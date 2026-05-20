@@ -4,12 +4,13 @@ import { fonts } from "../../theme";
 import {
   deleteReviewSession,
   getReviewSession,
+  listReviewPRs,
   loadReviewPR,
-  parsePRInput,
   pushAllReviewComments,
   pushReviewComment,
   runReview,
   type ReviewComment,
+  type ReviewPR,
   type ReviewSession,
   type ReviewStatus,
 } from "../../api/review";
@@ -35,14 +36,19 @@ function statusLabel(status: ReviewStatus): string {
 export function ReviewPanel({ channelId, subscribeChatEvents, onClose }: ReviewPanelProps) {
   const { colors, fontSizes } = useTheme();
   const [session, setSession] = useState<ReviewSession | null>(null);
-  const [prInput, setPrInput] = useState("");
+  const [prList, setPrList] = useState<ReviewPR[] | null>(null);
+  const [listLoading, setListLoading] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [loadingPR, setLoadingPR] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
+
+  const hasSession = session !== null && session.status !== "idle" && session.status !== "error";
 
   // Initial fetch on channel change.
   useEffect(() => {
     let cancelled = false;
     setSession(null);
+    setPrList(null);
     setError(null);
     (async () => {
       try {
@@ -55,6 +61,27 @@ export function ReviewPanel({ channelId, subscribeChatEvents, onClose }: ReviewP
     })();
     return () => { cancelled = true; };
   }, [channelId]);
+
+  // Fetch open PRs when there's no active session — i.e. show the picker.
+  useEffect(() => {
+    if (hasSession) return;
+    let cancelled = false;
+    setListLoading(true);
+    (async () => {
+      try {
+        const prs = await listReviewPRs(channelId);
+        if (!cancelled) setPrList(prs);
+      } catch (e) {
+        if (!cancelled) {
+          setPrList([]);
+          setError(e instanceof Error ? e.message : String(e));
+        }
+      } finally {
+        if (!cancelled) setListLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [channelId, hasSession]);
 
   // WS subscription: pick up review.comment + review.status for this channel.
   useEffect(() => {
@@ -76,19 +103,17 @@ export function ReviewPanel({ channelId, subscribeChatEvents, onClose }: ReviewP
     return subscribeChatEvents(listener);
   }, [channelId, subscribeChatEvents]);
 
-  const onLoad = useCallback(async () => {
-    const num = parsePRInput(prInput);
-    if (num === null) { setError("Enter a PR number or URL"); return; }
-    setBusy(true); setError(null);
+  const onSelectPR = useCallback(async (pr: ReviewPR) => {
+    setBusy(true); setError(null); setLoadingPR(pr.number);
     try {
-      const resp = await loadReviewPR(channelId, num);
+      const resp = await loadReviewPR(channelId, pr.number);
       if (resp.present && resp.session) setSession(resp.session);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
-      setBusy(false);
+      setBusy(false); setLoadingPR(null);
     }
-  }, [channelId, prInput]);
+  }, [channelId]);
 
   const onRun = useCallback(async () => {
     setBusy(true); setError(null);
@@ -107,7 +132,6 @@ export function ReviewPanel({ channelId, subscribeChatEvents, onClose }: ReviewP
     try {
       await deleteReviewSession(channelId);
       setSession(null);
-      setPrInput("");
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -151,17 +175,6 @@ export function ReviewPanel({ channelId, subscribeChatEvents, onClose }: ReviewP
     [session],
   );
 
-  const inputBarStyle: React.CSSProperties = {
-    flex: 1,
-    background: colors.surface,
-    color: colors.text,
-    border: `1px solid ${colors.border}`,
-    borderRadius: 4,
-    padding: "4px 8px",
-    fontSize: 12,
-    fontFamily: fonts.sans,
-  };
-
   const btnStyle: React.CSSProperties = {
     background: "transparent",
     color: colors.textDim,
@@ -192,7 +205,7 @@ export function ReviewPanel({ channelId, subscribeChatEvents, onClose }: ReviewP
         backgroundColor: colors.bg,
       }}
     >
-      {/* Header / PR loader */}
+      {/* Header */}
       <div
         style={{
           display: "flex",
@@ -202,43 +215,39 @@ export function ReviewPanel({ channelId, subscribeChatEvents, onClose }: ReviewP
           alignItems: "center",
         }}
       >
-        {!session || session.status === "idle" || session.status === "error" ? (
-          <>
-            <input
-              data-testid="review-pr-input"
-              value={prInput}
-              onChange={(e) => setPrInput(e.target.value)}
-              onKeyDown={(e) => { if (e.key === "Enter" && !busy) void onLoad(); }}
-              placeholder="PR number or URL"
-              disabled={busy}
-              style={inputBarStyle}
-            />
-            <button
-              data-testid="review-load-btn"
-              onClick={() => void onLoad()}
-              disabled={busy || prInput.trim() === ""}
-              style={primaryBtnStyle}
-            >
-              Load
-            </button>
-          </>
+        {!hasSession ? (
+          <div style={{ flex: 1, fontSize: 12, color: colors.textDim, fontFamily: fonts.sans }}>
+            Select a PR to review
+          </div>
         ) : (
           <>
             <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 2, minWidth: 0 }}>
               <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: colors.text }}>
-                <span style={{ fontFamily: "monospace" }}>#{session.pr?.number}</span>
+                {session?.pr?.url ? (
+                  <a
+                    href={session.pr.url}
+                    target="_blank"
+                    rel="noreferrer noopener"
+                    style={{ fontFamily: "monospace", color: colors.active, textDecoration: "none" }}
+                    title={session.pr.url}
+                  >
+                    #{session.pr.number}
+                  </a>
+                ) : (
+                  <span style={{ fontFamily: "monospace" }}>#{session?.pr?.number}</span>
+                )}
                 <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                  {session.pr?.title ?? ""}
+                  {session?.pr?.title ?? ""}
                 </span>
               </div>
               <div style={{ fontSize: 10, color: colors.textDim, fontFamily: fonts.sans }}>
-                {session.pr?.base_ref} ← {session.pr?.head_ref} · {statusLabel(session.status)}
+                {session?.pr?.base_ref} ← {session?.pr?.head_ref} · {session ? statusLabel(session.status) : ""}
               </div>
             </div>
             <button
               data-testid="review-run-btn"
               onClick={() => void onRun()}
-              disabled={busy || session.status !== "ready"}
+              disabled={busy || session?.status !== "ready"}
               style={primaryBtnStyle}
               title="Run agent review"
             >
@@ -295,22 +304,29 @@ export function ReviewPanel({ channelId, subscribeChatEvents, onClose }: ReviewP
 
       {/* Body */}
       <div style={{ flex: 1, overflow: "auto", display: "flex", flexDirection: "column" }}>
-        {!session && (
-          <EmptyHint colors={colors} />
+        {!hasSession && (
+          <PRListPicker
+            prs={prList}
+            loading={listLoading}
+            loadingPR={loadingPR}
+            disabled={busy}
+            colors={colors}
+            onSelect={onSelectPR}
+          />
         )}
-        {session && session.comments.length === 0 && session.status !== "reviewing" && (
+        {hasSession && session && session.comments.length === 0 && session.status !== "reviewing" && (
           <div style={{ padding: 16, color: colors.textDim, fontSize: 12, textAlign: "center" }}>
             {session.status === "ready"
               ? "No comments yet. Click Run to start the agent review."
               : `Status: ${statusLabel(session.status)}`}
           </div>
         )}
-        {session && session.status === "reviewing" && session.comments.length === 0 && (
+        {hasSession && session && session.status === "reviewing" && session.comments.length === 0 && (
           <div style={{ padding: 16, color: colors.textDim, fontSize: 12, textAlign: "center" }}>
             Reviewing... comments will appear as the agent emits them.
           </div>
         )}
-        {session && session.comments.map((c) => (
+        {hasSession && session && session.comments.map((c) => (
           <CommentRow key={c.id} comment={c} colors={colors} onPush={onPushOne} />
         ))}
       </div>
@@ -318,12 +334,89 @@ export function ReviewPanel({ channelId, subscribeChatEvents, onClose }: ReviewP
   );
 }
 
-function EmptyHint({ colors }: { colors: ReturnType<typeof useTheme>["colors"] }) {
+function PRListPicker({
+  prs,
+  loading,
+  loadingPR,
+  disabled,
+  colors,
+  onSelect,
+}: {
+  prs: ReviewPR[] | null;
+  loading: boolean;
+  loadingPR: number | null;
+  disabled: boolean;
+  colors: ReturnType<typeof useTheme>["colors"];
+  onSelect: (pr: ReviewPR) => void | Promise<void>;
+}) {
+  if (loading && prs === null) {
+    return (
+      <div data-testid="review-pr-list-loading" style={{ padding: 16, color: colors.textDim, fontSize: 12, textAlign: "center" }}>
+        Loading open PRs...
+      </div>
+    );
+  }
+  if (prs !== null && prs.length === 0) {
+    return (
+      <div data-testid="review-pr-list-empty" style={{ padding: 24, color: colors.textDim, fontSize: 12, textAlign: "center", lineHeight: 1.6 }}>
+        No open pull requests found in this repo.
+      </div>
+    );
+  }
+  if (prs === null) return null;
   return (
-    <div style={{ padding: 24, color: colors.textDim, fontSize: 12, textAlign: "center", lineHeight: 1.6 }}>
-      Enter a GitHub PR number or URL to load its diff into a local worktree,
-      then run an agent review to generate inline comments you can push back
-      to the PR.
+    <div data-testid="review-pr-list">
+      {prs.map((pr) => (
+        <button
+          key={pr.number}
+          data-testid={`review-pr-row-${pr.number}`}
+          onClick={() => void onSelect(pr)}
+          disabled={disabled}
+          style={{
+            display: "flex",
+            flexDirection: "column",
+            alignItems: "flex-start",
+            gap: 2,
+            width: "100%",
+            textAlign: "left",
+            padding: "8px 10px",
+            background: "transparent",
+            color: colors.text,
+            border: "none",
+            borderBottom: `1px solid ${colors.border}`,
+            cursor: disabled ? "default" : "pointer",
+            fontFamily: fonts.sans,
+            opacity: disabled && loadingPR !== pr.number ? 0.5 : 1,
+          }}
+        >
+          <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, width: "100%", minWidth: 0 }}>
+            <span style={{ fontFamily: "monospace", color: colors.textDim }}>#{pr.number}</span>
+            {pr.is_draft && (
+              <span
+                style={{
+                  fontSize: 9,
+                  padding: "0 4px",
+                  borderRadius: 3,
+                  border: `1px solid ${colors.border}`,
+                  color: colors.textDim,
+                  textTransform: "uppercase",
+                }}
+              >
+                draft
+              </span>
+            )}
+            <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1 }}>
+              {pr.title ?? ""}
+            </span>
+            {loadingPR === pr.number && (
+              <span style={{ fontSize: 10, color: colors.textDim }}>loading...</span>
+            )}
+          </div>
+          <div style={{ fontSize: 10, color: colors.textDim }}>
+            {pr.base_ref} ← {pr.head_ref}
+          </div>
+        </button>
+      ))}
     </div>
   );
 }

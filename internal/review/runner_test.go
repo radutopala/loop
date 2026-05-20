@@ -26,7 +26,7 @@ func TestRunnerSuite(t *testing.T) { suite.Run(t, new(RunnerSuite)) }
 
 func (s *RunnerSuite) TestRunNoAgentConfigured() {
 	r := &Runner{}
-	_, err := r.Run(context.Background(), "ch", "/dir", "sys", "p", nil)
+	_, err := r.Run(context.Background(), "ch", "/dir", "/parent", "sys", "p", nil)
 	require.ErrorContains(s.T(), err, "agent not configured")
 }
 
@@ -34,7 +34,7 @@ func (s *RunnerSuite) TestRunAgentErrorPropagates() {
 	a := new(mockAgentRunner)
 	a.On("Run", mock.Anything, mock.Anything).Return(nil, errors.New("boom"))
 	r := &Runner{Agent: a}
-	_, err := r.Run(context.Background(), "ch", "/dir", "sys", "p", nil)
+	_, err := r.Run(context.Background(), "ch", "/dir", "/parent", "sys", "p", nil)
 	require.ErrorContains(s.T(), err, "boom")
 }
 
@@ -42,7 +42,7 @@ func (s *RunnerSuite) TestRunParsesAndDispatchesComments() {
 	var got []*Comment
 	a := new(mockAgentRunner)
 	a.On("Run", mock.Anything, mock.MatchedBy(func(req *agent.AgentRequest) bool {
-		return req.DirPath == "/wt" && req.SystemPrompt == "sys" && req.Prompt == "p" && req.OnTurn != nil
+		return req.DirPath == "/wt" && req.ParentDirPath == "/repo" && req.SystemPrompt == "sys" && req.Prompt == "p" && req.OnTurn != nil
 	})).Run(func(args mock.Arguments) {
 		req := args.Get(1).(*agent.AgentRequest)
 		// Simulate two turns where the second repeats one comment id.
@@ -51,7 +51,7 @@ func (s *RunnerSuite) TestRunParsesAndDispatchesComments() {
 	}).Return(&agent.AgentResponse{Response: "done"}, nil)
 
 	r := &Runner{Agent: a}
-	resp, err := r.Run(context.Background(), "ch", "/wt", "sys", "p", func(c *Comment) {
+	resp, err := r.Run(context.Background(), "ch", "/wt", "/repo", "sys", "p", func(c *Comment) {
 		got = append(got, c)
 	})
 	require.NoError(s.T(), err)
@@ -68,6 +68,6 @@ func (s *RunnerSuite) TestRunNilCallbackSafe() {
 		req.OnTurn(`<review-comment path="a.go" line="1">x</review-comment>`)
 	}).Return(&agent.AgentResponse{}, nil)
 	r := &Runner{Agent: a}
-	_, err := r.Run(context.Background(), "ch", "/wt", "sys", "p", nil)
+	_, err := r.Run(context.Background(), "ch", "/wt", "/repo", "sys", "p", nil)
 	require.NoError(s.T(), err)
 }

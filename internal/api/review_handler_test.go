@@ -52,28 +52,34 @@ func (m *mockGitHubReview) FetchRepoSlug(ctx context.Context, workdir, ghUser st
 	return slug, args.Error(1)
 }
 
+func (m *mockGitHubReview) ListOpenPRs(ctx context.Context, workdir, ghUser string) ([]githubapi.PRInfo, error) {
+	args := m.Called(ctx, workdir, ghUser)
+	prs, _ := args.Get(0).([]githubapi.PRInfo)
+	return prs, args.Error(1)
+}
+
 func (m *mockGitHubReview) PostPRComment(ctx context.Context, workdir, ghUser string, slug githubapi.RepoSlug, prNum int, commitID, path, side string, line int, body string) error {
 	args := m.Called(ctx, workdir, ghUser, slug, prNum, commitID, path, side, line, body)
 	return args.Error(0)
 }
 
-// mockPRWorktree is a testify mock for review.PRWorktree.
-type mockPRWorktree struct {
+// mockPR is a testify mock for review.PR.
+type mockPR struct {
 	mock.Mock
 }
 
-func (m *mockPRWorktree) Add(ctx context.Context, parentDir string, prNum int) (string, error) {
+func (m *mockPR) Add(ctx context.Context, parentDir string, prNum int) (string, error) {
 	args := m.Called(ctx, parentDir, prNum)
 	return args.String(0), args.Error(1)
 }
 
-func (m *mockPRWorktree) Diff(ctx context.Context, parentDir, worktreePath, baseRef string) ([]byte, error) {
+func (m *mockPR) Diff(ctx context.Context, parentDir, worktreePath, baseRef string) ([]byte, error) {
 	args := m.Called(ctx, parentDir, worktreePath, baseRef)
 	b, _ := args.Get(0).([]byte)
 	return b, args.Error(1)
 }
 
-func (m *mockPRWorktree) Remove(ctx context.Context, parentDir, worktreePath string) error {
+func (m *mockPR) Remove(ctx context.Context, parentDir, worktreePath string) error {
 	args := m.Called(ctx, parentDir, worktreePath)
 	return args.Error(0)
 }
@@ -83,7 +89,7 @@ type ReviewHandlerSuite struct {
 	srv   *Server
 	store *MockChannelLister
 	gh    *mockGitHubReview
-	wt    *mockPRWorktree
+	wt    *mockPR
 	rs    *review.Store
 	mux   *http.ServeMux
 }
@@ -96,7 +102,7 @@ func (s *ReviewHandlerSuite) SetupTest() {
 	s.srv = newServerForReviewTests(s.T())
 	s.store = s.srv.store.(*MockChannelLister)
 	s.gh = new(mockGitHubReview)
-	s.wt = new(mockPRWorktree)
+	s.wt = new(mockPR)
 	s.rs = review.NewStore()
 	s.srv.SetReviewService(s.gh, s.rs, s.wt)
 	s.mux = s.srv.buildMux()
@@ -570,24 +576,130 @@ func (s *ReviewHandlerSuite) TestErrorMessageNil() {
 	require.Equal(s.T(), "", errorMessage(nil))
 }
 
+// ---- list PRs ----
+
+func (s *ReviewHandlerSuite) TestListPRsHappyPath() {
+	s.store.On("GetChannel", mock.Anything, "ch1").Return(&db.Channel{ChannelID: "ch1", DirPath: "/repo"}, nil)
+	prs := []githubapi.PRInfo{
+		{Number: 1, Title: "first", BaseRef: "main", HeadRef: "f1", State: "OPEN"},
+		{Number: 2, Title: "second", BaseRef: "main", HeadRef: "f2", State: "OPEN", IsDraft: true},
+	}
+	s.gh.On("ListOpenPRs", mock.Anything, "/repo", "").Return(prs, nil)
+
+	req := httptest.NewRequest("GET", "/api/channels/ch1/review/prs", nil)
+	w := httptest.NewRecorder()
+	s.mux.ServeHTTP(w, req)
+	require.Equal(s.T(), http.StatusOK, w.Code)
+	var resp struct {
+		PRs []githubapi.PRInfo `json:"prs"`
+	}
+	require.NoError(s.T(), json.Unmarshal(w.Body.Bytes(), &resp))
+	require.Len(s.T(), resp.PRs, 2)
+	require.Equal(s.T(), 1, resp.PRs[0].Number)
+	require.True(s.T(), resp.PRs[1].IsDraft)
+}
+
+func (s *ReviewHandlerSuite) TestListPRsEmptyReturnsEmptyArray() {
+	s.store.On("GetChannel", mock.Anything, "ch1").Return(&db.Channel{ChannelID: "ch1", DirPath: "/repo"}, nil)
+	s.gh.On("ListOpenPRs", mock.Anything, "/repo", "").Return(nil, nil)
+
+	req := httptest.NewRequest("GET", "/api/channels/ch1/review/prs", nil)
+	w := httptest.NewRecorder()
+	s.mux.ServeHTTP(w, req)
+	require.Equal(s.T(), http.StatusOK, w.Code)
+	require.Contains(s.T(), w.Body.String(), `"prs":[]`)
+}
+
+func (s *ReviewHandlerSuite) TestListPRsChannelLookupError() {
+	s.store.On("GetChannel", mock.Anything, "ch1").Return(nil, errors.New("db"))
+	req := httptest.NewRequest("GET", "/api/channels/ch1/review/prs", nil)
+	w := httptest.NewRecorder()
+	s.mux.ServeHTTP(w, req)
+	require.Equal(s.T(), http.StatusInternalServerError, w.Code)
+}
+
+func (s *ReviewHandlerSuite) TestListPRsChannelNotFound() {
+	s.store.On("GetChannel", mock.Anything, "ch1").Return(nil, nil)
+	req := httptest.NewRequest("GET", "/api/channels/ch1/review/prs", nil)
+	w := httptest.NewRecorder()
+	s.mux.ServeHTTP(w, req)
+	require.Equal(s.T(), http.StatusNotFound, w.Code)
+}
+
+func (s *ReviewHandlerSuite) TestListPRsNoDirPath() {
+	s.store.On("GetChannel", mock.Anything, "ch1").Return(&db.Channel{ChannelID: "ch1"}, nil)
+	req := httptest.NewRequest("GET", "/api/channels/ch1/review/prs", nil)
+	w := httptest.NewRecorder()
+	s.mux.ServeHTTP(w, req)
+	require.Equal(s.T(), http.StatusBadRequest, w.Code)
+}
+
+func (s *ReviewHandlerSuite) TestListPRsLoopDirFallback() {
+	s.srv.loopDir = "/loop"
+	s.store.On("GetChannel", mock.Anything, "ch1").Return(&db.Channel{ChannelID: "ch1"}, nil)
+	s.gh.On("ListOpenPRs", mock.Anything, "/loop/ch1/work", "").Return([]githubapi.PRInfo{}, nil)
+	req := httptest.NewRequest("GET", "/api/channels/ch1/review/prs", nil)
+	w := httptest.NewRecorder()
+	s.mux.ServeHTTP(w, req)
+	require.Equal(s.T(), http.StatusOK, w.Code)
+}
+
+func (s *ReviewHandlerSuite) TestListPRsRunError() {
+	s.store.On("GetChannel", mock.Anything, "ch1").Return(&db.Channel{ChannelID: "ch1", DirPath: "/repo"}, nil)
+	s.gh.On("ListOpenPRs", mock.Anything, "/repo", "").Return(nil, errors.New("api fail"))
+	req := httptest.NewRequest("GET", "/api/channels/ch1/review/prs", nil)
+	w := httptest.NewRecorder()
+	s.mux.ServeHTTP(w, req)
+	require.Equal(s.T(), http.StatusInternalServerError, w.Code)
+}
+
+func (s *ReviewHandlerSuite) TestListPRsGhNotInstalled() {
+	s.store.On("GetChannel", mock.Anything, "ch1").Return(&db.Channel{ChannelID: "ch1", DirPath: "/repo"}, nil)
+	s.gh.On("ListOpenPRs", mock.Anything, "/repo", "").Return(nil, githubapi.ErrGhNotInstalled)
+	req := httptest.NewRequest("GET", "/api/channels/ch1/review/prs", nil)
+	w := httptest.NewRecorder()
+	s.mux.ServeHTTP(w, req)
+	require.Equal(s.T(), http.StatusServiceUnavailable, w.Code)
+}
+
+func (s *ReviewHandlerSuite) TestListPRsStoreNotConfigured() {
+	srv := newServerForReviewTests(s.T())
+	srv.store = nil
+	mux := srv.buildMux()
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, httptest.NewRequest("GET", "/api/channels/ch1/review/prs", nil))
+	require.Equal(s.T(), http.StatusNotImplemented, w.Code)
+}
+
+func (s *ReviewHandlerSuite) TestListPRsReviewClientNotConfigured() {
+	srv := newServerForReviewTests(s.T())
+	// store wired by newServerForReviewTests; reviewClient stays nil.
+	mux := srv.buildMux()
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, httptest.NewRequest("GET", "/api/channels/ch1/review/prs", nil))
+	require.Equal(s.T(), http.StatusNotImplemented, w.Code)
+}
+
 // ---- run ----
 
 // mockReviewRunner stubs the agent run. The custom runFn lets each test
 // drive comment dispatch and the eventual return synchronously.
 type mockReviewRunner struct {
-	mu       sync.Mutex
-	calls    int
-	lastDir  string
-	lastSys  string
-	lastUser string
-	runFn    func(onComment func(*review.Comment)) (*agent.AgentResponse, error)
-	done     chan struct{} // closed after Run returns
+	mu         sync.Mutex
+	calls      int
+	lastDir    string
+	lastParent string
+	lastSys    string
+	lastUser   string
+	runFn      func(onComment func(*review.Comment)) (*agent.AgentResponse, error)
+	done       chan struct{} // closed after Run returns
 }
 
-func (m *mockReviewRunner) Run(_ context.Context, _, dirPath, systemPrompt, prompt string, onComment func(*review.Comment)) (*agent.AgentResponse, error) {
+func (m *mockReviewRunner) Run(_ context.Context, _, dirPath, parentDirPath, systemPrompt, prompt string, onComment func(*review.Comment)) (*agent.AgentResponse, error) {
 	m.mu.Lock()
 	m.calls++
 	m.lastDir = dirPath
+	m.lastParent = parentDirPath
 	m.lastSys = systemPrompt
 	m.lastUser = prompt
 	fn := m.runFn
@@ -617,12 +729,24 @@ func (s *ReviewHandlerSuite) waitFor(cond func() bool) {
 
 func (s *ReviewHandlerSuite) wireReadySession() {
 	s.rs.Put("ch1", &review.Session{
-		PR:           &githubapi.PRInfo{Number: 7},
+		PR: &githubapi.PRInfo{
+			Number:  7,
+			URL:     "https://github.com/o/r/pull/7",
+			Title:   "Add X",
+			BaseRef: "main",
+			HeadRef: "feat-x",
+		},
 		HeadSHA:      "abc",
 		WorktreePath: "/repo/.worktrees/pr-7",
 		RawDiff:      "diff --git a/x b/x",
 		Status:       review.StatusReady,
 	})
+	// handleReviewRun resolves the channel's repo dir so the container
+	// can mount it alongside the worktree (the worktree's .git is a
+	// pointer file into the shared gitdir). resolveParentDirPath calls
+	// GetChannel once; the run handler may also call it for fallback
+	// when the channel isn't a worktree — `.Maybe()` covers both paths.
+	s.store.On("GetChannel", mock.Anything, "ch1").Return(&db.Channel{ChannelID: "ch1", DirPath: "/repo"}, nil).Maybe()
 }
 
 func (s *ReviewHandlerSuite) TestRunReviewStoreNotConfigured() {
@@ -685,9 +809,17 @@ func (s *ReviewHandlerSuite) TestRunHappyPathDispatchesCommentsAndStatus() {
 
 	require.Equal(s.T(), 1, runner.calls)
 	require.Equal(s.T(), "/repo/.worktrees/pr-7", runner.lastDir)
+	require.Equal(s.T(), "/repo", runner.lastParent)
 	require.Equal(s.T(), "sys", runner.lastSys)
 	require.Contains(s.T(), runner.lastUser, "review-prompt-body")
-	require.Contains(s.T(), runner.lastUser, "diff --git a/x b/x")
+	require.Contains(s.T(), runner.lastUser, "#7")
+	require.Contains(s.T(), runner.lastUser, "https://github.com/o/r/pull/7")
+	require.Contains(s.T(), runner.lastUser, "Add X")
+	require.Contains(s.T(), runner.lastUser, "main")
+	require.Contains(s.T(), runner.lastUser, "feat-x")
+	require.Contains(s.T(), runner.lastUser, "abc") // head sha
+	require.Contains(s.T(), runner.lastUser, "git diff origin/main...HEAD")
+	require.NotContains(s.T(), runner.lastUser, "diff --git a/x b/x")
 
 	sess := s.rs.Get("ch1")
 	require.Len(s.T(), sess.Comments, 1)
@@ -783,4 +915,121 @@ func (s *ReviewHandlerSuite) TestBroadcastReviewStatusNoHubIsSafe() {
 	s.wireReadySession()
 	require.Nil(s.T(), s.srv.eventsHub)
 	s.srv.broadcastReviewStatus("ch1", review.StatusReady, "")
+}
+
+// When the channel is a worktree-thread, the real main repo (which
+// holds the shared gitdir) is the *parent* channel's dir, not the
+// worktree channel's own dir. The runner must see the parent dir so
+// the container mounts the right location.
+func (s *ReviewHandlerSuite) TestRunWorktreeThreadUsesParentChannelDir() {
+	s.rs.Put("ch1", &review.Session{
+		PR:           &githubapi.PRInfo{Number: 7},
+		HeadSHA:      "abc",
+		WorktreePath: "/wt/.worktrees/pr-7",
+		RawDiff:      "diff",
+		Status:       review.StatusReady,
+	})
+	s.store.On("GetChannel", mock.Anything, "ch1").Return(
+		&db.Channel{ChannelID: "ch1", DirPath: "/wt", Worktree: true, ParentID: "parent-ch"}, nil)
+	s.store.On("GetChannel", mock.Anything, "parent-ch").Return(
+		&db.Channel{ChannelID: "parent-ch", DirPath: "/main-repo"}, nil)
+
+	runner := &mockReviewRunner{done: make(chan struct{})}
+	s.srv.SetReviewAgent(runner, "", "")
+	w := httptest.NewRecorder()
+	s.mux.ServeHTTP(w, httptest.NewRequest("POST", "/api/channels/ch1/review/run", nil))
+	require.Equal(s.T(), http.StatusAccepted, w.Code)
+	<-runner.done
+	require.Equal(s.T(), "/main-repo", runner.lastParent)
+}
+
+// Root (non-worktree) channels: resolveParentDirPath returns "", and
+// the handler falls back to the channel's own dir, which IS the main
+// repo.
+func (s *ReviewHandlerSuite) TestRunRootChannelUsesOwnDir() {
+	s.rs.Put("ch1", &review.Session{
+		PR:           &githubapi.PRInfo{Number: 7},
+		HeadSHA:      "abc",
+		WorktreePath: "/repo/.worktrees/pr-7",
+		RawDiff:      "diff",
+		Status:       review.StatusReady,
+	})
+	s.store.On("GetChannel", mock.Anything, "ch1").Return(
+		&db.Channel{ChannelID: "ch1", DirPath: "/repo"}, nil)
+
+	runner := &mockReviewRunner{done: make(chan struct{})}
+	s.srv.SetReviewAgent(runner, "", "")
+	w := httptest.NewRecorder()
+	s.mux.ServeHTTP(w, httptest.NewRequest("POST", "/api/channels/ch1/review/run", nil))
+	require.Equal(s.T(), http.StatusAccepted, w.Code)
+	<-runner.done
+	require.Equal(s.T(), "/repo", runner.lastParent)
+}
+
+// When a root channel has no DirPath, the handler synthesizes one from
+// loopDir — same pattern as load.
+func (s *ReviewHandlerSuite) TestRunLoopDirFallbackForParent() {
+	s.srv.loopDir = "/loop"
+	s.rs.Put("ch1", &review.Session{
+		PR:           &githubapi.PRInfo{Number: 7},
+		HeadSHA:      "abc",
+		WorktreePath: "/loop/ch1/work/.worktrees/pr-7",
+		RawDiff:      "diff",
+		Status:       review.StatusReady,
+	})
+	s.store.On("GetChannel", mock.Anything, "ch1").Return(
+		&db.Channel{ChannelID: "ch1"}, nil)
+
+	runner := &mockReviewRunner{done: make(chan struct{})}
+	s.srv.SetReviewAgent(runner, "", "")
+	w := httptest.NewRecorder()
+	s.mux.ServeHTTP(w, httptest.NewRequest("POST", "/api/channels/ch1/review/run", nil))
+	require.Equal(s.T(), http.StatusAccepted, w.Code)
+	<-runner.done
+	require.Equal(s.T(), "/loop/ch1/work", runner.lastParent)
+}
+
+// When the worktree-thread's parent lookup fails, the handler falls
+// back to the channel's own dir. Degraded but doesn't break the run.
+func (s *ReviewHandlerSuite) TestRunWorktreeThreadParentLookupFailureFallsBack() {
+	s.rs.Put("ch1", &review.Session{
+		PR:           &githubapi.PRInfo{Number: 7},
+		HeadSHA:      "abc",
+		WorktreePath: "/wt/.worktrees/pr-7",
+		RawDiff:      "diff",
+		Status:       review.StatusReady,
+	})
+	s.store.On("GetChannel", mock.Anything, "ch1").Return(
+		&db.Channel{ChannelID: "ch1", DirPath: "/wt", Worktree: true, ParentID: "parent-ch"}, nil)
+	s.store.On("GetChannel", mock.Anything, "parent-ch").Return(nil, errors.New("db"))
+
+	runner := &mockReviewRunner{done: make(chan struct{})}
+	s.srv.SetReviewAgent(runner, "", "")
+	w := httptest.NewRecorder()
+	s.mux.ServeHTTP(w, httptest.NewRequest("POST", "/api/channels/ch1/review/run", nil))
+	require.Equal(s.T(), http.StatusAccepted, w.Code)
+	<-runner.done
+	require.Equal(s.T(), "/wt", runner.lastParent)
+}
+
+// GetChannel error on both lookups leaves parentDirPath as "" — the
+// run still proceeds, but the agent container is missing the parent
+// mount (degraded; same as before this fix).
+func (s *ReviewHandlerSuite) TestRunNoParentWhenGetChannelFails() {
+	s.rs.Put("ch1", &review.Session{
+		PR:           &githubapi.PRInfo{Number: 7},
+		HeadSHA:      "abc",
+		WorktreePath: "/repo/.worktrees/pr-7",
+		RawDiff:      "diff",
+		Status:       review.StatusReady,
+	})
+	s.store.On("GetChannel", mock.Anything, "ch1").Return(nil, errors.New("db"))
+
+	runner := &mockReviewRunner{done: make(chan struct{})}
+	s.srv.SetReviewAgent(runner, "", "")
+	w := httptest.NewRecorder()
+	s.mux.ServeHTTP(w, httptest.NewRequest("POST", "/api/channels/ch1/review/run", nil))
+	require.Equal(s.T(), http.StatusAccepted, w.Code)
+	<-runner.done
+	require.Equal(s.T(), "", runner.lastParent)
 }

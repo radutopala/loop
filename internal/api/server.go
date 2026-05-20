@@ -137,7 +137,7 @@ type Server struct {
 	githubLookup              GitHubLookup                                                 // resolves PR for a channel's branch via `gh`
 	reviewClient              GitHubReview                                                 // gh ops for review panel (fetch diff, post comment)
 	reviewStore               *review.Store                                                // per-channel review session state
-	reviewWorktree            review.PRWorktree                                            // creates/removes PR worktrees
+	reviewWorktree            review.PR                                                    // creates/removes PR worktrees
 	reviewRunner              ReviewRunner                                                 // drives the agent for /review/run
 	reviewSystemPrompt        string                                                       // resolved system prompt for review runs
 	reviewPrompt              string                                                       // resolved user prompt for review runs ("" -> built-in default)
@@ -349,6 +349,7 @@ func (s *Server) buildMux() *http.ServeMux {
 	mux.HandleFunc("GET /api/channels/{id}/diff", s.handleGitDiff)
 	mux.HandleFunc("GET /api/channels/{id}/pr", s.handleChannelPR)
 	mux.HandleFunc("POST /api/channels/{id}/review/load", s.handleReviewLoad)
+	mux.HandleFunc("GET /api/channels/{id}/review/prs", s.handleReviewListPRs)
 	mux.HandleFunc("GET /api/channels/{id}/review", s.handleReviewGet)
 	mux.HandleFunc("DELETE /api/channels/{id}/review", s.handleReviewDelete)
 	mux.HandleFunc("POST /api/channels/{id}/review/run", s.handleReviewRun)

@@ -76,7 +76,7 @@ func (c *Creator) Create(ctx context.Context, dirPath, branch, name, sessionID s
 // parentDir is the main repository directory (not the worktree itself).
 // worktreePath is the absolute path of the worktree to remove.
 func (c *Creator) Remove(ctx context.Context, parentDir, worktreePath string) error {
-	out, err := c.Run(ctx, parentDir, "git", "worktree", "remove", "--force", worktreePath)
+	out, err := c.Run(ctx, parentDir, "git", "worktree", "remove", "--force", "--force", worktreePath)
 	if err != nil {
 		return fmt.Errorf("git worktree remove failed: %s", strings.TrimSpace(string(out)))
 	}

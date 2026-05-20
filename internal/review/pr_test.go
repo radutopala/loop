@@ -11,12 +11,12 @@ import (
 	"github.com/stretchr/testify/suite"
 )
 
-type WorktreeSuite struct {
+type PRSuite struct {
 	suite.Suite
 }
 
-func TestWorktreeSuite(t *testing.T) {
-	suite.Run(t, new(WorktreeSuite))
+func TestPRSuite(t *testing.T) {
+	suite.Run(t, new(PRSuite))
 }
 
 // recordingRunner captures every (dir, name, args) tuple it's invoked
@@ -58,17 +58,17 @@ func joinArgs(args []string) string {
 	return out
 }
 
-func (s *WorktreeSuite) TestAddRequiresInputs() {
-	g := &GitPRWorktree{Run: (&recordingRunner{}).run}
+func (s *PRSuite) TestAddRequiresInputs() {
+	g := &GitPR{Run: (&recordingRunner{}).run}
 	_, err := g.Add(context.Background(), "", 1)
 	require.Error(s.T(), err)
 	_, err = g.Add(context.Background(), "/repo", 0)
 	require.Error(s.T(), err)
 }
 
-func (s *WorktreeSuite) TestAddHappyPath() {
+func (s *PRSuite) TestAddHappyPath() {
 	rr := &recordingRunner{}
-	g := &GitPRWorktree{Run: rr.run}
+	g := &GitPR{Run: rr.run}
 	path, err := g.Add(context.Background(), "/repo", 42)
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), filepath.Join("/repo", ".worktrees", "pr-42"), path)
@@ -78,18 +78,18 @@ func (s *WorktreeSuite) TestAddHappyPath() {
 	require.Equal(s.T(), []string{"worktree", "add", "--detach", filepath.Join("/repo", ".worktrees", "pr-42"), "FETCH_HEAD"}, rr.calls[1].args)
 }
 
-func (s *WorktreeSuite) TestAddFetchError() {
+func (s *PRSuite) TestAddFetchError() {
 	rr := &recordingRunner{
 		response: map[string]callResponse{
 			"git fetch origin refs/pull/7/head": {out: []byte("network down"), err: errors.New("fail")},
 		},
 	}
-	g := &GitPRWorktree{Run: rr.run}
+	g := &GitPR{Run: rr.run}
 	_, err := g.Add(context.Background(), "/repo", 7)
 	require.ErrorContains(s.T(), err, "network down")
 }
 
-func (s *WorktreeSuite) TestAddWorktreeAlreadyExistsIsOK() {
+func (s *PRSuite) TestAddWorktreeAlreadyExistsIsOK() {
 	target := filepath.Join("/repo", ".worktrees", "pr-9")
 	rr := &recordingRunner{
 		response: map[string]callResponse{
@@ -99,13 +99,13 @@ func (s *WorktreeSuite) TestAddWorktreeAlreadyExistsIsOK() {
 			},
 		},
 	}
-	g := &GitPRWorktree{Run: rr.run}
+	g := &GitPR{Run: rr.run}
 	path, err := g.Add(context.Background(), "/repo", 9)
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), target, path)
 }
 
-func (s *WorktreeSuite) TestAddWorktreeOtherErrorPropagates() {
+func (s *PRSuite) TestAddWorktreeOtherErrorPropagates() {
 	target := filepath.Join("/repo", ".worktrees", "pr-9")
 	rr := &recordingRunner{
 		response: map[string]callResponse{
@@ -115,13 +115,13 @@ func (s *WorktreeSuite) TestAddWorktreeOtherErrorPropagates() {
 			},
 		},
 	}
-	g := &GitPRWorktree{Run: rr.run}
+	g := &GitPR{Run: rr.run}
 	_, err := g.Add(context.Background(), "/repo", 9)
 	require.ErrorContains(s.T(), err, "bad object")
 }
 
-func (s *WorktreeSuite) TestDiffRequiresInputs() {
-	g := &GitPRWorktree{Run: (&recordingRunner{}).run}
+func (s *PRSuite) TestDiffRequiresInputs() {
+	g := &GitPR{Run: (&recordingRunner{}).run}
 	_, err := g.Diff(context.Background(), "", "/wt", "main")
 	require.Error(s.T(), err)
 	_, err = g.Diff(context.Background(), "/repo", "", "main")
@@ -130,13 +130,13 @@ func (s *WorktreeSuite) TestDiffRequiresInputs() {
 	require.Error(s.T(), err)
 }
 
-func (s *WorktreeSuite) TestDiffHappyPath() {
+func (s *PRSuite) TestDiffHappyPath() {
 	rr := &recordingRunner{
 		response: map[string]callResponse{
 			"git diff origin/main...HEAD": {out: []byte("diff --git a/x b/x\n")},
 		},
 	}
-	g := &GitPRWorktree{Run: rr.run}
+	g := &GitPR{Run: rr.run}
 	out, err := g.Diff(context.Background(), "/repo", "/repo/.worktrees/pr-1", "main")
 	require.NoError(s.T(), err)
 	require.Contains(s.T(), string(out), "diff --git")
@@ -147,44 +147,44 @@ func (s *WorktreeSuite) TestDiffHappyPath() {
 	require.Equal(s.T(), []string{"diff", "origin/main...HEAD"}, rr.calls[1].args)
 }
 
-func (s *WorktreeSuite) TestDiffFetchError() {
+func (s *PRSuite) TestDiffFetchError() {
 	rr := &recordingRunner{
 		response: map[string]callResponse{
 			"git fetch origin main": {out: []byte("bad ref"), err: errors.New("exit 1")},
 		},
 	}
-	g := &GitPRWorktree{Run: rr.run}
+	g := &GitPR{Run: rr.run}
 	_, err := g.Diff(context.Background(), "/repo", "/wt", "main")
 	require.ErrorContains(s.T(), err, "bad ref")
 }
 
-func (s *WorktreeSuite) TestDiffDiffError() {
+func (s *PRSuite) TestDiffDiffError() {
 	rr := &recordingRunner{
 		response: map[string]callResponse{
 			"git diff origin/main...HEAD": {out: []byte("bad object"), err: errors.New("exit 128")},
 		},
 	}
-	g := &GitPRWorktree{Run: rr.run}
+	g := &GitPR{Run: rr.run}
 	_, err := g.Diff(context.Background(), "/repo", "/wt", "main")
 	require.ErrorContains(s.T(), err, "bad object")
 }
 
-func (s *WorktreeSuite) TestRemoveRequiresInputs() {
-	g := &GitPRWorktree{Run: (&recordingRunner{}).run}
+func (s *PRSuite) TestRemoveRequiresInputs() {
+	g := &GitPR{Run: (&recordingRunner{}).run}
 	require.Error(s.T(), g.Remove(context.Background(), "", "/x"))
 	require.Error(s.T(), g.Remove(context.Background(), "/repo", ""))
 }
 
-func (s *WorktreeSuite) TestRemoveHappyPath() {
+func (s *PRSuite) TestRemoveHappyPath() {
 	rr := &recordingRunner{}
-	g := &GitPRWorktree{Run: rr.run}
+	g := &GitPR{Run: rr.run}
 	require.NoError(s.T(), g.Remove(context.Background(), "/repo", "/repo/.worktrees/pr-1"))
 	require.Len(s.T(), rr.calls, 2)
 	require.Equal(s.T(), []string{"worktree", "remove", "--force", "/repo/.worktrees/pr-1"}, rr.calls[0].args)
 	require.Equal(s.T(), []string{"worktree", "prune"}, rr.calls[1].args)
 }
 
-func (s *WorktreeSuite) TestRemoveAlreadyGoneStillPrunes() {
+func (s *PRSuite) TestRemoveAlreadyGoneStillPrunes() {
 	rr := &recordingRunner{
 		response: map[string]callResponse{
 			"git worktree remove --force /repo/.worktrees/pr-1": {
@@ -193,12 +193,12 @@ func (s *WorktreeSuite) TestRemoveAlreadyGoneStillPrunes() {
 			},
 		},
 	}
-	g := &GitPRWorktree{Run: rr.run}
+	g := &GitPR{Run: rr.run}
 	require.NoError(s.T(), g.Remove(context.Background(), "/repo", "/repo/.worktrees/pr-1"))
 	require.Len(s.T(), rr.calls, 2) // remove + prune both attempted
 }
 
-func (s *WorktreeSuite) TestRemovePropagatesOtherErrors() {
+func (s *PRSuite) TestRemovePropagatesOtherErrors() {
 	rr := &recordingRunner{
 		response: map[string]callResponse{
 			"git worktree remove --force /repo/.worktrees/pr-1": {
@@ -207,18 +207,18 @@ func (s *WorktreeSuite) TestRemovePropagatesOtherErrors() {
 			},
 		},
 	}
-	g := &GitPRWorktree{Run: rr.run}
+	g := &GitPR{Run: rr.run}
 	err := g.Remove(context.Background(), "/repo", "/repo/.worktrees/pr-1")
 	require.ErrorContains(s.T(), err, "refusing")
 }
 
-func (s *WorktreeSuite) TestRemovePruneError() {
+func (s *PRSuite) TestRemovePruneError() {
 	rr := &recordingRunner{
 		response: map[string]callResponse{
 			"git worktree prune": {out: []byte("prune busted"), err: errors.New("exit 1")},
 		},
 	}
-	g := &GitPRWorktree{Run: rr.run}
+	g := &GitPR{Run: rr.run}
 	err := g.Remove(context.Background(), "/repo", "/repo/.worktrees/pr-1")
 	require.ErrorContains(s.T(), err, "prune busted")
 }

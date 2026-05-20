@@ -18,6 +18,7 @@ type dispatchRunner struct {
 
 	tokenOut, tokenErr       any // []byte or error
 	prViewOut, prViewErr     any
+	prListOut, prListErr     any
 	repoViewOut, repoViewErr any
 	apiOut, apiErr           any
 }
@@ -30,6 +31,8 @@ func (d *dispatchRunner) Run(_ context.Context, workdir string, env []string, ar
 		return asBytes(d.tokenOut), asErr(d.tokenErr)
 	case len(args) >= 2 && args[0] == "pr" && args[1] == "view":
 		return asBytes(d.prViewOut), asErr(d.prViewErr)
+	case len(args) >= 2 && args[0] == "pr" && args[1] == "list":
+		return asBytes(d.prListOut), asErr(d.prListErr)
 	case len(args) >= 2 && args[0] == "repo" && args[1] == "view":
 		return asBytes(d.repoViewOut), asErr(d.repoViewErr)
 	case len(args) >= 1 && args[0] == "api":
@@ -249,6 +252,73 @@ func (s *ReviewAPISuite) TestPostPRCommentTokenFailure() {
 	r := &dispatchRunner{tokenErr: errors.New("no token")}
 	c := NewClientWithRunner(r)
 	err := c.PostPRComment(context.Background(), "/tmp", "u", RepoSlug{Owner: "o", Name: "n"}, 1, "sha", "p", "RIGHT", 1, "b")
+	require.Error(s.T(), err)
+}
+
+// ── ListOpenPRs ──────────────────────────────────────────────────────────
+
+func (s *ReviewAPISuite) TestListOpenPRsRequiresWorkdir() {
+	c := NewClientWithRunner(&dispatchRunner{})
+	_, err := c.ListOpenPRs(context.Background(), "", "")
+	require.Error(s.T(), err)
+}
+
+func (s *ReviewAPISuite) TestListOpenPRsHappyPath() {
+	r := &dispatchRunner{prListOut: []byte(`[
+		{"number":1,"url":"u1","baseRefName":"main","headRefName":"f1","state":"OPEN","title":"T1","isDraft":false},
+		{"number":2,"url":"u2","baseRefName":"main","headRefName":"f2","state":"OPEN","title":"T2","isDraft":true}
+	]`)}
+	c := NewClientWithRunner(r)
+	prs, err := c.ListOpenPRs(context.Background(), "/tmp", "")
+	require.NoError(s.T(), err)
+	require.Len(s.T(), prs, 2)
+	require.Equal(s.T(), 1, prs[0].Number)
+	require.Equal(s.T(), "T2", prs[1].Title)
+	require.True(s.T(), prs[1].IsDraft)
+	require.Equal(s.T(), "main", prs[0].BaseRef)
+
+	args := r.calls[len(r.calls)-1].args
+	require.Equal(s.T(), "pr", args[0])
+	require.Equal(s.T(), "list", args[1])
+	require.Contains(s.T(), args, "--state")
+	require.Contains(s.T(), args, "open")
+}
+
+func (s *ReviewAPISuite) TestListOpenPRsEmpty() {
+	r := &dispatchRunner{prListOut: []byte(`[]`)}
+	c := NewClientWithRunner(r)
+	prs, err := c.ListOpenPRs(context.Background(), "/tmp", "")
+	require.NoError(s.T(), err)
+	require.Empty(s.T(), prs)
+}
+
+func (s *ReviewAPISuite) TestListOpenPRsGhNotInstalled() {
+	r := &dispatchRunner{prListErr: ErrGhNotInstalled}
+	c := NewClientWithRunner(r)
+	_, err := c.ListOpenPRs(context.Background(), "/tmp", "")
+	require.ErrorIs(s.T(), err, ErrGhNotInstalled)
+}
+
+func (s *ReviewAPISuite) TestListOpenPRsRunError() {
+	r := &dispatchRunner{prListErr: errors.New("boom")}
+	c := NewClientWithRunner(r)
+	_, err := c.ListOpenPRs(context.Background(), "/tmp", "")
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "boom")
+}
+
+func (s *ReviewAPISuite) TestListOpenPRsMalformedJSON() {
+	r := &dispatchRunner{prListOut: []byte(`{nope`)}
+	c := NewClientWithRunner(r)
+	_, err := c.ListOpenPRs(context.Background(), "/tmp", "")
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "parsing gh pr list")
+}
+
+func (s *ReviewAPISuite) TestListOpenPRsTokenFailure() {
+	r := &dispatchRunner{tokenErr: errors.New("no token")}
+	c := NewClientWithRunner(r)
+	_, err := c.ListOpenPRs(context.Background(), "/tmp", "u")
 	require.Error(s.T(), err)
 }
 

@@ -12,27 +12,27 @@ import (
 // existing worktree.ExecCommandRunner can be reused as the default impl.
 type CommandRunner func(ctx context.Context, dir, name string, args ...string) ([]byte, error)
 
-// PRWorktree adds and removes a git worktree that checks out a pull
-// request's head commit in detached HEAD mode. Detached avoids polluting
-// the user's branch list with one-off review branches — the worktree is
+// PR adds and removes a git worktree that checks out a pull request's
+// head commit in detached HEAD mode. Detached avoids polluting the
+// user's branch list with one-off review branches — the worktree is
 // purely a read-only sandbox for the review agent. Diff produces a
 // merge-base unified patch between origin/<baseRef> and the worktree's
 // HEAD — the same view GitHub shows on the PR.
-type PRWorktree interface {
+type PR interface {
 	Add(ctx context.Context, parentDir string, prNum int) (worktreePath string, err error)
 	Diff(ctx context.Context, parentDir, worktreePath, baseRef string) ([]byte, error)
 	Remove(ctx context.Context, parentDir, worktreePath string) error
 }
 
-// GitPRWorktree is the default PRWorktree backed by shelling out to git.
-type GitPRWorktree struct {
+// GitPR is the default PR implementation backed by shelling out to git.
+type GitPR struct {
 	Run CommandRunner
 }
 
 // Add fetches the PR head from origin (refs/pull/<n>/head) and creates a
 // detached worktree at <parentDir>/.worktrees/pr-<n>. Idempotent: if the
 // worktree already exists, the existing path is returned.
-func (g *GitPRWorktree) Add(ctx context.Context, parentDir string, prNum int) (string, error) {
+func (g *GitPR) Add(ctx context.Context, parentDir string, prNum int) (string, error) {
 	if parentDir == "" || prNum <= 0 {
 		return "", fmt.Errorf("parentDir and prNum are required")
 	}
@@ -62,7 +62,7 @@ func (g *GitPRWorktree) Add(ctx context.Context, parentDir string, prNum int) (s
 // is fetched first from the parent repo to ensure it's up to date — the
 // worktree shares the parent's git dir so the fetched ref is visible
 // from inside the worktree.
-func (g *GitPRWorktree) Diff(ctx context.Context, parentDir, worktreePath, baseRef string) ([]byte, error) {
+func (g *GitPR) Diff(ctx context.Context, parentDir, worktreePath, baseRef string) ([]byte, error) {
 	if parentDir == "" || worktreePath == "" || baseRef == "" {
 		return nil, fmt.Errorf("parentDir, worktreePath, and baseRef are required")
 	}
@@ -78,7 +78,7 @@ func (g *GitPRWorktree) Diff(ctx context.Context, parentDir, worktreePath, baseR
 
 // Remove tears down a worktree created by Add. Best-effort prune cleans
 // up the worktree metadata even if the directory was already gone.
-func (g *GitPRWorktree) Remove(ctx context.Context, parentDir, worktreePath string) error {
+func (g *GitPR) Remove(ctx context.Context, parentDir, worktreePath string) error {
 	if parentDir == "" || worktreePath == "" {
 		return fmt.Errorf("parentDir and worktreePath are required")
 	}
