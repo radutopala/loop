@@ -355,6 +355,7 @@ func (s *Server) buildMux() *http.ServeMux {
 	mux.HandleFunc("DELETE /api/channels/{id}/review", s.handleReviewDelete)
 	mux.HandleFunc("POST /api/channels/{id}/review/run", s.handleReviewRun)
 	mux.HandleFunc("POST /api/channels/{id}/review/comments/{cid}/push", s.handleReviewPushComment)
+	mux.HandleFunc("DELETE /api/channels/{id}/review/comments/{cid}", s.handleReviewDeleteComment)
 	mux.HandleFunc("POST /api/channels/{id}/review/push-all", s.handleReviewPushAll)
 	mux.HandleFunc("GET /api/channels/{id}/branches", s.handleListBranches)
 	mux.HandleFunc("GET /api/channels/{id}/commits", s.handleListCommits)

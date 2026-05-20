@@ -195,19 +195,24 @@ func (s *ReviewAPISuite) TestPostPRCommentInvalidArgs() {
 		fn   func() error
 	}{
 		{"empty workdir", func() error {
-			return c.PostPRComment(context.Background(), "", "", RepoSlug{Owner: "o", Name: "n"}, 1, "sha", "p", "RIGHT", 1, "b")
+			_, err := c.PostPRComment(context.Background(), "", "", RepoSlug{Owner: "o", Name: "n"}, 1, "sha", "p", "RIGHT", 1, "b")
+			return err
 		}},
 		{"zero prNum", func() error {
-			return c.PostPRComment(context.Background(), "/tmp", "", RepoSlug{Owner: "o", Name: "n"}, 0, "sha", "p", "RIGHT", 1, "b")
+			_, err := c.PostPRComment(context.Background(), "/tmp", "", RepoSlug{Owner: "o", Name: "n"}, 0, "sha", "p", "RIGHT", 1, "b")
+			return err
 		}},
 		{"empty commitID", func() error {
-			return c.PostPRComment(context.Background(), "/tmp", "", RepoSlug{Owner: "o", Name: "n"}, 1, "", "p", "RIGHT", 1, "b")
+			_, err := c.PostPRComment(context.Background(), "/tmp", "", RepoSlug{Owner: "o", Name: "n"}, 1, "", "p", "RIGHT", 1, "b")
+			return err
 		}},
 		{"empty path", func() error {
-			return c.PostPRComment(context.Background(), "/tmp", "", RepoSlug{Owner: "o", Name: "n"}, 1, "sha", "", "RIGHT", 1, "b")
+			_, err := c.PostPRComment(context.Background(), "/tmp", "", RepoSlug{Owner: "o", Name: "n"}, 1, "sha", "", "RIGHT", 1, "b")
+			return err
 		}},
 		{"zero line", func() error {
-			return c.PostPRComment(context.Background(), "/tmp", "", RepoSlug{Owner: "o", Name: "n"}, 1, "sha", "p", "RIGHT", 0, "b")
+			_, err := c.PostPRComment(context.Background(), "/tmp", "", RepoSlug{Owner: "o", Name: "n"}, 1, "sha", "p", "RIGHT", 0, "b")
+			return err
 		}},
 	}
 	for _, tt := range tests {
@@ -220,8 +225,9 @@ func (s *ReviewAPISuite) TestPostPRCommentInvalidArgs() {
 func (s *ReviewAPISuite) TestPostPRCommentHappyPath() {
 	r := &dispatchRunner{apiOut: []byte(`{"id":123}`)}
 	c := NewClientWithRunner(r)
-	err := c.PostPRComment(context.Background(), "/tmp", "", RepoSlug{Owner: "acme", Name: "widgets"}, 5, "deadbeef", "foo.go", "RIGHT", 10, "looks good")
+	id, err := c.PostPRComment(context.Background(), "/tmp", "", RepoSlug{Owner: "acme", Name: "widgets"}, 5, "deadbeef", "foo.go", "RIGHT", 10, "looks good")
 	require.NoError(s.T(), err)
+	require.Equal(s.T(), int64(123), id)
 	require.Len(s.T(), r.calls, 1)
 	args := r.calls[0].args
 	require.Equal(s.T(), "api", args[0])
@@ -236,23 +242,88 @@ func (s *ReviewAPISuite) TestPostPRCommentHappyPath() {
 func (s *ReviewAPISuite) TestPostPRCommentDefaultsSideToRight() {
 	r := &dispatchRunner{apiOut: []byte(`{}`)}
 	c := NewClientWithRunner(r)
-	err := c.PostPRComment(context.Background(), "/tmp", "", RepoSlug{Owner: "o", Name: "n"}, 1, "sha", "p", "", 1, "b")
+	id, err := c.PostPRComment(context.Background(), "/tmp", "", RepoSlug{Owner: "o", Name: "n"}, 1, "sha", "p", "", 1, "b")
 	require.NoError(s.T(), err)
+	require.Equal(s.T(), int64(0), id)
 	require.Contains(s.T(), r.calls[0].args, "side=RIGHT")
+}
+
+func (s *ReviewAPISuite) TestPostPRCommentUnparseableBodyReturnsZeroID() {
+	r := &dispatchRunner{apiOut: []byte(`not-json`)}
+	c := NewClientWithRunner(r)
+	id, err := c.PostPRComment(context.Background(), "/tmp", "", RepoSlug{Owner: "o", Name: "n"}, 1, "sha", "p", "RIGHT", 1, "b")
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), int64(0), id)
 }
 
 func (s *ReviewAPISuite) TestPostPRCommentRunError() {
 	r := &dispatchRunner{apiErr: errors.New("boom")}
 	c := NewClientWithRunner(r)
-	err := c.PostPRComment(context.Background(), "/tmp", "", RepoSlug{Owner: "o", Name: "n"}, 1, "sha", "p", "RIGHT", 1, "b")
+	_, err := c.PostPRComment(context.Background(), "/tmp", "", RepoSlug{Owner: "o", Name: "n"}, 1, "sha", "p", "RIGHT", 1, "b")
 	require.Error(s.T(), err)
 }
 
 func (s *ReviewAPISuite) TestPostPRCommentTokenFailure() {
 	r := &dispatchRunner{tokenErr: errors.New("no token")}
 	c := NewClientWithRunner(r)
-	err := c.PostPRComment(context.Background(), "/tmp", "u", RepoSlug{Owner: "o", Name: "n"}, 1, "sha", "p", "RIGHT", 1, "b")
+	_, err := c.PostPRComment(context.Background(), "/tmp", "u", RepoSlug{Owner: "o", Name: "n"}, 1, "sha", "p", "RIGHT", 1, "b")
 	require.Error(s.T(), err)
+}
+
+// ── DeletePRReviewComment ───────────────────────────────────────────────
+
+func (s *ReviewAPISuite) TestDeletePRReviewCommentInvalidArgs() {
+	c := NewClientWithRunner(&dispatchRunner{})
+	tests := []struct {
+		name string
+		fn   func() error
+	}{
+		{"empty workdir", func() error {
+			return c.DeletePRReviewComment(context.Background(), "", "", RepoSlug{Owner: "o", Name: "n"}, 1)
+		}},
+		{"zero id", func() error {
+			return c.DeletePRReviewComment(context.Background(), "/tmp", "", RepoSlug{Owner: "o", Name: "n"}, 0)
+		}},
+		{"empty owner", func() error {
+			return c.DeletePRReviewComment(context.Background(), "/tmp", "", RepoSlug{Owner: "", Name: "n"}, 1)
+		}},
+		{"empty name", func() error {
+			return c.DeletePRReviewComment(context.Background(), "/tmp", "", RepoSlug{Owner: "o", Name: ""}, 1)
+		}},
+	}
+	for _, tt := range tests {
+		s.Run(tt.name, func() {
+			require.Error(s.T(), tt.fn())
+		})
+	}
+}
+
+func (s *ReviewAPISuite) TestDeletePRReviewCommentHappyPath() {
+	r := &dispatchRunner{apiOut: []byte(``)}
+	c := NewClientWithRunner(r)
+	err := c.DeletePRReviewComment(context.Background(), "/tmp", "", RepoSlug{Owner: "acme", Name: "widgets"}, 42)
+	require.NoError(s.T(), err)
+	require.Len(s.T(), r.calls, 1)
+	args := r.calls[0].args
+	require.Equal(s.T(), []string{"api", "repos/acme/widgets/pulls/comments/42", "--method", "DELETE"}, args)
+}
+
+func (s *ReviewAPISuite) TestDeletePRReviewCommentTreats404AsSuccess() {
+	r := &dispatchRunner{apiErr: errors.New("gh api ...: HTTP 404: Not Found")}
+	c := NewClientWithRunner(r)
+	require.NoError(s.T(), c.DeletePRReviewComment(context.Background(), "/tmp", "", RepoSlug{Owner: "o", Name: "n"}, 1))
+}
+
+func (s *ReviewAPISuite) TestDeletePRReviewCommentOtherErrorPropagates() {
+	r := &dispatchRunner{apiErr: errors.New("boom")}
+	c := NewClientWithRunner(r)
+	require.Error(s.T(), c.DeletePRReviewComment(context.Background(), "/tmp", "", RepoSlug{Owner: "o", Name: "n"}, 1))
+}
+
+func (s *ReviewAPISuite) TestDeletePRReviewCommentTokenFailure() {
+	r := &dispatchRunner{tokenErr: errors.New("no token")}
+	c := NewClientWithRunner(r)
+	require.Error(s.T(), c.DeletePRReviewComment(context.Background(), "/tmp", "u", RepoSlug{Owner: "o", Name: "n"}, 1))
 }
 
 // ── ListOpenPRs ──────────────────────────────────────────────────────────

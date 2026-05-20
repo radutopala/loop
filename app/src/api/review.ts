@@ -25,6 +25,7 @@ export interface ReviewComment {
   url?: string;
   created_at?: string;
   outdated?: boolean;
+  github_id?: number;
 }
 
 export interface ReviewSession {
@@ -107,6 +108,14 @@ export async function pushReviewComment(channelId: string, commentId: string): P
     { method: "POST" },
   );
   if (!res.ok) throw new Error(await res.text() || `Failed to push comment: ${res.statusText}`);
+}
+
+export async function deleteReviewComment(channelId: string, commentId: string): Promise<void> {
+  const res = await fetch(
+    `${getApiUrl()}/api/channels/${channelId}/review/comments/${encodeURIComponent(commentId)}`,
+    { method: "DELETE" },
+  );
+  if (!res.ok) throw new Error(await res.text() || `Failed to delete comment: ${res.statusText}`);
 }
 
 export async function pushAllReviewComments(channelId: string): Promise<PushAllResult> {

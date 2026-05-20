@@ -25,7 +25,8 @@ type GitHubReview interface {
 	FetchRepoSlug(ctx context.Context, workdir, ghUser string) (*githubapi.RepoSlug, error)
 	ListOpenPRs(ctx context.Context, workdir, ghUser string) ([]githubapi.PRInfo, error)
 	FetchPRReviewComments(ctx context.Context, workdir, ghUser string, slug githubapi.RepoSlug, prNum int) ([]githubapi.PRReviewComment, error)
-	PostPRComment(ctx context.Context, workdir, ghUser string, slug githubapi.RepoSlug, prNum int, commitID, path, side string, line int, body string) error
+	PostPRComment(ctx context.Context, workdir, ghUser string, slug githubapi.RepoSlug, prNum int, commitID, path, side string, line int, body string) (int64, error)
+	DeletePRReviewComment(ctx context.Context, workdir, ghUser string, slug githubapi.RepoSlug, commentID int64) error
 }
 
 // SetReviewService wires the dependencies for the /api/channels/{id}/review/*
@@ -310,6 +311,7 @@ func (s *Server) fetchExistingReviewComments(ctx context.Context, dirPath, ghUse
 			URL:       c.URL,
 			CreatedAt: c.CreatedAt,
 			Outdated:  c.Outdated,
+			GitHubID:  c.ID,
 		})
 	}
 	return out
@@ -476,6 +478,77 @@ func (s *Server) handleReviewPushAll(w http.ResponseWriter, r *http.Request) {
 	writeHTTPJSON(w, http.StatusOK, result, s.logger)
 }
 
+// handleReviewDeleteComment removes a single review comment from the
+// session. If the comment has a GitHub-side id (either a github-source
+// comment or an agent comment that was previously pushed) it is also
+// deleted via `gh api DELETE /pulls/comments/{id}` so the PR no longer
+// shows it. Local-only agent comments just disappear from the session.
+//
+// On success the response is 204 No Content. On a 4xx (session/comment
+// missing) the local state is untouched. On a GitHub-side failure the
+// local comment is also preserved so the user can retry — half-deleting
+// (gone locally, still on GH) would be confusing.
+func (s *Server) handleReviewDeleteComment(w http.ResponseWriter, r *http.Request) {
+	if !requireConfigured(w, s.store, "channel listing not configured") {
+		return
+	}
+	if s.reviewStore == nil {
+		http.Error(w, "review service not configured", http.StatusNotImplemented)
+		return
+	}
+	channelID := r.PathValue("id")
+	commentID := r.PathValue("cid")
+	c, sess := s.reviewStore.FindComment(channelID, commentID)
+	if sess == nil {
+		http.Error(w, "no review session for channel", http.StatusNotFound)
+		return
+	}
+	if c == nil {
+		http.Error(w, "comment not found", http.StatusNotFound)
+		return
+	}
+
+	// Only call GitHub when there's actually a GH-side comment to delete.
+	// Agent comments that were never pushed have GitHubID==0 and live
+	// purely in the in-memory session; just drop them locally.
+	if c.GitHubID > 0 {
+		if !requireConfigured(w, s.reviewClient, "review service not configured") {
+			return
+		}
+		ch, err := s.store.GetChannel(r.Context(), channelID)
+		if err != nil || ch == nil || ch.DirPath == "" {
+			http.Error(w, "channel has no dir_path", http.StatusInternalServerError)
+			return
+		}
+		parentDirPath := s.resolveParentDirPath(r.Context(), channelID)
+		ghUser := s.resolveGHUser(ch.DirPath, parentDirPath)
+		// GitHub-source comments are only deletable when their author
+		// matches the configured gh user — GH would reject anyone else's
+		// DELETE anyway, but failing fast here keeps the local copy
+		// (otherwise our error path drops it). Agent comments don't
+		// carry an Author (we posted them as the configured user) so
+		// they pass through.
+		if c.Source == "github" {
+			if ghUser == "" || c.Author == "" || c.Author != ghUser {
+				http.Error(w, "cannot delete a comment authored by another user on github", http.StatusForbidden)
+				return
+			}
+		}
+		slug, err := s.reviewClient.FetchRepoSlug(r.Context(), ch.DirPath, ghUser)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		if err := s.reviewClient.DeletePRReviewComment(r.Context(), ch.DirPath, ghUser, *slug, c.GitHubID); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+	}
+
+	s.reviewStore.RemoveComment(channelID, commentID)
+	w.WriteHeader(http.StatusNoContent)
+}
+
 // pushOneComment resolves the repo slug, pushes via gh, and flips the
 // Pushed flag on the in-memory comment. Returns the underlying error so
 // callers can attach it to their response (single-push: bubble up;
@@ -494,10 +567,11 @@ func (s *Server) pushOneComment(ctx context.Context, channelID string, sess *rev
 	if err != nil {
 		return err
 	}
-	if err := s.reviewClient.PostPRComment(ctx, ch.DirPath, ghUser, *slug, sess.PR.Number, sess.HeadSHA, c.Path, c.Side, c.Line, c.Body); err != nil {
+	ghID, err := s.reviewClient.PostPRComment(ctx, ch.DirPath, ghUser, *slug, sess.PR.Number, sess.HeadSHA, c.Path, c.Side, c.Line, c.Body)
+	if err != nil {
 		return err
 	}
-	s.reviewStore.MarkPushed(channelID, c.ID)
+	s.reviewStore.MarkPushed(channelID, c.ID, ghID)
 	return nil
 }
 

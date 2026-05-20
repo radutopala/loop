@@ -239,17 +239,19 @@ func (c *Client) FetchRepoSlug(ctx context.Context, workdir, ghUser string) (*Re
 // PostPRComment files a single-line review comment on a PR via the gh API.
 // commitID is the head SHA of the PR (required by the GitHub API to anchor
 // the comment to a specific revision). side is "RIGHT" for added/modified
-// lines, "LEFT" for deleted lines.
-func (c *Client) PostPRComment(ctx context.Context, workdir, ghUser string, slug RepoSlug, prNum int, commitID, path, side string, line int, body string) error {
+// lines, "LEFT" for deleted lines. Returns the GitHub-assigned comment id
+// (0 if gh returned a body we couldn't parse — non-fatal: the push still
+// succeeded, only the id is lost, which only matters for later deletion).
+func (c *Client) PostPRComment(ctx context.Context, workdir, ghUser string, slug RepoSlug, prNum int, commitID, path, side string, line int, body string) (int64, error) {
 	if workdir == "" || prNum <= 0 || commitID == "" || path == "" || line <= 0 {
-		return fmt.Errorf("workdir, prNum, commitID, path, line are required")
+		return 0, fmt.Errorf("workdir, prNum, commitID, path, line are required")
 	}
 	if side == "" {
 		side = "RIGHT"
 	}
 	env, err := c.tokenEnv(ctx, workdir, ghUser)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	endpoint := fmt.Sprintf("repos/%s/%s/pulls/%d/comments", slug.Owner, slug.Name, prNum)
 	args := []string{
@@ -260,7 +262,39 @@ func (c *Client) PostPRComment(ctx context.Context, workdir, ghUser string, slug
 		"-f", "commit_id=" + commitID,
 		"-f", "side=" + side,
 	}
-	if _, err := c.runner.Run(ctx, workdir, env, args...); err != nil {
+	out, err := c.runner.Run(ctx, workdir, env, args...)
+	if err != nil {
+		return 0, err
+	}
+	var raw struct {
+		ID int64 `json:"id"`
+	}
+	// Best-effort: an unparseable response is logged-as-zero rather than
+	// failing the push, since the comment IS on the PR at this point.
+	_ = json.Unmarshal(out, &raw)
+	return raw.ID, nil
+}
+
+// DeletePRReviewComment deletes a single inline review comment via the gh
+// API. commentID is the numeric GitHub-assigned id (NOT the loop-local
+// "gh-<n>" / agent uuid). Returns nil if the comment is already gone
+// (404) — callers can rely on best-effort idempotency.
+func (c *Client) DeletePRReviewComment(ctx context.Context, workdir, ghUser string, slug RepoSlug, commentID int64) error {
+	if workdir == "" || commentID <= 0 || slug.Owner == "" || slug.Name == "" {
+		return fmt.Errorf("workdir, slug, and commentID are required")
+	}
+	env, err := c.tokenEnv(ctx, workdir, ghUser)
+	if err != nil {
+		return err
+	}
+	endpoint := fmt.Sprintf("repos/%s/%s/pulls/comments/%d", slug.Owner, slug.Name, commentID)
+	if _, err := c.runner.Run(ctx, workdir, env, "api", endpoint, "--method", "DELETE"); err != nil {
+		// gh surfaces a 404 as a stderr message containing "Not Found";
+		// treat that as success so re-deleting an already-gone comment is
+		// idempotent.
+		if strings.Contains(err.Error(), "Not Found") || strings.Contains(err.Error(), "HTTP 404") {
+			return nil
+		}
 		return err
 	}
 	return nil

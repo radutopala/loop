@@ -33,6 +33,12 @@ type Comment struct {
 	URL       string    `json:"url,omitempty"`        // html_url for source=github
 	CreatedAt string    `json:"created_at,omitempty"` // GitHub createdAt for source=github
 	Outdated  bool      `json:"outdated,omitempty"`   // true when GH could not anchor to current head
+	// GitHubID is the numeric comment id assigned by GitHub. Set when we
+	// load existing GH comments (parsed from PRReviewComment.ID) or when
+	// we successfully push an agent comment (captured from the POST
+	// response). Used as the address for DELETE /pulls/comments/{id} —
+	// zero means "no GH-side state to clean up; local removal only".
+	GitHubID int64 `json:"github_id,omitempty"`
 }
 
 // Status describes where the session is in its lifecycle so the FE
@@ -137,9 +143,10 @@ func (s *Store) AddComment(channelID string, c *Comment) bool {
 	return true
 }
 
-// MarkPushed flips Pushed=true on the comment with the matching ID.
+// MarkPushed flips Pushed=true on the comment with the matching ID and
+// stamps GitHubID with the id GitHub assigned on POST (0 if unknown).
 // Returns false if no session or no matching comment.
-func (s *Store) MarkPushed(channelID, commentID string) bool {
+func (s *Store) MarkPushed(channelID, commentID string, githubID int64) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	sess, ok := s.sessions[channelID]
@@ -150,11 +157,36 @@ func (s *Store) MarkPushed(channelID, commentID string) bool {
 		if c.ID == commentID {
 			c.Pushed = true
 			c.PushedAt = time.Now()
+			if githubID > 0 {
+				c.GitHubID = githubID
+			}
 			sess.UpdatedAt = time.Now()
 			return true
 		}
 	}
 	return false
+}
+
+// RemoveComment drops the comment with the matching ID from the session.
+// Returns the removed comment (or nil) so callers can inspect e.g. its
+// GitHubID before deciding whether to also delete on GitHub. The bool
+// is true when the session existed (regardless of whether the comment
+// was found) so callers can distinguish 404-no-session from 404-no-comment.
+func (s *Store) RemoveComment(channelID, commentID string) (*Comment, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	sess, ok := s.sessions[channelID]
+	if !ok {
+		return nil, false
+	}
+	for i, c := range sess.Comments {
+		if c.ID == commentID {
+			sess.Comments = append(sess.Comments[:i], sess.Comments[i+1:]...)
+			sess.UpdatedAt = time.Now()
+			return c, true
+		}
+	}
+	return nil, true
 }
 
 // FindComment returns the comment with the matching ID (or nil) along

@@ -60,15 +60,21 @@ func (m *mockGitHubReview) ListOpenPRs(ctx context.Context, workdir, ghUser stri
 	return prs, args.Error(1)
 }
 
-func (m *mockGitHubReview) PostPRComment(ctx context.Context, workdir, ghUser string, slug githubapi.RepoSlug, prNum int, commitID, path, side string, line int, body string) error {
+func (m *mockGitHubReview) PostPRComment(ctx context.Context, workdir, ghUser string, slug githubapi.RepoSlug, prNum int, commitID, path, side string, line int, body string) (int64, error) {
 	args := m.Called(ctx, workdir, ghUser, slug, prNum, commitID, path, side, line, body)
-	return args.Error(0)
+	id, _ := args.Get(0).(int64)
+	return id, args.Error(1)
 }
 
 func (m *mockGitHubReview) FetchPRReviewComments(ctx context.Context, workdir, ghUser string, slug githubapi.RepoSlug, prNum int) ([]githubapi.PRReviewComment, error) {
 	args := m.Called(ctx, workdir, ghUser, slug, prNum)
 	cs, _ := args.Get(0).([]githubapi.PRReviewComment)
 	return cs, args.Error(1)
+}
+
+func (m *mockGitHubReview) DeletePRReviewComment(ctx context.Context, workdir, ghUser string, slug githubapi.RepoSlug, commentID int64) error {
+	args := m.Called(ctx, workdir, ghUser, slug, commentID)
+	return args.Error(0)
 }
 
 // mockPR is a testify mock for review.PR.
@@ -676,7 +682,7 @@ func (s *ReviewHandlerSuite) TestPushCommentPostError() {
 	s.store.On("GetChannel", mock.Anything, "ch1").Return(&db.Channel{ChannelID: "ch1", DirPath: "/repo"}, nil)
 	slug := &githubapi.RepoSlug{Owner: "o", Name: "r"}
 	s.gh.On("FetchRepoSlug", mock.Anything, "/repo", "").Return(slug, nil)
-	s.gh.On("PostPRComment", mock.Anything, "/repo", "", *slug, 7, "abc", "x.go", "RIGHT", 1, "b").Return(errors.New("api 422"))
+	s.gh.On("PostPRComment", mock.Anything, "/repo", "", *slug, 7, "abc", "x.go", "RIGHT", 1, "b").Return(int64(0), errors.New("api 422"))
 	w := httptest.NewRecorder()
 	s.mux.ServeHTTP(w, httptest.NewRequest("POST", "/api/channels/ch1/review/comments/a/push", nil))
 	require.Equal(s.T(), http.StatusInternalServerError, w.Code)
@@ -691,12 +697,13 @@ func (s *ReviewHandlerSuite) TestPushCommentHappyPath() {
 	s.store.On("GetChannel", mock.Anything, "ch1").Return(&db.Channel{ChannelID: "ch1", DirPath: "/repo"}, nil)
 	slug := &githubapi.RepoSlug{Owner: "o", Name: "r"}
 	s.gh.On("FetchRepoSlug", mock.Anything, "/repo", "").Return(slug, nil)
-	s.gh.On("PostPRComment", mock.Anything, "/repo", "", *slug, 7, "abc", "x.go", "RIGHT", 1, "b").Return(nil)
+	s.gh.On("PostPRComment", mock.Anything, "/repo", "", *slug, 7, "abc", "x.go", "RIGHT", 1, "b").Return(int64(555), nil)
 	w := httptest.NewRecorder()
 	s.mux.ServeHTTP(w, httptest.NewRequest("POST", "/api/channels/ch1/review/comments/a/push", nil))
 	require.Equal(s.T(), http.StatusOK, w.Code)
 	c, _ := s.rs.FindComment("ch1", "a")
 	require.True(s.T(), c.Pushed)
+	require.Equal(s.T(), int64(555), c.GitHubID)
 }
 
 func (s *ReviewHandlerSuite) TestPushCommentChannelLookupError() {
@@ -726,8 +733,8 @@ func (s *ReviewHandlerSuite) TestPushAllMixedResults() {
 	s.store.On("GetChannel", mock.Anything, "ch1").Return(&db.Channel{ChannelID: "ch1", DirPath: "/repo"}, nil)
 	slug := &githubapi.RepoSlug{Owner: "o", Name: "r"}
 	s.gh.On("FetchRepoSlug", mock.Anything, "/repo", "").Return(slug, nil)
-	s.gh.On("PostPRComment", mock.Anything, "/repo", "", *slug, 7, "abc", "x.go", "RIGHT", 1, "body-a").Return(nil)
-	s.gh.On("PostPRComment", mock.Anything, "/repo", "", *slug, 7, "abc", "y.go", "RIGHT", 2, "body-b").Return(errors.New("422"))
+	s.gh.On("PostPRComment", mock.Anything, "/repo", "", *slug, 7, "abc", "x.go", "RIGHT", 1, "body-a").Return(int64(1001), nil)
+	s.gh.On("PostPRComment", mock.Anything, "/repo", "", *slug, 7, "abc", "y.go", "RIGHT", 2, "body-b").Return(int64(0), errors.New("422"))
 
 	w := httptest.NewRecorder()
 	s.mux.ServeHTTP(w, httptest.NewRequest("POST", "/api/channels/ch1/review/push-all", nil))
@@ -834,6 +841,169 @@ func (s *ReviewHandlerSuite) TestPushAllReviewStoreNotConfigured() {
 
 func (s *ReviewHandlerSuite) TestErrorMessageNil() {
 	require.Equal(s.T(), "", errorMessage(nil))
+}
+
+// ---- delete comment ----
+
+func (s *ReviewHandlerSuite) TestDeleteCommentNoSession() {
+	w := httptest.NewRecorder()
+	s.mux.ServeHTTP(w, httptest.NewRequest("DELETE", "/api/channels/ch1/review/comments/a", nil))
+	require.Equal(s.T(), http.StatusNotFound, w.Code)
+}
+
+func (s *ReviewHandlerSuite) TestDeleteCommentNotFound() {
+	s.rs.Put("ch1", &review.Session{PR: &githubapi.PRInfo{Number: 7}, HeadSHA: "abc"})
+	w := httptest.NewRecorder()
+	s.mux.ServeHTTP(w, httptest.NewRequest("DELETE", "/api/channels/ch1/review/comments/missing", nil))
+	require.Equal(s.T(), http.StatusNotFound, w.Code)
+}
+
+func (s *ReviewHandlerSuite) TestDeleteCommentLocalOnlyAgentCommentSkipsGitHub() {
+	// Agent comment that was never pushed — GitHubID==0 → no gh shell-out,
+	// just remove from the in-memory session.
+	s.rs.Put("ch1", &review.Session{PR: &githubapi.PRInfo{Number: 7}, HeadSHA: "abc"})
+	s.rs.AddComment("ch1", &review.Comment{ID: "a", Path: "x.go", Line: 1, Body: "b", Source: "agent"})
+	w := httptest.NewRecorder()
+	s.mux.ServeHTTP(w, httptest.NewRequest("DELETE", "/api/channels/ch1/review/comments/a", nil))
+	require.Equal(s.T(), http.StatusNoContent, w.Code)
+	c, _ := s.rs.FindComment("ch1", "a")
+	require.Nil(s.T(), c)
+	s.gh.AssertNotCalled(s.T(), "DeletePRReviewComment", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything)
+}
+
+func (s *ReviewHandlerSuite) TestDeleteCommentGitHubSourceCallsAPI() {
+	// GH-source comment authored by the configured gh user — the gate
+	// allows the call and the comment is wiped both on GH and locally.
+	s.srv.loadConfig = func() (*config.Config, error) {
+		return &config.Config{GitHub: config.GitHubConfig{GHUser: "alice"}}, nil
+	}
+	s.rs.Put("ch1", &review.Session{PR: &githubapi.PRInfo{Number: 7}, HeadSHA: "abc"})
+	s.rs.AddComment("ch1", &review.Comment{ID: "gh-99", Path: "x.go", Line: 1, Body: "b", Source: "github", Author: "alice", GitHubID: 99, Pushed: true})
+	s.store.On("GetChannel", mock.Anything, "ch1").Return(&db.Channel{ChannelID: "ch1", DirPath: "/repo"}, nil)
+	slug := &githubapi.RepoSlug{Owner: "o", Name: "r"}
+	s.gh.On("FetchRepoSlug", mock.Anything, "/repo", "alice").Return(slug, nil)
+	s.gh.On("DeletePRReviewComment", mock.Anything, "/repo", "alice", *slug, int64(99)).Return(nil)
+
+	w := httptest.NewRecorder()
+	s.mux.ServeHTTP(w, httptest.NewRequest("DELETE", "/api/channels/ch1/review/comments/gh-99", nil))
+	require.Equal(s.T(), http.StatusNoContent, w.Code)
+	c, _ := s.rs.FindComment("ch1", "gh-99")
+	require.Nil(s.T(), c)
+}
+
+func (s *ReviewHandlerSuite) TestDeleteCommentGitHubSourceForeignAuthorRefused() {
+	// GH-source comment authored by someone other than the configured gh
+	// user — we refuse rather than calling DELETE (which GH would 403
+	// anyway). The local copy must survive so a re-Sync doesn't show
+	// stale state, and so the user understands why nothing happened.
+	s.srv.loadConfig = func() (*config.Config, error) {
+		return &config.Config{GitHub: config.GitHubConfig{GHUser: "alice"}}, nil
+	}
+	s.rs.Put("ch1", &review.Session{PR: &githubapi.PRInfo{Number: 7}, HeadSHA: "abc"})
+	s.rs.AddComment("ch1", &review.Comment{ID: "gh-99", Source: "github", Author: "bob", GitHubID: 99, Pushed: true})
+	s.store.On("GetChannel", mock.Anything, "ch1").Return(&db.Channel{ChannelID: "ch1", DirPath: "/repo"}, nil)
+
+	w := httptest.NewRecorder()
+	s.mux.ServeHTTP(w, httptest.NewRequest("DELETE", "/api/channels/ch1/review/comments/gh-99", nil))
+	require.Equal(s.T(), http.StatusForbidden, w.Code)
+	c, _ := s.rs.FindComment("ch1", "gh-99")
+	require.NotNil(s.T(), c, "local comment must survive a refused GH delete")
+	s.gh.AssertNotCalled(s.T(), "DeletePRReviewComment", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything)
+	s.gh.AssertNotCalled(s.T(), "FetchRepoSlug", mock.Anything, mock.Anything, mock.Anything)
+}
+
+func (s *ReviewHandlerSuite) TestDeleteCommentGitHubSourceUnconfiguredGHUserRefused() {
+	// Without a configured gh user we can't validate ownership, so we
+	// refuse the GH-side delete and keep the local copy.
+	s.rs.Put("ch1", &review.Session{PR: &githubapi.PRInfo{Number: 7}, HeadSHA: "abc"})
+	s.rs.AddComment("ch1", &review.Comment{ID: "gh-99", Source: "github", Author: "alice", GitHubID: 99, Pushed: true})
+	s.store.On("GetChannel", mock.Anything, "ch1").Return(&db.Channel{ChannelID: "ch1", DirPath: "/repo"}, nil)
+
+	w := httptest.NewRecorder()
+	s.mux.ServeHTTP(w, httptest.NewRequest("DELETE", "/api/channels/ch1/review/comments/gh-99", nil))
+	require.Equal(s.T(), http.StatusForbidden, w.Code)
+	c, _ := s.rs.FindComment("ch1", "gh-99")
+	require.NotNil(s.T(), c)
+}
+
+func (s *ReviewHandlerSuite) TestDeleteCommentChannelLookupErrorKeepsLocal() {
+	s.rs.Put("ch1", &review.Session{PR: &githubapi.PRInfo{Number: 7}, HeadSHA: "abc"})
+	s.rs.AddComment("ch1", &review.Comment{ID: "a", Path: "x.go", Line: 1, Body: "b", GitHubID: 42, Pushed: true})
+	s.store.On("GetChannel", mock.Anything, "ch1").Return(nil, errors.New("db"))
+	w := httptest.NewRecorder()
+	s.mux.ServeHTTP(w, httptest.NewRequest("DELETE", "/api/channels/ch1/review/comments/a", nil))
+	require.Equal(s.T(), http.StatusInternalServerError, w.Code)
+	c, _ := s.rs.FindComment("ch1", "a")
+	require.NotNil(s.T(), c, "comment should be preserved on GH-side failure")
+}
+
+func (s *ReviewHandlerSuite) TestDeleteCommentFetchRepoSlugFailure() {
+	s.rs.Put("ch1", &review.Session{PR: &githubapi.PRInfo{Number: 7}, HeadSHA: "abc"})
+	s.rs.AddComment("ch1", &review.Comment{ID: "a", GitHubID: 42, Pushed: true})
+	s.store.On("GetChannel", mock.Anything, "ch1").Return(&db.Channel{ChannelID: "ch1", DirPath: "/repo"}, nil)
+	s.gh.On("FetchRepoSlug", mock.Anything, "/repo", "").Return((*githubapi.RepoSlug)(nil), errors.New("no remote"))
+	w := httptest.NewRecorder()
+	s.mux.ServeHTTP(w, httptest.NewRequest("DELETE", "/api/channels/ch1/review/comments/a", nil))
+	require.Equal(s.T(), http.StatusInternalServerError, w.Code)
+	c, _ := s.rs.FindComment("ch1", "a")
+	require.NotNil(s.T(), c)
+}
+
+func (s *ReviewHandlerSuite) TestDeleteCommentGitHubAPIFailureKeepsLocal() {
+	s.rs.Put("ch1", &review.Session{PR: &githubapi.PRInfo{Number: 7}, HeadSHA: "abc"})
+	s.rs.AddComment("ch1", &review.Comment{ID: "a", GitHubID: 42, Pushed: true})
+	s.store.On("GetChannel", mock.Anything, "ch1").Return(&db.Channel{ChannelID: "ch1", DirPath: "/repo"}, nil)
+	slug := &githubapi.RepoSlug{Owner: "o", Name: "r"}
+	s.gh.On("FetchRepoSlug", mock.Anything, "/repo", "").Return(slug, nil)
+	s.gh.On("DeletePRReviewComment", mock.Anything, "/repo", "", *slug, int64(42)).Return(errors.New("403"))
+	w := httptest.NewRecorder()
+	s.mux.ServeHTTP(w, httptest.NewRequest("DELETE", "/api/channels/ch1/review/comments/a", nil))
+	require.Equal(s.T(), http.StatusInternalServerError, w.Code)
+	c, _ := s.rs.FindComment("ch1", "a")
+	require.NotNil(s.T(), c, "local comment must survive a GH-side failure")
+}
+
+func (s *ReviewHandlerSuite) TestDeleteCommentStoreNotConfigured() {
+	srv := newServerForReviewTests(s.T())
+	srv.store = nil
+	mux := srv.buildMux()
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, httptest.NewRequest("DELETE", "/api/channels/ch1/review/comments/x", nil))
+	require.Equal(s.T(), http.StatusNotImplemented, w.Code)
+}
+
+func (s *ReviewHandlerSuite) TestDeleteCommentReviewStoreNotConfigured() {
+	srv := newServerForReviewTests(s.T())
+	// store wired but reviewStore nil
+	mux := srv.buildMux()
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, httptest.NewRequest("DELETE", "/api/channels/ch1/review/comments/x", nil))
+	require.Equal(s.T(), http.StatusNotImplemented, w.Code)
+}
+
+func (s *ReviewHandlerSuite) TestDeleteCommentReviewClientNotConfigured() {
+	// reviewStore wired with a session that has a GitHub-side comment, but
+	// reviewClient missing — handler should refuse rather than silently
+	// drop only the local copy.
+	srv := newServerForReviewTests(s.T())
+	srv.reviewStore = review.NewStore()
+	srv.reviewStore.Put("ch1", &review.Session{PR: &githubapi.PRInfo{Number: 7}})
+	srv.reviewStore.AddComment("ch1", &review.Comment{ID: "a", GitHubID: 42})
+	mux := srv.buildMux()
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, httptest.NewRequest("DELETE", "/api/channels/ch1/review/comments/a", nil))
+	require.Equal(s.T(), http.StatusNotImplemented, w.Code)
+}
+
+func (s *ReviewHandlerSuite) TestDeleteCommentChannelDirPathMissing() {
+	s.rs.Put("ch1", &review.Session{PR: &githubapi.PRInfo{Number: 7}})
+	s.rs.AddComment("ch1", &review.Comment{ID: "a", GitHubID: 42})
+	s.store.On("GetChannel", mock.Anything, "ch1").Return(&db.Channel{ChannelID: "ch1"}, nil)
+	w := httptest.NewRecorder()
+	s.mux.ServeHTTP(w, httptest.NewRequest("DELETE", "/api/channels/ch1/review/comments/a", nil))
+	require.Equal(s.T(), http.StatusInternalServerError, w.Code)
+	c, _ := s.rs.FindComment("ch1", "a")
+	require.NotNil(s.T(), c)
 }
 
 // ---- list PRs ----

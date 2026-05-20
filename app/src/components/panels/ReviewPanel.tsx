@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTheme } from "../../ThemeContext";
 import { fonts } from "../../theme";
 import {
+  deleteReviewComment,
   deleteReviewSession,
   getReviewSession,
   listReviewPRs,
@@ -171,6 +172,29 @@ export function ReviewPanel({ channelId, subscribeChatEvents }: ReviewPanelProps
     }
   }, [channelId]);
 
+  const onDeleteOne = useCallback(async (c: ReviewComment) => {
+    // Confirm in-line: deleting a pushed/github comment removes it from
+    // the PR on GitHub too, which is irreversible — but for unpushed
+    // local agent comments it's just dropping a draft, so the prompt
+    // shouldn't be alarmist. Keep one prompt with a wording that adapts
+    // to the situation.
+    const hitsGitHub = !!c.github_id;
+    const msg = hitsGitHub
+      ? "Delete this comment from GitHub? This cannot be undone."
+      : "Discard this comment?";
+    if (!window.confirm(msg)) return;
+    setError(null);
+    try {
+      await deleteReviewComment(channelId, c.id);
+      setSession((prev) => prev ? {
+        ...prev,
+        comments: prev.comments.filter((x) => x.id !== c.id),
+      } : prev);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    }
+  }, [channelId]);
+
   const onPushAll = useCallback(async () => {
     setBusy(true); setError(null);
     try {
@@ -210,6 +234,14 @@ export function ReviewPanel({ channelId, subscribeChatEvents }: ReviewPanelProps
     color: colors.text,
     borderColor: colors.active,
   };
+
+  // Disabled styling is applied inline so the button visibly dims and
+  // shows a not-allowed cursor — otherwise `disabled` is a no-op visual.
+  const disabledStyle: React.CSSProperties = { opacity: 0.4, cursor: "not-allowed" };
+  const syncDisabled = busy || session?.status === "reviewing" || session?.status === "loading";
+  const runDisabled = busy || session?.status !== "ready";
+  const closeDisabled = busy;
+  const pushAllDisabled = busy;
 
   return (
     <div
@@ -272,14 +304,23 @@ export function ReviewPanel({ channelId, subscribeChatEvents }: ReviewPanelProps
                 )}
               </div>
               <div style={{ fontSize: 10, color: colors.textDim, fontFamily: fonts.sans }}>
-                {session?.pr?.base_ref} ← {session?.pr?.head_ref} · {session ? statusLabel(session.status) : ""}
+                {session?.pr?.base_ref} ← {session?.pr?.head_ref}
+                {session?.head_sha && (
+                  <>
+                    {" @ "}
+                    <span style={{ fontFamily: "monospace" }} title={session.head_sha}>
+                      {session.head_sha.slice(0, 7)}
+                    </span>
+                  </>
+                )}
+                {" · "}{session ? statusLabel(session.status) : ""}
               </div>
             </div>
             <button
               data-testid="review-sync-btn"
               onClick={() => void onSync()}
-              disabled={busy || session?.status === "reviewing" || session?.status === "loading"}
-              style={btnStyle}
+              disabled={syncDisabled}
+              style={syncDisabled ? { ...btnStyle, ...disabledStyle } : btnStyle}
               title="Pull the latest PR head, diff, and GitHub comments"
             >
               Sync
@@ -287,18 +328,22 @@ export function ReviewPanel({ channelId, subscribeChatEvents }: ReviewPanelProps
             <button
               data-testid="review-run-btn"
               onClick={() => void onRun()}
-              disabled={busy || session?.status !== "ready"}
-              style={primaryBtnStyle}
-              title="Run agent review"
+              disabled={runDisabled}
+              style={runDisabled ? { ...primaryBtnStyle, ...disabledStyle } : primaryBtnStyle}
+              title={
+                session?.status === "reviewing"
+                  ? "Review already running"
+                  : "Run agent review"
+              }
             >
-              Run
+              {session?.status === "reviewing" ? "Running..." : "Run"}
             </button>
             {pendingCount > 0 && (
               <button
                 data-testid="review-push-all-btn"
                 onClick={() => void onPushAll()}
-                disabled={busy}
-                style={btnStyle}
+                disabled={pushAllDisabled}
+                style={pushAllDisabled ? { ...btnStyle, ...disabledStyle } : btnStyle}
                 title="Push all unpushed comments"
               >
                 Push all ({pendingCount})
@@ -307,7 +352,7 @@ export function ReviewPanel({ channelId, subscribeChatEvents }: ReviewPanelProps
             <button
               data-testid="review-close-btn"
               onClick={() => void onCloseSession()}
-              disabled={busy}
+              disabled={closeDisabled}
               style={btnStyle}
               title="Close review session and remove worktree"
             >
@@ -355,6 +400,7 @@ export function ReviewPanel({ channelId, subscribeChatEvents }: ReviewPanelProps
             rawDiff={session.raw_diff ?? ""}
             comments={session.comments}
             onPushComment={onPushOne}
+            onDeleteComment={onDeleteOne}
           />
         )}
       </div>
