@@ -41,12 +41,14 @@ type BotRouter interface {
 //     an agent-pane terminal). Multiple panes in the same container produce
 //     distinct leafIds, so each pane only shows its own approval cards.
 //
-// OnPrompt, when non-nil, is invoked by Manager.Request once it has cleared
-// the cache and rate-limit checks and is about to dispatch the prompt to the
-// bot. Callers (handlers and the dockerproxy) use this to emit the
-// pre-decision audit record only when a user is actually going to be asked
-// — cache hits and rate-limit denies short-circuit before this callback
-// fires, so they never produce a "request" audit entry.
+// OnPrompt, when non-nil, is invoked by the Approver immediately before the
+// prompt is dispatched. For *Manager (in-process), the call happens after
+// cache and rate-limit checks pass, so cache hits and rate-limited denies
+// never produce a "request" audit entry. For httpapprover (cross-process),
+// the call happens before the HTTP POST — the server-side cache/rate-limit
+// status is unknown to the caller, so a "request" entry may fire even for
+// a cache hit. Callers should treat the OnPrompt firing as "the agent
+// intended to prompt", not as a strict pre-prompt-only signal.
 type ApprovalRequest struct {
 	ID       string
 	Kind     string
