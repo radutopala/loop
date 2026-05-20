@@ -89,6 +89,7 @@ type Orchestrator struct {
 	configLoad        func() (*config.Config, error)
 	loadProjectConfig func(string, *config.Config) (*config.Config, error)
 	removeMCPConfig   func(string, string) error
+	tasks             *taskRegistry
 }
 
 // defaultRemoveMCPConfig delegates to bot.RemoveMCPConfig.
@@ -109,6 +110,7 @@ func New(store db.Store, bot Bot, runner Runner, sched scheduler.Scheduler, logg
 		configLoad:        configLoad,
 		loadProjectConfig: config.LoadProjectConfig,
 		removeMCPConfig:   defaultRemoveMCPConfig,
+		tasks:             newTaskRegistry(),
 	}
 	o.cfg.Store(&cfg)
 	o.drainSpawn = func(fn func()) { o.drainWG.Go(fn) }

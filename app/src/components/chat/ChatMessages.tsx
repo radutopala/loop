@@ -1,5 +1,5 @@
 import { createContext, forwardRef, useCallback, useContext, useEffect, useImperativeHandle, useMemo, useRef, useState } from "react";
-import type { AgentActivityData, AskUserQuestion, ExitPlanModeData, Message, TimelineItem, TodoItem } from "../../types";
+import type { AgentActivityData, AskUserQuestion, ExitPlanModeData, Message, TaskItem, TimelineItem } from "../../types";
 import type { ChatState } from "../../hooks/useChatState";
 import { resolveAsk, resolvePlan } from "../../api/channels";
 import { fonts } from "../../theme";
@@ -153,7 +153,7 @@ export interface ChatMessagesHandle {
 export const ChatMessages = forwardRef<ChatMessagesHandle, ChatMessagesProps>(function ChatMessages({ channelId, chatState, scrollToMessageId, onScrollComplete, onQuote }, ref) {
   const { colors } = useTheme();
   const styles = buildMessageStyles(colors);
-  const { items, liveTail, messages, loading, loadMore, hasMore, streamingContent, isRunning, agentActivity, askUserQuestions, exitPlanRequest, todos, completionInfo, triggerContent, gateApprovals, processingMsgId, queuedMessages: backendQueue } = chatState;
+  const { items, liveTail, messages, loading, loadMore, hasMore, streamingContent, isRunning, agentActivity, askUserQuestions, exitPlanRequest, agentTasks, completionInfo, triggerContent, gateApprovals, processingMsgId, queuedMessages: backendQueue } = chatState;
   // The approval card belongs to chat only when the gate is attributed to the
   // chat agent. Terminal-sourced gates ("terminal:<leafId>") render in the
   // matching terminal pane instead.
@@ -207,7 +207,7 @@ export const ChatMessages = forwardRef<ChatMessagesHandle, ChatMessagesProps>(fu
     if (autoScrollRef.current) {
       bottomRef.current?.scrollIntoView({ behavior: "smooth" });
     }
-  }, [messages, items, liveTail, streamingContent, agentActivity, askUserQuestions, exitPlanRequest, todos, chatGateApproval]);
+  }, [messages, items, liveTail, streamingContent, agentActivity, askUserQuestions, exitPlanRequest, agentTasks, chatGateApproval]);
 
   // Scroll to a specific message (from search) and highlight it.
   useEffect(() => {
@@ -445,8 +445,8 @@ export const ChatMessages = forwardRef<ChatMessagesHandle, ChatMessagesProps>(fu
           </div>
         )}
       </div>
-      {todos && (
-        <TodoChecklist todos={todos.todos} />
+      {agentTasks && agentTasks.tasks.length > 0 && (
+        <TaskChecklist tasks={agentTasks.tasks} />
       )}
       {queuedMessages.length > 0 && (
         <QueuedMessagesPopup messages={queuedMessages} channelId={channelId} />
@@ -938,9 +938,9 @@ function ThinkingBubble({ text, truncated }: { text?: string; truncated: boolean
   );
 }
 
-function TodoChecklist({ todos }: { todos: TodoItem[] }) {
+function TaskChecklist({ tasks }: { tasks: TaskItem[] }) {
   const { colors } = useTheme();
-  const completed = todos.filter((t) => t.status === "completed").length;
+  const completed = tasks.filter((t) => t.status === "completed").length;
   return (
     <div style={{ display: "flex", justifyContent: "center", padding: "4px 24px 0" }}>
       <div style={{
@@ -954,26 +954,26 @@ function TodoChecklist({ todos }: { todos: TodoItem[] }) {
         fontFamily: fonts.mono,
       }}>
         <div style={{ fontSize: 10, fontWeight: 700, color: colors.active, textTransform: "uppercase" as const, letterSpacing: 1, marginBottom: 4 }}>
-          Progress {completed}/{todos.length}
+          Tasks {completed}/{tasks.length}
         </div>
-        {todos.map((todo, i) => (
-          <div key={i} style={{
+        {tasks.map((task) => (
+          <div key={task.id} style={{
             display: "flex",
             alignItems: "center",
             gap: 6,
             padding: "2px 0",
-            color: todo.status === "pending" ? colors.textDim
-                 : todo.status === "in_progress" ? colors.active
+            color: task.status === "pending" ? colors.textDim
+                 : task.status === "in_progress" ? colors.active
                  : colors.text,
           }}>
             <span style={{ fontSize: 14, lineHeight: 1 }}>
-              {todo.status === "completed" ? "\u2611" : "\u2610"}
+              {task.status === "completed" ? "\u2611" : "\u2610"}
             </span>
             <span style={{
-              textDecoration: todo.status === "completed" ? "line-through" : "none",
-              opacity: todo.status === "pending" ? 0.6 : 1,
+              textDecoration: task.status === "completed" ? "line-through" : "none",
+              opacity: task.status === "pending" ? 0.6 : 1,
             }}>
-              {todo.status === "in_progress" ? todo.activeForm : todo.content}
+              {task.status === "in_progress" && task.activeForm ? task.activeForm : task.subject}
             </span>
           </div>
         ))}

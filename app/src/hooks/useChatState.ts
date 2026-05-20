@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { fetchQueuedMessages } from "../api/channels";
-import type { AgentActivityData, AgentStatusData, AgentThinkingData, AskUserQuestionData, ExitPlanModeData, GateApprovalRequestedData, GateApprovalResolvedData, Message, MessageCreatedData, MessagesProcessedData, MessageStreamingData, TimelineItem, TodoWriteData, ToolResultData, ToolUseData, WSEvent } from "../types";
+import type { AgentActivityData, AgentStatusData, AgentThinkingData, AgentTasksData, AskUserQuestionData, ExitPlanModeData, GateApprovalRequestedData, GateApprovalResolvedData, Message, MessageCreatedData, MessagesProcessedData, MessageStreamingData, TimelineItem, ToolResultData, ToolUseData, WSEvent } from "../types";
 import type { ActiveChatState, ChatEventListener } from "./useChatStateStore";
 import { useTimeline } from "./useTimeline";
 
@@ -19,7 +19,7 @@ export interface ChatState {
   agentActivity: AgentActivityData | null;
   askUserQuestions: AskUserQuestionData | null;
   exitPlanRequest: ExitPlanModeData | null;
-  todos: TodoWriteData | null;
+  agentTasks: AgentTasksData | null;
   clearAskUser: () => void;
   clearExitPlan: () => void;
   mode: "agent" | "plan";
@@ -96,7 +96,7 @@ export function useChatState(
   const [agentActivity, setAgentActivity] = useState<AgentActivityData | null>(initialState?.agentActivity ?? null);
   const [askUserQuestions, setAskUserQuestions] = useState<AskUserQuestionData | null>(initialState?.askUserQuestions ?? null);
   const [exitPlanRequest, setExitPlanRequest] = useState<ExitPlanModeData | null>(initialState?.exitPlanRequest ?? null);
-  const [todos, setTodos] = useState<TodoWriteData | null>(initialState?.todos ?? null);
+  const [agentTasks, setAgentTasks] = useState<AgentTasksData | null>(initialState?.agentTasks ?? null);
   const [mode, setMode] = useState<"agent" | "plan">(initialState?.mode ?? "agent");
   const [completionInfo, setCompletionInfo] = useState<{ duration_ms?: number; num_turns?: number; stop_reason?: string; model?: string } | null>(initialState?.completionInfo ?? null);
   const [triggerContent, setTriggerContent] = useState<string | null>(initialState?.triggerContent ?? null);
@@ -146,8 +146,8 @@ export function useChatState(
   askRef.current = askUserQuestions;
   const exitRef = useRef(exitPlanRequest);
   exitRef.current = exitPlanRequest;
-  const todosRef = useRef(todos);
-  todosRef.current = todos;
+  const agentTasksRef = useRef(agentTasks);
+  agentTasksRef.current = agentTasks;
   const modeRef = useRef(mode);
   modeRef.current = mode;
   const completionRef = useRef(completionInfo);
@@ -173,7 +173,7 @@ export function useChatState(
         agentActivity: agentRef.current,
         askUserQuestions: askRef.current,
         exitPlanRequest: exitRef.current,
-        todos: todosRef.current,
+        agentTasks: agentTasksRef.current,
         mode: modeRef.current,
         completionInfo: completionRef.current,
         triggerContent: triggerRef.current,
@@ -267,9 +267,9 @@ export function useChatState(
         setExitPlanRequest(data);
         return;
       }
-      if (event.type === "agent.todos") {
-        const data = event.data as TodoWriteData;
-        setTodos(data);
+      if (event.type === "agent.tasks") {
+        const data = event.data as AgentTasksData;
+        setAgentTasks(data);
         return;
       }
       if (event.type === "gate.approval_requested") {
@@ -323,8 +323,8 @@ export function useChatState(
             setToolActivity(null);
             setAgentActivity(null);
             setTriggerContent(null);
-            // Clear todos when the agent turn ends.
-            setTodos(null);
+            // Clear agent tasks when the agent turn ends.
+            setAgentTasks(null);
             // Drop any stale CHAT-sourced gate approval — the backend's
             // pending entry for the chat run is gone, so a click would 404.
             // Terminal-pane gates have independent lifecycles and stay.
@@ -384,7 +384,7 @@ export function useChatState(
     agentActivity,
     askUserQuestions,
     exitPlanRequest,
-    todos,
+    agentTasks,
     clearAskUser: useCallback(() => setAskUserQuestions(null), []),
     clearExitPlan: useCallback(() => setExitPlanRequest(null), []),
     mode,

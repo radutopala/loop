@@ -144,14 +144,18 @@ export interface ExitPlanModeData {
   planFilePath?: string;
 }
 
-export interface TodoItem {
-  content: string;
-  status: "completed" | "in_progress" | "pending";
-  activeForm: string;
+export interface TaskItem {
+  id: string;
+  subject: string;
+  description?: string;
+  activeForm?: string;
+  status: "pending" | "in_progress" | "completed";
+  blocks?: string[];
+  blockedBy?: string[];
 }
 
-export interface TodoWriteData {
-  todos: TodoItem[];
+export interface AgentTasksData {
+  tasks: TaskItem[];
 }
 
 export interface PRInfo {

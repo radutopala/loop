@@ -162,7 +162,7 @@ func summarizeToolInput(name string, raw json.RawMessage) string {
 		if desc, ok := m["description"].(string); ok {
 			return desc
 		}
-	case "AskUserQuestion", "ExitPlanMode", "TodoWrite":
+	case "AskUserQuestion", "ExitPlanMode", "TodoWrite", "TaskCreate", "TaskUpdate":
 		return string(raw)
 	}
 	// For other tools, try common keys.

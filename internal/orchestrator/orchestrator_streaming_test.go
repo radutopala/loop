@@ -563,7 +563,7 @@ func (s *OrchestratorSuite) TestHandleMessageStreamingExitPlanModeSelfInitiated(
 	eb.AssertExpectations(s.T())
 }
 
-func (s *OrchestratorSuite) TestHandleMessageStreamingTodoWrite() {
+func (s *OrchestratorSuite) TestHandleMessageStreamingTaskCreate() {
 	cfgStream := s.orch.cfg.Load()
 	cfgStream.StreamingEnabled = true
 	s.orch.cfg.Store(cfgStream)
@@ -572,7 +572,7 @@ func (s *OrchestratorSuite) TestHandleMessageStreamingTodoWrite() {
 
 	msg := &bot.IncomingMessage{
 		ChannelID: "ch1", GuildID: "g1", AuthorID: "user1", AuthorName: "Alice",
-		Content: "do tasks", MessageID: "msg-todo", IsBotMention: true, Timestamp: time.Now().UTC(),
+		Content: "do tasks", MessageID: "msg-task", IsBotMention: true, Timestamp: time.Now().UTC(),
 	}
 
 	s.store.On("IsChannelActive", s.ctx, "ch1").Return(true, nil)
@@ -583,30 +583,85 @@ func (s *OrchestratorSuite) TestHandleMessageStreamingTodoWrite() {
 	s.bot.On("SendTyping", mock.Anything, "ch1").Return(nil).Maybe()
 	s.store.On("GetRecentMessages", s.ctx, "ch1", 50).Return([]*db.Message{}, nil)
 
-	todoInput := `{"todos":[{"content":"Fix bug","status":"in_progress","activeForm":"Fixing bug"}]}`
+	taskInput := `{"subject":"Fix bug","activeForm":"Fixing bug","description":""}`
 	s.runner.On("Run", mock.Anything, mock.MatchedBy(func(req *agent.AgentRequest) bool {
-		if req.OnToolUse == nil {
+		if req.OnToolUse == nil || req.OnToolResult == nil {
 			return false
 		}
-		req.OnToolUse("toolu_t", "TodoWrite", todoInput)
+		req.OnToolUse("toolu_t", "TaskCreate", taskInput)
+		req.OnToolResult("toolu_t", "Task #1 created successfully: Fix bug", false)
 		req.OnTurn("done")
 		return true
-	})).Return(&agent.AgentResponse{Response: "done", SessionID: "sess-todo"}, nil)
+	})).Return(&agent.AgentResponse{Response: "done", SessionID: "sess-task"}, nil)
 
-	s.store.On("UpdateSessionID", s.ctx, "ch1", "sess-todo").Return(nil)
+	s.store.On("UpdateSessionID", s.ctx, "ch1", "sess-task").Return(nil)
 	s.bot.On("SendMessage", s.ctx, mock.Anything).Return(nil)
 	s.store.On("MarkMessagesProcessed", s.ctx, []int64{}).Return(nil)
 
 	eb.On("BroadcastMessageCreated", "ch1", mock.Anything).Return()
 	eb.On("BroadcastAgentStatus", "ch1", mock.Anything).Return()
 	eb.On("BroadcastToolUse", "ch1", mock.Anything).Once()
-	eb.On("BroadcastTodoWrite", "ch1", mock.MatchedBy(func(d events.TodoWriteEventData) bool {
-		return len(d.Todos) == 1 && d.Todos[0].Content == "Fix bug"
+	eb.On("BroadcastToolResult", "ch1", mock.Anything).Once()
+	eb.On("BroadcastAgentTasks", "ch1", mock.MatchedBy(func(d events.AgentTasksEventData) bool {
+		return len(d.Tasks) == 1 && d.Tasks[0].Subject == "Fix bug" && d.Tasks[0].ID == "1"
 	})).Once()
 
 	s.orch.HandleMessage(s.ctx, msg)
 
-	eb.AssertCalled(s.T(), "BroadcastTodoWrite", "ch1", mock.Anything)
+	eb.AssertCalled(s.T(), "BroadcastAgentTasks", "ch1", mock.Anything)
+	eb.AssertExpectations(s.T())
+}
+
+func (s *OrchestratorSuite) TestHandleMessageStreamingTaskUpdate() {
+	cfgStream := s.orch.cfg.Load()
+	cfgStream.StreamingEnabled = true
+	s.orch.cfg.Store(cfgStream)
+	eb := new(MockEventBroadcaster)
+	s.orch.SetEventBroadcaster(eb)
+
+	// Seed the registry so applyUpdate finds the task.
+	_, _ = s.orch.tasks.applyCreate("ch1",
+		`{"subject":"Fix bug","activeForm":"Fixing bug"}`,
+		"Task #1 created successfully: Fix bug",
+	)
+
+	msg := &bot.IncomingMessage{
+		ChannelID: "ch1", GuildID: "g1", AuthorID: "user1", AuthorName: "Alice",
+		Content: "do tasks", MessageID: "msg-upd", IsBotMention: true, Timestamp: time.Now().UTC(),
+	}
+
+	s.store.On("IsChannelActive", s.ctx, "ch1").Return(true, nil)
+	s.store.On("GetChannel", s.ctx, "ch1").Return(&db.Channel{ID: 1, ChannelID: "ch1", Active: true}, nil)
+	s.store.On("GetChannel", mock.Anything, "ch1").Return(&db.Channel{ID: 1, ChannelID: "ch1", Active: true}, nil).Maybe()
+	s.store.On("InsertMessage", s.ctx, mock.Anything).Return(nil)
+	s.store.On("InsertAgentEvent", mock.Anything, mock.Anything).Return(nil).Maybe()
+	s.bot.On("SendTyping", mock.Anything, "ch1").Return(nil).Maybe()
+	s.store.On("GetRecentMessages", s.ctx, "ch1", 50).Return([]*db.Message{}, nil)
+
+	updateInput := `{"taskId":"1","status":"in_progress"}`
+	s.runner.On("Run", mock.Anything, mock.MatchedBy(func(req *agent.AgentRequest) bool {
+		if req.OnToolUse == nil {
+			return false
+		}
+		req.OnToolUse("toolu_u", "TaskUpdate", updateInput)
+		req.OnTurn("done")
+		return true
+	})).Return(&agent.AgentResponse{Response: "done", SessionID: "sess-upd"}, nil)
+
+	s.store.On("UpdateSessionID", s.ctx, "ch1", "sess-upd").Return(nil)
+	s.bot.On("SendMessage", s.ctx, mock.Anything).Return(nil)
+	s.store.On("MarkMessagesProcessed", s.ctx, []int64{}).Return(nil)
+
+	eb.On("BroadcastMessageCreated", "ch1", mock.Anything).Return()
+	eb.On("BroadcastAgentStatus", "ch1", mock.Anything).Return()
+	eb.On("BroadcastToolUse", "ch1", mock.Anything).Once()
+	eb.On("BroadcastAgentTasks", "ch1", mock.MatchedBy(func(d events.AgentTasksEventData) bool {
+		return len(d.Tasks) == 1 && d.Tasks[0].Status == "in_progress"
+	})).Once()
+
+	s.orch.HandleMessage(s.ctx, msg)
+
+	eb.AssertCalled(s.T(), "BroadcastAgentTasks", "ch1", mock.Anything)
 	eb.AssertExpectations(s.T())
 }
 
