@@ -20,6 +20,7 @@ type CommandRunner func(ctx context.Context, dir, name string, args ...string) (
 // HEAD — the same view GitHub shows on the PR.
 type PR interface {
 	Add(ctx context.Context, parentDir string, prNum int) (worktreePath string, err error)
+	Refresh(ctx context.Context, parentDir, worktreePath string, prNum int) error
 	Diff(ctx context.Context, parentDir, worktreePath, baseRef string) ([]byte, error)
 	Remove(ctx context.Context, parentDir, worktreePath string) error
 }
@@ -55,6 +56,24 @@ func (g *GitPR) Add(ctx context.Context, parentDir string, prNum int) (string, e
 		return "", fmt.Errorf("git worktree add: %s", msg)
 	}
 	return worktreePath, nil
+}
+
+// Refresh fast-forwards an existing worktree to the latest PR head by
+// re-fetching `refs/pull/<n>/head` and running `git checkout --detach
+// FETCH_HEAD` inside the worktree. Used by the sync button to pick up
+// new commits pushed to the PR without tearing the worktree down.
+func (g *GitPR) Refresh(ctx context.Context, parentDir, worktreePath string, prNum int) error {
+	if parentDir == "" || worktreePath == "" || prNum <= 0 {
+		return fmt.Errorf("parentDir, worktreePath, and prNum are required")
+	}
+	fetchSpec := fmt.Sprintf("refs/pull/%d/head", prNum)
+	if out, err := g.Run(ctx, parentDir, "git", "fetch", "origin", fetchSpec); err != nil {
+		return fmt.Errorf("git fetch %s: %s", fetchSpec, strings.TrimSpace(string(out)))
+	}
+	if out, err := g.Run(ctx, worktreePath, "git", "checkout", "--detach", "FETCH_HEAD"); err != nil {
+		return fmt.Errorf("git checkout: %s", strings.TrimSpace(string(out)))
+	}
+	return nil
 }
 
 // Diff computes the unified patch between origin/<baseRef> and the

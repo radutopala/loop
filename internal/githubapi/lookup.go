@@ -315,6 +315,88 @@ func (c *Client) ListOpenPRs(ctx context.Context, workdir, ghUser string) ([]PRI
 	return prs, nil
 }
 
+// PRReviewComment is a single inline review comment already filed on a PR
+// via GitHub's web UI / API. The review panel loads these alongside the
+// agent's pending comments so the user sees both side-by-side in the diff
+// view. Line is the right-side line number (or original_line if the
+// comment is outdated against the current head); Line is 0 when GitHub
+// could not anchor the comment to any line on the latest commit.
+type PRReviewComment struct {
+	ID        int64  `json:"id"`
+	Path      string `json:"path"`
+	Line      int    `json:"line"`
+	Side      string `json:"side"`
+	Body      string `json:"body"`
+	Author    string `json:"author,omitempty"`
+	URL       string `json:"url,omitempty"`
+	CreatedAt string `json:"created_at,omitempty"`
+	Outdated  bool   `json:"outdated,omitempty"`
+}
+
+// FetchPRReviewComments lists existing inline review comments on a PR via
+// `gh api /repos/{owner}/{name}/pulls/{n}/comments`. The list is capped
+// at 100 to keep the panel responsive — reviews larger than that are an
+// edge case and the user can always view the PR on GitHub.
+func (c *Client) FetchPRReviewComments(ctx context.Context, workdir, ghUser string, slug RepoSlug, prNum int) ([]PRReviewComment, error) {
+	if workdir == "" || prNum <= 0 || slug.Owner == "" || slug.Name == "" {
+		return nil, fmt.Errorf("workdir, slug, and prNum are required")
+	}
+	env, err := c.tokenEnv(ctx, workdir, ghUser)
+	if err != nil {
+		return nil, err
+	}
+	endpoint := fmt.Sprintf("repos/%s/%s/pulls/%d/comments?per_page=100", slug.Owner, slug.Name, prNum)
+	out, err := c.runner.Run(ctx, workdir, env, "api", endpoint)
+	if err != nil {
+		if errors.Is(err, ErrGhNotInstalled) {
+			return nil, err
+		}
+		return nil, err
+	}
+	var raw []struct {
+		ID           int64  `json:"id"`
+		Path         string `json:"path"`
+		Line         *int   `json:"line"`
+		OriginalLine *int   `json:"original_line"`
+		Side         string `json:"side"`
+		Body         string `json:"body"`
+		HTMLURL      string `json:"html_url"`
+		CreatedAt    string `json:"created_at"`
+		User         struct {
+			Login string `json:"login"`
+		} `json:"user"`
+	}
+	if err := json.Unmarshal(out, &raw); err != nil {
+		return nil, fmt.Errorf("parsing gh api pulls/%d/comments output: %w", prNum, err)
+	}
+	comments := make([]PRReviewComment, 0, len(raw))
+	for _, r := range raw {
+		line, outdated := 0, false
+		if r.Line != nil {
+			line = *r.Line
+		} else if r.OriginalLine != nil {
+			line = *r.OriginalLine
+			outdated = true
+		}
+		side := r.Side
+		if side == "" {
+			side = "RIGHT"
+		}
+		comments = append(comments, PRReviewComment{
+			ID:        r.ID,
+			Path:      r.Path,
+			Line:      line,
+			Side:      side,
+			Body:      r.Body,
+			Author:    r.User.Login,
+			URL:       r.HTMLURL,
+			CreatedAt: r.CreatedAt,
+			Outdated:  outdated,
+		})
+	}
+	return comments, nil
+}
+
 // FetchPRHeadSHA returns the head commit SHA for a PR, required when
 // posting review comments anchored to a specific revision.
 func (c *Client) FetchPRHeadSHA(ctx context.Context, workdir, ghUser string, number int) (string, error) {

@@ -15,17 +15,24 @@ import (
 	"github.com/radutopala/loop/internal/githubapi"
 )
 
-// Comment is a single inline review note the agent produced (or that
-// the user manually entered) against a specific (path, line) pair in
-// the PR diff. Pushed flips to true after PostPRComment succeeds.
+// Comment is a single inline review note against a specific (path, line)
+// pair in the PR diff. Pushed flips to true after PostPRComment succeeds
+// — pre-existing GitHub comments are seeded with Pushed=true at Load.
+// Source distinguishes agent-emitted comments (the current review run)
+// from comments already filed on the PR via GitHub.
 type Comment struct {
-	ID       string    `json:"id"`
-	Path     string    `json:"path"`
-	Line     int       `json:"line"`
-	Side     string    `json:"side"` // "RIGHT" added/modified, "LEFT" deleted
-	Body     string    `json:"body"`
-	Pushed   bool      `json:"pushed"`
-	PushedAt time.Time `json:"pushed_at,omitzero"`
+	ID        string    `json:"id"`
+	Path      string    `json:"path"`
+	Line      int       `json:"line"`
+	Side      string    `json:"side"` // "RIGHT" added/modified, "LEFT" deleted
+	Body      string    `json:"body"`
+	Pushed    bool      `json:"pushed"`
+	PushedAt  time.Time `json:"pushed_at,omitzero"`
+	Source    string    `json:"source,omitempty"`     // "agent" | "github"
+	Author    string    `json:"author,omitempty"`     // GitHub login (for source=github)
+	URL       string    `json:"url,omitempty"`        // html_url for source=github
+	CreatedAt string    `json:"created_at,omitempty"` // GitHub createdAt for source=github
+	Outdated  bool      `json:"outdated,omitempty"`   // true when GH could not anchor to current head
 }
 
 // Status describes where the session is in its lifecycle so the FE

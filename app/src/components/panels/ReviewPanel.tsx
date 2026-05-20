@@ -9,6 +9,7 @@ import {
   pushAllReviewComments,
   pushReviewComment,
   runReview,
+  syncReviewSession,
   type ReviewComment,
   type ReviewPR,
   type ReviewSession,
@@ -16,11 +17,11 @@ import {
 } from "../../api/review";
 import type { ChatEventListener } from "../../hooks/useChatStateStore";
 import type { WSEvent } from "../../types";
+import { ReviewDiffView } from "./ReviewDiffView";
 
 interface ReviewPanelProps {
   channelId: string;
   subscribeChatEvents?: (listener: ChatEventListener) => () => void;
-  onClose?: () => void;
 }
 
 function statusLabel(status: ReviewStatus): string {
@@ -33,7 +34,7 @@ function statusLabel(status: ReviewStatus): string {
   }
 }
 
-export function ReviewPanel({ channelId, subscribeChatEvents, onClose }: ReviewPanelProps) {
+export function ReviewPanel({ channelId, subscribeChatEvents }: ReviewPanelProps) {
   const { colors, fontSizes } = useTheme();
   const [session, setSession] = useState<ReviewSession | null>(null);
   const [prList, setPrList] = useState<ReviewPR[] | null>(null);
@@ -117,9 +118,27 @@ export function ReviewPanel({ channelId, subscribeChatEvents, onClose }: ReviewP
 
   const onRun = useCallback(async () => {
     setBusy(true); setError(null);
+    // Optimistically flip to "reviewing" so the Run button stays disabled
+    // even before the review.status WS event lands — otherwise there's a
+    // brief window after setBusy(false) where status is still "ready" and
+    // the button re-enables itself.
+    setSession((prev) => prev ? { ...prev, status: "reviewing" } : prev);
     try {
       await runReview(channelId);
       // Status will transition via review.status WS event; no need to refetch.
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+      setSession((prev) => prev ? { ...prev, status: "ready" } : prev);
+    } finally {
+      setBusy(false);
+    }
+  }, [channelId]);
+
+  const onSync = useCallback(async () => {
+    setBusy(true); setError(null);
+    try {
+      const resp = await syncReviewSession(channelId);
+      if (resp.present && resp.session) setSession(resp.session);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -222,28 +241,49 @@ export function ReviewPanel({ channelId, subscribeChatEvents, onClose }: ReviewP
         ) : (
           <>
             <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 2, minWidth: 0 }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: colors.text }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: colors.text, minWidth: 0 }}>
                 {session?.pr?.url ? (
                   <a
                     href={session.pr.url}
                     target="_blank"
                     rel="noreferrer noopener"
-                    style={{ fontFamily: "monospace", color: colors.active, textDecoration: "none" }}
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 6,
+                      color: colors.active,
+                      textDecoration: "none",
+                      minWidth: 0,
+                    }}
                     title={session.pr.url}
                   >
-                    #{session.pr.number}
+                    <span style={{ fontFamily: "monospace" }}>#{session.pr.number}</span>
+                    <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                      {session.pr.title ?? ""}
+                    </span>
                   </a>
                 ) : (
-                  <span style={{ fontFamily: "monospace" }}>#{session?.pr?.number}</span>
+                  <>
+                    <span style={{ fontFamily: "monospace" }}>#{session?.pr?.number}</span>
+                    <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                      {session?.pr?.title ?? ""}
+                    </span>
+                  </>
                 )}
-                <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                  {session?.pr?.title ?? ""}
-                </span>
               </div>
               <div style={{ fontSize: 10, color: colors.textDim, fontFamily: fonts.sans }}>
                 {session?.pr?.base_ref} ← {session?.pr?.head_ref} · {session ? statusLabel(session.status) : ""}
               </div>
             </div>
+            <button
+              data-testid="review-sync-btn"
+              onClick={() => void onSync()}
+              disabled={busy || session?.status === "reviewing" || session?.status === "loading"}
+              style={btnStyle}
+              title="Pull the latest PR head, diff, and GitHub comments"
+            >
+              Sync
+            </button>
             <button
               data-testid="review-run-btn"
               onClick={() => void onRun()}
@@ -275,15 +315,6 @@ export function ReviewPanel({ channelId, subscribeChatEvents, onClose }: ReviewP
             </button>
           </>
         )}
-        {onClose && (
-          <button
-            onClick={onClose}
-            style={btnStyle}
-            title="Close panel"
-          >
-            ×
-          </button>
-        )}
       </div>
 
       {/* Error banner */}
@@ -314,21 +345,18 @@ export function ReviewPanel({ channelId, subscribeChatEvents, onClose }: ReviewP
             onSelect={onSelectPR}
           />
         )}
-        {hasSession && session && session.comments.length === 0 && session.status !== "reviewing" && (
-          <div style={{ padding: 16, color: colors.textDim, fontSize: 12, textAlign: "center" }}>
-            {session.status === "ready"
-              ? "No comments yet. Click Run to start the agent review."
-              : `Status: ${statusLabel(session.status)}`}
-          </div>
-        )}
         {hasSession && session && session.status === "reviewing" && session.comments.length === 0 && (
-          <div style={{ padding: 16, color: colors.textDim, fontSize: 12, textAlign: "center" }}>
-            Reviewing... comments will appear as the agent emits them.
+          <div style={{ padding: "6px 12px", color: colors.textDim, fontSize: 11, borderBottom: `1px solid ${colors.border}` }}>
+            Reviewing... comments will appear inline as the agent emits them.
           </div>
         )}
-        {hasSession && session && session.comments.map((c) => (
-          <CommentRow key={c.id} comment={c} colors={colors} onPush={onPushOne} />
-        ))}
+        {hasSession && session && (
+          <ReviewDiffView
+            rawDiff={session.raw_diff ?? ""}
+            comments={session.comments}
+            onPushComment={onPushOne}
+          />
+        )}
       </div>
     </div>
   );
@@ -421,58 +449,3 @@ function PRListPicker({
   );
 }
 
-function CommentRow({
-  comment,
-  colors,
-  onPush,
-}: {
-  comment: ReviewComment;
-  colors: ReturnType<typeof useTheme>["colors"];
-  onPush: (c: ReviewComment) => void | Promise<void>;
-}) {
-  return (
-    <div
-      data-testid={`review-comment-${comment.id}`}
-      style={{
-        padding: "8px 10px",
-        borderBottom: `1px solid ${colors.border}`,
-        display: "flex",
-        flexDirection: "column",
-        gap: 4,
-        background: comment.pushed ? "transparent" : colors.surface,
-      }}
-    >
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 6 }}>
-        <span style={{ fontFamily: "monospace", fontSize: 11, color: colors.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-          {comment.path}:{comment.line}
-        </span>
-        <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
-          {comment.pushed ? (
-            <span style={{ fontSize: 10, color: colors.textDim }}>pushed</span>
-          ) : (
-            <button
-              data-testid={`review-comment-push-${comment.id}`}
-              onClick={() => void onPush(comment)}
-              style={{
-                background: "transparent",
-                color: colors.text,
-                border: `1px solid ${colors.border}`,
-                borderRadius: 3,
-                padding: "1px 6px",
-                fontSize: 10,
-                fontFamily: fonts.sans,
-                cursor: "pointer",
-              }}
-              title="Push this comment to the PR"
-            >
-              Push
-            </button>
-          )}
-        </div>
-      </div>
-      <div style={{ fontSize: 12, color: colors.text, whiteSpace: "pre-wrap" }}>
-        {comment.body}
-      </div>
-    </div>
-  );
-}

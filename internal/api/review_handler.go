@@ -24,6 +24,7 @@ type GitHubReview interface {
 	FetchPRHeadSHA(ctx context.Context, workdir, ghUser string, number int) (string, error)
 	FetchRepoSlug(ctx context.Context, workdir, ghUser string) (*githubapi.RepoSlug, error)
 	ListOpenPRs(ctx context.Context, workdir, ghUser string) ([]githubapi.PRInfo, error)
+	FetchPRReviewComments(ctx context.Context, workdir, ghUser string, slug githubapi.RepoSlug, prNum int) ([]githubapi.PRReviewComment, error)
 	PostPRComment(ctx context.Context, workdir, ghUser string, slug githubapi.RepoSlug, prNum int, commitID, path, side string, line int, body string) error
 }
 
@@ -156,15 +157,162 @@ func (s *Server) handleReviewLoad(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Seed the comment list with any inline review comments already filed
+	// on the PR via GitHub — so the panel can render them alongside the
+	// agent's pending comments in one unified diff view. A failure here is
+	// non-fatal: the session loads without GH comments and the FE shows
+	// the agent comments only. The Author field on PR comments often
+	// requires a token; if FetchRepoSlug fails (e.g. detached / mirror
+	// repo) skip the GH-comment fetch entirely.
+	ghComments := s.fetchExistingReviewComments(r.Context(), dirPath, ghUser, req.PRNumber)
+
 	sess := &review.Session{
 		PR:           pr,
 		HeadSHA:      headSHA,
 		WorktreePath: worktreePath,
 		RawDiff:      string(diff),
+		Comments:     ghComments,
 		Status:       review.StatusReady,
 	}
 	s.reviewStore.Put(channelID, sess)
 	writeHTTPJSON(w, http.StatusOK, reviewSessionResponse{Present: true, Session: s.reviewStore.Get(channelID)}, s.logger)
+}
+
+// handleReviewSync re-fetches the PR head, the diff, and the GitHub
+// review comments for an active review session — used by the FE Sync
+// button so the panel reflects new commits / new GH comments without
+// the user having to Close + Load. Agent-emitted comments are preserved
+// (so a partially-done review survives a Sync); existing GH comments
+// are replaced with a fresh snapshot. Requires Status=Ready (or
+// Error/Reviewing? — we accept any non-Loading status: we never want
+// two concurrent worktree mutations).
+func (s *Server) handleReviewSync(w http.ResponseWriter, r *http.Request) {
+	if !requireConfigured(w, s.store, "channel listing not configured") {
+		return
+	}
+	if !requireConfigured(w, s.reviewClient, "review service not configured") {
+		return
+	}
+	if s.reviewStore == nil {
+		http.Error(w, "review service not configured", http.StatusNotImplemented)
+		return
+	}
+	if !requireConfigured(w, s.reviewWorktree, "review service not configured") {
+		return
+	}
+
+	channelID := r.PathValue("id")
+	sess := s.reviewStore.Get(channelID)
+	if sess == nil {
+		http.Error(w, "no review session for channel", http.StatusNotFound)
+		return
+	}
+	if sess.PR == nil || sess.WorktreePath == "" {
+		http.Error(w, "session not ready (no PR or worktree)", http.StatusConflict)
+		return
+	}
+	if sess.Status == review.StatusLoading || sess.Status == review.StatusReviewing {
+		http.Error(w, "session busy (status="+string(sess.Status)+")", http.StatusConflict)
+		return
+	}
+
+	ch, err := s.store.GetChannel(r.Context(), channelID)
+	if err != nil {
+		http.Error(w, "failed to look up channel", http.StatusInternalServerError)
+		return
+	}
+	if ch == nil {
+		http.Error(w, "channel not found", http.StatusNotFound)
+		return
+	}
+	dirPath := ch.DirPath
+	if dirPath == "" && s.loopDir != "" {
+		dirPath = filepath.Join(s.loopDir, ch.ChannelID, "work")
+	}
+	if dirPath == "" {
+		http.Error(w, "channel has no dir_path", http.StatusBadRequest)
+		return
+	}
+	parentDirPath := s.resolveParentDirPath(r.Context(), channelID)
+	ghUser := s.resolveGHUser(dirPath, parentDirPath)
+
+	prNum := sess.PR.Number
+	headSHA, err := s.reviewClient.FetchPRHeadSHA(r.Context(), dirPath, ghUser, prNum)
+	if err != nil {
+		respondReviewError(w, err)
+		return
+	}
+	if err := s.reviewWorktree.Refresh(r.Context(), dirPath, sess.WorktreePath, prNum); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	diff, err := s.reviewWorktree.Diff(r.Context(), dirPath, sess.WorktreePath, sess.PR.BaseRef)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	ghComments := s.fetchExistingReviewComments(r.Context(), dirPath, ghUser, prNum)
+
+	// Preserve agent-emitted comments verbatim; replace github-sourced
+	// ones with the fresh snapshot. Same precedence as Load.
+	var merged []*review.Comment
+	for _, c := range sess.Comments {
+		if c == nil || c.Source == "github" {
+			continue
+		}
+		merged = append(merged, c)
+	}
+	merged = append(merged, ghComments...)
+
+	s.reviewStore.Put(channelID, &review.Session{
+		PR:           sess.PR,
+		HeadSHA:      headSHA,
+		WorktreePath: sess.WorktreePath,
+		RawDiff:      string(diff),
+		Comments:     merged,
+		Status:       review.StatusReady,
+	})
+	writeHTTPJSON(w, http.StatusOK, reviewSessionResponse{Present: true, Session: s.reviewStore.Get(channelID)}, s.logger)
+}
+
+// fetchExistingReviewComments pulls inline review comments already filed
+// on the PR via GitHub and converts them to review.Comment with
+// Source="github" + Pushed=true so the FE renders them as read-only.
+// Best-effort: any failure is logged and the function returns nil so
+// Load still succeeds with the agent-only comment list.
+func (s *Server) fetchExistingReviewComments(ctx context.Context, dirPath, ghUser string, prNum int) []*review.Comment {
+	slug, err := s.reviewClient.FetchRepoSlug(ctx, dirPath, ghUser)
+	if err != nil || slug == nil {
+		if err != nil {
+			s.logger.Debug("review: skip GH comment fetch (slug)", "err", err)
+		}
+		return nil
+	}
+	ghComments, err := s.reviewClient.FetchPRReviewComments(ctx, dirPath, ghUser, *slug, prNum)
+	if err != nil {
+		s.logger.Debug("review: skip GH comment fetch (api)", "err", err)
+		return nil
+	}
+	out := make([]*review.Comment, 0, len(ghComments))
+	for _, c := range ghComments {
+		if c.Line <= 0 {
+			continue
+		}
+		out = append(out, &review.Comment{
+			ID:        fmt.Sprintf("gh-%d", c.ID),
+			Path:      c.Path,
+			Line:      c.Line,
+			Side:      c.Side,
+			Body:      c.Body,
+			Pushed:    true,
+			Source:    "github",
+			Author:    c.Author,
+			URL:       c.URL,
+			CreatedAt: c.CreatedAt,
+			Outdated:  c.Outdated,
+		})
+	}
+	return out
 }
 
 // handleReviewListPRs returns the list of open PRs in the repo backing the
@@ -419,12 +567,26 @@ func (s *Server) handleReviewRun(w http.ResponseWriter, r *http.Request) {
 	if prompt == "" {
 		prompt = defaultReviewPrompt
 	}
+	// Resolve the gh user once for the run so the agent knows which
+	// account to switch to before shelling out to gh. dirPath is the
+	// channel's own workdir (used for project-config layering), and
+	// parentDirPath provides the worktree-merge layer.
+	channelDirPath := ""
+	if s.store != nil {
+		if ch, err := s.store.GetChannel(r.Context(), channelID); err == nil && ch != nil {
+			channelDirPath = ch.DirPath
+			if channelDirPath == "" && s.loopDir != "" {
+				channelDirPath = filepath.Join(s.loopDir, ch.ChannelID, "work")
+			}
+		}
+	}
+	ghUser := s.resolveGHUser(channelDirPath, parentDirPath)
 	// Inlining the diff blew past Linux's MAX_ARG_STRLEN (~128KB per argv
 	// entry) on large PRs and killed the container with "argument list too
 	// long" before claude ever started. The worktree is already checked
 	// out at PR head with `origin/<base>` fetched, so the agent can run
 	// `git diff origin/<base>...HEAD` itself.
-	fullPrompt := prompt + "\n\n" + buildReviewContext(sess)
+	fullPrompt := prompt + "\n\n" + buildReviewContext(sess, ghUser)
 	worktreePath := sess.WorktreePath
 	sysPrompt := s.reviewSystemPrompt
 
@@ -519,8 +681,11 @@ Do not emit blocks for style nits, formatting, or matters of taste. Only emit bl
 // buildReviewContext renders the per-PR context block appended to the
 // configured review prompt. Each known field gets its own labelled line so
 // the agent can quote it verbatim and so a missing field (e.g. empty Title)
-// just drops one line without breaking the rest.
-func buildReviewContext(sess *review.Session) string {
+// just drops one line without breaking the rest. When ghUser is set, an
+// auth block tells the agent to switch the gh CLI to that account before
+// running gh commands. Any existing review comments on the session are
+// rendered as a dedup list so the agent does not re-emit them.
+func buildReviewContext(sess *review.Session, ghUser string) string {
 	var b strings.Builder
 	b.WriteString("Pull request under review:\n")
 	if sess.PR != nil {
@@ -548,6 +713,34 @@ func buildReviewContext(sess *review.Session) string {
 		fmt.Fprintf(&b, " Run `git diff origin/%s...HEAD` to read the diff before commenting.", sess.PR.BaseRef)
 	}
 	b.WriteString("\n")
+	if ghUser != "" {
+		fmt.Fprintf(&b, "\nGitHub CLI account: %s\n", ghUser)
+		fmt.Fprintf(&b, "If you need to run gh, switch to that account first with `gh auth switch -u %s` (only if it isn't already active).\n", ghUser)
+	}
+	if len(sess.Comments) > 0 {
+		b.WriteString("\nExisting review comments on this PR — do NOT re-emit any of these. Only add NEW, non-duplicate findings.\n")
+		for _, c := range sess.Comments {
+			if c == nil {
+				continue
+			}
+			label := "agent"
+			if c.Source == "github" {
+				label = "github"
+				if c.Author != "" {
+					label = "github @" + c.Author
+				}
+			}
+			side := c.Side
+			if side == "" {
+				side = "RIGHT"
+			}
+			body := strings.TrimSpace(c.Body)
+			if len(body) > 240 {
+				body = body[:240] + "..."
+			}
+			fmt.Fprintf(&b, "- [%s] %s:L%d (%s): %s\n", label, c.Path, c.Line, side, body)
+		}
+	}
 	return b.String()
 }
 
