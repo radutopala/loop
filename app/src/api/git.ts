@@ -6,6 +6,7 @@ export interface WorktreeInfo {
   path: string;
   branch: string;
   thread_id?: string;
+  locked?: boolean;
 }
 
 export interface BranchInfo {

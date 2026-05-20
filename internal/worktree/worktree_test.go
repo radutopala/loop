@@ -222,6 +222,68 @@ func (s *CreatorSuite) TestRemoveGitError() {
 	require.Contains(s.T(), err.Error(), "fatal: not a worktree")
 }
 
+func (s *CreatorSuite) TestLockSuccessWithReason() {
+	err := s.creator.Lock(context.Background(), "/proj", "/proj/.worktrees/wt-abc", "locked from Loop UI")
+
+	require.NoError(s.T(), err)
+	require.Len(s.T(), s.runArgs, 1)
+	require.Equal(s.T(), []string{"/proj", "git", "worktree", "lock", "/proj/.worktrees/wt-abc", "--reason", "locked from Loop UI"}, s.runArgs[0])
+}
+
+func (s *CreatorSuite) TestLockSuccessWithoutReason() {
+	err := s.creator.Lock(context.Background(), "/proj", "/proj/.worktrees/wt-abc", "")
+
+	require.NoError(s.T(), err)
+	require.Len(s.T(), s.runArgs, 1)
+	require.Equal(s.T(), []string{"/proj", "git", "worktree", "lock", "/proj/.worktrees/wt-abc"}, s.runArgs[0])
+}
+
+func (s *CreatorSuite) TestLockAlreadyLockedNoOp() {
+	s.runErr = fmt.Errorf("exit status 1")
+	s.runOut = []byte("fatal: '/proj/.worktrees/wt-abc' is already locked")
+
+	err := s.creator.Lock(context.Background(), "/proj", "/proj/.worktrees/wt-abc", "")
+
+	require.NoError(s.T(), err)
+}
+
+func (s *CreatorSuite) TestLockGitError() {
+	s.runErr = fmt.Errorf("exit status 128")
+	s.runOut = []byte("fatal: not a worktree")
+
+	err := s.creator.Lock(context.Background(), "/proj", "/proj/.worktrees/wt-abc", "")
+
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "fatal: not a worktree")
+}
+
+func (s *CreatorSuite) TestUnlockSuccess() {
+	err := s.creator.Unlock(context.Background(), "/proj", "/proj/.worktrees/wt-abc")
+
+	require.NoError(s.T(), err)
+	require.Len(s.T(), s.runArgs, 1)
+	require.Equal(s.T(), []string{"/proj", "git", "worktree", "unlock", "/proj/.worktrees/wt-abc"}, s.runArgs[0])
+}
+
+func (s *CreatorSuite) TestUnlockNotLockedNoOp() {
+	s.runErr = fmt.Errorf("exit status 1")
+	s.runOut = []byte("fatal: '/proj/.worktrees/wt-abc' is not locked")
+
+	err := s.creator.Unlock(context.Background(), "/proj", "/proj/.worktrees/wt-abc")
+
+	require.NoError(s.T(), err)
+}
+
+func (s *CreatorSuite) TestUnlockGitError() {
+	s.runErr = fmt.Errorf("exit status 128")
+	s.runOut = []byte("fatal: not a worktree")
+
+	err := s.creator.Unlock(context.Background(), "/proj", "/proj/.worktrees/wt-abc")
+
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "fatal: not a worktree")
+}
+
 func (s *CreatorSuite) TestRemovePruneError() {
 	callCount := 0
 	s.creator.Run = func(ctx context.Context, dir, name string, args ...string) ([]byte, error) {

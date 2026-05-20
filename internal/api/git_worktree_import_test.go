@@ -495,3 +495,106 @@ func (s *ServerSuite) TestRemoveWorktree_RemoveError() {
 	require.Equal(s.T(), http.StatusInternalServerError, rec.Code)
 	require.Contains(s.T(), rec.Body.String(), "failed to remove worktree")
 }
+
+// ── handleSetWorktreeLocked (path-based, non-imported worktrees) ──
+
+func (s *ServerSuite) TestSetWorktreeLocked_LockSuccess() {
+	dir := initGitRepo(s.T())
+	cmd := exec.Command("git", "branch", "feature/lk-test")
+	cmd.Dir = dir
+	require.NoError(s.T(), cmd.Run())
+	wtPath := filepath.Join(dir, ".worktrees", "lk-test")
+	cmd = exec.Command("git", "worktree", "add", wtPath, "feature/lk-test")
+	cmd.Dir = dir
+	require.NoError(s.T(), cmd.Run())
+
+	s.store.On("GetChannel", mock.Anything, "ch1").Return(&db.Channel{
+		ChannelID: "ch1", DirPath: dir,
+	}, nil)
+
+	body := fmt.Sprintf(`{"channel_id":"ch1","worktree_path":%q,"locked":true}`, wtPath)
+	rec := s.testRequest("POST", "/api/worktrees/lock", body)
+	require.Equal(s.T(), http.StatusNoContent, rec.Code)
+
+	// Verify via porcelain output that git sees it as locked.
+	out, err := exec.Command("git", "-C", dir, "worktree", "list", "--porcelain").Output()
+	require.NoError(s.T(), err)
+	require.Contains(s.T(), string(out), "locked")
+}
+
+func (s *ServerSuite) TestSetWorktreeLocked_UnlockSuccess() {
+	dir := initGitRepo(s.T())
+	cmd := exec.Command("git", "branch", "feature/un-test")
+	cmd.Dir = dir
+	require.NoError(s.T(), cmd.Run())
+	wtPath := filepath.Join(dir, ".worktrees", "un-test")
+	cmd = exec.Command("git", "worktree", "add", wtPath, "feature/un-test")
+	cmd.Dir = dir
+	require.NoError(s.T(), cmd.Run())
+	cmd = exec.Command("git", "-C", dir, "worktree", "lock", wtPath)
+	require.NoError(s.T(), cmd.Run())
+
+	s.store.On("GetChannel", mock.Anything, "ch1").Return(&db.Channel{
+		ChannelID: "ch1", DirPath: dir,
+	}, nil)
+
+	body := fmt.Sprintf(`{"channel_id":"ch1","worktree_path":%q,"locked":false}`, wtPath)
+	rec := s.testRequest("POST", "/api/worktrees/lock", body)
+	require.Equal(s.T(), http.StatusNoContent, rec.Code)
+
+	out, err := exec.Command("git", "-C", dir, "worktree", "list", "--porcelain").Output()
+	require.NoError(s.T(), err)
+	require.NotContains(s.T(), string(out), "locked\n")
+}
+
+func (s *ServerSuite) TestSetWorktreeLocked_MissingFields() {
+	rec := s.testRequest("POST", "/api/worktrees/lock", `{"channel_id":"ch1"}`)
+	require.Equal(s.T(), http.StatusBadRequest, rec.Code)
+	require.Contains(s.T(), rec.Body.String(), "channel_id and worktree_path required")
+}
+
+func (s *ServerSuite) TestSetWorktreeLocked_InvalidJSON() {
+	rec := s.testRequest("POST", "/api/worktrees/lock", `{not json`)
+	require.Equal(s.T(), http.StatusBadRequest, rec.Code)
+}
+
+func (s *ServerSuite) TestSetWorktreeLocked_ChannelNotFound() {
+	s.store.On("GetChannel", mock.Anything, "missing").Return((*db.Channel)(nil), nil)
+
+	rec := s.testRequest("POST", "/api/worktrees/lock", `{"channel_id":"missing","worktree_path":"/tmp/wt","locked":true}`)
+	require.Equal(s.T(), http.StatusBadRequest, rec.Code)
+}
+
+func (s *ServerSuite) TestSetWorktreeLocked_GitError() {
+	dir := initGitRepo(s.T())
+	s.store.On("GetChannel", mock.Anything, "ch1").Return(&db.Channel{
+		ChannelID: "ch1", DirPath: dir,
+	}, nil)
+
+	rec := s.testRequest("POST", "/api/worktrees/lock", `{"channel_id":"ch1","worktree_path":"/nonexistent/worktree","locked":true}`)
+	require.Equal(s.T(), http.StatusInternalServerError, rec.Code)
+}
+
+func (s *ServerSuite) TestSetWorktreeLocked_StoreNotConfigured() {
+	srv := NewServer(nil, nil, nil, nil, nil, testLogger())
+	mux := http.NewServeMux()
+	mux.HandleFunc("POST /api/worktrees/lock", srv.handleSetWorktreeLocked)
+
+	req := httptest.NewRequest("POST", "/api/worktrees/lock", strings.NewReader(`{"channel_id":"ch1","worktree_path":"/tmp/wt","locked":true}`))
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	require.Equal(s.T(), http.StatusNotImplemented, rec.Code)
+}
+
+func (s *ServerSuite) TestSetWorktreeLocked_CreatorNotConfigured() {
+	// Server has a store but no worktreeCreator (manually nilled out).
+	srv := NewServer(nil, nil, nil, s.store, nil, testLogger())
+	srv.worktreeCreator = nil
+	mux := http.NewServeMux()
+	mux.HandleFunc("POST /api/worktrees/lock", srv.handleSetWorktreeLocked)
+
+	req := httptest.NewRequest("POST", "/api/worktrees/lock", strings.NewReader(`{"channel_id":"ch1","worktree_path":"/tmp/wt","locked":true}`))
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	require.Equal(s.T(), http.StatusNotImplemented, rec.Code)
+}

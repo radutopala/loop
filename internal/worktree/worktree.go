@@ -87,6 +87,40 @@ func (c *Creator) Remove(ctx context.Context, parentDir, worktreePath string) er
 	return nil
 }
 
+// Lock marks a git worktree as locked so `git worktree remove` refuses to
+// delete it without --force. Re-locking an already-locked worktree returns
+// nil (git's "already locked" error is treated as a no-op).
+func (c *Creator) Lock(ctx context.Context, parentDir, worktreePath, reason string) error {
+	args := []string{"worktree", "lock", worktreePath}
+	if reason != "" {
+		args = append(args, "--reason", reason)
+	}
+	out, err := c.Run(ctx, parentDir, "git", args...)
+	if err != nil {
+		msg := strings.TrimSpace(string(out))
+		if strings.Contains(strings.ToLower(msg), "already locked") {
+			return nil
+		}
+		return fmt.Errorf("git worktree lock failed: %s", msg)
+	}
+	return nil
+}
+
+// Unlock removes the lock on a git worktree. Unlocking an already-unlocked
+// worktree returns nil (git's "not locked" error is treated as a no-op).
+func (c *Creator) Unlock(ctx context.Context, parentDir, worktreePath string) error {
+	out, err := c.Run(ctx, parentDir, "git", "worktree", "unlock", worktreePath)
+	if err != nil {
+		msg := strings.TrimSpace(string(out))
+		lower := strings.ToLower(msg)
+		if strings.Contains(lower, "not locked") || strings.Contains(lower, "is not locked") {
+			return nil
+		}
+		return fmt.Errorf("git worktree unlock failed: %s", msg)
+	}
+	return nil
+}
+
 func (c *Creator) copySessionFile(parentDirPath, worktreeDirPath, sessionID string) error {
 	sessionID = filepath.Base(sessionID)
 	if sessionID == "." || sessionID == ".." || sessionID == "" {

@@ -75,6 +75,40 @@ func (s *ServerSuite) TestListBranches_ExcludesOtherWorktreeBranches() {
 	require.True(s.T(), found)
 }
 
+func (s *ServerSuite) TestListBranches_EnrichesLockedFromDB() {
+	dir := initGitRepo(s.T())
+	cmd := exec.Command("git", "branch", "feature/imported")
+	cmd.Dir = dir
+	require.NoError(s.T(), cmd.Run())
+	wtPath := filepath.Join(dir, ".worktrees", "wt1")
+	cmd = exec.Command("git", "worktree", "add", wtPath, "feature/imported")
+	cmd.Dir = dir
+	require.NoError(s.T(), cmd.Run())
+
+	// Existing thread row marks this worktree imported and locked in the DB.
+	s.store.On("GetChannel", mock.Anything, "ch1").Return(&db.Channel{ChannelID: "ch1", DirPath: dir}, nil)
+	s.store.On("ListChannels", mock.Anything).Return([]*db.Channel{
+		{ChannelID: "thread-wt", ParentID: "ch1", Worktree: true, DirPath: wtPath, Locked: true},
+	}, nil)
+
+	rec := s.testRequest("GET", "/api/channels/ch1/branches", "")
+	require.Equal(s.T(), http.StatusOK, rec.Code)
+
+	var resp branchListResponse
+	require.NoError(s.T(), json.Unmarshal(rec.Body.Bytes(), &resp))
+
+	var matched *worktreeEntry
+	for i := range resp.Worktrees {
+		if resp.Worktrees[i].Branch == "feature/imported" {
+			matched = &resp.Worktrees[i]
+			break
+		}
+	}
+	require.NotNil(s.T(), matched)
+	require.Equal(s.T(), "thread-wt", matched.ThreadID)
+	require.True(s.T(), matched.Locked, "DB-locked worktree should surface as Locked=true")
+}
+
 func (s *ServerSuite) TestListBranches_NotConfigured() {
 	srv := nilServer()
 	mux := http.NewServeMux()
@@ -345,6 +379,32 @@ branch refs/heads/feature/bar
 func TestParseWorktreesEmpty(t *testing.T) {
 	wts := parseWorktrees("", "/repo")
 	require.Empty(t, wts)
+}
+
+func TestParseWorktreesLocked(t *testing.T) {
+	// `git worktree list --porcelain` emits a bare "locked" line for locked
+	// worktrees without a reason, and "locked <reason>" when a reason was
+	// supplied. Both should set Locked=true.
+	output := `worktree /repo
+branch refs/heads/main
+
+worktree /repo/.worktrees/wt-a
+branch refs/heads/feature/a
+locked
+
+worktree /repo/.worktrees/wt-b
+branch refs/heads/feature/b
+locked locked from Loop UI
+
+worktree /repo/.worktrees/wt-c
+branch refs/heads/feature/c
+
+`
+	wts := parseWorktrees(output, "/repo")
+	require.Len(t, wts, 3)
+	require.True(t, wts[0].Locked, "wt-a should be locked (bare locked line)")
+	require.True(t, wts[1].Locked, "wt-b should be locked (locked with reason)")
+	require.False(t, wts[2].Locked, "wt-c should not be locked")
 }
 
 func TestValidBranchName(t *testing.T) {

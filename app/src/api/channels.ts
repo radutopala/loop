@@ -95,6 +95,15 @@ export async function removeWorktree(channelId: string, worktreePath: string, th
   if (!res.ok) throw new Error(`Failed to remove worktree: ${res.statusText}`);
 }
 
+export async function setWorktreeLocked(channelId: string, worktreePath: string, locked: boolean): Promise<void> {
+  const res = await fetch(`${getApiUrl()}/api/worktrees/lock`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ channel_id: channelId, worktree_path: worktreePath, locked }),
+  });
+  if (!res.ok) throw new Error(`Failed to update worktree lock: ${res.statusText}`);
+}
+
 export async function deleteChannel(channelId: string): Promise<void> {
   const res = await fetch(`${getApiUrl()}/api/channels/${channelId}`, {
     method: "DELETE",
