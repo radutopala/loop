@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/radutopala/loop/internal/container"
+	"github.com/radutopala/loop/internal/db"
 )
 
 const channelsNotConfiguredMsg = "channel creation not configured (discord_guild_id not set or Slack not configured)"
@@ -48,6 +49,7 @@ type channelResponse struct {
 	Locked           bool   `json:"locked"`
 	DiffAdditions    int    `json:"diff_additions,omitempty"`
 	DiffDeletions    int    `json:"diff_deletions,omitempty"`
+	ReviewEnabled    bool   `json:"review_enabled"`
 }
 
 func (s *Server) handleEnsureChannel(w http.ResponseWriter, r *http.Request) {
@@ -124,6 +126,14 @@ func (s *Server) handleSearchChannels(w http.ResponseWriter, r *http.Request) {
 	query := r.URL.Query().Get("query")
 	platformFilter := r.URL.Query().Get("platform")
 
+	// Build a channel-id → channel index once so per-row parent lookups
+	// for review-enabled resolution stay in-memory instead of issuing
+	// O(N) GetChannel queries against the store.
+	byID := make(map[string]*db.Channel, len(channels))
+	for _, ch := range channels {
+		byID[ch.ChannelID] = ch
+	}
+
 	resp := make([]channelResponse, 0, len(channels))
 	for _, ch := range channels {
 		if platformFilter != "" && string(ch.Platform) != platformFilter {
@@ -139,6 +149,13 @@ func (s *Server) handleSearchChannels(w http.ResponseWriter, r *http.Request) {
 			dirPath = filepath.Join(s.loopDir, ch.ChannelID, "work")
 		}
 		diffAdd, diffDel := gitDiffStats(r.Context(), dirPath)
+		parentDirPath := ""
+		if ch.Worktree && ch.ParentID != "" {
+			if parent := byID[ch.ParentID]; parent != nil {
+				parentDirPath = parent.DirPath
+			}
+		}
+		reviewEnabled := s.resolveReviewEnabled(dirPath, parentDirPath)
 		resp = append(resp, channelResponse{
 			ChannelID:        ch.ChannelID,
 			Name:             ch.Name,
@@ -154,6 +171,7 @@ func (s *Server) handleSearchChannels(w http.ResponseWriter, r *http.Request) {
 			Locked:           ch.Locked,
 			DiffAdditions:    diffAdd,
 			DiffDeletions:    diffDel,
+			ReviewEnabled:    reviewEnabled,
 		})
 	}
 

@@ -609,6 +609,10 @@ function InlineComment({
         display: "flex",
         flexDirection: "column",
         gap: 4,
+        // De-emphasize resolved threads so the user's eye lands on what
+        // still needs attention. Fully hiding them would obscure history;
+        // 50% is enough to make them recede without losing context.
+        opacity: comment.resolved ? 0.55 : 1,
       }}
     >
       <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11 }}>
@@ -634,6 +638,22 @@ function InlineComment({
             title="GitHub couldn't anchor this comment to the current head"
           >
             outdated
+          </span>
+        )}
+        {comment.resolved && (
+          <span
+            data-testid={`review-comment-resolved-${comment.id}`}
+            style={{
+              fontSize: 9,
+              padding: "0 4px",
+              borderRadius: 3,
+              border: `1px solid ${colors.active}`,
+              color: colors.active,
+              textTransform: "uppercase",
+            }}
+            title="This review thread is resolved on GitHub"
+          >
+            resolved
           </span>
         )}
         <span style={{ flex: 1 }} />

@@ -628,6 +628,55 @@ func (s *ConfigSuite) TestLoadProjectConfigOverrides() {
 				require.Equal(s.T(), "radutopalama", merged.GitHub.GHUser)
 			},
 		},
+		{
+			name:        "Review/EnableOverridesGlobal",
+			projectJSON: `{"review": {"enabled": true}}`,
+			mainCfg:     &Config{Review: ReviewConfig{Enabled: false}},
+			assert: func(merged, main *Config) {
+				require.True(s.T(), merged.Review.Enabled)
+				require.False(s.T(), main.Review.Enabled)
+			},
+		},
+		{
+			name:        "Review/DisableOverridesGlobal",
+			projectJSON: `{"review": {"enabled": false}}`,
+			mainCfg:     &Config{Review: ReviewConfig{Enabled: true}},
+			assert: func(merged, _ *Config) {
+				require.False(s.T(), merged.Review.Enabled)
+			},
+		},
+		{
+			name:        "Review/UnsetKeepsGlobal",
+			projectJSON: `{"review": {}}`,
+			mainCfg:     &Config{Review: ReviewConfig{Enabled: true}},
+			assert: func(merged, _ *Config) {
+				require.True(s.T(), merged.Review.Enabled)
+			},
+		},
+		{
+			name:        "Review/NoOverrideKeepsGlobal",
+			projectJSON: `{}`,
+			mainCfg:     &Config{Review: ReviewConfig{Enabled: true}},
+			assert: func(merged, _ *Config) {
+				require.True(s.T(), merged.Review.Enabled)
+			},
+		},
+		{
+			name:        "Review/PromptOverride",
+			projectJSON: `{"review": {"prompt": "project prompt"}}`,
+			mainCfg:     &Config{Review: ReviewConfig{Prompt: "global prompt"}},
+			assert: func(merged, _ *Config) {
+				require.Equal(s.T(), "project prompt", merged.Review.Prompt)
+			},
+		},
+		{
+			name:        "Review/EmptyPromptKeepsGlobal",
+			projectJSON: `{"review": {"prompt": ""}}`,
+			mainCfg:     &Config{Review: ReviewConfig{Prompt: "global prompt"}},
+			assert: func(merged, _ *Config) {
+				require.Equal(s.T(), "global prompt", merged.Review.Prompt)
+			},
+		},
 	}
 
 	for _, tt := range tests {

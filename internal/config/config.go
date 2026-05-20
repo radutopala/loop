@@ -154,7 +154,21 @@ type EmbeddingsConfig struct {
 // ReviewConfig configures the review-panel agent prompt. Either Prompt
 // (inline) or PromptPath ({loopDir}/review/{prompt_path}) may be set;
 // both empty means the daemon uses its built-in default prompt.
+// Enabled gates the review panel feature: false (the default) makes the
+// FE hide the panel from the picker and the backend reject /review/*
+// requests with 403. The flag is per global/project/worktree, layered
+// the same way as github.gh_user.
 type ReviewConfig struct {
+	Enabled    bool   `json:"enabled"`
+	Prompt     string `json:"prompt"`
+	PromptPath string `json:"prompt_path"`
+}
+
+// jsonReviewConfig is the JSON representation of ReviewConfig with an
+// optional Enabled pointer so we can distinguish "unset" (inherit parent
+// layer) from "explicitly false" (force-disable at this layer).
+type jsonReviewConfig struct {
+	Enabled    *bool  `json:"enabled"`
 	Prompt     string `json:"prompt"`
 	PromptPath string `json:"prompt_path"`
 }
@@ -405,7 +419,7 @@ type jsonConfig struct {
 	Desktop                                  *DesktopConfig         `json:"desktop"`
 	Gates                                    *jsonGatesConfig       `json:"gates"`
 	GitHub                                   *GitHubConfig          `json:"github"`
-	Review                                   *ReviewConfig          `json:"review"`
+	Review                                   *jsonReviewConfig      `json:"review"`
 }
 
 // jsonMemoryConfig is the JSON representation of the memory block.
@@ -691,7 +705,9 @@ func (l *Loader) parse() (*Config, error) {
 	}
 
 	if jc.Review != nil {
-		cfg.Review = *jc.Review
+		cfg.Review.Enabled = ptrDefault(jc.Review.Enabled, false)
+		cfg.Review.Prompt = jc.Review.Prompt
+		cfg.Review.PromptPath = jc.Review.PromptPath
 	}
 
 	// Memory config: enabled must be explicitly true.
@@ -867,6 +883,7 @@ type projectConfig struct {
 	ExtraDirs                                []string               `json:"extra_dirs"`
 	Gates                                    *jsonGatesConfig       `json:"gates"`
 	GitHub                                   *GitHubConfig          `json:"github"`
+	Review                                   *jsonReviewConfig      `json:"review"`
 }
 
 // LoadProjectConfig loads project-specific config from {workDir}/.loop/config.json
@@ -1230,6 +1247,22 @@ func (l *Loader) loadProjectConfig(workDir string, mainConfig *Config) (*Config,
 	// GitHub: project overrides global when gh_user is set.
 	if pc.GitHub != nil && pc.GitHub.GHUser != "" {
 		merged.GitHub.GHUser = pc.GitHub.GHUser
+	}
+
+	// Review: each field overrides global only when explicitly set in the
+	// project layer. Enabled is *bool so we can distinguish "unset" from
+	// "false"; prompt and prompt_path override only when non-empty so an
+	// empty project block doesn't wipe the global prompt.
+	if pc.Review != nil {
+		if pc.Review.Enabled != nil {
+			merged.Review.Enabled = *pc.Review.Enabled
+		}
+		if pc.Review.Prompt != "" {
+			merged.Review.Prompt = pc.Review.Prompt
+		}
+		if pc.Review.PromptPath != "" {
+			merged.Review.PromptPath = pc.Review.PromptPath
+		}
 	}
 
 	return &merged, nil

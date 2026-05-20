@@ -132,7 +132,7 @@ func (s *PRSuite) TestRefreshHappyPath() {
 	g := &GitPR{Run: rr.run}
 	require.NoError(s.T(), g.Refresh(context.Background(), "/repo", "/wt", 7))
 	require.Len(s.T(), rr.calls, 2)
-	require.Equal(s.T(), "/repo", rr.calls[0].dir)
+	require.Equal(s.T(), "/wt", rr.calls[0].dir)
 	require.Equal(s.T(), []string{"fetch", "origin", "refs/pull/7/head"}, rr.calls[0].args)
 	require.Equal(s.T(), "/wt", rr.calls[1].dir)
 	require.Equal(s.T(), []string{"checkout", "--detach", "FETCH_HEAD"}, rr.calls[1].args)

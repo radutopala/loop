@@ -124,9 +124,15 @@ func (s *ReviewHandlerSuite) SetupTest() {
 	s.wt = new(mockPR)
 	s.rs = review.NewStore()
 	s.srv.SetReviewService(s.gh, s.rs, s.wt)
-	// Stub config loaders so resolveGHUser is deterministic in tests
-	// (otherwise it shells out to the user's actual ~/.loop/config.json).
-	s.srv.loadConfig = func() (*config.Config, error) { return &config.Config{}, nil }
+	// Stub config loaders so resolveGHUser/resolveReviewEnabled are
+	// deterministic in tests (otherwise they would shell out to the user's
+	// actual ~/.loop/config.json). Review is enabled in the base stub so
+	// the gate is transparent for the existing test cases; tests that
+	// specifically exercise the gate override loadConfig to return
+	// Enabled=false.
+	s.srv.loadConfig = func() (*config.Config, error) {
+		return &config.Config{Review: config.ReviewConfig{Enabled: true}}, nil
+	}
 	s.srv.loadProjectConfig = func(string, *config.Config) (*config.Config, error) { return nil, nil }
 	s.srv.loadWorktreeProjectConfig = func(string, string, *config.Config) (*config.Config, error) { return nil, nil }
 	s.mux = s.srv.buildMux()
@@ -146,6 +152,87 @@ func (s *ReviewHandlerSuite) doRaw(method, path string, body []byte) *httptest.R
 	w := httptest.NewRecorder()
 	s.mux.ServeHTTP(w, req)
 	return w
+}
+
+// ---- review.enabled gate ----
+
+// When review.enabled is false in the merged config, every mutating
+// endpoint returns 403. Each sub-case sets up just enough state to walk
+// the handler past its in-memory validation and hit the dir-path-based
+// gate (which always reads through resolveReviewEnabled).
+func (s *ReviewHandlerSuite) TestReviewEnabledGate403s() {
+	s.srv.loadConfig = func() (*config.Config, error) {
+		return &config.Config{Review: config.ReviewConfig{Enabled: false}}, nil
+	}
+	s.store.On("GetChannel", mock.Anything, "ch1").Return(&db.Channel{ChannelID: "ch1", DirPath: "/repo"}, nil)
+	s.srv.SetReviewAgent(&mockReviewRunner{}, "", "")
+
+	readySession := func() *review.Session {
+		return &review.Session{
+			PR:           &githubapi.PRInfo{Number: 7, BaseRef: "main", HeadRef: "feat"},
+			HeadSHA:      "abc",
+			WorktreePath: "/repo/.worktrees/pr-7",
+			RawDiff:      "diff",
+			Status:       review.StatusReady,
+		}
+	}
+
+	cases := []struct {
+		name   string
+		method string
+		path   string
+		body   []byte
+		setup  func()
+	}{
+		{"load", "POST", "/api/channels/ch1/review/load", []byte(`{"pr_number":7}`), nil},
+		{"list-prs", "GET", "/api/channels/ch1/review/prs", nil, nil},
+		{"sync", "POST", "/api/channels/ch1/review/sync", nil, func() {
+			s.rs.Put("ch1", readySession())
+		}},
+		{"run", "POST", "/api/channels/ch1/review/run", nil, func() {
+			s.rs.Put("ch1", readySession())
+		}},
+		{"push-comment", "POST", "/api/channels/ch1/review/comments/a/push", nil, func() {
+			s.rs.Put("ch1", readySession())
+			s.rs.AddComment("ch1", &review.Comment{ID: "a", Path: "x.go", Line: 1, Body: "b", Side: "RIGHT"})
+		}},
+		{"push-all", "POST", "/api/channels/ch1/review/push-all", nil, func() {
+			s.rs.Put("ch1", readySession())
+			s.rs.AddComment("ch1", &review.Comment{ID: "a", Path: "x.go", Line: 1, Body: "b", Side: "RIGHT"})
+		}},
+		{"delete-comment", "DELETE", "/api/channels/ch1/review/comments/a", nil, func() {
+			s.rs.Put("ch1", readySession())
+			s.rs.AddComment("ch1", &review.Comment{ID: "a", Path: "x.go", Line: 1, Body: "b", GitHubID: 99})
+		}},
+	}
+	for _, tc := range cases {
+		s.Run(tc.name, func() {
+			s.rs.Delete("ch1")
+			if tc.setup != nil {
+				tc.setup()
+			}
+			w := s.doRaw(tc.method, tc.path, tc.body)
+			require.Equal(s.T(), http.StatusForbidden, w.Code, "endpoint %s should 403 when review disabled", tc.name)
+		})
+	}
+}
+
+// GET .../review and DELETE .../review intentionally bypass the gate:
+// the FE may need to inspect or tear down a session that already exists,
+// even after the feature flag was flipped off.
+func (s *ReviewHandlerSuite) TestReviewEnabledGateAllowsGetAndDelete() {
+	s.srv.loadConfig = func() (*config.Config, error) {
+		return &config.Config{Review: config.ReviewConfig{Enabled: false}}, nil
+	}
+	s.rs.Put("ch1", &review.Session{PR: &githubapi.PRInfo{Number: 7}})
+
+	w := httptest.NewRecorder()
+	s.mux.ServeHTTP(w, httptest.NewRequest("GET", "/api/channels/ch1/review", nil))
+	require.Equal(s.T(), http.StatusOK, w.Code)
+
+	w = httptest.NewRecorder()
+	s.mux.ServeHTTP(w, httptest.NewRequest("DELETE", "/api/channels/ch1/review", nil))
+	require.Equal(s.T(), http.StatusNoContent, w.Code)
 }
 
 // ---- load ----
@@ -935,7 +1022,7 @@ func (s *ReviewHandlerSuite) TestDeleteCommentGitHubSourceCallsAPI() {
 	// GH-source comment authored by the configured gh user — the gate
 	// allows the call and the comment is wiped both on GH and locally.
 	s.srv.loadConfig = func() (*config.Config, error) {
-		return &config.Config{GitHub: config.GitHubConfig{GHUser: "alice"}}, nil
+		return &config.Config{GitHub: config.GitHubConfig{GHUser: "alice"}, Review: config.ReviewConfig{Enabled: true}}, nil
 	}
 	s.rs.Put("ch1", &review.Session{PR: &githubapi.PRInfo{Number: 7}, HeadSHA: "abc"})
 	s.rs.AddComment("ch1", &review.Comment{ID: "gh-99", Path: "x.go", Line: 1, Body: "b", Source: "github", Author: "alice", GitHubID: 99, Pushed: true})
@@ -957,7 +1044,7 @@ func (s *ReviewHandlerSuite) TestDeleteCommentGitHubSourceForeignAuthorRefused()
 	// anyway). The local copy must survive so a re-Sync doesn't show
 	// stale state, and so the user understands why nothing happened.
 	s.srv.loadConfig = func() (*config.Config, error) {
-		return &config.Config{GitHub: config.GitHubConfig{GHUser: "alice"}}, nil
+		return &config.Config{GitHub: config.GitHubConfig{GHUser: "alice"}, Review: config.ReviewConfig{Enabled: true}}, nil
 	}
 	s.rs.Put("ch1", &review.Session{PR: &githubapi.PRInfo{Number: 7}, HeadSHA: "abc"})
 	s.rs.AddComment("ch1", &review.Comment{ID: "gh-99", Source: "github", Author: "bob", GitHubID: 99, Pushed: true})
@@ -1321,7 +1408,7 @@ func (s *ReviewHandlerSuite) TestRunHappyPathDispatchesCommentsAndStatus() {
 func (s *ReviewHandlerSuite) TestRunPromptIncludesConfiguredGHUser() {
 	s.wireReadySession()
 	s.srv.loadConfig = func() (*config.Config, error) {
-		return &config.Config{GitHub: config.GitHubConfig{GHUser: "alice"}}, nil
+		return &config.Config{GitHub: config.GitHubConfig{GHUser: "alice"}, Review: config.ReviewConfig{Enabled: true}}, nil
 	}
 	runner := &mockReviewRunner{done: make(chan struct{})}
 	s.srv.SetReviewAgent(runner, "", "")

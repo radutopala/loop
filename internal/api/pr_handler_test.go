@@ -375,3 +375,53 @@ func (s *ServerSuite) TestResolveGHUserWorktreeNilLoaderUsesRealConfig() {
 	parent := s.T().TempDir()
 	require.Equal(s.T(), "global", srv.resolveGHUser(wt, parent))
 }
+
+func (s *ServerSuite) TestResolveReviewEnabledLoadConfigError() {
+	srv := &Server{
+		loadConfig: func() (*config.Config, error) { return nil, errors.New("boom") },
+	}
+	// Config-load failure must fail-closed (review hidden) regardless of layer.
+	require.False(s.T(), srv.resolveReviewEnabled("/tmp", ""))
+}
+
+func (s *ServerSuite) TestResolveReviewEnabledGlobalEnabled() {
+	srv := &Server{
+		loadConfig: func() (*config.Config, error) {
+			return &config.Config{Review: config.ReviewConfig{Enabled: true}}, nil
+		},
+		loadProjectConfig: func(_ string, c *config.Config) (*config.Config, error) {
+			return c, nil
+		},
+	}
+	require.True(s.T(), srv.resolveReviewEnabled("/proj", ""))
+}
+
+func (s *ServerSuite) TestResolveReviewEnabledWorktreeOverride() {
+	srv := &Server{
+		loadConfig: func() (*config.Config, error) {
+			return &config.Config{Review: config.ReviewConfig{Enabled: false}}, nil
+		},
+		loadWorktreeProjectConfig: func(workdir, parent string, c *config.Config) (*config.Config, error) {
+			require.Equal(s.T(), "/wt", workdir)
+			require.Equal(s.T(), "/proj", parent)
+			out := *c
+			out.Review.Enabled = true
+			return &out, nil
+		},
+	}
+	require.True(s.T(), srv.resolveReviewEnabled("/wt", "/proj"))
+}
+
+// Nil worktree loader falls through to config.LoadWorktreeProjectConfig.
+// With no .loop/config.json present the real loader returns an error and
+// we fall back to the global value.
+func (s *ServerSuite) TestResolveReviewEnabledWorktreeNilLoaderUsesRealConfig() {
+	srv := &Server{
+		loadConfig: func() (*config.Config, error) {
+			return &config.Config{Review: config.ReviewConfig{Enabled: true}}, nil
+		},
+	}
+	wt := s.T().TempDir()
+	parent := s.T().TempDir()
+	require.True(s.T(), srv.resolveReviewEnabled(wt, parent))
+}
