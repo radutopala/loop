@@ -413,6 +413,11 @@ func (o *Orchestrator) executeAgentRun(ctx context.Context, msg *bot.IncomingMes
 	// /ask/resolve endpoint as a priority-bumped continuation message.
 	var selfInitiatedAsk atomic.Bool
 
+	// pendingTaskCreates pairs an OnToolUse for TaskCreate with the matching
+	// OnToolResult so we can extract the harness-assigned id (only present
+	// in the result text) and surface the new task to the FE.
+	var pendingTaskCreates sync.Map // map[toolUseID]inputJSON string
+
 	var tracker *streamTracker
 	if cfg.StreamingEnabled {
 		tracker = newStreamTracker(func(text string) {
@@ -472,11 +477,13 @@ func (o *Orchestrator) executeAgentRun(ctx context.Context, msg *bot.IncomingMes
 						}
 					}
 				}
-				if name == "TodoWrite" {
-					var data events.TodoWriteEventData
-					if err := json.Unmarshal([]byte(input), &data); err == nil && len(data.Todos) > 0 {
-						o.events.BroadcastTodoWrite(msg.ChannelID, data)
+				if name == "TaskUpdate" {
+					if list, ok := o.tasks.applyUpdate(msg.ChannelID, input); ok {
+						o.events.BroadcastAgentTasks(msg.ChannelID, events.AgentTasksEventData{Tasks: list})
 					}
+				}
+				if name == "TaskCreate" {
+					pendingTaskCreates.Store(toolUseID, input)
 				}
 			}
 			req.OnThinking = func(text string) {
@@ -495,6 +502,11 @@ func (o *Orchestrator) executeAgentRun(ctx context.Context, msg *bot.IncomingMes
 					IsError:      isError,
 					TriggerMsgID: msg.MessageID,
 				}, o.logger.Warn)
+				if inputRaw, ok := pendingTaskCreates.LoadAndDelete(toolUseID); ok && !isError {
+					if list, ok := o.tasks.applyCreate(msg.ChannelID, inputRaw.(string), output); ok {
+						o.events.BroadcastAgentTasks(msg.ChannelID, events.AgentTasksEventData{Tasks: list})
+					}
+				}
 				o.events.BroadcastToolResult(msg.ChannelID, events.ToolResultEventData{
 					ToolUseID: toolUseID,
 					Output:    output,
@@ -642,6 +654,10 @@ func (o *Orchestrator) deliverResponse(ctx context.Context, msg *bot.IncomingMes
 			MsgID:      msg.MessageID,
 		})
 	}
+	// Match the FE's "clear on status=completed" so the next turn starts
+	// from an empty list; without this the registry would grow unbounded
+	// per channel across runs.
+	o.tasks.clear(msg.ChannelID)
 }
 
 // markTriggerProcessed marks the trigger message (and any earlier unprocessed

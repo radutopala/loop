@@ -10,7 +10,7 @@ import type {
   MessageCreatedData,
   MessageStreamingData,
   MessagesProcessedData,
-  TodoWriteData,
+  AgentTasksData,
   ToolUseData,
   WSEvent,
 } from "../types";
@@ -25,7 +25,7 @@ export interface ActiveChatState {
   agentActivity: AgentActivityData | null;
   askUserQuestions: AskUserQuestionData | null;
   exitPlanRequest: ExitPlanModeData | null;
-  todos: TodoWriteData | null;
+  agentTasks: AgentTasksData | null;
   mode: "agent" | "plan";
   completionInfo: {
     duration_ms?: number;
@@ -532,7 +532,7 @@ function createEmptyState(): ActiveChatState {
     agentActivity: null,
     askUserQuestions: null,
     exitPlanRequest: null,
-    todos: null,
+    agentTasks: null,
     mode: "agent",
     completionInfo: null,
     triggerContent: null,
@@ -548,7 +548,7 @@ function isRunningEvent(event: WSEvent): boolean {
     "agent.activity",
     "agent.ask_user",
     "agent.exit_plan",
-    "agent.todos",
+    "agent.tasks",
     "agent.status",
     "gate.approval_requested",
   ].includes(event.type);
@@ -588,8 +588,8 @@ function applyEvent(state: ActiveChatState, event: WSEvent): void {
       state.exitPlanRequest = event.data as ExitPlanModeData;
       break;
     }
-    case "agent.todos": {
-      state.todos = event.data as TodoWriteData;
+    case "agent.tasks": {
+      state.agentTasks = event.data as AgentTasksData;
       break;
     }
     case "gate.approval_requested": {
@@ -640,8 +640,8 @@ function applyEvent(state: ActiveChatState, event: WSEvent): void {
           state.toolActivity = null;
           state.agentActivity = null;
           state.triggerContent = null;
-          // Clear todos when the agent turn ends.
-          state.todos = null;
+          // Clear agent tasks when the agent turn ends.
+          state.agentTasks = null;
           // Drop any stale chat-sourced gate approval so a remount doesn't
           // rehydrate it. Terminal-pane gates have their own lifecycle and
           // are NOT cleared by the chat agent's run ending.

@@ -201,7 +201,7 @@ func (m *MockEventBroadcaster) BroadcastExitPlan(channelID string, data events.E
 	m.Called(channelID, data)
 }
 
-func (m *MockEventBroadcaster) BroadcastTodoWrite(channelID string, data events.TodoWriteEventData) {
+func (m *MockEventBroadcaster) BroadcastAgentTasks(channelID string, data events.AgentTasksEventData) {
 	m.Called(channelID, data)
 }
 

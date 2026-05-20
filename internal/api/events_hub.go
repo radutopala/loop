@@ -25,7 +25,7 @@ const (
 	EventAgentActivity             = "agent.activity"
 	EventAskUser                   = "agent.ask_user"
 	EventExitPlan                  = "agent.exit_plan"
-	EventTodoWrite                 = "agent.todos"
+	EventAgentTasks                = "agent.tasks"
 	EventChannelCreated            = "channel.created"
 	EventChannelDeleted            = "channel.deleted"
 	EventChannelLocked             = "channel.locked"
@@ -358,10 +358,11 @@ func (h *EventsHub) BroadcastExitPlan(channelID string, data events.ExitPlanMode
 	})
 }
 
-// BroadcastTodoWrite sends an agent.todos event with the current todo list.
-func (h *EventsHub) BroadcastTodoWrite(channelID string, data events.TodoWriteEventData) {
+// BroadcastAgentTasks sends an agent.tasks event with the cumulative task list
+// reconstructed from Claude's TaskCreate/TaskUpdate stream calls.
+func (h *EventsHub) BroadcastAgentTasks(channelID string, data events.AgentTasksEventData) {
 	h.Broadcast(Event{
-		Type:      EventTodoWrite,
+		Type:      EventAgentTasks,
 		ChannelID: channelID,
 		Data:      data,
 	})

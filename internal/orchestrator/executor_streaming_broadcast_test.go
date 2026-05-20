@@ -259,7 +259,7 @@ func (s *TaskExecutorSuite) TestStreamingOnToolUseExitPlanMode() {
 	eb.AssertExpectations(s.T())
 }
 
-func (s *TaskExecutorSuite) TestStreamingOnToolUseTodoWrite() {
+func (s *TaskExecutorSuite) TestStreamingOnToolUseTaskCreate() {
 	s.executor.streamingEnabled.Store(true)
 	eb := new(MockEventBroadcaster)
 	s.executor.SetEventBroadcaster(eb)
@@ -276,28 +276,78 @@ func (s *TaskExecutorSuite) TestStreamingOnToolUseTodoWrite() {
 	s.bot.On("CreateSimpleThread", s.ctx, "ch29", mock.Anything, mock.Anything).Return("thread-29", nil).Once()
 	s.store.On("UpdateScheduledTaskThreadID", s.ctx, int64(29), "thread-29").Return(nil)
 
-	todoInput := `{"todos":[{"content":"Fix bug","status":"in_progress","activeForm":"Fixing bug"}]}`
+	taskInput := `{"subject":"Fix bug","activeForm":"Fixing bug","description":""}`
+	s.runner.On("Run", mock.Anything, mock.MatchedBy(func(req *agent.AgentRequest) bool {
+		if req.OnToolUse == nil || req.OnToolResult == nil {
+			return false
+		}
+		req.OnTurn("Turn 1")
+		req.OnToolUse("toolu_t", "TaskCreate", taskInput)
+		req.OnToolResult("toolu_t", "Task #1 created successfully: Fix bug", false)
+		return true
+	})).Return(&agent.AgentResponse{Response: "Turn 1", SessionID: "sess-task"}, nil)
+
+	s.store.On("UpdateSessionID", s.ctx, "thread-29", "sess-task").Return(nil)
+
+	eb.On("BroadcastChannelCreated", "ch29", "thread-29").Once()
+	eb.On("BroadcastMessageCreated", "thread-29", mock.Anything).Maybe()
+	eb.On("BroadcastToolUse", "thread-29", mock.Anything).Once()
+	eb.On("BroadcastToolResult", "thread-29", mock.Anything).Once()
+	eb.On("BroadcastAgentTasks", "thread-29", mock.MatchedBy(func(d events.AgentTasksEventData) bool {
+		return len(d.Tasks) == 1 && d.Tasks[0].Subject == "Fix bug" && d.Tasks[0].ID == "1"
+	})).Once()
+
+	_, err := s.executor.ExecuteTask(s.ctx, task)
+	require.NoError(s.T(), err)
+	eb.AssertCalled(s.T(), "BroadcastAgentTasks", "thread-29", mock.Anything)
+	eb.AssertExpectations(s.T())
+}
+
+func (s *TaskExecutorSuite) TestStreamingOnToolUseTaskUpdate() {
+	s.executor.streamingEnabled.Store(true)
+	eb := new(MockEventBroadcaster)
+	s.executor.SetEventBroadcaster(eb)
+	allowStatusBroadcasts(eb)
+
+	task := &db.ScheduledTask{
+		ID: 30, ChannelID: "ch30", Prompt: "update tasks",
+		Type: db.TaskTypeCron, Schedule: "0 * * * *",
+	}
+
+	// Seed the registry under the thread id the test will assign so applyUpdate finds the task.
+	_, _ = s.executor.tasks.applyCreate("thread-30",
+		`{"subject":"Fix bug","activeForm":"Fixing bug"}`,
+		"Task #1 created successfully: Fix bug",
+	)
+
+	s.store.On("GetChannel", mock.Anything, "ch30").Return(nil, nil)
+	s.store.On("GetChannel", mock.Anything, "thread-30").Return(nil, nil).Maybe()
+	s.store.On("GetScheduledTask", s.ctx, int64(30)).Return(&db.ScheduledTask{ID: 30, Type: db.TaskTypeCron}, nil)
+	s.bot.On("CreateSimpleThread", s.ctx, "ch30", mock.Anything, mock.Anything).Return("thread-30", nil).Once()
+	s.store.On("UpdateScheduledTaskThreadID", s.ctx, int64(30), "thread-30").Return(nil)
+
+	updateInput := `{"taskId":"1","status":"in_progress"}`
 	s.runner.On("Run", mock.Anything, mock.MatchedBy(func(req *agent.AgentRequest) bool {
 		if req.OnToolUse == nil {
 			return false
 		}
 		req.OnTurn("Turn 1")
-		req.OnToolUse("toolu_t", "TodoWrite", todoInput)
+		req.OnToolUse("toolu_u", "TaskUpdate", updateInput)
 		return true
-	})).Return(&agent.AgentResponse{Response: "Turn 1", SessionID: "sess-todo"}, nil)
+	})).Return(&agent.AgentResponse{Response: "Turn 1", SessionID: "sess-upd"}, nil)
 
-	s.store.On("UpdateSessionID", s.ctx, "thread-29", "sess-todo").Return(nil)
+	s.store.On("UpdateSessionID", s.ctx, "thread-30", "sess-upd").Return(nil)
 
-	eb.On("BroadcastChannelCreated", "ch29", "thread-29").Once()
-	eb.On("BroadcastMessageCreated", "thread-29", mock.Anything).Maybe()
-	eb.On("BroadcastToolUse", "thread-29", mock.Anything).Once()
-	eb.On("BroadcastTodoWrite", "thread-29", mock.MatchedBy(func(d events.TodoWriteEventData) bool {
-		return len(d.Todos) == 1 && d.Todos[0].Content == "Fix bug"
+	eb.On("BroadcastChannelCreated", "ch30", "thread-30").Once()
+	eb.On("BroadcastMessageCreated", "thread-30", mock.Anything).Maybe()
+	eb.On("BroadcastToolUse", "thread-30", mock.Anything).Once()
+	eb.On("BroadcastAgentTasks", "thread-30", mock.MatchedBy(func(d events.AgentTasksEventData) bool {
+		return len(d.Tasks) == 1 && d.Tasks[0].Status == "in_progress"
 	})).Once()
 
 	_, err := s.executor.ExecuteTask(s.ctx, task)
 	require.NoError(s.T(), err)
-	eb.AssertCalled(s.T(), "BroadcastTodoWrite", "thread-29", mock.Anything)
+	eb.AssertCalled(s.T(), "BroadcastAgentTasks", "thread-30", mock.Anything)
 	eb.AssertExpectations(s.T())
 }
 

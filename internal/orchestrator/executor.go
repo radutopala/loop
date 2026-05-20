@@ -36,6 +36,7 @@ type TaskExecutor struct {
 	worktreeCreator  *worktree.Creator
 	workflowEngine   workflow.Engine
 	activeRuns       *sync.Map // shared with Orchestrator for stop button support
+	tasks            *taskRegistry
 }
 
 // NewTaskExecutor creates a new TaskExecutor.
@@ -47,6 +48,7 @@ func NewTaskExecutor(runner Runner, bot Bot, store db.Store, logger *slog.Logger
 		logger:        logger,
 		configLoad:    configLoad,
 		timeAfterFunc: time.AfterFunc,
+		tasks:         newTaskRegistry(),
 	}
 	e.containerTimeout.Store(int64(containerTimeout))
 	e.streamingEnabled.Store(streamingEnabled)
@@ -236,6 +238,10 @@ func (e *TaskExecutor) ExecuteTask(ctx context.Context, task *db.ScheduledTask) 
 	var threadID string
 	var threadName string
 	var threadFailed bool
+	// pendingTaskCreates pairs OnToolUse with OnToolResult for TaskCreate so
+	// we can extract the harness-assigned id (only present in the result text)
+	// before broadcasting the cumulative task list.
+	var pendingTaskCreates sync.Map // map[toolUseID]inputJSON string
 	// Reuse existing thread for recurring tasks (all platforms).
 	// Re-fetch from DB in case a concurrent execution persisted it since this task was loaded.
 	isLocal := channel != nil && channel.Platform == types.PlatformLocal
@@ -386,11 +392,13 @@ func (e *TaskExecutor) ExecuteTask(ctx context.Context, task *db.ScheduledTask) 
 						e.events.BroadcastExitPlan(targetID, data)
 					}
 				}
-				if name == "TodoWrite" {
-					var data events.TodoWriteEventData
-					if err := json.Unmarshal([]byte(input), &data); err == nil && len(data.Todos) > 0 {
-						e.events.BroadcastTodoWrite(targetID, data)
+				if name == "TaskUpdate" {
+					if list, ok := e.tasks.applyUpdate(targetID, input); ok {
+						e.events.BroadcastAgentTasks(targetID, events.AgentTasksEventData{Tasks: list})
 					}
+				}
+				if name == "TaskCreate" {
+					pendingTaskCreates.Store(toolUseID, input)
 				}
 			}
 			req.OnThinking = func(text string) {
@@ -415,6 +423,11 @@ func (e *TaskExecutor) ExecuteTask(ctx context.Context, task *db.ScheduledTask) 
 					Content:   output,
 					IsError:   isError,
 				}, e.logger.Warn)
+				if inputRaw, ok := pendingTaskCreates.LoadAndDelete(toolUseID); ok && !isError {
+					if list, ok := e.tasks.applyCreate(targetID, inputRaw.(string), output); ok {
+						e.events.BroadcastAgentTasks(targetID, events.AgentTasksEventData{Tasks: list})
+					}
+				}
 				e.events.BroadcastToolResult(targetID, events.ToolResultEventData{
 					ToolUseID: toolUseID,
 					Output:    output,
@@ -547,6 +560,15 @@ func (e *TaskExecutor) ExecuteTask(ctx context.Context, task *db.ScheduledTask) 
 		}
 		e.events.BroadcastAgentStatus(task.ChannelID, done)
 	}
+	// Match the FE's "clear on status=completed" so the registry doesn't
+	// accumulate stale tasks across recurring runs of the same task. Use the
+	// agent-facing id (thread for tasks that own one, otherwise the channel)
+	// so the entry under which TaskUpdate broadcasts actually clears.
+	clearTaskID := threadID
+	if clearTaskID == "" {
+		clearTaskID = task.ChannelID
+	}
+	e.tasks.clear(clearTaskID)
 
 	// Schedule auto-deletion of the thread when auto_delete_sec is configured
 	if task.AutoDeleteSec > 0 && threadID != "" {

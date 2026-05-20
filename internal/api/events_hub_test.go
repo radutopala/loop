@@ -629,7 +629,7 @@ func (s *EventsHubSuite) TestBroadcastExitPlan() {
 	require.Equal(s.T(), "ch-1", evt.ChannelID)
 }
 
-func (s *EventsHubSuite) TestBroadcastTodoWrite() {
+func (s *EventsHubSuite) TestBroadcastAgentTasks() {
 	hub := NewEventsHub(testLogger())
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -649,9 +649,9 @@ func (s *EventsHubSuite) TestBroadcastTodoWrite() {
 
 	time.Sleep(50 * time.Millisecond)
 
-	hub.BroadcastTodoWrite("ch-1", events.TodoWriteEventData{
-		Todos: []events.TodoItem{
-			{Content: "Task 1", Status: "in_progress", ActiveForm: "Working on task 1"},
+	hub.BroadcastAgentTasks("ch-1", events.AgentTasksEventData{
+		Tasks: []events.TaskItem{
+			{ID: "1", Subject: "Task 1", ActiveForm: "Working on task 1", Status: "in_progress"},
 		},
 	})
 
@@ -660,7 +660,7 @@ func (s *EventsHubSuite) TestBroadcastTodoWrite() {
 
 	var evt Event
 	require.NoError(s.T(), json.Unmarshal(msg, &evt))
-	require.Equal(s.T(), "agent.todos", evt.Type)
+	require.Equal(s.T(), "agent.tasks", evt.Type)
 	require.Equal(s.T(), "ch-1", evt.ChannelID)
 }
 

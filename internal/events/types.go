@@ -11,7 +11,7 @@ type Broadcaster interface {
 	BroadcastAgentActivity(channelID string, data AgentActivityEventData)
 	BroadcastAskUser(channelID string, data AskUserQuestionEventData)
 	BroadcastExitPlan(channelID string, data ExitPlanModeEventData)
-	BroadcastTodoWrite(channelID string, data TodoWriteEventData)
+	BroadcastAgentTasks(channelID string, data AgentTasksEventData)
 	BroadcastMessagesProcessed(channelID string, data MessagesProcessedData)
 	BroadcastMessageDeleted(channelID string, data MessageDeletedData)
 	BroadcastChannelCreated(parentChannelID, channelID string)
@@ -144,16 +144,25 @@ type ExitPlanModeEventData struct {
 	PlanFilePath string `json:"planFilePath,omitempty"`
 }
 
-// TodoItem represents a single todo item from Claude's TodoWrite tool.
-type TodoItem struct {
-	Content    string `json:"content"`
-	Status     string `json:"status"`     // "completed", "in_progress", "pending"
-	ActiveForm string `json:"activeForm"` // present-continuous form shown during execution
+// TaskItem mirrors the on-disk schema written by Claude's TaskCreate/TaskUpdate
+// tools. Reconstructed on the loop server from the JSON streamed by the agent's
+// claude binary (input on TaskCreate / TaskUpdate, plus the assigned id parsed
+// from the TaskCreate tool_result).
+type TaskItem struct {
+	ID          string   `json:"id"`
+	Subject     string   `json:"subject"`
+	Description string   `json:"description,omitempty"`
+	ActiveForm  string   `json:"activeForm,omitempty"`
+	Status      string   `json:"status"` // "pending" | "in_progress" | "completed" | "deleted"
+	Blocks      []string `json:"blocks,omitempty"`
+	BlockedBy   []string `json:"blockedBy,omitempty"`
 }
 
-// TodoWriteEventData is the payload for agent.todos events.
-type TodoWriteEventData struct {
-	Todos []TodoItem `json:"todos"`
+// AgentTasksEventData is the payload for agent.tasks events. Tasks holds the
+// cumulative list for the channel after the most recent Task* tool call;
+// status="deleted" entries are filtered out by the time they reach the FE.
+type AgentTasksEventData struct {
+	Tasks []TaskItem `json:"tasks"`
 }
 
 // AskUserQuestion represents a single question from Claude's AskUserQuestion tool.
