@@ -13,6 +13,7 @@ Comprehensive documentation for every feature of the Loop platform.
 ## Agent & Containers
 
 - [**Agent**](agent.md) — Agent request/response types, session management, streaming callbacks
+- [**Multi-Agent**](multi-agent.md) — Multiple Claude Code agents in one channel, MCP discovery, inter-agent messaging
 - [**Containers**](containers.md) — Docker container lifecycle, container registry with status tracking, environment, mounts, MCP config, scheduled removal
 - [**Security Gate**](gates.md) — Seccomp filter + Docker HTTP proxy for agent containers, default policy, approval UI, project-merge semantics
 - [**MCP Server**](mcpserver.md) — MCP tools for task scheduling, communication, and memory search
@@ -38,6 +39,7 @@ Comprehensive documentation for every feature of the Loop platform.
 - [**Sidebar**](sidebar.md) — Channel/thread navigation, ordering, search, batch operations
 - [**Kanban**](kanban.md) — Ticket board panel, filesystem-backed tickets, worktree assignment, `tk` CLI integration
 - [**Playground**](playground.md) — Live interactive code sandbox, agent-driven HTML/CSS/JS rendering, global and project scopes
+- [**Review**](review.md) — Pull-request review panel, agent diff pass, inline comments pushed back to the PR
 - [**Settings**](settings.md) — Settings panel, command palette (Cmd+K), daemon management
 
 ## Help

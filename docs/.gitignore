@@ -1,0 +1,8 @@
+# Hugo build artifacts
+public/
+resources/
+.hugo_build.lock
+
+# Synthesized at build time from README.md so Hugo treats it as the
+# section index. Kept out of git to avoid drift with README.md.
+_index.md
