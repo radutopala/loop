@@ -22,6 +22,12 @@ function buildMessageStyles(colors: ColorPalette): Record<string, React.CSSPrope
     messageColumn: {
       maxWidth: 768,
       margin: "0 auto",
+      // Mirror the chat input's internal text gutter (left 18 / right 14
+      // from ChatInput's inputWrapper padding) so message text starts and
+      // ends at the same x as the textarea's text — without this the
+      // column begins flush with the input's outer border and the visible
+      // text edges drift 18px apart.
+      padding: "0 14px 0 18px",
     },
     loadMore: {
       display: "block",
@@ -656,7 +662,11 @@ function MessageBubble({ message, showProcessing, showQueued, queuePosition, hig
           ...styles.bubble,
           backgroundColor: isUser ? colors.userBubble : "transparent",
           borderRadius: isUser ? "18px 18px 4px 18px" : "18px 18px 18px 4px",
-          maxWidth: "85%",
+          // Cap user bubbles so the right-aligned colored pill doesn't
+          // stretch the full column, but let assistant bubbles fill it so
+          // the message-column right edge matches the chat input below.
+          maxWidth: isUser ? "85%" : "100%",
+          width: isUser ? undefined : "100%",
           padding: isUser ? "10px 16px" : "4px 0",
         }}
       >
@@ -705,7 +715,7 @@ function StreamingBubble({ content }: { content: string }) {
       <div
         style={{
           borderRadius: "18px 18px 18px 4px",
-          maxWidth: "85%",
+          width: "100%",
           padding: "4px 0",
         }}
       >
