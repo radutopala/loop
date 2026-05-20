@@ -5,7 +5,7 @@ import type { PaneNode, LeafNode, PanelType, AgentOpenMode } from "../../types/p
 import { CHANNEL_ONLY_PANELS } from "../../types/panels";
 import type { SplitDirection, DropPosition } from "../../splitPane/types";
 import { makeLeaf, findLeafById, splitLeaf, removeLeaf, updateFlex, swapLeavesInTree, moveLeaf, leafCount, collectLeaves, canAddPanel, hasAgentLeaf, collectPanelTypes } from "../../splitPane/treeOps";
-import { saveLayout, clearLayout, saveActiveLayout, saveLayoutType, deleteLayout, renameLayout, loadChannelLayouts, ensureDefaultLayouts, createDefaultLayouts, restoreDefaultLayouts, DEFAULT_LAYOUT_NAMES, DEFAULT_LAYOUT_TYPES } from "../../layouts/persistence";
+import { saveLayout, clearLayout, saveActiveLayout, saveLayoutType, deleteLayout, renameLayout, reorderLayout, loadChannelLayouts, ensureDefaultLayouts, createDefaultLayouts, restoreDefaultLayouts, DEFAULT_LAYOUT_NAMES, DEFAULT_LAYOUT_TYPES } from "../../layouts/persistence";
 import type { LayoutType } from "../../layouts/persistence";
 import { SplitPaneLayout } from "../../splitPane/SplitPaneLayout";
 import { PaneLeafHeader } from "../../splitPane/PaneLeafHeader";
@@ -492,6 +492,20 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
       saveActiveLayout(channelId, next);
     }
   }, [channelId, layoutNames, activeName]);
+
+  const handleReorderLayout = useCallback((fromName: string, toName: string) => {
+    if (fromName === toName) return;
+    setLayoutNames((prev) => {
+      const from = prev.indexOf(fromName);
+      const to = prev.indexOf(toName);
+      if (from < 0 || to < 0) return prev;
+      const next = prev.slice();
+      const [moved] = next.splice(from, 1);
+      next.splice(to, 0, moved!);
+      reorderLayout(channelId, from, to);
+      return next;
+    });
+  }, [channelId]);
 
   // --- Tree operations ---
   const handleDrop = useCallback(
@@ -1079,6 +1093,7 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
             onSelect={() => { if (name !== activeName) switchLayout(name); }}
             onRename={(newName) => handleRenameLayout(name, newName)}
             onDelete={() => handleDeleteLayout(name)}
+            onReorder={handleReorderLayout}
           />
         ))}
         <div style={{ position: "relative" }}>
@@ -1298,18 +1313,22 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
 
 // ── Layout Tab ──
 
-function LayoutTab({ name, active, canDelete, onSelect, onRename, onDelete }: {
+const TAB_DRAG_MIME = "application/x-loop-layout-tab";
+
+function LayoutTab({ name, active, canDelete, onSelect, onRename, onDelete, onReorder }: {
   name: string;
   active: boolean;
   canDelete: boolean;
   onSelect: () => void;
   onRename: (newName: string) => void;
   onDelete: () => void;
+  onReorder: (fromName: string, toName: string) => void;
 }) {
   const { colors } = useTheme();
   const [editing, setEditing] = useState(false);
   const [editValue, setEditValue] = useState(name);
   const [confirming, setConfirming] = useState(false);
+  const [dragOver, setDragOver] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -1336,9 +1355,37 @@ function LayoutTab({ name, active, canDelete, onSelect, onRename, onDelete }: {
     }
   };
 
+  const handleDragStart = (e: React.DragEvent<HTMLDivElement>) => {
+    e.dataTransfer.setData(TAB_DRAG_MIME, name);
+    e.dataTransfer.effectAllowed = "move";
+  };
+
+  const handleDragOver = (e: React.DragEvent<HTMLDivElement>) => {
+    if (!e.dataTransfer.types.includes(TAB_DRAG_MIME)) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "move";
+    if (!dragOver) setDragOver(true);
+  };
+
+  const handleDragLeave = () => {
+    if (dragOver) setDragOver(false);
+  };
+
+  const handleDrop = (e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    setDragOver(false);
+    const fromName = e.dataTransfer.getData(TAB_DRAG_MIME);
+    if (fromName && fromName !== name) onReorder(fromName, name);
+  };
+
   return (
     <div
       data-testid={`layout-tab-${name}`}
+      draggable={!editing}
+      onDragStart={handleDragStart}
+      onDragOver={handleDragOver}
+      onDragLeave={handleDragLeave}
+      onDrop={handleDrop}
       onClick={onSelect}
       style={{
         ...buildTabButtonStyle(colors, active),
@@ -1346,6 +1393,9 @@ function LayoutTab({ name, active, canDelete, onSelect, onRename, onDelete }: {
         position: "relative",
         paddingLeft: canDelete && !editing ? 4 : 10,
         paddingRight: canDelete && !editing ? 10 : 10,
+        outline: dragOver ? `2px solid ${colors.textLight}` : undefined,
+        outlineOffset: dragOver ? -2 : undefined,
+        cursor: editing ? "text" : "grab",
       }}
       onMouseEnter={(e) => { if (!active) { e.currentTarget.style.background = colors.hoverBg; e.currentTarget.style.color = colors.textLight; } }}
       onMouseLeave={(e) => { if (!active) { e.currentTarget.style.background = "transparent"; e.currentTarget.style.color = colors.textDim; } }}
