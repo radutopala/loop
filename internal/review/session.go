@@ -108,6 +108,28 @@ func (s *Store) Put(channelID string, sess *Session) {
 	s.sessions[channelID] = sess
 }
 
+// SessionSummary is the minimal (channel_id, status) pair returned by
+// List — enough for the sidebar to decide whether to render a `rev`
+// pill without dragging the whole session (raw diff + comments) over
+// the wire.
+type SessionSummary struct {
+	ChannelID string `json:"channel_id"`
+	Status    Status `json:"status"`
+}
+
+// List returns a summary of every live session. Order is unspecified.
+// Used at FE startup to hydrate the sidebar's rev-pill set; live
+// transitions still come through the review.status WS event.
+func (s *Store) List() []SessionSummary {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	out := make([]SessionSummary, 0, len(s.sessions))
+	for id, sess := range s.sessions {
+		out = append(out, SessionSummary{ChannelID: id, Status: sess.Status})
+	}
+	return out
+}
+
 // Delete removes the session for channelID. No-op if none exists.
 func (s *Store) Delete(channelID string) {
 	s.mu.Lock()

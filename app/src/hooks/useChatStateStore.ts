@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { listPendingApprovals } from "../api/gate";
+import { listReviewSessions } from "../api/review";
 import type {
   AgentActivityData,
   AgentStatusData,
@@ -205,6 +206,36 @@ export function useChatStateStore({
       refreshGateMembership(id, state);
     }
   }, [refreshGateMembership]);
+
+  // Pull the live (channel_id, status) snapshot of every review session
+  // and reconcile reviewChannelIdsRef against it. Run from WS onOpen so
+  // a renderer reload or WS reconnect re-lights the `rev` pill on every
+  // channel whose session is still ready — review.status events only
+  // fire on transitions, so without this any ready session that finished
+  // while the app was closed would stay dark until the user reopened
+  // the Review panel for that channel.
+  const rehydrateReviewSessions = useCallback(async () => {
+    let sessions;
+    try {
+      sessions = await listReviewSessions();
+    } catch (err) {
+      console.warn("[rehydrate] listReviewSessions failed:", err);
+      return;
+    }
+    const ready = new Set<string>();
+    for (const s of sessions) {
+      if (s.status === "ready") ready.add(s.channel_id);
+    }
+    const set = reviewChannelIdsRef.current;
+    let changed = false;
+    for (const id of ready) {
+      if (!set.has(id)) { set.add(id); changed = true; }
+    }
+    for (const id of [...set]) {
+      if (!ready.has(id)) { set.delete(id); changed = true; }
+    }
+    if (changed) setReviewTick((v) => v + 1);
+  }, []);
 
   // Also rehydrate when the user returns to Loop. The WS-onOpen path covers
   // reconnects and renderer reloads, but if a `gate.approval_requested`
@@ -454,6 +485,7 @@ export function useChatStateStore({
         // so cards reappear and (b) hand electron-main the canonical req_id
         // list so it can drop bouncer entries with no live request.
         rehydrateGateApprovals();
+        rehydrateReviewSessions();
       },
       // eslint-disable-next-line react-hooks/exhaustive-deps
       [],

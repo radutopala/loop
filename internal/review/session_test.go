@@ -59,6 +59,29 @@ func (s *SessionSuite) TestGetEmptyCommentsMarshalsAsArrayNotNull() {
 	require.NotContains(s.T(), string(b), `"comments":null`)
 }
 
+func (s *SessionSuite) TestListEmpty() {
+	store := NewStore()
+	require.Empty(s.T(), store.List())
+}
+
+func (s *SessionSuite) TestListReturnsSummaries() {
+	store := NewStore()
+	store.Put("ch1", &Session{Status: StatusReady})
+	store.Put("ch2", &Session{Status: StatusReviewing})
+	store.Put("ch3", &Session{Status: StatusError})
+
+	got := store.List()
+	require.Len(s.T(), got, 3)
+
+	statuses := map[string]Status{}
+	for _, sum := range got {
+		statuses[sum.ChannelID] = sum.Status
+	}
+	require.Equal(s.T(), StatusReady, statuses["ch1"])
+	require.Equal(s.T(), StatusReviewing, statuses["ch2"])
+	require.Equal(s.T(), StatusError, statuses["ch3"])
+}
+
 func (s *SessionSuite) TestDelete() {
 	store := NewStore()
 	store.Put("ch1", &Session{})

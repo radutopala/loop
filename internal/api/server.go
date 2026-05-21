@@ -348,6 +348,7 @@ func (s *Server) buildMux() *http.ServeMux {
 	mux.HandleFunc("POST /api/channels/{id}/paste-image", s.handlePasteImage)
 	mux.HandleFunc("GET /api/channels/{id}/diff", s.handleGitDiff)
 	mux.HandleFunc("GET /api/channels/{id}/pr", s.handleChannelPR)
+	mux.HandleFunc("GET /api/review/sessions", s.handleReviewSessions)
 	mux.HandleFunc("POST /api/channels/{id}/review/load", s.handleReviewLoad)
 	mux.HandleFunc("POST /api/channels/{id}/review/sync", s.handleReviewSync)
 	mux.HandleFunc("GET /api/channels/{id}/review/prs", s.handleReviewListPRs)

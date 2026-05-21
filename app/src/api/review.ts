@@ -63,6 +63,25 @@ function normalizeSession(resp: ReviewSessionResponse): ReviewSessionResponse {
   return resp;
 }
 
+export interface ReviewSessionSummary {
+  channel_id: string;
+  status: ReviewStatus;
+}
+
+/**
+ * Snapshot every live review session's (channel_id, status). Used at
+ * app startup to seed the sidebar `rev` pill set — review.status WS
+ * events only fire on transitions, and the FE doesn't subscribe to
+ * every channel, so without this any session that became ready while
+ * the renderer was closed would never re-light its indicator.
+ */
+export async function listReviewSessions(): Promise<ReviewSessionSummary[]> {
+  const res = await fetch(`${getApiUrl()}/api/review/sessions`);
+  if (!res.ok) throw new Error(`Failed to list review sessions: ${res.statusText}`);
+  const body = (await res.json()) as { sessions?: ReviewSessionSummary[] };
+  return Array.isArray(body.sessions) ? body.sessions : [];
+}
+
 export async function listReviewPRs(channelId: string): Promise<ReviewPR[]> {
   const res = await fetch(`${getApiUrl()}/api/channels/${channelId}/review/prs`);
   if (!res.ok) throw new Error((await res.text()) || `Failed to list PRs: ${res.statusText}`);

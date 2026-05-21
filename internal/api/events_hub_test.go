@@ -479,6 +479,44 @@ func (s *EventsHubSuite) TestBroadcastChannelUpdated() {
 	require.Equal(s.T(), "abc1234", data["commit"])
 }
 
+// review.status must be Global so a client subscribed to channel A
+// still gets the pill update when a background review on channel B
+// finishes — otherwise the FE filter at the hub drops the event.
+func (s *EventsHubSuite) TestBroadcastReviewStatusIsGlobal() {
+	hub := NewEventsHub(testLogger())
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := wsUpgrader.Upgrade(w, r, nil)
+		if err != nil {
+			return
+		}
+		// Subscribe only to ch-other; review.status on ch-1 must still arrive.
+		hub.Register(conn, []string{"ch-other"})
+		holdUntilClientDisconnects(conn)
+	}))
+	defer srv.Close()
+
+	wsURL := "ws" + strings.TrimPrefix(srv.URL, "http")
+	conn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
+	require.NoError(s.T(), err)
+	defer conn.Close()
+
+	time.Sleep(50 * time.Millisecond)
+
+	hub.BroadcastReviewStatus("ch-1", events.ReviewStatusEventData{Status: "ready"})
+
+	_, msg, err := conn.ReadMessage()
+	require.NoError(s.T(), err)
+
+	var evt Event
+	require.NoError(s.T(), json.Unmarshal(msg, &evt))
+	require.Equal(s.T(), "review.status", evt.Type)
+	require.Equal(s.T(), "ch-1", evt.ChannelID)
+	data, ok := evt.Data.(map[string]any)
+	require.True(s.T(), ok)
+	require.Equal(s.T(), "ready", data["status"])
+}
+
 func (s *EventsHubSuite) TestBroadcastChannelLocked() {
 	hub := NewEventsHub(testLogger())
 
