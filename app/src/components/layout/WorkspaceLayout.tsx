@@ -694,7 +694,14 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
     killAgentContainer(channelId);
   }, [channelId]);
 
-  const hasMissingDefaults = (DEFAULT_LAYOUT_NAMES as readonly string[]).some((n) => !layoutNames.includes(n));
+  // "Review" is only a real default when the project enables the
+  // review feature — without that flag the tab is hidden, so it must
+  // also not count as a "missing default" that lights up the restore
+  // button.
+  const hasMissingDefaults = (DEFAULT_LAYOUT_NAMES as readonly string[]).some((n) => {
+    if (n === "Review" && !channel.review_enabled) return false;
+    return !layoutNames.includes(n);
+  });
   const isDefaultLayout = (DEFAULT_LAYOUT_NAMES as readonly string[]).includes(activeName);
 
   const restoreDefaults = useCallback(() => {
@@ -1112,6 +1119,7 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
         </span>
         {layoutNames
           .filter((name) => !(channel.parent_id && (name === "Sessions" || name === "Kanban")))
+          .filter((name) => !(name === "Review" && !channel.review_enabled))
           .map((name) => (
           <LayoutTab
             key={name}
