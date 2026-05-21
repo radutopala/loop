@@ -28,6 +28,7 @@ interface ChannelItemProps {
   isRunningMapRef?: React.RefObject<Map<string, string>>;
   unreadIdsRef?: React.RefObject<Set<string>>;
   gateChannelIdsRef?: React.RefObject<Set<string>>;
+  reviewChannelIdsRef?: React.RefObject<Set<string>>;
 }
 
 export function ChannelItem({
@@ -52,6 +53,7 @@ export function ChannelItem({
   isRunningMapRef,
   unreadIdsRef,
   gateChannelIdsRef,
+  reviewChannelIdsRef,
 }: ChannelItemProps) {
   const { colors } = useTheme();
   const [creating, setCreating] = useState(false);
@@ -196,6 +198,23 @@ export function ChannelItem({
               gate
             </span>
           )}
+          {reviewChannelIdsRef?.current?.has(channel.id) && (
+            <span
+              title="Review session open"
+              style={{
+                flexShrink: 0,
+                fontSize: 9,
+                fontFamily: fonts.mono,
+                lineHeight: 1,
+                padding: "2px 4px",
+                borderRadius: 3,
+                color: colors.active,
+                border: `1px solid ${colors.active}`,
+              }}
+            >
+              rev
+            </span>
+          )}
           {(channel.container_running || channel.agent_running || isRunningMapRef?.current?.get(channel.id)) && (
             <span
               style={{
@@ -296,6 +315,7 @@ export function ChannelItem({
             isRunningMapRef={isRunningMapRef}
             unreadIdsRef={unreadIdsRef}
             gateChannelIdsRef={gateChannelIdsRef}
+            reviewChannelIdsRef={reviewChannelIdsRef}
           />
         ))}
     </div>
