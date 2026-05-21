@@ -1,9 +1,6 @@
 ---
 title: Platform Support
 ---
-
-# Platform Support
-
 Loop supports three chat platforms: **Discord**, **Slack**, and **Local** (Desktop/Electron). Each platform implements the `orchestrator.Bot` interface, which provides a uniform set of operations for messaging, threading, typing indicators, and lifecycle management. The `BotRouter` layer sits above the platform bots and dispatches calls to the correct implementation based on the channel's platform stored in the database.
 
 ## Platform Overview

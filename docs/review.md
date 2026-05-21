@@ -1,13 +1,25 @@
 ---
 title: Review Panel
 ---
-
-# Review Panel
-
 The Review panel loads a GitHub pull request into a local git worktree,
 runs an agent review pass against the diff, and lets the user push the
 resulting inline comments back to the PR — either one at a time or all
 at once.
+
+## Enabling
+
+The panel is gated behind `review.enabled` (default `false`). Set it in
+`~/.loop/config.json` (or a project override) to opt in:
+
+```jsonc
+"review": {
+  "enabled": true
+}
+```
+
+When disabled, the FE hides the Review tab from the panel picker and the
+backend returns `403` for `/review/*` requests. The flag is layered
+per-global / per-project / per-worktree the same way as `github.gh_user`.
 
 ## Lifecycle
 

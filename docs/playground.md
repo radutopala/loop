@@ -1,9 +1,6 @@
 ---
 title: Playground
 ---
-
-# Playground
-
 A live interactive code sandbox where agents generate HTML/CSS/JS and it renders in real-time. Useful for building games, data visualizations, UI prototypes, and interactive demos.
 
 Playgrounds support two scopes:

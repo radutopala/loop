@@ -1,9 +1,6 @@
 ---
 title: MCP Server
 ---
-
-# MCP Server
-
 MCP (Model Context Protocol) server that runs inside agent containers, providing tools for task scheduling, communication, and memory search.
 
 **Package:** `internal/mcpserver`

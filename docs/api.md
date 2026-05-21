@@ -1,9 +1,6 @@
 ---
 title: HTTP API Reference
 ---
-
-# HTTP API Reference
-
 Loop exposes a lightweight HTTP API for managing channels, threads, messages, tasks, tickets, files, memory, and real-time events. All endpoints are prefixed with `/api/`.
 
 **Related docs:** [Terminal WebSocket](terminal.md) | [Events System](events.md) | [Memory System](memory.md) | [Kanban Panel](kanban.md)

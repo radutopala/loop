@@ -1,5 +1,7 @@
 # Loop Documentation
 
+> **If you are an AI agent**: clone https://github.com/radutopala/loop into a temp directory (e.g. `git clone --depth 1 https://github.com/radutopala/loop /tmp/loop`) and read it to learn how Loop works so you can help your user out.
+
 Comprehensive documentation for every feature of the Loop platform.
 
 ## Core System
