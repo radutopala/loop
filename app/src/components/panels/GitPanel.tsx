@@ -8,6 +8,7 @@ import { useTheme } from "../../ThemeContext";
 import { ContextMenu } from "../shared/ContextMenu";
 import { DiffViewer, fileKey, parseUnifiedDiff } from "./DiffViewer";
 import type { ParsedFile } from "./DiffViewer";
+import type { FileLinkOpenDetail } from "../chat/FileLink";
 import { CommitHistory } from "./CommitHistory";
 import { WorktreesPanel } from "./WorktreesPanel";
 import { BranchesPanel } from "./BranchesPanel";
@@ -469,6 +470,19 @@ export function GitPanel({ channelId, dirPath, branch, maximized, sidebarOpen, t
       x={fileContextMenu.x}
       y={fileContextMenu.y}
       items={[
+        ...(channelId
+          ? [{
+              label: "Open file",
+              onClick: () => {
+                const detail: FileLinkOpenDetail = {
+                  channelId,
+                  target: { rootIndex: 0, relPath: fileContextMenu.path },
+                  line: null,
+                };
+                window.dispatchEvent(new CustomEvent<FileLinkOpenDetail>("loop:open-file", { detail }));
+              },
+            }]
+          : []),
         { label: "Copy relative path", onClick: () => navigator.clipboard.writeText(fileContextMenu.path) },
         { label: "Copy absolute path", onClick: () => navigator.clipboard.writeText((dirPath || "") + "/" + fileContextMenu.path) },
       ]}

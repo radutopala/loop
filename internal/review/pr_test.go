@@ -355,6 +355,62 @@ func (s *PRSuite) TestRemovePruneError() {
 	require.ErrorContains(s.T(), err, "prune busted")
 }
 
+// `diff --git` header lacking the ` b/` portion (e.g. a malformed
+// stream from a rebase recording) drops the parser into a no-op state
+// until the next valid header, so subsequent hunk lines don't get
+// attributed to the wrong file. Also covers the leading-hunk case
+// where a hunk header arrives before any diff --git line.
+func (s *PRSuite) TestParseChangedRangesMalformedHeader() {
+	diff := []byte("@@ -1,1 +1,1 @@\n" + // hunk before any diff --git
+		"diff --git x.go\n" + // header without ` b/`
+		"@@ -1,1 +1,1 @@\n" + // hunk that must be ignored
+		"diff --git a/y.go b/y.go\n" +
+		"@@ -1,1 +1,1 @@\n",
+	)
+	r := parseChangedRanges(diff)
+	require.NotContains(s.T(), r, "x.go")
+	require.Contains(s.T(), r, "y.go")
+}
+
+// `@@ -1,0 +1,N @@` (pure insertion) and `@@ -1,N +1,0 @@` (pure
+// deletion) carry a zero count on one side. parseChangedRanges
+// collapses each to a single-line span so the side stays addressable.
+func (s *PRSuite) TestParseChangedRangesZeroCountHunks() {
+	diff := []byte("diff --git a/ins.go b/ins.go\n" +
+		"@@ -0,0 +5,2 @@\n" +
+		"diff --git a/del.go b/del.go\n" +
+		"@@ -7,3 +0,0 @@\n",
+	)
+	r := parseChangedRanges(diff)
+	require.Equal(s.T(), [][2]int{{5, 6}}, r["ins.go"].newSpans)
+	require.Equal(s.T(), [][2]int{{0, 0}}, r["ins.go"].oldSpans)
+	require.Equal(s.T(), [][2]int{{0, 0}}, r["del.go"].newSpans)
+	require.Equal(s.T(), [][2]int{{7, 9}}, r["del.go"].oldSpans)
+}
+
+// computeContextNeeded must tolerate the edge cases that ShouldRediff
+// pre-screens away: nil entries in the comment slice, comments on files
+// that landed in the diff but produced no spans for the requested side,
+// and comments that already fall inside an existing span.
+func (s *PRSuite) TestComputeContextNeededEdges() {
+	diff := []byte("diff --git a/x.go b/x.go\n@@ -10,3 +10,3 @@\n")
+	// Nil entry, in-span comment (dist=0), and a side that has no spans
+	// should all keep needed at 0 without panicking.
+	needed := computeContextNeeded(diff, []*Comment{
+		nil,
+		{Path: "x.go", Line: 11, Side: "RIGHT"},
+	})
+	require.Equal(s.T(), 0, needed)
+
+	// File in the diff but no hunks recorded (mode-only / binary patch):
+	// both sides are empty, so any comment on it widens nothing.
+	binaryOnly := []byte("diff --git a/bin.bin b/bin.bin\n")
+	needed = computeContextNeeded(binaryOnly, []*Comment{
+		{Path: "bin.bin", Line: 1, Side: "RIGHT"},
+	})
+	require.Equal(s.T(), 0, needed)
+}
+
 func (s *PRSuite) TestShouldRediff() {
 	diff := []byte("diff --git a/x.go b/x.go\n" +
 		"--- a/x.go\n" +

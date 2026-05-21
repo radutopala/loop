@@ -73,6 +73,20 @@ func (s *SessionSuite) TestUpdateStatusMissingReturnsFalse() {
 	require.False(s.T(), store.UpdateStatus("nope", StatusError, "x"))
 }
 
+func (s *SessionSuite) TestUpdateRawDiffMissingReturnsFalse() {
+	store := NewStore()
+	require.False(s.T(), store.UpdateRawDiff("nope", "diff"))
+}
+
+func (s *SessionSuite) TestUpdateRawDiffSwapsAndStampsTime() {
+	store := NewStore()
+	store.Put("ch1", &Session{RawDiff: "old"})
+	require.True(s.T(), store.UpdateRawDiff("ch1", "new"))
+	got := store.Get("ch1")
+	require.Equal(s.T(), "new", got.RawDiff)
+	require.False(s.T(), got.UpdatedAt.IsZero())
+}
+
 func (s *SessionSuite) TestUpdateStatus() {
 	store := NewStore()
 	store.Put("ch1", &Session{Status: StatusIdle})

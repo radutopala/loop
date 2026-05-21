@@ -298,20 +298,36 @@ func (s *Server) handleReviewSync(w http.ResponseWriter, r *http.Request) {
 	}
 	ghUser := s.resolveGHUser(dirPath, parentDirPath)
 
-	prNum := sess.PR.Number
-	headSHA, err := s.reviewClient.FetchPRHeadSHA(r.Context(), dirPath, ghUser, prNum)
-	if err != nil {
+	if _, err := s.refreshReviewSession(r.Context(), channelID, dirPath, ghUser, sess); err != nil {
 		respondReviewError(w, err)
 		return
 	}
-	if err := s.reviewWorktree.Refresh(r.Context(), dirPath, sess.WorktreePath, prNum); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	ghComments := s.fetchExistingReviewComments(r.Context(), dirPath, ghUser, prNum)
+	writeHTTPJSON(w, http.StatusOK, reviewSessionResponse{Present: true, Session: s.reviewStore.Get(channelID)}, s.logger)
+}
 
-	// Preserve agent-emitted comments verbatim; replace github-sourced
-	// ones with the fresh snapshot. Same precedence as Load.
+// refreshReviewSession fast-forwards the worktree to the PR's current
+// head, refetches GH review comments, re-runs Diff with widened context
+// (so every comment lands inside a hunk), and replaces the session in
+// the store with Status=Ready. Used by Sync and Run — both want the
+// agent and the diff view to reflect the latest PR state without
+// forcing the user to Close + Load.
+//
+// Agent-emitted comments from a prior run are preserved verbatim;
+// github-sourced ones are replaced with the fresh snapshot. Broadcasts
+// review.diff when raw_diff changes so any FE that didn't drive this
+// call (e.g. Run, whose HTTP response doesn't carry the session)
+// still picks up the new diff over WS.
+func (s *Server) refreshReviewSession(ctx context.Context, channelID, dirPath, ghUser string, sess *review.Session) (*review.Session, error) {
+	prNum := sess.PR.Number
+	headSHA, err := s.reviewClient.FetchPRHeadSHA(ctx, dirPath, ghUser, prNum)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.reviewWorktree.Refresh(ctx, dirPath, sess.WorktreePath, prNum); err != nil {
+		return nil, err
+	}
+	ghComments := s.fetchExistingReviewComments(ctx, dirPath, ghUser, prNum)
+
 	var merged []*review.Comment
 	for _, c := range sess.Comments {
 		if c == nil || c.Source == "github" {
@@ -321,23 +337,25 @@ func (s *Server) handleReviewSync(w http.ResponseWriter, r *http.Request) {
 	}
 	merged = append(merged, ghComments...)
 
-	// Pass the full merged comment set (agent + GH) so Diff can widen
-	// `-U` enough to land every comment inside a hunk.
-	diff, err := s.reviewWorktree.Diff(r.Context(), dirPath, sess.WorktreePath, sess.PR.BaseRef, merged)
+	diff, err := s.reviewWorktree.Diff(ctx, dirPath, sess.WorktreePath, sess.PR.BaseRef, merged)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
+		return nil, err
 	}
-
+	raw := string(diff)
 	s.reviewStore.Put(channelID, &review.Session{
 		PR:           sess.PR,
 		HeadSHA:      headSHA,
 		WorktreePath: sess.WorktreePath,
-		RawDiff:      string(diff),
+		RawDiff:      raw,
 		Comments:     merged,
 		Status:       review.StatusReady,
 	})
-	writeHTTPJSON(w, http.StatusOK, reviewSessionResponse{Present: true, Session: s.reviewStore.Get(channelID)}, s.logger)
+	if raw != sess.RawDiff {
+		if hub := s.eventsHub; hub != nil {
+			hub.BroadcastReviewDiff(channelID, events.ReviewDiffEventData{RawDiff: raw})
+		}
+	}
+	return s.reviewStore.Get(channelID), nil
 }
 
 // fetchExistingReviewComments pulls inline review comments already filed
@@ -742,6 +760,26 @@ func (s *Server) handleReviewRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ghUser := s.resolveGHUser(channelDirPath, parentDirPath)
+
+	// Refresh the worktree + GH comments + diff before the agent kicks
+	// off. Without this, the agent could review stale code (commits
+	// pushed since Load) and miss out-of-band GH comments in its dedup
+	// list. Mirrors Sync's behavior. Errors here unregister the run and
+	// short-circuit before any status flip — the FE keeps showing
+	// StatusReady and the error banner from the HTTP response.
+	if channelDirPath == "" {
+		s.unregisterReviewRun(channelID)
+		http.Error(w, "channel has no dir_path", http.StatusBadRequest)
+		return
+	}
+	refreshed, err := s.refreshReviewSession(r.Context(), channelID, channelDirPath, ghUser, sess)
+	if err != nil {
+		s.unregisterReviewRun(channelID)
+		respondReviewError(w, err)
+		return
+	}
+	sess = refreshed
+
 	// Inlining the diff blew past Linux's MAX_ARG_STRLEN (~128KB per argv
 	// entry) on large PRs and killed the container with "argument list too
 	// long" before claude ever started. The worktree is already checked

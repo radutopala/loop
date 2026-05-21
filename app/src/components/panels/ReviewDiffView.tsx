@@ -233,7 +233,6 @@ export function ReviewDiffView({ channelId, rawDiff, comments, worktreePath, onP
             style={{ borderLeft: `3px solid ${idx === clampedIdx ? colors.active : "transparent"}`, transition: "border-color 0.15s ease" }}
           >
             <FileSection
-              channelId={channelId}
               summary={sum}
               comments={byFile.get(sum.path) ?? []}
               expanded={expanded.has(sum.path)}
@@ -260,6 +259,7 @@ export function ReviewDiffView({ channelId, rawDiff, comments, worktreePath, onP
           x={fileContextMenu.x}
           y={fileContextMenu.y}
           items={[
+            { label: "Open file", onClick: () => dispatchOpenFile(channelId, fileContextMenu.path) },
             { label: "Copy relative path", onClick: () => void navigator.clipboard.writeText(fileContextMenu.path) },
             { label: "Copy absolute path", onClick: () => void navigator.clipboard.writeText((worktreePath ?? "") + "/" + fileContextMenu.path) },
           ]}
@@ -396,7 +396,6 @@ function DiffToolbar({
 }
 
 function FileSection({
-  channelId,
   summary,
   comments,
   expanded,
@@ -406,7 +405,6 @@ function FileSection({
   onPushComment,
   onDeleteComment,
 }: {
-  channelId: string;
   summary: FileSummary;
   comments: ReviewComment[];
   expanded: boolean;
@@ -438,109 +436,76 @@ function FileSection({
 
   return (
     <div data-testid={`review-diff-file-${summary.path}`}>
-      <div
+      <button
+        onClick={onToggle}
         onContextMenu={(e) => onContextMenu(e, summary.path)}
         style={{
           display: "flex",
           alignItems: "center",
           gap: 6,
           width: "100%",
+          padding: "4px 12px",
+          border: "none",
           background: expanded ? colors.hoverBg : "transparent",
           borderBottom: `1px solid ${colors.border}`,
+          color: colors.textLight,
+          fontSize: 12,
+          fontFamily: fonts.mono,
+          textAlign: "left",
+          cursor: "pointer",
         }}
       >
-        <button
-          onClick={onToggle}
+        <svg
+          width="10"
+          height="10"
+          viewBox="0 0 10 10"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.5"
+          strokeLinecap="round"
+          strokeLinejoin="round"
           style={{
-            display: "flex",
-            alignItems: "center",
-            gap: 6,
-            flex: 1,
-            minWidth: 0,
-            padding: "4px 12px",
-            border: "none",
-            background: "transparent",
-            color: colors.textLight,
-            fontSize: 12,
-            fontFamily: fonts.mono,
-            textAlign: "left",
-            cursor: "pointer",
-          }}
-        >
-          <svg
-            width="10"
-            height="10"
-            viewBox="0 0 10 10"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="1.5"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            style={{
-              transition: "transform 0.15s ease",
-              transform: expanded ? "rotate(0deg)" : "rotate(-90deg)",
-              flexShrink: 0,
-              color: colors.textDim,
-            }}
-          >
-            <path d="M2.5 3.5L5 6.5L7.5 3.5" />
-          </svg>
-          <span
-            style={{
-              flex: 1,
-              overflow: "hidden",
-              textOverflow: "ellipsis",
-              whiteSpace: "nowrap",
-              direction: "rtl",
-              textAlign: "left",
-            }}
-          >
-            <bdi>{summary.path}</bdi>
-          </span>
-          {totalCount > 0 && (
-            <span
-              data-testid={`review-diff-file-count-${summary.path}`}
-              style={{
-                flexShrink: 0,
-                fontSize: 10,
-                padding: "1px 6px",
-                borderRadius: 3,
-                border: `1px solid ${colors.active}`,
-                color: colors.active,
-              }}
-              title={`${summary.agentCount} agent · ${summary.ghCount} github`}
-            >
-              {totalCount}
-            </span>
-          )}
-          <span style={{ flexShrink: 0, width: 80, fontSize: 11, textAlign: "right" }}>
-            <span style={{ color: colors.diffAddText }}>+{summary.additions}</span>{" "}
-            <span style={{ color: colors.diffDelText }}>-{summary.deletions}</span>
-          </span>
-        </button>
-        <button
-          data-testid={`review-diff-file-open-${summary.path}`}
-          onClick={(e) => {
-            e.stopPropagation();
-            dispatchOpenFile(channelId, summary.path);
-          }}
-          title="Open file in editor"
-          style={{
+            transition: "transform 0.15s ease",
+            transform: expanded ? "rotate(0deg)" : "rotate(-90deg)",
             flexShrink: 0,
-            background: "transparent",
             color: colors.textDim,
-            border: `1px solid ${colors.border}`,
-            borderRadius: 3,
-            padding: "1px 6px",
-            margin: "0 8px 0 0",
-            fontSize: 10,
-            fontFamily: fonts.sans,
-            cursor: "pointer",
           }}
         >
-          Open
-        </button>
-      </div>
+          <path d="M2.5 3.5L5 6.5L7.5 3.5" />
+        </svg>
+        <span
+          style={{
+            flex: 1,
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            whiteSpace: "nowrap",
+            direction: "rtl",
+            textAlign: "left",
+          }}
+        >
+          <bdi>{summary.path}</bdi>
+        </span>
+        {totalCount > 0 && (
+          <span
+            data-testid={`review-diff-file-count-${summary.path}`}
+            style={{
+              flexShrink: 0,
+              fontSize: 10,
+              padding: "1px 6px",
+              borderRadius: 3,
+              border: `1px solid ${colors.active}`,
+              color: colors.active,
+            }}
+            title={`${summary.agentCount} agent · ${summary.ghCount} github`}
+          >
+            {totalCount}
+          </span>
+        )}
+        <span style={{ flexShrink: 0, width: 80, fontSize: 11, textAlign: "right" }}>
+          <span style={{ color: colors.diffAddText }}>+{summary.additions}</span>{" "}
+          <span style={{ color: colors.diffDelText }}>-{summary.deletions}</span>
+        </span>
+      </button>
       {expanded && (
         <div style={{ borderBottom: `1px solid ${colors.border}` }}>
           {segments.map((seg, si) => {
