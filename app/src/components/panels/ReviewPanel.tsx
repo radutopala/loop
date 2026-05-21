@@ -68,8 +68,13 @@ function buildBatchPromptForChat(cs: ReviewComment[], headSHA?: string, prNumber
 interface ReviewPanelProps {
   channelId: string;
   subscribeChatEvents?: (listener: ChatEventListener) => () => void;
-  /** Dismiss the sidebar's `rev` pill — fired once the user is looking at the review. */
-  clearReviewPill?: (channelId: string) => void;
+  /**
+   * Register this channel as having a Review panel mounted. The store
+   * drops the pill on call and suppresses re-lights (from the WS event
+   * handler or the WS-reconnect rehydrate path) until the returned
+   * deregister fn is called on unmount.
+   */
+  registerReviewView?: (channelId: string) => () => void;
 }
 
 function statusLabel(status: ReviewStatus): string {
@@ -82,7 +87,7 @@ function statusLabel(status: ReviewStatus): string {
   }
 }
 
-export function ReviewPanel({ channelId, subscribeChatEvents, clearReviewPill }: ReviewPanelProps) {
+export function ReviewPanel({ channelId, subscribeChatEvents, registerReviewView }: ReviewPanelProps) {
   const { colors, fontSizes } = useTheme();
   const [session, setSession] = useState<ReviewSession | null>(null);
   const [prList, setPrList] = useState<ReviewPR[] | null>(null);
@@ -93,14 +98,15 @@ export function ReviewPanel({ channelId, subscribeChatEvents, clearReviewPill }:
 
   const hasSession = session !== null && session.status !== "idle" && session.status !== "error";
 
-  // The `rev` pill in the sidebar is a "go look" badge — once this panel
-  // is mounted and showing a session, the user has acknowledged it.
-  // Drop the pill on every render where the session is visualized so a
-  // WS reconnect that re-runs rehydrateReviewSessions (and re-adds the
-  // pill) can't briefly relight it while the panel is in view.
+  // The sidebar `rev` pill is a "go look" badge — once this panel is
+  // mounted, the user is already looking. Register the channel with the
+  // store for the panel's lifetime so the WS event handler and the
+  // WS-reconnect rehydrate path skip re-adding the pill for this
+  // channel. Unregister on unmount / channel switch.
   useEffect(() => {
-    if (hasSession) clearReviewPill?.(channelId);
-  }, [hasSession, channelId, clearReviewPill]);
+    if (!registerReviewView) return;
+    return registerReviewView(channelId);
+  }, [channelId, registerReviewView]);
 
   // Initial fetch on channel change.
   useEffect(() => {
@@ -156,11 +162,6 @@ export function ReviewPanel({ channelId, subscribeChatEvents, clearReviewPill }:
       } else if (event.type === "review.status") {
         const d = event.data as { status: ReviewStatus; error?: string };
         setSession((prev) => prev ? { ...prev, status: d.status, error: d.error ?? "" } : prev);
-        // Suppress the sidebar pill on every fresh "ready" — the panel
-        // is mounted and the user is already looking at the review, so
-        // a new pill would be noise. Without this, a re-run that lands
-        // back in ready while the panel is open would relight the pill.
-        if (d.status === "ready") clearReviewPill?.(channelId);
       } else if (event.type === "review.diff") {
         // Backend re-rendered the diff with widened context after an
         // agent comment landed outside the current hunks. Swap the
@@ -171,7 +172,7 @@ export function ReviewPanel({ channelId, subscribeChatEvents, clearReviewPill }:
       }
     };
     return subscribeChatEvents(listener);
-  }, [channelId, subscribeChatEvents, clearReviewPill]);
+  }, [channelId, subscribeChatEvents]);
 
   const onSelectPR = useCallback(async (pr: ReviewPR) => {
     setBusy(true); setError(null); setLoadingPR(pr.number);
@@ -287,15 +288,21 @@ export function ReviewPanel({ channelId, subscribeChatEvents, clearReviewPill }:
   }, [channelId, ensureChatOpen, session?.head_sha, session?.pr?.number]);
 
   const onPushAllToChat = useCallback(async () => {
-    setError(null);
     const pending = (session?.comments ?? []).filter((c) => !c.pushed);
     if (pending.length === 0) return;
+    // Toggle `busy` for the duration of the sendMessage round-trip so the
+    // header buttons (which all gate on `busy`) actually disable. Without
+    // this the disabled={busy} on "Push all to chat" was a no-op and
+    // double-clicks queued duplicate prompts to the agent.
+    setBusy(true); setError(null);
     try {
       ensureChatOpen();
       const prompt = buildBatchPromptForChat(pending, session?.head_sha, session?.pr?.number);
       await sendMessage(channelId, prompt);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
     }
   }, [channelId, ensureChatOpen, session?.comments, session?.head_sha, session?.pr?.number]);
 

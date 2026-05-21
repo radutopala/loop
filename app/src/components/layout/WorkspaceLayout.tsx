@@ -208,8 +208,12 @@ interface WorkspaceLayoutProps {
   onChatStateUnmount?: (channelId: string, state: ActiveChatState) => void;
   /** Subscribe to chat events from the store's single WebSocket. */
   subscribeChatEvents?: (listener: ChatEventListener) => () => void;
-  /** Drop the sidebar's `rev` pill for a channel. */
-  clearReviewPill?: (channelId: string) => void;
+  /**
+   * Register a channel as having its Review panel mounted. Drops the
+   * pill immediately and blocks the WS / rehydrate path from relighting
+   * it until the returned deregister fn is called.
+   */
+  registerReviewView?: (channelId: string) => () => void;
 }
 
 export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutProps>(function WorkspaceLayout({
@@ -234,7 +238,7 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
   initialChatState,
   onChatStateUnmount,
   subscribeChatEvents,
-  clearReviewPill,
+  registerReviewView,
 }, ref) {
   const { colors } = useTheme();
   const { agents: agentInfoMap } = useAgentRegistry(channelId);
@@ -951,14 +955,14 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
               key={`layout-review-${channelId}`}
               channelId={channelId}
               subscribeChatEvents={subscribeChatEvents}
-              clearReviewPill={clearReviewPill}
+              registerReviewView={registerReviewView}
             />
           );
         default:
           return null;
       }
     },
-    [channelId, chatState, editorState, dirPath, branch, scrollToMessageId, onScrollComplete, openMemoryFile, onStatusChange, handlePaneStatus, handleRemoveLeaf, subscribeChatEvents, clearReviewPill],
+    [channelId, chatState, editorState, dirPath, branch, scrollToMessageId, onScrollComplete, openMemoryFile, onStatusChange, handlePaneStatus, handleRemoveLeaf, subscribeChatEvents, registerReviewView],
   );
 
   return (

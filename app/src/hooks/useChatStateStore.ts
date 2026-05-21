@@ -81,6 +81,12 @@ export function useChatStateStore({
   const unreadIdsRef = useRef(new Set<string>());
   const gateChannelIdsRef = useRef(new Set<string>());
   const reviewChannelIdsRef = useRef(new Set<string>());
+  // Channels that currently have a Review panel mounted in some
+  // workspace tree. The WS event handler and rehydrate path both consult
+  // this so a fresh `review.status: ready` (or a reconnect-driven
+  // rehydrate) doesn't relight the sidebar pill on a channel the user
+  // is already looking at.
+  const viewingReviewChannelsRef = useRef(new Set<string>());
   const [unreadCount, setUnreadCount] = useState(0);
   const [, setGateTick] = useState(0);
   const [, setReviewTick] = useState(0);
@@ -227,8 +233,12 @@ export function useChatStateStore({
       if (s.status === "ready") ready.add(s.channel_id);
     }
     const set = reviewChannelIdsRef.current;
+    const viewing = viewingReviewChannelsRef.current;
     let changed = false;
     for (const id of ready) {
+      // Don't relight the pill on a channel whose Review panel is
+      // currently open — the user is already looking at it.
+      if (viewing.has(id)) continue;
       if (!set.has(id)) { set.add(id); changed = true; }
     }
     for (const id of [...set]) {
@@ -338,14 +348,15 @@ export function useChatStateStore({
       }
 
       // Track which channels have a loaded review session so the sidebar
-      // can render a `rev` pill alongside `gate`. Live events only — no
-      // rehydration on reload, the pill reappears once the user opens the
-      // Review panel for that channel and a fresh status event fires.
+      // can render a `rev` pill alongside `gate`. If the Review panel
+      // for this channel is currently mounted, skip lighting the pill —
+      // the user is already looking at it.
       if (channelId && wsEvent.type === "review.status") {
         const data = wsEvent.data as { status: string };
         const set = reviewChannelIdsRef.current;
         const has = set.has(channelId);
-        const shouldHave = data.status === "ready";
+        const shouldHave =
+          data.status === "ready" && !viewingReviewChannelsRef.current.has(channelId);
         if (shouldHave && !has) {
           set.add(channelId);
           setReviewTick((v) => v + 1);
@@ -570,19 +581,24 @@ export function useChatStateStore({
     setUnreadCount(0);
   }, []);
 
-  // Drop the `rev` pill for a channel. Called by the Review panel once it
-  // mounts on a ready session — the pill is a "go look" badge, and the
-  // user looking at the panel makes it redundant. Live `review.status`
-  // events can still re-light it for a fresh transition; this only
-  // clears the current notification.
-  const clearReviewPill = useCallback((channelId: string) => {
-    const set = reviewChannelIdsRef.current;
-    if (set.delete(channelId)) {
+  // Mark a channel as "currently being viewed in a Review panel".
+  // Drops the pill immediately AND prevents the WS event handler /
+  // rehydrate path from relighting it for the lifetime of the
+  // registration. Returns a deregister fn for the panel's useEffect
+  // cleanup. A fire-and-forget clear was not enough because rehydrate
+  // unconditionally re-adds ready sessions to the pill set on every WS
+  // reconnect, and the Review panel's effect can't observe that.
+  const registerReviewView = useCallback((channelId: string) => {
+    viewingReviewChannelsRef.current.add(channelId);
+    if (reviewChannelIdsRef.current.delete(channelId)) {
       setReviewTick((v) => v + 1);
     }
+    return () => {
+      viewingReviewChannelsRef.current.delete(channelId);
+    };
   }, []);
 
-  return { getState, saveState, removeState, isRunningMapRef, unreadIdsRef, gateChannelIdsRef, reviewChannelIdsRef, unreadCount, markRead, markAllRead, clearReviewPill, subscribeChatEvents };
+  return { getState, saveState, removeState, isRunningMapRef, unreadIdsRef, gateChannelIdsRef, reviewChannelIdsRef, unreadCount, markRead, markAllRead, registerReviewView, subscribeChatEvents };
 }
 
 // ── Helpers ──
