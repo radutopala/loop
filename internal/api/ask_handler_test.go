@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"sync"
@@ -9,7 +10,23 @@ import (
 
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
+
+	"github.com/radutopala/loop/internal/events"
 )
+
+// MockPendingAsksLister mocks api.PendingAsksLister. Local to the test
+// package so production code stays free of test-only types.
+type MockPendingAsksLister struct {
+	mock.Mock
+}
+
+func (m *MockPendingAsksLister) ListAskedChannels() []events.AskedChannelEntry {
+	args := m.Called()
+	if v := args.Get(0); v != nil {
+		return v.([]events.AskedChannelEntry)
+	}
+	return nil
+}
 
 // MockAskResolver mocks api.AskResolver. Local to the test package so
 // production code stays free of test-only types.
@@ -171,4 +188,39 @@ func (s *ServerSuite) TestAskResolveNoHandlerConfigured() {
 	s.srv.SetAskResolver(new(MockAskResolver))
 	rec := s.testRequest("POST", "/api/channels/ch-1/ask/resolve", `{"action":"answer","answer":"x"}`)
 	require.Equal(s.T(), http.StatusNotImplemented, rec.Code)
+}
+
+func (s *ServerSuite) TestListPendingAsksNotConfigured() {
+	rec := s.testRequest("GET", "/api/asks/pending", "")
+	require.Equal(s.T(), http.StatusNotImplemented, rec.Code)
+}
+
+func (s *ServerSuite) TestListPendingAsksEmpty() {
+	lister := new(MockPendingAsksLister)
+	lister.On("ListAskedChannels").Return(nil)
+	s.srv.SetPendingAsksLister(lister)
+
+	rec := s.testRequest("GET", "/api/asks/pending", "")
+	require.Equal(s.T(), http.StatusOK, rec.Code)
+
+	var resp pendingAsksResponse
+	require.NoError(s.T(), json.Unmarshal(rec.Body.Bytes(), &resp))
+	require.NotNil(s.T(), resp.Asks)
+	require.Empty(s.T(), resp.Asks)
+}
+
+func (s *ServerSuite) TestListPendingAsksWithEntries() {
+	entries := []events.AskedChannelEntry{
+		{ChannelID: "ch-1", Data: events.AskUserQuestionEventData{Questions: []events.AskUserQuestion{{Question: "yes/no?"}}}},
+	}
+	lister := new(MockPendingAsksLister)
+	lister.On("ListAskedChannels").Return(entries)
+	s.srv.SetPendingAsksLister(lister)
+
+	rec := s.testRequest("GET", "/api/asks/pending", "")
+	require.Equal(s.T(), http.StatusOK, rec.Code)
+
+	var resp pendingAsksResponse
+	require.NoError(s.T(), json.Unmarshal(rec.Body.Bytes(), &resp))
+	require.Equal(s.T(), entries, resp.Asks)
 }

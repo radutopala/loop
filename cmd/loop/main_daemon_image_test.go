@@ -361,6 +361,32 @@ func (s *MainSuite) TestEnsureImageRebuildsOnVersionMismatch() {
 	dockerClient.AssertCalled(s.T(), "ImageBuild", mock.Anything, mock.Anything, "loop-agent:latest")
 }
 
+// PruneBuildCache failure is logged-and-ignored — defaultEnsureImage must
+// still return nil so a stale cache doesn't break daemon startup.
+func (s *MainSuite) TestEnsureImagePruneBuildCacheErrorIsIgnored() {
+	dockerClient := new(mockDockerClient)
+	dockerClient.On("ImageList", mock.Anything, "loop-agent:latest").Return([]string{}, nil)
+	dockerClient.On("ImageBuild", mock.Anything, mock.Anything, "loop-agent:latest").Return(nil)
+	dockerClient.On("ImageList", mock.Anything, "loop-chrome:latest").Return([]string{}, nil)
+	dockerClient.On("ImageBuildFile", mock.Anything, mock.Anything, "chrome.Dockerfile", "loop-chrome:latest").Return(nil)
+	dockerClient.On("PruneBuildCache", mock.Anything, 30*24*time.Hour).Return(errors.New("prune broke"))
+
+	cfg := &config.Config{
+		LoopDir:        s.T().TempDir(),
+		ContainerImage: "loop-agent:latest",
+		Browser:        config.BrowserConfig{ChromeImage: "loop-chrome:latest"},
+	}
+	containerDir := filepath.Join(cfg.LoopDir, "container")
+	require.NoError(s.T(), os.MkdirAll(containerDir, 0755))
+	require.NoError(s.T(), os.WriteFile(filepath.Join(containerDir, "Dockerfile"), []byte("FROM alpine"), 0644))
+	require.NoError(s.T(), os.WriteFile(filepath.Join(containerDir, "chrome.Dockerfile"), []byte("FROM alpine"), 0644))
+
+	s.app.sys = newPassthroughMock()
+	err := s.app.defaultEnsureImage(context.Background(), dockerClient, cfg)
+	require.NoError(s.T(), err)
+	dockerClient.AssertExpectations(s.T())
+}
+
 func (s *MainSuite) TestEnsureImageSkipsRebuildWhenVersionMatches() {
 	dockerClient := new(mockDockerClient)
 	dockerClient.On("ImageList", mock.Anything, "loop-agent:latest").Return([]string{"sha256:abc"}, nil)

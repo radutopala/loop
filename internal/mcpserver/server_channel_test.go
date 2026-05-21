@@ -273,6 +273,28 @@ func (s *MCPServerSuite) TestCreateWorktreeThreadSuccessNoName() {
 	require.Contains(s.T(), text, "thread-2")
 }
 
+func (s *MCPServerSuite) TestCreateWorktreeThreadSuccessWithAuthorID() {
+	s.cleanup()
+	s.srv = New("test-channel", "http://localhost:8222", "user-42", s.httpClient, nil)
+	client := mcp.NewClient(&mcp.Implementation{Name: "test-client", Version: "1.0.0"}, nil)
+	t1, t2 := mcp.NewInMemoryTransports()
+	go func() { _ = s.srv.Run(s.ctx, t1) }()
+	session, err := client.Connect(s.ctx, t2, nil)
+	require.NoError(s.T(), err)
+	s.session = session
+	s.cleanup = func() { session.Close() }
+
+	s.httpClient.doFunc = func(req *http.Request) (*http.Response, error) {
+		body, _ := io.ReadAll(req.Body)
+		require.Contains(s.T(), string(body), `"author_id":"user-42"`)
+		return jsonResponse(http.StatusCreated, `{"thread_id":"thread-7","worktree_path":"/tmp/wt/wt-z"}`), nil
+	}
+
+	text, isError := s.callTool("create_worktree_thread", map[string]any{"branch": "feat/foo"})
+	require.False(s.T(), isError)
+	require.Contains(s.T(), text, "thread-7")
+}
+
 func (s *MCPServerSuite) TestCreateWorktreeThreadEmptyBranch() {
 	text, isError := s.callTool("create_worktree_thread", map[string]any{"branch": ""})
 	require.True(s.T(), isError)

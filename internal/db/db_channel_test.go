@@ -290,6 +290,7 @@ func (s *StoreSuite) TestDeleteChannelErrors() {
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "deleting quality snapshots for channel")
 
+	s.mock.ExpectBegin()
 	s.mock.ExpectExec(`DELETE FROM messages WHERE channel_id`).WithArgs("ch1").WillReturnResult(sqlmock.NewResult(0, 0))
 	s.mock.ExpectExec(`DELETE FROM quality_snapshots WHERE channel_id`).WithArgs("ch1").WillReturnResult(sqlmock.NewResult(0, 0))
 	s.mock.ExpectExec(`DELETE FROM channels WHERE channel_id`).WithArgs("ch1").WillReturnError(sql.ErrConnDone)
@@ -331,6 +332,7 @@ func (s *StoreSuite) TestDeleteChannelsByParentIDErrors() {
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "deleting quality snapshots for child channels")
 
+	s.mock.ExpectBegin()
 	s.mock.ExpectExec(`DELETE FROM messages WHERE channel_id IN`).WithArgs("ch1").WillReturnResult(sqlmock.NewResult(0, 0))
 	s.mock.ExpectExec(`DELETE FROM quality_snapshots WHERE channel_id IN`).WithArgs("ch1").WillReturnResult(sqlmock.NewResult(0, 0))
 	s.mock.ExpectExec(`DELETE FROM channels WHERE parent_id`).WithArgs("ch1").WillReturnError(sql.ErrConnDone)
