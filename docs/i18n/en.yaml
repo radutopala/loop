@@ -1,0 +1,3 @@
+# Override Hextra's built-in copyright string (defaults to "© 2024 Hextra.").
+# Footer reads this via `{{ T "copyright" }}` in _partials/footer.html.
+copyright: "© 2026 Radu Topala — Loop is Apache-2.0 licensed."

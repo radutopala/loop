@@ -31,6 +31,7 @@ module:
         - public/**
         - resources/**
         - layouts/**
+        - i18n/**
 
 markup:
   goldmark:
@@ -69,7 +70,9 @@ params:
     default: system
     displayToggle: true
   footer:
-    enable: false
+    enable: true
+    displayCopyright: true
+    displayPoweredBy: false
   search:
     enable: true
     type: flexsearch
