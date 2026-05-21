@@ -1329,6 +1329,24 @@ func (s *ReviewHandlerSuite) wireReadySession() {
 	// GetChannel once; the run handler may also call it for fallback
 	// when the channel isn't a worktree — `.Maybe()` covers both paths.
 	s.store.On("GetChannel", mock.Anything, "ch1").Return(&db.Channel{ChannelID: "ch1", DirPath: "/repo"}, nil).Maybe()
+	s.wireRefreshMocks("/repo", "/repo/.worktrees/pr-7", 7, "main", []byte("diff --git a/x b/x"))
+}
+
+// wireRefreshMocks attaches Maybe expectations for the refresh chain
+// Run executes before kicking off the agent (FetchPRHeadSHA → Refresh →
+// FetchRepoSlug-fails → Diff). diff is what Diff returns; tests that
+// don't want a review.diff broadcast should pass the same bytes the
+// session's RawDiff is seeded with so the refresh is a visual no-op.
+// Tests exercising the refresh path itself should override these with
+// explicit expectations before the handler invocation.
+func (s *ReviewHandlerSuite) wireRefreshMocks(dirPath, worktreePath string, prNum int, baseRef string, diff []byte) {
+	s.gh.On("FetchPRHeadSHA", mock.Anything, dirPath, mock.Anything, prNum).Return("abc", nil).Maybe()
+	s.wt.On("Refresh", mock.Anything, dirPath, worktreePath, prNum).Return(nil).Maybe()
+	// FetchRepoSlug returning an error short-circuits the GH comment fetch
+	// inside fetchExistingReviewComments, so no FetchPRReviewComments mock
+	// is needed. Best-effort behavior matches production.
+	s.gh.On("FetchRepoSlug", mock.Anything, dirPath, mock.Anything).Return((*githubapi.RepoSlug)(nil), errors.New("slug skipped")).Maybe()
+	s.wt.On("Diff", mock.Anything, dirPath, worktreePath, baseRef, mock.Anything).Return(diff, nil).Maybe()
 }
 
 func (s *ReviewHandlerSuite) TestRunReviewStoreNotConfigured() {
@@ -1435,16 +1453,27 @@ func (s *ReviewHandlerSuite) TestRunPromptListsExistingCommentsForDedup() {
 		WorktreePath: "/repo/.worktrees/pr-7",
 		RawDiff:      "diff",
 		Comments: []*review.Comment{
-			{ID: "gh-1", Path: "a.go", Line: 5, Side: "RIGHT", Body: "nit body", Source: "github", Author: "bob"},
 			{ID: "a", Path: "b.go", Line: 9, Side: "LEFT", Body: "issue body", Source: "agent"},
-			// no author -> bare "github" label; empty side -> defaults to RIGHT;
-			// body > 240 chars -> truncated with ellipsis.
-			{ID: "gh-2", Path: "c.go", Line: 3, Side: "", Body: strings.Repeat("x", 300), Source: "github"},
 			nil, // defensive: nil entries are skipped without panicking.
 		},
 		Status: review.StatusReady,
 	})
 	s.store.On("GetChannel", mock.Anything, "ch1").Return(&db.Channel{ChannelID: "ch1", DirPath: "/repo"}, nil).Maybe()
+	// Refresh re-fetches GH comments before kicking off the agent — so
+	// the GH side of the dedup list must come back from FetchPRReviewComments,
+	// not from the seed session (which refresh discards for source=github
+	// entries). The agent comment from the seed survives untouched.
+	s.gh.On("FetchPRHeadSHA", mock.Anything, "/repo", mock.Anything, 7).Return("abc", nil).Maybe()
+	s.wt.On("Refresh", mock.Anything, "/repo", "/repo/.worktrees/pr-7", 7).Return(nil).Maybe()
+	slug := &githubapi.RepoSlug{Owner: "o", Name: "r"}
+	s.gh.On("FetchRepoSlug", mock.Anything, "/repo", mock.Anything).Return(slug, nil).Maybe()
+	s.gh.On("FetchPRReviewComments", mock.Anything, "/repo", mock.Anything, *slug, 7).Return([]githubapi.PRReviewComment{
+		{ID: 1, Path: "a.go", Line: 5, Side: "RIGHT", Body: "nit body", Author: "bob"},
+		// no author -> bare "github" label; empty side -> defaults to RIGHT;
+		// body > 240 chars -> truncated with ellipsis.
+		{ID: 2, Path: "c.go", Line: 3, Side: "", Body: strings.Repeat("x", 300)},
+	}, nil).Maybe()
+	s.wt.On("Diff", mock.Anything, "/repo", "/repo/.worktrees/pr-7", "main", mock.Anything).Return([]byte("diff"), nil).Maybe()
 	runner := &mockReviewRunner{done: make(chan struct{})}
 	s.srv.SetReviewAgent(runner, "", "")
 
@@ -1558,15 +1587,19 @@ func (s *ReviewHandlerSuite) TestBroadcastReviewStatusNoHubIsSafe() {
 func (s *ReviewHandlerSuite) TestRunRediffsOnCommentOutsideHunk() {
 	// The seed diff covers x.go but only line 1 falls inside its hunk.
 	// The agent's comment on line 42 is outside that hunk → re-diff.
+	seedDiff := []byte("diff --git a/x.go b/x.go\n--- a/x.go\n+++ b/x.go\n@@ -1,1 +1,1 @@\n-old\n+new\n")
 	s.rs.Put("ch1", &review.Session{
 		PR: &githubapi.PRInfo{
 			Number: 7, BaseRef: "main", HeadRef: "feat-x",
 		},
 		WorktreePath: "/repo/.worktrees/pr-7",
-		RawDiff:      "diff --git a/x.go b/x.go\n--- a/x.go\n+++ b/x.go\n@@ -1,1 +1,1 @@\n-old\n+new\n",
+		RawDiff:      string(seedDiff),
 		Status:       review.StatusReady,
 	})
 	s.store.On("GetChannel", mock.Anything, "ch1").Return(&db.Channel{ChannelID: "ch1", DirPath: "/repo"}, nil).Maybe()
+	s.gh.On("FetchPRHeadSHA", mock.Anything, "/repo", mock.Anything, 7).Return("abc", nil).Maybe()
+	s.wt.On("Refresh", mock.Anything, "/repo", "/repo/.worktrees/pr-7", 7).Return(nil).Maybe()
+	s.gh.On("FetchRepoSlug", mock.Anything, "/repo", mock.Anything).Return((*githubapi.RepoSlug)(nil), errors.New("slug skipped")).Maybe()
 
 	hub := NewEventsHub(slog.Default())
 	var diffEvents []Event
@@ -1580,8 +1613,13 @@ func (s *ReviewHandlerSuite) TestRunRediffsOnCommentOutsideHunk() {
 	}
 	s.srv.SetEventsHub(hub)
 
+	// First Diff call (refresh, before agent kicks off) returns the seed
+	// bytes — raw == sess.RawDiff, so no review.diff broadcast. Second
+	// Diff call (re-diff after the agent's out-of-hunk comment) returns
+	// widened bytes, triggering the one broadcast we assert on.
 	widened := []byte("diff --git a/x.go b/x.go\n--- a/x.go\n+++ b/x.go\n@@ -1,50 +1,50 @@\n widened\n")
-	s.wt.On("Diff", mock.Anything, "/repo", "/repo/.worktrees/pr-7", "main", mock.Anything).Return(widened, nil)
+	s.wt.On("Diff", mock.Anything, "/repo", "/repo/.worktrees/pr-7", "main", mock.Anything).Return(seedDiff, nil).Once()
+	s.wt.On("Diff", mock.Anything, "/repo", "/repo/.worktrees/pr-7", "main", mock.Anything).Return(widened, nil).Once()
 
 	runner := &mockReviewRunner{done: make(chan struct{})}
 	runner.runFn = func(onComment func(*review.Comment)) (*agent.AgentResponse, error) {
@@ -1607,15 +1645,18 @@ func (s *ReviewHandlerSuite) TestRunRediffsOnCommentOutsideHunk() {
 // Comments that already land inside an existing hunk must NOT trigger
 // a re-diff — that would thrash the FE for nothing on every comment.
 func (s *ReviewHandlerSuite) TestRunSkipsRediffWhenCommentInsideHunk() {
+	seedDiff := []byte("diff --git a/x.go b/x.go\n--- a/x.go\n+++ b/x.go\n@@ -1,5 +1,5 @@\n line\n line\n-old\n+new\n line\n line\n")
 	s.rs.Put("ch1", &review.Session{
 		PR: &githubapi.PRInfo{
 			Number: 7, BaseRef: "main", HeadRef: "feat-x",
 		},
 		WorktreePath: "/repo/.worktrees/pr-7",
-		RawDiff:      "diff --git a/x.go b/x.go\n--- a/x.go\n+++ b/x.go\n@@ -1,5 +1,5 @@\n line\n line\n-old\n+new\n line\n line\n",
+		RawDiff:      string(seedDiff),
 		Status:       review.StatusReady,
 	})
 	s.store.On("GetChannel", mock.Anything, "ch1").Return(&db.Channel{ChannelID: "ch1", DirPath: "/repo"}, nil).Maybe()
+	// Refresh mocks: Diff returns the same seed so no review.diff broadcast.
+	s.wireRefreshMocks("/repo", "/repo/.worktrees/pr-7", 7, "main", seedDiff)
 
 	hub := NewEventsHub(slog.Default())
 	var diffEvents []Event
@@ -1649,15 +1690,17 @@ func (s *ReviewHandlerSuite) TestRunSkipsRediffWhenCommentInsideHunk() {
 // widening -U won't bring a new file into the diff; the FE shows them
 // in the outside-of-diff section.
 func (s *ReviewHandlerSuite) TestRunSkipsRediffWhenPathAbsentFromDiff() {
+	seedDiff := []byte("diff --git a/x.go b/x.go\n--- a/x.go\n+++ b/x.go\n@@ -1,1 +1,1 @@\n-old\n+new\n")
 	s.rs.Put("ch1", &review.Session{
 		PR: &githubapi.PRInfo{
 			Number: 7, BaseRef: "main", HeadRef: "feat-x",
 		},
 		WorktreePath: "/repo/.worktrees/pr-7",
-		RawDiff:      "diff --git a/x.go b/x.go\n--- a/x.go\n+++ b/x.go\n@@ -1,1 +1,1 @@\n-old\n+new\n",
+		RawDiff:      string(seedDiff),
 		Status:       review.StatusReady,
 	})
 	s.store.On("GetChannel", mock.Anything, "ch1").Return(&db.Channel{ChannelID: "ch1", DirPath: "/repo"}, nil).Maybe()
+	s.wireRefreshMocks("/repo", "/repo/.worktrees/pr-7", 7, "main", seedDiff)
 
 	hub := NewEventsHub(slog.Default())
 	var diffEvents []Event
@@ -1690,7 +1733,7 @@ func (s *ReviewHandlerSuite) TestRunSkipsRediffWhenPathAbsentFromDiff() {
 // the container mounts the right location.
 func (s *ReviewHandlerSuite) TestRunWorktreeThreadUsesParentChannelDir() {
 	s.rs.Put("ch1", &review.Session{
-		PR:           &githubapi.PRInfo{Number: 7},
+		PR:           &githubapi.PRInfo{Number: 7, BaseRef: "main"},
 		HeadSHA:      "abc",
 		WorktreePath: "/wt/.worktrees/pr-7",
 		RawDiff:      "diff",
@@ -1700,6 +1743,10 @@ func (s *ReviewHandlerSuite) TestRunWorktreeThreadUsesParentChannelDir() {
 		&db.Channel{ChannelID: "ch1", DirPath: "/wt", Worktree: true, ParentID: "parent-ch"}, nil)
 	s.store.On("GetChannel", mock.Anything, "parent-ch").Return(
 		&db.Channel{ChannelID: "parent-ch", DirPath: "/main-repo"}, nil)
+	// Refresh chain runs against the channel's own dir ("/wt"), not the
+	// parent — the parent dir is only used to mount the shared gitdir
+	// into the agent container.
+	s.wireRefreshMocks("/wt", "/wt/.worktrees/pr-7", 7, "main", []byte("diff"))
 
 	runner := &mockReviewRunner{done: make(chan struct{})}
 	s.srv.SetReviewAgent(runner, "", "")
@@ -1715,7 +1762,7 @@ func (s *ReviewHandlerSuite) TestRunWorktreeThreadUsesParentChannelDir() {
 // repo.
 func (s *ReviewHandlerSuite) TestRunRootChannelUsesOwnDir() {
 	s.rs.Put("ch1", &review.Session{
-		PR:           &githubapi.PRInfo{Number: 7},
+		PR:           &githubapi.PRInfo{Number: 7, BaseRef: "main"},
 		HeadSHA:      "abc",
 		WorktreePath: "/repo/.worktrees/pr-7",
 		RawDiff:      "diff",
@@ -1723,6 +1770,7 @@ func (s *ReviewHandlerSuite) TestRunRootChannelUsesOwnDir() {
 	})
 	s.store.On("GetChannel", mock.Anything, "ch1").Return(
 		&db.Channel{ChannelID: "ch1", DirPath: "/repo"}, nil)
+	s.wireRefreshMocks("/repo", "/repo/.worktrees/pr-7", 7, "main", []byte("diff"))
 
 	runner := &mockReviewRunner{done: make(chan struct{})}
 	s.srv.SetReviewAgent(runner, "", "")
@@ -1738,7 +1786,7 @@ func (s *ReviewHandlerSuite) TestRunRootChannelUsesOwnDir() {
 func (s *ReviewHandlerSuite) TestRunLoopDirFallbackForParent() {
 	s.srv.loopDir = "/loop"
 	s.rs.Put("ch1", &review.Session{
-		PR:           &githubapi.PRInfo{Number: 7},
+		PR:           &githubapi.PRInfo{Number: 7, BaseRef: "main"},
 		HeadSHA:      "abc",
 		WorktreePath: "/loop/ch1/work/.worktrees/pr-7",
 		RawDiff:      "diff",
@@ -1746,6 +1794,7 @@ func (s *ReviewHandlerSuite) TestRunLoopDirFallbackForParent() {
 	})
 	s.store.On("GetChannel", mock.Anything, "ch1").Return(
 		&db.Channel{ChannelID: "ch1"}, nil)
+	s.wireRefreshMocks("/loop/ch1/work", "/loop/ch1/work/.worktrees/pr-7", 7, "main", []byte("diff"))
 
 	runner := &mockReviewRunner{done: make(chan struct{})}
 	s.srv.SetReviewAgent(runner, "", "")
@@ -1760,7 +1809,7 @@ func (s *ReviewHandlerSuite) TestRunLoopDirFallbackForParent() {
 // back to the channel's own dir. Degraded but doesn't break the run.
 func (s *ReviewHandlerSuite) TestRunWorktreeThreadParentLookupFailureFallsBack() {
 	s.rs.Put("ch1", &review.Session{
-		PR:           &githubapi.PRInfo{Number: 7},
+		PR:           &githubapi.PRInfo{Number: 7, BaseRef: "main"},
 		HeadSHA:      "abc",
 		WorktreePath: "/wt/.worktrees/pr-7",
 		RawDiff:      "diff",
@@ -1769,6 +1818,7 @@ func (s *ReviewHandlerSuite) TestRunWorktreeThreadParentLookupFailureFallsBack()
 	s.store.On("GetChannel", mock.Anything, "ch1").Return(
 		&db.Channel{ChannelID: "ch1", DirPath: "/wt", Worktree: true, ParentID: "parent-ch"}, nil)
 	s.store.On("GetChannel", mock.Anything, "parent-ch").Return(nil, errors.New("db"))
+	s.wireRefreshMocks("/wt", "/wt/.worktrees/pr-7", 7, "main", []byte("diff"))
 
 	runner := &mockReviewRunner{done: make(chan struct{})}
 	s.srv.SetReviewAgent(runner, "", "")
@@ -1779,12 +1829,168 @@ func (s *ReviewHandlerSuite) TestRunWorktreeThreadParentLookupFailureFallsBack()
 	require.Equal(s.T(), "/wt", runner.lastParent)
 }
 
-// GetChannel error on both lookups leaves parentDirPath as "" — the
-// run still proceeds, but the agent container is missing the parent
-// mount (degraded; same as before this fix).
-func (s *ReviewHandlerSuite) TestRunNoParentWhenGetChannelFails() {
+// Refresh widens / shrinks the diff: when the post-refresh raw_diff
+// differs from the session's prior diff, the hub must broadcast so the
+// FE re-renders. Covers the conditional broadcast branch in
+// refreshReviewSession that the no-op refresh paths skip.
+func (s *ReviewHandlerSuite) TestRunRefreshBroadcastsWhenDiffChanges() {
 	s.rs.Put("ch1", &review.Session{
-		PR:           &githubapi.PRInfo{Number: 7},
+		PR:           &githubapi.PRInfo{Number: 7, BaseRef: "main", HeadRef: "feat-x"},
+		HeadSHA:      "old",
+		WorktreePath: "/repo/.worktrees/pr-7",
+		RawDiff:      "OLD",
+		Status:       review.StatusReady,
+	})
+	s.store.On("GetChannel", mock.Anything, "ch1").Return(&db.Channel{ChannelID: "ch1", DirPath: "/repo"}, nil).Maybe()
+	s.gh.On("FetchPRHeadSHA", mock.Anything, "/repo", mock.Anything, 7).Return("new", nil).Maybe()
+	s.wt.On("Refresh", mock.Anything, "/repo", "/repo/.worktrees/pr-7", 7).Return(nil).Maybe()
+	s.gh.On("FetchRepoSlug", mock.Anything, "/repo", mock.Anything).Return((*githubapi.RepoSlug)(nil), errors.New("slug skipped")).Maybe()
+	// Refresh's Diff returns bytes different from sess.RawDiff → broadcast.
+	s.wt.On("Diff", mock.Anything, "/repo", "/repo/.worktrees/pr-7", "main", mock.Anything).Return([]byte("NEW"), nil).Maybe()
+
+	hub := NewEventsHub(slog.Default())
+	var diffEvents []Event
+	var hubMu sync.Mutex
+	hub.captureHook = func(e Event) {
+		if e.Type == EventReviewDiff {
+			hubMu.Lock()
+			diffEvents = append(diffEvents, e)
+			hubMu.Unlock()
+		}
+	}
+	s.srv.SetEventsHub(hub)
+
+	runner := &mockReviewRunner{done: make(chan struct{})}
+	s.srv.SetReviewAgent(runner, "", "")
+
+	w := httptest.NewRecorder()
+	s.mux.ServeHTTP(w, httptest.NewRequest("POST", "/api/channels/ch1/review/run", nil))
+	require.Equal(s.T(), http.StatusAccepted, w.Code)
+	<-runner.done
+	s.waitFor(func() bool { return s.rs.Get("ch1").Status == review.StatusReady })
+
+	require.Equal(s.T(), "NEW", s.rs.Get("ch1").RawDiff)
+	hubMu.Lock()
+	require.Len(s.T(), diffEvents, 1)
+	hubMu.Unlock()
+}
+
+// Refresh chain failure: the Run handler unregisters the in-flight slot
+// and returns an error response — the agent must NOT run against a
+// half-prepared worktree.
+func (s *ReviewHandlerSuite) TestRunRefreshFailureReturnsError() {
+	s.rs.Put("ch1", &review.Session{
+		PR:           &githubapi.PRInfo{Number: 7, BaseRef: "main", HeadRef: "feat-x"},
+		HeadSHA:      "abc",
+		WorktreePath: "/repo/.worktrees/pr-7",
+		RawDiff:      "diff",
+		Status:       review.StatusReady,
+	})
+	s.store.On("GetChannel", mock.Anything, "ch1").Return(&db.Channel{ChannelID: "ch1", DirPath: "/repo"}, nil).Maybe()
+	s.gh.On("FetchPRHeadSHA", mock.Anything, "/repo", mock.Anything, 7).Return("", errors.New("gh down"))
+
+	runner := &mockReviewRunner{done: make(chan struct{})}
+	s.srv.SetReviewAgent(runner, "", "")
+	w := httptest.NewRecorder()
+	s.mux.ServeHTTP(w, httptest.NewRequest("POST", "/api/channels/ch1/review/run", nil))
+
+	require.Equal(s.T(), http.StatusInternalServerError, w.Code)
+	require.Contains(s.T(), w.Body.String(), "gh down")
+	// Agent must not have been called.
+	require.Equal(s.T(), 0, runner.calls)
+	// In-flight slot must be released so a retry isn't shut out.
+	require.False(s.T(), s.srv.isReviewRunActive("ch1"))
+}
+
+// maybeRediffForComment is a guarded best-effort helper. Each guard
+// (no worktree set, no session, no PR, no base-ref, ShouldRediff=false,
+// Diff error, identical raw_diff) is exercised here so a regression in
+// any of them shows up immediately.
+func (s *ReviewHandlerSuite) TestMaybeRediffGuards() {
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	c := &review.Comment{Path: "x.go", Line: 50, Side: "RIGHT"}
+
+	s.Run("no worktree configured", func() {
+		srv := newServerForReviewTests(s.T())
+		srv.logger = logger
+		// reviewWorktree intentionally left nil — call is a no-op.
+		srv.maybeRediffForComment("ch1", "/wt", "/repo", c)
+	})
+
+	s.Run("no session", func() {
+		// reviewStore is fresh; Get returns nil.
+		s.srv.maybeRediffForComment("ch1", "/wt", "/repo", c)
+	})
+
+	s.Run("session missing base ref", func() {
+		s.rs.Put("ch1", &review.Session{PR: &githubapi.PRInfo{Number: 7}})
+		s.srv.maybeRediffForComment("ch1", "/wt", "/repo", c)
+		s.rs.Delete("ch1")
+	})
+
+	s.Run("diff error logs and returns", func() {
+		// Seed a diff that puts the comment outside any hunk so
+		// ShouldRediff returns true and the Diff path is reached.
+		raw := "diff --git a/x.go b/x.go\n@@ -1,1 +1,1 @@\n"
+		s.rs.Put("ch1", &review.Session{
+			PR:           &githubapi.PRInfo{Number: 7, BaseRef: "main"},
+			WorktreePath: "/wt",
+			RawDiff:      raw,
+		})
+		wt := new(mockPR)
+		wt.On("Diff", mock.Anything, "/repo", "/wt", "main", mock.Anything).Return([]byte(nil), errors.New("boom"))
+		s.srv.SetReviewService(s.gh, s.rs, wt)
+		s.srv.logger = logger
+		s.srv.maybeRediffForComment("ch1", "/wt", "/repo", c)
+		require.Equal(s.T(), raw, s.rs.Get("ch1").RawDiff)
+		wt.AssertExpectations(s.T())
+		s.rs.Delete("ch1")
+	})
+
+	s.Run("diff identical → no broadcast", func() {
+		raw := "diff --git a/x.go b/x.go\n@@ -1,1 +1,1 @@\n"
+		s.rs.Put("ch1", &review.Session{
+			PR:           &githubapi.PRInfo{Number: 7, BaseRef: "main"},
+			WorktreePath: "/wt",
+			RawDiff:      raw,
+		})
+		wt := new(mockPR)
+		wt.On("Diff", mock.Anything, "/repo", "/wt", "main", mock.Anything).Return([]byte(raw), nil)
+		s.srv.SetReviewService(s.gh, s.rs, wt)
+		hub := NewEventsHub(logger)
+		var events []Event
+		hub.captureHook = func(e Event) { events = append(events, e) }
+		s.srv.SetEventsHub(hub)
+		s.srv.maybeRediffForComment("ch1", "/wt", "/repo", c)
+		require.Empty(s.T(), events)
+		s.rs.Delete("ch1")
+	})
+}
+
+// buildReviewContext must tolerate nil entries in the comment slice —
+// they can show up after a partial cleanup and shouldn't panic the
+// prompt assembly.
+func (s *ReviewHandlerSuite) TestBuildReviewContextSkipsNilComment() {
+	sess := &review.Session{
+		PR: &githubapi.PRInfo{Number: 7, BaseRef: "main", HeadRef: "feat-x"},
+		Comments: []*review.Comment{
+			nil,
+			{ID: "c1", Path: "x.go", Line: 1, Side: "RIGHT", Body: "real"},
+		},
+	}
+	ctx := buildReviewContext(sess, "alice")
+	require.Contains(s.T(), ctx, "real")
+	require.Contains(s.T(), ctx, "gh auth switch -u alice")
+}
+
+// GetChannel error on both lookups leaves channelDirPath as "" — the
+// run now refuses to proceed because the refresh chain has no dir to
+// fetch into. 400 here is preferable to silently starting the agent
+// container with no parent mount (which would fail with "no result
+// event found" downstream).
+func (s *ReviewHandlerSuite) TestRunRejectedWhenGetChannelFails() {
+	s.rs.Put("ch1", &review.Session{
+		PR:           &githubapi.PRInfo{Number: 7, BaseRef: "main"},
 		HeadSHA:      "abc",
 		WorktreePath: "/repo/.worktrees/pr-7",
 		RawDiff:      "diff",
@@ -1796,7 +2002,8 @@ func (s *ReviewHandlerSuite) TestRunNoParentWhenGetChannelFails() {
 	s.srv.SetReviewAgent(runner, "", "")
 	w := httptest.NewRecorder()
 	s.mux.ServeHTTP(w, httptest.NewRequest("POST", "/api/channels/ch1/review/run", nil))
-	require.Equal(s.T(), http.StatusAccepted, w.Code)
-	<-runner.done
-	require.Equal(s.T(), "", runner.lastParent)
+	require.Equal(s.T(), http.StatusBadRequest, w.Code)
+	require.Contains(s.T(), w.Body.String(), "no dir_path")
+	// Runner never gets invoked — no need to wait on runner.done.
+	require.Equal(s.T(), 0, runner.calls)
 }

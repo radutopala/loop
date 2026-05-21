@@ -619,9 +619,16 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
     return () => window.removeEventListener("loop:open-panel", handler);
   }, [channelId, handleEmptyAdd, handleSplitLeaf]);
 
-  // Listen for "open this file in the editor" events dispatched by FileLink in
-  // chat. If no editor leaf exists yet, place one on the opposite horizontal
-  // side of the chat leaf. Then load the file and scroll to the requested line.
+  // Listen for "open this file in the editor" events dispatched by chat
+  // FileLink and by the review panel's per-file Open button. If no editor
+  // leaf exists yet, place one on the opposite horizontal side of an
+  // anchor leaf — chat if present, otherwise whichever leaf is first in
+  // the tree (e.g. the review panel). The anchor split keeps the new
+  // editor adjacent to the panel the user clicked from, and going through
+  // insertOppositeHorizontal (rather than handleSplitLeaf) deliberately
+  // skips the automatic file-tree sidecar that handleSplitLeaf would
+  // attach — opening a file should give the editor alone, not the editor
+  // + file tree combo.
   useEffect(() => {
     const handler = (ev: Event) => {
       const ce = ev as CustomEvent<FileLinkOpenDetail>;
@@ -632,15 +639,14 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
       const current = treeRef.current;
       const hasEditor = current ? collectLeaves(current).some((l) => l.panel === "editor") : false;
       if (!hasEditor && current && canAddPanel(current, "editor")) {
-        const chatLeaf = collectLeaves(current).find((l) => l.panel === "chat");
+        const leaves = collectLeaves(current);
+        const anchorLeaf = leaves.find((l) => l.panel === "chat") ?? leaves[0];
         const editorId = leafIdForPanel(channelId, "editor");
-        if (chatLeaf) {
+        if (anchorLeaf) {
           setTree((prev) => {
             if (!prev) return prev;
-            return insertOppositeHorizontal(prev, chatLeaf.id, makeLeaf(editorId, "editor"));
+            return insertOppositeHorizontal(prev, anchorLeaf.id, makeLeaf(editorId, "editor"));
           });
-        } else {
-          handleSplitLeaf(collectLeaves(current)[0]?.id ?? "", "editor", "horizontal");
         }
       } else if (!current) {
         handleEmptyAdd("editor");
@@ -650,7 +656,7 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
     };
     window.addEventListener("loop:open-file", handler);
     return () => window.removeEventListener("loop:open-file", handler);
-  }, [channelId, editorState, handleEmptyAdd, handleSplitLeaf]);
+  }, [channelId, editorState, handleEmptyAdd]);
 
   const handleKillAgents = useCallback(() => {
     // Close all agent and shell terminal sessions in the current tree.
