@@ -4,7 +4,7 @@ import type { LayoutRoot } from "../canvas/types";
 const LAYOUT_KEY = "loop-workspace-layout";
 
 /** Default layout names — these are the "fixed" buttons in the header. */
-export const DEFAULT_LAYOUT_NAMES = ["Chat", "Editor", "Memory", "Terminal", "Git", "Browser Chat", "Sessions", "Swarm", "Canvas", "Playground", "Kanban", "Workflows"] as const;
+export const DEFAULT_LAYOUT_NAMES = ["Chat", "Editor", "Memory", "Terminal", "Git", "Browser Chat", "Sessions", "Swarm", "Canvas", "Playground", "Kanban", "Workflows", "Review"] as const;
 
 export type LayoutType = "split" | "canvas";
 
@@ -308,7 +308,7 @@ export function getLayoutNames(channelId: string): string[] {
 export function createDefaultLayouts(): ChannelLayouts {
   return {
     active: "Chat",
-    order: ["Chat", "Editor", "Memory", "Terminal", "Git", "Browser Chat", "Sessions", "Swarm", "Canvas", "Playground", "Kanban", "Workflows"],
+    order: ["Chat", "Editor", "Memory", "Terminal", "Git", "Browser Chat", "Sessions", "Swarm", "Canvas", "Playground", "Kanban", "Workflows", "Review"],
     types: { Canvas: "canvas" },
     version: CURRENT_VERSION,
     layouts: {
@@ -323,6 +323,7 @@ export function createDefaultLayouts(): ChannelLayouts {
       Playground: { type: "split", direction: "horizontal", flex: 1, children: [{ type: "leaf", id: "chat", panel: "chat", flex: 40 }, { type: "leaf", id: "playground", panel: "playground", flex: 60 }] },
       Kanban: { type: "leaf", id: "kanban", panel: "kanban", flex: 1 },
       Workflows: { type: "leaf", id: "workflows", panel: "workflows", flex: 1 },
+      Review: { type: "split", direction: "horizontal", flex: 1, children: [{ type: "split", direction: "vertical", flex: 40, children: [{ type: "leaf", id: "chat", panel: "chat", flex: 70 }, { type: "leaf", id: "git", panel: "git", flex: 30 }] }, { type: "leaf", id: "review", panel: "review", flex: 60 }] },
     },
   };
 }
