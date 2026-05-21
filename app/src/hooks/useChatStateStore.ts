@@ -570,7 +570,19 @@ export function useChatStateStore({
     setUnreadCount(0);
   }, []);
 
-  return { getState, saveState, removeState, isRunningMapRef, unreadIdsRef, gateChannelIdsRef, reviewChannelIdsRef, unreadCount, markRead, markAllRead, subscribeChatEvents };
+  // Drop the `rev` pill for a channel. Called by the Review panel once it
+  // mounts on a ready session — the pill is a "go look" badge, and the
+  // user looking at the panel makes it redundant. Live `review.status`
+  // events can still re-light it for a fresh transition; this only
+  // clears the current notification.
+  const clearReviewPill = useCallback((channelId: string) => {
+    const set = reviewChannelIdsRef.current;
+    if (set.delete(channelId)) {
+      setReviewTick((v) => v + 1);
+    }
+  }, []);
+
+  return { getState, saveState, removeState, isRunningMapRef, unreadIdsRef, gateChannelIdsRef, reviewChannelIdsRef, unreadCount, markRead, markAllRead, clearReviewPill, subscribeChatEvents };
 }
 
 // ── Helpers ──
