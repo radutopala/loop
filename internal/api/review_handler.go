@@ -461,6 +461,20 @@ func (s *Server) handleReviewGet(w http.ResponseWriter, r *http.Request) {
 	writeHTTPJSON(w, http.StatusOK, reviewSessionResponse{Present: true, Session: sess}, s.logger)
 }
 
+// handleReviewSessions returns a (channel_id, status) summary for every
+// live session. Used at FE startup to seed the sidebar's `rev` pill set
+// so the indicator survives a renderer reload — review.status WS events
+// only fire on transitions, and the FE doesn't subscribe to every
+// channel, so without this any ready session that completed while the
+// app was closed would never re-light its pill.
+func (s *Server) handleReviewSessions(w http.ResponseWriter, _ *http.Request) {
+	if s.reviewStore == nil {
+		http.Error(w, "review service not configured", http.StatusNotImplemented)
+		return
+	}
+	writeHTTPJSON(w, http.StatusOK, map[string]any{"sessions": s.reviewStore.List()}, s.logger)
+}
+
 func (s *Server) handleReviewDelete(w http.ResponseWriter, r *http.Request) {
 	if !requireConfigured(w, s.store, "channel listing not configured") {
 		return

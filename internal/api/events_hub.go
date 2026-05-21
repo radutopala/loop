@@ -213,12 +213,15 @@ func (h *EventsHub) BroadcastReviewComment(channelID string, data events.ReviewC
 }
 
 // BroadcastReviewStatus sends a review.status event for a session
-// status transition.
+// status transition. Global so the sidebar's `rev` pill lights up for
+// every open client when a background review completes, not only the
+// one happening to be subscribed to that channel.
 func (h *EventsHub) BroadcastReviewStatus(channelID string, data events.ReviewStatusEventData) {
 	h.Broadcast(Event{
 		Type:      EventReviewStatus,
 		ChannelID: channelID,
 		Data:      data,
+		Global:    true,
 	})
 }
 

@@ -728,6 +728,48 @@ func (s *ReviewHandlerSuite) TestGetWithSession() {
 	require.Equal(s.T(), "diff", resp.Session.RawDiff)
 }
 
+// ---- sessions list ----
+
+func (s *ReviewHandlerSuite) TestSessionsNoReviewStoreNotImplemented() {
+	srv := newServerForReviewTests(s.T())
+	mux := srv.buildMux()
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, httptest.NewRequest("GET", "/api/review/sessions", nil))
+	require.Equal(s.T(), http.StatusNotImplemented, w.Code)
+}
+
+func (s *ReviewHandlerSuite) TestSessionsEmpty() {
+	w := httptest.NewRecorder()
+	s.mux.ServeHTTP(w, httptest.NewRequest("GET", "/api/review/sessions", nil))
+	require.Equal(s.T(), http.StatusOK, w.Code)
+	var resp struct {
+		Sessions []review.SessionSummary `json:"sessions"`
+	}
+	require.NoError(s.T(), json.Unmarshal(w.Body.Bytes(), &resp))
+	require.Empty(s.T(), resp.Sessions)
+}
+
+func (s *ReviewHandlerSuite) TestSessionsReturnsLiveStatuses() {
+	s.rs.Put("ch1", &review.Session{Status: review.StatusReady})
+	s.rs.Put("ch2", &review.Session{Status: review.StatusReviewing})
+
+	w := httptest.NewRecorder()
+	s.mux.ServeHTTP(w, httptest.NewRequest("GET", "/api/review/sessions", nil))
+	require.Equal(s.T(), http.StatusOK, w.Code)
+
+	var resp struct {
+		Sessions []review.SessionSummary `json:"sessions"`
+	}
+	require.NoError(s.T(), json.Unmarshal(w.Body.Bytes(), &resp))
+	require.Len(s.T(), resp.Sessions, 2)
+	statuses := map[string]review.Status{}
+	for _, sum := range resp.Sessions {
+		statuses[sum.ChannelID] = sum.Status
+	}
+	require.Equal(s.T(), review.StatusReady, statuses["ch1"])
+	require.Equal(s.T(), review.StatusReviewing, statuses["ch2"])
+}
+
 // ---- delete ----
 
 func (s *ReviewHandlerSuite) TestDeleteNoSession() {
