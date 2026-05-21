@@ -98,10 +98,12 @@ func (a *app) defaultEnsureImage(ctx context.Context, client container.DockerCli
 			}
 		}
 	}
+	built := false
 	if needsBuild {
 		if err := client.ImageBuild(ctx, containerDir, cfg.ContainerImage); err != nil {
 			return err
 		}
+		built = true
 	}
 
 	// Build chrome image if missing
@@ -112,6 +114,18 @@ func (a *app) defaultEnsureImage(ctx context.Context, client container.DockerCli
 	if len(chromeIDs) == 0 {
 		if err := client.ImageBuildFile(ctx, containerDir, "chrome.Dockerfile", cfg.Browser.ChromeImage); err != nil {
 			return err
+		}
+		built = true
+	}
+
+	// Drop BuildKit cache entries not used in the last 30 days. Loop's
+	// images get rebuilt on every `make restart` and on cold daemon
+	// starts; without periodic eviction the build cache grew to 100GB+
+	// in real-world installs. Logged-and-ignored on failure — a stale
+	// cache is preferable to a failed startup.
+	if built {
+		if err := client.PruneBuildCache(ctx, 30*24*time.Hour); err != nil {
+			slog.Warn("build cache prune failed", "error", err)
 		}
 	}
 

@@ -84,6 +84,10 @@ func (m *MockDockerClient) ImageBuildFile(ctx context.Context, contextDir, docke
 	return args.Error(0)
 }
 
+func (m *MockDockerClient) PruneBuildCache(ctx context.Context, unusedFor time.Duration) error {
+	return m.Called(ctx, unusedFor).Error(0)
+}
+
 func (m *MockDockerClient) RemoveImageAndContainers(ctx context.Context, imageName string) error {
 	args := m.Called(ctx, imageName)
 	return args.Error(0)
