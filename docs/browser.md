@@ -1,9 +1,6 @@
 ---
 title: Browser
 ---
-
-# Browser
-
 Manages Chrome browser instances for screencast streaming and MCP browser automation tools. Supports two modes: Docker (headless Chrome container per channel) and Host (user's local Chrome).
 
 **Packages:** `internal/browser`, `internal/api` (handler), `internal/mcpbrowser` (MCP server)

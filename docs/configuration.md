@@ -1,9 +1,6 @@
 ---
 title: Configuration Reference
 ---
-
-# Configuration Reference
-
 Loop is configured via HJSON files (JSON with comments and trailing commas). This document covers all configuration fields, their defaults, and the merge rules for project-level overrides.
 
 Config files can be edited directly on disk, or through the HTTP API (`GET/PUT /api/config` for global, `GET/PUT /api/config/project` for per-project). The desktop app Settings panel uses the API to provide a schema-driven form editor and a raw JSON editor. See [API Reference: Configuration](api.md#configuration) for endpoint details.
@@ -230,20 +227,22 @@ Shortcuts appear in the chat input when the user types `#`. Selecting a shortcut
 
 #### Review
 
-Configures the prompt used by the Review panel's agent pass (see [review.md](review.md)).
+Enables and configures the Review panel (see [review.md](review.md)).
 
 ```jsonc
 "review": {
+  "enabled": true,
   "prompt_path": "review.md"
 }
 ```
 
 | Field | Type | Description |
 |---|---|---|
+| `enabled` | `bool` | Gates the Review panel. `false` (the default) hides the panel in the FE picker and makes the backend reject `/review/*` requests with `403`. Layered per-global/per-project/per-worktree like `github.gh_user`. |
 | `prompt` | `string` | Inline prompt text. Mutually exclusive with `prompt_path`. |
 | `prompt_path` | `string` | Path to a prompt file, resolved as `~/.loop/review/{prompt_path}`. Mutually exclusive with `prompt`. |
 
-Both empty (the default) uses the daemon's built-in default prompt, which instructs the agent to emit `<review-comment>` blocks for actionable issues only.
+Both prompt fields empty (the default) uses the daemon's built-in default prompt, which instructs the agent to emit `<review-comment>` blocks for actionable issues only.
 
 #### Workflows
 

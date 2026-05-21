@@ -1,9 +1,6 @@
 ---
 title: Workspace Layouts
 ---
-
-# Workspace Layouts
-
 The workspace layout system supports two layout types: **Split** (flexible split-pane interface) and **Canvas** (free-form draggable tiles). Layouts are named, switchable, and persisted per channel. Each layout tab stores its type (`"split"` or `"canvas"`).
 
 Related docs: [Chat](chat.md) | [Editor](editor.md) | [Desktop App](desktop-app.md)

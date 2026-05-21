@@ -1,9 +1,6 @@
 ---
 title: Daemon
 ---
-
-# Daemon
-
 Cross-platform daemon/service management for the Loop bot process.
 
 **Package:** `internal/daemon`

@@ -1,9 +1,6 @@
 ---
 title: Kanban Panel
 ---
-
-# Kanban Panel
-
 The Kanban panel provides a visual ticket board for managing work with the `tk` ticket system. Tickets are stored as markdown files in the project's `.tickets/` directory (via the [`github.com/radutopala/ticket`](https://github.com/radutopala/ticket) library) and shared between the CLI (`tk`), agents, and the Kanban UI.
 
 **Related docs:** [HTTP API — Tickets](api.md#tickets) | [Events System](events.md) | [Layouts](layouts.md) | [Multi-Agent](multi-agent.md)

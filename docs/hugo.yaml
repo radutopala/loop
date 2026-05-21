@@ -11,6 +11,14 @@ languageCode: en-us
 enableRobotsTXT: true
 enableGitInfo: true
 
+# Apply Hextra's `docs` page type to every page so they render with the
+# nav-tree sidebar on the left and the on-this-page TOC on the right.
+# Without this, our flat top-level layout would fall back to the basic
+# single-column page template (no sidebar).
+cascade:
+  - _target: {}
+    type: docs
+
 # Hextra is consumed as a Hugo module — see go.mod.
 # The mount remaps the current directory as Hugo's content tree, so the
 # README.md / *.md files at the root of docs/ render as site pages without
@@ -31,6 +39,7 @@ module:
         - public/**
         - resources/**
         - layouts/**
+        - static/**
         - i18n/**
 
 markup:
@@ -62,8 +71,14 @@ menu:
 
 params:
   navbar:
-    displayTitle: true
-    displayLogo: false
+    displayTitle: false
+    displayLogo: true
+    logo:
+      path: images/logo.svg
+      dark: images/logo-dark.svg
+      link: /
+      width: 115
+      height: 30
   page:
     width: wide
   theme:

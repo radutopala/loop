@@ -1,9 +1,6 @@
 ---
 title: Docker Container Lifecycle
 ---
-
-# Docker Container Lifecycle
-
 Loop runs Claude Code agents inside Docker containers. This document covers how containers are created, configured, and managed throughout their lifecycle.
 
 See also: [Configuration Reference](configuration.md) for global and project config fields that control container behavior.

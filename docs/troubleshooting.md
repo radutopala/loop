@@ -1,9 +1,6 @@
 ---
 title: Troubleshooting
 ---
-
-# Troubleshooting
-
 ## Permission denied writing LaunchAgents plist
 
 When running `loop daemon:start`, you may see:

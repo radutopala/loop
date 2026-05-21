@@ -1,9 +1,6 @@
 ---
 title: Orchestrator & Message Processing
 ---
-
-# Orchestrator & Message Processing
-
 The orchestrator is the central coordinator of the Loop bot. It connects the chat platform bots, the agent runner (Docker containers), the scheduler, and the database. All message processing, command handling, permission checks, and agent execution flow through it.
 
 ## Architecture

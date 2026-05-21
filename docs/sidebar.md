@@ -1,9 +1,6 @@
 ---
 title: Sidebar & Navigation
 ---
-
-# Sidebar & Navigation
-
 The sidebar provides the primary navigation structure for the Loop desktop app. It lists channels and threads, supports drag-and-drop reordering, batch selection, search filtering, and houses the app's footer actions.
 
 Related docs: [Desktop App](desktop-app.md) | [Layouts](layouts.md) | [Settings](settings.md) | [Chat](chat.md)

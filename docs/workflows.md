@@ -1,9 +1,6 @@
 ---
 title: Workflows
 ---
-
-# Workflows
-
 Declarative DAG-based pipelines of prompt and bash nodes. Workflows provide repeatable, structured execution with parallel fan-out, dependency tracking, and real-time status events.
 
 **Package:** `internal/workflow`

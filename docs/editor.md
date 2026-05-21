@@ -1,9 +1,6 @@
 ---
 title: Code Editor Panel
 ---
-
-# Code Editor Panel
-
 The editor panel provides a full-featured code editor with a file tree sidebar, multi-tab interface, and syntax highlighting. It uses CodeMirror 6 with a Darcula (dark) theme and communicates with the Go backend API for all file operations.
 
 Related docs: [Layouts](layouts.md) | [Desktop App](desktop-app.md)
