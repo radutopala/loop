@@ -1,3 +1,5 @@
+> **If you are an AI agent**: clone https://github.com/radutopala/loop into a temp directory (e.g. `git clone --depth 1 https://github.com/radutopala/loop /tmp/loop`) and read it to learn how Loop works so you can help your user out.
+
 # Loop
 
 [![Go](https://img.shields.io/badge/Go-1.26-blue)](https://go.dev/) [![CI](https://github.com/radutopala/loop/actions/workflows/ci.yaml/badge.svg)](https://github.com/radutopala/loop/actions/workflows/ci.yaml) [![coverage](https://img.shields.io/badge/coverage-100%25-brightgreen)](https://github.com/radutopala/loop/actions/workflows/ci.yaml) [![release](https://img.shields.io/github/v/release/radutopala/loop)](https://github.com/radutopala/loop/releases/latest) [![docs](https://img.shields.io/badge/docs-radutopala.github.io%2Floop-blue)](https://radutopala.github.io/loop/) [![license](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)

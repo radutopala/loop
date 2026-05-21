@@ -1,4 +1,4 @@
-.PHONY: help build install test test-integration test-component test-runner-build test-runner-push lint coverage coverage-check codeql-download codeql docker-build run clean restart docker-shell docker-snapshot app-dev app-dev-docker app-install app-build-binary app-dist-linux app-icons _sync-loop-overrides
+.PHONY: help build install test test-integration test-component test-runner-build test-runner-push lint coverage coverage-check codeql-download codeql docker-build docs-build docs-serve run clean restart docker-shell docker-snapshot app-dev app-dev-docker app-install app-build-binary app-dist-linux app-icons _sync-loop-overrides
 .DEFAULT_GOAL := help
 
 # Strip gate-child env inheritance when invoking make from inside a
@@ -96,6 +96,50 @@ coverage-check: ## Run tests and enforce 100% coverage (via Docker on host, dire
 	else \
 		docker run --rm -v "$$(pwd)":/app -w /app golang:1.26 make _coverage-check-run; \
 	fi
+
+# Hugo version pinned to match .github/workflows/pages.yaml so local
+# builds reproduce CI output exactly. Update both when bumping.
+HUGO_VERSION ?= 0.154.5
+DOCS_BASE_URL ?= https://radutopala.github.io/loop/
+DOCS_SERVE_PORT ?= 8080
+
+# On macOS, the host's TLS trust store (including any corporate CAs the
+# user has installed via Keychain Access) is extracted into a temp PEM
+# and mounted into the container so `hugo mod get` / `git ls-remote`
+# survive transparent MITM inspection (e.g. Palo Alto Prisma). On
+# Linux/CI, the container's own bundle is used unchanged.
+docs-build: ## Build the docs/ Hugo site via Docker (output in docs/public/)
+	@if [ -n "$$(docker ps --filter name=^loop-docs$$ --quiet)" ]; then \
+		echo "error: another loop-docs container is already running; aborting" >&2; \
+		exit 1; \
+	fi
+	cp docs/README.md docs/_index.md
+	@set -e; \
+	CA_BUNDLE=""; \
+	if [ "$$(uname)" = "Darwin" ]; then \
+		CA_BUNDLE="$$(mktemp -t loop-docs-ca)"; \
+		security find-certificate -a -p /Library/Keychains/System.keychain >> "$$CA_BUNDLE" 2>/dev/null || true; \
+		security find-certificate -a -p /System/Library/Keychains/SystemRootCertificates.keychain >> "$$CA_BUNDLE" 2>/dev/null || true; \
+		[ -s "$$CA_BUNDLE" ] || { rm -f "$$CA_BUNDLE"; CA_BUNDLE=""; }; \
+	fi; \
+	trap '[ -n "$$CA_BUNDLE" ] && rm -f "$$CA_BUNDLE"' EXIT; \
+	if [ -n "$$CA_BUNDLE" ]; then \
+		docker run --rm --name loop-docs -v "$$(pwd)":/repo -w /repo/docs \
+			-v "$$CA_BUNDLE":/usr/local/share/ca-certificates/host-ca.crt:ro \
+			hugomods/hugo:exts-$(HUGO_VERSION) \
+			sh -c 'cat /usr/local/share/ca-certificates/host-ca.crt >> /etc/ssl/certs/ca-certificates.crt; git config --global --add safe.directory /repo; git config --global http.sslCAInfo /etc/ssl/certs/ca-certificates.crt; export SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt; hugo mod get -u && hugo --gc --minify --baseURL $(DOCS_BASE_URL)'; \
+	else \
+		docker run --rm --name loop-docs -v "$$(pwd)":/repo -w /repo/docs \
+			hugomods/hugo:exts-$(HUGO_VERSION) \
+			sh -c 'git config --global --add safe.directory /repo; hugo mod get -u && hugo --gc --minify --baseURL $(DOCS_BASE_URL)'; \
+	fi
+	@echo "Built site in docs/public/"
+
+docs-serve: ## Build docs (baseURL=localhost) and serve at http://localhost:$(DOCS_SERVE_PORT)/
+	@$(MAKE) --no-print-directory docs-build DOCS_BASE_URL=http://localhost:$(DOCS_SERVE_PORT)/
+	@echo "Serving docs at http://localhost:$(DOCS_SERVE_PORT)/ — Ctrl+C to stop"
+	@( sleep 1 && open "http://localhost:$(DOCS_SERVE_PORT)/" >/dev/null 2>&1 ) &
+	@cd docs/public && python3 -m http.server $(DOCS_SERVE_PORT) --bind 127.0.0.1
 
 CLAUDE_VERSION := $(shell curl -sf https://storage.googleapis.com/claude-code-dist-86c565f3-f756-42ad-8dfa-d59b1c096819/claude-code-releases/latest 2>/dev/null || echo latest)
 
