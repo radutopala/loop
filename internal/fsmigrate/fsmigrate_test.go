@@ -3,6 +3,7 @@ package fsmigrate
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -317,6 +318,135 @@ func (s *FSMigrateSuite) TestRefreshContainerFilesSetupWriteError() {
 	err := refreshContainerFiles(context.Background(), &Ctx{Sys: sys, LoopDir: "/loop"})
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "writing setup.sh")
+}
+
+// --- seedBuiltinCodeReviewShortcut tests ---
+
+func (s *FSMigrateSuite) TestSeedBuiltinCodeReviewShortcutNoConfigFile() {
+	sys := newFakeSystem()
+
+	err := seedBuiltinCodeReviewShortcut(context.Background(), &Ctx{Sys: sys, LoopDir: "/loop"}, json.MarshalIndent)
+	require.NoError(s.T(), err)
+	require.Empty(s.T(), sys.files, "no file should be written when config is absent")
+}
+
+func (s *FSMigrateSuite) TestSeedBuiltinCodeReviewShortcutReadError() {
+	sys := newFakeSystem()
+	configPath := filepath.Join("/loop", "config.json")
+	sys.files[configPath] = []byte("{}")
+	sys.readErr[configPath] = errors.New("permission denied")
+
+	err := seedBuiltinCodeReviewShortcut(context.Background(), &Ctx{Sys: sys, LoopDir: "/loop"}, json.MarshalIndent)
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "reading")
+}
+
+func (s *FSMigrateSuite) TestSeedBuiltinCodeReviewShortcutInvalidHJSON() {
+	sys := newFakeSystem()
+	configPath := filepath.Join("/loop", "config.json")
+	sys.files[configPath] = []byte("{not even close")
+
+	err := seedBuiltinCodeReviewShortcut(context.Background(), &Ctx{Sys: sys, LoopDir: "/loop"}, json.MarshalIndent)
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "standardizing")
+}
+
+func (s *FSMigrateSuite) TestSeedBuiltinCodeReviewShortcutInvalidJSON() {
+	sys := newFakeSystem()
+	configPath := filepath.Join("/loop", "config.json")
+	// Valid HJSON that standardizes to a non-object — passes Standardize but
+	// fails json.Unmarshal into map[string]any.
+	sys.files[configPath] = []byte("[]")
+
+	err := seedBuiltinCodeReviewShortcut(context.Background(), &Ctx{Sys: sys, LoopDir: "/loop"}, json.MarshalIndent)
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "parsing")
+}
+
+func (s *FSMigrateSuite) TestSeedBuiltinCodeReviewShortcutAlreadyPresent() {
+	sys := newFakeSystem()
+	configPath := filepath.Join("/loop", "config.json")
+	sys.files[configPath] = []byte(`{"prompt_shortcuts":[{"name":"builtin code review","prompt":"/code-review"}]}`)
+
+	err := seedBuiltinCodeReviewShortcut(context.Background(), &Ctx{Sys: sys, LoopDir: "/loop"}, json.MarshalIndent)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(),
+		[]byte(`{"prompt_shortcuts":[{"name":"builtin code review","prompt":"/code-review"}]}`),
+		sys.files[configPath],
+		"file must not be rewritten when entry already exists",
+	)
+}
+
+func (s *FSMigrateSuite) TestSeedBuiltinCodeReviewShortcutEmptyConfig() {
+	sys := newFakeSystem()
+	configPath := filepath.Join("/loop", "config.json")
+	sys.files[configPath] = []byte(`{}`)
+
+	err := seedBuiltinCodeReviewShortcut(context.Background(), &Ctx{Sys: sys, LoopDir: "/loop"}, json.MarshalIndent)
+	require.NoError(s.T(), err)
+
+	var cfg map[string]any
+	require.NoError(s.T(), json.Unmarshal(sys.files[configPath], &cfg))
+	shortcuts := cfg["prompt_shortcuts"].([]any)
+	require.Len(s.T(), shortcuts, 1)
+	sc := shortcuts[0].(map[string]any)
+	require.Equal(s.T(), "builtin code review", sc["name"])
+	require.Equal(s.T(), "/code-review", sc["prompt"])
+	require.Contains(s.T(), sc["description"], "/code-review")
+}
+
+func (s *FSMigrateSuite) TestSeedBuiltinCodeReviewShortcutAppendsToExisting() {
+	sys := newFakeSystem()
+	configPath := filepath.Join("/loop", "config.json")
+	sys.files[configPath] = []byte(`{"prompt_shortcuts":[{"name":"review","prompt_path":"review-code.md"}]}`)
+
+	err := seedBuiltinCodeReviewShortcut(context.Background(), &Ctx{Sys: sys, LoopDir: "/loop"}, json.MarshalIndent)
+	require.NoError(s.T(), err)
+
+	var cfg map[string]any
+	require.NoError(s.T(), json.Unmarshal(sys.files[configPath], &cfg))
+	shortcuts := cfg["prompt_shortcuts"].([]any)
+	require.Len(s.T(), shortcuts, 2)
+	require.Equal(s.T(), "review", shortcuts[0].(map[string]any)["name"])
+	require.Equal(s.T(), "builtin code review", shortcuts[1].(map[string]any)["name"])
+}
+
+func (s *FSMigrateSuite) TestSeedBuiltinCodeReviewShortcutSkipsNonMapEntries() {
+	sys := newFakeSystem()
+	configPath := filepath.Join("/loop", "config.json")
+	// Defensive: a bogus non-object entry must not crash or block the seed.
+	sys.files[configPath] = []byte(`{"prompt_shortcuts":["bogus",{"name":"other"}]}`)
+
+	err := seedBuiltinCodeReviewShortcut(context.Background(), &Ctx{Sys: sys, LoopDir: "/loop"}, json.MarshalIndent)
+	require.NoError(s.T(), err)
+
+	var cfg map[string]any
+	require.NoError(s.T(), json.Unmarshal(sys.files[configPath], &cfg))
+	shortcuts := cfg["prompt_shortcuts"].([]any)
+	require.Len(s.T(), shortcuts, 3)
+	require.Equal(s.T(), "builtin code review", shortcuts[2].(map[string]any)["name"])
+}
+
+func (s *FSMigrateSuite) TestSeedBuiltinCodeReviewShortcutWriteError() {
+	sys := newFakeSystem()
+	configPath := filepath.Join("/loop", "config.json")
+	sys.files[configPath] = []byte(`{}`)
+	sys.writeErr[configPath] = errors.New("io error")
+
+	err := seedBuiltinCodeReviewShortcut(context.Background(), &Ctx{Sys: sys, LoopDir: "/loop"}, json.MarshalIndent)
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "writing")
+}
+
+func (s *FSMigrateSuite) TestSeedBuiltinCodeReviewShortcutMarshalError() {
+	sys := newFakeSystem()
+	configPath := filepath.Join("/loop", "config.json")
+	sys.files[configPath] = []byte(`{}`)
+
+	failingMarshal := func(_ any, _, _ string) ([]byte, error) { return nil, errors.New("marshal fail") }
+	err := seedBuiltinCodeReviewShortcut(context.Background(), &Ctx{Sys: sys, LoopDir: "/loop"}, failingMarshal)
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "serializing")
 }
 
 // --- Bootstrap entry guard ---

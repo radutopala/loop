@@ -237,6 +237,11 @@
   // Project-level configs can override global shortcuts by name.
   "prompt_shortcuts": [
     {
+      "name": "builtin code review",
+      "description": "Run Claude Code's built-in /code-review slash command",
+      "prompt": "/code-review"
+    },
+    {
       "name": "review",
       "description": "Review uncommitted and branch changes",
       "prompt_path": "review-code.md"
