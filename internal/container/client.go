@@ -267,9 +267,13 @@ func (c *Client) ContainerWait(ctx context.Context, containerID string) (<-chan 
 	return waitCh, errCh
 }
 
-// ContainerRemove forcefully removes the specified container.
+// ContainerRemove forcefully removes the specified container along with its
+// anonymous volumes. Named volumes (e.g. the ollama model cache) are not
+// touched — Docker's RemoveVolumes only drops volumes the container itself
+// owned implicitly. Without this flag every agent container leaks ~5
+// anonymous volumes that accumulate until the disk fills up.
 func (c *Client) ContainerRemove(ctx context.Context, containerID string) error {
-	return c.api.ContainerRemove(ctx, containerID, containertypes.RemoveOptions{Force: true})
+	return c.api.ContainerRemove(ctx, containerID, containertypes.RemoveOptions{Force: true, RemoveVolumes: true})
 }
 
 // ContainerStop stops the specified container with a 10-second grace period
@@ -307,7 +311,7 @@ func (c *Client) RemoveImageAndContainers(ctx context.Context, imageName string)
 		return fmt.Errorf("listing containers for image %s: %w", imageName, err)
 	}
 	for _, ctr := range containers {
-		if err := c.api.ContainerRemove(ctx, ctr.ID, containertypes.RemoveOptions{Force: true}); err != nil {
+		if err := c.api.ContainerRemove(ctx, ctr.ID, containertypes.RemoveOptions{Force: true, RemoveVolumes: true}); err != nil {
 			return fmt.Errorf("removing container %s: %w", ctr.ID[:12], err)
 		}
 	}

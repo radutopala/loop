@@ -573,7 +573,7 @@ func (s *ClientSuite) TestContainerStopError() {
 func (s *ClientSuite) TestContainerRemove() {
 	ctx := context.Background()
 
-	s.api.On("ContainerRemove", ctx, "cid-1", containertypes.RemoveOptions{Force: true}).Return(nil)
+	s.api.On("ContainerRemove", ctx, "cid-1", containertypes.RemoveOptions{Force: true, RemoveVolumes: true}).Return(nil)
 
 	err := s.client.ContainerRemove(ctx, "cid-1")
 	require.NoError(s.T(), err)
@@ -583,7 +583,7 @@ func (s *ClientSuite) TestContainerRemove() {
 func (s *ClientSuite) TestContainerRemoveError() {
 	ctx := context.Background()
 
-	s.api.On("ContainerRemove", ctx, "cid-1", containertypes.RemoveOptions{Force: true}).Return(errors.New("remove failed"))
+	s.api.On("ContainerRemove", ctx, "cid-1", containertypes.RemoveOptions{Force: true, RemoveVolumes: true}).Return(errors.New("remove failed"))
 
 	err := s.client.ContainerRemove(ctx, "cid-1")
 	require.Error(s.T(), err)
