@@ -642,6 +642,20 @@ function InlineComment({
   onPushToChat: (c: ReviewComment) => void | Promise<void>;
   onDelete: (c: ReviewComment) => void | Promise<void>;
 }) {
+  // Local in-flight flag for the "Push to chat" button. Push-to-chat
+  // doesn't flip the comment to `pushed`, so without this guard rapid
+  // double-clicks during the sendMessage round-trip would queue
+  // duplicate prompts to the agent.
+  const [sendingChat, setSendingChat] = useState(false);
+  const handlePushToChat = async () => {
+    if (sendingChat) return;
+    setSendingChat(true);
+    try {
+      await onPushToChat(comment);
+    } finally {
+      setSendingChat(false);
+    }
+  };
   const isGitHub = comment.source === "github";
   const headerLabel = isGitHub
     ? comment.author
@@ -725,7 +739,8 @@ function InlineComment({
           <>
             <button
               data-testid={`review-comment-push-chat-${comment.id}`}
-              onClick={() => void onPushToChat(comment)}
+              onClick={() => void handlePushToChat()}
+              disabled={sendingChat}
               style={{
                 background: "transparent",
                 color: colors.text,
@@ -734,11 +749,12 @@ function InlineComment({
                 padding: "1px 6px",
                 fontSize: 10,
                 fontFamily: fonts.sans,
-                cursor: "pointer",
+                cursor: sendingChat ? "not-allowed" : "pointer",
+                opacity: sendingChat ? 0.5 : 1,
               }}
               title="Send this comment to the chat as a prompt for the agent"
             >
-              Push to chat
+              {sendingChat ? "Sending..." : "Push to chat"}
             </button>
             <button
               data-testid={`review-comment-push-${comment.id}`}
