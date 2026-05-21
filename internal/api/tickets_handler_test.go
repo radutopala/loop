@@ -613,6 +613,27 @@ func (s *ServerSuite) TestAssignTicket_GetChannelError() {
 	require.Equal(s.T(), http.StatusInternalServerError, rec.Code)
 }
 
+// TestAssignTicket_GrandparentLookupFails covers the error branch when
+// resolving a thread channel's parent project: handleAssignTicket calls
+// store.GetChannel(parent.ParentID) and must surface the error rather
+// than fall through with an inconsistent parent.
+func (s *ServerSuite) TestAssignTicket_GrandparentLookupFails() {
+	dir := createTicketsDir(s.T())
+	writeTestTicket(s.T(), dir, "tic-gperr", "Grandparent err", tk.StatusOpen)
+
+	// First lookup: thread row with non-empty ParentID.
+	s.store.On("GetChannel", mock.Anything, "thread-1").Return(&db.Channel{
+		ChannelID: "thread-1", DirPath: dir, ParentID: "parent-err",
+	}, nil)
+	// Grandparent lookup fails — the handler must 500 instead of proceeding.
+	s.store.On("GetChannel", mock.Anything, "parent-err").Return(nil, fmt.Errorf("db boom"))
+
+	body := fmt.Sprintf(`{"dir": %q, "channel_id": "thread-1"}`, dir)
+	rec := s.testRequest("POST", "/api/tickets/tic-gperr/assign", body)
+	require.Equal(s.T(), http.StatusInternalServerError, rec.Code)
+	require.Contains(s.T(), rec.Body.String(), "db boom")
+}
+
 func (s *ServerSuite) TestAssignTicket_WorktreeCreateFails() {
 	dir := createTicketsDir(s.T())
 	writeTestTicket(s.T(), dir, "tic-wtfl", "WT fail", tk.StatusOpen)

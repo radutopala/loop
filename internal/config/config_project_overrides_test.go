@@ -677,6 +677,14 @@ func (s *ConfigSuite) TestLoadProjectConfigOverrides() {
 				require.Equal(s.T(), "global prompt", merged.Review.Prompt)
 			},
 		},
+		{
+			name:        "Review/PromptPathOverride",
+			projectJSON: `{"review": {"prompt_path": "project/path.md"}}`,
+			mainCfg:     &Config{Review: ReviewConfig{PromptPath: "global/path.md"}},
+			assert: func(merged, _ *Config) {
+				require.Equal(s.T(), "project/path.md", merged.Review.PromptPath)
+			},
+		},
 	}
 
 	for _, tt := range tests {

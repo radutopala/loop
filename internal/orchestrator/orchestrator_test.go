@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
@@ -936,4 +937,79 @@ func (s *OrchestratorSuite) TestCurrentConfigNilLoader() {
 
 	cfg := s.orch.currentConfig()
 	require.True(s.T(), cfg.StreamingEnabled)
+}
+
+// TestDefaultDrainSpawnTracksOnDrainWG covers the closure installed by New —
+// the production path that schedules drains onto drainWG so WaitDrains can
+// observe them. Most tests swap this out via SetSynchronousDrain, leaving the
+// default closure body uncovered.
+func (s *OrchestratorSuite) TestDefaultDrainSpawnTracksOnDrainWG() {
+	orch := New(s.store, s.bot, s.runner, s.scheduler, slog.New(slog.NewTextHandler(io.Discard, nil)), config.Config{}, nil)
+
+	ran := make(chan struct{})
+	orch.drainSpawn(func() { close(ran) })
+
+	select {
+	case <-ran:
+	case <-time.After(time.Second):
+		s.T().Fatal("default drainSpawn closure did not invoke fn")
+	}
+	orch.WaitDrains()
+}
+
+func (s *OrchestratorSuite) TestWaitDrainsReturnsImmediatelyWhenIdle() {
+	orch := New(s.store, s.bot, s.runner, s.scheduler, slog.New(slog.NewTextHandler(io.Discard, nil)), config.Config{}, nil)
+	done := make(chan struct{})
+	go func() {
+		orch.WaitDrains()
+		close(done)
+	}()
+	require.Eventually(s.T(), func() bool {
+		select {
+		case <-done:
+			return true
+		default:
+			return false
+		}
+	}, time.Second, time.Millisecond)
+}
+
+func (s *OrchestratorSuite) TestListAskedChannelsSnapshotsEntries() {
+	orch := New(s.store, s.bot, s.runner, s.scheduler, slog.New(slog.NewTextHandler(io.Discard, nil)), config.Config{}, nil)
+	require.Empty(s.T(), orch.ListAskedChannels())
+
+	q1 := events.AskUserQuestionEventData{Questions: []events.AskUserQuestion{{Question: "pick A or B"}}}
+	q2 := events.AskUserQuestionEventData{Questions: []events.AskUserQuestion{{Question: "pick C or D"}}}
+	orch.markAskedChannel("ch-1", q1)
+	orch.markAskedChannel("ch-2", q2)
+
+	entries := orch.ListAskedChannels()
+	require.Len(s.T(), entries, 2)
+	byID := map[string]events.AskUserQuestionEventData{}
+	for _, e := range entries {
+		byID[e.ChannelID] = e.Data
+	}
+	require.Equal(s.T(), q1, byID["ch-1"])
+	require.Equal(s.T(), q2, byID["ch-2"])
+}
+
+// TestListAskedChannelsIgnoresMalformedEntries covers the defensive type
+// assertions in ListAskedChannels. The askedChannels map is private, but a
+// caller using sync.Map.Store directly could in principle insert a wrong-type
+// value — the function must skip those rather than panic. We use the
+// exported field via package-internal access since the test is in the same
+// package.
+func (s *OrchestratorSuite) TestListAskedChannelsIgnoresMalformedEntries() {
+	orch := New(s.store, s.bot, s.runner, s.scheduler, slog.New(slog.NewTextHandler(io.Discard, nil)), config.Config{}, nil)
+
+	// Valid entry.
+	orch.markAskedChannel("ch-valid", events.AskUserQuestionEventData{Questions: []events.AskUserQuestion{{Question: "q"}}})
+	// Wrong-typed value (string instead of AskUserQuestionEventData).
+	orch.askedChannels.Store("ch-bad-val", "not the right type")
+	// Wrong-typed key (int instead of string).
+	orch.askedChannels.Store(42, events.AskUserQuestionEventData{})
+
+	entries := orch.ListAskedChannels()
+	require.Len(s.T(), entries, 1)
+	require.Equal(s.T(), "ch-valid", entries[0].ChannelID)
 }

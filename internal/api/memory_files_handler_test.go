@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -11,6 +12,18 @@ import (
 
 	"github.com/radutopala/loop/internal/db"
 )
+
+// TestResolveParentDirPath_EarlyReturn covers the early-return guard at
+// the top of resolveParentDirPath: empty channelID and nil store. The
+// channelID="" branch is reachable from callers that pass through an
+// unset path parameter; the s.store==nil branch is a defensive guard
+// for servers wired without a store.
+func (s *ServerSuite) TestResolveParentDirPath_EarlyReturn() {
+	require.Equal(s.T(), "", s.srv.resolveParentDirPath(context.Background(), ""))
+
+	bare := nilServer()
+	require.Equal(s.T(), "", bare.resolveParentDirPath(context.Background(), "ch-1"))
+}
 
 func (s *ServerSuite) TestListMemoryFiles_Success() {
 	tmpDir := s.T().TempDir()

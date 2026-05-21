@@ -1020,6 +1020,59 @@ func (s *OrchestratorSuite) TestHandleMessageBotSelfTriggerTagsBroadcastsAsBot()
 	eb.AssertExpectations(s.T())
 }
 
+// Bot-self-triggered agent errors must still tag the error-status broadcast
+// with Trigger="bot" so the renderer doesn't bounce the dock for indirect
+// chains that failed.
+func (s *OrchestratorSuite) TestHandleMessageBotSelfTriggerErrorTagsBroadcastsAsBot() {
+	eb := new(MockEventBroadcaster)
+
+	s.bot = new(MockBot)
+	s.bot.On("BotUserID").Return("BOT").Maybe()
+	s.bot.On("IsBotUser", "BOT").Return(true).Maybe()
+	s.bot.On("IsBotUser", mock.Anything).Return(false).Maybe()
+	s.bot.On("SendStopButton", mock.Anything, mock.Anything, mock.Anything).Return("stop-msg-1", nil).Maybe()
+	s.bot.On("RemoveStopButton", mock.Anything, mock.Anything, mock.Anything).Return(nil).Maybe()
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	s.orch = New(s.store, s.bot, s.runner, s.scheduler, logger, config.Config{}, nil)
+	s.orch.SetSynchronousDrain()
+	s.orch.SetEventBroadcaster(eb)
+
+	msg := &bot.IncomingMessage{
+		ChannelID:    "ch1",
+		AuthorID:     "BOT",
+		AuthorName:   "agent",
+		Content:      "hi from agent",
+		MessageID:    "msg-bot-err",
+		IsBotMention: true,
+		Platform:     types.PlatformDiscord,
+		Timestamp:    time.Now().UTC(),
+	}
+
+	s.store.On("IsChannelActive", s.ctx, "ch1").Return(true, nil)
+	s.store.On("GetChannel", s.ctx, "ch1").Return(&db.Channel{ID: 1, ChannelID: "ch1", Active: true}, nil)
+	s.store.On("InsertMessage", s.ctx, mock.Anything).Return(nil)
+	s.bot.On("SendTyping", mock.Anything, "ch1").Return(nil).Maybe()
+	s.store.On("GetRecentMessages", s.ctx, "ch1", 50).Return([]*db.Message{
+		{ID: 12, MsgID: "msg-bot-err", AuthorName: "agent", Content: "hi from agent", ChannelID: "ch1"},
+	}, nil)
+	s.runner.On("Run", mock.Anything, mock.Anything).Return(&agent.AgentResponse{Error: "agent broke"}, nil)
+	s.bot.On("SendMessage", s.ctx, mock.Anything).Return(nil).Maybe()
+	s.store.On("MarkMessagesProcessed", s.ctx, []int64{12}).Return(nil)
+
+	eb.On("BroadcastMessageCreated", "ch1", mock.Anything).Return()
+	eb.On("BroadcastAgentStatus", "ch1", mock.MatchedBy(func(d events.AgentStatusEventData) bool {
+		return d.Status == "running" && d.Trigger == "bot"
+	})).Return()
+	eb.On("BroadcastAgentStatus", "ch1", mock.MatchedBy(func(d events.AgentStatusEventData) bool {
+		return d.Status == "error" && d.Trigger == "bot" && d.Error == "agent broke"
+	})).Return()
+	eb.On("BroadcastMessagesProcessed", "ch1", mock.Anything).Return()
+
+	s.orch.HandleMessage(s.ctx, msg)
+
+	eb.AssertExpectations(s.T())
+}
+
 // Real user messages must NOT carry a bot/scheduled trigger — the renderer
 // relies on the empty trigger to bounce the dock when the user's reply lands.
 func (s *OrchestratorSuite) TestHandleMessageUserTriggerLeavesTriggerEmpty() {
