@@ -2,7 +2,10 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
+
+	"github.com/radutopala/loop/internal/events"
 )
 
 const (
@@ -74,4 +77,32 @@ func (s *Server) insertAskContinuation(ctx context.Context, channelID, content, 
 	s.msgHandler.HandleIncomingMessageWithPriority(context.Background(), channelID, "", content, mode, prio)
 	s.askResolver.ClearAskedChannel(channelID)
 	s.askResolver.ResumeChannel(context.Background(), channelID)
+}
+
+// PendingAsksLister snapshots every channel currently parked on an
+// AskUserQuestion card along with its question payload. Backed in
+// production by *orchestrator.Orchestrator.
+type PendingAsksLister interface {
+	ListAskedChannels() []events.AskedChannelEntry
+}
+
+type pendingAsksResponse struct {
+	Asks []events.AskedChannelEntry `json:"asks"`
+}
+
+// handleListPendingAsks returns every parked AskUserQuestion. The FE
+// calls this on WS reconnect so the ask card re-renders after a renderer
+// reload — agent.ask_user only fires on the original tool call, so
+// without this snapshot the card would never come back even though the
+// backend keeps blocking the channel's drain.
+func (s *Server) handleListPendingAsks(w http.ResponseWriter, _ *http.Request) {
+	if !requireConfigured(w, s.pendingAsks, "pending asks lister not configured") {
+		return
+	}
+	entries := s.pendingAsks.ListAskedChannels()
+	if entries == nil {
+		entries = []events.AskedChannelEntry{}
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(pendingAsksResponse{Asks: entries})
 }

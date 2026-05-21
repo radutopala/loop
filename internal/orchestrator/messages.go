@@ -451,7 +451,7 @@ func (o *Orchestrator) executeAgentRun(ctx context.Context, msg *bot.IncomingMes
 						// Park before broadcasting so the drain loop sees the
 						// flag the moment the run wraps up; cancel the run so
 						// no further tools execute past the ask card.
-						o.markAskedChannel(msg.ChannelID)
+						o.markAskedChannel(msg.ChannelID, data)
 						o.events.BroadcastAskUser(msg.ChannelID, data)
 						selfInitiatedAsk.Store(true)
 						runCancel()

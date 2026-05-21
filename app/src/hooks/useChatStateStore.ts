@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { listPendingAsks } from "../api/channels";
 import { listPendingApprovals } from "../api/gate";
 import { listReviewSessions } from "../api/review";
 import type {
@@ -87,6 +88,12 @@ export function useChatStateStore({
   // rehydrate) doesn't relight the sidebar pill on a channel the user
   // is already looking at.
   const viewingReviewChannelsRef = useRef(new Set<string>());
+  // Bumped on each rehydrateReviewSessions invocation; the post-await
+  // reconcile bails if a newer rehydrate has started in the meantime.
+  // Without this, an old in-flight snapshot can resolve after a fresh
+  // WS event added an id and would then delete that id (it's not in the
+  // stale snapshot).
+  const reviewRehydrateSeqRef = useRef(0);
   const [unreadCount, setUnreadCount] = useState(0);
   const [, setGateTick] = useState(0);
   const [, setReviewTick] = useState(0);
@@ -213,6 +220,42 @@ export function useChatStateStore({
     }
   }, [refreshGateMembership]);
 
+  // Rehydrate the ask-user card for every channel currently parked on
+  // an AskUserQuestion. Run from WS onOpen so a renderer reload / WS
+  // reconnect re-renders the card — agent.ask_user only fires on the
+  // original tool call, so without this any parked channel keeps the
+  // backend's drain blocked while the UI shows nothing actionable.
+  const askRehydrateSeqRef = useRef(0);
+  const rehydrateAskUser = useCallback(async () => {
+    const seq = ++askRehydrateSeqRef.current;
+    let asks;
+    try {
+      asks = await listPendingAsks();
+    } catch (err) {
+      console.warn("[rehydrate] listPendingAsks failed:", err);
+      return;
+    }
+    if (seq !== askRehydrateSeqRef.current) return;
+    const now = Date.now();
+    for (const a of asks) {
+      let state = storeRef.current.get(a.channel_id);
+      if (!state) {
+        state = createEmptyState();
+        storeRef.current.set(a.channel_id, state);
+      }
+      state.askUserQuestions = a.data;
+      if (a.channel_id === selectedIdRef.current) {
+        const event: WSEvent = {
+          type: "agent.ask_user",
+          channel_id: a.channel_id,
+          data: a.data,
+          timestamp: now,
+        };
+        for (const listener of chatListenersRef.current) listener(event);
+      }
+    }
+  }, []);
+
   // Pull the live (channel_id, status) snapshot of every review session
   // and reconcile reviewChannelIdsRef against it. Run from WS onOpen so
   // a renderer reload or WS reconnect re-lights the `rev` pill on every
@@ -221,6 +264,7 @@ export function useChatStateStore({
   // while the app was closed would stay dark until the user reopened
   // the Review panel for that channel.
   const rehydrateReviewSessions = useCallback(async () => {
+    const seq = ++reviewRehydrateSeqRef.current;
     let sessions;
     try {
       sessions = await listReviewSessions();
@@ -228,6 +272,7 @@ export function useChatStateStore({
       console.warn("[rehydrate] listReviewSessions failed:", err);
       return;
     }
+    if (seq !== reviewRehydrateSeqRef.current) return;
     const ready = new Set<string>();
     for (const s of sessions) {
       if (s.status === "ready") ready.add(s.channel_id);
@@ -241,8 +286,13 @@ export function useChatStateStore({
       if (viewing.has(id)) continue;
       if (!set.has(id)) { set.add(id); changed = true; }
     }
-    for (const id of [...set]) {
-      if (!ready.has(id)) { set.delete(id); changed = true; }
+    const toDelete: string[] = [];
+    for (const id of set) {
+      if (!ready.has(id)) toDelete.push(id);
+    }
+    for (const id of toDelete) {
+      set.delete(id);
+      changed = true;
     }
     if (changed) setReviewTick((v) => v + 1);
   }, []);
@@ -497,6 +547,7 @@ export function useChatStateStore({
         // list so it can drop bouncer entries with no live request.
         rehydrateGateApprovals();
         rehydrateReviewSessions();
+        rehydrateAskUser();
       },
       // eslint-disable-next-line react-hooks/exhaustive-deps
       [],

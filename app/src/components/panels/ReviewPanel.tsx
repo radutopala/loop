@@ -21,17 +21,19 @@ import type { ChatEventListener } from "../../hooks/useChatStateStore";
 import type { WSEvent } from "../../types";
 import { ReviewDiffView } from "./ReviewDiffView";
 
-// Build the agent prompt for a single review comment. The agent runs
-// inside the channel's worktree, so it has direct filesystem access —
-// we only need to hand it enough metadata to locate the comment in the
-// PR's diff and the original review note verbatim.
+// The agent runs inside the channel's worktree, so it has direct
+// filesystem access — we only hand it enough metadata to locate the
+// comment in the PR's diff and the original review note verbatim.
+function sideLabel(side?: string): string {
+  return side === "LEFT" ? "deleted/old" : "added/new";
+}
+
 function buildSinglePromptForChat(c: ReviewComment, headSHA?: string, prNumber?: number): string {
-  const sideLabel = c.side === "LEFT" ? "deleted/old" : "added/new";
   const lines: string[] = [];
   lines.push(`Please address this review comment from the PR:`);
   lines.push("");
   lines.push(`- File: \`${c.path}\``);
-  lines.push(`- Line: ${c.line} (${c.side || "RIGHT"} — ${sideLabel})`);
+  lines.push(`- Line: ${c.line} (${c.side || "RIGHT"} — ${sideLabel(c.side)})`);
   if (prNumber) lines.push(`- PR: #${prNumber}`);
   if (headSHA) lines.push(`- Commit: ${headSHA}`);
   if (c.author) lines.push(`- Author: @${c.author}`);
@@ -42,10 +44,6 @@ function buildSinglePromptForChat(c: ReviewComment, headSHA?: string, prNumber?:
   return lines.join("\n");
 }
 
-// Build a single prompt that batches multiple comments for "Push all to
-// chat". Each comment renders the same metadata block as the single
-// version so the agent can act on them independently without losing
-// context.
 function buildBatchPromptForChat(cs: ReviewComment[], headSHA?: string, prNumber?: number): string {
   const header: string[] = [];
   header.push(`Please address the following ${cs.length} review comment${cs.length === 1 ? "" : "s"} from the PR:`);
@@ -53,11 +51,10 @@ function buildBatchPromptForChat(cs: ReviewComment[], headSHA?: string, prNumber
   if (prNumber) header.push(`- PR: #${prNumber}`);
   if (headSHA) header.push(`- Commit: ${headSHA}`);
   const blocks = cs.map((c, i) => {
-    const sideLabel = c.side === "LEFT" ? "deleted/old" : "added/new";
     const b: string[] = [];
     b.push("");
     b.push(`---`);
-    b.push(`### ${i + 1}. \`${c.path}\`:${c.line} (${c.side || "RIGHT"} — ${sideLabel})${c.author ? ` — @${c.author}` : ""}`);
+    b.push(`### ${i + 1}. \`${c.path}\`:${c.line} (${c.side || "RIGHT"} — ${sideLabel(c.side)})${c.author ? ` — @${c.author}` : ""}`);
     b.push("");
     for (const ln of c.body.split("\n")) b.push(`> ${ln}`);
     return b.join("\n");
@@ -355,7 +352,6 @@ export function ReviewPanel({ channelId, subscribeChatEvents, registerReviewView
   const syncDisabled = busy || session?.status === "reviewing" || session?.status === "loading";
   const runDisabled = busy || session?.status !== "ready";
   const closeDisabled = busy;
-  const pushAllDisabled = busy;
 
   return (
     <div
@@ -466,8 +462,8 @@ export function ReviewPanel({ channelId, subscribeChatEvents, registerReviewView
                 <button
                   data-testid="review-push-all-btn"
                   onClick={() => void onPushAll()}
-                  disabled={pushAllDisabled}
-                  style={pushAllDisabled ? { ...btnStyle, ...disabledStyle } : btnStyle}
+                  disabled={busy}
+                  style={busy ? { ...btnStyle, ...disabledStyle } : btnStyle}
                   title="Push all unpushed comments to GitHub"
                 >
                   Push all to GitHub ({pendingCount})

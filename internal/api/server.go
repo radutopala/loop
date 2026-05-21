@@ -133,6 +133,7 @@ type Server struct {
 	approvalResolver          bot.ApprovalResolver                                         // gate approval dispatcher
 	containerApprovalRouter   ContainerApprovalRouter                                      // per-container bearer-token → Manager lookup
 	pendingApprovals          PendingApprovalLister                                        // snapshot of in-flight approvals for FE rehydration
+	pendingAsks               PendingAsksLister                                            // snapshot of parked AskUserQuestion cards for FE rehydration
 	auditDirResolver          AuditDirResolver                                             // per-channel host path to the gate audit jsonl dir
 	githubLookup              GitHubLookup                                                 // resolves PR for a channel's branch via `gh`
 	reviewClient              GitHubReview                                                 // gh ops for review panel (fetch diff, post comment)
@@ -273,6 +274,12 @@ func (s *Server) SetPendingApprovalLister(l PendingApprovalLister) {
 	s.pendingApprovals = l
 }
 
+// SetPendingAsksLister wires the snapshot source used by
+// GET /api/asks/pending. Typically backed by *orchestrator.Orchestrator.
+func (s *Server) SetPendingAsksLister(l PendingAsksLister) {
+	s.pendingAsks = l
+}
+
 // SetAuditDirResolver wires the per-channel gate-audit-dir resolver used by
 // /api/channels/{id}/audit endpoints. Typically backed by *container.DockerRunner.
 func (s *Server) SetAuditDirResolver(r AuditDirResolver) {
@@ -313,6 +320,7 @@ func (s *Server) buildMux() *http.ServeMux {
 	mux.HandleFunc("PATCH /api/channels/{id}/lock", s.handleSetChannelLocked)
 	mux.HandleFunc("POST /api/channels/{id}/plan/resolve", s.handlePlanResolve)
 	mux.HandleFunc("POST /api/channels/{id}/ask/resolve", s.handleAskResolve)
+	mux.HandleFunc("GET /api/asks/pending", s.handleListPendingAsks)
 	mux.HandleFunc("POST /api/tasks", s.handleCreateTask)
 	mux.HandleFunc("GET /api/tasks", s.handleListTasks)
 	mux.HandleFunc("GET /api/tasks/{id}", s.handleGetTask)
