@@ -3,10 +3,13 @@ package fsmigrate
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+
+	"github.com/tailscale/hujson"
 
 	containerimage "github.com/radutopala/loop/internal/container/image"
 )
@@ -28,6 +31,12 @@ var migrations = []Migration{
 	{
 		Description: "refresh container/ files: HOST_UID/HOST_GID pinning + chrome alpine revert",
 		Apply:       refreshContainerFiles,
+	},
+	{
+		Description: "seed builtin code review prompt shortcut",
+		Apply: func(ctx context.Context, c *Ctx) error {
+			return seedBuiltinCodeReviewShortcut(ctx, c, json.MarshalIndent)
+		},
 	},
 }
 
@@ -83,6 +92,66 @@ func refreshContainerFiles(_ context.Context, c *Ctx) error {
 		if err := c.Sys.WriteFile(setupPath, containerimage.MustRead("setup.sh"), 0644); err != nil {
 			return fmt.Errorf("writing setup.sh: %w", err)
 		}
+	}
+	return nil
+}
+
+// builtinCodeReviewShortcutName is the unique name we look for / write under.
+// Whitespace is intentional — it's how the entry renders in the # picker.
+const builtinCodeReviewShortcutName = "builtin code review"
+
+// marshalIndentFunc matches json.MarshalIndent. Parameterized so tests can
+// exercise the otherwise-unreachable marshal-error branch without resorting
+// to package-level var save/restore.
+type marshalIndentFunc func(v any, prefix, indent string) ([]byte, error)
+
+// seedBuiltinCodeReviewShortcut appends a default shortcut to the user's
+// existing ~/.loop/config.json. Fresh installs get the same entry via
+// config.global.example.json on first onboard; this migration covers the
+// upgrade path for installs that already have a config.
+//
+// No-ops when the file doesn't exist (onboard will handle it) or when an
+// entry with the same name is already present (user may have added it
+// themselves; never duplicate).
+func seedBuiltinCodeReviewShortcut(_ context.Context, c *Ctx, marshal marshalIndentFunc) error {
+	configPath := filepath.Join(c.LoopDir, "config.json")
+	data, err := c.Sys.ReadFile(configPath)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
+		return fmt.Errorf("reading %s: %w", configPath, err)
+	}
+
+	standardized, err := hujson.Standardize(data)
+	if err != nil {
+		return fmt.Errorf("standardizing %s: %w", configPath, err)
+	}
+	var cfg map[string]any
+	if err := json.Unmarshal(standardized, &cfg); err != nil {
+		return fmt.Errorf("parsing %s: %w", configPath, err)
+	}
+
+	shortcuts, _ := cfg["prompt_shortcuts"].([]any)
+	for _, item := range shortcuts {
+		if m, ok := item.(map[string]any); ok && m["name"] == builtinCodeReviewShortcutName {
+			return nil
+		}
+	}
+
+	shortcuts = append(shortcuts, map[string]any{
+		"name":        builtinCodeReviewShortcutName,
+		"description": "Run Claude Code's built-in /code-review slash command",
+		"prompt":      "/code-review",
+	})
+	cfg["prompt_shortcuts"] = shortcuts
+
+	out, err := marshal(cfg, "", "  ")
+	if err != nil {
+		return fmt.Errorf("serializing %s: %w", configPath, err)
+	}
+	if err := c.Sys.WriteFile(configPath, append(out, '\n'), 0644); err != nil {
+		return fmt.Errorf("writing %s: %w", configPath, err)
 	}
 	return nil
 }
