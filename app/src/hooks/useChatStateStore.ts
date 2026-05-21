@@ -79,8 +79,10 @@ export function useChatStateStore({
   const isRunningMapRef = useRef(new Map<string, string>());
   const unreadIdsRef = useRef(new Set<string>());
   const gateChannelIdsRef = useRef(new Set<string>());
+  const reviewChannelIdsRef = useRef(new Set<string>());
   const [unreadCount, setUnreadCount] = useState(0);
   const [, setGateTick] = useState(0);
+  const [, setReviewTick] = useState(0);
 
   // Reconcile the sidebar's gate-indicator set against a channel's current
   // gateApprovals. Called after every gate/agent.status apply so the pill
@@ -304,6 +306,24 @@ export function useChatStateStore({
         }
       }
 
+      // Track which channels have a loaded review session so the sidebar
+      // can render a `rev` pill alongside `gate`. Live events only — no
+      // rehydration on reload, the pill reappears once the user opens the
+      // Review panel for that channel and a fresh status event fires.
+      if (channelId && wsEvent.type === "review.status") {
+        const data = wsEvent.data as { status: string };
+        const set = reviewChannelIdsRef.current;
+        const has = set.has(channelId);
+        const shouldHave = data.status === "ready";
+        if (shouldHave && !has) {
+          set.add(channelId);
+          setReviewTick((v) => v + 1);
+        } else if (!shouldHave && has) {
+          set.delete(channelId);
+          setReviewTick((v) => v + 1);
+        }
+      }
+
       // Track isRunning in the map for subscription management.
       // The map value is the run_id so we can distinguish concurrent runs.
       if (channelId && wsEvent.type === "agent.status") {
@@ -518,7 +538,7 @@ export function useChatStateStore({
     setUnreadCount(0);
   }, []);
 
-  return { getState, saveState, removeState, isRunningMapRef, unreadIdsRef, gateChannelIdsRef, unreadCount, markRead, markAllRead, subscribeChatEvents };
+  return { getState, saveState, removeState, isRunningMapRef, unreadIdsRef, gateChannelIdsRef, reviewChannelIdsRef, unreadCount, markRead, markAllRead, subscribeChatEvents };
 }
 
 // ── Helpers ──

@@ -63,6 +63,8 @@ interface SidebarProps {
   unreadIdsRef?: React.RefObject<Set<string>>;
   /** Channels with at least one pending gate approval (chat or terminal). */
   gateChannelIdsRef?: React.RefObject<Set<string>>;
+  /** Channels with a loaded review session (status=ready). */
+  reviewChannelIdsRef?: React.RefObject<Set<string>>;
   unreadCount?: number;
   onMarkAllRead?: () => void;
   imageBuildStatus?: ImageBuildStatusData | null;
@@ -94,6 +96,7 @@ export function Sidebar({
   isRunningMapRef,
   unreadIdsRef,
   gateChannelIdsRef,
+  reviewChannelIdsRef,
   unreadCount,
   onMarkAllRead,
   imageBuildStatus,
@@ -390,6 +393,7 @@ export function Sidebar({
         isRunningMapRef={isRunningMapRef}
         unreadIdsRef={unreadIdsRef}
         gateChannelIdsRef={gateChannelIdsRef}
+        reviewChannelIdsRef={reviewChannelIdsRef}
       />
 
       {/* Spacer to push footer to bottom */}

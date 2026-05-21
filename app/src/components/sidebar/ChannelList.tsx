@@ -22,6 +22,7 @@ interface ChannelListProps {
   isRunningMapRef?: React.RefObject<Map<string, string>>;
   unreadIdsRef?: React.RefObject<Set<string>>;
   gateChannelIdsRef?: React.RefObject<Set<string>>;
+  reviewChannelIdsRef?: React.RefObject<Set<string>>;
 }
 
 export function ChannelList({
@@ -45,6 +46,7 @@ export function ChannelList({
   isRunningMapRef,
   unreadIdsRef,
   gateChannelIdsRef,
+  reviewChannelIdsRef,
 }: ChannelListProps) {
   return (
     <>
@@ -72,6 +74,7 @@ export function ChannelList({
           isRunningMapRef={isRunningMapRef}
           unreadIdsRef={unreadIdsRef}
           gateChannelIdsRef={gateChannelIdsRef}
+          reviewChannelIdsRef={reviewChannelIdsRef}
         />
       )}
       {topLevel.map((channel) => (
@@ -97,6 +100,7 @@ export function ChannelList({
           isRunningMapRef={isRunningMapRef}
           unreadIdsRef={unreadIdsRef}
           gateChannelIdsRef={gateChannelIdsRef}
+          reviewChannelIdsRef={reviewChannelIdsRef}
         />
       ))}
     </>
