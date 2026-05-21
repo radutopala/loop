@@ -68,6 +68,8 @@ function buildBatchPromptForChat(cs: ReviewComment[], headSHA?: string, prNumber
 interface ReviewPanelProps {
   channelId: string;
   subscribeChatEvents?: (listener: ChatEventListener) => () => void;
+  /** Dismiss the sidebar's `rev` pill — fired once the user is looking at the review. */
+  clearReviewPill?: (channelId: string) => void;
 }
 
 function statusLabel(status: ReviewStatus): string {
@@ -80,7 +82,7 @@ function statusLabel(status: ReviewStatus): string {
   }
 }
 
-export function ReviewPanel({ channelId, subscribeChatEvents }: ReviewPanelProps) {
+export function ReviewPanel({ channelId, subscribeChatEvents, clearReviewPill }: ReviewPanelProps) {
   const { colors, fontSizes } = useTheme();
   const [session, setSession] = useState<ReviewSession | null>(null);
   const [prList, setPrList] = useState<ReviewPR[] | null>(null);
@@ -90,6 +92,15 @@ export function ReviewPanel({ channelId, subscribeChatEvents }: ReviewPanelProps
   const [error, setError] = useState<string | null>(null);
 
   const hasSession = session !== null && session.status !== "idle" && session.status !== "error";
+
+  // The `rev` pill in the sidebar is a "go look" badge — once this panel
+  // is mounted and showing a session, the user has acknowledged it.
+  // Drop the pill on every render where the session is visualized so a
+  // WS reconnect that re-runs rehydrateReviewSessions (and re-adds the
+  // pill) can't briefly relight it while the panel is in view.
+  useEffect(() => {
+    if (hasSession) clearReviewPill?.(channelId);
+  }, [hasSession, channelId, clearReviewPill]);
 
   // Initial fetch on channel change.
   useEffect(() => {
@@ -145,6 +156,11 @@ export function ReviewPanel({ channelId, subscribeChatEvents }: ReviewPanelProps
       } else if (event.type === "review.status") {
         const d = event.data as { status: ReviewStatus; error?: string };
         setSession((prev) => prev ? { ...prev, status: d.status, error: d.error ?? "" } : prev);
+        // Suppress the sidebar pill on every fresh "ready" — the panel
+        // is mounted and the user is already looking at the review, so
+        // a new pill would be noise. Without this, a re-run that lands
+        // back in ready while the panel is open would relight the pill.
+        if (d.status === "ready") clearReviewPill?.(channelId);
       } else if (event.type === "review.diff") {
         // Backend re-rendered the diff with widened context after an
         // agent comment landed outside the current hunks. Swap the
@@ -155,7 +171,7 @@ export function ReviewPanel({ channelId, subscribeChatEvents }: ReviewPanelProps
       }
     };
     return subscribeChatEvents(listener);
-  }, [channelId, subscribeChatEvents]);
+  }, [channelId, subscribeChatEvents, clearReviewPill]);
 
   const onSelectPR = useCallback(async (pr: ReviewPR) => {
     setBusy(true); setError(null); setLoadingPR(pr.number);
@@ -247,27 +263,41 @@ export function ReviewPanel({ channelId, subscribeChatEvents }: ReviewPanelProps
     }
   }, [channelId]);
 
+  // Ask WorkspaceLayout to ensure a chat panel is mounted in the active
+  // layout. The listener is a no-op if one already exists; otherwise it
+  // anchors the new chat panel to the right of this review panel so the
+  // user sees the prompt land beside the diff they pushed it from.
+  const ensureChatOpen = useCallback(() => {
+    window.dispatchEvent(
+      new CustomEvent("loop:open-panel", {
+        detail: { channelId, panel: "chat", anchorPanel: "review" },
+      }),
+    );
+  }, [channelId]);
+
   const onPushOneToChat = useCallback(async (c: ReviewComment) => {
     setError(null);
     try {
+      ensureChatOpen();
       const prompt = buildSinglePromptForChat(c, session?.head_sha, session?.pr?.number);
       await sendMessage(channelId, prompt);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     }
-  }, [channelId, session?.head_sha, session?.pr?.number]);
+  }, [channelId, ensureChatOpen, session?.head_sha, session?.pr?.number]);
 
   const onPushAllToChat = useCallback(async () => {
     setError(null);
     const pending = (session?.comments ?? []).filter((c) => !c.pushed);
     if (pending.length === 0) return;
     try {
+      ensureChatOpen();
       const prompt = buildBatchPromptForChat(pending, session?.head_sha, session?.pr?.number);
       await sendMessage(channelId, prompt);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     }
-  }, [channelId, session?.comments, session?.head_sha, session?.pr?.number]);
+  }, [channelId, ensureChatOpen, session?.comments, session?.head_sha, session?.pr?.number]);
 
   const onPushAll = useCallback(async () => {
     setBusy(true); setError(null);

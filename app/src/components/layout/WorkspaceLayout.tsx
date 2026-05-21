@@ -208,6 +208,8 @@ interface WorkspaceLayoutProps {
   onChatStateUnmount?: (channelId: string, state: ActiveChatState) => void;
   /** Subscribe to chat events from the store's single WebSocket. */
   subscribeChatEvents?: (listener: ChatEventListener) => () => void;
+  /** Drop the sidebar's `rev` pill for a channel. */
+  clearReviewPill?: (channelId: string) => void;
 }
 
 export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutProps>(function WorkspaceLayout({
@@ -232,6 +234,7 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
   initialChatState,
   onChatStateUnmount,
   subscribeChatEvents,
+  clearReviewPill,
 }, ref) {
   const { colors } = useTheme();
   const { agents: agentInfoMap } = useAgentRegistry(channelId);
@@ -599,20 +602,34 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
   // quality icon). The event carries the target channelId so other workspaces
   // ignore it. If the panel already exists in the active tree this is a no-op;
   // otherwise we split the first leaf or create a fresh tree if empty.
+  //
+  // The optional `anchorPanel` hint pins the new leaf to the right of an
+  // existing panel (e.g. push-to-chat opens chat to the right of review).
+  // If the anchor is missing we fall back to splitting the first leaf.
   useEffect(() => {
     const handler = (ev: Event) => {
-      const ce = ev as CustomEvent<{ channelId: string; panel: PanelType }>;
+      const ce = ev as CustomEvent<{ channelId: string; panel: PanelType; anchorPanel?: PanelType }>;
       if (!ce.detail || ce.detail.channelId !== channelId) return;
       const panel = ce.detail.panel;
+      const anchorPanel = ce.detail.anchorPanel;
       const current = treeRef.current;
       if (current && collectLeaves(current).some((l) => l.panel === panel)) return;
       if (!current) {
         handleEmptyAdd(panel);
         return;
       }
-      const firstLeaf = collectLeaves(current)[0];
-      if (firstLeaf) {
-        handleSplitLeaf(firstLeaf.id, panel, "vertical");
+      const leaves = collectLeaves(current);
+      const anchorLeaf = anchorPanel ? leaves.find((l) => l.panel === anchorPanel) : undefined;
+      if (anchorLeaf && canAddPanel(current, panel)) {
+        const newLeafId = leafIdForPanel(channelId, panel);
+        setTree((prev) => {
+          if (!prev) return prev;
+          return insertOppositeHorizontal(prev, anchorLeaf.id, makeLeaf(newLeafId, panel));
+        });
+        return;
+      }
+      if (leaves[0]) {
+        handleSplitLeaf(leaves[0].id, panel, "vertical");
       }
     };
     window.addEventListener("loop:open-panel", handler);
@@ -934,13 +951,14 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
               key={`layout-review-${channelId}`}
               channelId={channelId}
               subscribeChatEvents={subscribeChatEvents}
+              clearReviewPill={clearReviewPill}
             />
           );
         default:
           return null;
       }
     },
-    [channelId, chatState, editorState, dirPath, branch, scrollToMessageId, onScrollComplete, openMemoryFile, onStatusChange, handlePaneStatus, handleRemoveLeaf, subscribeChatEvents],
+    [channelId, chatState, editorState, dirPath, branch, scrollToMessageId, onScrollComplete, openMemoryFile, onStatusChange, handlePaneStatus, handleRemoveLeaf, subscribeChatEvents, clearReviewPill],
   );
 
   return (
