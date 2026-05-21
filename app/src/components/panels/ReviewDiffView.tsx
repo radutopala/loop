@@ -13,6 +13,7 @@ interface ReviewDiffViewProps {
   comments: ReviewComment[];
   worktreePath?: string;
   onPushComment: (c: ReviewComment) => void | Promise<void>;
+  onPushCommentToChat: (c: ReviewComment) => void | Promise<void>;
   onDeleteComment: (c: ReviewComment) => void | Promise<void>;
 }
 
@@ -65,7 +66,7 @@ function summarize(parsed: ParsedFile, fileComments: ReviewComment[]): FileSumma
   return { path: parsed.path, additions, deletions, parsed, agentCount, ghCount };
 }
 
-export function ReviewDiffView({ channelId, rawDiff, comments, worktreePath, onPushComment, onDeleteComment }: ReviewDiffViewProps) {
+export function ReviewDiffView({ channelId, rawDiff, comments, worktreePath, onPushComment, onPushCommentToChat, onDeleteComment }: ReviewDiffViewProps) {
   const { colors } = useTheme();
   const [fileContextMenu, setFileContextMenu] = useState<{ x: number; y: number; path: string } | null>(null);
 
@@ -240,6 +241,7 @@ export function ReviewDiffView({ channelId, rawDiff, comments, worktreePath, onP
               onToggle={() => { setFocusedIdx(idx); toggle(sum.path); }}
               onContextMenu={handleFileContextMenu}
               onPushComment={onPushComment}
+              onPushCommentToChat={onPushCommentToChat}
               onDeleteComment={onDeleteComment}
             />
           </div>
@@ -250,6 +252,7 @@ export function ReviewDiffView({ channelId, rawDiff, comments, worktreePath, onP
             colors={colors}
             onContextMenu={handleFileContextMenu}
             onPushComment={onPushComment}
+            onPushCommentToChat={onPushCommentToChat}
             onDeleteComment={onDeleteComment}
           />
         )}
@@ -403,6 +406,7 @@ function FileSection({
   onToggle,
   onContextMenu,
   onPushComment,
+  onPushCommentToChat,
   onDeleteComment,
 }: {
   summary: FileSummary;
@@ -412,6 +416,7 @@ function FileSection({
   onToggle: () => void;
   onContextMenu: (e: React.MouseEvent, path: string) => void;
   onPushComment: (c: ReviewComment) => void | Promise<void>;
+  onPushCommentToChat: (c: ReviewComment) => void | Promise<void>;
   onDeleteComment: (c: ReviewComment) => void | Promise<void>;
 }) {
   // Group comments by (line, side) so multiple comments on the same line
@@ -538,6 +543,7 @@ function FileSection({
                           comment={c}
                           colors={colors}
                           onPush={onPushComment}
+                          onPushToChat={onPushCommentToChat}
                           onDelete={onDeleteComment}
                         />
                       ))}
@@ -627,11 +633,13 @@ function InlineComment({
   comment,
   colors,
   onPush,
+  onPushToChat,
   onDelete,
 }: {
   comment: ReviewComment;
   colors: ColorPalette;
   onPush: (c: ReviewComment) => void | Promise<void>;
+  onPushToChat: (c: ReviewComment) => void | Promise<void>;
   onDelete: (c: ReviewComment) => void | Promise<void>;
 }) {
   const isGitHub = comment.source === "github";
@@ -714,23 +722,42 @@ function InlineComment({
         {comment.pushed ? (
           <span style={{ fontSize: 10, color: colors.textDim }}>{isGitHub ? "on github" : "pushed"}</span>
         ) : (
-          <button
-            data-testid={`review-comment-push-${comment.id}`}
-            onClick={() => void onPush(comment)}
-            style={{
-              background: "transparent",
-              color: colors.text,
-              border: `1px solid ${colors.border}`,
-              borderRadius: 3,
-              padding: "1px 6px",
-              fontSize: 10,
-              fontFamily: fonts.sans,
-              cursor: "pointer",
-            }}
-            title="Push this comment to the PR"
-          >
-            Push
-          </button>
+          <>
+            <button
+              data-testid={`review-comment-push-chat-${comment.id}`}
+              onClick={() => void onPushToChat(comment)}
+              style={{
+                background: "transparent",
+                color: colors.text,
+                border: `1px solid ${colors.border}`,
+                borderRadius: 3,
+                padding: "1px 6px",
+                fontSize: 10,
+                fontFamily: fonts.sans,
+                cursor: "pointer",
+              }}
+              title="Send this comment to the chat as a prompt for the agent"
+            >
+              Push to chat
+            </button>
+            <button
+              data-testid={`review-comment-push-${comment.id}`}
+              onClick={() => void onPush(comment)}
+              style={{
+                background: "transparent",
+                color: colors.text,
+                border: `1px solid ${colors.border}`,
+                borderRadius: 3,
+                padding: "1px 6px",
+                fontSize: 10,
+                fontFamily: fonts.sans,
+                cursor: "pointer",
+              }}
+              title="Push this comment to GitHub"
+            >
+              Push to GitHub
+            </button>
+          </>
         )}
         <button
           data-testid={`review-comment-delete-${comment.id}`}
@@ -774,12 +801,14 @@ function OrphanCommentsSection({
   colors,
   onContextMenu,
   onPushComment,
+  onPushCommentToChat,
   onDeleteComment,
 }: {
   comments: ReviewComment[];
   colors: ColorPalette;
   onContextMenu: (e: React.MouseEvent, path: string) => void;
   onPushComment: (c: ReviewComment) => void | Promise<void>;
+  onPushCommentToChat: (c: ReviewComment) => void | Promise<void>;
   onDeleteComment: (c: ReviewComment) => void | Promise<void>;
 }) {
   return (
@@ -809,7 +838,7 @@ function OrphanCommentsSection({
           >
             {c.path}:{c.line}
           </div>
-          <InlineComment comment={c} colors={colors} onPush={onPushComment} onDelete={onDeleteComment} />
+          <InlineComment comment={c} colors={colors} onPush={onPushComment} onPushToChat={onPushCommentToChat} onDelete={onDeleteComment} />
         </div>
       ))}
     </div>
