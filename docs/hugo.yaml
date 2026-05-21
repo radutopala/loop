@@ -69,9 +69,7 @@ params:
     default: system
     displayToggle: true
   footer:
-    enable: true
-    displayCopyright: true
-    displayPoweredBy: true
+    enable: false
   search:
     enable: true
     type: flexsearch
