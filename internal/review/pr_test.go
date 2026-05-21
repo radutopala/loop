@@ -160,11 +160,11 @@ func (s *PRSuite) TestRefreshCheckoutError() {
 
 func (s *PRSuite) TestDiffRequiresInputs() {
 	g := &GitPR{Run: (&recordingRunner{}).run}
-	_, err := g.Diff(context.Background(), "", "/wt", "main")
+	_, err := g.Diff(context.Background(), "", "/wt", "main", nil)
 	require.Error(s.T(), err)
-	_, err = g.Diff(context.Background(), "/repo", "", "main")
+	_, err = g.Diff(context.Background(), "/repo", "", "main", nil)
 	require.Error(s.T(), err)
-	_, err = g.Diff(context.Background(), "/repo", "/wt", "")
+	_, err = g.Diff(context.Background(), "/repo", "/wt", "", nil)
 	require.Error(s.T(), err)
 }
 
@@ -175,7 +175,7 @@ func (s *PRSuite) TestDiffHappyPath() {
 		},
 	}
 	g := &GitPR{Run: rr.run}
-	out, err := g.Diff(context.Background(), "/repo", "/repo/.worktrees/pr-1", "main")
+	out, err := g.Diff(context.Background(), "/repo", "/repo/.worktrees/pr-1", "main", nil)
 	require.NoError(s.T(), err)
 	require.Contains(s.T(), string(out), "diff --git")
 	require.Len(s.T(), rr.calls, 2)
@@ -192,7 +192,7 @@ func (s *PRSuite) TestDiffFetchError() {
 		},
 	}
 	g := &GitPR{Run: rr.run}
-	_, err := g.Diff(context.Background(), "/repo", "/wt", "main")
+	_, err := g.Diff(context.Background(), "/repo", "/wt", "main", nil)
 	require.ErrorContains(s.T(), err, "bad ref")
 }
 
@@ -203,8 +203,102 @@ func (s *PRSuite) TestDiffDiffError() {
 		},
 	}
 	g := &GitPR{Run: rr.run}
-	_, err := g.Diff(context.Background(), "/repo", "/wt", "main")
+	_, err := g.Diff(context.Background(), "/repo", "/wt", "main", nil)
 	require.ErrorContains(s.T(), err, "bad object")
+}
+
+// When a commented line is far outside the default 3-line context window,
+// Diff first runs `-U0` to discover changed ranges, then re-runs with the
+// computed `-U<n>` so the comment lands inside a hunk.
+func (s *PRSuite) TestDiffWidensContextForFarComments() {
+	rr := &recordingRunner{
+		response: map[string]callResponse{
+			"git diff -U0 origin/main...HEAD": {
+				out: []byte("diff --git a/foo.go b/foo.go\n@@ -10,1 +10,1 @@\n-old\n+new\n"),
+			},
+			"git diff -U92 origin/main...HEAD": {out: []byte("widened diff")},
+		},
+	}
+	g := &GitPR{Run: rr.run}
+	out, err := g.Diff(context.Background(), "/repo", "/wt", "main", []*Comment{
+		{Path: "foo.go", Line: 102, Side: "RIGHT"},
+	})
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "widened diff", string(out))
+	// fetch + -U0 probe + final widened diff
+	require.Len(s.T(), rr.calls, 3)
+	require.Equal(s.T(), []string{"diff", "-U0", "origin/main...HEAD"}, rr.calls[1].args)
+	require.Equal(s.T(), []string{"diff", "-U92", "origin/main...HEAD"}, rr.calls[2].args)
+}
+
+// Comments within default unified context don't trigger a -U widen.
+func (s *PRSuite) TestDiffSkipsWidenWhenDefaultCovers() {
+	rr := &recordingRunner{
+		response: map[string]callResponse{
+			"git diff -U0 origin/main...HEAD": {
+				out: []byte("diff --git a/foo.go b/foo.go\n@@ -10,1 +10,1 @@\n-old\n+new\n"),
+			},
+			"git diff origin/main...HEAD": {out: []byte("default diff")},
+		},
+	}
+	g := &GitPR{Run: rr.run}
+	out, err := g.Diff(context.Background(), "/repo", "/wt", "main", []*Comment{
+		{Path: "foo.go", Line: 12, Side: "RIGHT"},
+	})
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "default diff", string(out))
+	require.Equal(s.T(), []string{"diff", "origin/main...HEAD"}, rr.calls[2].args)
+}
+
+// Comments on files that aren't in the diff (orphan-by-path) don't
+// force a -U widen for the files that are.
+func (s *PRSuite) TestDiffIgnoresCommentsOnUnchangedFiles() {
+	rr := &recordingRunner{
+		response: map[string]callResponse{
+			"git diff -U0 origin/main...HEAD": {
+				out: []byte("diff --git a/foo.go b/foo.go\n@@ -10,1 +10,1 @@\n-old\n+new\n"),
+			},
+			"git diff origin/main...HEAD": {out: []byte("default diff")},
+		},
+	}
+	g := &GitPR{Run: rr.run}
+	_, err := g.Diff(context.Background(), "/repo", "/wt", "main", []*Comment{
+		{Path: "unrelated.go", Line: 999, Side: "RIGHT"},
+	})
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), []string{"diff", "origin/main...HEAD"}, rr.calls[2].args)
+}
+
+// LEFT-side comments anchor to the old-file range from the @@ header.
+func (s *PRSuite) TestDiffWidensForLeftSideComment() {
+	rr := &recordingRunner{
+		response: map[string]callResponse{
+			"git diff -U0 origin/main...HEAD": {
+				out: []byte("diff --git a/foo.go b/foo.go\n@@ -50,2 +50,1 @@\n-a\n-b\n+merged\n"),
+			},
+			"git diff -U29 origin/main...HEAD": {out: []byte("widened")},
+		},
+	}
+	g := &GitPR{Run: rr.run}
+	out, err := g.Diff(context.Background(), "/repo", "/wt", "main", []*Comment{
+		{Path: "foo.go", Line: 21, Side: "LEFT"},
+	})
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "widened", string(out))
+}
+
+// -U0 pre-pass failure propagates.
+func (s *PRSuite) TestDiffSkinnyPassError() {
+	rr := &recordingRunner{
+		response: map[string]callResponse{
+			"git diff -U0 origin/main...HEAD": {out: []byte("u0 boom"), err: errors.New("exit 1")},
+		},
+	}
+	g := &GitPR{Run: rr.run}
+	_, err := g.Diff(context.Background(), "/repo", "/wt", "main", []*Comment{
+		{Path: "foo.go", Line: 1, Side: "RIGHT"},
+	})
+	require.ErrorContains(s.T(), err, "u0 boom")
 }
 
 func (s *PRSuite) TestRemoveRequiresInputs() {
@@ -259,4 +353,31 @@ func (s *PRSuite) TestRemovePruneError() {
 	g := &GitPR{Run: rr.run}
 	err := g.Remove(context.Background(), "/repo", "/repo/.worktrees/pr-1")
 	require.ErrorContains(s.T(), err, "prune busted")
+}
+
+func (s *PRSuite) TestShouldRediff() {
+	diff := []byte("diff --git a/x.go b/x.go\n" +
+		"--- a/x.go\n" +
+		"+++ b/x.go\n" +
+		"@@ -10,3 +10,3 @@\n" +
+		" a\n-b\n+B\n c\n",
+	)
+	cases := []struct {
+		name string
+		path string
+		line int
+		side string
+		want bool
+	}{
+		{"inside hunk RIGHT", "x.go", 11, "RIGHT", false},
+		{"outside hunk RIGHT", "x.go", 50, "RIGHT", true},
+		{"inside hunk LEFT", "x.go", 10, "LEFT", false},
+		{"outside hunk LEFT", "x.go", 100, "LEFT", true},
+		{"path absent", "other.go", 1, "RIGHT", false},
+	}
+	for _, tc := range cases {
+		s.Run(tc.name, func() {
+			require.Equal(s.T(), tc.want, ShouldRediff(diff, tc.path, tc.line, tc.side))
+		})
+	}
 }

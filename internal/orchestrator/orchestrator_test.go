@@ -249,6 +249,10 @@ func (m *MockEventBroadcaster) BroadcastReviewStatus(channelID string, data even
 	m.Called(channelID, data)
 }
 
+func (m *MockEventBroadcaster) BroadcastReviewDiff(channelID string, data events.ReviewDiffEventData) {
+	m.Called(channelID, data)
+}
+
 type MockRunner struct {
 	mock.Mock
 }

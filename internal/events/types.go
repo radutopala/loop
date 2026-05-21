@@ -25,6 +25,7 @@ type Broadcaster interface {
 	BroadcastGateApprovalResolved(channelID string, data GateApprovalResolvedData)
 	BroadcastReviewComment(channelID string, data ReviewCommentEventData)
 	BroadcastReviewStatus(channelID string, data ReviewStatusEventData)
+	BroadcastReviewDiff(channelID string, data ReviewDiffEventData)
 }
 
 // ReviewCommentEventData is the payload for review.comment events. Sent
@@ -45,6 +46,16 @@ type ReviewCommentEventData struct {
 type ReviewStatusEventData struct {
 	Status string `json:"status"`
 	Error  string `json:"error,omitempty"`
+}
+
+// ReviewDiffEventData is the payload for review.diff events. Sent when
+// the backend re-renders the diff with widened unified context — e.g.
+// when an agent-emitted comment lands on a line outside the current
+// hunks and `-U` has to grow to absorb it. The FE swaps raw_diff in
+// place so the inline view re-parses without losing scroll/expanded
+// state.
+type ReviewDiffEventData struct {
+	RawDiff string `json:"raw_diff"`
 }
 
 // MessageEventData is the payload for message.created events.
