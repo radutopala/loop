@@ -206,13 +206,6 @@ func (s *Server) handleReviewLoad(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	diff, err := s.reviewWorktree.Diff(r.Context(), dirPath, worktreePath, pr.BaseRef)
-	if err != nil {
-		s.reviewStore.UpdateStatus(channelID, review.StatusError, errorMessage(err))
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-
 	// Seed the comment list with any inline review comments already filed
 	// on the PR via GitHub — so the panel can render them alongside the
 	// agent's pending comments in one unified diff view. A failure here is
@@ -220,7 +213,17 @@ func (s *Server) handleReviewLoad(w http.ResponseWriter, r *http.Request) {
 	// the agent comments only. The Author field on PR comments often
 	// requires a token; if FetchRepoSlug fails (e.g. detached / mirror
 	// repo) skip the GH-comment fetch entirely.
+	//
+	// Fetched before Diff so the worktree can widen `-U` enough to absorb
+	// any out-of-hunk comment lines into the rendered diff.
 	ghComments := s.fetchExistingReviewComments(r.Context(), dirPath, ghUser, req.PRNumber)
+
+	diff, err := s.reviewWorktree.Diff(r.Context(), dirPath, worktreePath, pr.BaseRef, ghComments)
+	if err != nil {
+		s.reviewStore.UpdateStatus(channelID, review.StatusError, errorMessage(err))
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
 
 	sess := &review.Session{
 		PR:           pr,
@@ -305,11 +308,6 @@ func (s *Server) handleReviewSync(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	diff, err := s.reviewWorktree.Diff(r.Context(), dirPath, sess.WorktreePath, sess.PR.BaseRef)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
 	ghComments := s.fetchExistingReviewComments(r.Context(), dirPath, ghUser, prNum)
 
 	// Preserve agent-emitted comments verbatim; replace github-sourced
@@ -322,6 +320,14 @@ func (s *Server) handleReviewSync(w http.ResponseWriter, r *http.Request) {
 		merged = append(merged, c)
 	}
 	merged = append(merged, ghComments...)
+
+	// Pass the full merged comment set (agent + GH) so Diff can widen
+	// `-U` enough to land every comment inside a hunk.
+	diff, err := s.reviewWorktree.Diff(r.Context(), dirPath, sess.WorktreePath, sess.PR.BaseRef, merged)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
 
 	s.reviewStore.Put(channelID, &review.Session{
 		PR:           sess.PR,
@@ -770,6 +776,7 @@ func (s *Server) runReviewAsync(channelID, worktreePath, parentDirPath, systemPr
 				Body: c.Body,
 			})
 		}
+		s.maybeRediffForComment(channelID, worktreePath, parentDirPath, c)
 	}
 	_, err := s.reviewRunner.Run(context.Background(), channelID, worktreePath, parentDirPath, systemPrompt, prompt, onComment)
 	if err != nil {
@@ -779,6 +786,41 @@ func (s *Server) runReviewAsync(channelID, worktreePath, parentDirPath, systemPr
 	}
 	s.reviewStore.UpdateStatus(channelID, review.StatusReady, "")
 	s.broadcastReviewStatus(channelID, review.StatusReady, "")
+}
+
+// maybeRediffForComment re-runs git diff with widened unified context if
+// the just-emitted comment lands on a known file but outside every
+// existing hunk. Path-absent comments and comments already inside a
+// hunk are no-ops. On success the session's raw_diff is swapped and a
+// review.diff event is broadcast; on failure we log and continue —
+// the FE keeps the old diff and the comment surfaces in the
+// outside-of-diff section.
+func (s *Server) maybeRediffForComment(channelID, worktreePath, parentDirPath string, c *review.Comment) {
+	if s.reviewWorktree == nil {
+		return
+	}
+	sess := s.reviewStore.Get(channelID)
+	if sess == nil || sess.PR == nil || sess.PR.BaseRef == "" {
+		return
+	}
+	if !review.ShouldRediff([]byte(sess.RawDiff), c.Path, c.Line, c.Side) {
+		return
+	}
+	out, err := s.reviewWorktree.Diff(context.Background(), parentDirPath, worktreePath, sess.PR.BaseRef, sess.Comments)
+	if err != nil {
+		if s.logger != nil {
+			s.logger.Warn("review re-diff failed", "channel_id", channelID, "error", err)
+		}
+		return
+	}
+	raw := string(out)
+	if raw == sess.RawDiff {
+		return
+	}
+	s.reviewStore.UpdateRawDiff(channelID, raw)
+	if hub := s.eventsHub; hub != nil {
+		hub.BroadcastReviewDiff(channelID, events.ReviewDiffEventData{RawDiff: raw})
+	}
 }
 
 // registerReviewRun records that channelID has a review run in flight.

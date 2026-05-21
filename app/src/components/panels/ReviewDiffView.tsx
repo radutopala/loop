@@ -5,8 +5,10 @@ import { useTheme } from "../../ThemeContext";
 import { ContextMenu } from "../shared/ContextMenu";
 import { computeSegments, parseUnifiedDiff, type HunkLine, type ParsedFile } from "./DiffViewer";
 import type { ReviewComment } from "../../api/review";
+import type { FileLinkOpenDetail } from "../chat/FileLink";
 
 interface ReviewDiffViewProps {
+  channelId: string;
   rawDiff: string;
   comments: ReviewComment[];
   worktreePath?: string;
@@ -31,6 +33,20 @@ function commentLineSide(c: ReviewComment): "LEFT" | "RIGHT" {
   return c.side === "LEFT" ? "LEFT" : "RIGHT";
 }
 
+// Dispatch the same custom event chat-message file links use so an
+// editor panel opens the file at the channel's root. The backend
+// widens `git diff -U` enough that every commented line lives inside a
+// hunk, so we don't need a line target here — clicking a file row just
+// opens the file in the editor at the top.
+function dispatchOpenFile(channelId: string, relPath: string) {
+  const detail: FileLinkOpenDetail = {
+    channelId,
+    target: { rootIndex: 0, relPath },
+    line: null,
+  };
+  window.dispatchEvent(new CustomEvent<FileLinkOpenDetail>("loop:open-file", { detail }));
+}
+
 function summarize(parsed: ParsedFile, fileComments: ReviewComment[]): FileSummary {
   let additions = 0;
   let deletions = 0;
@@ -49,7 +65,7 @@ function summarize(parsed: ParsedFile, fileComments: ReviewComment[]): FileSumma
   return { path: parsed.path, additions, deletions, parsed, agentCount, ghCount };
 }
 
-export function ReviewDiffView({ rawDiff, comments, worktreePath, onPushComment, onDeleteComment }: ReviewDiffViewProps) {
+export function ReviewDiffView({ channelId, rawDiff, comments, worktreePath, onPushComment, onDeleteComment }: ReviewDiffViewProps) {
   const { colors } = useTheme();
   const [fileContextMenu, setFileContextMenu] = useState<{ x: number; y: number; path: string } | null>(null);
 
@@ -217,6 +233,7 @@ export function ReviewDiffView({ rawDiff, comments, worktreePath, onPushComment,
             style={{ borderLeft: `3px solid ${idx === clampedIdx ? colors.active : "transparent"}`, transition: "border-color 0.15s ease" }}
           >
             <FileSection
+              channelId={channelId}
               summary={sum}
               comments={byFile.get(sum.path) ?? []}
               expanded={expanded.has(sum.path)}
@@ -379,6 +396,7 @@ function DiffToolbar({
 }
 
 function FileSection({
+  channelId,
   summary,
   comments,
   expanded,
@@ -388,6 +406,7 @@ function FileSection({
   onPushComment,
   onDeleteComment,
 }: {
+  channelId: string;
   summary: FileSummary;
   comments: ReviewComment[];
   expanded: boolean;
@@ -397,9 +416,10 @@ function FileSection({
   onPushComment: (c: ReviewComment) => void | Promise<void>;
   onDeleteComment: (c: ReviewComment) => void | Promise<void>;
 }) {
-  const segments = computeSegments(summary.parsed);
   // Group comments by (line, side) so multiple comments on the same line
-  // render as a stack underneath that line.
+  // render as a stack underneath that line. The backend widens git's
+  // `-U` enough to land every comment on a hunk line, so we don't need
+  // a separate out-of-hunk path here.
   const lineKey = (line: HunkLine) => {
     if (line.newNum !== null) return `R:${line.newNum}`;
     if (line.oldNum !== null) return `L:${line.oldNum}`;
@@ -413,80 +433,114 @@ function FileSection({
     commentMap.set(k, arr);
   }
 
+  const segments = computeSegments(summary.parsed);
   const totalCount = summary.agentCount + summary.ghCount;
 
   return (
     <div data-testid={`review-diff-file-${summary.path}`}>
-      <button
-        onClick={onToggle}
+      <div
         onContextMenu={(e) => onContextMenu(e, summary.path)}
         style={{
           display: "flex",
           alignItems: "center",
           gap: 6,
           width: "100%",
-          padding: "4px 12px",
-          border: "none",
           background: expanded ? colors.hoverBg : "transparent",
-          color: colors.textLight,
-          fontSize: 12,
-          fontFamily: fonts.mono,
-          textAlign: "left",
-          cursor: "pointer",
           borderBottom: `1px solid ${colors.border}`,
         }}
       >
-        <svg
-          width="10"
-          height="10"
-          viewBox="0 0 10 10"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="1.5"
-          strokeLinecap="round"
-          strokeLinejoin="round"
+        <button
+          onClick={onToggle}
           style={{
-            transition: "transform 0.15s ease",
-            transform: expanded ? "rotate(0deg)" : "rotate(-90deg)",
-            flexShrink: 0,
-            color: colors.textDim,
-          }}
-        >
-          <path d="M2.5 3.5L5 6.5L7.5 3.5" />
-        </svg>
-        <span
-          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 6,
             flex: 1,
-            overflow: "hidden",
-            textOverflow: "ellipsis",
-            whiteSpace: "nowrap",
-            direction: "rtl",
+            minWidth: 0,
+            padding: "4px 12px",
+            border: "none",
+            background: "transparent",
+            color: colors.textLight,
+            fontSize: 12,
+            fontFamily: fonts.mono,
             textAlign: "left",
+            cursor: "pointer",
           }}
         >
-          <bdi>{summary.path}</bdi>
-        </span>
-        {totalCount > 0 && (
-          <span
-            data-testid={`review-diff-file-count-${summary.path}`}
+          <svg
+            width="10"
+            height="10"
+            viewBox="0 0 10 10"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.5"
+            strokeLinecap="round"
+            strokeLinejoin="round"
             style={{
+              transition: "transform 0.15s ease",
+              transform: expanded ? "rotate(0deg)" : "rotate(-90deg)",
               flexShrink: 0,
-              fontSize: 10,
-              padding: "1px 6px",
-              borderRadius: 3,
-              border: `1px solid ${colors.active}`,
-              color: colors.active,
+              color: colors.textDim,
             }}
-            title={`${summary.agentCount} agent · ${summary.ghCount} github`}
           >
-            {totalCount}
+            <path d="M2.5 3.5L5 6.5L7.5 3.5" />
+          </svg>
+          <span
+            style={{
+              flex: 1,
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              whiteSpace: "nowrap",
+              direction: "rtl",
+              textAlign: "left",
+            }}
+          >
+            <bdi>{summary.path}</bdi>
           </span>
-        )}
-        <span style={{ flexShrink: 0, width: 80, fontSize: 11, textAlign: "right" }}>
-          <span style={{ color: colors.diffAddText }}>+{summary.additions}</span>{" "}
-          <span style={{ color: colors.diffDelText }}>-{summary.deletions}</span>
-        </span>
-      </button>
+          {totalCount > 0 && (
+            <span
+              data-testid={`review-diff-file-count-${summary.path}`}
+              style={{
+                flexShrink: 0,
+                fontSize: 10,
+                padding: "1px 6px",
+                borderRadius: 3,
+                border: `1px solid ${colors.active}`,
+                color: colors.active,
+              }}
+              title={`${summary.agentCount} agent · ${summary.ghCount} github`}
+            >
+              {totalCount}
+            </span>
+          )}
+          <span style={{ flexShrink: 0, width: 80, fontSize: 11, textAlign: "right" }}>
+            <span style={{ color: colors.diffAddText }}>+{summary.additions}</span>{" "}
+            <span style={{ color: colors.diffDelText }}>-{summary.deletions}</span>
+          </span>
+        </button>
+        <button
+          data-testid={`review-diff-file-open-${summary.path}`}
+          onClick={(e) => {
+            e.stopPropagation();
+            dispatchOpenFile(channelId, summary.path);
+          }}
+          title="Open file in editor"
+          style={{
+            flexShrink: 0,
+            background: "transparent",
+            color: colors.textDim,
+            border: `1px solid ${colors.border}`,
+            borderRadius: 3,
+            padding: "1px 6px",
+            margin: "0 8px 0 0",
+            fontSize: 10,
+            fontFamily: fonts.sans,
+            cursor: "pointer",
+          }}
+        >
+          Open
+        </button>
+      </div>
       {expanded && (
         <div style={{ borderBottom: `1px solid ${colors.border}` }}>
           {segments.map((seg, si) => {

@@ -100,6 +100,13 @@ export function ReviewPanel({ channelId, subscribeChatEvents }: ReviewPanelProps
       } else if (event.type === "review.status") {
         const d = event.data as { status: ReviewStatus; error?: string };
         setSession((prev) => prev ? { ...prev, status: d.status, error: d.error ?? "" } : prev);
+      } else if (event.type === "review.diff") {
+        // Backend re-rendered the diff with widened context after an
+        // agent comment landed outside the current hunks. Swap the
+        // raw_diff in place — the diff view re-parses on the new value
+        // and existing comments re-bind to the wider hunk set.
+        const d = event.data as { raw_diff: string };
+        setSession((prev) => prev ? { ...prev, raw_diff: d.raw_diff } : prev);
       }
     };
     return subscribeChatEvents(listener);
@@ -400,6 +407,7 @@ export function ReviewPanel({ channelId, subscribeChatEvents }: ReviewPanelProps
         )}
         {hasSession && session && (
           <ReviewDiffView
+            channelId={channelId}
             rawDiff={session.raw_diff ?? ""}
             comments={session.comments}
             worktreePath={session.worktree_path}

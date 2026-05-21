@@ -61,6 +61,7 @@ const (
 	EventQualityRulesViolated      = "quality.rules_violated"
 	EventReviewComment             = "review.comment"
 	EventReviewStatus              = "review.status"
+	EventReviewDiff                = "review.diff"
 )
 
 // Event represents a server-sent event to WebSocket clients.
@@ -216,6 +217,18 @@ func (h *EventsHub) BroadcastReviewComment(channelID string, data events.ReviewC
 func (h *EventsHub) BroadcastReviewStatus(channelID string, data events.ReviewStatusEventData) {
 	h.Broadcast(Event{
 		Type:      EventReviewStatus,
+		ChannelID: channelID,
+		Data:      data,
+	})
+}
+
+// BroadcastReviewDiff sends a review.diff event carrying a freshly
+// widened raw diff. Triggered when an agent comment arrives on a line
+// outside the current hunks and the backend has to re-run `git diff`
+// with a larger `-U` to keep every comment inside a hunk.
+func (h *EventsHub) BroadcastReviewDiff(channelID string, data events.ReviewDiffEventData) {
+	h.Broadcast(Event{
+		Type:      EventReviewDiff,
 		ChannelID: channelID,
 		Data:      data,
 	})

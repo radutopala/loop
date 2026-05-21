@@ -1,9 +1,12 @@
 package review
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"path/filepath"
+	"regexp"
+	"strconv"
 	"strings"
 )
 
@@ -21,7 +24,7 @@ type CommandRunner func(ctx context.Context, dir, name string, args ...string) (
 type PR interface {
 	Add(ctx context.Context, parentDir string, prNum int) (worktreePath string, err error)
 	Refresh(ctx context.Context, parentDir, worktreePath string, prNum int) error
-	Diff(ctx context.Context, parentDir, worktreePath, baseRef string) ([]byte, error)
+	Diff(ctx context.Context, parentDir, worktreePath, baseRef string, comments []*Comment) ([]byte, error)
 	Remove(ctx context.Context, parentDir, worktreePath string) error
 }
 
@@ -87,18 +90,181 @@ func (g *GitPR) Refresh(ctx context.Context, parentDir, worktreePath string, prN
 // is fetched first from the parent repo to ensure it's up to date — the
 // worktree shares the parent's git dir so the fetched ref is visible
 // from inside the worktree.
-func (g *GitPR) Diff(ctx context.Context, parentDir, worktreePath, baseRef string) ([]byte, error) {
+//
+// When comments is non-empty, the unified-context number `-U<n>` is
+// widened so every commented (path, line) lands inside a hunk rather
+// than a context gap. We do a cheap first pass at `-U0` to discover
+// changed line ranges per file, compute the largest distance from any
+// comment to the nearest change, and use that as the final `-U`. With
+// no comments — or when default -U=3 already covers them — we skip the
+// pre-pass and run the standard `git diff`.
+func (g *GitPR) Diff(ctx context.Context, parentDir, worktreePath, baseRef string, comments []*Comment) ([]byte, error) {
 	if parentDir == "" || worktreePath == "" || baseRef == "" {
 		return nil, fmt.Errorf("parentDir, worktreePath, and baseRef are required")
 	}
 	if out, err := g.Run(ctx, parentDir, "git", "fetch", "origin", baseRef); err != nil {
 		return nil, fmt.Errorf("git fetch %s: %s", baseRef, strings.TrimSpace(string(out)))
 	}
-	out, err := g.Run(ctx, worktreePath, "git", "diff", fmt.Sprintf("origin/%s...HEAD", baseRef))
+	baseSpec := fmt.Sprintf("origin/%s...HEAD", baseRef)
+
+	needed := 0
+	if len(comments) > 0 {
+		skinny, err := g.Run(ctx, worktreePath, "git", "diff", "-U0", baseSpec)
+		if err != nil {
+			return nil, fmt.Errorf("git diff -U0: %s", strings.TrimSpace(string(skinny)))
+		}
+		needed = computeContextNeeded(skinny, comments)
+	}
+
+	args := []string{"diff"}
+	if needed > defaultUnifiedContext {
+		args = append(args, fmt.Sprintf("-U%d", needed))
+	}
+	args = append(args, baseSpec)
+	out, err := g.Run(ctx, worktreePath, "git", args...)
 	if err != nil {
 		return nil, fmt.Errorf("git diff: %s", strings.TrimSpace(string(out)))
 	}
 	return out, nil
+}
+
+// defaultUnifiedContext is git's built-in `-U` value. We only widen
+// beyond this when comments outside default hunks need to be absorbed.
+const defaultUnifiedContext = 3
+
+// fileChangeSpans holds the line ranges (per side) covered by hunks
+// for one file, as parsed from a `git diff -U0` output. Counts default
+// to 1 when the @@ header omits them; counts of 0 (pure insertions /
+// pure deletions) collapse to a single-line marker at the start line.
+type fileChangeSpans struct {
+	newSpans [][2]int
+	oldSpans [][2]int
+}
+
+var hunkHeaderRE = regexp.MustCompile(`^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@`)
+
+// parseChangedRanges walks a `git diff -U0` output and records the
+// hunk ranges per file path (using the b/ path, so renames map to the
+// new name). Files with no hunks (binary, mode-only) get an empty
+// entry so callers can distinguish "in diff but no line ranges" from
+// "not in diff at all".
+func parseChangedRanges(diff []byte) map[string]*fileChangeSpans {
+	result := make(map[string]*fileChangeSpans)
+	var current *fileChangeSpans
+	for raw := range bytes.SplitSeq(diff, []byte{'\n'}) {
+		line := string(raw)
+		if strings.HasPrefix(line, "diff --git ") {
+			// "diff --git a/<old> b/<new>" — the b/ portion is the new
+			// path even for renames; that's what comments target.
+			if _, after, ok := strings.Cut(line, " b/"); ok {
+				current = &fileChangeSpans{}
+				result[after] = current
+			} else {
+				current = nil
+			}
+			continue
+		}
+		if current == nil {
+			continue
+		}
+		m := hunkHeaderRE.FindStringSubmatch(line)
+		if m == nil {
+			continue
+		}
+		oldStart, _ := strconv.Atoi(m[1])
+		oldCount := 1
+		if m[2] != "" {
+			oldCount, _ = strconv.Atoi(m[2])
+		}
+		newStart, _ := strconv.Atoi(m[3])
+		newCount := 1
+		if m[4] != "" {
+			newCount, _ = strconv.Atoi(m[4])
+		}
+		if newCount > 0 {
+			current.newSpans = append(current.newSpans, [2]int{newStart, newStart + newCount - 1})
+		} else {
+			current.newSpans = append(current.newSpans, [2]int{newStart, newStart})
+		}
+		if oldCount > 0 {
+			current.oldSpans = append(current.oldSpans, [2]int{oldStart, oldStart + oldCount - 1})
+		} else {
+			current.oldSpans = append(current.oldSpans, [2]int{oldStart, oldStart})
+		}
+	}
+	return result
+}
+
+// computeContextNeeded returns the smallest `-U<n>` such that every
+// comment whose file is in the diff lands within a hunk. Comments on
+// files not in the diff are ignored — they have no anchor and will be
+// surfaced by the frontend's outside-of-diff section instead.
+func computeContextNeeded(skinnyDiff []byte, comments []*Comment) int {
+	ranges := parseChangedRanges(skinnyDiff)
+	needed := 0
+	for _, c := range comments {
+		if c == nil {
+			continue
+		}
+		r, ok := ranges[c.Path]
+		if !ok {
+			continue
+		}
+		spans := r.newSpans
+		if c.Side == "LEFT" {
+			spans = r.oldSpans
+		}
+		if len(spans) == 0 {
+			continue
+		}
+		dist := -1
+		for _, span := range spans {
+			var d int
+			switch {
+			case c.Line < span[0]:
+				d = span[0] - c.Line
+			case c.Line > span[1]:
+				d = c.Line - span[1]
+			default:
+				d = 0
+			}
+			if dist < 0 || d < dist {
+				dist = d
+			}
+		}
+		if dist > needed {
+			needed = dist
+		}
+	}
+	return needed
+}
+
+// ShouldRediff reports whether a freshly-emitted comment on
+// (path, line, side) needs the diff to be re-rendered with widened
+// unified context. Returns true iff path is already in the diff but
+// line falls outside every existing hunk on that side — exactly the
+// case where growing `-U` will absorb the comment into a hunk.
+//
+// Path-absent comments return false: re-diffing won't add the file (it
+// has no changes vs base), so they stay in the FE's outside-of-diff
+// section. Lines already inside a hunk also return false — no work
+// needed.
+func ShouldRediff(rawDiff []byte, path string, line int, side string) bool {
+	ranges := parseChangedRanges(rawDiff)
+	r, ok := ranges[path]
+	if !ok {
+		return false
+	}
+	spans := r.newSpans
+	if side == "LEFT" {
+		spans = r.oldSpans
+	}
+	for _, span := range spans {
+		if line >= span[0] && line <= span[1] {
+			return false
+		}
+	}
+	return true
 }
 
 // Remove tears down a worktree created by Add. Best-effort prune cleans

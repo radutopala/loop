@@ -130,6 +130,22 @@ func (s *Store) UpdateStatus(channelID string, status Status, errMsg string) boo
 	return true
 }
 
+// UpdateRawDiff swaps the session's raw_diff. Used by the agent-stream
+// path when a freshly-emitted comment lands outside the existing hunks
+// and the diff has to be re-rendered with a widened `-U`. Returns false
+// if no session exists for channelID.
+func (s *Store) UpdateRawDiff(channelID, rawDiff string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	sess, ok := s.sessions[channelID]
+	if !ok {
+		return false
+	}
+	sess.RawDiff = rawDiff
+	sess.UpdatedAt = time.Now()
+	return true
+}
+
 // AddComment appends a comment to the session. Returns false if no
 // session exists for channelID.
 func (s *Store) AddComment(channelID string, c *Comment) bool {
