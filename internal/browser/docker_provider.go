@@ -113,7 +113,7 @@ func (m *DockerProvider) EnsureBrowser(ctx context.Context, channelID, _ string)
 			}
 			// Registry says it exists but it's not usable — clean up.
 			m.logger.Info("removing stale Chrome container from registry", "container_id", info.ContainerID)
-			_ = m.api.ContainerRemove(ctx, info.ContainerID, containertypes.RemoveOptions{Force: true})
+			_ = m.api.ContainerRemove(ctx, info.ContainerID, containertypes.RemoveOptions{Force: true, RemoveVolumes: true})
 			m.registry.Unregister(info.ContainerID)
 		}
 	}
@@ -145,7 +145,7 @@ func (m *DockerProvider) EnsureBrowser(ctx context.Context, channelID, _ string)
 		}
 		// Stale container — remove it so we can create a fresh one.
 		m.logger.Info("removing stale Chrome container", "container_id", id)
-		_ = m.api.ContainerRemove(ctx, id, containertypes.RemoveOptions{Force: true})
+		_ = m.api.ContainerRemove(ctx, id, containertypes.RemoveOptions{Force: true, RemoveVolumes: true})
 		if m.registry != nil {
 			m.registry.Unregister(id)
 		}

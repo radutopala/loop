@@ -26,8 +26,8 @@ func (s *ClientSuite) TestRemoveImageAndContainers_HappyPath() {
 	}, nil)
 
 	// Mock ContainerRemove for each container.
-	s.api.On("ContainerRemove", ctx, "container-aaa111", containertypes.RemoveOptions{Force: true}).Return(nil)
-	s.api.On("ContainerRemove", ctx, "container-bbb222", containertypes.RemoveOptions{Force: true}).Return(nil)
+	s.api.On("ContainerRemove", ctx, "container-aaa111", containertypes.RemoveOptions{Force: true, RemoveVolumes: true}).Return(nil)
+	s.api.On("ContainerRemove", ctx, "container-bbb222", containertypes.RemoveOptions{Force: true, RemoveVolumes: true}).Return(nil)
 
 	// Mock ImageList for reference lookup.
 	s.api.On("ImageList", ctx, mock.MatchedBy(func(opts image.ListOptions) bool {
@@ -91,7 +91,7 @@ func (s *ClientSuite) TestRemoveImageAndContainers_ContainerRemoveError() {
 		{ID: "container-aaa111bbb222"},
 	}, nil)
 
-	s.api.On("ContainerRemove", ctx, "container-aaa111bbb222", containertypes.RemoveOptions{Force: true}).
+	s.api.On("ContainerRemove", ctx, "container-aaa111bbb222", containertypes.RemoveOptions{Force: true, RemoveVolumes: true}).
 		Return(errors.New("rm failed"))
 
 	err := s.client.RemoveImageAndContainers(ctx, "loop-agent:latest")

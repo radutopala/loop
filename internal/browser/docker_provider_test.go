@@ -495,7 +495,7 @@ func (s *ManagerSuite) TestEnsureBrowserRemovesStaleContainer() {
 		}, nil)
 	s.api.On("ContainerInspect", ctx, "stale-ctr").
 		Return(inspectResponseWithPort("1"), nil)
-	s.api.On("ContainerRemove", ctx, "stale-ctr", containertypes.RemoveOptions{Force: true}).Return(nil)
+	s.api.On("ContainerRemove", ctx, "stale-ctr", containertypes.RemoveOptions{Force: true, RemoveVolumes: true}).Return(nil)
 
 	s.api.On("ContainerCreate", ctx, mock.Anything, mock.Anything, (*network.NetworkingConfig)(nil), (*ocispec.Platform)(nil), "loop-chrome-ch-1").
 		Return(containertypes.CreateResponse{ID: "new-ctr"}, nil)
@@ -510,7 +510,7 @@ func (s *ManagerSuite) TestEnsureBrowserRemovesStaleContainer() {
 
 	err := s.mgr.EnsureBrowser(ctx, "ch-1", "")
 	require.NoError(s.T(), err)
-	s.api.AssertCalled(s.T(), "ContainerRemove", ctx, "stale-ctr", containertypes.RemoveOptions{Force: true})
+	s.api.AssertCalled(s.T(), "ContainerRemove", ctx, "stale-ctr", containertypes.RemoveOptions{Force: true, RemoveVolumes: true})
 }
 
 func (s *ManagerSuite) TestEnsureBrowserRemovesStaleContainerUnregisters() {
@@ -532,7 +532,7 @@ func (s *ManagerSuite) TestEnsureBrowserRemovesStaleContainerUnregisters() {
 		}, nil)
 	s.api.On("ContainerInspect", ctx, "stale-ctr").
 		Return(inspectResponseWithPort("1"), nil) // unreachable port
-	s.api.On("ContainerRemove", ctx, "stale-ctr", containertypes.RemoveOptions{Force: true}).Return(nil)
+	s.api.On("ContainerRemove", ctx, "stale-ctr", containertypes.RemoveOptions{Force: true, RemoveVolumes: true}).Return(nil)
 
 	s.api.On("ContainerCreate", ctx, mock.Anything, mock.Anything, (*network.NetworkingConfig)(nil), (*ocispec.Platform)(nil), "loop-chrome-ch-1").
 		Return(containertypes.CreateResponse{ID: "new-ctr"}, nil)
@@ -732,7 +732,7 @@ func (s *ManagerSuite) TestEnsureBrowserRegistryStaleContainerCleanup() {
 	s.api.On("ContainerInspect", ctx, "stale-reg-ctr").
 		Return(inspectStopped(), nil)
 	// Clean up stale container.
-	s.api.On("ContainerRemove", ctx, "stale-reg-ctr", containertypes.RemoveOptions{Force: true}).Return(nil)
+	s.api.On("ContainerRemove", ctx, "stale-reg-ctr", containertypes.RemoveOptions{Force: true, RemoveVolumes: true}).Return(nil)
 
 	// Falls through to findExistingChrome then create.
 	s.api.On("ContainerList", ctx, mock.Anything).
@@ -751,7 +751,7 @@ func (s *ManagerSuite) TestEnsureBrowserRegistryStaleContainerCleanup() {
 	require.True(s.T(), ok)
 	require.Equal(s.T(), "new-ctr", cid)
 
-	s.api.AssertCalled(s.T(), "ContainerRemove", ctx, "stale-reg-ctr", containertypes.RemoveOptions{Force: true})
+	s.api.AssertCalled(s.T(), "ContainerRemove", ctx, "stale-reg-ctr", containertypes.RemoveOptions{Force: true, RemoveVolumes: true})
 	reg.AssertExpectations(s.T())
 }
 
