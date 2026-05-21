@@ -99,6 +99,10 @@ func (m *mockDockerClient) ImageBuildFile(ctx context.Context, contextDir, docke
 	return m.Called(ctx, contextDir, dockerfile, tag).Error(0)
 }
 
+func (m *mockDockerClient) PruneBuildCache(ctx context.Context, unusedFor time.Duration) error {
+	return m.Called(ctx, unusedFor).Error(0)
+}
+
 func (m *mockDockerClient) ContainerList(ctx context.Context, labelKey, labelValue string) ([]string, error) {
 	args := m.Called(ctx, labelKey, labelValue)
 	if args.Get(0) == nil {

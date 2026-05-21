@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/docker/docker/api/types/build"
 	containertypes "github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/filters"
 	"github.com/docker/docker/api/types/image"
@@ -39,6 +40,7 @@ type dockerAPI interface {
 	CopyToContainer(ctx context.Context, containerID, dstPath string, content io.Reader, options containertypes.CopyToContainerOptions) error
 	NetworkCreate(ctx context.Context, name string, options network.CreateOptions) (network.CreateResponse, error)
 	NetworkRemove(ctx context.Context, networkID string) error
+	BuildCachePrune(ctx context.Context, opts build.CachePruneOptions) (*build.CachePruneReport, error)
 	Close() error
 }
 
@@ -426,6 +428,21 @@ func (c *Client) ImageBuildFile(ctx context.Context, contextDir, dockerfile, tag
 	output, err := c.dockerBuildFileCmd(ctx, contextDir, dockerfile, tag)
 	if err != nil {
 		return fmt.Errorf("building image: %s: %w", strings.TrimSpace(string(output)), err)
+	}
+	return nil
+}
+
+// PruneBuildCache drops BuildKit cache entries not used in the past unusedFor
+// window. Called after a successful image build so frequently-used layers
+// stay warm but stale entries don't accumulate across many `make restart` /
+// daemon-restart cycles. Without this, a single Loop install can balloon to
+// 100GB+ of build cache over months.
+func (c *Client) PruneBuildCache(ctx context.Context, unusedFor time.Duration) error {
+	f := filters.NewArgs()
+	f.Add("unused-for", unusedFor.String())
+	_, err := c.api.BuildCachePrune(ctx, build.CachePruneOptions{Filters: f})
+	if err != nil {
+		return fmt.Errorf("pruning build cache: %w", err)
 	}
 	return nil
 }

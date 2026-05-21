@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
@@ -199,6 +200,7 @@ func (s *MainSuite) TestEnsureImageBuildsWhenMissing() {
 	dockerClient.On("ImageBuild", mock.Anything, mock.Anything, "loop-agent:latest").Return(nil)
 	dockerClient.On("ImageList", mock.Anything, "loop-chrome:latest").Return([]string{}, nil)
 	dockerClient.On("ImageBuildFile", mock.Anything, mock.Anything, "chrome.Dockerfile", "loop-chrome:latest").Return(nil)
+	dockerClient.On("PruneBuildCache", mock.Anything, 30*24*time.Hour).Return(nil)
 
 	cfg := &config.Config{
 		LoopDir:        s.T().TempDir(),
@@ -340,6 +342,7 @@ func (s *MainSuite) TestEnsureImageRebuildsOnVersionMismatch() {
 	}, nil)
 	dockerClient.On("ImageBuild", mock.Anything, mock.Anything, "loop-agent:latest").Return(nil)
 	dockerClient.On("ImageList", mock.Anything, "loop-chrome:latest").Return([]string{"sha256:def"}, nil)
+	dockerClient.On("PruneBuildCache", mock.Anything, 30*24*time.Hour).Return(nil)
 
 	cfg := &config.Config{
 		LoopDir:        s.T().TempDir(),

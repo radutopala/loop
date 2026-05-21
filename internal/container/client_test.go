@@ -7,7 +7,9 @@ import (
 	"io"
 	"os"
 	"testing"
+	"time"
 
+	"github.com/docker/docker/api/types/build"
 	containertypes "github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/image"
 	"github.com/docker/docker/api/types/network"
@@ -106,6 +108,14 @@ func (m *mockDockerAPI) NetworkCreate(ctx context.Context, name string, options 
 func (m *mockDockerAPI) NetworkRemove(ctx context.Context, networkID string) error {
 	args := m.Called(ctx, networkID)
 	return args.Error(0)
+}
+
+func (m *mockDockerAPI) BuildCachePrune(ctx context.Context, opts build.CachePruneOptions) (*build.CachePruneReport, error) {
+	args := m.Called(ctx, opts)
+	if v := args.Get(0); v != nil {
+		return v.(*build.CachePruneReport), args.Error(1)
+	}
+	return nil, args.Error(1)
 }
 
 func (m *mockDockerAPI) Close() error {
@@ -604,6 +614,28 @@ func (s *ClientSuite) TestDockerStateToStatus() {
 	require.Equal(s.T(), ContainerStatusStopped, dockerStateToStatus("created"))
 	require.Equal(s.T(), ContainerStatusStopped, dockerStateToStatus("paused"))
 	require.Equal(s.T(), ContainerStatusStopped, dockerStateToStatus(""))
+}
+
+func (s *ClientSuite) TestPruneBuildCache() {
+	ctx := context.Background()
+	s.api.On("BuildCachePrune", ctx, mock.MatchedBy(func(opts build.CachePruneOptions) bool {
+		v := opts.Filters.Get("unused-for")
+		return len(v) == 1 && v[0] == "720h0m0s"
+	})).Return(&build.CachePruneReport{}, nil)
+
+	err := s.client.PruneBuildCache(ctx, 720*time.Hour)
+	require.NoError(s.T(), err)
+	s.api.AssertExpectations(s.T())
+}
+
+func (s *ClientSuite) TestPruneBuildCacheError() {
+	ctx := context.Background()
+	s.api.On("BuildCachePrune", ctx, mock.Anything).Return((*build.CachePruneReport)(nil), errors.New("daemon down"))
+
+	err := s.client.PruneBuildCache(ctx, 720*time.Hour)
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "pruning build cache")
+	require.Contains(s.T(), err.Error(), "daemon down")
 }
 
 func (s *ClientSuite) TestImageBuild() {
