@@ -4,6 +4,7 @@ import { fonts } from "../../theme";
 import { useTheme } from "../../ThemeContext";
 import { ThreadItem } from "./ThreadItem";
 import { NewThreadInput } from "./NewThreadInput";
+import { StatusPill } from "./StatusPill";
 
 interface ChannelItemProps {
   channel: Channel;
@@ -182,38 +183,10 @@ export function ChannelItem({
             {channel.name || channel.dir_path?.split("/").pop() || channel.id}
           </span>
           {gateChannelIdsRef?.current?.has(channel.id) && (
-            <span
-              title="Approval needed"
-              style={{
-                flexShrink: 0,
-                fontSize: 9,
-                fontFamily: fonts.mono,
-                lineHeight: 1,
-                padding: "2px 4px",
-                borderRadius: 3,
-                color: colors.warning,
-                border: `1px solid ${colors.warning}`,
-              }}
-            >
-              gate
-            </span>
+            <StatusPill label="gate" color={colors.warning} title="Approval needed" />
           )}
           {reviewChannelIdsRef?.current?.has(channel.id) && (
-            <span
-              title="Review session open"
-              style={{
-                flexShrink: 0,
-                fontSize: 9,
-                fontFamily: fonts.mono,
-                lineHeight: 1,
-                padding: "2px 4px",
-                borderRadius: 3,
-                color: colors.active,
-                border: `1px solid ${colors.active}`,
-              }}
-            >
-              rev
-            </span>
+            <StatusPill label="rev" color={colors.active} title="Review session open" />
           )}
           {(channel.container_running || channel.agent_running || isRunningMapRef?.current?.get(channel.id)) && (
             <span

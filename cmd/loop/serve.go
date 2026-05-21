@@ -630,6 +630,7 @@ func (a *app) serve() error {
 	apiSrv.SetRunCanceller(orch)
 	apiSrv.SetPlanResolver(orch)
 	apiSrv.SetAskResolver(orch)
+	apiSrv.SetPendingAsksLister(orch)
 	apiSrv.SetInteractionHandler(orch)
 	apiSrv.SetActiveChatLister(orch)
 

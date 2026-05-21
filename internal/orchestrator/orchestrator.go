@@ -80,7 +80,7 @@ type Orchestrator struct {
 	activeRuns        sync.Map       // map[channelID]context.CancelFunc
 	activeRunMsgIDs   sync.Map       // map[channelID]string — msg_id of the row currently running
 	plannedChannels   sync.Map       // map[channelID]struct{} — channels parked on an ExitPlanMode card
-	askedChannels     sync.Map       // map[channelID]struct{} — channels parked on an AskUserQuestion card
+	askedChannels     sync.Map       // map[channelID]events.AskUserQuestionEventData — channels parked on an AskUserQuestion card, value is the question payload (for FE rehydration after a renderer reload / WS reconnect)
 	drainWG           sync.WaitGroup // tracks in-flight drain goroutines so tests / shutdown can wait
 	drainSpawn        func(func())   // wraps fn into a tracked goroutine; tests swap for inline run
 	logger            *slog.Logger
@@ -201,9 +201,11 @@ func (o *Orchestrator) ClearPlannedChannel(channelID string) {
 // drainChannel returns without claiming any queued rows so messages the user
 // types after the ask card appears (and any rows already queued behind the
 // trigger) wait for an explicit answer / cancel via
-// POST /api/channels/{id}/ask/resolve.
-func (o *Orchestrator) markAskedChannel(channelID string) {
-	o.askedChannels.Store(channelID, struct{}{})
+// POST /api/channels/{id}/ask/resolve. The question payload is stored
+// alongside the flag so a renderer reload / WS reconnect can rehydrate
+// the ask card via GET /api/asks/pending.
+func (o *Orchestrator) markAskedChannel(channelID string, data events.AskUserQuestionEventData) {
+	o.askedChannels.Store(channelID, data)
 }
 
 // IsChannelAsked reports whether a channel is currently parked on an
@@ -217,6 +219,29 @@ func (o *Orchestrator) IsChannelAsked(channelID string) bool {
 // API ask-resolve endpoint once the user has answered or cancelled.
 func (o *Orchestrator) ClearAskedChannel(channelID string) {
 	o.askedChannels.Delete(channelID)
+}
+
+// ListAskedChannels returns a snapshot of every channel currently parked on
+// an AskUserQuestion card along with the originally-broadcast question
+// payload. Used by GET /api/asks/pending so the FE can rehydrate the ask
+// card after a renderer reload / WS reconnect — the agent.ask_user WS
+// event fires only on the original tool call, so without a snapshot the
+// card never reappears.
+func (o *Orchestrator) ListAskedChannels() []events.AskedChannelEntry {
+	var out []events.AskedChannelEntry
+	o.askedChannels.Range(func(k, v any) bool {
+		id, ok := k.(string)
+		if !ok {
+			return true
+		}
+		data, ok := v.(events.AskUserQuestionEventData)
+		if !ok {
+			return true
+		}
+		out = append(out, events.AskedChannelEntry{ChannelID: id, Data: data})
+		return true
+	})
+	return out
 }
 
 // CancelActiveRun cancels the active agent run for a channel, if any.

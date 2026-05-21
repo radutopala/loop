@@ -2,6 +2,7 @@ import { useState } from "react";
 import type { Channel } from "../../types";
 import { fonts } from "../../theme";
 import { useTheme } from "../../ThemeContext";
+import { StatusPill } from "./StatusPill";
 
 interface ThreadItemProps {
   thread: Channel;
@@ -164,40 +165,20 @@ export function ThreadItem({ thread, subThreads, threadsByParent, selected, sele
         />
       )}
       {hasGate && (
-        <span
+        <StatusPill
+          label="gate"
+          color={colors.warning}
           title="Approval needed"
-          style={{
-            flexShrink: 0,
-            fontSize: 9,
-            fontFamily: fonts.mono,
-            lineHeight: 1,
-            padding: "2px 4px",
-            borderRadius: 3,
-            color: colors.warning,
-            border: `1px solid ${colors.warning}`,
-            marginLeft: (isUnread || thread.diff_additions > 0 || thread.diff_deletions > 0) ? 4 : "auto",
-          }}
-        >
-          gate
-        </span>
+          marginLeft={(isUnread || thread.diff_additions > 0 || thread.diff_deletions > 0) ? 4 : "auto"}
+        />
       )}
       {hasReview && (
-        <span
+        <StatusPill
+          label="rev"
+          color={colors.active}
           title="Review session open"
-          style={{
-            flexShrink: 0,
-            fontSize: 9,
-            fontFamily: fonts.mono,
-            lineHeight: 1,
-            padding: "2px 4px",
-            borderRadius: 3,
-            color: colors.active,
-            border: `1px solid ${colors.active}`,
-            marginLeft: (isUnread || hasGate || thread.diff_additions > 0 || thread.diff_deletions > 0) ? 4 : "auto",
-          }}
-        >
-          rev
-        </span>
+          marginLeft={(isUnread || hasGate || thread.diff_additions > 0 || thread.diff_deletions > 0) ? 4 : "auto"}
+        />
       )}
       {(thread.container_running || thread.agent_running || isRunningMapRef?.current?.get(thread.id)) && (
         <span

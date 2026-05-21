@@ -895,7 +895,7 @@ func (s *OrchestratorSuite) TestDrainChannelSkipsWhenAsked() {
 	orch := New(store, s.bot, s.runner, s.scheduler, slog.New(slog.NewTextHandler(io.Discard, nil)), config.Config{}, nil)
 	orch.SetSynchronousDrain()
 
-	orch.markAskedChannel("asked-ch")
+	orch.markAskedChannel("asked-ch", events.AskUserQuestionEventData{})
 	require.True(s.T(), orch.IsChannelAsked("asked-ch"))
 
 	orch.ResumeChannel(context.Background(), "asked-ch")

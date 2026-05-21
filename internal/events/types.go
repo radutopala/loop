@@ -149,6 +149,15 @@ type AskUserQuestionEventData struct {
 	Questions []AskUserQuestion `json:"questions"`
 }
 
+// AskedChannelEntry is one entry in the parked-AskUserQuestion snapshot
+// returned by GET /api/asks/pending. Lives here so the orchestrator (the
+// source) and the api package (the consumer) share the wire type without
+// either having to import the other.
+type AskedChannelEntry struct {
+	ChannelID string                   `json:"channel_id"`
+	Data      AskUserQuestionEventData `json:"data"`
+}
+
 // ExitPlanModeEventData is the payload for agent.exit_plan events.
 type ExitPlanModeEventData struct {
 	Plan         string `json:"plan"`

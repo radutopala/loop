@@ -1,4 +1,4 @@
-import type { Channel, Message, TimelineResponse } from "../types";
+import type { AskUserQuestionData, Channel, Message, TimelineResponse } from "../types";
 import { getApiUrl, getWsUrl } from "./api";
 
 /** Open a one-shot WebSocket to send a kill message for a channel's agent container. */
@@ -156,6 +156,25 @@ export async function resolveAsk(
     body: JSON.stringify(body),
   });
   if (!res.ok) throw new Error(`Failed to resolve ask: ${res.statusText}`);
+}
+
+export interface PendingAsk {
+  channel_id: string;
+  data: AskUserQuestionData;
+}
+
+/**
+ * Snapshot every channel currently parked on an AskUserQuestion card.
+ * Used on WS reconnect to rehydrate the ask card after a renderer
+ * reload — agent.ask_user only fires on the original tool call, so
+ * without this snapshot the card never reappears even though the
+ * backend keeps blocking the channel's drain.
+ */
+export async function listPendingAsks(): Promise<PendingAsk[]> {
+  const res = await fetch(`${getApiUrl()}/api/asks/pending`);
+  if (!res.ok) throw new Error(`Failed to list pending asks: ${res.statusText}`);
+  const body = (await res.json()) as { asks?: PendingAsk[] };
+  return Array.isArray(body.asks) ? body.asks : [];
 }
 
 export async function ensureChannel(dirPath: string): Promise<Channel> {
