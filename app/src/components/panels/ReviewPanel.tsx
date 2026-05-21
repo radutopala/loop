@@ -16,9 +16,54 @@ import {
   type ReviewSession,
   type ReviewStatus,
 } from "../../api/review";
+import { sendMessage } from "../../api/channels";
 import type { ChatEventListener } from "../../hooks/useChatStateStore";
 import type { WSEvent } from "../../types";
 import { ReviewDiffView } from "./ReviewDiffView";
+
+// Build the agent prompt for a single review comment. The agent runs
+// inside the channel's worktree, so it has direct filesystem access —
+// we only need to hand it enough metadata to locate the comment in the
+// PR's diff and the original review note verbatim.
+function buildSinglePromptForChat(c: ReviewComment, headSHA?: string, prNumber?: number): string {
+  const sideLabel = c.side === "LEFT" ? "deleted/old" : "added/new";
+  const lines: string[] = [];
+  lines.push(`Please address this review comment from the PR:`);
+  lines.push("");
+  lines.push(`- File: \`${c.path}\``);
+  lines.push(`- Line: ${c.line} (${c.side || "RIGHT"} — ${sideLabel})`);
+  if (prNumber) lines.push(`- PR: #${prNumber}`);
+  if (headSHA) lines.push(`- Commit: ${headSHA}`);
+  if (c.author) lines.push(`- Author: @${c.author}`);
+  lines.push("");
+  lines.push(`Comment:`);
+  lines.push("");
+  for (const ln of c.body.split("\n")) lines.push(`> ${ln}`);
+  return lines.join("\n");
+}
+
+// Build a single prompt that batches multiple comments for "Push all to
+// chat". Each comment renders the same metadata block as the single
+// version so the agent can act on them independently without losing
+// context.
+function buildBatchPromptForChat(cs: ReviewComment[], headSHA?: string, prNumber?: number): string {
+  const header: string[] = [];
+  header.push(`Please address the following ${cs.length} review comment${cs.length === 1 ? "" : "s"} from the PR:`);
+  if (prNumber || headSHA) header.push("");
+  if (prNumber) header.push(`- PR: #${prNumber}`);
+  if (headSHA) header.push(`- Commit: ${headSHA}`);
+  const blocks = cs.map((c, i) => {
+    const sideLabel = c.side === "LEFT" ? "deleted/old" : "added/new";
+    const b: string[] = [];
+    b.push("");
+    b.push(`---`);
+    b.push(`### ${i + 1}. \`${c.path}\`:${c.line} (${c.side || "RIGHT"} — ${sideLabel})${c.author ? ` — @${c.author}` : ""}`);
+    b.push("");
+    for (const ln of c.body.split("\n")) b.push(`> ${ln}`);
+    return b.join("\n");
+  });
+  return [...header, ...blocks].join("\n");
+}
 
 interface ReviewPanelProps {
   channelId: string;
@@ -202,6 +247,28 @@ export function ReviewPanel({ channelId, subscribeChatEvents }: ReviewPanelProps
     }
   }, [channelId]);
 
+  const onPushOneToChat = useCallback(async (c: ReviewComment) => {
+    setError(null);
+    try {
+      const prompt = buildSinglePromptForChat(c, session?.head_sha, session?.pr?.number);
+      await sendMessage(channelId, prompt);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    }
+  }, [channelId, session?.head_sha, session?.pr?.number]);
+
+  const onPushAllToChat = useCallback(async () => {
+    setError(null);
+    const pending = (session?.comments ?? []).filter((c) => !c.pushed);
+    if (pending.length === 0) return;
+    try {
+      const prompt = buildBatchPromptForChat(pending, session?.head_sha, session?.pr?.number);
+      await sendMessage(channelId, prompt);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    }
+  }, [channelId, session?.comments, session?.head_sha, session?.pr?.number]);
+
   const onPushAll = useCallback(async () => {
     setBusy(true); setError(null);
     try {
@@ -349,15 +416,26 @@ export function ReviewPanel({ channelId, subscribeChatEvents }: ReviewPanelProps
               {session?.status === "reviewing" ? "Running..." : "Run"}
             </button>
             {pendingCount > 0 && (
-              <button
-                data-testid="review-push-all-btn"
-                onClick={() => void onPushAll()}
-                disabled={pushAllDisabled}
-                style={pushAllDisabled ? { ...btnStyle, ...disabledStyle } : btnStyle}
-                title="Push all unpushed comments"
-              >
-                Push all ({pendingCount})
-              </button>
+              <>
+                <button
+                  data-testid="review-push-all-chat-btn"
+                  onClick={() => void onPushAllToChat()}
+                  disabled={busy}
+                  style={busy ? { ...btnStyle, ...disabledStyle } : btnStyle}
+                  title="Send all unpushed comments to the chat as a single agent prompt"
+                >
+                  Push all to chat ({pendingCount})
+                </button>
+                <button
+                  data-testid="review-push-all-btn"
+                  onClick={() => void onPushAll()}
+                  disabled={pushAllDisabled}
+                  style={pushAllDisabled ? { ...btnStyle, ...disabledStyle } : btnStyle}
+                  title="Push all unpushed comments to GitHub"
+                >
+                  Push all to GitHub ({pendingCount})
+                </button>
+              </>
             )}
             <button
               data-testid="review-close-btn"
@@ -412,6 +490,7 @@ export function ReviewPanel({ channelId, subscribeChatEvents }: ReviewPanelProps
             comments={session.comments}
             worktreePath={session.worktree_path}
             onPushComment={onPushOne}
+            onPushCommentToChat={onPushOneToChat}
             onDeleteComment={onDeleteOne}
           />
         )}
