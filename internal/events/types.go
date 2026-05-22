@@ -290,8 +290,9 @@ type GateApprovalResolvedData struct {
 
 // WorkflowNodeEventData is the payload for workflow.node.* events.
 type WorkflowNodeEventData struct {
-	RunID  string `json:"run_id"`
-	NodeID string `json:"node_id"`
-	Status string `json:"status"`
-	Output string `json:"output,omitempty"`
+	RunID     string `json:"run_id"`
+	NodeID    string `json:"node_id"`
+	Status    string `json:"status"`
+	Output    string `json:"output,omitempty"`
+	Iteration int    `json:"iteration,omitempty"`
 }

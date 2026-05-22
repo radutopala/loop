@@ -110,6 +110,10 @@ func (e *defaultEngine) StartRun(ctx context.Context, opts StartRunOptions) (str
 		return "", err
 	}
 
+	if err := validateWorkflowDef(wfDef); err != nil {
+		return "", err
+	}
+
 	// Validate required inputs.
 	for name, input := range wfDef.Inputs {
 		if input.Required {

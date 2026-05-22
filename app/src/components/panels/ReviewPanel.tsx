@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTheme } from "../../ThemeContext";
 import { fonts } from "../../theme";
 import {
@@ -9,7 +9,6 @@ import {
   loadReviewPR,
   pushAllReviewComments,
   pushReviewComment,
-  runReview,
   syncReviewSession,
   type ReviewComment,
   type ReviewPR,
@@ -17,9 +16,40 @@ import {
   type ReviewStatus,
 } from "../../api/review";
 import { sendMessage } from "../../api/channels";
+import { startWorkflowRun } from "../../api/workflows";
 import type { ChatEventListener } from "../../hooks/useChatStateStore";
-import type { WSEvent } from "../../types";
+import type { GateApprovalRequestedData, WSEvent } from "../../types";
+import { ApprovalCard } from "../chat/ApprovalCard";
+import { ContextMenu } from "../shared/ContextMenu";
 import { ReviewDiffView } from "./ReviewDiffView";
+
+type ReviewMode = "review-only" | "review-fix";
+
+const REVIEW_MODE_STORAGE_KEY = "loop.review.lastMode";
+const REVIEW_MAX_ITER_STORAGE_KEY = "loop.review.maxIter";
+
+const REVIEW_LOOP_WORKFLOW = "review-loop";
+const REVIEW_FIX_LOOP_WORKFLOW = "review-fix-loop";
+
+function readStoredMode(): ReviewMode {
+  if (typeof window === "undefined") return "review-only";
+  const v = window.localStorage.getItem(REVIEW_MODE_STORAGE_KEY);
+  return v === "review-fix" ? "review-fix" : "review-only";
+}
+
+function readStoredMaxIter(): number {
+  if (typeof window === "undefined") return 3;
+  const raw = window.localStorage.getItem(REVIEW_MAX_ITER_STORAGE_KEY);
+  const n = raw === null ? NaN : parseInt(raw, 10);
+  if (!Number.isFinite(n)) return 3;
+  if (n < 1) return 1;
+  if (n > 10) return 10;
+  return n;
+}
+
+function modePrimaryLabel(mode: ReviewMode): string {
+  return mode === "review-fix" ? "Run review + fix" : "Run review";
+}
 
 // The agent runs inside the channel's worktree, so it has direct
 // filesystem access — we only hand it enough metadata to locate the
@@ -72,6 +102,18 @@ interface ReviewPanelProps {
    * deregister fn is called on unmount.
    */
   registerReviewView?: (channelId: string) => () => void;
+  /**
+   * True when a chat panel is mounted in the active layout. When false the
+   * Review panel renders gate approval prompts inline (otherwise the chat
+   * panel handles them and the panel only shows a "see chat" chip).
+   */
+  hasChatPanel?: boolean;
+  /** Per-source pending gate approvals on this channel (keyed by source).
+   *  Pass through `chatState.gateApprovals` from the chat store. */
+  gateApprovals?: Record<string, GateApprovalRequestedData>;
+  /** Drop a resolved gate from the store. Called when the inline
+   *  ApprovalCard fires its `onResolved`. */
+  onClearGateApproval?: (source: string) => void;
 }
 
 function statusLabel(status: ReviewStatus): string {
@@ -84,7 +126,14 @@ function statusLabel(status: ReviewStatus): string {
   }
 }
 
-export function ReviewPanel({ channelId, subscribeChatEvents, registerReviewView }: ReviewPanelProps) {
+export function ReviewPanel({
+  channelId,
+  subscribeChatEvents,
+  registerReviewView,
+  hasChatPanel,
+  gateApprovals,
+  onClearGateApproval,
+}: ReviewPanelProps) {
   const { colors, fontSizes } = useTheme();
   const [session, setSession] = useState<ReviewSession | null>(null);
   const [prList, setPrList] = useState<ReviewPR[] | null>(null);
@@ -92,6 +141,12 @@ export function ReviewPanel({ channelId, subscribeChatEvents, registerReviewView
   const [busy, setBusy] = useState(false);
   const [loadingPR, setLoadingPR] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [mode, setMode] = useState<ReviewMode>(() => readStoredMode());
+  const [maxIter, setMaxIter] = useState<number>(() => readStoredMaxIter());
+  const [loopRunId, setLoopRunId] = useState<string | null>(null);
+  const [loopChip, setLoopChip] = useState<string>("");
+  const [menuPos, setMenuPos] = useState<{ x: number; y: number } | null>(null);
+  const caretRef = useRef<HTMLButtonElement | null>(null);
 
   const hasSession = session !== null && session.status !== "idle" && session.status !== "error";
 
@@ -144,6 +199,63 @@ export function ReviewPanel({ channelId, subscribeChatEvents, registerReviewView
     return () => { cancelled = true; };
   }, [channelId, hasSession]);
 
+  // Persist mode + max_iterations to localStorage so the primary button
+  // label and input survive remounts/reloads.
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    window.localStorage.setItem(REVIEW_MODE_STORAGE_KEY, mode);
+  }, [mode]);
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    window.localStorage.setItem(REVIEW_MAX_ITER_STORAGE_KEY, String(maxIter));
+  }, [maxIter]);
+
+  // `hasChatPanel` is only consulted inside the `workflow.run_paused`
+  // branch. Keep it in a ref so the WS subscription effect doesn't have
+  // to tear down and re-subscribe whenever the parent layout re-renders
+  // with a fresh `hasChatPanel` value.
+  const hasChatPanelRef = useRef(hasChatPanel);
+  useEffect(() => { hasChatPanelRef.current = hasChatPanel; }, [hasChatPanel]);
+
+  // Workflow event subscription: chip mirrors run/node status for the
+  // active review-loop run. Cleared on terminal status.
+  useEffect(() => {
+    if (!subscribeChatEvents) return;
+    if (!loopRunId) {
+      setLoopChip("");
+      return;
+    }
+    const listener: ChatEventListener = (event: WSEvent) => {
+      const d = event.data as { run_id?: string; status?: string; node_id?: string; iteration?: number } | undefined;
+      if (!d || d.run_id !== loopRunId) return;
+      switch (event.type) {
+        case "workflow.run_started":
+          setLoopChip("running iter 1");
+          break;
+        case "workflow.node_started":
+          if (d.node_id) {
+            const iter = typeof d.iteration === "number" ? d.iteration + 1 : 1;
+            setLoopChip(`${d.node_id} — iter ${iter}`);
+          }
+          break;
+        case "workflow.node_completed":
+          // wait for next node_started or run_completed to overwrite
+          break;
+        case "workflow.run_paused":
+          setLoopChip(hasChatPanelRef.current ? "paused at gate — see chat" : "paused at gate — approve below");
+          break;
+        case "workflow.run_completed":
+          if (d.status === "completed") setLoopChip("done");
+          else if (d.status === "failed") setLoopChip("failed");
+          else if (d.status === "cancelled") setLoopChip("cancelled");
+          else setLoopChip(d.status ?? "done");
+          break;
+        default:
+      }
+    };
+    return subscribeChatEvents(listener);
+  }, [subscribeChatEvents, loopRunId]);
+
   // WS subscription: pick up review.comment + review.status for this channel.
   useEffect(() => {
     if (!subscribeChatEvents) return;
@@ -183,23 +295,42 @@ export function ReviewPanel({ channelId, subscribeChatEvents, registerReviewView
     }
   }, [channelId]);
 
-  const onRun = useCallback(async () => {
+  const runMode = useCallback(async (m: ReviewMode) => {
     setBusy(true); setError(null);
+    setMode(m);
     // Optimistically flip to "reviewing" so the Run button stays disabled
     // even before the review.status WS event lands — otherwise there's a
     // brief window after setBusy(false) where status is still "ready" and
     // the button re-enables itself.
     setSession((prev) => prev ? { ...prev, status: "reviewing" } : prev);
+    setLoopChip("starting...");
     try {
-      await runReview(channelId);
-      // Status will transition via review.status WS event; no need to refetch.
+      const workflowName = m === "review-fix" ? REVIEW_FIX_LOOP_WORKFLOW : REVIEW_LOOP_WORKFLOW;
+      const resp = await startWorkflowRun({
+        workflow_name: workflowName,
+        channel_id: channelId,
+        inputs: { max_iterations: String(maxIter) },
+      });
+      setLoopRunId(resp.run_id);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
       setSession((prev) => prev ? { ...prev, status: "ready" } : prev);
+      setLoopChip("");
     } finally {
       setBusy(false);
     }
-  }, [channelId]);
+  }, [channelId, maxIter]);
+
+  const onPrimaryClick = useCallback(() => {
+    void runMode(mode);
+  }, [runMode, mode]);
+
+  const openModeMenu = useCallback(() => {
+    const el = caretRef.current;
+    if (!el) return;
+    const r = el.getBoundingClientRect();
+    setMenuPos({ x: r.left, y: r.bottom + 2 });
+  }, []);
 
   const onSync = useCallback(async () => {
     setBusy(true); setError(null);
@@ -435,19 +566,84 @@ export function ReviewPanel({ channelId, subscribeChatEvents, registerReviewView
             >
               Sync
             </button>
-            <button
-              data-testid="review-run-btn"
-              onClick={() => void onRun()}
+            <input
+              data-testid="review-max-iter"
+              type="number"
+              min={1}
+              max={10}
+              value={maxIter}
+              onChange={(e) => {
+                const v = parseInt(e.target.value, 10);
+                if (!Number.isFinite(v)) return;
+                setMaxIter(Math.min(10, Math.max(1, v)));
+              }}
               disabled={runDisabled}
-              style={runDisabled ? { ...primaryBtnStyle, ...disabledStyle } : primaryBtnStyle}
-              title={
-                session?.status === "reviewing"
-                  ? "Review already running"
-                  : "Run agent review"
-              }
-            >
-              {session?.status === "reviewing" ? "Running..." : "Run"}
-            </button>
+              title="Maximum review iterations (1-10)"
+              style={{
+                width: 40,
+                background: "transparent",
+                color: colors.text,
+                border: `1px solid ${colors.border}`,
+                borderRadius: 4,
+                padding: "3px 4px",
+                fontSize: 11,
+                fontFamily: fonts.sans,
+                textAlign: "right",
+              }}
+            />
+            <div style={{ display: "flex", alignItems: "stretch" }}>
+              <button
+                data-testid="review-run-btn"
+                onClick={onPrimaryClick}
+                disabled={runDisabled}
+                style={{
+                  ...(runDisabled ? { ...primaryBtnStyle, ...disabledStyle } : primaryBtnStyle),
+                  borderTopRightRadius: 0,
+                  borderBottomRightRadius: 0,
+                  borderRight: "none",
+                }}
+                title={
+                  session?.status === "reviewing"
+                    ? "Review already running"
+                    : `Start ${mode === "review-fix" ? "review + fix loop" : "review loop"}`
+                }
+              >
+                {session?.status === "reviewing" ? "Running..." : modePrimaryLabel(mode)}
+              </button>
+              <button
+                ref={caretRef}
+                data-testid="review-run-mode-caret"
+                onClick={openModeMenu}
+                disabled={runDisabled}
+                aria-label="Choose review run mode"
+                style={{
+                  ...(runDisabled ? { ...primaryBtnStyle, ...disabledStyle } : primaryBtnStyle),
+                  borderTopLeftRadius: 0,
+                  borderBottomLeftRadius: 0,
+                  paddingLeft: 6,
+                  paddingRight: 6,
+                }}
+                title="Choose review run mode"
+              >
+                ▾
+              </button>
+            </div>
+            {loopChip && (
+              <span
+                data-testid="review-loop-chip"
+                style={{
+                  fontSize: 10,
+                  fontFamily: fonts.sans,
+                  color: colors.textDim,
+                  padding: "2px 6px",
+                  border: `1px solid ${colors.border}`,
+                  borderRadius: 10,
+                }}
+                title={`Workflow run ${loopRunId ?? ""}`}
+              >
+                {loopChip}
+              </span>
+            )}
             {pendingCount > 0 && (
               <>
                 <button
@@ -501,6 +697,18 @@ export function ReviewPanel({ channelId, subscribeChatEvents, registerReviewView
 
       {/* Body */}
       <div style={{ flex: 1, overflow: "auto", display: "flex", flexDirection: "column" }}>
+        {/* Inline gate approval card — only rendered when no chat panel is
+            mounted in the current layout. When chat is mounted, ChatMessages
+            renders the same card and the panel chip points the user there. */}
+        {!hasChatPanel && gateApprovals?.chat && (
+          <div data-testid="review-inline-approval" style={{ padding: 8, borderBottom: `1px solid ${colors.border}` }}>
+            <ApprovalCard
+              data={gateApprovals.chat}
+              channelId={channelId}
+              onResolved={() => onClearGateApproval?.("chat")}
+            />
+          </div>
+        )}
         {!hasSession && (
           <PRListPicker
             prs={prList}
@@ -528,6 +736,23 @@ export function ReviewPanel({ channelId, subscribeChatEvents, registerReviewView
           />
         )}
       </div>
+      {menuPos && (
+        <ContextMenu
+          x={menuPos.x}
+          y={menuPos.y}
+          onClose={() => setMenuPos(null)}
+          items={[
+            {
+              label: "Run review (one-shot)",
+              onClick: () => void runMode("review-only"),
+            },
+            {
+              label: "Run review + fix loop",
+              onClick: () => void runMode("review-fix"),
+            },
+          ]}
+        />
+      )}
     </div>
   );
 }

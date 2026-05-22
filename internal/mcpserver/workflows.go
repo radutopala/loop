@@ -285,10 +285,44 @@ func (s *Server) handleRetryWorkflowRunMCP(_ context.Context, _ *mcp.CallToolReq
 	}, nil, nil
 }
 
+// schemaNodeDef mirrors config.NodeDef for the MCP schema layer. It uses
+// []any for Body so jsonschema-go does not recurse into NodeDef → []*NodeDef
+// → NodeDef and trip its cycle detector. Field tags, including
+// `jsonschema:"required,..."` annotations, must stay in sync with
+// config.NodeDef.
+type schemaNodeDef struct {
+	ID            string              `json:"id" jsonschema:"required,Unique node identifier within the workflow"`
+	Type          string              `json:"type" jsonschema:"required,Node type: 'prompt' (AI agent), 'bash' (shell script), 'loop' (prompt repeated until condition), or 'approval' (human decision)"`
+	DependsOn     []string            `json:"depends_on,omitempty" jsonschema:"IDs of nodes that must complete before this one starts"`
+	When          string              `json:"when,omitempty" jsonschema:"Go template expression; node is skipped when it renders 'false'"`
+	TriggerRule   string              `json:"trigger_rule,omitempty" jsonschema:"How dependencies gate this node: 'all_success' (default), 'all_done', or 'one_success'"`
+	Prompt        string              `json:"prompt,omitempty" jsonschema:"Inline prompt text for 'prompt'/'loop' nodes. Supports Go text/template. Mutually exclusive with prompt_path."`
+	PromptPath    string              `json:"prompt_path,omitempty" jsonschema:"Path to a prompt file, resolved as {loopDir}/workflows/{prompt_path}. Mutually exclusive with prompt."`
+	SystemPrompt  string              `json:"system_prompt,omitempty" jsonschema:"Optional system prompt for 'prompt' nodes; supports templates"`
+	Model         string              `json:"model,omitempty" jsonschema:"Optional Claude model override (e.g. 'claude-sonnet-4-6')"`
+	Script        string              `json:"script,omitempty" jsonschema:"Shell command(s) for 'bash' nodes, passed to /bin/sh -c."`
+	MaxIterations int                 `json:"max_iterations,omitempty" jsonschema:"Maximum iterations for 'loop' nodes (default 10)"`
+	Condition     string              `json:"condition,omitempty" jsonschema:"Go template evaluated after each 'loop' iteration; stops when it renders 'true'"`
+	Body          []any               `json:"body,omitempty" jsonschema:"Child nodes executed in order per iteration. For 'loop' nodes only. Empty body keeps the legacy self-prompt behavior."`
+	Message       string              `json:"message,omitempty" jsonschema:"Approval message shown to the human for 'approval' nodes; supports templates"`
+	Timeout       string              `json:"timeout,omitempty" jsonschema:"Per-node timeout as a Go time.Duration (e.g. '5m')."`
+	Retry         *config.RetryConfig `json:"retry,omitempty" jsonschema:"Optional retry policy for transient failures"`
+}
+
+// schemaWorkflowDef mirrors config.WorkflowDef but uses schemaNodeDef so the
+// node body schema can be expressed without a self-reference cycle.
+type schemaWorkflowDef struct {
+	Name        string                          `json:"name" jsonschema:"required,Workflow name (unique within its scope)"`
+	Description string                          `json:"description,omitempty" jsonschema:"Human-readable description of what the workflow does"`
+	Timeout     string                          `json:"timeout,omitempty" jsonschema:"Optional whole-DAG timeout as a Go time.Duration (e.g. '30m')"`
+	Inputs      map[string]config.WorkflowInput `json:"inputs,omitempty" jsonschema:"Named input parameters the workflow expects at run time"`
+	Nodes       []schemaNodeDef                 `json:"nodes" jsonschema:"required,Ordered list of DAG nodes; execution order is derived from depends_on"`
+}
+
 type saveWorkflowInput struct {
-	Action   string             `json:"action" jsonschema:"required,Action: 'add' (create new) or 'update' (modify existing)"`
-	Workflow config.WorkflowDef `json:"workflow" jsonschema:"required,Full workflow definition with name, description, inputs, and nodes"`
-	Scope    string             `json:"scope,omitempty" jsonschema:"Storage scope: 'global' (default) or 'project'. Requires channel context for project scope."`
+	Action   string            `json:"action" jsonschema:"required,Action: 'add' (create new) or 'update' (modify existing)"`
+	Workflow schemaWorkflowDef `json:"workflow" jsonschema:"required,Full workflow definition with name, description, inputs, and nodes"`
+	Scope    string            `json:"scope,omitempty" jsonschema:"Storage scope: 'global' (default) or 'project'. Requires channel context for project scope."`
 }
 
 func (s *Server) handleSaveWorkflow(_ context.Context, _ *mcp.CallToolRequest, input saveWorkflowInput) (*mcp.CallToolResult, any, error) {
@@ -298,7 +332,14 @@ func (s *Server) handleSaveWorkflow(_ context.Context, _ *mcp.CallToolRequest, i
 		return errorResult("action must be 'add' or 'update'"), nil, nil
 	}
 
-	wfJSON, _ := json.Marshal(input.Workflow)
+	wfJSON, err := json.Marshal(input.Workflow)
+	if err != nil {
+		return errorResult(fmt.Sprintf("invalid workflow: %v", err)), nil, nil
+	}
+	var wf config.WorkflowDef
+	if err := json.Unmarshal(wfJSON, &wf); err != nil {
+		return errorResult(fmt.Sprintf("invalid workflow JSON: %v", err)), nil, nil
+	}
 
 	body := map[string]any{
 		"action":   input.Action,
@@ -320,7 +361,7 @@ func (s *Server) handleSaveWorkflow(_ context.Context, _ *mcp.CallToolRequest, i
 		return errResult, nil, err
 	}
 
-	name := input.Workflow.Name
+	name := wf.Name
 	scope := "global"
 	if input.Scope == "project" {
 		scope = "project"

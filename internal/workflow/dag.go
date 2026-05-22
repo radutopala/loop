@@ -3,9 +3,13 @@ package workflow
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"maps"
 	"os"
+	"slices"
+	"strconv"
+	"strings"
 	"sync"
 	"text/template"
 	"time"
@@ -28,6 +32,7 @@ func (e *defaultEngine) executeDAG(ctx context.Context, run *db.WorkflowRun, wfD
 			RunID:        run.ID,
 			WorktreePath: run.WorktreePath,
 		},
+		ChannelID: run.ChannelID,
 	}
 
 	// Build node map and dependency graph.
@@ -166,6 +171,7 @@ func (e *defaultEngine) executeDAGFromCheckpoint(
 		Inputs:      inputs,
 		NodeOutputs: make(map[string]string),
 		RunMeta:     RunMeta{RunID: run.ID, WorktreePath: run.WorktreePath},
+		ChannelID:   run.ChannelID,
 	}
 	maps.Copy(runCtx.NodeOutputs, completedOutputs)
 
@@ -559,8 +565,24 @@ func renderTemplate(tmplStr string, data *RunContext) (string, error) {
 func (e *defaultEngine) executeLoopNode(ctx context.Context, run *db.WorkflowRun, node *config.NodeDef, runCtx *RunContext, mu *sync.Mutex) (string, error) {
 	maxIter := node.MaxIterations
 	if maxIter <= 0 {
+		// Fall back to the `max_iterations` workflow input when the node
+		// itself doesn't pin a value. The seeded review/review-fix loops
+		// rely on this so the FE's max-iter input can drive the cap
+		// without rewriting the workflow definition per request.
+		mu.Lock()
+		raw := runCtx.Inputs["max_iterations"]
+		mu.Unlock()
+		if raw != "" {
+			if v, perr := strconv.Atoi(raw); perr == nil && v > 0 {
+				maxIter = v
+			}
+		}
+	}
+	if maxIter <= 0 {
 		maxIter = 10 // default
 	}
+
+	hasBody := len(node.Body) > 0
 
 	var lastOutput string
 	for i := 0; i < maxIter; i++ {
@@ -568,11 +590,24 @@ func (e *defaultEngine) executeLoopNode(ctx context.Context, run *db.WorkflowRun
 			return lastOutput, ctx.Err()
 		}
 
-		output, err := e.executePromptNode(ctx, run, node, runCtx, mu)
-		if err != nil {
-			return output, err
+		mu.Lock()
+		runCtx.Iteration = i
+		mu.Unlock()
+
+		if !hasBody {
+			// Backward compat: self-prompt each iteration.
+			output, err := e.executePromptNode(ctx, run, node, runCtx, mu)
+			if err != nil {
+				return output, err
+			}
+			lastOutput = output
+		} else {
+			output, err := e.executeLoopBody(ctx, run, node, runCtx, mu, i)
+			if err != nil {
+				return output, err
+			}
+			lastOutput = output
 		}
-		lastOutput = output
 
 		// Evaluate stop condition.
 		if node.Condition != "" {
@@ -589,7 +624,187 @@ func (e *defaultEngine) executeLoopNode(ctx context.Context, run *db.WorkflowRun
 		}
 	}
 
+	// Iteration must reset to 0 so any downstream non-loop node using
+	// {{.Iteration}} in a template sees the runCtx outside the loop scope.
+	mu.Lock()
+	runCtx.Iteration = 0
+	mu.Unlock()
+
 	return lastOutput, nil
+}
+
+// reviewBodyNodeID is the well-known child ID inside a loop body whose
+// stdout is parsed as `loop review run` JSON into runCtx.Review. The seeded
+// review-loop and review-fix-loop workflows pin the bash node to this ID
+// so the parser knows which child's output to interpret.
+const reviewBodyNodeID = "review"
+
+// executeLoopBody runs the body children of a loop node in declaration order
+// for a single iteration. Each child is persisted as its own node_runs row
+// keyed by (run_id, child.ID, iteration). After a bash child whose ID is
+// reviewBodyNodeID finishes, its stdout is parsed into runCtx.Review.
+func (e *defaultEngine) executeLoopBody(ctx context.Context, run *db.WorkflowRun, loopNode *config.NodeDef, runCtx *RunContext, mu *sync.Mutex, iteration int) (string, error) {
+	var lastOutput string
+	for _, child := range loopNode.Body {
+		if ctx.Err() != nil {
+			return lastOutput, ctx.Err()
+		}
+
+		// Evaluate child-level when.
+		mu.Lock()
+		shouldRun := e.evaluateWhen(child, runCtx)
+		mu.Unlock()
+
+		now := time.Now().UTC()
+		if !shouldRun {
+			nr := &db.NodeRun{
+				RunID:      run.ID,
+				NodeID:     child.ID,
+				Iteration:  iteration,
+				Status:     db.NodeRunStatusSkipped,
+				Attempt:    1,
+				StartedAt:  &now,
+				FinishedAt: &now,
+			}
+			if err := e.store.UpsertNodeRun(ctx, nr); err != nil {
+				e.logger.Error("workflow: failed to persist body skip", "node_id", child.ID, "iteration", iteration, "error", err)
+			}
+			if e.broadcaster != nil {
+				e.broadcaster.BroadcastWorkflowNodeCompleted(events.WorkflowNodeEventData{
+					RunID:     run.ID,
+					NodeID:    child.ID,
+					Status:    string(db.NodeRunStatusSkipped),
+					Iteration: iteration,
+				})
+			}
+			continue
+		}
+
+		// Persist running status for this (child, iteration).
+		nrStart := &db.NodeRun{
+			RunID:     run.ID,
+			NodeID:    child.ID,
+			Iteration: iteration,
+			Status:    db.NodeRunStatusRunning,
+			Attempt:   1,
+			StartedAt: &now,
+		}
+		if err := e.store.UpsertNodeRun(ctx, nrStart); err != nil {
+			e.logger.Error("workflow: failed to persist body start", "node_id", child.ID, "iteration", iteration, "error", err)
+		}
+		if e.broadcaster != nil {
+			e.broadcaster.BroadcastWorkflowNodeStarted(events.WorkflowNodeEventData{
+				RunID:     run.ID,
+				NodeID:    child.ID,
+				Status:    string(db.NodeRunStatusRunning),
+				Iteration: iteration,
+			})
+		}
+
+		var output string
+		var execErr error
+		switch child.Type {
+		case config.NodeTypePrompt:
+			output, execErr = e.executePromptNode(ctx, run, child, runCtx, mu)
+		case config.NodeTypeBash:
+			output, execErr = e.executeBashNode(ctx, run, child, runCtx, mu)
+		}
+
+		status := db.NodeRunStatusSuccess
+		if execErr != nil {
+			status = db.NodeRunStatusFailed
+		}
+
+		if execErr == nil && child.Type == config.NodeTypeBash && child.ID == reviewBodyNodeID {
+			mu.Lock()
+			parseReviewOutput(output, runCtx)
+			mu.Unlock()
+		}
+
+		finishedAt := time.Now().UTC()
+		nrEnd := &db.NodeRun{
+			RunID:      run.ID,
+			NodeID:     child.ID,
+			Iteration:  iteration,
+			Status:     status,
+			Output:     output,
+			Attempt:    1,
+			FinishedAt: &finishedAt,
+		}
+		if execErr != nil {
+			nrEnd.ErrorText = execErr.Error()
+		}
+		// Detached context — run ctx may already be cancelled, but the
+		// terminal node status still needs to be persisted. Matches the
+		// pattern at completeNode (line ~406).
+		if err := e.store.UpsertNodeRun(context.Background(), nrEnd); err != nil {
+			e.logger.Error("workflow: failed to persist body completion", "node_id", child.ID, "iteration", iteration, "error", err)
+		}
+		if e.broadcaster != nil {
+			e.broadcaster.BroadcastWorkflowNodeCompleted(events.WorkflowNodeEventData{
+				RunID:     run.ID,
+				NodeID:    child.ID,
+				Status:    string(status),
+				Output:    truncateOutput(output, 1000),
+				Iteration: iteration,
+			})
+		}
+
+		if execErr != nil {
+			return output, execErr
+		}
+		lastOutput = output
+	}
+	return lastOutput, nil
+}
+
+// parseReviewOutput parses stdout JSON from `loop review run --wait` into
+// runCtx.Review. It tolerates leading/trailing whitespace and a final newline
+// from the CLI. When the output cannot be parsed as JSON, the function leaves
+// runCtx.Review untouched except for shifting IDs into PrevIDs so the loop's
+// SameAsPrev gate still advances. The expected shape is:
+//
+//	{"status": "ready", "no_comments": bool, "comments": [{"id": "...", ...}]}
+func parseReviewOutput(stdout string, runCtx *RunContext) {
+	prev := append([]string(nil), runCtx.Review.IDs...)
+	runCtx.Review.PrevIDs = prev
+
+	trimmed := strings.TrimSpace(stdout)
+	var parsed struct {
+		Status     string          `json:"status"`
+		NoComments bool            `json:"no_comments"`
+		Comments   []ReviewComment `json:"comments"`
+	}
+	if trimmed == "" || json.Unmarshal([]byte(trimmed), &parsed) != nil {
+		// Leave Comments/CommentsJSON/IDs as-is; treat as "no findings parsed".
+		runCtx.Review.NoComments = false
+		runCtx.Review.Comments = nil
+		runCtx.Review.CommentsJSON = ""
+		runCtx.Review.IDs = nil
+		runCtx.Review.SameAsPrev = len(prev) == 0
+		return
+	}
+
+	runCtx.Review.Comments = parsed.Comments
+	runCtx.Review.NoComments = parsed.NoComments || len(parsed.Comments) == 0
+
+	if len(parsed.Comments) > 0 {
+		raw, _ := json.Marshal(parsed.Comments)
+		runCtx.Review.CommentsJSON = string(raw)
+	} else {
+		runCtx.Review.CommentsJSON = ""
+	}
+
+	ids := make([]string, 0, len(parsed.Comments))
+	for _, c := range parsed.Comments {
+		ids = append(ids, c.ID)
+	}
+	if len(ids) > 1 {
+		slices.Sort(ids)
+	}
+	runCtx.Review.IDs = ids
+
+	runCtx.Review.SameAsPrev = len(ids) > 0 && slices.Equal(ids, prev)
 }
 
 func (e *defaultEngine) executeApprovalNode(ctx context.Context, run *db.WorkflowRun, node *config.NodeDef, runCtx *RunContext, mu *sync.Mutex) (string, error) {

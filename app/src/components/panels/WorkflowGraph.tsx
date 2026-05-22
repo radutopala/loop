@@ -71,6 +71,8 @@ interface LayoutNode {
   y: number;
   def: WorkflowNodeDef;
   run?: WorkflowNodeRun;
+  /** Set on synthetic nodes produced by expanding a loop body. */
+  synthetic?: SyntheticMeta;
 }
 
 interface LayoutEdge {
@@ -78,20 +80,142 @@ interface LayoutEdge {
   to: LayoutNode;
 }
 
+interface SyntheticMeta {
+  loopId: string;
+  srcId: string;
+  iteration: number;
+  origDef: WorkflowNodeDef;
+}
+
+interface GroupRect {
+  loopId: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  iterCount: number;
+}
+
+const SYNTH_SEP = ":iter";
+
+function makeSyntheticId(loopId: string, iter: number, childId: string): string {
+  return `${loopId}${SYNTH_SEP}${iter}:${childId}`;
+}
+
+// expandLoopBodies rewrites the input defs so every loop body child becomes
+// its own top-level synthetic def (one per executed iteration), wrapped in
+// a "loop container" group rect at render time. The original loop def is
+// dropped — it's a container, not a node.
+//
+// Iteration count is derived from observed node_runs (max iteration + 1).
+// When no rows exist yet, fall back to 1 so the user sees the body shape
+// before the first run starts.
+//
+// Dependencies are rewritten so each iteration runs sequentially:
+// the first child of iteration N depends on the last child of iteration N-1.
+// Top-level defs that depend on a loopId are rewired onto the loop's last
+// emitted node.
+export function expandLoopBodies(
+  defs: WorkflowNodeDef[],
+  runs: WorkflowNodeRun[],
+): { effectiveDefs: WorkflowNodeDef[]; groupSpecs: { loopId: string; iterCount: number; syntheticIds: string[] }[] } {
+  const groupSpecs: { loopId: string; iterCount: number; syntheticIds: string[] }[] = [];
+  const rewires = new Map<string, string>();
+  const out: WorkflowNodeDef[] = [];
+
+  for (const d of defs) {
+    if (d.type !== "loop" || !d.body || d.body.length === 0) {
+      out.push(d);
+      continue;
+    }
+    let maxIter = -1;
+    const bodyIds = new Set(d.body.map((c) => c.id));
+    for (const r of runs) {
+      if (!bodyIds.has(r.node_id)) continue;
+      if (r.iteration > maxIter) maxIter = r.iteration;
+    }
+    const iterCount = maxIter >= 0 ? maxIter + 1 : 1;
+    const syntheticIds: string[] = [];
+
+    for (let i = 0; i < iterCount; i++) {
+      for (let ci = 0; ci < d.body.length; ci++) {
+        const child = d.body[ci]!;
+        const newId = makeSyntheticId(d.id, i, child.id);
+        const deps: string[] = [];
+        for (const dep of child.depends_on ?? []) {
+          if (bodyIds.has(dep)) deps.push(makeSyntheticId(d.id, i, dep));
+        }
+        if (ci === 0 && i > 0) {
+          const prevLast = d.body[d.body.length - 1]!;
+          deps.push(makeSyntheticId(d.id, i - 1, prevLast.id));
+        }
+        out.push({ ...child, id: newId, depends_on: deps });
+        syntheticIds.push(newId);
+      }
+    }
+
+    const lastChild = d.body[d.body.length - 1]!;
+    rewires.set(d.id, makeSyntheticId(d.id, iterCount - 1, lastChild.id));
+    groupSpecs.push({ loopId: d.id, iterCount, syntheticIds });
+  }
+
+  if (rewires.size > 0) {
+    for (let i = 0; i < out.length; i++) {
+      const d = out[i]!;
+      if (!d.depends_on || d.depends_on.length === 0) continue;
+      const next: string[] = [];
+      let changed = false;
+      for (const dep of d.depends_on) {
+        const rewired = rewires.get(dep);
+        if (rewired) { next.push(rewired); changed = true; } else { next.push(dep); }
+      }
+      if (changed) out[i] = { ...d, depends_on: next };
+    }
+  }
+
+  return { effectiveDefs: out, groupSpecs };
+}
+
 function computeLayout(
   defs: WorkflowNodeDef[],
   runs: WorkflowNodeRun[],
-): { nodes: LayoutNode[]; edges: LayoutEdge[]; width: number; height: number } {
-  const effectiveDefs = defs.length > 0 ? defs : runs.map((r) => ({
+): { nodes: LayoutNode[]; edges: LayoutEdge[]; width: number; height: number; groupRects: GroupRect[] } {
+  // Expand any loop-with-body defs into per-iteration synthetic children.
+  const { effectiveDefs: expanded, groupSpecs } = expandLoopBodies(defs, runs);
+
+  // Track which expanded ids came from which loop / iteration so we can
+  // (a) build group rects and (b) look up the right run row by
+  // (srcId, iteration) instead of by synthetic id.
+  const syntheticMeta = new Map<string, SyntheticMeta>();
+  for (const g of groupSpecs) {
+    for (const synthId of g.syntheticIds) {
+      const remainder = synthId.slice(g.loopId.length + SYNTH_SEP.length);
+      const sepIdx = remainder.indexOf(":");
+      const iter = parseInt(remainder.slice(0, sepIdx), 10);
+      const srcId = remainder.slice(sepIdx + 1);
+      const origDef = expanded.find((d) => d.id === synthId);
+      if (!origDef) continue;
+      syntheticMeta.set(synthId, { loopId: g.loopId, srcId, iteration: iter, origDef });
+    }
+  }
+
+  const effectiveDefs = expanded.length > 0 ? expanded : runs.map((r) => ({
     id: r.node_id,
     type: "bash" as const,
     depends_on: [] as string[],
   }));
 
-  if (effectiveDefs.length === 0) return { nodes: [], edges: [], width: 0, height: 0 };
+  if (effectiveDefs.length === 0) return { nodes: [], edges: [], width: 0, height: 0, groupRects: [] };
 
+  // Composite key: ${node_id}#${iteration} so per-iteration history doesn't
+  // collide. Synthetic children look up by (srcId, iteration); plain
+  // top-level nodes look up by (node_id, 0).
   const runMap = new Map<string, WorkflowNodeRun>();
-  for (const r of runs) runMap.set(r.node_id, r);
+  for (const r of runs) runMap.set(`${r.node_id}#${r.iteration}`, r);
+  function lookupRun(node: LayoutNode): WorkflowNodeRun | undefined {
+    if (node.synthetic) return runMap.get(`${node.synthetic.srcId}#${node.synthetic.iteration}`);
+    return runMap.get(`${node.def.id}#0`);
+  }
 
   const defMap = new Map<string, WorkflowNodeDef>();
   for (const d of effectiveDefs) defMap.set(d.id, d);
@@ -142,7 +266,9 @@ function computeLayout(
       const def = group[i]!;
       const x = PAD + l * (NODE_W + GAP_X);
       const y = PAD + offsetY + i * (NODE_H + GAP_Y);
-      const node: LayoutNode = { id: def.id, layer: l, index: i, x, y, def, run: runMap.get(def.id) };
+      const synth = syntheticMeta.get(def.id);
+      const node: LayoutNode = { id: def.id, layer: l, index: i, x, y, def, synthetic: synth };
+      node.run = lookupRun(node);
       layoutNodes.push(node);
       nodeMap.set(def.id, node);
     }
@@ -161,7 +287,29 @@ function computeLayout(
   const width = PAD * 2 + (maxLayer + 1) * NODE_W + maxLayer * GAP_X;
   const height = PAD * 2 + maxNodesInLayer * NODE_H + (maxNodesInLayer - 1) * GAP_Y;
 
-  return { nodes: layoutNodes, edges: layoutEdges, width: Math.max(width, 200), height: Math.max(height, 100) };
+  // Group rects: bounding box around all synthetic nodes sharing a loop.
+  const groupRects: GroupRect[] = [];
+  for (const spec of groupSpecs) {
+    const members = layoutNodes.filter((n) => n.synthetic?.loopId === spec.loopId);
+    if (members.length === 0) continue;
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    for (const m of members) {
+      if (m.x < minX) minX = m.x;
+      if (m.y < minY) minY = m.y;
+      if (m.x + NODE_W > maxX) maxX = m.x + NODE_W;
+      if (m.y + NODE_H > maxY) maxY = m.y + NODE_H;
+    }
+    groupRects.push({
+      loopId: spec.loopId,
+      x: minX,
+      y: minY,
+      width: maxX - minX,
+      height: maxY - minY,
+      iterCount: spec.iterCount,
+    });
+  }
+
+  return { nodes: layoutNodes, edges: layoutEdges, width: Math.max(width, 200), height: Math.max(height, 100), groupRects };
 }
 
 // ---------------------------------------------------------------------------
@@ -198,7 +346,7 @@ export function WorkflowGraph({ defs, nodeRuns, colors, onNodeClick, expandedNod
   const isPanning = useRef(false);
   const hasCentered = useRef(false);
 
-  const { nodes, edges, width, height } = useMemo(
+  const { nodes, edges, width, height, groupRects } = useMemo(
     () => computeLayout(defs, nodeRuns),
     [defs, nodeRuns],
   );
@@ -361,6 +509,32 @@ export function WorkflowGraph({ defs, nodeRuns, colors, onNodeClick, expandedNod
               ))}
             </defs>
 
+            {/* Loop body container rects — drawn under edges/nodes so the
+                dashed border frames the iterations without obscuring them. */}
+            {groupRects.map((g) => (
+              <g key={`group-${g.loopId}`} data-testid={`wf-loop-group-${g.loopId}`}>
+                <rect
+                  x={g.x - 12}
+                  y={g.y - 28}
+                  width={g.width + 24}
+                  height={g.height + 40}
+                  fill="transparent"
+                  stroke={colors.border}
+                  strokeDasharray="6 4"
+                  rx={12}
+                />
+                <text
+                  x={g.x - 4}
+                  y={g.y - 12}
+                  fontSize={11}
+                  fontFamily={fonts.mono}
+                  fill={colors.textDim}
+                >
+                  {g.loopId} · {g.iterCount} iter{g.iterCount === 1 ? "" : "s"}
+                </text>
+              </g>
+            ))}
+
             {/* Edges */}
             {edges.map((edge, i) => {
               const toStatus = edge.to.run?.status;
@@ -448,7 +622,10 @@ export function WorkflowGraph({ defs, nodeRuns, colors, onNodeClick, expandedNod
                     fontWeight={600}
                     dominantBaseline="middle"
                   >
-                    {node.id.length > 12 ? node.id.slice(0, 11) + "\u2026" : node.id}
+                    {(() => {
+                      const label = node.synthetic?.srcId ?? node.id;
+                      return label.length > 12 ? label.slice(0, 11) + "\u2026" : label;
+                    })()}
                   </text>
 
                   <rect
@@ -650,11 +827,16 @@ export function WorkflowGraph({ defs, nodeRuns, colors, onNodeClick, expandedNod
               {STATUS_ICONS[expandedRun.status] ?? "\u25CB"}
             </span>
             <span style={{ fontFamily: fonts.mono, fontWeight: 600, fontSize: 11, color: colors.textLight }}>
-              {expandedNode.id}
+              {expandedNode.synthetic?.srcId ?? expandedNode.id}
             </span>
             <span style={{ fontSize: 10, color: colors.textDim, padding: "0 4px", borderRadius: 3, border: `1px solid ${colors.border}` }}>
               {expandedNode.def.type}
             </span>
+            {expandedNode.synthetic && (
+              <span style={{ fontSize: 10, color: colors.textDim, padding: "0 4px", borderRadius: 3, border: `1px solid ${colors.border}` }}>
+                iter {expandedNode.synthetic.iteration + 1}
+              </span>
+            )}
             {expandedRun.started_at && (
               <span style={{ fontSize: 10, color: colors.textDim, marginLeft: "auto" }}>
                 {elapsedShort(expandedRun.started_at, expandedRun.finished_at)}
