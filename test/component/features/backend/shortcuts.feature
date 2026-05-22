@@ -3,11 +3,16 @@ Feature: Prompt Shortcuts endpoint
   The Loop API exposes shortcuts endpoints for listing and managing prompt shortcuts.
 
   Scenario: Shortcuts returns empty array when no shortcuts configured
+    # Clear any built-in shortcuts (e.g. the "builtin code review" seeded
+    # by fsmigrate) so the empty-list assertion holds.
+    Given I clear all prompt shortcuts via API
     When I send a GET request to "/api/shortcuts"
     Then the response status should be 200
     And the response should contain "[]"
 
   Scenario: Add, list, update, and delete a shortcut via API
+    # Clear built-in shortcuts so the final "[]" assertion holds.
+    Given I clear all prompt shortcuts via API
     # Add a shortcut
     When I send a POST request to "/api/shortcuts" with body:
       """
