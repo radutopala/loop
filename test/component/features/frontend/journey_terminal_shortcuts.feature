@@ -37,9 +37,11 @@ Feature: Terminal Prompt Shortcuts Journey
     Then I wait for text "#bdd-term-lint" to disappear
 
   Scenario: Terminal pane hides the shortcut button when no shortcuts exist
-    # No shortcut seeding — TerminalShortcuts returns null when the
-    # fetched list is empty (TerminalShortcuts.tsx: `shortcuts.length === 0`).
-    Given I set up a test channel via API for directory "/tmp/bdd-term-no-shortcuts"
+    # Clear any built-in shortcuts (e.g. the "builtin code review" seeded by
+    # fsmigrate). TerminalShortcuts returns null when the fetched list is
+    # empty (TerminalShortcuts.tsx: `shortcuts.length === 0`).
+    Given I clear all prompt shortcuts via API
+    And I set up a test channel via API for directory "/tmp/bdd-term-no-shortcuts"
     And I open the app in a browser
     And I wait for text "bdd-term-no-shortcuts" to appear
     When I click on "bdd-term-no-shortcuts" in the sidebar

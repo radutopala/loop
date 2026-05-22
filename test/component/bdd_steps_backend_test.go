@@ -54,6 +54,7 @@ func registerBackendSteps(ctx *godog.ScenarioContext, tc *TestContext) {
 
 	// Shortcut setup steps
 	ctx.Step(`^I add a prompt shortcut "([^"]*)" with prompt "([^"]*)" via API$`, tc.addShortcutViaAPI)
+	ctx.Step(`^I clear all prompt shortcuts via API$`, tc.clearAllShortcutsViaAPI)
 
 	// WebSocket steps
 	ctx.Step(`^I connect to the events WebSocket$`, tc.connectEventsWS)
@@ -438,6 +439,35 @@ func (tc *TestContext) addShortcutViaAPI(name, prompt string) error {
 		return fmt.Errorf("failed to add shortcut: status %d, body: %s", tc.LastStatus, string(tc.LastBody))
 	}
 	tc.CreatedShortcutNames = append(tc.CreatedShortcutNames, name)
+	return nil
+}
+
+// clearAllShortcutsViaAPI deletes every prompt shortcut currently configured
+// on the daemon. Used by scenarios that need to assert the empty-list state
+// without being affected by built-in seeds (e.g. the "builtin code review"
+// shortcut seeded by fsmigrate on first launch).
+func (tc *TestContext) clearAllShortcutsViaAPI() error {
+	if err := tc.doRequest(http.MethodGet, "/api/shortcuts", ""); err != nil {
+		return err
+	}
+	if tc.LastStatus != http.StatusOK {
+		return fmt.Errorf("failed to list shortcuts: status %d, body: %s", tc.LastStatus, string(tc.LastBody))
+	}
+	var shortcuts []struct {
+		Name string `json:"name"`
+	}
+	if err := json.Unmarshal(tc.LastBody, &shortcuts); err != nil {
+		return fmt.Errorf("decoding shortcuts list: %w", err)
+	}
+	for _, sc := range shortcuts {
+		body := fmt.Sprintf(`{"action":"delete","name":%q}`, sc.Name)
+		if err := tc.doRequest(http.MethodPost, "/api/shortcuts", body); err != nil {
+			return err
+		}
+		if tc.LastStatus != http.StatusNoContent {
+			return fmt.Errorf("failed to delete shortcut %q: status %d, body: %s", sc.Name, tc.LastStatus, string(tc.LastBody))
+		}
+	}
 	return nil
 }
 
