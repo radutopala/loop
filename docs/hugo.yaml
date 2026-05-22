@@ -76,7 +76,7 @@ params:
     logo:
       path: images/logo.svg
       dark: images/logo-dark.svg
-      link: /
+      link: https://radutopala.github.io/loop/
       width: 115
       height: 30
   page:
