@@ -178,6 +178,7 @@ type NodeRun struct {
 	ID              int64         `json:"id"`
 	RunID           string        `json:"run_id"`
 	NodeID          string        `json:"node_id"`
+	Iteration       int           `json:"iteration"`
 	Status          NodeRunStatus `json:"status"`
 	Output          string        `json:"output"`
 	ErrorText       string        `json:"error_text"`

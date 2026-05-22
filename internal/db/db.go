@@ -1103,8 +1103,8 @@ func (s *SQLiteStore) CreateWorkflowRunWithNodes(ctx context.Context, run *Workf
 		}
 		for _, nodeID := range nodeIDs {
 			if _, err := tx.ExecContext(ctx,
-				`INSERT INTO workflow_node_runs (run_id, node_id, status, output, error_text, attempt, started_at, finished_at, last_heartbeat_at)
-				 VALUES (?, ?, ?, '', '', 0, NULL, NULL, NULL)`,
+				`INSERT INTO workflow_node_runs (run_id, node_id, iteration, status, output, error_text, attempt, started_at, finished_at, last_heartbeat_at)
+				 VALUES (?, ?, 0, ?, '', '', 0, NULL, NULL, NULL)`,
 				run.ID, nodeID, string(NodeRunStatusPending),
 			); err != nil {
 				return err
@@ -1232,9 +1232,9 @@ func (s *SQLiteStore) ListWorkflowRunsByStatus(ctx context.Context, statuses []W
 
 func (s *SQLiteStore) UpsertNodeRun(ctx context.Context, nr *NodeRun) error {
 	_, err := s.db.ExecContext(ctx,
-		`INSERT INTO workflow_node_runs (run_id, node_id, status, output, error_text, attempt, started_at, finished_at, last_heartbeat_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-		 ON CONFLICT(run_id, node_id) DO UPDATE SET
+		`INSERT INTO workflow_node_runs (run_id, node_id, iteration, status, output, error_text, attempt, started_at, finished_at, last_heartbeat_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		 ON CONFLICT(run_id, node_id, iteration) DO UPDATE SET
 		   status = excluded.status,
 		   output = excluded.output,
 		   error_text = excluded.error_text,
@@ -1242,14 +1242,14 @@ func (s *SQLiteStore) UpsertNodeRun(ctx context.Context, nr *NodeRun) error {
 		   started_at = COALESCE(excluded.started_at, workflow_node_runs.started_at),
 		   finished_at = excluded.finished_at,
 		   last_heartbeat_at = COALESCE(excluded.last_heartbeat_at, workflow_node_runs.last_heartbeat_at)`,
-		nr.RunID, nr.NodeID, string(nr.Status), nr.Output, nr.ErrorText, nr.Attempt, nr.StartedAt, nr.FinishedAt, nr.LastHeartbeatAt,
+		nr.RunID, nr.NodeID, nr.Iteration, string(nr.Status), nr.Output, nr.ErrorText, nr.Attempt, nr.StartedAt, nr.FinishedAt, nr.LastHeartbeatAt,
 	)
 	return err
 }
 
 func (s *SQLiteStore) ListNodeRuns(ctx context.Context, runID string) ([]*NodeRun, error) { //nolint:dupl
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, run_id, node_id, status, output, error_text, attempt, started_at, finished_at, last_heartbeat_at
+		`SELECT id, run_id, node_id, iteration, status, output, error_text, attempt, started_at, finished_at, last_heartbeat_at
 		 FROM workflow_node_runs WHERE run_id = ? ORDER BY id ASC`, runID)
 	if err != nil {
 		return nil, err
@@ -1258,7 +1258,7 @@ func (s *SQLiteStore) ListNodeRuns(ctx context.Context, runID string) ([]*NodeRu
 	var nodeRuns []*NodeRun
 	for rows.Next() {
 		nr := &NodeRun{}
-		if err := rows.Scan(&nr.ID, &nr.RunID, &nr.NodeID, &nr.Status, &nr.Output, &nr.ErrorText, &nr.Attempt, &nr.StartedAt, &nr.FinishedAt, &nr.LastHeartbeatAt); err != nil {
+		if err := rows.Scan(&nr.ID, &nr.RunID, &nr.NodeID, &nr.Iteration, &nr.Status, &nr.Output, &nr.ErrorText, &nr.Attempt, &nr.StartedAt, &nr.FinishedAt, &nr.LastHeartbeatAt); err != nil {
 			return nil, err
 		}
 		nodeRuns = append(nodeRuns, nr)

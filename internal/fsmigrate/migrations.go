@@ -38,6 +38,12 @@ var migrations = []Migration{
 			return seedBuiltinCodeReviewShortcut(ctx, c, json.MarshalIndent)
 		},
 	},
+	{
+		Description: "seed review-loop and review-fix-loop workflows",
+		Apply: func(ctx context.Context, c *Ctx) error {
+			return seedReviewLoopWorkflows(ctx, c, json.MarshalIndent)
+		},
+	},
 }
 
 // versionedContainerFiles are tracked by the daemon: each release ships a
@@ -154,4 +160,146 @@ func seedBuiltinCodeReviewShortcut(_ context.Context, c *Ctx, marshal marshalInd
 		return fmt.Errorf("writing %s: %w", configPath, err)
 	}
 	return nil
+}
+
+// seededReviewLoopName / seededReviewFixLoopName are the canonical names of
+// the two seeded review workflows. The FE's split button refers to these by
+// name when starting a run, so the names must stay stable across releases.
+const (
+	seededReviewLoopName    = "review-loop"
+	seededReviewFixLoopName = "review-fix-loop"
+)
+
+// seedReviewLoopWorkflows ensures both built-in review workflows are present
+// in the user's ~/.loop/config.json. Each is skipped individually if an entry
+// with the same name already exists (user may have customized it). No-ops
+// when the config file doesn't exist (onboard handles fresh installs).
+func seedReviewLoopWorkflows(_ context.Context, c *Ctx, marshal marshalIndentFunc) error {
+	configPath := filepath.Join(c.LoopDir, "config.json")
+	data, err := c.Sys.ReadFile(configPath)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
+		return fmt.Errorf("reading %s: %w", configPath, err)
+	}
+
+	standardized, err := hujson.Standardize(data)
+	if err != nil {
+		return fmt.Errorf("standardizing %s: %w", configPath, err)
+	}
+	var cfg map[string]any
+	if err := json.Unmarshal(standardized, &cfg); err != nil {
+		return fmt.Errorf("parsing %s: %w", configPath, err)
+	}
+
+	workflows, _ := cfg["workflows"].([]any)
+	existing := make(map[string]struct{}, len(workflows))
+	for _, item := range workflows {
+		if m, ok := item.(map[string]any); ok {
+			if name, _ := m["name"].(string); name != "" {
+				existing[name] = struct{}{}
+			}
+		}
+	}
+
+	changed := false
+	if _, ok := existing[seededReviewLoopName]; !ok {
+		workflows = append(workflows, builtinReviewLoopDef())
+		changed = true
+	}
+	if _, ok := existing[seededReviewFixLoopName]; !ok {
+		workflows = append(workflows, builtinReviewFixLoopDef())
+		changed = true
+	}
+	if !changed {
+		return nil
+	}
+	cfg["workflows"] = workflows
+
+	out, err := marshal(cfg, "", "  ")
+	if err != nil {
+		return fmt.Errorf("serializing %s: %w", configPath, err)
+	}
+	if err := c.Sys.WriteFile(configPath, append(out, '\n'), 0644); err != nil {
+		return fmt.Errorf("writing %s: %w", configPath, err)
+	}
+	return nil
+}
+
+// reviewBashBodyChild is the bash node every seeded review loop pins as its
+// first body child. The loop body parser keys off `id == "review"` to
+// populate runCtx.Review with the CLI's JSON output (see
+// internal/workflow/dag.go reviewBodyNodeID).
+func reviewBashBodyChild() map[string]any {
+	return map[string]any{
+		"id":     "review",
+		"type":   "bash",
+		"script": "loop review run --channel-id {{.ChannelID}} --api-url $API_URL --wait",
+	}
+}
+
+// builtinLoopDef builds the outer shape (name, description, inputs, single
+// loop node with same-IDs stop-condition) shared by both seeded review
+// workflows. The body children differ between the two — see callers.
+func builtinLoopDef(name, description, inputDesc string, body []any) map[string]any {
+	return map[string]any{
+		"name":        name,
+		"description": description,
+		"inputs": map[string]any{
+			"max_iterations": map[string]any{
+				"description": inputDesc,
+				"default":     "3",
+			},
+		},
+		"nodes": []any{
+			map[string]any{
+				"id":        "loop",
+				"type":      "loop",
+				"condition": "{{ or .Review.NoComments .Review.SameAsPrev }}",
+				"body":      body,
+			},
+		},
+	}
+}
+
+// builtinReviewLoopDef is the JSON-shaped definition of the review-only loop.
+// Each iteration runs `loop review run --wait` inside the agent container;
+// the workflow stops when the iteration produces zero comments OR repeats the
+// same comment-id set as the previous iteration. With max_iterations=1 the
+// behavior matches today's single-shot Review button.
+func builtinReviewLoopDef() map[string]any {
+	return builtinLoopDef(
+		seededReviewLoopName,
+		"Run review N times in a row, deduping comments across iterations.",
+		"Number of review passes (1-10).",
+		[]any{reviewBashBodyChild()},
+	)
+}
+
+// builtinReviewFixLoopDef defines the review → fix → verify loop. Same stop
+// condition as the review-only variant; adds two body children gated on
+// `not .Review.NoComments` so the fix prompt and verification only run when
+// the latest review surfaced findings.
+func builtinReviewFixLoopDef() map[string]any {
+	return builtinLoopDef(
+		seededReviewFixLoopName,
+		"Iterate review → fix → re-review until clean or max_iterations.",
+		"Maximum review/fix iterations (1-10).",
+		[]any{
+			reviewBashBodyChild(),
+			map[string]any{
+				"id":     "fix",
+				"type":   "prompt",
+				"when":   "{{ not .Review.NoComments }}",
+				"prompt": "Fix the following review comments and commit your changes:\n\n{{.Review.CommentsJSON}}",
+			},
+			map[string]any{
+				"id":     "verify",
+				"type":   "bash",
+				"when":   "{{ not .Review.NoComments }}",
+				"script": "git rev-parse HEAD",
+			},
+		},
+	)
 }

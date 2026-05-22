@@ -456,3 +456,164 @@ func (s *FSMigrateSuite) TestMigrationsHaveBootstrapEntry() {
 	require.Equal(s.T(), "bootstrap", migrations[0].Description)
 	require.Nil(s.T(), migrations[0].Apply, "bootstrap migration must have nil Apply (never executed)")
 }
+
+// --- seedReviewLoopWorkflows tests ---
+
+func (s *FSMigrateSuite) TestSeedReviewLoopWorkflowsNoConfigFile() {
+	sys := newFakeSystem()
+
+	err := seedReviewLoopWorkflows(context.Background(), &Ctx{Sys: sys, LoopDir: "/loop"}, json.MarshalIndent)
+	require.NoError(s.T(), err)
+	require.Empty(s.T(), sys.files, "no file should be written when config is absent")
+}
+
+func (s *FSMigrateSuite) TestSeedReviewLoopWorkflowsReadError() {
+	sys := newFakeSystem()
+	configPath := filepath.Join("/loop", "config.json")
+	sys.files[configPath] = []byte("{}")
+	sys.readErr[configPath] = errors.New("permission denied")
+
+	err := seedReviewLoopWorkflows(context.Background(), &Ctx{Sys: sys, LoopDir: "/loop"}, json.MarshalIndent)
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "reading")
+}
+
+func (s *FSMigrateSuite) TestSeedReviewLoopWorkflowsInvalidHJSON() {
+	sys := newFakeSystem()
+	configPath := filepath.Join("/loop", "config.json")
+	sys.files[configPath] = []byte("{not even close")
+
+	err := seedReviewLoopWorkflows(context.Background(), &Ctx{Sys: sys, LoopDir: "/loop"}, json.MarshalIndent)
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "standardizing")
+}
+
+func (s *FSMigrateSuite) TestSeedReviewLoopWorkflowsInvalidJSON() {
+	sys := newFakeSystem()
+	configPath := filepath.Join("/loop", "config.json")
+	sys.files[configPath] = []byte("[]")
+
+	err := seedReviewLoopWorkflows(context.Background(), &Ctx{Sys: sys, LoopDir: "/loop"}, json.MarshalIndent)
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "parsing")
+}
+
+func (s *FSMigrateSuite) TestSeedReviewLoopWorkflowsSeedsBoth() {
+	sys := newFakeSystem()
+	configPath := filepath.Join("/loop", "config.json")
+	sys.files[configPath] = []byte(`{}`)
+
+	err := seedReviewLoopWorkflows(context.Background(), &Ctx{Sys: sys, LoopDir: "/loop"}, json.MarshalIndent)
+	require.NoError(s.T(), err)
+
+	var cfg map[string]any
+	require.NoError(s.T(), json.Unmarshal(sys.files[configPath], &cfg))
+	workflows, ok := cfg["workflows"].([]any)
+	require.True(s.T(), ok)
+	require.Len(s.T(), workflows, 2)
+	names := []string{
+		workflows[0].(map[string]any)["name"].(string),
+		workflows[1].(map[string]any)["name"].(string),
+	}
+	require.Contains(s.T(), names, "review-loop")
+	require.Contains(s.T(), names, "review-fix-loop")
+}
+
+func (s *FSMigrateSuite) TestSeedReviewLoopWorkflowsBothAlreadyPresentIsNoop() {
+	sys := newFakeSystem()
+	configPath := filepath.Join("/loop", "config.json")
+	original := []byte(`{"workflows":[{"name":"review-loop"},{"name":"review-fix-loop"}]}`)
+	sys.files[configPath] = append([]byte(nil), original...)
+
+	err := seedReviewLoopWorkflows(context.Background(), &Ctx{Sys: sys, LoopDir: "/loop"}, json.MarshalIndent)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), original, sys.files[configPath], "file must not be rewritten when both entries already exist")
+}
+
+func (s *FSMigrateSuite) TestSeedReviewLoopWorkflowsAppendsMissingOnly() {
+	sys := newFakeSystem()
+	configPath := filepath.Join("/loop", "config.json")
+	// review-loop already present; only review-fix-loop should be appended.
+	sys.files[configPath] = []byte(`{"workflows":[{"name":"review-loop"}]}`)
+
+	err := seedReviewLoopWorkflows(context.Background(), &Ctx{Sys: sys, LoopDir: "/loop"}, json.MarshalIndent)
+	require.NoError(s.T(), err)
+
+	var cfg map[string]any
+	require.NoError(s.T(), json.Unmarshal(sys.files[configPath], &cfg))
+	workflows := cfg["workflows"].([]any)
+	require.Len(s.T(), workflows, 2)
+	require.Equal(s.T(), "review-loop", workflows[0].(map[string]any)["name"])
+	require.Equal(s.T(), "review-fix-loop", workflows[1].(map[string]any)["name"])
+}
+
+func (s *FSMigrateSuite) TestSeedReviewLoopWorkflowsSkipsNonMapEntries() {
+	sys := newFakeSystem()
+	configPath := filepath.Join("/loop", "config.json")
+	sys.files[configPath] = []byte(`{"workflows":["bogus",{"name":"other"}]}`)
+
+	err := seedReviewLoopWorkflows(context.Background(), &Ctx{Sys: sys, LoopDir: "/loop"}, json.MarshalIndent)
+	require.NoError(s.T(), err)
+
+	var cfg map[string]any
+	require.NoError(s.T(), json.Unmarshal(sys.files[configPath], &cfg))
+	workflows := cfg["workflows"].([]any)
+	require.Len(s.T(), workflows, 4, "should append both seeded workflows past the bogus + other entries")
+}
+
+func (s *FSMigrateSuite) TestSeedReviewLoopWorkflowsWriteError() {
+	sys := newFakeSystem()
+	configPath := filepath.Join("/loop", "config.json")
+	sys.files[configPath] = []byte(`{}`)
+	sys.writeErr[configPath] = errors.New("io error")
+
+	err := seedReviewLoopWorkflows(context.Background(), &Ctx{Sys: sys, LoopDir: "/loop"}, json.MarshalIndent)
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "writing")
+}
+
+func (s *FSMigrateSuite) TestSeedReviewLoopWorkflowsMarshalError() {
+	sys := newFakeSystem()
+	configPath := filepath.Join("/loop", "config.json")
+	sys.files[configPath] = []byte(`{}`)
+
+	failingMarshal := func(_ any, _, _ string) ([]byte, error) { return nil, errors.New("marshal fail") }
+	err := seedReviewLoopWorkflows(context.Background(), &Ctx{Sys: sys, LoopDir: "/loop"}, failingMarshal)
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "serializing")
+}
+
+// --- builtin loop def shape guards ---
+
+func (s *FSMigrateSuite) TestBuiltinReviewLoopDefShape() {
+	def := builtinReviewLoopDef()
+	require.Equal(s.T(), "review-loop", def["name"])
+	require.Contains(s.T(), def["description"], "review")
+	nodes := def["nodes"].([]any)
+	require.Len(s.T(), nodes, 1)
+	loop := nodes[0].(map[string]any)
+	require.Equal(s.T(), "loop", loop["type"])
+	body := loop["body"].([]any)
+	require.Len(s.T(), body, 1)
+	review := body[0].(map[string]any)
+	require.Equal(s.T(), "review", review["id"])
+	require.Equal(s.T(), "bash", review["type"])
+}
+
+func (s *FSMigrateSuite) TestBuiltinReviewFixLoopDefShape() {
+	def := builtinReviewFixLoopDef()
+	require.Equal(s.T(), "review-fix-loop", def["name"])
+	nodes := def["nodes"].([]any)
+	loop := nodes[0].(map[string]any)
+	body := loop["body"].([]any)
+	require.Len(s.T(), body, 3)
+	ids := []string{
+		body[0].(map[string]any)["id"].(string),
+		body[1].(map[string]any)["id"].(string),
+		body[2].(map[string]any)["id"].(string),
+	}
+	require.Equal(s.T(), []string{"review", "fix", "verify"}, ids)
+	// fix + verify must be gated on .Review.NoComments to skip when clean.
+	require.Equal(s.T(), "{{ not .Review.NoComments }}", body[1].(map[string]any)["when"])
+	require.Equal(s.T(), "{{ not .Review.NoComments }}", body[2].(map[string]any)["when"])
+}

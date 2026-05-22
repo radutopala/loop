@@ -963,13 +963,16 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
               channelId={channelId}
               subscribeChatEvents={subscribeChatEvents}
               registerReviewView={registerReviewView}
+              hasChatPanel={tree ? collectLeaves(tree).some((l) => l.panel === "chat") : false}
+              gateApprovals={chatState.gateApprovals}
+              onClearGateApproval={(source) => chatState.clearGateApproval(source)}
             />
           );
         default:
           return null;
       }
     },
-    [channelId, chatState, editorState, dirPath, branch, scrollToMessageId, onScrollComplete, openMemoryFile, onStatusChange, handlePaneStatus, handleRemoveLeaf, subscribeChatEvents, registerReviewView],
+    [channelId, chatState, editorState, dirPath, branch, scrollToMessageId, onScrollComplete, openMemoryFile, onStatusChange, handlePaneStatus, handleRemoveLeaf, subscribeChatEvents, registerReviewView, tree],
   );
 
   return (

@@ -24,6 +24,9 @@ export interface WorkflowNodeDef {
   max_iterations?: number;
   condition?: string;
   retry?: { max_retries: number; backoff_base?: string; backoff_max?: string };
+  /** Loop nodes only: children executed sequentially per iteration. Empty
+   *  preserves the legacy "self-prompt" behavior used by older workflows. */
+  body?: WorkflowNodeDef[];
 }
 
 export interface WorkflowRun {
@@ -47,6 +50,9 @@ export interface WorkflowNodeRun {
   id: number;
   run_id: string;
   node_id: string;
+  /** Zero-based loop iteration this row belongs to. 0 for nodes outside a
+   *  loop body. Older rows (pre-iteration column) materialize as 0. */
+  iteration: number;
   status: "pending" | "running" | "success" | "failed" | "skipped" | "paused";
   output: string;
   error_text: string;

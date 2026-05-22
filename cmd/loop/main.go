@@ -136,6 +136,11 @@ type app struct {
 	httpGet            func(string) (*http.Response, error)
 	getLatestVersionFn func() (string, error)
 
+	// reviewClient is the HTTP client used by `loop review run` to talk to
+	// the daemon. Tests inject an httptest-backed client so the CLI can be
+	// driven against a fake review endpoint without spinning up serve.
+	reviewClient reviewHTTPClient
+
 	// Embedded FS for playground examples (overridable for testing)
 	playgroundExamplesFS fs.FS
 
@@ -294,6 +299,7 @@ func (a *app) newRootCmd() *cobra.Command {
 	root.AddCommand(a.newSyscallwrapCmd())
 	root.AddCommand(a.newDockerproxyCmd())
 	root.AddCommand(a.newQualityCmd())
+	root.AddCommand(a.newReviewCmd())
 	root.SetHelpTemplate(helpTemplate)
 	return root
 }

@@ -271,6 +271,36 @@ var migrations = []migration{
 	// in the FE.
 	sqlMigration(`ALTER TABLE messages ADD COLUMN trigger_msg_id TEXT NOT NULL DEFAULT ''`),
 	sqlMigration(`CREATE INDEX IF NOT EXISTS idx_messages_trigger_msg_id ON messages(channel_id, trigger_msg_id) WHERE trigger_msg_id != ''`),
+	// Per-iteration node runs for review/review-fix loops. Without an
+	// iteration column the inline UNIQUE(run_id, node_id) constraint causes
+	// every loop iteration to overwrite the prior row, so the Workflows
+	// panel loses the per-iteration history. SQLite cannot drop an inline
+	// UNIQUE constraint, so we recreate the table with an `iteration`
+	// column and a (run_id, node_id, iteration) UNIQUE index. Existing rows
+	// migrate with iteration=0 (which is also the default for non-loop and
+	// pre-migration nodes).
+	sqlMigration(`PRAGMA foreign_keys=OFF`),
+	sqlMigration(`CREATE TABLE workflow_node_runs_new (
+		id          INTEGER PRIMARY KEY AUTOINCREMENT,
+		run_id      TEXT NOT NULL,
+		node_id     TEXT NOT NULL,
+		iteration   INTEGER NOT NULL DEFAULT 0,
+		status      TEXT NOT NULL DEFAULT 'pending',
+		output      TEXT NOT NULL DEFAULT '',
+		error_text  TEXT NOT NULL DEFAULT '',
+		attempt     INTEGER NOT NULL DEFAULT 1,
+		started_at  TIMESTAMP,
+		finished_at TIMESTAMP,
+		last_heartbeat_at TIMESTAMP,
+		FOREIGN KEY (run_id) REFERENCES workflow_runs(id)
+	)`),
+	sqlMigration(`INSERT INTO workflow_node_runs_new (id, run_id, node_id, status, output, error_text, attempt, started_at, finished_at, last_heartbeat_at)
+		SELECT id, run_id, node_id, status, output, error_text, attempt, started_at, finished_at, last_heartbeat_at FROM workflow_node_runs`),
+	sqlMigration(`DROP TABLE workflow_node_runs`),
+	sqlMigration(`ALTER TABLE workflow_node_runs_new RENAME TO workflow_node_runs`),
+	sqlMigration(`CREATE UNIQUE INDEX workflow_node_runs_run_node_iter_unique ON workflow_node_runs(run_id, node_id, iteration)`),
+	sqlMigration(`CREATE INDEX IF NOT EXISTS idx_workflow_node_runs_run_id ON workflow_node_runs(run_id)`),
+	sqlMigration(`PRAGMA foreign_keys=ON`),
 }
 
 // RunMigrations executes all pending schema migrations.
