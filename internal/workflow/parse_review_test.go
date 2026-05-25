@@ -66,3 +66,42 @@ func (s *ParseReviewSuite) TestEmptyStdoutSameAsPrevWhenPrevEmpty() {
 	// parser's "no payload" reset branch.
 	require.True(s.T(), rc.Review.SameAsPrev)
 }
+
+func (s *ParseReviewSuite) TestParsesJSONAfterDockerproxyPreamble() {
+	// Real container stdout: dockerproxy logs to stdout before the CLI's
+	// compact JSON line. The parser must still locate the JSON.
+	stdout := "time=2026-05-25T11:48:18.834+03:00 level=INFO msg=\"loop-dockerproxy started\" socket=/var/run/docker.sock\n" +
+		`{"status":"ready","no_comments":false,"comments":[{"id":"db0cc90b5f4e","path":"foo.go","line":10,"body":"nit"}]}` + "\n"
+	rc := &RunContext{}
+	parseReviewOutput(stdout, rc)
+	require.Equal(s.T(), []string{"db0cc90b5f4e"}, rc.Review.IDs)
+	require.False(s.T(), rc.Review.NoComments)
+	require.Contains(s.T(), rc.Review.CommentsJSON, "db0cc90b5f4e")
+}
+
+func (s *ParseReviewSuite) TestPicksLastJSONLineWhenMultiplePresent() {
+	// A stray earlier JSON line (unlikely in practice but defensive) must
+	// be overridden by the CLI's final envelope.
+	stdout := `{"status":"reviewing","comments":[]}` + "\n" +
+		`{"status":"ready","no_comments":false,"comments":[{"id":"x"}]}` + "\n"
+	rc := &RunContext{}
+	parseReviewOutput(stdout, rc)
+	require.Equal(s.T(), []string{"x"}, rc.Review.IDs)
+}
+
+func (s *ParseReviewSuite) TestFallsBackToTrimmedFullStdout() {
+	// Pretty-printed (multi-line) JSON, no single line that parses on its
+	// own. The whole-trimmed-stdout fallback should still recover it.
+	stdout := "{\n  \"status\": \"ready\",\n  \"comments\": [{\"id\": \"a\"}]\n}\n"
+	rc := &RunContext{}
+	parseReviewOutput(stdout, rc)
+	require.Equal(s.T(), []string{"a"}, rc.Review.IDs)
+}
+
+func (s *ParseReviewSuite) TestExtractReviewJSONReturnsFalseOnEmpty() {
+	// Whitespace-only stdout exercises the explicit empty-string return.
+	var out struct {
+		Status string `json:"status"`
+	}
+	require.False(s.T(), extractReviewJSON("   \n\t  ", &out))
+}

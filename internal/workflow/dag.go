@@ -759,23 +759,24 @@ func (e *defaultEngine) executeLoopBody(ctx context.Context, run *db.WorkflowRun
 }
 
 // parseReviewOutput parses stdout JSON from `loop review run --wait` into
-// runCtx.Review. It tolerates leading/trailing whitespace and a final newline
-// from the CLI. When the output cannot be parsed as JSON, the function leaves
-// runCtx.Review untouched except for shifting IDs into PrevIDs so the loop's
-// SameAsPrev gate still advances. The expected shape is:
+// runCtx.Review. The bash node's captured stdout includes preamble from the
+// agent container (e.g. `loop-dockerproxy started ...`) before the CLI's
+// final JSON line, so the parser scans backwards through the lines and uses
+// the last one that parses as the expected envelope. When nothing parses,
+// the function clears Review.* except for shifting IDs into PrevIDs so the
+// loop's SameAsPrev gate still advances. The expected shape is:
 //
 //	{"status": "ready", "no_comments": bool, "comments": [{"id": "...", ...}]}
 func parseReviewOutput(stdout string, runCtx *RunContext) {
 	prev := append([]string(nil), runCtx.Review.IDs...)
 	runCtx.Review.PrevIDs = prev
 
-	trimmed := strings.TrimSpace(stdout)
 	var parsed struct {
 		Status     string          `json:"status"`
 		NoComments bool            `json:"no_comments"`
 		Comments   []ReviewComment `json:"comments"`
 	}
-	if trimmed == "" || json.Unmarshal([]byte(trimmed), &parsed) != nil {
+	if !extractReviewJSON(stdout, &parsed) {
 		// Leave Comments/CommentsJSON/IDs as-is; treat as "no findings parsed".
 		runCtx.Review.NoComments = false
 		runCtx.Review.Comments = nil
@@ -805,6 +806,30 @@ func parseReviewOutput(stdout string, runCtx *RunContext) {
 	runCtx.Review.IDs = ids
 
 	runCtx.Review.SameAsPrev = len(ids) > 0 && slices.Equal(ids, prev)
+}
+
+// extractReviewJSON scans stdout backwards through non-empty lines (and as
+// a final fallback the entire trimmed stdout) for the first one that parses
+// as the review envelope. Returns true on a successful decode, in which case
+// `out` carries the parsed payload. The backward walk is intentional: the
+// container's preamble (e.g. `loop-dockerproxy started ...`) precedes the
+// CLI's compact one-line JSON, and any future log lines emitted alongside
+// the JSON should not displace the real envelope.
+func extractReviewJSON(stdout string, out any) bool {
+	lines := strings.Split(stdout, "\n")
+	for i := len(lines) - 1; i >= 0; i-- {
+		line := strings.TrimSpace(lines[i])
+		if line == "" {
+			continue
+		}
+		if json.Unmarshal([]byte(line), out) == nil {
+			return true
+		}
+	}
+	if trimmed := strings.TrimSpace(stdout); trimmed != "" {
+		return json.Unmarshal([]byte(trimmed), out) == nil
+	}
+	return false
 }
 
 func (e *defaultEngine) executeApprovalNode(ctx context.Context, run *db.WorkflowRun, node *config.NodeDef, runCtx *RunContext, mu *sync.Mutex) (string, error) {
