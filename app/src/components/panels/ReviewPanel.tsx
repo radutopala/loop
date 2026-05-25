@@ -145,6 +145,14 @@ export function ReviewPanel({
   const [maxIter, setMaxIter] = useState<number>(() => readStoredMaxIter());
   const [loopRunId, setLoopRunId] = useState<string | null>(null);
   const [loopChip, setLoopChip] = useState<string>("");
+  // Tracks whether a workflow run is in flight independently of
+  // `session.status` and `busy`. The review-fix loop's body children flip the
+  // daemon's review session back to "ready" between iterations (after each
+  // `review` child completes), and `busy` clears as soon as the initial POST
+  // returns — without this guard, the primary button would re-enable
+  // mid-loop and let the user start a second concurrent run on the same
+  // worktree. Cleared on workflow.run_completed.
+  const [loopActive, setLoopActive] = useState(false);
   const [menuPos, setMenuPos] = useState<{ x: number; y: number } | null>(null);
   const caretRef = useRef<HTMLButtonElement | null>(null);
 
@@ -249,6 +257,7 @@ export function ReviewPanel({
           else if (d.status === "failed") setLoopChip("failed");
           else if (d.status === "cancelled") setLoopChip("cancelled");
           else setLoopChip(d.status ?? "done");
+          setLoopActive(false);
           break;
         default:
       }
@@ -304,6 +313,7 @@ export function ReviewPanel({
     // the button re-enables itself.
     setSession((prev) => prev ? { ...prev, status: "reviewing" } : prev);
     setLoopChip("starting...");
+    setLoopActive(true);
     try {
       const workflowName = m === "review-fix" ? REVIEW_FIX_LOOP_WORKFLOW : REVIEW_LOOP_WORKFLOW;
       const resp = await startWorkflowRun({
@@ -316,6 +326,7 @@ export function ReviewPanel({
       setError(e instanceof Error ? e.message : String(e));
       setSession((prev) => prev ? { ...prev, status: "ready" } : prev);
       setLoopChip("");
+      setLoopActive(false);
     } finally {
       setBusy(false);
     }
@@ -481,7 +492,7 @@ export function ReviewPanel({
   // shows a not-allowed cursor — otherwise `disabled` is a no-op visual.
   const disabledStyle: React.CSSProperties = { opacity: 0.4, cursor: "not-allowed" };
   const syncDisabled = busy || session?.status === "reviewing" || session?.status === "loading";
-  const runDisabled = busy || session?.status !== "ready";
+  const runDisabled = busy || session?.status !== "ready" || loopActive;
   const closeDisabled = busy;
 
   return (
