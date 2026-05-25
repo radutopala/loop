@@ -61,6 +61,18 @@ var migrations = []Migration{
 			return patchReviewFixVerifyScript(ctx, c, json.MarshalIndent)
 		},
 	},
+	{
+		// Backfill body-child `depends_on` so the FE WorkflowGraph draws
+		// review → fix → verify edges within each iteration. Without this
+		// the graph only shows cross-iteration verify[i-1] → review[i]
+		// links because expandLoopBodies emits edges from depends_on only;
+		// executeLoopNode runs body children in array order regardless,
+		// so the change is purely visual.
+		Description: "patch review-fix-loop body children with explicit depends_on",
+		Apply: func(ctx context.Context, c *Ctx) error {
+			return patchReviewFixLoopBodyDeps(ctx, c, json.MarshalIndent)
+		},
+	},
 }
 
 // versionedContainerFiles are tracked by the daemon: each release ships a
@@ -340,6 +352,78 @@ func patchReviewFixVerifyScript(_ context.Context, c *Ctx, marshal marshalIndent
 	return nil
 }
 
+// patchReviewFixLoopBodyDeps walks ~/.loop/config.json, finds the
+// `review-fix-loop` workflow, and adds explicit `depends_on` to its `fix`
+// and `verify` body children (fix→review, verify→fix) when they're absent.
+// Only fills in missing deps — never overwrites a user-set value — so a
+// customized workflow with deliberate parallel siblings is preserved.
+// No-ops when the config file is missing or the workflow is absent.
+func patchReviewFixLoopBodyDeps(_ context.Context, c *Ctx, marshal marshalIndentFunc) error {
+	configPath := filepath.Join(c.LoopDir, "config.json")
+	data, err := c.Sys.ReadFile(configPath)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
+		return fmt.Errorf("reading %s: %w", configPath, err)
+	}
+
+	standardized, err := hujson.Standardize(data)
+	if err != nil {
+		return fmt.Errorf("standardizing %s: %w", configPath, err)
+	}
+	var cfg map[string]any
+	if err := json.Unmarshal(standardized, &cfg); err != nil {
+		return fmt.Errorf("parsing %s: %w", configPath, err)
+	}
+
+	wantDeps := map[string]string{"fix": "review", "verify": "fix"}
+	workflows, _ := cfg["workflows"].([]any)
+	patched := false
+	for _, item := range workflows {
+		wf, ok := item.(map[string]any)
+		if !ok || wf["name"] != seededReviewFixLoopName {
+			continue
+		}
+		nodes, _ := wf["nodes"].([]any)
+		for _, n := range nodes {
+			loopNode, ok := n.(map[string]any)
+			if !ok {
+				continue
+			}
+			body, _ := loopNode["body"].([]any)
+			for _, child := range body {
+				cm, ok := child.(map[string]any)
+				if !ok {
+					continue
+				}
+				id, _ := cm["id"].(string)
+				dep, want := wantDeps[id]
+				if !want {
+					continue
+				}
+				if _, exists := cm["depends_on"]; exists {
+					continue
+				}
+				cm["depends_on"] = []any{dep}
+				patched = true
+			}
+		}
+	}
+	if !patched {
+		return nil
+	}
+
+	out, err := marshal(cfg, "", "  ")
+	if err != nil {
+		return fmt.Errorf("serializing %s: %w", configPath, err)
+	}
+	if err := c.Sys.WriteFile(configPath, append(out, '\n'), 0644); err != nil {
+		return fmt.Errorf("writing %s: %w", configPath, err)
+	}
+	return nil
+}
+
 // reviewBashBodyChild is the bash node every seeded review loop pins as its
 // first body child. The loop body parser keys off `id == "review"` to
 // populate runCtx.Review with the CLI's JSON output (see
@@ -402,16 +486,18 @@ func builtinReviewFixLoopDef() map[string]any {
 		[]any{
 			reviewBashBodyChild(),
 			map[string]any{
-				"id":     "fix",
-				"type":   "prompt",
-				"when":   "{{ not .Review.NoComments }}",
-				"prompt": "Fix the following review comments and commit your changes:\n\n{{.Review.CommentsJSON}}",
+				"id":         "fix",
+				"type":       "prompt",
+				"when":       "{{ not .Review.NoComments }}",
+				"prompt":     "Fix the following review comments and commit your changes:\n\n{{.Review.CommentsJSON}}",
+				"depends_on": []any{"review"},
 			},
 			map[string]any{
-				"id":     "verify",
-				"type":   "bash",
-				"when":   "{{ not .Review.NoComments }}",
-				"script": reviewFixVerifyScript,
+				"id":         "verify",
+				"type":       "bash",
+				"when":       "{{ not .Review.NoComments }}",
+				"script":     reviewFixVerifyScript,
+				"depends_on": []any{"fix"},
 			},
 		},
 	)
