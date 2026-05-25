@@ -46,7 +46,7 @@ export function WorkflowsLayoutPanel({ channelId }: WorkflowsLayoutPanelProps) {
           <span style={{ fontSize: 12, color: colors.textDim, flex: 1 }}>
             {wf.runs.length} run{wf.runs.length !== 1 ? "s" : ""}
           </span>
-          {wf.definitions.length > 0 && (
+          {(wf.definitions.length > 0 || !wf.definitionsLoaded) && (
             <button
               onClick={wf.openStartDialog}
               style={{

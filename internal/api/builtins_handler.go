@@ -69,11 +69,14 @@ func (s *Server) handleRestoreBuiltins(w http.ResponseWriter, r *http.Request) {
 	for _, n := range added {
 		addedSet[n] = struct{}{}
 	}
-	var skipped []string
+	skipped := []string{}
 	for _, n := range canonical {
 		if _, ok := addedSet[n]; !ok {
 			skipped = append(skipped, n)
 		}
+	}
+	if added == nil {
+		added = []string{}
 	}
 	writeHTTPJSON(w, http.StatusOK, builtinRestoreResponse{
 		Kind:    req.Kind,

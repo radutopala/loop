@@ -221,6 +221,7 @@ export function Settings({ open, projectDirPath, channelId, channel, sidebarOpen
 
   return (
     <div
+      data-testid="settings-panel"
       style={{
         flex: 1,
         backgroundColor: colors.sidebar,
@@ -567,8 +568,10 @@ function NavButton({ name, active, colors, onClick }: {
   colors: ColorPalette;
   onClick: () => void;
 }) {
+  const testId = `settings-nav-${name.toLowerCase().replace(/\s+/g, "-")}`;
   return (
     <button
+      data-testid={testId}
       onClick={onClick}
       style={{
         display: "block",

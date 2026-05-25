@@ -32,6 +32,7 @@ export function useWorkflowState({
   listLimit = 50,
 }: UseWorkflowStateOptions) {
   const [definitions, setDefinitions] = useState<WorkflowDef[]>([]);
+  const [definitionsLoaded, setDefinitionsLoaded] = useState(false);
   const [runs, setRuns] = useState<WorkflowRun[]>([]);
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
   const [nodeRuns, setNodeRuns] = useState<WorkflowNodeRun[]>([]);
@@ -115,7 +116,9 @@ export function useWorkflowState({
     try {
       const data = await fetchWorkflows(channelId);
       setDefinitions(data);
-    } catch { /* ignore */ }
+    } catch { /* ignore */ } finally {
+      setDefinitionsLoaded(true);
+    }
   }, [channelId]);
 
   const loadRunDetail = useCallback(async (runId: string) => {
@@ -311,6 +314,7 @@ export function useWorkflowState({
   return {
     // State
     definitions,
+    definitionsLoaded,
     runs,
     selectedRunId,
     nodeRuns,

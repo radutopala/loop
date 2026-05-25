@@ -155,11 +155,14 @@ func registerFrontendSteps(ctx *godog.ScenarioContext, tc *TestContext) {
 	ctx.Step(`^I click on "([^"]*)" in the kanban panel$`, tc.clickInKanbanPanel)
 	ctx.Step(`^I click button "([^"]*)" in the kanban panel$`, tc.clickButtonInKanbanPanel)
 	ctx.Step(`^I click button "([^"]*)" in the git panel$`, tc.clickButtonInGitPanel)
+	ctx.Step(`^I open the settings panel and select "([^"]*)"$`, tc.openSettingsPanelSection)
 	ctx.Step(`^I open the workflows panel$`, tc.openWorkflowsPanel)
 	ctx.Step(`^I click on "([^"]*)" in the workflows panel$`, tc.clickInWorkflowsPanel)
 	ctx.Step(`^I click button "([^"]*)" in the workflows panel$`, tc.clickButtonInWorkflowsPanel)
 	ctx.Step(`^I click on "([^"]*)" in the workflows split panel$`, tc.clickInWorkflowsSplitPanel)
 	ctx.Step(`^I click button "([^"]*)" in the workflows split panel$`, tc.clickButtonInWorkflowsSplitPanel)
+	ctx.Step(`^I click on "([^"]*)" in the settings panel$`, tc.clickInSettingsPanel)
+	ctx.Step(`^I click button "([^"]*)" in the settings panel$`, tc.clickButtonInSettingsPanel)
 	ctx.Step(`^I trigger Run Now for the visible task$`, tc.triggerRunNowForVisibleTask)
 	ctx.Step(`^I capture the visible task ID$`, tc.captureVisibleTaskID)
 	ctx.Step(`^I click on the element with text "([^"]*)"$`, tc.clickElementWithText)
@@ -453,6 +456,45 @@ func (tc *TestContext) clickInSidebar(text string) error {
 	return tc.clickInRegion(text, "sidebar")
 }
 
+// openSettingsPanelSection clicks the sidebar Settings button (retrying until
+// the panel mounts) then waits for the named NavButton to be ready (loaded=true
+// has resolved + schema-driven sections rendered), then clicks it. Mirrors the
+// retry-poll pattern used by openGlobalTasksPanel — single clicks can race
+// React hydration in CI and silently no-op.
+//
+// Both Poll calls use WithPollingInterval (setTimeout-based) instead of the
+// default "raf" mode — headless Chrome throttles requestAnimationFrame on
+// pages that aren't actively painted (Vite dev server in CI), so the rAF
+// poller can fire only a handful of times in 15s and the click retry never
+// hits.
+func (tc *TestContext) openSettingsPanelSection(section string) error {
+	navTestID := "settings-nav-" + strings.ReplaceAll(strings.ToLower(section), " ", "-")
+	openJS := `(() => {
+		if (document.querySelector('[data-testid="settings-panel"]')) return true;
+		const btn = document.querySelector('[data-testid="sidebar-settings-btn"]');
+		if (btn) { btn.click(); }
+		return false;
+	})()`
+	navJS := fmt.Sprintf(`(() => {
+		const el = document.querySelector('[data-testid=%q]');
+		if (!el) return false;
+		const r = el.getBoundingClientRect();
+		return r.width > 0 && r.height > 0;
+	})()`, navTestID)
+	clickNavJS := fmt.Sprintf(`(() => {
+		const el = document.querySelector('[data-testid=%q]');
+		if (!el) return false;
+		el.click();
+		return true;
+	})()`, navTestID)
+	return chromedp.Run(tc.chromeTab.ctx,
+		chromedp.WaitVisible(`[data-testid="sidebar-settings-btn"]`, chromedp.ByQuery),
+		chromedp.Poll(openJS, nil, chromedp.WithPollingTimeout(15*time.Second), chromedp.WithPollingInterval(100*time.Millisecond)),
+		chromedp.Poll(navJS, nil, chromedp.WithPollingTimeout(15*time.Second), chromedp.WithPollingInterval(100*time.Millisecond)),
+		chromedp.Evaluate(clickNavJS, nil),
+	)
+}
+
 func (tc *TestContext) clickInTasksPanel(text string) error {
 	return tc.clickTaskRow(text, "tasks-panel")
 }
@@ -529,7 +571,7 @@ func (tc *TestContext) openWorkflowsPanel() error {
 			const btn = document.querySelector('[data-testid="sidebar-workflows-btn"]');
 			if (btn) btn.click();
 			return false;
-		})()`, nil, chromedp.WithPollingTimeout(15*time.Second)),
+		})()`, nil, chromedp.WithPollingTimeout(15*time.Second), chromedp.WithPollingInterval(100*time.Millisecond)),
 	)
 }
 
@@ -547,6 +589,14 @@ func (tc *TestContext) clickInWorkflowsSplitPanel(text string) error {
 
 func (tc *TestContext) clickButtonInWorkflowsSplitPanel(text string) error {
 	return tc.clickButtonInRegion(text, "workflows-split-panel")
+}
+
+func (tc *TestContext) clickInSettingsPanel(text string) error {
+	return tc.clickInRegion(text, "settings-panel")
+}
+
+func (tc *TestContext) clickButtonInSettingsPanel(text string) error {
+	return tc.clickButtonInRegion(text, "settings-panel")
 }
 
 func (tc *TestContext) clickButtonInGitPanel(text string) error {
@@ -851,6 +901,10 @@ func (tc *TestContext) clickTaskCreateButton() error {
 	return nil
 }
 
+// WithPollingInterval(100ms) switches Poll to setTimeout-based polling — the
+// default "raf" mode is throttled to ~1Hz in headless Chrome on pages that
+// aren't actively painted (Vite dev server in CI), causing 10s waits to fire
+// only a handful of times and miss text that briefly flashed.
 func (tc *TestContext) waitForTextToAppearWithTimeout(timeout, text string) error {
 	d, err := time.ParseDuration(timeout)
 	if err != nil {
@@ -858,7 +912,7 @@ func (tc *TestContext) waitForTextToAppearWithTimeout(timeout, text string) erro
 	}
 	return chromedp.Run(tc.chromeTab.ctx,
 		chromedp.Poll(fmt.Sprintf(`document.body.innerText.includes(%q)`, text),
-			nil, chromedp.WithPollingTimeout(d)),
+			nil, chromedp.WithPollingTimeout(d), chromedp.WithPollingInterval(100*time.Millisecond)),
 	)
 }
 
@@ -869,7 +923,7 @@ func (tc *TestContext) waitForTextToDisappearWithTimeout(timeout, text string) e
 	}
 	return chromedp.Run(tc.chromeTab.ctx,
 		chromedp.Poll(fmt.Sprintf(`!document.body.innerText.includes(%q)`, text),
-			nil, chromedp.WithPollingTimeout(d)),
+			nil, chromedp.WithPollingTimeout(d), chromedp.WithPollingInterval(100*time.Millisecond)),
 	)
 }
 
@@ -884,14 +938,14 @@ func (tc *TestContext) clickLabelWithText(text string) error {
 func (tc *TestContext) waitForTextToAppear(text string) error {
 	return chromedp.Run(tc.chromeTab.ctx,
 		chromedp.Poll(fmt.Sprintf(`document.body.innerText.includes(%q)`, text),
-			nil, chromedp.WithPollingTimeout(10*time.Second)),
+			nil, chromedp.WithPollingTimeout(10*time.Second), chromedp.WithPollingInterval(100*time.Millisecond)),
 	)
 }
 
 func (tc *TestContext) waitForTextToDisappear(text string) error {
 	return chromedp.Run(tc.chromeTab.ctx,
 		chromedp.Poll(fmt.Sprintf(`!document.body.innerText.includes(%q)`, text),
-			nil, chromedp.WithPollingTimeout(10*time.Second)),
+			nil, chromedp.WithPollingTimeout(10*time.Second), chromedp.WithPollingInterval(100*time.Millisecond)),
 	)
 }
 
