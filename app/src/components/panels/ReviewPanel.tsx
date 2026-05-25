@@ -307,14 +307,26 @@ export function ReviewPanel({
   const runMode = useCallback(async (m: ReviewMode) => {
     setBusy(true); setError(null);
     setMode(m);
-    // Optimistically flip to "reviewing" so the Run button stays disabled
-    // even before the review.status WS event lands — otherwise there's a
-    // brief window after setBusy(false) where status is still "ready" and
-    // the button re-enables itself.
-    setSession((prev) => prev ? { ...prev, status: "reviewing" } : prev);
     setLoopChip("starting...");
     setLoopActive(true);
     try {
+      // Re-verify the daemon-side session exists before dispatching the
+      // workflow. The session lives in the daemon's in-memory reviewStore
+      // and gets wiped on restart, while the FE may still hold a stale
+      // session object in React state. Without this check the workflow
+      // starts and immediately fails on the CLI's POST /review/run with
+      // a cryptic "node loop failed: script exited with status 1".
+      const server = await getReviewSession(channelId);
+      if (!server.present || !server.session) {
+        setSession(null);
+        throw new Error("No review session loaded — pick a PR first, then run the loop.");
+      }
+      setSession(server.session);
+      // Optimistically flip to "reviewing" so the Run button stays disabled
+      // even before the review.status WS event lands — otherwise there's a
+      // brief window after setBusy(false) where status is still "ready" and
+      // the button re-enables itself.
+      setSession((prev) => prev ? { ...prev, status: "reviewing" } : prev);
       const workflowName = m === "review-fix" ? REVIEW_FIX_LOOP_WORKFLOW : REVIEW_LOOP_WORKFLOW;
       const resp = await startWorkflowRun({
         workflow_name: workflowName,
