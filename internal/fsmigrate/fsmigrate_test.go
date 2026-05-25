@@ -619,6 +619,12 @@ func (s *FSMigrateSuite) TestBuiltinReviewFixLoopDefShape() {
 	// verify script must run an explicit commit so leftover changes survive
 	// the loop even if the fix prompt forgets to commit.
 	require.Equal(s.T(), reviewFixVerifyScript, body[2].(map[string]any)["script"])
+	// fix depends on review; verify depends on fix — required so the
+	// WorkflowGraph draws within-iteration edges (review → fix → verify).
+	// Without these the graph collapses each iteration into one column and
+	// only shows the cross-iteration verify[i-1] → review[i] links.
+	require.Equal(s.T(), []any{"review"}, body[1].(map[string]any)["depends_on"])
+	require.Equal(s.T(), []any{"fix"}, body[2].(map[string]any)["depends_on"])
 }
 
 // --- patchReviewFixVerifyScript tests ---
@@ -769,6 +775,154 @@ func (s *FSMigrateSuite) TestPatchReviewFixVerifyScriptMarshalError() {
 
 	failingMarshal := func(_ any, _, _ string) ([]byte, error) { return nil, errors.New("marshal fail") }
 	err := patchReviewFixVerifyScript(context.Background(), &Ctx{Sys: sys, LoopDir: "/loop"}, failingMarshal)
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "serializing")
+}
+
+// --- patchReviewFixLoopBodyDeps tests ---
+
+// reviewFixLoopBodyConfig builds the on-disk shape patchReviewFixLoopBodyDeps
+// walks: one `review-fix-loop` workflow whose loop body has [review, fix,
+// verify] children, each optionally pre-populated with depends_on via the
+// `preset` map (id → depends_on value to inject).
+func reviewFixLoopBodyConfig(preset map[string]any) string {
+	mkChild := func(id string) map[string]any {
+		c := map[string]any{"id": id, "type": "bash"}
+		if v, ok := preset[id]; ok {
+			c["depends_on"] = v
+		}
+		return c
+	}
+	cfg := map[string]any{
+		"workflows": []any{
+			map[string]any{
+				"name": "review-fix-loop",
+				"nodes": []any{
+					map[string]any{
+						"type": "loop",
+						"body": []any{mkChild("review"), mkChild("fix"), mkChild("verify")},
+					},
+				},
+			},
+		},
+	}
+	out, _ := json.Marshal(cfg)
+	return string(out)
+}
+
+func (s *FSMigrateSuite) TestPatchReviewFixLoopBodyDepsNoConfigFile() {
+	sys := newFakeSystem()
+	err := patchReviewFixLoopBodyDeps(context.Background(), &Ctx{Sys: sys, LoopDir: "/loop"}, json.MarshalIndent)
+	require.NoError(s.T(), err)
+}
+
+func (s *FSMigrateSuite) TestPatchReviewFixLoopBodyDepsReadError() {
+	sys := newFakeSystem()
+	configPath := filepath.Join("/loop", "config.json")
+	sys.files[configPath] = []byte(`{}`)
+	sys.readErr[configPath] = errors.New("io error")
+	err := patchReviewFixLoopBodyDeps(context.Background(), &Ctx{Sys: sys, LoopDir: "/loop"}, json.MarshalIndent)
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "reading")
+}
+
+func (s *FSMigrateSuite) TestPatchReviewFixLoopBodyDepsInvalidHJSON() {
+	sys := newFakeSystem()
+	configPath := filepath.Join("/loop", "config.json")
+	sys.files[configPath] = []byte(`{not json`)
+	err := patchReviewFixLoopBodyDeps(context.Background(), &Ctx{Sys: sys, LoopDir: "/loop"}, json.MarshalIndent)
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "standardizing")
+}
+
+func (s *FSMigrateSuite) TestPatchReviewFixLoopBodyDepsInvalidJSON() {
+	sys := newFakeSystem()
+	configPath := filepath.Join("/loop", "config.json")
+	sys.files[configPath] = []byte(`["not an object"]`)
+	err := patchReviewFixLoopBodyDeps(context.Background(), &Ctx{Sys: sys, LoopDir: "/loop"}, json.MarshalIndent)
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "parsing")
+}
+
+func (s *FSMigrateSuite) TestPatchReviewFixLoopBodyDepsAddsMissingDeps() {
+	sys := newFakeSystem()
+	configPath := filepath.Join("/loop", "config.json")
+	sys.files[configPath] = []byte(reviewFixLoopBodyConfig(nil))
+
+	err := patchReviewFixLoopBodyDeps(context.Background(), &Ctx{Sys: sys, LoopDir: "/loop"}, json.MarshalIndent)
+	require.NoError(s.T(), err)
+
+	var cfg map[string]any
+	require.NoError(s.T(), json.Unmarshal(sys.files[configPath], &cfg))
+	body := cfg["workflows"].([]any)[0].(map[string]any)["nodes"].([]any)[0].(map[string]any)["body"].([]any)
+	require.Nil(s.T(), body[0].(map[string]any)["depends_on"], "review must remain dep-less")
+	require.Equal(s.T(), []any{"review"}, body[1].(map[string]any)["depends_on"])
+	require.Equal(s.T(), []any{"fix"}, body[2].(map[string]any)["depends_on"])
+}
+
+func (s *FSMigrateSuite) TestPatchReviewFixLoopBodyDepsLeavesExistingDepsAlone() {
+	sys := newFakeSystem()
+	configPath := filepath.Join("/loop", "config.json")
+	// Pre-existing custom deps on fix and verify must survive untouched —
+	// a user might have deliberately changed the chain.
+	sys.files[configPath] = []byte(reviewFixLoopBodyConfig(map[string]any{
+		"fix":    []any{"something-else"},
+		"verify": []any{"another"},
+	}))
+	original := append([]byte(nil), sys.files[configPath]...)
+
+	err := patchReviewFixLoopBodyDeps(context.Background(), &Ctx{Sys: sys, LoopDir: "/loop"}, json.MarshalIndent)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), original, sys.files[configPath], "customized depends_on must not be rewritten")
+}
+
+func (s *FSMigrateSuite) TestPatchReviewFixLoopBodyDepsNoMatchingWorkflowIsNoop() {
+	sys := newFakeSystem()
+	configPath := filepath.Join("/loop", "config.json")
+	original := []byte(`{"workflows":[{"name":"some-other-workflow"}]}`)
+	sys.files[configPath] = append([]byte(nil), original...)
+
+	err := patchReviewFixLoopBodyDeps(context.Background(), &Ctx{Sys: sys, LoopDir: "/loop"}, json.MarshalIndent)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), original, sys.files[configPath])
+}
+
+func (s *FSMigrateSuite) TestPatchReviewFixLoopBodyDepsSkipsNonMapEntries() {
+	sys := newFakeSystem()
+	configPath := filepath.Join("/loop", "config.json")
+	// Workflows list contains bogus + a malformed review-fix-loop whose
+	// nodes[0] is not a map. Walker must not panic and must patch the
+	// reachable second loop's fix/verify children.
+	sys.files[configPath] = []byte(`{"workflows":["bogus",{"name":"review-fix-loop","nodes":["not-a-map",{"type":"loop","body":["not-a-map",{"id":"review","type":"bash"},{"id":"fix","type":"prompt"},{"id":"verify","type":"bash"}]}]}]}`)
+
+	err := patchReviewFixLoopBodyDeps(context.Background(), &Ctx{Sys: sys, LoopDir: "/loop"}, json.MarshalIndent)
+	require.NoError(s.T(), err)
+
+	var cfg map[string]any
+	require.NoError(s.T(), json.Unmarshal(sys.files[configPath], &cfg))
+	body := cfg["workflows"].([]any)[1].(map[string]any)["nodes"].([]any)[1].(map[string]any)["body"].([]any)
+	require.Equal(s.T(), []any{"review"}, body[2].(map[string]any)["depends_on"])
+	require.Equal(s.T(), []any{"fix"}, body[3].(map[string]any)["depends_on"])
+}
+
+func (s *FSMigrateSuite) TestPatchReviewFixLoopBodyDepsWriteError() {
+	sys := newFakeSystem()
+	configPath := filepath.Join("/loop", "config.json")
+	sys.files[configPath] = []byte(reviewFixLoopBodyConfig(nil))
+	sys.writeErr[configPath] = errors.New("io error")
+
+	err := patchReviewFixLoopBodyDeps(context.Background(), &Ctx{Sys: sys, LoopDir: "/loop"}, json.MarshalIndent)
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "writing")
+}
+
+func (s *FSMigrateSuite) TestPatchReviewFixLoopBodyDepsMarshalError() {
+	sys := newFakeSystem()
+	configPath := filepath.Join("/loop", "config.json")
+	sys.files[configPath] = []byte(reviewFixLoopBodyConfig(nil))
+
+	failingMarshal := func(_ any, _, _ string) ([]byte, error) { return nil, errors.New("marshal fail") }
+	err := patchReviewFixLoopBodyDeps(context.Background(), &Ctx{Sys: sys, LoopDir: "/loop"}, failingMarshal)
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "serializing")
 }
