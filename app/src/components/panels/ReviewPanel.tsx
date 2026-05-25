@@ -492,7 +492,18 @@ export function ReviewPanel({
   // shows a not-allowed cursor — otherwise `disabled` is a no-op visual.
   const disabledStyle: React.CSSProperties = { opacity: 0.4, cursor: "not-allowed" };
   const syncDisabled = busy || session?.status === "reviewing" || session?.status === "loading";
-  const runDisabled = busy || session?.status !== "ready" || loopActive;
+  // Defense-in-depth alongside `loopActive`: while the run is in flight the
+  // chip cycles through non-terminal states ("starting...", "running iter N",
+  // "<node> — iter N", "paused at gate — ..."), and only the
+  // workflow.run_completed handler swaps it for "done"/"failed"/"cancelled".
+  // Gating on `loopRunId !== null && !isLoopTerminal` makes the "you cannot
+  // start a second concurrent run on this channel" invariant explicit from
+  // the visible chip state, not just from the loopActive boolean.
+  const isLoopTerminal = loopChip === "done" || loopChip === "failed" || loopChip === "cancelled";
+  const runDisabled = busy
+    || session?.status !== "ready"
+    || loopActive
+    || (loopRunId !== null && !isLoopTerminal);
   const closeDisabled = busy;
 
   return (

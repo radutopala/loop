@@ -43,8 +43,8 @@ func (s *ParseReviewSuite) TestSameAsPrevDetectsRepeatedIDs() {
 
 func (s *ParseReviewSuite) TestDifferingIDsNotSameAsPrev() {
 	rc := &RunContext{}
-	parseReviewOutput(`{"comments":[{"id":"x"}]}`, rc)
-	parseReviewOutput(`{"comments":[{"id":"y"}]}`, rc)
+	parseReviewOutput(`{"status":"ready","comments":[{"id":"x"}]}`, rc)
+	parseReviewOutput(`{"status":"ready","comments":[{"id":"y"}]}`, rc)
 	require.False(s.T(), rc.Review.SameAsPrev)
 	require.Equal(s.T(), []string{"y"}, rc.Review.IDs)
 	require.Equal(s.T(), []string{"x"}, rc.Review.PrevIDs)
@@ -107,8 +107,18 @@ func (s *ParseReviewSuite) TestFallsBackToTrimmedFullStdout() {
 
 func (s *ParseReviewSuite) TestExtractReviewJSONReturnsFalseOnEmpty() {
 	// Whitespace-only stdout exercises the explicit empty-string return.
-	var out struct {
-		Status string `json:"status"`
-	}
+	var out reviewEnvelope
 	require.False(s.T(), extractReviewJSON("   \n\t  ", &out))
+}
+
+func (s *ParseReviewSuite) TestExtractReviewJSONRejectsUnrelatedEnvelope() {
+	// A JSON object emitted to stdout by something other than the review
+	// CLI (sidecar log, future stdout pollution) must not be accepted as
+	// the envelope just because it parses — the seeded review-fix loop
+	// would otherwise terminate with a false "no findings" verdict.
+	rc := &RunContext{}
+	parseReviewOutput(`{"level":"info","msg":"unrelated log line"}`+"\n", rc)
+	require.False(s.T(), rc.Review.NoComments)
+	require.False(s.T(), rc.Review.SameAsPrev)
+	require.Nil(s.T(), rc.Review.Comments)
 }
