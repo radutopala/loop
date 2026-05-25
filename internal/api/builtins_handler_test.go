@@ -70,6 +70,24 @@ func (s *ServerSuite) TestHandleRestoreBuiltinsWorkflowsPartialSkip() {
 	require.Equal(s.T(), []string{"review-loop"}, resp.Skipped)
 }
 
+func (s *ServerSuite) TestHandleRestoreBuiltinsEmitsEmptyArraysNotNull() {
+	// FE does `result.added.length` / `result.skipped.length` — Go nil slices
+	// marshal to `null`, which would crash the FE. Verify the wire format
+	// shows `[]` for both empty fields, in both directions (all added /
+	// all skipped).
+	s.writeLoopConfig(`{}`)
+	rec := s.testRequest(http.MethodPost, "/api/builtins/restore", `{"kind":"workflows"}`)
+	require.Equal(s.T(), http.StatusOK, rec.Code)
+	require.Contains(s.T(), rec.Body.String(), `"skipped":[]`)
+	require.NotContains(s.T(), rec.Body.String(), `"skipped":null`)
+
+	s.writeLoopConfig(`{"workflows":[{"name":"review-loop"},{"name":"review-fix-loop"}]}`)
+	rec = s.testRequest(http.MethodPost, "/api/builtins/restore", `{"kind":"workflows"}`)
+	require.Equal(s.T(), http.StatusOK, rec.Code)
+	require.Contains(s.T(), rec.Body.String(), `"added":[]`)
+	require.NotContains(s.T(), rec.Body.String(), `"added":null`)
+}
+
 func (s *ServerSuite) TestHandleRestoreBuiltinsRejectsUnknownKind() {
 	s.writeLoopConfig(`{}`)
 
