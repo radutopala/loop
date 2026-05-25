@@ -44,6 +44,12 @@ var migrations = []Migration{
 			return seedReviewLoopWorkflows(ctx, c, json.MarshalIndent)
 		},
 	},
+	{
+		Description: "patch review-fix-loop verify step to commit leftover changes",
+		Apply: func(ctx context.Context, c *Ctx) error {
+			return patchReviewFixVerifyScript(ctx, c, json.MarshalIndent)
+		},
+	},
 }
 
 // versionedContainerFiles are tracked by the daemon: each release ships a
@@ -170,6 +176,20 @@ const (
 	seededReviewFixLoopName = "review-fix-loop"
 )
 
+// reviewFixVerifyScript is the post-fix bash. The fix prompt asks the agent
+// to commit, but that's best-effort; this stages any leftover changes and
+// commits them deterministically. `git diff --cached --quiet` exits 0 when
+// there's nothing to commit (agent already committed, or didn't change
+// anything) which short-circuits the `git commit` via `||`. The fallback
+// commit message intentionally omits {{.Iteration}} to keep the script
+// template-free — distinct iterations produce distinct commits by content.
+const reviewFixVerifyScript = "git add -A && (git diff --cached --quiet || git commit -m 'fix: address review feedback')"
+
+// reviewFixVerifyScriptOld was the original verify script (a no-op HEAD
+// print). Migration #7 patches in-place only when the user's config still
+// has this exact value, so a customized verify step is left alone.
+const reviewFixVerifyScriptOld = "git rev-parse HEAD"
+
 // seedReviewLoopWorkflows ensures both built-in review workflows are present
 // in the user's ~/.loop/config.json. Each is skipped individually if an entry
 // with the same name already exists (user may have customized it). No-ops
@@ -216,6 +236,71 @@ func seedReviewLoopWorkflows(_ context.Context, c *Ctx, marshal marshalIndentFun
 		return nil
 	}
 	cfg["workflows"] = workflows
+
+	out, err := marshal(cfg, "", "  ")
+	if err != nil {
+		return fmt.Errorf("serializing %s: %w", configPath, err)
+	}
+	if err := c.Sys.WriteFile(configPath, append(out, '\n'), 0644); err != nil {
+		return fmt.Errorf("writing %s: %w", configPath, err)
+	}
+	return nil
+}
+
+// patchReviewFixVerifyScript walks ~/.loop/config.json, finds the
+// `review-fix-loop` workflow, and rewrites its `verify` bash node's script
+// from the original no-op (`git rev-parse HEAD`) to one that stages and
+// commits any leftover changes. Only patches when the verify script still
+// matches the exact original value so user customizations are left alone.
+// No-ops when the config file is missing or the workflow is absent.
+func patchReviewFixVerifyScript(_ context.Context, c *Ctx, marshal marshalIndentFunc) error {
+	configPath := filepath.Join(c.LoopDir, "config.json")
+	data, err := c.Sys.ReadFile(configPath)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
+		return fmt.Errorf("reading %s: %w", configPath, err)
+	}
+
+	standardized, err := hujson.Standardize(data)
+	if err != nil {
+		return fmt.Errorf("standardizing %s: %w", configPath, err)
+	}
+	var cfg map[string]any
+	if err := json.Unmarshal(standardized, &cfg); err != nil {
+		return fmt.Errorf("parsing %s: %w", configPath, err)
+	}
+
+	workflows, _ := cfg["workflows"].([]any)
+	patched := false
+	for _, item := range workflows {
+		wf, ok := item.(map[string]any)
+		if !ok || wf["name"] != seededReviewFixLoopName {
+			continue
+		}
+		nodes, _ := wf["nodes"].([]any)
+		for _, n := range nodes {
+			loopNode, ok := n.(map[string]any)
+			if !ok {
+				continue
+			}
+			body, _ := loopNode["body"].([]any)
+			for _, child := range body {
+				cm, ok := child.(map[string]any)
+				if !ok || cm["id"] != "verify" {
+					continue
+				}
+				if script, _ := cm["script"].(string); script == reviewFixVerifyScriptOld {
+					cm["script"] = reviewFixVerifyScript
+					patched = true
+				}
+			}
+		}
+	}
+	if !patched {
+		return nil
+	}
 
 	out, err := marshal(cfg, "", "  ")
 	if err != nil {
@@ -298,7 +383,7 @@ func builtinReviewFixLoopDef() map[string]any {
 				"id":     "verify",
 				"type":   "bash",
 				"when":   "{{ not .Review.NoComments }}",
-				"script": "git rev-parse HEAD",
+				"script": reviewFixVerifyScript,
 			},
 		},
 	)

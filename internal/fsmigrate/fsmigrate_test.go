@@ -616,4 +616,144 @@ func (s *FSMigrateSuite) TestBuiltinReviewFixLoopDefShape() {
 	// fix + verify must be gated on .Review.NoComments to skip when clean.
 	require.Equal(s.T(), "{{ not .Review.NoComments }}", body[1].(map[string]any)["when"])
 	require.Equal(s.T(), "{{ not .Review.NoComments }}", body[2].(map[string]any)["when"])
+	// verify script must run an explicit commit so leftover changes survive
+	// the loop even if the fix prompt forgets to commit.
+	require.Equal(s.T(), reviewFixVerifyScript, body[2].(map[string]any)["script"])
+}
+
+// --- patchReviewFixVerifyScript tests ---
+
+// reviewFixLoopWithVerifyScript builds the on-disk shape patchReviewFixVerifyScript
+// walks: a workflows array containing one `review-fix-loop` whose single loop
+// node has a body with a `verify` bash child set to the given script.
+func reviewFixLoopWithVerifyScript(script string) string {
+	cfg := map[string]any{
+		"workflows": []any{
+			map[string]any{
+				"name": "review-fix-loop",
+				"nodes": []any{
+					map[string]any{
+						"type": "loop",
+						"body": []any{
+							map[string]any{"id": "review", "type": "bash"},
+							map[string]any{"id": "fix", "type": "prompt"},
+							map[string]any{"id": "verify", "type": "bash", "script": script},
+						},
+					},
+				},
+			},
+		},
+	}
+	out, _ := json.Marshal(cfg)
+	return string(out)
+}
+
+func (s *FSMigrateSuite) TestPatchReviewFixVerifyScriptNoConfigFile() {
+	sys := newFakeSystem()
+	err := patchReviewFixVerifyScript(context.Background(), &Ctx{Sys: sys, LoopDir: "/loop"}, json.MarshalIndent)
+	require.NoError(s.T(), err)
+}
+
+func (s *FSMigrateSuite) TestPatchReviewFixVerifyScriptReadError() {
+	sys := newFakeSystem()
+	configPath := filepath.Join("/loop", "config.json")
+	sys.files[configPath] = []byte(`{}`)
+	sys.readErr[configPath] = errors.New("io error")
+	err := patchReviewFixVerifyScript(context.Background(), &Ctx{Sys: sys, LoopDir: "/loop"}, json.MarshalIndent)
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "reading")
+}
+
+func (s *FSMigrateSuite) TestPatchReviewFixVerifyScriptInvalidHJSON() {
+	sys := newFakeSystem()
+	configPath := filepath.Join("/loop", "config.json")
+	sys.files[configPath] = []byte(`{not json`)
+	err := patchReviewFixVerifyScript(context.Background(), &Ctx{Sys: sys, LoopDir: "/loop"}, json.MarshalIndent)
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "standardizing")
+}
+
+func (s *FSMigrateSuite) TestPatchReviewFixVerifyScriptInvalidJSON() {
+	sys := newFakeSystem()
+	configPath := filepath.Join("/loop", "config.json")
+	sys.files[configPath] = []byte(`["not an object"]`)
+	err := patchReviewFixVerifyScript(context.Background(), &Ctx{Sys: sys, LoopDir: "/loop"}, json.MarshalIndent)
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "parsing")
+}
+
+func (s *FSMigrateSuite) TestPatchReviewFixVerifyScriptUpdatesOldScript() {
+	sys := newFakeSystem()
+	configPath := filepath.Join("/loop", "config.json")
+	sys.files[configPath] = []byte(reviewFixLoopWithVerifyScript(reviewFixVerifyScriptOld))
+
+	err := patchReviewFixVerifyScript(context.Background(), &Ctx{Sys: sys, LoopDir: "/loop"}, json.MarshalIndent)
+	require.NoError(s.T(), err)
+
+	var cfg map[string]any
+	require.NoError(s.T(), json.Unmarshal(sys.files[configPath], &cfg))
+	body := cfg["workflows"].([]any)[0].(map[string]any)["nodes"].([]any)[0].(map[string]any)["body"].([]any)
+	verify := body[2].(map[string]any)
+	require.Equal(s.T(), reviewFixVerifyScript, verify["script"])
+}
+
+func (s *FSMigrateSuite) TestPatchReviewFixVerifyScriptLeavesCustomizedScriptAlone() {
+	sys := newFakeSystem()
+	configPath := filepath.Join("/loop", "config.json")
+	original := []byte(reviewFixLoopWithVerifyScript("my custom script"))
+	sys.files[configPath] = append([]byte(nil), original...)
+
+	err := patchReviewFixVerifyScript(context.Background(), &Ctx{Sys: sys, LoopDir: "/loop"}, json.MarshalIndent)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), original, sys.files[configPath], "customized verify script must not be rewritten")
+}
+
+func (s *FSMigrateSuite) TestPatchReviewFixVerifyScriptNoMatchingWorkflowIsNoop() {
+	sys := newFakeSystem()
+	configPath := filepath.Join("/loop", "config.json")
+	original := []byte(`{"workflows":[{"name":"some-other-workflow"}]}`)
+	sys.files[configPath] = append([]byte(nil), original...)
+
+	err := patchReviewFixVerifyScript(context.Background(), &Ctx{Sys: sys, LoopDir: "/loop"}, json.MarshalIndent)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), original, sys.files[configPath])
+}
+
+func (s *FSMigrateSuite) TestPatchReviewFixVerifyScriptSkipsNonMapEntries() {
+	sys := newFakeSystem()
+	configPath := filepath.Join("/loop", "config.json")
+	// Workflows list contains bogus + a malformed review-fix-loop whose
+	// nodes[0] is not a map. Walker must not panic and must not patch.
+	sys.files[configPath] = []byte(`{"workflows":["bogus",{"name":"review-fix-loop","nodes":["not-a-map",{"type":"loop","body":["not-a-map",{"id":"verify","type":"bash","script":"` + reviewFixVerifyScriptOld + `"}]}]}]}`)
+
+	err := patchReviewFixVerifyScript(context.Background(), &Ctx{Sys: sys, LoopDir: "/loop"}, json.MarshalIndent)
+	require.NoError(s.T(), err)
+
+	var cfg map[string]any
+	require.NoError(s.T(), json.Unmarshal(sys.files[configPath], &cfg))
+	// the nested loop's body's verify child was reachable — should be patched.
+	body := cfg["workflows"].([]any)[1].(map[string]any)["nodes"].([]any)[1].(map[string]any)["body"].([]any)
+	require.Equal(s.T(), reviewFixVerifyScript, body[1].(map[string]any)["script"])
+}
+
+func (s *FSMigrateSuite) TestPatchReviewFixVerifyScriptWriteError() {
+	sys := newFakeSystem()
+	configPath := filepath.Join("/loop", "config.json")
+	sys.files[configPath] = []byte(reviewFixLoopWithVerifyScript(reviewFixVerifyScriptOld))
+	sys.writeErr[configPath] = errors.New("io error")
+
+	err := patchReviewFixVerifyScript(context.Background(), &Ctx{Sys: sys, LoopDir: "/loop"}, json.MarshalIndent)
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "writing")
+}
+
+func (s *FSMigrateSuite) TestPatchReviewFixVerifyScriptMarshalError() {
+	sys := newFakeSystem()
+	configPath := filepath.Join("/loop", "config.json")
+	sys.files[configPath] = []byte(reviewFixLoopWithVerifyScript(reviewFixVerifyScriptOld))
+
+	failingMarshal := func(_ any, _, _ string) ([]byte, error) { return nil, errors.New("marshal fail") }
+	err := patchReviewFixVerifyScript(context.Background(), &Ctx{Sys: sys, LoopDir: "/loop"}, failingMarshal)
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "serializing")
 }
