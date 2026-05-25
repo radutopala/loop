@@ -35,13 +35,15 @@ var migrations = []Migration{
 	{
 		Description: "seed builtin code review prompt shortcut",
 		Apply: func(ctx context.Context, c *Ctx) error {
-			return seedBuiltinCodeReviewShortcut(ctx, c, json.MarshalIndent)
+			_, err := seedBuiltinCodeReviewShortcut(ctx, c, json.MarshalIndent)
+			return err
 		},
 	},
 	{
 		Description: "seed review-loop and review-fix-loop workflows",
 		Apply: func(ctx context.Context, c *Ctx) error {
-			return seedReviewLoopWorkflows(ctx, c, json.MarshalIndent)
+			_, err := seedReviewLoopWorkflows(ctx, c, json.MarshalIndent)
+			return err
 		},
 	},
 	{
@@ -148,29 +150,29 @@ type marshalIndentFunc func(v any, prefix, indent string) ([]byte, error)
 // No-ops when the file doesn't exist (onboard will handle it) or when an
 // entry with the same name is already present (user may have added it
 // themselves; never duplicate).
-func seedBuiltinCodeReviewShortcut(_ context.Context, c *Ctx, marshal marshalIndentFunc) error {
+func seedBuiltinCodeReviewShortcut(_ context.Context, c *Ctx, marshal marshalIndentFunc) ([]string, error) {
 	configPath := filepath.Join(c.LoopDir, "config.json")
 	data, err := c.Sys.ReadFile(configPath)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			return nil
+			return nil, nil
 		}
-		return fmt.Errorf("reading %s: %w", configPath, err)
+		return nil, fmt.Errorf("reading %s: %w", configPath, err)
 	}
 
 	standardized, err := hujson.Standardize(data)
 	if err != nil {
-		return fmt.Errorf("standardizing %s: %w", configPath, err)
+		return nil, fmt.Errorf("standardizing %s: %w", configPath, err)
 	}
 	var cfg map[string]any
 	if err := json.Unmarshal(standardized, &cfg); err != nil {
-		return fmt.Errorf("parsing %s: %w", configPath, err)
+		return nil, fmt.Errorf("parsing %s: %w", configPath, err)
 	}
 
 	shortcuts, _ := cfg["prompt_shortcuts"].([]any)
 	for _, item := range shortcuts {
 		if m, ok := item.(map[string]any); ok && m["name"] == builtinCodeReviewShortcutName {
-			return nil
+			return nil, nil
 		}
 	}
 
@@ -183,12 +185,12 @@ func seedBuiltinCodeReviewShortcut(_ context.Context, c *Ctx, marshal marshalInd
 
 	out, err := marshal(cfg, "", "  ")
 	if err != nil {
-		return fmt.Errorf("serializing %s: %w", configPath, err)
+		return nil, fmt.Errorf("serializing %s: %w", configPath, err)
 	}
 	if err := c.Sys.WriteFile(configPath, append(out, '\n'), 0644); err != nil {
-		return fmt.Errorf("writing %s: %w", configPath, err)
+		return nil, fmt.Errorf("writing %s: %w", configPath, err)
 	}
-	return nil
+	return []string{builtinCodeReviewShortcutName}, nil
 }
 
 // seededReviewLoopName / seededReviewFixLoopName are the canonical names of
@@ -228,23 +230,23 @@ const reviewFixVerifyScriptBuggyAddAll = "git add -A && (git diff --cached --qui
 // in the user's ~/.loop/config.json. Each is skipped individually if an entry
 // with the same name already exists (user may have customized it). No-ops
 // when the config file doesn't exist (onboard handles fresh installs).
-func seedReviewLoopWorkflows(_ context.Context, c *Ctx, marshal marshalIndentFunc) error {
+func seedReviewLoopWorkflows(_ context.Context, c *Ctx, marshal marshalIndentFunc) ([]string, error) {
 	configPath := filepath.Join(c.LoopDir, "config.json")
 	data, err := c.Sys.ReadFile(configPath)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			return nil
+			return nil, nil
 		}
-		return fmt.Errorf("reading %s: %w", configPath, err)
+		return nil, fmt.Errorf("reading %s: %w", configPath, err)
 	}
 
 	standardized, err := hujson.Standardize(data)
 	if err != nil {
-		return fmt.Errorf("standardizing %s: %w", configPath, err)
+		return nil, fmt.Errorf("standardizing %s: %w", configPath, err)
 	}
 	var cfg map[string]any
 	if err := json.Unmarshal(standardized, &cfg); err != nil {
-		return fmt.Errorf("parsing %s: %w", configPath, err)
+		return nil, fmt.Errorf("parsing %s: %w", configPath, err)
 	}
 
 	workflows, _ := cfg["workflows"].([]any)
@@ -257,28 +259,28 @@ func seedReviewLoopWorkflows(_ context.Context, c *Ctx, marshal marshalIndentFun
 		}
 	}
 
-	changed := false
+	var added []string
 	if _, ok := existing[seededReviewLoopName]; !ok {
 		workflows = append(workflows, builtinReviewLoopDef())
-		changed = true
+		added = append(added, seededReviewLoopName)
 	}
 	if _, ok := existing[seededReviewFixLoopName]; !ok {
 		workflows = append(workflows, builtinReviewFixLoopDef())
-		changed = true
+		added = append(added, seededReviewFixLoopName)
 	}
-	if !changed {
-		return nil
+	if len(added) == 0 {
+		return nil, nil
 	}
 	cfg["workflows"] = workflows
 
 	out, err := marshal(cfg, "", "  ")
 	if err != nil {
-		return fmt.Errorf("serializing %s: %w", configPath, err)
+		return nil, fmt.Errorf("serializing %s: %w", configPath, err)
 	}
 	if err := c.Sys.WriteFile(configPath, append(out, '\n'), 0644); err != nil {
-		return fmt.Errorf("writing %s: %w", configPath, err)
+		return nil, fmt.Errorf("writing %s: %w", configPath, err)
 	}
-	return nil
+	return added, nil
 }
 
 // patchReviewFixVerifyScript walks ~/.loop/config.json, finds the

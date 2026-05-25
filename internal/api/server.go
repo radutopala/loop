@@ -422,6 +422,7 @@ func (s *Server) buildMux() *http.ServeMux {
 	mux.HandleFunc("POST /api/gate/container-approval", s.handleContainerApproval)
 	mux.HandleFunc("GET /api/workflows", s.handleListWorkflows)
 	mux.HandleFunc("POST /api/workflows", s.handleModifyWorkflow)
+	mux.HandleFunc("POST /api/builtins/restore", s.handleRestoreBuiltins)
 	mux.HandleFunc("POST /api/channels/{id}/quality/scan", s.handleQualityScan)
 	mux.HandleFunc("DELETE /api/channels/{id}/quality/scan", s.handleQualityScanCancel)
 	mux.HandleFunc("GET /api/channels/{id}/quality/snapshot", s.handleQualitySnapshot)

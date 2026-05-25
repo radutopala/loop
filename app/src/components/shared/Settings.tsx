@@ -7,6 +7,7 @@ import type { ColorPalette } from "../../theme";
 import { useTheme, DEFAULT_FONT_SIZES } from "../../ThemeContext";
 import { ConfigForm, getSections, type ConfigFormHandle } from "./ConfigForm";
 import { ChannelHeaderInfo } from "../layout/ChannelHeaderInfo";
+import { restoreBuiltins, type BuiltinKind } from "../../api/builtins";
 
 function buildHeaderBtnStyle(colors: ColorPalette): React.CSSProperties {
   return {
@@ -53,10 +54,15 @@ export function Settings({ open, projectDirPath, channelId, channel, sidebarOpen
   const [showDirtyModal, setShowDirtyModal] = useState(false);
   const [saving, setSaving] = useState(false);
   const [activeSection, setActiveSection] = useState("Desktop");
+  const [restoring, setRestoring] = useState(false);
+  const [restoreMsg, setRestoreMsg] = useState<string | null>(null);
   const globalFormRef = useRef<ConfigFormHandle>(null);
   const projectFormRef = useRef<ConfigFormHandle>(null);
 
   useEffect(() => { onConfigDirtyChange?.(configDirty); }, [configDirty, onConfigDirtyChange]);
+
+  // Reset the restore-builtins toast when the user navigates away.
+  useEffect(() => { setRestoreMsg(null); }, [activeSection]);
 
   // Build section groups for sidebar nav.
   const HARDCODED_GLOBAL = ["Daemon", "Docker Image"];
@@ -148,6 +154,23 @@ export function Settings({ open, projectDirPath, channelId, channel, sidebarOpen
     } catch (e: any) {
       return e.message ?? "Failed to save";
     }
+  };
+
+  const handleRestoreBuiltins = async (kind: BuiltinKind) => {
+    setRestoring(true);
+    setRestoreMsg(null);
+    try {
+      const result = await restoreBuiltins(kind);
+      // Re-fetch global config so the form picks up newly-seeded entries.
+      const fresh = await fetchGlobalConfig().catch(() => null);
+      if (fresh) setGlobalConfig(fresh);
+      const added = result.added.length ? `Added: ${result.added.join(", ")}` : null;
+      const skipped = result.skipped.length ? `Already present: ${result.skipped.join(", ")}` : null;
+      setRestoreMsg([added, skipped].filter(Boolean).join(" · ") || "Nothing to restore");
+    } catch (e: any) {
+      setRestoreMsg(e?.message ?? "Restore failed");
+    }
+    setRestoring(false);
   };
 
   const handleSaveProjectConfig = async (content: string): Promise<string | null> => {
@@ -370,17 +393,28 @@ export function Settings({ open, projectDirPath, channelId, channel, sidebarOpen
               )}
 
               {globalConfig && globalSchemaSections.includes(activeSection) && (
-                <ConfigForm
-                  ref={globalFormRef}
-                  title="Global Config"
-                  schema={schema}
-                  config={globalConfig}
-                  onSave={handleSaveGlobalConfig}
-                  isGlobal={true}
-                  colors={colors}
-                  onDirtyChange={setGlobalDirty}
-                  visibleSection={activeSection}
-                />
+                <>
+                  {(activeSection === "Workflows" || activeSection === "Prompt Shortcuts") && (
+                    <RestoreBuiltinsBar
+                      colors={colors}
+                      kind={activeSection === "Workflows" ? "workflows" : "shortcuts"}
+                      restoring={restoring}
+                      message={restoreMsg}
+                      onClick={handleRestoreBuiltins}
+                    />
+                  )}
+                  <ConfigForm
+                    ref={globalFormRef}
+                    title="Global Config"
+                    schema={schema}
+                    config={globalConfig}
+                    onSave={handleSaveGlobalConfig}
+                    isGlobal={true}
+                    colors={colors}
+                    onDirtyChange={setGlobalDirty}
+                    visibleSection={activeSection}
+                  />
+                </>
               )}
 
               {activeSection === "__project_json__" && projectConfig && (
@@ -465,6 +499,49 @@ export function Settings({ open, projectDirPath, channelId, channel, sidebarOpen
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+function RestoreBuiltinsBar({ colors, kind, restoring, message, onClick }: {
+  colors: ColorPalette;
+  kind: BuiltinKind;
+  restoring: boolean;
+  message: string | null;
+  onClick: (kind: BuiltinKind) => void;
+}) {
+  const label = kind === "workflows" ? "Restore built-in workflows" : "Restore built-in shortcuts";
+  return (
+    <div data-testid={`restore-builtins-${kind}`} style={{
+      display: "flex",
+      gap: 10,
+      alignItems: "center",
+      marginBottom: 12,
+      padding: "8px 10px",
+      backgroundColor: colors.bg,
+      border: `1px solid ${colors.border}`,
+      borderRadius: 6,
+    }}>
+      <button
+        onClick={() => onClick(kind)}
+        disabled={restoring}
+        style={{
+          padding: "5px 10px",
+          backgroundColor: "transparent",
+          border: `1px solid ${colors.border}`,
+          borderRadius: 5,
+          color: colors.text,
+          fontSize: 11,
+          cursor: restoring ? "default" : "pointer",
+          opacity: restoring ? 0.6 : 1,
+          fontFamily: "inherit",
+        }}
+      >
+        {restoring ? "Restoring…" : label}
+      </button>
+      <span style={{ fontSize: 11, color: colors.textDim, lineHeight: 1.4 }}>
+        {message ?? "Re-adds any built-ins missing from your config. Items you kept (or modified) are left untouched."}
+      </span>
     </div>
   );
 }
