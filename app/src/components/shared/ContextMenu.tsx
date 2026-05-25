@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { fonts } from "../../theme";
 import { useTheme } from "../../ThemeContext";
 
@@ -19,6 +19,28 @@ interface ContextMenuProps {
 export function ContextMenu({ x, y, items, onClose }: ContextMenuProps) {
   const { colors } = useTheme();
   const menuRef = useRef<HTMLDivElement>(null);
+  // Render at the caller-supplied (x,y) first, then measure on mount and
+  // shift left/up if the menu overflows the viewport. This handles dropdowns
+  // anchored to right-edge or bottom-edge buttons without forcing callers to
+  // compute clamping themselves.
+  const [pos, setPos] = useState({ x, y });
+
+  useLayoutEffect(() => {
+    const el = menuRef.current;
+    if (!el) return;
+    const r = el.getBoundingClientRect();
+    const margin = 8;
+    let nx = x;
+    let ny = y;
+    if (nx + r.width > window.innerWidth - margin) {
+      nx = Math.max(margin, window.innerWidth - r.width - margin);
+    }
+    if (ny + r.height > window.innerHeight - margin) {
+      ny = Math.max(margin, window.innerHeight - r.height - margin);
+    }
+    if (nx !== x || ny !== y) setPos({ x: nx, y: ny });
+    else setPos({ x, y });
+  }, [x, y]);
 
   useEffect(() => {
     const handleKey = (e: KeyboardEvent) => {
@@ -65,8 +87,8 @@ export function ContextMenu({ x, y, items, onClose }: ContextMenuProps) {
         onContextMenu={(e) => e.preventDefault()}
         style={{
           position: "fixed",
-          top: y,
-          left: x,
+          top: pos.y,
+          left: pos.x,
           backgroundColor: colors.surface,
           border: `1px solid ${colors.border}`,
           borderRadius: 6,
