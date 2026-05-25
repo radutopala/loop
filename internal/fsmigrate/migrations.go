@@ -50,6 +50,17 @@ var migrations = []Migration{
 			return patchReviewFixVerifyScript(ctx, c, json.MarshalIndent)
 		},
 	},
+	{
+		// Re-runs the patcher to swap the interim `git add -A` verify
+		// script (shipped on dev builds of this branch before merge) for
+		// the safer `git add -u` version. Users who already advanced past
+		// migration #7 with the buggy script in place wouldn't be caught
+		// by #7 a second time; this dedicated entry fixes them.
+		Description: "patch review-fix-loop verify step: replace unsafe git add -A with git add -u",
+		Apply: func(ctx context.Context, c *Ctx) error {
+			return patchReviewFixVerifyScript(ctx, c, json.MarshalIndent)
+		},
+	},
 }
 
 // versionedContainerFiles are tracked by the daemon: each release ships a
@@ -178,17 +189,28 @@ const (
 
 // reviewFixVerifyScript is the post-fix bash. The fix prompt asks the agent
 // to commit, but that's best-effort; this stages any leftover changes and
-// commits them deterministically. `git diff --cached --quiet` exits 0 when
-// there's nothing to commit (agent already committed, or didn't change
-// anything) which short-circuits the `git commit` via `||`. The fallback
-// commit message intentionally omits {{.Iteration}} to keep the script
-// template-free — distinct iterations produce distinct commits by content.
-const reviewFixVerifyScript = "git add -A && (git diff --cached --quiet || git commit -m 'fix: address review feedback')"
+// commits them deterministically. `git add -u` is deliberate: it stages
+// modifications and deletions of *tracked* files only, so scratch files,
+// debug logs, or dependency caches the agent leaves around don't get swept
+// into the auto-generated commit. New files the agent intentionally creates
+// must be committed by the agent itself (per the fix prompt). `git diff
+// --cached --quiet` exits 0 when there's nothing to commit (agent already
+// committed, or `-u` found no tracked changes) which short-circuits `git
+// commit` via `||`. The fallback commit message intentionally omits
+// {{.Iteration}} to keep the script template-free — distinct iterations
+// produce distinct commits by content.
+const reviewFixVerifyScript = "git add -u && (git diff --cached --quiet || git commit -m 'fix: address review feedback')"
 
 // reviewFixVerifyScriptOld was the original verify script (a no-op HEAD
 // print). Migration #7 patches in-place only when the user's config still
 // has this exact value, so a customized verify step is left alone.
 const reviewFixVerifyScriptOld = "git rev-parse HEAD"
+
+// reviewFixVerifyScriptBuggyAddAll was an interim version of the verify
+// script (briefly shipped on this branch before merge) that used `git add
+// -A`, which swept untracked files into the auto-commit. Migration #8 looks
+// for this exact value and rewrites it to `reviewFixVerifyScript`.
+const reviewFixVerifyScriptBuggyAddAll = "git add -A && (git diff --cached --quiet || git commit -m 'fix: address review feedback')"
 
 // seedReviewLoopWorkflows ensures both built-in review workflows are present
 // in the user's ~/.loop/config.json. Each is skipped individually if an entry
@@ -249,9 +271,10 @@ func seedReviewLoopWorkflows(_ context.Context, c *Ctx, marshal marshalIndentFun
 
 // patchReviewFixVerifyScript walks ~/.loop/config.json, finds the
 // `review-fix-loop` workflow, and rewrites its `verify` bash node's script
-// from the original no-op (`git rev-parse HEAD`) to one that stages and
-// commits any leftover changes. Only patches when the verify script still
-// matches the exact original value so user customizations are left alone.
+// to the current `reviewFixVerifyScript` value when the existing script
+// matches one of the known-replaceable old versions (original no-op
+// `git rev-parse HEAD` or the buggy interim `git add -A` variant). Any
+// other script value is treated as a user customization and left alone.
 // No-ops when the config file is missing or the workflow is absent.
 func patchReviewFixVerifyScript(_ context.Context, c *Ctx, marshal marshalIndentFunc) error {
 	configPath := filepath.Join(c.LoopDir, "config.json")
@@ -272,6 +295,10 @@ func patchReviewFixVerifyScript(_ context.Context, c *Ctx, marshal marshalIndent
 		return fmt.Errorf("parsing %s: %w", configPath, err)
 	}
 
+	replaceable := map[string]struct{}{
+		reviewFixVerifyScriptOld:         {},
+		reviewFixVerifyScriptBuggyAddAll: {},
+	}
 	workflows, _ := cfg["workflows"].([]any)
 	patched := false
 	for _, item := range workflows {
@@ -291,7 +318,8 @@ func patchReviewFixVerifyScript(_ context.Context, c *Ctx, marshal marshalIndent
 				if !ok || cm["id"] != "verify" {
 					continue
 				}
-				if script, _ := cm["script"].(string); script == reviewFixVerifyScriptOld {
+				script, _ := cm["script"].(string)
+				if _, ok := replaceable[script]; ok {
 					cm["script"] = reviewFixVerifyScript
 					patched = true
 				}

@@ -697,6 +697,21 @@ func (s *FSMigrateSuite) TestPatchReviewFixVerifyScriptUpdatesOldScript() {
 	require.Equal(s.T(), reviewFixVerifyScript, verify["script"])
 }
 
+func (s *FSMigrateSuite) TestPatchReviewFixVerifyScriptUpdatesBuggyAddAllScript() {
+	sys := newFakeSystem()
+	configPath := filepath.Join("/loop", "config.json")
+	sys.files[configPath] = []byte(reviewFixLoopWithVerifyScript(reviewFixVerifyScriptBuggyAddAll))
+
+	err := patchReviewFixVerifyScript(context.Background(), &Ctx{Sys: sys, LoopDir: "/loop"}, json.MarshalIndent)
+	require.NoError(s.T(), err)
+
+	var cfg map[string]any
+	require.NoError(s.T(), json.Unmarshal(sys.files[configPath], &cfg))
+	body := cfg["workflows"].([]any)[0].(map[string]any)["nodes"].([]any)[0].(map[string]any)["body"].([]any)
+	verify := body[2].(map[string]any)
+	require.Equal(s.T(), reviewFixVerifyScript, verify["script"])
+}
+
 func (s *FSMigrateSuite) TestPatchReviewFixVerifyScriptLeavesCustomizedScriptAlone() {
 	sys := newFakeSystem()
 	configPath := filepath.Join("/loop", "config.json")
