@@ -195,6 +195,39 @@ func (s *MainSuite) TestRunReviewWaitTimeout() {
 	require.Contains(s.T(), err.Error(), "timed out")
 }
 
+// TestRunReviewWaitTimeoutDuringHungResponse verifies the fix for the
+// flag-not-bounding-Do bug: when the daemon accepts the GET poll but stalls
+// indefinitely on the response, the --timeout must still trip via ctx
+// cancellation inside client.Do (not just between polls). Without
+// context.WithTimeout on the run ctx, http.DefaultClient has no Timeout and
+// the Do call would hang past --timeout.
+func (s *MainSuite) TestRunReviewWaitTimeoutDuringHungResponse() {
+	hang := make(chan struct{})
+	defer close(hang)
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost {
+			w.WriteHeader(http.StatusAccepted)
+			return
+		}
+		// Block until the request ctx is cancelled (the daemon never
+		// flushes a response body). The fix's context.WithTimeout on the
+		// run ctx is what cancels the in-flight request.
+		select {
+		case <-r.Context().Done():
+		case <-hang:
+		}
+	}))
+	defer ts.Close()
+
+	s.app.reviewClient = http.DefaultClient
+	start := time.Now()
+	err := s.app.runReview(context.Background(), &bytes.Buffer{}, ts.URL, "ch1", true, 50*time.Millisecond)
+	elapsed := time.Since(start)
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "timed out")
+	require.Less(s.T(), elapsed, 5*time.Second, "timeout must bound the in-flight client.Do call, not block on it")
+}
+
 func (s *MainSuite) TestRunReviewWaitContextCancel() {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodPost {

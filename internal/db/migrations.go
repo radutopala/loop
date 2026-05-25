@@ -279,7 +279,24 @@ var migrations = []migration{
 	// column and a (run_id, node_id, iteration) UNIQUE index. Existing rows
 	// migrate with iteration=0 (which is also the default for non-loop and
 	// pre-migration nodes).
-	sqlMigration(`PRAGMA foreign_keys=OFF`),
+	//
+	// The SQLite recipe at https://sqlite.org/lang_altertable.html#otheralter
+	// wraps a table rebuild in `PRAGMA foreign_keys=OFF; BEGIN; …; COMMIT;
+	// PRAGMA foreign_keys=ON;` so child FK constraints aren't enforced
+	// against the transient `_new` table mid-rewrite. We can't follow that
+	// recipe via sqlMigration entries because runSQLMigration wraps every
+	// sqlMigration in its own BeginTx and `PRAGMA foreign_keys` is silently
+	// ignored when issued inside an open transaction — the surrounding
+	// PRAGMA entries (kept below as `SELECT 1` no-op placeholders so the
+	// migration version numbering stays stable for installs that already
+	// ran the earlier broken shape) never actually toggled FK enforcement.
+	// The rebuild is safe today only because no other table has an incoming
+	// FK to workflow_node_runs (verified by grep for `REFERENCES
+	// workflow_node_runs`): the rebuild's INSERT…SELECT/DROP/RENAME run
+	// fine with FK enforcement on. If a future table adds such an FK, this
+	// rebuild must be lifted into a `funcMigration` that issues the PRAGMA
+	// via sqlDB.ExecContext (outside any tx) before the rewrite.
+	sqlMigration(`SELECT 1`), // placeholder for the dropped `PRAGMA foreign_keys=OFF`; see header comment.
 	sqlMigration(`CREATE TABLE workflow_node_runs_new (
 		id          INTEGER PRIMARY KEY AUTOINCREMENT,
 		run_id      TEXT NOT NULL,
@@ -300,7 +317,7 @@ var migrations = []migration{
 	sqlMigration(`ALTER TABLE workflow_node_runs_new RENAME TO workflow_node_runs`),
 	sqlMigration(`CREATE UNIQUE INDEX workflow_node_runs_run_node_iter_unique ON workflow_node_runs(run_id, node_id, iteration)`),
 	sqlMigration(`CREATE INDEX IF NOT EXISTS idx_workflow_node_runs_run_id ON workflow_node_runs(run_id)`),
-	sqlMigration(`PRAGMA foreign_keys=ON`),
+	sqlMigration(`SELECT 1`), // placeholder for the dropped `PRAGMA foreign_keys=ON`; see header comment.
 }
 
 // RunMigrations executes all pending schema migrations.

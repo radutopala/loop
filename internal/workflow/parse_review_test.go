@@ -57,14 +57,21 @@ func (s *ParseReviewSuite) TestInvalidJSONResetsState() {
 	require.Nil(s.T(), rc.Review.IDs)
 	require.Equal(s.T(), []string{"existing"}, rc.Review.PrevIDs)
 	require.False(s.T(), rc.Review.NoComments)
+	// SameAsPrev must be false on parse failure so the loop's stop
+	// condition doesn't trip and silently terminate with "no findings".
+	require.False(s.T(), rc.Review.SameAsPrev)
 }
 
-func (s *ParseReviewSuite) TestEmptyStdoutSameAsPrevWhenPrevEmpty() {
+func (s *ParseReviewSuite) TestEmptyStdoutDoesNotTerminateLoop() {
 	rc := &RunContext{}
 	parseReviewOutput("", rc)
-	// prev was empty, so SameAsPrev=true is the documented behavior of the
-	// parser's "no payload" reset branch.
-	require.True(s.T(), rc.Review.SameAsPrev)
+	// Prev was empty, but the parse miss is a real signal (daemon/CLI bug,
+	// $API_URL misconfig, future stdout pollution). Both gates stay false
+	// so `{{ or .Review.NoComments .Review.SameAsPrev }}` is false and the
+	// loop keeps iterating up to maxIter instead of completing as if the
+	// review had returned a clean result.
+	require.False(s.T(), rc.Review.NoComments)
+	require.False(s.T(), rc.Review.SameAsPrev)
 }
 
 func (s *ParseReviewSuite) TestParsesJSONAfterDockerproxyPreamble() {
