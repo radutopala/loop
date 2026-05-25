@@ -758,6 +758,16 @@ func (e *defaultEngine) executeLoopBody(ctx context.Context, run *db.WorkflowRun
 	return lastOutput, nil
 }
 
+// reviewEnvelope is the JSON shape printed by `loop review run --wait` and
+// consumed by parseReviewOutput. Defined as a named type (rather than
+// inlined) so extractReviewJSON can validate the shape — specifically the
+// Status field — before accepting a candidate line as the envelope.
+type reviewEnvelope struct {
+	Status     string          `json:"status"`
+	NoComments bool            `json:"no_comments"`
+	Comments   []ReviewComment `json:"comments"`
+}
+
 // parseReviewOutput parses stdout JSON from `loop review run --wait` into
 // runCtx.Review. The bash node's captured stdout includes preamble from the
 // agent container (e.g. `loop-dockerproxy started ...`) before the CLI's
@@ -777,11 +787,7 @@ func parseReviewOutput(stdout string, runCtx *RunContext) {
 	prev := append([]string(nil), runCtx.Review.IDs...)
 	runCtx.Review.PrevIDs = prev
 
-	var parsed struct {
-		Status     string          `json:"status"`
-		NoComments bool            `json:"no_comments"`
-		Comments   []ReviewComment `json:"comments"`
-	}
+	var parsed reviewEnvelope
 	if !extractReviewJSON(stdout, &parsed) {
 		// Treat as a real parse failure, NOT as "no findings". Setting
 		// SameAsPrev=true when prev was empty would terminate the loop on
@@ -819,24 +825,45 @@ func parseReviewOutput(stdout string, runCtx *RunContext) {
 
 // extractReviewJSON scans stdout backwards through non-empty lines (and as
 // a final fallback the entire trimmed stdout) for the first one that parses
-// as the review envelope. Returns true on a successful decode, in which case
-// `out` carries the parsed payload. The backward walk is intentional: the
+// as the review envelope AND carries a recognized Status ("ready" or
+// "error"). Returns true on a successful decode, in which case `out`
+// carries the parsed payload. The backward walk is intentional: the
 // container's preamble (e.g. `loop-dockerproxy started ...`) precedes the
 // CLI's compact one-line JSON, and any future log lines emitted alongside
 // the JSON should not displace the real envelope.
-func extractReviewJSON(stdout string, out any) bool {
+//
+// The Status check is load-bearing. RunBash captures the entire container's
+// logs (not just the script's stdout), and a sidecar or future stdout
+// pollution could emit an unrelated JSON object after the CLI line. Without
+// shape validation, an unrelated `{}` or other valid-JSON-but-wrong-shape
+// would decode silently, default Comments to empty, and flip NoComments to
+// true via the `|| len(parsed.Comments) == 0` branch in parseReviewOutput
+// — terminating the seeded review-fix loop with a false "clean" verdict
+// while the real review surfaced findings.
+func extractReviewJSON(stdout string, out *reviewEnvelope) bool {
+	tryDecode := func(s string) bool {
+		var candidate reviewEnvelope
+		if err := json.Unmarshal([]byte(s), &candidate); err != nil {
+			return false
+		}
+		if candidate.Status != "ready" && candidate.Status != "error" {
+			return false
+		}
+		*out = candidate
+		return true
+	}
 	lines := strings.Split(stdout, "\n")
 	for i := len(lines) - 1; i >= 0; i-- {
 		line := strings.TrimSpace(lines[i])
 		if line == "" {
 			continue
 		}
-		if json.Unmarshal([]byte(line), out) == nil {
+		if tryDecode(line) {
 			return true
 		}
 	}
 	if trimmed := strings.TrimSpace(stdout); trimmed != "" {
-		return json.Unmarshal([]byte(trimmed), out) == nil
+		return tryDecode(trimmed)
 	}
 	return false
 }
