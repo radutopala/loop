@@ -314,6 +314,7 @@ func (s *ServerSuite) SetupTest() {
 	s.mux.HandleFunc("POST /api/gate/container-approval", s.srv.handleContainerApproval)
 	s.mux.HandleFunc("GET /api/workflows", s.srv.handleListWorkflows)
 	s.mux.HandleFunc("POST /api/workflows", s.srv.handleModifyWorkflow)
+	s.mux.HandleFunc("POST /api/builtins/restore", s.srv.handleRestoreBuiltins)
 	s.mux.HandleFunc("POST /api/channels/{id}/quality/scan", s.srv.handleQualityScan)
 	s.mux.HandleFunc("DELETE /api/channels/{id}/quality/scan", s.srv.handleQualityScanCancel)
 	s.mux.HandleFunc("GET /api/channels/{id}/quality/snapshot", s.srv.handleQualitySnapshot)
