@@ -98,7 +98,20 @@ func resolveReviewAPIURL(flag, env string) string {
 // runReview POSTs to /api/channels/{id}/review/run and, when wait is true,
 // polls /api/channels/{id}/review every second until the session leaves the
 // "reviewing" status or the deadline fires.
+//
+// When wait is true the timeout bounds the whole operation: ctx is wrapped in
+// context.WithTimeout so cancellation propagates into every client.Do call,
+// not just the gap between polls. Without that wrap, a single hung response
+// (network stall, daemon deadlock, partial write) would block inside
+// client.Do indefinitely because http.DefaultClient has no Timeout set and
+// cobra's parent ctx has no deadline either — the `time.Now().After(deadline)`
+// check between polls never gets a turn to fire.
 func (a *app) runReview(ctx context.Context, stdout io.Writer, apiURL, channelID string, wait bool, timeout time.Duration) error {
+	if wait {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, timeout)
+		defer cancel()
+	}
 	client := a.reviewHTTPClient()
 
 	runURL := fmt.Sprintf("%s/api/channels/%s/review/run", apiURL, channelID)
@@ -121,15 +134,26 @@ func (a *app) runReview(ctx context.Context, stdout io.Writer, apiURL, channelID
 		return nil
 	}
 
+	// wrapTimeout swaps the deadline-exceeded sentinel for the documented
+	// "timed out after --timeout" message so the user sees their flag in the
+	// error, not raw `context deadline exceeded`. Other ctx errors (parent
+	// cancel) pass through untouched. Used at every site where a deadline
+	// can surface: in-flight Do error, top-of-loop guard, or sleep-select.
+	wrapTimeout := func(err error) error {
+		if errors.Is(err, context.DeadlineExceeded) || errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			return fmt.Errorf("timed out after %s waiting for review to finish", timeout)
+		}
+		return err
+	}
+
 	getURL := fmt.Sprintf("%s/api/channels/%s/review", apiURL, channelID)
-	deadline := time.Now().Add(timeout)
 	for {
-		if ctx.Err() != nil {
-			return ctx.Err()
+		if err := ctx.Err(); err != nil {
+			return wrapTimeout(err)
 		}
 		out, terminal, perr := pollReviewOnce(ctx, client, getURL)
 		if perr != nil {
-			return perr
+			return wrapTimeout(perr)
 		}
 		if terminal {
 			enc, _ := json.Marshal(out) // shape is fixed; cannot fail
@@ -141,14 +165,11 @@ func (a *app) runReview(ctx context.Context, stdout io.Writer, apiURL, channelID
 			}
 			return nil
 		}
-		if time.Now().After(deadline) {
-			return fmt.Errorf("timed out after %s waiting for review to finish", timeout)
-		}
 		t := time.NewTimer(time.Second)
 		select {
 		case <-ctx.Done():
 			t.Stop()
-			return ctx.Err()
+			return wrapTimeout(ctx.Err())
 		case <-t.C:
 		}
 	}

@@ -763,8 +763,14 @@ func (e *defaultEngine) executeLoopBody(ctx context.Context, run *db.WorkflowRun
 // agent container (e.g. `loop-dockerproxy started ...`) before the CLI's
 // final JSON line, so the parser scans backwards through the lines and uses
 // the last one that parses as the expected envelope. When nothing parses,
-// the function clears Review.* except for shifting IDs into PrevIDs so the
-// loop's SameAsPrev gate still advances. The expected shape is:
+// the function clears Review.* (shifting IDs into PrevIDs) but leaves both
+// `NoComments` and `SameAsPrev` false so the seeded loops' stop condition
+// `{{ or .Review.NoComments .Review.SameAsPrev }}` does NOT trip — an empty
+// stdout, a missing JSON envelope, or any other parse miss is a real signal
+// (CLI bug, $API_URL misconfig that returned an empty body, future stdout
+// pollution after the JSON line) that we want to surface as "keep trying
+// until maxIter" rather than silently treating as a clean review. The
+// expected shape is:
 //
 //	{"status": "ready", "no_comments": bool, "comments": [{"id": "...", ...}]}
 func parseReviewOutput(stdout string, runCtx *RunContext) {
@@ -777,12 +783,15 @@ func parseReviewOutput(stdout string, runCtx *RunContext) {
 		Comments   []ReviewComment `json:"comments"`
 	}
 	if !extractReviewJSON(stdout, &parsed) {
-		// Leave Comments/CommentsJSON/IDs as-is; treat as "no findings parsed".
+		// Treat as a real parse failure, NOT as "no findings". Setting
+		// SameAsPrev=true when prev was empty would terminate the loop on
+		// the very first iteration with `completed` status, hiding a
+		// daemon/CLI bug behind a "review with no findings" UI report.
 		runCtx.Review.NoComments = false
 		runCtx.Review.Comments = nil
 		runCtx.Review.CommentsJSON = ""
 		runCtx.Review.IDs = nil
-		runCtx.Review.SameAsPrev = len(prev) == 0
+		runCtx.Review.SameAsPrev = false
 		return
 	}
 
