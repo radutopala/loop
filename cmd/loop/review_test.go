@@ -176,6 +176,37 @@ func (s *MainSuite) TestRunReviewWaitErrorStatusReturnsError() {
 	require.Contains(s.T(), buf.String(), `"status":"error"`)
 }
 
+// TestRunReviewWaitErrorStatusEmptyMessageFallsBackToSentinel verifies the
+// daemon may flip a session to status=error without populating
+// session.error — the CLI must surface a non-blank message so the user
+// gets something diagnosable instead of a blank cobra line and an empty
+// node_runs.error_text.
+func (s *MainSuite) TestRunReviewWaitErrorStatusEmptyMessageFallsBackToSentinel() {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost {
+			w.WriteHeader(http.StatusAccepted)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"present": true,
+			// No "error" field — zero-value empty string passes through
+			// pollReviewOnce into runReview's terminal branch.
+			"session": map[string]any{"status": "error"},
+		})
+	}))
+	defer ts.Close()
+
+	s.app.reviewClient = http.DefaultClient
+	var buf bytes.Buffer
+	err := s.app.runReview(context.Background(), &buf, ts.URL, "ch1", true, 5*time.Second)
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "review session ended with status=error")
+	require.Contains(s.T(), err.Error(), "no message")
+	// Still printed the error JSON to stdout before raising the sentinel.
+	require.Contains(s.T(), buf.String(), `"status":"error"`)
+}
+
 func (s *MainSuite) TestRunReviewWaitTimeout() {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodPost {

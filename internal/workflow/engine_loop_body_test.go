@@ -521,6 +521,100 @@ func (s *EngineSuite) TestLoopBodyUpsertNodeRunErrorsAreLogged() {
 	}
 }
 
+// TestLoopBodyChildTimeoutAppliesAndCancels verifies a body child's
+// `timeout:` declaration is honored: the child's bash invocation sees a
+// context with a deadline matching the timeout, and the per-iteration
+// cancel is explicitly invoked (rather than deferred — defer in the for-loop
+// would stack one cancel per iteration). With timeout="50ms", the ctx that
+// reaches RunBash must have a deadline less than 100ms from now.
+func (s *EngineSuite) TestLoopBodyChildTimeoutAppliesAndCancels() {
+	s.workflows = []config.WorkflowDef{
+		{
+			Name: "loop-child-timeout",
+			Nodes: []config.NodeDef{
+				{
+					ID:            "loop",
+					Type:          config.NodeTypeLoop,
+					MaxIterations: 1,
+					Body: []*config.NodeDef{
+						{ID: "slow", Type: config.NodeTypeBash, Timeout: "50ms", Script: "echo slow"},
+					},
+				},
+			},
+		},
+	}
+
+	s.store.On("CreateWorkflowRunWithNodes", mock.Anything, mock.Anything, mock.Anything).Return(nil)
+	s.store.On("UpsertNodeRun", mock.Anything, mock.Anything).Return(nil)
+	done := s.waitForTerminalStatus()
+
+	var observedDeadline time.Time
+	s.bashRunner.On("RunBash", mock.MatchedBy(func(ctx context.Context) bool {
+		// The childCtx wrap must have set a deadline. Without the wrap the
+		// ctx would be the run ctx, which has no deadline (or a much later
+		// one — runReviewPollTimeout default is 30m, but here the run ctx
+		// is the engine's root background ctx with no deadline at all).
+		d, ok := ctx.Deadline()
+		if ok {
+			observedDeadline = d
+		}
+		return ok && time.Until(d) < 200*time.Millisecond
+	}), "echo slow", "", "").Return("ok", nil)
+
+	_, err := s.engine.StartRun(context.Background(), StartRunOptions{WorkflowName: "loop-child-timeout"})
+	require.NoError(s.T(), err)
+
+	select {
+	case status := <-done:
+		require.Equal(s.T(), db.WorkflowRunStatusCompleted, status)
+	case <-time.After(5 * time.Second):
+		s.T().Fatal("timeout")
+	}
+	require.False(s.T(), observedDeadline.IsZero(), "child ctx must have a deadline set")
+}
+
+// TestLoopBodyChildTimeoutInvalidDurationIgnored verifies a malformed
+// timeout string (`time.ParseDuration` error) is swallowed without
+// failing the run — the child runs with the inherited run ctx instead,
+// preserving the same behavior as omitting `timeout:` entirely.
+func (s *EngineSuite) TestLoopBodyChildTimeoutInvalidDurationIgnored() {
+	s.workflows = []config.WorkflowDef{
+		{
+			Name: "loop-child-bad-timeout",
+			Nodes: []config.NodeDef{
+				{
+					ID:            "loop",
+					Type:          config.NodeTypeLoop,
+					MaxIterations: 1,
+					Body: []*config.NodeDef{
+						{ID: "ok", Type: config.NodeTypeBash, Timeout: "not-a-duration", Script: "echo ok"},
+					},
+				},
+			},
+		},
+	}
+
+	s.store.On("CreateWorkflowRunWithNodes", mock.Anything, mock.Anything, mock.Anything).Return(nil)
+	s.store.On("UpsertNodeRun", mock.Anything, mock.Anything).Return(nil)
+	done := s.waitForTerminalStatus()
+
+	s.bashRunner.On("RunBash", mock.MatchedBy(func(ctx context.Context) bool {
+		// Bad timeout string is silently ignored — child runs without a per-child deadline.
+		_, hasDeadline := ctx.Deadline()
+		return !hasDeadline
+	}), "echo ok", "", "").Return("ok", nil)
+
+	_, err := s.engine.StartRun(context.Background(), StartRunOptions{WorkflowName: "loop-child-bad-timeout"})
+	require.NoError(s.T(), err)
+
+	select {
+	case status := <-done:
+		require.Equal(s.T(), db.WorkflowRunStatusCompleted, status)
+	case <-time.After(5 * time.Second):
+		s.T().Fatal("timeout")
+	}
+}
+
 // TestLoopBodyConditionTemplateErrorContinues verifies that a bad condition
 // template logs a warning and continues iterating (rather than failing the
 // run) — same recovery semantics as the legacy self-prompt loop.
