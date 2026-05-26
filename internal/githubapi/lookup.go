@@ -242,6 +242,14 @@ func (c *Client) FetchRepoSlug(ctx context.Context, workdir, ghUser string) (*Re
 // lines, "LEFT" for deleted lines. Returns the GitHub-assigned comment id
 // (0 if gh returned a body we couldn't parse — non-fatal: the push still
 // succeeded, only the id is lost, which only matters for later deletion).
+//
+// Fallback: GitHub returns HTTP 422 when the anchor (path, line) is not
+// part of the PR's diff at commitID — common when the review agent flags
+// a bug on an unchanged line inside a touched function. In that case we
+// retry as a general PR conversation comment via the issues endpoint, with
+// the file:line prepended to the body so the anchor isn't lost. Returns
+// 0 for the comment id on fallback (different id namespace; the loop UI
+// can't currently delete conversation comments by id).
 func (c *Client) PostPRComment(ctx context.Context, workdir, ghUser string, slug RepoSlug, prNum int, commitID, path, side string, line int, body string) (int64, error) {
 	if workdir == "" || prNum <= 0 || commitID == "" || path == "" || line <= 0 {
 		return 0, fmt.Errorf("workdir, prNum, commitID, path, line are required")
@@ -253,6 +261,17 @@ func (c *Client) PostPRComment(ctx context.Context, workdir, ghUser string, slug
 	if err != nil {
 		return 0, err
 	}
+	id, err := c.postPRInlineComment(ctx, workdir, env, slug, prNum, commitID, path, side, line, body)
+	if err == nil {
+		return id, nil
+	}
+	if !isOutOfDiff422(err) {
+		return 0, err
+	}
+	return c.postPRConversationComment(ctx, workdir, env, slug, prNum, path, side, line, body)
+}
+
+func (c *Client) postPRInlineComment(ctx context.Context, workdir string, env []string, slug RepoSlug, prNum int, commitID, path, side string, line int, body string) (int64, error) {
 	endpoint := fmt.Sprintf("repos/%s/%s/pulls/%d/comments", slug.Owner, slug.Name, prNum)
 	args := []string{
 		"api", endpoint, "--method", "POST",
@@ -269,10 +288,38 @@ func (c *Client) PostPRComment(ctx context.Context, workdir, ghUser string, slug
 	var raw struct {
 		ID int64 `json:"id"`
 	}
-	// Best-effort: an unparseable response is logged-as-zero rather than
-	// failing the push, since the comment IS on the PR at this point.
 	_ = json.Unmarshal(out, &raw)
 	return raw.ID, nil
+}
+
+func (c *Client) postPRConversationComment(ctx context.Context, workdir string, env []string, slug RepoSlug, prNum int, path, side string, line int, body string) (int64, error) {
+	sideLabel := ""
+	if side == "LEFT" {
+		sideLabel = " (deleted)"
+	}
+	prefixed := fmt.Sprintf("**%s:L%d%s** _(posted as PR conversation — line not in diff)_\n\n%s", path, line, sideLabel, body)
+	endpoint := fmt.Sprintf("repos/%s/%s/issues/%d/comments", slug.Owner, slug.Name, prNum)
+	args := []string{
+		"api", endpoint, "--method", "POST",
+		"-f", "body=" + prefixed,
+	}
+	if _, err := c.runner.Run(ctx, workdir, env, args...); err != nil {
+		return 0, err
+	}
+	return 0, nil
+}
+
+// isOutOfDiff422 detects the GitHub validation error that fires when the
+// anchor line is not part of the PR diff at commitID. gh surfaces it as
+// "Validation Failed (HTTP 422)" in stderr; the execRunner wraps that into
+// the error string. Match conservatively — only on the 422 substring — so
+// unrelated 422s (rare on this endpoint) also trigger the fallback rather
+// than failing the push outright.
+func isOutOfDiff422(err error) bool {
+	if err == nil {
+		return false
+	}
+	return strings.Contains(err.Error(), "HTTP 422")
 }
 
 // DeletePRReviewComment deletes a single inline review comment via the gh
