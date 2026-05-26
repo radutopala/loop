@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -378,6 +379,21 @@ func (s *MainSuite) TestRunReviewCtxAlreadyCancelledBeforePoll() {
 	require.ErrorIs(s.T(), err, context.Canceled)
 }
 
+// TestRunReviewCancelDuringPollInterval covers the rare case where ctx is
+// cancelled between a non-terminal poll returning and the next iteration's
+// top-of-loop ctx.Err() guard firing — the poll-interval timer's select picks
+// up ctx.Done first, returning the wrapped cancellation error. We stretch the
+// poll interval to one minute so the timer can't win the select race.
+func (s *MainSuite) TestRunReviewCancelDuringPollInterval() {
+	ctx, cancel := context.WithCancel(context.Background())
+	s.app.reviewClient = &cancelAfterReviewingGetClient{cancel: cancel}
+	s.app.reviewPollInterval = time.Minute
+
+	err := s.app.runReview(ctx, &bytes.Buffer{}, "http://stub", "ch1", true, 5*time.Second)
+	require.Error(s.T(), err)
+	require.ErrorIs(s.T(), err, context.Canceled)
+}
+
 // TestRunReviewFprintlnError verifies the rare write-error branch by using
 // a stdout writer that returns an error on Write. The ready-status path
 // reaches the Fprintln call and surfaces the wrapped error.
@@ -519,6 +535,32 @@ func (c *cancelAfterPostClient) Do(_ *http.Request) (*http.Response, error) {
 		return resp, nil
 	}
 	return nil, errors.New("unexpected second call")
+}
+
+// cancelAfterReviewingGetClient returns 202 on POST, then "reviewing" status
+// on the first GET while cancelling its embedded ctx mid-call. The point is to
+// force runReview into the poll-interval timer select with ctx already done,
+// covering the `case <-ctx.Done()` branch that follows a non-terminal poll.
+type cancelAfterReviewingGetClient struct {
+	cancel context.CancelFunc
+	calls  atomic.Int32
+}
+
+func (c *cancelAfterReviewingGetClient) Do(req *http.Request) (*http.Response, error) {
+	n := c.calls.Add(1)
+	if n == 1 {
+		return &http.Response{StatusCode: http.StatusAccepted, Body: http.NoBody}, nil
+	}
+	body, _ := json.Marshal(map[string]any{
+		"present": true,
+		"session": map[string]any{"status": "reviewing"},
+	})
+	c.cancel()
+	return &http.Response{
+		StatusCode: http.StatusOK,
+		Body:       io.NopCloser(bytes.NewReader(body)),
+		Header:     http.Header{"Content-Type": []string{"application/json"}},
+	}, nil
 }
 
 func (s *stubHTTPClient) Do(_ *http.Request) (*http.Response, error) {
