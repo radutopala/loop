@@ -453,19 +453,25 @@ func (s *EngineSuite) TestLoopBodyContextCancelBetweenChildren() {
 	s.store.On("UpsertNodeRun", mock.Anything, mock.Anything).Return(nil)
 	done := s.waitForRunStatus()
 
-	var runID atomic.Value
+	// idReady is closed once the test has captured the run ID returned by
+	// StartRun. The first-child mock blocks on it before invoking CancelRun;
+	// without this gate the workflow goroutine could enter RunBash before the
+	// test stores the ID, the cancel would no-op, and `echo second` would run
+	// — a CI-only flake because local timing happens to favor the test.
+	idReady := make(chan struct{})
+	var runID string
 	s.bashRunner.On("RunBash", mock.Anything, "echo first", "", "").
 		Return("ok", nil).
 		Run(func(_ mock.Arguments) {
-			if id := runID.Load(); id != nil {
-				_ = s.engine.CancelRun(context.Background(), id.(string))
-			}
+			<-idReady
+			_ = s.engine.CancelRun(context.Background(), runID)
 		})
 	s.bashRunner.On("RunBash", mock.Anything, "echo second", "", "").Return("never", nil).Maybe()
 
-	id, err := s.engine.StartRun(context.Background(), StartRunOptions{WorkflowName: "loop-ctx-cancel"})
+	var err error
+	runID, err = s.engine.StartRun(context.Background(), StartRunOptions{WorkflowName: "loop-ctx-cancel"})
 	require.NoError(s.T(), err)
-	runID.Store(id)
+	close(idReady)
 
 	select {
 	case <-done:
