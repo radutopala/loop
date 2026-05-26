@@ -211,7 +211,7 @@ func (s *EngineSuite) TestApprovalNodePauseStatusWriteError() {
 
 	s.store.On("CreateWorkflowRunWithNodes", mock.Anything, mock.Anything, mock.Anything).Return(nil)
 	s.store.On("UpsertNodeRun", mock.Anything, mock.Anything).Return(nil)
-	s.store.On("UpdateNodeHeartbeat", mock.Anything, mock.Anything, mock.Anything).Return(nil).Maybe()
+	s.store.On("UpdateNodeHeartbeat", mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Maybe()
 
 	for _, call := range s.store.ExpectedCalls {
 		if call.Method == "GetWorkflowRun" {
@@ -418,7 +418,7 @@ func (s *EngineSuite) TestExecuteDAGFinalWriteGetError() {
 	s.store.ExpectedCalls = nil
 	s.store.On("CreateWorkflowRunWithNodes", mock.Anything, mock.Anything, mock.Anything).Return(nil)
 	s.store.On("UpsertNodeRun", mock.Anything, mock.Anything).Return(nil)
-	s.store.On("UpdateNodeHeartbeat", mock.Anything, mock.Anything, mock.Anything).Return(nil).Maybe()
+	s.store.On("UpdateNodeHeartbeat", mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Maybe()
 	// GetWorkflowRun returns error — the final write in executeDAG will log it.
 	s.store.On("GetWorkflowRun", mock.Anything, mock.Anything).Return(nil, fmt.Errorf("db gone"))
 	// UpdateWorkflowRun may still be called; accept it.

@@ -256,29 +256,29 @@ func (s *MainSuite) TestRunReviewWaitContextCancel() {
 	require.ErrorIs(s.T(), err, context.Canceled)
 }
 
-func (s *MainSuite) TestRunReviewWaitPollTransientNotPresent() {
-	var calls atomic.Int32
+// TestRunReviewWaitPresentFalseIsPermanent verifies that a poll returning
+// present=false after a successful POST kickoff is treated as a permanent
+// failure: the session was deleted underneath us (typically the user closed
+// the Review panel) and continuing to poll for the rest of --timeout is
+// pointless. The runReview must bail immediately, not retry.
+func (s *MainSuite) TestRunReviewWaitPresentFalseIsPermanent() {
+	var getCalls atomic.Int32
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodPost {
 			w.WriteHeader(http.StatusAccepted)
 			return
 		}
-		c := calls.Add(1)
+		getCalls.Add(1)
 		w.Header().Set("Content-Type", "application/json")
-		if c < 2 {
-			_ = json.NewEncoder(w).Encode(map[string]any{"present": false})
-			return
-		}
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"present": true,
-			"session": map[string]any{"status": "ready", "comments": []map[string]any{}},
-		})
+		_ = json.NewEncoder(w).Encode(map[string]any{"present": false})
 	}))
 	defer ts.Close()
 
 	s.app.reviewClient = http.DefaultClient
 	err := s.app.runReview(context.Background(), &bytes.Buffer{}, ts.URL, "ch1", true, 5*time.Second)
-	require.NoError(s.T(), err)
+	require.Error(s.T(), err)
+	require.ErrorIs(s.T(), err, errReviewSessionGone)
+	require.Equal(s.T(), int32(1), getCalls.Load(), "session-gone is permanent — must not retry")
 }
 
 // TestRunReviewPollTransientErrorRetries verifies that a transient
@@ -455,6 +455,98 @@ func (s *MainSuite) TestPollReviewOnceBuildRequestError() {
 	_, _, err := pollReviewOnce(context.Background(), http.DefaultClient, "http://\x7f")
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "building GET request")
+}
+
+// TestPollReviewOnce4xxIsPermanent: a 4xx response is the daemon telling us
+// the request is malformed or the channel/session is gone. Retrying for the
+// full --timeout window is pointless; the error must be wrapped in
+// *pollPermanentError so runReview bails immediately.
+func (s *MainSuite) TestPollReviewOnce4xxIsPermanent() {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, "nope", http.StatusNotFound)
+	}))
+	defer ts.Close()
+
+	_, _, err := pollReviewOnce(context.Background(), http.DefaultClient, ts.URL)
+	require.Error(s.T(), err)
+	var permanent *pollPermanentError
+	require.True(s.T(), errors.As(err, &permanent), "4xx must be wrapped as permanent")
+}
+
+// TestPollReviewOnce5xxIsTransient: 5xx is a daemon hiccup that may resolve
+// on the next poll, so it must NOT be wrapped permanent.
+func (s *MainSuite) TestPollReviewOnce5xxIsTransient() {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, "down", http.StatusBadGateway)
+	}))
+	defer ts.Close()
+
+	_, _, err := pollReviewOnce(context.Background(), http.DefaultClient, ts.URL)
+	require.Error(s.T(), err)
+	var permanent *pollPermanentError
+	require.False(s.T(), errors.As(err, &permanent), "5xx must not be wrapped permanent")
+}
+
+// TestPollReviewOncePresentFalseIsPermanent: once the kickoff POST returns
+// 202, the session is created synchronously. A GET response with
+// present=false later means the session was deleted (user closed the panel).
+// Retrying for the full --timeout window is pointless.
+func (s *MainSuite) TestPollReviewOncePresentFalseIsPermanent() {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"present": false})
+	}))
+	defer ts.Close()
+
+	_, _, err := pollReviewOnce(context.Background(), http.DefaultClient, ts.URL)
+	require.Error(s.T(), err)
+	var permanent *pollPermanentError
+	require.True(s.T(), errors.As(err, &permanent))
+	require.ErrorIs(s.T(), err, errReviewSessionGone)
+}
+
+// TestRunReviewWait4xxIsPermanent verifies that a 4xx GET response makes the
+// run bail immediately rather than burning through the rest of --timeout.
+func (s *MainSuite) TestRunReviewWait4xxIsPermanent() {
+	var getCalls atomic.Int32
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost {
+			w.WriteHeader(http.StatusAccepted)
+			return
+		}
+		getCalls.Add(1)
+		http.Error(w, "bad request", http.StatusBadRequest)
+	}))
+	defer ts.Close()
+
+	s.app.reviewClient = http.DefaultClient
+	err := s.app.runReview(context.Background(), &bytes.Buffer{}, ts.URL, "ch1", true, 5*time.Second)
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "status 400")
+	require.Equal(s.T(), int32(1), getCalls.Load(), "4xx is permanent — must not retry")
+}
+
+// TestRunReviewPostHangBoundedWithoutWait verifies that a hung POST in
+// fire-and-forget mode (--wait=false) is bounded by a.reviewPostTimeout and
+// doesn't hang the CLI forever. We shrink the field to 50ms and rely on
+// context-deadline-exceeded propagating into client.Do. Without the
+// internal context.WithTimeout, http.DefaultClient has no Timeout and the
+// caller's ctx has no deadline either, so the CLI would block indefinitely.
+func (s *MainSuite) TestRunReviewPostHangBoundedWithoutWait() {
+	hung := make(chan struct{})
+	ts := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {
+		<-hung // block forever
+	}))
+	defer ts.Close()
+	defer close(hung)
+
+	s.app.reviewClient = http.DefaultClient
+	s.app.reviewPostTimeout = 50 * time.Millisecond
+	start := time.Now()
+	err := s.app.runReview(context.Background(), &bytes.Buffer{}, ts.URL, "ch1", false, 5*time.Second)
+	elapsed := time.Since(start)
+	require.Error(s.T(), err, "hung POST must surface as an error, not block forever")
+	require.Less(s.T(), elapsed, 2*time.Second, "POST must be bounded by reviewPostTimeout")
 }
 
 func (s *MainSuite) TestRunReviewBuildPostRequestError() {

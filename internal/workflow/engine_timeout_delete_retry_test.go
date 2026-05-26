@@ -339,7 +339,7 @@ func (s *EngineSuite) TestDeleteRunActiveRunCancelledBeforeDelete() {
 		Return(&db.WorkflowRun{ID: "r-running", WorkflowName: "wf", ChannelID: "ch1", Status: db.WorkflowRunStatusRunning}, nil).Once()
 	s.store.On("UpdateWorkflowRun", mock.Anything, mock.Anything).Return(nil)
 	s.store.On("DeleteWorkflowRun", mock.Anything, "r-running").Return(nil)
-	s.store.On("UpdateNodeHeartbeat", mock.Anything, mock.Anything, mock.Anything).Return(nil).Maybe()
+	s.store.On("UpdateNodeHeartbeat", mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Maybe()
 
 	err := s.engine.DeleteRun(context.Background(), "r-running")
 	require.NoError(s.T(), err)
@@ -356,7 +356,7 @@ func (s *EngineSuite) TestDeleteRunPausedRunCancelledBeforeDelete() {
 		Return(&db.WorkflowRun{ID: "r-paused", WorkflowName: "wf", ChannelID: "ch2", Status: db.WorkflowRunStatusPaused}, nil).Once()
 	s.store.On("UpdateWorkflowRun", mock.Anything, mock.Anything).Return(nil)
 	s.store.On("DeleteWorkflowRun", mock.Anything, "r-paused").Return(nil)
-	s.store.On("UpdateNodeHeartbeat", mock.Anything, mock.Anything, mock.Anything).Return(nil).Maybe()
+	s.store.On("UpdateNodeHeartbeat", mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Maybe()
 
 	err := s.engine.DeleteRun(context.Background(), "r-paused")
 	require.NoError(s.T(), err)
@@ -393,7 +393,7 @@ func (s *EngineSuite) TestRetryRunHappyPath() {
 	}
 
 	s.store.ExpectedCalls = nil
-	s.store.On("UpdateNodeHeartbeat", mock.Anything, mock.Anything, mock.Anything).Return(nil).Maybe()
+	s.store.On("UpdateNodeHeartbeat", mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Maybe()
 	// First call returns the original run; subsequent calls from the async DAG
 	// (finalizeDAG, updateRunStatus) return a running run.
 	s.store.On("GetWorkflowRun", mock.Anything, "original").Return(&db.WorkflowRun{
@@ -483,7 +483,7 @@ func (s *EngineSuite) TestRetryRunWithNoInputs() {
 	}
 
 	s.store.ExpectedCalls = nil
-	s.store.On("UpdateNodeHeartbeat", mock.Anything, mock.Anything, mock.Anything).Return(nil).Maybe()
+	s.store.On("UpdateNodeHeartbeat", mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Maybe()
 	// First call returns the original (completed) run; async DAG calls get a running run.
 	s.store.On("GetWorkflowRun", mock.Anything, "r-noinput").Return(&db.WorkflowRun{
 		ID:           "r-noinput",
@@ -605,7 +605,7 @@ func (s *EngineSuite) TestRecoverRunsCheckpointUpdateStatusError() {
 		{RunID: "wfr-cpfail", NodeID: "gate", Status: db.NodeRunStatusRunning},
 	}, nil)
 	s.store.On("UpsertNodeRun", mock.Anything, mock.Anything).Return(nil).Maybe()
-	s.store.On("UpdateNodeHeartbeat", mock.Anything, mock.Anything, mock.Anything).Return(nil).Maybe()
+	s.store.On("UpdateNodeHeartbeat", mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Maybe()
 
 	// GetWorkflowRun: first call inside updateRunStatus (success path reads it),
 	// second call inside finalizeDAG reads a fresh copy for the terminal write.

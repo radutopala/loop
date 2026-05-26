@@ -496,7 +496,7 @@ func (s *EngineSuite) TestLoopBodyUpsertNodeRunErrorsAreLogged() {
 	s.store.On("GetWorkflowRun", mock.Anything, mock.Anything).Return(
 		&db.WorkflowRun{Status: db.WorkflowRunStatusRunning}, nil,
 	).Maybe()
-	s.store.On("UpdateNodeHeartbeat", mock.Anything, mock.Anything, mock.Anything).Return(nil).Maybe()
+	s.store.On("UpdateNodeHeartbeat", mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Maybe()
 	s.store.On("CreateWorkflowRunWithNodes", mock.Anything, mock.Anything, mock.Anything).Return(nil)
 	// All UpsertNodeRun calls inside the body return an error so the three
 	// log branches all fire. The top-level run's UpsertNodeRun also fails;

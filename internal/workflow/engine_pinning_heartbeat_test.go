@@ -141,7 +141,7 @@ func (s *EngineSuite) TestHeartbeatFiresDuringNodeExecution() {
 	}
 
 	// The initial heartbeat should have fired at least once.
-	s.store.AssertCalled(s.T(), "UpdateNodeHeartbeat", mock.Anything, mock.Anything, "slow")
+	s.store.AssertCalled(s.T(), "UpdateNodeHeartbeat", mock.Anything, mock.Anything, "slow", 0)
 }
 
 func (s *EngineSuite) TestRecoverPausedRunUsePinnedDef() {
@@ -167,7 +167,7 @@ func (s *EngineSuite) TestRecoverPausedRunUsePinnedDef() {
 	s.store.On("ListWorkflowRunsByStatus", mock.Anything, mock.Anything).Return([]*db.WorkflowRun{pausedRun}, nil)
 	s.store.On("ListNodeRuns", mock.Anything, "wfr-pinned").Return(nodeRuns, nil)
 	s.store.On("UpsertNodeRun", mock.Anything, mock.Anything).Return(nil)
-	s.store.On("UpdateNodeHeartbeat", mock.Anything, mock.Anything, mock.Anything).Return(nil).Maybe()
+	s.store.On("UpdateNodeHeartbeat", mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Maybe()
 	s.store.On("GetWorkflowRun", mock.Anything, "wfr-pinned").Return(
 		&db.WorkflowRun{ID: "wfr-pinned", Status: db.WorkflowRunStatusRunning, PausedNodeID: "approve", WorkflowName: "pinned-wf", ChannelID: "ch1"}, nil,
 	)
@@ -239,7 +239,7 @@ func (s *EngineSuite) TestCheckpointNodeNotInDBTreatedAsPending() {
 	s.store.On("ListWorkflowRunsByStatus", mock.Anything, mock.Anything).Return([]*db.WorkflowRun{pausedRun}, nil)
 	s.store.On("ListNodeRuns", mock.Anything, "wfr-missing").Return(nodeRuns, nil)
 	s.store.On("UpsertNodeRun", mock.Anything, mock.Anything).Return(nil)
-	s.store.On("UpdateNodeHeartbeat", mock.Anything, mock.Anything, mock.Anything).Return(nil).Maybe()
+	s.store.On("UpdateNodeHeartbeat", mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Maybe()
 	s.store.On("GetWorkflowRun", mock.Anything, "wfr-missing").Return(
 		&db.WorkflowRun{ID: "wfr-missing", Status: db.WorkflowRunStatusRunning, PausedNodeID: "a", WorkflowName: "checkpoint-missing", ChannelID: "ch1"}, nil,
 	)
@@ -291,7 +291,7 @@ func (s *EngineSuite) TestHeartbeatErrorPaths() {
 		&db.WorkflowRun{Status: db.WorkflowRunStatusRunning}, nil,
 	)
 	// Heartbeat returns an error — should be logged but not fail the node.
-	s.store.On("UpdateNodeHeartbeat", mock.Anything, mock.Anything, mock.Anything).Return(fmt.Errorf("db locked"))
+	s.store.On("UpdateNodeHeartbeat", mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(fmt.Errorf("db locked"))
 
 	done := make(chan db.WorkflowRunStatus, 1)
 	s.store.On("UpdateWorkflowRun", mock.Anything, mock.Anything).Run(func(args mock.Arguments) {
@@ -377,7 +377,7 @@ func (s *EngineSuite) TestRecoverRunningRunFreshHeartbeatReExecutes() {
 	s.store.On("ListWorkflowRunsByStatus", mock.Anything, mock.Anything).Return([]*db.WorkflowRun{runningRun}, nil)
 	s.store.On("ListNodeRuns", mock.Anything, "wfr-fresh").Return(nodeRuns, nil)
 	s.store.On("UpsertNodeRun", mock.Anything, mock.Anything).Return(nil)
-	s.store.On("UpdateNodeHeartbeat", mock.Anything, mock.Anything, mock.Anything).Return(nil).Maybe()
+	s.store.On("UpdateNodeHeartbeat", mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Maybe()
 	s.store.On("GetWorkflowRun", mock.Anything, "wfr-fresh").Return(
 		&db.WorkflowRun{ID: "wfr-fresh", Status: db.WorkflowRunStatusRunning, WorkflowName: "recover-running", ChannelID: "ch1"}, nil,
 	)
@@ -442,7 +442,7 @@ func (s *EngineSuite) TestRecoverRunningRunStaleHeartbeatFails() {
 	s.store.On("ListWorkflowRunsByStatus", mock.Anything, mock.Anything).Return([]*db.WorkflowRun{runningRun}, nil)
 	s.store.On("ListNodeRuns", mock.Anything, "wfr-stale-hb").Return(nodeRuns, nil)
 	s.store.On("UpsertNodeRun", mock.Anything, mock.Anything).Return(nil)
-	s.store.On("UpdateNodeHeartbeat", mock.Anything, mock.Anything, mock.Anything).Return(nil).Maybe()
+	s.store.On("UpdateNodeHeartbeat", mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Maybe()
 	s.store.On("GetWorkflowRun", mock.Anything, "wfr-stale-hb").Return(
 		&db.WorkflowRun{ID: "wfr-stale-hb", Status: db.WorkflowRunStatusRunning, WorkflowName: "recover-stale", ChannelID: "ch1"}, nil,
 	)
@@ -497,7 +497,7 @@ func (s *EngineSuite) TestRecoverRunningRunNoHeartbeatFails() {
 	s.store.On("ListWorkflowRunsByStatus", mock.Anything, mock.Anything).Return([]*db.WorkflowRun{runningRun}, nil)
 	s.store.On("ListNodeRuns", mock.Anything, "wfr-nohb").Return(nodeRuns, nil)
 	s.store.On("UpsertNodeRun", mock.Anything, mock.Anything).Return(nil)
-	s.store.On("UpdateNodeHeartbeat", mock.Anything, mock.Anything, mock.Anything).Return(nil).Maybe()
+	s.store.On("UpdateNodeHeartbeat", mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Maybe()
 	s.store.On("GetWorkflowRun", mock.Anything, "wfr-nohb").Return(
 		&db.WorkflowRun{ID: "wfr-nohb", Status: db.WorkflowRunStatusRunning, WorkflowName: "recover-nohb", ChannelID: "ch1"}, nil,
 	)
@@ -562,7 +562,7 @@ func (s *EngineSuite) TestRecoverRunningRunMixedNodes() {
 	s.store.On("ListWorkflowRunsByStatus", mock.Anything, mock.Anything).Return([]*db.WorkflowRun{runningRun}, nil)
 	s.store.On("ListNodeRuns", mock.Anything, "wfr-mixed").Return(nodeRuns, nil)
 	s.store.On("UpsertNodeRun", mock.Anything, mock.Anything).Return(nil)
-	s.store.On("UpdateNodeHeartbeat", mock.Anything, mock.Anything, mock.Anything).Return(nil).Maybe()
+	s.store.On("UpdateNodeHeartbeat", mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Maybe()
 	s.store.On("GetWorkflowRun", mock.Anything, "wfr-mixed").Return(
 		&db.WorkflowRun{ID: "wfr-mixed", Status: db.WorkflowRunStatusRunning, WorkflowName: "recover-mixed", ChannelID: "ch1"}, nil,
 	)

@@ -519,22 +519,36 @@ func (s *StoreSuite) TestListNodeRunsScanError() {
 }
 
 func (s *StoreSuite) TestUpdateNodeHeartbeat() {
-	s.mock.ExpectExec(`UPDATE workflow_node_runs SET last_heartbeat_at`).
-		WithArgs(sqlmock.AnyArg(), "run-1", "node-a").
+	s.mock.ExpectExec(`UPDATE workflow_node_runs SET last_heartbeat_at = \? WHERE run_id = \? AND node_id = \? AND iteration = \?`).
+		WithArgs(sqlmock.AnyArg(), "run-1", "node-a", 0).
 		WillReturnResult(sqlmock.NewResult(0, 1))
 
-	err := s.store.UpdateNodeHeartbeat(context.Background(), "run-1", "node-a")
+	err := s.store.UpdateNodeHeartbeat(context.Background(), "run-1", "node-a", 0)
 	require.NoError(s.T(), err)
 	require.NoError(s.T(), s.mock.ExpectationsWereMet())
 }
 
 func (s *StoreSuite) TestUpdateNodeHeartbeatError() {
 	s.mock.ExpectExec(`UPDATE workflow_node_runs SET last_heartbeat_at`).
-		WithArgs(sqlmock.AnyArg(), "run-1", "node-a").
+		WithArgs(sqlmock.AnyArg(), "run-1", "node-a", 2).
 		WillReturnError(sql.ErrConnDone)
 
-	err := s.store.UpdateNodeHeartbeat(context.Background(), "run-1", "node-a")
+	err := s.store.UpdateNodeHeartbeat(context.Background(), "run-1", "node-a", 2)
 	require.Error(s.T(), err)
+}
+
+// TestUpdateNodeHeartbeatScopedByIteration verifies the WHERE clause filters
+// on iteration so a heartbeat for iter N can't accidentally bump iter N-1's
+// last_heartbeat_at — that bumping would mask a stalled prior iteration from
+// the recovery sweeper.
+func (s *StoreSuite) TestUpdateNodeHeartbeatScopedByIteration() {
+	s.mock.ExpectExec(`UPDATE workflow_node_runs SET last_heartbeat_at = \? WHERE run_id = \? AND node_id = \? AND iteration = \?`).
+		WithArgs(sqlmock.AnyArg(), "run-1", "review", 3).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+
+	err := s.store.UpdateNodeHeartbeat(context.Background(), "run-1", "review", 3)
+	require.NoError(s.T(), err)
+	require.NoError(s.T(), s.mock.ExpectationsWereMet())
 }
 
 func (s *StoreSuite) TestDeleteWorkflowRun() {

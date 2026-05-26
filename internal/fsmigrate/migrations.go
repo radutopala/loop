@@ -373,7 +373,7 @@ func builtinLoopDef(name, description, inputDesc string, body []any) map[string]
 		"inputs": map[string]any{
 			"max_iterations": map[string]any{
 				"description": inputDesc,
-				"default":     "3",
+				"default":     "1",
 			},
 		},
 		"nodes": []any{
