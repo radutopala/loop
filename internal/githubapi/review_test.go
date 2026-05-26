@@ -270,6 +270,88 @@ func (s *ReviewAPISuite) TestPostPRCommentTokenFailure() {
 	require.Error(s.T(), err)
 }
 
+func (s *ReviewAPISuite) TestPostPRCommentFallsBackOn422() {
+	r := &endpointRunner{
+		responses: map[string]apiResponse{
+			"repos/acme/widgets/pulls/5/comments":  {err: errors.New("gh api ...: HTTP 422: Validation Failed")},
+			"repos/acme/widgets/issues/5/comments": {out: []byte(``)},
+		},
+	}
+	c := NewClientWithRunner(r)
+	id, err := c.PostPRComment(context.Background(), "/tmp", "", RepoSlug{Owner: "acme", Name: "widgets"}, 5, "deadbeef", "engine.go", "RIGHT", 526, "review body")
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), int64(0), id)
+	require.Len(s.T(), r.calls, 2)
+	require.Equal(s.T(), "repos/acme/widgets/pulls/5/comments", r.calls[0].args[1])
+	require.Equal(s.T(), "repos/acme/widgets/issues/5/comments", r.calls[1].args[1])
+	require.Contains(s.T(), r.calls[1].args, "body=**engine.go:L526** _(posted as PR conversation — line not in diff)_\n\nreview body")
+}
+
+func (s *ReviewAPISuite) TestPostPRCommentFallback422LeftSide() {
+	r := &endpointRunner{
+		responses: map[string]apiResponse{
+			"repos/o/n/pulls/3/comments":  {err: errors.New("gh: Validation Failed (HTTP 422)")},
+			"repos/o/n/issues/3/comments": {out: []byte(``)},
+		},
+	}
+	c := NewClientWithRunner(r)
+	_, err := c.PostPRComment(context.Background(), "/tmp", "", RepoSlug{Owner: "o", Name: "n"}, 3, "sha", "f.go", "LEFT", 7, "removed-line note")
+	require.NoError(s.T(), err)
+	require.Contains(s.T(), r.calls[1].args, "body=**f.go:L7 (deleted)** _(posted as PR conversation — line not in diff)_\n\nremoved-line note")
+}
+
+func (s *ReviewAPISuite) TestPostPRCommentFallback422AlsoFails() {
+	r := &endpointRunner{
+		responses: map[string]apiResponse{
+			"repos/o/n/pulls/3/comments":  {err: errors.New("HTTP 422")},
+			"repos/o/n/issues/3/comments": {err: errors.New("server down")},
+		},
+	}
+	c := NewClientWithRunner(r)
+	_, err := c.PostPRComment(context.Background(), "/tmp", "", RepoSlug{Owner: "o", Name: "n"}, 3, "sha", "f.go", "RIGHT", 1, "b")
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "server down")
+}
+
+func (s *ReviewAPISuite) TestPostPRCommentNon422ErrorDoesNotFallBack() {
+	r := &endpointRunner{
+		responses: map[string]apiResponse{
+			"repos/o/n/pulls/3/comments": {err: errors.New("HTTP 500: Internal Server Error")},
+		},
+	}
+	c := NewClientWithRunner(r)
+	_, err := c.PostPRComment(context.Background(), "/tmp", "", RepoSlug{Owner: "o", Name: "n"}, 3, "sha", "f.go", "RIGHT", 1, "b")
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "500")
+	require.Len(s.T(), r.calls, 1, "should not retry on non-422 errors")
+}
+
+// endpointRunner routes `gh api <endpoint>` calls by endpoint and records
+// each call. Unlike dispatchRunner it lets a single test stub two
+// different api endpoints (used for the inline → conversation fallback
+// test).
+type endpointRunner struct {
+	calls     []fakeCall
+	responses map[string]apiResponse
+}
+
+type apiResponse struct {
+	out []byte
+	err error
+}
+
+func (r *endpointRunner) Run(_ context.Context, workdir string, env []string, args ...string) ([]byte, error) {
+	r.calls = append(r.calls, fakeCall{workdir: workdir, env: env, args: args})
+	if len(args) >= 2 && args[0] == "api" {
+		if resp, ok := r.responses[args[1]]; ok {
+			return resp.out, resp.err
+		}
+		return nil, errors.New("unstubbed endpoint: " + args[1])
+	}
+	// Token lookup falls through with empty success so tokenEnv returns nil env.
+	return nil, nil
+}
+
 // ── DeletePRReviewComment ───────────────────────────────────────────────
 
 func (s *ReviewAPISuite) TestDeletePRReviewCommentInvalidArgs() {
