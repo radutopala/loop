@@ -394,6 +394,43 @@ func (s *MainSuite) TestRunReviewCancelDuringPollInterval() {
 	require.ErrorIs(s.T(), err, context.Canceled)
 }
 
+// TestRunReviewCancelDuringTransportBackoff covers the rare case where ctx
+// fires during the *transport-error* backoff timer (the recoverable-error
+// arm of the for-loop, not the steady poll-interval arm). The first poll
+// must return a transient error to enter the backoff branch; we stretch the
+// backoff to one minute and cancel ctx so the select's <-ctx.Done() arm
+// wins. Without this guard a cancellation during sustained transport flaps
+// would only fire after the full backoff elapsed.
+func (s *MainSuite) TestRunReviewCancelDuringTransportBackoff() {
+	ctx, cancel := context.WithCancel(context.Background())
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost {
+			w.WriteHeader(http.StatusAccepted)
+			return
+		}
+		// Drop the GET to produce a transport error, then cancel ctx so
+		// the backoff select picks <-ctx.Done() over the (1-minute) timer.
+		hj, ok := w.(http.Hijacker)
+		if !ok {
+			http.Error(w, "hijack unsupported", http.StatusInternalServerError)
+			return
+		}
+		conn, _, err := hj.Hijack()
+		if err != nil {
+			return
+		}
+		_ = conn.Close()
+		cancel()
+	}))
+	defer ts.Close()
+
+	s.app.reviewClient = http.DefaultClient
+	s.app.reviewPollTransportBackoff = time.Minute
+	err := s.app.runReview(ctx, &bytes.Buffer{}, ts.URL, "ch1", true, 5*time.Second)
+	require.Error(s.T(), err)
+	require.ErrorIs(s.T(), err, context.Canceled)
+}
+
 // TestRunReviewFprintlnError verifies the rare write-error branch by using
 // a stdout writer that returns an error on Write. The ready-status path
 // reaches the Fprintln call and surfaces the wrapped error.

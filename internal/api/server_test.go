@@ -334,6 +334,11 @@ func (s *ServerSuite) SetupTest() {
 }
 
 // testRequest is a helper that sends an HTTP request and returns the recorder.
+// RemoteAddr is set to a loopback address so loopback-gated endpoints
+// (e.g. /api/builtins/restore via isLoopbackRequest) succeed in tests
+// without each test having to override it. Tests that exercise the
+// non-loopback rejection path build their own *http.Request and call
+// s.mux.ServeHTTP directly.
 func (s *ServerSuite) testRequest(method, path, body string) *httptest.ResponseRecorder {
 	var req *http.Request
 	if body != "" {
@@ -341,6 +346,7 @@ func (s *ServerSuite) testRequest(method, path, body string) *httptest.ResponseR
 	} else {
 		req = httptest.NewRequest(method, path, nil)
 	}
+	req.RemoteAddr = "127.0.0.1:0"
 	rec := httptest.NewRecorder()
 	s.mux.ServeHTTP(rec, req)
 	return rec

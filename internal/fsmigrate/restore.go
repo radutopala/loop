@@ -21,19 +21,36 @@ func RestoreBuiltinShortcuts(ctx context.Context, c *Ctx) ([]string, error) {
 // the expected shape is missing, so running them on a clean seed is a no-op
 // and running them on a stale workflow brings it up to date.
 //
-// Returns the names of newly-added workflows. Patcher-only updates are not
-// returned (we don't track which patcher touched what) but the UI reads
-// success as "tried, no harm done".
-func RestoreBuiltinWorkflows(ctx context.Context, c *Ctx) ([]string, error) {
-	added, err := seedReviewLoopWorkflows(ctx, c)
+// Returns (added, patched, error). `added` is the names of newly-seeded
+// workflows; `patched` is the names of workflows the patchers mutated in
+// place (e.g. `review-fix-loop` when its verify script was stale). The two
+// lists are disjoint — a freshly-added workflow has nothing to patch. The
+// caller surfaces both to the FE so a "Restore" that only patched (no new
+// seeds) is reported as "updated" rather than the misleading
+// "already present" implied by an empty `added`.
+func RestoreBuiltinWorkflows(ctx context.Context, c *Ctx) (added []string, patched []string, err error) {
+	added, err = seedReviewLoopWorkflows(ctx, c)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	if err := patchReviewFixVerifyScript(ctx, c); err != nil {
-		return nil, err
+	verifyPatched, err := patchReviewFixVerifyScriptReport(ctx, c)
+	if err != nil {
+		return nil, nil, err
 	}
-	if err := patchReviewFixLoopBodyDeps(ctx, c); err != nil {
-		return nil, err
+	depsPatched, err := patchReviewFixLoopBodyDepsReport(ctx, c)
+	if err != nil {
+		return nil, nil, err
 	}
-	return added, nil
+	// Both patchers operate only on `review-fix-loop`. De-dupe via a set.
+	patchedSet := map[string]struct{}{}
+	if verifyPatched {
+		patchedSet[seededReviewFixLoopName] = struct{}{}
+	}
+	if depsPatched {
+		patchedSet[seededReviewFixLoopName] = struct{}{}
+	}
+	for n := range patchedSet {
+		patched = append(patched, n)
+	}
+	return added, patched, nil
 }

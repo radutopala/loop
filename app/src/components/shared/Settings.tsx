@@ -162,8 +162,11 @@ export function Settings({ open, projectDirPath, channelId, channel, sidebarOpen
     try {
       const result = await restoreBuiltins(kind);
       // Re-fetch global config so the form picks up newly-seeded entries.
+      // Skip the overwrite if the user has unsaved global edits in the form —
+      // setGlobalConfig would silently blow them away. The newly-seeded items
+      // will be picked up on the next reopen / save cycle instead.
       const fresh = await fetchGlobalConfig().catch(() => null);
-      if (fresh) setGlobalConfig(fresh);
+      if (fresh && !globalDirty) setGlobalConfig(fresh);
       const added = result.added.length ? `Added: ${result.added.join(", ")}` : null;
       const skipped = result.skipped.length ? `Already present: ${result.skipped.join(", ")}` : null;
       setRestoreMsg([added, skipped].filter(Boolean).join(" · ") || "Nothing to restore");

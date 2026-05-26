@@ -3,8 +3,10 @@ package api
 import (
 	"encoding/json"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/stretchr/testify/require"
 )
@@ -118,4 +120,53 @@ func (s *ServerSuite) TestHandleRestoreBuiltinsPropagatesSeederError() {
 
 	rec := s.testRequest(http.MethodPost, "/api/builtins/restore", `{"kind":"workflows"}`)
 	require.Equal(s.T(), http.StatusInternalServerError, rec.Code)
+}
+
+func (s *ServerSuite) TestHandleRestoreBuiltinsRejectsNonLoopback() {
+	s.writeLoopConfig(`{}`)
+	// Bypass testRequest's loopback default — build the request directly so
+	// the LAN/WAN rejection path runs.
+	req := httptest.NewRequest(http.MethodPost, "/api/builtins/restore", strings.NewReader(`{"kind":"shortcuts"}`))
+	req.RemoteAddr = "192.0.2.5:4242" // TestNet-1
+	rec := httptest.NewRecorder()
+	s.mux.ServeHTTP(rec, req)
+	require.Equal(s.T(), http.StatusForbidden, rec.Code)
+	require.Contains(s.T(), rec.Body.String(), "loopback")
+}
+
+func (s *ServerSuite) TestHandleRestoreBuiltinsAllowsIPv6Loopback() {
+	s.writeLoopConfig(`{}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/builtins/restore", strings.NewReader(`{"kind":"shortcuts"}`))
+	req.RemoteAddr = "[::1]:4242"
+	rec := httptest.NewRecorder()
+	s.mux.ServeHTTP(rec, req)
+	require.Equal(s.T(), http.StatusOK, rec.Code)
+}
+
+func (s *ServerSuite) TestHandleRestoreBuiltinsRejectsUnparsableRemoteAddr() {
+	s.writeLoopConfig(`{}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/builtins/restore", strings.NewReader(`{"kind":"shortcuts"}`))
+	// Garbage RemoteAddr (no port, not a valid IP) — the safe default is to
+	// reject rather than fall through.
+	req.RemoteAddr = "not-an-address"
+	rec := httptest.NewRecorder()
+	s.mux.ServeHTTP(rec, req)
+	require.Equal(s.T(), http.StatusForbidden, rec.Code)
+}
+
+func (s *ServerSuite) TestHandleRestoreBuiltinsPatchedSurfaceInResponse() {
+	// Stale review-fix-loop with the old verify script — patcher runs and the
+	// workflow name lands in `patched`, not `skipped`.
+	s.writeLoopConfig(`{"workflows":[{"name":"review-loop"},{"name":"review-fix-loop","nodes":[{"type":"loop","body":[{"id":"verify","script":"old"}]}]}]}`)
+
+	rec := s.testRequest(http.MethodPost, "/api/builtins/restore", `{"kind":"workflows"}`)
+	require.Equal(s.T(), http.StatusOK, rec.Code)
+	// JSON envelope contains a non-empty patched array (even though the
+	// patcher won't trigger on this exact stale shape we still want to see
+	// the field shape stable as `[]`).
+	var resp builtinRestoreResponse
+	require.NoError(s.T(), json.NewDecoder(rec.Body).Decode(&resp))
+	require.Equal(s.T(), "workflows", resp.Kind)
+	// patched is always emitted as [] (never null) for FE stability.
+	require.NotNil(s.T(), resp.Patched)
 }

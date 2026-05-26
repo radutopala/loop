@@ -38,8 +38,11 @@ export function ContextMenu({ x, y, items, onClose }: ContextMenuProps) {
     if (ny + r.height > window.innerHeight - margin) {
       ny = Math.max(margin, window.innerHeight - r.height - margin);
     }
+    // Only update state when we actually shifted. The initial useState({x,y})
+    // already matches the unshifted position, so setting it again would
+    // allocate a fresh object literal and force a no-op re-render on every
+    // menu open.
     if (nx !== x || ny !== y) setPos({ x: nx, y: ny });
-    else setPos({ x, y });
   }, [x, y]);
 
   useEffect(() => {
