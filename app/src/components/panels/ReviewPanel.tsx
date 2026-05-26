@@ -337,7 +337,13 @@ export function ReviewPanel({
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
       setSession((prev) => prev ? { ...prev, status: "ready" } : prev);
-      setLoopChip("");
+      // Show an explicit "failed" chip alongside the error banner instead of
+      // clearing it. Clearing made the failure invisible in the header — the
+      // user only saw the error text below and had to infer that no run
+      // started. A terminal chip mirrors the workflow.run_completed("failed")
+      // path so the visual state is consistent across the two failure modes
+      // (pre-dispatch throw here vs. daemon-side failure observed via WS).
+      setLoopChip("failed");
       setLoopActive(false);
     } finally {
       setBusy(false);
