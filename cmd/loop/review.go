@@ -153,7 +153,26 @@ func (a *app) runReview(ctx context.Context, stdout io.Writer, apiURL, channelID
 		}
 		out, terminal, perr := pollReviewOnce(ctx, client, getURL)
 		if perr != nil {
-			return wrapTimeout(perr)
+			// Transport-level error (TCP reset, momentary daemon restart, proxy
+			// 502, hung response cancelled by our own ctx timeout). With
+			// --timeout 30m and a 1s poll cadence we make thousands of GETs;
+			// treating any single hiccup as fatal would kill a review-fix loop
+			// iteration on the first packet drop. Bail only when the run ctx is
+			// genuinely done (cancellation or our own deadline); otherwise back
+			// off briefly and keep polling — the overall context.WithTimeout
+			// still bounds the wait.
+			if errors.Is(perr, context.Canceled) || errors.Is(perr, context.DeadlineExceeded) ||
+				ctx.Err() != nil {
+				return wrapTimeout(perr)
+			}
+			t := time.NewTimer(a.reviewPollTransportBackoff)
+			select {
+			case <-ctx.Done():
+				t.Stop()
+				return wrapTimeout(ctx.Err())
+			case <-t.C:
+			}
+			continue
 		}
 		if terminal {
 			enc, _ := json.Marshal(out) // shape is fixed; cannot fail
@@ -165,7 +184,7 @@ func (a *app) runReview(ctx context.Context, stdout io.Writer, apiURL, channelID
 			}
 			return nil
 		}
-		t := time.NewTimer(time.Second)
+		t := time.NewTimer(a.reviewPollInterval)
 		select {
 		case <-ctx.Done():
 			t.Stop()

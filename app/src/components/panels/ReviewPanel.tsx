@@ -504,18 +504,17 @@ export function ReviewPanel({
   // shows a not-allowed cursor — otherwise `disabled` is a no-op visual.
   const disabledStyle: React.CSSProperties = { opacity: 0.4, cursor: "not-allowed" };
   const syncDisabled = busy || session?.status === "reviewing" || session?.status === "loading";
-  // Defense-in-depth alongside `loopActive`: while the run is in flight the
-  // chip cycles through non-terminal states ("starting...", "running iter N",
-  // "<node> — iter N", "paused at gate — ..."), and only the
-  // workflow.run_completed handler swaps it for "done"/"failed"/"cancelled".
-  // Gating on `loopRunId !== null && !isLoopTerminal` makes the "you cannot
-  // start a second concurrent run on this channel" invariant explicit from
-  // the visible chip state, not just from the loopActive boolean.
-  const isLoopTerminal = loopChip === "done" || loopChip === "failed" || loopChip === "cancelled";
+  // `loopActive` is the single source of truth for "a run is in flight": set
+  // when runMode dispatches the workflow, cleared in the workflow.run_completed
+  // handler regardless of the daemon's terminal status. Earlier this gate also
+  // checked `loopRunId !== null && !isLoopTerminal` as defense-in-depth, but
+  // `isLoopTerminal` only matched the three known terminal chip strings
+  // ("done"/"failed"/"cancelled"). Any other terminal status from the daemon
+  // (e.g. "deleted" from engine.DeleteRun, or anything added later) left
+  // isLoopTerminal false and trapped the Run button until the user reloaded.
   const runDisabled = busy
     || session?.status !== "ready"
-    || loopActive
-    || (loopRunId !== null && !isLoopTerminal);
+    || loopActive;
   const closeDisabled = busy;
 
   return (

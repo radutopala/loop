@@ -325,7 +325,7 @@ func (s *FSMigrateSuite) TestRefreshContainerFilesSetupWriteError() {
 func (s *FSMigrateSuite) TestSeedBuiltinCodeReviewShortcutNoConfigFile() {
 	sys := newFakeSystem()
 
-	_, err := seedBuiltinCodeReviewShortcut(context.Background(), &Ctx{Sys: sys, LoopDir: "/loop"}, json.MarshalIndent)
+	_, err := seedBuiltinCodeReviewShortcut(context.Background(), &Ctx{Sys: sys, LoopDir: "/loop"})
 	require.NoError(s.T(), err)
 	require.Empty(s.T(), sys.files, "no file should be written when config is absent")
 }
@@ -336,7 +336,7 @@ func (s *FSMigrateSuite) TestSeedBuiltinCodeReviewShortcutReadError() {
 	sys.files[configPath] = []byte("{}")
 	sys.readErr[configPath] = errors.New("permission denied")
 
-	_, err := seedBuiltinCodeReviewShortcut(context.Background(), &Ctx{Sys: sys, LoopDir: "/loop"}, json.MarshalIndent)
+	_, err := seedBuiltinCodeReviewShortcut(context.Background(), &Ctx{Sys: sys, LoopDir: "/loop"})
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "reading")
 }
@@ -346,9 +346,9 @@ func (s *FSMigrateSuite) TestSeedBuiltinCodeReviewShortcutInvalidHJSON() {
 	configPath := filepath.Join("/loop", "config.json")
 	sys.files[configPath] = []byte("{not even close")
 
-	_, err := seedBuiltinCodeReviewShortcut(context.Background(), &Ctx{Sys: sys, LoopDir: "/loop"}, json.MarshalIndent)
+	_, err := seedBuiltinCodeReviewShortcut(context.Background(), &Ctx{Sys: sys, LoopDir: "/loop"})
 	require.Error(s.T(), err)
-	require.Contains(s.T(), err.Error(), "standardizing")
+	require.Contains(s.T(), err.Error(), "parsing")
 }
 
 func (s *FSMigrateSuite) TestSeedBuiltinCodeReviewShortcutInvalidJSON() {
@@ -358,7 +358,7 @@ func (s *FSMigrateSuite) TestSeedBuiltinCodeReviewShortcutInvalidJSON() {
 	// fails json.Unmarshal into map[string]any.
 	sys.files[configPath] = []byte("[]")
 
-	_, err := seedBuiltinCodeReviewShortcut(context.Background(), &Ctx{Sys: sys, LoopDir: "/loop"}, json.MarshalIndent)
+	_, err := seedBuiltinCodeReviewShortcut(context.Background(), &Ctx{Sys: sys, LoopDir: "/loop"})
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "parsing")
 }
@@ -368,7 +368,7 @@ func (s *FSMigrateSuite) TestSeedBuiltinCodeReviewShortcutAlreadyPresent() {
 	configPath := filepath.Join("/loop", "config.json")
 	sys.files[configPath] = []byte(`{"prompt_shortcuts":[{"name":"builtin code review","prompt":"/code-review"}]}`)
 
-	_, err := seedBuiltinCodeReviewShortcut(context.Background(), &Ctx{Sys: sys, LoopDir: "/loop"}, json.MarshalIndent)
+	_, err := seedBuiltinCodeReviewShortcut(context.Background(), &Ctx{Sys: sys, LoopDir: "/loop"})
 	require.NoError(s.T(), err)
 	require.Equal(s.T(),
 		[]byte(`{"prompt_shortcuts":[{"name":"builtin code review","prompt":"/code-review"}]}`),
@@ -382,7 +382,7 @@ func (s *FSMigrateSuite) TestSeedBuiltinCodeReviewShortcutEmptyConfig() {
 	configPath := filepath.Join("/loop", "config.json")
 	sys.files[configPath] = []byte(`{}`)
 
-	_, err := seedBuiltinCodeReviewShortcut(context.Background(), &Ctx{Sys: sys, LoopDir: "/loop"}, json.MarshalIndent)
+	_, err := seedBuiltinCodeReviewShortcut(context.Background(), &Ctx{Sys: sys, LoopDir: "/loop"})
 	require.NoError(s.T(), err)
 
 	var cfg map[string]any
@@ -400,7 +400,7 @@ func (s *FSMigrateSuite) TestSeedBuiltinCodeReviewShortcutAppendsToExisting() {
 	configPath := filepath.Join("/loop", "config.json")
 	sys.files[configPath] = []byte(`{"prompt_shortcuts":[{"name":"review","prompt_path":"review-code.md"}]}`)
 
-	_, err := seedBuiltinCodeReviewShortcut(context.Background(), &Ctx{Sys: sys, LoopDir: "/loop"}, json.MarshalIndent)
+	_, err := seedBuiltinCodeReviewShortcut(context.Background(), &Ctx{Sys: sys, LoopDir: "/loop"})
 	require.NoError(s.T(), err)
 
 	var cfg map[string]any
@@ -417,7 +417,7 @@ func (s *FSMigrateSuite) TestSeedBuiltinCodeReviewShortcutSkipsNonMapEntries() {
 	// Defensive: a bogus non-object entry must not crash or block the seed.
 	sys.files[configPath] = []byte(`{"prompt_shortcuts":["bogus",{"name":"other"}]}`)
 
-	_, err := seedBuiltinCodeReviewShortcut(context.Background(), &Ctx{Sys: sys, LoopDir: "/loop"}, json.MarshalIndent)
+	_, err := seedBuiltinCodeReviewShortcut(context.Background(), &Ctx{Sys: sys, LoopDir: "/loop"})
 	require.NoError(s.T(), err)
 
 	var cfg map[string]any
@@ -433,20 +433,9 @@ func (s *FSMigrateSuite) TestSeedBuiltinCodeReviewShortcutWriteError() {
 	sys.files[configPath] = []byte(`{}`)
 	sys.writeErr[configPath] = errors.New("io error")
 
-	_, err := seedBuiltinCodeReviewShortcut(context.Background(), &Ctx{Sys: sys, LoopDir: "/loop"}, json.MarshalIndent)
+	_, err := seedBuiltinCodeReviewShortcut(context.Background(), &Ctx{Sys: sys, LoopDir: "/loop"})
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "writing")
-}
-
-func (s *FSMigrateSuite) TestSeedBuiltinCodeReviewShortcutMarshalError() {
-	sys := newFakeSystem()
-	configPath := filepath.Join("/loop", "config.json")
-	sys.files[configPath] = []byte(`{}`)
-
-	failingMarshal := func(_ any, _, _ string) ([]byte, error) { return nil, errors.New("marshal fail") }
-	_, err := seedBuiltinCodeReviewShortcut(context.Background(), &Ctx{Sys: sys, LoopDir: "/loop"}, failingMarshal)
-	require.Error(s.T(), err)
-	require.Contains(s.T(), err.Error(), "serializing")
 }
 
 // --- Bootstrap entry guard ---
@@ -462,7 +451,7 @@ func (s *FSMigrateSuite) TestMigrationsHaveBootstrapEntry() {
 func (s *FSMigrateSuite) TestSeedReviewLoopWorkflowsNoConfigFile() {
 	sys := newFakeSystem()
 
-	_, err := seedReviewLoopWorkflows(context.Background(), &Ctx{Sys: sys, LoopDir: "/loop"}, json.MarshalIndent)
+	_, err := seedReviewLoopWorkflows(context.Background(), &Ctx{Sys: sys, LoopDir: "/loop"})
 	require.NoError(s.T(), err)
 	require.Empty(s.T(), sys.files, "no file should be written when config is absent")
 }
@@ -473,7 +462,7 @@ func (s *FSMigrateSuite) TestSeedReviewLoopWorkflowsReadError() {
 	sys.files[configPath] = []byte("{}")
 	sys.readErr[configPath] = errors.New("permission denied")
 
-	_, err := seedReviewLoopWorkflows(context.Background(), &Ctx{Sys: sys, LoopDir: "/loop"}, json.MarshalIndent)
+	_, err := seedReviewLoopWorkflows(context.Background(), &Ctx{Sys: sys, LoopDir: "/loop"})
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "reading")
 }
@@ -483,9 +472,9 @@ func (s *FSMigrateSuite) TestSeedReviewLoopWorkflowsInvalidHJSON() {
 	configPath := filepath.Join("/loop", "config.json")
 	sys.files[configPath] = []byte("{not even close")
 
-	_, err := seedReviewLoopWorkflows(context.Background(), &Ctx{Sys: sys, LoopDir: "/loop"}, json.MarshalIndent)
+	_, err := seedReviewLoopWorkflows(context.Background(), &Ctx{Sys: sys, LoopDir: "/loop"})
 	require.Error(s.T(), err)
-	require.Contains(s.T(), err.Error(), "standardizing")
+	require.Contains(s.T(), err.Error(), "parsing")
 }
 
 func (s *FSMigrateSuite) TestSeedReviewLoopWorkflowsInvalidJSON() {
@@ -493,7 +482,7 @@ func (s *FSMigrateSuite) TestSeedReviewLoopWorkflowsInvalidJSON() {
 	configPath := filepath.Join("/loop", "config.json")
 	sys.files[configPath] = []byte("[]")
 
-	_, err := seedReviewLoopWorkflows(context.Background(), &Ctx{Sys: sys, LoopDir: "/loop"}, json.MarshalIndent)
+	_, err := seedReviewLoopWorkflows(context.Background(), &Ctx{Sys: sys, LoopDir: "/loop"})
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "parsing")
 }
@@ -503,7 +492,7 @@ func (s *FSMigrateSuite) TestSeedReviewLoopWorkflowsSeedsBoth() {
 	configPath := filepath.Join("/loop", "config.json")
 	sys.files[configPath] = []byte(`{}`)
 
-	_, err := seedReviewLoopWorkflows(context.Background(), &Ctx{Sys: sys, LoopDir: "/loop"}, json.MarshalIndent)
+	_, err := seedReviewLoopWorkflows(context.Background(), &Ctx{Sys: sys, LoopDir: "/loop"})
 	require.NoError(s.T(), err)
 
 	var cfg map[string]any
@@ -525,7 +514,7 @@ func (s *FSMigrateSuite) TestSeedReviewLoopWorkflowsBothAlreadyPresentIsNoop() {
 	original := []byte(`{"workflows":[{"name":"review-loop"},{"name":"review-fix-loop"}]}`)
 	sys.files[configPath] = append([]byte(nil), original...)
 
-	_, err := seedReviewLoopWorkflows(context.Background(), &Ctx{Sys: sys, LoopDir: "/loop"}, json.MarshalIndent)
+	_, err := seedReviewLoopWorkflows(context.Background(), &Ctx{Sys: sys, LoopDir: "/loop"})
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), original, sys.files[configPath], "file must not be rewritten when both entries already exist")
 }
@@ -536,7 +525,7 @@ func (s *FSMigrateSuite) TestSeedReviewLoopWorkflowsAppendsMissingOnly() {
 	// review-loop already present; only review-fix-loop should be appended.
 	sys.files[configPath] = []byte(`{"workflows":[{"name":"review-loop"}]}`)
 
-	_, err := seedReviewLoopWorkflows(context.Background(), &Ctx{Sys: sys, LoopDir: "/loop"}, json.MarshalIndent)
+	_, err := seedReviewLoopWorkflows(context.Background(), &Ctx{Sys: sys, LoopDir: "/loop"})
 	require.NoError(s.T(), err)
 
 	var cfg map[string]any
@@ -552,7 +541,7 @@ func (s *FSMigrateSuite) TestSeedReviewLoopWorkflowsSkipsNonMapEntries() {
 	configPath := filepath.Join("/loop", "config.json")
 	sys.files[configPath] = []byte(`{"workflows":["bogus",{"name":"other"}]}`)
 
-	_, err := seedReviewLoopWorkflows(context.Background(), &Ctx{Sys: sys, LoopDir: "/loop"}, json.MarshalIndent)
+	_, err := seedReviewLoopWorkflows(context.Background(), &Ctx{Sys: sys, LoopDir: "/loop"})
 	require.NoError(s.T(), err)
 
 	var cfg map[string]any
@@ -567,20 +556,9 @@ func (s *FSMigrateSuite) TestSeedReviewLoopWorkflowsWriteError() {
 	sys.files[configPath] = []byte(`{}`)
 	sys.writeErr[configPath] = errors.New("io error")
 
-	_, err := seedReviewLoopWorkflows(context.Background(), &Ctx{Sys: sys, LoopDir: "/loop"}, json.MarshalIndent)
+	_, err := seedReviewLoopWorkflows(context.Background(), &Ctx{Sys: sys, LoopDir: "/loop"})
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "writing")
-}
-
-func (s *FSMigrateSuite) TestSeedReviewLoopWorkflowsMarshalError() {
-	sys := newFakeSystem()
-	configPath := filepath.Join("/loop", "config.json")
-	sys.files[configPath] = []byte(`{}`)
-
-	failingMarshal := func(_ any, _, _ string) ([]byte, error) { return nil, errors.New("marshal fail") }
-	_, err := seedReviewLoopWorkflows(context.Background(), &Ctx{Sys: sys, LoopDir: "/loop"}, failingMarshal)
-	require.Error(s.T(), err)
-	require.Contains(s.T(), err.Error(), "serializing")
 }
 
 // --- builtin loop def shape guards ---
@@ -656,7 +634,7 @@ func reviewFixLoopWithVerifyScript(script string) string {
 
 func (s *FSMigrateSuite) TestPatchReviewFixVerifyScriptNoConfigFile() {
 	sys := newFakeSystem()
-	err := patchReviewFixVerifyScript(context.Background(), &Ctx{Sys: sys, LoopDir: "/loop"}, json.MarshalIndent)
+	err := patchReviewFixVerifyScript(context.Background(), &Ctx{Sys: sys, LoopDir: "/loop"})
 	require.NoError(s.T(), err)
 }
 
@@ -665,7 +643,7 @@ func (s *FSMigrateSuite) TestPatchReviewFixVerifyScriptReadError() {
 	configPath := filepath.Join("/loop", "config.json")
 	sys.files[configPath] = []byte(`{}`)
 	sys.readErr[configPath] = errors.New("io error")
-	err := patchReviewFixVerifyScript(context.Background(), &Ctx{Sys: sys, LoopDir: "/loop"}, json.MarshalIndent)
+	err := patchReviewFixVerifyScript(context.Background(), &Ctx{Sys: sys, LoopDir: "/loop"})
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "reading")
 }
@@ -674,16 +652,16 @@ func (s *FSMigrateSuite) TestPatchReviewFixVerifyScriptInvalidHJSON() {
 	sys := newFakeSystem()
 	configPath := filepath.Join("/loop", "config.json")
 	sys.files[configPath] = []byte(`{not json`)
-	err := patchReviewFixVerifyScript(context.Background(), &Ctx{Sys: sys, LoopDir: "/loop"}, json.MarshalIndent)
+	err := patchReviewFixVerifyScript(context.Background(), &Ctx{Sys: sys, LoopDir: "/loop"})
 	require.Error(s.T(), err)
-	require.Contains(s.T(), err.Error(), "standardizing")
+	require.Contains(s.T(), err.Error(), "parsing")
 }
 
 func (s *FSMigrateSuite) TestPatchReviewFixVerifyScriptInvalidJSON() {
 	sys := newFakeSystem()
 	configPath := filepath.Join("/loop", "config.json")
 	sys.files[configPath] = []byte(`["not an object"]`)
-	err := patchReviewFixVerifyScript(context.Background(), &Ctx{Sys: sys, LoopDir: "/loop"}, json.MarshalIndent)
+	err := patchReviewFixVerifyScript(context.Background(), &Ctx{Sys: sys, LoopDir: "/loop"})
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "parsing")
 }
@@ -693,7 +671,7 @@ func (s *FSMigrateSuite) TestPatchReviewFixVerifyScriptUpdatesOldScript() {
 	configPath := filepath.Join("/loop", "config.json")
 	sys.files[configPath] = []byte(reviewFixLoopWithVerifyScript(reviewFixVerifyScriptOld))
 
-	err := patchReviewFixVerifyScript(context.Background(), &Ctx{Sys: sys, LoopDir: "/loop"}, json.MarshalIndent)
+	err := patchReviewFixVerifyScript(context.Background(), &Ctx{Sys: sys, LoopDir: "/loop"})
 	require.NoError(s.T(), err)
 
 	var cfg map[string]any
@@ -708,7 +686,7 @@ func (s *FSMigrateSuite) TestPatchReviewFixVerifyScriptUpdatesBuggyAddAllScript(
 	configPath := filepath.Join("/loop", "config.json")
 	sys.files[configPath] = []byte(reviewFixLoopWithVerifyScript(reviewFixVerifyScriptBuggyAddAll))
 
-	err := patchReviewFixVerifyScript(context.Background(), &Ctx{Sys: sys, LoopDir: "/loop"}, json.MarshalIndent)
+	err := patchReviewFixVerifyScript(context.Background(), &Ctx{Sys: sys, LoopDir: "/loop"})
 	require.NoError(s.T(), err)
 
 	var cfg map[string]any
@@ -724,7 +702,7 @@ func (s *FSMigrateSuite) TestPatchReviewFixVerifyScriptLeavesCustomizedScriptAlo
 	original := []byte(reviewFixLoopWithVerifyScript("my custom script"))
 	sys.files[configPath] = append([]byte(nil), original...)
 
-	err := patchReviewFixVerifyScript(context.Background(), &Ctx{Sys: sys, LoopDir: "/loop"}, json.MarshalIndent)
+	err := patchReviewFixVerifyScript(context.Background(), &Ctx{Sys: sys, LoopDir: "/loop"})
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), original, sys.files[configPath], "customized verify script must not be rewritten")
 }
@@ -735,7 +713,7 @@ func (s *FSMigrateSuite) TestPatchReviewFixVerifyScriptNoMatchingWorkflowIsNoop(
 	original := []byte(`{"workflows":[{"name":"some-other-workflow"}]}`)
 	sys.files[configPath] = append([]byte(nil), original...)
 
-	err := patchReviewFixVerifyScript(context.Background(), &Ctx{Sys: sys, LoopDir: "/loop"}, json.MarshalIndent)
+	err := patchReviewFixVerifyScript(context.Background(), &Ctx{Sys: sys, LoopDir: "/loop"})
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), original, sys.files[configPath])
 }
@@ -747,7 +725,7 @@ func (s *FSMigrateSuite) TestPatchReviewFixVerifyScriptSkipsNonMapEntries() {
 	// nodes[0] is not a map. Walker must not panic and must not patch.
 	sys.files[configPath] = []byte(`{"workflows":["bogus",{"name":"review-fix-loop","nodes":["not-a-map",{"type":"loop","body":["not-a-map",{"id":"verify","type":"bash","script":"` + reviewFixVerifyScriptOld + `"}]}]}]}`)
 
-	err := patchReviewFixVerifyScript(context.Background(), &Ctx{Sys: sys, LoopDir: "/loop"}, json.MarshalIndent)
+	err := patchReviewFixVerifyScript(context.Background(), &Ctx{Sys: sys, LoopDir: "/loop"})
 	require.NoError(s.T(), err)
 
 	var cfg map[string]any
@@ -763,20 +741,9 @@ func (s *FSMigrateSuite) TestPatchReviewFixVerifyScriptWriteError() {
 	sys.files[configPath] = []byte(reviewFixLoopWithVerifyScript(reviewFixVerifyScriptOld))
 	sys.writeErr[configPath] = errors.New("io error")
 
-	err := patchReviewFixVerifyScript(context.Background(), &Ctx{Sys: sys, LoopDir: "/loop"}, json.MarshalIndent)
+	err := patchReviewFixVerifyScript(context.Background(), &Ctx{Sys: sys, LoopDir: "/loop"})
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "writing")
-}
-
-func (s *FSMigrateSuite) TestPatchReviewFixVerifyScriptMarshalError() {
-	sys := newFakeSystem()
-	configPath := filepath.Join("/loop", "config.json")
-	sys.files[configPath] = []byte(reviewFixLoopWithVerifyScript(reviewFixVerifyScriptOld))
-
-	failingMarshal := func(_ any, _, _ string) ([]byte, error) { return nil, errors.New("marshal fail") }
-	err := patchReviewFixVerifyScript(context.Background(), &Ctx{Sys: sys, LoopDir: "/loop"}, failingMarshal)
-	require.Error(s.T(), err)
-	require.Contains(s.T(), err.Error(), "serializing")
 }
 
 // --- patchReviewFixLoopBodyDeps tests ---
@@ -812,7 +779,7 @@ func reviewFixLoopBodyConfig(preset map[string]any) string {
 
 func (s *FSMigrateSuite) TestPatchReviewFixLoopBodyDepsNoConfigFile() {
 	sys := newFakeSystem()
-	err := patchReviewFixLoopBodyDeps(context.Background(), &Ctx{Sys: sys, LoopDir: "/loop"}, json.MarshalIndent)
+	err := patchReviewFixLoopBodyDeps(context.Background(), &Ctx{Sys: sys, LoopDir: "/loop"})
 	require.NoError(s.T(), err)
 }
 
@@ -821,7 +788,7 @@ func (s *FSMigrateSuite) TestPatchReviewFixLoopBodyDepsReadError() {
 	configPath := filepath.Join("/loop", "config.json")
 	sys.files[configPath] = []byte(`{}`)
 	sys.readErr[configPath] = errors.New("io error")
-	err := patchReviewFixLoopBodyDeps(context.Background(), &Ctx{Sys: sys, LoopDir: "/loop"}, json.MarshalIndent)
+	err := patchReviewFixLoopBodyDeps(context.Background(), &Ctx{Sys: sys, LoopDir: "/loop"})
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "reading")
 }
@@ -830,16 +797,16 @@ func (s *FSMigrateSuite) TestPatchReviewFixLoopBodyDepsInvalidHJSON() {
 	sys := newFakeSystem()
 	configPath := filepath.Join("/loop", "config.json")
 	sys.files[configPath] = []byte(`{not json`)
-	err := patchReviewFixLoopBodyDeps(context.Background(), &Ctx{Sys: sys, LoopDir: "/loop"}, json.MarshalIndent)
+	err := patchReviewFixLoopBodyDeps(context.Background(), &Ctx{Sys: sys, LoopDir: "/loop"})
 	require.Error(s.T(), err)
-	require.Contains(s.T(), err.Error(), "standardizing")
+	require.Contains(s.T(), err.Error(), "parsing")
 }
 
 func (s *FSMigrateSuite) TestPatchReviewFixLoopBodyDepsInvalidJSON() {
 	sys := newFakeSystem()
 	configPath := filepath.Join("/loop", "config.json")
 	sys.files[configPath] = []byte(`["not an object"]`)
-	err := patchReviewFixLoopBodyDeps(context.Background(), &Ctx{Sys: sys, LoopDir: "/loop"}, json.MarshalIndent)
+	err := patchReviewFixLoopBodyDeps(context.Background(), &Ctx{Sys: sys, LoopDir: "/loop"})
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "parsing")
 }
@@ -849,7 +816,7 @@ func (s *FSMigrateSuite) TestPatchReviewFixLoopBodyDepsAddsMissingDeps() {
 	configPath := filepath.Join("/loop", "config.json")
 	sys.files[configPath] = []byte(reviewFixLoopBodyConfig(nil))
 
-	err := patchReviewFixLoopBodyDeps(context.Background(), &Ctx{Sys: sys, LoopDir: "/loop"}, json.MarshalIndent)
+	err := patchReviewFixLoopBodyDeps(context.Background(), &Ctx{Sys: sys, LoopDir: "/loop"})
 	require.NoError(s.T(), err)
 
 	var cfg map[string]any
@@ -871,7 +838,7 @@ func (s *FSMigrateSuite) TestPatchReviewFixLoopBodyDepsLeavesExistingDepsAlone()
 	}))
 	original := append([]byte(nil), sys.files[configPath]...)
 
-	err := patchReviewFixLoopBodyDeps(context.Background(), &Ctx{Sys: sys, LoopDir: "/loop"}, json.MarshalIndent)
+	err := patchReviewFixLoopBodyDeps(context.Background(), &Ctx{Sys: sys, LoopDir: "/loop"})
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), original, sys.files[configPath], "customized depends_on must not be rewritten")
 }
@@ -882,7 +849,7 @@ func (s *FSMigrateSuite) TestPatchReviewFixLoopBodyDepsNoMatchingWorkflowIsNoop(
 	original := []byte(`{"workflows":[{"name":"some-other-workflow"}]}`)
 	sys.files[configPath] = append([]byte(nil), original...)
 
-	err := patchReviewFixLoopBodyDeps(context.Background(), &Ctx{Sys: sys, LoopDir: "/loop"}, json.MarshalIndent)
+	err := patchReviewFixLoopBodyDeps(context.Background(), &Ctx{Sys: sys, LoopDir: "/loop"})
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), original, sys.files[configPath])
 }
@@ -895,7 +862,7 @@ func (s *FSMigrateSuite) TestPatchReviewFixLoopBodyDepsSkipsNonMapEntries() {
 	// reachable second loop's fix/verify children.
 	sys.files[configPath] = []byte(`{"workflows":["bogus",{"name":"review-fix-loop","nodes":["not-a-map",{"type":"loop","body":["not-a-map",{"id":"review","type":"bash"},{"id":"fix","type":"prompt"},{"id":"verify","type":"bash"}]}]}]}`)
 
-	err := patchReviewFixLoopBodyDeps(context.Background(), &Ctx{Sys: sys, LoopDir: "/loop"}, json.MarshalIndent)
+	err := patchReviewFixLoopBodyDeps(context.Background(), &Ctx{Sys: sys, LoopDir: "/loop"})
 	require.NoError(s.T(), err)
 
 	var cfg map[string]any
@@ -911,18 +878,7 @@ func (s *FSMigrateSuite) TestPatchReviewFixLoopBodyDepsWriteError() {
 	sys.files[configPath] = []byte(reviewFixLoopBodyConfig(nil))
 	sys.writeErr[configPath] = errors.New("io error")
 
-	err := patchReviewFixLoopBodyDeps(context.Background(), &Ctx{Sys: sys, LoopDir: "/loop"}, json.MarshalIndent)
+	err := patchReviewFixLoopBodyDeps(context.Background(), &Ctx{Sys: sys, LoopDir: "/loop"})
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "writing")
-}
-
-func (s *FSMigrateSuite) TestPatchReviewFixLoopBodyDepsMarshalError() {
-	sys := newFakeSystem()
-	configPath := filepath.Join("/loop", "config.json")
-	sys.files[configPath] = []byte(reviewFixLoopBodyConfig(nil))
-
-	failingMarshal := func(_ any, _, _ string) ([]byte, error) { return nil, errors.New("marshal fail") }
-	err := patchReviewFixLoopBodyDeps(context.Background(), &Ctx{Sys: sys, LoopDir: "/loop"}, failingMarshal)
-	require.Error(s.T(), err)
-	require.Contains(s.T(), err.Error(), "serializing")
 }

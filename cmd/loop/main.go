@@ -12,6 +12,7 @@ import (
 	"os"
 	"runtime/debug"
 	"strings"
+	"time"
 
 	"github.com/bwmarrin/discordgo"
 	dockerclient "github.com/docker/docker/client"
@@ -141,6 +142,15 @@ type app struct {
 	// driven against a fake review endpoint without spinning up serve.
 	reviewClient reviewHTTPClient
 
+	// reviewPollInterval is the gap between successful poll-and-not-terminal
+	// GETs on /api/channels/{id}/review. reviewPollTransportBackoff is the
+	// gap used after a transient transport error (TCP reset, momentary
+	// daemon restart, proxy 502) so a single hiccup doesn't kill a 30-minute
+	// review run. Held as struct fields so tests can shrink them without
+	// resorting to package-level var save/restore.
+	reviewPollInterval         time.Duration
+	reviewPollTransportBackoff time.Duration
+
 	// Embedded FS for playground examples (overridable for testing)
 	playgroundExamplesFS fs.FS
 
@@ -240,6 +250,11 @@ func newApp() *app {
 
 		// Evolution history-reader factory
 		newEvolutionReader: func() evolution.HistoryReader { return evolution.NewExecReader() },
+
+		// Poll cadences for `loop review run --wait`. Production defaults tuned
+		// for a real daemon that takes seconds, not microseconds, to recover.
+		reviewPollInterval:         time.Second,
+		reviewPollTransportBackoff: 2 * time.Second,
 
 		serveReady: make(chan struct{}),
 	}

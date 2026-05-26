@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/tailscale/hujson"
 
@@ -35,22 +36,20 @@ var migrations = []Migration{
 	{
 		Description: "seed builtin code review prompt shortcut",
 		Apply: func(ctx context.Context, c *Ctx) error {
-			_, err := seedBuiltinCodeReviewShortcut(ctx, c, json.MarshalIndent)
+			_, err := seedBuiltinCodeReviewShortcut(ctx, c)
 			return err
 		},
 	},
 	{
 		Description: "seed review-loop and review-fix-loop workflows",
 		Apply: func(ctx context.Context, c *Ctx) error {
-			_, err := seedReviewLoopWorkflows(ctx, c, json.MarshalIndent)
+			_, err := seedReviewLoopWorkflows(ctx, c)
 			return err
 		},
 	},
 	{
 		Description: "patch review-fix-loop verify step to commit leftover changes",
-		Apply: func(ctx context.Context, c *Ctx) error {
-			return patchReviewFixVerifyScript(ctx, c, json.MarshalIndent)
-		},
+		Apply:       patchReviewFixVerifyScript,
 	},
 	{
 		// Re-runs the patcher to swap the interim `git add -A` verify
@@ -59,9 +58,7 @@ var migrations = []Migration{
 		// migration #7 with the buggy script in place wouldn't be caught
 		// by #7 a second time; this dedicated entry fixes them.
 		Description: "patch review-fix-loop verify step: replace unsafe git add -A with git add -u",
-		Apply: func(ctx context.Context, c *Ctx) error {
-			return patchReviewFixVerifyScript(ctx, c, json.MarshalIndent)
-		},
+		Apply:       patchReviewFixVerifyScript,
 	},
 	{
 		// Backfill body-child `depends_on` so the FE WorkflowGraph draws
@@ -71,9 +68,7 @@ var migrations = []Migration{
 		// executeLoopNode runs body children in array order regardless,
 		// so the change is purely visual.
 		Description: "patch review-fix-loop body children with explicit depends_on",
-		Apply: func(ctx context.Context, c *Ctx) error {
-			return patchReviewFixLoopBodyDeps(ctx, c, json.MarshalIndent)
-		},
+		Apply:       patchReviewFixLoopBodyDeps,
 	},
 }
 
@@ -137,11 +132,6 @@ func refreshContainerFiles(_ context.Context, c *Ctx) error {
 // Whitespace is intentional — it's how the entry renders in the # picker.
 const builtinCodeReviewShortcutName = "builtin code review"
 
-// marshalIndentFunc matches json.MarshalIndent. Parameterized so tests can
-// exercise the otherwise-unreachable marshal-error branch without resorting
-// to package-level var save/restore.
-type marshalIndentFunc func(v any, prefix, indent string) ([]byte, error)
-
 // seedBuiltinCodeReviewShortcut appends a default shortcut to the user's
 // existing ~/.loop/config.json. Fresh installs get the same entry via
 // config.global.example.json on first onboard; this migration covers the
@@ -149,45 +139,33 @@ type marshalIndentFunc func(v any, prefix, indent string) ([]byte, error)
 //
 // No-ops when the file doesn't exist (onboard will handle it) or when an
 // entry with the same name is already present (user may have added it
-// themselves; never duplicate).
-func seedBuiltinCodeReviewShortcut(_ context.Context, c *Ctx, marshal marshalIndentFunc) ([]string, error) {
-	configPath := filepath.Join(c.LoopDir, "config.json")
-	data, err := c.Sys.ReadFile(configPath)
-	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return nil, nil
-		}
-		return nil, fmt.Errorf("reading %s: %w", configPath, err)
+// themselves; never duplicate). Mutations go through the hujson AST so the
+// user's HJSON comments and key ordering survive — round-tripping through
+// json.Unmarshal would silently strip both.
+func seedBuiltinCodeReviewShortcut(_ context.Context, c *Ctx) ([]string, error) {
+	v, configPath, err := loadConfigHJSON(c)
+	if err != nil || v == nil {
+		return nil, err
+	}
+	rootObj, ok := v.Value.(*hujson.Object)
+	if !ok {
+		return nil, fmt.Errorf("parsing %s: expected JSON object at top level", configPath)
 	}
 
-	standardized, err := hujson.Standardize(data)
-	if err != nil {
-		return nil, fmt.Errorf("standardizing %s: %w", configPath, err)
-	}
-	var cfg map[string]any
-	if err := json.Unmarshal(standardized, &cfg); err != nil {
-		return nil, fmt.Errorf("parsing %s: %w", configPath, err)
+	existing := arrayMemberStringValues(rootObj, "prompt_shortcuts", "name")
+	if _, present := existing[builtinCodeReviewShortcutName]; present {
+		return nil, nil
 	}
 
-	shortcuts, _ := cfg["prompt_shortcuts"].([]any)
-	for _, item := range shortcuts {
-		if m, ok := item.(map[string]any); ok && m["name"] == builtinCodeReviewShortcutName {
-			return nil, nil
-		}
-	}
-
-	shortcuts = append(shortcuts, map[string]any{
+	def := map[string]any{
 		"name":        builtinCodeReviewShortcutName,
 		"description": "Run Claude Code's built-in /code-review slash command",
 		"prompt":      "/code-review",
-	})
-	cfg["prompt_shortcuts"] = shortcuts
-
-	out, err := marshal(cfg, "", "  ")
-	if err != nil {
-		return nil, fmt.Errorf("serializing %s: %w", configPath, err)
 	}
-	if err := c.Sys.WriteFile(configPath, append(out, '\n'), 0644); err != nil {
+	if err := appendOrCreateArrayMember(v, "prompt_shortcuts", def); err != nil {
+		return nil, fmt.Errorf("patching %s: %w", configPath, err)
+	}
+	if err := c.Sys.WriteFile(configPath, v.Pack(), 0644); err != nil {
 		return nil, fmt.Errorf("writing %s: %w", configPath, err)
 	}
 	return []string{builtinCodeReviewShortcutName}, nil
@@ -230,54 +208,46 @@ const reviewFixVerifyScriptBuggyAddAll = "git add -A && (git diff --cached --qui
 // in the user's ~/.loop/config.json. Each is skipped individually if an entry
 // with the same name already exists (user may have customized it). No-ops
 // when the config file doesn't exist (onboard handles fresh installs).
-func seedReviewLoopWorkflows(_ context.Context, c *Ctx, marshal marshalIndentFunc) ([]string, error) {
-	configPath := filepath.Join(c.LoopDir, "config.json")
-	data, err := c.Sys.ReadFile(configPath)
-	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return nil, nil
-		}
-		return nil, fmt.Errorf("reading %s: %w", configPath, err)
+//
+// Mutations go through the hujson AST so the user's HJSON comments and key
+// ordering survive. The previous implementation round-tripped through
+// json.Unmarshal + json.MarshalIndent, which silently stripped every comment
+// and re-sorted keys alphabetically — a real problem now that
+// /api/builtins/restore lets the user trigger this on-demand from Settings.
+func seedReviewLoopWorkflows(_ context.Context, c *Ctx) ([]string, error) {
+	v, configPath, err := loadConfigHJSON(c)
+	if err != nil || v == nil {
+		return nil, err
+	}
+	rootObj, ok := v.Value.(*hujson.Object)
+	if !ok {
+		return nil, fmt.Errorf("parsing %s: expected JSON object at top level", configPath)
 	}
 
-	standardized, err := hujson.Standardize(data)
-	if err != nil {
-		return nil, fmt.Errorf("standardizing %s: %w", configPath, err)
-	}
-	var cfg map[string]any
-	if err := json.Unmarshal(standardized, &cfg); err != nil {
-		return nil, fmt.Errorf("parsing %s: %w", configPath, err)
-	}
+	existing := arrayMemberStringValues(rootObj, "workflows", "name")
 
-	workflows, _ := cfg["workflows"].([]any)
-	existing := make(map[string]struct{}, len(workflows))
-	for _, item := range workflows {
-		if m, ok := item.(map[string]any); ok {
-			if name, _ := m["name"].(string); name != "" {
-				existing[name] = struct{}{}
-			}
-		}
+	type seed struct {
+		name string
+		def  map[string]any
 	}
-
+	seeds := []seed{
+		{seededReviewLoopName, builtinReviewLoopDef()},
+		{seededReviewFixLoopName, builtinReviewFixLoopDef()},
+	}
 	var added []string
-	if _, ok := existing[seededReviewLoopName]; !ok {
-		workflows = append(workflows, builtinReviewLoopDef())
-		added = append(added, seededReviewLoopName)
-	}
-	if _, ok := existing[seededReviewFixLoopName]; !ok {
-		workflows = append(workflows, builtinReviewFixLoopDef())
-		added = append(added, seededReviewFixLoopName)
+	for _, s := range seeds {
+		if _, present := existing[s.name]; present {
+			continue
+		}
+		if err := appendOrCreateArrayMember(v, "workflows", s.def); err != nil {
+			return nil, fmt.Errorf("patching %s: %w", configPath, err)
+		}
+		added = append(added, s.name)
 	}
 	if len(added) == 0 {
 		return nil, nil
 	}
-	cfg["workflows"] = workflows
-
-	out, err := marshal(cfg, "", "  ")
-	if err != nil {
-		return nil, fmt.Errorf("serializing %s: %w", configPath, err)
-	}
-	if err := c.Sys.WriteFile(configPath, append(out, '\n'), 0644); err != nil {
+	if err := c.Sys.WriteFile(configPath, v.Pack(), 0644); err != nil {
 		return nil, fmt.Errorf("writing %s: %w", configPath, err)
 	}
 	return added, nil
@@ -290,65 +260,47 @@ func seedReviewLoopWorkflows(_ context.Context, c *Ctx, marshal marshalIndentFun
 // `git rev-parse HEAD` or the buggy interim `git add -A` variant). Any
 // other script value is treated as a user customization and left alone.
 // No-ops when the config file is missing or the workflow is absent.
-func patchReviewFixVerifyScript(_ context.Context, c *Ctx, marshal marshalIndentFunc) error {
-	configPath := filepath.Join(c.LoopDir, "config.json")
-	data, err := c.Sys.ReadFile(configPath)
-	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return nil
-		}
-		return fmt.Errorf("reading %s: %w", configPath, err)
+//
+// Operates on the hujson AST and mutates only the script literal in place,
+// so the user's surrounding comments, key ordering, and formatting survive.
+func patchReviewFixVerifyScript(_ context.Context, c *Ctx) error {
+	v, configPath, err := loadConfigHJSON(c)
+	if err != nil || v == nil {
+		return err
 	}
-
-	standardized, err := hujson.Standardize(data)
-	if err != nil {
-		return fmt.Errorf("standardizing %s: %w", configPath, err)
-	}
-	var cfg map[string]any
-	if err := json.Unmarshal(standardized, &cfg); err != nil {
-		return fmt.Errorf("parsing %s: %w", configPath, err)
+	rootObj, ok := v.Value.(*hujson.Object)
+	if !ok {
+		return fmt.Errorf("parsing %s: expected JSON object at top level", configPath)
 	}
 
 	replaceable := map[string]struct{}{
 		reviewFixVerifyScriptOld:         {},
 		reviewFixVerifyScriptBuggyAddAll: {},
 	}
-	workflows, _ := cfg["workflows"].([]any)
 	patched := false
-	for _, item := range workflows {
-		wf, ok := item.(map[string]any)
-		if !ok || wf["name"] != seededReviewFixLoopName {
-			continue
+	forEachReviewFixLoopBodyChild(rootObj, func(childObj *hujson.Object) {
+		id, _ := memberString(childObj, "id")
+		if id != "verify" {
+			return
 		}
-		nodes, _ := wf["nodes"].([]any)
-		for _, n := range nodes {
-			loopNode, ok := n.(map[string]any)
-			if !ok {
-				continue
-			}
-			body, _ := loopNode["body"].([]any)
-			for _, child := range body {
-				cm, ok := child.(map[string]any)
-				if !ok || cm["id"] != "verify" {
-					continue
-				}
-				script, _ := cm["script"].(string)
-				if _, ok := replaceable[script]; ok {
-					cm["script"] = reviewFixVerifyScript
-					patched = true
-				}
-			}
+		scriptVal := findObjectMember(childObj, "script")
+		if scriptVal == nil {
+			return
 		}
-	}
+		scriptLit, ok := scriptVal.Value.(hujson.Literal)
+		if !ok {
+			return
+		}
+		if _, ok := replaceable[scriptLit.String()]; !ok {
+			return
+		}
+		scriptVal.Value = hujson.String(reviewFixVerifyScript)
+		patched = true
+	})
 	if !patched {
 		return nil
 	}
-
-	out, err := marshal(cfg, "", "  ")
-	if err != nil {
-		return fmt.Errorf("serializing %s: %w", configPath, err)
-	}
-	if err := c.Sys.WriteFile(configPath, append(out, '\n'), 0644); err != nil {
+	if err := c.Sys.WriteFile(configPath, v.Pack(), 0644); err != nil {
 		return fmt.Errorf("writing %s: %w", configPath, err)
 	}
 	return nil
@@ -360,67 +312,40 @@ func patchReviewFixVerifyScript(_ context.Context, c *Ctx, marshal marshalIndent
 // Only fills in missing deps — never overwrites a user-set value — so a
 // customized workflow with deliberate parallel siblings is preserved.
 // No-ops when the config file is missing or the workflow is absent.
-func patchReviewFixLoopBodyDeps(_ context.Context, c *Ctx, marshal marshalIndentFunc) error {
-	configPath := filepath.Join(c.LoopDir, "config.json")
-	data, err := c.Sys.ReadFile(configPath)
-	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return nil
-		}
-		return fmt.Errorf("reading %s: %w", configPath, err)
+//
+// Operates on the hujson AST and patches each body child individually via
+// JSON Patch ops so user comments and key ordering survive.
+func patchReviewFixLoopBodyDeps(_ context.Context, c *Ctx) error {
+	v, configPath, err := loadConfigHJSON(c)
+	if err != nil || v == nil {
+		return err
 	}
-
-	standardized, err := hujson.Standardize(data)
-	if err != nil {
-		return fmt.Errorf("standardizing %s: %w", configPath, err)
-	}
-	var cfg map[string]any
-	if err := json.Unmarshal(standardized, &cfg); err != nil {
-		return fmt.Errorf("parsing %s: %w", configPath, err)
+	rootObj, ok := v.Value.(*hujson.Object)
+	if !ok {
+		return fmt.Errorf("parsing %s: expected JSON object at top level", configPath)
 	}
 
 	wantDeps := map[string]string{"fix": "review", "verify": "fix"}
-	workflows, _ := cfg["workflows"].([]any)
 	patched := false
-	for _, item := range workflows {
-		wf, ok := item.(map[string]any)
-		if !ok || wf["name"] != seededReviewFixLoopName {
-			continue
+	forEachReviewFixLoopBodyChild(rootObj, func(childObj *hujson.Object) {
+		id, _ := memberString(childObj, "id")
+		dep, want := wantDeps[id]
+		if !want {
+			return
 		}
-		nodes, _ := wf["nodes"].([]any)
-		for _, n := range nodes {
-			loopNode, ok := n.(map[string]any)
-			if !ok {
-				continue
-			}
-			body, _ := loopNode["body"].([]any)
-			for _, child := range body {
-				cm, ok := child.(map[string]any)
-				if !ok {
-					continue
-				}
-				id, _ := cm["id"].(string)
-				dep, want := wantDeps[id]
-				if !want {
-					continue
-				}
-				if _, exists := cm["depends_on"]; exists {
-					continue
-				}
-				cm["depends_on"] = []any{dep}
-				patched = true
-			}
+		if findObjectMember(childObj, "depends_on") != nil {
+			return
 		}
-	}
+		childObj.Members = append(childObj.Members, hujson.ObjectMember{
+			Name:  hujson.Value{Value: hujson.String("depends_on")},
+			Value: hujson.Value{Value: parseJSONValue([]any{dep})},
+		})
+		patched = true
+	})
 	if !patched {
 		return nil
 	}
-
-	out, err := marshal(cfg, "", "  ")
-	if err != nil {
-		return fmt.Errorf("serializing %s: %w", configPath, err)
-	}
-	if err := c.Sys.WriteFile(configPath, append(out, '\n'), 0644); err != nil {
+	if err := c.Sys.WriteFile(configPath, v.Pack(), 0644); err != nil {
 		return fmt.Errorf("writing %s: %w", configPath, err)
 	}
 	return nil
@@ -503,4 +428,188 @@ func builtinReviewFixLoopDef() map[string]any {
 			},
 		},
 	)
+}
+
+// loadConfigHJSON reads ~/.loop/config.json and parses it via hujson so the
+// returned AST retains every comment and key ordering from the source. A
+// missing file returns (nil, path, nil) so callers can treat it as a no-op
+// — the caller usually short-circuits with `if v == nil { return ..., err }`.
+func loadConfigHJSON(c *Ctx) (*hujson.Value, string, error) {
+	configPath := filepath.Join(c.LoopDir, "config.json")
+	data, err := c.Sys.ReadFile(configPath)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil, configPath, nil
+		}
+		return nil, configPath, fmt.Errorf("reading %s: %w", configPath, err)
+	}
+	v, err := hujson.Parse(data)
+	if err != nil {
+		return nil, configPath, fmt.Errorf("parsing %s: %w", configPath, err)
+	}
+	return &v, configPath, nil
+}
+
+// findObjectMember returns a pointer to the named member's Value, or nil if
+// no such member exists. Pointer return lets callers mutate the value in
+// place (e.g. swap a script literal) without rebuilding the parent object.
+func findObjectMember(obj *hujson.Object, name string) *hujson.Value {
+	for i := range obj.Members {
+		nameLit, ok := obj.Members[i].Name.Value.(hujson.Literal)
+		if !ok {
+			continue
+		}
+		if nameLit.String() == name {
+			return &obj.Members[i].Value
+		}
+	}
+	return nil
+}
+
+// memberString returns the string value of the named member when it is
+// present and is a JSON string literal. Anything else (missing, non-string,
+// nested object) returns "", false so the caller's `if` chain keeps walking.
+func memberString(obj *hujson.Object, name string) (string, bool) {
+	v := findObjectMember(obj, name)
+	if v == nil {
+		return "", false
+	}
+	lit, ok := v.Value.(hujson.Literal)
+	if !ok || lit.Kind() != '"' {
+		return "", false
+	}
+	return lit.String(), true
+}
+
+// arrayMemberStringValues returns the set of string values found under
+// memberKey across each object element of rootObj[arrayKey]. Used to dedupe
+// seeded entries by name: if the user already has a workflow / shortcut with
+// the same name, we leave it alone.
+func arrayMemberStringValues(rootObj *hujson.Object, arrayKey, memberKey string) map[string]struct{} {
+	out := map[string]struct{}{}
+	arrVal := findObjectMember(rootObj, arrayKey)
+	if arrVal == nil {
+		return out
+	}
+	arr, ok := arrVal.Value.(*hujson.Array)
+	if !ok {
+		return out
+	}
+	for i := range arr.Elements {
+		elemObj, ok := arr.Elements[i].Value.(*hujson.Object)
+		if !ok {
+			continue
+		}
+		if s, present := memberString(elemObj, memberKey); present {
+			out[s] = struct{}{}
+		}
+	}
+	return out
+}
+
+// appendOrCreateArrayMember appends item to the array at rootObj[key], or
+// creates a new array with item as its only element when the key is absent.
+// Implemented via hujson.Value.Patch (RFC 6902) so the user's surrounding
+// comments and key ordering survive the rewrite — round-tripping through
+// json.Unmarshal would strip both.
+func appendOrCreateArrayMember(v *hujson.Value, key string, item map[string]any) error {
+	rootObj, ok := v.Value.(*hujson.Object)
+	if !ok {
+		return fmt.Errorf("expected JSON object at top level")
+	}
+	itemBytes, err := json.Marshal(item)
+	if err != nil {
+		return fmt.Errorf("marshaling item: %w", err)
+	}
+	pointer := jsonPointerEscape(key)
+	var ops string
+	if findObjectMember(rootObj, key) == nil {
+		ops = fmt.Sprintf(`[{"op":"add","path":"/%s","value":[%s]}]`, pointer, itemBytes)
+	} else {
+		ops = fmt.Sprintf(`[{"op":"add","path":"/%s/-","value":%s}]`, pointer, itemBytes)
+	}
+	return v.Patch([]byte(ops))
+}
+
+// jsonPointerEscape encodes a JSON Pointer reference token per RFC 6901
+// section 4 ("~" → "~0", "/" → "~1"). Our keys are simple identifiers but
+// kept defensive — a stray "/" in a future key would silently produce a
+// malformed path otherwise.
+func jsonPointerEscape(s string) string {
+	s = strings.ReplaceAll(s, "~", "~0")
+	s = strings.ReplaceAll(s, "/", "~1")
+	return s
+}
+
+// forEachReviewFixLoopBodyChild walks rootObj.workflows looking for the
+// review-fix-loop workflow, then for each top-level loop node within it
+// invokes fn on every object-typed body child. Non-object entries at any
+// level are skipped silently so a malformed user config can't panic the
+// migration.
+func forEachReviewFixLoopBodyChild(rootObj *hujson.Object, fn func(*hujson.Object)) {
+	wfsVal := findObjectMember(rootObj, "workflows")
+	if wfsVal == nil {
+		return
+	}
+	wfsArr, ok := wfsVal.Value.(*hujson.Array)
+	if !ok {
+		return
+	}
+	for i := range wfsArr.Elements {
+		wfObj, ok := wfsArr.Elements[i].Value.(*hujson.Object)
+		if !ok {
+			continue
+		}
+		if name, _ := memberString(wfObj, "name"); name != seededReviewFixLoopName {
+			continue
+		}
+		nodesVal := findObjectMember(wfObj, "nodes")
+		if nodesVal == nil {
+			continue
+		}
+		nodesArr, ok := nodesVal.Value.(*hujson.Array)
+		if !ok {
+			continue
+		}
+		for j := range nodesArr.Elements {
+			nodeObj, ok := nodesArr.Elements[j].Value.(*hujson.Object)
+			if !ok {
+				continue
+			}
+			if t, _ := memberString(nodeObj, "type"); t != "loop" {
+				continue
+			}
+			bodyVal := findObjectMember(nodeObj, "body")
+			if bodyVal == nil {
+				continue
+			}
+			bodyArr, ok := bodyVal.Value.(*hujson.Array)
+			if !ok {
+				continue
+			}
+			for k := range bodyArr.Elements {
+				childObj, ok := bodyArr.Elements[k].Value.(*hujson.Object)
+				if !ok {
+					continue
+				}
+				fn(childObj)
+			}
+		}
+	}
+}
+
+// parseJSONValue marshals v (typically a Go literal like []any{"dep"}) to
+// JSON then re-parses it as a hujson AST node so it can be spliced into a
+// parent Value. Used when appending fresh ObjectMembers — building the
+// hujson.Array literal-by-hand would be brittle.
+func parseJSONValue(v any) hujson.ValueTrimmed {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return hujson.Literal("null")
+	}
+	parsed, err := hujson.Parse(b)
+	if err != nil {
+		return hujson.Literal("null")
+	}
+	return parsed.Value
 }
