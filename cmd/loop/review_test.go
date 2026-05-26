@@ -280,9 +280,63 @@ func (s *MainSuite) TestRunReviewWaitPollTransientNotPresent() {
 	require.NoError(s.T(), err)
 }
 
-// TestRunReviewPollError verifies that a transport-level error from
-// pollReviewOnce propagates out of runReview's polling loop.
-func (s *MainSuite) TestRunReviewPollError() {
+// TestRunReviewPollTransientErrorRetries verifies that a transient
+// transport error on the GET poll does not kill the run — the loop backs
+// off and keeps polling until the daemon recovers. This is the fix for the
+// "one packet drop kills a 30-minute review-fix-loop iteration" bug.
+func (s *MainSuite) TestRunReviewPollTransientErrorRetries() {
+	var getCalls atomic.Int32
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost {
+			w.WriteHeader(http.StatusAccepted)
+			return
+		}
+		n := getCalls.Add(1)
+		if n <= 2 {
+			// First two polls: simulate transport failure by hijacking
+			// and dropping the connection. pollReviewOnce returns a
+			// transport error; runReview must retry rather than bail.
+			hj, ok := w.(http.Hijacker)
+			if !ok {
+				http.Error(w, "hijack unsupported", http.StatusInternalServerError)
+				return
+			}
+			conn, _, err := hj.Hijack()
+			if err != nil {
+				return
+			}
+			_ = conn.Close()
+			return
+		}
+		// Third poll: daemon recovered, return a terminal status.
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"present": true,
+			"session": map[string]any{
+				"status":   "ready",
+				"comments": []map[string]any{},
+			},
+		})
+	}))
+	defer ts.Close()
+
+	s.app.reviewClient = http.DefaultClient
+	var buf bytes.Buffer
+	err := s.app.runReview(context.Background(), &buf, ts.URL, "ch1", true, 5*time.Second)
+	require.NoError(s.T(), err, "transient transport errors should be retried, not fatal")
+	require.GreaterOrEqual(s.T(), getCalls.Load(), int32(3), "loop should retry past the broken polls and succeed on recovery")
+
+	var out reviewCLIOutput
+	require.NoError(s.T(), json.Unmarshal(bytes.TrimSpace(buf.Bytes()), &out))
+	require.Equal(s.T(), "ready", out.Status)
+	require.True(s.T(), out.NoComments)
+}
+
+// TestRunReviewPollSustainedTransportErrorTimesOut verifies that a sustained
+// transport failure (daemon never recovers) is eventually bounded by the
+// --timeout deadline, surfacing as the documented "timed out" error rather
+// than spinning indefinitely.
+func (s *MainSuite) TestRunReviewPollSustainedTransportErrorTimesOut() {
 	var postDone atomic.Bool
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodPost {
@@ -290,9 +344,6 @@ func (s *MainSuite) TestRunReviewPollError() {
 			w.WriteHeader(http.StatusAccepted)
 			return
 		}
-		// Force a transport-level error on the GET poll by hijacking the
-		// connection and dropping it. pollReviewOnce sees this as a
-		// transport error and propagates it.
 		hj, ok := w.(http.Hijacker)
 		if !ok {
 			http.Error(w, "hijack unsupported", http.StatusInternalServerError)
@@ -307,9 +358,10 @@ func (s *MainSuite) TestRunReviewPollError() {
 	defer ts.Close()
 
 	s.app.reviewClient = http.DefaultClient
-	err := s.app.runReview(context.Background(), &bytes.Buffer{}, ts.URL, "ch1", true, 5*time.Second)
+	err := s.app.runReview(context.Background(), &bytes.Buffer{}, ts.URL, "ch1", true, 50*time.Millisecond)
 	require.Error(s.T(), err)
-	require.True(s.T(), postDone.Load(), "POST should have succeeded before the GET broke")
+	require.True(s.T(), postDone.Load(), "POST should have succeeded before the GETs broke")
+	require.Contains(s.T(), err.Error(), "timed out", "sustained transport failure must surface as the documented timeout")
 }
 
 // TestRunReviewCtxAlreadyCancelledBeforePoll verifies the ctx.Err() guard at

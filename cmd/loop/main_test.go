@@ -385,6 +385,11 @@ func TestMainSuite(t *testing.T) {
 func (s *MainSuite) SetupTest() {
 	s.app = newApp()
 	s.app.loadProjectMemoryPaths = func(_ string) []string { return nil }
+	// Shrink the review-poll cadences so polling-loop tests don't burn
+	// real seconds waiting between retries. Production values are tuned
+	// for a daemon that takes seconds to recover; tests use ms.
+	s.app.reviewPollInterval = 5 * time.Millisecond
+	s.app.reviewPollTransportBackoff = 5 * time.Millisecond
 }
 
 // waitForServeReady blocks until serve() signals readiness. Fails the test if
