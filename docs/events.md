@@ -587,12 +587,13 @@ Individual node lifecycle events within a workflow run.
 }
 ```
 
-| Field     | Type   | Description |
-|-----------|--------|-------------|
-| `run_id`  | string | Parent workflow run ID |
-| `node_id` | string | Node identifier within the workflow |
-| `status`  | string | `"running"`, `"success"`, `"failed"`, or `"skipped"` |
-| `output`  | string | Node output text (truncated to 1000 chars, only on completion) |
+| Field       | Type    | Description |
+|-------------|---------|-------------|
+| `run_id`    | string  | Parent workflow run ID |
+| `node_id`   | string  | Node identifier within the workflow |
+| `status`    | string  | `"running"`, `"success"`, `"failed"`, or `"skipped"` |
+| `output`    | string  | Node output text (truncated to 1000 chars, only on completion) |
+| `iteration` | integer | Loop iteration index when the node is a child of a `loop` body (omitted / `0` for nodes outside a loop). |
 
 **Scope:** Global.
 

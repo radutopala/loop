@@ -2174,6 +2174,38 @@ Creates the `.loop/` directory and config file if they don't exist.
 
 ---
 
+### `POST /api/builtins/restore`
+
+Re-seed any missing built-in workflows or prompt shortcuts under `~/.loop/`. Idempotent — entries the user has kept (or modified) are left untouched, so this restores deletions rather than resetting to defaults. Backs the "Restore built-ins" bar in the Settings panel.
+
+**Request Body:**
+
+| Field  | Type   | Required | Description |
+|--------|--------|----------|-------------|
+| `kind` | string | yes      | `"workflows"` or `"shortcuts"` |
+
+Canonical names per kind:
+
+| Kind | Names |
+|------|-------|
+| `workflows` | `review-loop`, `review-fix-loop` |
+| `shortcuts` | `builtin code review` |
+
+**Response (200):**
+```json
+{
+  "kind": "workflows",
+  "added": ["review-fix-loop"],
+  "skipped": ["review-loop"]
+}
+```
+
+`added` lists names that were missing and have now been written back. `skipped` lists names that were already present. Empty arrays are emitted as `[]` (never `null`).
+
+**Errors:** `400` if `kind` is not `"workflows"` or `"shortcuts"`. `500` on filesystem errors.
+
+---
+
 ## Playground
 
 The playground stores named HTML/CSS/JS items and broadcasts updates for live rendering in the desktop app's Playground panel. Items can be stored globally (`~/.loop/playground/{name}/`) or per-project (`.loop/playground/{name}/` in the channel's working directory).

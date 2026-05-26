@@ -151,6 +151,15 @@ Nested objects (e.g. `browser`, `memory`, `mcp`, `gates`) render as collapsible 
 | `Escape` | Cancel editing (stops propagation to prevent closing Settings) |
 | `Tab` | Insert two spaces (no focus change) |
 
+#### Restore built-ins
+
+When the active section is **Workflows** or **Prompt Shortcuts**, a "Restore built-ins" bar sits above the section's content. Clicking it re-seeds any missing built-in entries via the same `fsmigrate` seeders used during onboard:
+
+- Workflows: `review-loop` and `review-fix-loop`.
+- Prompt shortcuts: `builtin code review`.
+
+The bar reports which entries were added vs. already present, and re-fetches the global config on success so the newly-seeded entries appear in the form below. The seeders are skip-if-name-exists, so user-edited entries (or entries the user has intentionally deleted-and-replaced) are never overwritten — this affordance is for restoring deletions, not for resetting to defaults. Backed by `POST /api/builtins/restore` with `{"kind": "workflows"}` or `{"kind": "shortcuts"}`.
+
 #### Saving
 
 - "Save" button writes config via `PUT /api/config`. Shows "Saving..." while in progress. Displays error message on failure.

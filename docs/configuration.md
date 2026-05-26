@@ -285,6 +285,7 @@ Both prompt fields empty (the default) uses the daemon's built-in default prompt
 | `script` | `string` | Shell command(s) for `bash` nodes, passed to `/bin/sh -c`. Any sh-compatible content — one-liners, multi-line scripts, pipelines, heredocs. To run a script file on disk, just invoke it (e.g. `bash workflows/build.sh`); the bash container shares the same mounts as agent containers. Supports templates. |
 | `max_iterations` | `int` | Max iterations for `loop` nodes (default: 10). |
 | `condition` | `string` | Template for `loop` nodes; stops when it renders `"true"`. |
+| `body` | `NodeDef[]` | Optional child nodes for `loop` nodes. When set, each iteration runs the body sequentially instead of re-running the loop node's own prompt. Children may be `prompt` or `bash` only — nested `loop` and `approval` are rejected by the validator. Mutually exclusive with `prompt`/`prompt_path` on the loop node itself. |
 | `message` | `string` | Approval message for `approval` nodes. Supports templates. |
 | `timeout` | `string` | Go duration (e.g. `"5m"`, `"1h"`). For `approval` nodes: deadline for human response. For `prompt`/`bash`/`loop` nodes: enforced execution deadline via context cancellation. |
 | `retry` | `RetryConfig` | Optional retry with `max_retries`, `backoff_base`, `backoff_max`. |

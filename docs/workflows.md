@@ -116,16 +116,19 @@ Stdout becomes the node output. A non-zero exit code fails the node.
 
 ### Loop Node (`"type": "loop"`)
 
-Runs a prompt node repeatedly until a condition is met or `max_iterations` is reached.
+Runs either a single prompt repeatedly, or an ordered sequence of child nodes per iteration, until a condition is met or `max_iterations` is reached.
 
 | Field | Description |
 |---|---|
-| `prompt` | Template-rendered prompt sent to the agent each iteration. Mutually exclusive with `prompt_path`. |
-| `prompt_path` | Path to a prompt file, resolved as `{loopDir}/workflows/{prompt_path}`. Mutually exclusive with `prompt`. |
+| `prompt` | Template-rendered prompt sent to the agent each iteration. Mutually exclusive with `prompt_path` and `body`. |
+| `prompt_path` | Path to a prompt file, resolved as `{loopDir}/workflows/{prompt_path}`. Mutually exclusive with `prompt` and `body`. |
+| `body` | Ordered list of child node definitions executed sequentially per iteration. Each child can be a `prompt` or `bash` node; nested `loop` and `approval` types are rejected at load time. Children may declare `depends_on` against siblings for visual edges in the DAG graph; execution order is the array order regardless. Mutually exclusive with `prompt` / `prompt_path`. |
 | `max_iterations` | Maximum number of iterations (default: 10) |
 | `condition` | Go template evaluated after each iteration; stops when it renders `"true"` |
 
-Each iteration's output is available as `{{.NodeOutputs.<id>}}` (overwritten each iteration; downstream nodes see the final output). The condition template receives the same `RunContext` as other templates.
+Each iteration's output is available as `{{.NodeOutputs.<id>}}` (overwritten each iteration; downstream nodes see the final output). The condition template receives the same `RunContext` as other templates, plus per-iteration state like `{{.Review.*}}` populated by the bash review parser (used by the seeded `review-loop` / `review-fix-loop` workflows — see [Review Panel](review.md)).
+
+Per-iteration node runs are persisted as separate rows in `workflow_node_runs` (keyed by `(run_id, node_id, iteration)`), so the full execution history of every iteration is preserved.
 
 ```jsonc
 {
@@ -135,6 +138,22 @@ Each iteration's output is available as `{{.NodeOutputs.<id>}}` (overwritten eac
   "prompt": "Improve this draft:\n\n{{.NodeOutputs.draft}}",
   "max_iterations": 3,
   "condition": "{{if contains .NodeOutputs.refine \"LGTM\"}}true{{end}}"
+}
+```
+
+Loop with a body — runs `review → fix → verify` per iteration, stops when no comments remain or the comment-id set repeats:
+
+```jsonc
+{
+  "id": "loop",
+  "type": "loop",
+  "max_iterations": "{{.Inputs.max_iterations}}",
+  "condition": "{{ or .Review.NoComments .Review.SameAsPrev }}",
+  "body": [
+    { "id": "review", "type": "bash",   "script": "loop review run --channel-id {{.ChannelID}} --api-url $API_URL --wait" },
+    { "id": "fix",    "type": "prompt", "depends_on": ["review"], "when": "{{ not .Review.NoComments }}", "prompt": "Fix these review comments and commit:\n\n{{.Review.CommentsJSON}}" },
+    { "id": "verify", "type": "bash",   "depends_on": ["fix"],    "when": "{{ not .Review.NoComments }}", "script": "git add -u && git diff --cached --quiet || git commit -m \"fix: address review feedback\"" }
+  ]
 }
 ```
 
@@ -436,6 +455,8 @@ The detail view renders an interactive SVG DAG graph (`WorkflowGraph` component)
 
 **Node output:** Click a node to expand its output in a 50/50 split below the graph canvas. Click again to collapse.
 
+**Loop body expansion:** When a loop node has a `body`, the graph renders every executed (or in-flight) iteration's body children as their own visible nodes, grouped inside a dashed container labeled `<loop-id> · N iters`. One column of children per iteration is laid out left-to-right; cross-iteration edges connect the last child of iteration `i` to the first child of iteration `i+1`. Clicking a synthetic child opens its per-iteration output. The loop container itself is not clickable — there is no loop-level output; the children carry the data.
+
 **Approval widget:** When a run is paused at an approval node, an inline widget appears with the approval message, a text input for the response, and Approve/Reject buttons.
 
 **Definition fallback:** When the definitions API returns no match (e.g. in the global panel without a project context), the graph falls back to the `workflow_def` JSON snapshot stored on the run record. As a last resort, node definitions are synthesized from the node run data.
@@ -469,6 +490,7 @@ Workflow state is persisted in SQLite:
 | `id` | INTEGER PK | Auto-increment ID |
 | `run_id` | TEXT FK | Parent workflow run ID |
 | `node_id` | TEXT | Node identifier |
+| `iteration` | INTEGER | Loop iteration index (0 for nodes outside a loop body, 0..N for nodes inside one). Unique key is `(run_id, node_id, iteration)`. |
 | `status` | TEXT | `pending`, `running`, `success`, `failed`, `skipped` |
 | `output` | TEXT | Node output text |
 | `error_text` | TEXT | Error message on failure |
