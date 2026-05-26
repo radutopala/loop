@@ -297,12 +297,17 @@ export function ReviewPanel({
 
   // Workflow event subscription: chip mirrors run/node status for the
   // active review-loop run. Cleared on terminal status.
+  //
+  // Importantly, do NOT call setLoopChip("") inside this effect when
+  // loopRunId is null. The hydration effect above runs first on mount and
+  // sets the chip (e.g. to "done" or "running") based on the recovered run's
+  // status; this effect re-runs on the same mount with loopRunId still null,
+  // wiping the chip the hydration effect just set. The hydration effect
+  // owns the initial chip state for unmount→remount cases, and the per-run
+  // listener only paints when there's an active loopRunId to listen to.
   useEffect(() => {
     if (!subscribeChatEvents) return;
-    if (!loopRunId) {
-      setLoopChip("");
-      return;
-    }
+    if (!loopRunId) return;
     const listener: ChatEventListener = (event: WSEvent) => {
       const d = event.data as { run_id?: string; status?: string; node_id?: string; iteration?: number } | undefined;
       if (!d || d.run_id !== loopRunId) return;
@@ -381,7 +386,6 @@ export function ReviewPanel({
 
   const runMode = useCallback(async (m: ReviewMode) => {
     setBusy(true); setError(null);
-    setMode(m);
     setLoopChip("starting...");
     setLoopActive(true);
     try {
@@ -417,6 +421,11 @@ export function ReviewPanel({
         window.sessionStorage.setItem(reviewRunIdKey(channelId), resp.run_id);
       }
       setLoopRunId(resp.run_id);
+      // Only persist the mode after the run actually launched. A failed
+      // session check would otherwise silently flip the user's last-mode
+      // (and the primary button label on next mount) even though no run
+      // ever started.
+      setMode(m);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
       setSession((prev) => prev ? { ...prev, status: "ready" } : prev);
@@ -428,6 +437,11 @@ export function ReviewPanel({
       // (pre-dispatch throw here vs. daemon-side failure observed via WS).
       setLoopChip("failed");
       setLoopActive(false);
+      // Also clear loopRunId in React state. Without this, a setLoopRunId
+      // from a *prior* successful run that's still in flight would keep the
+      // hydration resync effect firing against a now-stale id. Belt-and-
+      // braces with the sessionStorage clear below.
+      setLoopRunId(null);
       // No run was dispatched — make sure no stale id from a prior attempt
       // sticks around to fool the next remount's hydration.
       if (typeof window !== "undefined") {
@@ -705,6 +719,7 @@ export function ReviewPanel({
                 setMaxIter(Math.min(10, Math.max(1, v)));
               }}
               disabled={runDisabled}
+              aria-label="Maximum review iterations (1-10)"
               title="Maximum review iterations (1-10)"
               style={{
                 width: 40,
@@ -826,16 +841,25 @@ export function ReviewPanel({
       <div style={{ flex: 1, overflow: "auto", display: "flex", flexDirection: "column" }}>
         {/* Inline gate approval card — only rendered when no chat panel is
             mounted in the current layout. When chat is mounted, ChatMessages
-            renders the same card and the panel chip points the user there. */}
-        {!hasChatPanel && gateApprovals?.chat && (
-          <div data-testid="review-inline-approval" style={{ padding: 8, borderBottom: `1px solid ${colors.border}` }}>
-            <ApprovalCard
-              data={gateApprovals.chat}
-              channelId={channelId}
-              onResolved={() => onClearGateApproval?.("chat")}
-            />
-          </div>
-        )}
+            renders the same card and the panel chip points the user there.
+            Pick whatever source has a pending approval (chat, agent, etc.) —
+            limiting to the literal "chat" key would silently hide approvals
+            from any future router that emits a non-chat source. */}
+        {(() => {
+          if (hasChatPanel) return null;
+          const entries = Object.entries(gateApprovals ?? {});
+          if (entries.length === 0) return null;
+          const [source, data] = entries[0]!;
+          return (
+            <div data-testid="review-inline-approval" style={{ padding: 8, borderBottom: `1px solid ${colors.border}` }}>
+              <ApprovalCard
+                data={data}
+                channelId={channelId}
+                onResolved={() => onClearGateApproval?.(source)}
+              />
+            </div>
+          );
+        })()}
         {!hasSession && (
           <PRListPicker
             prs={prList}

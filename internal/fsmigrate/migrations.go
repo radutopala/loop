@@ -263,14 +263,23 @@ func seedReviewLoopWorkflows(_ context.Context, c *Ctx) ([]string, error) {
 //
 // Operates on the hujson AST and mutates only the script literal in place,
 // so the user's surrounding comments, key ordering, and formatting survive.
-func patchReviewFixVerifyScript(_ context.Context, c *Ctx) error {
+func patchReviewFixVerifyScript(ctx context.Context, c *Ctx) error {
+	_, err := patchReviewFixVerifyScriptReport(ctx, c)
+	return err
+}
+
+// patchReviewFixVerifyScriptReport is the (bool, error) variant of
+// patchReviewFixVerifyScript used by RestoreBuiltinWorkflows to surface
+// patched-but-not-added workflows to the FE. The bool is true iff the
+// patcher wrote to disk.
+func patchReviewFixVerifyScriptReport(_ context.Context, c *Ctx) (bool, error) {
 	v, configPath, err := loadConfigHJSON(c)
 	if err != nil || v == nil {
-		return err
+		return false, err
 	}
 	rootObj, ok := v.Value.(*hujson.Object)
 	if !ok {
-		return fmt.Errorf("parsing %s: expected JSON object at top level", configPath)
+		return false, fmt.Errorf("parsing %s: expected JSON object at top level", configPath)
 	}
 
 	replaceable := map[string]struct{}{
@@ -298,12 +307,12 @@ func patchReviewFixVerifyScript(_ context.Context, c *Ctx) error {
 		patched = true
 	})
 	if !patched {
-		return nil
+		return false, nil
 	}
 	if err := c.Sys.WriteFile(configPath, v.Pack(), 0644); err != nil {
-		return fmt.Errorf("writing %s: %w", configPath, err)
+		return false, fmt.Errorf("writing %s: %w", configPath, err)
 	}
-	return nil
+	return true, nil
 }
 
 // patchReviewFixLoopBodyDeps walks ~/.loop/config.json, finds the
@@ -315,14 +324,21 @@ func patchReviewFixVerifyScript(_ context.Context, c *Ctx) error {
 //
 // Operates on the hujson AST and patches each body child individually via
 // JSON Patch ops so user comments and key ordering survive.
-func patchReviewFixLoopBodyDeps(_ context.Context, c *Ctx) error {
+func patchReviewFixLoopBodyDeps(ctx context.Context, c *Ctx) error {
+	_, err := patchReviewFixLoopBodyDepsReport(ctx, c)
+	return err
+}
+
+// patchReviewFixLoopBodyDepsReport is the (bool, error) variant used by
+// RestoreBuiltinWorkflows. The bool is true iff the patcher wrote to disk.
+func patchReviewFixLoopBodyDepsReport(_ context.Context, c *Ctx) (bool, error) {
 	v, configPath, err := loadConfigHJSON(c)
 	if err != nil || v == nil {
-		return err
+		return false, err
 	}
 	rootObj, ok := v.Value.(*hujson.Object)
 	if !ok {
-		return fmt.Errorf("parsing %s: expected JSON object at top level", configPath)
+		return false, fmt.Errorf("parsing %s: expected JSON object at top level", configPath)
 	}
 
 	wantDeps := map[string]string{"fix": "review", "verify": "fix"}
@@ -343,12 +359,12 @@ func patchReviewFixLoopBodyDeps(_ context.Context, c *Ctx) error {
 		patched = true
 	})
 	if !patched {
-		return nil
+		return false, nil
 	}
 	if err := c.Sys.WriteFile(configPath, v.Pack(), 0644); err != nil {
-		return fmt.Errorf("writing %s: %w", configPath, err)
+		return false, fmt.Errorf("writing %s: %w", configPath, err)
 	}
-	return nil
+	return true, nil
 }
 
 // reviewBashBodyChild is the bash node every seeded review loop pins as its
@@ -523,12 +539,31 @@ func appendOrCreateArrayMember(v *hujson.Value, key string, item map[string]any)
 	}
 	pointer := jsonPointerEscape(key)
 	var ops string
-	if findObjectMember(rootObj, key) == nil {
+	existing := findObjectMember(rootObj, key)
+	switch {
+	case existing == nil:
 		ops = fmt.Sprintf(`[{"op":"add","path":"/%s","value":[%s]}]`, pointer, itemBytes)
-	} else {
+	case isArrayValue(existing):
 		ops = fmt.Sprintf(`[{"op":"add","path":"/%s/-","value":%s}]`, pointer, itemBytes)
+	default:
+		// User-edited config has a non-array (null, object, scalar) at this
+		// key. Patching `/key/-` would emit RFC6902 "path not an array" and
+		// surface as a HTTP 500 to the FE. Refuse explicitly so the
+		// Restore-built-ins handler returns a clear 4xx-shaped error instead.
+		return fmt.Errorf("cannot append %q: existing value is not a JSON array", key)
 	}
 	return v.Patch([]byte(ops))
+}
+
+// isArrayValue reports whether the hujson value is an array. Used by
+// appendOrCreateArrayMember to refuse patching when the user clobbered a
+// canonical array key with null/object/scalar.
+func isArrayValue(v *hujson.Value) bool {
+	if v == nil {
+		return false
+	}
+	_, ok := v.Value.(*hujson.Array)
+	return ok
 }
 
 // jsonPointerEscape encodes a JSON Pointer reference token per RFC 6901

@@ -256,10 +256,11 @@ func pollReviewOnce(ctx context.Context, client reviewHTTPClient, url string) (r
 			Status   string `json:"status"`
 			Error    string `json:"error"`
 			Comments []struct {
-				ID   string `json:"id"`
-				Path string `json:"path"`
-				Line int    `json:"line"`
-				Body string `json:"body"`
+				ID       string `json:"id"`
+				Severity string `json:"severity"`
+				Path     string `json:"path"`
+				Line     int    `json:"line"`
+				Body     string `json:"body"`
 			} `json:"comments"`
 		} `json:"session"`
 	}
@@ -279,10 +280,11 @@ func pollReviewOnce(ctx context.Context, client reviewHTTPClient, url string) (r
 		out := reviewCLIOutput{Status: "ready"}
 		for _, c := range raw.Session.Comments {
 			out.Comments = append(out.Comments, reviewCLIOutputCommit{
-				ID:   c.ID,
-				Path: c.Path,
-				Line: c.Line,
-				Body: c.Body,
+				ID:       c.ID,
+				Severity: c.Severity,
+				Path:     c.Path,
+				Line:     c.Line,
+				Body:     c.Body,
 			})
 		}
 		out.NoComments = len(out.Comments) == 0

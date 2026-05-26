@@ -55,6 +55,14 @@ func (s *FSMigrateSuite) TestArrayMemberStringValuesKeyIsNotArray() {
 	require.Empty(s.T(), got)
 }
 
+func (s *FSMigrateSuite) TestIsArrayValueNilReturnsFalse() {
+	// Defensive nil-guard: findObjectMember currently never returns nil for
+	// the keys we use (the `existing == nil` branch above isArrayValue
+	// handles the absent-key case), but the helper still asserts the guard
+	// so a future caller can't get a nil-deref.
+	require.False(s.T(), isArrayValue(nil))
+}
+
 func (s *FSMigrateSuite) TestAppendOrCreateArrayMemberRejectsNonObjectRoot() {
 	v, err := hujson.Parse([]byte(`["just", "an", "array"]`))
 	require.NoError(s.T(), err)

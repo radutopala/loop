@@ -50,12 +50,16 @@ func (s *ParseReviewSuite) TestDifferingIDsNotSameAsPrev() {
 	require.Equal(s.T(), []string{"x"}, rc.Review.PrevIDs)
 }
 
-func (s *ParseReviewSuite) TestInvalidJSONResetsState() {
+func (s *ParseReviewSuite) TestInvalidJSONPreservesPrevIDsAndClearsTerminators() {
 	rc := &RunContext{}
 	rc.Review.IDs = []string{"existing"}
 	parseReviewOutput("not json", rc)
-	require.Nil(s.T(), rc.Review.IDs)
-	require.Equal(s.T(), []string{"existing"}, rc.Review.PrevIDs)
+	// IDs/PrevIDs intentionally NOT rotated on parse miss. A transient
+	// parse failure between two identical good reviews would otherwise
+	// mask the no-progress (SameAsPrev) signal on the next pass and burn
+	// an extra fix iteration; keeping IDs preserves the last good baseline.
+	require.Equal(s.T(), []string{"existing"}, rc.Review.IDs)
+	require.Empty(s.T(), rc.Review.PrevIDs)
 	require.False(s.T(), rc.Review.NoComments)
 	// SameAsPrev must be false on parse failure so the loop's stop
 	// condition doesn't trip and silently terminate with "no findings".
@@ -109,6 +113,22 @@ func (s *ParseReviewSuite) TestExtractReviewJSONReturnsFalseOnEmpty() {
 	// Whitespace-only stdout exercises the explicit empty-string return.
 	var out reviewEnvelope
 	require.False(s.T(), extractReviewJSON("   \n\t  ", &out))
+}
+
+func (s *ParseReviewSuite) TestErrorStatusRotatesPrevButDoesNotTerminateLoop() {
+	// status=="error" decodes via extractReviewJSON (the CLI distinguishes
+	// it from "ready") but must NOT flip NoComments true — that would let
+	// the seeded review-fix loop exit with a "clean" verdict whenever the
+	// daemon reports an error. We still rotate PrevIDs so a subsequent
+	// successful retry has the right baseline.
+	rc := &RunContext{}
+	rc.Review.IDs = []string{"prev1", "prev2"}
+	parseReviewOutput(`{"status":"error","comments":[]}`, rc)
+	require.Equal(s.T(), []string{"prev1", "prev2"}, rc.Review.PrevIDs)
+	require.Nil(s.T(), rc.Review.IDs)
+	require.False(s.T(), rc.Review.NoComments)
+	require.False(s.T(), rc.Review.SameAsPrev)
+	require.Empty(s.T(), rc.Review.CommentsJSON)
 }
 
 func (s *ParseReviewSuite) TestExtractReviewJSONRejectsUnrelatedEnvelope() {

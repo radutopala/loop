@@ -209,11 +209,23 @@ function computeLayout(
     }
   }
 
-  const effectiveDefs = expanded.length > 0 ? expanded : runs.map((r) => ({
-    id: r.node_id,
-    type: "bash" as const,
-    depends_on: [] as string[],
-  }));
+  // Fallback when the workflow def isn't available (legacy rows): synthesize
+  // a def per distinct node_id from the run rows. Without the de-dupe, a 3-
+  // iteration loop produces three defs with the same id; defMap.set then
+  // overwrites them and `nodes` ends up with one collapsed entry that hides
+  // the earlier iterations entirely.
+  let effectiveDefs: WorkflowNodeDef[];
+  if (expanded.length > 0) {
+    effectiveDefs = expanded;
+  } else {
+    const seenNodeIds = new Set<string>();
+    effectiveDefs = [];
+    for (const r of runs) {
+      if (seenNodeIds.has(r.node_id)) continue;
+      seenNodeIds.add(r.node_id);
+      effectiveDefs.push({ id: r.node_id, type: "bash", depends_on: [] });
+    }
+  }
 
   if (effectiveDefs.length === 0) return { nodes: [], edges: [], width: 0, height: 0, groupRects: [] };
 

@@ -585,6 +585,15 @@ func (e *defaultEngine) executeLoopNode(ctx context.Context, run *db.WorkflowRun
 	if maxIter <= 0 {
 		maxIter = 10 // default
 	}
+	// Server-side absolute ceiling. The FE caps the input at 10, but the
+	// runtime input is a free-form string from the HTTP body and a misuse
+	// (or scripted caller) could pass an arbitrarily large value that pins
+	// the executor goroutine forever. Anything above this is almost
+	// certainly a typo — generously above the FE's 10 so the legitimate
+	// path is unaffected.
+	if maxIter > maxLoopIterations {
+		maxIter = maxLoopIterations
+	}
 
 	hasBody := len(node.Body) > 0
 
@@ -642,6 +651,21 @@ func (e *defaultEngine) executeLoopNode(ctx context.Context, run *db.WorkflowRun
 // review-loop and review-fix-loop workflows pin the bash node to this ID
 // so the parser knows which child's output to interpret.
 const reviewBodyNodeID = "review"
+
+// reviewParsedWorkflows enumerates the workflow names whose body child
+// `reviewBodyNodeID` is treated as the review CLI envelope. Scoped so a
+// user-authored workflow that happens to name a bash child "review" doesn't
+// have its stdout silently consumed and reshaped into runCtx.Review.
+var reviewParsedWorkflows = map[string]struct{}{
+	"review-loop":     {},
+	"review-fix-loop": {},
+}
+
+// maxLoopIterations is an absolute server-side ceiling on a loop node's
+// iteration count. The FE caps the input at 10; this guards against scripted
+// callers that bypass the FE and pass a much larger value through the HTTP
+// surface or a user-authored workflow with a runaway max_iterations.
+const maxLoopIterations = 50
 
 // executeLoopBody runs the body children of a loop node in declaration order
 // for a single iteration. Each child is persisted as its own node_runs row
@@ -705,22 +729,36 @@ func (e *defaultEngine) executeLoopBody(ctx context.Context, run *db.WorkflowRun
 			})
 		}
 
+		// Body children get the same heartbeat as top-level nodes (see
+		// executeNode line ~319) so the recovery sweeper can detect a stalled
+		// body child after a daemon restart instead of stranding the row at
+		// status=running forever.
+		stopHeartbeat := e.startHeartbeat(ctx, run.ID, child.ID, iteration)
+
 		var output string
 		var execErr error
-		switch child.Type {
-		case config.NodeTypePrompt:
-			output, execErr = e.executePromptNode(ctx, run, child, runCtx, mu)
-		case config.NodeTypeBash:
-			output, execErr = e.executeBashNode(ctx, run, child, runCtx, mu)
-		default:
-			// validateWorkflowDef rejects this at StartRun, but
-			// executeDAGFromCheckpoint resumes from the DB-pinned definition
-			// without re-validating — a stored workflow with an unsupported
-			// body-child type (manual DB edit, pre-validator definition)
-			// would otherwise persist as Success with empty output. Make the
-			// miss observable instead.
-			execErr = fmt.Errorf("unsupported body child type: %s", child.Type)
+		execFn := func() (string, error) {
+			switch child.Type {
+			case config.NodeTypePrompt:
+				return e.executePromptNode(ctx, run, child, runCtx, mu)
+			case config.NodeTypeBash:
+				return e.executeBashNode(ctx, run, child, runCtx, mu)
+			default:
+				// validateWorkflowDef rejects this at StartRun, but
+				// executeDAGFromCheckpoint resumes from the DB-pinned definition
+				// without re-validating — a stored workflow with an unsupported
+				// body-child type (manual DB edit, pre-validator definition)
+				// would otherwise persist as Success with empty output. Make
+				// the miss observable instead.
+				return "", fmt.Errorf("unsupported body child type: %s", child.Type)
+			}
 		}
+		// Honor the child's retry: block the same as a top-level node would.
+		// Without this, the seeded fix prompt's retry config (if added) would
+		// be silently ignored, and a transient agent hiccup would tank the
+		// whole loop on iteration 1.
+		output, execErr = e.executeWithRetry(ctx, run, child, execFn)
+		stopHeartbeat()
 
 		status := db.NodeRunStatusSuccess
 		if execErr != nil {
@@ -728,9 +766,11 @@ func (e *defaultEngine) executeLoopBody(ctx context.Context, run *db.WorkflowRun
 		}
 
 		if execErr == nil && child.Type == config.NodeTypeBash && child.ID == reviewBodyNodeID {
-			mu.Lock()
-			parseReviewOutput(output, runCtx)
-			mu.Unlock()
+			if _, isSeeded := reviewParsedWorkflows[run.WorkflowName]; isSeeded {
+				mu.Lock()
+				parseReviewOutput(output, runCtx)
+				mu.Unlock()
+			}
 		}
 
 		finishedAt := time.Now().UTC()
@@ -802,19 +842,41 @@ type reviewEnvelope struct {
 //
 //	{"status": "ready", "no_comments": bool, "comments": [{"id": "...", ...}]}
 func parseReviewOutput(stdout string, runCtx *RunContext) {
-	prev := append([]string(nil), runCtx.Review.IDs...)
-	runCtx.Review.PrevIDs = prev
-
 	var parsed reviewEnvelope
 	if !extractReviewJSON(stdout, &parsed) {
 		// Treat as a real parse failure, NOT as "no findings". Setting
 		// SameAsPrev=true when prev was empty would terminate the loop on
 		// the very first iteration with `completed` status, hiding a
 		// daemon/CLI bug behind a "review with no findings" UI report.
+		//
+		// Leave IDs/PrevIDs untouched on parse miss so the next successful
+		// iteration's SameAsPrev compares against the last *good* parse —
+		// otherwise a transient parse miss between two identical reviews
+		// would mask the no-progress signal and burn an extra fix pass.
 		runCtx.Review.NoComments = false
 		runCtx.Review.Comments = nil
 		runCtx.Review.CommentsJSON = ""
+		runCtx.Review.SameAsPrev = false
+		return
+	}
+
+	// Status was validated by extractReviewJSON to be "ready" or "error".
+	// Only "ready" implies the review actually completed — an "error"
+	// envelope means the daemon flipped to failure, which must NOT be
+	// reinterpreted as `no_comments=true` (which would terminate the loop
+	// with a false-clean verdict via the stop condition
+	// `{{ or .Review.NoComments .Review.SameAsPrev }}`). On error we still
+	// rotate IDs into PrevIDs so a subsequent successful retry has the
+	// right baseline, but leave NoComments/SameAsPrev false so the loop
+	// keeps trying.
+	prev := append([]string(nil), runCtx.Review.IDs...)
+	runCtx.Review.PrevIDs = prev
+
+	if parsed.Status != "ready" {
+		runCtx.Review.Comments = nil
+		runCtx.Review.CommentsJSON = ""
 		runCtx.Review.IDs = nil
+		runCtx.Review.NoComments = false
 		runCtx.Review.SameAsPrev = false
 		return
 	}

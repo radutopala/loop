@@ -67,7 +67,10 @@ func (s *EngineSuite) TestExecuteLoopWithBodyRunsChildrenInOrder() {
 func (s *EngineSuite) TestExecuteLoopBodyBreaksOnReviewNoComments() {
 	s.workflows = []config.WorkflowDef{
 		{
-			Name: "review-clean",
+			// Must match a name in reviewParsedWorkflows; otherwise the loop-body
+			// executor skips parseReviewOutput and the condition never sees
+			// .Review.NoComments flip true.
+			Name: "review-loop",
 			Nodes: []config.NodeDef{
 				{
 					ID:            "loop",
@@ -89,7 +92,7 @@ func (s *EngineSuite) TestExecuteLoopBodyBreaksOnReviewNoComments() {
 	var calls atomic.Int32
 	s.bashRunner.On("RunBash", mock.Anything, "loop review run", "", "").Return(`{"status":"ready","no_comments":true,"comments":[]}`, nil).Run(func(_ mock.Arguments) { calls.Add(1) })
 
-	_, err := s.engine.StartRun(context.Background(), StartRunOptions{WorkflowName: "review-clean"})
+	_, err := s.engine.StartRun(context.Background(), StartRunOptions{WorkflowName: "review-loop"})
 	require.NoError(s.T(), err)
 
 	select {
@@ -108,7 +111,9 @@ func (s *EngineSuite) TestExecuteLoopBodyBreaksOnReviewNoComments() {
 func (s *EngineSuite) TestExecuteLoopBodyBreaksOnSameAsPrev() {
 	s.workflows = []config.WorkflowDef{
 		{
-			Name: "review-same",
+			// review-fix-loop is in reviewParsedWorkflows; the gate would
+			// otherwise skip parseReviewOutput and SameAsPrev stays false.
+			Name: "review-fix-loop",
 			Nodes: []config.NodeDef{
 				{
 					ID:            "loop",
@@ -134,7 +139,7 @@ func (s *EngineSuite) TestExecuteLoopBodyBreaksOnSameAsPrev() {
 		Return(`{"status":"ready","no_comments":false,"comments":[{"id":"x"}]}`, nil).
 		Run(func(_ mock.Arguments) { calls.Add(1) })
 
-	_, err := s.engine.StartRun(context.Background(), StartRunOptions{WorkflowName: "review-same"})
+	_, err := s.engine.StartRun(context.Background(), StartRunOptions{WorkflowName: "review-fix-loop"})
 	require.NoError(s.T(), err)
 
 	select {

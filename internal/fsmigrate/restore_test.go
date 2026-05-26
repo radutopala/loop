@@ -2,10 +2,34 @@ package fsmigrate
 
 import (
 	"context"
+	"errors"
+	"os"
 	"path/filepath"
 
 	"github.com/stretchr/testify/require"
 )
+
+// corruptingSys wraps the fake system and corrupts the named file's stored
+// bytes after the first write — so a subsequent read returns garbage HJSON.
+// Drives RestoreBuiltinWorkflows' "seed succeeded, patcher errored" branch
+// (which can't happen with the plain fakeSystem because both phases read
+// the same file from the same map).
+type corruptingSys struct {
+	*fakeSystem
+	target  string
+	written bool
+}
+
+func (c *corruptingSys) WriteFile(name string, data []byte, perm os.FileMode) error {
+	if err := c.fakeSystem.WriteFile(name, data, perm); err != nil {
+		return err
+	}
+	if name == c.target && !c.written {
+		c.written = true
+		c.files[name] = []byte("{not valid hjson")
+	}
+	return nil
+}
 
 // The Restore* wrappers are thin: just confirm they reach the underlying
 // seeder and return its result. The seeder's own branches are covered by
@@ -34,17 +58,19 @@ func (s *FSMigrateSuite) TestRestoreBuiltinWorkflowsDelegatesAndReturnsAdded() {
 	configPath := filepath.Join("/loop", "config.json")
 	sys.files[configPath] = []byte(`{}`)
 
-	added, err := RestoreBuiltinWorkflows(context.Background(), &Ctx{Sys: sys, LoopDir: "/loop"})
+	added, patched, err := RestoreBuiltinWorkflows(context.Background(), &Ctx{Sys: sys, LoopDir: "/loop"})
 	require.NoError(s.T(), err)
 	require.ElementsMatch(s.T(), []string{"review-loop", "review-fix-loop"}, added)
+	require.Empty(s.T(), patched, "freshly seeded workflows have nothing to patch")
 }
 
 func (s *FSMigrateSuite) TestRestoreBuiltinWorkflowsNoOpWhenConfigMissing() {
 	sys := newFakeSystem()
 
-	added, err := RestoreBuiltinWorkflows(context.Background(), &Ctx{Sys: sys, LoopDir: "/loop"})
+	added, patched, err := RestoreBuiltinWorkflows(context.Background(), &Ctx{Sys: sys, LoopDir: "/loop"})
 	require.NoError(s.T(), err)
 	require.Empty(s.T(), added)
+	require.Empty(s.T(), patched)
 }
 
 // TestRestoreBuiltinWorkflowsPatchesStaleVerifyScript verifies that when a
@@ -58,14 +84,77 @@ func (s *FSMigrateSuite) TestRestoreBuiltinWorkflowsPatchesStaleVerifyScript() {
 	stale := `{"workflows":[{"name":"review-fix-loop","nodes":[{"type":"loop","body":[{"id":"verify","script":"` + reviewFixVerifyScriptOld + `"}]}]}]}`
 	sys.files[configPath] = []byte(stale)
 
-	added, err := RestoreBuiltinWorkflows(context.Background(), &Ctx{Sys: sys, LoopDir: "/loop"})
+	added, patched, err := RestoreBuiltinWorkflows(context.Background(), &Ctx{Sys: sys, LoopDir: "/loop"})
 	require.NoError(s.T(), err)
 	require.Contains(s.T(), added, "review-loop", "review-loop is still missing and should be added")
 	require.NotContains(s.T(), added, "review-fix-loop", "review-fix-loop is present by name — seed skips it")
+	require.Contains(s.T(), patched, "review-fix-loop", "review-fix-loop's verify script was patched in place")
 	require.NotContains(s.T(), string(sys.files[configPath]), reviewFixVerifyScriptOld,
 		"patcher should have replaced the stale verify script")
 	require.Contains(s.T(), string(sys.files[configPath]), reviewFixVerifyScript,
 		"patcher should have written the current verify script")
+}
+
+func (s *FSMigrateSuite) TestRestoreBuiltinWorkflowsSurfacesVerifyPatcherError() {
+	// Seed succeeds (writes the two workflows into the fresh config), but
+	// the wrapper corrupts the file on disk after that write so the verify
+	// patcher's loadConfigHJSON fails. RestoreBuiltinWorkflows must bubble
+	// the error rather than swallow it as "nothing patched."
+	configPath := filepath.Join("/loop", "config.json")
+	sys := &corruptingSys{fakeSystem: newFakeSystem(), target: configPath}
+	sys.files[configPath] = []byte(`{}`)
+
+	added, patched, err := RestoreBuiltinWorkflows(context.Background(), &Ctx{Sys: sys, LoopDir: "/loop"})
+	require.Error(s.T(), err)
+	require.Nil(s.T(), added)
+	require.Nil(s.T(), patched)
+}
+
+func (s *FSMigrateSuite) TestRestoreBuiltinWorkflowsSurfacesDepsPatcherError() {
+	// Seed both workflows successfully into a clean config, then arrange for
+	// the *second* patcher (body-deps) to fail by injecting a read error on
+	// its read pass. The verify patcher succeeds (reads the post-seed bytes),
+	// but we then poison the file via readErr for the deps patcher's read.
+	configPath := filepath.Join("/loop", "config.json")
+	sys := newFakeSystem()
+	sys.files[configPath] = []byte(`{}`)
+
+	// Seed first.
+	added, err := seedReviewLoopWorkflows(context.Background(), &Ctx{Sys: sys, LoopDir: "/loop"})
+	require.NoError(s.T(), err)
+	require.NotEmpty(s.T(), added)
+
+	// Now arrange so the verify patcher reads fine but the deps patcher errors.
+	// Both patchers re-read the file each time; we need a wrapper that errors
+	// on the *second* call. Reuse corruptingSys to corrupt-on-first-write isn't
+	// useful here (nothing else writes); instead use a per-call counter sys.
+	wrapper := &readCountingSys{fakeSystem: sys, target: configPath, errOnCall: 2, err: errors.New("disk read failed")}
+	added, patched, err := RestoreBuiltinWorkflows(context.Background(), &Ctx{Sys: wrapper, LoopDir: "/loop"})
+	require.Error(s.T(), err)
+	require.Nil(s.T(), added)
+	require.Nil(s.T(), patched)
+	require.Contains(s.T(), err.Error(), "disk read failed")
+}
+
+// readCountingSys errors on the N-th ReadFile call against `target`. Drives
+// the deps-patcher error branch in RestoreBuiltinWorkflows without tripping
+// the seed or the first patcher.
+type readCountingSys struct {
+	*fakeSystem
+	target    string
+	errOnCall int
+	err       error
+	calls     int
+}
+
+func (c *readCountingSys) ReadFile(name string) ([]byte, error) {
+	if name == c.target {
+		c.calls++
+		if c.calls == c.errOnCall {
+			return nil, c.err
+		}
+	}
+	return c.fakeSystem.ReadFile(name)
 }
 
 // TestRestoreBuiltinWorkflowsPatchesStaleBodyDeps: a hand-rolled fix-loop
@@ -77,8 +166,9 @@ func (s *FSMigrateSuite) TestRestoreBuiltinWorkflowsPatchesStaleBodyDeps() {
 	stale := `{"workflows":[{"name":"review-fix-loop","nodes":[{"type":"loop","body":[{"id":"review"},{"id":"fix"},{"id":"verify"}]}]}]}`
 	sys.files[configPath] = []byte(stale)
 
-	_, err := RestoreBuiltinWorkflows(context.Background(), &Ctx{Sys: sys, LoopDir: "/loop"})
+	_, patched, err := RestoreBuiltinWorkflows(context.Background(), &Ctx{Sys: sys, LoopDir: "/loop"})
 	require.NoError(s.T(), err)
+	require.Contains(s.T(), patched, "review-fix-loop", "body-deps patch must surface as patched")
 	out := string(sys.files[configPath])
 	require.Contains(s.T(), out, `"depends_on"`, "fix/verify must gain depends_on after restore")
 }
