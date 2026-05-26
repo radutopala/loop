@@ -72,12 +72,14 @@ func (a *app) newReviewRunCmd() *cobra.Command {
 	cmd.Flags().StringVar(&channelID, "channel-id", "", "Channel ID to run review on")
 	cmd.Flags().StringVar(&apiURL, "api-url", "", "Loop API base URL (default $API_URL or http://localhost:8222)")
 	cmd.Flags().BoolVar(&wait, "wait", false, "Block until the daemon flips to a terminal status, then print JSON")
-	// 30m default chosen empirically: a real PR review on a non-trivial diff
-	// regularly takes 5–15 minutes inside the agent container. The earlier 5m
-	// default raced ahead of the daemon and killed the workflow's bash node
-	// before fix/verify could fire (the daemon's review goroutine kept
-	// running and the FE saw comments, but the loop body had already errored).
-	cmd.Flags().StringVar(&timeoutStr, "timeout", "30m", "Maximum time to wait when --wait is set (Go duration)")
+	// 60m default chosen to sit above the daemon-side review ceiling
+	// (SetReviewRunTimeout in cmd/loop/serve.go, currently 50m): the daemon
+	// flips the session to status=error first with a meaningful message,
+	// and the CLI exits with that message rather than its generic
+	// "timed out after 60m" wrapper. The earlier 30m default fired before
+	// the daemon's own deadline on big PRs, killing the workflow's bash
+	// node while the agent was still emitting comments.
+	cmd.Flags().StringVar(&timeoutStr, "timeout", "60m", "Maximum time to wait when --wait is set (Go duration)")
 	_ = cmd.MarkFlagRequired("channel-id")
 
 	return cmd

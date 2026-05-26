@@ -1316,16 +1316,20 @@ type mockReviewRunner struct {
 	lastSys    string
 	lastUser   string
 	runFn      func(onComment func(*review.Comment)) (*agent.AgentResponse, error)
-	done       chan struct{} // closed after Run returns
+	// runWithCtxFn, when set, takes precedence over runFn so tests can
+	// observe ctx cancellation (used by the runReviewAsync timeout test).
+	runWithCtxFn func(ctx context.Context, onComment func(*review.Comment)) (*agent.AgentResponse, error)
+	done         chan struct{} // closed after Run returns
 }
 
-func (m *mockReviewRunner) Run(_ context.Context, _, dirPath, parentDirPath, systemPrompt, prompt string, onComment func(*review.Comment)) (*agent.AgentResponse, error) {
+func (m *mockReviewRunner) Run(ctx context.Context, _, dirPath, parentDirPath, systemPrompt, prompt string, onComment func(*review.Comment)) (*agent.AgentResponse, error) {
 	m.mu.Lock()
 	m.calls++
 	m.lastDir = dirPath
 	m.lastParent = parentDirPath
 	m.lastSys = systemPrompt
 	m.lastUser = prompt
+	ctxFn := m.runWithCtxFn
 	fn := m.runFn
 	done := m.done
 	m.mu.Unlock()
@@ -1334,6 +1338,9 @@ func (m *mockReviewRunner) Run(_ context.Context, _, dirPath, parentDirPath, sys
 			close(done)
 		}
 	}()
+	if ctxFn != nil {
+		return ctxFn(ctx, onComment)
+	}
 	if fn != nil {
 		return fn(onComment)
 	}
@@ -2048,4 +2055,104 @@ func (s *ReviewHandlerSuite) TestRunRejectedWhenGetChannelFails() {
 	require.Contains(s.T(), w.Body.String(), "no dir_path")
 	// Runner never gets invoked — no need to wait on runner.done.
 	require.Equal(s.T(), 0, runner.calls)
+}
+
+// TestRunReviewAsyncTimeoutFlipsStatusToError verifies the server-side
+// ceiling: when reviewRunTimeout fires, runReviewAsync cancels the
+// agent ctx and surfaces a "review timed out after <d>" error_text on
+// the session — rather than leaking the goroutine and pinning the
+// session at status=reviewing forever (the original bug).
+func (s *ReviewHandlerSuite) TestRunReviewAsyncTimeoutFlipsStatusToError() {
+	s.wireReadySession()
+	s.srv.SetReviewRunTimeout(10 * time.Millisecond)
+
+	runner := &mockReviewRunner{done: make(chan struct{})}
+	runner.runWithCtxFn = func(ctx context.Context, _ func(*review.Comment)) (*agent.AgentResponse, error) {
+		<-ctx.Done()
+		return nil, ctx.Err()
+	}
+	s.srv.SetReviewAgent(runner, "", "")
+
+	w := httptest.NewRecorder()
+	s.mux.ServeHTTP(w, httptest.NewRequest("POST", "/api/channels/ch1/review/run", nil))
+	require.Equal(s.T(), http.StatusAccepted, w.Code)
+
+	<-runner.done
+	s.waitFor(func() bool { return s.rs.Get("ch1").Status == review.StatusError })
+	sess := s.rs.Get("ch1")
+	require.Contains(s.T(), sess.Error, "review timed out after")
+}
+
+// TestRunReviewAsyncTimeoutDoesNotMaskUnrelatedErrors covers the
+// "timeout is set, but the runner failed for a non-timeout reason"
+// branch — the original error message must survive (e.g. an
+// authentication failure, not a deadline). Without this branch we'd
+// risk falsely flagging any error as a timeout once the ceiling is on.
+func (s *ReviewHandlerSuite) TestRunReviewAsyncTimeoutDoesNotMaskUnrelatedErrors() {
+	s.wireReadySession()
+	s.srv.SetReviewRunTimeout(time.Hour)
+
+	runner := &mockReviewRunner{done: make(chan struct{})}
+	runner.runFn = func(_ func(*review.Comment)) (*agent.AgentResponse, error) {
+		return nil, errors.New("gh auth failed")
+	}
+	s.srv.SetReviewAgent(runner, "", "")
+
+	w := httptest.NewRecorder()
+	s.mux.ServeHTTP(w, httptest.NewRequest("POST", "/api/channels/ch1/review/run", nil))
+	require.Equal(s.T(), http.StatusAccepted, w.Code)
+
+	<-runner.done
+	s.waitFor(func() bool { return s.rs.Get("ch1").Status == review.StatusError })
+	sess := s.rs.Get("ch1")
+	require.Equal(s.T(), "gh auth failed", sess.Error)
+}
+
+// TestRunReviewAsyncTimeoutSuccessPath covers the "timeout is set and
+// the run completes well before the deadline" branch — verifies the
+// timeout ceiling doesn't accidentally fail successful fast runs.
+func (s *ReviewHandlerSuite) TestRunReviewAsyncTimeoutSuccessPath() {
+	s.wireReadySession()
+	s.srv.SetReviewRunTimeout(time.Hour)
+
+	runner := &mockReviewRunner{done: make(chan struct{})}
+	runner.runFn = func(_ func(*review.Comment)) (*agent.AgentResponse, error) {
+		return &agent.AgentResponse{}, nil
+	}
+	s.srv.SetReviewAgent(runner, "", "")
+
+	w := httptest.NewRecorder()
+	s.mux.ServeHTTP(w, httptest.NewRequest("POST", "/api/channels/ch1/review/run", nil))
+	require.Equal(s.T(), http.StatusAccepted, w.Code)
+
+	<-runner.done
+	s.waitFor(func() bool { return s.rs.Get("ch1").Status == review.StatusReady })
+}
+
+// TestRunReviewAsyncTimeoutRewritesAgentDeadlineMessage covers the
+// branch where the agent observes the ctx-cancel and returns its own
+// (non-wrapping) error string. The handler must still substitute the
+// readable "timed out after <d>" message because ctx.Err() is
+// DeadlineExceeded — without this branch the user would see whatever
+// opaque string the agent happened to return.
+func (s *ReviewHandlerSuite) TestRunReviewAsyncTimeoutRewritesAgentDeadlineMessage() {
+	s.wireReadySession()
+	s.srv.SetReviewRunTimeout(10 * time.Millisecond)
+
+	runner := &mockReviewRunner{done: make(chan struct{})}
+	runner.runWithCtxFn = func(ctx context.Context, _ func(*review.Comment)) (*agent.AgentResponse, error) {
+		<-ctx.Done()
+		return nil, errors.New("agent stream closed")
+	}
+	s.srv.SetReviewAgent(runner, "", "")
+
+	w := httptest.NewRecorder()
+	s.mux.ServeHTTP(w, httptest.NewRequest("POST", "/api/channels/ch1/review/run", nil))
+	require.Equal(s.T(), http.StatusAccepted, w.Code)
+
+	<-runner.done
+	s.waitFor(func() bool { return s.rs.Get("ch1").Status == review.StatusError })
+	sess := s.rs.Get("ch1")
+	require.Contains(s.T(), sess.Error, "review timed out after")
+	require.NotContains(s.T(), sess.Error, "agent stream closed")
 }
