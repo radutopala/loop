@@ -151,6 +151,12 @@ type app struct {
 	reviewPollInterval         time.Duration
 	reviewPollTransportBackoff time.Duration
 
+	// reviewPostTimeout bounds the kickoff POST when --wait is false. Held
+	// as a struct field so tests can shrink it without resorting to
+	// global-var save/restore. See cmd/loop/review.go for why a fixed
+	// timeout is needed in the fire-and-forget path.
+	reviewPostTimeout time.Duration
+
 	// Embedded FS for playground examples (overridable for testing)
 	playgroundExamplesFS fs.FS
 
@@ -255,6 +261,7 @@ func newApp() *app {
 		// for a real daemon that takes seconds, not microseconds, to recover.
 		reviewPollInterval:         time.Second,
 		reviewPollTransportBackoff: 2 * time.Second,
+		reviewPostTimeout:          30 * time.Second,
 
 		serveReady: make(chan struct{}),
 	}

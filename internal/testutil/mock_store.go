@@ -364,8 +364,8 @@ func (m *MockStore) ListNodeRuns(ctx context.Context, runID string) ([]*db.NodeR
 	return args.Get(0).([]*db.NodeRun), args.Error(1)
 }
 
-func (m *MockStore) UpdateNodeHeartbeat(ctx context.Context, runID, nodeID string) error {
-	return m.Called(ctx, runID, nodeID).Error(0)
+func (m *MockStore) UpdateNodeHeartbeat(ctx context.Context, runID, nodeID string, iteration int) error {
+	return m.Called(ctx, runID, nodeID, iteration).Error(0)
 }
 
 func (m *MockStore) DeleteWorkflowRun(ctx context.Context, id string) error {

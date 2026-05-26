@@ -312,7 +312,11 @@ func (e *defaultEngine) executeNode(
 
 	// Start heartbeat for this node — periodically updates last_heartbeat_at
 	// so the UI can show liveness and recovery can detect stale nodes.
-	stopHeartbeat := e.startHeartbeat(ctx, run.ID, node.ID)
+	// Top-level executor: nothing wraps this node in a loop body, so the
+	// only row in workflow_node_runs is at iteration=0. Passing 0 explicitly
+	// keeps the heartbeat UPDATE aimed at that row (the WHERE clause filters
+	// by iteration so per-iteration body rows don't get hijacked).
+	stopHeartbeat := e.startHeartbeat(ctx, run.ID, node.ID, 0)
 	defer stopHeartbeat()
 
 	// Evaluate "when" condition.
@@ -731,12 +735,18 @@ func (e *defaultEngine) executeLoopBody(ctx context.Context, run *db.WorkflowRun
 
 		finishedAt := time.Now().UTC()
 		nrEnd := &db.NodeRun{
-			RunID:      run.ID,
-			NodeID:     child.ID,
-			Iteration:  iteration,
-			Status:     status,
-			Output:     output,
-			Attempt:    1,
+			RunID:     run.ID,
+			NodeID:    child.ID,
+			Iteration: iteration,
+			Status:    status,
+			Output:    output,
+			Attempt:   1,
+			// StartedAt is carried into the UPSERT so that, if nrStart's
+			// INSERT failed silently above (we only log + swallow at line
+			// ~692), the row inserted here still has a valid started_at —
+			// otherwise the column is NOT NULL and the second UPSERT would
+			// be rejected, leaving no DB record of the node ever running.
+			StartedAt:  &now,
 			FinishedAt: &finishedAt,
 		}
 		if execErr != nil {
@@ -1019,24 +1029,28 @@ func (e *defaultEngine) executeWithRetry(ctx context.Context, run *db.WorkflowRu
 }
 
 // startHeartbeat launches a background goroutine that periodically updates
-// last_heartbeat_at for the given node. The returned function cancels the
-// goroutine and waits for it to exit.
-func (e *defaultEngine) startHeartbeat(ctx context.Context, runID, nodeID string) func() {
+// last_heartbeat_at for the given (run, node, iteration) row. The returned
+// function cancels the goroutine and waits for it to exit. iteration is
+// load-bearing: a node's row is keyed by (run_id, node_id, iteration) and
+// the heartbeat UPDATE filters by all three — without it, a heartbeat for
+// iteration N would also bump iteration N-1's last_heartbeat_at and hide a
+// stalled node from the recovery sweeper.
+func (e *defaultEngine) startHeartbeat(ctx context.Context, runID, nodeID string, iteration int) func() {
 	hbCtx, cancel := context.WithCancel(ctx)
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
 		// Immediate first heartbeat.
-		if err := e.store.UpdateNodeHeartbeat(hbCtx, runID, nodeID); err != nil {
-			e.logger.Error("workflow: heartbeat update failed", "run_id", runID, "node_id", nodeID, "error", err)
+		if err := e.store.UpdateNodeHeartbeat(hbCtx, runID, nodeID, iteration); err != nil {
+			e.logger.Error("workflow: heartbeat update failed", "run_id", runID, "node_id", nodeID, "iteration", iteration, "error", err)
 		}
 		ticker := time.NewTicker(e.heartbeatInterval)
 		defer ticker.Stop()
 		for {
 			select {
 			case <-ticker.C:
-				if err := e.store.UpdateNodeHeartbeat(hbCtx, runID, nodeID); err != nil {
-					e.logger.Error("workflow: heartbeat update failed", "run_id", runID, "node_id", nodeID, "error", err)
+				if err := e.store.UpdateNodeHeartbeat(hbCtx, runID, nodeID, iteration); err != nil {
+					e.logger.Error("workflow: heartbeat update failed", "run_id", runID, "node_id", nodeID, "iteration", iteration, "error", err)
 				}
 			case <-hbCtx.Done():
 				return

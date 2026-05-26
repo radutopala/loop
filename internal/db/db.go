@@ -73,7 +73,7 @@ type Store interface {
 	ListWorkflowRunsByStatus(ctx context.Context, statuses []WorkflowRunStatus) ([]*WorkflowRun, error)
 	UpsertNodeRun(ctx context.Context, nr *NodeRun) error
 	ListNodeRuns(ctx context.Context, runID string) ([]*NodeRun, error)
-	UpdateNodeHeartbeat(ctx context.Context, runID, nodeID string) error
+	UpdateNodeHeartbeat(ctx context.Context, runID, nodeID string, iteration int) error
 	DeleteWorkflowRun(ctx context.Context, id string) error
 	Close() error
 }
@@ -1266,10 +1266,15 @@ func (s *SQLiteStore) ListNodeRuns(ctx context.Context, runID string) ([]*NodeRu
 	return nodeRuns, rows.Err()
 }
 
-func (s *SQLiteStore) UpdateNodeHeartbeat(ctx context.Context, runID, nodeID string) error {
+// UpdateNodeHeartbeat refreshes last_heartbeat_at for the (run_id, node_id,
+// iteration) row. The iteration filter matters because a body child node
+// shares its node_id across iterations — without it, a heartbeat for
+// iteration N would also bump iteration N-1's row, hiding a stalled-and-
+// recovered scenario from the recovery sweeper.
+func (s *SQLiteStore) UpdateNodeHeartbeat(ctx context.Context, runID, nodeID string, iteration int) error {
 	_, err := s.db.ExecContext(ctx,
-		`UPDATE workflow_node_runs SET last_heartbeat_at = ? WHERE run_id = ? AND node_id = ?`,
-		s.nowFunc(), runID, nodeID,
+		`UPDATE workflow_node_runs SET last_heartbeat_at = ? WHERE run_id = ? AND node_id = ? AND iteration = ?`,
+		s.nowFunc(), runID, nodeID, iteration,
 	)
 	return err
 }

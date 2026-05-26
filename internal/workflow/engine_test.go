@@ -105,7 +105,7 @@ func (s *EngineSuite) SetupTest() {
 
 	// Default heartbeat mock — the heartbeat goroutine fires from executeNode
 	// and its timing is non-deterministic in tests.
-	s.store.On("UpdateNodeHeartbeat", mock.Anything, mock.Anything, mock.Anything).Return(nil).Maybe()
+	s.store.On("UpdateNodeHeartbeat", mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Maybe()
 }
 
 // waitForRunStatus sets up UpdateWorkflowRun to signal on a channel when the

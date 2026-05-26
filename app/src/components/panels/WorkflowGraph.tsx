@@ -143,7 +143,17 @@ export function expandLoopBodies(
         const newId = makeSyntheticId(d.id, i, child.id);
         const deps: string[] = [];
         for (const dep of child.depends_on ?? []) {
-          if (bodyIds.has(dep)) deps.push(makeSyntheticId(d.id, i, dep));
+          if (bodyIds.has(dep)) {
+            deps.push(makeSyntheticId(d.id, i, dep));
+          } else {
+            // External dep (a top-level pre-loop node, or another loop's id).
+            // The rewires pass below will re-point any cross-loop reference
+            // to that loop's final iteration. Dropping the dep here silently
+            // would break edges from pre-loop nodes to body children — they
+            // simply wouldn't render an arrow and the body child would
+            // appear orphaned.
+            deps.push(dep);
+          }
         }
         if (ci === 0 && i > 0) {
           const prevLast = d.body[d.body.length - 1]!;

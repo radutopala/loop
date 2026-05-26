@@ -16,7 +16,7 @@ import {
   type ReviewStatus,
 } from "../../api/review";
 import { sendMessage } from "../../api/channels";
-import { startWorkflowRun } from "../../api/workflows";
+import { fetchWorkflowRun, startWorkflowRun } from "../../api/workflows";
 import type { ChatEventListener } from "../../hooks/useChatStateStore";
 import type { GateApprovalRequestedData, WSEvent } from "../../types";
 import { ApprovalCard } from "../chat/ApprovalCard";
@@ -31,6 +31,14 @@ const REVIEW_MAX_ITER_STORAGE_KEY = "loop.review.maxIter";
 const REVIEW_LOOP_WORKFLOW = "review-loop";
 const REVIEW_FIX_LOOP_WORKFLOW = "review-fix-loop";
 
+// Per-channel sessionStorage key for the currently active review-loop run.
+// We store this in sessionStorage (not localStorage) so unrelated tabs don't
+// fight over the same run, but the chip survives a panel remount within the
+// same tab (e.g. layout reshuffle, dev-tools open/close, hot reload).
+function reviewRunIdKey(channelId: string): string {
+  return `loop.review.activeRunId.${channelId}`;
+}
+
 function readStoredMode(): ReviewMode {
   if (typeof window === "undefined") return "review-only";
   const v = window.localStorage.getItem(REVIEW_MODE_STORAGE_KEY);
@@ -38,10 +46,10 @@ function readStoredMode(): ReviewMode {
 }
 
 function readStoredMaxIter(): number {
-  if (typeof window === "undefined") return 3;
+  if (typeof window === "undefined") return 1;
   const raw = window.localStorage.getItem(REVIEW_MAX_ITER_STORAGE_KEY);
   const n = raw === null ? NaN : parseInt(raw, 10);
-  if (!Number.isFinite(n)) return 3;
+  if (!Number.isFinite(n)) return 1;
   if (n < 1) return 1;
   if (n > 10) return 10;
   return n;
@@ -143,7 +151,15 @@ export function ReviewPanel({
   const [error, setError] = useState<string | null>(null);
   const [mode, setMode] = useState<ReviewMode>(() => readStoredMode());
   const [maxIter, setMaxIter] = useState<number>(() => readStoredMaxIter());
-  const [loopRunId, setLoopRunId] = useState<string | null>(null);
+  // Hydrate loopRunId from sessionStorage so a panel remount (layout
+  // reshuffle, dev-tools, hot reload) re-binds to the still-running daemon
+  // workflow instead of losing track of it. The hydration effect below
+  // verifies the run is still live and either resyncs the chip or clears
+  // the key on terminal status.
+  const [loopRunId, setLoopRunId] = useState<string | null>(() => {
+    if (typeof window === "undefined") return null;
+    return window.sessionStorage.getItem(reviewRunIdKey(channelId));
+  });
   const [loopChip, setLoopChip] = useState<string>("");
   // Tracks whether a workflow run is in flight independently of
   // `session.status` and `busy`. The review-fix loop's body children flip the
@@ -152,7 +168,10 @@ export function ReviewPanel({
   // returns — without this guard, the primary button would re-enable
   // mid-loop and let the user start a second concurrent run on the same
   // worktree. Cleared on workflow.run_completed.
-  const [loopActive, setLoopActive] = useState(false);
+  const [loopActive, setLoopActive] = useState<boolean>(() => {
+    if (typeof window === "undefined") return false;
+    return window.sessionStorage.getItem(reviewRunIdKey(channelId)) !== null;
+  });
   const [menuPos, setMenuPos] = useState<{ x: number; y: number } | null>(null);
   const caretRef = useRef<HTMLButtonElement | null>(null);
 
@@ -225,6 +244,57 @@ export function ReviewPanel({
   const hasChatPanelRef = useRef(hasChatPanel);
   useEffect(() => { hasChatPanelRef.current = hasChatPanel; }, [hasChatPanel]);
 
+  // Hydration resync: when the panel mounts (or the channel changes) with
+  // a sessionStorage-recovered run id, ask the daemon for the current
+  // status. Three outcomes:
+  //   - run is terminal already (completed/failed/cancelled) → clear the
+  //     key and show the matching final chip so the user sees what
+  //     happened during their absence.
+  //   - run is still live → leave the key alone; the chip will be driven
+  //     by the workflow event subscription below as new events arrive.
+  //   - the run row is gone (deleted/404) → clear the key silently.
+  // Without this resync, a run that finished while the panel was unmounted
+  // would leave loopActive=true forever (sticky disabled button) because
+  // workflow.run_completed already fired and won't fire again.
+  useEffect(() => {
+    if (!loopRunId) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const detail = await fetchWorkflowRun(loopRunId);
+        if (cancelled) return;
+        const status = detail.run?.status;
+        if (status === "completed" || status === "failed" || status === "cancelled") {
+          if (typeof window !== "undefined") {
+            window.sessionStorage.removeItem(reviewRunIdKey(channelId));
+          }
+          setLoopChip(status === "completed" ? "done" : status);
+          setLoopActive(false);
+          setLoopRunId(null);
+        } else if (status === "paused") {
+          setLoopChip(hasChatPanelRef.current ? "paused at gate — see chat" : "paused at gate — approve below");
+        } else {
+          // Still running — chip will be repainted by the WS subscription.
+          setLoopChip((prev) => prev || "running");
+        }
+      } catch {
+        if (cancelled) return;
+        // Run is gone (404 or daemon down). Clear the stale handle so the
+        // Run button re-enables and the chip clears.
+        if (typeof window !== "undefined") {
+          window.sessionStorage.removeItem(reviewRunIdKey(channelId));
+        }
+        setLoopChip("");
+        setLoopActive(false);
+        setLoopRunId(null);
+      }
+    })();
+    return () => { cancelled = true; };
+    // Only fire on (channelId, loopRunId) edge transitions. Adding the
+    // chat-panel ref or setters would re-trigger the API call needlessly.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [channelId, loopRunId]);
+
   // Workflow event subscription: chip mirrors run/node status for the
   // active review-loop run. Cleared on terminal status.
   useEffect(() => {
@@ -258,12 +328,17 @@ export function ReviewPanel({
           else if (d.status === "cancelled") setLoopChip("cancelled");
           else setLoopChip(d.status ?? "done");
           setLoopActive(false);
+          // Drop the sessionStorage handle once the run hits a terminal
+          // state, so a subsequent remount doesn't re-resync to a stale id.
+          if (typeof window !== "undefined") {
+            window.sessionStorage.removeItem(reviewRunIdKey(channelId));
+          }
           break;
         default:
       }
     };
     return subscribeChatEvents(listener);
-  }, [subscribeChatEvents, loopRunId]);
+  }, [subscribeChatEvents, loopRunId, channelId]);
 
   // WS subscription: pick up review.comment + review.status for this channel.
   useEffect(() => {
@@ -333,6 +408,14 @@ export function ReviewPanel({
         channel_id: channelId,
         inputs: { max_iterations: String(maxIter) },
       });
+      // Persist the run id before setLoopRunId so the resync effect (which
+      // fires on loopRunId changes) sees the storage entry. Without this the
+      // initial mount-and-set would land at the same wall-clock tick as the
+      // sessionStorage write, and a competing remount in another browser
+      // process could observe an empty key.
+      if (typeof window !== "undefined") {
+        window.sessionStorage.setItem(reviewRunIdKey(channelId), resp.run_id);
+      }
       setLoopRunId(resp.run_id);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -345,6 +428,11 @@ export function ReviewPanel({
       // (pre-dispatch throw here vs. daemon-side failure observed via WS).
       setLoopChip("failed");
       setLoopActive(false);
+      // No run was dispatched — make sure no stale id from a prior attempt
+      // sticks around to fool the next remount's hydration.
+      if (typeof window !== "undefined") {
+        window.sessionStorage.removeItem(reviewRunIdKey(channelId));
+      }
     } finally {
       setBusy(false);
     }

@@ -39,7 +39,7 @@ func (s *EngineSuite) TestApprovalNodePauseAndResume() {
 	s.store.ExpectedCalls = nil // clear existing mocks
 	s.store.On("CreateWorkflowRunWithNodes", mock.Anything, mock.Anything, mock.Anything).Return(nil)
 	s.store.On("UpsertNodeRun", mock.Anything, mock.Anything).Return(nil)
-	s.store.On("UpdateNodeHeartbeat", mock.Anything, mock.Anything, mock.Anything).Return(nil).Maybe()
+	s.store.On("UpdateNodeHeartbeat", mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Maybe()
 	// GetWorkflowRun: used by updateRunStatus, executeDAG final write, and
 	// ResumeRun (to look up PausedNodeID). Return PausedNodeID="approve" so
 	// ResumeRun can form the correct composite approval key.

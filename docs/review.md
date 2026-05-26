@@ -36,7 +36,7 @@ per-global / per-project / per-worktree the same way as `github.gh_user`.
    - **Run review** — a single review pass (the original one-shot behavior).
    - **Run review + fix loop** — review → fix → re-review, capped at
      `max_iterations` (set via the small numeric input next to the button,
-     1–10, default `3`). Each iteration runs the same review prompt as the
+     1–10, default `1`). Each iteration runs the same review prompt as the
      one-shot mode; comments stream live into the panel as they arrive.
      The loop stops early when an iteration returns zero comments
      **or** the same comment-id set as the previous iteration

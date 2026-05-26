@@ -156,7 +156,7 @@ func (s *EngineSuite) TestRecoverRunsPausedResumeApproval() {
 	s.store.On("ListWorkflowRunsByStatus", mock.Anything, mock.Anything).Return([]*db.WorkflowRun{pausedRun}, nil)
 	s.store.On("ListNodeRuns", mock.Anything, "wfr-recover").Return(nodeRuns, nil)
 	s.store.On("UpsertNodeRun", mock.Anything, mock.Anything).Return(nil)
-	s.store.On("UpdateNodeHeartbeat", mock.Anything, mock.Anything, mock.Anything).Return(nil).Maybe()
+	s.store.On("UpdateNodeHeartbeat", mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Maybe()
 
 	// GetWorkflowRun: used by updateRunStatus and finalizeDAG. Return with
 	// PausedNodeID="approve" so ResumeRun can form the composite key.
@@ -246,7 +246,7 @@ func (s *EngineSuite) TestRecoverRunsCheckpointWithStaleRunningNode() {
 	s.store.On("ListWorkflowRunsByStatus", mock.Anything, mock.Anything).Return([]*db.WorkflowRun{pausedRun}, nil)
 	s.store.On("ListNodeRuns", mock.Anything, "wfr-stalenode").Return(nodeRuns, nil)
 	s.store.On("UpsertNodeRun", mock.Anything, mock.Anything).Return(nil)
-	s.store.On("UpdateNodeHeartbeat", mock.Anything, mock.Anything, mock.Anything).Return(nil).Maybe()
+	s.store.On("UpdateNodeHeartbeat", mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Maybe()
 	s.store.On("GetWorkflowRun", mock.Anything, "wfr-stalenode").Return(
 		&db.WorkflowRun{ID: "wfr-stalenode", Status: db.WorkflowRunStatusRunning, PausedNodeID: "approve", WorkflowName: "stale-node-wf", ChannelID: "ch1"}, nil,
 	)
@@ -528,7 +528,7 @@ func (s *EngineSuite) TestNodeSlotCancelledDuringCheckpoint() {
 	s.store.On("ListWorkflowRunsByStatus", mock.Anything, mock.Anything).Return([]*db.WorkflowRun{pausedRun}, nil)
 	s.store.On("ListNodeRuns", mock.Anything, "wfr-ck").Return(nodeRuns, nil)
 	s.store.On("UpsertNodeRun", mock.Anything, mock.Anything).Return(nil)
-	s.store.On("UpdateNodeHeartbeat", mock.Anything, mock.Anything, mock.Anything).Return(nil).Maybe()
+	s.store.On("UpdateNodeHeartbeat", mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Maybe()
 	s.store.On("GetWorkflowRun", mock.Anything, "wfr-ck").Return(
 		&db.WorkflowRun{ID: "wfr-ck", Status: db.WorkflowRunStatusRunning, PausedNodeID: "approve", WorkflowName: "ck-wf", ChannelID: "ch1"}, nil,
 	)
@@ -642,7 +642,7 @@ func (s *EngineSuite) TestApprovalNodeResumeStatusWriteError() {
 
 	s.store.On("CreateWorkflowRunWithNodes", mock.Anything, mock.Anything, mock.Anything).Return(nil)
 	s.store.On("UpsertNodeRun", mock.Anything, mock.Anything).Return(nil)
-	s.store.On("UpdateNodeHeartbeat", mock.Anything, mock.Anything, mock.Anything).Return(nil).Maybe()
+	s.store.On("UpdateNodeHeartbeat", mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Maybe()
 
 	// Clear default GetWorkflowRun mock.
 	for _, call := range s.store.ExpectedCalls {

@@ -95,6 +95,21 @@ func resolveReviewAPIURL(flag, env string) string {
 	return "http://localhost:8222"
 }
 
+// errReviewSessionGone surfaces present=false from a /review GET poll.
+// Returned only after the kickoff POST has been accepted, where the session
+// is supposed to exist — typically because the user closed the Review panel
+// mid-loop. The caller bails immediately instead of polling for the full
+// --timeout window.
+var errReviewSessionGone = errors.New("review session no longer present (deleted)")
+
+// pollPermanentError marks an HTTP poll error as non-retryable. Wrapping a
+// permanent error (e.g. a 4xx response, or session-gone) lets runReview
+// distinguish it from transient transport hiccups that should be retried.
+type pollPermanentError struct{ err error }
+
+func (e *pollPermanentError) Error() string { return e.err.Error() }
+func (e *pollPermanentError) Unwrap() error { return e.err }
+
 // runReview POSTs to /api/channels/{id}/review/run and, when wait is true,
 // polls /api/channels/{id}/review every second until the session leaves the
 // "reviewing" status or the deadline fires.
@@ -106,6 +121,10 @@ func resolveReviewAPIURL(flag, env string) string {
 // client.Do indefinitely because http.DefaultClient has no Timeout set and
 // cobra's parent ctx has no deadline either — the `time.Now().After(deadline)`
 // check between polls never gets a turn to fire.
+//
+// When wait is false the POST itself still gets a smaller fixed timeout
+// (reviewPostTimeout) so fire-and-forget callers can't hang on a stalled
+// POST response either.
 func (a *app) runReview(ctx context.Context, stdout io.Writer, apiURL, channelID string, wait bool, timeout time.Duration) error {
 	if wait {
 		var cancel context.CancelFunc
@@ -115,7 +134,13 @@ func (a *app) runReview(ctx context.Context, stdout io.Writer, apiURL, channelID
 	client := a.reviewHTTPClient()
 
 	runURL := fmt.Sprintf("%s/api/channels/%s/review/run", apiURL, channelID)
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, runURL, bytes.NewReader([]byte(`{}`)))
+	postCtx := ctx
+	if !wait {
+		var cancel context.CancelFunc
+		postCtx, cancel = context.WithTimeout(ctx, a.reviewPostTimeout)
+		defer cancel()
+	}
+	req, err := http.NewRequestWithContext(postCtx, http.MethodPost, runURL, bytes.NewReader([]byte(`{}`)))
 	if err != nil {
 		return fmt.Errorf("building POST request: %w", err)
 	}
@@ -153,15 +178,17 @@ func (a *app) runReview(ctx context.Context, stdout io.Writer, apiURL, channelID
 		}
 		out, terminal, perr := pollReviewOnce(ctx, client, getURL)
 		if perr != nil {
-			// Transport-level error (TCP reset, momentary daemon restart, proxy
-			// 502, hung response cancelled by our own ctx timeout). With
-			// --timeout 30m and a 1s poll cadence we make thousands of GETs;
-			// treating any single hiccup as fatal would kill a review-fix loop
-			// iteration on the first packet drop. Bail only when the run ctx is
-			// genuinely done (cancellation or our own deadline); otherwise back
-			// off briefly and keep polling — the overall context.WithTimeout
-			// still bounds the wait.
-			if errors.Is(perr, context.Canceled) || errors.Is(perr, context.DeadlineExceeded) ||
+			// Permanent errors (HTTP 4xx, session-gone) bail immediately —
+			// the 30m --timeout was burning out on these too. Transport-level
+			// hiccups (TCP reset, momentary daemon restart, proxy 502) still
+			// back off and keep polling — with --timeout 30m and a 1s cadence
+			// we make thousands of GETs; treating any single hiccup as fatal
+			// would kill a review-fix loop on the first packet drop. Bail
+			// only when the run ctx is genuinely done or when pollReviewOnce
+			// flagged the error as permanent.
+			var permanent *pollPermanentError
+			if errors.As(perr, &permanent) ||
+				errors.Is(perr, context.Canceled) || errors.Is(perr, context.DeadlineExceeded) ||
 				ctx.Err() != nil {
 				return wrapTimeout(perr)
 			}
@@ -196,9 +223,11 @@ func (a *app) runReview(ctx context.Context, stdout io.Writer, apiURL, channelID
 
 // pollReviewOnce calls GET /api/channels/{id}/review once. It returns the
 // CLI-shaped output, a flag indicating whether the session is in a terminal
-// state (ready or error), and any transport-level error. A 200 with
-// present=false is treated as a transient "not yet" — the caller keeps
-// polling rather than failing.
+// state (ready or error), and any transport-level error. Errors are wrapped
+// in *pollPermanentError when retrying is hopeless: HTTP 4xx (request
+// malformed / channel missing) or a 200 with present=false (session went
+// away). 5xx and decode errors propagate as plain errors so the caller can
+// back off and retry through a transient daemon hiccup.
 func pollReviewOnce(ctx context.Context, client reviewHTTPClient, url string) (reviewCLIOutput, bool, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
@@ -211,7 +240,14 @@ func pollReviewOnce(ctx context.Context, client reviewHTTPClient, url string) (r
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
-		return reviewCLIOutput{}, false, fmt.Errorf("GET %s: unexpected status %d: %s", url, resp.StatusCode, string(body))
+		err := fmt.Errorf("GET %s: unexpected status %d: %s", url, resp.StatusCode, string(body))
+		// 4xx is the daemon telling us the request is malformed or the
+		// session was never set up — retrying won't help. 5xx may be a
+		// daemon restart mid-loop; let the caller back off and retry.
+		if resp.StatusCode >= 400 && resp.StatusCode < 500 {
+			return reviewCLIOutput{}, false, &pollPermanentError{err: err}
+		}
+		return reviewCLIOutput{}, false, err
 	}
 
 	var raw struct {
@@ -231,7 +267,11 @@ func pollReviewOnce(ctx context.Context, client reviewHTTPClient, url string) (r
 		return reviewCLIOutput{}, false, fmt.Errorf("decoding %s: %w", url, err)
 	}
 	if !raw.Present || raw.Session == nil {
-		return reviewCLIOutput{}, false, nil
+		// The kickoff POST returned 202 (we accepted the run). If the GET
+		// then says present=false, the session was deleted underneath us —
+		// typically the user closed the Review panel mid-loop. Polling for
+		// the rest of --timeout is pointless; bail with a permanent error.
+		return reviewCLIOutput{}, false, &pollPermanentError{err: errReviewSessionGone}
 	}
 
 	switch raw.Session.Status {
