@@ -735,14 +735,29 @@ func (e *defaultEngine) executeLoopBody(ctx context.Context, run *db.WorkflowRun
 		// status=running forever.
 		stopHeartbeat := e.startHeartbeat(ctx, run.ID, child.ID, iteration)
 
+		// Honor the child's timeout the same way executeNode does for top-level
+		// nodes (see line ~344). Without this wrap, a body child's `timeout:`
+		// declaration is silently ignored — e.g. `{id:"fix", type:"prompt",
+		// timeout:"5m"}` would stall against the outer run ctx instead of the
+		// per-child budget. Cancel explicitly at the end of the iteration
+		// rather than via defer — defer in this for-loop would stack one cancel
+		// per iteration and only fire when executeLoopBody returns.
+		childCtx := ctx
+		var childCancel context.CancelFunc
+		if child.Timeout != "" {
+			if d, perr := time.ParseDuration(child.Timeout); perr == nil {
+				childCtx, childCancel = context.WithTimeout(ctx, d)
+			}
+		}
+
 		var output string
 		var execErr error
 		execFn := func() (string, error) {
 			switch child.Type {
 			case config.NodeTypePrompt:
-				return e.executePromptNode(ctx, run, child, runCtx, mu)
+				return e.executePromptNode(childCtx, run, child, runCtx, mu)
 			case config.NodeTypeBash:
-				return e.executeBashNode(ctx, run, child, runCtx, mu)
+				return e.executeBashNode(childCtx, run, child, runCtx, mu)
 			default:
 				// validateWorkflowDef rejects this at StartRun, but
 				// executeDAGFromCheckpoint resumes from the DB-pinned definition
@@ -757,8 +772,11 @@ func (e *defaultEngine) executeLoopBody(ctx context.Context, run *db.WorkflowRun
 		// Without this, the seeded fix prompt's retry config (if added) would
 		// be silently ignored, and a transient agent hiccup would tank the
 		// whole loop on iteration 1.
-		output, execErr = e.executeWithRetry(ctx, run, child, execFn)
+		output, execErr = e.executeWithRetry(childCtx, run, child, execFn)
 		stopHeartbeat()
+		if childCancel != nil {
+			childCancel()
+		}
 
 		status := db.NodeRunStatusSuccess
 		if execErr != nil {
@@ -829,8 +847,8 @@ type reviewEnvelope struct {
 // parseReviewOutput parses stdout JSON from `loop review run --wait` into
 // runCtx.Review. The bash node's captured stdout includes preamble from the
 // agent container (e.g. `loop-dockerproxy started ...`) before the CLI's
-// final JSON line, so the parser scans backwards through the lines and uses
-// the last one that parses as the expected envelope. When nothing parses,
+// JSON line, so the parser scans forwards through the lines and uses the
+// first one that parses as the expected envelope. When nothing parses,
 // the function clears Review.* (shifting IDs into PrevIDs) but leaves both
 // `NoComments` and `SameAsPrev` false so the seeded loops' stop condition
 // `{{ or .Review.NoComments .Review.SameAsPrev }}` does NOT trip — an empty
@@ -903,23 +921,24 @@ func parseReviewOutput(stdout string, runCtx *RunContext) {
 	runCtx.Review.SameAsPrev = len(ids) > 0 && slices.Equal(ids, prev)
 }
 
-// extractReviewJSON scans stdout backwards through non-empty lines (and as
+// extractReviewJSON scans stdout forwards through non-empty lines (and as
 // a final fallback the entire trimmed stdout) for the first one that parses
 // as the review envelope AND carries a recognized Status ("ready" or
 // "error"). Returns true on a successful decode, in which case `out`
-// carries the parsed payload. The backward walk is intentional: the
-// container's preamble (e.g. `loop-dockerproxy started ...`) precedes the
-// CLI's compact one-line JSON, and any future log lines emitted alongside
-// the JSON should not displace the real envelope.
+// carries the parsed payload. The forward walk is intentional: the CLI's
+// envelope is the first valid one printed; any JSON-shaped string emitted
+// AFTER it (debug `echo`, sidecar ready ping, set-x trace surfacing a
+// cached envelope) must NOT displace the real envelope.
 //
-// The Status check is load-bearing. RunBash captures the entire container's
-// logs (not just the script's stdout), and a sidecar or future stdout
-// pollution could emit an unrelated JSON object after the CLI line. Without
-// shape validation, an unrelated `{}` or other valid-JSON-but-wrong-shape
-// would decode silently, default Comments to empty, and flip NoComments to
-// true via the `|| len(parsed.Comments) == 0` branch in parseReviewOutput
-// — terminating the seeded review-fix loop with a false "clean" verdict
-// while the real review surfaced findings.
+// Preamble from the agent container (e.g. `loop-dockerproxy started ...`)
+// is not JSON and fails the json.Unmarshal call cleanly, so the forward
+// scan skips it and lands on the CLI's envelope. The Status check is
+// load-bearing: RunBash captures the entire container's logs (not just the
+// script's stdout), and an unrelated JSON object on any line would
+// otherwise decode silently, default Comments to empty, and flip
+// NoComments to true via the `|| len(parsed.Comments) == 0` branch in
+// parseReviewOutput — terminating the seeded review-fix loop with a false
+// "clean" verdict while the real review surfaced findings.
 func extractReviewJSON(stdout string, out *reviewEnvelope) bool {
 	tryDecode := func(s string) bool {
 		var candidate reviewEnvelope
@@ -932,9 +951,8 @@ func extractReviewJSON(stdout string, out *reviewEnvelope) bool {
 		*out = candidate
 		return true
 	}
-	lines := strings.Split(stdout, "\n")
-	for i := len(lines) - 1; i >= 0; i-- {
-		line := strings.TrimSpace(lines[i])
+	for raw := range strings.SplitSeq(stdout, "\n") {
+		line := strings.TrimSpace(raw)
 		if line == "" {
 			continue
 		}

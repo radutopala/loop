@@ -90,14 +90,28 @@ func (s *ParseReviewSuite) TestParsesJSONAfterDockerproxyPreamble() {
 	require.Contains(s.T(), rc.Review.CommentsJSON, "db0cc90b5f4e")
 }
 
-func (s *ParseReviewSuite) TestPicksLastJSONLineWhenMultiplePresent() {
-	// A stray earlier JSON line (unlikely in practice but defensive) must
-	// be overridden by the CLI's final envelope.
+func (s *ParseReviewSuite) TestSkipsNonTerminalEnvelopesAndPicksTerminalOne() {
+	// Forward scan skips an interim `status:"reviewing"` envelope (filtered by
+	// the Status="ready"|"error" check in extractReviewJSON) and lands on the
+	// CLI's terminal envelope.
 	stdout := `{"status":"reviewing","comments":[]}` + "\n" +
 		`{"status":"ready","no_comments":false,"comments":[{"id":"x"}]}` + "\n"
 	rc := &RunContext{}
 	parseReviewOutput(stdout, rc)
 	require.Equal(s.T(), []string{"x"}, rc.Review.IDs)
+}
+
+func (s *ParseReviewSuite) TestPicksFirstValidEnvelopeWhenMultipleTerminalPresent() {
+	// Forward semantics: the FIRST envelope with a recognized terminal Status
+	// wins. A second valid envelope appearing later in stdout (debug echo, set-x
+	// trace surfacing a cached envelope, future stdout pollution) must NOT
+	// displace the real envelope. Backward scan would silently swap.
+	stdout := `{"status":"ready","no_comments":false,"comments":[{"id":"first"}]}` + "\n" +
+		`{"status":"ready","no_comments":true,"comments":[]}` + "\n"
+	rc := &RunContext{}
+	parseReviewOutput(stdout, rc)
+	require.Equal(s.T(), []string{"first"}, rc.Review.IDs)
+	require.False(s.T(), rc.Review.NoComments, "second envelope (no_comments=true) must not override the first")
 }
 
 func (s *ParseReviewSuite) TestFallsBackToTrimmedFullStdout() {

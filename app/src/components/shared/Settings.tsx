@@ -54,15 +54,19 @@ export function Settings({ open, projectDirPath, channelId, channel, sidebarOpen
   const [showDirtyModal, setShowDirtyModal] = useState(false);
   const [saving, setSaving] = useState(false);
   const [activeSection, setActiveSection] = useState("Desktop");
-  const [restoring, setRestoring] = useState(false);
-  const [restoreMsg, setRestoreMsg] = useState<string | null>(null);
+  // Scope per-kind so an in-flight "Restore Workflows" can't bleed into the
+  // Shortcuts bar (or vice versa) when the user switches tabs mid-flight.
+  // A single shared `restoring`/`restoreMsg` would render the Shortcuts bar
+  // as "Restoring…" while the Workflows POST is still in flight.
+  const [restoringByKind, setRestoringByKind] = useState<Record<BuiltinKind, boolean>>({ workflows: false, shortcuts: false });
+  const [restoreMsgByKind, setRestoreMsgByKind] = useState<Record<BuiltinKind, string | null>>({ workflows: null, shortcuts: null });
   const globalFormRef = useRef<ConfigFormHandle>(null);
   const projectFormRef = useRef<ConfigFormHandle>(null);
 
   useEffect(() => { onConfigDirtyChange?.(configDirty); }, [configDirty, onConfigDirtyChange]);
 
   // Reset the restore-builtins toast when the user navigates away.
-  useEffect(() => { setRestoreMsg(null); }, [activeSection]);
+  useEffect(() => { setRestoreMsgByKind({ workflows: null, shortcuts: null }); }, [activeSection]);
 
   // Build section groups for sidebar nav.
   const HARDCODED_GLOBAL = ["Daemon", "Docker Image"];
@@ -157,8 +161,9 @@ export function Settings({ open, projectDirPath, channelId, channel, sidebarOpen
   };
 
   const handleRestoreBuiltins = async (kind: BuiltinKind) => {
-    setRestoring(true);
-    setRestoreMsg(null);
+    setRestoringByKind((prev) => ({ ...prev, [kind]: true }));
+    setRestoreMsgByKind((prev) => ({ ...prev, [kind]: null }));
+    let msg: string;
     try {
       const result = await restoreBuiltins(kind);
       // Re-fetch global config so the form picks up newly-seeded entries.
@@ -169,11 +174,12 @@ export function Settings({ open, projectDirPath, channelId, channel, sidebarOpen
       if (fresh && !globalDirty) setGlobalConfig(fresh);
       const added = result.added.length ? `Added: ${result.added.join(", ")}` : null;
       const skipped = result.skipped.length ? `Already present: ${result.skipped.join(", ")}` : null;
-      setRestoreMsg([added, skipped].filter(Boolean).join(" · ") || "Nothing to restore");
+      msg = [added, skipped].filter(Boolean).join(" · ") || "Nothing to restore";
     } catch (e: any) {
-      setRestoreMsg(e?.message ?? "Restore failed");
+      msg = e?.message ?? "Restore failed";
     }
-    setRestoring(false);
+    setRestoreMsgByKind((prev) => ({ ...prev, [kind]: msg }));
+    setRestoringByKind((prev) => ({ ...prev, [kind]: false }));
   };
 
   const handleSaveProjectConfig = async (content: string): Promise<string | null> => {
@@ -398,15 +404,18 @@ export function Settings({ open, projectDirPath, channelId, channel, sidebarOpen
 
               {globalConfig && globalSchemaSections.includes(activeSection) && (
                 <>
-                  {(activeSection === "Workflows" || activeSection === "Prompt Shortcuts") && (
-                    <RestoreBuiltinsBar
-                      colors={colors}
-                      kind={activeSection === "Workflows" ? "workflows" : "shortcuts"}
-                      restoring={restoring}
-                      message={restoreMsg}
-                      onClick={handleRestoreBuiltins}
-                    />
-                  )}
+                  {(activeSection === "Workflows" || activeSection === "Prompt Shortcuts") && (() => {
+                    const k: BuiltinKind = activeSection === "Workflows" ? "workflows" : "shortcuts";
+                    return (
+                      <RestoreBuiltinsBar
+                        colors={colors}
+                        kind={k}
+                        restoring={restoringByKind[k]}
+                        message={restoreMsgByKind[k]}
+                        onClick={handleRestoreBuiltins}
+                      />
+                    );
+                  })()}
                   <ConfigForm
                     ref={globalFormRef}
                     title="Global Config"

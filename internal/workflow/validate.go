@@ -7,20 +7,32 @@ import (
 )
 
 // validateWorkflowDef checks workflow-level invariants that the executor
-// relies on but config loading does not enforce. Today it rejects loop body
-// children of types the body executor doesn't handle (loop/approval) and
-// body-child IDs that collide with a top-level node ID (which would cause
-// node_runs UPSERT collisions on the (run_id, node_id, 0) row).
+// relies on but config loading does not enforce. Today it rejects:
+//   - loop body children of types the body executor doesn't handle
+//     (loop/approval)
+//   - body-child IDs that collide with a top-level node ID (which would
+//     cause node_runs UPSERT collisions on the (run_id, node_id, 0) row)
+//   - duplicate body-child IDs across loops in the same workflow (two
+//     loops sharing a body-child ID would collide on the schema's
+//     UNIQUE(run_id, node_id, iteration) AND cause WorkflowGraph's
+//     expandLoopBodies to inflate each loop's iteration count from
+//     the other's rows)
 func validateWorkflowDef(wfDef *config.WorkflowDef) error {
 	topLevelIDs := make(map[string]struct{}, len(wfDef.Nodes))
 	for i := range wfDef.Nodes {
 		topLevelIDs[wfDef.Nodes[i].ID] = struct{}{}
 	}
+	// Tracks which loop first claimed a given body-child ID, so a second
+	// loop reusing the same ID gets a precise "owned by X" error message.
+	bodyChildOwner := map[string]string{}
 	for i := range wfDef.Nodes {
 		n := &wfDef.Nodes[i]
 		if n.Type != config.NodeTypeLoop {
 			continue
 		}
+		// Track per-loop occurrences so two body children of the SAME loop
+		// with the same ID also surface as a precise error.
+		thisLoopChildIDs := map[string]struct{}{}
 		for _, child := range n.Body {
 			switch child.Type {
 			case config.NodeTypePrompt, config.NodeTypeBash:
@@ -36,12 +48,19 @@ func validateWorkflowDef(wfDef *config.WorkflowDef) error {
 			// reusing the same ID is fine (the loop persists at iter=0 once;
 			// the body child persists per iteration). Any *other* top-level
 			// ID collision would race UPSERTs at (run_id, node_id, 0).
-			if child.ID == n.ID {
-				continue
+			if child.ID != n.ID {
+				if _, clash := topLevelIDs[child.ID]; clash {
+					return fmt.Errorf("loop %q: body child %q collides with top-level node %q (would race UPSERTs on (run_id, node_id, 0))", n.ID, child.ID, child.ID)
+				}
 			}
-			if _, clash := topLevelIDs[child.ID]; clash {
-				return fmt.Errorf("loop %q: body child %q collides with top-level node %q (would race UPSERTs on (run_id, node_id, 0))", n.ID, child.ID, child.ID)
+			if _, dup := thisLoopChildIDs[child.ID]; dup {
+				return fmt.Errorf("loop %q: body child %q appears twice in this loop's body (would race UPSERTs on (run_id, node_id, iteration))", n.ID, child.ID)
 			}
+			thisLoopChildIDs[child.ID] = struct{}{}
+			if owner, taken := bodyChildOwner[child.ID]; taken && owner != n.ID {
+				return fmt.Errorf("loop %q: body child %q is already used by loop %q — two loops cannot share a body-child ID (would race UPSERTs on (run_id, node_id, iteration) and inflate WorkflowGraph iteration counts)", n.ID, child.ID, owner)
+			}
+			bodyChildOwner[child.ID] = n.ID
 		}
 	}
 	return nil

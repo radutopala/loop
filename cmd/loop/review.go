@@ -207,7 +207,17 @@ func (a *app) runReview(ctx context.Context, stdout io.Writer, apiURL, channelID
 				return fmt.Errorf("writing output: %w", err)
 			}
 			if out.Status == "error" {
-				return errors.New(out.Error)
+				// Guard against an empty error message: the daemon may flip
+				// the session to status=error without populating session.error
+				// (zero-value passes through pollReviewOnce). errors.New("")
+				// would surface as a blank cobra line and a blank
+				// node_runs.error_text — the user gets a "failed" toast with
+				// nothing to diagnose. Always emit at least the sentinel.
+				msg := out.Error
+				if msg == "" {
+					msg = "review session ended with status=error (no message)"
+				}
+				return errors.New(msg)
 			}
 			return nil
 		}
