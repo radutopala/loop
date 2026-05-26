@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -243,11 +244,9 @@ func (s *EngineSuite) TestExecuteLoopBodyWhenGatesChild() {
 	s.bashRunner.AssertNotCalled(s.T(), "RunBash", mock.Anything, "echo never", "", "")
 }
 
-// TestExecuteLoopBodyUnknownChildTypeFails verifies that a child node with a
-// type unsupported inside loop bodies fails the run. (Validation catches this
-// at StartRun for known invalid types like approval/loop; this exercise the
-// executor's defensive `default` branch.)
-func (s *EngineSuite) TestExecuteLoopBodyUnknownChildTypeFails() {
+// TestExecuteLoopBodyUnknownChildTypeFailsAtStartRun verifies the validator
+// rejects unsupported body-child types at StartRun for known-bad shapes.
+func (s *EngineSuite) TestExecuteLoopBodyUnknownChildTypeFailsAtStartRun() {
 	s.workflows = []config.WorkflowDef{
 		{
 			Name: "loop-bad-child",
@@ -264,10 +263,36 @@ func (s *EngineSuite) TestExecuteLoopBodyUnknownChildTypeFails() {
 		},
 	}
 
-	// Pre-validation rejects unknown types — StartRun returns an error.
 	_, err := s.engine.StartRun(context.Background(), StartRunOptions{WorkflowName: "loop-bad-child"})
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "weird")
+}
+
+// TestExecuteLoopBodyUnknownChildTypeExecutorDefault drives the executor's
+// defensive `default` branch directly. The resume path
+// (executeDAGFromCheckpoint) replays a pinned workflow_def without re-running
+// validateWorkflowDef, so a stored definition with an unsupported body-child
+// type (manual DB edit, pre-validator install) can reach the executor — the
+// default branch must surface a real error rather than silently persisting
+// the child as Success with empty output.
+func (s *EngineSuite) TestExecuteLoopBodyUnknownChildTypeExecutorDefault() {
+	e := s.engine.(*defaultEngine)
+	s.store.On("UpsertNodeRun", mock.Anything, mock.Anything).Return(nil)
+
+	loopNode := &config.NodeDef{
+		ID:   "loop",
+		Type: config.NodeTypeLoop,
+		Body: []*config.NodeDef{{ID: "bad", Type: "weird"}},
+	}
+	run := &db.WorkflowRun{ID: "r1"}
+	runCtx := &RunContext{}
+	var mu sync.Mutex
+
+	output, err := e.executeLoopBody(context.Background(), run, loopNode, runCtx, &mu, 0)
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "unsupported body child type")
+	require.Contains(s.T(), err.Error(), "weird")
+	require.Empty(s.T(), output)
 }
 
 // TestLoopBodyMaxIterFromInputs verifies the loop reads max_iterations from

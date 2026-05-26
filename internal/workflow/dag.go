@@ -708,6 +708,14 @@ func (e *defaultEngine) executeLoopBody(ctx context.Context, run *db.WorkflowRun
 			output, execErr = e.executePromptNode(ctx, run, child, runCtx, mu)
 		case config.NodeTypeBash:
 			output, execErr = e.executeBashNode(ctx, run, child, runCtx, mu)
+		default:
+			// validateWorkflowDef rejects this at StartRun, but
+			// executeDAGFromCheckpoint resumes from the DB-pinned definition
+			// without re-validating — a stored workflow with an unsupported
+			// body-child type (manual DB edit, pre-validator definition)
+			// would otherwise persist as Success with empty output. Make the
+			// miss observable instead.
+			execErr = fmt.Errorf("unsupported body child type: %s", child.Type)
 		}
 
 		status := db.NodeRunStatusSuccess

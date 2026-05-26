@@ -601,15 +601,14 @@ func forEachReviewFixLoopBodyChild(rootObj *hujson.Object, fn func(*hujson.Objec
 // parseJSONValue marshals v (typically a Go literal like []any{"dep"}) to
 // JSON then re-parses it as a hujson AST node so it can be spliced into a
 // parent Value. Used when appending fresh ObjectMembers — building the
-// hujson.Array literal-by-hand would be brittle.
+// hujson.Array literal-by-hand would be brittle. hujson.Parse is not
+// re-checked for error: its input is the output of json.Marshal, which is
+// always valid JSON by construction.
 func parseJSONValue(v any) hujson.ValueTrimmed {
 	b, err := json.Marshal(v)
 	if err != nil {
 		return hujson.Literal("null")
 	}
-	parsed, err := hujson.Parse(b)
-	if err != nil {
-		return hujson.Literal("null")
-	}
+	parsed, _ := hujson.Parse(b)
 	return parsed.Value
 }
