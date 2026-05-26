@@ -5,6 +5,7 @@ export type BuiltinKind = "workflows" | "shortcuts";
 export interface RestoreBuiltinsResponse {
   kind: BuiltinKind;
   added: string[];
+  patched: string[];
   skipped: string[];
 }
 

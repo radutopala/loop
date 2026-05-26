@@ -248,11 +248,15 @@ func (s *ReviewAPISuite) TestPostPRCommentDefaultsSideToRight() {
 	require.Contains(s.T(), r.calls[0].args, "side=RIGHT")
 }
 
-func (s *ReviewAPISuite) TestPostPRCommentUnparseableBodyReturnsZeroID() {
+func (s *ReviewAPISuite) TestPostPRCommentUnparseableBodySurfacesError() {
+	// gh returned exit 0 but a non-JSON body — the comment is on GitHub but
+	// loop has no id to record. Surface the decode error so callers see
+	// the integration drift instead of silently logging a phantom comment.
 	r := &dispatchRunner{apiOut: []byte(`not-json`)}
 	c := NewClientWithRunner(r)
 	id, err := c.PostPRComment(context.Background(), "/tmp", "", RepoSlug{Owner: "o", Name: "n"}, 1, "sha", "p", "RIGHT", 1, "b")
-	require.NoError(s.T(), err)
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "decoding gh api response")
 	require.Equal(s.T(), int64(0), id)
 }
 

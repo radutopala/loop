@@ -78,11 +78,10 @@ func (s *ValidateSuite) TestLoopBodyRejectsUnknownType() {
 	require.Contains(s.T(), err.Error(), "wat")
 }
 
-func (s *ValidateSuite) TestLoopBodyChildSameIDAsParentLoopIsAllowed() {
-	// The loop persists its top-level node_runs row at iteration=0; body
-	// children persist with their own iteration values, so a body child
-	// sharing the loop's own ID does NOT race UPSERTs (only an external
-	// top-level node with the same ID would). Validator allows the reuse.
+func (s *ValidateSuite) TestLoopBodyChildSameIDAsParentLoopIsRejected() {
+	// The loop's own node_runs row is persisted at (run_id, loop_id, 0) by
+	// executeNode; the body child's iteration=0 row would be persisted at
+	// the same key by executeLoopBody and race UPSERTs.
 	wf := &config.WorkflowDef{
 		Name: "wf",
 		Nodes: []config.NodeDef{{
@@ -93,7 +92,9 @@ func (s *ValidateSuite) TestLoopBodyChildSameIDAsParentLoopIsAllowed() {
 			},
 		}},
 	}
-	require.NoError(s.T(), validateWorkflowDef(wf))
+	err := validateWorkflowDef(wf)
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "collides")
 }
 
 func (s *ValidateSuite) TestLoopBodyChildIDClashesWithSiblingTopLevelNode() {

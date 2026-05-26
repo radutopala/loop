@@ -89,9 +89,20 @@ export async function fetchWorkflowRuns(
   return (await res.json()) ?? [];
 }
 
-export async function fetchWorkflowRun(runId: string): Promise<WorkflowRunDetail> {
-  const res = await fetch(`${getApiUrl()}/api/workflows/runs/${encodeURIComponent(runId)}`);
-  if (!res.ok) throw new Error(`Failed to fetch workflow run: ${res.statusText}`);
+/** Thrown by fetchWorkflowRun for non-2xx responses. Callers can branch on
+ *  `status` to distinguish "run is gone" (404) from "daemon hiccup" (5xx). */
+export class FetchWorkflowRunError extends Error {
+  status: number;
+  constructor(status: number, statusText: string) {
+    super(`Failed to fetch workflow run: ${statusText || status}`);
+    this.status = status;
+    this.name = "FetchWorkflowRunError";
+  }
+}
+
+export async function fetchWorkflowRun(runId: string, opts?: { signal?: AbortSignal }): Promise<WorkflowRunDetail> {
+  const res = await fetch(`${getApiUrl()}/api/workflows/runs/${encodeURIComponent(runId)}`, { signal: opts?.signal });
+  if (!res.ok) throw new FetchWorkflowRunError(res.status, res.statusText);
   return res.json();
 }
 

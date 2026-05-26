@@ -44,14 +44,16 @@ func validateWorkflowDef(wfDef *config.WorkflowDef) error {
 			default:
 				return fmt.Errorf("loop %q: body child %q has unsupported type %q", n.ID, child.ID, child.Type)
 			}
-			// The loop node itself is a top-level node, so a body child
-			// reusing the same ID is fine (the loop persists at iter=0 once;
-			// the body child persists per iteration). Any *other* top-level
-			// ID collision would race UPSERTs at (run_id, node_id, 0).
-			if child.ID != n.ID {
-				if _, clash := topLevelIDs[child.ID]; clash {
-					return fmt.Errorf("loop %q: body child %q collides with top-level node %q (would race UPSERTs on (run_id, node_id, 0))", n.ID, child.ID, child.ID)
-				}
+			// The loop's own node_runs row is persisted at
+			// (run_id, loop_id, 0) by executeNode before executeLoopNode
+			// runs (dag.go:302-309), AND each body child's iteration=0 row
+			// is persisted at (run_id, child_id, 0) by executeLoopBody. So
+			// a body child reusing the loop's own ID would race UPSERTs at
+			// (run_id, loop_id, 0) — the body child's status writes would
+			// clobber the loop's Running row (and vice versa for completion).
+			// Same race applies to any other top-level node ID collision.
+			if _, clash := topLevelIDs[child.ID]; clash {
+				return fmt.Errorf("loop %q: body child %q collides with top-level node %q (would race UPSERTs on (run_id, node_id, 0))", n.ID, child.ID, child.ID)
 			}
 			if _, dup := thisLoopChildIDs[child.ID]; dup {
 				return fmt.Errorf("loop %q: body child %q appears twice in this loop's body (would race UPSERTs on (run_id, node_id, iteration))", n.ID, child.ID)

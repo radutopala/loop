@@ -16,7 +16,7 @@ import {
   type ReviewStatus,
 } from "../../api/review";
 import { sendMessage } from "../../api/channels";
-import { fetchWorkflowRun, startWorkflowRun } from "../../api/workflows";
+import { FetchWorkflowRunError, fetchWorkflowRun, startWorkflowRun } from "../../api/workflows";
 import type { ChatEventListener } from "../../hooks/useChatStateStore";
 import type { GateApprovalRequestedData, WSEvent } from "../../types";
 import { ApprovalCard } from "../chat/ApprovalCard";
@@ -259,9 +259,10 @@ export function ReviewPanel({
   useEffect(() => {
     if (!loopRunId) return;
     let cancelled = false;
+    const ctl = new AbortController();
     (async () => {
       try {
-        const detail = await fetchWorkflowRun(loopRunId);
+        const detail = await fetchWorkflowRun(loopRunId, { signal: ctl.signal });
         if (cancelled) return;
         const status = detail.run?.status;
         if (status === "completed" || status === "failed" || status === "cancelled") {
@@ -277,19 +278,29 @@ export function ReviewPanel({
           // Still running — chip will be repainted by the WS subscription.
           setLoopChip((prev) => prev || "running");
         }
-      } catch {
+      } catch (e) {
         if (cancelled) return;
-        // Run is gone (404 or daemon down). Clear the stale handle so the
-        // Run button re-enables and the chip clears.
-        if (typeof window !== "undefined") {
-          window.sessionStorage.removeItem(reviewRunIdKey(channelId));
+        // Aborted by cleanup — leave state alone; a fresh effect will fire
+        // for the new loopRunId.
+        if (e instanceof DOMException && e.name === "AbortError") return;
+        // Distinguish "run row is gone" (404) from "daemon hiccup" (5xx /
+        // network). Only the former should clear the stale handle; a
+        // momentary daemon restart shouldn't wipe a live loop's UI state.
+        // The WS subscription will repaint the chip when events resume.
+        if (e instanceof FetchWorkflowRunError && e.status === 404) {
+          if (typeof window !== "undefined") {
+            window.sessionStorage.removeItem(reviewRunIdKey(channelId));
+          }
+          setLoopChip("");
+          setLoopActive(false);
+          setLoopRunId(null);
         }
-        setLoopChip("");
-        setLoopActive(false);
-        setLoopRunId(null);
       }
     })();
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+      ctl.abort();
+    };
     // Only fire on (channelId, loopRunId) edge transitions. Adding the
     // chat-panel ref or setters would re-trigger the API call needlessly.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -338,6 +349,13 @@ export function ReviewPanel({
           if (typeof window !== "undefined") {
             window.sessionStorage.removeItem(reviewRunIdKey(channelId));
           }
+          // Also drop the in-memory loopRunId so the hydration effect
+          // doesn't re-fire fetchWorkflowRun against this terminal id when
+          // the user kicks off a new mode dispatch (which only toggles
+          // loopActive). Without this, a fresh run-mode click re-queries
+          // the stale id and the chip flickers through the terminal state
+          // before the new run id mounts.
+          setLoopRunId(null);
           break;
         default:
       }
@@ -894,12 +912,17 @@ export function ReviewPanel({
           onClose={() => setMenuPos(null)}
           items={[
             {
+              // Re-check runDisabled here: the caret guards menu-open, but a
+              // run can flip active between menu-open and item-click (e.g. a
+              // loop kicked off via a peer mount or sessionStorage rehydrate).
+              // Without the guard, clicking an item would start a second
+              // overlapping workflow run on the same channel.
               label: "Run review (one-shot)",
-              onClick: () => void runMode("review-only"),
+              onClick: () => { if (!runDisabled) void runMode("review-only"); },
             },
             {
               label: "Run review + fix loop",
-              onClick: () => void runMode("review-fix"),
+              onClick: () => { if (!runDisabled) void runMode("review-fix"); },
             },
           ]}
         />

@@ -147,7 +147,7 @@ Loop with a body — runs `review → fix → verify` per iteration, stops when 
 {
   "id": "loop",
   "type": "loop",
-  "max_iterations": "{{.Inputs.max_iterations}}",
+  "max_iterations": 3,
   "condition": "{{ or .Review.NoComments .Review.SameAsPrev }}",
   "body": [
     { "id": "review", "type": "bash",   "script": "loop review run --channel-id {{.ChannelID}} --api-url $API_URL --wait" },
