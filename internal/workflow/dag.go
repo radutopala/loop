@@ -597,6 +597,16 @@ func (e *defaultEngine) executeLoopNode(ctx context.Context, run *db.WorkflowRun
 
 	hasBody := len(node.Body) > 0
 
+	// Iteration must reset to 0 on EVERY exit (success, error, or ctx
+	// cancellation) so any downstream non-loop node templating {{.Iteration}}
+	// doesn't see the last-attempted index from a failed loop. Defer instead
+	// of resetting only on the success path.
+	defer func() {
+		mu.Lock()
+		runCtx.Iteration = 0
+		mu.Unlock()
+	}()
+
 	var lastOutput string
 	for i := 0; i < maxIter; i++ {
 		if ctx.Err() != nil {
@@ -636,12 +646,6 @@ func (e *defaultEngine) executeLoopNode(ctx context.Context, run *db.WorkflowRun
 			}
 		}
 	}
-
-	// Iteration must reset to 0 so any downstream non-loop node using
-	// {{.Iteration}} in a template sees the runCtx outside the loop scope.
-	mu.Lock()
-	runCtx.Iteration = 0
-	mu.Unlock()
 
 	return lastOutput, nil
 }

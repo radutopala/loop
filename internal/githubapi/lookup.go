@@ -288,7 +288,15 @@ func (c *Client) postPRInlineComment(ctx context.Context, workdir string, env []
 	var raw struct {
 		ID int64 `json:"id"`
 	}
-	_ = json.Unmarshal(out, &raw)
+	if err := json.Unmarshal(out, &raw); err != nil {
+		// gh returned exit 0 — the comment IS posted on GitHub — but the
+		// body wasn't the expected JSON envelope. Surface this rather than
+		// silently returning (0, nil), so the caller logs a phantom-comment
+		// warning instead of recording a successful push it can't later
+		// delete by id. The caller's docstring promises id=0 only for the
+		// 422-fallback path, not for unparseable success bodies.
+		return 0, fmt.Errorf("decoding gh api response (%d bytes): %w", len(out), err)
+	}
 	return raw.ID, nil
 }
 

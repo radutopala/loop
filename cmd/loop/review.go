@@ -149,7 +149,10 @@ func (a *app) runReview(ctx context.Context, stdout io.Writer, apiURL, channelID
 	if err != nil {
 		return fmt.Errorf("POST %s: %w", runURL, err)
 	}
-	body, _ := io.ReadAll(resp.Body)
+	// Cap the error body we read into memory — a misbehaving daemon (or a
+	// reverse proxy returning a giant HTML 5xx page) could otherwise stream
+	// arbitrary bytes here. 64 KiB is enough to surface a useful message.
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 64<<10))
 	_ = resp.Body.Close()
 	if resp.StatusCode != http.StatusAccepted {
 		return fmt.Errorf("POST %s: unexpected status %d: %s", runURL, resp.StatusCode, string(body))
@@ -249,7 +252,10 @@ func pollReviewOnce(ctx context.Context, client reviewHTTPClient, url string) (r
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
+		// Cap the error body — same reasoning as the POST path: a 5xx HTML
+		// page or a misbehaving proxy shouldn't be able to balloon memory
+		// over a long polling loop.
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 64<<10))
 		err := fmt.Errorf("GET %s: unexpected status %d: %s", url, resp.StatusCode, string(body))
 		// 4xx is the daemon telling us the request is malformed or the
 		// session was never set up — retrying won't help. 5xx may be a

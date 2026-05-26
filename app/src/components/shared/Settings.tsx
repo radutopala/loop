@@ -173,13 +173,15 @@ export function Settings({ open, projectDirPath, channelId, channel, sidebarOpen
       const fresh = await fetchGlobalConfig().catch(() => null);
       if (fresh && !globalDirty) setGlobalConfig(fresh);
       const added = result.added.length ? `Added: ${result.added.join(", ")}` : null;
+      const patched = result.patched.length ? `Patched: ${result.patched.join(", ")}` : null;
       const skipped = result.skipped.length ? `Already present: ${result.skipped.join(", ")}` : null;
-      msg = [added, skipped].filter(Boolean).join(" · ") || "Nothing to restore";
+      msg = [added, patched, skipped].filter(Boolean).join(" · ") || "Nothing to restore";
     } catch (e: any) {
       msg = e?.message ?? "Restore failed";
+    } finally {
+      setRestoringByKind((prev) => ({ ...prev, [kind]: false }));
     }
     setRestoreMsgByKind((prev) => ({ ...prev, [kind]: msg }));
-    setRestoringByKind((prev) => ({ ...prev, [kind]: false }));
   };
 
   const handleSaveProjectConfig = async (content: string): Promise<string | null> => {
