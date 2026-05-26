@@ -142,6 +142,7 @@ type Server struct {
 	reviewRunner              ReviewRunner                                                 // drives the agent for /review/run
 	reviewSystemPrompt        string                                                       // resolved system prompt for review runs
 	reviewPrompt              string                                                       // resolved user prompt for review runs ("" -> built-in default)
+	reviewRunTimeout          time.Duration                                                // hard ceiling on runReviewAsync; 0 = unbounded (legacy)
 	reviewMu                  sync.Mutex                                                   // guards reviewActive
 	reviewActive              map[string]struct{}                                          // per-channel in-flight review runs
 

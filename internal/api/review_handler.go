@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/radutopala/loop/internal/agent"
 	"github.com/radutopala/loop/internal/events"
@@ -87,6 +88,16 @@ func (s *Server) SetReviewAgent(runner ReviewRunner, systemPrompt, userPrompt st
 	s.reviewRunner = runner
 	s.reviewSystemPrompt = systemPrompt
 	s.reviewPrompt = userPrompt
+}
+
+// SetReviewRunTimeout caps the runReviewAsync goroutine. A value of 0
+// (the zero default) leaves the previous unbounded behavior — useful for
+// tests that drive runReviewAsync directly without wanting a deadline.
+// Production callsites should set this below the CLI's --timeout so the
+// daemon flips the session to status=error first and the CLI exits with
+// a meaningful message instead of its generic "timed out" wrapper.
+func (s *Server) SetReviewRunTimeout(d time.Duration) {
+	s.reviewRunTimeout = d
 }
 
 // reviewLoadRequest carries the PR number to load. The FE also accepts
@@ -813,6 +824,13 @@ func (s *Server) handleReviewRun(w http.ResponseWriter, r *http.Request) {
 // runReviewAsync executes the review run on the goroutine that
 // handleReviewRun spawns. It owns the in-flight registration cleanup
 // and the final status broadcast.
+//
+// When reviewRunTimeout > 0 the agent run is bounded by that timeout: on
+// expiry the run ctx is cancelled (so the underlying agent stops) and
+// the session flips to status=error with a clear "timed out" message
+// instead of staying at status=reviewing forever. Without this gate, a
+// hung container would leak the goroutine and any CLI/FE poller would
+// keep hitting status=reviewing until its own deadline fired.
 func (s *Server) runReviewAsync(channelID, worktreePath, parentDirPath, systemPrompt, prompt string) {
 	defer s.unregisterReviewRun(channelID)
 	onComment := func(c *review.Comment) {
@@ -830,10 +848,25 @@ func (s *Server) runReviewAsync(channelID, worktreePath, parentDirPath, systemPr
 		}
 		s.maybeRediffForComment(channelID, worktreePath, parentDirPath, c)
 	}
-	_, err := s.reviewRunner.Run(context.Background(), channelID, worktreePath, parentDirPath, systemPrompt, prompt, onComment)
+	ctx := context.Background()
+	if s.reviewRunTimeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, s.reviewRunTimeout)
+		defer cancel()
+	}
+	_, err := s.reviewRunner.Run(ctx, channelID, worktreePath, parentDirPath, systemPrompt, prompt, onComment)
 	if err != nil {
-		s.reviewStore.UpdateStatus(channelID, review.StatusError, err.Error())
-		s.broadcastReviewStatus(channelID, review.StatusError, err.Error())
+		msg := err.Error()
+		// Re-shape ctx-deadline into a user-readable message. errors.Is
+		// catches both the bare DeadlineExceeded and any err that wraps
+		// it via fmt.Errorf("%w", ctx.Err()). The ctx.Err() check covers
+		// agents that return their own error string (e.g. "stream closed")
+		// after the ctx fired but before they observed the cancel.
+		if errors.Is(err, context.DeadlineExceeded) || ctx.Err() == context.DeadlineExceeded {
+			msg = fmt.Sprintf("review timed out after %s", s.reviewRunTimeout)
+		}
+		s.reviewStore.UpdateStatus(channelID, review.StatusError, msg)
+		s.broadcastReviewStatus(channelID, review.StatusError, msg)
 		return
 	}
 	s.reviewStore.UpdateStatus(channelID, review.StatusReady, "")

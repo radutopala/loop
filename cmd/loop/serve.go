@@ -561,6 +561,13 @@ func (a *app) serve() error {
 		reviewPrompt = ""
 	}
 	apiSrv.SetReviewAgent(&review.Runner{Agent: runner}, "", reviewPrompt)
+	// Ceiling for the daemon-side review goroutine. Picked below the CLI's
+	// `loop review run --timeout` default (60m) so the daemon flips the
+	// session to status=error first and the CLI surfaces the daemon's
+	// "timed out" message instead of its own generic wrapper. A hung agent
+	// container would otherwise leak the goroutine and pin the session at
+	// status=reviewing until the next daemon restart.
+	apiSrv.SetReviewRunTimeout(50 * time.Minute)
 	go api.NewBranchPoller(store, eventsHub, cfg.LoopDir, 0, logger).Run(ctx)
 	containerReg.SetBroadcaster(eventsHub)
 	if gateResolver != nil {
