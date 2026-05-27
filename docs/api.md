@@ -1234,6 +1234,12 @@ Look up the open GitHub pull request whose head branch matches the channel's cur
 
 List local git branches and worktrees for a channel's directory.
 
+**Query Parameters:**
+
+| Param  | Type | Default | Description |
+|--------|------|---------|-------------|
+| `root` | int  | 0       | Root directory index (0 = primary `dir_path`, 1+ = extra directories from project config) |
+
 **Response (200):**
 ```json
 {
@@ -1249,6 +1255,9 @@ List local git branches and worktrees for a channel's directory.
 - Branches checked out in other worktrees are excluded from the `branches` list (git won't allow switching to them).
 - The main worktree is excluded from the `worktrees` list.
 - `thread_id` is populated when the worktree has been imported as a thread (via `POST /api/worktrees` or `POST /api/worktrees/import`).
+- The `root` parameter mirrors the same field on `/api/channels/{id}/diff` and `/api/channels/{id}/commits`: `0` (default) targets the channel's primary `dir_path`; `1+` indexes into `extra_dirs` from the project's `.loop/config.json`. Each extra root is treated as an independent repo.
+
+**Errors:** `400` if `root` is non-numeric, negative, or out of range.
 
 ### `POST /api/channels/{id}/branches/switch`
 

@@ -15,8 +15,9 @@ export interface BranchInfo {
   worktrees: WorktreeInfo[];
 }
 
-export async function fetchBranches(channelId: string): Promise<BranchInfo> {
-  const res = await fetch(`${getApiUrl()}/api/channels/${channelId}/branches`);
+export async function fetchBranches(channelId: string, rootIndex?: number): Promise<BranchInfo> {
+  const qs = rootIndex !== undefined && rootIndex > 0 ? `?root=${rootIndex}` : "";
+  const res = await fetch(`${getApiUrl()}/api/channels/${channelId}/branches${qs}`);
   if (!res.ok) throw new Error(`Failed to fetch branches: ${res.statusText}`);
   return res.json();
 }

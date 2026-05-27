@@ -4,8 +4,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -107,6 +109,52 @@ func (s *ServerSuite) TestListBranches_EnrichesLockedFromDB() {
 	require.NotNil(s.T(), matched)
 	require.Equal(s.T(), "thread-wt", matched.ThreadID)
 	require.True(s.T(), matched.Locked, "DB-locked worktree should surface as Locked=true")
+}
+
+func (s *ServerSuite) TestListBranches_RootParamSelectsExtraDir() {
+	primary := initGitRepo(s.T())
+	extra := initGitRepo(s.T())
+	// Create a distinguishing branch in the extra repo so we can tell which
+	// root the handler dispatched to.
+	cmd := exec.Command("git", "checkout", "-b", "extra/only")
+	cmd.Dir = extra
+	require.NoError(s.T(), cmd.Run())
+
+	require.NoError(s.T(), os.MkdirAll(filepath.Join(primary, ".loop"), 0o755))
+	cfgJSON := `{"extra_dirs":[` + strconv.Quote(extra) + `]}`
+	require.NoError(s.T(), os.WriteFile(filepath.Join(primary, ".loop", "config.json"), []byte(cfgJSON), 0o644))
+
+	s.store.On("GetChannel", mock.Anything, "ch-roots").
+		Return(&db.Channel{ChannelID: "ch-roots", DirPath: primary}, nil)
+	s.store.On("ListChannels", mock.Anything).Return(([]*db.Channel)(nil), nil)
+
+	// root=0 → primary; the extra repo's "extra/only" branch must NOT appear.
+	rec := s.testRequest("GET", "/api/channels/ch-roots/branches", "")
+	require.Equal(s.T(), http.StatusOK, rec.Code)
+	require.NotContains(s.T(), rec.Body.String(), "extra/only")
+
+	// root=1 → extra; the branch must now appear.
+	rec = s.testRequest("GET", "/api/channels/ch-roots/branches?root=1", "")
+	require.Equal(s.T(), http.StatusOK, rec.Code)
+	require.Contains(s.T(), rec.Body.String(), "extra/only")
+}
+
+func (s *ServerSuite) TestListBranches_RootParamInvalid() {
+	dir := initGitRepo(s.T())
+	s.store.On("GetChannel", mock.Anything, "ch-bad-root").
+		Return(&db.Channel{ChannelID: "ch-bad-root", DirPath: dir}, nil)
+
+	// Non-numeric → 400.
+	rec := s.testRequest("GET", "/api/channels/ch-bad-root/branches?root=abc", "")
+	require.Equal(s.T(), http.StatusBadRequest, rec.Code)
+
+	// Negative → 400.
+	rec = s.testRequest("GET", "/api/channels/ch-bad-root/branches?root=-1", "")
+	require.Equal(s.T(), http.StatusBadRequest, rec.Code)
+
+	// Out of range → 400 (no extra_dirs configured, only root=0 valid).
+	rec = s.testRequest("GET", "/api/channels/ch-bad-root/branches?root=5", "")
+	require.Equal(s.T(), http.StatusBadRequest, rec.Code)
 }
 
 func (s *ServerSuite) TestListBranches_NotConfigured() {

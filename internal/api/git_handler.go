@@ -56,6 +56,26 @@ func (s *Server) handleListBranches(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// ?root=N selects an extra_dirs entry instead of the primary dir_path
+	// (mirrors handleGitDiff / handleListCommits). The branches list is
+	// per-repo, so when the panel's root selector switches workspaces the
+	// dropdown should reflect the chosen repo's branches and worktrees.
+	if rootStr := r.URL.Query().Get("root"); rootStr != "" {
+		rootIdx, err := strconv.Atoi(rootStr)
+		if err != nil || rootIdx < 0 {
+			http.Error(w, "invalid root index", http.StatusBadRequest)
+			return
+		}
+		if rootIdx > 0 {
+			resolved, err := s.resolveRootDir(r.Context(), channelID, r)
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+			dirPath = resolved
+		}
+	}
+
 	// List local branches.
 	branchCmd := exec.CommandContext(r.Context(), "git", "branch", "--format=%(refname:short)")
 	branchCmd.Dir = dirPath

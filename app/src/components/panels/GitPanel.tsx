@@ -150,12 +150,12 @@ export function GitPanel({ channelId, dirPath, branch, maximized, sidebarOpen, t
   }, [channelId]);
 
   // Fetch branch list when switching to branch or commits mode. Re-runs when
-  // `pr` changes so the PR's base ref is included in the dropdown options even
-  // if it isn't a local branch (e.g. stacked PRs where the parent branch lives
-  // only as origin/<name>).
+  // `pr` or `rootIndex` changes so the dropdown reflects the active workspace
+  // root's branches and worktrees, and so the PR's base ref is included as a
+  // selectable option even if it isn't a local branch.
   useEffect(() => {
     if ((gitMode === "branches" || gitMode === "commits") && channelId) {
-      fetchBranches(channelId).then((info) => {
+      fetchBranches(channelId, rootIndex).then((info) => {
         // Combine regular branches + current branch (which may be filtered out of the list).
         const all = new Set(info.branches);
         if (info.current) all.add(info.current);
@@ -163,29 +163,25 @@ export function GitPanel({ channelId, dirPath, branch, maximized, sidebarOpen, t
         for (const wt of info.worktrees ?? []) {
           if (wt.branch) all.add(wt.branch);
         }
-        // Include the PR's base ref so the dropdown can render it as the
-        // selected source — `git diff` resolves it against remotes if needed.
-        if (pr?.base_ref) all.add(pr.base_ref);
+        // The PR's base ref only applies to the primary root; extra_dirs may
+        // be unrelated repos so don't pollute their dropdown with it.
+        if (rootIndex === 0 && pr?.base_ref) all.add(pr.base_ref);
         const sorted = [...all].sort();
         setBranches(sorted);
-        // Default source to PR base (if present), else main, then current.
-        if (!sourceBranch) {
-          if (pr?.base_ref && sorted.includes(pr.base_ref)) {
-            setSourceBranch(pr.base_ref);
-          } else {
-            const main = sorted.find((b) => b === "main" || b === "master");
-            setSourceBranch(main ?? info.current ?? sorted[0] ?? "");
-          }
-        }
-        if (!targetBranch && info.current) {
-          setTargetBranch(info.current);
-        }
-        if (!commitBranch && info.current) {
-          setCommitBranch(info.current);
-        }
+        // Reset any selection that doesn't exist in the new root's branch
+        // set — otherwise the dropdown points at a branch git can't resolve
+        // and the commits / diff view comes back empty.
+        const defaultSource = (() => {
+          if (rootIndex === 0 && pr?.base_ref && sorted.includes(pr.base_ref)) return pr.base_ref;
+          const main = sorted.find((b) => b === "main" || b === "master");
+          return main ?? info.current ?? sorted[0] ?? "";
+        })();
+        setSourceBranch((prev) => (prev && all.has(prev) ? prev : defaultSource));
+        setTargetBranch((prev) => (prev && all.has(prev) ? prev : info.current ?? ""));
+        setCommitBranch((prev) => (prev && all.has(prev) ? prev : info.current ?? ""));
       }).catch(() => {});
     }
-  }, [gitMode, channelId, pr?.base_ref]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [gitMode, channelId, pr?.base_ref, rootIndex]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Load first page of commits when branch changes. Re-runs on rootIndex so
   // switching workspace roots refetches commits for the new dir.
