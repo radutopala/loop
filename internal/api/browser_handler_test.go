@@ -468,7 +468,9 @@ func (m *mockCDPSession) NewContextForTarget(_ string) (browser.CDPSession, erro
 // --- Helper: start browser and get WS with CDP mock ---
 
 // newTestCDPManager creates a CDPManager with a mock factory for testing.
-func newTestCDPManager(mockCDP *mockCDPSession) *browser.CDPManager {
+// The mock CDP session is wired in separately by the caller via
+// browser.SetCDPFactoryForTest, so this helper takes no arguments.
+func newTestCDPManager() *browser.CDPManager {
 	mgr := browser.NewCDPManager("ws://test:9222", browser.CDPManagerConfig{
 		DiscoverExisting: false,
 		MaxRetries:       1,
@@ -488,7 +490,7 @@ func (s *BrowserHandlerSuite) startBrowserWS() (*websocket.Conn, *httptest.Serve
 	mockCDP.On("ListTabs", mock.Anything).Return([]browser.TabInfo(nil), nil).Maybe()
 
 	// Inject a CDPManager with the mock CDP factory into the server.
-	cdpMgr := newTestCDPManager(mockCDP)
+	cdpMgr := newTestCDPManager()
 	s.srv.cdpManagersMu.Lock()
 	if s.srv.cdpManagers == nil {
 		s.srv.cdpManagers = make(map[string]*browser.CDPManager)
@@ -504,7 +506,7 @@ func (s *BrowserHandlerSuite) startBrowserWS() (*websocket.Conn, *httptest.Serve
 	s.srv.cdpManagersMu.Lock()
 	mgr := s.srv.cdpManagers["ch-1|docker"]
 	if mgr == nil {
-		mgr = newTestCDPManager(mockCDP)
+		mgr = newTestCDPManager()
 		s.srv.cdpManagers["ch-1|docker"] = mgr
 	}
 	s.srv.cdpManagersMu.Unlock()

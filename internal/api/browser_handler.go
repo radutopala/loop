@@ -229,7 +229,7 @@ func (s *Server) handleBrowserWS(w http.ResponseWriter, r *http.Request) {
 		case bwsMsgScreencast:
 			go bc.handleScreencast(msg)
 		case bwsMsgInput:
-			bc.handleInput(r.Context(), msg)
+			bc.handleInput(msg)
 		default:
 			bc.sendError("unknown message type: " + msg.Type)
 		}
@@ -338,7 +338,7 @@ func (bc *browserWSConn) handleStop(ctx context.Context, msg browserWSMessage) {
 	bc.sendJSON(browserWSResponse{Type: bwsRespStopped})
 }
 
-func (bc *browserWSConn) handleInput(ctx context.Context, msg browserWSMessage) {
+func (bc *browserWSConn) handleInput(msg browserWSMessage) {
 	ev := browser.InputEvent{
 		Type:       msg.InputType,
 		X:          msg.X,
@@ -843,12 +843,15 @@ func (s *Server) handleBrowserAction(w http.ResponseWriter, r *http.Request) {
 		cdpMgr.Touch()
 	}
 
-	resp := s.dispatchBrowserAction(r.Context(), req, cdpCl)
+	resp := s.dispatchBrowserAction(req, cdpCl)
 	writeJSON(w, resp)
 }
 
 // dispatchBrowserAction dispatches a browser action to the CDP client.
-func (s *Server) dispatchBrowserAction(ctx context.Context, req browserActionRequest, cdpCl browser.CDPSession) browserActionResponse {
+// Uses a detached context.Background() so the browser action survives
+// the HTTP request's lifecycle (long CDP calls shouldn't abort if the
+// caller navigates away).
+func (s *Server) dispatchBrowserAction(req browserActionRequest, cdpCl browser.CDPSession) browserActionResponse {
 	bg := context.Background()
 	params := req.Params
 
