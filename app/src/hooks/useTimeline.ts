@@ -10,12 +10,16 @@ interface UseTimelineResult {
   loading: boolean;
   loadMore: () => void;
   hasMore: boolean;
-  // Live SSE handlers — append to the live tail.
+  // Live SSE handlers — append to the live tail. triggerMsgId attributes the
+  // item to the user message whose run produced it, so groupTimelineItems can
+  // route bot replies and agent events under their trigger even when a queued
+  // user message was appended in between (otherwise they'd attach to the wrong
+  // user row by array position).
   appendLiveMessage: (msg: Message) => void;
-  appendLiveThinking: (text: string) => void;
-  appendLiveToolUse: (toolUseID: string | undefined, toolName: string, input: string) => void;
-  appendLiveToolResult: (toolUseID: string | undefined, output: string, isError: boolean) => void;
-  appendLiveCompacting: () => void;
+  appendLiveThinking: (text: string, triggerMsgId?: string) => void;
+  appendLiveToolUse: (toolUseID: string | undefined, toolName: string, input: string, triggerMsgId?: string) => void;
+  appendLiveToolResult: (toolUseID: string | undefined, output: string, isError: boolean, triggerMsgId?: string) => void;
+  appendLiveCompacting: (triggerMsgId?: string) => void;
   // Mutators for chat-row events that already affected DB state.
   markProcessed: (msgIds: string[]) => void;
   removeMessage: (msgId: string) => void;
@@ -109,19 +113,22 @@ export function useTimeline(channelId: string | null): UseTimelineResult {
     setLiveTail((prev) => {
       // Dedup by msg_id — message.created can fire twice across reconnect/resume.
       if (prev.some((it) => it.kind === "message" && it.data.msg_id === msg.msg_id)) return prev;
-      return [...prev, { kind: "message", position: 0, id: nextLiveId(), data: msg }];
+      return [
+        ...prev,
+        { kind: "message", position: 0, id: nextLiveId(), data: msg, trigger_msg_id: msg.trigger_msg_id },
+      ];
     });
   }, [nextLiveId]);
 
-  const appendLiveThinking = useCallback((text: string) => {
+  const appendLiveThinking = useCallback((text: string, triggerMsgId?: string) => {
     setLiveTail((prev) => [
       ...prev,
-      { kind: "thinking", position: 0, id: nextLiveId(), text, truncated: false },
+      { kind: "thinking", position: 0, id: nextLiveId(), text, truncated: false, trigger_msg_id: triggerMsgId },
     ]);
   }, [nextLiveId]);
 
   const appendLiveToolUse = useCallback(
-    (toolUseID: string | undefined, toolName: string, input: string) => {
+    (toolUseID: string | undefined, toolName: string, input: string, triggerMsgId?: string) => {
       setLiveTail((prev) => [
         ...prev,
         {
@@ -131,6 +138,7 @@ export function useTimeline(channelId: string | null): UseTimelineResult {
           tool_use_id: toolUseID ?? "",
           tool_name: toolName,
           tool_input: input,
+          trigger_msg_id: triggerMsgId,
         },
       ]);
     },
@@ -138,7 +146,7 @@ export function useTimeline(channelId: string | null): UseTimelineResult {
   );
 
   const appendLiveToolResult = useCallback(
-    (toolUseID: string | undefined, output: string, isError: boolean) => {
+    (toolUseID: string | undefined, output: string, isError: boolean, triggerMsgId?: string) => {
       setLiveTail((prev) => [
         ...prev,
         {
@@ -148,20 +156,21 @@ export function useTimeline(channelId: string | null): UseTimelineResult {
           tool_use_id: toolUseID ?? "",
           text: output,
           is_error: isError,
+          trigger_msg_id: triggerMsgId,
         },
       ]);
     },
     [nextLiveId],
   );
 
-  const appendLiveCompacting = useCallback(() => {
+  const appendLiveCompacting = useCallback((triggerMsgId?: string) => {
     setLiveTail((prev) => {
       // Coalesce repeated compacting events: if the last item is already a
       // compacting marker, skip — the runner can emit the status multiple times
       // during a single /compact pass.
       const last = prev[prev.length - 1];
       if (last && last.kind === "compacting") return prev;
-      return [...prev, { kind: "compacting", position: 0, id: nextLiveId() }];
+      return [...prev, { kind: "compacting", position: 0, id: nextLiveId(), trigger_msg_id: triggerMsgId }];
     });
   }, [nextLiveId]);
 
