@@ -483,7 +483,7 @@ func (e *defaultEngine) executePromptNode(ctx context.Context, run *db.WorkflowR
 
 func (e *defaultEngine) executeBashNode(ctx context.Context, run *db.WorkflowRun, node *config.NodeDef, runCtx *RunContext, mu *sync.Mutex) (string, error) {
 	mu.Lock()
-	script, err := renderTemplate(node.Script, runCtx)
+	script, err := renderBashScript(node.Script, runCtx)
 	mu.Unlock()
 	if err != nil {
 		return "", fmt.Errorf("rendering script template: %w", err)
