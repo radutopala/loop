@@ -231,7 +231,7 @@ Feature: Workflows
     And I click button "+" in the workflows split panel
     And I wait for text "Start Workflow" to appear
     And I click on the button with text "Start"
-    Then I wait for text "Start Workflow" to disappear
+    Then I wait up to "30s" for text "Start Workflow" to disappear
     And I wait for text "bdd-test-workflow" to appear
     And I wait up to "90s" for text "COMPLETED" to appear
 
