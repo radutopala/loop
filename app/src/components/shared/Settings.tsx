@@ -63,6 +63,14 @@ export function Settings({ open, projectDirPath, channelId, channel, sidebarOpen
   const globalFormRef = useRef<ConfigFormHandle>(null);
   const projectFormRef = useRef<ConfigFormHandle>(null);
 
+  // handleRestoreBuiltins awaits two async calls before consulting globalDirty
+  // and would otherwise capture the value at click time. If the user starts
+  // typing in the form during the ~1–2s POST + refetch window, their unsaved
+  // edits would be silently overwritten by setGlobalConfig(fresh). Reading
+  // through a ref instead always sees the current value.
+  const globalDirtyRef = useRef(globalDirty);
+  useEffect(() => { globalDirtyRef.current = globalDirty; }, [globalDirty]);
+
   useEffect(() => { onConfigDirtyChange?.(configDirty); }, [configDirty, onConfigDirtyChange]);
 
   // Reset the restore-builtins toast when the user navigates away.
@@ -171,7 +179,7 @@ export function Settings({ open, projectDirPath, channelId, channel, sidebarOpen
       // setGlobalConfig would silently blow them away. The newly-seeded items
       // will be picked up on the next reopen / save cycle instead.
       const fresh = await fetchGlobalConfig().catch(() => null);
-      if (fresh && !globalDirty) setGlobalConfig(fresh);
+      if (fresh && !globalDirtyRef.current) setGlobalConfig(fresh);
       const added = result.added.length ? `Added: ${result.added.join(", ")}` : null;
       const patched = result.patched.length ? `Patched: ${result.patched.join(", ")}` : null;
       const skipped = result.skipped.length ? `Already present: ${result.skipped.join(", ")}` : null;

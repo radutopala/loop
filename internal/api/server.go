@@ -83,6 +83,9 @@ type serverSystem interface {
 	Open(name string) (*os.File, error)
 	EvalSymlinks(path string) (string, error)
 	WalkDir(root string, fn fs.WalkDirFunc) error
+	// Rename is forwarded to fsmigrate's atomicWriteConfig so the
+	// /api/builtins/restore handler can write config.json crash-safely.
+	Rename(oldpath, newpath string) error
 }
 
 // Server exposes a lightweight HTTP API for task CRUD operations.

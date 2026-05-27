@@ -142,7 +142,7 @@ export const WorkflowsGlobalPanel = forwardRef<WorkflowsGlobalPanelHandle, Workf
             >
               Workflows ({wf.runs.length})
             </span>
-            {(wf.definitions.length > 0 || !wf.definitionsLoaded) && (
+            {wf.definitionsLoaded && wf.definitions.length > 0 && (
               <button
                 data-testid="start-workflow-btn"
                 onClick={wf.openStartDialog}

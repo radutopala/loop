@@ -663,3 +663,81 @@ func (s *EngineSuite) TestLoopBodyConditionTemplateErrorContinues() {
 
 	require.Equal(s.T(), int32(2), calls.Load(), "bad condition template must not abort the loop")
 }
+
+// TestLoopBodyReviewExecErrorRotatesPrevIDs verifies the failed-review-bash
+// branch in executeLoopBody (the `else` of the `execErr == nil` check inside
+// the reviewParsedWorkflows gate). When the review bash child fails, stale
+// Comments/IDs from the previous iteration must NOT be reused: IDs rotate
+// into PrevIDs, the rest clear, and ParseFailed flips true so the fix child's
+// `when` gate skips and the loop retries the review on the next iteration
+// rather than fixing stale findings.
+func (s *EngineSuite) TestLoopBodyReviewExecErrorRotatesPrevIDs() {
+	e := s.engine.(*defaultEngine)
+	s.store.On("UpsertNodeRun", mock.Anything, mock.Anything).Return(nil)
+	s.bashRunner.On("RunBash", mock.Anything, "loop review run", "", "").
+		Return("", fmt.Errorf("review CLI exit 1"))
+
+	loopNode := &config.NodeDef{
+		ID:   "loop",
+		Type: config.NodeTypeLoop,
+		Body: []*config.NodeDef{
+			{ID: reviewBodyNodeID, Type: config.NodeTypeBash, Script: "loop review run"},
+		},
+	}
+	// WorkflowName MUST be in reviewParsedWorkflows or the rotation branch
+	// is skipped entirely.
+	run := &db.WorkflowRun{ID: "r1", WorkflowName: "review-fix-loop"}
+	runCtx := &RunContext{}
+	// Pre-existing baseline from a prior good iteration. The branch under test
+	// must capture this into PrevIDs before clearing IDs.
+	runCtx.Review.IDs = []string{"prev1", "prev2"}
+	runCtx.Review.Comments = []ReviewComment{{ID: "prev1"}, {ID: "prev2"}}
+	runCtx.Review.CommentsJSON = `[{"id":"prev1"},{"id":"prev2"}]`
+	runCtx.Review.NoComments = false
+	runCtx.Review.SameAsPrev = false
+	var mu sync.Mutex
+
+	_, err := e.executeLoopBody(context.Background(), run, loopNode, runCtx, &mu, 1)
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "review CLI exit 1")
+
+	require.Equal(s.T(), []string{"prev1", "prev2"}, runCtx.Review.PrevIDs, "IDs must rotate into PrevIDs on review bash failure")
+	require.Nil(s.T(), runCtx.Review.IDs, "IDs must clear so stale findings don't drive the next fix")
+	require.Nil(s.T(), runCtx.Review.Comments)
+	require.Empty(s.T(), runCtx.Review.CommentsJSON)
+	require.False(s.T(), runCtx.Review.NoComments)
+	require.False(s.T(), runCtx.Review.SameAsPrev)
+	require.True(s.T(), runCtx.Review.ParseFailed, "ParseFailed must gate the fix child's `when` so the loop retries the review")
+}
+
+// TestLoopBodyReviewExecErrorOnUnseededWorkflowSkipsRotation verifies the
+// outer `isSeeded` gate around the rotation branch: a workflow NOT in
+// reviewParsedWorkflows must NOT have its runCtx.Review touched on a failing
+// bash child, even if the child's ID happens to be `reviewBodyNodeID`. Without
+// this check a user-authored workflow with a bash child named "review" would
+// have its iteration baseline silently rewritten.
+func (s *EngineSuite) TestLoopBodyReviewExecErrorOnUnseededWorkflowSkipsRotation() {
+	e := s.engine.(*defaultEngine)
+	s.store.On("UpsertNodeRun", mock.Anything, mock.Anything).Return(nil)
+	s.bashRunner.On("RunBash", mock.Anything, "review.sh", "", "").
+		Return("", fmt.Errorf("script exit 1"))
+
+	loopNode := &config.NodeDef{
+		ID:   "loop",
+		Type: config.NodeTypeLoop,
+		Body: []*config.NodeDef{
+			{ID: reviewBodyNodeID, Type: config.NodeTypeBash, Script: "review.sh"},
+		},
+	}
+	run := &db.WorkflowRun{ID: "r1", WorkflowName: "user-authored-workflow"}
+	runCtx := &RunContext{}
+	runCtx.Review.IDs = []string{"keep1"}
+	var mu sync.Mutex
+
+	_, err := e.executeLoopBody(context.Background(), run, loopNode, runCtx, &mu, 0)
+	require.Error(s.T(), err)
+	// Unseeded workflow: runCtx.Review untouched.
+	require.Equal(s.T(), []string{"keep1"}, runCtx.Review.IDs)
+	require.Nil(s.T(), runCtx.Review.PrevIDs)
+	require.False(s.T(), runCtx.Review.ParseFailed)
+}

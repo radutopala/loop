@@ -39,6 +39,23 @@ function reviewRunIdKey(channelId: string): string {
   return `loop.review.activeRunId.${channelId}`;
 }
 
+// CustomEvent name used to broadcast review-run-id sessionStorage writes
+// across sibling ReviewPanel instances mounted in the same window. The
+// browser's native `storage` event only fires for OTHER documents, so two
+// ReviewPanels mounted side-by-side (split layout, dual-pane review) for
+// the same channel wouldn't observe each other's writes without this.
+const REVIEW_RUN_ID_EVENT = "loop.review.activeRunId.changed";
+interface ReviewRunIdChangedDetail {
+  channelId: string;
+  runId: string | null;
+}
+function broadcastReviewRunIdChange(channelId: string, runId: string | null): void {
+  if (typeof window === "undefined") return;
+  window.dispatchEvent(new CustomEvent<ReviewRunIdChangedDetail>(REVIEW_RUN_ID_EVENT, {
+    detail: { channelId, runId },
+  }));
+}
+
 function readStoredMode(): ReviewMode {
   if (typeof window === "undefined") return "review-only";
   const v = window.localStorage.getItem(REVIEW_MODE_STORAGE_KEY);
@@ -244,6 +261,45 @@ export function ReviewPanel({
   const hasChatPanelRef = useRef(hasChatPanel);
   useEffect(() => { hasChatPanelRef.current = hasChatPanel; }, [hasChatPanel]);
 
+  // Cross-instance loopActive/loopRunId sync. Two ReviewPanels mounted in
+  // the same window for the same channel (split layout, dual-pane) only read
+  // sessionStorage at lazy-init. Without this listener, instance B would keep
+  // showing the Run button enabled while instance A has a workflow in flight,
+  // letting the user start a second concurrent run on the same worktree.
+  // `storage` events fire only for OTHER documents/tabs, so we layer a
+  // window-level CustomEvent for same-tab siblings on top.
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const onCustom = (ev: Event) => {
+      const detail = (ev as CustomEvent<ReviewRunIdChangedDetail>).detail;
+      if (!detail || detail.channelId !== channelId) return;
+      if (detail.runId === null) {
+        setLoopRunId(null);
+        setLoopActive(false);
+      } else {
+        setLoopRunId(detail.runId);
+        setLoopActive(true);
+      }
+    };
+    const onStorage = (ev: StorageEvent) => {
+      if (ev.storageArea !== window.sessionStorage) return;
+      if (ev.key !== reviewRunIdKey(channelId)) return;
+      if (ev.newValue === null) {
+        setLoopRunId(null);
+        setLoopActive(false);
+      } else {
+        setLoopRunId(ev.newValue);
+        setLoopActive(true);
+      }
+    };
+    window.addEventListener(REVIEW_RUN_ID_EVENT, onCustom);
+    window.addEventListener("storage", onStorage);
+    return () => {
+      window.removeEventListener(REVIEW_RUN_ID_EVENT, onCustom);
+      window.removeEventListener("storage", onStorage);
+    };
+  }, [channelId]);
+
   // Hydration resync: when the panel mounts (or the channel changes) with
   // a sessionStorage-recovered run id, ask the daemon for the current
   // status. Three outcomes:
@@ -260,7 +316,16 @@ export function ReviewPanel({
     if (!loopRunId) return;
     let cancelled = false;
     const ctl = new AbortController();
-    (async () => {
+    // Bounded retry on transient failures (5xx, TypeError "Failed to fetch",
+    // JSON parse). Without this, a daemon restart that took longer than the
+    // initial hydration would leave loopActive=true forever — because the WS
+    // run_completed event already fired and won't fire again on remount.
+    // Three retries with exponential backoff (1s, 2s, 4s) cover a typical
+    // restart window without spamming the daemon during a longer outage.
+    const transientBackoffMs = [1000, 2000, 4000];
+    let attempt = 0;
+    let retryTimer: ReturnType<typeof setTimeout> | null = null;
+    const tick = async () => {
       try {
         const detail = await fetchWorkflowRun(loopRunId, { signal: ctl.signal });
         if (cancelled) return;
@@ -269,6 +334,7 @@ export function ReviewPanel({
           if (typeof window !== "undefined") {
             window.sessionStorage.removeItem(reviewRunIdKey(channelId));
           }
+          broadcastReviewRunIdChange(channelId, null);
           setLoopChip(status === "completed" ? "done" : status);
           setLoopActive(false);
           setLoopRunId(null);
@@ -284,22 +350,36 @@ export function ReviewPanel({
         // for the new loopRunId.
         if (e instanceof DOMException && e.name === "AbortError") return;
         // Distinguish "run row is gone" (404) from "daemon hiccup" (5xx /
-        // network). Only the former should clear the stale handle; a
-        // momentary daemon restart shouldn't wipe a live loop's UI state.
-        // The WS subscription will repaint the chip when events resume.
+        // network / JSON parse). Only the former should clear the stale
+        // handle; a momentary daemon restart shouldn't wipe a live loop's
+        // UI state.
         if (e instanceof FetchWorkflowRunError && e.status === 404) {
           if (typeof window !== "undefined") {
             window.sessionStorage.removeItem(reviewRunIdKey(channelId));
           }
+          broadcastReviewRunIdChange(channelId, null);
           setLoopChip("");
           setLoopActive(false);
           setLoopRunId(null);
+          return;
         }
+        // Transient: retry with backoff. After exhausting retries, clear
+        // loopActive so the button isn't permanently disabled — the WS
+        // subscription will repaint the chip if events resume.
+        if (attempt < transientBackoffMs.length) {
+          retryTimer = setTimeout(tick, transientBackoffMs[attempt]);
+          attempt++;
+          return;
+        }
+        setLoopActive(false);
+        setLoopChip((prev) => prev || "unknown");
       }
-    })();
+    };
+    void tick();
     return () => {
       cancelled = true;
       ctl.abort();
+      if (retryTimer !== null) clearTimeout(retryTimer);
     };
     // Only fire on (channelId, loopRunId) edge transitions. Adding the
     // chat-panel ref or setters would re-trigger the API call needlessly.
@@ -349,6 +429,7 @@ export function ReviewPanel({
           if (typeof window !== "undefined") {
             window.sessionStorage.removeItem(reviewRunIdKey(channelId));
           }
+          broadcastReviewRunIdChange(channelId, null);
           // Also drop the in-memory loopRunId so the hydration effect
           // doesn't re-fire fetchWorkflowRun against this terminal id when
           // the user kicks off a new mode dispatch (which only toggles
@@ -438,6 +519,13 @@ export function ReviewPanel({
       if (typeof window !== "undefined") {
         window.sessionStorage.setItem(reviewRunIdKey(channelId), resp.run_id);
       }
+      broadcastReviewRunIdChange(channelId, resp.run_id);
+      // The workflow.run_started event for this run may have already fired
+      // (and been dropped by the chip listener — it returns early when
+      // loopRunId is null) before this setState lands. Paint the initial
+      // chip here so the chip doesn't sit on "starting..." until the first
+      // node_started event arrives in iteration 1.
+      setLoopChip("running iter 1");
       setLoopRunId(resp.run_id);
       // Only persist the mode after the run actually launched. A failed
       // session check would otherwise silently flip the user's last-mode
@@ -465,6 +553,7 @@ export function ReviewPanel({
       if (typeof window !== "undefined") {
         window.sessionStorage.removeItem(reviewRunIdKey(channelId));
       }
+      broadcastReviewRunIdChange(channelId, null);
     } finally {
       setBusy(false);
     }

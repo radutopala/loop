@@ -315,7 +315,7 @@ var migrations = []migration{
 		SELECT id, run_id, node_id, status, output, error_text, attempt, started_at, finished_at, last_heartbeat_at FROM workflow_node_runs`),
 	sqlMigration(`DROP TABLE workflow_node_runs`),
 	sqlMigration(`ALTER TABLE workflow_node_runs_new RENAME TO workflow_node_runs`),
-	sqlMigration(`CREATE UNIQUE INDEX workflow_node_runs_run_node_iter_unique ON workflow_node_runs(run_id, node_id, iteration)`),
+	sqlMigration(`CREATE UNIQUE INDEX IF NOT EXISTS workflow_node_runs_run_node_iter_unique ON workflow_node_runs(run_id, node_id, iteration)`),
 	sqlMigration(`CREATE INDEX IF NOT EXISTS idx_workflow_node_runs_run_id ON workflow_node_runs(run_id)`),
 	sqlMigration(`SELECT 1`), // placeholder for the dropped `PRAGMA foreign_keys=ON`; see header comment.
 }

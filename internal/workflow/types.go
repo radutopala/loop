@@ -35,6 +35,13 @@ type ReviewState struct {
 	IDs          []string        // sorted comment IDs from this iteration
 	PrevIDs      []string        // IDs captured from the prior iteration
 	SameAsPrev   bool            // IDs == PrevIDs (and len > 0) — fix made no progress
+	// ParseFailed is true when the latest iteration's bash review child
+	// produced output that couldn't be parsed into a review envelope. The
+	// seeded review-fix-loop's `fix` body child uses this in its `when:`
+	// expression so an unparseable review doesn't trigger a fix prompt
+	// with empty CommentsJSON — the loop instead keeps iterating to retry
+	// the review. Never causes the loop to terminate.
+	ParseFailed bool
 }
 
 // ReviewComment is a single review finding emitted by `loop review run`.

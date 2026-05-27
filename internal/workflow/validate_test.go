@@ -206,3 +206,42 @@ func (s *ValidateSuite) TestNonLoopNodeBodyIgnored() {
 	}
 	require.NoError(s.T(), validateWorkflowDef(wf))
 }
+
+func (s *ValidateSuite) TestLoopBodyRejectsNilChildEntry() {
+	// A nil entry in n.Body (manual config edit or future parser hiccup)
+	// would panic on the child.Type switch — reject with a precise message
+	// at validation time.
+	wf := &config.WorkflowDef{
+		Name: "wf",
+		Nodes: []config.NodeDef{{
+			ID:   "loop",
+			Type: config.NodeTypeLoop,
+			Body: []*config.NodeDef{nil},
+		}},
+	}
+	err := validateWorkflowDef(wf)
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "nil child entry")
+}
+
+func (s *ValidateSuite) TestLoopBodyRejectsForwardDependsOn() {
+	// A body child whose depends_on references a sibling declared LATER in
+	// the body cannot be honored by executeLoopBody (which walks body
+	// children in declaration order). Reject at StartRun time so the user
+	// sees the contradiction immediately.
+	wf := &config.WorkflowDef{
+		Name: "wf",
+		Nodes: []config.NodeDef{{
+			ID:   "loop",
+			Type: config.NodeTypeLoop,
+			Body: []*config.NodeDef{
+				{ID: "first", Type: config.NodeTypeBash, Script: "echo a", DependsOn: []string{"second"}},
+				{ID: "second", Type: config.NodeTypeBash, Script: "echo b"},
+			},
+		}},
+	}
+	err := validateWorkflowDef(wf)
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "depends_on")
+	require.Contains(s.T(), err.Error(), "second")
+}

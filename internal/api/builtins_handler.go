@@ -8,12 +8,21 @@ import (
 )
 
 // isLoopbackRequest returns true when the request's peer is on the loopback
-// interface (127.0.0.0/8, ::1). The daemon defaults to binding 127.0.0.1
-// only, but a user who explicitly binds to 0.0.0.0 or a LAN IP would expose
-// every endpoint — including write-the-config-from-HTTP routes — to the
-// network. This check is the floor: it rejects non-loopback peers without
-// the caller having to plumb auth tokens through Settings.
+// interface (127.0.0.0/8, ::1) AND there is no evidence the request was
+// forwarded by a reverse proxy. The daemon defaults to binding 127.0.0.1
+// only, but a user who explicitly binds to 0.0.0.0 or a LAN IP and puts a
+// same-host reverse proxy (nginx, Caddy, Traefik) in front would otherwise
+// see every request appear to originate from 127.0.0.1 — opening write
+// endpoints to arbitrary network peers. The proxy-header sniff is best
+// effort but is the floor: if any of the well-known forwarding headers are
+// set, the original peer is not the daemon's direct caller and we cannot
+// trust r.RemoteAddr.
 func isLoopbackRequest(r *http.Request) bool {
+	if r.Header.Get("X-Forwarded-For") != "" ||
+		r.Header.Get("X-Real-IP") != "" ||
+		r.Header.Get("Forwarded") != "" {
+		return false
+	}
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {
 		// Some test setups (httptest.NewServer with a Unix-socket-like

@@ -156,3 +156,30 @@ func (s *ParseReviewSuite) TestExtractReviewJSONRejectsUnrelatedEnvelope() {
 	require.False(s.T(), rc.Review.SameAsPrev)
 	require.Nil(s.T(), rc.Review.Comments)
 }
+
+func (s *ParseReviewSuite) TestExtractReviewJSONRejectsMissingCommentsKey() {
+	// `{"status":"ready"}` has a recognized status but no `comments` key.
+	// Probe decode succeeds (status=ready, comments=nil), but the missing
+	// key disqualifies the envelope: a no-findings response must explicitly
+	// carry `comments: []` (the CLI always emits it). Without this check
+	// the seeded review-fix loop would terminate with a false-clean verdict
+	// when the daemon emits an incomplete envelope.
+	rc := &RunContext{}
+	parseReviewOutput(`{"status":"ready"}`, rc)
+	require.False(s.T(), rc.Review.NoComments)
+	require.False(s.T(), rc.Review.SameAsPrev)
+	require.Nil(s.T(), rc.Review.Comments)
+	require.True(s.T(), rc.Review.ParseFailed)
+}
+
+func (s *ParseReviewSuite) TestExtractReviewJSONRejectsTypeMismatchInComments() {
+	// The probe decoder uses json.RawMessage for comments so a type
+	// mismatch (string instead of object) passes the probe but fails the
+	// strict-typed candidate decode. extractReviewJSON must reject the
+	// envelope so parseReviewOutput surfaces ParseFailed.
+	rc := &RunContext{}
+	parseReviewOutput(`{"status":"ready","comments":["broken"]}`, rc)
+	require.False(s.T(), rc.Review.NoComments)
+	require.True(s.T(), rc.Review.ParseFailed)
+	require.Nil(s.T(), rc.Review.Comments)
+}

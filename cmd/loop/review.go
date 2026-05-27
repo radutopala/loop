@@ -135,12 +135,29 @@ func (a *app) runReview(ctx context.Context, stdout io.Writer, apiURL, channelID
 	}
 	client := a.reviewHTTPClient()
 
+	// wrapTimeout swaps the deadline-exceeded sentinel for a documented
+	// "timed out after X waiting for review to finish" message so the user
+	// sees their flag in the error, not raw `context deadline exceeded`.
+	// Only fires when the err itself is DeadlineExceeded — never on an
+	// unrelated err that happened to arrive while ctx also expired, since
+	// that would swallow the real diagnostic. Hoisted out of the wait
+	// branch so the --no-wait POST path's own reviewPostTimeout also
+	// surfaces a clear message rather than a raw context-deadline error.
+	wrapTimeout := func(err error, label string, dur time.Duration) error {
+		if errors.Is(err, context.DeadlineExceeded) {
+			return fmt.Errorf("timed out after %s %s", dur, label)
+		}
+		return err
+	}
+
 	runURL := fmt.Sprintf("%s/api/channels/%s/review/run", apiURL, channelID)
 	postCtx := ctx
+	postTimeout := timeout
 	if !wait {
 		var cancel context.CancelFunc
 		postCtx, cancel = context.WithTimeout(ctx, a.reviewPostTimeout)
 		defer cancel()
+		postTimeout = a.reviewPostTimeout
 	}
 	req, err := http.NewRequestWithContext(postCtx, http.MethodPost, runURL, bytes.NewReader([]byte(`{}`)))
 	if err != nil {
@@ -149,7 +166,7 @@ func (a *app) runReview(ctx context.Context, stdout io.Writer, apiURL, channelID
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := client.Do(req)
 	if err != nil {
-		return fmt.Errorf("POST %s: %w", runURL, err)
+		return wrapTimeout(fmt.Errorf("POST %s: %w", runURL, err), "waiting for review POST to be accepted", postTimeout)
 	}
 	// Cap the error body we read into memory — a misbehaving daemon (or a
 	// reverse proxy returning a giant HTML 5xx page) could otherwise stream
@@ -164,22 +181,11 @@ func (a *app) runReview(ctx context.Context, stdout io.Writer, apiURL, channelID
 		return nil
 	}
 
-	// wrapTimeout swaps the deadline-exceeded sentinel for the documented
-	// "timed out after --timeout" message so the user sees their flag in the
-	// error, not raw `context deadline exceeded`. Other ctx errors (parent
-	// cancel) pass through untouched. Used at every site where a deadline
-	// can surface: in-flight Do error, top-of-loop guard, or sleep-select.
-	wrapTimeout := func(err error) error {
-		if errors.Is(err, context.DeadlineExceeded) || errors.Is(ctx.Err(), context.DeadlineExceeded) {
-			return fmt.Errorf("timed out after %s waiting for review to finish", timeout)
-		}
-		return err
-	}
-
+	waitLabel := "waiting for review to finish"
 	getURL := fmt.Sprintf("%s/api/channels/%s/review", apiURL, channelID)
 	for {
 		if err := ctx.Err(); err != nil {
-			return wrapTimeout(err)
+			return wrapTimeout(err, waitLabel, timeout)
 		}
 		out, terminal, perr := pollReviewOnce(ctx, client, getURL)
 		if perr != nil {
@@ -193,15 +199,22 @@ func (a *app) runReview(ctx context.Context, stdout io.Writer, apiURL, channelID
 			// flagged the error as permanent.
 			var permanent *pollPermanentError
 			if errors.As(perr, &permanent) ||
-				errors.Is(perr, context.Canceled) || errors.Is(perr, context.DeadlineExceeded) ||
-				ctx.Err() != nil {
-				return wrapTimeout(perr)
+				errors.Is(perr, context.Canceled) || errors.Is(perr, context.DeadlineExceeded) {
+				return wrapTimeout(perr, waitLabel, timeout)
+			}
+			// ctx.Err() != nil (without DeadlineExceeded on perr itself)
+			// surfaces only when the parent ctx was cancelled separately
+			// from the poll error. Re-issue the wait via ctx.Err() — which
+			// IS DeadlineExceeded if the wrapper expired — so the wrap
+			// fires on its own merit rather than on perr's hitchhiking.
+			if ctx.Err() != nil {
+				return wrapTimeout(ctx.Err(), waitLabel, timeout)
 			}
 			t := time.NewTimer(a.reviewPollTransportBackoff)
 			select {
 			case <-ctx.Done():
 				t.Stop()
-				return wrapTimeout(ctx.Err())
+				return wrapTimeout(ctx.Err(), waitLabel, timeout)
 			case <-t.C:
 			}
 			continue
@@ -230,7 +243,7 @@ func (a *app) runReview(ctx context.Context, stdout io.Writer, apiURL, channelID
 		select {
 		case <-ctx.Done():
 			t.Stop()
-			return wrapTimeout(ctx.Err())
+			return wrapTimeout(ctx.Err(), waitLabel, timeout)
 		case <-t.C:
 		}
 	}
@@ -285,12 +298,19 @@ func pollReviewOnce(ctx context.Context, client reviewHTTPClient, url string) (r
 	if err := json.NewDecoder(resp.Body).Decode(&raw); err != nil {
 		return reviewCLIOutput{}, false, fmt.Errorf("decoding %s: %w", url, err)
 	}
-	if !raw.Present || raw.Session == nil {
+	if !raw.Present {
 		// The kickoff POST returned 202 (we accepted the run). If the GET
 		// then says present=false, the session was deleted underneath us —
 		// typically the user closed the Review panel mid-loop. Polling for
 		// the rest of --timeout is pointless; bail with a permanent error.
 		return reviewCLIOutput{}, false, &pollPermanentError{err: errReviewSessionGone}
+	}
+	if raw.Session == nil {
+		// A {"present":true,"session":null} response is a daemon-side
+		// serialization race, not a permanently-gone session. Surface it
+		// as a transient error so the caller backs off and retries instead
+		// of collapsing it into errReviewSessionGone and bailing.
+		return reviewCLIOutput{}, false, fmt.Errorf("GET %s: present=true but session is null (transient daemon race)", url)
 	}
 
 	switch raw.Session.Status {

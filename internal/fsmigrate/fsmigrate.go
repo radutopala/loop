@@ -20,6 +20,11 @@ type System interface {
 	WriteFile(name string, data []byte, perm os.FileMode) error
 	ReadFile(name string) ([]byte, error)
 	Remove(name string) error
+	// Rename is used by atomicWriteConfig to swap a temp file into place
+	// once its contents have been written. Required to make config.json
+	// updates crash-safe — a SIGKILL between WriteFile's truncate and the
+	// writev would otherwise leave the user with an empty config.json.
+	Rename(oldpath, newpath string) error
 }
 
 // Ctx is passed to every migration's Apply function.
