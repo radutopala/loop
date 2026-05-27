@@ -19,11 +19,24 @@ interface ContextMenuProps {
 export function ContextMenu({ x, y, items, onClose }: ContextMenuProps) {
   const { colors } = useTheme();
   const menuRef = useRef<HTMLDivElement>(null);
+  const itemRefs = useRef<(HTMLButtonElement | null)[]>([]);
+  // Index of the menu item currently owning roving tabindex. -1 means
+  // none focused yet — keyboard nav grabs index 0 on first ArrowDown.
+  const [focusIdx, setFocusIdx] = useState<number>(-1);
+  // Element that opened the menu — focus is returned here on close so
+  // screen-reader users don't lose context after dismissing.
+  const triggerRef = useRef<HTMLElement | null>(null);
   // Render at the caller-supplied (x,y) first, then measure on mount and
   // shift left/up if the menu overflows the viewport. This handles dropdowns
   // anchored to right-edge or bottom-edge buttons without forcing callers to
   // compute clamping themselves.
   const [pos, setPos] = useState({ x, y });
+
+  // Indices of the "real" (non-separator) menu items — arrow nav skips
+  // separators so the user never lands on a non-actionable row.
+  const itemIndices = items
+    .map((it, i) => (it.separator ? -1 : i))
+    .filter((i) => i >= 0);
 
   useLayoutEffect(() => {
     const el = menuRef.current;
@@ -45,15 +58,64 @@ export function ContextMenu({ x, y, items, onClose }: ContextMenuProps) {
     if (nx !== x || ny !== y) setPos({ x: nx, y: ny });
   }, [x, y]);
 
+  // Capture the trigger on mount so we can restore focus on close,
+  // then move focus into the menu itself so screen readers announce
+  // the menu opening and arrow keys work immediately.
+  useEffect(() => {
+    triggerRef.current = (document.activeElement as HTMLElement) ?? null;
+    const el = menuRef.current;
+    if (el) el.focus();
+    return () => {
+      triggerRef.current?.focus?.();
+    };
+  }, []);
+
+  // Keep DOM focus in sync with the focused index after arrow nav.
+  useEffect(() => {
+    if (focusIdx < 0) return;
+    const btn = itemRefs.current[focusIdx];
+    if (btn) btn.focus();
+  }, [focusIdx]);
+
   useEffect(() => {
     const handleKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
+      if (e.key === "Escape") {
+        e.preventDefault();
+        onClose();
+        return;
+      }
+      if (itemIndices.length === 0) return;
+      if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+        e.preventDefault();
+        const pos = itemIndices.indexOf(focusIdx);
+        let nextPos: number;
+        if (pos < 0) {
+          // No item focused yet — first ArrowDown lands on the first item,
+          // first ArrowUp wraps to the last.
+          nextPos = e.key === "ArrowDown" ? 0 : itemIndices.length - 1;
+        } else {
+          const delta = e.key === "ArrowDown" ? 1 : -1;
+          nextPos = (pos + delta + itemIndices.length) % itemIndices.length;
+        }
+        setFocusIdx(itemIndices[nextPos]);
+        return;
+      }
+      if (e.key === "Home") {
+        e.preventDefault();
+        setFocusIdx(itemIndices[0]);
+        return;
+      }
+      if (e.key === "End") {
+        e.preventDefault();
+        setFocusIdx(itemIndices[itemIndices.length - 1]);
+        return;
+      }
     };
     document.addEventListener("keydown", handleKey);
     return () => {
       document.removeEventListener("keydown", handleKey);
     };
-  }, [onClose]);
+  }, [onClose, focusIdx, itemIndices]);
 
   return (
     <>
@@ -87,6 +149,9 @@ export function ContextMenu({ x, y, items, onClose }: ContextMenuProps) {
       <div
         data-testid="context-menu"
         ref={menuRef}
+        role="menu"
+        aria-orientation="vertical"
+        tabIndex={-1}
         onContextMenu={(e) => e.preventDefault()}
         style={{
           position: "fixed",
@@ -100,6 +165,7 @@ export function ContextMenu({ x, y, items, onClose }: ContextMenuProps) {
           zIndex: 1000,
           boxShadow: `0 4px 12px ${colors.shadow}`,
           fontFamily: fonts.sans,
+          outline: "none",
         }}
       >
         {items.map((item, i) => (
@@ -114,6 +180,11 @@ export function ContextMenu({ x, y, items, onClose }: ContextMenuProps) {
               />
             )}
             <button
+              role="menuitem"
+              tabIndex={focusIdx === i ? 0 : -1}
+              ref={(el) => {
+                itemRefs.current[i] = el;
+              }}
               onClick={() => {
                 item.onClick();
                 onClose();

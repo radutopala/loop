@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
-	"maps"
 	"sync"
 	"time"
 
@@ -132,14 +131,22 @@ func (e *defaultEngine) StartRun(ctx context.Context, opts StartRunOptions) (str
 		}
 	}
 
-	// Apply input defaults then user-provided inputs.
+	// Apply input defaults then user-provided inputs. Skip empty-string
+	// overrides: external callers (CLI, MCP, future automation) that send
+	// `{"name": ""}` explicitly would otherwise wipe out the default and
+	// surface as strconv/parse failures downstream.
 	inputs := make(map[string]string)
 	for name, input := range wfDef.Inputs {
 		if input.Default != "" {
 			inputs[name] = input.Default
 		}
 	}
-	maps.Copy(inputs, opts.Inputs)
+	for k, v := range opts.Inputs {
+		if v == "" {
+			continue
+		}
+		inputs[k] = v
+	}
 
 	inputsJSON, _ := json.Marshal(inputs)
 
@@ -432,6 +439,17 @@ func (e *defaultEngine) recoverPausedRun(ctx context.Context, run *db.WorkflowRu
 		return
 	}
 
+	// Re-validate the pinned definition before resuming. A run may have
+	// been pinned with a definition that pre-dates a new validator rule, or
+	// that was hand-edited in ~/.loop/config.json while paused; without
+	// this guard executeDAGFromCheckpoint trips half-way through with an
+	// "unsupported body child" error after already running siblings.
+	if err := validateWorkflowDef(wfDef); err != nil {
+		e.logger.Error("workflow: cannot recover paused run — definition fails validation", "run_id", run.ID, "workflow", run.WorkflowName, "error", err)
+		e.failStaleRun(ctx, run)
+		return
+	}
+
 	nodeRuns, err := e.store.ListNodeRuns(ctx, run.ID)
 	if err != nil {
 		e.logger.Error("workflow: cannot recover run — failed to list node runs", "run_id", run.ID, "error", err)
@@ -439,12 +457,21 @@ func (e *defaultEngine) recoverPausedRun(ctx context.Context, run *db.WorkflowRu
 		return
 	}
 
+	// For loop body children, multiple rows can exist per node_id (one per
+	// iteration). Templates in subsequent iterations read the previous
+	// iteration's output via runCtx.NodeOutputs[childID], so on resume we
+	// need the HIGHEST-iteration Success row to win deterministically —
+	// not whatever ListNodeRuns happens to return last.
 	completedNodes := make(map[string]db.NodeRunStatus, len(nodeRuns))
 	completedOutputs := make(map[string]string)
+	highestOutputIter := make(map[string]int)
 	for _, nr := range nodeRuns {
 		completedNodes[nr.NodeID] = nr.Status
 		if nr.Status == db.NodeRunStatusSuccess && nr.Output != "" {
-			completedOutputs[nr.NodeID] = nr.Output
+			if prev, ok := highestOutputIter[nr.NodeID]; !ok || nr.Iteration >= prev {
+				completedOutputs[nr.NodeID] = nr.Output
+				highestOutputIter[nr.NodeID] = nr.Iteration
+			}
 		}
 	}
 
@@ -501,6 +528,12 @@ func (e *defaultEngine) recoverRunningRun(ctx context.Context, run *db.WorkflowR
 		return
 	}
 
+	if err := validateWorkflowDef(wfDef); err != nil {
+		e.logger.Error("workflow: cannot recover running run — definition fails validation", "run_id", run.ID, "workflow", run.WorkflowName, "error", err)
+		e.failStaleRun(ctx, run)
+		return
+	}
+
 	nodeRuns, err := e.store.ListNodeRuns(ctx, run.ID)
 	if err != nil {
 		e.logger.Error("workflow: cannot recover running run — failed to list node runs, failing", "run_id", run.ID, "error", err)
@@ -509,8 +542,11 @@ func (e *defaultEngine) recoverRunningRun(ctx context.Context, run *db.WorkflowR
 	}
 
 	// Classify running nodes using heartbeat freshness.
+	// See recoverPausedRun: for loop body children, pick the highest-
+	// iteration Success row's output deterministically.
 	completedNodes := make(map[string]db.NodeRunStatus, len(nodeRuns))
 	completedOutputs := make(map[string]string)
+	highestOutputIter := make(map[string]int)
 	for _, nr := range nodeRuns {
 		status := nr.Status
 		if status == db.NodeRunStatusRunning {
@@ -525,7 +561,10 @@ func (e *defaultEngine) recoverRunningRun(ctx context.Context, run *db.WorkflowR
 		}
 		completedNodes[nr.NodeID] = status
 		if status == db.NodeRunStatusSuccess && nr.Output != "" {
-			completedOutputs[nr.NodeID] = nr.Output
+			if prev, ok := highestOutputIter[nr.NodeID]; !ok || nr.Iteration >= prev {
+				completedOutputs[nr.NodeID] = nr.Output
+				highestOutputIter[nr.NodeID] = nr.Iteration
+			}
 		}
 	}
 

@@ -67,10 +67,37 @@ export interface WorkflowRunDetail {
   node_runs: WorkflowNodeRun[];
 }
 
+// describeError extracts a meaningful failure description from a non-2xx
+// fetch Response. Under HTTP/2 the wire-level reason phrase is removed
+// (RFC 7540 §8.1.2.4), so `res.statusText` is empty — relying on it alone
+// would surface bare "Failed to ___: " messages to the user. The daemon
+// emits JSON error bodies (`{"error":"…"}`), and plaintext bodies in
+// the legacy paths. Prefer the body when present; fall back to the
+// numeric status code so callers never get a blank suffix.
+async function describeError(res: Response): Promise<string> {
+  const code = res.status;
+  let text: string;
+  try {
+    text = (await res.text()).trim();
+  } catch {
+    return res.statusText || String(code);
+  }
+  if (!text) return res.statusText || String(code);
+  try {
+    const parsed = JSON.parse(text);
+    if (parsed && typeof parsed.error === "string" && parsed.error) {
+      return parsed.error;
+    }
+  } catch {
+    // not JSON — fall through and use the raw body.
+  }
+  return text.length > 400 ? `${text.slice(0, 400)}…` : text;
+}
+
 export async function fetchWorkflows(channelId?: string): Promise<WorkflowDef[]> {
   const qs = channelId ? `?channel_id=${encodeURIComponent(channelId)}` : "";
   const res = await fetch(`${getApiUrl()}/api/workflows${qs}`);
-  if (!res.ok) throw new Error(`Failed to fetch workflows: ${res.statusText}`);
+  if (!res.ok) throw new Error(`Failed to fetch workflows: ${await describeError(res)}`);
   return (await res.json()) ?? [];
 }
 
@@ -85,7 +112,7 @@ export async function fetchWorkflowRuns(
   if (offset !== undefined && offset > 0) params.set("offset", String(offset));
   const qs = params.toString();
   const res = await fetch(`${getApiUrl()}/api/workflows/runs${qs ? `?${qs}` : ""}`);
-  if (!res.ok) throw new Error(`Failed to fetch workflow runs: ${res.statusText}`);
+  if (!res.ok) throw new Error(`Failed to fetch workflow runs: ${await describeError(res)}`);
   return (await res.json()) ?? [];
 }
 
@@ -102,7 +129,7 @@ export class FetchWorkflowRunError extends Error {
 
 export async function fetchWorkflowRun(runId: string, opts?: { signal?: AbortSignal }): Promise<WorkflowRunDetail> {
   const res = await fetch(`${getApiUrl()}/api/workflows/runs/${encodeURIComponent(runId)}`, { signal: opts?.signal });
-  if (!res.ok) throw new FetchWorkflowRunError(res.status, res.statusText);
+  if (!res.ok) throw new FetchWorkflowRunError(res.status, await describeError(res));
   return res.json();
 }
 
@@ -116,7 +143,7 @@ export async function startWorkflowRun(data: {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(data),
   });
-  if (!res.ok) throw new Error(`Failed to start workflow: ${res.statusText}`);
+  if (!res.ok) throw new Error(`Failed to start workflow: ${await describeError(res)}`);
   return res.json();
 }
 
@@ -126,27 +153,27 @@ export async function resumeWorkflowRun(runId: string, response: string): Promis
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ response }),
   });
-  if (!res.ok) throw new Error(`Failed to resume workflow run: ${res.statusText}`);
+  if (!res.ok) throw new Error(`Failed to resume workflow run: ${await describeError(res)}`);
 }
 
 export async function cancelWorkflowRun(runId: string): Promise<void> {
   const res = await fetch(`${getApiUrl()}/api/workflows/runs/${encodeURIComponent(runId)}/cancel`, {
     method: "POST",
   });
-  if (!res.ok) throw new Error(`Failed to cancel workflow run: ${res.statusText}`);
+  if (!res.ok) throw new Error(`Failed to cancel workflow run: ${await describeError(res)}`);
 }
 
 export async function deleteWorkflowRun(runId: string): Promise<void> {
   const res = await fetch(`${getApiUrl()}/api/workflows/runs/${encodeURIComponent(runId)}`, {
     method: "DELETE",
   });
-  if (!res.ok) throw new Error(`Failed to delete workflow run: ${res.statusText}`);
+  if (!res.ok) throw new Error(`Failed to delete workflow run: ${await describeError(res)}`);
 }
 
 export async function retryWorkflowRun(runId: string): Promise<{ run_id: string }> {
   const res = await fetch(`${getApiUrl()}/api/workflows/runs/${encodeURIComponent(runId)}/retry`, {
     method: "POST",
   });
-  if (!res.ok) throw new Error(`Failed to retry workflow run: ${res.statusText}`);
+  if (!res.ok) throw new Error(`Failed to retry workflow run: ${await describeError(res)}`);
   return res.json();
 }

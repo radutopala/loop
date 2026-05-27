@@ -251,6 +251,46 @@ func (s *EngineSuite) TestStartRunInputOverridesDefault() {
 	s.bashRunner.AssertCalled(s.T(), "RunBash", mock.Anything, "echo develop", "", "")
 }
 
+// TestStartRunSkipsEmptyStringInputs covers the explicit empty-string skip
+// in StartRun. External callers (CLI, MCP, future automation) routinely
+// emit `{"branch": ""}` for unset optional fields; without the skip those
+// would wipe the configured default and surface as downstream
+// strconv/parse failures (or, for max_iterations, a 0-cap loop).
+func (s *EngineSuite) TestStartRunSkipsEmptyStringInputs() {
+	s.workflows = []config.WorkflowDef{
+		{
+			Name: "empty-input-defaults",
+			Inputs: map[string]config.WorkflowInput{
+				"branch": {Default: "main"},
+			},
+			Nodes: []config.NodeDef{{ID: "run", Type: config.NodeTypeBash, Script: "echo {{.Inputs.branch}}"}},
+		},
+	}
+
+	s.store.On("CreateWorkflowRunWithNodes", mock.Anything, mock.Anything, mock.Anything).Return(nil)
+	s.store.On("UpsertNodeRun", mock.Anything, mock.Anything).Return(nil)
+	done := s.waitForRunStatus()
+
+	// Should run "echo main" — the empty-string input was skipped so the
+	// default survives.
+	s.bashRunner.On("RunBash", mock.Anything, "echo main", "", "").Return("main", nil)
+
+	_, err := s.engine.StartRun(context.Background(), StartRunOptions{
+		WorkflowName: "empty-input-defaults",
+		Inputs:       map[string]string{"branch": ""},
+	})
+	require.NoError(s.T(), err)
+
+	select {
+	case status := <-done:
+		require.Equal(s.T(), db.WorkflowRunStatusCompleted, status)
+	case <-time.After(5 * time.Second):
+		s.T().Fatal("timeout waiting for run completion")
+	}
+
+	s.bashRunner.AssertCalled(s.T(), "RunBash", mock.Anything, "echo main", "", "")
+}
+
 func (s *EngineSuite) TestCancelRun() {
 	s.workflows = []config.WorkflowDef{
 		{

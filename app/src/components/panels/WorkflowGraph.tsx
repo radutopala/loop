@@ -373,8 +373,13 @@ export function WorkflowGraph({ defs, nodeRuns, colors, onNodeClick, expandedNod
     [defs, nodeRuns],
   );
 
-  // Auto-center graph on first render or when nodes change.
+  // Auto-center graph ONCE — on first render with non-zero nodes. After
+  // that, leave the user's pan/zoom alone: a later iteration adding
+  // synthetic body nodes bumps nodes.length/width/height, and without
+  // this guard the effect re-fires and snaps the viewport back to
+  // centered, throwing away whatever the user was inspecting.
   useEffect(() => {
+    if (hasCentered.current) return;
     if (nodes.length === 0) return;
     const el = containerRef.current;
     if (!el) return;

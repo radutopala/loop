@@ -695,3 +695,237 @@ func (s *EngineSuite) TestApprovalNodeResumeStatusWriteError() {
 		s.T().Fatal("timeout — run should have failed due to resume status write error")
 	}
 }
+
+// TestRecoverPausedRunFailsOnInvalidPinnedDef covers the validate-on-resume
+// guard added to recoverPausedRun. A pinned def can pre-date a new
+// validator rule (or be hand-edited in ~/.loop/config.json while paused);
+// without the guard executeDAGFromCheckpoint trips half-way through with
+// an "unsupported body child" error after already running siblings.
+func (s *EngineSuite) TestRecoverPausedRunFailsOnInvalidPinnedDef() {
+	// Pinned def has a body child of type "loop" — disallowed by
+	// validateWorkflowDef (nested loops in body unsupported in v1).
+	pinnedDef := `{"name":"bad-pinned","nodes":[{"id":"outer","type":"loop","body":[{"id":"inner","type":"loop"}]}]}`
+
+	pausedRun := &db.WorkflowRun{
+		ID:           "wfr-bad-pinned",
+		WorkflowName: "bad-pinned",
+		Status:       db.WorkflowRunStatusPaused,
+		PausedNodeID: "outer",
+		Inputs:       `{}`,
+		WorkflowDef:  pinnedDef,
+	}
+	s.store.ExpectedCalls = nil
+	s.store.On("ListWorkflowRunsByStatus", mock.Anything, mock.Anything).Return([]*db.WorkflowRun{pausedRun}, nil)
+	s.store.On("MarkRunFailedWithStaleNodes", mock.Anything, "wfr-bad-pinned", mock.Anything, mock.Anything, mock.Anything).Return(nil)
+	s.workflows = nil
+
+	err := s.engine.RecoverRuns(context.Background())
+	require.NoError(s.T(), err)
+	// ListNodeRuns must NOT be called — validation fires before the node-run
+	// fetch, so the run short-circuits straight to failStaleRun.
+	s.store.AssertNotCalled(s.T(), "ListNodeRuns", mock.Anything, "wfr-bad-pinned")
+	s.store.AssertCalled(s.T(), "MarkRunFailedWithStaleNodes", mock.Anything, "wfr-bad-pinned", mock.Anything, mock.Anything, mock.Anything)
+}
+
+// TestRecoverRunningRunFailsOnInvalidPinnedDef mirrors
+// TestRecoverPausedRunFailsOnInvalidPinnedDef for the running-recovery
+// path. Both paths must validate to avoid a half-executed loop body
+// after restart.
+func (s *EngineSuite) TestRecoverRunningRunFailsOnInvalidPinnedDef() {
+	pinnedDef := `{"name":"bad-pinned-r","nodes":[{"id":"outer","type":"loop","body":[{"id":"inner","type":"loop"}]}]}`
+	runningRun := &db.WorkflowRun{
+		ID:           "wfr-bad-pinned-r",
+		WorkflowName: "bad-pinned-r",
+		Status:       db.WorkflowRunStatusRunning,
+		Inputs:       `{}`,
+		WorkflowDef:  pinnedDef,
+	}
+	s.store.ExpectedCalls = nil
+	s.store.On("ListWorkflowRunsByStatus", mock.Anything, mock.Anything).Return([]*db.WorkflowRun{runningRun}, nil)
+	s.store.On("MarkRunFailedWithStaleNodes", mock.Anything, "wfr-bad-pinned-r", mock.Anything, mock.Anything, mock.Anything).Return(nil)
+	s.workflows = nil
+
+	err := s.engine.RecoverRuns(context.Background())
+	require.NoError(s.T(), err)
+	s.store.AssertNotCalled(s.T(), "ListNodeRuns", mock.Anything, "wfr-bad-pinned-r")
+	s.store.AssertCalled(s.T(), "MarkRunFailedWithStaleNodes", mock.Anything, "wfr-bad-pinned-r", mock.Anything, mock.Anything, mock.Anything)
+}
+
+// TestRecoverPausedRunHighestIterationOutputWins covers the deterministic
+// highest-iteration tracking in recoverPausedRun's completedOutputs build.
+// Templates in subsequent loop iterations read the previous iteration's
+// output via runCtx.NodeOutputs[childID], so on resume we must select the
+// HIGHEST-iteration Success row's Output — not whatever ListNodeRuns
+// happens to return last.
+func (s *EngineSuite) TestRecoverPausedRunHighestIterationOutputWins() {
+	// Workflow has a loop with a single body child "tick" and a downstream
+	// node "after" that reads {{.NodeOutputs.tick}}. We seed THREE Success
+	// node-run rows for "tick" with iterations 0/1/2 in REVERSE-order so a
+	// last-write-wins implementation would pick iter=0 and the test would
+	// fail. The highestOutputIter map must pick iter=2.
+	s.workflows = []config.WorkflowDef{
+		{
+			Name: "hi-iter",
+			Nodes: []config.NodeDef{
+				{
+					ID:            "loop",
+					Type:          config.NodeTypeLoop,
+					MaxIterations: 3,
+					Condition:     "true",
+					Body: []*config.NodeDef{
+						{ID: "tick", Type: config.NodeTypeBash, Script: "echo tick"},
+					},
+				},
+				{
+					ID:        "after",
+					Type:      config.NodeTypeBash,
+					DependsOn: []string{"loop"},
+					Script:    "echo {{.NodeOutputs.tick}}",
+				},
+			},
+		},
+	}
+
+	pausedRun := &db.WorkflowRun{
+		ID:           "wfr-hi-iter",
+		WorkflowName: "hi-iter",
+		ChannelID:    "ch1",
+		Status:       db.WorkflowRunStatusPaused,
+		PausedNodeID: "loop",
+		Inputs:       `{}`,
+	}
+
+	// Reverse order: iter=2 first, then iter=1, then iter=0. With
+	// last-write-wins, iter=0 would replace iter=2 and the downstream node
+	// would receive "iter0-out" instead of "iter2-out".
+	nodeRuns := []*db.NodeRun{
+		{RunID: "wfr-hi-iter", NodeID: "tick", Iteration: 2, Status: db.NodeRunStatusSuccess, Output: "iter2-out"},
+		{RunID: "wfr-hi-iter", NodeID: "tick", Iteration: 1, Status: db.NodeRunStatusSuccess, Output: "iter1-out"},
+		{RunID: "wfr-hi-iter", NodeID: "tick", Iteration: 0, Status: db.NodeRunStatusSuccess, Output: "iter0-out"},
+		// The loop itself is marked Success so executeDAGFromCheckpoint
+		// skips re-executing the loop and proceeds straight to "after".
+		{RunID: "wfr-hi-iter", NodeID: "loop", Iteration: 0, Status: db.NodeRunStatusSuccess, Output: "iter2-out"},
+	}
+
+	s.store.ExpectedCalls = nil
+	s.store.On("ListWorkflowRunsByStatus", mock.Anything, mock.Anything).Return([]*db.WorkflowRun{pausedRun}, nil)
+	s.store.On("ListNodeRuns", mock.Anything, "wfr-hi-iter").Return(nodeRuns, nil)
+	s.store.On("UpsertNodeRun", mock.Anything, mock.Anything).Return(nil)
+	s.store.On("UpdateNodeHeartbeat", mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Maybe()
+	s.store.On("GetWorkflowRun", mock.Anything, "wfr-hi-iter").Return(
+		&db.WorkflowRun{ID: "wfr-hi-iter", Status: db.WorkflowRunStatusRunning, WorkflowName: "hi-iter", ChannelID: "ch1"}, nil,
+	).Maybe()
+
+	done := make(chan db.WorkflowRunStatus, 1)
+	s.store.On("UpdateWorkflowRun", mock.Anything, mock.Anything).Run(func(args mock.Arguments) {
+		run := args.Get(1).(*db.WorkflowRun)
+		if run.Status == db.WorkflowRunStatusCompleted || run.Status == db.WorkflowRunStatusFailed {
+			select {
+			case done <- run.Status:
+			default:
+			}
+		}
+	}).Return(nil)
+
+	// Capture the script after rendering — must contain "iter2-out".
+	var actualScript atomic.Value
+	s.bashRunner.On("RunBash", mock.Anything, mock.AnythingOfType("string"), "ch1", "").
+		Return("after-out", nil).
+		Run(func(args mock.Arguments) {
+			actualScript.Store(args.Get(1).(string))
+		})
+
+	err := s.engine.RecoverRuns(context.Background())
+	require.NoError(s.T(), err)
+
+	select {
+	case status := <-done:
+		require.Equal(s.T(), db.WorkflowRunStatusCompleted, status)
+	case <-time.After(5 * time.Second):
+		s.T().Fatal("timeout waiting for recovered run to complete")
+	}
+
+	rendered, _ := actualScript.Load().(string)
+	require.Equal(s.T(), "echo iter2-out", rendered, "downstream node must see highest-iter (iter=2) output, not last-listed (iter=0)")
+}
+
+// TestRecoverRunningRunHighestIterationOutputWins mirrors the paused-run
+// variant for the running-recovery path.
+func (s *EngineSuite) TestRecoverRunningRunHighestIterationOutputWins() {
+	s.workflows = []config.WorkflowDef{
+		{
+			Name: "hi-iter-r",
+			Nodes: []config.NodeDef{
+				{
+					ID:            "loop",
+					Type:          config.NodeTypeLoop,
+					MaxIterations: 2,
+					Condition:     "true",
+					Body: []*config.NodeDef{
+						{ID: "tick", Type: config.NodeTypeBash, Script: "echo tick"},
+					},
+				},
+				{
+					ID:        "after",
+					Type:      config.NodeTypeBash,
+					DependsOn: []string{"loop"},
+					Script:    "echo {{.NodeOutputs.tick}}",
+				},
+			},
+		},
+	}
+
+	runningRun := &db.WorkflowRun{
+		ID:           "wfr-hi-iter-r",
+		WorkflowName: "hi-iter-r",
+		ChannelID:    "ch1",
+		Status:       db.WorkflowRunStatusRunning,
+		Inputs:       `{}`,
+	}
+
+	nodeRuns := []*db.NodeRun{
+		{RunID: "wfr-hi-iter-r", NodeID: "tick", Iteration: 1, Status: db.NodeRunStatusSuccess, Output: "winner"},
+		{RunID: "wfr-hi-iter-r", NodeID: "tick", Iteration: 0, Status: db.NodeRunStatusSuccess, Output: "loser"},
+		{RunID: "wfr-hi-iter-r", NodeID: "loop", Iteration: 0, Status: db.NodeRunStatusSuccess, Output: "winner"},
+	}
+
+	s.store.ExpectedCalls = nil
+	s.store.On("ListWorkflowRunsByStatus", mock.Anything, mock.Anything).Return([]*db.WorkflowRun{runningRun}, nil)
+	s.store.On("ListNodeRuns", mock.Anything, "wfr-hi-iter-r").Return(nodeRuns, nil)
+	s.store.On("UpsertNodeRun", mock.Anything, mock.Anything).Return(nil)
+	s.store.On("UpdateNodeHeartbeat", mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Maybe()
+	s.store.On("GetWorkflowRun", mock.Anything, "wfr-hi-iter-r").Return(
+		&db.WorkflowRun{ID: "wfr-hi-iter-r", Status: db.WorkflowRunStatusRunning, WorkflowName: "hi-iter-r", ChannelID: "ch1"}, nil,
+	).Maybe()
+
+	done := make(chan db.WorkflowRunStatus, 1)
+	s.store.On("UpdateWorkflowRun", mock.Anything, mock.Anything).Run(func(args mock.Arguments) {
+		run := args.Get(1).(*db.WorkflowRun)
+		if run.Status == db.WorkflowRunStatusCompleted || run.Status == db.WorkflowRunStatusFailed {
+			select {
+			case done <- run.Status:
+			default:
+			}
+		}
+	}).Return(nil)
+
+	var actualScript atomic.Value
+	s.bashRunner.On("RunBash", mock.Anything, mock.AnythingOfType("string"), "ch1", "").
+		Return("after-out", nil).
+		Run(func(args mock.Arguments) {
+			actualScript.Store(args.Get(1).(string))
+		})
+
+	err := s.engine.RecoverRuns(context.Background())
+	require.NoError(s.T(), err)
+
+	select {
+	case status := <-done:
+		require.Equal(s.T(), db.WorkflowRunStatusCompleted, status)
+	case <-time.After(5 * time.Second):
+		s.T().Fatal("timeout waiting for recovered run to complete")
+	}
+
+	rendered, _ := actualScript.Load().(string)
+	require.Equal(s.T(), "echo winner", rendered, "downstream node must see highest-iter output")
+}
