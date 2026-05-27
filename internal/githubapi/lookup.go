@@ -239,9 +239,7 @@ func (c *Client) FetchRepoSlug(ctx context.Context, workdir, ghUser string) (*Re
 // PostPRComment files a single-line review comment on a PR via the gh API.
 // commitID is the head SHA of the PR (required by the GitHub API to anchor
 // the comment to a specific revision). side is "RIGHT" for added/modified
-// lines, "LEFT" for deleted lines. Returns the GitHub-assigned comment id
-// (0 if gh returned a body we couldn't parse — non-fatal: the push still
-// succeeded, only the id is lost, which only matters for later deletion).
+// lines, "LEFT" for deleted lines. Returns the GitHub-assigned comment id.
 //
 // Fallback: GitHub returns HTTP 422 when the anchor (path, line) is not
 // part of the PR's diff at commitID — common when the review agent flags
@@ -290,12 +288,11 @@ func (c *Client) postPRInlineComment(ctx context.Context, workdir string, env []
 	}
 	if err := json.Unmarshal(out, &raw); err != nil {
 		// gh returned exit 0 — the comment IS posted on GitHub — but the
-		// body wasn't the expected JSON envelope. Surface this rather than
-		// silently returning (0, nil), so the caller logs a phantom-comment
-		// warning instead of recording a successful push it can't later
-		// delete by id. The caller's docstring promises id=0 only for the
-		// 422-fallback path, not for unparseable success bodies.
-		return 0, fmt.Errorf("decoding gh api response (%d bytes): %w", len(out), err)
+		// body wasn't the expected JSON envelope. Surface the decode error
+		// so the user sees the integration drift; the duplicate-post risk
+		// on retry is the lesser concern (losing the comment id means we
+		// can never delete the phantom comment, which is worse).
+		return 0, fmt.Errorf("decoding gh api response (response was %d bytes): %w", len(out), err)
 	}
 	return raw.ID, nil
 }
@@ -311,10 +308,24 @@ func (c *Client) postPRConversationComment(ctx context.Context, workdir string, 
 		"api", endpoint, "--method", "POST",
 		"-f", "body=" + prefixed,
 	}
-	if _, err := c.runner.Run(ctx, workdir, env, args...); err != nil {
+	out, err := c.runner.Run(ctx, workdir, env, args...)
+	if err != nil {
 		return 0, err
 	}
-	return 0, nil
+	// Parse the conversation-comment id from gh's response so the caller
+	// can track / delete it later. Conversation comments live in a
+	// different id namespace than inline review comments (issues vs
+	// pulls/comments) — the caller is responsible for routing the id to
+	// the right delete endpoint. An unparseable body still keeps the
+	// comment posted: surface id=0 (best-effort id), not an error, since
+	// erroring would make the FE retry and post a duplicate.
+	var raw struct {
+		ID int64 `json:"id"`
+	}
+	if err := json.Unmarshal(out, &raw); err != nil {
+		return 0, nil
+	}
+	return raw.ID, nil
 }
 
 // isOutOfDiff422 detects the GitHub validation error that fires when the

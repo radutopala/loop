@@ -116,9 +116,13 @@ export function useWorkflowState({
     try {
       const data = await fetchWorkflows(channelId);
       setDefinitions(data);
-    } catch { /* ignore */ } finally {
+      // Only flip `definitionsLoaded=true` on a successful fetch. A transient
+      // initial-fetch failure would otherwise leave the panel in a
+      // `loaded && empty` state where the "+ Run" button is hidden but never
+      // re-attempted; keeping definitionsLoaded=false lets a subsequent
+      // remount / channel change retry instead of silently failing.
       setDefinitionsLoaded(true);
-    }
+    } catch { /* ignore */ }
   }, [channelId]);
 
   const loadRunDetail = useCallback(async (runId: string) => {

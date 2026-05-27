@@ -555,6 +555,28 @@ func (s *MainSuite) TestPollReviewOnce5xxIsTransient() {
 	require.False(s.T(), errors.As(err, &permanent), "5xx must not be wrapped permanent")
 }
 
+// TestPollReviewOncePresentTrueSessionNullIsTransient: a
+// {"present":true,"session":null} response is a daemon-side serialization
+// race (the session row exists but the join produced a null body). It MUST
+// NOT collapse into errReviewSessionGone — that would mark the run as
+// permanently lost and bail. Surface a plain error so the caller backs off
+// and retries through the race.
+func (s *MainSuite) TestPollReviewOncePresentTrueSessionNullIsTransient() {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"present":true,"session":null}`))
+	}))
+	defer ts.Close()
+
+	_, terminal, err := pollReviewOnce(context.Background(), http.DefaultClient, ts.URL)
+	require.Error(s.T(), err)
+	require.False(s.T(), terminal)
+	var permanent *pollPermanentError
+	require.False(s.T(), errors.As(err, &permanent), "session=null must be transient (will retry)")
+	require.NotErrorIs(s.T(), err, errReviewSessionGone)
+	require.Contains(s.T(), err.Error(), "session is null")
+}
+
 // TestPollReviewOncePresentFalseIsPermanent: once the kickoff POST returns
 // 202, the session is created synchronously. A GET response with
 // present=false later means the session was deleted (user closed the panel).
@@ -615,6 +637,44 @@ func (s *MainSuite) TestRunReviewPostHangBoundedWithoutWait() {
 	elapsed := time.Since(start)
 	require.Error(s.T(), err, "hung POST must surface as an error, not block forever")
 	require.Less(s.T(), elapsed, 2*time.Second, "POST must be bounded by reviewPostTimeout")
+}
+
+// TestRunReviewTransportErrorThenCtxErrChecksCtxAfterError covers the
+// ctx.Err() check that fires AFTER a non-permanent, non-context poll error.
+// The stub client returns 202 for POST, then on the first GET cancels its
+// embedded ctx BEFORE returning a plain error that does NOT wrap
+// context.Canceled. By the time runReview checks `errors.Is(perr,
+// context.Canceled)` the check is false, but `ctx.Err() != nil` fires and
+// short-circuits the backoff timer. Without this guard a separately-cancelled
+// ctx would only be honored after sleeping through the full transport
+// backoff.
+func (s *MainSuite) TestRunReviewTransportErrorThenCtxErrChecksCtxAfterError() {
+	ctx, cancel := context.WithCancel(context.Background())
+	s.app.reviewClient = &errAfterCancelClient{cancel: cancel}
+	s.app.reviewPollTransportBackoff = time.Minute
+	err := s.app.runReview(ctx, &bytes.Buffer{}, "http://stub", "ch1", true, 5*time.Second)
+	require.Error(s.T(), err)
+	require.ErrorIs(s.T(), err, context.Canceled)
+}
+
+// TestRunReviewTransportErrorThenCancelDuringBackoff covers the
+// `case <-ctx.Done()` arm inside the transport-error backoff select. The
+// stub returns 202 for POST, then on the first GET returns a plain
+// non-context error (so `errors.Is(perr, context.Canceled)` is false and
+// `ctx.Err() != nil` is also false because the goroutine that cancels hasn't
+// fired yet). A goroutine then cancels ctx during the backoff sleep; with
+// a 1-minute backoff the cancel wins the select race deterministically.
+func (s *MainSuite) TestRunReviewTransportErrorThenCancelDuringBackoff() {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	s.app.reviewClient = &errThenCancelDuringBackoffClient{
+		cancel:      cancel,
+		cancelDelay: 50 * time.Millisecond,
+	}
+	s.app.reviewPollTransportBackoff = time.Minute
+	err := s.app.runReview(ctx, &bytes.Buffer{}, "http://stub", "ch1", true, 5*time.Second)
+	require.Error(s.T(), err)
+	require.ErrorIs(s.T(), err, context.Canceled)
 }
 
 func (s *MainSuite) TestRunReviewBuildPostRequestError() {
@@ -728,6 +788,52 @@ func (s *stubHTTPClient) Do(_ *http.Request) (*http.Response, error) {
 		return nil, s.err
 	}
 	return s.resp, nil
+}
+
+// errAfterCancelClient returns 202 on the first call (POST). On the next
+// call (the GET inside the poll loop) it cancels its embedded ctx BEFORE
+// returning a plain error that does NOT wrap context.Canceled. By the time
+// runReview reaches the `ctx.Err() != nil` check, ctx is cancelled but the
+// returned error itself is just a plain transport error.
+type errAfterCancelClient struct {
+	cancel context.CancelFunc
+	calls  atomic.Int32
+}
+
+func (c *errAfterCancelClient) Do(_ *http.Request) (*http.Response, error) {
+	n := c.calls.Add(1)
+	if n == 1 {
+		return &http.Response{StatusCode: http.StatusAccepted, Body: http.NoBody}, nil
+	}
+	c.cancel()
+	return nil, errors.New("transient transport error")
+}
+
+// errThenCancelDuringBackoffClient returns 202 on the first call (POST),
+// then on the GET returns a plain non-context transport error WITHOUT
+// cancelling ctx synchronously. A goroutine fires cancel() after cancelDelay
+// so that runReview's transport-backoff select observes ctx.Done() winning
+// over the (1-minute) timer arm. This exercises the
+// `case <-ctx.Done()` branch inside the backoff select rather than the
+// pre-sleep ctx.Err() short-circuit.
+type errThenCancelDuringBackoffClient struct {
+	cancel      context.CancelFunc
+	cancelDelay time.Duration
+	calls       atomic.Int32
+}
+
+func (c *errThenCancelDuringBackoffClient) Do(_ *http.Request) (*http.Response, error) {
+	n := c.calls.Add(1)
+	if n == 1 {
+		return &http.Response{StatusCode: http.StatusAccepted, Body: http.NoBody}, nil
+	}
+	// Cancel asynchronously so runReview gets past `ctx.Err() != nil` and
+	// enters the backoff sleep before the cancellation fires.
+	go func() {
+		time.Sleep(c.cancelDelay)
+		c.cancel()
+	}()
+	return nil, errors.New("transient transport error")
 }
 
 // --- compile-time sanity: stubHTTPClient satisfies the interface ---

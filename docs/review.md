@@ -102,7 +102,7 @@ loop review run --channel-id $CHANNEL_ID --api-url $API_URL --wait
 | `--channel-id` | (required) | Channel whose review session to drive. |
 | `--api-url` | `$API_URL` then `http://localhost:8222` | Daemon URL. The agent container already exports `$API_URL`. |
 | `--wait` | `false` | Block until the session reaches a terminal status (`ready` or `error`) and emit the JSON envelope to stdout. Without `--wait`, the command exits 0 immediately after the `202`. |
-| `--timeout` | `30m` | Bound on the total `--wait` time. Enforced inside the HTTP client, not just between polls, so a hung response can't outlive the deadline. Transient transport errors (TCP reset, momentary daemon restart, proxy 502) back off and retry instead of failing the whole loop. |
+| `--timeout` | `60m` | Bound on the total `--wait` time. Enforced inside the HTTP client, not just between polls, so a hung response can't outlive the deadline. Transient transport errors (TCP reset, momentary daemon restart, proxy 502) back off and retry instead of failing the whole loop. Sits above the daemon-side review ceiling (50m) so the daemon flips first with a meaningful error rather than the CLI's generic timeout. |
 
 The emitted JSON shape is `{"status":"ready","no_comments":bool,"comments":[...]}` — the same payload used by the workflow body parser to populate `{{.Review.*}}` templates inside the seeded loops.
 

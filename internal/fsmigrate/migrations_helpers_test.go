@@ -80,14 +80,6 @@ func (s *FSMigrateSuite) TestAppendOrCreateArrayMemberRejectsUnmarshallableItem(
 	require.Contains(s.T(), err.Error(), "marshaling item")
 }
 
-func (s *FSMigrateSuite) TestParseJSONValueMarshalErrorReturnsNullLiteral() {
-	// channel is unmarshallable; helper must swallow the error and emit "null".
-	got := parseJSONValue(make(chan int))
-	lit, ok := got.(hujson.Literal)
-	require.True(s.T(), ok)
-	require.Equal(s.T(), "null", lit.String())
-}
-
 // --- forEachReviewFixLoopBodyChild skip-path tests ---
 //
 // These call seeders/patchers with deliberately malformed configs to drive

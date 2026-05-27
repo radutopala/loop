@@ -31,6 +31,20 @@ func (c *corruptingSys) WriteFile(name string, data []byte, perm os.FileMode) er
 	return nil
 }
 
+// Rename mirrors WriteFile's corrupt-on-first-success behavior so the
+// atomicWriteConfig path (write tmp → rename to target) also triggers
+// corruption when the *destination* equals the target.
+func (c *corruptingSys) Rename(oldpath, newpath string) error {
+	if err := c.fakeSystem.Rename(oldpath, newpath); err != nil {
+		return err
+	}
+	if newpath == c.target && !c.written {
+		c.written = true
+		c.files[newpath] = []byte("{not valid hjson")
+	}
+	return nil
+}
+
 // The Restore* wrappers are thin: just confirm they reach the underlying
 // seeder and return its result. The seeder's own branches are covered by
 // TestSeed* in fsmigrate_test.go.
@@ -110,6 +124,23 @@ func (s *FSMigrateSuite) TestRestoreBuiltinWorkflowsSurfacesVerifyPatcherError()
 	require.Nil(s.T(), patched)
 }
 
+// TestRestoreBuiltinWorkflowsSurfacesSeedError verifies that an error from
+// the seed phase (call 1 of the read sequence) is surfaced rather than
+// swallowed. Without this propagation, a disk failure during seed would let
+// the patchers run on stale bytes, then RestoreBuiltinWorkflows would
+// silently "succeed" with `added=nil`.
+func (s *FSMigrateSuite) TestRestoreBuiltinWorkflowsSurfacesSeedError() {
+	configPath := filepath.Join("/loop", "config.json")
+	sys := newFakeSystem()
+	sys.files[configPath] = []byte(`{}`)
+	wrapper := &readCountingSys{fakeSystem: sys, target: configPath, errOnCall: 1, err: errors.New("disk read failed")}
+	added, patched, err := RestoreBuiltinWorkflows(context.Background(), &Ctx{Sys: wrapper, LoopDir: "/loop"})
+	require.Error(s.T(), err)
+	require.Nil(s.T(), added)
+	require.Nil(s.T(), patched)
+	require.Contains(s.T(), err.Error(), "disk read failed")
+}
+
 func (s *FSMigrateSuite) TestRestoreBuiltinWorkflowsSurfacesDepsPatcherError() {
 	// Seed both workflows successfully into a clean config, then arrange for
 	// the *second* patcher (body-deps) to fail by injecting a read error on
@@ -125,10 +156,12 @@ func (s *FSMigrateSuite) TestRestoreBuiltinWorkflowsSurfacesDepsPatcherError() {
 	require.NotEmpty(s.T(), added)
 
 	// Now arrange so the verify patcher reads fine but the deps patcher errors.
-	// Both patchers re-read the file each time; we need a wrapper that errors
-	// on the *second* call. Reuse corruptingSys to corrupt-on-first-write isn't
-	// useful here (nothing else writes); instead use a per-call counter sys.
-	wrapper := &readCountingSys{fakeSystem: sys, target: configPath, errOnCall: 2, err: errors.New("disk read failed")}
+	// Each phase re-reads target once: (1) seedReviewLoopWorkflows,
+	// (2) patchReviewFixVerifyScriptReport, (3) patchReviewFixLoopBodyDepsReport.
+	// We want the deps patcher (call 3) to fail. Reuse corruptingSys's
+	// corrupt-on-first-write isn't useful here (nothing else writes); instead
+	// use a per-call counter sys.
+	wrapper := &readCountingSys{fakeSystem: sys, target: configPath, errOnCall: 3, err: errors.New("disk read failed")}
 	added, patched, err := RestoreBuiltinWorkflows(context.Background(), &Ctx{Sys: wrapper, LoopDir: "/loop"})
 	require.Error(s.T(), err)
 	require.Nil(s.T(), added)

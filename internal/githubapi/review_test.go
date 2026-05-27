@@ -330,6 +330,27 @@ func (s *ReviewAPISuite) TestPostPRCommentNon422ErrorDoesNotFallBack() {
 	require.Len(s.T(), r.calls, 1, "should not retry on non-422 errors")
 }
 
+// TestPostPRCommentFallback422ReturnsConversationID covers the conversation
+// comment success path: the inline call 422s, the fallback issues endpoint
+// returns a valid JSON envelope with an id, and that id is surfaced to the
+// caller. Sibling tests cover the 422→empty-body branch (id=0).
+func (s *ReviewAPISuite) TestPostPRCommentFallback422ReturnsConversationID() {
+	r := &endpointRunner{
+		responses: map[string]apiResponse{
+			"repos/acme/widgets/pulls/5/comments":  {err: errors.New("HTTP 422")},
+			"repos/acme/widgets/issues/5/comments": {out: []byte(`{"id":424242}`)},
+		},
+	}
+	c := NewClientWithRunner(r)
+	id, err := c.PostPRComment(context.Background(), "/tmp", "", RepoSlug{Owner: "acme", Name: "widgets"}, 5, "deadbeef", "f.go", "RIGHT", 9, "body")
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), int64(424242), id)
+}
+
+func (s *ReviewAPISuite) TestIsOutOfDiff422NilErrorReturnsFalse() {
+	require.False(s.T(), isOutOfDiff422(nil))
+}
+
 // endpointRunner routes `gh api <endpoint>` calls by endpoint and records
 // each call. Unlike dispatchRunner it lets a single test stub two
 // different api endpoints (used for the inline → conversation fallback

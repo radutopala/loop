@@ -599,11 +599,14 @@ func (e *defaultEngine) executeLoopNode(ctx context.Context, run *db.WorkflowRun
 
 	// Iteration must reset to 0 on EVERY exit (success, error, or ctx
 	// cancellation) so any downstream non-loop node templating {{.Iteration}}
-	// doesn't see the last-attempted index from a failed loop. Defer instead
-	// of resetting only on the success path.
+	// doesn't see the last-attempted index from a failed loop. Review must
+	// also reset on exit so downstream nodes don't template stale
+	// findings from the loop's last iteration. Defer instead of resetting
+	// only on the success path.
 	defer func() {
 		mu.Lock()
 		runCtx.Iteration = 0
+		runCtx.Review = ReviewState{}
 		mu.Unlock()
 	}()
 
@@ -739,29 +742,36 @@ func (e *defaultEngine) executeLoopBody(ctx context.Context, run *db.WorkflowRun
 		// status=running forever.
 		stopHeartbeat := e.startHeartbeat(ctx, run.ID, child.ID, iteration)
 
-		// Honor the child's timeout the same way executeNode does for top-level
-		// nodes (see line ~344). Without this wrap, a body child's `timeout:`
-		// declaration is silently ignored — e.g. `{id:"fix", type:"prompt",
-		// timeout:"5m"}` would stall against the outer run ctx instead of the
-		// per-child budget. Cancel explicitly at the end of the iteration
-		// rather than via defer — defer in this for-loop would stack one cancel
-		// per iteration and only fire when executeLoopBody returns.
-		childCtx := ctx
-		var childCancel context.CancelFunc
+		// Parse the child's timeout once. The actual context.WithTimeout is
+		// created PER ATTEMPT inside execFn so that retries get a fresh
+		// deadline — when attempt 1 trips a 30s timeout, attempt 2 would
+		// otherwise inherit an already-cancelled context and immediately
+		// fail. The d > 0 guard rejects a user-declared `timeout: "0s"`
+		// (which would build an already-expired context and turn every
+		// attempt into an instant failure).
+		var childTimeout time.Duration
 		if child.Timeout != "" {
-			if d, perr := time.ParseDuration(child.Timeout); perr == nil {
-				childCtx, childCancel = context.WithTimeout(ctx, d)
+			if d, perr := time.ParseDuration(child.Timeout); perr == nil && d > 0 {
+				childTimeout = d
 			}
 		}
 
 		var output string
 		var execErr error
+		var attemptsRun int
 		execFn := func() (string, error) {
+			attemptsRun++
+			attemptCtx := ctx
+			var attemptCancel context.CancelFunc
+			if childTimeout > 0 {
+				attemptCtx, attemptCancel = context.WithTimeout(ctx, childTimeout)
+				defer attemptCancel()
+			}
 			switch child.Type {
 			case config.NodeTypePrompt:
-				return e.executePromptNode(childCtx, run, child, runCtx, mu)
+				return e.executePromptNode(attemptCtx, run, child, runCtx, mu)
 			case config.NodeTypeBash:
-				return e.executeBashNode(childCtx, run, child, runCtx, mu)
+				return e.executeBashNode(attemptCtx, run, child, runCtx, mu)
 			default:
 				// validateWorkflowDef rejects this at StartRun, but
 				// executeDAGFromCheckpoint resumes from the DB-pinned definition
@@ -775,26 +785,45 @@ func (e *defaultEngine) executeLoopBody(ctx context.Context, run *db.WorkflowRun
 		// Honor the child's retry: block the same as a top-level node would.
 		// Without this, the seeded fix prompt's retry config (if added) would
 		// be silently ignored, and a transient agent hiccup would tank the
-		// whole loop on iteration 1.
-		output, execErr = e.executeWithRetry(childCtx, run, child, execFn)
+		// whole loop on iteration 1. Pass the parent `ctx` (not a per-attempt
+		// timeout-bound ctx) so the retry backoff sleeps against the outer
+		// run context and the per-attempt timeout doesn't cancel the retry
+		// loop itself.
+		output, execErr = e.executeWithRetry(ctx, run, child, execFn)
 		stopHeartbeat()
-		if childCancel != nil {
-			childCancel()
-		}
 
 		status := db.NodeRunStatusSuccess
 		if execErr != nil {
 			status = db.NodeRunStatusFailed
 		}
 
-		if execErr == nil && child.Type == config.NodeTypeBash && child.ID == reviewBodyNodeID {
+		if child.Type == config.NodeTypeBash && child.ID == reviewBodyNodeID {
 			if _, isSeeded := reviewParsedWorkflows[run.WorkflowName]; isSeeded {
 				mu.Lock()
-				parseReviewOutput(output, runCtx)
+				if execErr == nil {
+					parseReviewOutput(output, runCtx)
+				} else {
+					// On a failed review bash child, the captured output is
+					// unreliable — but the stale Comments / IDs from the
+					// previous iteration MUST NOT be reused by the next
+					// iteration's SameAsPrev compare. Rotate IDs into
+					// PrevIDs (preserving the last-good baseline) and clear
+					// the rest. ParseFailed gates the fix child's `when:`
+					// so the loop retries the review rather than fixing
+					// stale findings.
+					runCtx.Review.PrevIDs = append([]string(nil), runCtx.Review.IDs...)
+					runCtx.Review.Comments = nil
+					runCtx.Review.CommentsJSON = ""
+					runCtx.Review.IDs = nil
+					runCtx.Review.NoComments = false
+					runCtx.Review.SameAsPrev = false
+					runCtx.Review.ParseFailed = true
+				}
 				mu.Unlock()
 			}
 		}
 
+		attempt := max(attemptsRun, 1)
 		finishedAt := time.Now().UTC()
 		nrEnd := &db.NodeRun{
 			RunID:     run.ID,
@@ -802,7 +831,7 @@ func (e *defaultEngine) executeLoopBody(ctx context.Context, run *db.WorkflowRun
 			Iteration: iteration,
 			Status:    status,
 			Output:    output,
-			Attempt:   1,
+			Attempt:   attempt,
 			// StartedAt is carried into the UPSERT so that, if nrStart's
 			// INSERT failed silently above (we only log + swallow at line
 			// ~692), the row inserted here still has a valid started_at —
@@ -875,10 +904,13 @@ func parseReviewOutput(stdout string, runCtx *RunContext) {
 		// iteration's SameAsPrev compares against the last *good* parse —
 		// otherwise a transient parse miss between two identical reviews
 		// would mask the no-progress signal and burn an extra fix pass.
+		// ParseFailed gates the seeded fix child's `when:` so the loop
+		// doesn't fire a fix prompt with empty CommentsJSON.
 		runCtx.Review.NoComments = false
 		runCtx.Review.Comments = nil
 		runCtx.Review.CommentsJSON = ""
 		runCtx.Review.SameAsPrev = false
+		runCtx.Review.ParseFailed = true
 		return
 	}
 
@@ -887,21 +919,27 @@ func parseReviewOutput(stdout string, runCtx *RunContext) {
 	// envelope means the daemon flipped to failure, which must NOT be
 	// reinterpreted as `no_comments=true` (which would terminate the loop
 	// with a false-clean verdict via the stop condition
-	// `{{ or .Review.NoComments .Review.SameAsPrev }}`). On error we still
-	// rotate IDs into PrevIDs so a subsequent successful retry has the
-	// right baseline, but leave NoComments/SameAsPrev false so the loop
-	// keeps trying.
-	prev := append([]string(nil), runCtx.Review.IDs...)
-	runCtx.Review.PrevIDs = prev
-
+	// `{{ or .Review.NoComments .Review.SameAsPrev }}`). We still rotate
+	// IDs into PrevIDs and clear IDs so a subsequent successful retry
+	// has the right baseline to compare against (the error iteration
+	// produced no findings of its own — treating its absence as the new
+	// baseline lets SameAsPrev work correctly across the error).
 	if parsed.Status != "ready" {
+		runCtx.Review.PrevIDs = append([]string(nil), runCtx.Review.IDs...)
+		runCtx.Review.IDs = nil
 		runCtx.Review.Comments = nil
 		runCtx.Review.CommentsJSON = ""
-		runCtx.Review.IDs = nil
 		runCtx.Review.NoComments = false
 		runCtx.Review.SameAsPrev = false
+		runCtx.Review.ParseFailed = true
 		return
 	}
+
+	// Successful parse — rotate PrevIDs now (after we know the envelope is
+	// usable). Clear ParseFailed so the fix child's `when:` can fire.
+	prev := append([]string(nil), runCtx.Review.IDs...)
+	runCtx.Review.PrevIDs = prev
+	runCtx.Review.ParseFailed = false
 
 	runCtx.Review.Comments = parsed.Comments
 	runCtx.Review.NoComments = parsed.NoComments || len(parsed.Comments) == 0
@@ -945,11 +983,29 @@ func parseReviewOutput(stdout string, runCtx *RunContext) {
 // "clean" verdict while the real review surfaced findings.
 func extractReviewJSON(stdout string, out *reviewEnvelope) bool {
 	tryDecode := func(s string) bool {
-		var candidate reviewEnvelope
-		if err := json.Unmarshal([]byte(s), &candidate); err != nil {
+		// Use a presence-checking shape with json.RawMessage so we can
+		// distinguish "comments key is missing" from "comments: []". A
+		// stdout line like `{"status":"ready"}` would otherwise decode
+		// silently into reviewEnvelope with Comments=nil, NoComments=false
+		// — and the surrounding caller would interpret that as a
+		// false-clean review. Requiring the `comments` key to be present
+		// rejects unrelated JSON-shaped lines (debug echo, sidecar ping)
+		// that happen to carry a recognized status string.
+		var probe struct {
+			Status   string          `json:"status"`
+			Comments json.RawMessage `json:"comments"`
+		}
+		if err := json.Unmarshal([]byte(s), &probe); err != nil {
 			return false
 		}
-		if candidate.Status != "ready" && candidate.Status != "error" {
+		if probe.Status != "ready" && probe.Status != "error" {
+			return false
+		}
+		if len(probe.Comments) == 0 {
+			return false
+		}
+		var candidate reviewEnvelope
+		if err := json.Unmarshal([]byte(s), &candidate); err != nil {
 			return false
 		}
 		*out = candidate

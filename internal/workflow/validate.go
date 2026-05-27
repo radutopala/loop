@@ -33,7 +33,19 @@ func validateWorkflowDef(wfDef *config.WorkflowDef) error {
 		// Track per-loop occurrences so two body children of the SAME loop
 		// with the same ID also surface as a precise error.
 		thisLoopChildIDs := map[string]struct{}{}
+		// Track which body-child IDs have been declared earlier in this
+		// loop so a depends_on reference to a later sibling can be rejected
+		// at StartRun time. executeLoopBody iterates body children in
+		// declaration order and never inspects child.DependsOn, so an
+		// "out-of-order" dep would silently run before the dep was satisfied.
+		declaredEarlier := map[string]struct{}{}
 		for _, child := range n.Body {
+			// n.Body is []*config.NodeDef; a nil entry (manual config edit or
+			// future parser hiccup) would panic on the child.Type switch
+			// below. Reject with a clear message instead.
+			if child == nil {
+				return fmt.Errorf("loop %q: body contains a nil child entry", n.ID)
+			}
 			switch child.Type {
 			case config.NodeTypePrompt, config.NodeTypeBash:
 				// ok
@@ -59,6 +71,17 @@ func validateWorkflowDef(wfDef *config.WorkflowDef) error {
 				return fmt.Errorf("loop %q: body child %q appears twice in this loop's body (would race UPSERTs on (run_id, node_id, iteration))", n.ID, child.ID)
 			}
 			thisLoopChildIDs[child.ID] = struct{}{}
+			// executeLoopBody walks body children in declaration order; a
+			// depends_on reference to a later sibling is a contradiction the
+			// executor can't honor. Reject at validation time so the user
+			// sees a precise message at StartRun instead of a confusing
+			// runtime behavior where the dep fires before the dependency.
+			for _, dep := range child.DependsOn {
+				if _, ok := declaredEarlier[dep]; !ok {
+					return fmt.Errorf("loop %q: body child %q depends_on %q which is not declared earlier in this loop's body", n.ID, child.ID, dep)
+				}
+			}
+			declaredEarlier[child.ID] = struct{}{}
 			if owner, taken := bodyChildOwner[child.ID]; taken && owner != n.ID {
 				return fmt.Errorf("loop %q: body child %q is already used by loop %q — two loops cannot share a body-child ID (would race UPSERTs on (run_id, node_id, iteration) and inflate WorkflowGraph iteration counts)", n.ID, child.ID, owner)
 			}

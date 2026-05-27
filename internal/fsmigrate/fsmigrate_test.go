@@ -34,6 +34,7 @@ type fakeSystem struct {
 	statErr     map[string]error
 	readErr     map[string]error
 	removeErr   error
+	renameErr   map[string]error
 	statMissing map[string]bool
 }
 
@@ -44,6 +45,7 @@ func newFakeSystem() *fakeSystem {
 		writeErr:    map[string]error{},
 		statErr:     map[string]error{},
 		readErr:     map[string]error{},
+		renameErr:   map[string]error{},
 		statMissing: map[string]bool{},
 	}
 }
@@ -95,6 +97,19 @@ func (f *fakeSystem) Remove(name string) error {
 		return f.removeErr
 	}
 	delete(f.files, name)
+	return nil
+}
+
+func (f *fakeSystem) Rename(oldpath, newpath string) error {
+	if err, ok := f.renameErr[oldpath]; ok {
+		return err
+	}
+	data, ok := f.files[oldpath]
+	if !ok {
+		return os.ErrNotExist
+	}
+	f.files[newpath] = data
+	delete(f.files, oldpath)
 	return nil
 }
 
@@ -431,7 +446,11 @@ func (s *FSMigrateSuite) TestSeedBuiltinCodeReviewShortcutWriteError() {
 	sys := newFakeSystem()
 	configPath := filepath.Join("/loop", "config.json")
 	sys.files[configPath] = []byte(`{}`)
-	sys.writeErr[configPath] = errors.New("io error")
+	// atomicWriteConfig writes to configPath+".tmp" first, then renames into
+	// place. Inject the failure on the tmp path so the test still exercises
+	// the "WriteFile failed" branch — the previous configPath injection
+	// became a no-op once writes were funneled through the tmp file.
+	sys.writeErr[configPath+".tmp"] = errors.New("io error")
 
 	_, err := seedBuiltinCodeReviewShortcut(context.Background(), &Ctx{Sys: sys, LoopDir: "/loop"})
 	require.Error(s.T(), err)
@@ -554,7 +573,8 @@ func (s *FSMigrateSuite) TestSeedReviewLoopWorkflowsWriteError() {
 	sys := newFakeSystem()
 	configPath := filepath.Join("/loop", "config.json")
 	sys.files[configPath] = []byte(`{}`)
-	sys.writeErr[configPath] = errors.New("io error")
+	// atomicWriteConfig writes to configPath+".tmp" first; inject there.
+	sys.writeErr[configPath+".tmp"] = errors.New("io error")
 
 	_, err := seedReviewLoopWorkflows(context.Background(), &Ctx{Sys: sys, LoopDir: "/loop"})
 	require.Error(s.T(), err)
@@ -591,9 +611,11 @@ func (s *FSMigrateSuite) TestBuiltinReviewFixLoopDefShape() {
 		body[2].(map[string]any)["id"].(string),
 	}
 	require.Equal(s.T(), []string{"review", "fix", "verify"}, ids)
-	// fix + verify must be gated on .Review.NoComments to skip when clean.
-	require.Equal(s.T(), "{{ not .Review.NoComments }}", body[1].(map[string]any)["when"])
-	require.Equal(s.T(), "{{ not .Review.NoComments }}", body[2].(map[string]any)["when"])
+	// fix + verify must be gated on .Review.NoComments AND .Review.ParseFailed
+	// so an unparseable review (CLI error, empty body, daemon-side error
+	// envelope) doesn't trigger a fix prompt with empty CommentsJSON.
+	require.Equal(s.T(), reviewFixWhenExpr, body[1].(map[string]any)["when"])
+	require.Equal(s.T(), reviewFixWhenExpr, body[2].(map[string]any)["when"])
 	// verify script must run an explicit commit so leftover changes survive
 	// the loop even if the fix prompt forgets to commit.
 	require.Equal(s.T(), reviewFixVerifyScript, body[2].(map[string]any)["script"])
@@ -739,7 +761,7 @@ func (s *FSMigrateSuite) TestPatchReviewFixVerifyScriptWriteError() {
 	sys := newFakeSystem()
 	configPath := filepath.Join("/loop", "config.json")
 	sys.files[configPath] = []byte(reviewFixLoopWithVerifyScript(reviewFixVerifyScriptOld))
-	sys.writeErr[configPath] = errors.New("io error")
+	sys.writeErr[configPath+".tmp"] = errors.New("io error")
 
 	err := patchReviewFixVerifyScript(context.Background(), &Ctx{Sys: sys, LoopDir: "/loop"})
 	require.Error(s.T(), err)
@@ -876,9 +898,70 @@ func (s *FSMigrateSuite) TestPatchReviewFixLoopBodyDepsWriteError() {
 	sys := newFakeSystem()
 	configPath := filepath.Join("/loop", "config.json")
 	sys.files[configPath] = []byte(reviewFixLoopBodyConfig(nil))
-	sys.writeErr[configPath] = errors.New("io error")
+	sys.writeErr[configPath+".tmp"] = errors.New("io error")
 
 	err := patchReviewFixLoopBodyDeps(context.Background(), &Ctx{Sys: sys, LoopDir: "/loop"})
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "writing")
+}
+
+// TestPatchReviewFixLoopBodyDepsReplacesNullDeps: a child with
+// `depends_on: null` is treated as "missing" and gets replaced with the
+// canonical [dep] array via a JSON Patch `replace` op.
+func (s *FSMigrateSuite) TestPatchReviewFixLoopBodyDepsReplacesNullDeps() {
+	sys := newFakeSystem()
+	configPath := filepath.Join("/loop", "config.json")
+	sys.files[configPath] = []byte(reviewFixLoopBodyConfig(map[string]any{
+		"fix":    nil,
+		"verify": nil,
+	}))
+
+	err := patchReviewFixLoopBodyDeps(context.Background(), &Ctx{Sys: sys, LoopDir: "/loop"})
+	require.NoError(s.T(), err)
+
+	var cfg map[string]any
+	require.NoError(s.T(), json.Unmarshal(sys.files[configPath], &cfg))
+	body := cfg["workflows"].([]any)[0].(map[string]any)["nodes"].([]any)[0].(map[string]any)["body"].([]any)
+	require.Equal(s.T(), []any{"review"}, body[1].(map[string]any)["depends_on"])
+	require.Equal(s.T(), []any{"fix"}, body[2].(map[string]any)["depends_on"])
+}
+
+// TestPatchReviewFixLoopBodyDepsReplacesEmptyArrayDeps: a child with
+// `depends_on: []` is treated as "missing" and gets replaced with the
+// canonical [dep] array. An empty array carries no user intent — the
+// patcher fills it the same way as `null` or absent.
+func (s *FSMigrateSuite) TestPatchReviewFixLoopBodyDepsReplacesEmptyArrayDeps() {
+	sys := newFakeSystem()
+	configPath := filepath.Join("/loop", "config.json")
+	sys.files[configPath] = []byte(reviewFixLoopBodyConfig(map[string]any{
+		"fix":    []any{},
+		"verify": []any{},
+	}))
+
+	err := patchReviewFixLoopBodyDeps(context.Background(), &Ctx{Sys: sys, LoopDir: "/loop"})
+	require.NoError(s.T(), err)
+
+	var cfg map[string]any
+	require.NoError(s.T(), json.Unmarshal(sys.files[configPath], &cfg))
+	body := cfg["workflows"].([]any)[0].(map[string]any)["nodes"].([]any)[0].(map[string]any)["body"].([]any)
+	require.Equal(s.T(), []any{"review"}, body[1].(map[string]any)["depends_on"])
+	require.Equal(s.T(), []any{"fix"}, body[2].(map[string]any)["depends_on"])
+}
+
+// TestAtomicWriteConfigRenameError exercises the rename-failure branch
+// (and the tmp-file cleanup it triggers). The tmp write succeeds; the
+// rename fails; atomicWriteConfig surfaces the rename error and cleans
+// up the orphaned tmp.
+func (s *FSMigrateSuite) TestAtomicWriteConfigRenameError() {
+	sys := newFakeSystem()
+	configPath := filepath.Join("/loop", "config.json")
+	sys.files[configPath] = []byte(reviewFixLoopBodyConfig(nil))
+	sys.renameErr[configPath+".tmp"] = errors.New("rename failed")
+
+	err := patchReviewFixLoopBodyDeps(context.Background(), &Ctx{Sys: sys, LoopDir: "/loop"})
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "rename failed")
+	// Tmp file must be cleaned up so a retry doesn't trip over it.
+	_, ok := sys.files[configPath+".tmp"]
+	require.False(s.T(), ok, "orphaned tmp file should be removed after rename failure")
 }

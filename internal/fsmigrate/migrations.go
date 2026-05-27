@@ -165,7 +165,7 @@ func seedBuiltinCodeReviewShortcut(_ context.Context, c *Ctx) ([]string, error) 
 	if err := appendOrCreateArrayMember(v, "prompt_shortcuts", def); err != nil {
 		return nil, fmt.Errorf("patching %s: %w", configPath, err)
 	}
-	if err := c.Sys.WriteFile(configPath, v.Pack(), 0644); err != nil {
+	if err := atomicWriteConfig(c.Sys, configPath, v.Pack(), 0644); err != nil {
 		return nil, fmt.Errorf("writing %s: %w", configPath, err)
 	}
 	return []string{builtinCodeReviewShortcutName}, nil
@@ -178,6 +178,14 @@ const (
 	seededReviewLoopName    = "review-loop"
 	seededReviewFixLoopName = "review-fix-loop"
 )
+
+// reviewFixWhenExpr gates the seeded fix and verify body children. It fires
+// when the latest review produced findings AND the bash node's output
+// parsed cleanly into a review envelope. ParseFailed=true (unparseable
+// output, daemon-side `status:error` envelope, or a failed bash child)
+// would otherwise let the fix prompt run with empty CommentsJSON, asking
+// the agent to fix nothing — wasting an iteration and confusing the agent.
+const reviewFixWhenExpr = "{{ and (not .Review.NoComments) (not .Review.ParseFailed) }}"
 
 // reviewFixVerifyScript is the post-fix bash. The fix prompt asks the agent
 // to commit, but that's best-effort; this stages any leftover changes and
@@ -247,7 +255,7 @@ func seedReviewLoopWorkflows(_ context.Context, c *Ctx) ([]string, error) {
 	if len(added) == 0 {
 		return nil, nil
 	}
-	if err := c.Sys.WriteFile(configPath, v.Pack(), 0644); err != nil {
+	if err := atomicWriteConfig(c.Sys, configPath, v.Pack(), 0644); err != nil {
 		return nil, fmt.Errorf("writing %s: %w", configPath, err)
 	}
 	return added, nil
@@ -309,7 +317,7 @@ func patchReviewFixVerifyScriptReport(_ context.Context, c *Ctx) (bool, error) {
 	if !patched {
 		return false, nil
 	}
-	if err := c.Sys.WriteFile(configPath, v.Pack(), 0644); err != nil {
+	if err := atomicWriteConfig(c.Sys, configPath, v.Pack(), 0644); err != nil {
 		return false, fmt.Errorf("writing %s: %w", configPath, err)
 	}
 	return true, nil
@@ -331,6 +339,16 @@ func patchReviewFixLoopBodyDeps(ctx context.Context, c *Ctx) error {
 
 // patchReviewFixLoopBodyDepsReport is the (bool, error) variant used by
 // RestoreBuiltinWorkflows. The bool is true iff the patcher wrote to disk.
+//
+// Patches in two cases:
+//   - depends_on is absent → add it
+//   - depends_on is null or an empty array → replace it
+//
+// Leaves the field alone when it's any non-empty array (treated as a
+// deliberate user customization) so a workflow with intentional parallel
+// siblings survives. Patches are applied via v.Patch (RFC 6902) rather than
+// raw AST mutation so the user's surrounding comments and key ordering
+// survive the rewrite.
 func patchReviewFixLoopBodyDepsReport(_ context.Context, c *Ctx) (bool, error) {
 	v, configPath, err := loadConfigHJSON(c)
 	if err != nil || v == nil {
@@ -342,29 +360,66 @@ func patchReviewFixLoopBodyDepsReport(_ context.Context, c *Ctx) (bool, error) {
 	}
 
 	wantDeps := map[string]string{"fix": "review", "verify": "fix"}
-	patched := false
-	forEachReviewFixLoopBodyChild(rootObj, func(childObj *hujson.Object) {
+	type pendingOp struct {
+		pointer string // JSON Pointer to the body child object
+		op      string // "add" (key absent) or "replace" (key present but value unusable)
+		dep     string // the dependency id to write
+	}
+	var pending []pendingOp
+	forEachReviewFixLoopBodyChildWithPath(rootObj, func(childObj *hujson.Object, pointer string) {
 		id, _ := memberString(childObj, "id")
 		dep, want := wantDeps[id]
 		if !want {
 			return
 		}
-		if findObjectMember(childObj, "depends_on") != nil {
+		existing := findObjectMember(childObj, "depends_on")
+		if existing == nil {
+			pending = append(pending, pendingOp{pointer: pointer, op: "add", dep: dep})
 			return
 		}
-		childObj.Members = append(childObj.Members, hujson.ObjectMember{
-			Name:  hujson.Value{Value: hujson.String("depends_on")},
-			Value: hujson.Value{Value: parseJSONValue([]any{dep})},
-		})
-		patched = true
+		// Only patch null or empty array. A non-empty array — even with a
+		// stale id — is treated as user customization. Strings, objects,
+		// numbers are pathological shapes the user wrote on purpose; leave
+		// them alone to avoid silently rewriting non-canonical configs.
+		if isNullLiteral(existing) {
+			pending = append(pending, pendingOp{pointer: pointer, op: "replace", dep: dep})
+			return
+		}
+		if arr, ok := existing.Value.(*hujson.Array); ok && len(arr.Elements) == 0 {
+			pending = append(pending, pendingOp{pointer: pointer, op: "replace", dep: dep})
+			return
+		}
 	})
-	if !patched {
+	if len(pending) == 0 {
 		return false, nil
 	}
-	if err := c.Sys.WriteFile(configPath, v.Pack(), 0644); err != nil {
+
+	// The patch is built deterministically from a fixed set of `op`s
+	// ("add"/"replace"), pointers we just walked in the AST, and a string
+	// dep that json.Marshal cannot fail on. A v.Patch error here would
+	// represent a programmer mistake, not a runtime condition — discard.
+	var ops []string
+	for _, p := range pending {
+		b, _ := json.Marshal([]string{p.dep})
+		ops = append(ops, fmt.Sprintf(`{"op":%q,"path":"%s/depends_on","value":%s}`, p.op, p.pointer, b))
+	}
+	patch := "[" + strings.Join(ops, ",") + "]"
+	_ = v.Patch([]byte(patch))
+	if err := atomicWriteConfig(c.Sys, configPath, v.Pack(), 0644); err != nil {
 		return false, fmt.Errorf("writing %s: %w", configPath, err)
 	}
 	return true, nil
+}
+
+// isNullLiteral reports whether v holds a JSON null literal. Used by the
+// depends_on patcher to recognize `"depends_on": null` as "missing" so it
+// gets replaced with the canonical [dep] array. Caller must pass non-nil.
+func isNullLiteral(v *hujson.Value) bool {
+	lit, ok := v.Value.(hujson.Literal)
+	if !ok {
+		return false
+	}
+	return lit.Kind() == 'n'
 }
 
 // reviewBashBodyChild is the bash node every seeded review loop pins as its
@@ -431,19 +486,41 @@ func builtinReviewFixLoopDef() map[string]any {
 			map[string]any{
 				"id":         "fix",
 				"type":       "prompt",
-				"when":       "{{ not .Review.NoComments }}",
+				"when":       reviewFixWhenExpr,
 				"prompt":     "Fix the following review comments and commit your changes:\n\n{{.Review.CommentsJSON}}",
 				"depends_on": []any{"review"},
 			},
 			map[string]any{
 				"id":         "verify",
 				"type":       "bash",
-				"when":       "{{ not .Review.NoComments }}",
+				"when":       reviewFixWhenExpr,
 				"script":     reviewFixVerifyScript,
 				"depends_on": []any{"fix"},
 			},
 		},
 	)
+}
+
+// atomicWriteConfig writes data to a sibling temp file and renames it over
+// path so the swap is durable against SIGKILL / OOM / power loss. The plain
+// WriteFile opens with O_TRUNC, which leaves the user's config.json empty if
+// the daemon dies between the truncate and the bytes landing — a rare-but-
+// observed failure mode on memory-pressured machines, and irreversible since
+// fsmigrate is the only piece that knows the canonical content.
+func atomicWriteConfig(sys System, path string, data []byte, perm os.FileMode) error {
+	tmp := path + ".tmp"
+	if err := sys.WriteFile(tmp, data, perm); err != nil {
+		return err
+	}
+	if err := sys.Rename(tmp, path); err != nil {
+		// Best-effort cleanup of the orphaned tmp file so a successful
+		// retry doesn't trip over it. Ignore the Remove error: if the
+		// rename failed because the source is gone, the cleanup will
+		// also fail and there's nothing useful to do with the result.
+		_ = sys.Remove(tmp)
+		return err
+	}
+	return nil
 }
 
 // loadConfigHJSON reads ~/.loop/config.json and parses it via hujson so the
@@ -582,6 +659,16 @@ func jsonPointerEscape(s string) string {
 // level are skipped silently so a malformed user config can't panic the
 // migration.
 func forEachReviewFixLoopBodyChild(rootObj *hujson.Object, fn func(*hujson.Object)) {
+	forEachReviewFixLoopBodyChildWithPath(rootObj, func(childObj *hujson.Object, _ string) {
+		fn(childObj)
+	})
+}
+
+// forEachReviewFixLoopBodyChildWithPath is like forEachReviewFixLoopBodyChild
+// but also passes the JSON Pointer (RFC 6901) path to the child object. Used
+// by patchers that need to apply RFC 6902 Patch operations rather than
+// mutating the AST in place. The path starts with `/workflows/<i>/...`.
+func forEachReviewFixLoopBodyChildWithPath(rootObj *hujson.Object, fn func(*hujson.Object, string)) {
 	wfsVal := findObjectMember(rootObj, "workflows")
 	if wfsVal == nil {
 		return
@@ -627,23 +714,9 @@ func forEachReviewFixLoopBodyChild(rootObj *hujson.Object, fn func(*hujson.Objec
 				if !ok {
 					continue
 				}
-				fn(childObj)
+				path := fmt.Sprintf("/workflows/%d/nodes/%d/body/%d", i, j, k)
+				fn(childObj, path)
 			}
 		}
 	}
-}
-
-// parseJSONValue marshals v (typically a Go literal like []any{"dep"}) to
-// JSON then re-parses it as a hujson AST node so it can be spliced into a
-// parent Value. Used when appending fresh ObjectMembers — building the
-// hujson.Array literal-by-hand would be brittle. hujson.Parse is not
-// re-checked for error: its input is the output of json.Marshal, which is
-// always valid JSON by construction.
-func parseJSONValue(v any) hujson.ValueTrimmed {
-	b, err := json.Marshal(v)
-	if err != nil {
-		return hujson.Literal("null")
-	}
-	parsed, _ := hujson.Parse(b)
-	return parsed.Value
 }
