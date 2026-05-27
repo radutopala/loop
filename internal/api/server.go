@@ -334,6 +334,8 @@ func (s *Server) buildMux() *http.ServeMux {
 	mux.HandleFunc("POST /api/tasks/{id}/run", s.handleRunTask)
 	mux.HandleFunc("GET /api/shortcuts", s.handleListShortcuts)
 	mux.HandleFunc("POST /api/shortcuts", s.handleModifyShortcut)
+	mux.HandleFunc("GET /api/bash-shortcuts", s.handleListBashShortcuts)
+	mux.HandleFunc("POST /api/bash-shortcuts", s.handleModifyBashShortcut)
 	mux.HandleFunc("GET /api/channels/{id}/sessions", s.handleListSessions)
 	mux.HandleFunc("GET /api/channels/{id}/audit", s.handleListAuditFiles)
 	mux.HandleFunc("DELETE /api/channels/{id}/audit/{date}", s.handleDeleteAuditFile)

@@ -77,6 +77,21 @@ export async function fetchShortcuts(channelId?: string): Promise<PromptShortcut
   return res.json();
 }
 
+// ── Bash Shortcuts ──
+
+export interface BashShortcut {
+  name: string;
+  description: string;
+  command: string;
+}
+
+export async function fetchBashShortcuts(channelId?: string): Promise<BashShortcut[]> {
+  const params = channelId ? `?channel_id=${encodeURIComponent(channelId)}` : "";
+  const res = await fetch(`${getApiUrl()}/api/bash-shortcuts${params}`);
+  if (!res.ok) return [];
+  return res.json();
+}
+
 export async function saveProjectConfig(channelId: string, content: string): Promise<void> {
   const params = new URLSearchParams({ channel_id: channelId });
   const res = await fetch(`${getApiUrl()}/api/config/project?${params}`, {

@@ -524,6 +524,56 @@ func (s *ConfigSuite) TestLoadProjectConfigShortcutsMerge() {
 	require.Equal(s.T(), "local-only", merged.PromptShortcuts[2].Name)
 }
 
+func (s *ConfigSuite) TestBashShortcutResolveInline() {
+	sc := &BashShortcut{Name: "ll", Command: "ls -la"}
+	cmd, err := sc.ResolveCommand("/loop", s.loader.readFile)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "ls -la", cmd)
+}
+
+func (s *ConfigSuite) TestBashShortcutResolveFromFile() {
+	s.loader.readFile = func(path string) ([]byte, error) {
+		if path == "/loop/bash-shortcuts/build.sh" {
+			return []byte("make build"), nil
+		}
+		return nil, errors.New("not found")
+	}
+	sc := &BashShortcut{Name: "build", CommandPath: "build.sh"}
+	cmd, err := sc.ResolveCommand("/loop", s.loader.readFile)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "make build", cmd)
+}
+
+func (s *ConfigSuite) TestLoadProjectConfigBashShortcutsMerge() {
+	s.loader.readFile = func(path string) ([]byte, error) {
+		if strings.HasSuffix(path, "config.json") {
+			return s.minimalJSON(), nil
+		}
+		return nil, os.ErrNotExist
+	}
+	base, err := s.loader.load()
+	require.NoError(s.T(), err)
+	base.BashShortcuts = []BashShortcut{
+		{Name: "global", Command: "echo global"},
+		{Name: "override-me", Command: "echo old"},
+	}
+
+	s.setupProjectReadFile(`{
+		"bash_shortcuts": [
+			{"name": "override-me", "description": "updated", "command": "echo new"},
+			{"name": "local-only", "command": "echo local"}
+		]
+	}`)
+
+	merged, err := s.loader.loadProjectConfig("/project", base)
+	require.NoError(s.T(), err)
+	require.Len(s.T(), merged.BashShortcuts, 3)
+	require.Equal(s.T(), "global", merged.BashShortcuts[0].Name)
+	require.Equal(s.T(), "override-me", merged.BashShortcuts[1].Name)
+	require.Equal(s.T(), "echo new", merged.BashShortcuts[1].Command)
+	require.Equal(s.T(), "local-only", merged.BashShortcuts[2].Name)
+}
+
 func (s *ConfigSuite) TestLoadProjectConfigExtraDirs() {
 	s.setupProjectReadFile(`{"extra_dirs": ["/home/user/lib", "/home/user/common"]}`)
 
