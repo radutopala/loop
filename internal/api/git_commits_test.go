@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"testing"
 
 	"github.com/stretchr/testify/mock"
@@ -195,6 +196,61 @@ func (s *ServerSuite) TestListCommits_ValidBranch() {
 	require.NoError(s.T(), json.Unmarshal(rec.Body.Bytes(), &resp))
 	require.Len(s.T(), resp.Commits, 2) // "branch commit" + "init"
 	require.Equal(s.T(), "branch commit", resp.Commits[0].Subject)
+}
+
+// ── root scoping ──
+
+func (s *ServerSuite) TestListCommits_RootParamSelectsExtraDir() {
+	primary := initGitRepo(s.T())
+	extra := initGitRepo(s.T())
+	// Add a distinguishing commit to extra so we can tell which root was hit.
+	require.NoError(s.T(), os.WriteFile(filepath.Join(extra, "extra.txt"), []byte("x"), 0644))
+	cmd := exec.Command("git", "add", ".")
+	cmd.Dir = extra
+	require.NoError(s.T(), cmd.Run())
+	cmd = exec.Command("git", "commit", "-m", "extra commit")
+	cmd.Dir = extra
+	require.NoError(s.T(), cmd.Run())
+
+	require.NoError(s.T(), os.MkdirAll(filepath.Join(primary, ".loop"), 0o755))
+	cfgJSON := `{"extra_dirs":[` + strconv.Quote(extra) + `]}`
+	require.NoError(s.T(), os.WriteFile(filepath.Join(primary, ".loop", "config.json"), []byte(cfgJSON), 0o644))
+
+	s.store.On("GetChannel", mock.Anything, "ch-roots").
+		Return(&db.Channel{ChannelID: "ch-roots", DirPath: primary}, nil)
+
+	// root=0 → primary (only the "init" commit).
+	rec := s.testRequest("GET", "/api/channels/ch-roots/commits?root=0", "")
+	require.Equal(s.T(), http.StatusOK, rec.Code)
+	var resp commitsResponse
+	require.NoError(s.T(), json.Unmarshal(rec.Body.Bytes(), &resp))
+	require.Len(s.T(), resp.Commits, 1)
+	require.Equal(s.T(), "init", resp.Commits[0].Subject)
+
+	// root=1 → extra (init + extra commit).
+	rec = s.testRequest("GET", "/api/channels/ch-roots/commits?root=1", "")
+	require.Equal(s.T(), http.StatusOK, rec.Code)
+	require.NoError(s.T(), json.Unmarshal(rec.Body.Bytes(), &resp))
+	require.Len(s.T(), resp.Commits, 2)
+	require.Equal(s.T(), "extra commit", resp.Commits[0].Subject)
+}
+
+func (s *ServerSuite) TestListCommits_RootParamInvalid() {
+	dir := initGitRepo(s.T())
+	s.store.On("GetChannel", mock.Anything, "ch-bad-root").
+		Return(&db.Channel{ChannelID: "ch-bad-root", DirPath: dir}, nil)
+
+	// Non-numeric → 400.
+	rec := s.testRequest("GET", "/api/channels/ch-bad-root/commits?root=abc", "")
+	require.Equal(s.T(), http.StatusBadRequest, rec.Code)
+
+	// Negative → 400.
+	rec = s.testRequest("GET", "/api/channels/ch-bad-root/commits?root=-1", "")
+	require.Equal(s.T(), http.StatusBadRequest, rec.Code)
+
+	// Out of range → 400 (no extra_dirs configured, only root=0 valid).
+	rec = s.testRequest("GET", "/api/channels/ch-bad-root/commits?root=5", "")
+	require.Equal(s.T(), http.StatusBadRequest, rec.Code)
 }
 
 // ── parseCommitLog unit tests ──
