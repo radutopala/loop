@@ -418,116 +418,113 @@ func (o *Orchestrator) executeAgentRun(ctx context.Context, msg *bot.IncomingMes
 	// in the result text) and surface the new task to the FE.
 	var pendingTaskCreates sync.Map // map[toolUseID]inputJSON string
 
-	var tracker *streamTracker
-	if cfg.StreamingEnabled {
-		tracker = newStreamTracker(func(text string) {
-			if err := o.bot.SendMessage(ctx, &bot.OutgoingMessage{
-				ChannelID:        msg.ChannelID,
-				Content:          text,
-				ReplyToMessageID: msg.MessageID,
-			}); err != nil {
-				o.logger.Error("streaming send failed", "error", err, "channel_id", msg.ChannelID)
+	tracker := newStreamTracker(func(text string) {
+		if err := o.bot.SendMessage(ctx, &bot.OutgoingMessage{
+			ChannelID:        msg.ChannelID,
+			Content:          text,
+			ReplyToMessageID: msg.MessageID,
+		}); err != nil {
+			o.logger.Error("streaming send failed", "error", err, "channel_id", msg.ChannelID)
+		}
+		storeBotMessage(ctx, o.store, o.events, msg.ChannelID, text, msg.MessageID)
+	})
+	req.OnTurn = tracker.OnTurn
+	if o.events != nil {
+		req.OnToolUse = func(toolUseID, name, input string) {
+			storeAgentEvent(ctx, o.store, chatID, msg.ChannelID, &db.Message{
+				Kind:         db.MessageKindToolUse,
+				ToolUseID:    toolUseID,
+				ToolName:     name,
+				Content:      input,
+				TriggerMsgID: msg.MessageID,
+			}, o.logger.Warn)
+			o.events.BroadcastToolUse(msg.ChannelID, events.ToolUseEventData{
+				ToolUseID: toolUseID,
+				ToolName:  name,
+				Input:     input,
+			})
+			if name == "AskUserQuestion" {
+				var data events.AskUserQuestionEventData
+				if err := json.Unmarshal([]byte(input), &data); err == nil && len(data.Questions) > 0 {
+					// Park before broadcasting so the drain loop sees the
+					// flag the moment the run wraps up; cancel the run so
+					// no further tools execute past the ask card.
+					o.markAskedChannel(msg.ChannelID, data)
+					o.events.BroadcastAskUser(msg.ChannelID, data)
+					selfInitiatedAsk.Store(true)
+					runCancel()
+				}
 			}
-			storeBotMessage(ctx, o.store, o.events, msg.ChannelID, text, msg.MessageID)
-		})
-		req.OnTurn = tracker.OnTurn
-		if o.events != nil {
-			req.OnToolUse = func(toolUseID, name, input string) {
-				storeAgentEvent(ctx, o.store, chatID, msg.ChannelID, &db.Message{
-					Kind:         db.MessageKindToolUse,
-					ToolUseID:    toolUseID,
-					ToolName:     name,
-					Content:      input,
-					TriggerMsgID: msg.MessageID,
-				}, o.logger.Warn)
-				o.events.BroadcastToolUse(msg.ChannelID, events.ToolUseEventData{
-					ToolUseID: toolUseID,
-					ToolName:  name,
-					Input:     input,
-				})
-				if name == "AskUserQuestion" {
-					var data events.AskUserQuestionEventData
-					if err := json.Unmarshal([]byte(input), &data); err == nil && len(data.Questions) > 0 {
-						// Park before broadcasting so the drain loop sees the
-						// flag the moment the run wraps up; cancel the run so
-						// no further tools execute past the ask card.
-						o.markAskedChannel(msg.ChannelID, data)
-						o.events.BroadcastAskUser(msg.ChannelID, data)
-						selfInitiatedAsk.Store(true)
+			if name == "ExitPlanMode" {
+				var data events.ExitPlanModeEventData
+				if err := json.Unmarshal([]byte(input), &data); err == nil && data.Plan != "" {
+					// Park the channel before broadcasting so the drain
+					// loop sees the flag the moment the run wraps up
+					// (relevant for the user-picked-plan-pill path, where
+					// the agent halts naturally and the drain races back
+					// to claim any queued sibling messages).
+					o.markPlannedChannel(msg.ChannelID)
+					o.events.BroadcastExitPlan(msg.ChannelID, data)
+					// User picked the plan pill → the prompt-injected plan
+					// system message already halts the model at ExitPlanMode.
+					// Otherwise the agent volunteered plan mode mid-turn, so
+					// stop the run before subsequent tools execute.
+					if !req.PlanMode {
+						selfInitiatedPlan.Store(true)
 						runCancel()
 					}
 				}
-				if name == "ExitPlanMode" {
-					var data events.ExitPlanModeEventData
-					if err := json.Unmarshal([]byte(input), &data); err == nil && data.Plan != "" {
-						// Park the channel before broadcasting so the drain
-						// loop sees the flag the moment the run wraps up
-						// (relevant for the user-picked-plan-pill path, where
-						// the agent halts naturally and the drain races back
-						// to claim any queued sibling messages).
-						o.markPlannedChannel(msg.ChannelID)
-						o.events.BroadcastExitPlan(msg.ChannelID, data)
-						// User picked the plan pill → the prompt-injected plan
-						// system message already halts the model at ExitPlanMode.
-						// Otherwise the agent volunteered plan mode mid-turn, so
-						// stop the run before subsequent tools execute.
-						if !req.PlanMode {
-							selfInitiatedPlan.Store(true)
-							runCancel()
-						}
-					}
-				}
-				if name == "TaskUpdate" {
-					if list, ok := o.tasks.applyUpdate(msg.ChannelID, input); ok {
-						o.events.BroadcastAgentTasks(msg.ChannelID, events.AgentTasksEventData{Tasks: list})
-					}
-				}
-				if name == "TaskCreate" {
-					pendingTaskCreates.Store(toolUseID, input)
+			}
+			if name == "TaskUpdate" {
+				if list, ok := o.tasks.applyUpdate(msg.ChannelID, input); ok {
+					o.events.BroadcastAgentTasks(msg.ChannelID, events.AgentTasksEventData{Tasks: list})
 				}
 			}
-			req.OnThinking = func(text string) {
+			if name == "TaskCreate" {
+				pendingTaskCreates.Store(toolUseID, input)
+			}
+		}
+		req.OnThinking = func(text string) {
+			storeAgentEvent(ctx, o.store, chatID, msg.ChannelID, &db.Message{
+				Kind:         db.MessageKindThinking,
+				Content:      text,
+				TriggerMsgID: msg.MessageID,
+			}, o.logger.Warn)
+			o.events.BroadcastAgentThinking(msg.ChannelID, events.AgentThinkingEventData{Text: text})
+		}
+		req.OnToolResult = func(toolUseID, output string, isError bool) {
+			storeAgentEvent(ctx, o.store, chatID, msg.ChannelID, &db.Message{
+				Kind:         db.MessageKindToolResult,
+				ToolUseID:    toolUseID,
+				Content:      output,
+				IsError:      isError,
+				TriggerMsgID: msg.MessageID,
+			}, o.logger.Warn)
+			if inputRaw, ok := pendingTaskCreates.LoadAndDelete(toolUseID); ok && !isError {
+				if list, ok := o.tasks.applyCreate(msg.ChannelID, inputRaw.(string), output); ok {
+					o.events.BroadcastAgentTasks(msg.ChannelID, events.AgentTasksEventData{Tasks: list})
+				}
+			}
+			o.events.BroadcastToolResult(msg.ChannelID, events.ToolResultEventData{
+				ToolUseID: toolUseID,
+				Output:    output,
+				IsError:   isError,
+			})
+		}
+		req.OnActivity = func(activity, detail string) {
+			data := events.AgentActivityEventData{Activity: activity}
+			if activity == "model" {
+				data.Model = detail
+			} else {
+				data.Description = detail
+			}
+			if activity == "compacting" {
 				storeAgentEvent(ctx, o.store, chatID, msg.ChannelID, &db.Message{
-					Kind:         db.MessageKindThinking,
-					Content:      text,
+					Kind:         db.MessageKindCompacting,
 					TriggerMsgID: msg.MessageID,
 				}, o.logger.Warn)
-				o.events.BroadcastAgentThinking(msg.ChannelID, events.AgentThinkingEventData{Text: text})
 			}
-			req.OnToolResult = func(toolUseID, output string, isError bool) {
-				storeAgentEvent(ctx, o.store, chatID, msg.ChannelID, &db.Message{
-					Kind:         db.MessageKindToolResult,
-					ToolUseID:    toolUseID,
-					Content:      output,
-					IsError:      isError,
-					TriggerMsgID: msg.MessageID,
-				}, o.logger.Warn)
-				if inputRaw, ok := pendingTaskCreates.LoadAndDelete(toolUseID); ok && !isError {
-					if list, ok := o.tasks.applyCreate(msg.ChannelID, inputRaw.(string), output); ok {
-						o.events.BroadcastAgentTasks(msg.ChannelID, events.AgentTasksEventData{Tasks: list})
-					}
-				}
-				o.events.BroadcastToolResult(msg.ChannelID, events.ToolResultEventData{
-					ToolUseID: toolUseID,
-					Output:    output,
-					IsError:   isError,
-				})
-			}
-			req.OnActivity = func(activity, detail string) {
-				data := events.AgentActivityEventData{Activity: activity}
-				if activity == "model" {
-					data.Model = detail
-				} else {
-					data.Description = detail
-				}
-				if activity == "compacting" {
-					storeAgentEvent(ctx, o.store, chatID, msg.ChannelID, &db.Message{
-						Kind:         db.MessageKindCompacting,
-						TriggerMsgID: msg.MessageID,
-					}, o.logger.Warn)
-				}
-				o.events.BroadcastAgentActivity(msg.ChannelID, data)
-			}
+			o.events.BroadcastAgentActivity(msg.ChannelID, data)
 		}
 	}
 
@@ -573,11 +570,7 @@ func (o *Orchestrator) executeAgentRun(ctx context.Context, msg *bot.IncomingMes
 		return nil, "", runID, &runFinishStatus{status: "error", errMsg: resp.Error}, fmt.Errorf("agent error: %s", resp.Error)
 	}
 
-	var lastText string
-	if tracker != nil {
-		lastText = tracker.lastText
-	}
-	return resp, lastText, runID, nil, nil
+	return resp, tracker.lastText, runID, nil, nil
 }
 
 // deliverResponse sends the final response, records the bot message, and marks messages as processed.

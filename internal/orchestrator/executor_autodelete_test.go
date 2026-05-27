@@ -15,7 +15,6 @@ import (
 )
 
 func (s *TaskExecutorSuite) TestAutoDeleteTimerFires() {
-	s.executor.streamingEnabled.Store(true)
 	eb := new(MockEventBroadcaster)
 	s.executor.SetEventBroadcaster(eb)
 	allowStatusBroadcasts(eb)
@@ -79,7 +78,6 @@ func (s *TaskExecutorSuite) TestAutoDeleteTimerFires() {
 }
 
 func (s *TaskExecutorSuite) TestAutoDeleteEphemeralLocalPlatform() {
-	s.executor.streamingEnabled.Store(true)
 	eb := new(MockEventBroadcaster)
 	s.executor.events = eb
 	eb.On("BroadcastAgentStatus", mock.Anything, mock.Anything).Maybe()
@@ -159,7 +157,6 @@ func (s *TaskExecutorSuite) TestAutoDeleteEphemeralVariants() {
 	for _, tc := range tests {
 		s.Run(tc.name, func() {
 			s.SetupTest()
-			s.executor.streamingEnabled.Store(true)
 
 			s.store.On("GetChannel", s.ctx, tc.channelID).Return(nil, nil)
 			s.store.On("GetScheduledTask", s.ctx, int64(22)).Return(&db.ScheduledTask{ID: 22, Type: db.TaskTypeCron}, nil)
@@ -198,7 +195,6 @@ func (s *TaskExecutorSuite) TestAutoDeleteEphemeralVariants() {
 }
 
 func (s *TaskExecutorSuite) TestAutoDeleteNonEphemeralNoRename() {
-	s.executor.streamingEnabled.Store(true)
 
 	task := &db.ScheduledTask{
 		ID: 19, ChannelID: "ch19", Prompt: "important task",
@@ -242,14 +238,14 @@ func (s *TaskExecutorSuite) TestAutoDeleteNonEphemeralNoRename() {
 func (s *TaskExecutorSuite) TestAutoDeleteSkipped() {
 	tests := []struct {
 		name       string
-		streaming  bool
+		callOnTurn bool
 		task       *db.ScheduledTask
 		response   string
 		setupMocks func()
 	}{
 		{
-			name:      "auto delete sec is zero",
-			streaming: true,
+			name:       "auto delete sec is zero",
+			callOnTurn: true,
 			task: &db.ScheduledTask{
 				ID: 16, ChannelID: "ch16", Prompt: "no-del task",
 				Type: db.TaskTypeCron, Schedule: "0 * * * *", AutoDeleteSec: 0,
@@ -264,8 +260,8 @@ func (s *TaskExecutorSuite) TestAutoDeleteSkipped() {
 			},
 		},
 		{
-			name:      "no thread created",
-			streaming: false,
+			name:       "no thread created",
+			callOnTurn: false,
 			task: &db.ScheduledTask{
 				ID: 17, ChannelID: "ch17", Prompt: "no-thread task",
 				Type: db.TaskTypeCron, Schedule: "0 * * * *", AutoDeleteSec: 120,
@@ -285,15 +281,13 @@ func (s *TaskExecutorSuite) TestAutoDeleteSkipped() {
 	for _, tc := range tests {
 		s.Run(tc.name, func() {
 			s.SetupTest()
-			s.executor.streamingEnabled.Store(tc.streaming)
 			tc.setupMocks()
 
 			s.runner.On("Run", mock.Anything, mock.MatchedBy(func(req *agent.AgentRequest) bool {
-				if tc.streaming && req.OnTurn != nil {
+				if tc.callOnTurn {
 					req.OnTurn(tc.response)
-					return true
 				}
-				return !tc.streaming && req.OnTurn == nil
+				return true
 			})).Return(&agent.AgentResponse{
 				Response: tc.response, SessionID: "sess",
 			}, nil)

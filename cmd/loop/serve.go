@@ -437,7 +437,7 @@ func (a *app) serve() error {
 
 	agentReg := agentregistry.New()
 
-	executor := orchestrator.NewTaskExecutor(runner, chatBot, store, logger, cfg.ContainerTimeout, cfg.StreamingEnabled, config.Reload)
+	executor := orchestrator.NewTaskExecutor(runner, chatBot, store, logger, cfg.ContainerTimeout, config.Reload)
 	executor.SetWorktreeCreator(&worktree.Creator{
 		Sys: osutil.RealSystem{},
 		Run: worktree.ExecCommandRunner,

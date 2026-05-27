@@ -932,11 +932,11 @@ func (s *OrchestratorSuite) TestCurrentConfigFallbackOnError() {
 }
 
 func (s *OrchestratorSuite) TestCurrentConfigNilLoader() {
-	s.orch.cfg.Store(&config.Config{StreamingEnabled: true})
+	s.orch.cfg.Store(&config.Config{KeepMCPConfigs: true})
 	s.orch.configLoad = nil
 
 	cfg := s.orch.currentConfig()
-	require.True(s.T(), cfg.StreamingEnabled)
+	require.True(s.T(), cfg.KeepMCPConfigs)
 }
 
 // TestDefaultDrainSpawnTracksOnDrainWG covers the closure installed by New —

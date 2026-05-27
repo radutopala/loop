@@ -326,7 +326,6 @@ type Config struct {
 	// it, but Anthropic ships the flag as development-only; default to off so
 	// users opt in deliberately. Hierarchy: global → project → worktree.
 	ClaudeDangerouslyLoadDevelopmentChannels bool
-	StreamingEnabled                         bool
 	KeepMCPConfigs                           bool
 	WorkflowBashLocal                        bool
 	Browser                                  BrowserConfig
@@ -410,7 +409,6 @@ type jsonConfig struct {
 	ClaudeModel                              string                 `json:"claude_model"`
 	ClaudeBinPath                            string                 `json:"claude_bin_path"`
 	ClaudeDangerouslyLoadDevelopmentChannels *bool                  `json:"claude_dangerously_load_development_channels"`
-	StreamingEnabled                         *bool                  `json:"streaming_enabled"`
 	KeepMCPConfigs                           *bool                  `json:"keep_mcp_configs"`
 	WorkflowBashLocal                        *bool                  `json:"workflow_bash_local"`
 	Browser                                  *jsonBrowserConfig     `json:"browser"`
@@ -606,7 +604,6 @@ func (l *Loader) parse() (*Config, error) {
 		LoopDir:                                  loopDir,
 		ClaudeModel:                              stringDefault(jc.ClaudeModel, "claude-sonnet-4-6"),
 		ClaudeDangerouslyLoadDevelopmentChannels: ptrDefault(jc.ClaudeDangerouslyLoadDevelopmentChannels, false),
-		StreamingEnabled:                         ptrDefault(jc.StreamingEnabled, true),
 		KeepMCPConfigs:                           ptrDefault(jc.KeepMCPConfigs, false),
 		WorkflowBashLocal:                        ptrDefault(jc.WorkflowBashLocal, false),
 	}

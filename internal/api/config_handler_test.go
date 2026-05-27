@@ -182,10 +182,10 @@ func (s *ServerSuite) TestSaveProjectConfigSuccess() {
 
 	sys := new(testutil.MockSystem)
 	sys.On("MkdirAll", "/projects/myapp/.loop", os.FileMode(0755)).Return(nil)
-	sys.On("WriteFile", "/projects/myapp/.loop/config.json", []byte(`{"streaming_enabled":true}`), os.FileMode(0644)).Return(nil)
+	sys.On("WriteFile", "/projects/myapp/.loop/config.json", []byte(`{"claude_model":"opus"}`), os.FileMode(0644)).Return(nil)
 	s.srv.sys = sys
 
-	rec := s.testRequest("PUT", "/api/config/project?channel_id=ch-1", `{"content":"{\"streaming_enabled\":true}"}`)
+	rec := s.testRequest("PUT", "/api/config/project?channel_id=ch-1", `{"content":"{\"claude_model\":\"opus\"}"}`)
 	require.Equal(s.T(), http.StatusNoContent, rec.Code)
 	sys.AssertExpectations(s.T())
 }
@@ -217,12 +217,12 @@ func (s *ServerSuite) TestSaveProjectConfigAcceptsHJSON() {
 	}, nil)
 
 	sys := new(testutil.MockSystem)
-	content := "{\n  // comment\n  \"streaming_enabled\": true,\n}\n"
+	content := "{\n  // comment\n  \"claude_model\": \"opus\",\n}\n"
 	sys.On("MkdirAll", "/projects/myapp/.loop", os.FileMode(0755)).Return(nil)
 	sys.On("WriteFile", "/projects/myapp/.loop/config.json", []byte(content), os.FileMode(0644)).Return(nil)
 	s.srv.sys = sys
 
-	rec := s.testRequest("PUT", "/api/config/project?channel_id=ch-1", `{"content":"{\n  \/\/ comment\n  \"streaming_enabled\": true,\n}\n"}`)
+	rec := s.testRequest("PUT", "/api/config/project?channel_id=ch-1", `{"content":"{\n  \/\/ comment\n  \"claude_model\": \"opus\",\n}\n"}`)
 	require.Equal(s.T(), http.StatusNoContent, rec.Code)
 	sys.AssertExpectations(s.T())
 }
@@ -316,10 +316,10 @@ func (s *ServerSuite) TestSaveProjectConfigWorktreeUsesParentDir() {
 
 	sys := new(testutil.MockSystem)
 	sys.On("MkdirAll", "/projects/myapp/.loop", os.FileMode(0755)).Return(nil)
-	sys.On("WriteFile", "/projects/myapp/.loop/config.json", []byte(`{"streaming_enabled":true}`), os.FileMode(0644)).Return(nil)
+	sys.On("WriteFile", "/projects/myapp/.loop/config.json", []byte(`{"claude_model":"opus"}`), os.FileMode(0644)).Return(nil)
 	s.srv.sys = sys
 
-	rec := s.testRequest("PUT", "/api/config/project?channel_id=wt-1", `{"content":"{\"streaming_enabled\":true}"}`)
+	rec := s.testRequest("PUT", "/api/config/project?channel_id=wt-1", `{"content":"{\"claude_model\":\"opus\"}"}`)
 	require.Equal(s.T(), http.StatusNoContent, rec.Code)
 	sys.AssertExpectations(s.T())
 }

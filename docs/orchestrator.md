@@ -164,7 +164,7 @@ When the user clicks "Deny with prompt" on a gate approval (or the API receives 
 
 1. **Timeout** -- Create a context with `ContainerTimeout` (default 3600s / 1 hour).
 2. **Cancel registration** -- Store the cancel function in `activeRuns` so stop button clicks can cancel the run.
-3. **Streaming setup** (if `StreamingEnabled`):
+3. **Streaming setup**:
    - Create a `streamTracker` that filters empty turns and tracks the last sent text for deduplication.
    - Set `OnTurn` callback to send intermediate responses as they arrive.
    - Set `OnToolUse` callback to broadcast tool usage events (tool name + summarized input).
@@ -200,7 +200,7 @@ If the initial run fails for other reasons and the request has a `SessionID`, th
 
 ## Streaming Support
 
-When `StreamingEnabled` is true (the default), the runner follows container logs in real-time using `ContainerLogsFollow` instead of waiting for the container to exit.
+The runner follows container logs in real-time using `ContainerLogsFollow` instead of waiting for the container to exit.
 
 ### Callbacks
 

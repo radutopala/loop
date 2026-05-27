@@ -63,14 +63,6 @@ func buildSchema() *ConfigSchema {
 				XOrder:       2,
 				XPlaceholder: "claude",
 			},
-			"streaming_enabled": {
-				Type:        "boolean",
-				Title:       "Streaming",
-				Description: "Stream agent responses to chat",
-				Default:     true,
-				XSection:    "Claude",
-				XOrder:      3,
-			},
 			"claude_dangerously_load_development_channels": {
 				Type:        "boolean",
 				Title:       "MCP Channels (dangerous)",

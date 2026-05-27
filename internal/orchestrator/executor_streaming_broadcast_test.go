@@ -58,7 +58,6 @@ func (s *TaskExecutorSuite) TestFinalResponseBroadcasts() {
 }
 
 func (s *TaskExecutorSuite) TestStreamingThreadBroadcastsToThread() {
-	s.executor.streamingEnabled.Store(true)
 	eb := new(MockEventBroadcaster)
 	s.executor.SetEventBroadcaster(eb)
 	allowStatusBroadcasts(eb)
@@ -127,7 +126,6 @@ func (s *TaskExecutorSuite) TestStreamingThreadBroadcastsToThread() {
 }
 
 func (s *TaskExecutorSuite) TestStreamingOnToolUseBroadcasts() {
-	s.executor.streamingEnabled.Store(true)
 	eb := new(MockEventBroadcaster)
 	s.executor.SetEventBroadcaster(eb)
 	allowStatusBroadcasts(eb)
@@ -176,7 +174,6 @@ func (s *TaskExecutorSuite) TestStreamingOnToolUseBroadcasts() {
 }
 
 func (s *TaskExecutorSuite) TestStreamingOnToolUseAskUserQuestion() {
-	s.executor.streamingEnabled.Store(true)
 	eb := new(MockEventBroadcaster)
 	s.executor.SetEventBroadcaster(eb)
 	allowStatusBroadcasts(eb)
@@ -218,7 +215,6 @@ func (s *TaskExecutorSuite) TestStreamingOnToolUseAskUserQuestion() {
 }
 
 func (s *TaskExecutorSuite) TestStreamingOnToolUseExitPlanMode() {
-	s.executor.streamingEnabled.Store(true)
 	eb := new(MockEventBroadcaster)
 	s.executor.SetEventBroadcaster(eb)
 	allowStatusBroadcasts(eb)
@@ -260,7 +256,6 @@ func (s *TaskExecutorSuite) TestStreamingOnToolUseExitPlanMode() {
 }
 
 func (s *TaskExecutorSuite) TestStreamingOnToolUseTaskCreate() {
-	s.executor.streamingEnabled.Store(true)
 	eb := new(MockEventBroadcaster)
 	s.executor.SetEventBroadcaster(eb)
 	allowStatusBroadcasts(eb)
@@ -304,7 +299,6 @@ func (s *TaskExecutorSuite) TestStreamingOnToolUseTaskCreate() {
 }
 
 func (s *TaskExecutorSuite) TestStreamingOnToolUseTaskUpdate() {
-	s.executor.streamingEnabled.Store(true)
 	eb := new(MockEventBroadcaster)
 	s.executor.SetEventBroadcaster(eb)
 	allowStatusBroadcasts(eb)
@@ -352,7 +346,6 @@ func (s *TaskExecutorSuite) TestStreamingOnToolUseTaskUpdate() {
 }
 
 func (s *TaskExecutorSuite) TestStreamingOnToolUseBroadcastsBeforeThread() {
-	s.executor.streamingEnabled.Store(true)
 	eb := new(MockEventBroadcaster)
 	s.executor.SetEventBroadcaster(eb)
 	allowStatusBroadcasts(eb)
@@ -398,7 +391,6 @@ func (s *TaskExecutorSuite) TestStreamingOnToolUseBroadcastsBeforeThread() {
 }
 
 func (s *TaskExecutorSuite) TestStreamingOnActivityBroadcasts() {
-	s.executor.streamingEnabled.Store(true)
 	eb := new(MockEventBroadcaster)
 	s.executor.SetEventBroadcaster(eb)
 	allowStatusBroadcasts(eb)
@@ -453,7 +445,6 @@ func (s *TaskExecutorSuite) TestStreamingOnActivityBroadcasts() {
 // marker survives run completion / page reload. Also asserts that
 // non-compacting activities do NOT trigger persistence — only the broadcast.
 func (s *TaskExecutorSuite) TestStreamingOnCompactingPersistsRow() {
-	s.executor.streamingEnabled.Store(true)
 	eb := new(MockEventBroadcaster)
 	s.executor.SetEventBroadcaster(eb)
 	allowStatusBroadcasts(eb)
@@ -515,7 +506,6 @@ func (s *TaskExecutorSuite) TestStreamingOnCompactingPersistsRow() {
 }
 
 func (s *TaskExecutorSuite) TestStreamingOnThinkingAndToolResultBroadcasts() {
-	s.executor.streamingEnabled.Store(true)
 	eb := new(MockEventBroadcaster)
 	s.executor.SetEventBroadcaster(eb)
 	allowStatusBroadcasts(eb)
@@ -571,7 +561,6 @@ func (s *TaskExecutorSuite) TestStreamingOnThinkingAndToolResultBroadcasts() {
 // executor calls GetChannel(threadID) once and stamps the resulting chat_id
 // onto the inserted agent event.
 func (s *TaskExecutorSuite) TestStreamingResolvesThreadChatID() {
-	s.executor.streamingEnabled.Store(true)
 	eb := new(MockEventBroadcaster)
 	s.executor.SetEventBroadcaster(eb)
 	allowStatusBroadcasts(eb)
@@ -628,7 +617,6 @@ func (s *TaskExecutorSuite) TestStreamingResolvesThreadChatID() {
 // thread-creation path: one-shot tasks call UpsertChannel for the thread row
 // instead of LinkTaskThread (which is reserved for recurring tasks).
 func (s *TaskExecutorSuite) TestStreamingOnceTaskUpsertsChannel() {
-	s.executor.streamingEnabled.Store(true)
 	eb := new(MockEventBroadcaster)
 	s.executor.SetEventBroadcaster(eb)
 	allowStatusBroadcasts(eb)
@@ -668,7 +656,6 @@ func (s *TaskExecutorSuite) TestStreamingOnceTaskUpsertsChannel() {
 }
 
 func (s *TaskExecutorSuite) TestStreamingInvitesPermissionUsersToThread() {
-	s.executor.streamingEnabled.Store(true)
 	s.allowBotInserts()
 
 	task := &db.ScheduledTask{
@@ -715,7 +702,6 @@ func (s *TaskExecutorSuite) TestStreamingInvitesPermissionUsersToThread() {
 }
 
 func (s *TaskExecutorSuite) TestStreamingInviteErrorsAreLogged() {
-	s.executor.streamingEnabled.Store(true)
 	s.allowBotInserts()
 
 	task := &db.ScheduledTask{

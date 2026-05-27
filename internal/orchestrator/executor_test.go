@@ -42,7 +42,7 @@ func (s *TaskExecutorSuite) SetupTest() {
 	s.ctx = context.Background()
 
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	s.executor = NewTaskExecutor(s.runner, s.bot, s.store, logger, 5*time.Minute, false, nil)
+	s.executor = NewTaskExecutor(s.runner, s.bot, s.store, logger, 5*time.Minute, nil)
 }
 
 // allowStatusBroadcasts adds BroadcastAgentStatus expectations for task execution.
@@ -188,7 +188,6 @@ func (s *TaskExecutorSuite) TestActiveRunsRegisteredDuringExecution() {
 func (s *TaskExecutorSuite) TestActiveRunsStopCancelsTaskRun() {
 	activeRuns := &sync.Map{}
 	s.executor.SetActiveRuns(activeRuns)
-	s.executor.streamingEnabled.Store(true)
 
 	task := &db.ScheduledTask{
 		ID: 61, ChannelID: "ch-stop", Prompt: "long task",
@@ -245,7 +244,6 @@ func (s *TaskExecutorSuite) TestRunnerErrorBroadcastsStatus() {
 func (s *TaskExecutorSuite) TestRunnerErrorBroadcastsToThreadAndParent() {
 	eb := new(MockEventBroadcaster)
 	s.executor.SetEventBroadcaster(eb)
-	s.executor.streamingEnabled.Store(true)
 
 	task := &db.ScheduledTask{
 		ID: 52, ChannelID: "ch-parent", Prompt: "fail", Type: db.TaskTypeInterval, Schedule: "5m",
@@ -282,7 +280,6 @@ func (s *TaskExecutorSuite) TestRunnerErrorBroadcastsToThreadAndParent() {
 func (s *TaskExecutorSuite) TestAgentResponseErrorBroadcastsStatus() {
 	eb := new(MockEventBroadcaster)
 	s.executor.SetEventBroadcaster(eb)
-	s.executor.streamingEnabled.Store(true)
 
 	task := &db.ScheduledTask{
 		ID: 51, ChannelID: "ch-err2", Prompt: "fail", Type: db.TaskTypeInterval, Schedule: "5m",

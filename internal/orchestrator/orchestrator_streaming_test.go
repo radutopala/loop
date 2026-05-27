@@ -17,10 +17,6 @@ import (
 // --- Streaming tests ---
 
 func (s *OrchestratorSuite) TestHandleMessageStreamingSkipsDuplicate() {
-	cfgStream := s.orch.cfg.Load()
-	cfgStream.StreamingEnabled = true
-	s.orch.cfg.Store(cfgStream)
-
 	msg := &bot.IncomingMessage{
 		ChannelID:    "ch1",
 		GuildID:      "g1",
@@ -70,10 +66,6 @@ func (s *OrchestratorSuite) TestHandleMessageStreamingSkipsDuplicate() {
 }
 
 func (s *OrchestratorSuite) TestHandleMessageStreamingSendsFinalWhenDifferent() {
-	cfgStream := s.orch.cfg.Load()
-	cfgStream.StreamingEnabled = true
-	s.orch.cfg.Store(cfgStream)
-
 	msg := &bot.IncomingMessage{
 		ChannelID:    "ch1",
 		GuildID:      "g1",
@@ -119,10 +111,6 @@ func (s *OrchestratorSuite) TestHandleMessageStreamingSendsFinalWhenDifferent() 
 }
 
 func (s *OrchestratorSuite) TestHandleMessageStreamingSendErrorIsLogged() {
-	cfgStream := s.orch.cfg.Load()
-	cfgStream.StreamingEnabled = true
-	s.orch.cfg.Store(cfgStream)
-
 	msg := &bot.IncomingMessage{
 		ChannelID:    "ch1",
 		GuildID:      "g1",
@@ -165,50 +153,7 @@ func (s *OrchestratorSuite) TestHandleMessageStreamingSendErrorIsLogged() {
 	s.store.AssertExpectations(s.T())
 }
 
-func (s *OrchestratorSuite) TestHandleMessageStreamingDisabledNoOnTurn() {
-	// streamingEnabled is false by default (set in SetupTest)
-	msg := &bot.IncomingMessage{
-		ChannelID:    "ch1",
-		GuildID:      "g1",
-		AuthorName:   "Alice",
-		Content:      "hello",
-		MessageID:    "msg1",
-		IsBotMention: true,
-		Timestamp:    time.Now().UTC(),
-	}
-
-	s.store.On("IsChannelActive", s.ctx, "ch1").Return(true, nil)
-	s.store.On("GetChannel", s.ctx, "ch1").Return(&db.Channel{ID: 1, ChannelID: "ch1", Active: true}, nil)
-	s.store.On("InsertMessage", s.ctx, mock.Anything).Return(nil)
-	s.bot.On("SendTyping", mock.Anything, "ch1").Return(nil).Maybe()
-	s.store.On("GetRecentMessages", s.ctx, "ch1", 50).Return([]*db.Message{}, nil)
-
-	s.runner.On("Run", mock.Anything, mock.MatchedBy(func(req *agent.AgentRequest) bool {
-		// OnTurn should NOT be set when streaming is disabled
-		return req.OnTurn == nil
-	})).Return(&agent.AgentResponse{
-		Response:  "Hello!",
-		SessionID: "sess-3",
-	}, nil)
-
-	s.store.On("UpdateSessionID", s.ctx, "ch1", "sess-3").Return(nil)
-	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *bot.OutgoingMessage) bool {
-		return out.Content == "Hello!" && out.ReplyToMessageID == "msg1"
-	})).Return(nil)
-	s.store.On("MarkMessagesProcessed", s.ctx, []int64{}).Return(nil)
-
-	s.orch.HandleMessage(s.ctx, msg)
-
-	// Only 1 SendMessage call (the final response)
-	s.bot.AssertNumberOfCalls(s.T(), "SendMessage", 1)
-	s.store.AssertExpectations(s.T())
-	s.runner.AssertExpectations(s.T())
-}
-
 func (s *OrchestratorSuite) TestHandleMessageStreamingBroadcastsViaEvents() {
-	cfgStream := s.orch.cfg.Load()
-	cfgStream.StreamingEnabled = true
-	s.orch.cfg.Store(cfgStream)
 	eb := new(MockEventBroadcaster)
 	s.orch.SetEventBroadcaster(eb)
 
@@ -256,9 +201,6 @@ func (s *OrchestratorSuite) TestHandleMessageStreamingBroadcastsViaEvents() {
 }
 
 func (s *OrchestratorSuite) TestHandleMessageStreamingOnToolUseBroadcasts() {
-	cfgStream := s.orch.cfg.Load()
-	cfgStream.StreamingEnabled = true
-	s.orch.cfg.Store(cfgStream)
 	eb := new(MockEventBroadcaster)
 	s.orch.SetEventBroadcaster(eb)
 
@@ -317,7 +259,6 @@ func (s *OrchestratorSuite) TestHandleMessageStreamingOnToolUseBroadcasts() {
 // as a priority-bumped continuation.
 func (s *OrchestratorSuite) TestHandleMessageStreamingAskUserQuestion() {
 	cfgStream := s.orch.cfg.Load()
-	cfgStream.StreamingEnabled = true
 	// Non-zero timeout so the context cancellation we observe is provably
 	// from runCancel(), not a 0-duration deadline.
 	cfgStream.ContainerTimeout = time.Minute
@@ -381,7 +322,6 @@ func (s *OrchestratorSuite) TestHandleMessageStreamingAskUserQuestion() {
 // error path, then the deferred agent.status from executeAgentRun.
 func (s *OrchestratorSuite) TestAskUserQuestionBroadcastOrder() {
 	cfgStream := s.orch.cfg.Load()
-	cfgStream.StreamingEnabled = true
 	cfgStream.ContainerTimeout = time.Minute
 	s.orch.cfg.Store(cfgStream)
 	eb := new(MockEventBroadcaster)
@@ -437,9 +377,6 @@ func (s *OrchestratorSuite) TestAskUserQuestionBroadcastOrder() {
 }
 
 func (s *OrchestratorSuite) TestHandleMessageStreamingExitPlanMode() {
-	cfgStream := s.orch.cfg.Load()
-	cfgStream.StreamingEnabled = true
-	s.orch.cfg.Store(cfgStream)
 	eb := new(MockEventBroadcaster)
 	s.orch.SetEventBroadcaster(eb)
 
@@ -498,7 +435,6 @@ func (s *OrchestratorSuite) TestHandleMessageStreamingExitPlanMode() {
 // "Run stopped." chat message that the manual stop-button path emits.
 func (s *OrchestratorSuite) TestHandleMessageStreamingExitPlanModeSelfInitiated() {
 	cfgStream := s.orch.cfg.Load()
-	cfgStream.StreamingEnabled = true
 	// Non-zero timeout so a context cancellation we observe in the captured
 	// context is provably from runCancel(), not from a 0-duration deadline.
 	cfgStream.ContainerTimeout = time.Minute
@@ -564,9 +500,6 @@ func (s *OrchestratorSuite) TestHandleMessageStreamingExitPlanModeSelfInitiated(
 }
 
 func (s *OrchestratorSuite) TestHandleMessageStreamingTaskCreate() {
-	cfgStream := s.orch.cfg.Load()
-	cfgStream.StreamingEnabled = true
-	s.orch.cfg.Store(cfgStream)
 	eb := new(MockEventBroadcaster)
 	s.orch.SetEventBroadcaster(eb)
 
@@ -613,9 +546,6 @@ func (s *OrchestratorSuite) TestHandleMessageStreamingTaskCreate() {
 }
 
 func (s *OrchestratorSuite) TestHandleMessageStreamingTaskUpdate() {
-	cfgStream := s.orch.cfg.Load()
-	cfgStream.StreamingEnabled = true
-	s.orch.cfg.Store(cfgStream)
 	eb := new(MockEventBroadcaster)
 	s.orch.SetEventBroadcaster(eb)
 
@@ -666,9 +596,6 @@ func (s *OrchestratorSuite) TestHandleMessageStreamingTaskUpdate() {
 }
 
 func (s *OrchestratorSuite) TestHandleMessageStreamingOnActivityBroadcasts() {
-	cfgStream := s.orch.cfg.Load()
-	cfgStream.StreamingEnabled = true
-	s.orch.cfg.Store(cfgStream)
 	eb := new(MockEventBroadcaster)
 	s.orch.SetEventBroadcaster(eb)
 
@@ -734,9 +661,6 @@ func (s *OrchestratorSuite) TestHandleMessageStreamingOnActivityBroadcasts() {
 // marker survives run completion / page reload, in addition to the normal
 // BroadcastAgentActivity for live subscribers.
 func (s *OrchestratorSuite) TestHandleMessageStreamingOnCompactingPersistsRow() {
-	cfgStream := s.orch.cfg.Load()
-	cfgStream.StreamingEnabled = true
-	s.orch.cfg.Store(cfgStream)
 	eb := new(MockEventBroadcaster)
 	s.orch.SetEventBroadcaster(eb)
 
@@ -794,9 +718,6 @@ func (s *OrchestratorSuite) TestHandleMessageStreamingOnCompactingPersistsRow() 
 }
 
 func (s *OrchestratorSuite) TestHandleMessageStreamingOnThinkingAndToolResultBroadcasts() {
-	cfgStream := s.orch.cfg.Load()
-	cfgStream.StreamingEnabled = true
-	s.orch.cfg.Store(cfgStream)
 	eb := new(MockEventBroadcaster)
 	s.orch.SetEventBroadcaster(eb)
 

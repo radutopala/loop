@@ -35,7 +35,6 @@
   //"poll_interval_sec": 30,
   //"claude_model": "", // defaults to "claude-sonnet-4-6"; options: "claude-opus-4-7", "claude-opus-4-6[1m]", "claude-opus-4-6", "claude-sonnet-4-6"
   //"claude_bin_path": "claude",
-  //"streaming_enabled": true, // stream intermediate Claude turns to chat as they happen
   //"claude_dangerously_load_development_channels": false, // when true, pass --dangerously-load-development-channels to Claude so the agent can receive push notifications from other agents (Anthropic ships the flag as development-only)
   //"keep_mcp_configs": false, // when true, MCP config JSON files are preserved after container runs (useful for debugging)
 
