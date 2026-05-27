@@ -846,7 +846,7 @@ func (s *EngineSuite) TestRecoverPausedRunHighestIterationOutputWins() {
 	}
 
 	rendered, _ := actualScript.Load().(string)
-	require.Equal(s.T(), "echo iter2-out", rendered, "downstream node must see highest-iter (iter=2) output, not last-listed (iter=0)")
+	require.Equal(s.T(), "echo 'iter2-out'", rendered, "downstream node must see highest-iter (iter=2) output, not last-listed (iter=0)")
 }
 
 // TestRecoverRunningRunHighestIterationOutputWins mirrors the paused-run
@@ -927,5 +927,5 @@ func (s *EngineSuite) TestRecoverRunningRunHighestIterationOutputWins() {
 	}
 
 	rendered, _ := actualScript.Load().(string)
-	require.Equal(s.T(), "echo winner", rendered, "downstream node must see highest-iter output")
+	require.Equal(s.T(), "echo 'winner'", rendered, "downstream node must see highest-iter output")
 }

@@ -203,7 +203,7 @@ func (s *EngineSuite) TestStartRunInputDefaults() {
 	s.store.On("UpsertNodeRun", mock.Anything, mock.Anything).Return(nil)
 	done := s.waitForRunStatus()
 
-	s.bashRunner.On("RunBash", mock.Anything, "echo main", "", "").Return("main", nil)
+	s.bashRunner.On("RunBash", mock.Anything, "echo 'main'", "", "").Return("main", nil)
 
 	_, err := s.engine.StartRun(context.Background(), StartRunOptions{WorkflowName: "defaults"})
 	require.NoError(s.T(), err)
@@ -215,7 +215,7 @@ func (s *EngineSuite) TestStartRunInputDefaults() {
 		s.T().Fatal("timeout waiting for run completion")
 	}
 
-	s.bashRunner.AssertCalled(s.T(), "RunBash", mock.Anything, "echo main", "", "")
+	s.bashRunner.AssertCalled(s.T(), "RunBash", mock.Anything, "echo 'main'", "", "")
 }
 
 func (s *EngineSuite) TestStartRunInputOverridesDefault() {
@@ -233,7 +233,7 @@ func (s *EngineSuite) TestStartRunInputOverridesDefault() {
 	s.store.On("UpsertNodeRun", mock.Anything, mock.Anything).Return(nil)
 	done := s.waitForRunStatus()
 
-	s.bashRunner.On("RunBash", mock.Anything, "echo develop", "", "").Return("develop", nil)
+	s.bashRunner.On("RunBash", mock.Anything, "echo 'develop'", "", "").Return("develop", nil)
 
 	_, err := s.engine.StartRun(context.Background(), StartRunOptions{
 		WorkflowName: "override",
@@ -248,7 +248,7 @@ func (s *EngineSuite) TestStartRunInputOverridesDefault() {
 		s.T().Fatal("timeout waiting for run completion")
 	}
 
-	s.bashRunner.AssertCalled(s.T(), "RunBash", mock.Anything, "echo develop", "", "")
+	s.bashRunner.AssertCalled(s.T(), "RunBash", mock.Anything, "echo 'develop'", "", "")
 }
 
 // TestStartRunSkipsEmptyStringInputs covers the explicit empty-string skip
@@ -271,9 +271,9 @@ func (s *EngineSuite) TestStartRunSkipsEmptyStringInputs() {
 	s.store.On("UpsertNodeRun", mock.Anything, mock.Anything).Return(nil)
 	done := s.waitForRunStatus()
 
-	// Should run "echo main" — the empty-string input was skipped so the
-	// default survives.
-	s.bashRunner.On("RunBash", mock.Anything, "echo main", "", "").Return("main", nil)
+	// Should run "echo 'main'" — the empty-string input was skipped so the
+	// default survives. The value is shell-quoted by renderBashScript.
+	s.bashRunner.On("RunBash", mock.Anything, "echo 'main'", "", "").Return("main", nil)
 
 	_, err := s.engine.StartRun(context.Background(), StartRunOptions{
 		WorkflowName: "empty-input-defaults",
@@ -288,7 +288,7 @@ func (s *EngineSuite) TestStartRunSkipsEmptyStringInputs() {
 		s.T().Fatal("timeout waiting for run completion")
 	}
 
-	s.bashRunner.AssertCalled(s.T(), "RunBash", mock.Anything, "echo main", "", "")
+	s.bashRunner.AssertCalled(s.T(), "RunBash", mock.Anything, "echo 'main'", "", "")
 }
 
 func (s *EngineSuite) TestCancelRun() {
@@ -1016,4 +1016,62 @@ func TestRenderTemplateExecuteError(t *testing.T) {
 	// Calling a method that doesn't exist triggers an execute error.
 	_, err := renderTemplate("{{.Inputs.Missing | len}}", rc)
 	require.Error(t, err)
+}
+
+// TestShellQuote covers the POSIX single-quote escape used to neutralize
+// shell metacharacters in user-controlled values that flow into bash node
+// scripts.
+func TestShellQuote(t *testing.T) {
+	tests := []struct {
+		name string
+		in   string
+		out  string
+	}{
+		{"empty", "", "''"},
+		{"plain", "main", "'main'"},
+		{"semicolon", "a; rm -rf /", "'a; rm -rf /'"},
+		{"single quote", "it's", `'it'\''s'`},
+		{"backticks and $", "`whoami`$(id)", "'`whoami`$(id)'"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			require.Equal(t, tt.out, shellQuote(tt.in))
+		})
+	}
+}
+
+// TestRenderBashScriptShellQuotesUserValues asserts that values from Inputs,
+// NodeOutputs, ChannelID and Review.CommentsJSON are shell-quoted before
+// interpolation into bash node scripts — closing the command-injection sink
+// at /bin/sh -c (CodeQL go/command-injection).
+func TestRenderBashScriptShellQuotesUserValues(t *testing.T) {
+	rc := &RunContext{
+		Inputs:      map[string]string{"branch": "; rm -rf /"},
+		NodeOutputs: map[string]string{"diff": "$(whoami)"},
+		ChannelID:   "ch'1",
+		Review:      ReviewState{CommentsJSON: `[{"id":"a"}]`},
+	}
+
+	out, err := renderBashScript(
+		"echo {{.Inputs.branch}} {{.NodeOutputs.diff}} {{.ChannelID}} {{.Review.CommentsJSON}}",
+		rc,
+	)
+	require.NoError(t, err)
+	require.Equal(t, `echo '; rm -rf /' '$(whoami)' 'ch'\''1' '[{"id":"a"}]'`, out)
+}
+
+// TestRenderBashScriptEmptyTemplate covers the early-return path.
+func TestRenderBashScriptEmptyTemplate(t *testing.T) {
+	out, err := renderBashScript("", &RunContext{})
+	require.NoError(t, err)
+	require.Empty(t, out)
+}
+
+// TestRenderBashScriptNilMaps covers shellQuoteMap's nil-input branch — the
+// engine constructs RunContext with non-nil maps in practice, but the helper
+// must remain defensive so partial test/usage paths don't panic.
+func TestRenderBashScriptNilMaps(t *testing.T) {
+	out, err := renderBashScript("echo hi", &RunContext{})
+	require.NoError(t, err)
+	require.Equal(t, "echo hi", out)
 }
