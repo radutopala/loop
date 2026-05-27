@@ -48,6 +48,7 @@ export function WorkflowStartDialog({
         <div style={{ fontSize: 14, fontWeight: 600, color: colors.text, marginBottom: 12 }}>Start Workflow</div>
         <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
           <select
+            data-testid="workflow-start-select"
             value={startWorkflowName}
             onChange={(e) => onSelectWorkflow(e.target.value)}
             style={{ ...inputStyle, cursor: "pointer" }}

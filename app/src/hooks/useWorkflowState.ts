@@ -64,23 +64,6 @@ export function useWorkflowState({
   // Delete confirmation popover state.
   const [confirmingDeleteId, setConfirmingDeleteId] = useState<string | null>(null);
 
-  // Auto-select the first workflow when the start dialog is open but no
-  // selection exists yet — covers the race where the user (or BDD) clicks
-  // Start before workflow definitions finish loading after the dialog opens.
-  useEffect(() => {
-    if (!showStartDialog || startWorkflowName) return;
-    const first = definitions[0];
-    if (!first) return;
-    setStartWorkflowName(first.name);
-    const initial: Record<string, string> = {};
-    if (first.inputs) {
-      for (const [k, v] of Object.entries(first.inputs)) {
-        initial[k] = v.default ?? "";
-      }
-    }
-    setStartInputs(initial);
-  }, [showStartDialog, startWorkflowName, definitions]);
-
   // Dismiss delete confirmation popover on outside click.
   useEffect(() => {
     if (!confirmingDeleteId) return;
@@ -230,22 +213,16 @@ export function useWorkflowState({
   }, [loadRuns, loadRunDetail]);
 
   const handleStartRun = useCallback(async () => {
-    // Fall back to the first definition when no workflow has been explicitly
-    // selected — the native <select> renders the first <option> visually even
-    // when React state is empty (initial mount race), so respect that visual default.
-    const effectiveName = startWorkflowName || definitions[0]?.name || "";
-    if (!effectiveName) return;
-    // Close the dialog immediately so a failed start doesn't strand the user
-    // (and BDD waits) on an open modal. Success-path side effects still fire below.
-    setShowStartDialog(false);
-    setStartWorkflowName("");
-    setStartInputs({});
+    if (!startWorkflowName) return;
     try {
       const result = await startWorkflowRun({
-        workflow_name: effectiveName,
+        workflow_name: startWorkflowName,
         channel_id: channelId,
         inputs: Object.keys(startInputs).length > 0 ? startInputs : undefined,
       });
+      setShowStartDialog(false);
+      setStartWorkflowName("");
+      setStartInputs({});
       loadRuns();
       setSelectedRunId(result.run_id);
       // Fast-completing workflows (e.g. simple bash nodes) may finish before
@@ -254,7 +231,7 @@ export function useWorkflowState({
       setTimeout(() => { loadRuns(); if (result.run_id) loadRunDetail(result.run_id); }, 500);
       setTimeout(() => { loadRuns(); if (result.run_id) loadRunDetail(result.run_id); }, 2000);
     } catch (err) { console.error("workflow start failed:", err); }
-  }, [channelId, startWorkflowName, startInputs, definitions, loadRuns, loadRunDetail]);
+  }, [channelId, startWorkflowName, startInputs, loadRuns, loadRunDetail]);
 
   const handleSelectWorkflow = useCallback((name: string) => {
     setStartWorkflowName(name);
