@@ -28,7 +28,7 @@ Agent (Claude Code)  ←→  MCP Protocol (stdio)  ←→  loop mcp  ←→  HTT
 
 ## Registered Tools
 
-### Always Available (18 tools)
+### Always Available (17 tools)
 
 #### Task Management
 
@@ -64,6 +64,13 @@ Agent (Claude Code)  ←→  MCP Protocol (stdio)  ←→  loop mcp  ←→  HTT
 |------|-------------|
 | `playground` | Manage playgrounds (action: create/update/delete). Create sets up the entry HTML, title, and description. Use `playground_file` to add JS, CSS, and other files. |
 | `playground_file` | Manage files within a playground (action: create/update/read/delete/list). Write script.js, style.css, importmap.json, lib/utils.js, etc. Files served at relative URLs for ES module imports. |
+
+#### Shortcuts
+
+| Tool | Description |
+|------|-------------|
+| `prompt_shortcut` | Manage prompt shortcuts triggered via `#` in chat. Actions: `list`, `add`, `update`, `delete`. Scope: `global` (default, `~/.loop/config.json`) or `project` (project `.loop/config.json`). |
+| `bash_shortcut` | Manage bash shortcuts triggered via `$` in the terminal shortcuts bar. Actions: `list`, `add`, `update`, `delete`. Scope: `global` or `project`. |
 
 ### Agent Tools (when `--agent-id` set)
 

@@ -224,6 +224,32 @@ See [Task Scheduling](scheduling.md) for full details.
 
 Shortcuts appear in the chat input when the user types `#`. Selecting a shortcut sends its resolved prompt as a message. The API endpoint `GET /api/shortcuts` returns all shortcuts with resolved prompts; pass `?channel_id=<id>` to merge project-level shortcuts. Agents can manage shortcuts via the `prompt_shortcut` MCP tool or the `POST /api/shortcuts` endpoint — add, update, or delete shortcuts in either global or project scope.
 
+#### Bash Shortcuts
+
+```jsonc
+"bash_shortcuts": [
+  {
+    "name": "make lint",
+    "description": "Run the linter",
+    "command": "make lint"
+  },
+  {
+    "name": "tests",
+    "description": "Run unit tests",
+    "command_path": "run-tests.sh"
+  }
+]
+```
+
+| Field | Type | Description |
+|---|---|---|
+| `name` | `string` | Unique shortcut identifier. Shown in the `$` picker on terminal panes. |
+| `description` | `string` | Human-readable description shown below the name. |
+| `command` | `string` | Inline shell command. Mutually exclusive with `command_path`. |
+| `command_path` | `string` | Path to a script file, resolved as `~/.loop/bash-shortcuts/{command_path}` (global) or `.loop/bash-shortcuts/{command_path}` (project). The file contents become the command body. Mutually exclusive with `command`. |
+
+Shortcuts appear in the terminal footer `$` picker. They mount on **Docker Shell** and **Host Shell** panes (raw bash, sent with a trailing newline) and on **Docker Agent** panes (Claude TUI, sent as a bracketed paste + `\r` so multi-line scripts arrive as a single paste buffer). The `#` prompt picker and the `$` bash picker are mutually exclusive on a given pane — Docker Agent panes show `#`, raw-shell panes show `$`. The API endpoint `GET /api/bash-shortcuts` returns shortcuts with resolved command text; pass `?channel_id=<id>` to merge project-level shortcuts. Agents can manage them via the `bash_shortcut` MCP tool or the `POST /api/bash-shortcuts` endpoint.
+
 #### Review
 
 Enables and configures the Review panel (see [review.md](review.md)).

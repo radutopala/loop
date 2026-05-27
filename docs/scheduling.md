@@ -160,7 +160,7 @@ See also: [Workflows](workflows.md) for the full workflow engine documentation.
 
 ## Thread Creation for Scheduled Tasks
 
-When streaming is enabled (default), task execution creates a thread for its output.
+Task execution streams output to a thread.
 
 ### Thread Reuse (Local Platform)
 

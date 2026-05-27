@@ -86,6 +86,8 @@ export function TerminalShortcuts({ channelId, leafId, onPick, target = "agent",
   const showPromptBtn = promptsEnabled && prompts.length > 0;
   const showBashBtn = !promptsEnabled && bash.length > 0;
 
+  if (!showPromptBtn && !showBashBtn) return null;
+
   const items: { name: string; description: string; text: string }[] =
     openKind === "prompt"
       ? prompts.map((p) => ({ name: p.name, description: p.description, text: p.prompt }))

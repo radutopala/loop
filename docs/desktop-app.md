@@ -46,6 +46,16 @@ On macOS, the dock icon is set from `loop-macos.png` (rounded-rect background va
 
 `Cmd+N` / `Ctrl+N` opens a new window via the File menu. The app enforces single-instance mode using `requestSingleInstanceLock()`. A second launch passes its URL arguments to the first instance rather than creating a new process.
 
+### External Link Guard
+
+A `will-navigate` listener on each window's `webContents` keeps the React app from being replaced by a navigation to an external page. Plain `<a href="https://…">` clicks from rendered HTML (e.g. the README rendered via `dangerouslySetInnerHTML`) would otherwise blow the SPA away with no way back. The handler:
+
+- Parses the target URL; if it fails to parse, it falls through and lets Electron handle it.
+- Allows same-origin navigations (so reload, hash changes, and `file://` dist links keep working).
+- For cross-origin `http:` / `https:` URLs, calls `event.preventDefault()` and routes the link to `shell.openExternal(url)` — the OS browser opens, the Loop window stays put.
+
+This complements the `setWindowOpenHandler` route used for `target="_blank"` links and the xterm `WebLinksAddon` (which calls `loopAPI.openExternal` via IPC).
+
 ---
 
 ## Deep Linking
