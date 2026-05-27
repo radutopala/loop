@@ -187,25 +187,26 @@ export function GitPanel({ channelId, dirPath, branch, maximized, sidebarOpen, t
     }
   }, [gitMode, channelId, pr?.base_ref]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Load first page of commits when branch changes
+  // Load first page of commits when branch changes. Re-runs on rootIndex so
+  // switching workspace roots refetches commits for the new dir.
   useEffect(() => {
     if (gitMode !== "commits" || !channelId || !commitBranch) return;
     setCommitsLoading(true);
     setCommitsHasMore(true);
-    fetchCommits(channelId, commitBranch, COMMITS_PAGE, 0)
+    fetchCommits(channelId, commitBranch, COMMITS_PAGE, 0, rootIndex)
       .then((c) => { setCommits(c); setCommitsHasMore(c.length >= COMMITS_PAGE); })
       .catch(() => { setCommits([]); setCommitsHasMore(false); })
       .finally(() => setCommitsLoading(false));
-  }, [gitMode, channelId, commitBranch]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [gitMode, channelId, commitBranch, rootIndex]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const loadMoreCommits = useCallback(() => {
     if (!channelId || !commitBranch || commitsLoading || !commitsHasMore) return;
     setCommitsLoading(true);
-    fetchCommits(channelId, commitBranch, COMMITS_PAGE, commits.length)
+    fetchCommits(channelId, commitBranch, COMMITS_PAGE, commits.length, rootIndex)
       .then((c) => { setCommits((prev) => [...prev, ...c]); setCommitsHasMore(c.length >= COMMITS_PAGE); })
       .catch(() => setCommitsHasMore(false))
       .finally(() => setCommitsLoading(false));
-  }, [channelId, commitBranch, commitsLoading, commitsHasMore, commits.length]);
+  }, [channelId, commitBranch, commitsLoading, commitsHasMore, commits.length, rootIndex]);
 
   const load = useCallback(async () => {
     if (!channelId) return;
@@ -214,7 +215,7 @@ export function GitPanel({ channelId, dirPath, branch, maximized, sidebarOpen, t
       setCommitsLoading(true);
       setCommitsHasMore(true);
       try {
-        const c = await fetchCommits(channelId, commitBranch, COMMITS_PAGE, 0);
+        const c = await fetchCommits(channelId, commitBranch, COMMITS_PAGE, 0, rootIndex);
         setCommits(c);
         setCommitsHasMore(c.length >= COMMITS_PAGE);
       } catch {
@@ -396,7 +397,7 @@ export function GitPanel({ channelId, dirPath, branch, maximized, sidebarOpen, t
           )}
         </span>
         <div style={{ flex: 1 }} />
-        {roots.length > 1 && (gitMode === "uncommitted" || gitMode === "branches") && (
+        {roots.length > 1 && (gitMode === "uncommitted" || gitMode === "branches" || gitMode === "commits") && (
           <select
             value={rootIndex}
             onChange={(e) => setRootIndex(Number(e.target.value))}

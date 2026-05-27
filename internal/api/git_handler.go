@@ -197,6 +197,25 @@ func (s *Server) handleListCommits(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// ?root=N selects an extra_dirs entry instead of the primary dir_path.
+	// Mirrors handleGitDiff. root=0 (default) is the primary dir; root>0
+	// indexes into extra_dirs in order.
+	if rootStr := r.URL.Query().Get("root"); rootStr != "" {
+		rootIdx, err := strconv.Atoi(rootStr)
+		if err != nil || rootIdx < 0 {
+			http.Error(w, "invalid root index", http.StatusBadRequest)
+			return
+		}
+		if rootIdx > 0 {
+			resolved, err := s.resolveRootDir(r.Context(), channelID, r)
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+			dirPath = resolved
+		}
+	}
+
 	limit := 50
 	if l := r.URL.Query().Get("limit"); l != "" {
 		if parsed, parseErr := strconv.Atoi(l); parseErr == nil && parsed >= 1 {

@@ -88,11 +88,12 @@ export interface CommitEntry {
   date: string;
 }
 
-export async function fetchCommits(channelId: string, branch?: string, limit?: number, skip?: number): Promise<CommitEntry[]> {
+export async function fetchCommits(channelId: string, branch?: string, limit?: number, skip?: number, rootIndex?: number): Promise<CommitEntry[]> {
   const params = new URLSearchParams();
   if (branch) params.set("branch", branch);
   if (limit) params.set("limit", String(limit));
   if (skip) params.set("skip", String(skip));
+  if (rootIndex !== undefined && rootIndex > 0) params.set("root", String(rootIndex));
   const qs = params.toString();
   const res = await fetch(`${getApiUrl()}/api/channels/${channelId}/commits${qs ? `?${qs}` : ""}`);
   if (!res.ok) throw new Error(`Failed to fetch commits: ${res.statusText}`);
