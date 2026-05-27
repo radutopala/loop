@@ -503,6 +503,11 @@ func (s *Server) handleReviewDelete(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}
+	// Detach any in-flight agent run before tearing down the session.
+	// Otherwise the goroutine keeps running for 5–20 min, holding a
+	// container slot, and the post-run UpdateStatus/Broadcast writes
+	// into a deleted session.
+	s.cancelReviewRun(channelID)
 	if sess.WorktreePath != "" {
 		ch, err := s.store.GetChannel(r.Context(), channelID)
 		if err == nil && ch != nil && ch.DirPath != "" {
@@ -696,6 +701,17 @@ func (s *Server) pushOneComment(ctx context.Context, channelID string, sess *rev
 	if err != nil {
 		return err
 	}
+	// Skip MarkPushed when the GitHub ID came back as 0 — that signals
+	// the 422 fallback path took the unparseable-response branch
+	// (postPRConversationComment couldn't decode gh's reply). Stamping
+	// the comment as Pushed with GitHubID=0 leaves it permanently
+	// undeletable through the UI (handleReviewDeleteComment skips the
+	// remote DELETE call when GitHubID<=0). Leaving Pushed=false lets
+	// the user re-push or surface the issue rather than silently losing
+	// the ability to remove the comment from GitHub.
+	if ghID == 0 {
+		return nil
+	}
 	s.reviewStore.MarkPushed(channelID, c.ID, ghID)
 	return nil
 }
@@ -732,8 +748,12 @@ func (s *Server) handleReviewRun(w http.ResponseWriter, r *http.Request) {
 	// In-flight check must come before the status guard: a second call
 	// while the first run is in flight should coalesce (202 "in_progress")
 	// rather than 409, since the session was already moved to Reviewing
-	// by the first call.
-	if !s.registerReviewRun(channelID) {
+	// by the first call. The cancel func registered here lets session-
+	// delete and server-Stop detach the long-running agent ctx so the
+	// container doesn't outlive its session.
+	runCtx, cancelRun := context.WithCancel(context.Background())
+	if !s.registerReviewRun(channelID, cancelRun) {
+		cancelRun()
 		writeHTTPJSON(w, http.StatusAccepted, map[string]string{"status": "in_progress"}, s.logger)
 		return
 	}
@@ -817,7 +837,7 @@ func (s *Server) handleReviewRun(w http.ResponseWriter, r *http.Request) {
 	s.reviewStore.UpdateStatus(channelID, review.StatusReviewing, "")
 	s.broadcastReviewStatus(channelID, review.StatusReviewing, "")
 
-	go s.runReviewAsync(channelID, worktreePath, parentDirPath, sysPrompt, fullPrompt)
+	go s.runReviewAsync(runCtx, channelID, worktreePath, parentDirPath, sysPrompt, fullPrompt)
 	writeHTTPJSON(w, http.StatusAccepted, map[string]string{"status": "started"}, s.logger)
 }
 
@@ -825,13 +845,18 @@ func (s *Server) handleReviewRun(w http.ResponseWriter, r *http.Request) {
 // handleReviewRun spawns. It owns the in-flight registration cleanup
 // and the final status broadcast.
 //
-// When reviewRunTimeout > 0 the agent run is bounded by that timeout: on
-// expiry the run ctx is cancelled (so the underlying agent stops) and
-// the session flips to status=error with a clear "timed out" message
-// instead of staying at status=reviewing forever. Without this gate, a
-// hung container would leak the goroutine and any CLI/FE poller would
-// keep hitting status=reviewing until its own deadline fired.
-func (s *Server) runReviewAsync(channelID, worktreePath, parentDirPath, systemPrompt, prompt string) {
+// runCtx is the per-run cancellable context registered with
+// registerReviewRun. Session-delete (handleReviewDelete) and graceful
+// shutdown (Server.Stop) cancel it to detach the long-running agent
+// container from a session it no longer has any reason to outlive.
+//
+// When reviewRunTimeout > 0 the agent run is further bounded by that
+// timeout: on expiry the run ctx is cancelled (so the underlying agent
+// stops) and the session flips to status=error with a clear "timed out"
+// message instead of staying at status=reviewing forever. Without this
+// gate, a hung container would leak the goroutine and any CLI/FE poller
+// would keep hitting status=reviewing until its own deadline fired.
+func (s *Server) runReviewAsync(runCtx context.Context, channelID, worktreePath, parentDirPath, systemPrompt, prompt string) {
 	defer s.unregisterReviewRun(channelID)
 	onComment := func(c *review.Comment) {
 		if !s.reviewStore.AddComment(channelID, c) {
@@ -848,7 +873,7 @@ func (s *Server) runReviewAsync(channelID, worktreePath, parentDirPath, systemPr
 		}
 		s.maybeRediffForComment(channelID, worktreePath, parentDirPath, c)
 	}
-	ctx := context.Background()
+	ctx := runCtx
 	if s.reviewRunTimeout > 0 {
 		var cancel context.CancelFunc
 		ctx, cancel = context.WithTimeout(ctx, s.reviewRunTimeout)
@@ -864,6 +889,13 @@ func (s *Server) runReviewAsync(channelID, worktreePath, parentDirPath, systemPr
 		// after the ctx fired but before they observed the cancel.
 		if errors.Is(err, context.DeadlineExceeded) || ctx.Err() == context.DeadlineExceeded {
 			msg = fmt.Sprintf("review timed out after %s", s.reviewRunTimeout)
+		}
+		// Session-delete or shutdown fired the registered cancel func.
+		// Don't broadcast an "error" status — the session is going away
+		// (or already gone), and an error WS event would just race the
+		// delete and confuse the FE.
+		if errors.Is(err, context.Canceled) || runCtx.Err() == context.Canceled {
+			return
 		}
 		s.reviewStore.UpdateStatus(channelID, review.StatusError, msg)
 		s.broadcastReviewStatus(channelID, review.StatusError, msg)
@@ -911,26 +943,59 @@ func (s *Server) maybeRediffForComment(channelID, worktreePath, parentDirPath st
 // registerReviewRun records that channelID has a review run in flight.
 // Returns false if one was already in flight, in which case the caller
 // should not start another goroutine — the existing one will continue
-// streaming events.
-func (s *Server) registerReviewRun(channelID string) bool {
+// streaming events. cancel is stored so that session delete + server
+// Stop can detach the long-running agent ctx; runReviewAsync derives its
+// agent ctx from this cancel.
+func (s *Server) registerReviewRun(channelID string, cancel context.CancelFunc) bool {
 	s.reviewMu.Lock()
 	defer s.reviewMu.Unlock()
 	if s.reviewActive == nil {
-		s.reviewActive = make(map[string]struct{})
+		s.reviewActive = make(map[string]context.CancelFunc)
 	}
 	if _, ok := s.reviewActive[channelID]; ok {
 		return false
 	}
-	s.reviewActive[channelID] = struct{}{}
+	s.reviewActive[channelID] = cancel
 	return true
 }
 
 // unregisterReviewRun drops the in-flight marker so a subsequent run
-// can register. Safe to call when no marker exists.
+// can register. Safe to call when no marker exists. Does NOT call the
+// stored cancel — runReviewAsync defers cancel() locally so the run's
+// natural completion path doesn't double-fire.
 func (s *Server) unregisterReviewRun(channelID string) {
 	s.reviewMu.Lock()
 	defer s.reviewMu.Unlock()
 	delete(s.reviewActive, channelID)
+}
+
+// cancelReviewRun cancels the agent ctx of an in-flight run for
+// channelID. Safe to call when no run is active. Used by session-delete
+// and server-Stop paths to keep a running agent from outliving the
+// session it was reviewing.
+func (s *Server) cancelReviewRun(channelID string) {
+	s.reviewMu.Lock()
+	cancel, ok := s.reviewActive[channelID]
+	s.reviewMu.Unlock()
+	if ok && cancel != nil {
+		cancel()
+	}
+}
+
+// cancelAllReviewRuns fires every registered cancel func — used during
+// graceful shutdown so agent containers don't outlive the daemon.
+func (s *Server) cancelAllReviewRuns() {
+	s.reviewMu.Lock()
+	cancels := make([]context.CancelFunc, 0, len(s.reviewActive))
+	for _, c := range s.reviewActive {
+		cancels = append(cancels, c)
+	}
+	s.reviewMu.Unlock()
+	for _, c := range cancels {
+		if c != nil {
+			c()
+		}
+	}
 }
 
 // isReviewRunActive reports whether a review run is currently in flight

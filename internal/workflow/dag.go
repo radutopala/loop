@@ -368,7 +368,7 @@ func (e *defaultEngine) executeNode(
 		}
 	}
 
-	output, execErr = e.executeWithRetry(nodeCtx, run, node, execFn)
+	output, execErr = e.executeWithRetry(nodeCtx, run, node, 0, execFn)
 
 	status := db.NodeRunStatusSuccess
 	if execErr != nil {
@@ -789,7 +789,7 @@ func (e *defaultEngine) executeLoopBody(ctx context.Context, run *db.WorkflowRun
 		// timeout-bound ctx) so the retry backoff sleeps against the outer
 		// run context and the per-attempt timeout doesn't cancel the retry
 		// loop itself.
-		output, execErr = e.executeWithRetry(ctx, run, child, execFn)
+		output, execErr = e.executeWithRetry(ctx, run, child, iteration, execFn)
 		stopHeartbeat()
 
 		status := db.NodeRunStatusSuccess
@@ -1116,7 +1116,13 @@ func (e *defaultEngine) updateRunStatus(ctx context.Context, runID string, statu
 }
 
 // executeWithRetry wraps a node execution function with optional retry logic.
-func (e *defaultEngine) executeWithRetry(ctx context.Context, run *db.WorkflowRun, node *config.NodeDef, fn func() (string, error)) (string, error) {
+// iteration scopes the retry-attempt UpsertNodeRun to the correct
+// (run_id, node_id, iteration) row; for top-level nodes that is 0, for
+// loop body children it is the current iteration. Without it, a retry of
+// a body child at iter N>0 would silently overwrite the (run_id, node_id, 0)
+// row's status — corrupting iter-0's terminal state and burying the actual
+// retrying iteration in the Workflows graph.
+func (e *defaultEngine) executeWithRetry(ctx context.Context, run *db.WorkflowRun, node *config.NodeDef, iteration int, fn func() (string, error)) (string, error) {
 	if node.Retry == nil || node.Retry.MaxRetries <= 0 {
 		return fn()
 	}
@@ -1138,15 +1144,18 @@ func (e *defaultEngine) executeWithRetry(ctx context.Context, run *db.WorkflowRu
 	var output string
 	for attempt := 0; attempt <= node.Retry.MaxRetries; attempt++ {
 		if attempt > 0 {
-			// Persist retry attempt.
+			// Persist retry attempt. Iteration is load-bearing for body
+			// children — without it the UPSERT targets the (run_id, node_id, 0)
+			// row regardless of which iteration is actually retrying.
 			nr := &db.NodeRun{
-				RunID:   run.ID,
-				NodeID:  node.ID,
-				Status:  db.NodeRunStatusRunning,
-				Attempt: attempt + 1,
+				RunID:     run.ID,
+				NodeID:    node.ID,
+				Iteration: iteration,
+				Status:    db.NodeRunStatusRunning,
+				Attempt:   attempt + 1,
 			}
 			if err := e.store.UpsertNodeRun(ctx, nr); err != nil {
-				e.logger.Error("workflow: failed to update retry attempt", "node_id", node.ID, "error", err)
+				e.logger.Error("workflow: failed to update retry attempt", "node_id", node.ID, "iteration", iteration, "error", err)
 			}
 
 			shift := min(attempt-1, 30)

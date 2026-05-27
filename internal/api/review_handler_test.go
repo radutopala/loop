@@ -439,8 +439,12 @@ func (s *ReviewHandlerSuite) TestLoadRefusedWhileRunActive() {
 	// would let the background run stomp the new session on completion.
 	// Reject with 409 so the user is forced to wait or close the session.
 	s.store.On("GetChannel", mock.Anything, "ch1").Return(&db.Channel{ChannelID: "ch1", DirPath: "/repo"}, nil)
-	require.True(s.T(), s.srv.registerReviewRun("ch1"))
-	s.T().Cleanup(func() { s.srv.unregisterReviewRun("ch1") })
+	_, cancelRun := context.WithCancel(context.Background())
+	require.True(s.T(), s.srv.registerReviewRun("ch1", cancelRun))
+	s.T().Cleanup(func() {
+		cancelRun()
+		s.srv.unregisterReviewRun("ch1")
+	})
 
 	w := s.postJSON("/api/channels/ch1/review/load", map[string]any{"pr_number": 7})
 	require.Equal(s.T(), http.StatusConflict, w.Code)
@@ -2155,4 +2159,101 @@ func (s *ReviewHandlerSuite) TestRunReviewAsyncTimeoutRewritesAgentDeadlineMessa
 	sess := s.rs.Get("ch1")
 	require.Contains(s.T(), sess.Error, "review timed out after")
 	require.NotContains(s.T(), sess.Error, "agent stream closed")
+}
+
+// TestPushCommentGhIDZeroLeavesUnpushed covers the rare 422-fallback path
+// where postPRConversationComment couldn't decode gh's reply and returns
+// (0, nil). Stamping Pushed=true with GitHubID=0 would leave the comment
+// permanently undeletable via the UI (DELETE skips when GitHubID<=0), so
+// the handler must short-circuit and leave Pushed=false.
+func (s *ReviewHandlerSuite) TestPushCommentGhIDZeroLeavesUnpushed() {
+	s.rs.Put("ch1", &review.Session{PR: &githubapi.PRInfo{Number: 7}, HeadSHA: "abc"})
+	s.rs.AddComment("ch1", &review.Comment{ID: "a", Path: "x.go", Line: 1, Body: "b", Side: "RIGHT"})
+	s.store.On("GetChannel", mock.Anything, "ch1").Return(&db.Channel{ChannelID: "ch1", DirPath: "/repo"}, nil)
+	slug := &githubapi.RepoSlug{Owner: "o", Name: "r"}
+	s.gh.On("FetchRepoSlug", mock.Anything, "/repo", "").Return(slug, nil)
+	s.gh.On("PostPRComment", mock.Anything, "/repo", "", *slug, 7, "abc", "x.go", "RIGHT", 1, "b").Return(int64(0), nil)
+	w := httptest.NewRecorder()
+	s.mux.ServeHTTP(w, httptest.NewRequest("POST", "/api/channels/ch1/review/comments/a/push", nil))
+	require.Equal(s.T(), http.StatusOK, w.Code)
+	c, _ := s.rs.FindComment("ch1", "a")
+	require.False(s.T(), c.Pushed)
+	require.Equal(s.T(), int64(0), c.GitHubID)
+}
+
+// TestRunReviewAsyncCancelledSilently covers the context.Canceled branch
+// in runReviewAsync: when session-delete fires the registered cancel func
+// mid-run, the agent observes ctx.Canceled — we must NOT broadcast
+// status=error, since the session is going away and an error event would
+// race the delete and confuse the FE.
+func (s *ReviewHandlerSuite) TestRunReviewAsyncCancelledSilently() {
+	s.wireReadySession()
+	runner := &mockReviewRunner{done: make(chan struct{})}
+	runner.runWithCtxFn = func(ctx context.Context, _ func(*review.Comment)) (*agent.AgentResponse, error) {
+		<-ctx.Done()
+		return nil, ctx.Err()
+	}
+	s.srv.SetReviewAgent(runner, "", "")
+
+	w := httptest.NewRecorder()
+	s.mux.ServeHTTP(w, httptest.NewRequest("POST", "/api/channels/ch1/review/run", nil))
+	require.Equal(s.T(), http.StatusAccepted, w.Code)
+
+	// Cancel the in-flight run directly (mirrors what handleReviewDelete
+	// would do). runReviewAsync should observe context.Canceled and return
+	// without flipping status to error.
+	s.srv.cancelReviewRun("ch1")
+	<-runner.done
+
+	// Give the goroutine a beat to finish unregistering — then assert no
+	// status flip happened. Status stays Reviewing (the state set by
+	// handleReviewRun before kicking off the goroutine).
+	s.waitFor(func() bool { return !s.srv.isReviewRunActive("ch1") })
+	sess := s.rs.Get("ch1")
+	require.Equal(s.T(), review.StatusReviewing, sess.Status)
+	require.Empty(s.T(), sess.Error)
+}
+
+// TestCancelReviewRunUnknownChannelNoOp ensures the helper is safe to
+// call when no run is registered for the channel — covers the
+// `ok=false`/`cancel==nil` skip in cancelReviewRun.
+func (s *ReviewHandlerSuite) TestCancelReviewRunUnknownChannelNoOp() {
+	// reviewActive is empty.
+	s.srv.cancelReviewRun("never-registered")
+	// Also exercise the nil-cancel guard by inserting a nil entry directly.
+	s.srv.reviewMu.Lock()
+	if s.srv.reviewActive == nil {
+		s.srv.reviewActive = make(map[string]context.CancelFunc)
+	}
+	s.srv.reviewActive["nil-cancel"] = nil
+	s.srv.reviewMu.Unlock()
+	s.srv.cancelReviewRun("nil-cancel")
+	// No panic, no observable side effect — just exercise the branches.
+}
+
+// TestCancelAllReviewRunsFiresEveryCancel registers two cancellable runs
+// and asserts that cancelAllReviewRuns fires both. Covers the Stop-path
+// drain used by graceful shutdown.
+func (s *ReviewHandlerSuite) TestCancelAllReviewRunsFiresEveryCancel() {
+	ctxA, cancelA := context.WithCancel(context.Background())
+	ctxB, cancelB := context.WithCancel(context.Background())
+	require.True(s.T(), s.srv.registerReviewRun("a", cancelA))
+	require.True(s.T(), s.srv.registerReviewRun("b", cancelB))
+	// Also a nil-cancel entry to exercise the `c != nil` guard inside the
+	// loop. registerReviewRun rejects nil callers in practice, but the
+	// guard exists as a defensive check on the map slot.
+	s.srv.reviewMu.Lock()
+	s.srv.reviewActive["nil"] = nil
+	s.srv.reviewMu.Unlock()
+
+	s.srv.cancelAllReviewRuns()
+
+	require.ErrorIs(s.T(), ctxA.Err(), context.Canceled)
+	require.ErrorIs(s.T(), ctxB.Err(), context.Canceled)
+
+	// Cleanup map state so subsequent tests start clean (SetupTest rebuilds
+	// the server, so this is belt-and-suspenders).
+	s.srv.unregisterReviewRun("a")
+	s.srv.unregisterReviewRun("b")
+	s.srv.unregisterReviewRun("nil")
 }

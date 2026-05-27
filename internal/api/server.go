@@ -147,7 +147,7 @@ type Server struct {
 	reviewPrompt              string                                                       // resolved user prompt for review runs ("" -> built-in default)
 	reviewRunTimeout          time.Duration                                                // hard ceiling on runReviewAsync; 0 = unbounded (legacy)
 	reviewMu                  sync.Mutex                                                   // guards reviewActive
-	reviewActive              map[string]struct{}                                          // per-channel in-flight review runs
+	reviewActive              map[string]context.CancelFunc                                // per-channel in-flight review runs; cancel detaches the long-running agent ctx on session delete / shutdown
 
 	// Quality-scan wiring. All fields are nil by default — handlers
 	// return 501 until the daemon wires concrete implementations. Tests
@@ -500,6 +500,11 @@ func (s *Server) SetStopError(err error) {
 
 // Stop gracefully shuts down the HTTP server.
 func (s *Server) Stop(ctx context.Context) error {
+	// Cancel every in-flight review run before draining the HTTP server.
+	// Otherwise their agent containers (typically 5–20 min runs) outlive
+	// the daemon process and keep consuming the Docker socket + LLM quota
+	// with nothing left to consume their output.
+	s.cancelAllReviewRuns()
 	if s.stopErr != nil {
 		// Still perform the real shutdown, but return the injected error.
 		if s.server != nil {
