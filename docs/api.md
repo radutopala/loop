@@ -1147,6 +1147,7 @@ Get git diff information for a channel's working directory. Includes both tracke
 |----------|--------|-------------|
 | `source` | string | When provided with `target`, switches to branch-to-branch diff mode (`git diff source..target`). `status` is omitted in this mode. |
 | `target` | string | Branch / ref name for branch-to-branch diff mode. |
+| `root`   | int    | Root directory index (0 = primary `dir_path`, 1+ = extra directories from project config). Defaults to 0. |
 
 **Response (200) — uncommitted mode:**
 ```json
@@ -1185,8 +1186,9 @@ Get git diff information for a channel's working directory. Includes both tracke
 - Untracked files generate synthetic diff patches (all lines as additions). Binary detection checks the first 512 bytes for null bytes.
 - If the directory is not a git repo, returns an empty `files` array.
 - Files are sorted by (path, status priority) — `conflict` < `staged` < `unstaged` < `untracked`.
+- The `root` parameter mirrors the same field on file endpoints: `0` (default) targets the channel's primary `dir_path`; `1+` indexes into `extra_dirs` from the project's `.loop/config.json`. Both uncommitted and branch-to-branch modes honor `root`.
 
-**Errors:** `404` if channel not found.
+**Errors:** `404` if channel not found. `400` if `root` is non-numeric, negative, or out of range.
 
 ---
 
@@ -1277,6 +1279,7 @@ List commit history for a channel's git repository.
 | `branch` | string | HEAD    | Branch name to list commits from |
 | `limit`  | int    | 50      | Maximum number of commits to return (max 200) |
 | `skip`   | int    | 0       | Number of commits to skip (for pagination) |
+| `root`   | int    | 0       | Root directory index (0 = primary `dir_path`, 1+ = extra directories from project config) |
 
 **Response (200):**
 ```json
@@ -1298,8 +1301,9 @@ List commit history for a channel's git repository.
 - On empty repositories (no commits yet), returns `{"commits": []}` instead of an error.
 - Branch names are validated against a safe character set (alphanumeric, slashes, hyphens, dots, underscores).
 - The `skip` parameter enables lazy pagination — the frontend loads pages of 50 commits and fetches more on scroll.
+- The `root` parameter mirrors the same field on `/api/channels/{id}/diff` and other file endpoints: `0` (default) targets the channel's primary `dir_path`; `1+` indexes into `extra_dirs` from the project's `.loop/config.json`.
 
-**Errors:** `400` if branch name is invalid.
+**Errors:** `400` if branch name is invalid, or if `root` is non-numeric / negative / out of range.
 
 ### `POST /api/worktrees`
 

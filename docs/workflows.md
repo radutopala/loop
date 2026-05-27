@@ -110,7 +110,9 @@ Runs a shell script in a Docker container using the same mounts and environment 
 
 | Field | Description |
 |---|---|
-| `script` | Shell command(s) passed to `/bin/sh -c`. Accepts any sh-compatible content — a one-liner, multi-line scripts, pipelines, heredocs. To execute a script file on disk, just invoke it (e.g. `bash workflows/build.sh`); the bash container shares the same mounts as agent containers. Supports Go `text/template` rendering against workflow inputs and upstream node outputs. |
+| `script` | Shell command(s) piped to `/bin/sh` on stdin. Accepts any sh-compatible content — a one-liner, multi-line scripts, pipelines, heredocs. To execute a script file on disk, just invoke it (e.g. `bash workflows/build.sh`); the bash container shares the same mounts as agent containers. Supports Go `text/template` rendering against workflow inputs and upstream node outputs. |
+
+User-controllable template values — `Inputs`, `NodeOutputs`, `ChannelID`, and `Review.CommentsJSON` — are POSIX shell-quoted at render time, so an unquoted spread like `echo {{.Inputs.foo}}` is safe even if `foo` contains shell metacharacters. The fully-rendered script is piped to `/bin/sh` via stdin rather than passed on the command line, so the script body never appears in the spawned process's argv.
 
 Stdout becomes the node output. A non-zero exit code fails the node.
 
