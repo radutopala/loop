@@ -84,7 +84,9 @@ export function ContextMenu({ x, y, items, onClose }: ContextMenuProps) {
         onClose();
         return;
       }
-      if (itemIndices.length === 0) return;
+      const first = itemIndices[0];
+      const last = itemIndices[itemIndices.length - 1];
+      if (first === undefined || last === undefined) return;
       if (e.key === "ArrowDown" || e.key === "ArrowUp") {
         e.preventDefault();
         const pos = itemIndices.indexOf(focusIdx);
@@ -97,17 +99,18 @@ export function ContextMenu({ x, y, items, onClose }: ContextMenuProps) {
           const delta = e.key === "ArrowDown" ? 1 : -1;
           nextPos = (pos + delta + itemIndices.length) % itemIndices.length;
         }
-        setFocusIdx(itemIndices[nextPos]);
+        const next = itemIndices[nextPos];
+        if (next !== undefined) setFocusIdx(next);
         return;
       }
       if (e.key === "Home") {
         e.preventDefault();
-        setFocusIdx(itemIndices[0]);
+        setFocusIdx(first);
         return;
       }
       if (e.key === "End") {
         e.preventDefault();
-        setFocusIdx(itemIndices[itemIndices.length - 1]);
+        setFocusIdx(last);
         return;
       }
     };
