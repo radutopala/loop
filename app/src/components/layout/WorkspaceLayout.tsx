@@ -214,6 +214,12 @@ interface WorkspaceLayoutProps {
    * it until the returned deregister fn is called.
    */
   registerReviewView?: (channelId: string) => () => void;
+  /**
+   * Tell the store to drop the sidebar's ask-pill for this channel. Wired
+   * into useChatState's clearAskUser so the pill clears in lockstep with
+   * the card disappearing (the backend doesn't emit an ask.resolved event).
+   */
+  clearAskUserPill?: (channelId: string) => void;
 }
 
 export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutProps>(function WorkspaceLayout({
@@ -239,6 +245,7 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
   onChatStateUnmount,
   subscribeChatEvents,
   registerReviewView,
+  clearAskUserPill,
 }, ref) {
   const { colors } = useTheme();
   const { agents: agentInfoMap } = useAgentRegistry(channelId);
@@ -285,6 +292,7 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
     initialState: initialChatState,
     onUnmount: chatStateUnmount,
     subscribeChatEvents,
+    clearAskUserPill,
   });
 
   // Editor + file-tree shared state. Hoisted here so both panels (rendered
