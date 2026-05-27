@@ -359,6 +359,26 @@ function createWindow(hash?: string): BrowserWindow {
     return { action: "allow" };
   });
 
+  // In-window navigation guard: plain `<a href="https://…">` clicks (e.g. from
+  // the README rendered via dangerouslySetInnerHTML) would otherwise replace
+  // the React app with the external page, with no way back. Redirect them to
+  // the OS browser. Navigations to our own app origin (dev server or file://
+  // dist) are allowed so reload, hash, and same-origin link cases still work.
+  win.webContents.on("will-navigate", (event, url) => {
+    const currentURL = win.webContents.getURL();
+    try {
+      const target = new URL(url);
+      const current = currentURL ? new URL(currentURL) : null;
+      if (current && target.origin === current.origin) return;
+      if (target.protocol === "http:" || target.protocol === "https:") {
+        event.preventDefault();
+        shell.openExternal(url);
+      }
+    } catch {
+      // Not a parseable URL — let Electron handle it normally.
+    }
+  });
+
   return win;
 }
 
