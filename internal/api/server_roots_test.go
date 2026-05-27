@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -12,6 +13,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/radutopala/loop/internal/db"
+	"github.com/radutopala/loop/internal/testutil"
 )
 
 // --- handleListRoots tests ---
@@ -111,6 +113,54 @@ func (s *ServerSuite) TestAllDirPathsChannelError() {
 	_, err := s.srv.allDirPaths(context.Background(), "ch-err")
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "not found")
+}
+
+func (s *ServerSuite) TestAllDirPathsExpandsTilde() {
+	s.srv.sys = s.sys
+
+	tmpDir := s.T().TempDir()
+	loopDir := filepath.Join(tmpDir, ".loop")
+	require.NoError(s.T(), os.MkdirAll(loopDir, 0755))
+	require.NoError(s.T(), os.WriteFile(
+		filepath.Join(loopDir, "config.json"),
+		[]byte(`{"extra_dirs": ["~/dev/foo", "/abs/path", "~/dev/bar"]}`),
+		0644,
+	))
+
+	s.store.On("GetChannel", mock.Anything, "ch-tilde").
+		Return(&db.Channel{ChannelID: "ch-tilde", DirPath: tmpDir}, nil)
+
+	paths, err := s.srv.allDirPaths(context.Background(), "ch-tilde")
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), []string{
+		tmpDir,
+		"/home/testuser/dev/foo",
+		"/abs/path",
+		"/home/testuser/dev/bar",
+	}, paths)
+}
+
+func (s *ServerSuite) TestExpandHomePathNoTilde() {
+	s.srv.sys = s.sys
+	require.Equal(s.T(), "/abs/path", s.srv.expandHomePath("/abs/path"))
+	require.Equal(s.T(), "relative/path", s.srv.expandHomePath("relative/path"))
+	require.Equal(s.T(), "~user/dev", s.srv.expandHomePath("~user/dev"))
+}
+
+func (s *ServerSuite) TestExpandHomePathHomeError() {
+	sys := new(testutil.MockSystem)
+	sys.On("UserHomeDir").Return("", fmt.Errorf("no home"))
+	s.srv.sys = sys
+
+	require.Equal(s.T(), "~/dev/foo", s.srv.expandHomePath("~/dev/foo"))
+}
+
+func (s *ServerSuite) TestExpandHomePathEmptyHome() {
+	sys := new(testutil.MockSystem)
+	sys.On("UserHomeDir").Return("", nil)
+	s.srv.sys = sys
+
+	require.Equal(s.T(), "~/dev/foo", s.srv.expandHomePath("~/dev/foo"))
 }
 
 // --- resolveRootDir with extra dirs ---
