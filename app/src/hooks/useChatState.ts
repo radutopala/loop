@@ -206,6 +206,7 @@ export function useChatState(
           is_bot: data.is_bot,
           is_processed: data.is_processed,
           priority: data.priority,
+          trigger_msg_id: data.trigger_msg_id,
           created_at: new Date(event.timestamp).toISOString(),
         });
         // A new user message may have just been queued (incl. priority-bumped
@@ -231,19 +232,19 @@ export function useChatState(
       if (event.type === "tool.use") {
         const data = event.data as ToolUseData;
         setToolActivity({ tool_name: data.tool_name, input: data.input });
-        appendLiveToolUse(data.tool_use_id, data.tool_name, data.input);
+        appendLiveToolUse(data.tool_use_id, data.tool_name, data.input, processingMsgIdRef.current ?? undefined);
         if (data.tool_name === "EnterPlanMode") setMode("plan");
         if (data.tool_name === "ExitPlanMode") setMode("agent");
         return;
       }
       if (event.type === "agent.thinking") {
         const data = event.data as AgentThinkingData;
-        appendLiveThinking(data.text);
+        appendLiveThinking(data.text, processingMsgIdRef.current ?? undefined);
         return;
       }
       if (event.type === "tool.result") {
         const data = event.data as ToolResultData;
-        appendLiveToolResult(data.tool_use_id, data.output, data.is_error ?? false);
+        appendLiveToolResult(data.tool_use_id, data.output, data.is_error ?? false, processingMsgIdRef.current ?? undefined);
         return;
       }
       if (event.type === "agent.activity") {
@@ -252,7 +253,7 @@ export function useChatState(
           // Persist as a timeline item so it survives subsequent activity
           // events overwriting the rolling indicator slot, and so the run
           // summary can count it.
-          appendLiveCompacting();
+          appendLiveCompacting(processingMsgIdRef.current ?? undefined);
         }
         setAgentActivity(data);
         return;
@@ -310,6 +311,10 @@ export function useChatState(
           // as-is, masks the per-message fallback in the trigger-quote banner
           // and renders an empty card.
           setTriggerContent(data.trigger_content ? data.trigger_content : null);
+          // Sync the ref alongside the setter so a follow-up agent event in the
+          // same tick (tool.use / agent.thinking / tool.result) reads the new
+          // trigger and live items get attributed to the correct user message.
+          processingMsgIdRef.current = data.msg_id ?? null;
           setProcessingMsgId(data.msg_id ?? null);
           refreshQueue();
         } else {
@@ -333,6 +338,7 @@ export function useChatState(
               const { ["chat"]: _removed, ...rest } = prev;
               return rest;
             });
+            processingMsgIdRef.current = null;
             setProcessingMsgId(null);
             // Refetch the head — JSONL ingest now has chain_position values for
             // the run's rows, so the persisted timeline supersedes the live tail.
