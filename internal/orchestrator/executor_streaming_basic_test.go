@@ -14,7 +14,6 @@ import (
 )
 
 func (s *TaskExecutorSuite) TestStreamingCreatesThread() {
-	s.executor.streamingEnabled.Store(true)
 	s.allowBotInserts()
 
 	task := &db.ScheduledTask{
@@ -66,7 +65,6 @@ func (s *TaskExecutorSuite) TestStreamingCreatesThread() {
 }
 
 func (s *TaskExecutorSuite) TestStreamingLocalPlatformPersistsThreadID() {
-	s.executor.streamingEnabled.Store(true)
 
 	task := &db.ScheduledTask{
 		ID:        30,
@@ -104,7 +102,6 @@ func (s *TaskExecutorSuite) TestStreamingLocalPlatformPersistsThreadID() {
 }
 
 func (s *TaskExecutorSuite) TestStreamingLocalPlatformReusesThreadID() {
-	s.executor.streamingEnabled.Store(true)
 
 	task := &db.ScheduledTask{
 		ID:        31,
@@ -152,7 +149,6 @@ func (s *TaskExecutorSuite) TestStreamingDanglingThreadCreatesReplacement() {
 	// thread was deleted from the UI without clearing the task's thread_id).
 	// The executor must fall back to first-run behavior and create a new
 	// replacement thread instead of streaming output to the dead ID.
-	s.executor.streamingEnabled.Store(true)
 
 	task := &db.ScheduledTask{
 		ID:        33,
@@ -197,7 +193,6 @@ func (s *TaskExecutorSuite) TestStreamingDanglingThreadCreatesReplacement() {
 }
 
 func (s *TaskExecutorSuite) TestStreamingDiscordReusesThread() {
-	s.executor.streamingEnabled.Store(true)
 
 	task := &db.ScheduledTask{
 		ID:        32,
@@ -238,30 +233,7 @@ func (s *TaskExecutorSuite) TestStreamingDiscordReusesThread() {
 	s.bot.AssertNotCalled(s.T(), "CreateSimpleThread", mock.Anything, mock.Anything, mock.Anything, mock.Anything)
 }
 
-func (s *TaskExecutorSuite) TestStreamingDisabledNoOnTurn() {
-	// streamingEnabled is false by default
-	s.store.On("GetChannel", s.ctx, "ch10").Return(nil, nil)
-	s.store.On("GetScheduledTask", s.ctx, int64(10)).Return(&db.ScheduledTask{ID: 10, Type: db.TaskTypeCron}, nil)
-	s.runner.On("Run", mock.Anything, mock.MatchedBy(func(req *agent.AgentRequest) bool {
-		return req.OnTurn == nil
-	})).Return(&agent.AgentResponse{Response: "Result", SessionID: "sess-nostream"}, nil)
-	s.store.On("UpdateSessionID", s.ctx, "ch10", "sess-nostream").Return(nil)
-	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(msg *bot.OutgoingMessage) bool {
-		return msg.ChannelID == "ch10" && msg.Content == "Result"
-	})).Return(nil).Once()
-
-	resp, err := s.executor.ExecuteTask(s.ctx, &db.ScheduledTask{
-		ID: 10, ChannelID: "ch10", Prompt: "no stream",
-		Type: db.TaskTypeCron, Schedule: "0 * * * *",
-	})
-	require.NoError(s.T(), err)
-	require.Equal(s.T(), "Result", resp)
-	s.bot.AssertNumberOfCalls(s.T(), "SendMessage", 1)
-	s.runner.AssertExpectations(s.T())
-}
-
 func (s *TaskExecutorSuite) TestStreamingFinalSentWhenDifferent() {
-	s.executor.streamingEnabled.Store(true)
 	s.allowBotInserts()
 
 	task := &db.ScheduledTask{
@@ -308,7 +280,6 @@ func (s *TaskExecutorSuite) TestStreamingFinalSentWhenDifferent() {
 }
 
 func (s *TaskExecutorSuite) TestStreamingThreadCreationFailsFallsBack() {
-	s.executor.streamingEnabled.Store(true)
 
 	task := &db.ScheduledTask{
 		ID:        12,
@@ -357,7 +328,6 @@ func (s *TaskExecutorSuite) TestStreamingThreadCreationFailsFallsBack() {
 }
 
 func (s *TaskExecutorSuite) TestStreamingSendMessageErrorIsLogged() {
-	s.executor.streamingEnabled.Store(true)
 
 	task := &db.ScheduledTask{
 		ID:        14,
@@ -405,7 +375,6 @@ func (s *TaskExecutorSuite) TestStreamingSendMessageErrorIsLogged() {
 }
 
 func (s *TaskExecutorSuite) TestStreamingSingleTurnNoFinalDuplicate() {
-	s.executor.streamingEnabled.Store(true)
 
 	task := &db.ScheduledTask{
 		ID:        13,

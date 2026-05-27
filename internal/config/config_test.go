@@ -68,7 +68,6 @@ func (s *ConfigSuite) TestLoadDefaults() {
 	require.Empty(s.T(), cfg.ClaudeCodeOAuthToken)
 	require.Empty(s.T(), cfg.DiscordGuildID)
 	require.Nil(s.T(), cfg.MCPServers)
-	require.True(s.T(), cfg.StreamingEnabled)
 	require.True(s.T(), cfg.Browser.Enabled)
 	require.Equal(s.T(), []string{"~/.claude.json"}, cfg.CopyFiles)
 	require.False(s.T(), cfg.KeepMCPConfigs)
@@ -120,21 +119,6 @@ func (s *ConfigSuite) TestLoadCustomValues() {
 	require.Equal(s.T(), ":9999", cfg.APIAddr)
 	require.Equal(s.T(), "/custom/claude", cfg.ClaudeBinPath)
 	require.True(s.T(), cfg.Desktop.AutoSaveOnBlur)
-}
-
-func (s *ConfigSuite) TestLoadStreamingEnabledExplicitFalse() {
-	s.loader.readFile = func(_ string) ([]byte, error) {
-		return []byte(`{
-			"platforms": ["discord"],
-			"discord_token": "t",
-			"discord_app_id": "a",
-			"streaming_enabled": false
-		}`), nil
-	}
-
-	cfg, err := s.loader.load()
-	require.NoError(s.T(), err)
-	require.False(s.T(), cfg.StreamingEnabled)
 }
 
 func (s *ConfigSuite) TestLoadGitHubConfig() {

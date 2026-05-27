@@ -29,7 +29,6 @@ type TaskExecutor struct {
 	store            db.Store
 	logger           *slog.Logger
 	containerTimeout atomic.Int64 // nanoseconds
-	streamingEnabled atomic.Bool
 	configLoad       func() (*config.Config, error)
 	events           events.Broadcaster
 	timeAfterFunc    func(time.Duration, func()) *time.Timer
@@ -40,7 +39,7 @@ type TaskExecutor struct {
 }
 
 // NewTaskExecutor creates a new TaskExecutor.
-func NewTaskExecutor(runner Runner, bot Bot, store db.Store, logger *slog.Logger, containerTimeout time.Duration, streamingEnabled bool, configLoad func() (*config.Config, error)) *TaskExecutor {
+func NewTaskExecutor(runner Runner, bot Bot, store db.Store, logger *slog.Logger, containerTimeout time.Duration, configLoad func() (*config.Config, error)) *TaskExecutor {
 	e := &TaskExecutor{
 		runner:        runner,
 		bot:           bot,
@@ -51,21 +50,18 @@ func NewTaskExecutor(runner Runner, bot Bot, store db.Store, logger *slog.Logger
 		tasks:         newTaskRegistry(),
 	}
 	e.containerTimeout.Store(int64(containerTimeout))
-	e.streamingEnabled.Store(streamingEnabled)
 	return e
 }
 
-// refreshConfig reloads configuration and returns the current container timeout
-// and streaming flag. On reload error (or nil configLoad), the last-known-good
-// values are returned.
-func (e *TaskExecutor) refreshConfig() (time.Duration, bool) {
+// refreshConfig reloads configuration and returns the current container timeout.
+// On reload error (or nil configLoad), the last-known-good value is returned.
+func (e *TaskExecutor) refreshConfig() time.Duration {
 	if e.configLoad != nil {
 		if fresh, err := e.configLoad(); err == nil {
 			e.containerTimeout.Store(int64(fresh.ContainerTimeout))
-			e.streamingEnabled.Store(fresh.StreamingEnabled)
 		}
 	}
-	return time.Duration(e.containerTimeout.Load()), e.streamingEnabled.Load()
+	return time.Duration(e.containerTimeout.Load())
 }
 
 // SetEventBroadcaster sets the event broadcaster for real-time updates.
@@ -91,7 +87,7 @@ func (e *TaskExecutor) SetActiveRuns(m *sync.Map) {
 
 // ExecuteTask runs an agent for the given scheduled task and sends the result to the chat platform.
 func (e *TaskExecutor) ExecuteTask(ctx context.Context, task *db.ScheduledTask) (string, error) {
-	containerTimeout, streamingEnabled := e.refreshConfig()
+	containerTimeout := e.refreshConfig()
 
 	channel, err := e.store.GetChannel(ctx, task.ChannelID)
 	if err != nil {
@@ -234,7 +230,6 @@ func (e *TaskExecutor) ExecuteTask(ctx context.Context, task *db.ScheduledTask) 
 		return threadChatID
 	}
 
-	var tracker *streamTracker
 	var threadID string
 	var threadName string
 	var threadFailed bool
@@ -275,183 +270,181 @@ func (e *TaskExecutor) ExecuteTask(ctx context.Context, task *db.ScheduledTask) 
 	if hasExistingThread {
 		req.ChannelID = threadID
 	}
-	if streamingEnabled {
-		tracker = newStreamTracker(func(text string) {
-			if threadID == "" && !threadFailed {
-				// First turn — create a thread for the task output
-				taskPrefix := ""
-				if !isLocal {
-					taskPrefix = "⏱ "
-				}
-				prefix := fmt.Sprintf("%stask #%d (`%s`) ", taskPrefix, task.ID, task.Schedule)
-				threadName = types.TruncateString(prefix+task.Prompt, 100)
-				id, err := e.bot.CreateSimpleThread(ctx, task.ChannelID, threadName, prefix+text)
-				if err != nil {
-					e.logger.Error("creating task thread", "error", err, "task_id", task.ID, "channel_id", task.ChannelID)
-					threadFailed = true
-					// Fallback: send to channel directly
-					_ = e.bot.SendMessage(ctx, &bot.OutgoingMessage{
-						ChannelID: task.ChannelID,
-						Content:   text,
-					})
-					storeBotMessage(ctx, e.store, e.events, task.ChannelID, text, "")
-					return
-				}
-				threadID = id
-				// Upsert thread channel inheriting from parent so botForChannel
-				// can resolve it for subsequent operations (rename, delete, etc.).
-				if channel != nil {
-					threadChannel := &db.Channel{
-						ChannelID:   threadID,
-						GuildID:     channel.GuildID,
-						Name:        threadName,
-						DirPath:     dirPath,
-						ParentID:    task.ChannelID,
-						Platform:    channel.Platform,
-						SessionID:   channel.SessionID,
-						Permissions: channel.Permissions,
-						Active:      true,
-						Worktree:    worktreeCreated,
-					}
-					if task.Type != db.TaskTypeOnce {
-						_ = e.store.LinkTaskThread(ctx, threadChannel, task.ID, threadID)
-					} else {
-						_ = e.store.UpsertChannel(ctx, threadChannel)
-					}
-					e.invitePermissionUsers(ctx, threadID, channel.Permissions)
-				} else if task.Type != db.TaskTypeOnce {
-					_ = e.store.UpdateScheduledTaskThreadID(ctx, task.ID, threadID)
+	tracker := newStreamTracker(func(text string) {
+		if threadID == "" && !threadFailed {
+			// First turn — create a thread for the task output
+			taskPrefix := ""
+			if !isLocal {
+				taskPrefix = "⏱ "
+			}
+			prefix := fmt.Sprintf("%stask #%d (`%s`) ", taskPrefix, task.ID, task.Schedule)
+			threadName = types.TruncateString(prefix+task.Prompt, 100)
+			id, err := e.bot.CreateSimpleThread(ctx, task.ChannelID, threadName, prefix+text)
+			if err != nil {
+				e.logger.Error("creating task thread", "error", err, "task_id", task.ID, "channel_id", task.ChannelID)
+				threadFailed = true
+				// Fallback: send to channel directly
+				_ = e.bot.SendMessage(ctx, &bot.OutgoingMessage{
+					ChannelID: task.ChannelID,
+					Content:   text,
+				})
+				storeBotMessage(ctx, e.store, e.events, task.ChannelID, text, "")
+				return
+			}
+			threadID = id
+			// Upsert thread channel inheriting from parent so botForChannel
+			// can resolve it for subsequent operations (rename, delete, etc.).
+			if channel != nil {
+				threadChannel := &db.Channel{
+					ChannelID:   threadID,
+					GuildID:     channel.GuildID,
+					Name:        threadName,
+					DirPath:     dirPath,
+					ParentID:    task.ChannelID,
+					Platform:    channel.Platform,
+					SessionID:   channel.SessionID,
+					Permissions: channel.Permissions,
+					Active:      true,
+					Worktree:    worktreeCreated,
 				}
 				if task.Type != db.TaskTypeOnce {
-					task.ThreadID = threadID
-				}
-				// Notify the UI that a new thread was created so the
-				// sidebar refreshes immediately.
-				if e.events != nil {
-					e.events.BroadcastChannelCreated(task.ChannelID, threadID)
-				}
-				// Broadcast to the thread (not the parent channel) so the
-				// Electron app shows the initial message in the thread view.
-				// Don't use storeBotMessage here — CreateSimpleThread
-				// already stored the message in the DB for the thread.
-				if e.events != nil {
-					e.events.BroadcastMessageCreated(threadID, events.MessageEventData{
-						MsgID:       generateMessageID(),
-						AuthorName:  "agent",
-						Content:     prefix + text,
-						IsBot:       true,
-						IsProcessed: true,
-					})
-				}
-			} else {
-				targetID := threadID
-				if targetID == "" {
-					targetID = task.ChannelID
-				}
-				if err := e.bot.SendMessage(ctx, &bot.OutgoingMessage{
-					ChannelID: targetID,
-					Content:   text,
-				}); err != nil {
-					e.logger.Error("streaming send failed", "error", err, "channel_id", targetID)
-				}
-				storeBotMessage(ctx, e.store, e.events, targetID, text, "")
-			}
-		})
-		req.OnTurn = func(text string) {
-			// Strip [EPHEMERAL] before the tracker records it, so IsDuplicate
-			// correctly matches the final (also stripped) response.
-			text = strings.TrimSpace(strings.ReplaceAll(text, "[EPHEMERAL]", ""))
-			tracker.OnTurn(text)
-		}
-		if e.events != nil {
-			req.OnToolUse = func(toolUseID, name, input string) {
-				targetID := threadID
-				if targetID == "" {
-					targetID = task.ChannelID
-				}
-				storeAgentEvent(ctx, e.store, resolveTargetChatID(targetID), targetID, &db.Message{
-					Kind:      db.MessageKindToolUse,
-					ToolUseID: toolUseID,
-					ToolName:  name,
-					Content:   input,
-				}, e.logger.Warn)
-				e.events.BroadcastToolUse(targetID, events.ToolUseEventData{
-					ToolUseID: toolUseID,
-					ToolName:  name,
-					Input:     input,
-				})
-				if name == "AskUserQuestion" {
-					var data events.AskUserQuestionEventData
-					if err := json.Unmarshal([]byte(input), &data); err == nil && len(data.Questions) > 0 {
-						e.events.BroadcastAskUser(targetID, data)
-					}
-				}
-				if name == "ExitPlanMode" {
-					var data events.ExitPlanModeEventData
-					if err := json.Unmarshal([]byte(input), &data); err == nil && data.Plan != "" {
-						e.events.BroadcastExitPlan(targetID, data)
-					}
-				}
-				if name == "TaskUpdate" {
-					if list, ok := e.tasks.applyUpdate(targetID, input); ok {
-						e.events.BroadcastAgentTasks(targetID, events.AgentTasksEventData{Tasks: list})
-					}
-				}
-				if name == "TaskCreate" {
-					pendingTaskCreates.Store(toolUseID, input)
-				}
-			}
-			req.OnThinking = func(text string) {
-				targetID := threadID
-				if targetID == "" {
-					targetID = task.ChannelID
-				}
-				storeAgentEvent(ctx, e.store, resolveTargetChatID(targetID), targetID, &db.Message{
-					Kind:    db.MessageKindThinking,
-					Content: text,
-				}, e.logger.Warn)
-				e.events.BroadcastAgentThinking(targetID, events.AgentThinkingEventData{Text: text})
-			}
-			req.OnToolResult = func(toolUseID, output string, isError bool) {
-				targetID := threadID
-				if targetID == "" {
-					targetID = task.ChannelID
-				}
-				storeAgentEvent(ctx, e.store, resolveTargetChatID(targetID), targetID, &db.Message{
-					Kind:      db.MessageKindToolResult,
-					ToolUseID: toolUseID,
-					Content:   output,
-					IsError:   isError,
-				}, e.logger.Warn)
-				if inputRaw, ok := pendingTaskCreates.LoadAndDelete(toolUseID); ok && !isError {
-					if list, ok := e.tasks.applyCreate(targetID, inputRaw.(string), output); ok {
-						e.events.BroadcastAgentTasks(targetID, events.AgentTasksEventData{Tasks: list})
-					}
-				}
-				e.events.BroadcastToolResult(targetID, events.ToolResultEventData{
-					ToolUseID: toolUseID,
-					Output:    output,
-					IsError:   isError,
-				})
-			}
-			req.OnActivity = func(activity, detail string) {
-				targetID := threadID
-				if targetID == "" {
-					targetID = task.ChannelID
-				}
-				data := events.AgentActivityEventData{Activity: activity}
-				if activity == "model" {
-					data.Model = detail
+					_ = e.store.LinkTaskThread(ctx, threadChannel, task.ID, threadID)
 				} else {
-					data.Description = detail
+					_ = e.store.UpsertChannel(ctx, threadChannel)
 				}
-				if activity == "compacting" {
-					storeAgentEvent(ctx, e.store, resolveTargetChatID(targetID), targetID, &db.Message{
-						Kind: db.MessageKindCompacting,
-					}, e.logger.Warn)
-				}
-				e.events.BroadcastAgentActivity(targetID, data)
+				e.invitePermissionUsers(ctx, threadID, channel.Permissions)
+			} else if task.Type != db.TaskTypeOnce {
+				_ = e.store.UpdateScheduledTaskThreadID(ctx, task.ID, threadID)
 			}
+			if task.Type != db.TaskTypeOnce {
+				task.ThreadID = threadID
+			}
+			// Notify the UI that a new thread was created so the
+			// sidebar refreshes immediately.
+			if e.events != nil {
+				e.events.BroadcastChannelCreated(task.ChannelID, threadID)
+			}
+			// Broadcast to the thread (not the parent channel) so the
+			// Electron app shows the initial message in the thread view.
+			// Don't use storeBotMessage here — CreateSimpleThread
+			// already stored the message in the DB for the thread.
+			if e.events != nil {
+				e.events.BroadcastMessageCreated(threadID, events.MessageEventData{
+					MsgID:       generateMessageID(),
+					AuthorName:  "agent",
+					Content:     prefix + text,
+					IsBot:       true,
+					IsProcessed: true,
+				})
+			}
+		} else {
+			targetID := threadID
+			if targetID == "" {
+				targetID = task.ChannelID
+			}
+			if err := e.bot.SendMessage(ctx, &bot.OutgoingMessage{
+				ChannelID: targetID,
+				Content:   text,
+			}); err != nil {
+				e.logger.Error("streaming send failed", "error", err, "channel_id", targetID)
+			}
+			storeBotMessage(ctx, e.store, e.events, targetID, text, "")
+		}
+	})
+	req.OnTurn = func(text string) {
+		// Strip [EPHEMERAL] before the tracker records it, so IsDuplicate
+		// correctly matches the final (also stripped) response.
+		text = strings.TrimSpace(strings.ReplaceAll(text, "[EPHEMERAL]", ""))
+		tracker.OnTurn(text)
+	}
+	if e.events != nil {
+		req.OnToolUse = func(toolUseID, name, input string) {
+			targetID := threadID
+			if targetID == "" {
+				targetID = task.ChannelID
+			}
+			storeAgentEvent(ctx, e.store, resolveTargetChatID(targetID), targetID, &db.Message{
+				Kind:      db.MessageKindToolUse,
+				ToolUseID: toolUseID,
+				ToolName:  name,
+				Content:   input,
+			}, e.logger.Warn)
+			e.events.BroadcastToolUse(targetID, events.ToolUseEventData{
+				ToolUseID: toolUseID,
+				ToolName:  name,
+				Input:     input,
+			})
+			if name == "AskUserQuestion" {
+				var data events.AskUserQuestionEventData
+				if err := json.Unmarshal([]byte(input), &data); err == nil && len(data.Questions) > 0 {
+					e.events.BroadcastAskUser(targetID, data)
+				}
+			}
+			if name == "ExitPlanMode" {
+				var data events.ExitPlanModeEventData
+				if err := json.Unmarshal([]byte(input), &data); err == nil && data.Plan != "" {
+					e.events.BroadcastExitPlan(targetID, data)
+				}
+			}
+			if name == "TaskUpdate" {
+				if list, ok := e.tasks.applyUpdate(targetID, input); ok {
+					e.events.BroadcastAgentTasks(targetID, events.AgentTasksEventData{Tasks: list})
+				}
+			}
+			if name == "TaskCreate" {
+				pendingTaskCreates.Store(toolUseID, input)
+			}
+		}
+		req.OnThinking = func(text string) {
+			targetID := threadID
+			if targetID == "" {
+				targetID = task.ChannelID
+			}
+			storeAgentEvent(ctx, e.store, resolveTargetChatID(targetID), targetID, &db.Message{
+				Kind:    db.MessageKindThinking,
+				Content: text,
+			}, e.logger.Warn)
+			e.events.BroadcastAgentThinking(targetID, events.AgentThinkingEventData{Text: text})
+		}
+		req.OnToolResult = func(toolUseID, output string, isError bool) {
+			targetID := threadID
+			if targetID == "" {
+				targetID = task.ChannelID
+			}
+			storeAgentEvent(ctx, e.store, resolveTargetChatID(targetID), targetID, &db.Message{
+				Kind:      db.MessageKindToolResult,
+				ToolUseID: toolUseID,
+				Content:   output,
+				IsError:   isError,
+			}, e.logger.Warn)
+			if inputRaw, ok := pendingTaskCreates.LoadAndDelete(toolUseID); ok && !isError {
+				if list, ok := e.tasks.applyCreate(targetID, inputRaw.(string), output); ok {
+					e.events.BroadcastAgentTasks(targetID, events.AgentTasksEventData{Tasks: list})
+				}
+			}
+			e.events.BroadcastToolResult(targetID, events.ToolResultEventData{
+				ToolUseID: toolUseID,
+				Output:    output,
+				IsError:   isError,
+			})
+		}
+		req.OnActivity = func(activity, detail string) {
+			targetID := threadID
+			if targetID == "" {
+				targetID = task.ChannelID
+			}
+			data := events.AgentActivityEventData{Activity: activity}
+			if activity == "model" {
+				data.Model = detail
+			} else {
+				data.Description = detail
+			}
+			if activity == "compacting" {
+				storeAgentEvent(ctx, e.store, resolveTargetChatID(targetID), targetID, &db.Message{
+					Kind: db.MessageKindCompacting,
+				}, e.logger.Warn)
+			}
+			e.events.BroadcastAgentActivity(targetID, data)
 		}
 	}
 
@@ -532,7 +525,7 @@ func (e *TaskExecutor) ExecuteTask(ctx context.Context, task *db.ScheduledTask) 
 	}
 
 	// Skip final send if it duplicates the last streamed turn
-	if tracker == nil || !tracker.IsDuplicate(resp.Response) {
+	if !tracker.IsDuplicate(resp.Response) {
 		if err := e.bot.SendMessage(ctx, &bot.OutgoingMessage{
 			ChannelID: targetChannelID,
 			Content:   resp.Response,

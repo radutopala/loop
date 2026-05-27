@@ -577,36 +577,30 @@ func (s *TaskExecutorSuite) TestRefreshConfigReloads() {
 		called = true
 		return &config.Config{
 			ContainerTimeout: 99 * time.Second,
-			StreamingEnabled: true,
 		}, nil
 	}
 
-	timeout, streaming := s.executor.refreshConfig()
+	timeout := s.executor.refreshConfig()
 	require.True(s.T(), called)
 	require.Equal(s.T(), 99*time.Second, timeout)
-	require.True(s.T(), streaming)
 }
 
 func (s *TaskExecutorSuite) TestRefreshConfigFallbackOnError() {
 	// Set initial values.
 	s.executor.containerTimeout.Store(int64(30 * time.Second))
-	s.executor.streamingEnabled.Store(true)
 
 	s.executor.configLoad = func() (*config.Config, error) {
 		return nil, errors.New("reload failed")
 	}
 
-	timeout, streaming := s.executor.refreshConfig()
+	timeout := s.executor.refreshConfig()
 	require.Equal(s.T(), 30*time.Second, timeout)
-	require.True(s.T(), streaming)
 }
 
 func (s *TaskExecutorSuite) TestRefreshConfigNilLoader() {
 	s.executor.containerTimeout.Store(int64(42 * time.Second))
-	s.executor.streamingEnabled.Store(false)
 
 	// configLoad is already nil from SetupTest (passed nil).
-	timeout, streaming := s.executor.refreshConfig()
+	timeout := s.executor.refreshConfig()
 	require.Equal(s.T(), 42*time.Second, timeout)
-	require.False(s.T(), streaming)
 }

@@ -45,7 +45,6 @@ Exactly one of these should be set. OAuth takes precedence if both are provided.
 |---|---|---|---|
 | `claude_bin_path` | `string` | `"claude"` | Path to the Claude CLI binary inside containers. |
 | `claude_model` | `string` | `"claude-sonnet-4-6"` | Claude model to use. Options: `"claude-opus-4-7"`, `"claude-opus-4-6[1m]"`, `"claude-opus-4-6"`, `"claude-sonnet-4-6"`. |
-| `streaming_enabled` | `bool` | `true` | Stream intermediate Claude turns to chat as they happen. |
 | `keep_mcp_configs` | `bool` | `false` | When true, preserves MCP config JSON files after container runs. Useful for debugging MCP server configuration. |
 
 #### Storage & Logging
@@ -597,7 +596,6 @@ The merge follows these principles:
   // Agent settings
   //"claude_model": "",
   //"claude_bin_path": "claude",
-  //"streaming_enabled": true,
   //"keep_mcp_configs": false, // preserve MCP config files after container runs for debugging
 
   // Browser automation
