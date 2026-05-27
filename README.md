@@ -925,6 +925,21 @@ Project configs (`.loop/config.json`) can define their own `prompt_shortcuts` th
 
 Agents can manage shortcuts via the `prompt_shortcut` MCP tool — list, add, update, or delete shortcuts in either global or project scope.
 
+### Bash Shortcuts
+
+The `bash_shortcuts` array defines quick-access shell commands that users can trigger by typing `$` in the terminal shortcuts bar. Each shortcut has a name, optional description, and either an inline `command` or a `command_path` to a script file (resolved as `~/.loop/bash-shortcuts/{path}` globally, or `.loop/bash-shortcuts/{path}` per-project).
+
+```jsonc
+{
+  "bash_shortcuts": [
+    { "name": "make lint", "description": "Run the linter", "command": "make lint" },
+    { "name": "tests", "description": "Run unit tests", "command_path": "run-tests.sh" }
+  ]
+}
+```
+
+The `$` picker mounts on **Docker Shell** and **Host Shell** panes (raw bash; sent with a trailing newline) and on **Docker Agent** panes (Claude TUI; sent as a bracketed paste + `\r`). The `#` prompt-picker and the `$` bash-picker are mutually exclusive on a given pane. Agents can manage shortcuts via the `bash_shortcut` MCP tool.
+
 ### Workflows
 
 Workflows are declarative DAG-based pipelines of prompt and bash nodes. They provide repeatable, structured execution with parallel fan-out, dependency tracking, and real-time status events. Defined in the `workflows` array in config, using the same merge-by-name system as `task_templates`.
@@ -961,7 +976,7 @@ Loop includes a cross-platform desktop app for macOS, Windows, and Linux, built 
 ### Features
 
 - **Chat** — send messages, stream agent responses in real-time, search messages (Cmd+K), copy-on-select, persistent drafts across channel switches, message history navigation (ArrowUp/ArrowDown), prompt shortcuts (`#` picker), clickable file links in message text and tool blocks (paths with optional `:line` suffix are auto-detected, validated against the working tree, and open the editor panel — placed opposite the chat horizontally if missing — scrolled to the target line). Pasting an image into the chat input (PNG/JPEG/GIF/WebP) saves it under `<workspace>/.loop/pastes/` and inserts the absolute path at the caret, so the agent's `Read` tool can pick it up
-- **Terminal** — interactive xterm.js terminals with horizontal/vertical splits. Three panel types: **Docker Agent** launches Claude Code inside the project's docker container, **Docker Shell** opens a plain bash shell in the same container (no Claude), and **Host Shell** runs on the local machine. Docker Agent and Docker Shell share the container — files and processes are visible across panes. The Docker Agent split menu and empty-layout picker expose three session-handling variants — **Resume**, **Resume with fork**, **Fresh session** — chosen up front per pane. **Shift+Enter** inserts a newline (matching Claude `/terminal-setup`) instead of submitting. Clicked URLs route via `shell.openExternal` and open only in the OS default browser, never inside Loop
+- **Terminal** — interactive xterm.js terminals with horizontal/vertical splits. Three panel types: **Docker Agent** launches Claude Code inside the project's docker container, **Docker Shell** opens a plain bash shell in the same container (no Claude), and **Host Shell** runs on the local machine. Docker Agent and Docker Shell share the container — files and processes are visible across panes. The Docker Agent split menu and empty-layout picker expose three session-handling variants — **Resume**, **Resume with fork**, **Fresh session** — chosen up front per pane. **Shift+Enter** inserts a newline (matching Claude `/terminal-setup`) instead of submitting. Each pane has a footer shortcuts bar: Docker Agent panes show a `#` picker for prompt shortcuts, Docker Shell and Host Shell panes show a `$` picker for bash shortcuts. Clicked URLs route via `shell.openExternal` and open only in the OS default browser, never inside Loop
 - **File editor** — CodeMirror-powered editor with syntax highlighting, markdown preview, in-file search, context menus, auto-save, and directory creation/deletion. Image files (PNG/JPEG/GIF/WebP) render inline as `<img>` instead of the text editor, with cache-busting on agent edits so the picture refreshes automatically
 - **Git panel** — git changes with per-file addition/deletion stats, maximizable to full width, expandable context rows between hunks (GitLab-style "load more"), branch-to-branch diff mode for comparing any two branches, renamed file support with `{old => new}` notation, commit history view with branch selector and lazy pagination, worktrees tab for managing git worktrees (import, navigate, delete). When the current branch has an open GitHub PR, the diff source defaults to the PR's base ref and a state-coloured PR link chip surfaces in the panel header (requires `gh` on the host; account selectable via `github.gh_user` config)
 - **Kanban panel** — visual ticket board with Open / In Progress / Closed columns backed by filesystem-based `tk` tickets (`.tickets/` directory). Create, edit, delete tickets with full metadata (priority, type, assignee, tags, dependencies, design notes, acceptance criteria). One-click "Assign Worktree" atomically claims a ticket, creates a git worktree, spawns a thread, and auto-starts an agent. Live updates via WebSocket. See [Kanban](docs/kanban.md)
@@ -972,7 +987,7 @@ Loop includes a cross-platform desktop app for macOS, Windows, and Linux, built 
 - **Custom layouts** — named split-pane workspaces with drag-to-resize, saved per channel. Create, rename, delete, and restore default layouts from the tab bar
 - **Islands layout** — panels float as rounded cards over a deep canvas background with gaps between them. Enable via `"islands": true` in the `desktop` config section (on by default)
 - **Multi-window** — open multiple windows (Cmd+N), each navigating independently
-- **Sidebar** — browse channels and threads, create new ones, batch-delete, see running status (green dot), and open directories directly from the sidebar
+- **Sidebar** — browse channels and threads, create new ones, batch-delete, see running status (green dot), and open directories directly from the sidebar. Status pills surface live conditions: `rev` when a review session is open, `ask` when an agent is parked on an `AskUserQuestion` card (sourced from `/api/review/sessions` and `/api/asks/pending`, rehydrated on WebSocket reconnect)
 - **Auto-update** — checks for new releases every 30 minutes, download and install with one click
 - **Deep links** — `loop://channel/<id>` opens the app directly to a channel
 - **Branch picker** — switch branches from the header bar, create worktree threads, import existing worktrees. Threads show branches only; parent channels show branches + worktrees in a 50/50 split. Double-click a branch name to copy it
@@ -1115,6 +1130,7 @@ make app-install
 | `playground` | Manage playgrounds (create/update/delete) |
 | `playground_file` | Manage files within a playground (create/update/read/delete/list) |
 | `prompt_shortcut` | Manage prompt shortcuts (list, add, update, delete) in global or project scope |
+| `bash_shortcut` | Manage bash shortcuts (list, add, update, delete) in global or project scope |
 | | **Workflows** |
 | `run_workflow` | Start a workflow run by name with optional inputs |
 | `get_workflow_run` | Get run status and node outputs |

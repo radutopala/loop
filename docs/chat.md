@@ -386,6 +386,19 @@ Selecting a shortcut (via click, `Tab`, or `Enter`) clears the input and immedia
 
 ---
 
+## Bash Shortcuts
+
+A separate `$` picker surfaces shell-command shortcuts on terminal panes (not in the chat input). Shortcuts are defined in the `bash_shortcuts` config array (global or per-project). See [Configuration: Bash Shortcuts](configuration.md#bash-shortcuts).
+
+The picker lives in the footer bar below each terminal:
+
+- **Docker Shell** and **Host Shell** panes — shows a `$` button. Picked commands are sent as raw text + `\n` (bash doesn't enable bracketed paste by default).
+- **Docker Agent** panes — shows the `#` prompt-shortcut button instead of `$`. Picked entries are wrapped in `ESC[200~ … ESC[201~\r` so multi-line scripts arrive as a single bracketed-paste buffer in Claude's TUI.
+
+The two buttons are mutually exclusive per pane — a Docker Shell or Host Shell pane never shows `#`, and a Docker Agent pane never shows `$`. Selecting a shortcut sends the resolved command/prompt immediately. Backed by `GET /api/bash-shortcuts` (project shortcuts merge on top of global ones when `channel_id` is passed).
+
+---
+
 ## @Mention Autocomplete
 
 Typing `@` followed by a partial match for "LoopBot" triggers mention autocomplete.

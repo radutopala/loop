@@ -55,6 +55,8 @@ func registerBackendSteps(ctx *godog.ScenarioContext, tc *TestContext) {
 	// Shortcut setup steps
 	ctx.Step(`^I add a prompt shortcut "([^"]*)" with prompt "([^"]*)" via API$`, tc.addShortcutViaAPI)
 	ctx.Step(`^I clear all prompt shortcuts via API$`, tc.clearAllShortcutsViaAPI)
+	ctx.Step(`^I add a bash shortcut "([^"]*)" with command "([^"]*)" via API$`, tc.addBashShortcutViaAPI)
+	ctx.Step(`^I clear all bash shortcuts via API$`, tc.clearAllBashShortcutsViaAPI)
 
 	// WebSocket steps
 	ctx.Step(`^I connect to the events WebSocket$`, tc.connectEventsWS)
@@ -466,6 +468,52 @@ func (tc *TestContext) clearAllShortcutsViaAPI() error {
 		}
 		if tc.LastStatus != http.StatusNoContent {
 			return fmt.Errorf("failed to delete shortcut %q: status %d, body: %s", sc.Name, tc.LastStatus, string(tc.LastBody))
+		}
+	}
+	return nil
+}
+
+func (tc *TestContext) addBashShortcutViaAPI(name, command string) error {
+	payload := map[string]string{
+		"action":      "add",
+		"name":        name,
+		"description": name,
+		"command":     command,
+	}
+	b, _ := json.Marshal(payload)
+	if err := tc.doRequest(http.MethodPost, "/api/bash-shortcuts", string(b)); err != nil {
+		return err
+	}
+	if tc.LastStatus != http.StatusNoContent {
+		return fmt.Errorf("failed to add bash shortcut: status %d, body: %s", tc.LastStatus, string(tc.LastBody))
+	}
+	tc.CreatedBashShortcutNames = append(tc.CreatedBashShortcutNames, name)
+	return nil
+}
+
+// clearAllBashShortcutsViaAPI deletes every bash shortcut currently
+// configured on the daemon. Mirror of clearAllShortcutsViaAPI for the
+// /api/bash-shortcuts endpoint.
+func (tc *TestContext) clearAllBashShortcutsViaAPI() error {
+	if err := tc.doRequest(http.MethodGet, "/api/bash-shortcuts", ""); err != nil {
+		return err
+	}
+	if tc.LastStatus != http.StatusOK {
+		return fmt.Errorf("failed to list bash shortcuts: status %d, body: %s", tc.LastStatus, string(tc.LastBody))
+	}
+	var shortcuts []struct {
+		Name string `json:"name"`
+	}
+	if err := json.Unmarshal(tc.LastBody, &shortcuts); err != nil {
+		return fmt.Errorf("decoding bash shortcuts list: %w", err)
+	}
+	for _, sc := range shortcuts {
+		body := fmt.Sprintf(`{"action":"delete","name":%q}`, sc.Name)
+		if err := tc.doRequest(http.MethodPost, "/api/bash-shortcuts", body); err != nil {
+			return err
+		}
+		if tc.LastStatus != http.StatusNoContent {
+			return fmt.Errorf("failed to delete bash shortcut %q: status %d, body: %s", sc.Name, tc.LastStatus, string(tc.LastBody))
 		}
 	}
 	return nil

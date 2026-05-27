@@ -37,7 +37,8 @@ type TestContext struct {
 	CreatedDirs       []string
 	WorktreeThreadID     string
 	WorktreePath         string
-	CreatedShortcutNames []string
+	CreatedShortcutNames     []string
+	CreatedBashShortcutNames []string
 
 	// Frontend (lazily initialized)
 	chromeTab *chromeTab
@@ -109,6 +110,14 @@ func (tc *TestContext) cleanup() {
 	for _, name := range tc.CreatedShortcutNames {
 		body := fmt.Sprintf(`{"action":"delete","name":%q}`, name)
 		req, _ := http.NewRequest("POST", tc.BaseURL+"/api/shortcuts", strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		tc.HTTPClient.Do(req) //nolint:errcheck
+	}
+
+	// Delete all tracked bash shortcuts.
+	for _, name := range tc.CreatedBashShortcutNames {
+		body := fmt.Sprintf(`{"action":"delete","name":%q}`, name)
+		req, _ := http.NewRequest("POST", tc.BaseURL+"/api/bash-shortcuts", strings.NewReader(body))
 		req.Header.Set("Content-Type", "application/json")
 		tc.HTTPClient.Do(req) //nolint:errcheck
 	}

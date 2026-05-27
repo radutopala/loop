@@ -37,3 +37,17 @@ Feature: Ask user question card
     And I click on the button with text "yes"
     And I click on the button with text "Send Answers"
     Then I wait for text "CLAUDE HAS QUESTIONS" to disappear
+
+  Scenario: Sidebar lights the ask pill while the channel is parked on AskUserQuestion
+    # agent.ask_user → applyEvent sets state.askUserQuestions → refreshAskUserMembership
+    # adds the channel ID to askUserChannelIdsRef → ChannelItem renders
+    # <StatusPill label="ask" title="Agent is asking a question">. Clicking
+    # Send Answers fires clearAskUser() → clearAskUserPill(channelId) → set
+    # delete → pill disappears.
+    When I inject an ask_user event with question "Pick one" and options "yes,no"
+    Then I wait for text "CLAUDE HAS QUESTIONS" to appear
+    And the element "[data-testid='sidebar'] [title='Agent is asking a question']" should be visible
+    When I click on the button with text "yes"
+    And I click on the button with text "Send Answers"
+    Then I wait for text "CLAUDE HAS QUESTIONS" to disappear
+    And the element "[data-testid='sidebar'] [title='Agent is asking a question']" should not exist

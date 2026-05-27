@@ -2146,6 +2146,62 @@ Add, update, or delete a prompt shortcut in the global or project config file.
 
 ---
 
+### `GET /api/bash-shortcuts`
+
+Returns bash shortcuts with resolved command text. When a `channel_id` is provided, project-level shortcuts are merged on top of global ones (project overrides global by name).
+
+**Query Parameters:**
+
+| Param        | Type   | Required | Description |
+|--------------|--------|----------|-------------|
+| `channel_id` | string | no       | Channel ID to merge project-level shortcuts |
+
+**Response (200):**
+```json
+[
+  {
+    "name": "make lint",
+    "description": "Run the linter",
+    "command": "make lint"
+  }
+]
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `name` | string | Shortcut identifier |
+| `description` | string | Human-readable description |
+| `command` | string | Resolved command text (inline or loaded from file) |
+
+Shortcuts with unresolvable commands (e.g. missing file) are silently skipped.
+
+---
+
+### `POST /api/bash-shortcuts`
+
+Add, update, or delete a bash shortcut in the global or project config file.
+
+**Request Body:**
+
+| Field          | Type   | Required | Description |
+|----------------|--------|----------|-------------|
+| `action`       | string | yes      | `add`, `update`, or `delete` |
+| `name`         | string | yes      | Shortcut name |
+| `scope`        | string | no       | `global` (default) or `project` |
+| `channel_id`   | string | conditional | Required when scope is `project` |
+| `description`  | string | no       | Human-readable description (add/update) |
+| `command`      | string | conditional | Inline command text (required for add/update unless `command_path` is set) |
+| `command_path` | string | conditional | Path to script file relative to `bash-shortcuts/` dir (mutually exclusive with `command`) |
+
+**Response:** `204 No Content` on success.
+
+**Errors:**
+- `400` — missing name, invalid action, missing command, mutually exclusive fields, or missing channel_id for project scope
+- `404` — shortcut not found (update/delete)
+- `409` — duplicate name (add)
+
+---
+
 ### `PUT /api/config/project`
 
 Save project config for a channel.
