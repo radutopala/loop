@@ -123,11 +123,17 @@ export async function fetchPR(channelId: string): Promise<PRResponse> {
   return res.json();
 }
 
-export async function fetchDiff(channelId: string, source?: string, target?: string): Promise<DiffResponse> {
-  let url = `${getApiUrl()}/api/channels/${channelId}/diff`;
+export async function fetchDiff(channelId: string, source?: string, target?: string, rootIndex?: number): Promise<DiffResponse> {
+  const params = new URLSearchParams();
   if (source && target) {
-    url += `?source=${encodeURIComponent(source)}&target=${encodeURIComponent(target)}`;
+    params.set("source", source);
+    params.set("target", target);
   }
+  if (rootIndex !== undefined && rootIndex > 0) {
+    params.set("root", String(rootIndex));
+  }
+  const qs = params.toString();
+  const url = qs ? `${getApiUrl()}/api/channels/${channelId}/diff?${qs}` : `${getApiUrl()}/api/channels/${channelId}/diff`;
   const res = await fetch(url);
   if (!res.ok) throw new Error(`Failed to fetch diff: ${res.statusText}`);
   return res.json();

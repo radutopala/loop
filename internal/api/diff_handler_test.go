@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -653,6 +654,83 @@ func TestResolveBranchRefEmpty(t *testing.T) {
 	// The handler validates branch names before calling resolveBranchRef, so
 	// this path is unreachable end-to-end — covered with a direct unit test.
 	require.Equal(t, "", resolveBranchRef(context.Background(), "/tmp", ""))
+}
+
+func (s *ServerSuite) TestGitDiffRootParamSelectsExtraDir() {
+	// Primary dir has one change, extra dir has another. Verify ?root=1
+	// returns the extra dir's diff, not the primary's.
+	primary := s.T().TempDir()
+	extra := s.T().TempDir()
+	for _, dir := range []string{primary, extra} {
+		gitRun(s.T(), dir, "init")
+		gitRun(s.T(), dir, "config", "user.email", "test@test.com")
+		gitRun(s.T(), dir, "config", "user.name", "Test")
+	}
+	require.NoError(s.T(), os.WriteFile(filepath.Join(primary, "primary.txt"), []byte("a\n"), 0o644))
+	gitRun(s.T(), primary, "add", ".")
+	gitRun(s.T(), primary, "commit", "-m", "init")
+	require.NoError(s.T(), os.WriteFile(filepath.Join(primary, "primary.txt"), []byte("a\nb\n"), 0o644))
+
+	require.NoError(s.T(), os.WriteFile(filepath.Join(extra, "extra.txt"), []byte("x\n"), 0o644))
+	gitRun(s.T(), extra, "add", ".")
+	gitRun(s.T(), extra, "commit", "-m", "init")
+	require.NoError(s.T(), os.WriteFile(filepath.Join(extra, "extra.txt"), []byte("x\ny\n"), 0o644))
+
+	// Write project config referencing the extra dir.
+	require.NoError(s.T(), os.MkdirAll(filepath.Join(primary, ".loop"), 0o755))
+	cfgJSON := `{"extra_dirs":[` + strconv.Quote(extra) + `]}`
+	require.NoError(s.T(), os.WriteFile(filepath.Join(primary, ".loop", "config.json"), []byte(cfgJSON), 0o644))
+
+	s.store.On("GetChannel", mock.Anything, "ch-roots").
+		Return(&db.Channel{ChannelID: "ch-roots", DirPath: primary}, nil)
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /api/channels/{id}/diff", s.srv.handleGitDiff)
+
+	// root=0 → primary
+	req := httptest.NewRequest("GET", "/api/channels/ch-roots/diff?root=0", nil)
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+	require.Equal(s.T(), http.StatusOK, w.Code)
+	body := w.Body.String()
+	require.Contains(s.T(), body, `"primary.txt"`)
+	require.NotContains(s.T(), body, `"extra.txt"`)
+
+	// root=1 → extra
+	req = httptest.NewRequest("GET", "/api/channels/ch-roots/diff?root=1", nil)
+	w = httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+	require.Equal(s.T(), http.StatusOK, w.Code)
+	body = w.Body.String()
+	require.Contains(s.T(), body, `"extra.txt"`)
+	require.NotContains(s.T(), body, `"primary.txt"`)
+}
+
+func (s *ServerSuite) TestGitDiffRootParamInvalid() {
+	dir := s.T().TempDir()
+	s.store.On("GetChannel", mock.Anything, "ch-bad-root").
+		Return(&db.Channel{ChannelID: "ch-bad-root", DirPath: dir}, nil)
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /api/channels/{id}/diff", s.srv.handleGitDiff)
+
+	// Non-numeric → 400.
+	req := httptest.NewRequest("GET", "/api/channels/ch-bad-root/diff?root=abc", nil)
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+	require.Equal(s.T(), http.StatusBadRequest, w.Code)
+
+	// Negative → 400.
+	req = httptest.NewRequest("GET", "/api/channels/ch-bad-root/diff?root=-1", nil)
+	w = httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+	require.Equal(s.T(), http.StatusBadRequest, w.Code)
+
+	// Out of range → 400 (no extra_dirs configured, only root=0 valid).
+	req = httptest.NewRequest("GET", "/api/channels/ch-bad-root/diff?root=5", nil)
+	w = httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+	require.Equal(s.T(), http.StatusBadRequest, w.Code)
 }
 
 // gitRun is a test helper to run a git command in a directory.

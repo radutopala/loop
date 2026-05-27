@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { DiffResponse, PRInfo } from "../../api/loopApi";
 import { fetchDiff, fetchBranches, fetchCommits, fetchPR } from "../../api/loopApi";
+import { fetchRoots, type RootEntry } from "../../api/files";
 import { useEventStream } from "../../hooks/useEventStream";
 import { fonts } from "../../theme";
 import type { ColorPalette } from "../../theme";
@@ -90,6 +91,10 @@ export function GitPanel({ channelId, dirPath, branch, maximized, sidebarOpen, t
   const [diffVersion, setDiffVersion] = useState(0);
   const panelRef = useRef<HTMLDivElement>(null);
   const [pr, setPR] = useState<PRInfo | null>(null);
+  // Multi-root workspace support: primary dir_path + extra_dirs. When the
+  // channel has no extras, roots.length is 1 and the dropdown is hidden.
+  const [roots, setRoots] = useState<RootEntry[]>([]);
+  const [rootIndex, setRootIndex] = useState(0);
   // Track which channel's PR has seeded sourceBranch so a manual re-pick by
   // the user isn't clobbered when the same channel's PR refreshes.
   const prSeededRef = useRef<string>("");
@@ -127,6 +132,22 @@ export function GitPanel({ channelId, dirPath, branch, maximized, sidebarOpen, t
     }).catch(() => { if (!cancelled) setPR(null); });
     return () => { cancelled = true; };
   }, [channelId]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Fetch the channel's roots (primary dir_path + extra_dirs) so the diff can
+  // be scoped to any of them via a dropdown. Reset selection when switching
+  // channels so we don't carry over an index that's out of range for the next.
+  useEffect(() => {
+    setRootIndex(0);
+    if (!channelId) {
+      setRoots([]);
+      return;
+    }
+    let cancelled = false;
+    fetchRoots(channelId)
+      .then((r) => { if (!cancelled) setRoots(r); })
+      .catch(() => { if (!cancelled) setRoots([]); });
+    return () => { cancelled = true; };
+  }, [channelId]);
 
   // Fetch branch list when switching to branch or commits mode. Re-runs when
   // `pr` changes so the PR's base ref is included in the dropdown options even
@@ -208,8 +229,8 @@ export function GitPanel({ channelId, dirPath, branch, maximized, sidebarOpen, t
     if (gitMode === "branches" && (!sourceBranch || !targetBranch)) return;
     try {
       const d = gitMode === "branches"
-        ? await fetchDiff(channelId, sourceBranch, targetBranch)
-        : await fetchDiff(channelId);
+        ? await fetchDiff(channelId, sourceBranch, targetBranch, rootIndex)
+        : await fetchDiff(channelId, undefined, undefined, rootIndex);
       // If diff changed, bump version to reset DiffViewer internal state
       if (d.diff !== prevDiffRef.current) {
         prevDiffRef.current = d.diff;
@@ -234,7 +255,7 @@ export function GitPanel({ channelId, dirPath, branch, maximized, sidebarOpen, t
     } finally {
       setLoading(false);
     }
-  }, [channelId, gitMode, sourceBranch, targetBranch, commitBranch]);
+  }, [channelId, gitMode, sourceBranch, targetBranch, commitBranch, rootIndex]);
 
   // Initial load + background polling fallback
   useEffect(() => {
@@ -375,6 +396,19 @@ export function GitPanel({ channelId, dirPath, branch, maximized, sidebarOpen, t
           )}
         </span>
         <div style={{ flex: 1 }} />
+        {roots.length > 1 && (gitMode === "uncommitted" || gitMode === "branches") && (
+          <select
+            value={rootIndex}
+            onChange={(e) => setRootIndex(Number(e.target.value))}
+            style={selectStyle}
+            title="Workspace root"
+            data-testid="git-panel-root-select"
+          >
+            {roots.map((r) => (
+              <option key={r.index} value={r.index} title={r.path}>{r.path}</option>
+            ))}
+          </select>
+        )}
         {pr && <PRChip pr={pr} colors={colors} />}
         {gitMode !== "worktrees" && gitMode !== "branchlist" && (
           <button onClick={load} title="Refresh" style={headerBtnStyle} onMouseEnter={hoverIn} onMouseLeave={hoverOut}>
