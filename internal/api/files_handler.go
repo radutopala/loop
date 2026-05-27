@@ -74,7 +74,10 @@ func (s *Server) validateFilePath(rootDir, relativePath string) (string, error) 
 	return absPath, nil
 }
 
-// allDirPaths returns the primary dir_path followed by any extra_dirs from project config.
+// allDirPaths returns the primary dir_path followed by any extra_dirs from
+// project config. Tilde-prefixed extra_dirs entries (e.g. "~/dev/foo") are
+// expanded to the user's home directory so downstream filesystem and git
+// operations can chdir into them — the OS does not expand "~" itself.
 func (s *Server) allDirPaths(ctx context.Context, channelID string) ([]string, error) {
 	dirPath, err := s.resolveDirPath(ctx, "", channelID)
 	if err != nil {
@@ -83,9 +86,25 @@ func (s *Server) allDirPaths(ctx context.Context, channelID string) ([]string, e
 	paths := []string{dirPath}
 	cfg, err := config.LoadProjectConfig(dirPath, &config.Config{})
 	if err == nil && len(cfg.ExtraDirs) > 0 {
-		paths = append(paths, cfg.ExtraDirs...)
+		for _, p := range cfg.ExtraDirs {
+			paths = append(paths, s.expandHomePath(p))
+		}
 	}
 	return paths, nil
+}
+
+// expandHomePath expands a leading "~/" to the user's home directory.
+// Returns the path unchanged if it doesn't start with "~/" or if the home
+// directory cannot be resolved.
+func (s *Server) expandHomePath(path string) string {
+	if !strings.HasPrefix(path, "~/") {
+		return path
+	}
+	home, err := s.sys.UserHomeDir()
+	if err != nil || home == "" {
+		return path
+	}
+	return filepath.Join(home, path[2:])
 }
 
 // resolveRootDir returns the root directory for file operations, supporting
