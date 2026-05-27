@@ -2,66 +2,108 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react
 import { createPortal } from "react-dom";
 import { useTheme } from "../../ThemeContext";
 import { fonts } from "../../theme";
-import { fetchShortcuts, type PromptShortcut } from "../../api/configApi";
-import { LoopInfinityIcon } from "../LoopInfinityIcon";
-import type { SessionStatus } from "../../types";
+import { fetchShortcuts, fetchBashShortcuts, type PromptShortcut, type BashShortcut } from "../../api/configApi";
+import type { TerminalTarget } from "../../types";
 
 interface TerminalShortcutsProps {
   channelId: string;
   /** Pane leaf id — used for test selectors. */
   leafId: string;
-  /** Called with the resolved prompt text when a shortcut is picked. */
-  onPick: (prompt: string) => void;
-  /** Current session status — drives the animated isolation logo. */
-  status?: SessionStatus;
+  /** Called with the resolved text when a shortcut is picked. */
+  onPick: (text: string) => void;
+  /** Which terminal this footer is attached to. */
+  target?: TerminalTarget;
+  /** True when the pane runs Claude (so # prompt shortcuts apply). Defaults
+   *  to true for `target === "agent"`. The Docker shell pane runs raw bash in
+   *  the agent container and passes false so only $ bash shortcuts surface. */
+  showPrompts?: boolean;
 }
 
+type MenuKind = "prompt" | "bash";
+
 /**
- * Footer bar rendered below the xterm content. Shows a `#` button that
- * opens a dropdown (popping upward) of prompt shortcuts.
+ * Footer bar rendered below the xterm content. Shows a `#` button for prompt
+ * shortcuts (agent only) and a `$` button for bash shortcuts (both targets).
+ * Each opens a dropdown popping upward.
  */
-export function TerminalShortcuts({ channelId, leafId, onPick, status }: TerminalShortcutsProps) {
+export function TerminalShortcuts({ channelId, leafId, onPick, target = "agent", showPrompts }: TerminalShortcutsProps) {
+  const promptsEnabled = showPrompts ?? (target === "agent");
   const { colors } = useTheme();
-  const [shortcuts, setShortcuts] = useState<PromptShortcut[]>([]);
-  const [open, setOpen] = useState(false);
+  const [prompts, setPrompts] = useState<PromptShortcut[]>([]);
+  const [bash, setBash] = useState<BashShortcut[]>([]);
+  const [openKind, setOpenKind] = useState<MenuKind | null>(null);
   const [selectedIdx, setSelectedIdx] = useState(0);
   const [menuPos, setMenuPos] = useState<{ bottom: number; left: number }>({ bottom: 0, left: 0 });
-  const btnRef = useRef<HTMLButtonElement>(null);
+  const promptBtnRef = useRef<HTMLButtonElement>(null);
+  const bashBtnRef = useRef<HTMLButtonElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     let cancelled = false;
-    fetchShortcuts(channelId)
-      .then((list) => { if (!cancelled) setShortcuts(list); })
-      .catch(() => { if (!cancelled) setShortcuts([]); });
+    if (promptsEnabled) {
+      fetchShortcuts(channelId)
+        .then((list) => { if (!cancelled) setPrompts(list); })
+        .catch(() => { if (!cancelled) setPrompts([]); });
+    } else {
+      fetchBashShortcuts(channelId)
+        .then((list) => { if (!cancelled) setBash(list); })
+        .catch(() => { if (!cancelled) setBash([]); });
+    }
     return () => { cancelled = true; };
-  }, [channelId]);
+  }, [channelId, promptsEnabled]);
 
   useLayoutEffect(() => {
-    if (!open || !btnRef.current) return;
-    const r = btnRef.current.getBoundingClientRect();
-    // Pop upward: anchor menu's bottom 4px above the button's top.
+    if (openKind === null) return;
+    const btn = openKind === "prompt" ? promptBtnRef.current : bashBtnRef.current;
+    if (!btn) return;
+    const r = btn.getBoundingClientRect();
     setMenuPos({ bottom: window.innerHeight - r.top + 4, left: r.left });
-  }, [open]);
+  }, [openKind]);
 
   useEffect(() => {
-    if (!open) return;
+    if (openKind === null) return;
     const handler = (e: MouseEvent) => {
-      const target = e.target as Node;
-      if (btnRef.current?.contains(target)) return;
-      if (menuRef.current?.contains(target)) return;
-      setOpen(false);
+      const t = e.target as Node;
+      if (promptBtnRef.current?.contains(t)) return;
+      if (bashBtnRef.current?.contains(t)) return;
+      if (menuRef.current?.contains(t)) return;
+      setOpenKind(null);
     };
     document.addEventListener("mousedown", handler);
     return () => document.removeEventListener("mousedown", handler);
-  }, [open]);
+  }, [openKind]);
 
-  const pick = useCallback((sc: PromptShortcut) => {
-    setOpen(false);
+  const pickPrompt = useCallback((sc: PromptShortcut) => {
+    setOpenKind(null);
     onPick(sc.prompt);
   }, [onPick]);
 
-  const isRunning = status === "running";
+  const pickBash = useCallback((sc: BashShortcut) => {
+    setOpenKind(null);
+    onPick(sc.command);
+  }, [onPick]);
+
+  const showPromptBtn = promptsEnabled && prompts.length > 0;
+  const showBashBtn = !promptsEnabled && bash.length > 0;
+
+  const items: { name: string; description: string; text: string }[] =
+    openKind === "prompt"
+      ? prompts.map((p) => ({ name: p.name, description: p.description, text: p.prompt }))
+      : openKind === "bash"
+        ? bash.map((b) => ({ name: b.name, description: b.description, text: b.command }))
+        : [];
+
+  const pickItem = (idx: number) => {
+    if (openKind === "prompt") {
+      const p = prompts[idx];
+      if (p) pickPrompt(p);
+    } else if (openKind === "bash") {
+      const b = bash[idx];
+      if (b) pickBash(b);
+    }
+  };
+
+  const sigil = openKind === "bash" ? "$" : "#";
 
   return (
     <div
@@ -76,30 +118,13 @@ export function TerminalShortcuts({ channelId, leafId, onPick, status }: Termina
         height: 40,
       }}
     >
-      {shortcuts.length > 0 ? (
+      {showPromptBtn && (
         <button
-          ref={btnRef}
-          onClick={() => { setSelectedIdx(0); setOpen((v) => !v); }}
+          ref={promptBtnRef}
+          onClick={() => { setSelectedIdx(0); setOpenKind((k) => (k === "prompt" ? null : "prompt")); }}
           title="Prompt shortcuts"
           data-testid={`terminal-shortcuts-btn-${leafId}`}
-          style={{
-            display: "inline-flex",
-            alignItems: "center",
-            justifyContent: "center",
-            width: 28,
-            height: 28,
-            padding: 0,
-            background: "transparent",
-            border: `1px solid ${colors.border}`,
-            borderRadius: 8,
-            color: colors.textDim,
-            cursor: "pointer",
-            fontFamily: fonts.mono,
-            fontSize: 14,
-            fontWeight: 600,
-            lineHeight: 1,
-            flexShrink: 0,
-          }}
+          style={pickerBtnStyle(colors)}
           onMouseEnter={(e) => {
             e.currentTarget.style.backgroundColor = colors.hoverBg;
             e.currentTarget.style.color = colors.textLight;
@@ -111,23 +136,27 @@ export function TerminalShortcuts({ channelId, leafId, onPick, status }: Termina
         >
           #
         </button>
-      ) : null}
-      <div
-        style={{
-          flex: 1,
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          gap: 6,
-          fontSize: 11,
-          color: colors.textDim,
-          fontFamily: fonts.mono,
-        }}
-      >
-        <LoopInfinityIcon color={isRunning ? undefined : colors.textDim} animated={isRunning} isDark={colors.isDark} />
-        Running interactively in an isolated Docker container
-      </div>
-      {open && createPortal(
+      )}
+      {showBashBtn && (
+        <button
+          ref={bashBtnRef}
+          onClick={() => { setSelectedIdx(0); setOpenKind((k) => (k === "bash" ? null : "bash")); }}
+          title="Bash shortcuts"
+          data-testid={`terminal-bash-shortcuts-btn-${leafId}`}
+          style={pickerBtnStyle(colors)}
+          onMouseEnter={(e) => {
+            e.currentTarget.style.backgroundColor = colors.hoverBg;
+            e.currentTarget.style.color = colors.textLight;
+          }}
+          onMouseLeave={(e) => {
+            e.currentTarget.style.backgroundColor = "transparent";
+            e.currentTarget.style.color = colors.textDim;
+          }}
+        >
+          $
+        </button>
+      )}
+      {openKind !== null && createPortal(
         <div
           ref={menuRef}
           data-testid={`terminal-shortcuts-menu-${leafId}`}
@@ -147,10 +176,10 @@ export function TerminalShortcuts({ channelId, leafId, onPick, status }: Termina
           }}
         >
           <div style={{ maxHeight: 268, overflowY: "auto", padding: "0 4px" }}>
-            {shortcuts.map((sc, i) => (
+            {items.map((it, i) => (
               <div
-                key={sc.name}
-                onMouseDown={(e) => { e.preventDefault(); pick(sc); }}
+                key={it.name}
+                onMouseDown={(e) => { e.preventDefault(); pickItem(i); }}
                 onMouseEnter={() => setSelectedIdx(i)}
                 style={{
                   padding: "8px 12px",
@@ -163,10 +192,10 @@ export function TerminalShortcuts({ channelId, leafId, onPick, status }: Termina
                 }}
               >
                 <div style={{ color: colors.textLight, fontWeight: 600, fontSize: 13, fontFamily: fonts.mono }}>
-                  #{sc.name}
+                  {sigil}{it.name}
                 </div>
                 <div style={{ color: colors.textMuted, fontSize: 12, fontFamily: fonts.sans }}>
-                  {sc.description}
+                  {it.description}
                 </div>
               </div>
             ))}
@@ -176,4 +205,25 @@ export function TerminalShortcuts({ channelId, leafId, onPick, status }: Termina
       )}
     </div>
   );
+}
+
+function pickerBtnStyle(colors: ReturnType<typeof useTheme>["colors"]): React.CSSProperties {
+  return {
+    display: "inline-flex",
+    alignItems: "center",
+    justifyContent: "center",
+    width: 28,
+    height: 28,
+    padding: 0,
+    background: "transparent",
+    border: `1px solid ${colors.border}`,
+    borderRadius: 8,
+    color: colors.textDim,
+    cursor: "pointer",
+    fontFamily: fonts.mono,
+    fontSize: 14,
+    fontWeight: 600,
+    lineHeight: 1,
+    flexShrink: 0,
+  };
 }

@@ -125,6 +125,22 @@ func (s *PromptShortcut) ResolvePrompt(loopDir string, readFile func(string) ([]
 	return resolvePromptField(s.Name, s.Prompt, s.PromptPath, filepath.Join(loopDir, "shortcuts"), readFile)
 }
 
+// BashShortcut defines a reusable bash command that auto-runs in a terminal
+// (host or agent) when picked from the footer "$" menu.
+type BashShortcut struct {
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	Command     string `json:"command"`
+	CommandPath string `json:"command_path"`
+}
+
+// ResolveCommand returns the command text for the shortcut.
+// If Command is set, it is returned directly.
+// If CommandPath is set, the file is read from {loopDir}/bash-shortcuts/{command_path}.
+func (s *BashShortcut) ResolveCommand(loopDir string, readFile func(string) ([]byte, error)) (string, error) {
+	return resolvePromptField(s.Name, s.Command, s.CommandPath, filepath.Join(loopDir, "bash-shortcuts"), readFile)
+}
+
 // resolvePromptField resolves a prompt from either an inline value or a file path.
 // Exactly one of prompt or promptPath must be set.
 func resolvePromptField(name, prompt, promptPath, baseDir string, readFile func(string) ([]byte, error)) (string, error) {
@@ -316,6 +332,7 @@ type Config struct {
 	Workflows            []WorkflowDef
 	WorkflowConcurrency  WorkflowConcurrency
 	PromptShortcuts      []PromptShortcut
+	BashShortcuts        []BashShortcut
 	Mounts               []string
 	CopyFiles            []string
 	Envs                 map[string]string
@@ -403,6 +420,7 @@ type jsonConfig struct {
 	Workflows                                []WorkflowDef          `json:"workflows"`
 	WorkflowConcurrency                      *WorkflowConcurrency   `json:"workflow_concurrency"`
 	PromptShortcuts                          []PromptShortcut       `json:"prompt_shortcuts"`
+	BashShortcuts                            []BashShortcut         `json:"bash_shortcuts"`
 	Mounts                                   []string               `json:"mounts"`
 	CopyFiles                                []string               `json:"copy_files"`
 	Envs                                     map[string]any         `json:"envs"`
@@ -694,6 +712,7 @@ func (l *Loader) parse() (*Config, error) {
 		cfg.WorkflowConcurrency = *jc.WorkflowConcurrency
 	}
 	cfg.PromptShortcuts = jc.PromptShortcuts
+	cfg.BashShortcuts = jc.BashShortcuts
 	cfg.Mounts = jc.Mounts
 	cfg.CopyFiles = sliceDefault(jc.CopyFiles, []string{"~/.claude.json"})
 	cfg.Envs = stringifyEnvs(jc.Envs)
@@ -875,6 +894,7 @@ type projectConfig struct {
 	Workflows                                []WorkflowDef          `json:"workflows"`
 	WorkflowConcurrency                      *WorkflowConcurrency   `json:"workflow_concurrency"`
 	PromptShortcuts                          []PromptShortcut       `json:"prompt_shortcuts"`
+	BashShortcuts                            []BashShortcut         `json:"bash_shortcuts"`
 	Memory                                   *jsonMemoryConfig      `json:"memory"`
 	Quality                                  *jsonQualityConfig     `json:"quality"`
 	Permissions                              *jsonPermissionsConfig `json:"permissions"`
@@ -1235,6 +1255,24 @@ func (l *Loader) loadProjectConfig(workDir string, mainConfig *Config) (*Config,
 			}
 		}
 		merged.PromptShortcuts = mergedShortcuts
+	}
+
+	// Merge bash shortcuts: project shortcuts override global by name
+	if len(pc.BashShortcuts) > 0 {
+		byName := make(map[string]int, len(merged.BashShortcuts))
+		mergedShortcuts := make([]BashShortcut, len(merged.BashShortcuts))
+		copy(mergedShortcuts, merged.BashShortcuts)
+		for i, s := range mergedShortcuts {
+			byName[s.Name] = i
+		}
+		for _, ps := range pc.BashShortcuts {
+			if idx, ok := byName[ps.Name]; ok {
+				mergedShortcuts[idx] = ps
+			} else {
+				mergedShortcuts = append(mergedShortcuts, ps)
+			}
+		}
+		merged.BashShortcuts = mergedShortcuts
 	}
 
 	// ExtraDirs: project replaces global when set.

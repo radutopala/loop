@@ -164,12 +164,19 @@ export function Terminal({ channelId, target = "agent", instanceId, claudeSessio
     sendCreate();
   }, [reset, sendCreate]);
 
-  const handleShortcutPick = useCallback((prompt: string) => {
-    // Bracketed paste so multi-line prompts (e.g. file-backed shortcuts) land
-    // as a single paste buffer instead of one Enter-per-newline; trailing \r
-    // submits.
-    sendInput(`\x1b[200~${prompt}\x1b[201~\r`);
-  }, [sendInput]);
+  const handleShortcutPick = useCallback((text: string) => {
+    if (target === "agent" && !cmd) {
+      // Claude TUI: bracketed paste so multi-line prompts (e.g. file-backed
+      // shortcuts) land as a single paste buffer instead of one Enter-per-
+      // newline; trailing \r submits.
+      sendInput(`\x1b[200~${text}\x1b[201~\r`);
+    } else {
+      // Raw shell (host or docker-shell). Bash doesn't enable bracketed paste
+      // by default, so the \x1b[200~ … \x1b[201~ wrappers would leak through
+      // as literal text. Send the command + newline to execute immediately.
+      sendInput(`${text}\n`);
+    }
+  }, [sendInput, target, cmd]);
 
   const { write, xtermRef } = useXTerminal({
     containerRef: terminalRef,
@@ -252,8 +259,14 @@ export function Terminal({ channelId, target = "agent", instanceId, claudeSessio
           </div>
         )}
       </div>
-      {target === "agent" && instanceId && (
-        <TerminalShortcuts channelId={channelId} leafId={instanceId} onPick={handleShortcutPick} status={status} />
+      {instanceId && (
+        <TerminalShortcuts
+          channelId={channelId}
+          leafId={instanceId}
+          onPick={handleShortcutPick}
+          target={target}
+          showPrompts={target === "agent" && !cmd}
+        />
       )}
     </div>
   );

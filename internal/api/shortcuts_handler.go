@@ -55,18 +55,19 @@ type shortcutResponse struct {
 	Prompt      string `json:"prompt"`
 }
 
-// handleListShortcuts returns the configured prompt shortcuts with resolved
-// prompt text. Accepts an optional channel_id query parameter to merge
-// project-level shortcuts on top of global ones.
-func (s *Server) handleListShortcuts(w http.ResponseWriter, r *http.Request) {
+// resolveShortcutContext loads the global config, optionally merges a
+// project-level overlay when channel_id is present, and returns the resolution
+// dirs and a readFile to use for loading file-backed shortcut bodies. Writes
+// an HTTP error and returns ok=false on failure.
+func (s *Server) resolveShortcutContext(w http.ResponseWriter, r *http.Request) (cfg *config.Config, loopDirs []string, readFile func(string) ([]byte, error), ok bool) {
 	loadConfig := s.loadConfig
 	if loadConfig == nil {
 		loadConfig = config.Load
 	}
-	cfg, err := loadConfig()
+	c, err := loadConfig()
 	if err != nil {
 		http.Error(w, "failed to load config", http.StatusInternalServerError)
-		return
+		return nil, nil, nil, false
 	}
 
 	loadProjectConfig := s.loadProjectConfig
@@ -74,58 +75,87 @@ func (s *Server) handleListShortcuts(w http.ResponseWriter, r *http.Request) {
 		loadProjectConfig = config.LoadProjectConfig
 	}
 
-	// Merge project-level shortcuts when a channel is specified.
 	var dirPath string
 	if channelID := r.URL.Query().Get("channel_id"); channelID != "" {
 		dp, dirErr := s.resolveProjectConfigDirPath(r.Context(), channelID)
 		if dirErr == nil && dp != "" {
 			dirPath = dp
-			if merged, mergeErr := loadProjectConfig(dirPath, cfg); mergeErr == nil {
-				cfg = merged
+			if merged, mergeErr := loadProjectConfig(dirPath, c); mergeErr == nil {
+				c = merged
 			}
 		}
 	}
 
-	loopDir := cfg.LoopDir
+	loopDir := c.LoopDir
 	if loopDir == "" {
 		home, _ := s.sys.UserHomeDir()
 		loopDir = filepath.Join(home, ".loop")
 	}
 
-	readFile := s.readFile
-	if readFile == nil {
-		readFile = os.ReadFile
+	rf := s.readFile
+	if rf == nil {
+		rf = os.ReadFile
 	}
 
-	// Build resolution dirs: project .loop first (if available), then global.
-	loopDirs := []string{loopDir}
+	dirs := []string{loopDir}
 	if dirPath != "" {
-		loopDirs = []string{filepath.Join(dirPath, ".loop"), loopDir}
+		dirs = []string{filepath.Join(dirPath, ".loop"), loopDir}
 	}
+	return c, dirs, rf, true
+}
 
-	result := make([]shortcutResponse, 0, len(cfg.PromptShortcuts))
-	for _, sc := range cfg.PromptShortcuts {
-		var prompt string
+// listShortcutItems is the generic resolution + collection loop used by both
+// list handlers. It walks `items`, tries each loopDir until `resolve`
+// succeeds, and either calls `mapResult` or `onUnresolved`.
+func listShortcutItems[T any, R any](
+	items []T,
+	loopDirs []string,
+	readFile func(string) ([]byte, error),
+	resolve func(item T, dir string, rf func(string) ([]byte, error)) (string, error),
+	mapResult func(item T, value string) R,
+	onUnresolved func(item T),
+) []R {
+	result := make([]R, 0, len(items))
+	for _, it := range items {
+		var value string
 		var resolved bool
 		for _, ld := range loopDirs {
-			p, err := sc.ResolvePrompt(ld, readFile)
+			v, err := resolve(it, ld, readFile)
 			if err == nil {
-				prompt = p
+				value = v
 				resolved = true
 				break
 			}
 		}
 		if !resolved {
-			s.logger.Warn("skipping shortcut with unresolvable prompt", "name", sc.Name)
+			onUnresolved(it)
 			continue
 		}
-		result = append(result, shortcutResponse{
-			Name:        sc.Name,
-			Description: sc.Description,
-			Prompt:      prompt,
-		})
+		result = append(result, mapResult(it, value))
 	}
+	return result
+}
 
+// handleListShortcuts returns the configured prompt shortcuts with resolved
+// prompt text. Accepts an optional channel_id query parameter to merge
+// project-level shortcuts on top of global ones.
+func (s *Server) handleListShortcuts(w http.ResponseWriter, r *http.Request) { //nolint:dupl
+	cfg, loopDirs, readFile, ok := s.resolveShortcutContext(w, r)
+	if !ok {
+		return
+	}
+	result := listShortcutItems(
+		cfg.PromptShortcuts, loopDirs, readFile,
+		func(sc config.PromptShortcut, dir string, rf func(string) ([]byte, error)) (string, error) {
+			return sc.ResolvePrompt(dir, rf)
+		},
+		func(sc config.PromptShortcut, value string) shortcutResponse {
+			return shortcutResponse{Name: sc.Name, Description: sc.Description, Prompt: value}
+		},
+		func(sc config.PromptShortcut) {
+			s.logger.Warn("skipping shortcut with unresolvable prompt", "name", sc.Name)
+		},
+	)
 	writeHTTPJSON(w, http.StatusOK, result, s.logger)
 }
 
@@ -139,6 +169,26 @@ type shortcutModifyRequest struct {
 	PromptPath  string `json:"prompt_path"` // file-based prompt (mutually exclusive with prompt)
 }
 
+// shortcutEntryRequest is the field-agnostic view of a shortcut-modify request
+// passed to the shared writer. Inline / Path are the value pair that differs by
+// shortcut kind (prompt|prompt_path vs command|command_path).
+type shortcutEntryRequest struct {
+	Action      string
+	Scope       string
+	ChannelID   string
+	Name        string
+	Description string
+	Inline      string
+	Path        string
+}
+
+// shortcutEntryFields names the config-map keys for a shortcut kind.
+type shortcutEntryFields struct {
+	ArrayKey    string // "prompt_shortcuts" or "bash_shortcuts"
+	InlineField string // "prompt" or "command"
+	PathField   string // "prompt_path" or "command_path"
+}
+
 // handleModifyShortcut adds, updates, or deletes a prompt shortcut in the
 // global or project config file.
 func (s *Server) handleModifyShortcut(w http.ResponseWriter, r *http.Request) {
@@ -146,6 +196,28 @@ func (s *Server) handleModifyShortcut(w http.ResponseWriter, r *http.Request) {
 	if !decodeJSON(w, r, &req) {
 		return
 	}
+	s.modifyShortcutEntry(w, r,
+		shortcutEntryRequest{
+			Action:      req.Action,
+			Scope:       req.Scope,
+			ChannelID:   req.ChannelID,
+			Name:        req.Name,
+			Description: req.Description,
+			Inline:      req.Prompt,
+			Path:        req.PromptPath,
+		},
+		shortcutEntryFields{
+			ArrayKey:    "prompt_shortcuts",
+			InlineField: "prompt",
+			PathField:   "prompt_path",
+		},
+	)
+}
+
+// modifyShortcutEntry is the shared add/update/delete writer for prompt and
+// bash shortcuts. The two kinds share the entire flow except for the array key
+// and the inline/path field names.
+func (s *Server) modifyShortcutEntry(w http.ResponseWriter, r *http.Request, req shortcutEntryRequest, f shortcutEntryFields) {
 	if req.Name == "" {
 		http.Error(w, "name is required", http.StatusBadRequest)
 		return
@@ -154,22 +226,20 @@ func (s *Server) handleModifyShortcut(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "action must be add, update, or delete", http.StatusBadRequest)
 		return
 	}
-	if (req.Action == "add" || req.Action == "update") && req.Prompt == "" && req.PromptPath == "" {
-		http.Error(w, "prompt or prompt_path is required for add/update", http.StatusBadRequest)
+	if (req.Action == "add" || req.Action == "update") && req.Inline == "" && req.Path == "" {
+		http.Error(w, f.InlineField+" or "+f.PathField+" is required for add/update", http.StatusBadRequest)
 		return
 	}
-	if req.Prompt != "" && req.PromptPath != "" {
-		http.Error(w, "prompt and prompt_path are mutually exclusive", http.StatusBadRequest)
+	if req.Inline != "" && req.Path != "" {
+		http.Error(w, f.InlineField+" and "+f.PathField+" are mutually exclusive", http.StatusBadRequest)
 		return
 	}
 
-	// Resolve the config file path based on scope.
 	configPath, ok := s.resolveConfigPath(w, r, req.Scope, req.ChannelID)
 	if !ok {
 		return
 	}
 
-	// Read existing config.
 	configData, err := s.sys.ReadFile(configPath)
 	if err != nil {
 		if !os.IsNotExist(err) {
@@ -179,7 +249,6 @@ func (s *Server) handleModifyShortcut(w http.ResponseWriter, r *http.Request) {
 		configData = []byte("{}")
 	}
 
-	// Standardize HJSON to JSON, parse into generic map.
 	standardized, err := hujson.Standardize(configData)
 	if err != nil {
 		http.Error(w, "config file contains invalid HJSON", http.StatusInternalServerError)
@@ -191,9 +260,8 @@ func (s *Server) handleModifyShortcut(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Extract existing prompt_shortcuts array.
 	var shortcuts []map[string]any
-	if raw, ok := configMap["prompt_shortcuts"]; ok {
+	if raw, ok := configMap[f.ArrayKey]; ok {
 		if arr, ok := raw.([]any); ok {
 			for _, item := range arr {
 				if m, ok := item.(map[string]any); ok {
@@ -205,7 +273,6 @@ func (s *Server) handleModifyShortcut(w http.ResponseWriter, r *http.Request) {
 
 	switch req.Action {
 	case "add":
-		// Check for duplicate name.
 		for _, sc := range shortcuts {
 			if sc["name"] == req.Name {
 				http.Error(w, "shortcut with this name already exists; use update to modify it", http.StatusConflict)
@@ -216,11 +283,11 @@ func (s *Server) handleModifyShortcut(w http.ResponseWriter, r *http.Request) {
 		if req.Description != "" {
 			entry["description"] = req.Description
 		}
-		if req.Prompt != "" {
-			entry["prompt"] = req.Prompt
+		if req.Inline != "" {
+			entry[f.InlineField] = req.Inline
 		}
-		if req.PromptPath != "" {
-			entry["prompt_path"] = req.PromptPath
+		if req.Path != "" {
+			entry[f.PathField] = req.Path
 		}
 		shortcuts = append(shortcuts, entry)
 
@@ -232,14 +299,13 @@ func (s *Server) handleModifyShortcut(w http.ResponseWriter, r *http.Request) {
 				if req.Description != "" {
 					sc["description"] = req.Description
 				}
-				// Replace prompt fields: clear the other when one is set.
-				if req.Prompt != "" {
-					sc["prompt"] = req.Prompt
-					delete(sc, "prompt_path")
+				if req.Inline != "" {
+					sc[f.InlineField] = req.Inline
+					delete(sc, f.PathField)
 				}
-				if req.PromptPath != "" {
-					sc["prompt_path"] = req.PromptPath
-					delete(sc, "prompt")
+				if req.Path != "" {
+					sc[f.PathField] = req.Path
+					delete(sc, f.InlineField)
 				}
 				break
 			}
@@ -266,8 +332,7 @@ func (s *Server) handleModifyShortcut(w http.ResponseWriter, r *http.Request) {
 		shortcuts = filtered
 	}
 
-	// Write back.
-	configMap["prompt_shortcuts"] = shortcuts
+	configMap[f.ArrayKey] = shortcuts
 	out, err := jsonMarshalIndent(configMap, "", "  ")
 	if err != nil {
 		http.Error(w, "failed to serialize config", http.StatusInternalServerError)

@@ -517,6 +517,22 @@ func buildSchema() *ConfigSchema {
 				},
 			},
 
+			// ── Bash Shortcuts section ──
+			"bash_shortcuts": {
+				Type:     "array",
+				Title:    "Bash Shortcuts",
+				XSection: "Bash Shortcuts",
+				Items: &SchemaProperty{
+					Type: "object",
+					Properties: map[string]*SchemaProperty{
+						"name":         {Type: "string", Title: "Name"},
+						"description":  {Type: "string", Title: "Description"},
+						"command":      {Type: "string", Title: "Command", XWidget: "textarea"},
+						"command_path": {Type: "string", Title: "Command Path", Description: "Relative to ~/.loop/bash-shortcuts/"},
+					},
+				},
+			},
+
 			// ── Desktop section (Electron app preferences) ──
 			"desktop": {
 				Type:        "object",
