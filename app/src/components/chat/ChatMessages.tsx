@@ -380,7 +380,7 @@ export const ChatMessages = forwardRef<ChatMessagesHandle, ChatMessagesProps>(fu
             </button>
           )}
           {(() => {
-            const groups = groupTimelineItems(visibleAllItems);
+            const groups = groupTimelineItems(visibleAllItems, queuedMsgIdSet);
             const lastIdx = groups.length - 1;
             return groups.map((g, idx) => {
               if (g.kind === "message") {
@@ -473,21 +473,43 @@ type TimelineGroup =
 // neighbouring user row by array position. Orphans (events whose trigger isn't
 // in the current window, or pre-feature rows without trigger_msg_id) fall
 // through to positional grouping so reload of an older page still renders.
-function groupTimelineItems(items: TimelineItem[]): TimelineGroup[] {
+//
+// Queued user messages act as routing boundaries: when a still-running prior
+// trigger keeps emitting events after the user has queued a new message, those
+// later events stop routing back under the prior trigger and fall through to
+// positional grouping. Without this, the prior trigger's growing event list
+// would keep pushing the queued message visually further down even though its
+// chain_position is fixed.
+function groupTimelineItems(items: TimelineItem[], queuedMsgIdSet: Set<string>): TimelineGroup[] {
   const presentUserMsgIds = new Set<string>();
-  for (const it of items) {
-    if (it.kind === "message" && !it.data.is_bot) presentUserMsgIds.add(it.data.msg_id);
+  const userIdxByMsgId = new Map<string, number>();
+  const queuedIndices: number[] = [];
+  for (let i = 0; i < items.length; i++) {
+    const it = items[i]!;
+    if (it.kind === "message" && !it.data.is_bot) {
+      presentUserMsgIds.add(it.data.msg_id);
+      userIdxByMsgId.set(it.data.msg_id, i);
+      if (queuedMsgIdSet.has(it.data.msg_id)) queuedIndices.push(i);
+    }
   }
   const byTrigger = new Map<string, TimelineItem[]>();
   const isRouted = new Set<TimelineItem>();
-  for (const it of items) {
+  for (let i = 0; i < items.length; i++) {
+    const it = items[i]!;
     const trig = it.trigger_msg_id;
-    if (trig && presentUserMsgIds.has(trig)) {
-      const arr = byTrigger.get(trig) ?? [];
-      arr.push(it);
-      byTrigger.set(trig, arr);
-      isRouted.add(it);
+    if (!trig || !presentUserMsgIds.has(trig)) continue;
+    const triggerIdx = userIdxByMsgId.get(trig)!;
+    let blocked = false;
+    for (const qi of queuedIndices) {
+      if (qi <= triggerIdx) continue;
+      if (qi < i) { blocked = true; }
+      break;
     }
+    if (blocked) continue;
+    const arr = byTrigger.get(trig) ?? [];
+    arr.push(it);
+    byTrigger.set(trig, arr);
+    isRouted.add(it);
   }
 
   const out: TimelineGroup[] = [];

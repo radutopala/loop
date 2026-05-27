@@ -182,6 +182,8 @@ On reload, `ChatMessages.groupTimelineItems` routes every bot reply and agent ev
 
 Orphans — events whose `trigger_msg_id` points outside the currently loaded window (e.g. paginated away) or pre-feature rows that pre-date the column — fall through to positional grouping so reloading an older page still renders cleanly.
 
+Queued user messages act as routing boundaries. While a prior trigger's run is still streaming events and the user queues a new message, that queued message holds its insertion position: any events from the prior trigger that arrive *after* the queued message stop routing back under the prior trigger and render below it via positional grouping. Without this, the prior trigger's bucket of routed events would keep growing and push the queued message ever further down the timeline. Once the queued message starts processing (no longer in the backend queue), routing resumes as normal and the prior trigger's later events snap back under it.
+
 ---
 
 ## Completion Summary
