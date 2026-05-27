@@ -82,6 +82,7 @@ export function useChatStateStore({
   const unreadIdsRef = useRef(new Set<string>());
   const gateChannelIdsRef = useRef(new Set<string>());
   const reviewChannelIdsRef = useRef(new Set<string>());
+  const askUserChannelIdsRef = useRef(new Set<string>());
   // Channels that currently have a Review panel mounted in some
   // workspace tree. The WS event handler and rehydrate path both consult
   // this so a fresh `review.status: ready` (or a reconnect-driven
@@ -97,6 +98,7 @@ export function useChatStateStore({
   const [unreadCount, setUnreadCount] = useState(0);
   const [, setGateTick] = useState(0);
   const [, setReviewTick] = useState(0);
+  const [, setAskUserTick] = useState(0);
 
   // Reconcile the sidebar's gate-indicator set against a channel's current
   // gateApprovals. Called after every gate/agent.status apply so the pill
@@ -111,6 +113,23 @@ export function useChatStateStore({
     } else if (!shouldHave && has) {
       set.delete(channelId);
       setGateTick((v) => v + 1);
+    }
+  }, []);
+
+  // Reconcile the sidebar's ask-indicator set against a channel's current
+  // askUserQuestions. The agent pauses the channel's drain on AskUserQuestion,
+  // so the pill stays lit until the user answers/cancels (clearAskUserPill) or
+  // a new run starts (agent.status running clears askUserQuestions).
+  const refreshAskUserMembership = useCallback((channelId: string, state: ActiveChatState) => {
+    const set = askUserChannelIdsRef.current;
+    const has = set.has(channelId);
+    const shouldHave = state.askUserQuestions != null;
+    if (shouldHave && !has) {
+      set.add(channelId);
+      setAskUserTick((v) => v + 1);
+    } else if (!shouldHave && has) {
+      set.delete(channelId);
+      setAskUserTick((v) => v + 1);
     }
   }, []);
 
@@ -244,6 +263,7 @@ export function useChatStateStore({
         storeRef.current.set(a.channel_id, state);
       }
       state.askUserQuestions = a.data;
+      refreshAskUserMembership(a.channel_id, state);
       if (a.channel_id === selectedIdRef.current) {
         const event: WSEvent = {
           type: "agent.ask_user",
@@ -254,7 +274,23 @@ export function useChatStateStore({
         for (const listener of chatListenersRef.current) listener(event);
       }
     }
-  }, []);
+    // Drop pill ids whose backend snapshot no longer has them (cancelled
+    // out-of-band, e.g. answered from another renderer).
+    const valid = new Set<string>(asks.map((a) => a.channel_id));
+    const setIds = askUserChannelIdsRef.current;
+    const toDelete: string[] = [];
+    for (const id of setIds) {
+      if (!valid.has(id)) toDelete.push(id);
+    }
+    if (toDelete.length) {
+      for (const id of toDelete) {
+        setIds.delete(id);
+        const state = storeRef.current.get(id);
+        if (state) state.askUserQuestions = null;
+      }
+      setAskUserTick((v) => v + 1);
+    }
+  }, [refreshAskUserMembership]);
 
   // Pull the live (channel_id, status) snapshot of every review session
   // and reconcile reviewChannelIdsRef against it. Run from WS onOpen so
@@ -394,6 +430,14 @@ export function useChatStateStore({
             wsEvent.type === "agent.status")
         ) {
           refreshGateMembership(stateTarget, state);
+        }
+        // agent.ask_user sets askUserQuestions; agent.status running clears it.
+        // Mirror those onto the sidebar's ask-pill set.
+        if (
+          state &&
+          (wsEvent.type === "agent.ask_user" || wsEvent.type === "agent.status")
+        ) {
+          refreshAskUserMembership(stateTarget, state);
         }
       }
 
@@ -632,6 +676,20 @@ export function useChatStateStore({
     setUnreadCount(0);
   }, []);
 
+  // Drop the ask-pill for a channel and clear its askUserQuestions state.
+  // Called from useChatState's local clearAskUser (which fires when the
+  // user answers/cancels the card) so the sidebar pill clears in lockstep
+  // with the card disappearing — the backend doesn't emit an "ask resolved"
+  // event, the resumed run's agent.status running event does it.
+  const clearAskUserPill = useCallback((channelId: string) => {
+    const set = askUserChannelIdsRef.current;
+    if (set.delete(channelId)) {
+      setAskUserTick((v) => v + 1);
+    }
+    const state = storeRef.current.get(channelId);
+    if (state) state.askUserQuestions = null;
+  }, []);
+
   // Mark a channel as "currently being viewed in a Review panel".
   // Drops the pill immediately AND prevents the WS event handler /
   // rehydrate path from relighting it for the lifetime of the
@@ -649,7 +707,7 @@ export function useChatStateStore({
     };
   }, []);
 
-  return { getState, saveState, removeState, isRunningMapRef, unreadIdsRef, gateChannelIdsRef, reviewChannelIdsRef, unreadCount, markRead, markAllRead, registerReviewView, subscribeChatEvents };
+  return { getState, saveState, removeState, isRunningMapRef, unreadIdsRef, gateChannelIdsRef, reviewChannelIdsRef, askUserChannelIdsRef, unreadCount, markRead, markAllRead, registerReviewView, clearAskUserPill, subscribeChatEvents };
 }
 
 // ── Helpers ──

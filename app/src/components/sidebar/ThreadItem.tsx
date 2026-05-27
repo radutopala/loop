@@ -21,9 +21,10 @@ interface ThreadItemProps {
   unreadIdsRef?: React.RefObject<Set<string>>;
   gateChannelIdsRef?: React.RefObject<Set<string>>;
   reviewChannelIdsRef?: React.RefObject<Set<string>>;
+  askUserChannelIdsRef?: React.RefObject<Set<string>>;
 }
 
-export function ThreadItem({ thread, subThreads, threadsByParent, selected, selectedId, isLast, onSelect, onContextMenu, selectMode, checked, onToggleCheck, isRunningMapRef, unreadIdsRef, gateChannelIdsRef, reviewChannelIdsRef }: ThreadItemProps) {
+export function ThreadItem({ thread, subThreads, threadsByParent, selected, selectedId, isLast, onSelect, onContextMenu, selectMode, checked, onToggleCheck, isRunningMapRef, unreadIdsRef, gateChannelIdsRef, reviewChannelIdsRef, askUserChannelIdsRef }: ThreadItemProps) {
   const { colors } = useTheme();
   const [hovered, setHovered] = useState(false);
   const [collapsed, setCollapsed] = useState(false);
@@ -31,6 +32,7 @@ export function ThreadItem({ thread, subThreads, threadsByParent, selected, sele
   const isUnread = unreadIdsRef?.current?.has(thread.id) ?? false;
   const hasGate = gateChannelIdsRef?.current?.has(thread.id) ?? false;
   const hasReview = reviewChannelIdsRef?.current?.has(thread.id) ?? false;
+  const hasAsk = askUserChannelIdsRef?.current?.has(thread.id) ?? false;
   const isEphemeral = thread.name.startsWith("[ephemeral] ");
   const isTaskThread = /^(\[ephemeral] )?(🧵 |⏱ )?task #/.test(thread.name);
   const displayName = isTaskThread
@@ -180,6 +182,14 @@ export function ThreadItem({ thread, subThreads, threadsByParent, selected, sele
           marginLeft={(isUnread || hasGate || thread.diff_additions > 0 || thread.diff_deletions > 0) ? 4 : "auto"}
         />
       )}
+      {hasAsk && (
+        <StatusPill
+          label="ask"
+          color={colors.warning}
+          title="Agent is asking a question"
+          marginLeft={(isUnread || hasGate || hasReview || thread.diff_additions > 0 || thread.diff_deletions > 0) ? 4 : "auto"}
+        />
+      )}
       {(thread.container_running || thread.agent_running || isRunningMapRef?.current?.get(thread.id)) && (
         <span
           style={{
@@ -188,7 +198,7 @@ export function ThreadItem({ thread, subThreads, threadsByParent, selected, sele
             borderRadius: "50%",
             backgroundColor: colors.active,
             flexShrink: 0,
-            marginLeft: (isUnread || hasGate || hasReview || thread.diff_additions > 0 || thread.diff_deletions > 0) ? 4 : "auto",
+            marginLeft: (isUnread || hasGate || hasReview || hasAsk || thread.diff_additions > 0 || thread.diff_deletions > 0) ? 4 : "auto",
           }}
         />
       )}
@@ -212,6 +222,7 @@ export function ThreadItem({ thread, subThreads, threadsByParent, selected, sele
             unreadIdsRef={unreadIdsRef}
             gateChannelIdsRef={gateChannelIdsRef}
             reviewChannelIdsRef={reviewChannelIdsRef}
+            askUserChannelIdsRef={askUserChannelIdsRef}
           />
         ))}
     </div>

@@ -65,6 +65,8 @@ interface SidebarProps {
   gateChannelIdsRef?: React.RefObject<Set<string>>;
   /** Channels with a loaded review session (status=ready). */
   reviewChannelIdsRef?: React.RefObject<Set<string>>;
+  /** Channels parked on an AskUserQuestion card. */
+  askUserChannelIdsRef?: React.RefObject<Set<string>>;
   unreadCount?: number;
   onMarkAllRead?: () => void;
   imageBuildStatus?: ImageBuildStatusData | null;
@@ -97,6 +99,7 @@ export function Sidebar({
   unreadIdsRef,
   gateChannelIdsRef,
   reviewChannelIdsRef,
+  askUserChannelIdsRef,
   unreadCount,
   onMarkAllRead,
   imageBuildStatus,
@@ -394,6 +397,7 @@ export function Sidebar({
         unreadIdsRef={unreadIdsRef}
         gateChannelIdsRef={gateChannelIdsRef}
         reviewChannelIdsRef={reviewChannelIdsRef}
+        askUserChannelIdsRef={askUserChannelIdsRef}
       />
 
       {/* Spacer to push footer to bottom */}

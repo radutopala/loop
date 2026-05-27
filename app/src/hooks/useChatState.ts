@@ -56,6 +56,12 @@ interface UseChatStateOptions {
    * events flow through the single store WS instead.
    */
   subscribeChatEvents?: (listener: ChatEventListener) => () => void;
+  /**
+   * Tell the app-level store to drop the sidebar's ask-pill for this channel.
+   * Wired into clearAskUser so the pill clears in lockstep with the card
+   * disappearing (the backend doesn't emit an ask.resolved event).
+   */
+  clearAskUserPill?: (channelId: string) => void;
 }
 
 /**
@@ -72,7 +78,7 @@ export function useChatState(
   initialRunningBot?: boolean,
   options?: UseChatStateOptions,
 ): ChatState {
-  const { initialState, onUnmount, subscribeChatEvents } = options ?? {};
+  const { initialState, onUnmount, subscribeChatEvents, clearAskUserPill } = options ?? {};
 
   const {
     items,
@@ -391,7 +397,10 @@ export function useChatState(
     askUserQuestions,
     exitPlanRequest,
     agentTasks,
-    clearAskUser: useCallback(() => setAskUserQuestions(null), []),
+    clearAskUser: useCallback(() => {
+      setAskUserQuestions(null);
+      if (channelId) clearAskUserPill?.(channelId);
+    }, [channelId, clearAskUserPill]),
     clearExitPlan: useCallback(() => setExitPlanRequest(null), []),
     mode,
     setMode,
