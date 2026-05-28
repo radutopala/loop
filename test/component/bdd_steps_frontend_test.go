@@ -145,6 +145,10 @@ func registerFrontendSteps(ctx *godog.ScenarioContext, tc *TestContext) {
 	ctx.Step(`^I clear and type "([^"]*)" into "([^"]*)"$`, tc.clearAndTypeInto)
 	ctx.Step(`^I wait for "([^"]*)" to be visible$`, tc.waitForVisible)
 	ctx.Step(`^I select "([^"]*)" from "([^"]*)"$`, tc.selectFrom)
+	ctx.Step(`^I open the file "([^"]*)" in the editor tree$`, tc.openFileInEditorTree)
+	ctx.Step(`^I append "([^"]*)" to the code editor$`, tc.appendToCodeEditor)
+	ctx.Step(`^I save the editor$`, tc.saveEditor)
+	ctx.Step(`^I click "([^"]*)" in the git panel$`, tc.clickInGitPanel)
 
 	// DOM interaction — text-based (scoped to a data-testid region)
 	ctx.Step(`^I click on the button with text "([^"]*)"$`, tc.clickButtonWithText)
@@ -198,12 +202,18 @@ func registerFrontendSteps(ctx *godog.ScenarioContext, tc *TestContext) {
 	// Extended wait
 	ctx.Step(`^I wait up to "([^"]*)" for text "([^"]*)" to appear$`, tc.waitForTextToAppearWithTimeout)
 	ctx.Step(`^I wait up to "([^"]*)" for text "([^"]*)" to disappear$`, tc.waitForTextToDisappearWithTimeout)
+	ctx.Step(`^I wait up to "([^"]*)" for "([^"]*)" to disappear$`, tc.waitForSelectorToDisappear)
+	ctx.Step(`^I wait up to "([^"]*)" for "([^"]*)" to be visible$`, tc.waitForSelectorVisibleWithTimeout)
+	ctx.Step(`^I wait up to "([^"]*)" for "([^"]*)" to be visible, best effort$`, tc.waitForSelectorVisibleBestEffort)
+	ctx.Step(`^I select the created playground$`, tc.selectCreatedPlayground)
 
 	// Label interaction
 	ctx.Step(`^I click on the label with text "([^"]*)"$`, tc.clickLabelWithText)
 
 	// Panel interaction
 	ctx.Step(`^I add a "([^"]*)" panel$`, tc.addPanel)
+	ctx.Step(`^I open the add-panel menu in the git panel$`, tc.openAddPanelMenuInGitPanel)
+	ctx.Step(`^I add the "([^"]*)" panel below in the menu$`, tc.addPanelBelowFromMenu)
 	ctx.Step(`^I click the task create button$`, tc.clickTaskCreateButton)
 
 	// Layout tab drag/drop + chat scroll (synthesized via JS — chromedp's
@@ -227,7 +237,11 @@ func registerFrontendSteps(ctx *godog.ScenarioContext, tc *TestContext) {
 	ctx.Step(`^I stop recording "([^"]*)"$`, tc.stopRecording)
 	ctx.Step(`^I show caption "([^"]*)"$`, tc.showCaption)
 	ctx.Step(`^I show the Loop title card$`, tc.showLoopTitleCard)
+	ctx.Step(`^I show the Loop title card and hold$`, tc.showLoopTitleCardHold)
+	ctx.Step(`^I show the Loop intro card$`, tc.showLoopIntroCard)
+	ctx.Step(`^I fade out the Loop title card$`, tc.fadeOutLoopTitleCard)
 	ctx.Step(`^I hide caption$`, tc.hideCaption)
+	ctx.Step(`^I show the mouse cursor$`, tc.injectMouseCursor)
 
 	// Debugging
 	ctx.Step(`^I take a screenshot$`, tc.takeScreenshot)
@@ -255,10 +269,12 @@ func (tc *TestContext) ensureChromeTab() error {
 	// but short enough that a hung agent fails fast rather than after ~10m.
 	scenarioTimeout := 120 * time.Second
 	if os.Getenv("LOOP_DOCS_CAPTURE") != "" {
-		// The docs journey is one long scenario (two live agent replies + a
+		// The docs journey is one long scenario (several live agent replies —
+		// chat, review-diff, an agent file change + commit with a Git-panel tour,
+		// an editor-edit commit, and a chat inside a new worktree — plus a
 		// captioned, deliberately-slow tour of every panel) — give it room but
 		// still fail a hang inside the go-test timeout.
-		scenarioTimeout = 300 * time.Second
+		scenarioTimeout = 840 * time.Second
 	}
 	timeoutCtx, timeoutCancel := context.WithTimeout(parentCtx, scenarioTimeout)
 	ctx, cancel := chromedp.NewContext(timeoutCtx)
@@ -432,8 +448,14 @@ func (tc *TestContext) clickInRegion(text, testID string) error {
 			if (walker.currentNode.textContent.includes(%q)) {
 				const el = walker.currentNode.parentElement;
 				if (el && el.offsetWidth > 0 && el.offsetHeight > 0) {
-					el.dispatchEvent(new MouseEvent('mousedown', {bubbles: true, cancelable: true}));
-					el.dispatchEvent(new MouseEvent('mouseup', {bubbles: true, cancelable: true}));
+					// Carry the element's center coords so the docs-capture fake
+					// cursor (window mousemove/mousedown listener) glides to and
+					// pulses at the click point; harmless when no cursor is present.
+					const r = el.getBoundingClientRect();
+					const cx = Math.round(r.left + r.width / 2), cy = Math.round(r.top + r.height / 2);
+					window.dispatchEvent(new MouseEvent('mousemove', {bubbles: true, clientX: cx, clientY: cy}));
+					el.dispatchEvent(new MouseEvent('mousedown', {bubbles: true, cancelable: true, clientX: cx, clientY: cy}));
+					el.dispatchEvent(new MouseEvent('mouseup', {bubbles: true, cancelable: true, clientX: cx, clientY: cy}));
 					el.click();
 					return true;
 				}
@@ -483,6 +505,12 @@ func (tc *TestContext) openGlobalTasksPanel() error {
 			return false;
 		})()`, nil, chromedp.WithPollingTimeout(15*time.Second)),
 	)
+}
+
+// clickInGitPanel clicks a tab/element by visible text within the Git panel
+// (data-testid="git-panel") — e.g. "Uncommitted Diff", "Commits", "Branches Diff".
+func (tc *TestContext) clickInGitPanel(text string) error {
+	return tc.clickInRegion(text, "git-panel")
 }
 
 func (tc *TestContext) clickInSidebar(text string) error {
@@ -820,6 +848,50 @@ func (tc *TestContext) pressEscape() error {
 	return chromedp.Run(tc.chromeTab.ctx, chromedp.KeyEvent("\x1b"))
 }
 
+// --- Editor steps ---
+
+// openFileInEditorTree clicks a file by name in the Editor layout's file-tree
+// panel (data-testid="file-tree-panel"), loading it into the CodeMirror editor.
+func (tc *TestContext) openFileInEditorTree(name string) error {
+	return tc.clickInRegion(name, "file-tree-panel")
+}
+
+// appendToCodeEditor focuses the CodeMirror editor, moves the caret to the end
+// of the document, and types text there. CM6 renders a contenteditable (not a
+// textarea), so the caret is positioned via the DOM Selection API and then real
+// key events are sent — CM6 ingests them through its beforeinput/keydown path.
+func (tc *TestContext) appendToCodeEditor(text string) error {
+	focusJS := `(() => {
+		const cm = document.querySelector('.cm-content');
+		if (!cm) return false;
+		cm.focus();
+		const sel = window.getSelection();
+		const range = document.createRange();
+		range.selectNodeContents(cm);
+		range.collapse(false); // collapse to the end of the document
+		sel.removeAllRanges();
+		sel.addRange(range);
+		return true;
+	})()`
+	var ok bool
+	return chromedp.Run(tc.chromeTab.ctx,
+		chromedp.Poll(`!!document.querySelector('.cm-content')`, nil, chromedp.WithPollingTimeout(15*time.Second)),
+		chromedp.Evaluate(focusJS, &ok),
+		chromedp.KeyEvent(text),
+	)
+}
+
+// saveEditor triggers the editor's Cmd/Ctrl+S save handler (registered on
+// window) so the edited buffer is flushed to disk before the agent commits it.
+func (tc *TestContext) saveEditor() error {
+	js := `(() => {
+		window.dispatchEvent(new KeyboardEvent('keydown', {key:'s', code:'KeyS', ctrlKey:true, metaKey:true, bubbles:true, cancelable:true}));
+		return true;
+	})()`
+	var ok bool
+	return chromedp.Run(tc.chromeTab.ctx, chromedp.Evaluate(js, &ok))
+}
+
 // --- Wait steps ---
 
 func (tc *TestContext) waitDuration(duration string) error {
@@ -905,6 +977,66 @@ func (tc *TestContext) addPanel(panelName string) error {
 	return nil
 }
 
+// openAddPanelMenuInGitPanel clicks the Git leaf's own "Add panel" button (each
+// leaf header has one) so the panel selector opens anchored to the Git panel —
+// choosing a "↓" option there splits the new panel in BELOW Git. The first
+// document-wide Add-panel button would target the wrong leaf, so we scope to the
+// leaf wrapping [data-testid="git-panel"]. A synthetic mouse event at the button
+// drives the docs-capture cursor.
+func (tc *TestContext) openAddPanelMenuInGitPanel() error {
+	js := `(function(){
+		var git = document.querySelector('[data-testid="git-panel"]');
+		if (!git) return 'no git panel';
+		var addBtn = null, el = git;
+		for (var i = 0; i < 6 && el; i++) {
+			el = el.parentElement;
+			if (el) { var b = el.querySelector('button[title="Add panel"]'); if (b) { addBtn = b; break; } }
+		}
+		if (!addBtn) return 'no add-panel button near git panel';
+		var r = addBtn.getBoundingClientRect();
+		var cx = Math.round(r.left + r.width / 2), cy = Math.round(r.top + r.height / 2);
+		window.dispatchEvent(new MouseEvent('mousemove', {bubbles: true, clientX: cx, clientY: cy}));
+		window.dispatchEvent(new MouseEvent('mousedown', {bubbles: true, clientX: cx, clientY: cy}));
+		addBtn.click();
+		return 'ok';
+	})()`
+	var res string
+	if err := chromedp.Run(tc.chromeTab.ctx, chromedp.Evaluate(js, &res)); err != nil {
+		return err
+	}
+	if res != "ok" {
+		return fmt.Errorf("open add-panel menu in git panel: %s", res)
+	}
+	return nil
+}
+
+// addPanelBelowFromMenu clicks the "<name> ↓" option in the open add-panel menu,
+// which splits the new panel in below the leaf the menu was opened from.
+func (tc *TestContext) addPanelBelowFromMenu(name string) error {
+	js := fmt.Sprintf(`(function(){
+		var menu = document.querySelector('[data-testid="add-panel-menu"]');
+		if (!menu) return 'no add-panel menu';
+		var btn = Array.from(menu.querySelectorAll('button')).find(function(b){
+			return b.textContent.includes(%q) && b.textContent.includes('↓');
+		});
+		if (!btn) return 'option not found';
+		var r = btn.getBoundingClientRect();
+		var cx = Math.round(r.left + r.width / 2), cy = Math.round(r.top + r.height / 2);
+		window.dispatchEvent(new MouseEvent('mousemove', {bubbles: true, clientX: cx, clientY: cy}));
+		window.dispatchEvent(new MouseEvent('mousedown', {bubbles: true, clientX: cx, clientY: cy}));
+		btn.click();
+		return 'ok';
+	})()`, name)
+	var res string
+	if err := chromedp.Run(tc.chromeTab.ctx, chromedp.Evaluate(js, &res)); err != nil {
+		return err
+	}
+	if res != "ok" {
+		return fmt.Errorf("add %q panel below from menu: %s", name, res)
+	}
+	return nil
+}
+
 func (tc *TestContext) clickTaskCreateButton() error {
 	// The task create "+" button is a small button inside the tasks panel list header,
 	// next to the "{n} task(s)" count text. We find it by locating the span with
@@ -960,6 +1092,64 @@ func (tc *TestContext) waitForTextToDisappearWithTimeout(timeout, text string) e
 	)
 }
 
+// waitForSelectorToDisappear polls until the CSS selector matches no element.
+// Used to wait for the agent's run to finish (the chat's Stop button unmounts).
+func (tc *TestContext) waitForSelectorToDisappear(timeout, selector string) error {
+	d, err := time.ParseDuration(timeout)
+	if err != nil {
+		return fmt.Errorf("invalid timeout %q: %w", timeout, err)
+	}
+	return chromedp.Run(tc.chromeTab.ctx,
+		chromedp.Poll(fmt.Sprintf(`document.querySelector(%q) === null`, selector),
+			nil, chromedp.WithPollingTimeout(d), chromedp.WithPollingInterval(200*time.Millisecond)),
+	)
+}
+
+// waitForSelectorVisibleWithTimeout polls until the selector exists and has a
+// non-zero box, bounded by timeout (a hung agent fails fast rather than at the
+// scenario deadline).
+func (tc *TestContext) waitForSelectorVisibleWithTimeout(timeout, selector string) error {
+	d, err := time.ParseDuration(timeout)
+	if err != nil {
+		return fmt.Errorf("invalid timeout %q: %w", timeout, err)
+	}
+	js := fmt.Sprintf(`(() => { const el = document.querySelector(%q); if (!el) return false; const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0; })()`, selector)
+	return chromedp.Run(tc.chromeTab.ctx,
+		chromedp.Poll(js, nil, chromedp.WithPollingTimeout(d), chromedp.WithPollingInterval(200*time.Millisecond)),
+	)
+}
+
+// waitForSelectorVisibleBestEffort waits like waitForSelectorVisibleWithTimeout
+// but never fails the scenario — used for content that depends on a live agent
+// (e.g. an agent-created playground) so a rare miss doesn't break the journey.
+func (tc *TestContext) waitForSelectorVisibleBestEffort(timeout, selector string) error {
+	_ = tc.waitForSelectorVisibleWithTimeout(timeout, selector)
+	return nil
+}
+
+// selectCreatedPlayground ensures the Playground panel shows a playground: if its
+// iframe isn't already rendering, it picks the first real option from the panel's
+// <select> (the agent-created playground). Best-effort — no-op if nothing to pick
+// (the iframe wait that follows is the real, lenient gate). This avoids relying
+// on the playground.update WS event's auto-select, which can be missed.
+func (tc *TestContext) selectCreatedPlayground() error {
+	js := `(() => {
+		const panel = document.querySelector('[data-testid="playground-panel"]');
+		if (!panel) return 'no-panel';
+		if (panel.querySelector('iframe')) return 'ok';
+		const sel = panel.querySelector('select');
+		if (!sel) return 'no-select';
+		const opt = Array.from(sel.options).find(o => o.value && !o.disabled);
+		if (!opt) return 'no-option';
+		const setter = Object.getOwnPropertyDescriptor(window.HTMLSelectElement.prototype, 'value').set;
+		setter.call(sel, opt.value);
+		sel.dispatchEvent(new Event('change', { bubbles: true }));
+		return 'ok';
+	})()`
+	var res string
+	return chromedp.Run(tc.chromeTab.ctx, chromedp.Evaluate(js, &res))
+}
+
 func (tc *TestContext) clickLabelWithText(text string) error {
 	xpath := fmt.Sprintf(`//label[contains(text(), '%s')]`, text)
 	return chromedp.Run(tc.chromeTab.ctx,
@@ -1006,10 +1196,17 @@ func (tc *TestContext) captureDocScreenshot(name string) error {
 	if os.Getenv("LOOP_DOCS_CAPTURE") == "" {
 		return nil
 	}
+	// Hide the fake cursor (if injected) so it never appears in still PNGs.
+	hideCursor := `(function(){var c=document.getElementById('loop-docs-cursor');if(c)c.style.display='none';return 'ok';})()`
+	showCursor := `(function(){var c=document.getElementById('loop-docs-cursor');if(c)c.style.display='';return 'ok';})()`
+	var res string
+	_ = chromedp.Run(tc.chromeTab.ctx, chromedp.Evaluate(hideCursor, &res))
 	var buf []byte
-	if err := chromedp.Run(tc.chromeTab.ctx,
+	err := chromedp.Run(tc.chromeTab.ctx,
 		chromedp.CaptureScreenshot(&buf),
-	); err != nil {
+	)
+	_ = chromedp.Run(tc.chromeTab.ctx, chromedp.Evaluate(showCursor, &res))
+	if err != nil {
 		return err
 	}
 	outDir := os.Getenv("LOOP_DOCS_OUT")
@@ -1051,24 +1248,126 @@ func (tc *TestContext) showCaption(text string) error {
 // showLoopTitleCard shows a branded "∞ Loop" intro/outro card that fades in,
 // holds, and fades out (the journey waits ~3.4s for the animation to be
 // recorded, then hides it). No-op outside LOOP_DOCS_CAPTURE.
-func (tc *TestContext) showLoopTitleCard() error {
+// injectMouseCursor adds a fake pointer that follows mouse events, so the
+// screencast can "show the mouse." CDP's screencast records the page, not the OS
+// cursor, so we render our own: a window-level (capture-phase) mousemove listener
+// glides the pointer (CSS transition) and mousedown draws a click ripple. Real
+// CDP clicks (chromedp.Click) emit native mouse events the listener catches;
+// clickInRegion's JS-dispatched clicks carry clientX/clientY for the same reason.
+func (tc *TestContext) injectMouseCursor() error {
+	if os.Getenv("LOOP_DOCS_CAPTURE") == "" {
+		return nil
+	}
+	js := `(function(){
+		if (document.getElementById('loop-docs-cursor')) return 'exists';
+		var c = document.createElement('div');
+		c.id = 'loop-docs-cursor';
+		c.style.cssText = 'position:fixed;left:0;top:0;z-index:2147483646;pointer-events:none;'+
+			'transition:transform 0.45s cubic-bezier(.22,.61,.36,1);will-change:transform;'+
+			'filter:drop-shadow(0 1px 2px rgba(0,0,0,.55));';
+		c.innerHTML = '<svg width="22" height="22" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">'+
+			'<path d="M5 2.5 L5 19 L9.2 14.8 L12 21 L14.4 20 L11.6 13.8 L17.5 13.8 Z" '+
+			'fill="#ffffff" stroke="#111111" stroke-width="1.2" stroke-linejoin="round"/></svg>';
+		document.body.appendChild(c);
+		var x = window.innerWidth/2, y = window.innerHeight*0.6;
+		function move(nx, ny){ x=nx; y=ny; c.style.transform='translate('+nx+'px,'+ny+'px)'; }
+		move(x, y);
+		function pulse(px, py){
+			var r = document.createElement('div');
+			r.style.cssText='position:fixed;left:'+px+'px;top:'+py+'px;width:10px;height:10px;'+
+				'margin:-5px 0 0 -5px;border-radius:50%;border:2px solid rgba(90,170,255,.9);'+
+				'background:rgba(90,170,255,.22);z-index:2147483645;pointer-events:none;'+
+				'transition:width .45s ease-out,height .45s ease-out,margin .45s ease-out,opacity .45s ease-out;';
+			document.body.appendChild(r);
+			requestAnimationFrame(function(){
+				r.style.width='44px'; r.style.height='44px'; r.style.margin='-22px 0 0 -22px'; r.style.opacity='0';
+			});
+			setTimeout(function(){ r.remove(); }, 480);
+		}
+		window.addEventListener('mousemove', function(e){ move(e.clientX, e.clientY); }, true);
+		window.addEventListener('mousedown', function(e){ move(e.clientX, e.clientY); pulse(e.clientX, e.clientY); }, true);
+		window.__loopCursor = { move: move, pulse: pulse };
+		return 'ok';
+	})()`
+	var res string
+	return chromedp.Run(tc.chromeTab.ctx, chromedp.Evaluate(js, &res))
+}
+
+func (tc *TestContext) showLoopTitleCard() error     { return tc.loopTitleCard(false) }
+func (tc *TestContext) showLoopTitleCardHold() error { return tc.loopTitleCard(true) }
+
+// loopCardInjectJS builds the JS that injects (or updates) the full-screen
+// branded "∞ Loop" card at the given opacity. The logo is the inlined codebase
+// logo (app/src/assets/logo-horizontal.svg): the infinity mark next to the
+// "Loop" wordmark, recoloured light for the dark card. The SVG has no '%' so the
+// single %s opacity placeholder is safe.
+func loopCardInjectJS(opacity string) string {
+	return fmt.Sprintf(`(function(){
+		var id='loop-docs-caption';
+		var el=document.getElementById(id);
+		if(!el){el=document.createElement('div');el.id=id;document.body.appendChild(el);}
+		el.style.cssText='position:fixed;inset:0;z-index:2147483647;display:flex;'+
+			'align-items:center;justify-content:center;background:#06080c;opacity:%s';
+		el.innerHTML='<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 567 148" width="500">'+
+			'<g transform="translate(94.9, 74.0) scale(0.4154)"><path d="M0 0c-43-57.3-86-86-128.7-86a86 86 0 1 0 0 172c42.7 0 85.7-28.7 128.7-86Zm0 0c43 57.3 86 86 128.7 86a86 86 0 0 0 0-172c-42.7 0-85.7 28.7-128.7 86Z" fill="none" stroke="#e8eaed" stroke-width="18" stroke-linecap="round" stroke-linejoin="round"/></g>'+
+			'<g transform="translate(213.8, 116.3)"><path d="M20.00 0.00Q15.31 0.00 12.62 -2.77Q9.92 -5.55 9.92 -10.47L9.92 -103.59Q9.92 -108.59 12.62 -111.33Q15.31 -114.06 20.00 -114.06Q24.69 -114.06 27.38 -111.33Q30.08 -108.59 30.08 -103.59L30.08 -17.03L73.28 -17.03Q77.42 -17.03 79.96 -14.73Q82.50 -12.42 82.50 -8.52Q82.50 -4.61 79.96 -2.30Q77.42 0.00 73.28 0.00ZM128.81 1.64Q116.70 1.64 107.67 -3.52Q98.65 -8.67 93.69 -18.36Q88.73 -28.05 88.73 -41.41Q88.73 -54.84 93.73 -64.45Q98.73 -74.06 107.75 -79.30Q116.77 -84.53 128.81 -84.53Q140.91 -84.53 149.90 -79.34Q158.88 -74.14 163.88 -64.49Q168.88 -54.84 168.88 -41.41Q168.88 -27.97 163.92 -18.32Q158.96 -8.67 149.98 -3.52Q140.99 1.64 128.81 1.64ZM128.81 -13.75Q134.98 -13.75 139.55 -16.99Q144.12 -20.23 146.62 -26.45Q149.12 -32.66 149.12 -41.41Q149.12 -50.23 146.62 -56.41Q144.12 -62.58 139.55 -65.82Q134.98 -69.06 128.81 -69.06Q122.63 -69.06 118.06 -65.82Q113.49 -62.58 110.99 -56.41Q108.49 -50.23 108.49 -41.41Q108.49 -32.66 110.99 -26.45Q113.49 -20.23 118.06 -16.99Q122.63 -13.75 128.81 -13.75ZM218.00 1.64Q205.89 1.64 196.87 -3.52Q187.84 -8.67 182.88 -18.36Q177.92 -28.05 177.92 -41.41Q177.92 -54.84 182.92 -64.45Q187.92 -74.06 196.95 -79.30Q205.97 -84.53 218.00 -84.53Q230.11 -84.53 239.09 -79.34Q248.08 -74.14 253.08 -64.49Q258.08 -54.84 258.08 -41.41Q258.08 -27.97 253.12 -18.32Q248.16 -8.67 239.17 -3.52Q230.19 1.64 218.00 1.64ZM218.00 -13.75Q224.17 -13.75 228.74 -16.99Q233.31 -20.23 235.81 -26.45Q238.31 -32.66 238.31 -41.41Q238.31 -50.23 235.81 -56.41Q233.31 -62.58 228.74 -65.82Q224.17 -69.06 218.00 -69.06Q211.83 -69.06 207.26 -65.82Q202.69 -62.58 200.19 -56.41Q197.69 -50.23 197.69 -41.41Q197.69 -32.66 200.19 -26.45Q202.69 -20.23 207.26 -16.99Q211.83 -13.75 218.00 -13.75ZM280.24 29.45Q276.02 29.45 273.29 26.80Q270.55 24.14 270.55 19.22L270.55 -74.45Q270.55 -79.22 273.17 -81.84Q275.79 -84.45 280.01 -84.45Q284.23 -84.45 286.88 -81.84Q289.54 -79.22 289.54 -74.45L289.54 -68.52L289.93 -68.52Q292.27 -73.36 296.10 -76.88Q299.93 -80.39 304.97 -82.30Q310.01 -84.22 316.02 -84.22Q326.49 -84.22 334.23 -79.02Q341.96 -73.83 346.18 -64.26Q350.40 -54.69 350.40 -41.41Q350.40 -28.20 346.22 -18.59Q342.04 -8.98 334.38 -3.83Q326.73 1.33 316.34 1.33Q310.40 1.33 305.32 -0.51Q300.24 -2.34 296.45 -5.74Q292.66 -9.14 290.40 -13.75L290.01 -13.75L290.01 19.22Q290.01 24.14 287.27 26.80Q284.54 29.45 280.24 29.45ZM310.09 -14.61Q316.41 -14.61 320.98 -17.89Q325.55 -21.17 328.02 -27.19Q330.48 -33.20 330.48 -41.41Q330.48 -49.61 328.02 -55.59Q325.55 -61.56 320.98 -64.88Q316.41 -68.20 310.09 -68.20Q304.07 -68.20 299.50 -64.88Q294.93 -61.56 292.43 -55.51Q289.93 -49.45 289.85 -41.41Q289.93 -33.28 292.43 -27.27Q294.93 -21.25 299.50 -17.93Q304.07 -14.61 310.09 -14.61Z" fill="#e8eaed"/></g></svg>';
+		return 'ok';
+	})()`, opacity)
+}
+
+// showLoopIntroCard injects the branded card at full opacity. Called BEFORE the
+// recording starts so the screencast's very first frame is the "∞ Loop" card
+// (otherwise the app UI shows until the card fades in).
+func (tc *TestContext) showLoopIntroCard() error {
+	if os.Getenv("LOOP_DOCS_CAPTURE") == "" {
+		return nil
+	}
+	var res string
+	if err := chromedp.Run(tc.chromeTab.ctx, chromedp.Evaluate(loopCardInjectJS("1"), &res)); err != nil {
+		return err
+	}
+	// Let the card actually composite before the caller starts the screencast,
+	// otherwise the recorder's first frame catches the app underneath.
+	time.Sleep(600 * time.Millisecond)
+	return nil
+}
+
+// fadeOutLoopTitleCard fades the already-shown card from full to transparent
+// (JS-stepped so headless Chrome actually repaints/records it). The caller then
+// removes it with `I hide caption`.
+func (tc *TestContext) fadeOutLoopTitleCard() error {
 	if os.Getenv("LOOP_DOCS_CAPTURE") == "" {
 		return nil
 	}
 	ctx := tc.chromeTab.ctx
-	inject := `(function(){
-		var id='loop-docs-caption';
-		var el=document.getElementById(id);
-		if(!el){el=document.createElement('div');el.id=id;document.body.appendChild(el);}
-		el.style.cssText='position:fixed;inset:0;z-index:2147483647;display:flex;flex-direction:column;'+
-			'align-items:center;justify-content:center;background:#06080c;color:#e8eaed;opacity:0;'+
-			'font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif';
-		el.innerHTML='<div style="font-size:160px;line-height:0.9;font-weight:200">∞</div>'+
-			'<div style="font-size:56px;font-weight:600;letter-spacing:4px">Loop</div>';
-		return 'ok';
-	})()`
 	var res string
-	if err := chromedp.Run(ctx, chromedp.Evaluate(inject, &res)); err != nil {
+	const total = 0.8
+	start := time.Now()
+	for {
+		elapsed := time.Since(start).Seconds()
+		if elapsed >= total {
+			break
+		}
+		op := (total - elapsed) / total
+		step := fmt.Sprintf(`(function(){var e=document.getElementById('loop-docs-caption');if(e)e.style.opacity=%q;return 'ok';})()`, fmt.Sprintf("%.3f", op))
+		_ = chromedp.Run(ctx, chromedp.Evaluate(step, &res))
+		time.Sleep(33 * time.Millisecond) // ~30fps opacity steps for a smooth, well-recorded fade
+	}
+	return nil
+}
+
+// loopTitleCard injects the branded "∞ Loop" card and drives its opacity from
+// JS (headless Chrome throttles CSS animations on a static page). holdAtEnd=false
+// fades in, holds, then fades out (intro); holdAtEnd=true fades in and stays at
+// full opacity so the recording can end on the card (outro). A tiny opacity
+// jitter during the hold forces the repaints the screencast records.
+func (tc *TestContext) loopTitleCard(holdAtEnd bool) error {
+	if os.Getenv("LOOP_DOCS_CAPTURE") == "" {
+		return nil
+	}
+	ctx := tc.chromeTab.ctx
+	var res string
+	if err := chromedp.Run(ctx, chromedp.Evaluate(loopCardInjectJS("0"), &res)); err != nil {
 		return err
 	}
 	// Drive the fade in/hold/out from JS rather than a CSS animation: headless
@@ -1077,7 +1376,7 @@ func (tc *TestContext) showLoopTitleCard() error {
 	// repaints the screencast records.
 	const total = 4.5
 	start := time.Now()
-	for {
+	for i := 0; ; i++ {
 		elapsed := time.Since(start).Seconds()
 		if elapsed >= total {
 			break
@@ -1085,13 +1384,15 @@ func (tc *TestContext) showLoopTitleCard() error {
 		op := 1.0
 		switch {
 		case elapsed < 0.6:
-			op = elapsed / 0.6
-		case elapsed > total-0.8:
-			op = (total - elapsed) / 0.8
+			op = elapsed / 0.6 // fade in
+		case !holdAtEnd && elapsed > total-0.8:
+			op = (total - elapsed) / 0.8 // fade out (intro)
+		case holdAtEnd:
+			op = 1.0 - 0.004*float64(i%2) // hold at full opacity, jitter to keep recording
 		}
 		step := fmt.Sprintf(`(function(){var e=document.getElementById('loop-docs-caption');if(e)e.style.opacity=%q;return 'ok';})()`, fmt.Sprintf("%.3f", op))
 		_ = chromedp.Run(ctx, chromedp.Evaluate(step, &res))
-		time.Sleep(120 * time.Millisecond)
+		time.Sleep(33 * time.Millisecond) // ~30fps opacity steps for a smooth, well-recorded fade
 	}
 	return nil
 }

@@ -41,6 +41,8 @@ The panel toolbar shows a dropdown selector when multiple playgrounds exist. Whe
 
 ## Panel
 
+![A live playground — a centered "Hello from Loop" card with a pulsing glow, rendered in a sandboxed iframe next to chat](static/images/features/playground.png)
+
 **Component:** `app/src/components/panels/PlaygroundPanel.tsx`
 
 The playground renders agent-generated code in a sandboxed `<iframe>` with `sandbox="allow-scripts"`. This provides process isolation — the playground code cannot access the parent page or the Loop API.

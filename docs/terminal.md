@@ -276,6 +276,8 @@ create ──> readLoop starts ──> fan-out to attached clients
 
 ## Docker Exec Sessions
 
+![A Docker Shell pane in the container with the $ bash-shortcut picker open](static/images/features/docker-shell.png)
+
 Managed by `DockerExecClient` which wraps the Docker SDK exec API.
 
 - **ExecCreate:** Creates an exec process inside a running container with `Tty: true`, stdin/stdout/stderr attached. Runs as the host user (`$USER` env var) matching the container's non-root `agent` user. Default command is `/bin/sh`.

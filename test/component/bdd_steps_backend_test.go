@@ -536,6 +536,19 @@ export function searchNotes(query: string): Note[] {
 		"command": "npm test",
 	})
 	_ = tc.doRequest(http.MethodPost, "/api/bash-shortcuts", string(bsBody))
+
+	// Preseed a project-scoped playground via the server's own API (files on disk;
+	// no DB/Ollama) so the Playground panel reliably shows a live sandbox. The
+	// journey also asks the agent to create one in chat, but the panel's item list
+	// only refreshes on a playground.update WS event that can be missed mid-run.
+	pgHTML := `<style>html,body{margin:0;height:100%}body{display:flex;align-items:center;justify-content:center;background:#0b0d12;font-family:system-ui,-apple-system,sans-serif}.card{padding:46px 64px;border-radius:16px;background:#12151c;color:#e8eaed;font-size:30px;font-weight:600;letter-spacing:.3px;box-shadow:0 0 0 1px rgba(255,255,255,.06);animation:glow 3s ease-in-out infinite}@keyframes glow{0%,100%{box-shadow:0 0 24px rgba(124,92,255,.25)}50%{box-shadow:0 0 60px rgba(124,92,255,.65)}}</style>
+<div class="card">Hello from Loop</div>`
+	pgBody, _ := json.Marshal(map[string]any{
+		"html":        pgHTML,
+		"title":       "Hello from Loop",
+		"description": "A centered card with a gentle pulsing glow.",
+	})
+	_ = tc.doRequest(http.MethodPut, fmt.Sprintf("/api/playground?name=hello-loop&scope=project&channel_id=%s", id), string(pgBody))
 	return nil
 }
 
