@@ -13,6 +13,8 @@ Related docs: [Chat](chat.md) | [Editor](editor.md) | [Desktop App](desktop-app.
 
 The default layout type. Panels are arranged in arbitrary horizontal and vertical splits using a recursive tree data structure (see [Tree Data Structure](#tree-data-structure) below).
 
+![A split layout combining Chat, Files, and Git panels in one workspace](static/images/features/multi-panel-workspace.png)
+
 ### Canvas Layout
 
 A free-form layout with draggable, resizable tiles on an infinite surface.
