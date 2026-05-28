@@ -230,6 +230,8 @@ Tasks with `worktree = true` run the agent in an isolated git worktree so change
 
 Tasks running in a worktree directory use a three-layer config merge: **global → parent project → worktree**. This ensures settings like `claude_model`, `mounts`, and `mcp_servers` configured in the parent project's `.loop/config.json` are inherited automatically.
 
+Because the worktree's seeded config sets `extra_dirs` to the parent project path, the parent project's own `extra_dirs` are **unioned** with the worktree's (rather than replaced), so the worktree mounts the same extra roots as the parent channel.
+
 This applies in two cases:
 - **`worktree = true` tasks**: The executor sets the parent channel's `dir_path` as the config parent.
 - **Tasks scheduled from a worktree channel** (even with `worktree = false`): The executor resolves the worktree channel's parent and uses its `dir_path` for config inheritance.

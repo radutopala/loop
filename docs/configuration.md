@@ -538,6 +538,7 @@ Not all global fields are available in project configs. The following fields can
 |---|---|
 | `mounts` | **Replaces** global mounts entirely. Relative host paths are resolved relative to `workDir`. |
 | `copy_files` | **Replaces** global `copy_files` entirely when set. |
+| `extra_dirs` | **Replaces** global value when set. In **worktree** configs the parent project's `extra_dirs` are **unioned** with the worktree's (deduped, parent first), so a worktree inherits the same extra roots as its parent channel. |
 | `mcp.servers` | **Merged** with global servers. Project servers override global servers with the same name. |
 | `envs` | **Merged** with global envs. Project values override global values with the same key. |
 | `claude_model` | **Overrides** global value when set. |

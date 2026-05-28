@@ -111,7 +111,7 @@ Mounts are specified in the config as `host_path:container_path[:mode]` strings.
 
 5. **Worktree parent mount** -- when `ParentDirPath` is set and the work directory is inside it (e.g. `/project/.worktrees/wt1` inside `/project`), the parent directory is mounted instead of the work directory. This ensures the container sees the main `.git` directory that git worktrees reference.
 
-6. **Extra directories** -- when a channel has extra directories configured (`extra_dirs`), each extra directory is bind-mounted into the container at its original path. The `--add-dir` flag is passed to the Claude CLI for each extra directory, making all roots available to the agent.
+6. **Extra directories** -- when a channel has extra directories configured (`extra_dirs`), each extra directory is bind-mounted into the container at its original path. The `--add-dir` flag is passed to the Claude CLI for each extra directory, making all roots available to the agent. For worktree channels, the parent project's `extra_dirs` are inherited too: the worktree's seeded `extra_dirs` (which references the parent project) is unioned with the parent's own list, so a worktree container mounts the same extra roots as the parent channel.
 
 ### Named Volume Examples
 
