@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/cucumber/godog"
@@ -38,6 +39,7 @@ func registerBackendSteps(ctx *godog.ScenarioContext, tc *TestContext) {
 	// Hybrid API setup steps (for frontend scenarios that need pre-seeded data)
 	ctx.Step(`^I set up a test channel via API for directory "([^"]*)"$`, tc.setupChannelViaAPI)
 	ctx.Step(`^I set up a test channel via API for git repo "([^"]*)"$`, tc.setupChannelViaAPIForGitRepo)
+	ctx.Step(`^I set up a sample project channel$`, tc.setupSampleProjectChannel)
 	ctx.Step(`^I create a thread "([^"]*)" under the current channel via API$`, tc.createThreadViaAPI)
 	ctx.Step(`^I set up a test task via API with prompt "([^"]*)" and schedule "([^"]*)"$`, tc.setupTaskViaAPI)
 	ctx.Step(`^I set up a test task via API with type "([^"]*)" prompt "([^"]*)" and schedule "([^"]*)"$`, tc.setupTaskViaAPIWithType)
@@ -307,6 +309,206 @@ func (tc *TestContext) setupChannelViaAPIForGitRepo(name string) error {
 
 	tc.ChannelDir = dir
 	return tc.setupChannelViaAPI(dir)
+}
+
+// gitRun runs a git command in dir, returning a descriptive error on failure.
+func gitRun(dir string, args ...string) error {
+	full := append([]string{"-C", dir}, args...)
+	if out, err := exec.Command("git", full...).CombinedOutput(); err != nil {
+		return fmt.Errorf("git %v: %s: %w", args, out, err)
+	}
+	return nil
+}
+
+// setupSampleProjectChannel materializes a small, realistic sample project (an
+// "Acme Notes" TypeScript service) with a loop project config, gives it git
+// history plus a couple of uncommitted edits, and opens a channel on it. Used
+// by @docs capture scenarios so the Files/Git panels show real content instead
+// of an empty repo. The dir base ("acme-notes") becomes the channel name.
+// sampleProject is built once per run and reused across all @docs scenarios
+// (one channel in the DB) — far cheaper than regenerating the git repo every
+// scenario, and it keeps the sidebar to a single acme-notes channel.
+var sampleProject struct {
+	once      sync.Once
+	channelID string
+	dir       string
+	err       error
+}
+
+func (tc *TestContext) setupSampleProjectChannel() error {
+	sampleProject.once.Do(func() { sampleProject.err = tc.buildSampleProjectOnce() })
+	if sampleProject.err != nil {
+		return sampleProject.err
+	}
+	// Deliberately do NOT set tc.ChannelID: per-scenario cleanup() deletes
+	// tc.ChannelID, which would remove the shared sample channel after the
+	// first scenario. Docs scenarios drive the channel via the UI (sidebar),
+	// not the API, so they don't need it.
+	tc.ChannelDir = sampleProject.dir
+	return nil
+}
+
+// buildSampleProjectOnce materializes the sample project and opens a channel on
+// it, recording both in the package-level sampleProject for reuse. The channel
+// and dir are intentionally NOT tracked for per-scenario cleanup so they
+// survive the whole run (the harness wipes the temp dir at the end).
+func (tc *TestContext) buildSampleProjectOnce() error {
+	// LOOP_DOCS_WORKDIR_BASE (set by docs-capture) is a shared, writable base so
+	// a sibling agent container can bind-mount the workdir by the same path.
+	parent, err := os.MkdirTemp(os.Getenv("LOOP_DOCS_WORKDIR_BASE"), "bdd-sample-")
+	if err != nil {
+		return fmt.Errorf("creating temp dir: %w", err)
+	}
+	dir := filepath.Join(parent, "acme-notes")
+
+	// Committed baseline: a tiny notes service + loop project config.
+	committed := map[string]string{
+		"README.md": "# Acme Notes API\n\nA small notes service used in the Loop documentation screenshots.\n\n## Endpoints\n\n- `GET  /notes` — list notes\n- `POST /notes` — create a note\n\n## Develop\n\n```\nnpm install\nnpm run dev\n```\n",
+		"package.json": `{
+  "name": "acme-notes",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "build": "tsc -p ."
+  },
+  "dependencies": { "express": "^4.19.2" },
+  "devDependencies": { "tsx": "^4.7.0", "typescript": "^5.4.0" }
+}
+`,
+		".gitignore": "node_modules/\ndist/\n",
+		".loop/config.json": "{\n  \"claude_model\": \"claude-sonnet-4-6\"\n}\n",
+		"src/index.ts": `import express from "express";
+import { listNotes, createNote } from "./notes";
+
+const app = express();
+app.use(express.json());
+
+app.get("/notes", (_req, res) => {
+  res.json(listNotes());
+});
+
+app.post("/notes", (req, res) => {
+  const note = createNote(req.body.title ?? "untitled");
+  res.status(201).json(note);
+});
+
+const port = Number(process.env.PORT ?? 3000);
+app.listen(port, () => console.log(` + "`acme-notes listening on :${port}`" + `));
+`,
+		"src/notes.ts": `export interface Note {
+  id: number;
+  title: string;
+  createdAt: string;
+}
+
+const notes: Note[] = [];
+
+export function listNotes(): Note[] {
+  return notes;
+}
+
+export function createNote(title: string): Note {
+  const note: Note = { id: notes.length + 1, title, createdAt: new Date().toISOString() };
+  notes.push(note);
+  return note;
+}
+`,
+	}
+	for rel, content := range committed {
+		p := filepath.Join(dir, rel)
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			return fmt.Errorf("mkdir %s: %w", rel, err)
+		}
+		if err := os.WriteFile(p, []byte(content), 0o644); err != nil {
+			return fmt.Errorf("writing %s: %w", rel, err)
+		}
+	}
+
+	if err := gitRun(dir, "init", "-b", "main"); err != nil {
+		return err
+	}
+	for _, kv := range [][2]string{{"user.email", "dev@acme.test"}, {"user.name", "Acme Dev"}} {
+		if err := gitRun(dir, "config", kv[0], kv[1]); err != nil {
+			return err
+		}
+	}
+	// Two commits give the Commits view some history.
+	if err := gitRun(dir, "add", "."); err != nil {
+		return err
+	}
+	if err := gitRun(dir, "commit", "-m", "Initial commit: notes service"); err != nil {
+		return err
+	}
+	if err := os.WriteFile(filepath.Join(dir, "README.md"), []byte("# Acme Notes API\n\nA small notes service used in the Loop documentation screenshots.\n\n## Endpoints\n\n- `GET  /notes` — list notes\n- `POST /notes` — create a note\n- `DELETE /notes/:id` — delete a note\n\n## Develop\n\n```\nnpm install\nnpm run dev\n```\n"), 0o644); err != nil {
+		return err
+	}
+	if err := gitRun(dir, "commit", "-am", "Document delete endpoint"); err != nil {
+		return err
+	}
+
+	// Uncommitted edits so the Git panel shows real changes: one modified
+	// tracked file and one untracked file.
+	notesEdit := `export interface Note {
+  id: number;
+  title: string;
+  createdAt: string;
+}
+
+const notes: Note[] = [];
+
+export function listNotes(): Note[] {
+  return notes;
+}
+
+export function createNote(title: string): Note {
+  const note: Note = { id: notes.length + 1, title, createdAt: new Date().toISOString() };
+  notes.push(note);
+  return note;
+}
+
+export function deleteNote(id: number): boolean {
+  const idx = notes.findIndex((n) => n.id === id);
+  if (idx === -1) return false;
+  notes.splice(idx, 1);
+  return true;
+}
+`
+	if err := os.WriteFile(filepath.Join(dir, "src", "notes.ts"), []byte(notesEdit), 0o644); err != nil {
+		return err
+	}
+	searchFile := `import type { Note } from "./notes";
+import { listNotes } from "./notes";
+
+export function searchNotes(query: string): Note[] {
+  const q = query.toLowerCase();
+  return listNotes().filter((n) => n.title.toLowerCase().includes(q));
+}
+`
+	if err := os.WriteFile(filepath.Join(dir, "src", "search.ts"), []byte(searchFile), 0o644); err != nil {
+		return err
+	}
+
+	// Docs-capture runs the agent as a non-root uid (loop runs as root in the
+	// sandbox; claude refuses root). Make the workspace world-writable so the
+	// agent's MCP server / tools can write under the workdir.
+	if os.Getenv("LOOP_DOCS_CAPTURE") != "" {
+		_ = exec.Command("chmod", "-R", "0777", parent).Run()
+	}
+
+	// Open a channel on the sample dir without tracking it for per-scenario
+	// cleanup, so it persists for the whole run and is reused by every scenario.
+	body := fmt.Sprintf(`{"dir_path": %q, "platform": "local"}`, dir)
+	if err := tc.doRequest(http.MethodPost, "/api/channels", body); err != nil {
+		return err
+	}
+	if tc.LastStatus != http.StatusOK {
+		return fmt.Errorf("failed to create sample channel: status %d, body: %s", tc.LastStatus, string(tc.LastBody))
+	}
+	id, _ := tc.LastJSON["channel_id"].(string)
+	sampleProject.channelID = id
+	sampleProject.dir = dir
+	return nil
 }
 
 func (tc *TestContext) triggerRunNowViaAPI() error {

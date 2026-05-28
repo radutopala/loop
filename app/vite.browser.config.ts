@@ -16,6 +16,9 @@ export default defineConfig({
       "/api": {
         target: apiTarget,
         changeOrigin: true,
+        // Proxy WebSocket upgrades too (loop's live stream is /api/ws);
+        // without this the browser's /api/ws never completes the 101 handshake.
+        ws: true,
       },
     },
   },

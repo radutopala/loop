@@ -40,7 +40,7 @@ GODOG_TAGS ?= ~@docs
 
 test-component-bdd: ## Run BDD component tests (via Docker on host, natively in CI)
 	@if [ "$$CI" = "true" ] || ([ -f /.dockerenv ] && [ "$$(id -u)" = "0" ] && command -v apt-get >/dev/null 2>&1); then \
-		GODOG_TAGS="$(GODOG_TAGS)" LOOP_DOCS_CAPTURE="$(LOOP_DOCS_CAPTURE)" TEST_RUN=$${TEST_RUN:-"TestBDDBackendFeatures|TestBDDFrontendFeatures"} bash scripts/test-component.sh; \
+		GODOG_TAGS="$(GODOG_TAGS)" LOOP_DOCS_CAPTURE="$(LOOP_DOCS_CAPTURE)" $(if $(LOOP_DOCS_CAPTURE),LOOP_DOCS_HOST_CONFIG="$(HOME)/.loop/config.json") TEST_RUN=$${TEST_RUN:-"TestBDDBackendFeatures|TestBDDFrontendFeatures"} bash scripts/test-component.sh; \
 	else \
 		docker rm -f loop-bdd 2>/dev/null; \
 		rm -rf /tmp/loop-bdd-data && mkdir -p /tmp/loop-bdd-data; \
@@ -50,13 +50,13 @@ test-component-bdd: ## Run BDD component tests (via Docker on host, natively in 
 			-v loop-gomod:/go/pkg/mod -v loop-gocache:/root/.cache/go-build \
 			-e TEST_RUN="$${TEST_RUN:-TestBDDBackendFeatures|TestBDDFrontendFeatures}" \
 			$(if $(GODOG_TAGS),-e GODOG_TAGS="$(GODOG_TAGS)") \
-			$(if $(LOOP_DOCS_CAPTURE),-e LOOP_DOCS_CAPTURE="$(LOOP_DOCS_CAPTURE)") \
+			$(if $(LOOP_DOCS_CAPTURE),-e LOOP_DOCS_CAPTURE="$(LOOP_DOCS_CAPTURE)" -v "$(HOME)/.loop/config.json:/host-loop-config.json:ro" -e LOOP_DOCS_HOST_CONFIG=/host-loop-config.json) \
 			$(if $(GODOG_CONCURRENCY),-e GODOG_CONCURRENCY="$(GODOG_CONCURRENCY)") \
 			ghcr.io/radutopala/loop/test-runner:latest bash scripts/test-component.sh; \
 		rc=$$?; docker ps -aq --filter "name=loop-bdd-" | xargs -r docker rm -f 2>/dev/null || true; exit $$rc; \
 	fi
 
-docs-capture: ## Capture documentation screenshots from @docs BDD scenarios into docs/static/images/features
+docs-capture: ## Capture documentation screenshots/GIFs from @docs BDD scenarios (incl. a live Claude agent chat; reuses one sample project) into docs/static/images/features
 	$(MAKE) test-component-bdd GODOG_TAGS=@docs LOOP_DOCS_CAPTURE=1 TEST_RUN=TestBDDFrontendFeatures
 
 test-component-perf: ## Run API performance tests (via Docker on host, natively in CI)

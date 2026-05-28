@@ -6,6 +6,14 @@
 
 AI agents powered by Claude, running in Docker containers. Use the **desktop app** for a local-first experience, or connect to **Slack** / **Discord** for team collaboration — or run all three at once.
 
+## Demo
+
+> 📹 **End-to-end walkthrough** — recorded locally by `make docs-capture` to the gitignored `docs/videos/journey.mp4`. Upload it to YouTube, then uncomment the embed below and replace `VIDEO_ID`.
+
+<!--
+[![Loop — end-to-end walkthrough](https://img.youtube.com/vi/VIDEO_ID/hqdefault.jpg)](https://www.youtube.com/watch?v=VIDEO_ID)
+-->
+
 ## Architecture
 
 ```

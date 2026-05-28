@@ -51,3 +51,7 @@ tickets/
 
 # Component test artifacts
 test/component/screenshots/
+
+# Generated docs walkthrough video (recorded by `make docs-capture`, uploaded
+# manually to YouTube — not committed)
+docs/videos/
