@@ -124,14 +124,16 @@ docs-build: ## Build the docs/ Hugo site via Docker (output in docs/public/)
 	fi
 	cp docs/README.md docs/_index.md
 	@set -e; \
-	CA_BUNDLE=""; \
-	if [ "$$(uname)" = "Darwin" ]; then \
-		CA_BUNDLE="$$(mktemp -t loop-docs-ca)"; \
-		security find-certificate -a -p /Library/Keychains/System.keychain >> "$$CA_BUNDLE" 2>/dev/null || true; \
-		security find-certificate -a -p /System/Library/Keychains/SystemRootCertificates.keychain >> "$$CA_BUNDLE" 2>/dev/null || true; \
-		[ -s "$$CA_BUNDLE" ] || { rm -f "$$CA_BUNDLE"; CA_BUNDLE=""; }; \
+	CA_BUNDLE=""; CA_BUNDLE_TMP=""; \
+	if [ -n "$(DOCS_CA_BUNDLE)" ]; then \
+		CA_BUNDLE="$(DOCS_CA_BUNDLE)"; \
+	elif [ "$$(uname)" = "Darwin" ]; then \
+		CA_BUNDLE_TMP="$$(mktemp -t loop-docs-ca)"; \
+		security find-certificate -a -p /Library/Keychains/System.keychain >> "$$CA_BUNDLE_TMP" 2>/dev/null || true; \
+		security find-certificate -a -p /System/Library/Keychains/SystemRootCertificates.keychain >> "$$CA_BUNDLE_TMP" 2>/dev/null || true; \
+		if [ -s "$$CA_BUNDLE_TMP" ]; then CA_BUNDLE="$$CA_BUNDLE_TMP"; else rm -f "$$CA_BUNDLE_TMP"; CA_BUNDLE_TMP=""; fi; \
 	fi; \
-	trap '[ -n "$$CA_BUNDLE" ] && rm -f "$$CA_BUNDLE"' EXIT; \
+	trap '[ -n "$$CA_BUNDLE_TMP" ] && rm -f "$$CA_BUNDLE_TMP"' EXIT; \
 	if [ -n "$$CA_BUNDLE" ]; then \
 		docker run --rm --name loop-docs -v "$$(pwd)":/repo -w /repo/docs \
 			-v "$$CA_BUNDLE":/usr/local/share/ca-certificates/host-ca.crt:ro \
