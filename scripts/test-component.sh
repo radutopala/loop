@@ -166,11 +166,11 @@ if [ -n "$TEST_RUN" ]; then
     TEST_FLAGS="-run $TEST_RUN"
 fi
 
-# Run component tests. docs-capture uses a shorter timeout so a hung live-agent
-# scenario fails in ~2 min instead of ~10 (per-scenario budget is 20s). Override
-# with GO_TEST_TIMEOUT.
+# Run component tests. docs-capture runs one long end-to-end journey (live agent
+# reply + a full panel tour + MP4 encode); the per-scenario budget is 120s, so
+# allow headroom here. Override with GO_TEST_TIMEOUT.
 TEST_TIMEOUT=900s
-[ -n "$LOOP_DOCS_CAPTURE" ] && TEST_TIMEOUT=120s
+[ -n "$LOOP_DOCS_CAPTURE" ] && TEST_TIMEOUT=540s
 [ -n "$GO_TEST_TIMEOUT" ] && TEST_TIMEOUT="$GO_TEST_TIMEOUT"
 echo -e "${YELLOW}Running component tests (timeout $TEST_TIMEOUT)...${NC}"
 LOOP_BASE_URL="http://localhost:8222" \

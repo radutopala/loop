@@ -225,6 +225,9 @@ func registerFrontendSteps(ctx *godog.ScenarioContext, tc *TestContext) {
 	ctx.Step(`^I capture screenshot "([^"]*)"$`, tc.captureDocScreenshot)
 	ctx.Step(`^I start recording$`, tc.startRecording)
 	ctx.Step(`^I stop recording "([^"]*)"$`, tc.stopRecording)
+	ctx.Step(`^I show caption "([^"]*)"$`, tc.showCaption)
+	ctx.Step(`^I show the Loop title card$`, tc.showLoopTitleCard)
+	ctx.Step(`^I hide caption$`, tc.hideCaption)
 
 	// Debugging
 	ctx.Step(`^I take a screenshot$`, tc.takeScreenshot)
@@ -252,10 +255,10 @@ func (tc *TestContext) ensureChromeTab() error {
 	// but short enough that a hung agent fails fast rather than after ~10m.
 	scenarioTimeout := 120 * time.Second
 	if os.Getenv("LOOP_DOCS_CAPTURE") != "" {
-		// The docs journey is one long scenario (live agent reply + layout
-		// changes + workflows panel) — give it room but still fail a hang well
-		// inside the go-test timeout.
-		scenarioTimeout = 60 * time.Second
+		// The docs journey is one long scenario (two live agent replies + a
+		// captioned, deliberately-slow tour of every panel) — give it room but
+		// still fail a hang inside the go-test timeout.
+		scenarioTimeout = 300 * time.Second
 	}
 	timeoutCtx, timeoutCancel := context.WithTimeout(parentCtx, scenarioTimeout)
 	ctx, cancel := chromedp.NewContext(timeoutCtx)
@@ -1020,6 +1023,87 @@ func (tc *TestContext) captureDocScreenshot(name string) error {
 		return err
 	}
 	return os.WriteFile(path, buf, 0o644)
+}
+
+// showCaption injects a full-screen title-card overlay so the recorded video has
+// an on-screen explanation between panels. No-op outside LOOP_DOCS_CAPTURE.
+// Captions must be hidden before a screenshot so they don't obscure the panel.
+func (tc *TestContext) showCaption(text string) error {
+	if os.Getenv("LOOP_DOCS_CAPTURE") == "" {
+		return nil
+	}
+	js := fmt.Sprintf(`(function(){
+		var id='loop-docs-caption';
+		var el=document.getElementById(id);
+		if(!el){el=document.createElement('div');el.id=id;document.body.appendChild(el);}
+		el.style.cssText='position:fixed;inset:0;z-index:2147483647;display:flex;'+
+			'align-items:center;justify-content:center;text-align:center;padding:0 10%%;'+
+			'background:rgba(8,10,14,0.92);color:#e8eaed;'+
+			'font:600 44px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;'+
+			'-webkit-font-smoothing:antialiased';
+		el.textContent=%q;
+		return 'ok';
+	})()`, text)
+	var res string
+	return chromedp.Run(tc.chromeTab.ctx, chromedp.Evaluate(js, &res))
+}
+
+// showLoopTitleCard shows a branded "∞ Loop" intro/outro card that fades in,
+// holds, and fades out (the journey waits ~3.4s for the animation to be
+// recorded, then hides it). No-op outside LOOP_DOCS_CAPTURE.
+func (tc *TestContext) showLoopTitleCard() error {
+	if os.Getenv("LOOP_DOCS_CAPTURE") == "" {
+		return nil
+	}
+	ctx := tc.chromeTab.ctx
+	inject := `(function(){
+		var id='loop-docs-caption';
+		var el=document.getElementById(id);
+		if(!el){el=document.createElement('div');el.id=id;document.body.appendChild(el);}
+		el.style.cssText='position:fixed;inset:0;z-index:2147483647;display:flex;flex-direction:column;'+
+			'align-items:center;justify-content:center;background:#06080c;color:#e8eaed;opacity:0;'+
+			'font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif';
+		el.innerHTML='<div style="font-size:160px;line-height:0.9;font-weight:200">∞</div>'+
+			'<div style="font-size:56px;font-weight:600;letter-spacing:4px">Loop</div>';
+		return 'ok';
+	})()`
+	var res string
+	if err := chromedp.Run(ctx, chromedp.Evaluate(inject, &res)); err != nil {
+		return err
+	}
+	// Drive the fade in/hold/out from JS rather than a CSS animation: headless
+	// Chrome throttles CSS animations on otherwise-static pages, leaving the card
+	// stuck invisible. Stepping opacity from JS both animates it and forces the
+	// repaints the screencast records.
+	const total = 4.5
+	start := time.Now()
+	for {
+		elapsed := time.Since(start).Seconds()
+		if elapsed >= total {
+			break
+		}
+		op := 1.0
+		switch {
+		case elapsed < 0.6:
+			op = elapsed / 0.6
+		case elapsed > total-0.8:
+			op = (total - elapsed) / 0.8
+		}
+		step := fmt.Sprintf(`(function(){var e=document.getElementById('loop-docs-caption');if(e)e.style.opacity=%q;return 'ok';})()`, fmt.Sprintf("%.3f", op))
+		_ = chromedp.Run(ctx, chromedp.Evaluate(step, &res))
+		time.Sleep(120 * time.Millisecond)
+	}
+	return nil
+}
+
+// hideCaption removes the title-card overlay injected by showCaption.
+func (tc *TestContext) hideCaption() error {
+	if os.Getenv("LOOP_DOCS_CAPTURE") == "" {
+		return nil
+	}
+	js := `(function(){var el=document.getElementById('loop-docs-caption');if(el)el.remove();return 'ok';})()`
+	var res string
+	return chromedp.Run(tc.chromeTab.ctx, chromedp.Evaluate(js, &res))
 }
 
 // dumpPaneLeaves prints the pane-header-slot element ids that are currently

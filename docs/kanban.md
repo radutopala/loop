@@ -9,6 +9,8 @@ The Kanban panel provides a visual ticket board for managing work with the `tk` 
 
 ## Overview
 
+![The Kanban board with Open, In Progress, and Closed columns](static/images/features/kanban-board.png)
+
 The panel displays three status columns — **Open**, **In Progress**, and **Closed** — each showing ticket cards sorted by priority. Tickets flow left to right as work progresses.
 
 ```

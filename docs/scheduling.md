@@ -249,6 +249,8 @@ The worktree checkbox in the Tasks panel is only shown when:
 
 ## Tasks Panel
 
+![The Tasks panel listing a scheduled cron task with its next-run time](static/images/features/tasks-panel.png)
+
 The Tasks panel (`tasks` panel type, singleton) provides a GUI for managing scheduled tasks within a channel. It can be added to any layout from the panel menu.
 
 ### Layout
