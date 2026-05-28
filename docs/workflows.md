@@ -430,6 +430,8 @@ See [Events: Workflow Events](events.md#workflowrun_started--workflowrun_complet
 
 ## UI Panel
 
+![The global Workflows panel showing the run list and detail view](/images/features/workflows-panel.png)
+
 The Workflows panel is available in two variants:
 
 - **Global panel** — overlay panel accessible from the sidebar, showing runs across all channels. Start workflows via the `+ Run` button. Each row shows a clickable channel/thread pill (resolved to the nearest named ancestor) and the run's `dir_path` — clicking the pill jumps to that channel.
