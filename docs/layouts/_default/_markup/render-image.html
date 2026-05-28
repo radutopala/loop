@@ -1,0 +1,25 @@
+{{- /*
+  Custom image render hook.
+
+  Lets a single markdown image reference render on both GitHub and the
+  deployed Hugo site without page bundles. Authors reference screenshots
+  with a repo-relative path that GitHub resolves against the file's own
+  directory, e.g. `![](static/images/features/x.png)` from a docs/*.md
+  (or `docs/static/images/...` from the root README). Here we drop the
+  leading `docs/`/`static/` so Hugo serves it from the site root
+  (`/images/...`, baseURL-prefixed via relURL). Remote and root-absolute
+  URLs pass through unchanged.
+*/ -}}
+{{- $src := .Destination -}}
+{{- $isRemote := or (hasPrefix $src "http://") (hasPrefix $src "https://") (hasPrefix $src "//") -}}
+{{- if not $isRemote -}}
+  {{- $src = strings.TrimPrefix "./" $src -}}
+  {{- $src = strings.TrimPrefix "docs/" $src -}}
+  {{- $src = strings.TrimPrefix "static/" $src -}}
+  {{- /* Drop any leading slash so relURL joins onto the baseURL path
+     (e.g. the /loop/ prefix on GitHub Pages) instead of treating it as
+     host-absolute. */ -}}
+  {{- $src = strings.TrimPrefix "/" $src -}}
+  {{- $src = $src | relURL -}}
+{{- end -}}
+<img src="{{ $src | safeURL }}" alt="{{ .PlainText }}"{{ with .Title }} title="{{ . }}"{{ end }} loading="lazy">

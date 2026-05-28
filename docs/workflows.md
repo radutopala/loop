@@ -430,7 +430,7 @@ See [Events: Workflow Events](events.md#workflowrun_started--workflowrun_complet
 
 ## UI Panel
 
-![The global Workflows panel showing the run list and detail view](/images/features/workflows-panel.png)
+![The global Workflows panel showing the run list and detail view](static/images/features/workflows-panel.png)
 
 The Workflows panel is available in two variants:
 
