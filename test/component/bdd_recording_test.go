@@ -22,8 +22,11 @@ import (
 // and keep the input rate sane; per-frame timestamps are kept so playback
 // preserves real-time pacing (holds/captions become real on-screen pauses).
 const (
-	recordingMinFrameGap = 40 * time.Millisecond
-	recordingMaxFrames   = 3000
+	// ~60fps capture cap (16ms) keeps the 30fps output fully fed even during fast
+	// motion (a 40ms/25fps cap sat below 30fps and juddered). The frame budget is
+	// raised to match so a long journey isn't truncated mid-way.
+	recordingMinFrameGap = 16 * time.Millisecond
+	recordingMaxFrames   = 8000
 	// Clamp per-frame display time so a long idle gap doesn't freeze the video.
 	recordingMinHold = 0.04
 	recordingMaxHold = 5.0
@@ -90,9 +93,11 @@ func (tc *TestContext) startRecording() error {
 }
 
 // stopRecording stops the screencast and muxes the captured JPEG frames into an
-// MP4 under docs/videos (override via LOOP_DOCS_VIDEO_OUT). The MP4 is gitignored
-// (intended for manual upload), so a missing ffmpeg is a soft failure — the
-// screenshots captured during the journey are the committed assets.
+// MP4 under docs/videos (override via LOOP_DOCS_VIDEO_OUT). The filename carries
+// a capture timestamp (e.g. journey-20060102-150405.mp4) so successive runs keep
+// their history instead of overwriting. The MP4 is gitignored (intended for
+// manual upload), so a missing ffmpeg is a soft failure — the screenshots
+// captured during the journey are the committed assets.
 func (tc *TestContext) stopRecording(name string) error {
 	rec := tc.chromeTab.rec
 	if rec == nil {
@@ -118,7 +123,7 @@ func (tc *TestContext) stopRecording(name string) error {
 		outDir = filepath.Join("..", "..", "docs", "videos")
 	}
 	safe := strings.TrimPrefix(filepath.Clean("/"+name), "/")
-	outPath := filepath.Join(outDir, safe+".mp4")
+	outPath := filepath.Join(outDir, fmt.Sprintf("%s-%s.mp4", safe, time.Now().Format("20060102-150405")))
 	if err := os.MkdirAll(filepath.Dir(outPath), 0o755); err != nil {
 		return err
 	}

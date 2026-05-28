@@ -77,9 +77,21 @@ if [ -n "$LOOP_DOCS_CAPTURE" ]; then
         DOCS_TOKEN=$(sed -nE 's/.*claude_code_oauth_token[^:]*:[[:space:]]*"([^"]+)".*/\1/p' "$LOOP_DOCS_HOST_CONFIG" 2>/dev/null | head -1 || true)
         if [ -n "$DOCS_TOKEN" ]; then
             echo '{"hasCompletedOnboarding":true}' > "$LOOP_HOME/.claude.json"
+            # Fresh, isolated Claude session store for this run, bind-mounted from
+            # the loop server's own HOME so BOTH the agent containers AND the loop
+            # server see the same ~/.claude/projects/<workdir>/*.jsonl files: the
+            # agent writes session files there (so a 2nd turn can `claude --resume`
+            # the 1st), and the Sessions panel — which reads the server's
+            # $HOME/.claude/projects — can list them. A named volume would only be
+            # visible to the agent containers, leaving the Sessions panel empty.
+            # Pre-create + chown to the agent uid (1000) so the non-root agent can
+            # write into the bind source (binds aren't auto-chowned like volumes).
+            mkdir -p "$LOOP_HOME/.claude"
+            chown 1000:1000 "$LOOP_HOME/.claude" 2>/dev/null || true
             DOCS_AUTH="\"claude_code_oauth_token\": \"$DOCS_TOKEN\",
   \"envs\": { \"NODE_TLS_REJECT_UNAUTHORIZED\": \"0\", \"NODE_NO_WARNINGS\": \"1\", \"HOST_UID\": \"1000\", \"HOST_GID\": \"1000\" },
   \"gates\": { \"agentgate\": { \"enabled\": false } },
+  \"mounts\": [\"~/.claude:~/.claude\"],
   \"copy_files\": [\"~/.claude.json\"],"
             echo -e "${YELLOW}Docs capture: injecting Claude auth + non-root agent uid for live runs${NC}"
         else
@@ -170,7 +182,7 @@ fi
 # reply + a full panel tour + MP4 encode); the per-scenario budget is 120s, so
 # allow headroom here. Override with GO_TEST_TIMEOUT.
 TEST_TIMEOUT=900s
-[ -n "$LOOP_DOCS_CAPTURE" ] && TEST_TIMEOUT=540s
+[ -n "$LOOP_DOCS_CAPTURE" ] && TEST_TIMEOUT=1200s
 [ -n "$GO_TEST_TIMEOUT" ] && TEST_TIMEOUT="$GO_TEST_TIMEOUT"
 echo -e "${YELLOW}Running component tests (timeout $TEST_TIMEOUT)...${NC}"
 LOOP_BASE_URL="http://localhost:8222" \

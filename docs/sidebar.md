@@ -164,6 +164,8 @@ The "Delete Channel" item has `danger: true` styling (red text) and a separator 
 
 ## Thread Item
 
+![A worktree thread (git-branch icon) nested under its parent channel in the sidebar, opened in its own isolated workspace](static/images/features/worktree.png)
+
 Threads are listed below their parent channel, indented with a tree connector line. Threads can contain sub-threads (e.g. scheduled task threads), forming a 3-level hierarchy.
 
 ### Visual Elements
