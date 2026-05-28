@@ -90,8 +90,62 @@ func (s *ConfigSuite) TestLoadWorktreeProjectConfigMergesParentAndWorktree() {
 	require.Equal(s.T(), "claude-opus-4-6", merged.ClaudeModel)
 	// Parent mounts are inherited (worktree config doesn't override them).
 	require.Equal(s.T(), []string{"/parent/data:/data"}, merged.Mounts)
-	// Worktree extra_dirs are applied.
+	// Worktree extra_dirs are applied (parent has none, so just the worktree's).
 	require.Equal(s.T(), []string{"/Users/user/dev/loop"}, merged.ExtraDirs)
+}
+
+func (s *ConfigSuite) TestLoadWorktreeProjectConfigUnionsExtraDirs() {
+	// The parent project defines real extra_dirs (e.g. a shared lib). The
+	// worktree's seeded config sets extra_dirs to the parent project dir.
+	// Both must survive — the worktree must mount the same extra dirs as the
+	// parent channel, not lose them to the seeded parent-dir entry.
+	parentCfg := `{"extra_dirs": ["/Users/user/dev/shared-lib", "/Users/user/dev/common"]}`
+	worktreeCfg := `{"extra_dirs": ["/Users/user/dev/myapp"]}`
+	s.loader.readFile = func(path string) ([]byte, error) {
+		switch path {
+		case "/Users/user/dev/myapp/.worktrees/wt1/.loop/config.json":
+			return []byte(worktreeCfg), nil
+		case "/Users/user/dev/myapp/.loop/config.json":
+			return []byte(parentCfg), nil
+		default:
+			return nil, errors.New("unexpected path: " + path)
+		}
+	}
+
+	mainCfg := &Config{}
+	merged, err := s.loader.loadWorktreeProjectConfig("/Users/user/dev/myapp/.worktrees/wt1", "/Users/user/dev/myapp", mainCfg)
+	require.NoError(s.T(), err)
+	// Parent extra_dirs come first, then the worktree's parent-dir entry.
+	require.Equal(s.T(), []string{
+		"/Users/user/dev/shared-lib",
+		"/Users/user/dev/common",
+		"/Users/user/dev/myapp",
+	}, merged.ExtraDirs)
+}
+
+func (s *ConfigSuite) TestLoadWorktreeProjectConfigUnionDedupes() {
+	// When the worktree config repeats a dir the parent already has, it is
+	// not duplicated in the union.
+	parentCfg := `{"extra_dirs": ["/Users/user/dev/shared-lib"]}`
+	worktreeCfg := `{"extra_dirs": ["/Users/user/dev/shared-lib", "/Users/user/dev/myapp"]}`
+	s.loader.readFile = func(path string) ([]byte, error) {
+		switch path {
+		case "/project/.worktrees/wt1/.loop/config.json":
+			return []byte(worktreeCfg), nil
+		case "/project/.loop/config.json":
+			return []byte(parentCfg), nil
+		default:
+			return nil, errors.New("unexpected path: " + path)
+		}
+	}
+
+	mainCfg := &Config{}
+	merged, err := s.loader.loadWorktreeProjectConfig("/project/.worktrees/wt1", "/project", mainCfg)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), []string{
+		"/Users/user/dev/shared-lib",
+		"/Users/user/dev/myapp",
+	}, merged.ExtraDirs)
 }
 
 func (s *ConfigSuite) TestLoadWorktreeProjectConfigDevChannelsOverride() {

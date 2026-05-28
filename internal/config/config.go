@@ -941,7 +941,37 @@ func (l *Loader) loadWorktreeProjectConfig(worktreeDir, parentDir string, mainCo
 	if os.IsNotExist(err) {
 		return parentMerged, nil
 	}
-	return l.loadProjectConfig(worktreeDir, parentMerged)
+	worktreeMerged, err := l.loadProjectConfig(worktreeDir, parentMerged)
+	if err != nil {
+		return nil, err
+	}
+	// extra_dirs use replace semantics in loadProjectConfig, but a worktree's
+	// seeded config sets extra_dirs to the parent project dir — which would
+	// otherwise wipe the parent project's own extra_dirs. Union them so a
+	// worktree container mounts the same extra dirs as the parent channel
+	// (plus the parent dir for --add-dir access), not just the parent dir.
+	worktreeMerged.ExtraDirs = unionExtraDirs(parentMerged.ExtraDirs, worktreeMerged.ExtraDirs)
+	return worktreeMerged, nil
+}
+
+// unionExtraDirs returns the union of two extra_dirs slices, preserving order
+// (a entries first, then b entries not already present) and removing duplicates.
+func unionExtraDirs(a, b []string) []string {
+	if len(a) == 0 {
+		return b
+	}
+	seen := make(map[string]bool, len(a)+len(b))
+	out := make([]string, 0, len(a)+len(b))
+	for _, dirs := range [][]string{a, b} {
+		for _, d := range dirs {
+			if seen[d] {
+				continue
+			}
+			seen[d] = true
+			out = append(out, d)
+		}
+	}
+	return out
 }
 
 func (l *Loader) loadProjectConfig(workDir string, mainConfig *Config) (*Config, error) {
