@@ -33,9 +33,14 @@ test: ## Run all tests
 test-integration: ## Run integration tests (requires tokens in ~/.loop/config.integration.json)
 	go test -v -tags integration -race -count=1 -timeout 10m ./internal/slack/ ./internal/discord/
 
+# Documentation-capture scenarios are tagged @docs and excluded by default so
+# normal runs (and CI) stay fast and don't write assets. `make docs-capture`
+# overrides this to run only @docs scenarios with capture enabled.
+GODOG_TAGS ?= ~@docs
+
 test-component-bdd: ## Run BDD component tests (via Docker on host, natively in CI)
 	@if [ "$$CI" = "true" ] || ([ -f /.dockerenv ] && [ "$$(id -u)" = "0" ] && command -v apt-get >/dev/null 2>&1); then \
-		TEST_RUN=$${TEST_RUN:-"TestBDDBackendFeatures|TestBDDFrontendFeatures"} bash scripts/test-component.sh; \
+		GODOG_TAGS="$(GODOG_TAGS)" LOOP_DOCS_CAPTURE="$(LOOP_DOCS_CAPTURE)" TEST_RUN=$${TEST_RUN:-"TestBDDBackendFeatures|TestBDDFrontendFeatures"} bash scripts/test-component.sh; \
 	else \
 		docker rm -f loop-bdd 2>/dev/null; \
 		rm -rf /tmp/loop-bdd-data && mkdir -p /tmp/loop-bdd-data; \
@@ -45,10 +50,14 @@ test-component-bdd: ## Run BDD component tests (via Docker on host, natively in 
 			-v loop-gomod:/go/pkg/mod -v loop-gocache:/root/.cache/go-build \
 			-e TEST_RUN="$${TEST_RUN:-TestBDDBackendFeatures|TestBDDFrontendFeatures}" \
 			$(if $(GODOG_TAGS),-e GODOG_TAGS="$(GODOG_TAGS)") \
+			$(if $(LOOP_DOCS_CAPTURE),-e LOOP_DOCS_CAPTURE="$(LOOP_DOCS_CAPTURE)") \
 			$(if $(GODOG_CONCURRENCY),-e GODOG_CONCURRENCY="$(GODOG_CONCURRENCY)") \
 			ghcr.io/radutopala/loop/test-runner:latest bash scripts/test-component.sh; \
 		rc=$$?; docker ps -aq --filter "name=loop-bdd-" | xargs -r docker rm -f 2>/dev/null || true; exit $$rc; \
 	fi
+
+docs-capture: ## Capture documentation screenshots from @docs BDD scenarios into docs/static/images/features
+	$(MAKE) test-component-bdd GODOG_TAGS=@docs LOOP_DOCS_CAPTURE=1 TEST_RUN=TestBDDFrontendFeatures
 
 test-component-perf: ## Run API performance tests (via Docker on host, natively in CI)
 	@if [ "$$CI" = "true" ] || ([ -f /.dockerenv ] && [ "$$(id -u)" = "0" ] && command -v apt-get >/dev/null 2>&1); then \
@@ -61,7 +70,7 @@ test-component-perf: ## Run API performance tests (via Docker on host, natively 
 	fi
 
 test-component-bdd-host: ## Run frontend BDD tests against host Chrome browser (no Docker)
-	CHROME_CDP_URL=$${CHROME_CDP_URL:-auto} TEST_RUN=$${TEST_RUN:-TestBDDFrontendFeatures} GODOG_CONCURRENCY=1 bash scripts/test-component.sh
+	CHROME_CDP_URL=$${CHROME_CDP_URL:-auto} GODOG_TAGS="$(GODOG_TAGS)" LOOP_DOCS_CAPTURE="$(LOOP_DOCS_CAPTURE)" TEST_RUN=$${TEST_RUN:-TestBDDFrontendFeatures} GODOG_CONCURRENCY=1 bash scripts/test-component.sh
 
 TEST_RUNNER_IMAGE := ghcr.io/radutopala/loop/test-runner:latest
 

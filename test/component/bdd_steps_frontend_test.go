@@ -214,6 +214,9 @@ func registerFrontendSteps(ctx *godog.ScenarioContext, tc *TestContext) {
 	ctx.Step(`^I inject a gate\.approval_requested event with req_id "([^"]*)", source "([^"]*)", and target "([^"]*)"$`, tc.injectGateApprovalRequested)
 	ctx.Step(`^I inject a gate\.approval_resolved event with req_id "([^"]*)"$`, tc.injectGateApprovalResolved)
 
+	// Documentation capture (no-op unless LOOP_DOCS_CAPTURE is set; see docs-capture make target)
+	ctx.Step(`^I capture screenshot "([^"]*)"$`, tc.captureDocScreenshot)
+
 	// Debugging
 	ctx.Step(`^I take a screenshot$`, tc.takeScreenshot)
 	ctx.Step(`^I dump page text$`, tc.dumpPageText)
@@ -961,6 +964,34 @@ func (tc *TestContext) takeScreenshot() error {
 	dir := "screenshots"
 	_ = os.MkdirAll(dir, 0o755)
 	path := filepath.Join(dir, fmt.Sprintf("screenshot-%d.png", time.Now().UnixMilli()))
+	return os.WriteFile(path, buf, 0o644)
+}
+
+// captureDocScreenshot writes a deterministically-named viewport PNG for the
+// docs site. It is a no-op unless LOOP_DOCS_CAPTURE is set, so @docs scenarios
+// that accidentally run in a normal suite never write assets. The destination
+// defaults to the docs static images tree (relative to the test package dir)
+// and is overridable via LOOP_DOCS_OUT. name may contain "/" to nest assets.
+func (tc *TestContext) captureDocScreenshot(name string) error {
+	if os.Getenv("LOOP_DOCS_CAPTURE") == "" {
+		return nil
+	}
+	var buf []byte
+	if err := chromedp.Run(tc.chromeTab.ctx,
+		chromedp.CaptureScreenshot(&buf),
+	); err != nil {
+		return err
+	}
+	outDir := os.Getenv("LOOP_DOCS_OUT")
+	if outDir == "" {
+		outDir = filepath.Join("..", "..", "docs", "static", "images", "features")
+	}
+	// Strip any leading slash and ".." segments so name can't escape outDir.
+	safe := strings.TrimPrefix(filepath.Clean("/"+name), "/")
+	path := filepath.Join(outDir, safe+".png")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
 	return os.WriteFile(path, buf, 0o644)
 }
 
