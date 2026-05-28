@@ -508,6 +508,34 @@ export function searchNotes(query: string): Note[] {
 	id, _ := tc.LastJSON["channel_id"].(string)
 	sampleProject.channelID = id
 	sampleProject.dir = dir
+
+	// Seed Kanban tickets and a scheduled task so those panels show real content
+	// in the docs walkthrough (best-effort; the channel works without them).
+	for _, t := range []struct{ title, kind string }{
+		{"Add note search endpoint", "feature"},
+		{"Fix pagination off-by-one", "bug"},
+	} {
+		tb, _ := json.Marshal(map[string]any{"dir": dir, "title": t.title, "type": t.kind})
+		_ = tc.doRequest(http.MethodPost, "/api/tickets", string(tb))
+	}
+	taskBody, _ := json.Marshal(map[string]any{
+		"channel_id": id, "prompt": "Summarise the open notes each morning",
+		"schedule": "0 9 * * *", "type": "cron",
+	})
+	_ = tc.doRequest(http.MethodPost, "/api/tasks", string(taskBody))
+
+	// Seed a prompt shortcut (chat # picker) and a bash shortcut (Docker Shell
+	// $ picker) so those affordances have content in the docs walkthrough.
+	psBody, _ := json.Marshal(map[string]any{
+		"action": "add", "name": "review-diff", "description": "Review the current diff",
+		"prompt": "Review the uncommitted changes and summarise risks in 3 bullets.",
+	})
+	_ = tc.doRequest(http.MethodPost, "/api/shortcuts", string(psBody))
+	bsBody, _ := json.Marshal(map[string]any{
+		"action": "add", "name": "run-tests", "description": "Run the test suite",
+		"command": "npm test",
+	})
+	_ = tc.doRequest(http.MethodPost, "/api/bash-shortcuts", string(bsBody))
 	return nil
 }
 

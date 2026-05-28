@@ -76,6 +76,8 @@ Files with unrecognized extensions are opened without syntax highlighting.
 
 ## File Tree Sidebar
 
+![The Editor layout: file tree, code editor, host shell, and chat side by side](static/images/features/editor.png)
+
 ### Layout
 
 The sidebar occupies the left side of the editor panel with:

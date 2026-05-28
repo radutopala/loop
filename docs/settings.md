@@ -9,6 +9,8 @@ Related docs: [Desktop App](desktop-app.md) | [Sidebar](sidebar.md) | [Editor](e
 
 ## Settings Panel
 
+![The Settings panel overlay with the section nav and the Workflows config form](static/images/features/settings-panel.png)
+
 The Settings panel (`src/components/shared/Settings.tsx`) opens as a full-width overlay that replaces the workspace layout. It can be opened from:
 - Sidebar footer "Settings" button
 - macOS app menu "Settings..." item (`Cmd+,`)

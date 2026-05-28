@@ -3,7 +3,6 @@
 package component
 
 import (
-	"encoding/base64"
 	"fmt"
 	"os"
 	"os/exec"
@@ -12,25 +11,31 @@ import (
 	"sync"
 	"time"
 
+	"encoding/base64"
+
 	"github.com/chromedp/cdproto/page"
 	"github.com/chromedp/chromedp"
 )
 
 // The end-to-end journey is recorded as one screencast and muxed into an MP4 by
-// ffmpeg (baked into the test-runner image). Capturing every repaint is fine for
-// H.264, but throttle a little to bound memory and keep the input rate sane.
+// ffmpeg (baked into the test-runner image). Throttle a little to bound memory
+// and keep the input rate sane; per-frame timestamps are kept so playback
+// preserves real-time pacing (holds/captions become real on-screen pauses).
 const (
-	recordingMinFrameGap = 80 * time.Millisecond
-	recordingMaxFrames   = 1500
+	recordingMinFrameGap = 40 * time.Millisecond
+	recordingMaxFrames   = 3000
+	// Clamp per-frame display time so a long idle gap doesn't freeze the video.
+	recordingMinHold = 0.04
+	recordingMaxHold = 5.0
 )
 
 // screencastRecorder buffers CDP screencast frames for a scenario. Frames
 // arrive on chromedp's event goroutine, so access is guarded by mu.
 type screencastRecorder struct {
-	mu        sync.Mutex
-	frames    [][]byte  // raw JPEG bytes, in capture order
-	startedAt time.Time // wall-clock start (for deriving playback fps)
-	lastKept  time.Time // wall-clock time the last frame was retained (throttle)
+	mu       sync.Mutex
+	frames   [][]byte    // raw JPEG bytes, in capture order
+	times    []time.Time // wall-clock capture time per kept frame (for real-time pacing)
+	lastKept time.Time   // wall-clock time the last frame was retained (throttle)
 }
 
 // startRecording subscribes to CDP screencast frames and starts the stream.
@@ -39,7 +44,7 @@ func (tc *TestContext) startRecording() error {
 	if os.Getenv("LOOP_DOCS_CAPTURE") == "" {
 		return nil
 	}
-	rec := &screencastRecorder{startedAt: time.Now()}
+	rec := &screencastRecorder{}
 	tc.chromeTab.rec = rec
 	ctx := tc.chromeTab.ctx
 
@@ -68,6 +73,7 @@ func (tc *TestContext) startRecording() error {
 		}
 		rec.mu.Lock()
 		rec.frames = append(rec.frames, data)
+		rec.times = append(rec.times, now)
 		rec.mu.Unlock()
 	})
 
@@ -96,8 +102,7 @@ func (tc *TestContext) stopRecording(name string) error {
 	_ = chromedp.Run(tc.chromeTab.ctx, page.StopScreencast())
 
 	rec.mu.Lock()
-	frames := rec.frames
-	elapsed := time.Since(rec.startedAt)
+	frames, times := rec.frames, rec.times
 	rec.mu.Unlock()
 	if len(frames) == 0 {
 		return fmt.Errorf("recording %q captured no frames", name)
@@ -117,40 +122,57 @@ func (tc *TestContext) stopRecording(name string) error {
 	if err := os.MkdirAll(filepath.Dir(outPath), 0o755); err != nil {
 		return err
 	}
-	return encodeMP4(frames, elapsed, outPath)
+	return encodeMP4(frames, times, outPath)
 }
 
 // encodeMP4 writes the JPEG frames to a temp dir and muxes them into an H.264
-// MP4 via ffmpeg. The input frame rate is derived from the real capture duration
-// so playback runs at roughly wall-clock speed.
-func encodeMP4(frames [][]byte, elapsed time.Duration, outPath string) error {
+// MP4 via ffmpeg's concat demuxer. Each frame's display duration is its real
+// wall-clock gap to the next frame (clamped), so on-screen pauses and caption
+// title-cards hold for their actual time; a final fps filter resamples to a
+// universally-playable constant 30fps (H.264 makes the duplicated hold frames
+// nearly free).
+func encodeMP4(frames [][]byte, times []time.Time, outPath string) error {
 	dir, err := os.MkdirTemp("", "loop-journey-frames-")
 	if err != nil {
 		return err
 	}
 	defer os.RemoveAll(dir)
+
+	var list strings.Builder
 	for i, raw := range frames {
-		if err := os.WriteFile(filepath.Join(dir, fmt.Sprintf("f%05d.jpg", i)), raw, 0o644); err != nil {
+		name := fmt.Sprintf("f%05d.jpg", i)
+		if err := os.WriteFile(filepath.Join(dir, name), raw, 0o644); err != nil {
 			return err
 		}
-	}
-
-	fps := 10.0
-	if elapsed > 0 {
-		if r := float64(len(frames)) / elapsed.Seconds(); r >= 1 {
-			fps = r
+		hold := recordingMaxHold
+		if i+1 < len(times) {
+			hold = times[i+1].Sub(times[i]).Seconds()
+		} else {
+			hold = 2.0 // final frame lingers briefly
 		}
+		if hold < recordingMinHold {
+			hold = recordingMinHold
+		}
+		if hold > recordingMaxHold {
+			hold = recordingMaxHold
+		}
+		fmt.Fprintf(&list, "file '%s'\nduration %.3f\n", name, hold)
 	}
-	if fps > 30 {
-		fps = 30
+	// The concat demuxer ignores the last entry's duration unless the file is
+	// repeated once more — append it so the final frame honors its hold.
+	if len(frames) > 0 {
+		fmt.Fprintf(&list, "file '%s'\n", fmt.Sprintf("f%05d.jpg", len(frames)-1))
+	}
+	listPath := filepath.Join(dir, "frames.txt")
+	if err := os.WriteFile(listPath, []byte(list.String()), 0o644); err != nil {
+		return err
 	}
 
 	cmd := exec.Command("ffmpeg", "-y",
-		"-framerate", fmt.Sprintf("%.3f", fps),
-		"-i", filepath.Join(dir, "f%05d.jpg"),
+		"-f", "concat", "-safe", "0", "-i", listPath,
+		"-vf", "scale=trunc(iw/2)*2:trunc(ih/2)*2,fps=30", // even dims + CFR for compatibility
 		"-c:v", "libx264",
 		"-pix_fmt", "yuv420p",
-		"-vf", "scale=trunc(iw/2)*2:trunc(ih/2)*2", // libx264 needs even dimensions
 		"-movflags", "+faststart",
 		outPath,
 	)

@@ -355,6 +355,8 @@ Accepting a command fills the textarea with `/loop <command> ` (with trailing sp
 
 ## Prompt Shortcuts
 
+![The chat prompt-shortcut picker opened by typing #](static/images/features/chat-shortcut.png)
+
 Typing `#` in the chat input triggers a shortcut picker. Shortcuts are defined in the `prompt_shortcuts` config array (global or per-project). See [Configuration: Prompt Shortcuts](configuration.md#prompt-shortcuts).
 
 ### Trigger Logic
