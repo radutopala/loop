@@ -6,6 +6,7 @@ import (
 	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -385,12 +386,7 @@ type DesktopFontSizes struct {
 
 // HasPlatform returns true if the given platform is enabled.
 func (c *Config) HasPlatform(p types.Platform) bool {
-	for _, plat := range c.Platforms {
-		if plat == p {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(c.Platforms, p)
 }
 
 // jsonConfig is an intermediate struct for JSON unmarshalling.
