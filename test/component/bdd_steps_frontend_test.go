@@ -91,6 +91,12 @@ func ensureChrome() error {
 		chromedp.Flag("disable-background-networking", true),
 		chromedp.WindowSize(1280, 800),
 	)
+	if os.Getenv("LOOP_DOCS_CAPTURE") != "" {
+		// Render at 2x device pixels so the recorded MP4 matches the screenshots'
+		// resolution. CDP screencast captures the backing store but ignores
+		// per-page emulation deviceScaleFactor, so the flag is what bumps it.
+		opts = append(opts, chromedp.Flag("force-device-scale-factor", "2"))
+	}
 
 	chromeManager.allocCtx, chromeManager.allocCancel = chromedp.NewExecAllocator(
 		context.Background(), opts...)
@@ -119,6 +125,7 @@ func stopChrome() {
 type chromeTab struct {
 	ctx    context.Context
 	cancel context.CancelFunc
+	rec    *screencastRecorder // non-nil while a docs-capture recording is active
 }
 
 func (t *chromeTab) close() {
@@ -216,6 +223,8 @@ func registerFrontendSteps(ctx *godog.ScenarioContext, tc *TestContext) {
 
 	// Documentation capture (no-op unless LOOP_DOCS_CAPTURE is set; see docs-capture make target)
 	ctx.Step(`^I capture screenshot "([^"]*)"$`, tc.captureDocScreenshot)
+	ctx.Step(`^I start recording$`, tc.startRecording)
+	ctx.Step(`^I stop recording "([^"]*)"$`, tc.stopRecording)
 
 	// Debugging
 	ctx.Step(`^I take a screenshot$`, tc.takeScreenshot)
@@ -238,7 +247,17 @@ func (tc *TestContext) ensureChromeTab() error {
 	if chromeManager.remote {
 		parentCtx = chromeManager.browserCtx
 	}
-	timeoutCtx, timeoutCancel := context.WithTimeout(parentCtx, 120*time.Second)
+	// Docs-capture scenarios may drive a live agent (container cold-start +
+	// Claude latency), so give them a somewhat larger per-scenario budget —
+	// but short enough that a hung agent fails fast rather than after ~10m.
+	scenarioTimeout := 120 * time.Second
+	if os.Getenv("LOOP_DOCS_CAPTURE") != "" {
+		// The docs journey is one long scenario (live agent reply + layout
+		// changes + workflows panel) — give it room but still fail a hang well
+		// inside the go-test timeout.
+		scenarioTimeout = 60 * time.Second
+	}
+	timeoutCtx, timeoutCancel := context.WithTimeout(parentCtx, scenarioTimeout)
 	ctx, cancel := chromedp.NewContext(timeoutCtx)
 	tc.chromeTab = &chromeTab{ctx: ctx, cancel: func() { cancel(); timeoutCancel() }}
 	return nil
@@ -251,19 +270,27 @@ func (tc *TestContext) openAppInBrowser() error {
 		return err
 	}
 	actions := []chromedp.Action{chromedp.Navigate(tc.AppURL)}
-	if chromeManager.remote {
-		// In host browser mode tabs share the same profile; clear stored
-		// state so each scenario starts fresh (headless mode uses isolated
-		// browser contexts, so this is not needed there).
-		// Also set a consistent viewport size since the host window may be
-		// any size (headless mode uses WindowSize(1280,800) at launch).
+	// Viewport size + device scale factor. Docs-capture renders larger and at
+	// 2x DPI so screenshots/GIFs are crisp and panels aren't cramped; normal
+	// runs use the launch size (1280x800 @ 1x).
+	vw, vh, scale := int64(1280), int64(800), 1.0
+	if os.Getenv("LOOP_DOCS_CAPTURE") != "" {
+		vw, vh, scale = 1600, 1000, 2.0
+	}
+	if chromeManager.remote || os.Getenv("LOOP_DOCS_CAPTURE") != "" {
+		// Pin a consistent viewport. In host-browser mode also clear stored
+		// state so each scenario starts fresh (headless uses isolated contexts).
 		actions = append(actions,
 			chromedp.ActionFunc(func(ctx context.Context) error {
-				return emulation.SetDeviceMetricsOverride(1280, 800, 1.0, false).Do(ctx)
+				return emulation.SetDeviceMetricsOverride(vw, vh, scale, false).Do(ctx)
 			}),
-			chromedp.Evaluate(`localStorage.clear(); sessionStorage.clear()`, nil),
-			chromedp.Reload(),
 		)
+		if chromeManager.remote {
+			actions = append(actions,
+				chromedp.Evaluate(`localStorage.clear(); sessionStorage.clear()`, nil),
+				chromedp.Reload(),
+			)
+		}
 	}
 	return chromedp.Run(tc.chromeTab.ctx, actions...)
 }

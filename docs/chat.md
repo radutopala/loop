@@ -3,6 +3,8 @@ title: Chat View & Messaging
 ---
 The chat view is the primary interface for interacting with the Loop agent. It displays a conversation timeline with message bubbles, real-time streaming, agent activity indicators, and a multi-mode input area.
 
+![A live chat conversation with the Loop agent alongside the Git panel](static/images/features/chat-conversation.png)
+
 Related docs: [Layouts](layouts.md) | [Sidebar](sidebar.md) | [Settings](settings.md)
 
 ---

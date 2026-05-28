@@ -60,10 +60,39 @@ LOOP_HOME="$TMPDIR"
 LOOP_DIR="$LOOP_HOME/.loop"
 mkdir -p "$LOOP_DIR"
 
+# Docs-capture: make agent containers run live Claude. Reuse the real OAuth
+# token + TLS-relaxing envs (corporate MITM), seed the onboarding marker, and
+# force a non-root agent uid — this sandbox runs loop as root, and claude
+# refuses --dangerously-skip-permissions as root. Gated on LOOP_DOCS_CAPTURE so
+# normal/CI runs stay hermetic and unauthenticated.
+DOCS_AUTH=""
+if [ -n "$LOOP_DOCS_CAPTURE" ]; then
+    # Channel workdirs (created by BDD steps) live under this shared, writable
+    # base so sibling agent containers can bind-mount them by the same path.
+    export LOOP_DOCS_WORKDIR_BASE="$TMPDIR"
+    if [ -n "$LOOP_DOCS_HOST_CONFIG" ] && [ -f "$LOOP_DOCS_HOST_CONFIG" ]; then
+        # The config is HJSON (comments, unquoted keys, trailing commas), so a
+        # strict JSON parser (jq/python) can't be relied on — extract the token
+        # tolerantly. Matches both "key": "v" and unquoted key: "v" forms.
+        DOCS_TOKEN=$(sed -nE 's/.*claude_code_oauth_token[^:]*:[[:space:]]*"([^"]+)".*/\1/p' "$LOOP_DOCS_HOST_CONFIG" 2>/dev/null | head -1 || true)
+        if [ -n "$DOCS_TOKEN" ]; then
+            echo '{"hasCompletedOnboarding":true}' > "$LOOP_HOME/.claude.json"
+            DOCS_AUTH="\"claude_code_oauth_token\": \"$DOCS_TOKEN\",
+  \"envs\": { \"NODE_TLS_REJECT_UNAUTHORIZED\": \"0\", \"NODE_NO_WARNINGS\": \"1\", \"HOST_UID\": \"1000\", \"HOST_GID\": \"1000\" },
+  \"gates\": { \"agentgate\": { \"enabled\": false } },
+  \"copy_files\": [\"~/.claude.json\"],"
+            echo -e "${YELLOW}Docs capture: injecting Claude auth + non-root agent uid for live runs${NC}"
+        else
+            echo -e "${RED}WARNING: LOOP_DOCS_CAPTURE set but no claude_code_oauth_token in $LOOP_DOCS_HOST_CONFIG${NC}"
+        fi
+    fi
+fi
+
 # Write minimal config
 cat > "$LOOP_DIR/config.json" <<EOF
 {
   "platforms": ["local"],
+  $DOCS_AUTH
   "db_path": "$LOOP_DIR/loop.db",
   "api_addr": ":8222",
   "log_level": "warn",
@@ -137,11 +166,16 @@ if [ -n "$TEST_RUN" ]; then
     TEST_FLAGS="-run $TEST_RUN"
 fi
 
-# Run component tests
-echo -e "${YELLOW}Running component tests...${NC}"
+# Run component tests. docs-capture uses a shorter timeout so a hung live-agent
+# scenario fails in ~2 min instead of ~10 (per-scenario budget is 20s). Override
+# with GO_TEST_TIMEOUT.
+TEST_TIMEOUT=900s
+[ -n "$LOOP_DOCS_CAPTURE" ] && TEST_TIMEOUT=120s
+[ -n "$GO_TEST_TIMEOUT" ] && TEST_TIMEOUT="$GO_TEST_TIMEOUT"
+echo -e "${YELLOW}Running component tests (timeout $TEST_TIMEOUT)...${NC}"
 LOOP_BASE_URL="http://localhost:8222" \
 LOOP_APP_URL="${LOOP_APP_URL:-http://localhost:5173}" \
 LOOP_PID="$LOOP_PID" \
 CHROME_CDP_URL="${CHROME_CDP_URL:-}" \
 GODOG_CONCURRENCY="${GODOG_CONCURRENCY:-1}" \
-go test -timeout 900s -count=1 -v -tags=component ${TEST_FLAGS} ./test/component/...
+go test -timeout "$TEST_TIMEOUT" -count=1 -v -tags=component ${TEST_FLAGS} ./test/component/...
