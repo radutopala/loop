@@ -116,6 +116,29 @@ func (s *StoreSuite) TestDeleteQueuedMessageRowsAffectedError() {
 	require.False(s.T(), ok)
 }
 
+func (s *StoreSuite) TestReorderQueuedMessages() {
+	s.mock.ExpectBegin()
+	// First id gets the highest priority (n-i), in a single write transaction.
+	s.mock.ExpectExec(`UPDATE messages SET priority = \? WHERE channel_id = \? AND msg_id = \?`).
+		WithArgs(2, "ch1", "msgA").WillReturnResult(sqlmock.NewResult(0, 1))
+	s.mock.ExpectExec(`UPDATE messages SET priority = \? WHERE channel_id = \? AND msg_id = \?`).
+		WithArgs(1, "ch1", "msgB").WillReturnResult(sqlmock.NewResult(0, 1))
+	s.mock.ExpectCommit()
+
+	err := s.store.ReorderQueuedMessages(context.Background(), "ch1", []string{"msgA", "msgB"})
+	require.NoError(s.T(), err)
+}
+
+func (s *StoreSuite) TestReorderQueuedMessagesExecError() {
+	s.mock.ExpectBegin()
+	s.mock.ExpectExec(`UPDATE messages SET priority`).
+		WithArgs(1, "ch1", "msgA").WillReturnError(sql.ErrConnDone)
+	s.mock.ExpectRollback()
+
+	err := s.store.ReorderQueuedMessages(context.Background(), "ch1", []string{"msgA"})
+	require.Error(s.T(), err)
+}
+
 func (s *StoreSuite) TestGetRecentMessages() {
 	now := time.Now().UTC()
 	rows := addMessageRow(newMockMessageRows(), 1, 1, "ch1", "msg1", "u1", "user1", "hello", 0, 1, now)

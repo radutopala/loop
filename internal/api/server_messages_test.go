@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"time"
 
@@ -248,6 +249,38 @@ func (s *ServerSuite) TestDeleteQueuedMessageError() {
 	rec := s.testRequest("DELETE", "/api/messages/msg-1?channel_id=ch-1", "")
 	require.Equal(s.T(), http.StatusInternalServerError, rec.Code)
 	s.store.AssertExpectations(s.T())
+}
+
+func (s *ServerSuite) TestReorderQueuedMessagesSuccess() {
+	s.store.On("ReorderQueuedMessages", mock.Anything, "ch-1", []string{"a", "b"}).Return(nil)
+
+	rec := s.testRequest("POST", "/api/channels/ch-1/queued/reorder", `{"order":["a","b"]}`)
+	require.Equal(s.T(), http.StatusNoContent, rec.Code)
+	s.store.AssertExpectations(s.T())
+}
+
+func (s *ServerSuite) TestReorderQueuedMessagesBadBody() {
+	rec := s.testRequest("POST", "/api/channels/ch-1/queued/reorder", `not json`)
+	require.Equal(s.T(), http.StatusBadRequest, rec.Code)
+}
+
+func (s *ServerSuite) TestReorderQueuedMessagesError() {
+	s.store.On("ReorderQueuedMessages", mock.Anything, "ch-1", []string{"a"}).Return(errors.New("boom"))
+
+	rec := s.testRequest("POST", "/api/channels/ch-1/queued/reorder", `{"order":["a"]}`)
+	require.Equal(s.T(), http.StatusInternalServerError, rec.Code)
+	s.store.AssertExpectations(s.T())
+}
+
+func (s *ServerSuite) TestReorderQueuedMessagesNotConfigured() {
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	srv := NewServer(nil, nil, nil, nil, nil, logger)
+	mux := http.NewServeMux()
+	mux.HandleFunc("POST /api/channels/{id}/queued/reorder", srv.handleReorderQueuedMessages)
+	req := httptest.NewRequest("POST", "/api/channels/ch-1/queued/reorder", strings.NewReader(`{"order":[]}`))
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	require.Equal(s.T(), http.StatusNotImplemented, rec.Code)
 }
 
 func (s *ServerSuite) TestSetIncomingMessageHandler() {

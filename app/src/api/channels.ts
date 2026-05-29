@@ -259,6 +259,21 @@ export async function deleteQueuedMessage(
   if (!res.ok) throw new Error(`Failed to delete queued message: ${res.statusText}`);
 }
 
+// reorderQueuedMessages persists a new order for the channel's queued messages
+// (first id = highest priority / runs next).
+export async function reorderQueuedMessages(
+  channelId: string,
+  orderedMsgIds: string[],
+): Promise<void> {
+  const url = `${getApiUrl()}/api/channels/${encodeURIComponent(channelId)}/queued/reorder`;
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ order: orderedMsgIds }),
+  });
+  if (!res.ok) throw new Error(`Failed to reorder queued messages: ${res.statusText}`);
+}
+
 export async function sendCommand(
   channelId: string,
   command: string,

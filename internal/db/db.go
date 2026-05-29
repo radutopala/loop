@@ -36,6 +36,7 @@ type Store interface {
 	ListPendingChannels(ctx context.Context) ([]string, error)
 	GetRecentMessages(ctx context.Context, channelID string, limit int) ([]*Message, error)
 	ListQueuedUserMessages(ctx context.Context, channelID string) ([]*Message, error)
+	ReorderQueuedMessages(ctx context.Context, channelID string, orderedMsgIDs []string) error
 	GetMessagesCursor(ctx context.Context, channelID string, cursor int64, limit int) ([]*Message, error)
 	SearchMessages(ctx context.Context, query string, limit int) ([]*Message, error)
 	GetMessagesAround(ctx context.Context, channelID string, messageID int64, limit int) ([]*Message, error)
@@ -594,6 +595,25 @@ func (s *SQLiteStore) ListQueuedUserMessages(ctx context.Context, channelID stri
 	}
 	defer rows.Close()
 	return scanMessages(rows)
+}
+
+// ReorderQueuedMessages rewrites priorities so the channel's queued user
+// messages sort in the given msg_id order under the (priority DESC, id ASC)
+// rule — the first id gets the highest priority. Ids that aren't currently
+// queued user messages are simply not matched. Runs in one write transaction.
+func (s *SQLiteStore) ReorderQueuedMessages(ctx context.Context, channelID string, orderedMsgIDs []string) error {
+	return s.withTx(ctx, func(tx *sql.Tx) error {
+		n := len(orderedMsgIDs)
+		for i, msgID := range orderedMsgIDs {
+			if _, err := tx.ExecContext(ctx,
+				`UPDATE messages SET priority = ? WHERE channel_id = ? AND msg_id = ? AND kind = 'message' AND is_bot = 0 AND is_processed = 0`,
+				n-i, channelID, msgID,
+			); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
 }
 
 func (s *SQLiteStore) GetMessagesCursor(ctx context.Context, channelID string, cursor int64, limit int) ([]*Message, error) {

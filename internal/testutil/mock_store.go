@@ -120,6 +120,10 @@ func (m *MockStore) ListQueuedUserMessages(ctx context.Context, channelID string
 	return args.Get(0).([]*db.Message), args.Error(1)
 }
 
+func (m *MockStore) ReorderQueuedMessages(ctx context.Context, channelID string, orderedMsgIDs []string) error {
+	return m.Called(ctx, channelID, orderedMsgIDs).Error(0)
+}
+
 func (m *MockStore) GetMessagesCursor(ctx context.Context, channelID string, cursor int64, limit int) ([]*db.Message, error) {
 	args := m.Called(ctx, channelID, cursor, limit)
 	if args.Get(0) == nil {

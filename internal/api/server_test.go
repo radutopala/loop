@@ -248,6 +248,7 @@ func (s *ServerSuite) SetupTest() {
 	s.mux.HandleFunc("DELETE /api/channels/{id}/audit/{date}", s.srv.handleDeleteAuditFile)
 	s.mux.HandleFunc("GET /api/channels/{id}/messages", s.srv.handleListMessages)
 	s.mux.HandleFunc("GET /api/channels/{id}/queued", s.srv.handleListQueuedMessages)
+	s.mux.HandleFunc("POST /api/channels/{id}/queued/reorder", s.srv.handleReorderQueuedMessages)
 	s.mux.HandleFunc("GET /api/channels/{id}/timeline", s.srv.handleTimeline)
 	s.mux.HandleFunc("GET /api/messages/search", s.srv.handleSearchMessages)
 	s.mux.HandleFunc("POST /api/commands", s.srv.handleCommand)
