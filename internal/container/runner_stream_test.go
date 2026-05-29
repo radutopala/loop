@@ -307,6 +307,22 @@ func TestScanStreamJSONOnActivity(t *testing.T) {
 		}, activities)
 	})
 
+	t.Run("thinking_tokens emit a thinking activity with the running token count", func(t *testing.T) {
+		input := `{"type":"system","subtype":"thinking_tokens","estimated_tokens":200,"estimated_tokens_delta":150}
+{"type":"system","subtype":"thinking_tokens","estimated_tokens":450,"estimated_tokens_delta":250}
+{"type":"result","result":"OK","session_id":"s1","is_error":false}
+`
+		var activities []string
+		cb := streamCallbacks{
+			onActivity: func(activity, detail string) {
+				activities = append(activities, activity+":"+detail)
+			},
+		}
+		_, err := scanStreamJSON(strings.NewReader(input), cb)
+		require.NoError(t, err)
+		require.Equal(t, []string{"thinking:200", "thinking:450"}, activities)
+	})
+
 	t.Run("result metadata parsed", func(t *testing.T) {
 		input := `{"type":"assistant","message":{"model":"claude-opus-4-6","content":[{"type":"text","text":"Done"}]}}
 {"type":"result","result":"OK","session_id":"s1","is_error":false,"duration_ms":5000,"num_turns":3,"stop_reason":"end_turn"}

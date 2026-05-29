@@ -118,7 +118,7 @@ export interface ToolResultData {
 }
 
 export interface AgentActivityData {
-  activity: "model" | "subagent_started" | "subagent_progress" | "compacting";
+  activity: "model" | "subagent_started" | "subagent_progress" | "compacting" | "thinking";
   model?: string;
   description?: string;
 }

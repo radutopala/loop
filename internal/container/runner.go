@@ -74,10 +74,11 @@ type assistantMessage struct {
 
 // systemEvent represents a "system" event from Claude's stream-json output.
 type systemEvent struct {
-	Type        string `json:"type"`
-	Subtype     string `json:"subtype"`
-	Description string `json:"description"`
-	Status      string `json:"status"`
+	Type            string `json:"type"`
+	Subtype         string `json:"subtype"`
+	Description     string `json:"description"`
+	Status          string `json:"status"`
+	EstimatedTokens int    `json:"estimated_tokens"`
 }
 
 // extractText joins all text content blocks from an assistant message.
@@ -2040,6 +2041,12 @@ func scanStreamJSON(r io.Reader, cb streamCallbacks) (*claudeResponse, error) {
 					cb.onActivity("subagent_progress", evt.Description)
 				case "status":
 					cb.onActivity(evt.Status, evt.Description)
+				case "thinking_tokens":
+					// Opus emits running thinking-token estimates while it
+					// reasons (the thinking text itself is redacted). Surface
+					// them as a live "thinking" activity so the chat shows a
+					// progress indicator, mirroring sonnet's thinking display.
+					cb.onActivity("thinking", fmt.Sprintf("%d", evt.EstimatedTokens))
 				}
 			}
 		case "result":
