@@ -16,6 +16,9 @@ export function QueuedMessagesPopup({ messages, channelId }: QueuedMessagesPopup
   const [deletingIds, setDeletingIds] = useState<Set<string>>(new Set());
   const [copiedIds, setCopiedIds] = useState<Set<string>>(new Set());
   const [order, setOrder] = useState<string[] | null>(null);
+  // The row the cursor is over while dragging, plus which edge the dragged item
+  // would land on — drives the drop-line indicator and the insert position.
+  const [dropTarget, setDropTarget] = useState<{ id: string; pos: "before" | "after" } | null>(null);
   const draggedIdRef = useRef<string | null>(null);
 
   if (messages.length === 0) return null;
@@ -76,17 +79,28 @@ export function QueuedMessagesPopup({ messages, channelId }: QueuedMessagesPopup
     return result;
   })();
 
-  const handleDrop = (targetId: string) => {
+  // dropPosition returns "before" or "after" depending on whether the cursor is
+  // in the top or bottom half of the row being hovered.
+  const dropPosition = (e: React.DragEvent): "before" | "after" => {
+    const rect = e.currentTarget.getBoundingClientRect();
+    return e.clientY < rect.top + rect.height / 2 ? "before" : "after";
+  };
+
+  const handleDrop = (targetId: string, pos: "before" | "after") => {
     const dragged = draggedIdRef.current;
     draggedIdRef.current = null;
-    if (!dragged || dragged === targetId) return;
-    const ids = displayed.map((m) => m.msg_id);
+    setDropTarget(null);
+    if (!dragged) return;
+    const original = displayed.map((m) => m.msg_id);
+    const ids = original.slice();
     const from = ids.indexOf(dragged);
     if (from < 0) return;
     ids.splice(from, 1);
-    const to = ids.indexOf(targetId);
-    if (to < 0) return;
-    ids.splice(to, 0, dragged); // insert before the drop target
+    let to = ids.indexOf(targetId);
+    if (to < 0) return; // target was the dragged row itself
+    if (pos === "after") to += 1;
+    ids.splice(to, 0, dragged);
+    if (ids.length === original.length && ids.every((id, i) => id === original[i])) return; // no-op
     setOrder(ids);
     reorderQueuedMessages(channelId, ids).catch(() => {});
   };
@@ -132,8 +146,13 @@ export function QueuedMessagesPopup({ messages, channelId }: QueuedMessagesPopup
               return (
                 <div
                   key={msg.msg_id}
-                  onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = "move"; }}
-                  onDrop={() => handleDrop(msg.msg_id)}
+                  onDragOver={(e) => {
+                    e.preventDefault();
+                    e.dataTransfer.dropEffect = "move";
+                    const pos = dropPosition(e);
+                    setDropTarget((prev) => (prev && prev.id === msg.msg_id && prev.pos === pos ? prev : { id: msg.msg_id, pos }));
+                  }}
+                  onDrop={(e) => handleDrop(msg.msg_id, dropPosition(e))}
                   style={{
                     display: "flex",
                     alignItems: "flex-start",
@@ -141,12 +160,18 @@ export function QueuedMessagesPopup({ messages, channelId }: QueuedMessagesPopup
                     padding: "6px 14px",
                     borderBottom: `1px solid ${colors.border}`,
                     opacity: isDeleting ? 0.5 : 1,
+                    boxShadow:
+                      dropTarget && dropTarget.id === msg.msg_id
+                        ? dropTarget.pos === "before"
+                          ? `inset 0 2px 0 0 ${colors.active}`
+                          : `inset 0 -2px 0 0 ${colors.active}`
+                        : undefined,
                   }}
                 >
                   <span
                     draggable
                     onDragStart={(e) => { draggedIdRef.current = msg.msg_id; e.dataTransfer.effectAllowed = "move"; }}
-                    onDragEnd={() => { draggedIdRef.current = null; }}
+                    onDragEnd={() => { draggedIdRef.current = null; setDropTarget(null); }}
                     title="Drag to reorder"
                     style={{ flexShrink: 0, cursor: "grab", color: colors.textDim, userSelect: "none", display: "flex", alignItems: "center", paddingTop: 2 }}
                   >
