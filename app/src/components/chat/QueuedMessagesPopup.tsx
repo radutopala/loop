@@ -1,8 +1,8 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import type { Message } from "../../types";
 import { fonts } from "../../theme";
 import { useTheme } from "../../ThemeContext";
-import { deleteQueuedMessage } from "../../api/loopApi";
+import { deleteQueuedMessage, reorderQueuedMessages } from "../../api/loopApi";
 
 interface QueuedMessagesPopupProps {
   messages: Message[];
@@ -15,6 +15,8 @@ export function QueuedMessagesPopup({ messages, channelId }: QueuedMessagesPopup
   const [expandedRowIds, setExpandedRowIds] = useState<Set<string>>(new Set());
   const [deletingIds, setDeletingIds] = useState<Set<string>>(new Set());
   const [copiedIds, setCopiedIds] = useState<Set<string>>(new Set());
+  const [order, setOrder] = useState<string[] | null>(null);
+  const draggedIdRef = useRef<string | null>(null);
 
   if (messages.length === 0) return null;
 
@@ -57,6 +59,38 @@ export function QueuedMessagesPopup({ messages, channelId }: QueuedMessagesPopup
     }
   };
 
+  // Apply the user's drag order locally: known ids first (in chosen order),
+  // then any newly-arrived messages appended; removed ones drop out.
+  const displayed = (() => {
+    if (!order) return messages;
+    const byId = new Map(messages.map((m) => [m.msg_id, m]));
+    const result: Message[] = [];
+    for (const id of order) {
+      const m = byId.get(id);
+      if (m) {
+        result.push(m);
+        byId.delete(id);
+      }
+    }
+    for (const m of messages) if (byId.has(m.msg_id)) result.push(m);
+    return result;
+  })();
+
+  const handleDrop = (targetId: string) => {
+    const dragged = draggedIdRef.current;
+    draggedIdRef.current = null;
+    if (!dragged || dragged === targetId) return;
+    const ids = displayed.map((m) => m.msg_id);
+    const from = ids.indexOf(dragged);
+    if (from < 0) return;
+    ids.splice(from, 1);
+    const to = ids.indexOf(targetId);
+    if (to < 0) return;
+    ids.splice(to, 0, dragged); // insert before the drop target
+    setOrder(ids);
+    reorderQueuedMessages(channelId, ids).catch(() => {});
+  };
+
   return (
     <div style={{ display: "flex", justifyContent: "center", padding: "4px 24px 0" }}>
       <div style={{
@@ -92,12 +126,14 @@ export function QueuedMessagesPopup({ messages, channelId }: QueuedMessagesPopup
         </button>
         {expanded && (
           <div style={{ borderTop: `1px solid ${colors.border}` }}>
-            {messages.map((msg) => {
+            {displayed.map((msg) => {
               const isRowExpanded = expandedRowIds.has(msg.msg_id);
               const isDeleting = deletingIds.has(msg.msg_id);
               return (
                 <div
                   key={msg.msg_id}
+                  onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = "move"; }}
+                  onDrop={() => handleDrop(msg.msg_id)}
                   style={{
                     display: "flex",
                     alignItems: "flex-start",
@@ -107,6 +143,15 @@ export function QueuedMessagesPopup({ messages, channelId }: QueuedMessagesPopup
                     opacity: isDeleting ? 0.5 : 1,
                   }}
                 >
+                  <span
+                    draggable
+                    onDragStart={(e) => { draggedIdRef.current = msg.msg_id; e.dataTransfer.effectAllowed = "move"; }}
+                    onDragEnd={() => { draggedIdRef.current = null; }}
+                    title="Drag to reorder"
+                    style={{ flexShrink: 0, cursor: "grab", color: colors.textDim, userSelect: "none", display: "flex", alignItems: "center", paddingTop: 2 }}
+                  >
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><circle cx="9" cy="6" r="1.5" /><circle cx="15" cy="6" r="1.5" /><circle cx="9" cy="12" r="1.5" /><circle cx="15" cy="12" r="1.5" /><circle cx="9" cy="18" r="1.5" /><circle cx="15" cy="18" r="1.5" /></svg>
+                  </span>
                   <button
                     onClick={() => toggleRow(msg.msg_id)}
                     style={{

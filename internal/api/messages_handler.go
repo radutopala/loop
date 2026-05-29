@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"strings"
 	"time"
@@ -95,6 +96,32 @@ func (s *Server) handleDeleteQueuedMessage(w http.ResponseWriter, r *http.Reques
 	}
 	if s.eventsHub != nil {
 		s.eventsHub.BroadcastMessageDeleted(channelID, events.MessageDeletedData{MsgID: msgID})
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+type reorderQueuedRequest struct {
+	Order []string `json:"order"`
+}
+
+// handleReorderQueuedMessages rewrites the channel's queued-message priorities
+// to match the given msg_id order (first = highest priority), so a user can
+// drag-reorder the pending queue.
+func (s *Server) handleReorderQueuedMessages(w http.ResponseWriter, r *http.Request) {
+	if !requireConfigured(w, s.store, "queued message reorder not configured") {
+		return
+	}
+
+	channelID := r.PathValue("id")
+	var req reorderQueuedRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	if err := s.store.ReorderQueuedMessages(r.Context(), channelID, req.Order); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
