@@ -69,7 +69,7 @@ func (s *ConfigSuite) TestLoadDefaults() {
 	require.Empty(s.T(), cfg.DiscordGuildID)
 	require.Nil(s.T(), cfg.MCPServers)
 	require.True(s.T(), cfg.Browser.Enabled)
-	require.Equal(s.T(), []string{"~/.claude.json"}, cfg.CopyFiles)
+	require.Empty(s.T(), cfg.CopyFiles) // runner prepends ~/.claude.json per container; not defaulted here
 	require.False(s.T(), cfg.KeepMCPConfigs)
 	require.False(s.T(), cfg.Desktop.AutoSaveOnBlur)
 	require.True(s.T(), cfg.Desktop.PreviewTabs)

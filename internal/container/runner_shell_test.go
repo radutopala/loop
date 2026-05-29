@@ -219,10 +219,13 @@ func (s *RunnerSuite) TestCopyFilesSingleFile() {
 		if err != nil {
 			return false
 		}
-		return string(data) == string(fileContent)
+		// ~/.claude.json has the consent flags merged in while preserving the
+		// original content (the auth token).
+		return strings.Contains(string(data), `"oauth_token":"tok-123"`) &&
+			strings.Contains(string(data), `"bypassPermissionsModeAccepted":true`)
 	})).Return(nil)
 
-	err := s.runner.copyFiles(ctx, containerID, []string{"~/.claude.json"})
+	err := s.runner.copyFiles(ctx, containerID, []string{"~/.claude.json"}, "/work")
 	require.NoError(s.T(), err)
 	s.client.AssertExpectations(s.T())
 }
@@ -246,7 +249,7 @@ func (s *RunnerSuite) TestCopyFilesMultiple() {
 			}
 		}).Return(nil).Times(2)
 
-	err := s.runner.copyFiles(ctx, containerID, []string{"~/.claude.json", "~/.npmrc"})
+	err := s.runner.copyFiles(ctx, containerID, []string{"~/.claude.json", "~/.npmrc"}, "/work")
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), []string{".claude.json", ".npmrc"}, tarNames)
 	s.client.AssertExpectations(s.T())
@@ -256,7 +259,7 @@ func (s *RunnerSuite) TestCopyFilesNotExists() {
 	ctx := context.Background()
 	// osReadFile already returns os.ErrNotExist by default in SetupTest
 
-	err := s.runner.copyFiles(ctx, "cid-nofile", []string{"~/.claude.json"})
+	err := s.runner.copyFiles(ctx, "cid-nofile", []string{"~/.claude.json"}, "/work")
 	require.NoError(s.T(), err)
 	s.client.AssertNotCalled(s.T(), "CopyToContainer")
 }
@@ -270,7 +273,7 @@ func (s *RunnerSuite) TestCopyFilesCopyError() {
 
 	s.client.On("CopyToContainer", ctx, containerID, "/home/testuser", mock.Anything).Return(errors.New("copy failed"))
 
-	err := s.runner.copyFiles(ctx, containerID, []string{"~/.claude.json"})
+	err := s.runner.copyFiles(ctx, containerID, []string{"~/.claude.json"}, "/work")
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "copy failed")
 	s.client.AssertExpectations(s.T())
@@ -281,7 +284,7 @@ func (s *RunnerSuite) TestCopyFilesExpandError() {
 
 	s.sys.Override("UserHomeDir").Return("", errors.New("no home"))
 
-	err := s.runner.copyFiles(ctx, "cid-nohome", []string{"~/.claude.json"})
+	err := s.runner.copyFiles(ctx, "cid-nohome", []string{"~/.claude.json"}, "/work")
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "expanding path")
 }
@@ -310,7 +313,7 @@ func (s *RunnerSuite) TestCopyFilesReadError() {
 	s.sys.Override("ReadFile", "/home/testuser/.claude.json").Return(nil, errors.New("permission denied"))
 	s.sys.On("ReadFile", mock.Anything).Return(nil, os.ErrNotExist)
 
-	err := s.runner.copyFiles(ctx, "cid-readerr", []string{"~/.claude.json"})
+	err := s.runner.copyFiles(ctx, "cid-readerr", []string{"~/.claude.json"}, "/work")
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "reading ~/.claude.json")
 }
@@ -328,7 +331,7 @@ func (s *RunnerSuite) TestCopyFilesAbsolutePath() {
 		return hdr != nil && hdr.Name == "some.conf"
 	})).Return(nil)
 
-	err := s.runner.copyFiles(ctx, containerID, []string{"/etc/some.conf"})
+	err := s.runner.copyFiles(ctx, containerID, []string{"/etc/some.conf"}, "/work")
 	require.NoError(s.T(), err)
 	s.client.AssertExpectations(s.T())
 }

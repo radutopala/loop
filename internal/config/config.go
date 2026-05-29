@@ -710,7 +710,9 @@ func (l *Loader) parse() (*Config, error) {
 	cfg.PromptShortcuts = jc.PromptShortcuts
 	cfg.BashShortcuts = jc.BashShortcuts
 	cfg.Mounts = jc.Mounts
-	cfg.CopyFiles = sliceDefault(jc.CopyFiles, []string{"~/.claude.json"})
+	// ~/.claude.json is no longer defaulted here — the container runner always
+	// prepends it (flag-merged) to copy_files so every agent gets it regardless.
+	cfg.CopyFiles = jc.CopyFiles
 	cfg.Envs = stringifyEnvs(jc.Envs)
 
 	if jc.GitHub != nil {

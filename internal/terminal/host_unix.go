@@ -68,6 +68,12 @@ func (c *HostExecClient) ExecCreate(_ context.Context, dirPath string, cmd []str
 	if !hasEnvKey(env, "TERM") {
 		env = append(env, "TERM=xterm-256color")
 	}
+	if !hasEnvKey(env, "CLAUDE_CODE_NO_FLICKER") {
+		// Default Claude to the no-flicker (alternate-screen) renderer so a
+		// `claude` launched in a Host Shell keeps its TUI pinned. Skipped if the
+		// user already set it in their own environment.
+		env = append(env, "CLAUDE_CODE_NO_FLICKER=1")
+	}
 	command.Env = env
 	command.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 
@@ -178,15 +184,4 @@ func (h *hostPTYConn) Close() error {
 		closeErr = h.pty.Close()
 	})
 	return closeErr
-}
-
-// hasEnvKey reports whether the env slice contains a variable with the given key.
-func hasEnvKey(env []string, key string) bool {
-	prefix := key + "="
-	for _, e := range env {
-		if len(e) > len(prefix) && e[:len(prefix)] == prefix {
-			return true
-		}
-	}
-	return false
 }

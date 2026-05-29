@@ -814,6 +814,11 @@ func (r *DockerRunner) buildContainerEnv(cfg *config.Config, channelID, apiURL s
 		fmt.Sprintf("HOST_GID=%d", r.sys.Getgid()),
 		"TZ=" + r.localTimezone(),
 		"PATH=" + hostHome + "/.local/bin:" + hostHome + "/bin:" + hostHome + "/go/bin:/usr/local/go/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+		// Default Claude to the no-flicker (alternate-screen) renderer for any
+		// claude launched in the container — including a manual `claude` in a
+		// Docker Shell — so its TUI stays pinned instead of scrolling away. A
+		// user-set envs.CLAUDE_CODE_NO_FLICKER (appended below) overrides this.
+		"CLAUDE_CODE_NO_FLICKER=1",
 	}
 	env = addAuthEnv(env, cfg)
 	env = r.addProxyEnv(env)
@@ -1124,8 +1129,11 @@ func (r *DockerRunner) filterMountedCopyFiles(copyFiles, binds []string) []strin
 
 // copyFiles copies the given host files into the container so that each
 // container gets its own copy instead of sharing a Docker volume.
-// Files that don't exist are silently skipped.
-func (r *DockerRunner) copyFiles(ctx context.Context, containerID string, files []string) error {
+// Files that don't exist are silently skipped. For ~/.claude.json the consent
+// flags are merged in (see mergeClaudeFlags), keyed on workDir, so the
+// interactive agent TUI skips the onboarding / bypass / trust dialogs it can't
+// answer — without disturbing the user's auth or other files.
+func (r *DockerRunner) copyFiles(ctx context.Context, containerID string, files []string, workDir string) error {
 	for _, f := range files {
 		expanded, err := r.expandPath(f)
 		if err != nil {
@@ -1142,6 +1150,9 @@ func (r *DockerRunner) copyFiles(ctx context.Context, containerID string, files 
 
 		dir := filepath.Dir(expanded)
 		name := filepath.Base(expanded)
+		if name == ".claude.json" {
+			data = mergeClaudeFlags(data, workDir)
+		}
 
 		var buf bytes.Buffer
 		tw := tar.NewWriter(&buf)
@@ -1158,6 +1169,59 @@ func (r *DockerRunner) copyFiles(ctx context.Context, containerID string, files 
 		}
 	}
 	return nil
+}
+
+// mergeClaudeFlags returns ~/.claude.json content with the consent flags Loop's
+// sandboxed agents need, merged into `existing` (which may be empty/nil/invalid).
+// Every existing key is preserved — notably oauthAccount auth — and only these
+// are added/overwritten:
+//   - global: hasCompletedOnboarding, bypassPermissionsModeAccepted
+//   - projects[workDir]: hasTrustDialogAccepted, hasCompletedProjectOnboarding
+//
+// Without them the interactive Claude TUI (Docker Agent terminals) stalls on the
+// onboarding, "Bypass Permissions mode" consent, and "trust this folder" dialogs
+// — which an automated agent can't answer. Invalid JSON is treated as empty.
+func mergeClaudeFlags(existing []byte, workDir string) []byte {
+	m := map[string]any{}
+	if len(existing) > 0 {
+		if err := json.Unmarshal(existing, &m); err != nil || m == nil {
+			m = map[string]any{}
+		}
+	}
+	m["hasCompletedOnboarding"] = true
+	m["bypassPermissionsModeAccepted"] = true
+
+	projects, ok := m["projects"].(map[string]any)
+	if !ok || projects == nil {
+		projects = map[string]any{}
+	}
+	entry, ok := projects[workDir].(map[string]any)
+	if !ok || entry == nil {
+		entry = map[string]any{}
+	}
+	entry["hasTrustDialogAccepted"] = true
+	entry["hasCompletedProjectOnboarding"] = true
+	projects[workDir] = entry
+	m["projects"] = projects
+
+	out, _ := json.Marshal(m) // a map decoded from JSON always re-marshals
+	return out
+}
+
+// withClaudeConfig ensures ~/.claude.json is the first copy_files entry so every
+// agent container gets a flag-merged copy (see mergeClaudeFlags) regardless of
+// the user's copy_files config — the merge happens in copyFiles, keyed on the
+// basename. Deduped if the caller already listed it.
+func withClaudeConfig(copyFiles []string) []string {
+	const claudeJSON = "~/.claude.json"
+	out := make([]string, 0, len(copyFiles)+1)
+	out = append(out, claudeJSON)
+	for _, f := range copyFiles {
+		if f != claudeJSON {
+			out = append(out, f)
+		}
+	}
+	return out
 }
 
 // createAndStartContainer resolves the work directory, loads project config,
@@ -1196,7 +1260,8 @@ func (r *DockerRunner) createAndStartContainer(
 	}
 
 	binds, chownPaths := r.buildContainerMounts(cfg.Mounts, workDir, parentDirPath, cfg.ExtraDirs)
-	for _, f := range r.filterMountedCopyFiles(cfg.CopyFiles, binds) {
+	copyFilesList := withClaudeConfig(cfg.CopyFiles)
+	for _, f := range r.filterMountedCopyFiles(copyFilesList, binds) {
 		if expanded, err := r.expandPath(f); err == nil {
 			chownPaths = append(chownPaths, expanded)
 		}
@@ -1362,7 +1427,7 @@ func (r *DockerRunner) createAndStartContainer(
 		r.gateResolver.AddWithToken(containerID, gateToken, gateMgr, channelID)
 	}
 
-	if err := r.copyFiles(ctx, containerID, r.filterMountedCopyFiles(cfg.CopyFiles, binds)); err != nil {
+	if err := r.copyFiles(ctx, containerID, r.filterMountedCopyFiles(copyFilesList, binds), workDir); err != nil {
 		return containerID, containerName, mcpConfigPath, keepMCPConfig, fmt.Errorf("copying files: %w", err)
 	}
 

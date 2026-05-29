@@ -68,11 +68,18 @@ func (c *HostExecClient) ExecCreate(_ context.Context, dirPath string, cmd []str
 	cmdLine := buildCommandLine(cmd)
 
 	id := generateID(c.randRead)
+	env := os.Environ()
+	if !hasEnvKey(env, "CLAUDE_CODE_NO_FLICKER") {
+		// Default Claude to the no-flicker (alternate-screen) renderer so a
+		// `claude` launched in a Host Shell keeps its TUI pinned. Skipped if the
+		// user already set it.
+		env = append(env, "CLAUDE_CODE_NO_FLICKER=1")
+	}
 	c.mu.Lock()
 	c.execs[id] = &hostExec{
 		cmdLine: cmdLine,
 		dir:     dirPath,
-		env:     os.Environ(),
+		env:     env,
 	}
 	c.mu.Unlock()
 

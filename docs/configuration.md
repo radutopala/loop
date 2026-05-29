@@ -119,7 +119,7 @@ Format: `host_path:container_path[:mode]`
 
 | Field | Type | Default | Description |
 |---|---|---|---|
-| `copy_files` | `string[]` | `["~/.claude.json"]` | Files copied into each container (not mounted). Each container gets its own independent copy. |
+| `copy_files` | `string[]` | `[]` | Extra files copied into each container (not mounted); each gets its own copy. `~/.claude.json` is always copied automatically (flag-merged) regardless of this list — see [Containers — File Copying](containers.md#file-copying). |
 
 See [Containers: File Copying](containers.md#file-copying).
 

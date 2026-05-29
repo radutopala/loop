@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strconv"
+	"strings"
 
 	"github.com/docker/docker/api/types"
 	containertypes "github.com/docker/docker/api/types/container"
@@ -46,14 +48,42 @@ func newDockerExecClientWith(apiFactory func() (dockerExecAPI, error)) (*DockerE
 	}, nil
 }
 
-// defaultExecUser returns "<uid>:<gid>" of the current process. Numeric IDs
-// bypass runc's /etc/passwd lookup at exec creation, which would otherwise
-// race against the entrypoint's useradd and fail with
+// defaultExecUser returns the "<uid>:<gid>" a docker exec should run as.
+//
+// It prefers HOST_UID/HOST_GID from the environment, falling back to the
+// current process's own uid/gid. This matters when the loop daemon itself
+// runs as root (e.g. inside a container): agent containers run Claude as the
+// non-root agent user pinned to HOST_UID, and Claude refuses
+// --dangerously-skip-permissions under root — so the exec must follow the
+// same uid, not root. In the common case (daemon running as your own non-root
+// user, HOST_UID unset) it falls back to the process uid, which already
+// matches the agent user, so behavior is unchanged.
+//
+// Numeric IDs bypass runc's /etc/passwd lookup at exec creation, which would
+// otherwise race against the entrypoint's useradd and fail with
 // "unable to find user X: no matching entries in passwd file".
 // On Windows, os.Getuid/os.Getgid return -1; Docker Desktop maps file
 // permissions transparently, so fall back to the container's root user.
 func defaultExecUser() string {
+	if u := execUserFromEnv(os.Getenv("HOST_UID"), os.Getenv("HOST_GID")); u != "" {
+		return u
+	}
 	return formatExecUser(os.Getuid(), os.Getgid())
+}
+
+// execUserFromEnv builds "<uid>:<gid>" from HOST_UID/HOST_GID values, returning
+// "" when either is empty or not a non-negative integer (so the caller falls
+// back to the process uid/gid).
+func execUserFromEnv(uid, gid string) string {
+	ui, err := strconv.Atoi(strings.TrimSpace(uid))
+	if err != nil || ui < 0 {
+		return ""
+	}
+	gi, err := strconv.Atoi(strings.TrimSpace(gid))
+	if err != nil || gi < 0 {
+		return ""
+	}
+	return formatExecUser(ui, gi)
 }
 
 // formatExecUser is the pure helper behind defaultExecUser, split out so the
