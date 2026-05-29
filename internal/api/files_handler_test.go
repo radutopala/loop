@@ -681,10 +681,74 @@ func (s *ServerSuite) TestReadFile_Video() {
 			rec := s.testRequest("GET", "/api/channels/"+chID+"/file?path="+tc.name, "")
 			require.Equal(s.T(), http.StatusOK, rec.Code)
 			require.Equal(s.T(), tc.mime, rec.Header().Get("Content-Type"))
-			require.Equal(s.T(), "bytes", rec.Header().Get("Accept-Ranges")) // ServeFile enables Range/seek
+			require.Equal(s.T(), "bytes", rec.Header().Get("Accept-Ranges")) // ServeContent enables Range/seek
 			require.Equal(s.T(), data, rec.Body.Bytes())
 		})
 	}
+}
+
+// Videos must stream even when larger than maxFileSize — they bypass the text
+// cap (and are never buffered whole into memory). Regression guard: an earlier
+// fix accidentally moved the video branch below the size check, 413-ing clips.
+func (s *ServerSuite) TestReadFile_VideoLargerThanMaxFileSize() {
+	tmpDir := s.T().TempDir()
+	data := make([]byte, maxFileSize+1024)
+	for i := range data {
+		data[i] = byte(i % 251)
+	}
+	require.NoError(s.T(), os.WriteFile(filepath.Join(tmpDir, "big.mp4"), data, 0644))
+
+	s.store.On("GetChannel", mock.Anything, "ch-1").
+		Return(&db.Channel{ChannelID: "ch-1", DirPath: tmpDir}, nil)
+
+	rec := s.testRequest("GET", "/api/channels/ch-1/file?path=big.mp4", "")
+	require.Equal(s.T(), http.StatusOK, rec.Code)
+	require.Equal(s.T(), "video/mp4", rec.Header().Get("Content-Type"))
+	require.Equal(s.T(), "bytes", rec.Header().Get("Accept-Ranges"))
+	require.Equal(s.T(), data, rec.Body.Bytes())
+}
+
+// A Range request on a video returns 206 with just the requested bytes, so the
+// <video> player can seek.
+func (s *ServerSuite) TestReadFile_VideoRangeRequest() {
+	tmpDir := s.T().TempDir()
+	data := []byte("0123456789abcdef")
+	require.NoError(s.T(), os.WriteFile(filepath.Join(tmpDir, "clip.mp4"), data, 0644))
+
+	s.store.On("GetChannel", mock.Anything, "ch-1").
+		Return(&db.Channel{ChannelID: "ch-1", DirPath: tmpDir}, nil)
+
+	req := httptest.NewRequest("GET", "/api/channels/ch-1/file?path=clip.mp4", nil)
+	req.RemoteAddr = "127.0.0.1:0"
+	req.Header.Set("Range", "bytes=4-7")
+	rec := httptest.NewRecorder()
+	s.mux.ServeHTTP(rec, req)
+
+	require.Equal(s.T(), http.StatusPartialContent, rec.Code)
+	require.Equal(s.T(), "video/mp4", rec.Header().Get("Content-Type"))
+	require.Equal(s.T(), "bytes 4-7/16", rec.Header().Get("Content-Range"))
+	require.Equal(s.T(), []byte("4567"), rec.Body.Bytes())
+}
+
+// failOpenSys validates paths and stats against the real OS but fails Open, so
+// handleReadFile's video open-error branch can be exercised.
+type failOpenSys struct{ *testutil.MockSystem }
+
+func (failOpenSys) Stat(name string) (os.FileInfo, error)    { return os.Stat(name) }
+func (failOpenSys) EvalSymlinks(path string) (string, error) { return filepath.EvalSymlinks(path) }
+func (failOpenSys) Open(string) (*os.File, error)            { return nil, fmt.Errorf("injected open error") }
+
+func (s *ServerSuite) TestReadFile_VideoOpenError() {
+	tmpDir := s.T().TempDir()
+	require.NoError(s.T(), os.WriteFile(filepath.Join(tmpDir, "clip.mp4"), []byte("x"), 0644))
+
+	s.store.On("GetChannel", mock.Anything, "ch-1").
+		Return(&db.Channel{ChannelID: "ch-1", DirPath: tmpDir}, nil)
+	s.srv.sys = failOpenSys{s.sys}
+
+	rec := s.testRequest("GET", "/api/channels/ch-1/file?path=clip.mp4", "")
+	require.Equal(s.T(), http.StatusInternalServerError, rec.Code)
+	require.Contains(s.T(), rec.Body.String(), "failed to read file")
 }
 
 func (s *ServerSuite) TestReadFile_LargeTextFile() {
