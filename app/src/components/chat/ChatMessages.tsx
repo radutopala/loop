@@ -838,6 +838,10 @@ function AgentActivityIndicator({ activity }: { activity: AgentActivityData }) {
   } else if (activity.activity === "compacting") {
     icon = "&#128220;"; // scroll
     label = "Compacting context...";
+  } else if (activity.activity === "thinking") {
+    icon = "&#129504;"; // brain
+    const toks = activity.description ?? "";
+    label = toks && toks !== "0" ? `Thinking… (${toks} tokens)` : "Thinking…";
   }
   if (!label) return null;
   if (label.length > 100) label = label.slice(0, 100) + "...";
