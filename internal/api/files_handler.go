@@ -1,6 +1,7 @@
 package api
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -449,14 +450,6 @@ func (s *Server) handleReadFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Video files: stream straight from disk with Range support (no maxFileSize
-	// cap, no full read into memory) so the editor's <video> player can seek.
-	if mime := videoMIMEByExt(absPath); mime != "" {
-		w.Header().Set("Content-Type", mime)
-		http.ServeFile(w, r, absPath)
-		return
-	}
-
 	if info.Size() > maxFileSize {
 		http.Error(w, "file too large", http.StatusRequestEntityTooLarge)
 		return
@@ -465,6 +458,17 @@ func (s *Server) handleReadFile(w http.ResponseWriter, r *http.Request) {
 	data, err := s.sys.ReadFile(absPath)
 	if err != nil {
 		http.Error(w, "failed to read file", http.StatusInternalServerError)
+		return
+	}
+
+	// Video files: serve with Range support so the editor's <video> player can
+	// seek. ServeContent ranges over the in-memory bytes — we read through s.sys
+	// rather than http.ServeFile, which is a path-injection sink (the user-
+	// supplied path would reach it even though validateFilePath already
+	// contains it to the channel dir).
+	if mime := videoMIMEByExt(absPath); mime != "" {
+		w.Header().Set("Content-Type", mime)
+		http.ServeContent(w, r, filepath.Base(absPath), info.ModTime(), bytes.NewReader(data))
 		return
 	}
 
