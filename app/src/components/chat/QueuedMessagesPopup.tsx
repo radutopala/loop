@@ -14,6 +14,7 @@ export function QueuedMessagesPopup({ messages, channelId }: QueuedMessagesPopup
   const [expanded, setExpanded] = useState(false);
   const [expandedRowIds, setExpandedRowIds] = useState<Set<string>>(new Set());
   const [deletingIds, setDeletingIds] = useState<Set<string>>(new Set());
+  const [copiedIds, setCopiedIds] = useState<Set<string>>(new Set());
 
   if (messages.length === 0) return null;
 
@@ -24,6 +25,22 @@ export function QueuedMessagesPopup({ messages, channelId }: QueuedMessagesPopup
       else next.add(msgId);
       return next;
     });
+  };
+
+  const handleCopy = async (msgId: string, content: string) => {
+    try {
+      await navigator.clipboard.writeText(content);
+    } catch {
+      return;
+    }
+    setCopiedIds((prev) => new Set(prev).add(msgId));
+    setTimeout(() => {
+      setCopiedIds((prev) => {
+        const next = new Set(prev);
+        next.delete(msgId);
+        return next;
+      });
+    }, 1200);
   };
 
   const handleDelete = async (msgId: string) => {
@@ -112,6 +129,32 @@ export function QueuedMessagesPopup({ messages, channelId }: QueuedMessagesPopup
                     title={isRowExpanded ? "Click to collapse" : "Click to expand"}
                   >
                     {msg.content}
+                  </button>
+                  <button
+                    onClick={() => handleCopy(msg.msg_id, msg.content)}
+                    title={copiedIds.has(msg.msg_id) ? "Copied" : "Copy to clipboard"}
+                    style={{
+                      flexShrink: 0,
+                      width: 20,
+                      height: 20,
+                      padding: 0,
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      background: "none",
+                      border: "none",
+                      color: copiedIds.has(msg.msg_id) ? colors.active : colors.textDim,
+                      cursor: "pointer",
+                      borderRadius: 4,
+                    }}
+                    onMouseEnter={(e) => { if (!copiedIds.has(msg.msg_id)) e.currentTarget.style.color = colors.textLight; }}
+                    onMouseLeave={(e) => { if (!copiedIds.has(msg.msg_id)) e.currentTarget.style.color = colors.textDim; }}
+                  >
+                    {copiedIds.has(msg.msg_id) ? (
+                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12" /></svg>
+                    ) : (
+                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2" /><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" /></svg>
+                    )}
                   </button>
                   <button
                     onClick={() => handleDelete(msg.msg_id)}
