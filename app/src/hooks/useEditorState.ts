@@ -9,6 +9,7 @@ import {
   updateExtraDirs,
   buildFileUrl,
   isImagePath,
+  isVideoPath,
   type FileEntry,
   type RootEntry,
 } from "../api/loopApi";
@@ -204,7 +205,7 @@ export function useEditorState(channelId: string, options?: UseEditorStateOption
   useEffect(() => {
     if (!selectedPath) return;
     const { rootIndex: ri, relativePath: rp } = parsePathKey(selectedPath);
-    if (isImagePath(rp)) {
+    if (isImagePath(rp) || isVideoPath(rp)) {
       setImageURL(buildFileUrl(channelId, rp, ri, imageVersionRef.current));
       setFileContent(null);
       setIsBinary(false);
@@ -272,7 +273,7 @@ export function useEditorState(channelId: string, options?: UseEditorStateOption
     setError(null);
     setIsBinary(false);
     const { rootIndex: ri, relativePath: rp } = parsePathKey(pathKey);
-    if (isImagePath(rp)) {
+    if (isImagePath(rp) || isVideoPath(rp)) {
       setImageURL(buildFileUrl(channelId, rp, ri, imageVersionRef.current));
       setFileContent(null);
       setLoading(false);
@@ -402,7 +403,7 @@ export function useEditorState(channelId: string, options?: UseEditorStateOption
     const pathKey = selectedPathRef.current;
     if (pathKey) {
       const { rootIndex: ri, relativePath: rp } = parsePathKey(pathKey);
-      if (isImagePath(rp)) {
+      if (isImagePath(rp) || isVideoPath(rp)) {
         imageVersionRef.current++;
         setImageURL(buildFileUrl(channelId, rp, ri, imageVersionRef.current));
         return;
@@ -555,7 +556,7 @@ export function useEditorState(channelId: string, options?: UseEditorStateOption
       const pathKey = selectedPathRef.current;
       if (!pathKey) return;
       const { rootIndex: ri, relativePath: rp } = parsePathKey(pathKey);
-      if (isImagePath(rp)) {
+      if (isImagePath(rp) || isVideoPath(rp)) {
         imageVersionRef.current++;
         setImageURL(buildFileUrl(channelId, rp, ri, imageVersionRef.current));
         return;
@@ -582,7 +583,7 @@ export function useEditorState(channelId: string, options?: UseEditorStateOption
 
   const applyAgentRefresh = useCallback((pathKey: string) => {
     const { rootIndex: ri, relativePath: rp } = parsePathKey(pathKey);
-    if (isImagePath(rp)) {
+    if (isImagePath(rp) || isVideoPath(rp)) {
       if (pathKey === selectedPathRef.current) {
         imageVersionRef.current++;
         setImageURL(buildFileUrl(channelId, rp, ri, imageVersionRef.current));

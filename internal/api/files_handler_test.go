@@ -657,6 +657,36 @@ func (s *ServerSuite) TestReadFile_Image() {
 	}
 }
 
+func (s *ServerSuite) TestReadFile_Video() {
+	cases := []struct {
+		name string
+		mime string
+	}{
+		{"clip.mp4", "video/mp4"},
+		{"clip.MP4", "video/mp4"},
+		{"clip.webm", "video/webm"},
+		{"clip.mov", "video/quicktime"},
+	}
+
+	for _, tc := range cases {
+		s.Run(tc.name, func() {
+			tmpDir := s.T().TempDir()
+			data := []byte{0x00, 0x00, 0x00, 0x18, 0x66, 0x74, 0x79, 0x70} // fake ftyp header
+			require.NoError(s.T(), os.WriteFile(filepath.Join(tmpDir, tc.name), data, 0644))
+
+			chID := "ch-" + tc.name
+			s.store.On("GetChannel", mock.Anything, chID).
+				Return(&db.Channel{ChannelID: chID, DirPath: tmpDir}, nil)
+
+			rec := s.testRequest("GET", "/api/channels/"+chID+"/file?path="+tc.name, "")
+			require.Equal(s.T(), http.StatusOK, rec.Code)
+			require.Equal(s.T(), tc.mime, rec.Header().Get("Content-Type"))
+			require.Equal(s.T(), "bytes", rec.Header().Get("Accept-Ranges")) // ServeFile enables Range/seek
+			require.Equal(s.T(), data, rec.Body.Bytes())
+		})
+	}
+}
+
 func (s *ServerSuite) TestReadFile_LargeTextFile() {
 	tmpDir := s.T().TempDir()
 	data := make([]byte, 1024)
