@@ -15,6 +15,7 @@ import { html } from "@codemirror/lang-html";
 import { yaml } from "@codemirror/lang-yaml";
 import { marked } from "marked";
 import { fonts } from "../../theme";
+import { isVideoPath } from "../../api/files";
 import { useTheme } from "../../ThemeContext";
 import { buildMarkdownStyles } from "./FilePanel";
 import { buildEditorTheme } from "./editorTheme";
@@ -331,11 +332,19 @@ export const CodeEditor = forwardRef<CodeEditorHandle, CodeEditorProps>(function
             backgroundColor: colors.sidebar,
           }}
         >
-          <img
-            src={imageURL}
-            alt=""
-            style={{ maxWidth: "100%", maxHeight: "100%", objectFit: "contain" }}
-          />
+          {isVideoPath(selectedRelPath || "") ? (
+            <video
+              src={imageURL}
+              controls
+              style={{ maxWidth: "100%", maxHeight: "100%" }}
+            />
+          ) : (
+            <img
+              src={imageURL}
+              alt=""
+              style={{ maxWidth: "100%", maxHeight: "100%", objectFit: "contain" }}
+            />
+          )}
         </div>
       )}
       {!selectedPath && !loading && (

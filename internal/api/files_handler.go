@@ -449,6 +449,14 @@ func (s *Server) handleReadFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Video files: stream straight from disk with Range support (no maxFileSize
+	// cap, no full read into memory) so the editor's <video> player can seek.
+	if mime := videoMIMEByExt(absPath); mime != "" {
+		w.Header().Set("Content-Type", mime)
+		http.ServeFile(w, r, absPath)
+		return
+	}
+
 	if info.Size() > maxFileSize {
 		http.Error(w, "file too large", http.StatusRequestEntityTooLarge)
 		return
@@ -500,6 +508,20 @@ func imageMIMEByExt(path string) string {
 		return "image/gif"
 	case ".webp":
 		return "image/webp"
+	}
+	return ""
+}
+
+// videoMIMEByExt returns the MIME type for known video extensions, or "" for
+// non-video files. Extension match only (same approach as imageMIMEByExt).
+func videoMIMEByExt(path string) string {
+	switch strings.ToLower(filepath.Ext(path)) {
+	case ".mp4":
+		return "video/mp4"
+	case ".webm":
+		return "video/webm"
+	case ".mov":
+		return "video/quicktime"
 	}
 	return ""
 }

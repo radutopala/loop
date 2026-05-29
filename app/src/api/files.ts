@@ -77,6 +77,16 @@ export function isImagePath(path: string): boolean {
   return IMAGE_EXTS.has(path.slice(dot).toLowerCase());
 }
 
+// Video extensions the editor renders inline via <video src=...>. Matches the
+// backend's videoMIMEByExt in internal/api/files_handler.go — keep in sync.
+const VIDEO_EXTS = new Set([".mp4", ".webm", ".mov"]);
+
+export function isVideoPath(path: string): boolean {
+  const dot = path.lastIndexOf(".");
+  if (dot < 0) return false;
+  return VIDEO_EXTS.has(path.slice(dot).toLowerCase());
+}
+
 // buildFileUrl returns the absolute /api URL for the file-read endpoint, with
 // the `path` (and optional `root`) query parameters set. Used as <img src> for
 // image tabs in the editor, where the browser does its own fetch instead of
