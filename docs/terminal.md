@@ -7,6 +7,18 @@ The terminal system provides interactive PTY sessions inside Docker containers o
 
 ---
 
+## In the app
+
+![A Docker Agent terminal split below a shell, resuming the channel's Claude session in the container](static/images/features/docker-agent-terminal.png)
+
+Terminals open as panels in any layout (see [Layouts](layouts.md)). Each pane is one of:
+
+- **Docker Agent** — an interactive Claude session inside the channel's container. The open mode (**Resume** / **Fork** / **Fresh**) decides how it relates to the channel's stored session: *Resume* continues the same conversation in place, so you can talk to the very same agent straight from a terminal — no context lost.
+- **Docker Shell** — a plain `/bin/bash` inside the container, for running commands next to the agent.
+- **Host Shell** — a shell on your machine.
+
+---
+
 ## WebSocket Protocol
 
 The terminal WebSocket uses a bidirectional JSON-based control protocol layered on top of the standard WebSocket framing:

@@ -70,13 +70,23 @@ if [ -n "$LOOP_DOCS_CAPTURE" ]; then
     # Channel workdirs (created by BDD steps) live under this shared, writable
     # base so sibling agent containers can bind-mount them by the same path.
     export LOOP_DOCS_WORKDIR_BASE="$TMPDIR"
+    # This sandbox runs loop as root, but agent containers run Claude as the
+    # non-root agent user (uid 1000, see envs below). docker-exec terminals
+    # derive their exec user from the loop PROCESS env, so export the same uid
+    # here — otherwise the Docker Agent terminal execs as root and Claude
+    # refuses --dangerously-skip-permissions.
+    export HOST_UID=1000 HOST_GID=1000
     if [ -n "$LOOP_DOCS_HOST_CONFIG" ] && [ -f "$LOOP_DOCS_HOST_CONFIG" ]; then
         # The config is HJSON (comments, unquoted keys, trailing commas), so a
         # strict JSON parser (jq/python) can't be relied on — extract the token
         # tolerantly. Matches both "key": "v" and unquoted key: "v" forms.
         DOCS_TOKEN=$(sed -nE 's/.*claude_code_oauth_token[^:]*:[[:space:]]*"([^"]+)".*/\1/p' "$LOOP_DOCS_HOST_CONFIG" 2>/dev/null | head -1 || true)
         if [ -n "$DOCS_TOKEN" ]; then
-            echo '{"hasCompletedOnboarding":true}' > "$LOOP_HOME/.claude.json"
+            # bypassPermissionsModeAccepted pre-accepts the interactive
+            # "Bypass Permissions mode" consent the TUI shows on first launch
+            # under --dangerously-skip-permissions; without it the Docker Agent
+            # terminal stalls on that prompt instead of resuming the session.
+            echo '{"hasCompletedOnboarding":true,"bypassPermissionsModeAccepted":true}' > "$LOOP_HOME/.claude.json"
             # Fresh, isolated Claude session store for this run, bind-mounted from
             # the loop server's own HOME so BOTH the agent containers AND the loop
             # server see the same ~/.claude/projects/<workdir>/*.jsonl files: the

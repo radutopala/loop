@@ -840,7 +840,7 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
           // to "fork" so behavior is unchanged for existing layouts.
           const openMode: AgentOpenMode = leaf.openMode ?? "fork";
           return (
-            <div key={`layout-docker-agent-${channelId}-${leaf.id}`} style={{ flex: 1, display: "flex", flexDirection: "column", minHeight: 0, overflow: "hidden", backgroundColor: colors.sidebar }}>
+            <div key={`layout-docker-agent-${channelId}-${leaf.id}`} data-testid="docker-agent-pane" style={{ flex: 1, display: "flex", flexDirection: "column", minHeight: 0, overflow: "hidden", backgroundColor: colors.sidebar }}>
               <Terminal
                 channelId={channelId}
                 target="agent"
