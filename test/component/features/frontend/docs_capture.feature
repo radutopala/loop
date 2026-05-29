@@ -190,6 +190,34 @@ Feature: Documentation walkthrough
     # Select a saved command — pause on the open menu, then it runs in the shell
     And I click on the element with text "$run-tests"
     And I wait "6s"
+    # Docker Agent (Resume) — split an agent terminal in below the shell; it
+    # resumes THIS channel's Claude session right inside the container, so you
+    # can talk to the same agent straight from a terminal.
+    And I wait "2s"
+    And I show caption "Open a Docker Agent terminal — it resumes this channel's session in the container"
+    And I wait "4s"
+    And I hide caption
+    And I wait "2s"
+    # Open the pane's panel selector and let it linger so the menu is recorded
+    And I open the add-panel menu
+    And I wait "5s"
+    # Pick "Docker Agent (Resume)" — splits an agent terminal in below the shell
+    And I add the "Docker Agent (Resume)" panel below in the menu
+    And I wait up to "40s" for "[data-testid='docker-agent-pane'] .xterm" to be visible, best effort
+    # Give the Claude TUI time to boot and resume the session inside the container
+    And I wait "35s"
+    # Type a message straight into the resumed agent — same session, same workspace
+    And I wait "2s"
+    And I show caption "Type right in the terminal — same agent, same session, no context lost"
+    And I wait "4s"
+    And I hide caption
+    And I wait "2s"
+    And I type "In one short sentence, what does this notes service do?" into the agent terminal
+    And I wait "2s"
+    And I submit the agent terminal
+    And I wait "30s"
+    And I capture screenshot "docker-agent-terminal"
+    And I wait "3s"
     # Git
     And I wait "2s"
     And I show caption "Git — review the diff, branches, commits, and worktrees"

@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/chromedp/cdproto/emulation"
+	"github.com/chromedp/cdproto/input"
 	"github.com/chromedp/cdproto/runtime"
 	"github.com/chromedp/chromedp"
 	"github.com/cucumber/godog"
@@ -142,6 +143,8 @@ func registerFrontendSteps(ctx *godog.ScenarioContext, tc *TestContext) {
 	// DOM interaction — CSS selectors
 	ctx.Step(`^I click on "([^"]*)"$`, tc.clickOn)
 	ctx.Step(`^I type "([^"]*)" into "([^"]*)"$`, tc.typeInto)
+	ctx.Step(`^I type "([^"]*)" into the agent terminal$`, tc.typeIntoAgentTerminal)
+	ctx.Step(`^I submit the agent terminal$`, tc.submitAgentTerminal)
 	ctx.Step(`^I clear and type "([^"]*)" into "([^"]*)"$`, tc.clearAndTypeInto)
 	ctx.Step(`^I wait for "([^"]*)" to be visible$`, tc.waitForVisible)
 	ctx.Step(`^I select "([^"]*)" from "([^"]*)"$`, tc.selectFrom)
@@ -213,6 +216,7 @@ func registerFrontendSteps(ctx *godog.ScenarioContext, tc *TestContext) {
 	// Panel interaction
 	ctx.Step(`^I add a "([^"]*)" panel$`, tc.addPanel)
 	ctx.Step(`^I open the add-panel menu in the git panel$`, tc.openAddPanelMenuInGitPanel)
+	ctx.Step(`^I open the add-panel menu$`, tc.openAddPanelMenuFirst)
 	ctx.Step(`^I add the "([^"]*)" panel below in the menu$`, tc.addPanelBelowFromMenu)
 	ctx.Step(`^I click the task create button$`, tc.clickTaskCreateButton)
 
@@ -343,6 +347,80 @@ func (tc *TestContext) typeInto(text, selector string) error {
 	return chromedp.Run(tc.chromeTab.ctx,
 		chromedp.Poll(js, nil, chromedp.WithPollingTimeout(15*time.Second)),
 		chromedp.SendKeys(selector, text, chromedp.ByQuery),
+	)
+}
+
+// typeIntoAgentTerminal types text into the Docker Agent pane's interactive
+// Claude TUI. xterm.js routes input through an offscreen .xterm-helper-textarea
+// (zero-size, so the visibility-gated typeInto can't reach it). We focus it via
+// the DOM (a real click), then type with ordinary key events — exactly as a
+// user would. Scoped to the docker-agent pane so it never lands in a shell or
+// editor xterm sharing the layout.
+func (tc *TestContext) typeIntoAgentTerminal(text string) error {
+	if err := tc.clickAgentTerminalToFocus(); err != nil {
+		return fmt.Errorf("type into agent terminal: %w", err)
+	}
+	return chromedp.Run(tc.chromeTab.ctx, chromedp.ActionFunc(func(ctx context.Context) error {
+		for _, r := range text {
+			// CDP "char" events deliver one character through the keypress/input
+			// path only (no keydown), so xterm forwards each exactly once.
+			// chromedp.KeyEvent double-fires keydown+input and doubles every char.
+			if err := input.DispatchKeyEvent(input.KeyChar).WithText(string(r)).Do(ctx); err != nil {
+				return err
+			}
+		}
+		return nil
+	}))
+}
+
+// submitAgentTerminal clicks the terminal to (re)focus xterm and sends one Enter
+// so the typed message is submitted to the resumed Claude TUI. A dedicated step
+// (not the global press-Enter) so it always targets the docker-agent pane, via a
+// single trusted rawKeyDown/keyUp that xterm turns into one \r.
+func (tc *TestContext) submitAgentTerminal() error {
+	if err := tc.clickAgentTerminalToFocus(); err != nil {
+		return fmt.Errorf("submit agent terminal: %w", err)
+	}
+	return chromedp.Run(tc.chromeTab.ctx, chromedp.ActionFunc(func(ctx context.Context) error {
+		if err := input.DispatchKeyEvent(input.KeyRawDown).
+			WithKey("Enter").WithCode("Enter").WithWindowsVirtualKeyCode(13).Do(ctx); err != nil {
+			return err
+		}
+		return input.DispatchKeyEvent(input.KeyUp).
+			WithKey("Enter").WithCode("Enter").WithWindowsVirtualKeyCode(13).Do(ctx)
+	}))
+}
+
+// clickAgentTerminalToFocus issues a real trusted mouse click at the centre of
+// the Docker Agent pane's xterm so the terminal grabs keyboard focus (a DOM
+// .focus() on the offscreen helper textarea doesn't reliably stick once Claude's
+// TUI boots and xterm re-fits). Subsequent KeyEvents then reach the terminal.
+func (tc *TestContext) clickAgentTerminalToFocus() error {
+	var box struct {
+		X  float64 `json:"x"`
+		Y  float64 `json:"y"`
+		OK bool    `json:"ok"`
+	}
+	rectJS := `(() => {
+		const pane = document.querySelector('[data-testid="docker-agent-pane"]');
+		if (!pane) return null;
+		const el = pane.querySelector('.xterm-screen') || pane.querySelector('.xterm');
+		if (!el) return null;
+		const r = el.getBoundingClientRect();
+		return { x: r.left + r.width / 2, y: r.top + r.height / 2, ok: true };
+	})()`
+	if err := chromedp.Run(tc.chromeTab.ctx,
+		chromedp.Poll(`!!document.querySelector('[data-testid="docker-agent-pane"] .xterm-helper-textarea')`, nil, chromedp.WithPollingTimeout(20*time.Second)),
+		chromedp.Evaluate(rectJS, &box),
+	); err != nil {
+		return err
+	}
+	if !box.OK {
+		return fmt.Errorf("docker-agent pane xterm not found")
+	}
+	return chromedp.Run(tc.chromeTab.ctx,
+		chromedp.MouseClickXY(box.X, box.Y),
+		chromedp.Sleep(300*time.Millisecond),
 	)
 }
 
@@ -1006,6 +1084,31 @@ func (tc *TestContext) openAddPanelMenuInGitPanel() error {
 	}
 	if res != "ok" {
 		return fmt.Errorf("open add-panel menu in git panel: %s", res)
+	}
+	return nil
+}
+
+// openAddPanelMenuFirst clicks the first pane's "Add panel" button (cursor-
+// driven so the docs cursor moves to it) and leaves the selector open. Use on a
+// single-pane layout (e.g. the Terminal tab with just a shell) where there's one
+// such button; the open menu is then recorded before a "<name> ↓" pick.
+func (tc *TestContext) openAddPanelMenuFirst() error {
+	js := `(function(){
+		var b = document.querySelector('button[title="Add panel"]');
+		if (!b) return 'no add-panel button';
+		var r = b.getBoundingClientRect();
+		var cx = Math.round(r.left + r.width / 2), cy = Math.round(r.top + r.height / 2);
+		window.dispatchEvent(new MouseEvent('mousemove', {bubbles: true, clientX: cx, clientY: cy}));
+		window.dispatchEvent(new MouseEvent('mousedown', {bubbles: true, clientX: cx, clientY: cy}));
+		b.click();
+		return 'ok';
+	})()`
+	var res string
+	if err := chromedp.Run(tc.chromeTab.ctx, chromedp.Evaluate(js, &res)); err != nil {
+		return err
+	}
+	if res != "ok" {
+		return fmt.Errorf("open add-panel menu: %s", res)
 	}
 	return nil
 }

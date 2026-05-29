@@ -32,11 +32,16 @@ const (
 	recordingMaxHold = 5.0
 )
 
-// screencastRecorder buffers CDP screencast frames for a scenario. Frames
-// arrive on chromedp's event goroutine, so access is guarded by mu.
+// screencastRecorder streams CDP screencast frames straight to a temp dir for a
+// scenario, keeping only per-frame timestamps in memory. Buffering thousands of
+// full-res JPEGs in a slice (~2-3GB for an 8000-frame journey) OOM-killed the
+// run once a live agent container was also resident, so frames go to disk as
+// they arrive. Frames land on chromedp's (serial) event goroutine; mu guards the
+// counters against stopRecording reading them.
 type screencastRecorder struct {
 	mu       sync.Mutex
-	frames   [][]byte    // raw JPEG bytes, in capture order
+	dir      string      // temp dir holding fNNNNN.jpg frames
+	count    int         // frames written so far (also the next frame's index)
 	times    []time.Time // wall-clock capture time per kept frame (for real-time pacing)
 	lastKept time.Time   // wall-clock time the last frame was retained (throttle)
 }
@@ -47,7 +52,11 @@ func (tc *TestContext) startRecording() error {
 	if os.Getenv("LOOP_DOCS_CAPTURE") == "" {
 		return nil
 	}
-	rec := &screencastRecorder{}
+	dir, err := os.MkdirTemp("", "loop-journey-frames-")
+	if err != nil {
+		return err
+	}
+	rec := &screencastRecorder{dir: dir}
 	tc.chromeTab.rec = rec
 	ctx := tc.chromeTab.ctx
 
@@ -61,11 +70,9 @@ func (tc *TestContext) startRecording() error {
 		go func(sid int64) { _ = chromedp.Run(ctx, page.ScreencastFrameAck(sid)) }(f.SessionID)
 		now := time.Now()
 		rec.mu.Lock()
-		skip := len(rec.frames) >= recordingMaxFrames ||
+		idx := rec.count
+		skip := idx >= recordingMaxFrames ||
 			(!rec.lastKept.IsZero() && now.Sub(rec.lastKept) < recordingMinFrameGap)
-		if !skip {
-			rec.lastKept = now
-		}
 		rec.mu.Unlock()
 		if skip {
 			return
@@ -74,9 +81,15 @@ func (tc *TestContext) startRecording() error {
 		if err != nil {
 			return
 		}
+		// Write before counting so a failed write leaves no dangling index that
+		// the concat list would reference (frames stay contiguous 0..count-1).
+		if err := os.WriteFile(filepath.Join(rec.dir, fmt.Sprintf("f%05d.jpg", idx)), data, 0o644); err != nil {
+			return
+		}
 		rec.mu.Lock()
-		rec.frames = append(rec.frames, data)
+		rec.lastKept = now
 		rec.times = append(rec.times, now)
+		rec.count++
 		rec.mu.Unlock()
 	})
 
@@ -105,11 +118,14 @@ func (tc *TestContext) stopRecording(name string) error {
 	}
 	tc.chromeTab.rec = nil
 	_ = chromedp.Run(tc.chromeTab.ctx, page.StopScreencast())
+	if rec.dir != "" {
+		defer os.RemoveAll(rec.dir)
+	}
 
 	rec.mu.Lock()
-	frames, times := rec.frames, rec.times
+	count, times := rec.count, rec.times
 	rec.mu.Unlock()
-	if len(frames) == 0 {
+	if count == 0 {
 		return fmt.Errorf("recording %q captured no frames", name)
 	}
 
@@ -127,28 +143,19 @@ func (tc *TestContext) stopRecording(name string) error {
 	if err := os.MkdirAll(filepath.Dir(outPath), 0o755); err != nil {
 		return err
 	}
-	return encodeMP4(frames, times, outPath)
+	return encodeMP4(rec.dir, count, times, outPath)
 }
 
-// encodeMP4 writes the JPEG frames to a temp dir and muxes them into an H.264
-// MP4 via ffmpeg's concat demuxer. Each frame's display duration is its real
-// wall-clock gap to the next frame (clamped), so on-screen pauses and caption
-// title-cards hold for their actual time; a final fps filter resamples to a
-// universally-playable constant 30fps (H.264 makes the duplicated hold frames
-// nearly free).
-func encodeMP4(frames [][]byte, times []time.Time, outPath string) error {
-	dir, err := os.MkdirTemp("", "loop-journey-frames-")
-	if err != nil {
-		return err
-	}
-	defer os.RemoveAll(dir)
-
+// encodeMP4 muxes the JPEG frames already streamed to framesDir (f00000.jpg …)
+// into an H.264 MP4 via ffmpeg's concat demuxer. Each frame's display duration
+// is its real wall-clock gap to the next frame (clamped), so on-screen pauses
+// and caption title-cards hold for their actual time; a final fps filter
+// resamples to a universally-playable constant 30fps (H.264 makes the
+// duplicated hold frames nearly free).
+func encodeMP4(framesDir string, count int, times []time.Time, outPath string) error {
 	var list strings.Builder
-	for i, raw := range frames {
+	for i := 0; i < count; i++ {
 		name := fmt.Sprintf("f%05d.jpg", i)
-		if err := os.WriteFile(filepath.Join(dir, name), raw, 0o644); err != nil {
-			return err
-		}
 		hold := recordingMaxHold
 		if i+1 < len(times) {
 			hold = times[i+1].Sub(times[i]).Seconds()
@@ -165,10 +172,10 @@ func encodeMP4(frames [][]byte, times []time.Time, outPath string) error {
 	}
 	// The concat demuxer ignores the last entry's duration unless the file is
 	// repeated once more — append it so the final frame honors its hold.
-	if len(frames) > 0 {
-		fmt.Fprintf(&list, "file '%s'\n", fmt.Sprintf("f%05d.jpg", len(frames)-1))
+	if count > 0 {
+		fmt.Fprintf(&list, "file '%s'\n", fmt.Sprintf("f%05d.jpg", count-1))
 	}
-	listPath := filepath.Join(dir, "frames.txt")
+	listPath := filepath.Join(framesDir, "frames.txt")
 	if err := os.WriteFile(listPath, []byte(list.String()), 0o644); err != nil {
 		return err
 	}
