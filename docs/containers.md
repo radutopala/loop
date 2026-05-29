@@ -175,7 +175,9 @@ The filter is inherited by every descendant. An agent cannot disable the gate by
 
 ## File Copying
 
-Files listed in `copy_files` (default: `["~/.claude.json"]`) are copied into each container after creation but before startup. This gives each container its own independent copy rather than sharing via a bind mount, avoiding corruption from concurrent writes.
+Files listed in `copy_files` are copied into each container after creation but before startup. This gives each container its own independent copy rather than sharing via a bind mount, avoiding corruption from concurrent writes.
+
+`~/.claude.json` is **always** copied (prepended automatically), even when `copy_files` is empty or customized. As it's copied, Loop merges in the consent flags an automated agent can't answer interactively — `hasCompletedOnboarding`, `bypassPermissionsModeAccepted`, and per-workdir `hasTrustDialogAccepted` / `hasCompletedProjectOnboarding` — while preserving the user's auth, so a Docker Agent terminal resumes the session straight to the prompt instead of stalling on the onboarding / bypass-consent / "trust this folder" dialogs.
 
 ### Mechanism
 

@@ -3,6 +3,7 @@ package container
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"io"
 	"os"
 	"testing"
@@ -300,4 +301,50 @@ func (s *RunnerSuite) setupMockRun(ctx context.Context, createMatcher any, conta
 	s.client.On("ContainerLogs", ctx, testContainerID).Return(reader, nil)
 	s.client.On("ContainerStart", ctx, testContainerID).Return(nil)
 	s.client.On("ContainerWait", ctx, testContainerID).Return((<-chan WaitResponse)(waitCh), (<-chan error)(errCh))
+}
+
+func (s *RunnerSuite) TestMergeClaudeFlags() {
+	t := s.T()
+	parse := func(b []byte) map[string]any {
+		var m map[string]any
+		require.NoError(t, json.Unmarshal(b, &m))
+		return m
+	}
+
+	// Empty input → global flags + per-project entry.
+	m := parse(mergeClaudeFlags(nil, "/work/p"))
+	require.Equal(t, true, m["hasCompletedOnboarding"])
+	require.Equal(t, true, m["bypassPermissionsModeAccepted"])
+	proj := m["projects"].(map[string]any)["/work/p"].(map[string]any)
+	require.Equal(t, true, proj["hasTrustDialogAccepted"])
+	require.Equal(t, true, proj["hasCompletedProjectOnboarding"])
+
+	// Existing auth + an unrelated project are preserved; the target is added.
+	m = parse(mergeClaudeFlags([]byte(`{"oauthAccount":{"id":"abc"},"projects":{"/other":{"hasTrustDialogAccepted":true}}}`), "/work/p"))
+	require.Equal(t, "abc", m["oauthAccount"].(map[string]any)["id"])
+	require.Contains(t, m["projects"].(map[string]any), "/other")
+	require.Contains(t, m["projects"].(map[string]any), "/work/p")
+
+	// An existing target-project entry is merged, not clobbered.
+	m = parse(mergeClaudeFlags([]byte(`{"projects":{"/work/p":{"customKey":"keep"}}}`), "/work/p"))
+	proj = m["projects"].(map[string]any)["/work/p"].(map[string]any)
+	require.Equal(t, "keep", proj["customKey"])
+	require.Equal(t, true, proj["hasTrustDialogAccepted"])
+
+	// Invalid JSON and explicit null both fall back to a fresh object with flags.
+	for _, bad := range [][]byte{[]byte("not json"), []byte("null")} {
+		m = parse(mergeClaudeFlags(bad, "/work/p"))
+		require.Equal(t, true, m["bypassPermissionsModeAccepted"])
+		require.Contains(t, m["projects"].(map[string]any), "/work/p")
+	}
+}
+
+func (s *RunnerSuite) TestWithClaudeConfig() {
+	t := s.T()
+	// Prepended to an empty list and to an unrelated one.
+	require.Equal(t, []string{"~/.claude.json"}, withClaudeConfig(nil))
+	require.Equal(t, []string{"~/.claude.json", "~/.npmrc"}, withClaudeConfig([]string{"~/.npmrc"}))
+	// Deduped + hoisted to first regardless of original position.
+	require.Equal(t, []string{"~/.claude.json", "~/.npmrc"}, withClaudeConfig([]string{"~/.claude.json", "~/.npmrc"}))
+	require.Equal(t, []string{"~/.claude.json", "~/.npmrc"}, withClaudeConfig([]string{"~/.npmrc", "~/.claude.json"}))
 }

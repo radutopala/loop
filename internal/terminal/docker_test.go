@@ -149,6 +149,30 @@ func (s *DockerSuite) TestFormatExecUserWindowsFallback() {
 	require.Equal(s.T(), "0:0", formatExecUser(0, -1))
 }
 
+func (s *DockerSuite) TestExecUserFromEnv() {
+	require.Equal(s.T(), "1000:1000", execUserFromEnv("1000", "1000"))
+	require.Equal(s.T(), "0:0", execUserFromEnv(" 0 ", " 0 "))
+	// Empty / non-numeric / negative → "" so the caller falls back to the process uid.
+	require.Equal(s.T(), "", execUserFromEnv("", "1000"))
+	require.Equal(s.T(), "", execUserFromEnv("1000", ""))
+	require.Equal(s.T(), "", execUserFromEnv("agent", "1000"))
+	require.Equal(s.T(), "", execUserFromEnv("1000", "x"))
+	require.Equal(s.T(), "", execUserFromEnv("-1", "1000"))
+	require.Equal(s.T(), "", execUserFromEnv("1000", "-2"))
+}
+
+func (s *DockerSuite) TestDefaultExecUserHonorsHostEnv() {
+	s.T().Setenv("HOST_UID", "1000")
+	s.T().Setenv("HOST_GID", "2000")
+	require.Equal(s.T(), "1000:2000", defaultExecUser())
+}
+
+func (s *DockerSuite) TestDefaultExecUserFallsBackWhenEnvUnset() {
+	s.T().Setenv("HOST_UID", "")
+	s.T().Setenv("HOST_GID", "")
+	require.Regexp(s.T(), `^\d+:\d+$`, defaultExecUser())
+}
+
 func (s *DockerSuite) TestExecAttach() {
 	api := new(mockDockerExecAPI)
 	client := &DockerExecClient{api: api, execUser: defaultExecUser}

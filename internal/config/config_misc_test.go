@@ -258,7 +258,9 @@ func (s *ConfigSuite) TestCopyFilesDefault() {
 	}
 	cfg, err := s.loader.load()
 	require.NoError(s.T(), err)
-	require.Equal(s.T(), []string{"~/.claude.json"}, cfg.CopyFiles)
+	// No longer defaulted to ~/.claude.json here — the container runner prepends
+	// it (flag-merged) per agent container instead.
+	require.Empty(s.T(), cfg.CopyFiles)
 }
 
 func (s *ConfigSuite) TestCopyFilesExplicit() {
