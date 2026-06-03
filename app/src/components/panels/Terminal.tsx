@@ -2,8 +2,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { GateApprovalRequestedData, SessionStatus, TerminalTarget } from "../../types";
 import type { AgentOpenMode } from "../../types/panels";
 import { fetchRoots, type RootEntry } from "../../api/files";
-import { fonts } from "../../theme";
 import { useTheme } from "../../ThemeContext";
+import { TerminalRootSelect } from "./TerminalRootSelect";
 import { useTerminalWs } from "../../hooks/useTerminalWs";
 import { useElapsedTimer } from "../../hooks/useElapsedTimer";
 import { useXTerminal } from "../../hooks/useXTerminal";
@@ -256,32 +256,8 @@ export function Terminal({ channelId, target = "agent", instanceId, claudeSessio
           killTitle={target === "host" ? "Close shell session" : "Stop container and end session"}
         />
       )}
-      {isShell && roots.length > 1 && (
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "flex-end", gap: 6, padding: "2px 8px", borderBottom: `1px solid ${colors.border}`, flexShrink: 0 }}>
-          <span style={{ fontSize: 10, color: colors.textDim }}>root</span>
-          <select
-            value={rootIndex}
-            onChange={(e) => setRootIndex(Number(e.target.value))}
-            title="Workspace root the shell opens in"
-            data-testid="terminal-root-select"
-            style={{
-              background: colors.surface,
-              color: colors.textLight,
-              border: `1px solid ${colors.border}`,
-              borderRadius: 4,
-              fontSize: 11,
-              fontFamily: fonts.mono,
-              padding: "1px 4px",
-              outline: "none",
-              maxWidth: 160,
-              cursor: "pointer",
-            }}
-          >
-            {roots.map((r) => (
-              <option key={r.index} value={r.index} title={r.path}>{r.path}</option>
-            ))}
-          </select>
-        </div>
+      {isShell && roots.length > 1 && instanceId && (
+        <TerminalRootSelect leafId={instanceId} roots={roots} value={rootIndex} onChange={setRootIndex} />
       )}
       <div style={{ flex: 1, position: "relative", overflow: "hidden", minHeight: 0 }}>
         <div style={{ padding: "8px 0 8px 12px", width: "100%", height: "100%", boxSizing: "border-box" }}>
