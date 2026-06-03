@@ -394,17 +394,20 @@ export function GitPanel({ channelId, dirPath, branch, maximized, sidebarOpen, t
         </span>
         <div style={{ flex: 1 }} />
         {roots.length > 1 && (gitMode === "uncommitted" || gitMode === "branches" || gitMode === "commits") && (
-          <select
-            value={rootIndex}
-            onChange={(e) => setRootIndex(Number(e.target.value))}
-            style={selectStyle}
-            title="Workspace root"
-            data-testid="git-panel-root-select"
-          >
-            {roots.map((r) => (
-              <option key={r.index} value={r.index} title={r.path}>{r.path}</option>
-            ))}
-          </select>
+          <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+            <span style={{ fontSize: 10, color: colors.textDim }}>root</span>
+            <select
+              value={rootIndex}
+              onChange={(e) => setRootIndex(Number(e.target.value))}
+              style={selectStyle}
+              title="Workspace root"
+              data-testid="git-panel-root-select"
+            >
+              {roots.map((r) => (
+                <option key={r.index} value={r.index} title={r.path}>{r.path}</option>
+              ))}
+            </select>
+          </span>
         )}
         {pr && <PRChip pr={pr} colors={colors} />}
         {gitMode !== "worktrees" && gitMode !== "branchlist" && (
