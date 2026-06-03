@@ -1,4 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { fonts } from "../../theme";
 import { useTheme } from "../../ThemeContext";
 
@@ -120,7 +121,12 @@ export function ContextMenu({ x, y, items, onClose }: ContextMenuProps) {
     };
   }, [onClose, focusIdx, itemIndices]);
 
-  return (
+  // Render through a portal to <body> so the menu escapes any ancestor that
+  // sets CSS `zoom` (the sidebar, chat, and panel containers scale themselves by
+  // the user's font-size setting). `zoom` scales a fixed-positioned descendant's
+  // coordinates, so a menu nested inside would land at `clientY * zoom` — visibly
+  // "way down" the larger the font. At <body> the position maps to true viewport px.
+  return createPortal(
     <>
       {/* Invisible backdrop: catches clicks outside the menu */}
       <div
@@ -220,6 +226,7 @@ export function ContextMenu({ x, y, items, onClose }: ContextMenuProps) {
           </div>
         ))}
       </div>
-    </>
+    </>,
+    document.body,
   );
 }
