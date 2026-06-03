@@ -3,7 +3,7 @@ import type { GateApprovalRequestedData, SessionStatus, TerminalTarget } from ".
 import type { AgentOpenMode } from "../../types/panels";
 import { fetchRoots, type RootEntry } from "../../api/files";
 import { useTheme } from "../../ThemeContext";
-import { TerminalRootSelect } from "./TerminalRootSelect";
+import { PaneRootSelect } from "./PaneRootSelect";
 import { useTerminalWs } from "../../hooks/useTerminalWs";
 import { useElapsedTimer } from "../../hooks/useElapsedTimer";
 import { useXTerminal } from "../../hooks/useXTerminal";
@@ -257,7 +257,7 @@ export function Terminal({ channelId, target = "agent", instanceId, claudeSessio
         />
       )}
       {isShell && roots.length > 1 && instanceId && (
-        <TerminalRootSelect leafId={instanceId} roots={roots} value={rootIndex} onChange={setRootIndex} />
+        <PaneRootSelect leafId={instanceId} roots={roots} value={rootIndex} onChange={setRootIndex} testId="terminal-root-select" title="Workspace root the shell opens in" />
       )}
       <div style={{ flex: 1, position: "relative", overflow: "hidden", minHeight: 0 }}>
         <div style={{ padding: "8px 0 8px 12px", width: "100%", height: "100%", boxSizing: "border-box" }}>

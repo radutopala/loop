@@ -13,6 +13,7 @@ import type { FileLinkOpenDetail } from "../chat/FileLink";
 import { CommitHistory } from "./CommitHistory";
 import { WorktreesPanel } from "./WorktreesPanel";
 import { BranchesPanel } from "./BranchesPanel";
+import { PaneRootSelect } from "./PaneRootSelect";
 import { storageGet, storageSet } from "../../utils/storage";
 
 const MIN_WIDTH = 280;
@@ -42,6 +43,8 @@ interface GitPanelProps {
   sidebarOpen?: boolean;
   tabBar?: React.ReactNode;
   embedded?: boolean;
+  /** Pane leaf id. When set, the root selector moves into the pane header. */
+  leafId?: string;
   isWorktree?: boolean;
   hasBranch?: boolean;
   onToggleSidebar?: () => void;
@@ -67,7 +70,7 @@ function buildHeaderBtnStyle(colors: ColorPalette): React.CSSProperties {
   };
 }
 
-export function GitPanel({ channelId, dirPath, branch, maximized, sidebarOpen, tabBar, embedded, isWorktree, hasBranch, onToggleSidebar, onOpenPalette, onToggleMaximize, onImportWorktree, onSelectThread, onStatusChange, onClose }: GitPanelProps) {
+export function GitPanel({ channelId, dirPath, branch, maximized, sidebarOpen, tabBar, embedded, leafId, isWorktree, hasBranch, onToggleSidebar, onOpenPalette, onToggleMaximize, onImportWorktree, onSelectThread, onStatusChange, onClose }: GitPanelProps) {
   const { colors, fontSizes } = useTheme();
   const [width, setWidth] = useState(loadWidth);
   const [resizing, setResizing] = useState(false);
@@ -393,7 +396,12 @@ export function GitPanel({ channelId, dirPath, branch, maximized, sidebarOpen, t
           )}
         </span>
         <div style={{ flex: 1 }} />
-        {roots.length > 1 && (gitMode === "uncommitted" || gitMode === "branches" || gitMode === "commits") && (
+        {/* Embedded in a pane: the root selector lives in the pane header and
+            governs every tab. Standalone (no leafId): keep it in the toolbar. */}
+        {leafId && roots.length > 1 && (
+          <PaneRootSelect leafId={leafId} roots={roots} value={rootIndex} onChange={setRootIndex} testId="git-panel-root-select" title="Workspace root" />
+        )}
+        {!leafId && roots.length > 1 && (gitMode === "uncommitted" || gitMode === "branches" || gitMode === "commits") && (
           <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
             <span style={{ fontSize: 10, color: colors.textDim }}>root</span>
             <select
