@@ -185,6 +185,8 @@ export function Terminal({ channelId, target = "agent", instanceId, claudeSessio
 
   // Switching workspace root re-creates the session in the new dir. Skip the
   // initial mount (the first create already carries the current rootIndex).
+  // Reset the xterm first so the new shell's prompt starts on a clean screen
+  // instead of being appended to the previous session's dangling prompt line.
   const sendCreateRef = useRef(sendCreate);
   sendCreateRef.current = sendCreate;
   const prevRootIndexRef = useRef(rootIndex);
@@ -192,6 +194,7 @@ export function Terminal({ channelId, target = "agent", instanceId, claudeSessio
     if (prevRootIndexRef.current === rootIndex) return;
     prevRootIndexRef.current = rootIndex;
     reset();
+    xtermInstRef.current?.reset();
     sendCreateRef.current();
   }, [rootIndex, reset]);
 
