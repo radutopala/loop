@@ -275,7 +275,7 @@ export function Terminal({ channelId, target = "agent", instanceId, claudeSessio
             }}
           >
             {roots.map((r) => (
-              <option key={r.index} value={r.index} title={r.path}>{r.name}</option>
+              <option key={r.index} value={r.index} title={r.path}>{r.path}</option>
             ))}
           </select>
         </div>
