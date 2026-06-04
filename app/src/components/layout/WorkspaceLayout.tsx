@@ -822,6 +822,7 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
               dirPath={dirPath}
               branch={branch}
               embedded
+              leafId={leaf.id}
               isWorktree={channel.worktree}
               hasBranch={!channel.parent_id && !!channel.branch}
               onImportWorktree={onImportWorktree}

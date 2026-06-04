@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { GateApprovalRequestedData, SessionStatus, TerminalTarget } from "../../types";
 import type { AgentOpenMode } from "../../types/panels";
+import { fetchRoots, type RootEntry } from "../../api/files";
 import { useTheme } from "../../ThemeContext";
+import { PaneRootSelect } from "./PaneRootSelect";
 import { useTerminalWs } from "../../hooks/useTerminalWs";
 import { useElapsedTimer } from "../../hooks/useElapsedTimer";
 import { useXTerminal } from "../../hooks/useXTerminal";
@@ -55,6 +57,22 @@ export function Terminal({ channelId, target = "agent", instanceId, claudeSessio
   const terminalRef = useRef<HTMLDivElement>(null);
   const [status, setStatus] = useState<SessionStatus>("connecting");
   const { elapsed, start, stop, reset } = useElapsedTimer();
+
+  // Shell panes (host shell or docker shell) can open in any workspace root.
+  // The agent (Claude) pane — target "agent" with no explicit cmd — is excluded.
+  const isShell = target === "host" || (!!cmd && cmd.length > 0);
+  const [roots, setRoots] = useState<RootEntry[]>([]);
+  const [rootIndex, setRootIndex] = useState(0);
+
+  useEffect(() => {
+    setRootIndex(0);
+    if (!channelId || !isShell) { setRoots([]); return; }
+    let cancelled = false;
+    fetchRoots(channelId)
+      .then((r) => { if (!cancelled) setRoots(r); })
+      .catch(() => { if (!cancelled) setRoots([]); });
+    return () => { cancelled = true; };
+  }, [channelId, isShell]);
 
   const getStartTimeRef = useRef<(() => number | undefined) | null>(null);
 
@@ -118,6 +136,7 @@ export function Terminal({ channelId, target = "agent", instanceId, claudeSessio
     newSession,
     openMode,
     cmd,
+    rootIndex,
     onData,
     onStatus,
     onError,
@@ -163,6 +182,21 @@ export function Terminal({ channelId, target = "agent", instanceId, claudeSessio
     reset();
     sendCreate();
   }, [reset, sendCreate]);
+
+  // Switching workspace root re-creates the session in the new dir. Skip the
+  // initial mount (the first create already carries the current rootIndex).
+  // Reset the xterm first so the new shell's prompt starts on a clean screen
+  // instead of being appended to the previous session's dangling prompt line.
+  const sendCreateRef = useRef(sendCreate);
+  sendCreateRef.current = sendCreate;
+  const prevRootIndexRef = useRef(rootIndex);
+  useEffect(() => {
+    if (prevRootIndexRef.current === rootIndex) return;
+    prevRootIndexRef.current = rootIndex;
+    reset();
+    xtermInstRef.current?.reset();
+    sendCreateRef.current();
+  }, [rootIndex, reset]);
 
   const handleShortcutPick = useCallback((text: string) => {
     if (target === "agent" && !cmd) {
@@ -221,6 +255,9 @@ export function Terminal({ channelId, target = "agent", instanceId, claudeSessio
           killLabel={target === "host" ? "Close" : "Stop"}
           killTitle={target === "host" ? "Close shell session" : "Stop container and end session"}
         />
+      )}
+      {isShell && roots.length > 1 && instanceId && (
+        <PaneRootSelect leafId={instanceId} roots={roots} value={rootIndex} onChange={setRootIndex} testId="terminal-root-select" title="Workspace root the shell opens in" />
       )}
       <div style={{ flex: 1, position: "relative", overflow: "hidden", minHeight: 0 }}>
         <div style={{ padding: "8px 0 8px 12px", width: "100%", height: "100%", boxSizing: "border-box" }}>

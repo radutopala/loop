@@ -87,6 +87,11 @@ type wsControlMessage struct {
 	// When unset, falls back to the legacy NewSession/auto-fork behavior so
 	// older clients (and non-agent terminals) keep working unchanged.
 	OpenMode string `json:"open_mode,omitempty"`
+	// RootIndex selects which workspace root (0 = primary dir, 1+ = extra_dirs)
+	// a shell pane opens in. Resolved server-side against the channel's
+	// authoritative root list; out-of-range or 0 falls back to the primary dir.
+	// Only meaningful for host-shell / docker-shell panes.
+	RootIndex int `json:"root_index,omitempty"`
 }
 
 // Valid OpenMode values. Anything else is treated as unset (legacy fallback).
@@ -120,10 +125,14 @@ type terminalWSConn struct {
 	cmdBuilder        InteractiveCmdBuilder
 	store             ChannelLister
 	loopDir           string // fallback work dir root (e.g. ~/.loop)
-	logger            *slog.Logger
-	writeMu           sync.Mutex
-	stopOnce          sync.Once
-	stopCh            chan struct{}
+	// rootDirs returns the channel's ordered workspace roots (index 0 = primary
+	// dir, 1+ = extra_dirs). Used to resolve a shell pane's RootIndex to an
+	// absolute path. May be nil (then RootIndex is ignored — primary dir only).
+	rootDirs func(ctx context.Context, channelID string) ([]string, error)
+	logger   *slog.Logger
+	writeMu  sync.Mutex
+	stopOnce sync.Once
+	stopCh   chan struct{}
 
 	sessionID     string
 	outputCh      <-chan []byte
@@ -324,6 +333,27 @@ func (t *terminalWSConn) startSession(sessionID string, output <-chan []byte, hi
 // maxCmdArgs is the maximum number of arguments allowed in a create command.
 const maxCmdArgs = 64
 
+// shellSingleQuote wraps s in single quotes, escaping any embedded single
+// quotes, so it can be safely interpolated into a POSIX shell command.
+func shellSingleQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
+}
+
+// resolveRootDir maps a shell pane's RootIndex to an absolute workspace path.
+// Index 0 (or an unset/out-of-range index, or no resolver) keeps the supplied
+// default. Resolution goes through rootDirs so the index is validated against
+// the channel's authoritative root list rather than trusting client input.
+func (t *terminalWSConn) resolveRootDir(ctx context.Context, channelID string, rootIndex int, def string) string {
+	if rootIndex <= 0 || t.rootDirs == nil || channelID == "" {
+		return def
+	}
+	paths, err := t.rootDirs(ctx, channelID)
+	if err != nil || rootIndex >= len(paths) || paths[rootIndex] == "" {
+		return def
+	}
+	return paths[rootIndex]
+}
+
 func (t *terminalWSConn) handleCreateHost(ctx context.Context, msg wsControlMessage) {
 	if t.hostManager == nil {
 		t.sendError("host terminal not configured", wsErrCodeSessionFailed)
@@ -349,6 +379,9 @@ func (t *terminalWSConn) handleCreateHost(ctx context.Context, msg wsControlMess
 			}
 		}
 	}
+
+	// Multi-root workspaces: open the shell in the selected extra root.
+	dirPath = t.resolveRootDir(ctx, msg.ChannelID, msg.RootIndex, dirPath)
 
 	if len(msg.Cmd) > maxCmdArgs {
 		t.sendError("cmd exceeds maximum arguments", wsErrCodeInvalidInput)
@@ -492,6 +525,20 @@ func (t *terminalWSConn) handleCreate(ctx context.Context, msg wsControlMessage)
 	if msg.Rows > 0 && msg.Cols > 0 {
 		if err := t.manager.Resize(ctx, sid, msg.Rows, msg.Cols); err != nil {
 			t.logger.Warn("terminal ws: initial resize failed", "session_id", sid, "error", err)
+		}
+	}
+
+	// Docker shell panes opened in a non-primary workspace root: cd into the
+	// selected root. Extra roots are bind-mounted into the shell container at
+	// their real host paths, so the path is valid inside the container. Only
+	// shells (explicit cmd) take this path; the agent boots via the interactive
+	// cmd below (len(Cmd) == 0). The dir is server-resolved from the channel's
+	// root list, not raw client input, but we shell-quote it defensively.
+	if len(msg.Cmd) > 0 && msg.RootIndex > 0 {
+		if shellDir := t.resolveRootDir(ctx, msg.ChannelID, msg.RootIndex, dirPath); shellDir != "" && shellDir != dirPath {
+			if err := t.manager.SendInput(sid, []byte("cd "+shellSingleQuote(shellDir)+"\n")); err != nil {
+				t.logger.Warn("terminal ws: failed to cd shell into root", "session_id", sid, "error", err)
+			}
 		}
 	}
 
@@ -690,6 +737,7 @@ func (s *Server) handleTerminalWS(w http.ResponseWriter, r *http.Request) {
 	defer conn.Close()
 
 	tc := newTerminalWSConn(conn, s.termManager, s.hostTermManager, s.containerRegistry, s.cmdBuilder, s.store, s.loopDir, s.logger)
+	tc.rootDirs = s.allDirPaths
 	tc.browserProvider = s.dockerBrowserProvider
 	defer tc.close()
 

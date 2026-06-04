@@ -39,6 +39,7 @@ func registerBackendSteps(ctx *godog.ScenarioContext, tc *TestContext) {
 	// Hybrid API setup steps (for frontend scenarios that need pre-seeded data)
 	ctx.Step(`^I set up a test channel via API for directory "([^"]*)"$`, tc.setupChannelViaAPI)
 	ctx.Step(`^I set up a test channel via API for git repo "([^"]*)"$`, tc.setupChannelViaAPIForGitRepo)
+	ctx.Step(`^I add an extra workspace root via API$`, tc.addExtraWorkspaceRootViaAPI)
 	ctx.Step(`^I set up a sample project channel$`, tc.setupSampleProjectChannel)
 	ctx.Step(`^I create a thread "([^"]*)" under the current channel via API$`, tc.createThreadViaAPI)
 	ctx.Step(`^I set up a test task via API with prompt "([^"]*)" and schedule "([^"]*)"$`, tc.setupTaskViaAPI)
@@ -309,6 +310,32 @@ func (tc *TestContext) setupChannelViaAPIForGitRepo(name string) error {
 
 	tc.ChannelDir = dir
 	return tc.setupChannelViaAPI(dir)
+}
+
+// addExtraWorkspaceRootViaAPI gives the current channel a second workspace root
+// by writing a project .loop/config.json with an extra_dirs entry. The extra
+// dir uses a stable "bdd-extra-root-" prefix so scenarios can assert it appears
+// as an option in the root selector. fetchRoots reads the config live, so no
+// channel re-creation is needed.
+func (tc *TestContext) addExtraWorkspaceRootViaAPI() error {
+	if tc.ChannelDir == "" {
+		return fmt.Errorf("no channel dir set; use 'I set up a test channel via API for git repo' step first")
+	}
+	extra, err := os.MkdirTemp("", "bdd-extra-root-")
+	if err != nil {
+		return fmt.Errorf("creating extra root dir: %w", err)
+	}
+	tc.CreatedDirs = append(tc.CreatedDirs, extra)
+
+	loopDir := filepath.Join(tc.ChannelDir, ".loop")
+	if err := os.MkdirAll(loopDir, 0o755); err != nil {
+		return fmt.Errorf("creating .loop dir: %w", err)
+	}
+	cfg := `{"extra_dirs":["` + extra + `"]}`
+	if err := os.WriteFile(filepath.Join(loopDir, "config.json"), []byte(cfg), 0o644); err != nil {
+		return fmt.Errorf("writing project config: %w", err)
+	}
+	return nil
 }
 
 // gitRun runs a git command in dir, returning a descriptive error on failure.

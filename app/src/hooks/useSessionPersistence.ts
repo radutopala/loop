@@ -35,6 +35,8 @@ export function useSessionPersistence(
   cmd?: string[],
   /** Agent terminal open mode (resume / fork / fresh). */
   openMode?: AgentOpenMode,
+  /** Workspace root index for shell panes (0 = primary dir, 1+ = extra_dirs). */
+  rootIndex?: number,
 ) {
   const key = channelId ? sessionKey(channelId, target, instanceId) : null;
   const sessionIdRef = useRef<string | null>(
@@ -82,10 +84,10 @@ export function useSessionPersistence(
         );
       } else if (channelId && !killedRef.current) {
         const size = getTerminalSizeRef?.current?.();
-        ws.send(JSON.stringify({ type: "create", channel_id: channelId, target, ...(target === "agent" && instanceId ? { agent_id: instanceId, leaf_id: instanceId } : {}), ...(claudeSessionId ? { session_id: claudeSessionId } : {}), ...(newSession ? { new_session: true } : {}), ...(openMode ? { open_mode: openMode } : {}), ...(cmd && cmd.length > 0 ? { cmd } : {}), ...size }));
+        ws.send(JSON.stringify({ type: "create", channel_id: channelId, target, ...(target === "agent" && instanceId ? { agent_id: instanceId, leaf_id: instanceId } : {}), ...(claudeSessionId ? { session_id: claudeSessionId } : {}), ...(newSession ? { new_session: true } : {}), ...(openMode ? { open_mode: openMode } : {}), ...(rootIndex ? { root_index: rootIndex } : {}), ...(cmd && cmd.length > 0 ? { cmd } : {}), ...size }));
       }
     },
-    [channelId, target, instanceId, claudeSessionId, newSession, openMode, cmd, getTerminalSizeRef],
+    [channelId, target, instanceId, claudeSessionId, newSession, openMode, rootIndex, cmd, getTerminalSizeRef],
   );
 
   return { sessionIdRef, killedRef, setSessionId, handleOpen, markKilled, getStartTime };
