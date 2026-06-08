@@ -14,7 +14,9 @@ import {
   type RootEntry,
 } from "../api/loopApi";
 import { fetchGlobalConfig } from "../api/configApi";
+import { fetchDiff } from "../api/git";
 import { makePathKey, parsePathKey } from "../components/panels/EditorFileTree";
+import { gitLineChangesForFile, emptyGitLineChanges, type GitLineChanges } from "../components/panels/editorGitGutter";
 import type { CodeEditorHandle } from "../components/panels/CodeEditor";
 import type { ChatEventListener } from "./useChatStateStore";
 import type { ToolUseData, WSEvent } from "../types";
@@ -69,6 +71,10 @@ export interface EditorStateApi {
   imageURL: string | null;
   loading: boolean;
   error: string | null;
+
+  // VCS change markers (added/modified/deleted lines vs git HEAD) for the
+  // currently-open file, fed to the editor's gutter.
+  gitChanges: GitLineChanges;
 
   // Dirty + auto-refresh state
   dirtyTabs: Set<string>;
@@ -135,6 +141,7 @@ export function useEditorState(channelId: string, options?: UseEditorStateOption
   const imageVersionRef = useRef(0);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [gitChanges, setGitChanges] = useState<GitLineChanges>(emptyGitLineChanges);
 
   const [dirtyTabs, setDirtyTabs] = useState<Set<string>>(new Set());
   const [pendingRefresh, setPendingRefresh] = useState<Map<string, string>>(new Map());
@@ -226,6 +233,37 @@ export function useEditorState(channelId: string, options?: UseEditorStateOption
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Fetch the open file's uncommitted diff and recompute its gutter markers.
+  // Cheap and idempotent; called on file open, save, agent edit, and focus.
+  const refreshGitChanges = useCallback(async () => {
+    const pathKey = selectedPathRef.current;
+    if (!pathKey) {
+      setGitChanges(emptyGitLineChanges());
+      return;
+    }
+    const { rootIndex: ri, relativePath: rp } = parsePathKey(pathKey);
+    if (isImagePath(rp) || isVideoPath(rp)) {
+      setGitChanges(emptyGitLineChanges());
+      return;
+    }
+    try {
+      const diff = await fetchDiff(channelId, undefined, undefined, ri);
+      if (selectedPathRef.current !== pathKey) return;
+      const combined = [diff.staged_diff, diff.unstaged_diff, diff.untracked_diff].filter(Boolean).join("\n");
+      setGitChanges(gitLineChangesForFile(combined, rp));
+    } catch {
+      setGitChanges(emptyGitLineChanges());
+    }
+  }, [channelId]);
+
+  const refreshGitChangesRef = useRef(refreshGitChanges);
+  refreshGitChangesRef.current = refreshGitChanges;
+
+  // Recompute gutter markers whenever the active file (or channel) changes.
+  useEffect(() => {
+    refreshGitChangesRef.current();
+  }, [selectedPath, channelId]);
+
   const markDirty = useCallback(() => {
     const p = selectedPathRef.current;
     if (!p) return;
@@ -252,6 +290,7 @@ export function useEditorState(channelId: string, options?: UseEditorStateOption
     saveFileContent(channelId, rp, content, ri).then(() => {
       dirtyContentRef.current.delete(savePath);
       setDirtyTabs((prev) => { if (!prev.has(savePath)) return prev; const next = new Set(prev); next.delete(savePath); return next; });
+      if (savePath === selectedPathRef.current) refreshGitChangesRef.current();
     }).catch(() => {});
   }, [channelId]);
 
@@ -571,6 +610,7 @@ export function useEditorState(channelId: string, options?: UseEditorStateOption
           editor.replaceContent(result.content);
           setDirtyTabs((prev) => { if (!prev.has(pathKey)) return prev; const next = new Set(prev); next.delete(pathKey); return next; });
         }
+        refreshGitChangesRef.current();
       }).catch(() => {});
     };
     window.addEventListener("blur", onBlur);
@@ -614,6 +654,7 @@ export function useEditorState(channelId: string, options?: UseEditorStateOption
         } else {
           setFileContent(result.content);
         }
+        refreshGitChangesRef.current();
       } else {
         dirtyContentRef.current.delete(pathKey);
       }
@@ -703,6 +744,7 @@ export function useEditorState(channelId: string, options?: UseEditorStateOption
     imageURL,
     loading,
     error,
+    gitChanges,
     dirtyTabs,
     pendingRefresh,
     autoSaveOnBlur,
