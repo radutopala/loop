@@ -28,7 +28,7 @@ Agent (Claude Code)  ←→  MCP Protocol (stdio)  ←→  loop mcp  ←→  HTT
 
 ## Registered Tools
 
-### Always Available (17 tools)
+### Always Available (18 tools)
 
 #### Task Management
 
@@ -45,7 +45,8 @@ Agent (Claude Code)  ←→  MCP Protocol (stdio)  ←→  loop mcp  ←→  HTT
 
 | Tool | Description |
 |------|-------------|
-| `send_message` | Send a message to a channel or thread. Supports `@BotName` mentions (auto-converted to proper mentions). |
+| `send_message` | Send a message to a channel or thread. `channel_id` is optional — omit it to target the current channel/thread. Supports `@BotName` mentions (auto-converted to proper mentions). |
+| `queue_message` | Queue a follow-up prompt for yourself in the current channel/thread/worktree. Enqueues a new turn behind any running/queued work (shows in the chat's queued-messages list); `interrupt=true` cancels the active run and jumps the queue to run next. |
 | `create_channel` | Create a new channel (bot auto-joins) |
 | `create_thread` | Create a thread in the current channel. If message provided, triggers an agent immediately. |
 | `create_worktree_thread` | Create a thread backed by a fresh git worktree on the given `branch` (mirrors the UI `+wt` button). Optional `name` for the worktree directory; optional `message` triggers an agent immediately. |
