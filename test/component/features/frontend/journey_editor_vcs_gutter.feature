@@ -1,7 +1,7 @@
 @frontend @slow
 Feature: Editor VCS Change Markers Journey
-  The code editor shows JetBrains/GoLand-style git change markers in the gutter
-  and a right-side overview ruler for uncommitted changes versus git HEAD.
+  The code editor shows git change markers in the gutter and a right-side
+  overview ruler for uncommitted changes versus git HEAD.
 
   Scenario: Modified file shows a gutter change bar and the overview ruler
     Given I set up a test channel via API for git repo "bdd-editor-gutter"

@@ -23,7 +23,7 @@ All file I/O goes through the backend REST API (`/api/channels/{id}/files`, `/ap
 
 ### Theme
 
-The editor uses a custom **Darcula** theme inspired by JetBrains IDEs:
+The editor uses a custom **Darcula** dark theme:
 
 - Font: JetBrains Mono (loaded via `@fontsource/jetbrains-mono`), 13px
 - Background: `colors.sidebar` (`#171717`)
@@ -251,7 +251,7 @@ The preview updates with a 300ms debounce after each edit. A toggle button lets 
 
 ## VCS Change Markers
 
-JetBrains/GoLand-style git change markers highlight uncommitted edits to the open file (relative to git `HEAD`), in two places:
+Git change markers highlight uncommitted edits to the open file (relative to git `HEAD`), in two places:
 
 ### Gutter Stripe
 
