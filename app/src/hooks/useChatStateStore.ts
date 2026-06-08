@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { listPendingAsks } from "../api/channels";
+import { listPendingAsks, listPendingPlans } from "../api/channels";
 import { listPendingApprovals } from "../api/gate";
 import { listReviewSessions } from "../api/review";
 import type {
@@ -291,6 +291,53 @@ export function useChatStateStore({
       setAskUserTick((v) => v + 1);
     }
   }, [refreshAskUserMembership]);
+
+  // Rehydrate the ExitPlanMode card for every channel currently parked on
+  // a plan. Run from WS onOpen so a renderer reload / WS reconnect re-renders
+  // the card — agent.exit_plan only fires on the original tool call, so
+  // without this a parked channel keeps the backend's drain blocked while the
+  // UI shows nothing actionable (and free-text the user types can't route
+  // through plan/resolve because hasPendingExitPlan is false).
+  const planRehydrateSeqRef = useRef(0);
+  const rehydrateExitPlan = useCallback(async () => {
+    const seq = ++planRehydrateSeqRef.current;
+    let plans;
+    try {
+      plans = await listPendingPlans();
+    } catch (err) {
+      console.warn("[rehydrate] listPendingPlans failed:", err);
+      return;
+    }
+    if (seq !== planRehydrateSeqRef.current) return;
+    const now = Date.now();
+    for (const p of plans) {
+      let state = storeRef.current.get(p.channel_id);
+      if (!state) {
+        state = createEmptyState();
+        storeRef.current.set(p.channel_id, state);
+      }
+      state.exitPlanRequest = p.data;
+      if (p.channel_id === selectedIdRef.current) {
+        const event: WSEvent = {
+          type: "agent.exit_plan",
+          channel_id: p.channel_id,
+          data: p.data,
+          timestamp: now,
+        };
+        for (const listener of chatListenersRef.current) listener(event);
+      }
+    }
+    // Drop a stale cached plan card whose backend snapshot no longer has it
+    // (resolved out-of-band, e.g. approved from another renderer) so switching
+    // to that channel later doesn't show a dead card. The selected open view
+    // self-heals via the agent.status "running" event the resumed run emits.
+    const valid = new Set<string>(plans.map((p) => p.channel_id));
+    for (const [id, state] of storeRef.current) {
+      if (state.exitPlanRequest && !valid.has(id)) {
+        state.exitPlanRequest = null;
+      }
+    }
+  }, []);
 
   // Pull the live (channel_id, status) snapshot of every review session
   // and reconcile reviewChannelIdsRef against it. Run from WS onOpen so
@@ -592,6 +639,7 @@ export function useChatStateStore({
         rehydrateGateApprovals();
         rehydrateReviewSessions();
         rehydrateAskUser();
+        rehydrateExitPlan();
       },
       // eslint-disable-next-line react-hooks/exhaustive-deps
       [],

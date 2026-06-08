@@ -164,6 +164,16 @@ type ExitPlanModeEventData struct {
 	PlanFilePath string `json:"planFilePath,omitempty"`
 }
 
+// PlannedChannelEntry is one entry in the parked-ExitPlanMode snapshot
+// returned by GET /api/plans/pending. Mirrors AskedChannelEntry so the FE
+// can re-render the plan card after a renderer reload / WS reconnect —
+// agent.exit_plan only fires on the original tool call, so without this
+// snapshot the card never reappears and the channel's drain stays blocked.
+type PlannedChannelEntry struct {
+	ChannelID string                `json:"channel_id"`
+	Data      ExitPlanModeEventData `json:"data"`
+}
+
 // TaskItem mirrors the on-disk schema written by Claude's TaskCreate/TaskUpdate
 // tools. Reconstructed on the loop server from the JSON streamed by the agent's
 // claude binary (input on TaskCreate / TaskUpdate, plus the assigned id parsed

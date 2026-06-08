@@ -1,4 +1,4 @@
-import type { AskUserQuestionData, Channel, Message, TimelineResponse } from "../types";
+import type { AskUserQuestionData, Channel, ExitPlanModeData, Message, TimelineResponse } from "../types";
 import { getApiUrl, getWsUrl } from "./api";
 
 /** Open a one-shot WebSocket to send a kill message for a channel's agent container. */
@@ -175,6 +175,25 @@ export async function listPendingAsks(): Promise<PendingAsk[]> {
   if (!res.ok) throw new Error(`Failed to list pending asks: ${res.statusText}`);
   const body = (await res.json()) as { asks?: PendingAsk[] };
   return Array.isArray(body.asks) ? body.asks : [];
+}
+
+export interface PendingPlan {
+  channel_id: string;
+  data: ExitPlanModeData;
+}
+
+/**
+ * Snapshot every channel currently parked on an ExitPlanMode card.
+ * Used on WS reconnect to rehydrate the plan card after a renderer
+ * reload — agent.exit_plan only fires on the original tool call, so
+ * without this snapshot the card never reappears even though the
+ * backend keeps blocking the channel's drain.
+ */
+export async function listPendingPlans(): Promise<PendingPlan[]> {
+  const res = await fetch(`${getApiUrl()}/api/plans/pending`);
+  if (!res.ok) throw new Error(`Failed to list pending plans: ${res.statusText}`);
+  const body = (await res.json()) as { plans?: PendingPlan[] };
+  return Array.isArray(body.plans) ? body.plans : [];
 }
 
 export async function ensureChannel(dirPath: string): Promise<Channel> {

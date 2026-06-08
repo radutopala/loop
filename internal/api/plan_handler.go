@@ -2,7 +2,10 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
+
+	"github.com/radutopala/loop/internal/events"
 )
 
 const (
@@ -87,4 +90,32 @@ func (s *Server) insertPlanContinuation(ctx context.Context, channelID, content,
 	s.msgHandler.HandleIncomingMessageWithPriority(context.Background(), channelID, "", content, mode, prio)
 	s.planResolver.ClearPlannedChannel(channelID)
 	s.planResolver.ResumeChannel(context.Background(), channelID)
+}
+
+// PendingPlansLister snapshots every channel currently parked on an
+// ExitPlanMode card along with its plan payload. Backed in production by
+// *orchestrator.Orchestrator.
+type PendingPlansLister interface {
+	ListPlannedChannels() []events.PlannedChannelEntry
+}
+
+type pendingPlansResponse struct {
+	Plans []events.PlannedChannelEntry `json:"plans"`
+}
+
+// handleListPendingPlans returns every parked ExitPlanMode card. The FE calls
+// this on WS reconnect so the plan card re-renders after a renderer reload —
+// agent.exit_plan only fires on the original tool call, so without this
+// snapshot the card would never come back even though the backend keeps
+// blocking the channel's drain.
+func (s *Server) handleListPendingPlans(w http.ResponseWriter, _ *http.Request) {
+	if !requireConfigured(w, s.pendingPlans, "pending plans lister not configured") {
+		return
+	}
+	entries := s.pendingPlans.ListPlannedChannels()
+	if entries == nil {
+		entries = []events.PlannedChannelEntry{}
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(pendingPlansResponse{Plans: entries})
 }

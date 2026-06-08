@@ -79,7 +79,7 @@ type Orchestrator struct {
 	channelLocks      sync.Map       // map[channelID]*sync.Mutex — serialises per-channel drain loops
 	activeRuns        sync.Map       // map[channelID]context.CancelFunc
 	activeRunMsgIDs   sync.Map       // map[channelID]string — msg_id of the row currently running
-	plannedChannels   sync.Map       // map[channelID]struct{} — channels parked on an ExitPlanMode card
+	plannedChannels   sync.Map       // map[channelID]events.ExitPlanModeEventData — channels parked on an ExitPlanMode card, value is the plan payload (for FE rehydration after a renderer reload / WS reconnect)
 	askedChannels     sync.Map       // map[channelID]events.AskUserQuestionEventData — channels parked on an AskUserQuestion card, value is the question payload (for FE rehydration after a renderer reload / WS reconnect)
 	drainWG           sync.WaitGroup // tracks in-flight drain goroutines so tests / shutdown can wait
 	drainSpawn        func(func())   // wraps fn into a tracked goroutine; tests swap for inline run
@@ -179,9 +179,11 @@ func (o *Orchestrator) WaitDrains() {
 // markPlannedChannel parks a channel on an ExitPlanMode card. While parked,
 // drainChannel returns without claiming any queued rows so messages the user
 // types after the plan card appears (and any rows already queued behind the
-// trigger) wait for an explicit approve / reject / deny resolution.
-func (o *Orchestrator) markPlannedChannel(channelID string) {
-	o.plannedChannels.Store(channelID, struct{}{})
+// trigger) wait for an explicit approve / reject / deny resolution. The plan
+// payload is stored alongside the flag so a renderer reload / WS reconnect can
+// rehydrate the plan card via GET /api/plans/pending.
+func (o *Orchestrator) markPlannedChannel(channelID string, data events.ExitPlanModeEventData) {
+	o.plannedChannels.Store(channelID, data)
 }
 
 // IsChannelPlanned reports whether a channel is currently parked on a plan
@@ -195,6 +197,29 @@ func (o *Orchestrator) IsChannelPlanned(channelID string) bool {
 // the API plan-resolve endpoint once the user has decided how to proceed.
 func (o *Orchestrator) ClearPlannedChannel(channelID string) {
 	o.plannedChannels.Delete(channelID)
+}
+
+// ListPlannedChannels returns a snapshot of every channel currently parked on
+// an ExitPlanMode card along with the originally-broadcast plan payload. Used
+// by GET /api/plans/pending so the FE can rehydrate the plan card after a
+// renderer reload / WS reconnect — the agent.exit_plan WS event fires only on
+// the original tool call, so without a snapshot the card never reappears and
+// the channel's drain stays blocked with nothing actionable in the UI.
+func (o *Orchestrator) ListPlannedChannels() []events.PlannedChannelEntry {
+	var out []events.PlannedChannelEntry
+	o.plannedChannels.Range(func(k, v any) bool {
+		id, ok := k.(string)
+		if !ok {
+			return true
+		}
+		data, ok := v.(events.ExitPlanModeEventData)
+		if !ok {
+			return true
+		}
+		out = append(out, events.PlannedChannelEntry{ChannelID: id, Data: data})
+		return true
+	})
+	return out
 }
 
 // markAskedChannel parks a channel on an AskUserQuestion card. While parked,
