@@ -296,8 +296,7 @@ export function Sidebar({
         backgroundColor: colors.sidebarNav,
         display: "flex",
         flexDirection: "column",
-        overflowX: "hidden",
-        overflowY: "auto",
+        overflow: "hidden",
         position: "relative",
         zoom: fontSizes.sidebar / 12,
         // Prevent text selection while dragging
@@ -375,33 +374,32 @@ export function Sidebar({
         }}
         newChannelInputRef={newChannelInputRef}
       />
-      <ChannelList
-        dmChannel={dmChannel}
-        topLevel={topLevel}
-        selectedId={selectedId}
-        onSelect={onSelect}
-        onCreateThread={onCreateThread}
-        onOpenConfig={onOpenConfig}
-        onContextMenu={handleContextMenu}
-        onDragStart={handleDragStart}
-        onDragOver={handleDragOver}
-        onDrop={handleDrop}
-        onDragEnd={handleDragEnd}
-        dragOverId={dragOverId}
-        getFilteredThreads={getFilteredThreads}
-        threadsByParent={threadsByParent}
-        selectMode={selectMode}
-        checkedIds={selected}
-        onToggleCheck={toggleSelected}
-        isRunningMapRef={isRunningMapRef}
-        unreadIdsRef={unreadIdsRef}
-        gateChannelIdsRef={gateChannelIdsRef}
-        reviewChannelIdsRef={reviewChannelIdsRef}
-        askUserChannelIdsRef={askUserChannelIdsRef}
-      />
-
-      {/* Spacer to push footer to bottom */}
-      <div style={{ flex: 1 }} />
+      <div style={{ flex: 1, overflowY: "auto", overflowX: "hidden", minHeight: 0 }}>
+        <ChannelList
+          dmChannel={dmChannel}
+          topLevel={topLevel}
+          selectedId={selectedId}
+          onSelect={onSelect}
+          onCreateThread={onCreateThread}
+          onOpenConfig={onOpenConfig}
+          onContextMenu={handleContextMenu}
+          onDragStart={handleDragStart}
+          onDragOver={handleDragOver}
+          onDrop={handleDrop}
+          onDragEnd={handleDragEnd}
+          dragOverId={dragOverId}
+          getFilteredThreads={getFilteredThreads}
+          threadsByParent={threadsByParent}
+          selectMode={selectMode}
+          checkedIds={selected}
+          onToggleCheck={toggleSelected}
+          isRunningMapRef={isRunningMapRef}
+          unreadIdsRef={unreadIdsRef}
+          gateChannelIdsRef={gateChannelIdsRef}
+          reviewChannelIdsRef={reviewChannelIdsRef}
+          askUserChannelIdsRef={askUserChannelIdsRef}
+        />
+      </div>
 
       <SidebarFooter
         updateStatus={updateStatus}

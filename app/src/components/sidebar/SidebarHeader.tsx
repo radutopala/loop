@@ -229,7 +229,7 @@ export function SidebarHeader({
           onClose={() => setNewMenuOpen(false)}
         />
       )}
-      <div style={{ padding: "6px 12px 4px" }}>
+      <div style={{ padding: "6px 12px 4px", flexShrink: 0 }}>
         <div style={{ position: "relative" }}>
           <svg
             width="13"
