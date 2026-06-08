@@ -132,6 +132,16 @@ func refreshContainerFiles(_ context.Context, c *Ctx) error {
 // Whitespace is intentional — it's how the entry renders in the # picker.
 const builtinCodeReviewShortcutName = "builtin code review"
 
+// builtinCodeReviewShortcutPrompt is the prompt seeded for the "builtin code
+// review" shortcut. It mirrors the Review panel's default prompt (run the
+// /code-review skill, with a self-review fallback when it's unavailable),
+// trimmed to the chat use case — no panel review-comment XML — and adds an
+// importance grouping plus a triage question so the user decides what to fix.
+// Kept in sync with the same entry in config.global.example.json.
+const builtinCodeReviewShortcutPrompt = `Run the built-in /code-review slash command (via the Skill tool with skill="code-review") — it runs the full multi-angle find / verify / sweep pass and returns findings, each with at least a file, line, and description. If the skill is unavailable, fall back to a recall-focused review yourself: read the diff (git diff @{upstream}...HEAD plus any working-tree changes) and surface every real bug you can confirm or reasonably suspect.
+
+When the review completes, present the findings grouped by importance — Critical, High, Medium, Low — each as a short bullet with file:line, the bug, and the concrete trigger and resulting wrong behavior. Don't fix anything yet. After listing them, ask me which findings to address (for example: all Critical and High, specific items by number, or none).`
+
 // seedBuiltinCodeReviewShortcut appends a default shortcut to the user's
 // existing ~/.loop/config.json. Fresh installs get the same entry via
 // config.global.example.json on first onboard; this migration covers the
@@ -159,8 +169,8 @@ func seedBuiltinCodeReviewShortcut(_ context.Context, c *Ctx) ([]string, error) 
 
 	def := map[string]any{
 		"name":        builtinCodeReviewShortcutName,
-		"description": "Run Claude Code's built-in /code-review slash command",
-		"prompt":      "/code-review",
+		"description": "Run /code-review, group findings by importance, and ask what to address",
+		"prompt":      builtinCodeReviewShortcutPrompt,
 	}
 	if err := appendOrCreateArrayMember(v, "prompt_shortcuts", def); err != nil {
 		return nil, fmt.Errorf("patching %s: %w", configPath, err)

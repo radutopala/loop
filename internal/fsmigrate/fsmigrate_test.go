@@ -406,7 +406,7 @@ func (s *FSMigrateSuite) TestSeedBuiltinCodeReviewShortcutEmptyConfig() {
 	require.Len(s.T(), shortcuts, 1)
 	sc := shortcuts[0].(map[string]any)
 	require.Equal(s.T(), "builtin code review", sc["name"])
-	require.Equal(s.T(), "/code-review", sc["prompt"])
+	require.Equal(s.T(), builtinCodeReviewShortcutPrompt, sc["prompt"])
 	require.Contains(s.T(), sc["description"], "/code-review")
 }
 
