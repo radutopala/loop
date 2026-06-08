@@ -48,6 +48,7 @@ The highlight style covers keywords (`#cc7832`), strings (`#6a8759`), numbers (`
 | `EditorView.lineWrapping` | Soft line wrapping |
 | `bracketMatching()` | Matching bracket highlighting |
 | `foldGutter()` | Code folding controls in gutter |
+| `gitChangeGutter` | VCS change bars in the gutter — added/modified/deleted lines vs git HEAD (see [VCS Change Markers](#vcs-change-markers)) |
 | `history()` | Undo/redo |
 | `search({ top: true })` | Search panel at the top |
 | Language extension | Syntax-specific highlighting (see below) |
@@ -245,6 +246,32 @@ For `.md` and `.mdx` files, the editor shows a split view with:
 - Rendered HTML preview on the right (using the `marked` library)
 
 The preview updates with a 300ms debounce after each edit. A toggle button lets the user show/hide the preview pane.
+
+---
+
+## VCS Change Markers
+
+JetBrains/GoLand-style git change markers highlight uncommitted edits to the open file (relative to git `HEAD`), in two places:
+
+### Gutter Stripe
+
+A thin per-line bar in the rightmost gutter column (hugging the code) marks each changed line:
+
+| Marker | Meaning |
+|--------|---------|
+| Green bar | Added line |
+| Blue bar | Modified line |
+| Grey triangle | Lines were deleted at this point |
+
+### Overview Ruler
+
+A 10px full-height strip to the right of the editor (`data-testid="git-overview-ruler"`) maps **every** change onto the whole document — a bird's-eye view of all changes regardless of scroll position. Consecutive same-kind lines are coalesced into one proportional block. Clicking anywhere on the ruler jumps the editor to the corresponding line. The ruler is hidden when the file has no uncommitted changes, and in markdown preview-only mode.
+
+### Data Source
+
+Markers are derived client-side from the channel's unified diff (`GET /api/channels/{id}/diff` — the same patch the [Git panel](git.md) renders), combining staged, unstaged, and untracked hunks. They refresh on file open, save, agent edit (`tool.use` for `Write`/`Edit`/`MultiEdit`), and window focus — so they reflect the on-disk (last-saved) state versus `HEAD`, not live per-keystroke edits.
+
+The gutter extension and its `StateField` live in `editorGitGutter.ts`; the overview ruler is `editorGitOverview.tsx`. Both share a single source of truth for the bar colours (`gitGutterColors`), which the editor theme also consumes so the colours track the active palette.
 
 ---
 
