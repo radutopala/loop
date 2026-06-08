@@ -124,6 +124,8 @@ When a project has extra directories configured (via Settings or `.loop/config.j
 
 This is useful for multi-root projects where related code lives in separate directories — for example, a backend service and a shared library, or a monorepo with multiple packages.
 
+**Worktree threads** inherit the parent channel's roots. A worktree thread has its own working directory, but its file tree is resolved with a three-layer merge (global → parent → worktree), so it shows the worktree dir plus the parent channel's configured `extra_dirs` (and the parent project dir itself) — the same roots the agent container gets, not just the worktree's own directory.
+
 ### Resize Handle
 
 A 4px-wide handle on the right edge of the tree allows horizontal resizing:
