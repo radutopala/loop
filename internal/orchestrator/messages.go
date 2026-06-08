@@ -463,7 +463,7 @@ func (o *Orchestrator) executeAgentRun(ctx context.Context, msg *bot.IncomingMes
 					// (relevant for the user-picked-plan-pill path, where
 					// the agent halts naturally and the drain races back
 					// to claim any queued sibling messages).
-					o.markPlannedChannel(msg.ChannelID)
+					o.markPlannedChannel(msg.ChannelID, data)
 					o.events.BroadcastExitPlan(msg.ChannelID, data)
 					// User picked the plan pill → the prompt-injected plan
 					// system message already halts the model at ExitPlanMode.

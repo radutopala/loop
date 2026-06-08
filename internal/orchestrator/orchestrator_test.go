@@ -873,7 +873,7 @@ func (s *OrchestratorSuite) TestDrainChannelSkipsWhenPlanned() {
 	orch := New(store, s.bot, s.runner, s.scheduler, slog.New(slog.NewTextHandler(io.Discard, nil)), config.Config{}, nil)
 	orch.SetSynchronousDrain()
 
-	orch.markPlannedChannel("planned-ch")
+	orch.markPlannedChannel("planned-ch", events.ExitPlanModeEventData{})
 	require.True(s.T(), orch.IsChannelPlanned("planned-ch"))
 
 	orch.ResumeChannel(context.Background(), "planned-ch")
@@ -1010,6 +1010,42 @@ func (s *OrchestratorSuite) TestListAskedChannelsIgnoresMalformedEntries() {
 	orch.askedChannels.Store(42, events.AskUserQuestionEventData{})
 
 	entries := orch.ListAskedChannels()
+	require.Len(s.T(), entries, 1)
+	require.Equal(s.T(), "ch-valid", entries[0].ChannelID)
+}
+
+func (s *OrchestratorSuite) TestListPlannedChannelsSnapshotsEntries() {
+	orch := New(s.store, s.bot, s.runner, s.scheduler, slog.New(slog.NewTextHandler(io.Discard, nil)), config.Config{}, nil)
+	require.Empty(s.T(), orch.ListPlannedChannels())
+
+	p1 := events.ExitPlanModeEventData{Plan: "# Plan one"}
+	p2 := events.ExitPlanModeEventData{Plan: "# Plan two", PlanFilePath: "/tmp/plan.md"}
+	orch.markPlannedChannel("ch-1", p1)
+	orch.markPlannedChannel("ch-2", p2)
+
+	entries := orch.ListPlannedChannels()
+	require.Len(s.T(), entries, 2)
+	byID := map[string]events.ExitPlanModeEventData{}
+	for _, e := range entries {
+		byID[e.ChannelID] = e.Data
+	}
+	require.Equal(s.T(), p1, byID["ch-1"])
+	require.Equal(s.T(), p2, byID["ch-2"])
+}
+
+// TestListPlannedChannelsIgnoresMalformedEntries covers the defensive type
+// assertions in ListPlannedChannels, mirroring the asked-channels case.
+func (s *OrchestratorSuite) TestListPlannedChannelsIgnoresMalformedEntries() {
+	orch := New(s.store, s.bot, s.runner, s.scheduler, slog.New(slog.NewTextHandler(io.Discard, nil)), config.Config{}, nil)
+
+	// Valid entry.
+	orch.markPlannedChannel("ch-valid", events.ExitPlanModeEventData{Plan: "p"})
+	// Wrong-typed value (string instead of ExitPlanModeEventData).
+	orch.plannedChannels.Store("ch-bad-val", "not the right type")
+	// Wrong-typed key (int instead of string).
+	orch.plannedChannels.Store(42, events.ExitPlanModeEventData{})
+
+	entries := orch.ListPlannedChannels()
 	require.Len(s.T(), entries, 1)
 	require.Equal(s.T(), "ch-valid", entries[0].ChannelID)
 }

@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"sync"
@@ -9,7 +10,23 @@ import (
 
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
+
+	"github.com/radutopala/loop/internal/events"
 )
+
+// MockPendingPlansLister mocks api.PendingPlansLister. Local to the test
+// package so production code stays free of test-only types.
+type MockPendingPlansLister struct {
+	mock.Mock
+}
+
+func (m *MockPendingPlansLister) ListPlannedChannels() []events.PlannedChannelEntry {
+	args := m.Called()
+	if v := args.Get(0); v != nil {
+		return v.([]events.PlannedChannelEntry)
+	}
+	return nil
+}
 
 // MockPlanResolver mocks api.PlanResolver. Local to the test package so
 // production code stays free of test-only types.
@@ -201,4 +218,39 @@ func (s *ServerSuite) TestPlanResolveNoHandlerConfigured() {
 	// msgHandler not set
 	rec := s.testRequest("POST", "/api/channels/ch-1/plan/resolve", `{"action":"approve"}`)
 	require.Equal(s.T(), http.StatusNotImplemented, rec.Code)
+}
+
+func (s *ServerSuite) TestListPendingPlansNotConfigured() {
+	rec := s.testRequest("GET", "/api/plans/pending", "")
+	require.Equal(s.T(), http.StatusNotImplemented, rec.Code)
+}
+
+func (s *ServerSuite) TestListPendingPlansEmpty() {
+	lister := new(MockPendingPlansLister)
+	lister.On("ListPlannedChannels").Return(nil)
+	s.srv.SetPendingPlansLister(lister)
+
+	rec := s.testRequest("GET", "/api/plans/pending", "")
+	require.Equal(s.T(), http.StatusOK, rec.Code)
+
+	var resp pendingPlansResponse
+	require.NoError(s.T(), json.Unmarshal(rec.Body.Bytes(), &resp))
+	require.NotNil(s.T(), resp.Plans)
+	require.Empty(s.T(), resp.Plans)
+}
+
+func (s *ServerSuite) TestListPendingPlansWithEntries() {
+	entries := []events.PlannedChannelEntry{
+		{ChannelID: "ch-1", Data: events.ExitPlanModeEventData{Plan: "# Plan", PlanFilePath: "/tmp/plan.md"}},
+	}
+	lister := new(MockPendingPlansLister)
+	lister.On("ListPlannedChannels").Return(entries)
+	s.srv.SetPendingPlansLister(lister)
+
+	rec := s.testRequest("GET", "/api/plans/pending", "")
+	require.Equal(s.T(), http.StatusOK, rec.Code)
+
+	var resp pendingPlansResponse
+	require.NoError(s.T(), json.Unmarshal(rec.Body.Bytes(), &resp))
+	require.Equal(s.T(), entries, resp.Plans)
 }
