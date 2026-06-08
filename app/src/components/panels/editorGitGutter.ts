@@ -2,7 +2,7 @@ import { gutter, GutterMarker } from "@codemirror/view";
 import { StateField, StateEffect } from "@codemirror/state";
 import { parseUnifiedDiff, type ParsedFile } from "./DiffViewer";
 
-// JetBrains/GoLand-style VCS change markers in the editor gutter: a thin
+// VCS change markers in the editor gutter: a thin
 // coloured bar to the left of each line that has been added or modified
 // relative to git HEAD, plus a small triangle where lines were deleted.
 //

@@ -10,7 +10,7 @@ interface GitChangeOverviewProps {
 }
 
 /**
- * GoLand-style right-side VCS overview ruler: a thin full-height strip beside
+ * Right-side VCS overview ruler: a thin full-height strip beside
  * the editor that maps every changed/added/deleted region onto the whole
  * document, giving a bird's-eye view of all changes. Clicking jumps the editor
  * to the corresponding line. Hidden when the file has no uncommitted changes.

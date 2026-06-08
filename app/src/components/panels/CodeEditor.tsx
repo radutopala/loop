@@ -238,7 +238,7 @@ export const CodeEditor = forwardRef<CodeEditorHandle, CodeEditorProps>(function
       EditorView.lineWrapping,
       bracketMatching(),
       foldGutter(),
-      // VCS change stripe — rightmost gutter so it hugs the code, JetBrains-style.
+      // VCS change stripe — rightmost gutter so it hugs the code.
       gitChangeGutterExtension,
       history(),
       search({ top: true }),
