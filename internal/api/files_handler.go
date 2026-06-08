@@ -79,12 +79,22 @@ func (s *Server) validateFilePath(rootDir, relativePath string) (string, error) 
 // expanded to the user's home directory so downstream filesystem and git
 // operations can chdir into them — the OS does not expand "~" itself.
 func (s *Server) allDirPaths(ctx context.Context, channelID string) ([]string, error) {
-	dirPath, err := s.resolveDirPath(ctx, "", channelID)
+	dirPath, parentDirPath, err := s.resolveWorkflowConfigPaths(ctx, channelID)
 	if err != nil {
 		return nil, err
 	}
 	paths := []string{dirPath}
-	cfg, err := config.LoadProjectConfig(dirPath, &config.Config{})
+	// Worktree channels resolve extra_dirs with three-layer merging
+	// (global → parent → worktree) so the file tree shows the same roots the
+	// agent gets — the parent channel's extra_dirs, not just the parent dir
+	// the worktree config seeds. Regular channels (parentDirPath == "") use
+	// the plain project-config load.
+	var cfg *config.Config
+	if parentDirPath != "" {
+		cfg, err = config.LoadWorktreeProjectConfig(dirPath, parentDirPath, &config.Config{})
+	} else {
+		cfg, err = config.LoadProjectConfig(dirPath, &config.Config{})
+	}
 	if err == nil && len(cfg.ExtraDirs) > 0 {
 		for _, p := range cfg.ExtraDirs {
 			paths = append(paths, s.expandHomePath(p))

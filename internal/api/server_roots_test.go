@@ -94,6 +94,41 @@ func (s *ServerSuite) TestAllDirPathsWithExtraDirs() {
 	require.Equal(s.T(), []string{tmpDir, "/home/user/lib"}, paths)
 }
 
+// TestAllDirPathsWorktreeUnionsParentExtraDirs covers the worktree branch:
+// a worktree channel's file-tree roots include the parent channel's
+// extra_dirs (three-layer merge), not just the parent dir the worktree
+// config seeds — matching the roots the agent container gets.
+func (s *ServerSuite) TestAllDirPathsWorktreeUnionsParentExtraDirs() {
+	parentDir := s.T().TempDir()
+	parentLoop := filepath.Join(parentDir, ".loop")
+	require.NoError(s.T(), os.MkdirAll(parentLoop, 0755))
+	require.NoError(s.T(), os.WriteFile(
+		filepath.Join(parentLoop, "config.json"),
+		[]byte(`{"extra_dirs": ["/home/user/shared-lib"]}`),
+		0644,
+	))
+
+	worktreeDir := s.T().TempDir()
+	wtLoop := filepath.Join(worktreeDir, ".loop")
+	require.NoError(s.T(), os.MkdirAll(wtLoop, 0755))
+	// Seeded form written by worktree.Creator.Create: extra_dirs -> parent dir.
+	require.NoError(s.T(), os.WriteFile(
+		filepath.Join(wtLoop, "config.json"),
+		fmt.Appendf(nil, `{"extra_dirs": [%q]}`, parentDir),
+		0644,
+	))
+
+	s.store.On("GetChannel", mock.Anything, "ch-wt").
+		Return(&db.Channel{ChannelID: "ch-wt", DirPath: worktreeDir, Worktree: true, ParentID: "ch-parent"}, nil)
+	s.store.On("GetChannel", mock.Anything, "ch-parent").
+		Return(&db.Channel{ChannelID: "ch-parent", DirPath: parentDir}, nil)
+
+	paths, err := s.srv.allDirPaths(context.Background(), "ch-wt")
+	require.NoError(s.T(), err)
+	// worktree dir, then parent's own extra_dirs, then the seeded parent dir.
+	require.Equal(s.T(), []string{worktreeDir, "/home/user/shared-lib", parentDir}, paths)
+}
+
 func (s *ServerSuite) TestAllDirPathsNoExtraDirs() {
 	tmpDir := s.T().TempDir()
 	// No .loop/config.json — extra dirs should be empty.
