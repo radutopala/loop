@@ -1,5 +1,5 @@
 import "@fontsource/jetbrains-mono/400.css";
-import { forwardRef, useEffect, useImperativeHandle, useRef } from "react";
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef } from "react";
 import { EditorView, keymap, lineNumbers, highlightActiveLine, highlightActiveLineGutter, drawSelection } from "@codemirror/view";
 import { EditorSelection, EditorState, Compartment } from "@codemirror/state";
 import { defaultKeymap, indentWithTab, history, historyKeymap } from "@codemirror/commands";
@@ -19,6 +19,8 @@ import { isVideoPath } from "../../api/files";
 import { useTheme } from "../../ThemeContext";
 import { buildMarkdownStyles } from "./FilePanel";
 import { buildEditorTheme } from "./editorTheme";
+import { gitChangeGutterExtension, setGitLineChanges, emptyGitLineChanges, type GitLineChanges } from "./editorGitGutter";
+import { GitChangeOverview } from "./editorGitOverview";
 import { ContextMenu, type MenuItem } from "../shared/ContextMenu";
 
 // ── Helpers ──
@@ -114,10 +116,12 @@ interface CodeEditorProps {
   previewHtml: string;
   /** When set, render the file as an image via this URL instead of the text editor. */
   imageURL?: string | null;
+  /** VCS change markers for the open file (added/modified/deleted lines vs git HEAD). */
+  gitChanges?: GitLineChanges | null;
 }
 
 export const CodeEditor = forwardRef<CodeEditorHandle, CodeEditorProps>(function CodeEditor(
-  { fileContent, isBinary, binarySize, selectedRelPath, selectedPath, loading, error, previewMode, onDocChanged, onPreviewUpdate, editorMenu, onEditorMenuClose, onEditorContextMenu, previewHtml, imageURL },
+  { fileContent, isBinary, binarySize, selectedRelPath, selectedPath, loading, error, previewMode, onDocChanged, onPreviewUpdate, editorMenu, onEditorMenuClose, onEditorContextMenu, previewHtml, imageURL, gitChanges },
   ref,
 ) {
   const { colors, fontSizes } = useTheme();
@@ -135,8 +139,26 @@ export const CodeEditor = forwardRef<CodeEditorHandle, CodeEditorProps>(function
   onPreviewUpdateRef.current = onPreviewUpdate;
   const selectedRelPathRef = useRef(selectedRelPath);
   selectedRelPathRef.current = selectedRelPath;
+  const gitChangesRef = useRef(gitChanges);
+  gitChangesRef.current = gitChanges;
 
   const isMd = selectedRelPath ? isMarkdownFile(selectedRelPath) : false;
+
+  // Whole-document line count backing the right-side VCS overview ruler.
+  const totalLines = useMemo(() => (fileContent ? fileContent.split("\n").length : 0), [fileContent]);
+
+  // Scroll the live editor to a 1-based line (used by the overview ruler).
+  const jumpToLine = useCallback((line: number) => {
+    const view = viewRef.current;
+    if (!view) return;
+    const target = Math.max(1, Math.min(line, view.state.doc.lines));
+    const info = view.state.doc.line(target);
+    view.dispatch({
+      selection: EditorSelection.cursor(info.from),
+      effects: EditorView.scrollIntoView(info.from, { y: "center" }),
+    });
+    view.focus();
+  }, []);
 
   // Expose imperative methods to the parent.
   useImperativeHandle(ref, () => ({
@@ -216,6 +238,8 @@ export const CodeEditor = forwardRef<CodeEditorHandle, CodeEditorProps>(function
       EditorView.lineWrapping,
       bracketMatching(),
       foldGutter(),
+      // VCS change stripe — rightmost gutter so it hugs the code, JetBrains-style.
+      gitChangeGutterExtension,
       history(),
       search({ top: true }),
       themeCompartment.current.of(buildEditorTheme(colors, fontSizes.editor)),
@@ -256,6 +280,9 @@ export const CodeEditor = forwardRef<CodeEditorHandle, CodeEditorProps>(function
 
     viewRef.current = view;
 
+    // Seed the VCS change gutter for the freshly-mounted view.
+    view.dispatch({ effects: setGitLineChanges.of(gitChangesRef.current ?? emptyGitLineChanges()) });
+
     // Set initial markdown preview.
     if (selectedRelPath && isMarkdownFile(selectedRelPath)) {
       onPreviewUpdateRef.current(marked.parse(fileContent, { async: false }) as string);
@@ -293,6 +320,13 @@ export const CodeEditor = forwardRef<CodeEditorHandle, CodeEditorProps>(function
       });
     }
   }, [colors, fontSizes.editor]);
+
+  // Push VCS change markers into the live view without rebuilding it.
+  useEffect(() => {
+    if (viewRef.current) {
+      viewRef.current.dispatch({ effects: setGitLineChanges.of(gitChanges ?? emptyGitLineChanges()) });
+    }
+  }, [gitChanges]);
 
   const getEditorMenuItems = (): MenuItem[] => {
     const view = viewRef.current;
@@ -359,6 +393,13 @@ export const CodeEditor = forwardRef<CodeEditorHandle, CodeEditorProps>(function
             display: isMd && previewMode === "preview" ? "none" : undefined,
           }}
         />
+        {!(isMd && previewMode === "preview") && (
+          <GitChangeOverview
+            changes={gitChanges ?? emptyGitLineChanges()}
+            totalLines={totalLines}
+            onJumpToLine={jumpToLine}
+          />
+        )}
         {isMd && previewMode !== "editor" && previewHtml && (
           <>
             <div style={{ width: 1, backgroundColor: colors.border, flexShrink: 0 }} />

@@ -33,6 +33,7 @@ export function EditorPanel({ dirPath, branch, editorState, embedded, ...panelPr
     imageURL,
     loading,
     error,
+    gitChanges,
     dirtyTabs,
     pendingRefresh,
     codeEditorRef,
@@ -232,6 +233,7 @@ export function EditorPanel({ dirPath, branch, editorState, embedded, ...panelPr
           onEditorContextMenu={handleEditorContextMenu}
           previewHtml={previewHtml}
           imageURL={imageURL}
+          gitChanges={gitChanges}
         />
       </div>
     </FilePanel>

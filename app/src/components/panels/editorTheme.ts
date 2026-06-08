@@ -2,6 +2,7 @@ import { EditorView } from "@codemirror/view";
 import { syntaxHighlighting, HighlightStyle } from "@codemirror/language";
 import { tags } from "@lezer/highlight";
 import { type ColorPalette, fonts } from "../../theme";
+import { gitGutterColors } from "./editorGitGutter";
 
 // Build CodeMirror editor theme + syntax highlighting from the active palette.
 // Dark values match GoLand Darcula; light values match JetBrains IntelliJ Light.
@@ -31,6 +32,11 @@ export function buildEditorTheme(palette: ColorPalette, editorFontSize?: number)
   const labelBorder = isDark ? "rgba(255,255,255,0.25)" : "rgba(0,0,0,0.2)";
   const labelHoverBorder = isDark ? "rgba(255,255,255,0.5)" : "rgba(0,0,0,0.4)";
   const labelHoverColor = isDark ? "#ccc" : "#333";
+
+  // VCS gutter change bars (JetBrains/GoLand style): solid green for added,
+  // blue for modified, grey triangle for deleted. Saturated so a 3px strip
+  // reads clearly against the gutter background. Shared with the overview ruler.
+  const { added: gitAddedBar, modified: gitModifiedBar, deleted: gitDeletedTri } = gitGutterColors(isDark);
 
   const theme = EditorView.theme({
     "&": {
@@ -150,6 +156,34 @@ export function buildEditorTheme(palette: ColorPalette, editorFontSize?: number)
     },
     ".cm-search": {
       gap: "4px",
+    },
+    // VCS change gutter: a thin strip at the far-left edge of the gutters.
+    ".cm-gitChangeGutter": {
+      width: "3px",
+      padding: "0",
+    },
+    ".cm-gitChangeGutter .cm-gutterElement": {
+      padding: "0",
+    },
+    ".cm-gitChange": {
+      width: "3px",
+      height: "100%",
+      boxSizing: "border-box",
+    },
+    ".cm-gitChange-added": {
+      backgroundColor: gitAddedBar,
+    },
+    ".cm-gitChange-modified": {
+      backgroundColor: gitModifiedBar,
+    },
+    // Deletion marker: a small triangle hugging the top of the line below the
+    // removed region, pointing into the document.
+    ".cm-gitChange-deleted": {
+      width: "0",
+      height: "0",
+      borderTop: "4px solid transparent",
+      borderBottom: "4px solid transparent",
+      borderLeft: `5px solid ${gitDeletedTri}`,
     },
   }, { dark: isDark });
 
