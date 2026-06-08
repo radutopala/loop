@@ -46,7 +46,7 @@ export function SidebarFooter({
   };
 
   return (
-    <div style={{ padding: "8px 12px", borderTop: `1px solid ${colors.border}`, display: "flex", flexDirection: "column", gap: 2 }}>
+    <div style={{ padding: "8px 12px", borderTop: `1px solid ${colors.border}`, display: "flex", flexDirection: "column", gap: 2, flexShrink: 0 }}>
       {updateStatus?.available && (
         <button
           onClick={updateStatus.downloaded ? onInstallUpdate : updateStatus.downloading ? undefined : onDownloadUpdate}
