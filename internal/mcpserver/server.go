@@ -149,8 +149,13 @@ func New(channelID, apiURL, authorID string, httpClient HTTPClient, logger *slog
 
 	mcp.AddTool(s.mcpServer, &mcp.Tool{
 		Name:        "send_message",
-		Description: "Send a message to a channel or thread. Use search_channels to find the target channel ID first. To trigger the bot in the target channel, include @BotName (e.g. @LoopBot) as plain text in the message — it will be converted to a proper mention automatically.",
+		Description: "Send a message to a channel or thread. channel_id is optional — omit it to target the current channel/thread this agent is running in; use search_channels to find another channel's ID. To trigger the bot in the target channel, include @BotName (e.g. @LoopBot) as plain text in the message — it will be converted to a proper mention automatically.",
 	}, s.handleSendMessage)
+
+	mcp.AddTool(s.mcpServer, &mcp.Tool{
+		Name:        "queue_message",
+		Description: "Queue a follow-up prompt for yourself in the current channel/thread/worktree. The prompt is enqueued as a new turn behind any currently-running or already-queued work and appears in the chat's queued-messages list. Set interrupt=true to cancel the active run and jump the queue so it runs next. Use this to chain your own follow-up tasks without discovering your channel ID.",
+	}, s.handleQueueMessage)
 
 	mcp.AddTool(s.mcpServer, &mcp.Tool{
 		Name:        "get_readme",
