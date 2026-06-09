@@ -37,8 +37,13 @@ function buildStyles(colors: ColorPalette): Record<string, React.CSSProperties> 
       display: "flex",
       alignItems: "center",
       justifyContent: "center",
+      // Wrap the icon + label as a group and center the text so the footer
+      // stays centered (not left-aligned) when the chat pane is too narrow
+      // for it to fit on one line.
+      flexWrap: "wrap",
+      textAlign: "center",
       gap: 6,
-      padding: "0 0 12px",
+      padding: "0 12px 12px",
       fontSize: 11,
       color: colors.textDim,
       fontFamily: fonts.mono,
