@@ -1023,17 +1023,17 @@ func (s *Server) broadcastReviewStatus(channelID string, status review.Status, e
 // agent when no override is configured. The system prompt (separately
 // configurable) is left empty in that case — the user prompt alone is
 // enough to drive the review.
-const defaultReviewPrompt = `You are reviewing a GitHub pull request. Run the built-in ` + "`/code-review`" + ` slash command (via the Skill tool with ` + "`skill=\"code-review\"`" + `) — it does the full multi-angle find / verify / sweep pass and returns a list of findings, each with at least ` + "`file`" + `, ` + "`line`" + `, and a description.
+const defaultReviewPrompt = `You are reviewing a GitHub pull request. Run the built-in ` + "`code-review`" + ` skill (via the Skill tool with ` + "`skill=\"code-review\"`" + `) — it does the full multi-angle find / verify / sweep pass and returns a list of findings, each with at least ` + "`file`" + `, ` + "`line`" + `, and a description.
 
-When ` + "`/code-review`" + ` completes, translate each finding into exactly one block in this XML format and emit nothing else:
+When the ` + "`code-review`" + ` skill completes, translate each finding into exactly one block in this XML format and emit nothing else:
 
 <review-comment path="path/to/file" line="N" side="RIGHT">
 One paragraph: the bug, the concrete inputs/state that trigger it, and the wrong output or crash.
 </review-comment>
 
-Use ` + "`side=\"RIGHT\"`" + ` for added/modified lines (the default). Use ` + "`side=\"LEFT\"`" + ` only when the finding is anchored on a line removed from the base. If ` + "`/code-review`" + ` returns no findings, emit no blocks. Do not fix anything yourself — the user triages comments from the Review panel.
+Use ` + "`side=\"RIGHT\"`" + ` for added/modified lines (the default). Use ` + "`side=\"LEFT\"`" + ` only when the finding is anchored on a line removed from the base. If the ` + "`code-review`" + ` skill returns no findings, emit no blocks. Do not fix anything yourself — the user triages comments from the Review panel.
 
-If the ` + "`/code-review`" + ` skill is unavailable in this environment, fall back to a recall-focused review yourself (read the diff under ` + "`git diff @{upstream}...HEAD`" + ` plus working-tree changes, surface every real bug you can confirm or reasonably suspect), and emit the same XML format.`
+If the ` + "`code-review`" + ` skill is unavailable in this environment, fall back to a recall-focused review yourself (read the diff under ` + "`git diff @{upstream}...HEAD`" + ` plus working-tree changes, surface every real bug you can confirm or reasonably suspect), and emit the same XML format.`
 
 // buildReviewContext renders the per-PR context block appended to the
 // configured review prompt. Each known field gets its own labelled line so
