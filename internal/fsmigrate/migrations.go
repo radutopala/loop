@@ -70,6 +70,14 @@ var migrations = []Migration{
 		Description: "patch review-fix-loop body children with explicit depends_on",
 		Apply:       patchReviewFixLoopBodyDeps,
 	},
+	{
+		// Upgrade path: installs that seeded the old "builtin code review"
+		// shortcut (bare /code-review) get the new review-panel-derived
+		// prompt. Skip-if-present seeding can't do this; the patcher rewrites
+		// only an unmodified entry, never a user-edited one.
+		Description: "patch builtin code review shortcut to the review-panel-derived prompt",
+		Apply:       patchBuiltinCodeReviewShortcutPrompt,
+	},
 }
 
 // versionedContainerFiles are tracked by the daemon: each release ships a
@@ -132,6 +140,29 @@ func refreshContainerFiles(_ context.Context, c *Ctx) error {
 // Whitespace is intentional — it's how the entry renders in the # picker.
 const builtinCodeReviewShortcutName = "builtin code review"
 
+// builtinCodeReviewShortcutPrompt is the prompt seeded for the "builtin code
+// review" shortcut. It mirrors the Review panel's default prompt (run the
+// /code-review skill, with a self-review fallback when it's unavailable),
+// trimmed to the chat use case — no panel review-comment XML — and adds an
+// importance grouping plus a triage question so the user decides what to fix.
+// Kept in sync with the same entry in config.global.example.json.
+const builtinCodeReviewShortcutPrompt = `Run the built-in code-review skill (via the Skill tool with skill="code-review") — it runs the full multi-angle find / verify / sweep pass and returns findings, each with at least a file, line, and description. If the skill is unavailable, fall back to a recall-focused review yourself: read the diff (git diff @{upstream}...HEAD plus any working-tree changes) and surface every real bug you can confirm or reasonably suspect.
+
+When the review completes, present the findings grouped by importance — Critical, High, Medium, Low — each as a short bullet with file:line, the bug, and the concrete trigger and resulting wrong behavior. Don't fix anything yet. After listing them, ask me which findings to address (for example: all Critical and High, specific items by number, or none).`
+
+// builtinCodeReviewShortcutDescription is the stock description seeded with the
+// shortcut. Kept in sync with config.global.example.json.
+const builtinCodeReviewShortcutDescription = "Run /code-review, group findings by importance, and ask what to address"
+
+// oldBuiltinCodeReviewShortcut{Prompt,Description} are the original seeded
+// values — a bare slash command. The upgrade patcher rewrites only entries
+// still holding these exact values (i.e. unmodified by the user); a
+// user-edited prompt is left untouched.
+const (
+	oldBuiltinCodeReviewShortcutPrompt      = "/code-review"
+	oldBuiltinCodeReviewShortcutDescription = "Run Claude Code's built-in /code-review slash command"
+)
+
 // seedBuiltinCodeReviewShortcut appends a default shortcut to the user's
 // existing ~/.loop/config.json. Fresh installs get the same entry via
 // config.global.example.json on first onboard; this migration covers the
@@ -159,8 +190,8 @@ func seedBuiltinCodeReviewShortcut(_ context.Context, c *Ctx) ([]string, error) 
 
 	def := map[string]any{
 		"name":        builtinCodeReviewShortcutName,
-		"description": "Run Claude Code's built-in /code-review slash command",
-		"prompt":      "/code-review",
+		"description": builtinCodeReviewShortcutDescription,
+		"prompt":      builtinCodeReviewShortcutPrompt,
 	}
 	if err := appendOrCreateArrayMember(v, "prompt_shortcuts", def); err != nil {
 		return nil, fmt.Errorf("patching %s: %w", configPath, err)
@@ -211,6 +242,73 @@ const reviewFixVerifyScriptOld = "git rev-parse HEAD"
 // -A`, which swept untracked files into the auto-commit. Migration #8 looks
 // for this exact value and rewrites it to `reviewFixVerifyScript`.
 const reviewFixVerifyScriptBuggyAddAll = "git add -A && (git diff --cached --quiet || git commit -m 'fix: address review feedback')"
+
+// patchBuiltinCodeReviewShortcutPrompt upgrades an unmodified "builtin code
+// review" prompt shortcut (prompt still the bare "/code-review") to the
+// current review-panel-derived prompt + description. A user-edited prompt is
+// left untouched. Covers the upgrade path for installs that seeded the old
+// shortcut before this prompt existed — seedBuiltinCodeReviewShortcut only
+// ever adds a missing entry, never rewrites a present one.
+func patchBuiltinCodeReviewShortcutPrompt(ctx context.Context, c *Ctx) error {
+	_, err := patchBuiltinCodeReviewShortcutPromptReport(ctx, c)
+	return err
+}
+
+// patchBuiltinCodeReviewShortcutPromptReport is the (bool, error) variant used
+// by RestoreBuiltinShortcuts to surface a patched-but-not-added shortcut to
+// the FE. The bool is true iff the patcher wrote to disk. Operates on the
+// hujson AST so the user's HJSON comments and key ordering survive.
+func patchBuiltinCodeReviewShortcutPromptReport(_ context.Context, c *Ctx) (bool, error) {
+	v, configPath, err := loadConfigHJSON(c)
+	if err != nil || v == nil {
+		return false, err
+	}
+	rootObj, ok := v.Value.(*hujson.Object)
+	if !ok {
+		return false, fmt.Errorf("parsing %s: expected JSON object at top level", configPath)
+	}
+	scsVal := findObjectMember(rootObj, "prompt_shortcuts")
+	if scsVal == nil {
+		return false, nil
+	}
+	scsArr, ok := scsVal.Value.(*hujson.Array)
+	if !ok {
+		return false, nil
+	}
+	patched := false
+	for i := range scsArr.Elements {
+		elemObj, ok := scsArr.Elements[i].Value.(*hujson.Object)
+		if !ok {
+			continue
+		}
+		if name, _ := memberString(elemObj, "name"); name != builtinCodeReviewShortcutName {
+			continue
+		}
+		promptVal := findObjectMember(elemObj, "prompt")
+		if promptVal == nil {
+			continue
+		}
+		lit, ok := promptVal.Value.(hujson.Literal)
+		if !ok || lit.String() != oldBuiltinCodeReviewShortcutPrompt {
+			continue // user-edited (or unexpected shape) — never overwrite
+		}
+		promptVal.Value = hujson.String(builtinCodeReviewShortcutPrompt)
+		// Refresh the stock description too, but only when it's unmodified.
+		if descVal := findObjectMember(elemObj, "description"); descVal != nil {
+			if dlit, ok := descVal.Value.(hujson.Literal); ok && dlit.String() == oldBuiltinCodeReviewShortcutDescription {
+				descVal.Value = hujson.String(builtinCodeReviewShortcutDescription)
+			}
+		}
+		patched = true
+	}
+	if !patched {
+		return false, nil
+	}
+	if err := atomicWriteConfig(c.Sys, configPath, v.Pack(), 0644); err != nil {
+		return false, fmt.Errorf("writing %s: %w", configPath, err)
+	}
+	return true, nil
+}
 
 // seedReviewLoopWorkflows ensures both built-in review workflows are present
 // in the user's ~/.loop/config.json. Each is skipped individually if an entry

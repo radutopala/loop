@@ -406,7 +406,7 @@ func (s *FSMigrateSuite) TestSeedBuiltinCodeReviewShortcutEmptyConfig() {
 	require.Len(s.T(), shortcuts, 1)
 	sc := shortcuts[0].(map[string]any)
 	require.Equal(s.T(), "builtin code review", sc["name"])
-	require.Equal(s.T(), "/code-review", sc["prompt"])
+	require.Equal(s.T(), builtinCodeReviewShortcutPrompt, sc["prompt"])
 	require.Contains(s.T(), sc["description"], "/code-review")
 }
 
@@ -764,6 +764,116 @@ func (s *FSMigrateSuite) TestPatchReviewFixVerifyScriptWriteError() {
 	sys.writeErr[configPath+".tmp"] = errors.New("io error")
 
 	err := patchReviewFixVerifyScript(context.Background(), &Ctx{Sys: sys, LoopDir: "/loop"})
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "writing")
+}
+
+// --- patchBuiltinCodeReviewShortcutPrompt tests ---
+
+func (s *FSMigrateSuite) TestPatchBuiltinCodeReviewShortcutNoConfigFile() {
+	sys := newFakeSystem()
+	require.NoError(s.T(), patchBuiltinCodeReviewShortcutPrompt(context.Background(), &Ctx{Sys: sys, LoopDir: "/loop"}))
+}
+
+func (s *FSMigrateSuite) TestPatchBuiltinCodeReviewShortcutReadError() {
+	sys := newFakeSystem()
+	configPath := filepath.Join("/loop", "config.json")
+	sys.files[configPath] = []byte(`{}`)
+	sys.readErr[configPath] = errors.New("io error")
+	err := patchBuiltinCodeReviewShortcutPrompt(context.Background(), &Ctx{Sys: sys, LoopDir: "/loop"})
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "reading")
+}
+
+func (s *FSMigrateSuite) TestPatchBuiltinCodeReviewShortcutNotObject() {
+	sys := newFakeSystem()
+	configPath := filepath.Join("/loop", "config.json")
+	sys.files[configPath] = []byte(`["not an object"]`)
+	err := patchBuiltinCodeReviewShortcutPrompt(context.Background(), &Ctx{Sys: sys, LoopDir: "/loop"})
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "parsing")
+}
+
+func (s *FSMigrateSuite) TestPatchBuiltinCodeReviewShortcutNoShortcutsIsNoop() {
+	sys := newFakeSystem()
+	configPath := filepath.Join("/loop", "config.json")
+	original := []byte(`{}`)
+	sys.files[configPath] = append([]byte(nil), original...)
+	require.NoError(s.T(), patchBuiltinCodeReviewShortcutPrompt(context.Background(), &Ctx{Sys: sys, LoopDir: "/loop"}))
+	require.Equal(s.T(), original, sys.files[configPath])
+}
+
+func (s *FSMigrateSuite) TestPatchBuiltinCodeReviewShortcutNotArrayIsNoop() {
+	sys := newFakeSystem()
+	configPath := filepath.Join("/loop", "config.json")
+	original := []byte(`{"prompt_shortcuts":{}}`)
+	sys.files[configPath] = append([]byte(nil), original...)
+	require.NoError(s.T(), patchBuiltinCodeReviewShortcutPrompt(context.Background(), &Ctx{Sys: sys, LoopDir: "/loop"}))
+	require.Equal(s.T(), original, sys.files[configPath])
+}
+
+func (s *FSMigrateSuite) TestPatchBuiltinCodeReviewShortcutSkipsNonMatchingAndMalformed() {
+	sys := newFakeSystem()
+	configPath := filepath.Join("/loop", "config.json")
+	// Non-object element, a different-named entry, our entry without a prompt,
+	// and our entry whose prompt is a non-literal — none qualify, no rewrite.
+	original := []byte(`{"prompt_shortcuts":["bogus",{"name":"other","prompt":"/code-review"},{"name":"builtin code review"},{"name":"builtin code review","prompt":{}}]}`)
+	sys.files[configPath] = append([]byte(nil), original...)
+	require.NoError(s.T(), patchBuiltinCodeReviewShortcutPrompt(context.Background(), &Ctx{Sys: sys, LoopDir: "/loop"}))
+	require.Equal(s.T(), original, sys.files[configPath], "no unmodified builtin entry — must not rewrite")
+}
+
+func (s *FSMigrateSuite) TestPatchBuiltinCodeReviewShortcutLeavesUserEditedPrompt() {
+	sys := newFakeSystem()
+	configPath := filepath.Join("/loop", "config.json")
+	original := []byte(`{"prompt_shortcuts":[{"name":"builtin code review","prompt":"my custom prompt"}]}`)
+	sys.files[configPath] = append([]byte(nil), original...)
+	require.NoError(s.T(), patchBuiltinCodeReviewShortcutPrompt(context.Background(), &Ctx{Sys: sys, LoopDir: "/loop"}))
+	require.Equal(s.T(), original, sys.files[configPath], "user-edited prompt must not be rewritten")
+}
+
+func (s *FSMigrateSuite) TestPatchBuiltinCodeReviewShortcutUpgradesWithoutDescription() {
+	sys := newFakeSystem()
+	configPath := filepath.Join("/loop", "config.json")
+	sys.files[configPath] = []byte(`{"prompt_shortcuts":[{"name":"builtin code review","prompt":"/code-review"}]}`)
+	require.NoError(s.T(), patchBuiltinCodeReviewShortcutPrompt(context.Background(), &Ctx{Sys: sys, LoopDir: "/loop"}))
+	var cfg map[string]any
+	require.NoError(s.T(), json.Unmarshal(sys.files[configPath], &cfg))
+	sc := cfg["prompt_shortcuts"].([]any)[0].(map[string]any)
+	require.Equal(s.T(), builtinCodeReviewShortcutPrompt, sc["prompt"])
+	_, hasDesc := sc["description"]
+	require.False(s.T(), hasDesc, "absent description must stay absent")
+}
+
+func (s *FSMigrateSuite) TestPatchBuiltinCodeReviewShortcutKeepsCustomDescription() {
+	sys := newFakeSystem()
+	configPath := filepath.Join("/loop", "config.json")
+	sys.files[configPath] = []byte(`{"prompt_shortcuts":[{"name":"builtin code review","description":"my desc","prompt":"/code-review"}]}`)
+	require.NoError(s.T(), patchBuiltinCodeReviewShortcutPrompt(context.Background(), &Ctx{Sys: sys, LoopDir: "/loop"}))
+	var cfg map[string]any
+	require.NoError(s.T(), json.Unmarshal(sys.files[configPath], &cfg))
+	sc := cfg["prompt_shortcuts"].([]any)[0].(map[string]any)
+	require.Equal(s.T(), builtinCodeReviewShortcutPrompt, sc["prompt"])
+	require.Equal(s.T(), "my desc", sc["description"], "customized description preserved")
+}
+
+func (s *FSMigrateSuite) TestPatchBuiltinCodeReviewShortcutNonLiteralDescription() {
+	sys := newFakeSystem()
+	configPath := filepath.Join("/loop", "config.json")
+	sys.files[configPath] = []byte(`{"prompt_shortcuts":[{"name":"builtin code review","description":{},"prompt":"/code-review"}]}`)
+	require.NoError(s.T(), patchBuiltinCodeReviewShortcutPrompt(context.Background(), &Ctx{Sys: sys, LoopDir: "/loop"}))
+	var cfg map[string]any
+	require.NoError(s.T(), json.Unmarshal(sys.files[configPath], &cfg))
+	sc := cfg["prompt_shortcuts"].([]any)[0].(map[string]any)
+	require.Equal(s.T(), builtinCodeReviewShortcutPrompt, sc["prompt"])
+}
+
+func (s *FSMigrateSuite) TestPatchBuiltinCodeReviewShortcutWriteError() {
+	sys := newFakeSystem()
+	configPath := filepath.Join("/loop", "config.json")
+	sys.files[configPath] = []byte(`{"prompt_shortcuts":[{"name":"builtin code review","prompt":"/code-review"}]}`)
+	sys.writeErr[configPath+".tmp"] = errors.New("io error")
+	err := patchBuiltinCodeReviewShortcutPrompt(context.Background(), &Ctx{Sys: sys, LoopDir: "/loop"})
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "writing")
 }

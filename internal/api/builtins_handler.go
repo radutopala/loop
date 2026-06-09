@@ -104,9 +104,7 @@ func (s *Server) handleRestoreBuiltins(w http.ResponseWriter, r *http.Request) {
 	case "workflows":
 		added, patched, err = fsmigrate.RestoreBuiltinWorkflows(r.Context(), ctx)
 	case "shortcuts":
-		// Shortcuts have no patcher today — only a seeder. Report patched as
-		// an empty slice for response-shape stability across kinds.
-		added, err = fsmigrate.RestoreBuiltinShortcuts(r.Context(), ctx)
+		added, patched, err = fsmigrate.RestoreBuiltinShortcuts(r.Context(), ctx)
 	}
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)

@@ -2,6 +2,7 @@ package fsmigrate
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -54,17 +55,78 @@ func (s *FSMigrateSuite) TestRestoreBuiltinShortcutsDelegatesAndReturnsAdded() {
 	configPath := filepath.Join("/loop", "config.json")
 	sys.files[configPath] = []byte(`{}`)
 
-	added, err := RestoreBuiltinShortcuts(context.Background(), &Ctx{Sys: sys, LoopDir: "/loop"})
+	added, patched, err := RestoreBuiltinShortcuts(context.Background(), &Ctx{Sys: sys, LoopDir: "/loop"})
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), []string{"builtin code review"}, added)
+	require.Empty(s.T(), patched)
 }
 
 func (s *FSMigrateSuite) TestRestoreBuiltinShortcutsNoOpWhenConfigMissing() {
 	sys := newFakeSystem()
 
-	added, err := RestoreBuiltinShortcuts(context.Background(), &Ctx{Sys: sys, LoopDir: "/loop"})
+	added, patched, err := RestoreBuiltinShortcuts(context.Background(), &Ctx{Sys: sys, LoopDir: "/loop"})
 	require.NoError(s.T(), err)
 	require.Empty(s.T(), added)
+	require.Empty(s.T(), patched)
+}
+
+// TestRestoreBuiltinShortcutsUpgradesUnmodifiedEntry covers the upgrade path:
+// an existing entry still holding the bare "/code-review" prompt is patched
+// (not added), and the patched name is reported.
+func (s *FSMigrateSuite) TestRestoreBuiltinShortcutsUpgradesUnmodifiedEntry() {
+	sys := newFakeSystem()
+	configPath := filepath.Join("/loop", "config.json")
+	sys.files[configPath] = []byte(`{"prompt_shortcuts":[{"name":"builtin code review","description":"Run Claude Code's built-in /code-review slash command","prompt":"/code-review"}]}`)
+
+	added, patched, err := RestoreBuiltinShortcuts(context.Background(), &Ctx{Sys: sys, LoopDir: "/loop"})
+	require.NoError(s.T(), err)
+	require.Empty(s.T(), added)
+	require.Equal(s.T(), []string{"builtin code review"}, patched)
+
+	var cfg map[string]any
+	require.NoError(s.T(), json.Unmarshal(sys.files[configPath], &cfg))
+	sc := cfg["prompt_shortcuts"].([]any)[0].(map[string]any)
+	require.Equal(s.T(), builtinCodeReviewShortcutPrompt, sc["prompt"])
+	require.Equal(s.T(), builtinCodeReviewShortcutDescription, sc["description"])
+}
+
+// TestRestoreBuiltinShortcutsLeavesUserEditedEntry verifies a user-customized
+// prompt is never overwritten by the patcher.
+func (s *FSMigrateSuite) TestRestoreBuiltinShortcutsLeavesUserEditedEntry() {
+	sys := newFakeSystem()
+	configPath := filepath.Join("/loop", "config.json")
+	original := []byte(`{"prompt_shortcuts":[{"name":"builtin code review","prompt":"my custom review prompt"}]}`)
+	sys.files[configPath] = original
+
+	added, patched, err := RestoreBuiltinShortcuts(context.Background(), &Ctx{Sys: sys, LoopDir: "/loop"})
+	require.NoError(s.T(), err)
+	require.Empty(s.T(), added)
+	require.Empty(s.T(), patched)
+	require.Equal(s.T(), original, sys.files[configPath], "user-edited prompt must not be rewritten")
+}
+
+// TestRestoreBuiltinShortcutsSeedError surfaces an error from the seed step
+// (top-level config is not a JSON object).
+func (s *FSMigrateSuite) TestRestoreBuiltinShortcutsSeedError() {
+	sys := newFakeSystem()
+	configPath := filepath.Join("/loop", "config.json")
+	sys.files[configPath] = []byte(`["not an object"]`)
+
+	_, _, err := RestoreBuiltinShortcuts(context.Background(), &Ctx{Sys: sys, LoopDir: "/loop"})
+	require.Error(s.T(), err)
+}
+
+// TestRestoreBuiltinShortcutsPatchError surfaces an error from the patch step:
+// the entry is already present (so the seed no-ops) but the write fails when
+// the patcher rewrites the unmodified prompt.
+func (s *FSMigrateSuite) TestRestoreBuiltinShortcutsPatchError() {
+	sys := newFakeSystem()
+	configPath := filepath.Join("/loop", "config.json")
+	sys.files[configPath] = []byte(`{"prompt_shortcuts":[{"name":"builtin code review","prompt":"/code-review"}]}`)
+	sys.writeErr[configPath+".tmp"] = errors.New("io error")
+
+	_, _, err := RestoreBuiltinShortcuts(context.Background(), &Ctx{Sys: sys, LoopDir: "/loop"})
+	require.Error(s.T(), err)
 }
 
 func (s *FSMigrateSuite) TestRestoreBuiltinWorkflowsDelegatesAndReturnsAdded() {
