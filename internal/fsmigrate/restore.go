@@ -35,6 +35,11 @@ func RestoreBuiltinShortcuts(ctx context.Context, c *Ctx) (added []string, patch
 	if didPatch {
 		patched = append(patched, builtinCodeReviewShortcutName)
 	}
+	addedSimplify, err := seedBuiltinSimplifyShortcut(ctx, c)
+	if err != nil {
+		return nil, nil, err
+	}
+	added = append(added, addedSimplify...)
 	return added, patched, nil
 }
 

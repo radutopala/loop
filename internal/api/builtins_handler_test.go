@@ -29,11 +29,13 @@ func (s *ServerSuite) TestHandleRestoreBuiltinsShortcutsAddsMissing() {
 	var resp builtinRestoreResponse
 	require.NoError(s.T(), json.NewDecoder(rec.Body).Decode(&resp))
 	require.Equal(s.T(), "shortcuts", resp.Kind)
-	require.Equal(s.T(), []string{"builtin code review"}, resp.Added)
+	require.ElementsMatch(s.T(), []string{"builtin code review", "builtin simplify"}, resp.Added)
 	require.Empty(s.T(), resp.Skipped)
 }
 
 func (s *ServerSuite) TestHandleRestoreBuiltinsShortcutsSkipsWhenPresent() {
+	// A user-edited code-review entry is left untouched (skipped); the missing
+	// simplify shortcut is added.
 	s.writeLoopConfig(`{"prompt_shortcuts":[{"name":"builtin code review","prompt":"x"}]}`)
 
 	rec := s.testRequest(http.MethodPost, "/api/builtins/restore", `{"kind":"shortcuts"}`)
@@ -41,7 +43,7 @@ func (s *ServerSuite) TestHandleRestoreBuiltinsShortcutsSkipsWhenPresent() {
 
 	var resp builtinRestoreResponse
 	require.NoError(s.T(), json.NewDecoder(rec.Body).Decode(&resp))
-	require.Empty(s.T(), resp.Added)
+	require.Equal(s.T(), []string{"builtin simplify"}, resp.Added)
 	require.Equal(s.T(), []string{"builtin code review"}, resp.Skipped)
 }
 

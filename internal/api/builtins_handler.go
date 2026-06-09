@@ -59,7 +59,7 @@ type builtinRestoreResponse struct {
 // handler computes Skipped = canonicalBuiltins[kind] − Added so the FE can
 // show "X already present, Y restored."
 var canonicalBuiltins = map[string][]string{
-	"shortcuts": {"builtin code review"},
+	"shortcuts": {"builtin code review", "builtin simplify"},
 	"workflows": {"review-loop", "review-fix-loop"},
 }
 

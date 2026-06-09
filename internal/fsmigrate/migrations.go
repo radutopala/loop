@@ -78,6 +78,13 @@ var migrations = []Migration{
 		Description: "patch builtin code review shortcut to the review-panel-derived prompt",
 		Apply:       patchBuiltinCodeReviewShortcutPrompt,
 	},
+	{
+		Description: "seed builtin simplify prompt shortcut",
+		Apply: func(ctx context.Context, c *Ctx) error {
+			_, err := seedBuiltinSimplifyShortcut(ctx, c)
+			return err
+		},
+	},
 }
 
 // versionedContainerFiles are tracked by the daemon: each release ships a
@@ -163,17 +170,35 @@ const (
 	oldBuiltinCodeReviewShortcutDescription = "Run Claude Code's built-in /code-review slash command"
 )
 
-// seedBuiltinCodeReviewShortcut appends a default shortcut to the user's
-// existing ~/.loop/config.json. Fresh installs get the same entry via
-// config.global.example.json on first onboard; this migration covers the
+// builtinSimplifyShortcutName is the unique name for the simplify shortcut, as
+// it renders in the # picker.
+const builtinSimplifyShortcutName = "builtin simplify"
+
+// builtinSimplifyShortcutPrompt loads the simplify skill (same approach as the
+// code-review shortcut: run the skill via the Skill tool, with a self-review
+// fallback). Unlike code-review, simplify applies the cleanups, so the closing
+// step summarizes what changed rather than asking what to address. Kept in
+// sync with config.global.example.json.
+const builtinSimplifyShortcutPrompt = `Run the built-in simplify skill (via the Skill tool with skill="simplify") — it reviews the changed code for reuse, simplification, efficiency, and altitude cleanups and applies the fixes (quality only — it does not hunt for bugs; use the code-review skill for that). If the skill is unavailable, do the cleanup review yourself on the diff (git diff @{upstream}...HEAD plus any working-tree changes) and apply the safe cleanups.
+
+When it completes, summarize the cleanups grouped by category — reuse, simplification, efficiency, altitude — each as a short bullet with file:line and what changed.`
+
+// builtinSimplifyShortcutDescription is the stock description seeded with the
+// shortcut. Kept in sync with config.global.example.json.
+const builtinSimplifyShortcutDescription = "Run /simplify — apply reuse/simplification/efficiency/altitude cleanups to the changed code"
+
+// seedBuiltinShortcut appends a built-in prompt shortcut to the user's
+// existing ~/.loop/config.json. Fresh installs get the same entries via
+// config.global.example.json on first onboard; these migrations cover the
 // upgrade path for installs that already have a config.
 //
 // No-ops when the file doesn't exist (onboard will handle it) or when an
 // entry with the same name is already present (user may have added it
 // themselves; never duplicate). Mutations go through the hujson AST so the
 // user's HJSON comments and key ordering survive — round-tripping through
-// json.Unmarshal would silently strip both.
-func seedBuiltinCodeReviewShortcut(_ context.Context, c *Ctx) ([]string, error) {
+// json.Unmarshal would silently strip both. Returns the seeded name, or nil
+// when nothing was written.
+func seedBuiltinShortcut(c *Ctx, name, description, prompt string) ([]string, error) {
 	v, configPath, err := loadConfigHJSON(c)
 	if err != nil || v == nil {
 		return nil, err
@@ -184,14 +209,14 @@ func seedBuiltinCodeReviewShortcut(_ context.Context, c *Ctx) ([]string, error) 
 	}
 
 	existing := arrayMemberStringValues(rootObj, "prompt_shortcuts", "name")
-	if _, present := existing[builtinCodeReviewShortcutName]; present {
+	if _, present := existing[name]; present {
 		return nil, nil
 	}
 
 	def := map[string]any{
-		"name":        builtinCodeReviewShortcutName,
-		"description": builtinCodeReviewShortcutDescription,
-		"prompt":      builtinCodeReviewShortcutPrompt,
+		"name":        name,
+		"description": description,
+		"prompt":      prompt,
 	}
 	if err := appendOrCreateArrayMember(v, "prompt_shortcuts", def); err != nil {
 		return nil, fmt.Errorf("patching %s: %w", configPath, err)
@@ -199,7 +224,15 @@ func seedBuiltinCodeReviewShortcut(_ context.Context, c *Ctx) ([]string, error) 
 	if err := atomicWriteConfig(c.Sys, configPath, v.Pack(), 0644); err != nil {
 		return nil, fmt.Errorf("writing %s: %w", configPath, err)
 	}
-	return []string{builtinCodeReviewShortcutName}, nil
+	return []string{name}, nil
+}
+
+func seedBuiltinCodeReviewShortcut(_ context.Context, c *Ctx) ([]string, error) {
+	return seedBuiltinShortcut(c, builtinCodeReviewShortcutName, builtinCodeReviewShortcutDescription, builtinCodeReviewShortcutPrompt)
+}
+
+func seedBuiltinSimplifyShortcut(_ context.Context, c *Ctx) ([]string, error) {
+	return seedBuiltinShortcut(c, builtinSimplifyShortcutName, builtinSimplifyShortcutDescription, builtinSimplifyShortcutPrompt)
 }
 
 // seededReviewLoopName / seededReviewFixLoopName are the canonical names of
