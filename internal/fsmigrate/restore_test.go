@@ -57,7 +57,7 @@ func (s *FSMigrateSuite) TestRestoreBuiltinShortcutsDelegatesAndReturnsAdded() {
 
 	added, patched, err := RestoreBuiltinShortcuts(context.Background(), &Ctx{Sys: sys, LoopDir: "/loop"})
 	require.NoError(s.T(), err)
-	require.Equal(s.T(), []string{"builtin code review"}, added)
+	require.ElementsMatch(s.T(), []string{"builtin code review", "builtin simplify"}, added)
 	require.Empty(s.T(), patched)
 }
 
@@ -80,7 +80,9 @@ func (s *FSMigrateSuite) TestRestoreBuiltinShortcutsUpgradesUnmodifiedEntry() {
 
 	added, patched, err := RestoreBuiltinShortcuts(context.Background(), &Ctx{Sys: sys, LoopDir: "/loop"})
 	require.NoError(s.T(), err)
-	require.Empty(s.T(), added)
+	// The code-review entry is patched (not added); simplify is missing so it
+	// is added.
+	require.Equal(s.T(), []string{"builtin simplify"}, added)
 	require.Equal(s.T(), []string{"builtin code review"}, patched)
 
 	var cfg map[string]any
@@ -91,18 +93,26 @@ func (s *FSMigrateSuite) TestRestoreBuiltinShortcutsUpgradesUnmodifiedEntry() {
 }
 
 // TestRestoreBuiltinShortcutsLeavesUserEditedEntry verifies a user-customized
-// prompt is never overwritten by the patcher.
+// prompt is never overwritten by the patcher (the missing simplify shortcut is
+// still seeded alongside it).
 func (s *FSMigrateSuite) TestRestoreBuiltinShortcutsLeavesUserEditedEntry() {
 	sys := newFakeSystem()
 	configPath := filepath.Join("/loop", "config.json")
-	original := []byte(`{"prompt_shortcuts":[{"name":"builtin code review","prompt":"my custom review prompt"}]}`)
-	sys.files[configPath] = original
+	sys.files[configPath] = []byte(`{"prompt_shortcuts":[{"name":"builtin code review","prompt":"my custom review prompt"}]}`)
 
 	added, patched, err := RestoreBuiltinShortcuts(context.Background(), &Ctx{Sys: sys, LoopDir: "/loop"})
 	require.NoError(s.T(), err)
-	require.Empty(s.T(), added)
+	require.Equal(s.T(), []string{"builtin simplify"}, added)
 	require.Empty(s.T(), patched)
-	require.Equal(s.T(), original, sys.files[configPath], "user-edited prompt must not be rewritten")
+
+	var cfg map[string]any
+	require.NoError(s.T(), json.Unmarshal(sys.files[configPath], &cfg))
+	shortcuts := cfg["prompt_shortcuts"].([]any)
+	require.Len(s.T(), shortcuts, 2)
+	cr := shortcuts[0].(map[string]any)
+	require.Equal(s.T(), "builtin code review", cr["name"])
+	require.Equal(s.T(), "my custom review prompt", cr["prompt"], "user-edited prompt must not be rewritten")
+	require.Equal(s.T(), "builtin simplify", shortcuts[1].(map[string]any)["name"])
 }
 
 // TestRestoreBuiltinShortcutsSeedError surfaces an error from the seed step

@@ -410,6 +410,36 @@ func (s *FSMigrateSuite) TestSeedBuiltinCodeReviewShortcutEmptyConfig() {
 	require.Contains(s.T(), sc["description"], "/code-review")
 }
 
+func (s *FSMigrateSuite) TestSeedBuiltinSimplifyShortcutEmptyConfig() {
+	sys := newFakeSystem()
+	configPath := filepath.Join("/loop", "config.json")
+	sys.files[configPath] = []byte(`{}`)
+
+	_, err := seedBuiltinSimplifyShortcut(context.Background(), &Ctx{Sys: sys, LoopDir: "/loop"})
+	require.NoError(s.T(), err)
+
+	var cfg map[string]any
+	require.NoError(s.T(), json.Unmarshal(sys.files[configPath], &cfg))
+	shortcuts := cfg["prompt_shortcuts"].([]any)
+	require.Len(s.T(), shortcuts, 1)
+	sc := shortcuts[0].(map[string]any)
+	require.Equal(s.T(), "builtin simplify", sc["name"])
+	require.Equal(s.T(), builtinSimplifyShortcutPrompt, sc["prompt"])
+	require.Equal(s.T(), builtinSimplifyShortcutDescription, sc["description"])
+}
+
+func (s *FSMigrateSuite) TestSeedBuiltinSimplifyShortcutAlreadyPresent() {
+	sys := newFakeSystem()
+	configPath := filepath.Join("/loop", "config.json")
+	original := []byte(`{"prompt_shortcuts":[{"name":"builtin simplify","prompt":"mine"}]}`)
+	sys.files[configPath] = append([]byte(nil), original...)
+
+	added, err := seedBuiltinSimplifyShortcut(context.Background(), &Ctx{Sys: sys, LoopDir: "/loop"})
+	require.NoError(s.T(), err)
+	require.Empty(s.T(), added)
+	require.Equal(s.T(), original, sys.files[configPath], "present entry must not be rewritten")
+}
+
 func (s *FSMigrateSuite) TestSeedBuiltinCodeReviewShortcutAppendsToExisting() {
 	sys := newFakeSystem()
 	configPath := filepath.Join("/loop", "config.json")

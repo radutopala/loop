@@ -2258,7 +2258,7 @@ Canonical names per kind:
 | Kind | Names |
 |------|-------|
 | `workflows` | `review-loop`, `review-fix-loop` |
-| `shortcuts` | `builtin code review` |
+| `shortcuts` | `builtin code review`, `builtin simplify` |
 
 **Response (200):**
 ```json
