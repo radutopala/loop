@@ -15,13 +15,27 @@ import (
 var restoreMu sync.Mutex
 
 // RestoreBuiltinShortcuts re-seeds any missing built-in prompt shortcuts into
-// ~/.loop/config.json. Idempotent: present entries (including user-modified
-// ones) are left untouched; only missing built-ins are appended. Returns the
-// list of names that were added (empty when everything was already present).
-func RestoreBuiltinShortcuts(ctx context.Context, c *Ctx) ([]string, error) {
+// ~/.loop/config.json AND upgrades an unmodified "builtin code review" entry
+// in place. Idempotent: a missing built-in is appended; an entry whose prompt
+// still matches the original seed is patched to the current prompt; a
+// user-edited entry is left untouched. Returns (added, patched) names — the
+// two lists are disjoint, since a freshly-added entry already has the current
+// prompt and won't be patched.
+func RestoreBuiltinShortcuts(ctx context.Context, c *Ctx) (added []string, patched []string, err error) {
 	restoreMu.Lock()
 	defer restoreMu.Unlock()
-	return seedBuiltinCodeReviewShortcut(ctx, c)
+	added, err = seedBuiltinCodeReviewShortcut(ctx, c)
+	if err != nil {
+		return nil, nil, err
+	}
+	didPatch, err := patchBuiltinCodeReviewShortcutPromptReport(ctx, c)
+	if err != nil {
+		return nil, nil, err
+	}
+	if didPatch {
+		patched = append(patched, builtinCodeReviewShortcutName)
+	}
+	return added, patched, nil
 }
 
 // RestoreBuiltinWorkflows re-seeds any missing built-in workflows into
