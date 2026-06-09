@@ -523,14 +523,18 @@ export function ChatInput({ channelId, messages, roots, isRunning, mode, setMode
     setText("");
     draftText.delete(channelId);
     setSending(true);
+    // Prepend the shortcut's #name so the sent message records which shortcut
+    // produced it — the chat bubble and history show the name, not just the
+    // expanded prompt body.
+    const composed = `#${shortcut.name}\n${shortcut.prompt}`;
     try {
       if (pendingGateReqId) {
         await resolveGateApproval(pendingGateReqId, "deny");
-        await sendMessage(channelId, shortcut.prompt, mode, true);
+        await sendMessage(channelId, composed, mode, true);
       } else {
-        await sendMessage(channelId, shortcut.prompt, mode);
+        await sendMessage(channelId, composed, mode);
       }
-      historyRef.current.push(shortcut.prompt);
+      historyRef.current.push(composed);
       historyIdxRef.current = -1;
       draftRef.current = "";
       onDismissCards?.();
