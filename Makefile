@@ -1,4 +1,4 @@
-.PHONY: help build install test test-integration test-component test-runner-build test-runner-push lint coverage coverage-check codeql-download codeql docker-build docs-build docs-serve run clean restart docker-shell docker-snapshot app-dev app-dev-docker app-install app-build-binary app-dist-linux app-icons _sync-loop-overrides
+.PHONY: help build install test test-integration test-component test-runner-build test-runner-push lint coverage coverage-check codeql-download codeql docker-build docs-build docs-serve run clean restart docker-shell docker-snapshot app-dev app-dev-docker app-test app-install app-build-binary app-dist-linux app-icons _sync-loop-overrides
 .DEFAULT_GOAL := help
 
 # Strip gate-child env inheritance when invoking make from inside a
@@ -210,6 +210,9 @@ app-build-binary: ## Cross-compile loop binary for app bundling (GOOS=, GOARCH=)
 
 app-dev: ## Start the Electron app frontend dev server
 	cd app && npm install && npx vite --host
+
+app-test: ## Run the frontend unit tests (vitest)
+	cd app && npm install && npm test
 
 app-dev-docker: ## Start Vite frontend dev server in Docker (no Electron, browser-accessible)
 	docker run --rm -it --name loop-app-dev \
