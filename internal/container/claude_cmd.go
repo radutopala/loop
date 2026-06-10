@@ -1,0 +1,163 @@
+// claude_cmd.go holds ClaudeCmdBuilder and the helpers that assemble the Claude
+// CLI command for both batch (stream-json) and interactive terminal sessions.
+package container
+
+import (
+	"encoding/json"
+	"os"
+	"path/filepath"
+	"strings"
+	"sync/atomic"
+
+	"github.com/radutopala/loop/internal/agent"
+	"github.com/radutopala/loop/internal/config"
+)
+
+// buildBaseClaudeCmd returns the common Claude CLI flags shared by both
+// batch and interactive modes.
+func buildBaseClaudeCmd(cfg *config.Config, mcpConfigPath, sessionID, agentID string, forkSession bool, extraDirs []string) []string {
+	cmd := []string{cfg.ClaudeBinPath, "--mcp-config", mcpConfigPath}
+	if cfg.ClaudeModel != "" {
+		cmd = append(cmd, "--model", cfg.ClaudeModel)
+	}
+	cmd = append(cmd, "--dangerously-skip-permissions")
+	if sessionID != "" {
+		cmd = append(cmd, "--resume", sessionID)
+		if forkSession {
+			cmd = append(cmd, "--fork-session")
+		}
+	}
+	// Enable MCP Channels when agent tools are configured, so the agent
+	// can receive push notifications from other agents. Anthropic ships
+	// `--dangerously-load-development-channels` as a development-only flag,
+	// so it's opt-in via config (global → project → worktree).
+	if agentID != "" && cfg.ClaudeDangerouslyLoadDevelopmentChannels {
+		cmd = append(cmd, "--dangerously-load-development-channels", "server:loop")
+	}
+	for _, dir := range extraDirs {
+		cmd = append(cmd, "--add-dir", dir)
+	}
+	return cmd
+}
+
+// planModePromptPrefix is prepended to the user's prompt when req.PlanMode is
+// true. Calling EnterPlanMode flips the session's permission context to
+// "plan", which causes Claude Code's per-turn attachment loop to inject the
+// full pair-planning prompt (with a computed planFilePath and read-only
+// restrictions) from the next turn onward.
+const planModePromptPrefix = "Call the EnterPlanMode tool before doing anything else, then follow the plan-mode instructions that follow.\n\n"
+
+// buildClaudeCmd assembles the Claude CLI command with all flags for batch mode.
+func buildClaudeCmd(cfg *config.Config, mcpConfigPath string, req *agent.AgentRequest) []string {
+	cmd := buildBaseClaudeCmd(cfg, mcpConfigPath, req.SessionID, req.AgentID, req.ForkSession, cfg.ExtraDirs)
+	cmd = append(cmd, "--print", "--verbose", "--output-format", "stream-json")
+	if req.SystemPrompt != "" {
+		cmd = append(cmd, "--append-system-prompt", req.SystemPrompt)
+	}
+	prompt := req.BuildPrompt()
+	if req.PlanMode {
+		prompt = planModePromptPrefix + prompt
+	}
+	return append(cmd, prompt)
+}
+
+// mcpConfigPathForAgent returns the MCP config file path. When agentID is set,
+// a per-agent config is used so each agent gets its own --agent-id flag.
+func mcpConfigPathForAgent(workDir, channelID, agentID string) string {
+	if agentID != "" {
+		return filepath.Join(workDir, ".loop", "mcp-"+channelID+"-"+agentID+".json")
+	}
+	return filepath.Join(workDir, ".loop", "mcp-"+channelID+".json")
+}
+
+// BuildInteractiveClaudeCmd assembles the Claude CLI shell command for interactive
+// terminal sessions (no --print, --verbose, --output-format flags).
+//
+// When the seccomp gate is enabled, the command is wrapped in
+// `loop syscallwrap --` so the interactive claude runs under the same filter
+// the agent-mode (stream) path gets via entrypoint.sh. docker-exec'ing into the
+// running shell container does NOT inherit the shell's seccomp state (setns(2)
+// is per-namespace, but seccomp is per-process), so without this wrapper a
+// user typing `claude` at the terminal would bypass the gate entirely.
+func BuildInteractiveClaudeCmd(cfg *config.Config, channelID, workDir, sessionID, agentID string, forkSession bool) string {
+	mcpConfigPath := mcpConfigPathForAgent(workDir, channelID, agentID)
+	cmd := buildBaseClaudeCmd(cfg, mcpConfigPath, sessionID, agentID, forkSession, cfg.ExtraDirs)
+	if cfg.Gates.Agentgate.Enabled {
+		cmd = append([]string{"loop", "syscallwrap", "--"}, cmd...)
+	}
+	return "CLAUDE_CODE_NO_FLICKER=1 " + strings.Join(cmd, " ")
+}
+
+// ClaudeCmdBuilder builds the interactive Claude command for terminal sessions.
+// It implements api.InteractiveCmdBuilder.
+type ClaudeCmdBuilder struct {
+	cfg                       atomic.Pointer[config.Config]
+	configLoad                func() (*config.Config, error)
+	loadProjectConfig         func(string, *config.Config) (*config.Config, error)
+	loadWorktreeProjectConfig func(string, string, *config.Config) (*config.Config, error)
+	writeFile                 func(string, []byte, os.FileMode) error
+	mkdirAll                  func(string, os.FileMode) error
+}
+
+// NewClaudeCmdBuilder creates a builder that uses the given config.
+func NewClaudeCmdBuilder(cfg *config.Config, configLoad func() (*config.Config, error)) *ClaudeCmdBuilder {
+	b := &ClaudeCmdBuilder{
+		configLoad:                configLoad,
+		loadProjectConfig:         config.LoadProjectConfig,
+		loadWorktreeProjectConfig: config.LoadWorktreeProjectConfig,
+		writeFile:                 os.WriteFile,
+		mkdirAll:                  os.MkdirAll,
+	}
+	b.cfg.Store(cfg)
+	return b
+}
+
+// currentConfig returns a fresh config by calling configLoad, falling back
+// to the last-known-good config on error or when configLoad is nil.
+func (b *ClaudeCmdBuilder) currentConfig() *config.Config {
+	if b.configLoad == nil {
+		return b.cfg.Load()
+	}
+	fresh, err := b.configLoad()
+	if err != nil {
+		return b.cfg.Load()
+	}
+	b.cfg.Store(fresh)
+	return fresh
+}
+
+// BuildInteractiveCmd returns the interactive Claude shell command for the given channel.
+// It loads the project-specific config (if any) to apply per-project overrides
+// such as claude_model before building the command.
+// When agentID is set, a per-agent MCP config is written with --agent-id so
+// the agent can identify itself via the MCP tools.
+func (b *ClaudeCmdBuilder) BuildInteractiveCmd(channelID, dirPath, parentDirPath, sessionID, agentID string, forkSession bool) string {
+	baseCfg := b.currentConfig()
+	workDir := dirPath
+	if workDir == "" {
+		workDir = filepath.Join(baseCfg.LoopDir, channelID, "work")
+	}
+	cfg := baseCfg
+	if parentDirPath != "" {
+		if merged, err := b.loadWorktreeProjectConfig(workDir, parentDirPath, baseCfg); err == nil {
+			cfg = merged
+		}
+	} else if merged, err := b.loadProjectConfig(workDir, baseCfg); err == nil {
+		cfg = merged
+	}
+	if agentID != "" {
+		b.writeAgentMCPConfig(cfg, workDir, channelID, agentID)
+	}
+	return BuildInteractiveClaudeCmd(cfg, channelID, workDir, sessionID, agentID, forkSession)
+}
+
+// writeAgentMCPConfig writes a per-agent MCP config file with --agent-id.
+func (b *ClaudeCmdBuilder) writeAgentMCPConfig(cfg *config.Config, workDir, channelID, agentID string) {
+	apiURL := "http://host.docker.internal" + cfg.APIAddr
+	loopDir := filepath.Join(workDir, ".loop")
+	_ = b.mkdirAll(loopDir, 0o755)
+	mcpCfg := buildMCPConfig(channelID, apiURL, workDir, "", agentID, cfg.Memory.Enabled, cfg.Browser.Enabled, cfg.MCPServers)
+	data, _ := json.MarshalIndent(mcpCfg, "", "  ")
+	configPath := mcpConfigPathForAgent(workDir, channelID, agentID)
+	_ = b.writeFile(configPath, data, 0o644)
+}
