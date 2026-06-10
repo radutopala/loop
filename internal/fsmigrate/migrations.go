@@ -86,7 +86,7 @@ var migrations = []Migration{
 		},
 	},
 	{
-		Description: "refresh container/ files: Node 22 via nodesource (Debian's Node 20 is EOL)",
+		Description: "refresh container/ files: Node 24 via nodesource (Debian's Node 20 is EOL)",
 		Apply:       refreshContainerFiles,
 	},
 }

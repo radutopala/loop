@@ -562,6 +562,7 @@ Not all global fields are available in project configs. The following fields can
 | `browser.chrome_image` | **Overrides** global value when set. |
 | `browser.host_cdp_port` | **Overrides** global value when set. |
 | `github.gh_user` | **Overrides** global value when set. |
+| `review.enabled` / `review.prompt` / `review.prompt_path` | Each field **overrides** the global value only when explicitly set (see [Review](#review)). |
 | `gates.agentgate.enabled` | **Narrows only**: project may set `false` to disable the gate for this project; it **cannot** re-enable the gate when global `gates.agentgate.enabled` is `false`. Transitively disables `gates.docker_proxy.enabled` when the project turns the gate off. |
 | `gates.agentgate.path_rules` / `command_rules` / `file_rules` | **Prepended** to the merged global rules (first-match-wins applies project rules first). **Rules with `decision: "allow"` are rejected at load time** — project configs may only tighten the policy, not loosen it. |
 | `gates.agentgate.default_decision` | **Ignored** — global wins unconditionally. |
