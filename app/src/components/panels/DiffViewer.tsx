@@ -182,7 +182,14 @@ export function parseUnifiedDiff(raw: string, status?: DiffFileStatus): ParsedFi
       let newNum = nums?.[2] ? parseInt(nums[2], 10) : 1;
 
       const lines: HunkLine[] = [];
-      for (const line of body.split("\n")) {
+      // The body starts with the newline that terminated the @@ header, so
+      // the first split element is always an empty artifact — drop it before
+      // the loop: the `line === ""` ctx branch below (meant for blank context
+      // lines whose trailing space was stripped) would otherwise count it as
+      // a phantom first line and shift every old/new number by one.
+      const bodyLines = body.split("\n");
+      if (bodyLines[0] === "") bodyLines.shift();
+      for (const line of bodyLines) {
         if (line.startsWith("+")) {
           lines.push({ type: "add", content: line.slice(1), oldNum: null, newNum });
           newNum++;

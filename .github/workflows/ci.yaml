@@ -131,3 +131,4 @@ jobs:
       # Retried: the Electron postinstall binary download intermittently 504s.
       - run: cd app && (npm ci || (sleep 20 && npm ci) || (sleep 60 && npm ci))
       - run: cd app && npx tsc --noEmit
+      - run: cd app && npm test
