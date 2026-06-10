@@ -85,8 +85,9 @@ jobs:
           security list-keychains -d user -s $KEYCHAIN_PATH login.keychain-db
 
       - name: Install dependencies and set version
+        # npm ci retried: the Electron postinstall download intermittently 504s.
         run: |
-          cd app && npm ci
+          cd app && (npm ci || (sleep 20 && npm ci) || (sleep 60 && npm ci))
           npm pkg set version="${GITHUB_REF_NAME#v}"
 
       - name: Build, sign, and notarize
@@ -140,8 +141,9 @@ jobs:
           cache-dependency-path: app/package-lock.json
 
       - name: Install dependencies and set version
+        # npm ci retried: the Electron postinstall download intermittently 504s.
         run: |
-          cd app && npm ci
+          cd app && (npm ci || (sleep 20 && npm ci) || (sleep 60 && npm ci))
           npm pkg set version="${GITHUB_REF_NAME#v}"
 
       - name: Build AppImage and deb
@@ -193,14 +195,17 @@ jobs:
           cache-dependency-path: app/package-lock.json
 
       - name: Install dependencies and set version
+        # npm ci retried: the Electron postinstall download intermittently 504s.
         shell: bash
         run: |
-          cd app && npm ci
+          cd app && (npm ci || (sleep 20 && npm ci) || (sleep 60 && npm ci))
           npm pkg set version="${GITHUB_REF_NAME#v}"
 
       - name: Build NSIS installer
+        # Retried: electron-builder's NSIS binary download intermittently 504s
+        # (the most common transient release failure). The build is idempotent.
         shell: bash
-        run: cd app && npm run dist:win:${{ matrix.arch }} -- --publish never
+        run: cd app && (npm run dist:win:${{ matrix.arch }} -- --publish never || (sleep 30 && npm run dist:win:${{ matrix.arch }} -- --publish never))
 
       - name: Upload Windows artifacts to release
         env:
