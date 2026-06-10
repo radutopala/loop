@@ -18,12 +18,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           fetch-depth: 0
 
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v6
         with:
           go-version: "1.26"
 
@@ -50,7 +50,7 @@ jobs:
             goreleaser_arch: amd64
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Download loop binary from release
         env:
@@ -63,7 +63,7 @@ jobs:
           tar -xzf "/tmp/$ARCHIVE" -C app/resources/mac/${{ matrix.arch }}
 
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: "22"
           cache: npm
@@ -102,7 +102,7 @@ jobs:
         run: gh release upload "${{ github.ref_name }}" app/release/*.dmg app/release/*.zip app/release/*.blockmap --clobber
 
       - name: Save update manifest
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: update-yml-mac-${{ matrix.arch }}
           path: app/release/latest-mac.yml
@@ -120,7 +120,7 @@ jobs:
             goreleaser_arch: arm64
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Download loop binary from release
         env:
@@ -133,7 +133,7 @@ jobs:
           tar -xzf "/tmp/$ARCHIVE" -C app/resources/linux/${{ matrix.arch }}
 
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: "22"
           cache: npm
@@ -154,7 +154,7 @@ jobs:
 
       - name: Save update manifest
         if: hashFiles('app/release/latest-linux.yml') != ''
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: update-yml-linux-${{ matrix.arch }}
           path: app/release/latest-linux.yml
@@ -172,7 +172,7 @@ jobs:
             goreleaser_arch: arm64
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Download loop binary from release
         env:
@@ -186,7 +186,7 @@ jobs:
           unzip "$RUNNER_TEMP/$ARCHIVE" -d app/resources/win/${{ matrix.arch }}
 
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: "22"
           cache: npm
@@ -210,7 +210,7 @@ jobs:
 
       - name: Save update manifest
         if: hashFiles('app/release/latest.yml') != ''
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: update-yml-win-${{ matrix.arch }}
           path: app/release/latest.yml
@@ -220,7 +220,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Download all update manifests
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           pattern: update-yml-*
           path: manifests
