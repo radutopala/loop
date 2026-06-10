@@ -308,15 +308,6 @@ Feature: Documentation walkthrough
     And I wait "2s"
     And I click on "[data-testid='layout-tab-Workflows']"
     And I wait "3s"
-    # Review — the tab is present because the sample project sets review.enabled
-    And I wait "2s"
-    And I show caption "Review — an agent pass over your diff, with comments pushed back inline"
-    And I wait "4s"
-    And I hide caption
-    And I wait "2s"
-    And I click on "[data-testid='layout-tab-Review']"
-    And I wait "3s"
-    And I capture screenshot "review-panel"
     # Quality — split the panel into the Chat layout, run a scan, show the signal
     And I wait "2s"
     And I show caption "Quality — one architectural signal, with a treemap of hotspots"
