@@ -44,7 +44,10 @@ func (a *socketModeClientAdapter) RunContext(ctx context.Context) error {
 }
 
 func (a *socketModeClientAdapter) Ack(req socketmode.Request, payload ...any) {
-	a.client.Ack(req, payload...)
+	// Ack returns an error since slack-go 0.25; a failed ack means the socket
+	// write failed, which the RunContext read loop surfaces on its own —
+	// nothing actionable at this call site.
+	_ = a.client.Ack(req, payload...)
 }
 
 func (a *socketModeClientAdapter) Events() <-chan socketmode.Event {
@@ -212,9 +215,11 @@ func (b *SlackBot) RemoveStopButton(_ context.Context, channelID, messageID stri
 // session / Deny) and returns the message timestamp. The button ActionIDs
 // follow "gate:<promptID>:<decision>" so handleInteractive can dispatch
 // clicks to the approval resolver.
-func (b *SlackBot) SendApproval(_ context.Context, channelID string, prompt bot.ApprovalPrompt) (string, error) {
-	chID, threadTS := parseCompositeID(channelID)
-
+// approvalBlocks builds the two blocks of an approval message: the mrkdwn
+// header (target + optional message/details) and the three-button action
+// block. Extracted so tests can assert on block content directly — slack-go
+// ≥ 0.18 no longer exposes blocks through UnsafeApplyMsgOptions.
+func approvalBlocks(prompt bot.ApprovalPrompt) (*goslack.SectionBlock, *goslack.ActionBlock) {
 	header := "*Agent wants to:* " + prompt.Target
 	if prompt.Message != "" {
 		header += "\n" + prompt.Message
@@ -245,7 +250,13 @@ func (b *SlackBot) SendApproval(_ context.Context, channelID string, prompt bot.
 	denyBtn.Style = goslack.StyleDanger
 
 	actionBlock := goslack.NewActionBlock("gate_actions:"+prompt.ID, onceBtn, sessionBtn, denyBtn)
+	return headerBlock, actionBlock
+}
 
+func (b *SlackBot) SendApproval(_ context.Context, channelID string, prompt bot.ApprovalPrompt) (string, error) {
+	chID, threadTS := parseCompositeID(channelID)
+
+	headerBlock, actionBlock := approvalBlocks(prompt)
 	opts := []goslack.MsgOption{goslack.MsgOptionBlocks(headerBlock, actionBlock)}
 	if threadTS != "" {
 		opts = append(opts, goslack.MsgOptionTS(threadTS))
