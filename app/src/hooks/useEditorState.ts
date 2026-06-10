@@ -16,6 +16,7 @@ import {
 import { fetchGlobalConfig } from "../api/configApi";
 import { fetchDiff } from "../api/git";
 import { makePathKey, parsePathKey } from "../components/panels/EditorFileTree";
+import { matchAbsPathToKey } from "./editorPaths";
 import { gitLineChangesForFile, emptyGitLineChanges, type GitLineChanges } from "../components/panels/editorGitGutter";
 import type { CodeEditorHandle } from "../components/panels/CodeEditor";
 import type { ChatEventListener } from "./useChatStateStore";
@@ -773,24 +774,5 @@ export function useEditorState(channelId: string, options?: UseEditorStateOption
   };
 }
 
-/** Map a tool's absolute file path to a {rootIndex, relativePath} pathKey. */
-function matchAbsPathToKey(absPath: string, roots: RootEntry[]): string | null {
-  // Pick the longest matching root prefix to handle nested roots correctly.
-  let best: { root: RootEntry; rel: string } | null = null;
-  for (const root of roots) {
-    const base = root.path.endsWith("/") ? root.path.slice(0, -1) : root.path;
-    if (absPath === base) {
-      if (!best || base.length > best.root.path.length) best = { root, rel: "" };
-      continue;
-    }
-    const prefix = base + "/";
-    if (absPath.startsWith(prefix)) {
-      const rel = absPath.slice(prefix.length);
-      if (!best || base.length > (best.root.path.endsWith("/") ? best.root.path.length - 1 : best.root.path.length)) {
-        best = { root, rel };
-      }
-    }
-  }
-  if (!best) return null;
-  return makePathKey(best.root.index, best.rel);
-}
+/** Map a tool's absolute file path to a {rootIndex, relativePath} pathKey.
+ * Implementation lives in ./editorPaths so it is unit-testable in isolation. */
