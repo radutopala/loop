@@ -283,5 +283,11 @@ codeql: ## Run CodeQL security analysis locally (via Docker)
 		python3 -c "import json,sys; d=json.load(open(\"/db/results.sarif\")); rs=d.get(\"runs\",[{}])[0].get(\"results\",[]); [print(\"  \"+r[\"ruleId\"]+\" \"+r[\"locations\"][0][\"physicalLocation\"][\"artifactLocation\"][\"uri\"]+\":\"+str(r[\"locations\"][0][\"physicalLocation\"][\"region\"][\"startLine\"])+\" - \"+r[\"message\"][\"text\"]) for r in rs] or print(\"  No issues found.\"); sys.exit(len(rs))"; \
 		'
 
+deps-outdated: ## List outdated Go and npm dependencies (no changes made)
+	@echo "== Go modules with newer versions =="
+	@go list -u -m all 2>/dev/null | grep '\[' || echo "  all current"
+	@echo "== npm packages (app/) with newer versions =="
+	@cd app && npm outdated || true
+
 clean: ## Remove build artifacts
 	rm -rf bin/ app/resources/ coverage.out coverage.html
