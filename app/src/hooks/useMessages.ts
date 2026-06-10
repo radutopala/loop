@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { Message } from "../types";
 import { fetchMessages } from "../api/loopApi";
+import { logErr } from "../utils/log";
 
 const PAGE_SIZE = 50;
 
@@ -94,7 +95,7 @@ export function useMessages(channelId: string | null, aroundMessageId?: number |
         setHasMore(resp.next_cursor !== null);
         cursorRef.current = resp.next_cursor;
       })
-      .catch(() => {})
+      .catch(logErr("loading older messages"))
       .finally(() => {
         setLoading(false);
         loadingRef.current = false;

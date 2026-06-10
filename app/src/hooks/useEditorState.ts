@@ -22,6 +22,7 @@ import type { CodeEditorHandle } from "../components/panels/CodeEditor";
 import type { ChatEventListener } from "./useChatStateStore";
 import type { ToolUseData, WSEvent } from "../types";
 import { storageGetJSON, storageSetJSON } from "../utils/storage";
+import { logErr } from "../utils/log";
 
 const EDITOR_TABS_KEY = "loop-editor-tabs";
 
@@ -170,7 +171,7 @@ export function useEditorState(channelId: string, options?: UseEditorStateOption
       if (!d) return;
       if (typeof d.auto_save_on_blur === "boolean") setAutoSaveOnBlur(d.auto_save_on_blur);
       if (typeof d.preview_tabs === "boolean") setPreviewTabsEnabled(d.preview_tabs);
-    }).catch(() => {});
+    }).catch(logErr("loading desktop settings"));
   }, []);
 
   // Persist tab list (excluding preview tab).
@@ -292,7 +293,7 @@ export function useEditorState(channelId: string, options?: UseEditorStateOption
       dirtyContentRef.current.delete(savePath);
       setDirtyTabs((prev) => { if (!prev.has(savePath)) return prev; const next = new Set(prev); next.delete(savePath); return next; });
       if (savePath === selectedPathRef.current) refreshGitChangesRef.current();
-    }).catch(() => {});
+    }).catch(logErr("saving file"));
   }, [channelId]);
 
   const saveAllDirty = useCallback(() => {
@@ -612,7 +613,7 @@ export function useEditorState(channelId: string, options?: UseEditorStateOption
           setDirtyTabs((prev) => { if (!prev.has(pathKey)) return prev; const next = new Set(prev); next.delete(pathKey); return next; });
         }
         refreshGitChangesRef.current();
-      }).catch(() => {});
+      }).catch(logErr("refreshing file on blur"));
     };
     window.addEventListener("blur", onBlur);
     window.addEventListener("focus", onFocus);
@@ -659,7 +660,7 @@ export function useEditorState(channelId: string, options?: UseEditorStateOption
       } else {
         dirtyContentRef.current.delete(pathKey);
       }
-    }).catch(() => {});
+    }).catch(logErr("auto-refreshing file"));
   }, [channelId]);
 
   // Auto-refresh on agent Edit/Write/MultiEdit tool events.

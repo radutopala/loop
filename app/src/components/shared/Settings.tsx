@@ -8,6 +8,7 @@ import { useTheme, DEFAULT_FONT_SIZES } from "../../ThemeContext";
 import { ConfigForm, getSections, type ConfigFormHandle } from "./ConfigForm";
 import { ChannelHeaderInfo } from "../layout/ChannelHeaderInfo";
 import { restoreBuiltins, type BuiltinKind } from "../../api/builtins";
+import { logErr } from "../../utils/log";
 
 function buildHeaderBtnStyle(colors: ColorPalette): React.CSSProperties {
   return {
@@ -119,7 +120,7 @@ export function Settings({ open, projectDirPath, channelId, channel, sidebarOpen
   // Refresh image status when a build completes.
   useEffect(() => {
     if (imageBuildStatus?.state === "completed") {
-      getImageStatus().then(setImageStatus).catch(() => {});
+      getImageStatus().then(setImageStatus).catch(logErr("fetching image status"));
     }
   }, [imageBuildStatus]);
 
@@ -161,7 +162,7 @@ export function Settings({ open, projectDirPath, channelId, channel, sidebarOpen
         }
       } catch { /* ignore parse errors */ }
       // Re-fetch so other sections see the updated values.
-      fetchGlobalConfig().then(setGlobalConfig).catch(() => {});
+      fetchGlobalConfig().then(setGlobalConfig).catch(logErr("re-fetching global config"));
       return null;
     } catch (e: any) {
       return e.message ?? "Failed to save";
@@ -197,7 +198,7 @@ export function Settings({ open, projectDirPath, channelId, channel, sidebarOpen
     try {
       await saveProjectConfig(channelId, content);
       // Re-fetch so other sections see the updated values.
-      fetchProjectConfig(channelId).then(setProjectConfig).catch(() => {});
+      fetchProjectConfig(channelId).then(setProjectConfig).catch(logErr("re-fetching project config"));
       return null;
     } catch (e: any) {
       return e.message ?? "Failed to save";

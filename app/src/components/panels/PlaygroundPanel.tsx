@@ -4,6 +4,7 @@ import { fetchPlayground, fetchPlaygroundItems, getApiUrl, type PlaygroundItem }
 import { useEventStream } from "../../hooks/useEventStream";
 import type { WSEvent } from "../../types";
 import { storageGetJSON, storageSetJSON } from "../../utils/storage";
+import { logErr } from "../../utils/log";
 
 interface PlaygroundCode {
   html: string;
@@ -61,7 +62,7 @@ export function PlaygroundPanel({ channelId }: PlaygroundPanelProps) {
 
   // Load items list on mount.
   useEffect(() => {
-    fetchPlaygroundItems(channelId).then(setItems).catch(() => {});
+    fetchPlaygroundItems(channelId).then(setItems).catch(logErr("fetching playground items"));
   }, [channelId]);
 
   // Load content when active item changes.
@@ -77,7 +78,7 @@ export function PlaygroundPanel({ channelId }: PlaygroundPanelProps) {
         setTitle("");
         setDescription("");
       }
-    }).catch(() => {});
+    }).catch(logErr("loading playground item"));
   }, [activeItem, activeScope, channelId]);
 
   // Listen for live updates from agent via EventsHub.
@@ -99,7 +100,7 @@ export function PlaygroundPanel({ channelId }: PlaygroundPanelProps) {
             const found = list.find((i) => i.name === eventName && i.scope === eventScope);
             selectItem(eventName, found?.scope);
           }
-        }).catch(() => {});
+        }).catch(logErr("refreshing playground items"));
         // Reload active item with fresh content from server.
         if (eventName === activeItemRef.current && eventScope === activeScopeRef.current) {
           if (data.html) {

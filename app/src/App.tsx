@@ -17,6 +17,7 @@ import { WorkflowsGlobalPanel, type WorkflowsGlobalPanelHandle } from "./compone
 import { useChatStateStore, type ActiveChatState } from "./hooks/useChatStateStore";
 import { useAppPanelState } from "./hooks/useAppPanelState";
 import { storageGet, storageSet, storageRemove } from "./utils/storage";
+import { logErr } from "./utils/log";
 
 const LAST_CHANNEL_KEY = "loop-last-channel";
 
@@ -106,7 +107,7 @@ function AppInner() {
     getImageStatus().then((img) => {
       if (img?.status && img.status.state !== "idle") setImageBuildStatus(img.status);
       if (img?.update_available) setImageUpdateAvailable(img.update_available);
-    }).catch(() => {});
+    }).catch(logErr("fetching agent-image status"));
   }, [ready]);
 
   // Sync hash and localStorage with selected channel.
