@@ -84,6 +84,19 @@ func (s *Server) allDirPaths(ctx context.Context, channelID string) ([]string, e
 		return nil, err
 	}
 	paths := []string{dirPath}
+	// Seed the merge from the daemon's global config so global-level
+	// extra_dirs surface as file-tree roots — the agent container mounts
+	// them (the runner seeds from currentConfig()), so the file tree must
+	// list them too. Fall back to an empty base when the global config
+	// can't be loaded.
+	base := &config.Config{}
+	loadCfg := s.loadConfig
+	if loadCfg == nil {
+		loadCfg = config.Load
+	}
+	if global, loadErr := loadCfg(); loadErr == nil && global != nil {
+		base = global
+	}
 	// Worktree channels resolve extra_dirs with three-layer merging
 	// (global → parent → worktree) so the file tree shows the same roots the
 	// agent gets — the parent channel's extra_dirs, not just the parent dir
@@ -91,9 +104,9 @@ func (s *Server) allDirPaths(ctx context.Context, channelID string) ([]string, e
 	// the plain project-config load.
 	var cfg *config.Config
 	if parentDirPath != "" {
-		cfg, err = config.LoadWorktreeProjectConfig(dirPath, parentDirPath, &config.Config{})
+		cfg, err = config.LoadWorktreeProjectConfig(dirPath, parentDirPath, base)
 	} else {
-		cfg, err = config.LoadProjectConfig(dirPath, &config.Config{})
+		cfg, err = config.LoadProjectConfig(dirPath, base)
 	}
 	if err == nil && len(cfg.ExtraDirs) > 0 {
 		for _, p := range cfg.ExtraDirs {
