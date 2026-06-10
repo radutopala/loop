@@ -636,10 +636,19 @@ export function useChatStateStore({
         // events. Snapshot the gate to (a) refill gateApprovals per channel
         // so cards reappear and (b) hand electron-main the canonical req_id
         // list so it can drop bouncer entries with no live request.
-        rehydrateGateApprovals();
-        rehydrateReviewSessions();
-        rehydrateAskUser();
-        rehydrateExitPlan();
+        //
+        // __loopWsRehydrated flags when the reconcile pass has settled: the
+        // rehydrates drop any local card with no backend counterpart, so the
+        // BDD harness must not inject synthetic cards before they finish.
+        window.__loopWsRehydrated = false;
+        void Promise.allSettled([
+          rehydrateGateApprovals(),
+          rehydrateReviewSessions(),
+          rehydrateAskUser(),
+          rehydrateExitPlan(),
+        ]).then(() => {
+          window.__loopWsRehydrated = true;
+        });
       },
       // eslint-disable-next-line react-hooks/exhaustive-deps
       [],
