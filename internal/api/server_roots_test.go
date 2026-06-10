@@ -12,6 +12,7 @@ import (
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 
+	"github.com/radutopala/loop/internal/config"
 	"github.com/radutopala/loop/internal/db"
 	"github.com/radutopala/loop/internal/testutil"
 )
@@ -90,6 +91,61 @@ func (s *ServerSuite) TestAllDirPathsWithExtraDirs() {
 		Return(&db.Channel{ChannelID: "ch-multi", DirPath: tmpDir}, nil)
 
 	paths, err := s.srv.allDirPaths(context.Background(), "ch-multi")
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), []string{tmpDir, "/home/user/lib"}, paths)
+}
+
+// TestAllDirPathsIncludesGlobalExtraDirs covers the global-config seed: a
+// global-level extra_dirs (no project config) surfaces as a file-tree root,
+// matching the mounts the agent container gets from the same merge.
+func (s *ServerSuite) TestAllDirPathsIncludesGlobalExtraDirs() {
+	tmpDir := s.T().TempDir() // no .loop/config.json — project sets nothing
+	s.srv.loadConfig = func() (*config.Config, error) {
+		return &config.Config{ExtraDirs: []string{"/home/user/global-lib"}}, nil
+	}
+
+	s.store.On("GetChannel", mock.Anything, "ch-global").
+		Return(&db.Channel{ChannelID: "ch-global", DirPath: tmpDir}, nil)
+
+	paths, err := s.srv.allDirPaths(context.Background(), "ch-global")
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), []string{tmpDir, "/home/user/global-lib"}, paths)
+}
+
+// TestAllDirPathsNilLoadConfigFallsBackToConfigLoad covers the nil-loader
+// branch (production default): allDirPaths falls back to config.Load. The
+// host's real global config may or may not define extra_dirs, so only the
+// primary root is asserted.
+func (s *ServerSuite) TestAllDirPathsNilLoadConfigFallsBackToConfigLoad() {
+	tmpDir := s.T().TempDir()
+	s.srv.loadConfig = nil
+
+	s.store.On("GetChannel", mock.Anything, "ch-nilload").
+		Return(&db.Channel{ChannelID: "ch-nilload", DirPath: tmpDir}, nil)
+
+	paths, err := s.srv.allDirPaths(context.Background(), "ch-nilload")
+	require.NoError(s.T(), err)
+	require.NotEmpty(s.T(), paths)
+	require.Equal(s.T(), tmpDir, paths[0])
+}
+
+// TestAllDirPathsGlobalConfigLoadError falls back to an empty base when the
+// global config can't be loaded — project extra_dirs still resolve.
+func (s *ServerSuite) TestAllDirPathsGlobalConfigLoadError() {
+	tmpDir := s.T().TempDir()
+	loopDir := filepath.Join(tmpDir, ".loop")
+	require.NoError(s.T(), os.MkdirAll(loopDir, 0755))
+	require.NoError(s.T(), os.WriteFile(
+		filepath.Join(loopDir, "config.json"),
+		[]byte(`{"extra_dirs": ["/home/user/lib"]}`),
+		0644,
+	))
+	s.srv.loadConfig = func() (*config.Config, error) { return nil, fmt.Errorf("boom") }
+
+	s.store.On("GetChannel", mock.Anything, "ch-loaderr").
+		Return(&db.Channel{ChannelID: "ch-loaderr", DirPath: tmpDir}, nil)
+
+	paths, err := s.srv.allDirPaths(context.Background(), "ch-loaderr")
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), []string{tmpDir, "/home/user/lib"}, paths)
 }

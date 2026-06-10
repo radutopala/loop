@@ -20,6 +20,7 @@ import (
 	tk "github.com/radutopala/ticket/pkg/ticket"
 
 	"github.com/radutopala/loop/internal/bot"
+	"github.com/radutopala/loop/internal/config"
 	"github.com/radutopala/loop/internal/memory"
 	"github.com/radutopala/loop/internal/testutil"
 )
@@ -207,6 +208,9 @@ func (s *ServerSuite) SetupTest() {
 	s.messages = new(MockMessageSender)
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	s.srv = NewServer(s.scheduler, s.channels, s.threads, s.store, s.messages, logger)
+	// Hermetic global config: allDirPaths seeds its merge from loadConfig;
+	// without this the suite would read the developer's real ~/.loop/config.json.
+	s.srv.loadConfig = func() (*config.Config, error) { return &config.Config{}, nil }
 
 	s.sys = new(testutil.MockSystem)
 	s.sys.On("ReadDir", mock.Anything).Return(nil, nil)
