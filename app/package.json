@@ -69,5 +69,9 @@
     "vite-plugin-electron": "^0.28.0",
     "vite-plugin-electron-renderer": "^0.14.0",
     "vitest": "^4.1.8"
+  },
+  "optionalDependencies": {
+    "@rollup/rollup-linux-arm64-gnu": "^4.60.2",
+    "@rollup/rollup-linux-x64-gnu": "^4.60.2"
   }
 }
