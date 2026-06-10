@@ -273,7 +273,7 @@ func busFactor(commits []CommitFiles, o Options) []BusFactorRisk {
 			st.byAuthor[c.Author]++
 		}
 	}
-	for f, st := range files {
+	for _, st := range files {
 		dominant := ""
 		dominantCount := 0
 		for author, n := range st.byAuthor {
@@ -283,7 +283,6 @@ func busFactor(commits []CommitFiles, o Options) []BusFactorRisk {
 			}
 		}
 		st.soleCandidate = dominant
-		_ = f
 	}
 	for _, c := range commits {
 		for _, f := range c.Files {
