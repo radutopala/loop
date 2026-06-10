@@ -112,6 +112,11 @@ jobs:
   component-bdd:
     needs: ensure-test-runner
     runs-on: ubuntu-latest
+    # The job container is pulled with the job's GITHUB_TOKEN — it needs
+    # packages:read for the ghcr test-runner image.
+    permissions:
+      contents: read
+      packages: read
     container:
       image: ghcr.io/radutopala/loop/test-runner:latest
     steps:
@@ -122,6 +127,9 @@ jobs:
   component-perf:
     needs: ensure-test-runner
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: read
     container:
       image: ghcr.io/radutopala/loop/test-runner:latest
     steps:
