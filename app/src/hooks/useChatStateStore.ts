@@ -79,6 +79,10 @@ export function useChatStateStore({
 }: UseChatStateStoreOptions) {
   const storeRef = useRef(new Map<string, ActiveChatState>());
   const isRunningMapRef = useRef(new Map<string, string>());
+  // req_ids of gate approvals injected via the loop:test-event hook; exempt
+  // from rehydrate reconciliation (they have no backend counterpart). Only
+  // populated by the test hook — empty in production.
+  const syntheticGateReqIdsRef = useRef(new Set<string>());
   const unreadIdsRef = useRef(new Set<string>());
   const gateChannelIdsRef = useRef(new Set<string>());
   const reviewChannelIdsRef = useRef(new Set<string>());
@@ -188,8 +192,11 @@ export function useChatStateStore({
 
     const now = Date.now();
     // 1. Synthesize a resolved event for any local entry missing from snapshot.
+    // Synthetic test-hook gates are exempt — they never have a backend
+    // counterpart and would be wiped on every (re)connect mid-test.
     for (const [channelId, state] of storeRef.current) {
       for (const entry of Object.values(state.gateApprovals)) {
+        if (syntheticGateReqIdsRef.current.has(entry.req_id)) continue;
         if (!valid.has(entry.req_id)) {
           const event: WSEvent = {
             type: "gate.approval_resolved",
@@ -420,10 +427,25 @@ export function useChatStateStore({
   // detail (a stringified WSEvent) through the same onMessage handler the real
   // WebSocket uses. Lets headless browser tests render plan/approval cards
   // without spinning up a real agent run.
+  //
+  // Synthetic gate approvals are remembered in syntheticGateReqIdsRef so
+  // rehydrateGateApprovals can exempt them from reconciliation: they have no
+  // backend counterpart, and a WS (re)connect mid-scenario would otherwise
+  // wipe the injected card while the test is still asserting on it. The set
+  // only ever grows via this hook, so production behavior is untouched.
   const onMessageRef = useRef<((event: MessageEvent) => void) | null>(null);
   useEffect(() => {
     const handler = (e: Event) => {
       const ce = e as CustomEvent<string>;
+      try {
+        const parsed = JSON.parse(ce.detail) as WSEvent;
+        if (parsed.type === "gate.approval_requested") {
+          const reqID = (parsed.data as GateApprovalRequestedData | undefined)?.req_id;
+          if (reqID) syntheticGateReqIdsRef.current.add(reqID);
+        }
+      } catch {
+        // Malformed test payloads fall through to onMessage's own parse guard.
+      }
       onMessageRef.current?.({ data: ce.detail } as MessageEvent);
     };
     window.addEventListener("loop:test-event", handler);
