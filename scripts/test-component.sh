@@ -15,7 +15,7 @@ if [ -f /.dockerenv ] && ! command -v chromium &> /dev/null && [ -z "$CHROME_CDP
     apt-get update -qq > /dev/null 2>&1
     apt-get install -yqq curl chromium > /dev/null 2>&1
     if ! command -v node &> /dev/null; then
-        curl -fsSL https://deb.nodesource.com/setup_22.x | bash - > /dev/null 2>&1
+        curl -fsSL https://deb.nodesource.com/setup_24.x | bash - > /dev/null 2>&1
         apt-get install -yqq nodejs > /dev/null 2>&1
     fi
 fi
