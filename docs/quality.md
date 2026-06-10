@@ -122,6 +122,8 @@ loop quality scan --json | jq -e '.rules.failed | length == 0'
 
 ### Desktop panel
 
+![The Quality panel split into the chat layout: band-coloured signal headline, six metric cards, and the per-file deficit treemap](static/images/features/quality-panel.png)
+
 `QualityPanel.tsx` (`app/src/components/panels/QualityPanel.tsx`). Available as a per-channel split-pane panel; opens via the `+` panel switcher or the chat-bar quality indicator.
 
 Layout, top to bottom:
