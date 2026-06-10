@@ -85,6 +85,10 @@ var migrations = []Migration{
 			return err
 		},
 	},
+	{
+		Description: "refresh container/ files: Node 22 via nodesource (Debian's Node 20 is EOL)",
+		Apply:       refreshContainerFiles,
+	},
 }
 
 // versionedContainerFiles are tracked by the daemon: each release ships a

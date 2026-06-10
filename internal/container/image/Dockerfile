@@ -4,13 +4,18 @@ RUN go install golang.org/x/tools/gopls@latest
 
 FROM golang:1.26
 ENV GOTOOLCHAIN=auto
+# Node comes from nodesource (22.x LTS, npm bundled) instead of Debian's
+# distro package — Debian ships Node 20, which is end-of-life. Keep the
+# version in sync with scripts/test-runner.Dockerfile and the CI
+# node-version pins.
 RUN apt-get update && apt-get install -y --no-install-recommends \
         bash ca-certificates curl git make patch \
-        nodejs npm \
         docker-cli docker-compose \
         gosu ripgrep openssh-client \
         python3 python3-pip python3-venv \
         gcc libc6-dev \
+    && curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
+    && apt-get install -y --no-install-recommends nodejs \
     && rm -rf /var/lib/apt/lists/*
 RUN pip install --break-system-packages --no-cache-dir pre-commit uv awscli
 ENV USE_BUILTIN_RIPGREP=0
