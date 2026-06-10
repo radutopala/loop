@@ -362,6 +362,16 @@ export function GitPanel({ channelId, dirPath, branch, maximized, sidebarOpen, t
     lineHeight: "20px",
   });
 
+  // The file-count / +adds -dels counters next to the tabs. Mirrors the tabs'
+  // vertical geometry (20px line + 4px bottom chrome) so the numbers sit on
+  // the same optical line as the tab labels — a bare span would flex-center
+  // ~2px lower because the tabs' underline chrome hangs below their text.
+  const modeStatStyle: React.CSSProperties = {
+    fontSize: 10,
+    lineHeight: "20px",
+    paddingBottom: 4,
+  };
+
   const gitToolbar = (
     <div
       style={{
@@ -387,9 +397,9 @@ export function GitPanel({ channelId, dirPath, branch, maximized, sidebarOpen, t
           <button style={modeTabStyle(gitMode === "commits")} onClick={() => setGitMode("commits")}>Commits</button>
           {hasBranch && <button style={modeTabStyle(gitMode === "branchlist")} onClick={() => setGitMode("branchlist")}>Branches</button>}
           {hasBranch && <button style={modeTabStyle(gitMode === "worktrees")} onClick={() => setGitMode("worktrees")}>Worktrees</button>}
-          {gitMode !== "commits" && gitMode !== "worktrees" && gitMode !== "branchlist" && totalFiles > 0 && <span style={{ fontSize: 10, color: colors.textDim }}>{totalFiles}</span>}
+          {gitMode !== "commits" && gitMode !== "worktrees" && gitMode !== "branchlist" && totalFiles > 0 && <span style={{ ...modeStatStyle, color: colors.textDim }}>{totalFiles}</span>}
           {gitMode !== "commits" && gitMode !== "worktrees" && gitMode !== "branchlist" && (totalAdd > 0 || totalDel > 0) && (
-            <span style={{ fontSize: 10, fontFamily: fonts.mono }}>
+            <span style={{ ...modeStatStyle, fontFamily: fonts.mono }}>
               <span style={{ color: colors.diffAddText }}>+{totalAdd}</span>{" "}
               <span style={{ color: colors.diffDelText }}>-{totalDel}</span>
             </span>
@@ -713,12 +723,12 @@ export function GitPanel({ channelId, dirPath, branch, maximized, sidebarOpen, t
               {hasBranch && <button style={modeTabStyle(gitMode === "branchlist")} onClick={() => setGitMode("branchlist")}>Branches</button>}
           {hasBranch && <button style={modeTabStyle(gitMode === "worktrees")} onClick={() => setGitMode("worktrees")}>Worktrees</button>}
               {gitMode !== "commits" && gitMode !== "worktrees" && gitMode !== "branchlist" && totalFiles > 0 && (
-                <span style={{ fontSize: 10, color: colors.textDim }}>
+                <span style={{ ...modeStatStyle, color: colors.textDim }}>
                   {totalFiles}
                 </span>
               )}
               {gitMode !== "commits" && gitMode !== "worktrees" && gitMode !== "branchlist" && (totalAdd > 0 || totalDel > 0) && (
-                <span style={{ fontSize: 10, fontFamily: fonts.mono }}>
+                <span style={{ ...modeStatStyle, fontFamily: fonts.mono }}>
                   <span style={{ color: colors.diffAddText }}>+{totalAdd}</span>
                   {" "}
                   <span style={{ color: colors.diffDelText }}>-{totalDel}</span>
@@ -736,12 +746,12 @@ export function GitPanel({ channelId, dirPath, branch, maximized, sidebarOpen, t
               {hasBranch && <button style={modeTabStyle(gitMode === "branchlist")} onClick={() => setGitMode("branchlist")}>Branches</button>}
           {hasBranch && <button style={modeTabStyle(gitMode === "worktrees")} onClick={() => setGitMode("worktrees")}>Worktrees</button>}
               {gitMode !== "commits" && gitMode !== "worktrees" && gitMode !== "branchlist" && totalFiles > 0 && (
-                <span style={{ fontSize: 10, color: colors.textDim }}>
+                <span style={{ ...modeStatStyle, color: colors.textDim }}>
                   {totalFiles}
                 </span>
               )}
               {gitMode !== "commits" && gitMode !== "worktrees" && gitMode !== "branchlist" && (totalAdd > 0 || totalDel > 0) && (
-                <span style={{ fontSize: 10, fontFamily: fonts.mono }}>
+                <span style={{ ...modeStatStyle, fontFamily: fonts.mono }}>
                   <span style={{ color: colors.diffAddText }}>+{totalAdd}</span>
                   {" "}
                   <span style={{ color: colors.diffDelText }}>-{totalDel}</span>
