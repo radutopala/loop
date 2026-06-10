@@ -46,6 +46,20 @@ Feature: Documentation walkthrough
     And I wait up to "90s" for "button[title='Stop']" to disappear
     And I wait "4s"
     And I capture screenshot "chat-conversation"
+    # Security gate — a synthetic approval card (same component the real gate
+    # mounts when a risky operation pauses for the operator's decision).
+    And I wait "2s"
+    And I show caption "Security gate — risky operations pause for your approval"
+    And I wait "4s"
+    And I hide caption
+    And I wait "2s"
+    And I inject a gate.approval_requested event with req_id "docs-gate", source "chat", and target "/root/.ssh/authorized_keys"
+    And I wait for text "/root/.ssh/authorized_keys" to appear
+    And I wait "3s"
+    And I capture screenshot "gate-approval"
+    And I inject a gate.approval_resolved event with req_id "docs-gate"
+    And I wait for text "/root/.ssh/authorized_keys" to disappear
+    And I wait "2s"
     # Prompt shortcuts — two ways to open the picker. First: click the # button.
     And I wait "2s"
     And I show caption "Prompt shortcuts — click the # button to pick a reusable prompt"
@@ -294,6 +308,29 @@ Feature: Documentation walkthrough
     And I wait "2s"
     And I click on "[data-testid='layout-tab-Workflows']"
     And I wait "3s"
+    # Review — the tab is present because the sample project sets review.enabled
+    And I wait "2s"
+    And I show caption "Review — an agent pass over your diff, with comments pushed back inline"
+    And I wait "4s"
+    And I hide caption
+    And I wait "2s"
+    And I click on "[data-testid='layout-tab-Review']"
+    And I wait "3s"
+    And I capture screenshot "review-panel"
+    # Quality — split the panel into the Chat layout, run a scan, show the signal
+    And I wait "2s"
+    And I show caption "Quality — one architectural signal, with a treemap of hotspots"
+    And I wait "4s"
+    And I hide caption
+    And I wait "2s"
+    And I click on "[data-testid='layout-tab-Chat']"
+    And I wait "2s"
+    And I add a "Quality" panel
+    And I wait "2s"
+    And I click on the button with text "Scan now"
+    And I wait up to "60s" for text "Modularity" to appear
+    And I wait "3s"
+    And I capture screenshot "quality-panel"
     # Multi-panel — compose a custom workspace: split a Host Shell under the Git panel
     And I wait "2s"
     And I show caption "Compose your own workspace — split any panel into the layout"
