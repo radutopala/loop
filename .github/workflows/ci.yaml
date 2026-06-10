@@ -9,7 +9,13 @@ on:
 
 permissions:
   contents: read
-  packages: write
+
+# Supersede in-flight runs of the same branch/PR so rapid pushes don't
+# stack jobs. Pushes to main keep running to completion (unique group per
+# commit) so merge-commit CI history stays complete.
+concurrency:
+  group: ci-${{ github.ref }}-${{ github.ref == 'refs/heads/main' && github.sha || '' }}
+  cancel-in-progress: true
 
 jobs:
   test:
@@ -76,6 +82,10 @@ jobs:
 
   ensure-test-runner:
     runs-on: ubuntu-latest
+    # The only job that pushes to ghcr; everything else runs read-only.
+    permissions:
+      contents: read
+      packages: write
     steps:
       - uses: actions/checkout@v6
       - name: Log in to GitHub Container Registry

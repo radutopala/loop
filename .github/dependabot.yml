@@ -1,0 +1,28 @@
+# Automated dependency updates. Minor/patch bumps are grouped into a single
+# weekly PR per ecosystem to keep the noise down; majors stay individual so
+# breaking changes get their own review.
+version: 2
+updates:
+  - package-ecosystem: gomod
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      go-minor-patch:
+        update-types: [minor, patch]
+
+  - package-ecosystem: npm
+    directory: /app
+    schedule:
+      interval: weekly
+    groups:
+      npm-minor-patch:
+        update-types: [minor, patch]
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      actions-all:
+        update-types: [major, minor, patch]

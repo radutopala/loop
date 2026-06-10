@@ -13,6 +13,12 @@ on:
 permissions:
   contents: write
 
+# On tag push this is the pushed tag. On manual dispatch github.ref_name
+# would be the branch the workflow ran from, not the release — use the
+# entered tag input instead so re-runs operate on the right release.
+env:
+  RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+
 jobs:
   goreleaser:
     runs-on: ubuntu-latest
@@ -21,6 +27,7 @@ jobs:
         uses: actions/checkout@v6
         with:
           fetch-depth: 0
+          ref: ${{ env.RELEASE_TAG }}
 
       - name: Set up Go
         uses: actions/setup-go@v6
@@ -31,7 +38,7 @@ jobs:
         uses: goreleaser/goreleaser-action@v6
         with:
           distribution: goreleaser
-          version: latest
+          version: "~> v2"
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -51,15 +58,17 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v6
+        with:
+          ref: ${{ env.RELEASE_TAG }}
 
       - name: Download loop binary from release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          VERSION="${GITHUB_REF_NAME#v}"
+          VERSION="${RELEASE_TAG#v}"
           ARCHIVE="loop_${VERSION}_darwin_${{ matrix.goreleaser_arch }}.tar.gz"
           mkdir -p app/resources/mac/${{ matrix.arch }}
-          gh release download "${{ github.ref_name }}" --pattern "$ARCHIVE" --dir /tmp
+          gh release download "$RELEASE_TAG" --pattern "$ARCHIVE" --dir /tmp
           tar -xzf "/tmp/$ARCHIVE" -C app/resources/mac/${{ matrix.arch }}
 
       - name: Set up Node.js
@@ -88,7 +97,7 @@ jobs:
         # npm ci retried: the Electron postinstall download intermittently 504s.
         run: |
           cd app && (npm ci || (sleep 20 && npm ci) || (sleep 60 && npm ci))
-          npm pkg set version="${GITHUB_REF_NAME#v}"
+          npm pkg set version="${RELEASE_TAG#v}"
 
       - name: Build, sign, and notarize
         env:
@@ -100,7 +109,7 @@ jobs:
       - name: Upload DMG, ZIP, and blockmap to release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: gh release upload "${{ github.ref_name }}" app/release/*.dmg app/release/*.zip app/release/*.blockmap --clobber
+        run: gh release upload "$RELEASE_TAG" app/release/*.dmg app/release/*.zip app/release/*.blockmap --clobber
 
       - name: Save update manifest
         uses: actions/upload-artifact@v7
@@ -122,15 +131,17 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v6
+        with:
+          ref: ${{ env.RELEASE_TAG }}
 
       - name: Download loop binary from release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          VERSION="${GITHUB_REF_NAME#v}"
+          VERSION="${RELEASE_TAG#v}"
           ARCHIVE="loop_${VERSION}_linux_${{ matrix.goreleaser_arch }}.tar.gz"
           mkdir -p app/resources/linux/${{ matrix.arch }}
-          gh release download "${{ github.ref_name }}" --pattern "$ARCHIVE" --dir /tmp
+          gh release download "$RELEASE_TAG" --pattern "$ARCHIVE" --dir /tmp
           tar -xzf "/tmp/$ARCHIVE" -C app/resources/linux/${{ matrix.arch }}
 
       - name: Set up Node.js
@@ -144,7 +155,7 @@ jobs:
         # npm ci retried: the Electron postinstall download intermittently 504s.
         run: |
           cd app && (npm ci || (sleep 20 && npm ci) || (sleep 60 && npm ci))
-          npm pkg set version="${GITHUB_REF_NAME#v}"
+          npm pkg set version="${RELEASE_TAG#v}"
 
       - name: Build AppImage and deb
         run: cd app && npm run dist:linux:${{ matrix.arch }} -- --publish never
@@ -152,7 +163,7 @@ jobs:
       - name: Upload Linux artifacts to release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: gh release upload "${{ github.ref_name }}" app/release/*.AppImage app/release/*.deb --clobber
+        run: gh release upload "$RELEASE_TAG" app/release/*.AppImage app/release/*.deb --clobber
 
       - name: Save update manifest
         if: hashFiles('app/release/latest-linux.yml') != ''
@@ -175,16 +186,18 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v6
+        with:
+          ref: ${{ env.RELEASE_TAG }}
 
       - name: Download loop binary from release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         shell: bash
         run: |
-          VERSION="${GITHUB_REF_NAME#v}"
+          VERSION="${RELEASE_TAG#v}"
           ARCHIVE="loop_${VERSION}_windows_${{ matrix.goreleaser_arch }}.zip"
           mkdir -p app/resources/win/${{ matrix.arch }}
-          gh release download "${{ github.ref_name }}" --pattern "$ARCHIVE" --dir "$RUNNER_TEMP"
+          gh release download "$RELEASE_TAG" --pattern "$ARCHIVE" --dir "$RUNNER_TEMP"
           unzip "$RUNNER_TEMP/$ARCHIVE" -d app/resources/win/${{ matrix.arch }}
 
       - name: Set up Node.js
@@ -199,7 +212,7 @@ jobs:
         shell: bash
         run: |
           cd app && (npm ci || (sleep 20 && npm ci) || (sleep 60 && npm ci))
-          npm pkg set version="${GITHUB_REF_NAME#v}"
+          npm pkg set version="${RELEASE_TAG#v}"
 
       - name: Build NSIS installer
         # Retried: electron-builder's NSIS binary download intermittently 504s
@@ -211,7 +224,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         shell: bash
-        run: gh release upload "${{ github.ref_name }}" app/release/*.exe --clobber
+        run: gh release upload "$RELEASE_TAG" app/release/*.exe --clobber
 
       - name: Save update manifest
         if: hashFiles('app/release/latest.yml') != ''
@@ -278,5 +291,5 @@ jobs:
           [ -f latest-linux.yml ] && FILES="$FILES latest-linux.yml"
           [ -f latest.yml ] && FILES="$FILES latest.yml"
           if [ -n "$FILES" ]; then
-            gh release upload "${{ github.ref_name }}" $FILES --clobber --repo "${{ github.repository }}"
+            gh release upload "$RELEASE_TAG" $FILES --clobber --repo "${{ github.repository }}"
           fi
