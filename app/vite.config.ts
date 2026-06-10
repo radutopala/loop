@@ -10,23 +10,34 @@ import renderer from "vite-plugin-electron-renderer";
 mkdirSync("dist-electron", { recursive: true });
 copyFileSync("electron/preload.cjs", "dist-electron/preload.cjs");
 
+// LOOP_NO_ELECTRON=1 skips the Electron plugins so `vite` serves the renderer
+// as a plain browser app — `npm run dev` inside a Linux/agent container would
+// otherwise auto-launch the host-platform Electron binary and crash. The
+// browser-targeted vite.browser.config.ts used by the BDD harness covers the
+// same need for tests; this flag covers interactive dev.
+const noElectron = process.env.LOOP_NO_ELECTRON === "1";
+
 export default defineConfig({
   plugins: [
     react(),
-    electron([
-      {
-        entry: "electron/main.ts",
-        vite: {
-          build: {
-            outDir: "dist-electron",
-            rollupOptions: {
-              external: ["electron"],
+    ...(noElectron
+      ? []
+      : [
+          electron([
+            {
+              entry: "electron/main.ts",
+              vite: {
+                build: {
+                  outDir: "dist-electron",
+                  rollupOptions: {
+                    external: ["electron"],
+                  },
+                },
+              },
             },
-          },
-        },
-      },
-    ]),
-    renderer(),
+          ]),
+          renderer(),
+        ]),
   ],
   base: "./",
   server: {
