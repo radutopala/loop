@@ -485,9 +485,12 @@ func (s *CDPSuite) TestMakeAxTreeFuncFallbackUnmarshal() {
 			Nodes []json.RawMessage `json:"nodes"`
 		})
 		raw.Nodes = []json.RawMessage{
-			// A node with an unknown enum that causes strict unmarshal to fail,
-			// but fallback parsing should succeed.
-			json.RawMessage(`{"nodeId":"n1","role":{"type":"role","value":"button"},"name":{"type":"string","value":"Submit"},"description":{"type":"string","value":"desc"},"value":{"type":"string","value":"val"},"backendDOMNodeId":42,"ignoredReasons":[{"name":"uninteresting"}]}`),
+			// A node that fails cdproto's strict unmarshal but succeeds via the
+			// lenient fallback. childIds carries the wrong TYPE (number, not
+			// array) so the failure is version-independent — enum-based fixtures
+			// (e.g. ignoredReasons "uninteresting") stop failing once cdproto
+			// learns the value, silently skipping the fallback path.
+			json.RawMessage(`{"nodeId":"n1","childIds":123,"role":{"type":"role","value":"button"},"name":{"type":"string","value":"Submit"},"description":{"type":"string","value":"desc"},"value":{"type":"string","value":"val"},"backendDOMNodeId":42}`),
 		}
 		return nil
 	}

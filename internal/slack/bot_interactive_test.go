@@ -88,37 +88,26 @@ func (s *BotSuite) TestRemoveStopButton() {
 }
 
 func (s *BotSuite) TestSendApprovalRendersThreeButtons() {
-	var captured goslack.Blocks
-	s.session.On("PostMessage", "C123", mock.MatchedBy(func(opts []goslack.MsgOption) bool {
-		_, values, err := goslack.UnsafeApplyMsgOptions("xoxb-test", "C123", "https://slack.test/", opts...)
-		if err != nil {
-			return false
-		}
-		blob := values.Get("blocks")
-		if blob == "" {
-			return false
-		}
-		return captured.UnmarshalJSON([]byte(blob)) == nil
-	})).Return("C123", "1234567890.000001", nil)
+	// slack-go ≥ 0.18 no longer exposes blocks via UnsafeApplyMsgOptions, so
+	// block content is asserted on approvalBlocks directly; the mock only
+	// verifies the message is posted to the right channel.
+	s.session.On("PostMessage", "C123", mock.Anything).Return("C123", "1234567890.000001", nil)
 
-	msgID, err := s.bot.SendApproval(context.Background(), "C123", bot.ApprovalPrompt{
+	prompt := bot.ApprovalPrompt{
 		ID:      "req-1",
 		Kind:    "execve",
 		Target:  "git push origin main",
 		Message: "write-side git op",
-	})
+	}
+	msgID, err := s.bot.SendApproval(context.Background(), "C123", prompt)
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), "1234567890.000001", msgID)
 	s.session.AssertExpectations(s.T())
 
-	require.Len(s.T(), captured.BlockSet, 2)
-	section, ok := captured.BlockSet[0].(*goslack.SectionBlock)
-	require.True(s.T(), ok)
+	section, actions := approvalBlocks(prompt)
 	require.Contains(s.T(), section.Text.Text, "git push origin main")
 	require.Contains(s.T(), section.Text.Text, "write-side git op")
 
-	actions, ok := captured.BlockSet[1].(*goslack.ActionBlock)
-	require.True(s.T(), ok)
 	require.Equal(s.T(), "gate_actions:req-1", actions.BlockID)
 	require.Len(s.T(), actions.Elements.ElementSet, 3)
 
@@ -158,30 +147,21 @@ func (s *BotSuite) TestSendApprovalThreadedChannel() {
 }
 
 func (s *BotSuite) TestSendApprovalRendersDetailsInHeader() {
-	var captured goslack.Blocks
-	s.session.On("PostMessage", "C123", mock.MatchedBy(func(opts []goslack.MsgOption) bool {
-		_, values, err := goslack.UnsafeApplyMsgOptions("xoxb-test", "C123", "https://slack.test/", opts...)
-		if err != nil {
-			return false
-		}
-		blob := values.Get("blocks")
-		return blob != "" && captured.UnmarshalJSON([]byte(blob)) == nil
-	})).Return("C123", "1234567890.000002", nil)
+	s.session.On("PostMessage", "C123", mock.Anything).Return("C123", "1234567890.000002", nil)
 
-	_, err := s.bot.SendApproval(context.Background(), "C123", bot.ApprovalPrompt{
+	prompt := bot.ApprovalPrompt{
 		ID:     "req-d",
 		Target: "POST /containers/create",
 		Details: map[string]string{
 			"image":      "alpine:3.20",
 			"privileged": "true",
 		},
-	})
+	}
+	_, err := s.bot.SendApproval(context.Background(), "C123", prompt)
 	require.NoError(s.T(), err)
 	s.session.AssertExpectations(s.T())
 
-	require.Len(s.T(), captured.BlockSet, 2)
-	section, ok := captured.BlockSet[0].(*goslack.SectionBlock)
-	require.True(s.T(), ok)
+	section, _ := approvalBlocks(prompt)
 	require.Contains(s.T(), section.Text.Text, "> `image`: alpine:3.20")
 	require.Contains(s.T(), section.Text.Text, "> `privileged`: true")
 }
