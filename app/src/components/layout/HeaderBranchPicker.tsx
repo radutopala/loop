@@ -2,6 +2,7 @@ import { useState, useCallback, useEffect, useRef } from "react";
 import { fetchBranches, switchBranch, type BranchInfo } from "../../api/loopApi";
 import { fonts } from "../../theme";
 import { useTheme } from "../../ThemeContext";
+import { logErr } from "../../utils/log";
 
 export function HeaderBranchPicker({ channelId, branch, onBranchChanged, onCreateWorktree, onImportWorktree, onSelectThread, onError }: {
   channelId: string;
@@ -31,7 +32,7 @@ export function HeaderBranchPicker({ channelId, branch, onBranchChanged, onCreat
   const handleOpen = useCallback(() => {
     setOpen(true);
     setSearch("");
-    fetchBranches(channelId).then(setBranchInfo).catch(() => {});
+    fetchBranches(channelId).then(setBranchInfo).catch(logErr("fetching branches"));
     setTimeout(() => searchRef.current?.focus(), 0);
   }, [channelId]);
 

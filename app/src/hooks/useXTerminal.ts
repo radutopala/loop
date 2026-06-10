@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef } from "react";
 import type { RefObject } from "react";
 import "@xterm/xterm/css/xterm.css";
 import { type ColorPalette, fonts } from "../theme";
+import { logErr } from "../utils/log";
 
 // Patterns matching terminal→app *report replies* that xterm.js emits in
 // answer to capability queries. These must never be forwarded to the PTY as
@@ -323,7 +324,7 @@ export function useXTerminal({
         if (e.button !== 0) return;
         const sel = term.getSelection() || dragSel;
         if (sel) {
-          void navigator.clipboard.writeText(sel).catch(() => {});
+          void navigator.clipboard.writeText(sel).catch(logErr("copying terminal selection"));
         }
       };
       document.addEventListener("mouseup", onCopySelection);

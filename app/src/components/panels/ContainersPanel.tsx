@@ -6,6 +6,7 @@ import { fonts } from "../../theme";
 import type { ColorPalette } from "../../theme";
 import { useTheme } from "../../ThemeContext";
 import { ChannelHeaderInfo } from "../layout/ChannelHeaderInfo";
+import { logErr } from "../../utils/log";
 
 function buildHeaderBtnStyle(colors: ColorPalette): React.CSSProperties {
   return {
@@ -74,7 +75,7 @@ export const ContainersPanel = forwardRef<ContainersPanelHandle, ContainersPanel
   useEffect(() => {
     fetchContainers()
       .then(setContainers)
-      .catch(() => {});
+      .catch(logErr("fetching containers"));
   }, []);
 
   const handleContainerEvent = useCallback((event: WSEvent) => {

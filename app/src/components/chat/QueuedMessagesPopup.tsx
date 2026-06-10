@@ -3,6 +3,7 @@ import type { Message } from "../../types";
 import { fonts } from "../../theme";
 import { useTheme } from "../../ThemeContext";
 import { deleteQueuedMessage, reorderQueuedMessages } from "../../api/loopApi";
+import { logErr } from "../../utils/log";
 
 interface QueuedMessagesPopupProps {
   messages: Message[];
@@ -102,7 +103,7 @@ export function QueuedMessagesPopup({ messages, channelId }: QueuedMessagesPopup
     ids.splice(to, 0, dragged);
     if (ids.length === original.length && ids.every((id, i) => id === original[i])) return; // no-op
     setOrder(ids);
-    reorderQueuedMessages(channelId, ids).catch(() => {});
+    reorderQueuedMessages(channelId, ids).catch(logErr("reordering queued messages"));
   };
 
   return (

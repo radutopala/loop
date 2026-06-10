@@ -7,6 +7,7 @@ import { FilePanel } from "./FilePanel";
 import { MemoryFileList, type TreeNode } from "./MemoryFileList";
 import { MemoryFileViewer } from "./MemoryFileViewer";
 import { storageGet, storageSet, storageGetJSON, storageSetJSON } from "../../utils/storage";
+import { logErr } from "../../utils/log";
 
 const TREE_MIN_WIDTH = 120;
 const TREE_MAX_WIDTH = 400;
@@ -94,7 +95,7 @@ export function MemoryPanel({ channelId, dirPath, branch, embedded, openMemoryFi
       if (!d) return;
       if (typeof d.auto_save_on_blur === "boolean") setAutoSaveOnBlur(d.auto_save_on_blur);
       if (typeof d.preview_tabs === "boolean") setPreviewTabsEnabled(d.preview_tabs);
-    }).catch(() => {});
+    }).catch(logErr("loading desktop settings"));
   }, []);
 
   // Persist tabs (exclude preview tab).
@@ -160,7 +161,7 @@ export function MemoryPanel({ channelId, dirPath, branch, embedded, openMemoryFi
     saveMemoryFileContent(channelIdRef.current, savePath, content).then(() => {
       dirtyContentRef.current.delete(savePath);
       setDirtyTabs((prev) => { if (!prev.has(savePath)) return prev; const next = new Set(prev); next.delete(savePath); return next; });
-    }).catch(() => {});
+    }).catch(logErr("saving memory file"));
   }, []);
 
   const saveAllDirty = useCallback(() => {
@@ -277,7 +278,7 @@ export function MemoryPanel({ channelId, dirPath, branch, embedded, openMemoryFi
           view.dispatch({ changes: { from: 0, to: current.length, insert: content } });
           setDirtyTabs((prev) => { if (!prev.has(path)) return prev; const next = new Set(prev); next.delete(path); return next; });
         }
-      }).catch(() => {});
+      }).catch(logErr("refreshing memory file on blur"));
     };
     window.addEventListener("blur", onBlur);
     window.addEventListener("focus", onFocus);

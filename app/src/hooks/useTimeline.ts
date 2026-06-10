@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { Message, TimelineCursor, TimelineItem } from "../types";
 import { fetchTimeline } from "../api/loopApi";
+import { logErr } from "../utils/log";
 
 const PAGE_SIZE = 50;
 
@@ -102,7 +103,7 @@ export function useTimeline(channelId: string | null): UseTimelineResult {
         setHasMore(resp.next_cursor !== null);
         cursorRef.current = resp.next_cursor;
       })
-      .catch(() => {})
+      .catch(logErr("loading older timeline items"))
       .finally(() => {
         setLoading(false);
         loadingRef.current = false;
@@ -269,7 +270,7 @@ export function useTimeline(channelId: string | null): UseTimelineResult {
       setLiveTail(pruneLive);
     };
 
-    run().catch(() => {});
+    run().catch(logErr("loading timeline"));
   }, [channelId]);
 
   return {

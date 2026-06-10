@@ -15,6 +15,7 @@ import { WorktreesPanel } from "./WorktreesPanel";
 import { BranchesPanel } from "./BranchesPanel";
 import { PaneRootSelect } from "./PaneRootSelect";
 import { storageGet, storageSet } from "../../utils/storage";
+import { logErr } from "../../utils/log";
 
 const MIN_WIDTH = 280;
 const MAX_WIDTH_PERCENT = 0.6;
@@ -182,7 +183,7 @@ export function GitPanel({ channelId, dirPath, branch, maximized, sidebarOpen, t
         setSourceBranch((prev) => (prev && all.has(prev) ? prev : defaultSource));
         setTargetBranch((prev) => (prev && all.has(prev) ? prev : info.current ?? ""));
         setCommitBranch((prev) => (prev && all.has(prev) ? prev : info.current ?? ""));
-      }).catch(() => {});
+      }).catch(logErr("fetching branch info"));
     }
   }, [gitMode, channelId, pr?.base_ref, rootIndex]); // eslint-disable-line react-hooks/exhaustive-deps
 
