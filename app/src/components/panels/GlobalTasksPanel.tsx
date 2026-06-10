@@ -13,6 +13,7 @@ import {
   fetchWorkflows,
 } from "../../api/loopApi";
 import type { ScheduledTask, TaskRunLog, WorkflowDef } from "../../api/loopApi";
+import { timeAgo, nextRunLabel, TYPE_COLORS } from "../../utils/taskUtils";
 
 function buildHeaderBtnStyle(colors: ColorPalette): React.CSSProperties {
   return {
@@ -27,38 +28,6 @@ function buildHeaderBtnStyle(colors: ColorPalette): React.CSSProperties {
     alignItems: "center",
   };
 }
-
-function nextRunLabel(dateStr: string): string {
-  const d = new Date(dateStr);
-  if (isNaN(d.getTime())) return "-";
-  const diff = d.getTime() - Date.now();
-  if (diff < 0) return "overdue";
-  const mins = Math.floor(diff / 60000);
-  if (mins < 60) return `in ${mins}m`;
-  const hours = Math.floor(mins / 60);
-  if (hours < 24) return `in ${hours}h`;
-  const days = Math.floor(hours / 24);
-  return `in ${days}d`;
-}
-
-function timeAgo(dateStr: string): string {
-  const d = new Date(dateStr);
-  if (isNaN(d.getTime())) return "-";
-  const diff = Date.now() - d.getTime();
-  const mins = Math.floor(diff / 60000);
-  if (mins < 0) return `in ${-mins}m`;
-  if (mins < 60) return `${mins}m ago`;
-  const hours = Math.floor(mins / 60);
-  if (hours < 24) return `${hours}h ago`;
-  const days = Math.floor(hours / 24);
-  return `${days}d ago`;
-}
-
-const TYPE_COLORS: Record<string, string> = {
-  cron: "#818cf8",
-  interval: "#34d399",
-  once: "#fbbf24",
-};
 
 interface GlobalTasksPanelProps {
   channel?: Channel;
