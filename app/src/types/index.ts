@@ -297,6 +297,13 @@ export interface DaemonInfo {
 
 declare global {
   interface Window {
+    /** Test-observability flag (see loop:test-event): false while the events
+     *  WS is down or its onOpen rehydrates are still in flight, true once
+     *  they have settled. The BDD harness waits on this before dispatching
+     *  synthetic events — rehydrateGateApprovals & co. reconcile against the
+     *  backend and would otherwise wipe injected cards that raced the
+     *  initial connect on slow runners. */
+    __loopWsRehydrated?: boolean;
     loopAPI: {
       getApiUrl: () => Promise<string>;
       showOpenDirectoryDialog?: () => Promise<string | null>;

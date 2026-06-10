@@ -1741,7 +1741,19 @@ func (tc *TestContext) seedChatTimeline() ([]byte, error) {
 
 // dispatchTestEvents fires N synthetic CustomEvents at the chat store via
 // the loop:test-event hook. The store handles them like real WS messages.
+//
+// Waits for window.__loopWsRehydrated first: the store's WS-onOpen rehydrates
+// reconcile local cards against the backend's pending lists and drop anything
+// without a server-side counterpart. A synthetic card injected before that
+// pass settles gets wiped — on slow CI runners the events WS can still be
+// connecting when the scenario reaches its inject step, which was the cause
+// of the recurring journey_gate_approval timeout flake.
 func (tc *TestContext) dispatchTestEvents(payloads ...[]byte) error {
+	if err := chromedp.Run(tc.chromeTab.ctx,
+		chromedp.Poll("window.__loopWsRehydrated === true", nil, chromedp.WithPollingTimeout(20*time.Second)),
+	); err != nil {
+		return fmt.Errorf("waiting for WS rehydrate before injecting test events: %w", err)
+	}
 	dispatches := make([]string, 0, len(payloads))
 	for _, p := range payloads {
 		dispatches = append(dispatches,
