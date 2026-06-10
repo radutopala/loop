@@ -128,5 +128,6 @@ jobs:
           node-version: "22"
           cache: npm
           cache-dependency-path: app/package-lock.json
-      - run: cd app && npm ci
+      # Retried: the Electron postinstall binary download intermittently 504s.
+      - run: cd app && (npm ci || (sleep 20 && npm ci) || (sleep 60 && npm ci))
       - run: cd app && npx tsc --noEmit
