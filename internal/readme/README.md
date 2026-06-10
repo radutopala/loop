@@ -1021,7 +1021,7 @@ Release builds for macOS are signed with a Developer ID Application certificate 
 
 ### Build from source
 
-Requires [Node.js 22+](https://nodejs.org/).
+Requires [Node.js 24+](https://nodejs.org/).
 
 ```sh
 # Development
