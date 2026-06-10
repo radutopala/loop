@@ -29,11 +29,11 @@ Feature: Per-source gate approval routing
     Then I wait for text "/tmp/bdd-gate-default-chat.txt" to appear
 
   Scenario: Terminal-sourced gate renders inside the matching pane
-    # The first docker-agent panel added to the default Chat layout (chat + git)
-    # gets leaf id `docker-agent-1` because initIdCounter bumps the counter to
-    # max+1 (max=0 from non-numeric leaves) before the first nextId() call.
+    # "newest-docker-agent" resolves to the just-added pane's real leaf id —
+    # the counter's start value depends on which features ran earlier in the
+    # suite, so the first added pane is not always docker-agent-1.
     When I add a "Docker Agent" panel
-    And I inject a gate.approval_requested event with req_id "gate-term-A", source "terminal:docker-agent-1", and target "/tmp/bdd-gate-term-A.txt"
+    And I inject a gate.approval_requested event with req_id "gate-term-A", source "terminal:newest-docker-agent", and target "/tmp/bdd-gate-term-A.txt"
     Then I wait for text "/tmp/bdd-gate-term-A.txt" to appear
     And the page should contain text "Deny with prompt"
 
@@ -50,14 +50,14 @@ Feature: Per-source gate approval routing
     # evicts a chat-sourced one (singleton state was the previous bug).
     When I add a "Docker Agent" panel
     And I inject a gate.approval_requested event with req_id "gate-chat-C", source "chat", and target "/tmp/bdd-gate-parallel-chat.txt"
-    And I inject a gate.approval_requested event with req_id "gate-term-C", source "terminal:docker-agent-1", and target "/tmp/bdd-gate-parallel-term.txt"
+    And I inject a gate.approval_requested event with req_id "gate-term-C", source "terminal:newest-docker-agent", and target "/tmp/bdd-gate-parallel-term.txt"
     Then I wait for text "/tmp/bdd-gate-parallel-chat.txt" to appear
     And I wait for text "/tmp/bdd-gate-parallel-term.txt" to appear
 
   Scenario: Resolving the chat gate leaves the terminal gate intact
     When I add a "Docker Agent" panel
     And I inject a gate.approval_requested event with req_id "gate-chat-D", source "chat", and target "/tmp/bdd-gate-resolve-chat.txt"
-    And I inject a gate.approval_requested event with req_id "gate-term-D", source "terminal:docker-agent-1", and target "/tmp/bdd-gate-resolve-term.txt"
+    And I inject a gate.approval_requested event with req_id "gate-term-D", source "terminal:newest-docker-agent", and target "/tmp/bdd-gate-resolve-term.txt"
     And I wait for text "/tmp/bdd-gate-resolve-chat.txt" to appear
     And I wait for text "/tmp/bdd-gate-resolve-term.txt" to appear
     When I inject a gate.approval_resolved event with req_id "gate-chat-D"

@@ -1848,6 +1848,28 @@ func (tc *TestContext) injectGateApprovalRequested(reqID, source, target string)
 	if err := tc.ensureChromeTab(); err != nil {
 		return err
 	}
+	// "terminal:newest-docker-agent" resolves to the highest-numbered
+	// docker-agent pane currently in the layout. Scenarios must not hardcode
+	// "docker-agent-1": the leaf-id counter's start value depends on which
+	// features ran earlier in the suite, so the first added pane is not
+	// always #1 — the cause of the recurring gate-approval flake.
+	if source == "terminal:newest-docker-agent" {
+		// Pane header slots carry id="pane-header-slot-<leafId>"; poll because
+		// the pane mounts a React tick after the add-panel click.
+		js := `(() => {
+			const ids = Array.from(document.querySelectorAll('[id^="pane-header-slot-docker-agent-"]'))
+				.map(el => el.id.replace('pane-header-slot-', ''));
+			ids.sort((a, b) => Number(a.split('-').pop()) - Number(b.split('-').pop()));
+			return ids.length ? ids[ids.length - 1] : "";
+		})()`
+		var leafID string
+		if err := chromedp.Run(tc.chromeTab.ctx,
+			chromedp.Poll(js, &leafID, chromedp.WithPollingTimeout(10*time.Second)),
+		); err != nil {
+			return fmt.Errorf("resolving newest docker-agent pane: %w", err)
+		}
+		source = "terminal:" + leafID
+	}
 	seed, err := tc.seedChatTimeline()
 	if err != nil {
 		return fmt.Errorf("marshalling seed payload: %w", err)
