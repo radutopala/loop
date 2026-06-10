@@ -244,6 +244,8 @@ Together these body rules are the reason the HTTP layer can afford to default-al
 
 ## Approval UI
 
+![The gate approval card in chat: a blocked exec on /root/.ssh/authorized_keys with Allow once, Allow for session, Deny, and Deny with prompt buttons](static/images/features/gate-approval.png)
+
 Approve decisions cross three platforms through the same `orchestrator.Bot.ApprovalPrompt` interface. Each prompt shows three buttons:
 
 - **Allow once** — default action; allows this single call, nothing cached.
