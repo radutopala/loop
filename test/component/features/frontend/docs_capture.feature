@@ -328,7 +328,9 @@ Feature: Documentation walkthrough
     And I add a "Quality" panel
     And I wait "2s"
     And I click on the button with text "Scan now"
-    And I wait up to "60s" for text "Modularity" to appear
+    # Post-scan marker: the header renders `geo-mean N.NNN`. (Don't wait on the
+    # metric-card labels — they're CSS-uppercased and innerText reflects that.)
+    And I wait up to "60s" for text "geo-mean" to appear
     And I wait "3s"
     And I capture screenshot "quality-panel"
     # Multi-panel — compose a custom workspace: split a Host Shell under the Git panel
