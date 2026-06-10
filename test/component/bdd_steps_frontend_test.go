@@ -1834,6 +1834,17 @@ func (tc *TestContext) injectAskUserEvent(question, options string) error {
 	return tc.dispatchTestEvents(seed, payload)
 }
 
+// injectChannelID returns the channel to address synthetic gate events to:
+// the per-scenario API channel when set, else the shared sample-project
+// channel (the @docs walkthrough deliberately leaves tc.ChannelID unset so
+// per-scenario cleanup can't delete the shared channel).
+func (tc *TestContext) injectChannelID() string {
+	if tc.ChannelID != "" {
+		return tc.ChannelID
+	}
+	return sampleProject.channelID
+}
+
 // injectGateApprovalRequested fires a synthetic gate.approval_requested event
 // into the chat store. `source` is the per-pane routing tag the backend
 // attaches: "chat" (or empty → defaults to chat) routes the ApprovalCard to
@@ -1842,7 +1853,8 @@ func (tc *TestContext) injectAskUserEvent(question, options string) error {
 // or arg the card displays — use a unique value per scenario so text
 // assertions are unambiguous.
 func (tc *TestContext) injectGateApprovalRequested(reqID, source, target string) error {
-	if tc.ChannelID == "" {
+	channelID := tc.injectChannelID()
+	if channelID == "" {
 		return fmt.Errorf("no channel_id set; use 'I set up a test channel via API' step first")
 	}
 	if err := tc.ensureChromeTab(); err != nil {
@@ -1876,7 +1888,7 @@ func (tc *TestContext) injectGateApprovalRequested(reqID, source, target string)
 	}
 	payload, err := json.Marshal(map[string]any{
 		"type":       "gate.approval_requested",
-		"channel_id": tc.ChannelID,
+		"channel_id": channelID,
 		"data": map[string]any{
 			"req_id": reqID,
 			"kind":   "exec",
@@ -1895,7 +1907,8 @@ func (tc *TestContext) injectGateApprovalRequested(reqID, source, target string)
 // whose req_id matches, regardless of source — mirrors what happens when a
 // real approval is resolved over the wire.
 func (tc *TestContext) injectGateApprovalResolved(reqID string) error {
-	if tc.ChannelID == "" {
+	channelID := tc.injectChannelID()
+	if channelID == "" {
 		return fmt.Errorf("no channel_id set; use 'I set up a test channel via API' step first")
 	}
 	if err := tc.ensureChromeTab(); err != nil {
@@ -1903,7 +1916,7 @@ func (tc *TestContext) injectGateApprovalResolved(reqID string) error {
 	}
 	payload, err := json.Marshal(map[string]any{
 		"type":       "gate.approval_resolved",
-		"channel_id": tc.ChannelID,
+		"channel_id": channelID,
 		"data": map[string]any{
 			"req_id":   reqID,
 			"decision": "once",
