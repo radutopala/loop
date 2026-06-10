@@ -53,7 +53,7 @@
     "@xterm/xterm": "^5.5.0",
     "dayjs": "^1.11.20",
     "electron-updater": "^6.8.3",
-    "marked": "^17.0.4",
+    "marked": "^18.0.5",
     "mermaid": "^11.14.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0"
