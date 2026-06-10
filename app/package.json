@@ -44,22 +44,22 @@
     "@codemirror/language": "^6.12.2",
     "@codemirror/search": "^6.6.0",
     "@codemirror/state": "^6.5.4",
-    "@codemirror/view": "^6.39.17",
+    "@codemirror/view": "^6.43.1",
     "@fontsource/jetbrains-mono": "^5.2.8",
     "@visx/group": "4.0.1-alpha.0",
     "@visx/hierarchy": "4.0.1-alpha.0",
-    "@xterm/addon-fit": "^0.10.0",
-    "@xterm/addon-web-links": "^0.11.0",
+    "@xterm/addon-fit": "^0.11.0",
+    "@xterm/addon-web-links": "^0.12.0",
     "@xterm/xterm": "^5.5.0",
-    "dayjs": "^1.11.20",
-    "electron-updater": "^6.8.3",
+    "dayjs": "^1.11.21",
+    "electron-updater": "^6.8.9",
     "marked": "^17.0.4",
-    "mermaid": "^11.14.0",
-    "react": "^19.0.0",
-    "react-dom": "^19.0.0"
+    "mermaid": "^11.15.0",
+    "react": "^19.2.7",
+    "react-dom": "^19.2.7"
   },
   "devDependencies": {
-    "@types/react": "^19.0.0",
+    "@types/react": "^19.2.17",
     "@types/react-dom": "^19.0.0",
     "@vitejs/plugin-react": "^4.3.0",
     "electron": "^42.4.0",
@@ -71,7 +71,7 @@
     "vitest": "^4.1.8"
   },
   "optionalDependencies": {
-    "@rollup/rollup-linux-arm64-gnu": "^4.60.2",
-    "@rollup/rollup-linux-x64-gnu": "^4.60.2"
+    "@rollup/rollup-linux-arm64-gnu": "^4.61.1",
+    "@rollup/rollup-linux-x64-gnu": "^4.61.1"
   }
 }
