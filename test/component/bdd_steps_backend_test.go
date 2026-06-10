@@ -404,7 +404,9 @@ func (tc *TestContext) buildSampleProjectOnce() error {
 }
 `,
 		".gitignore": "node_modules/\ndist/\n",
-		".loop/config.json": "{\n  \"claude_model\": \"claude-sonnet-4-6\"\n}\n",
+		// review.enabled surfaces the Review tab so the docs walkthrough can
+		// capture the panel; it has no effect on the other scenarios.
+		".loop/config.json": "{\n  \"claude_model\": \"claude-sonnet-4-6\",\n  \"review\": { \"enabled\": true }\n}\n",
 		"src/index.ts": `import express from "express";
 import { listNotes, createNote } from "./notes";
 

@@ -191,7 +191,7 @@ fi
 # reply + a full panel tour + MP4 encode); the per-scenario budget is 120s, so
 # allow headroom here. Override with GO_TEST_TIMEOUT.
 TEST_TIMEOUT=900s
-[ -n "$LOOP_DOCS_CAPTURE" ] && TEST_TIMEOUT=1200s
+[ -n "$LOOP_DOCS_CAPTURE" ] && TEST_TIMEOUT=1500s
 [ -n "$GO_TEST_TIMEOUT" ] && TEST_TIMEOUT="$GO_TEST_TIMEOUT"
 echo -e "${YELLOW}Running component tests (timeout $TEST_TIMEOUT)...${NC}"
 LOOP_BASE_URL="http://localhost:8222" \
