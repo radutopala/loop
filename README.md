@@ -1024,12 +1024,17 @@ Release builds for macOS are signed with a Developer ID Application certificate 
 Requires [Node.js 24+](https://nodejs.org/).
 
 ```sh
-# Development
+# Development (expects a running daemon on :8222 — `loop serve` first)
 cd app && npm install && npm run dev
+
+# Frontend unit tests (vitest)
+make app-test
 
 # Build and install to /Applications (macOS)
 make app-install
 ```
+
+In headless/Linux environments where Electron can't launch, `LOOP_NO_ELECTRON=1 npm run dev` serves the same renderer as a plain browser app on `:5173` (`make app-dev-docker` wraps this in Docker). See [CONTRIBUTING.md](CONTRIBUTING.md) for the full dev-setup guide.
 
 ## REST API
 
@@ -1175,6 +1180,7 @@ make test             # Run tests
 make lint             # Run linter
 make coverage-check   # Enforce 100% test coverage
 make coverage         # Generate HTML coverage report
+make app-test         # Run frontend unit tests (vitest)
 make app-install      # Build Electron app and copy to /Applications
 make app-dev-docker   # Run Vite dev server in Docker (browser-only, no Electron)
 make clean            # Remove build artifacts
