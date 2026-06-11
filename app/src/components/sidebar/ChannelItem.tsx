@@ -2,8 +2,9 @@ import { useState } from "react";
 import type { Channel } from "../../types";
 import { fonts } from "../../theme";
 import { useTheme } from "../../ThemeContext";
-import { ThreadItem } from "./ThreadItem";
+import { ThreadItem, type ThreadReorder } from "./ThreadItem";
 import { NewThreadInput } from "./NewThreadInput";
+import { SidebarWorktreeButton } from "./SidebarWorktreeButton";
 import { StatusPill } from "./StatusPill";
 
 interface ChannelItemProps {
@@ -14,6 +15,8 @@ interface ChannelItemProps {
   selectedId: string | null;
   onSelect: (id: string) => void;
   onCreateThread: (parentId: string, name: string) => void;
+  onCreateWorktree?: (channelId: string, branch: string) => void;
+  threadReorder?: ThreadReorder;
   onOpenConfig?: (dirPath: string) => void;
   onContextMenu: (e: React.MouseEvent, channel: Channel) => void;
   onDragStart: (channelId: string) => void;
@@ -41,6 +44,8 @@ export function ChannelItem({
   selectedId,
   onSelect,
   onCreateThread,
+  onCreateWorktree,
+  threadReorder,
   onOpenConfig,
   onContextMenu,
   onDragStart,
@@ -262,6 +267,9 @@ export function ChannelItem({
           >
             + thread
           </button>
+          {channel.dir_path && onCreateWorktree && (
+            <SidebarWorktreeButton channelId={channel.id} onCreateWorktree={onCreateWorktree} />
+          )}
         </div>
       </div>
 
@@ -287,6 +295,7 @@ export function ChannelItem({
             isLast={i === threads.length - 1}
             onSelect={onSelect}
             onContextMenu={onContextMenu}
+            reorder={threadReorder}
             selectMode={selectMode}
             checked={checkedIds?.has(thread.id)}
             onToggleCheck={onToggleCheck}

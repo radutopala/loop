@@ -12,6 +12,10 @@ const MIN_WIDTH = 180;
 const MAX_WIDTH_PERCENT = 0.25;
 const DEFAULT_WIDTH = 280;
 const ORDER_STORAGE_KEY = "loop-channel-order";
+// Per-parent thread/worktree order, keyed by parent channel id. Client-side
+// only (localStorage), mirroring the channel-order approach — the backend
+// returns threads alphabetically and stays the source of truth for membership.
+const THREAD_ORDER_STORAGE_KEY = "loop-thread-order";
 
 function loadOrder(): string[] {
   return storageGetJSON<string[]>(ORDER_STORAGE_KEY) ?? [];
@@ -19,6 +23,14 @@ function loadOrder(): string[] {
 
 function saveOrder(ids: string[]) {
   storageSetJSON(ORDER_STORAGE_KEY, ids);
+}
+
+function loadThreadOrder(): Record<string, string[]> {
+  return storageGetJSON<Record<string, string[]>>(THREAD_ORDER_STORAGE_KEY) ?? {};
+}
+
+function saveThreadOrder(order: Record<string, string[]>) {
+  storageSetJSON(THREAD_ORDER_STORAGE_KEY, order);
 }
 
 function sortByOrder(channels: Channel[], order: string[]): Channel[] {
@@ -44,6 +56,7 @@ interface SidebarProps {
   onSelect: (id: string) => void;
   onCreateChannel: (name: string) => void;
   onCreateThread: (parentId: string, name: string) => void;
+  onCreateWorktree?: (channelId: string, branch: string) => void;
   onDeleteThread: (threadId: string) => void;
   onSetLocked?: (channelId: string, locked: boolean) => void;
   onDeleteBatch?: (ids: string[]) => void;
@@ -82,6 +95,7 @@ export function Sidebar({
   onSelect,
   onCreateChannel,
   onCreateThread,
+  onCreateWorktree,
   onDeleteThread,
   onSetLocked,
   onDeleteBatch,
@@ -113,6 +127,9 @@ export function Sidebar({
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
   const [channelOrder, setChannelOrder] = useState<string[]>(loadOrder);
   const [dragOverId, setDragOverId] = useState<string | null>(null);
+  const [threadOrder, setThreadOrder] = useState<Record<string, string[]>>(loadThreadOrder);
+  const [threadDragOverId, setThreadDragOverId] = useState<string | null>(null);
+  const draggedThreadRef = useRef<{ id: string; parentId: string } | null>(null);
   const [creatingChannel, setCreatingChannel] = useState(false);
   const [newChannelName, setNewChannelName] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
@@ -168,6 +185,45 @@ export function Sidebar({
   const handleDragEnd = useCallback(() => {
     draggedIdRef.current = null;
     setDragOverId(null);
+  }, []);
+
+  // Thread/worktree drag-reorder within a single parent channel. Reorders are
+  // persisted per-parent in localStorage; cross-parent drops are ignored.
+  const handleThreadDragStart = useCallback((threadId: string, parentId: string) => {
+    draggedThreadRef.current = { id: threadId, parentId };
+  }, []);
+
+  const handleThreadDragOver = useCallback((e: React.DragEvent, threadId: string) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setThreadDragOverId(threadId);
+  }, []);
+
+  const handleThreadDrop = useCallback((e: React.DragEvent, targetId: string, parentId: string) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setThreadDragOverId(null);
+    const src = draggedThreadRef.current;
+    draggedThreadRef.current = null;
+    if (!src || src.id === targetId || src.parentId !== parentId) return;
+
+    const siblings = channels.filter((c) => c.parent_id === parentId);
+    const ids = sortByOrder(siblings, threadOrder[parentId] ?? []).map((c) => c.id);
+    const from = ids.indexOf(src.id);
+    const to = ids.indexOf(targetId);
+    if (from === -1 || to === -1) return;
+    ids.splice(from, 1);
+    ids.splice(to, 0, src.id);
+    setThreadOrder((prev) => {
+      const next = { ...prev, [parentId]: ids };
+      saveThreadOrder(next);
+      return next;
+    });
+  }, [channels, threadOrder]);
+
+  const handleThreadDragEnd = useCallback(() => {
+    draggedThreadRef.current = null;
+    setThreadDragOverId(null);
   }, []);
 
   const handleContextMenu = useCallback(
@@ -247,6 +303,15 @@ export function Sidebar({
     },
     {},
   );
+  // Apply the per-parent drag-reorder order; parents with no saved order keep
+  // the backend's alphabetical order.
+  for (const parentId of Object.keys(threadsByParent)) {
+    const order = threadOrder[parentId];
+    const list = threadsByParent[parentId];
+    if (list && order && order.length > 0) {
+      threadsByParent[parentId] = sortByOrder(list, order);
+    }
+  }
 
   // Separate DM channel (pinned at top) from regular channels.
   const dmChannel = channels.find((c) => c.name === "dm" && !c.parent_id);
@@ -381,6 +446,14 @@ export function Sidebar({
           selectedId={selectedId}
           onSelect={onSelect}
           onCreateThread={onCreateThread}
+          onCreateWorktree={onCreateWorktree}
+          threadReorder={{
+            onDragStart: handleThreadDragStart,
+            onDragOver: handleThreadDragOver,
+            onDrop: handleThreadDrop,
+            onDragEnd: handleThreadDragEnd,
+            dragOverId: threadDragOverId,
+          }}
           onOpenConfig={onOpenConfig}
           onContextMenu={handleContextMenu}
           onDragStart={handleDragStart}
