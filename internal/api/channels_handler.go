@@ -210,41 +210,47 @@ func gitCommit(ctx context.Context, dir string) string {
 
 // gitDiffStats returns the total additions and deletions for uncommitted changes,
 // including untracked files (counted as additions).
+// gitDiffStats returns the uncommitted insertion/deletion counts for the sidebar
+// badge. It mirrors the Uncommitted Diff panel (handleGitDiff) so the two agree:
+// staged (index vs HEAD) + unstaged (worktree vs index) tracked changes, plus
+// untracked files counted exactly like the panel (buildUntrackedEntry) — text
+// files add their line count, binary files add nothing. (The previous version
+// omitted staged changes and counted untracked files with raw `wc -l`, which
+// inflated the badge for binary files since it counts newline bytes.)
 func gitDiffStats(ctx context.Context, dir string) (add, del int) {
 	if dir == "" {
 		return 0, 0
 	}
 
-	// Tracked changes.
-	cmd := exec.CommandContext(ctx, "git", "diff", "--shortstat")
-	cmd.Dir = dir
-	if out, err := cmd.Output(); err == nil {
-		for _, part := range strings.Split(strings.TrimSpace(string(out)), ",") {
-			part = strings.TrimSpace(part)
-			if strings.Contains(part, "insertion") {
-				_, _ = fmt.Sscanf(part, "%d", &add)
-			} else if strings.Contains(part, "deletion") {
-				_, _ = fmt.Sscanf(part, "%d", &del)
+	// Tracked changes: staged (index vs HEAD) then unstaged (worktree vs index).
+	for _, args := range [][]string{
+		{"diff", "--cached", "--shortstat"},
+		{"diff", "--shortstat"},
+	} {
+		cmd := exec.CommandContext(ctx, "git", args...)
+		cmd.Dir = dir
+		if out, err := cmd.Output(); err == nil {
+			for _, part := range strings.Split(strings.TrimSpace(string(out)), ",") {
+				part = strings.TrimSpace(part)
+				var n int
+				if strings.Contains(part, "insertion") {
+					_, _ = fmt.Sscanf(part, "%d", &n)
+					add += n
+				} else if strings.Contains(part, "deletion") {
+					_, _ = fmt.Sscanf(part, "%d", &n)
+					del += n
+				}
 			}
 		}
 	}
 
-	// Untracked files: count total lines as additions.
+	// Untracked files: count the same way the panel does (binary-aware).
 	lsCmd := exec.CommandContext(ctx, "git", "ls-files", "--others", "--exclude-standard")
 	lsCmd.Dir = dir
 	if lsOut, err := lsCmd.Output(); err == nil {
-		files := strings.TrimSpace(string(lsOut))
-		if files != "" {
-			args := append([]string{"-l"}, strings.Split(files, "\n")...)
-			wcCmd := exec.CommandContext(ctx, "wc", args...)
-			wcCmd.Dir = dir
-			if wcOut, err := wcCmd.Output(); err == nil {
-				// wc -l with multiple files prints a "total" line last; with one file just the count.
-				lines := strings.Split(strings.TrimSpace(string(wcOut)), "\n")
-				lastLine := strings.TrimSpace(lines[len(lines)-1])
-				var n int
-				_, _ = fmt.Sscanf(lastLine, "%d", &n)
-				add += n
+		for _, uf := range splitLines(string(lsOut)) {
+			if entry, _ := buildUntrackedEntry(dir, uf); entry != nil {
+				add += entry.Additions
 			}
 		}
 	}
