@@ -106,7 +106,7 @@ For each due task:
 3. If the task has `worktree = true`, a git worktree is created (see [Worktree Isolation](#worktree-isolation) below).
 4. An `AgentRequest` is built with:
    - The task's prompt as a user message. If `update_before_run` is enabled and `origin_branch` is set, git fetch/rebase instructions are prepended to the prompt.
-   - A system prompt instructing the agent NOT to use `send_message`, `create_thread`, or `create_channel` MCP tools (responses are delivered automatically).
+   - A system prompt instructing the agent NOT to use `send_message`, `create_thread`, or `create_channel` MCP tools (responses are delivered automatically). The agent **may** use `queue_message` to enqueue a follow-up prompt for itself in the task's thread.
    - If `auto_delete_sec > 0`, the system prompt also instructs the agent to prefix "nothing to report" responses with `[EPHEMERAL]`.
    - For subsequent local-platform runs (thread already exists), the agent is registered under the thread's channel ID so the stop button in the thread view works.
 5. The run's cancel function is registered in the orchestrator's `activeRuns` map, enabling the stop button and `/loop stop` command to cancel a running task.
