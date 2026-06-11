@@ -778,10 +778,19 @@ func (s *ServerSuite) TestSearchChannelsDiffStats() {
 	ci.Dir = dir
 	require.NoError(s.T(), ci.Run())
 
-	// Modify tracked file (1 insertion, 1 deletion).
+	// Modify tracked file (1 insertion, 1 deletion, unstaged).
 	require.NoError(s.T(), os.WriteFile(filepath.Join(dir, "tracked.txt"), []byte("line1\nchanged\n"), 0o644))
-	// Create an untracked file with 3 lines.
+	// Stage a new file (2 insertions) — must be counted (index vs HEAD), like the
+	// Uncommitted Diff panel; the old gitDiffStats omitted staged changes.
+	require.NoError(s.T(), os.WriteFile(filepath.Join(dir, "staged.txt"), []byte("s1\ns2\n"), 0o644))
+	addStaged := exec.Command("git", "add", "staged.txt")
+	addStaged.Dir = dir
+	require.NoError(s.T(), addStaged.Run())
+	// Create an untracked TEXT file with 3 lines.
 	require.NoError(s.T(), os.WriteFile(filepath.Join(dir, "untracked.txt"), []byte("a\nb\nc\n"), 0o644))
+	// Create an untracked BINARY file — it must NOT inflate additions (counts 0,
+	// like the panel). Raw `wc -l` would have counted its 4 newline bytes.
+	require.NoError(s.T(), os.WriteFile(filepath.Join(dir, "blob.bin"), []byte("\x00\n\x00\n\x00\n\x00\n"), 0o644))
 
 	channels := []*db.Channel{
 		{ChannelID: "ch-diff", Name: "with-diff", DirPath: dir, Active: true, Platform: types.PlatformLocal},
@@ -794,7 +803,8 @@ func (s *ServerSuite) TestSearchChannelsDiffStats() {
 	var resp []channelResponse
 	require.NoError(s.T(), json.NewDecoder(rec.Body).Decode(&resp))
 	require.Len(s.T(), resp, 1)
-	// Tracked: 1 insertion + 1 deletion; Untracked: 3 lines counted as additions.
-	require.Equal(s.T(), 4, resp[0].DiffAdditions, "expected 1 tracked insertion + 3 untracked lines")
+	// 1 unstaged insertion + 2 staged insertions + 3 untracked text lines; the
+	// binary blob.bin contributes 0 (matches the Uncommitted Diff panel).
+	require.Equal(s.T(), 6, resp[0].DiffAdditions, "1 unstaged + 2 staged + 3 untracked text lines (binary excluded)")
 	require.Equal(s.T(), 1, resp[0].DiffDeletions, "expected 1 tracked deletion")
 }
