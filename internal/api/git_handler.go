@@ -547,6 +547,7 @@ func (s *Server) handleCreateWorktree(w http.ResponseWriter, r *http.Request) {
 	}
 	ch.DirPath = worktreePath
 	ch.Worktree = true
+	ch.BaseBranch = req.Branch
 	if err := s.store.UpsertChannel(r.Context(), ch); err != nil {
 		http.Error(w, fmt.Sprintf("updating thread: %s", err), http.StatusInternalServerError)
 		return

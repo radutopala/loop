@@ -1,6 +1,9 @@
+import { useState, useEffect } from "react";
 import type { Channel } from "../../types";
 import type { ColorPalette } from "../../theme";
 import { fonts } from "../../theme";
+import { fetchCommits } from "../../api/git";
+import { logErr } from "../../utils/log";
 
 interface ChannelHeaderInfoProps {
   channel: Channel;
@@ -14,6 +17,27 @@ export function ChannelHeaderInfo({ channel, colors, hideBranch }: ChannelHeader
   const dirPath = channel.dir_path || "";
   const branch = channel.branch || "";
   const commit = channel.commit || "";
+
+  // For a worktree thread, flag when it still sits at its base branch's commit
+  // (i.e. no commits made yet). Compare the worktree HEAD (channel.commit) to
+  // the base branch's tip; the worktree shares the parent's .git so the base
+  // ref is resolvable from its own dir.
+  const [atBase, setAtBase] = useState(false);
+  useEffect(() => {
+    if (!channel.worktree || !channel.base_branch || !commit) {
+      setAtBase(false);
+      return;
+    }
+    let cancelled = false;
+    fetchCommits(channel.id, channel.base_branch, 1)
+      .then((commits) => {
+        if (cancelled) return;
+        const tip = commits[0];
+        setAtBase(!!tip && (tip.short === commit || tip.hash.startsWith(commit)));
+      })
+      .catch(logErr("fetching base branch commit"));
+    return () => { cancelled = true; };
+  }, [channel.id, channel.worktree, channel.base_branch, commit]);
 
   if (!dirPath) return null;
 
@@ -113,6 +137,25 @@ export function ChannelHeaderInfo({ channel, colors, hideBranch }: ChannelHeader
             {branch}
           </span>
         </>
+      )}
+      {atBase && (
+        <span
+          title={`This worktree is still at the same commit as its base branch "${channel.base_branch}" — no commits made yet.`}
+          style={{
+            fontSize: 10,
+            color: colors.warning,
+            fontFamily: fonts.mono,
+            flexShrink: 0,
+            marginLeft: 8,
+            padding: "1px 6px",
+            border: `1px solid ${colors.warning}`,
+            borderRadius: 4,
+            opacity: 0.85,
+            WebkitAppRegion: "no-drag",
+          }}
+        >
+          = {channel.base_branch}
+        </span>
       )}
     </>
   );

@@ -67,8 +67,8 @@ func (s *SQLiteStore) LinkTaskThread(ctx context.Context, ch *Channel, taskID in
 	}
 	return s.withTx(ctx, func(tx *sql.Tx) error {
 		if _, err := tx.ExecContext(ctx,
-			`INSERT INTO channels (channel_id, guild_id, name, dir_path, parent_id, platform, session_id, permissions, active, worktree, locked, updated_at)
-			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			`INSERT INTO channels (channel_id, guild_id, name, dir_path, parent_id, platform, session_id, permissions, active, worktree, base_branch, locked, updated_at)
+			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 			 ON CONFLICT(channel_id) DO UPDATE SET
 			   guild_id = excluded.guild_id,
 			   name = excluded.name,
@@ -79,8 +79,9 @@ func (s *SQLiteStore) LinkTaskThread(ctx context.Context, ch *Channel, taskID in
 			   permissions = CASE WHEN excluded.permissions != '' THEN excluded.permissions ELSE channels.permissions END,
 			   active = excluded.active,
 			   worktree = excluded.worktree,
+			   base_branch = CASE WHEN excluded.base_branch != '' THEN excluded.base_branch ELSE channels.base_branch END,
 			   updated_at = excluded.updated_at`,
-			ch.ChannelID, ch.GuildID, ch.Name, ch.DirPath, ch.ParentID, ch.Platform, ch.SessionID, permStr, boolToInt(ch.Active), boolToInt(ch.Worktree), boolToInt(ch.Locked), s.nowFunc(),
+			ch.ChannelID, ch.GuildID, ch.Name, ch.DirPath, ch.ParentID, ch.Platform, ch.SessionID, permStr, boolToInt(ch.Active), boolToInt(ch.Worktree), ch.BaseBranch, boolToInt(ch.Locked), s.nowFunc(),
 		); err != nil {
 			return err
 		}
