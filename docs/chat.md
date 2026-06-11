@@ -133,6 +133,14 @@ The editor centers the target line and focuses the view. When `line` is null the
 
 ---
 
+## Image Paste
+
+Paste an image straight into the chat input (⌘/Ctrl-V). Loop saves it under the channel workspace's `.loop/pastes/` directory and inserts the saved file path into the composer at the cursor — no upload dialog — so the agent reads it on the next message. The same paste works in the [agent terminal](terminal.md#image-paste).
+
+![Pasting an image into the chat input inserts the saved file path](static/images/features/chat-image-paste.png)
+
+---
+
 ## Streaming
 
 When the agent is generating a response, the chat view shows a streaming bubble:

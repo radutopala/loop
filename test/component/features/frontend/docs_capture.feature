@@ -58,6 +58,16 @@ Feature: Documentation walkthrough
     And I wait "4s"
     And I capture screenshot "chat-conversation"
     And I wait "2s"
+    # Paste an image into the input — Loop saves it to the workspace and inserts
+    # the file path, so the agent can read it on the next message.
+    And I show caption "Paste an image — Loop saves it and inserts its file path"
+    And I wait "4s"
+    And I hide caption
+    And I wait "2s"
+    And I paste an image into "textarea"
+    And I wait "3s"
+    And I capture screenshot "chat-image-paste"
+    And I wait "2s"
     Then I stop recording "02_chat"
 
   @docs-gate
@@ -243,12 +253,27 @@ Feature: Documentation walkthrough
     # capturing. Generous timeout: the first run cold-starts the Ollama sidecar
     # and pulls the embedding model (~270MB), which can take a couple of minutes
     # (the model persists in a named volume, so later runs are fast).
-    And I wait up to "180s" for text "CLAUDE.md" to appear
+    And I wait up to "300s" for text "CLAUDE.md" to appear
     # The panel auto-opens the first indexed file; wait for its content to finish
     # loading so the viewer shows real content, not the "Loading..." placeholder.
     And I wait up to "30s" for text "Loading..." to disappear
     And I wait "2s"
     And I capture screenshot "memory-panel"
+    And I wait "2s"
+    # Now recall it from chat — the agent answers using the search_memory MCP tool.
+    And I show caption "Recall it from chat — the agent answers via the search_memory tool"
+    And I wait "4s"
+    And I hide caption
+    And I wait "2s"
+    And I click on "[data-testid='layout-tab-Chat']"
+    And I wait for "textarea" to be visible
+    And I wait "2s"
+    And I type "Use Loop's search_memory tool to look up and tell me the coding conventions for this notes service." into "textarea"
+    And I press Enter
+    And I wait "2s"
+    And I wait up to "120s" for "button[title='Stop']" to disappear
+    And I wait "4s"
+    And I capture screenshot "memory-recall"
     And I wait "2s"
     Then I stop recording "07_memory"
 
@@ -303,6 +328,17 @@ Feature: Documentation walkthrough
     And I wait "30s"
     And I capture screenshot "docker-agent-terminal"
     And I wait "3s"
+    # Paste an image straight into the agent terminal — Loop uploads it and drops
+    # the saved file path into the prompt, the same UX as the chat input.
+    And I wait "2s"
+    And I show caption "Paste an image into the terminal — its saved path drops into the prompt"
+    And I wait "4s"
+    And I hide caption
+    And I wait "2s"
+    And I paste an image into the agent terminal
+    And I wait "4s"
+    And I capture screenshot "terminal-image-paste"
+    And I wait "2s"
     Then I stop recording "08_terminal"
 
   @docs-git-panel
@@ -482,8 +518,8 @@ Feature: Documentation walkthrough
 
   @docs-worktrees
   Scenario: Worktrees
-    # Sidebar +wt picker, then create one from the header branch picker and chat
-    # inside it.
+    # Open the acme-notes +wt picker, pick the main branch to create the
+    # worktree off it, then chat inside the new worktree thread.
     When I start recording
     And I wait "2s"
     And I show caption "Worktrees — branch off into an isolated workspace to work in parallel"
@@ -496,20 +532,20 @@ Feature: Documentation walkthrough
     And I hide caption
     And I hover over "acme-notes" in the sidebar
     And I wait "1s"
-    And I click on the button with title "New worktree from branch"
+    # Scope the +wt click to the acme-notes row (every channel has its own +wt)
+    And I click the worktree button for "acme-notes" in the sidebar
     And I wait for "[data-testid='sidebar-worktree-picker']" to be visible
     And I wait "2s"
     And I capture screenshot "sidebar-worktree"
     And I wait "2s"
-    # Toggle the picker closed (clicking +wt again), then create the worktree from the header picker
-    And I click on the button with title "New worktree from branch"
-    And I wait "1s"
-    And I click on the button with title "Branch"
-    And I wait for text "BRANCHES" to appear
+    # Pick the base branch (main) right in the acme-notes picker to branch off it
+    And I show caption "Pick the base branch — here, main — to branch off from"
     And I wait "3s"
-    And I click on "+wt" in the branch picker
+    And I hide caption
+    And I wait "1s"
+    And I click branch "main" in the sidebar worktree picker
     And I wait "6s"
-    # Loop creates the worktree and opens it as its own thread — open it from the sidebar
+    # Loop creates the worktree off acme-notes/main and opens it as its own thread — open it from the sidebar
     And I wait "2s"
     And I show caption "Loop creates a git worktree and opens it as its own thread"
     And I wait "4s"
@@ -544,12 +580,33 @@ Feature: Documentation walkthrough
     And I wait "3s"
     And I capture screenshot "tasks-panel"
     And I wait "2s"
+    # Select the seeded task and run it once, on demand
+    And I show caption "Select a task and Run Now to trigger it immediately"
+    And I wait "3s"
+    And I hide caption
+    And I wait "1s"
+    And I click on "Summarise" in the global tasks panel
+    And I wait "2s"
+    And I click button "Run Now" in the global tasks panel
+    And I wait "6s"
+    # The run opens as its own thread under the project — open it from the sidebar
+    And I show caption "The run opens as its own thread — open it from the sidebar"
+    And I wait "4s"
+    And I hide caption
+    And I wait "1s"
+    And I press Escape
+    And I wait "1s"
+    And I wait up to "30s" for text "task #" to appear
+    And I click on "task #" in the sidebar
+    And I wait for "textarea" to be visible
+    And I wait "3s"
+    And I capture screenshot "task-thread"
+    And I wait up to "120s" for "button[title='Stop']" to disappear
+    And I wait "2s"
     Then I stop recording "20_tasks"
 
   @docs-workflows-panel
   Scenario: Workflows overlay
-    # Seed a real run so the panel lists an actual run, not just the empty state.
-    Given I start a workflow run for "bdd-test-workflow" via API
     When I start recording
     And I wait "2s"
     And I show caption "Workflows panel — start runs and watch them across every channel"
@@ -558,7 +615,17 @@ Feature: Documentation walkthrough
     And I wait "2s"
     And I open the workflows panel
     And I wait up to "10s" for text "+ Run" to appear
+    And I wait "2s"
+    # Trigger the seeded bdd-test-workflow right from the panel
+    And I show caption "Start a run right from the panel — pick a workflow and go"
     And I wait "3s"
+    And I hide caption
+    And I wait "1s"
+    And I click button "+ Run" in the workflows panel
+    And I wait for text "Start Workflow" to appear
+    And I wait "2s"
+    And I click on the button with text "Start"
+    And I wait "6s"
     And I capture screenshot "workflows-panel"
     And I wait "2s"
     Then I stop recording "21_workflows-panel"

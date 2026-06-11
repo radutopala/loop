@@ -145,6 +145,8 @@ func registerFrontendSteps(ctx *godog.ScenarioContext, tc *TestContext) {
 	ctx.Step(`^I type "([^"]*)" into "([^"]*)"$`, tc.typeInto)
 	ctx.Step(`^I type "([^"]*)" into the agent terminal$`, tc.typeIntoAgentTerminal)
 	ctx.Step(`^I submit the agent terminal$`, tc.submitAgentTerminal)
+	ctx.Step(`^I paste an image into "([^"]*)"$`, tc.pasteImageIntoSelector)
+	ctx.Step(`^I paste an image into the agent terminal$`, tc.pasteImageIntoAgentTerminal)
 	ctx.Step(`^I clear and type "([^"]*)" into "([^"]*)"$`, tc.clearAndTypeInto)
 	ctx.Step(`^I wait for "([^"]*)" to be visible$`, tc.waitForVisible)
 	ctx.Step(`^I select "([^"]*)" from "([^"]*)"$`, tc.selectFrom)
@@ -162,6 +164,8 @@ func registerFrontendSteps(ctx *godog.ScenarioContext, tc *TestContext) {
 	ctx.Step(`^I click on "([^"]*)" in the context menu$`, tc.clickInContextMenu)
 	ctx.Step(`^I click on "([^"]*)" in the branch picker$`, tc.clickInBranchPicker)
 	ctx.Step(`^I click button "([^"]*)" in the tasks panel$`, tc.clickButtonInTasksPanel)
+	ctx.Step(`^I click button "([^"]*)" in the global tasks panel$`, tc.clickButtonInGlobalTasksPanel)
+	ctx.Step(`^I click branch "([^"]*)" in the sidebar worktree picker$`, tc.clickBranchInSidebarWorktreePicker)
 	ctx.Step(`^I click on "([^"]*)" in the worktrees panel$`, tc.clickInWorktreesPanel)
 	ctx.Step(`^I click button "([^"]*)" in the worktrees panel$`, tc.clickButtonInWorktreesPanel)
 	ctx.Step(`^I click on "([^"]*)" in the branches panel$`, tc.clickInBranchesPanel)
@@ -181,6 +185,7 @@ func registerFrontendSteps(ctx *godog.ScenarioContext, tc *TestContext) {
 	ctx.Step(`^I capture the visible task ID$`, tc.captureVisibleTaskID)
 	ctx.Step(`^I click on the element with text "([^"]*)"$`, tc.clickElementWithText)
 	ctx.Step(`^I click on the button with title "([^"]*)"$`, tc.clickButtonWithTitle)
+	ctx.Step(`^I click the worktree button for "([^"]*)" in the sidebar$`, tc.clickWorktreeButtonForChannel)
 	ctx.Step(`^I hover over the element with text "([^"]*)"$`, tc.hoverElementWithText)
 	ctx.Step(`^I hover over "([^"]*)" in the sidebar$`, tc.hoverInSidebar)
 	ctx.Step(`^I right-click on the element with text "([^"]*)"$`, tc.rightClickElementWithText)
@@ -283,6 +288,30 @@ func (tc *TestContext) ensureChromeTab() error {
 	timeoutCtx, timeoutCancel := context.WithTimeout(parentCtx, scenarioTimeout)
 	ctx, cancel := chromedp.NewContext(timeoutCtx)
 	tc.chromeTab = &chromeTab{ctx: ctx, cancel: func() { cancel(); timeoutCancel() }}
+	// Surface browser console warnings/errors and uncaught exceptions to the
+	// test log. Many UI actions swallow failures (e.g. a fetch .catch that only
+	// console.warns), so without this a silently-broken step just times out with
+	// no clue why.
+	chromedp.ListenTarget(ctx, func(ev any) {
+		switch e := ev.(type) {
+		case *runtime.EventConsoleAPICalled:
+			if e.Type == "error" || e.Type == "warning" {
+				parts := make([]string, 0, len(e.Args))
+				for _, a := range e.Args {
+					if v := strings.Trim(string(a.Value), `"`); v != "" && v != "null" {
+						parts = append(parts, v)
+					} else if a.Description != "" {
+						parts = append(parts, a.Description)
+					}
+				}
+				fmt.Fprintf(os.Stderr, "[browser console.%s] %s\n", e.Type, strings.Join(parts, " "))
+			}
+		case *runtime.EventExceptionThrown:
+			if e.ExceptionDetails != nil {
+				fmt.Fprintf(os.Stderr, "[browser exception] %s\n", e.ExceptionDetails.Text)
+			}
+		}
+	})
 	return nil
 }
 
@@ -395,6 +424,35 @@ func (tc *TestContext) submitAgentTerminal() error {
 // the Docker Agent pane's xterm so the terminal grabs keyboard focus (a DOM
 // .focus() on the offscreen helper textarea doesn't reliably stick once Claude's
 // TUI boots and xterm re-fits). Subsequent KeyEvents then reach the terminal.
+// pasteImageIntoSelector simulates pasting an image by dispatching a synthetic
+// ClipboardEvent (carrying a small PNG File) onto the target element — exercises
+// the same onPaste path a real image paste would, in both the chat input and
+// the terminal. The terminal's listener is on the pane container in the capture
+// phase, so dispatching on a descendant (.xterm) still reaches it.
+func (tc *TestContext) pasteImageIntoSelector(selector string) error {
+	js := fmt.Sprintf(`(() => {
+		const el = document.querySelector(%q);
+		if (!el) return false;
+		const b64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==";
+		const bin = atob(b64);
+		const bytes = new Uint8Array(bin.length);
+		for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+		const file = new File([bytes], "pasted.png", { type: "image/png" });
+		const dt = new DataTransfer();
+		dt.items.add(file);
+		el.dispatchEvent(new ClipboardEvent("paste", { clipboardData: dt, bubbles: true, cancelable: true }));
+		return true;
+	})()`, selector)
+	var ok bool
+	return chromedp.Run(tc.chromeTab.ctx,
+		chromedp.Poll(js, &ok, chromedp.WithPollingTimeout(15*time.Second)),
+	)
+}
+
+func (tc *TestContext) pasteImageIntoAgentTerminal() error {
+	return tc.pasteImageIntoSelector(`[data-testid="docker-agent-pane"] .xterm`)
+}
+
 func (tc *TestContext) clickAgentTerminalToFocus() error {
 	var box struct {
 		X  float64 `json:"x"`
@@ -677,6 +735,14 @@ func (tc *TestContext) clickButtonInTasksPanel(text string) error {
 	return tc.clickButtonInRegion(text, "tasks-panel")
 }
 
+func (tc *TestContext) clickButtonInGlobalTasksPanel(text string) error {
+	return tc.clickButtonInRegion(text, "global-tasks-panel")
+}
+
+func (tc *TestContext) clickBranchInSidebarWorktreePicker(branch string) error {
+	return tc.clickButtonInRegion(branch, "sidebar-worktree-picker")
+}
+
 func (tc *TestContext) clickInWorktreesPanel(text string) error {
 	return tc.clickInRegion(text, "worktrees-panel")
 }
@@ -808,6 +874,38 @@ func (tc *TestContext) clickButtonWithTitle(title string) error {
 	return chromedp.Run(tc.chromeTab.ctx,
 		chromedp.WaitVisible(sel, chromedp.ByQuery),
 		chromedp.Click(sel, chromedp.ByQuery),
+	)
+}
+
+// clickWorktreeButtonForChannel clicks the "+wt" (New worktree from branch)
+// button that belongs to a specific sidebar channel row. Every channel with a
+// dir_path renders its own +wt button, so a plain button[title=...] selector
+// would hit whichever row comes first (e.g. the default DM); this scopes the
+// click to the row whose name matches, so the worktree branches off the right
+// project.
+func (tc *TestContext) clickWorktreeButtonForChannel(name string) error {
+	js := fmt.Sprintf(`(() => {
+		const sidebar = document.querySelector('[data-testid="sidebar"]');
+		if (!sidebar) return false;
+		// Match the leaf element that shows the channel name. The displayed name
+		// carries a random suffix (acme-notes-ab12), so match by substring — and
+		// only leaves, so we don't latch onto a container that holds several rows
+		// (whose first +wt button would be the wrong channel's).
+		const nameEl = Array.from(sidebar.querySelectorAll('*')).find(
+			(e) => e.childElementCount === 0 && e.textContent.includes(%q));
+		if (!nameEl) return false;
+		// Walk up to this row and click its own +wt button.
+		let row = nameEl;
+		for (let i = 0; i < 8 && row; i++) {
+			const btn = row.querySelector('button[title="New worktree from branch"]');
+			if (btn) { btn.click(); return true; }
+			row = row.parentElement;
+		}
+		return false;
+	})()`, name)
+	var clicked bool
+	return chromedp.Run(tc.chromeTab.ctx,
+		chromedp.Poll(js, &clicked, chromedp.WithPollingTimeout(10*time.Second)),
 	)
 }
 

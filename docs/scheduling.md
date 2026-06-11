@@ -261,6 +261,10 @@ The worktree checkbox in the Tasks panel is only shown when:
 
 The Tasks panel (`tasks` panel type, singleton) provides a GUI for managing scheduled tasks within a channel. It can be added to any layout from the panel menu.
 
+Selecting a task and pressing **▶ Run Now** triggers it immediately; the run opens as its own thread under the channel, which you can open from the sidebar to watch the agent work.
+
+![A manually-triggered task run opened as its own thread under the project](static/images/features/task-thread.png)
+
 ### Layout
 
 The panel is split into two resizable panes:

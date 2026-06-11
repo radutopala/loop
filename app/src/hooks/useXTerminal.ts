@@ -3,6 +3,7 @@ import type { RefObject } from "react";
 import "@xterm/xterm/css/xterm.css";
 import { type ColorPalette, fonts } from "../theme";
 import { logErr } from "../utils/log";
+import { firstClipboardImage } from "../utils/clipboardImage";
 
 // Patterns matching terminal→app *report replies* that xterm.js emits in
 // answer to capability queries. These must never be forwarded to the PTY as
@@ -74,6 +75,14 @@ interface UseXTerminalOptions {
   fontSize?: number;
   onInput: (data: string) => void;
   onResize: (cols: number, rows: number) => void;
+  /**
+   * Called when an image is pasted into the terminal. Should upload the image
+   * and inject the resulting absolute file path into the pane — the same UX as
+   * the chat input, so the in-pane agent (e.g. the Claude Code TUI) receives a
+   * readable path. When omitted, image pastes fall through to xterm's default
+   * (text) handling.
+   */
+  onPasteImage?: (file: File) => void | Promise<void>;
 }
 
 /**
@@ -87,8 +96,14 @@ export function useXTerminal({
   fontSize: termFontSize,
   onInput,
   onResize,
+  onPasteImage,
 }: UseXTerminalOptions) {
   const xtermRef = useRef<import("@xterm/xterm").Terminal | null>(null);
+  // Hold the latest paste handler in a ref so the one-time paste listener
+  // installed in init() always calls the current callback (it closes over the
+  // current channel without re-creating the terminal).
+  const onPasteImageRef = useRef(onPasteImage);
+  onPasteImageRef.current = onPasteImage;
   const fitAddonRef = useRef<import("@xterm/addon-fit").FitAddon | null>(null);
   // Writes that arrive before the dynamic xterm import resolves are queued
   // here and flushed once the terminal is ready. Without this, a fast attach
@@ -119,6 +134,7 @@ export function useXTerminal({
     if (!containerRef.current) return;
 
     let disposed = false;
+    let pasteListenerCleanup: (() => void) | null = null;
 
     async function init() {
       const { Terminal: XTerm } = await import("@xterm/xterm");
@@ -221,6 +237,27 @@ export function useXTerminal({
         if (isTerminalReportReply(data)) return;
         onInput(data);
       });
+
+      // Image paste: intercept before xterm's own (document-level) paste
+      // handler so an image becomes a readable file path instead of garbage
+      // text. Capture phase fires before xterm's listener; for an image we stop
+      // propagation and hand the file to the caller, which uploads it and
+      // injects the returned path — the same UX as the chat input, so the
+      // in-pane agent (Claude Code TUI) receives a path it can Read.
+      const pasteHandler = (e: ClipboardEvent) => {
+        const handler = onPasteImageRef.current;
+        if (!handler) return;
+        const file = firstClipboardImage(e.clipboardData);
+        if (!file) return; // no image → let xterm handle the text paste
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        void Promise.resolve(handler(file)).catch((err) =>
+          console.warn("[terminal] image paste failed:", err),
+        );
+      };
+      const pasteTarget = containerRef.current!;
+      pasteTarget.addEventListener("paste", pasteHandler, true);
+      pasteListenerCleanup = () => pasteTarget.removeEventListener("paste", pasteHandler, true);
 
       term.onResize(({ cols, rows }) => {
         onResize(cols, rows);
@@ -359,6 +396,7 @@ export function useXTerminal({
         container.removeEventListener("mousedown", onDragMouseDown);
         document.removeEventListener("mouseup", onDragMouseUp, true);
         document.removeEventListener("mouseup", onCopySelection);
+        pasteListenerCleanup?.();
         if (xtermEl) delete xtermEl._xtermGetSelection;
       };
     }

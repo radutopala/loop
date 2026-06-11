@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { GateApprovalRequestedData, SessionStatus, TerminalTarget } from "../../types";
 import type { AgentOpenMode } from "../../types/panels";
 import { fetchRoots, type RootEntry } from "../../api/files";
+import { uploadPastedImage } from "../../utils/clipboardImage";
 import { useTheme } from "../../ThemeContext";
 import { PaneRootSelect } from "./PaneRootSelect";
 import { useTerminalWs } from "../../hooks/useTerminalWs";
@@ -212,12 +213,25 @@ export function Terminal({ channelId, target = "agent", instanceId, claudeSessio
     }
   }, [sendInput, target, cmd]);
 
+  // Paste an image into the pane: upload it to the channel workspace and insert
+  // the saved absolute path, mirroring the chat input's paste UX. We inject the
+  // path as plain typed input rather than a bracketed paste on purpose — an
+  // agent TUI treats a bracketed image-file path as an inline attachment
+  // ([Image #1]) and hides the path, whereas the user expects to see the literal
+  // absolute path (which the agent can then Read). Raw text works for shells too.
+  const handlePasteImage = useCallback(async (file: File) => {
+    if (!channelId) return;
+    const path = await uploadPastedImage(channelId, file);
+    sendInput(path);
+  }, [channelId, sendInput]);
+
   const { write, xtermRef } = useXTerminal({
     containerRef: terminalRef,
     colors,
     fontSize: fontSizes.terminal,
     onInput: sendInput,
     onResize: sendResize,
+    onPasteImage: handlePasteImage,
   });
   xtermInstRef.current = xtermRef.current;
 
