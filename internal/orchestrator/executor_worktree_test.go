@@ -604,3 +604,77 @@ func (s *TaskExecutorSuite) TestRefreshConfigNilLoader() {
 	timeout := s.executor.refreshConfig()
 	require.Equal(s.T(), 42*time.Second, timeout)
 }
+
+// TestWorktreeFirstRunInjectsPromptIntoWorktreeThread closes the gap raised in
+// review: a local task that wants a worktree, on its first streamed turn,
+// creates a thread that must point at the WORKTREE (not the parent dir) and the
+// injected prompt user message must land in that thread. CreateSimpleThread
+// seeds the thread with the parent DirPath, but LinkTaskThread overwrites it
+// with the worktree path before any message is stored.
+func (s *TaskExecutorSuite) TestWorktreeFirstRunInjectsPromptIntoWorktreeThread() {
+	task := &db.ScheduledTask{
+		ID: 10, ChannelID: "ch1", Prompt: "build the thing", Type: db.TaskTypeCron,
+		Schedule: "0 * * * *", Worktree: true,
+	}
+	s.store.On("GetChannel", s.ctx, "ch1").Return(&db.Channel{
+		ID: 1, ChannelID: "ch1", DirPath: "/proj", SessionID: "sess-1", Platform: types.PlatformLocal,
+	}, nil)
+	s.store.On("GetChannel", mock.Anything, "wt-thread").Return(&db.Channel{ID: 88, ChannelID: "wt-thread"}, nil).Maybe()
+	s.store.On("GetScheduledTask", s.ctx, int64(10)).Return(&db.ScheduledTask{ID: 10, Type: db.TaskTypeCron}, nil)
+	s.store.On("UpdateScheduledTaskOriginBranch", s.ctx, int64(10), "main").Return(nil)
+	s.store.On("UpdateSessionID", mock.Anything, mock.Anything, mock.Anything).Return(nil).Maybe()
+
+	s.executor.SetWorktreeCreator(&worktree.Creator{
+		Sys: &mockWorktreeSys{},
+		Run: func(_ context.Context, _, name string, args ...string) ([]byte, error) {
+			if name == "git" && len(args) > 1 && args[0] == "rev-parse" && args[1] == "--abbrev-ref" {
+				return []byte("main\n"), nil
+			}
+			return nil, nil
+		},
+	})
+
+	// Empty initial message on local: the executor seeds the thread itself.
+	s.bot.On("CreateSimpleThread", s.ctx, "ch1", mock.Anything, "").Return("wt-thread", nil).Once()
+	s.bot.On("SendMessage", mock.Anything, mock.Anything).Return(nil).Maybe()
+
+	// The thread channel must be linked with the WORKTREE DirPath, not "/proj".
+	var linkedDir string
+	var linkedWorktree bool
+	s.store.On("LinkTaskThread", mock.Anything, mock.MatchedBy(func(ch *db.Channel) bool {
+		if ch.ChannelID != "wt-thread" {
+			return false
+		}
+		linkedDir = ch.DirPath
+		linkedWorktree = ch.Worktree
+		return true
+	}), int64(10), "wt-thread").Return(nil).Once()
+
+	var inserted []*db.Message
+	s.store.On("InsertMessage", mock.Anything, mock.Anything).Run(func(args mock.Arguments) {
+		inserted = append(inserted, args.Get(1).(*db.Message))
+	}).Return(nil)
+
+	s.runner.On("Run", mock.Anything, mock.MatchedBy(func(req *agent.AgentRequest) bool {
+		if req.OnTurn == nil || !strings.Contains(req.DirPath, ".worktrees/task-10-") {
+			return false
+		}
+		req.OnTurn("working on it")
+		return true
+	})).Return(&agent.AgentResponse{Response: "working on it", SessionID: "s2"}, nil)
+
+	_, err := s.executor.ExecuteTask(s.ctx, task)
+	require.NoError(s.T(), err)
+
+	// Thread points at the worktree, flagged as a worktree.
+	require.Contains(s.T(), linkedDir, ".worktrees/task-10-")
+	require.NotEqual(s.T(), "/proj", linkedDir)
+	require.True(s.T(), linkedWorktree)
+
+	// The prompt landed in the worktree thread as a user message, ahead of the reply.
+	require.GreaterOrEqual(s.T(), len(inserted), 2)
+	require.False(s.T(), inserted[0].IsBot)
+	require.Equal(s.T(), "build the thing", inserted[0].Content)
+	require.Equal(s.T(), "wt-thread", inserted[0].ChannelID)
+	require.True(s.T(), inserted[1].IsBot)
+}
