@@ -96,7 +96,7 @@ Feature: Worktrees Journey
     # Create task on worktree
     When I click the task create button
     And I select "interval" from "select"
-    And I clear and type "25m" into "input[placeholder='30m']"
+    And I clear and type "25" into "[data-testid='task-interval-value']"
     And I type "wt-prompt-alpha" into "textarea[placeholder='Task prompt...']"
     And I click on the button with text "Create"
     Then I wait for text "wt-prompt-alpha" to appear

@@ -49,6 +49,51 @@ export function defaultScheduleForType(type: string): string {
   }
 }
 
+export type IntervalUnit = "m" | "h" | "d";
+
+/**
+ * Parse a Go duration interval string (e.g. "30m", "2h", "48h") into a
+ * number + unit for the interval builder. Compound/odd durations collapse to
+ * the largest clean unit (e.g. "2h30m" → 150 minutes), which is behaviourally
+ * identical for next-run scheduling. Unparseable input falls back to 30m.
+ */
+export function parseIntervalToParts(dur: string): { value: number; unit: IntervalUnit } {
+  const mins = goDurationToMinutes(dur);
+  if (mins == null || mins < 1) return { value: 30, unit: "m" };
+  if (mins % 1440 === 0) return { value: mins / 1440, unit: "d" };
+  if (mins % 60 === 0) return { value: mins / 60, unit: "h" };
+  return { value: mins, unit: "m" };
+}
+
+/**
+ * Compose a number + unit back into a Go duration string. Go has no day unit,
+ * so days are emitted as hours (1 day → "24h"); this round-trips through
+ * parseIntervalToParts and schedules identically.
+ */
+export function intervalPartsToString(value: number, unit: IntervalUnit): string {
+  const n = Number.isFinite(value) && value >= 1 ? Math.floor(value) : 1;
+  if (unit === "d") return `${n * 24}h`;
+  return `${n}${unit}`;
+}
+
+/** Sum a Go duration string (h/m/s segments) to whole minutes, or null. */
+function goDurationToMinutes(dur: string): number | null {
+  if (!dur) return null;
+  const re = /(\d+(?:\.\d+)?)(h|m|s)/g;
+  let total = 0;
+  let consumed = 0;
+  let matched = false;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(dur)) !== null) {
+    matched = true;
+    consumed += m[0].length;
+    const n = parseFloat(m[1] ?? "0");
+    total += m[2] === "h" ? n * 60 : m[2] === "m" ? n : n / 60;
+  }
+  if (!matched || consumed !== dur.length) return null;
+  return Math.round(total);
+}
+
 /**
  * Convert a stored RFC3339 schedule (e.g. "2026-06-11T09:00:00Z") to the
  * "YYYY-MM-DDTHH:mm" form an <input type="datetime-local"> expects, in the

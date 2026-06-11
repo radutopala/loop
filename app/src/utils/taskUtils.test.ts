@@ -6,6 +6,8 @@ import {
   defaultScheduleForType,
   rfc3339ToDatetimeLocal,
   datetimeLocalToRFC3339,
+  parseIntervalToParts,
+  intervalPartsToString,
 } from "./taskUtils";
 
 const NOW = new Date("2026-06-10T12:00:00Z");
@@ -103,5 +105,38 @@ describe("once datetime conversion", () => {
   it("round-trips a picked local time back to itself (timezone-independent)", () => {
     const local = "2026-06-11T09:00";
     expect(rfc3339ToDatetimeLocal(datetimeLocalToRFC3339(local))).toBe(local);
+  });
+});
+
+describe("interval parts", () => {
+  it("decomposes to the largest clean unit", () => {
+    expect(parseIntervalToParts("30m")).toEqual({ value: 30, unit: "m" });
+    expect(parseIntervalToParts("2h")).toEqual({ value: 2, unit: "h" });
+    expect(parseIntervalToParts("48h")).toEqual({ value: 2, unit: "d" });
+    expect(parseIntervalToParts("90m")).toEqual({ value: 90, unit: "m" }); // not a whole hour
+  });
+
+  it("collapses compound durations to equivalent minutes", () => {
+    expect(parseIntervalToParts("2h30m")).toEqual({ value: 150, unit: "m" });
+  });
+
+  it("falls back to 30m for empty/unparseable input", () => {
+    expect(parseIntervalToParts("")).toEqual({ value: 30, unit: "m" });
+    expect(parseIntervalToParts("garbage")).toEqual({ value: 30, unit: "m" });
+    expect(parseIntervalToParts("*/5 * * * *")).toEqual({ value: 30, unit: "m" });
+  });
+
+  it("composes a Go duration string, emitting days as hours", () => {
+    expect(intervalPartsToString(30, "m")).toBe("30m");
+    expect(intervalPartsToString(2, "h")).toBe("2h");
+    expect(intervalPartsToString(1, "d")).toBe("24h");
+    expect(intervalPartsToString(0, "m")).toBe("1m"); // clamps to >= 1
+  });
+
+  it("round-trips parse → compose for each unit", () => {
+    for (const dur of ["5m", "1h", "24h", "72h"]) {
+      const { value, unit } = parseIntervalToParts(dur);
+      expect(parseIntervalToParts(intervalPartsToString(value, unit))).toEqual({ value, unit });
+    }
   });
 });
