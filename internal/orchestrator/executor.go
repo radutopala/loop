@@ -166,7 +166,7 @@ func (e *TaskExecutor) ExecuteTask(ctx context.Context, task *db.ScheduledTask) 
 		forkSession = true
 	}
 
-	systemPrompt := "IMPORTANT: Do NOT use the send_message, queue_message, create_thread, or create_channel MCP tools. Your text responses are automatically delivered to the chat. Just respond with text directly."
+	systemPrompt := "IMPORTANT: Do NOT use the send_message, create_thread, or create_channel MCP tools. Your text responses are automatically delivered to the chat. Just respond with text directly. You MAY use queue_message to enqueue a follow-up prompt for yourself in this task's thread."
 	if task.AutoDeleteSec > 0 {
 		systemPrompt += "\nIf you have nothing meaningful to report, start your response with [EPHEMERAL]. Otherwise respond normally."
 	}
