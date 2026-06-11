@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { GateApprovalRequestedData } from "../../types";
 import { resolveGateApproval, sendMessage } from "../../api/loopApi";
 import type { GateDecision } from "../../api/gate";
@@ -17,6 +17,21 @@ export function ApprovalCard({ data, channelId, onResolved, onDenyWithPrompt, st
   style?: React.CSSProperties;
 }) {
   const { colors } = useTheme();
+  const cardRef = useRef<HTMLDivElement>(null);
+  // Bring the whole card (including the Allow/Deny buttons) into view once it has
+  // rendered at full height. The chat's own auto-scroll can fall short here (the
+  // triggering user bubble renders just after the card), so jump the scroll
+  // container to its true bottom — and do it deferred (rAF) so this is the final,
+  // winning scroll even when the user had scrolled up.
+  useEffect(() => {
+    const id = requestAnimationFrame(() => {
+      let el = cardRef.current?.parentElement ?? null;
+      while (el && getComputedStyle(el).overflowY !== "auto") el = el.parentElement;
+      if (el) el.scrollTop = el.scrollHeight;
+      else cardRef.current?.scrollIntoView({ block: "end" });
+    });
+    return () => cancelAnimationFrame(id);
+  }, []);
   const [sending, setSending] = useState<GateDecision | "deny-with-prompt" | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [showPrompt, setShowPrompt] = useState(false);
@@ -59,7 +74,7 @@ export function ApprovalCard({ data, channelId, onResolved, onDenyWithPrompt, st
   const label = data.kind ? data.kind.toUpperCase() : "APPROVAL";
 
   return (
-    <div style={{
+    <div ref={cardRef} style={{
       margin: "8px 16px",
       padding: "12px 16px",
       borderRadius: 8,

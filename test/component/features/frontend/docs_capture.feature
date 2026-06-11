@@ -62,21 +62,37 @@ Feature: Documentation walkthrough
 
   @docs-gate
   Scenario: Security gate
-    # A synthetic approval card — the same component the real gate mounts when a
-    # risky operation pauses for the operator's decision.
+    # A REAL gate: agentgate command_rules hold the agent's `git commit` for
+    # approval (see scripts/test-component.sh). Approve it, then see the
+    # committed change land in the Git panel's Branches Diff.
     When I start recording
     And I wait "2s"
-    And I show caption "Security gate — risky operations pause for your approval"
+    And I show caption "Security gate — risky commands pause for your approval"
     And I wait "4s"
     And I hide caption
     And I wait "2s"
-    And I inject a gate.approval_requested event with req_id "docs-gate", source "chat", and target "/root/.ssh/authorized_keys"
-    And I wait for text "/root/.ssh/authorized_keys" to appear
+    And I type "Create a branch called gate-demo, append a line '<!-- reviewed -->' to README.md, and commit it with a concise message." into "textarea"
+    And I press Enter
+    # The commit is held — the approval card appears in chat.
+    And I wait up to "120s" for text "Allow once" to appear
     And I wait "3s"
     And I capture screenshot "gate-approval"
-    And I inject a gate.approval_resolved event with req_id "docs-gate"
-    And I wait for text "/root/.ssh/authorized_keys" to disappear
+    # Approve it — the held commit proceeds.
     And I wait "2s"
+    And I show caption "Press Allow — the commit is approved and runs"
+    And I wait "4s"
+    And I hide caption
+    And I click on the button with text "Allow once"
+    # Give the approved commit a moment to land (don't block on the agent fully
+    # finishing — it may keep working after the commit).
+    And I wait "10s"
+    # The approved commit lands — review it in Branches Diff.
+    And I show caption "Approved — the commit lands; review it in Branches Diff"
+    And I wait "4s"
+    And I hide caption
+    And I wait "2s"
+    And I click "Branches Diff" in the git panel
+    And I wait "4s"
     Then I stop recording "03_gate"
 
   @docs-shortcuts
@@ -141,9 +157,12 @@ Feature: Documentation walkthrough
     And I wait "2s"
     And I type "Create a new branch called add-healthz, then commit that change to it with a concise message." into "textarea"
     And I press Enter
-    And I wait "2s"
-    And I wait up to "120s" for "button[title='Stop']" to disappear
-    And I wait "4s"
+    # The commit is gated — approve it so it proceeds.
+    And I wait up to "90s" for text "Allow once" to appear
+    And I click on the button with text "Allow once"
+    # Give the approved commit a moment to land (don't block on the agent
+    # fully finishing — it may keep working after the commit).
+    And I wait "10s"
     # Commits — the new commit lands in history
     And I wait "2s"
     And I show caption "The new commit lands in Commits"
@@ -202,9 +221,12 @@ Feature: Documentation walkthrough
     And I wait "2s"
     And I type "Create a new branch called update-readme, then commit my change to README.md to it with a concise message." into "textarea[placeholder*='Ask Loop anything']"
     And I press Enter
-    And I wait "2s"
-    And I wait up to "120s" for "button[title='Stop']" to disappear
-    And I wait "4s"
+    # The commit is gated — approve it so it proceeds.
+    And I wait up to "90s" for text "Allow once" to appear
+    And I click on the button with text "Allow once"
+    # Give the approved commit a moment to land (don't block on the agent
+    # fully finishing — it may keep working after the commit).
+    And I wait "10s"
     Then I stop recording "06_editor"
 
   @docs-memory
