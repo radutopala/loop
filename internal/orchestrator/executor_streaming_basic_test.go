@@ -75,6 +75,7 @@ func (s *TaskExecutorSuite) TestStreamingLocalPlatformPersistsThreadID() {
 	}
 
 	localChannel := &db.Channel{ChannelID: "ch-local", Platform: types.PlatformLocal, DirPath: "/work"}
+	s.allowBotInserts() // first-turn thread seeds the prompt + agent message
 	s.store.On("GetChannel", mock.Anything, "ch-local").Return(localChannel, nil)
 	// Post-run JSONL ingest looks up the session-target channel for chat_id.
 	s.store.On("GetChannel", mock.Anything, "local-thread-1").Return(&db.Channel{ID: 9001, ChannelID: "local-thread-1"}, nil).Maybe()
@@ -443,4 +444,50 @@ func (s *TaskExecutorSuite) TestEphemeralInstructionInSystemPrompt() {
 			s.runner.AssertExpectations(s.T())
 		})
 	}
+}
+
+// TestStreamingLocalFirstRunInjectsPromptBeforeReply locks the feature: on a
+// local task's first run, the prompt is persisted as a user message
+// (IsBot=false, AuthorID="scheduled-task") in the freshly-created thread,
+// inserted ahead of the agent's first reply so the chat reads prompt →
+// response. CreateSimpleThread is called with an empty initial message so the
+// executor controls the ordering (prompt first, then the agent turn).
+func (s *TaskExecutorSuite) TestStreamingLocalFirstRunInjectsPromptBeforeReply() {
+	task := &db.ScheduledTask{
+		ID: 130, ChannelID: "ch-fr", Prompt: "summarise the notes",
+		Type: db.TaskTypeCron, Schedule: "0 9 * * *",
+	}
+	localChannel := &db.Channel{ID: 1, ChannelID: "ch-fr", Platform: types.PlatformLocal, DirPath: "/work"}
+	s.store.On("GetChannel", mock.Anything, "ch-fr").Return(localChannel, nil)
+	s.store.On("GetChannel", mock.Anything, "thread-fr").Return(&db.Channel{ID: 77, ChannelID: "thread-fr"}, nil).Maybe()
+	s.store.On("GetScheduledTask", mock.Anything, mock.Anything).Return(nil, nil).Maybe()
+	// Empty initial message on local: the executor seeds the thread itself.
+	s.bot.On("CreateSimpleThread", s.ctx, "ch-fr", mock.Anything, "").Return("thread-fr", nil).Once()
+	s.store.On("LinkTaskThread", mock.Anything, mock.Anything, int64(130), "thread-fr").Return(nil).Maybe()
+	s.store.On("UpdateSessionID", mock.Anything, mock.Anything, mock.Anything).Return(nil).Maybe()
+
+	var inserted []*db.Message
+	s.store.On("InsertMessage", mock.Anything, mock.Anything).Run(func(args mock.Arguments) {
+		inserted = append(inserted, args.Get(1).(*db.Message))
+	}).Return(nil)
+
+	s.runner.On("Run", mock.Anything, mock.MatchedBy(func(req *agent.AgentRequest) bool {
+		if req.OnTurn == nil {
+			return false
+		}
+		req.OnTurn("Here is the summary.")
+		return true
+	})).Return(&agent.AgentResponse{Response: "Here is the summary.", SessionID: "s"}, nil)
+
+	_, err := s.executor.ExecuteTask(s.ctx, task)
+	require.NoError(s.T(), err)
+
+	// First thread insert is the prompt as a user message; the agent reply follows.
+	require.GreaterOrEqual(s.T(), len(inserted), 2)
+	require.False(s.T(), inserted[0].IsBot, "prompt must be a user message")
+	require.Equal(s.T(), "summarise the notes", inserted[0].Content)
+	require.Equal(s.T(), "scheduled-task", inserted[0].AuthorID)
+	require.Equal(s.T(), "thread-fr", inserted[0].ChannelID)
+	require.True(s.T(), inserted[0].IsProcessed, "prompt must be inert (out of the drain queue)")
+	require.True(s.T(), inserted[1].IsBot, "agent reply must be a bot message")
 }

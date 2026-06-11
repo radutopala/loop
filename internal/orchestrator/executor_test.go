@@ -50,10 +50,21 @@ func allowStatusBroadcasts(eb *MockEventBroadcaster) {
 	eb.On("BroadcastAgentStatus", mock.Anything, mock.Anything).Maybe()
 }
 
-// allowBotInserts adds an InsertMessage expectation for bot messages from storeBotMessage.
+// allowTaskPromptBroadcast permits the scheduled-task prompt user-message
+// broadcast the executor emits on local platforms (storeUserTaskPrompt).
+func allowTaskPromptBroadcast(eb *MockEventBroadcaster) {
+	eb.On("BroadcastMessageCreated", mock.Anything, mock.MatchedBy(func(d events.MessageEventData) bool {
+		return d.AuthorID == "scheduled-task"
+	})).Maybe()
+}
+
+// allowBotInserts adds an InsertMessage expectation for executor-emitted rows:
+// bot messages from storeBotMessage, and the scheduled-task prompt user message
+// from storeUserTaskPrompt (inserted on the local-platform thread so the chat
+// shows the prompt that kicked off the run).
 func (s *TaskExecutorSuite) allowBotInserts() {
 	s.store.On("InsertMessage", mock.Anything, mock.MatchedBy(func(msg *db.Message) bool {
-		return msg.IsBot
+		return msg.IsBot || msg.AuthorID == "scheduled-task"
 	})).Return(nil).Maybe()
 }
 
@@ -194,6 +205,7 @@ func (s *TaskExecutorSuite) TestActiveRunsStopCancelsTaskRun() {
 		Type: db.TaskTypeInterval, Schedule: "5m",
 		ThreadID: "stop-thread",
 	}
+	s.allowBotInserts() // existing-thread run injects the prompt as a user message
 	localCh := &db.Channel{ChannelID: "ch-stop", Platform: types.PlatformLocal}
 	s.store.On("GetChannel", mock.Anything, "ch-stop").Return(localCh, nil)
 	s.store.On("GetChannel", mock.Anything, "stop-thread").Return(&db.Channel{
@@ -204,6 +216,7 @@ func (s *TaskExecutorSuite) TestActiveRunsStopCancelsTaskRun() {
 	eb := new(MockEventBroadcaster)
 	s.executor.SetEventBroadcaster(eb)
 	allowStatusBroadcasts(eb)
+	allowTaskPromptBroadcast(eb)
 
 	// Simulate stop: during Run, cancel via activeRuns entry.
 	s.runner.On("Run", mock.Anything, mock.MatchedBy(func(req *agent.AgentRequest) bool {
@@ -244,11 +257,13 @@ func (s *TaskExecutorSuite) TestRunnerErrorBroadcastsStatus() {
 func (s *TaskExecutorSuite) TestRunnerErrorBroadcastsToThreadAndParent() {
 	eb := new(MockEventBroadcaster)
 	s.executor.SetEventBroadcaster(eb)
+	allowTaskPromptBroadcast(eb)
 
 	task := &db.ScheduledTask{
 		ID: 52, ChannelID: "ch-parent", Prompt: "fail", Type: db.TaskTypeInterval, Schedule: "5m",
 		ThreadID: "existing-thread",
 	}
+	s.allowBotInserts() // existing-thread run injects the prompt as a user message
 	localCh := &db.Channel{ChannelID: "ch-parent", Platform: types.PlatformLocal}
 	s.store.On("GetChannel", mock.Anything, "ch-parent").Return(localCh, nil)
 	s.store.On("GetChannel", mock.Anything, "existing-thread").Return(&db.Channel{ChannelID: "existing-thread", ParentID: "ch-parent", Platform: types.PlatformLocal, SessionID: "thread-sess"}, nil)
@@ -280,11 +295,13 @@ func (s *TaskExecutorSuite) TestRunnerErrorBroadcastsToThreadAndParent() {
 func (s *TaskExecutorSuite) TestAgentResponseErrorBroadcastsStatus() {
 	eb := new(MockEventBroadcaster)
 	s.executor.SetEventBroadcaster(eb)
+	allowTaskPromptBroadcast(eb)
 
 	task := &db.ScheduledTask{
 		ID: 51, ChannelID: "ch-err2", Prompt: "fail", Type: db.TaskTypeInterval, Schedule: "5m",
 		ThreadID: "err-thread",
 	}
+	s.allowBotInserts() // existing-thread run injects the prompt as a user message
 	localCh := &db.Channel{ChannelID: "ch-err2", Platform: types.PlatformLocal}
 	s.store.On("GetChannel", mock.Anything, "ch-err2").Return(localCh, nil)
 	s.store.On("GetChannel", mock.Anything, "err-thread").Return(&db.Channel{ChannelID: "err-thread", ParentID: "ch-err2", Platform: types.PlatformLocal, SessionID: "err-thread-sess"}, nil)
