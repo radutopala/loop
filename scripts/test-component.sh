@@ -7,39 +7,12 @@ GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 NC='\033[0m'
 
-# Stitch the per-section docs clips into one journey.mp4. Each clip is named
-# NN_<section>.mp4 (NN = feature order), so a plain lexical sort gives the
-# journey order — a missing/failed section just leaves a numbering gap and is
-# skipped. Called only for a full docs-capture run (GODOG_TAGS=@docs);
-# per-section runs leave journey.mp4 alone.
-stitch_journey() {
-    local vdir="docs/videos"
-    if ! command -v ffmpeg > /dev/null 2>&1; then
-        echo -e "${YELLOW}stitch: ffmpeg not found; skipping journey.mp4${NC}"
-        return 0
-    fi
-    local list="$vdir/.journey-concat.txt"
-    : > "$list"
-    local n=0
-    for f in $(ls "$vdir"/[0-9][0-9]_*.mp4 2>/dev/null | sort); do
-        echo "file '$(basename "$f")'" >> "$list"
-        n=$((n + 1))
-    done
-    if [ "$n" -eq 0 ]; then
-        echo -e "${YELLOW}stitch: no section clips found; skipping journey.mp4${NC}"
-        rm -f "$list"
-        return 0
-    fi
-    echo -e "${YELLOW}Stitching $n section clips into $vdir/journey.mp4...${NC}"
-    # All section clips are encoded identically (libx264/yuv420p/30fps), so try a
-    # fast stream-copy concat first; fall back to a re-encode if copy rejects it.
-    if ! ffmpeg -y -f concat -safe 0 -i "$list" -c copy -movflags +faststart "$vdir/journey.mp4" > /dev/null 2>&1; then
-        ffmpeg -y -f concat -safe 0 -i "$list" -vf "fps=30" -c:v libx264 -pix_fmt yuv420p -movflags +faststart "$vdir/journey.mp4" \
-            || { echo -e "${RED}stitch: ffmpeg concat failed${NC}"; rm -f "$list"; return 1; }
-    fi
-    rm -f "$list"
-    echo -e "${GREEN}Wrote $vdir/journey.mp4 ($n clips)${NC}"
-}
+
+# Stitch + ambient-music helpers live in a sibling script. Sourcing only defines
+# the functions (the script has a run-if-executed-directly guard, so sourcing
+# does not trigger a stitch); the full @docs run calls stitch_journey explicitly
+# after the tests.
+source "$(dirname "$0")/stitch-journey.sh"
 
 echo -e "${GREEN}=== Component Tests ===${NC}"
 
@@ -271,8 +244,9 @@ CHROME_CDP_URL="${CHROME_CDP_URL:-}" \
 GODOG_CONCURRENCY="${GODOG_CONCURRENCY:-1}" \
 go test -timeout "$TEST_TIMEOUT" -count=1 -v -tags=component ${TEST_FLAGS} ./test/component/... || TEST_RC=$?
 
-# Full docs-capture run: stitch the per-section clips into journey.mp4. Done even
-# on a partial failure so the montage reflects whatever sections were captured.
+# Full docs-capture run: stitch the per-section clips into journey.mp4 and add the
+# soundtrack. Done even on a partial failure so the montage reflects whatever
+# sections were captured.
 if [ -n "$LOOP_DOCS_CAPTURE" ] && [ "$GODOG_TAGS" = "@docs" ]; then
     stitch_journey || true
 fi

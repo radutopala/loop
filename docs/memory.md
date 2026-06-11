@@ -13,6 +13,10 @@ The Memory layout panel browses the indexed `.md` files as a tree and opens any 
 
 ![The Memory panel: a tree of indexed Markdown files (CLAUDE.md, README.md, tickets) with a file open in the viewer](static/images/features/memory-panel.png)
 
+You can also recall memory straight from chat: ask the agent and it answers using Loop's `search_memory` MCP tool, which embeds the query and returns the most relevant indexed chunks.
+
+![Recalling project conventions in chat — the agent answers via the search_memory tool](static/images/features/memory-recall.png)
+
 ---
 
 ## Architecture

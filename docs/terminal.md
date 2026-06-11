@@ -17,6 +17,12 @@ Terminals open as panels in any layout (see [Layouts](layouts.md)). Each pane is
 - **Docker Shell** — a plain `/bin/bash` inside the container, for running commands next to the agent.
 - **Host Shell** — a shell on your machine.
 
+### Image paste
+
+Paste an image into any terminal pane (⌘/Ctrl-V). Loop saves it under the workspace's `.loop/pastes/` directory and inserts the saved **absolute path** into the pane, so the in-pane Claude session (or shell) can read it. Same UX as the [chat input](chat.md#image-paste).
+
+![Pasting an image into the Docker Agent terminal drops the saved file path into the prompt](static/images/features/terminal-image-paste.png)
+
 ---
 
 ## WebSocket Protocol
