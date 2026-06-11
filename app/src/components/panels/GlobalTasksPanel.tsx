@@ -406,7 +406,7 @@ export function GlobalTasksPanel({
               <option value="once">Once</option>
               <option value="manual">Manual</option>
             </select>
-            <TaskScheduleField type={editType} value={editSchedule} onChange={setEditSchedule} inputStyle={inputStyle} />
+            <TaskScheduleField type={editType} value={editSchedule} onChange={setEditSchedule} inputStyle={inputStyle} selectStyle={selectStyle} />
           </div>
           <div style={{ display: "flex", gap: 4 }}>
             <button

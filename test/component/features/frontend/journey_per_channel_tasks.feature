@@ -44,7 +44,7 @@ Feature: Per-Channel Tasks Journey
     # Create interval task
     When I click the task create button
     And I select "interval" from "select"
-    And I clear and type "15m" into "input[placeholder='30m']"
+    And I clear and type "15" into "[data-testid='task-interval-value']"
     And I type "mega-interval-task" into "textarea[placeholder='Task prompt...']"
     And I click on the button with text "Create"
     Then I wait for text "mega-interval-task" to appear
@@ -122,7 +122,7 @@ Feature: Per-Channel Tasks Journey
     Then I wait for text "0 tasks" to appear
     When I click the task create button
     And I select "interval" from "select"
-    And I clear and type "20m" into "input[placeholder='30m']"
+    And I clear and type "20" into "[data-testid='task-interval-value']"
     And I type "mega-thread-task" into "textarea[placeholder='Task prompt...']"
     And I click on the button with text "Create"
     Then I wait for text "mega-thread-task" to appear

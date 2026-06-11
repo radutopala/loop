@@ -289,7 +289,7 @@ export function TasksPanel({ channelId, allowWorktree, onSelectChannel }: TasksP
           <option value="once">Once</option>
           <option value="manual">Manual</option>
         </select>
-        <TaskScheduleField type={newType} value={newSchedule} onChange={setNewSchedule} inputStyle={inputStyle} />
+        <TaskScheduleField type={newType} value={newSchedule} onChange={setNewSchedule} inputStyle={inputStyle} selectStyle={selectStyle} />
       </div>
       <div style={{ display: "flex", gap: 4 }}>
         <button
@@ -484,7 +484,7 @@ export function TasksPanel({ channelId, allowWorktree, onSelectChannel }: TasksP
               <option value="once">Once</option>
               <option value="manual">Manual</option>
             </select>
-            <TaskScheduleField type={editType} value={editSchedule} onChange={setEditSchedule} inputStyle={inputStyle} />
+            <TaskScheduleField type={editType} value={editSchedule} onChange={setEditSchedule} inputStyle={inputStyle} selectStyle={selectStyle} />
           </div>
           <div style={{ display: "flex", gap: 4 }}>
             <button
