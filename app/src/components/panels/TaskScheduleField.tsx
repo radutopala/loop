@@ -56,6 +56,7 @@ export function TaskScheduleField({ type, value, onChange, inputStyle, selectSty
           onChange={(e) => onChange(intervalPartsToString(amount, e.target.value as IntervalUnit))}
           style={{ ...selectStyle, flex: 1 }}
         >
+          <option value="s">seconds</option>
           <option value="m">minutes</option>
           <option value="h">hours</option>
           <option value="d">days</option>
