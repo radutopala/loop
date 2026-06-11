@@ -284,7 +284,13 @@ func (e *TaskExecutor) ExecuteTask(ctx context.Context, task *db.ScheduledTask) 
 			if !isLocal {
 				taskPrefix = "⏱ "
 			}
-			prefix := fmt.Sprintf("%stask #%d (`%s`) ", taskPrefix, task.ID, task.Schedule)
+			// Manual tasks have no schedule; label them "manual" so the thread
+			// name reads "task #N (`manual`)" instead of empty backticks.
+			scheduleLabel := task.Schedule
+			if task.Type == db.TaskTypeManual {
+				scheduleLabel = "manual"
+			}
+			prefix := fmt.Sprintf("%stask #%d (`%s`) ", taskPrefix, task.ID, scheduleLabel)
 			threadName = types.TruncateString(prefix+task.Prompt, 100)
 			// On local, seed the thread ourselves (prompt user message, then the
 			// agent's first turn) so the prompt renders ahead of the reply; pass
