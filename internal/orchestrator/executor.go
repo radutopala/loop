@@ -269,6 +269,13 @@ func (e *TaskExecutor) ExecuteTask(ctx context.Context, task *db.ScheduledTask) 
 	hasExistingThread := threadID != "" && isLocal
 	if hasExistingThread {
 		req.ChannelID = threadID
+		// Surface the prompt that kicked off this run as a user message in the
+		// thread, before the agent replies (inserted first → lower id → renders
+		// ahead of the response). Use the raw task.Prompt, not the
+		// UpdateBeforeRun-augmented `prompt`, so the git-rebase preamble stays
+		// out of the chat. First-run prompt injection happens at thread
+		// creation in the streamTracker below.
+		storeUserTaskPrompt(ctx, e.store, e.events, threadID, task.Prompt)
 	}
 	tracker := newStreamTracker(func(text string) {
 		if threadID == "" && !threadFailed {
@@ -279,7 +286,16 @@ func (e *TaskExecutor) ExecuteTask(ctx context.Context, task *db.ScheduledTask) 
 			}
 			prefix := fmt.Sprintf("%stask #%d (`%s`) ", taskPrefix, task.ID, task.Schedule)
 			threadName = types.TruncateString(prefix+task.Prompt, 100)
-			id, err := e.bot.CreateSimpleThread(ctx, task.ChannelID, threadName, prefix+text)
+			// On local, seed the thread ourselves (prompt user message, then the
+			// agent's first turn) so the prompt renders ahead of the reply; pass
+			// an empty initial message so CreateSimpleThread doesn't store the
+			// agent turn first (which would take the lower id). Other platforms
+			// keep posting the first turn as the thread's native initial message.
+			initialMessage := prefix + text
+			if isLocal {
+				initialMessage = ""
+			}
+			id, err := e.bot.CreateSimpleThread(ctx, task.ChannelID, threadName, initialMessage)
 			if err != nil {
 				e.logger.Error("creating task thread", "error", err, "task_id", task.ID, "channel_id", task.ChannelID)
 				threadFailed = true
@@ -324,11 +340,16 @@ func (e *TaskExecutor) ExecuteTask(ctx context.Context, task *db.ScheduledTask) 
 			if e.events != nil {
 				e.events.BroadcastChannelCreated(task.ChannelID, threadID)
 			}
-			// Broadcast to the thread (not the parent channel) so the
-			// Electron app shows the initial message in the thread view.
-			// Don't use storeBotMessage here — CreateSimpleThread
-			// already stored the message in the DB for the thread.
-			if e.events != nil {
+			if isLocal {
+				// Seed the thread: the prompt as a user message first (lower id
+				// → renders ahead of the reply), then the agent's first turn.
+				// Both insert into the DB and broadcast, replacing the message
+				// CreateSimpleThread would otherwise have stored.
+				storeUserTaskPrompt(ctx, e.store, e.events, threadID, task.Prompt)
+				storeBotMessage(ctx, e.store, e.events, threadID, prefix+text, "")
+			} else if e.events != nil {
+				// Other platforms: CreateSimpleThread already stored+delivered
+				// the first turn; just broadcast so any local watchers see it.
 				e.events.BroadcastMessageCreated(threadID, events.MessageEventData{
 					MsgID:       generateMessageID(),
 					AuthorName:  "agent",

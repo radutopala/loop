@@ -43,6 +43,43 @@ func storeBotMessage(ctx context.Context, store db.Store, broadcaster events.Bro
 	}
 }
 
+// storeUserTaskPrompt inserts a scheduled task's prompt as a visible user
+// message in the target channel/thread and broadcasts it, so the chat shows
+// the prompt that kicked off the run the same way send_message/queue_message
+// surface a user message. IsBot=false makes the FE render it as a user bubble.
+// The row is inert: IsProcessed=true and IsTriggered=false (default) keep it
+// out of the ClaimNextPending drain queue (which requires is_processed=0 AND
+// is_triggered=1), so it can never be picked up and re-executed. Either store
+// or broadcaster may be nil.
+func storeUserTaskPrompt(ctx context.Context, store db.Store, broadcaster events.Broadcaster, channelID, content string) {
+	msgID := generateMessageID()
+	if store != nil {
+		ch, err := store.GetChannel(ctx, channelID)
+		if err == nil && ch != nil {
+			_ = store.InsertMessage(ctx, &db.Message{
+				ChatID:      ch.ID,
+				ChannelID:   channelID,
+				MsgID:       msgID,
+				AuthorID:    "scheduled-task",
+				AuthorName:  "scheduled task",
+				Content:     content,
+				IsBot:       false,
+				IsProcessed: true,
+				CreatedAt:   time.Now().UTC(),
+			})
+		}
+	}
+	if broadcaster != nil {
+		broadcaster.BroadcastMessageCreated(channelID, events.MessageEventData{
+			MsgID:      msgID,
+			AuthorID:   "scheduled-task",
+			AuthorName: "scheduled task",
+			Content:    content,
+			IsBot:      false,
+		})
+	}
+}
+
 // storeAgentEvent inserts an agent-event row (thinking, tool_use, tool_result)
 // for a channel. The row is assigned a fresh chain_position atomically so
 // reload-time renders place it after every prior row in the channel. The caller

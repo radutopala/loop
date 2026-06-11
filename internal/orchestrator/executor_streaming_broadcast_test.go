@@ -564,6 +564,7 @@ func (s *TaskExecutorSuite) TestStreamingResolvesThreadChatID() {
 	eb := new(MockEventBroadcaster)
 	s.executor.SetEventBroadcaster(eb)
 	allowStatusBroadcasts(eb)
+	allowTaskPromptBroadcast(eb)
 
 	task := &db.ScheduledTask{
 		ID: 71, ChannelID: "ch71", Prompt: "resolve thread chat id",
@@ -572,8 +573,11 @@ func (s *TaskExecutorSuite) TestStreamingResolvesThreadChatID() {
 
 	parent := &db.Channel{ID: 100, ChannelID: "ch71", Platform: types.PlatformLocal}
 	threadCh := &db.Channel{ID: 999, ChannelID: "thread-71", ParentID: "ch71", Platform: types.PlatformLocal}
+	s.allowBotInserts() // first-turn thread seeds the prompt + agent message
 	s.store.On("GetChannel", mock.Anything, "ch71").Return(parent, nil)
-	s.store.On("GetChannel", mock.Anything, "thread-71").Return(threadCh, nil).Once()
+	// Not .Once(): first-turn thread seeding (prompt + agent message) and the
+	// tool-event chat-id resolution each look the thread channel up.
+	s.store.On("GetChannel", mock.Anything, "thread-71").Return(threadCh, nil)
 	s.store.On("GetScheduledTask", s.ctx, int64(71)).Return(&db.ScheduledTask{ID: 71, Type: db.TaskTypeCron}, nil)
 
 	s.bot.On("CreateSimpleThread", s.ctx, "ch71", mock.Anything, mock.Anything).Return("thread-71", nil).Once()
@@ -609,8 +613,12 @@ func (s *TaskExecutorSuite) TestStreamingResolvesThreadChatID() {
 
 	_, err := s.executor.ExecuteTask(s.ctx, task)
 	require.NoError(s.T(), err)
-	// GetChannel("thread-71") must be called exactly once (lazy + cached).
-	s.store.AssertNumberOfCalls(s.T(), "GetChannel", 2) // ch71 + thread-71
+	// Four GetChannel calls: ch71 (parent) once, then thread-71 three times —
+	// seeding the prompt user message, seeding the agent's first turn, and the
+	// tool-event chat-id resolution. The resolution stays lazy + cached: it
+	// fires once for the FIRST tool call and the second reuses it (otherwise
+	// this would be five), which is the behavior this test guards.
+	s.store.AssertNumberOfCalls(s.T(), "GetChannel", 4)
 }
 
 // TestStreamingOnceTaskUpsertsChannel covers the TaskTypeOnce branch in the
