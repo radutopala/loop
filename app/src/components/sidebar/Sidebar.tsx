@@ -197,11 +197,12 @@ export function Sidebar({
     draggedThreadRef.current = { id: threadId, parentId };
   }, []);
 
-  const handleThreadDragOver = useCallback((e: React.DragEvent, threadId: string) => {
-    // Only accept thread drags here. When a channel is being dragged, let the
-    // event bubble to the channel row's handler instead of marking the thread
-    // as a drop target.
-    if (!draggedThreadRef.current) return;
+  const handleThreadDragOver = useCallback((e: React.DragEvent, threadId: string, parentId: string) => {
+    // Only show a drop indicator on a sibling under the SAME parent. A channel
+    // drag (no thread ref) or hovering a thread in another channel is a
+    // non-target, so skip preventDefault and the cursor shows no-drop.
+    const src = draggedThreadRef.current;
+    if (!src || src.parentId !== parentId) return;
     e.preventDefault();
     e.stopPropagation();
     setThreadDragOverId(threadId);

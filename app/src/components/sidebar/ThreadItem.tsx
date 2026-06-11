@@ -7,7 +7,7 @@ import { StatusPill } from "./StatusPill";
 /** Drag-to-reorder wiring for threads/worktrees under a common parent. */
 export interface ThreadReorder {
   onDragStart: (threadId: string, parentId: string) => void;
-  onDragOver: (e: React.DragEvent, threadId: string) => void;
+  onDragOver: (e: React.DragEvent, threadId: string, parentId: string) => void;
   onDrop: (e: React.DragEvent, targetId: string, parentId: string) => void;
   onDragEnd: () => void;
   dragOverId: string | null;
@@ -72,7 +72,7 @@ export function ThreadItem({ thread, subThreads, threadsByParent, selected, sele
         title={thread.dir_path || undefined}
         draggable={!!reorder}
         onDragStart={reorder ? (e) => { e.stopPropagation(); reorder.onDragStart(thread.id, thread.parent_id); } : undefined}
-        onDragOver={reorder ? (e) => reorder.onDragOver(e, thread.id) : undefined}
+        onDragOver={reorder ? (e) => reorder.onDragOver(e, thread.id, thread.parent_id) : undefined}
         onDrop={reorder ? (e) => reorder.onDrop(e, thread.id, thread.parent_id) : undefined}
         onDragEnd={reorder ? (e) => { e.stopPropagation(); reorder.onDragEnd(); } : undefined}
         onClick={() => onSelect(thread.id)}
