@@ -96,6 +96,7 @@ func (s *OrchestratorSuite) TestHandleInteractionTasks() {
 		{ID: 2, Prompt: "task2", Schedule: "5m", Type: db.TaskTypeInterval, Enabled: false, NextRunAt: nextRun.Add(5 * time.Minute)},
 		{ID: 3, Prompt: "task3", Schedule: "10m", Type: db.TaskTypeOnce, Enabled: true, NextRunAt: nextRun.Add(10 * time.Minute)},
 		{ID: 4, Prompt: "task4", Schedule: "0 12 * * *", Type: db.TaskTypeCron, Enabled: true, NextRunAt: nextRun.Add(15 * time.Minute), AutoDeleteSec: 120},
+		{ID: 5, Prompt: "task5", Schedule: "", Type: db.TaskTypeManual, Enabled: true},
 	}
 	s.scheduler.On("ListTasks", s.ctx, "ch1").Return(tasks, nil)
 	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *bot.OutgoingMessage) bool {
@@ -112,7 +113,10 @@ func (s *OrchestratorSuite) TestHandleInteractionTasks() {
 			strings.Contains(out.Content, nextRun.Add(10*time.Minute).Local().Format("2006-01-02 15:04 MST")) &&
 			!strings.Contains(out.Content, "`10m`") &&
 			strings.Contains(out.Content, "next: in ") &&
-			strings.Contains(out.Content, "(auto_delete: 120s)")
+			strings.Contains(out.Content, "(auto_delete: 120s)") &&
+			strings.Contains(out.Content, "[manual]") &&
+			strings.Contains(out.Content, "(manual)") &&
+			strings.Contains(out.Content, "next: on demand")
 	})).Return(nil)
 
 	s.orch.HandleInteraction(s.ctx, &bot.Interaction{
@@ -241,6 +245,30 @@ func (s *OrchestratorSuite) TestHandleInteractionTask() {
 		ChannelID:   "ch1",
 		CommandName: "task",
 		Options:     map[string]string{"task_id": "74"},
+	})
+
+	s.store.AssertExpectations(s.T())
+}
+
+func (s *OrchestratorSuite) TestHandleInteractionTaskManual() {
+	s.store.On("GetChannel", s.ctx, "ch1").Return(nil, nil)
+	task := &db.ScheduledTask{
+		ID: 75, Prompt: "summarise open notes",
+		Schedule: "", Type: db.TaskTypeManual, Enabled: true,
+	}
+	s.store.On("GetScheduledTask", s.ctx, int64(75)).Return(task, nil)
+	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *bot.OutgoingMessage) bool {
+		return out.ChannelID == "ch1" &&
+			strings.Contains(out.Content, "**Task 75**") &&
+			strings.Contains(out.Content, "Type: manual") &&
+			strings.Contains(out.Content, "Schedule: (manual)") &&
+			strings.Contains(out.Content, "Next run: on demand")
+	})).Return(nil)
+
+	s.orch.HandleInteraction(s.ctx, &bot.Interaction{
+		ChannelID:   "ch1",
+		CommandName: "task",
+		Options:     map[string]string{"task_id": "75"},
 	})
 
 	s.store.AssertExpectations(s.T())

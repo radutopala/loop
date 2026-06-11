@@ -2,12 +2,23 @@ package api
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"time"
 
 	"github.com/radutopala/loop/internal/db"
 	"github.com/radutopala/loop/internal/events"
+	"github.com/radutopala/loop/internal/scheduler"
 )
+
+// taskMutationStatus maps an AddTask/EditTask error to an HTTP status: 400 for
+// an invalid user-supplied schedule or type, 500 for genuine server faults.
+func taskMutationStatus(err error) int {
+	if errors.Is(err, scheduler.ErrInvalidSchedule) {
+		return http.StatusBadRequest
+	}
+	return http.StatusInternalServerError
+}
 
 // resolveTaskChannelID walks up from deeply nested threads to the nearest
 // channel that is either a top-level channel or a direct child of one.
@@ -100,7 +111,7 @@ func (s *Server) handleCreateTask(w http.ResponseWriter, r *http.Request) {
 
 	id, err := s.scheduler.AddTask(r.Context(), task)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		http.Error(w, err.Error(), taskMutationStatus(err))
 		return
 	}
 
@@ -242,7 +253,7 @@ func (s *Server) handleUpdateTask(w http.ResponseWriter, r *http.Request) {
 
 	if req.Schedule != nil || req.Type != nil || req.Prompt != nil || req.AutoDeleteSec != nil || req.Worktree != nil || req.OriginBranch != nil || req.UpdateBeforeRun != nil || req.WorkflowName != nil || req.WorkflowInputs != nil {
 		if err := s.scheduler.EditTask(r.Context(), taskID, req.Schedule, req.Type, req.Prompt, req.AutoDeleteSec, req.Worktree, req.OriginBranch, req.UpdateBeforeRun, req.WorkflowName, req.WorkflowInputs); err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			http.Error(w, err.Error(), taskMutationStatus(err))
 			return
 		}
 	}

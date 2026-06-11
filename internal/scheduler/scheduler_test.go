@@ -548,9 +548,10 @@ func (s *SchedulerSuite) TestCalculateNextRun() {
 		{"cron", db.TaskTypeCron, "*/5 * * * *", now, time.Date(2025, 1, 1, 12, 5, 0, 0, time.UTC), ""},
 		{"interval", db.TaskTypeInterval, "30m", now, time.Date(2025, 1, 1, 12, 30, 0, 0, time.UTC), ""},
 		{"once", db.TaskTypeOnce, "2026-02-09T14:30:00Z", now, time.Date(2026, 2, 9, 14, 30, 0, 0, time.UTC), ""},
-		{"invalid cron", db.TaskTypeCron, "bad", now, time.Time{}, "parsing cron schedule"},
-		{"invalid interval", db.TaskTypeInterval, "not-valid", now, time.Time{}, "parsing interval"},
-		{"invalid once", db.TaskTypeOnce, "bad", now, time.Time{}, "parsing once schedule"},
+		{"manual", db.TaskTypeManual, "", now, time.Time{}, ""},
+		{"invalid cron", db.TaskTypeCron, "bad", now, time.Time{}, "cron schedule"},
+		{"invalid interval", db.TaskTypeInterval, "not-valid", now, time.Time{}, "interval"},
+		{"invalid once", db.TaskTypeOnce, "bad", now, time.Time{}, "must be RFC3339"},
 		{"unknown type", db.TaskType("unknown"), "", now, time.Time{}, "unknown task type"},
 	}
 	for _, tc := range cases {
@@ -559,6 +560,7 @@ func (s *SchedulerSuite) TestCalculateNextRun() {
 			if tc.errMsg != "" {
 				require.Error(s.T(), err)
 				require.Contains(s.T(), err.Error(), tc.errMsg)
+				require.ErrorIs(s.T(), err, ErrInvalidSchedule)
 			} else {
 				require.NoError(s.T(), err)
 				require.Equal(s.T(), tc.expected, next)

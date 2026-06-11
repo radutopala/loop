@@ -75,6 +75,15 @@ func (s *MigrationsSuite) TestRunMigrationsAllNew() {
 					WillReturnResult(sqlmock.NewResult(0, 0))
 				mock.ExpectExec(`UPDATE channels SET dir_path`).
 					WillReturnResult(sqlmock.NewResult(0, 0))
+			case strings.Contains(name, "migrateScheduledTasksAddManualType"):
+				mock.ExpectExec(`PRAGMA foreign_keys=OFF`).WillReturnResult(sqlmock.NewResult(0, 0))
+				mock.ExpectExec(`CREATE TABLE scheduled_tasks_new`).WillReturnResult(sqlmock.NewResult(0, 0))
+				mock.ExpectExec(`INSERT INTO scheduled_tasks_new`).WillReturnResult(sqlmock.NewResult(0, 0))
+				mock.ExpectExec(`DROP TABLE scheduled_tasks`).WillReturnResult(sqlmock.NewResult(0, 0))
+				mock.ExpectExec(`ALTER TABLE scheduled_tasks_new RENAME`).WillReturnResult(sqlmock.NewResult(0, 0))
+				mock.ExpectExec(`idx_scheduled_tasks_channel_thread`).WillReturnResult(sqlmock.NewResult(0, 0))
+				mock.ExpectExec(`idx_scheduled_tasks_due`).WillReturnResult(sqlmock.NewResult(0, 0))
+				mock.ExpectExec(`PRAGMA foreign_keys=ON`).WillReturnResult(sqlmock.NewResult(0, 0))
 			default:
 				s.T().Fatalf("unhandled func migration %d (%s) in TestRunMigrationsAllNew", i, name)
 			}
@@ -386,6 +395,49 @@ func (s *MigrationsSuite) TestMigrateBackfillDirPathThreadUpdateError() {
 	err = migrate(context.Background(), db)
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "backfilling thread dir_path")
+}
+
+func (s *MigrationsSuite) TestMigrateScheduledTasksAddManualTypePragmaError() {
+	db, mock, err := sqlmock.New()
+	require.NoError(s.T(), err)
+	defer db.Close()
+
+	mock.ExpectExec(`PRAGMA foreign_keys=OFF`).WillReturnError(sql.ErrConnDone)
+
+	err = migrateScheduledTasksAddManualType(context.Background(), db)
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "disabling foreign keys")
+}
+
+func (s *MigrationsSuite) TestMigrateScheduledTasksAddManualTypeRebuildError() {
+	db, mock, err := sqlmock.New()
+	require.NoError(s.T(), err)
+	defer db.Close()
+
+	mock.ExpectExec(`PRAGMA foreign_keys=OFF`).WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectExec(`CREATE TABLE scheduled_tasks_new`).WillReturnError(sql.ErrConnDone)
+	// The deferred PRAGMA foreign_keys=ON still runs as the function unwinds.
+	mock.ExpectExec(`PRAGMA foreign_keys=ON`).WillReturnResult(sqlmock.NewResult(0, 0))
+
+	err = migrateScheduledTasksAddManualType(context.Background(), db)
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "rebuilding scheduled_tasks")
+}
+
+func (s *MigrationsSuite) TestMigrateScheduledTasksAddManualTypeRebuildsOnRealDB() {
+	sqlDB, err := sql.Open("sqlite", ":memory:")
+	require.NoError(s.T(), err)
+	defer sqlDB.Close()
+
+	// Run all migrations up to (and including) the rebuild, then verify the
+	// widened CHECK actually accepts a 'manual' row and rejects a bogus type.
+	require.NoError(s.T(), RunMigrations(context.Background(), sqlDB))
+
+	_, err = sqlDB.Exec(`INSERT INTO scheduled_tasks (channel_id, schedule, type, prompt) VALUES ('c', '', 'manual', 'p')`)
+	require.NoError(s.T(), err, "manual type must satisfy the CHECK constraint")
+
+	_, err = sqlDB.Exec(`INSERT INTO scheduled_tasks (channel_id, schedule, type, prompt) VALUES ('c', '', 'bogus', 'p')`)
+	require.Error(s.T(), err, "unknown type must still violate the CHECK constraint")
 }
 
 func (s *MigrationsSuite) TestMigrateBackfillDirPathHomeDirError() {

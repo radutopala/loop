@@ -2,6 +2,7 @@ package scheduler
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"sync"
@@ -12,6 +13,12 @@ import (
 	"github.com/radutopala/loop/internal/db"
 	"github.com/radutopala/loop/internal/events"
 )
+
+// ErrInvalidSchedule wraps schedule/type validation failures (bad cron, bad
+// duration, non-RFC3339 once time, unknown type). Callers can detect it with
+// errors.Is to return a 400 rather than a 500 — these are user-input errors,
+// not server faults.
+var ErrInvalidSchedule = errors.New("invalid task schedule")
 
 // TaskExecutor executes a scheduled task and returns a response or error.
 type TaskExecutor interface {
@@ -329,7 +336,7 @@ func (s *TaskScheduler) executeAndLog(ctx context.Context, task *db.ScheduledTas
 func parseOnceSchedule(schedule string) (time.Time, error) {
 	t, err := time.Parse(time.RFC3339, schedule)
 	if err != nil {
-		return time.Time{}, fmt.Errorf("parsing once schedule %q: must be RFC3339 (e.g. 2026-02-09T14:30:00Z): %w", schedule, err)
+		return time.Time{}, fmt.Errorf("%w: once schedule %q must be RFC3339 (e.g. 2026-02-09T14:30:00Z): %w", ErrInvalidSchedule, schedule, err)
 	}
 	return t, nil
 }
@@ -340,18 +347,22 @@ func calculateNextRun(taskType db.TaskType, schedule string, now time.Time) (tim
 		parser := cron.NewParser(cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow)
 		sched, err := parser.Parse(schedule)
 		if err != nil {
-			return time.Time{}, fmt.Errorf("parsing cron schedule %q: %w", schedule, err)
+			return time.Time{}, fmt.Errorf("%w: cron schedule %q: %w", ErrInvalidSchedule, schedule, err)
 		}
 		return sched.Next(now), nil
 	case db.TaskTypeInterval:
 		d, err := time.ParseDuration(schedule)
 		if err != nil {
-			return time.Time{}, fmt.Errorf("parsing interval %q: %w", schedule, err)
+			return time.Time{}, fmt.Errorf("%w: interval %q: %w", ErrInvalidSchedule, schedule, err)
 		}
 		return now.Add(d), nil
 	case db.TaskTypeOnce:
 		return parseOnceSchedule(schedule)
+	case db.TaskTypeManual:
+		// Manual tasks have no schedule; the poller never selects them
+		// (GetDueTasks excludes type='manual'), so the zero next-run is inert.
+		return time.Time{}, nil
 	default:
-		return time.Time{}, fmt.Errorf("unknown task type %q", taskType)
+		return time.Time{}, fmt.Errorf("%w: unknown task type %q", ErrInvalidSchedule, taskType)
 	}
 }

@@ -84,13 +84,13 @@ func (s *CommandsSuite) TestScheduleSubcommand() {
 	require.Contains(s.T(), optNames, "type")
 	require.Equal(s.T(), discordgo.ApplicationCommandOptionString, optNames["type"].Type)
 	require.True(s.T(), optNames["type"].Required)
-	require.Len(s.T(), optNames["type"].Choices, 3)
+	require.Len(s.T(), optNames["type"].Choices, 4)
 
-	choiceNames := make([]string, 0, 3)
+	choiceNames := make([]string, 0, 4)
 	for _, c := range optNames["type"].Choices {
 		choiceNames = append(choiceNames, c.Name)
 	}
-	require.ElementsMatch(s.T(), []string{"cron", "interval", "once"}, choiceNames)
+	require.ElementsMatch(s.T(), []string{"cron", "interval", "once", "manual"}, choiceNames)
 }
 
 func (s *CommandsSuite) TestCancelSubcommand() {
@@ -135,7 +135,7 @@ func (s *CommandsSuite) TestEditSubcommand() {
 	require.Contains(s.T(), optNames, "type")
 	require.Equal(s.T(), discordgo.ApplicationCommandOptionString, optNames["type"].Type)
 	require.False(s.T(), optNames["type"].Required)
-	require.Len(s.T(), optNames["type"].Choices, 3)
+	require.Len(s.T(), optNames["type"].Choices, 4)
 
 	require.Contains(s.T(), optNames, "prompt")
 	require.Equal(s.T(), discordgo.ApplicationCommandOptionString, optNames["prompt"].Type)

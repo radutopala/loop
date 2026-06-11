@@ -415,7 +415,7 @@ func buildSchema() *ConfigSchema {
 						"name":            {Type: "string", Title: "Name"},
 						"description":     {Type: "string", Title: "Description"},
 						"schedule":        {Type: "string", Title: "Schedule", Description: "Cron expression, Go duration, or RFC3339 timestamp"},
-						"type":            {Type: "string", Title: "Type", Enum: []any{"cron", "interval", "once"}},
+						"type":            {Type: "string", Title: "Type", Enum: []any{"cron", "interval", "once", "manual"}},
 						"prompt":          {Type: "string", Title: "Prompt"},
 						"prompt_path":     {Type: "string", Title: "Prompt Path", Description: "Relative to ~/.loop/templates/"},
 						"auto_delete_sec": {Type: "integer", Title: "Auto Delete (sec)"},

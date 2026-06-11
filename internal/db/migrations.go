@@ -318,6 +318,58 @@ var migrations = []migration{
 	sqlMigration(`CREATE UNIQUE INDEX IF NOT EXISTS workflow_node_runs_run_node_iter_unique ON workflow_node_runs(run_id, node_id, iteration)`),
 	sqlMigration(`CREATE INDEX IF NOT EXISTS idx_workflow_node_runs_run_id ON workflow_node_runs(run_id)`),
 	sqlMigration(`SELECT 1`), // placeholder for the dropped `PRAGMA foreign_keys=ON`; see header comment.
+	// Add 'manual' to the scheduled_tasks.type CHECK constraint. SQLite can't
+	// alter a CHECK in place, so rebuild the table. task_run_logs has an
+	// incoming FK to scheduled_tasks(id), so this must run as a funcMigration
+	// that toggles PRAGMA foreign_keys outside a transaction (sqlMigration
+	// wraps each statement in a tx, where the PRAGMA is a silent no-op).
+	funcMigration(migrateScheduledTasksAddManualType),
+}
+
+// migrateScheduledTasksAddManualType rebuilds scheduled_tasks to widen the
+// type CHECK constraint to include 'manual'. Columns are copied by explicit
+// name so the copy is independent of column order.
+func migrateScheduledTasksAddManualType(ctx context.Context, sqlDB *sql.DB) error {
+	if _, err := sqlDB.ExecContext(ctx, `PRAGMA foreign_keys=OFF`); err != nil {
+		return fmt.Errorf("disabling foreign keys: %w", err)
+	}
+	defer func() { _, _ = sqlDB.ExecContext(ctx, `PRAGMA foreign_keys=ON`) }()
+
+	stmts := []string{
+		`CREATE TABLE scheduled_tasks_new (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			channel_id TEXT NOT NULL,
+			guild_id TEXT NOT NULL DEFAULT '',
+			schedule TEXT NOT NULL,
+			type TEXT NOT NULL CHECK(type IN ('cron', 'interval', 'once', 'manual')),
+			prompt TEXT NOT NULL,
+			enabled INTEGER NOT NULL DEFAULT 1,
+			next_run_at TIMESTAMP,
+			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+			updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+			template_name TEXT NOT NULL DEFAULT '',
+			auto_delete_sec INTEGER NOT NULL DEFAULT 0,
+			thread_id TEXT NOT NULL DEFAULT '',
+			worktree INTEGER NOT NULL DEFAULT 0,
+			origin_branch TEXT NOT NULL DEFAULT '',
+			update_before_run INTEGER NOT NULL DEFAULT 0,
+			running INTEGER NOT NULL DEFAULT 0,
+			workflow_name TEXT NOT NULL DEFAULT '',
+			workflow_inputs TEXT NOT NULL DEFAULT '{}'
+		)`,
+		`INSERT INTO scheduled_tasks_new (id, channel_id, guild_id, schedule, type, prompt, enabled, next_run_at, created_at, updated_at, template_name, auto_delete_sec, thread_id, worktree, origin_branch, update_before_run, running, workflow_name, workflow_inputs)
+			SELECT id, channel_id, guild_id, schedule, type, prompt, enabled, next_run_at, created_at, updated_at, template_name, auto_delete_sec, thread_id, worktree, origin_branch, update_before_run, running, workflow_name, workflow_inputs FROM scheduled_tasks`,
+		`DROP TABLE scheduled_tasks`,
+		`ALTER TABLE scheduled_tasks_new RENAME TO scheduled_tasks`,
+		`CREATE INDEX IF NOT EXISTS idx_scheduled_tasks_channel_thread ON scheduled_tasks(channel_id) WHERE thread_id != ''`,
+		`CREATE INDEX IF NOT EXISTS idx_scheduled_tasks_due ON scheduled_tasks(next_run_at) WHERE enabled = 1 AND running = 0`,
+	}
+	for _, stmt := range stmts {
+		if _, err := sqlDB.ExecContext(ctx, stmt); err != nil {
+			return fmt.Errorf("rebuilding scheduled_tasks: %w", err)
+		}
+	}
+	return nil
 }
 
 // RunMigrations executes all pending schema migrations.

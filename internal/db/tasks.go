@@ -28,7 +28,7 @@ func (s *SQLiteStore) CreateScheduledTask(ctx context.Context, task *ScheduledTa
 
 func (s *SQLiteStore) GetDueTasks(ctx context.Context, now time.Time) ([]*ScheduledTask, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT `+taskColumns+` FROM scheduled_tasks WHERE enabled = 1 AND running = 0 AND next_run_at <= ?`,
+		`SELECT `+taskColumns+` FROM scheduled_tasks WHERE enabled = 1 AND running = 0 AND type != 'manual' AND next_run_at <= ?`,
 		now,
 	)
 	if err != nil {

@@ -3,6 +3,7 @@ package api
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"time"
@@ -11,6 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/radutopala/loop/internal/db"
+	"github.com/radutopala/loop/internal/scheduler"
 	"github.com/radutopala/loop/internal/types"
 )
 
@@ -96,6 +98,17 @@ func (s *ServerSuite) TestCreateTaskSchedulerError() {
 	rec := s.testRequest("POST", "/api/tasks", `{"channel_id":"ch1","schedule":"bad","type":"cron","prompt":"test"}`)
 
 	require.Equal(s.T(), http.StatusInternalServerError, rec.Code)
+	s.scheduler.AssertExpectations(s.T())
+}
+
+func (s *ServerSuite) TestCreateTaskInvalidScheduleReturns400() {
+	s.store.On("GetChannel", mock.Anything, "ch1").Return(nil, nil)
+	s.scheduler.On("AddTask", mock.Anything, mock.Anything).
+		Return(int64(0), fmt.Errorf("calculating next run: %w", scheduler.ErrInvalidSchedule))
+
+	rec := s.testRequest("POST", "/api/tasks", `{"channel_id":"ch1","schedule":"nope","type":"once","prompt":"test"}`)
+
+	require.Equal(s.T(), http.StatusBadRequest, rec.Code)
 	s.scheduler.AssertExpectations(s.T())
 }
 
