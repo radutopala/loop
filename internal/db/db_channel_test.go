@@ -23,22 +23,22 @@ func (s *StoreSuite) TestUpsertChannel() {
 		{
 			name: "basic",
 			ch:   &Channel{ChannelID: "ch1", GuildID: "g1", Name: "test-channel", Active: true},
-			args: []driver.Value{"ch1", "g1", "test-channel", "", "", "", "", "", 1, 0, 0, sqlmock.AnyArg()},
+			args: []driver.Value{"ch1", "g1", "test-channel", "", "", "", "", "", 1, 0, "", 0, sqlmock.AnyArg()},
 		},
 		{
 			name: "with dir path",
 			ch:   &Channel{ChannelID: "ch1", GuildID: "g1", Name: "test-channel", DirPath: "/home/user/project", Active: true},
-			args: []driver.Value{"ch1", "g1", "test-channel", "/home/user/project", "", "", "", "", 1, 0, 0, sqlmock.AnyArg()},
+			args: []driver.Value{"ch1", "g1", "test-channel", "/home/user/project", "", "", "", "", 1, 0, "", 0, sqlmock.AnyArg()},
 		},
 		{
 			name: "with parent ID",
 			ch:   &Channel{ChannelID: "thread1", GuildID: "g1", Name: "", ParentID: "ch1", SessionID: "sess-parent", Active: true},
-			args: []driver.Value{"thread1", "g1", "", "", "ch1", "", "sess-parent", "", 1, 0, 0, sqlmock.AnyArg()},
+			args: []driver.Value{"thread1", "g1", "", "", "ch1", "", "sess-parent", "", 1, 0, "", 0, sqlmock.AnyArg()},
 		},
 		{
 			name: "with locked",
 			ch:   &Channel{ChannelID: "ch-lock", GuildID: "g1", Name: "locked", Active: true, Locked: true},
-			args: []driver.Value{"ch-lock", "g1", "locked", "", "", "", "", "", 1, 0, 1, sqlmock.AnyArg()},
+			args: []driver.Value{"ch-lock", "g1", "locked", "", "", "", "", "", 1, 0, "", 1, sqlmock.AnyArg()},
 		},
 	}
 	for _, tc := range cases {
@@ -62,7 +62,7 @@ func (s *StoreSuite) TestUpsertChannel() {
 func (s *StoreSuite) TestGetChannelWithParentID() {
 	now := time.Now().UTC()
 	rows := newMockChannelRows().
-		AddRow(1, "thread1", "g1", "", "/project", "ch1", "", 1, "", "", 0, 0, now, now)
+		AddRow(1, "thread1", "g1", "", "/project", "ch1", "", 1, "", "", 0, "", 0, now, now)
 	s.mock.ExpectQuery(`SELECT .+ FROM channels WHERE channel_id`).
 		WithArgs("thread1").
 		WillReturnRows(rows)
@@ -77,7 +77,7 @@ func (s *StoreSuite) TestGetChannelWithParentID() {
 func (s *StoreSuite) TestUpsertChannelError() {
 	ch := &Channel{ChannelID: "ch1", GuildID: "g1", Name: "test-channel", Active: true}
 	s.mock.ExpectExec(`INSERT INTO channels`).
-		WithArgs(ch.ChannelID, ch.GuildID, ch.Name, "", "", "", "", "", 1, 0, 0, sqlmock.AnyArg()).
+		WithArgs(ch.ChannelID, ch.GuildID, ch.Name, "", "", "", "", "", 1, 0, "", 0, sqlmock.AnyArg()).
 		WillReturnError(sql.ErrConnDone)
 
 	err := s.store.UpsertChannel(context.Background(), ch)
@@ -91,7 +91,7 @@ func (s *StoreSuite) TestUpsertChannelWithPermissions() {
 	}
 	ch := &Channel{ChannelID: "ch1", GuildID: "g1", Name: "test-channel", Permissions: perms, Active: true}
 	s.mock.ExpectExec(`INSERT INTO channels`).
-		WithArgs(ch.ChannelID, ch.GuildID, ch.Name, "", "", "", "", `{"owners":{"users":["U1"],"roles":["admin"]},"members":{"users":["U2"],"roles":[]}}`, 1, 0, 0, sqlmock.AnyArg()).
+		WithArgs(ch.ChannelID, ch.GuildID, ch.Name, "", "", "", "", `{"owners":{"users":["U1"],"roles":["admin"]},"members":{"users":["U2"],"roles":[]}}`, 1, 0, "", 0, sqlmock.AnyArg()).
 		WillReturnResult(sqlmock.NewResult(1, 1))
 
 	err := s.store.UpsertChannel(context.Background(), ch)
@@ -116,7 +116,7 @@ func (s *StoreSuite) TestGetChannel() {
 	now := time.Now().UTC()
 	permJSON := `{"owners":{"users":["U1"],"roles":["admin"]},"members":{"users":[],"roles":[]}}`
 	rows := newMockChannelRows().
-		AddRow(1, "ch1", "g1", "test", "/home/user/project", "", "discord", 1, "sess-123", permJSON, 0, 0, now, now)
+		AddRow(1, "ch1", "g1", "test", "/home/user/project", "", "discord", 1, "sess-123", permJSON, 0, "", 0, now, now)
 	s.mock.ExpectQuery(`SELECT .+ FROM channels WHERE channel_id`).
 		WithArgs("ch1").
 		WillReturnRows(rows)
@@ -151,7 +151,7 @@ func (s *StoreSuite) TestGetChannelByDirPath() {
 	now := time.Now().UTC()
 	permJSON := `{"owners":{"users":["U1"],"roles":[]},"members":{"users":["U2"],"roles":[]}}`
 	rows := newMockChannelRows().
-		AddRow(1, "ch1", "g1", "loop", "/home/user/dev/loop", "", "discord", 1, "", permJSON, 0, 0, now, now)
+		AddRow(1, "ch1", "g1", "loop", "/home/user/dev/loop", "", "discord", 1, "", permJSON, 0, "", 0, now, now)
 	s.mock.ExpectQuery(`SELECT .+ FROM channels WHERE dir_path`).
 		WithArgs("/home/user/dev/loop", types.PlatformDiscord).
 		WillReturnRows(rows)
@@ -181,8 +181,8 @@ func (s *StoreSuite) TestGetChannelByDirPathNotFoundAndError() {
 func (s *StoreSuite) TestGetChannelsByDirPath() {
 	now := time.Now().UTC()
 	rows := newMockChannelRows().
-		AddRow(1, "ch1", "", "loop-local", "/home/user/dev/loop", "", "local", 1, "", "", 0, 0, now, now).
-		AddRow(2, "ch2", "g1", "loop-discord", "/home/user/dev/loop", "", "discord", 1, "", "", 0, 0, now, now)
+		AddRow(1, "ch1", "", "loop-local", "/home/user/dev/loop", "", "local", 1, "", "", 0, "", 0, now, now).
+		AddRow(2, "ch2", "g1", "loop-discord", "/home/user/dev/loop", "", "discord", 1, "", "", 0, "", 0, now, now)
 	s.mock.ExpectQuery(`SELECT .+ FROM channels WHERE dir_path`).
 		WithArgs("/home/user/dev/loop").
 		WillReturnRows(rows)
@@ -389,8 +389,8 @@ func (s *StoreSuite) TestListChannels() {
 	now := time.Now().UTC()
 	permJSON := `{"owners":{"users":["U1"],"roles":[]},"members":{"users":[],"roles":[]}}`
 	rows := newMockChannelRows().
-		AddRow(1, "ch1", "g1", "alpha", "/home/user/alpha", "", "discord", 1, "sess-1", permJSON, 0, 0, now, now).
-		AddRow(2, "ch2", "g1", "beta", "/home/user/beta", "ch1", "discord", 0, "sess-2", "", 0, 1, now, now)
+		AddRow(1, "ch1", "g1", "alpha", "/home/user/alpha", "", "discord", 1, "sess-1", permJSON, 0, "", 0, now, now).
+		AddRow(2, "ch2", "g1", "beta", "/home/user/beta", "ch1", "discord", 0, "sess-2", "", 0, "", 1, now, now)
 	s.mock.ExpectQuery(`SELECT .+ FROM channels ORDER BY name ASC`).
 		WillReturnRows(rows)
 
@@ -432,7 +432,7 @@ func (s *StoreSuite) TestListChannelsErrors() {
 	require.Nil(s.T(), channels)
 
 	s.mock.ExpectQuery(`SELECT .+ FROM channels ORDER BY name ASC`).WillReturnRows(
-		newMockChannelRows().AddRow("not-an-int", "ch1", "g1", "test", "/home/user/project", "", "", 1, "sess-1", "", 0, 0, time.Now().UTC(), time.Now().UTC()))
+		newMockChannelRows().AddRow("not-an-int", "ch1", "g1", "test", "/home/user/project", "", "", 1, "sess-1", "", 0, "", 0, time.Now().UTC(), time.Now().UTC()))
 	channels, err = s.store.ListChannels(context.Background())
 	require.Error(s.T(), err)
 	require.Nil(s.T(), channels)

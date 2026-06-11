@@ -324,6 +324,9 @@ var migrations = []migration{
 	// that toggles PRAGMA foreign_keys outside a transaction (sqlMigration
 	// wraps each statement in a tx, where the PRAGMA is a silent no-op).
 	funcMigration(migrateScheduledTasksAddManualType),
+	// base_branch records the branch a worktree thread was created from, so the
+	// UI can flag a worktree still sitting at its base commit.
+	sqlMigration(`ALTER TABLE channels ADD COLUMN base_branch TEXT NOT NULL DEFAULT ''`),
 }
 
 // migrateScheduledTasksAddManualType rebuilds scheduled_tasks to widen the

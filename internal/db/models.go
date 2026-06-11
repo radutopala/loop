@@ -19,9 +19,12 @@ type Channel struct {
 	SessionID   string            `json:"session_id"`
 	Permissions types.Permissions `json:"permissions"`
 	Worktree    bool              `json:"worktree"`
-	Locked      bool              `json:"locked"`
-	CreatedAt   time.Time         `json:"created_at"`
-	UpdatedAt   time.Time         `json:"updated_at"`
+	// BaseBranch is the branch a worktree thread was created from. Empty for
+	// non-worktree channels and for worktrees created before this was tracked.
+	BaseBranch string    `json:"base_branch"`
+	Locked     bool      `json:"locked"`
+	CreatedAt  time.Time `json:"created_at"`
+	UpdatedAt  time.Time `json:"updated_at"`
 }
 
 // StaleRunningMessage describes a (channel_id, msg_id) pair returned by

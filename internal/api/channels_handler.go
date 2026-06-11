@@ -46,6 +46,7 @@ type channelResponse struct {
 	Branch           string `json:"branch,omitempty"`
 	Commit           string `json:"commit,omitempty"`
 	Worktree         bool   `json:"worktree"`
+	BaseBranch       string `json:"base_branch,omitempty"`
 	Locked           bool   `json:"locked"`
 	DiffAdditions    int    `json:"diff_additions,omitempty"`
 	DiffDeletions    int    `json:"diff_deletions,omitempty"`
@@ -168,6 +169,7 @@ func (s *Server) handleSearchChannels(w http.ResponseWriter, r *http.Request) {
 			Branch:           gitBranch(r.Context(), dirPath),
 			Commit:           gitCommit(r.Context(), dirPath),
 			Worktree:         ch.Worktree,
+			BaseBranch:       ch.BaseBranch,
 			Locked:           ch.Locked,
 			DiffAdditions:    diffAdd,
 			DiffDeletions:    diffDel,

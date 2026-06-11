@@ -13,6 +13,8 @@ export interface Channel {
   branch: string;
   commit: string;
   worktree: boolean;
+  /** For worktree threads: the branch this worktree was created from. */
+  base_branch?: string;
   locked: boolean;
   diff_additions: number;
   diff_deletions: number;

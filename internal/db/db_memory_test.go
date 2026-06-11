@@ -183,7 +183,7 @@ func (s *StoreSuite) TestNowFuncUsedInUpsertChannel() {
 
 	ch := &Channel{ChannelID: "ch1", GuildID: "g1", Name: "test", Active: true}
 	s.mock.ExpectExec(`INSERT INTO channels`).
-		WithArgs("ch1", "g1", "test", "", "", "", "", "", 1, 0, 0, fixedTime).
+		WithArgs("ch1", "g1", "test", "", "", "", "", "", 1, 0, "", 0, fixedTime).
 		WillReturnResult(sqlmock.NewResult(1, 1))
 
 	err := s.store.UpsertChannel(context.Background(), ch)
