@@ -166,6 +166,9 @@ export function ChannelItem({
           onClick={() => onSelect(channel.id)}
           style={{
             flex: 1,
+            // Allow the button to shrink below its text width so the name
+            // ellipsizes and the hover action buttons (+thread/+wt) stay in bounds.
+            minWidth: 0,
             display: "flex",
             alignItems: "center",
             gap: 6,
