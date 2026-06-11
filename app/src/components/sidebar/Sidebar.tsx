@@ -159,6 +159,10 @@ export function Sidebar({
   }, []);
 
   const handleDragOver = useCallback((e: React.DragEvent, channelId: string) => {
+    // Only accept channel-on-channel drops. When a thread is being dragged
+    // (draggedThreadRef set, draggedIdRef null), skip preventDefault so the
+    // channel row is a non-target and the cursor shows "no-drop".
+    if (!draggedIdRef.current) return;
     e.preventDefault();
     setDragOverId(channelId);
   }, []);
@@ -194,18 +198,26 @@ export function Sidebar({
   }, []);
 
   const handleThreadDragOver = useCallback((e: React.DragEvent, threadId: string) => {
+    // Only accept thread drags here. When a channel is being dragged, let the
+    // event bubble to the channel row's handler instead of marking the thread
+    // as a drop target.
+    if (!draggedThreadRef.current) return;
     e.preventDefault();
     e.stopPropagation();
     setThreadDragOverId(threadId);
   }, []);
 
   const handleThreadDrop = useCallback((e: React.DragEvent, targetId: string, parentId: string) => {
+    // Not a thread drag (e.g. a channel dropped over a thread row): let the
+    // event bubble to the channel row's drop handler instead of swallowing it.
+    if (!draggedThreadRef.current) return;
     e.preventDefault();
     e.stopPropagation();
     setThreadDragOverId(null);
     const src = draggedThreadRef.current;
     draggedThreadRef.current = null;
-    if (!src || src.id === targetId || src.parentId !== parentId) return;
+    // Only reorder among siblings of the same parent — no cross-parent moves.
+    if (src.id === targetId || src.parentId !== parentId) return;
 
     const siblings = channels.filter((c) => c.parent_id === parentId);
     const ids = sortByOrder(siblings, threadOrder[parentId] ?? []).map((c) => c.id);
