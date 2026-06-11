@@ -491,3 +491,34 @@ func (s *TaskExecutorSuite) TestStreamingLocalFirstRunInjectsPromptBeforeReply()
 	require.True(s.T(), inserted[0].IsProcessed, "prompt must be inert (out of the drain queue)")
 	require.True(s.T(), inserted[1].IsBot, "agent reply must be a bot message")
 }
+
+// TestStreamingManualTaskThreadNameUsesManualLabel guards the thread-name
+// label for manual tasks: they have no schedule, so the prefix must read
+// "task #N (`manual`)" rather than empty backticks "task #N (“)".
+func (s *TaskExecutorSuite) TestStreamingManualTaskThreadNameUsesManualLabel() {
+	task := &db.ScheduledTask{
+		ID: 140, ChannelID: "ch-m", Prompt: "say hi",
+		Type: db.TaskTypeManual, Schedule: "",
+	}
+	localChannel := &db.Channel{ID: 1, ChannelID: "ch-m", Platform: types.PlatformLocal, DirPath: "/work"}
+	s.allowBotInserts()
+	s.store.On("GetChannel", mock.Anything, "ch-m").Return(localChannel, nil)
+	s.store.On("GetChannel", mock.Anything, "thread-m").Return(&db.Channel{ID: 50, ChannelID: "thread-m"}, nil).Maybe()
+	s.store.On("GetScheduledTask", mock.Anything, mock.Anything).Return(nil, nil).Maybe()
+	s.bot.On("CreateSimpleThread", s.ctx, "ch-m", mock.MatchedBy(func(name string) bool {
+		return strings.Contains(name, "task #140 (`manual`)")
+	}), "").Return("thread-m", nil).Once()
+	s.store.On("LinkTaskThread", mock.Anything, mock.Anything, int64(140), "thread-m").Return(nil).Maybe()
+	s.store.On("UpdateSessionID", mock.Anything, mock.Anything, mock.Anything).Return(nil).Maybe()
+	s.runner.On("Run", mock.Anything, mock.MatchedBy(func(req *agent.AgentRequest) bool {
+		if req.OnTurn == nil {
+			return false
+		}
+		req.OnTurn("hi")
+		return true
+	})).Return(&agent.AgentResponse{Response: "hi", SessionID: "s"}, nil)
+
+	_, err := s.executor.ExecuteTask(s.ctx, task)
+	require.NoError(s.T(), err)
+	s.bot.AssertExpectations(s.T())
+}
