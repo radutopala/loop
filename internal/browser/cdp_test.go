@@ -79,6 +79,37 @@ func (s *CDPSuite) TestNewCDPClientSuccess() {
 	c.Close()
 }
 
+// WithDiscoverExisting makes the client attach to the discovered existing target.
+func (s *CDPSuite) TestNewCDPClientDiscoverExisting() {
+	c, err := NewCDPClient(context.Background(), "ws://test:9222", slog.Default(),
+		WithAllocator(func(parent context.Context, _ string) (context.Context, context.CancelFunc) {
+			return context.WithCancel(parent)
+		}),
+		WithRunFunc(func(_ context.Context, _ ...chromedp.Action) error { return nil }),
+		WithDiscoverExisting(),
+		withDiscoverFunc(func(_ string, _ *slog.Logger) string { return "PAGE-T0" }),
+	)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "PAGE-T0", c.TargetID())
+	c.Close()
+}
+
+// WithDiscoverExisting when no existing target is found falls back to chromedp's
+// default (no pre-resolved target).
+func (s *CDPSuite) TestNewCDPClientDiscoverExistingNoTarget() {
+	c, err := NewCDPClient(context.Background(), "ws://test:9222", slog.Default(),
+		WithAllocator(func(parent context.Context, _ string) (context.Context, context.CancelFunc) {
+			return context.WithCancel(parent)
+		}),
+		WithRunFunc(func(_ context.Context, _ ...chromedp.Action) error { return nil }),
+		WithDiscoverExisting(),
+		withDiscoverFunc(func(_ string, _ *slog.Logger) string { return "" }),
+	)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "", c.TargetID())
+	c.Close()
+}
+
 func (s *CDPSuite) TestNewCDPClientRunError() {
 	c, err := NewCDPClient(context.Background(), "ws://test:9222", slog.Default(),
 		WithAllocator(func(parent context.Context, _ string) (context.Context, context.CancelFunc) {

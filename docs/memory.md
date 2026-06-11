@@ -7,6 +7,14 @@ The memory system provides semantic search over Markdown files using vector embe
 
 ---
 
+## Memory Panel
+
+The Memory layout panel browses the indexed `.md` files as a tree and opens any file in a viewer. The list refreshes automatically while the panel is open, so files indexed by the re-indexer or the agent appear without a manual reload.
+
+![The Memory panel: a tree of indexed Markdown files (CLAUDE.md, README.md, tickets) with a file open in the viewer](static/images/features/memory-panel.png)
+
+---
+
 ## Architecture
 
 ```

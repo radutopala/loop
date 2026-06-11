@@ -72,7 +72,10 @@ func (d *cdpDispatcher) ensureCDP() (directCDP, error) {
 		return d.cdp, nil
 	}
 	// Use Background context so the CDP connection outlives individual MCP requests.
-	client, err := d.factory(context.Background(), d.cdpEndpoint, d.logger, browser.WithNewTarget())
+	// Attach to Chrome's existing first page target (rather than spawning a new
+	// tab) so the desktop browser panel — which screencasts that same target —
+	// shows what these tools navigate, instead of each driving a separate blank tab.
+	client, err := d.factory(context.Background(), d.cdpEndpoint, d.logger, browser.WithDiscoverExisting())
 	if err != nil {
 		return nil, fmt.Errorf("connecting to Chrome at %s: %w", d.cdpEndpoint, err)
 	}

@@ -117,6 +117,15 @@ func (s *RunnerSuite) TestLocalhostToDockerHost() {
 	}
 }
 
+func (s *RunnerSuite) TestAgentAPIBase() {
+	// Default: host.docker.internal + APIAddr (daemon on the Docker host).
+	require.Equal(s.T(), "http://host.docker.internal:8222",
+		agentAPIBase(&config.Config{APIAddr: ":8222"}))
+	// Override: used when the daemon itself runs in a container.
+	require.Equal(s.T(), "http://172.17.0.2:8222",
+		agentAPIBase(&config.Config{APIAddr: ":8222", APIAdvertiseURL: "http://172.17.0.2:8222"}))
+}
+
 func (s *RunnerSuite) TestEnsureNoProxy() {
 	tests := []struct {
 		name       string

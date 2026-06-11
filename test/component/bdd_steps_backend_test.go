@@ -75,6 +75,7 @@ func registerBackendSteps(ctx *godog.ScenarioContext, tc *TestContext) {
 	// Workflow task setup
 	ctx.Step(`^I set up a workflow task via API with workflow "([^"]*)" and schedule "([^"]*)"$`, tc.setupWorkflowTaskViaAPINoInputs)
 	ctx.Step(`^I set up a workflow task via API with workflow "([^"]*)" and schedule "([^"]*)" with inputs:$`, tc.setupWorkflowTaskViaAPIWithInputs)
+	ctx.Step(`^I start a workflow run for "([^"]*)" via API$`, tc.startWorkflowRunViaAPI)
 
 	// Worktree task setup
 	ctx.Step(`^I set up a worktree task via API with prompt "([^"]*)" and schedule "([^"]*)"$`, tc.setupWorktreeTaskViaAPI)
@@ -404,7 +405,12 @@ func (tc *TestContext) buildSampleProjectOnce() error {
 }
 `,
 		".gitignore": "node_modules/\ndist/\n",
-		".loop/config.json": "{\n  \"claude_model\": \"claude-sonnet-4-6\"\n}\n",
+		// CLAUDE.md gives the Memory panel something to index/show in the docs
+		// walkthrough (the indexer only picks up *.md under memory.paths).
+		"CLAUDE.md": "# Acme Notes — agent guide\n\nThis is a small Express notes service used in the Loop documentation.\n\n## Conventions\n\n- Routes live in `src/index.ts`; storage helpers in `src/notes.ts`.\n- Keep handlers thin — validation in the route, persistence in `notes.ts`.\n- Notes are kept in memory; there is no database yet.\n\n## Common tasks\n\n- Add an endpoint: register it in `src/index.ts` and add a helper in `src/notes.ts`.\n- Run locally with `npm run dev` (tsx watch).\n",
+		// memory.paths indexes this project's *.md (CLAUDE.md, README.md) so the
+		// Memory panel is populated during docs capture.
+		".loop/config.json": "{\n  \"claude_model\": \"claude-sonnet-4-6\",\n  \"memory\": { \"paths\": [\".\"] }\n}\n",
 		"src/index.ts": `import express from "express";
 import { listNotes, createNote } from "./notes";
 
@@ -949,6 +955,24 @@ func (tc *TestContext) taskHasRunLogs() bool {
 
 func (tc *TestContext) setupWorkflowTaskViaAPINoInputs(workflowName, schedule string) error {
 	return tc.createWorkflowTask(workflowName, "{}", schedule)
+}
+
+// startWorkflowRunViaAPI immediately starts a workflow run for the sample
+// project (by dir_path, since the docs sample channel leaves ChannelID unset),
+// so the Workflows panel/tab shows a real run instead of an empty state.
+func (tc *TestContext) startWorkflowRunViaAPI(workflowName string) error {
+	payload := map[string]any{
+		"workflow_name": workflowName,
+		"dir_path":      tc.ChannelDir,
+	}
+	b, _ := json.Marshal(payload)
+	if err := tc.doRequest(http.MethodPost, "/api/workflows/runs", string(b)); err != nil {
+		return err
+	}
+	if tc.LastStatus != http.StatusOK && tc.LastStatus != http.StatusCreated {
+		return fmt.Errorf("failed to start workflow run: status %d, body: %s", tc.LastStatus, string(tc.LastBody))
+	}
+	return nil
 }
 
 func (tc *TestContext) setupWorkflowTaskViaAPIWithInputs(workflowName, schedule string, body *godog.DocString) error {

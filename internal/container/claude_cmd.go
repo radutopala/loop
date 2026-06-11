@@ -153,7 +153,7 @@ func (b *ClaudeCmdBuilder) BuildInteractiveCmd(channelID, dirPath, parentDirPath
 
 // writeAgentMCPConfig writes a per-agent MCP config file with --agent-id.
 func (b *ClaudeCmdBuilder) writeAgentMCPConfig(cfg *config.Config, workDir, channelID, agentID string) {
-	apiURL := "http://host.docker.internal" + cfg.APIAddr
+	apiURL := agentAPIBase(cfg)
 	loopDir := filepath.Join(workDir, ".loop")
 	_ = b.mkdirAll(loopDir, 0o755)
 	mcpCfg := buildMCPConfig(channelID, apiURL, workDir, "", agentID, cfg.Memory.Enabled, cfg.Browser.Enabled, cfg.MCPServers)

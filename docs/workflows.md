@@ -439,6 +439,10 @@ The Workflows panel is available in two variants:
 
 Both variants share the same two-pane layout: a resizable run list on the left and a detail view on the right. The run list paginates via infinite scroll — pages of 50 runs are fetched as you scroll within 200 px of the bottom, and polling/WebSocket refreshes preserve the currently-loaded window so already-paginated rows stay visible.
 
+The same panel is also available as a **Workflows layout tab** scoped to the current project, showing that channel's runs and their live DAG:
+
+![The Workflows layout tab showing a completed run and its DAG for the current project](static/images/features/workflows-tab.png)
+
 ### DAG Graph Visualization
 
 The detail view renders an interactive SVG DAG graph (`WorkflowGraph` component). Nodes are laid out in topological layers using a longest-path algorithm, with independent nodes stacked vertically within the same layer.

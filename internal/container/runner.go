@@ -488,7 +488,7 @@ func (r *DockerRunner) createAndStartContainer(
 	}
 	keepMCPConfig = cfg.KeepMCPConfigs
 
-	apiURL := "http://host.docker.internal" + cfg.APIAddr
+	apiURL := agentAPIBase(cfg)
 
 	env, err := r.buildContainerEnv(cfg, channelID, apiURL)
 	if err != nil {

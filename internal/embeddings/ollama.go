@@ -60,6 +60,10 @@ type OllamaEmbedder struct {
 	loopDir           string
 	idleCheckInterval time.Duration
 	sleepFunc         func(time.Duration)
+	// inContainer reports whether loop runs inside a container. When true, the
+	// ollama sidecar's published 127.0.0.1 port lives on the Docker host and is
+	// unreachable from us, so we connect to the sidecar's bridge IP instead.
+	inContainer func() bool
 }
 
 // OllamaOption configures an OllamaEmbedder.
@@ -105,6 +109,11 @@ func WithOllamaIdleCheckInterval(d time.Duration) OllamaOption {
 	return func(e *OllamaEmbedder) { e.idleCheckInterval = d }
 }
 
+// WithOllamaInContainer overrides the containerized-daemon detector (for testing).
+func WithOllamaInContainer(fn func() bool) OllamaOption {
+	return func(e *OllamaEmbedder) { e.inContainer = fn }
+}
+
 // NewOllamaEmbedder creates an Ollama embedder that manages a Docker container.
 func NewOllamaEmbedder(opts ...OllamaOption) *OllamaEmbedder {
 	e := &OllamaEmbedder{
@@ -117,6 +126,7 @@ func NewOllamaEmbedder(opts ...OllamaOption) *OllamaEmbedder {
 		startupWait:       ollamaStartupWait,
 		idleCheckInterval: ollamaIdleCheckInterval,
 		sleepFunc:         time.Sleep,
+		inContainer:       defaultInContainer,
 	}
 	for _, opt := range opts {
 		opt(e)
@@ -238,8 +248,40 @@ func (e *OllamaEmbedder) ensureRunning(ctx context.Context) error {
 		return fmt.Errorf("docker run ollama: %w", err)
 	}
 
+	// When loop runs in a container, the sidecar's published 127.0.0.1 port lives
+	// on the Docker host and is unreachable from us; connect to its bridge IP
+	// (container-to-container) instead, mirroring the browser CDP sidecar.
+	if url := e.resolveContainerURL(ctx); url != "" {
+		e.url = url
+	}
+
 	// Wait for Ollama to become responsive.
 	return e.waitForReady(ctx)
+}
+
+// defaultInContainer reports whether loop is running inside a container by
+// probing for the /.dockerenv marker Docker writes into every container.
+func defaultInContainer() bool {
+	_, err := os.Stat("/.dockerenv")
+	return err == nil
+}
+
+// resolveContainerURL returns the ollama sidecar's bridge-network URL when loop
+// runs inside a container, or "" to keep the configured (host-published) URL.
+func (e *OllamaEmbedder) resolveContainerURL(ctx context.Context) string {
+	if e.inContainer == nil || !e.inContainer() {
+		return ""
+	}
+	out, err := e.commander.Run(ctx, "docker", "inspect", "-f",
+		"{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}", ollamaContainerName)
+	if err != nil {
+		return ""
+	}
+	ip := strings.TrimSpace(string(out))
+	if ip == "" {
+		return ""
+	}
+	return fmt.Sprintf("http://%s:11434", ip)
 }
 
 // waitForReady polls the Ollama API until it responds or the timeout is reached.

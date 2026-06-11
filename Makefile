@@ -39,7 +39,7 @@ test-integration: ## Run integration tests (requires tokens in ~/.loop/config.in
 GODOG_TAGS ?= ~@docs
 
 test-component-bdd: ## Run BDD component tests (via Docker on host, natively in CI)
-	@if [ "$$CI" = "true" ] || ([ -f /.dockerenv ] && [ "$$(id -u)" = "0" ] && command -v apt-get >/dev/null 2>&1); then \
+	@if { [ "$$CI" = "true" ] || ([ -f /.dockerenv ] && [ "$$(id -u)" = "0" ] && command -v apt-get >/dev/null 2>&1); } && [ -z "$(LOOP_DOCS_CAPTURE)" ]; then \
 		GODOG_TAGS="$(GODOG_TAGS)" LOOP_DOCS_CAPTURE="$(LOOP_DOCS_CAPTURE)" $(if $(LOOP_DOCS_CAPTURE),LOOP_DOCS_HOST_CONFIG="$(HOME)/.loop/config.json") TEST_RUN=$${TEST_RUN:-"TestBDDBackendFeatures|TestBDDFrontendFeatures"} bash scripts/test-component.sh; \
 	else \
 		docker rm -f loop-bdd 2>/dev/null; \
@@ -58,6 +58,10 @@ test-component-bdd: ## Run BDD component tests (via Docker on host, natively in 
 
 docs-capture: ## Capture documentation screenshots/GIFs from @docs BDD scenarios (incl. a live Claude agent chat; reuses one sample project) into docs/static/images/features
 	$(MAKE) test-component-bdd GODOG_TAGS=@docs LOOP_DOCS_CAPTURE=1 TEST_RUN=TestBDDFrontendFeatures
+
+docs-capture-section: ## Capture+record a single docs section for fast iteration, e.g. SECTION=git or SECTION=browser (tags: intro chat gate shortcuts git editor memory terminal git-panel browser sessions swarm canvas playground kanban workflows-tab quality multi-panel worktrees tasks workflows-panel settings outro)
+	@test -n "$(SECTION)" || { echo "Usage: make docs-capture-section SECTION=<name>"; exit 1; }
+	$(MAKE) test-component-bdd GODOG_TAGS=@docs-$(SECTION) LOOP_DOCS_CAPTURE=1 TEST_RUN=TestBDDFrontendFeatures
 
 test-component-perf: ## Run API performance tests (via Docker on host, natively in CI)
 	@if [ "$$CI" = "true" ] || ([ -f /.dockerenv ] && [ "$$(id -u)" = "0" ] && command -v apt-get >/dev/null 2>&1); then \

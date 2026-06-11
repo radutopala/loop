@@ -25,6 +25,7 @@ func isChromeReachable(hostPort string) bool {
 type browserSession struct {
 	chromeContainerID string // only used by DockerProvider
 	hostPort          string // only used by DockerProvider
+	cdpAddr           string // host:port the daemon uses to reach CDP (DockerProvider)
 	lastUsedAt        time.Time
 }
 
