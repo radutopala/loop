@@ -49,20 +49,24 @@ export function defaultScheduleForType(type: string): string {
   }
 }
 
-export type IntervalUnit = "m" | "h" | "d";
+export type IntervalUnit = "s" | "m" | "h" | "d";
 
 /**
- * Parse a Go duration interval string (e.g. "30m", "2h", "48h") into a
- * number + unit for the interval builder. Compound/odd durations collapse to
- * the largest clean unit (e.g. "2h30m" → 150 minutes), which is behaviourally
- * identical for next-run scheduling. Unparseable input falls back to 30m.
+ * Parse a Go duration interval string (e.g. "45s", "30m", "2h", "48h") into a
+ * number + unit for the interval builder. The largest clean unit wins
+ * (3600s → 1 hour); compound/odd durations collapse to the largest exact
+ * divisor (e.g. "2h30m" → 150 minutes), behaviourally identical for next-run
+ * scheduling. Seconds are preserved so a sub-minute interval created via
+ * API/MCP round-trips instead of silently rounding. Unparseable input falls
+ * back to 30m.
  */
 export function parseIntervalToParts(dur: string): { value: number; unit: IntervalUnit } {
-  const mins = goDurationToMinutes(dur);
-  if (mins == null || mins < 1) return { value: 30, unit: "m" };
-  if (mins % 1440 === 0) return { value: mins / 1440, unit: "d" };
-  if (mins % 60 === 0) return { value: mins / 60, unit: "h" };
-  return { value: mins, unit: "m" };
+  const secs = goDurationToSeconds(dur);
+  if (secs == null || secs < 1) return { value: 30, unit: "m" };
+  if (secs % 86400 === 0) return { value: secs / 86400, unit: "d" };
+  if (secs % 3600 === 0) return { value: secs / 3600, unit: "h" };
+  if (secs % 60 === 0) return { value: secs / 60, unit: "m" };
+  return { value: secs, unit: "s" };
 }
 
 /**
@@ -76,8 +80,8 @@ export function intervalPartsToString(value: number, unit: IntervalUnit): string
   return `${n}${unit}`;
 }
 
-/** Sum a Go duration string (h/m/s segments) to whole minutes, or null. */
-function goDurationToMinutes(dur: string): number | null {
+/** Sum a Go duration string (h/m/s segments) to whole seconds, or null. */
+function goDurationToSeconds(dur: string): number | null {
   if (!dur) return null;
   const re = /(\d+(?:\.\d+)?)(h|m|s)/g;
   let total = 0;
@@ -88,7 +92,7 @@ function goDurationToMinutes(dur: string): number | null {
     matched = true;
     consumed += m[0].length;
     const n = parseFloat(m[1] ?? "0");
-    total += m[2] === "h" ? n * 60 : m[2] === "m" ? n : n / 60;
+    total += m[2] === "h" ? n * 3600 : m[2] === "m" ? n * 60 : n;
   }
   if (!matched || consumed !== dur.length) return null;
   return Math.round(total);

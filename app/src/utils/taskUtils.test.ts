@@ -116,6 +116,13 @@ describe("interval parts", () => {
     expect(parseIntervalToParts("90m")).toEqual({ value: 90, unit: "m" }); // not a whole hour
   });
 
+  it("preserves sub-minute intervals as seconds (round-trip, no silent rounding)", () => {
+    expect(parseIntervalToParts("45s")).toEqual({ value: 45, unit: "s" }); // not a whole minute
+    expect(parseIntervalToParts("90s")).toEqual({ value: 90, unit: "s" }); // 90s = 1.5 min, stays seconds
+    expect(parseIntervalToParts("120s")).toEqual({ value: 2, unit: "m" }); // whole minutes → promoted
+    expect(intervalPartsToString(45, "s")).toBe("45s");
+  });
+
   it("collapses compound durations to equivalent minutes", () => {
     expect(parseIntervalToParts("2h30m")).toEqual({ value: 150, unit: "m" });
   });
