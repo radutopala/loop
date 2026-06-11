@@ -58,7 +58,6 @@ export function SidebarWorktreeButton({ channelId, onCreateWorktree }: {
           lineHeight: 1,
           borderRadius: 4,
           whiteSpace: "nowrap",
-          fontFamily: fonts.mono,
         }}
         onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = colors.hoverBg; e.currentTarget.style.color = colors.textLight; }}
         onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = "transparent"; e.currentTarget.style.color = colors.textDim; }}
