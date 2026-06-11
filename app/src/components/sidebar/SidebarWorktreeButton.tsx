@@ -1,4 +1,5 @@
 import { useState, useCallback, useEffect, useRef } from "react";
+import { createPortal } from "react-dom";
 import { fetchBranches, type BranchInfo } from "../../api/git";
 import { fonts } from "../../theme";
 import { useTheme } from "../../ThemeContext";
@@ -9,6 +10,10 @@ import { logErr } from "../../utils/log";
  * dropdown (the same data the header branch picker uses); picking a branch
  * creates a worktree thread from it. Only rendered for channels backed by a
  * git repo (a dir_path).
+ *
+ * The dropdown is portaled to the document body and positioned at the button's
+ * lower-right via fixed coordinates, so it opens down-and-to-the-right of the
+ * click instead of being clipped by the sidebar's overflow.
  */
 export function SidebarWorktreeButton({ channelId, onCreateWorktree }: {
   channelId: string;
@@ -16,15 +21,19 @@ export function SidebarWorktreeButton({ channelId, onCreateWorktree }: {
 }) {
   const { colors } = useTheme();
   const [open, setOpen] = useState(false);
+  const [coords, setCoords] = useState<{ top: number; left: number }>({ top: 0, left: 0 });
   const [branchInfo, setBranchInfo] = useState<BranchInfo | null>(null);
   const [search, setSearch] = useState("");
-  const ref = useRef<HTMLDivElement>(null);
+  const buttonRef = useRef<HTMLButtonElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
   const searchRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     if (!open) return;
     const handler = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+      const target = e.target as Node;
+      if (buttonRef.current?.contains(target) || menuRef.current?.contains(target)) return;
+      setOpen(false);
     };
     document.addEventListener("mousedown", handler);
     return () => document.removeEventListener("mousedown", handler);
@@ -32,20 +41,27 @@ export function SidebarWorktreeButton({ channelId, onCreateWorktree }: {
 
   const handleOpen = useCallback((e: React.MouseEvent) => {
     e.stopPropagation();
-    setOpen((v) => !v);
+    if (open) {
+      setOpen(false);
+      return;
+    }
+    const rect = buttonRef.current?.getBoundingClientRect();
+    if (rect) setCoords({ top: rect.bottom + 4, left: rect.left });
     setSearch("");
     setBranchInfo(null);
+    setOpen(true);
     fetchBranches(channelId).then(setBranchInfo).catch(logErr("fetching branches for worktree"));
     setTimeout(() => searchRef.current?.focus(), 0);
-  }, [channelId]);
+  }, [channelId, open]);
 
   const filtered = branchInfo?.branches.filter((b) =>
     !search || b.toLowerCase().includes(search.toLowerCase()),
   ) ?? [];
 
   return (
-    <div ref={ref} style={{ position: "relative", display: "flex", alignItems: "center" }}>
+    <>
       <button
+        ref={buttonRef}
         onClick={handleOpen}
         title="New worktree from branch"
         style={{
@@ -64,15 +80,15 @@ export function SidebarWorktreeButton({ channelId, onCreateWorktree }: {
       >
         +wt
       </button>
-      {open && (
+      {open && createPortal(
         <div
+          ref={menuRef}
           data-testid="sidebar-worktree-picker"
           onClick={(e) => e.stopPropagation()}
           style={{
-            position: "absolute",
-            top: "100%",
-            right: 0,
-            marginTop: 4,
+            position: "fixed",
+            top: coords.top,
+            left: coords.left,
             backgroundColor: colors.surface,
             border: `1px solid ${colors.border}`,
             borderRadius: 8,
@@ -139,8 +155,9 @@ export function SidebarWorktreeButton({ channelId, onCreateWorktree }: {
               <div style={{ padding: "8px 12px", color: colors.textDim, fontSize: 12 }}>Loading branches…</div>
             )}
           </div>
-        </div>
+        </div>,
+        document.body,
       )}
-    </div>
+    </>
   );
 }
