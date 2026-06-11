@@ -13,7 +13,8 @@ import {
   fetchWorkflows,
 } from "../../api/loopApi";
 import type { ScheduledTask, TaskRunLog, WorkflowDef } from "../../api/loopApi";
-import { timeAgo, nextRunLabel, TYPE_COLORS } from "../../utils/taskUtils";
+import { timeAgo, nextRunLabel, TYPE_COLORS, defaultScheduleForType } from "../../utils/taskUtils";
+import { TaskScheduleField, type TaskType } from "./TaskScheduleField";
 
 function buildHeaderBtnStyle(colors: ColorPalette): React.CSSProperties {
   return {
@@ -68,7 +69,7 @@ export function GlobalTasksPanel({
 
   // Edit form state
   const [editSchedule, setEditSchedule] = useState("");
-  const [editType, setEditType] = useState<"cron" | "interval" | "once">("cron");
+  const [editType, setEditType] = useState<TaskType>("cron");
   const [editMode, setEditMode] = useState<"prompt" | "workflow">("prompt");
   const [editPrompt, setEditPrompt] = useState("");
   const [editWorkflowName, setEditWorkflowName] = useState("");
@@ -197,7 +198,7 @@ export function GlobalTasksPanel({
     if (selectedId == null) return;
     try {
       await updateTask(selectedId, {
-        schedule: editSchedule,
+        schedule: editType === "manual" ? "" : editSchedule,
         type: editType,
         prompt: editMode === "workflow" ? "" : editPrompt,
         workflow_name: editMode === "workflow" ? editWorkflowName : "",
@@ -301,7 +302,7 @@ export function GlobalTasksPanel({
             {task.type}
           </span>
           <span style={{ color: colors.textLight, fontFamily: "monospace", fontSize: 11, flexShrink: 0 }}>
-            {task.schedule}
+            {task.type === "manual" ? "on demand" : task.schedule}
           </span>
           {task.worktree && (
             <span title="Runs in worktree" style={{ fontSize: 11, flexShrink: 0 }}>wt</span>
@@ -364,7 +365,7 @@ export function GlobalTasksPanel({
             {task.dir_path}
           </div>
         )}
-        {task.enabled && (
+        {task.enabled && task.type !== "manual" && (
           <div style={{ color: colors.textDim, fontSize: 10 }}>
             Next: {nextRunLabel(task.next_run_at)}
           </div>
@@ -399,12 +400,13 @@ export function GlobalTasksPanel({
         <div style={{ flex: 1, overflowY: "auto", padding: 12, display: "flex", flexDirection: "column", gap: 8 }}>
           <div style={{ fontSize: 13, fontWeight: 600, color: colors.text }}>Edit Task #{selectedTask.id}</div>
           <div style={{ display: "flex", gap: 6 }}>
-            <select value={editType} onChange={(e) => setEditType(e.target.value as "cron" | "interval" | "once")} style={{ ...selectStyle, flex: 1 }}>
+            <select value={editType} onChange={(e) => { const t = e.target.value as TaskType; setEditType(t); setEditSchedule(defaultScheduleForType(t)); }} style={{ ...selectStyle, flex: 1 }}>
               <option value="cron">Cron</option>
               <option value="interval">Interval</option>
               <option value="once">Once</option>
+              <option value="manual">Manual</option>
             </select>
-            <input value={editSchedule} onChange={(e) => setEditSchedule(e.target.value)} style={{ ...inputStyle, flex: 2 }} />
+            <TaskScheduleField type={editType} value={editSchedule} onChange={setEditSchedule} inputStyle={inputStyle} />
           </div>
           <div style={{ display: "flex", gap: 4 }}>
             <button
@@ -555,7 +557,7 @@ export function GlobalTasksPanel({
             </button>
           </div>
           <div style={{ color: colors.textLight, fontSize: 12, fontFamily: "monospace" }}>
-            {selectedTask.schedule}
+            {selectedTask.type === "manual" ? "on demand (run manually)" : selectedTask.schedule}
           </div>
           {selectedTask.dir_path && (
             <div style={{ color: colors.textDim, fontSize: 11, fontFamily: "monospace" }}>
@@ -578,7 +580,7 @@ export function GlobalTasksPanel({
               {selectedTask.prompt}
             </div>
           )}
-          {selectedTask.enabled && (
+          {selectedTask.enabled && selectedTask.type !== "manual" && (
             <div style={{ color: colors.textDim, fontSize: 11 }}>
               Next run: {nextRunLabel(selectedTask.next_run_at)}
             </div>

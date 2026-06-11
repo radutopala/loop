@@ -175,6 +175,7 @@ func (s *MCPServerSuite) TestScheduleTaskValidSchedules() {
 	}{
 		{"valid RFC3339 once", "2026-02-09T14:30:00Z", "once", 10},
 		{"valid duration interval", "1h", "interval", 2},
+		{"manual ignores schedule", "ignored", "manual", 7},
 	}
 	for _, tt := range tests {
 		s.Run(tt.name, func() {
@@ -501,6 +502,20 @@ func (s *MCPServerSuite) TestEditTaskWithTypeAndSchedule() {
 	text, isError := s.callTool("edit_task", map[string]any{"task_id": float64(10), "type": "interval", "schedule": "30m"})
 	require.False(s.T(), isError)
 	require.Contains(s.T(), text, "Task 10 updated")
+}
+
+func (s *MCPServerSuite) TestEditTaskToManualClearsSchedule() {
+	s.httpClient.doFunc = func(req *http.Request) (*http.Response, error) {
+		body, _ := io.ReadAll(req.Body)
+		require.Contains(s.T(), string(body), `"type":"manual"`)
+		// Switching to manual must blank any prior schedule.
+		require.Contains(s.T(), string(body), `"schedule":""`)
+		return noContentResponse(http.StatusOK), nil
+	}
+
+	text, isError := s.callTool("edit_task", map[string]any{"task_id": float64(11), "type": "manual"})
+	require.False(s.T(), isError)
+	require.Contains(s.T(), text, "Task 11 updated")
 }
 
 func (s *MCPServerSuite) TestEditTaskWithAutoDeleteSec() {

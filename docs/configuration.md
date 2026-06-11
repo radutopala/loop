@@ -189,7 +189,7 @@ A built-in `"loop"` server is always added unless the user defines one with the 
 | `name` | `string` | Unique template identifier. |
 | `description` | `string` | Human-readable description shown in template listings. |
 | `schedule` | `string` | Cron expression, Go duration, or RFC3339 timestamp (depends on `type`). |
-| `type` | `string` | One of `"cron"`, `"interval"`, `"once"`. |
+| `type` | `string` | One of `"cron"`, `"interval"`, `"once"`, `"manual"` (manual tasks have no schedule and only run on demand). |
 | `prompt` | `string` | Inline prompt text. Mutually exclusive with `prompt_path`. |
 | `prompt_path` | `string` | Path to a prompt file, resolved as `~/.loop/templates/{prompt_path}`. Mutually exclusive with `prompt`. |
 | `origin_branch` | `string` | Base branch for worktree tasks. If omitted, auto-detected from the parent repo on first run. |

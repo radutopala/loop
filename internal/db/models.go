@@ -113,6 +113,9 @@ const (
 	TaskTypeCron     TaskType = "cron"
 	TaskTypeInterval TaskType = "interval"
 	TaskTypeOnce     TaskType = "once"
+	// TaskTypeManual tasks have no schedule and are never auto-run by the
+	// poller; they only execute when triggered explicitly ("run now").
+	TaskTypeManual TaskType = "manual"
 )
 
 // TaskRunLog records the execution history of a scheduled task.

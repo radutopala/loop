@@ -167,13 +167,18 @@ func (o *Orchestrator) handleTasksInteraction(ctx context.Context, inter *bot.In
 		if !t.Enabled {
 			status = "disabled"
 		}
-		var schedule string
-		if t.Type == db.TaskTypeOnce {
+		var schedule, nextRun string
+		switch t.Type {
+		case db.TaskTypeOnce:
 			schedule = t.NextRunAt.Local().Format("2006-01-02 15:04 MST")
-		} else {
+			nextRun = formatDuration(t.NextRunAt.Sub(now))
+		case db.TaskTypeManual:
+			schedule = "(manual)"
+			nextRun = "on demand"
+		default:
 			schedule = fmt.Sprintf("`%s`", t.Schedule)
+			nextRun = formatDuration(t.NextRunAt.Sub(now))
 		}
-		nextRun := formatDuration(t.NextRunAt.Sub(now))
 		prompt := types.TruncateString(t.Prompt, 80)
 		fmt.Fprintf(&sb, "- **ID %d** [%s] [%s] %s — %s (next: %s)", t.ID, t.Type, status, schedule, prompt, nextRun)
 		if t.AutoDeleteSec > 0 {
@@ -209,13 +214,18 @@ func (o *Orchestrator) handleTaskInteraction(ctx context.Context, inter *bot.Int
 	}
 
 	now := time.Now().UTC()
-	var schedule string
-	if task.Type == db.TaskTypeOnce {
+	var schedule, nextRun string
+	switch task.Type {
+	case db.TaskTypeOnce:
 		schedule = task.NextRunAt.Local().Format("2006-01-02 15:04 MST")
-	} else {
+		nextRun = formatDuration(task.NextRunAt.Sub(now))
+	case db.TaskTypeManual:
+		schedule = "(manual)"
+		nextRun = "on demand"
+	default:
 		schedule = fmt.Sprintf("`%s`", task.Schedule)
+		nextRun = formatDuration(task.NextRunAt.Sub(now))
 	}
-	nextRun := formatDuration(task.NextRunAt.Sub(now))
 
 	var sb strings.Builder
 	fmt.Fprintf(&sb, "**Task %d**\n", task.ID)

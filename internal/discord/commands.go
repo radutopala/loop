@@ -37,6 +37,7 @@ func Commands() []*discordgo.ApplicationCommand {
 								{Name: "cron", Value: "cron"},
 								{Name: "interval", Value: "interval"},
 								{Name: "once", Value: "once"},
+								{Name: "manual", Value: "manual"},
 							},
 						},
 					},
@@ -111,6 +112,7 @@ func Commands() []*discordgo.ApplicationCommand {
 								{Name: "cron", Value: "cron"},
 								{Name: "interval", Value: "interval"},
 								{Name: "once", Value: "once"},
+								{Name: "manual", Value: "manual"},
 							},
 						},
 						{

@@ -14,8 +14,8 @@ import (
 )
 
 type scheduleTaskInput struct {
-	Schedule        string `json:"schedule" jsonschema:"Cron expression (e.g. 0 9 * * *), Go time.Duration (e.g. 5m, 1h), or RFC3339 timestamp (e.g. 2026-02-09T14:30:00Z) for once type"`
-	Type            string `json:"type" jsonschema:"Task type: cron, interval, or once"`
+	Schedule        string `json:"schedule" jsonschema:"Cron expression (e.g. 0 9 * * *), Go time.Duration (e.g. 5m, 1h), or RFC3339 timestamp (e.g. 2026-02-09T14:30:00Z) for once type. Ignored (leave empty) for manual tasks."`
+	Type            string `json:"type" jsonschema:"Task type: cron, interval, once, or manual (manual tasks have no schedule and only run when triggered)"`
 	Prompt          string `json:"prompt,omitempty" jsonschema:"The prompt to execute on schedule (required unless workflow_name is set)"`
 	TemplateName    string `json:"template_name,omitempty" jsonschema:"Optional template name to associate with this task (for identification and deduplication)"`
 	AutoDeleteSec   int    `json:"auto_delete_sec,omitempty" jsonschema:"Seconds after execution to auto-delete the thread (0 = disabled)"`
@@ -38,7 +38,7 @@ type toggleTaskInput struct {
 type editTaskInput struct {
 	TaskID          int64   `json:"task_id" jsonschema:"The ID of the task to edit"`
 	Schedule        *string `json:"schedule,omitempty" jsonschema:"New schedule expression (cron, Go time.Duration, or RFC3339 timestamp for once type)"`
-	Type            *string `json:"type,omitempty" jsonschema:"New task type: cron, interval, or once"`
+	Type            *string `json:"type,omitempty" jsonschema:"New task type: cron, interval, once, or manual"`
 	Prompt          *string `json:"prompt,omitempty" jsonschema:"New prompt to execute on schedule"`
 	AutoDeleteSec   *int    `json:"auto_delete_sec,omitempty" jsonschema:"Seconds after execution to auto-delete the thread (0 = disabled)"`
 	Worktree        *bool   `json:"worktree,omitempty" jsonschema:"If true, run the task in an isolated git worktree instead of the parent channel directory"`
@@ -66,6 +66,9 @@ func (s *Server) handleScheduleTask(_ context.Context, _ *mcp.CallToolRequest, i
 		if _, err := time.ParseDuration(input.Schedule); err != nil {
 			return errorResult(fmt.Sprintf("invalid schedule for type %q: must be a valid Go time.Duration (e.g. 5m, 1h, 24h): %v", input.Type, err)), nil, nil
 		}
+	case "manual":
+		// Manual tasks have no schedule; drop any value the caller passed.
+		input.Schedule = ""
 	}
 
 	body := map[string]any{
@@ -267,6 +270,11 @@ func (s *Server) handleEditTask(_ context.Context, _ *mcp.CallToolRequest, input
 	}
 	if input.Type != nil {
 		body["type"] = *input.Type
+		// Manual tasks have no schedule; clear any prior value so the row
+		// doesn't keep a stale cron/interval/once string.
+		if *input.Type == "manual" {
+			body["schedule"] = ""
+		}
 	}
 	if input.Prompt != nil {
 		body["prompt"] = *input.Prompt

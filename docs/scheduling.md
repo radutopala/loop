@@ -57,6 +57,14 @@ Examples:
 2026-03-15T10:30:00-04:00     # with timezone offset
 ```
 
+In the desktop UI, "once" tasks use a native date-time picker (stored as RFC3339 UTC) rather than a raw timestamp field.
+
+### Manual (`"manual"`)
+
+Manual tasks have **no schedule** and are never run by the poller. They exist as a saved prompt (or workflow) that you trigger on demand — "Run now" in the desktop Tasks panel, the `run_task` action, or `POST /api/tasks/{id}/run`. The `schedule` field is ignored (stored empty) and `next_run_at` is unused; listings show "on demand" instead of a next-run time.
+
+Use a manual task for an on-demand routine you re-run periodically by hand (e.g. "summarise open notes") without committing to a fixed cadence.
+
 ---
 
 ## Task Lifecycle
@@ -332,7 +340,7 @@ Templates are pre-defined task configurations in the global config. They allow q
 | `name` | Unique identifier. Used by `/loop template-add` and for deduplication. |
 | `description` | Shown in `/loop template-list` output. |
 | `schedule` | Cron expression, Go duration, or RFC3339 timestamp. |
-| `type` | `"cron"`, `"interval"`, or `"once"`. |
+| `type` | `"cron"`, `"interval"`, `"once"`, or `"manual"`. |
 | `prompt` | Inline prompt text. |
 | `prompt_path` | File path resolved as `~/.loop/templates/{prompt_path}`. |
 | `worktree` | Run the agent in an isolated git worktree (default: `false`). |
@@ -372,7 +380,7 @@ All commands are available as slash commands (`/loop <command>`) and MCP tools.
 ### Create
 
 ```
-/loop schedule type:<cron|interval|once> schedule:<expression> prompt:<text> [worktree:<true|false>] [origin_branch:<branch>] [update_before_run:<true|false>]
+/loop schedule type:<cron|interval|once|manual> schedule:<expression> prompt:<text> [worktree:<true|false>] [origin_branch:<branch>] [update_before_run:<true|false>]
 ```
 
 Creates a new task. The scheduler calculates `next_run_at` and enables the task immediately. Set `worktree: true` to run the task in an isolated git worktree (see [Worktree Isolation](#worktree-isolation)). Optionally set `origin_branch` to pin the base branch (otherwise auto-detected on first run) and `update_before_run: true` to prepend git rebase instructions before each execution.

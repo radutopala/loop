@@ -4,7 +4,7 @@ export interface ScheduledTask {
   id: number;
   channel_id: string;
   schedule: string;
-  type: "cron" | "interval" | "once";
+  type: "cron" | "interval" | "once" | "manual";
   prompt: string;
   enabled: boolean;
   next_run_at: string;

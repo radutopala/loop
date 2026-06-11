@@ -90,22 +90,23 @@ func parseSlashCommand(channelID, teamID, text string) (*bot.Interaction, string
 func parseSchedule(inter *bot.Interaction, args []string) (*bot.Interaction, string) {
 	if len(args) < 3 {
 		return nil, "Usage: `/loop schedule <schedule> <type> <prompt>`\n" +
-			"Types: cron, interval, once\n" +
+			"Types: cron, interval, once, manual (manual ignores the schedule; run it from the UI/Run Now)\n" +
 			"Examples:\n" +
 			"  `/loop schedule \"0 9 * * *\" cron Check for updates`\n" +
 			"  `/loop schedule 1h interval Run health check`\n" +
-			"  `/loop schedule 2026-02-15T10:00:00Z once Deploy release`"
+			"  `/loop schedule 2026-02-15T10:00:00Z once Deploy release`\n" +
+			"  `/loop schedule - manual Summarise open notes`"
 	}
 
 	inter.CommandName = "schedule"
 
-	// Find the type argument (cron, interval, once) to split schedule from prompt.
-	// The schedule can contain spaces (e.g., cron expressions "0 9 * * *"),
-	// so we search for the type keyword from left to right.
+	// Find the type argument (cron, interval, once, manual) to split schedule
+	// from prompt. The schedule can contain spaces (e.g., cron expressions
+	// "0 9 * * *"), so we search for the type keyword from left to right.
 	typeIdx := -1
 	for i, arg := range args {
 		lower := strings.ToLower(arg)
-		if lower == "cron" || lower == "interval" || lower == "once" {
+		if lower == "cron" || lower == "interval" || lower == "once" || lower == "manual" {
 			typeIdx = i
 			break
 		}

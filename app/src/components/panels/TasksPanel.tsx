@@ -11,7 +11,8 @@ import {
   fetchWorkflows,
 } from "../../api/loopApi";
 import type { ScheduledTask, TaskRunLog, WorkflowDef } from "../../api/loopApi";
-import { timeAgo, nextRunLabel, TYPE_COLORS } from "../../utils/taskUtils";
+import { timeAgo, nextRunLabel, TYPE_COLORS, defaultScheduleForType } from "../../utils/taskUtils";
+import { TaskScheduleField, type TaskType } from "./TaskScheduleField";
 
 interface TasksPanelProps {
   channelId: string;
@@ -34,7 +35,7 @@ export function TasksPanel({ channelId, allowWorktree, onSelectChannel }: TasksP
 
   // Create form state
   const [newSchedule, setNewSchedule] = useState("*/30 * * * *");
-  const [newType, setNewType] = useState<"cron" | "interval" | "once">("cron");
+  const [newType, setNewType] = useState<TaskType>("cron");
   const [newMode, setNewMode] = useState<"prompt" | "workflow">("prompt");
   const [newPrompt, setNewPrompt] = useState("");
   const [newWorkflowName, setNewWorkflowName] = useState("");
@@ -46,7 +47,7 @@ export function TasksPanel({ channelId, allowWorktree, onSelectChannel }: TasksP
 
   // Edit form state
   const [editSchedule, setEditSchedule] = useState("");
-  const [editType, setEditType] = useState<"cron" | "interval" | "once">("cron");
+  const [editType, setEditType] = useState<TaskType>("cron");
   const [editMode, setEditMode] = useState<"prompt" | "workflow">("prompt");
   const [editPrompt, setEditPrompt] = useState("");
   const [editWorkflowName, setEditWorkflowName] = useState("");
@@ -108,7 +109,7 @@ export function TasksPanel({ channelId, allowWorktree, onSelectChannel }: TasksP
     try {
       await createTask({
         channel_id: channelId,
-        schedule: newSchedule,
+        schedule: newType === "manual" ? "" : newSchedule,
         type: newType,
         prompt: newMode === "workflow" ? "" : newPrompt,
         workflow_name: newMode === "workflow" ? newWorkflowName : "",
@@ -195,7 +196,7 @@ export function TasksPanel({ channelId, allowWorktree, onSelectChannel }: TasksP
     if (selectedId == null) return;
     try {
       await updateTask(selectedId, {
-        schedule: editSchedule,
+        schedule: editType === "manual" ? "" : editSchedule,
         type: editType,
         prompt: editMode === "workflow" ? "" : editPrompt,
         workflow_name: editMode === "workflow" ? editWorkflowName : "",
@@ -263,7 +264,9 @@ export function TasksPanel({ channelId, allowWorktree, onSelectChannel }: TasksP
   };
 
   const selectedNewWorkflow = workflows.find((w) => w.name === newWorkflowName);
-  const newCanSubmit = newMode === "workflow" ? !!newWorkflowName : !!newPrompt.trim();
+  // "once" needs a picked time; manual/cron/interval don't gate on schedule.
+  const newScheduleOk = newType !== "once" || !!newSchedule;
+  const newCanSubmit = (newMode === "workflow" ? !!newWorkflowName : !!newPrompt.trim()) && newScheduleOk;
 
   const onSelectNewWorkflow = (name: string) => {
     setNewWorkflowName(name);
@@ -280,18 +283,13 @@ export function TasksPanel({ channelId, allowWorktree, onSelectChannel }: TasksP
   const renderCreateForm = () => (
     <div style={{ padding: 8, borderBottom: `1px solid ${colors.border}`, display: "flex", flexDirection: "column", gap: 6 }}>
       <div style={{ display: "flex", gap: 6 }}>
-        <select value={newType} onChange={(e) => setNewType(e.target.value as "cron" | "interval" | "once")} style={{ ...selectStyle, flex: 1 }}>
+        <select value={newType} onChange={(e) => { const t = e.target.value as TaskType; setNewType(t); setNewSchedule(defaultScheduleForType(t)); }} style={{ ...selectStyle, flex: 1 }}>
           <option value="cron">Cron</option>
           <option value="interval">Interval</option>
           <option value="once">Once</option>
+          <option value="manual">Manual</option>
         </select>
-        <input
-          type="text"
-          placeholder={newType === "cron" ? "*/30 * * * *" : newType === "interval" ? "30m" : "2026-01-01T00:00:00Z"}
-          value={newSchedule}
-          onChange={(e) => setNewSchedule(e.target.value)}
-          style={{ ...inputStyle, flex: 2 }}
-        />
+        <TaskScheduleField type={newType} value={newSchedule} onChange={setNewSchedule} inputStyle={inputStyle} />
       </div>
       <div style={{ display: "flex", gap: 4 }}>
         <button
@@ -411,7 +409,7 @@ export function TasksPanel({ channelId, allowWorktree, onSelectChannel }: TasksP
             {task.type}
           </span>
           <span style={{ color: colors.textLight, fontFamily: "monospace", fontSize: 11, flexShrink: 0 }}>
-            {task.schedule}
+            {task.type === "manual" ? "on demand" : task.schedule}
           </span>
           {task.worktree && (
             <span title="Runs in worktree" style={{ fontSize: 11, flexShrink: 0 }}>wt</span>
@@ -445,7 +443,7 @@ export function TasksPanel({ channelId, allowWorktree, onSelectChannel }: TasksP
         >
           {task.workflow_name ? `workflow: ${task.workflow_name}` : task.prompt}
         </div>
-        {task.enabled && (
+        {task.enabled && task.type !== "manual" && (
           <div style={{ color: colors.textDim, fontSize: 10 }}>
             Next: {nextRunLabel(task.next_run_at)}
           </div>
@@ -480,12 +478,13 @@ export function TasksPanel({ channelId, allowWorktree, onSelectChannel }: TasksP
         <div style={{ flex: 1, overflowY: "auto", padding: 12, display: "flex", flexDirection: "column", gap: 8 }}>
           <div style={{ fontSize: 13, fontWeight: 600, color: colors.text }}>Edit Task #{selectedTask.id}</div>
           <div style={{ display: "flex", gap: 6 }}>
-            <select value={editType} onChange={(e) => setEditType(e.target.value as "cron" | "interval" | "once")} style={{ ...selectStyle, flex: 1 }}>
+            <select value={editType} onChange={(e) => { const t = e.target.value as TaskType; setEditType(t); setEditSchedule(defaultScheduleForType(t)); }} style={{ ...selectStyle, flex: 1 }}>
               <option value="cron">Cron</option>
               <option value="interval">Interval</option>
               <option value="once">Once</option>
+              <option value="manual">Manual</option>
             </select>
-            <input value={editSchedule} onChange={(e) => setEditSchedule(e.target.value)} style={{ ...inputStyle, flex: 2 }} />
+            <TaskScheduleField type={editType} value={editSchedule} onChange={setEditSchedule} inputStyle={inputStyle} />
           </div>
           <div style={{ display: "flex", gap: 4 }}>
             <button
@@ -620,7 +619,7 @@ export function TasksPanel({ channelId, allowWorktree, onSelectChannel }: TasksP
             </button>
           </div>
           <div style={{ color: colors.textLight, fontSize: 12, fontFamily: "monospace" }}>
-            {selectedTask.schedule}
+            {selectedTask.type === "manual" ? "on demand (run manually)" : selectedTask.schedule}
           </div>
           {selectedTask.workflow_name ? (
             <>
@@ -638,7 +637,7 @@ export function TasksPanel({ channelId, allowWorktree, onSelectChannel }: TasksP
               {selectedTask.prompt}
             </div>
           )}
-          {selectedTask.enabled && (
+          {selectedTask.enabled && selectedTask.type !== "manual" && (
             <div style={{ color: colors.textDim, fontSize: 11 }}>
               Next run: {nextRunLabel(selectedTask.next_run_at)}
             </div>
