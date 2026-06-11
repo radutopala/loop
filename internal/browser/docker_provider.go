@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"os"
 
 	containertypes "github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/filters"
@@ -37,6 +38,13 @@ type DockerProvider struct {
 	screen   string
 	logger   *slog.Logger
 	registry container.ContainerRegistry
+
+	// inContainer is true when loop itself runs inside a container. The Chrome
+	// sidecar publishes its CDP port to 127.0.0.1:hostPort on the Docker HOST,
+	// which is unreachable from a sibling container — so when containerized we
+	// connect to the sidecar's bridge IP on the in-container port instead.
+	// Set by NewDockerProvider; overridable in tests via the struct field.
+	inContainer bool
 }
 
 const (
@@ -58,7 +66,48 @@ func NewDockerProvider(api DockerClient, image, screen string, logger *slog.Logg
 		image:          image,
 		screen:         screen,
 		logger:         logger,
+		inContainer:    inDockerContainer(),
 	}
+}
+
+// inDockerContainer reports whether loop is running inside a container, by
+// probing for the /.dockerenv marker Docker writes into every container.
+func inDockerContainer() bool {
+	_, err := os.Stat("/.dockerenv")
+	return err == nil
+}
+
+// resolveCDPHostPort returns the host:port the daemon should use to reach the
+// channel's Chrome sidecar CDP. When loop runs inside a container the sidecar's
+// 127.0.0.1:hostPort binding lives on the Docker host (unreachable from us), so
+// we use the sidecar's bridge IP on the in-container CDP port. On a host-run
+// daemon (the common case) we use the mapped 127.0.0.1:hostPort.
+func (m *DockerProvider) resolveCDPHostPort(ctx context.Context, containerID, hostPort string) string {
+	if m.inContainer {
+		if ip := m.getContainerIP(ctx, containerID); ip != "" {
+			return fmt.Sprintf("%s:%d", ip, CDPPort)
+		}
+	}
+	return "127.0.0.1:" + hostPort
+}
+
+// getContainerIP returns the Chrome container's Docker network IP, or "" if it
+// can't be determined.
+func (m *DockerProvider) getContainerIP(ctx context.Context, containerID string) string {
+	info, err := m.api.ContainerInspect(ctx, containerID)
+	if err != nil || info.NetworkSettings == nil {
+		return ""
+	}
+	// Prefer the default "bridge" network, then any other attached network.
+	if n := info.NetworkSettings.Networks["bridge"]; n != nil && n.IPAddress != "" {
+		return n.IPAddress
+	}
+	for _, n := range info.NetworkSettings.Networks {
+		if n != nil && n.IPAddress != "" {
+			return n.IPAddress
+		}
+	}
+	return ""
 }
 
 // SetContainerRegistry configures the container registry for lifecycle tracking.
@@ -98,17 +147,21 @@ func (m *DockerProvider) EnsureBrowser(ctx context.Context, channelID, _ string)
 	if m.registry != nil {
 		if info := m.registry.FindByChannelAndType(channelID, container.ContainerTypeChrome); info != nil {
 			if m.isContainerRunning(ctx, info.ContainerID) {
-				if port, err := m.getHostPort(ctx, info.ContainerID); err == nil && isChromeReachable("127.0.0.1:"+port) {
-					m.logger.Info("reusing Chrome container from registry",
-						"channel_id", channelID,
-						"container_id", info.ContainerID,
-						"host_port", port,
-					)
-					sess := newBrowserSession(m.timeNow())
-					sess.chromeContainerID = info.ContainerID
-					sess.hostPort = port
-					m.sessions[channelID] = sess
-					return nil
+				if port, err := m.getHostPort(ctx, info.ContainerID); err == nil {
+					addr := m.resolveCDPHostPort(ctx, info.ContainerID, port)
+					if isChromeReachable(addr) {
+						m.logger.Info("reusing Chrome container from registry",
+							"channel_id", channelID,
+							"container_id", info.ContainerID,
+							"host_port", port,
+						)
+						sess := newBrowserSession(m.timeNow())
+						sess.chromeContainerID = info.ContainerID
+						sess.hostPort = port
+						sess.cdpAddr = addr
+						m.sessions[channelID] = sess
+						return nil
+					}
 				}
 			}
 			// Registry says it exists but it's not usable — clean up.
@@ -123,7 +176,8 @@ func (m *DockerProvider) EnsureBrowser(ctx context.Context, channelID, _ string)
 	// Check if Chrome container already exists (e.g. from a previous daemon run
 	// before the registry was introduced, or created outside of loop).
 	if id, port := m.findExistingChrome(ctx, containerName); id != "" {
-		if isChromeReachable("127.0.0.1:" + port) {
+		addr := m.resolveCDPHostPort(ctx, id, port)
+		if isChromeReachable(addr) {
 			m.logger.Info("reusing existing Chrome container",
 				"channel_id", channelID,
 				"container_id", id,
@@ -132,6 +186,7 @@ func (m *DockerProvider) EnsureBrowser(ctx context.Context, channelID, _ string)
 			sess := newBrowserSession(m.timeNow())
 			sess.chromeContainerID = id
 			sess.hostPort = port
+			sess.cdpAddr = addr
 			m.sessions[channelID] = sess
 			if m.registry != nil {
 				m.registry.Register(&container.ContainerInfo{
@@ -196,6 +251,7 @@ func (m *DockerProvider) EnsureBrowser(ctx context.Context, channelID, _ string)
 	sess := newBrowserSession(m.timeNow())
 	sess.chromeContainerID = resp.ID
 	sess.hostPort = hostPort
+	sess.cdpAddr = m.resolveCDPHostPort(ctx, resp.ID, hostPort)
 	m.sessions[channelID] = sess
 
 	if m.registry != nil {
@@ -220,8 +276,8 @@ func (m *DockerProvider) EnsureBrowser(ctx context.Context, channelID, _ string)
 func (m *DockerProvider) GetCDPEndpoint(channelID string) string {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if sess, ok := m.sessions[channelID]; ok && sess.hostPort != "" {
-		return fmt.Sprintf("ws://127.0.0.1:%s", sess.hostPort)
+	if sess, ok := m.sessions[channelID]; ok && sess.cdpAddr != "" {
+		return "ws://" + sess.cdpAddr
 	}
 	return fmt.Sprintf("ws://127.0.0.1:%d", CDPPort)
 }

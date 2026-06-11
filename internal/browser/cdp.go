@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 	"time"
@@ -124,12 +126,14 @@ func (c *CDPClient) NewContextForTarget(targetID string) (CDPSession, error) {
 
 // cdpConfig holds constructor-level dependencies, overridable via CDPOption.
 type cdpConfig struct {
-	allocFunc       func(context.Context, string) (context.Context, context.CancelFunc)
-	runFunc         func(context.Context, ...chromedp.Action) error
-	exec            cdpExecutor                             // injectable cdp.Execute for testability
-	targetID        target.ID                               // attach to existing target instead of creating new
-	reuseTarget     bool                                    // if true, reuse existing page target; if false, always create new
-	fromContextFunc func(context.Context) *chromedp.Context // extract target info from context
+	allocFunc        func(context.Context, string) (context.Context, context.CancelFunc)
+	runFunc          func(context.Context, ...chromedp.Action) error
+	exec             cdpExecutor                             // injectable cdp.Execute for testability
+	targetID         target.ID                               // attach to existing target instead of creating new
+	reuseTarget      bool                                    // if true, reuse existing page target; if false, always create new
+	discoverExisting bool                                    // attach to Chrome's first existing page target instead of creating a new one
+	discoverFunc     func(string, *slog.Logger) string       // discovers the first existing page target ID (injectable for tests)
+	fromContextFunc  func(context.Context) *chromedp.Context // extract target info from context
 }
 
 // CDPOption configures NewCDPClient.
@@ -161,15 +165,107 @@ func WithNewTarget() CDPOption {
 	return func(c *cdpConfig) { c.reuseTarget = false }
 }
 
+// WithDiscoverExisting makes the client attach to Chrome's first existing page
+// target (the sidecar's initial about:blank) instead of creating a new one. This
+// lets the desktop browser panel and the agent's mcp-browser tools share ONE tab
+// — so the panel's screencast shows what the agent navigates, rather than each
+// driving its own blank tab.
+func WithDiscoverExisting() CDPOption {
+	return func(c *cdpConfig) { c.discoverExisting = true }
+}
+
+// withDiscoverFunc overrides the existing-target discovery function (for tests).
+func withDiscoverFunc(fn func(string, *slog.Logger) string) CDPOption {
+	return func(c *cdpConfig) { c.discoverFunc = fn }
+}
+
+// resolveBrowserWSURL turns a bare "ws://host:port" CDP endpoint into the full
+// "ws://host:port/devtools/browser/<id>" URL by querying /json/version with a
+// DIRECT (proxy-bypassing) HTTP client.
+//
+// chromedp would otherwise make that /json/version query via http.DefaultClient,
+// which honors HTTP_PROXY/HTTPS_PROXY. On a host behind a corporate proxy the
+// loopback request to the Chrome sidecar then gets routed to the proxy and fails
+// ("connection refused" / "failed to resolve <proxy>"), so the Docker Browser
+// panel never attaches even though the agent's CDP tools work. Pre-resolving
+// here with Proxy:nil bypasses the proxy; the returned URL already contains
+// "/devtools/browser/", so chromedp skips its own proxied lookup and the
+// subsequent gobwas/ws dial is direct (no proxy).
+//
+// Best effort: on any error it returns the original URL unchanged.
+func resolveBrowserWSURL(wsURL string, logger *slog.Logger) string {
+	if strings.Contains(wsURL, "/devtools/browser/") {
+		return wsURL // already a full browser-level URL
+	}
+	u, err := url.Parse(wsURL)
+	if err != nil || u.Host == "" {
+		return wsURL
+	}
+
+	// Proxy:nil — never relay a loopback CDP request through an HTTP proxy.
+	client := &http.Client{Transport: &http.Transport{Proxy: nil}, Timeout: 5 * time.Second}
+	resp, err := client.Get("http://" + u.Host + "/json/version")
+	if err != nil {
+		if logger != nil {
+			logger.Debug("CDP ws resolve failed; using bare URL", "host", u.Host, "error", err)
+		}
+		return wsURL
+	}
+	defer resp.Body.Close()
+
+	var v struct {
+		WebSocketDebuggerURL string `json:"webSocketDebuggerUrl"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&v); err != nil || v.WebSocketDebuggerURL == "" {
+		return wsURL
+	}
+	return v.WebSocketDebuggerURL
+}
+
+// discoverFirstPageTarget queries Chrome's /json/list endpoint (direct, no proxy)
+// and returns the ID of the first existing page target — Chrome's initial
+// about:blank tab. Attaching to it (instead of creating a new tab) lets the
+// browser panel and the agent's tools share one tab. Returns "" on any error.
+func discoverFirstPageTarget(wsURL string, logger *slog.Logger) string {
+	u, err := url.Parse(wsURL)
+	if err != nil || u.Host == "" {
+		return ""
+	}
+	client := &http.Client{Transport: &http.Transport{Proxy: nil}, Timeout: 5 * time.Second}
+	resp, err := client.Get("http://" + u.Host + "/json/list")
+	if err != nil {
+		if logger != nil {
+			logger.Debug("CDP target discovery failed", "host", u.Host, "error", err)
+		}
+		return ""
+	}
+	defer resp.Body.Close()
+
+	var targets []struct {
+		Type string `json:"type"`
+		ID   string `json:"id"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&targets); err != nil {
+		return ""
+	}
+	for _, t := range targets {
+		if t.Type == "page" {
+			return t.ID
+		}
+	}
+	return ""
+}
+
 // NewCDPClient connects to a Chrome instance via its CDP WebSocket URL.
 func NewCDPClient(ctx context.Context, wsURL string, logger *slog.Logger, opts ...CDPOption) (*CDPClient, error) {
 	cfg := cdpConfig{
 		allocFunc: func(parent context.Context, ws string) (context.Context, context.CancelFunc) {
-			return chromedp.NewRemoteAllocator(parent, ws)
+			return chromedp.NewRemoteAllocator(parent, resolveBrowserWSURL(ws, logger))
 		},
 		runFunc:         chromedp.Run,
 		exec:            cdp.Execute,
 		reuseTarget:     true,
+		discoverFunc:    discoverFirstPageTarget,
 		fromContextFunc: chromedp.FromContext,
 	}
 	for _, o := range opts {
@@ -180,6 +276,15 @@ func NewCDPClient(ctx context.Context, wsURL string, logger *slog.Logger, opts .
 	var resolvedTargetID target.ID
 	if cfg.targetID != "" {
 		resolvedTargetID = cfg.targetID
+	}
+
+	// Attach to Chrome's first existing page target so the panel and the agent's
+	// tools share one tab, instead of each chromedp.NewContext spawning a fresh
+	// blank tab.
+	if cfg.discoverExisting && resolvedTargetID == "" {
+		if tid := cfg.discoverFunc(wsURL, logger); tid != "" {
+			resolvedTargetID = target.ID(tid)
+		}
 	}
 
 	if resolvedTargetID != "" {

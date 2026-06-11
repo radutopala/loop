@@ -105,31 +105,47 @@ export function MemoryPanel({ channelId, dirPath, branch, embedded, openMemoryFi
     saveTabs(channelId, { tabs: persistedTabs, selected: persistedSelected });
   }, [channelId, openTabs, selectedPath, previewTab]);
 
-  // Fetch file list.
-  const loadFiles = useCallback(() => {
-    setLoading(true);
-    setListError(null);
+  // Fetch file list. A quiet refresh (used by the background poll) updates the
+  // tree in place without the loading spinner, selection, or error churn — so
+  // files indexed after the panel opened (e.g. by the re-indexer or the agent)
+  // appear without a manual reload.
+  const loadFiles = useCallback((quiet = false) => {
+    if (!quiet) {
+      setLoading(true);
+      setListError(null);
+    }
     fetchMemoryFiles(channelId)
       .then((f) => {
         setFiles(f);
-        // Auto-expand all dirs on first load.
-        const dirs = new Set(f.map((fi) => fi.dir_path));
-        setExpandedDirs(dirs);
-        // If we have open tabs, keep them. Otherwise select the first file.
-        if (openTabs.length === 0 && f.length > 0 && f[0]) {
-          const firstPath = f[0].file_path;
-          setOpenTabs([firstPath]);
-          setSelectedPath(firstPath);
+        // Quiet (poll) refresh only grows the expanded set so newly-indexed dirs
+        // become visible without collapsing the user's view; the initial load
+        // expands everything. Auto-opening the first file is handled by a
+        // separate effect so it goes through switchToTab (which fetches content).
+        if (quiet) {
+          setExpandedDirs((prev) => new Set([...prev, ...f.map((fi) => fi.dir_path)]));
+        } else {
+          setExpandedDirs(new Set(f.map((fi) => fi.dir_path)));
         }
       })
-      .catch((err) => setListError(err instanceof Error ? err.message : "Failed to load"))
-      .finally(() => setLoading(false));
+      .catch((err) => {
+        if (!quiet) setListError(err instanceof Error ? err.message : "Failed to load");
+      })
+      .finally(() => {
+        if (!quiet) setLoading(false);
+      });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [channelId]);
 
   useEffect(() => {
     setFiles([]);
     loadFiles();
+  }, [loadFiles]);
+
+  // Poll for newly-indexed files (memory is indexed asynchronously by the
+  // re-indexer / agent), so the tree stays current while the panel is open.
+  useEffect(() => {
+    const id = setInterval(() => loadFiles(true), 8000);
+    return () => clearInterval(id);
   }, [loadFiles]);
 
   // Handle openMemoryFile prop (from Cmd+K navigation).
@@ -202,6 +218,16 @@ export function MemoryPanel({ channelId, dirPath, branch, embedded, openMemoryFi
     setOpenTabs((prev) => prev.includes(path) ? prev : [...prev, path]);
     if (selectedPathRef.current !== path) switchToTab(path);
   }, [switchToTab]);
+
+  // Auto-open the first file once files are available and nothing is open yet —
+  // on the initial load AND when files first appear via the poll. Routed through
+  // openFileInTab (→ switchToTab) so the content is actually fetched; setting
+  // selectedPath directly would leave the viewer stuck on "Loading...".
+  useEffect(() => {
+    if (selectedPathRef.current === null && openTabs.length === 0 && files.length > 0 && files[0]) {
+      openFileInTab(files[0].file_path);
+    }
+  }, [files, openTabs, openFileInTab]);
 
   // Single-click: open as preview (transient) tab, or permanently if preview disabled.
   const handleFileClick = useCallback((path: string) => {

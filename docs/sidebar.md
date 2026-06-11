@@ -164,6 +164,12 @@ The "Delete Channel" item has `danger: true` styling (red text) and a separator 
 
 ## Thread Item
 
+Hovering a channel row reveals a **+wt** button; clicking it opens a branch
+picker (portaled just below the button) to spin off a git worktree from any
+branch — the worktree opens as its own thread under that channel.
+
+![The +wt branch picker on a channel row, listing branches to create a git worktree from](static/images/features/sidebar-worktree.png)
+
 ![A worktree thread (git-branch icon) nested under its parent channel in the sidebar, opened in its own isolated workspace](static/images/features/worktree.png)
 
 Threads are listed below their parent channel, indented with a tree connector line. Threads can contain sub-threads (e.g. scheduled task threads), forming a 3-level hierarchy.

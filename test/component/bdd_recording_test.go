@@ -139,7 +139,9 @@ func (tc *TestContext) stopRecording(name string) error {
 		outDir = filepath.Join("..", "..", "docs", "videos")
 	}
 	safe := strings.TrimPrefix(filepath.Clean("/"+name), "/")
-	outPath := filepath.Join(outDir, fmt.Sprintf("%s-%s.mp4", safe, time.Now().Format("20060102-150405")))
+	// Stable per-section filename (no timestamp) so `make docs-capture` can stitch
+	// the section clips into the final video by a fixed, name-keyed order.
+	outPath := filepath.Join(outDir, fmt.Sprintf("%s.mp4", safe))
 	if err := os.MkdirAll(filepath.Dir(outPath), 0o755); err != nil {
 		return err
 	}

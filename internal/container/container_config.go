@@ -303,6 +303,18 @@ func ensureNoProxy(env []string, extraHosts ...string) []string {
 	return env
 }
 
+// agentAPIBase returns the base URL agent containers use to reach the loop API.
+// Defaults to host.docker.internal (correct when the daemon runs on the Docker
+// host), but honors cfg.APIAdvertiseURL when set — needed when the daemon ITSELF
+// runs in a container, so agents reach it over the Docker network rather than
+// the host (where host.docker.internal:<port> would hit a different daemon).
+func agentAPIBase(cfg *config.Config) string {
+	if cfg.APIAdvertiseURL != "" {
+		return cfg.APIAdvertiseURL
+	}
+	return "http://host.docker.internal" + cfg.APIAddr
+}
+
 // localhostToDockerHost rewrites localhost proxy addresses so they resolve
 // inside the container. E.g. ":3128" → "http://host.docker.internal:3128",
 // "http://127.0.0.1:3128" → "http://host.docker.internal:3128".

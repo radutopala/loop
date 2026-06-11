@@ -278,7 +278,7 @@ func (tc *TestContext) ensureChromeTab() error {
 		// an editor-edit commit, and a chat inside a new worktree — plus a
 		// captioned, deliberately-slow tour of every panel) — give it room but
 		// still fail a hang inside the go-test timeout.
-		scenarioTimeout = 960 * time.Second
+		scenarioTimeout = 1080 * time.Second
 	}
 	timeoutCtx, timeoutCancel := context.WithTimeout(parentCtx, scenarioTimeout)
 	ctx, cancel := chromedp.NewContext(timeoutCtx)

@@ -1,40 +1,51 @@
 @frontend @docs
 Feature: Documentation walkthrough
-  Captures the documentation assets in a single end-to-end journey: one browser
-  session is screen-recorded the whole way through (muxed to an MP4 for manual
-  upload) while still-screenshots are captured at key moments. The recording is a
-  guided tour — a fading "∞ Loop" title card opens and closes it; for each stop a
-  caption is shown first to explain what's coming, then (after a beat) the action
-  happens. The MP4 preserves real-time pacing so every pause is real and easy to
-  follow.
+  Captures the documentation assets as a set of PER-FEATURE scenarios. Each
+  scenario is independently runnable (tagged @docs-<name>) so a single section
+  can be re-recorded fast in isolation for iteration —
+  `make docs-capture-section SECTION=git` — and each brackets its steps with
+  `start recording` / `stop recording "<name>"`, emitting docs/videos/<name>.mp4.
+  A full `make docs-capture` run (GODOG_TAGS=@docs) runs every section plus the
+  browser clip (tag docs-browser), then stitches them — in the fixed order
+  encoded in scripts/test-component.sh — into docs/videos/journey.mp4.
+  Still-screenshots are captured at key moments throughout (independent of
+  recording).
   Tagged @docs so normal BDD runs skip it (GODOG_TAGS defaults to ~@docs);
   run via `make docs-capture`, which sets LOOP_DOCS_CAPTURE so the capture steps
-  write assets (screenshots into docs/static/images/features, the MP4 into the
+  write assets (screenshots into docs/static/images/features, the MP4s into the
   gitignored docs/videos).
 
-  # The journey runs against the sample "acme-notes" project (real files, git
-  # history, uncommitted edits, seeded Kanban tickets, a scheduled task, a prompt
-  # shortcut, and a bash shortcut). One continuous browser session = one unbroken
-  # recording. Rhythm per stop: pause -> caption (explains the next action) ->
-  # pause -> action -> settle. Captions are hidden before the action so they
-  # never obscure the panel or a screenshot.
+  # All scenarios share ONE sample "acme-notes" project + channel (built once via
+  # sync.Once). In a full run the BACKEND state (git history, indexed memory,
+  # sessions) accumulates across scenarios in file order — so e.g. the git
+  # section commits a branch the git-panel section later shows — while each
+  # scenario gets a FRESH browser and re-establishes its own UI from the default
+  # chat+git layout. Run alone, a view-only section (sessions, git-panel) shows
+  # less, but still validates its own capture/timing.
+  # Rhythm per stop: record -> caption (explains the next action) -> pause ->
+  # action -> settle. Captions are hidden before the action so they never obscure
+  # the panel or a screenshot.
   Background:
     Given I set up a sample project channel
     And I open the app in a browser
     And I wait for text "acme-notes" to appear
     And I click on "acme-notes" in the sidebar
     And I wait for "textarea" to be visible
+    And I show the mouse cursor
 
-  Scenario: End-to-end product walkthrough
-    # Inject the branded card BEFORE recording so the video opens on it
+  @docs-intro
+  Scenario: Intro
+    # Branded title card, then fade into the app
     Given I show the Loop intro card
     When I start recording
-    And I show the mouse cursor
-    # Branded intro — already on screen from frame 1; hold, then fade out to the app
     And I wait "3s"
     And I fade out the Loop title card
     And I hide caption
-    # Chat — live agent reply
+    Then I stop recording "01_intro"
+
+  @docs-chat
+  Scenario: Chat — live agent reply
+    When I start recording
     And I wait "2s"
     And I show caption "Chat — describe what you want; the agent works in a sandboxed container"
     And I wait "4s"
@@ -46,8 +57,14 @@ Feature: Documentation walkthrough
     And I wait up to "90s" for "button[title='Stop']" to disappear
     And I wait "4s"
     And I capture screenshot "chat-conversation"
-    # Security gate — a synthetic approval card (same component the real gate
-    # mounts when a risky operation pauses for the operator's decision).
+    And I wait "2s"
+    Then I stop recording "02_chat"
+
+  @docs-gate
+  Scenario: Security gate
+    # A synthetic approval card — the same component the real gate mounts when a
+    # risky operation pauses for the operator's decision.
+    When I start recording
     And I wait "2s"
     And I show caption "Security gate — risky operations pause for your approval"
     And I wait "4s"
@@ -60,7 +77,11 @@ Feature: Documentation walkthrough
     And I inject a gate.approval_resolved event with req_id "docs-gate"
     And I wait for text "/root/.ssh/authorized_keys" to disappear
     And I wait "2s"
-    # Prompt shortcuts — two ways to open the picker. First: click the # button.
+    Then I stop recording "03_gate"
+
+  @docs-shortcuts
+  Scenario: Prompt shortcuts
+    When I start recording
     And I wait "2s"
     And I show caption "Prompt shortcuts — click the # button to pick a reusable prompt"
     And I wait "4s"
@@ -84,14 +105,16 @@ Feature: Documentation walkthrough
     And I wait "2s"
     And I press Enter
     And I wait for text "Review the uncommitted changes" to appear
-    # Let the shortcut's run start (Stop button mounts), then wait for it to
-    # finish and the result to render before moving on. The first run was already
-    # awaited above, so there's no queuing race here.
     And I wait "2s"
     And I wait up to "90s" for "button[title='Stop']" to disappear
     And I wait "4s"
-    # Git workflow (in the Chat layout, Git panel alongside) — ask the agent to
-    # change a file, inspect the uncommitted diff, commit it, then review history.
+    Then I stop recording "04_shortcuts"
+
+  @docs-git
+  Scenario: Git workflow
+    # Ask the agent to change a file, inspect the uncommitted diff, commit it on a
+    # branch, then review history (Commits, Branches Diff).
+    When I start recording
     And I wait "2s"
     And I show caption "Ask the agent to change a file — it edits code in the sandbox"
     And I wait "4s"
@@ -110,13 +133,13 @@ Feature: Documentation walkthrough
     And I wait "2s"
     And I click "Uncommitted Diff" in the git panel
     And I wait "4s"
-    # Commit it — just ask in chat
+    # Commit it on a new branch — so Branches Diff below has something to show.
     And I wait "2s"
-    And I show caption "Then ask the agent to commit it"
+    And I show caption "Ask the agent to put it on a new branch and commit"
     And I wait "4s"
     And I hide caption
     And I wait "2s"
-    And I type "Commit that change with a concise message." into "textarea"
+    And I type "Create a new branch called add-healthz, then commit that change to it with a concise message." into "textarea"
     And I press Enter
     And I wait "2s"
     And I wait up to "120s" for "button[title='Stop']" to disappear
@@ -137,7 +160,12 @@ Feature: Documentation walkthrough
     And I wait "2s"
     And I click "Branches Diff" in the git panel
     And I wait "4s"
-    # Editor — open a file, edit it inline, then ask the agent to commit it
+    Then I stop recording "05_git"
+
+  @docs-editor
+  Scenario: Editor
+    # Open a file, edit it inline, then ask the agent to commit it.
+    When I start recording
     And I wait "2s"
     And I show caption "Editor — file tree, code editor, a shell, and chat side by side"
     And I wait "4s"
@@ -165,26 +193,48 @@ Feature: Documentation walkthrough
     And I wait "2s"
     And I save the editor
     And I wait "3s"
-    # Ask the agent in chat to commit the change
+    # Ask the agent in chat to commit the change — on its own branch, so the Git
+    # panel's Branches Diff has something to compare.
     And I wait "2s"
-    And I show caption "Then just ask the agent to commit it — same repo, same workspace"
+    And I show caption "Then just ask the agent to put it on a branch and commit — same repo, same workspace"
     And I wait "4s"
     And I hide caption
     And I wait "2s"
-    And I type "Commit my change to README.md with a concise message." into "textarea[placeholder*='Ask Loop anything']"
+    And I type "Create a new branch called update-readme, then commit my change to README.md to it with a concise message." into "textarea[placeholder*='Ask Loop anything']"
     And I press Enter
     And I wait "2s"
     And I wait up to "120s" for "button[title='Stop']" to disappear
     And I wait "4s"
-    # Memory
+    Then I stop recording "06_editor"
+
+  @docs-memory
+  Scenario: Memory
+    When I start recording
     And I wait "2s"
     And I show caption "Memory — searchable long-term memory the agent can recall"
     And I wait "4s"
     And I hide caption
     And I wait "2s"
     And I click on "[data-testid='layout-tab-Memory']"
-    And I wait "3s"
-    # Terminal — open a Docker shell, then open the $ picker and run a saved command
+    # The background re-indexer (Ollama embeddings, 30s ticker) indexes the sample
+    # project's CLAUDE.md / README.md — wait for the tree to populate before
+    # capturing. Generous timeout: the first run cold-starts the Ollama sidecar
+    # and pulls the embedding model (~270MB), which can take a couple of minutes
+    # (the model persists in a named volume, so later runs are fast).
+    And I wait up to "180s" for text "CLAUDE.md" to appear
+    # The panel auto-opens the first indexed file; wait for its content to finish
+    # loading so the viewer shows real content, not the "Loading..." placeholder.
+    And I wait up to "30s" for text "Loading..." to disappear
+    And I wait "2s"
+    And I capture screenshot "memory-panel"
+    And I wait "2s"
+    Then I stop recording "07_memory"
+
+  @docs-terminal
+  Scenario: Terminal
+    # Open a Docker shell, run a saved command, then split in a Docker Agent
+    # terminal that resumes this channel's session inside the container.
+    When I start recording
     And I wait "2s"
     And I show caption "Terminal — open a shell in the container, then click $ to run a saved command"
     And I wait "4s"
@@ -205,8 +255,7 @@ Feature: Documentation walkthrough
     And I click on the element with text "$run-tests"
     And I wait "6s"
     # Docker Agent (Resume) — split an agent terminal in below the shell; it
-    # resumes THIS channel's Claude session right inside the container, so you
-    # can talk to the same agent straight from a terminal.
+    # resumes THIS channel's Claude session right inside the container.
     And I wait "2s"
     And I show caption "Open a Docker Agent terminal — it resumes this channel's session in the container"
     And I wait "4s"
@@ -232,7 +281,12 @@ Feature: Documentation walkthrough
     And I wait "30s"
     And I capture screenshot "docker-agent-terminal"
     And I wait "3s"
-    # Git
+    Then I stop recording "08_terminal"
+
+  @docs-git-panel
+  Scenario: Git panel
+    # The full Git tab (diff, branches, commits, worktrees).
+    When I start recording
     And I wait "2s"
     And I show caption "Git — review the diff, branches, commits, and worktrees"
     And I wait "4s"
@@ -241,15 +295,37 @@ Feature: Documentation walkthrough
     And I click on "[data-testid='layout-tab-Git']"
     And I wait "3s"
     And I capture screenshot "git-panel"
-    # Browser
     And I wait "2s"
-    And I show caption "Browser — drive a real Chrome side-by-side with chat"
+    Then I stop recording "09_git-panel"
+
+  @docs-browser
+  Scenario: Browser
+    # The agent drives a real headless Chrome through its browser MCP tools —
+    # navigate to a page, then read it back via the console tools.
+    When I start recording
+    And I wait "1s"
+    And I show caption "Browser — the agent drives a real Chrome through its tools"
     And I wait "4s"
     And I hide caption
-    And I wait "2s"
+    And I wait "1s"
     And I click on "[data-testid='layout-tab-Browser Chat']"
-    And I wait "3s"
-    # Sessions
+    And I wait "2s"
+    And I show caption "Ask it to open a page and read it back via the console"
+    And I wait "4s"
+    And I hide caption
+    And I wait "1s"
+    And I type "Use your browser tools to navigate to https://example.com, then use the console to extract and report the page's main heading text." into "textarea"
+    And I press Enter
+    And I wait "2s"
+    And I wait up to "120s" for "button[title='Stop']" to disappear
+    And I wait "4s"
+    And I capture screenshot "browser-agent"
+    And I wait "2s"
+    Then I stop recording "10_browser"
+
+  @docs-sessions
+  Scenario: Sessions
+    When I start recording
     And I wait "2s"
     And I show caption "Sessions — browse and resume past Claude sessions"
     And I wait "4s"
@@ -258,7 +334,12 @@ Feature: Documentation walkthrough
     And I click on "[data-testid='layout-tab-Sessions']"
     And I wait "3s"
     And I capture screenshot "sessions"
-    # Swarm
+    And I wait "2s"
+    Then I stop recording "11_sessions"
+
+  @docs-swarm
+  Scenario: Swarm
+    When I start recording
     And I wait "2s"
     And I show caption "Swarm — run several agents in parallel"
     And I wait "4s"
@@ -266,7 +347,11 @@ Feature: Documentation walkthrough
     And I wait "2s"
     And I click on "[data-testid='layout-tab-Swarm']"
     And I wait "3s"
-    # Canvas
+    Then I stop recording "12_swarm"
+
+  @docs-canvas
+  Scenario: Canvas
+    When I start recording
     And I wait "2s"
     And I show caption "Canvas — arrange panels freely on an infinite canvas"
     And I wait "4s"
@@ -274,7 +359,12 @@ Feature: Documentation walkthrough
     And I wait "2s"
     And I click on "[data-testid='layout-tab-Canvas']"
     And I wait "3s"
-    # Playground — ask the agent to build a live HTML/CSS/JS sandbox via MCP
+    Then I stop recording "13_canvas"
+
+  @docs-playground
+  Scenario: Playground
+    # Ask the agent to build a live HTML/CSS/JS sandbox via MCP.
+    When I start recording
     And I wait "2s"
     And I show caption "Playground — ask the agent to build a live HTML/CSS/JS sandbox"
     And I wait "4s"
@@ -291,7 +381,12 @@ Feature: Documentation walkthrough
     And I wait up to "30s" for "[data-testid='playground-panel'] iframe" to be visible, best effort
     And I wait "4s"
     And I capture screenshot "playground"
-    # Kanban
+    And I wait "2s"
+    Then I stop recording "14_playground"
+
+  @docs-kanban
+  Scenario: Kanban
+    When I start recording
     And I wait "2s"
     And I show caption "Kanban — track tickets across Open, In Progress, and Closed"
     And I wait "4s"
@@ -300,15 +395,30 @@ Feature: Documentation walkthrough
     And I click on "[data-testid='layout-tab-Kanban']"
     And I wait "3s"
     And I capture screenshot "kanban-board"
-    # Workflows tab
+    And I wait "2s"
+    Then I stop recording "15_kanban"
+
+  @docs-workflows-tab
+  Scenario: Workflows tab
+    # Seed a real run (bdd-test-workflow is in the harness config) so the tab
+    # shows a live DAG with a completed run instead of an empty state.
+    Given I start a workflow run for "bdd-test-workflow" via API
+    When I start recording
     And I wait "2s"
     And I show caption "Workflows — declarative multi-step pipelines with a live DAG"
     And I wait "4s"
     And I hide caption
     And I wait "2s"
     And I click on "[data-testid='layout-tab-Workflows']"
-    And I wait "3s"
-    # Quality — split the panel into the Chat layout, run a scan, show the signal
+    And I wait "5s"
+    And I capture screenshot "workflows-tab"
+    And I wait "2s"
+    Then I stop recording "16_workflows-tab"
+
+  @docs-quality
+  Scenario: Quality
+    # Split the panel into the Chat layout, run a scan.
+    When I start recording
     And I wait "2s"
     And I show caption "Quality — one architectural signal, with a treemap of hotspots"
     And I wait "4s"
@@ -324,7 +434,13 @@ Feature: Documentation walkthrough
     And I wait up to "60s" for text "geo-mean" to appear
     And I wait "3s"
     And I capture screenshot "quality-panel"
-    # Multi-panel — compose a custom workspace: split a Host Shell under the Git panel
+    And I wait "2s"
+    Then I stop recording "17_quality"
+
+  @docs-multi-panel
+  Scenario: Multi-panel workspace
+    # Compose a custom workspace: split a Host Shell under the Git panel.
+    When I start recording
     And I wait "2s"
     And I show caption "Compose your own workspace — split any panel into the layout"
     And I wait "4s"
@@ -339,12 +455,33 @@ Feature: Documentation walkthrough
     And I add the "Host Shell" panel below in the menu
     And I wait "5s"
     And I capture screenshot "multi-panel-workspace"
-    # Worktrees — spin off an isolated git worktree from the header branch picker, then chat in it
+    And I wait "2s"
+    Then I stop recording "18_multi-panel"
+
+  @docs-worktrees
+  Scenario: Worktrees
+    # Sidebar +wt picker, then create one from the header branch picker and chat
+    # inside it.
+    When I start recording
     And I wait "2s"
     And I show caption "Worktrees — branch off into an isolated workspace to work in parallel"
     And I wait "4s"
     And I hide caption
     And I wait "2s"
+    # Quickest path: hover a channel row in the sidebar and click +wt to pick a base branch
+    And I show caption "Hover a channel and click +wt to branch off from any branch"
+    And I wait "3s"
+    And I hide caption
+    And I hover over "acme-notes" in the sidebar
+    And I wait "1s"
+    And I click on the button with title "New worktree from branch"
+    And I wait for "[data-testid='sidebar-worktree-picker']" to be visible
+    And I wait "2s"
+    And I capture screenshot "sidebar-worktree"
+    And I wait "2s"
+    # Toggle the picker closed (clicking +wt again), then create the worktree from the header picker
+    And I click on the button with title "New worktree from branch"
+    And I wait "1s"
     And I click on the button with title "Branch"
     And I wait for text "BRANCHES" to appear
     And I wait "3s"
@@ -371,7 +508,11 @@ Feature: Documentation walkthrough
     And I wait "2s"
     And I wait up to "120s" for "button[title='Stop']" to disappear
     And I wait "4s"
-    # Scheduled tasks (sidebar overlay)
+    Then I stop recording "19_worktrees"
+
+  @docs-tasks
+  Scenario: Scheduled tasks
+    When I start recording
     And I wait "2s"
     And I show caption "Scheduled tasks — run prompts on a cron or interval"
     And I wait "4s"
@@ -380,7 +521,14 @@ Feature: Documentation walkthrough
     And I open the global tasks panel
     And I wait "3s"
     And I capture screenshot "tasks-panel"
-    # Workflows overlay
+    And I wait "2s"
+    Then I stop recording "20_tasks"
+
+  @docs-workflows-panel
+  Scenario: Workflows overlay
+    # Seed a real run so the panel lists an actual run, not just the empty state.
+    Given I start a workflow run for "bdd-test-workflow" via API
+    When I start recording
     And I wait "2s"
     And I show caption "Workflows panel — start runs and watch them across every channel"
     And I wait "4s"
@@ -390,7 +538,13 @@ Feature: Documentation walkthrough
     And I wait up to "10s" for text "+ Run" to appear
     And I wait "3s"
     And I capture screenshot "workflows-panel"
-    # Settings — global, then per-project
+    And I wait "2s"
+    Then I stop recording "21_workflows-panel"
+
+  @docs-settings
+  Scenario: Settings
+    # Global, then per-project.
+    When I start recording
     And I wait "2s"
     And I show caption "Settings — global configuration, as a form or raw JSON"
     And I wait "4s"
@@ -409,7 +563,13 @@ Feature: Documentation walkthrough
     And I wait "1s"
     And I click on the button with title "Project config"
     And I wait "4s"
-    # Branded outro — fades in and holds at full opacity so the video ends on the card
-    And I wait "2s"
+    Then I stop recording "22_settings"
+
+  @docs-outro
+  Scenario: Outro
+    # Branded card fades in and holds so the montage ends on it.
+    When I start recording
+    And I wait "1s"
     And I show the Loop title card and hold
-    Then I stop recording "journey"
+    And I wait "2s"
+    Then I stop recording "23_outro"

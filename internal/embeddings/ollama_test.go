@@ -64,6 +64,9 @@ func (s *OllamaSuite) newEmbedder() *OllamaEmbedder {
 		WithOllamaURL("http://localhost:11434"),
 		WithOllamaModel("nomic-embed-text"),
 		WithOllamaStartupWait(10*time.Millisecond),
+		// Default to host mode so ensureRunning doesn't issue the extra bridge-IP
+		// inspect; containerized behavior is exercised explicitly per test.
+		WithOllamaInContainer(func() bool { return false }),
 	)
 }
 
@@ -323,6 +326,7 @@ func (s *OllamaSuite) TestEmbedInvalidURL() {
 		WithOllamaHTTPClient(s.http),
 		WithOllamaURL("http://localhost\x00:11434"),
 		WithOllamaModel("nomic-embed-text"),
+		WithOllamaInContainer(func() bool { return false }),
 	)
 
 	s.cmd.On("Run", ctx, "docker", "inspect", "--format", "{{.State.Running}}", "loop-ollama").
@@ -344,6 +348,7 @@ func (s *OllamaSuite) TestWaitForReadyInvalidURL() {
 		WithOllamaHTTPClient(s.http),
 		WithOllamaURL("http://localhost\x00:11434"),
 		WithOllamaModel("nomic-embed-text"),
+		WithOllamaInContainer(func() bool { return false }),
 		WithOllamaStartupWait(10*time.Millisecond),
 	)
 	e.sleepFunc = func(_ time.Duration) {}
@@ -391,6 +396,84 @@ func (s *OllamaSuite) TestWithOllamaOptions() {
 	require.Equal(s.T(), 30*time.Second, e.idleCheckInterval)
 }
 
+// --- resolveContainerURL tests ---
+
+const inspectIPFormat = "{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}"
+
+func (s *OllamaSuite) TestResolveContainerURLBridgeIP() {
+	ctx := context.Background()
+	e := NewOllamaEmbedder(WithOllamaCommander(s.cmd), WithOllamaInContainer(func() bool { return true }))
+	s.cmd.On("Run", ctx, "docker", "inspect", "-f", inspectIPFormat, "loop-ollama").
+		Return([]byte("172.17.0.9\n"), nil)
+	require.Equal(s.T(), "http://172.17.0.9:11434", e.resolveContainerURL(ctx))
+}
+
+func (s *OllamaSuite) TestResolveContainerURLHostMode() {
+	e := NewOllamaEmbedder(WithOllamaCommander(s.cmd), WithOllamaInContainer(func() bool { return false }))
+	require.Equal(s.T(), "", e.resolveContainerURL(context.Background()))
+}
+
+func (s *OllamaSuite) TestResolveContainerURLNilDetector() {
+	e := NewOllamaEmbedder(WithOllamaCommander(s.cmd))
+	e.inContainer = nil
+	require.Equal(s.T(), "", e.resolveContainerURL(context.Background()))
+}
+
+func (s *OllamaSuite) TestResolveContainerURLInspectError() {
+	ctx := context.Background()
+	e := NewOllamaEmbedder(WithOllamaCommander(s.cmd), WithOllamaInContainer(func() bool { return true }))
+	s.cmd.On("Run", ctx, "docker", "inspect", "-f", inspectIPFormat, "loop-ollama").
+		Return([]byte(""), errors.New("boom"))
+	require.Equal(s.T(), "", e.resolveContainerURL(ctx))
+}
+
+func (s *OllamaSuite) TestResolveContainerURLEmptyIP() {
+	ctx := context.Background()
+	e := NewOllamaEmbedder(WithOllamaCommander(s.cmd), WithOllamaInContainer(func() bool { return true }))
+	s.cmd.On("Run", ctx, "docker", "inspect", "-f", inspectIPFormat, "loop-ollama").
+		Return([]byte("  \n"), nil)
+	require.Equal(s.T(), "", e.resolveContainerURL(ctx))
+}
+
+func (s *OllamaSuite) TestDefaultInContainer() {
+	_ = defaultInContainer() // just exercise the /.dockerenv probe
+}
+
+// When containerized, ensureRunning switches the embedder URL to the sidecar's
+// bridge IP after starting the container.
+func (s *OllamaSuite) TestEnsureRunningSwitchesToBridgeURL() {
+	ctx := context.Background()
+	e := NewOllamaEmbedder(
+		WithOllamaCommander(s.cmd),
+		WithOllamaHTTPClient(s.http),
+		WithOllamaURL("http://localhost:11434"),
+		WithOllamaModel("nomic-embed-text"),
+		WithOllamaStartupWait(10*time.Millisecond),
+		WithOllamaInContainer(func() bool { return true }),
+	)
+	s.cmd.On("Run", ctx, "docker", "inspect", "--format", "{{.State.Running}}", "loop-ollama").
+		Return([]byte(""), errors.New("not found"))
+	s.cmd.On("Run", ctx, "docker", "rm", "-f", "loop-ollama").Return([]byte(""), nil)
+	s.cmd.On("Run", ctx, "docker", "run", "-d",
+		"--name", "loop-ollama",
+		"-v", "loop-ollama:/root/.ollama",
+		"-p", "11434:11434",
+		"ollama/ollama:latest",
+	).Return([]byte("cid\n"), nil)
+	s.cmd.On("Run", ctx, "docker", "inspect", "-f", inspectIPFormat, "loop-ollama").
+		Return([]byte("172.17.0.9\n"), nil)
+	s.cmd.On("Run", ctx, "docker", "exec", "loop-ollama", "ollama", "list").
+		Return([]byte("nomic-embed-text:latest\n"), nil)
+	s.http.On("Do", mock.MatchedBy(func(r *http.Request) bool { return r.URL.Path == "/" })).
+		Return(&http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(""))}, nil)
+	s.http.On("Do", mock.MatchedBy(func(r *http.Request) bool { return r.URL.Path == "/api/embed" })).
+		Return(&http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(`{"embeddings":[[0.1]]}`))}, nil)
+
+	_, err := e.Embed(ctx, []string{"test"})
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "http://172.17.0.9:11434", e.url)
+}
+
 // --- touchMarkerFile tests ---
 
 func (s *OllamaSuite) TestTouchMarkerFile() {
@@ -423,6 +506,7 @@ func (s *OllamaSuite) TestEmbedTouchesMarkerFile() {
 		WithOllamaModel("nomic-embed-text"),
 		WithOllamaStartupWait(10*time.Millisecond),
 		WithOllamaLoopDir(tmpDir),
+		WithOllamaInContainer(func() bool { return false }),
 	)
 
 	s.cmd.On("Run", ctx, "docker", "inspect", "--format", "{{.State.Running}}", "loop-ollama").

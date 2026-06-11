@@ -7,7 +7,47 @@ GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 NC='\033[0m'
 
+# Stitch the per-section docs clips into one journey.mp4. Each clip is named
+# NN_<section>.mp4 (NN = feature order), so a plain lexical sort gives the
+# journey order — a missing/failed section just leaves a numbering gap and is
+# skipped. Called only for a full docs-capture run (GODOG_TAGS=@docs);
+# per-section runs leave journey.mp4 alone.
+stitch_journey() {
+    local vdir="docs/videos"
+    if ! command -v ffmpeg > /dev/null 2>&1; then
+        echo -e "${YELLOW}stitch: ffmpeg not found; skipping journey.mp4${NC}"
+        return 0
+    fi
+    local list="$vdir/.journey-concat.txt"
+    : > "$list"
+    local n=0
+    for f in $(ls "$vdir"/[0-9][0-9]_*.mp4 2>/dev/null | sort); do
+        echo "file '$(basename "$f")'" >> "$list"
+        n=$((n + 1))
+    done
+    if [ "$n" -eq 0 ]; then
+        echo -e "${YELLOW}stitch: no section clips found; skipping journey.mp4${NC}"
+        rm -f "$list"
+        return 0
+    fi
+    echo -e "${YELLOW}Stitching $n section clips into $vdir/journey.mp4...${NC}"
+    # All section clips are encoded identically (libx264/yuv420p/30fps), so try a
+    # fast stream-copy concat first; fall back to a re-encode if copy rejects it.
+    if ! ffmpeg -y -f concat -safe 0 -i "$list" -c copy -movflags +faststart "$vdir/journey.mp4" > /dev/null 2>&1; then
+        ffmpeg -y -f concat -safe 0 -i "$list" -vf "fps=30" -c:v libx264 -pix_fmt yuv420p -movflags +faststart "$vdir/journey.mp4" \
+            || { echo -e "${RED}stitch: ffmpeg concat failed${NC}"; rm -f "$list"; return 1; }
+    fi
+    rm -f "$list"
+    echo -e "${GREEN}Wrote $vdir/journey.mp4 ($n clips)${NC}"
+}
+
 echo -e "${GREEN}=== Component Tests ===${NC}"
+
+# Full docs-capture run: clear stale section clips so a removed/failed section
+# can't leave a stale clip in the stitched journey. (Per-section runs keep them.)
+if [ -n "$LOOP_DOCS_CAPTURE" ] && [ "$GODOG_TAGS" = "@docs" ]; then
+    rm -f docs/videos/*.mp4 2>/dev/null || true
+fi
 
 # Install dependencies if missing (CI runners, non-prebuilt containers).
 if [ -f /.dockerenv ] && ! command -v chromium &> /dev/null && [ -z "$CHROME_CDP_URL" ]; then
@@ -65,8 +105,28 @@ mkdir -p "$LOOP_DIR"
 # force a non-root agent uid — this sandbox runs loop as root, and claude
 # refuses --dangerously-skip-permissions as root. Gated on LOOP_DOCS_CAPTURE so
 # normal/CI runs stay hermetic and unauthenticated.
+# Memory + embeddings are off for normal/CI runs (Ollama is heavy). Docs
+# capture turns them on so the Memory panel is populated from indexed *.md.
+MEMORY_BLOCK='"memory": { "enabled": false },'
+# Agent containers reach the loop API at host.docker.internal by default. In
+# docs capture the daemon runs INSIDE a container, so host.docker.internal:8222
+# would hit a DIFFERENT daemon on the Docker host (e.g. a dev instance) instead
+# of this one — breaking the browser panel (the agent would drive the wrong
+# Chrome). Point agents at this daemon's own container IP over the Docker bridge.
+AGENT_API_BLOCK=""
 DOCS_AUTH=""
 if [ -n "$LOOP_DOCS_CAPTURE" ]; then
+    # ollama_url is the host-mode fallback; when loop runs in a container (as it
+    # does here) the embedder auto-connects to the ollama sidecar's bridge IP
+    # (container-to-container), so this localhost value isn't actually used.
+    # (Requires the test-runner image to have the docker CLI — docker-cli in
+    # scripts/test-runner.Dockerfile.)
+    MEMORY_BLOCK='"memory": { "enabled": true, "reindex_interval_sec": 30, "embeddings": { "provider": "ollama", "model": "nomic-embed-text", "ollama_url": "http://localhost:11434" } },'
+    CONTAINER_IP=$(hostname -i 2>/dev/null | awk '{print $1}')
+    if [ -n "$CONTAINER_IP" ]; then
+        AGENT_API_BLOCK="\"api_advertise_url\": \"http://$CONTAINER_IP:8222\","
+        echo -e "${YELLOW}Docs capture: agents will reach this daemon at http://$CONTAINER_IP:8222${NC}"
+    fi
     # Channel workdirs (created by BDD steps) live under this shared, writable
     # base so sibling agent containers can bind-mount them by the same path.
     export LOOP_DOCS_WORKDIR_BASE="$TMPDIR"
@@ -97,10 +157,18 @@ if [ -n "$LOOP_DOCS_CAPTURE" ]; then
             # write into the bind source (binds aren't auto-chowned like volumes).
             mkdir -p "$LOOP_HOME/.claude"
             chown 1000:1000 "$LOOP_HOME/.claude" 2>/dev/null || true
+            # Agent containers normally pull a RELEASED loop binary (see the agent
+            # image Dockerfile). For docs capture we want the agent's mcp-browser
+            # to run THIS build — so its browser actions route through the daemon
+            # API and share the panel's Chrome tab (otherwise the panel preview
+            # shows about:blank while the agent drives its own tab). Stage the
+            # freshly-built binary under the host-shared LOOP_HOME and bind-mount
+            # it over /usr/local/bin/loop in each agent container.
+            cp bin/loop "$LOOP_HOME/loop" && chmod 0755 "$LOOP_HOME/loop"
             DOCS_AUTH="\"claude_code_oauth_token\": \"$DOCS_TOKEN\",
   \"envs\": { \"NODE_TLS_REJECT_UNAUTHORIZED\": \"0\", \"NODE_NO_WARNINGS\": \"1\", \"HOST_UID\": \"1000\", \"HOST_GID\": \"1000\" },
   \"gates\": { \"agentgate\": { \"enabled\": false } },
-  \"mounts\": [\"~/.claude:~/.claude\"],
+  \"mounts\": [\"~/.claude:~/.claude\", \"$LOOP_HOME/loop:/usr/local/bin/loop\"],
   \"copy_files\": [\"~/.claude.json\"],"
             echo -e "${YELLOW}Docs capture: injecting Claude auth + non-root agent uid for live runs${NC}"
         else
@@ -116,9 +184,10 @@ cat > "$LOOP_DIR/config.json" <<EOF
   $DOCS_AUTH
   "db_path": "$LOOP_DIR/loop.db",
   "api_addr": ":8222",
+  $AGENT_API_BLOCK
   "log_level": "warn",
-  "memory": { "enabled": false },
-  "browser": { "enabled": false },
+  $MEMORY_BLOCK
+  "browser": { "enabled": true },
   "workflow_bash_local": true,
   "workflows": [
     {
@@ -187,16 +256,24 @@ if [ -n "$TEST_RUN" ]; then
     TEST_FLAGS="-run $TEST_RUN"
 fi
 
-# Run component tests. docs-capture runs one long end-to-end journey (live agent
-# reply + a full panel tour + MP4 encode); the per-scenario budget is 120s, so
-# allow headroom here. Override with GO_TEST_TIMEOUT.
+# Run component tests. A full docs-capture run drives ~22 per-section scenarios
+# (each its own browser + live agent + MP4 encode), so allow generous headroom.
+# Override with GO_TEST_TIMEOUT.
 TEST_TIMEOUT=900s
-[ -n "$LOOP_DOCS_CAPTURE" ] && TEST_TIMEOUT=1500s
+[ -n "$LOOP_DOCS_CAPTURE" ] && TEST_TIMEOUT=2700s
 [ -n "$GO_TEST_TIMEOUT" ] && TEST_TIMEOUT="$GO_TEST_TIMEOUT"
 echo -e "${YELLOW}Running component tests (timeout $TEST_TIMEOUT)...${NC}"
+TEST_RC=0
 LOOP_BASE_URL="http://localhost:8222" \
 LOOP_APP_URL="${LOOP_APP_URL:-http://localhost:5173}" \
 LOOP_PID="$LOOP_PID" \
 CHROME_CDP_URL="${CHROME_CDP_URL:-}" \
 GODOG_CONCURRENCY="${GODOG_CONCURRENCY:-1}" \
-go test -timeout "$TEST_TIMEOUT" -count=1 -v -tags=component ${TEST_FLAGS} ./test/component/...
+go test -timeout "$TEST_TIMEOUT" -count=1 -v -tags=component ${TEST_FLAGS} ./test/component/... || TEST_RC=$?
+
+# Full docs-capture run: stitch the per-section clips into journey.mp4. Done even
+# on a partial failure so the montage reflects whatever sections were captured.
+if [ -n "$LOOP_DOCS_CAPTURE" ] && [ "$GODOG_TAGS" = "@docs" ]; then
+    stitch_journey || true
+fi
+exit "$TEST_RC"

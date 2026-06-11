@@ -67,6 +67,10 @@ func TestManagerSuite(t *testing.T) {
 func (s *ManagerSuite) SetupTest() {
 	s.api = new(mockDockerClient)
 	s.mgr = NewDockerProvider(s.api, "loop-agent:latest", "1920,1080", slog.Default())
+	// Default to host-run daemon (the common deployment): the CDP endpoint is the
+	// mapped 127.0.0.1:hostPort and no extra inspect is needed. Containerized
+	// behavior is exercised explicitly by setting inContainer=true per test.
+	s.mgr.inContainer = false
 }
 
 // inspectResponseWithPort returns a ContainerInspect response with the given host port mapping.
@@ -293,8 +297,68 @@ func (s *ManagerSuite) TestIsRunningInspectError() {
 }
 
 func (s *ManagerSuite) TestGetCDPEndpointWithSession() {
-	s.mgr.sessions["ch-1"] = &browserSession{chromeContainerID: "chrome-ctr-1", hostPort: "49152"}
+	s.mgr.sessions["ch-1"] = &browserSession{chromeContainerID: "chrome-ctr-1", hostPort: "49152", cdpAddr: "127.0.0.1:49152"}
 	require.Equal(s.T(), "ws://127.0.0.1:49152", s.mgr.GetCDPEndpoint("ch-1"))
+}
+
+// When loop runs inside a container, the endpoint uses the sidecar's bridge IP
+// on the in-container CDP port, not the (unreachable) host-published port.
+func (s *ManagerSuite) TestGetCDPEndpointContainerized() {
+	s.mgr.sessions["ch-1"] = &browserSession{chromeContainerID: "chrome-ctr-1", hostPort: "49152", cdpAddr: "172.17.0.5:9222"}
+	require.Equal(s.T(), "ws://172.17.0.5:9222", s.mgr.GetCDPEndpoint("ch-1"))
+}
+
+// resolveCDPHostPort: host-run daemon uses the mapped 127.0.0.1:hostPort (no inspect).
+func (s *ManagerSuite) TestResolveCDPHostPortHostMode() {
+	s.mgr.inContainer = false
+	require.Equal(s.T(), "127.0.0.1:49152", s.mgr.resolveCDPHostPort(context.Background(), "ctr-1", "49152"))
+}
+
+// resolveCDPHostPort: containerized daemon uses the sidecar bridge IP:9222.
+func (s *ManagerSuite) TestResolveCDPHostPortContainerized() {
+	s.mgr.inContainer = true
+	s.api.On("ContainerInspect", mock.Anything, "ctr-1").Return(containertypes.InspectResponse{
+		NetworkSettings: &containertypes.NetworkSettings{
+			Networks: map[string]*network.EndpointSettings{"bridge": {IPAddress: "172.18.0.7"}},
+		},
+	}, nil)
+	require.Equal(s.T(), "172.18.0.7:9222", s.mgr.resolveCDPHostPort(context.Background(), "ctr-1", "49152"))
+}
+
+// resolveCDPHostPort: containerized but IP undiscoverable → host-port fallback.
+func (s *ManagerSuite) TestResolveCDPHostPortContainerizedNoIP() {
+	s.mgr.inContainer = true
+	s.api.On("ContainerInspect", mock.Anything, "ctr-1").Return(containertypes.InspectResponse{
+		NetworkSettings: &containertypes.NetworkSettings{},
+	}, nil)
+	require.Equal(s.T(), "127.0.0.1:49152", s.mgr.resolveCDPHostPort(context.Background(), "ctr-1", "49152"))
+}
+
+// getContainerIP: inspect error → "".
+func (s *ManagerSuite) TestGetContainerIPInspectError() {
+	s.api.On("ContainerInspect", mock.Anything, "ctr-1").Return(containertypes.InspectResponse{}, errors.New("boom"))
+	require.Equal(s.T(), "", s.mgr.getContainerIP(context.Background(), "ctr-1"))
+}
+
+// getContainerIP: nil NetworkSettings → "".
+func (s *ManagerSuite) TestGetContainerIPNilNetworkSettings() {
+	s.api.On("ContainerInspect", mock.Anything, "ctr-1").Return(containertypes.InspectResponse{}, nil)
+	require.Equal(s.T(), "", s.mgr.getContainerIP(context.Background(), "ctr-1"))
+}
+
+// getContainerIP: falls back to a non-bridge network when "bridge" is absent.
+func (s *ManagerSuite) TestGetContainerIPNonBridgeNetwork() {
+	s.api.On("ContainerInspect", mock.Anything, "ctr-1").Return(containertypes.InspectResponse{
+		NetworkSettings: &containertypes.NetworkSettings{
+			Networks: map[string]*network.EndpointSettings{"loopnet": {IPAddress: "10.5.0.3"}},
+		},
+	}, nil)
+	require.Equal(s.T(), "10.5.0.3", s.mgr.getContainerIP(context.Background(), "ctr-1"))
+}
+
+// inDockerContainer probes for the /.dockerenv marker; just exercise it.
+func (s *ManagerSuite) TestInDockerContainer() {
+	_ = inDockerContainer()
 }
 
 func (s *ManagerSuite) TestGetCDPEndpointNoSession() {

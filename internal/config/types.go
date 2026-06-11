@@ -303,23 +303,29 @@ type DockerProxyConfig struct {
 
 // Config holds all application configuration loaded from config.json.
 type Config struct {
-	Platforms            []types.Platform
-	DiscordToken         string
-	DiscordAppID         string
-	SlackBotToken        string
-	SlackAppToken        string
-	ClaudeBinPath        string
-	DBPath               string
-	LogFile              string
-	LogLevel             string
-	LogFormat            string
-	ContainerImage       string
-	ContainerTimeout     time.Duration
-	ContainerMemoryMB    int64
-	ContainerCPUs        float64
-	ContainerKeepAlive   time.Duration
-	PollInterval         time.Duration
-	APIAddr              string
+	Platforms          []types.Platform
+	DiscordToken       string
+	DiscordAppID       string
+	SlackBotToken      string
+	SlackAppToken      string
+	ClaudeBinPath      string
+	DBPath             string
+	LogFile            string
+	LogLevel           string
+	LogFormat          string
+	ContainerImage     string
+	ContainerTimeout   time.Duration
+	ContainerMemoryMB  int64
+	ContainerCPUs      float64
+	ContainerKeepAlive time.Duration
+	PollInterval       time.Duration
+	APIAddr            string
+	// APIAdvertiseURL is the base URL advertised to agent containers for reaching
+	// the loop API (default "http://host.docker.internal" + APIAddr). This is the
+	// advertise counterpart to the APIAddr bind address: set it when the daemon
+	// itself runs in a container, so agents reach it over the Docker network
+	// instead of the host.
+	APIAdvertiseURL      string
 	ClaudeCodeOAuthToken string
 	AnthropicAPIKey      string
 	DiscordGuildID       string

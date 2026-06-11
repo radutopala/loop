@@ -35,6 +35,7 @@ type jsonConfig struct {
 	ContainerKeepAliveSec                    *int                   `json:"container_keep_alive_sec"`
 	PollIntervalSec                          *int                   `json:"poll_interval_sec"`
 	APIAddr                                  string                 `json:"api_addr"`
+	APIAdvertiseURL                          string                 `json:"api_advertise_url"`
 	MCP                                      *jsonMCPConfig         `json:"mcp"`
 	TaskTemplates                            []TaskTemplate         `json:"task_templates"`
 	Workflows                                []WorkflowDef          `json:"workflows"`
@@ -239,6 +240,7 @@ func (l *Loader) parse() (*Config, error) {
 		ContainerKeepAlive:                       time.Duration(ptrDefault(jc.ContainerKeepAliveSec, 300)) * time.Second,
 		PollInterval:                             time.Duration(ptrDefault(jc.PollIntervalSec, 30)) * time.Second,
 		APIAddr:                                  stringDefault(jc.APIAddr, ":8222"),
+		APIAdvertiseURL:                          jc.APIAdvertiseURL,
 		LoopDir:                                  loopDir,
 		ClaudeModel:                              stringDefault(jc.ClaudeModel, "claude-sonnet-4-6"),
 		ClaudeDangerouslyLoadDevelopmentChannels: ptrDefault(jc.ClaudeDangerouslyLoadDevelopmentChannels, false),

@@ -107,8 +107,12 @@ func (m *CDPManager) Connect(ctx context.Context) error {
 	defer m.mu.Unlock()
 
 	var cdpOpts []CDPOption
-	// Host mode (no discovery): always create a new target.
-	if !m.cfg.DiscoverExisting {
+	if m.cfg.DiscoverExisting {
+		// Docker mode: attach to Chrome's existing first page target so the panel
+		// shares the SAME tab the agent's mcp-browser tools drive.
+		cdpOpts = append(cdpOpts, WithDiscoverExisting())
+	} else {
+		// Host mode: always create a new target.
 		cdpOpts = append(cdpOpts, WithNewTarget())
 	}
 
