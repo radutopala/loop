@@ -85,8 +85,17 @@ export const ChatMessages = forwardRef<ChatMessagesHandle, ChatMessagesProps>(fu
 
   // Auto-scroll to bottom on new messages, timeline growth, or streaming updates.
   useEffect(() => {
-    if (autoScrollRef.current) {
-      bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+    if (!autoScrollRef.current) return;
+    // Interactive cards (gate approval, ask-user, exit-plan) carry action
+    // buttons at their bottom edge, and the triggering user bubble can render
+    // just after them — so scrollIntoView aligned to the card or the bottom
+    // anchor falls short and leaves the buttons below the fold. Jump straight
+    // to the true scroll bottom so the whole card stays actionable.
+    const interactive = !!(chatGateApproval || askUserQuestions || exitPlanRequest);
+    if (interactive && containerRef.current) {
+      containerRef.current.scrollTop = containerRef.current.scrollHeight;
+    } else {
+      bottomRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
     }
   }, [messages, items, liveTail, streamingContent, agentActivity, askUserQuestions, exitPlanRequest, agentTasks, chatGateApproval]);
 

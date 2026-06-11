@@ -166,8 +166,8 @@ if [ -n "$LOOP_DOCS_CAPTURE" ]; then
             # it over /usr/local/bin/loop in each agent container.
             cp bin/loop "$LOOP_HOME/loop" && chmod 0755 "$LOOP_HOME/loop"
             DOCS_AUTH="\"claude_code_oauth_token\": \"$DOCS_TOKEN\",
-  \"envs\": { \"NODE_TLS_REJECT_UNAUTHORIZED\": \"0\", \"NODE_NO_WARNINGS\": \"1\", \"HOST_UID\": \"1000\", \"HOST_GID\": \"1000\" },
-  \"gates\": { \"agentgate\": { \"enabled\": false } },
+  \"envs\": { \"NODE_TLS_REJECT_UNAUTHORIZED\": \"0\", \"NODE_NO_WARNINGS\": \"1\", \"HOST_USER\": \"agent\", \"HOST_UID\": \"1000\", \"HOST_GID\": \"1000\" },
+  \"gates\": { \"agentgate\": { \"enabled\": true, \"command_rules\": [ { \"commands\": [\"git\"], \"args_patterns\": [\"commit\", \"push\"], \"decision\": \"approve\", \"message\": \"git commit/push (approval required)\" } ] } },
   \"mounts\": [\"~/.claude:~/.claude\", \"$LOOP_HOME/loop:/usr/local/bin/loop\"],
   \"copy_files\": [\"~/.claude.json\"],"
             echo -e "${YELLOW}Docs capture: injecting Claude auth + non-root agent uid for live runs${NC}"
