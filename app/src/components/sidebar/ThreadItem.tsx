@@ -4,6 +4,15 @@ import { fonts } from "../../theme";
 import { useTheme } from "../../ThemeContext";
 import { StatusPill } from "./StatusPill";
 
+/** Drag-to-reorder wiring for threads/worktrees under a common parent. */
+export interface ThreadReorder {
+  onDragStart: (threadId: string, parentId: string) => void;
+  onDragOver: (e: React.DragEvent, threadId: string) => void;
+  onDrop: (e: React.DragEvent, targetId: string, parentId: string) => void;
+  onDragEnd: () => void;
+  dragOverId: string | null;
+}
+
 interface ThreadItemProps {
   thread: Channel;
   subThreads?: Channel[];
@@ -13,6 +22,7 @@ interface ThreadItemProps {
   isLast?: boolean;
   onSelect: (id: string) => void;
   onContextMenu: (e: React.MouseEvent, channel: Channel) => void;
+  reorder?: ThreadReorder;
   selectMode?: boolean;
   checked?: boolean;
   onToggleCheck?: (id: string) => void;
@@ -24,7 +34,7 @@ interface ThreadItemProps {
   askUserChannelIdsRef?: React.RefObject<Set<string>>;
 }
 
-export function ThreadItem({ thread, subThreads, threadsByParent, selected, selectedId, isLast, onSelect, onContextMenu, selectMode, checked, onToggleCheck, isRunningMapRef, unreadIdsRef, gateChannelIdsRef, reviewChannelIdsRef, askUserChannelIdsRef }: ThreadItemProps) {
+export function ThreadItem({ thread, subThreads, threadsByParent, selected, selectedId, isLast, onSelect, onContextMenu, reorder, selectMode, checked, onToggleCheck, isRunningMapRef, unreadIdsRef, gateChannelIdsRef, reviewChannelIdsRef, askUserChannelIdsRef }: ThreadItemProps) {
   const { colors } = useTheme();
   const [hovered, setHovered] = useState(false);
   const [collapsed, setCollapsed] = useState(false);
@@ -60,6 +70,11 @@ export function ThreadItem({ thread, subThreads, threadsByParent, selected, sele
       </svg>
       <button
         title={thread.dir_path || undefined}
+        draggable={!!reorder}
+        onDragStart={reorder ? (e) => { e.stopPropagation(); reorder.onDragStart(thread.id, thread.parent_id); } : undefined}
+        onDragOver={reorder ? (e) => reorder.onDragOver(e, thread.id) : undefined}
+        onDrop={reorder ? (e) => reorder.onDrop(e, thread.id, thread.parent_id) : undefined}
+        onDragEnd={reorder ? (e) => { e.stopPropagation(); reorder.onDragEnd(); } : undefined}
         onClick={() => onSelect(thread.id)}
         onContextMenu={(e) => onContextMenu(e, thread)}
         onMouseEnter={() => setHovered(true)}
@@ -81,6 +96,8 @@ export function ThreadItem({ thread, subThreads, threadsByParent, selected, sele
           textAlign: "left",
           cursor: "pointer",
           borderRadius: 6,
+          // Drop indicator: inset top line so reordering doesn't shift layout.
+          boxShadow: reorder?.dragOverId === thread.id ? `inset 0 2px 0 ${colors.active}` : undefined,
         }}
       >
       {hasChildren && (
@@ -215,6 +232,7 @@ export function ThreadItem({ thread, subThreads, threadsByParent, selected, sele
             isLast={i === subThreads!.length - 1}
             onSelect={onSelect}
             onContextMenu={onContextMenu}
+            reorder={reorder}
             selectMode={selectMode}
             checked={checked}
             onToggleCheck={onToggleCheck}

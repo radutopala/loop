@@ -1,5 +1,6 @@
 import type { Channel } from "../../types";
 import { ChannelItem } from "./ChannelItem";
+import type { ThreadReorder } from "./ThreadItem";
 
 interface ChannelListProps {
   dmChannel: Channel | undefined;
@@ -7,6 +8,8 @@ interface ChannelListProps {
   selectedId: string | null;
   onSelect: (id: string) => void;
   onCreateThread: (parentId: string, name: string) => void;
+  onCreateWorktree?: (channelId: string, branch: string) => void;
+  threadReorder?: ThreadReorder;
   onOpenConfig?: (dirPath: string) => void;
   onContextMenu: (e: React.MouseEvent, channel: Channel) => void;
   onDragStart: (channelId: string) => void;
@@ -32,6 +35,8 @@ export function ChannelList({
   selectedId,
   onSelect,
   onCreateThread,
+  onCreateWorktree,
+  threadReorder,
   onOpenConfig,
   onContextMenu,
   onDragStart,
@@ -62,6 +67,8 @@ export function ChannelList({
           selectedId={selectedId}
           onSelect={onSelect}
           onCreateThread={onCreateThread}
+          onCreateWorktree={onCreateWorktree}
+          threadReorder={threadReorder}
           onOpenConfig={onOpenConfig}
           onContextMenu={onContextMenu}
           onDragStart={onDragStart}
@@ -90,6 +97,8 @@ export function ChannelList({
           selectedId={selectedId}
           onSelect={onSelect}
           onCreateThread={onCreateThread}
+          onCreateWorktree={onCreateWorktree}
+          threadReorder={threadReorder}
           onOpenConfig={onOpenConfig}
           onContextMenu={onContextMenu}
           onDragStart={onDragStart}

@@ -523,6 +523,7 @@ function AppInner() {
         onOpenDirectory={handleOpenDirectory}
         onCreateChannel={handleCreateChannel}
         onCreateThread={handleCreateThread}
+        onCreateWorktree={handleCreateWorktree}
         onDeleteThread={handleDelete}
         onSetLocked={handleSetLocked}
         onDeleteBatch={handleDeleteBatch}
