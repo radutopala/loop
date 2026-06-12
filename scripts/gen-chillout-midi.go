@@ -3,7 +3,7 @@
 // gen-chillout-midi.go generates an original chillout MIDI loop for the docs
 // journey soundtrack, in a choice of styles. It has no dependencies beyond the Go
 // standard library and writes a Standard MIDI File by hand, which FluidSynth + a
-// General-MIDI soundfont then renders to audio in scripts/stitch-journey.sh.
+// General-MIDI soundfont then renders to audio in scripts/journey-music.sh.
 //
 // All styles share an 8-bar A/B form in C major:
 //

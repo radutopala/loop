@@ -52,10 +52,10 @@ tickets/
 # Component test artifacts
 test/component/screenshots/
 
-# Generated docs walkthrough video (recorded by `make docs-capture`, uploaded
-# manually to YouTube — not committed)
+# Generated walkthrough videos: per-section clips from `make docs-capture` and the
+# single-take `make docs-journey` recording, uploaded manually — not committed.
 docs/videos/
 
 # Single-take journey feature, generated from docs_capture.feature by
-# `make docs-journey` (scripts/gen-journey-feature.py) — regenerated, not committed
+# `make docs-journey` (scripts/gen-journey-feature.go) — regenerated, not committed
 test/component/features/frontend/journey.feature

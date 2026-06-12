@@ -8,19 +8,12 @@ YELLOW='\033[1;33m'
 NC='\033[0m'
 
 
-# Stitch + ambient-music helpers live in a sibling script. Sourcing only defines
-# the functions (the script has a run-if-executed-directly guard, so sourcing
-# does not trigger a stitch); the full @docs run calls stitch_journey explicitly
-# after the tests.
-source "$(dirname "$0")/stitch-journey.sh"
+# Journey soundtrack helpers live in a sibling script. Sourcing only defines the
+# functions (a run-if-executed-directly guard keeps sourcing side-effect-free);
+# the @journey run calls mux_journey_music explicitly after the tests.
+source "$(dirname "$0")/journey-music.sh"
 
 echo -e "${GREEN}=== Component Tests ===${NC}"
-
-# Full docs-capture run: clear stale section clips so a removed/failed section
-# can't leave a stale clip in the stitched journey. (Per-section runs keep them.)
-if [ -n "$LOOP_DOCS_CAPTURE" ] && [ "$GODOG_TAGS" = "@docs" ]; then
-    rm -f docs/videos/*.mp4 2>/dev/null || true
-fi
 
 # Install dependencies if missing (CI runners, non-prebuilt containers).
 if [ -f /.dockerenv ] && ! command -v chromium &> /dev/null && [ -z "$CHROME_CDP_URL" ]; then
@@ -263,16 +256,10 @@ CHROME_CDP_URL="${CHROME_CDP_URL:-}" \
 GODOG_CONCURRENCY="${GODOG_CONCURRENCY:-1}" \
 go test -timeout "$TEST_TIMEOUT" -count=1 -v -tags=component ${TEST_FLAGS} ./test/component/... || TEST_RC=$?
 
-# Lay the soundtrack under the journey video. Two routes:
-#  * @docs   — stitch the per-section clips into journey.mp4, then score it.
-#  * @journey — the single-take run already recorded docs/videos/journey.mp4 in one
-#               continuous pass; just score it (no stitching, no seams).
+# Score the single-take journey: the @journey run records one continuous
+# docs/videos/journey.mp4, so just lay the soundtrack under it (no stitching).
 # Done even on a partial failure so the result reflects whatever was captured.
-if [ -n "$LOOP_DOCS_CAPTURE" ]; then
-    if [ "$GODOG_TAGS" = "@docs" ]; then
-        stitch_journey || true
-    elif [ "$GODOG_TAGS" = "@journey" ]; then
-        mux_journey_music "docs/videos/journey.mp4" || true
-    fi
+if [ -n "$LOOP_DOCS_CAPTURE" ] && [ "$GODOG_TAGS" = "@journey" ]; then
+    mux_journey_music "docs/videos/journey.mp4" || true
 fi
 exit "$TEST_RC"
