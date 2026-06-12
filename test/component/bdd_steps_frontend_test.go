@@ -238,6 +238,7 @@ func registerFrontendSteps(ctx *godog.ScenarioContext, tc *TestContext) {
 	ctx.Step(`^I drag layout tab "([^"]*)" onto layout tab "([^"]*)"$`, tc.dragLayoutTab)
 	ctx.Step(`^the layout tabs should be in order "([^"]*)"$`, tc.assertLayoutTabOrder)
 	ctx.Step(`^I scroll the chat messages to bottom$`, tc.scrollChatMessagesToBottom)
+	ctx.Step(`^I scroll the chat messages to top$`, tc.scrollChatMessagesToTop)
 	ctx.Step(`^I inject (\d+) bot messages with content "([^"]*)"$`, tc.injectBotMessages)
 	ctx.Step(`^I inject a user message with content "([^"]*)"$`, tc.injectUserMessage)
 
@@ -1847,6 +1848,27 @@ func (tc *TestContext) scrollChatMessagesToBottom() error {
 	}
 	if result != "ok" {
 		return fmt.Errorf("scrollChatMessagesToBottom: %s", result)
+	}
+	return nil
+}
+
+func (tc *TestContext) scrollChatMessagesToTop() error {
+	js := `(() => {
+		const bubble = document.querySelector('[data-msg-uuid]');
+		if (!bubble) return 'no message bubble';
+		let el = bubble.parentElement;
+		while (el && getComputedStyle(el).overflowY !== 'auto') el = el.parentElement;
+		if (!el) return 'no scroll container';
+		el.scrollTop = 0;
+		el.dispatchEvent(new Event('scroll'));
+		return 'ok';
+	})()`
+	var result string
+	if err := chromedp.Run(tc.chromeTab.ctx, chromedp.Evaluate(js, &result)); err != nil {
+		return err
+	}
+	if result != "ok" {
+		return fmt.Errorf("scrollChatMessagesToTop: %s", result)
 	}
 	return nil
 }
