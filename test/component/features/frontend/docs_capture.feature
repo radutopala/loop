@@ -5,9 +5,10 @@ Feature: Documentation walkthrough
   can be re-recorded fast in isolation for iteration —
   `make docs-capture-section SECTION=git` — and each brackets its steps with
   `start recording` / `stop recording "<name>"`, emitting docs/videos/<name>.mp4.
-  A full `make docs-capture` run (GODOG_TAGS=@docs) runs every section plus the
-  browser clip (tag docs-browser), then stitches them — in the fixed order
-  encoded in scripts/test-component.sh — into docs/videos/journey.mp4.
+  A full `make docs-capture` run (GODOG_TAGS=@docs) runs every section, capturing
+  the still-screenshots embedded in the docs plus a per-section clip. The single
+  continuous walkthrough video is produced separately by `make docs-journey`,
+  which flattens these sections into one take (scripts/gen-journey-feature.go).
   Still-screenshots are captured at key moments throughout (independent of
   recording).
   Tagged @docs so normal BDD runs skip it (GODOG_TAGS defaults to ~@docs);

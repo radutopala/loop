@@ -5,9 +5,8 @@
 // library.
 //
 // `make docs-capture` runs every @docs section as its OWN scenario (each a fresh
-// browser + its own start/stop recording), then stitches the resulting clips into
-// docs/videos/journey.mp4 — which means visual cuts between sections and a
-// soundtrack that has to survive them.
+// browser + its own start/stop recording) — useful for screenshots and iterating
+// on one section, but every section is a separate clip with no continuous video.
 //
 // This program flattens all those sections into ONE scenario that shares a single
 // browser session and brackets the WHOLE walkthrough with one `start recording` /
