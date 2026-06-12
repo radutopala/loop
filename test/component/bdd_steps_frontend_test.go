@@ -479,7 +479,22 @@ func (tc *TestContext) pasteImageIntoSelector(selector string) error {
 	js := fmt.Sprintf(`(() => {
 		const el = document.querySelector(%q);
 		if (!el) return false;
-		const b64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==";
+		// Generate a REAL 640x400 PNG (not a 1x1 placeholder): docs-capture now
+		// sends the pasted image to the agent, which reads it back through the
+		// vision API — and the API rejects degenerate/tiny images ("could not be
+		// processed and was removed"). A proper-sized rendered image is accepted.
+		const c = document.createElement("canvas");
+		c.width = 640; c.height = 400;
+		const x = c.getContext("2d");
+		const g = x.createLinearGradient(0, 0, 640, 400);
+		g.addColorStop(0, "#0b1020"); g.addColorStop(1, "#1b2740");
+		x.fillStyle = g; x.fillRect(0, 0, 640, 400);
+		x.strokeStyle = "#3b82f6"; x.lineWidth = 4; x.strokeRect(40, 40, 560, 320);
+		x.fillStyle = "#e8eaed"; x.textAlign = "center";
+		x.font = "bold 64px sans-serif"; x.fillText("Loop", 320, 200);
+		x.font = "24px sans-serif"; x.fillStyle = "#9fb3d1";
+		x.fillText("pasted screenshot", 320, 250);
+		const b64 = c.toDataURL("image/png").split(",")[1];
 		const bin = atob(b64);
 		const bytes = new Uint8Array(bin.length);
 		for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
