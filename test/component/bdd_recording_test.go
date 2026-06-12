@@ -60,6 +60,16 @@ func (tc *TestContext) startRecording() error {
 	tc.chromeTab.rec = rec
 	ctx := tc.chromeTab.ctx
 
+	// The per-section clips fit comfortably in the defaults, but the single-take
+	// journey (every section back-to-back) needs more frame headroom and a gentler
+	// capture rate — override via LOOP_REC_MAX_FRAMES / LOOP_REC_MIN_GAP_MS (set by
+	// `make docs-journey`).
+	maxFrames := envInt("LOOP_REC_MAX_FRAMES", recordingMaxFrames)
+	minFrameGap := recordingMinFrameGap
+	if ms := envInt("LOOP_REC_MIN_GAP_MS", 0); ms > 0 {
+		minFrameGap = time.Duration(ms) * time.Millisecond
+	}
+
 	chromedp.ListenTarget(ctx, func(ev interface{}) {
 		f, ok := ev.(*page.EventScreencastFrame)
 		if !ok {
@@ -71,8 +81,8 @@ func (tc *TestContext) startRecording() error {
 		now := time.Now()
 		rec.mu.Lock()
 		idx := rec.count
-		skip := idx >= recordingMaxFrames ||
-			(!rec.lastKept.IsZero() && now.Sub(rec.lastKept) < recordingMinFrameGap)
+		skip := idx >= maxFrames ||
+			(!rec.lastKept.IsZero() && now.Sub(rec.lastKept) < minFrameGap)
 		rec.mu.Unlock()
 		if skip {
 			return

@@ -55,3 +55,7 @@ test/component/screenshots/
 # Generated docs walkthrough video (recorded by `make docs-capture`, uploaded
 # manually to YouTube — not committed)
 docs/videos/
+
+# Single-take journey feature, generated from docs_capture.feature by
+# `make docs-journey` (scripts/gen-journey-feature.py) — regenerated, not committed
+test/component/features/frontend/journey.feature

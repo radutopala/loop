@@ -96,7 +96,14 @@ func ensureChrome() error {
 		// Render at 2x device pixels so the recorded MP4 matches the screenshots'
 		// resolution. CDP screencast captures the backing store but ignores
 		// per-page emulation deviceScaleFactor, so the flag is what bumps it.
-		opts = append(opts, chromedp.Flag("force-device-scale-factor", "2"))
+		// The single-take journey captures no screenshots, so `make docs-journey`
+		// drops this to 1x (LOOP_REC_SCALE=1) with a wider viewport — more of the
+		// app fits on screen (less zoom) and the frames are lighter.
+		scale := os.Getenv("LOOP_REC_SCALE")
+		if scale == "" {
+			scale = "2"
+		}
+		opts = append(opts, chromedp.Flag("force-device-scale-factor", scale))
 	}
 
 	chromeManager.allocCtx, chromeManager.allocCancel = chromedp.NewExecAllocator(
@@ -211,6 +218,7 @@ func registerFrontendSteps(ctx *godog.ScenarioContext, tc *TestContext) {
 	ctx.Step(`^I wait up to "([^"]*)" for text "([^"]*)" to appear$`, tc.waitForTextToAppearWithTimeout)
 	ctx.Step(`^I wait up to "([^"]*)" for text "([^"]*)" to disappear$`, tc.waitForTextToDisappearWithTimeout)
 	ctx.Step(`^I wait up to "([^"]*)" for "([^"]*)" to disappear$`, tc.waitForSelectorToDisappear)
+	ctx.Step(`^I wait up to "([^"]*)" for "([^"]*)" to disappear, best effort$`, tc.waitForSelectorToDisappearBestEffort)
 	ctx.Step(`^I wait up to "([^"]*)" for "([^"]*)" to be visible$`, tc.waitForSelectorVisibleWithTimeout)
 	ctx.Step(`^I wait up to "([^"]*)" for "([^"]*)" to be visible, best effort$`, tc.waitForSelectorVisibleBestEffort)
 	ctx.Step(`^I select the created playground$`, tc.selectCreatedPlayground)
@@ -278,12 +286,17 @@ func (tc *TestContext) ensureChromeTab() error {
 	// but short enough that a hung agent fails fast rather than after ~10m.
 	scenarioTimeout := 120 * time.Second
 	if os.Getenv("LOOP_DOCS_CAPTURE") != "" {
-		// The docs journey is one long scenario (several live agent replies —
-		// chat, review-diff, an agent file change + commit with a Git-panel tour,
-		// an editor-edit commit, and a chat inside a new worktree — plus a
-		// captioned, deliberately-slow tour of every panel) — give it room but
-		// still fail a hang inside the go-test timeout.
+		// A docs-capture SECTION drives a live agent (container cold-start + Claude
+		// latency), so give it a larger per-scenario budget — but short enough that
+		// a hung agent fails fast rather than after ~10m.
 		scenarioTimeout = 1080 * time.Second
+		// The single-take @journey concatenates EVERY section into one scenario, so
+		// its budget must cover the SUM of all the live-agent waits (chat, gate,
+		// memory cold-start, browser, playground, worktree, …) — far more than one
+		// section. `make docs-journey` raises it via LOOP_SCENARIO_TIMEOUT_SEC.
+		if s := envInt("LOOP_SCENARIO_TIMEOUT_SEC", 0); s > 0 {
+			scenarioTimeout = time.Duration(s) * time.Second
+		}
 	}
 	timeoutCtx, timeoutCancel := context.WithTimeout(parentCtx, scenarioTimeout)
 	ctx, cancel := chromedp.NewContext(timeoutCtx)
@@ -328,6 +341,17 @@ func (tc *TestContext) openAppInBrowser() error {
 	vw, vh, scale := int64(1280), int64(800), 1.0
 	if os.Getenv("LOOP_DOCS_CAPTURE") != "" {
 		vw, vh, scale = 1600, 1000, 2.0
+		// `make docs-journey` overrides these (1x DPI, wider viewport) so the
+		// recording shows more of the app instead of a zoomed-in 2x crop.
+		if v := envInt("LOOP_REC_VW", 0); v > 0 {
+			vw = int64(v)
+		}
+		if v := envInt("LOOP_REC_VH", 0); v > 0 {
+			vh = int64(v)
+		}
+		if v := envInt("LOOP_REC_SCALE", 0); v > 0 {
+			scale = float64(v)
+		}
 	}
 	if chromeManager.remote || os.Getenv("LOOP_DOCS_CAPTURE") != "" {
 		// Pin a consistent viewport. In host-browser mode also clear stored
@@ -357,11 +381,33 @@ func (tc *TestContext) navigateTo(path string) error {
 
 // --- DOM interaction steps ---
 
+// leadCursorActions returns chromedp actions that, in docs-capture only, glide the
+// fake cursor (see injectMouseCursor) to the centre of the element matched by
+// findJS — a JS expression returning an Element or null — then wait out the glide.
+// Splicing these in BEFORE a click makes the visible cursor arrive at the target
+// before the click fires; without it the click's effect lands first and the
+// cursor only catches up afterwards. No-op (nil) outside docs-capture.
+func leadCursorActions(findJS string) []chromedp.Action {
+	if os.Getenv("LOOP_DOCS_CAPTURE") == "" {
+		return nil
+	}
+	moveJS := fmt.Sprintf(`(() => {
+		const el = (%s);
+		if (!el || !window.__loopCursor) return false;
+		const r = el.getBoundingClientRect();
+		if (r.width === 0 && r.height === 0) return false;
+		window.__loopCursor.move(Math.round(r.left + r.width / 2), Math.round(r.top + r.height / 2));
+		return true;
+	})()`, findJS)
+	// 500ms > the 0.45s cursor CSS glide, so the pointer has settled on arrival.
+	return []chromedp.Action{chromedp.Evaluate(moveJS, nil), chromedp.Sleep(500 * time.Millisecond)}
+}
+
 func (tc *TestContext) clickOn(selector string) error {
-	return chromedp.Run(tc.chromeTab.ctx,
-		chromedp.WaitVisible(selector, chromedp.ByQuery),
-		chromedp.Click(selector, chromedp.ByQuery),
-	)
+	actions := []chromedp.Action{chromedp.WaitVisible(selector, chromedp.ByQuery)}
+	actions = append(actions, leadCursorActions(fmt.Sprintf(`document.querySelector(%q)`, selector))...)
+	actions = append(actions, chromedp.Click(selector, chromedp.ByQuery))
+	return chromedp.Run(tc.chromeTab.ctx, actions...)
 }
 
 func (tc *TestContext) typeInto(text, selector string) error {
@@ -545,7 +591,7 @@ func (tc *TestContext) clickButtonWithText(text string) error {
 		return true;
 	})()`, text, text)
 	var found bool
-	return chromedp.Run(tc.chromeTab.ctx,
+	actions := []chromedp.Action{
 		chromedp.Poll(pollJS, nil, chromedp.WithPollingTimeout(10*time.Second)),
 		chromedp.Evaluate(clickJS, &found),
 		chromedp.ActionFunc(func(ctx context.Context) error {
@@ -554,9 +600,13 @@ func (tc *TestContext) clickButtonWithText(text string) error {
 			}
 			return nil
 		}),
+	}
+	actions = append(actions, leadCursorActions(`document.querySelector('button[data-bdd-click="target"]')`)...)
+	actions = append(actions,
 		chromedp.Click(`button[data-bdd-click="target"]`, chromedp.ByQuery),
 		chromedp.Evaluate(`document.querySelector('[data-bdd-click]')?.removeAttribute('data-bdd-click')`, nil),
 	)
+	return chromedp.Run(tc.chromeTab.ctx, actions...)
 }
 
 // clickInRegion clicks the first visible element containing text within a
@@ -599,9 +649,22 @@ func (tc *TestContext) clickInRegion(text, testID string) error {
 		}
 		return false;
 	})()`, testID, text)
+	findJS := fmt.Sprintf(`(() => {
+		const root = document.querySelector('[data-testid=%q]');
+		if (!root) return null;
+		const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+		while (walker.nextNode()) {
+			if (walker.currentNode.textContent.includes(%q)) {
+				const el = walker.currentNode.parentElement;
+				if (el && el.offsetWidth > 0 && el.offsetHeight > 0) return el;
+			}
+		}
+		return null;
+	})()`, testID, text)
 	var clicked bool
-	return chromedp.Run(tc.chromeTab.ctx,
-		chromedp.Poll(js, nil, chromedp.WithPollingTimeout(15*time.Second)),
+	actions := []chromedp.Action{chromedp.Poll(js, nil, chromedp.WithPollingTimeout(15*time.Second))}
+	actions = append(actions, leadCursorActions(findJS)...)
+	actions = append(actions,
 		chromedp.Evaluate(clickJS, &clicked),
 		chromedp.ActionFunc(func(ctx context.Context) error {
 			if !clicked {
@@ -610,6 +673,7 @@ func (tc *TestContext) clickInRegion(text, testID string) error {
 			return nil
 		}),
 	)
+	return chromedp.Run(tc.chromeTab.ctx, actions...)
 }
 
 // clickTaskRow clicks the task row containing text in a tasks panel. It targets
@@ -724,11 +788,16 @@ func (tc *TestContext) clickButtonInRegion(text, testID string) error {
 		btn.click();
 		return true;
 	})()`, testID, text)
+	findJS := fmt.Sprintf(`(() => {
+		const region = document.querySelector('[data-testid="%s"]');
+		if (!region) return null;
+		return Array.from(region.querySelectorAll('button')).find(b => b.innerText.includes(%q)) || null;
+	})()`, testID, text)
 	var clicked bool
-	return chromedp.Run(tc.chromeTab.ctx,
-		chromedp.Poll(pollJS, nil, chromedp.WithPollingTimeout(10*time.Second)),
-		chromedp.Evaluate(clickJS, &clicked),
-	)
+	actions := []chromedp.Action{chromedp.Poll(pollJS, nil, chromedp.WithPollingTimeout(10*time.Second))}
+	actions = append(actions, leadCursorActions(findJS)...)
+	actions = append(actions, chromedp.Evaluate(clickJS, &clicked))
+	return chromedp.Run(tc.chromeTab.ctx, actions...)
 }
 
 func (tc *TestContext) clickButtonInTasksPanel(text string) error {
@@ -1176,8 +1245,11 @@ func (tc *TestContext) openAddPanelMenuInGitPanel() error {
 		addBtn.click();
 		return 'ok';
 	})()`
+	findJS := `(function(){var git=document.querySelector('[data-testid="git-panel"]');if(!git)return null;var el=git;for(var i=0;i<6&&el;i++){el=el.parentElement;if(el){var b=el.querySelector('button[title="Add panel"]');if(b)return b;}}return null;})()`
 	var res string
-	if err := chromedp.Run(tc.chromeTab.ctx, chromedp.Evaluate(js, &res)); err != nil {
+	actions := leadCursorActions(findJS)
+	actions = append(actions, chromedp.Evaluate(js, &res))
+	if err := chromedp.Run(tc.chromeTab.ctx, actions...); err != nil {
 		return err
 	}
 	if res != "ok" {
@@ -1202,7 +1274,9 @@ func (tc *TestContext) openAddPanelMenuFirst() error {
 		return 'ok';
 	})()`
 	var res string
-	if err := chromedp.Run(tc.chromeTab.ctx, chromedp.Evaluate(js, &res)); err != nil {
+	actions := leadCursorActions(`document.querySelector('button[title="Add panel"]')`)
+	actions = append(actions, chromedp.Evaluate(js, &res))
+	if err := chromedp.Run(tc.chromeTab.ctx, actions...); err != nil {
 		return err
 	}
 	if res != "ok" {
@@ -1228,8 +1302,11 @@ func (tc *TestContext) addPanelBelowFromMenu(name string) error {
 		btn.click();
 		return 'ok';
 	})()`, name)
+	findJS := fmt.Sprintf(`(function(){var menu=document.querySelector('[data-testid="add-panel-menu"]');if(!menu)return null;return Array.from(menu.querySelectorAll('button')).find(function(b){return b.textContent.includes(%q)&&b.textContent.includes('↓');})||null;})()`, name)
 	var res string
-	if err := chromedp.Run(tc.chromeTab.ctx, chromedp.Evaluate(js, &res)); err != nil {
+	actions := leadCursorActions(findJS)
+	actions = append(actions, chromedp.Evaluate(js, &res))
+	if err := chromedp.Run(tc.chromeTab.ctx, actions...); err != nil {
 		return err
 	}
 	if res != "ok" {
@@ -1304,6 +1381,15 @@ func (tc *TestContext) waitForSelectorToDisappear(timeout, selector string) erro
 		chromedp.Poll(fmt.Sprintf(`document.querySelector(%q) === null`, selector),
 			nil, chromedp.WithPollingTimeout(d), chromedp.WithPollingInterval(200*time.Millisecond)),
 	)
+}
+
+// waitForSelectorToDisappearBestEffort waits like waitForSelectorToDisappear but
+// never fails the scenario — used by the single-take journey for agent-completion
+// waits (e.g. the chat "Stop" button), where one slower-than-usual reply must not
+// abort the whole continuous recording; the tour just moves on.
+func (tc *TestContext) waitForSelectorToDisappearBestEffort(timeout, selector string) error {
+	_ = tc.waitForSelectorToDisappear(timeout, selector)
+	return nil
 }
 
 // waitForSelectorVisibleWithTimeout polls until the selector exists and has a

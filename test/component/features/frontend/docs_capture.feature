@@ -59,15 +59,22 @@ Feature: Documentation walkthrough
     And I capture screenshot "chat-conversation"
     And I wait "2s"
     # Paste an image into the input — Loop saves it to the workspace and inserts
-    # the file path, so the agent can read it on the next message.
+    # its file path. Send it as its OWN message (a short lead-in + the image) so the
+    # agent reads the screenshot separately, and the input is clear for whatever
+    # comes next (otherwise, in the single-take journey, the next prompt would glue
+    # onto the leftover path).
     And I show caption "Paste an image — Loop saves it and inserts its file path"
     And I wait "4s"
     And I hide caption
     And I wait "2s"
+    And I type "Here's a screenshot of the UI — tell me what you see. " into "textarea"
     And I paste an image into "textarea"
     And I wait "3s"
     And I capture screenshot "chat-image-paste"
     And I wait "2s"
+    And I press Enter
+    And I wait up to "90s" for "button[title='Stop']" to disappear
+    And I wait "4s"
     Then I stop recording "02_chat"
 
   @docs-gate
@@ -329,16 +336,20 @@ Feature: Documentation walkthrough
     And I capture screenshot "docker-agent-terminal"
     And I wait "3s"
     # Paste an image straight into the agent terminal — Loop uploads it and drops
-    # the saved file path into the prompt, the same UX as the chat input.
+    # the saved file path into the prompt, the same UX as the chat input. Send the
+    # same prompt as the chat section and wait for the agent to answer.
     And I wait "2s"
-    And I show caption "Paste an image into the terminal — its saved path drops into the prompt"
+    And I show caption "Paste an image into the terminal — ask about it and send, just like chat"
     And I wait "4s"
     And I hide caption
     And I wait "2s"
+    And I type "Here's a screenshot of the UI — tell me what you see. " into the agent terminal
     And I paste an image into the agent terminal
-    And I wait "4s"
+    And I wait "3s"
     And I capture screenshot "terminal-image-paste"
     And I wait "2s"
+    And I submit the agent terminal
+    And I wait "30s"
     Then I stop recording "08_terminal"
 
   @docs-git-panel
