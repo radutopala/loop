@@ -36,7 +36,7 @@ test-integration: ## Run integration tests (requires tokens in ~/.loop/config.in
 # Documentation-capture scenarios are tagged @docs and excluded by default so
 # normal runs (and CI) stay fast and don't write assets. `make docs-capture`
 # overrides this to run only @docs scenarios with capture enabled.
-GODOG_TAGS ?= ~@docs
+GODOG_TAGS ?= ~@docs && ~@journey
 
 test-component-bdd: ## Run BDD component tests (via Docker on host, natively in CI)
 	@if { [ "$$CI" = "true" ] || ([ -f /.dockerenv ] && [ "$$(id -u)" = "0" ] && command -v apt-get >/dev/null 2>&1); } && [ -z "$(LOOP_DOCS_CAPTURE)" ]; then \
@@ -62,6 +62,10 @@ docs-capture: ## Capture documentation screenshots/GIFs from @docs BDD scenarios
 docs-capture-section: ## Capture+record a single docs section for fast iteration, e.g. SECTION=git or SECTION=browser (tags: intro chat gate shortcuts git editor memory terminal git-panel browser sessions swarm canvas playground kanban workflows-tab quality multi-panel worktrees tasks workflows-panel settings outro)
 	@test -n "$(SECTION)" || { echo "Usage: make docs-capture-section SECTION=<name>"; exit 1; }
 	$(MAKE) test-component-bdd GODOG_TAGS=@docs-$(SECTION) LOOP_DOCS_CAPTURE=1 TEST_RUN=TestBDDFrontendFeatures
+
+docs-journey: ## Record the WHOLE walkthrough as one continuous take (single browser session, one start/stop) into docs/videos/journey.mp4 with a continuous soundtrack — no per-section stitching. Regenerates journey.feature from docs_capture.feature first.
+	go run scripts/gen-journey-feature.go test/component/features/frontend/docs_capture.feature test/component/features/frontend/journey.feature
+	$(MAKE) test-component-bdd GODOG_TAGS=@journey LOOP_DOCS_CAPTURE=1 TEST_RUN=TestBDDFrontendFeatures
 
 test-component-perf: ## Run API performance tests (via Docker on host, natively in CI)
 	@if [ "$$CI" = "true" ] || ([ -f /.dockerenv ] && [ "$$(id -u)" = "0" ] && command -v apt-get >/dev/null 2>&1); then \

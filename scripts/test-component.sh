@@ -235,6 +235,25 @@ fi
 TEST_TIMEOUT=900s
 [ -n "$LOOP_DOCS_CAPTURE" ] && TEST_TIMEOUT=2700s
 [ -n "$GO_TEST_TIMEOUT" ] && TEST_TIMEOUT="$GO_TEST_TIMEOUT"
+
+# The single-take journey records every section back-to-back in one continuous
+# screencast, so it needs far more frame headroom than a per-section clip and a
+# gentler capture cap (30fps matches the output, so capturing faster is wasted).
+# Defaults here; override via the environment.
+if [ "$GODOG_TAGS" = "@journey" ]; then
+    export LOOP_REC_MAX_FRAMES="${LOOP_REC_MAX_FRAMES:-20000}"
+    export LOOP_REC_MIN_GAP_MS="${LOOP_REC_MIN_GAP_MS:-33}"
+    # One scenario must cover the SUM of every section's live-agent waits, so give
+    # it a much larger per-scenario budget (the go-test timeout above still bounds
+    # a true hang).
+    export LOOP_SCENARIO_TIMEOUT_SEC="${LOOP_SCENARIO_TIMEOUT_SEC:-2400}"
+    # The journey captures no screenshots, so it doesn't need 2x DPI. Record at 1x
+    # with a wider viewport: more of the app is visible (less zoom) and the frames
+    # are lighter on memory/disk than a 3200x2000 2x capture.
+    export LOOP_REC_SCALE="${LOOP_REC_SCALE:-1}"
+    export LOOP_REC_VW="${LOOP_REC_VW:-1920}"
+    export LOOP_REC_VH="${LOOP_REC_VH:-1200}"
+fi
 echo -e "${YELLOW}Running component tests (timeout $TEST_TIMEOUT)...${NC}"
 TEST_RC=0
 LOOP_BASE_URL="http://localhost:8222" \
@@ -244,10 +263,16 @@ CHROME_CDP_URL="${CHROME_CDP_URL:-}" \
 GODOG_CONCURRENCY="${GODOG_CONCURRENCY:-1}" \
 go test -timeout "$TEST_TIMEOUT" -count=1 -v -tags=component ${TEST_FLAGS} ./test/component/... || TEST_RC=$?
 
-# Full docs-capture run: stitch the per-section clips into journey.mp4 and add the
-# soundtrack. Done even on a partial failure so the montage reflects whatever
-# sections were captured.
-if [ -n "$LOOP_DOCS_CAPTURE" ] && [ "$GODOG_TAGS" = "@docs" ]; then
-    stitch_journey || true
+# Lay the soundtrack under the journey video. Two routes:
+#  * @docs   — stitch the per-section clips into journey.mp4, then score it.
+#  * @journey — the single-take run already recorded docs/videos/journey.mp4 in one
+#               continuous pass; just score it (no stitching, no seams).
+# Done even on a partial failure so the result reflects whatever was captured.
+if [ -n "$LOOP_DOCS_CAPTURE" ]; then
+    if [ "$GODOG_TAGS" = "@docs" ]; then
+        stitch_journey || true
+    elif [ "$GODOG_TAGS" = "@journey" ]; then
+        mux_journey_music "docs/videos/journey.mp4" || true
+    fi
 fi
 exit "$TEST_RC"
