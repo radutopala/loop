@@ -16,7 +16,12 @@ Feature: Chat Trigger Banner Journey
     When I inject a user message with content "TRIGGER_BANNER_PROMPT"
     And I inject 40 bot messages with content "bot reply line"
     Then I wait for text "bot reply line" to appear
-    And the element "[data-testid='trigger-quote']" should not exist
+
+    # The chat auto-follows new output to the bottom, so scroll back to the top:
+    # the prompt comes into view and the floating banner hides (driven by an
+    # IntersectionObserver, so poll for it to disappear rather than asserting once).
+    When I scroll the chat messages to top
+    Then I wait up to "5s" for "[data-testid='trigger-quote']" to disappear
 
     # Scroll the chat container down — the prompt slides above the viewport
     # and the floating banner appears with the quoted prompt
