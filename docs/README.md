@@ -6,7 +6,7 @@ Comprehensive documentation for every feature of the Loop platform.
 
 ## Demo
 
-{{< youtube SbONFmxKilA >}}
+{{< youtube Aqo2ikAQ5nM >}}
 
 End-to-end walkthrough — a guided tour of every panel, recorded in one continuous take by `make docs-journey`.
 
