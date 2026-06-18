@@ -128,6 +128,68 @@ func (s *ServerSuite) TestPlanResolveApproveMaxPriorityErrorFallsBackToZero() {
 	resolver.AssertExpectations(s.T())
 }
 
+func (s *ServerSuite) TestPlanResolveApproveNamesPlanFilePath() {
+	handler := new(MockIncomingMessageHandler)
+	resolver := new(MockPlanResolver)
+	lister := new(MockPendingPlansLister)
+	s.srv.SetIncomingMessageHandler(handler)
+	s.srv.SetPlanResolver(resolver)
+	s.srv.SetPendingPlansLister(lister)
+
+	lister.On("ListPlannedChannels").Return([]events.PlannedChannelEntry{
+		{ChannelID: "ch-1", Data: events.ExitPlanModeEventData{Plan: "# Plan", PlanFilePath: "memory/plans/foo.md"}},
+	})
+	s.store.On("MaxQueuedPriority", mock.Anything, "ch-1").Return(0, nil)
+	called := make(chan struct{}, 1)
+	wantPrompt := "I approve the plan at memory/plans/foo.md. Please proceed with the implementation."
+	handler.On("HandleIncomingMessageWithPriority", mock.Anything, "ch-1", "", wantPrompt, "", 1).
+		Run(func(_ mock.Arguments) { called <- struct{}{} }).Return()
+	resolver.On("ClearPlannedChannel", "ch-1").Return()
+	resumed := make(chan struct{}, 1)
+	resolver.On("ResumeChannel", mock.Anything, "ch-1").
+		Run(func(_ mock.Arguments) { resumed <- struct{}{} }).Return()
+
+	rec := s.testRequest("POST", "/api/channels/ch-1/plan/resolve", `{"action":"approve"}`)
+	require.Equal(s.T(), http.StatusNoContent, rec.Code)
+
+	s.awaitPlanCall("HandleIncomingMessageWithPriority", called)
+	s.awaitPlanCall("ResumeChannel", resumed)
+	handler.AssertExpectations(s.T())
+	resolver.AssertExpectations(s.T())
+}
+
+func (s *ServerSuite) TestPlanResolveApproveFallsBackWhenNoPlanFilePath() {
+	handler := new(MockIncomingMessageHandler)
+	resolver := new(MockPlanResolver)
+	lister := new(MockPendingPlansLister)
+	s.srv.SetIncomingMessageHandler(handler)
+	s.srv.SetPlanResolver(resolver)
+	s.srv.SetPendingPlansLister(lister)
+
+	// A non-matching channel (skipped) and the matching channel with no recorded
+	// path (skipped) → the stock, path-less prompt is used.
+	lister.On("ListPlannedChannels").Return([]events.PlannedChannelEntry{
+		{ChannelID: "other", Data: events.ExitPlanModeEventData{Plan: "x", PlanFilePath: "/x.md"}},
+		{ChannelID: "ch-1", Data: events.ExitPlanModeEventData{Plan: "y", PlanFilePath: ""}},
+	})
+	s.store.On("MaxQueuedPriority", mock.Anything, "ch-1").Return(0, nil)
+	called := make(chan struct{}, 1)
+	handler.On("HandleIncomingMessageWithPriority", mock.Anything, "ch-1", "", planApprovePrompt, "", 1).
+		Run(func(_ mock.Arguments) { called <- struct{}{} }).Return()
+	resolver.On("ClearPlannedChannel", "ch-1").Return()
+	resumed := make(chan struct{}, 1)
+	resolver.On("ResumeChannel", mock.Anything, "ch-1").
+		Run(func(_ mock.Arguments) { resumed <- struct{}{} }).Return()
+
+	rec := s.testRequest("POST", "/api/channels/ch-1/plan/resolve", `{"action":"approve"}`)
+	require.Equal(s.T(), http.StatusNoContent, rec.Code)
+
+	s.awaitPlanCall("HandleIncomingMessageWithPriority", called)
+	s.awaitPlanCall("ResumeChannel", resumed)
+	handler.AssertExpectations(s.T())
+	resolver.AssertExpectations(s.T())
+}
+
 func (s *ServerSuite) TestPlanResolveDeny() {
 	handler := new(MockIncomingMessageHandler)
 	resolver := new(MockPlanResolver)
