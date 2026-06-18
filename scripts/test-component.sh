@@ -30,11 +30,23 @@ fi
 echo -e "${YELLOW}Building loop...${NC}"
 CGO_ENABLED=0 go build -buildvcs=false -o bin/loop ./cmd/loop
 
+# Serve-only mode (LOOP_SERVE_ONLY): leave the daemon + UI running for manual /
+# MCP-browser testing instead of running the test suite. The browser that drives
+# the app is a SEPARATE container (e.g. an MCP browser sidecar on the Docker
+# bridge), so the frontend must reach the API at this container's bridge IP, not
+# localhost. Compute it up front so Vite bakes the right LOOP_API_URL.
+SERVE_IP=""
+VITE_API_URL="http://localhost:8222"
+if [ -n "$LOOP_SERVE_ONLY" ]; then
+    SERVE_IP="$(hostname -i 2>/dev/null | awk '{print $1}')"
+    [ -n "$SERVE_IP" ] && VITE_API_URL="http://$SERVE_IP:8222"
+fi
+
 # Start Vite dev server for frontend tests if app/ exists
 VITE_PID=""
 if [ -d "app" ] && [ -z "$LOOP_APP_URL" ]; then
     echo -e "${YELLOW}Starting Vite dev server...${NC}"
-    (cd app && npm install --silent > /dev/null 2>&1 && LOOP_API_URL="http://localhost:8222" npx vite --host 0.0.0.0 --port 5173 --config vite.browser.config.ts > /dev/null 2>&1) &
+    (cd app && npm install --silent > /dev/null 2>&1 && LOOP_API_URL="$VITE_API_URL" npx vite --host 0.0.0.0 --port 5173 --config vite.browser.config.ts > /dev/null 2>&1) &
     VITE_PID=$!
     export LOOP_APP_URL="http://localhost:5173"
     for i in $(seq 1 30); do
@@ -213,6 +225,19 @@ done
 if ! curl -sf http://localhost:8222/api/health > /dev/null 2>&1; then
     echo -e "${RED}ERROR: loop failed to start${NC}"
     exit 1
+fi
+
+# Serve-only mode: the daemon + UI are up; print how to reach them and block so
+# the container stays alive for manual / MCP-browser testing. The cleanup trap
+# tears everything down when the container is stopped.
+if [ -n "$LOOP_SERVE_ONLY" ]; then
+    echo -e "${GREEN}=== loop is serving (serve-only mode) ===${NC}"
+    echo -e "${GREEN}Connect a browser to:${NC}"
+    echo -e "  ${YELLOW}UI:${NC}  http://${SERVE_IP:-localhost}:5173"
+    echo -e "  ${YELLOW}API:${NC} http://${SERVE_IP:-localhost}:8222"
+    echo -e "${GREEN}Blocking until the container is stopped (docker rm -f loop-dev).${NC}"
+    wait "$LOOP_PID"
+    exit 0
 fi
 
 # Pass through env vars — run all component tests by default.

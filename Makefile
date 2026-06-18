@@ -1,4 +1,4 @@
-.PHONY: help build install test test-integration test-component test-runner-build test-runner-push lint coverage coverage-check codeql-download codeql docker-build docs-build docs-serve docs-capture run clean restart docker-shell docker-snapshot app-dev app-dev-docker app-test app-install app-build-binary app-dist-linux app-icons _sync-loop-overrides
+.PHONY: help build install test test-integration test-component test-runner-build test-runner-push bdd-serve lint coverage coverage-check codeql-download codeql docker-build docs-build docs-serve docs-capture run clean restart docker-shell docker-snapshot app-dev app-dev-docker app-test app-install app-build-binary app-dist-linux app-icons _sync-loop-overrides
 .DEFAULT_GOAL := help
 
 # Strip gate-child env inheritance when invoking make from inside a
@@ -55,6 +55,33 @@ test-component-bdd: ## Run BDD component tests (via Docker on host, natively in 
 			ghcr.io/radutopala/loop/test-runner:latest bash scripts/test-component.sh; \
 		rc=$$?; docker ps -aq --filter "name=loop-bdd-" | xargs -r docker rm -f 2>/dev/null || true; exit $$rc; \
 	fi
+
+bdd-serve: ## Build + run the daemon and UI inside Docker as a STANDING instance (no tests), with live agents, for manual / MCP-browser testing. Prints the bridge URL to connect to. Stop with: docker rm -f loop-dev
+	@docker rm -f loop-dev 2>/dev/null || true; \
+	rm -rf /tmp/loop-bdd-data && mkdir -p /tmp/loop-bdd-data; \
+	echo "Building + starting loop in Docker (container: loop-dev)..."; \
+	docker run -d --name loop-dev -v "$$(pwd)":/app -w /app \
+		-v /var/run/docker.sock:/var/run/docker.sock \
+		-v /tmp/loop-bdd-data:/tmp/loop-bdd-data \
+		-v loop-gomod:/go/pkg/mod -v loop-gocache:/root/.cache/go-build \
+		-v "$(HOME)/.loop/config.json:/host-loop-config.json:ro" \
+		-e LOOP_SERVE_ONLY=1 -e LOOP_DOCS_CAPTURE=1 -e LOOP_DOCS_HOST_CONFIG=/host-loop-config.json \
+		ghcr.io/radutopala/loop/test-runner:latest bash scripts/test-component.sh >/dev/null; \
+	for i in $$(seq 1 90); do \
+		ip=$$(docker inspect loop-dev --format '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' 2>/dev/null); \
+		if [ -n "$$ip" ] && docker exec loop-dev curl -sf http://localhost:8222/api/health >/dev/null 2>&1; then \
+			echo ""; echo "loop-dev is up — connect a browser (e.g. MCP) to:"; \
+			echo "   UI:  http://$$ip:5173"; \
+			echo "   API: http://$$ip:8222"; \
+			echo "Logs: docker logs -f loop-dev    Stop: docker rm -f loop-dev"; \
+			exit 0; \
+		fi; \
+		if [ "$$(docker inspect loop-dev --format '{{.State.Running}}' 2>/dev/null)" != "true" ]; then \
+			echo "loop-dev exited early:"; docker logs loop-dev 2>&1 | tail -20; exit 1; \
+		fi; \
+		sleep 3; \
+	done; \
+	echo "loop-dev did not become healthy in time; see: docker logs loop-dev"; exit 1
 
 docs-capture: ## Capture documentation screenshots/GIFs from @docs BDD scenarios (incl. a live Claude agent chat; reuses one sample project) into docs/static/images/features
 	$(MAKE) test-component-bdd GODOG_TAGS=@docs LOOP_DOCS_CAPTURE=1 TEST_RUN=TestBDDFrontendFeatures
