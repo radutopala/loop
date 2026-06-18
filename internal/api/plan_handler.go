@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 
 	"github.com/radutopala/loop/internal/events"
@@ -51,7 +52,7 @@ func (s *Server) handlePlanResolve(w http.ResponseWriter, r *http.Request) {
 
 	switch req.Action {
 	case planActionApprove:
-		s.insertPlanContinuation(r.Context(), channelID, planApprovePrompt, "")
+		s.insertPlanContinuation(r.Context(), channelID, s.planApprovePrompt(channelID), "")
 	case planActionDeny:
 		if req.Prompt == "" {
 			http.Error(w, "prompt is required for deny", http.StatusBadRequest)
@@ -67,6 +68,22 @@ func (s *Server) handlePlanResolve(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// planApprovePrompt returns the message inserted when the user approves a plan.
+// When the parked plan recorded the file it was written to, the prompt names
+// that path ("I approve the plan at <path>. …") so the agent re-reads the exact
+// plan file rather than relying on conversation memory; otherwise it falls back
+// to the stock, path-less prompt.
+func (s *Server) planApprovePrompt(channelID string) string {
+	if s.pendingPlans != nil {
+		for _, e := range s.pendingPlans.ListPlannedChannels() {
+			if e.ChannelID == channelID && e.Data.PlanFilePath != "" {
+				return fmt.Sprintf("I approve the plan at %s. Please proceed with the implementation.", e.Data.PlanFilePath)
+			}
+		}
+	}
+	return planApprovePrompt
 }
 
 // insertPlanContinuation clears the pause flag and inserts a priority-bumped
