@@ -450,15 +450,14 @@ export function AskUserQuestionCard({ questions, channelId, mode, onSent }: { qu
       const q = questions[i]!;
       const answer = answers.get(i);
       if (!answer) continue;
-      const label = q.header || q.question;
-      if (answer === "__other__") {
-        parts.push(`${label}: ${otherTexts.get(i) || "(no answer)"}`);
-      } else {
-        parts.push(`${label}: ${answer}`);
-      }
+      const answerText = answer === "__other__" ? (otherTexts.get(i) || "(no answer)") : answer;
+      // Pair each answer with its full question. The agent may pick these up in a
+      // fresh turn (or a different worktree) where it no longer has the question
+      // in context, so the short header alone would be ambiguous.
+      parts.push(`Q: ${q.question}\nA: ${answerText}`);
     }
     const content = parts.length > 0
-      ? "Here are my answers:\n" + parts.map((p) => `- ${p}`).join("\n")
+      ? "Here are my answers:\n\n" + parts.join("\n\n")
       : "No specific answers provided.";
     try {
       await resolveAsk(channelId, "answer", content, mode);
