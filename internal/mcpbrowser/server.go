@@ -12,6 +12,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -159,6 +160,10 @@ type computerInput struct {
 	StartY   float64 `json:"start_y,omitempty" jsonschema:"Start Y coordinate for left_click_drag"`
 }
 
+type saveScreenshotInput struct {
+	Path string `json:"path" jsonschema:"Filesystem path to write the PNG screenshot to (e.g. /work/shot.png). Parent directories are created."`
+}
+
 func (s *Server) registerTools() {
 	type navigateInput struct {
 		URL string `json:"url" jsonschema:"The URL to navigate to"`
@@ -244,25 +249,34 @@ func (s *Server) registerTools() {
 		Name:        "screenshot",
 		Description: "Take a screenshot of the current page.",
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, _ struct{}) (*mcp.CallToolResult, any, error) {
-		resp, err := s.callAction(ctx, "screenshot", nil)
+		data, err := s.captureScreenshot(ctx)
 		if err != nil {
-			return errorResult(fmt.Sprintf("screenshot failed: %v", err)), nil, nil
-		}
-		// If host returned a file path, read the file directly (avoids base64 over HTTP).
-		if resp.ScreenshotPath != "" {
-			data, readErr := os.ReadFile(resp.ScreenshotPath)
-			if readErr != nil {
-				return errorResult(fmt.Sprintf("reading screenshot file: %v", readErr)), nil, nil
-			}
-			os.Remove(resp.ScreenshotPath) //nolint:errcheck
-			return imageResult(data), nil, nil
-		}
-		// Fallback to base64 decode.
-		data, err := base64.StdEncoding.DecodeString(resp.Image)
-		if err != nil {
-			return errorResult(fmt.Sprintf("screenshot decode failed: %v", err)), nil, nil
+			return errorResult(err.Error()), nil, nil
 		}
 		return imageResult(data), nil, nil
+	})
+
+	mcp.AddTool(s.mcpServer, &mcp.Tool{
+		Name:        "save_screenshot",
+		Description: "Take a screenshot of the current page and write it to a PNG file on disk at the given path (parent directories are created). Returns the saved path. Use this instead of `screenshot` when you want the image persisted to a file rather than returned inline.",
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input saveScreenshotInput) (*mcp.CallToolResult, any, error) {
+		path := strings.TrimSpace(input.Path)
+		if path == "" {
+			return errorResult("path is required"), nil, nil
+		}
+		data, err := s.captureScreenshot(ctx)
+		if err != nil {
+			return errorResult(err.Error()), nil, nil
+		}
+		if dir := filepath.Dir(path); dir != "" {
+			if mkErr := os.MkdirAll(dir, 0o755); mkErr != nil {
+				return errorResult(fmt.Sprintf("creating directory: %v", mkErr)), nil, nil
+			}
+		}
+		if writeErr := os.WriteFile(path, data, 0o644); writeErr != nil {
+			return errorResult(fmt.Sprintf("writing screenshot file: %v", writeErr)), nil, nil
+		}
+		return textResult(fmt.Sprintf("Saved screenshot to %s (%d bytes)", path, len(data))), nil, nil
 	})
 
 	mcp.AddTool(s.mcpServer, &mcp.Tool{
@@ -566,23 +580,9 @@ func (s *Server) handleComputer(ctx context.Context, input computerInput) (*mcp.
 		return textResult(fmt.Sprintf("Moved to (%.0f, %.0f)", x, y)), nil, nil
 
 	case "screenshot":
-		resp, err := s.callAction(ctx, "screenshot", nil)
+		data, err := s.captureScreenshot(ctx)
 		if err != nil {
-			return errorResult(fmt.Sprintf("screenshot failed: %v", err)), nil, nil
-		}
-		// If host returned a file path, read the file directly (avoids base64 over HTTP).
-		if resp.ScreenshotPath != "" {
-			data, readErr := os.ReadFile(resp.ScreenshotPath)
-			if readErr != nil {
-				return errorResult(fmt.Sprintf("reading screenshot file: %v", readErr)), nil, nil
-			}
-			os.Remove(resp.ScreenshotPath) //nolint:errcheck
-			return imageResult(data), nil, nil
-		}
-		// Fallback to base64 decode.
-		data, err := base64.StdEncoding.DecodeString(resp.Image)
-		if err != nil {
-			return errorResult(fmt.Sprintf("screenshot decode failed: %v", err)), nil, nil
+			return errorResult(err.Error()), nil, nil
 		}
 		return imageResult(data), nil, nil
 
@@ -657,6 +657,30 @@ func (s *Server) handleFind(ctx context.Context, query string) (*mcp.CallToolRes
 		result += line + "\n"
 	}
 	return textResult(result), nil, nil
+}
+
+// captureScreenshot takes a screenshot via the action backend and returns the
+// raw PNG bytes. When the host returns a file path it reads (and removes) the
+// file directly, avoiding base64 over HTTP; otherwise it decodes the inline
+// base64. Error messages are kept stable — callers surface them verbatim.
+func (s *Server) captureScreenshot(ctx context.Context) ([]byte, error) {
+	resp, err := s.callAction(ctx, "screenshot", nil)
+	if err != nil {
+		return nil, fmt.Errorf("screenshot failed: %v", err)
+	}
+	if resp.ScreenshotPath != "" {
+		data, readErr := os.ReadFile(resp.ScreenshotPath)
+		if readErr != nil {
+			return nil, fmt.Errorf("reading screenshot file: %v", readErr)
+		}
+		os.Remove(resp.ScreenshotPath) //nolint:errcheck
+		return data, nil
+	}
+	data, err := base64.StdEncoding.DecodeString(resp.Image)
+	if err != nil {
+		return nil, fmt.Errorf("screenshot decode failed: %v", err)
+	}
+	return data, nil
 }
 
 func textResult(text string) *mcp.CallToolResult {
