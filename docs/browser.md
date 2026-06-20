@@ -171,7 +171,7 @@ Agent containers run `loop mcp-browser` which proxies all tool calls via `POST /
 Requires `chrome://inspect/#remote-debugging` enabled in Chrome.
 
 ### Available Tools
-`navigate`, `read_page`, `computer`, `form_input`, `screenshot`, `go_back`, `go_forward`, `reload`, `evaluate`, `list_tabs`, `new_tab`, `switch_tab`, `close_tab`, `page_info`, `get_page_text`, `find`, `read_console_messages`, `read_network_requests`, `resize_window`
+`navigate`, `read_page`, `computer`, `form_input`, `screenshot`, `save_screenshot`, `go_back`, `go_forward`, `reload`, `evaluate`, `list_tabs`, `new_tab`, `switch_tab`, `close_tab`, `page_info`, `get_page_text`, `find`, `read_console_messages`, `read_network_requests`, `resize_window`
 
 ## Idle Monitoring
 
