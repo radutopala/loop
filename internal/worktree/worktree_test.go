@@ -300,3 +300,41 @@ func (s *CreatorSuite) TestRemovePruneError() {
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "prune failed")
 }
+
+func (s *CreatorSuite) TestMoveSuccess() {
+	err := s.creator.Move(context.Background(), "/proj", "/proj/.worktrees/wt-old", "/proj/.worktrees/wt-new", "worktree/wt-old", "worktree/wt-new")
+
+	require.NoError(s.T(), err)
+	require.Len(s.T(), s.runArgs, 2)
+	require.Equal(s.T(), []string{"/proj", "git", "worktree", "move", "/proj/.worktrees/wt-old", "/proj/.worktrees/wt-new"}, s.runArgs[0])
+	require.Equal(s.T(), []string{"/proj/.worktrees/wt-new", "git", "branch", "-m", "worktree/wt-old", "worktree/wt-new"}, s.runArgs[1])
+}
+
+func (s *CreatorSuite) TestMoveWorktreeFail() {
+	s.runErr = fmt.Errorf("exit status 1")
+	s.runOut = []byte("fatal: not a worktree path")
+
+	err := s.creator.Move(context.Background(), "/proj", "/proj/.worktrees/wt-old", "/proj/.worktrees/wt-new", "worktree/wt-old", "worktree/wt-new")
+
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "git worktree move failed")
+	require.Contains(s.T(), err.Error(), "fatal: not a worktree path")
+}
+
+func (s *CreatorSuite) TestMoveBranchRenameFail() {
+	callCount := 0
+	s.creator.Run = func(ctx context.Context, dir, name string, args ...string) ([]byte, error) {
+		s.runArgs = append(s.runArgs, append([]string{dir, name}, args...))
+		callCount++
+		if callCount == 2 {
+			return []byte("fatal: branch rename failed"), fmt.Errorf("exit status 1")
+		}
+		return nil, nil
+	}
+
+	err := s.creator.Move(context.Background(), "/proj", "/proj/.worktrees/wt-old", "/proj/.worktrees/wt-new", "worktree/wt-old", "worktree/wt-new")
+
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "git branch -m failed")
+	require.Contains(s.T(), err.Error(), "fatal: branch rename failed")
+}

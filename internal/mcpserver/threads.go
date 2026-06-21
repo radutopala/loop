@@ -122,3 +122,67 @@ func (s *Server) handleDeleteThread(_ context.Context, _ *mcp.CallToolRequest, i
 		},
 	}, nil, nil
 }
+
+type renameThreadInput struct {
+	ThreadID string `json:"thread_id" jsonschema:"required,The ID of the thread to rename"`
+	Name     string `json:"name" jsonschema:"required,New display name for the thread"`
+}
+
+type renameWorktreeThreadInput struct {
+	ThreadID string `json:"thread_id" jsonschema:"required,The ID of the worktree thread to rename"`
+	NewName  string `json:"new_name" jsonschema:"required,New name for the worktree (will also rename dir and branch)"`
+}
+
+func (s *Server) handleRenameThread(_ context.Context, _ *mcp.CallToolRequest, input renameThreadInput) (*mcp.CallToolResult, any, error) {
+	s.logger.Info("mcp tool call", "tool", "rename_thread", "thread_id", input.ThreadID)
+
+	if input.ThreadID == "" {
+		return errorResult("thread_id is required"), nil, nil
+	}
+	if input.Name == "" {
+		return errorResult("name is required"), nil, nil
+	}
+
+	data, _ := json.Marshal(map[string]string{"name": input.Name})
+	if errResult, err := doAPICallNoBody(s, "POST", fmt.Sprintf("%s/api/channels/%s/rename", s.apiURL, input.ThreadID), http.StatusOK, data); errResult != nil || err != nil {
+		return errResult, nil, err
+	}
+
+	return &mcp.CallToolResult{
+		Content: []mcp.Content{
+			&mcp.TextContent{Text: fmt.Sprintf("Thread %s renamed to %q successfully.", input.ThreadID, input.Name)},
+		},
+	}, nil, nil
+}
+
+func (s *Server) handleRenameWorktreeThread(_ context.Context, _ *mcp.CallToolRequest, input renameWorktreeThreadInput) (*mcp.CallToolResult, any, error) {
+	s.logger.Info("mcp tool call", "tool", "rename_worktree_thread", "thread_id", input.ThreadID)
+
+	if input.ThreadID == "" {
+		return errorResult("thread_id is required"), nil, nil
+	}
+	if input.NewName == "" {
+		return errorResult("new_name is required"), nil, nil
+	}
+
+	data, _ := json.Marshal(map[string]string{
+		"channel_id": input.ThreadID,
+		"new_name":   input.NewName,
+	})
+
+	type moveResult struct {
+		ChannelID string `json:"channel_id"`
+		DirPath   string `json:"dir_path"`
+		Name      string `json:"name"`
+	}
+	result, errResult, err := doAPICall[moveResult](s, "POST", s.apiURL+"/api/worktrees/move", http.StatusOK, data)
+	if errResult != nil || err != nil {
+		return errResult, nil, err
+	}
+
+	return &mcp.CallToolResult{
+		Content: []mcp.Content{
+			&mcp.TextContent{Text: fmt.Sprintf("Worktree thread %s renamed to %q (new path: %s, new branch: worktree/%s).", result.ChannelID, result.Name, result.DirPath, result.Name)},
+		},
+	}, nil, nil
+}

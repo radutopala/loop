@@ -181,6 +181,8 @@ export interface ChannelUpdatedData {
   commit: string;
   diff_additions: number;
   diff_deletions: number;
+  name?: string;
+  dir_path?: string;
 }
 
 export interface GateApprovalRequestedData {

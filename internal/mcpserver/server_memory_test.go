@@ -72,7 +72,7 @@ func (s *MCPMemorySuite) callTool(name string, args map[string]any) (string, boo
 func (s *MCPMemorySuite) TestListToolsIncludesMemory() {
 	res, err := s.session.ListTools(s.ctx, nil)
 	require.NoError(s.T(), err)
-	require.Len(s.T(), res.Tools, 32) // 14 base + 2 memory + 2 playground + 2 shortcut + 12 quality
+	require.Len(s.T(), res.Tools, 34) // 14 base + 2 memory + 2 playground + 2 shortcut + 12 quality + 2 rename
 
 	names := make(map[string]bool)
 	for _, t := range res.Tools {
@@ -268,7 +268,7 @@ func (s *MCPMemoryChannelIDSuite) TestMemoryEnabledWithEmptyDirPath() {
 func (s *MCPMemoryChannelIDSuite) TestListToolsIncludesMemory() {
 	res, err := s.session.ListTools(s.ctx, nil)
 	require.NoError(s.T(), err)
-	require.Len(s.T(), res.Tools, 32)
+	require.Len(s.T(), res.Tools, 34)
 
 	names := make(map[string]bool)
 	for _, t := range res.Tools {

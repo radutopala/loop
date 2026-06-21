@@ -143,6 +143,16 @@ func New(channelID, apiURL, authorID string, httpClient HTTPClient, logger *slog
 	}, s.handleDeleteThread)
 
 	mcp.AddTool(s.mcpServer, &mcp.Tool{
+		Name:        "rename_thread",
+		Description: "Rename a thread or channel's display name. Only updates the name — sessions and directory are preserved.",
+	}, s.handleRenameThread)
+
+	mcp.AddTool(s.mcpServer, &mcp.Tool{
+		Name:        "rename_worktree_thread",
+		Description: "Rename a worktree thread: renames the worktree directory (.worktrees/<old> → .worktrees/<new>), renames the git branch (worktree/<old> → worktree/<new>), relocates the Claude session store, and updates the channel name and dir_path. Preserves all Claude sessions.",
+	}, s.handleRenameWorktreeThread)
+
+	mcp.AddTool(s.mcpServer, &mcp.Tool{
 		Name:        "search_channels",
 		Description: "Search for channels and threads. Returns channel IDs, names, directory paths, and active status. Use the query parameter to filter by name.",
 	}, s.handleSearchChannels)

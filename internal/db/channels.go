@@ -117,6 +117,24 @@ func (s *SQLiteStore) UpdateChannelLocked(ctx context.Context, channelID string,
 	return err
 }
 
+// UpdateChannelName sets the name of a channel.
+func (s *SQLiteStore) UpdateChannelName(ctx context.Context, channelID, name string) error {
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE channels SET name = ?, updated_at = ? WHERE channel_id = ?`,
+		name, s.nowFunc(), channelID,
+	)
+	return err
+}
+
+// UpdateChannelDirPath sets the dir_path of a channel.
+func (s *SQLiteStore) UpdateChannelDirPath(ctx context.Context, channelID, dirPath string) error {
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE channels SET dir_path = ?, updated_at = ? WHERE channel_id = ?`,
+		dirPath, s.nowFunc(), channelID,
+	)
+	return err
+}
+
 func (s *SQLiteStore) DeleteChannel(ctx context.Context, channelID string) error {
 	return s.withTx(ctx, func(tx *sql.Tx) error {
 		if _, err := tx.ExecContext(ctx, `DELETE FROM messages WHERE channel_id = ?`, channelID); err != nil {
