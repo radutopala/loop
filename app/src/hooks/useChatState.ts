@@ -144,6 +144,21 @@ export function useChatState(
   isRunningRef.current = isRunning;
   const runIdRef = useRef(runId);
   runIdRef.current = runId;
+
+  // `initialRunningBot` (channel.agent_running) seeds isRunning at mount via
+  // useState, but it can flip to true AFTER mount — the channels list polls on an
+  // interval and refetches on channel.created, so a run that started while this
+  // view wasn't subscribed (e.g. a worktree thread whose run was triggered on
+  // creation, opened a moment later) surfaces only on a later refresh. Reflect
+  // that true-transition so the Stop button self-heals. Never force false here:
+  // the live agent.status "done" event clears isRunning, and a lagging channels
+  // poll must not hide an active run.
+  useEffect(() => {
+    if (initialRunningBot && !isRunningRef.current) {
+      isRunningRef.current = true;
+      setIsRunning(true);
+    }
+  }, [initialRunningBot]);
   const toolRef = useRef(toolActivity);
   toolRef.current = toolActivity;
   const agentRef = useRef(agentActivity);

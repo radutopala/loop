@@ -291,14 +291,20 @@ function AppInner() {
   const doSelect = useCallback((id: string | null) => {
     setScrollToMessageId(null);
     closeAllPanels();
-    if (id) markRead(id);
+    if (id) {
+      markRead(id);
+      // Refresh channels so the opened channel's agent_running (which seeds the
+      // Stop button) is current — its run may have started while we weren't
+      // subscribed (e.g. a freshly-created worktree thread). Fire-and-forget.
+      loadChannels();
+    }
     setSelectedId((prev) => {
       if (id !== null && id === prev) {
         setMountKey((k) => k + 1);
       }
       return id;
     });
-  }, [markRead, closeAllPanels]);
+  }, [markRead, closeAllPanels, loadChannels]);
 
   const handleSelect = useCallback((id: string | null) => {
     if (configDirty && settingsOpen) {
