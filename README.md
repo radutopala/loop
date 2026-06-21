@@ -1127,7 +1127,9 @@ In headless/Linux environments where Electron can't launch, `LOOP_NO_ELECTRON=1 
 | `edit_task` | Edit a task's schedule, type, and/or prompt |
 | `create_channel` | Create a new channel by name |
 | `create_thread` | Create a new thread; optional `message` triggers a runner immediately |
-| `create_worktree_thread` | Create a thread backed by a fresh git worktree on the given branch (mirror of the UI's `+wt` button); optional `message` triggers a runner immediately |
+| `create_worktree_thread` | Create a thread backed by a fresh git worktree; `branch` is the base to fork from (a new `worktree/<name>` branch is checked out off it); optional `message` triggers a runner immediately |
+| `rename_thread` | Rename a thread or channel's display name (sessions and directory preserved) |
+| `rename_worktree_thread` | Rename a worktree thread — renames its directory and branch, relocates the Claude session store (sessions preserved); rejected while a run is active |
 | `delete_thread` | Delete a thread by ID (cleans up worktree and branch if applicable) |
 | `search_channels` | Search for channels and threads by name |
 | `send_message` | Send a message to a channel or thread (`channel_id` optional — defaults to the current channel) |

@@ -208,6 +208,36 @@ Toggle the locked flag on a channel or thread. Locking guards against accidental
 
 ---
 
+### `POST /api/channels/{id}/rename`
+
+Rename a channel or thread's display name. Only the name changes — the directory path and Claude sessions are untouched.
+
+**Path Parameters:**
+
+| Param | Type   | Description |
+|-------|--------|-------------|
+| `id`  | string | Channel or thread ID |
+
+**Request:**
+```json
+{"name": "New Name"}
+```
+
+| Field  | Type   | Required | Description |
+|--------|--------|----------|-------------|
+| `name` | string | yes      | New display name |
+
+**Response:** `200 OK`
+```json
+{"channel_id": "abc123", "name": "New Name"}
+```
+
+**Behavior notes:** Broadcasts a `channel.updated` event carrying the new `name` so other clients refresh their sidebar live.
+
+**Errors:** `400` if `name` is empty. `404` if channel not found.
+
+---
+
 ## Threads
 
 ### `POST /api/threads`
@@ -1344,6 +1374,39 @@ If `message` is provided, the bot posts it as a self-mention into the new thread
 - Copies the parent's Claude session file to the worktree's project dir (`~/.claude/projects/<encoded-path>/`) so `--resume --fork-session` works on the first message.
 - The thread's `DirPath` points to the worktree directory; `Worktree` flag is set to true.
 - Container mounts include the parent project directory so git worktree references resolve correctly.
+
+### `POST /api/worktrees/move`
+
+Rename a worktree thread. Renames the worktree directory and its `worktree/<name>` branch, relocates the Claude session store so sessions are preserved, and updates the thread's display name and `dir_path`.
+
+**Request:**
+```json
+{
+  "channel_id": "worktree-thread-id",
+  "new_name": "new-name"
+}
+```
+
+| Field        | Type   | Required | Description |
+|--------------|--------|----------|-------------|
+| `channel_id` | string | yes      | The worktree thread to rename |
+| `new_name`   | string | yes      | New worktree name (sanitized like a branch name) |
+
+**Response (200):**
+```json
+{
+  "channel_id": "worktree-thread-id",
+  "dir_path": "/project/.worktrees/new-name",
+  "name": "new-name"
+}
+```
+
+**Behavior notes:**
+- Runs `git worktree move` then `git branch -m worktree/<old> worktree/<new>`.
+- Relocates the Claude session store from `~/.claude/projects/<encoded-old-dir>/` to `<encoded-new-dir>/`, so the thread keeps its `session_id` and `--resume` continues to work after the rename. The git move is rolled back if relocation fails unexpectedly.
+- Broadcasts a `channel.updated` event carrying the new `name` and `dir_path`.
+
+**Errors:** `400` if `channel_id`/`new_name` is missing, `new_name` is invalid, or the channel is not a worktree thread. `404` if channel not found. `409` if the thread has an active run.
 
 ### `POST /api/worktrees/import`
 
