@@ -57,6 +57,14 @@ func (m *MockStore) UpdateChannelLocked(ctx context.Context, channelID string, l
 	return m.Called(ctx, channelID, locked).Error(0)
 }
 
+func (m *MockStore) UpdateChannelName(ctx context.Context, channelID, name string) error {
+	return m.Called(ctx, channelID, name).Error(0)
+}
+
+func (m *MockStore) UpdateChannelDirPath(ctx context.Context, channelID, dirPath string) error {
+	return m.Called(ctx, channelID, dirPath).Error(0)
+}
+
 func (m *MockStore) InsertMessage(ctx context.Context, msg *db.Message) error {
 	return m.Called(ctx, msg).Error(0)
 }

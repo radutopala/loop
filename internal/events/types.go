@@ -241,6 +241,8 @@ type ChannelUpdatedData struct {
 	Commit        string `json:"commit"`
 	DiffAdditions int    `json:"diff_additions"`
 	DiffDeletions int    `json:"diff_deletions"`
+	Name          string `json:"name,omitempty"`
+	DirPath       string `json:"dir_path,omitempty"`
 }
 
 // TaskEventData is the payload for task.created and task.updated events.

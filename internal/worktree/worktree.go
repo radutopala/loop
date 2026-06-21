@@ -121,6 +121,21 @@ func (c *Creator) Unlock(ctx context.Context, parentDir, worktreePath string) er
 	return nil
 }
 
+// Move moves a git worktree directory and renames its branch.
+// parentDir is the main repository directory.
+// oldPath/newPath are absolute paths; oldBranch/newBranch are the full branch names.
+func (c *Creator) Move(ctx context.Context, parentDir, oldPath, newPath, oldBranch, newBranch string) error {
+	out, err := c.Run(ctx, parentDir, "git", "worktree", "move", oldPath, newPath)
+	if err != nil {
+		return fmt.Errorf("git worktree move failed: %s", strings.TrimSpace(string(out)))
+	}
+	out, err = c.Run(ctx, newPath, "git", "branch", "-m", oldBranch, newBranch)
+	if err != nil {
+		return fmt.Errorf("git branch -m failed: %s", strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
 func (c *Creator) copySessionFile(parentDirPath, worktreeDirPath, sessionID string) error {
 	sessionID = filepath.Base(sessionID)
 	if sessionID == "." || sessionID == ".." || sessionID == "" {

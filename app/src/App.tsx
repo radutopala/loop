@@ -229,6 +229,8 @@ function AppInner() {
         commit: d.commit,
         diff_additions: d.diff_additions,
         diff_deletions: d.diff_deletions,
+        ...(d.name !== undefined ? { name: d.name } : {}),
+        ...(d.dir_path !== undefined ? { dir_path: d.dir_path } : {}),
       } : c));
       return;
     }
