@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"path/filepath"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
@@ -15,7 +16,7 @@ type createThreadInput struct {
 }
 
 type createWorktreeThreadInput struct {
-	Branch  string `json:"branch" jsonschema:"required,The git branch to check out in the new worktree (existing or new branch name)"`
+	Branch  string `json:"branch" jsonschema:"required,The existing base branch to fork the worktree from (e.g. 'main'). A fresh 'worktree/<name>' branch is created off it and checked out — this is NOT the name of the new branch. Must be an existing ref."`
 	Name    string `json:"name,omitempty" jsonschema:"Optional name for the worktree directory. If omitted, a random 'wt-XXXX' name is generated."`
 	Message string `json:"message,omitempty" jsonschema:"Optional task or topic for the new worktree thread. If provided, an agent is triggered immediately with this message as its prompt."`
 }
@@ -94,9 +95,12 @@ func (s *Server) handleCreateWorktreeThread(_ context.Context, _ *mcp.CallToolRe
 	if input.Message != "" {
 		suffix = "An agent has been triggered in the thread with the supplied message. Do NOT perform the task yourself — just tell the user the thread was created."
 	}
+	// The worktree is checked out on a fresh branch "worktree/<dir>" forked from
+	// the base branch (input.Branch), not on input.Branch itself.
+	newBranch := "worktree/" + filepath.Base(result.WorktreePath)
 	return &mcp.CallToolResult{
 		Content: []mcp.Content{
-			&mcp.TextContent{Text: fmt.Sprintf("Worktree thread created (ID: %s, path: %s). Branch %q is checked out at the worktree path. %s", result.ThreadID, result.WorktreePath, input.Branch, suffix)},
+			&mcp.TextContent{Text: fmt.Sprintf("Worktree thread created (ID: %s, path: %s). A fresh branch %q (forked from base %q) is checked out at the worktree path. %s", result.ThreadID, result.WorktreePath, newBranch, input.Branch, suffix)},
 		},
 	}, nil, nil
 }
