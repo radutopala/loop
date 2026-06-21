@@ -49,7 +49,9 @@ Agent (Claude Code)  ←→  MCP Protocol (stdio)  ←→  loop mcp  ←→  HTT
 | `queue_message` | Queue a follow-up prompt for yourself in the current channel/thread/worktree. Enqueues a new turn behind any running/queued work (shows in the chat's queued-messages list); `interrupt=true` cancels the active run and jumps the queue to run next. |
 | `create_channel` | Create a new channel (bot auto-joins) |
 | `create_thread` | Create a thread in the current channel. If message provided, triggers an agent immediately. |
-| `create_worktree_thread` | Create a thread backed by a fresh git worktree on the given `branch` (mirrors the UI `+wt` button). Optional `name` for the worktree directory; optional `message` triggers an agent immediately. |
+| `create_worktree_thread` | Create a thread backed by a fresh git worktree (mirrors the UI `+wt` button). `branch` is the existing **base** to fork from (e.g. `main`); a new `worktree/<name>` branch is created and checked out off it. Optional `name` for the worktree directory; optional `message` triggers an agent immediately. |
+| `rename_thread` | Rename a thread or channel's display name. Only updates the name — the directory and Claude sessions are preserved. |
+| `rename_worktree_thread` | Rename a worktree thread to `new_name`: renames the worktree directory and its `worktree/<name>` branch, relocates the Claude session store, and updates the display name. Sessions are preserved; rejected with `409` if a run is active. |
 | `delete_thread` | Delete a thread by ID |
 | `search_channels` | Search channels and threads by optional query. Returns IDs, names, directory paths, parent IDs, and active status. |
 
