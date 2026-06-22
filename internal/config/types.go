@@ -346,17 +346,23 @@ type Config struct {
 	// it, but Anthropic ships the flag as development-only; default to off so
 	// users opt in deliberately. Hierarchy: global → project → worktree.
 	ClaudeDangerouslyLoadDevelopmentChannels bool
-	KeepMCPConfigs                           bool
-	WorkflowBashLocal                        bool
-	Browser                                  BrowserConfig
-	Memory                                   MemoryConfig
-	Quality                                  QualityConfig
-	Permissions                              types.Permissions
-	ExtraDirs                                []string
-	Desktop                                  DesktopConfig
-	Gates                                    GatesConfig
-	GitHub                                   GitHubConfig
-	Review                                   ReviewConfig
+	// ClaudeBatchDisallowedTools lists Claude Code tool names passed to
+	// `--disallowedTools` for batch (`--print`) agent runs only. Defaults to the
+	// persistent-harness tools (ScheduleWakeup, Cron*) that no-op in one-shot
+	// mode. The interactive terminal path is unaffected. Hierarchy: global →
+	// project → worktree.
+	ClaudeBatchDisallowedTools []string
+	KeepMCPConfigs             bool
+	WorkflowBashLocal          bool
+	Browser                    BrowserConfig
+	Memory                     MemoryConfig
+	Quality                    QualityConfig
+	Permissions                types.Permissions
+	ExtraDirs                  []string
+	Desktop                    DesktopConfig
+	Gates                      GatesConfig
+	GitHub                     GitHubConfig
+	Review                     ReviewConfig
 }
 
 // GitHubConfig holds GitHub integration settings. GHUser names a `gh` CLI

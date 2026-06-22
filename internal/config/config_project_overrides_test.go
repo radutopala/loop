@@ -104,6 +104,23 @@ func (s *ConfigSuite) TestLoadProjectConfigOverrides() {
 			},
 		},
 		{
+			name:        "BatchDisallowedTools/Override",
+			projectJSON: `{"claude_batch_disallowed_tools": ["ScheduleWakeup"]}`,
+			mainCfg:     &Config{ClaudeBatchDisallowedTools: []string{"ScheduleWakeup", "CronCreate"}},
+			assert: func(merged, main *Config) {
+				require.Equal(s.T(), []string{"ScheduleWakeup"}, merged.ClaudeBatchDisallowedTools)
+				require.Equal(s.T(), []string{"ScheduleWakeup", "CronCreate"}, main.ClaudeBatchDisallowedTools)
+			},
+		},
+		{
+			name:        "BatchDisallowedTools/NoOverride",
+			projectJSON: `{}`,
+			mainCfg:     &Config{ClaudeBatchDisallowedTools: []string{"ScheduleWakeup"}},
+			assert: func(merged, _ *Config) {
+				require.Equal(s.T(), []string{"ScheduleWakeup"}, merged.ClaudeBatchDisallowedTools)
+			},
+		},
+		{
 			name: "Container/Override",
 			projectJSON: `{
 				"container_image": "custom-agent:v3",

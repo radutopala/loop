@@ -309,3 +309,24 @@ func (s *ConfigSuite) TestClaudeModelAbsent() {
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), "claude-sonnet-4-6", cfg.ClaudeModel)
 }
+
+func (s *ConfigSuite) TestClaudeBatchDisallowedToolsDefault() {
+	s.loader.readFile = func(_ string) ([]byte, error) {
+		return s.minimalJSON(), nil
+	}
+
+	cfg, err := s.loader.load()
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), DefaultBatchDisallowedTools(), cfg.ClaudeBatchDisallowedTools)
+	require.Contains(s.T(), cfg.ClaudeBatchDisallowedTools, "ScheduleWakeup")
+}
+
+func (s *ConfigSuite) TestClaudeBatchDisallowedToolsOverride() {
+	s.loader.readFile = func(_ string) ([]byte, error) {
+		return []byte(`{"platforms":["discord"],"discord_token":"t","discord_app_id":"a","claude_batch_disallowed_tools":["OnlyThis"]}`), nil
+	}
+
+	cfg, err := s.loader.load()
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), []string{"OnlyThis"}, cfg.ClaudeBatchDisallowedTools)
+}

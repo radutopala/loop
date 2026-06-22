@@ -646,6 +646,50 @@ func (s *RunnerSuite) TestBuildClaudeCmdPlanMode() {
 	require.True(s.T(), strings.HasPrefix(cmd[len(cmd)-1], "Call the EnterPlanMode tool"))
 }
 
+func (s *RunnerSuite) TestBuildClaudeCmdDisallowedTools() {
+	req := &agent.AgentRequest{
+		ChannelID: "ch-1",
+		Messages:  []agent.AgentMessage{{Role: "user", Content: "hello"}},
+	}
+
+	// With a disallowed-tools list: a single comma-joined --disallowedTools
+	// value (so the variadic flag can't swallow the trailing prompt), and the
+	// prompt stays the last argument.
+	cfg := &config.Config{
+		ClaudeBinPath:              "claude",
+		ClaudeBatchDisallowedTools: []string{"ScheduleWakeup", "CronCreate"},
+	}
+	cmd := buildClaudeCmd(cfg, "/work/.loop/mcp-ch-1.json", req)
+	got := strings.Join(cmd, " ")
+	require.Contains(s.T(), got, "--disallowedTools ScheduleWakeup,CronCreate")
+	require.Equal(s.T(), "user: hello\n", cmd[len(cmd)-1])
+	// The flag value is one comma-joined token, not separate args.
+	idx := slices.Index(cmd, "--disallowedTools")
+	require.GreaterOrEqual(s.T(), idx, 0)
+	require.Equal(s.T(), "ScheduleWakeup,CronCreate", cmd[idx+1])
+	// Critical: --disallowedTools is variadic, so it MUST come before --print
+	// (a flag terminates the variadic). Emitted adjacent to the trailing prompt
+	// it would swallow the prompt into bogus tool names.
+	printIdx := slices.Index(cmd, "--print")
+	require.Less(s.T(), idx, printIdx, "--disallowedTools must precede --print")
+
+	// Empty list: no --disallowedTools flag at all.
+	cfg.ClaudeBatchDisallowedTools = nil
+	cmd = buildClaudeCmd(cfg, "/work/.loop/mcp-ch-1.json", req)
+	require.NotContains(s.T(), strings.Join(cmd, " "), "--disallowedTools")
+}
+
+func (s *RunnerSuite) TestBuildInteractiveClaudeCmdNoDisallowedTools() {
+	// The interactive terminal path must NOT carry --disallowedTools even when
+	// the batch list is configured — denial is batch-only.
+	cfg := &config.Config{
+		ClaudeBinPath:              "claude",
+		ClaudeBatchDisallowedTools: []string{"ScheduleWakeup"},
+	}
+	got := BuildInteractiveClaudeCmd(cfg, "ch-1", "/work", "", "", false)
+	require.NotContains(s.T(), got, "--disallowedTools")
+}
+
 func (s *RunnerSuite) TestClaudeCmdBuilder() {
 	tests := []struct {
 		name        string
