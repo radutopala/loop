@@ -48,6 +48,7 @@ type jsonConfig struct {
 	ClaudeModel                              string                 `json:"claude_model"`
 	ClaudeBinPath                            string                 `json:"claude_bin_path"`
 	ClaudeDangerouslyLoadDevelopmentChannels *bool                  `json:"claude_dangerously_load_development_channels"`
+	ClaudeBatchDisallowedTools               []string               `json:"claude_batch_disallowed_tools"`
 	KeepMCPConfigs                           *bool                  `json:"keep_mcp_configs"`
 	WorkflowBashLocal                        *bool                  `json:"workflow_bash_local"`
 	Browser                                  *jsonBrowserConfig     `json:"browser"`
@@ -244,6 +245,7 @@ func (l *Loader) parse() (*Config, error) {
 		LoopDir:                                  loopDir,
 		ClaudeModel:                              stringDefault(jc.ClaudeModel, "claude-sonnet-4-6"),
 		ClaudeDangerouslyLoadDevelopmentChannels: ptrDefault(jc.ClaudeDangerouslyLoadDevelopmentChannels, false),
+		ClaudeBatchDisallowedTools:               sliceDefault(jc.ClaudeBatchDisallowedTools, DefaultBatchDisallowedTools()),
 		KeepMCPConfigs:                           ptrDefault(jc.KeepMCPConfigs, false),
 		WorkflowBashLocal:                        ptrDefault(jc.WorkflowBashLocal, false),
 	}
@@ -460,6 +462,16 @@ func stringDefault(val, def string) string {
 		return val
 	}
 	return def
+}
+
+// DefaultBatchDisallowedTools lists Claude Code tools denied via
+// `--disallowedTools` in batch (`--print`) agent runs by default. ScheduleWakeup
+// and the Cron* tools schedule future re-invocations that only a persistent
+// interactive harness can honor; in one-shot mode the container exits at end of
+// turn, so the agent would silently park work that never resumes. Override via
+// the `claude_batch_disallowed_tools` config key (global/project/worktree).
+func DefaultBatchDisallowedTools() []string {
+	return []string{"ScheduleWakeup", "CronCreate", "CronDelete", "CronList"}
 }
 
 func sliceDefault[T any](v []T, def []T) []T {

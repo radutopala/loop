@@ -45,6 +45,7 @@ Exactly one of these should be set. OAuth takes precedence if both are provided.
 |---|---|---|---|
 | `claude_bin_path` | `string` | `"claude"` | Path to the Claude CLI binary inside containers. |
 | `claude_model` | `string` | `"claude-sonnet-4-6"` | Claude model to use. Options: `"claude-fable-5"`, `"claude-opus-4-8"`, `"claude-opus-4-7"`, `"claude-opus-4-6[1m]"`, `"claude-opus-4-6"`, `"claude-sonnet-4-6"`. |
+| `claude_batch_disallowed_tools` | `[]string` | `["ScheduleWakeup", "CronCreate", "CronDelete", "CronList"]` | Claude Code tool names passed to `--disallowedTools` for **batch** (`--print`) agent runs only — the interactive terminal is unaffected. The defaults schedule future re-invocations that only a persistent harness can honor, so in loop's one-shot containers they silently park work that never resumes. Override to tune the list (e.g. to re-enable a tool). |
 | `keep_mcp_configs` | `bool` | `false` | When true, preserves MCP config JSON files after container runs. Useful for debugging MCP server configuration. |
 
 #### Storage & Logging
@@ -543,6 +544,7 @@ Not all global fields are available in project configs. The following fields can
 | `envs` | **Merged** with global envs. Project values override global values with the same key. |
 | `claude_model` | **Overrides** global value when set. |
 | `claude_bin_path` | **Overrides** global value when set. |
+| `claude_batch_disallowed_tools` | **Overrides** global value when set (non-empty). |
 | `claude_code_oauth_token` | **Overrides** global auth entirely. Clears `anthropic_api_key`. |
 | `anthropic_api_key` | **Overrides** global auth entirely. Clears `claude_code_oauth_token`. |
 | `container_image` | **Overrides** global value when set. |

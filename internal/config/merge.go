@@ -24,6 +24,7 @@ type projectConfig struct {
 	ClaudeModel                              string                 `json:"claude_model"`
 	ClaudeBinPath                            string                 `json:"claude_bin_path"`
 	ClaudeDangerouslyLoadDevelopmentChannels *bool                  `json:"claude_dangerously_load_development_channels"`
+	ClaudeBatchDisallowedTools               []string               `json:"claude_batch_disallowed_tools"`
 	ClaudeCodeOAuthToken                     string                 `json:"claude_code_oauth_token"`
 	AnthropicAPIKey                          string                 `json:"anthropic_api_key"`
 	ContainerImage                           string                 `json:"container_image"`
@@ -194,6 +195,10 @@ func (l *Loader) loadProjectConfig(workDir string, mainConfig *Config) (*Config,
 
 	if pc.ClaudeDangerouslyLoadDevelopmentChannels != nil {
 		merged.ClaudeDangerouslyLoadDevelopmentChannels = *pc.ClaudeDangerouslyLoadDevelopmentChannels
+	}
+
+	if len(pc.ClaudeBatchDisallowedTools) > 0 {
+		merged.ClaudeBatchDisallowedTools = pc.ClaudeBatchDisallowedTools
 	}
 
 	if pc.ClaudeCodeOAuthToken != "" {

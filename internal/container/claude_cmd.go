@@ -50,6 +50,19 @@ const planModePromptPrefix = "Call the EnterPlanMode tool before doing anything 
 // buildClaudeCmd assembles the Claude CLI command with all flags for batch mode.
 func buildClaudeCmd(cfg *config.Config, mcpConfigPath string, req *agent.AgentRequest) []string {
 	cmd := buildBaseClaudeCmd(cfg, mcpConfigPath, req.SessionID, req.AgentID, req.ForkSession, cfg.ExtraDirs)
+	// Deny tools that only make sense in a persistent interactive harness.
+	// In one-shot `--print` mode the container exits at end of turn, so tools
+	// like ScheduleWakeup / Cron* schedule re-invocations that never fire —
+	// the agent silently "parks" work that never resumes. Batch-only: the
+	// interactive terminal path (BuildInteractiveClaudeCmd) keeps them.
+	//
+	// `--disallowedTools` is variadic (`<tools...>`): it must be emitted BEFORE
+	// another flag (here `--print`) so the parser stops consuming at that flag.
+	// Emitted last (adjacent to the trailing positional prompt) it would swallow
+	// the prompt and split it into bogus tool names, leaving an empty prompt.
+	if len(cfg.ClaudeBatchDisallowedTools) > 0 {
+		cmd = append(cmd, "--disallowedTools", strings.Join(cfg.ClaudeBatchDisallowedTools, ","))
+	}
 	cmd = append(cmd, "--print", "--verbose", "--output-format", "stream-json")
 	if req.SystemPrompt != "" {
 		cmd = append(cmd, "--append-system-prompt", req.SystemPrompt)
