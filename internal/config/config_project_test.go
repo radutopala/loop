@@ -319,6 +319,7 @@ func (s *ConfigSuite) TestClaudeBatchDisallowedToolsDefault() {
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), DefaultBatchDisallowedTools(), cfg.ClaudeBatchDisallowedTools)
 	require.Contains(s.T(), cfg.ClaudeBatchDisallowedTools, "ScheduleWakeup")
+	require.Contains(s.T(), cfg.ClaudeBatchDisallowedTools, "Monitor")
 }
 
 func (s *ConfigSuite) TestClaudeBatchDisallowedToolsOverride() {

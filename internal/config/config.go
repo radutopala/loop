@@ -465,13 +465,16 @@ func stringDefault(val, def string) string {
 }
 
 // DefaultBatchDisallowedTools lists Claude Code tools denied via
-// `--disallowedTools` in batch (`--print`) agent runs by default. ScheduleWakeup
-// and the Cron* tools schedule future re-invocations that only a persistent
-// interactive harness can honor; in one-shot mode the container exits at end of
-// turn, so the agent would silently park work that never resumes. Override via
-// the `claude_batch_disallowed_tools` config key (global/project/worktree).
+// `--disallowedTools` in batch (`--print`) agent runs by default. These tools
+// rely on a persistent interactive harness that one-shot mode lacks: the
+// container exits at end of turn, so they silently park work that never
+// resumes. ScheduleWakeup and the Cron* tools schedule future re-invocations
+// that never fire. Monitor arms a background watcher whose events are delivered
+// across turns — once the agent's single turn ends, the container exits and the
+// watch dies mid-stream, dropping the remaining events. Override via the
+// `claude_batch_disallowed_tools` config key (global/project/worktree).
 func DefaultBatchDisallowedTools() []string {
-	return []string{"ScheduleWakeup", "CronCreate", "CronDelete", "CronList"}
+	return []string{"ScheduleWakeup", "CronCreate", "CronDelete", "CronList", "Monitor"}
 }
 
 func sliceDefault[T any](v []T, def []T) []T {
