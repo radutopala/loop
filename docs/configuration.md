@@ -45,7 +45,7 @@ Exactly one of these should be set. OAuth takes precedence if both are provided.
 |---|---|---|---|
 | `claude_bin_path` | `string` | `"claude"` | Path to the Claude CLI binary inside containers. |
 | `claude_model` | `string` | `"claude-sonnet-4-6"` | Claude model to use. Options: `"claude-fable-5"`, `"claude-opus-4-8"`, `"claude-opus-4-7"`, `"claude-opus-4-6[1m]"`, `"claude-opus-4-6"`, `"claude-sonnet-4-6"`. |
-| `claude_batch_disallowed_tools` | `[]string` | `["ScheduleWakeup", "CronCreate", "CronDelete", "CronList"]` | Claude Code tool names passed to `--disallowedTools` for **batch** (`--print`) agent runs only — the interactive terminal is unaffected. The defaults schedule future re-invocations that only a persistent harness can honor, so in loop's one-shot containers they silently park work that never resumes. Override to tune the list (e.g. to re-enable a tool). |
+| `claude_batch_disallowed_tools` | `[]string` | `["ScheduleWakeup", "CronCreate", "CronDelete", "CronList", "Monitor"]` | Claude Code tool names passed to `--disallowedTools` for **batch** (`--print`) agent runs only — the interactive terminal is unaffected. The defaults rely on a persistent harness that one-shot containers lack: `ScheduleWakeup`/`Cron*` schedule re-invocations that never fire, and `Monitor` arms a background watcher whose cross-turn events are dropped when the container exits at end of turn — so they silently park work that never resumes. Override to tune the list (e.g. to re-enable a tool). |
 | `keep_mcp_configs` | `bool` | `false` | When true, preserves MCP config JSON files after container runs. Useful for debugging MCP server configuration. |
 
 #### Storage & Logging
