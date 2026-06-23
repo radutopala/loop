@@ -29,6 +29,7 @@ func TestIsRetryableAgentError(t *testing.T) {
 		// Terminal — must NOT retry even though some share keywords.
 		{"usage limit reached", errors.New("Your usage limit reached. Limit resets at 5pm."), false},
 		{"reached your usage limit", errors.New("you have reached your usage limit"), false},
+		{"session limit (real Anthropic string)", errors.New("You've hit your session limit · resets 8:30pm (UTC)"), false},
 		{"credit balance", errors.New("your credit balance is too low"), false},
 		{"auth", errors.New("authentication_error: invalid x-api-key"), false},
 		{"invalid request", errors.New("invalid_request_error: messages required"), false},
