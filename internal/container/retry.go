@@ -20,6 +20,7 @@ var nonRetryableMarkers = []string{
 	"usage limit reached",
 	"usage limit exceeded",
 	"reached your usage limit",
+	"session limit",
 	"limit will reset",
 	"limit resets",
 	"credit balance",
