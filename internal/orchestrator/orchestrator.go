@@ -89,6 +89,7 @@ type Orchestrator struct {
 	configLoad        func() (*config.Config, error)
 	loadProjectConfig func(string, *config.Config) (*config.Config, error)
 	removeMCPConfig   func(string, string) error
+	timeNow           func() time.Time // injectable clock (session-limit reset math, tests)
 	tasks             *taskRegistry
 }
 
@@ -110,6 +111,7 @@ func New(store db.Store, bot Bot, runner Runner, sched scheduler.Scheduler, logg
 		configLoad:        configLoad,
 		loadProjectConfig: config.LoadProjectConfig,
 		removeMCPConfig:   defaultRemoveMCPConfig,
+		timeNow:           time.Now,
 		tasks:             newTaskRegistry(),
 	}
 	o.cfg.Store(&cfg)

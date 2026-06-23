@@ -213,6 +213,9 @@ func (l *Loader) loadProjectConfig(workDir string, mainConfig *Config) (*Config,
 		if pc.ClaudeRetry.BackoffMaxSec != nil {
 			merged.AgentRetry.BackoffMax = time.Duration(*pc.ClaudeRetry.BackoffMaxSec) * time.Second
 		}
+		if pc.ClaudeRetry.SessionLimitAutoContinue != nil {
+			merged.AgentRetry.SessionLimitAutoContinue = *pc.ClaudeRetry.SessionLimitAutoContinue
+		}
 	}
 
 	if pc.ClaudeCodeOAuthToken != "" {

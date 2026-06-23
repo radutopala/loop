@@ -133,6 +133,17 @@ func (s *ConfigSuite) TestLoadProjectConfigOverrides() {
 			},
 		},
 		{
+			name:        "AgentRetry/FullOverride",
+			projectJSON: `{"claude_retry": {"max_attempts": 2, "backoff_base_sec": 3, "backoff_max_sec": 60, "session_limit_auto_continue": false}}`,
+			mainCfg:     &Config{AgentRetry: AgentRetryConfig{MaxAttempts: 5, BackoffBase: 5 * time.Second, BackoffMax: 120 * time.Second, SessionLimitAutoContinue: true}},
+			assert: func(merged, _ *Config) {
+				require.Equal(s.T(), 2, merged.AgentRetry.MaxAttempts)
+				require.Equal(s.T(), 3*time.Second, merged.AgentRetry.BackoffBase)
+				require.Equal(s.T(), 60*time.Second, merged.AgentRetry.BackoffMax)
+				require.False(s.T(), merged.AgentRetry.SessionLimitAutoContinue)
+			},
+		},
+		{
 			name:        "AgentRetry/NoOverride",
 			projectJSON: `{}`,
 			mainCfg:     &Config{AgentRetry: AgentRetryConfig{MaxAttempts: 5, BackoffBase: 5 * time.Second, BackoffMax: 120 * time.Second}},

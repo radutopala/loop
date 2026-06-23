@@ -552,6 +552,14 @@ func (o *Orchestrator) executeAgentRun(ctx context.Context, msg *bot.IncomingMes
 			return nil, "", runID, &runFinishStatus{status: "error", errMsg: err.Error()}, err
 		}
 		o.logger.Error("running agent", "error", err, "channel_id", msg.ChannelID)
+		if notice, scheduled := o.maybeScheduleSessionLimitRetry(ctx, msg, err.Error()); scheduled {
+			_ = o.bot.SendMessage(ctx, &bot.OutgoingMessage{
+				ChannelID:        msg.ChannelID,
+				Content:          notice,
+				ReplyToMessageID: msg.MessageID,
+			})
+			return nil, "", runID, &runFinishStatus{status: "completed"}, err
+		}
 		_ = o.bot.SendMessage(ctx, &bot.OutgoingMessage{
 			ChannelID:        msg.ChannelID,
 			Content:          "Sorry, I encountered an error processing your request.",

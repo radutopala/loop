@@ -117,9 +117,10 @@ type jsonBrowserConfig struct {
 
 // jsonAgentRetryConfig is the JSON representation of the claude_retry block.
 type jsonAgentRetryConfig struct {
-	MaxAttempts    *int `json:"max_attempts"`
-	BackoffBaseSec *int `json:"backoff_base_sec"`
-	BackoffMaxSec  *int `json:"backoff_max_sec"`
+	MaxAttempts              *int  `json:"max_attempts"`
+	BackoffBaseSec           *int  `json:"backoff_base_sec"`
+	BackoffMaxSec            *int  `json:"backoff_max_sec"`
+	SessionLimitAutoContinue *bool `json:"session_limit_auto_continue"`
 }
 
 // jsonGatesConfig is the JSON representation of the gates block — the umbrella
@@ -289,6 +290,9 @@ func (l *Loader) parse() (*Config, error) {
 		}
 		if jc.ClaudeRetry.BackoffMaxSec != nil {
 			cfg.AgentRetry.BackoffMax = time.Duration(*jc.ClaudeRetry.BackoffMaxSec) * time.Second
+		}
+		if jc.ClaudeRetry.SessionLimitAutoContinue != nil {
+			cfg.AgentRetry.SessionLimitAutoContinue = *jc.ClaudeRetry.SessionLimitAutoContinue
 		}
 	}
 
@@ -507,9 +511,10 @@ func DefaultBatchDisallowedTools() []string {
 // rate limit several minutes to clear before the run is surfaced as an error.
 func DefaultAgentRetry() AgentRetryConfig {
 	return AgentRetryConfig{
-		MaxAttempts: 5,
-		BackoffBase: 5 * time.Second,
-		BackoffMax:  120 * time.Second,
+		MaxAttempts:              5,
+		BackoffBase:              5 * time.Second,
+		BackoffMax:               120 * time.Second,
+		SessionLimitAutoContinue: true,
 	}
 }
 

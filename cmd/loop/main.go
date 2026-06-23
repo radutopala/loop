@@ -14,6 +14,11 @@ import (
 	"strings"
 	"time"
 
+	// Embed the IANA timezone database so time.LoadLocation works regardless of
+	// host tzdata — needed to parse Claude session-limit reset times like
+	// "resets 11:30pm (Europe/Bucharest)".
+	_ "time/tzdata"
+
 	"github.com/bwmarrin/discordgo"
 	dockerclient "github.com/docker/docker/client"
 	goslack "github.com/slack-go/slack"

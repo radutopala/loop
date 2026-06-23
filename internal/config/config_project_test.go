@@ -344,6 +344,7 @@ func (s *ConfigSuite) TestAgentRetryDefault() {
 	require.Equal(s.T(), 5, cfg.AgentRetry.MaxAttempts)
 	require.Equal(s.T(), 5*time.Second, cfg.AgentRetry.BackoffBase)
 	require.Equal(s.T(), 120*time.Second, cfg.AgentRetry.BackoffMax)
+	require.True(s.T(), cfg.AgentRetry.SessionLimitAutoContinue)
 }
 
 func (s *ConfigSuite) TestAgentRetryPartialOverride() {
@@ -361,7 +362,7 @@ func (s *ConfigSuite) TestAgentRetryPartialOverride() {
 
 func (s *ConfigSuite) TestAgentRetryFullOverride() {
 	s.loader.readFile = func(_ string) ([]byte, error) {
-		return []byte(`{"platforms":["discord"],"discord_token":"t","discord_app_id":"a","claude_retry":{"max_attempts":3,"backoff_base_sec":2,"backoff_max_sec":30}}`), nil
+		return []byte(`{"platforms":["discord"],"discord_token":"t","discord_app_id":"a","claude_retry":{"max_attempts":3,"backoff_base_sec":2,"backoff_max_sec":30,"session_limit_auto_continue":false}}`), nil
 	}
 
 	cfg, err := s.loader.load()
@@ -369,4 +370,5 @@ func (s *ConfigSuite) TestAgentRetryFullOverride() {
 	require.Equal(s.T(), 3, cfg.AgentRetry.MaxAttempts)
 	require.Equal(s.T(), 2*time.Second, cfg.AgentRetry.BackoffBase)
 	require.Equal(s.T(), 30*time.Second, cfg.AgentRetry.BackoffMax)
+	require.False(s.T(), cfg.AgentRetry.SessionLimitAutoContinue)
 }
