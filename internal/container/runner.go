@@ -102,8 +102,11 @@ type DockerRunner struct {
 	loadWorktreeProjectConfig func(string, string, *config.Config) (*config.Config, error)
 	osRandRead                func([]byte) (int, error)
 	osTimeLocalName           func() string
-	registry                  ContainerRegistry
-	instanceID                string // unique per daemon, used to scope Cleanup
+	// sleep waits for d or until ctx is cancelled, returning ctx.Err() if
+	// cancelled. Injectable so retry-backoff tests don't sleep in real time.
+	sleep      func(ctx context.Context, d time.Duration) error
+	registry   ContainerRegistry
+	instanceID string // unique per daemon, used to scope Cleanup
 
 	// Docker HTTP proxy (stage 2 of agentgate). When cfg.Gates.DockerProxy.Enabled,
 	// the runner writes proxy-policy.json into policyDir/<channel>/ and mounts it
@@ -153,6 +156,7 @@ func NewDockerRunner(client DockerClient, cfg *config.Config, configLoad func() 
 		loadWorktreeProjectConfig: config.LoadWorktreeProjectConfig,
 		osRandRead:                rand.Read,
 		osTimeLocalName:           func() string { return time.Now().Location().String() },
+		sleep:                     sleepCtx,
 		instanceID:                hex.EncodeToString(b),
 	}
 	r.cfg.Store(cfg)
@@ -305,10 +309,45 @@ func (r *DockerRunner) containerName(channelID, dirPath string) string {
 	return "loop-" + sanitized + "-" + hex.EncodeToString(b)
 }
 
-// Run executes an agent request in a Docker container.
-// If a session ID is set and the run fails, it retries with --resume
-// using only the original prompt (no full message history rebuild).
+// Run executes an agent request in a Docker container, retrying on transient
+// API errors (rate limiting, overload, transient 5xx) with bounded exponential
+// backoff. Terminal errors (usage/quota, auth, billing) are surfaced
+// immediately. Each retry re-invokes with --resume so the session context is
+// preserved; the backoff is interruptible via ctx (the Stop button), and
+// progress is surfaced through req.OnActivity as a "rate_limited" notice.
 func (r *DockerRunner) Run(ctx context.Context, req *agent.AgentRequest) (*agent.AgentResponse, error) {
+	retry := r.currentConfig().AgentRetry
+
+	resp, err := r.runWithRecovery(ctx, req)
+	for attempt := 0; err != nil &&
+		attempt < retry.MaxAttempts &&
+		isRetryableAgentError(err) &&
+		ctx.Err() == nil; attempt++ {
+
+		delay := backoffDelay(attempt, retry.BackoffBase, retry.BackoffMax)
+		if req.OnActivity != nil {
+			req.OnActivity("rate_limited", fmt.Sprintf("Rate limited — retrying in %s (%d/%d)", delay.Round(time.Second), attempt+1, retry.MaxAttempts))
+		}
+		if serr := r.sleep(ctx, delay); serr != nil {
+			return resp, err // ctx cancelled during backoff — surface the last error
+		}
+
+		// Resume the session produced by the failed attempt when available, so
+		// retries continue the same conversation rather than restarting it.
+		retryReq := *req
+		if resp != nil && resp.SessionID != "" {
+			retryReq.SessionID = resp.SessionID
+			retryReq.ForkSession = false
+		}
+		resp, err = r.runWithRecovery(ctx, &retryReq)
+	}
+	return resp, err
+}
+
+// runWithRecovery executes an agent request and, on failure with a live
+// session, retries with --resume — compacting first when the session is too
+// long. This is the per-attempt unit the backoff loop in Run calls.
+func (r *DockerRunner) runWithRecovery(ctx context.Context, req *agent.AgentRequest) (*agent.AgentResponse, error) {
 	resp, err := r.runOnce(ctx, req)
 	if err == nil || req.SessionID == "" {
 		return resp, err
@@ -338,6 +377,13 @@ func (r *DockerRunner) Run(ctx context.Context, req *agent.AgentRequest) (*agent
 	retryReq := *req
 	if retryReq.Prompt == "" && len(retryReq.Messages) > 0 {
 		retryReq.Prompt = retryReq.Messages[len(retryReq.Messages)-1].Content
+	}
+	// A transient error is left for the backoff loop in Run, which resumes
+	// after a delay. Retrying immediately here would just hit the same rate
+	// limit and burn a container. resp carries the failed run's SessionID so
+	// the caller can resume.
+	if isRetryableAgentError(err) {
+		return resp, err
 	}
 	retryResp, retryErr := r.runOnce(ctx, &retryReq)
 	if retryErr != nil {

@@ -5,6 +5,9 @@
   // Claude binary path override (e.g. "/usr/local/bin/claude" or "claude-code")
   //"claude_bin_path": "",
 
+  // Backoff-retry policy override for transient API errors (rate limiting, overload, 5xx)
+  //"claude_retry": { "max_attempts": 5, "backoff_base_sec": 5, "backoff_max_sec": 120 },
+
   // Authentication override for this project (overrides global auth entirely)
   //"claude_code_oauth_token": "sk-ant-project-oauth-token",
   //"anthropic_api_key": "sk-ant-project-api-key",

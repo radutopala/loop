@@ -120,7 +120,7 @@ export interface ToolResultData {
 }
 
 export interface AgentActivityData {
-  activity: "model" | "subagent_started" | "subagent_progress" | "compacting" | "thinking";
+  activity: "model" | "subagent_started" | "subagent_progress" | "compacting" | "thinking" | "rate_limited";
   model?: string;
   description?: string;
 }
