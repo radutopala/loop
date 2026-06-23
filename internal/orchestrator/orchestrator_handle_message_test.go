@@ -785,6 +785,37 @@ func (s *OrchestratorSuite) TestHandleMessageTriggeredErrors() {
 			assertFn: func() { s.bot.AssertExpectations(s.T()) },
 		},
 		{
+			name: "session limit schedules auto-continue retry",
+			setupMock: func() {
+				s.orch.cfg.Store(&config.Config{
+					AgentRetry: config.AgentRetryConfig{SessionLimitAutoContinue: true},
+				})
+				s.orch.timeNow = func() time.Time {
+					loc, _ := time.LoadLocation("Europe/Bucharest")
+					return time.Date(2026, 6, 23, 14, 0, 0, 0, loc)
+				}
+				s.setupTriggeredBase()
+				s.store.On("GetRecentMessages", s.ctx, "ch1", 50).Return([]*db.Message{
+					{ID: 11, MsgID: "msg1", Content: "hello"},
+				}, nil)
+				s.runner.On("Run", mock.Anything, mock.Anything).Return(nil,
+					errors.New("claude returned error: You've hit your session limit · resets 11:30pm (Europe/Bucharest)"))
+				s.scheduler.On("ListTasks", s.ctx, "ch1").Return([]*db.ScheduledTask(nil), nil)
+				s.scheduler.On("AddTask", s.ctx, mock.MatchedBy(func(t *db.ScheduledTask) bool {
+					return t.Type == db.TaskTypeOnce && t.Prompt == "continue" &&
+						t.TemplateName == sessionLimitTemplateName
+				})).Return(int64(1), nil)
+				s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *bot.OutgoingMessage) bool {
+					return strings.Contains(out.Content, "automatically continue")
+				})).Return(nil)
+				s.store.On("MarkMessagesProcessed", s.ctx, []int64{11}).Return(nil)
+			},
+			assertFn: func() {
+				s.scheduler.AssertExpectations(s.T())
+				s.bot.AssertExpectations(s.T())
+			},
+		},
+		{
 			name: "runner error marks trigger processed",
 			setupMock: func() {
 				eb := new(MockEventBroadcaster)

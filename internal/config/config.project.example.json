@@ -6,7 +6,7 @@
   //"claude_bin_path": "",
 
   // Backoff-retry policy override for transient API errors (rate limiting, overload, 5xx)
-  //"claude_retry": { "max_attempts": 5, "backoff_base_sec": 5, "backoff_max_sec": 120 },
+  //"claude_retry": { "max_attempts": 5, "backoff_base_sec": 5, "backoff_max_sec": 120, "session_limit_auto_continue": true },
 
   // Authentication override for this project (overrides global auth entirely)
   //"claude_code_oauth_token": "sk-ant-project-oauth-token",

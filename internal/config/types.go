@@ -213,6 +213,10 @@ type AgentRetryConfig struct {
 	MaxAttempts int           // additional attempts after the first failure (0 disables)
 	BackoffBase time.Duration // first-retry delay; doubles each attempt
 	BackoffMax  time.Duration // ceiling for the per-attempt delay
+	// SessionLimitAutoContinue, when true, schedules a one-shot retry at the
+	// reset time announced in a "session limit" error so the run continues
+	// automatically. Persisted via the scheduler so it survives daemon restarts.
+	SessionLimitAutoContinue bool
 }
 
 // MemoryConfig groups all memory-related settings: enable flag, paths, and embeddings.
