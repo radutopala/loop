@@ -558,6 +558,7 @@ func (o *Orchestrator) executeAgentRun(ctx context.Context, msg *bot.IncomingMes
 				Content:          notice,
 				ReplyToMessageID: msg.MessageID,
 			})
+			storeBotMessage(ctx, o.store, o.events, msg.ChannelID, notice, msg.MessageID)
 			return nil, "", runID, &runFinishStatus{status: "completed"}, err
 		}
 		_ = o.bot.SendMessage(ctx, &bot.OutgoingMessage{
