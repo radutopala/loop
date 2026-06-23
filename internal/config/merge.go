@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/tailscale/hujson"
 
@@ -25,6 +26,7 @@ type projectConfig struct {
 	ClaudeBinPath                            string                 `json:"claude_bin_path"`
 	ClaudeDangerouslyLoadDevelopmentChannels *bool                  `json:"claude_dangerously_load_development_channels"`
 	ClaudeBatchDisallowedTools               []string               `json:"claude_batch_disallowed_tools"`
+	ClaudeRetry                              *jsonAgentRetryConfig  `json:"claude_retry"`
 	ClaudeCodeOAuthToken                     string                 `json:"claude_code_oauth_token"`
 	AnthropicAPIKey                          string                 `json:"anthropic_api_key"`
 	ContainerImage                           string                 `json:"container_image"`
@@ -199,6 +201,18 @@ func (l *Loader) loadProjectConfig(workDir string, mainConfig *Config) (*Config,
 
 	if len(pc.ClaudeBatchDisallowedTools) > 0 {
 		merged.ClaudeBatchDisallowedTools = pc.ClaudeBatchDisallowedTools
+	}
+
+	if pc.ClaudeRetry != nil {
+		if pc.ClaudeRetry.MaxAttempts != nil {
+			merged.AgentRetry.MaxAttempts = *pc.ClaudeRetry.MaxAttempts
+		}
+		if pc.ClaudeRetry.BackoffBaseSec != nil {
+			merged.AgentRetry.BackoffBase = time.Duration(*pc.ClaudeRetry.BackoffBaseSec) * time.Second
+		}
+		if pc.ClaudeRetry.BackoffMaxSec != nil {
+			merged.AgentRetry.BackoffMax = time.Duration(*pc.ClaudeRetry.BackoffMaxSec) * time.Second
+		}
 	}
 
 	if pc.ClaudeCodeOAuthToken != "" {

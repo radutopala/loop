@@ -49,6 +49,7 @@ type jsonConfig struct {
 	ClaudeBinPath                            string                 `json:"claude_bin_path"`
 	ClaudeDangerouslyLoadDevelopmentChannels *bool                  `json:"claude_dangerously_load_development_channels"`
 	ClaudeBatchDisallowedTools               []string               `json:"claude_batch_disallowed_tools"`
+	ClaudeRetry                              *jsonAgentRetryConfig  `json:"claude_retry"`
 	KeepMCPConfigs                           *bool                  `json:"keep_mcp_configs"`
 	WorkflowBashLocal                        *bool                  `json:"workflow_bash_local"`
 	Browser                                  *jsonBrowserConfig     `json:"browser"`
@@ -112,6 +113,13 @@ type jsonBrowserConfig struct {
 	ChromeImage string `json:"chrome_image"`
 	Mode        string `json:"mode"`
 	HostCDPPort *int   `json:"host_cdp_port"`
+}
+
+// jsonAgentRetryConfig is the JSON representation of the claude_retry block.
+type jsonAgentRetryConfig struct {
+	MaxAttempts    *int `json:"max_attempts"`
+	BackoffBaseSec *int `json:"backoff_base_sec"`
+	BackoffMaxSec  *int `json:"backoff_max_sec"`
 }
 
 // jsonGatesConfig is the JSON representation of the gates block — the umbrella
@@ -266,6 +274,22 @@ func (l *Loader) parse() (*Config, error) {
 			cfg.Browser.Mode = jc.Browser.Mode
 		}
 		cfg.Browser.HostCDPPort = ptrDefault(jc.Browser.HostCDPPort, 9222)
+	}
+
+	// Agent retry: backoff policy for transient API errors. Defaults applied
+	// per-field so a partial block (e.g. only max_attempts) keeps the other
+	// defaults.
+	cfg.AgentRetry = DefaultAgentRetry()
+	if jc.ClaudeRetry != nil {
+		if jc.ClaudeRetry.MaxAttempts != nil {
+			cfg.AgentRetry.MaxAttempts = *jc.ClaudeRetry.MaxAttempts
+		}
+		if jc.ClaudeRetry.BackoffBaseSec != nil {
+			cfg.AgentRetry.BackoffBase = time.Duration(*jc.ClaudeRetry.BackoffBaseSec) * time.Second
+		}
+		if jc.ClaudeRetry.BackoffMaxSec != nil {
+			cfg.AgentRetry.BackoffMax = time.Duration(*jc.ClaudeRetry.BackoffMaxSec) * time.Second
+		}
 	}
 
 	// Gates umbrella: agentgate + docker_proxy share a Manager, bearer token,
@@ -475,6 +499,18 @@ func stringDefault(val, def string) string {
 // `claude_batch_disallowed_tools` config key (global/project/worktree).
 func DefaultBatchDisallowedTools() []string {
 	return []string{"ScheduleWakeup", "CronCreate", "CronDelete", "CronList", "Monitor"}
+}
+
+// DefaultAgentRetry returns the default backoff-retry policy for batch agent
+// runs that fail with a transient API error (rate limiting, overload, 5xx).
+// Five additional attempts at 5s, 10s, 20s, 40s, 80s (capped at 120s) give a
+// rate limit several minutes to clear before the run is surfaced as an error.
+func DefaultAgentRetry() AgentRetryConfig {
+	return AgentRetryConfig{
+		MaxAttempts: 5,
+		BackoffBase: 5 * time.Second,
+		BackoffMax:  120 * time.Second,
+	}
 }
 
 func sliceDefault[T any](v []T, def []T) []T {

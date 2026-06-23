@@ -1,6 +1,8 @@
 package config
 
 import (
+	"time"
+
 	"github.com/stretchr/testify/require"
 
 	"github.com/radutopala/loop/internal/types"
@@ -118,6 +120,24 @@ func (s *ConfigSuite) TestLoadProjectConfigOverrides() {
 			mainCfg:     &Config{ClaudeBatchDisallowedTools: []string{"ScheduleWakeup"}},
 			assert: func(merged, _ *Config) {
 				require.Equal(s.T(), []string{"ScheduleWakeup"}, merged.ClaudeBatchDisallowedTools)
+			},
+		},
+		{
+			name:        "AgentRetry/PartialOverride",
+			projectJSON: `{"claude_retry": {"max_attempts": 2}}`,
+			mainCfg:     &Config{AgentRetry: AgentRetryConfig{MaxAttempts: 5, BackoffBase: 5 * time.Second, BackoffMax: 120 * time.Second}},
+			assert: func(merged, main *Config) {
+				require.Equal(s.T(), 2, merged.AgentRetry.MaxAttempts)
+				require.Equal(s.T(), 5*time.Second, merged.AgentRetry.BackoffBase) // unchanged
+				require.Equal(s.T(), 5, main.AgentRetry.MaxAttempts)               // global untouched
+			},
+		},
+		{
+			name:        "AgentRetry/NoOverride",
+			projectJSON: `{}`,
+			mainCfg:     &Config{AgentRetry: AgentRetryConfig{MaxAttempts: 5, BackoffBase: 5 * time.Second, BackoffMax: 120 * time.Second}},
+			assert: func(merged, _ *Config) {
+				require.Equal(s.T(), 5, merged.AgentRetry.MaxAttempts)
 			},
 		},
 		{

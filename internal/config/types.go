@@ -206,6 +206,15 @@ type BrowserConfig struct {
 	HostCDPPort int    // default 9222
 }
 
+// AgentRetryConfig controls automatic backoff-retry of batch agent runs that
+// fail with a transient API error (rate limiting, overload, transient 5xx).
+// Terminal errors (usage/quota, auth, billing) are never retried.
+type AgentRetryConfig struct {
+	MaxAttempts int           // additional attempts after the first failure (0 disables)
+	BackoffBase time.Duration // first-retry delay; doubles each attempt
+	BackoffMax  time.Duration // ceiling for the per-attempt delay
+}
+
 // MemoryConfig groups all memory-related settings: enable flag, paths, and embeddings.
 type MemoryConfig struct {
 	Enabled            bool
@@ -352,6 +361,7 @@ type Config struct {
 	// mode. The interactive terminal path is unaffected. Hierarchy: global →
 	// project → worktree.
 	ClaudeBatchDisallowedTools []string
+	AgentRetry                 AgentRetryConfig
 	KeepMCPConfigs             bool
 	WorkflowBashLocal          bool
 	Browser                    BrowserConfig

@@ -277,6 +277,9 @@ export function AgentActivityIndicator({ activity }: { activity: AgentActivityDa
     icon = "&#129504;"; // brain
     const toks = activity.description ?? "";
     label = toks && toks !== "0" ? `Thinking… (${toks} tokens)` : "Thinking…";
+  } else if (activity.activity === "rate_limited") {
+    icon = "&#9203;"; // hourglass
+    label = activity.description ?? "Rate limited — retrying…";
   }
   if (!label) return null;
   if (label.length > 100) label = label.slice(0, 100) + "...";

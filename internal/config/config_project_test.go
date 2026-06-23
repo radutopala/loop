@@ -3,6 +3,7 @@ package config
 import (
 	"errors"
 	"os"
+	"time"
 
 	"github.com/stretchr/testify/require"
 )
@@ -330,4 +331,42 @@ func (s *ConfigSuite) TestClaudeBatchDisallowedToolsOverride() {
 	cfg, err := s.loader.load()
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), []string{"OnlyThis"}, cfg.ClaudeBatchDisallowedTools)
+}
+
+func (s *ConfigSuite) TestAgentRetryDefault() {
+	s.loader.readFile = func(_ string) ([]byte, error) {
+		return s.minimalJSON(), nil
+	}
+
+	cfg, err := s.loader.load()
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), DefaultAgentRetry(), cfg.AgentRetry)
+	require.Equal(s.T(), 5, cfg.AgentRetry.MaxAttempts)
+	require.Equal(s.T(), 5*time.Second, cfg.AgentRetry.BackoffBase)
+	require.Equal(s.T(), 120*time.Second, cfg.AgentRetry.BackoffMax)
+}
+
+func (s *ConfigSuite) TestAgentRetryPartialOverride() {
+	// Only max_attempts set — the other two keep their defaults.
+	s.loader.readFile = func(_ string) ([]byte, error) {
+		return []byte(`{"platforms":["discord"],"discord_token":"t","discord_app_id":"a","claude_retry":{"max_attempts":0}}`), nil
+	}
+
+	cfg, err := s.loader.load()
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), 0, cfg.AgentRetry.MaxAttempts)
+	require.Equal(s.T(), 5*time.Second, cfg.AgentRetry.BackoffBase)
+	require.Equal(s.T(), 120*time.Second, cfg.AgentRetry.BackoffMax)
+}
+
+func (s *ConfigSuite) TestAgentRetryFullOverride() {
+	s.loader.readFile = func(_ string) ([]byte, error) {
+		return []byte(`{"platforms":["discord"],"discord_token":"t","discord_app_id":"a","claude_retry":{"max_attempts":3,"backoff_base_sec":2,"backoff_max_sec":30}}`), nil
+	}
+
+	cfg, err := s.loader.load()
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), 3, cfg.AgentRetry.MaxAttempts)
+	require.Equal(s.T(), 2*time.Second, cfg.AgentRetry.BackoffBase)
+	require.Equal(s.T(), 30*time.Second, cfg.AgentRetry.BackoffMax)
 }
