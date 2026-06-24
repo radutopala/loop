@@ -264,11 +264,17 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
   });
   const [tree, setTree] = useState<PaneNode | null>(() => {
     const ch = ensureDefaultLayouts(channelId);
+    // Seed the id counter from EVERY split layout (not just the active one) so a
+    // newly added panel can never mint a leaf id that collides with one persisted
+    // in another tab — leaf ids must stay unique per channel for per-instance
+    // panel state (e.g. each playground's selected item) to stay isolated across
+    // tabs. Canvas layouts hold a CanvasNode, not a pane tree, so skip them.
+    for (const [name, t] of Object.entries(ch.layouts)) {
+      if (t && ch.types[name] !== "canvas") initIdCounter(channelId, t as PaneNode);
+    }
     const lt = ch.types[ch.active] ?? "split";
     if (lt !== "canvas") {
-      const t = ch.layouts[ch.active] ?? null;
-      if (t) initIdCounter(channelId, t as PaneNode);
-      return (t as PaneNode) ?? null;
+      return (ch.layouts[ch.active] as PaneNode) ?? null;
     }
     return null;
   });
@@ -910,8 +916,9 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
         case "playground":
           return (
             <PlaygroundPanel
-              key={`layout-playground-${channelId}`}
+              key={`layout-playground-${channelId}-${leaf.id}`}
               channelId={channelId}
+              instanceId={leaf.id}
             />
           );
         case "notes":
