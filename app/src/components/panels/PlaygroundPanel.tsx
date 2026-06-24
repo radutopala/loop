@@ -21,13 +21,17 @@ interface ConsoleEntry {
 
 interface PlaygroundPanelProps {
   channelId: string;
+  // instanceId distinguishes multiple playground panels within (and across)
+  // layout tabs so each keeps its own selected item. Optional for callers that
+  // render a single playground; defaults to "default".
+  instanceId?: string;
 }
 
 function playgroundSelectionKey(name: string, scope: "global" | "project"): string {
   return `${scope}:${name}`;
 }
 
-export function PlaygroundPanel({ channelId }: PlaygroundPanelProps) {
+export function PlaygroundPanel({ channelId, instanceId = "default" }: PlaygroundPanelProps) {
   const { colors, fontSizes } = useTheme();
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const [iframeVersion, setIframeVersion] = useState(0);
@@ -41,7 +45,7 @@ export function PlaygroundPanel({ channelId }: PlaygroundPanelProps) {
   const [items, setItems] = useState<PlaygroundItem[]>([]);
   const itemsRef = useRef<PlaygroundItem[]>([]);
   itemsRef.current = items;
-  const storageKey = `playground-active:${channelId}`;
+  const storageKey = `playground-active:${channelId}:${instanceId}`;
   const [activeItem, setActiveItem] = useState<string>(() => {
     return storageGetJSON<{ name?: string }>(storageKey)?.name || "";
   });
