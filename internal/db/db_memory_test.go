@@ -200,7 +200,7 @@ func (s *StoreSuite) TestNowFuncUsedInCreateScheduledTask() {
 		Prompt: "test", Enabled: true, NextRunAt: fixedTime,
 	}
 	s.mock.ExpectExec(`INSERT INTO scheduled_tasks`).
-		WithArgs("ch1", "", "0 9 * * *", "cron", "test", 1, fixedTime, fixedTime, fixedTime, "", 0, 0, "", 0, "", "").
+		WithArgs("ch1", "", "0 9 * * *", "cron", "test", 1, fixedTime, fixedTime, fixedTime, "", 0, "", 0, "", 0, "", "").
 		WillReturnResult(sqlmock.NewResult(1, 1))
 
 	id, err := s.store.CreateScheduledTask(context.Background(), task)

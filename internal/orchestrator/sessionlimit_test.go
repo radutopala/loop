@@ -185,6 +185,9 @@ func (s *SessionLimitSuite) TestSchedulesOnceTaskAtResetTime() {
 	require.Equal(s.T(), "continue", captured.Prompt)
 	require.Equal(s.T(), sessionLimitTemplateName, captured.TemplateName)
 	require.True(s.T(), captured.Enabled)
+	// ThreadID == ChannelID so the retry runs IN the same thread/worktree-thread
+	// (resuming its session inline), not in a freshly spawned child thread.
+	require.Equal(s.T(), "ch-1", captured.ThreadID)
 	// Schedule is RFC3339 at 23:30 Bucharest today.
 	parsed, err := time.Parse(time.RFC3339, captured.Schedule)
 	require.NoError(s.T(), err)
