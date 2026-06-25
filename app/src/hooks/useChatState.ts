@@ -282,11 +282,24 @@ export function useChatState(
       if (event.type === "agent.ask_user") {
         const data = event.data as AskUserQuestionData;
         setAskUserQuestions(data);
+        // The agent has parked waiting for an answer — its run is over. Clear
+        // isRunning directly rather than relying on a separate agent.status
+        // "completed" event (which can be missed on a WS reconnect, leaving a
+        // phantom stop button and hiding the card behind the !isRunning guard).
+        isRunningRef.current = false;
+        setIsRunning(false);
+        setRunId(null);
         return;
       }
       if (event.type === "agent.exit_plan") {
         const data = event.data as ExitPlanModeData;
         setExitPlanRequest(data);
+        // Parked on a plan card — same as ask_user: the run has stopped, so
+        // clear isRunning so the approval card renders and the input isn't
+        // stuck interrupting a non-existent run.
+        isRunningRef.current = false;
+        setIsRunning(false);
+        setRunId(null);
         return;
       }
       if (event.type === "agent.tasks") {
