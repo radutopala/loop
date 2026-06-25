@@ -250,7 +250,13 @@ func (e *TaskExecutor) ExecuteTask(ctx context.Context, task *db.ScheduledTask) 
 	// fall back to first-run behavior so the streaming tracker creates a
 	// fresh replacement thread. Without this, output would be sent to a dead
 	// channel ID and no new thread would ever be created.
-	if task.ThreadID != "" && task.Type != db.TaskTypeOnce {
+	//
+	// A once-task normally creates its own thread, but when it carries an
+	// explicit ThreadID (e.g. the session-limit auto-continue, which sets
+	// ThreadID to the channel/thread where the limit was hit) it must run IN
+	// that channel inline — resuming its session, no child thread — so once
+	// tasks are NOT excluded here.
+	if task.ThreadID != "" {
 		threadCh, chErr := e.store.GetChannel(ctx, task.ThreadID)
 		if chErr != nil || threadCh == nil {
 			e.logger.Warn("thread channel missing for task — creating new thread",
@@ -258,7 +264,7 @@ func (e *TaskExecutor) ExecuteTask(ctx context.Context, task *db.ScheduledTask) 
 			task.ThreadID = ""
 		}
 	}
-	if task.ThreadID != "" && task.Type != db.TaskTypeOnce {
+	if task.ThreadID != "" {
 		threadID = task.ThreadID
 	}
 	// hasExistingThread is true when the thread was created by a previous run

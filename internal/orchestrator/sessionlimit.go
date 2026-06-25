@@ -111,6 +111,10 @@ func (o *Orchestrator) maybeScheduleSessionLimitRetry(ctx context.Context, msg *
 		Prompt:       "continue",
 		Enabled:      true,
 		TemplateName: sessionLimitTemplateName,
+		// Run the retry IN the channel/thread where the limit was hit (resuming
+		// its own session inline), rather than spawning a child thread. The
+		// executor treats a task whose ThreadID is set as "run in that thread".
+		ThreadID: msg.ChannelID,
 	}
 	if _, err := o.scheduler.AddTask(ctx, task); err != nil {
 		o.logger.Error("scheduling session-limit retry", "error", err, "channel_id", msg.ChannelID)

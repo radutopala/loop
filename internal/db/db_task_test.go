@@ -21,7 +21,7 @@ func (s *StoreSuite) TestCreateScheduledTask() {
 		NextRunAt: time.Now().UTC(),
 	}
 	s.mock.ExpectExec(`INSERT INTO scheduled_tasks`).
-		WithArgs(task.ChannelID, task.GuildID, task.Schedule, "cron", task.Prompt, 1, sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), "", 0, 0, "", 0, "", "").
+		WithArgs(task.ChannelID, task.GuildID, task.Schedule, "cron", task.Prompt, 1, sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), "", 0, "", 0, "", 0, "", "").
 		WillReturnResult(sqlmock.NewResult(5, 1))
 
 	id, err := s.store.CreateScheduledTask(context.Background(), task)
@@ -30,8 +30,25 @@ func (s *StoreSuite) TestCreateScheduledTask() {
 	require.Equal(s.T(), int64(5), task.ID)
 }
 
+// A task created with an explicit ThreadID (the session-limit auto-continue)
+// must persist it on insert so the executor runs in that thread.
+func (s *StoreSuite) TestCreateScheduledTaskWithThreadID() {
+	task := &ScheduledTask{
+		ChannelID: "ch1", Schedule: "2026-06-23T20:30:00Z",
+		Type: TaskTypeOnce, Prompt: "continue", Enabled: true,
+		ThreadID: "ch1", NextRunAt: time.Now().UTC(),
+	}
+	s.mock.ExpectExec(`INSERT INTO scheduled_tasks`).
+		WithArgs("ch1", "", task.Schedule, "once", "continue", 1, sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), "", 0, "ch1", 0, "", 0, "", "").
+		WillReturnResult(sqlmock.NewResult(8, 1))
+
+	id, err := s.store.CreateScheduledTask(context.Background(), task)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), int64(8), id)
+}
+
 func (s *StoreSuite) TestCreateScheduledTaskErrors() {
-	anyArgs := []driver.Value{sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg()}
+	anyArgs := []driver.Value{sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg()}
 	s.mock.ExpectExec(`INSERT INTO scheduled_tasks`).WithArgs(anyArgs...).WillReturnError(sql.ErrConnDone)
 	id, err := s.store.CreateScheduledTask(context.Background(), &ScheduledTask{ChannelID: "ch1", Type: TaskTypeCron, NextRunAt: time.Now().UTC()})
 	require.Error(s.T(), err)

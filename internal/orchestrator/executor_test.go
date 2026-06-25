@@ -234,6 +234,42 @@ func (s *TaskExecutorSuite) TestActiveRunsStopCancelsTaskRun() {
 	require.Contains(s.T(), err.Error(), "context canceled")
 }
 
+// A once-task carrying an explicit ThreadID (the session-limit auto-continue
+// sets ThreadID == ChannelID) must run IN that channel inline — resuming its
+// own session without forking and WITHOUT spawning a child thread.
+func (s *TaskExecutorSuite) TestOnceTaskWithThreadIDRunsInline() {
+	task := &db.ScheduledTask{
+		ID: 70, ChannelID: "ch-inline", Prompt: "continue",
+		Type: db.TaskTypeOnce, Schedule: "2026-06-23T20:30:00Z",
+		ThreadID: "ch-inline", TemplateName: "session-limit-auto-continue",
+	}
+	s.allowBotInserts()
+	localCh := &db.Channel{ChannelID: "ch-inline", Platform: types.PlatformLocal, SessionID: "s-existing"}
+	s.store.On("GetChannel", mock.Anything, "ch-inline").Return(localCh, nil)
+	s.store.On("UpdateSessionID", s.ctx, "ch-inline", "s-new").Return(nil)
+	// Final response is delivered inline to the channel.
+	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(m *bot.OutgoingMessage) bool {
+		return m.ChannelID == "ch-inline" && m.Content == "resumed"
+	})).Return(nil)
+
+	eb := new(MockEventBroadcaster)
+	s.executor.SetEventBroadcaster(eb)
+	allowStatusBroadcasts(eb)
+	allowTaskPromptBroadcast(eb)
+	eb.On("BroadcastMessageCreated", mock.Anything, mock.Anything).Maybe()
+
+	// The run targets the channel itself, resumes its session, no fork.
+	s.runner.On("Run", mock.Anything, mock.MatchedBy(func(req *agent.AgentRequest) bool {
+		return req.ChannelID == "ch-inline" && req.SessionID == "s-existing" && !req.ForkSession
+	})).Return(&agent.AgentResponse{Response: "resumed", SessionID: "s-new"}, nil)
+
+	resp, err := s.executor.ExecuteTask(s.ctx, task)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "resumed", resp)
+	// Critically: no child thread is created.
+	s.bot.AssertNotCalled(s.T(), "CreateSimpleThread", mock.Anything, mock.Anything, mock.Anything, mock.Anything)
+}
+
 func (s *TaskExecutorSuite) TestRunnerErrorBroadcastsStatus() {
 	eb := new(MockEventBroadcaster)
 	s.executor.SetEventBroadcaster(eb)
