@@ -646,6 +646,25 @@ func (s *RunnerSuite) TestBuildClaudeCmdPlanMode() {
 	require.True(s.T(), strings.HasPrefix(cmd[len(cmd)-1], "Call the EnterPlanMode tool"))
 }
 
+func (s *RunnerSuite) TestBuildClaudeCmdPermissionPromptTool() {
+	cfg := &config.Config{ClaudeBinPath: "claude"}
+	req := &agent.AgentRequest{
+		ChannelID: "ch-1",
+		Messages:  []agent.AgentMessage{{Role: "user", Content: "hi"}},
+	}
+	cmd := buildClaudeCmd(cfg, "/work/.loop/mcp-ch-1.json", req)
+	// Batch mode must configure a permission-prompt-tool so Claude exposes the
+	// interactive tools (AskUserQuestion/EnterPlanMode/ExitPlanMode) in --print
+	// mode; it names a registered MCP tool (empty does not work).
+	idx := slices.Index(cmd, "--permission-prompt-tool")
+	require.GreaterOrEqual(s.T(), idx, 0, "batch cmd must set --permission-prompt-tool")
+	require.Equal(s.T(), "mcp__loop__get_readme", cmd[idx+1])
+	// The interactive terminal command must NOT carry it — interactive mode
+	// already exposes these tools.
+	got := BuildInteractiveClaudeCmd(cfg, "ch-1", "/work", "", "", false)
+	require.NotContains(s.T(), got, "--permission-prompt-tool")
+}
+
 func (s *RunnerSuite) TestBuildClaudeCmdDisallowedTools() {
 	req := &agent.AgentRequest{
 		ChannelID: "ch-1",
