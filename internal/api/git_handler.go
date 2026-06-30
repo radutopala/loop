@@ -197,6 +197,7 @@ type commitEntry struct {
 	Subject string `json:"subject"`
 	Author  string `json:"author"`
 	Date    string `json:"date"`
+	Body    string `json:"body"`
 }
 
 type commitsResponse struct {
@@ -253,7 +254,9 @@ func (s *Server) handleListCommits(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	args := []string{"log", fmt.Sprintf("--max-count=%d", limit), fmt.Sprintf("--skip=%d", skip), "--format=%H\x1e%h\x1e%s\x1e%an\x1e%ci"}
+	// -z NUL-separates commits so the body (%b, possibly multi-line) stays in a
+	// single record. Fields within a record are \x1e-separated; the body is last.
+	args := []string{"log", "-z", fmt.Sprintf("--max-count=%d", limit), fmt.Sprintf("--skip=%d", skip), "--format=%H\x1e%h\x1e%s\x1e%an\x1e%ci\x1e%b"}
 	if branch := r.URL.Query().Get("branch"); branch != "" {
 		safe, ok := sanitizeBranch(branch)
 		if !ok {
@@ -275,17 +278,26 @@ func (s *Server) handleListCommits(w http.ResponseWriter, r *http.Request) {
 	writeHTTPJSON(w, http.StatusOK, commitsResponse{Commits: parseCommitLog(string(out))}, s.logger)
 }
 
-// parseCommitLog parses the output of git log --format=%H\x1e%h\x1e%s\x1e%an\x1e%ci
-// into a slice of commitEntry. Malformed lines are skipped.
+// parseCommitLog parses the output of
+// git log -z --format=%H\x1e%h\x1e%s\x1e%an\x1e%ci\x1e%b
+// into a slice of commitEntry. Commits are NUL-separated; fields within a commit
+// are \x1e-separated with the (possibly multi-line) body last. Malformed records
+// are skipped.
 func parseCommitLog(output string) []commitEntry {
 	var commits []commitEntry
-	for _, line := range strings.Split(strings.TrimSpace(output), "\n") {
-		if line == "" {
+	for _, record := range strings.Split(output, "\x00") {
+		record = strings.Trim(record, "\n")
+		if record == "" {
 			continue
 		}
-		parts := strings.SplitN(line, "\x1e", 5)
+		// Up to 6 fields; body (last) keeps any embedded separators.
+		parts := strings.SplitN(record, "\x1e", 6)
 		if len(parts) < 5 {
 			continue
+		}
+		body := ""
+		if len(parts) == 6 {
+			body = strings.TrimRight(parts[5], "\n")
 		}
 		commits = append(commits, commitEntry{
 			Hash:    parts[0],
@@ -293,6 +305,7 @@ func parseCommitLog(output string) []commitEntry {
 			Subject: parts[2],
 			Author:  parts[3],
 			Date:    parts[4],
+			Body:    body,
 		})
 	}
 	if commits == nil {
