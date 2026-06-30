@@ -9,6 +9,33 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestIsAPILimitError(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{"nil", nil, false},
+		{"weekly limit", errors.New("You've hit your weekly limit · resets 8am (Europe/Bucharest)"), true},
+		{"session limit", errors.New("You've hit your session limit · resets 11:30pm (Europe/Bucharest)"), true},
+		{"plain hit your limit", errors.New("You've hit your limit · resets 8am (UTC)"), true},
+		{"usage limit reached", errors.New("Your usage limit reached"), true},
+		{"rate limited", errors.New("Server is temporarily limiting requests (not your usage limit) · Rate limited"), true},
+		{"overloaded", errors.New("claude returned error: overloaded_error"), true},
+		{"quota", errors.New("quota exceeded"), true},
+		{"credit balance", errors.New("your credit balance is too low"), true},
+		// Non-limit errors: the blind resume-retry should still apply to these.
+		{"generic", errors.New("claude returned error: something went wrong"), false},
+		{"prompt too long", errors.New("Prompt is too long"), false},
+		{"network", errors.New("connection reset by peer"), false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			require.Equal(t, tc.want, isAPILimitError(tc.err))
+		})
+	}
+}
+
 func TestIsRetryableAgentError(t *testing.T) {
 	tests := []struct {
 		name string

@@ -81,6 +81,46 @@ func isRetryableAgentError(err error) bool {
 	return false
 }
 
+// apiLimitMarkers indicate any API limit or overload — transient (rate limit,
+// overloaded) OR terminal (weekly/session/usage limit, quota, billing). An
+// immediate resume-retry of any of these just hits the same wall, so the blind
+// resume-retry in runWithRecovery is skipped for all of them: transient ones go
+// to the backoff loop, terminal ones are surfaced to the orchestrator (which
+// may schedule a session-limit auto-continue).
+var apiLimitMarkers = []string{
+	"usage limit",
+	"rate limit",
+	"rate_limit",
+	"rate-limited",
+	"rate limited",
+	"overloaded",
+	"temporarily limiting requests",
+	"quota",
+	"credit balance",
+	"insufficient",
+	"billing",
+}
+
+// isAPILimitError reports whether the error is any API limit/overload condition
+// — including the "You've hit your <session|weekly|daily|…> limit" family — for
+// which retrying immediately is futile.
+func isAPILimitError(err error) bool {
+	if err == nil {
+		return false
+	}
+	m := strings.ToLower(err.Error())
+	// "You've hit your <session|weekly|daily|5-hour|…> limit · resets …"
+	if strings.Contains(m, "hit your") && strings.Contains(m, "limit") {
+		return true
+	}
+	for _, x := range apiLimitMarkers {
+		if strings.Contains(m, x) {
+			return true
+		}
+	}
+	return false
+}
+
 // backoffDelay returns the wait before the given zero-based retry attempt:
 // min(base * 2^attempt, max). attempt 0 is the first retry (after the initial
 // failure).

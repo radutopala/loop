@@ -378,11 +378,14 @@ func (r *DockerRunner) runWithRecovery(ctx context.Context, req *agent.AgentRequ
 	if retryReq.Prompt == "" && len(retryReq.Messages) > 0 {
 		retryReq.Prompt = retryReq.Messages[len(retryReq.Messages)-1].Content
 	}
-	// A transient error is left for the backoff loop in Run, which resumes
-	// after a delay. Retrying immediately here would just hit the same rate
-	// limit and burn a container. resp carries the failed run's SessionID so
-	// the caller can resume.
-	if isRetryableAgentError(err) {
+	// Any API limit/overload error is left for the layers above: transient ones
+	// (rate limit, overload) are picked up by the backoff loop in Run; terminal
+	// ones (weekly/session/usage limit) are surfaced to the orchestrator (which
+	// may schedule a session-limit auto-continue). Blind-retrying any of them
+	// here just hits the same wall and burns a second container — the bug where
+	// a weekly-limit error appeared twice a minute apart. resp carries the
+	// failed run's SessionID so the caller can resume.
+	if isAPILimitError(err) {
 		return resp, err
 	}
 	retryResp, retryErr := r.runOnce(ctx, &retryReq)

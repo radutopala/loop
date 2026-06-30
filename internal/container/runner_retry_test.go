@@ -106,16 +106,35 @@ func (s *RunnerSuite) TestRunDoesNotRetryTerminalError() {
 		Messages:  []agent.AgentMessage{{Role: "user", Content: "hi"}},
 	}
 
-	// A quota error must not enter the backoff loop even with attempts
-	// available. The legacy single blind resume-retry inside runWithRecovery
-	// still fires once (it predates rate-limit handling), so wire two attempts;
-	// the key assertion is that no backoff sleep occurs.
+	// A quota/limit error must neither enter the backoff loop NOR trigger the
+	// legacy blind resume-retry — it runs exactly once. Wiring a single attempt
+	// (and asserting expectations) proves no second container is spawned.
 	quota := `{"type":"result","result":"Your usage limit reached. Limit resets at midnight.","session_id":"sess-1","is_error":true}`
-	s.setupMockAttempts(ctx, quota, quota)
+	s.setupMockAttempts(ctx, quota)
 
 	_, err := s.runner.Run(ctx, req)
 	require.Error(s.T(), err)
 	require.Equal(s.T(), 0, sleeps, "terminal error must not sleep/retry with backoff")
+	s.client.AssertExpectations(s.T())
+}
+
+func (s *RunnerSuite) TestRunDoesNotBlindRetryWeeklyLimit() {
+	ctx := context.Background()
+	// No backoff configured — isolate the blind-retry behavior.
+	s.cfg.AgentRetry = config.AgentRetryConfig{}
+	req := &agent.AgentRequest{
+		SessionID: "sess-1",
+		ChannelID: "ch-1",
+		Messages:  []agent.AgentMessage{{Role: "user", Content: "hi"}},
+	}
+	// "You've hit your weekly limit · resets 8am" must run exactly once — the
+	// blind resume-retry previously fired here, showing the error twice.
+	weekly := `{"type":"result","result":"You've hit your weekly limit · resets 8am (Europe/Bucharest)","session_id":"sess-1","is_error":true}`
+	s.setupMockAttempts(ctx, weekly)
+
+	_, err := s.runner.Run(ctx, req)
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "weekly limit")
 	s.client.AssertExpectations(s.T())
 }
 
