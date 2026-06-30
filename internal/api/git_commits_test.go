@@ -47,6 +47,29 @@ func (s *ServerSuite) TestListCommits_Success() {
 	require.NotEmpty(s.T(), resp.Commits[0].Date)
 }
 
+func (s *ServerSuite) TestListCommits_Body() {
+	dir := initGitRepo(s.T())
+	// A commit with a multi-line body.
+	msg := "feat: add the thing\n\nThis is the body.\n\n- one\n- two"
+	cmd := exec.Command("git", "commit", "--allow-empty", "-m", msg)
+	cmd.Dir = dir
+	require.NoError(s.T(), cmd.Run())
+
+	s.store.On("GetChannel", mock.Anything, "ch-1").
+		Return(&db.Channel{ChannelID: "ch-1", DirPath: dir}, nil)
+
+	rec := s.testRequest("GET", "/api/channels/ch-1/commits", "")
+	require.Equal(s.T(), http.StatusOK, rec.Code)
+
+	var resp commitsResponse
+	require.NoError(s.T(), json.Unmarshal(rec.Body.Bytes(), &resp))
+	require.GreaterOrEqual(s.T(), len(resp.Commits), 2)
+	// Newest first: the body commit, then the "init" commit (no body).
+	require.Equal(s.T(), "feat: add the thing", resp.Commits[0].Subject)
+	require.Equal(s.T(), "This is the body.\n\n- one\n- two", resp.Commits[0].Body)
+	require.Empty(s.T(), resp.Commits[1].Body)
+}
+
 func (s *ServerSuite) TestListCommits_WithSkip() {
 	dir := initGitRepo(s.T())
 	// Add a second commit.
@@ -268,16 +291,28 @@ func TestParseCommitLog_WhitespaceOnly(t *testing.T) {
 }
 
 func TestParseCommitLog_MalformedLines(t *testing.T) {
-	// Lines with fewer than 5 record-separator-delimited fields are skipped.
-	commits := parseCommitLog("abc\x1edef\nfoo\x1ebar\x1ebaz")
+	// Records with fewer than 5 field-separator-delimited fields are skipped.
+	commits := parseCommitLog("abc\x1edef\x00foo\x1ebar\x1ebaz")
 	require.Empty(t, commits)
 	require.NotNil(t, commits)
 }
 
 func TestParseCommitLog_MixedValidAndInvalid(t *testing.T) {
-	input := "abc123\x1eabc\x1esubject\x1eauthor\x1e2025-01-01\ngarbage line\n\ndef456\x1edef\x1esubject2\x1eauthor2\x1e2025-01-02"
+	input := "abc123\x1eabc\x1esubject\x1eauthor\x1e2025-01-01\x1e\x00garbage record\x00def456\x1edef\x1esubject2\x1eauthor2\x1e2025-01-02\x1e"
 	commits := parseCommitLog(input)
 	require.Len(t, commits, 2)
 	require.Equal(t, "abc123", commits[0].Hash)
 	require.Equal(t, "def456", commits[1].Hash)
+}
+
+func TestParseCommitLog_Body(t *testing.T) {
+	// A commit with a multi-line body; the body is the last field and keeps its
+	// newlines. A second commit with an empty body keeps Body == "".
+	input := "h1\x1es1\x1esubj1\x1eauthor\x1e2025-01-01\x1eLine one.\n\nLine two.\n\x00" +
+		"h2\x1es2\x1esubj2\x1eauthor\x1e2025-01-02\x1e"
+	commits := parseCommitLog(input)
+	require.Len(t, commits, 2)
+	require.Equal(t, "Line one.\n\nLine two.", commits[0].Body)
+	require.Equal(t, "subj1", commits[0].Subject)
+	require.Empty(t, commits[1].Body)
 }

@@ -87,6 +87,8 @@ export interface CommitEntry {
   subject: string;
   author: string;
   date: string;
+  /** Full commit message body (everything after the subject line). May be empty. */
+  body?: string;
 }
 
 export async function fetchCommits(channelId: string, branch?: string, limit?: number, skip?: number, rootIndex?: number): Promise<CommitEntry[]> {
