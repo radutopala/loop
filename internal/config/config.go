@@ -252,7 +252,7 @@ func (l *Loader) parse() (*Config, error) {
 		APIAddr:                                  stringDefault(jc.APIAddr, ":8222"),
 		APIAdvertiseURL:                          jc.APIAdvertiseURL,
 		LoopDir:                                  loopDir,
-		ClaudeModel:                              stringDefault(jc.ClaudeModel, "claude-sonnet-4-6"),
+		ClaudeModel:                              stringDefault(jc.ClaudeModel, "claude-sonnet-5"),
 		ClaudeDangerouslyLoadDevelopmentChannels: ptrDefault(jc.ClaudeDangerouslyLoadDevelopmentChannels, false),
 		ClaudeBatchDisallowedTools:               sliceDefault(jc.ClaudeBatchDisallowedTools, DefaultBatchDisallowedTools()),
 		KeepMCPConfigs:                           ptrDefault(jc.KeepMCPConfigs, false),
