@@ -46,6 +46,7 @@ type jsonConfig struct {
 	CopyFiles                                []string               `json:"copy_files"`
 	Envs                                     map[string]any         `json:"envs"`
 	ClaudeModel                              string                 `json:"claude_model"`
+	ClaudeEffort                             string                 `json:"claude_effort"`
 	ClaudeBinPath                            string                 `json:"claude_bin_path"`
 	ClaudeDangerouslyLoadDevelopmentChannels *bool                  `json:"claude_dangerously_load_development_channels"`
 	ClaudeBatchDisallowedTools               []string               `json:"claude_batch_disallowed_tools"`
@@ -253,6 +254,7 @@ func (l *Loader) parse() (*Config, error) {
 		APIAdvertiseURL:                          jc.APIAdvertiseURL,
 		LoopDir:                                  loopDir,
 		ClaudeModel:                              stringDefault(jc.ClaudeModel, "claude-sonnet-5"),
+		ClaudeEffort:                             jc.ClaudeEffort,
 		ClaudeDangerouslyLoadDevelopmentChannels: ptrDefault(jc.ClaudeDangerouslyLoadDevelopmentChannels, false),
 		ClaudeBatchDisallowedTools:               sliceDefault(jc.ClaudeBatchDisallowedTools, DefaultBatchDisallowedTools()),
 		KeepMCPConfigs:                           ptrDefault(jc.KeepMCPConfigs, false),

@@ -56,11 +56,20 @@ func buildSchema() *ConfigSchema {
 				XSection:    "Claude",
 				XOrder:      1,
 			},
+			"claude_effort": {
+				Type:        "string",
+				Title:       "Effort",
+				Description: "Reasoning-effort level passed to the Claude CLI as --effort. Empty leaves it unset (model default).",
+				Enum:        []any{"", "low", "medium", "high", "xhigh", "max"},
+				Default:     "",
+				XSection:    "Claude",
+				XOrder:      2,
+			},
 			"claude_bin_path": {
 				Type:         "string",
 				Title:        "Binary Path",
 				XSection:     "Claude",
-				XOrder:       2,
+				XOrder:       3,
 				XPlaceholder: "claude",
 			},
 			"claude_dangerously_load_development_channels": {

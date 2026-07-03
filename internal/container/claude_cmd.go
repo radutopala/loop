@@ -20,6 +20,9 @@ func buildBaseClaudeCmd(cfg *config.Config, mcpConfigPath, sessionID, agentID st
 	if cfg.ClaudeModel != "" {
 		cmd = append(cmd, "--model", cfg.ClaudeModel)
 	}
+	if cfg.ClaudeEffort != "" {
+		cmd = append(cmd, "--effort", cfg.ClaudeEffort)
+	}
 	cmd = append(cmd, "--dangerously-skip-permissions")
 	if sessionID != "" {
 		cmd = append(cmd, "--resume", sessionID)

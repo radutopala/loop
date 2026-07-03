@@ -64,6 +64,15 @@ func (s *SchemaSuite) TestClaudeModelHasEnum() {
 	require.Contains(s.T(), prop.Enum, "")
 }
 
+func (s *SchemaSuite) TestClaudeEffortHasEnum() {
+	prop := GlobalConfigSchema().Properties["claude_effort"]
+	require.NotNil(s.T(), prop)
+	require.Equal(s.T(), "string", prop.Type)
+	require.Equal(s.T(), "Claude", prop.XSection)
+	// Empty string (no override, model default) plus the effort levels.
+	require.Equal(s.T(), []any{"", "low", "medium", "high", "xhigh", "max"}, prop.Enum)
+}
+
 func (s *SchemaSuite) TestContainerMemoryMBIsInteger() {
 	prop := GlobalConfigSchema().Properties["container_memory_mb"]
 	require.NotNil(s.T(), prop)
