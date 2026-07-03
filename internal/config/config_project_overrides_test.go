@@ -32,6 +32,22 @@ func (s *ConfigSuite) TestLoadProjectConfigOverrides() {
 			},
 		},
 		{
+			name:        "ClaudeEffort/Override",
+			projectJSON: `{"claude_effort": "high"}`,
+			mainCfg:     &Config{ClaudeEffort: "low"},
+			assert: func(merged, _ *Config) {
+				require.Equal(s.T(), "high", merged.ClaudeEffort)
+			},
+		},
+		{
+			name:        "ClaudeEffort/NoOverride",
+			projectJSON: `{}`,
+			mainCfg:     &Config{ClaudeEffort: "low"},
+			assert: func(merged, _ *Config) {
+				require.Equal(s.T(), "low", merged.ClaudeEffort)
+			},
+		},
+		{
 			name:        "OAuthToken/Override",
 			projectJSON: `{"claude_code_oauth_token": "sk-ant-project-oauth"}`,
 			mainCfg:     &Config{AnthropicAPIKey: "sk-ant-global-api-key"},

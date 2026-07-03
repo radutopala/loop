@@ -353,6 +353,11 @@ type Config struct {
 	CopyFiles            []string
 	Envs                 map[string]string
 	ClaudeModel          string
+	// ClaudeEffort is passed to the Claude CLI as `--effort` when non-empty,
+	// selecting the model's reasoning-effort level (e.g. low, medium, high,
+	// xhigh, max). Empty by default (no flag). Hierarchy: global → project →
+	// worktree.
+	ClaudeEffort string
 	// ClaudeDangerouslyLoadDevelopmentChannels gates the
 	// `--dangerously-load-development-channels server:loop` CLI flag added to
 	// the agent's `claude` invocation. Loop's MCP Channels surface depends on

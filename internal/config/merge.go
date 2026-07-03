@@ -23,6 +23,7 @@ type projectConfig struct {
 	Envs                                     map[string]any         `json:"envs"`
 	MCP                                      *jsonMCPConfig         `json:"mcp"`
 	ClaudeModel                              string                 `json:"claude_model"`
+	ClaudeEffort                             string                 `json:"claude_effort"`
 	ClaudeBinPath                            string                 `json:"claude_bin_path"`
 	ClaudeDangerouslyLoadDevelopmentChannels *bool                  `json:"claude_dangerously_load_development_channels"`
 	ClaudeBatchDisallowedTools               []string               `json:"claude_batch_disallowed_tools"`
@@ -189,6 +190,10 @@ func (l *Loader) loadProjectConfig(workDir string, mainConfig *Config) (*Config,
 
 	if pc.ClaudeModel != "" {
 		merged.ClaudeModel = pc.ClaudeModel
+	}
+
+	if pc.ClaudeEffort != "" {
+		merged.ClaudeEffort = pc.ClaudeEffort
 	}
 
 	if pc.ClaudeBinPath != "" {

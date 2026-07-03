@@ -430,6 +430,51 @@ func (s *RunnerSuite) TestRunClaudeModelConfig() {
 	}
 }
 
+func (s *RunnerSuite) TestRunClaudeEffortConfig() {
+	tests := []struct {
+		name        string
+		effort      string
+		checkConfig func(*ContainerConfig) bool
+	}{
+		{
+			name:   "with effort",
+			effort: "high",
+			checkConfig: func(cfg *ContainerConfig) bool {
+				effortIdx := slices.Index(cfg.Cmd, "--effort")
+				return effortIdx != -1 && cfg.Cmd[effortIdx+1] == "high"
+			},
+		},
+		{
+			name: "without effort",
+			checkConfig: func(cfg *ContainerConfig) bool {
+				return !slices.Contains(cfg.Cmd, "--effort")
+			},
+		},
+	}
+	for _, tt := range tests {
+		s.Run(tt.name, func() {
+			s.client = new(MockDockerClient)
+			s.cfg.ClaudeEffort = tt.effort
+			s.runner = NewDockerRunner(s.client, s.cfg, nil)
+			s.applyMockDefaults()
+
+			ctx := context.Background()
+			req := &agent.AgentRequest{
+				Messages:  []agent.AgentMessage{{Role: "user", Content: "hello"}},
+				ChannelID: "ch-1",
+			}
+
+			s.setupMockRun(ctx, mock.MatchedBy(tt.checkConfig), testContainerName, testJSONOK)
+
+			resp, err := s.runner.Run(ctx, req)
+			require.NoError(s.T(), err)
+			require.Equal(s.T(), "ok", resp.Response)
+
+			s.client.AssertExpectations(s.T())
+		})
+	}
+}
+
 func (s *RunnerSuite) TestRunWithGitExcludesMount() {
 	// Default UserHomeDir from newDefaultMockSystem returns "/home/testuser"
 	s.sys.Override("ExecCommandOutput", mock.Anything, mock.Anything).Return([]byte("~/.gitignore_global\n"), nil)
