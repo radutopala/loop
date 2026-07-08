@@ -578,6 +578,13 @@ func (a *app) serve() error {
 		}
 	}
 
+	if streamer, ok := dockerClient.(container.OOMEventStreamer); ok {
+		watcher := container.NewOOMWatcher(streamer.OOMEvents, func(noticeCtx context.Context, channelID, content string) {
+			orchestrator.StoreSystemNotice(noticeCtx, store, eventsHub, channelID, content)
+		}, logger)
+		go watcher.Run(ctx)
+	}
+
 	containerDir := filepath.Join(cfg.LoopDir, "container")
 	lifecycleMgr := container.NewImageLifecycleManager(
 		dockerClient, eventsHub, a.sys, logger,

@@ -10,8 +10,10 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -112,6 +114,11 @@ type wsStatusMessage struct {
 // InteractiveCmdBuilder builds the interactive Claude command for a terminal session.
 type InteractiveCmdBuilder interface {
 	BuildInteractiveCmd(channelID, dirPath, parentDirPath, sessionID, agentID string, forkSession bool) string
+	// BuildContinueCmd builds a `claude --continue` command that resumes the
+	// most recently modified session for the working directory, used to
+	// relaunch Claude after its process exits unexpectedly (e.g. OOM-killed)
+	// without needing to know its (possibly forked) session id.
+	BuildContinueCmd(channelID, dirPath, parentDirPath, agentID string) string
 }
 
 // terminalWSConn manages a single WebSocket terminal connection.
@@ -139,10 +146,32 @@ type terminalWSConn struct {
 	sessionTarget string // "host" or "agent"
 	stopOnClose   bool   // if true, stop (not just detach) the session on WS disconnect
 
+	// sessionIDAtomic mirrors sessionID for the one cross-goroutine reader:
+	// the delayed relaunch goroutine spawned by scanClaudeExit. sessionID
+	// itself is otherwise only ever read/written on the WS connection's own
+	// goroutine, so it doesn't need synchronization elsewhere.
+	sessionIDAtomic atomic.Value
+
 	// autoAccept scans terminal output and sends Enter when prompts are detected.
 	autoAcceptMu        sync.Mutex
 	autoAcceptRemaining int // remaining prompts to auto-accept (0 = disabled)
+
+	// relaunch scans terminal output for Claude's exit marker and, on an
+	// abnormal exit, resends the interactive Claude command (in --continue
+	// mode) so a Claude process that died unexpectedly (e.g. OOM-killed)
+	// comes back without the user having to notice and retype it.
+	relaunchMu        sync.Mutex
+	relaunchEnabled   bool // true only for panes that auto-boot Claude (not explicit cmd / sessions panel)
+	relaunchRemaining int  // remaining auto-relaunches for the current session (0 = disabled)
+	relaunchChannelID string
+	relaunchDirPath   string
+	relaunchParentDir string
+	relaunchAgentID   string
 }
+
+// maxClaudeRelaunches is the maximum number of times a terminal pane's Claude
+// process is auto-relaunched after an abnormal exit, per session creation.
+const maxClaudeRelaunches = 2
 
 // activeManager returns the correct manager based on the current session target.
 func (t *terminalWSConn) activeManager() TerminalManager {
@@ -202,6 +231,7 @@ func (t *terminalWSConn) streamOutput(output <-chan []byte, done <-chan struct{}
 			}
 			t.writeBinary(data)
 			t.scanAutoAccept(data)
+			t.scanClaudeExit(data)
 		case <-done:
 			t.writeJSON(wsStatusMessage{Type: wsStatusClosed})
 			return
@@ -219,10 +249,34 @@ func (t *terminalWSConn) detachCurrent() {
 				t.logger.Warn("terminal ws: detach failed", "session_id", t.sessionID, "error", err)
 			}
 		}
-		t.sessionID = ""
+		t.setSessionID("")
 		t.outputCh = nil
 		t.sessionTarget = ""
 	}
+	t.disableRelaunch()
+}
+
+// disableRelaunch zeroes the relaunch budget so a Claude-exit marker arriving
+// after the pane has been detached, stopped, or closed can never fire a
+// relaunch into a session the client no longer owns.
+func (t *terminalWSConn) disableRelaunch() {
+	t.relaunchMu.Lock()
+	t.relaunchEnabled = false
+	t.relaunchRemaining = 0
+	t.relaunchMu.Unlock()
+}
+
+// enableRelaunch records the state needed to relaunch Claude after an
+// abnormal exit and resets the per-session relaunch budget.
+func (t *terminalWSConn) enableRelaunch(channelID, dirPath, parentDirPath, agentID string) {
+	t.relaunchMu.Lock()
+	t.relaunchEnabled = true
+	t.relaunchRemaining = maxClaudeRelaunches
+	t.relaunchChannelID = channelID
+	t.relaunchDirPath = dirPath
+	t.relaunchParentDir = parentDirPath
+	t.relaunchAgentID = agentID
+	t.relaunchMu.Unlock()
 }
 
 // close stops streaming and detaches (or stops) the current session.
@@ -250,10 +304,11 @@ func (t *terminalWSConn) stopCurrentSession() {
 				t.logger.Warn("terminal ws: stop on close failed", "session_id", t.sessionID, "error", err)
 			}
 		}
-		t.sessionID = ""
+		t.setSessionID("")
 		t.outputCh = nil
 		t.sessionTarget = ""
 	}
+	t.disableRelaunch()
 }
 
 // autoAcceptTrigger is the prompt text that triggers an automatic Enter.
@@ -317,9 +372,78 @@ func (t *terminalWSConn) scanAutoAccept(data []byte) {
 	}()
 }
 
+// claudeExitMarkerRe matches the exit-code line an interactive Claude command
+// emits (see container.ClaudeExitMarkerPrefix / claudeExitTrailer) once the
+// Claude process exits, e.g. "__LOOP_CLAUDE_EXIT:137".
+// setSessionID updates sessionID and its atomic mirror (see sessionIDAtomic).
+func (t *terminalWSConn) setSessionID(id string) {
+	t.sessionID = id
+	t.sessionIDAtomic.Store(id)
+}
+
+// getSessionID reads the atomic mirror of sessionID, safe to call from a
+// goroutine other than the WS connection's own (e.g. the delayed relaunch
+// goroutine in scanClaudeExit).
+func (t *terminalWSConn) getSessionID() string {
+	v, _ := t.sessionIDAtomic.Load().(string)
+	return v
+}
+
+var claudeExitMarkerRe = regexp.MustCompile(regexp.QuoteMeta(container.ClaudeExitMarkerPrefix) + `(\d+)`)
+
+// scanClaudeExit checks live terminal output for a Claude exit marker and, on
+// an abnormal (non-zero) exit with relaunch budget remaining, resends the
+// interactive Claude command in --continue mode so a process that died
+// unexpectedly (e.g. OOM-killed) comes back automatically. An exit code of 0
+// means the user quit deliberately, so relaunching is disabled for the rest
+// of the session's lifetime.
+func (t *terminalWSConn) scanClaudeExit(data []byte) {
+	clean := stripANSI(data)
+	m := claudeExitMarkerRe.FindSubmatch(clean)
+	if m == nil {
+		return
+	}
+	code, err := strconv.Atoi(string(m[1]))
+	if err != nil {
+		return
+	}
+
+	t.relaunchMu.Lock()
+	if !t.relaunchEnabled {
+		t.relaunchMu.Unlock()
+		return
+	}
+	if code == 0 {
+		t.relaunchRemaining = 0
+		t.relaunchMu.Unlock()
+		return
+	}
+	if t.relaunchRemaining <= 0 {
+		t.relaunchMu.Unlock()
+		return
+	}
+	t.relaunchRemaining--
+	channelID, dirPath, parentDirPath, agentID := t.relaunchChannelID, t.relaunchDirPath, t.relaunchParentDir, t.relaunchAgentID
+	t.relaunchMu.Unlock()
+
+	sid := t.sessionID
+	t.logger.Warn("terminal ws: claude exited abnormally, relaunching", "session_id", sid, "exit_code", code, "channel_id", channelID)
+
+	go func() {
+		time.Sleep(time.Second)
+		if t.getSessionID() != sid {
+			return // pane moved on (detached/stopped/closed) — don't relaunch into it
+		}
+		cmd := t.cmdBuilder.BuildContinueCmd(channelID, dirPath, parentDirPath, agentID)
+		if err := t.manager.SendInput(sid, []byte(cmd+"\n")); err != nil {
+			t.logger.Warn("terminal ws: claude relaunch send failed", "session_id", sid, "error", err)
+		}
+	}()
+}
+
 // startSession attaches to a session and begins streaming output.
 func (t *terminalWSConn) startSession(sessionID string, output <-chan []byte, history []byte, done <-chan struct{}, statusType string) {
-	t.sessionID = sessionID
+	t.setSessionID(sessionID)
 	t.outputCh = output
 	t.writeJSON(wsStatusMessage{Type: statusType, SessionID: sessionID})
 	if len(history) > 0 {
@@ -556,6 +680,11 @@ func (t *terminalWSConn) handleCreate(ctx context.Context, msg wsControlMessage)
 		if err := t.manager.SendInput(sid, []byte(cmd+"\n")); err != nil {
 			t.logger.Warn("terminal ws: failed to send interactive cmd", "session_id", sid, "error", err)
 		}
+		// Sessions-panel panes (stopOnClose) resume an explicit, fixed session
+		// the user picked — don't auto-relaunch those into a different one.
+		if !t.stopOnClose {
+			t.enableRelaunch(msg.ChannelID, dirPath, parentDirPath, msg.AgentID)
+		}
 	}
 }
 
@@ -643,9 +772,10 @@ func (t *terminalWSConn) handleStop(ctx context.Context, msg wsControlMessage) {
 	}
 	// Clear session state directly — StopSession already removed the session
 	// from the manager, so calling detachCurrent would fail with "session not found".
-	t.sessionID = ""
+	t.setSessionID("")
 	t.outputCh = nil
 	t.sessionTarget = ""
+	t.disableRelaunch()
 
 	// Remove the container before notifying the client, so the channel list
 	// API reflects the updated running state when the client refreshes.
@@ -673,9 +803,10 @@ func (t *terminalWSConn) handleClose(msg wsControlMessage) {
 		t.sendError(err.Error(), wsErrCodeSessionFailed)
 		return
 	}
-	t.sessionID = ""
+	t.setSessionID("")
 	t.outputCh = nil
 	t.sessionTarget = ""
+	t.disableRelaunch()
 	t.writeJSON(wsStatusMessage{Type: wsStatusStopped})
 }
 
@@ -696,9 +827,10 @@ func (t *terminalWSConn) handleKill(ctx context.Context, msg wsControlMessage) {
 		if _, err := t.activeManager().StopSession(t.sessionID); err != nil {
 			t.logger.Warn("terminal ws: kill session stop failed", "session_id", t.sessionID, "error", err)
 		}
-		t.sessionID = ""
+		t.setSessionID("")
 		t.outputCh = nil
 		t.sessionTarget = ""
+		t.disableRelaunch()
 	}
 
 	// Remove all containers for this channel.

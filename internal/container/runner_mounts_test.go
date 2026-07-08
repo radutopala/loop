@@ -701,7 +701,7 @@ func (s *RunnerSuite) TestBuildBaseClaudeCmdWithExtraDirs() {
 	cfg := &config.Config{ClaudeBinPath: "claude"}
 	extraDirs := []string{"/home/user/lib", "/home/user/common"}
 
-	cmd := buildBaseClaudeCmd(cfg, "/work/.loop/mcp-ch-1.json", "", "", false, extraDirs)
+	cmd := buildBaseClaudeCmd(cfg, "/work/.loop/mcp-ch-1.json", "", "", false, false, extraDirs)
 	got := strings.Join(cmd, " ")
 
 	require.Contains(s.T(), got, "--add-dir /home/user/lib")
@@ -711,7 +711,7 @@ func (s *RunnerSuite) TestBuildBaseClaudeCmdWithExtraDirs() {
 func (s *RunnerSuite) TestBuildBaseClaudeCmdNoExtraDirs() {
 	cfg := &config.Config{ClaudeBinPath: "claude"}
 
-	cmd := buildBaseClaudeCmd(cfg, "/work/.loop/mcp-ch-1.json", "", "", false, nil)
+	cmd := buildBaseClaudeCmd(cfg, "/work/.loop/mcp-ch-1.json", "", "", false, false, nil)
 	got := strings.Join(cmd, " ")
 
 	require.NotContains(s.T(), got, "--add-dir")

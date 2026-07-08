@@ -43,6 +43,14 @@ func storeBotMessage(ctx context.Context, store db.Store, broadcaster events.Bro
 	}
 }
 
+// StoreSystemNotice persists and broadcasts a system-generated notice (not
+// tied to any triggering user message) in a channel, e.g. an OOM-kill
+// notification from container.OOMWatcher. Either store or broadcaster may be
+// nil.
+func StoreSystemNotice(ctx context.Context, store db.Store, broadcaster events.Broadcaster, channelID, content string) {
+	storeBotMessage(ctx, store, broadcaster, channelID, content, "")
+}
+
 // storeUserTaskPrompt inserts a scheduled task's prompt as a visible user
 // message in the target channel/thread and broadcasts it, so the chat shows
 // the prompt that kicked off the run the same way send_message/queue_message

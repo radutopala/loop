@@ -14,8 +14,11 @@ import (
 )
 
 // buildBaseClaudeCmd returns the common Claude CLI flags shared by both
-// batch and interactive modes.
-func buildBaseClaudeCmd(cfg *config.Config, mcpConfigPath, sessionID, agentID string, forkSession bool, extraDirs []string) []string {
+// batch and interactive modes. When continueSession is true, sessionID is
+// ignored and `--continue` is emitted instead — used to relaunch a terminal
+// pane after its Claude process died without knowing which (possibly forked)
+// session id it was running.
+func buildBaseClaudeCmd(cfg *config.Config, mcpConfigPath, sessionID, agentID string, forkSession, continueSession bool, extraDirs []string) []string {
 	cmd := []string{cfg.ClaudeBinPath, "--mcp-config", mcpConfigPath}
 	if cfg.ClaudeModel != "" {
 		cmd = append(cmd, "--model", cfg.ClaudeModel)
@@ -24,7 +27,10 @@ func buildBaseClaudeCmd(cfg *config.Config, mcpConfigPath, sessionID, agentID st
 		cmd = append(cmd, "--effort", cfg.ClaudeEffort)
 	}
 	cmd = append(cmd, "--dangerously-skip-permissions")
-	if sessionID != "" {
+	switch {
+	case continueSession:
+		cmd = append(cmd, "--continue")
+	case sessionID != "":
 		cmd = append(cmd, "--resume", sessionID)
 		if forkSession {
 			cmd = append(cmd, "--fork-session")
@@ -52,7 +58,7 @@ const planModePromptPrefix = "Call the EnterPlanMode tool before doing anything 
 
 // buildClaudeCmd assembles the Claude CLI command with all flags for batch mode.
 func buildClaudeCmd(cfg *config.Config, mcpConfigPath string, req *agent.AgentRequest) []string {
-	cmd := buildBaseClaudeCmd(cfg, mcpConfigPath, req.SessionID, req.AgentID, req.ForkSession, cfg.ExtraDirs)
+	cmd := buildBaseClaudeCmd(cfg, mcpConfigPath, req.SessionID, req.AgentID, req.ForkSession, false, cfg.ExtraDirs)
 	// Deny tools that only make sense in a persistent interactive harness.
 	// In one-shot `--print` mode the container exits at end of turn, so tools
 	// like ScheduleWakeup / Cron* schedule re-invocations that never fire —
@@ -96,7 +102,20 @@ func mcpConfigPathForAgent(workDir, channelID, agentID string) string {
 	return filepath.Join(workDir, ".loop", "mcp-"+channelID+".json")
 }
 
-// BuildInteractiveClaudeCmd assembles the Claude CLI shell command for interactive
+// ClaudeExitMarkerPrefix prefixes the exit-code line an interactive Claude
+// terminal command emits to its own pty when the Claude process exits. The
+// terminal handler scans live output for this marker to detect a dead Claude
+// process (e.g. OOM-killed) and relaunch it. See claudeExitTrailer.
+const ClaudeExitMarkerPrefix = "__LOOP_CLAUDE_EXIT:"
+
+// claudeExitTrailer is appended to an interactive Claude command so that,
+// once Claude exits for any reason, the shell resets any mouse-tracking
+// modes Claude may have left enabled (a dead TUI can leave xterm mouse
+// reporting on, flooding the shell with unusable input) and reports Claude's
+// exit code via ClaudeExitMarkerPrefix.
+const claudeExitTrailer = `; __lec=$?; printf '\033[?1000l\033[?1002l\033[?1003l\033[?1006l\n` + ClaudeExitMarkerPrefix + `%d\n' "$__lec"`
+
+// buildInteractiveClaudeCmd assembles the Claude CLI shell command for interactive
 // terminal sessions (no --print, --verbose, --output-format flags).
 //
 // When the seccomp gate is enabled, the command is wrapped in
@@ -105,13 +124,19 @@ func mcpConfigPathForAgent(workDir, channelID, agentID string) string {
 // running shell container does NOT inherit the shell's seccomp state (setns(2)
 // is per-namespace, but seccomp is per-process), so without this wrapper a
 // user typing `claude` at the terminal would bypass the gate entirely.
-func BuildInteractiveClaudeCmd(cfg *config.Config, channelID, workDir, sessionID, agentID string, forkSession bool) string {
+func buildInteractiveClaudeCmd(cfg *config.Config, channelID, workDir, sessionID, agentID string, forkSession, continueSession bool) string {
 	mcpConfigPath := mcpConfigPathForAgent(workDir, channelID, agentID)
-	cmd := buildBaseClaudeCmd(cfg, mcpConfigPath, sessionID, agentID, forkSession, cfg.ExtraDirs)
+	cmd := buildBaseClaudeCmd(cfg, mcpConfigPath, sessionID, agentID, forkSession, continueSession, cfg.ExtraDirs)
 	if cfg.Gates.Agentgate.Enabled {
 		cmd = append([]string{"loop", "syscallwrap", "--"}, cmd...)
 	}
-	return "CLAUDE_CODE_NO_FLICKER=1 " + strings.Join(cmd, " ")
+	return "CLAUDE_CODE_NO_FLICKER=1 " + strings.Join(cmd, " ") + claudeExitTrailer
+}
+
+// BuildInteractiveClaudeCmd assembles the Claude CLI shell command for interactive
+// terminal sessions. See buildInteractiveClaudeCmd for details.
+func BuildInteractiveClaudeCmd(cfg *config.Config, channelID, workDir, sessionID, agentID string, forkSession bool) string {
+	return buildInteractiveClaudeCmd(cfg, channelID, workDir, sessionID, agentID, forkSession, false)
 }
 
 // ClaudeCmdBuilder builds the interactive Claude command for terminal sessions.
@@ -158,6 +183,25 @@ func (b *ClaudeCmdBuilder) currentConfig() *config.Config {
 // When agentID is set, a per-agent MCP config is written with --agent-id so
 // the agent can identify itself via the MCP tools.
 func (b *ClaudeCmdBuilder) BuildInteractiveCmd(channelID, dirPath, parentDirPath, sessionID, agentID string, forkSession bool) string {
+	cfg, workDir := b.resolveCmdConfig(channelID, dirPath, parentDirPath, agentID)
+	return buildInteractiveClaudeCmd(cfg, channelID, workDir, sessionID, agentID, forkSession, false)
+}
+
+// BuildContinueCmd returns the interactive Claude shell command that resumes
+// the most recently modified session for the channel's working directory via
+// `claude --continue`, without needing to know its (possibly forked) session
+// id. Used to relaunch a terminal pane's Claude process after it exits
+// unexpectedly (e.g. OOM-killed).
+func (b *ClaudeCmdBuilder) BuildContinueCmd(channelID, dirPath, parentDirPath, agentID string) string {
+	cfg, workDir := b.resolveCmdConfig(channelID, dirPath, parentDirPath, agentID)
+	return buildInteractiveClaudeCmd(cfg, channelID, workDir, "", agentID, false, true)
+}
+
+// resolveCmdConfig loads the effective project config (applying worktree/project
+// overrides) and resolves the working directory for a channel's interactive
+// Claude command, writing the per-agent MCP config file as a side effect when
+// agentID is set.
+func (b *ClaudeCmdBuilder) resolveCmdConfig(channelID, dirPath, parentDirPath, agentID string) (*config.Config, string) {
 	baseCfg := b.currentConfig()
 	workDir := dirPath
 	if workDir == "" {
@@ -174,7 +218,7 @@ func (b *ClaudeCmdBuilder) BuildInteractiveCmd(channelID, dirPath, parentDirPath
 	if agentID != "" {
 		b.writeAgentMCPConfig(cfg, workDir, channelID, agentID)
 	}
-	return BuildInteractiveClaudeCmd(cfg, channelID, workDir, sessionID, agentID, forkSession)
+	return cfg, workDir
 }
 
 // writeAgentMCPConfig writes a per-agent MCP config file with --agent-id.
