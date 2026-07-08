@@ -15,6 +15,7 @@ import (
 
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/bwmarrin/discordgo"
+	"github.com/docker/docker/api/types/events"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 
@@ -247,6 +248,62 @@ func (s *MainSuite) TestServeHappyPathShutdown() {
 
 	m.store.AssertExpectations(s.T())
 	m.bot.AssertExpectations(s.T())
+}
+
+// TestServeWiresOOMWatcherNotice exercises the OOM-watcher wiring in serve():
+// when the docker client implements container.OOMEventStreamer and emits an
+// OOM event for a labeled container, serve() should post a channel notice via
+// orchestrator.StoreSystemNotice (store insert + broadcast).
+func (s *MainSuite) TestServeWiresOOMWatcherNotice() {
+	m := s.setupServeMocks()
+	m.setupHappyBot()
+
+	msgCh := make(chan events.Message, 1)
+	var errChTyped <-chan error
+	// Replace the default setupServeMocks OOMEvents(nil,nil) expectation with
+	// one that returns a live message channel this test can push into —
+	// testify matches same-specificity expectations in registration order, so
+	// the default must be removed rather than shadowed.
+	filtered := m.dockerClient.ExpectedCalls[:0]
+	for _, call := range m.dockerClient.ExpectedCalls {
+		if call.Method != "OOMEvents" {
+			filtered = append(filtered, call)
+		}
+	}
+	m.dockerClient.ExpectedCalls = filtered
+	m.dockerClient.On("OOMEvents", mock.Anything).Return((<-chan events.Message)(msgCh), errChTyped).Maybe()
+
+	notified := make(chan struct{}, 1)
+	m.store.On("GetChannel", mock.Anything, "ch-oom").Return(nil, nil).Run(func(_ mock.Arguments) {
+		notified <- struct{}{}
+	})
+
+	errCh := make(chan error, 1)
+	go func() { errCh <- s.app.serve() }()
+
+	s.waitForServeReady(errCh)
+
+	msgCh <- events.Message{Actor: events.Actor{
+		ID:         "container-oom-1",
+		Attributes: map[string]string{container.ChannelLabelKey: "ch-oom", "name": "loop-agent-ch-oom"},
+	}}
+
+	select {
+	case <-notified:
+	case <-time.After(5 * time.Second):
+		s.T().Fatal("expected OOM notice to reach store.GetChannel")
+	}
+
+	p, err := os.FindProcess(os.Getpid())
+	require.NoError(s.T(), err)
+	require.NoError(s.T(), p.Signal(syscall.SIGINT))
+
+	select {
+	case err := <-errCh:
+		require.NoError(s.T(), err)
+	case <-time.After(5 * time.Second):
+		s.T().Fatal("serve() did not return in time")
+	}
 }
 
 // TestServeResumesPendingMessages exercises the startup-recovery block that
@@ -513,6 +570,8 @@ func (s *MainSuite) TestServeDockerClientCloserCalled() {
 	innerClient := new(mockDockerClient)
 	innerClient.On("LatestClaudeVersion").Return("1.0.0").Maybe()
 	innerClient.On("ListContainerInfos", mock.Anything).Return([]*container.ContainerInfo{}, nil).Maybe()
+	innerClient.On("OOMEvents", mock.Anything).
+		Return((<-chan events.Message)(nil), (<-chan error)(nil)).Maybe()
 	s.app.newDockerClient = func() (container.DockerClient, error) {
 		return &closableDockerClient{
 			mockDockerClient: innerClient,

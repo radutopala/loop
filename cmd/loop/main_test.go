@@ -18,6 +18,8 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
 
+	"github.com/docker/docker/api/types/events"
+
 	"github.com/radutopala/loop/internal/api"
 	"github.com/radutopala/loop/internal/bot"
 
@@ -144,6 +146,23 @@ func (m *mockDockerClient) SetLoopVersion(v string) {}
 func (m *mockDockerClient) LatestClaudeVersion() string {
 	args := m.Called()
 	return args.String(0)
+}
+
+// OOMEvents makes mockDockerClient satisfy container.OOMEventStreamer, so
+// serve() exercises its OOM-watcher wiring path in tests. Not part of
+// container.DockerClient itself — a real docker client optionally
+// implements it, and serve() type-asserts for it.
+func (m *mockDockerClient) OOMEvents(ctx context.Context) (<-chan events.Message, <-chan error) {
+	args := m.Called(ctx)
+	var msgCh <-chan events.Message
+	if v := args.Get(0); v != nil {
+		msgCh = v.(<-chan events.Message)
+	}
+	var errCh <-chan error
+	if v := args.Get(1); v != nil {
+		errCh = v.(<-chan error)
+	}
+	return msgCh, errCh
 }
 
 type mockBot struct {
@@ -463,6 +482,8 @@ func (s *MainSuite) setupServeMocks() *serveMocks {
 	m.store.On("ListPendingChannels", mock.Anything).Return(([]string)(nil), nil).Maybe()
 	m.dockerClient.On("LatestClaudeVersion").Return("1.0.0").Maybe()
 	m.dockerClient.On("ListContainerInfos", mock.Anything).Return([]*container.ContainerInfo{}, nil).Maybe()
+	m.dockerClient.On("OOMEvents", mock.Anything).
+		Return((<-chan events.Message)(nil), (<-chan error)(nil)).Maybe()
 	s.app.configLoad = func() (*config.Config, error) { return m.cfg, nil }
 	s.app.newSQLiteStore = func(_ string) (db.Store, error) { return m.store, nil }
 	s.app.newDiscordBot = func(_, _, _ string, _ *slog.Logger) (orchestrator.Bot, error) { return m.bot, nil }

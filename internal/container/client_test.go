@@ -11,6 +11,7 @@ import (
 
 	"github.com/docker/docker/api/types/build"
 	containertypes "github.com/docker/docker/api/types/container"
+	"github.com/docker/docker/api/types/events"
 	"github.com/docker/docker/api/types/image"
 	"github.com/docker/docker/api/types/network"
 	"github.com/docker/docker/pkg/stdcopy"
@@ -118,6 +119,19 @@ func (m *mockDockerAPI) BuildCachePrune(ctx context.Context, opts build.CachePru
 	return nil, args.Error(1)
 }
 
+func (m *mockDockerAPI) Events(ctx context.Context, options events.ListOptions) (<-chan events.Message, <-chan error) {
+	args := m.Called(ctx, options)
+	var msgCh <-chan events.Message
+	if v := args.Get(0); v != nil {
+		msgCh = v.(<-chan events.Message)
+	}
+	var errCh <-chan error
+	if v := args.Get(1); v != nil {
+		errCh = v.(<-chan error)
+	}
+	return msgCh, errCh
+}
+
 func (m *mockDockerAPI) Close() error {
 	args := m.Called()
 	return args.Error(0)
@@ -191,6 +205,21 @@ func (s *ClientSuite) TestCloseError() {
 	err := s.client.Close()
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "close failed")
+	s.api.AssertExpectations(s.T())
+}
+
+func (s *ClientSuite) TestOOMEvents() {
+	msgCh := make(chan events.Message, 1)
+	errCh := make(chan error, 1)
+	s.api.On("Events", mock.Anything, mock.MatchedBy(func(opts events.ListOptions) bool {
+		return opts.Filters.ExactMatch("type", string(events.ContainerEventType)) &&
+			opts.Filters.ExactMatch("event", "oom") &&
+			opts.Filters.ExactMatch("label", "app="+ContainerLabel)
+	})).Return((<-chan events.Message)(msgCh), (<-chan error)(errCh))
+
+	gotMsgCh, gotErrCh := s.client.OOMEvents(context.Background())
+	require.NotNil(s.T(), gotMsgCh)
+	require.NotNil(s.T(), gotErrCh)
 	s.api.AssertExpectations(s.T())
 }
 

@@ -305,3 +305,180 @@ func (s *TerminalHandlerSuite) TestDisableAutoAcceptStopsTrigger() {
 	time.Sleep(700 * time.Millisecond)
 	s.terminal.AssertNotCalled(s.T(), "SendInput", mock.Anything, mock.Anything)
 }
+
+// --- Claude exit-marker relaunch tests ---
+
+func (s *TerminalHandlerSuite) newRelaunchConn(builder *MockInteractiveCmdBuilder) *terminalWSConn {
+	tc := &terminalWSConn{
+		manager:    s.terminal,
+		cmdBuilder: builder,
+		logger:     slog.Default(),
+	}
+	tc.setSessionID("sid-1")
+	return tc
+}
+
+// TestScanClaudeExitRelaunchesOnAbnormalExit proves an abnormal exit code
+// triggers a --continue relaunch of the interactive Claude command.
+func (s *TerminalHandlerSuite) TestScanClaudeExitRelaunchesOnAbnormalExit() {
+	builder := new(MockInteractiveCmdBuilder)
+	builder.On("BuildContinueCmd", "ch-1", "/work", "", "agent-0").Return("claude --continue")
+	relaunched := onSendInputCalled(s.terminal, "sid-1", []byte("claude --continue\n"))
+
+	tc := s.newRelaunchConn(builder)
+	tc.enableRelaunch("ch-1", "/work", "", "agent-0")
+
+	tc.scanClaudeExit([]byte("__LOOP_CLAUDE_EXIT:137\n"))
+
+	select {
+	case <-relaunched:
+	case <-time.After(3 * time.Second):
+		s.T().Fatal("timed out waiting for relaunch SendInput")
+	}
+	builder.AssertExpectations(s.T())
+}
+
+// TestScanClaudeExitCleanExitDoesNotRelaunch proves exit code 0 (deliberate
+// quit) disables relaunching instead of firing it.
+func (s *TerminalHandlerSuite) TestScanClaudeExitCleanExitDoesNotRelaunch() {
+	builder := new(MockInteractiveCmdBuilder)
+	tc := s.newRelaunchConn(builder)
+	tc.enableRelaunch("ch-1", "/work", "", "agent-0")
+
+	tc.scanClaudeExit([]byte("__LOOP_CLAUDE_EXIT:0\n"))
+	time.Sleep(1200 * time.Millisecond)
+
+	s.terminal.AssertNotCalled(s.T(), "SendInput", "sid-1", []byte("claude --continue\n"))
+	builder.AssertNotCalled(s.T(), "BuildContinueCmd", mock.Anything, mock.Anything, mock.Anything, mock.Anything)
+	// A subsequent abnormal marker must not relaunch either — budget is zeroed.
+	tc.scanClaudeExit([]byte("__LOOP_CLAUDE_EXIT:1\n"))
+	time.Sleep(1200 * time.Millisecond)
+	s.terminal.AssertNotCalled(s.T(), "SendInput", "sid-1", []byte("claude --continue\n"))
+}
+
+// TestScanClaudeExitDisabledByDefault proves relaunching is a no-op when
+// enableRelaunch was never called (e.g. explicit cmd / sessions-panel panes).
+func (s *TerminalHandlerSuite) TestScanClaudeExitDisabledByDefault() {
+	builder := new(MockInteractiveCmdBuilder)
+	tc := s.newRelaunchConn(builder)
+
+	tc.scanClaudeExit([]byte("__LOOP_CLAUDE_EXIT:137\n"))
+	time.Sleep(1200 * time.Millisecond)
+
+	s.terminal.AssertNotCalled(s.T(), "SendInput", mock.Anything, mock.Anything)
+	builder.AssertNotCalled(s.T(), "BuildContinueCmd", mock.Anything, mock.Anything, mock.Anything, mock.Anything)
+}
+
+// TestScanClaudeExitBudgetExhausted proves relaunching stops after
+// maxClaudeRelaunches abnormal exits in a row.
+func (s *TerminalHandlerSuite) TestScanClaudeExitBudgetExhausted() {
+	builder := new(MockInteractiveCmdBuilder)
+	builder.On("BuildContinueCmd", "ch-1", "/work", "", "agent-0").Return("claude --continue")
+	s.terminal.On("SendInput", "sid-1", []byte("claude --continue\n")).Return(nil)
+
+	tc := s.newRelaunchConn(builder)
+	tc.enableRelaunch("ch-1", "/work", "", "agent-0")
+	require.Equal(s.T(), maxClaudeRelaunches, tc.relaunchRemaining)
+
+	for i := 0; i < maxClaudeRelaunches; i++ {
+		tc.scanClaudeExit([]byte("__LOOP_CLAUDE_EXIT:137\n"))
+	}
+	time.Sleep(1200 * time.Millisecond)
+	s.terminal.AssertNumberOfCalls(s.T(), "SendInput", maxClaudeRelaunches)
+
+	// One more abnormal exit beyond the budget must not relaunch again.
+	tc.scanClaudeExit([]byte("__LOOP_CLAUDE_EXIT:137\n"))
+	time.Sleep(1200 * time.Millisecond)
+	s.terminal.AssertNumberOfCalls(s.T(), "SendInput", maxClaudeRelaunches)
+}
+
+// TestScanClaudeExitNoMarkerIsNoop proves output without the exit marker is
+// ignored.
+func (s *TerminalHandlerSuite) TestScanClaudeExitNoMarkerIsNoop() {
+	builder := new(MockInteractiveCmdBuilder)
+	tc := s.newRelaunchConn(builder)
+	tc.enableRelaunch("ch-1", "/work", "", "agent-0")
+
+	tc.scanClaudeExit([]byte("some ordinary output\n"))
+	time.Sleep(200 * time.Millisecond)
+
+	s.terminal.AssertNotCalled(s.T(), "SendInput", mock.Anything, mock.Anything)
+}
+
+// TestScanClaudeExitSkipsIfSessionMovedOn proves a relaunch scheduled before
+// the pane detached/stopped/closed does not fire into a session the client
+// no longer owns.
+func (s *TerminalHandlerSuite) TestScanClaudeExitSkipsIfSessionMovedOn() {
+	builder := new(MockInteractiveCmdBuilder)
+	builder.On("BuildContinueCmd", "ch-1", "/work", "", "agent-0").Return("claude --continue").Maybe()
+
+	tc := s.newRelaunchConn(builder)
+	tc.enableRelaunch("ch-1", "/work", "", "agent-0")
+
+	tc.scanClaudeExit([]byte("__LOOP_CLAUDE_EXIT:137\n"))
+	// Simulate the pane moving to a new session before the 1s relaunch delay fires.
+	tc.setSessionID("sid-2")
+	time.Sleep(1200 * time.Millisecond)
+
+	s.terminal.AssertNotCalled(s.T(), "SendInput", "sid-1", mock.Anything)
+}
+
+// TestScanClaudeExitRelaunchSendError proves a SendInput failure during
+// relaunch is logged rather than panicking.
+func (s *TerminalHandlerSuite) TestScanClaudeExitRelaunchSendError() {
+	builder := new(MockInteractiveCmdBuilder)
+	builder.On("BuildContinueCmd", "ch-1", "/work", "", "agent-0").Return("claude --continue")
+	sendCh := make(chan struct{}, 1)
+	s.terminal.On("SendInput", "sid-1", []byte("claude --continue\n")).
+		Return(errors.New("session gone")).
+		Run(func(_ mock.Arguments) { sendCh <- struct{}{} })
+
+	tc := s.newRelaunchConn(builder)
+	tc.enableRelaunch("ch-1", "/work", "", "agent-0")
+
+	tc.scanClaudeExit([]byte("__LOOP_CLAUDE_EXIT:137\n"))
+
+	select {
+	case <-sendCh:
+	case <-time.After(3 * time.Second):
+		s.T().Fatal("timed out waiting for relaunch SendInput")
+	}
+	builder.AssertExpectations(s.T())
+}
+
+// TestDisableRelaunchClearsState proves detach/stop/close paths (via
+// disableRelaunch) prevent a later marker from relaunching.
+func (s *TerminalHandlerSuite) TestDisableRelaunchClearsState() {
+	builder := new(MockInteractiveCmdBuilder)
+	tc := s.newRelaunchConn(builder)
+	tc.enableRelaunch("ch-1", "/work", "", "agent-0")
+	tc.disableRelaunch()
+
+	tc.scanClaudeExit([]byte("__LOOP_CLAUDE_EXIT:137\n"))
+	time.Sleep(1200 * time.Millisecond)
+
+	s.terminal.AssertNotCalled(s.T(), "SendInput", mock.Anything, mock.Anything)
+	builder.AssertNotCalled(s.T(), "BuildContinueCmd", mock.Anything, mock.Anything, mock.Anything, mock.Anything)
+}
+
+// TestScanClaudeExitNoMarkerIsNoopForNonNumeric proves the marker regex
+// requires digits, so trailing non-numeric junk after the prefix is not
+// treated as an exit code.
+func (s *TerminalHandlerSuite) TestScanClaudeExitNoMarkerIsNoopForNonNumeric() {
+	require.Nil(s.T(), claudeExitMarkerRe.FindSubmatch([]byte("__LOOP_CLAUDE_EXIT:abc")))
+}
+
+// TestScanClaudeExitOverflowingCodeIsNoop guards the strconv.Atoi error path:
+// a numeric-looking but int-overflowing exit code must be ignored rather than
+// panicking or relaunching.
+func (s *TerminalHandlerSuite) TestScanClaudeExitOverflowingCodeIsNoop() {
+	builder := new(MockInteractiveCmdBuilder)
+	tc := s.newRelaunchConn(builder)
+	tc.enableRelaunch("ch-1", "/work", "", "agent-0")
+
+	tc.scanClaudeExit([]byte("__LOOP_CLAUDE_EXIT:99999999999999999999999\n"))
+	time.Sleep(200 * time.Millisecond)
+
+	s.terminal.AssertNotCalled(s.T(), "SendInput", mock.Anything, mock.Anything)
+	builder.AssertNotCalled(s.T(), "BuildContinueCmd", mock.Anything, mock.Anything, mock.Anything, mock.Anything)
+}

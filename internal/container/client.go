@@ -13,6 +13,7 @@ import (
 
 	"github.com/docker/docker/api/types/build"
 	containertypes "github.com/docker/docker/api/types/container"
+	"github.com/docker/docker/api/types/events"
 	"github.com/docker/docker/api/types/filters"
 	"github.com/docker/docker/api/types/image"
 	"github.com/docker/docker/api/types/network"
@@ -41,6 +42,7 @@ type dockerAPI interface {
 	NetworkCreate(ctx context.Context, name string, options network.CreateOptions) (network.CreateResponse, error)
 	NetworkRemove(ctx context.Context, networkID string) error
 	BuildCachePrune(ctx context.Context, opts build.CachePruneOptions) (*build.CachePruneReport, error)
+	Events(ctx context.Context, options events.ListOptions) (<-chan events.Message, <-chan error)
 	Close() error
 }
 
@@ -535,6 +537,29 @@ func (c *Client) ListContainerInfos(ctx context.Context) ([]*ContainerInfo, erro
 		})
 	}
 	return result, nil
+}
+
+// OOMEventStreamer is implemented by container clients that can stream
+// container out-of-memory events. Used to optionally wire up OOMWatcher —
+// a docker client that doesn't implement it (e.g. a minimal test double)
+// simply skips OOM notifications rather than requiring every caller to
+// implement Events.
+type OOMEventStreamer interface {
+	OOMEvents(ctx context.Context) (<-chan events.Message, <-chan error)
+}
+
+// OOMEvents streams Docker "container oom" events for loop-managed agent
+// containers (labeled app=loop-agent). The kernel emits this event when a
+// process inside the container's cgroup is killed for exceeding its memory
+// limit, even if the container itself keeps running (e.g. only the Claude
+// process was reaped) — so, unlike a container "die" event, this is the only
+// signal available for that case.
+func (c *Client) OOMEvents(ctx context.Context) (<-chan events.Message, <-chan error) {
+	f := filters.NewArgs()
+	f.Add("type", string(events.ContainerEventType))
+	f.Add("event", "oom")
+	f.Add("label", "app="+ContainerLabel)
+	return c.api.Events(ctx, events.ListOptions{Filters: f})
 }
 
 // dockerStateToStatus maps Docker's container state string to a ContainerStatus.
