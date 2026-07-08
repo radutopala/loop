@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { Channel, ChannelUpdatedData, ImageBuildStatusData, ImageUpdateAvailableData, UpdateStatus, WSEvent } from "./types";
 import { fonts } from "./theme";
 import { ThemeProvider, useTheme, DEFAULT_FONT_SIZES } from "./ThemeContext";
-import { createChannel, createThread, createWorktreeThread, deleteChannel, deleteThread, ensureChannel, fetchChannels, fetchDiff, getImageStatus, importWorktree, initApiUrl, rebuildImage, setChannelLocked } from "./api/loopApi";
+import { createChannel, createThread, createWorktreeThread, deleteChannel, deleteThread, ensureChannel, fetchChannels, fetchDiff, getImageStatus, importWorktree, initApiUrl, moveWorktree, rebuildImage, renameChannel, setChannelLocked } from "./api/loopApi";
 import { fetchGlobalConfig } from "./api/configApi";
 import { Sidebar } from "./components/sidebar/Sidebar";
 import { MarkdownFilePanel } from "./components/panels/FilePanel";
@@ -446,6 +446,25 @@ function AppInner() {
     [channels, loadChannels, selectedId],
   );
 
+  const handleRename = useCallback(
+    async (id: string, newName: string, isWorktree: boolean) => {
+      setError(null);
+      try {
+        if (isWorktree) {
+          await moveWorktree(id, newName);
+        } else {
+          await renameChannel(id, newName);
+        }
+        await loadChannels();
+      } catch (err) {
+        const message = err instanceof Error ? err.message : "Failed to rename";
+        setError(message);
+        console.error("rename failed:", err);
+      }
+    },
+    [loadChannels],
+  );
+
   const handleSetLocked = useCallback(
     async (id: string, locked: boolean) => {
       setError(null);
@@ -533,6 +552,7 @@ function AppInner() {
         onCreateThread={handleCreateThread}
         onCreateWorktree={handleCreateWorktree}
         onDeleteThread={handleDelete}
+        onRenameThread={handleRename}
         onSetLocked={handleSetLocked}
         onDeleteBatch={handleDeleteBatch}
         onOpenSettings={() => togglePanel("settings")}

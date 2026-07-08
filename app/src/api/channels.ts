@@ -106,6 +106,36 @@ export async function setWorktreeLocked(channelId: string, worktreePath: string,
   if (!res.ok) throw new Error(`Failed to update worktree lock: ${res.statusText}`);
 }
 
+/** Reads the response body as an error message, falling back to statusText. */
+async function errorText(res: Response): Promise<string> {
+  const body = (await res.text().catch(() => "")).trim();
+  return body || res.statusText;
+}
+
+/** Rename a thread/channel's display name (no side effects on disk). */
+export async function renameChannel(channelId: string, name: string): Promise<void> {
+  const res = await fetch(`${getApiUrl()}/api/channels/${channelId}/rename`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name }),
+  });
+  if (!res.ok) throw new Error(`Failed to rename thread: ${await errorText(res)}`);
+}
+
+/**
+ * Rename a worktree thread. Unlike renameChannel this also moves the worktree
+ * directory and renames its git branch (to worktree/<newName>). The backend
+ * rejects the move while the channel has an active run.
+ */
+export async function moveWorktree(channelId: string, newName: string): Promise<void> {
+  const res = await fetch(`${getApiUrl()}/api/worktrees/move`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ channel_id: channelId, new_name: newName }),
+  });
+  if (!res.ok) throw new Error(`Failed to rename worktree: ${await errorText(res)}`);
+}
+
 export async function deleteChannel(channelId: string): Promise<void> {
   const res = await fetch(`${getApiUrl()}/api/channels/${channelId}`, {
     method: "DELETE",

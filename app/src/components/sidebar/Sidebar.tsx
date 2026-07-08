@@ -6,6 +6,7 @@ import type { MenuItem } from "../shared/ContextMenu";
 import { SidebarHeader } from "./SidebarHeader";
 import { ChannelList } from "./ChannelList";
 import { SidebarFooter } from "./SidebarFooter";
+import { RenameThreadDialog } from "./RenameThreadDialog";
 import { storageGetJSON, storageSetJSON } from "../../utils/storage";
 
 const MIN_WIDTH = 180;
@@ -58,6 +59,7 @@ interface SidebarProps {
   onCreateThread: (parentId: string, name: string) => void;
   onCreateWorktree?: (channelId: string, branch: string) => void;
   onDeleteThread: (threadId: string) => void;
+  onRenameThread?: (threadId: string, newName: string, isWorktree: boolean) => void;
   onSetLocked?: (channelId: string, locked: boolean) => void;
   onDeleteBatch?: (ids: string[]) => void;
   onOpenDirectory?: (dirPath: string) => void;
@@ -97,6 +99,7 @@ export function Sidebar({
   onCreateThread,
   onCreateWorktree,
   onDeleteThread,
+  onRenameThread,
   onSetLocked,
   onDeleteBatch,
   onOpenDirectory,
@@ -125,6 +128,7 @@ export function Sidebar({
   const [width, setWidth] = useState(DEFAULT_WIDTH);
   const [resizing, setResizing] = useState(false);
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
+  const [renaming, setRenaming] = useState<Channel | null>(null);
   const [channelOrder, setChannelOrder] = useState<string[]>(loadOrder);
   const [dragOverId, setDragOverId] = useState<string | null>(null);
   const [threadOrder, setThreadOrder] = useState<Record<string, string[]>>(loadThreadOrder);
@@ -254,10 +258,19 @@ export function Sidebar({
           onClick: () => navigator.clipboard.writeText(channel.id),
         },
       ];
+      // Rename is offered for threads (incl. worktree threads) only — never the
+      // DM, and not while locked (mirrors Delete: unlock first to confirm intent).
+      if (isThread && !isDm && !channel.locked && onRenameThread) {
+        items.push({
+          label: channel.worktree ? "Rename Worktree" : "Rename Thread",
+          separator: true,
+          onClick: () => setRenaming(channel),
+        });
+      }
       if (!isDm && onSetLocked) {
         items.push({
           label: channel.locked ? "Unlock" : "Lock",
-          separator: true,
+          separator: !(isThread && !channel.locked && onRenameThread),
           onClick: () => onSetLocked(channel.id, !channel.locked),
         });
       }
@@ -274,7 +287,7 @@ export function Sidebar({
       }
       setContextMenu({ x: e.clientX, y: e.clientY, items });
     },
-    [onDeleteThread, onSetLocked],
+    [onDeleteThread, onRenameThread, onSetLocked],
   );
 
   const handleMouseDown = useCallback(
@@ -507,6 +520,18 @@ export function Sidebar({
           y={contextMenu.y}
           items={contextMenu.items}
           onClose={() => setContextMenu(null)}
+        />
+      )}
+
+      {renaming && (
+        <RenameThreadDialog
+          currentName={renaming.name}
+          isWorktree={!!renaming.worktree}
+          onCancel={() => setRenaming(null)}
+          onSubmit={(newName) => {
+            onRenameThread?.(renaming.id, newName, !!renaming.worktree);
+            setRenaming(null);
+          }}
         />
       )}
 
