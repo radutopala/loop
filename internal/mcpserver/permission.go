@@ -26,22 +26,25 @@ func (s *Server) handlePermissionPrompt(ctx context.Context, _ *mcp.CallToolRequ
 	toolName, _ := input["tool_name"].(string)
 	s.logger.Info("mcp tool call", "tool", "permission_prompt", "for_tool", toolName)
 
-	// AskUserQuestion is special: Loop surfaces its own answer card on the host
-	// and cancels the run the instant it sees the tool_use in the stream (see
-	// orchestrator: markAskedChannel + runCancel). If we allowed the tool here,
-	// Claude Code would execute it natively and — with no interactive TTY —
-	// immediately resolve it as "The user did not answer the questions", dumping
-	// a bogus tool_result into the transcript and racing Loop's card. Block
-	// instead so the native tool never resolves; Loop tears the container down
-	// (which cancels this ctx) while we wait. Safe because Loop unconditionally
-	// cancels the run on an AskUserQuestion tool_use.
-	if toolName == "AskUserQuestion" {
+	// AskUserQuestion and ExitPlanMode are special: Loop surfaces its own card
+	// on the host (an answer card / a plan-review card) and cancels the run the
+	// instant it sees the tool_use in the stream (see orchestrator:
+	// markAskedChannel / markPlannedChannel + runCancel). If we allowed them
+	// here, Claude Code would execute them natively and — with no interactive
+	// TTY — immediately self-resolve: AskUserQuestion as "The user did not
+	// answer the questions", and ExitPlanMode as "approved your plan, you can
+	// now start coding" (which makes the agent execute the plan before the user
+	// has reviewed it). Block instead so the native tool never resolves; Loop
+	// tears the container down (which cancels this ctx) while we wait. Safe
+	// because Loop cancels the run on both tool_uses (see messages.go). Note
+	// EnterPlanMode is NOT blocked — it legitimately enters plan mode and Loop
+	// does not cancel it.
+	if toolName == "AskUserQuestion" || toolName == "ExitPlanMode" {
 		<-ctx.Done()
 		return nil, nil, ctx.Err()
 	}
 
-	// Everything else (EnterPlanMode, ExitPlanMode, …) is allowed to proceed —
-	// Loop does not unconditionally cancel those, so blocking would hang them.
+	// Everything else (EnterPlanMode, …) is allowed to proceed.
 	// Echo the original tool input straight back as the approved input.
 	updated := input["input"]
 	if updated == nil {
