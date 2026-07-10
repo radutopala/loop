@@ -170,8 +170,8 @@ func (s *MCPServerSuite) TestGetReadmeSuccess() {
 // the input unchanged for non-AskUserQuestion tools.
 func (s *MCPServerSuite) TestPermissionPromptAllows() {
 	text, isError := s.callTool("permission_prompt", map[string]any{
-		"tool_name":   "ExitPlanMode",
-		"input":       map[string]any{"plan": "do the thing"},
+		"tool_name":   "EnterPlanMode",
+		"input":       map[string]any{"reason": "planning"},
 		"tool_use_id": "toolu_123",
 	})
 	require.False(s.T(), isError)
@@ -179,19 +179,19 @@ func (s *MCPServerSuite) TestPermissionPromptAllows() {
 	var decision struct {
 		Behavior     string `json:"behavior"`
 		UpdatedInput struct {
-			Plan string `json:"plan"`
+			Reason string `json:"reason"`
 		} `json:"updatedInput"`
 	}
 	require.NoError(s.T(), json.Unmarshal([]byte(text), &decision))
 	require.Equal(s.T(), "allow", decision.Behavior)
-	require.Equal(s.T(), "do the thing", decision.UpdatedInput.Plan)
+	require.Equal(s.T(), "planning", decision.UpdatedInput.Reason)
 }
 
 // TestPermissionPromptMissingInput defaults updatedInput to an empty object
 // when no input field is supplied.
 func (s *MCPServerSuite) TestPermissionPromptMissingInput() {
 	text, isError := s.callTool("permission_prompt", map[string]any{
-		"tool_name": "ExitPlanMode",
+		"tool_name": "EnterPlanMode",
 	})
 	require.False(s.T(), isError)
 
@@ -201,18 +201,22 @@ func (s *MCPServerSuite) TestPermissionPromptMissingInput() {
 	require.Equal(s.T(), map[string]any{}, decision["updatedInput"])
 }
 
-// TestPermissionPromptBlocksAskUserQuestion verifies the tool does NOT allow
-// AskUserQuestion (which would let Claude natively self-resolve it as "user did
-// not answer"); it blocks until the run's context is cancelled, at which point
-// it returns the context error and no allow decision.
-func (s *MCPServerSuite) TestPermissionPromptBlocksAskUserQuestion() {
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel() // Simulate Loop tearing the container down.
+// TestPermissionPromptBlocksInteractiveTools verifies the tool does NOT allow
+// AskUserQuestion or ExitPlanMode (which would let Claude natively self-resolve
+// them — "user did not answer" / "approved your plan"); it blocks until the
+// run's context is cancelled, then returns the context error and no decision.
+func (s *MCPServerSuite) TestPermissionPromptBlocksInteractiveTools() {
+	for _, tool := range []string{"AskUserQuestion", "ExitPlanMode"} {
+		s.Run(tool, func() {
+			ctx, cancel := context.WithCancel(context.Background())
+			cancel() // Simulate Loop tearing the container down.
 
-	res, _, err := s.srv.handlePermissionPrompt(ctx, nil, map[string]any{
-		"tool_name": "AskUserQuestion",
-		"input":     map[string]any{"questions": []any{}},
-	})
-	require.ErrorIs(s.T(), err, context.Canceled)
-	require.Nil(s.T(), res)
+			res, _, err := s.srv.handlePermissionPrompt(ctx, nil, map[string]any{
+				"tool_name": tool,
+				"input":     map[string]any{},
+			})
+			require.ErrorIs(s.T(), err, context.Canceled)
+			require.Nil(s.T(), res)
+		})
+	}
 }

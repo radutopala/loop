@@ -465,14 +465,17 @@ func (o *Orchestrator) executeAgentRun(ctx context.Context, msg *bot.IncomingMes
 					// to claim any queued sibling messages).
 					o.markPlannedChannel(msg.ChannelID, data)
 					o.events.BroadcastExitPlan(msg.ChannelID, data)
-					// User picked the plan pill → the prompt-injected plan
-					// system message already halts the model at ExitPlanMode.
-					// Otherwise the agent volunteered plan mode mid-turn, so
-					// stop the run before subsequent tools execute.
-					if !req.PlanMode {
-						selfInitiatedPlan.Store(true)
-						runCancel()
-					}
+					// Stop the run so the plan-review card is the end-of-turn
+					// artifact and the agent cannot execute the plan before the
+					// user approves it. This must be unconditional: the
+					// permission_prompt tool blocks ExitPlanMode (so the native
+					// tool can't self-resolve as "approved"), which means the
+					// run no longer halts on its own even in plan-pill mode —
+					// without this cancel the container would hang at the
+					// permission gate until it times out. The user's approval
+					// arrives via /plan/resolve as a fresh continuation.
+					selfInitiatedPlan.Store(true)
+					runCancel()
 				}
 			}
 			if name == "TaskUpdate" {
