@@ -65,6 +65,22 @@ func (m *MockStore) UpdateChannelDirPath(ctx context.Context, channelID, dirPath
 	return m.Called(ctx, channelID, dirPath).Error(0)
 }
 
+func (m *MockStore) UpsertPausedChannel(ctx context.Context, p *db.PausedChannel) error {
+	return m.Called(ctx, p).Error(0)
+}
+
+func (m *MockStore) DeletePausedChannel(ctx context.Context, channelID, kind string) error {
+	return m.Called(ctx, channelID, kind).Error(0)
+}
+
+func (m *MockStore) ListPausedChannels(ctx context.Context) ([]*db.PausedChannel, error) {
+	args := m.Called(ctx)
+	if v := args.Get(0); v != nil {
+		return v.([]*db.PausedChannel), args.Error(1)
+	}
+	return nil, args.Error(1)
+}
+
 func (m *MockStore) InsertMessage(ctx context.Context, msg *db.Message) error {
 	return m.Called(ctx, msg).Error(0)
 }

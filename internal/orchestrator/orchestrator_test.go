@@ -872,8 +872,10 @@ func (s *OrchestratorSuite) TestDrainChannelSkipsWhenPlanned() {
 	// call panics with "unexpected call".
 	orch := New(store, s.bot, s.runner, s.scheduler, slog.New(slog.NewTextHandler(io.Discard, nil)), config.Config{}, nil)
 	orch.SetSynchronousDrain()
+	store.On("UpsertPausedChannel", mock.Anything, mock.Anything).Return(nil)
+	store.On("DeletePausedChannel", mock.Anything, "planned-ch", db.PausedKindPlan).Return(nil)
 
-	orch.markPlannedChannel("planned-ch", events.ExitPlanModeEventData{})
+	orch.markPlannedChannel(context.Background(), "planned-ch", events.ExitPlanModeEventData{})
 	require.True(s.T(), orch.IsChannelPlanned("planned-ch"))
 
 	orch.ResumeChannel(context.Background(), "planned-ch")
@@ -895,8 +897,10 @@ func (s *OrchestratorSuite) TestDrainChannelSkipsWhenAsked() {
 	store := new(testutil.MockStore)
 	orch := New(store, s.bot, s.runner, s.scheduler, slog.New(slog.NewTextHandler(io.Discard, nil)), config.Config{}, nil)
 	orch.SetSynchronousDrain()
+	store.On("UpsertPausedChannel", mock.Anything, mock.Anything).Return(nil)
+	store.On("DeletePausedChannel", mock.Anything, "asked-ch", db.PausedKindAsk).Return(nil)
 
-	orch.markAskedChannel("asked-ch", events.AskUserQuestionEventData{})
+	orch.markAskedChannel(context.Background(), "asked-ch", "", events.AskUserQuestionEventData{})
 	require.True(s.T(), orch.IsChannelAsked("asked-ch"))
 
 	orch.ResumeChannel(context.Background(), "asked-ch")
@@ -978,10 +982,11 @@ func (s *OrchestratorSuite) TestListAskedChannelsSnapshotsEntries() {
 	orch := New(s.store, s.bot, s.runner, s.scheduler, slog.New(slog.NewTextHandler(io.Discard, nil)), config.Config{}, nil)
 	require.Empty(s.T(), orch.ListAskedChannels())
 
+	s.store.On("UpsertPausedChannel", mock.Anything, mock.Anything).Return(nil).Maybe()
 	q1 := events.AskUserQuestionEventData{Questions: []events.AskUserQuestion{{Question: "pick A or B"}}}
 	q2 := events.AskUserQuestionEventData{Questions: []events.AskUserQuestion{{Question: "pick C or D"}}}
-	orch.markAskedChannel("ch-1", q1)
-	orch.markAskedChannel("ch-2", q2)
+	orch.markAskedChannel(context.Background(), "ch-1", "", q1)
+	orch.markAskedChannel(context.Background(), "ch-2", "plan", q2)
 
 	entries := orch.ListAskedChannels()
 	require.Len(s.T(), entries, 2)
@@ -1002,8 +1007,9 @@ func (s *OrchestratorSuite) TestListAskedChannelsSnapshotsEntries() {
 func (s *OrchestratorSuite) TestListAskedChannelsIgnoresMalformedEntries() {
 	orch := New(s.store, s.bot, s.runner, s.scheduler, slog.New(slog.NewTextHandler(io.Discard, nil)), config.Config{}, nil)
 
+	s.store.On("UpsertPausedChannel", mock.Anything, mock.Anything).Return(nil).Maybe()
 	// Valid entry.
-	orch.markAskedChannel("ch-valid", events.AskUserQuestionEventData{Questions: []events.AskUserQuestion{{Question: "q"}}})
+	orch.markAskedChannel(context.Background(), "ch-valid", "", events.AskUserQuestionEventData{Questions: []events.AskUserQuestion{{Question: "q"}}})
 	// Wrong-typed value (string instead of AskUserQuestionEventData).
 	orch.askedChannels.Store("ch-bad-val", "not the right type")
 	// Wrong-typed key (int instead of string).
@@ -1018,10 +1024,11 @@ func (s *OrchestratorSuite) TestListPlannedChannelsSnapshotsEntries() {
 	orch := New(s.store, s.bot, s.runner, s.scheduler, slog.New(slog.NewTextHandler(io.Discard, nil)), config.Config{}, nil)
 	require.Empty(s.T(), orch.ListPlannedChannels())
 
+	s.store.On("UpsertPausedChannel", mock.Anything, mock.Anything).Return(nil).Maybe()
 	p1 := events.ExitPlanModeEventData{Plan: "# Plan one"}
 	p2 := events.ExitPlanModeEventData{Plan: "# Plan two", PlanFilePath: "/tmp/plan.md"}
-	orch.markPlannedChannel("ch-1", p1)
-	orch.markPlannedChannel("ch-2", p2)
+	orch.markPlannedChannel(context.Background(), "ch-1", p1)
+	orch.markPlannedChannel(context.Background(), "ch-2", p2)
 
 	entries := orch.ListPlannedChannels()
 	require.Len(s.T(), entries, 2)
@@ -1038,8 +1045,9 @@ func (s *OrchestratorSuite) TestListPlannedChannelsSnapshotsEntries() {
 func (s *OrchestratorSuite) TestListPlannedChannelsIgnoresMalformedEntries() {
 	orch := New(s.store, s.bot, s.runner, s.scheduler, slog.New(slog.NewTextHandler(io.Discard, nil)), config.Config{}, nil)
 
+	s.store.On("UpsertPausedChannel", mock.Anything, mock.Anything).Return(nil).Maybe()
 	// Valid entry.
-	orch.markPlannedChannel("ch-valid", events.ExitPlanModeEventData{Plan: "p"})
+	orch.markPlannedChannel(context.Background(), "ch-valid", events.ExitPlanModeEventData{Plan: "p"})
 	// Wrong-typed value (string instead of ExitPlanModeEventData).
 	orch.plannedChannels.Store("ch-bad-val", "not the right type")
 	// Wrong-typed key (int instead of string).
@@ -1048,4 +1056,69 @@ func (s *OrchestratorSuite) TestListPlannedChannelsIgnoresMalformedEntries() {
 	entries := orch.ListPlannedChannels()
 	require.Len(s.T(), entries, 1)
 	require.Equal(s.T(), "ch-valid", entries[0].ChannelID)
+}
+
+// TestRestoreParkedChannels verifies persisted ask/plan parks are reloaded
+// into the in-memory maps at startup — including the ask's composer mode —
+// and that malformed payloads are skipped rather than fatal.
+func (s *OrchestratorSuite) TestRestoreParkedChannels() {
+	store := new(testutil.MockStore)
+	orch := New(store, s.bot, s.runner, s.scheduler, slog.New(slog.NewTextHandler(io.Discard, nil)), config.Config{}, nil)
+
+	store.On("ListPausedChannels", mock.Anything).Return([]*db.PausedChannel{
+		{ChannelID: "ch-ask", Kind: db.PausedKindAsk, Mode: "plan", Data: `{"questions":[{"question":"q","header":"H"}]}`},
+		{ChannelID: "ch-plan", Kind: db.PausedKindPlan, Data: `{"plan":"# P"}`},
+		{ChannelID: "ch-bad-ask", Kind: db.PausedKindAsk, Data: `not json`},
+		{ChannelID: "ch-bad-plan", Kind: db.PausedKindPlan, Data: `not json`},
+		{ChannelID: "ch-unknown", Kind: "other", Data: `{}`},
+	}, nil)
+
+	orch.RestoreParkedChannels(context.Background())
+
+	require.True(s.T(), orch.IsChannelAsked("ch-ask"))
+	require.Equal(s.T(), "plan", orch.AskedChannelMode("ch-ask"))
+	require.True(s.T(), orch.IsChannelPlanned("ch-plan"))
+	require.False(s.T(), orch.IsChannelAsked("ch-bad-ask"))
+	require.False(s.T(), orch.IsChannelPlanned("ch-bad-plan"))
+	require.False(s.T(), orch.IsChannelAsked("ch-unknown"))
+	require.False(s.T(), orch.IsChannelPlanned("ch-unknown"))
+	store.AssertExpectations(s.T())
+}
+
+func (s *OrchestratorSuite) TestRestoreParkedChannelsListError() {
+	store := new(testutil.MockStore)
+	orch := New(store, s.bot, s.runner, s.scheduler, slog.New(slog.NewTextHandler(io.Discard, nil)), config.Config{}, nil)
+	store.On("ListPausedChannels", mock.Anything).Return(nil, errors.New("db closed"))
+
+	orch.RestoreParkedChannels(context.Background()) // must not panic
+	require.Empty(s.T(), orch.ListAskedChannels())
+	require.Empty(s.T(), orch.ListPlannedChannels())
+}
+
+// TestAskedChannelModeDefaults covers the empty cases: no park at all, and a
+// wrong-typed stored value.
+func (s *OrchestratorSuite) TestAskedChannelModeDefaults() {
+	orch := New(s.store, s.bot, s.runner, s.scheduler, slog.New(slog.NewTextHandler(io.Discard, nil)), config.Config{}, nil)
+	require.Equal(s.T(), "", orch.AskedChannelMode("nope"))
+	orch.askedModes.Store("weird", 42)
+	require.Equal(s.T(), "", orch.AskedChannelMode("weird"))
+}
+
+// TestParkPersistenceErrorsAreLoggedNotFatal covers the error branches of the
+// persistence calls in mark/clear: a failing store must not break parking.
+func (s *OrchestratorSuite) TestParkPersistenceErrorsAreLoggedNotFatal() {
+	store := new(testutil.MockStore)
+	orch := New(store, s.bot, s.runner, s.scheduler, slog.New(slog.NewTextHandler(io.Discard, nil)), config.Config{}, nil)
+	store.On("UpsertPausedChannel", mock.Anything, mock.Anything).Return(errors.New("disk full"))
+	store.On("DeletePausedChannel", mock.Anything, mock.Anything, mock.Anything).Return(errors.New("disk full"))
+
+	orch.markAskedChannel(context.Background(), "ch-1", "plan", events.AskUserQuestionEventData{})
+	require.True(s.T(), orch.IsChannelAsked("ch-1"))
+	orch.ClearAskedChannel("ch-1")
+	require.False(s.T(), orch.IsChannelAsked("ch-1"))
+
+	orch.markPlannedChannel(context.Background(), "ch-2", events.ExitPlanModeEventData{Plan: "p"})
+	require.True(s.T(), orch.IsChannelPlanned("ch-2"))
+	orch.ClearPlannedChannel("ch-2")
+	require.False(s.T(), orch.IsChannelPlanned("ch-2"))
 }

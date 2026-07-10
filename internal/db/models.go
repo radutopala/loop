@@ -35,6 +35,26 @@ type StaleRunningMessage struct {
 	MsgID     string
 }
 
+// Paused-channel kinds: the card type a channel is parked on.
+const (
+	PausedKindAsk  = "ask"
+	PausedKindPlan = "plan"
+)
+
+// PausedChannel is a persisted ask/plan card park. It mirrors the
+// orchestrator's in-memory parked state so a daemon restart can restore it —
+// otherwise the card can't rehydrate and the startup pending-message resume
+// re-runs the trigger past the unanswered card. Mode preserves the triggering
+// run's composer mode (e.g. "plan") so an ask answered mid-plan resumes in
+// plan mode; Data is the broadcast event payload JSON used to rehydrate the
+// card.
+type PausedChannel struct {
+	ChannelID string
+	Kind      string
+	Mode      string
+	Data      string
+}
+
 // MessageKind discriminates real chat messages from JSONL-backed agent events
 // stored in the same table.
 type MessageKind string

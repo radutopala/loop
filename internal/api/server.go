@@ -64,10 +64,14 @@ type PlanResolver interface {
 // AskResolver clears and resumes a channel parked on an AskUserQuestion card.
 // ClearAskedChannel removes the pause flag set by the orchestrator when the
 // agent emitted AskUserQuestion; ResumeChannel kicks the drain so any queued
-// rows can now be claimed.
+// rows can now be claimed. AskedChannelMode returns the composer mode of the
+// run that raised the pending ask so the answer continuation resumes in the
+// same mode — e.g. an ask raised mid-plan must resume in plan mode, or the
+// agent implements without plan approval.
 type AskResolver interface {
 	ClearAskedChannel(channelID string)
 	ResumeChannel(ctx context.Context, channelID string)
+	AskedChannelMode(channelID string) string
 }
 
 // serverSystem abstracts OS operations needed by Server.

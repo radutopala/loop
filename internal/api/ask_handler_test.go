@@ -42,6 +42,10 @@ func (m *MockAskResolver) ResumeChannel(ctx context.Context, channelID string) {
 	m.Called(ctx, channelID)
 }
 
+func (m *MockAskResolver) AskedChannelMode(channelID string) string {
+	return m.Called(channelID).String(0)
+}
+
 func (s *ServerSuite) awaitAskCall(name string, ch <-chan struct{}) {
 	select {
 	case <-ch:
@@ -105,6 +109,7 @@ func (s *ServerSuite) TestAskResolveAnswerMaxPriorityErrorFallsBackToZero() {
 	s.srv.SetIncomingMessageHandler(handler)
 	s.srv.SetAskResolver(resolver)
 
+	resolver.On("AskedChannelMode", "ch-1").Return("")
 	s.store.On("MaxQueuedPriority", mock.Anything, "ch-1").Return(0, errors.New("db error"))
 	called := make(chan struct{}, 1)
 	handler.On("HandleIncomingMessageWithPriority", mock.Anything, "ch-1", "", "x", "", 0).
@@ -123,11 +128,42 @@ func (s *ServerSuite) TestAskResolveAnswerMaxPriorityErrorFallsBackToZero() {
 	resolver.AssertExpectations(s.T())
 }
 
+// TestAskResolveInheritsParkedMode verifies that when the resolve request
+// carries no mode, the continuation inherits the asking run's composer mode —
+// an ask raised mid-plan must resume in plan mode, or the agent implements
+// without plan approval.
+func (s *ServerSuite) TestAskResolveInheritsParkedMode() {
+	handler := new(MockIncomingMessageHandler)
+	resolver := new(MockAskResolver)
+	s.srv.SetIncomingMessageHandler(handler)
+	s.srv.SetAskResolver(resolver)
+
+	resolver.On("AskedChannelMode", "ch-1").Return("plan")
+	s.store.On("MaxQueuedPriority", mock.Anything, "ch-1").Return(0, nil)
+	called := make(chan struct{}, 1)
+	handler.On("HandleIncomingMessageWithPriority", mock.Anything, "ch-1", "", "use redis", "plan", 1).
+		Run(func(_ mock.Arguments) { called <- struct{}{} }).Return()
+	resolver.On("ClearAskedChannel", "ch-1").Return()
+	resumed := make(chan struct{}, 1)
+	resolver.On("ResumeChannel", mock.Anything, "ch-1").
+		Run(func(_ mock.Arguments) { resumed <- struct{}{} }).Return()
+
+	rec := s.testRequest("POST", "/api/channels/ch-1/ask/resolve", `{"action":"answer","answer":"use redis"}`)
+	require.Equal(s.T(), http.StatusNoContent, rec.Code)
+
+	s.awaitAskCall("HandleIncomingMessageWithPriority", called)
+	s.awaitAskCall("ResumeChannel", resumed)
+	handler.AssertExpectations(s.T())
+	resolver.AssertExpectations(s.T())
+}
+
 func (s *ServerSuite) TestAskResolveAnswerMissingAnswer() {
 	handler := new(MockIncomingMessageHandler)
 	resolver := new(MockAskResolver)
 	s.srv.SetIncomingMessageHandler(handler)
 	s.srv.SetAskResolver(resolver)
+
+	resolver.On("AskedChannelMode", "ch-1").Return("")
 
 	rec := s.testRequest("POST", "/api/channels/ch-1/ask/resolve", `{"action":"answer"}`)
 	require.Equal(s.T(), http.StatusBadRequest, rec.Code)
@@ -142,6 +178,7 @@ func (s *ServerSuite) TestAskResolveCancel() {
 	s.srv.SetIncomingMessageHandler(handler)
 	s.srv.SetAskResolver(resolver)
 
+	resolver.On("AskedChannelMode", "ch-1").Return("")
 	s.store.On("MaxQueuedPriority", mock.Anything, "ch-1").Return(0, nil)
 	called := make(chan struct{}, 1)
 	handler.On("HandleIncomingMessageWithPriority", mock.Anything, "ch-1", "", askCancelPrompt, "", 1).
@@ -164,6 +201,7 @@ func (s *ServerSuite) TestAskResolveInvalidAction() {
 	resolver := new(MockAskResolver)
 	s.srv.SetIncomingMessageHandler(new(MockIncomingMessageHandler))
 	s.srv.SetAskResolver(resolver)
+	resolver.On("AskedChannelMode", "ch-1").Return("")
 
 	rec := s.testRequest("POST", "/api/channels/ch-1/ask/resolve", `{"action":"nope"}`)
 	require.Equal(s.T(), http.StatusBadRequest, rec.Code)
