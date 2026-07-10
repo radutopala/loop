@@ -401,22 +401,32 @@ func (o *Orchestrator) executeAgentRun(ctx context.Context, msg *bot.IncomingMes
 	// Register the cancel func so stop button clicks can cancel this run.
 	o.activeRuns.Store(msg.ChannelID, runCancel)
 
-	// Set when the agent volunteers EnterPlanMode → ExitPlanMode mid-turn
-	// without the user picking the plan pill (req.PlanMode=false). We cancel
-	// the run so the plan card lands as the only end-of-turn artifact instead
-	// of the agent continuing past it under --dangerously-skip-permissions.
+	// Set when the agent emits ExitPlanMode mid-turn. The run is cancelled at
+	// the matching tool_result (see gateToolUses) so the plan card lands as
+	// the end-of-turn artifact instead of the agent continuing past it under
+	// --dangerously-skip-permissions; this flag makes the resulting
+	// context.Canceled report as a clean `completed`, not an error.
 	var selfInitiatedPlan atomic.Bool
 
-	// Set when the agent emits AskUserQuestion mid-turn. We always cancel the
-	// run so the ask card is the end-of-turn artifact and the agent cannot
-	// keep using other tools past it; the user's answer arrives via the
-	// /ask/resolve endpoint as a priority-bumped continuation message.
+	// Set when the agent emits AskUserQuestion mid-turn. Cancelled at the
+	// matching tool_result (see gateToolUses) so the ask card is the
+	// end-of-turn artifact; the user's answer arrives via the /ask/resolve
+	// endpoint as a priority-bumped continuation message.
 	var selfInitiatedAsk atomic.Bool
 
 	// pendingTaskCreates pairs an OnToolUse for TaskCreate with the matching
 	// OnToolResult so we can extract the harness-assigned id (only present
 	// in the result text) and surface the new task to the FE.
 	var pendingTaskCreates sync.Map // map[toolUseID]inputJSON string
+
+	// gateToolUses holds the toolUseIDs of AskUserQuestion / ExitPlanMode
+	// calls whose card has been surfaced. The run is cancelled when the
+	// MATCHING tool_result arrives — not at the tool_use — so the
+	// permission_prompt deny result is persisted into the session transcript
+	// first. Cancelling at the tool_use left a dangling tool_use in the
+	// session, which the model read as an interrupted attempt and retried
+	// after resume (re-asking the same question).
+	var gateToolUses sync.Map // map[toolUseID]struct{}
 
 	tracker := newStreamTracker(func(text string) {
 		if err := o.bot.SendMessage(ctx, &bot.OutgoingMessage{
@@ -447,12 +457,15 @@ func (o *Orchestrator) executeAgentRun(ctx context.Context, msg *bot.IncomingMes
 				var data events.AskUserQuestionEventData
 				if err := json.Unmarshal([]byte(input), &data); err == nil && len(data.Questions) > 0 {
 					// Park before broadcasting so the drain loop sees the
-					// flag the moment the run wraps up; cancel the run so
-					// no further tools execute past the ask card.
+					// flag the moment the run wraps up. The cancel happens
+					// when this call's tool_result (the permission_prompt
+					// deny) lands — see OnToolResult — so the resolution is
+					// persisted in the session before teardown and the model
+					// doesn't see a dangling, retryable attempt on resume.
 					o.markAskedChannel(msg.ChannelID, data)
 					o.events.BroadcastAskUser(msg.ChannelID, data)
 					selfInitiatedAsk.Store(true)
-					runCancel()
+					gateToolUses.Store(toolUseID, struct{}{})
 				}
 			}
 			if name == "ExitPlanMode" {
@@ -465,17 +478,13 @@ func (o *Orchestrator) executeAgentRun(ctx context.Context, msg *bot.IncomingMes
 					// to claim any queued sibling messages).
 					o.markPlannedChannel(msg.ChannelID, data)
 					o.events.BroadcastExitPlan(msg.ChannelID, data)
-					// Stop the run so the plan-review card is the end-of-turn
-					// artifact and the agent cannot execute the plan before the
-					// user approves it. This must be unconditional: the
-					// permission_prompt tool blocks ExitPlanMode (so the native
-					// tool can't self-resolve as "approved"), which means the
-					// run no longer halts on its own even in plan-pill mode —
-					// without this cancel the container would hang at the
-					// permission gate until it times out. The user's approval
-					// arrives via /plan/resolve as a fresh continuation.
+					// Cancelled at the matching tool_result (the
+					// permission_prompt deny), like AskUserQuestion above, so
+					// the plan card is the end-of-turn artifact and the agent
+					// cannot execute the plan before the user approves it.
+					// The user's approval arrives via /plan/resolve.
 					selfInitiatedPlan.Store(true)
-					runCancel()
+					gateToolUses.Store(toolUseID, struct{}{})
 				}
 			}
 			if name == "TaskUpdate" {
@@ -507,6 +516,11 @@ func (o *Orchestrator) executeAgentRun(ctx context.Context, msg *bot.IncomingMes
 				if list, ok := o.tasks.applyCreate(msg.ChannelID, inputRaw.(string), output); ok {
 					o.events.BroadcastAgentTasks(msg.ChannelID, events.AgentTasksEventData{Tasks: list})
 				}
+			}
+			// The gate tool's deny result is now persisted in the session —
+			// stop the run so the ask/plan card is the end-of-turn artifact.
+			if _, ok := gateToolUses.LoadAndDelete(toolUseID); ok {
+				runCancel()
 			}
 			o.events.BroadcastToolResult(msg.ChannelID, events.ToolResultEventData{
 				ToolUseID: toolUseID,

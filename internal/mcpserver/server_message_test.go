@@ -201,22 +201,36 @@ func (s *MCPServerSuite) TestPermissionPromptMissingInput() {
 	require.Equal(s.T(), map[string]any{}, decision["updatedInput"])
 }
 
-// TestPermissionPromptBlocksInteractiveTools verifies the tool does NOT allow
+// TestPermissionPromptDeniesInteractiveTools verifies the tool does NOT allow
 // AskUserQuestion or ExitPlanMode (which would let Claude natively self-resolve
-// them — "user did not answer" / "approved your plan"); it blocks until the
-// run's context is cancelled, then returns the context error and no decision.
-func (s *MCPServerSuite) TestPermissionPromptBlocksInteractiveTools() {
-	for _, tool := range []string{"AskUserQuestion", "ExitPlanMode"} {
-		s.Run(tool, func() {
-			ctx, cancel := context.WithCancel(context.Background())
-			cancel() // Simulate Loop tearing the container down.
-
-			res, _, err := s.srv.handlePermissionPrompt(ctx, nil, map[string]any{
-				"tool_name": tool,
+// them — "user did not answer" / "approved your plan"); it returns a deny
+// decision whose message tells the model to wait for the user and not retry,
+// so the tool_use closes with a persisted result instead of dangling.
+func (s *MCPServerSuite) TestPermissionPromptDeniesInteractiveTools() {
+	tests := []struct {
+		tool    string
+		mustSay string
+		mustBan string
+	}{
+		{"AskUserQuestion", "answers will arrive as the next user message", "Do NOT call AskUserQuestion again"},
+		{"ExitPlanMode", "decision will arrive as the next user message", "Do NOT start implementing"},
+	}
+	for _, tt := range tests {
+		s.Run(tt.tool, func() {
+			text, isError := s.callTool("permission_prompt", map[string]any{
+				"tool_name": tt.tool,
 				"input":     map[string]any{},
 			})
-			require.ErrorIs(s.T(), err, context.Canceled)
-			require.Nil(s.T(), res)
+			require.False(s.T(), isError)
+
+			var decision struct {
+				Behavior string `json:"behavior"`
+				Message  string `json:"message"`
+			}
+			require.NoError(s.T(), json.Unmarshal([]byte(text), &decision))
+			require.Equal(s.T(), "deny", decision.Behavior)
+			require.Contains(s.T(), decision.Message, tt.mustSay)
+			require.Contains(s.T(), decision.Message, tt.mustBan)
 		})
 	}
 }
