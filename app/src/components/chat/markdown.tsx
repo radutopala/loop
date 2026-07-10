@@ -108,11 +108,13 @@ function formatInline(text: string, s: Record<string, React.CSSProperties>, chan
         </code>,
       );
     } else if (token.startsWith("**")) {
+      // Linkify inside bold/italic so a bare URL emphasized by the agent
+      // (e.g. **https://…**) is still clickable.
       nodes.push(
-        <strong key={nodes.length}>{token.slice(2, -2)}</strong>,
+        <strong key={nodes.length}>{linkifyText(token.slice(2, -2), nodes.length, channelId)}</strong>,
       );
     } else if (token.startsWith("*")) {
-      nodes.push(<em key={nodes.length}>{token.slice(1, -1)}</em>);
+      nodes.push(<em key={nodes.length}>{linkifyText(token.slice(1, -1), nodes.length, channelId)}</em>);
     } else if (token.startsWith("[")) {
       const mdMatch = token.match(/^\[([^\]]+)\]\(([^)]+)\)$/);
       if (mdMatch) {
