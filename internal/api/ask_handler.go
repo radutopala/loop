@@ -46,15 +46,23 @@ func (s *Server) handleAskResolve(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Inherit the asking run's composer mode when the request doesn't set one,
+	// so an ask raised mid-plan resumes in plan mode instead of a normal agent
+	// run that implements without plan approval.
+	mode := req.Mode
+	if mode == "" {
+		mode = s.askResolver.AskedChannelMode(channelID)
+	}
+
 	switch req.Action {
 	case askActionAnswer:
 		if req.Answer == "" {
 			http.Error(w, "answer is required for answer", http.StatusBadRequest)
 			return
 		}
-		s.insertAskContinuation(r.Context(), channelID, req.Answer, req.Mode)
+		s.insertAskContinuation(r.Context(), channelID, req.Answer, mode)
 	case askActionCancel:
-		s.insertAskContinuation(r.Context(), channelID, askCancelPrompt, req.Mode)
+		s.insertAskContinuation(r.Context(), channelID, askCancelPrompt, mode)
 	default:
 		http.Error(w, "invalid action", http.StatusBadRequest)
 		return

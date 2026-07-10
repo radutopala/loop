@@ -479,6 +479,7 @@ func (s *MainSuite) setupServeMocks() *serveMocks {
 	m.store.On("ListChannels", mock.Anything).Return(nil, nil).Maybe()
 	m.store.On("ResetStaleRunningTasks", mock.Anything).Return(int64(0), nil).Maybe()
 	m.store.On("ResetStaleRunningMessages", mock.Anything).Return(([]db.StaleRunningMessage)(nil), nil).Maybe()
+	m.store.On("ListPausedChannels", mock.Anything).Return(nil, nil).Maybe()
 	m.store.On("ListPendingChannels", mock.Anything).Return(([]string)(nil), nil).Maybe()
 	m.dockerClient.On("LatestClaudeVersion").Return("1.0.0").Maybe()
 	m.dockerClient.On("ListContainerInfos", mock.Anything).Return([]*container.ContainerInfo{}, nil).Maybe()

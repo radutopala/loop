@@ -668,6 +668,11 @@ func (a *app) serve() error {
 		return fmt.Errorf("starting orchestrator: %w", err)
 	}
 
+	// Restore persisted ask/plan card parks BEFORE resuming pending messages,
+	// so parked channels' drains stay held and their cards rehydrate via the
+	// pending endpoints instead of the resume re-running the parked trigger.
+	orch.RestoreParkedChannels(ctx)
+
 	// Resume DB-queued messages from the prior daemon run: clear stale
 	// is_running rows (their agent runs cannot survive a restart), then
 	// kick off a drain per channel that still has unprocessed triggered rows.

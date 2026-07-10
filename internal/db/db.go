@@ -27,6 +27,9 @@ type Store interface {
 	DeleteChannel(ctx context.Context, channelID string) error
 	DeleteChannelsByParentID(ctx context.Context, parentID string) error
 	ListChannelIDsByParentID(ctx context.Context, parentID string) ([]string, error)
+	UpsertPausedChannel(ctx context.Context, p *PausedChannel) error
+	DeletePausedChannel(ctx context.Context, channelID, kind string) error
+	ListPausedChannels(ctx context.Context) ([]*PausedChannel, error)
 	InsertMessage(ctx context.Context, msg *Message) error
 	MarkMessagesProcessed(ctx context.Context, ids []int64) error
 	DeleteQueuedMessage(ctx context.Context, channelID, msgID string) (bool, error)

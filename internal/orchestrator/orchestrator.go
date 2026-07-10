@@ -2,6 +2,7 @@ package orchestrator
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -81,6 +82,7 @@ type Orchestrator struct {
 	activeRunMsgIDs   sync.Map       // map[channelID]string — msg_id of the row currently running
 	plannedChannels   sync.Map       // map[channelID]events.ExitPlanModeEventData — channels parked on an ExitPlanMode card, value is the plan payload (for FE rehydration after a renderer reload / WS reconnect)
 	askedChannels     sync.Map       // map[channelID]events.AskUserQuestionEventData — channels parked on an AskUserQuestion card, value is the question payload (for FE rehydration after a renderer reload / WS reconnect)
+	askedModes        sync.Map       // map[channelID]string — composer mode of the run that raised the pending ask, so the answer continuation resumes in the same mode (e.g. plan)
 	drainWG           sync.WaitGroup // tracks in-flight drain goroutines so tests / shutdown can wait
 	drainSpawn        func(func())   // wraps fn into a tracked goroutine; tests swap for inline run
 	logger            *slog.Logger
@@ -183,9 +185,16 @@ func (o *Orchestrator) WaitDrains() {
 // types after the plan card appears (and any rows already queued behind the
 // trigger) wait for an explicit approve / reject / deny resolution. The plan
 // payload is stored alongside the flag so a renderer reload / WS reconnect can
-// rehydrate the plan card via GET /api/plans/pending.
-func (o *Orchestrator) markPlannedChannel(channelID string, data events.ExitPlanModeEventData) {
+// rehydrate the plan card via GET /api/plans/pending, and persisted so a
+// daemon restart restores the park (see RestoreParkedChannels).
+func (o *Orchestrator) markPlannedChannel(ctx context.Context, channelID string, data events.ExitPlanModeEventData) {
 	o.plannedChannels.Store(channelID, data)
+	payload, _ := json.Marshal(data)
+	if err := o.store.UpsertPausedChannel(ctx, &db.PausedChannel{
+		ChannelID: channelID, Kind: db.PausedKindPlan, Data: string(payload),
+	}); err != nil {
+		o.logger.Error("persisting plan park", "error", err, "channel_id", channelID)
+	}
 }
 
 // IsChannelPlanned reports whether a channel is currently parked on a plan
@@ -199,6 +208,9 @@ func (o *Orchestrator) IsChannelPlanned(channelID string) bool {
 // the API plan-resolve endpoint once the user has decided how to proceed.
 func (o *Orchestrator) ClearPlannedChannel(channelID string) {
 	o.plannedChannels.Delete(channelID)
+	if err := o.store.DeletePausedChannel(context.Background(), channelID, db.PausedKindPlan); err != nil {
+		o.logger.Error("clearing persisted plan park", "error", err, "channel_id", channelID)
+	}
 }
 
 // ListPlannedChannels returns a snapshot of every channel currently parked on
@@ -230,9 +242,32 @@ func (o *Orchestrator) ListPlannedChannels() []events.PlannedChannelEntry {
 // trigger) wait for an explicit answer / cancel via
 // POST /api/channels/{id}/ask/resolve. The question payload is stored
 // alongside the flag so a renderer reload / WS reconnect can rehydrate
-// the ask card via GET /api/asks/pending.
-func (o *Orchestrator) markAskedChannel(channelID string, data events.AskUserQuestionEventData) {
+// the ask card via GET /api/asks/pending, and persisted so a daemon restart
+// restores the park (see RestoreParkedChannels). mode is the triggering
+// run's composer mode (e.g. "plan") so the answer continuation can resume in
+// the same mode — without it an ask raised mid-plan resumes as a normal
+// agent run and implements without plan approval.
+func (o *Orchestrator) markAskedChannel(ctx context.Context, channelID, mode string, data events.AskUserQuestionEventData) {
 	o.askedChannels.Store(channelID, data)
+	o.askedModes.Store(channelID, mode)
+	payload, _ := json.Marshal(data)
+	if err := o.store.UpsertPausedChannel(ctx, &db.PausedChannel{
+		ChannelID: channelID, Kind: db.PausedKindAsk, Mode: mode, Data: string(payload),
+	}); err != nil {
+		o.logger.Error("persisting ask park", "error", err, "channel_id", channelID)
+	}
+}
+
+// AskedChannelMode returns the composer mode of the run that raised the
+// channel's pending AskUserQuestion ("" when none). Used by the ask-resolve
+// endpoint so the answer continuation inherits the original mode (e.g. plan).
+func (o *Orchestrator) AskedChannelMode(channelID string) string {
+	if v, ok := o.askedModes.Load(channelID); ok {
+		if mode, ok := v.(string); ok {
+			return mode
+		}
+	}
+	return ""
 }
 
 // IsChannelAsked reports whether a channel is currently parked on an
@@ -246,6 +281,43 @@ func (o *Orchestrator) IsChannelAsked(channelID string) bool {
 // API ask-resolve endpoint once the user has answered or cancelled.
 func (o *Orchestrator) ClearAskedChannel(channelID string) {
 	o.askedChannels.Delete(channelID)
+	o.askedModes.Delete(channelID)
+	if err := o.store.DeletePausedChannel(context.Background(), channelID, db.PausedKindAsk); err != nil {
+		o.logger.Error("clearing persisted ask park", "error", err, "channel_id", channelID)
+	}
+}
+
+// RestoreParkedChannels reloads persisted ask/plan card parks into the
+// in-memory maps at daemon startup, BEFORE the pending-message resume runs.
+// Without it a restart forgets the parked state: the card can't rehydrate
+// via the pending endpoints and the startup resume re-claims the parked
+// trigger and re-runs it past the unanswered card.
+func (o *Orchestrator) RestoreParkedChannels(ctx context.Context) {
+	parked, err := o.store.ListPausedChannels(ctx)
+	if err != nil {
+		o.logger.Error("restoring parked channels", "error", err)
+		return
+	}
+	for _, p := range parked {
+		switch p.Kind {
+		case db.PausedKindAsk:
+			var data events.AskUserQuestionEventData
+			if err := json.Unmarshal([]byte(p.Data), &data); err != nil {
+				o.logger.Error("restoring ask park: bad payload", "error", err, "channel_id", p.ChannelID)
+				continue
+			}
+			o.askedChannels.Store(p.ChannelID, data)
+			o.askedModes.Store(p.ChannelID, p.Mode)
+		case db.PausedKindPlan:
+			var data events.ExitPlanModeEventData
+			if err := json.Unmarshal([]byte(p.Data), &data); err != nil {
+				o.logger.Error("restoring plan park: bad payload", "error", err, "channel_id", p.ChannelID)
+				continue
+			}
+			o.plannedChannels.Store(p.ChannelID, data)
+		}
+		o.logger.Info("restored parked channel", "channel_id", p.ChannelID, "kind", p.Kind)
+	}
 }
 
 // ListAskedChannels returns a snapshot of every channel currently parked on

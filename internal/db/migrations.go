@@ -327,6 +327,20 @@ var migrations = []migration{
 	// base_branch records the branch a worktree thread was created from, so the
 	// UI can flag a worktree still sitting at its base commit.
 	sqlMigration(`ALTER TABLE channels ADD COLUMN base_branch TEXT NOT NULL DEFAULT ''`),
+	// paused_channels persists ask/plan card parking across daemon restarts.
+	// Without it a restart forgets the parked state: the card can't rehydrate,
+	// and the startup pending-message resume re-claims the trigger and re-runs
+	// it past the unanswered card. kind is 'ask' or 'plan'; mode preserves the
+	// triggering run's composer mode (e.g. plan) for the resume; data is the
+	// broadcast event payload JSON used to rehydrate the card.
+	sqlMigration(`CREATE TABLE IF NOT EXISTS paused_channels (
+		channel_id TEXT NOT NULL,
+		kind TEXT NOT NULL,
+		mode TEXT NOT NULL DEFAULT '',
+		data TEXT NOT NULL DEFAULT '',
+		created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+		PRIMARY KEY (channel_id, kind)
+	)`),
 }
 
 // migrateScheduledTasksAddManualType rebuilds scheduled_tasks to widen the

@@ -220,6 +220,7 @@ func (s *OrchestratorSuite) TestHandleMessageStreamingOnToolUseBroadcasts() {
 	s.store.On("GetChannel", mock.Anything, "ch1").Return(&db.Channel{ID: 1, ChannelID: "ch1", Active: true}, nil).Maybe()
 	s.store.On("InsertMessage", s.ctx, mock.Anything).Return(nil)
 	s.store.On("InsertAgentEvent", mock.Anything, mock.Anything).Return(nil).Maybe()
+	s.store.On("UpsertPausedChannel", mock.Anything, mock.Anything).Return(nil).Maybe()
 	s.bot.On("SendTyping", mock.Anything, "ch1").Return(nil).Maybe()
 	s.store.On("GetRecentMessages", s.ctx, "ch1", 50).Return([]*db.Message{}, nil)
 
@@ -276,6 +277,7 @@ func (s *OrchestratorSuite) TestHandleMessageStreamingAskUserQuestion() {
 	s.store.On("GetChannel", mock.Anything, "ch1").Return(&db.Channel{ID: 1, ChannelID: "ch1", Active: true}, nil).Maybe()
 	s.store.On("InsertMessage", s.ctx, mock.Anything).Return(nil)
 	s.store.On("InsertAgentEvent", mock.Anything, mock.Anything).Return(nil).Maybe()
+	s.store.On("UpsertPausedChannel", mock.Anything, mock.Anything).Return(nil).Maybe()
 	s.bot.On("SendTyping", mock.Anything, "ch1").Return(nil).Maybe()
 	s.store.On("GetRecentMessages", s.ctx, "ch1", 50).Return([]*db.Message{}, nil)
 	s.store.On("MarkMessagesProcessed", s.ctx, []int64{}).Return(nil).Maybe()
@@ -346,6 +348,7 @@ func (s *OrchestratorSuite) TestAskUserQuestionBroadcastOrder() {
 	s.store.On("GetChannel", mock.Anything, "ch1").Return(&db.Channel{ID: 1, ChannelID: "ch1", Active: true}, nil).Maybe()
 	s.store.On("InsertMessage", s.ctx, mock.Anything).Return(nil)
 	s.store.On("InsertAgentEvent", mock.Anything, mock.Anything).Return(nil).Maybe()
+	s.store.On("UpsertPausedChannel", mock.Anything, mock.Anything).Return(nil).Maybe()
 	s.bot.On("SendTyping", mock.Anything, "ch1").Return(nil).Maybe()
 	s.store.On("GetRecentMessages", s.ctx, "ch1", 50).Return([]*db.Message{trigger}, nil)
 	s.store.On("MarkMessagesProcessed", s.ctx, []int64{42}).Return(nil)
@@ -408,6 +411,7 @@ func (s *OrchestratorSuite) TestHandleMessageStreamingExitPlanMode() {
 	s.store.On("GetChannel", mock.Anything, "ch1").Return(&db.Channel{ID: 1, ChannelID: "ch1", Active: true}, nil).Maybe()
 	s.store.On("InsertMessage", s.ctx, mock.Anything).Return(nil)
 	s.store.On("InsertAgentEvent", mock.Anything, mock.Anything).Return(nil).Maybe()
+	s.store.On("UpsertPausedChannel", mock.Anything, mock.Anything).Return(nil).Maybe()
 	s.bot.On("SendTyping", mock.Anything, "ch1").Return(nil).Maybe()
 	s.store.On("GetRecentMessages", s.ctx, "ch1", 50).Return([]*db.Message{}, nil)
 
@@ -478,6 +482,7 @@ func (s *OrchestratorSuite) TestHandleMessageStreamingExitPlanModeSelfInitiated(
 	s.store.On("GetChannel", mock.Anything, "ch1").Return(&db.Channel{ID: 1, ChannelID: "ch1", Active: true}, nil).Maybe()
 	s.store.On("InsertMessage", s.ctx, mock.Anything).Return(nil)
 	s.store.On("InsertAgentEvent", mock.Anything, mock.Anything).Return(nil).Maybe()
+	s.store.On("UpsertPausedChannel", mock.Anything, mock.Anything).Return(nil).Maybe()
 	s.bot.On("SendTyping", mock.Anything, "ch1").Return(nil).Maybe()
 	s.store.On("GetRecentMessages", s.ctx, "ch1", 50).Return([]*db.Message{}, nil)
 
@@ -541,6 +546,7 @@ func (s *OrchestratorSuite) TestHandleMessageStreamingTaskCreate() {
 	s.store.On("GetChannel", mock.Anything, "ch1").Return(&db.Channel{ID: 1, ChannelID: "ch1", Active: true}, nil).Maybe()
 	s.store.On("InsertMessage", s.ctx, mock.Anything).Return(nil)
 	s.store.On("InsertAgentEvent", mock.Anything, mock.Anything).Return(nil).Maybe()
+	s.store.On("UpsertPausedChannel", mock.Anything, mock.Anything).Return(nil).Maybe()
 	s.bot.On("SendTyping", mock.Anything, "ch1").Return(nil).Maybe()
 	s.store.On("GetRecentMessages", s.ctx, "ch1", 50).Return([]*db.Message{}, nil)
 
@@ -593,6 +599,7 @@ func (s *OrchestratorSuite) TestHandleMessageStreamingTaskUpdate() {
 	s.store.On("GetChannel", mock.Anything, "ch1").Return(&db.Channel{ID: 1, ChannelID: "ch1", Active: true}, nil).Maybe()
 	s.store.On("InsertMessage", s.ctx, mock.Anything).Return(nil)
 	s.store.On("InsertAgentEvent", mock.Anything, mock.Anything).Return(nil).Maybe()
+	s.store.On("UpsertPausedChannel", mock.Anything, mock.Anything).Return(nil).Maybe()
 	s.bot.On("SendTyping", mock.Anything, "ch1").Return(nil).Maybe()
 	s.store.On("GetRecentMessages", s.ctx, "ch1", 50).Return([]*db.Message{}, nil)
 
@@ -765,6 +772,7 @@ func (s *OrchestratorSuite) TestHandleMessageStreamingOnThinkingAndToolResultBro
 	s.store.On("GetChannel", mock.Anything, "ch1").Return(&db.Channel{ID: 1, ChannelID: "ch1", Active: true}, nil).Maybe()
 	s.store.On("InsertMessage", s.ctx, mock.Anything).Return(nil)
 	s.store.On("InsertAgentEvent", mock.Anything, mock.Anything).Return(nil).Maybe()
+	s.store.On("UpsertPausedChannel", mock.Anything, mock.Anything).Return(nil).Maybe()
 	s.bot.On("SendTyping", mock.Anything, "ch1").Return(nil).Maybe()
 	s.store.On("GetRecentMessages", s.ctx, "ch1", 50).Return([]*db.Message{}, nil)
 

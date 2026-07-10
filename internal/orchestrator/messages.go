@@ -462,7 +462,7 @@ func (o *Orchestrator) executeAgentRun(ctx context.Context, msg *bot.IncomingMes
 					// deny) lands — see OnToolResult — so the resolution is
 					// persisted in the session before teardown and the model
 					// doesn't see a dangling, retryable attempt on resume.
-					o.markAskedChannel(msg.ChannelID, data)
+					o.markAskedChannel(ctx, msg.ChannelID, msg.Mode, data)
 					o.events.BroadcastAskUser(msg.ChannelID, data)
 					selfInitiatedAsk.Store(true)
 					gateToolUses.Store(toolUseID, struct{}{})
@@ -476,7 +476,7 @@ func (o *Orchestrator) executeAgentRun(ctx context.Context, msg *bot.IncomingMes
 					// (relevant for the user-picked-plan-pill path, where
 					// the agent halts naturally and the drain races back
 					// to claim any queued sibling messages).
-					o.markPlannedChannel(msg.ChannelID, data)
+					o.markPlannedChannel(ctx, msg.ChannelID, data)
 					o.events.BroadcastExitPlan(msg.ChannelID, data)
 					// Cancelled at the matching tool_result (the
 					// permission_prompt deny), like AskUserQuestion above, so
