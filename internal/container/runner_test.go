@@ -337,6 +337,43 @@ func (s *RunnerSuite) TestMergeClaudeFlags() {
 		require.Equal(t, true, m["bypassPermissionsModeAccepted"])
 		require.Contains(t, m["projects"].(map[string]any), "/work/p")
 	}
+
+	// A worktree cwd inherits mcpServers from its nearest ancestor project so
+	// the agent keeps the repo's project-scoped MCP servers.
+	existing := `{"projects":{"/repo":{"mcpServers":{"proj-server":{"command":"x"}}}}}`
+	wt := "/repo/.worktrees/feature/.worktrees/task-1"
+	m = parse(mergeClaudeFlags([]byte(existing), wt))
+	inherited := m["projects"].(map[string]any)[wt].(map[string]any)["mcpServers"].(map[string]any)
+	require.Contains(t, inherited, "proj-server")
+
+	// The deepest ancestor wins, and a worktree with its own mcpServers is not
+	// overwritten.
+	nested := `{"projects":{"/repo":{"mcpServers":{"a":{}}},"/repo/wt":{"mcpServers":{"b":{}}}}}`
+	m = parse(mergeClaudeFlags([]byte(nested), "/repo/wt/sub"))
+	got := m["projects"].(map[string]any)["/repo/wt/sub"].(map[string]any)["mcpServers"].(map[string]any)
+	require.Contains(t, got, "b")
+	require.NotContains(t, got, "a")
+
+	own := `{"projects":{"/repo":{"mcpServers":{"a":{}}},"/repo/wt":{"mcpServers":{"keep":{}}}}}`
+	m = parse(mergeClaudeFlags([]byte(own), "/repo/wt"))
+	got = m["projects"].(map[string]any)["/repo/wt"].(map[string]any)["mcpServers"].(map[string]any)
+	require.Contains(t, got, "keep")
+	require.NotContains(t, got, "a")
+
+	// All of these ancestor shapes are ignored (no inheritance, no panic): a
+	// non-object entry, a null mcpServers, an entry with no mcpServers key, and
+	// an empty mcpServers map — plus an empty-string key and a non-ancestor.
+	emptyAnc := `{"projects":{` +
+		`"":{"mcpServers":{"z":{}}},` +
+		`"/a":"notobj",` +
+		`"/a/b":{"mcpServers":null},` +
+		`"/a/b/c":{"hasTrustDialogAccepted":true},` +
+		`"/a/b/c/d":{"mcpServers":{}},` +
+		`"/other":{"mcpServers":{"n":{}}}` +
+		`}}`
+	m = parse(mergeClaudeFlags([]byte(emptyAnc), "/a/b/c/d/e"))
+	_, has := m["projects"].(map[string]any)["/a/b/c/d/e"].(map[string]any)["mcpServers"]
+	require.False(t, has)
 }
 
 func (s *RunnerSuite) TestWithClaudeConfig() {
