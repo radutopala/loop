@@ -2,6 +2,7 @@ package mcpserver
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -159,4 +160,43 @@ func (s *MCPServerSuite) TestGetReadmeSuccess() {
 	text, isError := s.callTool("get_readme", map[string]any{})
 	require.False(s.T(), isError)
 	require.NotEmpty(s.T(), text)
+}
+
+// --- permission_prompt ---
+
+// TestPermissionPromptAllows verifies the tool accepts Claude's
+// {tool_name, input, tool_use_id} permission payload (the shape that a strict
+// schema like get_readme rejected) and returns an allow decision that echoes
+// the input unchanged.
+func (s *MCPServerSuite) TestPermissionPromptAllows() {
+	text, isError := s.callTool("permission_prompt", map[string]any{
+		"tool_name":   "AskUserQuestion",
+		"input":       map[string]any{"questions": []any{map[string]any{"question": "Which?"}}},
+		"tool_use_id": "toolu_123",
+	})
+	require.False(s.T(), isError)
+
+	var decision struct {
+		Behavior     string `json:"behavior"`
+		UpdatedInput struct {
+			Questions []any `json:"questions"`
+		} `json:"updatedInput"`
+	}
+	require.NoError(s.T(), json.Unmarshal([]byte(text), &decision))
+	require.Equal(s.T(), "allow", decision.Behavior)
+	require.Len(s.T(), decision.UpdatedInput.Questions, 1)
+}
+
+// TestPermissionPromptMissingInput defaults updatedInput to an empty object
+// when no input field is supplied.
+func (s *MCPServerSuite) TestPermissionPromptMissingInput() {
+	text, isError := s.callTool("permission_prompt", map[string]any{
+		"tool_name": "ExitPlanMode",
+	})
+	require.False(s.T(), isError)
+
+	var decision map[string]any
+	require.NoError(s.T(), json.Unmarshal([]byte(text), &decision))
+	require.Equal(s.T(), "allow", decision["behavior"])
+	require.Equal(s.T(), map[string]any{}, decision["updatedInput"])
 }
