@@ -75,13 +75,15 @@ func buildClaudeCmd(cfg *config.Config, mcpConfigPath string, req *agent.AgentRe
 	// Claude Code gates the interactive tools (AskUserQuestion, EnterPlanMode,
 	// ExitPlanMode) behind a configured --permission-prompt-tool in headless
 	// --print mode. It must name a *registered* MCP tool — an empty value leaves
-	// the tools gated. Loop runs under --dangerously-skip-permissions
-	// (permissionMode "bypassPermissions"), so Claude never actually invokes the
-	// tool for a permission decision; it just needs to exist to unlock the
-	// interactive tools, which Loop then surfaces via stream interception. Point
-	// it at the always-registered, read-only get_readme tool to avoid adding a
-	// dedicated one. Batch-only: the interactive terminal already exposes these.
-	cmd = append(cmd, "--permission-prompt-tool", "mcp__loop__get_readme")
+	// the tools gated. Claude invokes it with a {tool_name, input, tool_use_id}
+	// payload when one of those tools fires, so the tool's schema must accept
+	// that payload and return an allow decision — a tool with a stricter schema
+	// (e.g. get_readme) rejects the payload and the interactive tool errors.
+	// mcp__loop__permission_prompt accepts any object and always allows; Loop
+	// runs under --dangerously-skip-permissions, so ordinary tools never reach
+	// this gate, and Loop surfaces the interactive tools via stream interception.
+	// Batch-only: the interactive terminal already exposes these.
+	cmd = append(cmd, "--permission-prompt-tool", "mcp__loop__permission_prompt")
 	cmd = append(cmd, "--print", "--verbose", "--output-format", "stream-json")
 	if req.SystemPrompt != "" {
 		cmd = append(cmd, "--append-system-prompt", req.SystemPrompt)

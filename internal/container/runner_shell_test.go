@@ -658,7 +658,7 @@ func (s *RunnerSuite) TestBuildClaudeCmdPermissionPromptTool() {
 	// mode; it names a registered MCP tool (empty does not work).
 	idx := slices.Index(cmd, "--permission-prompt-tool")
 	require.GreaterOrEqual(s.T(), idx, 0, "batch cmd must set --permission-prompt-tool")
-	require.Equal(s.T(), "mcp__loop__get_readme", cmd[idx+1])
+	require.Equal(s.T(), "mcp__loop__permission_prompt", cmd[idx+1])
 	// The interactive terminal command must NOT carry it — interactive mode
 	// already exposes these tools.
 	got := BuildInteractiveClaudeCmd(cfg, "ch-1", "/work", "", "", false)

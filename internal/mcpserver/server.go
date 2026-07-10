@@ -172,6 +172,15 @@ func New(channelID, apiURL, authorID string, httpClient HTTPClient, logger *slog
 		Description: "Get the Loop README documentation. Returns the full project README with setup instructions, configuration, commands, and architecture details.",
 	}, s.handleGetReadme)
 
+	// Internal: named by Claude's --permission-prompt-tool so the interactive
+	// tools (AskUserQuestion, EnterPlanMode, ExitPlanMode) work in headless
+	// --print mode. Loop runs under --dangerously-skip-permissions, so this
+	// always allows and echoes the input unchanged. Agents should not call it.
+	mcp.AddTool(s.mcpServer, &mcp.Tool{
+		Name:        "permission_prompt",
+		Description: "Internal Loop permission gate (used by --permission-prompt-tool). Do not call directly; it always approves.",
+	}, s.handlePermissionPrompt)
+
 	if s.memoryEnabled {
 		mcp.AddTool(s.mcpServer, &mcp.Tool{
 			Name:        "search_memory",
