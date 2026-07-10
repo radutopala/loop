@@ -283,10 +283,14 @@ func (s *OrchestratorSuite) TestHandleMessageStreamingAskUserQuestion() {
 	askInput := `{"questions":[{"question":"Pick one","header":"Choice","options":[{"label":"X"}]}]}`
 	var capturedCtx context.Context
 	s.runner.On("Run", mock.Anything, mock.MatchedBy(func(req *agent.AgentRequest) bool {
-		if req.OnToolUse == nil {
+		if req.OnToolUse == nil || req.OnToolResult == nil {
 			return false
 		}
 		req.OnToolUse("toolu_q", "AskUserQuestion", askInput)
+		// The permission_prompt deny closes the tool_use; the run is
+		// cancelled only once this result has landed (so it persists in the
+		// session transcript before teardown).
+		req.OnToolResult("toolu_q", "denied: wait for the user", true)
 		return true
 	})).Run(func(args mock.Arguments) {
 		capturedCtx = args.Get(0).(context.Context)
@@ -294,6 +298,7 @@ func (s *OrchestratorSuite) TestHandleMessageStreamingAskUserQuestion() {
 
 	eb.On("BroadcastMessageCreated", "ch1", mock.Anything).Return()
 	eb.On("BroadcastToolUse", "ch1", mock.Anything).Return().Once()
+	eb.On("BroadcastToolResult", "ch1", mock.Anything).Return().Once()
 	eb.On("BroadcastAskUser", "ch1", mock.MatchedBy(func(d events.AskUserQuestionEventData) bool {
 		return len(d.Questions) == 1 && d.Questions[0].Header == "Choice"
 	})).Return().Once()
@@ -347,10 +352,11 @@ func (s *OrchestratorSuite) TestAskUserQuestionBroadcastOrder() {
 
 	askInput := `{"questions":[{"question":"Pick","header":"Choice","options":[{"label":"X"}]}]}`
 	s.runner.On("Run", mock.Anything, mock.MatchedBy(func(req *agent.AgentRequest) bool {
-		if req.OnToolUse == nil {
+		if req.OnToolUse == nil || req.OnToolResult == nil {
 			return false
 		}
 		req.OnToolUse("toolu_q", "AskUserQuestion", askInput)
+		req.OnToolResult("toolu_q", "denied: wait for the user", true)
 		return true
 	})).Return((*agent.AgentResponse)(nil), context.Canceled)
 
@@ -358,6 +364,7 @@ func (s *OrchestratorSuite) TestAskUserQuestionBroadcastOrder() {
 	var order []string
 	eb.On("BroadcastMessageCreated", "ch1", mock.Anything).Return()
 	eb.On("BroadcastToolUse", "ch1", mock.Anything).Return().Once()
+	eb.On("BroadcastToolResult", "ch1", mock.Anything).Return().Once()
 	eb.On("BroadcastAskUser", "ch1", mock.Anything).Return().Once()
 	eb.On("BroadcastAgentStatus", "ch1", mock.MatchedBy(func(d events.AgentStatusEventData) bool {
 		return d.Status == "running"
@@ -386,11 +393,11 @@ func (s *OrchestratorSuite) TestHandleMessageStreamingExitPlanMode() {
 	s.orch.SetEventBroadcaster(eb)
 
 	// User picked the plan pill (Mode="plan") → req.PlanMode=true. The
-	// permission_prompt tool blocks ExitPlanMode so the native tool can't
-	// self-resolve as "approved", so the orchestrator must cancel the run on
-	// ExitPlanMode (unconditionally, like the self-initiated path) — otherwise
-	// the container would hang at the permission gate. The plan card is the
-	// end-of-turn artifact; the run ends as a clean `completed`, not `error`.
+	// permission_prompt tool denies ExitPlanMode (so the native tool can't
+	// self-resolve as "approved"); the orchestrator cancels the run when the
+	// deny tool_result lands — after it is persisted in the session — so the
+	// plan card is the end-of-turn artifact and the run ends as a clean
+	// `completed`, not `error`.
 	msg := &bot.IncomingMessage{
 		ChannelID: "ch1", GuildID: "g1", AuthorID: "user1", AuthorName: "Alice",
 		Content: "plan it", MessageID: "msg-plan", Mode: "plan", IsBotMention: true, Timestamp: time.Now().UTC(),
@@ -407,10 +414,11 @@ func (s *OrchestratorSuite) TestHandleMessageStreamingExitPlanMode() {
 	exitInput := `{"plan":"# Plan\nStep 1","planFilePath":"/tmp/p.md"}`
 	var capturedCtx context.Context
 	s.runner.On("Run", mock.Anything, mock.MatchedBy(func(req *agent.AgentRequest) bool {
-		if req.OnToolUse == nil || !req.PlanMode {
+		if req.OnToolUse == nil || req.OnToolResult == nil || !req.PlanMode {
 			return false
 		}
 		req.OnToolUse("toolu_p", "ExitPlanMode", exitInput)
+		req.OnToolResult("toolu_p", "denied: plan under review", true)
 		return true
 	})).Run(func(args mock.Arguments) {
 		capturedCtx = args.Get(0).(context.Context)
@@ -418,6 +426,7 @@ func (s *OrchestratorSuite) TestHandleMessageStreamingExitPlanMode() {
 
 	eb.On("BroadcastMessageCreated", "ch1", mock.Anything).Return()
 	eb.On("BroadcastToolUse", "ch1", mock.Anything).Once()
+	eb.On("BroadcastToolResult", "ch1", mock.Anything).Return().Once()
 	eb.On("BroadcastExitPlan", "ch1", mock.MatchedBy(func(d events.ExitPlanModeEventData) bool {
 		return d.Plan == "# Plan\nStep 1"
 	})).Once()
@@ -476,10 +485,11 @@ func (s *OrchestratorSuite) TestHandleMessageStreamingExitPlanModeSelfInitiated(
 	// Capture the run context so we can assert it was cancelled.
 	var capturedCtx context.Context
 	s.runner.On("Run", mock.Anything, mock.MatchedBy(func(req *agent.AgentRequest) bool {
-		if req.OnToolUse == nil || req.PlanMode {
+		if req.OnToolUse == nil || req.OnToolResult == nil || req.PlanMode {
 			return false
 		}
 		req.OnToolUse("toolu_p", "ExitPlanMode", exitInput)
+		req.OnToolResult("toolu_p", "denied: plan under review", true)
 		return true
 	})).Run(func(args mock.Arguments) {
 		capturedCtx = args.Get(0).(context.Context)
@@ -487,6 +497,7 @@ func (s *OrchestratorSuite) TestHandleMessageStreamingExitPlanModeSelfInitiated(
 
 	eb.On("BroadcastMessageCreated", "ch1", mock.Anything).Return()
 	eb.On("BroadcastToolUse", "ch1", mock.Anything).Return().Once()
+	eb.On("BroadcastToolResult", "ch1", mock.Anything).Return().Once()
 	eb.On("BroadcastExitPlan", "ch1", mock.MatchedBy(func(d events.ExitPlanModeEventData) bool {
 		return d.Plan == "# Plan\nStep 1"
 	})).Return().Once()
