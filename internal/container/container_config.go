@@ -527,11 +527,60 @@ func mergeClaudeFlags(existing []byte, workDir string) []byte {
 	}
 	entry["hasTrustDialogAccepted"] = true
 	entry["hasCompletedProjectOnboarding"] = true
+
+	// Inherit project-scoped MCP servers from the nearest ancestor project.
+	// Claude Code keys `projects[<cwd>].mcpServers` by the exact working dir,
+	// but a git worktree agent runs at the worktree path — not the repo root
+	// where the user configured them. Without this, worktree
+	// (and nested-worktree task) agents silently lose those MCP servers. Only
+	// fill in when the worktree has none of its own so an explicit override wins.
+	if _, has := entry["mcpServers"]; !has {
+		if servers := nearestAncestorMCPServers(projects, workDir); servers != nil {
+			entry["mcpServers"] = servers
+		}
+	}
+
 	projects[workDir] = entry
 	m["projects"] = projects
 
 	out, _ := json.Marshal(m) // a map decoded from JSON always re-marshals
 	return out
+}
+
+// nearestAncestorMCPServers returns the non-empty mcpServers value of the
+// deepest project path in projects that is a filesystem ancestor of workDir
+// (workDir itself is excluded). Returns nil when no ancestor defines any.
+func nearestAncestorMCPServers(projects map[string]any, workDir string) any {
+	best := ""
+	var bestServers any
+	for path, v := range projects {
+		if !isAncestorDir(path, workDir) {
+			continue
+		}
+		pm, ok := v.(map[string]any)
+		if !ok {
+			continue
+		}
+		servers, ok := pm["mcpServers"]
+		if !ok || servers == nil {
+			continue
+		}
+		if sm, ok := servers.(map[string]any); ok && len(sm) == 0 {
+			continue
+		}
+		if len(path) > len(best) {
+			best, bestServers = path, servers
+		}
+	}
+	return bestServers
+}
+
+// isAncestorDir reports whether ancestor is a strict parent directory of child.
+func isAncestorDir(ancestor, child string) bool {
+	if ancestor == "" {
+		return false
+	}
+	return strings.HasPrefix(child, strings.TrimRight(ancestor, "/")+"/")
 }
 
 // withClaudeConfig ensures ~/.claude.json is the first copy_files entry so every
