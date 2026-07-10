@@ -167,11 +167,11 @@ func (s *MCPServerSuite) TestGetReadmeSuccess() {
 // TestPermissionPromptAllows verifies the tool accepts Claude's
 // {tool_name, input, tool_use_id} permission payload (the shape that a strict
 // schema like get_readme rejected) and returns an allow decision that echoes
-// the input unchanged.
+// the input unchanged for non-AskUserQuestion tools.
 func (s *MCPServerSuite) TestPermissionPromptAllows() {
 	text, isError := s.callTool("permission_prompt", map[string]any{
-		"tool_name":   "AskUserQuestion",
-		"input":       map[string]any{"questions": []any{map[string]any{"question": "Which?"}}},
+		"tool_name":   "ExitPlanMode",
+		"input":       map[string]any{"plan": "do the thing"},
 		"tool_use_id": "toolu_123",
 	})
 	require.False(s.T(), isError)
@@ -179,12 +179,12 @@ func (s *MCPServerSuite) TestPermissionPromptAllows() {
 	var decision struct {
 		Behavior     string `json:"behavior"`
 		UpdatedInput struct {
-			Questions []any `json:"questions"`
+			Plan string `json:"plan"`
 		} `json:"updatedInput"`
 	}
 	require.NoError(s.T(), json.Unmarshal([]byte(text), &decision))
 	require.Equal(s.T(), "allow", decision.Behavior)
-	require.Len(s.T(), decision.UpdatedInput.Questions, 1)
+	require.Equal(s.T(), "do the thing", decision.UpdatedInput.Plan)
 }
 
 // TestPermissionPromptMissingInput defaults updatedInput to an empty object
@@ -199,4 +199,20 @@ func (s *MCPServerSuite) TestPermissionPromptMissingInput() {
 	require.NoError(s.T(), json.Unmarshal([]byte(text), &decision))
 	require.Equal(s.T(), "allow", decision["behavior"])
 	require.Equal(s.T(), map[string]any{}, decision["updatedInput"])
+}
+
+// TestPermissionPromptBlocksAskUserQuestion verifies the tool does NOT allow
+// AskUserQuestion (which would let Claude natively self-resolve it as "user did
+// not answer"); it blocks until the run's context is cancelled, at which point
+// it returns the context error and no allow decision.
+func (s *MCPServerSuite) TestPermissionPromptBlocksAskUserQuestion() {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // Simulate Loop tearing the container down.
+
+	res, _, err := s.srv.handlePermissionPrompt(ctx, nil, map[string]any{
+		"tool_name": "AskUserQuestion",
+		"input":     map[string]any{"questions": []any{}},
+	})
+	require.ErrorIs(s.T(), err, context.Canceled)
+	require.Nil(s.T(), res)
 }
