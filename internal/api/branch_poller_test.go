@@ -73,9 +73,9 @@ func (s *BranchPollerSuite) TestTickBroadcastsOnChange() {
 	var branch atomicString
 	branch.set("main")
 	p := NewBranchPoller(store, hub, "", 10*time.Millisecond, testLogger())
-	p.gitBranch = func(_ context.Context, _ string) string { return branch.get() }
-	p.gitCommit = func(_ context.Context, _ string) string { return "abc1234" }
-	p.gitDiff = func(_ context.Context, _ string) (int, int) { return 0, 0 }
+	p.gitInfo = func(_ context.Context, _ string) gitState {
+		return gitState{Branch: branch.get(), Commit: "abc1234"}
+	}
 
 	// Prime tick: no broadcast even though state differs from zero value.
 	p.tick(context.Background(), true)
@@ -108,12 +108,10 @@ func (s *BranchPollerSuite) TestTickFallsBackToLoopDir() {
 
 	var seenDir atomicString
 	p := NewBranchPoller(store, hub, "/loop", 10*time.Millisecond, testLogger())
-	p.gitBranch = func(_ context.Context, dir string) string {
+	p.gitInfo = func(_ context.Context, dir string) gitState {
 		seenDir.set(dir)
-		return "main"
+		return gitState{Branch: "main"}
 	}
-	p.gitCommit = func(_ context.Context, _ string) string { return "" }
-	p.gitDiff = func(_ context.Context, _ string) (int, int) { return 0, 0 }
 
 	p.tick(context.Background(), false)
 	require.Equal(s.T(), "/loop/ch-2/work", seenDir.get())
@@ -130,9 +128,7 @@ func (s *BranchPollerSuite) TestTickSkipsEmptyDir() {
 
 	p := NewBranchPoller(store, hub, "", 10*time.Millisecond, testLogger())
 	called := false
-	p.gitBranch = func(_ context.Context, _ string) string { called = true; return "main" }
-	p.gitCommit = func(_ context.Context, _ string) string { return "" }
-	p.gitDiff = func(_ context.Context, _ string) (int, int) { return 0, 0 }
+	p.gitInfo = func(_ context.Context, _ string) gitState { called = true; return gitState{Branch: "main"} }
 
 	p.tick(context.Background(), false)
 	require.False(s.T(), called)
@@ -171,9 +167,7 @@ func (s *BranchPollerSuite) TestTickPrunesStaleState() {
 	store.On("ListChannels", mock.Anything).Return(second, nil).Once()
 
 	p := NewBranchPoller(store, hub, "", 10*time.Millisecond, testLogger())
-	p.gitBranch = func(_ context.Context, _ string) string { return "main" }
-	p.gitCommit = func(_ context.Context, _ string) string { return "" }
-	p.gitDiff = func(_ context.Context, _ string) (int, int) { return 0, 0 }
+	p.gitInfo = func(_ context.Context, _ string) gitState { return gitState{Branch: "main"} }
 
 	p.tick(context.Background(), true)
 	p.mu.Lock()
@@ -220,3 +214,58 @@ type atomicString struct {
 
 func (a *atomicString) set(v string) { a.mu.Lock(); a.v = v; a.mu.Unlock() }
 func (a *atomicString) get() string  { a.mu.Lock(); defer a.mu.Unlock(); return a.v }
+
+// TestTickDedupesSharedDirs verifies the per-tick dir dedupe: channels and
+// threads sharing a worktree dir must trigger a single gitInfo computation.
+func (s *BranchPollerSuite) TestTickDedupesSharedDirs() {
+	store := &testutil.MockStore{}
+	hub, _ := newCaptureHub()
+
+	store.On("ListChannels", mock.Anything).Return([]*db.Channel{
+		{ChannelID: "wt", DirPath: "/repo/wt"},
+		{ChannelID: "wt-thread-1", DirPath: "/repo/wt"},
+		{ChannelID: "wt-thread-2", DirPath: "/repo/wt"},
+		{ChannelID: "other", DirPath: "/repo/other"},
+	}, nil)
+
+	var mu sync.Mutex
+	calls := map[string]int{}
+	p := NewBranchPoller(store, hub, "", 10*time.Millisecond, testLogger())
+	p.gitInfo = func(_ context.Context, dir string) gitState {
+		mu.Lock()
+		calls[dir]++
+		mu.Unlock()
+		return gitState{Branch: "main"}
+	}
+
+	p.tick(context.Background(), true)
+	mu.Lock()
+	defer mu.Unlock()
+	require.Equal(s.T(), map[string]int{"/repo/wt": 1, "/repo/other": 1}, calls)
+}
+
+// TestSnapshot verifies the per-dir snapshot the /api/channels handler
+// consumes: present after a tick, refreshed each tick, absent for unknown
+// dirs.
+func (s *BranchPollerSuite) TestSnapshot() {
+	store := &testutil.MockStore{}
+	hub, _ := newCaptureHub()
+	store.On("ListChannels", mock.Anything).Return([]*db.Channel{
+		{ChannelID: "ch-1", DirPath: "/repo/a"},
+	}, nil)
+
+	p := NewBranchPoller(store, hub, "", 10*time.Millisecond, testLogger())
+
+	_, ok := p.Snapshot("/repo/a")
+	require.False(s.T(), ok, "no snapshot before the first tick")
+
+	p.gitInfo = func(_ context.Context, _ string) gitState { return gitState{Branch: "main", Commit: "abc1234"} }
+	p.tick(context.Background(), true)
+
+	st, ok := p.Snapshot("/repo/a")
+	require.True(s.T(), ok)
+	require.Equal(s.T(), gitState{Branch: "main", Commit: "abc1234"}, st)
+
+	_, ok = p.Snapshot("/repo/unknown")
+	require.False(s.T(), ok)
+}

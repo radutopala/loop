@@ -24,18 +24,22 @@ type gitState struct {
 // BranchPoller polls each channel's workdir for branch/commit/diff changes
 // and emits channel.updated events. Tick cadence is fixed at construction
 // time. Run blocks until the context is cancelled.
+//
+// The poller is also the git-state cache for GET /api/channels: it computes
+// each unique directory ONCE per tick (channels/threads sharing a worktree
+// dir reuse the result) and the handler serves Snapshot instead of spawning
+// git subprocesses per channel per request.
 type BranchPoller struct {
-	store     ChannelLister
-	hub       *EventsHub
-	loopDir   string
-	interval  time.Duration
-	logger    *slog.Logger
-	gitBranch func(ctx context.Context, dir string) string
-	gitCommit func(ctx context.Context, dir string) string
-	gitDiff   func(ctx context.Context, dir string) (int, int)
+	store    ChannelLister
+	hub      *EventsHub
+	loopDir  string
+	interval time.Duration
+	logger   *slog.Logger
+	gitInfo  func(ctx context.Context, dir string) gitState
 
-	mu    sync.Mutex
-	state map[string]gitState
+	mu       sync.Mutex
+	state    map[string]gitState // per channelID, for change broadcasts
+	dirState map[string]gitState // per dirPath, for API snapshots
 }
 
 // NewBranchPoller constructs a poller. interval defaults to 5s when zero.
@@ -44,16 +48,25 @@ func NewBranchPoller(store ChannelLister, hub *EventsHub, loopDir string, interv
 		interval = 5 * time.Second
 	}
 	return &BranchPoller{
-		store:     store,
-		hub:       hub,
-		loopDir:   loopDir,
-		interval:  interval,
-		logger:    logger,
-		gitBranch: gitBranch,
-		gitCommit: gitCommit,
-		gitDiff:   gitDiffStats,
-		state:     make(map[string]gitState),
+		store:    store,
+		hub:      hub,
+		loopDir:  loopDir,
+		interval: interval,
+		logger:   logger,
+		gitInfo:  collectGitState,
+		state:    make(map[string]gitState),
+		dirState: make(map[string]gitState),
 	}
+}
+
+// Snapshot returns the last polled git state for dir. ok is false when the
+// poller hasn't covered the dir yet (fresh channel between ticks, or the
+// poller isn't running) — callers fall back to computing inline.
+func (p *BranchPoller) Snapshot(dir string) (gitState, bool) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	st, ok := p.dirState[dir]
+	return st, ok
 }
 
 // Run polls until ctx is cancelled. Safe to call in a goroutine.
@@ -86,6 +99,9 @@ func (p *BranchPoller) tick(ctx context.Context, prime bool) {
 		return
 	}
 
+	// Compute once per unique dir — channels and threads sharing a worktree
+	// dir would otherwise multiply the git subprocess cost.
+	computed := make(map[string]gitState)
 	seen := make(map[string]struct{}, len(channels))
 	for _, ch := range channels {
 		seen[ch.ChannelID] = struct{}{}
@@ -96,11 +112,11 @@ func (p *BranchPoller) tick(ctx context.Context, prime bool) {
 		if dirPath == "" {
 			continue
 		}
-		next := gitState{
-			Branch: p.gitBranch(ctx, dirPath),
-			Commit: p.gitCommit(ctx, dirPath),
+		next, ok := computed[dirPath]
+		if !ok {
+			next = p.gitInfo(ctx, dirPath)
+			computed[dirPath] = next
 		}
-		next.DiffAdditions, next.DiffDeletions = p.gitDiff(ctx, dirPath)
 
 		p.mu.Lock()
 		prev, known := p.state[ch.ChannelID]
@@ -122,9 +138,10 @@ func (p *BranchPoller) tick(ctx context.Context, prime bool) {
 		})
 	}
 
-	// Drop state for channels that no longer exist so the map doesn't grow
-	// unbounded over a long-running daemon.
+	// Swap in this tick's dir snapshots and drop state for channels that no
+	// longer exist so the maps don't grow unbounded over a long-running daemon.
 	p.mu.Lock()
+	p.dirState = computed
 	for id := range p.state {
 		if _, ok := seen[id]; !ok {
 			delete(p.state, id)

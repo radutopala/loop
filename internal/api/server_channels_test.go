@@ -12,6 +12,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
@@ -542,6 +543,54 @@ func (s *ServerSuite) TestSearchChannelsSuccess() {
 	require.Equal(s.T(), "ch-2", resp[1].ChannelID)
 	require.Equal(s.T(), "ch-1", resp[1].ParentID)
 	s.store.AssertExpectations(s.T())
+}
+
+// TestSearchChannelsUsesBranchPollerSnapshot verifies the handler serves the
+// poller's per-dir git snapshot (no inline recompute) and that channels
+// sharing a dir get the same state.
+func (s *ServerSuite) TestSearchChannelsUsesBranchPollerSnapshot() {
+	channels := []*db.Channel{
+		{ChannelID: "wt", Name: "wt", DirPath: "/repo/wt", Active: true, Platform: types.PlatformLocal},
+		{ChannelID: "wt-thread", Name: "t", DirPath: "/repo/wt", ParentID: "wt", Active: true, Platform: types.PlatformLocal},
+	}
+	s.store.On("ListChannels", mock.Anything).Return(channels, nil)
+
+	poller := NewBranchPoller(nil, nil, "", time.Second, testLogger())
+	poller.dirState["/repo/wt"] = gitState{Branch: "feat/x", Commit: "abc1234", DiffAdditions: 5, DiffDeletions: 2}
+	s.srv.SetBranchPoller(poller)
+
+	rec := s.testRequest("GET", "/api/channels", "")
+	require.Equal(s.T(), http.StatusOK, rec.Code)
+
+	var resp []channelResponse
+	require.NoError(s.T(), json.NewDecoder(rec.Body).Decode(&resp))
+	require.Len(s.T(), resp, 2)
+	for _, ch := range resp {
+		require.Equal(s.T(), "feat/x", ch.Branch)
+		require.Equal(s.T(), "abc1234", ch.Commit)
+		require.Equal(s.T(), 5, ch.DiffAdditions)
+		require.Equal(s.T(), 2, ch.DiffDeletions)
+	}
+}
+
+// TestSearchChannelsPollerMissFallsBack verifies a dir the poller hasn't
+// covered yet is computed inline (a non-repo dir yields empty git state, and
+// the request still succeeds).
+func (s *ServerSuite) TestSearchChannelsPollerMissFallsBack() {
+	channels := []*db.Channel{
+		{ChannelID: "fresh", Name: "fresh", DirPath: s.T().TempDir(), Active: true, Platform: types.PlatformLocal},
+	}
+	s.store.On("ListChannels", mock.Anything).Return(channels, nil)
+	s.srv.SetBranchPoller(NewBranchPoller(nil, nil, "", time.Second, testLogger()))
+
+	rec := s.testRequest("GET", "/api/channels", "")
+	require.Equal(s.T(), http.StatusOK, rec.Code)
+
+	var resp []channelResponse
+	require.NoError(s.T(), json.NewDecoder(rec.Body).Decode(&resp))
+	require.Len(s.T(), resp, 1)
+	require.Empty(s.T(), resp[0].Branch)
+	require.Zero(s.T(), resp[0].DiffAdditions)
 }
 
 func (s *ServerSuite) TestSearchChannelsWithQuery() {

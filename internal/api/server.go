@@ -113,6 +113,7 @@ type Server struct {
 	cmdBuilder                InteractiveCmdBuilder
 	containerRegistry         ContainerManager
 	activeChatLister          ActiveChatLister
+	branchPoller              *BranchPoller
 	msgHandler                IncomingMessageHandler
 	runCanceller              RunCanceller
 	planResolver              PlanResolver
@@ -240,6 +241,13 @@ func (s *Server) SetContainerRegistry(reg ContainerManager) {
 // SetActiveChatLister configures the active chat lister for the channel list endpoint.
 func (s *Server) SetActiveChatLister(lister ActiveChatLister) {
 	s.activeChatLister = lister
+}
+
+// SetBranchPoller wires the branch poller whose per-dir git snapshots back
+// the channel list endpoint, so listing channels doesn't spawn git
+// subprocesses per channel per request.
+func (s *Server) SetBranchPoller(p *BranchPoller) {
+	s.branchPoller = p
 }
 
 // SetIncomingMessageHandler configures the handler for user messages from the API.
