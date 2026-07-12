@@ -548,6 +548,12 @@ func (s *SchedulerSuite) TestCalculateNextRun() {
 		{"cron", db.TaskTypeCron, "*/5 * * * *", now, time.Date(2025, 1, 1, 12, 5, 0, 0, time.UTC), ""},
 		{"interval", db.TaskTypeInterval, "30m", now, time.Date(2025, 1, 1, 12, 30, 0, 0, time.UTC), ""},
 		{"once", db.TaskTypeOnce, "2026-02-09T14:30:00Z", now, time.Date(2026, 2, 9, 14, 30, 0, 0, time.UTC), ""},
+		// A once schedule with a non-UTC offset must normalize to UTC before
+		// storage: the sqlite driver serializes the zone into the TEXT column
+		// and GetDueTasks compares against a UTC now lexicographically, so a
+		// local-offset value would fire late by exactly the zone offset
+		// (observed with a session-limit auto-continue scheduled at +03:00).
+		{"once non-UTC offset", db.TaskTypeOnce, "2026-02-09T14:30:00+03:00", now, time.Date(2026, 2, 9, 11, 30, 0, 0, time.UTC), ""},
 		{"manual", db.TaskTypeManual, "", now, time.Time{}, ""},
 		{"invalid cron", db.TaskTypeCron, "bad", now, time.Time{}, "cron schedule"},
 		{"invalid interval", db.TaskTypeInterval, "not-valid", now, time.Time{}, "interval"},

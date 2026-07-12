@@ -357,7 +357,18 @@ func calculateNextRun(taskType db.TaskType, schedule string, now time.Time) (tim
 		}
 		return now.Add(d), nil
 	case db.TaskTypeOnce:
-		return parseOnceSchedule(schedule)
+		t, err := parseOnceSchedule(schedule)
+		if err != nil {
+			return time.Time{}, err
+		}
+		// Normalize to UTC before storage. time.Parse keeps the RFC3339
+		// offset (e.g. +03:00) and the sqlite driver serializes time.Time
+		// WITH its zone, while GetDueTasks compares next_run_at against a
+		// UTC now as TEXT — so a local-offset value compares by its
+		// wall-clock digits against the UTC clock and fires hours late (by
+		// exactly the zone offset). Cron/interval are unaffected: they
+		// derive from time.Now().UTC().
+		return t.UTC(), nil
 	case db.TaskTypeManual:
 		// Manual tasks have no schedule; the poller never selects them
 		// (GetDueTasks excludes type='manual'), so the zero next-run is inert.
