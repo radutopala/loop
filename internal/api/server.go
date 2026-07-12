@@ -145,6 +145,9 @@ type Server struct {
 	pendingPlans              PendingPlansLister                                           // snapshot of parked ExitPlanMode cards for FE rehydration
 	auditDirResolver          AuditDirResolver                                             // per-channel host path to the gate audit jsonl dir
 	githubLookup              GitHubLookup                                                 // resolves PR for a channel's branch via `gh`
+	prCache                   map[string]prCacheEntry                                      // (dirPath,branch) → cached PR lookup; see prCacheTTL
+	prCacheMu                 sync.Mutex                                                   // protects prCache
+	prCacheClock              func() time.Time                                             // injectable cache clock for tests
 	reviewClient              GitHubReview                                                 // gh ops for review panel (fetch diff, post comment)
 	reviewStore               *review.Store                                                // per-channel review session state
 	reviewWorktree            review.PR                                                    // creates/removes PR worktrees

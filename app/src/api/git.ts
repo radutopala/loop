@@ -121,8 +121,9 @@ export interface PRResponse {
   pr?: PRInfo;
 }
 
-export async function fetchPR(channelId: string): Promise<PRResponse> {
-  const res = await fetch(`${getApiUrl()}/api/channels/${channelId}/pr`);
+export async function fetchPR(channelId: string, fresh = false): Promise<PRResponse> {
+  const qs = fresh ? "?fresh=1" : "";
+  const res = await fetch(`${getApiUrl()}/api/channels/${channelId}/pr${qs}`);
   if (!res.ok) throw new Error(`Failed to fetch PR info: ${res.statusText}`);
   return res.json();
 }

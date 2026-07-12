@@ -574,6 +574,7 @@ func (a *app) serve() error {
 	apiSrv.SetReviewRunTimeout(50 * time.Minute)
 	branchPoller := api.NewBranchPoller(store, eventsHub, cfg.LoopDir, 0, logger)
 	apiSrv.SetBranchPoller(branchPoller)
+	branchPoller.SetOnDirChange(apiSrv.InvalidatePRCacheForDir)
 	go branchPoller.Run(ctx)
 	containerReg.SetBroadcaster(eventsHub)
 	if gateResolver != nil {

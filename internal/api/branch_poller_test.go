@@ -269,3 +269,40 @@ func (s *BranchPollerSuite) TestSnapshot() {
 	_, ok = p.Snapshot("/repo/unknown")
 	require.False(s.T(), ok)
 }
+
+// TestTickFiresOnDirChange verifies the per-dir change hook: fired once per
+// changed dir per tick (deduped across channels sharing the dir), not fired
+// on prime or when nothing changed.
+func (s *BranchPollerSuite) TestTickFiresOnDirChange() {
+	store := &testutil.MockStore{}
+	hub, _ := newCaptureHub()
+	store.On("ListChannels", mock.Anything).Return([]*db.Channel{
+		{ChannelID: "a", DirPath: "/repo/x"},
+		{ChannelID: "b", DirPath: "/repo/x"},
+	}, nil)
+
+	var branch atomicString
+	branch.set("main")
+	p := NewBranchPoller(store, hub, "", 10*time.Millisecond, testLogger())
+	p.gitInfo = func(_ context.Context, _ string) gitState { return gitState{Branch: branch.get()} }
+
+	var mu sync.Mutex
+	fired := map[string]int{}
+	p.SetOnDirChange(func(dir string) {
+		mu.Lock()
+		fired[dir]++
+		mu.Unlock()
+	})
+
+	p.tick(context.Background(), true)  // prime: no hook
+	p.tick(context.Background(), false) // unchanged: no hook
+	mu.Lock()
+	require.Empty(s.T(), fired)
+	mu.Unlock()
+
+	branch.set("feat/y")
+	p.tick(context.Background(), false) // changed: fires ONCE for the shared dir
+	mu.Lock()
+	require.Equal(s.T(), map[string]int{"/repo/x": 1}, fired)
+	mu.Unlock()
+}
