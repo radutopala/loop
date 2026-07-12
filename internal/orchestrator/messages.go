@@ -347,22 +347,38 @@ func (o *Orchestrator) prepareAgentRequest(ctx context.Context, msg *bot.Incomin
 
 	// Fork the session on the first thread message so the thread gets its
 	// own session while inheriting the parent's context.
+	inWorktree := channel.Worktree
 	if channel.ParentID != "" {
 		parent, err := o.store.GetChannel(ctx, channel.ParentID)
 		if err == nil && parent != nil {
 			if req.SessionID != "" && channel.SessionID == parent.SessionID {
 				req.ForkSession = true
 			}
-			// Pass parent's DirPath so the runner can mount it for worktree containers.
-			if channel.Worktree && parent.DirPath != "" {
-				req.ParentDirPath = parent.DirPath
+			// Pass the root project checkout so the runner can mount it for
+			// worktree containers and apply the full config merge chain
+			// (global → root project → worktree). worktreeRootFor walks past
+			// nested worktrees (a worktree created from another worktree) and
+			// threads that share a worktree's dir_path without carrying the
+			// worktree flag (e.g. a scheduled task's thread) — otherwise the
+			// root's .loop/config.json (gates, model, MCP servers) is
+			// untracked in the worktree checkout and silently ignored.
+			if channel.Worktree || parent.Worktree {
+				inWorktree = true
+				if dir := worktreeRootFor(ctx, o.store, channel); dir != "" {
+					req.ParentDirPath = dir
+				} else if channel.Worktree && parent.DirPath != "" {
+					// Fallback to the immediate parent when the chain can't
+					// be fully resolved (lookup error mid-walk).
+					req.ParentDirPath = parent.DirPath
+				}
 			}
 		}
 	}
 
-	// When running in a worktree, tell the agent its working directory so it
-	// uses the correct absolute paths instead of drifting to the main repo.
-	if channel.Worktree && channel.DirPath != "" {
+	// When running in a worktree (directly or as a thread under one), tell the
+	// agent its working directory so it uses the correct absolute paths
+	// instead of drifting to the main repo.
+	if inWorktree && channel.DirPath != "" {
 		dirHint := fmt.Sprintf(
 			"IMPORTANT: Your working directory is %s. Always use absolute paths under this directory for all file operations.",
 			channel.DirPath,

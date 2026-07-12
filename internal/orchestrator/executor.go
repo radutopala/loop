@@ -170,18 +170,23 @@ func (e *TaskExecutor) ExecuteTask(ctx context.Context, task *db.ScheduledTask) 
 	if task.AutoDeleteSec > 0 {
 		systemPrompt += "\nIf you have nothing meaningful to report, start your response with [EPHEMERAL]. Otherwise respond normally."
 	}
-	// Track parent dir for worktree config inheritance (model, etc.).
-	// Two cases:
-	// 1. task.Worktree=true → executor creates a worktree; parentDirPath = parent channel's DirPath.
-	// 2. task.Worktree=false but channel itself is a worktree → look up the
-	//    parent channel's DirPath so the runner uses the full merge chain
-	//    (global → parent → worktree) and inherits settings like claude_model.
+	// Track the root project dir for worktree config inheritance (gates,
+	// model, MCP servers) via worktreeRootFor, which walks to the nearest
+	// non-worktree ancestor. Covers:
+	// 1. task.Worktree=true on a plain channel → executor creates a worktree;
+	//    the channel's own DirPath is the root.
+	// 2. task.Worktree=true on a worktree channel (or a thread under one) →
+	//    the task creates a NESTED worktree; the chain must anchor at the
+	//    root checkout, not the intermediate worktree (whose untracked
+	//    .loop/config.json doesn't exist).
+	// 3. task on a worktree channel, or on a thread under one → same root
+	//    resolution, otherwise the root project's .loop/config.json is
+	//    silently ignored for the runs.
 	parentDirPath := ""
-	if task.Worktree && channel != nil {
-		parentDirPath = channel.DirPath
-	} else if channel != nil && channel.Worktree && channel.ParentID != "" {
-		if parentCh, err := e.store.GetChannel(ctx, channel.ParentID); err == nil && parentCh != nil {
-			parentDirPath = parentCh.DirPath
+	if channel != nil {
+		parentDirPath = worktreeRootFor(ctx, e.store, channel)
+		if parentDirPath == "" && task.Worktree {
+			parentDirPath = channel.DirPath
 		}
 	}
 
