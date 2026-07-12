@@ -3,6 +3,7 @@ import type { DiffResponse, PRInfo } from "../../api/loopApi";
 import { fetchDiff, fetchBranches, fetchCommits, fetchPR } from "../../api/loopApi";
 import { fetchRoots, type RootEntry } from "../../api/files";
 import { useEventStream } from "../../hooks/useEventStream";
+import type { AgentStatusData, WSEvent } from "../../types";
 import { fonts } from "../../theme";
 import type { ColorPalette } from "../../theme";
 import { useTheme } from "../../ThemeContext";
@@ -113,17 +114,16 @@ export function GitPanel({ channelId, dirPath, branch, maximized, sidebarOpen, t
     e.currentTarget.style.color = colors.textDim;
   };
 
-  // Fetch PR info on mount and when channel changes. When a PR is open, seed
-  // sourceBranch to the PR's base (only once per channel) so the Branches Diff
-  // mode defaults to the PR's target rather than main.
-  useEffect(() => {
+  // Load PR info. When a PR is open, seed sourceBranch to the PR's base
+  // (only once per channel) so the Branches Diff mode defaults to the PR's
+  // target rather than main. `fresh` bypasses the backend lookup cache —
+  // used right after an agent run completes, when a new PR is most likely.
+  const loadPR = useCallback((fresh = false) => {
     if (!channelId) {
       setPR(null);
       return;
     }
-    let cancelled = false;
-    fetchPR(channelId).then((res) => {
-      if (cancelled) return;
+    fetchPR(channelId, fresh).then((res) => {
       if (res.present && res.pr) {
         setPR(res.pr);
         if (prSeededRef.current !== channelId) {
@@ -133,9 +133,13 @@ export function GitPanel({ channelId, dirPath, branch, maximized, sidebarOpen, t
       } else {
         setPR(null);
       }
-    }).catch(() => { if (!cancelled) setPR(null); });
-    return () => { cancelled = true; };
+    }).catch(() => setPR(null));
   }, [channelId]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Fetch PR info on mount and when channel changes.
+  useEffect(() => {
+    loadPR();
+  }, [loadPR]);
 
   // Fetch the channel's roots (primary dir_path + extra_dirs) so the diff can
   // be scoped to any of them via a dropdown. Reset selection when switching
@@ -270,11 +274,19 @@ export function GitPanel({ channelId, dirPath, branch, maximized, sidebarOpen, t
   }, [load]);
 
   // Real-time refresh: debounce-reload on any agent event for this channel.
+  // The PR chip also refreshes without a channel switch: with `fresh` right
+  // after an agent run completes (a new PR is most likely, bypass the backend
+  // cache), and from the (poller-invalidated) cache on branch/commit changes.
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const onEvent = useCallback(() => {
+  const onEvent = useCallback((event: WSEvent) => {
     if (debounceRef.current) clearTimeout(debounceRef.current);
     debounceRef.current = setTimeout(load, 1_000);
-  }, [load]);
+    if (event.type === "agent.status" && (event.data as AgentStatusData | undefined)?.status !== "running") {
+      loadPR(true);
+    } else if (event.type === "channel.updated") {
+      loadPR();
+    }
+  }, [load, loadPR]);
   useEffect(() => () => { if (debounceRef.current) clearTimeout(debounceRef.current); }, []);
   useEventStream({ channelId, onEvent });
 

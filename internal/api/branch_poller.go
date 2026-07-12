@@ -36,6 +36,11 @@ type BranchPoller struct {
 	interval time.Duration
 	logger   *slog.Logger
 	gitInfo  func(ctx context.Context, dir string) gitState
+	// onDirChange fires once per dir per tick when its git state changed
+	// since the previous tick. Wired to Server.InvalidatePRCacheForDir so a
+	// new commit/branch (the push that precedes a PR) makes the next PR
+	// lookup bypass the cache.
+	onDirChange func(dir string)
 
 	mu       sync.Mutex
 	state    map[string]gitState // per channelID, for change broadcasts
@@ -57,6 +62,12 @@ func NewBranchPoller(store ChannelLister, hub *EventsHub, loopDir string, interv
 		state:    make(map[string]gitState),
 		dirState: make(map[string]gitState),
 	}
+}
+
+// SetOnDirChange registers the per-dir change callback (see field docs).
+// Must be called before Run.
+func (p *BranchPoller) SetOnDirChange(fn func(dir string)) {
+	p.onDirChange = fn
 }
 
 // Snapshot returns the last polled git state for dir. ok is false when the
@@ -102,6 +113,7 @@ func (p *BranchPoller) tick(ctx context.Context, prime bool) {
 	// Compute once per unique dir — channels and threads sharing a worktree
 	// dir would otherwise multiply the git subprocess cost.
 	computed := make(map[string]gitState)
+	changedDirs := make(map[string]struct{})
 	seen := make(map[string]struct{}, len(channels))
 	for _, ch := range channels {
 		seen[ch.ChannelID] = struct{}{}
@@ -129,6 +141,7 @@ func (p *BranchPoller) tick(ctx context.Context, prime bool) {
 		if prev == next {
 			continue
 		}
+		changedDirs[dirPath] = struct{}{}
 		p.hub.BroadcastChannelUpdated(events.ChannelUpdatedData{
 			ChannelID:     ch.ChannelID,
 			Branch:        next.Branch,
@@ -136,6 +149,11 @@ func (p *BranchPoller) tick(ctx context.Context, prime bool) {
 			DiffAdditions: next.DiffAdditions,
 			DiffDeletions: next.DiffDeletions,
 		})
+	}
+	if p.onDirChange != nil {
+		for dir := range changedDirs {
+			p.onDirChange(dir)
+		}
 	}
 
 	// Swap in this tick's dir snapshots and drop state for channels that no

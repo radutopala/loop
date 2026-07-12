@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
@@ -424,4 +425,73 @@ func (s *ServerSuite) TestResolveReviewEnabledWorktreeNilLoaderUsesRealConfig() 
 	wt := s.T().TempDir()
 	parent := s.T().TempDir()
 	require.True(s.T(), srv.resolveReviewEnabled(wt, parent))
+}
+
+// --- PR lookup cache ---
+
+// TestChannelPRCache verifies the (dir,branch) cache: the second request is
+// served without a new gh lookup, ?fresh=1 bypasses the cache, TTL expiry
+// re-fetches, and InvalidatePRCacheForDir forces the next lookup fresh.
+func (s *ServerSuite) TestChannelPRCache() {
+	dir := gitInitRepoWithBranch(s.T(), "feat-c")
+	gh := new(mockGitHubLookup)
+	gh.On("LookupPR", mock.Anything, dir, "", "feat-c").Return(nil, nil)
+	s.srv.SetGitHubLookup(gh)
+	now := time.Unix(1000, 0)
+	s.srv.prCacheClock = func() time.Time { return now }
+	s.store.On("GetChannel", mock.Anything, "ch-c").
+		Return(&db.Channel{ChannelID: "ch-c", DirPath: dir}, nil)
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /api/channels/{id}/pr", s.srv.handleChannelPR)
+	do := func(url string) {
+		req := httptest.NewRequest("GET", url, nil)
+		w := httptest.NewRecorder()
+		mux.ServeHTTP(w, req)
+		require.Equal(s.T(), http.StatusOK, w.Code)
+		require.Contains(s.T(), w.Body.String(), `"present":false`)
+	}
+
+	// First request populates; second is served from cache (miss cached too).
+	do("/api/channels/ch-c/pr")
+	do("/api/channels/ch-c/pr")
+	gh.AssertNumberOfCalls(s.T(), "LookupPR", 1)
+
+	// fresh=1 bypasses the cache.
+	do("/api/channels/ch-c/pr?fresh=1")
+	gh.AssertNumberOfCalls(s.T(), "LookupPR", 2)
+
+	// TTL expiry re-fetches.
+	now = now.Add(prCacheTTL + time.Second)
+	do("/api/channels/ch-c/pr")
+	gh.AssertNumberOfCalls(s.T(), "LookupPR", 3)
+
+	// Poller-driven invalidation forces the next lookup fresh.
+	do("/api/channels/ch-c/pr")
+	gh.AssertNumberOfCalls(s.T(), "LookupPR", 3)
+	s.srv.InvalidatePRCacheForDir(dir)
+	do("/api/channels/ch-c/pr")
+	gh.AssertNumberOfCalls(s.T(), "LookupPR", 4)
+}
+
+// TestChannelPRLookupErrorNotCached verifies transient lookup failures are
+// never cached: the next request retries the lookup.
+func (s *ServerSuite) TestChannelPRLookupErrorNotCached() {
+	dir := gitInitRepoWithBranch(s.T(), "feat-e")
+	gh := new(mockGitHubLookup)
+	gh.On("LookupPR", mock.Anything, dir, "", "feat-e").Return(nil, errors.New("network down"))
+	s.srv.SetGitHubLookup(gh)
+	s.store.On("GetChannel", mock.Anything, "ch-e").
+		Return(&db.Channel{ChannelID: "ch-e", DirPath: dir}, nil)
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /api/channels/{id}/pr", s.srv.handleChannelPR)
+	for range 2 {
+		req := httptest.NewRequest("GET", "/api/channels/ch-e/pr", nil)
+		w := httptest.NewRecorder()
+		mux.ServeHTTP(w, req)
+		require.Equal(s.T(), http.StatusOK, w.Code)
+		require.Contains(s.T(), w.Body.String(), `"present":false`)
+	}
+	gh.AssertNumberOfCalls(s.T(), "LookupPR", 2)
 }
