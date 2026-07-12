@@ -2,7 +2,6 @@ package api
 
 import (
 	"context"
-	"fmt"
 	"net/http"
 	"os/exec"
 	"path/filepath"
@@ -135,6 +134,27 @@ func (s *Server) handleSearchChannels(w http.ResponseWriter, r *http.Request) {
 		byID[ch.ChannelID] = ch
 	}
 
+	// Git state comes from the branch poller's per-dir snapshot (computed
+	// once per tick, deduped across channels sharing a worktree dir) instead
+	// of spawning git subprocesses per channel per request. Dirs the poller
+	// hasn't covered yet (fresh channel between ticks, or no poller in tests)
+	// are computed inline, once per unique dir within this request.
+	gitStates := make(map[string]gitState)
+	gitStateFor := func(dir string) gitState {
+		if st, ok := gitStates[dir]; ok {
+			return st
+		}
+		st, ok := gitState{}, false
+		if s.branchPoller != nil {
+			st, ok = s.branchPoller.Snapshot(dir)
+		}
+		if !ok {
+			st = collectGitState(r.Context(), dir)
+		}
+		gitStates[dir] = st
+		return st
+	}
+
 	resp := make([]channelResponse, 0, len(channels))
 	for _, ch := range channels {
 		if platformFilter != "" && string(ch.Platform) != platformFilter {
@@ -149,7 +169,7 @@ func (s *Server) handleSearchChannels(w http.ResponseWriter, r *http.Request) {
 		if dirPath == "" && s.loopDir != "" {
 			dirPath = filepath.Join(s.loopDir, ch.ChannelID, "work")
 		}
-		diffAdd, diffDel := gitDiffStats(r.Context(), dirPath)
+		git := gitStateFor(dirPath)
 		parentDirPath := ""
 		if ch.Worktree && ch.ParentID != "" {
 			if parent := byID[ch.ParentID]; parent != nil {
@@ -166,13 +186,13 @@ func (s *Server) handleSearchChannels(w http.ResponseWriter, r *http.Request) {
 			Active:           ch.Active,
 			ContainerRunning: running,
 			AgentRunning:     runningBot,
-			Branch:           gitBranch(r.Context(), dirPath),
-			Commit:           gitCommit(r.Context(), dirPath),
+			Branch:           git.Branch,
+			Commit:           git.Commit,
 			Worktree:         ch.Worktree,
 			BaseBranch:       ch.BaseBranch,
 			Locked:           ch.Locked,
-			DiffAdditions:    diffAdd,
-			DiffDeletions:    diffDel,
+			DiffAdditions:    git.DiffAdditions,
+			DiffDeletions:    git.DiffDeletions,
 			ReviewEnabled:    reviewEnabled,
 		})
 	}
@@ -192,70 +212,6 @@ func gitBranch(ctx context.Context, dir string) string {
 		return ""
 	}
 	return strings.TrimSpace(string(out))
-}
-
-// gitCommit returns the short commit hash for the given directory, or "".
-func gitCommit(ctx context.Context, dir string) string {
-	if dir == "" {
-		return ""
-	}
-	cmd := exec.CommandContext(ctx, "git", "rev-parse", "--short", "HEAD")
-	cmd.Dir = dir
-	out, err := cmd.Output()
-	if err != nil {
-		return ""
-	}
-	return strings.TrimSpace(string(out))
-}
-
-// gitDiffStats returns the total additions and deletions for uncommitted changes,
-// including untracked files (counted as additions).
-// gitDiffStats returns the uncommitted insertion/deletion counts for the sidebar
-// badge. It mirrors the Uncommitted Diff panel (handleGitDiff) so the two agree:
-// staged (index vs HEAD) + unstaged (worktree vs index) tracked changes, plus
-// untracked files counted exactly like the panel (buildUntrackedEntry) — text
-// files add their line count, binary files add nothing. (The previous version
-// omitted staged changes and counted untracked files with raw `wc -l`, which
-// inflated the badge for binary files since it counts newline bytes.)
-func gitDiffStats(ctx context.Context, dir string) (add, del int) {
-	if dir == "" {
-		return 0, 0
-	}
-
-	// Tracked changes: staged (index vs HEAD) then unstaged (worktree vs index).
-	for _, args := range [][]string{
-		{"diff", "--cached", "--shortstat"},
-		{"diff", "--shortstat"},
-	} {
-		cmd := exec.CommandContext(ctx, "git", args...)
-		cmd.Dir = dir
-		if out, err := cmd.Output(); err == nil {
-			for _, part := range strings.Split(strings.TrimSpace(string(out)), ",") {
-				part = strings.TrimSpace(part)
-				var n int
-				if strings.Contains(part, "insertion") {
-					_, _ = fmt.Sscanf(part, "%d", &n)
-					add += n
-				} else if strings.Contains(part, "deletion") {
-					_, _ = fmt.Sscanf(part, "%d", &n)
-					del += n
-				}
-			}
-		}
-	}
-
-	// Untracked files: count the same way the panel does (binary-aware).
-	lsCmd := exec.CommandContext(ctx, "git", "ls-files", "--others", "--exclude-standard")
-	lsCmd.Dir = dir
-	if lsOut, err := lsCmd.Output(); err == nil {
-		for _, uf := range splitLines(string(lsOut)) {
-			if entry, _ := buildUntrackedEntry(dir, uf); entry != nil {
-				add += entry.Additions
-			}
-		}
-	}
-
-	return add, del
 }
 
 func (s *Server) handleDeleteChannel(w http.ResponseWriter, r *http.Request) {

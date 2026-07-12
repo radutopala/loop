@@ -568,7 +568,9 @@ func (a *app) serve() error {
 	// container would otherwise leak the goroutine and pin the session at
 	// status=reviewing until the next daemon restart.
 	apiSrv.SetReviewRunTimeout(50 * time.Minute)
-	go api.NewBranchPoller(store, eventsHub, cfg.LoopDir, 0, logger).Run(ctx)
+	branchPoller := api.NewBranchPoller(store, eventsHub, cfg.LoopDir, 0, logger)
+	apiSrv.SetBranchPoller(branchPoller)
+	go branchPoller.Run(ctx)
 	containerReg.SetBroadcaster(eventsHub)
 	if gateResolver != nil {
 		if gb, ok := localBot.(interface {
