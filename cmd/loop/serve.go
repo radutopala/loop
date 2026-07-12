@@ -412,7 +412,11 @@ func (a *app) serve() error {
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
 
-	runner := container.NewDockerRunner(dockerClient, cfg, config.Reload)
+	// One shared mtime-cached reloader backs every hot-reload consumer, so a
+	// config edit is still picked up immediately but unchanged files are
+	// parsed once instead of on every message/run/request.
+	reloadConfig := config.NewCachedReloader().Reload
+	runner := container.NewDockerRunner(dockerClient, cfg, reloadConfig)
 	// Per-container policy files live under ~/.loop/run/<cid>/ (not
 	// /run/loop/<cid>/) because macOS /run is on the read-only system
 	// volume. Linux hosts could use /run/loop but we keep one path for both
@@ -437,7 +441,7 @@ func (a *app) serve() error {
 
 	agentReg := agentregistry.New()
 
-	executor := orchestrator.NewTaskExecutor(runner, chatBot, store, logger, cfg.ContainerTimeout, config.Reload)
+	executor := orchestrator.NewTaskExecutor(runner, chatBot, store, logger, cfg.ContainerTimeout, reloadConfig)
 	executor.SetWorktreeCreator(&worktree.Creator{
 		Sys: osutil.RealSystem{},
 		Run: worktree.ExecCommandRunner,
@@ -504,7 +508,7 @@ func (a *app) serve() error {
 	} else {
 		termMgr := terminal.NewManager(execClient, logger)
 		apiSrv.SetTerminalManager(terminal.NewManagerAdapter(termMgr))
-		apiSrv.SetInteractiveCmdBuilder(container.NewClaudeCmdBuilder(cfg, config.Reload))
+		apiSrv.SetInteractiveCmdBuilder(container.NewClaudeCmdBuilder(cfg, reloadConfig))
 	}
 
 	hostExecClient := a.newHostExecClient()
@@ -609,7 +613,7 @@ func (a *app) serve() error {
 		bashRunner = &workflow.LocalBashRunner{SafeDir: cfg.LoopDir}
 		logger.Info("workflow bash nodes will execute locally (workflow_bash_local=true)")
 	}
-	wfEngine := workflow.NewEngine(store, runner, bashRunner, eventsHub, workflowsFromConfig(cfg, config.Reload), cfg.LoopDir, cfg.WorkflowConcurrency, logger)
+	wfEngine := workflow.NewEngine(store, runner, bashRunner, eventsHub, workflowsFromConfig(cfg, reloadConfig), cfg.LoopDir, cfg.WorkflowConcurrency, logger)
 	if err := wfEngine.RecoverRuns(ctx); err != nil {
 		logger.Error("failed to recover workflow runs", "error", err)
 	}
@@ -635,14 +639,14 @@ func (a *app) serve() error {
 				MaxFiles:     cfg.Quality.MaxFiles,
 				ExcludePaths: cfg.Quality.ExcludePaths,
 				Metrics:      buildMetricsConfig(cfg.Quality),
-			}, qualityConfigLoader(cfg, config.Reload), nil)
+			}, qualityConfigLoader(cfg, reloadConfig), nil)
 			qEngine.SetProgress(apiSrv.EmitQualityProgress)
 			apiSrv.SetQualityScanner(qEngine)
 			apiSrv.SetQualityGraphProvider(qCache)
 			apiSrv.SetQualitySnapshotReader(qStore)
 			apiSrv.SetQualityHistoryReader(evolution.NewExecReader())
-			apiSrv.SetQualityRulesLoader(qualityRulesLoader(cfg, config.Reload))
-			apiSrv.SetQualityMetricsLoader(qualityMetricsLoader(cfg, config.Reload))
+			apiSrv.SetQualityRulesLoader(qualityRulesLoader(cfg, reloadConfig))
+			apiSrv.SetQualityMetricsLoader(qualityMetricsLoader(cfg, reloadConfig))
 		}
 	} else {
 		logger.Warn("quality engine disabled: store does not expose WriterDB")
@@ -652,7 +656,7 @@ func (a *app) serve() error {
 		return fmt.Errorf("starting api server: %w", err)
 	}
 
-	orch := orchestrator.New(store, chatBot, runner, sched, logger, *cfg, config.Reload)
+	orch := orchestrator.New(store, chatBot, runner, sched, logger, *cfg, reloadConfig)
 	orch.SetEventBroadcaster(eventsHub)
 	orch.SetWorkflowEngine(wfEngine)
 	executor.SetActiveRuns(orch.ActiveRunsMap())
