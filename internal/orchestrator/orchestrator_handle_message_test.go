@@ -1,6 +1,7 @@
 package orchestrator
 
 import (
+	"context"
 	"errors"
 	"io"
 	"log/slog"
@@ -8,12 +9,14 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/mock"
+	"github.com/stretchr/testify/require"
 
 	"github.com/radutopala/loop/internal/agent"
 	"github.com/radutopala/loop/internal/bot"
 	"github.com/radutopala/loop/internal/config"
 	"github.com/radutopala/loop/internal/db"
 	"github.com/radutopala/loop/internal/events"
+	"github.com/radutopala/loop/internal/testutil"
 	"github.com/radutopala/loop/internal/types"
 )
 
@@ -126,6 +129,165 @@ func (s *OrchestratorSuite) TestHandleMessageWorktreeThread() {
 	})
 
 	s.runner.AssertExpectations(s.T())
+}
+
+// TestHandleMessageThreadUnderWorktree covers a thread nested under a
+// worktree channel (e.g. a scheduled task's thread): the thread row shares
+// the worktree's dir_path but carries no worktree flag. The agent request
+// must inherit ParentDirPath from the worktree's own parent (the root
+// project channel) so the runner applies the full config merge chain —
+// otherwise the root's .loop/config.json (gates, model, MCP servers) is
+// silently ignored — and the prompt must carry the working-dir hint.
+func (s *OrchestratorSuite) TestHandleMessageThreadUnderWorktree() {
+	s.store.On("IsChannelActive", s.ctx, "task-thread").Return(true, nil)
+	s.store.On("GetChannel", s.ctx, "task-thread").Return(&db.Channel{
+		ID: 4, ChannelID: "task-thread", GuildID: "g1", DirPath: "/project/.worktrees/wt1",
+		ParentID: "wt1", SessionID: "sess-t", Worktree: false, Active: true,
+	}, nil)
+	s.store.On("InsertMessage", s.ctx, mock.Anything).Return(nil)
+	s.bot.On("SendTyping", mock.Anything, "task-thread").Return(nil).Maybe()
+	s.store.On("GetRecentMessages", s.ctx, "task-thread", 50).Return([]*db.Message{}, nil)
+	s.store.On("GetChannel", s.ctx, "wt1").Return(&db.Channel{
+		ID: 3, ChannelID: "wt1", DirPath: "/project/.worktrees/wt1",
+		ParentID: "ch1", SessionID: "sess-wt", Worktree: true,
+	}, nil)
+	s.store.On("GetChannel", s.ctx, "ch1").Return(&db.Channel{
+		ID: 1, ChannelID: "ch1", DirPath: "/project",
+	}, nil)
+	s.runner.On("Run", mock.Anything, mock.MatchedBy(func(req *agent.AgentRequest) bool {
+		return req.ParentDirPath == "/project" && req.DirPath == "/project/.worktrees/wt1" &&
+			strings.Contains(req.Prompt, "IMPORTANT: Your working directory is /project/.worktrees/wt1")
+	})).Return(&agent.AgentResponse{
+		Response: "thread response", SessionID: "sess-t2",
+	}, nil)
+	s.store.On("UpdateSessionID", s.ctx, "task-thread", "sess-t2").Return(nil)
+	s.bot.On("SendMessage", s.ctx, mock.Anything).Return(nil)
+	s.store.On("MarkMessagesProcessed", s.ctx, []int64{}).Return(nil)
+
+	s.orch.HandleMessage(s.ctx, &bot.IncomingMessage{
+		ChannelID:    "task-thread",
+		GuildID:      "g1",
+		AuthorName:   "user",
+		Content:      "push the branch",
+		IsBotMention: true,
+	})
+
+	s.runner.AssertExpectations(s.T())
+}
+
+// TestHandleMessageNestedWorktreeThread covers case 4: a worktree channel
+// whose parent is ITSELF a worktree (created by a worktree task scheduled on
+// a worktree channel). The chain must anchor at the root checkout, walking
+// past the intermediate worktree.
+func (s *OrchestratorSuite) TestHandleMessageNestedWorktreeThread() {
+	s.store.On("IsChannelActive", s.ctx, "wt2").Return(true, nil)
+	s.store.On("GetChannel", s.ctx, "wt2").Return(&db.Channel{
+		ID: 5, ChannelID: "wt2", GuildID: "g1", DirPath: "/project/.worktrees/wt1/.worktrees/wt2",
+		ParentID: "wt1", SessionID: "sess-n", Worktree: true, Active: true,
+	}, nil)
+	s.store.On("InsertMessage", s.ctx, mock.Anything).Return(nil)
+	s.bot.On("SendTyping", mock.Anything, "wt2").Return(nil).Maybe()
+	s.store.On("GetRecentMessages", s.ctx, "wt2", 50).Return([]*db.Message{}, nil)
+	s.store.On("GetChannel", s.ctx, "wt1").Return(&db.Channel{
+		ID: 3, ChannelID: "wt1", DirPath: "/project/.worktrees/wt1",
+		ParentID: "ch1", SessionID: "sess-wt", Worktree: true,
+	}, nil)
+	s.store.On("GetChannel", s.ctx, "ch1").Return(&db.Channel{
+		ID: 1, ChannelID: "ch1", DirPath: "/project",
+	}, nil)
+	s.runner.On("Run", mock.Anything, mock.MatchedBy(func(req *agent.AgentRequest) bool {
+		return req.ParentDirPath == "/project" && req.DirPath == "/project/.worktrees/wt1/.worktrees/wt2"
+	})).Return(&agent.AgentResponse{
+		Response: "nested response", SessionID: "sess-n2",
+	}, nil)
+	s.store.On("UpdateSessionID", s.ctx, "wt2", "sess-n2").Return(nil)
+	s.bot.On("SendMessage", s.ctx, mock.Anything).Return(nil)
+	s.store.On("MarkMessagesProcessed", s.ctx, []int64{}).Return(nil)
+
+	s.orch.HandleMessage(s.ctx, &bot.IncomingMessage{
+		ChannelID:    "wt2",
+		GuildID:      "g1",
+		AuthorName:   "user",
+		Content:      "hello nested",
+		IsBotMention: true,
+	})
+
+	s.runner.AssertExpectations(s.T())
+}
+
+// TestHandleMessageWorktreeRootLookupErrorFallsBack covers the fallback: when
+// the root walk fails mid-chain (grandparent lookup error), a worktree
+// channel still passes its immediate parent's DirPath so mounting keeps
+// working.
+func (s *OrchestratorSuite) TestHandleMessageWorktreeRootLookupErrorFallsBack() {
+	s.store.On("IsChannelActive", s.ctx, "wt2").Return(true, nil)
+	s.store.On("GetChannel", s.ctx, "wt2").Return(&db.Channel{
+		ID: 5, ChannelID: "wt2", GuildID: "g1", DirPath: "/project/.worktrees/wt1/.worktrees/wt2",
+		ParentID: "wt1", SessionID: "sess-n", Worktree: true, Active: true,
+	}, nil)
+	s.store.On("InsertMessage", s.ctx, mock.Anything).Return(nil)
+	s.bot.On("SendTyping", mock.Anything, "wt2").Return(nil).Maybe()
+	s.store.On("GetRecentMessages", s.ctx, "wt2", 50).Return([]*db.Message{}, nil)
+	s.store.On("GetChannel", s.ctx, "wt1").Return(&db.Channel{
+		ID: 3, ChannelID: "wt1", DirPath: "/project/.worktrees/wt1",
+		ParentID: "ch1", SessionID: "sess-wt", Worktree: true,
+	}, nil)
+	// Grandparent lookup fails → walk returns "" → fall back to parent dir.
+	s.store.On("GetChannel", s.ctx, "ch1").Return(nil, errors.New("db error"))
+	s.runner.On("Run", mock.Anything, mock.MatchedBy(func(req *agent.AgentRequest) bool {
+		return req.ParentDirPath == "/project/.worktrees/wt1"
+	})).Return(&agent.AgentResponse{
+		Response: "resp", SessionID: "sess-n3",
+	}, nil)
+	s.store.On("UpdateSessionID", s.ctx, "wt2", "sess-n3").Return(nil)
+	s.bot.On("SendMessage", s.ctx, mock.Anything).Return(nil)
+	s.store.On("MarkMessagesProcessed", s.ctx, []int64{}).Return(nil)
+
+	s.orch.HandleMessage(s.ctx, &bot.IncomingMessage{
+		ChannelID:    "wt2",
+		GuildID:      "g1",
+		AuthorName:   "user",
+		Content:      "hello",
+		IsBotMention: true,
+	})
+
+	s.runner.AssertExpectations(s.T())
+}
+
+// TestWorktreeRootForBounds covers the defensive edges of the root walk: a
+// parent-id cycle exhausts the bounded loop, a channel with no parent has no
+// chain, and a plain thread under a plain channel isn't a worktree chain.
+func (s *OrchestratorSuite) TestWorktreeRootForBounds() {
+	store := new(testutil.MockStore)
+	// Cycle: two worktree channels pointing at each other.
+	store.On("GetChannel", mock.Anything, "wt-a").Return(&db.Channel{
+		ChannelID: "wt-a", ParentID: "wt-b", Worktree: true,
+	}, nil)
+	store.On("GetChannel", mock.Anything, "wt-b").Return(&db.Channel{
+		ChannelID: "wt-b", ParentID: "wt-a", Worktree: true,
+	}, nil)
+	require.Equal(s.T(), "", worktreeRootFor(context.Background(), store,
+		&db.Channel{ChannelID: "wt-a", ParentID: "wt-b", Worktree: true}))
+
+	// Worktree with no parent: no chain to resolve.
+	require.Equal(s.T(), "", worktreeRootFor(context.Background(), store,
+		&db.Channel{ChannelID: "wt-orphan", Worktree: true}))
+
+	// Plain thread with no parent id.
+	require.Equal(s.T(), "", worktreeRootFor(context.Background(), store,
+		&db.Channel{ChannelID: "plain"}))
+
+	// Plain thread under a plain (non-worktree) parent: not a worktree chain.
+	store.On("GetChannel", mock.Anything, "plain-parent").Return(&db.Channel{
+		ChannelID: "plain-parent", DirPath: "/project",
+	}, nil)
+	require.Equal(s.T(), "", worktreeRootFor(context.Background(), store,
+		&db.Channel{ChannelID: "t1", ParentID: "plain-parent"}))
+
+	// Thread whose parent lookup errors.
+	store.On("GetChannel", mock.Anything, "gone").Return(nil, errors.New("db error"))
+	require.Equal(s.T(), "", worktreeRootFor(context.Background(), store,
+		&db.Channel{ChannelID: "t2", ParentID: "gone"}))
 }
 
 func (s *OrchestratorSuite) TestHandleMessageThreadAlreadyUpserted() {

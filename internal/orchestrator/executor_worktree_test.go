@@ -401,6 +401,83 @@ func (s *TaskExecutorSuite) TestNonWorktreeTaskOnWorktreeChannelSetsParentDirPat
 	require.Equal(s.T(), "ok", resp)
 }
 
+// TestTaskOnThreadUnderWorktreeSetsParentDirPath covers case 3: the task's
+// channel is a THREAD under a worktree channel — it shares the worktree's
+// dir_path but carries no worktree flag. The merge chain must be inherited
+// from the worktree's own parent (the root project channel), otherwise the
+// root's .loop/config.json (gates, model, MCP servers) is silently ignored.
+func (s *TaskExecutorSuite) TestTaskOnThreadUnderWorktreeSetsParentDirPath() {
+	task := &db.ScheduledTask{
+		ID: 11, ChannelID: "thread-ch", Prompt: "build", Type: db.TaskTypeCron,
+		Schedule: "0 * * * *", Worktree: false,
+	}
+
+	// The task's channel is a plain thread whose parent is the worktree channel.
+	s.store.On("GetChannel", s.ctx, "thread-ch").Return(&db.Channel{
+		ChannelID: "thread-ch", DirPath: "/proj/.worktrees/wt-1", ParentID: "wt-ch", Worktree: false,
+	}, nil)
+	s.store.On("GetChannel", s.ctx, "wt-ch").Return(&db.Channel{
+		ChannelID: "wt-ch", DirPath: "/proj/.worktrees/wt-1", ParentID: "root-ch", Worktree: true,
+	}, nil)
+	s.store.On("GetChannel", s.ctx, "root-ch").Return(&db.Channel{
+		ChannelID: "root-ch", DirPath: "/proj",
+	}, nil)
+	s.store.On("GetScheduledTask", s.ctx, int64(11)).Return(&db.ScheduledTask{ID: 11, Type: db.TaskTypeCron}, nil)
+	s.allowBotInserts()
+
+	s.runner.On("Run", mock.Anything, mock.MatchedBy(func(req *agent.AgentRequest) bool {
+		return req.ParentDirPath == "/proj" && req.DirPath == "/proj/.worktrees/wt-1"
+	})).Return(&agent.AgentResponse{Response: "ok", SessionID: "s8"}, nil)
+	s.store.On("UpdateSessionID", s.ctx, "thread-ch", "s8").Return(nil)
+	s.bot.On("SendMessage", s.ctx, mock.Anything).Return(nil)
+
+	resp, err := s.executor.ExecuteTask(s.ctx, task)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "ok", resp)
+}
+
+// TestWorktreeTaskOnWorktreeChannelAnchorsAtRoot covers case 4: a worktree
+// task scheduled ON a worktree channel creates a NESTED worktree. The config
+// chain must anchor at the root checkout — not the intermediate worktree,
+// whose untracked .loop/config.json doesn't exist — so the root's gates,
+// model, and MCP servers still apply.
+func (s *TaskExecutorSuite) TestWorktreeTaskOnWorktreeChannelAnchorsAtRoot() {
+	task := &db.ScheduledTask{
+		ID: 12, ChannelID: "wt-ch", Prompt: "build", Type: db.TaskTypeCron,
+		Schedule: "0 * * * *", Worktree: true,
+	}
+
+	s.store.On("GetChannel", s.ctx, "wt-ch").Return(&db.Channel{
+		ChannelID: "wt-ch", DirPath: "/proj/.worktrees/wt-1", ParentID: "root-ch", Worktree: true,
+	}, nil)
+	s.store.On("GetChannel", s.ctx, "root-ch").Return(&db.Channel{
+		ChannelID: "root-ch", DirPath: "/proj",
+	}, nil)
+	s.store.On("GetScheduledTask", s.ctx, int64(12)).Return(&db.ScheduledTask{ID: 12, Type: db.TaskTypeCron}, nil)
+	s.store.On("UpdateScheduledTaskOriginBranch", s.ctx, int64(12), "main").Return(nil)
+	s.allowBotInserts()
+
+	s.executor.SetWorktreeCreator(&worktree.Creator{
+		Sys: &mockWorktreeSys{},
+		Run: func(ctx context.Context, dir, name string, args ...string) ([]byte, error) {
+			if name == "git" && len(args) > 0 && args[0] == "rev-parse" {
+				return []byte("main\n"), nil
+			}
+			return nil, nil
+		},
+	})
+
+	s.runner.On("Run", mock.Anything, mock.MatchedBy(func(req *agent.AgentRequest) bool {
+		return req.ParentDirPath == "/proj" && strings.Contains(req.DirPath, ".worktrees/task-12-")
+	})).Return(&agent.AgentResponse{Response: "ok", SessionID: "s9"}, nil)
+	s.store.On("UpdateSessionID", s.ctx, "wt-ch", "s9").Return(nil)
+	s.bot.On("SendMessage", s.ctx, mock.Anything).Return(nil)
+
+	resp, err := s.executor.ExecuteTask(s.ctx, task)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "ok", resp)
+}
+
 func (s *TaskExecutorSuite) TestNonWorktreeTaskOnWorktreeChannelParentLookupError() {
 	task := &db.ScheduledTask{
 		ID: 10, ChannelID: "wt-ch", Prompt: "build", Type: db.TaskTypeCron,
