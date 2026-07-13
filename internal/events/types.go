@@ -198,11 +198,15 @@ type AgentTasksEventData struct {
 }
 
 // AskUserQuestion represents a single question from Claude's AskUserQuestion tool.
+// The JSON tags MUST match Claude Code's tool-input schema (camelCase) — the
+// orchestrator unmarshals the raw tool_use input straight into this struct, so a
+// mismatched tag silently drops the field (e.g. multiSelect never toggling
+// checkbox mode).
 type AskUserQuestion struct {
 	Question    string          `json:"question"`
 	Header      string          `json:"header,omitempty"`
 	Options     []AskUserOption `json:"options,omitempty"`
-	MultiSelect bool            `json:"multi_select,omitempty"`
+	MultiSelect bool            `json:"multiSelect,omitempty"`
 }
 
 // AgentInstanceEventData is the payload for agent_instance.* events.
@@ -214,10 +218,13 @@ type AgentInstanceEventData struct {
 	WorkSummary string `json:"work_summary,omitempty"`
 }
 
-// AskUserOption represents a selectable option in a question.
+// AskUserOption represents a selectable option in a question. Preview is an
+// optional mockup / code snippet / visual comparison Claude attaches to an
+// option, surfaced by the FE when the option is focused.
 type AskUserOption struct {
 	Label       string `json:"label"`
 	Description string `json:"description,omitempty"`
+	Preview     string `json:"preview,omitempty"`
 }
 
 // ImageBuildStatusData is the payload for image.build_status events.
