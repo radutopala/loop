@@ -331,22 +331,27 @@ export function ToolActivityIndicator({ toolName, input, result }: { toolName: s
   const resultColor = result?.is_error ? colors.warning : colors.textDim;
   return (
     <div style={{ ...activityStyle, flexDirection: "column", alignItems: "flex-start", gap: 2 }}>
-      <div
-        onClick={canExpandInput ? () => setInputExpanded((v) => !v) : undefined}
-        title={canExpandInput ? (inputExpanded ? "Collapse command" : "Show full command") : undefined}
-        style={{ display: "flex", alignItems: "center", gap: 8, cursor: canExpandInput ? "pointer" : "default" }}
-      >
+      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
         <span style={{ opacity: 0.5 }}>&#9881;</span>
         <span style={{ color: colors.textMuted, fontWeight: 500 }}>{toolName}</span>
-        {canExpandInput && (
-          <span style={{ opacity: 0.5, fontSize: 9 }}>{inputExpanded ? "▾" : "▸"}</span>
-        )}
         {!inputExpanded && truncated && (
-          <span style={{ opacity: 0.85 }}>{renderInputWithLinks(truncated, toolName, channelId)}</span>
+          // Click the (truncated) command to reveal the whole thing — same
+          // affordance as the tool result below, no separate chevron.
+          <span
+            onClick={canExpandInput ? () => setInputExpanded(true) : undefined}
+            title={canExpandInput ? "Show full command" : undefined}
+            style={{ opacity: 0.85, cursor: canExpandInput ? "pointer" : "default" }}
+          >
+            {renderInputWithLinks(truncated, toolName, channelId)}
+          </span>
         )}
       </div>
       {inputExpanded && (
-        <div style={{ marginLeft: 22, opacity: 0.85, whiteSpace: "pre-wrap", wordBreak: "break-word", fontFamily: fonts.mono }}>
+        <div
+          onClick={() => setInputExpanded(false)}
+          title="Collapse command"
+          style={{ marginLeft: 22, opacity: 0.85, whiteSpace: "pre-wrap", wordBreak: "break-word", fontFamily: fonts.mono, cursor: "pointer" }}
+        >
           {renderInputWithLinks(safeInput, toolName, channelId)}
         </div>
       )}
