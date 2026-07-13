@@ -316,9 +316,14 @@ export function ToolActivityIndicator({ toolName, input, result }: { toolName: s
   const channelId = useContext(ChannelContext);
   const activityStyle = buildActivityStyle(colors);
   const [expanded, setExpanded] = useState(false);
+  const [inputExpanded, setInputExpanded] = useState(false);
   const safeInput = input ?? "";
   const isPathTool = FILE_PATH_TOOLS.has(toolName);
-  const truncated = !isPathTool && safeInput.length > 80 ? safeInput.slice(0, 80) + "..." : safeInput;
+  // Long tool inputs (e.g. multi-line Bash commands) are collapsed to a one-line
+  // preview; clicking the header reveals the full command so nothing the agent
+  // ran is hidden.
+  const canExpandInput = !isPathTool && safeInput.length > 80;
+  const truncated = canExpandInput ? safeInput.slice(0, 80) + "..." : safeInput;
   const fullText = result?.text ?? "";
   const previewText = fullText.length > 120 ? fullText.slice(0, 120) + "..." : fullText;
   const hasResult = fullText !== "";
@@ -326,13 +331,25 @@ export function ToolActivityIndicator({ toolName, input, result }: { toolName: s
   const resultColor = result?.is_error ? colors.warning : colors.textDim;
   return (
     <div style={{ ...activityStyle, flexDirection: "column", alignItems: "flex-start", gap: 2 }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+      <div
+        onClick={canExpandInput ? () => setInputExpanded((v) => !v) : undefined}
+        title={canExpandInput ? (inputExpanded ? "Collapse command" : "Show full command") : undefined}
+        style={{ display: "flex", alignItems: "center", gap: 8, cursor: canExpandInput ? "pointer" : "default" }}
+      >
         <span style={{ opacity: 0.5 }}>&#9881;</span>
         <span style={{ color: colors.textMuted, fontWeight: 500 }}>{toolName}</span>
-        {truncated && (
+        {canExpandInput && (
+          <span style={{ opacity: 0.5, fontSize: 9 }}>{inputExpanded ? "▾" : "▸"}</span>
+        )}
+        {!inputExpanded && truncated && (
           <span style={{ opacity: 0.85 }}>{renderInputWithLinks(truncated, toolName, channelId)}</span>
         )}
       </div>
+      {inputExpanded && (
+        <div style={{ marginLeft: 22, opacity: 0.85, whiteSpace: "pre-wrap", wordBreak: "break-word", fontFamily: fonts.mono }}>
+          {renderInputWithLinks(safeInput, toolName, channelId)}
+        </div>
+      )}
       {hasResult && (
         <div
           onClick={canExpand ? () => setExpanded((v) => !v) : undefined}

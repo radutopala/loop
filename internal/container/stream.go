@@ -96,6 +96,13 @@ func (m *assistantMessage) extractToolUses() []ToolUse {
 	return tools
 }
 
+// toolInputSummaryMax caps the tool-input summary sent to the chat. It is a
+// safety net against pathological inputs, not a display limit — the FE collapses
+// long summaries to a one-line preview and expands them on click, so the full
+// command must survive to the client (the old 120-char cap hid most of a
+// multi-line Bash command even when expanded).
+const toolInputSummaryMax = 2000
+
 // summarizeToolInput extracts a short description from tool input JSON.
 func summarizeToolInput(name string, raw json.RawMessage) string {
 	if len(raw) == 0 {
@@ -108,8 +115,8 @@ func summarizeToolInput(name string, raw json.RawMessage) string {
 	switch name {
 	case "Bash":
 		if cmd, ok := m["command"].(string); ok {
-			if len(cmd) > 120 {
-				cmd = cmd[:120] + "..."
+			if len(cmd) > toolInputSummaryMax {
+				cmd = cmd[:toolInputSummaryMax] + "..."
 			}
 			return cmd
 		}
@@ -143,8 +150,8 @@ func summarizeToolInput(name string, raw json.RawMessage) string {
 	// For other tools, try common keys.
 	for _, key := range []string{"description", "query", "prompt", "path", "url"} {
 		if v, ok := m[key].(string); ok {
-			if len(v) > 120 {
-				v = v[:120] + "..."
+			if len(v) > toolInputSummaryMax {
+				v = v[:toolInputSummaryMax] + "..."
 			}
 			return v
 		}
