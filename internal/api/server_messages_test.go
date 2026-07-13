@@ -586,3 +586,44 @@ func (s *ServerSuite) TestSearchMessagesNotConfigured() {
 	mux.ServeHTTP(rec, req)
 	require.Equal(s.T(), http.StatusNotImplemented, rec.Code)
 }
+
+// --- ComposerHistory tests ---
+
+func (s *ServerSuite) TestComposerHistorySuccess() {
+	s.store.On("ListUserMessageContents", mock.Anything, "ch-1", 100).
+		Return([]string{"first", "second"}, nil)
+
+	rec := s.testRequest("GET", "/api/channels/ch-1/composer-history", "")
+	require.Equal(s.T(), http.StatusOK, rec.Code)
+
+	var resp composerHistoryResponse
+	require.NoError(s.T(), json.NewDecoder(rec.Body).Decode(&resp))
+	require.Equal(s.T(), []string{"first", "second"}, resp.Messages)
+}
+
+func (s *ServerSuite) TestComposerHistoryCustomLimitAndEmpty() {
+	s.store.On("ListUserMessageContents", mock.Anything, "ch-1", 25).
+		Return(nil, nil)
+
+	rec := s.testRequest("GET", "/api/channels/ch-1/composer-history?limit=25", "")
+	require.Equal(s.T(), http.StatusOK, rec.Code)
+	require.Contains(s.T(), rec.Body.String(), `"messages":[]`)
+}
+
+func (s *ServerSuite) TestComposerHistoryInvalidLimitFallsBack() {
+	// Out-of-range / non-numeric limits fall back to the default 100.
+	s.store.On("ListUserMessageContents", mock.Anything, "ch-1", 100).
+		Return([]string{"x"}, nil).Times(3)
+	for _, q := range []string{"?limit=0", "?limit=9999", "?limit=abc"} {
+		rec := s.testRequest("GET", "/api/channels/ch-1/composer-history"+q, "")
+		require.Equal(s.T(), http.StatusOK, rec.Code)
+	}
+}
+
+func (s *ServerSuite) TestComposerHistoryStoreError() {
+	s.store.On("ListUserMessageContents", mock.Anything, "ch-1", 100).
+		Return(nil, errors.New("db down"))
+
+	rec := s.testRequest("GET", "/api/channels/ch-1/composer-history", "")
+	require.Equal(s.T(), http.StatusInternalServerError, rec.Code)
+}

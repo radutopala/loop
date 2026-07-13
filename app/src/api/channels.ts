@@ -426,3 +426,14 @@ export async function fetchReadme(): Promise<string> {
   if (!res.ok) throw new Error(`Failed to fetch README: ${res.statusText}`);
   return res.text();
 }
+
+/**
+ * Recent user-typed message contents for the composer's ArrowUp history,
+ * chronological (oldest first) — independent of timeline pagination.
+ */
+export async function fetchComposerHistory(channelId: string, limit = 100): Promise<string[]> {
+  const res = await fetch(`${getApiUrl()}/api/channels/${channelId}/composer-history?limit=${limit}`);
+  if (!res.ok) throw new Error(`Failed to fetch composer history: ${res.statusText}`);
+  const data = await res.json();
+  return data.messages ?? [];
+}

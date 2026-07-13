@@ -190,6 +190,41 @@ func (s *SQLiteStore) DeleteQueuedMessage(ctx context.Context, channelID, msgID 
 	return n > 0, nil
 }
 
+// ListUserMessageContents returns the contents of the channel's most recent
+// user-sent chat messages in chronological order, capped at limit. It backs
+// the composer's ArrowUp history, so it deliberately excludes bot rows, agent
+// event rows, and system-injected user rows (ask/plan continuations carry an
+// empty author_id) — only text the user actually typed comes back.
+func (s *SQLiteStore) ListUserMessageContents(ctx context.Context, channelID string, limit int) ([]string, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT content FROM messages
+		 WHERE channel_id = ? AND is_bot = 0 AND kind = 'message' AND author_id != '' AND content != ''
+		 ORDER BY id DESC LIMIT ?`,
+		channelID, limit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+
+	var out []string
+	for rows.Next() {
+		var c string
+		if err := rows.Scan(&c); err != nil {
+			return nil, err
+		}
+		out = append(out, c)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	// Reverse DESC → chronological so the composer walks backwards naturally.
+	for i, j := 0, len(out)-1; i < j; i, j = i+1, j-1 {
+		out[i], out[j] = out[j], out[i]
+	}
+	return out, nil
+}
+
 func (s *SQLiteStore) GetRecentMessages(ctx context.Context, channelID string, limit int) ([]*Message, error) {
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT `+messageColumns+` FROM messages WHERE channel_id = ? AND kind = 'message' ORDER BY created_at DESC LIMIT ?`,

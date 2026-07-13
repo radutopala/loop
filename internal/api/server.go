@@ -363,6 +363,7 @@ func (s *Server) buildMux() *http.ServeMux {
 	mux.HandleFunc("GET /api/channels/{id}/audit", s.handleListAuditFiles)
 	mux.HandleFunc("DELETE /api/channels/{id}/audit/{date}", s.handleDeleteAuditFile)
 	mux.HandleFunc("GET /api/channels/{id}/messages", s.handleListMessages)
+	mux.HandleFunc("GET /api/channels/{id}/composer-history", s.handleComposerHistory)
 	mux.HandleFunc("GET /api/channels/{id}/queued", s.handleListQueuedMessages)
 	mux.HandleFunc("POST /api/channels/{id}/queued/reorder", s.handleReorderQueuedMessages)
 	mux.HandleFunc("GET /api/channels/{id}/timeline", s.handleTimeline)
