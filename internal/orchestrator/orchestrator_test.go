@@ -198,8 +198,16 @@ func (m *MockEventBroadcaster) BroadcastAskUser(channelID string, data events.As
 	m.Called(channelID, data)
 }
 
+func (m *MockEventBroadcaster) BroadcastAskResolved(channelID string) {
+	m.Called(channelID)
+}
+
 func (m *MockEventBroadcaster) BroadcastExitPlan(channelID string, data events.ExitPlanModeEventData) {
 	m.Called(channelID, data)
+}
+
+func (m *MockEventBroadcaster) BroadcastPlanResolved(channelID string) {
+	m.Called(channelID)
 }
 
 func (m *MockEventBroadcaster) BroadcastAgentTasks(channelID string, data events.AgentTasksEventData) {
@@ -911,6 +919,28 @@ func (s *OrchestratorSuite) TestDrainChannelSkipsWhenAsked() {
 	store.On("ClaimNextPending", mock.Anything, "asked-ch").Return(nil, nil).Once()
 	orch.ResumeChannel(context.Background(), "asked-ch")
 	store.AssertExpectations(s.T())
+}
+
+// TestClearParkBroadcastsResolved verifies ClearAskedChannel / ClearPlannedChannel
+// emit an ask_resolved / plan_resolved event so the FE drops the card
+// deterministically instead of inferring it from the resume run's status.
+func (s *OrchestratorSuite) TestClearParkBroadcastsResolved() {
+	store := new(testutil.MockStore)
+	orch := New(store, s.bot, s.runner, s.scheduler, slog.New(slog.NewTextHandler(io.Discard, nil)), config.Config{}, nil)
+	eb := new(MockEventBroadcaster)
+	orch.SetEventBroadcaster(eb)
+	store.On("UpsertPausedChannel", mock.Anything, mock.Anything).Return(nil)
+	store.On("DeletePausedChannel", mock.Anything, mock.Anything, mock.Anything).Return(nil)
+	eb.On("BroadcastAskResolved", "asked-ch").Return().Once()
+	eb.On("BroadcastPlanResolved", "planned-ch").Return().Once()
+
+	orch.markAskedChannel(context.Background(), "asked-ch", "", events.AskUserQuestionEventData{})
+	orch.ClearAskedChannel("asked-ch")
+
+	orch.markPlannedChannel(context.Background(), "planned-ch", events.ExitPlanModeEventData{Plan: "p"})
+	orch.ClearPlannedChannel("planned-ch")
+
+	eb.AssertExpectations(s.T())
 }
 
 func (s *OrchestratorSuite) TestCurrentConfigReloads() {

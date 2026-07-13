@@ -123,7 +123,7 @@ export function useChatStateStore({
   // Reconcile the sidebar's ask-indicator set against a channel's current
   // askUserQuestions. The agent pauses the channel's drain on AskUserQuestion,
   // so the pill stays lit until the user answers/cancels (clearAskUserPill) or
-  // a new run starts (agent.status running clears askUserQuestions).
+  // the backend clears the park (agent.ask_resolved clears askUserQuestions).
   const refreshAskUserMembership = useCallback((channelId: string, state: ActiveChatState) => {
     const set = askUserChannelIdsRef.current;
     const has = set.has(channelId);
@@ -500,11 +500,11 @@ export function useChatStateStore({
         ) {
           refreshGateMembership(stateTarget, state);
         }
-        // agent.ask_user sets askUserQuestions; agent.status running clears it.
+        // agent.ask_user sets askUserQuestions; agent.ask_resolved clears it.
         // Mirror those onto the sidebar's ask-pill set.
         if (
           state &&
-          (wsEvent.type === "agent.ask_user" || wsEvent.type === "agent.status")
+          (wsEvent.type === "agent.ask_user" || wsEvent.type === "agent.ask_resolved")
         ) {
           refreshAskUserMembership(stateTarget, state);
         }
@@ -852,8 +852,18 @@ function applyEvent(state: ActiveChatState, event: WSEvent): void {
       state.askUserQuestions = event.data as AskUserQuestionData;
       break;
     }
+    case "agent.ask_resolved": {
+      // Backend cleared the ask park (answer/cancel) — drop the card.
+      state.askUserQuestions = null;
+      break;
+    }
     case "agent.exit_plan": {
       state.exitPlanRequest = event.data as ExitPlanModeData;
+      break;
+    }
+    case "agent.plan_resolved": {
+      // Backend cleared the plan park (approve/deny) — drop the card.
+      state.exitPlanRequest = null;
       break;
     }
     case "agent.tasks": {
@@ -892,8 +902,12 @@ function applyEvent(state: ActiveChatState, event: WSEvent): void {
         state.isRunning = true;
         state.runId = data.run_id ?? null;
         state.completionInfo = null;
-        state.askUserQuestions = null;
-        state.exitPlanRequest = null;
+        // NOTE: askUserQuestions / exitPlanRequest are intentionally NOT cleared
+        // here. A run starting is not proof the ask/plan was resolved — the
+        // backend now emits agent.ask_resolved / agent.plan_resolved the moment
+        // it clears the park (see below), which is the only signal that drops
+        // the card. Clearing on "running" wrongly hid a still-pending ask when a
+        // sibling run started while the channel was parked.
         // Empty-string trigger_content (queue-drain, subagent) is no signal;
         // fall through to per-message content in the trigger-quote banner.
         state.triggerContent = data.trigger_content ? data.trigger_content : null;

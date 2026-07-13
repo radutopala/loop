@@ -248,6 +248,11 @@ func (o *Orchestrator) ClearPlannedChannel(channelID string) {
 	if err := o.store.DeletePausedChannel(context.Background(), channelID, db.PausedKindPlan); err != nil {
 		o.logger.Error("clearing persisted plan park", "error", err, "channel_id", channelID)
 	}
+	// Signal the FE to drop the plan card deterministically, rather than
+	// inferring resolution from the resume run's agent.status.
+	if o.events != nil {
+		o.events.BroadcastPlanResolved(channelID)
+	}
 }
 
 // ListPlannedChannels returns a snapshot of every channel currently parked on
@@ -321,6 +326,12 @@ func (o *Orchestrator) ClearAskedChannel(channelID string) {
 	o.askedModes.Delete(channelID)
 	if err := o.store.DeletePausedChannel(context.Background(), channelID, db.PausedKindAsk); err != nil {
 		o.logger.Error("clearing persisted ask park", "error", err, "channel_id", channelID)
+	}
+	// Signal the FE to drop the ask card deterministically, rather than
+	// inferring resolution from the resume run's agent.status (which also
+	// fires for unrelated runs and would wrongly hide a still-pending ask).
+	if o.events != nil {
+		o.events.BroadcastAskResolved(channelID)
 	}
 }
 
