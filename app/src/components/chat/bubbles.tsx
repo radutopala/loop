@@ -1,5 +1,5 @@
 import { useCallback, useContext, useEffect, useRef, useState } from "react";
-import type { AgentActivityData, AskUserQuestion, ExitPlanModeData, Message, TaskItem, TimelineItem } from "../../types";
+import type { AgentActivityData, AskUserOption, AskUserQuestion, ExitPlanModeData, Message, TaskItem, TimelineItem } from "../../types";
 import { resolveAsk, resolvePlan } from "../../api/channels";
 import { fonts } from "../../theme";
 import { useTheme } from "../../ThemeContext";
@@ -432,18 +432,42 @@ export function TaskChecklist({ tasks }: { tasks: TaskItem[] }) {
 
 // ── AskUserQuestion Card ──
 
+const OTHER = "__other__";
+
 export function AskUserQuestionCard({ questions, channelId, mode, onSent }: { questions: AskUserQuestion[]; channelId: string; mode: "agent" | "plan"; onSent?: () => void }) {
   const { colors } = useTheme();
-  const [answers, setAnswers] = useState<Map<number, string>>(new Map());
+  // Selected option labels per question. Single-select keeps at most one entry;
+  // multiSelect questions accumulate several (checkbox semantics). OTHER is a
+  // pseudo-label whose free text lives in otherTexts.
+  const [selections, setSelections] = useState<Map<number, Set<string>>>(new Map());
   const [otherTexts, setOtherTexts] = useState<Map<number, string>>(new Map());
+  // Option whose preview/description is currently surfaced (hover/focus), per question.
+  const [focused, setFocused] = useState<Map<number, string>>(new Map());
   const [sending, setSending] = useState(false);
 
-  const setAnswer = (idx: number, value: string) => {
-    setAnswers((prev) => { const next = new Map(prev); next.set(idx, value); return next; });
+  const selectedFor = (qi: number): Set<string> => selections.get(qi) ?? new Set();
+
+  const toggleOption = (qi: number, label: string, multi: boolean) => {
+    setSelections((prev) => {
+      const next = new Map(prev);
+      const cur = new Set(prev.get(qi) ?? []);
+      if (multi) {
+        if (cur.has(label)) cur.delete(label); else cur.add(label);
+      } else {
+        // Single-select: replace, or clear if re-clicking the same chip.
+        if (cur.has(label) && cur.size === 1) cur.clear(); else { cur.clear(); cur.add(label); }
+      }
+      next.set(qi, cur);
+      return next;
+    });
   };
 
   const setOtherText = (idx: number, value: string) => {
     setOtherTexts((prev) => { const next = new Map(prev); next.set(idx, value); return next; });
+  };
+
+  const setFocusedOpt = (qi: number, label: string) => {
+    setFocused((prev) => { const next = new Map(prev); next.set(qi, label); return next; });
   };
 
   const handleSend = async () => {
@@ -451,13 +475,14 @@ export function AskUserQuestionCard({ questions, channelId, mode, onSent }: { qu
     const parts: string[] = [];
     for (let i = 0; i < questions.length; i++) {
       const q = questions[i]!;
-      const answer = answers.get(i);
-      if (!answer) continue;
-      const answerText = answer === "__other__" ? (otherTexts.get(i) || "(no answer)") : answer;
+      const sel = selectedFor(i);
+      if (sel.size === 0) continue;
+      const labels = [...sel].filter((l) => l !== OTHER);
+      if (sel.has(OTHER)) labels.push(otherTexts.get(i)?.trim() || "(no answer)");
       // Pair each answer with its full question. The agent may pick these up in a
       // fresh turn (or a different worktree) where it no longer has the question
       // in context, so the short header alone would be ambiguous.
-      parts.push(`Q: ${q.question}\nA: ${answerText}`);
+      parts.push(`Q: ${q.question}\nA: ${labels.join(", ")}`);
     }
     const content = parts.length > 0
       ? "Here are my answers:\n\n" + parts.join("\n\n")
@@ -469,7 +494,18 @@ export function AskUserQuestionCard({ questions, channelId, mode, onSent }: { qu
     setSending(false);
   };
 
-  const allAnswered = questions.every((_, i) => answers.has(i));
+  const allAnswered = questions.every((_, i) => selectedFor(i).size > 0);
+
+  // Resolve the option (across all questions) to preview: the focused one wins,
+  // else a single selected one — so a preview stays visible after clicking.
+  const focusedOption = (qi: number): AskUserOption | undefined => {
+    const f = focused.get(qi);
+    const opts = questions[qi]?.options ?? [];
+    if (f) return opts.find((o) => o.label === f);
+    const sel = [...selectedFor(qi)].filter((l) => l !== OTHER);
+    if (sel.length === 1) return opts.find((o) => o.label === sel[0]);
+    return undefined;
+  };
 
   return (
     <div style={{
@@ -482,50 +518,78 @@ export function AskUserQuestionCard({ questions, channelId, mode, onSent }: { qu
       <div style={{ fontSize: 11, fontWeight: 700, color: colors.active, textTransform: "uppercase", letterSpacing: 1, marginBottom: 8 }}>
         Claude has questions
       </div>
-      {questions.map((q, qi) => (
+      {questions.map((q, qi) => {
+        const multi = !!q.multiSelect;
+        const sel = selectedFor(qi);
+        const focusOpt = focusedOption(qi);
+        return (
         <div key={qi} style={{ marginBottom: qi < questions.length - 1 ? 12 : 0 }}>
-          {q.header && <div style={{ fontSize: 12, fontWeight: 600, color: colors.textLight, marginBottom: 4 }}>{q.header}</div>}
+          <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 4 }}>
+            {q.header && <div style={{ fontSize: 10, fontWeight: 700, color: colors.active, textTransform: "uppercase", letterSpacing: 1, padding: "1px 6px", border: `1px solid ${colors.active}`, borderRadius: 4 }}>{q.header}</div>}
+            {multi && <div style={{ fontSize: 10, color: colors.textDim, fontFamily: fonts.mono }} title="Select one or more">multi-select</div>}
+          </div>
           <div style={{ fontSize: 13, color: colors.text, marginBottom: 6 }}>{q.question}</div>
           <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
             {q.options?.map((opt) => {
-              const isSelected = answers.get(qi) === opt.label;
+              const isSelected = sel.has(opt.label);
               return (
                 <button
                   key={opt.label}
-                  onClick={() => setAnswer(qi, opt.label)}
+                  onClick={() => toggleOption(qi, opt.label, multi)}
+                  onMouseEnter={() => setFocusedOpt(qi, opt.label)}
+                  onFocus={() => setFocusedOpt(qi, opt.label)}
                   title={opt.description}
                   style={{
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: 6,
                     padding: "4px 10px",
                     fontSize: 12,
                     fontFamily: fonts.mono,
                     border: `1px solid ${isSelected ? colors.active : colors.border}`,
-                    borderRadius: 12,
+                    borderRadius: multi ? 6 : 12,
                     backgroundColor: isSelected ? colors.active : "transparent",
                     color: isSelected ? "#fff" : colors.text,
                     cursor: "pointer",
                   }}
                 >
+                  <span aria-hidden style={{ opacity: 0.9 }}>
+                    {multi ? (isSelected ? "☑" : "☐") : (isSelected ? "◉" : "○")}
+                  </span>
                   {opt.label}
                 </button>
               );
             })}
             <button
-              onClick={() => setAnswer(qi, "__other__")}
+              onClick={() => toggleOption(qi, OTHER, multi)}
               style={{
                 padding: "4px 10px",
                 fontSize: 12,
                 fontFamily: fonts.mono,
-                border: `1px solid ${answers.get(qi) === "__other__" ? colors.active : colors.border}`,
-                borderRadius: 12,
-                backgroundColor: answers.get(qi) === "__other__" ? colors.active : "transparent",
-                color: answers.get(qi) === "__other__" ? "#fff" : colors.textDim,
+                border: `1px solid ${sel.has(OTHER) ? colors.active : colors.border}`,
+                borderRadius: multi ? 6 : 12,
+                backgroundColor: sel.has(OTHER) ? colors.active : "transparent",
+                color: sel.has(OTHER) ? "#fff" : colors.textDim,
                 cursor: "pointer",
               }}
             >
               Other...
             </button>
           </div>
-          {answers.get(qi) === "__other__" && (
+          {/* Description + preview of the focused/selected option (Claude may
+              attach a mockup or code snippet to compare options). */}
+          {focusOpt && (focusOpt.description || focusOpt.preview) && (
+            <div style={{ marginTop: 6, padding: 8, backgroundColor: colors.bg, border: `1px solid ${colors.border}`, borderRadius: 6 }}>
+              <div style={{ fontSize: 11, fontWeight: 600, color: colors.textLight, marginBottom: focusOpt.description ? 4 : 0 }}>{focusOpt.label}</div>
+              {focusOpt.description && <div style={{ fontSize: 12, color: colors.textDim }}>{focusOpt.description}</div>}
+              {focusOpt.preview && (
+                <pre style={{ marginTop: focusOpt.description ? 6 : 4, marginBottom: 0, padding: 8, maxHeight: 220, overflow: "auto", fontSize: 11, fontFamily: fonts.mono, backgroundColor: colors.codeBlockBg, borderRadius: 4, color: colors.text, whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
+                  {focusOpt.preview}
+                </pre>
+              )}
+            </div>
+          )}
+          {sel.has(OTHER) && (
             <textarea
               autoFocus
               placeholder="Type your answer (⌘/Ctrl+Enter to send)…"
@@ -556,7 +620,8 @@ export function AskUserQuestionCard({ questions, channelId, mode, onSent }: { qu
             />
           )}
         </div>
-      ))}
+        );
+      })}
       <button
         onClick={handleSend}
         disabled={!allAnswered || sending}

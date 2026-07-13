@@ -128,13 +128,16 @@ export interface AgentActivityData {
 export interface AskUserOption {
   label: string;
   description?: string;
+  /** Optional mockup / code snippet / visual comparison shown when the option is focused. */
+  preview?: string;
 }
 
 export interface AskUserQuestion {
   question: string;
   header?: string;
   options?: AskUserOption[];
-  multi_select?: boolean;
+  /** When true the question is a checkbox list (multiple options selectable). */
+  multiSelect?: boolean;
 }
 
 export interface AskUserQuestionData {
