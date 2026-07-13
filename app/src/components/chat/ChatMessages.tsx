@@ -310,10 +310,15 @@ export const ChatMessages = forwardRef<ChatMessagesHandle, ChatMessagesProps>(fu
           {chatGateApproval && (
             <ApprovalCard data={chatGateApproval} channelId={channelId} onResolved={() => { chatState.clearGateApproval("chat"); scrollToBottom(); }} />
           )}
-          {askUserQuestions && !isRunning && channelId && (
+          {/* Ask/plan cards are sticky: rendered whenever the ask/plan is set,
+              independent of isRunning. The card only clears on an explicit
+              answer or the backend's agent.ask_resolved / agent.plan_resolved
+              event — so a sibling run starting while the channel is parked can
+              no longer hide the still-pending question. */}
+          {askUserQuestions && channelId && (
             <AskUserQuestionCard questions={askUserQuestions.questions} channelId={channelId} mode={chatState.mode} onSent={() => { chatState.clearAskUser(); scrollToBottom(); }} />
           )}
-          {exitPlanRequest && !askUserQuestions && !isRunning && channelId && (
+          {exitPlanRequest && !askUserQuestions && channelId && (
             <ExitPlanCard plan={exitPlanRequest} channelId={channelId} setMode={chatState.setMode} onSent={() => { chatState.clearExitPlan(); scrollToBottom(); }} />
           )}
           {streamingContent && (

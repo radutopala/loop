@@ -24,7 +24,9 @@ const (
 	EventAgentThinking             = "agent.thinking"
 	EventAgentActivity             = "agent.activity"
 	EventAskUser                   = "agent.ask_user"
+	EventAskResolved               = "agent.ask_resolved"
 	EventExitPlan                  = "agent.exit_plan"
+	EventPlanResolved              = "agent.plan_resolved"
 	EventAgentTasks                = "agent.tasks"
 	EventChannelCreated            = "channel.created"
 	EventChannelDeleted            = "channel.deleted"
@@ -365,12 +367,32 @@ func (h *EventsHub) BroadcastAskUser(channelID string, data events.AskUserQuesti
 	})
 }
 
+// BroadcastAskResolved sends an agent.ask_resolved event when a channel's
+// pending AskUserQuestion park is cleared (answer/cancel), so the FE can drop
+// the ask card without inferring resolution from the next run's status.
+func (h *EventsHub) BroadcastAskResolved(channelID string) {
+	h.Broadcast(Event{
+		Type:      EventAskResolved,
+		ChannelID: channelID,
+	})
+}
+
 // BroadcastExitPlan sends an agent.exit_plan event when Claude wants to exit plan mode.
 func (h *EventsHub) BroadcastExitPlan(channelID string, data events.ExitPlanModeEventData) {
 	h.Broadcast(Event{
 		Type:      EventExitPlan,
 		ChannelID: channelID,
 		Data:      data,
+	})
+}
+
+// BroadcastPlanResolved sends an agent.plan_resolved event when a channel's
+// pending ExitPlanMode park is cleared (approve/deny), mirroring
+// BroadcastAskResolved so the FE can drop the plan card deterministically.
+func (h *EventsHub) BroadcastPlanResolved(channelID string) {
+	h.Broadcast(Event{
+		Type:      EventPlanResolved,
+		ChannelID: channelID,
 	})
 }
 
