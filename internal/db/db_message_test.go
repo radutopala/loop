@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"database/sql/driver"
+	"errors"
 	"fmt"
 	"time"
 
@@ -660,5 +661,42 @@ func (s *StoreSuite) TestListPendingChannelsScanError() {
 		WillReturnRows(sqlmock.NewRows([]string{"channel_id"}).AddRow(nil))
 
 	_, err := s.store.ListPendingChannels(context.Background())
+	require.Error(s.T(), err)
+}
+
+func (s *StoreSuite) TestListUserMessageContents() {
+	rows := sqlmock.NewRows([]string{"content"}).
+		AddRow("newest").
+		AddRow("middle").
+		AddRow("oldest")
+	s.mock.ExpectQuery(`SELECT content FROM messages`).
+		WithArgs("ch-1", 100).
+		WillReturnRows(rows)
+
+	out, err := s.store.ListUserMessageContents(context.Background(), "ch-1", 100)
+	require.NoError(s.T(), err)
+	// DESC query result is reversed to chronological order.
+	require.Equal(s.T(), []string{"oldest", "middle", "newest"}, out)
+	require.NoError(s.T(), s.mock.ExpectationsWereMet())
+}
+
+func (s *StoreSuite) TestListUserMessageContentsQueryError() {
+	s.mock.ExpectQuery(`SELECT content FROM messages`).
+		WillReturnError(errors.New("db closed"))
+	_, err := s.store.ListUserMessageContents(context.Background(), "ch-1", 100)
+	require.Error(s.T(), err)
+}
+
+func (s *StoreSuite) TestListUserMessageContentsScanError() {
+	rows := sqlmock.NewRows([]string{"content"}).AddRow(nil)
+	s.mock.ExpectQuery(`SELECT content FROM messages`).WillReturnRows(rows)
+	_, err := s.store.ListUserMessageContents(context.Background(), "ch-1", 100)
+	require.Error(s.T(), err)
+}
+
+func (s *StoreSuite) TestListUserMessageContentsRowsError() {
+	rows := sqlmock.NewRows([]string{"content"}).AddRow("x").RowError(0, errors.New("torn"))
+	s.mock.ExpectQuery(`SELECT content FROM messages`).WillReturnRows(rows)
+	_, err := s.store.ListUserMessageContents(context.Background(), "ch-1", 100)
 	require.Error(s.T(), err)
 }

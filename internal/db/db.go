@@ -39,6 +39,7 @@ type Store interface {
 	MaxQueuedPriority(ctx context.Context, channelID string) (int, error)
 	ListPendingChannels(ctx context.Context) ([]string, error)
 	GetRecentMessages(ctx context.Context, channelID string, limit int) ([]*Message, error)
+	ListUserMessageContents(ctx context.Context, channelID string, limit int) ([]string, error)
 	ListQueuedUserMessages(ctx context.Context, channelID string) ([]*Message, error)
 	ReorderQueuedMessages(ctx context.Context, channelID string, orderedMsgIDs []string) error
 	GetMessagesCursor(ctx context.Context, channelID string, cursor int64, limit int) ([]*Message, error)

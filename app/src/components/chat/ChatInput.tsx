@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { Message } from "../../types";
 import { resolveGateApproval, sendCommand, sendMessage } from "../../api/loopApi";
-import { resolveAsk, resolvePlan } from "../../api/channels";
+import { fetchComposerHistory, resolveAsk, resolvePlan } from "../../api/channels";
 import { firstClipboardImage, uploadPastedImage } from "../../utils/clipboardImage";
 import { fetchShortcuts, type PromptShortcut } from "../../api/configApi";
 import { searchFiles, type FileSearchResult, type RootEntry } from "../../api/files";
@@ -283,18 +283,33 @@ export function ChatInput({ channelId, messages, roots, isRunning, mode, setMode
   const draftRef = useRef("");
   const historyChannelRef = useRef<string | null>(null);
 
-  // Keep history scoped to the active channel and clear stale entries on switch.
+  // Keep history scoped to the active channel and clear stale entries on
+  // switch. The list comes from a dedicated endpoint independent of timeline
+  // pagination — sourcing it from the loaded `messages` page capped ArrowUp
+  // recall at whatever the first page happened to contain. Until the fetch
+  // resolves (or if it fails), fall back to the loaded page so history keeps
+  // working offline.
   useEffect(() => {
     const channelChanged = historyChannelRef.current !== channelId;
     historyChannelRef.current = channelId;
 
-    const userMsgs = messages.filter((m) => !m.is_bot).map((m) => m.content);
-    historyRef.current = userMsgs;
     if (channelChanged) {
       historyIdxRef.current = -1;
       draftRef.current = draftText.get(channelId) ?? "";
+      historyRef.current = messages.filter((m) => !m.is_bot).map((m) => m.content);
+      // No cancellation flag on purpose: StrictMode / remounts run the
+      // cleanup right after the first effect pass, and the second pass sees
+      // historyChannelRef already set so it would never re-fetch — a
+      // cancelled-flag guard left history permanently on the page fallback.
+      // The channel-match check below is the correct staleness guard: a late
+      // response for a channel we've switched away from is discarded.
+      fetchComposerHistory(channelId).then((hist) => {
+        if (historyChannelRef.current === channelId && hist.length > 0) {
+          historyRef.current = hist;
+        }
+      }).catch(() => { /* keep the page-derived fallback */ });
     }
-  }, [channelId, messages]);
+  }, [channelId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Auto-focus textarea on mount; move cursor to end if restoring a draft.
   useEffect(() => {

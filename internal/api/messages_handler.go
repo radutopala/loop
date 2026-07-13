@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -175,6 +176,39 @@ func toSearchMessageResponse(m *db.Message) searchMessageResponse {
 		IsBot:      m.IsBot,
 		CreatedAt:  m.CreatedAt,
 	}
+}
+
+// composerHistoryResponse carries the user-typed message contents backing the
+// composer's ArrowUp history, chronological (oldest first).
+type composerHistoryResponse struct {
+	Messages []string `json:"messages"`
+}
+
+// handleComposerHistory returns the channel's recent user-sent chat message
+// contents, independent of timeline pagination — the composer's ArrowUp
+// history would otherwise only see the first loaded page.
+func (s *Server) handleComposerHistory(w http.ResponseWriter, r *http.Request) {
+	if !requireConfigured(w, s.store, "message listing not configured") {
+		return
+	}
+
+	channelID := r.PathValue("id")
+	limit := 100
+	if v := r.URL.Query().Get("limit"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 && n <= 500 {
+			limit = n
+		}
+	}
+
+	msgs, err := s.store.ListUserMessageContents(r.Context(), channelID, limit)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if msgs == nil {
+		msgs = []string{}
+	}
+	writeHTTPJSON(w, http.StatusOK, composerHistoryResponse{Messages: msgs}, s.logger)
 }
 
 func (s *Server) handleListMessages(w http.ResponseWriter, r *http.Request) {

@@ -81,6 +81,14 @@ func (m *MockStore) ListPausedChannels(ctx context.Context) ([]*db.PausedChannel
 	return nil, args.Error(1)
 }
 
+func (m *MockStore) ListUserMessageContents(ctx context.Context, channelID string, limit int) ([]string, error) {
+	args := m.Called(ctx, channelID, limit)
+	if v := args.Get(0); v != nil {
+		return v.([]string), args.Error(1)
+	}
+	return nil, args.Error(1)
+}
+
 func (m *MockStore) InsertMessage(ctx context.Context, msg *db.Message) error {
 	return m.Called(ctx, msg).Error(0)
 }
