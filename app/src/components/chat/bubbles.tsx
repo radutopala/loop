@@ -470,6 +470,13 @@ export function AskUserQuestionCard({ questions, channelId, mode, onSent }: { qu
     setFocused((prev) => { const next = new Map(prev); next.set(qi, label); return next; });
   };
 
+  // Drop the transient hover/focus so the description+preview panel doesn't
+  // linger on the last-pointed option after the pointer leaves (which left a
+  // stale box hovering above the "Other" textarea).
+  const clearFocusedOpt = (qi: number) => {
+    setFocused((prev) => { if (!prev.has(qi)) return prev; const next = new Map(prev); next.delete(qi); return next; });
+  };
+
   const handleSend = async () => {
     setSending(true);
     const parts: string[] = [];
@@ -496,15 +503,14 @@ export function AskUserQuestionCard({ questions, channelId, mode, onSent }: { qu
 
   const allAnswered = questions.every((_, i) => selectedFor(i).size > 0);
 
-  // Resolve the option (across all questions) to preview: the focused one wins,
-  // else a single selected one — so a preview stays visible after clicking.
+  // The option whose description+preview panel is shown: strictly the one under
+  // the pointer / keyboard focus (matching the tool schema's "rendered when this
+  // option is focused"). No selected-option fallback, so nothing lingers once
+  // the pointer leaves the options row.
   const focusedOption = (qi: number): AskUserOption | undefined => {
     const f = focused.get(qi);
-    const opts = questions[qi]?.options ?? [];
-    if (f) return opts.find((o) => o.label === f);
-    const sel = [...selectedFor(qi)].filter((l) => l !== OTHER);
-    if (sel.length === 1) return opts.find((o) => o.label === sel[0]);
-    return undefined;
+    if (!f) return undefined;
+    return questions[qi]?.options?.find((o) => o.label === f);
   };
 
   return (
@@ -537,7 +543,9 @@ export function AskUserQuestionCard({ questions, channelId, mode, onSent }: { qu
                   key={opt.label}
                   onClick={() => toggleOption(qi, opt.label, multi)}
                   onMouseEnter={() => setFocusedOpt(qi, opt.label)}
+                  onMouseLeave={() => clearFocusedOpt(qi)}
                   onFocus={() => setFocusedOpt(qi, opt.label)}
+                  onBlur={() => clearFocusedOpt(qi)}
                   title={opt.description}
                   style={{
                     display: "inline-flex",
