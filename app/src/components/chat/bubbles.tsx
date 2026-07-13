@@ -104,6 +104,50 @@ export function ToolRunBlock({ items, resultsByToolUseID, skippedToolResultIDs, 
   );
 }
 
+/**
+ * Small square-on-square copy button. Meant to sit inside a hover container
+ * (`visible` follows the container's hover state) — it fades in, copies `text`
+ * to the clipboard, and briefly flips to a check.
+ */
+export function CopyButton({ text, visible, style }: { text: string; visible: boolean; style?: React.CSSProperties }) {
+  const { colors } = useTheme();
+  const [copied, setCopied] = useState(false);
+  const copy = useCallback((e: React.MouseEvent) => {
+    e.stopPropagation();
+    e.preventDefault();
+    navigator.clipboard.writeText(text).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1200);
+    }).catch(() => { /* clipboard blocked — no-op */ });
+  }, [text]);
+  return (
+    <button
+      onClick={copy}
+      title={copied ? "Copied" : "Copy"}
+      aria-label="Copy to clipboard"
+      style={{
+        display: "inline-flex", alignItems: "center", justifyContent: "center",
+        width: 20, height: 20, padding: 0, flexShrink: 0,
+        background: "none", border: "none", borderRadius: 4,
+        cursor: "pointer",
+        color: copied ? colors.active : colors.textDim,
+        opacity: visible || copied ? 1 : 0,
+        transition: "opacity 0.12s ease",
+        WebkitAppRegion: "no-drag",
+        ...style,
+      }}
+      onMouseEnter={(e) => { if (!copied) e.currentTarget.style.color = colors.textLight; }}
+      onMouseLeave={(e) => { if (!copied) e.currentTarget.style.color = colors.textDim; }}
+    >
+      {copied ? (
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12" /></svg>
+      ) : (
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" /><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" /></svg>
+      )}
+    </button>
+  );
+}
+
 export function MessageBubble({ message, showProcessing, showQueued, queuePosition, highlighted, onQuote }: { message: Message; showProcessing?: boolean; showQueued?: boolean; queuePosition?: string; highlighted?: boolean; onQuote?: (msg: Message) => void }) {
   const { colors } = useTheme();
   const styles = buildMessageStyles(colors);
@@ -113,6 +157,7 @@ export function MessageBubble({ message, showProcessing, showQueued, queuePositi
     minute: "2-digit",
   });
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; items: MenuItem[] } | null>(null);
+  const [hovered, setHovered] = useState(false);
 
   const handleContextMenu = useCallback((e: React.MouseEvent) => {
     if (!onQuote) return;
@@ -130,6 +175,8 @@ export function MessageBubble({ message, showProcessing, showQueued, queuePositi
       data-msg-uuid={message.msg_id}
       data-is-user={isUser ? "true" : undefined}
       onContextMenu={handleContextMenu}
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
       style={{
         display: "flex",
         flexDirection: "column",
@@ -145,6 +192,7 @@ export function MessageBubble({ message, showProcessing, showQueued, queuePositi
       <div
         style={{
           ...styles.bubble,
+          position: "relative",
           backgroundColor: isUser ? colors.userBubble : "transparent",
           borderRadius: isUser ? "18px 18px 4px 18px" : "18px 18px 18px 4px",
           // Cap user bubbles so the right-aligned colored pill doesn't
@@ -155,6 +203,9 @@ export function MessageBubble({ message, showProcessing, showQueued, queuePositi
           padding: isUser ? "10px 16px" : "4px 0",
         }}
       >
+        {!isUser && (
+          <CopyButton text={message.content} visible={hovered} style={{ position: "absolute", top: 2, right: 0 }} />
+        )}
         {!isUser && (
           <div style={styles.header}>
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" style={{ flexShrink: 0 }}>
@@ -317,6 +368,7 @@ export function ToolActivityIndicator({ toolName, input, result }: { toolName: s
   const activityStyle = buildActivityStyle(colors);
   const [expanded, setExpanded] = useState(false);
   const [inputExpanded, setInputExpanded] = useState(false);
+  const [hovered, setHovered] = useState(false);
   const safeInput = input ?? "";
   const isPathTool = FILE_PATH_TOOLS.has(toolName);
   // Long tool inputs (e.g. multi-line Bash commands) are collapsed to a one-line
@@ -330,8 +382,12 @@ export function ToolActivityIndicator({ toolName, input, result }: { toolName: s
   const canExpand = fullText.length > 120;
   const resultColor = result?.is_error ? colors.warning : colors.textDim;
   return (
-    <div style={{ ...activityStyle, flexDirection: "column", alignItems: "flex-start", gap: 2 }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+    <div
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+      style={{ ...activityStyle, flexDirection: "column", alignItems: "flex-start", gap: 2 }}
+    >
+      <div style={{ display: "flex", alignItems: "center", gap: 8, maxWidth: "100%" }}>
         <span style={{ opacity: 0.5 }}>&#9881;</span>
         <span style={{ color: colors.textMuted, fontWeight: 500 }}>{toolName}</span>
         {!inputExpanded && truncated && (
@@ -340,11 +396,12 @@ export function ToolActivityIndicator({ toolName, input, result }: { toolName: s
           <span
             onClick={canExpandInput ? () => setInputExpanded(true) : undefined}
             title={canExpandInput ? "Show full command" : undefined}
-            style={{ opacity: 0.85, cursor: canExpandInput ? "pointer" : "default" }}
+            style={{ opacity: 0.85, cursor: canExpandInput ? "pointer" : "default", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
           >
             {renderInputWithLinks(truncated, toolName, channelId)}
           </span>
         )}
+        {safeInput && <CopyButton text={safeInput} visible={hovered} />}
       </div>
       {inputExpanded && (
         <div
@@ -356,20 +413,24 @@ export function ToolActivityIndicator({ toolName, input, result }: { toolName: s
         </div>
       )}
       {hasResult && (
-        <div
-          onClick={canExpand ? () => setExpanded((v) => !v) : undefined}
-          style={{
-            marginLeft: 22,
-            opacity: 0.6,
-            color: resultColor,
-            cursor: canExpand ? "pointer" : "default",
-            whiteSpace: expanded ? "pre-wrap" : "normal",
-            wordBreak: "break-word",
-            fontFamily: fonts.mono,
-          }}
-        >
-          {expanded ? fullText : previewText}
-          {result?.truncated && <span style={{ opacity: 0.5 }}> (truncated)</span>}
+        <div style={{ display: "flex", alignItems: "flex-start", gap: 6, marginLeft: 22, maxWidth: "100%" }}>
+          <div
+            onClick={canExpand ? () => setExpanded((v) => !v) : undefined}
+            style={{
+              flex: 1,
+              minWidth: 0,
+              opacity: 0.6,
+              color: resultColor,
+              cursor: canExpand ? "pointer" : "default",
+              whiteSpace: expanded ? "pre-wrap" : "normal",
+              wordBreak: "break-word",
+              fontFamily: fonts.mono,
+            }}
+          >
+            {expanded ? fullText : previewText}
+            {result?.truncated && <span style={{ opacity: 0.5 }}> (truncated)</span>}
+          </div>
+          <CopyButton text={fullText} visible={hovered} style={{ marginTop: 1 }} />
         </div>
       )}
     </div>
