@@ -62,7 +62,7 @@ func (s *StoreSuite) TestUpsertChannel() {
 func (s *StoreSuite) TestGetChannelWithParentID() {
 	now := time.Now().UTC()
 	rows := newMockChannelRows().
-		AddRow(1, "thread1", "g1", "", "/project", "ch1", "", 1, "", "", 0, "", 0, now, now)
+		AddRow(1, "thread1", "g1", "", "/project", "ch1", "", 1, "", "", 0, "", 0, "", "", now, now)
 	s.mock.ExpectQuery(`SELECT .+ FROM channels WHERE channel_id`).
 		WithArgs("thread1").
 		WillReturnRows(rows)
@@ -142,7 +142,7 @@ func (s *StoreSuite) TestGetChannel() {
 	now := time.Now().UTC()
 	permJSON := `{"owners":{"users":["U1"],"roles":["admin"]},"members":{"users":[],"roles":[]}}`
 	rows := newMockChannelRows().
-		AddRow(1, "ch1", "g1", "test", "/home/user/project", "", "discord", 1, "sess-123", permJSON, 0, "", 0, now, now)
+		AddRow(1, "ch1", "g1", "test", "/home/user/project", "", "discord", 1, "sess-123", permJSON, 0, "", 0, "", "", now, now)
 	s.mock.ExpectQuery(`SELECT .+ FROM channels WHERE channel_id`).
 		WithArgs("ch1").
 		WillReturnRows(rows)
@@ -177,7 +177,7 @@ func (s *StoreSuite) TestGetChannelByDirPath() {
 	now := time.Now().UTC()
 	permJSON := `{"owners":{"users":["U1"],"roles":[]},"members":{"users":["U2"],"roles":[]}}`
 	rows := newMockChannelRows().
-		AddRow(1, "ch1", "g1", "loop", "/home/user/dev/loop", "", "discord", 1, "", permJSON, 0, "", 0, now, now)
+		AddRow(1, "ch1", "g1", "loop", "/home/user/dev/loop", "", "discord", 1, "", permJSON, 0, "", 0, "", "", now, now)
 	s.mock.ExpectQuery(`SELECT .+ FROM channels WHERE dir_path`).
 		WithArgs("/home/user/dev/loop", types.PlatformDiscord).
 		WillReturnRows(rows)
@@ -207,8 +207,8 @@ func (s *StoreSuite) TestGetChannelByDirPathNotFoundAndError() {
 func (s *StoreSuite) TestGetChannelsByDirPath() {
 	now := time.Now().UTC()
 	rows := newMockChannelRows().
-		AddRow(1, "ch1", "", "loop-local", "/home/user/dev/loop", "", "local", 1, "", "", 0, "", 0, now, now).
-		AddRow(2, "ch2", "g1", "loop-discord", "/home/user/dev/loop", "", "discord", 1, "", "", 0, "", 0, now, now)
+		AddRow(1, "ch1", "", "loop-local", "/home/user/dev/loop", "", "local", 1, "", "", 0, "", 0, "", "", now, now).
+		AddRow(2, "ch2", "g1", "loop-discord", "/home/user/dev/loop", "", "discord", 1, "", "", 0, "", 0, "", "", now, now)
 	s.mock.ExpectQuery(`SELECT .+ FROM channels WHERE dir_path`).
 		WithArgs("/home/user/dev/loop").
 		WillReturnRows(rows)
@@ -266,6 +266,18 @@ func (s *StoreSuite) TestUpdateSessionID() {
 
 	s.mock.ExpectExec(`UPDATE channels SET session_id`).WithArgs("new-sess", sqlmock.AnyArg(), "ch1").WillReturnError(sql.ErrConnDone)
 	require.Error(s.T(), s.store.UpdateSessionID(context.Background(), "ch1", "new-sess"))
+}
+
+func (s *StoreSuite) TestUpdateChannelAgentOverrides() {
+	s.mock.ExpectExec(`UPDATE channels SET model_override = \?, effort_override = \?`).
+		WithArgs("claude-opus-4-8", "high", sqlmock.AnyArg(), "ch1").
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	require.NoError(s.T(), s.store.UpdateChannelAgentOverrides(context.Background(), "ch1", "claude-opus-4-8", "high"))
+
+	s.mock.ExpectExec(`UPDATE channels SET model_override = \?, effort_override = \?`).
+		WithArgs("", "", sqlmock.AnyArg(), "ch1").
+		WillReturnError(sql.ErrConnDone)
+	require.Error(s.T(), s.store.UpdateChannelAgentOverrides(context.Background(), "ch1", "", ""))
 }
 
 func (s *StoreSuite) TestUpdateChannelPermissions() {
@@ -415,8 +427,8 @@ func (s *StoreSuite) TestListChannels() {
 	now := time.Now().UTC()
 	permJSON := `{"owners":{"users":["U1"],"roles":[]},"members":{"users":[],"roles":[]}}`
 	rows := newMockChannelRows().
-		AddRow(1, "ch1", "g1", "alpha", "/home/user/alpha", "", "discord", 1, "sess-1", permJSON, 0, "", 0, now, now).
-		AddRow(2, "ch2", "g1", "beta", "/home/user/beta", "ch1", "discord", 0, "sess-2", "", 0, "", 1, now, now)
+		AddRow(1, "ch1", "g1", "alpha", "/home/user/alpha", "", "discord", 1, "sess-1", permJSON, 0, "", 0, "", "", now, now).
+		AddRow(2, "ch2", "g1", "beta", "/home/user/beta", "ch1", "discord", 0, "sess-2", "", 0, "", 1, "", "", now, now)
 	s.mock.ExpectQuery(`SELECT .+ FROM channels ORDER BY name ASC`).
 		WillReturnRows(rows)
 
@@ -458,7 +470,7 @@ func (s *StoreSuite) TestListChannelsErrors() {
 	require.Nil(s.T(), channels)
 
 	s.mock.ExpectQuery(`SELECT .+ FROM channels ORDER BY name ASC`).WillReturnRows(
-		newMockChannelRows().AddRow("not-an-int", "ch1", "g1", "test", "/home/user/project", "", "", 1, "sess-1", "", 0, "", 0, time.Now().UTC(), time.Now().UTC()))
+		newMockChannelRows().AddRow("not-an-int", "ch1", "g1", "test", "/home/user/project", "", "", 1, "sess-1", "", 0, "", 0, "", "", time.Now().UTC(), time.Now().UTC()))
 	channels, err = s.store.ListChannels(context.Background())
 	require.Error(s.T(), err)
 	require.Nil(s.T(), channels)

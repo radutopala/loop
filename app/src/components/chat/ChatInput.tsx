@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { Message } from "../../types";
 import { resolveGateApproval, sendCommand, sendMessage } from "../../api/loopApi";
 import { fetchComposerHistory, resolveAsk, resolvePlan } from "../../api/channels";
+import { AgentConfigPill } from "./AgentConfigPill";
 import { firstClipboardImage, uploadPastedImage } from "../../utils/clipboardImage";
 import { fetchShortcuts, type PromptShortcut } from "../../api/configApi";
 import { searchFiles, type FileSearchResult, type RootEntry } from "../../api/files";
@@ -937,6 +938,7 @@ export function ChatInput({ channelId, messages, roots, isRunning, mode, setMode
         </button>
       )}
       <div style={{ flex: 1 }} />
+      <AgentConfigPill channelId={channelId} />
       <div style={modeStyles.pill}>
         <button
           style={{

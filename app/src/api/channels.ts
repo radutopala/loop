@@ -437,3 +437,33 @@ export async function fetchComposerHistory(channelId: string, limit = 100): Prom
   const data = await res.json();
   return data.messages ?? [];
 }
+
+/** A channel's model/effort overrides plus the config defaults they fall back to. */
+export interface AgentConfig {
+  model: string;
+  effort: string;
+  default_model: string;
+  default_effort: string;
+}
+
+export async function fetchAgentConfig(channelId: string): Promise<AgentConfig> {
+  const res = await fetch(`${getApiUrl()}/api/channels/${channelId}/agent-config`);
+  if (!res.ok) throw new Error(`Failed to fetch agent config: ${res.statusText}`);
+  return res.json();
+}
+
+/**
+ * Set the channel's per-channel model/effort overrides (empty string clears —
+ * inherit from config). Takes effect on the channel's next agent run.
+ */
+export async function updateAgentConfig(channelId: string, model: string, effort: string): Promise<void> {
+  const res = await fetch(`${getApiUrl()}/api/channels/${channelId}/agent-config`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ model, effort }),
+  });
+  if (!res.ok) {
+    const body = (await res.text().catch(() => "")).trim();
+    throw new Error(body || `Failed to update agent config: ${res.statusText}`);
+  }
+}

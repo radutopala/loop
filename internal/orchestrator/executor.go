@@ -212,6 +212,11 @@ func (e *TaskExecutor) ExecuteTask(ctx context.Context, task *db.ScheduledTask) 
 		ParentDirPath: parentDirPath,
 		AgentID:       "chat",
 	}
+	// Per-channel on-demand model/effort overrides apply to scheduled runs too.
+	if channel != nil {
+		req.Model = channel.ModelOverride
+		req.Effort = channel.EffortOverride
+	}
 
 	// chatID resolution for storeAgentEvent: parent comes from the already-loaded
 	// `channel`; thread chatID is resolved lazily once the first OnTurn creates

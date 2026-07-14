@@ -360,6 +360,8 @@ func (s *Server) buildMux() *http.ServeMux {
 	mux.HandleFunc("GET /api/bash-shortcuts", s.handleListBashShortcuts)
 	mux.HandleFunc("POST /api/bash-shortcuts", s.handleModifyBashShortcut)
 	mux.HandleFunc("GET /api/channels/{id}/sessions", s.handleListSessions)
+	mux.HandleFunc("GET /api/channels/{id}/agent-config", s.handleGetAgentConfig)
+	mux.HandleFunc("PATCH /api/channels/{id}/agent-config", s.handleSetAgentConfig)
 	mux.HandleFunc("GET /api/channels/{id}/audit", s.handleListAuditFiles)
 	mux.HandleFunc("DELETE /api/channels/{id}/audit/{date}", s.handleDeleteAuditFile)
 	mux.HandleFunc("GET /api/channels/{id}/messages", s.handleListMessages)

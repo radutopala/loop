@@ -341,6 +341,10 @@ var migrations = []migration{
 		created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
 		PRIMARY KEY (channel_id, kind)
 	)`),
+	// Per-channel agent overrides: replace the config's claude_model /
+	// claude_effort for this channel's runs when non-empty (set from the chat UI).
+	sqlMigration(`ALTER TABLE channels ADD COLUMN model_override TEXT NOT NULL DEFAULT ''`),
+	sqlMigration(`ALTER TABLE channels ADD COLUMN effort_override TEXT NOT NULL DEFAULT ''`),
 }
 
 // migrateScheduledTasksAddManualType rebuilds scheduled_tasks to widen the

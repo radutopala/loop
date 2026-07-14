@@ -17,6 +17,10 @@ type AgentRequest struct {
 	PlanMode      bool           `json:"plan_mode,omitempty"`
 	Prompt        string         `json:"prompt,omitempty"`
 	AgentID       string         `json:"agent_id,omitempty"`
+	// Model / Effort override the merged config's claude_model / claude_effort
+	// for this run when non-empty (per-channel on-demand override).
+	Model  string `json:"model,omitempty"`
+	Effort string `json:"effort,omitempty"`
 	// OnTurn is called for each assistant turn's text content during streaming.
 	// When set, the runner follows container logs in real-time instead of waiting
 	// for the container to exit. When nil, the runner uses the existing

@@ -249,6 +249,8 @@ func (s *ServerSuite) SetupTest() {
 	s.mux.HandleFunc("GET /api/bash-shortcuts", s.srv.handleListBashShortcuts)
 	s.mux.HandleFunc("POST /api/bash-shortcuts", s.srv.handleModifyBashShortcut)
 	s.mux.HandleFunc("GET /api/channels/{id}/sessions", s.srv.handleListSessions)
+	s.mux.HandleFunc("GET /api/channels/{id}/agent-config", s.srv.handleGetAgentConfig)
+	s.mux.HandleFunc("PATCH /api/channels/{id}/agent-config", s.srv.handleSetAgentConfig)
 	s.mux.HandleFunc("GET /api/channels/{id}/audit", s.srv.handleListAuditFiles)
 	s.mux.HandleFunc("DELETE /api/channels/{id}/audit/{date}", s.srv.handleDeleteAuditFile)
 	s.mux.HandleFunc("GET /api/channels/{id}/messages", s.srv.handleListMessages)
