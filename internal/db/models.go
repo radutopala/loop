@@ -21,10 +21,15 @@ type Channel struct {
 	Worktree    bool              `json:"worktree"`
 	// BaseBranch is the branch a worktree thread was created from. Empty for
 	// non-worktree channels and for worktrees created before this was tracked.
-	BaseBranch string    `json:"base_branch"`
-	Locked     bool      `json:"locked"`
-	CreatedAt  time.Time `json:"created_at"`
-	UpdatedAt  time.Time `json:"updated_at"`
+	BaseBranch string `json:"base_branch"`
+	Locked     bool   `json:"locked"`
+	// ModelOverride / EffortOverride replace the config's claude_model /
+	// claude_effort for this channel's agent runs when non-empty. Set from the
+	// chat UI per channel/thread/worktree; empty means inherit from config.
+	ModelOverride  string    `json:"model_override"`
+	EffortOverride string    `json:"effort_override"`
+	CreatedAt      time.Time `json:"created_at"`
+	UpdatedAt      time.Time `json:"updated_at"`
 }
 
 // StaleRunningMessage describes a (channel_id, msg_id) pair returned by

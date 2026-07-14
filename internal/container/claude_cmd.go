@@ -58,6 +58,18 @@ const planModePromptPrefix = "Call the EnterPlanMode tool before doing anything 
 
 // buildClaudeCmd assembles the Claude CLI command with all flags for batch mode.
 func buildClaudeCmd(cfg *config.Config, mcpConfigPath string, req *agent.AgentRequest) []string {
+	// Per-channel on-demand overrides beat the merged config's model/effort.
+	// Shallow-copy so the cached config is never mutated.
+	if req.Model != "" || req.Effort != "" {
+		override := *cfg
+		if req.Model != "" {
+			override.ClaudeModel = req.Model
+		}
+		if req.Effort != "" {
+			override.ClaudeEffort = req.Effort
+		}
+		cfg = &override
+	}
 	cmd := buildBaseClaudeCmd(cfg, mcpConfigPath, req.SessionID, req.AgentID, req.ForkSession, false, cfg.ExtraDirs)
 	// Deny tools that only make sense in a persistent interactive harness.
 	// In one-shot `--print` mode the container exits at end of turn, so tools

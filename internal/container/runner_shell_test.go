@@ -646,6 +646,43 @@ func (s *RunnerSuite) TestBuildClaudeCmdPlanMode() {
 	require.True(s.T(), strings.HasPrefix(cmd[len(cmd)-1], "Call the EnterPlanMode tool"))
 }
 
+// TestBuildClaudeCmdModelEffortOverride verifies per-request model/effort
+// overrides replace the config values in the CLI flags without mutating the
+// shared config.
+func (s *RunnerSuite) TestBuildClaudeCmdModelEffortOverride() {
+	cfg := &config.Config{ClaudeBinPath: "claude", ClaudeModel: "claude-sonnet-5", ClaudeEffort: "medium"}
+	req := &agent.AgentRequest{
+		ChannelID: "ch-1",
+		Messages:  []agent.AgentMessage{{Role: "user", Content: "hello"}},
+	}
+
+	// No override: config values flow through.
+	got := strings.Join(buildClaudeCmd(cfg, "/work/.loop/mcp-ch-1.json", req), " ")
+	require.Contains(s.T(), got, "--model claude-sonnet-5")
+	require.Contains(s.T(), got, "--effort medium")
+
+	// Model-only override keeps the config effort.
+	req.Model = "claude-opus-4-8"
+	got = strings.Join(buildClaudeCmd(cfg, "/work/.loop/mcp-ch-1.json", req), " ")
+	require.Contains(s.T(), got, "--model claude-opus-4-8")
+	require.Contains(s.T(), got, "--effort medium")
+
+	// Effort-only override keeps the config model.
+	req.Model = ""
+	req.Effort = "high"
+	got = strings.Join(buildClaudeCmd(cfg, "/work/.loop/mcp-ch-1.json", req), " ")
+	require.Contains(s.T(), got, "--model claude-sonnet-5")
+	require.Contains(s.T(), got, "--effort high")
+
+	// Both overridden; the shared config must be untouched.
+	req.Model = "claude-haiku-4-5"
+	got = strings.Join(buildClaudeCmd(cfg, "/work/.loop/mcp-ch-1.json", req), " ")
+	require.Contains(s.T(), got, "--model claude-haiku-4-5")
+	require.Contains(s.T(), got, "--effort high")
+	require.Equal(s.T(), "claude-sonnet-5", cfg.ClaudeModel)
+	require.Equal(s.T(), "medium", cfg.ClaudeEffort)
+}
+
 func (s *RunnerSuite) TestBuildClaudeCmdPermissionPromptTool() {
 	cfg := &config.Config{ClaudeBinPath: "claude"}
 	req := &agent.AgentRequest{

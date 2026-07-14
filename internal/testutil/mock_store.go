@@ -53,6 +53,10 @@ func (m *MockStore) UpdateSessionID(ctx context.Context, channelID string, sessi
 	return m.Called(ctx, channelID, sessionID).Error(0)
 }
 
+func (m *MockStore) UpdateChannelAgentOverrides(ctx context.Context, channelID, model, effort string) error {
+	return m.Called(ctx, channelID, model, effort).Error(0)
+}
+
 func (m *MockStore) UpdateChannelLocked(ctx context.Context, channelID string, locked bool) error {
 	return m.Called(ctx, channelID, locked).Error(0)
 }

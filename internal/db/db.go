@@ -20,6 +20,7 @@ type Store interface {
 	GetChannelsByDirPath(ctx context.Context, dirPath string) ([]*Channel, error)
 	IsChannelActive(ctx context.Context, channelID string) (bool, error)
 	UpdateSessionID(ctx context.Context, channelID string, sessionID string) error
+	UpdateChannelAgentOverrides(ctx context.Context, channelID, model, effort string) error
 	UpdateChannelPermissions(ctx context.Context, channelID string, perms types.Permissions) error
 	UpdateChannelLocked(ctx context.Context, channelID string, locked bool) error
 	UpdateChannelName(ctx context.Context, channelID, name string) error
@@ -245,7 +246,7 @@ func scanChannelFrom(scanner rowScanner) (*Channel, error) {
 	var active, worktree, locked int
 	var permJSON string
 	if err := scanner.Scan(&ch.ID, &ch.ChannelID, &ch.GuildID, &ch.Name, &ch.DirPath,
-		&ch.ParentID, &ch.Platform, &active, &ch.SessionID, &permJSON, &worktree, &ch.BaseBranch, &locked, &ch.CreatedAt, &ch.UpdatedAt); err != nil {
+		&ch.ParentID, &ch.Platform, &active, &ch.SessionID, &permJSON, &worktree, &ch.BaseBranch, &locked, &ch.ModelOverride, &ch.EffortOverride, &ch.CreatedAt, &ch.UpdatedAt); err != nil {
 		return nil, err
 	}
 	ch.Active = active == 1

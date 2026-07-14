@@ -766,13 +766,14 @@ func (o *Orchestrator) buildAgentRequest(channelID string, recent []*db.Message,
 	}
 
 	sessionID := ""
+	dirPath := ""
+	model := ""
+	effort := ""
 	if channel != nil {
 		sessionID = channel.SessionID
-	}
-
-	dirPath := ""
-	if channel != nil {
 		dirPath = channel.DirPath
+		model = channel.ModelOverride
+		effort = channel.EffortOverride
 	}
 
 	return &agent.AgentRequest{
@@ -781,6 +782,8 @@ func (o *Orchestrator) buildAgentRequest(channelID string, recent []*db.Message,
 		ChannelID: channelID,
 		DirPath:   dirPath,
 		AgentID:   "chat",
+		Model:     model,
+		Effort:    effort,
 	}
 }
 

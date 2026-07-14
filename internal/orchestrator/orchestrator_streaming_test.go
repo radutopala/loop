@@ -16,6 +16,36 @@ import (
 
 // --- Streaming tests ---
 
+// TestHandleMessageAgentOverridesReachRunner verifies a channel's per-channel
+// model/effort overrides land on the AgentRequest the runner receives.
+func (s *OrchestratorSuite) TestHandleMessageAgentOverridesReachRunner() {
+	msg := &bot.IncomingMessage{
+		ChannelID: "ch1", GuildID: "g1", AuthorID: "user1", AuthorName: "Alice",
+		Content: "hello bot", MessageID: "msg-ovr", IsBotMention: true, Timestamp: time.Now().UTC(),
+	}
+
+	s.store.On("IsChannelActive", s.ctx, "ch1").Return(true, nil)
+	s.store.On("GetChannel", s.ctx, "ch1").Return(&db.Channel{
+		ID: 1, ChannelID: "ch1", Active: true,
+		ModelOverride: "claude-opus-4-8", EffortOverride: "high",
+	}, nil)
+	s.store.On("InsertMessage", s.ctx, mock.Anything).Return(nil)
+	s.bot.On("SendTyping", mock.Anything, "ch1").Return(nil).Maybe()
+	s.store.On("GetRecentMessages", s.ctx, "ch1", 50).Return([]*db.Message{}, nil)
+
+	s.runner.On("Run", mock.Anything, mock.MatchedBy(func(req *agent.AgentRequest) bool {
+		return req.Model == "claude-opus-4-8" && req.Effort == "high"
+	})).Return(&agent.AgentResponse{Response: "done", SessionID: "sess-1"}, nil)
+
+	s.store.On("UpdateSessionID", s.ctx, "ch1", "sess-1").Return(nil)
+	s.bot.On("SendMessage", s.ctx, mock.Anything).Return(nil)
+	s.store.On("MarkMessagesProcessed", s.ctx, []int64{}).Return(nil)
+
+	s.orch.HandleMessage(s.ctx, msg)
+
+	s.runner.AssertExpectations(s.T())
+}
+
 func (s *OrchestratorSuite) TestHandleMessageStreamingSkipsDuplicate() {
 	msg := &bot.IncomingMessage{
 		ChannelID:    "ch1",
