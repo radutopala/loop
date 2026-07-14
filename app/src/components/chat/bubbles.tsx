@@ -612,7 +612,12 @@ export function AskUserQuestionCard({ questions, channelId, mode, onSent }: { qu
         const sel = selectedFor(qi);
         const focusOpt = focusedOption(qi);
         return (
-        <div key={qi} style={{ marginBottom: qi < questions.length - 1 ? 12 : 0 }}>
+        // The hover clear lives on the whole question block (options row +
+        // panel), not on each option button: opening the panel grows the
+        // bottom-anchored chat and shifts the button out from under the
+        // cursor, so a per-button mouseLeave immediately cleared the focus
+        // and the panel flickered open/closed in a loop.
+        <div key={qi} onMouseLeave={() => clearFocusedOpt(qi)} style={{ marginBottom: qi < questions.length - 1 ? 12 : 0 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 4 }}>
             {q.header && <div style={{ fontSize: 10, fontWeight: 700, color: colors.active, textTransform: "uppercase", letterSpacing: 1, padding: "1px 6px", border: `1px solid ${colors.active}`, borderRadius: 4 }}>{q.header}</div>}
             {multi && <div style={{ fontSize: 10, color: colors.textDim, fontFamily: fonts.mono }} title="Select one or more">multi-select</div>}
@@ -626,9 +631,7 @@ export function AskUserQuestionCard({ questions, channelId, mode, onSent }: { qu
                   key={opt.label}
                   onClick={() => toggleOption(qi, opt.label, multi)}
                   onMouseEnter={() => setFocusedOpt(qi, opt.label)}
-                  onMouseLeave={() => clearFocusedOpt(qi)}
                   onFocus={() => setFocusedOpt(qi, opt.label)}
-                  onBlur={() => clearFocusedOpt(qi)}
                   title={opt.description}
                   style={{
                     display: "inline-flex",
