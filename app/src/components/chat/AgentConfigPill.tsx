@@ -140,9 +140,13 @@ export function AgentConfigPill({ channelId }: { channelId: string }) {
             </div>
             <div style={{ borderTop: `1px solid ${colors.border}`, margin: "2px 0" }} />
             <div style={sectionStyle}>Effort</div>
-            <button style={rowStyle(effort === "")} onClick={() => apply(model, "")}>
+            <button
+              style={rowStyle(effort === "")}
+              onClick={() => apply(model, "")}
+              title={defaults.effort ? `From config: ${defaults.effort}` : "No claude_effort in config — the CLI uses the selected model's own default effort"}
+            >
               <span style={{ width: 12 }}>{effort === "" ? "✓" : ""}</span>
-              Default{defaults.effort ? ` (${defaults.effort})` : ""}
+              Default ({defaults.effort || "model default"})
             </button>
             {EFFORT_PRESETS.map((ef) => (
               <button key={ef} style={rowStyle(effort === ef)} onClick={() => apply(model, ef)}>
