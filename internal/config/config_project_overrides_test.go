@@ -726,6 +726,31 @@ func (s *ConfigSuite) TestLoadProjectConfigOverrides() {
 			},
 		},
 		{
+			name:        "PlaygroundShare/EnableOverridesGlobal",
+			projectJSON: `{"playground_share": {"enabled": true}}`,
+			mainCfg:     &Config{PlaygroundShare: PlaygroundShareConfig{Enabled: false}},
+			assert: func(merged, main *Config) {
+				require.True(s.T(), merged.PlaygroundShare.Enabled)
+				require.False(s.T(), main.PlaygroundShare.Enabled)
+			},
+		},
+		{
+			name:        "PlaygroundShare/DisableOverridesGlobal",
+			projectJSON: `{"playground_share": {"enabled": false}}`,
+			mainCfg:     &Config{PlaygroundShare: PlaygroundShareConfig{Enabled: true}},
+			assert: func(merged, _ *Config) {
+				require.False(s.T(), merged.PlaygroundShare.Enabled)
+			},
+		},
+		{
+			name:        "PlaygroundShare/UnsetKeepsGlobal",
+			projectJSON: `{"playground_share": {}}`,
+			mainCfg:     &Config{PlaygroundShare: PlaygroundShareConfig{Enabled: true}},
+			assert: func(merged, _ *Config) {
+				require.True(s.T(), merged.PlaygroundShare.Enabled)
+			},
+		},
+		{
 			name:        "Review/PromptOverride",
 			projectJSON: `{"review": {"prompt": "project prompt"}}`,
 			mainCfg:     &Config{Review: ReviewConfig{Prompt: "global prompt"}},

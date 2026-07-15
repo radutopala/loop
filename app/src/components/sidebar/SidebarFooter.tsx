@@ -13,6 +13,8 @@ interface SidebarFooterProps {
   onOpenContainers?: () => void;
   onOpenReadme?: () => void;
   onOpenWorkflows?: () => void;
+  onOpenShares?: () => void;
+  shareCount?: number;
 }
 
 export function SidebarFooter({
@@ -27,6 +29,8 @@ export function SidebarFooter({
   onOpenContainers,
   onOpenReadme,
   onOpenWorkflows,
+  onOpenShares,
+  shareCount,
 }: SidebarFooterProps) {
   const { colors } = useTheme();
 
@@ -168,6 +172,45 @@ export function SidebarFooter({
           <line x1="12" y1="14" x2="12" y2="16" />
         </svg>
         Workflows
+      </button>
+      <button
+        data-testid="sidebar-shares-btn"
+        onClick={onOpenShares}
+        style={footerBtnStyle}
+        onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = colors.hoverBg; e.currentTarget.style.color = colors.textLight; }}
+        onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = "transparent"; e.currentTarget.style.color = colors.textDim; }}
+      >
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <circle cx="18" cy="5" r="3" />
+          <circle cx="6" cy="12" r="3" />
+          <circle cx="18" cy="19" r="3" />
+          <line x1="8.59" y1="13.51" x2="15.42" y2="17.49" />
+          <line x1="15.41" y1="6.51" x2="8.59" y2="10.49" />
+        </svg>
+        Playground Shares
+        {(shareCount ?? 0) > 0 && (
+          <span
+            data-testid="sidebar-shares-count"
+            title={`${shareCount} playground${shareCount === 1 ? "" : "s"} publicly shared`}
+            style={{
+              marginLeft: "auto",
+              backgroundColor: colors.error,
+              color: colors.white,
+              fontSize: 10,
+              fontWeight: 700,
+              lineHeight: 1,
+              minWidth: 16,
+              height: 16,
+              padding: "0 5px",
+              borderRadius: 8,
+              display: "inline-flex",
+              alignItems: "center",
+              justifyContent: "center",
+            }}
+          >
+            {shareCount}
+          </span>
+        )}
       </button>
       <button
         onClick={onOpenContainers}

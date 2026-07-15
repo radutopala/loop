@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { Channel, ChannelUpdatedData, ImageBuildStatusData, ImageUpdateAvailableData, UpdateStatus, WSEvent } from "./types";
 import { fonts } from "./theme";
 import { ThemeProvider, useTheme, DEFAULT_FONT_SIZES } from "./ThemeContext";
-import { createChannel, createThread, createWorktreeThread, deleteChannel, deleteThread, ensureChannel, fetchChannels, fetchDiff, getImageStatus, importWorktree, initApiUrl, moveWorktree, rebuildImage, renameChannel, setChannelLocked } from "./api/loopApi";
+import { createChannel, createThread, createWorktreeThread, deleteChannel, deleteThread, ensureChannel, fetchChannels, fetchDiff, fetchPlaygroundShares, getImageStatus, importWorktree, initApiUrl, moveWorktree, rebuildImage, renameChannel, setChannelLocked } from "./api/loopApi";
 import { fetchGlobalConfig } from "./api/configApi";
 import { Sidebar } from "./components/sidebar/Sidebar";
 import { MarkdownFilePanel } from "./components/panels/FilePanel";
@@ -13,6 +13,7 @@ import { CommandPalette } from "./components/shared/CommandPalette";
 import { Settings } from "./components/shared/Settings";
 import { ContainersPanel, type ContainersPanelHandle } from "./components/panels/ContainersPanel";
 import { GlobalTasksPanel } from "./components/panels/GlobalTasksPanel";
+import { GlobalSharesPanel } from "./components/panels/GlobalSharesPanel";
 import { WorkflowsGlobalPanel, type WorkflowsGlobalPanelHandle } from "./components/panels/WorkflowsGlobalPanel";
 import { useChatStateStore, type ActiveChatState } from "./hooks/useChatStateStore";
 import { useAppPanelState } from "./hooks/useAppPanelState";
@@ -63,7 +64,7 @@ function AppInner() {
   const [diffStats, setDiffStats] = useState<{ add: number; del: number }>({ add: 0, del: 0 });
   const [paletteOpen, setPaletteOpen] = useState(false);
   const {
-    settingsOpen, readmeOpen, containersOpen, tasksOpen, workflowsOpen,
+    settingsOpen, readmeOpen, containersOpen, tasksOpen, workflowsOpen, sharesOpen,
     settingsDirPath, configDirty, pendingSelectId,
     setConfigDirty, setPendingSelectId,
     togglePanel, openConfig,
@@ -77,6 +78,13 @@ function AppInner() {
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus | null>(null);
   const [imageBuildStatus, setImageBuildStatus] = useState<ImageBuildStatusData | null>(null);
   const [imageUpdateAvailable, setImageUpdateAvailable] = useState<ImageUpdateAvailableData | null>(null);
+  // Number of playgrounds publicly shared right now — surfaced as a red badge
+  // on the sidebar so the user always sees they have public tunnels open.
+  const [shareCount, setShareCount] = useState(0);
+  const refreshShareCount = useCallback(() => {
+    fetchPlaygroundShares().then((sh) => setShareCount(sh.length)).catch(() => { /* ignore */ });
+  }, []);
+  useEffect(() => { refreshShareCount(); }, [refreshShareCount]);
 
   const layoutRef = useRef<WorkspaceLayoutRef>(null);
 
@@ -250,9 +258,13 @@ function AppInner() {
       workflowsPanelRef.current?.handleWorkflowEvent(event);
       return;
     }
+    if (event.type === "playground.update" && (event.data as { kind?: string })?.kind === "share") {
+      refreshShareCount();
+      return;
+    }
     if (debounceRef.current) clearTimeout(debounceRef.current);
     debounceRef.current = setTimeout(loadDiffStats, 1_000);
-  }, [loadDiffStats, selectedId, loadChannels]);
+  }, [loadDiffStats, selectedId, loadChannels, refreshShareCount]);
   useEffect(() => () => { if (debounceRef.current) clearTimeout(debounceRef.current); }, []);
 
   // Single app-level WS that subscribes to the selected channel + all running
@@ -561,6 +573,8 @@ function AppInner() {
         onOpenContainers={() => togglePanel("containers")}
         onOpenTasks={() => togglePanel("tasks")}
         onOpenWorkflows={() => togglePanel("workflows")}
+        onOpenShares={() => togglePanel("shares")}
+        shareCount={shareCount}
         updateStatus={updateStatus}
         onDownloadUpdate={handleDownloadUpdate}
         onInstallUpdate={handleInstallUpdate}
@@ -584,7 +598,7 @@ function AppInner() {
             channelId={selectedId}
             channel={selectedChannel}
             sidebarOpen={sidebarOpen}
-            style={readmeOpen || settingsOpen || containersOpen || tasksOpen || workflowsOpen ? { display: "none" } : undefined}
+            style={readmeOpen || settingsOpen || containersOpen || tasksOpen || workflowsOpen || sharesOpen ? { display: "none" } : undefined}
             onToggleSidebar={() => setSidebarOpen((v) => !v)}
             onOpenPalette={() => setPaletteOpen(true)}
             scrollToMessageId={scrollToMessageId}
@@ -664,6 +678,14 @@ function AppInner() {
               onSelectChannel={(id) => { closePanel("workflows"); handleSelect(id); }}
             />
           )}
+          {sharesOpen && (
+            <GlobalSharesPanel
+              channel={selectedChannel}
+              sidebarOpen={sidebarOpen}
+              onOpenPalette={() => setPaletteOpen(true)}
+              onClose={() => closePanel("shares")}
+            />
+          )}
         </>
       ) : (
         <>
@@ -705,6 +727,12 @@ function AppInner() {
               onOpenPalette={() => setPaletteOpen(true)}
               onClose={() => closePanel("workflows")}
               onSelectChannel={(id) => { closePanel("workflows"); handleSelect(id); }}
+            />
+          ) : sharesOpen ? (
+            <GlobalSharesPanel
+              sidebarOpen={sidebarOpen}
+              onOpenPalette={() => setPaletteOpen(true)}
+              onClose={() => closePanel("shares")}
             />
           ) : (
             <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center" }}>

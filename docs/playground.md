@@ -55,6 +55,7 @@ The playground renders agent-generated code in a sandboxed `<iframe>` with `sand
 | **Reset** | Clear errors and console, reload the iframe with current code |
 | **Console** | Toggle the console output panel (bottom) |
 | **Export** | Download the playground as a standalone HTML file |
+| **Share** | Expose the playground publicly over the internet (see [Public sharing](#public-sharing)); shows the public URL (click to open in your external browser, **Copy** button to copy). Toggles to **Unshare**. |
 
 The toolbar also shows the last update description from the agent.
 
@@ -160,10 +161,40 @@ The global playground directory is bind-mounted into agent containers, so agents
 | `GET` | `/api/playground/items` | List all playground names (global + project) |
 | `GET` | `/api/playground/serve/{name}` | Serve global playground as HTML page |
 | `GET` | `/api/playground/serve-project/{channel_id}/{name}/` | Serve project-scoped playground as HTML page |
+| `PUT` | `/api/playground/share?name=...` | Share publicly; returns `{url, token}` (idempotent per playground; requires `playground_share.enabled`) |
+| `DELETE` | `/api/playground/share?name=...` | Stop sharing |
+| `GET` | `/api/playground/share?name=...` | Share status for one playground → `{shared, url}` |
+| `GET` | `/api/playground/share` | List all active public shares |
 
 All endpoints accept optional `scope=project&channel_id=...` query parameters to target project-scoped playgrounds. Without these parameters, operations default to the global scope.
 
 See [API Reference](api.md#playground) for full request/response schemas.
+
+---
+
+## Public sharing
+
+A playground can be exposed **over the internet** while still being served from the local machine, via a [cloudflared](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/do-more-with-tunnels/trycloudflare/) quick tunnel. Disabled by default — set `playground_share.enabled: true` (see [configuration](configuration.md#playground-share)).
+
+**How it works**
+
+- Clicking **Share** (panel toolbar) or calling the `playground_share` MCP tool registers an opaque 32-hex token for the playground and returns a public URL: `https://<random>.trycloudflare.com/p/<token>`.
+- The tunnel points at a **dedicated, playground-only HTTP listener** — not the main API (`:8222`). Only `/p/{token}` routes are reachable publicly, so no other endpoint is exposed. The public surface is served with `Cache-Control: no-store`.
+- The `cloudflared` binary is downloaded lazily to `~/.loop/bin` on first share and verified against a pinned sha256 (fail-closed). Quick tunnels are anonymous — no Cloudflare account or token.
+- **Multiple playgrounds share in parallel** over a single tunnel, isolated by token. The tunnel + listener start on the first share and stop when the last one is removed (reference-counted).
+- **Idempotent per playground.** A share's identity is the playground's resolved directory, so sharing the same playground again — from another channel, thread, or panel that maps to the same dir — returns the **same** token rather than opening a second tunnel. A global playground resolves to one dir regardless of channel; a project playground shared from multiple threads of the same project collapses to one share; a worktree thread resolves to a distinct dir and is a separate share.
+- **Unshare** (or the global **Playground Shares** panel, or the MCP tool with `action: unshare`) revokes the token immediately — the URL then returns `404`. Because identity is the dir, any channel/thread mapping to the same playground can unshare it.
+
+**Playground Shares panel**
+
+The sidebar **Playground Shares** button opens a panel listing every active public share across the daemon, with its URL (click to open in your external browser, **Copy** button to copy) and a **Disable** button per row. It live-updates as shares are added or removed. The sidebar button also shows a **red count badge** of how many playgrounds are currently public, so open tunnels are always visible at a glance.
+
+The per-playground **Share** toolbar reflects live state too: it hydrates from the daemon (resolved by dir), so returning to a still-shared playground — even one shared from a different thread of the same project — shows **Unshare** and its URL rather than a stale **Share**.
+
+**Security notes**
+
+- A shared playground is **public to anyone with the link** — there is no authentication on `/p/{token}`. Tokens are long and opaque (unguessable), but treat the URL as a secret.
+- Revocation is immediate; the tunnel carries only playground content, never the rest of the API.
 
 ---
 

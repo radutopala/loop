@@ -214,6 +214,11 @@ func New(channelID, apiURL, authorID string, httpClient HTTPClient, logger *slog
 	}, s.handlePlaygroundFile)
 
 	mcp.AddTool(s.mcpServer, &mcp.Tool{
+		Name:        "playground_share",
+		Description: "Expose a playground publicly over the internet through a cloudflared quick tunnel, or stop sharing. Actions: share (returns a unique public URL, tunnel started on demand), unshare (revokes the URL). Requires playground_share.enabled in config. Multiple playgrounds can be shared in parallel; the tunnel stops when the last share is removed.",
+	}, s.handlePlaygroundShare)
+
+	mcp.AddTool(s.mcpServer, &mcp.Tool{
 		Name:        "quality_scan",
 		Description: "Trigger a quality scan of the current channel's working directory. Returns immediately; the scan runs asynchronously and fires a 'quality.scanned' event with the full result (signal value, metric breakdown, rule pass/fail). Use quality_snapshot to read the most recent persisted result.",
 	}, s.handleQualityScan)

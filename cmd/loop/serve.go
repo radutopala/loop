@@ -44,6 +44,7 @@ import (
 	"github.com/radutopala/loop/internal/review"
 	"github.com/radutopala/loop/internal/scheduler"
 	"github.com/radutopala/loop/internal/terminal"
+	"github.com/radutopala/loop/internal/tunnel"
 	"github.com/radutopala/loop/internal/types"
 	"github.com/radutopala/loop/internal/workflow"
 	"github.com/radutopala/loop/internal/worktree"
@@ -493,6 +494,7 @@ func (a *app) serve() error {
 
 	apiSrv := a.newAPIServer(sched, channelSvc, threadSvc, store, chatBot, logger)
 	apiSrv.SetLoopDir(cfg.LoopDir)
+	apiSrv.SetTunnelManager(tunnel.NewManager(filepath.Join(cfg.LoopDir, "bin"), logger))
 	apiSrv.SetContainerRegistry(containerReg)
 	apiSrv.SetAgentRegistry(agentReg)
 	apiSrv.SetAuditDirResolver(runner)

@@ -198,6 +198,23 @@ func (r *ReviewConfig) ResolvePrompt(loopDir string, readFile func(string) ([]by
 	return resolvePromptField("review", r.Prompt, r.PromptPath, filepath.Join(loopDir, "review"), readFile)
 }
 
+// PlaygroundShareConfig gates the public playground-share feature: when
+// Enabled is false (the default), the share endpoints and the
+// playground_share MCP tool reject requests, and the FE hides the Share
+// toggle. Enabling it lets a playground be exposed over the internet through a
+// cloudflared quick tunnel. Layered per global/project the same way as
+// ReviewConfig.
+type PlaygroundShareConfig struct {
+	Enabled bool `json:"enabled"`
+}
+
+// jsonPlaygroundShareConfig is the JSON representation with an optional
+// Enabled pointer so we can distinguish "unset" (inherit parent layer) from
+// "explicitly false" (force-disable at this layer).
+type jsonPlaygroundShareConfig struct {
+	Enabled *bool `json:"enabled"`
+}
+
 // BrowserConfig groups all browser-related settings.
 type BrowserConfig struct {
 	Enabled     bool
@@ -382,6 +399,7 @@ type Config struct {
 	Gates                      GatesConfig
 	GitHub                     GitHubConfig
 	Review                     ReviewConfig
+	PlaygroundShare            PlaygroundShareConfig
 }
 
 // GitHubConfig holds GitHub integration settings. GHUser names a `gh` CLI

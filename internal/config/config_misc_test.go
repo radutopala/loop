@@ -483,6 +483,29 @@ func (s *ConfigSuite) TestReviewConfigLoadFromJSON() {
 	require.Equal(s.T(), "my prompt", cfg.Review.Prompt)
 }
 
+func (s *ConfigSuite) TestPlaygroundShareConfigLoadFromJSON() {
+	s.loader.readFile = func(_ string) ([]byte, error) {
+		return []byte(`{
+			"platforms": ["discord"],
+			"discord_token": "t",
+			"discord_app_id": "a",
+			"playground_share": { "enabled": true }
+		}`), nil
+	}
+	cfg, err := s.loader.load()
+	require.NoError(s.T(), err)
+	require.True(s.T(), cfg.PlaygroundShare.Enabled)
+}
+
+func (s *ConfigSuite) TestPlaygroundShareDefaultsDisabled() {
+	s.loader.readFile = func(_ string) ([]byte, error) {
+		return []byte(`{"platforms": ["discord"], "discord_token": "t", "discord_app_id": "a"}`), nil
+	}
+	cfg, err := s.loader.load()
+	require.NoError(s.T(), err)
+	require.False(s.T(), cfg.PlaygroundShare.Enabled)
+}
+
 func (s *ConfigSuite) TestPromptShortcutResolveFromFile() {
 	s.loader.readFile = func(path string) ([]byte, error) {
 		if path == "/loop/shortcuts/review.md" {

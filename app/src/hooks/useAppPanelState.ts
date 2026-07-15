@@ -1,6 +1,6 @@
 import { useCallback, useState } from "react";
 
-type PanelName = "settings" | "readme" | "containers" | "tasks" | "workflows";
+type PanelName = "settings" | "readme" | "containers" | "tasks" | "workflows" | "shares";
 
 export interface AppPanelState {
   settingsOpen: boolean;
@@ -8,6 +8,7 @@ export interface AppPanelState {
   containersOpen: boolean;
   tasksOpen: boolean;
   workflowsOpen: boolean;
+  sharesOpen: boolean;
   settingsDirPath: string | null;
   configDirty: boolean;
   pendingSelectId: string | null;
@@ -46,6 +47,7 @@ export function useAppPanelState(): AppPanelState {
   const [containersOpen, setContainersOpen] = useState(false);
   const [tasksOpen, setTasksOpen] = useState(false);
   const [workflowsOpen, setWorkflowsOpen] = useState(false);
+  const [sharesOpen, setSharesOpen] = useState(false);
   const [settingsDirPath, setSettingsDirPath] = useState<string | null>(null);
   const [configDirty, setConfigDirty] = useState(false);
   const [pendingSelectId, setPendingSelectId] = useState<string | null>(null);
@@ -56,6 +58,7 @@ export function useAppPanelState(): AppPanelState {
     setContainersOpen(panel === "containers" ? (v) => !v : false);
     setTasksOpen(panel === "tasks" ? (v) => !v : false);
     setWorkflowsOpen(panel === "workflows" ? (v) => !v : false);
+    setSharesOpen(panel === "shares" ? (v) => !v : false);
     if (panel === "settings") {
       setSettingsDirPath(null);
     }
@@ -66,6 +69,7 @@ export function useAppPanelState(): AppPanelState {
     setContainersOpen(false);
     setTasksOpen(false);
     setWorkflowsOpen(false);
+    setSharesOpen(false);
     setSettingsOpen((v) => !v);
     setSettingsDirPath(dirPath ?? null);
   }, []);
@@ -75,6 +79,7 @@ export function useAppPanelState(): AppPanelState {
     setContainersOpen(false);
     setTasksOpen(false);
     setWorkflowsOpen(false);
+    setSharesOpen(false);
     setSettingsOpen((v) => {
       if (v && settingsDirPath === dirPath) return false;
       setSettingsDirPath(dirPath);
@@ -84,7 +89,7 @@ export function useAppPanelState(): AppPanelState {
 
   const toggleSettingsKeyboard = useCallback(() => {
     setSettingsOpen((v) => {
-      if (!v) { setReadmeOpen(false); setContainersOpen(false); setTasksOpen(false); setWorkflowsOpen(false); }
+      if (!v) { setReadmeOpen(false); setContainersOpen(false); setTasksOpen(false); setWorkflowsOpen(false); setSharesOpen(false); }
       return !v;
     });
     setSettingsDirPath(null);
@@ -95,6 +100,7 @@ export function useAppPanelState(): AppPanelState {
     setContainersOpen(false);
     setTasksOpen(false);
     setWorkflowsOpen(false);
+    setSharesOpen(false);
     setSettingsOpen(true);
     setSettingsDirPath(null);
   }, []);
@@ -106,6 +112,7 @@ export function useAppPanelState(): AppPanelState {
       case "containers": setContainersOpen(false); break;
       case "tasks": setTasksOpen(false); break;
       case "workflows": setWorkflowsOpen(false); break;
+      case "shares": setSharesOpen(false); break;
     }
   }, []);
 
@@ -115,6 +122,7 @@ export function useAppPanelState(): AppPanelState {
     setContainersOpen(false);
     setTasksOpen(false);
     setWorkflowsOpen(false);
+    setSharesOpen(false);
     setConfigDirty(false);
   }, []);
 
@@ -124,6 +132,7 @@ export function useAppPanelState(): AppPanelState {
     containersOpen,
     tasksOpen,
     workflowsOpen,
+    sharesOpen,
     settingsDirPath,
     configDirty,
     pendingSelectId,

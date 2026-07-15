@@ -67,6 +67,7 @@ Agent (Claude Code)  ←→  MCP Protocol (stdio)  ←→  loop mcp  ←→  HTT
 |------|-------------|
 | `playground` | Manage playgrounds (action: create/update/delete). Create sets up the entry HTML, title, and description. Use `playground_file` to add JS, CSS, and other files. |
 | `playground_file` | Manage files within a playground (action: create/update/read/delete/list). Write script.js, style.css, importmap.json, lib/utils.js, etc. Files served at relative URLs for ES module imports. |
+| `playground_share` | Expose a playground publicly over a cloudflared quick tunnel, or stop (action: share/unshare). `share` returns a unique public URL; idempotent per playground. Requires `playground_share.enabled`. See [Playground: Public sharing](playground.md#public-sharing). |
 
 #### Shortcuts
 

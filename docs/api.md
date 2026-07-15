@@ -2480,6 +2480,18 @@ Serve a global playground as a standalone HTML page (used as iframe `src`).
 
 Serve a project-scoped playground as a standalone HTML page. Uses path-based routing instead of query parameters so that relative sub-resource URLs (style.css, script.js) resolve correctly via the `<base>` tag.
 
+### `PUT /api/playground/share?name=...`
+
+Expose a playground publicly over a [cloudflared](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/do-more-with-tunnels/trycloudflare/) quick tunnel. Accepts `scope`/`channel_id` like the other playground endpoints. Returns `{ "url": "https://<host>/p/<token>", "token": "<32-hex>" }`. **Idempotent** per resolved playground dir — re-sharing returns the same token. Requires `playground_share.enabled` (else `403`). See [Playground: Public sharing](playground.md#public-sharing).
+
+### `DELETE /api/playground/share?name=...`
+
+Stop sharing a playground; `204` on success. Resolves the dir, so any channel/thread mapping to the same playground can unshare it. The tunnel is torn down when the last share is removed.
+
+### `GET /api/playground/share`
+
+With no `name`: list every active share — `{ "shares": [{ name, scope, channel_id, url }] }`. With `?name=...` (+ optional `scope`/`channel_id`): return the status of that one playground — `{ "shared": bool, "url": string }`, resolved by dir so the answer is identical for every channel/thread mapping to the same playground.
+
 ---
 
 ## Tickets
