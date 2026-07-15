@@ -274,6 +274,22 @@ Enables and configures the Review panel (see [review.md](review.md)).
 
 Both prompt fields empty (the default) uses the daemon's built-in default prompt, which instructs the agent to emit `<review-comment>` blocks for actionable issues only.
 
+#### Playground share
+
+Gates the public playground-share feature — exposing a playground over the internet through a [cloudflared](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/do-more-with-tunnels/trycloudflare/) quick tunnel.
+
+```jsonc
+"playground_share": {
+  "enabled": true
+}
+```
+
+| Field | Type | Description |
+|---|---|---|
+| `enabled` | `bool` | Gates the feature. `false` (the default) makes the share endpoints and the `playground_share` MCP tool return `403`/error, and hides the Share toggle in the FE. Layered per-global/per-project like `review.enabled`. Also toggleable from **Settings → Playground Share** (the config schema surfaces it as a form field). |
+
+When enabled, sharing a playground starts a cloudflared quick tunnel (anonymous — no Cloudflare account) that points at a **dedicated, playground-only listener**; the main API is never exposed. The `cloudflared` binary is downloaded lazily to `~/.loop/bin` on first use and verified against a pinned sha256. Each share gets a unique opaque URL (`https://<random>.trycloudflare.com/p/<token>`), idempotent per playground; revoking it (Unshare, or the global **Playground Shares** panel) returns `404` immediately. Multiple playgrounds share in parallel over one tunnel, which stops when the last share is removed. See [playground.md](playground.md#public-sharing).
+
 #### Workflows
 
 ```jsonc

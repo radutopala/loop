@@ -37,7 +37,7 @@ func (s *SchemaSuite) TestTopLevelProperties() {
 		"claude_code_oauth_token", "anthropic_api_key",
 		"container_image", "container_memory_mb", "container_cpus",
 		"container_timeout_sec", "keep_mcp_configs",
-		"browser", "memory",
+		"browser", "memory", "playground_share",
 		"extra_dirs", "mounts", "copy_files",
 		"platforms",
 		"discord_token", "discord_app_id", "discord_guild_id",
@@ -101,6 +101,18 @@ func (s *SchemaSuite) TestBrowserNestedObject() {
 	chromeImage := prop.Properties["chrome_image"]
 	require.Equal(s.T(), "string", chromeImage.Type)
 	require.Equal(s.T(), "loop-chrome:latest", chromeImage.XPlaceholder)
+}
+
+func (s *SchemaSuite) TestPlaygroundShareNestedObject() {
+	prop := GlobalConfigSchema().Properties["playground_share"]
+	require.NotNil(s.T(), prop)
+	require.Equal(s.T(), "object", prop.Type)
+	require.Equal(s.T(), "Playground Share", prop.XSection)
+	require.Contains(s.T(), prop.Properties, "enabled")
+
+	enabled := prop.Properties["enabled"]
+	require.Equal(s.T(), "boolean", enabled.Type)
+	require.Equal(s.T(), false, enabled.Default)
 }
 
 func (s *SchemaSuite) TestMemoryNestedObject() {

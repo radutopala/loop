@@ -178,6 +178,19 @@ func buildSchema() *ConfigSchema {
 				},
 			},
 
+			"playground_share": {
+				Type:     "object",
+				XSection: "Playground Share",
+				Properties: map[string]*SchemaProperty{
+					"enabled": {
+						Type:        "boolean",
+						Title:       "Enabled",
+						Description: "Allow exposing a playground publicly over a cloudflared quick tunnel. Off by default.",
+						Default:     false,
+					},
+				},
+			},
+
 			// ── Quality section (nested object) ──
 			"quality": {
 				Type:     "object",

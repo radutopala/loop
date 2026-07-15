@@ -171,6 +171,27 @@ type Server struct {
 	qualityMu         sync.Mutex
 	qualityCancellers map[string]context.CancelFunc
 	qualityProgress   map[string]time.Time // per-channel throttle for quality.scan_progress
+
+	// Playground public-share state. shareStore maps opaque tokens to
+	// playgrounds; pgShareServer is an ephemeral listener that serves ONLY
+	// /p/{token} (never the main API), which the tunnel exposes publicly.
+	// tunnelMgr owns the cloudflared subprocess. All are lazily started on the
+	// first share and torn down when the last share is removed.
+	shareStore      *shareStore
+	pgShareServer   *http.Server
+	pgShareListener net.Listener
+	tunnelMgr       TunnelManager
+	shareMu         sync.Mutex
+	listenTCP       func(addr string) (net.Listener, error) // injectable for tests; nil → net.Listen
+}
+
+// TunnelManager is the subset of tunnel.Manager the server needs, injectable
+// so tests don't spawn cloudflared.
+type TunnelManager interface {
+	Start(ctx context.Context, localPort int) (string, error)
+	Stop()
+	PublicURL() string
+	Running() bool
 }
 
 // AuditDirResolver maps a channel ID to the host directory that backs the
@@ -327,8 +348,15 @@ func NewServer(sched scheduler.Scheduler, channels ChannelEnsurer, threads Threa
 			Sys: sys,
 			Run: worktree.ExecCommandRunner,
 		},
-		sys: sys,
+		sys:        sys,
+		shareStore: newShareStore(),
 	}
+}
+
+// SetTunnelManager wires the cloudflared tunnel manager used by the public
+// playground-share feature. Left nil in tests that don't exercise sharing.
+func (s *Server) SetTunnelManager(tm TunnelManager) {
+	s.tunnelMgr = tm
 }
 
 // buildMux creates the HTTP mux with all API route registrations.
@@ -430,6 +458,9 @@ func (s *Server) buildMux() *http.ServeMux {
 	mux.HandleFunc("GET /api/playground/serve/{name}/{path...}", s.handlePlaygroundServeFile)
 	mux.HandleFunc("GET /api/playground/serve-project/{channel_id}/{name}", s.handlePlaygroundServeProject)
 	mux.HandleFunc("GET /api/playground/serve-project/{channel_id}/{name}/{path...}", s.handlePlaygroundServeProjectFile)
+	mux.HandleFunc("PUT /api/playground/share", s.handlePlaygroundShare)
+	mux.HandleFunc("DELETE /api/playground/share", s.handlePlaygroundUnshare)
+	mux.HandleFunc("GET /api/playground/share", s.handlePlaygroundShareList)
 	mux.HandleFunc("POST /api/agents", s.handleRegisterAgent)
 	mux.HandleFunc("GET /api/agents", s.handleListAgents)
 	mux.HandleFunc("PATCH /api/agents/{id}", s.handleUpdateAgent)
@@ -536,6 +567,9 @@ func (s *Server) Stop(ctx context.Context) error {
 	// the daemon process and keep consuming the Docker socket + LLM quota
 	// with nothing left to consume their output.
 	s.cancelAllReviewRuns()
+	// Tear down the public playground-share tunnel + ephemeral listener so the
+	// cloudflared subprocess doesn't outlive the daemon.
+	s.stopShareInfra()
 	if s.stopErr != nil {
 		// Still perform the real shutdown, but return the injected error.
 		if s.server != nil {

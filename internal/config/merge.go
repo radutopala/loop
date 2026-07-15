@@ -18,35 +18,36 @@ import (
 
 // projectConfig is the structure for project-specific .loop/config.json files.
 type projectConfig struct {
-	Mounts                                   []string               `json:"mounts"`
-	CopyFiles                                []string               `json:"copy_files"`
-	Envs                                     map[string]any         `json:"envs"`
-	MCP                                      *jsonMCPConfig         `json:"mcp"`
-	ClaudeModel                              string                 `json:"claude_model"`
-	ClaudeEffort                             string                 `json:"claude_effort"`
-	ClaudeBinPath                            string                 `json:"claude_bin_path"`
-	ClaudeDangerouslyLoadDevelopmentChannels *bool                  `json:"claude_dangerously_load_development_channels"`
-	ClaudeBatchDisallowedTools               []string               `json:"claude_batch_disallowed_tools"`
-	ClaudeRetry                              *jsonAgentRetryConfig  `json:"claude_retry"`
-	ClaudeCodeOAuthToken                     string                 `json:"claude_code_oauth_token"`
-	AnthropicAPIKey                          string                 `json:"anthropic_api_key"`
-	ContainerImage                           string                 `json:"container_image"`
-	ContainerMemoryMB                        *int64                 `json:"container_memory_mb"`
-	ContainerCPUs                            *float64               `json:"container_cpus"`
-	KeepMCPConfigs                           *bool                  `json:"keep_mcp_configs"`
-	Browser                                  *jsonBrowserConfig     `json:"browser"`
-	TaskTemplates                            []TaskTemplate         `json:"task_templates"`
-	Workflows                                []WorkflowDef          `json:"workflows"`
-	WorkflowConcurrency                      *WorkflowConcurrency   `json:"workflow_concurrency"`
-	PromptShortcuts                          []PromptShortcut       `json:"prompt_shortcuts"`
-	BashShortcuts                            []BashShortcut         `json:"bash_shortcuts"`
-	Memory                                   *jsonMemoryConfig      `json:"memory"`
-	Quality                                  *jsonQualityConfig     `json:"quality"`
-	Permissions                              *jsonPermissionsConfig `json:"permissions"`
-	ExtraDirs                                []string               `json:"extra_dirs"`
-	Gates                                    *jsonGatesConfig       `json:"gates"`
-	GitHub                                   *GitHubConfig          `json:"github"`
-	Review                                   *jsonReviewConfig      `json:"review"`
+	Mounts                                   []string                   `json:"mounts"`
+	CopyFiles                                []string                   `json:"copy_files"`
+	Envs                                     map[string]any             `json:"envs"`
+	MCP                                      *jsonMCPConfig             `json:"mcp"`
+	ClaudeModel                              string                     `json:"claude_model"`
+	ClaudeEffort                             string                     `json:"claude_effort"`
+	ClaudeBinPath                            string                     `json:"claude_bin_path"`
+	ClaudeDangerouslyLoadDevelopmentChannels *bool                      `json:"claude_dangerously_load_development_channels"`
+	ClaudeBatchDisallowedTools               []string                   `json:"claude_batch_disallowed_tools"`
+	ClaudeRetry                              *jsonAgentRetryConfig      `json:"claude_retry"`
+	ClaudeCodeOAuthToken                     string                     `json:"claude_code_oauth_token"`
+	AnthropicAPIKey                          string                     `json:"anthropic_api_key"`
+	ContainerImage                           string                     `json:"container_image"`
+	ContainerMemoryMB                        *int64                     `json:"container_memory_mb"`
+	ContainerCPUs                            *float64                   `json:"container_cpus"`
+	KeepMCPConfigs                           *bool                      `json:"keep_mcp_configs"`
+	Browser                                  *jsonBrowserConfig         `json:"browser"`
+	TaskTemplates                            []TaskTemplate             `json:"task_templates"`
+	Workflows                                []WorkflowDef              `json:"workflows"`
+	WorkflowConcurrency                      *WorkflowConcurrency       `json:"workflow_concurrency"`
+	PromptShortcuts                          []PromptShortcut           `json:"prompt_shortcuts"`
+	BashShortcuts                            []BashShortcut             `json:"bash_shortcuts"`
+	Memory                                   *jsonMemoryConfig          `json:"memory"`
+	Quality                                  *jsonQualityConfig         `json:"quality"`
+	Permissions                              *jsonPermissionsConfig     `json:"permissions"`
+	ExtraDirs                                []string                   `json:"extra_dirs"`
+	Gates                                    *jsonGatesConfig           `json:"gates"`
+	GitHub                                   *GitHubConfig              `json:"github"`
+	Review                                   *jsonReviewConfig          `json:"review"`
+	PlaygroundShare                          *jsonPlaygroundShareConfig `json:"playground_share"`
 }
 
 // LoadProjectConfig loads project-specific config from {workDir}/.loop/config.json
@@ -497,6 +498,11 @@ func (l *Loader) loadProjectConfig(workDir string, mainConfig *Config) (*Config,
 		if pc.Review.PromptPath != "" {
 			merged.Review.PromptPath = pc.Review.PromptPath
 		}
+	}
+
+	// PlaygroundShare: Enabled overrides global only when explicitly set.
+	if pc.PlaygroundShare != nil && pc.PlaygroundShare.Enabled != nil {
+		merged.PlaygroundShare.Enabled = *pc.PlaygroundShare.Enabled
 	}
 
 	return &merged, nil

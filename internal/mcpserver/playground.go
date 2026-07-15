@@ -82,6 +82,41 @@ func (s *Server) handlePlayground(_ context.Context, _ *mcp.CallToolRequest, inp
 	}
 }
 
+type playgroundShareInput struct {
+	Action string `json:"action" jsonschema:"required,Action: share (expose the playground publicly over a cloudflared tunnel and return its URL) or unshare (stop sharing)"`
+	Name   string `json:"name" jsonschema:"required,Playground name to share/unshare."`
+	Scope  string `json:"scope,omitempty" jsonschema:"Storage scope: 'global' (default) or 'project'. Requires channel_id for project scope."`
+}
+
+// handlePlaygroundShare exposes a playground publicly (or stops), returning the
+// public tunnel URL on share. Requires playground_share.enabled in config.
+func (s *Server) handlePlaygroundShare(_ context.Context, _ *mcp.CallToolRequest, input playgroundShareInput) (*mcp.CallToolResult, any, error) {
+	s.logger.Info("mcp tool call", "tool", "playground_share", "action", input.Action, "name", input.Name, "scope", input.Scope)
+
+	apiURL := fmt.Sprintf("%s/api/playground/share?name=%s%s", s.apiURL, url.QueryEscape(input.Name), s.playgroundScopeParams(input.Scope))
+
+	switch input.Action {
+	case "share":
+		result, errResult, err := doAPICall[struct {
+			URL   string `json:"url"`
+			Token string `json:"token"`
+		}](s, "PUT", apiURL, http.StatusOK, nil)
+		if errResult != nil || err != nil {
+			return errResult, nil, err
+		}
+		return textResult(fmt.Sprintf("Playground '%s' is now public at %s", input.Name, result.URL)), nil, nil
+
+	case "unshare":
+		if errResult, err := doAPICallNoBody(s, "DELETE", apiURL, http.StatusNoContent, nil); errResult != nil || err != nil {
+			return errResult, nil, err
+		}
+		return textResult(fmt.Sprintf("Playground '%s' is no longer public.", input.Name)), nil, nil
+
+	default:
+		return errorResult("invalid action: " + input.Action), nil, nil
+	}
+}
+
 type playgroundFileInput struct {
 	Action  string `json:"action" jsonschema:"required,Action: create/update (write file), read (get content), delete (remove file), list (all files)"`
 	Name    string `json:"name" jsonschema:"required,Playground name"`

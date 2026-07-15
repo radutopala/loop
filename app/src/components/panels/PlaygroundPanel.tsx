@@ -1,10 +1,19 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useTheme } from "../../ThemeContext";
-import { fetchPlayground, fetchPlaygroundItems, getApiUrl, type PlaygroundItem } from "../../api/loopApi";
+import {
+  fetchPlayground,
+  fetchPlaygroundItems,
+  fetchPlaygroundShareStatus,
+  getApiUrl,
+  sharePlayground,
+  unsharePlayground,
+  type PlaygroundItem,
+} from "../../api/loopApi";
 import { useEventStream } from "../../hooks/useEventStream";
 import type { WSEvent } from "../../types";
 import { storageGetJSON, storageSetJSON } from "../../utils/storage";
 import { logErr } from "../../utils/log";
+import { openExternalUrl } from "../../utils/openExternal";
 
 interface PlaygroundCode {
   html: string;
@@ -40,6 +49,9 @@ export function PlaygroundPanel({ channelId, instanceId = "default" }: Playgroun
   const [error, setError] = useState<string | null>(null);
   const [showConsole, setShowConsole] = useState(false);
   const [showInfo, setShowInfo] = useState(false);
+  const [shareUrl, setShareUrl] = useState<string | null>(null);
+  const [sharePending, setSharePending] = useState(false);
+  const [shareCopied, setShareCopied] = useState(false);
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [items, setItems] = useState<PlaygroundItem[]>([]);
@@ -85,6 +97,19 @@ export function PlaygroundPanel({ channelId, instanceId = "default" }: Playgroun
     }).catch(logErr("loading playground item"));
   }, [activeItem, activeScope, channelId]);
 
+  // Resolve the active playground's share status from the daemon (by dir, so
+  // it's correct even when shared from a different channel/thread mapping to
+  // the same dir). Used on mount, on switch, and on live share events.
+  const refreshShareStatus = useCallback(() => {
+    if (!activeItemRef.current) {
+      setShareUrl(null);
+      return;
+    }
+    fetchPlaygroundShareStatus(activeItemRef.current, activeScopeRef.current, channelId)
+      .then((st) => setShareUrl(st.shared ? st.url : null))
+      .catch(() => setShareUrl(null));
+  }, [channelId]);
+
   // Listen for live updates from agent via EventsHub.
   useEventStream({
     channelId,
@@ -95,6 +120,17 @@ export function PlaygroundPanel({ channelId, instanceId = "default" }: Playgroun
         if (!eventName) return;
         const eventScope = data.scope === "project" ? "project" : "global";
         const eventChannelId = data.channel_id || "";
+        // Share state change (e.g. shared/unshared from another thread or the
+        // global panel): re-resolve status for the active playground rather
+        // than trusting the event's channel_id, since a project playground can
+        // be shared from a different channel that maps to the same dir. Not a
+        // content update.
+        if (data.kind === "share") {
+          if (eventName === activeItemRef.current && eventScope === activeScopeRef.current) {
+            refreshShareStatus();
+          }
+          return;
+        }
         if (eventScope === "project" && eventChannelId !== channelId) return;
         // Refresh items list (a new item may have been created).
         fetchPlaygroundItems(channelId).then((list) => {
@@ -118,7 +154,7 @@ export function PlaygroundPanel({ channelId, instanceId = "default" }: Playgroun
           }
         }
       }
-    }, [channelId, selectItem]),
+    }, [channelId, selectItem, refreshShareStatus]),
   });
 
   // Listen for console messages from iframe via postMessage.
@@ -144,6 +180,44 @@ export function PlaygroundPanel({ channelId, instanceId = "default" }: Playgroun
     setError(null);
     setConsoleMessages([]);
     setIframeVersion((v) => v + 1);
+  }
+
+  // Re-resolve the share toggle whenever the active playground (or channel)
+  // changes, so returning to a still-shared playground shows "Unshare" + its
+  // URL rather than a stale "Share".
+  useEffect(() => {
+    setShareCopied(false);
+    refreshShareStatus();
+  }, [activeItem, activeScope, refreshShareStatus]);
+
+  async function handleToggleShare() {
+    if (sharePending) return;
+    setSharePending(true);
+    try {
+      if (shareUrl) {
+        await unsharePlayground(activeItem, activeScope, channelId);
+        setShareUrl(null);
+        setShareCopied(false);
+      } else {
+        const { url } = await sharePlayground(activeItem, activeScope, channelId);
+        setShareUrl(url);
+      }
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "share failed");
+    } finally {
+      setSharePending(false);
+    }
+  }
+
+  function handleCopyShareUrl() {
+    if (!shareUrl) return;
+    navigator.clipboard.writeText(shareUrl).then(
+      () => {
+        setShareCopied(true);
+        setTimeout(() => setShareCopied(false), 1500);
+      },
+      logErr("copying share url"),
+    );
   }
 
   // Empty state — no item selected.
@@ -188,6 +262,36 @@ export function PlaygroundPanel({ channelId, instanceId = "default" }: Playgroun
           <ToolbarButton onClick={() => setShowInfo(!showInfo)} title="Toggle info" colors={colors}>
             Info
           </ToolbarButton>
+        )}
+        <ToolbarButton
+          onClick={handleToggleShare}
+          title={shareUrl ? "Stop sharing publicly" : "Share publicly over the internet"}
+          colors={colors}
+        >
+          {sharePending ? "…" : shareUrl ? "Unshare" : "Share"}
+        </ToolbarButton>
+        {shareUrl && (
+          <>
+            <span
+              onClick={() => openExternalUrl(shareUrl)}
+              title="Open in external browser"
+              style={{
+                fontSize: 11,
+                color: colors.active,
+                cursor: "pointer",
+                textDecoration: "underline",
+                maxWidth: 240,
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                whiteSpace: "nowrap",
+              }}
+            >
+              {shareUrl}
+            </span>
+            <ToolbarButton onClick={handleCopyShareUrl} title="Copy share URL" colors={colors}>
+              {shareCopied ? "copied!" : "Copy"}
+            </ToolbarButton>
+          </>
         )}
         {title && (
           <span style={{ marginLeft: 8, color: colors.textDim, fontSize: 11, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1 }}>

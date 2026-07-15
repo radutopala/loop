@@ -64,7 +64,7 @@ AI agents powered by Claude, running in Docker containers. Use the **desktop app
 
 - **Orchestrator** coordinates message handling, channel registration, session management, and scheduled tasks
 - **DockerRunner** mounts the channel's `dir_path` (falling back to `~/.loop/<channelID>/work`) at its original path inside the container, then runs `claude --print`
-- **Scheduler** polls for due tasks (cron, interval, once) and executes them via DockerRunner
+- **Scheduler** polls for due tasks (cron, interval, once, manual) and executes them via DockerRunner — each task runs an agent prompt, a [workflow](docs/workflows.md), or a bash script in the agent container ([docs](docs/scheduling.md#scheduled-bash-scripts))
 - **Workflow Engine** runs declarative DAG pipelines — parallel fan-out of prompt and bash nodes with dependency tracking, trigger rules, and real-time status events
 - **MCP Server** (inside the container) gives Claude tools to schedule/manage tasks and run workflows — calls loop back through the API server
 - **Browser** supports Docker mode (headless Chrome container per channel) and Host mode (user's local Chrome via CDP). The desktop app toggles modes per channel; `loop mcp-host-browser` runs standalone without Docker
@@ -360,7 +360,8 @@ On startup, `loop serve` keeps the versioned container files (`Dockerfile`, `ent
 | `browser.chrome_image` | `"loop-chrome:latest"` | Docker image for Chrome sidecar containers |
 | `browser.host_cdp_port` | `9222` | CDP port for Host mode (requires `chrome://inspect/#remote-debugging` in Chrome) |
 | `poll_interval_sec` | `30` | Task scheduler poll interval |
-| `claude_model` | `"claude-sonnet-4-6"` | Override Claude model (e.g. `"claude-opus-4-7"`) |
+| `claude_model` | `"claude-sonnet-5"` | Claude model (e.g. `"claude-fable-5"`, `"claude-opus-4-8"`). Overridable per channel from the chat composer |
+| `claude_effort` | `""` | Reasoning effort passed as `--effort` (`low`…`max`); empty uses the model default. Overridable per channel from the chat composer |
 | `claude_bin_path` | `"claude"` | Path to Claude Code binary |
 | `mounts` | `[]` | Host directories to mount into containers |
 | `copy_files` | `["~/.claude.json"]` | Files copied (not mounted) into each container |
@@ -376,6 +377,7 @@ On startup, `loop serve` keeps the versioned container files (`Dockerfile`, `ent
 | `gates.docker_proxy` | mirrors `gates.agentgate.enabled` | In-container Docker HTTP proxy. Agents talk to `/var/run/docker.sock` (tmpfs, owned by `loop dockerproxy`); that process reverse-proxies to the real daemon socket at `/var/run/docker.sock.host`. Ships with 15 method/path rules and 2 JSON body-inspection rules. Body rules support `deny` (hard 403, no prompt), `approve` (block + user prompt) and `allow` (silent pass-through) — same decision set as the HTTP rules |
 | `gates.rate_limits` | `{pending: 30, per_minute: 60, total: 500}` | Shared approval rate limits across both gate layers |
 | `gates.audit` | `{retention_days: 30, verbose: false}` | Shared audit-log retention and verbosity for approval decisions. `verbose: false` (default) drops silent policy-allow and cache-hit allow entries so the trail focuses on every deny plus every user-clicked decision; set `verbose: true` when debugging rules or exporting a full trace |
+| `playground_share` | `{enabled: false}` | Public [playground](docs/playground.md#public-sharing) sharing over a cloudflared quick tunnel. Off by default; when enabled, a playground can be exposed at a unique `trycloudflare.com/p/<token>` URL (main API never exposed) |
 
 ### Permissions
 
@@ -998,7 +1000,7 @@ Loop includes a cross-platform desktop app for macOS, Windows, and Linux, built 
 - **Deep links** — `loop://channel/<id>` opens the app directly to a channel
 - **Branch picker** — switch branches from the header bar, create worktree threads, import existing worktrees. Threads show branches only; parent channels show branches + worktrees in a 50/50 split. Double-click a branch name to copy it
 - **Browser** — live Chrome screencast via WebSocket, click/type/navigate directly in the browser pane. Two panel types: Docker Browser (headless container) and Host Browser (local Chrome via CDP), mutually exclusive per layout
-- **Playground** — live interactive sandbox where agents generate HTML/CSS/JS and it renders in a sandboxed iframe. Multiple named playgrounds with two scopes: global (`~/.loop/playground/`, shared across channels) and project (`.loop/playground/` in the channel's working directory). Multi-instance panels, hot-reloads on updates, console capture, import maps, multi-file support with relative imports. Agents use `playground` + `playground_file` MCP tools
+- **Playground** — live interactive sandbox where agents generate HTML/CSS/JS and it renders in a sandboxed iframe. Multiple named playgrounds with two scopes: global (`~/.loop/playground/`, shared across channels) and project (`.loop/playground/` in the channel's working directory). Multi-instance panels, hot-reloads on updates, console capture, import maps, multi-file support with relative imports. Optional **public sharing** (off by default) exposes a playground over the internet through a cloudflared quick tunnel at a unique `/p/<token>` URL (idempotent per playground; main API never exposed); a sidebar **Playground Shares** panel lists active shares with a red count badge. Agents use `playground` + `playground_file` + `playground_share` MCP tools
 - **Settings** — schema-driven config form with typed controls (toggles, dropdowns, number inputs, password fields, arrays, key-value editors) plus a raw JSON editor, with Form/JSON toggle and unsaved changes confirmation. The **Workflows** and **Prompt Shortcuts** sections each gain a "Restore built-ins" bar that re-seeds any missing built-in entries (`review-loop`, `review-fix-loop`, `builtin code review`, `builtin simplify`) without overwriting user-edited ones
 - **Plan mode** — run agents in read-only preview mode via Claude Code's `EnterPlanMode` tool
 - **Agent activity** — see model info, thinking blocks, tool calls with their results, and completion summaries in the chat view. Thinking and tool events are persisted alongside messages and replayed in chain order on reload, so the timeline survives page refreshes
