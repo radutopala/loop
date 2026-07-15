@@ -54,6 +54,8 @@ The `isRunning` flag is scoped per agent run via a `run_id` tracked internally b
 - Timestamp displayed next to the robot icon
 - Rounded corners: `18px 18px 18px 4px` (bottom-left is sharp)
 
+Hovering a bot message fades in a square-on-square **copy button** in the top-right corner of the bubble; it copies the raw message content and briefly flips to a check.
+
 ### User Messages (Right-Aligned)
 
 - Aligned to the right (`alignItems: "flex-end"`)
@@ -173,9 +175,13 @@ Activity text is truncated to **100 characters** maximum with "..." appended.
 When the agent invokes a tool (`tool.use` event), an indicator is appended to the timeline:
 - Gear icon
 - Tool name in bold
-- Input summary (truncated for display, except for path-bearing tools whose entire input is rendered as a clickable [file link](#file-links))
+- Input summary (collapsed to a one-line preview at 80 chars, except for path-bearing tools whose entire input is rendered as a clickable [file link](#file-links))
 
-When the matching `tool.result` event arrives (paired by `tool_use_id`), the indicator collapses into a `tool_use` + `tool_result` pair rendered together — the result is shown as a dimmed second line beneath the tool call. Tool calls and their results are persisted as timeline rows, so reloading the channel replays them in chain order alongside the surrounding messages.
+**Click to expand:** clicking a long input (e.g. a multi-line Bash command) toggles the full command, pre-wrapped; clicking the expanded command collapses it back — the same click-to-toggle used for the result below it. The backend caps the tool-input summary at 2000 chars (a safety net, not a display limit), so the whole command survives to the client.
+
+When the matching `tool.result` event arrives (paired by `tool_use_id`), the indicator collapses into a `tool_use` + `tool_result` pair rendered together — the result is shown as a dimmed second line beneath the tool call, itself click-expandable past 120 chars. Tool calls and their results are persisted as timeline rows, so reloading the channel replays them in chain order alongside the surrounding messages.
+
+**Copy buttons:** hovering the indicator fades in a small square-on-square copy button at the end of the command line and another at the result — each copies the raw text to the clipboard and briefly flips to a check.
 
 ### Thinking Bubble
 
@@ -449,6 +455,33 @@ The picker calls [`GET /api/channels/{id}/files/search?q=...&limit=...`](api.md#
 ### Acceptance
 
 Pressing `Tab` or `Enter` (or clicking a row) replaces the `@<query>` span with `` @`<rel_path>` `` (the path wrapped in backticks) plus a trailing space. The accepted path renders as inline code in the sent message and is auto-recognized by the [file-link detector](#file-links), so clicking it in the timeline opens the file in the editor.
+
+---
+
+## AskUserQuestion Card
+
+When the agent calls the `AskUserQuestion` tool, the run is parked and the chat renders an interactive card ([`agent.ask_user`](events.md#agentask_user)). The card supports the tool's full schema:
+
+- **Multi-panel:** up to 4 questions per call, each with its own header chip and option set.
+- **Single-select:** radio-style pills (`◉`/`○`); re-clicking a selected option clears it.
+- **Multi-select:** questions with `multiSelect: true` render as checkbox pills (`☑`/`☐`) with a `multi-select` hint next to the header.
+- **Description + preview panel:** hovering (or keyboard-focusing) an option opens a panel below the options row with the option's `description` and, when present, its `preview` (mockup / code snippet) in a code block. The panel clears when the pointer leaves the whole question block — block-level clearing absorbs the layout shift the panel itself causes in a bottom-anchored chat, so it doesn't flicker.
+- **Other:** an implicit free-text option with a textarea (`⌘/Ctrl+Enter` submits).
+
+**Stickiness:** the card is rendered whenever an ask is pending, independent of run state, and clears only on the backend's [`agent.ask_resolved`](events.md#agentask_resolved) event — a sibling run starting while the channel is parked cannot hide a still-pending question. On reload / WS reconnect the card rehydrates from `GET /api/asks/pending`.
+
+**Resolution:** "Send Answers" (or typing a free-text message in the composer while the card is up) routes through `POST /api/channels/{id}/ask/resolve`, which inserts the answer as a priority-bumped continuation and resumes the channel's drain. Messages queued while the card was up run after the answer.
+
+---
+
+## Model / Effort Override
+
+A pill next to the Agent/Plan mode toggle lets any channel, thread, or worktree override the config's `claude_model` / `claude_effort` on demand — no config edit or restart:
+
+- Collapsed, the pill shows `model` when inheriting, or the active override (e.g. `opus-4-8 · high`) highlighted in the accent color.
+- Clicking opens a popover with model presets (matching the config schema's options) plus a custom-id input, and the effort levels (`low` … `max`).
+- "Default" rows show the effective config value for the channel's dir (global → project → worktree merge) — e.g. `Default (claude-sonnet-5)` — or `Default (model default)` for effort when `claude_effort` isn't set (the CLI then uses the selected model's own default).
+- Selections apply immediately via `PATCH /api/channels/{id}/agent-config` and take effect on the channel's **next** agent run (chat and scheduled runs alike).
 
 ---
 

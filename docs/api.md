@@ -383,6 +383,43 @@ Sessions are sorted by modification time (newest first). `last_message` is extra
 
 ---
 
+### `GET /api/channels/{id}/agent-config`
+
+Return the channel's per-channel model/effort overrides plus the effective config defaults they fall back to (global → project → worktree merge for the channel's dir), so a UI can label "default" concretely.
+
+**Response (200):**
+```json
+{
+  "model": "claude-opus-4-8",
+  "effort": "high",
+  "default_model": "claude-sonnet-5",
+  "default_effort": ""
+}
+```
+
+`model` / `effort` are empty when the channel inherits from config.
+
+**Errors:** `404` if the channel doesn't exist. `501` if the store is not configured.
+
+---
+
+### `PATCH /api/channels/{id}/agent-config`
+
+Set the channel's model/effort overrides. Empty strings clear an override (inherit from config). Takes effect on the channel's **next** agent run — chat and scheduled runs alike — with no restart.
+
+**Request:**
+```json
+{"model": "claude-opus-4-8", "effort": "high"}
+```
+
+`effort` must be one of `low`, `medium`, `high`, `xhigh`, `max`, or empty. `model` is free text (any Claude model id).
+
+**Response:** `204 No Content`.
+
+**Errors:** `400` on invalid effort. `404` if the channel doesn't exist. `501` if the store is not configured.
+
+---
+
 ### `GET /api/channels/{id}/audit`
 
 List the agent-gate audit files accumulated for a channel. The files are rotating JSONL (`agentgate-YYYY-MM-DD.jsonl`) written by `FileAuditor` inside the container and kept on the host under `{policyDir}/<channel>/audit/`. See [Security Gate: Known gaps](gates.md#known-gaps) for the record schema and the `verbose` flag.
@@ -701,6 +738,7 @@ Create a new scheduled task.
 | `update_before_run`| bool   | no       | Prepend git fetch/rebase instructions to the prompt before each run |
 | `workflow_name`    | string | no       | Name of a workflow to run on schedule (mutually exclusive with `prompt`) |
 | `workflow_inputs`  | string | no       | JSON object of inputs to pass to the workflow |
+| `bash_script`      | string | no       | Shell script to run in the channel's agent container on schedule (mutually exclusive with `prompt` and `workflow_name`); output is posted to the channel |
 
 **Response (201):**
 ```json
@@ -791,11 +829,12 @@ Update one or more fields of a scheduled task. At least one field must be provid
   "origin_branch": "develop",
   "update_before_run": true,
   "workflow_name": "validate",
-  "workflow_inputs": "{}"
+  "workflow_inputs": "{}",
+  "bash_script": "df -h | tail -1"
 }
 ```
 
-All fields are optional (use JSON `null` or omit). When `enabled` is provided, it is applied separately via `SetTaskEnabled`. Other fields are applied via `EditTask`. Set `workflow_name` to convert a prompt task into a workflow task (or clear it with an empty string to revert).
+All fields are optional (use JSON `null` or omit). When `enabled` is provided, it is applied separately via `SetTaskEnabled`. Other fields are applied via `EditTask`. Set `workflow_name` to convert a prompt task into a workflow task, or `bash_script` to convert it into a [bash task](scheduling.md#scheduled-bash-scripts) (clear either with an empty string to revert).
 
 **Response:** `200 OK` (empty body)
 
