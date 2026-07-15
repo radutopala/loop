@@ -104,12 +104,6 @@ func (e *TaskExecutor) ExecuteTask(ctx context.Context, task *db.ScheduledTask) 
 		return e.executeWorkflowTask(ctx, task, dirPath)
 	}
 
-	// Bash tasks: run the script in the channel's agent container instead of
-	// an agent prompt.
-	if task.BashScript != "" {
-		return e.executeBashTask(ctx, task, dirPath)
-	}
-
 	// Worktree: on first run, create a git worktree; on subsequent runs, reuse
 	// the thread's DirPath which already points to the worktree.
 	worktreeCreated := false
@@ -156,6 +150,15 @@ func (e *TaskExecutor) ExecuteTask(ctx context.Context, task *db.ScheduledTask) 
 			worktreeCreated = true
 			e.logger.Info("created worktree for task", "task_id", task.ID, "worktree_path", dirPath)
 		}
+	}
+
+	// Bash tasks: run the script in the channel's agent container instead of
+	// an agent prompt. They share the worktree block above (thread-keyed, so a
+	// recurring task reuses the worktree through its thread's DirPath) and get
+	// the same thread behavior as prompt tasks: a sub-thread on first run
+	// (a worktree thread when worktree is checked), reused afterwards.
+	if task.BashScript != "" {
+		return e.executeBashTask(ctx, task, dirPath, channel, worktreeCreated)
 	}
 
 	// Determine which session to resume:
