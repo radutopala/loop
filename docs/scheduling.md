@@ -102,7 +102,7 @@ For each due task:
 1. The task is atomically claimed via `UPDATE ... SET running = 1 WHERE id = ? AND running = 0`. If `RowsAffected = 0`, another execution (e.g. a concurrent "Run Now") already claimed it and execution is skipped. This prevents concurrent runs even under race conditions.
 2. A deferred release (`running = 0`) is registered so the flag is always cleared when execution finishes.
 3. A `TaskRunLog` record is inserted with status `"running"`.
-2. The task executor retrieves the channel from the database to get the session ID and work directory.
+2. The task executor retrieves the channel from the database to get the session ID and work directory. Tasks with `workflow_name` delegate to the workflow engine ([Scheduled Workflows](#scheduled-workflows)); tasks with `bash_script` run the script directly ([Scheduled Bash Scripts](#scheduled-bash-scripts)); everything below applies to prompt tasks.
 3. If the task has `worktree = true`, a git worktree is created (see [Worktree Isolation](#worktree-isolation) below).
 4. An `AgentRequest` is built with:
    - The task's prompt as a user message. If `update_before_run` is enabled and `origin_branch` is set, git fetch/rebase instructions are prepended to the prompt.
@@ -143,7 +143,7 @@ schedule_task({
 })
 ```
 
-In the UI, the task create/edit form has a **Prompt | Workflow** mode toggle. Workflow mode is enabled when the channel has at least one workflow visible (merged global → parent → channel); the picker lists those workflows and renders inputs declared in the workflow definition, seeded with their defaults.
+In the UI, the task create/edit form has a **Prompt | Workflow | Bash** mode toggle. Workflow mode is enabled when the channel has at least one workflow visible (merged global → parent → channel); the picker lists those workflows and renders inputs declared in the workflow definition, seeded with their defaults.
 
 | Field | Description |
 |---|---|
@@ -163,6 +163,27 @@ When a workflow task fires:
 The task can be edited to change `workflow_name` or `workflow_inputs` via `edit_task` MCP tool or `PATCH /api/tasks/{id}`.
 
 See also: [Workflows](workflows.md) for the full workflow engine documentation.
+
+---
+
+## Scheduled Bash Scripts
+
+The third task flavor: setting `bash_script` on a task runs a shell script instead of an agent prompt or a workflow. The script executes inside the channel's **agent container** — same image, mounts, and syscall/proxy gates as agent runs, with the container timeout applied — via the same `RunBash` mechanism workflow script nodes use.
+
+```jsonc
+// Via MCP tool
+schedule_task({
+  "schedule": "0 8 * * *",
+  "type": "cron",
+  "bash_script": "df -h /work | tail -1"
+})
+```
+
+- Works with every schedule type (`cron`, `interval`, `once`, `manual`).
+- The script's output is posted to the channel as a bot message (fenced code block, truncated at ~3500 chars for chat); the task run log keeps the **full** output.
+- On failure, the error is posted along with any partial output, and the run log records `failed`.
+- `bash_script` is mutually exclusive with `prompt` and `workflow_name`; the create/edit API, the `schedule_task`/`edit_task` MCP tools, and the Tasks panels (per-channel and global, via the **Bash** mode with a monospace editor) all accept it.
+- Bash tasks don't create threads or resume sessions — there is no agent involved.
 
 ---
 

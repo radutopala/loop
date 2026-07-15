@@ -318,9 +318,9 @@ Claude used the `AskUserQuestion` tool to ask structured questions. The desktop 
       "header": "Location",
       "options": [
         { "label": "Root directory", "description": "Create in the project root" },
-        { "label": "src/ folder", "description": "Create inside the src directory" }
+        { "label": "src/ folder", "description": "Create inside the src directory", "preview": "src/\n  new-file.ts" }
       ],
-      "multi_select": false
+      "multiSelect": false
     }
   ]
 }
@@ -328,13 +328,16 @@ Claude used the `AskUserQuestion` tool to ask structured questions. The desktop 
 
 | Field              | Type     | Description |
 |--------------------|----------|-------------|
-| `questions`        | array    | List of questions to present |
+| `questions`        | array    | List of questions to present (1–4 per call) |
 | `questions[].question` | string | The question text |
-| `questions[].header`   | string | Short header/label for the question |
-| `questions[].options`  | array  | Selectable options (label + description) |
-| `questions[].multi_select` | bool | Whether multiple options can be selected |
+| `questions[].header`   | string | Short header/label for the question, rendered as a chip |
+| `questions[].options`  | array  | Selectable options (`label`, `description`, optional `preview`) |
+| `questions[].options[].preview` | string | Optional mockup / code snippet shown in a panel when the option is hovered or focused |
+| `questions[].multiSelect` | bool | Whether the question is a checkbox list (multiple options selectable) |
 
-The user's answers are sent as a regular message in the next turn (via `--resume`). An implicit "Other" free-text option is always available.
+The field names mirror Claude Code's tool-input schema (camelCase) — the orchestrator unmarshals the raw `tool_use` input directly into this payload.
+
+The card stays visible until the ask is resolved (it is **not** cleared when another run starts). The user's answers are submitted via `POST /api/channels/{id}/ask/resolve`, which clears the park, emits [`agent.ask_resolved`](#agentask_resolved), and inserts the answers as a priority-bumped continuation message. Messages queued while the card is up wait behind the ask. An implicit "Other" free-text option is always available.
 
 ---
 
@@ -357,6 +360,22 @@ Claude used the `ExitPlanMode` tool to signal that a plan is ready for review. T
 | `planFilePath` | string | Path where the plan file was written |
 
 Clicking "Accept & Execute" switches mode from plan to agent and sends an approval message. Clicking "Request Changes" keeps plan mode and sends a revision request.
+
+---
+
+### `agent.ask_resolved`
+
+The channel's pending `AskUserQuestion` park was cleared (the user answered or cancelled via `POST /api/channels/{id}/ask/resolve`). The frontend drops the ask card on this event — and only on this event, so a sibling run starting while the channel is parked cannot hide a still-pending question.
+
+**Payload:** none (the `channel_id` on the envelope identifies the ask).
+
+---
+
+### `agent.plan_resolved`
+
+The channel's pending `ExitPlanMode` park was cleared (approved or denied via `POST /api/channels/{id}/plan/resolve`). Mirrors `agent.ask_resolved` for the plan card.
+
+**Payload:** none.
 
 ---
 
@@ -824,7 +843,9 @@ Emitted on every review session status transition (`idle → loading → ready �
 | `BroadcastToolResult` | `tool.result` | `ToolResultEventData` | Channel |
 | `BroadcastAgentActivity` | `agent.activity` | `AgentActivityEventData` | Channel |
 | `BroadcastAskUser` | `agent.ask_user` | `AskUserQuestionEventData` | Channel |
+| `BroadcastAskResolved` | `agent.ask_resolved` | — | Channel |
 | `BroadcastExitPlan` | `agent.exit_plan` | `ExitPlanModeEventData` | Channel |
+| `BroadcastPlanResolved` | `agent.plan_resolved` | — | Channel |
 | `BroadcastTodoWrite` | `agent.todos` | `TodoWriteEventData` | Channel |
 | `BroadcastChannelCreated` | `channel.created` | `map[string]string{"channel_id": id}` | Channel |
 | `BroadcastChannelDeleted` | `channel.deleted` | `nil` | Channel |

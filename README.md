@@ -64,7 +64,7 @@ AI agents powered by Claude, running in Docker containers. Use the **desktop app
 
 - **Orchestrator** coordinates message handling, channel registration, session management, and scheduled tasks
 - **DockerRunner** mounts the channel's `dir_path` (falling back to `~/.loop/<channelID>/work`) at its original path inside the container, then runs `claude --print`
-- **Scheduler** polls for due tasks (cron, interval, once) and executes them via DockerRunner
+- **Scheduler** polls for due tasks (cron, interval, once, manual) and executes them via DockerRunner — each task runs an agent prompt, a [workflow](docs/workflows.md), or a bash script in the agent container ([docs](docs/scheduling.md#scheduled-bash-scripts))
 - **Workflow Engine** runs declarative DAG pipelines — parallel fan-out of prompt and bash nodes with dependency tracking, trigger rules, and real-time status events
 - **MCP Server** (inside the container) gives Claude tools to schedule/manage tasks and run workflows — calls loop back through the API server
 - **Browser** supports Docker mode (headless Chrome container per channel) and Host mode (user's local Chrome via CDP). The desktop app toggles modes per channel; `loop mcp-host-browser` runs standalone without Docker
@@ -360,7 +360,8 @@ On startup, `loop serve` keeps the versioned container files (`Dockerfile`, `ent
 | `browser.chrome_image` | `"loop-chrome:latest"` | Docker image for Chrome sidecar containers |
 | `browser.host_cdp_port` | `9222` | CDP port for Host mode (requires `chrome://inspect/#remote-debugging` in Chrome) |
 | `poll_interval_sec` | `30` | Task scheduler poll interval |
-| `claude_model` | `"claude-sonnet-4-6"` | Override Claude model (e.g. `"claude-opus-4-7"`) |
+| `claude_model` | `"claude-sonnet-5"` | Claude model (e.g. `"claude-fable-5"`, `"claude-opus-4-8"`). Overridable per channel from the chat composer |
+| `claude_effort` | `""` | Reasoning effort passed as `--effort` (`low`…`max`); empty uses the model default. Overridable per channel from the chat composer |
 | `claude_bin_path` | `"claude"` | Path to Claude Code binary |
 | `mounts` | `[]` | Host directories to mount into containers |
 | `copy_files` | `["~/.claude.json"]` | Files copied (not mounted) into each container |
