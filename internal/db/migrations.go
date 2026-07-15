@@ -345,6 +345,9 @@ var migrations = []migration{
 	// claude_effort for this channel's runs when non-empty (set from the chat UI).
 	sqlMigration(`ALTER TABLE channels ADD COLUMN model_override TEXT NOT NULL DEFAULT ''`),
 	sqlMigration(`ALTER TABLE channels ADD COLUMN effort_override TEXT NOT NULL DEFAULT ''`),
+	// Bash scheduled tasks: when set, the task runs this script in the
+	// channel's agent container instead of an agent prompt or workflow.
+	sqlMigration(`ALTER TABLE scheduled_tasks ADD COLUMN bash_script TEXT NOT NULL DEFAULT ''`),
 }
 
 // migrateScheduledTasksAddManualType rebuilds scheduled_tasks to widen the

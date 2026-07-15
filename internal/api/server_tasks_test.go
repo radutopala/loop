@@ -35,6 +35,29 @@ func (s *ServerSuite) TestCreateTaskSuccess() {
 	s.scheduler.AssertExpectations(s.T())
 }
 
+func (s *ServerSuite) TestCreateTaskWithBashScript() {
+	s.store.On("GetChannel", mock.Anything, "ch1").Return(nil, nil)
+	s.scheduler.On("AddTask", mock.Anything, mock.MatchedBy(func(task *db.ScheduledTask) bool {
+		return task.ChannelID == "ch1" && task.BashScript == "df -h | head -5" && task.Prompt == ""
+	})).Return(int64(43), nil)
+
+	rec := s.testRequest("POST", "/api/tasks", `{"channel_id":"ch1","schedule":"0 9 * * *","type":"cron","bash_script":"df -h | head -5"}`)
+
+	require.Equal(s.T(), http.StatusCreated, rec.Code)
+	s.scheduler.AssertExpectations(s.T())
+}
+
+func (s *ServerSuite) TestUpdateTaskEditBashScript() {
+	s.scheduler.On("EditTask", mock.Anything, int64(42), (*string)(nil), (*string)(nil), (*string)(nil), (*int)(nil), (*bool)(nil), (*string)(nil), (*bool)(nil), (*string)(nil), (*string)(nil), mock.MatchedBy(func(b *string) bool {
+		return b != nil && *b == "uptime"
+	})).Return(nil)
+
+	rec := s.testRequest("PATCH", "/api/tasks/42", `{"bash_script":"uptime"}`)
+
+	require.Equal(s.T(), http.StatusOK, rec.Code)
+	s.scheduler.AssertExpectations(s.T())
+}
+
 func (s *ServerSuite) TestCreateTaskWithTemplateName() {
 	s.store.On("GetChannel", mock.Anything, "ch1").Return(nil, nil)
 	s.scheduler.On("AddTask", mock.Anything, mock.MatchedBy(func(task *db.ScheduledTask) bool {
@@ -397,7 +420,7 @@ func (s *ServerSuite) TestUpdateTaskNoFields() {
 func (s *ServerSuite) TestUpdateTaskEditPrompt() {
 	s.scheduler.On("EditTask", mock.Anything, int64(42), (*string)(nil), (*string)(nil), mock.MatchedBy(func(p *string) bool {
 		return p != nil && *p == "new prompt"
-	}), (*int)(nil), (*bool)(nil), (*string)(nil), (*bool)(nil), (*string)(nil), (*string)(nil)).Return(nil)
+	}), (*int)(nil), (*bool)(nil), (*string)(nil), (*bool)(nil), (*string)(nil), (*string)(nil), (*string)(nil)).Return(nil)
 
 	rec := s.testRequest("PATCH", "/api/tasks/42", `{"prompt":"new prompt"}`)
 
@@ -406,7 +429,7 @@ func (s *ServerSuite) TestUpdateTaskEditPrompt() {
 }
 
 func (s *ServerSuite) TestUpdateTaskEditSchedulerError() {
-	s.scheduler.On("EditTask", mock.Anything, int64(42), mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(errors.New("edit error"))
+	s.scheduler.On("EditTask", mock.Anything, int64(42), mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, (*string)(nil)).Return(errors.New("edit error"))
 
 	rec := s.testRequest("PATCH", "/api/tasks/42", `{"prompt":"new"}`)
 
@@ -417,7 +440,7 @@ func (s *ServerSuite) TestUpdateTaskEditSchedulerError() {
 func (s *ServerSuite) TestUpdateTaskEditWorktree() {
 	s.scheduler.On("EditTask", mock.Anything, int64(42), (*string)(nil), (*string)(nil), (*string)(nil), (*int)(nil), mock.MatchedBy(func(w *bool) bool {
 		return w != nil && *w
-	}), (*string)(nil), (*bool)(nil), (*string)(nil), (*string)(nil)).Return(nil)
+	}), (*string)(nil), (*bool)(nil), (*string)(nil), (*string)(nil), (*string)(nil)).Return(nil)
 
 	rec := s.testRequest("PATCH", "/api/tasks/42", `{"worktree":true}`)
 
@@ -428,7 +451,7 @@ func (s *ServerSuite) TestUpdateTaskEditWorktree() {
 func (s *ServerSuite) TestUpdateTaskEditOriginBranch() {
 	s.scheduler.On("EditTask", mock.Anything, int64(42), (*string)(nil), (*string)(nil), (*string)(nil), (*int)(nil), (*bool)(nil), mock.MatchedBy(func(ob *string) bool {
 		return ob != nil && *ob == "develop"
-	}), (*bool)(nil), (*string)(nil), (*string)(nil)).Return(nil)
+	}), (*bool)(nil), (*string)(nil), (*string)(nil), (*string)(nil)).Return(nil)
 
 	rec := s.testRequest("PATCH", "/api/tasks/42", `{"origin_branch":"develop"}`)
 
@@ -439,7 +462,7 @@ func (s *ServerSuite) TestUpdateTaskEditOriginBranch() {
 func (s *ServerSuite) TestUpdateTaskEditUpdateBeforeRun() {
 	s.scheduler.On("EditTask", mock.Anything, int64(42), (*string)(nil), (*string)(nil), (*string)(nil), (*int)(nil), (*bool)(nil), (*string)(nil), mock.MatchedBy(func(ubr *bool) bool {
 		return ubr != nil && *ubr
-	}), (*string)(nil), (*string)(nil)).Return(nil)
+	}), (*string)(nil), (*string)(nil), (*string)(nil)).Return(nil)
 
 	rec := s.testRequest("PATCH", "/api/tasks/42", `{"update_before_run":true}`)
 

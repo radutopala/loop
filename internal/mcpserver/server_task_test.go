@@ -243,6 +243,39 @@ func (s *MCPServerSuite) TestScheduleTaskWithWorkflow() {
 	require.Contains(s.T(), text, "ID: 99")
 }
 
+func (s *MCPServerSuite) TestScheduleTaskWithBashScript() {
+	s.httpClient.doFunc = func(req *http.Request) (*http.Response, error) {
+		require.Equal(s.T(), "POST", req.Method)
+		body, _ := io.ReadAll(req.Body)
+		require.Contains(s.T(), string(body), `"bash_script":"df -h | head -5"`)
+		return jsonResponse(http.StatusCreated, `{"id":77}`), nil
+	}
+
+	text, isError := s.callTool("schedule_task", map[string]any{
+		"schedule":    "0 9 * * *",
+		"type":        "cron",
+		"bash_script": "df -h | head -5",
+	})
+	require.False(s.T(), isError)
+	require.Contains(s.T(), text, "ID: 77")
+}
+
+func (s *MCPServerSuite) TestEditTaskBashScript() {
+	s.httpClient.doFunc = func(req *http.Request) (*http.Response, error) {
+		require.Equal(s.T(), "PATCH", req.Method)
+		body, _ := io.ReadAll(req.Body)
+		require.Contains(s.T(), string(body), `"bash_script":"uptime"`)
+		return jsonResponse(http.StatusOK, `{}`), nil
+	}
+
+	text, isError := s.callTool("edit_task", map[string]any{
+		"task_id":     int64(5),
+		"bash_script": "uptime",
+	})
+	require.False(s.T(), isError)
+	require.Contains(s.T(), text, "updated")
+}
+
 // --- list_tasks ---
 
 func (s *MCPServerSuite) TestListTasksSuccess() {

@@ -39,7 +39,7 @@ func newMockChannelRows() *sqlmock.Rows {
 }
 
 func newMockTaskRows() *sqlmock.Rows {
-	return sqlmock.NewRows([]string{"id", "channel_id", "guild_id", "schedule", "type", "prompt", "enabled", "next_run_at", "created_at", "updated_at", "template_name", "auto_delete_sec", "thread_id", "worktree", "origin_branch", "update_before_run", "running", "workflow_name", "workflow_inputs"})
+	return sqlmock.NewRows([]string{"id", "channel_id", "guild_id", "schedule", "type", "prompt", "enabled", "next_run_at", "created_at", "updated_at", "template_name", "auto_delete_sec", "thread_id", "worktree", "origin_branch", "update_before_run", "running", "workflow_name", "workflow_inputs", "bash_script"})
 }
 
 func newMockMessageRows() *sqlmock.Rows {

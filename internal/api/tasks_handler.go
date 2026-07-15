@@ -47,6 +47,7 @@ type createTaskRequest struct {
 	UpdateBeforeRun bool   `json:"update_before_run"`
 	WorkflowName    string `json:"workflow_name,omitempty"`
 	WorkflowInputs  string `json:"workflow_inputs,omitempty"`
+	BashScript      string `json:"bash_script,omitempty"`
 }
 
 type createTaskResponse struct {
@@ -64,6 +65,7 @@ type updateTaskRequest struct {
 	UpdateBeforeRun *bool   `json:"update_before_run"`
 	WorkflowName    *string `json:"workflow_name"`
 	WorkflowInputs  *string `json:"workflow_inputs"`
+	BashScript      *string `json:"bash_script"`
 }
 
 type taskResponse struct {
@@ -86,6 +88,7 @@ type taskResponse struct {
 	ChannelWorktree bool      `json:"channel_worktree,omitempty"`
 	WorkflowName    string    `json:"workflow_name,omitempty"`
 	WorkflowInputs  string    `json:"workflow_inputs,omitempty"`
+	BashScript      string    `json:"bash_script,omitempty"`
 }
 
 func (s *Server) handleCreateTask(w http.ResponseWriter, r *http.Request) {
@@ -107,6 +110,7 @@ func (s *Server) handleCreateTask(w http.ResponseWriter, r *http.Request) {
 		UpdateBeforeRun: req.UpdateBeforeRun,
 		WorkflowName:    req.WorkflowName,
 		WorkflowInputs:  req.WorkflowInputs,
+		BashScript:      req.BashScript,
 	}
 
 	id, err := s.scheduler.AddTask(r.Context(), task)
@@ -207,6 +211,7 @@ func toTaskResponse(t *db.ScheduledTask) taskResponse {
 		ThreadID:        t.ThreadID,
 		WorkflowName:    t.WorkflowName,
 		WorkflowInputs:  t.WorkflowInputs,
+		BashScript:      t.BashScript,
 	}
 }
 
@@ -239,7 +244,7 @@ func (s *Server) handleUpdateTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if req.Enabled == nil && req.Schedule == nil && req.Type == nil && req.Prompt == nil && req.AutoDeleteSec == nil && req.Worktree == nil && req.OriginBranch == nil && req.UpdateBeforeRun == nil && req.WorkflowName == nil && req.WorkflowInputs == nil {
+	if req.Enabled == nil && req.Schedule == nil && req.Type == nil && req.Prompt == nil && req.AutoDeleteSec == nil && req.Worktree == nil && req.OriginBranch == nil && req.UpdateBeforeRun == nil && req.WorkflowName == nil && req.WorkflowInputs == nil && req.BashScript == nil {
 		http.Error(w, "at least one field is required", http.StatusBadRequest)
 		return
 	}
@@ -251,8 +256,8 @@ func (s *Server) handleUpdateTask(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	if req.Schedule != nil || req.Type != nil || req.Prompt != nil || req.AutoDeleteSec != nil || req.Worktree != nil || req.OriginBranch != nil || req.UpdateBeforeRun != nil || req.WorkflowName != nil || req.WorkflowInputs != nil {
-		if err := s.scheduler.EditTask(r.Context(), taskID, req.Schedule, req.Type, req.Prompt, req.AutoDeleteSec, req.Worktree, req.OriginBranch, req.UpdateBeforeRun, req.WorkflowName, req.WorkflowInputs); err != nil {
+	if req.Schedule != nil || req.Type != nil || req.Prompt != nil || req.AutoDeleteSec != nil || req.Worktree != nil || req.OriginBranch != nil || req.UpdateBeforeRun != nil || req.WorkflowName != nil || req.WorkflowInputs != nil || req.BashScript != nil {
+		if err := s.scheduler.EditTask(r.Context(), taskID, req.Schedule, req.Type, req.Prompt, req.AutoDeleteSec, req.Worktree, req.OriginBranch, req.UpdateBeforeRun, req.WorkflowName, req.WorkflowInputs, req.BashScript); err != nil {
 			http.Error(w, err.Error(), taskMutationStatus(err))
 			return
 		}

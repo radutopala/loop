@@ -104,6 +104,12 @@ func (e *TaskExecutor) ExecuteTask(ctx context.Context, task *db.ScheduledTask) 
 		return e.executeWorkflowTask(ctx, task, dirPath)
 	}
 
+	// Bash tasks: run the script in the channel's agent container instead of
+	// an agent prompt.
+	if task.BashScript != "" {
+		return e.executeBashTask(ctx, task, dirPath)
+	}
+
 	// Worktree: on first run, create a git worktree; on subsequent runs, reuse
 	// the thread's DirPath which already points to the worktree.
 	worktreeCreated := false

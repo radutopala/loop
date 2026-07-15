@@ -24,6 +24,7 @@ type scheduleTaskInput struct {
 	UpdateBeforeRun bool   `json:"update_before_run,omitempty" jsonschema:"If true, instruct the agent to update the worktree to latest origin branch before each run"`
 	WorkflowName    string `json:"workflow_name,omitempty" jsonschema:"Name of the workflow to run on schedule (mutually exclusive with prompt)"`
 	WorkflowInputs  string `json:"workflow_inputs,omitempty" jsonschema:"JSON object of inputs to pass to the workflow (e.g. {\"issue_url\": \"...\"})"`
+	BashScript      string `json:"bash_script,omitempty" jsonschema:"Shell script to run in the channel's agent container on schedule (mutually exclusive with prompt and workflow_name); output is posted to the channel"`
 }
 
 type cancelTaskInput struct {
@@ -46,6 +47,7 @@ type editTaskInput struct {
 	UpdateBeforeRun *bool   `json:"update_before_run,omitempty" jsonschema:"If true, instruct the agent to update the worktree to latest origin branch before each run"`
 	WorkflowName    *string `json:"workflow_name,omitempty" jsonschema:"Name of the workflow to run on schedule"`
 	WorkflowInputs  *string `json:"workflow_inputs,omitempty" jsonschema:"JSON object of inputs to pass to the workflow"`
+	BashScript      *string `json:"bash_script,omitempty" jsonschema:"New shell script to run on schedule (empty string clears it)"`
 }
 
 type showTaskInput struct {
@@ -89,6 +91,9 @@ func (s *Server) handleScheduleTask(_ context.Context, _ *mcp.CallToolRequest, i
 	}
 	if input.WorkflowInputs != "" {
 		body["workflow_inputs"] = input.WorkflowInputs
+	}
+	if input.BashScript != "" {
+		body["bash_script"] = input.BashScript
 	}
 	data, _ := json.Marshal(body)
 
@@ -296,6 +301,9 @@ func (s *Server) handleEditTask(_ context.Context, _ *mcp.CallToolRequest, input
 	}
 	if input.WorkflowInputs != nil {
 		body["workflow_inputs"] = *input.WorkflowInputs
+	}
+	if input.BashScript != nil {
+		body["bash_script"] = *input.BashScript
 	}
 
 	if len(body) == 0 {

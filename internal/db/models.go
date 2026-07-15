@@ -132,6 +132,9 @@ type ScheduledTask struct {
 	Running         bool      `json:"running"`
 	WorkflowName    string    `json:"workflow_name"`
 	WorkflowInputs  string    `json:"workflow_inputs"`
+	// BashScript, when non-empty, makes the task run this script in the
+	// channel's agent container instead of an agent prompt or workflow.
+	BashScript string `json:"bash_script"`
 }
 
 // TaskType represents the type of scheduled task.
