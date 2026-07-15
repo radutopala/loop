@@ -265,15 +265,12 @@ const consoleBridgeScript = `<script>
 })();
 </script>`
 
-// handlePlaygroundServe serves the composed HTML page for a playground.
-// GET /api/playground/serve/{name}?scope=...&channel_id=...
-func (s *Server) handlePlaygroundServe(w http.ResponseWriter, r *http.Request) {
-	name := r.PathValue("name")
-	pgDir, err := s.resolvePlaygroundDir(r, name)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
-	}
+// renderPlaygroundIndex composes and writes the full HTML document for a
+// playground given its resolved absolute directory and the <base href> the
+// relative assets (style.css, script.js, ES module imports) should resolve
+// against. Shared by the local serve routes and the public /p/{token} route so
+// the served output is byte-identical regardless of entry point.
+func renderPlaygroundIndex(w http.ResponseWriter, pgDir, baseHref string) {
 	rawHTML, _ := os.ReadFile(filepath.Join(pgDir, "index.html"))
 	importMap, _ := os.ReadFile(filepath.Join(pgDir, "importmap.json"))
 
@@ -287,17 +284,9 @@ func (s *Server) handlePlaygroundServe(w http.ResponseWriter, r *http.Request) {
 		body = `<div style="display:flex;align-items:center;justify-content:center;height:100vh;margin:0;color:#555;font-family:system-ui,sans-serif;font-size:13px">Playground — waiting for code from agent</div>`
 	}
 
-	// <base> ensures relative URLs (style.css, script.js, import './utils.js')
-	// resolve against the playground's serve path, not the document URL.
-	baseURL := fmt.Sprintf("/api/playground/serve/%s/", name)
-	if scope := r.URL.Query().Get("scope"); scope == "project" {
-		channelID := r.URL.Query().Get("channel_id")
-		baseURL = fmt.Sprintf("/api/playground/serve-project/%s/%s/", channelID, name)
-	}
-
 	var buf bytes.Buffer
 	fmt.Fprintf(&buf, "<!DOCTYPE html>\n<html>\n<head>\n<meta charset=\"utf-8\">\n")
-	fmt.Fprintf(&buf, "<base href=\"%s\">\n", html.EscapeString(baseURL))
+	fmt.Fprintf(&buf, "<base href=\"%s\">\n", html.EscapeString(baseHref))
 	buf.WriteString("<link rel=\"stylesheet\" href=\"style.css\">\n</head>\n<body style=\"margin:0;background:#000\">\n")
 	buf.WriteString(consoleBridgeScript)
 	buf.WriteByte('\n')
@@ -313,16 +302,12 @@ func (s *Server) handlePlaygroundServe(w http.ResponseWriter, r *http.Request) {
 	w.Write(buf.Bytes()) //nolint:errcheck
 }
 
-// handlePlaygroundServeFile serves individual files from a playground directory.
-// GET /api/playground/serve/{name}/{path...}?scope=...&channel_id=...
-func (s *Server) handlePlaygroundServeFile(w http.ResponseWriter, r *http.Request) {
-	name := r.PathValue("name")
-	pgDir, err := s.resolvePlaygroundDir(r, name)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
-	}
-	fullPath, err := validatePlaygroundPath(pgDir, r.PathValue("path"))
+// servePlaygroundFile serves a single file from a playground directory,
+// guarding against path traversal and setting the content type by extension.
+// Shared by the local serve-file routes and the public /p/{token}/{path...}
+// route.
+func servePlaygroundFile(w http.ResponseWriter, pgDir, relPath string) {
+	fullPath, err := validatePlaygroundPath(pgDir, relPath)
 	if err != nil {
 		http.Error(w, "file not found", http.StatusNotFound)
 		return
@@ -333,7 +318,6 @@ func (s *Server) handlePlaygroundServeFile(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	// Set content type based on extension.
 	ext := filepath.Ext(fullPath)
 	ct := mime.TypeByExtension(ext)
 	if ct == "" {
@@ -341,6 +325,38 @@ func (s *Server) handlePlaygroundServeFile(w http.ResponseWriter, r *http.Reques
 	}
 	w.Header().Set("Content-Type", ct)
 	w.Write(data) //nolint:errcheck
+}
+
+// handlePlaygroundServe serves the composed HTML page for a playground.
+// GET /api/playground/serve/{name}?scope=...&channel_id=...
+func (s *Server) handlePlaygroundServe(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	pgDir, err := s.resolvePlaygroundDir(r, name)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	// <base> ensures relative URLs (style.css, script.js, import './utils.js')
+	// resolve against the playground's serve path, not the document URL.
+	baseURL := fmt.Sprintf("/api/playground/serve/%s/", name)
+	if scope := r.URL.Query().Get("scope"); scope == "project" {
+		channelID := r.URL.Query().Get("channel_id")
+		baseURL = fmt.Sprintf("/api/playground/serve-project/%s/%s/", channelID, name)
+	}
+	renderPlaygroundIndex(w, pgDir, baseURL)
+}
+
+// handlePlaygroundServeFile serves individual files from a playground directory.
+// GET /api/playground/serve/{name}/{path...}?scope=...&channel_id=...
+func (s *Server) handlePlaygroundServeFile(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	pgDir, err := s.resolvePlaygroundDir(r, name)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	servePlaygroundFile(w, pgDir, r.PathValue("path"))
 }
 
 // resolveProjectPlaygroundDir resolves a playground dir from channel_id and name path values.
@@ -367,38 +383,9 @@ func (s *Server) handlePlaygroundServeProject(w http.ResponseWriter, r *http.Req
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	rawHTML, _ := os.ReadFile(filepath.Join(pgDir, "index.html"))
-	importMap, _ := os.ReadFile(filepath.Join(pgDir, "importmap.json"))
-
-	var importMapBlock string
-	if len(importMap) > 0 {
-		importMapBlock = fmt.Sprintf("<script type=\"importmap\">%s</script>\n", string(importMap))
-	}
-
-	body := string(rawHTML)
-	if body == "" {
-		body = `<div style="display:flex;align-items:center;justify-content:center;height:100vh;margin:0;color:#555;font-family:system-ui,sans-serif;font-size:13px">Playground — waiting for code from agent</div>`
-	}
-
 	channelID := r.PathValue("channel_id")
 	baseURL := fmt.Sprintf("/api/playground/serve-project/%s/%s/", channelID, name)
-
-	var buf bytes.Buffer
-	fmt.Fprintf(&buf, "<!DOCTYPE html>\n<html>\n<head>\n<meta charset=\"utf-8\">\n")
-	fmt.Fprintf(&buf, "<base href=\"%s\">\n", html.EscapeString(baseURL))
-	buf.WriteString("<link rel=\"stylesheet\" href=\"style.css\">\n</head>\n<body style=\"margin:0;background:#000\">\n")
-	buf.WriteString(consoleBridgeScript)
-	buf.WriteByte('\n')
-	buf.WriteString(body)
-	buf.WriteByte('\n')
-	if importMapBlock != "" {
-		buf.WriteString(importMapBlock)
-	}
-	buf.WriteString("<script type=\"module\" src=\"script.js\"></script>\n")
-	buf.WriteString("</body>\n</html>")
-
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	w.Write(buf.Bytes()) //nolint:errcheck
+	renderPlaygroundIndex(w, pgDir, baseURL)
 }
 
 // handlePlaygroundServeProjectFile serves files from a project-scoped playground.
@@ -409,24 +396,7 @@ func (s *Server) handlePlaygroundServeProjectFile(w http.ResponseWriter, r *http
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	fullPath, err := validatePlaygroundPath(pgDir, r.PathValue("path"))
-	if err != nil {
-		http.Error(w, "file not found", http.StatusNotFound)
-		return
-	}
-	data, err := os.ReadFile(fullPath)
-	if err != nil {
-		http.Error(w, "file not found", http.StatusNotFound)
-		return
-	}
-
-	ext := filepath.Ext(fullPath)
-	ct := mime.TypeByExtension(ext)
-	if ct == "" {
-		ct = "application/octet-stream"
-	}
-	w.Header().Set("Content-Type", ct)
-	w.Write(data) //nolint:errcheck
+	servePlaygroundFile(w, pgDir, r.PathValue("path"))
 }
 
 // handlePlaygroundDelete handles DELETE /api/playground?name=...&scope=...&channel_id=... — removes an entire playground.
