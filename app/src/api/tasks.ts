@@ -20,6 +20,7 @@ export interface ScheduledTask {
   channel_worktree?: boolean;
   workflow_name?: string;
   workflow_inputs?: string;
+  bash_script?: string;
 }
 
 export interface TaskRunLog {
@@ -56,6 +57,7 @@ export async function createTask(data: {
   update_before_run?: boolean;
   workflow_name?: string;
   workflow_inputs?: string;
+  bash_script?: string;
 }): Promise<{ id: number }> {
   const res = await fetch(`${getApiUrl()}/api/tasks`, {
     method: "POST",
@@ -79,6 +81,7 @@ export async function updateTask(
     update_before_run?: boolean;
     workflow_name?: string;
     workflow_inputs?: string;
+    bash_script?: string;
   },
 ): Promise<void> {
   const res = await fetch(`${getApiUrl()}/api/tasks/${taskId}`, {

@@ -70,10 +70,11 @@ export function GlobalTasksPanel({
   // Edit form state
   const [editSchedule, setEditSchedule] = useState("");
   const [editType, setEditType] = useState<TaskType>("cron");
-  const [editMode, setEditMode] = useState<"prompt" | "workflow">("prompt");
+  const [editMode, setEditMode] = useState<"prompt" | "workflow" | "bash">("prompt");
   const [editPrompt, setEditPrompt] = useState("");
   const [editWorkflowName, setEditWorkflowName] = useState("");
   const [editWorkflowInputs, setEditWorkflowInputs] = useState<Record<string, string>>({});
+  const [editBashScript, setEditBashScript] = useState("");
   const [editWorktree, setEditWorktree] = useState(false);
   const [editOriginBranch, setEditOriginBranch] = useState("");
   const [editUpdateBeforeRun, setEditUpdateBeforeRun] = useState(false);
@@ -179,9 +180,9 @@ export function GlobalTasksPanel({
     setEditSchedule(task.schedule);
     setEditType(task.type);
     setEditPrompt(task.prompt);
-    const isWorkflow = !!task.workflow_name;
-    setEditMode(isWorkflow ? "workflow" : "prompt");
+    setEditMode(task.workflow_name ? "workflow" : task.bash_script ? "bash" : "prompt");
     setEditWorkflowName(task.workflow_name || "");
+    setEditBashScript(task.bash_script || "");
     let parsedInputs: Record<string, string> = {};
     if (task.workflow_inputs) {
       try { parsedInputs = JSON.parse(task.workflow_inputs); } catch { /* ignore */ }
@@ -200,9 +201,10 @@ export function GlobalTasksPanel({
       await updateTask(selectedId, {
         schedule: editType === "manual" ? "" : editSchedule,
         type: editType,
-        prompt: editMode === "workflow" ? "" : editPrompt,
+        prompt: editMode === "prompt" ? editPrompt : "",
         workflow_name: editMode === "workflow" ? editWorkflowName : "",
         workflow_inputs: editMode === "workflow" ? JSON.stringify(editWorkflowInputs) : "",
+        bash_script: editMode === "bash" ? editBashScript : "",
         worktree: editWorktree,
         origin_branch: editOriginBranch || undefined,
         update_before_run: editUpdateBeforeRun,
@@ -213,7 +215,7 @@ export function GlobalTasksPanel({
     } catch {
       /* ignore */
     }
-  }, [selectedId, editSchedule, editType, editMode, editPrompt, editWorkflowName, editWorkflowInputs, editWorktree, editOriginBranch, editUpdateBeforeRun, editAutoDelete, loadTasks]);
+  }, [selectedId, editSchedule, editType, editMode, editPrompt, editWorkflowName, editWorkflowInputs, editBashScript, editWorktree, editOriginBranch, editUpdateBeforeRun, editAutoDelete, loadTasks]);
 
   // Resizable divider
   const onMouseDown = useCallback(() => {
@@ -357,7 +359,7 @@ export function GlobalTasksPanel({
               flex: 1,
             }}
           >
-            {task.workflow_name ? `workflow: ${task.workflow_name}` : task.prompt}
+            {task.workflow_name ? `workflow: ${task.workflow_name}` : task.bash_script ? `bash: ${task.bash_script}` : task.prompt}
           </span>
         </div>
         {task.dir_path && (
@@ -423,6 +425,13 @@ export function GlobalTasksPanel({
             >
               Workflow
             </button>
+            <button
+              onClick={() => setEditMode("bash")}
+              title="Run a shell script in the channel's agent container"
+              style={{ ...btnSecondaryStyle, padding: "2px 8px", fontSize: 11, background: editMode === "bash" ? colors.surface : "transparent", color: editMode === "bash" ? colors.text : colors.textDim }}
+            >
+              Bash
+            </button>
           </div>
           {editMode === "prompt" ? (
             <textarea
@@ -430,6 +439,14 @@ export function GlobalTasksPanel({
               onChange={(e) => setEditPrompt(e.target.value)}
               rows={5}
               style={{ ...inputStyle, resize: "vertical", fontFamily: "inherit" }}
+            />
+          ) : editMode === "bash" ? (
+            <textarea
+              value={editBashScript}
+              onChange={(e) => setEditBashScript(e.target.value)}
+              rows={5}
+              spellCheck={false}
+              style={{ ...inputStyle, resize: "vertical", fontFamily: "monospace" }}
             />
           ) : (
             <>
@@ -575,6 +592,13 @@ export function GlobalTasksPanel({
                 </div>
               )}
             </>
+          ) : selectedTask.bash_script ? (
+            <div style={{ color: colors.text, fontSize: 12 }}>
+              <span style={{ color: colors.active, fontWeight: 600 }}>Bash:</span>
+              <pre style={{ margin: "4px 0 0", padding: 8, backgroundColor: colors.surface, borderRadius: 4, fontSize: 11, fontFamily: "monospace", whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
+                {selectedTask.bash_script}
+              </pre>
+            </div>
           ) : (
             <div style={{ color: colors.text, fontSize: 12, whiteSpace: "pre-wrap" }}>
               {selectedTask.prompt}

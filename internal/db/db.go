@@ -224,7 +224,7 @@ func (s *SQLiteStore) withTx(ctx context.Context, fn func(tx *sql.Tx) error) err
 // Column lists for SELECT queries.
 const (
 	messageColumns = `id, chat_id, channel_id, msg_id, author_id, author_name, content, is_bot, is_processed, is_triggered, is_running, priority, mode, created_at, kind, chain_position, tool_use_id, tool_name, is_error, trigger_msg_id`
-	taskColumns    = `id, channel_id, guild_id, schedule, type, prompt, enabled, next_run_at, created_at, updated_at, template_name, auto_delete_sec, thread_id, worktree, origin_branch, update_before_run, running, workflow_name, workflow_inputs`
+	taskColumns    = `id, channel_id, guild_id, schedule, type, prompt, enabled, next_run_at, created_at, updated_at, template_name, auto_delete_sec, thread_id, worktree, origin_branch, update_before_run, running, workflow_name, workflow_inputs, bash_script`
 )
 
 // helpers
@@ -321,7 +321,7 @@ func scanScheduledTasks(rows *sql.Rows) ([]*ScheduledTask, error) {
 			&taskType, &task.Prompt, &enabled, &task.NextRunAt,
 			&task.CreatedAt, &task.UpdatedAt, &task.TemplateName, &task.AutoDeleteSec, &task.ThreadID, &worktree,
 			&task.OriginBranch, &updateBeforeRun, &running,
-			&task.WorkflowName, &task.WorkflowInputs,
+			&task.WorkflowName, &task.WorkflowInputs, &task.BashScript,
 		); err != nil {
 			return nil, err
 		}
