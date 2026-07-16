@@ -1,7 +1,9 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -1132,4 +1134,126 @@ func (s *ServerSuite) TestPlaygroundFileListProjectScope() {
 	require.NoError(s.T(), json.Unmarshal(rec.Body.Bytes(), &result))
 	require.Contains(s.T(), result.Files, "index.html")
 	require.Contains(s.T(), result.Files, "script.js")
+}
+
+// --- projectPlaygroundDir / worktreeRootDir (worktree threads see root project playgrounds) ---
+
+func (s *ServerSuite) TestProjectPlaygroundDirNormalChannel() {
+	s.store.On("GetChannel", mock.Anything, "ch1").Return(&db.Channel{ChannelID: "ch1", DirPath: "/proj"}, nil).Once()
+	dir, err := s.srv.projectPlaygroundDir(context.Background(), "ch1")
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "/proj", dir)
+}
+
+func (s *ServerSuite) TestProjectPlaygroundDirWorktreeChannelResolvesToRoot() {
+	// A worktree channel → root project checkout, not the worktree dir.
+	s.store.On("GetChannel", mock.Anything, "wt").Return(&db.Channel{ChannelID: "wt", DirPath: "/proj/.worktrees/x", ParentID: "root", Worktree: true}, nil).Once()
+	s.store.On("GetChannel", mock.Anything, "root").Return(&db.Channel{ChannelID: "root", DirPath: "/proj"}, nil).Once()
+	dir, err := s.srv.projectPlaygroundDir(context.Background(), "wt")
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "/proj", dir)
+}
+
+func (s *ServerSuite) TestProjectPlaygroundDirThreadUnderWorktreeResolvesToRoot() {
+	// A thread row (no worktree flag) whose parent is a worktree → hop to the
+	// worktree, then walk to the root.
+	s.store.On("GetChannel", mock.Anything, "th").Return(&db.Channel{ChannelID: "th", DirPath: "/proj/.worktrees/x", ParentID: "wt"}, nil).Once()
+	s.store.On("GetChannel", mock.Anything, "wt").Return(&db.Channel{ChannelID: "wt", DirPath: "/proj/.worktrees/x", ParentID: "root", Worktree: true}, nil).Once()
+	s.store.On("GetChannel", mock.Anything, "root").Return(&db.Channel{ChannelID: "root", DirPath: "/proj"}, nil).Once()
+	dir, err := s.srv.projectPlaygroundDir(context.Background(), "th")
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "/proj", dir)
+}
+
+func (s *ServerSuite) TestProjectPlaygroundDirNestedWorktreeWalksToRoot() {
+	// A worktree created from another worktree → walk past both to the root.
+	s.store.On("GetChannel", mock.Anything, "wt2").Return(&db.Channel{ChannelID: "wt2", ParentID: "wt1", Worktree: true}, nil).Once()
+	s.store.On("GetChannel", mock.Anything, "wt1").Return(&db.Channel{ChannelID: "wt1", ParentID: "root", Worktree: true}, nil).Once()
+	s.store.On("GetChannel", mock.Anything, "root").Return(&db.Channel{ChannelID: "root", DirPath: "/proj"}, nil).Once()
+	dir, err := s.srv.projectPlaygroundDir(context.Background(), "wt2")
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "/proj", dir)
+}
+
+func (s *ServerSuite) TestProjectPlaygroundDirThreadUnderNonWorktreeParent() {
+	// A normal thread whose parent is NOT a worktree → its own dir, no walk.
+	s.store.On("GetChannel", mock.Anything, "th").Return(&db.Channel{ChannelID: "th", DirPath: "/proj", ParentID: "root"}, nil).Once()
+	s.store.On("GetChannel", mock.Anything, "root").Return(&db.Channel{ChannelID: "root", DirPath: "/proj"}, nil).Once()
+	dir, err := s.srv.projectPlaygroundDir(context.Background(), "th")
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "/proj", dir)
+}
+
+func (s *ServerSuite) TestProjectPlaygroundDirWorktreeParentMissingFallsBack() {
+	// Worktree with an unresolvable parent → fall back to the channel's own dir.
+	s.store.On("GetChannel", mock.Anything, "wt").Return(&db.Channel{ChannelID: "wt", DirPath: "/proj/.worktrees/x", ParentID: "gone", Worktree: true}, nil).Once()
+	s.store.On("GetChannel", mock.Anything, "gone").Return(nil, nil).Once()
+	dir, err := s.srv.projectPlaygroundDir(context.Background(), "wt")
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "/proj/.worktrees/x", dir)
+}
+
+func (s *ServerSuite) TestProjectPlaygroundDirThreadParentFetchErrorFallsBack() {
+	s.store.On("GetChannel", mock.Anything, "th").Return(&db.Channel{ChannelID: "th", DirPath: "/proj", ParentID: "root"}, nil).Once()
+	s.store.On("GetChannel", mock.Anything, "root").Return(nil, errors.New("db down")).Once()
+	dir, err := s.srv.projectPlaygroundDir(context.Background(), "th")
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "/proj", dir)
+}
+
+func (s *ServerSuite) TestProjectPlaygroundDirWorktreeChainCycleBounded() {
+	// A parent-id cycle among worktrees must terminate and fall back.
+	s.store.On("GetChannel", mock.Anything, "a").Return(&db.Channel{ChannelID: "a", DirPath: "/proj/.worktrees/a", ParentID: "b", Worktree: true}, nil)
+	s.store.On("GetChannel", mock.Anything, "b").Return(&db.Channel{ChannelID: "b", ParentID: "a", Worktree: true}, nil)
+	dir, err := s.srv.projectPlaygroundDir(context.Background(), "a")
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "/proj/.worktrees/a", dir)
+}
+
+func (s *ServerSuite) TestProjectPlaygroundDirWorktreeChainBreaksOnParentIDGap() {
+	// A worktree whose parent has no further parent → no root, fall back.
+	s.store.On("GetChannel", mock.Anything, "wt").Return(&db.Channel{ChannelID: "wt", DirPath: "/proj/.worktrees/x", Worktree: true}, nil).Once()
+	dir, err := s.srv.projectPlaygroundDir(context.Background(), "wt")
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "/proj/.worktrees/x", dir)
+}
+
+func (s *ServerSuite) TestProjectPlaygroundDirEmptyChannelID() {
+	_, err := s.srv.projectPlaygroundDir(context.Background(), "")
+	require.Error(s.T(), err)
+}
+
+func (s *ServerSuite) TestProjectPlaygroundDirNilStore() {
+	srv := NewServer(nil, nil, nil, nil, nil, testLogger())
+	_, err := srv.projectPlaygroundDir(context.Background(), "ch1")
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "not configured")
+}
+
+func (s *ServerSuite) TestProjectPlaygroundDirGetChannelError() {
+	s.store.On("GetChannel", mock.Anything, "ch1").Return(nil, errors.New("boom")).Once()
+	_, err := s.srv.projectPlaygroundDir(context.Background(), "ch1")
+	require.Error(s.T(), err)
+}
+
+func (s *ServerSuite) TestProjectPlaygroundDirChannelNotFound() {
+	s.store.On("GetChannel", mock.Anything, "ch1").Return(nil, nil).Once()
+	_, err := s.srv.projectPlaygroundDir(context.Background(), "ch1")
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "not found")
+}
+
+func (s *ServerSuite) TestProjectPlaygroundDirNoDirPathFallsBackToLoopDir() {
+	s.srv.loopDir = "/loop"
+	s.store.On("GetChannel", mock.Anything, "ch1").Return(&db.Channel{ChannelID: "ch1"}, nil).Once()
+	dir, err := s.srv.projectPlaygroundDir(context.Background(), "ch1")
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), filepath.Join("/loop", "ch1", "work"), dir)
+}
+
+func (s *ServerSuite) TestProjectPlaygroundDirNoDirPathNoLoopDir() {
+	s.srv.loopDir = ""
+	s.store.On("GetChannel", mock.Anything, "ch1").Return(&db.Channel{ChannelID: "ch1"}, nil).Once()
+	_, err := s.srv.projectPlaygroundDir(context.Background(), "ch1")
+	require.Error(s.T(), err)
 }

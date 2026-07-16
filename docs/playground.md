@@ -5,7 +5,7 @@ A live interactive code sandbox where agents generate HTML/CSS/JS and it renders
 
 Playgrounds support two scopes:
 - **Global** — stored in `~/.loop/playground/`, shared across all channels.
-- **Project** — stored in `.loop/playground/` within the channel's working directory, scoped to that project.
+- **Project** — stored in `.loop/playground/` within the project's working directory, scoped to that project. **Worktree threads resolve to the root project checkout**, so every thread and worktree of a project sees and shares the same project playgrounds (matching how worktrees inherit the root's `.loop/config.json`).
 
 The panel shows both scopes grouped under "Global" and "Project" headings in the selector dropdown.
 
@@ -182,7 +182,7 @@ A playground can be exposed **over the internet** while still being served from 
 - The tunnel points at a **dedicated, playground-only HTTP listener** — not the main API (`:8222`). Only `/p/{token}` routes are reachable publicly, so no other endpoint is exposed. The public surface is served with `Cache-Control: no-store`.
 - The `cloudflared` binary is downloaded lazily to `~/.loop/bin` on first share and verified against a pinned sha256 (fail-closed). Quick tunnels are anonymous — no Cloudflare account or token.
 - **Multiple playgrounds share in parallel** over a single tunnel, isolated by token. The tunnel + listener start on the first share and stop when the last one is removed (reference-counted).
-- **Idempotent per playground.** A share's identity is the playground's resolved directory, so sharing the same playground again — from another channel, thread, or panel that maps to the same dir — returns the **same** token rather than opening a second tunnel. A global playground resolves to one dir regardless of channel; a project playground shared from multiple threads of the same project collapses to one share; a worktree thread resolves to a distinct dir and is a separate share.
+- **Idempotent per playground.** A share's identity is the playground's resolved directory, so sharing the same playground again — from another channel, thread, or panel that maps to the same dir — returns the **same** token rather than opening a second tunnel. A global playground resolves to one dir regardless of channel; a project playground resolves to the project root (so sharing it from any thread or worktree of the project collapses to one share).
 - **Unshare** (or the global **Playground Shares** panel, or the MCP tool with `action: unshare`) revokes the token immediately — the URL then returns `404`. Because identity is the dir, any channel/thread mapping to the same playground can unshare it.
 
 **Playground Shares panel**
