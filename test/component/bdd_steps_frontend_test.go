@@ -246,6 +246,7 @@ func registerFrontendSteps(ctx *godog.ScenarioContext, tc *TestContext) {
 	// listens for; routes through the same handler as a real WS message).
 	ctx.Step(`^I inject an exit_plan event with plan "([^"]*)"$`, tc.injectExitPlanEvent)
 	ctx.Step(`^I inject an ask_user event with question "([^"]*)" and options "([^"]*)"$`, tc.injectAskUserEvent)
+	ctx.Step(`^I inject an agent\.status running event$`, tc.injectAgentStatusRunning)
 	ctx.Step(`^I inject a gate\.approval_requested event with req_id "([^"]*)", source "([^"]*)", and target "([^"]*)"$`, tc.injectGateApprovalRequested)
 	ctx.Step(`^I inject a gate\.approval_resolved event with req_id "([^"]*)"$`, tc.injectGateApprovalResolved)
 
@@ -2053,6 +2054,32 @@ func (tc *TestContext) injectAskUserEvent(question, options string) error {
 		return fmt.Errorf("marshalling ask_user payload: %w", err)
 	}
 	return tc.dispatchTestEvents(seed, payload)
+}
+
+// injectAgentStatusRunning fires a synthetic agent.status "running" event into
+// the chat store. Used to prove a running run does NOT clear a still-pending
+// ExitPlanCard / AskUserQuestion card — a run starting is not proof the park
+// was resolved, so the card must survive until agent.plan_resolved/
+// agent.ask_resolved.
+func (tc *TestContext) injectAgentStatusRunning() error {
+	if tc.ChannelID == "" {
+		return fmt.Errorf("no channel_id set; use 'I set up a test channel via API' step first")
+	}
+	if err := tc.ensureChromeTab(); err != nil {
+		return err
+	}
+	payload, err := json.Marshal(map[string]any{
+		"type":       "agent.status",
+		"channel_id": tc.ChannelID,
+		"data": map[string]any{
+			"status": "running",
+			"run_id": "bdd-run-1",
+		},
+	})
+	if err != nil {
+		return fmt.Errorf("marshalling agent.status payload: %w", err)
+	}
+	return tc.dispatchTestEvents(payload)
 }
 
 // injectChannelID returns the channel to address synthetic gate events to:

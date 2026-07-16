@@ -38,6 +38,13 @@ Feature: Ask user question card
     And I click on the button with text "Send Answers"
     Then I wait for text "CLAUDE HAS QUESTIONS" to disappear
 
+  Scenario: A running run does not wipe a still-pending ask card
+    When I inject an ask_user event with question "Which database?" and options "postgres,sqlite"
+    And I wait for text "CLAUDE HAS QUESTIONS" to appear
+    And I inject an agent.status running event
+    Then the page should contain text "CLAUDE HAS QUESTIONS"
+    And the page should contain text "Which database?"
+
   Scenario: Sidebar lights the ask pill while the channel is parked on AskUserQuestion
     # agent.ask_user → applyEvent sets state.askUserQuestions → refreshAskUserMembership
     # adds the channel ID to askUserChannelIdsRef → ChannelItem renders
