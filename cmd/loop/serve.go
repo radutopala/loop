@@ -655,10 +655,6 @@ func (a *app) serve() error {
 		logger.Warn("quality engine disabled: store does not expose WriterDB")
 	}
 
-	if err := apiSrv.Start(cfg.APIAddr); err != nil {
-		return fmt.Errorf("starting api server: %w", err)
-	}
-
 	orch := orchestrator.New(store, chatBot, runner, sched, logger, *cfg, reloadConfig)
 	orch.SetEventBroadcaster(eventsHub)
 	orch.SetWorkflowEngine(wfEngine)
@@ -672,15 +668,27 @@ func (a *app) serve() error {
 	apiSrv.SetInteractionHandler(orch)
 	apiSrv.SetActiveChatLister(orch)
 
+	// Restore persisted ask/plan card parks BEFORE the API server begins
+	// serving, so GET /api/plans/pending and /api/asks/pending never hand a
+	// freshly-(re)connected renderer an empty snapshot. Restarting the desktop
+	// app also restarts the daemon, so the renderer's card rehydrate races
+	// daemon startup: if the API answered before RestoreParkedChannels populated
+	// the in-memory park maps, the parked channel showed no card (leaving it
+	// unapprovable) until the next reconnect. Wiring every apiSrv handler above
+	// before Start closes the same startup window for the other endpoints too.
+	orch.RestoreParkedChannels(ctx)
+
+	if err := apiSrv.Start(cfg.APIAddr); err != nil {
+		return fmt.Errorf("starting api server: %w", err)
+	}
+
+	// Start the bot + scheduler only after the API is listening so any run they
+	// trigger (a due scheduled task, an inbound message) can call back into the
+	// loop API.
 	if err := orch.Start(ctx); err != nil {
 		_ = apiSrv.Stop(context.Background())
 		return fmt.Errorf("starting orchestrator: %w", err)
 	}
-
-	// Restore persisted ask/plan card parks BEFORE resuming pending messages,
-	// so parked channels' drains stay held and their cards rehydrate via the
-	// pending endpoints instead of the resume re-running the parked trigger.
-	orch.RestoreParkedChannels(ctx)
 
 	// Resume DB-queued messages from the prior daemon run: clear stale
 	// is_running rows (their agent runs cannot survive a restart), then
