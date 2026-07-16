@@ -2,6 +2,7 @@ package api
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"html"
@@ -14,6 +15,8 @@ import (
 	"strings"
 
 	"github.com/adrg/frontmatter"
+
+	"github.com/radutopala/loop/internal/db"
 )
 
 var validPlaygroundName = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$`)
@@ -82,7 +85,7 @@ func (s *Server) resolvePlaygroundDir(r *http.Request, name string) (string, err
 		if channelID == "" {
 			return "", fmt.Errorf("channel_id is required for project-scoped playgrounds")
 		}
-		dirPath, err := s.resolveDirPath(r.Context(), "", channelID)
+		dirPath, err := s.projectPlaygroundDir(r.Context(), channelID)
 		if err != nil {
 			return "", err
 		}
@@ -97,6 +100,74 @@ func playgroundScopeFromRequest(r *http.Request) (scope, channelID string) {
 		return "project", r.URL.Query().Get("channel_id")
 	}
 	return "global", ""
+}
+
+// projectPlaygroundDir resolves the directory that holds a channel's
+// project-scoped playgrounds. For a worktree channel — or a thread under a
+// worktree chain — it returns the root project checkout, so every thread and
+// worktree of a project sees and shares the same project playgrounds (matching
+// how worktrees inherit the root's .loop/config.json). Non-worktree channels
+// resolve to their own dir. The channel is fetched once; the worktree walk
+// only makes extra lookups when the channel is (or is under) a worktree.
+func (s *Server) projectPlaygroundDir(ctx context.Context, channelID string) (string, error) {
+	if channelID == "" {
+		return "", fmt.Errorf("channel_id is required")
+	}
+	if s.store == nil {
+		return "", fmt.Errorf("channel lookup not configured")
+	}
+	ch, err := s.store.GetChannel(ctx, channelID)
+	if err != nil {
+		return "", fmt.Errorf("looking up channel: %w", err)
+	}
+	if ch == nil {
+		return "", fmt.Errorf("channel %s not found", channelID)
+	}
+	if root := s.worktreeRootDir(ctx, ch); root != "" {
+		return root, nil
+	}
+	if ch.DirPath == "" {
+		if s.loopDir != "" {
+			return filepath.Join(s.loopDir, channelID, "work"), nil
+		}
+		return "", fmt.Errorf("channel %s has no dir_path", channelID)
+	}
+	return ch.DirPath, nil
+}
+
+// worktreeRootDir returns the DirPath of the nearest non-worktree ancestor for
+// an already-fetched channel that is (or lives under) a worktree chain, or ""
+// when it isn't part of one. Handles worktree channels, threads that share a
+// worktree's dir without the worktree flag, and nested worktrees. The walk is
+// bounded to guard against parent-id cycles. Mirrors the orchestrator's
+// worktreeRootFor.
+func (s *Server) worktreeRootDir(ctx context.Context, ch *db.Channel) string {
+	cur := ch
+	if !cur.Worktree {
+		// A thread row under a worktree channel: hop to the worktree itself.
+		if cur.ParentID == "" {
+			return ""
+		}
+		p, err := s.store.GetChannel(ctx, cur.ParentID)
+		if err != nil || p == nil || !p.Worktree {
+			return ""
+		}
+		cur = p
+	}
+	for range 8 {
+		if cur.ParentID == "" {
+			return ""
+		}
+		p, err := s.store.GetChannel(ctx, cur.ParentID)
+		if err != nil || p == nil {
+			return ""
+		}
+		if !p.Worktree {
+			return p.DirPath
+		}
+		cur = p
+	}
+	return ""
 }
 
 // validatePlaygroundPath validates a relative file path within a playground directory,
@@ -232,7 +303,7 @@ func (s *Server) handlePlaygroundList(w http.ResponseWriter, r *http.Request) {
 
 	// If channel_id is provided, also list project-scoped playgrounds.
 	if channelID := r.URL.Query().Get("channel_id"); channelID != "" {
-		if dirPath, err := s.resolveDirPath(r.Context(), "", channelID); err == nil {
+		if dirPath, err := s.projectPlaygroundDir(r.Context(), channelID); err == nil {
 			projectDir := filepath.Clean(filepath.Join(dirPath, ".loop", "playground"))
 			if !strings.Contains(projectDir, "..") {
 				items = append(items, listPlaygroundsIn(projectDir, "project")...)
@@ -366,7 +437,7 @@ func (s *Server) resolveProjectPlaygroundDir(r *http.Request) (string, error) {
 	if channelID == "" || name == "" {
 		return "", fmt.Errorf("channel_id and name are required")
 	}
-	dirPath, err := s.resolveDirPath(r.Context(), "", channelID)
+	dirPath, err := s.projectPlaygroundDir(r.Context(), channelID)
 	if err != nil {
 		return "", err
 	}
