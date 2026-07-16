@@ -34,3 +34,10 @@ Feature: Plan mode review card
     And I wait for text "PLAN READY FOR REVIEW" to appear
     And I click on the button with text "Discard"
     Then I wait for text "PLAN READY FOR REVIEW" to disappear
+
+  Scenario: A running run does not wipe a still-pending plan card
+    When I inject an exit_plan event with plan "Survive the running event"
+    And I wait for text "PLAN READY FOR REVIEW" to appear
+    And I inject an agent.status running event
+    Then the page should contain text "PLAN READY FOR REVIEW"
+    And the page should contain text "Survive the running event"

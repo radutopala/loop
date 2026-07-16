@@ -338,8 +338,15 @@ export function useChatState(
           setIsRunning(true);
           setRunId(data.run_id ?? null);
           setCompletionInfo(null);
-          setAskUserQuestions(null);
-          setExitPlanRequest(null);
+          // NOTE: askUserQuestions / exitPlanRequest are intentionally NOT
+          // cleared here — mirroring the store's applyEvent. A run starting is
+          // not proof the ask/plan was resolved: the backend emits
+          // agent.ask_resolved / agent.plan_resolved the moment it clears the
+          // park, and that is the only signal that drops the card. Clearing on
+          // "running" wrongly hid a still-pending card when a sibling/scheduled
+          // run started while the channel was parked, and — after a restart —
+          // wiped the freshly rehydrated card so a plan-parked channel could
+          // never be approved.
           // Treat an empty string the same as missing — a continuation/queue-
           // drain agent.status running can ship trigger_content="" which, left
           // as-is, masks the per-message fallback in the trigger-quote banner
