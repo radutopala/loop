@@ -311,9 +311,13 @@ type GateApprovalResolvedData struct {
 
 // WorkflowNodeEventData is the payload for workflow.node.* events.
 type WorkflowNodeEventData struct {
-	RunID     string `json:"run_id"`
-	NodeID    string `json:"node_id"`
-	Status    string `json:"status"`
+	RunID  string `json:"run_id"`
+	NodeID string `json:"node_id"`
+	Status string `json:"status"`
+	// Input is the node's rendered input (bash script / prompt); SessionID is the
+	// prompt node's Claude session id. Both feed the Workflows panel node-detail.
+	Input     string `json:"input,omitempty"`
+	SessionID string `json:"session_id,omitempty"`
 	Output    string `json:"output,omitempty"`
 	Iteration int    `json:"iteration,omitempty"`
 }

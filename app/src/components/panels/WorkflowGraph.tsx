@@ -870,10 +870,37 @@ export function WorkflowGraph({ defs, nodeRuns, colors, onNodeClick, expandedNod
               </span>
             )}
           </div>
+          {expandedRun.session_id && (
+            <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 10, color: colors.textDim, marginBottom: 6 }}>
+              <span>session</span>
+              <span style={{
+                fontFamily: fonts.mono, color: colors.textLight, background: colors.bg,
+                padding: "1px 5px", borderRadius: 3, border: `1px solid ${colors.border}`,
+                userSelect: "all",
+              }}>
+                {expandedRun.session_id}
+              </span>
+              <span>— resume to continue this prompt's conversation</span>
+            </div>
+          )}
+          {expandedRun.input && (
+            <>
+              <div style={{ fontSize: 10, color: colors.textDim, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 3 }}>Input</div>
+              <div style={{
+                color: colors.textDim, fontSize: 11, whiteSpace: "pre-wrap",
+                fontFamily: fonts.mono, background: colors.bg, padding: "6px 8px", borderRadius: 4, marginBottom: 8,
+              }}>
+                {expandedRun.input}
+              </div>
+            </>
+          )}
           {expandedRun.error_text && (
             <div style={{ color: colors.error ?? "#ef4444", fontSize: 11, whiteSpace: "pre-wrap", marginBottom: 4 }}>
               {expandedRun.error_text}
             </div>
+          )}
+          {(expandedRun.output || expandedRun.input) && (
+            <div style={{ fontSize: 10, color: colors.textDim, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 3 }}>Output</div>
           )}
           {expandedRun.output && (
             <div style={{

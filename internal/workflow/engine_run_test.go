@@ -32,6 +32,38 @@ func (s *EngineSuite) TestStartRunMissingRequiredInput() {
 	require.ErrorContains(s.T(), err, "missing required input: url")
 }
 
+// TestStartRunSeedsBlankDefaultInputs guards the `<no value>` fix: a declared
+// input with a blank default must be seeded so `{{.Inputs.pr}}` renders "" (→
+// shell-quoted ”) rather than Go's map-miss sentinel `<no value>`, which would
+// splice into a bash node as `--pr <no value>` and break the shell.
+func (s *EngineSuite) TestStartRunSeedsBlankDefaultInputs() {
+	s.workflows = []config.WorkflowDef{
+		{
+			Name:   "blank-input",
+			Inputs: map[string]config.WorkflowInput{"pr": {Default: ""}},
+			Nodes:  []config.NodeDef{{ID: "n", Type: config.NodeTypeBash, Script: "loop review run --pr {{.Inputs.pr}} --wait"}},
+		},
+	}
+
+	s.store.On("CreateWorkflowRunWithNodes", mock.Anything, mock.Anything, mock.Anything).Return(nil)
+	s.store.On("UpsertNodeRun", mock.Anything, mock.Anything).Return(nil)
+	done := s.waitForRunStatus()
+
+	// Blank pr → shell-quoted '' in the rendered script, never "<no value>".
+	s.bashRunner.On("RunBash", mock.Anything, "loop review run --pr '' --wait", "", "").Return("ok", nil)
+
+	_, err := s.engine.StartRun(context.Background(), StartRunOptions{WorkflowName: "blank-input"})
+	require.NoError(s.T(), err)
+
+	select {
+	case status := <-done:
+		require.Equal(s.T(), db.WorkflowRunStatusCompleted, status)
+	case <-time.After(5 * time.Second):
+		s.T().Fatal("timeout waiting for run completion")
+	}
+	s.bashRunner.AssertCalled(s.T(), "RunBash", mock.Anything, "loop review run --pr '' --wait", "", "")
+}
+
 func (s *EngineSuite) TestStartRunSingleBashNode() {
 	s.workflows = []config.WorkflowDef{
 		{

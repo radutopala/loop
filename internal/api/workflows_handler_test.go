@@ -430,11 +430,25 @@ func (s *ServerSuite) TestListWorkflows_WithChannelID() {
 	s.store.On("GetChannel", mock.Anything, "ch1").Return(&db.Channel{
 		ChannelID: "ch1", DirPath: "/projects/myapp",
 	}, nil).Once()
-	wfs := []config.WorkflowDef{{Name: "project-wf"}}
+	wfs := []config.WorkflowDef{{Name: "project-wf"}, {Name: "review-loop"}}
 	wfe.On("ListWorkflows", mock.Anything, "/projects/myapp", "").Return(wfs, nil)
+	// Global-only lookup for scope tagging: review-loop is global, project-wf isn't.
+	wfe.On("ListWorkflows", mock.Anything, "", "").Return([]config.WorkflowDef{{Name: "review-loop"}}, nil)
 
 	rec := s.testRequest("GET", "/api/workflows?channel_id=ch1", "")
 	require.Equal(s.T(), http.StatusOK, rec.Code)
+
+	var resp []struct {
+		Scope string `json:"scope"`
+		Name  string `json:"name"`
+	}
+	require.NoError(s.T(), json.NewDecoder(rec.Body).Decode(&resp))
+	scopeByName := map[string]string{}
+	for _, r := range resp {
+		scopeByName[r.Name] = r.Scope
+	}
+	require.Equal(s.T(), "project", scopeByName["project-wf"])
+	require.Equal(s.T(), "global", scopeByName["review-loop"])
 }
 
 func (s *ServerSuite) TestListWorkflows_WorktreeChannelID() {
@@ -452,6 +466,8 @@ func (s *ServerSuite) TestListWorkflows_WorktreeChannelID() {
 
 	wfs := []config.WorkflowDef{{Name: "merged-wf"}}
 	wfe.On("ListWorkflows", mock.Anything, "/worktrees/wt-1", "/projects/myapp").Return(wfs, nil)
+	// Global-only lookup for scope tagging.
+	wfe.On("ListWorkflows", mock.Anything, "", "").Return([]config.WorkflowDef{}, nil)
 
 	rec := s.testRequest("GET", "/api/workflows?channel_id=wt-1", "")
 	require.Equal(s.T(), http.StatusOK, rec.Code)

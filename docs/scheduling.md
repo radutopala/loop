@@ -180,7 +180,7 @@ schedule_task({
 ```
 
 - Works with every schedule type (`cron`, `interval`, `once`, `manual`).
-- The script's output is posted to the channel as a bot message (fenced code block, truncated at ~3500 chars for chat); the task run log keeps the **full** output.
+- The script's output is posted to the thread as a bot message (fenced code block, truncated at ~3500 chars for chat); the task run log keeps the **full** output.
 - On failure, the error is posted along with any partial output, and the run log records `failed`.
 - `bash_script` is mutually exclusive with `prompt` and `workflow_name`; the create/edit API, the `schedule_task`/`edit_task` MCP tools, and the Tasks panels (per-channel and global, via the **Bash** mode with a monospace editor) all accept it.
 - **Threads:** bash tasks get the same thread behavior as prompt tasks — the first run creates a sub-thread (named ``task #N (`schedule`) <script>``), each run posts the script + output pair inside it, and recurring runs reuse the thread via the persisted `thread_id`. `once` tasks get a thread without the link; if thread creation fails, output falls back to the channel; a deleted thread is recreated on the next run.

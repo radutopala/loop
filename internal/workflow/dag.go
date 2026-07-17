@@ -325,7 +325,7 @@ func (e *defaultEngine) executeNode(
 	mu.Unlock()
 
 	if !shouldRun {
-		e.completeNode(run, node, "", db.NodeRunStatusSkipped, nil, mu, nodeStatus, inDegree, downstream, enqueueReady, errCh)
+		e.completeNode(run, node, nodeExecResult{}, db.NodeRunStatusSkipped, nil, mu, nodeStatus, inDegree, downstream, enqueueReady, errCh)
 		return
 	}
 
@@ -334,7 +334,7 @@ func (e *defaultEngine) executeNode(
 	triggerOk := e.checkTriggerRule(node, nodeStatus)
 	mu.Unlock()
 	if !triggerOk {
-		e.completeNode(run, node, "", db.NodeRunStatusSkipped, nil, mu, nodeStatus, inDegree, downstream, enqueueReady, errCh)
+		e.completeNode(run, node, nodeExecResult{}, db.NodeRunStatusSkipped, nil, mu, nodeStatus, inDegree, downstream, enqueueReady, errCh)
 		return
 	}
 
@@ -350,38 +350,37 @@ func (e *defaultEngine) executeNode(
 	}
 
 	// Execute the node based on type, with optional retry.
-	var output string
-	var execErr error
-
-	execFn := func() (string, error) {
+	execFn := func() (nodeExecResult, error) {
 		switch node.Type {
 		case config.NodeTypePrompt:
 			return e.executePromptNode(nodeCtx, run, node, runCtx, mu)
 		case config.NodeTypeBash:
 			return e.executeBashNode(nodeCtx, run, node, runCtx, mu)
 		case config.NodeTypeLoop:
-			return e.executeLoopNode(nodeCtx, run, node, runCtx, mu)
+			out, err := e.executeLoopNode(nodeCtx, run, node, runCtx, mu)
+			return nodeExecResult{output: out}, err
 		case config.NodeTypeApproval:
-			return e.executeApprovalNode(ctx, run, node, runCtx, mu)
+			out, err := e.executeApprovalNode(ctx, run, node, runCtx, mu)
+			return nodeExecResult{output: out}, err
 		default:
-			return "", fmt.Errorf("unsupported node type: %s", node.Type)
+			return nodeExecResult{}, fmt.Errorf("unsupported node type: %s", node.Type)
 		}
 	}
 
-	output, execErr = e.executeWithRetry(nodeCtx, run, node, 0, execFn)
+	res, execErr := e.executeWithRetry(nodeCtx, run, node, 0, execFn)
 
 	status := db.NodeRunStatusSuccess
 	if execErr != nil {
 		status = db.NodeRunStatusFailed
 	}
 
-	e.completeNode(run, node, output, status, execErr, mu, nodeStatus, inDegree, downstream, enqueueReady, errCh)
+	e.completeNode(run, node, res, status, execErr, mu, nodeStatus, inDegree, downstream, enqueueReady, errCh)
 }
 
 func (e *defaultEngine) completeNode(
 	run *db.WorkflowRun,
 	node *config.NodeDef,
-	output string,
+	res nodeExecResult,
 	status db.NodeRunStatus,
 	execErr error,
 	mu *sync.Mutex,
@@ -393,12 +392,16 @@ func (e *defaultEngine) completeNode(
 ) {
 	now := time.Now().UTC()
 
-	// Persist node completion.
+	// Persist node completion, including the rendered input + (prompt) session id
+	// so the Workflows panel can show the full per-node input/output and the run
+	// can hand off resumable prompt sessions.
 	nr := &db.NodeRun{
 		RunID:      run.ID,
 		NodeID:     node.ID,
 		Status:     status,
-		Output:     output,
+		Input:      res.input,
+		SessionID:  res.sessionID,
+		Output:     res.output,
 		Attempt:    1,
 		FinishedAt: &now,
 	}
@@ -411,13 +414,16 @@ func (e *defaultEngine) completeNode(
 		e.logger.Error("workflow: failed to update node run", "node_id", node.ID, "error", err)
 	}
 
-	// Broadcast node completed.
+	// Broadcast node completed (with input + session id so the panel's node-detail
+	// view has everything without an extra fetch).
 	if e.broadcaster != nil {
 		e.broadcaster.BroadcastWorkflowNodeCompleted(events.WorkflowNodeEventData{
-			RunID:  run.ID,
-			NodeID: node.ID,
-			Status: string(status),
-			Output: truncateOutput(output, 1000),
+			RunID:     run.ID,
+			NodeID:    node.ID,
+			Status:    string(status),
+			Input:     truncateOutput(res.input, 1000),
+			SessionID: res.sessionID,
+			Output:    truncateOutput(res.output, 1000),
 		})
 	}
 
@@ -436,16 +442,25 @@ func (e *defaultEngine) completeNode(
 	}
 }
 
-func (e *defaultEngine) executePromptNode(ctx context.Context, run *db.WorkflowRun, node *config.NodeDef, runCtx *RunContext, mu *sync.Mutex) (string, error) {
+// nodeExecResult carries a node execution's output plus the metadata persisted
+// for the unified run view: the rendered input (script/prompt) and, for prompt
+// nodes, the Claude session id (so its transcript is locatable/resumable).
+type nodeExecResult struct {
+	output    string
+	input     string
+	sessionID string
+}
+
+func (e *defaultEngine) executePromptNode(ctx context.Context, run *db.WorkflowRun, node *config.NodeDef, runCtx *RunContext, mu *sync.Mutex) (nodeExecResult, error) {
 	promptText, err := node.ResolvePrompt(e.loopDir, os.ReadFile)
 	if err != nil {
-		return "", fmt.Errorf("resolving prompt: %w", err)
+		return nodeExecResult{}, fmt.Errorf("resolving prompt: %w", err)
 	}
 	mu.Lock()
 	prompt, err := renderTemplate(promptText, runCtx)
 	mu.Unlock()
 	if err != nil {
-		return "", fmt.Errorf("rendering prompt template: %w", err)
+		return nodeExecResult{}, fmt.Errorf("rendering prompt template: %w", err)
 	}
 
 	var systemPrompt string
@@ -454,7 +469,7 @@ func (e *defaultEngine) executePromptNode(ctx context.Context, run *db.WorkflowR
 		systemPrompt, err = renderTemplate(node.SystemPrompt, runCtx)
 		mu.Unlock()
 		if err != nil {
-			return "", fmt.Errorf("rendering system prompt template: %w", err)
+			return nodeExecResult{input: prompt}, fmt.Errorf("rendering system prompt template: %w", err)
 		}
 	}
 
@@ -467,10 +482,12 @@ func (e *defaultEngine) executePromptNode(ctx context.Context, run *db.WorkflowR
 
 	resp, err := e.runner.Run(ctx, req)
 	if err != nil {
-		return "", err
+		return nodeExecResult{input: prompt}, err
 	}
+	// Capture the session id even on agent error so the transcript is locatable.
+	res := nodeExecResult{output: resp.Response, input: prompt, sessionID: resp.SessionID}
 	if resp.Error != "" {
-		return resp.Response, fmt.Errorf("agent error: %s", resp.Error)
+		return res, fmt.Errorf("agent error: %s", resp.Error)
 	}
 
 	// Store output for downstream nodes.
@@ -478,20 +495,20 @@ func (e *defaultEngine) executePromptNode(ctx context.Context, run *db.WorkflowR
 	runCtx.NodeOutputs[node.ID] = resp.Response
 	mu.Unlock()
 
-	return resp.Response, nil
+	return res, nil
 }
 
-func (e *defaultEngine) executeBashNode(ctx context.Context, run *db.WorkflowRun, node *config.NodeDef, runCtx *RunContext, mu *sync.Mutex) (string, error) {
+func (e *defaultEngine) executeBashNode(ctx context.Context, run *db.WorkflowRun, node *config.NodeDef, runCtx *RunContext, mu *sync.Mutex) (nodeExecResult, error) {
 	mu.Lock()
 	script, err := renderBashScript(node.Script, runCtx)
 	mu.Unlock()
 	if err != nil {
-		return "", fmt.Errorf("rendering script template: %w", err)
+		return nodeExecResult{}, fmt.Errorf("rendering script template: %w", err)
 	}
 
 	output, err := e.bashRunner.RunBash(ctx, script, run.ChannelID, run.DirPath)
 	if err != nil {
-		return output, err
+		return nodeExecResult{output: output, input: script}, err
 	}
 
 	// Store output for downstream nodes.
@@ -499,7 +516,7 @@ func (e *defaultEngine) executeBashNode(ctx context.Context, run *db.WorkflowRun
 	runCtx.NodeOutputs[node.ID] = output
 	mu.Unlock()
 
-	return output, nil
+	return nodeExecResult{output: output, input: script}, nil
 }
 
 // evaluateWhen evaluates the "when" condition. Must be called with mu held.
@@ -622,11 +639,11 @@ func (e *defaultEngine) executeLoopNode(ctx context.Context, run *db.WorkflowRun
 
 		if !hasBody {
 			// Backward compat: self-prompt each iteration.
-			output, err := e.executePromptNode(ctx, run, node, runCtx, mu)
+			res, err := e.executePromptNode(ctx, run, node, runCtx, mu)
 			if err != nil {
-				return output, err
+				return res.output, err
 			}
-			lastOutput = output
+			lastOutput = res.output
 		} else {
 			output, err := e.executeLoopBody(ctx, run, node, runCtx, mu, i)
 			if err != nil {
@@ -756,10 +773,9 @@ func (e *defaultEngine) executeLoopBody(ctx context.Context, run *db.WorkflowRun
 			}
 		}
 
-		var output string
 		var execErr error
 		var attemptsRun int
-		execFn := func() (string, error) {
+		execFn := func() (nodeExecResult, error) {
 			attemptsRun++
 			attemptCtx := ctx
 			var attemptCancel context.CancelFunc
@@ -779,7 +795,7 @@ func (e *defaultEngine) executeLoopBody(ctx context.Context, run *db.WorkflowRun
 				// body-child type (manual DB edit, pre-validator definition)
 				// would otherwise persist as Success with empty output. Make
 				// the miss observable instead.
-				return "", fmt.Errorf("unsupported body child type: %s", child.Type)
+				return nodeExecResult{}, fmt.Errorf("unsupported body child type: %s", child.Type)
 			}
 		}
 		// Honor the child's retry: block the same as a top-level node would.
@@ -789,7 +805,7 @@ func (e *defaultEngine) executeLoopBody(ctx context.Context, run *db.WorkflowRun
 		// timeout-bound ctx) so the retry backoff sleeps against the outer
 		// run context and the per-attempt timeout doesn't cancel the retry
 		// loop itself.
-		output, execErr = e.executeWithRetry(ctx, run, child, iteration, execFn)
+		res, execErr := e.executeWithRetry(ctx, run, child, iteration, execFn)
 		stopHeartbeat()
 
 		status := db.NodeRunStatusSuccess
@@ -801,7 +817,7 @@ func (e *defaultEngine) executeLoopBody(ctx context.Context, run *db.WorkflowRun
 			if _, isSeeded := reviewParsedWorkflows[run.WorkflowName]; isSeeded {
 				mu.Lock()
 				if execErr == nil {
-					parseReviewOutput(output, runCtx)
+					parseReviewOutput(res.output, runCtx)
 				} else {
 					// On a failed review bash child, the captured output is
 					// unreliable — but the stale Comments / IDs from the
@@ -830,7 +846,9 @@ func (e *defaultEngine) executeLoopBody(ctx context.Context, run *db.WorkflowRun
 			NodeID:    child.ID,
 			Iteration: iteration,
 			Status:    status,
-			Output:    output,
+			Input:     res.input,
+			SessionID: res.sessionID,
+			Output:    res.output,
 			Attempt:   attempt,
 			// StartedAt is carried into the UPSERT so that, if nrStart's
 			// INSERT failed silently above (we only log + swallow at line
@@ -854,15 +872,17 @@ func (e *defaultEngine) executeLoopBody(ctx context.Context, run *db.WorkflowRun
 				RunID:     run.ID,
 				NodeID:    child.ID,
 				Status:    string(status),
-				Output:    truncateOutput(output, 1000),
+				Input:     truncateOutput(res.input, 1000),
+				SessionID: res.sessionID,
+				Output:    truncateOutput(res.output, 1000),
 				Iteration: iteration,
 			})
 		}
 
 		if execErr != nil {
-			return output, execErr
+			return res.output, execErr
 		}
-		lastOutput = output
+		lastOutput = res.output
 	}
 	return lastOutput, nil
 }
@@ -1122,7 +1142,7 @@ func (e *defaultEngine) updateRunStatus(ctx context.Context, runID string, statu
 // a body child at iter N>0 would silently overwrite the (run_id, node_id, 0)
 // row's status — corrupting iter-0's terminal state and burying the actual
 // retrying iteration in the Workflows graph.
-func (e *defaultEngine) executeWithRetry(ctx context.Context, run *db.WorkflowRun, node *config.NodeDef, iteration int, fn func() (string, error)) (string, error) {
+func (e *defaultEngine) executeWithRetry(ctx context.Context, run *db.WorkflowRun, node *config.NodeDef, iteration int, fn func() (nodeExecResult, error)) (nodeExecResult, error) {
 	if node.Retry == nil || node.Retry.MaxRetries <= 0 {
 		return fn()
 	}
@@ -1141,7 +1161,7 @@ func (e *defaultEngine) executeWithRetry(ctx context.Context, run *db.WorkflowRu
 	}
 
 	var lastErr error
-	var output string
+	var res nodeExecResult
 	for attempt := 0; attempt <= node.Retry.MaxRetries; attempt++ {
 		if attempt > 0 {
 			// Persist retry attempt. Iteration is load-bearing for body
@@ -1164,17 +1184,17 @@ func (e *defaultEngine) executeWithRetry(ctx context.Context, run *db.WorkflowRu
 			select {
 			case <-time.After(delay):
 			case <-ctx.Done():
-				return "", ctx.Err()
+				return nodeExecResult{}, ctx.Err()
 			}
 		}
 
-		output, lastErr = fn()
+		res, lastErr = fn()
 		if lastErr == nil {
-			return output, nil
+			return res, nil
 		}
 	}
 
-	return output, lastErr
+	return res, lastErr
 }
 
 // startHeartbeat launches a background goroutine that periodically updates

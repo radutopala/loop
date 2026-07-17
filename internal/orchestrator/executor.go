@@ -689,14 +689,21 @@ func (e *TaskExecutor) executeWorkflowTask(ctx context.Context, task *db.Schedul
 
 // invitePermissionUsers invites all RBAC owner and member users to a thread.
 func (e *TaskExecutor) invitePermissionUsers(ctx context.Context, threadID string, perms types.Permissions) {
+	invitePermissionUsersTo(ctx, e.bot, e.logger, threadID, perms)
+}
+
+// invitePermissionUsersTo invites all RBAC owner and member users to threadID.
+// Shared by the scheduled-task executor and the workflow reporter so both seed
+// a freshly created thread with the same membership.
+func invitePermissionUsersTo(ctx context.Context, b Bot, logger *slog.Logger, threadID string, perms types.Permissions) {
 	for _, userID := range perms.Owners.Users {
-		if err := e.bot.InviteUserToChannel(ctx, threadID, userID); err != nil {
-			e.logger.Error("inviting owner to task thread", "error", err, "thread_id", threadID, "user_id", userID)
+		if err := b.InviteUserToChannel(ctx, threadID, userID); err != nil {
+			logger.Error("inviting owner to thread", "error", err, "thread_id", threadID, "user_id", userID)
 		}
 	}
 	for _, userID := range perms.Members.Users {
-		if err := e.bot.InviteUserToChannel(ctx, threadID, userID); err != nil {
-			e.logger.Error("inviting member to task thread", "error", err, "thread_id", threadID, "user_id", userID)
+		if err := b.InviteUserToChannel(ctx, threadID, userID); err != nil {
+			logger.Error("inviting member to thread", "error", err, "thread_id", threadID, "user_id", userID)
 		}
 	}
 }

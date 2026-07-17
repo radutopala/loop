@@ -46,9 +46,9 @@ func (s *RunnerSuite) TestCurrentConfigNilLoader() {
 	require.Equal(s.T(), s.cfg, cfg)
 }
 
-func (s *RunnerSuite) TestRunBashHappyPath() {
-	ctx := context.Background()
-
+// expectBashRegistry wires the registry Register + ScheduleRemove that every
+// started RunBash path performs.
+func (s *RunnerSuite) expectBashRegistry() *MockContainerRegistry {
 	reg := new(MockContainerRegistry)
 	s.runner.SetContainerRegistry(reg)
 	reg.On("Register", mock.MatchedBy(func(info *ContainerInfo) bool {
@@ -58,6 +58,12 @@ func (s *RunnerSuite) TestRunBashHappyPath() {
 			info.ContainerName == testContainerName
 	})).Once()
 	reg.On("ScheduleRemove", testContainerID, 5*time.Minute).Once()
+	return reg
+}
+
+func (s *RunnerSuite) TestRunBashHappyPath() {
+	ctx := context.Background()
+	reg := s.expectBashRegistry()
 
 	waitCh := make(chan WaitResponse, 1)
 	waitCh <- WaitResponse{StatusCode: 0}
@@ -95,16 +101,7 @@ func (s *RunnerSuite) TestRunBashCreateFails() {
 
 func (s *RunnerSuite) TestRunBashWaitError() {
 	ctx := context.Background()
-
-	reg := new(MockContainerRegistry)
-	s.runner.SetContainerRegistry(reg)
-	reg.On("Register", mock.MatchedBy(func(info *ContainerInfo) bool {
-		return info.ContainerID == testContainerID &&
-			info.ChannelID == "ch-1" &&
-			info.Type == ContainerTypeAgent &&
-			info.ContainerName == testContainerName
-	})).Once()
-	reg.On("ScheduleRemove", testContainerID, 5*time.Minute).Once()
+	reg := s.expectBashRegistry()
 
 	waitCh := make(chan WaitResponse, 1)
 	errCh := make(chan error, 1)
@@ -125,16 +122,7 @@ func (s *RunnerSuite) TestRunBashWaitError() {
 
 func (s *RunnerSuite) TestRunBashNonZeroExit() {
 	ctx := context.Background()
-
-	reg := new(MockContainerRegistry)
-	s.runner.SetContainerRegistry(reg)
-	reg.On("Register", mock.MatchedBy(func(info *ContainerInfo) bool {
-		return info.ContainerID == testContainerID &&
-			info.ChannelID == "ch-1" &&
-			info.Type == ContainerTypeAgent &&
-			info.ContainerName == testContainerName
-	})).Once()
-	reg.On("ScheduleRemove", testContainerID, 5*time.Minute).Once()
+	reg := s.expectBashRegistry()
 
 	waitCh := make(chan WaitResponse, 1)
 	waitCh <- WaitResponse{StatusCode: 1}
@@ -156,16 +144,7 @@ func (s *RunnerSuite) TestRunBashNonZeroExit() {
 
 func (s *RunnerSuite) TestRunBashLogsFails() {
 	ctx := context.Background()
-
-	reg := new(MockContainerRegistry)
-	s.runner.SetContainerRegistry(reg)
-	reg.On("Register", mock.MatchedBy(func(info *ContainerInfo) bool {
-		return info.ContainerID == testContainerID &&
-			info.ChannelID == "ch-1" &&
-			info.Type == ContainerTypeAgent &&
-			info.ContainerName == testContainerName
-	})).Once()
-	reg.On("ScheduleRemove", testContainerID, 5*time.Minute).Once()
+	reg := s.expectBashRegistry()
 
 	waitCh := make(chan WaitResponse, 1)
 	waitCh <- WaitResponse{StatusCode: 0}
@@ -187,16 +166,7 @@ func (s *RunnerSuite) TestRunBashLogsFails() {
 
 func (s *RunnerSuite) TestRunBashContextCancelled() {
 	ctx, cancel := context.WithCancel(context.Background())
-
-	reg := new(MockContainerRegistry)
-	s.runner.SetContainerRegistry(reg)
-	reg.On("Register", mock.MatchedBy(func(info *ContainerInfo) bool {
-		return info.ContainerID == testContainerID &&
-			info.ChannelID == "ch-1" &&
-			info.Type == ContainerTypeAgent &&
-			info.ContainerName == testContainerName
-	})).Once()
-	reg.On("ScheduleRemove", testContainerID, 5*time.Minute).Once()
+	reg := s.expectBashRegistry()
 
 	waitCh := make(chan WaitResponse) // never written to
 	errCh := make(chan error)         // never written to
@@ -219,16 +189,7 @@ func (s *RunnerSuite) TestRunBashContextCancelled() {
 
 func (s *RunnerSuite) TestRunBashContainerError() {
 	ctx := context.Background()
-
-	reg := new(MockContainerRegistry)
-	s.runner.SetContainerRegistry(reg)
-	reg.On("Register", mock.MatchedBy(func(info *ContainerInfo) bool {
-		return info.ContainerID == testContainerID &&
-			info.ChannelID == "ch-1" &&
-			info.Type == ContainerTypeAgent &&
-			info.ContainerName == testContainerName
-	})).Once()
-	reg.On("ScheduleRemove", testContainerID, 5*time.Minute).Once()
+	reg := s.expectBashRegistry()
 
 	waitCh := make(chan WaitResponse, 1)
 	waitCh <- WaitResponse{StatusCode: 1, Error: errors.New("OOM killed")}

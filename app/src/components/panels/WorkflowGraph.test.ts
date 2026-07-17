@@ -13,6 +13,8 @@ function run(nodeId: string, iteration: number): WorkflowNodeRun {
     node_id: nodeId,
     iteration,
     status: "success",
+    input: "",
+    session_id: "",
     output: "",
     error_text: "",
     attempt: 1,

@@ -89,6 +89,15 @@ var migrations = []Migration{
 		Description: "refresh container/ files: Node 24 via nodesource (Debian's Node 20 is EOL)",
 		Apply:       refreshContainerFiles,
 	},
+	{
+		// Upgrade path: existing review-loop / review-fix-loop installs get the
+		// env-based review command (`loop review run --pr {{.Inputs.pr}} --wait`,
+		// reading CHANNEL_ID/API_URL from the container env) + a `pr` input.
+		// Only rewrites an unmodified review script; ships with the new binary
+		// so the container's `loop` understands the new flags.
+		Description: "patch review-loop/review-fix-loop to env-based review command + pr input",
+		Apply:       patchReviewLoopEnvAndPRInput,
+	},
 }
 
 // versionedContainerFiles are tracked by the daemon: each release ships a
@@ -546,6 +555,117 @@ func patchReviewFixLoopBodyDepsReport(_ context.Context, c *Ctx) (bool, error) {
 	return true, nil
 }
 
+// patchReviewLoopEnvAndPRInput walks ~/.loop/config.json and upgrades the
+// seeded review-loop / review-fix-loop workflows to the env-based review
+// command: it rewrites each `review` body child's script from the old
+// `--channel-id {{.ChannelID}} --api-url $API_URL` form to `reviewRunScript`
+// (only when the script is unmodified) and adds the `pr` input when absent.
+// Never touches a user-customized review script. No-ops when the config file
+// is missing or the workflows are absent.
+func patchReviewLoopEnvAndPRInput(ctx context.Context, c *Ctx) error {
+	_, err := patchReviewLoopEnvAndPRInputReport(ctx, c)
+	return err
+}
+
+// patchReviewLoopEnvAndPRInputReport is the ([]patchedNames, error) variant
+// used by RestoreBuiltinWorkflows. Patches are applied via v.Patch (RFC 6902)
+// so the user's surrounding comments and key ordering survive.
+func patchReviewLoopEnvAndPRInputReport(_ context.Context, c *Ctx) ([]string, error) {
+	v, configPath, err := loadConfigHJSON(c)
+	if err != nil || v == nil {
+		return nil, err
+	}
+	rootObj, ok := v.Value.(*hujson.Object)
+	if !ok {
+		return nil, fmt.Errorf("parsing %s: expected JSON object at top level", configPath)
+	}
+	wfsVal := findObjectMember(rootObj, "workflows")
+	if wfsVal == nil {
+		return nil, nil
+	}
+	wfsArr, ok := wfsVal.Value.(*hujson.Array)
+	if !ok {
+		return nil, nil
+	}
+
+	descJSON, _ := json.Marshal(reviewPRInputDesc) // a plain string cannot fail
+	newScriptJSON, _ := json.Marshal(reviewRunScript)
+
+	var ops []string
+	patchedSet := map[string]struct{}{}
+	for i := range wfsArr.Elements {
+		wfObj, ok := wfsArr.Elements[i].Value.(*hujson.Object)
+		if !ok {
+			continue
+		}
+		name, _ := memberString(wfObj, "name")
+		if name != seededReviewLoopName && name != seededReviewFixLoopName {
+			continue
+		}
+
+		// (1) Upgrade the review node's script when it's the known old form.
+		nodesVal := findObjectMember(wfObj, "nodes")
+		if nodesArr, ok := arrayValue(nodesVal); ok {
+			for j := range nodesArr.Elements {
+				nodeObj, ok := nodesArr.Elements[j].Value.(*hujson.Object)
+				if !ok {
+					continue
+				}
+				if t, _ := memberString(nodeObj, "type"); t != "loop" {
+					continue
+				}
+				bodyArr, ok := arrayValue(findObjectMember(nodeObj, "body"))
+				if !ok {
+					continue
+				}
+				for k := range bodyArr.Elements {
+					childObj, ok := bodyArr.Elements[k].Value.(*hujson.Object)
+					if !ok {
+						continue
+					}
+					if id, _ := memberString(childObj, "id"); id != "review" {
+						continue
+					}
+					if sc, ok := memberString(childObj, "script"); ok && sc == reviewRunScriptOld {
+						ops = append(ops, fmt.Sprintf(`{"op":"replace","path":"/workflows/%d/nodes/%d/body/%d/script","value":%s}`, i, j, k, newScriptJSON))
+						patchedSet[name] = struct{}{}
+					}
+				}
+			}
+		}
+
+		// (2) Add the `pr` input when the workflow declares inputs but lacks it.
+		if inputsVal := findObjectMember(wfObj, "inputs"); inputsVal != nil {
+			if inputsObj, ok := inputsVal.Value.(*hujson.Object); ok && findObjectMember(inputsObj, "pr") == nil {
+				ops = append(ops, fmt.Sprintf(`{"op":"add","path":"/workflows/%d/inputs/pr","value":{"description":%s,"default":""}}`, i, descJSON))
+				patchedSet[name] = struct{}{}
+			}
+		}
+	}
+	if len(ops) == 0 {
+		return nil, nil
+	}
+	_ = v.Patch([]byte("[" + strings.Join(ops, ",") + "]"))
+	if err := atomicWriteConfig(c.Sys, configPath, v.Pack(), 0644); err != nil {
+		return nil, fmt.Errorf("writing %s: %w", configPath, err)
+	}
+	var patched []string
+	for n := range patchedSet {
+		patched = append(patched, n)
+	}
+	return patched, nil
+}
+
+// arrayValue returns v's underlying hujson.Array when v is non-nil and holds
+// an array. A small guard used by the review-loop patcher's node/body walk.
+func arrayValue(v *hujson.Value) (*hujson.Array, bool) {
+	if v == nil {
+		return nil, false
+	}
+	arr, ok := v.Value.(*hujson.Array)
+	return arr, ok
+}
+
 // isNullLiteral reports whether v holds a JSON null literal. Used by the
 // depends_on patcher to recognize `"depends_on": null` as "missing" so it
 // gets replaced with the canonical [dep] array. Caller must pass non-nil.
@@ -557,6 +677,16 @@ func isNullLiteral(v *hujson.Value) bool {
 	return lit.Kind() == 'n'
 }
 
+// reviewRunScript is the current review-node bash: channel-id / api-url come
+// from the container's injected env (CHANNEL_ID / API_URL), and an optional
+// `pr` input reviews a specific PR (blank = the channel's already-loaded
+// review). reviewRunScriptOld is the pre-env form the patcher upgrades.
+const (
+	reviewRunScript    = "loop review run --pr {{.Inputs.pr}} --wait"
+	reviewRunScriptOld = "loop review run --channel-id {{.ChannelID}} --api-url $API_URL --wait"
+	reviewPRInputDesc  = "PR number or URL to review (blank = the channel's already-loaded review)."
+)
+
 // reviewBashBodyChild is the bash node every seeded review loop pins as its
 // first body child. The loop body parser keys off `id == "review"` to
 // populate runCtx.Review with the CLI's JSON output (see
@@ -565,7 +695,7 @@ func reviewBashBodyChild() map[string]any {
 	return map[string]any{
 		"id":     "review",
 		"type":   "bash",
-		"script": "loop review run --channel-id {{.ChannelID}} --api-url $API_URL --wait",
+		"script": reviewRunScript,
 	}
 }
 
@@ -580,6 +710,10 @@ func builtinLoopDef(name, description, inputDesc string, body []any) map[string]
 			"max_iterations": map[string]any{
 				"description": inputDesc,
 				"default":     "1",
+			},
+			"pr": map[string]any{
+				"description": reviewPRInputDesc,
+				"default":     "",
 			},
 		},
 		"nodes": []any{

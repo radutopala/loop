@@ -606,17 +606,21 @@ Individual node lifecycle events within a workflow run.
   "run_id": "wfr-a1b2c3d4e5f67890",
   "node_id": "diff",
   "status": "success",
+  "input": "git diff main...HEAD",
+  "session_id": "",
   "output": "+added line"
 }
 ```
 
-| Field       | Type    | Description |
-|-------------|---------|-------------|
-| `run_id`    | string  | Parent workflow run ID |
-| `node_id`   | string  | Node identifier within the workflow |
-| `status`    | string  | `"running"`, `"success"`, `"failed"`, or `"skipped"` |
-| `output`    | string  | Node output text (truncated to 1000 chars, only on completion) |
-| `iteration` | integer | Loop iteration index when the node is a child of a `loop` body (omitted / `0` for nodes outside a loop). |
+| Field        | Type    | Description |
+|--------------|---------|-------------|
+| `run_id`     | string  | Parent workflow run ID |
+| `node_id`    | string  | Node identifier within the workflow |
+| `status`     | string  | `"running"`, `"success"`, `"failed"`, or `"skipped"` |
+| `input`      | string  | Node's rendered input — bash script / resolved prompt (truncated to 1000 chars, only on completion) |
+| `session_id` | string  | Prompt node's Claude session id (empty for non-prompt nodes) |
+| `output`     | string  | Node output text (truncated to 1000 chars, only on completion) |
+| `iteration`  | integer | Loop iteration index when the node is a child of a `loop` body (omitted / `0` for nodes outside a loop). |
 
 **Scope:** Global.
 

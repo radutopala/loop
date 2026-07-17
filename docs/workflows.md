@@ -379,7 +379,7 @@ When `workflow_name` is set, the `prompt` field is ignored. The task still suppo
 
 | Method | Path | Description |
 |---|---|---|
-| `GET` | `/api/workflows` | List workflow definitions |
+| `GET` | `/api/workflows` | List workflow definitions, each tagged with its `scope` (`global`/`project`); accepts `channel_id`/`dir_path` to resolve project + worktree definitions |
 | `POST` | `/api/workflows` | Add, update, or delete a workflow definition |
 | `POST` | `/api/workflows/runs` | Start a new workflow run |
 | `GET` | `/api/workflows/runs` | List workflow runs (supports `channel_id`, `limit`, `offset`) |
@@ -428,16 +428,32 @@ See [Events: Workflow Events](events.md#workflowrun_started--workflowrun_complet
 
 ---
 
+## Per-Node Run View
+
+Every node run stores its rendered **input** (the bash script, or the resolved
+prompt) alongside its full **output**, and prompt nodes also store the Claude
+**session id** their agent run produced. In the Workflows panel, clicking a node
+in the run's DAG graph expands a detail panel showing **Input → Output**, and for
+prompt nodes the **session id** (resume it to continue that prompt's
+conversation). These are persisted on `workflow_node_runs` (`input`,
+`session_id`) so they survive reload, and ride the `workflow.node_completed`
+event for live updates.
+
+There is no per-workflow chat thread — run output is surfaced in the Workflows
+panel, not the chat timeline.
+
+---
+
 ## UI Panel
 
 ![The global Workflows panel showing the run list and detail view](static/images/features/workflows-panel.png)
 
 The Workflows panel is available in two variants:
 
-- **Global panel** — overlay panel accessible from the sidebar, showing runs across all channels. Start workflows via the `+ Run` button. Each row shows a clickable channel/thread pill (resolved to the nearest named ancestor) and the run's `dir_path` — clicking the pill jumps to that channel.
-- **Embedded split panel** — per-channel panel added from the split-pane `+` menu. Start workflows via the `+` button. This is a singleton panel (one per layout).
+- **Global panel** — overlay panel accessible from the sidebar, showing runs across all channels. Each run row shows a clickable channel/thread pill (resolved to the nearest named ancestor) and the run's `dir_path` — clicking the pill jumps to that channel.
+- **Embedded split panel** — per-channel panel added from the split-pane `+` menu. This is a singleton panel (one per layout).
 
-Both variants share the same two-pane layout: a resizable run list on the left and a detail view on the right. The run list paginates via infinite scroll — pages of 50 runs are fetched as you scroll within 200 px of the bottom, and polling/WebSocket refreshes preserve the currently-loaded window so already-paginated rows stay visible.
+Both variants share the same two-pane layout: a left column and a detail view on the right. The left column lists the available **workflow definitions grouped under Global / Project** (from `~/.loop/config.json` and the project's `.loop/config.json`, tagged by the list endpoint — worktree threads inherit their root project's definitions), with a **search box** at the top that filters by name and description. Selecting a workflow filters the runs to it (**All runs** clears the filter), and each row has a **`▶ Run`** button. Run always opens a **start dialog** showing the workflow's name + description, its **inputs** (labelled with name + description, pre-filled with declared defaults — e.g. `review-loop`'s `max_iterations`), and the **full definition as editable JSON** with a **Save** button that writes changes back to the definition's config scope (global or project). **Start** launches the run with the entered inputs. The run list below paginates via infinite scroll — pages of 50 runs are fetched as you scroll within 200 px of the bottom, and polling/WebSocket refreshes preserve the currently-loaded window so already-paginated rows stay visible.
 
 The same panel is also available as a **Workflows layout tab** scoped to the current project, showing that channel's runs and their live DAG:
 
@@ -500,6 +516,8 @@ Workflow state is persisted in SQLite:
 | `node_id` | TEXT | Node identifier |
 | `iteration` | INTEGER | Loop iteration index (0 for nodes outside a loop body, 0..N for nodes inside one). Unique key is `(run_id, node_id, iteration)`. |
 | `status` | TEXT | `pending`, `running`, `success`, `failed`, `skipped` |
+| `input` | TEXT | Rendered node input: bash script / resolved prompt (empty for loop/approval) |
+| `session_id` | TEXT | Prompt node's Claude session id (resumable transcript); empty otherwise |
 | `output` | TEXT | Node output text |
 | `error_text` | TEXT | Error message on failure |
 | `attempt` | INTEGER | Execution attempt number |

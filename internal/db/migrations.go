@@ -348,6 +348,11 @@ var migrations = []migration{
 	// Bash scheduled tasks: when set, the task runs this script in the
 	// channel's agent container instead of an agent prompt or workflow.
 	sqlMigration(`ALTER TABLE scheduled_tasks ADD COLUMN bash_script TEXT NOT NULL DEFAULT ''`),
+	// Per-node input (rendered bash script / prompt) and, for prompt nodes, the
+	// Claude session id — so the Workflows panel can show each node's full
+	// input+output and the run can hand off resumable prompt sessions.
+	sqlMigration(`ALTER TABLE workflow_node_runs ADD COLUMN input TEXT NOT NULL DEFAULT ''`),
+	sqlMigration(`ALTER TABLE workflow_node_runs ADD COLUMN session_id TEXT NOT NULL DEFAULT ''`),
 }
 
 // migrateScheduledTasksAddManualType rebuilds scheduled_tasks to widen the

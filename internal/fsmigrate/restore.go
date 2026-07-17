@@ -76,13 +76,21 @@ func RestoreBuiltinWorkflows(ctx context.Context, c *Ctx) (added []string, patch
 	if err != nil {
 		return nil, nil, err
 	}
-	// Both patchers operate only on `review-fix-loop`. De-dupe via a set.
+	envPatched, err := patchReviewLoopEnvAndPRInputReport(ctx, c)
+	if err != nil {
+		return nil, nil, err
+	}
+	// verify/deps patchers touch only `review-fix-loop`; the env/pr patcher may
+	// touch both seeded loops. De-dupe via a set.
 	patchedSet := map[string]struct{}{}
 	if verifyPatched {
 		patchedSet[seededReviewFixLoopName] = struct{}{}
 	}
 	if depsPatched {
 		patchedSet[seededReviewFixLoopName] = struct{}{}
+	}
+	for _, n := range envPatched {
+		patchedSet[n] = struct{}{}
 	}
 	for n := range patchedSet {
 		patched = append(patched, n)

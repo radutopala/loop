@@ -9,6 +9,8 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -53,7 +55,7 @@ func (a *app) newReviewCmd() *cobra.Command {
 }
 
 func (a *app) newReviewRunCmd() *cobra.Command {
-	var channelID, apiURL, timeoutStr string
+	var channelID, apiURL, timeoutStr, pr string
 	var wait bool
 
 	cmd := &cobra.Command{
@@ -64,13 +66,38 @@ func (a *app) newReviewRunCmd() *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("invalid --timeout: %w", err)
 			}
+			// Both values are injected into the agent container's environment
+			// (CHANNEL_ID / API_URL), so a workflow's bash node can just run
+			// `loop review run --wait` without threading them through templates.
+			channelID = resolveReviewChannelID(channelID, os.Getenv("CHANNEL_ID"))
+			if channelID == "" {
+				return fmt.Errorf("channel-id is required (pass --channel-id or set $CHANNEL_ID)")
+			}
 			resolvedURL := resolveReviewAPIURL(apiURL, os.Getenv("API_URL"))
+			// When a PR is given, load it into the channel's review session
+			// first (fetch PR + create its worktree), then review; otherwise
+			// review whatever the channel already has loaded. The load is
+			// skipped when the session is already on this PR — e.g. the Review
+			// panel pre-loaded it — so we don't tear down and rebuild its
+			// worktree. Any session-lookup failure falls back to loading.
+			if pr != "" {
+				prNum, perr := parsePRNumber(pr)
+				if perr != nil {
+					return perr
+				}
+				if cur, err := a.currentReviewPR(c.Context(), resolvedURL, channelID); err != nil || cur != prNum {
+					if err := a.loadReview(c.Context(), resolvedURL, channelID, prNum, timeout); err != nil {
+						return err
+					}
+				}
+			}
 			return a.runReview(c.Context(), c.OutOrStdout(), resolvedURL, channelID, wait, timeout)
 		},
 	}
 
-	cmd.Flags().StringVar(&channelID, "channel-id", "", "Channel ID to run review on")
+	cmd.Flags().StringVar(&channelID, "channel-id", "", "Channel ID to run review on (default $CHANNEL_ID)")
 	cmd.Flags().StringVar(&apiURL, "api-url", "", "Loop API base URL (default $API_URL or http://localhost:8222)")
+	cmd.Flags().StringVar(&pr, "pr", "", "PR number or URL to load and review first (default: the channel's already-loaded review)")
 	cmd.Flags().BoolVar(&wait, "wait", false, "Block until the daemon flips to a terminal status, then print JSON")
 	// 60m default chosen to sit above the daemon-side review ceiling
 	// (SetReviewRunTimeout in cmd/loop/serve.go, currently 50m): the daemon
@@ -80,7 +107,6 @@ func (a *app) newReviewRunCmd() *cobra.Command {
 	// the daemon's own deadline on big PRs, killing the workflow's bash
 	// node while the agent was still emitting comments.
 	cmd.Flags().StringVar(&timeoutStr, "timeout", "60m", "Maximum time to wait when --wait is set (Go duration)")
-	_ = cmd.MarkFlagRequired("channel-id")
 
 	return cmd
 }
@@ -95,6 +121,95 @@ func resolveReviewAPIURL(flag, env string) string {
 		return env
 	}
 	return "http://localhost:8222"
+}
+
+// resolveReviewChannelID applies precedence: --channel-id flag > $CHANNEL_ID env.
+func resolveReviewChannelID(flag, env string) string {
+	if flag != "" {
+		return flag
+	}
+	return env
+}
+
+// parsePRNumber accepts a bare PR number ("123") or a GitHub PR URL
+// (".../pull/123[/…?…]") and returns the positive PR number.
+func parsePRNumber(s string) (int, error) {
+	orig := s
+	s = strings.TrimSpace(s)
+	if i := strings.LastIndex(s, "/pull/"); i >= 0 {
+		rest := s[i+len("/pull/"):]
+		j := 0
+		for j < len(rest) && rest[j] >= '0' && rest[j] <= '9' {
+			j++
+		}
+		s = rest[:j]
+	}
+	n, err := strconv.Atoi(s)
+	if err != nil || n <= 0 {
+		return 0, fmt.Errorf("invalid --pr %q: expected a positive PR number or a .../pull/N URL", orig)
+	}
+	return n, nil
+}
+
+// loadReview loads a PR into the channel's review session (POST
+// /review/load) so a subsequent run reviews it. The daemon fetches the PR and
+// creates its worktree synchronously, returning the ready session.
+func (a *app) loadReview(ctx context.Context, apiURL, channelID string, prNumber int, timeout time.Duration) error {
+	loadCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	url := fmt.Sprintf("%s/api/channels/%s/review/load", apiURL, channelID)
+	body, _ := json.Marshal(map[string]int{"pr_number": prNumber})
+	req, err := http.NewRequestWithContext(loadCtx, http.MethodPost, url, bytes.NewReader(body))
+	if err != nil {
+		return fmt.Errorf("building load request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := a.reviewHTTPClient().Do(req)
+	if err != nil {
+		return fmt.Errorf("POST %s: %w", url, err)
+	}
+	respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 64<<10))
+	_ = resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return fmt.Errorf("loading PR #%d: unexpected status %d: %s", prNumber, resp.StatusCode, string(respBody))
+	}
+	return nil
+}
+
+// currentReviewPR reports the PR number the channel's review session is
+// currently loaded on, or 0 when no session/PR is present. Any transport,
+// status, or decode failure is returned so the caller falls back to loading —
+// an unknown session state must never cause a needed load to be skipped.
+func (a *app) currentReviewPR(ctx context.Context, apiURL, channelID string) (int, error) {
+	url := fmt.Sprintf("%s/api/channels/%s/review", apiURL, channelID)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return 0, fmt.Errorf("building session request: %w", err)
+	}
+	resp, err := a.reviewHTTPClient().Do(req)
+	if err != nil {
+		return 0, fmt.Errorf("GET %s: %w", url, err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return 0, fmt.Errorf("GET %s: unexpected status %d", url, resp.StatusCode)
+	}
+	var raw struct {
+		Present bool `json:"present"`
+		Session *struct {
+			PR *struct {
+				Number int `json:"number"`
+			} `json:"pr"`
+		} `json:"session"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&raw); err != nil {
+		return 0, fmt.Errorf("decoding %s: %w", url, err)
+	}
+	if !raw.Present || raw.Session == nil || raw.Session.PR == nil {
+		return 0, nil
+	}
+	return raw.Session.PR.Number, nil
 }
 
 // errReviewSessionGone surfaces present=false from a /review GET poll.

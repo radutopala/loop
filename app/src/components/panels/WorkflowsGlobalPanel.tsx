@@ -8,8 +8,9 @@ import { fonts } from "../../theme";
 import { useTheme } from "../../ThemeContext";
 import { ChannelHeaderInfo } from "../layout/ChannelHeaderInfo";
 import { useWorkflowState } from "../../hooks/useWorkflowState";
-import { buildHeaderBtnStyle, buildBtnStyle, hoverIn, hoverOut } from "../../utils/workflowHelpers";
+import { buildHeaderBtnStyle, hoverIn, hoverOut } from "../../utils/workflowHelpers";
 import { WorkflowRunRow } from "./WorkflowRunRow";
+import { WorkflowDefList } from "./WorkflowDefList";
 import { WorkflowDetail } from "./WorkflowDetail";
 import { WorkflowStartDialog } from "./WorkflowStartDialog";
 
@@ -43,7 +44,6 @@ export const WorkflowsGlobalPanel = forwardRef<WorkflowsGlobalPanelHandle, Workf
     });
 
     const headerBtnStyle = buildHeaderBtnStyle(colors);
-    const btnStyle = buildBtnStyle(colors);
 
     // Escape to close dialog first, then panel.
     useEffect(() => {
@@ -142,15 +142,6 @@ export const WorkflowsGlobalPanel = forwardRef<WorkflowsGlobalPanelHandle, Workf
             >
               Workflows ({wf.runs.length})
             </span>
-            {wf.definitionsLoaded && wf.definitions.length > 0 && (
-              <button
-                data-testid="start-workflow-btn"
-                onClick={wf.openStartDialog}
-                style={{ ...btnStyle, padding: "2px 8px", fontSize: 10 }}
-              >
-                + Run
-              </button>
-            )}
           </div>
           <button
             onClick={onClose}
@@ -179,6 +170,13 @@ export const WorkflowsGlobalPanel = forwardRef<WorkflowsGlobalPanelHandle, Workf
               background: colors.bg,
             }}
           >
+            <WorkflowDefList
+              grouped={wf.groupedDefinitions}
+              selectedName={wf.selectedWorkflowName}
+              onSelect={wf.setSelectedWorkflowName}
+              onRun={wf.handleRunWorkflow}
+              colors={colors}
+            />
             <div
               style={{ flex: 1, overflowY: "auto" }}
               onScroll={(e) => {
@@ -188,7 +186,7 @@ export const WorkflowsGlobalPanel = forwardRef<WorkflowsGlobalPanelHandle, Workf
                 }
               }}
             >
-              {wf.sortedRuns.map((r) => (
+              {wf.displayedRuns.map((r) => (
                 <WorkflowRunRow
                   key={r.id}
                   run={r}
@@ -204,14 +202,14 @@ export const WorkflowsGlobalPanel = forwardRef<WorkflowsGlobalPanelHandle, Workf
                   Loading more…
                 </div>
               )}
-              {!wf.hasMore && wf.runs.length > 0 && (
+              {!wf.hasMore && !wf.selectedWorkflowName && wf.runs.length > 0 && (
                 <div style={{ padding: 12, color: colors.textDim, fontSize: 11, textAlign: "center", opacity: 0.6 }}>
                   End of history
                 </div>
               )}
-              {wf.runs.length === 0 && (
+              {wf.displayedRuns.length === 0 && (
                 <div style={{ padding: 16, color: colors.textDim, fontSize: 12, textAlign: "center" }}>
-                  No workflow runs
+                  {wf.selectedWorkflowName ? `No runs for ${wf.selectedWorkflowName}` : "No workflow runs"}
                 </div>
               )}
             </div>
@@ -251,15 +249,13 @@ export const WorkflowsGlobalPanel = forwardRef<WorkflowsGlobalPanelHandle, Workf
 
         <WorkflowStartDialog
           show={wf.showStartDialog}
-          definitions={wf.definitions}
-          startWorkflowName={wf.startWorkflowName}
           startInputs={wf.startInputs}
           selectedStartDef={wf.selectedStartDef}
           colors={colors}
           onClose={() => wf.setShowStartDialog(false)}
-          onSelectWorkflow={wf.handleSelectWorkflow}
           onInputChange={wf.setStartInputs}
           onStart={wf.handleStartRun}
+          onSave={wf.handleSaveWorkflowDef}
           testId="start-workflow-dialog"
         />
       </div>

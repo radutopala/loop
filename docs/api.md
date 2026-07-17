@@ -2763,10 +2763,11 @@ List all available workflow definitions from the merged config.
 | `dir_path` | string | Optional project directory for project-level config merge |
 | `channel_id` | string | Optional channel ID — resolves `dir_path` and parent from DB for three-layer config merge (global → parent → worktree) |
 
-**Response (200):**
+**Response (200):** Each definition is tagged with its config `scope` (`"global"` or `"project"`) so the panel can group them. With no channel/dir every entry is global; with a channel, names present only in the project's config are `"project"`.
 ```json
 [
   {
+    "scope": "global",
     "name": "code-review",
     "description": "Review branch changes",
     "inputs": {},
@@ -2873,6 +2874,8 @@ Get a workflow run with all node statuses and outputs.
       "run_id": "wfr-a1b2c3d4e5f67890",
       "node_id": "diff",
       "status": "success",
+      "input": "git diff main...HEAD",
+      "session_id": "",
       "output": "+added line\n-removed line",
       "attempt": 1,
       "started_at": "2026-04-11T10:00:00Z",

@@ -349,14 +349,18 @@ export function TasksPanel({ channelId, allowWorktree, onSelectChannel }: TasksP
             ))}
           </select>
           {selectedNewWorkflow?.inputs && Object.entries(selectedNewWorkflow.inputs).map(([key, def]) => (
-            <input
-              key={key}
-              type="text"
-              placeholder={def.description ? `${key} — ${def.description}` : key}
-              value={newWorkflowInputs[key] ?? ""}
-              onChange={(e) => setNewWorkflowInputs((prev) => ({ ...prev, [key]: e.target.value }))}
-              style={inputStyle}
-            />
+            <div key={key} style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+              <label style={{ fontSize: 11, color: colors.textDim }}>
+                {key}{def.required ? " *" : ""}{def.description ? ` — ${def.description}` : ""}
+              </label>
+              <input
+                type="text"
+                placeholder={def.default ? `default: ${def.default}` : key}
+                value={newWorkflowInputs[key] ?? ""}
+                onChange={(e) => setNewWorkflowInputs((prev) => ({ ...prev, [key]: e.target.value }))}
+                style={inputStyle}
+              />
+            </div>
           ))}
         </>
       )}
@@ -558,14 +562,18 @@ export function TasksPanel({ channelId, allowWorktree, onSelectChannel }: TasksP
                 ))}
               </select>
               {selectedEditWorkflow?.inputs && Object.entries(selectedEditWorkflow.inputs).map(([key, def]) => (
-                <input
-                  key={key}
-                  type="text"
-                  placeholder={def.description ? `${key} — ${def.description}` : key}
-                  value={editWorkflowInputs[key] ?? ""}
-                  onChange={(e) => setEditWorkflowInputs((prev) => ({ ...prev, [key]: e.target.value }))}
-                  style={inputStyle}
-                />
+                <div key={key} style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+                  <label style={{ fontSize: 11, color: colors.textDim }}>
+                    {key}{def.required ? " *" : ""}{def.description ? ` — ${def.description}` : ""}
+                  </label>
+                  <input
+                    type="text"
+                    placeholder={def.default ? `default: ${def.default}` : key}
+                    value={editWorkflowInputs[key] ?? ""}
+                    onChange={(e) => setEditWorkflowInputs((prev) => ({ ...prev, [key]: e.target.value }))}
+                    style={inputStyle}
+                  />
+                </div>
               ))}
             </>
           )}

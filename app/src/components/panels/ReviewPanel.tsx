@@ -506,10 +506,17 @@ export function ReviewPanel({
       // the button re-enables itself.
       setSession((prev) => prev ? { ...prev, status: "reviewing" } : prev);
       const workflowName = m === "review-fix" ? REVIEW_FIX_LOOP_WORKFLOW : REVIEW_LOOP_WORKFLOW;
+      // Carry the loaded PR number into the run so it's explicit in the
+      // workflow's inputs (and the review CLI's `--pr`). The CLI skips the
+      // redundant load when the session is already on this PR.
+      const prNumber = session?.pr?.number;
       const resp = await startWorkflowRun({
         workflow_name: workflowName,
         channel_id: channelId,
-        inputs: { max_iterations: String(maxIter) },
+        inputs: {
+          max_iterations: String(maxIter),
+          ...(prNumber ? { pr: String(prNumber) } : {}),
+        },
       });
       // Persist the run id before setLoopRunId so the resync effect (which
       // fires on loopRunId changes) sees the storage entry. Without this the
