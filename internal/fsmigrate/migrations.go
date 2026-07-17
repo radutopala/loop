@@ -588,10 +588,7 @@ func patchReviewLoopEnvAndPRInputReport(_ context.Context, c *Ctx) ([]string, er
 		return nil, nil
 	}
 
-	descJSON, _ := json.Marshal(reviewPRInputDesc) // a plain string cannot fail
-	newScriptJSON, _ := json.Marshal(reviewRunScript)
-
-	var ops []string
+	var ops []jsonPatchOp
 	patchedSet := map[string]struct{}{}
 	for i := range wfsArr.Elements {
 		wfObj, ok := wfsArr.Elements[i].Value.(*hujson.Object)
@@ -627,7 +624,11 @@ func patchReviewLoopEnvAndPRInputReport(_ context.Context, c *Ctx) ([]string, er
 						continue
 					}
 					if sc, ok := memberString(childObj, "script"); ok && sc == reviewRunScriptOld {
-						ops = append(ops, fmt.Sprintf(`{"op":"replace","path":"/workflows/%d/nodes/%d/body/%d/script","value":%s}`, i, j, k, newScriptJSON))
+						ops = append(ops, jsonPatchOp{
+							Op:    "replace",
+							Path:  fmt.Sprintf("/workflows/%d/nodes/%d/body/%d/script", i, j, k),
+							Value: reviewRunScript,
+						})
 						patchedSet[name] = struct{}{}
 					}
 				}
@@ -637,7 +638,11 @@ func patchReviewLoopEnvAndPRInputReport(_ context.Context, c *Ctx) ([]string, er
 		// (2) Add the `pr` input when the workflow declares inputs but lacks it.
 		if inputsVal := findObjectMember(wfObj, "inputs"); inputsVal != nil {
 			if inputsObj, ok := inputsVal.Value.(*hujson.Object); ok && findObjectMember(inputsObj, "pr") == nil {
-				ops = append(ops, fmt.Sprintf(`{"op":"add","path":"/workflows/%d/inputs/pr","value":{"description":%s,"default":""}}`, i, descJSON))
+				ops = append(ops, jsonPatchOp{
+					Op:    "add",
+					Path:  fmt.Sprintf("/workflows/%d/inputs/pr", i),
+					Value: workflowInputValue{Description: reviewPRInputDesc, Default: ""},
+				})
 				patchedSet[name] = struct{}{}
 			}
 		}
@@ -645,7 +650,12 @@ func patchReviewLoopEnvAndPRInputReport(_ context.Context, c *Ctx) ([]string, er
 	if len(ops) == 0 {
 		return nil, nil
 	}
-	_ = v.Patch([]byte("[" + strings.Join(ops, ",") + "]"))
+	// Marshal the whole RFC 6902 op list at once so every string value
+	// (script, description) is JSON-escaped by the encoder — never by hand-
+	// rolled string formatting — which keeps the patch injection-safe. The
+	// ops hold only strings and a fixed struct, so marshaling cannot fail.
+	patch, _ := json.Marshal(ops)
+	_ = v.Patch(patch)
 	if err := atomicWriteConfig(c.Sys, configPath, v.Pack(), 0644); err != nil {
 		return nil, fmt.Errorf("writing %s: %w", configPath, err)
 	}
@@ -654,6 +664,23 @@ func patchReviewLoopEnvAndPRInputReport(_ context.Context, c *Ctx) ([]string, er
 		patched = append(patched, n)
 	}
 	return patched, nil
+}
+
+// jsonPatchOp is a single RFC 6902 operation. Building ops as typed values and
+// marshaling them (rather than fmt.Sprintf-ing JSON fragments) guarantees every
+// string value is properly escaped, so a value containing a quote can't break
+// out of the patch document.
+type jsonPatchOp struct {
+	Op    string `json:"op"`
+	Path  string `json:"path"`
+	Value any    `json:"value"`
+}
+
+// workflowInputValue is the shape of a workflow input definition, used as a
+// patch `value` when adding the `pr` input.
+type workflowInputValue struct {
+	Description string `json:"description"`
+	Default     string `json:"default"`
 }
 
 // arrayValue returns v's underlying hujson.Array when v is non-nil and holds
