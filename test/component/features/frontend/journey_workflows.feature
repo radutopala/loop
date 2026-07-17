@@ -14,17 +14,17 @@ Feature: Workflows
     # Open workflows panel from sidebar
     When I open the workflows panel
     Then I wait for text "No workflow runs" to appear
-    And I wait up to "10s" for text "+ Run" to appear
+    And I wait up to "10s" for text "bdd-test-workflow" to appear
 
-    # Open start workflow dialog
-    When I click button "+ Run" in the workflows panel
-    Then I wait for text "Start Workflow" to appear
+    # Open start workflow dialog via the workflow's Run button
+    When I click on "[data-testid=workflow-run-bdd-test-workflow]"
+    Then I wait for text "START WORKFLOW" to appear
     And the page should contain text "bdd-test-workflow"
     And the page should contain text "message"
 
     # Close start dialog via Cancel
     When I click on the button with text "Cancel"
-    Then I wait for text "Start Workflow" to disappear
+    Then I wait for text "START WORKFLOW" to disappear
 
     # Close panel via close button
     When I click on the button with title "Close panel"
@@ -42,31 +42,29 @@ Feature: Workflows
     Then I wait for text "0 runs" to appear
     And the page should contain text "No workflow runs"
 
-    # Open start dialog, verify workflow definition appears
-    When I click button "+" in the workflows split panel
-    Then I wait for text "Start Workflow" to appear
+    # Open start dialog via the workflow's Run button
+    When I click on "[data-testid=workflow-run-bdd-test-workflow]"
+    Then I wait for text "START WORKFLOW" to appear
     And the page should contain text "bdd-test-workflow"
     And the page should contain text "message"
 
     # Cancel dialog — verify empty state persists
     When I click on the button with text "Cancel"
-    Then I wait for text "Start Workflow" to disappear
+    Then I wait for text "START WORKFLOW" to disappear
     And the page should contain text "No workflow runs"
 
     # Start a workflow run
-    When I click button "+" in the workflows split panel
-    And I wait for text "Start Workflow" to appear
-    And I select "bdd-test-workflow" from "[data-testid=workflow-start-select]"
+    When I click on "[data-testid=workflow-run-bdd-test-workflow]"
+    And I wait for text "START WORKFLOW" to appear
     And I click on the button with text "Start"
-    Then I wait for text "Start Workflow" to disappear
+    Then I wait for text "START WORKFLOW" to disappear
 
-    # Verify run appears and completes
-    And I wait for text "bdd-test-workflow" to appear
+    # Verify the run appears and completes
     And I wait up to "90s" for text "COMPLETED" to appear
 
-    # Click run to see detail
-    When I click on "bdd-test-workflow" in the workflows split panel
-    Then I wait for text "COMPLETED" to appear
+    # Click the completed run to open its detail (Retry is detail-only)
+    When I click on "COMPLETED" in the workflows split panel
+    Then I wait for text "Retry" to appear
 
   Scenario: Workflow tasks in per-channel and global panels
     # Seed channel with one regular task and one workflow task
@@ -153,18 +151,16 @@ Feature: Workflows
     Then I wait for text "0 runs" to appear
 
     # Start a workflow run
-    When I click button "+" in the workflows split panel
-    And I wait for text "Start Workflow" to appear
-    And I select "bdd-test-workflow" from "[data-testid=workflow-start-select]"
+    When I click on "[data-testid=workflow-run-bdd-test-workflow]"
+    And I wait for text "START WORKFLOW" to appear
     And I click on the button with text "Start"
-    Then I wait for text "Start Workflow" to disappear
+    Then I wait for text "START WORKFLOW" to disappear
 
     # Wait for run to complete (allow time for Docker fallback timeout)
-    And I wait for text "bdd-test-workflow" to appear
     And I wait up to "90s" for text "COMPLETED" to appear
 
     # Select the run to see detail with Delete button
-    When I click on "bdd-test-workflow" in the workflows split panel
+    When I click on "COMPLETED" in the workflows split panel
     Then I wait for text "Delete" to appear
 
     # Delete the run — confirm the popover, then list should return to empty
@@ -186,19 +182,17 @@ Feature: Workflows
     Then I wait for text "0 runs" to appear
 
     # Start a workflow run
-    When I click button "+" in the workflows split panel
-    And I wait for text "Start Workflow" to appear
-    And I select "bdd-test-workflow" from "[data-testid=workflow-start-select]"
+    When I click on "[data-testid=workflow-run-bdd-test-workflow]"
+    And I wait for text "START WORKFLOW" to appear
     And I click on the button with text "Start"
-    Then I wait for text "Start Workflow" to disappear
+    Then I wait for text "START WORKFLOW" to disappear
 
     # Wait for run to complete (allow time for Docker fallback timeout)
-    And I wait for text "bdd-test-workflow" to appear
     And I wait up to "90s" for text "COMPLETED" to appear
     And the page should contain text "1 run"
 
     # Select the completed run to see Retry button
-    When I click on "bdd-test-workflow" in the workflows split panel
+    When I click on "COMPLETED" in the workflows split panel
     Then I wait for text "Retry" to appear
 
     # Retry the run — a second run should appear
@@ -231,12 +225,10 @@ Feature: Workflows
     When I click on "bdd-wf-global" in the sidebar
     And I wait for "textarea" to be visible
     And I add a "Workflows" panel
-    And I click button "+" in the workflows split panel
-    And I wait for text "Start Workflow" to appear
-    And I select "bdd-test-workflow" from "[data-testid=workflow-start-select]"
+    And I click on "[data-testid=workflow-run-bdd-test-workflow]"
+    And I wait for text "START WORKFLOW" to appear
     And I click on the button with text "Start"
-    Then I wait for text "Start Workflow" to disappear
-    And I wait for text "bdd-test-workflow" to appear
+    Then I wait for text "START WORKFLOW" to disappear
     And I wait up to "90s" for text "COMPLETED" to appear
 
     # Open the global workflows panel — the row is enriched with channel pill and dir_path
