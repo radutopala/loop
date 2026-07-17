@@ -21,7 +21,8 @@ type Runner interface {
 	Run(ctx context.Context, req *agent.AgentRequest) (*agent.AgentResponse, error)
 }
 
-// BashRunner executes shell scripts (typically in Docker containers).
+// BashRunner executes shell scripts (typically in Docker containers) and returns
+// the combined stdout/stderr.
 type BashRunner interface {
 	RunBash(ctx context.Context, script, channelID, dirPath string) (string, error)
 }
@@ -131,15 +132,17 @@ func (e *defaultEngine) StartRun(ctx context.Context, opts StartRunOptions) (str
 		}
 	}
 
-	// Apply input defaults then user-provided inputs. Skip empty-string
-	// overrides: external callers (CLI, MCP, future automation) that send
-	// `{"name": ""}` explicitly would otherwise wipe out the default and
-	// surface as strconv/parse failures downstream.
+	// Apply input defaults then user-provided inputs. Every declared input is
+	// seeded — even ones whose default is "" — so a `{{.Inputs.name}}` template
+	// renders an empty string rather than Go's map-miss sentinel `<no value>`
+	// (which, spliced into a bash node like `--pr {{.Inputs.pr}}`, turns into
+	// `--pr <no value>` and breaks the shell on the `<`/`>` redirects). Skip
+	// empty-string overrides: external callers (CLI, MCP, future automation)
+	// that send `{"name": ""}` explicitly would otherwise wipe out a non-empty
+	// default and surface as strconv/parse failures downstream.
 	inputs := make(map[string]string)
 	for name, input := range wfDef.Inputs {
-		if input.Default != "" {
-			inputs[name] = input.Default
-		}
+		inputs[name] = input.Default
 	}
 	for k, v := range opts.Inputs {
 		if v == "" {

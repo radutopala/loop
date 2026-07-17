@@ -697,6 +697,7 @@ func (s *MainSuite) TestNewReviewRunCmdInvalidTimeout() {
 }
 
 func (s *MainSuite) TestNewReviewRunCmdRequiresChannelID() {
+	s.T().Setenv("CHANNEL_ID", "") // isolate from the daemon-injected env
 	cmd := s.app.newReviewCmd()
 	cmd.SetArgs([]string{"run"})
 	cmd.SetOut(new(bytes.Buffer))
@@ -704,6 +705,295 @@ func (s *MainSuite) TestNewReviewRunCmdRequiresChannelID() {
 	err := cmd.Execute()
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "channel-id")
+}
+
+// --- resolveReviewChannelID ---
+
+func (s *MainSuite) TestResolveReviewChannelIDFlagWins() {
+	require.Equal(s.T(), "flag-ch", resolveReviewChannelID("flag-ch", "env-ch"))
+}
+
+func (s *MainSuite) TestResolveReviewChannelIDEnvFallback() {
+	require.Equal(s.T(), "env-ch", resolveReviewChannelID("", "env-ch"))
+}
+
+func (s *MainSuite) TestResolveReviewChannelIDBothEmpty() {
+	require.Equal(s.T(), "", resolveReviewChannelID("", ""))
+}
+
+// --- parsePRNumber ---
+
+func (s *MainSuite) TestParsePRNumber() {
+	cases := []struct {
+		in   string
+		want int
+		ok   bool
+	}{
+		{"123", 123, true},
+		{"  42 ", 42, true},
+		{"https://github.com/org/repo/pull/567", 567, true},
+		{"https://github.com/org/repo/pull/567/files", 567, true},
+		{"https://github.com/org/repo/pull/89?tab=x", 89, true},
+		{"0", 0, false},
+		{"-5", 0, false},
+		{"abc", 0, false},
+		{".../pull/", 0, false},
+	}
+	for _, c := range cases {
+		n, err := parsePRNumber(c.in)
+		if c.ok {
+			require.NoError(s.T(), err, c.in)
+			require.Equal(s.T(), c.want, n, c.in)
+		} else {
+			require.Error(s.T(), err, c.in)
+		}
+	}
+}
+
+// --- loadReview ---
+
+func (s *MainSuite) TestLoadReviewSuccess() {
+	var loaded atomic.Bool
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.Equal(s.T(), http.MethodPost, r.Method)
+		require.Equal(s.T(), "/api/channels/ch1/review/load", r.URL.Path)
+		body, _ := io.ReadAll(r.Body)
+		require.Contains(s.T(), string(body), `"pr_number":567`)
+		loaded.Store(true)
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"present":true}`))
+	}))
+	defer ts.Close()
+
+	s.app.reviewClient = http.DefaultClient
+	err := s.app.loadReview(context.Background(), ts.URL, "ch1", 567, time.Second)
+	require.NoError(s.T(), err)
+	require.True(s.T(), loaded.Load())
+}
+
+func (s *MainSuite) TestLoadReviewNon2xx() {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, "PR not found", http.StatusNotFound)
+	}))
+	defer ts.Close()
+
+	s.app.reviewClient = http.DefaultClient
+	err := s.app.loadReview(context.Background(), ts.URL, "ch1", 999, time.Second)
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "loading PR #999")
+	require.Contains(s.T(), err.Error(), "404")
+}
+
+func (s *MainSuite) TestLoadReviewTransportError() {
+	s.app.reviewClient = &stubHTTPClient{err: errors.New("network down")}
+	err := s.app.loadReview(context.Background(), "http://x", "ch1", 5, time.Second)
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "network down")
+}
+
+func (s *MainSuite) TestLoadReviewBuildRequestError() {
+	// An invalid URL with control bytes fails http.NewRequestWithContext.
+	err := s.app.loadReview(context.Background(), "http://\x7f", "ch1", 5, time.Second)
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "building load request")
+}
+
+// --- currentReviewPR ---
+
+func (s *MainSuite) TestCurrentReviewPRReturnsLoadedPR() {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.Equal(s.T(), http.MethodGet, r.Method)
+		require.Equal(s.T(), "/api/channels/ch1/review", r.URL.Path)
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"present":true,"session":{"pr":{"number":42}}}`))
+	}))
+	defer ts.Close()
+
+	s.app.reviewClient = http.DefaultClient
+	pr, err := s.app.currentReviewPR(context.Background(), ts.URL, "ch1")
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), 42, pr)
+}
+
+func (s *MainSuite) TestCurrentReviewPRNoSession() {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"present":false}`))
+	}))
+	defer ts.Close()
+
+	s.app.reviewClient = http.DefaultClient
+	pr, err := s.app.currentReviewPR(context.Background(), ts.URL, "ch1")
+	require.NoError(s.T(), err)
+	require.Zero(s.T(), pr)
+}
+
+func (s *MainSuite) TestCurrentReviewPRSessionWithoutPR() {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"present":true,"session":{}}`))
+	}))
+	defer ts.Close()
+
+	s.app.reviewClient = http.DefaultClient
+	pr, err := s.app.currentReviewPR(context.Background(), ts.URL, "ch1")
+	require.NoError(s.T(), err)
+	require.Zero(s.T(), pr)
+}
+
+func (s *MainSuite) TestCurrentReviewPRNon200() {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, "boom", http.StatusInternalServerError)
+	}))
+	defer ts.Close()
+
+	s.app.reviewClient = http.DefaultClient
+	_, err := s.app.currentReviewPR(context.Background(), ts.URL, "ch1")
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "unexpected status 500")
+}
+
+func (s *MainSuite) TestCurrentReviewPRInvalidJSON() {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{not json`))
+	}))
+	defer ts.Close()
+
+	s.app.reviewClient = http.DefaultClient
+	_, err := s.app.currentReviewPR(context.Background(), ts.URL, "ch1")
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "decoding")
+}
+
+func (s *MainSuite) TestCurrentReviewPRTransportError() {
+	s.app.reviewClient = &stubHTTPClient{err: errors.New("network down")}
+	_, err := s.app.currentReviewPR(context.Background(), "http://x", "ch1")
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "network down")
+}
+
+func (s *MainSuite) TestCurrentReviewPRBuildRequestError() {
+	_, err := s.app.currentReviewPR(context.Background(), "http://\x7f", "ch1")
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "building session request")
+}
+
+func (s *MainSuite) TestNewReviewRunCmdPRLoadFails() {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/review/load"):
+			http.Error(w, "PR not found", http.StatusNotFound)
+		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/review"):
+			// No session loaded yet → the load is attempted (and fails).
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"present":false}`))
+		default:
+			s.T().Fatalf("run should not be reached when load fails: %s", r.URL.Path)
+		}
+	}))
+	defer ts.Close()
+
+	s.app.reviewClient = http.DefaultClient
+	cmd := s.app.newReviewCmd()
+	cmd.SetArgs([]string{"run", "--channel-id", "ch1", "--api-url", ts.URL, "--pr", "999"})
+	cmd.SetOut(new(bytes.Buffer))
+	cmd.SetErr(new(bytes.Buffer))
+	err := cmd.Execute()
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "loading PR #999")
+}
+
+// --- --pr flow (load then run) ---
+
+func (s *MainSuite) TestNewReviewRunCmdWithPRLoadsThenRuns() {
+	var loadHit, runHit atomic.Bool
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/review"):
+			// Session is on a different PR → the requested PR must be loaded.
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"present":true,"session":{"pr":{"number":111}}}`))
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/review/load"):
+			loadHit.Store(true)
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"present":true}`))
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/review/run"):
+			runHit.Store(true)
+			w.WriteHeader(http.StatusAccepted)
+		default:
+			http.Error(w, "unexpected", http.StatusBadRequest)
+		}
+	}))
+	defer ts.Close()
+
+	s.app.reviewClient = http.DefaultClient
+	cmd := s.app.newReviewCmd()
+	cmd.SetArgs([]string{"run", "--channel-id", "ch1", "--api-url", ts.URL, "--pr", "567"})
+	cmd.SetOut(new(bytes.Buffer))
+	cmd.SetErr(new(bytes.Buffer))
+	require.NoError(s.T(), cmd.Execute())
+	require.True(s.T(), loadHit.Load(), "PR should be loaded first")
+	require.True(s.T(), runHit.Load(), "review should run after load")
+}
+
+// When the channel's session is already on the requested PR (e.g. the Review
+// panel pre-loaded it), the destructive load is skipped and only the run fires.
+func (s *MainSuite) TestNewReviewRunCmdSkipsLoadWhenSessionOnSamePR() {
+	var runHit atomic.Bool
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/review"):
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"present":true,"session":{"pr":{"number":567}}}`))
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/review/load"):
+			s.T().Fatalf("load must be skipped when session already on the PR")
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/review/run"):
+			runHit.Store(true)
+			w.WriteHeader(http.StatusAccepted)
+		default:
+			http.Error(w, "unexpected", http.StatusBadRequest)
+		}
+	}))
+	defer ts.Close()
+
+	s.app.reviewClient = http.DefaultClient
+	cmd := s.app.newReviewCmd()
+	cmd.SetArgs([]string{"run", "--channel-id", "ch1", "--api-url", ts.URL, "--pr", "567"})
+	cmd.SetOut(new(bytes.Buffer))
+	cmd.SetErr(new(bytes.Buffer))
+	require.NoError(s.T(), cmd.Execute())
+	require.True(s.T(), runHit.Load(), "review should run without a reload")
+}
+
+func (s *MainSuite) TestNewReviewRunCmdInvalidPR() {
+	cmd := s.app.newReviewCmd()
+	cmd.SetArgs([]string{"run", "--channel-id", "ch1", "--pr", "nope"})
+	cmd.SetOut(new(bytes.Buffer))
+	cmd.SetErr(new(bytes.Buffer))
+	err := cmd.Execute()
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "invalid --pr")
+}
+
+func (s *MainSuite) TestNewReviewRunCmdChannelIDFromEnv() {
+	s.T().Setenv("CHANNEL_ID", "env-ch")
+	var runHit atomic.Bool
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.Equal(s.T(), "/api/channels/env-ch/review/run", r.URL.Path)
+		runHit.Store(true)
+		w.WriteHeader(http.StatusAccepted)
+	}))
+	defer ts.Close()
+
+	s.app.reviewClient = http.DefaultClient
+	cmd := s.app.newReviewCmd()
+	// No --channel-id — resolved from $CHANNEL_ID.
+	cmd.SetArgs([]string{"run", "--api-url", ts.URL})
+	cmd.SetOut(new(bytes.Buffer))
+	cmd.SetErr(new(bytes.Buffer))
+	require.NoError(s.T(), cmd.Execute())
+	require.True(s.T(), runHit.Load())
 }
 
 func (s *MainSuite) TestNewReviewRunCmdHappyPathNoWait() {

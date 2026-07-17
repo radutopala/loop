@@ -47,7 +47,10 @@ per-global / per-project / per-worktree the same way as `github.gh_user`.
    Both modes are backed by seeded workflows (`review-loop`,
    `review-fix-loop`) shipped via `fsmigrate`; the fix-loop body runs
    `review → fix → verify` per iteration, where `verify` stages and
-   commits any leftover changes via `git add -u` (tracked-only). A chip
+   commits any leftover changes via `git add -u` (tracked-only). Because
+   these are real workflow runs, each node's input/output (and the `fix`
+   prompt node's Claude session id) is inspectable in the Workflows panel —
+   see [Per-Node Run View](workflows.md#per-node-run-view). A chip
    in the panel header mirrors the workflow events
    (`workflow.node_started`, `workflow.run_completed`, …) so the
    operator can see `review iter 2/3 — running`, `fixing — iter 2/3`,
@@ -90,17 +93,27 @@ already does for other agent runs.
 ## CLI
 
 The host-side `loop review run` subcommand drives the same async
-endpoint from a shell or a workflow `bash` node. Inside the seeded
-review workflows the bash body looks like:
+endpoint from a shell or a workflow `bash` node. The agent container
+exports both `CHANNEL_ID` and `API_URL`, and the CLI falls back to them,
+so the seeded review workflows' bash body is simply:
 
 ```sh
-loop review run --channel-id $CHANNEL_ID --api-url $API_URL --wait
+loop review run --pr {{.Inputs.pr}} --wait
 ```
+
+`--pr` is optional (blank via the seeded `pr` input) — leave it blank to
+review the channel's already-loaded review, or pass a PR number/URL to load
+and review that PR. The load is **idempotent**: `loop review run` first GETs
+the channel's review session and skips the (destructive, worktree-rebuilding)
+load when it's already on that PR. So the Review panel can pre-load a PR and
+pass its number as the `pr` input for traceability without triggering a second
+load. Any session-lookup failure falls back to loading.
 
 | Flag | Default | Description |
 |---|---|---|
-| `--channel-id` | (required) | Channel whose review session to drive. |
+| `--channel-id` | `$CHANNEL_ID` | Channel whose review session to drive. Falls back to the container-injected `$CHANNEL_ID`; required only if neither is set. |
 | `--api-url` | `$API_URL` then `http://localhost:8222` | Daemon URL. The agent container already exports `$API_URL`. |
+| `--pr` | (none) | PR number (`567`) or URL (`.../pull/567`) to **load** into the channel's review session (fetch PR + create its worktree) before running. Omitted → review whatever the channel already has loaded. |
 | `--wait` | `false` | Block until the session reaches a terminal status (`ready` or `error`) and emit the JSON envelope to stdout. Without `--wait`, the command exits 0 immediately after the `202`. |
 | `--timeout` | `60m` | Bound on the total `--wait` time. Enforced inside the HTTP client, not just between polls, so a hung response can't outlive the deadline. Transient transport errors (TCP reset, momentary daemon restart, proxy 502) back off and retry instead of failing the whole loop. Sits above the daemon-side review ceiling (50m) so the daemon flips first with a meaningful error rather than the CLI's generic timeout. |
 

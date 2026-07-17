@@ -5,6 +5,7 @@ import {
   fetchWorkflowRuns,
   fetchWorkflowRun,
   startWorkflowRun,
+  saveWorkflowDef,
   resumeWorkflowRun,
   cancelWorkflowRun,
   deleteWorkflowRun,
@@ -35,6 +36,8 @@ export function useWorkflowState({
   const [definitionsLoaded, setDefinitionsLoaded] = useState(false);
   const [runs, setRuns] = useState<WorkflowRun[]>([]);
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
+  // When set, the run list is filtered to this workflow (from the def list).
+  const [selectedWorkflowName, setSelectedWorkflowName] = useState<string | null>(null);
   const [nodeRuns, setNodeRuns] = useState<WorkflowNodeRun[]>([]);
   const [expandedNodeId, setExpandedNodeId] = useState<string | null>(null);
   const [listWidth, setListWidth] = useState(initialListWidth);
@@ -247,20 +250,39 @@ export function useWorkflowState({
     }
   }, [definitions]);
 
-  const openStartDialog = useCallback(() => {
+  // Run a workflow from its row ("Run Now") — always opens the start dialog so
+  // the user can review inputs and the full definition (and optionally edit it)
+  // before starting.
+  const handleRunWorkflow = useCallback((name: string) => {
+    handleSelectWorkflow(name);
     setShowStartDialog(true);
-    const first = definitions[0];
-    if (first && !startWorkflowName) {
-      setStartWorkflowName(first.name);
-      const initial: Record<string, string> = {};
-      if (first.inputs) {
-        for (const [k, v] of Object.entries(first.inputs)) {
-          initial[k] = v.default ?? "";
-        }
-      }
-      setStartInputs(initial);
+  }, [handleSelectWorkflow]);
+
+  // Persist an edited workflow definition (from the start dialog's JSON editor)
+  // back to its config scope, then refresh the definition list. Returns an error
+  // message on failure, or null on success.
+  const handleSaveWorkflowDef = useCallback(async (jsonText: string): Promise<string | null> => {
+    let parsed: WorkflowDef & { scope?: unknown };
+    try {
+      parsed = JSON.parse(jsonText);
+    } catch (err) {
+      return `Invalid JSON: ${err instanceof Error ? err.message : String(err)}`;
     }
-  }, [definitions, startWorkflowName]);
+    if (!parsed || typeof parsed.name !== "string" || parsed.name === "") {
+      return "Definition must have a non-empty \"name\".";
+    }
+    const scope = definitions.find((d) => d.name === parsed.name)?.scope ?? "global";
+    // scope is a UI-only tag, not part of the stored definition.
+    const { scope: _drop, ...workflow } = parsed;
+    void _drop;
+    try {
+      await saveWorkflowDef({ action: "update", scope, channel_id: channelId, workflow });
+      await loadDefinitions();
+      return null;
+    } catch (err) {
+      return err instanceof Error ? err.message : String(err);
+    }
+  }, [definitions, channelId, loadDefinitions]);
 
   const toggleNodeExpand = useCallback((nodeId: string) => {
     setExpandedNodeId((prev) => {
@@ -303,6 +325,21 @@ export function useWorkflowState({
     }),
   [runs]);
 
+  // Runs shown in the list: all, or filtered to the selected workflow definition.
+  const displayedRuns = useMemo(
+    () => selectedWorkflowName
+      ? sortedRuns.filter((r) => r.workflow_name === selectedWorkflowName)
+      : sortedRuns,
+    [sortedRuns, selectedWorkflowName],
+  );
+
+  // Definitions grouped by config scope for the panel's Global / Project sections
+  // (untagged legacy defs default to global).
+  const groupedDefinitions = useMemo(() => ({
+    global: definitions.filter((d) => (d.scope ?? "global") === "global"),
+    project: definitions.filter((d) => d.scope === "project"),
+  }), [definitions]);
+
   const selectedRun = runs.find((r) => r.id === selectedRunId) ?? null;
 
   const selectedDef = useMemo(() => {
@@ -336,6 +373,10 @@ export function useWorkflowState({
 
     // Derived
     sortedRuns,
+    displayedRuns,
+    groupedDefinitions,
+    selectedWorkflowName,
+    setSelectedWorkflowName,
     selectedRun,
     selectedDef,
     selectedStartDef,
@@ -347,7 +388,8 @@ export function useWorkflowState({
     handleResume,
     handleStartRun,
     handleSelectWorkflow,
-    openStartDialog,
+    handleRunWorkflow,
+    handleSaveWorkflowDef,
     toggleNodeExpand,
     selectRun,
     onDividerMouseDown,

@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/radutopala/loop/internal/config"
 	"github.com/radutopala/loop/internal/db"
 	"github.com/radutopala/loop/internal/workflow"
 	"github.com/tailscale/hujson"
@@ -304,7 +305,37 @@ func (s *Server) handleListWorkflows(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeHTTPJSON(w, http.StatusOK, workflows, s.logger)
+	// Tag each definition's scope so the panel can group Global vs Project (like
+	// the Tasks panel). With no channel/dir there's only global config, so every
+	// entry is global. With a channel, the merged list may include project-scoped
+	// workflows: a name present in the global-only list is "global", else "project".
+	globalNames := map[string]struct{}{}
+	if dirPath != "" || parentDirPath != "" {
+		if g, gerr := s.workflowEngine.ListWorkflows(r.Context(), "", ""); gerr == nil {
+			for _, wf := range g {
+				globalNames[wf.Name] = struct{}{}
+			}
+		}
+	}
+
+	scoped := make([]scopedWorkflow, 0, len(workflows))
+	for _, wf := range workflows {
+		scope := "global"
+		if _, isGlobal := globalNames[wf.Name]; (dirPath != "" || parentDirPath != "") && !isGlobal {
+			scope = "project"
+		}
+		scoped = append(scoped, scopedWorkflow{Scope: scope, WorkflowDef: wf})
+	}
+
+	writeHTTPJSON(w, http.StatusOK, scoped, s.logger)
+}
+
+// scopedWorkflow is a workflow definition tagged with its config scope
+// ("global" or "project") for the panel's grouped list. The embedded
+// WorkflowDef flattens name/description/inputs/nodes alongside scope.
+type scopedWorkflow struct {
+	Scope string `json:"scope"`
+	config.WorkflowDef
 }
 
 type workflowModifyRequest struct {

@@ -209,17 +209,23 @@ type WorkflowRun struct {
 
 // NodeRun records the execution of a single workflow node.
 type NodeRun struct {
-	ID              int64         `json:"id"`
-	RunID           string        `json:"run_id"`
-	NodeID          string        `json:"node_id"`
-	Iteration       int           `json:"iteration"`
-	Status          NodeRunStatus `json:"status"`
-	Output          string        `json:"output"`
-	ErrorText       string        `json:"error_text"`
-	Attempt         int           `json:"attempt"`
-	StartedAt       *time.Time    `json:"started_at"`
-	FinishedAt      *time.Time    `json:"finished_at"`
-	LastHeartbeatAt *time.Time    `json:"last_heartbeat_at,omitempty"`
+	ID        int64         `json:"id"`
+	RunID     string        `json:"run_id"`
+	NodeID    string        `json:"node_id"`
+	Iteration int           `json:"iteration"`
+	Status    NodeRunStatus `json:"status"`
+	// Input is the node's rendered input: the bash script for bash nodes, the
+	// resolved prompt for prompt nodes. Empty for loop/approval nodes.
+	Input string `json:"input"`
+	// SessionID is the Claude session id a prompt node's agent run produced, so
+	// its transcript is locatable and resumable. Empty for non-prompt nodes.
+	SessionID       string     `json:"session_id"`
+	Output          string     `json:"output"`
+	ErrorText       string     `json:"error_text"`
+	Attempt         int        `json:"attempt"`
+	StartedAt       *time.Time `json:"started_at"`
+	FinishedAt      *time.Time `json:"finished_at"`
+	LastHeartbeatAt *time.Time `json:"last_heartbeat_at,omitempty"`
 }
 
 // MemoryFileInfo holds a distinct file_path + dir_path pair from the memory_files table.

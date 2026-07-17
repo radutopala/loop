@@ -241,6 +241,40 @@ func (s *FSMigrateSuite) TestRestoreBuiltinWorkflowsSurfacesDepsPatcherError() {
 	require.Contains(s.T(), err.Error(), "disk read failed")
 }
 
+// TestRestoreBuiltinWorkflowsPatchesStaleReviewScript covers the env/pr patcher
+// path in RestoreBuiltinWorkflows: an existing review-loop on the old review
+// script (seed skips it by name) gets its script upgraded and a `pr` input
+// added, and is surfaced in `patched`.
+func (s *FSMigrateSuite) TestRestoreBuiltinWorkflowsPatchesStaleReviewScript() {
+	sys := newFakeSystem()
+	configPath := filepath.Join("/loop", "config.json")
+	stale := `{"workflows":[{"name":"review-loop","inputs":{"max_iterations":{"default":"1","description":"n"}},"nodes":[{"type":"loop","body":[{"id":"review","type":"bash","script":"` + reviewRunScriptOld + `"}]}]}]}`
+	sys.files[configPath] = []byte(stale)
+
+	added, patched, err := RestoreBuiltinWorkflows(context.Background(), &Ctx{Sys: sys, LoopDir: "/loop"})
+	require.NoError(s.T(), err)
+	require.Contains(s.T(), added, "review-fix-loop", "review-fix-loop was missing and seeded")
+	require.Contains(s.T(), patched, "review-loop", "review-loop's review script was upgraded in place")
+	got := string(sys.files[configPath])
+	require.Contains(s.T(), got, reviewRunScript)
+	require.NotContains(s.T(), got, reviewRunScriptOld)
+	require.Contains(s.T(), got, `"pr"`)
+}
+
+func (s *FSMigrateSuite) TestRestoreBuiltinWorkflowsSurfacesEnvPatcherError() {
+	// The env/pr patcher is the 4th read (seed, verify, deps, env). Fail that
+	// read so RestoreBuiltinWorkflows bubbles the error.
+	configPath := filepath.Join("/loop", "config.json")
+	sys := newFakeSystem()
+	sys.files[configPath] = []byte(`{}`)
+	wrapper := &readCountingSys{fakeSystem: sys, target: configPath, errOnCall: 4, err: errors.New("disk read failed")}
+	added, patched, err := RestoreBuiltinWorkflows(context.Background(), &Ctx{Sys: wrapper, LoopDir: "/loop"})
+	require.Error(s.T(), err)
+	require.Nil(s.T(), added)
+	require.Nil(s.T(), patched)
+	require.Contains(s.T(), err.Error(), "disk read failed")
+}
+
 // readCountingSys errors on the N-th ReadFile call against `target`. Drives
 // the deps-patcher error branch in RestoreBuiltinWorkflows without tripping
 // the seed or the first patcher.

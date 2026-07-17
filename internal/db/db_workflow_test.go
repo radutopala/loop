@@ -20,7 +20,7 @@ func newMockWorkflowRunRows() *sqlmock.Rows {
 
 func newMockNodeRunRows() *sqlmock.Rows {
 	return sqlmock.NewRows([]string{
-		"id", "run_id", "node_id", "iteration", "status", "output", "error_text", "attempt", "started_at", "finished_at", "last_heartbeat_at",
+		"id", "run_id", "node_id", "iteration", "status", "input", "session_id", "output", "error_text", "attempt", "started_at", "finished_at", "last_heartbeat_at",
 	})
 }
 
@@ -416,7 +416,7 @@ func (s *StoreSuite) TestUpsertNodeRunInsert() {
 	}
 
 	s.mock.ExpectExec(`INSERT INTO workflow_node_runs`).
-		WithArgs(nr.RunID, nr.NodeID, nr.Iteration, string(nr.Status), nr.Output, nr.ErrorText, nr.Attempt, nr.StartedAt, nr.FinishedAt, nr.LastHeartbeatAt).
+		WithArgs(nr.RunID, nr.NodeID, nr.Iteration, string(nr.Status), nr.Input, nr.SessionID, nr.Output, nr.ErrorText, nr.Attempt, nr.StartedAt, nr.FinishedAt, nr.LastHeartbeatAt).
 		WillReturnResult(sqlmock.NewResult(1, 1))
 
 	err := s.store.UpsertNodeRun(context.Background(), nr)
@@ -431,6 +431,8 @@ func (s *StoreSuite) TestUpsertNodeRunUpdate() {
 		RunID:      "run-1",
 		NodeID:     "node-a",
 		Status:     NodeRunStatusSuccess,
+		Input:      "make build",
+		SessionID:  "sess-xyz",
 		Output:     "build passed",
 		ErrorText:  "",
 		Attempt:    1,
@@ -440,7 +442,7 @@ func (s *StoreSuite) TestUpsertNodeRunUpdate() {
 
 	// Second upsert simulates ON CONFLICT update path (same exec signature).
 	s.mock.ExpectExec(`INSERT INTO workflow_node_runs`).
-		WithArgs(nr.RunID, nr.NodeID, nr.Iteration, string(nr.Status), nr.Output, nr.ErrorText, nr.Attempt, nr.StartedAt, nr.FinishedAt, nr.LastHeartbeatAt).
+		WithArgs(nr.RunID, nr.NodeID, nr.Iteration, string(nr.Status), nr.Input, nr.SessionID, nr.Output, nr.ErrorText, nr.Attempt, nr.StartedAt, nr.FinishedAt, nr.LastHeartbeatAt).
 		WillReturnResult(sqlmock.NewResult(0, 1))
 
 	err := s.store.UpsertNodeRun(context.Background(), nr)
@@ -454,7 +456,7 @@ func (s *StoreSuite) TestUpsertNodeRunError() {
 	s.mock.ExpectExec(`INSERT INTO workflow_node_runs`).
 		WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(),
 			sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(),
-			sqlmock.AnyArg()).
+			sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg()).
 		WillReturnError(sql.ErrConnDone)
 
 	err := s.store.UpsertNodeRun(context.Background(), nr)
@@ -465,8 +467,8 @@ func (s *StoreSuite) TestListNodeRuns() {
 	startedAt := time.Now().UTC()
 	finishedAt := startedAt.Add(time.Second)
 	rows := newMockNodeRunRows().
-		AddRow(1, "run-1", "node-a", 0, "success", "output-a", "", 1, &startedAt, &finishedAt, nil).
-		AddRow(2, "run-1", "node-b", 0, "running", "", "", 1, &startedAt, nil, &startedAt)
+		AddRow(1, "run-1", "node-a", 0, "success", "echo hi", "sess-a", "output-a", "", 1, &startedAt, &finishedAt, nil).
+		AddRow(2, "run-1", "node-b", 0, "running", "", "", "", "", 1, &startedAt, nil, &startedAt)
 
 	s.mock.ExpectQuery(`SELECT .+ FROM workflow_node_runs WHERE run_id .+ ORDER BY id ASC`).
 		WithArgs("run-1").
@@ -479,6 +481,8 @@ func (s *StoreSuite) TestListNodeRuns() {
 	require.Equal(s.T(), "run-1", nodeRuns[0].RunID)
 	require.Equal(s.T(), "node-a", nodeRuns[0].NodeID)
 	require.Equal(s.T(), NodeRunStatusSuccess, nodeRuns[0].Status)
+	require.Equal(s.T(), "echo hi", nodeRuns[0].Input)
+	require.Equal(s.T(), "sess-a", nodeRuns[0].SessionID)
 	require.Equal(s.T(), "output-a", nodeRuns[0].Output)
 	require.NotNil(s.T(), nodeRuns[0].FinishedAt)
 	require.Equal(s.T(), "node-b", nodeRuns[1].NodeID)
@@ -511,7 +515,7 @@ func (s *StoreSuite) TestListNodeRunsError() {
 func (s *StoreSuite) TestListNodeRunsScanError() {
 	s.mock.ExpectQuery(`SELECT .+ FROM workflow_node_runs WHERE run_id .+ ORDER BY id ASC`).
 		WithArgs("run-1").
-		WillReturnRows(newMockNodeRunRows().AddRow("bad-id", nil, nil, nil, nil, nil, nil, nil, nil, nil, nil))
+		WillReturnRows(newMockNodeRunRows().AddRow("bad-id", nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil))
 
 	nodeRuns, err := s.store.ListNodeRuns(context.Background(), "run-1")
 	require.Error(s.T(), err)

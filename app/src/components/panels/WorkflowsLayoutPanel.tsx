@@ -3,6 +3,7 @@ import { useTheme } from "../../ThemeContext";
 import { useEventStream } from "../../hooks/useEventStream";
 import { useWorkflowState } from "../../hooks/useWorkflowState";
 import { WorkflowRunRow } from "./WorkflowRunRow";
+import { WorkflowDefList } from "./WorkflowDefList";
 import { WorkflowDetail } from "./WorkflowDetail";
 import { WorkflowStartDialog } from "./WorkflowStartDialog";
 
@@ -46,18 +47,14 @@ export function WorkflowsLayoutPanel({ channelId }: WorkflowsLayoutPanelProps) {
           <span style={{ fontSize: 12, color: colors.textDim, flex: 1 }}>
             {wf.runs.length} run{wf.runs.length !== 1 ? "s" : ""}
           </span>
-          {(wf.definitions.length > 0 || !wf.definitionsLoaded) && (
-            <button
-              onClick={wf.openStartDialog}
-              style={{
-                background: "none", border: `1px solid ${colors.border}`, borderRadius: 3,
-                color: colors.textDim, cursor: "pointer", padding: "1px 6px", fontSize: 12, lineHeight: 1,
-              }}
-            >
-              +
-            </button>
-          )}
         </div>
+        <WorkflowDefList
+          grouped={wf.groupedDefinitions}
+          selectedName={wf.selectedWorkflowName}
+          onSelect={wf.setSelectedWorkflowName}
+          onRun={wf.handleRunWorkflow}
+          colors={colors}
+        />
         <div
           style={{ flex: 1, overflowY: "auto" }}
           onScroll={(e) => {
@@ -67,7 +64,7 @@ export function WorkflowsLayoutPanel({ channelId }: WorkflowsLayoutPanelProps) {
             }
           }}
         >
-          {wf.sortedRuns.map((r) => (
+          {wf.displayedRuns.map((r) => (
             <WorkflowRunRow
               key={r.id}
               run={r}
@@ -80,11 +77,13 @@ export function WorkflowsLayoutPanel({ channelId }: WorkflowsLayoutPanelProps) {
           {wf.loadingMore && (
             <div style={{ padding: 12, color: colors.textDim, fontSize: 11, textAlign: "center" }}>Loading more…</div>
           )}
-          {!wf.hasMore && wf.runs.length > 0 && (
+          {!wf.hasMore && !wf.selectedWorkflowName && wf.runs.length > 0 && (
             <div style={{ padding: 12, color: colors.textDim, fontSize: 11, textAlign: "center", opacity: 0.6 }}>End of history</div>
           )}
-          {wf.runs.length === 0 && (
-            <div style={{ padding: 16, color: colors.textDim, fontSize: 12, textAlign: "center" }}>No workflow runs</div>
+          {wf.displayedRuns.length === 0 && (
+            <div style={{ padding: 16, color: colors.textDim, fontSize: 12, textAlign: "center" }}>
+              {wf.selectedWorkflowName ? `No runs for ${wf.selectedWorkflowName}` : "No workflow runs"}
+            </div>
           )}
         </div>
       </div>
@@ -114,15 +113,13 @@ export function WorkflowsLayoutPanel({ channelId }: WorkflowsLayoutPanelProps) {
 
       <WorkflowStartDialog
         show={wf.showStartDialog}
-        definitions={wf.definitions}
-        startWorkflowName={wf.startWorkflowName}
         startInputs={wf.startInputs}
         selectedStartDef={wf.selectedStartDef}
         colors={colors}
         onClose={() => wf.setShowStartDialog(false)}
-        onSelectWorkflow={wf.handleSelectWorkflow}
         onInputChange={wf.setStartInputs}
         onStart={wf.handleStartRun}
+        onSave={wf.handleSaveWorkflowDef}
         testId="start-workflow-dialog"
       />
     </div>

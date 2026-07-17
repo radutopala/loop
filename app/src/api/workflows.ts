@@ -2,6 +2,9 @@ import { getApiUrl } from "./api";
 
 export interface WorkflowDef {
   name: string;
+  /** Config scope this definition comes from: "global" (~/.loop/config.json) or
+   *  "project" (a project's .loop/config.json). Tagged by the list endpoint. */
+  scope?: "global" | "project";
   description: string;
   timeout?: string;
   inputs?: Record<string, { description?: string; required?: boolean; default?: string }>;
@@ -54,6 +57,12 @@ export interface WorkflowNodeRun {
    *  loop body. Older rows (pre-iteration column) materialize as 0. */
   iteration: number;
   status: "pending" | "running" | "success" | "failed" | "skipped" | "paused";
+  /** Rendered node input: bash script for bash nodes, resolved prompt for
+   *  prompt nodes. Empty for loop/approval nodes and pre-column rows. */
+  input: string;
+  /** Claude session id a prompt node's agent run produced (resumable
+   *  transcript). Empty for non-prompt nodes. */
+  session_id: string;
   output: string;
   error_text: string;
   attempt: number;
@@ -145,6 +154,21 @@ export async function startWorkflowRun(data: {
   });
   if (!res.ok) throw new Error(`Failed to start workflow: ${await describeError(res)}`);
   return res.json();
+}
+
+export async function saveWorkflowDef(params: {
+  action: "add" | "update" | "delete";
+  scope?: "global" | "project";
+  channel_id?: string;
+  name?: string;
+  workflow?: unknown;
+}): Promise<void> {
+  const res = await fetch(`${getApiUrl()}/api/workflows`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(params),
+  });
+  if (!res.ok) throw new Error(`Failed to save workflow: ${await describeError(res)}`);
 }
 
 export async function resumeWorkflowRun(runId: string, response: string): Promise<void> {
