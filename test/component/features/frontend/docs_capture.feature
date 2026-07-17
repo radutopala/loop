@@ -626,15 +626,15 @@ Feature: Documentation walkthrough
     And I hide caption
     And I wait "2s"
     And I open the workflows panel
-    And I wait up to "10s" for text "+ Run" to appear
+    And I wait up to "10s" for text "bdd-test-workflow" to appear
     And I wait "2s"
     # Trigger the seeded bdd-test-workflow right from the panel
     And I show caption "Start a run right from the panel — pick a workflow and go"
     And I wait "3s"
     And I hide caption
     And I wait "1s"
-    And I click button "+ Run" in the workflows panel
-    And I wait for text "Start Workflow" to appear
+    And I click on "[data-testid=workflow-run-bdd-test-workflow]"
+    And I wait for text "START WORKFLOW" to appear
     And I wait "2s"
     And I click on the button with text "Start"
     And I wait "6s"
