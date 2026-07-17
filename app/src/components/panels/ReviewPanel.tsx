@@ -22,6 +22,7 @@ import type { GateApprovalRequestedData, WSEvent } from "../../types";
 import { ApprovalCard } from "../chat/ApprovalCard";
 import { ContextMenu } from "../shared/ContextMenu";
 import { ReviewDiffView } from "./ReviewDiffView";
+import { ReviewRunDrawer } from "./ReviewRunDrawer";
 
 type ReviewMode = "review-only" | "review-fix";
 
@@ -38,6 +39,17 @@ const REVIEW_FIX_LOOP_WORKFLOW = "review-fix-loop";
 function reviewRunIdKey(channelId: string): string {
   return `loop.review.activeRunId.${channelId}`;
 }
+
+// Per-channel key for the run whose canvas the bottom drawer shows. Distinct
+// from the active-run key above: the drawer keeps showing a run's final canvas
+// after it completes (when the active-run key is cleared), so the user can
+// still inspect what happened. Overwritten when a new run starts; cleared when
+// the session is closed.
+function reviewDrawerRunIdKey(channelId: string): string {
+  return `loop.review.drawerRunId.${channelId}`;
+}
+
+const REVIEW_DRAWER_COLLAPSED_KEY = "loop.review.drawerCollapsed";
 
 // CustomEvent name used to broadcast review-run-id sessionStorage writes
 // across sibling ReviewPanel instances mounted in the same window. The
@@ -178,6 +190,16 @@ export function ReviewPanel({
     return window.sessionStorage.getItem(reviewRunIdKey(channelId));
   });
   const [loopChip, setLoopChip] = useState<string>("");
+  // The run whose canvas the bottom drawer shows. Survives run completion (so
+  // the final canvas stays visible) — see reviewDrawerRunIdKey.
+  const [drawerRunId, setDrawerRunId] = useState<string | null>(() => {
+    if (typeof window === "undefined") return null;
+    return window.sessionStorage.getItem(reviewDrawerRunIdKey(channelId));
+  });
+  const [drawerCollapsed, setDrawerCollapsed] = useState<boolean>(() => {
+    if (typeof window === "undefined") return false;
+    return window.localStorage.getItem(REVIEW_DRAWER_COLLAPSED_KEY) === "1";
+  });
   // Tracks whether a workflow run is in flight independently of
   // `session.status` and `busy`. The review-fix loop's body children flip the
   // daemon's review session back to "ready" between iterations (after each
@@ -253,6 +275,12 @@ export function ReviewPanel({
     if (typeof window === "undefined") return;
     window.localStorage.setItem(REVIEW_MAX_ITER_STORAGE_KEY, String(maxIter));
   }, [maxIter]);
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    window.localStorage.setItem(REVIEW_DRAWER_COLLAPSED_KEY, drawerCollapsed ? "1" : "0");
+  }, [drawerCollapsed]);
+
+  const onToggleDrawer = useCallback(() => setDrawerCollapsed((c) => !c), []);
 
   // `hasChatPanel` is only consulted inside the `workflow.run_paused`
   // branch. Keep it in a ref so the WS subscription effect doesn't have
@@ -279,6 +307,7 @@ export function ReviewPanel({
       } else {
         setLoopRunId(detail.runId);
         setLoopActive(true);
+        setDrawerRunId(detail.runId);
       }
     };
     const onStorage = (ev: StorageEvent) => {
@@ -290,6 +319,7 @@ export function ReviewPanel({
       } else {
         setLoopRunId(ev.newValue);
         setLoopActive(true);
+        setDrawerRunId(ev.newValue);
       }
     };
     window.addEventListener(REVIEW_RUN_ID_EVENT, onCustom);
@@ -525,8 +555,12 @@ export function ReviewPanel({
       // process could observe an empty key.
       if (typeof window !== "undefined") {
         window.sessionStorage.setItem(reviewRunIdKey(channelId), resp.run_id);
+        window.sessionStorage.setItem(reviewDrawerRunIdKey(channelId), resp.run_id);
       }
       broadcastReviewRunIdChange(channelId, resp.run_id);
+      // Bind the bottom drawer to this run so its canvas is in front of the
+      // user as the loop runs (expanded by default; respects a prior collapse).
+      setDrawerRunId(resp.run_id);
       // The workflow.run_started event for this run may have already fired
       // (and been dropped by the chip listener — it returns early when
       // loopRunId is null) before this setState lands. Paint the initial
@@ -594,6 +628,11 @@ export function ReviewPanel({
     try {
       await deleteReviewSession(channelId);
       setSession(null);
+      // The worktree is gone — drop the canvas drawer for this channel too.
+      setDrawerRunId(null);
+      if (typeof window !== "undefined") {
+        window.sessionStorage.removeItem(reviewDrawerRunIdKey(channelId));
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -1001,6 +1040,19 @@ export function ReviewPanel({
           />
         )}
       </div>
+
+      {/* Bottom drawer: live workflow canvas for the active/last review run,
+          so the user can watch the loop's nodes without opening the Workflows
+          panel. Only shown once a run has been kicked off on this session. */}
+      {hasSession && drawerRunId && (
+        <ReviewRunDrawer
+          runId={drawerRunId}
+          colors={colors}
+          subscribeChatEvents={subscribeChatEvents}
+          collapsed={drawerCollapsed}
+          onToggleCollapsed={onToggleDrawer}
+        />
+      )}
       {menuPos && (
         <ContextMenu
           x={menuPos.x}
