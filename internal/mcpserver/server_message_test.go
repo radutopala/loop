@@ -3,7 +3,6 @@ package mcpserver
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"io"
 	"net/http"
 
@@ -63,26 +62,12 @@ func (s *MCPServerSuite) TestSendMessageNoChannelRequired() {
 }
 
 func (s *MCPServerSuite) TestSendMessageErrors() {
-	tests := []struct {
-		name     string
-		doFunc   func(*http.Request) (*http.Response, error)
-		wantText string
-	}{
-		{"API error", func(*http.Request) (*http.Response, error) {
-			return jsonResponse(http.StatusInternalServerError, "send failed"), nil
-		}, "API error"},
-		{"HTTP error", func(*http.Request) (*http.Response, error) {
-			return nil, fmt.Errorf("connection refused")
-		}, "calling API"},
-	}
-	for _, tt := range tests {
-		s.Run(tt.name, func() {
-			s.httpClient.doFunc = tt.doFunc
-			text, isError := s.callTool("send_message", map[string]any{"channel_id": "ch-1", "content": "hello"})
-			require.True(s.T(), isError)
-			require.Contains(s.T(), text, tt.wantText)
-		})
-	}
+	runToolErrorCases(&s.Suite, s.httpClient, s.callTool, toolErrorSpec{
+		tool:      "send_message",
+		args:      map[string]any{"channel_id": "ch-1", "content": "hello"},
+		apiStatus: http.StatusInternalServerError,
+		apiBody:   "send failed",
+	})
 }
 
 // --- queue_message ---
@@ -132,26 +117,12 @@ func (s *MCPServerSuite) TestQueueMessageNoChannel() {
 }
 
 func (s *MCPServerSuite) TestQueueMessageErrors() {
-	tests := []struct {
-		name     string
-		doFunc   func(*http.Request) (*http.Response, error)
-		wantText string
-	}{
-		{"API error", func(*http.Request) (*http.Response, error) {
-			return jsonResponse(http.StatusInternalServerError, "queue failed"), nil
-		}, "API error"},
-		{"HTTP error", func(*http.Request) (*http.Response, error) {
-			return nil, fmt.Errorf("connection refused")
-		}, "calling API"},
-	}
-	for _, tt := range tests {
-		s.Run(tt.name, func() {
-			s.httpClient.doFunc = tt.doFunc
-			text, isError := s.callTool("queue_message", map[string]any{"content": "hello"})
-			require.True(s.T(), isError)
-			require.Contains(s.T(), text, tt.wantText)
-		})
-	}
+	runToolErrorCases(&s.Suite, s.httpClient, s.callTool, toolErrorSpec{
+		tool:      "queue_message",
+		args:      map[string]any{"content": "hello"},
+		apiStatus: http.StatusInternalServerError,
+		apiBody:   "queue failed",
+	})
 }
 
 // --- get_readme ---

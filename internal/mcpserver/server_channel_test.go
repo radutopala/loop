@@ -36,26 +36,12 @@ func (s *MCPServerSuite) TestToggleTaskSuccess() {
 }
 
 func (s *MCPServerSuite) TestToggleTaskErrors() {
-	tests := []struct {
-		name     string
-		doFunc   func(*http.Request) (*http.Response, error)
-		wantText string
-	}{
-		{"API error", func(*http.Request) (*http.Response, error) {
-			return jsonResponse(http.StatusInternalServerError, "not found"), nil
-		}, "API error"},
-		{"HTTP error", func(*http.Request) (*http.Response, error) {
-			return nil, fmt.Errorf("connection refused")
-		}, "calling API"},
-	}
-	for _, tt := range tests {
-		s.Run(tt.name, func() {
-			s.httpClient.doFunc = tt.doFunc
-			text, isError := s.callTool("toggle_task", map[string]any{"task_id": float64(1), "enabled": false})
-			require.True(s.T(), isError)
-			require.Contains(s.T(), text, tt.wantText)
-		})
-	}
+	runToolErrorCases(&s.Suite, s.httpClient, s.callTool, toolErrorSpec{
+		tool:      "toggle_task",
+		args:      map[string]any{"task_id": float64(1), "enabled": false},
+		apiStatus: http.StatusInternalServerError,
+		apiBody:   "not found",
+	})
 }
 
 // --- create_channel ---
@@ -106,29 +92,13 @@ func (s *MCPServerSuite) TestCreateChannelEmptyName() {
 }
 
 func (s *MCPServerSuite) TestCreateChannelErrors() {
-	tests := []struct {
-		name     string
-		doFunc   func(*http.Request) (*http.Response, error)
-		wantText string
-	}{
-		{"API error", func(*http.Request) (*http.Response, error) {
-			return jsonResponse(http.StatusInternalServerError, "create failed"), nil
-		}, "API error"},
-		{"HTTP error", func(*http.Request) (*http.Response, error) {
-			return nil, fmt.Errorf("connection refused")
-		}, "calling API"},
-		{"invalid response JSON", func(*http.Request) (*http.Response, error) {
-			return jsonResponse(http.StatusCreated, "not json"), nil
-		}, "decoding response"},
-	}
-	for _, tt := range tests {
-		s.Run(tt.name, func() {
-			s.httpClient.doFunc = tt.doFunc
-			text, isError := s.callTool("create_channel", map[string]any{"name": "trial"})
-			require.True(s.T(), isError)
-			require.Contains(s.T(), text, tt.wantText)
-		})
-	}
+	runToolErrorCases(&s.Suite, s.httpClient, s.callTool, toolErrorSpec{
+		tool:         "create_channel",
+		args:         map[string]any{"name": "trial"},
+		apiStatus:    http.StatusInternalServerError,
+		apiBody:      "create failed",
+		decodeStatus: http.StatusCreated,
+	})
 }
 
 // --- create_thread ---
@@ -201,29 +171,13 @@ func (s *MCPServerSuite) TestCreateThreadEmptyName() {
 }
 
 func (s *MCPServerSuite) TestCreateThreadErrors() {
-	tests := []struct {
-		name     string
-		doFunc   func(*http.Request) (*http.Response, error)
-		wantText string
-	}{
-		{"API error", func(*http.Request) (*http.Response, error) {
-			return jsonResponse(http.StatusInternalServerError, "parent not found"), nil
-		}, "API error"},
-		{"HTTP error", func(*http.Request) (*http.Response, error) {
-			return nil, fmt.Errorf("connection refused")
-		}, "calling API"},
-		{"invalid response JSON", func(*http.Request) (*http.Response, error) {
-			return jsonResponse(http.StatusCreated, "not json"), nil
-		}, "decoding response"},
-	}
-	for _, tt := range tests {
-		s.Run(tt.name, func() {
-			s.httpClient.doFunc = tt.doFunc
-			text, isError := s.callTool("create_thread", map[string]any{"name": "my-thread", "message": "Do something"})
-			require.True(s.T(), isError)
-			require.Contains(s.T(), text, tt.wantText)
-		})
-	}
+	runToolErrorCases(&s.Suite, s.httpClient, s.callTool, toolErrorSpec{
+		tool:         "create_thread",
+		args:         map[string]any{"name": "my-thread", "message": "Do something"},
+		apiStatus:    http.StatusInternalServerError,
+		apiBody:      "parent not found",
+		decodeStatus: http.StatusCreated,
+	})
 }
 
 // --- create_worktree_thread ---
@@ -302,29 +256,13 @@ func (s *MCPServerSuite) TestCreateWorktreeThreadEmptyBranch() {
 }
 
 func (s *MCPServerSuite) TestCreateWorktreeThreadErrors() {
-	tests := []struct {
-		name     string
-		doFunc   func(*http.Request) (*http.Response, error)
-		wantText string
-	}{
-		{"API error", func(*http.Request) (*http.Response, error) {
-			return jsonResponse(http.StatusInternalServerError, "channel not found or has no dir_path"), nil
-		}, "API error"},
-		{"HTTP error", func(*http.Request) (*http.Response, error) {
-			return nil, fmt.Errorf("connection refused")
-		}, "calling API"},
-		{"invalid response JSON", func(*http.Request) (*http.Response, error) {
-			return jsonResponse(http.StatusCreated, "not json"), nil
-		}, "decoding response"},
-	}
-	for _, tt := range tests {
-		s.Run(tt.name, func() {
-			s.httpClient.doFunc = tt.doFunc
-			text, isError := s.callTool("create_worktree_thread", map[string]any{"branch": "feat/foo"})
-			require.True(s.T(), isError)
-			require.Contains(s.T(), text, tt.wantText)
-		})
-	}
+	runToolErrorCases(&s.Suite, s.httpClient, s.callTool, toolErrorSpec{
+		tool:         "create_worktree_thread",
+		args:         map[string]any{"branch": "feat/foo"},
+		apiStatus:    http.StatusInternalServerError,
+		apiBody:      "channel not found or has no dir_path",
+		decodeStatus: http.StatusCreated,
+	})
 }
 
 // --- delete_thread ---
@@ -348,26 +286,12 @@ func (s *MCPServerSuite) TestDeleteThreadEmptyID() {
 }
 
 func (s *MCPServerSuite) TestDeleteThreadErrors() {
-	tests := []struct {
-		name     string
-		doFunc   func(*http.Request) (*http.Response, error)
-		wantText string
-	}{
-		{"API error", func(*http.Request) (*http.Response, error) {
-			return jsonResponse(http.StatusInternalServerError, "thread not found"), nil
-		}, "API error"},
-		{"HTTP error", func(*http.Request) (*http.Response, error) {
-			return nil, fmt.Errorf("connection refused")
-		}, "calling API"},
-	}
-	for _, tt := range tests {
-		s.Run(tt.name, func() {
-			s.httpClient.doFunc = tt.doFunc
-			text, isError := s.callTool("delete_thread", map[string]any{"thread_id": "thread-1"})
-			require.True(s.T(), isError)
-			require.Contains(s.T(), text, tt.wantText)
-		})
-	}
+	runToolErrorCases(&s.Suite, s.httpClient, s.callTool, toolErrorSpec{
+		tool:      "delete_thread",
+		args:      map[string]any{"thread_id": "thread-1"},
+		apiStatus: http.StatusInternalServerError,
+		apiBody:   "thread not found",
+	})
 }
 
 // --- search_channels ---

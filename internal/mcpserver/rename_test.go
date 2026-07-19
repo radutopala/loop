@@ -1,7 +1,6 @@
 package mcpserver
 
 import (
-	"fmt"
 	"io"
 	"net/http"
 
@@ -47,29 +46,12 @@ func (s *MCPServerSuite) TestRenameThreadEmptyName() {
 }
 
 func (s *MCPServerSuite) TestRenameThreadErrors() {
-	tests := []struct {
-		name     string
-		doFunc   func(*http.Request) (*http.Response, error)
-		wantText string
-	}{
-		{"API error", func(*http.Request) (*http.Response, error) {
-			return jsonResponse(http.StatusNotFound, "thread not found"), nil
-		}, "API error"},
-		{"HTTP error", func(*http.Request) (*http.Response, error) {
-			return nil, fmt.Errorf("connection refused")
-		}, "calling API"},
-	}
-	for _, tt := range tests {
-		s.Run(tt.name, func() {
-			s.httpClient.doFunc = tt.doFunc
-			text, isError := s.callTool("rename_thread", map[string]any{
-				"thread_id": "thread-1",
-				"name":      "my-new-name",
-			})
-			require.True(s.T(), isError)
-			require.Contains(s.T(), text, tt.wantText)
-		})
-	}
+	runToolErrorCases(&s.Suite, s.httpClient, s.callTool, toolErrorSpec{
+		tool:      "rename_thread",
+		args:      map[string]any{"thread_id": "thread-1", "name": "my-new-name"},
+		apiStatus: http.StatusNotFound,
+		apiBody:   "thread not found",
+	})
 }
 
 // --- rename_worktree_thread ---
@@ -113,30 +95,11 @@ func (s *MCPServerSuite) TestRenameWorktreeThreadEmptyNewName() {
 }
 
 func (s *MCPServerSuite) TestRenameWorktreeThreadErrors() {
-	tests := []struct {
-		name     string
-		doFunc   func(*http.Request) (*http.Response, error)
-		wantText string
-	}{
-		{"API error", func(*http.Request) (*http.Response, error) {
-			return jsonResponse(http.StatusInternalServerError, "active run"), nil
-		}, "API error"},
-		{"HTTP error", func(*http.Request) (*http.Response, error) {
-			return nil, fmt.Errorf("connection refused")
-		}, "calling API"},
-		{"invalid response JSON", func(*http.Request) (*http.Response, error) {
-			return jsonResponse(http.StatusOK, "not json"), nil
-		}, "decoding response"},
-	}
-	for _, tt := range tests {
-		s.Run(tt.name, func() {
-			s.httpClient.doFunc = tt.doFunc
-			text, isError := s.callTool("rename_worktree_thread", map[string]any{
-				"thread_id": "wt-thread-1",
-				"new_name":  "wt-new",
-			})
-			require.True(s.T(), isError)
-			require.Contains(s.T(), text, tt.wantText)
-		})
-	}
+	runToolErrorCases(&s.Suite, s.httpClient, s.callTool, toolErrorSpec{
+		tool:         "rename_worktree_thread",
+		args:         map[string]any{"thread_id": "wt-thread-1", "new_name": "wt-new"},
+		apiStatus:    http.StatusInternalServerError,
+		apiBody:      "active run",
+		decodeStatus: http.StatusOK,
+	})
 }

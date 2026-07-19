@@ -121,29 +121,13 @@ func (s *MCPMemorySuite) TestSearchMemoryEmptyQuery() {
 }
 
 func (s *MCPMemorySuite) TestSearchMemoryErrors() {
-	tests := []struct {
-		name     string
-		doFunc   func(*http.Request) (*http.Response, error)
-		wantText string
-	}{
-		{"API error", func(*http.Request) (*http.Response, error) {
-			return jsonResponse(http.StatusInternalServerError, "indexer error"), nil
-		}, "API error"},
-		{"HTTP error", func(*http.Request) (*http.Response, error) {
-			return nil, fmt.Errorf("connection refused")
-		}, "calling API"},
-		{"invalid response JSON", func(*http.Request) (*http.Response, error) {
-			return jsonResponse(http.StatusOK, "not json"), nil
-		}, "decoding response"},
-	}
-	for _, tt := range tests {
-		s.Run(tt.name, func() {
-			s.httpClient.doFunc = tt.doFunc
-			text, isError := s.callTool("search_memory", map[string]any{"query": "test"})
-			require.True(s.T(), isError)
-			require.Contains(s.T(), text, tt.wantText)
-		})
-	}
+	runToolErrorCases(&s.Suite, s.httpClient, s.callTool, toolErrorSpec{
+		tool:         "search_memory",
+		args:         map[string]any{"query": "test"},
+		apiStatus:    http.StatusInternalServerError,
+		apiBody:      "indexer error",
+		decodeStatus: http.StatusOK,
+	})
 }
 
 func (s *MCPMemorySuite) TestSearchMemorySingleResult() {

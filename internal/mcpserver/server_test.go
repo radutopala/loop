@@ -3,6 +3,7 @@ package mcpserver
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"io"
 	"net/http"
 	"testing"
@@ -145,4 +146,52 @@ func (s *MCPServerSuite) TestRunWithChannelTransport() {
 
 func (s *MCPServerSuite) TestMCPServer() {
 	require.Equal(s.T(), s.srv.mcpServer, s.srv.MCPServer())
+}
+
+// toolErrorCase is one standard failure-mode case run by runToolErrorCases.
+type toolErrorCase struct {
+	name     string
+	doFunc   func(*http.Request) (*http.Response, error)
+	wantText string
+}
+
+// toolErrorSpec drives runToolErrorCases: the tool + args to invoke and the
+// shape of the standard failure responses. decodeStatus, when non-zero, adds
+// the "invalid response JSON" case — a malformed body on an otherwise-
+// successful response with that status — for tools that decode their reply.
+type toolErrorSpec struct {
+	tool         string
+	args         map[string]any
+	apiStatus    int
+	apiBody      string
+	decodeStatus int
+}
+
+// runToolErrorCases exercises the failure modes every MCP tool handles the
+// same way: a non-2xx API response ("API error"), a transport failure
+// ("calling API"), and optionally a malformed success body ("decoding
+// response"). Each Test<Tool>Errors used to spell these cases out by hand;
+// they differ only in the spec fields.
+func runToolErrorCases(s *suite.Suite, client *mockHTTPClient, callTool func(string, map[string]any) (string, bool), spec toolErrorSpec) {
+	cases := []toolErrorCase{
+		{"API error", func(*http.Request) (*http.Response, error) {
+			return jsonResponse(spec.apiStatus, spec.apiBody), nil
+		}, "API error"},
+		{"HTTP error", func(*http.Request) (*http.Response, error) {
+			return nil, fmt.Errorf("connection refused")
+		}, "calling API"},
+	}
+	if spec.decodeStatus != 0 {
+		cases = append(cases, toolErrorCase{"invalid response JSON", func(*http.Request) (*http.Response, error) {
+			return jsonResponse(spec.decodeStatus, "not json"), nil
+		}, "decoding response"})
+	}
+	for _, tt := range cases {
+		s.Run(tt.name, func() {
+			client.doFunc = tt.doFunc
+			text, isError := callTool(spec.tool, spec.args)
+			require.True(s.T(), isError)
+			require.Contains(s.T(), text, tt.wantText)
+		})
+	}
 }
