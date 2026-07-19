@@ -18,12 +18,13 @@ type GateBotAdapter struct {
 // SendApproval forwards the prompt to the underlying bot.
 func (a *GateBotAdapter) SendApproval(ctx context.Context, channelID string, req agentgate.ApprovalRequest) (string, error) {
 	return a.Bot.SendApproval(ctx, channelID, bot.ApprovalPrompt{
-		ID:      req.ID,
-		Kind:    req.Kind,
-		Target:  req.Target,
-		Source:  req.Source,
-		Message: req.Message,
-		Details: req.Details,
+		ID:        req.ID,
+		Kind:      req.Kind,
+		Target:    req.Target,
+		Source:    req.Source,
+		Message:   req.Message,
+		Details:   req.Details,
+		ExpiresAt: req.ExpiresAt,
 	})
 }
 

@@ -67,10 +67,15 @@ func TestApprovalSuite(t *testing.T) {
 	suite.Run(t, new(ApprovalSuite))
 }
 
+// fixedNow is the deterministic clock every test manager uses, so stamped
+// deadlines (ExpiresAt = now + approvalTimeout) are assertable.
+var fixedNow = time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
+
 func (s *ApprovalSuite) newManager(bot Bot, limits types.RateLimits) *Manager {
 	m := NewManager(&fakeRouter{bot: bot}, limits)
 	var counter int64
 	m.idGen = func() string { return fmt.Sprintf("r-%d", atomic.AddInt64(&counter, 1)) }
+	m.now = func() time.Time { return fixedNow }
 	return m
 }
 
@@ -388,6 +393,7 @@ func (s *ApprovalSuite) TestListPendingReturnsSnapshot() {
 		Kind:      "exec",
 		Target:    "git push",
 		Source:    "terminal:leaf-7",
+		ExpiresAt: fixedNow.Add(approvalTimeout),
 		Message:   "Allow exec?",
 		Details:   map[string]string{"cwd": "/work"},
 	}, got[0])

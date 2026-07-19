@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/radutopala/loop/internal/agentgate"
 	"github.com/radutopala/loop/internal/local"
@@ -85,6 +86,7 @@ type pendingApprovalJSON struct {
 	Source      string            `json:"source,omitempty"`
 	Message     string            `json:"message,omitempty"`
 	Details     map[string]string `json:"details,omitempty"`
+	ExpiresAt   time.Time         `json:"expires_at,omitzero"`
 }
 
 type pendingApprovalsResponse struct {
@@ -111,6 +113,7 @@ func (s *Server) handleListGateApprovals(w http.ResponseWriter, _ *http.Request)
 			Source:      e.Source,
 			Message:     e.Message,
 			Details:     e.Details,
+			ExpiresAt:   e.ExpiresAt,
 		})
 	}
 	w.Header().Set("Content-Type", "application/json")

@@ -58,6 +58,10 @@ type ApprovalRequest struct {
 	CacheKey string
 	Details  map[string]string
 	OnPrompt func()
+
+	// ExpiresAt is stamped by Manager.Request from its approval timeout so
+	// transports (and ultimately the FE card) know the request's deadline.
+	ExpiresAt time.Time
 }
 
 // Outcome is what Request returns. Decision is always Allow or Deny.
@@ -95,6 +99,7 @@ type PendingApproval struct {
 	Source    string
 	Message   string
 	Details   map[string]string
+	ExpiresAt time.Time
 }
 
 // Manager coordinates approval prompts, per-container decision cache, and
@@ -109,6 +114,7 @@ type Manager struct {
 	cache        map[string]types.Decision
 	pending      map[string]*pendingEntry
 	totalPrompts int
+	timeout      time.Duration // prompt deadline; see approvalTimeout
 	recent       []time.Time
 	totalTripped bool
 }
@@ -127,11 +133,19 @@ type resolution struct {
 	actor    string
 }
 
+// approvalTimeout bounds how long a prompt waits for a decision before the
+// gate denies it. Daemon-authoritative: the container-side caller may give up
+// on its own schedule, but the daemon resolves (and retracts the card) at
+// this deadline regardless, so the FE never shows a live card for a dead
+// request.
+const approvalTimeout = 10 * time.Minute
+
 // NewManager constructs a Manager. Zero-valued RateLimits fields disable that cap.
 func NewManager(bots BotRouter, limits types.RateLimits) *Manager {
 	return &Manager{
 		bots:    bots,
 		limits:  limits,
+		timeout: approvalTimeout,
 		now:     time.Now,
 		idGen:   randomID,
 		cache:   map[string]types.Decision{},
@@ -160,6 +174,14 @@ func (m *Manager) Request(ctx context.Context, channelID string, req ApprovalReq
 		id = m.idGen()
 	}
 	req.ID = id
+	// Enforce the deadline daemon-side and stamp it on the request so the
+	// transports can surface it: the card knows when it dies.
+	if m.timeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, m.timeout)
+		defer cancel()
+		req.ExpiresAt = m.now().Add(m.timeout)
+	}
 	ch := make(chan resolution, 1)
 	entry := &pendingEntry{ch: ch, channelID: channelID, req: req}
 
@@ -191,8 +213,16 @@ func (m *Manager) Request(ctx context.Context, channelID string, req ApprovalReq
 		_ = bot.RemoveApproval(ctx, channelID, msgID)
 		return m.applyResolution(req.CacheKey, r)
 	case <-ctx.Done():
-		_ = bot.RemoveApproval(ctx, channelID, msgID)
-		return Outcome{Decision: types.DecisionDeny, Reason: "cancelled"}
+		// RemoveApproval broadcasts gate.approval_resolved so the FE
+		// retracts the card; use a fresh context since ours is done.
+		rmCtx, rmCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		_ = bot.RemoveApproval(rmCtx, channelID, msgID)
+		rmCancel()
+		reason := "cancelled"
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			reason = "timeout"
+		}
+		return Outcome{Decision: types.DecisionDeny, Reason: reason}
 	}
 }
 
@@ -259,6 +289,7 @@ func (m *Manager) ListPending() []PendingApproval {
 			Source:    e.req.Source,
 			Message:   e.req.Message,
 			Details:   e.req.Details,
+			ExpiresAt: e.req.ExpiresAt,
 		})
 	}
 	return out

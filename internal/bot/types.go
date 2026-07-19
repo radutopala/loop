@@ -25,6 +25,9 @@ type ApprovalPrompt struct {
 	Source  string
 	Message string
 	Details map[string]string
+	// ExpiresAt is the gate's deadline for this prompt; after it the request
+	// auto-denies and the card should render as expired.
+	ExpiresAt time.Time
 }
 
 // ApprovalResolver receives a user's decision on an agentgate approval prompt

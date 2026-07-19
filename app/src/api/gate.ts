@@ -35,8 +35,21 @@ export async function resolveGateApproval(
       body: JSON.stringify({ decision }),
     },
   );
+  if (res.status === 404) {
+    // The request is gone — resolved elsewhere, timed out, or its container
+    // exited. Callers treat this as "expired", not a failure.
+    throw new GateApprovalGoneError();
+  }
   if (!res.ok) {
     const text = await res.text().catch(() => res.statusText);
     throw new Error(`Failed to resolve gate approval: ${text || res.statusText}`);
+  }
+}
+
+/** Thrown by resolveGateApproval when the request no longer exists (404). */
+export class GateApprovalGoneError extends Error {
+  constructor() {
+    super("approval request no longer exists");
+    this.name = "GateApprovalGoneError";
   }
 }

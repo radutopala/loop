@@ -410,6 +410,17 @@ export function useChatStateStore({
     };
   }, [rehydrateGateApprovals]);
 
+  // While any card is showing, also reconcile on an interval. Focus/reconnect
+  // triggers miss the "window stayed focused but an event was dropped" case
+  // (e.g. a WS blip during a long-running approval) — a 30s sweep bounds how
+  // long a phantom card can survive regardless of event delivery.
+  useEffect(() => {
+    const id = setInterval(() => {
+      if (gateChannelIdsRef.current.size > 0) rehydrateGateApprovals();
+    }, 30_000);
+    return () => clearInterval(id);
+  }, [rehydrateGateApprovals]);
+
   // Compute subscription set: selectedId + all channels where isRunning.
   const subscribeChannels = useCallback(
     (send: (data: string) => void) => {

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { GateApprovalRequestedData } from "../../types";
 import { resolveGateApproval, sendMessage } from "../../api/loopApi";
-import type { GateDecision } from "../../api/gate";
+import { GateApprovalGoneError, type GateDecision } from "../../api/gate";
 import { fonts } from "../../theme";
 import { useTheme } from "../../ThemeContext";
 
@@ -37,6 +37,30 @@ export function ApprovalCard({ data, channelId, onResolved, onDenyWithPrompt, st
   const [showPrompt, setShowPrompt] = useState(false);
   const [prompt, setPrompt] = useState("");
 
+  // Expiry: the gate auto-denies at data.expires_at. Track it locally so the
+  // card greys out on time even if the gate.approval_resolved event was
+  // missed (WS drop, subscription race), then retract shortly after so a
+  // dead card can never sit around eating clicks.
+  const [expired, setExpired] = useState(false);
+  useEffect(() => {
+    if (!data.expires_at) return;
+    const remaining = new Date(data.expires_at).getTime() - Date.now();
+    if (remaining <= 0) {
+      setExpired(true);
+      return;
+    }
+    const t = setTimeout(() => setExpired(true), remaining);
+    return () => clearTimeout(t);
+  }, [data.expires_at]);
+  useEffect(() => {
+    if (!expired) return;
+    // Leave the expired card visible briefly so the user sees what happened,
+    // then let the store drop it.
+    const t = setTimeout(() => onResolved?.(), 15_000);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [expired]);
+
   const resolve = async (decision: GateDecision) => {
     setSending(decision);
     setError(null);
@@ -44,6 +68,14 @@ export function ApprovalCard({ data, channelId, onResolved, onDenyWithPrompt, st
       await resolveGateApproval(data.req_id, decision);
       onResolved?.();
     } catch (e) {
+      if (e instanceof GateApprovalGoneError) {
+        // The request died (timeout / container exit) before the click
+        // landed. Show the expired state instead of an error on a card
+        // that can never be resolved.
+        setExpired(true);
+        setSending(null);
+        return;
+      }
       setError(e instanceof Error ? e.message : String(e));
       setSending(null);
     }
@@ -110,6 +142,14 @@ export function ApprovalCard({ data, channelId, onResolved, onDenyWithPrompt, st
           ))}
         </div>
       )}
+      {expired ? (
+        <div
+          data-testid="approval-expired"
+          style={{ fontSize: 12, fontFamily: fonts.mono, color: colors.textDim, fontStyle: "italic" }}
+        >
+          Expired — the request timed out and was denied.
+        </div>
+      ) : (
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
         <ApprovalButton label="Allow once"        decision="once"    busy={sending === "once"}    disabled={sending !== null} onClick={resolve} variant="primary"   />
         <ApprovalButton label="Allow for session" decision="session" busy={sending === "session"} disabled={sending !== null} onClick={resolve} variant="secondary" />
@@ -132,7 +172,8 @@ export function ApprovalCard({ data, channelId, onResolved, onDenyWithPrompt, st
           Deny with prompt…
         </button>
       </div>
-      {showPrompt && (
+      )}
+      {!expired && showPrompt && (
         <div style={{ marginTop: 10, display: "flex", flexDirection: "column", gap: 6 }}>
           <textarea
             value={prompt}
