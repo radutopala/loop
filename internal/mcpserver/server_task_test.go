@@ -451,26 +451,12 @@ func (s *MCPServerSuite) TestShowTaskDisabled() {
 }
 
 func (s *MCPServerSuite) TestShowTaskErrors() {
-	tests := []struct {
-		name     string
-		doFunc   func(*http.Request) (*http.Response, error)
-		wantText string
-	}{
-		{"API error", func(*http.Request) (*http.Response, error) {
-			return jsonResponse(http.StatusNotFound, "task not found"), nil
-		}, "API error"},
-		{"HTTP error", func(*http.Request) (*http.Response, error) {
-			return nil, fmt.Errorf("connection refused")
-		}, "calling API"},
-	}
-	for _, tt := range tests {
-		s.Run(tt.name, func() {
-			s.httpClient.doFunc = tt.doFunc
-			text, isError := s.callTool("show_task", map[string]any{"task_id": float64(42)})
-			require.True(s.T(), isError)
-			require.Contains(s.T(), text, tt.wantText)
-		})
-	}
+	runToolErrorCases(&s.Suite, s.httpClient, s.callTool, toolErrorSpec{
+		tool:      "show_task",
+		args:      map[string]any{"task_id": float64(42)},
+		apiStatus: http.StatusNotFound,
+		apiBody:   "task not found",
+	})
 }
 
 // --- cancel_task ---
@@ -488,26 +474,12 @@ func (s *MCPServerSuite) TestCancelTaskSuccess() {
 }
 
 func (s *MCPServerSuite) TestCancelTaskErrors() {
-	tests := []struct {
-		name     string
-		doFunc   func(*http.Request) (*http.Response, error)
-		wantText string
-	}{
-		{"API error", func(*http.Request) (*http.Response, error) {
-			return jsonResponse(http.StatusInternalServerError, "not found"), nil
-		}, "API error"},
-		{"HTTP error", func(*http.Request) (*http.Response, error) {
-			return nil, fmt.Errorf("connection refused")
-		}, "calling API"},
-	}
-	for _, tt := range tests {
-		s.Run(tt.name, func() {
-			s.httpClient.doFunc = tt.doFunc
-			text, isError := s.callTool("cancel_task", map[string]any{"task_id": float64(1)})
-			require.True(s.T(), isError)
-			require.Contains(s.T(), text, tt.wantText)
-		})
-	}
+	runToolErrorCases(&s.Suite, s.httpClient, s.callTool, toolErrorSpec{
+		tool:      "cancel_task",
+		args:      map[string]any{"task_id": float64(1)},
+		apiStatus: http.StatusInternalServerError,
+		apiBody:   "not found",
+	})
 }
 
 // --- edit_task ---
@@ -658,24 +630,10 @@ func (s *MCPServerSuite) TestEditTaskValidRFC3339Once() {
 }
 
 func (s *MCPServerSuite) TestEditTaskErrors() {
-	tests := []struct {
-		name     string
-		doFunc   func(*http.Request) (*http.Response, error)
-		wantText string
-	}{
-		{"API error", func(*http.Request) (*http.Response, error) {
-			return jsonResponse(http.StatusInternalServerError, "not found"), nil
-		}, "API error"},
-		{"HTTP error", func(*http.Request) (*http.Response, error) {
-			return nil, fmt.Errorf("connection refused")
-		}, "calling API"},
-	}
-	for _, tt := range tests {
-		s.Run(tt.name, func() {
-			s.httpClient.doFunc = tt.doFunc
-			text, isError := s.callTool("edit_task", map[string]any{"task_id": float64(1), "prompt": "new"})
-			require.True(s.T(), isError)
-			require.Contains(s.T(), text, tt.wantText)
-		})
-	}
+	runToolErrorCases(&s.Suite, s.httpClient, s.callTool, toolErrorSpec{
+		tool:      "edit_task",
+		args:      map[string]any{"task_id": float64(1), "prompt": "new"},
+		apiStatus: http.StatusInternalServerError,
+		apiBody:   "not found",
+	})
 }

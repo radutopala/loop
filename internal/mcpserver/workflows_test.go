@@ -179,31 +179,13 @@ func (s *WorkflowsSuite) TestRunWorkflowUsesFallbackDirPath() {
 }
 
 func (s *WorkflowsSuite) TestRunWorkflowErrors() {
-	tests := []struct {
-		name     string
-		doFunc   func(*http.Request) (*http.Response, error)
-		wantText string
-	}{
-		{"API error", func(*http.Request) (*http.Response, error) {
-			return jsonResponse(http.StatusInternalServerError, "internal error"), nil
-		}, "API error"},
-		{"HTTP error", func(*http.Request) (*http.Response, error) {
-			return nil, fmt.Errorf("connection refused")
-		}, "calling API"},
-		{"invalid response JSON", func(*http.Request) (*http.Response, error) {
-			return jsonResponse(http.StatusCreated, "not json"), nil
-		}, "decoding response"},
-	}
-	for _, tt := range tests {
-		s.Run(tt.name, func() {
-			s.httpClient.doFunc = tt.doFunc
-			text, isError := s.callTool("run_workflow", map[string]any{
-				"workflow_name": "fail-workflow",
-			})
-			require.True(s.T(), isError)
-			require.Contains(s.T(), text, tt.wantText)
-		})
-	}
+	runToolErrorCases(&s.Suite, s.httpClient, s.callTool, toolErrorSpec{
+		tool:         "run_workflow",
+		args:         map[string]any{"workflow_name": "fail-workflow"},
+		apiStatus:    http.StatusInternalServerError,
+		apiBody:      "internal error",
+		decodeStatus: http.StatusCreated,
+	})
 }
 
 // --- get_workflow_run ---
@@ -238,31 +220,13 @@ func (s *WorkflowsSuite) TestGetWorkflowRunURLEscaping() {
 }
 
 func (s *WorkflowsSuite) TestGetWorkflowRunErrors() {
-	tests := []struct {
-		name     string
-		doFunc   func(*http.Request) (*http.Response, error)
-		wantText string
-	}{
-		{"not found", func(*http.Request) (*http.Response, error) {
-			return jsonResponse(http.StatusNotFound, "not found"), nil
-		}, "API error"},
-		{"HTTP error", func(*http.Request) (*http.Response, error) {
-			return nil, fmt.Errorf("timeout")
-		}, "calling API"},
-		{"invalid JSON", func(*http.Request) (*http.Response, error) {
-			return jsonResponse(http.StatusOK, "{bad json"), nil
-		}, "decoding response"},
-	}
-	for _, tt := range tests {
-		s.Run(tt.name, func() {
-			s.httpClient.doFunc = tt.doFunc
-			text, isError := s.callTool("get_workflow_run", map[string]any{
-				"run_id": "run-xyz",
-			})
-			require.True(s.T(), isError)
-			require.Contains(s.T(), text, tt.wantText)
-		})
-	}
+	runToolErrorCases(&s.Suite, s.httpClient, s.callTool, toolErrorSpec{
+		tool:         "get_workflow_run",
+		args:         map[string]any{"run_id": "run-xyz"},
+		apiStatus:    http.StatusNotFound,
+		apiBody:      "not found",
+		decodeStatus: http.StatusOK,
+	})
 }
 
 // --- list_workflows ---
@@ -489,28 +453,12 @@ func (s *WorkflowsSuite) TestCancelWorkflowRunSuccess() {
 }
 
 func (s *WorkflowsSuite) TestCancelWorkflowRunErrors() {
-	tests := []struct {
-		name     string
-		doFunc   func(*http.Request) (*http.Response, error)
-		wantText string
-	}{
-		{"API error", func(*http.Request) (*http.Response, error) {
-			return jsonResponse(http.StatusInternalServerError, "not found"), nil
-		}, "API error"},
-		{"HTTP error", func(*http.Request) (*http.Response, error) {
-			return nil, fmt.Errorf("connection refused")
-		}, "calling API"},
-	}
-	for _, tt := range tests {
-		s.Run(tt.name, func() {
-			s.httpClient.doFunc = tt.doFunc
-			text, isError := s.callTool("cancel_workflow_run", map[string]any{
-				"run_id": "run-fail",
-			})
-			require.True(s.T(), isError)
-			require.Contains(s.T(), text, tt.wantText)
-		})
-	}
+	runToolErrorCases(&s.Suite, s.httpClient, s.callTool, toolErrorSpec{
+		tool:      "cancel_workflow_run",
+		args:      map[string]any{"run_id": "run-fail"},
+		apiStatus: http.StatusInternalServerError,
+		apiBody:   "not found",
+	})
 }
 
 // --- resume_workflow_run ---
@@ -544,28 +492,12 @@ func (s *WorkflowsSuite) TestResumeWorkflowRunNoResponse() {
 }
 
 func (s *WorkflowsSuite) TestResumeWorkflowRunErrors() {
-	tests := []struct {
-		name     string
-		doFunc   func(*http.Request) (*http.Response, error)
-		wantText string
-	}{
-		{"API error", func(*http.Request) (*http.Response, error) {
-			return jsonResponse(http.StatusInternalServerError, "no pending approval"), nil
-		}, "API error"},
-		{"HTTP error", func(*http.Request) (*http.Response, error) {
-			return nil, fmt.Errorf("connection refused")
-		}, "calling API"},
-	}
-	for _, tt := range tests {
-		s.Run(tt.name, func() {
-			s.httpClient.doFunc = tt.doFunc
-			text, isError := s.callTool("resume_workflow_run", map[string]any{
-				"run_id": "run-fail",
-			})
-			require.True(s.T(), isError)
-			require.Contains(s.T(), text, tt.wantText)
-		})
-	}
+	runToolErrorCases(&s.Suite, s.httpClient, s.callTool, toolErrorSpec{
+		tool:      "resume_workflow_run",
+		args:      map[string]any{"run_id": "run-fail"},
+		apiStatus: http.StatusInternalServerError,
+		apiBody:   "no pending approval",
+	})
 }
 
 // --- save_workflow ---
@@ -727,28 +659,12 @@ func (s *WorkflowsSuite) TestDeleteWorkflowEmptyName() {
 }
 
 func (s *WorkflowsSuite) TestDeleteWorkflowErrors() {
-	tests := []struct {
-		name     string
-		doFunc   func(*http.Request) (*http.Response, error)
-		wantText string
-	}{
-		{"not found", func(*http.Request) (*http.Response, error) {
-			return jsonResponse(http.StatusNotFound, "workflow not found"), nil
-		}, "API error"},
-		{"HTTP error", func(*http.Request) (*http.Response, error) {
-			return nil, fmt.Errorf("connection refused")
-		}, "calling API"},
-	}
-	for _, tt := range tests {
-		s.Run(tt.name, func() {
-			s.httpClient.doFunc = tt.doFunc
-			text, isError := s.callTool("delete_workflow", map[string]any{
-				"name": "fail-wf",
-			})
-			require.True(s.T(), isError)
-			require.Contains(s.T(), text, tt.wantText)
-		})
-	}
+	runToolErrorCases(&s.Suite, s.httpClient, s.callTool, toolErrorSpec{
+		tool:      "delete_workflow",
+		args:      map[string]any{"name": "fail-wf"},
+		apiStatus: http.StatusNotFound,
+		apiBody:   "workflow not found",
+	})
 }
 
 // --- delete_workflow_run ---
@@ -781,28 +697,12 @@ func (s *WorkflowsSuite) TestDeleteWorkflowRunURLEscaping() {
 }
 
 func (s *WorkflowsSuite) TestDeleteWorkflowRunErrors() {
-	tests := []struct {
-		name     string
-		doFunc   func(*http.Request) (*http.Response, error)
-		wantText string
-	}{
-		{"API error", func(*http.Request) (*http.Response, error) {
-			return jsonResponse(http.StatusInternalServerError, "not found"), nil
-		}, "API error"},
-		{"HTTP error", func(*http.Request) (*http.Response, error) {
-			return nil, fmt.Errorf("connection refused")
-		}, "calling API"},
-	}
-	for _, tt := range tests {
-		s.Run(tt.name, func() {
-			s.httpClient.doFunc = tt.doFunc
-			text, isError := s.callTool("delete_workflow_run", map[string]any{
-				"run_id": "run-fail",
-			})
-			require.True(s.T(), isError)
-			require.Contains(s.T(), text, tt.wantText)
-		})
-	}
+	runToolErrorCases(&s.Suite, s.httpClient, s.callTool, toolErrorSpec{
+		tool:      "delete_workflow_run",
+		args:      map[string]any{"run_id": "run-fail"},
+		apiStatus: http.StatusInternalServerError,
+		apiBody:   "not found",
+	})
 }
 
 // --- retry_workflow_run ---
@@ -836,29 +736,11 @@ func (s *WorkflowsSuite) TestRetryWorkflowRunURLEscaping() {
 }
 
 func (s *WorkflowsSuite) TestRetryWorkflowRunErrors() {
-	tests := []struct {
-		name     string
-		doFunc   func(*http.Request) (*http.Response, error)
-		wantText string
-	}{
-		{"API error", func(*http.Request) (*http.Response, error) {
-			return jsonResponse(http.StatusInternalServerError, "run not found"), nil
-		}, "API error"},
-		{"HTTP error", func(*http.Request) (*http.Response, error) {
-			return nil, fmt.Errorf("connection refused")
-		}, "calling API"},
-		{"invalid response JSON", func(*http.Request) (*http.Response, error) {
-			return jsonResponse(http.StatusCreated, "not json"), nil
-		}, "decoding response"},
-	}
-	for _, tt := range tests {
-		s.Run(tt.name, func() {
-			s.httpClient.doFunc = tt.doFunc
-			text, isError := s.callTool("retry_workflow_run", map[string]any{
-				"run_id": "run-fail",
-			})
-			require.True(s.T(), isError)
-			require.Contains(s.T(), text, tt.wantText)
-		})
-	}
+	runToolErrorCases(&s.Suite, s.httpClient, s.callTool, toolErrorSpec{
+		tool:         "retry_workflow_run",
+		args:         map[string]any{"run_id": "run-fail"},
+		apiStatus:    http.StatusInternalServerError,
+		apiBody:      "run not found",
+		decodeStatus: http.StatusCreated,
+	})
 }
