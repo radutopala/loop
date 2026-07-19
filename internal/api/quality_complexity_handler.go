@@ -98,7 +98,7 @@ type pagedQualityRequest struct {
 	offset int
 }
 
-func (s *Server) preparePagedQualityRequest(w http.ResponseWriter, r *http.Request, defaultLimit, maxLimit int) (pagedQualityRequest, bool) {
+func (s *qualityService) preparePagedQualityRequest(w http.ResponseWriter, r *http.Request, defaultLimit, maxLimit int) (pagedQualityRequest, bool) {
 	channelID := r.PathValue("id")
 	g, ok := s.lookupCachedGraph(w, channelID)
 	if !ok {
@@ -120,7 +120,7 @@ func (s *Server) preparePagedQualityRequest(w http.ResponseWriter, r *http.Reque
 	}, true
 }
 
-func (s *Server) handleQualityComplexity(w http.ResponseWriter, r *http.Request) { //nolint:dupl
+func (s *qualityService) handleQualityComplexity(w http.ResponseWriter, r *http.Request) { //nolint:dupl
 	req, ok := s.preparePagedQualityRequest(w, r, complexityDefaultLimit, complexityMaxLimit)
 	if !ok {
 		return
@@ -139,10 +139,10 @@ func (s *Server) handleQualityComplexity(w http.ResponseWriter, r *http.Request)
 		Offset:         req.offset,
 		Limit:          req.limit,
 		Returned:       len(page),
-	}, s.logger)
+	}, s.srv.logger)
 }
 
-func (s *Server) handleQualityClones(w http.ResponseWriter, r *http.Request) { //nolint:dupl
+func (s *qualityService) handleQualityClones(w http.ResponseWriter, r *http.Request) { //nolint:dupl
 	req, ok := s.preparePagedQualityRequest(w, r, clonesDefaultLimit, clonesMaxLimit)
 	if !ok {
 		return
@@ -161,7 +161,7 @@ func (s *Server) handleQualityClones(w http.ResponseWriter, r *http.Request) { /
 		Offset:        req.offset,
 		Limit:         req.limit,
 		Returned:      len(page),
-	}, s.logger)
+	}, s.srv.logger)
 }
 
 // resolveMetricsConfigForChannel returns the effective metrics.Config
@@ -169,15 +169,15 @@ func (s *Server) handleQualityClones(w http.ResponseWriter, r *http.Request) { /
 // no loader is configured — handlers that don't need overrides shouldn't
 // pay for a GetChannel call (and tests shouldn't need to register the
 // mock).
-func (s *Server) resolveMetricsConfigForChannel(ctx context.Context, channelID string) metrics.Config {
-	if s.qualityMetricsCfg == nil {
+func (s *qualityService) resolveMetricsConfigForChannel(ctx context.Context, channelID string) metrics.Config {
+	if s.metricsCfg == nil {
 		return metrics.DefaultConfig()
 	}
 	var dir, parent string
-	if s.store != nil {
-		if d, err := s.resolveDirPath(ctx, "", channelID); err == nil {
+	if s.srv.store != nil {
+		if d, err := s.srv.resolveDirPath(ctx, "", channelID); err == nil {
 			dir = d
-			parent = s.resolveParentDirPath(ctx, channelID)
+			parent = s.srv.resolveParentDirPath(ctx, channelID)
 		}
 	}
 	return s.resolveMetricsConfig(dir, parent)

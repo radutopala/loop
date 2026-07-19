@@ -254,14 +254,14 @@ func (s *ServerSuite) TestHandleQualityClonesUsesProjectThresholds() {
 func (s *ServerSuite) TestResolveMetricsConfigForChannelNoLoader() {
 	// No loader configured — handler shouldn't even consult the channel
 	// store, so the test deliberately leaves the mock unregistered.
-	cfg := s.srv.resolveMetricsConfigForChannel(s.T().Context(), "ch-1")
+	cfg := s.srv.quality.resolveMetricsConfigForChannel(s.T().Context(), "ch-1")
 	require.Equal(s.T(), metrics.DefaultConfig(), cfg)
 }
 
 func (s *ServerSuite) TestResolveMetricsConfigForChannelLoaderReturnsZero() {
 	s.srv.SetQualityMetricsLoader(func(string, string) metrics.Config { return metrics.Config{} })
 	s.channelWithDir("ch-1", s.T().TempDir())
-	cfg := s.srv.resolveMetricsConfigForChannel(s.T().Context(), "ch-1")
+	cfg := s.srv.quality.resolveMetricsConfigForChannel(s.T().Context(), "ch-1")
 	require.Equal(s.T(), metrics.DefaultConfig(), cfg)
 }
 
@@ -273,7 +273,7 @@ func (s *ServerSuite) TestResolveMetricsConfigForChannelStoreUnset() {
 		capturedDir, capturedParent = d, p
 		return custom
 	})
-	cfg := s.srv.resolveMetricsConfigForChannel(s.T().Context(), "ch-1")
+	cfg := s.srv.quality.resolveMetricsConfigForChannel(s.T().Context(), "ch-1")
 	require.Equal(s.T(), custom, cfg)
 	require.Equal(s.T(), "", capturedDir)
 	require.Equal(s.T(), "", capturedParent)
@@ -283,6 +283,6 @@ func (s *ServerSuite) TestResolveMetricsConfigForChannelDirResolveError() {
 	s.store.On("GetChannel", mock.Anything, "ch-1").Return((*db.Channel)(nil), errors.New("missing"))
 	custom := metrics.Config{Complexity: metrics.ComplexityConfig{CyclomaticT: 42}}
 	s.srv.SetQualityMetricsLoader(func(string, string) metrics.Config { return custom })
-	cfg := s.srv.resolveMetricsConfigForChannel(s.T().Context(), "ch-1")
+	cfg := s.srv.quality.resolveMetricsConfigForChannel(s.T().Context(), "ch-1")
 	require.Equal(s.T(), custom, cfg)
 }

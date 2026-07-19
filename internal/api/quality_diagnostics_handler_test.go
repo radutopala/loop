@@ -63,12 +63,12 @@ func (s *ServerSuite) TestHandleQualityScanCancelNoInflightReturns204() {
 func (s *ServerSuite) TestHandleQualityScanCancelInflightCancelsAndBroadcasts() {
 	cap := s.hookHub()
 	_, cancel := context.WithCancel(context.Background())
-	s.srv.qualityMu.Lock()
-	if s.srv.qualityCancellers == nil {
-		s.srv.qualityCancellers = map[string]context.CancelFunc{}
+	s.srv.quality.mu.Lock()
+	if s.srv.quality.cancellers == nil {
+		s.srv.quality.cancellers = map[string]context.CancelFunc{}
 	}
-	s.srv.qualityCancellers["ch-1"] = cancel
-	s.srv.qualityMu.Unlock()
+	s.srv.quality.cancellers["ch-1"] = cancel
+	s.srv.quality.mu.Unlock()
 
 	rec := s.testRequest("DELETE", "/api/channels/ch-1/quality/scan", "")
 	require.Equal(s.T(), http.StatusAccepted, rec.Code)
@@ -83,9 +83,9 @@ func (s *ServerSuite) TestHandleQualityScanCancelInflightCancelsAndBroadcasts() 
 
 func (s *ServerSuite) TestHandleQualityScanCancelNilHubStillSucceeds() {
 	_, cancel := context.WithCancel(context.Background())
-	s.srv.qualityMu.Lock()
-	s.srv.qualityCancellers = map[string]context.CancelFunc{"ch-1": cancel}
-	s.srv.qualityMu.Unlock()
+	s.srv.quality.mu.Lock()
+	s.srv.quality.cancellers = map[string]context.CancelFunc{"ch-1": cancel}
+	s.srv.quality.mu.Unlock()
 	s.srv.eventsHub = nil
 
 	rec := s.testRequest("DELETE", "/api/channels/ch-1/quality/scan", "")

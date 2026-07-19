@@ -695,13 +695,13 @@ func (s *ServerSuite) TestBuildQualityReportSplitsFailedRules() {
 }
 
 func (s *ServerSuite) TestCollectRulesNoGraphProviderReturnsNil() {
-	out := s.srv.collectRules("ch-1", "", "", metrics.Signal{})
+	out := s.srv.quality.collectRules("ch-1", "", "", metrics.Signal{})
 	require.Nil(s.T(), out)
 }
 
 func (s *ServerSuite) TestCollectRulesNilGraphReturnsNil() {
 	s.srv.SetQualityGraphProvider(&fakeGraphProvider{g: nil})
-	out := s.srv.collectRules("ch-1", "", "", metrics.Signal{})
+	out := s.srv.quality.collectRules("ch-1", "", "", metrics.Signal{})
 	require.Nil(s.T(), out)
 }
 
@@ -710,7 +710,7 @@ func (s *ServerSuite) TestCollectRulesNilGraphReturnsNil() {
 // out without forcing callers to clear it.
 func (s *ServerSuite) TestResolveRulesConfigLoaderReturnsNilFallsBackToDefault() {
 	s.srv.SetQualityRulesLoader(func(string, string) *rules.Config { return nil })
-	got := s.srv.resolveRulesConfig("", "")
+	got := s.srv.quality.resolveRulesConfig("", "")
 	require.Equal(s.T(), rules.DefaultConfig(), got)
 }
 
@@ -747,7 +747,7 @@ func (s *ServerSuite) TestHandleQualitySnapshotStoreNotConfigured() {
 // that path explicitly because the engine-error tests always have a hub.
 func (s *ServerSuite) TestBroadcastQualityErrorNilHubIsNoop() {
 	s.srv.eventsHub = nil
-	s.srv.broadcastQualityError("ch-1", "/tmp", "main", errors.New("boom"))
+	s.srv.quality.broadcastQualityError("ch-1", "/tmp", "main", errors.New("boom"))
 }
 
 func (s *ServerSuite) TestEmitQualityProgressNilHubIsNoop() {
@@ -770,9 +770,9 @@ func (s *ServerSuite) TestEmitQualityProgressMidScanTickAfterWindowEmits() {
 	cap := s.hookHub()
 	s.srv.EmitQualityProgress("ch-1", 0, 10) // first → emits
 	// Backdate the last-emit so the next tick clears the throttle window.
-	s.srv.qualityMu.Lock()
-	s.srv.qualityProgress["ch-1"] = time.Now().Add(-progressThrottle - time.Second)
-	s.srv.qualityMu.Unlock()
+	s.srv.quality.mu.Lock()
+	s.srv.quality.progress["ch-1"] = time.Now().Add(-progressThrottle - time.Second)
+	s.srv.quality.mu.Unlock()
 	s.srv.EmitQualityProgress("ch-1", 5, 10) // window cleared → emits
 	require.Len(s.T(), cap.snapshot(), 2)
 }
