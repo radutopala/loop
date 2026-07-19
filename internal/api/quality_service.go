@@ -28,3 +28,11 @@ type qualityService struct {
 	cancellers map[string]context.CancelFunc
 	progress   map[string]time.Time // per-channel throttle for quality.scan_progress
 }
+
+// newQualityService creates the quality domain with its scan registry ready.
+// The engine deps (scanner, graph, snapshots, loaders, history) arrive later
+// via the Server setters — the daemon wires them conditionally when the
+// quality engine is enabled.
+func newQualityService(deps *serverDeps) *qualityService {
+	return &qualityService{deps: deps, cancellers: map[string]context.CancelFunc{}}
+}
