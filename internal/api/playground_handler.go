@@ -60,7 +60,7 @@ func buildReadme(title, body string) string {
 // validatePlaygroundDir validates the playground name (path containment + regex)
 // and returns a safe directory path under the playground base directory.
 func (s *playgroundService) validatePlaygroundDir(name string) (string, error) {
-	baseDir := filepath.Join(s.srv.loopDir, "playground")
+	baseDir := filepath.Join(s.deps.loopDir, "playground")
 	return validatePlaygroundDirIn(baseDir, name)
 }
 
@@ -113,10 +113,10 @@ func (s *playgroundService) projectPlaygroundDir(ctx context.Context, channelID 
 	if channelID == "" {
 		return "", fmt.Errorf("channel_id is required")
 	}
-	if s.srv.store == nil {
+	if s.deps.store == nil {
 		return "", fmt.Errorf("channel lookup not configured")
 	}
-	ch, err := s.srv.store.GetChannel(ctx, channelID)
+	ch, err := s.deps.store.GetChannel(ctx, channelID)
 	if err != nil {
 		return "", fmt.Errorf("looking up channel: %w", err)
 	}
@@ -127,8 +127,8 @@ func (s *playgroundService) projectPlaygroundDir(ctx context.Context, channelID 
 		return root, nil
 	}
 	if ch.DirPath == "" {
-		if s.srv.loopDir != "" {
-			return filepath.Join(s.srv.loopDir, channelID, "work"), nil
+		if s.deps.loopDir != "" {
+			return filepath.Join(s.deps.loopDir, channelID, "work"), nil
 		}
 		return "", fmt.Errorf("channel %s has no dir_path", channelID)
 	}
@@ -148,7 +148,7 @@ func (s *playgroundService) worktreeRootDir(ctx context.Context, ch *db.Channel)
 		if cur.ParentID == "" {
 			return ""
 		}
-		p, err := s.srv.store.GetChannel(ctx, cur.ParentID)
+		p, err := s.deps.store.GetChannel(ctx, cur.ParentID)
 		if err != nil || p == nil || !p.Worktree {
 			return ""
 		}
@@ -158,7 +158,7 @@ func (s *playgroundService) worktreeRootDir(ctx context.Context, ch *db.Channel)
 		if cur.ParentID == "" {
 			return ""
 		}
-		p, err := s.srv.store.GetChannel(ctx, cur.ParentID)
+		p, err := s.deps.store.GetChannel(ctx, cur.ParentID)
 		if err != nil || p == nil {
 			return ""
 		}
@@ -229,8 +229,8 @@ func (s *playgroundService) handlePlaygroundUpdate(w http.ResponseWriter, r *htt
 	}
 
 	// Broadcast event to all connected clients (global — no channel scoping).
-	if s.srv.eventsHub != nil {
-		s.srv.eventsHub.Broadcast(Event{
+	if s.deps.eventsHub != nil {
+		s.deps.eventsHub.Broadcast(Event{
 			Type:   EventPlaygroundUpdate,
 			Global: true,
 			Data:   content,
@@ -298,7 +298,7 @@ func listPlaygroundsIn(baseDir, scope string) []playgroundItem {
 // handlePlaygroundList handles GET /api/playground/items?channel_id=... — lists all playground names.
 // Returns items from both global (~/.loop/playground/) and project ({dir}/.loop/playground/) scopes.
 func (s *playgroundService) handlePlaygroundList(w http.ResponseWriter, r *http.Request) {
-	globalDir := filepath.Join(s.srv.loopDir, "playground")
+	globalDir := filepath.Join(s.deps.loopDir, "playground")
 	items := listPlaygroundsIn(globalDir, "global")
 
 	// If channel_id is provided, also list project-scoped playgrounds.
@@ -478,18 +478,18 @@ func (s *playgroundService) handlePlaygroundDelete(w http.ResponseWriter, r *htt
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	if _, err := s.srv.sys.Stat(pgDir); os.IsNotExist(err) {
+	if _, err := s.deps.sys.Stat(pgDir); os.IsNotExist(err) {
 		http.Error(w, "playground not found", http.StatusNotFound)
 		return
 	}
-	if err := s.srv.sys.RemoveAll(pgDir); err != nil {
+	if err := s.deps.sys.RemoveAll(pgDir); err != nil {
 		http.Error(w, "deleting playground: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 
-	if s.srv.eventsHub != nil {
+	if s.deps.eventsHub != nil {
 		scope, channelID := playgroundScopeFromRequest(r)
-		s.srv.eventsHub.Broadcast(Event{
+		s.deps.eventsHub.Broadcast(Event{
 			Type:   EventPlaygroundUpdate,
 			Global: true,
 			Data:   map[string]string{"name": name, "deleted": "true", "scope": scope, "channel_id": channelID},
@@ -530,9 +530,9 @@ func (s *playgroundService) handlePlaygroundFileWrite(w http.ResponseWriter, r *
 		return
 	}
 
-	if s.srv.eventsHub != nil {
+	if s.deps.eventsHub != nil {
 		scope, channelID := playgroundScopeFromRequest(r)
-		s.srv.eventsHub.Broadcast(Event{
+		s.deps.eventsHub.Broadcast(Event{
 			Type:   EventPlaygroundUpdate,
 			Global: true,
 			Data:   map[string]string{"name": name, "scope": scope, "channel_id": channelID},
@@ -583,9 +583,9 @@ func (s *playgroundService) handlePlaygroundFileDelete(w http.ResponseWriter, r 
 		return
 	}
 
-	if s.srv.eventsHub != nil {
+	if s.deps.eventsHub != nil {
 		scope, channelID := playgroundScopeFromRequest(r)
-		s.srv.eventsHub.Broadcast(Event{
+		s.deps.eventsHub.Broadcast(Event{
 			Type:   EventPlaygroundUpdate,
 			Global: true,
 			Data:   map[string]string{"name": name, "scope": scope, "channel_id": channelID},

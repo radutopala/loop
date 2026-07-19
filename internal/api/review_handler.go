@@ -58,7 +58,7 @@ func (s *Server) SetReviewService(client GitHubReview, store *review.Store, wt r
 // inspect or tear it down. Disabling the feature flag mid-session blocks
 // new loads / runs but doesn't strand an existing session.
 func (s *reviewService) requireReviewEnabled(w http.ResponseWriter, dirPath, parentDirPath string) bool {
-	if !s.srv.configs.reviewEnabled(dirPath, parentDirPath) {
+	if !s.deps.configs.reviewEnabled(dirPath, parentDirPath) {
 		http.Error(w, "review panel disabled for this project", http.StatusForbidden)
 		return false
 	}
@@ -117,7 +117,7 @@ type reviewSessionResponse struct {
 }
 
 func (s *reviewService) handleReviewLoad(w http.ResponseWriter, r *http.Request) {
-	if !requireConfigured(w, s.srv.store, "channel listing not configured") {
+	if !requireConfigured(w, s.deps.store, "channel listing not configured") {
 		return
 	}
 	if !requireConfigured(w, s.client, "review service not configured") {
@@ -141,7 +141,7 @@ func (s *reviewService) handleReviewLoad(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	ch, err := s.srv.store.GetChannel(r.Context(), channelID)
+	ch, err := s.deps.store.GetChannel(r.Context(), channelID)
 	if err != nil {
 		http.Error(w, "failed to look up channel", http.StatusInternalServerError)
 		return
@@ -151,19 +151,19 @@ func (s *reviewService) handleReviewLoad(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	dirPath := ch.DirPath
-	if dirPath == "" && s.srv.loopDir != "" {
-		dirPath = filepath.Join(s.srv.loopDir, ch.ChannelID, "work")
+	if dirPath == "" && s.deps.loopDir != "" {
+		dirPath = filepath.Join(s.deps.loopDir, ch.ChannelID, "work")
 	}
 	if dirPath == "" {
 		http.Error(w, "channel has no dir_path", http.StatusBadRequest)
 		return
 	}
 
-	parentDirPath := s.srv.workspace.resolveParentDirPath(r.Context(), channelID)
+	parentDirPath := s.deps.workspace.resolveParentDirPath(r.Context(), channelID)
 	if !s.requireReviewEnabled(w, dirPath, parentDirPath) {
 		return
 	}
-	ghUser := s.srv.configs.ghUser(dirPath, parentDirPath)
+	ghUser := s.deps.configs.ghUser(dirPath, parentDirPath)
 
 	// Refuse to Load over an in-flight run. The async run goroutine would
 	// otherwise stomp the new StatusLoading session on completion, and
@@ -180,7 +180,7 @@ func (s *reviewService) handleReviewLoad(w http.ResponseWriter, r *http.Request)
 	// but does not block the new Load.
 	if prev := s.sessions.Get(channelID); prev != nil && prev.WorktreePath != "" {
 		if err := s.worktree.Remove(r.Context(), dirPath, prev.WorktreePath); err != nil {
-			s.srv.logger.Warn("review worktree remove failed on load overwrite",
+			s.deps.logger.Warn("review worktree remove failed on load overwrite",
 				"channel_id", channelID, "path", prev.WorktreePath, "err", err)
 		}
 	}
@@ -245,7 +245,7 @@ func (s *reviewService) handleReviewLoad(w http.ResponseWriter, r *http.Request)
 		Status:       review.StatusReady,
 	}
 	s.sessions.Put(channelID, sess)
-	writeHTTPJSON(w, http.StatusOK, reviewSessionResponse{Present: true, Session: s.sessions.Get(channelID)}, s.srv.logger)
+	writeHTTPJSON(w, http.StatusOK, reviewSessionResponse{Present: true, Session: s.sessions.Get(channelID)}, s.deps.logger)
 }
 
 // handleReviewSync re-fetches the PR head, the diff, and the GitHub
@@ -257,7 +257,7 @@ func (s *reviewService) handleReviewLoad(w http.ResponseWriter, r *http.Request)
 // Error/Reviewing? — we accept any non-Loading status: we never want
 // two concurrent worktree mutations).
 func (s *reviewService) handleReviewSync(w http.ResponseWriter, r *http.Request) {
-	if !requireConfigured(w, s.srv.store, "channel listing not configured") {
+	if !requireConfigured(w, s.deps.store, "channel listing not configured") {
 		return
 	}
 	if !requireConfigured(w, s.client, "review service not configured") {
@@ -286,7 +286,7 @@ func (s *reviewService) handleReviewSync(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	ch, err := s.srv.store.GetChannel(r.Context(), channelID)
+	ch, err := s.deps.store.GetChannel(r.Context(), channelID)
 	if err != nil {
 		http.Error(w, "failed to look up channel", http.StatusInternalServerError)
 		return
@@ -296,24 +296,24 @@ func (s *reviewService) handleReviewSync(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	dirPath := ch.DirPath
-	if dirPath == "" && s.srv.loopDir != "" {
-		dirPath = filepath.Join(s.srv.loopDir, ch.ChannelID, "work")
+	if dirPath == "" && s.deps.loopDir != "" {
+		dirPath = filepath.Join(s.deps.loopDir, ch.ChannelID, "work")
 	}
 	if dirPath == "" {
 		http.Error(w, "channel has no dir_path", http.StatusBadRequest)
 		return
 	}
-	parentDirPath := s.srv.workspace.resolveParentDirPath(r.Context(), channelID)
+	parentDirPath := s.deps.workspace.resolveParentDirPath(r.Context(), channelID)
 	if !s.requireReviewEnabled(w, dirPath, parentDirPath) {
 		return
 	}
-	ghUser := s.srv.configs.ghUser(dirPath, parentDirPath)
+	ghUser := s.deps.configs.ghUser(dirPath, parentDirPath)
 
 	if _, err := s.refreshReviewSession(r.Context(), channelID, dirPath, ghUser, sess); err != nil {
 		respondReviewError(w, err)
 		return
 	}
-	writeHTTPJSON(w, http.StatusOK, reviewSessionResponse{Present: true, Session: s.sessions.Get(channelID)}, s.srv.logger)
+	writeHTTPJSON(w, http.StatusOK, reviewSessionResponse{Present: true, Session: s.sessions.Get(channelID)}, s.deps.logger)
 }
 
 // refreshReviewSession fast-forwards the worktree to the PR's current
@@ -362,7 +362,7 @@ func (s *reviewService) refreshReviewSession(ctx context.Context, channelID, dir
 		Status:       review.StatusReady,
 	})
 	if raw != sess.RawDiff {
-		if hub := s.srv.eventsHub; hub != nil {
+		if hub := s.deps.eventsHub; hub != nil {
 			hub.BroadcastReviewDiff(channelID, events.ReviewDiffEventData{RawDiff: raw})
 		}
 	}
@@ -378,13 +378,13 @@ func (s *reviewService) fetchExistingReviewComments(ctx context.Context, dirPath
 	slug, err := s.client.FetchRepoSlug(ctx, dirPath, ghUser)
 	if err != nil || slug == nil {
 		if err != nil {
-			s.srv.logger.Debug("review: skip GH comment fetch (slug)", "err", err)
+			s.deps.logger.Debug("review: skip GH comment fetch (slug)", "err", err)
 		}
 		return nil
 	}
 	ghComments, err := s.client.FetchPRReviewComments(ctx, dirPath, ghUser, *slug, prNum)
 	if err != nil {
-		s.srv.logger.Debug("review: skip GH comment fetch (api)", "err", err)
+		s.deps.logger.Debug("review: skip GH comment fetch (api)", "err", err)
 		return nil
 	}
 	out := make([]*review.Comment, 0, len(ghComments))
@@ -415,7 +415,7 @@ func (s *reviewService) fetchExistingReviewComments(ctx context.Context, dirPath
 // channel's working directory. The FE renders these as a picker so the user
 // can click a row to auto-load instead of pasting a PR number or URL.
 func (s *reviewService) handleReviewListPRs(w http.ResponseWriter, r *http.Request) {
-	if !requireConfigured(w, s.srv.store, "channel listing not configured") {
+	if !requireConfigured(w, s.deps.store, "channel listing not configured") {
 		return
 	}
 	if !requireConfigured(w, s.client, "review service not configured") {
@@ -423,7 +423,7 @@ func (s *reviewService) handleReviewListPRs(w http.ResponseWriter, r *http.Reque
 	}
 
 	channelID := r.PathValue("id")
-	ch, err := s.srv.store.GetChannel(r.Context(), channelID)
+	ch, err := s.deps.store.GetChannel(r.Context(), channelID)
 	if err != nil {
 		http.Error(w, "failed to look up channel", http.StatusInternalServerError)
 		return
@@ -433,19 +433,19 @@ func (s *reviewService) handleReviewListPRs(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	dirPath := ch.DirPath
-	if dirPath == "" && s.srv.loopDir != "" {
-		dirPath = filepath.Join(s.srv.loopDir, ch.ChannelID, "work")
+	if dirPath == "" && s.deps.loopDir != "" {
+		dirPath = filepath.Join(s.deps.loopDir, ch.ChannelID, "work")
 	}
 	if dirPath == "" {
 		http.Error(w, "channel has no dir_path", http.StatusBadRequest)
 		return
 	}
 
-	parentDirPath := s.srv.workspace.resolveParentDirPath(r.Context(), channelID)
+	parentDirPath := s.deps.workspace.resolveParentDirPath(r.Context(), channelID)
 	if !s.requireReviewEnabled(w, dirPath, parentDirPath) {
 		return
 	}
-	ghUser := s.srv.configs.ghUser(dirPath, parentDirPath)
+	ghUser := s.deps.configs.ghUser(dirPath, parentDirPath)
 
 	prs, err := s.client.ListOpenPRs(r.Context(), dirPath, ghUser)
 	if err != nil {
@@ -455,7 +455,7 @@ func (s *reviewService) handleReviewListPRs(w http.ResponseWriter, r *http.Reque
 	if prs == nil {
 		prs = []githubapi.PRInfo{}
 	}
-	writeHTTPJSON(w, http.StatusOK, map[string]any{"prs": prs}, s.srv.logger)
+	writeHTTPJSON(w, http.StatusOK, map[string]any{"prs": prs}, s.deps.logger)
 }
 
 func (s *reviewService) handleReviewGet(w http.ResponseWriter, r *http.Request) {
@@ -466,10 +466,10 @@ func (s *reviewService) handleReviewGet(w http.ResponseWriter, r *http.Request) 
 	channelID := r.PathValue("id")
 	sess := s.sessions.Get(channelID)
 	if sess == nil {
-		writeHTTPJSON(w, http.StatusOK, reviewSessionResponse{Present: false}, s.srv.logger)
+		writeHTTPJSON(w, http.StatusOK, reviewSessionResponse{Present: false}, s.deps.logger)
 		return
 	}
-	writeHTTPJSON(w, http.StatusOK, reviewSessionResponse{Present: true, Session: sess}, s.srv.logger)
+	writeHTTPJSON(w, http.StatusOK, reviewSessionResponse{Present: true, Session: sess}, s.deps.logger)
 }
 
 // handleReviewSessions returns a (channel_id, status) summary for every
@@ -483,11 +483,11 @@ func (s *reviewService) handleReviewSessions(w http.ResponseWriter, _ *http.Requ
 		http.Error(w, "review service not configured", http.StatusNotImplemented)
 		return
 	}
-	writeHTTPJSON(w, http.StatusOK, map[string]any{"sessions": s.sessions.List()}, s.srv.logger)
+	writeHTTPJSON(w, http.StatusOK, map[string]any{"sessions": s.sessions.List()}, s.deps.logger)
 }
 
 func (s *reviewService) handleReviewDelete(w http.ResponseWriter, r *http.Request) {
-	if !requireConfigured(w, s.srv.store, "channel listing not configured") {
+	if !requireConfigured(w, s.deps.store, "channel listing not configured") {
 		return
 	}
 	if s.sessions == nil {
@@ -509,10 +509,10 @@ func (s *reviewService) handleReviewDelete(w http.ResponseWriter, r *http.Reques
 	// into a deleted session.
 	s.cancelReviewRun(channelID)
 	if sess.WorktreePath != "" {
-		ch, err := s.srv.store.GetChannel(r.Context(), channelID)
+		ch, err := s.deps.store.GetChannel(r.Context(), channelID)
 		if err == nil && ch != nil && ch.DirPath != "" {
 			if err := s.worktree.Remove(r.Context(), ch.DirPath, sess.WorktreePath); err != nil {
-				s.srv.logger.Warn("review worktree remove failed", "channel_id", channelID, "path", sess.WorktreePath, "err", err)
+				s.deps.logger.Warn("review worktree remove failed", "channel_id", channelID, "path", sess.WorktreePath, "err", err)
 			}
 		}
 	}
@@ -521,7 +521,7 @@ func (s *reviewService) handleReviewDelete(w http.ResponseWriter, r *http.Reques
 }
 
 func (s *reviewService) handleReviewPushComment(w http.ResponseWriter, r *http.Request) {
-	if !requireConfigured(w, s.srv.store, "channel listing not configured") {
+	if !requireConfigured(w, s.deps.store, "channel listing not configured") {
 		return
 	}
 	if !requireConfigured(w, s.client, "review service not configured") {
@@ -543,7 +543,7 @@ func (s *reviewService) handleReviewPushComment(w http.ResponseWriter, r *http.R
 		return
 	}
 	if c.Pushed {
-		writeHTTPJSON(w, http.StatusOK, map[string]any{"pushed": true, "already": true}, s.srv.logger)
+		writeHTTPJSON(w, http.StatusOK, map[string]any{"pushed": true, "already": true}, s.deps.logger)
 		return
 	}
 	if err := s.pushOneComment(r.Context(), channelID, sess, c); err != nil {
@@ -554,7 +554,7 @@ func (s *reviewService) handleReviewPushComment(w http.ResponseWriter, r *http.R
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	writeHTTPJSON(w, http.StatusOK, map[string]any{"pushed": true}, s.srv.logger)
+	writeHTTPJSON(w, http.StatusOK, map[string]any{"pushed": true}, s.deps.logger)
 }
 
 // pushAllResult captures the outcome of POST .../review/push-all. Errors
@@ -567,7 +567,7 @@ type pushAllResult struct {
 }
 
 func (s *reviewService) handleReviewPushAll(w http.ResponseWriter, r *http.Request) {
-	if !requireConfigured(w, s.srv.store, "channel listing not configured") {
+	if !requireConfigured(w, s.deps.store, "channel listing not configured") {
 		return
 	}
 	if !requireConfigured(w, s.client, "review service not configured") {
@@ -599,7 +599,7 @@ func (s *reviewService) handleReviewPushAll(w http.ResponseWriter, r *http.Reque
 		}
 		result.Pushed++
 	}
-	writeHTTPJSON(w, http.StatusOK, result, s.srv.logger)
+	writeHTTPJSON(w, http.StatusOK, result, s.deps.logger)
 }
 
 // handleReviewDeleteComment removes a single review comment from the
@@ -613,7 +613,7 @@ func (s *reviewService) handleReviewPushAll(w http.ResponseWriter, r *http.Reque
 // local comment is also preserved so the user can retry — half-deleting
 // (gone locally, still on GH) would be confusing.
 func (s *reviewService) handleReviewDeleteComment(w http.ResponseWriter, r *http.Request) {
-	if !requireConfigured(w, s.srv.store, "channel listing not configured") {
+	if !requireConfigured(w, s.deps.store, "channel listing not configured") {
 		return
 	}
 	if s.sessions == nil {
@@ -639,16 +639,16 @@ func (s *reviewService) handleReviewDeleteComment(w http.ResponseWriter, r *http
 		if !requireConfigured(w, s.client, "review service not configured") {
 			return
 		}
-		ch, err := s.srv.store.GetChannel(r.Context(), channelID)
+		ch, err := s.deps.store.GetChannel(r.Context(), channelID)
 		if err != nil || ch == nil || ch.DirPath == "" {
 			http.Error(w, "channel has no dir_path", http.StatusInternalServerError)
 			return
 		}
-		parentDirPath := s.srv.workspace.resolveParentDirPath(r.Context(), channelID)
+		parentDirPath := s.deps.workspace.resolveParentDirPath(r.Context(), channelID)
 		if !s.requireReviewEnabled(w, ch.DirPath, parentDirPath) {
 			return
 		}
-		ghUser := s.srv.configs.ghUser(ch.DirPath, parentDirPath)
+		ghUser := s.deps.configs.ghUser(ch.DirPath, parentDirPath)
 		// GitHub-source comments are only deletable when their author
 		// matches the configured gh user — GH would reject anyone else's
 		// DELETE anyway, but failing fast here keeps the local copy
@@ -684,15 +684,15 @@ func (s *reviewService) pushOneComment(ctx context.Context, channelID string, se
 	if sess.PR == nil || sess.HeadSHA == "" {
 		return errors.New("session not ready (no PR or head SHA)")
 	}
-	ch, err := s.srv.store.GetChannel(ctx, channelID)
+	ch, err := s.deps.store.GetChannel(ctx, channelID)
 	if err != nil || ch == nil || ch.DirPath == "" {
 		return errors.New("channel has no dir_path")
 	}
-	parentDirPath := s.srv.workspace.resolveParentDirPath(ctx, channelID)
-	if !s.srv.configs.reviewEnabled(ch.DirPath, parentDirPath) {
+	parentDirPath := s.deps.workspace.resolveParentDirPath(ctx, channelID)
+	if !s.deps.configs.reviewEnabled(ch.DirPath, parentDirPath) {
 		return errReviewDisabled
 	}
-	ghUser := s.srv.configs.ghUser(ch.DirPath, parentDirPath)
+	ghUser := s.deps.configs.ghUser(ch.DirPath, parentDirPath)
 	slug, err := s.client.FetchRepoSlug(ctx, ch.DirPath, ghUser)
 	if err != nil {
 		return err
@@ -754,7 +754,7 @@ func (s *reviewService) handleReviewRun(w http.ResponseWriter, r *http.Request) 
 	runCtx, cancelRun := context.WithCancel(context.Background())
 	if !s.registerReviewRun(channelID, cancelRun) {
 		cancelRun()
-		writeHTTPJSON(w, http.StatusAccepted, map[string]string{"status": "in_progress"}, s.srv.logger)
+		writeHTTPJSON(w, http.StatusAccepted, map[string]string{"status": "in_progress"}, s.deps.logger)
 		return
 	}
 	if sess.Status != review.StatusReady {
@@ -772,12 +772,12 @@ func (s *reviewService) handleReviewRun(w http.ResponseWriter, r *http.Request) 
 	// channel's dir — resolveParentDirPath walks that chain. For a
 	// root channel, resolveParentDirPath returns "" and we fall back to
 	// the channel's own dir (which is the main repo).
-	parentDirPath := s.srv.workspace.resolveParentDirPath(r.Context(), channelID)
-	if parentDirPath == "" && s.srv.store != nil {
-		if ch, err := s.srv.store.GetChannel(r.Context(), channelID); err == nil && ch != nil {
+	parentDirPath := s.deps.workspace.resolveParentDirPath(r.Context(), channelID)
+	if parentDirPath == "" && s.deps.store != nil {
+		if ch, err := s.deps.store.GetChannel(r.Context(), channelID); err == nil && ch != nil {
 			parentDirPath = ch.DirPath
-			if parentDirPath == "" && s.srv.loopDir != "" {
-				parentDirPath = filepath.Join(s.srv.loopDir, ch.ChannelID, "work")
+			if parentDirPath == "" && s.deps.loopDir != "" {
+				parentDirPath = filepath.Join(s.deps.loopDir, ch.ChannelID, "work")
 			}
 		}
 	}
@@ -791,20 +791,20 @@ func (s *reviewService) handleReviewRun(w http.ResponseWriter, r *http.Request) 
 	// channel's own workdir (used for project-config layering), and
 	// parentDirPath provides the worktree-merge layer.
 	channelDirPath := ""
-	if s.srv.store != nil {
-		if ch, err := s.srv.store.GetChannel(r.Context(), channelID); err == nil && ch != nil {
+	if s.deps.store != nil {
+		if ch, err := s.deps.store.GetChannel(r.Context(), channelID); err == nil && ch != nil {
 			channelDirPath = ch.DirPath
-			if channelDirPath == "" && s.srv.loopDir != "" {
-				channelDirPath = filepath.Join(s.srv.loopDir, ch.ChannelID, "work")
+			if channelDirPath == "" && s.deps.loopDir != "" {
+				channelDirPath = filepath.Join(s.deps.loopDir, ch.ChannelID, "work")
 			}
 		}
 	}
-	if !s.srv.configs.reviewEnabled(channelDirPath, parentDirPath) {
+	if !s.deps.configs.reviewEnabled(channelDirPath, parentDirPath) {
 		s.unregisterReviewRun(channelID)
 		http.Error(w, "review panel disabled for this project", http.StatusForbidden)
 		return
 	}
-	ghUser := s.srv.configs.ghUser(channelDirPath, parentDirPath)
+	ghUser := s.deps.configs.ghUser(channelDirPath, parentDirPath)
 
 	// Refresh the worktree + GH comments + diff before the agent kicks
 	// off. Without this, the agent could review stale code (commits
@@ -838,7 +838,7 @@ func (s *reviewService) handleReviewRun(w http.ResponseWriter, r *http.Request) 
 	s.broadcastReviewStatus(channelID, review.StatusReviewing, "")
 
 	go s.runReviewAsync(runCtx, channelID, worktreePath, parentDirPath, sysPrompt, fullPrompt)
-	writeHTTPJSON(w, http.StatusAccepted, map[string]string{"status": "started"}, s.srv.logger)
+	writeHTTPJSON(w, http.StatusAccepted, map[string]string{"status": "started"}, s.deps.logger)
 }
 
 // runReviewAsync executes the review run on the goroutine that
@@ -862,7 +862,7 @@ func (s *reviewService) runReviewAsync(runCtx context.Context, channelID, worktr
 		if !s.sessions.AddComment(channelID, c) {
 			return
 		}
-		if hub := s.srv.eventsHub; hub != nil {
+		if hub := s.deps.eventsHub; hub != nil {
 			hub.BroadcastReviewComment(channelID, events.ReviewCommentEventData{
 				ID:   c.ID,
 				Path: c.Path,
@@ -925,8 +925,8 @@ func (s *reviewService) maybeRediffForComment(channelID, worktreePath, parentDir
 	}
 	out, err := s.worktree.Diff(context.Background(), parentDirPath, worktreePath, sess.PR.BaseRef, sess.Comments)
 	if err != nil {
-		if s.srv.logger != nil {
-			s.srv.logger.Warn("review re-diff failed", "channel_id", channelID, "error", err)
+		if s.deps.logger != nil {
+			s.deps.logger.Warn("review re-diff failed", "channel_id", channelID, "error", err)
 		}
 		return
 	}
@@ -935,7 +935,7 @@ func (s *reviewService) maybeRediffForComment(channelID, worktreePath, parentDir
 		return
 	}
 	s.sessions.UpdateRawDiff(channelID, raw)
-	if hub := s.srv.eventsHub; hub != nil {
+	if hub := s.deps.eventsHub; hub != nil {
 		hub.BroadcastReviewDiff(channelID, events.ReviewDiffEventData{RawDiff: raw})
 	}
 }
@@ -1006,7 +1006,7 @@ func (s *reviewService) isReviewRunActive(channelID string) bool {
 }
 
 func (s *reviewService) broadcastReviewStatus(channelID string, status review.Status, errMsg string) {
-	hub := s.srv.eventsHub
+	hub := s.deps.eventsHub
 	if hub == nil {
 		return
 	}

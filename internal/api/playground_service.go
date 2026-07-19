@@ -12,7 +12,7 @@ import (
 // playground/share state is reachable only through this struct; shared
 // daemon deps are accessed via srv.
 type playgroundService struct {
-	srv *Server // shared deps: store, logger, loopDir, eventsHub, sys, loadConfig
+	deps *serverDeps // shared infrastructure; see serverDeps
 
 	// Playground public-share state. shares maps opaque tokens to
 	// playgrounds; pgShareServer is an ephemeral listener that serves ONLY

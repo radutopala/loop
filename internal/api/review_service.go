@@ -13,7 +13,7 @@ import (
 // It was extracted from Server so review state is reachable only through
 // this struct; shared daemon deps are accessed via srv.
 type reviewService struct {
-	srv *Server // shared deps: store, logger, loopDir, eventsHub, resolve* helpers
+	deps *serverDeps // shared infrastructure; see serverDeps
 
 	client       GitHubReview
 	sessions     *review.Store

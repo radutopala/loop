@@ -60,7 +60,7 @@ func gitInitRepoWithBranch(t *testing.T, branch string) string {
 }
 
 func (s *ServerSuite) TestChannelPRStoreNotConfigured() {
-	srv := &Server{logger: s.srv.logger}
+	srv := &Server{serverDeps: serverDeps{logger: s.srv.logger}}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/channels/{id}/pr", srv.handleChannelPR)
 

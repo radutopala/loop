@@ -16,7 +16,7 @@ import (
 // wires concrete implementations. Tests can opt-in via the Set*Quality*
 // setters without spinning up a real engine.
 type qualityService struct {
-	srv *Server // shared deps: store, logger, eventsHub, resolveDirPath, resolveParentDirPath
+	deps *serverDeps // shared infrastructure; see serverDeps
 
 	scanner    QualityScanner
 	graph      QualityGraphProvider

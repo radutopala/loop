@@ -139,7 +139,7 @@ func (s *qualityService) handleQualityComplexity(w http.ResponseWriter, r *http.
 		Offset:         req.offset,
 		Limit:          req.limit,
 		Returned:       len(page),
-	}, s.srv.logger)
+	}, s.deps.logger)
 }
 
 func (s *qualityService) handleQualityClones(w http.ResponseWriter, r *http.Request) { //nolint:dupl
@@ -161,7 +161,7 @@ func (s *qualityService) handleQualityClones(w http.ResponseWriter, r *http.Requ
 		Offset:        req.offset,
 		Limit:         req.limit,
 		Returned:      len(page),
-	}, s.srv.logger)
+	}, s.deps.logger)
 }
 
 // resolveMetricsConfigForChannel returns the effective metrics.Config
@@ -174,10 +174,10 @@ func (s *qualityService) resolveMetricsConfigForChannel(ctx context.Context, cha
 		return metrics.DefaultConfig()
 	}
 	var dir, parent string
-	if s.srv.store != nil {
-		if d, err := s.srv.workspace.resolveDirPath(ctx, "", channelID); err == nil {
+	if s.deps.store != nil {
+		if d, err := s.deps.workspace.resolveDirPath(ctx, "", channelID); err == nil {
 			dir = d
-			parent = s.srv.workspace.resolveParentDirPath(ctx, channelID)
+			parent = s.deps.workspace.resolveParentDirPath(ctx, channelID)
 		}
 	}
 	return s.resolveMetricsConfig(dir, parent)

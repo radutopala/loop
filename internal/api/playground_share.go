@@ -124,7 +124,7 @@ func newShareToken(name, scope string) string {
 // playgroundShareEnabled reports whether the public-share feature is turned on
 // in config (default off).
 func (s *playgroundService) playgroundShareEnabled() bool {
-	cfg := s.srv.configs.merged("", "")
+	cfg := s.deps.configs.merged("", "")
 	if cfg == nil {
 		return false
 	}
@@ -245,10 +245,10 @@ func (s *playgroundService) shareURL(token string) string {
 // broadcastShareUpdate notifies the panel that a playground's share state
 // changed (url empty means unshared).
 func (s *playgroundService) broadcastShareUpdate(name, scope, channelID, url string) {
-	if s.srv.eventsHub == nil {
+	if s.deps.eventsHub == nil {
 		return
 	}
-	s.srv.eventsHub.Broadcast(Event{
+	s.deps.eventsHub.Broadcast(Event{
 		Type:   EventPlaygroundUpdate,
 		Global: true,
 		Data: map[string]string{
