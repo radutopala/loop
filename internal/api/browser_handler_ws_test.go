@@ -36,12 +36,12 @@ func (s *BrowserHandlerSuite) TestStartCDPConnectError() {
 	browser.SetCDPFactoryForTest(cdpMgr, func(_ context.Context, _ string, _ *slog.Logger, _ ...browser.CDPOption) (browser.CDPSession, error) {
 		return nil, errors.New("cdp connect failed")
 	})
-	s.srv.cdpManagersMu.Lock()
-	if s.srv.cdpManagers == nil {
-		s.srv.cdpManagers = make(map[string]*browser.CDPManager)
+	s.srv.browser.cdpManagersMu.Lock()
+	if s.srv.browser.cdpManagers == nil {
+		s.srv.browser.cdpManagers = make(map[string]*browser.CDPManager)
 	}
-	s.srv.cdpManagers["ch-1|docker"] = cdpMgr
-	s.srv.cdpManagersMu.Unlock()
+	s.srv.browser.cdpManagers["ch-1|docker"] = cdpMgr
+	s.srv.browser.cdpManagersMu.Unlock()
 
 	ws, ts := s.dialBrowserWS()
 	defer ts.Close()
@@ -323,10 +323,10 @@ func (s *BrowserHandlerSuite) TestCleanupWithStream() {
 func (s *BrowserHandlerSuite) TestBrowserWSUpgradeError() {
 	srv := nilServer()
 	mgr := new(mockBrowserProvider)
-	srv.SetBrowserProvider(mgr)
+	srv.browser.setProviders(mgr, srv.browser.hostProvider)
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /api/ws/browser", srv.handleBrowserWS)
+	mux.HandleFunc("GET /api/ws/browser", srv.browser.handleBrowserWS)
 	ts := httptest.NewServer(mux)
 	defer ts.Close()
 

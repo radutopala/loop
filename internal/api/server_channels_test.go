@@ -233,7 +233,7 @@ func (s *ServerSuite) TestDeleteChannelCleansUpContainers() {
 	reg.On("RemoveContainer", mock.Anything, "chrome-c3").Return(nil)
 
 	s.srv.containerRegistry = reg
-	s.srv.SetBrowserProvider(browserMgr)
+	s.srv.browser.setProviders(browserMgr, s.srv.browser.hostProvider)
 
 	req := httptest.NewRequest(http.MethodDelete, "/api/channels/ch-1", nil)
 	w := httptest.NewRecorder()
@@ -282,7 +282,7 @@ func (s *ServerSuite) TestDeleteChannelChromeRemoveError() {
 	reg.On("RemoveContainer", mock.Anything, "chrome-c1").Return(errors.New("chrome remove failed"))
 
 	s.srv.containerRegistry = reg
-	s.srv.SetBrowserProvider(browserMgr)
+	s.srv.browser.setProviders(browserMgr, s.srv.browser.hostProvider)
 
 	req := httptest.NewRequest(http.MethodDelete, "/api/channels/ch-1", nil)
 	w := httptest.NewRecorder()

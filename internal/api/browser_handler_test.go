@@ -66,12 +66,12 @@ func TestBrowserHandlerSuite(t *testing.T) {
 func (s *BrowserHandlerSuite) SetupTest() {
 	s.browserMgr = new(mockBrowserProvider)
 	s.srv = nilServer()
-	s.srv.SetBrowserProvider(s.browserMgr)
+	s.srv.browser.setProviders(s.browserMgr, s.srv.browser.hostProvider)
 }
 
 func (s *BrowserHandlerSuite) dialBrowserWS() (*websocket.Conn, *httptest.Server) {
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /api/ws/browser", s.srv.handleBrowserWS)
+	mux.HandleFunc("GET /api/ws/browser", s.srv.browser.handleBrowserWS)
 	ts := httptest.NewServer(mux)
 	wsURL := "ws" + strings.TrimPrefix(ts.URL, "http") + "/api/ws/browser"
 	ws, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
@@ -86,44 +86,43 @@ func (s *BrowserHandlerSuite) readResp(ws *websocket.Conn) browserWSResponse {
 	return resp
 }
 
-func (s *BrowserHandlerSuite) TestSetBrowserProvider() {
+func (s *BrowserHandlerSuite) TestBrowserServiceDockerProviderField() {
 	srv := nilServer()
-	require.Nil(s.T(), srv.dockerBrowserProvider)
+	require.Nil(s.T(), srv.browser.dockerProvider)
 
 	mgr := new(mockBrowserProvider)
-	srv.SetBrowserProvider(mgr)
-	require.NotNil(s.T(), srv.dockerBrowserProvider)
+	srv.browser.setProviders(mgr, srv.browser.hostProvider)
+	require.NotNil(s.T(), srv.browser.dockerProvider)
 }
 
-func (s *BrowserHandlerSuite) TestSetHostBrowserProvider() {
+func (s *BrowserHandlerSuite) TestBrowserServiceHostProviderField() {
 	srv := nilServer()
-	require.Nil(s.T(), srv.hostBrowserProvider)
+	require.Nil(s.T(), srv.browser.hostProvider)
 
 	mgr := new(mockBrowserProvider)
-	srv.SetHostBrowserProvider(mgr)
-	require.NotNil(s.T(), srv.hostBrowserProvider)
+	srv.browser.setProviders(srv.browser.dockerProvider, mgr)
+	require.NotNil(s.T(), srv.browser.hostProvider)
 }
 
 func (s *BrowserHandlerSuite) TestActiveBrowserProviderDefault() {
 	srv := nilServer()
 	dockerMgr := new(mockBrowserProvider)
-	srv.SetBrowserProvider(dockerMgr)
-	require.Equal(s.T(), dockerMgr, srv.activeBrowserProvider("ch-1"))
+	srv.browser.setProviders(dockerMgr, srv.browser.hostProvider)
+	require.Equal(s.T(), dockerMgr, srv.browser.activeBrowserProvider("ch-1"))
 }
 
 func (s *BrowserHandlerSuite) TestActiveBrowserProviderHostMode() {
 	srv := nilServer()
 	dockerMgr := new(mockBrowserProvider)
 	hostMgr := new(mockBrowserProvider)
-	srv.SetBrowserProvider(dockerMgr)
-	srv.SetHostBrowserProvider(hostMgr)
+	srv.browser.setProviders(dockerMgr, hostMgr)
 
-	srv.browserModeMu.Lock()
-	srv.activeBrowserMode = map[string]string{"ch-1": "host"}
-	srv.browserModeMu.Unlock()
+	srv.browser.modeMu.Lock()
+	srv.browser.activeMode = map[string]string{"ch-1": "host"}
+	srv.browser.modeMu.Unlock()
 
-	require.Equal(s.T(), hostMgr, srv.activeBrowserProvider("ch-1"))
-	require.Equal(s.T(), dockerMgr, srv.activeBrowserProvider("ch-2"))
+	require.Equal(s.T(), hostMgr, srv.browser.activeBrowserProvider("ch-1"))
+	require.Equal(s.T(), dockerMgr, srv.browser.activeBrowserProvider("ch-2"))
 }
 
 func (s *BrowserHandlerSuite) TestHandleBrowserModeSwitch() {
@@ -131,11 +130,10 @@ func (s *BrowserHandlerSuite) TestHandleBrowserModeSwitch() {
 	srv.logger = slog.Default()
 	dockerMgr := new(mockBrowserProvider)
 	hostMgr := new(mockBrowserProvider)
-	srv.SetBrowserProvider(dockerMgr)
-	srv.SetHostBrowserProvider(hostMgr)
+	srv.browser.setProviders(dockerMgr, hostMgr)
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("POST /api/browser/mode", srv.handleBrowserMode)
+	mux.HandleFunc("POST /api/browser/mode", srv.browser.handleBrowserMode)
 	ts := httptest.NewServer(mux)
 	defer ts.Close()
 
@@ -145,16 +143,16 @@ func (s *BrowserHandlerSuite) TestHandleBrowserModeSwitch() {
 	defer resp.Body.Close()
 	require.Equal(s.T(), http.StatusOK, resp.StatusCode)
 
-	srv.browserModeMu.Lock()
-	require.Equal(s.T(), "host", srv.activeBrowserMode["ch-1"])
-	srv.browserModeMu.Unlock()
+	srv.browser.modeMu.Lock()
+	require.Equal(s.T(), "host", srv.browser.activeMode["ch-1"])
+	srv.browser.modeMu.Unlock()
 }
 
 func (s *BrowserHandlerSuite) TestHandleBrowserModeInvalidMode() {
 	srv := nilServer()
 	srv.logger = slog.Default()
 	mux := http.NewServeMux()
-	mux.HandleFunc("POST /api/browser/mode", srv.handleBrowserMode)
+	mux.HandleFunc("POST /api/browser/mode", srv.browser.handleBrowserMode)
 	ts := httptest.NewServer(mux)
 	defer ts.Close()
 
@@ -169,7 +167,7 @@ func (s *BrowserHandlerSuite) TestHandleBrowserModeMissingChannelID() {
 	srv := nilServer()
 	srv.logger = slog.Default()
 	mux := http.NewServeMux()
-	mux.HandleFunc("POST /api/browser/mode", srv.handleBrowserMode)
+	mux.HandleFunc("POST /api/browser/mode", srv.browser.handleBrowserMode)
 	ts := httptest.NewServer(mux)
 	defer ts.Close()
 
@@ -183,9 +181,9 @@ func (s *BrowserHandlerSuite) TestHandleBrowserModeMissingChannelID() {
 func (s *BrowserHandlerSuite) TestHandleBrowserModeHostNotConfigured() {
 	srv := nilServer()
 	srv.logger = slog.Default()
-	srv.SetBrowserProvider(new(mockBrowserProvider))
+	srv.browser.setProviders(new(mockBrowserProvider), srv.browser.hostProvider)
 	mux := http.NewServeMux()
-	mux.HandleFunc("POST /api/browser/mode", srv.handleBrowserMode)
+	mux.HandleFunc("POST /api/browser/mode", srv.browser.handleBrowserMode)
 	ts := httptest.NewServer(mux)
 	defer ts.Close()
 
@@ -200,7 +198,7 @@ func (s *BrowserHandlerSuite) TestHandleBrowserModeInvalidJSON() {
 	srv := nilServer()
 	srv.logger = slog.Default()
 	mux := http.NewServeMux()
-	mux.HandleFunc("POST /api/browser/mode", srv.handleBrowserMode)
+	mux.HandleFunc("POST /api/browser/mode", srv.browser.handleBrowserMode)
 	ts := httptest.NewServer(mux)
 	defer ts.Close()
 
@@ -213,7 +211,7 @@ func (s *BrowserHandlerSuite) TestHandleBrowserModeInvalidJSON() {
 func (s *BrowserHandlerSuite) TestBrowserWSNotConfigured() {
 	srv := nilServer()
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /api/ws/browser", srv.handleBrowserWS)
+	mux.HandleFunc("GET /api/ws/browser", srv.browser.handleBrowserWS)
 	ts := httptest.NewServer(mux)
 	defer ts.Close()
 
@@ -295,8 +293,8 @@ func (s *BrowserHandlerSuite) TestStopNoSession() {
 func (s *BrowserHandlerSuite) TestStopSchedulesRemoval() {
 	reg := new(mockContainerManager)
 	reg.On("ScheduleRemove", "chrome-stop-1", 5*time.Minute)
-	s.srv.containerRegistry = reg
-	s.srv.browserKeepAlive = 5 * time.Minute
+	s.srv.SetContainerRegistry(reg)
+	s.srv.browser.setKeepAlive(5 * time.Minute)
 
 	s.browserMgr.On("StopBrowser", mock.Anything, "ch-1").Return("chrome-stop-1", nil)
 
@@ -361,7 +359,7 @@ func (s *BrowserHandlerSuite) TestInputNoBrowser() {
 
 func (s *BrowserHandlerSuite) TestBrowserWSRoute() {
 	srv := nilServer()
-	srv.SetBrowserProvider(s.browserMgr)
+	srv.browser.setProviders(s.browserMgr, srv.browser.hostProvider)
 
 	err := srv.Start("127.0.0.1:0")
 	require.NoError(s.T(), err)
@@ -491,25 +489,25 @@ func (s *BrowserHandlerSuite) startBrowserWS() (*websocket.Conn, *httptest.Serve
 
 	// Inject a CDPManager with the mock CDP factory into the server.
 	cdpMgr := newTestCDPManager()
-	s.srv.cdpManagersMu.Lock()
-	if s.srv.cdpManagers == nil {
-		s.srv.cdpManagers = make(map[string]*browser.CDPManager)
+	s.srv.browser.cdpManagersMu.Lock()
+	if s.srv.browser.cdpManagers == nil {
+		s.srv.browser.cdpManagers = make(map[string]*browser.CDPManager)
 	}
-	s.srv.cdpManagers["ch-1|docker"] = cdpMgr
-	s.srv.cdpManagersMu.Unlock()
+	s.srv.browser.cdpManagers["ch-1|docker"] = cdpMgr
+	s.srv.browser.cdpManagersMu.Unlock()
 	// Instead of complex injection, use a simpler approach:
 	// Override the server's getOrCreateCDPManager to return a pre-connected manager.
 	ws, ts := s.dialBrowserWS()
 
 	// Directly manipulate: create a connected CDPManager by injecting
 	// the mock CDP client before the WS start message.
-	s.srv.cdpManagersMu.Lock()
-	mgr := s.srv.cdpManagers["ch-1|docker"]
+	s.srv.browser.cdpManagersMu.Lock()
+	mgr := s.srv.browser.cdpManagers["ch-1|docker"]
 	if mgr == nil {
 		mgr = newTestCDPManager()
-		s.srv.cdpManagers["ch-1|docker"] = mgr
+		s.srv.browser.cdpManagers["ch-1|docker"] = mgr
 	}
-	s.srv.cdpManagersMu.Unlock()
+	s.srv.browser.cdpManagersMu.Unlock()
 
 	// Override cdpFactory on the manager to return our mock.
 	browser.SetCDPFactoryForTest(mgr, func(_ context.Context, _ string, _ *slog.Logger, _ ...browser.CDPOption) (browser.CDPSession, error) {

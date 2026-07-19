@@ -269,8 +269,8 @@ func (s *Server) cleanupChannelContainers(ctx context.Context, channelID string)
 			}
 		}
 	}
-	if s.dockerBrowserProvider != nil {
-		containerID, _ := s.dockerBrowserProvider.StopBrowser(ctx, channelID)
+	if s.browser.dockerProvider != nil {
+		containerID, _ := s.browser.dockerProvider.StopBrowser(ctx, channelID)
 		if containerID != "" && s.containerRegistry != nil {
 			if err := s.containerRegistry.RemoveContainer(ctx, containerID); err != nil {
 				s.logger.Warn("channel cleanup: chrome container remove failed",

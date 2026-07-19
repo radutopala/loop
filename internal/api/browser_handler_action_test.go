@@ -70,9 +70,9 @@ func (s *BrowserHandlerSuite) TestWatchMCPTabChangesTabAddedSendsWS() {
 	defer ws.Close()
 
 	// Get the CDPManager and send a tab added notification.
-	s.srv.cdpManagersMu.Lock()
-	cdpMgr := s.srv.cdpManagers["ch-1|docker"]
-	s.srv.cdpManagersMu.Unlock()
+	s.srv.browser.cdpManagersMu.Lock()
+	cdpMgr := s.srv.browser.cdpManagers["ch-1|docker"]
+	s.srv.browser.cdpManagersMu.Unlock()
 
 	cdpMgr.NotifyTabAdded(browser.TabInfo{TargetID: "t-new", URL: "https://new.com", Title: "New"})
 
@@ -89,9 +89,9 @@ func (s *BrowserHandlerSuite) TestWatchMCPTabChangesTabRemovedSendsWS() {
 	defer ts.Close()
 	defer ws.Close()
 
-	s.srv.cdpManagersMu.Lock()
-	cdpMgr := s.srv.cdpManagers["ch-1|docker"]
-	s.srv.cdpManagersMu.Unlock()
+	s.srv.browser.cdpManagersMu.Lock()
+	cdpMgr := s.srv.browser.cdpManagers["ch-1|docker"]
+	s.srv.browser.cdpManagersMu.Unlock()
 
 	cdpMgr.NotifyTabRemoved("t-old")
 
@@ -107,7 +107,7 @@ func (s *BrowserHandlerSuite) postBrowserAction(req browserActionRequest) *httpt
 	data, _ := json.Marshal(req)
 	r := httptest.NewRequest(http.MethodPost, "/api/browser/action", strings.NewReader(string(data)))
 	w := httptest.NewRecorder()
-	s.srv.handleBrowserAction(w, r)
+	s.srv.browser.handleBrowserAction(w, r)
 	return w
 }
 
@@ -116,7 +116,7 @@ func (s *BrowserHandlerSuite) TestBrowserActionNoBrowserProvider() {
 	body := strings.NewReader(`{"channel_id":"ch-1","action":"navigate","params":{"url":"https://example.com"}}`)
 	req := httptest.NewRequest(http.MethodPost, "/api/browser/action", body)
 	w := httptest.NewRecorder()
-	srv.handleBrowserAction(w, req)
+	srv.browser.handleBrowserAction(w, req)
 	require.Equal(s.T(), http.StatusServiceUnavailable, w.Code)
 }
 
@@ -124,7 +124,7 @@ func (s *BrowserHandlerSuite) TestBrowserActionMissingChannelID() {
 	body := strings.NewReader(`{"action":"navigate","params":{"url":"https://example.com"}}`)
 	req := httptest.NewRequest(http.MethodPost, "/api/browser/action", body)
 	w := httptest.NewRecorder()
-	s.srv.handleBrowserAction(w, req)
+	s.srv.browser.handleBrowserAction(w, req)
 	require.Equal(s.T(), http.StatusBadRequest, w.Code)
 }
 
@@ -132,7 +132,7 @@ func (s *BrowserHandlerSuite) TestBrowserActionInvalidJSON() {
 	body := strings.NewReader(`not json`)
 	req := httptest.NewRequest(http.MethodPost, "/api/browser/action", body)
 	w := httptest.NewRecorder()
-	s.srv.handleBrowserAction(w, req)
+	s.srv.browser.handleBrowserAction(w, req)
 	require.Equal(s.T(), http.StatusBadRequest, w.Code)
 }
 
@@ -155,12 +155,12 @@ func (s *BrowserHandlerSuite) setupActionMocks(mockCDP *mockCDPSession) {
 		return mockCDP, nil
 	})
 
-	s.srv.cdpManagersMu.Lock()
-	if s.srv.cdpManagers == nil {
-		s.srv.cdpManagers = make(map[string]*browser.CDPManager)
+	s.srv.browser.cdpManagersMu.Lock()
+	if s.srv.browser.cdpManagers == nil {
+		s.srv.browser.cdpManagers = make(map[string]*browser.CDPManager)
 	}
-	s.srv.cdpManagers["ch-1|docker"] = cdpMgr
-	s.srv.cdpManagersMu.Unlock()
+	s.srv.browser.cdpManagers["ch-1|docker"] = cdpMgr
+	s.srv.browser.cdpManagersMu.Unlock()
 }
 
 func (s *BrowserHandlerSuite) TestBrowserActionNavigateSuccess() {
@@ -225,7 +225,7 @@ func (s *BrowserHandlerSuite) TestBrowserActionListTabs() {
 	s.setupActionMocks(mockCDP)
 
 	// Track the tab so it passes the filter.
-	cdpMgr := s.srv.cdpManagers["ch-1|docker"]
+	cdpMgr := s.srv.browser.cdpManagers["ch-1|docker"]
 	cdpMgr.TrackTab("t1")
 
 	mockCDP.On("ListTabs", mock.Anything).Return([]browser.TabInfo{
@@ -340,12 +340,12 @@ func (s *BrowserHandlerSuite) TestBrowserActionGetBrowserCDPRetryAndFail() {
 	browser.SetCDPFactoryForTest(cdpMgr, func(_ context.Context, _ string, _ *slog.Logger, _ ...browser.CDPOption) (browser.CDPSession, error) {
 		return nil, errors.New("cdp connect fail")
 	})
-	s.srv.cdpManagersMu.Lock()
-	if s.srv.cdpManagers == nil {
-		s.srv.cdpManagers = make(map[string]*browser.CDPManager)
+	s.srv.browser.cdpManagersMu.Lock()
+	if s.srv.browser.cdpManagers == nil {
+		s.srv.browser.cdpManagers = make(map[string]*browser.CDPManager)
 	}
-	s.srv.cdpManagers["ch-1|docker"] = cdpMgr
-	s.srv.cdpManagersMu.Unlock()
+	s.srv.browser.cdpManagers["ch-1|docker"] = cdpMgr
+	s.srv.browser.cdpManagersMu.Unlock()
 
 	w := s.postBrowserAction(browserActionRequest{
 		ChannelID: "ch-1",
@@ -366,9 +366,9 @@ func (s *BrowserHandlerSuite) TestEnsureBrowserCaptureAlreadyStarted() {
 	mockCDP.On("EnableNetworkCapture", mock.Anything, mock.Anything).Return(nil)
 
 	// First call initializes capture and records the client.
-	s.srv.ensureBrowserCapture(context.Background(), "ch-1", mockCDP)
+	s.srv.browser.ensureBrowserCapture(context.Background(), "ch-1", mockCDP)
 	// Second call with the same client should not rewire.
-	s.srv.ensureBrowserCapture(context.Background(), "ch-1", mockCDP)
+	s.srv.browser.ensureBrowserCapture(context.Background(), "ch-1", mockCDP)
 
 	mockCDP.AssertNumberOfCalls(s.T(), "EnableConsoleCapture", 1)
 	mockCDP.AssertNumberOfCalls(s.T(), "EnableNetworkCapture", 1)
@@ -380,14 +380,14 @@ func (s *BrowserHandlerSuite) TestEnsureBrowserCaptureRewireOnNewClient() {
 	mockCDP1.On("EnableNetworkCapture", mock.Anything, mock.Anything).Return(nil)
 
 	// First call initializes capture with client 1.
-	s.srv.ensureBrowserCapture(context.Background(), "ch-1", mockCDP1)
+	s.srv.browser.ensureBrowserCapture(context.Background(), "ch-1", mockCDP1)
 
 	// Second call with a different client should rewire capture.
 	mockCDP2 := new(mockCDPSession)
 	mockCDP2.On("EnableConsoleCapture", mock.Anything, mock.Anything).Return(nil)
 	mockCDP2.On("EnableNetworkCapture", mock.Anything, mock.Anything).Return(nil)
 
-	s.srv.ensureBrowserCapture(context.Background(), "ch-1", mockCDP2)
+	s.srv.browser.ensureBrowserCapture(context.Background(), "ch-1", mockCDP2)
 
 	mockCDP2.AssertCalled(s.T(), "EnableConsoleCapture", mock.Anything, mock.Anything)
 	mockCDP2.AssertCalled(s.T(), "EnableNetworkCapture", mock.Anything, mock.Anything)
@@ -398,7 +398,7 @@ func (s *BrowserHandlerSuite) TestEnsureBrowserCaptureConsoleCaptureError() {
 	mockCDP.On("EnableConsoleCapture", mock.Anything, mock.Anything).Return(errors.New("console cap fail"))
 	mockCDP.On("EnableNetworkCapture", mock.Anything, mock.Anything).Return(nil)
 
-	s.srv.ensureBrowserCapture(context.Background(), "ch-1", mockCDP)
+	s.srv.browser.ensureBrowserCapture(context.Background(), "ch-1", mockCDP)
 
 	mockCDP.AssertCalled(s.T(), "EnableConsoleCapture", mock.Anything, mock.Anything)
 	mockCDP.AssertCalled(s.T(), "EnableNetworkCapture", mock.Anything, mock.Anything)
@@ -409,7 +409,7 @@ func (s *BrowserHandlerSuite) TestEnsureBrowserCaptureNetworkCaptureError() {
 	mockCDP.On("EnableConsoleCapture", mock.Anything, mock.Anything).Return(nil)
 	mockCDP.On("EnableNetworkCapture", mock.Anything, mock.Anything).Return(errors.New("net cap fail"))
 
-	s.srv.ensureBrowserCapture(context.Background(), "ch-1", mockCDP)
+	s.srv.browser.ensureBrowserCapture(context.Background(), "ch-1", mockCDP)
 
 	mockCDP.AssertCalled(s.T(), "EnableConsoleCapture", mock.Anything, mock.Anything)
 	mockCDP.AssertCalled(s.T(), "EnableNetworkCapture", mock.Anything, mock.Anything)
@@ -428,12 +428,12 @@ func (s *BrowserHandlerSuite) TestEnsureBrowserCaptureGoroutinesBodies() {
 			ch <- browser.NetworkRequest{URL: "https://test.com", Method: "GET", Status: 200, StatusText: "OK", Time: time.Now()}
 		}).Return(nil)
 
-	s.srv.ensureBrowserCapture(context.Background(), "ch-goroutines", mockCDP)
+	s.srv.browser.ensureBrowserCapture(context.Background(), "ch-goroutines", mockCDP)
 
 	require.Eventually(s.T(), func() bool {
-		s.srv.browserCapturesMu.Lock()
-		cs := s.srv.browserCaptures["ch-goroutines"]
-		s.srv.browserCapturesMu.Unlock()
+		s.srv.browser.capturesMu.Lock()
+		cs := s.srv.browser.captures["ch-goroutines"]
+		s.srv.browser.capturesMu.Unlock()
 		if cs == nil {
 			return false
 		}
@@ -446,9 +446,9 @@ func (s *BrowserHandlerSuite) TestEnsureBrowserCaptureGoroutinesBodies() {
 		return nConsole == 1 && nNetwork == 1
 	}, time.Second, 5*time.Millisecond, "goroutines did not process messages in time")
 
-	s.srv.browserCapturesMu.Lock()
-	cs := s.srv.browserCaptures["ch-goroutines"]
-	s.srv.browserCapturesMu.Unlock()
+	s.srv.browser.capturesMu.Lock()
+	cs := s.srv.browser.captures["ch-goroutines"]
+	s.srv.browser.capturesMu.Unlock()
 	require.Equal(s.T(), "test-msg", cs.ConsoleMsgs[0].Text)
 	require.Equal(s.T(), "https://test.com", cs.NetworkReqs[0].URL)
 }
@@ -595,17 +595,17 @@ func (s *BrowserHandlerSuite) TestBrowserActionReadConsole() {
 	mockCDP := new(mockCDPSession)
 	s.setupActionMocks(mockCDP)
 
-	s.srv.browserCapturesMu.Lock()
-	if s.srv.browserCaptures == nil {
-		s.srv.browserCaptures = make(map[string]*browser.CaptureState)
+	s.srv.browser.capturesMu.Lock()
+	if s.srv.browser.captures == nil {
+		s.srv.browser.captures = make(map[string]*browser.CaptureState)
 	}
 	cs := &browser.CaptureState{Started: true}
 	cs.ConsoleMsgs = []browser.ConsoleMessage{
 		{Level: "log", Text: "hello world", Time: time.Now()},
 		{Level: "error", Text: "something failed", Time: time.Now()},
 	}
-	s.srv.browserCaptures["ch-1"] = cs
-	s.srv.browserCapturesMu.Unlock()
+	s.srv.browser.captures["ch-1"] = cs
+	s.srv.browser.capturesMu.Unlock()
 
 	w := s.postBrowserAction(browserActionRequest{
 		ChannelID: "ch-1",
@@ -624,16 +624,16 @@ func (s *BrowserHandlerSuite) TestBrowserActionReadNetwork() {
 	mockCDP := new(mockCDPSession)
 	s.setupActionMocks(mockCDP)
 
-	s.srv.browserCapturesMu.Lock()
-	if s.srv.browserCaptures == nil {
-		s.srv.browserCaptures = make(map[string]*browser.CaptureState)
+	s.srv.browser.capturesMu.Lock()
+	if s.srv.browser.captures == nil {
+		s.srv.browser.captures = make(map[string]*browser.CaptureState)
 	}
 	cs := &browser.CaptureState{Started: true}
 	cs.NetworkReqs = []browser.NetworkRequest{
 		{URL: "https://api.example.com/v1", Method: "GET", Status: 200, StatusText: "OK", Time: time.Now()},
 	}
-	s.srv.browserCaptures["ch-1"] = cs
-	s.srv.browserCapturesMu.Unlock()
+	s.srv.browser.captures["ch-1"] = cs
+	s.srv.browser.capturesMu.Unlock()
 
 	w := s.postBrowserAction(browserActionRequest{
 		ChannelID: "ch-1",

@@ -542,6 +542,27 @@ func (a *app) serve() error {
 		logger.Warn("quality engine disabled: store does not expose WriterDB")
 	}
 
+	if cfg.Browser.Enabled {
+		dockerProvider, browserErr := a.newBrowserProvider(cfg.Browser.ChromeImage, logger)
+		if browserErr != nil {
+			logger.Warn("browser docker provider unavailable", "error", browserErr)
+		} else if dp, ok := dockerProvider.(*browser.DockerProvider); ok {
+			dp.SetContainerRegistry(containerReg)
+		}
+
+		// Always initialize host browser provider so the UI pill can switch to it.
+		hostProvider := browser.NewHostProvider(cfg.Browser.HostCDPPort, logger)
+
+		serverOpts = append(serverOpts,
+			api.WithBrowserProviders(dockerProvider, hostProvider),
+			api.WithBrowserKeepAlive(cfg.ContainerKeepAlive),
+		)
+	}
+
+	screenshotDir := filepath.Join(cfg.LoopDir, "screenshots")
+	_ = os.MkdirAll(screenshotDir, 0o755)
+	serverOpts = append(serverOpts, api.WithScreenshotDir(screenshotDir))
+
 	apiSrv := a.newAPIServer(sched, channelSvc, threadSvc, store, chatBot, logger, serverOpts...)
 	apiSrv.SetLoopDir(cfg.LoopDir)
 	if qEngine != nil {
@@ -570,22 +591,7 @@ func (a *app) serve() error {
 	apiSrv.SetHostTerminalManager(terminal.NewManagerAdapter(hostTermMgr))
 
 	if cfg.Browser.Enabled {
-		dockerProvider, browserErr := a.newBrowserProvider(cfg.Browser.ChromeImage, logger)
-		if browserErr != nil {
-			logger.Warn("browser docker provider unavailable", "error", browserErr)
-		} else {
-			if dp, ok := dockerProvider.(*browser.DockerProvider); ok {
-				dp.SetContainerRegistry(containerReg)
-			}
-			apiSrv.SetBrowserProvider(dockerProvider)
-		}
-
-		// Always initialize host browser provider so the UI pill can switch to it.
-		hostProvider := browser.NewHostProvider(cfg.Browser.HostCDPPort, logger)
-		apiSrv.SetHostBrowserProvider(hostProvider)
-
 		// Idle monitoring for browser sessions (CDPManagers + containers).
-		apiSrv.SetBrowserKeepAlive(cfg.ContainerKeepAlive)
 		go apiSrv.RunBrowserIdleMonitor(ctx, 5*time.Minute)
 	}
 
@@ -655,10 +661,6 @@ func (a *app) serve() error {
 	}
 	apiSrv.SetWorkflowEngine(wfEngine)
 	executor.SetWorkflowEngine(wfEngine)
-
-	screenshotDir := filepath.Join(cfg.LoopDir, "screenshots")
-	_ = os.MkdirAll(screenshotDir, 0o755)
-	apiSrv.SetScreenshotDir(screenshotDir)
 
 	orch := orchestrator.New(store, chatBot, runner, sched, logger, *cfg, reloadConfig)
 	orch.SetEventBroadcaster(eventsHub)
