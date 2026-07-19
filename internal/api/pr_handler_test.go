@@ -227,7 +227,7 @@ func (s *ServerSuite) TestChannelPRLookupGenericError() {
 
 func (s *ServerSuite) TestChannelPRResolvesGHUserFromGlobalConfig() {
 	dir := gitInitRepoWithBranch(s.T(), "feat-cfg")
-	s.srv.loadConfig = func() (*config.Config, error) {
+	s.srv.configs.load = func() (*config.Config, error) {
 		return &config.Config{GitHub: config.GitHubConfig{GHUser: "radutopala"}}, nil
 	}
 	gh := new(mockGitHubLookup)
@@ -246,10 +246,10 @@ func (s *ServerSuite) TestChannelPRResolvesGHUserFromGlobalConfig() {
 
 func (s *ServerSuite) TestChannelPRResolvesGHUserFromProjectOverride() {
 	dir := gitInitRepoWithBranch(s.T(), "feat-proj")
-	s.srv.loadConfig = func() (*config.Config, error) {
+	s.srv.configs.load = func() (*config.Config, error) {
 		return &config.Config{GitHub: config.GitHubConfig{GHUser: "global"}}, nil
 	}
-	s.srv.loadProjectConfig = func(_ string, c *config.Config) (*config.Config, error) {
+	s.srv.configs.loadProject = func(_ string, c *config.Config) (*config.Config, error) {
 		out := *c
 		out.GitHub.GHUser = "project-user"
 		return &out, nil
@@ -269,76 +269,76 @@ func (s *ServerSuite) TestChannelPRResolvesGHUserFromProjectOverride() {
 }
 
 func (s *ServerSuite) TestResolveGHUserNoLoaders() {
-	srv := &Server{}
-	require.Equal(s.T(), "", srv.resolveGHUser("/tmp", ""))
+	c := configResolver{}
+	require.Equal(s.T(), "", c.ghUser("/tmp", ""))
 }
 
 func (s *ServerSuite) TestResolveGHUserLoadConfigError() {
-	srv := &Server{
-		loadConfig: func() (*config.Config, error) { return nil, errors.New("boom") },
+	c := configResolver{
+		load: func() (*config.Config, error) { return nil, errors.New("boom") },
 	}
-	require.Equal(s.T(), "", srv.resolveGHUser("/tmp", ""))
+	require.Equal(s.T(), "", c.ghUser("/tmp", ""))
 }
 
 func (s *ServerSuite) TestResolveGHUserLoadConfigNil() {
-	srv := &Server{
-		loadConfig: func() (*config.Config, error) { return nil, nil },
+	c := configResolver{
+		load: func() (*config.Config, error) { return nil, nil },
 	}
-	require.Equal(s.T(), "", srv.resolveGHUser("/tmp", ""))
+	require.Equal(s.T(), "", c.ghUser("/tmp", ""))
 }
 
 func (s *ServerSuite) TestResolveGHUserProjectConfigError() {
-	srv := &Server{
-		loadConfig: func() (*config.Config, error) {
+	c := configResolver{
+		load: func() (*config.Config, error) {
 			return &config.Config{GitHub: config.GitHubConfig{GHUser: "global"}}, nil
 		},
-		loadProjectConfig: func(_ string, _ *config.Config) (*config.Config, error) {
+		loadProject: func(_ string, _ *config.Config) (*config.Config, error) {
 			return nil, errors.New("read failed")
 		},
 	}
 	// On project error we fall back to the global value, not "".
-	require.Equal(s.T(), "global", srv.resolveGHUser("/tmp", ""))
+	require.Equal(s.T(), "global", c.ghUser("/tmp", ""))
 }
 
 func (s *ServerSuite) TestResolveGHUserProjectConfigNilFallsBackToGlobal() {
-	srv := &Server{
-		loadConfig: func() (*config.Config, error) {
+	c := configResolver{
+		load: func() (*config.Config, error) {
 			return &config.Config{GitHub: config.GitHubConfig{GHUser: "global"}}, nil
 		},
-		loadProjectConfig: func(_ string, _ *config.Config) (*config.Config, error) {
+		loadProject: func(_ string, _ *config.Config) (*config.Config, error) {
 			return nil, nil
 		},
 	}
-	require.Equal(s.T(), "global", srv.resolveGHUser("/tmp", ""))
+	require.Equal(s.T(), "global", c.ghUser("/tmp", ""))
 }
 
 func (s *ServerSuite) TestResolveGHUserEmptyWorkdirSkipsProject() {
-	srv := &Server{
-		loadConfig: func() (*config.Config, error) {
+	c := configResolver{
+		load: func() (*config.Config, error) {
 			return &config.Config{GitHub: config.GitHubConfig{GHUser: "global"}}, nil
 		},
-		loadProjectConfig: func(_ string, c *config.Config) (*config.Config, error) {
+		loadProject: func(_ string, c *config.Config) (*config.Config, error) {
 			out := *c
 			out.GitHub.GHUser = "should-not-be-used"
 			return &out, nil
 		},
 	}
-	require.Equal(s.T(), "global", srv.resolveGHUser("", ""))
+	require.Equal(s.T(), "global", c.ghUser("", ""))
 }
 
 func (s *ServerSuite) TestResolveGHUserWorktreeUsesParentConfig() {
 	// Worktree's own .loop/config.json has no gh_user; the parent project's
 	// gh_user must still apply via the three-layer merge.
-	srv := &Server{
-		loadConfig: func() (*config.Config, error) {
+	c := configResolver{
+		load: func() (*config.Config, error) {
 			return &config.Config{GitHub: config.GitHubConfig{GHUser: "global"}}, nil
 		},
-		loadProjectConfig: func(_ string, c *config.Config) (*config.Config, error) {
+		loadProject: func(_ string, c *config.Config) (*config.Config, error) {
 			// Would resolve to "global" if used — but the worktree loader
 			// should be picked instead because parentDirPath is non-empty.
 			return c, nil
 		},
-		loadWorktreeProjectConfig: func(workdir, parent string, c *config.Config) (*config.Config, error) {
+		loadWorktree: func(workdir, parent string, c *config.Config) (*config.Config, error) {
 			require.Equal(s.T(), "/wt", workdir)
 			require.Equal(s.T(), "/proj", parent)
 			out := *c
@@ -346,19 +346,19 @@ func (s *ServerSuite) TestResolveGHUserWorktreeUsesParentConfig() {
 			return &out, nil
 		},
 	}
-	require.Equal(s.T(), "parent-user", srv.resolveGHUser("/wt", "/proj"))
+	require.Equal(s.T(), "parent-user", c.ghUser("/wt", "/proj"))
 }
 
 func (s *ServerSuite) TestResolveGHUserWorktreeLoaderErrorFallsBackToGlobal() {
-	srv := &Server{
-		loadConfig: func() (*config.Config, error) {
+	c := configResolver{
+		load: func() (*config.Config, error) {
 			return &config.Config{GitHub: config.GitHubConfig{GHUser: "global"}}, nil
 		},
-		loadWorktreeProjectConfig: func(_, _ string, _ *config.Config) (*config.Config, error) {
+		loadWorktree: func(_, _ string, _ *config.Config) (*config.Config, error) {
 			return nil, errors.New("read failed")
 		},
 	}
-	require.Equal(s.T(), "global", srv.resolveGHUser("/wt", "/proj"))
+	require.Equal(s.T(), "global", c.ghUser("/wt", "/proj"))
 }
 
 // TestResolveGHUserWorktreeNilLoaderUsesRealConfig exercises the
@@ -367,42 +367,42 @@ func (s *ServerSuite) TestResolveGHUserWorktreeLoaderErrorFallsBackToGlobal() {
 // no .loop/config.json, the real loader returns an error and the function
 // falls back to the global value.
 func (s *ServerSuite) TestResolveGHUserWorktreeNilLoaderUsesRealConfig() {
-	srv := &Server{
-		loadConfig: func() (*config.Config, error) {
+	c := configResolver{
+		load: func() (*config.Config, error) {
 			return &config.Config{GitHub: config.GitHubConfig{GHUser: "global"}}, nil
 		},
 	}
 	wt := s.T().TempDir()
 	parent := s.T().TempDir()
-	require.Equal(s.T(), "global", srv.resolveGHUser(wt, parent))
+	require.Equal(s.T(), "global", c.ghUser(wt, parent))
 }
 
 func (s *ServerSuite) TestResolveReviewEnabledLoadConfigError() {
-	srv := &Server{
-		loadConfig: func() (*config.Config, error) { return nil, errors.New("boom") },
+	c := configResolver{
+		load: func() (*config.Config, error) { return nil, errors.New("boom") },
 	}
 	// Config-load failure must fail-closed (review hidden) regardless of layer.
-	require.False(s.T(), srv.resolveReviewEnabled("/tmp", ""))
+	require.False(s.T(), c.reviewEnabled("/tmp", ""))
 }
 
 func (s *ServerSuite) TestResolveReviewEnabledGlobalEnabled() {
-	srv := &Server{
-		loadConfig: func() (*config.Config, error) {
+	c := configResolver{
+		load: func() (*config.Config, error) {
 			return &config.Config{Review: config.ReviewConfig{Enabled: true}}, nil
 		},
-		loadProjectConfig: func(_ string, c *config.Config) (*config.Config, error) {
+		loadProject: func(_ string, c *config.Config) (*config.Config, error) {
 			return c, nil
 		},
 	}
-	require.True(s.T(), srv.resolveReviewEnabled("/proj", ""))
+	require.True(s.T(), c.reviewEnabled("/proj", ""))
 }
 
 func (s *ServerSuite) TestResolveReviewEnabledWorktreeOverride() {
-	srv := &Server{
-		loadConfig: func() (*config.Config, error) {
+	c := configResolver{
+		load: func() (*config.Config, error) {
 			return &config.Config{Review: config.ReviewConfig{Enabled: false}}, nil
 		},
-		loadWorktreeProjectConfig: func(workdir, parent string, c *config.Config) (*config.Config, error) {
+		loadWorktree: func(workdir, parent string, c *config.Config) (*config.Config, error) {
 			require.Equal(s.T(), "/wt", workdir)
 			require.Equal(s.T(), "/proj", parent)
 			out := *c
@@ -410,21 +410,21 @@ func (s *ServerSuite) TestResolveReviewEnabledWorktreeOverride() {
 			return &out, nil
 		},
 	}
-	require.True(s.T(), srv.resolveReviewEnabled("/wt", "/proj"))
+	require.True(s.T(), c.reviewEnabled("/wt", "/proj"))
 }
 
 // Nil worktree loader falls through to config.LoadWorktreeProjectConfig.
 // With no .loop/config.json present the real loader returns an error and
 // we fall back to the global value.
 func (s *ServerSuite) TestResolveReviewEnabledWorktreeNilLoaderUsesRealConfig() {
-	srv := &Server{
-		loadConfig: func() (*config.Config, error) {
+	c := configResolver{
+		load: func() (*config.Config, error) {
 			return &config.Config{Review: config.ReviewConfig{Enabled: true}}, nil
 		},
 	}
 	wt := s.T().TempDir()
 	parent := s.T().TempDir()
-	require.True(s.T(), srv.resolveReviewEnabled(wt, parent))
+	require.True(s.T(), c.reviewEnabled(wt, parent))
 }
 
 // --- PR lookup cache ---
@@ -500,6 +500,6 @@ func (s *ServerSuite) TestChannelPRLookupErrorNotCached() {
 // config.Load. The result depends on the host's real config, so only the
 // fallback path itself (no panic, a definite answer) is asserted.
 func (s *ServerSuite) TestResolveReviewEnabledDefaultLoader() {
-	srv := &Server{logger: s.srv.logger}
-	_ = srv.resolveReviewEnabled(s.T().TempDir(), "")
+	c := configResolver{}
+	_ = c.reviewEnabled(s.T().TempDir(), "")
 }

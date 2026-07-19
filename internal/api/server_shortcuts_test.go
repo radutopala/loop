@@ -18,7 +18,7 @@ import (
 // --- Shortcuts tests ---
 
 func (s *ServerSuite) TestListShortcutsEmpty() {
-	s.srv.loadConfig = func() (*config.Config, error) {
+	s.srv.configs.load = func() (*config.Config, error) {
 		return &config.Config{LoopDir: "/home/testuser/.loop"}, nil
 	}
 
@@ -29,7 +29,7 @@ func (s *ServerSuite) TestListShortcutsEmpty() {
 }
 
 func (s *ServerSuite) TestListShortcutsWithInlinePrompt() {
-	s.srv.loadConfig = func() (*config.Config, error) {
+	s.srv.configs.load = func() (*config.Config, error) {
 		return &config.Config{
 			LoopDir: "/home/testuser/.loop",
 			PromptShortcuts: []config.PromptShortcut{
@@ -50,7 +50,7 @@ func (s *ServerSuite) TestListShortcutsWithInlinePrompt() {
 }
 
 func (s *ServerSuite) TestListShortcutsWithPromptPath() {
-	s.srv.loadConfig = func() (*config.Config, error) {
+	s.srv.configs.load = func() (*config.Config, error) {
 		return &config.Config{
 			LoopDir: "/home/testuser/.loop",
 			PromptShortcuts: []config.PromptShortcut{
@@ -76,7 +76,7 @@ func (s *ServerSuite) TestListShortcutsWithPromptPath() {
 }
 
 func (s *ServerSuite) TestListShortcutsSkipsUnresolvable() {
-	s.srv.loadConfig = func() (*config.Config, error) {
+	s.srv.configs.load = func() (*config.Config, error) {
 		return &config.Config{
 			LoopDir: "/home/testuser/.loop",
 			PromptShortcuts: []config.PromptShortcut{
@@ -99,7 +99,7 @@ func (s *ServerSuite) TestListShortcutsSkipsUnresolvable() {
 }
 
 func (s *ServerSuite) TestListShortcutsConfigLoadError() {
-	s.srv.loadConfig = func() (*config.Config, error) {
+	s.srv.configs.load = func() (*config.Config, error) {
 		return nil, errors.New("config broken")
 	}
 
@@ -109,7 +109,7 @@ func (s *ServerSuite) TestListShortcutsConfigLoadError() {
 }
 
 func (s *ServerSuite) TestListShortcutsWithChannelMerge() {
-	s.srv.loadConfig = func() (*config.Config, error) {
+	s.srv.configs.load = func() (*config.Config, error) {
 		return &config.Config{
 			LoopDir: "/home/testuser/.loop",
 			PromptShortcuts: []config.PromptShortcut{
@@ -118,7 +118,7 @@ func (s *ServerSuite) TestListShortcutsWithChannelMerge() {
 		}, nil
 	}
 	s.store.On("GetChannel", mock.Anything, "ch-proj").Return(&db.Channel{ChannelID: "ch-proj", DirPath: "/projects/app"}, nil)
-	s.srv.loadProjectConfig = func(dir string, base *config.Config) (*config.Config, error) {
+	s.srv.configs.loadProject = func(dir string, base *config.Config) (*config.Config, error) {
 		require.Equal(s.T(), "/projects/app", dir)
 		merged := *base
 		merged.PromptShortcuts = append(merged.PromptShortcuts,
@@ -138,7 +138,7 @@ func (s *ServerSuite) TestListShortcutsWithChannelMerge() {
 }
 
 func (s *ServerSuite) TestListShortcutsLoopDirFallback() {
-	s.srv.loadConfig = func() (*config.Config, error) {
+	s.srv.configs.load = func() (*config.Config, error) {
 		return &config.Config{
 			PromptShortcuts: []config.PromptShortcut{
 				{Name: "test", Description: "Test", Prompt: "test prompt"},
@@ -155,7 +155,7 @@ func (s *ServerSuite) TestListShortcutsLoopDirFallback() {
 }
 
 func (s *ServerSuite) TestListShortcutsProjectPromptPath() {
-	s.srv.loadConfig = func() (*config.Config, error) {
+	s.srv.configs.load = func() (*config.Config, error) {
 		return &config.Config{
 			LoopDir: "/home/testuser/.loop",
 			PromptShortcuts: []config.PromptShortcut{
@@ -164,7 +164,7 @@ func (s *ServerSuite) TestListShortcutsProjectPromptPath() {
 		}, nil
 	}
 	s.store.On("GetChannel", mock.Anything, "ch-proj").Return(&db.Channel{ChannelID: "ch-proj", DirPath: "/projects/app"}, nil)
-	s.srv.loadProjectConfig = func(dir string, base *config.Config) (*config.Config, error) {
+	s.srv.configs.loadProject = func(dir string, base *config.Config) (*config.Config, error) {
 		return base, nil
 	}
 	s.srv.readFile = func(path string) ([]byte, error) {
@@ -562,7 +562,7 @@ func (s *ServerSuite) TestListShortcutsDefaultLoadConfig() {
 	// Exercise the loadConfig == nil fallback (lines 24-26).
 	// When loadConfig is nil the handler falls back to config.Load,
 	// which may fail if no config exists — that's fine, it exercises the path.
-	s.srv.loadConfig = nil
+	s.srv.configs.load = nil
 	rec := s.testRequest("GET", "/api/shortcuts", "")
 	// Accept either 200 (config exists) or 500 (config.Load fails) —
 	// the point is the nil-check branch is exercised.

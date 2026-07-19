@@ -779,10 +779,10 @@ func (s *ServerSuite) TestSearchChannelsReviewEnabledWorktreeUsesParentDir() {
 		{ChannelID: "wt", Name: "w", DirPath: "/proj/.worktrees/wt", ParentID: "parent", Worktree: true, Platform: types.PlatformLocal},
 	}
 	s.store.On("ListChannels", mock.Anything).Return(channels, nil)
-	s.srv.loadConfig = func() (*config.Config, error) {
+	s.srv.configs.load = func() (*config.Config, error) {
 		return &config.Config{Review: config.ReviewConfig{Enabled: false}}, nil
 	}
-	s.srv.loadWorktreeProjectConfig = func(workdir, parent string, c *config.Config) (*config.Config, error) {
+	s.srv.configs.loadWorktree = func(workdir, parent string, c *config.Config) (*config.Config, error) {
 		require.Equal(s.T(), "/proj/.worktrees/wt", workdir)
 		require.Equal(s.T(), "/proj", parent)
 		out := *c

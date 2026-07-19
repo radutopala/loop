@@ -130,11 +130,11 @@ func (s *ReviewHandlerSuite) SetupTest() {
 	// the gate is transparent for the existing test cases; tests that
 	// specifically exercise the gate override loadConfig to return
 	// Enabled=false.
-	s.srv.loadConfig = func() (*config.Config, error) {
+	s.srv.configs.load = func() (*config.Config, error) {
 		return &config.Config{Review: config.ReviewConfig{Enabled: true}}, nil
 	}
-	s.srv.loadProjectConfig = func(string, *config.Config) (*config.Config, error) { return nil, nil }
-	s.srv.loadWorktreeProjectConfig = func(string, string, *config.Config) (*config.Config, error) { return nil, nil }
+	s.srv.configs.loadProject = func(string, *config.Config) (*config.Config, error) { return nil, nil }
+	s.srv.configs.loadWorktree = func(string, string, *config.Config) (*config.Config, error) { return nil, nil }
 	s.mux = s.srv.buildMux()
 }
 
@@ -161,7 +161,7 @@ func (s *ReviewHandlerSuite) doRaw(method, path string, body []byte) *httptest.R
 // the handler past its in-memory validation and hit the dir-path-based
 // gate (which always reads through resolveReviewEnabled).
 func (s *ReviewHandlerSuite) TestReviewEnabledGate403s() {
-	s.srv.loadConfig = func() (*config.Config, error) {
+	s.srv.configs.load = func() (*config.Config, error) {
 		return &config.Config{Review: config.ReviewConfig{Enabled: false}}, nil
 	}
 	s.store.On("GetChannel", mock.Anything, "ch1").Return(&db.Channel{ChannelID: "ch1", DirPath: "/repo"}, nil)
@@ -221,7 +221,7 @@ func (s *ReviewHandlerSuite) TestReviewEnabledGate403s() {
 // the FE may need to inspect or tear down a session that already exists,
 // even after the feature flag was flipped off.
 func (s *ReviewHandlerSuite) TestReviewEnabledGateAllowsGetAndDelete() {
-	s.srv.loadConfig = func() (*config.Config, error) {
+	s.srv.configs.load = func() (*config.Config, error) {
 		return &config.Config{Review: config.ReviewConfig{Enabled: false}}, nil
 	}
 	s.rs.Put("ch1", &review.Session{PR: &githubapi.PRInfo{Number: 7}})
@@ -1072,7 +1072,7 @@ func (s *ReviewHandlerSuite) TestDeleteCommentLocalOnlyAgentCommentSkipsGitHub()
 func (s *ReviewHandlerSuite) TestDeleteCommentGitHubSourceCallsAPI() {
 	// GH-source comment authored by the configured gh user — the gate
 	// allows the call and the comment is wiped both on GH and locally.
-	s.srv.loadConfig = func() (*config.Config, error) {
+	s.srv.configs.load = func() (*config.Config, error) {
 		return &config.Config{GitHub: config.GitHubConfig{GHUser: "alice"}, Review: config.ReviewConfig{Enabled: true}}, nil
 	}
 	s.rs.Put("ch1", &review.Session{PR: &githubapi.PRInfo{Number: 7}, HeadSHA: "abc"})
@@ -1094,7 +1094,7 @@ func (s *ReviewHandlerSuite) TestDeleteCommentGitHubSourceForeignAuthorRefused()
 	// user — we refuse rather than calling DELETE (which GH would 403
 	// anyway). The local copy must survive so a re-Sync doesn't show
 	// stale state, and so the user understands why nothing happened.
-	s.srv.loadConfig = func() (*config.Config, error) {
+	s.srv.configs.load = func() (*config.Config, error) {
 		return &config.Config{GitHub: config.GitHubConfig{GHUser: "alice"}, Review: config.ReviewConfig{Enabled: true}}, nil
 	}
 	s.rs.Put("ch1", &review.Session{PR: &githubapi.PRInfo{Number: 7}, HeadSHA: "abc"})
@@ -1483,7 +1483,7 @@ func (s *ReviewHandlerSuite) TestRunHappyPathDispatchesCommentsAndStatus() {
 // the agent can `gh auth switch -u <user>` before running gh commands.
 func (s *ReviewHandlerSuite) TestRunPromptIncludesConfiguredGHUser() {
 	s.wireReadySession()
-	s.srv.loadConfig = func() (*config.Config, error) {
+	s.srv.configs.load = func() (*config.Config, error) {
 		return &config.Config{GitHub: config.GitHubConfig{GHUser: "alice"}, Review: config.ReviewConfig{Enabled: true}}, nil
 	}
 	runner := &mockReviewRunner{done: make(chan struct{})}

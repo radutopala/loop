@@ -18,8 +18,6 @@ import (
 	"net"
 	"net/http"
 	"sync"
-
-	"github.com/radutopala/loop/internal/config"
 )
 
 // shareEntry describes one publicly-shared playground.
@@ -126,12 +124,8 @@ func newShareToken(name, scope string) string {
 // playgroundShareEnabled reports whether the public-share feature is turned on
 // in config (default off).
 func (s *playgroundService) playgroundShareEnabled() bool {
-	loadConfig := s.srv.loadConfig
-	if loadConfig == nil {
-		loadConfig = config.Load
-	}
-	cfg, err := loadConfig()
-	if err != nil || cfg == nil {
+	cfg := s.srv.configs.merged("", "")
+	if cfg == nil {
 		return false
 	}
 	return cfg.PlaygroundShare.Enabled

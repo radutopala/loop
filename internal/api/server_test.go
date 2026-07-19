@@ -210,7 +210,7 @@ func (s *ServerSuite) SetupTest() {
 	s.srv = NewServer(s.scheduler, s.channels, s.threads, s.store, s.messages, logger)
 	// Hermetic global config: allDirPaths seeds its merge from loadConfig;
 	// without this the suite would read the developer's real ~/.loop/config.json.
-	s.srv.loadConfig = func() (*config.Config, error) { return &config.Config{}, nil }
+	s.srv.configs.load = func() (*config.Config, error) { return &config.Config{}, nil }
 
 	s.sys = new(testutil.MockSystem)
 	s.sys.On("ReadDir", mock.Anything).Return(nil, nil)

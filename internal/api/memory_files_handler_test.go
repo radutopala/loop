@@ -19,10 +19,10 @@ import (
 // unset path parameter; the s.store==nil branch is a defensive guard
 // for servers wired without a store.
 func (s *ServerSuite) TestResolveParentDirPath_EarlyReturn() {
-	require.Equal(s.T(), "", s.srv.resolveParentDirPath(context.Background(), ""))
+	require.Equal(s.T(), "", s.srv.workspace.resolveParentDirPath(context.Background(), ""))
 
 	bare := nilServer()
-	require.Equal(s.T(), "", bare.resolveParentDirPath(context.Background(), "ch-1"))
+	require.Equal(s.T(), "", bare.workspace.resolveParentDirPath(context.Background(), "ch-1"))
 }
 
 func (s *ServerSuite) TestListMemoryFiles_Success() {

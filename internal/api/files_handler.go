@@ -90,7 +90,7 @@ func (s *Server) allDirPaths(ctx context.Context, channelID string) ([]string, e
 	// list them too. Fall back to an empty base when the global config
 	// can't be loaded.
 	base := &config.Config{}
-	loadCfg := s.loadConfig
+	loadCfg := s.configs.load
 	if loadCfg == nil {
 		loadCfg = config.Load
 	}
@@ -161,7 +161,7 @@ func (s *Server) resolveRootParam(w http.ResponseWriter, r *http.Request, channe
 func (s *Server) resolveRootDir(ctx context.Context, channelID string, r *http.Request) (string, error) {
 	rootIdx, _ := strconv.Atoi(r.URL.Query().Get("root")) // default 0
 	if rootIdx == 0 {
-		return s.resolveDirPath(ctx, "", channelID)
+		return s.workspace.resolveDirPath(ctx, "", channelID)
 	}
 
 	allPaths, err := s.allDirPaths(ctx, channelID)

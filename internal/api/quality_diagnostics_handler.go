@@ -105,7 +105,7 @@ func (s *qualityService) handleQualityMetrics(w http.ResponseWriter, r *http.Req
 		return
 	}
 	channelID := r.PathValue("id")
-	dirPath, err := s.srv.resolveDirPath(r.Context(), "", channelID)
+	dirPath, err := s.srv.workspace.resolveDirPath(r.Context(), "", channelID)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
@@ -141,7 +141,7 @@ func (s *qualityService) handleQualityDiagnostics(w http.ResponseWriter, r *http
 		return
 	}
 	channelID := r.PathValue("id")
-	dirPath, err := s.srv.resolveDirPath(r.Context(), "", channelID)
+	dirPath, err := s.srv.workspace.resolveDirPath(r.Context(), "", channelID)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
@@ -174,9 +174,9 @@ func (s *qualityService) handleQualityRules(w http.ResponseWriter, r *http.Reque
 	// previous static config field provided.
 	var dirPath, parentDirPath string
 	if s.srv.store != nil {
-		if d, err := s.srv.resolveDirPath(r.Context(), "", channelID); err == nil {
+		if d, err := s.srv.workspace.resolveDirPath(r.Context(), "", channelID); err == nil {
 			dirPath = d
-			parentDirPath = s.srv.resolveParentDirPath(r.Context(), channelID)
+			parentDirPath = s.srv.workspace.resolveParentDirPath(r.Context(), channelID)
 		}
 	}
 	sig := metrics.ComputeWith(g, s.resolveMetricsConfig(dirPath, parentDirPath))
@@ -239,9 +239,9 @@ func (s *qualityService) handleQualityWhatif(w http.ResponseWriter, r *http.Requ
 	}
 	var dirPath, parentDirPath string
 	if s.srv.store != nil {
-		if d, derr := s.srv.resolveDirPath(r.Context(), "", channelID); derr == nil {
+		if d, derr := s.srv.workspace.resolveDirPath(r.Context(), "", channelID); derr == nil {
 			dirPath = d
-			parentDirPath = s.srv.resolveParentDirPath(r.Context(), channelID)
+			parentDirPath = s.srv.workspace.resolveParentDirPath(r.Context(), channelID)
 		}
 	}
 	res, err := whatif.SimulateWith(g, req.Mutations, s.resolveMetricsConfig(dirPath, parentDirPath))
@@ -275,7 +275,7 @@ func (s *qualityService) handleQualityEvolution(w http.ResponseWriter, r *http.R
 		return
 	}
 	channelID := r.PathValue("id")
-	dirPath, err := s.srv.resolveDirPath(r.Context(), "", channelID)
+	dirPath, err := s.srv.workspace.resolveDirPath(r.Context(), "", channelID)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
@@ -300,7 +300,7 @@ func (s *qualityService) handleQualityBugFactor(w http.ResponseWriter, r *http.R
 		return
 	}
 	channelID := r.PathValue("id")
-	dirPath, err := s.srv.resolveDirPath(r.Context(), "", channelID)
+	dirPath, err := s.srv.workspace.resolveDirPath(r.Context(), "", channelID)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return

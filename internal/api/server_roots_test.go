@@ -100,7 +100,7 @@ func (s *ServerSuite) TestAllDirPathsWithExtraDirs() {
 // matching the mounts the agent container gets from the same merge.
 func (s *ServerSuite) TestAllDirPathsIncludesGlobalExtraDirs() {
 	tmpDir := s.T().TempDir() // no .loop/config.json — project sets nothing
-	s.srv.loadConfig = func() (*config.Config, error) {
+	s.srv.configs.load = func() (*config.Config, error) {
 		return &config.Config{ExtraDirs: []string{"/home/user/global-lib"}}, nil
 	}
 
@@ -118,7 +118,7 @@ func (s *ServerSuite) TestAllDirPathsIncludesGlobalExtraDirs() {
 // primary root is asserted.
 func (s *ServerSuite) TestAllDirPathsNilLoadConfigFallsBackToConfigLoad() {
 	tmpDir := s.T().TempDir()
-	s.srv.loadConfig = nil
+	s.srv.configs.load = nil
 
 	s.store.On("GetChannel", mock.Anything, "ch-nilload").
 		Return(&db.Channel{ChannelID: "ch-nilload", DirPath: tmpDir}, nil)
@@ -140,7 +140,7 @@ func (s *ServerSuite) TestAllDirPathsGlobalConfigLoadError() {
 		[]byte(`{"extra_dirs": ["/home/user/lib"]}`),
 		0644,
 	))
-	s.srv.loadConfig = func() (*config.Config, error) { return nil, fmt.Errorf("boom") }
+	s.srv.configs.load = func() (*config.Config, error) { return nil, fmt.Errorf("boom") }
 
 	s.store.On("GetChannel", mock.Anything, "ch-loaderr").
 		Return(&db.Channel{ChannelID: "ch-loaderr", DirPath: tmpDir}, nil)

@@ -175,9 +175,9 @@ func (s *qualityService) resolveMetricsConfigForChannel(ctx context.Context, cha
 	}
 	var dir, parent string
 	if s.srv.store != nil {
-		if d, err := s.srv.resolveDirPath(ctx, "", channelID); err == nil {
+		if d, err := s.srv.workspace.resolveDirPath(ctx, "", channelID); err == nil {
 			dir = d
-			parent = s.srv.resolveParentDirPath(ctx, channelID)
+			parent = s.srv.workspace.resolveParentDirPath(ctx, channelID)
 		}
 	}
 	return s.resolveMetricsConfig(dir, parent)
