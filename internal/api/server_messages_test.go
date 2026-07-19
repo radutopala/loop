@@ -627,3 +627,15 @@ func (s *ServerSuite) TestComposerHistoryStoreError() {
 	rec := s.testRequest("GET", "/api/channels/ch-1/composer-history", "")
 	require.Equal(s.T(), http.StatusInternalServerError, rec.Code)
 }
+
+// TestComposerHistoryStoreNotConfigured pins the 501 guard when the server
+// has no message store wired.
+func (s *ServerSuite) TestComposerHistoryStoreNotConfigured() {
+	srv := &Server{logger: s.srv.logger}
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /api/channels/{id}/composer-history", srv.handleComposerHistory)
+	req := httptest.NewRequest("GET", "/api/channels/ch-1/composer-history", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	require.Equal(s.T(), http.StatusNotImplemented, rec.Code)
+}

@@ -949,9 +949,6 @@ func (s *reviewService) maybeRediffForComment(channelID, worktreePath, parentDir
 func (s *reviewService) registerReviewRun(channelID string, cancel context.CancelFunc) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.active == nil {
-		s.active = make(map[string]context.CancelFunc)
-	}
 	if _, ok := s.active[channelID]; ok {
 		return false
 	}

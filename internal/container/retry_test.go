@@ -3,6 +3,7 @@ package container
 import (
 	"context"
 	"errors"
+	"math"
 	"testing"
 	"time"
 
@@ -102,4 +103,11 @@ func TestSleepCtx(t *testing.T) {
 
 	// Normal completion.
 	require.NoError(t, sleepCtx(context.Background(), time.Millisecond))
+}
+
+// TestBackoffDelayOverflowReturnsMax pins the overflow guard: when the
+// doubling wraps negative, the delay clamps to maxDelay instead of zero.
+func TestBackoffDelayOverflowReturnsMax(t *testing.T) {
+	got := backoffDelay(1, time.Duration(math.MaxInt64), time.Second)
+	require.Equal(t, time.Second, got)
 }

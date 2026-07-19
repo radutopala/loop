@@ -857,3 +857,9 @@ func (s *ServerSuite) TestSearchChannelsDiffStats() {
 	require.Equal(s.T(), 6, resp[0].DiffAdditions, "1 unstaged + 2 staged + 3 untracked text lines (binary excluded)")
 	require.Equal(s.T(), 1, resp[0].DiffDeletions, "expected 1 tracked deletion")
 }
+
+// TestGitBranchEmptyDir pins the empty-dir short-circuit: no directory, no
+// git subprocess, empty branch.
+func (s *ServerSuite) TestGitBranchEmptyDir() {
+	require.Empty(s.T(), gitBranch(context.Background(), ""))
+}

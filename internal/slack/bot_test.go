@@ -162,3 +162,11 @@ func (s *BotSuite) SetupTest() {
 func testLogger() *slog.Logger {
 	return slog.Default()
 }
+
+// TestHandleIncomingMessageNoOps pins the two chat-platform no-ops: incoming
+// API messages don't route back into Slack, so both must do nothing (and not
+// panic) regardless of arguments.
+func (s *BotSuite) TestHandleIncomingMessageNoOps() {
+	s.bot.HandleIncomingMessage(context.Background(), "ch-1", "user", "text", "sess")
+	s.bot.HandleIncomingMessageWithPriority(context.Background(), "ch-1", "user", "text", "sess", 5)
+}

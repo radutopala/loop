@@ -539,3 +539,25 @@ func (s *HostSuite) TestExecCreatePreservesExistingTERM() {
 	}
 	require.Equal(s.T(), 1, count, "should have exactly one TERM entry")
 }
+
+// TestExecCreateSetsNoFlickerDefault pins the CLAUDE_CODE_NO_FLICKER default:
+// when the variable is absent, ExecCreate injects =1 so a host-shell `claude`
+// keeps its alternate-screen TUI. The var is explicitly unset (and restored)
+// because agent/dev environments often export it, which otherwise leaves this
+// branch environment-dependent.
+func (s *HostSuite) TestExecCreateSetsNoFlickerDefault() {
+	orig, had := os.LookupEnv("CLAUDE_CODE_NO_FLICKER")
+	require.NoError(s.T(), os.Unsetenv("CLAUDE_CODE_NO_FLICKER"))
+	s.T().Cleanup(func() {
+		if had {
+			_ = os.Setenv("CLAUDE_CODE_NO_FLICKER", orig)
+		}
+	})
+
+	id, err := s.client.ExecCreate(context.Background(), "/tmp", []string{"/bin/echo", "hi"}, true)
+	require.NoError(s.T(), err)
+	s.client.mu.Lock()
+	he := s.client.execs[id]
+	s.client.mu.Unlock()
+	require.Contains(s.T(), he.cmd.Env, "CLAUDE_CODE_NO_FLICKER=1")
+}

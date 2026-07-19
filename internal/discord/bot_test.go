@@ -1,6 +1,7 @@
 package discord
 
 import (
+	"context"
 	"log/slog"
 	"testing"
 
@@ -215,3 +216,11 @@ func (s *BotSuite) SetupTest() {
 type discard struct{}
 
 func (discard) Write(p []byte) (int, error) { return len(p), nil }
+
+// TestHandleIncomingMessageNoOps pins the two chat-platform no-ops: incoming
+// API messages don't route back into Discord, so both must do nothing (and
+// not panic) regardless of arguments.
+func (s *BotSuite) TestHandleIncomingMessageNoOps() {
+	s.bot.HandleIncomingMessage(context.Background(), "ch-1", "user", "text", "sess")
+	s.bot.HandleIncomingMessageWithPriority(context.Background(), "ch-1", "user", "text", "sess", 5)
+}

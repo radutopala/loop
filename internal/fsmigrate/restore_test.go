@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 
@@ -310,4 +311,21 @@ func (s *FSMigrateSuite) TestRestoreBuiltinWorkflowsPatchesStaleBodyDeps() {
 	require.Contains(s.T(), patched, "review-fix-loop", "body-deps patch must surface as patched")
 	out := string(sys.files[configPath])
 	require.Contains(s.T(), out, `"depends_on"`, "fix/verify must gain depends_on after restore")
+}
+
+// TestRestoreBuiltinShortcutsSimplifySeedError surfaces an error from the
+// simplify seed specifically: the code-review entry is already present with
+// the current prompt (seed and patch both no-op, no writes), so the first
+// write attempt is the simplify seed, which fails.
+func (s *FSMigrateSuite) TestRestoreBuiltinShortcutsSimplifySeedError() {
+	sys := newFakeSystem()
+	configPath := filepath.Join("/loop", "config.json")
+	promptJSON, merr := json.Marshal(builtinCodeReviewShortcutPrompt)
+	require.NoError(s.T(), merr)
+	cfg := fmt.Sprintf(`{"prompt_shortcuts":[{"name":%q,"prompt":%s}]}`, builtinCodeReviewShortcutName, promptJSON)
+	sys.files[configPath] = []byte(cfg)
+	sys.writeErr[configPath+".tmp"] = errors.New("io error")
+
+	_, _, err := RestoreBuiltinShortcuts(context.Background(), &Ctx{Sys: sys, LoopDir: "/loop"})
+	require.Error(s.T(), err)
 }
