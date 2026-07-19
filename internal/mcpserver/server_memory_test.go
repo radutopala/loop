@@ -1,7 +1,6 @@
 package mcpserver
 
 import (
-	"context"
 	"fmt"
 	"io"
 	"net/http"
@@ -16,57 +15,11 @@ import (
 
 // MCPMemorySuite tests memory tools separately because they need a server created with WithMemoryAPI.
 type MCPMemorySuite struct {
-	suite.Suite
-	httpClient *mockHTTPClient
-	srv        *Server
-	ctx        context.Context
-	session    *mcp.ClientSession
-	cleanup    func()
+	baseToolSuite
 }
 
 func TestMCPMemorySuite(t *testing.T) {
-	suite.Run(t, new(MCPMemorySuite))
-}
-
-func (s *MCPMemorySuite) SetupTest() {
-	s.httpClient = &mockHTTPClient{}
-	s.srv = New("test-channel", "http://localhost:8222", "", s.httpClient, nil,
-		WithMemoryAPI("/tmp/project"),
-	)
-	s.ctx = context.Background()
-
-	client := mcp.NewClient(&mcp.Implementation{Name: "test-client", Version: "1.0.0"}, nil)
-	t1, t2 := mcp.NewInMemoryTransports()
-
-	go func() {
-		_ = s.srv.Run(s.ctx, t1)
-	}()
-
-	session, err := client.Connect(s.ctx, t2, nil)
-	require.NoError(s.T(), err)
-
-	s.session = session
-	s.cleanup = func() {
-		session.Close()
-	}
-}
-
-func (s *MCPMemorySuite) TearDownTest() {
-	if s.cleanup != nil {
-		s.cleanup()
-	}
-}
-
-// callTool is a helper that calls a tool and returns (text, isError).
-func (s *MCPMemorySuite) callTool(name string, args map[string]any) (string, bool) {
-	s.T().Helper()
-	res, err := s.session.CallTool(s.ctx, &mcp.CallToolParams{
-		Name:      name,
-		Arguments: args,
-	})
-	require.NoError(s.T(), err)
-	require.Len(s.T(), res.Content, 1)
-	return res.Content[0].(*mcp.TextContent).Text, res.IsError
+	suite.Run(t, &MCPMemorySuite{baseToolSuite{serverOpts: []MemoryOption{WithMemoryAPI("/tmp/project")}}})
 }
 
 func (s *MCPMemorySuite) TestListToolsIncludesMemory() {
@@ -121,7 +74,7 @@ func (s *MCPMemorySuite) TestSearchMemoryEmptyQuery() {
 }
 
 func (s *MCPMemorySuite) TestSearchMemoryErrors() {
-	runToolErrorCases(&s.Suite, s.httpClient, s.callTool, toolErrorSpec{
+	s.runToolErrorCases(toolErrorSpec{
 		tool:         "search_memory",
 		args:         map[string]any{"query": "test"},
 		apiStatus:    http.StatusInternalServerError,
@@ -203,45 +156,11 @@ func (s *MCPMemorySuite) TestDirPath() {
 
 // MCPMemoryChannelIDSuite tests memory tools when only channel_id is available (no dirPath).
 type MCPMemoryChannelIDSuite struct {
-	suite.Suite
-	httpClient *mockHTTPClient
-	srv        *Server
-	ctx        context.Context
-	session    *mcp.ClientSession
-	cleanup    func()
+	baseToolSuite
 }
 
 func TestMCPMemoryChannelIDSuite(t *testing.T) {
-	suite.Run(t, new(MCPMemoryChannelIDSuite))
-}
-
-func (s *MCPMemoryChannelIDSuite) SetupTest() {
-	s.httpClient = &mockHTTPClient{}
-	s.srv = New("test-channel", "http://localhost:8222", "", s.httpClient, nil,
-		WithMemoryAPI(""),
-	)
-	s.ctx = context.Background()
-
-	client := mcp.NewClient(&mcp.Implementation{Name: "test-client", Version: "1.0.0"}, nil)
-	t1, t2 := mcp.NewInMemoryTransports()
-
-	go func() {
-		_ = s.srv.Run(s.ctx, t1)
-	}()
-
-	session, err := client.Connect(s.ctx, t2, nil)
-	require.NoError(s.T(), err)
-
-	s.session = session
-	s.cleanup = func() {
-		session.Close()
-	}
-}
-
-func (s *MCPMemoryChannelIDSuite) TearDownTest() {
-	if s.cleanup != nil {
-		s.cleanup()
-	}
+	suite.Run(t, &MCPMemoryChannelIDSuite{baseToolSuite{serverOpts: []MemoryOption{WithMemoryAPI("")}}})
 }
 
 func (s *MCPMemoryChannelIDSuite) TestMemoryEnabledWithEmptyDirPath() {

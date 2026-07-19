@@ -62,7 +62,7 @@ func (s *MCPServerSuite) TestSendMessageNoChannelRequired() {
 }
 
 func (s *MCPServerSuite) TestSendMessageErrors() {
-	runToolErrorCases(&s.Suite, s.httpClient, s.callTool, toolErrorSpec{
+	s.runToolErrorCases(toolErrorSpec{
 		tool:      "send_message",
 		args:      map[string]any{"channel_id": "ch-1", "content": "hello"},
 		apiStatus: http.StatusInternalServerError,
@@ -117,7 +117,7 @@ func (s *MCPServerSuite) TestQueueMessageNoChannel() {
 }
 
 func (s *MCPServerSuite) TestQueueMessageErrors() {
-	runToolErrorCases(&s.Suite, s.httpClient, s.callTool, toolErrorSpec{
+	s.runToolErrorCases(toolErrorSpec{
 		tool:      "queue_message",
 		args:      map[string]any{"content": "hello"},
 		apiStatus: http.StatusInternalServerError,

@@ -36,7 +36,7 @@ func (s *MCPServerSuite) TestToggleTaskSuccess() {
 }
 
 func (s *MCPServerSuite) TestToggleTaskErrors() {
-	runToolErrorCases(&s.Suite, s.httpClient, s.callTool, toolErrorSpec{
+	s.runToolErrorCases(toolErrorSpec{
 		tool:      "toggle_task",
 		args:      map[string]any{"task_id": float64(1), "enabled": false},
 		apiStatus: http.StatusInternalServerError,
@@ -92,7 +92,7 @@ func (s *MCPServerSuite) TestCreateChannelEmptyName() {
 }
 
 func (s *MCPServerSuite) TestCreateChannelErrors() {
-	runToolErrorCases(&s.Suite, s.httpClient, s.callTool, toolErrorSpec{
+	s.runToolErrorCases(toolErrorSpec{
 		tool:         "create_channel",
 		args:         map[string]any{"name": "trial"},
 		apiStatus:    http.StatusInternalServerError,
@@ -171,7 +171,7 @@ func (s *MCPServerSuite) TestCreateThreadEmptyName() {
 }
 
 func (s *MCPServerSuite) TestCreateThreadErrors() {
-	runToolErrorCases(&s.Suite, s.httpClient, s.callTool, toolErrorSpec{
+	s.runToolErrorCases(toolErrorSpec{
 		tool:         "create_thread",
 		args:         map[string]any{"name": "my-thread", "message": "Do something"},
 		apiStatus:    http.StatusInternalServerError,
@@ -256,7 +256,7 @@ func (s *MCPServerSuite) TestCreateWorktreeThreadEmptyBranch() {
 }
 
 func (s *MCPServerSuite) TestCreateWorktreeThreadErrors() {
-	runToolErrorCases(&s.Suite, s.httpClient, s.callTool, toolErrorSpec{
+	s.runToolErrorCases(toolErrorSpec{
 		tool:         "create_worktree_thread",
 		args:         map[string]any{"branch": "feat/foo"},
 		apiStatus:    http.StatusInternalServerError,
@@ -286,7 +286,7 @@ func (s *MCPServerSuite) TestDeleteThreadEmptyID() {
 }
 
 func (s *MCPServerSuite) TestDeleteThreadErrors() {
-	runToolErrorCases(&s.Suite, s.httpClient, s.callTool, toolErrorSpec{
+	s.runToolErrorCases(toolErrorSpec{
 		tool:      "delete_thread",
 		args:      map[string]any{"thread_id": "thread-1"},
 		apiStatus: http.StatusInternalServerError,

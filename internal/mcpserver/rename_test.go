@@ -46,7 +46,7 @@ func (s *MCPServerSuite) TestRenameThreadEmptyName() {
 }
 
 func (s *MCPServerSuite) TestRenameThreadErrors() {
-	runToolErrorCases(&s.Suite, s.httpClient, s.callTool, toolErrorSpec{
+	s.runToolErrorCases(toolErrorSpec{
 		tool:      "rename_thread",
 		args:      map[string]any{"thread_id": "thread-1", "name": "my-new-name"},
 		apiStatus: http.StatusNotFound,
@@ -95,7 +95,7 @@ func (s *MCPServerSuite) TestRenameWorktreeThreadEmptyNewName() {
 }
 
 func (s *MCPServerSuite) TestRenameWorktreeThreadErrors() {
-	runToolErrorCases(&s.Suite, s.httpClient, s.callTool, toolErrorSpec{
+	s.runToolErrorCases(toolErrorSpec{
 		tool:         "rename_worktree_thread",
 		args:         map[string]any{"thread_id": "wt-thread-1", "new_name": "wt-new"},
 		apiStatus:    http.StatusInternalServerError,

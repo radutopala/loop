@@ -451,7 +451,7 @@ func (s *MCPServerSuite) TestShowTaskDisabled() {
 }
 
 func (s *MCPServerSuite) TestShowTaskErrors() {
-	runToolErrorCases(&s.Suite, s.httpClient, s.callTool, toolErrorSpec{
+	s.runToolErrorCases(toolErrorSpec{
 		tool:      "show_task",
 		args:      map[string]any{"task_id": float64(42)},
 		apiStatus: http.StatusNotFound,
@@ -474,7 +474,7 @@ func (s *MCPServerSuite) TestCancelTaskSuccess() {
 }
 
 func (s *MCPServerSuite) TestCancelTaskErrors() {
-	runToolErrorCases(&s.Suite, s.httpClient, s.callTool, toolErrorSpec{
+	s.runToolErrorCases(toolErrorSpec{
 		tool:      "cancel_task",
 		args:      map[string]any{"task_id": float64(1)},
 		apiStatus: http.StatusInternalServerError,
@@ -630,7 +630,7 @@ func (s *MCPServerSuite) TestEditTaskValidRFC3339Once() {
 }
 
 func (s *MCPServerSuite) TestEditTaskErrors() {
-	runToolErrorCases(&s.Suite, s.httpClient, s.callTool, toolErrorSpec{
+	s.runToolErrorCases(toolErrorSpec{
 		tool:      "edit_task",
 		args:      map[string]any{"task_id": float64(1), "prompt": "new"},
 		apiStatus: http.StatusInternalServerError,
