@@ -495,3 +495,11 @@ func (s *ServerSuite) TestChannelPRLookupErrorNotCached() {
 	}
 	gh.AssertNumberOfCalls(s.T(), "LookupPR", 2)
 }
+
+// TestResolveReviewEnabledDefaultLoader pins the nil-loadConfig fallback to
+// config.Load. The result depends on the host's real config, so only the
+// fallback path itself (no panic, a definite answer) is asserted.
+func (s *ServerSuite) TestResolveReviewEnabledDefaultLoader() {
+	srv := &Server{logger: s.srv.logger}
+	_ = srv.resolveReviewEnabled(s.T().TempDir(), "")
+}

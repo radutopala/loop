@@ -172,3 +172,13 @@ func (s *ServerSuite) TestHandleRestoreBuiltinsPatchedSurfaceInResponse() {
 	// patched is always emitted as [] (never null) for FE stability.
 	require.NotNil(s.T(), resp.Patched)
 }
+
+// TestIsLoopbackRequestProxyHeaders pins the proxy-header guard: any
+// forwarding header means the direct peer isn't the real client, so the
+// request must not be treated as loopback even from 127.0.0.1.
+func (s *ServerSuite) TestIsLoopbackRequestProxyHeaders() {
+	req := httptest.NewRequest("GET", "/", nil)
+	req.RemoteAddr = "127.0.0.1:1234"
+	req.Header.Set("X-Forwarded-For", "203.0.113.9")
+	require.False(s.T(), isLoopbackRequest(req))
+}

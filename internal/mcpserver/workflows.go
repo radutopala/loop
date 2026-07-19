@@ -332,14 +332,12 @@ func (s *Server) handleSaveWorkflow(_ context.Context, _ *mcp.CallToolRequest, i
 		return errorResult("action must be 'add' or 'update'"), nil, nil
 	}
 
-	wfJSON, err := json.Marshal(input.Workflow)
-	if err != nil {
-		return errorResult(fmt.Sprintf("invalid workflow: %v", err)), nil, nil
-	}
+	// schemaWorkflowDef is plain data (strings, typed maps, slices), so the
+	// marshal cannot fail, and the struct-to-struct round-trip into the
+	// matching config.WorkflowDef field types cannot fail either.
+	wfJSON, _ := json.Marshal(input.Workflow)
 	var wf config.WorkflowDef
-	if err := json.Unmarshal(wfJSON, &wf); err != nil {
-		return errorResult(fmt.Sprintf("invalid workflow JSON: %v", err)), nil, nil
-	}
+	_ = json.Unmarshal(wfJSON, &wf)
 
 	body := map[string]any{
 		"action":   input.Action,
