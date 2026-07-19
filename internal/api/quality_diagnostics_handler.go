@@ -347,9 +347,3 @@ func nilToEmpty(in [][]string) [][]string {
 	}
 	return in
 }
-
-// SetQualityHistoryReader wires the git-history reader for the evolution
-// and bug-factor endpoints. Nil disables those endpoints (501).
-func (s *Server) SetQualityHistoryReader(r QualityHistoryReader) {
-	s.quality.history = r
-}
