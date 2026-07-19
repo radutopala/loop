@@ -118,12 +118,13 @@ func (b *Bot) SendApproval(_ context.Context, channelID string, prompt bot.Appro
 		return "", nil
 	}
 	g.BroadcastGateApprovalRequested(channelID, events.GateApprovalEventData{
-		ReqID:   prompt.ID,
-		Kind:    prompt.Kind,
-		Target:  prompt.Target,
-		Source:  prompt.Source,
-		Message: prompt.Message,
-		Details: prompt.Details,
+		ReqID:     prompt.ID,
+		Kind:      prompt.Kind,
+		Target:    prompt.Target,
+		Source:    prompt.Source,
+		Message:   prompt.Message,
+		Details:   prompt.Details,
+		ExpiresAt: prompt.ExpiresAt,
 	})
 	return prompt.ID, nil
 }

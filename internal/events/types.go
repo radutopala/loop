@@ -1,5 +1,7 @@
 package events
 
+import "time"
+
 // Broadcaster broadcasts events to connected clients.
 type Broadcaster interface {
 	BroadcastMessageCreated(channelID string, data MessageEventData)
@@ -299,6 +301,9 @@ type GateApprovalEventData struct {
 	Source  string            `json:"source,omitempty"`
 	Message string            `json:"message,omitempty"`
 	Details map[string]string `json:"details,omitempty"`
+	// ExpiresAt is the gate's deadline; after it the request auto-denies
+	// and the card renders as expired even without further events.
+	ExpiresAt time.Time `json:"expires_at,omitzero"`
 }
 
 // GateApprovalResolvedData is the payload for gate.approval_resolved events.

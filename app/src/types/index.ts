@@ -201,6 +201,9 @@ export interface GateApprovalRequestedData {
   source?: string;
   message?: string;
   details?: Record<string, string>;
+  /** Gate deadline (RFC3339). After it the request auto-denies daemon-side
+   * and the card renders as expired even if the resolved event was missed. */
+  expires_at?: string;
 }
 
 export interface GateApprovalResolvedData {
