@@ -9,7 +9,6 @@ import (
 	"net"
 	"net/http"
 	"os"
-	"sync"
 	"time"
 
 	"github.com/radutopala/loop/internal/agentregistry"
@@ -147,10 +146,7 @@ type Server struct {
 	pendingAsks             PendingAsksLister            // snapshot of parked AskUserQuestion cards for FE rehydration
 	pendingPlans            PendingPlansLister           // snapshot of parked ExitPlanMode cards for FE rehydration
 	auditDirResolver        AuditDirResolver             // per-channel host path to the gate audit jsonl dir
-	githubLookup            GitHubLookup                 // resolves PR for a channel's branch via `gh`
-	prCache                 map[string]prCacheEntry      // (dirPath,branch) → cached PR lookup; see prCacheTTL
-	prCacheMu               sync.Mutex                   // protects prCache
-	prCacheClock            func() time.Time             // injectable cache clock for tests
+	prLookup                prLookup                     // gh PR lookups + per-(dir,branch) response cache
 	review                  *reviewService               // PR-review domain: sessions, gh client, worktree, in-flight runs
 
 	quality *qualityService // quality-scan domain: scanner, graph/snapshot/history readers, in-flight scan registry
@@ -209,6 +205,13 @@ func (s *Server) SetLoopDir(dir string) {
 // CleanupBrowsers stops all Docker browser containers during shutdown.
 func (s *Server) CleanupBrowsers(ctx context.Context) {
 	s.browser.cleanup(ctx)
+}
+
+// InvalidatePRCacheForDir drops every cached PR lookup for a directory. Wired
+// to the branch poller so a new commit/branch (the push that precedes a PR)
+// makes the next lookup fresh.
+func (s *Server) InvalidatePRCacheForDir(dir string) {
+	s.prLookup.invalidateDir(dir)
 }
 
 // SetContainerRegistry configures the container registry for the /api/containers endpoint.

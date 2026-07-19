@@ -104,7 +104,7 @@ func (s *ServerSuite) TestChannelPRNoLookupConfigured() {
 
 func (s *ServerSuite) TestChannelPRNoDirPathAndNoLoopDir() {
 	gh := new(mockGitHubLookup)
-	s.srv.SetGitHubLookup(gh)
+	s.srv.prLookup.client = gh
 	s.store.On("GetChannel", mock.Anything, "ch-no-dir").
 		Return(&db.Channel{ChannelID: "ch-no-dir"}, nil)
 	mux := http.NewServeMux()
@@ -120,7 +120,7 @@ func (s *ServerSuite) TestChannelPRNoDirPathAndNoLoopDir() {
 func (s *ServerSuite) TestChannelPRLoopDirFallback() {
 	gh := new(mockGitHubLookup)
 	gh.On("LookupPR", mock.Anything, mock.Anything, "", mock.Anything).Return(nil, nil)
-	s.srv.SetGitHubLookup(gh)
+	s.srv.prLookup.client = gh
 	s.srv.loopDir = s.T().TempDir() // not a git repo → gitBranch returns ""
 	s.store.On("GetChannel", mock.Anything, "ch-fb").
 		Return(&db.Channel{ChannelID: "ch-fb"}, nil)
@@ -136,7 +136,7 @@ func (s *ServerSuite) TestChannelPRLoopDirFallback() {
 
 func (s *ServerSuite) TestChannelPRNotGitRepoReturnsEmpty() {
 	gh := new(mockGitHubLookup)
-	s.srv.SetGitHubLookup(gh)
+	s.srv.prLookup.client = gh
 	s.store.On("GetChannel", mock.Anything, "ch-tmp").
 		Return(&db.Channel{ChannelID: "ch-tmp", DirPath: s.T().TempDir()}, nil)
 	mux := http.NewServeMux()
@@ -157,7 +157,7 @@ func (s *ServerSuite) TestChannelPRFound() {
 			Number: 42, URL: "https://github.com/o/r/pull/42",
 			BaseRef: "main", HeadRef: "feature-x", State: "OPEN", Title: "feat",
 		}, nil)
-	s.srv.SetGitHubLookup(gh)
+	s.srv.prLookup.client = gh
 	s.store.On("GetChannel", mock.Anything, "ch-pr").
 		Return(&db.Channel{ChannelID: "ch-pr", DirPath: dir}, nil)
 	mux := http.NewServeMux()
@@ -179,7 +179,7 @@ func (s *ServerSuite) TestChannelPRLookupNoPR() {
 	dir := gitInitRepoWithBranch(s.T(), "feature-y")
 	gh := new(mockGitHubLookup)
 	gh.On("LookupPR", mock.Anything, dir, "", "feature-y").Return(nil, nil)
-	s.srv.SetGitHubLookup(gh)
+	s.srv.prLookup.client = gh
 	s.store.On("GetChannel", mock.Anything, "ch-y").
 		Return(&db.Channel{ChannelID: "ch-y", DirPath: dir}, nil)
 	mux := http.NewServeMux()
@@ -196,7 +196,7 @@ func (s *ServerSuite) TestChannelPRLookupGhNotInstalled() {
 	gh := new(mockGitHubLookup)
 	gh.On("LookupPR", mock.Anything, dir, "", "feat-z").
 		Return(nil, githubapi.ErrGhNotInstalled)
-	s.srv.SetGitHubLookup(gh)
+	s.srv.prLookup.client = gh
 	s.store.On("GetChannel", mock.Anything, "ch-z").
 		Return(&db.Channel{ChannelID: "ch-z", DirPath: dir}, nil)
 	mux := http.NewServeMux()
@@ -213,7 +213,7 @@ func (s *ServerSuite) TestChannelPRLookupGenericError() {
 	gh := new(mockGitHubLookup)
 	gh.On("LookupPR", mock.Anything, dir, "", "feat-w").
 		Return(nil, errors.New("network broke"))
-	s.srv.SetGitHubLookup(gh)
+	s.srv.prLookup.client = gh
 	s.store.On("GetChannel", mock.Anything, "ch-w").
 		Return(&db.Channel{ChannelID: "ch-w", DirPath: dir}, nil)
 	mux := http.NewServeMux()
@@ -232,7 +232,7 @@ func (s *ServerSuite) TestChannelPRResolvesGHUserFromGlobalConfig() {
 	}
 	gh := new(mockGitHubLookup)
 	gh.On("LookupPR", mock.Anything, dir, "radutopala", "feat-cfg").Return(nil, nil)
-	s.srv.SetGitHubLookup(gh)
+	s.srv.prLookup.client = gh
 	s.store.On("GetChannel", mock.Anything, "ch-cfg").
 		Return(&db.Channel{ChannelID: "ch-cfg", DirPath: dir}, nil)
 	mux := http.NewServeMux()
@@ -256,7 +256,7 @@ func (s *ServerSuite) TestChannelPRResolvesGHUserFromProjectOverride() {
 	}
 	gh := new(mockGitHubLookup)
 	gh.On("LookupPR", mock.Anything, dir, "project-user", "feat-proj").Return(nil, nil)
-	s.srv.SetGitHubLookup(gh)
+	s.srv.prLookup.client = gh
 	s.store.On("GetChannel", mock.Anything, "ch-proj").
 		Return(&db.Channel{ChannelID: "ch-proj", DirPath: dir}, nil)
 	mux := http.NewServeMux()
@@ -436,9 +436,9 @@ func (s *ServerSuite) TestChannelPRCache() {
 	dir := gitInitRepoWithBranch(s.T(), "feat-c")
 	gh := new(mockGitHubLookup)
 	gh.On("LookupPR", mock.Anything, dir, "", "feat-c").Return(nil, nil)
-	s.srv.SetGitHubLookup(gh)
+	s.srv.prLookup.client = gh
 	now := time.Unix(1000, 0)
-	s.srv.prCacheClock = func() time.Time { return now }
+	s.srv.prLookup.clock = func() time.Time { return now }
 	s.store.On("GetChannel", mock.Anything, "ch-c").
 		Return(&db.Channel{ChannelID: "ch-c", DirPath: dir}, nil)
 
@@ -480,7 +480,7 @@ func (s *ServerSuite) TestChannelPRLookupErrorNotCached() {
 	dir := gitInitRepoWithBranch(s.T(), "feat-e")
 	gh := new(mockGitHubLookup)
 	gh.On("LookupPR", mock.Anything, dir, "", "feat-e").Return(nil, errors.New("network down"))
-	s.srv.SetGitHubLookup(gh)
+	s.srv.prLookup.client = gh
 	s.store.On("GetChannel", mock.Anything, "ch-e").
 		Return(&db.Channel{ChannelID: "ch-e", DirPath: dir}, nil)
 
