@@ -13,55 +13,11 @@ import (
 )
 
 type WorkflowsSuite struct {
-	suite.Suite
-	httpClient *mockHTTPClient
-	srv        *Server
-	ctx        context.Context
-	session    *mcp.ClientSession
-	cleanup    func()
+	baseToolSuite
 }
 
 func TestWorkflowsSuite(t *testing.T) {
-	suite.Run(t, new(WorkflowsSuite))
-}
-
-func (s *WorkflowsSuite) SetupTest() {
-	s.httpClient = &mockHTTPClient{}
-	s.srv = New("test-channel", "http://localhost:8222", "", s.httpClient, nil, WithWorkflowAPI())
-	s.ctx = context.Background()
-
-	client := mcp.NewClient(&mcp.Implementation{Name: "test-client", Version: "1.0.0"}, nil)
-	t1, t2 := mcp.NewInMemoryTransports()
-
-	go func() {
-		_ = s.srv.Run(s.ctx, t1)
-	}()
-
-	session, err := client.Connect(s.ctx, t2, nil)
-	require.NoError(s.T(), err)
-
-	s.session = session
-	s.cleanup = func() {
-		session.Close()
-	}
-}
-
-func (s *WorkflowsSuite) TearDownTest() {
-	if s.cleanup != nil {
-		s.cleanup()
-	}
-}
-
-// callTool is a helper that calls a tool and returns (text, isError).
-func (s *WorkflowsSuite) callTool(name string, args map[string]any) (string, bool) {
-	s.T().Helper()
-	res, err := s.session.CallTool(s.ctx, &mcp.CallToolParams{
-		Name:      name,
-		Arguments: args,
-	})
-	require.NoError(s.T(), err)
-	require.Len(s.T(), res.Content, 1)
-	return res.Content[0].(*mcp.TextContent).Text, res.IsError
+	suite.Run(t, &WorkflowsSuite{baseToolSuite{serverOpts: []MemoryOption{WithWorkflowAPI()}}})
 }
 
 // --- WorkflowAPI option ---
@@ -179,7 +135,7 @@ func (s *WorkflowsSuite) TestRunWorkflowUsesFallbackDirPath() {
 }
 
 func (s *WorkflowsSuite) TestRunWorkflowErrors() {
-	runToolErrorCases(&s.Suite, s.httpClient, s.callTool, toolErrorSpec{
+	s.runToolErrorCases(toolErrorSpec{
 		tool:         "run_workflow",
 		args:         map[string]any{"workflow_name": "fail-workflow"},
 		apiStatus:    http.StatusInternalServerError,
@@ -220,7 +176,7 @@ func (s *WorkflowsSuite) TestGetWorkflowRunURLEscaping() {
 }
 
 func (s *WorkflowsSuite) TestGetWorkflowRunErrors() {
-	runToolErrorCases(&s.Suite, s.httpClient, s.callTool, toolErrorSpec{
+	s.runToolErrorCases(toolErrorSpec{
 		tool:         "get_workflow_run",
 		args:         map[string]any{"run_id": "run-xyz"},
 		apiStatus:    http.StatusNotFound,
@@ -453,7 +409,7 @@ func (s *WorkflowsSuite) TestCancelWorkflowRunSuccess() {
 }
 
 func (s *WorkflowsSuite) TestCancelWorkflowRunErrors() {
-	runToolErrorCases(&s.Suite, s.httpClient, s.callTool, toolErrorSpec{
+	s.runToolErrorCases(toolErrorSpec{
 		tool:      "cancel_workflow_run",
 		args:      map[string]any{"run_id": "run-fail"},
 		apiStatus: http.StatusInternalServerError,
@@ -492,7 +448,7 @@ func (s *WorkflowsSuite) TestResumeWorkflowRunNoResponse() {
 }
 
 func (s *WorkflowsSuite) TestResumeWorkflowRunErrors() {
-	runToolErrorCases(&s.Suite, s.httpClient, s.callTool, toolErrorSpec{
+	s.runToolErrorCases(toolErrorSpec{
 		tool:      "resume_workflow_run",
 		args:      map[string]any{"run_id": "run-fail"},
 		apiStatus: http.StatusInternalServerError,
@@ -659,7 +615,7 @@ func (s *WorkflowsSuite) TestDeleteWorkflowEmptyName() {
 }
 
 func (s *WorkflowsSuite) TestDeleteWorkflowErrors() {
-	runToolErrorCases(&s.Suite, s.httpClient, s.callTool, toolErrorSpec{
+	s.runToolErrorCases(toolErrorSpec{
 		tool:      "delete_workflow",
 		args:      map[string]any{"name": "fail-wf"},
 		apiStatus: http.StatusNotFound,
@@ -697,7 +653,7 @@ func (s *WorkflowsSuite) TestDeleteWorkflowRunURLEscaping() {
 }
 
 func (s *WorkflowsSuite) TestDeleteWorkflowRunErrors() {
-	runToolErrorCases(&s.Suite, s.httpClient, s.callTool, toolErrorSpec{
+	s.runToolErrorCases(toolErrorSpec{
 		tool:      "delete_workflow_run",
 		args:      map[string]any{"run_id": "run-fail"},
 		apiStatus: http.StatusInternalServerError,
@@ -736,7 +692,7 @@ func (s *WorkflowsSuite) TestRetryWorkflowRunURLEscaping() {
 }
 
 func (s *WorkflowsSuite) TestRetryWorkflowRunErrors() {
-	runToolErrorCases(&s.Suite, s.httpClient, s.callTool, toolErrorSpec{
+	s.runToolErrorCases(toolErrorSpec{
 		tool:         "retry_workflow_run",
 		args:         map[string]any{"run_id": "run-fail"},
 		apiStatus:    http.StatusInternalServerError,

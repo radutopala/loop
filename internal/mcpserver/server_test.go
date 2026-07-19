@@ -30,22 +30,25 @@ func jsonResponse(status int, body string) *http.Response {
 	}
 }
 
-type MCPServerSuite struct {
+// baseToolSuite is the shared harness for the MCP tool suites: it owns the
+// mock HTTP client, the in-memory MCP server/client pair, and the tool-call
+// helpers. Concrete suites embed it and supply their server options via
+// serverOpts at construction.
+type baseToolSuite struct {
 	suite.Suite
 	httpClient *mockHTTPClient
 	srv        *Server
 	ctx        context.Context
 	session    *mcp.ClientSession
 	cleanup    func()
+
+	// serverOpts configure New in SetupTest (e.g. WithWorkflowAPI).
+	serverOpts []MemoryOption
 }
 
-func TestMCPServerSuite(t *testing.T) {
-	suite.Run(t, new(MCPServerSuite))
-}
-
-func (s *MCPServerSuite) SetupTest() {
+func (s *baseToolSuite) SetupTest() {
 	s.httpClient = &mockHTTPClient{}
-	s.srv = New("test-channel", "http://localhost:8222", "", s.httpClient, nil)
+	s.srv = New("test-channel", "http://localhost:8222", "", s.httpClient, nil, s.serverOpts...)
 	s.ctx = context.Background()
 
 	client := mcp.NewClient(&mcp.Implementation{Name: "test-client", Version: "1.0.0"}, nil)
@@ -64,14 +67,22 @@ func (s *MCPServerSuite) SetupTest() {
 	}
 }
 
-func (s *MCPServerSuite) TearDownTest() {
+func (s *baseToolSuite) TearDownTest() {
 	if s.cleanup != nil {
 		s.cleanup()
 	}
 }
 
+type MCPServerSuite struct {
+	baseToolSuite
+}
+
+func TestMCPServerSuite(t *testing.T) {
+	suite.Run(t, new(MCPServerSuite))
+}
+
 // callTool is a helper that calls a tool and returns (text, isError).
-func (s *MCPServerSuite) callTool(name string, args map[string]any) (string, bool) {
+func (s *baseToolSuite) callTool(name string, args map[string]any) (string, bool) {
 	s.T().Helper()
 	res, err := s.session.CallTool(s.ctx, &mcp.CallToolParams{
 		Name:      name,
@@ -172,7 +183,8 @@ type toolErrorSpec struct {
 // ("calling API"), and optionally a malformed success body ("decoding
 // response"). Each Test<Tool>Errors used to spell these cases out by hand;
 // they differ only in the spec fields.
-func runToolErrorCases(s *suite.Suite, client *mockHTTPClient, callTool func(string, map[string]any) (string, bool), spec toolErrorSpec) {
+func (s *baseToolSuite) runToolErrorCases(spec toolErrorSpec) {
+	s.T().Helper()
 	cases := []toolErrorCase{
 		{"API error", func(*http.Request) (*http.Response, error) {
 			return jsonResponse(spec.apiStatus, spec.apiBody), nil
@@ -188,8 +200,8 @@ func runToolErrorCases(s *suite.Suite, client *mockHTTPClient, callTool func(str
 	}
 	for _, tt := range cases {
 		s.Run(tt.name, func() {
-			client.doFunc = tt.doFunc
-			text, isError := callTool(spec.tool, spec.args)
+			s.httpClient.doFunc = tt.doFunc
+			text, isError := s.callTool(spec.tool, spec.args)
 			require.True(s.T(), isError)
 			require.Contains(s.T(), text, tt.wantText)
 		})
