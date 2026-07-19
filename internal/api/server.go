@@ -18,7 +18,6 @@ import (
 	"github.com/radutopala/loop/internal/config"
 	"github.com/radutopala/loop/internal/container"
 	"github.com/radutopala/loop/internal/osutil"
-	"github.com/radutopala/loop/internal/review"
 	"github.com/radutopala/loop/internal/scheduler"
 	"github.com/radutopala/loop/internal/worktree"
 )
@@ -148,15 +147,7 @@ type Server struct {
 	prCache                   map[string]prCacheEntry                                      // (dirPath,branch) → cached PR lookup; see prCacheTTL
 	prCacheMu                 sync.Mutex                                                   // protects prCache
 	prCacheClock              func() time.Time                                             // injectable cache clock for tests
-	reviewClient              GitHubReview                                                 // gh ops for review panel (fetch diff, post comment)
-	reviewStore               *review.Store                                                // per-channel review session state
-	reviewWorktree            review.PR                                                    // creates/removes PR worktrees
-	reviewRunner              ReviewRunner                                                 // drives the agent for /review/run
-	reviewSystemPrompt        string                                                       // resolved system prompt for review runs
-	reviewPrompt              string                                                       // resolved user prompt for review runs ("" -> built-in default)
-	reviewRunTimeout          time.Duration                                                // hard ceiling on runReviewAsync; 0 = unbounded (legacy)
-	reviewMu                  sync.Mutex                                                   // guards reviewActive
-	reviewActive              map[string]context.CancelFunc                                // per-channel in-flight review runs; cancel detaches the long-running agent ctx on session delete / shutdown
+	review                    *reviewService                                               // PR-review domain: sessions, gh client, worktree, in-flight runs
 
 	// Quality-scan wiring. All fields are nil by default — handlers
 	// return 501 until the daemon wires concrete implementations. Tests
@@ -337,7 +328,7 @@ func (s *Server) SetAuditDirResolver(r AuditDirResolver) {
 // parameters may be nil if those features are not configured.
 func NewServer(sched scheduler.Scheduler, channels ChannelEnsurer, threads ThreadEnsurer, store ChannelLister, messages MessageSender, logger *slog.Logger) *Server {
 	sys := osutil.RealSystem{}
-	return &Server{
+	s := &Server{
 		scheduler: sched,
 		channels:  channels,
 		threads:   threads,
@@ -351,6 +342,8 @@ func NewServer(sched scheduler.Scheduler, channels ChannelEnsurer, threads Threa
 		sys:        sys,
 		shareStore: newShareStore(),
 	}
+	s.review = &reviewService{srv: s, active: map[string]context.CancelFunc{}}
+	return s
 }
 
 // SetTunnelManager wires the cloudflared tunnel manager used by the public
@@ -437,16 +430,16 @@ func (s *Server) registerGitRoutes(mux *http.ServeMux) {
 
 // registerReviewRoutes registers the PR-review session routes.
 func (s *Server) registerReviewRoutes(mux *http.ServeMux) {
-	mux.HandleFunc("GET /api/review/sessions", s.handleReviewSessions)
-	mux.HandleFunc("POST /api/channels/{id}/review/load", s.handleReviewLoad)
-	mux.HandleFunc("POST /api/channels/{id}/review/sync", s.handleReviewSync)
-	mux.HandleFunc("GET /api/channels/{id}/review/prs", s.handleReviewListPRs)
-	mux.HandleFunc("GET /api/channels/{id}/review", s.handleReviewGet)
-	mux.HandleFunc("DELETE /api/channels/{id}/review", s.handleReviewDelete)
-	mux.HandleFunc("POST /api/channels/{id}/review/run", s.handleReviewRun)
-	mux.HandleFunc("POST /api/channels/{id}/review/comments/{cid}/push", s.handleReviewPushComment)
-	mux.HandleFunc("DELETE /api/channels/{id}/review/comments/{cid}", s.handleReviewDeleteComment)
-	mux.HandleFunc("POST /api/channels/{id}/review/push-all", s.handleReviewPushAll)
+	mux.HandleFunc("GET /api/review/sessions", s.review.handleReviewSessions)
+	mux.HandleFunc("POST /api/channels/{id}/review/load", s.review.handleReviewLoad)
+	mux.HandleFunc("POST /api/channels/{id}/review/sync", s.review.handleReviewSync)
+	mux.HandleFunc("GET /api/channels/{id}/review/prs", s.review.handleReviewListPRs)
+	mux.HandleFunc("GET /api/channels/{id}/review", s.review.handleReviewGet)
+	mux.HandleFunc("DELETE /api/channels/{id}/review", s.review.handleReviewDelete)
+	mux.HandleFunc("POST /api/channels/{id}/review/run", s.review.handleReviewRun)
+	mux.HandleFunc("POST /api/channels/{id}/review/comments/{cid}/push", s.review.handleReviewPushComment)
+	mux.HandleFunc("DELETE /api/channels/{id}/review/comments/{cid}", s.review.handleReviewDeleteComment)
+	mux.HandleFunc("POST /api/channels/{id}/review/push-all", s.review.handleReviewPushAll)
 }
 
 // registerFileRoutes registers the file tree, paste-image, readme, and memory routes.
@@ -625,7 +618,7 @@ func (s *Server) Stop(ctx context.Context) error {
 	// Otherwise their agent containers (typically 5–20 min runs) outlive
 	// the daemon process and keep consuming the Docker socket + LLM quota
 	// with nothing left to consume their output.
-	s.cancelAllReviewRuns()
+	s.review.cancelAllReviewRuns()
 	// Tear down the public playground-share tunnel + ephemeral listener so the
 	// cloudflared subprocess doesn't outlive the daemon.
 	s.stopShareInfra()
