@@ -103,21 +103,11 @@ func (s *Server) handleGitDiff(w http.ResponseWriter, r *http.Request) {
 	// ?root=N selects an extra_dirs entry instead of the primary dir_path.
 	// Mirrors resolveRootDir in files_handler.go. root=0 (default) is the
 	// primary dir; root>0 indexes into extra_dirs in order.
-	if rootStr := r.URL.Query().Get("root"); rootStr != "" {
-		rootIdx, err := strconv.Atoi(rootStr)
-		if err != nil || rootIdx < 0 {
-			http.Error(w, "invalid root index", http.StatusBadRequest)
-			return
-		}
-		if rootIdx > 0 {
-			resolved, err := s.resolveRootDir(r.Context(), channelID, r)
-			if err != nil {
-				http.Error(w, err.Error(), http.StatusBadRequest)
-				return
-			}
-			dirPath = resolved
-		}
+	resolvedDir, ok := s.resolveRootParam(w, r, channelID, dirPath)
+	if !ok {
+		return
 	}
+	dirPath = resolvedDir
 
 	// Branch-to-branch diff mode: ?source=branchA&target=branchB
 	source := r.URL.Query().Get("source")
