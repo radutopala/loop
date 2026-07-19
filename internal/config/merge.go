@@ -31,6 +31,7 @@ type projectConfig struct {
 	ClaudeCodeOAuthToken                     string                     `json:"claude_code_oauth_token"`
 	AnthropicAPIKey                          string                     `json:"anthropic_api_key"`
 	ContainerImage                           string                     `json:"container_image"`
+	ContainerImageAutobuild                  *bool                      `json:"container_image_autobuild"`
 	ContainerMemoryMB                        *int64                     `json:"container_memory_mb"`
 	ContainerCPUs                            *float64                   `json:"container_cpus"`
 	KeepMCPConfigs                           *bool                      `json:"keep_mcp_configs"`
@@ -234,6 +235,9 @@ func (l *Loader) loadProjectConfig(workDir string, mainConfig *Config) (*Config,
 
 	if pc.ContainerImage != "" {
 		merged.ContainerImage = pc.ContainerImage
+	}
+	if pc.ContainerImageAutobuild != nil {
+		merged.ContainerImageAutobuild = *pc.ContainerImageAutobuild
 	}
 	if pc.ContainerMemoryMB != nil {
 		merged.ContainerMemoryMB = *pc.ContainerMemoryMB

@@ -4,10 +4,12 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -62,13 +64,14 @@ type clientSystem interface {
 // For exec-ing into running containers (interactive PTY sessions), see
 // terminal.DockerExecClient instead.
 type Client struct {
-	api                 dockerAPI
-	sys                 clientSystem
-	dockerBuildCmd      func(ctx context.Context, contextDir, tag string) ([]byte, error)
-	dockerBuildFileCmd  func(ctx context.Context, contextDir, dockerfile, tag string) ([]byte, error)
-	claudeVersionURL    string
-	latestClaudeVersion func() string
-	loopVersion         string
+	api                      dockerAPI
+	sys                      clientSystem
+	dockerBuildCmd           func(ctx context.Context, contextDir, tag string) ([]byte, error)
+	dockerBuildFileCmd       func(ctx context.Context, contextDir, dockerfile, tag string) ([]byte, error)
+	dockerBuildFileLabelsCmd func(ctx context.Context, contextDir, dockerfile, tag string, labels map[string]string) ([]byte, error)
+	claudeVersionURL         string
+	latestClaudeVersion      func() string
+	loopVersion              string
 }
 
 // NewClient creates a new Client backed by the Docker SDK.
@@ -90,6 +93,7 @@ func NewClientWith(apiFactory func() (dockerAPI, error)) (*Client, error) {
 	}
 	c.latestClaudeVersion = c.defaultLatestClaudeVersion
 	c.dockerBuildCmd = c.defaultDockerBuildCmd
+	c.dockerBuildFileLabelsCmd = c.defaultDockerBuildFileLabelsCmd
 	c.dockerBuildFileCmd = c.defaultDockerBuildFileCmd
 	return c, nil
 }
@@ -425,6 +429,17 @@ func (c *Client) ImageBuild(ctx context.Context, contextDir, tag string) error {
 	return nil
 }
 
+// ImageBuildFileLabels builds a Docker image from a specific Dockerfile in
+// the context directory, attaching the given labels. Used by the child-image
+// cascade to stamp loop.parent_id at build time.
+func (c *Client) ImageBuildFileLabels(ctx context.Context, contextDir, dockerfile, tag string, labels map[string]string) error {
+	output, err := c.dockerBuildFileLabelsCmd(ctx, contextDir, dockerfile, tag, labels)
+	if err != nil {
+		return fmt.Errorf("building image: %s: %w", strings.TrimSpace(string(output)), err)
+	}
+	return nil
+}
+
 // ImageBuildFile builds a Docker image from a specific Dockerfile in the context directory.
 func (c *Client) ImageBuildFile(ctx context.Context, contextDir, dockerfile, tag string) error {
 	output, err := c.dockerBuildFileCmd(ctx, contextDir, dockerfile, tag)
@@ -447,6 +462,15 @@ func (c *Client) PruneBuildCache(ctx context.Context, unusedFor time.Duration) e
 		return fmt.Errorf("pruning build cache: %w", err)
 	}
 	return nil
+}
+
+func (c *Client) defaultDockerBuildFileLabelsCmd(ctx context.Context, contextDir, dockerfile, tag string, labels map[string]string) ([]byte, error) {
+	args := []string{"build", "-f", filepath.Join(contextDir, dockerfile)}
+	for _, k := range slices.Sorted(maps.Keys(labels)) {
+		args = append(args, "--label", k+"="+labels[k])
+	}
+	args = append(args, "-t", tag, contextDir)
+	return exec.CommandContext(ctx, "docker", args...).CombinedOutput()
 }
 
 func (c *Client) defaultDockerBuildFileCmd(ctx context.Context, contextDir, dockerfile, tag string) ([]byte, error) {

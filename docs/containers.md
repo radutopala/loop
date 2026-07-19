@@ -25,6 +25,27 @@ Examples:
 
 ---
 
+## Custom Project Images
+
+A project can run its agents in a custom image by setting `container_image`
+in its `.loop/config.json` — typically an image built `FROM loop-agent:latest`
+that bakes in extras (a corporate CA, internal CLIs). Keep the Dockerfile at
+the conventional path `.loop/container/Dockerfile`.
+
+Loop rebuilds these child images automatically whenever the base agent image
+is (re)built — at daemon startup after a version change, or via an image
+rebuild from the UI/API — so they never linger on an old base:
+
+- Only images whose Dockerfile has a stage `FROM` the configured base image
+  are managed; anything based elsewhere is never touched.
+- Staleness is tracked precisely with a `loop.parent_id` label stamped at
+  build time: a child is rebuilt exactly when its label differs from the
+  current base image ID (pre-existing unlabeled images rebuild once).
+- Failures are logged per image and never block the daemon or other children.
+- Opt out per project with `"container_image_autobuild": false`.
+
+Running containers are unaffected; the next agent run picks up the new image.
+
 ## Container Creation
 
 The `createAndStartContainer` method orchestrates the full creation pipeline:

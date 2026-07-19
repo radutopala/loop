@@ -333,23 +333,28 @@ type DockerProxyConfig struct {
 
 // Config holds all application configuration loaded from config.json.
 type Config struct {
-	Platforms          []types.Platform
-	DiscordToken       string
-	DiscordAppID       string
-	SlackBotToken      string
-	SlackAppToken      string
-	ClaudeBinPath      string
-	DBPath             string
-	LogFile            string
-	LogLevel           string
-	LogFormat          string
-	ContainerImage     string
-	ContainerTimeout   time.Duration
-	ContainerMemoryMB  int64
-	ContainerCPUs      float64
-	ContainerKeepAlive time.Duration
-	PollInterval       time.Duration
-	APIAddr            string
+	Platforms      []types.Platform
+	DiscordToken   string
+	DiscordAppID   string
+	SlackBotToken  string
+	SlackAppToken  string
+	ClaudeBinPath  string
+	DBPath         string
+	LogFile        string
+	LogLevel       string
+	LogFormat      string
+	ContainerImage string
+	// ContainerImageAutobuild opts a project's container_image override into
+	// the automatic child-image rebuild cascade when Loop's base agent image
+	// changes. Defaults to true; only consulted when container_image is set
+	// and .loop/container/Dockerfile is FROM the base image.
+	ContainerImageAutobuild bool
+	ContainerTimeout        time.Duration
+	ContainerMemoryMB       int64
+	ContainerCPUs           float64
+	ContainerKeepAlive      time.Duration
+	PollInterval            time.Duration
+	APIAddr                 string
 	// APIAdvertiseURL is the base URL advertised to agent containers for reaching
 	// the loop API (default "http://host.docker.internal" + APIAddr). This is the
 	// advertise counterpart to the APIAddr bind address: set it when the daemon

@@ -618,7 +618,6 @@ func pct(part, total int64) float64 {
 	return float64(part) / float64(total) * 100
 }
 
-
 func getDurationEnv(key string, def time.Duration) time.Duration {
 	if v := os.Getenv(key); v != "" {
 		if d, err := time.ParseDuration(v); err == nil {

@@ -171,18 +171,21 @@ func (s *ConfigSuite) TestLoadProjectConfigOverrides() {
 			name: "Container/Override",
 			projectJSON: `{
 				"container_image": "custom-agent:v3",
+				"container_image_autobuild": false,
 				"browser": { "chrome_image": "custom-chrome:v2" },
 				"container_memory_mb": 2048,
 				"container_cpus": 4.0
 			}`,
 			mainCfg: &Config{
-				ContainerImage:    "loop-agent:latest",
-				Browser:           BrowserConfig{ChromeImage: "loop-chrome:latest"},
-				ContainerMemoryMB: 512,
-				ContainerCPUs:     1.0,
+				ContainerImage:          "loop-agent:latest",
+				ContainerImageAutobuild: true,
+				Browser:                 BrowserConfig{ChromeImage: "loop-chrome:latest"},
+				ContainerMemoryMB:       512,
+				ContainerCPUs:           1.0,
 			},
 			assert: func(merged, main *Config) {
 				require.Equal(s.T(), "custom-agent:v3", merged.ContainerImage)
+				require.False(s.T(), merged.ContainerImageAutobuild)
 				require.Equal(s.T(), "custom-chrome:v2", merged.Browser.ChromeImage)
 				require.Equal(s.T(), int64(2048), merged.ContainerMemoryMB)
 				require.Equal(s.T(), 4.0, merged.ContainerCPUs)
