@@ -169,15 +169,6 @@ type Server struct {
 	playground *playgroundService // playground + public-share domain: playground CRUD/serving, share store, tunnel
 }
 
-// TunnelManager is the subset of tunnel.Manager the server needs, injectable
-// so tests don't spawn cloudflared.
-type TunnelManager interface {
-	Start(ctx context.Context, localPort int) (string, error)
-	Stop()
-	PublicURL() string
-	Running() bool
-}
-
 // AuditDirResolver maps a channel ID to the host directory that backs the
 // in-container /var/log/loop-gate bind — where the agentgate FileAuditor
 // writes its rotating jsonl files. Returns "" when the gate is disabled
@@ -342,12 +333,6 @@ func NewServer(sched scheduler.Scheduler, channels ChannelEnsurer, threads Threa
 	s.playground = newPlaygroundService(&s.serverDeps)
 	s.quality = newQualityService(&s.serverDeps)
 	return s
-}
-
-// SetTunnelManager wires the cloudflared tunnel manager used by the public
-// playground-share feature. Left nil in tests that don't exercise sharing.
-func (s *Server) SetTunnelManager(tm TunnelManager) {
-	s.playground.tunnel = tm
 }
 
 // buildMux creates the HTTP mux with all API route registrations.
