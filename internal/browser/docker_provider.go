@@ -129,17 +129,34 @@ func ChromeHostname(channelID string) string {
 // Creates the Chrome container if it doesn't exist; the host connects via the
 // mapped 127.0.0.1:hostPort (no Docker network required).
 func (m *DockerProvider) EnsureBrowser(ctx context.Context, channelID, _ string) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
+	// Serialize same-channel ensures (a concurrent pair must not race to
+	// create two containers) on a per-channel lock, so the Docker calls and
+	// the CDP reachability dial below — seconds in the worst case — no longer
+	// stall every other channel's browser behind the shared session mutex.
+	// m.mu is taken only for the short sessions-map reads/writes.
+	chLock := m.channelLock(channelID)
+	chLock.Lock()
+	defer chLock.Unlock()
 
 	// Check for existing session.
-	if sess, ok := m.sessions[channelID]; ok {
-		if m.isContainerRunning(ctx, sess.chromeContainerID) {
+	m.mu.Lock()
+	sess, ok := m.sessions[channelID]
+	var sessContainerID string
+	if ok {
+		sessContainerID = sess.chromeContainerID
+	}
+	m.mu.Unlock()
+	if ok {
+		if m.isContainerRunning(ctx, sessContainerID) {
+			m.mu.Lock()
 			sess.lastUsedAt = m.timeNow()
+			m.mu.Unlock()
 			return nil
 		}
 		// Stale session, clean up.
+		m.mu.Lock()
 		delete(m.sessions, channelID)
+		m.mu.Unlock()
 	}
 
 	// Fast path: check registry for an existing Chrome container (populated by Restore at startup).
@@ -155,11 +172,11 @@ func (m *DockerProvider) EnsureBrowser(ctx context.Context, channelID, _ string)
 							"container_id", info.ContainerID,
 							"host_port", port,
 						)
-						sess := newBrowserSession(m.timeNow())
-						sess.chromeContainerID = info.ContainerID
-						sess.hostPort = port
-						sess.cdpAddr = addr
-						m.sessions[channelID] = sess
+						reused := newBrowserSession(m.timeNow())
+						reused.chromeContainerID = info.ContainerID
+						reused.hostPort = port
+						reused.cdpAddr = addr
+						m.storeSession(channelID, reused)
 						return nil
 					}
 				}
@@ -183,11 +200,11 @@ func (m *DockerProvider) EnsureBrowser(ctx context.Context, channelID, _ string)
 				"container_id", id,
 				"host_port", port,
 			)
-			sess := newBrowserSession(m.timeNow())
-			sess.chromeContainerID = id
-			sess.hostPort = port
-			sess.cdpAddr = addr
-			m.sessions[channelID] = sess
+			reused := newBrowserSession(m.timeNow())
+			reused.chromeContainerID = id
+			reused.hostPort = port
+			reused.cdpAddr = addr
+			m.storeSession(channelID, reused)
 			if m.registry != nil {
 				m.registry.Register(&container.ContainerInfo{
 					ContainerID:   id,
@@ -248,11 +265,11 @@ func (m *DockerProvider) EnsureBrowser(ctx context.Context, channelID, _ string)
 		return fmt.Errorf("getting host port: %w", err)
 	}
 
-	sess := newBrowserSession(m.timeNow())
-	sess.chromeContainerID = resp.ID
-	sess.hostPort = hostPort
-	sess.cdpAddr = m.resolveCDPHostPort(ctx, resp.ID, hostPort)
-	m.sessions[channelID] = sess
+	created := newBrowserSession(m.timeNow())
+	created.chromeContainerID = resp.ID
+	created.hostPort = hostPort
+	created.cdpAddr = m.resolveCDPHostPort(ctx, resp.ID, hostPort)
+	m.storeSession(channelID, created)
 
 	if m.registry != nil {
 		m.registry.Register(&container.ContainerInfo{
