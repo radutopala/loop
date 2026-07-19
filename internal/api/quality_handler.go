@@ -488,3 +488,40 @@ func buildQualityReport(dirPath, branch string, res engine.ScanResult, ruleResul
 	}
 	return rep
 }
+
+// SetQualityScanner wires the scanner used by the POST scan endpoint.
+// Nil disables the endpoint (501).
+func (s *Server) SetQualityScanner(sc QualityScanner) {
+	s.quality.scanner = sc
+}
+
+// SetQualityGraphProvider wires the graph cache used to evaluate rules
+// on the just-completed scan. Nil disables rule evaluation but the scan
+// endpoint stays alive (returns empty rule lists).
+func (s *Server) SetQualityGraphProvider(gp QualityGraphProvider) {
+	s.quality.graph = gp
+}
+
+// SetQualitySnapshotReader wires the snapshot lookup for the GET endpoint.
+// Nil disables the endpoint (501).
+func (s *Server) SetQualitySnapshotReader(r QualitySnapshotReader) {
+	s.quality.snapshots = r
+}
+
+// SetQualityRulesLoader wires the per-scan rules-config resolver. Nil
+// disables overrides — handlers fall back to rules.DefaultConfig() at
+// evaluation time. Replaces the static SetQualityRulesConfig so changes
+// to project-level rule overrides are picked up without restarting the
+// daemon (mirrors qualityConfigLoader for the engine config).
+func (s *Server) SetQualityRulesLoader(loader QualityRulesLoader) {
+	s.quality.rulesLoad = loader
+}
+
+// SetQualityMetricsLoader wires the per-scan metrics-config resolver
+// used by handlers that recompute the signal from the cached graph
+// (rules, whatif). Nil disables overrides — handlers fall back to
+// metrics.DefaultConfig() at evaluation time, matching the behaviour
+// before per-metric thresholds were configurable.
+func (s *Server) SetQualityMetricsLoader(loader QualityMetricsLoader) {
+	s.quality.metricsCfg = loader
+}

@@ -42,9 +42,3 @@ type TunnelManager interface {
 	PublicURL() string
 	Running() bool
 }
-
-// SetTunnelManager wires the cloudflared tunnel manager used by the public
-// playground-share feature. Left nil in tests that don't exercise sharing.
-func (s *Server) SetTunnelManager(tm TunnelManager) {
-	s.playground.tunnel = tm
-}
