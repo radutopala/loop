@@ -65,25 +65,6 @@ type QualitySnapshotReader interface {
 	GetLatest(ctx context.Context, channelID string) (*snapshot.Snapshot, error)
 }
 
-// SetQualityScanner wires the scanner used by the POST scan endpoint.
-// Nil disables the endpoint (501).
-func (s *Server) SetQualityScanner(sc QualityScanner) {
-	s.quality.scanner = sc
-}
-
-// SetQualityGraphProvider wires the graph cache used to evaluate rules
-// on the just-completed scan. Nil disables rule evaluation but the scan
-// endpoint stays alive (returns empty rule lists).
-func (s *Server) SetQualityGraphProvider(gp QualityGraphProvider) {
-	s.quality.graph = gp
-}
-
-// SetQualitySnapshotReader wires the snapshot lookup for the GET endpoint.
-// Nil disables the endpoint (501).
-func (s *Server) SetQualitySnapshotReader(r QualitySnapshotReader) {
-	s.quality.snapshots = r
-}
-
 // QualityRulesLoader resolves the rules.Config for a scan, given the
 // scan's dirPath and (for worktrees) the parent project's dirPath.
 // Returning nil means "use rules.DefaultConfig()" — same semantic the
@@ -96,33 +77,9 @@ type QualityRulesLoader func(dirPath, parentDirPath string) *rules.Config
 // between the scanner and the post-scan diagnostics endpoints.
 type QualityMetricsLoader func(dirPath, parentDirPath string) metrics.Config
 
-// SetQualityRulesLoader wires the per-scan rules-config resolver. Nil
-// disables overrides — handlers fall back to rules.DefaultConfig() at
-// evaluation time. Replaces the static SetQualityRulesConfig so changes
-// to project-level rule overrides are picked up without restarting the
-// daemon (mirrors qualityConfigLoader for the engine config).
-func (s *Server) SetQualityRulesLoader(loader QualityRulesLoader) {
-	s.quality.rulesLoad = loader
-}
-
-// SetQualityMetricsLoader wires the per-scan metrics-config resolver
-// used by handlers that recompute the signal from the cached graph
-// (rules, whatif). Nil disables overrides — handlers fall back to
-// metrics.DefaultConfig() at evaluation time, matching the behaviour
-// before per-metric thresholds were configurable.
-func (s *Server) SetQualityMetricsLoader(loader QualityMetricsLoader) {
-	s.quality.metricsCfg = loader
-}
-
 // QualityHistoryReader is the slice of evolution.HistoryReader the HTTP
 // handler depends on. Held as an interface so tests can inject a fake
 // without requiring a real git repo on disk.
 type QualityHistoryReader interface {
 	Read(ctx context.Context, dirPath string, sinceMonths, maxCommits int) ([]evolution.CommitFiles, error)
-}
-
-// SetQualityHistoryReader wires the git-history reader for the evolution
-// and bug-factor endpoints. Nil disables those endpoints (501).
-func (s *Server) SetQualityHistoryReader(r QualityHistoryReader) {
-	s.quality.history = r
 }

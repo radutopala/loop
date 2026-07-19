@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/radutopala/loop/internal/events"
 	"github.com/radutopala/loop/internal/githubapi"
@@ -1060,4 +1061,34 @@ func errorMessage(err error) string {
 		return ""
 	}
 	return err.Error()
+}
+
+// SetReviewService wires the dependencies for the /api/channels/{id}/review/*
+// endpoints. All three are required; passing nil for any of them leaves
+// the routes returning 501 (not configured).
+func (s *Server) SetReviewService(client GitHubReview, store *review.Store, wt review.PR) {
+	s.review.client = client
+	s.review.sessions = store
+	s.review.worktree = wt
+}
+
+// SetReviewAgent wires the agent-run side of the review panel. runner
+// drives the agent; systemPrompt + userPrompt are the resolved prompt
+// pair (caller is expected to have read them out of config and applied
+// any defaulting). All three are required: nil/"" leaves
+// POST .../review/run returning 501.
+func (s *Server) SetReviewAgent(runner ReviewRunner, systemPrompt, userPrompt string) {
+	s.review.runner = runner
+	s.review.systemPrompt = systemPrompt
+	s.review.userPrompt = userPrompt
+}
+
+// SetReviewRunTimeout caps the runReviewAsync goroutine. A value of 0
+// (the zero default) leaves the previous unbounded behavior — useful for
+// tests that drive runReviewAsync directly without wanting a deadline.
+// Production callsites should set this below the CLI's --timeout so the
+// daemon flips the session to status=error first and the CLI exits with
+// a meaningful message instead of its generic "timed out" wrapper.
+func (s *Server) SetReviewRunTimeout(d time.Duration) {
+	s.review.runTimeout = d
 }
