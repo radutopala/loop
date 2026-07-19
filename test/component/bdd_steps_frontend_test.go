@@ -249,6 +249,7 @@ func registerFrontendSteps(ctx *godog.ScenarioContext, tc *TestContext) {
 	ctx.Step(`^I inject an agent\.status running event$`, tc.injectAgentStatusRunning)
 	ctx.Step(`^I inject a gate\.approval_requested event with req_id "([^"]*)", source "([^"]*)", and target "([^"]*)"$`, tc.injectGateApprovalRequested)
 	ctx.Step(`^I inject a gate\.approval_resolved event with req_id "([^"]*)"$`, tc.injectGateApprovalResolved)
+	ctx.Step(`^I inject a gate\.approval_requested event with req_id "([^"]*)", target "([^"]*)", expiring in "(\d+)ms"$`, tc.injectGateApprovalRequestedExpiring)
 
 	// Documentation capture (no-op unless LOOP_DOCS_CAPTURE is set; see docs-capture make target)
 	ctx.Step(`^I capture screenshot "([^"]*)"$`, tc.captureDocScreenshot)
@@ -2142,6 +2143,41 @@ func (tc *TestContext) injectGateApprovalRequested(reqID, source, target string)
 			"kind":   "exec",
 			"target": target,
 			"source": source,
+		},
+	})
+	if err != nil {
+		return fmt.Errorf("marshalling gate.approval_requested payload: %w", err)
+	}
+	return tc.dispatchTestEvents(seed, payload)
+}
+
+// injectGateApprovalRequestedExpiring fires a chat-sourced
+// gate.approval_requested event whose expires_at is `ms` milliseconds from
+// now — the field the daemon stamps with its authoritative approval
+// deadline. Drives the ApprovalCard's local expiry path: at the deadline the
+// buttons give way to the expired notice, and shortly after the card
+// retracts.
+func (tc *TestContext) injectGateApprovalRequestedExpiring(reqID, target string, ms int) error {
+	channelID := tc.injectChannelID()
+	if channelID == "" {
+		return fmt.Errorf("no channel_id set; use 'I set up a test channel via API' step first")
+	}
+	if err := tc.ensureChromeTab(); err != nil {
+		return err
+	}
+	seed, err := tc.seedChatTimeline()
+	if err != nil {
+		return fmt.Errorf("marshalling seed payload: %w", err)
+	}
+	payload, err := json.Marshal(map[string]any{
+		"type":       "gate.approval_requested",
+		"channel_id": channelID,
+		"data": map[string]any{
+			"req_id":     reqID,
+			"kind":       "exec",
+			"target":     target,
+			"source":     "chat",
+			"expires_at": time.Now().Add(time.Duration(ms) * time.Millisecond).UTC().Format(time.RFC3339Nano),
 		},
 	})
 	if err != nil {

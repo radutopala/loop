@@ -63,3 +63,25 @@ Feature: Per-source gate approval routing
     When I inject a gate.approval_resolved event with req_id "gate-chat-D"
     Then I wait for text "/tmp/bdd-gate-resolve-chat.txt" to disappear
     And the page should contain text "/tmp/bdd-gate-resolve-term.txt"
+
+  Scenario: Card expires at the daemon deadline and retracts
+    # The daemon stamps every approval request with expires_at (its 10-minute
+    # auto-deny deadline). The card tracks it locally: at the deadline the
+    # buttons give way to an expired notice, and ~15s later the card retracts
+    # so a dead card can never sit around eating clicks.
+    When I inject a gate.approval_requested event with req_id "gate-exp-A", target "/tmp/bdd-gate-expiry-A.txt", expiring in "2000ms"
+    Then I wait for text "/tmp/bdd-gate-expiry-A.txt" to appear
+    And the page should contain text "Allow once"
+    Then I wait for text "Expired" to appear
+    And the page should not contain text "Allow once"
+    And I wait up to "20s" for text "/tmp/bdd-gate-expiry-A.txt" to disappear
+
+  Scenario: Clicking a card whose request the daemon dropped shows expired
+    # A synthetic req_id is unknown to the real daemon, so resolving it
+    # returns 404 — the card must flip to the expired state instead of
+    # surfacing an error on a request that can never be resolved.
+    When I inject a gate.approval_requested event with req_id "gate-gone-A", source "chat", and target "/tmp/bdd-gate-gone-A.txt"
+    Then I wait for text "/tmp/bdd-gate-gone-A.txt" to appear
+    When I click on the button with text "Allow once"
+    Then I wait for text "Expired" to appear
+    And the page should not contain text "Allow for session"
