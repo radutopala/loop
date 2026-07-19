@@ -29,6 +29,7 @@ type jsonConfig struct {
 	LogFormat                                string                     `json:"log_format"`
 	DBPath                                   string                     `json:"db_path"`
 	ContainerImage                           string                     `json:"container_image"`
+	ContainerImageAutobuild                  *bool                      `json:"container_image_autobuild"`
 	ContainerTimeoutSec                      *int                       `json:"container_timeout_sec"`
 	ContainerMemoryMB                        *int64                     `json:"container_memory_mb"`
 	ContainerCPUs                            *float64                   `json:"container_cpus"`
@@ -246,6 +247,7 @@ func (l *Loader) parse() (*Config, error) {
 		LogFormat:                                stringDefault(jc.LogFormat, "text"),
 		DBPath:                                   stringDefault(jc.DBPath, filepath.Join(loopDir, "loop.db")),
 		ContainerImage:                           stringDefault(jc.ContainerImage, "loop-agent:latest"),
+		ContainerImageAutobuild:                  jc.ContainerImageAutobuild == nil || *jc.ContainerImageAutobuild,
 		ContainerTimeout:                         time.Duration(ptrDefault(jc.ContainerTimeoutSec, 43200)) * time.Second,
 		ContainerMemoryMB:                        ptrDefault(jc.ContainerMemoryMB, 1024),
 		ContainerCPUs:                            ptrDefault(jc.ContainerCPUs, 1.0),

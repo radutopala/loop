@@ -925,3 +925,45 @@ func (s *MainSuite) TestDefaultGetLatestVersionFn() {
 	// It will fail (no network) but that's fine — we just cover the code path.
 	_, _ = newApp().getLatestVersionFn()
 }
+
+// --- childProjectsLister ---
+
+func (s *MainSuite) TestChildProjectsLister() {
+	st := new(mockChannelLister)
+	st.On("ListChannels", mock.Anything).Return([]*db.Channel{
+		{ChannelID: "c1", DirPath: "/proj"},
+		{ChannelID: "c2", DirPath: ""},                    // no dir → skipped
+		{ChannelID: "c3", DirPath: "/wt", Worktree: true}, // worktree → skipped
+		{ChannelID: "c4", DirPath: "/proj"},               // duplicate dir → skipped
+		{ChannelID: "c5", DirPath: "/broken"},             // config load error → skipped
+		{ChannelID: "c6", DirPath: "/nilcfg"},             // nil config → skipped
+	}, nil)
+
+	base := &config.Config{ContainerImage: "loop-agent:latest", ContainerImageAutobuild: true}
+	load := func(dir string, cfg *config.Config) (*config.Config, error) {
+		switch dir {
+		case "/proj":
+			out := *cfg
+			out.ContainerImage = "proj-agent:latest"
+			out.ContainerImageAutobuild = false
+			return &out, nil
+		case "/broken":
+			return nil, errors.New("bad config")
+		default:
+			return nil, nil
+		}
+	}
+
+	got, err := childProjectsLister(st, base, load)(context.Background())
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), []container.ChildProject{
+		{DirPath: "/proj", Image: "proj-agent:latest", Autobuild: false},
+	}, got)
+}
+
+func (s *MainSuite) TestChildProjectsListerStoreError() {
+	st := new(mockChannelLister)
+	st.On("ListChannels", mock.Anything).Return(([]*db.Channel)(nil), errors.New("db down"))
+	_, err := childProjectsLister(st, &config.Config{}, nil)(context.Background())
+	require.Error(s.T(), err)
+}

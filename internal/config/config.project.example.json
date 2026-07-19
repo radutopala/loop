@@ -17,6 +17,10 @@
 
   // Container overrides for this project
   //"container_image": "loop-agent:latest",
+  // When container_image points at a custom image built FROM loop-agent
+  // (Dockerfile at .loop/container/Dockerfile), Loop rebuilds it automatically
+  // whenever the base agent image changes. Set to false to opt out.
+  //"container_image_autobuild": true,
   //"container_memory_mb": 512,
   //"container_cpus": 1.0,
 

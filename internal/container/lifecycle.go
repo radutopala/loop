@@ -66,10 +66,26 @@ type ImageLifecycleManager struct {
 	imageName           string
 	loopVersion         string
 	latestClaudeVersion func() string
+	childRebuilder      func(context.Context) // optional child-image cascade; see SetChildRebuilder
 }
 
 // SetContainerRegistry configures the registry so that containers removed
 // during image removal are also unregistered from the in-memory registry.
+// SetChildRebuilder wires the child-image cascade, invoked after every
+// successful base-image build so project images FROM the base get rebuilt.
+func (m *ImageLifecycleManager) SetChildRebuilder(fn func(context.Context)) {
+	m.childRebuilder = fn
+}
+
+// RebuildChildren runs the child-image cascade if one is wired. Exposed so
+// the daemon's startup ensure-image path can trigger the same cascade the
+// API-driven Rebuild uses.
+func (m *ImageLifecycleManager) RebuildChildren(ctx context.Context) {
+	if m.childRebuilder != nil {
+		m.childRebuilder(ctx)
+	}
+}
+
 func (m *ImageLifecycleManager) SetContainerRegistry(reg containerUnregisterer) {
 	m.registry = reg
 }
@@ -208,6 +224,7 @@ func (m *ImageLifecycleManager) doRebuild(ctx context.Context) {
 
 	m.broadcastStatus()
 	m.logger.Info("image lifecycle: build completed", "loop_version", v.LoopVersion, "claude_version", v.ClaudeVersion)
+	m.RebuildChildren(ctx)
 }
 
 // CheckClaudeUpdate checks if a newer Claude Code version is available.

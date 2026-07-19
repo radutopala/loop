@@ -508,7 +508,6 @@ collected:
 	require.True(s.T(), found, "should capture the /page3 navigation request")
 }
 
-
 // --- ResetScreencast ---
 
 func (s *CDPIntegrationSuite) TestResetScreencast() {

@@ -28,15 +28,15 @@ type TestContext struct {
 	LastJSON     map[string]any
 
 	// Entity tracking for cleanup
-	ChannelID         string
-	ChannelDir        string // git repo directory for the current channel
-	TaskID            string
-	CreatedChannelIDs []string
-	CreatedThreadIDs  []string
-	CreatedTaskIDs    []string
-	CreatedDirs       []string
-	WorktreeThreadID     string
-	WorktreePath         string
+	ChannelID                string
+	ChannelDir               string // git repo directory for the current channel
+	TaskID                   string
+	CreatedChannelIDs        []string
+	CreatedThreadIDs         []string
+	CreatedTaskIDs           []string
+	CreatedDirs              []string
+	WorktreeThreadID         string
+	WorktreePath             string
 	CreatedShortcutNames     []string
 	CreatedBashShortcutNames []string
 
@@ -44,7 +44,7 @@ type TestContext struct {
 	chromeTab *chromeTab
 
 	// WebSocket
-	WSConn     *websocket.Conn
+	WSConn      *websocket.Conn
 	LastWSEvent map[string]any
 }
 

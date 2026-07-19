@@ -853,7 +853,7 @@ func (tc *TestContext) waitForWSEventOfType(timeout, eventType string) error {
 		return fmt.Errorf("invalid timeout %q: %w", timeout, err)
 	}
 	deadline := time.Now().Add(dur)
-	tc.WSConn.SetReadDeadline(deadline) //nolint:errcheck
+	tc.WSConn.SetReadDeadline(deadline)          //nolint:errcheck
 	defer tc.WSConn.SetReadDeadline(time.Time{}) //nolint:errcheck
 	for {
 		_, msg, err := tc.WSConn.ReadMessage()

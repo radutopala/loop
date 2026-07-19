@@ -782,3 +782,33 @@ func (s *ClientSuite) TestCopyToContainerError() {
 	require.Contains(s.T(), err.Error(), "copy failed")
 	s.api.AssertExpectations(s.T())
 }
+
+func (s *ClientSuite) TestImageBuildFileLabels() {
+	s.client.dockerBuildFileLabelsCmd = func(_ context.Context, contextDir, dockerfile, tag string, labels map[string]string) ([]byte, error) {
+		require.Equal(s.T(), "/proj/.loop/container", contextDir)
+		require.Equal(s.T(), "Dockerfile", dockerfile)
+		require.Equal(s.T(), "proj-agent:latest", tag)
+		require.Equal(s.T(), map[string]string{"loop.parent_id": "sha256:p"}, labels)
+		return []byte("Successfully built"), nil
+	}
+	err := s.client.ImageBuildFileLabels(context.Background(), "/proj/.loop/container", "Dockerfile", "proj-agent:latest", map[string]string{"loop.parent_id": "sha256:p"})
+	require.NoError(s.T(), err)
+}
+
+func (s *ClientSuite) TestImageBuildFileLabelsError() {
+	s.client.dockerBuildFileLabelsCmd = func(_ context.Context, _, _, _ string, _ map[string]string) ([]byte, error) {
+		return []byte("error: build failed"), errors.New("exit status 1")
+	}
+	err := s.client.ImageBuildFileLabels(context.Background(), "/x", "Dockerfile", "t:latest", nil)
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "build failed")
+}
+
+func (s *ClientSuite) TestDefaultDockerBuildFileLabelsCmd() {
+	// Cancelled context so the docker invocation exits immediately; the
+	// point is exercising the arg assembly (sorted --label flags included).
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, _ = s.client.defaultDockerBuildFileLabelsCmd(ctx, "/nonexistent", "Dockerfile", "test:latest",
+		map[string]string{"b": "2", "a": "1"})
+}

@@ -659,3 +659,16 @@ func (s *LifecycleSuite) TestBroadcastStatus_WithBroadcaster() {
 		Phase: "removing",
 	})
 }
+
+func (s *LifecycleSuite) TestRebuildChildrenNilRebuilderIsNoop() {
+	m := s.newManager(nil)
+	m.RebuildChildren(context.Background())
+}
+
+func (s *LifecycleSuite) TestRebuildChildrenInvokesWiredRebuilder() {
+	m := s.newManager(nil)
+	called := false
+	m.SetChildRebuilder(func(context.Context) { called = true })
+	m.RebuildChildren(context.Background())
+	require.True(s.T(), called)
+}

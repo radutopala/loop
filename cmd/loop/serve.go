@@ -76,6 +76,7 @@ func (a *app) ensureImageWithBroadcast(ctx context.Context, client container.Doc
 	} else {
 		mgr.SetStatus(container.ImageBuildStatus{State: "completed"})
 		hub.BroadcastImageBuildStatus(events.ImageBuildStatusData{State: "completed"})
+		mgr.RebuildChildren(ctx)
 		logger.Info("agent image ready", "image", cfg.ContainerImage)
 	}
 	go mgr.RunUpdateChecker(ctx, 30*time.Minute)
@@ -642,6 +643,13 @@ func (a *app) serve() error {
 	lifecycleMgr.SetContainerRegistry(containerReg)
 	apiSrv.SetImageManager(lifecycleMgr)
 
+	// Child-image cascade: projects overriding container_image with a
+	// .loop/container/Dockerfile FROM the agent image get rebuilt whenever
+	// the base image is (re)built, so they never linger on an old base.
+	childImages := container.NewChildImageManager(dockerClient, cfg.ContainerImage,
+		childProjectsLister(store, cfg, config.LoadProjectConfig), logger)
+	lifecycleMgr.SetChildRebuilder(childImages.RebuildStale)
+
 	// Ensure agent image asynchronously so the API is available during builds.
 	a.ensureImageAsync(ctx, dockerClient, cfg, eventsHub, lifecycleMgr, logger)
 
@@ -954,4 +962,31 @@ func (a containerApprovalAdapter) ByToken(token string) (string, api.ContainerAp
 		return "", nil, "", false
 	}
 	return cid, mgr, channelID, true
+}
+
+// childProjectsLister resolves the registered projects' container_image
+// overrides for the child-image cascade: one entry per distinct non-worktree
+// channel dir_path, with the project's merged image + autobuild flag.
+// loadProject is injectable for tests (production: config.LoadProjectConfig).
+func childProjectsLister(store channelLister, cfg *config.Config, loadProject func(string, *config.Config) (*config.Config, error)) func(ctx context.Context) ([]container.ChildProject, error) {
+	return func(ctx context.Context) ([]container.ChildProject, error) {
+		chs, err := store.ListChannels(ctx)
+		if err != nil {
+			return nil, err
+		}
+		seenDirs := map[string]bool{}
+		var out []container.ChildProject
+		for _, ch := range chs {
+			if ch.DirPath == "" || ch.Worktree || seenDirs[ch.DirPath] {
+				continue
+			}
+			seenDirs[ch.DirPath] = true
+			pc, perr := loadProject(ch.DirPath, cfg)
+			if perr != nil || pc == nil {
+				continue
+			}
+			out = append(out, container.ChildProject{DirPath: ch.DirPath, Image: pc.ContainerImage, Autobuild: pc.ContainerImageAutobuild})
+		}
+		return out, nil
+	}
 }

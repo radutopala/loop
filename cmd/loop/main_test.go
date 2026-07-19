@@ -101,6 +101,11 @@ func (m *mockDockerClient) ImageBuildFile(ctx context.Context, contextDir, docke
 	return m.Called(ctx, contextDir, dockerfile, tag).Error(0)
 }
 
+func (m *mockDockerClient) ImageBuildFileLabels(ctx context.Context, contextDir, dockerfile, tag string, labels map[string]string) error {
+	args := m.Called(ctx, contextDir, dockerfile, tag, labels)
+	return args.Error(0)
+}
+
 func (m *mockDockerClient) PruneBuildCache(ctx context.Context, unusedFor time.Duration) error {
 	return m.Called(ctx, unusedFor).Error(0)
 }
@@ -482,6 +487,9 @@ func (s *MainSuite) setupServeMocks() *serveMocks {
 	m.store.On("ListPausedChannels", mock.Anything).Return(nil, nil).Maybe()
 	m.store.On("ListPendingChannels", mock.Anything).Return(([]string)(nil), nil).Maybe()
 	m.dockerClient.On("LatestClaudeVersion").Return("1.0.0").Maybe()
+	// The child-image cascade runs after a successful ensure-image; with no
+	// base image present it exits before touching anything else.
+	m.dockerClient.On("ImageList", mock.Anything, mock.Anything).Return([]string{}, nil).Maybe()
 	m.dockerClient.On("ListContainerInfos", mock.Anything).Return([]*container.ContainerInfo{}, nil).Maybe()
 	m.dockerClient.On("OOMEvents", mock.Anything).
 		Return((<-chan events.Message)(nil), (<-chan error)(nil)).Maybe()
