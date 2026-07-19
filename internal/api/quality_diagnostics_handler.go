@@ -38,23 +38,23 @@ type QualityHistoryReader interface {
 // SetQualityHistoryReader wires the git-history reader for the evolution
 // and bug-factor endpoints. Nil disables those endpoints (501).
 func (s *Server) SetQualityHistoryReader(r QualityHistoryReader) {
-	s.qualityHistory = r
+	s.quality.history = r
 }
 
 // handleQualityScanCancel cancels an in-flight scan for the channel. If
 // no scan is running, returns 204 (idempotent). Otherwise calls the
 // stored CancelFunc and broadcasts quality.scan_cancelled.
-func (s *Server) handleQualityScanCancel(w http.ResponseWriter, r *http.Request) {
+func (s *qualityService) handleQualityScanCancel(w http.ResponseWriter, r *http.Request) {
 	channelID := r.PathValue("id")
-	s.qualityMu.Lock()
-	cancel, ok := s.qualityCancellers[channelID]
-	s.qualityMu.Unlock()
+	s.mu.Lock()
+	cancel, ok := s.cancellers[channelID]
+	s.mu.Unlock()
 	if !ok {
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}
 	cancel()
-	if hub := s.eventsHub; hub != nil {
+	if hub := s.srv.eventsHub; hub != nil {
 		hub.BroadcastQualityEvent(EventQualityScanCancelled, channelID, map[string]string{
 			"reason": "user_requested",
 		})
@@ -70,7 +70,7 @@ type QualityCyclesResponse struct {
 	TotalNodesInCycles int        `json:"total_nodes_in_cycles"`
 }
 
-func (s *Server) handleQualityCycles(w http.ResponseWriter, r *http.Request) {
+func (s *qualityService) handleQualityCycles(w http.ResponseWriter, r *http.Request) {
 	channelID := r.PathValue("id")
 	g, ok := s.lookupCachedGraph(w, channelID)
 	if !ok {
@@ -82,7 +82,7 @@ func (s *Server) handleQualityCycles(w http.ResponseWriter, r *http.Request) {
 		Cycles:             nilToEmpty(detail.Cycles),
 		LargestCycleSize:   detail.LargestCycleSize,
 		TotalNodesInCycles: detail.TotalNodesInCycles,
-	}, s.logger)
+	}, s.srv.logger)
 }
 
 // QualityMetricsResponse is the GET /metrics wire shape — the full
@@ -97,15 +97,15 @@ type QualityMetricsResponse struct {
 	Metrics   []QualityMetricReport `json:"metrics"`
 }
 
-func (s *Server) handleQualityMetrics(w http.ResponseWriter, r *http.Request) {
-	if !requireConfigured(w, s.qualitySnapshots, "quality snapshot reader not configured") {
+func (s *qualityService) handleQualityMetrics(w http.ResponseWriter, r *http.Request) {
+	if !requireConfigured(w, s.snapshots, "quality snapshot reader not configured") {
 		return
 	}
-	if !requireConfigured(w, s.store, "channel store not configured") {
+	if !requireConfigured(w, s.srv.store, "channel store not configured") {
 		return
 	}
 	channelID := r.PathValue("id")
-	dirPath, err := s.resolveDirPath(r.Context(), "", channelID)
+	dirPath, err := s.srv.resolveDirPath(r.Context(), "", channelID)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
@@ -121,8 +121,8 @@ func (s *Server) handleQualityMetrics(w http.ResponseWriter, r *http.Request) {
 		Signal:    snap.Value,
 		GeoMean:   snap.GeoMean,
 		ScannedAt: snap.ScannedAt.UTC().Format("2006-01-02T15:04:05Z07:00"),
-		Metrics:   unmarshalMetricBreakdown(snap.MetricBreakdown, s.logger),
-	}, s.logger)
+		Metrics:   unmarshalMetricBreakdown(snap.MetricBreakdown, s.srv.logger),
+	}, s.srv.logger)
 }
 
 // QualityDiagnosticsResponse exposes the per-file deficit attribution as
@@ -133,15 +133,15 @@ type QualityDiagnosticsResponse struct {
 	Tiles []QualityFileTile `json:"tiles"`
 }
 
-func (s *Server) handleQualityDiagnostics(w http.ResponseWriter, r *http.Request) {
-	if !requireConfigured(w, s.qualitySnapshots, "quality snapshot reader not configured") {
+func (s *qualityService) handleQualityDiagnostics(w http.ResponseWriter, r *http.Request) {
+	if !requireConfigured(w, s.snapshots, "quality snapshot reader not configured") {
 		return
 	}
-	if !requireConfigured(w, s.store, "channel store not configured") {
+	if !requireConfigured(w, s.srv.store, "channel store not configured") {
 		return
 	}
 	channelID := r.PathValue("id")
-	dirPath, err := s.resolveDirPath(r.Context(), "", channelID)
+	dirPath, err := s.srv.resolveDirPath(r.Context(), "", channelID)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
@@ -153,8 +153,8 @@ func (s *Server) handleQualityDiagnostics(w http.ResponseWriter, r *http.Request
 		return
 	}
 	writeHTTPJSON(w, http.StatusOK, QualityDiagnosticsResponse{
-		Tiles: unmarshalTileData(snap.TileData, s.logger),
-	}, s.logger)
+		Tiles: unmarshalTileData(snap.TileData, s.srv.logger),
+	}, s.srv.logger)
 }
 
 // QualityRulesResponse passes through the rules engine's outcome for
@@ -162,7 +162,7 @@ func (s *Server) handleQualityDiagnostics(w http.ResponseWriter, r *http.Request
 // can render either source identically.
 type QualityRulesResponse = QualityRulesReport
 
-func (s *Server) handleQualityRules(w http.ResponseWriter, r *http.Request) {
+func (s *qualityService) handleQualityRules(w http.ResponseWriter, r *http.Request) {
 	channelID := r.PathValue("id")
 	g, ok := s.lookupCachedGraph(w, channelID)
 	if !ok {
@@ -173,10 +173,10 @@ func (s *Server) handleQualityRules(w http.ResponseWriter, r *http.Request) {
 	// that as "use global config only", which is the same behaviour the
 	// previous static config field provided.
 	var dirPath, parentDirPath string
-	if s.store != nil {
-		if d, err := s.resolveDirPath(r.Context(), "", channelID); err == nil {
+	if s.srv.store != nil {
+		if d, err := s.srv.resolveDirPath(r.Context(), "", channelID); err == nil {
 			dirPath = d
-			parentDirPath = s.resolveParentDirPath(r.Context(), channelID)
+			parentDirPath = s.srv.resolveParentDirPath(r.Context(), channelID)
 		}
 	}
 	sig := metrics.ComputeWith(g, s.resolveMetricsConfig(dirPath, parentDirPath))
@@ -194,7 +194,7 @@ func (s *Server) handleQualityRules(w http.ResponseWriter, r *http.Request) {
 			resp.Passed = append(resp.Passed, rr)
 		}
 	}
-	writeHTTPJSON(w, http.StatusOK, resp, s.logger)
+	writeHTTPJSON(w, http.StatusOK, resp, s.srv.logger)
 }
 
 // QualityWhatifRequest is the POST /whatif body — a list of mutations
@@ -215,7 +215,7 @@ type QualityWhatifResponse struct {
 	PredictedMetrics []QualityMetricReport `json:"predicted_metrics"`
 }
 
-func (s *Server) handleQualityWhatif(w http.ResponseWriter, r *http.Request) {
+func (s *qualityService) handleQualityWhatif(w http.ResponseWriter, r *http.Request) {
 	channelID := r.PathValue("id")
 	g, ok := s.lookupCachedGraph(w, channelID)
 	if !ok {
@@ -238,10 +238,10 @@ func (s *Server) handleQualityWhatif(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var dirPath, parentDirPath string
-	if s.store != nil {
-		if d, derr := s.resolveDirPath(r.Context(), "", channelID); derr == nil {
+	if s.srv.store != nil {
+		if d, derr := s.srv.resolveDirPath(r.Context(), "", channelID); derr == nil {
 			dirPath = d
-			parentDirPath = s.resolveParentDirPath(r.Context(), channelID)
+			parentDirPath = s.srv.resolveParentDirPath(r.Context(), channelID)
 		}
 	}
 	res, err := whatif.SimulateWith(g, req.Mutations, s.resolveMetricsConfig(dirPath, parentDirPath))
@@ -256,7 +256,7 @@ func (s *Server) handleQualityWhatif(w http.ResponseWriter, r *http.Request) {
 		DeltaSignal:      res.DeltaSignal,
 		BaselineMetrics:  metricResultsToReport(res.BaselineMetrics),
 		PredictedMetrics: metricResultsToReport(res.PredictedMetrics),
-	}, s.logger)
+	}, s.srv.logger)
 }
 
 func metricResultsToReport(in []metrics.Result) []QualityMetricReport {
@@ -267,20 +267,20 @@ func metricResultsToReport(in []metrics.Result) []QualityMetricReport {
 	return out
 }
 
-func (s *Server) handleQualityEvolution(w http.ResponseWriter, r *http.Request) {
-	if !requireConfigured(w, s.qualityHistory, "quality history reader not configured") {
+func (s *qualityService) handleQualityEvolution(w http.ResponseWriter, r *http.Request) {
+	if !requireConfigured(w, s.history, "quality history reader not configured") {
 		return
 	}
-	if !requireConfigured(w, s.store, "channel store not configured") {
+	if !requireConfigured(w, s.srv.store, "channel store not configured") {
 		return
 	}
 	channelID := r.PathValue("id")
-	dirPath, err := s.resolveDirPath(r.Context(), "", channelID)
+	dirPath, err := s.srv.resolveDirPath(r.Context(), "", channelID)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	res, err := evolution.Analyze(r.Context(), s.qualityHistory, dirPath, evolution.Options{})
+	res, err := evolution.Analyze(r.Context(), s.history, dirPath, evolution.Options{})
 	if err != nil {
 		if errors.Is(err, evolution.ErrNoHistory) {
 			http.Error(w, err.Error(), http.StatusNotFound)
@@ -289,23 +289,23 @@ func (s *Server) handleQualityEvolution(w http.ResponseWriter, r *http.Request) 
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	writeHTTPJSON(w, http.StatusOK, res, s.logger)
+	writeHTTPJSON(w, http.StatusOK, res, s.srv.logger)
 }
 
-func (s *Server) handleQualityBugFactor(w http.ResponseWriter, r *http.Request) {
-	if !requireConfigured(w, s.qualityHistory, "quality history reader not configured") {
+func (s *qualityService) handleQualityBugFactor(w http.ResponseWriter, r *http.Request) {
+	if !requireConfigured(w, s.history, "quality history reader not configured") {
 		return
 	}
-	if !requireConfigured(w, s.store, "channel store not configured") {
+	if !requireConfigured(w, s.srv.store, "channel store not configured") {
 		return
 	}
 	channelID := r.PathValue("id")
-	dirPath, err := s.resolveDirPath(r.Context(), "", channelID)
+	dirPath, err := s.srv.resolveDirPath(r.Context(), "", channelID)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	res, err := evolution.Analyze(r.Context(), s.qualityHistory, dirPath, evolution.Options{})
+	res, err := evolution.Analyze(r.Context(), s.history, dirPath, evolution.Options{})
 	if err != nil {
 		if errors.Is(err, evolution.ErrNoHistory) {
 			http.Error(w, err.Error(), http.StatusNotFound)
@@ -318,28 +318,28 @@ func (s *Server) handleQualityBugFactor(w http.ResponseWriter, r *http.Request) 
 		"bus_factor":      res.BusFactor,
 		"commits_scanned": res.CommitsScanned,
 		"shallow_warning": res.ShallowWarning,
-	}, s.logger)
+	}, s.srv.logger)
 }
 
-func (s *Server) handleQualityC4(w http.ResponseWriter, r *http.Request) {
+func (s *qualityService) handleQualityC4(w http.ResponseWriter, r *http.Request) {
 	channelID := r.PathValue("id")
 	g, ok := s.lookupCachedGraph(w, channelID)
 	if !ok {
 		return
 	}
-	writeHTTPJSON(w, http.StatusOK, c4.Emit(g), s.logger)
+	writeHTTPJSON(w, http.StatusOK, c4.Emit(g), s.srv.logger)
 }
 
 // lookupCachedGraph resolves the cached graph for channelID and writes
 // a 503 (no graph) or 501 (graph provider unset) on miss. Returns the
 // graph + true when the caller should proceed; false means the response
 // has already been written.
-func (s *Server) lookupCachedGraph(w http.ResponseWriter, channelID string) (*graph.Graph, bool) {
-	if s.qualityGraph == nil {
+func (s *qualityService) lookupCachedGraph(w http.ResponseWriter, channelID string) (*graph.Graph, bool) {
+	if s.graph == nil {
 		http.Error(w, "quality graph provider not configured", http.StatusNotImplemented)
 		return nil, false
 	}
-	g, _ := s.qualityGraph.Get(channelID)
+	g, _ := s.graph.Get(channelID)
 	if g == nil {
 		http.Error(w, "no graph cached; trigger a scan first", http.StatusServiceUnavailable)
 		return nil, false
@@ -350,13 +350,13 @@ func (s *Server) lookupCachedGraph(w http.ResponseWriter, channelID string) (*gr
 // loadSnapshot resolves the snapshot for (channel, branch), falling
 // back to the latest snapshot on any branch when the requested branch
 // has no row. Wraps the dual lookup the panel needs.
-func (s *Server) loadSnapshot(ctx context.Context, channelID, branch string) (*snapshot.Snapshot, error) {
+func (s *qualityService) loadSnapshot(ctx context.Context, channelID, branch string) (*snapshot.Snapshot, error) {
 	if branch == "" {
 		branch = "main"
 	}
-	snap, err := s.qualitySnapshots.Get(ctx, channelID, branch)
+	snap, err := s.snapshots.Get(ctx, channelID, branch)
 	if errors.Is(err, snapshot.ErrNotFound) {
-		snap, err = s.qualitySnapshots.GetLatest(ctx, channelID)
+		snap, err = s.snapshots.GetLatest(ctx, channelID)
 	}
 	return snap, err
 }

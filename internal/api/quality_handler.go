@@ -143,20 +143,20 @@ type scanResponse struct {
 // SetQualityScanner wires the scanner used by the POST scan endpoint.
 // Nil disables the endpoint (501).
 func (s *Server) SetQualityScanner(sc QualityScanner) {
-	s.qualityScanner = sc
+	s.quality.scanner = sc
 }
 
 // SetQualityGraphProvider wires the graph cache used to evaluate rules
 // on the just-completed scan. Nil disables rule evaluation but the scan
 // endpoint stays alive (returns empty rule lists).
 func (s *Server) SetQualityGraphProvider(gp QualityGraphProvider) {
-	s.qualityGraph = gp
+	s.quality.graph = gp
 }
 
 // SetQualitySnapshotReader wires the snapshot lookup for the GET endpoint.
 // Nil disables the endpoint (501).
 func (s *Server) SetQualitySnapshotReader(r QualitySnapshotReader) {
-	s.qualitySnapshots = r
+	s.quality.snapshots = r
 }
 
 // QualityRulesLoader resolves the rules.Config for a scan, given the
@@ -177,7 +177,7 @@ type QualityMetricsLoader func(dirPath, parentDirPath string) metrics.Config
 // to project-level rule overrides are picked up without restarting the
 // daemon (mirrors qualityConfigLoader for the engine config).
 func (s *Server) SetQualityRulesLoader(loader QualityRulesLoader) {
-	s.qualityRulesLoad = loader
+	s.quality.rulesLoad = loader
 }
 
 // SetQualityMetricsLoader wires the per-scan metrics-config resolver
@@ -186,18 +186,18 @@ func (s *Server) SetQualityRulesLoader(loader QualityRulesLoader) {
 // metrics.DefaultConfig() at evaluation time, matching the behaviour
 // before per-metric thresholds were configurable.
 func (s *Server) SetQualityMetricsLoader(loader QualityMetricsLoader) {
-	s.qualityMetricsCfg = loader
+	s.quality.metricsCfg = loader
 }
 
 // resolveMetricsConfig returns the effective metrics.Config for a
 // recompute on the cached graph, invoking the loader (if wired) and
 // falling back to metrics.DefaultConfig() when the loader is unset or
 // returns the zero value.
-func (s *Server) resolveMetricsConfig(dirPath, parentDirPath string) metrics.Config {
-	if s.qualityMetricsCfg == nil {
+func (s *qualityService) resolveMetricsConfig(dirPath, parentDirPath string) metrics.Config {
+	if s.metricsCfg == nil {
 		return metrics.DefaultConfig()
 	}
-	cfg := s.qualityMetricsCfg(dirPath, parentDirPath)
+	cfg := s.metricsCfg(dirPath, parentDirPath)
 	if cfg == (metrics.Config{}) {
 		return metrics.DefaultConfig()
 	}
@@ -215,7 +215,11 @@ const progressThrottle = 250 * time.Millisecond
 // so the bus doesn't drown in per-file pings. Always emits the terminal
 // (done==total) tick so the panel can clear the spinner cleanly.
 func (s *Server) EmitQualityProgress(channelID string, done, total int) {
-	hub := s.eventsHub
+	s.quality.emitProgress(channelID, done, total)
+}
+
+func (s *qualityService) emitProgress(channelID string, done, total int) {
+	hub := s.srv.eventsHub
 	if hub == nil {
 		return
 	}
@@ -228,23 +232,23 @@ func (s *Server) EmitQualityProgress(channelID string, done, total int) {
 	})
 }
 
-func (s *Server) shouldEmitProgress(channelID string, done, total int) bool {
-	s.qualityMu.Lock()
-	defer s.qualityMu.Unlock()
-	if s.qualityProgress == nil {
-		s.qualityProgress = make(map[string]time.Time)
+func (s *qualityService) shouldEmitProgress(channelID string, done, total int) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.progress == nil {
+		s.progress = make(map[string]time.Time)
 	}
 	now := time.Now()
 	// First (done == 0) and terminal (done == total) ticks always pass — the
 	// panel needs them to drive the spinner state machine.
 	if done == 0 || done >= total {
-		s.qualityProgress[channelID] = now
+		s.progress[channelID] = now
 		return true
 	}
-	if last, ok := s.qualityProgress[channelID]; ok && now.Sub(last) < progressThrottle {
+	if last, ok := s.progress[channelID]; ok && now.Sub(last) < progressThrottle {
 		return false
 	}
-	s.qualityProgress[channelID] = now
+	s.progress[channelID] = now
 	return true
 }
 
@@ -252,21 +256,21 @@ func (s *Server) shouldEmitProgress(channelID string, done, total int) bool {
 // quality.session_started + quality.scanned + (optional) quality.rules_violated.
 // Returns 202 Accepted with a status hint; the panel waits on the events
 // for the full payload.
-func (s *Server) handleQualityScan(w http.ResponseWriter, r *http.Request) {
-	if !requireConfigured(w, s.qualityScanner, "quality scanner not configured") {
+func (s *qualityService) handleQualityScan(w http.ResponseWriter, r *http.Request) {
+	if !requireConfigured(w, s.scanner, "quality scanner not configured") {
 		return
 	}
-	if !requireConfigured(w, s.store, "channel store not configured") {
+	if !requireConfigured(w, s.srv.store, "channel store not configured") {
 		return
 	}
 
 	channelID := r.PathValue("id")
-	dirPath, err := s.resolveDirPath(r.Context(), "", channelID)
+	dirPath, err := s.srv.resolveDirPath(r.Context(), "", channelID)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	parentDirPath := s.resolveParentDirPath(r.Context(), channelID)
+	parentDirPath := s.srv.resolveParentDirPath(r.Context(), channelID)
 	branch := gitBranch(r.Context(), dirPath)
 	if branch == "" {
 		branch = "main"
@@ -279,11 +283,11 @@ func (s *Server) handleQualityScan(w http.ResponseWriter, r *http.Request) {
 	scanCtx, cancel := context.WithCancel(context.Background())
 	if !s.registerQualityScan(channelID, cancel) {
 		cancel()
-		writeHTTPJSON(w, http.StatusAccepted, scanResponse{Status: "in_progress"}, s.logger)
+		writeHTTPJSON(w, http.StatusAccepted, scanResponse{Status: "in_progress"}, s.srv.logger)
 		return
 	}
 
-	if hub := s.eventsHub; hub != nil {
+	if hub := s.srv.eventsHub; hub != nil {
 		hub.BroadcastQualityEvent(EventQualitySessionStarted, channelID, map[string]string{
 			"dir_path": dirPath,
 			"branch":   branch,
@@ -291,16 +295,16 @@ func (s *Server) handleQualityScan(w http.ResponseWriter, r *http.Request) {
 	}
 
 	go s.runQualityScanAsync(scanCtx, channelID, dirPath, parentDirPath, branch)
-	writeHTTPJSON(w, http.StatusAccepted, scanResponse{Status: "started"}, s.logger)
+	writeHTTPJSON(w, http.StatusAccepted, scanResponse{Status: "started"}, s.srv.logger)
 }
 
 // runQualityScanAsync runs the engine scan, broadcasts the result, and
 // drops the in-flight registration. The scan ctx is detached from the
 // HTTP request so this goroutine owns its full lifecycle.
-func (s *Server) runQualityScanAsync(ctx context.Context, channelID, dirPath, parentDirPath, branch string) {
+func (s *qualityService) runQualityScanAsync(ctx context.Context, channelID, dirPath, parentDirPath, branch string) {
 	defer s.unregisterQualityScan(channelID)
 
-	res, err := s.qualityScanner.Scan(ctx, channelID, branch, dirPath, parentDirPath)
+	res, err := s.scanner.Scan(ctx, channelID, branch, dirPath, parentDirPath)
 	if err != nil {
 		s.broadcastQualityError(channelID, dirPath, branch, err)
 		return
@@ -315,7 +319,7 @@ func (s *Server) runQualityScanAsync(ctx context.Context, channelID, dirPath, pa
 
 	report := buildQualityReport(dirPath, branch, res, s.collectRules(channelID, dirPath, parentDirPath, res.Signal))
 
-	if hub := s.eventsHub; hub != nil {
+	if hub := s.srv.eventsHub; hub != nil {
 		hub.BroadcastQualityEvent(EventQualityScanned, channelID, report)
 		if len(report.Rules.Failed) > 0 {
 			hub.BroadcastQualityEvent(EventQualityRulesViolated, channelID, report.Rules)
@@ -331,8 +335,8 @@ func (s *Server) runQualityScanAsync(ctx context.Context, channelID, dirPath, pa
 // message and (when applicable) a structured RepoTooLarge detail. No
 // quality.scanned event fires on error — the panel keeps the previous
 // snapshot rendered.
-func (s *Server) broadcastQualityError(channelID, dirPath, branch string, err error) {
-	hub := s.eventsHub
+func (s *qualityService) broadcastQualityError(channelID, dirPath, branch string, err error) {
+	hub := s.srv.eventsHub
 	if hub == nil {
 		return
 	}
@@ -358,11 +362,11 @@ func (s *Server) broadcastQualityError(channelID, dirPath, branch string, err er
 // vacuously and the panel renders no rule cards. The rules config is
 // resolved via the loader so per-project overrides (rules in the
 // project's .loop/config.json) reach this path on every scan.
-func (s *Server) collectRules(channelID, dirPath, parentDirPath string, sig metrics.Signal) []rules.Result {
-	if s.qualityGraph == nil {
+func (s *qualityService) collectRules(channelID, dirPath, parentDirPath string, sig metrics.Signal) []rules.Result {
+	if s.graph == nil {
 		return nil
 	}
-	g, _ := s.qualityGraph.Get(channelID)
+	g, _ := s.graph.Get(channelID)
 	if g == nil {
 		return nil
 	}
@@ -372,11 +376,11 @@ func (s *Server) collectRules(channelID, dirPath, parentDirPath string, sig metr
 // resolveRulesConfig returns the effective rules.Config for a scan,
 // invoking the loader (if wired) and falling back to
 // rules.DefaultConfig() when the loader is unset or returns nil.
-func (s *Server) resolveRulesConfig(dirPath, parentDirPath string) rules.Config {
-	if s.qualityRulesLoad == nil {
+func (s *qualityService) resolveRulesConfig(dirPath, parentDirPath string) rules.Config {
+	if s.rulesLoad == nil {
 		return rules.DefaultConfig()
 	}
-	if cfg := s.qualityRulesLoad(dirPath, parentDirPath); cfg != nil {
+	if cfg := s.rulesLoad(dirPath, parentDirPath); cfg != nil {
 		return *cfg
 	}
 	return rules.DefaultConfig()
@@ -385,42 +389,39 @@ func (s *Server) resolveRulesConfig(dirPath, parentDirPath string) rules.Config 
 // registerQualityScan claims the in-flight slot for channelID. Returns
 // false if a scan is already registered (the caller treats that as
 // "in_progress" without spawning a new goroutine).
-func (s *Server) registerQualityScan(channelID string, cancel context.CancelFunc) bool {
-	s.qualityMu.Lock()
-	defer s.qualityMu.Unlock()
-	if s.qualityCancellers == nil {
-		s.qualityCancellers = make(map[string]context.CancelFunc)
-	}
-	if _, ok := s.qualityCancellers[channelID]; ok {
+func (s *qualityService) registerQualityScan(channelID string, cancel context.CancelFunc) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.cancellers[channelID]; ok {
 		return false
 	}
-	s.qualityCancellers[channelID] = cancel
+	s.cancellers[channelID] = cancel
 	return true
 }
 
 // unregisterQualityScan releases the in-flight slot. Idempotent so
 // double-defers from edge cases don't panic.
-func (s *Server) unregisterQualityScan(channelID string) {
-	s.qualityMu.Lock()
-	defer s.qualityMu.Unlock()
-	delete(s.qualityCancellers, channelID)
-	delete(s.qualityProgress, channelID)
+func (s *qualityService) unregisterQualityScan(channelID string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.cancellers, channelID)
+	delete(s.progress, channelID)
 }
 
 // handleQualitySnapshot returns the persisted snapshot for the channel's
 // current branch (or the most recent snapshot when no current-branch
 // row exists). Returns 404 when no snapshot has ever been recorded —
 // the panel uses that as the trigger to render the "Scan now" empty state.
-func (s *Server) handleQualitySnapshot(w http.ResponseWriter, r *http.Request) {
-	if !requireConfigured(w, s.qualitySnapshots, "quality snapshot reader not configured") {
+func (s *qualityService) handleQualitySnapshot(w http.ResponseWriter, r *http.Request) {
+	if !requireConfigured(w, s.snapshots, "quality snapshot reader not configured") {
 		return
 	}
-	if !requireConfigured(w, s.store, "channel store not configured") {
+	if !requireConfigured(w, s.srv.store, "channel store not configured") {
 		return
 	}
 
 	channelID := r.PathValue("id")
-	dirPath, err := s.resolveDirPath(r.Context(), "", channelID)
+	dirPath, err := s.srv.resolveDirPath(r.Context(), "", channelID)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
@@ -430,13 +431,13 @@ func (s *Server) handleQualitySnapshot(w http.ResponseWriter, r *http.Request) {
 		currentBranch = "main"
 	}
 
-	snap, err := s.qualitySnapshots.Get(r.Context(), channelID, currentBranch)
+	snap, err := s.snapshots.Get(r.Context(), channelID, currentBranch)
 	branchMismatch := false
 	if errors.Is(err, snapshot.ErrNotFound) {
 		// Try the most-recent snapshot on any branch — the panel can
 		// still render its numbers behind a "snapshot taken on <other>"
 		// banner.
-		snap, err = s.qualitySnapshots.GetLatest(r.Context(), channelID)
+		snap, err = s.snapshots.GetLatest(r.Context(), channelID)
 		if errors.Is(err, snapshot.ErrNotFound) {
 			http.Error(w, "no snapshot yet", http.StatusNotFound)
 			return
@@ -459,10 +460,10 @@ func (s *Server) handleQualitySnapshot(w http.ResponseWriter, r *http.Request) {
 		PreviousSignal: snap.PreviousValue,
 		GeoMean:        snap.GeoMean,
 		ScannedAt:      snap.ScannedAt,
-		Metrics:        unmarshalMetricBreakdown(snap.MetricBreakdown, s.logger),
-		Tiles:          unmarshalTileData(snap.TileData, s.logger),
+		Metrics:        unmarshalMetricBreakdown(snap.MetricBreakdown, s.srv.logger),
+		Tiles:          unmarshalTileData(snap.TileData, s.srv.logger),
 	}
-	writeHTTPJSON(w, http.StatusOK, resp, s.logger)
+	writeHTTPJSON(w, http.StatusOK, resp, s.srv.logger)
 }
 
 // unmarshalMetricBreakdown decodes the snapshot row's stored metrics

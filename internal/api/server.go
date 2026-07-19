@@ -149,19 +149,7 @@ type Server struct {
 	prCacheClock              func() time.Time                                             // injectable cache clock for tests
 	review                    *reviewService                                               // PR-review domain: sessions, gh client, worktree, in-flight runs
 
-	// Quality-scan wiring. All fields are nil by default — handlers
-	// return 501 until the daemon wires concrete implementations. Tests
-	// can opt-in via the Set*Quality* setters without spinning up a real
-	// engine.
-	qualityScanner    QualityScanner
-	qualityGraph      QualityGraphProvider
-	qualitySnapshots  QualitySnapshotReader
-	qualityRulesLoad  QualityRulesLoader
-	qualityMetricsCfg QualityMetricsLoader
-	qualityHistory    QualityHistoryReader
-	qualityMu         sync.Mutex
-	qualityCancellers map[string]context.CancelFunc
-	qualityProgress   map[string]time.Time // per-channel throttle for quality.scan_progress
+	quality *qualityService // quality-scan domain: scanner, graph/snapshot/history readers, in-flight scan registry
 
 	playground *playgroundService // playground + public-share domain: playground CRUD/serving, share store, tunnel
 }
@@ -333,6 +321,7 @@ func NewServer(sched scheduler.Scheduler, channels ChannelEnsurer, threads Threa
 	}
 	s.review = &reviewService{srv: s, active: map[string]context.CancelFunc{}}
 	s.playground = &playgroundService{srv: s, shares: newShareStore()}
+	s.quality = &qualityService{srv: s, cancellers: map[string]context.CancelFunc{}}
 	return s
 }
 
@@ -504,19 +493,19 @@ func (s *Server) registerWorkflowRoutes(mux *http.ServeMux) {
 
 // registerQualityRoutes registers the quality engine routes.
 func (s *Server) registerQualityRoutes(mux *http.ServeMux) {
-	mux.HandleFunc("POST /api/channels/{id}/quality/scan", s.handleQualityScan)
-	mux.HandleFunc("DELETE /api/channels/{id}/quality/scan", s.handleQualityScanCancel)
-	mux.HandleFunc("GET /api/channels/{id}/quality/snapshot", s.handleQualitySnapshot)
-	mux.HandleFunc("GET /api/channels/{id}/quality/cycles", s.handleQualityCycles)
-	mux.HandleFunc("GET /api/channels/{id}/quality/metrics", s.handleQualityMetrics)
-	mux.HandleFunc("GET /api/channels/{id}/quality/diagnostics", s.handleQualityDiagnostics)
-	mux.HandleFunc("GET /api/channels/{id}/quality/rules", s.handleQualityRules)
-	mux.HandleFunc("POST /api/channels/{id}/quality/whatif", s.handleQualityWhatif)
-	mux.HandleFunc("GET /api/channels/{id}/quality/evolution", s.handleQualityEvolution)
-	mux.HandleFunc("GET /api/channels/{id}/quality/c4", s.handleQualityC4)
-	mux.HandleFunc("GET /api/channels/{id}/quality/bugfactor", s.handleQualityBugFactor)
-	mux.HandleFunc("GET /api/channels/{id}/quality/complexity", s.handleQualityComplexity)
-	mux.HandleFunc("GET /api/channels/{id}/quality/clones", s.handleQualityClones)
+	mux.HandleFunc("POST /api/channels/{id}/quality/scan", s.quality.handleQualityScan)
+	mux.HandleFunc("DELETE /api/channels/{id}/quality/scan", s.quality.handleQualityScanCancel)
+	mux.HandleFunc("GET /api/channels/{id}/quality/snapshot", s.quality.handleQualitySnapshot)
+	mux.HandleFunc("GET /api/channels/{id}/quality/cycles", s.quality.handleQualityCycles)
+	mux.HandleFunc("GET /api/channels/{id}/quality/metrics", s.quality.handleQualityMetrics)
+	mux.HandleFunc("GET /api/channels/{id}/quality/diagnostics", s.quality.handleQualityDiagnostics)
+	mux.HandleFunc("GET /api/channels/{id}/quality/rules", s.quality.handleQualityRules)
+	mux.HandleFunc("POST /api/channels/{id}/quality/whatif", s.quality.handleQualityWhatif)
+	mux.HandleFunc("GET /api/channels/{id}/quality/evolution", s.quality.handleQualityEvolution)
+	mux.HandleFunc("GET /api/channels/{id}/quality/c4", s.quality.handleQualityC4)
+	mux.HandleFunc("GET /api/channels/{id}/quality/bugfactor", s.quality.handleQualityBugFactor)
+	mux.HandleFunc("GET /api/channels/{id}/quality/complexity", s.quality.handleQualityComplexity)
+	mux.HandleFunc("GET /api/channels/{id}/quality/clones", s.quality.handleQualityClones)
 }
 
 // registerTicketRoutes registers the tk ticket routes.
