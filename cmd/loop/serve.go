@@ -502,6 +502,7 @@ func (a *app) serve() error {
 		reviewPrompt = ""
 	}
 	serverOpts := []api.Option{
+		api.WithGitHubLookup(ghClient),
 		api.WithTunnel(tunnel.NewManager(filepath.Join(cfg.LoopDir, "bin"), logger)),
 		api.WithReview(ghClient, review.NewStore(), &review.GitPR{Run: worktree.ExecCommandRunner}),
 		api.WithReviewAgent(&review.Runner{Agent: runner}, "", reviewPrompt),
@@ -612,7 +613,6 @@ func (a *app) serve() error {
 
 	eventsHub := api.NewEventsHub(logger)
 	apiSrv.SetEventsHub(eventsHub)
-	apiSrv.SetGitHubLookup(ghClient)
 	branchPoller := api.NewBranchPoller(store, eventsHub, cfg.LoopDir, 0, logger)
 	apiSrv.SetBranchPoller(branchPoller)
 	branchPoller.SetOnDirChange(apiSrv.InvalidatePRCacheForDir)
