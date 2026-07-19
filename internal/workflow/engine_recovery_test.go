@@ -187,12 +187,7 @@ func (s *EngineSuite) TestRecoverRunsPausedResumeApproval() {
 	err = s.engine.ResumeRun(context.Background(), "wfr-recover", "approved")
 	require.NoError(s.T(), err)
 
-	select {
-	case status := <-done:
-		require.Equal(s.T(), db.WorkflowRunStatusCompleted, status)
-	case <-time.After(5 * time.Second):
-		s.T().Fatal("timeout waiting for recovered run to complete")
-	}
+	s.awaitStatus(done, db.WorkflowRunStatusCompleted)
 
 	s.bashRunner.AssertCalled(s.T(), "RunBash", mock.Anything, "echo deploying", "ch1", "")
 }
@@ -312,8 +307,7 @@ func (s *EngineSuite) TestRunConcurrencyLimit() {
 	s.bashRunner.On("RunBash", mock.Anything, mock.Anything, mock.Anything, mock.Anything).
 		Run(func(args mock.Arguments) { <-bashBlock }).
 		Return("ok", nil)
-	s.store.On("CreateWorkflowRunWithNodes", mock.Anything, mock.Anything, mock.Anything).Return(nil)
-	s.store.On("UpsertNodeRun", mock.Anything, mock.Anything).Return(nil)
+	s.expectRunPersistence()
 	s.store.On("UpdateWorkflowRun", mock.Anything, mock.Anything).Return(nil)
 
 	// Start first run — should acquire the semaphore slot.
@@ -377,19 +371,13 @@ func (s *EngineSuite) TestNodeConcurrencyLimit() {
 			concurrent.Add(-1)
 		}).
 		Return("ok", nil)
-	s.store.On("CreateWorkflowRunWithNodes", mock.Anything, mock.Anything, mock.Anything).Return(nil)
-	s.store.On("UpsertNodeRun", mock.Anything, mock.Anything).Return(nil)
+	s.expectRunPersistence()
 
 	done := s.waitForRunStatus()
 	_, err := e.StartRun(context.Background(), StartRunOptions{WorkflowName: "wf"})
 	require.NoError(s.T(), err)
 
-	select {
-	case status := <-done:
-		require.Equal(s.T(), db.WorkflowRunStatusCompleted, status)
-	case <-time.After(5 * time.Second):
-		s.T().Fatal("timed out waiting for run to complete")
-	}
+	s.awaitStatus(done, db.WorkflowRunStatusCompleted)
 
 	require.Equal(s.T(), int32(1), maxConcurrent.Load(), "at most 1 node should run concurrently")
 }
@@ -463,8 +451,7 @@ func (s *EngineSuite) TestNodeSlotCancelledDuringDAG() {
 		return s.workflows
 	}, "", config.WorkflowConcurrency{MaxConcurrentNodes: 1}, slog.Default())
 
-	s.store.On("CreateWorkflowRunWithNodes", mock.Anything, mock.Anything, mock.Anything).Return(nil)
-	s.store.On("UpsertNodeRun", mock.Anything, mock.Anything).Return(nil)
+	s.expectRunPersistence()
 
 	bashStarted := make(chan struct{}, 1)
 	s.bashRunner.On("RunBash", mock.Anything, "sleep 10", mock.Anything, mock.Anything).
@@ -582,8 +569,7 @@ func (s *EngineSuite) TestFinalizeDAGAlreadyTerminal() {
 		}},
 	}
 
-	s.store.On("CreateWorkflowRunWithNodes", mock.Anything, mock.Anything, mock.Anything).Return(nil)
-	s.store.On("UpsertNodeRun", mock.Anything, mock.Anything).Return(nil)
+	s.expectRunPersistence()
 	s.bashRunner.On("RunBash", mock.Anything, "echo done", mock.Anything, mock.Anything).Return("done", nil)
 
 	// Override default GetWorkflowRun to return "cancelled" — simulating
@@ -640,8 +626,7 @@ func (s *EngineSuite) TestApprovalNodeResumeStatusWriteError() {
 		},
 	}
 
-	s.store.On("CreateWorkflowRunWithNodes", mock.Anything, mock.Anything, mock.Anything).Return(nil)
-	s.store.On("UpsertNodeRun", mock.Anything, mock.Anything).Return(nil)
+	s.expectRunPersistence()
 	s.store.On("UpdateNodeHeartbeat", mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Maybe()
 
 	// Clear default GetWorkflowRun mock.
@@ -688,12 +673,7 @@ func (s *EngineSuite) TestApprovalNodeResumeStatusWriteError() {
 	err = s.engine.ResumeRun(context.Background(), runID, "looks good")
 	require.NoError(s.T(), err)
 
-	select {
-	case status := <-done:
-		require.Equal(s.T(), db.WorkflowRunStatusFailed, status)
-	case <-time.After(5 * time.Second):
-		s.T().Fatal("timeout — run should have failed due to resume status write error")
-	}
+	s.awaitStatus(done, db.WorkflowRunStatusFailed)
 }
 
 // TestRecoverPausedRunFailsOnInvalidPinnedDef covers the validate-on-resume
@@ -838,12 +818,7 @@ func (s *EngineSuite) TestRecoverPausedRunHighestIterationOutputWins() {
 	err := s.engine.RecoverRuns(context.Background())
 	require.NoError(s.T(), err)
 
-	select {
-	case status := <-done:
-		require.Equal(s.T(), db.WorkflowRunStatusCompleted, status)
-	case <-time.After(5 * time.Second):
-		s.T().Fatal("timeout waiting for recovered run to complete")
-	}
+	s.awaitStatus(done, db.WorkflowRunStatusCompleted)
 
 	rendered, _ := actualScript.Load().(string)
 	require.Equal(s.T(), "echo 'iter2-out'", rendered, "downstream node must see highest-iter (iter=2) output, not last-listed (iter=0)")
@@ -919,12 +894,7 @@ func (s *EngineSuite) TestRecoverRunningRunHighestIterationOutputWins() {
 	err := s.engine.RecoverRuns(context.Background())
 	require.NoError(s.T(), err)
 
-	select {
-	case status := <-done:
-		require.Equal(s.T(), db.WorkflowRunStatusCompleted, status)
-	case <-time.After(5 * time.Second):
-		s.T().Fatal("timeout waiting for recovered run to complete")
-	}
+	s.awaitStatus(done, db.WorkflowRunStatusCompleted)
 
 	rendered, _ := actualScript.Load().(string)
 	require.Equal(s.T(), "echo 'winner'", rendered, "downstream node must see highest-iter output")

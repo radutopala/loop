@@ -39,8 +39,7 @@ func (s *EngineSuite) TestExecuteLoopWithBodyRunsChildrenInOrder() {
 		},
 	}
 
-	s.store.On("CreateWorkflowRunWithNodes", mock.Anything, mock.Anything, mock.Anything).Return(nil)
-	s.store.On("UpsertNodeRun", mock.Anything, mock.Anything).Return(nil)
+	s.expectRunPersistence()
 	done := s.waitForTerminalStatus()
 
 	var firstCalls, secondCalls atomic.Int32
@@ -50,12 +49,7 @@ func (s *EngineSuite) TestExecuteLoopWithBodyRunsChildrenInOrder() {
 	_, err := s.engine.StartRun(context.Background(), StartRunOptions{WorkflowName: "loop-body"})
 	require.NoError(s.T(), err)
 
-	select {
-	case status := <-done:
-		require.Equal(s.T(), db.WorkflowRunStatusCompleted, status)
-	case <-time.After(5 * time.Second):
-		s.T().Fatal("timeout")
-	}
+	s.awaitStatus(done, db.WorkflowRunStatusCompleted)
 
 	require.Equal(s.T(), int32(2), firstCalls.Load())
 	require.Equal(s.T(), int32(2), secondCalls.Load())
@@ -85,8 +79,7 @@ func (s *EngineSuite) TestExecuteLoopBodyBreaksOnReviewNoComments() {
 		},
 	}
 
-	s.store.On("CreateWorkflowRunWithNodes", mock.Anything, mock.Anything, mock.Anything).Return(nil)
-	s.store.On("UpsertNodeRun", mock.Anything, mock.Anything).Return(nil)
+	s.expectRunPersistence()
 	done := s.waitForTerminalStatus()
 
 	var calls atomic.Int32
@@ -95,12 +88,7 @@ func (s *EngineSuite) TestExecuteLoopBodyBreaksOnReviewNoComments() {
 	_, err := s.engine.StartRun(context.Background(), StartRunOptions{WorkflowName: "review-loop"})
 	require.NoError(s.T(), err)
 
-	select {
-	case status := <-done:
-		require.Equal(s.T(), db.WorkflowRunStatusCompleted, status)
-	case <-time.After(5 * time.Second):
-		s.T().Fatal("timeout")
-	}
+	s.awaitStatus(done, db.WorkflowRunStatusCompleted)
 
 	require.Equal(s.T(), int32(1), calls.Load(), "loop should exit after one iteration when no_comments=true")
 }
@@ -128,8 +116,7 @@ func (s *EngineSuite) TestExecuteLoopBodyBreaksOnSameAsPrev() {
 		},
 	}
 
-	s.store.On("CreateWorkflowRunWithNodes", mock.Anything, mock.Anything, mock.Anything).Return(nil)
-	s.store.On("UpsertNodeRun", mock.Anything, mock.Anything).Return(nil)
+	s.expectRunPersistence()
 	done := s.waitForTerminalStatus()
 
 	var calls atomic.Int32
@@ -142,12 +129,7 @@ func (s *EngineSuite) TestExecuteLoopBodyBreaksOnSameAsPrev() {
 	_, err := s.engine.StartRun(context.Background(), StartRunOptions{WorkflowName: "review-fix-loop"})
 	require.NoError(s.T(), err)
 
-	select {
-	case status := <-done:
-		require.Equal(s.T(), db.WorkflowRunStatusCompleted, status)
-	case <-time.After(5 * time.Second):
-		s.T().Fatal("timeout")
-	}
+	s.awaitStatus(done, db.WorkflowRunStatusCompleted)
 
 	require.Equal(s.T(), int32(2), calls.Load(), "loop should exit after second iteration when comment IDs match")
 }
@@ -171,8 +153,7 @@ func (s *EngineSuite) TestExecuteLoopBodyChildErrorPropagates() {
 		},
 	}
 
-	s.store.On("CreateWorkflowRunWithNodes", mock.Anything, mock.Anything, mock.Anything).Return(nil)
-	s.store.On("UpsertNodeRun", mock.Anything, mock.Anything).Return(nil)
+	s.expectRunPersistence()
 	done := s.waitForTerminalStatus()
 
 	var calls atomic.Int32
@@ -183,12 +164,7 @@ func (s *EngineSuite) TestExecuteLoopBodyChildErrorPropagates() {
 	_, err := s.engine.StartRun(context.Background(), StartRunOptions{WorkflowName: "loop-err"})
 	require.NoError(s.T(), err)
 
-	select {
-	case status := <-done:
-		require.Equal(s.T(), db.WorkflowRunStatusFailed, status)
-	case <-time.After(5 * time.Second):
-		s.T().Fatal("timeout")
-	}
+	s.awaitStatus(done, db.WorkflowRunStatusFailed)
 
 	require.Equal(s.T(), int32(1), calls.Load(), "loop should stop on first child error")
 }
@@ -238,12 +214,7 @@ func (s *EngineSuite) TestExecuteLoopBodyWhenGatesChild() {
 		s.T().Fatal("expected skipme node to be persisted as skipped")
 	}
 
-	select {
-	case status := <-done:
-		require.Equal(s.T(), db.WorkflowRunStatusCompleted, status)
-	case <-time.After(5 * time.Second):
-		s.T().Fatal("timeout")
-	}
+	s.awaitStatus(done, db.WorkflowRunStatusCompleted)
 
 	// The skipped child's script should never have been invoked.
 	s.bashRunner.AssertNotCalled(s.T(), "RunBash", mock.Anything, "echo never", "", "")
@@ -319,8 +290,7 @@ func (s *EngineSuite) TestLoopBodyMaxIterFromInputs() {
 		},
 	}
 
-	s.store.On("CreateWorkflowRunWithNodes", mock.Anything, mock.Anything, mock.Anything).Return(nil)
-	s.store.On("UpsertNodeRun", mock.Anything, mock.Anything).Return(nil)
+	s.expectRunPersistence()
 	done := s.waitForTerminalStatus()
 
 	var calls atomic.Int32
@@ -334,12 +304,7 @@ func (s *EngineSuite) TestLoopBodyMaxIterFromInputs() {
 	})
 	require.NoError(s.T(), err)
 
-	select {
-	case status := <-done:
-		require.Equal(s.T(), db.WorkflowRunStatusCompleted, status)
-	case <-time.After(5 * time.Second):
-		s.T().Fatal("timeout")
-	}
+	s.awaitStatus(done, db.WorkflowRunStatusCompleted)
 
 	require.Equal(s.T(), int32(2), calls.Load())
 }
@@ -365,8 +330,7 @@ func (s *EngineSuite) TestLoopBodyMaxIterInvalidInputFallsBackToDefault() {
 		},
 	}
 
-	s.store.On("CreateWorkflowRunWithNodes", mock.Anything, mock.Anything, mock.Anything).Return(nil)
-	s.store.On("UpsertNodeRun", mock.Anything, mock.Anything).Return(nil)
+	s.expectRunPersistence()
 	done := s.waitForTerminalStatus()
 
 	s.bashRunner.On("RunBash", mock.Anything, "echo tick", "", "").Return("ok", nil)
@@ -377,12 +341,7 @@ func (s *EngineSuite) TestLoopBodyMaxIterInvalidInputFallsBackToDefault() {
 	})
 	require.NoError(s.T(), err)
 
-	select {
-	case status := <-done:
-		require.Equal(s.T(), db.WorkflowRunStatusCompleted, status)
-	case <-time.After(5 * time.Second):
-		s.T().Fatal("timeout")
-	}
+	s.awaitStatus(done, db.WorkflowRunStatusCompleted)
 }
 
 // TestLoopBodyPromptChild verifies a prompt-type body child invokes the
@@ -404,8 +363,7 @@ func (s *EngineSuite) TestLoopBodyPromptChild() {
 		},
 	}
 
-	s.store.On("CreateWorkflowRunWithNodes", mock.Anything, mock.Anything, mock.Anything).Return(nil)
-	s.store.On("UpsertNodeRun", mock.Anything, mock.Anything).Return(nil)
+	s.expectRunPersistence()
 	done := s.waitForTerminalStatus()
 
 	var promptCalls atomic.Int32
@@ -416,12 +374,7 @@ func (s *EngineSuite) TestLoopBodyPromptChild() {
 	_, err := s.engine.StartRun(context.Background(), StartRunOptions{WorkflowName: "loop-prompt-body"})
 	require.NoError(s.T(), err)
 
-	select {
-	case status := <-done:
-		require.Equal(s.T(), db.WorkflowRunStatusCompleted, status)
-	case <-time.After(5 * time.Second):
-		s.T().Fatal("timeout")
-	}
+	s.awaitStatus(done, db.WorkflowRunStatusCompleted)
 
 	require.Equal(s.T(), int32(1), promptCalls.Load())
 }
@@ -449,8 +402,7 @@ func (s *EngineSuite) TestLoopBodyContextCancelBetweenChildren() {
 		},
 	}
 
-	s.store.On("CreateWorkflowRunWithNodes", mock.Anything, mock.Anything, mock.Anything).Return(nil)
-	s.store.On("UpsertNodeRun", mock.Anything, mock.Anything).Return(nil)
+	s.expectRunPersistence()
 	done := s.waitForRunStatus()
 
 	// idReady is closed once the test has captured the run ID returned by
@@ -550,8 +502,7 @@ func (s *EngineSuite) TestLoopBodyChildTimeoutAppliesAndCancels() {
 		},
 	}
 
-	s.store.On("CreateWorkflowRunWithNodes", mock.Anything, mock.Anything, mock.Anything).Return(nil)
-	s.store.On("UpsertNodeRun", mock.Anything, mock.Anything).Return(nil)
+	s.expectRunPersistence()
 	done := s.waitForTerminalStatus()
 
 	var observedDeadline time.Time
@@ -570,12 +521,7 @@ func (s *EngineSuite) TestLoopBodyChildTimeoutAppliesAndCancels() {
 	_, err := s.engine.StartRun(context.Background(), StartRunOptions{WorkflowName: "loop-child-timeout"})
 	require.NoError(s.T(), err)
 
-	select {
-	case status := <-done:
-		require.Equal(s.T(), db.WorkflowRunStatusCompleted, status)
-	case <-time.After(5 * time.Second):
-		s.T().Fatal("timeout")
-	}
+	s.awaitStatus(done, db.WorkflowRunStatusCompleted)
 	require.False(s.T(), observedDeadline.IsZero(), "child ctx must have a deadline set")
 }
 
@@ -600,8 +546,7 @@ func (s *EngineSuite) TestLoopBodyChildTimeoutInvalidDurationIgnored() {
 		},
 	}
 
-	s.store.On("CreateWorkflowRunWithNodes", mock.Anything, mock.Anything, mock.Anything).Return(nil)
-	s.store.On("UpsertNodeRun", mock.Anything, mock.Anything).Return(nil)
+	s.expectRunPersistence()
 	done := s.waitForTerminalStatus()
 
 	s.bashRunner.On("RunBash", mock.MatchedBy(func(ctx context.Context) bool {
@@ -613,12 +558,7 @@ func (s *EngineSuite) TestLoopBodyChildTimeoutInvalidDurationIgnored() {
 	_, err := s.engine.StartRun(context.Background(), StartRunOptions{WorkflowName: "loop-child-bad-timeout"})
 	require.NoError(s.T(), err)
 
-	select {
-	case status := <-done:
-		require.Equal(s.T(), db.WorkflowRunStatusCompleted, status)
-	case <-time.After(5 * time.Second):
-		s.T().Fatal("timeout")
-	}
+	s.awaitStatus(done, db.WorkflowRunStatusCompleted)
 }
 
 // TestLoopBodyConditionTemplateErrorContinues verifies that a bad condition
@@ -642,8 +582,7 @@ func (s *EngineSuite) TestLoopBodyConditionTemplateErrorContinues() {
 		},
 	}
 
-	s.store.On("CreateWorkflowRunWithNodes", mock.Anything, mock.Anything, mock.Anything).Return(nil)
-	s.store.On("UpsertNodeRun", mock.Anything, mock.Anything).Return(nil)
+	s.expectRunPersistence()
 	done := s.waitForTerminalStatus()
 
 	var calls atomic.Int32
@@ -654,12 +593,7 @@ func (s *EngineSuite) TestLoopBodyConditionTemplateErrorContinues() {
 	_, err := s.engine.StartRun(context.Background(), StartRunOptions{WorkflowName: "loop-bad-cond"})
 	require.NoError(s.T(), err)
 
-	select {
-	case status := <-done:
-		require.Equal(s.T(), db.WorkflowRunStatusCompleted, status)
-	case <-time.After(5 * time.Second):
-		s.T().Fatal("timeout")
-	}
+	s.awaitStatus(done, db.WorkflowRunStatusCompleted)
 
 	require.Equal(s.T(), int32(2), calls.Load(), "bad condition template must not abort the loop")
 }

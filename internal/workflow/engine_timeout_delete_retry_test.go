@@ -27,8 +27,7 @@ func (s *EngineSuite) TestNodeTimeoutBashNode() {
 		},
 	}
 
-	s.store.On("CreateWorkflowRunWithNodes", mock.Anything, mock.Anything, mock.Anything).Return(nil)
-	s.store.On("UpsertNodeRun", mock.Anything, mock.Anything).Return(nil)
+	s.expectRunPersistence()
 	done := s.waitForTerminalStatus()
 
 	s.bashRunner.On("RunBash", mock.Anything, "sleep 100", "", "").
@@ -41,12 +40,7 @@ func (s *EngineSuite) TestNodeTimeoutBashNode() {
 	_, err := s.engine.StartRun(context.Background(), StartRunOptions{WorkflowName: "node-timeout"})
 	require.NoError(s.T(), err)
 
-	select {
-	case status := <-done:
-		require.Equal(s.T(), db.WorkflowRunStatusFailed, status)
-	case <-time.After(5 * time.Second):
-		s.T().Fatal("timeout waiting for run failure")
-	}
+	s.awaitStatus(done, db.WorkflowRunStatusFailed)
 }
 
 func (s *EngineSuite) TestNodeTimeoutPromptNode() {
@@ -59,8 +53,7 @@ func (s *EngineSuite) TestNodeTimeoutPromptNode() {
 		},
 	}
 
-	s.store.On("CreateWorkflowRunWithNodes", mock.Anything, mock.Anything, mock.Anything).Return(nil)
-	s.store.On("UpsertNodeRun", mock.Anything, mock.Anything).Return(nil)
+	s.expectRunPersistence()
 	done := s.waitForTerminalStatus()
 
 	s.runner.On("Run", mock.Anything, mock.Anything).
@@ -73,12 +66,7 @@ func (s *EngineSuite) TestNodeTimeoutPromptNode() {
 	_, err := s.engine.StartRun(context.Background(), StartRunOptions{WorkflowName: "prompt-timeout"})
 	require.NoError(s.T(), err)
 
-	select {
-	case status := <-done:
-		require.Equal(s.T(), db.WorkflowRunStatusFailed, status)
-	case <-time.After(5 * time.Second):
-		s.T().Fatal("timeout waiting for run failure")
-	}
+	s.awaitStatus(done, db.WorkflowRunStatusFailed)
 }
 
 func (s *EngineSuite) TestNodeTimeoutLoopNode() {
@@ -91,8 +79,7 @@ func (s *EngineSuite) TestNodeTimeoutLoopNode() {
 		},
 	}
 
-	s.store.On("CreateWorkflowRunWithNodes", mock.Anything, mock.Anything, mock.Anything).Return(nil)
-	s.store.On("UpsertNodeRun", mock.Anything, mock.Anything).Return(nil)
+	s.expectRunPersistence()
 	done := s.waitForTerminalStatus()
 
 	s.runner.On("Run", mock.Anything, mock.Anything).
@@ -105,12 +92,7 @@ func (s *EngineSuite) TestNodeTimeoutLoopNode() {
 	_, err := s.engine.StartRun(context.Background(), StartRunOptions{WorkflowName: "loop-timeout"})
 	require.NoError(s.T(), err)
 
-	select {
-	case status := <-done:
-		require.Equal(s.T(), db.WorkflowRunStatusFailed, status)
-	case <-time.After(5 * time.Second):
-		s.T().Fatal("timeout waiting for run failure")
-	}
+	s.awaitStatus(done, db.WorkflowRunStatusFailed)
 }
 
 func (s *EngineSuite) TestNodeTimeoutNotTriggeredWhenFast() {
@@ -123,8 +105,7 @@ func (s *EngineSuite) TestNodeTimeoutNotTriggeredWhenFast() {
 		},
 	}
 
-	s.store.On("CreateWorkflowRunWithNodes", mock.Anything, mock.Anything, mock.Anything).Return(nil)
-	s.store.On("UpsertNodeRun", mock.Anything, mock.Anything).Return(nil)
+	s.expectRunPersistence()
 	done := s.waitForRunStatus()
 
 	s.bashRunner.On("RunBash", mock.Anything, "echo fast", "", "").Return("fast\n", nil)
@@ -132,12 +113,7 @@ func (s *EngineSuite) TestNodeTimeoutNotTriggeredWhenFast() {
 	_, err := s.engine.StartRun(context.Background(), StartRunOptions{WorkflowName: "fast-with-timeout"})
 	require.NoError(s.T(), err)
 
-	select {
-	case status := <-done:
-		require.Equal(s.T(), db.WorkflowRunStatusCompleted, status)
-	case <-time.After(5 * time.Second):
-		s.T().Fatal("timeout waiting for completion")
-	}
+	s.awaitStatus(done, db.WorkflowRunStatusCompleted)
 }
 
 func (s *EngineSuite) TestNodeTimeoutInvalidDurationIgnored() {
@@ -150,8 +126,7 @@ func (s *EngineSuite) TestNodeTimeoutInvalidDurationIgnored() {
 		},
 	}
 
-	s.store.On("CreateWorkflowRunWithNodes", mock.Anything, mock.Anything, mock.Anything).Return(nil)
-	s.store.On("UpsertNodeRun", mock.Anything, mock.Anything).Return(nil)
+	s.expectRunPersistence()
 	done := s.waitForRunStatus()
 
 	s.bashRunner.On("RunBash", mock.Anything, "echo ok", "", "").Return("ok\n", nil)
@@ -159,12 +134,7 @@ func (s *EngineSuite) TestNodeTimeoutInvalidDurationIgnored() {
 	_, err := s.engine.StartRun(context.Background(), StartRunOptions{WorkflowName: "bad-node-timeout"})
 	require.NoError(s.T(), err)
 
-	select {
-	case status := <-done:
-		require.Equal(s.T(), db.WorkflowRunStatusCompleted, status)
-	case <-time.After(5 * time.Second):
-		s.T().Fatal("timeout waiting for completion")
-	}
+	s.awaitStatus(done, db.WorkflowRunStatusCompleted)
 }
 
 func (s *EngineSuite) TestWorkflowTimeout() {
@@ -178,8 +148,7 @@ func (s *EngineSuite) TestWorkflowTimeout() {
 		},
 	}
 
-	s.store.On("CreateWorkflowRunWithNodes", mock.Anything, mock.Anything, mock.Anything).Return(nil)
-	s.store.On("UpsertNodeRun", mock.Anything, mock.Anything).Return(nil)
+	s.expectRunPersistence()
 
 	var capturedErr string
 	ch := make(chan db.WorkflowRunStatus, 1)
@@ -225,8 +194,7 @@ func (s *EngineSuite) TestWorkflowTimeoutNotTriggeredWhenFast() {
 		},
 	}
 
-	s.store.On("CreateWorkflowRunWithNodes", mock.Anything, mock.Anything, mock.Anything).Return(nil)
-	s.store.On("UpsertNodeRun", mock.Anything, mock.Anything).Return(nil)
+	s.expectRunPersistence()
 	done := s.waitForRunStatus()
 
 	s.bashRunner.On("RunBash", mock.Anything, "echo fast", "", "").Return("fast\n", nil)
@@ -234,12 +202,7 @@ func (s *EngineSuite) TestWorkflowTimeoutNotTriggeredWhenFast() {
 	_, err := s.engine.StartRun(context.Background(), StartRunOptions{WorkflowName: "fast-wf-timeout"})
 	require.NoError(s.T(), err)
 
-	select {
-	case status := <-done:
-		require.Equal(s.T(), db.WorkflowRunStatusCompleted, status)
-	case <-time.After(5 * time.Second):
-		s.T().Fatal("timeout waiting for completion")
-	}
+	s.awaitStatus(done, db.WorkflowRunStatusCompleted)
 }
 
 func (s *EngineSuite) TestCreateRunContextWithTimeout() {
@@ -407,8 +370,7 @@ func (s *EngineSuite) TestRetryRunHappyPath() {
 	s.store.On("GetWorkflowRun", mock.Anything, mock.Anything).Return(
 		&db.WorkflowRun{Status: db.WorkflowRunStatusRunning}, nil,
 	).Maybe()
-	s.store.On("CreateWorkflowRunWithNodes", mock.Anything, mock.Anything, mock.Anything).Return(nil)
-	s.store.On("UpsertNodeRun", mock.Anything, mock.Anything).Return(nil)
+	s.expectRunPersistence()
 	// Accept UpdateWorkflowRun from the async DAG execution.
 	s.store.On("UpdateWorkflowRun", mock.Anything, mock.Anything).Return(nil)
 	s.bashRunner.On("RunBash", mock.Anything, "echo ok", "ch1", "/work").Return("ok", nil)
@@ -495,8 +457,7 @@ func (s *EngineSuite) TestRetryRunWithNoInputs() {
 	s.store.On("GetWorkflowRun", mock.Anything, mock.Anything).Return(
 		&db.WorkflowRun{Status: db.WorkflowRunStatusRunning}, nil,
 	).Maybe()
-	s.store.On("CreateWorkflowRunWithNodes", mock.Anything, mock.Anything, mock.Anything).Return(nil)
-	s.store.On("UpsertNodeRun", mock.Anything, mock.Anything).Return(nil)
+	s.expectRunPersistence()
 	s.store.On("UpdateWorkflowRun", mock.Anything, mock.Anything).Return(nil)
 	s.bashRunner.On("RunBash", mock.Anything, "echo hi", "ch1", "").Return("hi", nil)
 
@@ -562,19 +523,13 @@ func (s *EngineSuite) TestPromptNodeResolvePromptError() {
 		},
 	}
 
-	s.store.On("CreateWorkflowRunWithNodes", mock.Anything, mock.Anything, mock.Anything).Return(nil)
-	s.store.On("UpsertNodeRun", mock.Anything, mock.Anything).Return(nil)
+	s.expectRunPersistence()
 	done := s.waitForRunStatus()
 
 	_, err := s.engine.StartRun(context.Background(), StartRunOptions{WorkflowName: "unresolvable-prompt"})
 	require.NoError(s.T(), err)
 
-	select {
-	case status := <-done:
-		require.Equal(s.T(), db.WorkflowRunStatusFailed, status)
-	case <-time.After(5 * time.Second):
-		s.T().Fatal("timeout — run should have failed because prompt could not be resolved")
-	}
+	s.awaitStatus(done, db.WorkflowRunStatusFailed)
 }
 
 // TestRecoverRunsCheckpointUpdateStatusError covers the updateRunStatus error
@@ -628,10 +583,5 @@ func (s *EngineSuite) TestRecoverRunsCheckpointUpdateStatusError() {
 	err := s.engine.RecoverRuns(context.Background())
 	require.NoError(s.T(), err)
 
-	select {
-	case status := <-done:
-		require.Equal(s.T(), db.WorkflowRunStatusFailed, status)
-	case <-time.After(5 * time.Second):
-		s.T().Fatal("timeout — recovery should have finalized after updateRunStatus error")
-	}
+	s.awaitStatus(done, db.WorkflowRunStatusFailed)
 }
