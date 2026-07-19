@@ -26,3 +26,9 @@ type playgroundService struct {
 	shareMu         sync.Mutex
 	listenTCP       func(addr string) (net.Listener, error) // injectable for tests; nil → net.Listen
 }
+
+// newPlaygroundService creates the playground domain with an empty share
+// store. The tunnel manager arrives later via Server.SetTunnelManager.
+func newPlaygroundService(deps *serverDeps) *playgroundService {
+	return &playgroundService{deps: deps, shares: newShareStore()}
+}

@@ -338,9 +338,9 @@ func NewServer(sched scheduler.Scheduler, channels ChannelEnsurer, threads Threa
 			Run: worktree.ExecCommandRunner,
 		},
 	}
-	s.review = &reviewService{deps: &s.serverDeps, active: map[string]context.CancelFunc{}}
-	s.playground = &playgroundService{deps: &s.serverDeps, shares: newShareStore()}
-	s.quality = &qualityService{deps: &s.serverDeps, cancellers: map[string]context.CancelFunc{}}
+	s.review = newReviewService(&s.serverDeps)
+	s.playground = newPlaygroundService(&s.serverDeps)
+	s.quality = newQualityService(&s.serverDeps)
 	return s
 }
 

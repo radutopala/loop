@@ -25,3 +25,11 @@ type reviewService struct {
 	mu           sync.Mutex // guards active
 	active       map[string]context.CancelFunc
 }
+
+// newReviewService creates the review domain with its run registry ready.
+// Stage-2 wiring (gh client, session store, worktree, agent runner, timeout)
+// arrives later via the Server setters — the daemon builds those after the
+// server exists, and tests inject only the pieces a case needs.
+func newReviewService(deps *serverDeps) *reviewService {
+	return &reviewService{deps: deps, active: map[string]context.CancelFunc{}}
+}
