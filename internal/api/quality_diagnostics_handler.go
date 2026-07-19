@@ -12,7 +12,6 @@
 package api
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -332,20 +331,6 @@ func (s *qualityService) lookupCachedGraph(w http.ResponseWriter, channelID stri
 		return nil, false
 	}
 	return g, true
-}
-
-// loadSnapshot resolves the snapshot for (channel, branch), falling
-// back to the latest snapshot on any branch when the requested branch
-// has no row. Wraps the dual lookup the panel needs.
-func (s *qualityService) loadSnapshot(ctx context.Context, channelID, branch string) (*snapshot.Snapshot, error) {
-	if branch == "" {
-		branch = "main"
-	}
-	snap, err := s.snapshots.Get(ctx, channelID, branch)
-	if errors.Is(err, snapshot.ErrNotFound) {
-		snap, err = s.snapshots.GetLatest(ctx, channelID)
-	}
-	return snap, err
 }
 
 func writeQualityLookupError(w http.ResponseWriter, err error) {

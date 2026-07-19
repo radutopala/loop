@@ -8,7 +8,6 @@
 package api
 
 import (
-	"context"
 	"net/http"
 	"strconv"
 
@@ -162,25 +161,6 @@ func (s *qualityService) handleQualityClones(w http.ResponseWriter, r *http.Requ
 		Limit:         req.limit,
 		Returned:      len(page),
 	}, s.deps.logger)
-}
-
-// resolveMetricsConfigForChannel returns the effective metrics.Config
-// for the channel's recompute path. Skips the channel-store lookup when
-// no loader is configured — handlers that don't need overrides shouldn't
-// pay for a GetChannel call (and tests shouldn't need to register the
-// mock).
-func (s *qualityService) resolveMetricsConfigForChannel(ctx context.Context, channelID string) metrics.Config {
-	if s.metricsCfg == nil {
-		return metrics.DefaultConfig()
-	}
-	var dir, parent string
-	if s.deps.store != nil {
-		if d, err := s.deps.workspace.resolveDirPath(ctx, "", channelID); err == nil {
-			dir = d
-			parent = s.deps.workspace.resolveParentDirPath(ctx, channelID)
-		}
-	}
-	return s.resolveMetricsConfig(dir, parent)
 }
 
 // pageFunctions slices the (already-sorted) hotspot list by offset/limit
