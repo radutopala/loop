@@ -863,3 +863,92 @@ func (s *ManagerSuite) TestEnsureBrowserNilRegistryNoError() {
 	err := s.mgr.EnsureBrowser(ctx, "ch-1", "")
 	require.NoError(s.T(), err)
 }
+
+// listForChrome matches a ContainerList call filtering on the given Chrome
+// container name, so per-channel expectations don't cross wires in the
+// concurrency tests below.
+func listForChrome(name string) any {
+	return mock.MatchedBy(func(o containertypes.ListOptions) bool {
+		vals := o.Filters.Get("name")
+		return len(vals) == 1 && vals[0] == name
+	})
+}
+
+// TestEnsureBrowserCrossChannelNotBlocked guards the per-channel locking:
+// channel A's EnsureBrowser is parked inside a slow Docker call, and channel
+// B's EnsureBrowser must still complete. Under the old whole-provider mutex
+// this deadlocks (B waits on A's Docker I/O) and the test times out.
+func (s *ManagerSuite) TestEnsureBrowserCrossChannelNotBlocked() {
+	nameA := ChromeHostname("chan-a")
+	nameB := ChromeHostname("chan-b")
+	entered := make(chan struct{})
+	release := make(chan struct{})
+
+	// Channel A blocks in ContainerList until released, then creates.
+	s.api.On("ContainerList", mock.Anything, listForChrome(nameA)).
+		Run(func(mock.Arguments) { close(entered); <-release }).
+		Return([]containertypes.Summary{}, nil).Once()
+	s.api.On("ContainerCreate", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, nameA).
+		Return(containertypes.CreateResponse{ID: "ctr-a"}, nil).Once()
+	s.api.On("ContainerStart", mock.Anything, "ctr-a", mock.Anything).Return(nil).Once()
+	s.api.On("ContainerInspect", mock.Anything, "ctr-a").Return(inspectResponseWithPort("40001"), nil)
+
+	// Channel B completes promptly.
+	s.api.On("ContainerList", mock.Anything, listForChrome(nameB)).
+		Return([]containertypes.Summary{}, nil).Once()
+	s.api.On("ContainerCreate", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, nameB).
+		Return(containertypes.CreateResponse{ID: "ctr-b"}, nil).Once()
+	s.api.On("ContainerStart", mock.Anything, "ctr-b", mock.Anything).Return(nil).Once()
+	s.api.On("ContainerInspect", mock.Anything, "ctr-b").Return(inspectResponseWithPort("40002"), nil)
+
+	done := make(chan error, 1)
+	go func() { done <- s.mgr.EnsureBrowser(context.Background(), "chan-a", "") }()
+	<-entered // A now holds only chan-a's lock, mid Docker I/O.
+
+	require.NoError(s.T(), s.mgr.EnsureBrowser(context.Background(), "chan-b", ""),
+		"channel B must not be blocked by channel A's in-flight Docker call")
+
+	close(release)
+	require.NoError(s.T(), <-done)
+}
+
+// TestEnsureBrowserSameChannelSerialized guards the other half of the locking
+// contract: two concurrent ensures for the SAME channel must not race to
+// create two containers — the second waits, then adopts the first's session.
+func (s *ManagerSuite) TestEnsureBrowserSameChannelSerialized() {
+	name := ChromeHostname("chan-serial")
+	entered := make(chan struct{})
+	release := make(chan struct{})
+
+	// Only ONE create flow is expected (.Once() makes a second create fail).
+	s.api.On("ContainerList", mock.Anything, listForChrome(name)).
+		Run(func(mock.Arguments) { close(entered); <-release }).
+		Return([]containertypes.Summary{}, nil).Once()
+	s.api.On("ContainerCreate", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, name).
+		Return(containertypes.CreateResponse{ID: "ctr-s"}, nil).Once()
+	s.api.On("ContainerStart", mock.Anything, "ctr-s", mock.Anything).Return(nil).Once()
+	// Inspect serves the first flow's port lookup AND the second flow's
+	// running-check on the adopted session.
+	s.api.On("ContainerInspect", mock.Anything, "ctr-s").Return(inspectResponseWithPort("40003"), nil)
+
+	first := make(chan error, 1)
+	second := make(chan error, 1)
+	go func() { first <- s.mgr.EnsureBrowser(context.Background(), "chan-serial", "") }()
+	<-entered
+	go func() { second <- s.mgr.EnsureBrowser(context.Background(), "chan-serial", "") }()
+	close(release)
+
+	require.NoError(s.T(), <-first)
+	require.NoError(s.T(), <-second)
+	s.api.AssertExpectations(s.T())
+}
+
+// TestChannelLockSameMutex pins the per-channel lock identity: repeated calls
+// for one channel return the same mutex; different channels get different ones.
+func (s *ManagerSuite) TestChannelLockSameMutex() {
+	a1 := s.mgr.channelLock("ch-a")
+	a2 := s.mgr.channelLock("ch-a")
+	b := s.mgr.channelLock("ch-b")
+	require.Same(s.T(), a1, a2)
+	require.NotSame(s.T(), a1, b)
+}

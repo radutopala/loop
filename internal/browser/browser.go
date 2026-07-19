@@ -34,6 +34,25 @@ type sessionManager struct {
 	mu       sync.Mutex
 	sessions map[string]*browserSession
 	timeNow  func() time.Time
+
+	// chanLocks holds one mutex per channel, serializing slow same-channel
+	// lifecycle work (container inspect/create, CDP reachability dials)
+	// without stalling other channels. The sessions map itself stays guarded
+	// by mu, whose critical sections must remain short and I/O-free.
+	chanLocks sync.Map // channelID → *sync.Mutex
+}
+
+// channelLock returns the per-channel mutex, creating it on first use.
+func (s *sessionManager) channelLock(channelID string) *sync.Mutex {
+	lock, _ := s.chanLocks.LoadOrStore(channelID, &sync.Mutex{})
+	return lock.(*sync.Mutex)
+}
+
+// storeSession publishes a fully-built session for the channel.
+func (s *sessionManager) storeSession(channelID string, sess *browserSession) {
+	s.mu.Lock()
+	s.sessions[channelID] = sess
+	s.mu.Unlock()
 }
 
 func newSessionManager() sessionManager {
