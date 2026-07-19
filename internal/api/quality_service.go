@@ -4,6 +4,13 @@ import (
 	"context"
 	"sync"
 	"time"
+
+	"github.com/radutopala/loop/internal/quality/engine"
+	"github.com/radutopala/loop/internal/quality/evolution"
+	"github.com/radutopala/loop/internal/quality/graph"
+	"github.com/radutopala/loop/internal/quality/metrics"
+	"github.com/radutopala/loop/internal/quality/rules"
+	"github.com/radutopala/loop/internal/quality/snapshot"
 )
 
 // qualityService owns the structural-quality-scan domain: the scanner,
@@ -35,4 +42,87 @@ type qualityService struct {
 // quality engine is enabled.
 func newQualityService(deps *serverDeps) *qualityService {
 	return &qualityService{deps: deps, cancellers: map[string]context.CancelFunc{}}
+}
+
+// QualityScanner is the slice of *engine.Engine the HTTP handler depends on.
+// Held as an interface so tests can inject a fake without spinning up a
+// real parser + cache + store stack.
+type QualityScanner interface {
+	Scan(ctx context.Context, channelID, branch, dirPath, parentDirPath string) (engine.ScanResult, error)
+}
+
+// QualityGraphProvider supplies the post-scan graph for rule evaluation.
+// Satisfied by *graph.Cache; carved out so tests can inject a stub that
+// returns a hand-built graph without going through a scan.
+type QualityGraphProvider interface {
+	Get(channelID string) (*graph.Graph, bool)
+}
+
+// QualitySnapshotReader is the read-side of snapshot.Store, narrowed for
+// the GET handler. The full Store also covers writes (engine path).
+type QualitySnapshotReader interface {
+	Get(ctx context.Context, channelID, branch string) (*snapshot.Snapshot, error)
+	GetLatest(ctx context.Context, channelID string) (*snapshot.Snapshot, error)
+}
+
+// SetQualityScanner wires the scanner used by the POST scan endpoint.
+// Nil disables the endpoint (501).
+func (s *Server) SetQualityScanner(sc QualityScanner) {
+	s.quality.scanner = sc
+}
+
+// SetQualityGraphProvider wires the graph cache used to evaluate rules
+// on the just-completed scan. Nil disables rule evaluation but the scan
+// endpoint stays alive (returns empty rule lists).
+func (s *Server) SetQualityGraphProvider(gp QualityGraphProvider) {
+	s.quality.graph = gp
+}
+
+// SetQualitySnapshotReader wires the snapshot lookup for the GET endpoint.
+// Nil disables the endpoint (501).
+func (s *Server) SetQualitySnapshotReader(r QualitySnapshotReader) {
+	s.quality.snapshots = r
+}
+
+// QualityRulesLoader resolves the rules.Config for a scan, given the
+// scan's dirPath and (for worktrees) the parent project's dirPath.
+// Returning nil means "use rules.DefaultConfig()" — same semantic the
+// previous static SetQualityRulesConfig(nil) carried.
+type QualityRulesLoader func(dirPath, parentDirPath string) *rules.Config
+
+// QualityMetricsLoader resolves the metrics.Config for a scan, given the
+// same (dirPath, parentDirPath) pair. Returning the zero Config means
+// "use metrics.DefaultConfig()" so the metric paths stay consistent
+// between the scanner and the post-scan diagnostics endpoints.
+type QualityMetricsLoader func(dirPath, parentDirPath string) metrics.Config
+
+// SetQualityRulesLoader wires the per-scan rules-config resolver. Nil
+// disables overrides — handlers fall back to rules.DefaultConfig() at
+// evaluation time. Replaces the static SetQualityRulesConfig so changes
+// to project-level rule overrides are picked up without restarting the
+// daemon (mirrors qualityConfigLoader for the engine config).
+func (s *Server) SetQualityRulesLoader(loader QualityRulesLoader) {
+	s.quality.rulesLoad = loader
+}
+
+// SetQualityMetricsLoader wires the per-scan metrics-config resolver
+// used by handlers that recompute the signal from the cached graph
+// (rules, whatif). Nil disables overrides — handlers fall back to
+// metrics.DefaultConfig() at evaluation time, matching the behaviour
+// before per-metric thresholds were configurable.
+func (s *Server) SetQualityMetricsLoader(loader QualityMetricsLoader) {
+	s.quality.metricsCfg = loader
+}
+
+// QualityHistoryReader is the slice of evolution.HistoryReader the HTTP
+// handler depends on. Held as an interface so tests can inject a fake
+// without requiring a real git repo on disk.
+type QualityHistoryReader interface {
+	Read(ctx context.Context, dirPath string, sinceMonths, maxCommits int) ([]evolution.CommitFiles, error)
+}
+
+// SetQualityHistoryReader wires the git-history reader for the evolution
+// and bug-factor endpoints. Nil disables those endpoints (501).
+func (s *Server) SetQualityHistoryReader(r QualityHistoryReader) {
+	s.quality.history = r
 }

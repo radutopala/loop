@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"net"
 	"net/http"
 	"sync"
@@ -31,4 +32,19 @@ type playgroundService struct {
 // store. The tunnel manager arrives later via Server.SetTunnelManager.
 func newPlaygroundService(deps *serverDeps) *playgroundService {
 	return &playgroundService{deps: deps, shares: newShareStore()}
+}
+
+// TunnelManager is the subset of tunnel.Manager the server needs, injectable
+// so tests don't spawn cloudflared.
+type TunnelManager interface {
+	Start(ctx context.Context, localPort int) (string, error)
+	Stop()
+	PublicURL() string
+	Running() bool
+}
+
+// SetTunnelManager wires the cloudflared tunnel manager used by the public
+// playground-share feature. Left nil in tests that don't exercise sharing.
+func (s *Server) SetTunnelManager(tm TunnelManager) {
+	s.playground.tunnel = tm
 }

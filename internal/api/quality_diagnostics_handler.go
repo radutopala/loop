@@ -28,19 +28,6 @@ import (
 	"github.com/radutopala/loop/internal/quality/whatif"
 )
 
-// QualityHistoryReader is the slice of evolution.HistoryReader the HTTP
-// handler depends on. Held as an interface so tests can inject a fake
-// without requiring a real git repo on disk.
-type QualityHistoryReader interface {
-	Read(ctx context.Context, dirPath string, sinceMonths, maxCommits int) ([]evolution.CommitFiles, error)
-}
-
-// SetQualityHistoryReader wires the git-history reader for the evolution
-// and bug-factor endpoints. Nil disables those endpoints (501).
-func (s *Server) SetQualityHistoryReader(r QualityHistoryReader) {
-	s.quality.history = r
-}
-
 // handleQualityScanCancel cancels an in-flight scan for the channel. If
 // no scan is running, returns 204 (idempotent). Otherwise calls the
 // stored CancelFunc and broadcasts quality.scan_cancelled.
