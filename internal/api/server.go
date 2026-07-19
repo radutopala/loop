@@ -362,6 +362,22 @@ func (s *Server) SetTunnelManager(tm TunnelManager) {
 // buildMux creates the HTTP mux with all API route registrations.
 func (s *Server) buildMux() *http.ServeMux {
 	mux := http.NewServeMux()
+	s.registerChannelRoutes(mux)
+	s.registerTaskRoutes(mux)
+	s.registerGitRoutes(mux)
+	s.registerReviewRoutes(mux)
+	s.registerFileRoutes(mux)
+	s.registerPlaygroundRoutes(mux)
+	s.registerAgentRoutes(mux)
+	s.registerWorkflowRoutes(mux)
+	s.registerQualityRoutes(mux)
+	s.registerTicketRoutes(mux)
+	s.registerSystemRoutes(mux)
+	return mux
+}
+
+// registerChannelRoutes registers the channel, message, thread, plan/ask, rename, and session routes.
+func (s *Server) registerChannelRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/channels", s.handleSearchChannels)
 	mux.HandleFunc("POST /api/channels", s.handleEnsureChannel)
 	mux.HandleFunc("POST /api/channels/create", s.handleCreateChannel)
@@ -376,6 +392,20 @@ func (s *Server) buildMux() *http.ServeMux {
 	mux.HandleFunc("POST /api/channels/{id}/ask/resolve", s.handleAskResolve)
 	mux.HandleFunc("GET /api/asks/pending", s.handleListPendingAsks)
 	mux.HandleFunc("GET /api/plans/pending", s.handleListPendingPlans)
+	mux.HandleFunc("GET /api/channels/{id}/sessions", s.handleListSessions)
+	mux.HandleFunc("GET /api/channels/{id}/messages", s.handleListMessages)
+	mux.HandleFunc("GET /api/channels/{id}/composer-history", s.handleComposerHistory)
+	mux.HandleFunc("GET /api/channels/{id}/queued", s.handleListQueuedMessages)
+	mux.HandleFunc("POST /api/channels/{id}/queued/reorder", s.handleReorderQueuedMessages)
+	mux.HandleFunc("GET /api/messages/search", s.handleSearchMessages)
+	mux.HandleFunc("POST /api/channels/{id}/rename", s.handleRenameChannel)
+	mux.HandleFunc("POST /api/worktrees/move", s.handleMoveWorktree)
+}
+
+// registerTaskRoutes registers the scheduled task, shortcut, and command routes.
+//
+//nolint:dupl // route registrars are intentionally parallel lists
+func (s *Server) registerTaskRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/tasks", s.handleCreateTask)
 	mux.HandleFunc("GET /api/tasks", s.handleListTasks)
 	mux.HandleFunc("GET /api/tasks/{id}", s.handleGetTask)
@@ -387,18 +417,40 @@ func (s *Server) buildMux() *http.ServeMux {
 	mux.HandleFunc("POST /api/shortcuts", s.handleModifyShortcut)
 	mux.HandleFunc("GET /api/bash-shortcuts", s.handleListBashShortcuts)
 	mux.HandleFunc("POST /api/bash-shortcuts", s.handleModifyBashShortcut)
-	mux.HandleFunc("GET /api/channels/{id}/sessions", s.handleListSessions)
-	mux.HandleFunc("GET /api/channels/{id}/agent-config", s.handleGetAgentConfig)
-	mux.HandleFunc("PATCH /api/channels/{id}/agent-config", s.handleSetAgentConfig)
-	mux.HandleFunc("GET /api/channels/{id}/audit", s.handleListAuditFiles)
-	mux.HandleFunc("DELETE /api/channels/{id}/audit/{date}", s.handleDeleteAuditFile)
-	mux.HandleFunc("GET /api/channels/{id}/messages", s.handleListMessages)
-	mux.HandleFunc("GET /api/channels/{id}/composer-history", s.handleComposerHistory)
-	mux.HandleFunc("GET /api/channels/{id}/queued", s.handleListQueuedMessages)
-	mux.HandleFunc("POST /api/channels/{id}/queued/reorder", s.handleReorderQueuedMessages)
-	mux.HandleFunc("GET /api/channels/{id}/timeline", s.handleTimeline)
-	mux.HandleFunc("GET /api/messages/search", s.handleSearchMessages)
 	mux.HandleFunc("POST /api/commands", s.handleCommand)
+}
+
+// registerGitRoutes registers the git, diff, and PR routes.
+func (s *Server) registerGitRoutes(mux *http.ServeMux) {
+	mux.HandleFunc("GET /api/channels/{id}/diff", s.handleGitDiff)
+	mux.HandleFunc("GET /api/channels/{id}/pr", s.handleChannelPR)
+	mux.HandleFunc("GET /api/channels/{id}/branches", s.handleListBranches)
+	mux.HandleFunc("GET /api/channels/{id}/commits", s.handleListCommits)
+	mux.HandleFunc("POST /api/channels/{id}/branches/switch", s.handleSwitchBranch)
+	mux.HandleFunc("POST /api/channels/{id}/branches/create", s.handleCreateBranch)
+	mux.HandleFunc("DELETE /api/channels/{id}/branches", s.handleDeleteBranch)
+	mux.HandleFunc("POST /api/worktrees", s.handleCreateWorktree)
+	mux.HandleFunc("POST /api/worktrees/import", s.handleImportWorktree)
+	mux.HandleFunc("DELETE /api/worktrees", s.handleRemoveWorktree)
+	mux.HandleFunc("POST /api/worktrees/lock", s.handleSetWorktreeLocked)
+}
+
+// registerReviewRoutes registers the PR-review session routes.
+func (s *Server) registerReviewRoutes(mux *http.ServeMux) {
+	mux.HandleFunc("GET /api/review/sessions", s.handleReviewSessions)
+	mux.HandleFunc("POST /api/channels/{id}/review/load", s.handleReviewLoad)
+	mux.HandleFunc("POST /api/channels/{id}/review/sync", s.handleReviewSync)
+	mux.HandleFunc("GET /api/channels/{id}/review/prs", s.handleReviewListPRs)
+	mux.HandleFunc("GET /api/channels/{id}/review", s.handleReviewGet)
+	mux.HandleFunc("DELETE /api/channels/{id}/review", s.handleReviewDelete)
+	mux.HandleFunc("POST /api/channels/{id}/review/run", s.handleReviewRun)
+	mux.HandleFunc("POST /api/channels/{id}/review/comments/{cid}/push", s.handleReviewPushComment)
+	mux.HandleFunc("DELETE /api/channels/{id}/review/comments/{cid}", s.handleReviewDeleteComment)
+	mux.HandleFunc("POST /api/channels/{id}/review/push-all", s.handleReviewPushAll)
+}
+
+// registerFileRoutes registers the file tree, paste-image, readme, and memory routes.
+func (s *Server) registerFileRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/memory/search", s.handleMemorySearch)
 	mux.HandleFunc("POST /api/memory/index", s.handleMemoryIndex)
 	mux.HandleFunc("GET /api/memory/files", s.handleListMemoryFiles)
@@ -415,37 +467,10 @@ func (s *Server) buildMux() *http.ServeMux {
 	mux.HandleFunc("POST /api/channels/{id}/files/exists", s.handleFilesExists)
 	mux.HandleFunc("POST /api/channels/{id}/dir", s.handleCreateDir)
 	mux.HandleFunc("POST /api/channels/{id}/paste-image", s.handlePasteImage)
-	mux.HandleFunc("GET /api/channels/{id}/diff", s.handleGitDiff)
-	mux.HandleFunc("GET /api/channels/{id}/pr", s.handleChannelPR)
-	mux.HandleFunc("GET /api/review/sessions", s.handleReviewSessions)
-	mux.HandleFunc("POST /api/channels/{id}/review/load", s.handleReviewLoad)
-	mux.HandleFunc("POST /api/channels/{id}/review/sync", s.handleReviewSync)
-	mux.HandleFunc("GET /api/channels/{id}/review/prs", s.handleReviewListPRs)
-	mux.HandleFunc("GET /api/channels/{id}/review", s.handleReviewGet)
-	mux.HandleFunc("DELETE /api/channels/{id}/review", s.handleReviewDelete)
-	mux.HandleFunc("POST /api/channels/{id}/review/run", s.handleReviewRun)
-	mux.HandleFunc("POST /api/channels/{id}/review/comments/{cid}/push", s.handleReviewPushComment)
-	mux.HandleFunc("DELETE /api/channels/{id}/review/comments/{cid}", s.handleReviewDeleteComment)
-	mux.HandleFunc("POST /api/channels/{id}/review/push-all", s.handleReviewPushAll)
-	mux.HandleFunc("GET /api/channels/{id}/branches", s.handleListBranches)
-	mux.HandleFunc("GET /api/channels/{id}/commits", s.handleListCommits)
-	mux.HandleFunc("POST /api/channels/{id}/branches/switch", s.handleSwitchBranch)
-	mux.HandleFunc("POST /api/channels/{id}/branches/create", s.handleCreateBranch)
-	mux.HandleFunc("DELETE /api/channels/{id}/branches", s.handleDeleteBranch)
-	mux.HandleFunc("GET /api/tickets", s.handleListTickets)
-	mux.HandleFunc("GET /api/tickets/{id}", s.handleGetTicket)
-	mux.HandleFunc("POST /api/tickets", s.handleCreateTicket)
-	mux.HandleFunc("PATCH /api/tickets/{id}", s.handleUpdateTicket)
-	mux.HandleFunc("DELETE /api/tickets/{id}", s.handleDeleteTicket)
-	mux.HandleFunc("POST /api/tickets/{id}/assign", s.handleAssignTicket)
-	mux.HandleFunc("POST /api/worktrees", s.handleCreateWorktree)
-	mux.HandleFunc("POST /api/worktrees/import", s.handleImportWorktree)
-	mux.HandleFunc("DELETE /api/worktrees", s.handleRemoveWorktree)
-	mux.HandleFunc("POST /api/worktrees/lock", s.handleSetWorktreeLocked)
-	mux.HandleFunc("POST /api/channels/{id}/rename", s.handleRenameChannel)
-	mux.HandleFunc("POST /api/worktrees/move", s.handleMoveWorktree)
-	mux.HandleFunc("POST /api/browser/action", s.handleBrowserAction)
-	mux.HandleFunc("POST /api/browser/mode", s.handleBrowserMode)
+}
+
+// registerPlaygroundRoutes registers the playground and public-share routes.
+func (s *Server) registerPlaygroundRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("PUT /api/playground", s.handlePlaygroundUpdate)
 	mux.HandleFunc("GET /api/playground", s.handlePlaygroundGet)
 	mux.HandleFunc("DELETE /api/playground", s.handlePlaygroundDelete)
@@ -461,6 +486,14 @@ func (s *Server) buildMux() *http.ServeMux {
 	mux.HandleFunc("PUT /api/playground/share", s.handlePlaygroundShare)
 	mux.HandleFunc("DELETE /api/playground/share", s.handlePlaygroundUnshare)
 	mux.HandleFunc("GET /api/playground/share", s.handlePlaygroundShareList)
+}
+
+// registerAgentRoutes registers the agent, agent-config, image, and container routes.
+//
+//nolint:dupl // route registrars are intentionally parallel lists
+func (s *Server) registerAgentRoutes(mux *http.ServeMux) {
+	mux.HandleFunc("GET /api/channels/{id}/agent-config", s.handleGetAgentConfig)
+	mux.HandleFunc("PATCH /api/channels/{id}/agent-config", s.handleSetAgentConfig)
 	mux.HandleFunc("POST /api/agents", s.handleRegisterAgent)
 	mux.HandleFunc("GET /api/agents", s.handleListAgents)
 	mux.HandleFunc("PATCH /api/agents/{id}", s.handleUpdateAgent)
@@ -470,12 +503,11 @@ func (s *Server) buildMux() *http.ServeMux {
 	mux.HandleFunc("GET /api/image/status", s.handleImageStatus)
 	mux.HandleFunc("POST /api/image/rebuild", s.handleImageRebuild)
 	mux.HandleFunc("DELETE /api/image", s.handleImageRemove)
-	mux.HandleFunc("GET /api/config/schema", s.handleConfigSchema)
-	mux.HandleFunc("GET /api/config", s.handleGetConfig)
-	mux.HandleFunc("PUT /api/config", s.handleSaveConfig)
-	mux.HandleFunc("GET /api/config/project", s.handleGetProjectConfig)
-	mux.HandleFunc("PUT /api/config/project", s.handleSaveProjectConfig)
 	mux.HandleFunc("GET /api/containers", s.handleListContainers)
+}
+
+// registerWorkflowRoutes registers the workflow definition and run routes.
+func (s *Server) registerWorkflowRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/workflows/runs", s.handleStartWorkflowRun)
 	mux.HandleFunc("GET /api/workflows/runs", s.handleListWorkflowRuns)
 	mux.HandleFunc("GET /api/workflows/runs/{id}", s.handleGetWorkflowRun)
@@ -483,12 +515,12 @@ func (s *Server) buildMux() *http.ServeMux {
 	mux.HandleFunc("DELETE /api/workflows/runs/{id}", s.handleDeleteWorkflowRun)
 	mux.HandleFunc("POST /api/workflows/runs/{id}/retry", s.handleRetryWorkflowRun)
 	mux.HandleFunc("POST /api/workflows/runs/{id}/resume", s.handleResumeWorkflowRun)
-	mux.HandleFunc("GET /api/gate/approvals", s.handleListGateApprovals)
-	mux.HandleFunc("POST /api/gate/approvals/{id}", s.handleResolveGateApproval)
-	mux.HandleFunc("POST /api/gate/container-approval", s.handleContainerApproval)
 	mux.HandleFunc("GET /api/workflows", s.handleListWorkflows)
 	mux.HandleFunc("POST /api/workflows", s.handleModifyWorkflow)
-	mux.HandleFunc("POST /api/builtins/restore", s.handleRestoreBuiltins)
+}
+
+// registerQualityRoutes registers the quality engine routes.
+func (s *Server) registerQualityRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/channels/{id}/quality/scan", s.handleQualityScan)
 	mux.HandleFunc("DELETE /api/channels/{id}/quality/scan", s.handleQualityScanCancel)
 	mux.HandleFunc("GET /api/channels/{id}/quality/snapshot", s.handleQualitySnapshot)
@@ -502,11 +534,38 @@ func (s *Server) buildMux() *http.ServeMux {
 	mux.HandleFunc("GET /api/channels/{id}/quality/bugfactor", s.handleQualityBugFactor)
 	mux.HandleFunc("GET /api/channels/{id}/quality/complexity", s.handleQualityComplexity)
 	mux.HandleFunc("GET /api/channels/{id}/quality/clones", s.handleQualityClones)
+}
+
+// registerTicketRoutes registers the tk ticket routes.
+func (s *Server) registerTicketRoutes(mux *http.ServeMux) {
+	mux.HandleFunc("GET /api/tickets", s.handleListTickets)
+	mux.HandleFunc("GET /api/tickets/{id}", s.handleGetTicket)
+	mux.HandleFunc("POST /api/tickets", s.handleCreateTicket)
+	mux.HandleFunc("PATCH /api/tickets/{id}", s.handleUpdateTicket)
+	mux.HandleFunc("DELETE /api/tickets/{id}", s.handleDeleteTicket)
+	mux.HandleFunc("POST /api/tickets/{id}/assign", s.handleAssignTicket)
+}
+
+// registerSystemRoutes registers the config, gate, audit, timeline, builtins, browser, terminal, and events routes.
+func (s *Server) registerSystemRoutes(mux *http.ServeMux) {
+	mux.HandleFunc("GET /api/channels/{id}/audit", s.handleListAuditFiles)
+	mux.HandleFunc("DELETE /api/channels/{id}/audit/{date}", s.handleDeleteAuditFile)
+	mux.HandleFunc("GET /api/channels/{id}/timeline", s.handleTimeline)
+	mux.HandleFunc("POST /api/browser/action", s.handleBrowserAction)
+	mux.HandleFunc("POST /api/browser/mode", s.handleBrowserMode)
+	mux.HandleFunc("GET /api/config/schema", s.handleConfigSchema)
+	mux.HandleFunc("GET /api/config", s.handleGetConfig)
+	mux.HandleFunc("PUT /api/config", s.handleSaveConfig)
+	mux.HandleFunc("GET /api/config/project", s.handleGetProjectConfig)
+	mux.HandleFunc("PUT /api/config/project", s.handleSaveProjectConfig)
+	mux.HandleFunc("GET /api/gate/approvals", s.handleListGateApprovals)
+	mux.HandleFunc("POST /api/gate/approvals/{id}", s.handleResolveGateApproval)
+	mux.HandleFunc("POST /api/gate/container-approval", s.handleContainerApproval)
+	mux.HandleFunc("POST /api/builtins/restore", s.handleRestoreBuiltins)
 	mux.HandleFunc("GET /api/health", handleHealth)
 	mux.HandleFunc("GET /api/ws/terminal", s.handleTerminalWS)
 	mux.HandleFunc("GET /api/ws/browser", s.handleBrowserWS)
 	mux.HandleFunc("GET /api/ws", s.handleEventsWS)
-	return mux
 }
 
 // Start starts the HTTP server on the given address.

@@ -131,6 +131,32 @@ func (s *Server) expandHomePath(path string) string {
 }
 
 // resolveRootDir returns the root directory for file operations, supporting
+
+// resolveRootParam applies the optional ?root=N workspace selector shared by
+// the git and diff endpoints: absent or 0 keeps dirPath (the channel's
+// primary dir); root>0 resolves the extra_dirs entry via resolveRootDir. On
+// a bad index or resolve failure it writes a 400 and returns ("", false).
+func (s *Server) resolveRootParam(w http.ResponseWriter, r *http.Request, channelID, dirPath string) (string, bool) {
+	rootStr := r.URL.Query().Get("root")
+	if rootStr == "" {
+		return dirPath, true
+	}
+	rootIdx, err := strconv.Atoi(rootStr)
+	if err != nil || rootIdx < 0 {
+		http.Error(w, "invalid root index", http.StatusBadRequest)
+		return "", false
+	}
+	if rootIdx == 0 {
+		return dirPath, true
+	}
+	resolved, err := s.resolveRootDir(r.Context(), channelID, r)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return "", false
+	}
+	return resolved, true
+}
+
 // multi-root workspaces via the "root" query parameter (0-indexed, default 0).
 func (s *Server) resolveRootDir(ctx context.Context, channelID string, r *http.Request) (string, error) {
 	rootIdx, _ := strconv.Atoi(r.URL.Query().Get("root")) // default 0

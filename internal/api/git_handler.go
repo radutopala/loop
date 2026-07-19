@@ -60,21 +60,11 @@ func (s *Server) handleListBranches(w http.ResponseWriter, r *http.Request) {
 	// (mirrors handleGitDiff / handleListCommits). The branches list is
 	// per-repo, so when the panel's root selector switches workspaces the
 	// dropdown should reflect the chosen repo's branches and worktrees.
-	if rootStr := r.URL.Query().Get("root"); rootStr != "" {
-		rootIdx, err := strconv.Atoi(rootStr)
-		if err != nil || rootIdx < 0 {
-			http.Error(w, "invalid root index", http.StatusBadRequest)
-			return
-		}
-		if rootIdx > 0 {
-			resolved, err := s.resolveRootDir(r.Context(), channelID, r)
-			if err != nil {
-				http.Error(w, err.Error(), http.StatusBadRequest)
-				return
-			}
-			dirPath = resolved
-		}
+	resolvedDir, ok := s.resolveRootParam(w, r, channelID, dirPath)
+	if !ok {
+		return
 	}
+	dirPath = resolvedDir
 
 	// List local branches.
 	branchCmd := exec.CommandContext(r.Context(), "git", "branch", "--format=%(refname:short)")
@@ -221,21 +211,11 @@ func (s *Server) handleListCommits(w http.ResponseWriter, r *http.Request) {
 	// ?root=N selects an extra_dirs entry instead of the primary dir_path.
 	// Mirrors handleGitDiff. root=0 (default) is the primary dir; root>0
 	// indexes into extra_dirs in order.
-	if rootStr := r.URL.Query().Get("root"); rootStr != "" {
-		rootIdx, err := strconv.Atoi(rootStr)
-		if err != nil || rootIdx < 0 {
-			http.Error(w, "invalid root index", http.StatusBadRequest)
-			return
-		}
-		if rootIdx > 0 {
-			resolved, err := s.resolveRootDir(r.Context(), channelID, r)
-			if err != nil {
-				http.Error(w, err.Error(), http.StatusBadRequest)
-				return
-			}
-			dirPath = resolved
-		}
+	resolvedDir, ok := s.resolveRootParam(w, r, channelID, dirPath)
+	if !ok {
+		return
 	}
+	dirPath = resolvedDir
 
 	limit := 50
 	if l := r.URL.Query().Get("limit"); l != "" {
