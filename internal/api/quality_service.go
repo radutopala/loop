@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"time"
 
@@ -82,4 +83,196 @@ type QualityMetricsLoader func(dirPath, parentDirPath string) metrics.Config
 // without requiring a real git repo on disk.
 type QualityHistoryReader interface {
 	Read(ctx context.Context, dirPath string, sinceMonths, maxCommits int) ([]evolution.CommitFiles, error)
+}
+
+// resolveMetricsConfig returns the effective metrics.Config for a
+// recompute on the cached graph, invoking the loader (if wired) and
+// falling back to metrics.DefaultConfig() when the loader is unset or
+// returns the zero value.
+func (s *qualityService) resolveMetricsConfig(dirPath, parentDirPath string) metrics.Config {
+	if s.metricsCfg == nil {
+		return metrics.DefaultConfig()
+	}
+	cfg := s.metricsCfg(dirPath, parentDirPath)
+	if cfg == (metrics.Config{}) {
+		return metrics.DefaultConfig()
+	}
+	return cfg
+}
+
+func (s *qualityService) emitProgress(channelID string, done, total int) {
+	hub := s.deps.eventsHub
+	if hub == nil {
+		return
+	}
+	if !s.shouldEmitProgress(channelID, done, total) {
+		return
+	}
+	hub.BroadcastQualityEvent(EventQualityScanProgress, channelID, map[string]int{
+		"done":  done,
+		"total": total,
+	})
+}
+
+func (s *qualityService) shouldEmitProgress(channelID string, done, total int) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.progress == nil {
+		s.progress = make(map[string]time.Time)
+	}
+	now := time.Now()
+	// First (done == 0) and terminal (done == total) ticks always pass — the
+	// panel needs them to drive the spinner state machine.
+	if done == 0 || done >= total {
+		s.progress[channelID] = now
+		return true
+	}
+	if last, ok := s.progress[channelID]; ok && now.Sub(last) < progressThrottle {
+		return false
+	}
+	s.progress[channelID] = now
+	return true
+}
+
+// runQualityScanAsync runs the engine scan, broadcasts the result, and
+// drops the in-flight registration. The scan ctx is detached from the
+// HTTP request so this goroutine owns its full lifecycle.
+func (s *qualityService) runQualityScanAsync(ctx context.Context, channelID, dirPath, parentDirPath, branch string) {
+	defer s.unregisterQualityScan(channelID)
+
+	res, err := s.scanner.Scan(ctx, channelID, branch, dirPath, parentDirPath)
+	if err != nil {
+		s.broadcastQualityError(channelID, dirPath, branch, err)
+		return
+	}
+	if res.InProgress {
+		// Another scan was already running for this channel — the engine
+		// coalesced. We've already cleaned up our cancel registration via
+		// the defer; nothing more to broadcast (the in-flight scan owns
+		// the events for this channel).
+		return
+	}
+
+	report := buildQualityReport(dirPath, branch, res, s.collectRules(channelID, dirPath, parentDirPath, res.Signal))
+
+	if hub := s.deps.eventsHub; hub != nil {
+		hub.BroadcastQualityEvent(EventQualityScanned, channelID, report)
+		if len(report.Rules.Failed) > 0 {
+			hub.BroadcastQualityEvent(EventQualityRulesViolated, channelID, report.Rules)
+		}
+		hub.BroadcastQualityEvent(EventQualitySessionEnded, channelID, map[string]any{
+			"branch": branch,
+			"ok":     true,
+		})
+	}
+}
+
+// broadcastQualityError emits a session_ended event carrying the error
+// message and (when applicable) a structured RepoTooLarge detail. No
+// quality.scanned event fires on error — the panel keeps the previous
+// snapshot rendered.
+func (s *qualityService) broadcastQualityError(channelID, dirPath, branch string, err error) {
+	hub := s.deps.eventsHub
+	if hub == nil {
+		return
+	}
+	payload := map[string]any{
+		"branch":   branch,
+		"dir_path": dirPath,
+		"ok":       false,
+		"error":    err.Error(),
+	}
+	var tooLarge *graph.RepoTooLargeError
+	if errors.As(err, &tooLarge) {
+		payload["repo_too_large"] = map[string]int{
+			"file_count": tooLarge.FileCount,
+			"limit":      tooLarge.Limit,
+		}
+	}
+	hub.BroadcastQualityEvent(EventQualitySessionEnded, channelID, payload)
+}
+
+// collectRules runs the rules engine against the cached graph for
+// channelID. A missing graph (no scan ever completed, or the graph
+// provider is unset) yields an empty result list — rules evaluate
+// vacuously and the panel renders no rule cards. The rules config is
+// resolved via the loader so per-project overrides (rules in the
+// project's .loop/config.json) reach this path on every scan.
+func (s *qualityService) collectRules(channelID, dirPath, parentDirPath string, sig metrics.Signal) []rules.Result {
+	if s.graph == nil {
+		return nil
+	}
+	g, _ := s.graph.Get(channelID)
+	if g == nil {
+		return nil
+	}
+	return rules.Run(s.resolveRulesConfig(dirPath, parentDirPath), g, sig)
+}
+
+// resolveRulesConfig returns the effective rules.Config for a scan,
+// invoking the loader (if wired) and falling back to
+// rules.DefaultConfig() when the loader is unset or returns nil.
+func (s *qualityService) resolveRulesConfig(dirPath, parentDirPath string) rules.Config {
+	if s.rulesLoad == nil {
+		return rules.DefaultConfig()
+	}
+	if cfg := s.rulesLoad(dirPath, parentDirPath); cfg != nil {
+		return *cfg
+	}
+	return rules.DefaultConfig()
+}
+
+// registerQualityScan claims the in-flight slot for channelID. Returns
+// false if a scan is already registered (the caller treats that as
+// "in_progress" without spawning a new goroutine).
+func (s *qualityService) registerQualityScan(channelID string, cancel context.CancelFunc) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.cancellers[channelID]; ok {
+		return false
+	}
+	s.cancellers[channelID] = cancel
+	return true
+}
+
+// unregisterQualityScan releases the in-flight slot. Idempotent so
+// double-defers from edge cases don't panic.
+func (s *qualityService) unregisterQualityScan(channelID string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.cancellers, channelID)
+	delete(s.progress, channelID)
+}
+
+// loadSnapshot resolves the snapshot for (channel, branch), falling
+// back to the latest snapshot on any branch when the requested branch
+// has no row. Wraps the dual lookup the panel needs.
+func (s *qualityService) loadSnapshot(ctx context.Context, channelID, branch string) (*snapshot.Snapshot, error) {
+	if branch == "" {
+		branch = "main"
+	}
+	snap, err := s.snapshots.Get(ctx, channelID, branch)
+	if errors.Is(err, snapshot.ErrNotFound) {
+		snap, err = s.snapshots.GetLatest(ctx, channelID)
+	}
+	return snap, err
+}
+
+// resolveMetricsConfigForChannel returns the effective metrics.Config
+// for the channel's recompute path. Skips the channel-store lookup when
+// no loader is configured — handlers that don't need overrides shouldn't
+// pay for a GetChannel call (and tests shouldn't need to register the
+// mock).
+func (s *qualityService) resolveMetricsConfigForChannel(ctx context.Context, channelID string) metrics.Config {
+	if s.metricsCfg == nil {
+		return metrics.DefaultConfig()
+	}
+	var dir, parent string
+	if s.deps.store != nil {
+		if d, err := s.deps.workspace.resolveDirPath(ctx, "", channelID); err == nil {
+			dir = d
+			parent = s.deps.workspace.resolveParentDirPath(ctx, channelID)
+		}
+	}
+	return s.resolveMetricsConfig(dir, parent)
 }

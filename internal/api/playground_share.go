@@ -9,13 +9,10 @@
 package api
 
 import (
-	"context"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
-	"fmt"
-	"net"
 	"net/http"
 	"sync"
 )
@@ -121,16 +118,6 @@ func newShareToken(name, scope string) string {
 	return hex.EncodeToString(sum[:])[:32]
 }
 
-// playgroundShareEnabled reports whether the public-share feature is turned on
-// in config (default off).
-func (s *playgroundService) playgroundShareEnabled() bool {
-	cfg := s.deps.configs.merged("", "")
-	if cfg == nil {
-		return false
-	}
-	return cfg.PlaygroundShare.Enabled
-}
-
 // handlePlaygroundShare handles PUT /api/playground/share — shares a playground
 // publicly and returns its tunnel URL. Body/query: name, scope, channel_id.
 func (s *playgroundService) handlePlaygroundShare(w http.ResponseWriter, r *http.Request) {
@@ -228,110 +215,6 @@ func (s *playgroundService) handlePlaygroundShareStatus(w http.ResponseWriter, r
 	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]any{"shared": url != "", "url": url}) //nolint:errcheck
-}
-
-// shareURL builds the public URL for a token, or "" if the tunnel isn't up.
-func (s *playgroundService) shareURL(token string) string {
-	if s.tunnel == nil {
-		return ""
-	}
-	base := s.tunnel.PublicURL()
-	if base == "" {
-		return ""
-	}
-	return base + "/p/" + token
-}
-
-// broadcastShareUpdate notifies the panel that a playground's share state
-// changed (url empty means unshared).
-func (s *playgroundService) broadcastShareUpdate(name, scope, channelID, url string) {
-	if s.deps.eventsHub == nil {
-		return
-	}
-	s.deps.eventsHub.Broadcast(Event{
-		Type:   EventPlaygroundUpdate,
-		Global: true,
-		Data: map[string]string{
-			"kind":       "share",
-			"name":       name,
-			"scope":      scope,
-			"channel_id": channelID,
-			"url":        url,
-		},
-	})
-}
-
-// ensureShareInfra lazily starts the ephemeral playground listener and the
-// cloudflared tunnel, returning the public tunnel URL. Idempotent.
-func (s *playgroundService) ensureShareInfra(ctx context.Context) (string, error) {
-	s.shareMu.Lock()
-	defer s.shareMu.Unlock()
-
-	if s.pgShareListener == nil {
-		listen := s.listenTCP
-		if listen == nil {
-			listen = func(addr string) (net.Listener, error) { return net.Listen("tcp", addr) }
-		}
-		ln, err := listen("127.0.0.1:0")
-		if err != nil {
-			return "", fmt.Errorf("starting playground listener: %w", err)
-		}
-		s.pgShareListener = ln
-		s.pgShareServer = &http.Server{Handler: s.buildShareMux()}
-		go s.pgShareServer.Serve(ln) //nolint:errcheck
-	}
-	if s.tunnel == nil {
-		return "", fmt.Errorf("tunnel manager not configured")
-	}
-	port := s.pgShareListener.Addr().(*net.TCPAddr).Port
-	url, err := s.tunnel.Start(ctx, port)
-	if err != nil {
-		return "", err
-	}
-	return url, nil
-}
-
-// maybeStopShareInfra tears down the tunnel and ephemeral listener once no
-// shares remain.
-func (s *playgroundService) maybeStopShareInfra() {
-	if s.shares.count() > 0 {
-		return
-	}
-	s.shareMu.Lock()
-	defer s.shareMu.Unlock()
-	if s.tunnel != nil {
-		s.tunnel.Stop()
-	}
-	if s.pgShareServer != nil {
-		_ = s.pgShareServer.Close()
-		s.pgShareServer = nil
-		s.pgShareListener = nil
-	}
-}
-
-// stopShareInfra unconditionally tears down the tunnel and ephemeral listener,
-// used on daemon shutdown regardless of remaining share count.
-func (s *playgroundService) stopShareInfra() {
-	s.shareMu.Lock()
-	defer s.shareMu.Unlock()
-	if s.tunnel != nil {
-		s.tunnel.Stop()
-	}
-	if s.pgShareServer != nil {
-		_ = s.pgShareServer.Close()
-		s.pgShareServer = nil
-		s.pgShareListener = nil
-	}
-}
-
-// buildShareMux builds the ephemeral listener's handler. It registers ONLY the
-// public /p/{token} routes — no other endpoint of the main API is reachable
-// through the tunnel.
-func (s *playgroundService) buildShareMux() http.Handler {
-	mux := http.NewServeMux()
-	mux.HandleFunc("GET /p/{token}", s.handleSharedPlaygroundServe)
-	mux.HandleFunc("GET /p/{token}/{path...}", s.handleSharedPlaygroundServeFile)
-	return noStore(mux)
 }
 
 // noStore wraps a handler to set Cache-Control: no-store, so revoked shares
