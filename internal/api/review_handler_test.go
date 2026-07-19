@@ -414,8 +414,8 @@ func (s *ReviewHandlerSuite) TestLoadReviewStoreNotConfigured() {
 	// Wire only client (and a worktree mock); leave store nil so the
 	// pointer-nil branch fires.
 	srv := newServerForReviewTests(s.T())
-	srv.reviewClient = s.gh
-	srv.reviewWorktree = s.wt
+	srv.review.client = s.gh
+	srv.review.worktree = s.wt
 	// store stays nil
 	mux := srv.buildMux()
 	w := httptest.NewRecorder()
@@ -425,8 +425,8 @@ func (s *ReviewHandlerSuite) TestLoadReviewStoreNotConfigured() {
 
 func (s *ReviewHandlerSuite) TestLoadReviewWorktreeNotConfigured() {
 	srv := newServerForReviewTests(s.T())
-	srv.reviewClient = s.gh
-	srv.reviewStore = review.NewStore()
+	srv.review.client = s.gh
+	srv.review.sessions = review.NewStore()
 	// worktree stays nil
 	mux := srv.buildMux()
 	w := httptest.NewRecorder()
@@ -440,10 +440,10 @@ func (s *ReviewHandlerSuite) TestLoadRefusedWhileRunActive() {
 	// Reject with 409 so the user is forced to wait or close the session.
 	s.store.On("GetChannel", mock.Anything, "ch1").Return(&db.Channel{ChannelID: "ch1", DirPath: "/repo"}, nil)
 	_, cancelRun := context.WithCancel(context.Background())
-	require.True(s.T(), s.srv.registerReviewRun("ch1", cancelRun))
+	require.True(s.T(), s.srv.review.registerReviewRun("ch1", cancelRun))
 	s.T().Cleanup(func() {
 		cancelRun()
-		s.srv.unregisterReviewRun("ch1")
+		s.srv.review.unregisterReviewRun("ch1")
 	})
 
 	w := s.postJSON("/api/channels/ch1/review/load", map[string]any{"pr_number": 7})
@@ -549,8 +549,8 @@ func (s *ReviewHandlerSuite) TestSyncReviewClientNotConfigured() {
 
 func (s *ReviewHandlerSuite) TestSyncReviewStoreNotConfigured() {
 	srv := newServerForReviewTests(s.T())
-	srv.reviewClient = s.gh
-	srv.reviewWorktree = s.wt
+	srv.review.client = s.gh
+	srv.review.worktree = s.wt
 	mux := srv.buildMux()
 	w := httptest.NewRecorder()
 	mux.ServeHTTP(w, httptest.NewRequest("POST", "/api/channels/ch1/review/sync", nil))
@@ -559,8 +559,8 @@ func (s *ReviewHandlerSuite) TestSyncReviewStoreNotConfigured() {
 
 func (s *ReviewHandlerSuite) TestSyncReviewWorktreeNotConfigured() {
 	srv := newServerForReviewTests(s.T())
-	srv.reviewClient = s.gh
-	srv.reviewStore = review.NewStore()
+	srv.review.client = s.gh
+	srv.review.sessions = review.NewStore()
 	mux := srv.buildMux()
 	w := httptest.NewRecorder()
 	mux.ServeHTTP(w, httptest.NewRequest("POST", "/api/channels/ch1/review/sync", nil))
@@ -991,7 +991,7 @@ func (s *ReviewHandlerSuite) TestDeleteReviewStoreNotConfigured() {
 
 func (s *ReviewHandlerSuite) TestDeleteWorktreeNotConfigured() {
 	srv := newServerForReviewTests(s.T())
-	srv.reviewStore = review.NewStore()
+	srv.review.sessions = review.NewStore()
 	// reviewWorktree stays nil
 	mux := srv.buildMux()
 	w := httptest.NewRecorder()
@@ -1010,7 +1010,7 @@ func (s *ReviewHandlerSuite) TestPushCommentStoreNotConfigured() {
 
 func (s *ReviewHandlerSuite) TestPushCommentReviewStoreNotConfigured() {
 	srv := newServerForReviewTests(s.T())
-	srv.reviewClient = s.gh
+	srv.review.client = s.gh
 	// reviewStore stays nil
 	mux := srv.buildMux()
 	w := httptest.NewRecorder()
@@ -1029,7 +1029,7 @@ func (s *ReviewHandlerSuite) TestPushAllStoreNotConfigured() {
 
 func (s *ReviewHandlerSuite) TestPushAllReviewStoreNotConfigured() {
 	srv := newServerForReviewTests(s.T())
-	srv.reviewClient = s.gh
+	srv.review.client = s.gh
 	// reviewStore stays nil
 	mux := srv.buildMux()
 	w := httptest.NewRecorder()
@@ -1184,9 +1184,9 @@ func (s *ReviewHandlerSuite) TestDeleteCommentReviewClientNotConfigured() {
 	// reviewClient missing — handler should refuse rather than silently
 	// drop only the local copy.
 	srv := newServerForReviewTests(s.T())
-	srv.reviewStore = review.NewStore()
-	srv.reviewStore.Put("ch1", &review.Session{PR: &githubapi.PRInfo{Number: 7}})
-	srv.reviewStore.AddComment("ch1", &review.Comment{ID: "a", GitHubID: 42})
+	srv.review.sessions = review.NewStore()
+	srv.review.sessions.Put("ch1", &review.Session{PR: &githubapi.PRInfo{Number: 7}})
+	srv.review.sessions.AddComment("ch1", &review.Comment{ID: "a", GitHubID: 42})
 	mux := srv.buildMux()
 	w := httptest.NewRecorder()
 	mux.ServeHTTP(w, httptest.NewRequest("DELETE", "/api/channels/ch1/review/comments/a", nil))
@@ -1630,7 +1630,7 @@ func (s *ReviewHandlerSuite) TestRunCommentDispatchSkippedWhenSessionDropped() {
 func (s *ReviewHandlerSuite) TestBroadcastReviewStatusNoHubIsSafe() {
 	s.wireReadySession()
 	require.Nil(s.T(), s.srv.eventsHub)
-	s.srv.broadcastReviewStatus("ch1", review.StatusReady, "")
+	s.srv.review.broadcastReviewStatus("ch1", review.StatusReady, "")
 }
 
 // When the agent emits a comment whose path is in the diff but whose
@@ -1952,7 +1952,7 @@ func (s *ReviewHandlerSuite) TestRunRefreshFailureReturnsError() {
 	// Agent must not have been called.
 	require.Equal(s.T(), 0, runner.calls)
 	// In-flight slot must be released so a retry isn't shut out.
-	require.False(s.T(), s.srv.isReviewRunActive("ch1"))
+	require.False(s.T(), s.srv.review.isReviewRunActive("ch1"))
 }
 
 // maybeRediffForComment is a guarded best-effort helper. Each guard
@@ -1967,17 +1967,17 @@ func (s *ReviewHandlerSuite) TestMaybeRediffGuards() {
 		srv := newServerForReviewTests(s.T())
 		srv.logger = logger
 		// reviewWorktree intentionally left nil — call is a no-op.
-		srv.maybeRediffForComment("ch1", "/wt", "/repo", c)
+		srv.review.maybeRediffForComment("ch1", "/wt", "/repo", c)
 	})
 
 	s.Run("no session", func() {
 		// reviewStore is fresh; Get returns nil.
-		s.srv.maybeRediffForComment("ch1", "/wt", "/repo", c)
+		s.srv.review.maybeRediffForComment("ch1", "/wt", "/repo", c)
 	})
 
 	s.Run("session missing base ref", func() {
 		s.rs.Put("ch1", &review.Session{PR: &githubapi.PRInfo{Number: 7}})
-		s.srv.maybeRediffForComment("ch1", "/wt", "/repo", c)
+		s.srv.review.maybeRediffForComment("ch1", "/wt", "/repo", c)
 		s.rs.Delete("ch1")
 	})
 
@@ -1994,7 +1994,7 @@ func (s *ReviewHandlerSuite) TestMaybeRediffGuards() {
 		wt.On("Diff", mock.Anything, "/repo", "/wt", "main", mock.Anything).Return([]byte(nil), errors.New("boom"))
 		s.srv.SetReviewService(s.gh, s.rs, wt)
 		s.srv.logger = logger
-		s.srv.maybeRediffForComment("ch1", "/wt", "/repo", c)
+		s.srv.review.maybeRediffForComment("ch1", "/wt", "/repo", c)
 		require.Equal(s.T(), raw, s.rs.Get("ch1").RawDiff)
 		wt.AssertExpectations(s.T())
 		s.rs.Delete("ch1")
@@ -2014,7 +2014,7 @@ func (s *ReviewHandlerSuite) TestMaybeRediffGuards() {
 		var events []Event
 		hub.captureHook = func(e Event) { events = append(events, e) }
 		s.srv.SetEventsHub(hub)
-		s.srv.maybeRediffForComment("ch1", "/wt", "/repo", c)
+		s.srv.review.maybeRediffForComment("ch1", "/wt", "/repo", c)
 		require.Empty(s.T(), events)
 		s.rs.Delete("ch1")
 	})
@@ -2202,13 +2202,13 @@ func (s *ReviewHandlerSuite) TestRunReviewAsyncCancelledSilently() {
 	// Cancel the in-flight run directly (mirrors what handleReviewDelete
 	// would do). runReviewAsync should observe context.Canceled and return
 	// without flipping status to error.
-	s.srv.cancelReviewRun("ch1")
+	s.srv.review.cancelReviewRun("ch1")
 	<-runner.done
 
 	// Give the goroutine a beat to finish unregistering — then assert no
 	// status flip happened. Status stays Reviewing (the state set by
 	// handleReviewRun before kicking off the goroutine).
-	s.waitFor(func() bool { return !s.srv.isReviewRunActive("ch1") })
+	s.waitFor(func() bool { return !s.srv.review.isReviewRunActive("ch1") })
 	sess := s.rs.Get("ch1")
 	require.Equal(s.T(), review.StatusReviewing, sess.Status)
 	require.Empty(s.T(), sess.Error)
@@ -2219,15 +2219,15 @@ func (s *ReviewHandlerSuite) TestRunReviewAsyncCancelledSilently() {
 // `ok=false`/`cancel==nil` skip in cancelReviewRun.
 func (s *ReviewHandlerSuite) TestCancelReviewRunUnknownChannelNoOp() {
 	// reviewActive is empty.
-	s.srv.cancelReviewRun("never-registered")
+	s.srv.review.cancelReviewRun("never-registered")
 	// Also exercise the nil-cancel guard by inserting a nil entry directly.
-	s.srv.reviewMu.Lock()
-	if s.srv.reviewActive == nil {
-		s.srv.reviewActive = make(map[string]context.CancelFunc)
+	s.srv.review.mu.Lock()
+	if s.srv.review.active == nil {
+		s.srv.review.active = make(map[string]context.CancelFunc)
 	}
-	s.srv.reviewActive["nil-cancel"] = nil
-	s.srv.reviewMu.Unlock()
-	s.srv.cancelReviewRun("nil-cancel")
+	s.srv.review.active["nil-cancel"] = nil
+	s.srv.review.mu.Unlock()
+	s.srv.review.cancelReviewRun("nil-cancel")
 	// No panic, no observable side effect — just exercise the branches.
 }
 
@@ -2237,23 +2237,23 @@ func (s *ReviewHandlerSuite) TestCancelReviewRunUnknownChannelNoOp() {
 func (s *ReviewHandlerSuite) TestCancelAllReviewRunsFiresEveryCancel() {
 	ctxA, cancelA := context.WithCancel(context.Background())
 	ctxB, cancelB := context.WithCancel(context.Background())
-	require.True(s.T(), s.srv.registerReviewRun("a", cancelA))
-	require.True(s.T(), s.srv.registerReviewRun("b", cancelB))
+	require.True(s.T(), s.srv.review.registerReviewRun("a", cancelA))
+	require.True(s.T(), s.srv.review.registerReviewRun("b", cancelB))
 	// Also a nil-cancel entry to exercise the `c != nil` guard inside the
 	// loop. registerReviewRun rejects nil callers in practice, but the
 	// guard exists as a defensive check on the map slot.
-	s.srv.reviewMu.Lock()
-	s.srv.reviewActive["nil"] = nil
-	s.srv.reviewMu.Unlock()
+	s.srv.review.mu.Lock()
+	s.srv.review.active["nil"] = nil
+	s.srv.review.mu.Unlock()
 
-	s.srv.cancelAllReviewRuns()
+	s.srv.review.cancelAllReviewRuns()
 
 	require.ErrorIs(s.T(), ctxA.Err(), context.Canceled)
 	require.ErrorIs(s.T(), ctxB.Err(), context.Canceled)
 
 	// Cleanup map state so subsequent tests start clean (SetupTest rebuilds
 	// the server, so this is belt-and-suspenders).
-	s.srv.unregisterReviewRun("a")
-	s.srv.unregisterReviewRun("b")
-	s.srv.unregisterReviewRun("nil")
+	s.srv.review.unregisterReviewRun("a")
+	s.srv.review.unregisterReviewRun("b")
+	s.srv.review.unregisterReviewRun("nil")
 }

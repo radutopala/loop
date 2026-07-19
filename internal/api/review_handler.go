@@ -34,9 +34,9 @@ type GitHubReview interface {
 // endpoints. All three are required; passing nil for any of them leaves
 // the routes returning 501 (not configured).
 func (s *Server) SetReviewService(client GitHubReview, store *review.Store, wt review.PR) {
-	s.reviewClient = client
-	s.reviewStore = store
-	s.reviewWorktree = wt
+	s.review.client = client
+	s.review.sessions = store
+	s.review.worktree = wt
 }
 
 // requireReviewEnabled writes a 403 and returns false when review.enabled
@@ -57,8 +57,8 @@ func (s *Server) SetReviewService(client GitHubReview, store *review.Store, wt r
 // NOT call this — once a session exists in memory the FE may legitimately
 // inspect or tear it down. Disabling the feature flag mid-session blocks
 // new loads / runs but doesn't strand an existing session.
-func (s *Server) requireReviewEnabled(w http.ResponseWriter, dirPath, parentDirPath string) bool {
-	if !s.resolveReviewEnabled(dirPath, parentDirPath) {
+func (s *reviewService) requireReviewEnabled(w http.ResponseWriter, dirPath, parentDirPath string) bool {
+	if !s.srv.resolveReviewEnabled(dirPath, parentDirPath) {
 		http.Error(w, "review panel disabled for this project", http.StatusForbidden)
 		return false
 	}
@@ -85,9 +85,9 @@ type ReviewRunner interface {
 // any defaulting). All three are required: nil/"" leaves
 // POST .../review/run returning 501.
 func (s *Server) SetReviewAgent(runner ReviewRunner, systemPrompt, userPrompt string) {
-	s.reviewRunner = runner
-	s.reviewSystemPrompt = systemPrompt
-	s.reviewPrompt = userPrompt
+	s.review.runner = runner
+	s.review.systemPrompt = systemPrompt
+	s.review.userPrompt = userPrompt
 }
 
 // SetReviewRunTimeout caps the runReviewAsync goroutine. A value of 0
@@ -97,7 +97,7 @@ func (s *Server) SetReviewAgent(runner ReviewRunner, systemPrompt, userPrompt st
 // daemon flips the session to status=error first and the CLI exits with
 // a meaningful message instead of its generic "timed out" wrapper.
 func (s *Server) SetReviewRunTimeout(d time.Duration) {
-	s.reviewRunTimeout = d
+	s.review.runTimeout = d
 }
 
 // reviewLoadRequest carries the PR number to load. The FE also accepts
@@ -116,18 +116,18 @@ type reviewSessionResponse struct {
 	Session *review.Session `json:"session,omitempty"`
 }
 
-func (s *Server) handleReviewLoad(w http.ResponseWriter, r *http.Request) {
-	if !requireConfigured(w, s.store, "channel listing not configured") {
+func (s *reviewService) handleReviewLoad(w http.ResponseWriter, r *http.Request) {
+	if !requireConfigured(w, s.srv.store, "channel listing not configured") {
 		return
 	}
-	if !requireConfigured(w, s.reviewClient, "review service not configured") {
+	if !requireConfigured(w, s.client, "review service not configured") {
 		return
 	}
-	if s.reviewStore == nil {
+	if s.sessions == nil {
 		http.Error(w, "review service not configured", http.StatusNotImplemented)
 		return
 	}
-	if !requireConfigured(w, s.reviewWorktree, "review service not configured") {
+	if !requireConfigured(w, s.worktree, "review service not configured") {
 		return
 	}
 
@@ -141,7 +141,7 @@ func (s *Server) handleReviewLoad(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ch, err := s.store.GetChannel(r.Context(), channelID)
+	ch, err := s.srv.store.GetChannel(r.Context(), channelID)
 	if err != nil {
 		http.Error(w, "failed to look up channel", http.StatusInternalServerError)
 		return
@@ -151,19 +151,19 @@ func (s *Server) handleReviewLoad(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	dirPath := ch.DirPath
-	if dirPath == "" && s.loopDir != "" {
-		dirPath = filepath.Join(s.loopDir, ch.ChannelID, "work")
+	if dirPath == "" && s.srv.loopDir != "" {
+		dirPath = filepath.Join(s.srv.loopDir, ch.ChannelID, "work")
 	}
 	if dirPath == "" {
 		http.Error(w, "channel has no dir_path", http.StatusBadRequest)
 		return
 	}
 
-	parentDirPath := s.resolveParentDirPath(r.Context(), channelID)
+	parentDirPath := s.srv.resolveParentDirPath(r.Context(), channelID)
 	if !s.requireReviewEnabled(w, dirPath, parentDirPath) {
 		return
 	}
-	ghUser := s.resolveGHUser(dirPath, parentDirPath)
+	ghUser := s.srv.resolveGHUser(dirPath, parentDirPath)
 
 	// Refuse to Load over an in-flight run. The async run goroutine would
 	// otherwise stomp the new StatusLoading session on completion, and
@@ -178,41 +178,41 @@ func (s *Server) handleReviewLoad(w http.ResponseWriter, r *http.Request) {
 	// dangling `.worktrees/pr-N` entry for every PR the user loaded but
 	// never explicitly closed. Best-effort: a remove failure is logged
 	// but does not block the new Load.
-	if prev := s.reviewStore.Get(channelID); prev != nil && prev.WorktreePath != "" {
-		if err := s.reviewWorktree.Remove(r.Context(), dirPath, prev.WorktreePath); err != nil {
-			s.logger.Warn("review worktree remove failed on load overwrite",
+	if prev := s.sessions.Get(channelID); prev != nil && prev.WorktreePath != "" {
+		if err := s.worktree.Remove(r.Context(), dirPath, prev.WorktreePath); err != nil {
+			s.srv.logger.Warn("review worktree remove failed on load overwrite",
 				"channel_id", channelID, "path", prev.WorktreePath, "err", err)
 		}
 	}
 
 	// Mark loading early so the GET endpoint can show a spinner while the
 	// gh + git work runs.
-	s.reviewStore.Put(channelID, &review.Session{Status: review.StatusLoading})
+	s.sessions.Put(channelID, &review.Session{Status: review.StatusLoading})
 
-	pr, err := s.reviewClient.FetchPRByNumber(r.Context(), dirPath, ghUser, req.PRNumber)
+	pr, err := s.client.FetchPRByNumber(r.Context(), dirPath, ghUser, req.PRNumber)
 	if err != nil {
-		s.reviewStore.UpdateStatus(channelID, review.StatusError, errorMessage(err))
+		s.sessions.UpdateStatus(channelID, review.StatusError, errorMessage(err))
 		respondReviewError(w, err)
 		return
 	}
 	if pr == nil {
-		s.reviewStore.UpdateStatus(channelID, review.StatusError, "PR not found")
+		s.sessions.UpdateStatus(channelID, review.StatusError, "PR not found")
 		http.Error(w, "PR not found", http.StatusNotFound)
 		return
 	}
 
-	headSHA, err := s.reviewClient.FetchPRHeadSHA(r.Context(), dirPath, ghUser, req.PRNumber)
+	headSHA, err := s.client.FetchPRHeadSHA(r.Context(), dirPath, ghUser, req.PRNumber)
 	if err != nil {
-		s.reviewStore.UpdateStatus(channelID, review.StatusError, errorMessage(err))
+		s.sessions.UpdateStatus(channelID, review.StatusError, errorMessage(err))
 		respondReviewError(w, err)
 		return
 	}
 
 	// Check out the PR head locally first so the diff (and the review
 	// agent) can read the actual files in their post-merge form.
-	worktreePath, err := s.reviewWorktree.Add(r.Context(), dirPath, req.PRNumber)
+	worktreePath, err := s.worktree.Add(r.Context(), dirPath, req.PRNumber)
 	if err != nil {
-		s.reviewStore.UpdateStatus(channelID, review.StatusError, errorMessage(err))
+		s.sessions.UpdateStatus(channelID, review.StatusError, errorMessage(err))
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -229,9 +229,9 @@ func (s *Server) handleReviewLoad(w http.ResponseWriter, r *http.Request) {
 	// any out-of-hunk comment lines into the rendered diff.
 	ghComments := s.fetchExistingReviewComments(r.Context(), dirPath, ghUser, req.PRNumber)
 
-	diff, err := s.reviewWorktree.Diff(r.Context(), dirPath, worktreePath, pr.BaseRef, ghComments)
+	diff, err := s.worktree.Diff(r.Context(), dirPath, worktreePath, pr.BaseRef, ghComments)
 	if err != nil {
-		s.reviewStore.UpdateStatus(channelID, review.StatusError, errorMessage(err))
+		s.sessions.UpdateStatus(channelID, review.StatusError, errorMessage(err))
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -244,8 +244,8 @@ func (s *Server) handleReviewLoad(w http.ResponseWriter, r *http.Request) {
 		Comments:     ghComments,
 		Status:       review.StatusReady,
 	}
-	s.reviewStore.Put(channelID, sess)
-	writeHTTPJSON(w, http.StatusOK, reviewSessionResponse{Present: true, Session: s.reviewStore.Get(channelID)}, s.logger)
+	s.sessions.Put(channelID, sess)
+	writeHTTPJSON(w, http.StatusOK, reviewSessionResponse{Present: true, Session: s.sessions.Get(channelID)}, s.srv.logger)
 }
 
 // handleReviewSync re-fetches the PR head, the diff, and the GitHub
@@ -256,23 +256,23 @@ func (s *Server) handleReviewLoad(w http.ResponseWriter, r *http.Request) {
 // are replaced with a fresh snapshot. Requires Status=Ready (or
 // Error/Reviewing? — we accept any non-Loading status: we never want
 // two concurrent worktree mutations).
-func (s *Server) handleReviewSync(w http.ResponseWriter, r *http.Request) {
-	if !requireConfigured(w, s.store, "channel listing not configured") {
+func (s *reviewService) handleReviewSync(w http.ResponseWriter, r *http.Request) {
+	if !requireConfigured(w, s.srv.store, "channel listing not configured") {
 		return
 	}
-	if !requireConfigured(w, s.reviewClient, "review service not configured") {
+	if !requireConfigured(w, s.client, "review service not configured") {
 		return
 	}
-	if s.reviewStore == nil {
+	if s.sessions == nil {
 		http.Error(w, "review service not configured", http.StatusNotImplemented)
 		return
 	}
-	if !requireConfigured(w, s.reviewWorktree, "review service not configured") {
+	if !requireConfigured(w, s.worktree, "review service not configured") {
 		return
 	}
 
 	channelID := r.PathValue("id")
-	sess := s.reviewStore.Get(channelID)
+	sess := s.sessions.Get(channelID)
 	if sess == nil {
 		http.Error(w, "no review session for channel", http.StatusNotFound)
 		return
@@ -286,7 +286,7 @@ func (s *Server) handleReviewSync(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ch, err := s.store.GetChannel(r.Context(), channelID)
+	ch, err := s.srv.store.GetChannel(r.Context(), channelID)
 	if err != nil {
 		http.Error(w, "failed to look up channel", http.StatusInternalServerError)
 		return
@@ -296,24 +296,24 @@ func (s *Server) handleReviewSync(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	dirPath := ch.DirPath
-	if dirPath == "" && s.loopDir != "" {
-		dirPath = filepath.Join(s.loopDir, ch.ChannelID, "work")
+	if dirPath == "" && s.srv.loopDir != "" {
+		dirPath = filepath.Join(s.srv.loopDir, ch.ChannelID, "work")
 	}
 	if dirPath == "" {
 		http.Error(w, "channel has no dir_path", http.StatusBadRequest)
 		return
 	}
-	parentDirPath := s.resolveParentDirPath(r.Context(), channelID)
+	parentDirPath := s.srv.resolveParentDirPath(r.Context(), channelID)
 	if !s.requireReviewEnabled(w, dirPath, parentDirPath) {
 		return
 	}
-	ghUser := s.resolveGHUser(dirPath, parentDirPath)
+	ghUser := s.srv.resolveGHUser(dirPath, parentDirPath)
 
 	if _, err := s.refreshReviewSession(r.Context(), channelID, dirPath, ghUser, sess); err != nil {
 		respondReviewError(w, err)
 		return
 	}
-	writeHTTPJSON(w, http.StatusOK, reviewSessionResponse{Present: true, Session: s.reviewStore.Get(channelID)}, s.logger)
+	writeHTTPJSON(w, http.StatusOK, reviewSessionResponse{Present: true, Session: s.sessions.Get(channelID)}, s.srv.logger)
 }
 
 // refreshReviewSession fast-forwards the worktree to the PR's current
@@ -328,13 +328,13 @@ func (s *Server) handleReviewSync(w http.ResponseWriter, r *http.Request) {
 // review.diff when raw_diff changes so any FE that didn't drive this
 // call (e.g. Run, whose HTTP response doesn't carry the session)
 // still picks up the new diff over WS.
-func (s *Server) refreshReviewSession(ctx context.Context, channelID, dirPath, ghUser string, sess *review.Session) (*review.Session, error) {
+func (s *reviewService) refreshReviewSession(ctx context.Context, channelID, dirPath, ghUser string, sess *review.Session) (*review.Session, error) {
 	prNum := sess.PR.Number
-	headSHA, err := s.reviewClient.FetchPRHeadSHA(ctx, dirPath, ghUser, prNum)
+	headSHA, err := s.client.FetchPRHeadSHA(ctx, dirPath, ghUser, prNum)
 	if err != nil {
 		return nil, err
 	}
-	if err := s.reviewWorktree.Refresh(ctx, dirPath, sess.WorktreePath, prNum); err != nil {
+	if err := s.worktree.Refresh(ctx, dirPath, sess.WorktreePath, prNum); err != nil {
 		return nil, err
 	}
 	ghComments := s.fetchExistingReviewComments(ctx, dirPath, ghUser, prNum)
@@ -348,12 +348,12 @@ func (s *Server) refreshReviewSession(ctx context.Context, channelID, dirPath, g
 	}
 	merged = append(merged, ghComments...)
 
-	diff, err := s.reviewWorktree.Diff(ctx, dirPath, sess.WorktreePath, sess.PR.BaseRef, merged)
+	diff, err := s.worktree.Diff(ctx, dirPath, sess.WorktreePath, sess.PR.BaseRef, merged)
 	if err != nil {
 		return nil, err
 	}
 	raw := string(diff)
-	s.reviewStore.Put(channelID, &review.Session{
+	s.sessions.Put(channelID, &review.Session{
 		PR:           sess.PR,
 		HeadSHA:      headSHA,
 		WorktreePath: sess.WorktreePath,
@@ -362,11 +362,11 @@ func (s *Server) refreshReviewSession(ctx context.Context, channelID, dirPath, g
 		Status:       review.StatusReady,
 	})
 	if raw != sess.RawDiff {
-		if hub := s.eventsHub; hub != nil {
+		if hub := s.srv.eventsHub; hub != nil {
 			hub.BroadcastReviewDiff(channelID, events.ReviewDiffEventData{RawDiff: raw})
 		}
 	}
-	return s.reviewStore.Get(channelID), nil
+	return s.sessions.Get(channelID), nil
 }
 
 // fetchExistingReviewComments pulls inline review comments already filed
@@ -374,17 +374,17 @@ func (s *Server) refreshReviewSession(ctx context.Context, channelID, dirPath, g
 // Source="github" + Pushed=true so the FE renders them as read-only.
 // Best-effort: any failure is logged and the function returns nil so
 // Load still succeeds with the agent-only comment list.
-func (s *Server) fetchExistingReviewComments(ctx context.Context, dirPath, ghUser string, prNum int) []*review.Comment {
-	slug, err := s.reviewClient.FetchRepoSlug(ctx, dirPath, ghUser)
+func (s *reviewService) fetchExistingReviewComments(ctx context.Context, dirPath, ghUser string, prNum int) []*review.Comment {
+	slug, err := s.client.FetchRepoSlug(ctx, dirPath, ghUser)
 	if err != nil || slug == nil {
 		if err != nil {
-			s.logger.Debug("review: skip GH comment fetch (slug)", "err", err)
+			s.srv.logger.Debug("review: skip GH comment fetch (slug)", "err", err)
 		}
 		return nil
 	}
-	ghComments, err := s.reviewClient.FetchPRReviewComments(ctx, dirPath, ghUser, *slug, prNum)
+	ghComments, err := s.client.FetchPRReviewComments(ctx, dirPath, ghUser, *slug, prNum)
 	if err != nil {
-		s.logger.Debug("review: skip GH comment fetch (api)", "err", err)
+		s.srv.logger.Debug("review: skip GH comment fetch (api)", "err", err)
 		return nil
 	}
 	out := make([]*review.Comment, 0, len(ghComments))
@@ -414,16 +414,16 @@ func (s *Server) fetchExistingReviewComments(ctx context.Context, dirPath, ghUse
 // handleReviewListPRs returns the list of open PRs in the repo backing the
 // channel's working directory. The FE renders these as a picker so the user
 // can click a row to auto-load instead of pasting a PR number or URL.
-func (s *Server) handleReviewListPRs(w http.ResponseWriter, r *http.Request) {
-	if !requireConfigured(w, s.store, "channel listing not configured") {
+func (s *reviewService) handleReviewListPRs(w http.ResponseWriter, r *http.Request) {
+	if !requireConfigured(w, s.srv.store, "channel listing not configured") {
 		return
 	}
-	if !requireConfigured(w, s.reviewClient, "review service not configured") {
+	if !requireConfigured(w, s.client, "review service not configured") {
 		return
 	}
 
 	channelID := r.PathValue("id")
-	ch, err := s.store.GetChannel(r.Context(), channelID)
+	ch, err := s.srv.store.GetChannel(r.Context(), channelID)
 	if err != nil {
 		http.Error(w, "failed to look up channel", http.StatusInternalServerError)
 		return
@@ -433,21 +433,21 @@ func (s *Server) handleReviewListPRs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	dirPath := ch.DirPath
-	if dirPath == "" && s.loopDir != "" {
-		dirPath = filepath.Join(s.loopDir, ch.ChannelID, "work")
+	if dirPath == "" && s.srv.loopDir != "" {
+		dirPath = filepath.Join(s.srv.loopDir, ch.ChannelID, "work")
 	}
 	if dirPath == "" {
 		http.Error(w, "channel has no dir_path", http.StatusBadRequest)
 		return
 	}
 
-	parentDirPath := s.resolveParentDirPath(r.Context(), channelID)
+	parentDirPath := s.srv.resolveParentDirPath(r.Context(), channelID)
 	if !s.requireReviewEnabled(w, dirPath, parentDirPath) {
 		return
 	}
-	ghUser := s.resolveGHUser(dirPath, parentDirPath)
+	ghUser := s.srv.resolveGHUser(dirPath, parentDirPath)
 
-	prs, err := s.reviewClient.ListOpenPRs(r.Context(), dirPath, ghUser)
+	prs, err := s.client.ListOpenPRs(r.Context(), dirPath, ghUser)
 	if err != nil {
 		respondReviewError(w, err)
 		return
@@ -455,21 +455,21 @@ func (s *Server) handleReviewListPRs(w http.ResponseWriter, r *http.Request) {
 	if prs == nil {
 		prs = []githubapi.PRInfo{}
 	}
-	writeHTTPJSON(w, http.StatusOK, map[string]any{"prs": prs}, s.logger)
+	writeHTTPJSON(w, http.StatusOK, map[string]any{"prs": prs}, s.srv.logger)
 }
 
-func (s *Server) handleReviewGet(w http.ResponseWriter, r *http.Request) {
-	if s.reviewStore == nil {
+func (s *reviewService) handleReviewGet(w http.ResponseWriter, r *http.Request) {
+	if s.sessions == nil {
 		http.Error(w, "review service not configured", http.StatusNotImplemented)
 		return
 	}
 	channelID := r.PathValue("id")
-	sess := s.reviewStore.Get(channelID)
+	sess := s.sessions.Get(channelID)
 	if sess == nil {
-		writeHTTPJSON(w, http.StatusOK, reviewSessionResponse{Present: false}, s.logger)
+		writeHTTPJSON(w, http.StatusOK, reviewSessionResponse{Present: false}, s.srv.logger)
 		return
 	}
-	writeHTTPJSON(w, http.StatusOK, reviewSessionResponse{Present: true, Session: sess}, s.logger)
+	writeHTTPJSON(w, http.StatusOK, reviewSessionResponse{Present: true, Session: sess}, s.srv.logger)
 }
 
 // handleReviewSessions returns a (channel_id, status) summary for every
@@ -478,27 +478,27 @@ func (s *Server) handleReviewGet(w http.ResponseWriter, r *http.Request) {
 // only fire on transitions, and the FE doesn't subscribe to every
 // channel, so without this any ready session that completed while the
 // app was closed would never re-light its pill.
-func (s *Server) handleReviewSessions(w http.ResponseWriter, _ *http.Request) {
-	if s.reviewStore == nil {
+func (s *reviewService) handleReviewSessions(w http.ResponseWriter, _ *http.Request) {
+	if s.sessions == nil {
 		http.Error(w, "review service not configured", http.StatusNotImplemented)
 		return
 	}
-	writeHTTPJSON(w, http.StatusOK, map[string]any{"sessions": s.reviewStore.List()}, s.logger)
+	writeHTTPJSON(w, http.StatusOK, map[string]any{"sessions": s.sessions.List()}, s.srv.logger)
 }
 
-func (s *Server) handleReviewDelete(w http.ResponseWriter, r *http.Request) {
-	if !requireConfigured(w, s.store, "channel listing not configured") {
+func (s *reviewService) handleReviewDelete(w http.ResponseWriter, r *http.Request) {
+	if !requireConfigured(w, s.srv.store, "channel listing not configured") {
 		return
 	}
-	if s.reviewStore == nil {
+	if s.sessions == nil {
 		http.Error(w, "review service not configured", http.StatusNotImplemented)
 		return
 	}
-	if !requireConfigured(w, s.reviewWorktree, "review service not configured") {
+	if !requireConfigured(w, s.worktree, "review service not configured") {
 		return
 	}
 	channelID := r.PathValue("id")
-	sess := s.reviewStore.Get(channelID)
+	sess := s.sessions.Get(channelID)
 	if sess == nil {
 		w.WriteHeader(http.StatusNoContent)
 		return
@@ -509,31 +509,31 @@ func (s *Server) handleReviewDelete(w http.ResponseWriter, r *http.Request) {
 	// into a deleted session.
 	s.cancelReviewRun(channelID)
 	if sess.WorktreePath != "" {
-		ch, err := s.store.GetChannel(r.Context(), channelID)
+		ch, err := s.srv.store.GetChannel(r.Context(), channelID)
 		if err == nil && ch != nil && ch.DirPath != "" {
-			if err := s.reviewWorktree.Remove(r.Context(), ch.DirPath, sess.WorktreePath); err != nil {
-				s.logger.Warn("review worktree remove failed", "channel_id", channelID, "path", sess.WorktreePath, "err", err)
+			if err := s.worktree.Remove(r.Context(), ch.DirPath, sess.WorktreePath); err != nil {
+				s.srv.logger.Warn("review worktree remove failed", "channel_id", channelID, "path", sess.WorktreePath, "err", err)
 			}
 		}
 	}
-	s.reviewStore.Delete(channelID)
+	s.sessions.Delete(channelID)
 	w.WriteHeader(http.StatusNoContent)
 }
 
-func (s *Server) handleReviewPushComment(w http.ResponseWriter, r *http.Request) {
-	if !requireConfigured(w, s.store, "channel listing not configured") {
+func (s *reviewService) handleReviewPushComment(w http.ResponseWriter, r *http.Request) {
+	if !requireConfigured(w, s.srv.store, "channel listing not configured") {
 		return
 	}
-	if !requireConfigured(w, s.reviewClient, "review service not configured") {
+	if !requireConfigured(w, s.client, "review service not configured") {
 		return
 	}
-	if s.reviewStore == nil {
+	if s.sessions == nil {
 		http.Error(w, "review service not configured", http.StatusNotImplemented)
 		return
 	}
 	channelID := r.PathValue("id")
 	commentID := r.PathValue("cid")
-	c, sess := s.reviewStore.FindComment(channelID, commentID)
+	c, sess := s.sessions.FindComment(channelID, commentID)
 	if sess == nil {
 		http.Error(w, "no review session for channel", http.StatusNotFound)
 		return
@@ -543,7 +543,7 @@ func (s *Server) handleReviewPushComment(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	if c.Pushed {
-		writeHTTPJSON(w, http.StatusOK, map[string]any{"pushed": true, "already": true}, s.logger)
+		writeHTTPJSON(w, http.StatusOK, map[string]any{"pushed": true, "already": true}, s.srv.logger)
 		return
 	}
 	if err := s.pushOneComment(r.Context(), channelID, sess, c); err != nil {
@@ -554,7 +554,7 @@ func (s *Server) handleReviewPushComment(w http.ResponseWriter, r *http.Request)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	writeHTTPJSON(w, http.StatusOK, map[string]any{"pushed": true}, s.logger)
+	writeHTTPJSON(w, http.StatusOK, map[string]any{"pushed": true}, s.srv.logger)
 }
 
 // pushAllResult captures the outcome of POST .../review/push-all. Errors
@@ -566,19 +566,19 @@ type pushAllResult struct {
 	Errors []string `json:"errors,omitempty"`
 }
 
-func (s *Server) handleReviewPushAll(w http.ResponseWriter, r *http.Request) {
-	if !requireConfigured(w, s.store, "channel listing not configured") {
+func (s *reviewService) handleReviewPushAll(w http.ResponseWriter, r *http.Request) {
+	if !requireConfigured(w, s.srv.store, "channel listing not configured") {
 		return
 	}
-	if !requireConfigured(w, s.reviewClient, "review service not configured") {
+	if !requireConfigured(w, s.client, "review service not configured") {
 		return
 	}
-	if s.reviewStore == nil {
+	if s.sessions == nil {
 		http.Error(w, "review service not configured", http.StatusNotImplemented)
 		return
 	}
 	channelID := r.PathValue("id")
-	sess := s.reviewStore.Get(channelID)
+	sess := s.sessions.Get(channelID)
 	if sess == nil {
 		http.Error(w, "no review session for channel", http.StatusNotFound)
 		return
@@ -599,7 +599,7 @@ func (s *Server) handleReviewPushAll(w http.ResponseWriter, r *http.Request) {
 		}
 		result.Pushed++
 	}
-	writeHTTPJSON(w, http.StatusOK, result, s.logger)
+	writeHTTPJSON(w, http.StatusOK, result, s.srv.logger)
 }
 
 // handleReviewDeleteComment removes a single review comment from the
@@ -612,17 +612,17 @@ func (s *Server) handleReviewPushAll(w http.ResponseWriter, r *http.Request) {
 // missing) the local state is untouched. On a GitHub-side failure the
 // local comment is also preserved so the user can retry — half-deleting
 // (gone locally, still on GH) would be confusing.
-func (s *Server) handleReviewDeleteComment(w http.ResponseWriter, r *http.Request) {
-	if !requireConfigured(w, s.store, "channel listing not configured") {
+func (s *reviewService) handleReviewDeleteComment(w http.ResponseWriter, r *http.Request) {
+	if !requireConfigured(w, s.srv.store, "channel listing not configured") {
 		return
 	}
-	if s.reviewStore == nil {
+	if s.sessions == nil {
 		http.Error(w, "review service not configured", http.StatusNotImplemented)
 		return
 	}
 	channelID := r.PathValue("id")
 	commentID := r.PathValue("cid")
-	c, sess := s.reviewStore.FindComment(channelID, commentID)
+	c, sess := s.sessions.FindComment(channelID, commentID)
 	if sess == nil {
 		http.Error(w, "no review session for channel", http.StatusNotFound)
 		return
@@ -636,19 +636,19 @@ func (s *Server) handleReviewDeleteComment(w http.ResponseWriter, r *http.Reques
 	// Agent comments that were never pushed have GitHubID==0 and live
 	// purely in the in-memory session; just drop them locally.
 	if c.GitHubID > 0 {
-		if !requireConfigured(w, s.reviewClient, "review service not configured") {
+		if !requireConfigured(w, s.client, "review service not configured") {
 			return
 		}
-		ch, err := s.store.GetChannel(r.Context(), channelID)
+		ch, err := s.srv.store.GetChannel(r.Context(), channelID)
 		if err != nil || ch == nil || ch.DirPath == "" {
 			http.Error(w, "channel has no dir_path", http.StatusInternalServerError)
 			return
 		}
-		parentDirPath := s.resolveParentDirPath(r.Context(), channelID)
+		parentDirPath := s.srv.resolveParentDirPath(r.Context(), channelID)
 		if !s.requireReviewEnabled(w, ch.DirPath, parentDirPath) {
 			return
 		}
-		ghUser := s.resolveGHUser(ch.DirPath, parentDirPath)
+		ghUser := s.srv.resolveGHUser(ch.DirPath, parentDirPath)
 		// GitHub-source comments are only deletable when their author
 		// matches the configured gh user — GH would reject anyone else's
 		// DELETE anyway, but failing fast here keeps the local copy
@@ -661,18 +661,18 @@ func (s *Server) handleReviewDeleteComment(w http.ResponseWriter, r *http.Reques
 				return
 			}
 		}
-		slug, err := s.reviewClient.FetchRepoSlug(r.Context(), ch.DirPath, ghUser)
+		slug, err := s.client.FetchRepoSlug(r.Context(), ch.DirPath, ghUser)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
-		if err := s.reviewClient.DeletePRReviewComment(r.Context(), ch.DirPath, ghUser, *slug, c.GitHubID); err != nil {
+		if err := s.client.DeletePRReviewComment(r.Context(), ch.DirPath, ghUser, *slug, c.GitHubID); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
 	}
 
-	s.reviewStore.RemoveComment(channelID, commentID)
+	s.sessions.RemoveComment(channelID, commentID)
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -680,24 +680,24 @@ func (s *Server) handleReviewDeleteComment(w http.ResponseWriter, r *http.Reques
 // Pushed flag on the in-memory comment. Returns the underlying error so
 // callers can attach it to their response (single-push: bubble up;
 // push-all: accumulate).
-func (s *Server) pushOneComment(ctx context.Context, channelID string, sess *review.Session, c *review.Comment) error {
+func (s *reviewService) pushOneComment(ctx context.Context, channelID string, sess *review.Session, c *review.Comment) error {
 	if sess.PR == nil || sess.HeadSHA == "" {
 		return errors.New("session not ready (no PR or head SHA)")
 	}
-	ch, err := s.store.GetChannel(ctx, channelID)
+	ch, err := s.srv.store.GetChannel(ctx, channelID)
 	if err != nil || ch == nil || ch.DirPath == "" {
 		return errors.New("channel has no dir_path")
 	}
-	parentDirPath := s.resolveParentDirPath(ctx, channelID)
-	if !s.resolveReviewEnabled(ch.DirPath, parentDirPath) {
+	parentDirPath := s.srv.resolveParentDirPath(ctx, channelID)
+	if !s.srv.resolveReviewEnabled(ch.DirPath, parentDirPath) {
 		return errReviewDisabled
 	}
-	ghUser := s.resolveGHUser(ch.DirPath, parentDirPath)
-	slug, err := s.reviewClient.FetchRepoSlug(ctx, ch.DirPath, ghUser)
+	ghUser := s.srv.resolveGHUser(ch.DirPath, parentDirPath)
+	slug, err := s.client.FetchRepoSlug(ctx, ch.DirPath, ghUser)
 	if err != nil {
 		return err
 	}
-	ghID, err := s.reviewClient.PostPRComment(ctx, ch.DirPath, ghUser, *slug, sess.PR.Number, sess.HeadSHA, c.Path, c.Side, c.Line, c.Body)
+	ghID, err := s.client.PostPRComment(ctx, ch.DirPath, ghUser, *slug, sess.PR.Number, sess.HeadSHA, c.Path, c.Side, c.Line, c.Body)
 	if err != nil {
 		return err
 	}
@@ -712,7 +712,7 @@ func (s *Server) pushOneComment(ctx context.Context, channelID string, sess *rev
 	if ghID == 0 {
 		return nil
 	}
-	s.reviewStore.MarkPushed(channelID, c.ID, ghID)
+	s.sessions.MarkPushed(channelID, c.ID, ghID)
 	return nil
 }
 
@@ -724,18 +724,18 @@ func (s *Server) pushOneComment(ctx context.Context, channelID string, sess *rev
 // The handler returns 202 immediately and the run continues in a
 // background goroutine that streams review.comment + review.status
 // events through eventsHub. The FE consumes those over WS.
-func (s *Server) handleReviewRun(w http.ResponseWriter, r *http.Request) {
-	if s.reviewStore == nil {
+func (s *reviewService) handleReviewRun(w http.ResponseWriter, r *http.Request) {
+	if s.sessions == nil {
 		http.Error(w, "review service not configured", http.StatusNotImplemented)
 		return
 	}
-	if s.reviewRunner == nil {
+	if s.runner == nil {
 		http.Error(w, "review service not configured", http.StatusNotImplemented)
 		return
 	}
 
 	channelID := r.PathValue("id")
-	sess := s.reviewStore.Get(channelID)
+	sess := s.sessions.Get(channelID)
 	if sess == nil {
 		http.Error(w, "no review session for channel", http.StatusNotFound)
 		return
@@ -754,7 +754,7 @@ func (s *Server) handleReviewRun(w http.ResponseWriter, r *http.Request) {
 	runCtx, cancelRun := context.WithCancel(context.Background())
 	if !s.registerReviewRun(channelID, cancelRun) {
 		cancelRun()
-		writeHTTPJSON(w, http.StatusAccepted, map[string]string{"status": "in_progress"}, s.logger)
+		writeHTTPJSON(w, http.StatusAccepted, map[string]string{"status": "in_progress"}, s.srv.logger)
 		return
 	}
 	if sess.Status != review.StatusReady {
@@ -772,17 +772,17 @@ func (s *Server) handleReviewRun(w http.ResponseWriter, r *http.Request) {
 	// channel's dir — resolveParentDirPath walks that chain. For a
 	// root channel, resolveParentDirPath returns "" and we fall back to
 	// the channel's own dir (which is the main repo).
-	parentDirPath := s.resolveParentDirPath(r.Context(), channelID)
-	if parentDirPath == "" && s.store != nil {
-		if ch, err := s.store.GetChannel(r.Context(), channelID); err == nil && ch != nil {
+	parentDirPath := s.srv.resolveParentDirPath(r.Context(), channelID)
+	if parentDirPath == "" && s.srv.store != nil {
+		if ch, err := s.srv.store.GetChannel(r.Context(), channelID); err == nil && ch != nil {
 			parentDirPath = ch.DirPath
-			if parentDirPath == "" && s.loopDir != "" {
-				parentDirPath = filepath.Join(s.loopDir, ch.ChannelID, "work")
+			if parentDirPath == "" && s.srv.loopDir != "" {
+				parentDirPath = filepath.Join(s.srv.loopDir, ch.ChannelID, "work")
 			}
 		}
 	}
 
-	prompt := s.reviewPrompt
+	prompt := s.userPrompt
 	if prompt == "" {
 		prompt = defaultReviewPrompt
 	}
@@ -791,20 +791,20 @@ func (s *Server) handleReviewRun(w http.ResponseWriter, r *http.Request) {
 	// channel's own workdir (used for project-config layering), and
 	// parentDirPath provides the worktree-merge layer.
 	channelDirPath := ""
-	if s.store != nil {
-		if ch, err := s.store.GetChannel(r.Context(), channelID); err == nil && ch != nil {
+	if s.srv.store != nil {
+		if ch, err := s.srv.store.GetChannel(r.Context(), channelID); err == nil && ch != nil {
 			channelDirPath = ch.DirPath
-			if channelDirPath == "" && s.loopDir != "" {
-				channelDirPath = filepath.Join(s.loopDir, ch.ChannelID, "work")
+			if channelDirPath == "" && s.srv.loopDir != "" {
+				channelDirPath = filepath.Join(s.srv.loopDir, ch.ChannelID, "work")
 			}
 		}
 	}
-	if !s.resolveReviewEnabled(channelDirPath, parentDirPath) {
+	if !s.srv.resolveReviewEnabled(channelDirPath, parentDirPath) {
 		s.unregisterReviewRun(channelID)
 		http.Error(w, "review panel disabled for this project", http.StatusForbidden)
 		return
 	}
-	ghUser := s.resolveGHUser(channelDirPath, parentDirPath)
+	ghUser := s.srv.resolveGHUser(channelDirPath, parentDirPath)
 
 	// Refresh the worktree + GH comments + diff before the agent kicks
 	// off. Without this, the agent could review stale code (commits
@@ -832,13 +832,13 @@ func (s *Server) handleReviewRun(w http.ResponseWriter, r *http.Request) {
 	// `git diff origin/<base>...HEAD` itself.
 	fullPrompt := prompt + "\n\n" + buildReviewContext(sess, ghUser)
 	worktreePath := sess.WorktreePath
-	sysPrompt := s.reviewSystemPrompt
+	sysPrompt := s.systemPrompt
 
-	s.reviewStore.UpdateStatus(channelID, review.StatusReviewing, "")
+	s.sessions.UpdateStatus(channelID, review.StatusReviewing, "")
 	s.broadcastReviewStatus(channelID, review.StatusReviewing, "")
 
 	go s.runReviewAsync(runCtx, channelID, worktreePath, parentDirPath, sysPrompt, fullPrompt)
-	writeHTTPJSON(w, http.StatusAccepted, map[string]string{"status": "started"}, s.logger)
+	writeHTTPJSON(w, http.StatusAccepted, map[string]string{"status": "started"}, s.srv.logger)
 }
 
 // runReviewAsync executes the review run on the goroutine that
@@ -856,13 +856,13 @@ func (s *Server) handleReviewRun(w http.ResponseWriter, r *http.Request) {
 // message instead of staying at status=reviewing forever. Without this
 // gate, a hung container would leak the goroutine and any CLI/FE poller
 // would keep hitting status=reviewing until its own deadline fired.
-func (s *Server) runReviewAsync(runCtx context.Context, channelID, worktreePath, parentDirPath, systemPrompt, prompt string) {
+func (s *reviewService) runReviewAsync(runCtx context.Context, channelID, worktreePath, parentDirPath, systemPrompt, prompt string) {
 	defer s.unregisterReviewRun(channelID)
 	onComment := func(c *review.Comment) {
-		if !s.reviewStore.AddComment(channelID, c) {
+		if !s.sessions.AddComment(channelID, c) {
 			return
 		}
-		if hub := s.eventsHub; hub != nil {
+		if hub := s.srv.eventsHub; hub != nil {
 			hub.BroadcastReviewComment(channelID, events.ReviewCommentEventData{
 				ID:   c.ID,
 				Path: c.Path,
@@ -874,12 +874,12 @@ func (s *Server) runReviewAsync(runCtx context.Context, channelID, worktreePath,
 		s.maybeRediffForComment(channelID, worktreePath, parentDirPath, c)
 	}
 	ctx := runCtx
-	if s.reviewRunTimeout > 0 {
+	if s.runTimeout > 0 {
 		var cancel context.CancelFunc
-		ctx, cancel = context.WithTimeout(ctx, s.reviewRunTimeout)
+		ctx, cancel = context.WithTimeout(ctx, s.runTimeout)
 		defer cancel()
 	}
-	_, err := s.reviewRunner.Run(ctx, channelID, worktreePath, parentDirPath, systemPrompt, prompt, onComment)
+	_, err := s.runner.Run(ctx, channelID, worktreePath, parentDirPath, systemPrompt, prompt, onComment)
 	if err != nil {
 		msg := err.Error()
 		// Re-shape ctx-deadline into a user-readable message. errors.Is
@@ -888,7 +888,7 @@ func (s *Server) runReviewAsync(runCtx context.Context, channelID, worktreePath,
 		// agents that return their own error string (e.g. "stream closed")
 		// after the ctx fired but before they observed the cancel.
 		if errors.Is(err, context.DeadlineExceeded) || ctx.Err() == context.DeadlineExceeded {
-			msg = fmt.Sprintf("review timed out after %s", s.reviewRunTimeout)
+			msg = fmt.Sprintf("review timed out after %s", s.runTimeout)
 		}
 		// Session-delete or shutdown fired the registered cancel func.
 		// Don't broadcast an "error" status — the session is going away
@@ -897,11 +897,11 @@ func (s *Server) runReviewAsync(runCtx context.Context, channelID, worktreePath,
 		if errors.Is(err, context.Canceled) || runCtx.Err() == context.Canceled {
 			return
 		}
-		s.reviewStore.UpdateStatus(channelID, review.StatusError, msg)
+		s.sessions.UpdateStatus(channelID, review.StatusError, msg)
 		s.broadcastReviewStatus(channelID, review.StatusError, msg)
 		return
 	}
-	s.reviewStore.UpdateStatus(channelID, review.StatusReady, "")
+	s.sessions.UpdateStatus(channelID, review.StatusReady, "")
 	s.broadcastReviewStatus(channelID, review.StatusReady, "")
 }
 
@@ -912,21 +912,21 @@ func (s *Server) runReviewAsync(runCtx context.Context, channelID, worktreePath,
 // review.diff event is broadcast; on failure we log and continue —
 // the FE keeps the old diff and the comment surfaces in the
 // outside-of-diff section.
-func (s *Server) maybeRediffForComment(channelID, worktreePath, parentDirPath string, c *review.Comment) {
-	if s.reviewWorktree == nil {
+func (s *reviewService) maybeRediffForComment(channelID, worktreePath, parentDirPath string, c *review.Comment) {
+	if s.worktree == nil {
 		return
 	}
-	sess := s.reviewStore.Get(channelID)
+	sess := s.sessions.Get(channelID)
 	if sess == nil || sess.PR == nil || sess.PR.BaseRef == "" {
 		return
 	}
 	if !review.ShouldRediff([]byte(sess.RawDiff), c.Path, c.Line, c.Side) {
 		return
 	}
-	out, err := s.reviewWorktree.Diff(context.Background(), parentDirPath, worktreePath, sess.PR.BaseRef, sess.Comments)
+	out, err := s.worktree.Diff(context.Background(), parentDirPath, worktreePath, sess.PR.BaseRef, sess.Comments)
 	if err != nil {
-		if s.logger != nil {
-			s.logger.Warn("review re-diff failed", "channel_id", channelID, "error", err)
+		if s.srv.logger != nil {
+			s.srv.logger.Warn("review re-diff failed", "channel_id", channelID, "error", err)
 		}
 		return
 	}
@@ -934,8 +934,8 @@ func (s *Server) maybeRediffForComment(channelID, worktreePath, parentDirPath st
 	if raw == sess.RawDiff {
 		return
 	}
-	s.reviewStore.UpdateRawDiff(channelID, raw)
-	if hub := s.eventsHub; hub != nil {
+	s.sessions.UpdateRawDiff(channelID, raw)
+	if hub := s.srv.eventsHub; hub != nil {
 		hub.BroadcastReviewDiff(channelID, events.ReviewDiffEventData{RawDiff: raw})
 	}
 }
@@ -946,16 +946,16 @@ func (s *Server) maybeRediffForComment(channelID, worktreePath, parentDirPath st
 // streaming events. cancel is stored so that session delete + server
 // Stop can detach the long-running agent ctx; runReviewAsync derives its
 // agent ctx from this cancel.
-func (s *Server) registerReviewRun(channelID string, cancel context.CancelFunc) bool {
-	s.reviewMu.Lock()
-	defer s.reviewMu.Unlock()
-	if s.reviewActive == nil {
-		s.reviewActive = make(map[string]context.CancelFunc)
+func (s *reviewService) registerReviewRun(channelID string, cancel context.CancelFunc) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.active == nil {
+		s.active = make(map[string]context.CancelFunc)
 	}
-	if _, ok := s.reviewActive[channelID]; ok {
+	if _, ok := s.active[channelID]; ok {
 		return false
 	}
-	s.reviewActive[channelID] = cancel
+	s.active[channelID] = cancel
 	return true
 }
 
@@ -963,20 +963,20 @@ func (s *Server) registerReviewRun(channelID string, cancel context.CancelFunc) 
 // can register. Safe to call when no marker exists. Does NOT call the
 // stored cancel — runReviewAsync defers cancel() locally so the run's
 // natural completion path doesn't double-fire.
-func (s *Server) unregisterReviewRun(channelID string) {
-	s.reviewMu.Lock()
-	defer s.reviewMu.Unlock()
-	delete(s.reviewActive, channelID)
+func (s *reviewService) unregisterReviewRun(channelID string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.active, channelID)
 }
 
 // cancelReviewRun cancels the agent ctx of an in-flight run for
 // channelID. Safe to call when no run is active. Used by session-delete
 // and server-Stop paths to keep a running agent from outliving the
 // session it was reviewing.
-func (s *Server) cancelReviewRun(channelID string) {
-	s.reviewMu.Lock()
-	cancel, ok := s.reviewActive[channelID]
-	s.reviewMu.Unlock()
+func (s *reviewService) cancelReviewRun(channelID string) {
+	s.mu.Lock()
+	cancel, ok := s.active[channelID]
+	s.mu.Unlock()
 	if ok && cancel != nil {
 		cancel()
 	}
@@ -984,13 +984,13 @@ func (s *Server) cancelReviewRun(channelID string) {
 
 // cancelAllReviewRuns fires every registered cancel func — used during
 // graceful shutdown so agent containers don't outlive the daemon.
-func (s *Server) cancelAllReviewRuns() {
-	s.reviewMu.Lock()
-	cancels := make([]context.CancelFunc, 0, len(s.reviewActive))
-	for _, c := range s.reviewActive {
+func (s *reviewService) cancelAllReviewRuns() {
+	s.mu.Lock()
+	cancels := make([]context.CancelFunc, 0, len(s.active))
+	for _, c := range s.active {
 		cancels = append(cancels, c)
 	}
-	s.reviewMu.Unlock()
+	s.mu.Unlock()
 	for _, c := range cancels {
 		if c != nil {
 			c()
@@ -1001,15 +1001,15 @@ func (s *Server) cancelAllReviewRuns() {
 // isReviewRunActive reports whether a review run is currently in flight
 // for channelID. Used by /review/load to refuse overwriting a session
 // while its run goroutine is still executing.
-func (s *Server) isReviewRunActive(channelID string) bool {
-	s.reviewMu.Lock()
-	defer s.reviewMu.Unlock()
-	_, ok := s.reviewActive[channelID]
+func (s *reviewService) isReviewRunActive(channelID string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	_, ok := s.active[channelID]
 	return ok
 }
 
-func (s *Server) broadcastReviewStatus(channelID string, status review.Status, errMsg string) {
-	hub := s.eventsHub
+func (s *reviewService) broadcastReviewStatus(channelID string, status review.Status, errMsg string) {
+	hub := s.srv.eventsHub
 	if hub == nil {
 		return
 	}
