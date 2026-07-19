@@ -121,8 +121,7 @@ func (s *EngineSuite) TestHeartbeatFiresDuringNodeExecution() {
 		},
 	}
 
-	s.store.On("CreateWorkflowRunWithNodes", mock.Anything, mock.Anything, mock.Anything).Return(nil)
-	s.store.On("UpsertNodeRun", mock.Anything, mock.Anything).Return(nil)
+	s.expectRunPersistence()
 	done := s.waitForRunStatus()
 
 	// Block the bash runner long enough for the initial heartbeat to fire.
@@ -133,12 +132,7 @@ func (s *EngineSuite) TestHeartbeatFiresDuringNodeExecution() {
 	_, err := s.engine.StartRun(context.Background(), StartRunOptions{WorkflowName: "hb-test"})
 	require.NoError(s.T(), err)
 
-	select {
-	case status := <-done:
-		require.Equal(s.T(), db.WorkflowRunStatusCompleted, status)
-	case <-time.After(5 * time.Second):
-		s.T().Fatal("timeout")
-	}
+	s.awaitStatus(done, db.WorkflowRunStatusCompleted)
 
 	// The initial heartbeat should have fired at least once.
 	s.store.AssertCalled(s.T(), "UpdateNodeHeartbeat", mock.Anything, mock.Anything, "slow", 0)
@@ -198,12 +192,7 @@ func (s *EngineSuite) TestRecoverPausedRunUsePinnedDef() {
 	err = s.engine.ResumeRun(context.Background(), "wfr-pinned", "approved")
 	require.NoError(s.T(), err)
 
-	select {
-	case status := <-done:
-		require.Equal(s.T(), db.WorkflowRunStatusCompleted, status)
-	case <-time.After(5 * time.Second):
-		s.T().Fatal("timeout waiting for recovered run to complete")
-	}
+	s.awaitStatus(done, db.WorkflowRunStatusCompleted)
 
 	s.bashRunner.AssertCalled(s.T(), "RunBash", mock.Anything, "echo done", "ch1", "")
 }
@@ -260,12 +249,7 @@ func (s *EngineSuite) TestCheckpointNodeNotInDBTreatedAsPending() {
 	err := s.engine.RecoverRuns(context.Background())
 	require.NoError(s.T(), err)
 
-	select {
-	case status := <-done:
-		require.Equal(s.T(), db.WorkflowRunStatusCompleted, status)
-	case <-time.After(5 * time.Second):
-		s.T().Fatal("timeout waiting for recovered run to complete")
-	}
+	s.awaitStatus(done, db.WorkflowRunStatusCompleted)
 
 	// Node "b" should have been executed (it was not in DB, treated as pending).
 	s.bashRunner.AssertCalled(s.T(), "RunBash", mock.Anything, "echo b", "ch1", "")
@@ -285,8 +269,7 @@ func (s *EngineSuite) TestHeartbeatErrorPaths() {
 	s.engine.(*defaultEngine).heartbeatInterval = 10 * time.Millisecond
 
 	s.store.ExpectedCalls = nil
-	s.store.On("CreateWorkflowRunWithNodes", mock.Anything, mock.Anything, mock.Anything).Return(nil)
-	s.store.On("UpsertNodeRun", mock.Anything, mock.Anything).Return(nil)
+	s.expectRunPersistence()
 	s.store.On("GetWorkflowRun", mock.Anything, mock.Anything).Return(
 		&db.WorkflowRun{Status: db.WorkflowRunStatusRunning}, nil,
 	)
@@ -312,12 +295,7 @@ func (s *EngineSuite) TestHeartbeatErrorPaths() {
 	_, err := s.engine.StartRun(context.Background(), StartRunOptions{WorkflowName: "hb-err"})
 	require.NoError(s.T(), err)
 
-	select {
-	case status := <-done:
-		require.Equal(s.T(), db.WorkflowRunStatusCompleted, status)
-	case <-time.After(5 * time.Second):
-		s.T().Fatal("timeout")
-	}
+	s.awaitStatus(done, db.WorkflowRunStatusCompleted)
 
 	// The heartbeat should have been attempted multiple times (initial + ticker).
 	calls := 0
@@ -400,12 +378,7 @@ func (s *EngineSuite) TestRecoverRunningRunFreshHeartbeatReExecutes() {
 	err := s.engine.RecoverRuns(context.Background())
 	require.NoError(s.T(), err)
 
-	select {
-	case status := <-done:
-		require.Equal(s.T(), db.WorkflowRunStatusCompleted, status)
-	case <-time.After(5 * time.Second):
-		s.T().Fatal("timeout waiting for recovered run to complete")
-	}
+	s.awaitStatus(done, db.WorkflowRunStatusCompleted)
 
 	s.bashRunner.AssertCalled(s.T(), "RunBash", mock.Anything, "echo a", "ch1", "")
 	s.bashRunner.AssertCalled(s.T(), "RunBash", mock.Anything, "echo b", "ch1", "")
@@ -516,12 +489,7 @@ func (s *EngineSuite) TestRecoverRunningRunNoHeartbeatFails() {
 	err := s.engine.RecoverRuns(context.Background())
 	require.NoError(s.T(), err)
 
-	select {
-	case status := <-done:
-		require.Equal(s.T(), db.WorkflowRunStatusFailed, status)
-	case <-time.After(5 * time.Second):
-		s.T().Fatal("timeout waiting for recovered run to complete")
-	}
+	s.awaitStatus(done, db.WorkflowRunStatusFailed)
 }
 
 func (s *EngineSuite) TestRecoverRunningRunMixedNodes() {

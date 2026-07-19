@@ -5,8 +5,10 @@ import (
 	"log/slog"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/mock"
+	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
 
 	"github.com/radutopala/loop/internal/agent"
@@ -122,6 +124,26 @@ func (s *EngineSuite) waitForRunStatus() chan db.WorkflowRunStatus {
 		}
 	}).Return(nil)
 	return ch
+}
+
+// awaitStatus blocks until the run signals a status on done (from
+// waitForRunStatus / waitForTerminalStatus) and asserts it equals want.
+// Fails the test after 5s if the run never leaves running.
+func (s *EngineSuite) awaitStatus(done chan db.WorkflowRunStatus, want db.WorkflowRunStatus) {
+	s.T().Helper()
+	select {
+	case status := <-done:
+		require.Equal(s.T(), want, status)
+	case <-time.After(5 * time.Second):
+		s.T().Fatal("timeout waiting for workflow run status")
+	}
+}
+
+// expectRunPersistence registers the two store expectations every run makes:
+// creating the run row and upserting node-run rows.
+func (s *EngineSuite) expectRunPersistence() {
+	s.store.On("CreateWorkflowRunWithNodes", mock.Anything, mock.Anything, mock.Anything).Return(nil)
+	s.store.On("UpsertNodeRun", mock.Anything, mock.Anything).Return(nil)
 }
 
 // waitForTerminalStatus sets up UpdateWorkflowRun to signal only on truly terminal

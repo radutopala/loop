@@ -45,8 +45,7 @@ func (s *EngineSuite) TestStartRunSeedsBlankDefaultInputs() {
 		},
 	}
 
-	s.store.On("CreateWorkflowRunWithNodes", mock.Anything, mock.Anything, mock.Anything).Return(nil)
-	s.store.On("UpsertNodeRun", mock.Anything, mock.Anything).Return(nil)
+	s.expectRunPersistence()
 	done := s.waitForRunStatus()
 
 	// Blank pr → shell-quoted '' in the rendered script, never "<no value>".
@@ -55,12 +54,7 @@ func (s *EngineSuite) TestStartRunSeedsBlankDefaultInputs() {
 	_, err := s.engine.StartRun(context.Background(), StartRunOptions{WorkflowName: "blank-input"})
 	require.NoError(s.T(), err)
 
-	select {
-	case status := <-done:
-		require.Equal(s.T(), db.WorkflowRunStatusCompleted, status)
-	case <-time.After(5 * time.Second):
-		s.T().Fatal("timeout waiting for run completion")
-	}
+	s.awaitStatus(done, db.WorkflowRunStatusCompleted)
 	s.bashRunner.AssertCalled(s.T(), "RunBash", mock.Anything, "loop review run --pr '' --wait", "", "")
 }
 
@@ -72,8 +66,7 @@ func (s *EngineSuite) TestStartRunSingleBashNode() {
 		},
 	}
 
-	s.store.On("CreateWorkflowRunWithNodes", mock.Anything, mock.Anything, mock.Anything).Return(nil)
-	s.store.On("UpsertNodeRun", mock.Anything, mock.Anything).Return(nil)
+	s.expectRunPersistence()
 	done := s.waitForRunStatus()
 
 	s.bashRunner.On("RunBash", mock.Anything, "echo hello", "", "").Return("hello\n", nil)
@@ -82,12 +75,7 @@ func (s *EngineSuite) TestStartRunSingleBashNode() {
 	require.NoError(s.T(), err)
 	require.NotEmpty(s.T(), runID)
 
-	select {
-	case status := <-done:
-		require.Equal(s.T(), db.WorkflowRunStatusCompleted, status)
-	case <-time.After(5 * time.Second):
-		s.T().Fatal("timeout waiting for run completion")
-	}
+	s.awaitStatus(done, db.WorkflowRunStatusCompleted)
 
 	s.bashRunner.AssertCalled(s.T(), "RunBash", mock.Anything, "echo hello", "", "")
 }
@@ -100,8 +88,7 @@ func (s *EngineSuite) TestStartRunSinglePromptNode() {
 		},
 	}
 
-	s.store.On("CreateWorkflowRunWithNodes", mock.Anything, mock.Anything, mock.Anything).Return(nil)
-	s.store.On("UpsertNodeRun", mock.Anything, mock.Anything).Return(nil)
+	s.expectRunPersistence()
 	done := s.waitForRunStatus()
 
 	s.runner.On("Run", mock.Anything, mock.Anything).Return(&agent.AgentResponse{Response: "Hello!"}, nil)
@@ -109,12 +96,7 @@ func (s *EngineSuite) TestStartRunSinglePromptNode() {
 	_, err := s.engine.StartRun(context.Background(), StartRunOptions{WorkflowName: "prompt-test"})
 	require.NoError(s.T(), err)
 
-	select {
-	case status := <-done:
-		require.Equal(s.T(), db.WorkflowRunStatusCompleted, status)
-	case <-time.After(5 * time.Second):
-		s.T().Fatal("timeout waiting for run completion")
-	}
+	s.awaitStatus(done, db.WorkflowRunStatusCompleted)
 
 	// Verify the prompt was passed correctly.
 	calls := s.runner.Calls
@@ -134,8 +116,7 @@ func (s *EngineSuite) TestStartRunLinearChain() {
 		},
 	}
 
-	s.store.On("CreateWorkflowRunWithNodes", mock.Anything, mock.Anything, mock.Anything).Return(nil)
-	s.store.On("UpsertNodeRun", mock.Anything, mock.Anything).Return(nil)
+	s.expectRunPersistence()
 	done := s.waitForRunStatus()
 
 	s.bashRunner.On("RunBash", mock.Anything, "git diff", "", "").Return("+added line", nil)
@@ -144,12 +125,7 @@ func (s *EngineSuite) TestStartRunLinearChain() {
 	_, err := s.engine.StartRun(context.Background(), StartRunOptions{WorkflowName: "chain"})
 	require.NoError(s.T(), err)
 
-	select {
-	case status := <-done:
-		require.Equal(s.T(), db.WorkflowRunStatusCompleted, status)
-	case <-time.After(5 * time.Second):
-		s.T().Fatal("timeout waiting for run completion")
-	}
+	s.awaitStatus(done, db.WorkflowRunStatusCompleted)
 
 	// Verify the prompt included the bash output.
 	calls := s.runner.Calls
@@ -170,8 +146,7 @@ func (s *EngineSuite) TestStartRunParallelFanOut() {
 		},
 	}
 
-	s.store.On("CreateWorkflowRunWithNodes", mock.Anything, mock.Anything, mock.Anything).Return(nil)
-	s.store.On("UpsertNodeRun", mock.Anything, mock.Anything).Return(nil)
+	s.expectRunPersistence()
 	done := s.waitForRunStatus()
 
 	s.bashRunner.On("RunBash", mock.Anything, "make test", "", "").Return("PASS", nil)
@@ -181,12 +156,7 @@ func (s *EngineSuite) TestStartRunParallelFanOut() {
 	_, err := s.engine.StartRun(context.Background(), StartRunOptions{WorkflowName: "parallel"})
 	require.NoError(s.T(), err)
 
-	select {
-	case status := <-done:
-		require.Equal(s.T(), db.WorkflowRunStatusCompleted, status)
-	case <-time.After(5 * time.Second):
-		s.T().Fatal("timeout waiting for run completion")
-	}
+	s.awaitStatus(done, db.WorkflowRunStatusCompleted)
 
 	// Verify the report prompt got both outputs.
 	calls := s.runner.Calls
@@ -203,8 +173,7 @@ func (s *EngineSuite) TestStartRunBashNodeFailure() {
 		},
 	}
 
-	s.store.On("CreateWorkflowRunWithNodes", mock.Anything, mock.Anything, mock.Anything).Return(nil)
-	s.store.On("UpsertNodeRun", mock.Anything, mock.Anything).Return(nil)
+	s.expectRunPersistence()
 	done := s.waitForRunStatus()
 
 	s.bashRunner.On("RunBash", mock.Anything, "exit 1", "", "").Return("", fmt.Errorf("exit code 1"))
@@ -212,12 +181,7 @@ func (s *EngineSuite) TestStartRunBashNodeFailure() {
 	_, err := s.engine.StartRun(context.Background(), StartRunOptions{WorkflowName: "fail"})
 	require.NoError(s.T(), err)
 
-	select {
-	case status := <-done:
-		require.Equal(s.T(), db.WorkflowRunStatusFailed, status)
-	case <-time.After(5 * time.Second):
-		s.T().Fatal("timeout waiting for run completion")
-	}
+	s.awaitStatus(done, db.WorkflowRunStatusFailed)
 }
 
 func (s *EngineSuite) TestStartRunInputDefaults() {
@@ -231,8 +195,7 @@ func (s *EngineSuite) TestStartRunInputDefaults() {
 		},
 	}
 
-	s.store.On("CreateWorkflowRunWithNodes", mock.Anything, mock.Anything, mock.Anything).Return(nil)
-	s.store.On("UpsertNodeRun", mock.Anything, mock.Anything).Return(nil)
+	s.expectRunPersistence()
 	done := s.waitForRunStatus()
 
 	s.bashRunner.On("RunBash", mock.Anything, "echo 'main'", "", "").Return("main", nil)
@@ -240,12 +203,7 @@ func (s *EngineSuite) TestStartRunInputDefaults() {
 	_, err := s.engine.StartRun(context.Background(), StartRunOptions{WorkflowName: "defaults"})
 	require.NoError(s.T(), err)
 
-	select {
-	case status := <-done:
-		require.Equal(s.T(), db.WorkflowRunStatusCompleted, status)
-	case <-time.After(5 * time.Second):
-		s.T().Fatal("timeout waiting for run completion")
-	}
+	s.awaitStatus(done, db.WorkflowRunStatusCompleted)
 
 	s.bashRunner.AssertCalled(s.T(), "RunBash", mock.Anything, "echo 'main'", "", "")
 }
@@ -261,8 +219,7 @@ func (s *EngineSuite) TestStartRunInputOverridesDefault() {
 		},
 	}
 
-	s.store.On("CreateWorkflowRunWithNodes", mock.Anything, mock.Anything, mock.Anything).Return(nil)
-	s.store.On("UpsertNodeRun", mock.Anything, mock.Anything).Return(nil)
+	s.expectRunPersistence()
 	done := s.waitForRunStatus()
 
 	s.bashRunner.On("RunBash", mock.Anything, "echo 'develop'", "", "").Return("develop", nil)
@@ -273,12 +230,7 @@ func (s *EngineSuite) TestStartRunInputOverridesDefault() {
 	})
 	require.NoError(s.T(), err)
 
-	select {
-	case status := <-done:
-		require.Equal(s.T(), db.WorkflowRunStatusCompleted, status)
-	case <-time.After(5 * time.Second):
-		s.T().Fatal("timeout waiting for run completion")
-	}
+	s.awaitStatus(done, db.WorkflowRunStatusCompleted)
 
 	s.bashRunner.AssertCalled(s.T(), "RunBash", mock.Anything, "echo 'develop'", "", "")
 }
@@ -299,8 +251,7 @@ func (s *EngineSuite) TestStartRunSkipsEmptyStringInputs() {
 		},
 	}
 
-	s.store.On("CreateWorkflowRunWithNodes", mock.Anything, mock.Anything, mock.Anything).Return(nil)
-	s.store.On("UpsertNodeRun", mock.Anything, mock.Anything).Return(nil)
+	s.expectRunPersistence()
 	done := s.waitForRunStatus()
 
 	// Should run "echo 'main'" — the empty-string input was skipped so the
@@ -313,12 +264,7 @@ func (s *EngineSuite) TestStartRunSkipsEmptyStringInputs() {
 	})
 	require.NoError(s.T(), err)
 
-	select {
-	case status := <-done:
-		require.Equal(s.T(), db.WorkflowRunStatusCompleted, status)
-	case <-time.After(5 * time.Second):
-		s.T().Fatal("timeout waiting for run completion")
-	}
+	s.awaitStatus(done, db.WorkflowRunStatusCompleted)
 
 	s.bashRunner.AssertCalled(s.T(), "RunBash", mock.Anything, "echo 'main'", "", "")
 }
@@ -331,8 +277,7 @@ func (s *EngineSuite) TestCancelRun() {
 		},
 	}
 
-	s.store.On("CreateWorkflowRunWithNodes", mock.Anything, mock.Anything, mock.Anything).Return(nil)
-	s.store.On("UpsertNodeRun", mock.Anything, mock.Anything).Return(nil)
+	s.expectRunPersistence()
 	s.store.On("UpdateWorkflowRun", mock.Anything, mock.Anything).Return(nil)
 
 	s.bashRunner.On("RunBash", mock.Anything, "sleep 10", "", "").
@@ -456,8 +401,7 @@ func (s *EngineSuite) TestWhenConditionSkipsNode() {
 		},
 	}
 
-	s.store.On("CreateWorkflowRunWithNodes", mock.Anything, mock.Anything, mock.Anything).Return(nil)
-	s.store.On("UpsertNodeRun", mock.Anything, mock.Anything).Return(nil)
+	s.expectRunPersistence()
 	done := s.waitForRunStatus()
 
 	s.bashRunner.On("RunBash", mock.Anything, "echo yes", "", "").Return("yes", nil)
@@ -465,12 +409,7 @@ func (s *EngineSuite) TestWhenConditionSkipsNode() {
 	_, err := s.engine.StartRun(context.Background(), StartRunOptions{WorkflowName: "when-test"})
 	require.NoError(s.T(), err)
 
-	select {
-	case status := <-done:
-		require.Equal(s.T(), db.WorkflowRunStatusCompleted, status)
-	case <-time.After(5 * time.Second):
-		s.T().Fatal("timeout waiting for run completion")
-	}
+	s.awaitStatus(done, db.WorkflowRunStatusCompleted)
 
 	// "never" node should not have called RunBash with "echo no".
 	s.bashRunner.AssertNotCalled(s.T(), "RunBash", mock.Anything, "echo no", mock.Anything, mock.Anything)
@@ -487,8 +426,7 @@ func (s *EngineSuite) TestTriggerRuleAllDone() {
 		},
 	}
 
-	s.store.On("CreateWorkflowRunWithNodes", mock.Anything, mock.Anything, mock.Anything).Return(nil)
-	s.store.On("UpsertNodeRun", mock.Anything, mock.Anything).Return(nil)
+	s.expectRunPersistence()
 	done := s.waitForRunStatus()
 
 	s.bashRunner.On("RunBash", mock.Anything, "exit 1", "", "").Return("", fmt.Errorf("exit 1"))
@@ -518,8 +456,7 @@ func (s *EngineSuite) TestTriggerRuleAllSuccessSkips() {
 		},
 	}
 
-	s.store.On("CreateWorkflowRunWithNodes", mock.Anything, mock.Anything, mock.Anything).Return(nil)
-	s.store.On("UpsertNodeRun", mock.Anything, mock.Anything).Return(nil)
+	s.expectRunPersistence()
 	done := s.waitForRunStatus()
 
 	s.bashRunner.On("RunBash", mock.Anything, "exit 1", "", "").Return("", fmt.Errorf("exit 1"))
@@ -527,12 +464,7 @@ func (s *EngineSuite) TestTriggerRuleAllSuccessSkips() {
 	_, err := s.engine.StartRun(context.Background(), StartRunOptions{WorkflowName: "skip-on-fail"})
 	require.NoError(s.T(), err)
 
-	select {
-	case status := <-done:
-		require.Equal(s.T(), db.WorkflowRunStatusFailed, status)
-	case <-time.After(5 * time.Second):
-		s.T().Fatal("timeout waiting for run completion")
-	}
+	s.awaitStatus(done, db.WorkflowRunStatusFailed)
 
 	// Report node should NOT run since dependency failed.
 	s.runner.AssertNotCalled(s.T(), "Run", mock.Anything, mock.Anything)
@@ -546,8 +478,7 @@ func (s *EngineSuite) TestBroadcasterEventsEmitted() {
 		},
 	}
 
-	s.store.On("CreateWorkflowRunWithNodes", mock.Anything, mock.Anything, mock.Anything).Return(nil)
-	s.store.On("UpsertNodeRun", mock.Anything, mock.Anything).Return(nil)
+	s.expectRunPersistence()
 	done := s.waitForRunStatus()
 
 	s.bashRunner.On("RunBash", mock.Anything, "echo hi", "", "").Return("hi", nil)
@@ -579,19 +510,13 @@ func (s *EngineSuite) TestUnsupportedNodeType() {
 		},
 	}
 
-	s.store.On("CreateWorkflowRunWithNodes", mock.Anything, mock.Anything, mock.Anything).Return(nil)
-	s.store.On("UpsertNodeRun", mock.Anything, mock.Anything).Return(nil)
+	s.expectRunPersistence()
 	done := s.waitForRunStatus()
 
 	_, err := s.engine.StartRun(context.Background(), StartRunOptions{WorkflowName: "bad-type"})
 	require.NoError(s.T(), err)
 
-	select {
-	case status := <-done:
-		require.Equal(s.T(), db.WorkflowRunStatusFailed, status)
-	case <-time.After(5 * time.Second):
-		s.T().Fatal("timeout waiting for run completion")
-	}
+	s.awaitStatus(done, db.WorkflowRunStatusFailed)
 }
 
 func (s *EngineSuite) TestPromptNodeAgentError() {
@@ -602,8 +527,7 @@ func (s *EngineSuite) TestPromptNodeAgentError() {
 		},
 	}
 
-	s.store.On("CreateWorkflowRunWithNodes", mock.Anything, mock.Anything, mock.Anything).Return(nil)
-	s.store.On("UpsertNodeRun", mock.Anything, mock.Anything).Return(nil)
+	s.expectRunPersistence()
 	done := s.waitForRunStatus()
 
 	s.runner.On("Run", mock.Anything, mock.Anything).Return(&agent.AgentResponse{Response: "partial", Error: "agent failed"}, nil)
@@ -611,12 +535,7 @@ func (s *EngineSuite) TestPromptNodeAgentError() {
 	_, err := s.engine.StartRun(context.Background(), StartRunOptions{WorkflowName: "agent-err"})
 	require.NoError(s.T(), err)
 
-	select {
-	case status := <-done:
-		require.Equal(s.T(), db.WorkflowRunStatusFailed, status)
-	case <-time.After(5 * time.Second):
-		s.T().Fatal("timeout waiting for run completion")
-	}
+	s.awaitStatus(done, db.WorkflowRunStatusFailed)
 }
 
 func (s *EngineSuite) TestPromptNodeWithSystemPrompt() {
@@ -632,8 +551,7 @@ func (s *EngineSuite) TestPromptNodeWithSystemPrompt() {
 		},
 	}
 
-	s.store.On("CreateWorkflowRunWithNodes", mock.Anything, mock.Anything, mock.Anything).Return(nil)
-	s.store.On("UpsertNodeRun", mock.Anything, mock.Anything).Return(nil)
+	s.expectRunPersistence()
 	done := s.waitForRunStatus()
 
 	s.runner.On("Run", mock.Anything, mock.Anything).Return(&agent.AgentResponse{Response: "Hi"}, nil)
@@ -644,12 +562,7 @@ func (s *EngineSuite) TestPromptNodeWithSystemPrompt() {
 	})
 	require.NoError(s.T(), err)
 
-	select {
-	case status := <-done:
-		require.Equal(s.T(), db.WorkflowRunStatusCompleted, status)
-	case <-time.After(5 * time.Second):
-		s.T().Fatal("timeout")
-	}
+	s.awaitStatus(done, db.WorkflowRunStatusCompleted)
 
 	calls := s.runner.Calls
 	require.NotEmpty(s.T(), calls)
@@ -669,19 +582,13 @@ func (s *EngineSuite) TestPromptNodeSystemPromptTemplateError() {
 		},
 	}
 
-	s.store.On("CreateWorkflowRunWithNodes", mock.Anything, mock.Anything, mock.Anything).Return(nil)
-	s.store.On("UpsertNodeRun", mock.Anything, mock.Anything).Return(nil)
+	s.expectRunPersistence()
 	done := s.waitForRunStatus()
 
 	_, err := s.engine.StartRun(context.Background(), StartRunOptions{WorkflowName: "bad-sys"})
 	require.NoError(s.T(), err)
 
-	select {
-	case status := <-done:
-		require.Equal(s.T(), db.WorkflowRunStatusFailed, status)
-	case <-time.After(5 * time.Second):
-		s.T().Fatal("timeout")
-	}
+	s.awaitStatus(done, db.WorkflowRunStatusFailed)
 }
 
 func (s *EngineSuite) TestPromptNodeTemplateError() {
@@ -692,19 +599,13 @@ func (s *EngineSuite) TestPromptNodeTemplateError() {
 		},
 	}
 
-	s.store.On("CreateWorkflowRunWithNodes", mock.Anything, mock.Anything, mock.Anything).Return(nil)
-	s.store.On("UpsertNodeRun", mock.Anything, mock.Anything).Return(nil)
+	s.expectRunPersistence()
 	done := s.waitForRunStatus()
 
 	_, err := s.engine.StartRun(context.Background(), StartRunOptions{WorkflowName: "bad-prompt"})
 	require.NoError(s.T(), err)
 
-	select {
-	case status := <-done:
-		require.Equal(s.T(), db.WorkflowRunStatusFailed, status)
-	case <-time.After(5 * time.Second):
-		s.T().Fatal("timeout")
-	}
+	s.awaitStatus(done, db.WorkflowRunStatusFailed)
 }
 
 func (s *EngineSuite) TestBashNodeScriptTemplateError() {
@@ -715,19 +616,13 @@ func (s *EngineSuite) TestBashNodeScriptTemplateError() {
 		},
 	}
 
-	s.store.On("CreateWorkflowRunWithNodes", mock.Anything, mock.Anything, mock.Anything).Return(nil)
-	s.store.On("UpsertNodeRun", mock.Anything, mock.Anything).Return(nil)
+	s.expectRunPersistence()
 	done := s.waitForRunStatus()
 
 	_, err := s.engine.StartRun(context.Background(), StartRunOptions{WorkflowName: "bad-script"})
 	require.NoError(s.T(), err)
 
-	select {
-	case status := <-done:
-		require.Equal(s.T(), db.WorkflowRunStatusFailed, status)
-	case <-time.After(5 * time.Second):
-		s.T().Fatal("timeout")
-	}
+	s.awaitStatus(done, db.WorkflowRunStatusFailed)
 }
 
 func (s *EngineSuite) TestTriggerRuleOneSuccess() {
@@ -742,8 +637,7 @@ func (s *EngineSuite) TestTriggerRuleOneSuccess() {
 		},
 	}
 
-	s.store.On("CreateWorkflowRunWithNodes", mock.Anything, mock.Anything, mock.Anything).Return(nil)
-	s.store.On("UpsertNodeRun", mock.Anything, mock.Anything).Return(nil)
+	s.expectRunPersistence()
 	done := s.waitForRunStatus()
 
 	s.bashRunner.On("RunBash", mock.Anything, "exit 1", "", "").Return("", fmt.Errorf("exit 1"))
@@ -773,8 +667,7 @@ func (s *EngineSuite) TestWhenConditionTemplateError() {
 		},
 	}
 
-	s.store.On("CreateWorkflowRunWithNodes", mock.Anything, mock.Anything, mock.Anything).Return(nil)
-	s.store.On("UpsertNodeRun", mock.Anything, mock.Anything).Return(nil)
+	s.expectRunPersistence()
 	done := s.waitForRunStatus()
 
 	s.bashRunner.On("RunBash", mock.Anything, "echo ok", "", "").Return("ok", nil)
@@ -839,8 +732,7 @@ func (s *EngineSuite) TestPromptNodeRunnerError() {
 		},
 	}
 
-	s.store.On("CreateWorkflowRunWithNodes", mock.Anything, mock.Anything, mock.Anything).Return(nil)
-	s.store.On("UpsertNodeRun", mock.Anything, mock.Anything).Return(nil)
+	s.expectRunPersistence()
 	done := s.waitForRunStatus()
 
 	s.runner.On("Run", mock.Anything, mock.Anything).Return(nil, fmt.Errorf("connection refused"))
@@ -848,12 +740,7 @@ func (s *EngineSuite) TestPromptNodeRunnerError() {
 	_, err := s.engine.StartRun(context.Background(), StartRunOptions{WorkflowName: "runner-err"})
 	require.NoError(s.T(), err)
 
-	select {
-	case status := <-done:
-		require.Equal(s.T(), db.WorkflowRunStatusFailed, status)
-	case <-time.After(5 * time.Second):
-		s.T().Fatal("timeout")
-	}
+	s.awaitStatus(done, db.WorkflowRunStatusFailed)
 }
 
 func (s *EngineSuite) TestTriggerRuleOneSuccessNoneSucceeded() {
@@ -868,8 +755,7 @@ func (s *EngineSuite) TestTriggerRuleOneSuccessNoneSucceeded() {
 		},
 	}
 
-	s.store.On("CreateWorkflowRunWithNodes", mock.Anything, mock.Anything, mock.Anything).Return(nil)
-	s.store.On("UpsertNodeRun", mock.Anything, mock.Anything).Return(nil)
+	s.expectRunPersistence()
 	done := s.waitForRunStatus()
 
 	s.bashRunner.On("RunBash", mock.Anything, "exit 1", "", "").Return("", fmt.Errorf("exit 1"))
@@ -899,8 +785,7 @@ func (s *EngineSuite) TestTriggerRuleUnknown() {
 		},
 	}
 
-	s.store.On("CreateWorkflowRunWithNodes", mock.Anything, mock.Anything, mock.Anything).Return(nil)
-	s.store.On("UpsertNodeRun", mock.Anything, mock.Anything).Return(nil)
+	s.expectRunPersistence()
 	done := s.waitForRunStatus()
 
 	s.bashRunner.On("RunBash", mock.Anything, "echo ok", "", "").Return("ok", nil)
@@ -909,12 +794,7 @@ func (s *EngineSuite) TestTriggerRuleUnknown() {
 	_, err := s.engine.StartRun(context.Background(), StartRunOptions{WorkflowName: "unknown-rule"})
 	require.NoError(s.T(), err)
 
-	select {
-	case status := <-done:
-		require.Equal(s.T(), db.WorkflowRunStatusCompleted, status)
-	case <-time.After(5 * time.Second):
-		s.T().Fatal("timeout")
-	}
+	s.awaitStatus(done, db.WorkflowRunStatusCompleted)
 
 	s.runner.AssertCalled(s.T(), "Run", mock.Anything, mock.Anything)
 }
@@ -950,8 +830,7 @@ func (s *EngineSuite) TestUpdateWorkflowRunErrorLogging() {
 		},
 	}
 
-	s.store.On("CreateWorkflowRunWithNodes", mock.Anything, mock.Anything, mock.Anything).Return(nil)
-	s.store.On("UpsertNodeRun", mock.Anything, mock.Anything).Return(nil)
+	s.expectRunPersistence()
 
 	// Make UpdateWorkflowRun fail.
 	doneCh := make(chan struct{}, 1)

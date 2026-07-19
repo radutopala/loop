@@ -27,8 +27,7 @@ func (s *EngineSuite) TestApprovalNodePauseAndResume() {
 		},
 	}
 
-	s.store.On("CreateWorkflowRunWithNodes", mock.Anything, mock.Anything, mock.Anything).Return(nil)
-	s.store.On("UpsertNodeRun", mock.Anything, mock.Anything).Return(nil)
+	s.expectRunPersistence()
 	s.store.On("UpdateWorkflowRun", mock.Anything, mock.Anything).Return(nil)
 
 	s.bashRunner.On("RunBash", mock.Anything, "echo pre", "", "").Return("pre", nil)
@@ -37,8 +36,7 @@ func (s *EngineSuite) TestApprovalNodePauseAndResume() {
 	done := make(chan db.WorkflowRunStatus, 1)
 	updateCalls := 0
 	s.store.ExpectedCalls = nil // clear existing mocks
-	s.store.On("CreateWorkflowRunWithNodes", mock.Anything, mock.Anything, mock.Anything).Return(nil)
-	s.store.On("UpsertNodeRun", mock.Anything, mock.Anything).Return(nil)
+	s.expectRunPersistence()
 	s.store.On("UpdateNodeHeartbeat", mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Maybe()
 	// GetWorkflowRun: used by updateRunStatus, executeDAG final write, and
 	// ResumeRun (to look up PausedNodeID). Return PausedNodeID="approve" so
@@ -67,12 +65,7 @@ func (s *EngineSuite) TestApprovalNodePauseAndResume() {
 	err = s.engine.ResumeRun(context.Background(), runID, "looks good")
 	require.NoError(s.T(), err)
 
-	select {
-	case status := <-done:
-		require.Equal(s.T(), db.WorkflowRunStatusCompleted, status)
-	case <-time.After(5 * time.Second):
-		s.T().Fatal("timeout waiting for run completion")
-	}
+	s.awaitStatus(done, db.WorkflowRunStatusCompleted)
 
 	// Verify deploy ran after approval.
 	s.bashRunner.AssertCalled(s.T(), "RunBash", mock.Anything, "echo deploying", "", "")
@@ -88,19 +81,13 @@ func (s *EngineSuite) TestApprovalNodeTimeout() {
 		},
 	}
 
-	s.store.On("CreateWorkflowRunWithNodes", mock.Anything, mock.Anything, mock.Anything).Return(nil)
-	s.store.On("UpsertNodeRun", mock.Anything, mock.Anything).Return(nil)
+	s.expectRunPersistence()
 	done := s.waitForTerminalStatus()
 
 	_, err := s.engine.StartRun(context.Background(), StartRunOptions{WorkflowName: "approval-timeout"})
 	require.NoError(s.T(), err)
 
-	select {
-	case status := <-done:
-		require.Equal(s.T(), db.WorkflowRunStatusFailed, status)
-	case <-time.After(5 * time.Second):
-		s.T().Fatal("timeout waiting for run failure")
-	}
+	s.awaitStatus(done, db.WorkflowRunStatusFailed)
 }
 
 func (s *EngineSuite) TestApprovalNodeMessageTemplateError() {
@@ -113,19 +100,13 @@ func (s *EngineSuite) TestApprovalNodeMessageTemplateError() {
 		},
 	}
 
-	s.store.On("CreateWorkflowRunWithNodes", mock.Anything, mock.Anything, mock.Anything).Return(nil)
-	s.store.On("UpsertNodeRun", mock.Anything, mock.Anything).Return(nil)
+	s.expectRunPersistence()
 	done := s.waitForTerminalStatus()
 
 	_, err := s.engine.StartRun(context.Background(), StartRunOptions{WorkflowName: "approval-bad-msg"})
 	require.NoError(s.T(), err)
 
-	select {
-	case status := <-done:
-		require.Equal(s.T(), db.WorkflowRunStatusFailed, status)
-	case <-time.After(5 * time.Second):
-		s.T().Fatal("timeout")
-	}
+	s.awaitStatus(done, db.WorkflowRunStatusFailed)
 }
 
 func (s *EngineSuite) TestApprovalNodeDefaultResponse() {
@@ -138,8 +119,7 @@ func (s *EngineSuite) TestApprovalNodeDefaultResponse() {
 		},
 	}
 
-	s.store.On("CreateWorkflowRunWithNodes", mock.Anything, mock.Anything, mock.Anything).Return(nil)
-	s.store.On("UpsertNodeRun", mock.Anything, mock.Anything).Return(nil)
+	s.expectRunPersistence()
 	done := s.waitForTerminalStatus()
 
 	runID, err := s.engine.StartRun(context.Background(), StartRunOptions{WorkflowName: "approval-default"})
@@ -151,12 +131,7 @@ func (s *EngineSuite) TestApprovalNodeDefaultResponse() {
 	err = s.engine.ResumeRun(context.Background(), runID, "")
 	require.NoError(s.T(), err)
 
-	select {
-	case status := <-done:
-		require.Equal(s.T(), db.WorkflowRunStatusCompleted, status)
-	case <-time.After(5 * time.Second):
-		s.T().Fatal("timeout")
-	}
+	s.awaitStatus(done, db.WorkflowRunStatusCompleted)
 }
 
 func (s *EngineSuite) TestResumeRunNotPending() {
@@ -202,8 +177,7 @@ func (s *EngineSuite) TestLoopNodeIterates() {
 		},
 	}
 
-	s.store.On("CreateWorkflowRunWithNodes", mock.Anything, mock.Anything, mock.Anything).Return(nil)
-	s.store.On("UpsertNodeRun", mock.Anything, mock.Anything).Return(nil)
+	s.expectRunPersistence()
 	done := s.waitForRunStatus()
 
 	callCount := 0
@@ -214,12 +188,7 @@ func (s *EngineSuite) TestLoopNodeIterates() {
 	_, err := s.engine.StartRun(context.Background(), StartRunOptions{WorkflowName: "loop-test"})
 	require.NoError(s.T(), err)
 
-	select {
-	case status := <-done:
-		require.Equal(s.T(), db.WorkflowRunStatusCompleted, status)
-	case <-time.After(5 * time.Second):
-		s.T().Fatal("timeout")
-	}
+	s.awaitStatus(done, db.WorkflowRunStatusCompleted)
 
 	require.Equal(s.T(), 3, callCount)
 }
@@ -234,8 +203,7 @@ func (s *EngineSuite) TestLoopNodeStopsOnCondition() {
 		},
 	}
 
-	s.store.On("CreateWorkflowRunWithNodes", mock.Anything, mock.Anything, mock.Anything).Return(nil)
-	s.store.On("UpsertNodeRun", mock.Anything, mock.Anything).Return(nil)
+	s.expectRunPersistence()
 	done := s.waitForRunStatus()
 
 	callCount := 0
@@ -246,12 +214,7 @@ func (s *EngineSuite) TestLoopNodeStopsOnCondition() {
 	_, err := s.engine.StartRun(context.Background(), StartRunOptions{WorkflowName: "loop-stop"})
 	require.NoError(s.T(), err)
 
-	select {
-	case status := <-done:
-		require.Equal(s.T(), db.WorkflowRunStatusCompleted, status)
-	case <-time.After(5 * time.Second):
-		s.T().Fatal("timeout")
-	}
+	s.awaitStatus(done, db.WorkflowRunStatusCompleted)
 
 	// Should stop after first iteration since condition is immediately "true".
 	require.Equal(s.T(), 1, callCount)
@@ -267,8 +230,7 @@ func (s *EngineSuite) TestLoopNodeDefaultMaxIterations() {
 		},
 	}
 
-	s.store.On("CreateWorkflowRunWithNodes", mock.Anything, mock.Anything, mock.Anything).Return(nil)
-	s.store.On("UpsertNodeRun", mock.Anything, mock.Anything).Return(nil)
+	s.expectRunPersistence()
 	done := s.waitForRunStatus()
 
 	callCount := 0
@@ -299,8 +261,7 @@ func (s *EngineSuite) TestLoopNodePromptError() {
 		},
 	}
 
-	s.store.On("CreateWorkflowRunWithNodes", mock.Anything, mock.Anything, mock.Anything).Return(nil)
-	s.store.On("UpsertNodeRun", mock.Anything, mock.Anything).Return(nil)
+	s.expectRunPersistence()
 	done := s.waitForRunStatus()
 
 	s.runner.On("Run", mock.Anything, mock.Anything).Return(nil, fmt.Errorf("agent error"))
@@ -308,12 +269,7 @@ func (s *EngineSuite) TestLoopNodePromptError() {
 	_, err := s.engine.StartRun(context.Background(), StartRunOptions{WorkflowName: "loop-err"})
 	require.NoError(s.T(), err)
 
-	select {
-	case status := <-done:
-		require.Equal(s.T(), db.WorkflowRunStatusFailed, status)
-	case <-time.After(5 * time.Second):
-		s.T().Fatal("timeout")
-	}
+	s.awaitStatus(done, db.WorkflowRunStatusFailed)
 }
 
 func (s *EngineSuite) TestLoopNodeConditionTemplateError() {
@@ -326,8 +282,7 @@ func (s *EngineSuite) TestLoopNodeConditionTemplateError() {
 		},
 	}
 
-	s.store.On("CreateWorkflowRunWithNodes", mock.Anything, mock.Anything, mock.Anything).Return(nil)
-	s.store.On("UpsertNodeRun", mock.Anything, mock.Anything).Return(nil)
+	s.expectRunPersistence()
 	done := s.waitForRunStatus()
 
 	callCount := 0
@@ -338,12 +293,7 @@ func (s *EngineSuite) TestLoopNodeConditionTemplateError() {
 	_, err := s.engine.StartRun(context.Background(), StartRunOptions{WorkflowName: "loop-bad-cond"})
 	require.NoError(s.T(), err)
 
-	select {
-	case status := <-done:
-		require.Equal(s.T(), db.WorkflowRunStatusCompleted, status)
-	case <-time.After(5 * time.Second):
-		s.T().Fatal("timeout")
-	}
+	s.awaitStatus(done, db.WorkflowRunStatusCompleted)
 
 	// Should run all iterations despite bad condition (condition error → continue).
 	require.Equal(s.T(), 2, callCount)

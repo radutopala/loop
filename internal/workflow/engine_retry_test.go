@@ -27,8 +27,7 @@ func (s *EngineSuite) TestRetryBashNode() {
 		},
 	}
 
-	s.store.On("CreateWorkflowRunWithNodes", mock.Anything, mock.Anything, mock.Anything).Return(nil)
-	s.store.On("UpsertNodeRun", mock.Anything, mock.Anything).Return(nil)
+	s.expectRunPersistence()
 	done := s.waitForRunStatus()
 
 	// First call fails, second succeeds.
@@ -38,12 +37,7 @@ func (s *EngineSuite) TestRetryBashNode() {
 	_, err := s.engine.StartRun(context.Background(), StartRunOptions{WorkflowName: "retry-test"})
 	require.NoError(s.T(), err)
 
-	select {
-	case status := <-done:
-		require.Equal(s.T(), db.WorkflowRunStatusCompleted, status)
-	case <-time.After(5 * time.Second):
-		s.T().Fatal("timeout")
-	}
+	s.awaitStatus(done, db.WorkflowRunStatusCompleted)
 
 	// Verify at least 2 calls were made (first fails, second succeeds).
 	s.bashRunner.AssertNumberOfCalls(s.T(), "RunBash", 2)
@@ -60,8 +54,7 @@ func (s *EngineSuite) TestRetryExhausted() {
 		},
 	}
 
-	s.store.On("CreateWorkflowRunWithNodes", mock.Anything, mock.Anything, mock.Anything).Return(nil)
-	s.store.On("UpsertNodeRun", mock.Anything, mock.Anything).Return(nil)
+	s.expectRunPersistence()
 	done := s.waitForRunStatus()
 
 	s.bashRunner.On("RunBash", mock.Anything, "fail-cmd", "", "").Return("", fmt.Errorf("always fails"))
@@ -69,12 +62,7 @@ func (s *EngineSuite) TestRetryExhausted() {
 	_, err := s.engine.StartRun(context.Background(), StartRunOptions{WorkflowName: "retry-exhausted"})
 	require.NoError(s.T(), err)
 
-	select {
-	case status := <-done:
-		require.Equal(s.T(), db.WorkflowRunStatusFailed, status)
-	case <-time.After(5 * time.Second):
-		s.T().Fatal("timeout")
-	}
+	s.awaitStatus(done, db.WorkflowRunStatusFailed)
 }
 
 func (s *EngineSuite) TestRetryNoConfig() {
@@ -86,8 +74,7 @@ func (s *EngineSuite) TestRetryNoConfig() {
 		},
 	}
 
-	s.store.On("CreateWorkflowRunWithNodes", mock.Anything, mock.Anything, mock.Anything).Return(nil)
-	s.store.On("UpsertNodeRun", mock.Anything, mock.Anything).Return(nil)
+	s.expectRunPersistence()
 	done := s.waitForRunStatus()
 
 	s.bashRunner.On("RunBash", mock.Anything, "fail", "", "").Return("", fmt.Errorf("error")).Once()
@@ -95,12 +82,7 @@ func (s *EngineSuite) TestRetryNoConfig() {
 	_, err := s.engine.StartRun(context.Background(), StartRunOptions{WorkflowName: "no-retry"})
 	require.NoError(s.T(), err)
 
-	select {
-	case status := <-done:
-		require.Equal(s.T(), db.WorkflowRunStatusFailed, status)
-	case <-time.After(5 * time.Second):
-		s.T().Fatal("timeout")
-	}
+	s.awaitStatus(done, db.WorkflowRunStatusFailed)
 
 	// Only one attempt.
 	s.bashRunner.AssertNumberOfCalls(s.T(), "RunBash", 1)
@@ -116,8 +98,7 @@ func (s *EngineSuite) TestLoopNodeCancelledDuringIteration() {
 		},
 	}
 
-	s.store.On("CreateWorkflowRunWithNodes", mock.Anything, mock.Anything, mock.Anything).Return(nil)
-	s.store.On("UpsertNodeRun", mock.Anything, mock.Anything).Return(nil)
+	s.expectRunPersistence()
 	s.store.On("UpdateWorkflowRun", mock.Anything, mock.Anything).Return(nil)
 
 	// Use one-shot returns so CancelRun and finalizeDAG get distinct pointers
@@ -166,8 +147,7 @@ func (s *EngineSuite) TestApprovalNodeCancelledWhileWaiting() {
 		},
 	}
 
-	s.store.On("CreateWorkflowRunWithNodes", mock.Anything, mock.Anything, mock.Anything).Return(nil)
-	s.store.On("UpsertNodeRun", mock.Anything, mock.Anything).Return(nil)
+	s.expectRunPersistence()
 	s.store.On("UpdateWorkflowRun", mock.Anything, mock.Anything).Return(nil)
 
 	// Use one-shot returns so CancelRun and finalizeDAG get distinct pointers.
@@ -209,8 +189,7 @@ func (s *EngineSuite) TestApprovalNodePauseStatusWriteError() {
 		},
 	}
 
-	s.store.On("CreateWorkflowRunWithNodes", mock.Anything, mock.Anything, mock.Anything).Return(nil)
-	s.store.On("UpsertNodeRun", mock.Anything, mock.Anything).Return(nil)
+	s.expectRunPersistence()
 	s.store.On("UpdateNodeHeartbeat", mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Maybe()
 
 	for _, call := range s.store.ExpectedCalls {
@@ -239,12 +218,7 @@ func (s *EngineSuite) TestApprovalNodePauseStatusWriteError() {
 	_, err := s.engine.StartRun(context.Background(), StartRunOptions{WorkflowName: "approval-db-err"})
 	require.NoError(s.T(), err)
 
-	select {
-	case status := <-done:
-		require.Equal(s.T(), db.WorkflowRunStatusFailed, status)
-	case <-time.After(5 * time.Second):
-		s.T().Fatal("timeout — approval node should have failed due to DB error")
-	}
+	s.awaitStatus(done, db.WorkflowRunStatusFailed)
 }
 
 func (s *EngineSuite) TestResumeRunAlreadyResumed() {
@@ -280,8 +254,7 @@ func (s *EngineSuite) TestRetryBackoffMaxCapped() {
 		},
 	}
 
-	s.store.On("CreateWorkflowRunWithNodes", mock.Anything, mock.Anything, mock.Anything).Return(nil)
-	s.store.On("UpsertNodeRun", mock.Anything, mock.Anything).Return(nil)
+	s.expectRunPersistence()
 	done := s.waitForRunStatus()
 
 	s.bashRunner.On("RunBash", mock.Anything, "fail", "", "").Return("", fmt.Errorf("error"))
@@ -289,12 +262,7 @@ func (s *EngineSuite) TestRetryBackoffMaxCapped() {
 	_, err := s.engine.StartRun(context.Background(), StartRunOptions{WorkflowName: "retry-cap"})
 	require.NoError(s.T(), err)
 
-	select {
-	case status := <-done:
-		require.Equal(s.T(), db.WorkflowRunStatusFailed, status)
-	case <-time.After(5 * time.Second):
-		s.T().Fatal("timeout")
-	}
+	s.awaitStatus(done, db.WorkflowRunStatusFailed)
 
 	// 1 initial + 3 retries = 4 calls.
 	s.bashRunner.AssertNumberOfCalls(s.T(), "RunBash", 4)
@@ -323,12 +291,7 @@ func (s *EngineSuite) TestRetryUpsertNodeRunError() {
 	_, err := s.engine.StartRun(context.Background(), StartRunOptions{WorkflowName: "retry-upsert-err"})
 	require.NoError(s.T(), err)
 
-	select {
-	case status := <-done:
-		require.Equal(s.T(), db.WorkflowRunStatusFailed, status)
-	case <-time.After(5 * time.Second):
-		s.T().Fatal("timeout")
-	}
+	s.awaitStatus(done, db.WorkflowRunStatusFailed)
 }
 
 func (s *EngineSuite) TestRetryCancelledDuringBackoff() {
@@ -342,8 +305,7 @@ func (s *EngineSuite) TestRetryCancelledDuringBackoff() {
 		},
 	}
 
-	s.store.On("CreateWorkflowRunWithNodes", mock.Anything, mock.Anything, mock.Anything).Return(nil)
-	s.store.On("UpsertNodeRun", mock.Anything, mock.Anything).Return(nil)
+	s.expectRunPersistence()
 	s.store.On("UpdateWorkflowRun", mock.Anything, mock.Anything).Return(nil)
 
 	// Use one-shot returns so CancelRun and finalizeDAG get distinct pointers.
@@ -416,8 +378,7 @@ func (s *EngineSuite) TestExecuteDAGFinalWriteGetError() {
 	}
 
 	s.store.ExpectedCalls = nil
-	s.store.On("CreateWorkflowRunWithNodes", mock.Anything, mock.Anything, mock.Anything).Return(nil)
-	s.store.On("UpsertNodeRun", mock.Anything, mock.Anything).Return(nil)
+	s.expectRunPersistence()
 	s.store.On("UpdateNodeHeartbeat", mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Maybe()
 	// GetWorkflowRun returns error — the final write in executeDAG will log it.
 	s.store.On("GetWorkflowRun", mock.Anything, mock.Anything).Return(nil, fmt.Errorf("db gone"))
