@@ -60,7 +60,7 @@ type shortcutResponse struct {
 // dirs and a readFile to use for loading file-backed shortcut bodies. Writes
 // an HTTP error and returns ok=false on failure.
 func (s *Server) resolveShortcutContext(w http.ResponseWriter, r *http.Request) (cfg *config.Config, loopDirs []string, readFile func(string) ([]byte, error), ok bool) {
-	loadConfig := s.loadConfig
+	loadConfig := s.configs.load
 	if loadConfig == nil {
 		loadConfig = config.Load
 	}
@@ -70,7 +70,7 @@ func (s *Server) resolveShortcutContext(w http.ResponseWriter, r *http.Request) 
 		return nil, nil, nil, false
 	}
 
-	loadProjectConfig := s.loadProjectConfig
+	loadProjectConfig := s.configs.loadProject
 	if loadProjectConfig == nil {
 		loadProjectConfig = config.LoadProjectConfig
 	}

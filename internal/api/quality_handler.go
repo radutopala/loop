@@ -265,12 +265,12 @@ func (s *qualityService) handleQualityScan(w http.ResponseWriter, r *http.Reques
 	}
 
 	channelID := r.PathValue("id")
-	dirPath, err := s.srv.resolveDirPath(r.Context(), "", channelID)
+	dirPath, err := s.srv.workspace.resolveDirPath(r.Context(), "", channelID)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	parentDirPath := s.srv.resolveParentDirPath(r.Context(), channelID)
+	parentDirPath := s.srv.workspace.resolveParentDirPath(r.Context(), channelID)
 	branch := gitBranch(r.Context(), dirPath)
 	if branch == "" {
 		branch = "main"
@@ -421,7 +421,7 @@ func (s *qualityService) handleQualitySnapshot(w http.ResponseWriter, r *http.Re
 	}
 
 	channelID := r.PathValue("id")
-	dirPath, err := s.srv.resolveDirPath(r.Context(), "", channelID)
+	dirPath, err := s.srv.workspace.resolveDirPath(r.Context(), "", channelID)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return

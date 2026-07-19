@@ -15,7 +15,6 @@ import (
 	"github.com/radutopala/loop/internal/agentregistry"
 	"github.com/radutopala/loop/internal/bot"
 	"github.com/radutopala/loop/internal/browser"
-	"github.com/radutopala/loop/internal/config"
 	"github.com/radutopala/loop/internal/container"
 	"github.com/radutopala/loop/internal/osutil"
 	"github.com/radutopala/loop/internal/scheduler"
@@ -93,61 +92,63 @@ type serverSystem interface {
 
 // Server exposes a lightweight HTTP API for task CRUD operations.
 type Server struct {
-	scheduler                 scheduler.Scheduler
-	channels                  ChannelEnsurer
-	threads                   ThreadEnsurer
-	store                     ChannelLister
-	messages                  MessageSender
-	memoryIndexer             MemoryIndexer
-	termManager               TerminalManager
-	hostTermManager           TerminalManager
-	dockerBrowserProvider     BrowserProvider
-	hostBrowserProvider       BrowserProvider                // for host Chrome mode
-	activeBrowserMode         map[string]string              // channelID -> "docker"|"host"; nil defaults to docker
-	browserModeMu             sync.Mutex                     // protects activeBrowserMode
-	cdpManagers               map[string]*browser.CDPManager // "channelID|mode" -> CDPManager
-	cdpManagersMu             sync.Mutex
-	browserCaptures           map[string]*browser.CaptureState // channelID -> state
-	browserCapturesMu         sync.Mutex
-	cmdBuilder                InteractiveCmdBuilder
-	containerRegistry         ContainerManager
-	activeChatLister          ActiveChatLister
-	branchPoller              *BranchPoller
-	msgHandler                IncomingMessageHandler
-	runCanceller              RunCanceller
-	planResolver              PlanResolver
-	askResolver               AskResolver
-	interactionHandler        InteractionHandler
-	agentRegistry             *agentregistry.Registry
-	eventsHub                 *EventsHub
-	imageManager              ImageManager
-	browserKeepAlive          time.Duration // delay before removing idle browser containers
-	loopDir                   string
-	screenshotDir             string // if set, write screenshots to this dir instead of base64
-	logger                    *slog.Logger
-	server                    *http.Server
-	listener                  net.Listener
-	stopErr                   error             // if set, Stop returns this error (for testing)
-	agentWSWriteJSON          func(v any) error // injectable for testing agent-channel WS write errors
-	workflowEngine            WorkflowEngine
-	worktreeCreator           *worktree.Creator
-	sys                       serverSystem
-	loadConfig                func() (*config.Config, error)                               // injectable for testing
-	loadProjectConfig         func(string, *config.Config) (*config.Config, error)         // injectable for testing
-	loadWorktreeProjectConfig func(string, string, *config.Config) (*config.Config, error) // injectable for testing
-	readFile                  func(string) ([]byte, error)                                 // injectable for testing
-	ticketStoreOpener         func(dir string) TicketStore                                 // injectable for testing
-	approvalResolver          bot.ApprovalResolver                                         // gate approval dispatcher
-	containerApprovalRouter   ContainerApprovalRouter                                      // per-container bearer-token → Manager lookup
-	pendingApprovals          PendingApprovalLister                                        // snapshot of in-flight approvals for FE rehydration
-	pendingAsks               PendingAsksLister                                            // snapshot of parked AskUserQuestion cards for FE rehydration
-	pendingPlans              PendingPlansLister                                           // snapshot of parked ExitPlanMode cards for FE rehydration
-	auditDirResolver          AuditDirResolver                                             // per-channel host path to the gate audit jsonl dir
-	githubLookup              GitHubLookup                                                 // resolves PR for a channel's branch via `gh`
-	prCache                   map[string]prCacheEntry                                      // (dirPath,branch) → cached PR lookup; see prCacheTTL
-	prCacheMu                 sync.Mutex                                                   // protects prCache
-	prCacheClock              func() time.Time                                             // injectable cache clock for tests
-	review                    *reviewService                                               // PR-review domain: sessions, gh client, worktree, in-flight runs
+	scheduler             scheduler.Scheduler
+	channels              ChannelEnsurer
+	threads               ThreadEnsurer
+	store                 ChannelLister
+	messages              MessageSender
+	memoryIndexer         MemoryIndexer
+	termManager           TerminalManager
+	hostTermManager       TerminalManager
+	dockerBrowserProvider BrowserProvider
+	hostBrowserProvider   BrowserProvider                // for host Chrome mode
+	activeBrowserMode     map[string]string              // channelID -> "docker"|"host"; nil defaults to docker
+	browserModeMu         sync.Mutex                     // protects activeBrowserMode
+	cdpManagers           map[string]*browser.CDPManager // "channelID|mode" -> CDPManager
+	cdpManagersMu         sync.Mutex
+	browserCaptures       map[string]*browser.CaptureState // channelID -> state
+	browserCapturesMu     sync.Mutex
+	cmdBuilder            InteractiveCmdBuilder
+	containerRegistry     ContainerManager
+	activeChatLister      ActiveChatLister
+	branchPoller          *BranchPoller
+	msgHandler            IncomingMessageHandler
+	runCanceller          RunCanceller
+	planResolver          PlanResolver
+	askResolver           AskResolver
+	interactionHandler    InteractionHandler
+	agentRegistry         *agentregistry.Registry
+	eventsHub             *EventsHub
+	imageManager          ImageManager
+	browserKeepAlive      time.Duration // delay before removing idle browser containers
+	loopDir               string
+	screenshotDir         string // if set, write screenshots to this dir instead of base64
+	logger                *slog.Logger
+	server                *http.Server
+	listener              net.Listener
+	stopErr               error             // if set, Stop returns this error (for testing)
+	agentWSWriteJSON      func(v any) error // injectable for testing agent-channel WS write errors
+	workflowEngine        WorkflowEngine
+	worktreeCreator       *worktree.Creator
+	sys                   serverSystem
+	// workspace resolves dir_path/channel_id to workspace directories;
+	// configs answers layered-config questions. Value types so a zero
+	// Server (test literals) keeps the pre-extraction default behavior.
+	workspace               workspaceResolver
+	configs                 configResolver
+	readFile                func(string) ([]byte, error) // injectable for testing
+	ticketStoreOpener       func(dir string) TicketStore // injectable for testing
+	approvalResolver        bot.ApprovalResolver         // gate approval dispatcher
+	containerApprovalRouter ContainerApprovalRouter      // per-container bearer-token → Manager lookup
+	pendingApprovals        PendingApprovalLister        // snapshot of in-flight approvals for FE rehydration
+	pendingAsks             PendingAsksLister            // snapshot of parked AskUserQuestion cards for FE rehydration
+	pendingPlans            PendingPlansLister           // snapshot of parked ExitPlanMode cards for FE rehydration
+	auditDirResolver        AuditDirResolver             // per-channel host path to the gate audit jsonl dir
+	githubLookup            GitHubLookup                 // resolves PR for a channel's branch via `gh`
+	prCache                 map[string]prCacheEntry      // (dirPath,branch) → cached PR lookup; see prCacheTTL
+	prCacheMu               sync.Mutex                   // protects prCache
+	prCacheClock            func() time.Time             // injectable cache clock for tests
+	review                  *reviewService               // PR-review domain: sessions, gh client, worktree, in-flight runs
 
 	quality *qualityService // quality-scan domain: scanner, graph/snapshot/history readers, in-flight scan registry
 
@@ -206,6 +207,7 @@ func (s *Server) SetMemoryIndexer(idx MemoryIndexer) {
 // SetLoopDir sets the loop directory used for fallback work dir resolution.
 func (s *Server) SetLoopDir(dir string) {
 	s.loopDir = dir
+	s.workspace.loopDir = dir
 }
 
 // SetScreenshotDir sets the directory for file-based screenshots.
@@ -311,6 +313,7 @@ func NewServer(sched scheduler.Scheduler, channels ChannelEnsurer, threads Threa
 		channels:  channels,
 		threads:   threads,
 		store:     store,
+		workspace: workspaceResolver{store: store},
 		messages:  messages,
 		logger:    logger,
 		worktreeCreator: &worktree.Creator{

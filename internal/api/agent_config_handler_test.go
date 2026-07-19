@@ -36,10 +36,10 @@ func (s *ServerSuite) TestAgentConfigGet() {
 		EffortOverride: "high",
 	}, nil)
 	// Parent resolution for worktree defaults: not a worktree here.
-	s.srv.loadConfig = func() (*config.Config, error) {
+	s.srv.configs.load = func() (*config.Config, error) {
 		return &config.Config{ClaudeModel: "claude-sonnet-5", ClaudeEffort: "medium"}, nil
 	}
-	s.srv.loadProjectConfig = func(_ string, base *config.Config) (*config.Config, error) {
+	s.srv.configs.loadProject = func(_ string, base *config.Config) (*config.Config, error) {
 		merged := *base
 		merged.ClaudeEffort = "low" // project layer overrides effort
 		return &merged, nil
@@ -67,10 +67,10 @@ func (s *ServerSuite) TestAgentConfigGetWorktreeDefaults() {
 		ChannelID: "ch-1",
 		DirPath:   "/home/user/project",
 	}, nil)
-	s.srv.loadConfig = func() (*config.Config, error) {
+	s.srv.configs.load = func() (*config.Config, error) {
 		return &config.Config{ClaudeModel: "claude-sonnet-5"}, nil
 	}
-	s.srv.loadWorktreeProjectConfig = func(_, _ string, base *config.Config) (*config.Config, error) {
+	s.srv.configs.loadWorktree = func(_, _ string, base *config.Config) (*config.Config, error) {
 		merged := *base
 		merged.ClaudeModel = "claude-opus-4-8"
 		return &merged, nil
@@ -88,7 +88,7 @@ func (s *ServerSuite) TestAgentConfigGetConfigLoadError() {
 	s.store.On("GetChannel", mock.Anything, "ch-1").Return(&db.Channel{
 		ChannelID: "ch-1", DirPath: "/home/user/project",
 	}, nil)
-	s.srv.loadConfig = func() (*config.Config, error) { return nil, os.ErrNotExist }
+	s.srv.configs.load = func() (*config.Config, error) { return nil, os.ErrNotExist }
 
 	w := s.agentConfigGet("ch-1")
 	require.Equal(s.T(), http.StatusOK, w.Code)
@@ -103,10 +103,10 @@ func (s *ServerSuite) TestAgentConfigGetProjectConfigError() {
 	s.store.On("GetChannel", mock.Anything, "ch-1").Return(&db.Channel{
 		ChannelID: "ch-1", DirPath: "/home/user/project",
 	}, nil)
-	s.srv.loadConfig = func() (*config.Config, error) {
+	s.srv.configs.load = func() (*config.Config, error) {
 		return &config.Config{ClaudeModel: "claude-sonnet-5", ClaudeEffort: "medium"}, nil
 	}
-	s.srv.loadProjectConfig = func(string, *config.Config) (*config.Config, error) { return nil, os.ErrNotExist }
+	s.srv.configs.loadProject = func(string, *config.Config) (*config.Config, error) { return nil, os.ErrNotExist }
 
 	w := s.agentConfigGet("ch-1")
 	require.Equal(s.T(), http.StatusOK, w.Code)
@@ -124,10 +124,10 @@ func (s *ServerSuite) TestAgentConfigGetWorktreeConfigError() {
 	s.store.On("GetChannel", mock.Anything, "ch-1").Return(&db.Channel{
 		ChannelID: "ch-1", DirPath: "/home/user/project",
 	}, nil)
-	s.srv.loadConfig = func() (*config.Config, error) {
+	s.srv.configs.load = func() (*config.Config, error) {
 		return &config.Config{ClaudeModel: "claude-sonnet-5"}, nil
 	}
-	s.srv.loadWorktreeProjectConfig = func(string, string, *config.Config) (*config.Config, error) { return nil, os.ErrNotExist }
+	s.srv.configs.loadWorktree = func(string, string, *config.Config) (*config.Config, error) { return nil, os.ErrNotExist }
 
 	w := s.agentConfigGet("wt-1")
 	require.Equal(s.T(), http.StatusOK, w.Code)
@@ -148,15 +148,15 @@ func (s *ServerSuite) TestAgentConfigGetNilLoaderFallbacks() {
 	s.store.On("GetChannel", mock.Anything, "ch-1").Return(&db.Channel{
 		ChannelID: "ch-1", DirPath: parent,
 	}, nil)
-	s.srv.loadConfig = nil
-	s.srv.loadWorktreeProjectConfig = nil
+	s.srv.configs.load = nil
+	s.srv.configs.loadWorktree = nil
 	require.Equal(s.T(), http.StatusOK, s.agentConfigGet("wt-1").Code)
 
 	// Non-worktree channel exercises the nil loadProjectConfig fallback.
 	s.store.On("GetChannel", mock.Anything, "ch-2").Return(&db.Channel{
 		ChannelID: "ch-2", DirPath: dir,
 	}, nil)
-	s.srv.loadProjectConfig = nil
+	s.srv.configs.loadProject = nil
 	require.Equal(s.T(), http.StatusOK, s.agentConfigGet("ch-2").Code)
 }
 

@@ -22,7 +22,7 @@ func (s *Server) handleListMemoryFiles(w http.ResponseWriter, r *http.Request) {
 	channelID := r.URL.Query().Get("channel_id")
 	dirPathParam := r.URL.Query().Get("dir_path")
 
-	dirPath, err := s.resolveDirPath(r.Context(), dirPathParam, channelID)
+	dirPath, err := s.workspace.resolveDirPath(r.Context(), dirPathParam, channelID)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
@@ -53,7 +53,7 @@ func (s *Server) handleSearchMemoryFiles(w http.ResponseWriter, r *http.Request)
 	dirPathParam := r.URL.Query().Get("dir_path")
 	query := strings.ToLower(r.URL.Query().Get("q"))
 
-	dirPath, err := s.resolveDirPath(r.Context(), dirPathParam, channelID)
+	dirPath, err := s.workspace.resolveDirPath(r.Context(), dirPathParam, channelID)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
@@ -108,7 +108,7 @@ func (s *Server) validateMemoryFilePath(w http.ResponseWriter, r *http.Request, 
 
 	channelID := r.URL.Query().Get("channel_id")
 	dirPathParam := r.URL.Query().Get("dir_path")
-	dirPath, err := s.resolveDirPath(r.Context(), dirPathParam, channelID)
+	dirPath, err := s.workspace.resolveDirPath(r.Context(), dirPathParam, channelID)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return false

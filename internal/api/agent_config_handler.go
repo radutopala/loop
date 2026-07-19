@@ -45,7 +45,7 @@ func (s *Server) handleGetAgentConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	defModel, defEffort := s.resolveClaudeDefaults(ch.DirPath, s.resolveParentDirPath(r.Context(), channelID))
+	defModel, defEffort := s.resolveClaudeDefaults(ch.DirPath, s.workspace.resolveParentDirPath(r.Context(), channelID))
 	writeHTTPJSON(w, http.StatusOK, agentConfigResponse{
 		Model:         ch.ModelOverride,
 		Effort:        ch.EffortOverride,
@@ -96,7 +96,7 @@ func (s *Server) handleSetAgentConfig(w http.ResponseWriter, r *http.Request) {
 // what "default" resolves to for this channel's dir. Returns the global
 // defaults on any config-load error.
 func (s *Server) resolveClaudeDefaults(workdir, parentDirPath string) (string, string) {
-	loadConfig := s.loadConfig
+	loadConfig := s.configs.load
 	if loadConfig == nil {
 		loadConfig = config.Load
 	}
@@ -107,7 +107,7 @@ func (s *Server) resolveClaudeDefaults(workdir, parentDirPath string) (string, s
 	merged := cfg
 	switch {
 	case workdir != "" && parentDirPath != "":
-		loadWorktree := s.loadWorktreeProjectConfig
+		loadWorktree := s.configs.loadWorktree
 		if loadWorktree == nil {
 			loadWorktree = config.LoadWorktreeProjectConfig
 		}
@@ -115,7 +115,7 @@ func (s *Server) resolveClaudeDefaults(workdir, parentDirPath string) (string, s
 			merged = pc
 		}
 	case workdir != "":
-		loadProjectConfig := s.loadProjectConfig
+		loadProjectConfig := s.configs.loadProject
 		if loadProjectConfig == nil {
 			loadProjectConfig = config.LoadProjectConfig
 		}

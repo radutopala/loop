@@ -50,7 +50,7 @@ func (s *Server) handleListBranches(w http.ResponseWriter, r *http.Request) {
 	}
 
 	channelID := r.PathValue("id")
-	dirPath, err := s.resolveDirPath(r.Context(), "", channelID)
+	dirPath, err := s.workspace.resolveDirPath(r.Context(), "", channelID)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
@@ -202,7 +202,7 @@ func (s *Server) handleListCommits(w http.ResponseWriter, r *http.Request) {
 	}
 
 	channelID := r.PathValue("id")
-	dirPath, err := s.resolveDirPath(r.Context(), "", channelID)
+	dirPath, err := s.workspace.resolveDirPath(r.Context(), "", channelID)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
@@ -320,7 +320,7 @@ func (s *Server) handleSwitchBranch(w http.ResponseWriter, r *http.Request) {
 	}
 
 	channelID := r.PathValue("id")
-	dirPath, err := s.resolveDirPath(r.Context(), "", channelID)
+	dirPath, err := s.workspace.resolveDirPath(r.Context(), "", channelID)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
@@ -372,7 +372,7 @@ func (s *Server) handleCreateBranch(w http.ResponseWriter, r *http.Request) {
 	}
 
 	channelID := r.PathValue("id")
-	dirPath, err := s.resolveDirPath(r.Context(), "", channelID)
+	dirPath, err := s.workspace.resolveDirPath(r.Context(), "", channelID)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
@@ -419,7 +419,7 @@ func (s *Server) handleDeleteBranch(w http.ResponseWriter, r *http.Request) {
 	}
 
 	channelID := r.PathValue("id")
-	dirPath, err := s.resolveDirPath(r.Context(), "", channelID)
+	dirPath, err := s.workspace.resolveDirPath(r.Context(), "", channelID)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return

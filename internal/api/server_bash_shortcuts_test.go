@@ -18,7 +18,7 @@ import (
 // --- Bash shortcuts list tests ---
 
 func (s *ServerSuite) TestListBashShortcutsEmpty() {
-	s.srv.loadConfig = func() (*config.Config, error) {
+	s.srv.configs.load = func() (*config.Config, error) {
 		return &config.Config{LoopDir: "/home/testuser/.loop"}, nil
 	}
 
@@ -29,7 +29,7 @@ func (s *ServerSuite) TestListBashShortcutsEmpty() {
 }
 
 func (s *ServerSuite) TestListBashShortcutsWithInlineCommand() {
-	s.srv.loadConfig = func() (*config.Config, error) {
+	s.srv.configs.load = func() (*config.Config, error) {
 		return &config.Config{
 			LoopDir: "/home/testuser/.loop",
 			BashShortcuts: []config.BashShortcut{
@@ -50,7 +50,7 @@ func (s *ServerSuite) TestListBashShortcutsWithInlineCommand() {
 }
 
 func (s *ServerSuite) TestListBashShortcutsWithCommandPath() {
-	s.srv.loadConfig = func() (*config.Config, error) {
+	s.srv.configs.load = func() (*config.Config, error) {
 		return &config.Config{
 			LoopDir: "/home/testuser/.loop",
 			BashShortcuts: []config.BashShortcut{
@@ -76,7 +76,7 @@ func (s *ServerSuite) TestListBashShortcutsWithCommandPath() {
 }
 
 func (s *ServerSuite) TestListBashShortcutsSkipsUnresolvable() {
-	s.srv.loadConfig = func() (*config.Config, error) {
+	s.srv.configs.load = func() (*config.Config, error) {
 		return &config.Config{
 			LoopDir: "/home/testuser/.loop",
 			BashShortcuts: []config.BashShortcut{
@@ -99,7 +99,7 @@ func (s *ServerSuite) TestListBashShortcutsSkipsUnresolvable() {
 }
 
 func (s *ServerSuite) TestListBashShortcutsConfigLoadError() {
-	s.srv.loadConfig = func() (*config.Config, error) {
+	s.srv.configs.load = func() (*config.Config, error) {
 		return nil, errors.New("config broken")
 	}
 
@@ -109,7 +109,7 @@ func (s *ServerSuite) TestListBashShortcutsConfigLoadError() {
 }
 
 func (s *ServerSuite) TestListBashShortcutsWithChannelMerge() {
-	s.srv.loadConfig = func() (*config.Config, error) {
+	s.srv.configs.load = func() (*config.Config, error) {
 		return &config.Config{
 			LoopDir: "/home/testuser/.loop",
 			BashShortcuts: []config.BashShortcut{
@@ -118,7 +118,7 @@ func (s *ServerSuite) TestListBashShortcutsWithChannelMerge() {
 		}, nil
 	}
 	s.store.On("GetChannel", mock.Anything, "ch-proj").Return(&db.Channel{ChannelID: "ch-proj", DirPath: "/projects/app"}, nil)
-	s.srv.loadProjectConfig = func(dir string, base *config.Config) (*config.Config, error) {
+	s.srv.configs.loadProject = func(dir string, base *config.Config) (*config.Config, error) {
 		require.Equal(s.T(), "/projects/app", dir)
 		merged := *base
 		merged.BashShortcuts = append(merged.BashShortcuts,
@@ -138,7 +138,7 @@ func (s *ServerSuite) TestListBashShortcutsWithChannelMerge() {
 }
 
 func (s *ServerSuite) TestListBashShortcutsLoopDirFallback() {
-	s.srv.loadConfig = func() (*config.Config, error) {
+	s.srv.configs.load = func() (*config.Config, error) {
 		return &config.Config{
 			BashShortcuts: []config.BashShortcut{
 				{Name: "test", Description: "Test", Command: "echo test"},
@@ -155,7 +155,7 @@ func (s *ServerSuite) TestListBashShortcutsLoopDirFallback() {
 }
 
 func (s *ServerSuite) TestListBashShortcutsProjectCommandPath() {
-	s.srv.loadConfig = func() (*config.Config, error) {
+	s.srv.configs.load = func() (*config.Config, error) {
 		return &config.Config{
 			LoopDir: "/home/testuser/.loop",
 			BashShortcuts: []config.BashShortcut{
@@ -164,7 +164,7 @@ func (s *ServerSuite) TestListBashShortcutsProjectCommandPath() {
 		}, nil
 	}
 	s.store.On("GetChannel", mock.Anything, "ch-proj").Return(&db.Channel{ChannelID: "ch-proj", DirPath: "/projects/app"}, nil)
-	s.srv.loadProjectConfig = func(_ string, base *config.Config) (*config.Config, error) {
+	s.srv.configs.loadProject = func(_ string, base *config.Config) (*config.Config, error) {
 		return base, nil
 	}
 	s.srv.readFile = func(path string) ([]byte, error) {
@@ -558,7 +558,7 @@ func (s *ServerSuite) TestModifyBashShortcutWriteFileError() {
 }
 
 func (s *ServerSuite) TestListBashShortcutsDefaultLoadConfig() {
-	s.srv.loadConfig = nil
+	s.srv.configs.load = nil
 	rec := s.testRequest("GET", "/api/bash-shortcuts", "")
 	require.Contains(s.T(), []int{http.StatusOK, http.StatusInternalServerError}, rec.Code)
 }

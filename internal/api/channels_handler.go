@@ -176,7 +176,7 @@ func (s *Server) handleSearchChannels(w http.ResponseWriter, r *http.Request) {
 				parentDirPath = parent.DirPath
 			}
 		}
-		reviewEnabled := s.resolveReviewEnabled(dirPath, parentDirPath)
+		reviewEnabled := s.configs.reviewEnabled(dirPath, parentDirPath)
 		resp = append(resp, channelResponse{
 			ChannelID:        ch.ChannelID,
 			Name:             ch.Name,

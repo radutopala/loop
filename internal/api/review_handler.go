@@ -58,7 +58,7 @@ func (s *Server) SetReviewService(client GitHubReview, store *review.Store, wt r
 // inspect or tear it down. Disabling the feature flag mid-session blocks
 // new loads / runs but doesn't strand an existing session.
 func (s *reviewService) requireReviewEnabled(w http.ResponseWriter, dirPath, parentDirPath string) bool {
-	if !s.srv.resolveReviewEnabled(dirPath, parentDirPath) {
+	if !s.srv.configs.reviewEnabled(dirPath, parentDirPath) {
 		http.Error(w, "review panel disabled for this project", http.StatusForbidden)
 		return false
 	}
@@ -159,11 +159,11 @@ func (s *reviewService) handleReviewLoad(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	parentDirPath := s.srv.resolveParentDirPath(r.Context(), channelID)
+	parentDirPath := s.srv.workspace.resolveParentDirPath(r.Context(), channelID)
 	if !s.requireReviewEnabled(w, dirPath, parentDirPath) {
 		return
 	}
-	ghUser := s.srv.resolveGHUser(dirPath, parentDirPath)
+	ghUser := s.srv.configs.ghUser(dirPath, parentDirPath)
 
 	// Refuse to Load over an in-flight run. The async run goroutine would
 	// otherwise stomp the new StatusLoading session on completion, and
@@ -303,11 +303,11 @@ func (s *reviewService) handleReviewSync(w http.ResponseWriter, r *http.Request)
 		http.Error(w, "channel has no dir_path", http.StatusBadRequest)
 		return
 	}
-	parentDirPath := s.srv.resolveParentDirPath(r.Context(), channelID)
+	parentDirPath := s.srv.workspace.resolveParentDirPath(r.Context(), channelID)
 	if !s.requireReviewEnabled(w, dirPath, parentDirPath) {
 		return
 	}
-	ghUser := s.srv.resolveGHUser(dirPath, parentDirPath)
+	ghUser := s.srv.configs.ghUser(dirPath, parentDirPath)
 
 	if _, err := s.refreshReviewSession(r.Context(), channelID, dirPath, ghUser, sess); err != nil {
 		respondReviewError(w, err)
@@ -441,11 +441,11 @@ func (s *reviewService) handleReviewListPRs(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	parentDirPath := s.srv.resolveParentDirPath(r.Context(), channelID)
+	parentDirPath := s.srv.workspace.resolveParentDirPath(r.Context(), channelID)
 	if !s.requireReviewEnabled(w, dirPath, parentDirPath) {
 		return
 	}
-	ghUser := s.srv.resolveGHUser(dirPath, parentDirPath)
+	ghUser := s.srv.configs.ghUser(dirPath, parentDirPath)
 
 	prs, err := s.client.ListOpenPRs(r.Context(), dirPath, ghUser)
 	if err != nil {
@@ -644,11 +644,11 @@ func (s *reviewService) handleReviewDeleteComment(w http.ResponseWriter, r *http
 			http.Error(w, "channel has no dir_path", http.StatusInternalServerError)
 			return
 		}
-		parentDirPath := s.srv.resolveParentDirPath(r.Context(), channelID)
+		parentDirPath := s.srv.workspace.resolveParentDirPath(r.Context(), channelID)
 		if !s.requireReviewEnabled(w, ch.DirPath, parentDirPath) {
 			return
 		}
-		ghUser := s.srv.resolveGHUser(ch.DirPath, parentDirPath)
+		ghUser := s.srv.configs.ghUser(ch.DirPath, parentDirPath)
 		// GitHub-source comments are only deletable when their author
 		// matches the configured gh user — GH would reject anyone else's
 		// DELETE anyway, but failing fast here keeps the local copy
@@ -688,11 +688,11 @@ func (s *reviewService) pushOneComment(ctx context.Context, channelID string, se
 	if err != nil || ch == nil || ch.DirPath == "" {
 		return errors.New("channel has no dir_path")
 	}
-	parentDirPath := s.srv.resolveParentDirPath(ctx, channelID)
-	if !s.srv.resolveReviewEnabled(ch.DirPath, parentDirPath) {
+	parentDirPath := s.srv.workspace.resolveParentDirPath(ctx, channelID)
+	if !s.srv.configs.reviewEnabled(ch.DirPath, parentDirPath) {
 		return errReviewDisabled
 	}
-	ghUser := s.srv.resolveGHUser(ch.DirPath, parentDirPath)
+	ghUser := s.srv.configs.ghUser(ch.DirPath, parentDirPath)
 	slug, err := s.client.FetchRepoSlug(ctx, ch.DirPath, ghUser)
 	if err != nil {
 		return err
@@ -772,7 +772,7 @@ func (s *reviewService) handleReviewRun(w http.ResponseWriter, r *http.Request) 
 	// channel's dir — resolveParentDirPath walks that chain. For a
 	// root channel, resolveParentDirPath returns "" and we fall back to
 	// the channel's own dir (which is the main repo).
-	parentDirPath := s.srv.resolveParentDirPath(r.Context(), channelID)
+	parentDirPath := s.srv.workspace.resolveParentDirPath(r.Context(), channelID)
 	if parentDirPath == "" && s.srv.store != nil {
 		if ch, err := s.srv.store.GetChannel(r.Context(), channelID); err == nil && ch != nil {
 			parentDirPath = ch.DirPath
@@ -799,12 +799,12 @@ func (s *reviewService) handleReviewRun(w http.ResponseWriter, r *http.Request) 
 			}
 		}
 	}
-	if !s.srv.resolveReviewEnabled(channelDirPath, parentDirPath) {
+	if !s.srv.configs.reviewEnabled(channelDirPath, parentDirPath) {
 		s.unregisterReviewRun(channelID)
 		http.Error(w, "review panel disabled for this project", http.StatusForbidden)
 		return
 	}
-	ghUser := s.srv.resolveGHUser(channelDirPath, parentDirPath)
+	ghUser := s.srv.configs.ghUser(channelDirPath, parentDirPath)
 
 	// Refresh the worktree + GH comments + diff before the agent kicks
 	// off. Without this, the agent could review stale code (commits

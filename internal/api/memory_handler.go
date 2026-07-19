@@ -2,9 +2,7 @@ package api
 
 import (
 	"context"
-	"fmt"
 	"net/http"
-	"path/filepath"
 
 	"github.com/radutopala/loop/internal/memory"
 )
@@ -50,7 +48,7 @@ func (s *Server) handleMemorySearch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	dirPath, err := s.resolveDirPath(r.Context(), req.DirPath, req.ChannelID)
+	dirPath, err := s.workspace.resolveDirPath(r.Context(), req.DirPath, req.ChannelID)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
@@ -75,7 +73,7 @@ func (s *Server) handleMemoryIndex(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	dirPath, err := s.resolveDirPath(r.Context(), req.DirPath, req.ChannelID)
+	dirPath, err := s.workspace.resolveDirPath(r.Context(), req.DirPath, req.ChannelID)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
@@ -88,52 +86,4 @@ func (s *Server) handleMemoryIndex(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeHTTPJSON(w, http.StatusOK, memoryIndexResponse{Count: count}, s.logger)
-}
-
-// resolveDirPath returns the dir_path from the request, resolving via channel_id lookup if needed.
-func (s *Server) resolveDirPath(ctx context.Context, dirPath, channelID string) (string, error) {
-	if dirPath != "" {
-		return dirPath, nil
-	}
-	if channelID == "" {
-		return "", fmt.Errorf("dir_path or channel_id is required")
-	}
-	if s.store == nil {
-		return "", fmt.Errorf("channel lookup not configured")
-	}
-	ch, err := s.store.GetChannel(ctx, channelID)
-	if err != nil {
-		return "", fmt.Errorf("looking up channel: %w", err)
-	}
-	if ch == nil {
-		return "", fmt.Errorf("channel %s not found", channelID)
-	}
-	if ch.DirPath == "" {
-		// Fall back to the default work dir for channels without a project dir.
-		if s.loopDir != "" {
-			return filepath.Join(s.loopDir, channelID, "work"), nil
-		}
-		return "", fmt.Errorf("channel %s has no dir_path", channelID)
-	}
-	return ch.DirPath, nil
-}
-
-// resolveParentDirPath returns the parent project's dir_path for a
-// worktree channel, or "" for non-worktree channels (and for any
-// lookup error — callers treat that as "no parent" rather than a hard
-// failure). Used by the quality engine config-merge layer so worktree
-// scans see the parent project's `.loop/config.json` overrides.
-func (s *Server) resolveParentDirPath(ctx context.Context, channelID string) string {
-	if channelID == "" || s.store == nil {
-		return ""
-	}
-	ch, err := s.store.GetChannel(ctx, channelID)
-	if err != nil || ch == nil || !ch.Worktree || ch.ParentID == "" {
-		return ""
-	}
-	parent, err := s.store.GetChannel(ctx, ch.ParentID)
-	if err != nil || parent == nil {
-		return ""
-	}
-	return parent.DirPath
 }

@@ -67,7 +67,7 @@ func (s *ServerSuite) enableShare() (dir string, ft *fakeTunnel) {
 	require.NoError(s.T(), os.MkdirAll(pgDir, 0o755))
 	require.NoError(s.T(), os.WriteFile(filepath.Join(pgDir, "index.html"), []byte("<h1>Demo</h1>"), 0o644))
 	require.NoError(s.T(), os.WriteFile(filepath.Join(pgDir, "script.js"), []byte("console.log(1)"), 0o644))
-	s.srv.loadConfig = func() (*config.Config, error) {
+	s.srv.configs.load = func() (*config.Config, error) {
 		return &config.Config{PlaygroundShare: config.PlaygroundShareConfig{Enabled: true}}, nil
 	}
 	ft = &fakeTunnel{}
@@ -128,7 +128,7 @@ func (s *ServerSuite) TestShareStoreLookupAndRemove() {
 
 func (s *ServerSuite) TestPlaygroundShareDisabled() {
 	s.setPlaygroundDir()
-	s.srv.loadConfig = func() (*config.Config, error) {
+	s.srv.configs.load = func() (*config.Config, error) {
 		return &config.Config{PlaygroundShare: config.PlaygroundShareConfig{Enabled: false}}, nil
 	}
 	rec := s.testRequest("PUT", "/api/playground/share?name=demo", "")
@@ -340,12 +340,12 @@ func (s *ServerSuite) TestStopTearsDownShareInfra() {
 // --- config-off default via real config ---
 
 func (s *ServerSuite) TestPlaygroundShareEnabledDefaultsFalse() {
-	s.srv.loadConfig = func() (*config.Config, error) { return &config.Config{}, nil }
+	s.srv.configs.load = func() (*config.Config, error) { return &config.Config{}, nil }
 	require.False(s.T(), s.srv.playground.playgroundShareEnabled())
 }
 
 func (s *ServerSuite) TestPlaygroundShareEnabledConfigError() {
-	s.srv.loadConfig = func() (*config.Config, error) { return nil, os.ErrNotExist }
+	s.srv.configs.load = func() (*config.Config, error) { return nil, os.ErrNotExist }
 	require.False(s.T(), s.srv.playground.playgroundShareEnabled())
 }
 
@@ -355,7 +355,7 @@ func (s *ServerSuite) TestPlaygroundShareEnabledNilLoaderFallsBackToConfigLoad()
 	// (→ error → disabled), making the branch deterministic regardless of the
 	// developer's real config.
 	s.T().Setenv("HOME", s.T().TempDir())
-	s.srv.loadConfig = nil
+	s.srv.configs.load = nil
 	require.False(s.T(), s.srv.playground.playgroundShareEnabled())
 }
 

@@ -8,7 +8,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/radutopala/loop/internal/config"
 	"github.com/radutopala/loop/internal/githubapi"
 )
 
@@ -136,8 +135,8 @@ func (s *Server) handleChannelPR(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	parentDirPath := s.resolveParentDirPath(r.Context(), channelID)
-	ghUser := s.resolveGHUser(dirPath, parentDirPath)
+	parentDirPath := s.workspace.resolveParentDirPath(r.Context(), channelID)
+	ghUser := s.configs.ghUser(dirPath, parentDirPath)
 
 	pr, err := s.githubLookup.LookupPR(r.Context(), dirPath, ghUser, branch)
 	if err != nil {
@@ -155,78 +154,4 @@ func (s *Server) handleChannelPR(w http.ResponseWriter, r *http.Request) {
 	resp := prResponse{Present: pr != nil, PR: pr}
 	s.prCachePut(dirPath, branch, resp)
 	writeHTTPJSON(w, http.StatusOK, resp, s.logger)
-}
-
-// resolveGHUser returns the gh CLI user for the channel's workdir. For
-// worktree channels (parentDirPath != "") the merge is three-layered:
-// global → parent project → worktree, so the parent project's
-// github.gh_user setting applies even when the worktree's own
-// .loop/config.json is empty. Falls back to "" (use gh's active account)
-// on any load error.
-func (s *Server) resolveGHUser(workdir, parentDirPath string) string {
-	loadConfig := s.loadConfig
-	if loadConfig == nil {
-		loadConfig = config.Load
-	}
-	cfg, err := loadConfig()
-	if err != nil || cfg == nil {
-		return ""
-	}
-	merged := cfg
-	switch {
-	case workdir != "" && parentDirPath != "":
-		loadWorktree := s.loadWorktreeProjectConfig
-		if loadWorktree == nil {
-			loadWorktree = config.LoadWorktreeProjectConfig
-		}
-		if pc, perr := loadWorktree(workdir, parentDirPath, cfg); perr == nil && pc != nil {
-			merged = pc
-		}
-	case workdir != "":
-		loadProjectConfig := s.loadProjectConfig
-		if loadProjectConfig == nil {
-			loadProjectConfig = config.LoadProjectConfig
-		}
-		if pc, perr := loadProjectConfig(workdir, cfg); perr == nil && pc != nil {
-			merged = pc
-		}
-	}
-	return merged.GitHub.GHUser
-}
-
-// resolveReviewEnabled mirrors resolveGHUser for the review.enabled flag.
-// The layering is global → project → worktree; the worktree's own
-// .loop/config.json wins, falling through to the parent project and then
-// to global when an inner layer doesn't set Enabled explicitly. Returns
-// false on any config-load error so a broken config doesn't silently
-// expose the panel.
-func (s *Server) resolveReviewEnabled(workdir, parentDirPath string) bool {
-	loadConfig := s.loadConfig
-	if loadConfig == nil {
-		loadConfig = config.Load
-	}
-	cfg, err := loadConfig()
-	if err != nil || cfg == nil {
-		return false
-	}
-	merged := cfg
-	switch {
-	case workdir != "" && parentDirPath != "":
-		loadWorktree := s.loadWorktreeProjectConfig
-		if loadWorktree == nil {
-			loadWorktree = config.LoadWorktreeProjectConfig
-		}
-		if pc, perr := loadWorktree(workdir, parentDirPath, cfg); perr == nil && pc != nil {
-			merged = pc
-		}
-	case workdir != "":
-		loadProjectConfig := s.loadProjectConfig
-		if loadProjectConfig == nil {
-			loadProjectConfig = config.LoadProjectConfig
-		}
-		if pc, perr := loadProjectConfig(workdir, cfg); perr == nil && pc != nil {
-			merged = pc
-		}
-	}
-	return merged.Review.Enabled
 }
