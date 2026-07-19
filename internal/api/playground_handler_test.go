@@ -324,7 +324,7 @@ func (s *ServerSuite) TestPlaygroundServeFileNullBytePath() {
 	req.SetPathValue("name", "my-app")
 	req.SetPathValue("path", "foo\x00bar")
 	rec := httptest.NewRecorder()
-	s.srv.handlePlaygroundServeFile(rec, req)
+	s.srv.playground.handlePlaygroundServeFile(rec, req)
 	require.Equal(s.T(), http.StatusNotFound, rec.Code)
 }
 
@@ -606,17 +606,17 @@ func (s *ServerSuite) TestPlaygroundFileListMissingName() {
 func (s *ServerSuite) TestValidatePlaygroundDir() {
 	s.setPlaygroundDir()
 	// Valid name.
-	pgDir, err := s.srv.validatePlaygroundDir("my-app")
+	pgDir, err := s.srv.playground.validatePlaygroundDir("my-app")
 	require.NoError(s.T(), err)
 	require.Contains(s.T(), pgDir, "playground/my-app")
 	// Traversal attempt (fails containment check).
-	_, err = s.srv.validatePlaygroundDir("../escape")
+	_, err = s.srv.playground.validatePlaygroundDir("../escape")
 	require.ErrorContains(s.T(), err, "invalid or missing playground name")
 	// Empty name (resolves to base dir itself, fails containment).
-	_, err = s.srv.validatePlaygroundDir("")
+	_, err = s.srv.playground.validatePlaygroundDir("")
 	require.ErrorContains(s.T(), err, "invalid or missing playground name")
 	// Name that passes containment but fails regex (e.g. contains @).
-	_, err = s.srv.validatePlaygroundDir("ab@cd")
+	_, err = s.srv.playground.validatePlaygroundDir("ab@cd")
 	require.ErrorContains(s.T(), err, "invalid or missing playground name")
 }
 
@@ -701,12 +701,12 @@ func (s *ServerSuite) TestResolvePlaygroundDirProjectScope() {
 	}, nil).Once()
 
 	req := httptest.NewRequest("GET", "/api/playground?name=my-app&scope=project&channel_id=ch1", nil)
-	resolved, err := s.srv.resolvePlaygroundDir(req, "my-app")
+	resolved, err := s.srv.playground.resolvePlaygroundDir(req, "my-app")
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), pgDir, resolved)
 	// Verify global scope still works.
 	req2 := httptest.NewRequest("GET", "/api/playground?name=my-app", nil)
-	resolved2, err := s.srv.resolvePlaygroundDir(req2, "my-app")
+	resolved2, err := s.srv.playground.resolvePlaygroundDir(req2, "my-app")
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), filepath.Join(dir, "playground", "my-app"), resolved2)
 }
@@ -714,7 +714,7 @@ func (s *ServerSuite) TestResolvePlaygroundDirProjectScope() {
 func (s *ServerSuite) TestResolvePlaygroundDirProjectScopeMissingChannelID() {
 	s.setPlaygroundDir()
 	req := httptest.NewRequest("GET", "/api/playground?name=my-app&scope=project", nil)
-	_, err := s.srv.resolvePlaygroundDir(req, "my-app")
+	_, err := s.srv.playground.resolvePlaygroundDir(req, "my-app")
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "channel_id is required")
 }
@@ -724,7 +724,7 @@ func (s *ServerSuite) TestResolvePlaygroundDirProjectScopeBadChannel() {
 	s.store.On("GetChannel", mock.Anything, "bad-ch").Return(nil, nil).Once()
 
 	req := httptest.NewRequest("GET", "/api/playground?name=my-app&scope=project&channel_id=bad-ch", nil)
-	_, err := s.srv.resolvePlaygroundDir(req, "my-app")
+	_, err := s.srv.playground.resolvePlaygroundDir(req, "my-app")
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "not found")
 }
@@ -823,7 +823,7 @@ func (s *ServerSuite) TestResolveProjectPlaygroundDirSuccess() {
 	req.SetPathValue("channel_id", "ch1")
 	req.SetPathValue("name", "my-app")
 
-	resolved, err := s.srv.resolveProjectPlaygroundDir(req)
+	resolved, err := s.srv.playground.resolveProjectPlaygroundDir(req)
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), filepath.Join(projectDir, ".loop", "playground", "my-app"), resolved)
 }
@@ -834,7 +834,7 @@ func (s *ServerSuite) TestResolveProjectPlaygroundDirMissingChannelID() {
 	req.SetPathValue("channel_id", "")
 	req.SetPathValue("name", "my-app")
 
-	_, err := s.srv.resolveProjectPlaygroundDir(req)
+	_, err := s.srv.playground.resolveProjectPlaygroundDir(req)
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "channel_id and name are required")
 }
@@ -845,7 +845,7 @@ func (s *ServerSuite) TestResolveProjectPlaygroundDirMissingName() {
 	req.SetPathValue("channel_id", "ch1")
 	req.SetPathValue("name", "")
 
-	_, err := s.srv.resolveProjectPlaygroundDir(req)
+	_, err := s.srv.playground.resolveProjectPlaygroundDir(req)
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "channel_id and name are required")
 }
@@ -858,7 +858,7 @@ func (s *ServerSuite) TestResolveProjectPlaygroundDirBadChannel() {
 	req.SetPathValue("channel_id", "bad-ch")
 	req.SetPathValue("name", "my-app")
 
-	_, err := s.srv.resolveProjectPlaygroundDir(req)
+	_, err := s.srv.playground.resolveProjectPlaygroundDir(req)
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "not found")
 }
@@ -881,7 +881,7 @@ func (s *ServerSuite) TestPlaygroundServeProjectSuccess() {
 	req.SetPathValue("channel_id", "ch1")
 	req.SetPathValue("name", "my-app")
 	rec := httptest.NewRecorder()
-	s.srv.handlePlaygroundServeProject(rec, req)
+	s.srv.playground.handlePlaygroundServeProject(rec, req)
 
 	require.Equal(s.T(), http.StatusOK, rec.Code)
 	require.Contains(s.T(), rec.Header().Get("Content-Type"), "text/html")
@@ -906,7 +906,7 @@ func (s *ServerSuite) TestPlaygroundServeProjectEmpty() {
 	req.SetPathValue("channel_id", "ch1")
 	req.SetPathValue("name", "empty-proj")
 	rec := httptest.NewRecorder()
-	s.srv.handlePlaygroundServeProject(rec, req)
+	s.srv.playground.handlePlaygroundServeProject(rec, req)
 
 	require.Equal(s.T(), http.StatusOK, rec.Code)
 	require.Contains(s.T(), rec.Body.String(), "waiting for code from agent")
@@ -929,7 +929,7 @@ func (s *ServerSuite) TestPlaygroundServeProjectWithImportmap() {
 	req.SetPathValue("channel_id", "ch1")
 	req.SetPathValue("name", "with-imports")
 	rec := httptest.NewRecorder()
-	s.srv.handlePlaygroundServeProject(rec, req)
+	s.srv.playground.handlePlaygroundServeProject(rec, req)
 
 	require.Equal(s.T(), http.StatusOK, rec.Code)
 	require.Contains(s.T(), rec.Body.String(), `<script type="importmap">`)
@@ -944,7 +944,7 @@ func (s *ServerSuite) TestPlaygroundServeProjectInvalidChannel() {
 	req.SetPathValue("channel_id", "bad-ch")
 	req.SetPathValue("name", "my-app")
 	rec := httptest.NewRecorder()
-	s.srv.handlePlaygroundServeProject(rec, req)
+	s.srv.playground.handlePlaygroundServeProject(rec, req)
 
 	require.Equal(s.T(), http.StatusBadRequest, rec.Code)
 }
@@ -968,7 +968,7 @@ func (s *ServerSuite) TestPlaygroundServeProjectFileSuccess() {
 	req.SetPathValue("name", "my-app")
 	req.SetPathValue("path", "script.js")
 	rec := httptest.NewRecorder()
-	s.srv.handlePlaygroundServeProjectFile(rec, req)
+	s.srv.playground.handlePlaygroundServeProjectFile(rec, req)
 
 	require.Equal(s.T(), http.StatusOK, rec.Code)
 	require.Contains(s.T(), rec.Header().Get("Content-Type"), "javascript")
@@ -992,7 +992,7 @@ func (s *ServerSuite) TestPlaygroundServeProjectFileUnknownExtension() {
 	req.SetPathValue("name", "my-app")
 	req.SetPathValue("path", "data")
 	rec := httptest.NewRecorder()
-	s.srv.handlePlaygroundServeProjectFile(rec, req)
+	s.srv.playground.handlePlaygroundServeProjectFile(rec, req)
 
 	require.Equal(s.T(), http.StatusOK, rec.Code)
 	require.Equal(s.T(), "application/octet-stream", rec.Header().Get("Content-Type"))
@@ -1014,7 +1014,7 @@ func (s *ServerSuite) TestPlaygroundServeProjectFileNotFound() {
 	req.SetPathValue("name", "my-app")
 	req.SetPathValue("path", "nonexistent.js")
 	rec := httptest.NewRecorder()
-	s.srv.handlePlaygroundServeProjectFile(rec, req)
+	s.srv.playground.handlePlaygroundServeProjectFile(rec, req)
 
 	require.Equal(s.T(), http.StatusNotFound, rec.Code)
 }
@@ -1035,7 +1035,7 @@ func (s *ServerSuite) TestPlaygroundServeProjectFilePathTraversal() {
 	req.SetPathValue("name", "my-app")
 	req.SetPathValue("path", "../../etc/passwd")
 	rec := httptest.NewRecorder()
-	s.srv.handlePlaygroundServeProjectFile(rec, req)
+	s.srv.playground.handlePlaygroundServeProjectFile(rec, req)
 
 	require.Equal(s.T(), http.StatusNotFound, rec.Code)
 }
@@ -1049,7 +1049,7 @@ func (s *ServerSuite) TestPlaygroundServeProjectFileInvalidChannel() {
 	req.SetPathValue("name", "my-app")
 	req.SetPathValue("path", "script.js")
 	rec := httptest.NewRecorder()
-	s.srv.handlePlaygroundServeProjectFile(rec, req)
+	s.srv.playground.handlePlaygroundServeProjectFile(rec, req)
 
 	require.Equal(s.T(), http.StatusBadRequest, rec.Code)
 }
@@ -1140,7 +1140,7 @@ func (s *ServerSuite) TestPlaygroundFileListProjectScope() {
 
 func (s *ServerSuite) TestProjectPlaygroundDirNormalChannel() {
 	s.store.On("GetChannel", mock.Anything, "ch1").Return(&db.Channel{ChannelID: "ch1", DirPath: "/proj"}, nil).Once()
-	dir, err := s.srv.projectPlaygroundDir(context.Background(), "ch1")
+	dir, err := s.srv.playground.projectPlaygroundDir(context.Background(), "ch1")
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), "/proj", dir)
 }
@@ -1149,7 +1149,7 @@ func (s *ServerSuite) TestProjectPlaygroundDirWorktreeChannelResolvesToRoot() {
 	// A worktree channel → root project checkout, not the worktree dir.
 	s.store.On("GetChannel", mock.Anything, "wt").Return(&db.Channel{ChannelID: "wt", DirPath: "/proj/.worktrees/x", ParentID: "root", Worktree: true}, nil).Once()
 	s.store.On("GetChannel", mock.Anything, "root").Return(&db.Channel{ChannelID: "root", DirPath: "/proj"}, nil).Once()
-	dir, err := s.srv.projectPlaygroundDir(context.Background(), "wt")
+	dir, err := s.srv.playground.projectPlaygroundDir(context.Background(), "wt")
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), "/proj", dir)
 }
@@ -1160,7 +1160,7 @@ func (s *ServerSuite) TestProjectPlaygroundDirThreadUnderWorktreeResolvesToRoot(
 	s.store.On("GetChannel", mock.Anything, "th").Return(&db.Channel{ChannelID: "th", DirPath: "/proj/.worktrees/x", ParentID: "wt"}, nil).Once()
 	s.store.On("GetChannel", mock.Anything, "wt").Return(&db.Channel{ChannelID: "wt", DirPath: "/proj/.worktrees/x", ParentID: "root", Worktree: true}, nil).Once()
 	s.store.On("GetChannel", mock.Anything, "root").Return(&db.Channel{ChannelID: "root", DirPath: "/proj"}, nil).Once()
-	dir, err := s.srv.projectPlaygroundDir(context.Background(), "th")
+	dir, err := s.srv.playground.projectPlaygroundDir(context.Background(), "th")
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), "/proj", dir)
 }
@@ -1170,7 +1170,7 @@ func (s *ServerSuite) TestProjectPlaygroundDirNestedWorktreeWalksToRoot() {
 	s.store.On("GetChannel", mock.Anything, "wt2").Return(&db.Channel{ChannelID: "wt2", ParentID: "wt1", Worktree: true}, nil).Once()
 	s.store.On("GetChannel", mock.Anything, "wt1").Return(&db.Channel{ChannelID: "wt1", ParentID: "root", Worktree: true}, nil).Once()
 	s.store.On("GetChannel", mock.Anything, "root").Return(&db.Channel{ChannelID: "root", DirPath: "/proj"}, nil).Once()
-	dir, err := s.srv.projectPlaygroundDir(context.Background(), "wt2")
+	dir, err := s.srv.playground.projectPlaygroundDir(context.Background(), "wt2")
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), "/proj", dir)
 }
@@ -1179,7 +1179,7 @@ func (s *ServerSuite) TestProjectPlaygroundDirThreadUnderNonWorktreeParent() {
 	// A normal thread whose parent is NOT a worktree → its own dir, no walk.
 	s.store.On("GetChannel", mock.Anything, "th").Return(&db.Channel{ChannelID: "th", DirPath: "/proj", ParentID: "root"}, nil).Once()
 	s.store.On("GetChannel", mock.Anything, "root").Return(&db.Channel{ChannelID: "root", DirPath: "/proj"}, nil).Once()
-	dir, err := s.srv.projectPlaygroundDir(context.Background(), "th")
+	dir, err := s.srv.playground.projectPlaygroundDir(context.Background(), "th")
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), "/proj", dir)
 }
@@ -1188,7 +1188,7 @@ func (s *ServerSuite) TestProjectPlaygroundDirWorktreeParentMissingFallsBack() {
 	// Worktree with an unresolvable parent → fall back to the channel's own dir.
 	s.store.On("GetChannel", mock.Anything, "wt").Return(&db.Channel{ChannelID: "wt", DirPath: "/proj/.worktrees/x", ParentID: "gone", Worktree: true}, nil).Once()
 	s.store.On("GetChannel", mock.Anything, "gone").Return(nil, nil).Once()
-	dir, err := s.srv.projectPlaygroundDir(context.Background(), "wt")
+	dir, err := s.srv.playground.projectPlaygroundDir(context.Background(), "wt")
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), "/proj/.worktrees/x", dir)
 }
@@ -1196,7 +1196,7 @@ func (s *ServerSuite) TestProjectPlaygroundDirWorktreeParentMissingFallsBack() {
 func (s *ServerSuite) TestProjectPlaygroundDirThreadParentFetchErrorFallsBack() {
 	s.store.On("GetChannel", mock.Anything, "th").Return(&db.Channel{ChannelID: "th", DirPath: "/proj", ParentID: "root"}, nil).Once()
 	s.store.On("GetChannel", mock.Anything, "root").Return(nil, errors.New("db down")).Once()
-	dir, err := s.srv.projectPlaygroundDir(context.Background(), "th")
+	dir, err := s.srv.playground.projectPlaygroundDir(context.Background(), "th")
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), "/proj", dir)
 }
@@ -1205,7 +1205,7 @@ func (s *ServerSuite) TestProjectPlaygroundDirWorktreeChainCycleBounded() {
 	// A parent-id cycle among worktrees must terminate and fall back.
 	s.store.On("GetChannel", mock.Anything, "a").Return(&db.Channel{ChannelID: "a", DirPath: "/proj/.worktrees/a", ParentID: "b", Worktree: true}, nil)
 	s.store.On("GetChannel", mock.Anything, "b").Return(&db.Channel{ChannelID: "b", ParentID: "a", Worktree: true}, nil)
-	dir, err := s.srv.projectPlaygroundDir(context.Background(), "a")
+	dir, err := s.srv.playground.projectPlaygroundDir(context.Background(), "a")
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), "/proj/.worktrees/a", dir)
 }
@@ -1213,32 +1213,32 @@ func (s *ServerSuite) TestProjectPlaygroundDirWorktreeChainCycleBounded() {
 func (s *ServerSuite) TestProjectPlaygroundDirWorktreeChainBreaksOnParentIDGap() {
 	// A worktree whose parent has no further parent → no root, fall back.
 	s.store.On("GetChannel", mock.Anything, "wt").Return(&db.Channel{ChannelID: "wt", DirPath: "/proj/.worktrees/x", Worktree: true}, nil).Once()
-	dir, err := s.srv.projectPlaygroundDir(context.Background(), "wt")
+	dir, err := s.srv.playground.projectPlaygroundDir(context.Background(), "wt")
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), "/proj/.worktrees/x", dir)
 }
 
 func (s *ServerSuite) TestProjectPlaygroundDirEmptyChannelID() {
-	_, err := s.srv.projectPlaygroundDir(context.Background(), "")
+	_, err := s.srv.playground.projectPlaygroundDir(context.Background(), "")
 	require.Error(s.T(), err)
 }
 
 func (s *ServerSuite) TestProjectPlaygroundDirNilStore() {
 	srv := NewServer(nil, nil, nil, nil, nil, testLogger())
-	_, err := srv.projectPlaygroundDir(context.Background(), "ch1")
+	_, err := srv.playground.projectPlaygroundDir(context.Background(), "ch1")
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "not configured")
 }
 
 func (s *ServerSuite) TestProjectPlaygroundDirGetChannelError() {
 	s.store.On("GetChannel", mock.Anything, "ch1").Return(nil, errors.New("boom")).Once()
-	_, err := s.srv.projectPlaygroundDir(context.Background(), "ch1")
+	_, err := s.srv.playground.projectPlaygroundDir(context.Background(), "ch1")
 	require.Error(s.T(), err)
 }
 
 func (s *ServerSuite) TestProjectPlaygroundDirChannelNotFound() {
 	s.store.On("GetChannel", mock.Anything, "ch1").Return(nil, nil).Once()
-	_, err := s.srv.projectPlaygroundDir(context.Background(), "ch1")
+	_, err := s.srv.playground.projectPlaygroundDir(context.Background(), "ch1")
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "not found")
 }
@@ -1246,7 +1246,7 @@ func (s *ServerSuite) TestProjectPlaygroundDirChannelNotFound() {
 func (s *ServerSuite) TestProjectPlaygroundDirNoDirPathFallsBackToLoopDir() {
 	s.srv.loopDir = "/loop"
 	s.store.On("GetChannel", mock.Anything, "ch1").Return(&db.Channel{ChannelID: "ch1"}, nil).Once()
-	dir, err := s.srv.projectPlaygroundDir(context.Background(), "ch1")
+	dir, err := s.srv.playground.projectPlaygroundDir(context.Background(), "ch1")
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), filepath.Join("/loop", "ch1", "work"), dir)
 }
@@ -1254,6 +1254,6 @@ func (s *ServerSuite) TestProjectPlaygroundDirNoDirPathFallsBackToLoopDir() {
 func (s *ServerSuite) TestProjectPlaygroundDirNoDirPathNoLoopDir() {
 	s.srv.loopDir = ""
 	s.store.On("GetChannel", mock.Anything, "ch1").Return(&db.Channel{ChannelID: "ch1"}, nil).Once()
-	_, err := s.srv.projectPlaygroundDir(context.Background(), "ch1")
+	_, err := s.srv.playground.projectPlaygroundDir(context.Background(), "ch1")
 	require.Error(s.T(), err)
 }

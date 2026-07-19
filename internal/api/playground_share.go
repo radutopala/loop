@@ -125,8 +125,8 @@ func newShareToken(name, scope string) string {
 
 // playgroundShareEnabled reports whether the public-share feature is turned on
 // in config (default off).
-func (s *Server) playgroundShareEnabled() bool {
-	loadConfig := s.loadConfig
+func (s *playgroundService) playgroundShareEnabled() bool {
+	loadConfig := s.srv.loadConfig
 	if loadConfig == nil {
 		loadConfig = config.Load
 	}
@@ -139,7 +139,7 @@ func (s *Server) playgroundShareEnabled() bool {
 
 // handlePlaygroundShare handles PUT /api/playground/share — shares a playground
 // publicly and returns its tunnel URL. Body/query: name, scope, channel_id.
-func (s *Server) handlePlaygroundShare(w http.ResponseWriter, r *http.Request) {
+func (s *playgroundService) handlePlaygroundShare(w http.ResponseWriter, r *http.Request) {
 	if !s.playgroundShareEnabled() {
 		http.Error(w, "playground share is disabled", http.StatusForbidden)
 		return
@@ -156,13 +156,13 @@ func (s *Server) handlePlaygroundShare(w http.ResponseWriter, r *http.Request) {
 	}
 	scope, channelID := playgroundScopeFromRequest(r)
 
-	token := s.shareStore.add(name, scope, channelID, pgDir)
+	token := s.shares.add(name, scope, channelID, pgDir)
 
 	publicURL, err := s.ensureShareInfra(r.Context())
 	if err != nil {
 		// Roll back the share so a failed tunnel start doesn't leave a
 		// dangling entry that blocks teardown.
-		s.shareStore.removeByDir(pgDir)
+		s.shares.removeByDir(pgDir)
 		http.Error(w, "starting tunnel: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -178,7 +178,7 @@ func (s *Server) handlePlaygroundShare(w http.ResponseWriter, r *http.Request) {
 // a playground and tears down the tunnel when it was the last share. The dir is
 // resolved so any channel/thread that maps to the same playground can unshare
 // it (identity is the dir, not the requesting channel).
-func (s *Server) handlePlaygroundUnshare(w http.ResponseWriter, r *http.Request) {
+func (s *playgroundService) handlePlaygroundUnshare(w http.ResponseWriter, r *http.Request) {
 	name := r.URL.Query().Get("name")
 	if name == "" {
 		http.Error(w, "name is required", http.StatusBadRequest)
@@ -190,7 +190,7 @@ func (s *Server) handlePlaygroundUnshare(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	scope, channelID := playgroundScopeFromRequest(r)
-	s.shareStore.removeByDir(pgDir)
+	s.shares.removeByDir(pgDir)
 	s.maybeStopShareInfra()
 	s.broadcastShareUpdate(name, scope, channelID, "")
 	w.WriteHeader(http.StatusNoContent)
@@ -200,7 +200,7 @@ func (s *Server) handlePlaygroundUnshare(w http.ResponseWriter, r *http.Request)
 // query param it returns the share status for that one playground (resolving
 // its dir, so any channel mapping to the same dir sees the same answer); with
 // no name it lists every active share for the global panel.
-func (s *Server) handlePlaygroundShareList(w http.ResponseWriter, r *http.Request) {
+func (s *playgroundService) handlePlaygroundShareList(w http.ResponseWriter, r *http.Request) {
 	if name := r.URL.Query().Get("name"); name != "" {
 		s.handlePlaygroundShareStatus(w, r, name)
 		return
@@ -212,7 +212,7 @@ func (s *Server) handlePlaygroundShareList(w http.ResponseWriter, r *http.Reques
 		URL       string `json:"url"`
 	}
 	rows := []row{}
-	for _, e := range s.shareStore.list() {
+	for _, e := range s.shares.list() {
 		rows = append(rows, row{Name: e.Name, Scope: e.Scope, ChannelID: e.ChannelID, URL: s.shareURL(e.Token)})
 	}
 	w.Header().Set("Content-Type", "application/json")
@@ -222,14 +222,14 @@ func (s *Server) handlePlaygroundShareList(w http.ResponseWriter, r *http.Reques
 // handlePlaygroundShareStatus returns whether a specific playground is shared
 // and its public URL, resolving the dir so the answer is identical for every
 // channel/thread that maps to the same playground.
-func (s *Server) handlePlaygroundShareStatus(w http.ResponseWriter, r *http.Request, name string) {
+func (s *playgroundService) handlePlaygroundShareStatus(w http.ResponseWriter, r *http.Request, name string) {
 	pgDir, err := s.resolvePlaygroundDir(r, name)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 	url := ""
-	if e, ok := s.shareStore.lookupByDir(pgDir); ok {
+	if e, ok := s.shares.lookupByDir(pgDir); ok {
 		url = s.shareURL(e.Token)
 	}
 	w.Header().Set("Content-Type", "application/json")
@@ -237,11 +237,11 @@ func (s *Server) handlePlaygroundShareStatus(w http.ResponseWriter, r *http.Requ
 }
 
 // shareURL builds the public URL for a token, or "" if the tunnel isn't up.
-func (s *Server) shareURL(token string) string {
-	if s.tunnelMgr == nil {
+func (s *playgroundService) shareURL(token string) string {
+	if s.tunnel == nil {
 		return ""
 	}
-	base := s.tunnelMgr.PublicURL()
+	base := s.tunnel.PublicURL()
 	if base == "" {
 		return ""
 	}
@@ -250,11 +250,11 @@ func (s *Server) shareURL(token string) string {
 
 // broadcastShareUpdate notifies the panel that a playground's share state
 // changed (url empty means unshared).
-func (s *Server) broadcastShareUpdate(name, scope, channelID, url string) {
-	if s.eventsHub == nil {
+func (s *playgroundService) broadcastShareUpdate(name, scope, channelID, url string) {
+	if s.srv.eventsHub == nil {
 		return
 	}
-	s.eventsHub.Broadcast(Event{
+	s.srv.eventsHub.Broadcast(Event{
 		Type:   EventPlaygroundUpdate,
 		Global: true,
 		Data: map[string]string{
@@ -269,7 +269,7 @@ func (s *Server) broadcastShareUpdate(name, scope, channelID, url string) {
 
 // ensureShareInfra lazily starts the ephemeral playground listener and the
 // cloudflared tunnel, returning the public tunnel URL. Idempotent.
-func (s *Server) ensureShareInfra(ctx context.Context) (string, error) {
+func (s *playgroundService) ensureShareInfra(ctx context.Context) (string, error) {
 	s.shareMu.Lock()
 	defer s.shareMu.Unlock()
 
@@ -286,11 +286,11 @@ func (s *Server) ensureShareInfra(ctx context.Context) (string, error) {
 		s.pgShareServer = &http.Server{Handler: s.buildShareMux()}
 		go s.pgShareServer.Serve(ln) //nolint:errcheck
 	}
-	if s.tunnelMgr == nil {
+	if s.tunnel == nil {
 		return "", fmt.Errorf("tunnel manager not configured")
 	}
 	port := s.pgShareListener.Addr().(*net.TCPAddr).Port
-	url, err := s.tunnelMgr.Start(ctx, port)
+	url, err := s.tunnel.Start(ctx, port)
 	if err != nil {
 		return "", err
 	}
@@ -299,14 +299,14 @@ func (s *Server) ensureShareInfra(ctx context.Context) (string, error) {
 
 // maybeStopShareInfra tears down the tunnel and ephemeral listener once no
 // shares remain.
-func (s *Server) maybeStopShareInfra() {
-	if s.shareStore.count() > 0 {
+func (s *playgroundService) maybeStopShareInfra() {
+	if s.shares.count() > 0 {
 		return
 	}
 	s.shareMu.Lock()
 	defer s.shareMu.Unlock()
-	if s.tunnelMgr != nil {
-		s.tunnelMgr.Stop()
+	if s.tunnel != nil {
+		s.tunnel.Stop()
 	}
 	if s.pgShareServer != nil {
 		_ = s.pgShareServer.Close()
@@ -317,11 +317,11 @@ func (s *Server) maybeStopShareInfra() {
 
 // stopShareInfra unconditionally tears down the tunnel and ephemeral listener,
 // used on daemon shutdown regardless of remaining share count.
-func (s *Server) stopShareInfra() {
+func (s *playgroundService) stopShareInfra() {
 	s.shareMu.Lock()
 	defer s.shareMu.Unlock()
-	if s.tunnelMgr != nil {
-		s.tunnelMgr.Stop()
+	if s.tunnel != nil {
+		s.tunnel.Stop()
 	}
 	if s.pgShareServer != nil {
 		_ = s.pgShareServer.Close()
@@ -333,7 +333,7 @@ func (s *Server) stopShareInfra() {
 // buildShareMux builds the ephemeral listener's handler. It registers ONLY the
 // public /p/{token} routes — no other endpoint of the main API is reachable
 // through the tunnel.
-func (s *Server) buildShareMux() http.Handler {
+func (s *playgroundService) buildShareMux() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /p/{token}", s.handleSharedPlaygroundServe)
 	mux.HandleFunc("GET /p/{token}/{path...}", s.handleSharedPlaygroundServeFile)
@@ -350,8 +350,8 @@ func noStore(h http.Handler) http.Handler {
 }
 
 // handleSharedPlaygroundServe serves a shared playground's index by token.
-func (s *Server) handleSharedPlaygroundServe(w http.ResponseWriter, r *http.Request) {
-	e, ok := s.shareStore.lookup(r.PathValue("token"))
+func (s *playgroundService) handleSharedPlaygroundServe(w http.ResponseWriter, r *http.Request) {
+	e, ok := s.shares.lookup(r.PathValue("token"))
 	if !ok {
 		http.Error(w, "not found", http.StatusNotFound)
 		return
@@ -360,8 +360,8 @@ func (s *Server) handleSharedPlaygroundServe(w http.ResponseWriter, r *http.Requ
 }
 
 // handleSharedPlaygroundServeFile serves a shared playground's asset by token.
-func (s *Server) handleSharedPlaygroundServeFile(w http.ResponseWriter, r *http.Request) {
-	e, ok := s.shareStore.lookup(r.PathValue("token"))
+func (s *playgroundService) handleSharedPlaygroundServeFile(w http.ResponseWriter, r *http.Request) {
+	e, ok := s.shares.lookup(r.PathValue("token"))
 	if !ok {
 		http.Error(w, "not found", http.StatusNotFound)
 		return

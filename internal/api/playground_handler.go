@@ -59,8 +59,8 @@ func buildReadme(title, body string) string {
 
 // validatePlaygroundDir validates the playground name (path containment + regex)
 // and returns a safe directory path under the playground base directory.
-func (s *Server) validatePlaygroundDir(name string) (string, error) {
-	baseDir := filepath.Join(s.loopDir, "playground")
+func (s *playgroundService) validatePlaygroundDir(name string) (string, error) {
+	baseDir := filepath.Join(s.srv.loopDir, "playground")
 	return validatePlaygroundDirIn(baseDir, name)
 }
 
@@ -78,7 +78,7 @@ func validatePlaygroundDirIn(baseDir, name string) (string, error) {
 
 // resolvePlaygroundDir resolves the playground directory based on scope.
 // scope "project" requires a channel_id to resolve the project dir.
-func (s *Server) resolvePlaygroundDir(r *http.Request, name string) (string, error) {
+func (s *playgroundService) resolvePlaygroundDir(r *http.Request, name string) (string, error) {
 	scope := r.URL.Query().Get("scope")
 	if scope == "project" {
 		channelID := r.URL.Query().Get("channel_id")
@@ -109,14 +109,14 @@ func playgroundScopeFromRequest(r *http.Request) (scope, channelID string) {
 // how worktrees inherit the root's .loop/config.json). Non-worktree channels
 // resolve to their own dir. The channel is fetched once; the worktree walk
 // only makes extra lookups when the channel is (or is under) a worktree.
-func (s *Server) projectPlaygroundDir(ctx context.Context, channelID string) (string, error) {
+func (s *playgroundService) projectPlaygroundDir(ctx context.Context, channelID string) (string, error) {
 	if channelID == "" {
 		return "", fmt.Errorf("channel_id is required")
 	}
-	if s.store == nil {
+	if s.srv.store == nil {
 		return "", fmt.Errorf("channel lookup not configured")
 	}
-	ch, err := s.store.GetChannel(ctx, channelID)
+	ch, err := s.srv.store.GetChannel(ctx, channelID)
 	if err != nil {
 		return "", fmt.Errorf("looking up channel: %w", err)
 	}
@@ -127,8 +127,8 @@ func (s *Server) projectPlaygroundDir(ctx context.Context, channelID string) (st
 		return root, nil
 	}
 	if ch.DirPath == "" {
-		if s.loopDir != "" {
-			return filepath.Join(s.loopDir, channelID, "work"), nil
+		if s.srv.loopDir != "" {
+			return filepath.Join(s.srv.loopDir, channelID, "work"), nil
 		}
 		return "", fmt.Errorf("channel %s has no dir_path", channelID)
 	}
@@ -141,14 +141,14 @@ func (s *Server) projectPlaygroundDir(ctx context.Context, channelID string) (st
 // worktree's dir without the worktree flag, and nested worktrees. The walk is
 // bounded to guard against parent-id cycles. Mirrors the orchestrator's
 // worktreeRootFor.
-func (s *Server) worktreeRootDir(ctx context.Context, ch *db.Channel) string {
+func (s *playgroundService) worktreeRootDir(ctx context.Context, ch *db.Channel) string {
 	cur := ch
 	if !cur.Worktree {
 		// A thread row under a worktree channel: hop to the worktree itself.
 		if cur.ParentID == "" {
 			return ""
 		}
-		p, err := s.store.GetChannel(ctx, cur.ParentID)
+		p, err := s.srv.store.GetChannel(ctx, cur.ParentID)
 		if err != nil || p == nil || !p.Worktree {
 			return ""
 		}
@@ -158,7 +158,7 @@ func (s *Server) worktreeRootDir(ctx context.Context, ch *db.Channel) string {
 		if cur.ParentID == "" {
 			return ""
 		}
-		p, err := s.store.GetChannel(ctx, cur.ParentID)
+		p, err := s.srv.store.GetChannel(ctx, cur.ParentID)
 		if err != nil || p == nil {
 			return ""
 		}
@@ -195,7 +195,7 @@ func validatePlaygroundPath(rootDir, relativePath string) (string, error) {
 }
 
 // handlePlaygroundUpdate handles PUT /api/playground?name=...&scope=...&channel_id=... — stores code and pushes event.
-func (s *Server) handlePlaygroundUpdate(w http.ResponseWriter, r *http.Request) {
+func (s *playgroundService) handlePlaygroundUpdate(w http.ResponseWriter, r *http.Request) {
 	name := r.URL.Query().Get("name")
 	pgDir, err := s.resolvePlaygroundDir(r, name)
 	if err != nil {
@@ -229,8 +229,8 @@ func (s *Server) handlePlaygroundUpdate(w http.ResponseWriter, r *http.Request) 
 	}
 
 	// Broadcast event to all connected clients (global — no channel scoping).
-	if s.eventsHub != nil {
-		s.eventsHub.Broadcast(Event{
+	if s.srv.eventsHub != nil {
+		s.srv.eventsHub.Broadcast(Event{
 			Type:   EventPlaygroundUpdate,
 			Global: true,
 			Data:   content,
@@ -241,7 +241,7 @@ func (s *Server) handlePlaygroundUpdate(w http.ResponseWriter, r *http.Request) 
 }
 
 // handlePlaygroundGet handles GET /api/playground?name=...&scope=...&channel_id=... — retrieves playground content.
-func (s *Server) handlePlaygroundGet(w http.ResponseWriter, r *http.Request) {
+func (s *playgroundService) handlePlaygroundGet(w http.ResponseWriter, r *http.Request) {
 	name := r.URL.Query().Get("name")
 	pgDir, err := s.resolvePlaygroundDir(r, name)
 	if err != nil {
@@ -297,8 +297,8 @@ func listPlaygroundsIn(baseDir, scope string) []playgroundItem {
 
 // handlePlaygroundList handles GET /api/playground/items?channel_id=... — lists all playground names.
 // Returns items from both global (~/.loop/playground/) and project ({dir}/.loop/playground/) scopes.
-func (s *Server) handlePlaygroundList(w http.ResponseWriter, r *http.Request) {
-	globalDir := filepath.Join(s.loopDir, "playground")
+func (s *playgroundService) handlePlaygroundList(w http.ResponseWriter, r *http.Request) {
+	globalDir := filepath.Join(s.srv.loopDir, "playground")
 	items := listPlaygroundsIn(globalDir, "global")
 
 	// If channel_id is provided, also list project-scoped playgrounds.
@@ -400,7 +400,7 @@ func servePlaygroundFile(w http.ResponseWriter, pgDir, relPath string) {
 
 // handlePlaygroundServe serves the composed HTML page for a playground.
 // GET /api/playground/serve/{name}?scope=...&channel_id=...
-func (s *Server) handlePlaygroundServe(w http.ResponseWriter, r *http.Request) {
+func (s *playgroundService) handlePlaygroundServe(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
 	pgDir, err := s.resolvePlaygroundDir(r, name)
 	if err != nil {
@@ -420,7 +420,7 @@ func (s *Server) handlePlaygroundServe(w http.ResponseWriter, r *http.Request) {
 
 // handlePlaygroundServeFile serves individual files from a playground directory.
 // GET /api/playground/serve/{name}/{path...}?scope=...&channel_id=...
-func (s *Server) handlePlaygroundServeFile(w http.ResponseWriter, r *http.Request) {
+func (s *playgroundService) handlePlaygroundServeFile(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
 	pgDir, err := s.resolvePlaygroundDir(r, name)
 	if err != nil {
@@ -431,7 +431,7 @@ func (s *Server) handlePlaygroundServeFile(w http.ResponseWriter, r *http.Reques
 }
 
 // resolveProjectPlaygroundDir resolves a playground dir from channel_id and name path values.
-func (s *Server) resolveProjectPlaygroundDir(r *http.Request) (string, error) {
+func (s *playgroundService) resolveProjectPlaygroundDir(r *http.Request) (string, error) {
 	channelID := r.PathValue("channel_id")
 	name := r.PathValue("name")
 	if channelID == "" || name == "" {
@@ -447,7 +447,7 @@ func (s *Server) resolveProjectPlaygroundDir(r *http.Request) (string, error) {
 
 // handlePlaygroundServeProject serves the composed HTML page for a project-scoped playground.
 // GET /api/playground/serve-project/{channel_id}/{name}
-func (s *Server) handlePlaygroundServeProject(w http.ResponseWriter, r *http.Request) {
+func (s *playgroundService) handlePlaygroundServeProject(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
 	pgDir, err := s.resolveProjectPlaygroundDir(r)
 	if err != nil {
@@ -461,7 +461,7 @@ func (s *Server) handlePlaygroundServeProject(w http.ResponseWriter, r *http.Req
 
 // handlePlaygroundServeProjectFile serves files from a project-scoped playground.
 // GET /api/playground/serve-project/{channel_id}/{name}/{path...}
-func (s *Server) handlePlaygroundServeProjectFile(w http.ResponseWriter, r *http.Request) {
+func (s *playgroundService) handlePlaygroundServeProjectFile(w http.ResponseWriter, r *http.Request) {
 	pgDir, err := s.resolveProjectPlaygroundDir(r)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
@@ -471,25 +471,25 @@ func (s *Server) handlePlaygroundServeProjectFile(w http.ResponseWriter, r *http
 }
 
 // handlePlaygroundDelete handles DELETE /api/playground?name=...&scope=...&channel_id=... — removes an entire playground.
-func (s *Server) handlePlaygroundDelete(w http.ResponseWriter, r *http.Request) {
+func (s *playgroundService) handlePlaygroundDelete(w http.ResponseWriter, r *http.Request) {
 	name := r.URL.Query().Get("name")
 	pgDir, err := s.resolvePlaygroundDir(r, name)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	if _, err := s.sys.Stat(pgDir); os.IsNotExist(err) {
+	if _, err := s.srv.sys.Stat(pgDir); os.IsNotExist(err) {
 		http.Error(w, "playground not found", http.StatusNotFound)
 		return
 	}
-	if err := s.sys.RemoveAll(pgDir); err != nil {
+	if err := s.srv.sys.RemoveAll(pgDir); err != nil {
 		http.Error(w, "deleting playground: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 
-	if s.eventsHub != nil {
+	if s.srv.eventsHub != nil {
 		scope, channelID := playgroundScopeFromRequest(r)
-		s.eventsHub.Broadcast(Event{
+		s.srv.eventsHub.Broadcast(Event{
 			Type:   EventPlaygroundUpdate,
 			Global: true,
 			Data:   map[string]string{"name": name, "deleted": "true", "scope": scope, "channel_id": channelID},
@@ -500,7 +500,7 @@ func (s *Server) handlePlaygroundDelete(w http.ResponseWriter, r *http.Request) 
 }
 
 // handlePlaygroundFileWrite handles PUT /api/playground/file?name=...&path=...&scope=...&channel_id=... — creates or updates a file.
-func (s *Server) handlePlaygroundFileWrite(w http.ResponseWriter, r *http.Request) {
+func (s *playgroundService) handlePlaygroundFileWrite(w http.ResponseWriter, r *http.Request) {
 	name := r.URL.Query().Get("name")
 	pgDir, err := s.resolvePlaygroundDir(r, name)
 	if err != nil {
@@ -530,9 +530,9 @@ func (s *Server) handlePlaygroundFileWrite(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	if s.eventsHub != nil {
+	if s.srv.eventsHub != nil {
 		scope, channelID := playgroundScopeFromRequest(r)
-		s.eventsHub.Broadcast(Event{
+		s.srv.eventsHub.Broadcast(Event{
 			Type:   EventPlaygroundUpdate,
 			Global: true,
 			Data:   map[string]string{"name": name, "scope": scope, "channel_id": channelID},
@@ -543,7 +543,7 @@ func (s *Server) handlePlaygroundFileWrite(w http.ResponseWriter, r *http.Reques
 }
 
 // handlePlaygroundFileRead handles GET /api/playground/file?name=...&path=...&scope=...&channel_id=... — reads a file.
-func (s *Server) handlePlaygroundFileRead(w http.ResponseWriter, r *http.Request) {
+func (s *playgroundService) handlePlaygroundFileRead(w http.ResponseWriter, r *http.Request) {
 	name := r.URL.Query().Get("name")
 	pgDir, err := s.resolvePlaygroundDir(r, name)
 	if err != nil {
@@ -566,7 +566,7 @@ func (s *Server) handlePlaygroundFileRead(w http.ResponseWriter, r *http.Request
 }
 
 // handlePlaygroundFileDelete handles DELETE /api/playground/file?name=...&path=...&scope=...&channel_id=... — removes a file.
-func (s *Server) handlePlaygroundFileDelete(w http.ResponseWriter, r *http.Request) {
+func (s *playgroundService) handlePlaygroundFileDelete(w http.ResponseWriter, r *http.Request) {
 	name := r.URL.Query().Get("name")
 	pgDir, err := s.resolvePlaygroundDir(r, name)
 	if err != nil {
@@ -583,9 +583,9 @@ func (s *Server) handlePlaygroundFileDelete(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	if s.eventsHub != nil {
+	if s.srv.eventsHub != nil {
 		scope, channelID := playgroundScopeFromRequest(r)
-		s.eventsHub.Broadcast(Event{
+		s.srv.eventsHub.Broadcast(Event{
 			Type:   EventPlaygroundUpdate,
 			Global: true,
 			Data:   map[string]string{"name": name, "scope": scope, "channel_id": channelID},
@@ -596,7 +596,7 @@ func (s *Server) handlePlaygroundFileDelete(w http.ResponseWriter, r *http.Reque
 }
 
 // handlePlaygroundFileList handles GET /api/playground/files?name=...&scope=...&channel_id=... — lists all files.
-func (s *Server) handlePlaygroundFileList(w http.ResponseWriter, r *http.Request) {
+func (s *playgroundService) handlePlaygroundFileList(w http.ResponseWriter, r *http.Request) {
 	name := r.URL.Query().Get("name")
 	pgDir, err := s.resolvePlaygroundDir(r, name)
 	if err != nil {

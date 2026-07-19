@@ -144,7 +144,7 @@ func (s *ServerSuite) TestPlaygroundShareSuccess() {
 	require.NoError(s.T(), json.Unmarshal(rec.Body.Bytes(), &resp))
 	require.Contains(s.T(), resp["url"], "https://fake-tunnel.trycloudflare.com/p/")
 	require.Len(s.T(), resp["token"], 32)
-	require.Equal(s.T(), 1, s.srv.shareStore.count())
+	require.Equal(s.T(), 1, s.srv.playground.shares.count())
 }
 
 func (s *ServerSuite) TestPlaygroundShareMissingName() {
@@ -159,7 +159,7 @@ func (s *ServerSuite) TestPlaygroundShareTunnelError() {
 	rec := s.testRequest("PUT", "/api/playground/share?name=demo", "")
 	require.Equal(s.T(), http.StatusInternalServerError, rec.Code)
 	// Failed tunnel start must not leave a dangling share.
-	require.Equal(s.T(), 0, s.srv.shareStore.count())
+	require.Equal(s.T(), 0, s.srv.playground.shares.count())
 }
 
 func (s *ServerSuite) TestPlaygroundUnshareStopsTunnel() {
@@ -169,7 +169,7 @@ func (s *ServerSuite) TestPlaygroundUnshareStopsTunnel() {
 
 	rec := s.testRequest("DELETE", "/api/playground/share?name=demo", "")
 	require.Equal(s.T(), http.StatusNoContent, rec.Code)
-	require.Equal(s.T(), 0, s.srv.shareStore.count())
+	require.Equal(s.T(), 0, s.srv.playground.shares.count())
 	require.False(s.T(), ft.Running())
 	require.Equal(s.T(), 1, ft.stopCalls)
 }
@@ -189,7 +189,7 @@ func (s *ServerSuite) TestPlaygroundShareParallelReusesTunnel() {
 
 	s.testRequest("PUT", "/api/playground/share?name=demo", "")
 	s.testRequest("PUT", "/api/playground/share?name=demo2", "")
-	require.Equal(s.T(), 2, s.srv.shareStore.count())
+	require.Equal(s.T(), 2, s.srv.playground.shares.count())
 	// One tunnel serves both — Start called per share but the fake stays up;
 	// crucially only one listener exists and Stop hasn't fired.
 	require.True(s.T(), ft.Running())
@@ -219,8 +219,8 @@ func (s *ServerSuite) TestPlaygroundShareList() {
 func (s *ServerSuite) TestShareListURLNoTunnel() {
 	// A lingering share with no tunnel manager yields an empty URL.
 	s.setPlaygroundDir()
-	s.srv.tunnelMgr = nil
-	s.srv.shareStore.add("demo", "global", "", "/abs/demo")
+	s.srv.playground.tunnel = nil
+	s.srv.playground.shares.add("demo", "global", "", "/abs/demo")
 	rec := s.testRequest("GET", "/api/playground/share", "")
 	var resp map[string][]map[string]string
 	require.NoError(s.T(), json.Unmarshal(rec.Body.Bytes(), &resp))
@@ -231,7 +231,7 @@ func (s *ServerSuite) TestShareListURLTunnelDown() {
 	// Tunnel present but not started (empty PublicURL) → empty URL.
 	s.setPlaygroundDir()
 	s.srv.SetTunnelManager(&fakeTunnel{})
-	s.srv.shareStore.add("demo", "global", "", "/abs/demo")
+	s.srv.playground.shares.add("demo", "global", "", "/abs/demo")
 	rec := s.testRequest("GET", "/api/playground/share", "")
 	var resp map[string][]map[string]string
 	require.NoError(s.T(), json.Unmarshal(rec.Body.Bytes(), &resp))
@@ -285,7 +285,7 @@ func (s *ServerSuite) TestSharedPlaygroundServe() {
 	req := httptest.NewRequest("GET", "/p/"+token, nil)
 	req.SetPathValue("token", token)
 	rec2 := httptest.NewRecorder()
-	s.srv.handleSharedPlaygroundServe(rec2, req)
+	s.srv.playground.handleSharedPlaygroundServe(rec2, req)
 	require.Equal(s.T(), http.StatusOK, rec2.Code)
 	require.Contains(s.T(), rec2.Body.String(), "<h1>Demo</h1>")
 	require.Contains(s.T(), rec2.Body.String(), `<base href="/p/`+token+`/">`)
@@ -296,7 +296,7 @@ func (s *ServerSuite) TestSharedPlaygroundServeUnknownToken() {
 	req := httptest.NewRequest("GET", "/p/bad", nil)
 	req.SetPathValue("token", "bad")
 	rec := httptest.NewRecorder()
-	s.srv.handleSharedPlaygroundServe(rec, req)
+	s.srv.playground.handleSharedPlaygroundServe(rec, req)
 	require.Equal(s.T(), http.StatusNotFound, rec.Code)
 }
 
@@ -311,7 +311,7 @@ func (s *ServerSuite) TestSharedPlaygroundServeFile() {
 	req.SetPathValue("token", token)
 	req.SetPathValue("path", "script.js")
 	rec2 := httptest.NewRecorder()
-	s.srv.handleSharedPlaygroundServeFile(rec2, req)
+	s.srv.playground.handleSharedPlaygroundServeFile(rec2, req)
 	require.Equal(s.T(), http.StatusOK, rec2.Code)
 	require.Contains(s.T(), rec2.Body.String(), "console.log(1)")
 }
@@ -322,7 +322,7 @@ func (s *ServerSuite) TestSharedPlaygroundServeFileUnknownToken() {
 	req.SetPathValue("token", "bad")
 	req.SetPathValue("path", "x.js")
 	rec := httptest.NewRecorder()
-	s.srv.handleSharedPlaygroundServeFile(rec, req)
+	s.srv.playground.handleSharedPlaygroundServeFile(rec, req)
 	require.Equal(s.T(), http.StatusNotFound, rec.Code)
 }
 
@@ -341,12 +341,12 @@ func (s *ServerSuite) TestStopTearsDownShareInfra() {
 
 func (s *ServerSuite) TestPlaygroundShareEnabledDefaultsFalse() {
 	s.srv.loadConfig = func() (*config.Config, error) { return &config.Config{}, nil }
-	require.False(s.T(), s.srv.playgroundShareEnabled())
+	require.False(s.T(), s.srv.playground.playgroundShareEnabled())
 }
 
 func (s *ServerSuite) TestPlaygroundShareEnabledConfigError() {
 	s.srv.loadConfig = func() (*config.Config, error) { return nil, os.ErrNotExist }
-	require.False(s.T(), s.srv.playgroundShareEnabled())
+	require.False(s.T(), s.srv.playground.playgroundShareEnabled())
 }
 
 func (s *ServerSuite) TestPlaygroundShareEnabledNilLoaderFallsBackToConfigLoad() {
@@ -356,7 +356,7 @@ func (s *ServerSuite) TestPlaygroundShareEnabledNilLoaderFallsBackToConfigLoad()
 	// developer's real config.
 	s.T().Setenv("HOME", s.T().TempDir())
 	s.srv.loadConfig = nil
-	require.False(s.T(), s.srv.playgroundShareEnabled())
+	require.False(s.T(), s.srv.playground.playgroundShareEnabled())
 }
 
 func (s *ServerSuite) TestPlaygroundShareInvalidName() {
@@ -369,19 +369,19 @@ func (s *ServerSuite) TestPlaygroundShareInvalidName() {
 func (s *ServerSuite) TestEnsureShareInfraNilTunnelManager() {
 	s.setPlaygroundDir()
 	s.srv.SetTunnelManager(nil)
-	_, err := s.srv.ensureShareInfra(context.Background())
+	_, err := s.srv.playground.ensureShareInfra(context.Background())
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "tunnel manager not configured")
 	// The ephemeral listener that got opened before the tunnel check must be
 	// cleaned up so it doesn't leak across tests.
-	s.srv.stopShareInfra()
+	s.srv.playground.stopShareInfra()
 }
 
 func (s *ServerSuite) TestEnsureShareInfraListenError() {
 	s.setPlaygroundDir()
 	s.srv.SetTunnelManager(&fakeTunnel{})
-	s.srv.listenTCP = func(string) (net.Listener, error) { return nil, os.ErrPermission }
-	_, err := s.srv.ensureShareInfra(context.Background())
+	s.srv.playground.listenTCP = func(string) (net.Listener, error) { return nil, os.ErrPermission }
+	_, err := s.srv.playground.ensureShareInfra(context.Background())
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "starting playground listener")
 }

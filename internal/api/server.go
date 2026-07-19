@@ -163,17 +163,7 @@ type Server struct {
 	qualityCancellers map[string]context.CancelFunc
 	qualityProgress   map[string]time.Time // per-channel throttle for quality.scan_progress
 
-	// Playground public-share state. shareStore maps opaque tokens to
-	// playgrounds; pgShareServer is an ephemeral listener that serves ONLY
-	// /p/{token} (never the main API), which the tunnel exposes publicly.
-	// tunnelMgr owns the cloudflared subprocess. All are lazily started on the
-	// first share and torn down when the last share is removed.
-	shareStore      *shareStore
-	pgShareServer   *http.Server
-	pgShareListener net.Listener
-	tunnelMgr       TunnelManager
-	shareMu         sync.Mutex
-	listenTCP       func(addr string) (net.Listener, error) // injectable for tests; nil → net.Listen
+	playground *playgroundService // playground + public-share domain: playground CRUD/serving, share store, tunnel
 }
 
 // TunnelManager is the subset of tunnel.Manager the server needs, injectable
@@ -339,17 +329,17 @@ func NewServer(sched scheduler.Scheduler, channels ChannelEnsurer, threads Threa
 			Sys: sys,
 			Run: worktree.ExecCommandRunner,
 		},
-		sys:        sys,
-		shareStore: newShareStore(),
+		sys: sys,
 	}
 	s.review = &reviewService{srv: s, active: map[string]context.CancelFunc{}}
+	s.playground = &playgroundService{srv: s, shares: newShareStore()}
 	return s
 }
 
 // SetTunnelManager wires the cloudflared tunnel manager used by the public
 // playground-share feature. Left nil in tests that don't exercise sharing.
 func (s *Server) SetTunnelManager(tm TunnelManager) {
-	s.tunnelMgr = tm
+	s.playground.tunnel = tm
 }
 
 // buildMux creates the HTTP mux with all API route registrations.
@@ -464,21 +454,21 @@ func (s *Server) registerFileRoutes(mux *http.ServeMux) {
 
 // registerPlaygroundRoutes registers the playground and public-share routes.
 func (s *Server) registerPlaygroundRoutes(mux *http.ServeMux) {
-	mux.HandleFunc("PUT /api/playground", s.handlePlaygroundUpdate)
-	mux.HandleFunc("GET /api/playground", s.handlePlaygroundGet)
-	mux.HandleFunc("DELETE /api/playground", s.handlePlaygroundDelete)
-	mux.HandleFunc("GET /api/playground/items", s.handlePlaygroundList)
-	mux.HandleFunc("PUT /api/playground/file", s.handlePlaygroundFileWrite)
-	mux.HandleFunc("GET /api/playground/file", s.handlePlaygroundFileRead)
-	mux.HandleFunc("DELETE /api/playground/file", s.handlePlaygroundFileDelete)
-	mux.HandleFunc("GET /api/playground/files", s.handlePlaygroundFileList)
-	mux.HandleFunc("GET /api/playground/serve/{name}", s.handlePlaygroundServe)
-	mux.HandleFunc("GET /api/playground/serve/{name}/{path...}", s.handlePlaygroundServeFile)
-	mux.HandleFunc("GET /api/playground/serve-project/{channel_id}/{name}", s.handlePlaygroundServeProject)
-	mux.HandleFunc("GET /api/playground/serve-project/{channel_id}/{name}/{path...}", s.handlePlaygroundServeProjectFile)
-	mux.HandleFunc("PUT /api/playground/share", s.handlePlaygroundShare)
-	mux.HandleFunc("DELETE /api/playground/share", s.handlePlaygroundUnshare)
-	mux.HandleFunc("GET /api/playground/share", s.handlePlaygroundShareList)
+	mux.HandleFunc("PUT /api/playground", s.playground.handlePlaygroundUpdate)
+	mux.HandleFunc("GET /api/playground", s.playground.handlePlaygroundGet)
+	mux.HandleFunc("DELETE /api/playground", s.playground.handlePlaygroundDelete)
+	mux.HandleFunc("GET /api/playground/items", s.playground.handlePlaygroundList)
+	mux.HandleFunc("PUT /api/playground/file", s.playground.handlePlaygroundFileWrite)
+	mux.HandleFunc("GET /api/playground/file", s.playground.handlePlaygroundFileRead)
+	mux.HandleFunc("DELETE /api/playground/file", s.playground.handlePlaygroundFileDelete)
+	mux.HandleFunc("GET /api/playground/files", s.playground.handlePlaygroundFileList)
+	mux.HandleFunc("GET /api/playground/serve/{name}", s.playground.handlePlaygroundServe)
+	mux.HandleFunc("GET /api/playground/serve/{name}/{path...}", s.playground.handlePlaygroundServeFile)
+	mux.HandleFunc("GET /api/playground/serve-project/{channel_id}/{name}", s.playground.handlePlaygroundServeProject)
+	mux.HandleFunc("GET /api/playground/serve-project/{channel_id}/{name}/{path...}", s.playground.handlePlaygroundServeProjectFile)
+	mux.HandleFunc("PUT /api/playground/share", s.playground.handlePlaygroundShare)
+	mux.HandleFunc("DELETE /api/playground/share", s.playground.handlePlaygroundUnshare)
+	mux.HandleFunc("GET /api/playground/share", s.playground.handlePlaygroundShareList)
 }
 
 // registerAgentRoutes registers the agent, agent-config, image, and container routes.
@@ -621,7 +611,7 @@ func (s *Server) Stop(ctx context.Context) error {
 	s.review.cancelAllReviewRuns()
 	// Tear down the public playground-share tunnel + ephemeral listener so the
 	// cloudflared subprocess doesn't outlive the daemon.
-	s.stopShareInfra()
+	s.playground.stopShareInfra()
 	if s.stopErr != nil {
 		// Still perform the real shutdown, but return the injected error.
 		if s.server != nil {
