@@ -33,7 +33,7 @@ type playgroundService struct {
 }
 
 // newPlaygroundService creates the playground domain with an empty share
-// store. The tunnel manager arrives later via Server.SetTunnelManager.
+// store. The tunnel manager is injected at construction via WithTunnel.
 func newPlaygroundService(deps *serverDeps) *playgroundService {
 	return &playgroundService{deps: deps, shares: newShareStore()}
 }
@@ -268,4 +268,15 @@ func (s *playgroundService) buildShareMux() http.Handler {
 	mux.HandleFunc("GET /p/{token}", s.handleSharedPlaygroundServe)
 	mux.HandleFunc("GET /p/{token}/{path...}", s.handleSharedPlaygroundServeFile)
 	return noStore(mux)
+}
+
+// setTunnel wires the cloudflared tunnel manager used by the public
+// playground-share feature. Nil leaves sharing unavailable.
+func (s *playgroundService) setTunnel(tm TunnelManager) {
+	s.tunnel = tm
+}
+
+// WithTunnel configures the playground-share tunnel manager at construction.
+func WithTunnel(tm TunnelManager) Option {
+	return func(s *Server) { s.playground.setTunnel(tm) }
 }

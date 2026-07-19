@@ -100,13 +100,13 @@ func (s *ServerSuite) TestHandleQualityCyclesGraphProviderUnset() {
 }
 
 func (s *ServerSuite) TestHandleQualityCyclesNoCachedGraph() {
-	s.srv.SetQualityGraphProvider(&fakeGraphProvider{g: nil})
+	s.srv.quality.setGraphProvider(&fakeGraphProvider{g: nil})
 	rec := s.testRequest("GET", "/api/channels/ch-1/quality/cycles", "")
 	require.Equal(s.T(), http.StatusServiceUnavailable, rec.Code)
 }
 
 func (s *ServerSuite) TestHandleQualityCyclesReturnsDetail() {
-	s.srv.SetQualityGraphProvider(&graphProviderHit{g: smallGraph()})
+	s.srv.quality.setGraphProvider(&graphProviderHit{g: smallGraph()})
 	rec := s.testRequest("GET", "/api/channels/ch-1/quality/cycles", "")
 	require.Equal(s.T(), http.StatusOK, rec.Code)
 	var resp QualityCyclesResponse
@@ -122,14 +122,14 @@ func (s *ServerSuite) TestHandleQualityMetricsSnapshotReaderUnset() {
 }
 
 func (s *ServerSuite) TestHandleQualityMetricsStoreUnset() {
-	s.srv.SetQualitySnapshotReader(&fakeSnapshotReader{})
+	s.srv.quality.setSnapshotReader(&fakeSnapshotReader{})
 	s.srv.store = nil
 	rec := s.testRequest("GET", "/api/channels/ch-1/quality/metrics", "")
 	require.Equal(s.T(), http.StatusNotImplemented, rec.Code)
 }
 
 func (s *ServerSuite) TestHandleQualityMetricsResolveDirError() {
-	s.srv.SetQualitySnapshotReader(&fakeSnapshotReader{})
+	s.srv.quality.setSnapshotReader(&fakeSnapshotReader{})
 	s.store.On("GetChannel", mock.Anything, "ch-1").Return(&db.Channel{ChannelID: "ch-1"}, nil)
 	rec := s.testRequest("GET", "/api/channels/ch-1/quality/metrics", "")
 	require.Equal(s.T(), http.StatusBadRequest, rec.Code)
@@ -138,7 +138,7 @@ func (s *ServerSuite) TestHandleQualityMetricsResolveDirError() {
 func (s *ServerSuite) TestHandleQualityMetricsNoSnapshot() {
 	dir := s.T().TempDir()
 	s.channelWithDir("ch-1", dir)
-	s.srv.SetQualitySnapshotReader(&fakeSnapshotReader{})
+	s.srv.quality.setSnapshotReader(&fakeSnapshotReader{})
 	rec := s.testRequest("GET", "/api/channels/ch-1/quality/metrics", "")
 	require.Equal(s.T(), http.StatusNotFound, rec.Code)
 }
@@ -146,7 +146,7 @@ func (s *ServerSuite) TestHandleQualityMetricsNoSnapshot() {
 func (s *ServerSuite) TestHandleQualityMetricsSnapshotErrorReturns500() {
 	dir := s.T().TempDir()
 	s.channelWithDir("ch-1", dir)
-	s.srv.SetQualitySnapshotReader(&fakeSnapshotReader{getErr: errors.New("io fail")})
+	s.srv.quality.setSnapshotReader(&fakeSnapshotReader{getErr: errors.New("io fail")})
 	rec := s.testRequest("GET", "/api/channels/ch-1/quality/metrics", "")
 	require.Equal(s.T(), http.StatusInternalServerError, rec.Code)
 }
@@ -154,7 +154,7 @@ func (s *ServerSuite) TestHandleQualityMetricsSnapshotErrorReturns500() {
 func (s *ServerSuite) TestHandleQualityMetricsReturnsBreakdown() {
 	dir := s.T().TempDir()
 	s.channelWithDir("ch-1", dir)
-	s.srv.SetQualitySnapshotReader(&fakeSnapshotReader{
+	s.srv.quality.setSnapshotReader(&fakeSnapshotReader{
 		byBranch: map[string]*snapshot.Snapshot{
 			"main": {
 				ChannelID:       "ch-1",
@@ -183,14 +183,14 @@ func (s *ServerSuite) TestHandleQualityDiagnosticsSnapshotReaderUnset() {
 }
 
 func (s *ServerSuite) TestHandleQualityDiagnosticsStoreUnset() {
-	s.srv.SetQualitySnapshotReader(&fakeSnapshotReader{})
+	s.srv.quality.setSnapshotReader(&fakeSnapshotReader{})
 	s.srv.store = nil
 	rec := s.testRequest("GET", "/api/channels/ch-1/quality/diagnostics", "")
 	require.Equal(s.T(), http.StatusNotImplemented, rec.Code)
 }
 
 func (s *ServerSuite) TestHandleQualityDiagnosticsResolveDirError() {
-	s.srv.SetQualitySnapshotReader(&fakeSnapshotReader{})
+	s.srv.quality.setSnapshotReader(&fakeSnapshotReader{})
 	s.store.On("GetChannel", mock.Anything, "ch-1").Return(&db.Channel{ChannelID: "ch-1"}, nil)
 	rec := s.testRequest("GET", "/api/channels/ch-1/quality/diagnostics", "")
 	require.Equal(s.T(), http.StatusBadRequest, rec.Code)
@@ -199,7 +199,7 @@ func (s *ServerSuite) TestHandleQualityDiagnosticsResolveDirError() {
 func (s *ServerSuite) TestHandleQualityDiagnosticsNoSnapshot() {
 	dir := s.T().TempDir()
 	s.channelWithDir("ch-1", dir)
-	s.srv.SetQualitySnapshotReader(&fakeSnapshotReader{})
+	s.srv.quality.setSnapshotReader(&fakeSnapshotReader{})
 	rec := s.testRequest("GET", "/api/channels/ch-1/quality/diagnostics", "")
 	require.Equal(s.T(), http.StatusNotFound, rec.Code)
 }
@@ -207,7 +207,7 @@ func (s *ServerSuite) TestHandleQualityDiagnosticsNoSnapshot() {
 func (s *ServerSuite) TestHandleQualityDiagnosticsSnapshotErrorReturns500() {
 	dir := s.T().TempDir()
 	s.channelWithDir("ch-1", dir)
-	s.srv.SetQualitySnapshotReader(&fakeSnapshotReader{getErr: errors.New("io fail")})
+	s.srv.quality.setSnapshotReader(&fakeSnapshotReader{getErr: errors.New("io fail")})
 	rec := s.testRequest("GET", "/api/channels/ch-1/quality/diagnostics", "")
 	require.Equal(s.T(), http.StatusInternalServerError, rec.Code)
 }
@@ -215,7 +215,7 @@ func (s *ServerSuite) TestHandleQualityDiagnosticsSnapshotErrorReturns500() {
 func (s *ServerSuite) TestHandleQualityDiagnosticsReturnsTiles() {
 	dir := s.T().TempDir()
 	s.channelWithDir("ch-1", dir)
-	s.srv.SetQualitySnapshotReader(&fakeSnapshotReader{
+	s.srv.quality.setSnapshotReader(&fakeSnapshotReader{
 		byBranch: map[string]*snapshot.Snapshot{
 			"main": {
 				ChannelID: "ch-1",
@@ -242,14 +242,14 @@ func (s *ServerSuite) TestHandleQualityRulesGraphProviderUnset() {
 }
 
 func (s *ServerSuite) TestHandleQualityRulesNoCachedGraph() {
-	s.srv.SetQualityGraphProvider(&fakeGraphProvider{g: nil})
+	s.srv.quality.setGraphProvider(&fakeGraphProvider{g: nil})
 	rec := s.testRequest("GET", "/api/channels/ch-1/quality/rules", "")
 	require.Equal(s.T(), http.StatusServiceUnavailable, rec.Code)
 }
 
 func (s *ServerSuite) TestHandleQualityRulesDefaultConfigRunsAgainstGraph() {
 	s.channelWithDir("ch-1", s.T().TempDir())
-	s.srv.SetQualityGraphProvider(&graphProviderHit{g: smallGraph()})
+	s.srv.quality.setGraphProvider(&graphProviderHit{g: smallGraph()})
 	rec := s.testRequest("GET", "/api/channels/ch-1/quality/rules", "")
 	require.Equal(s.T(), http.StatusOK, rec.Code)
 	var resp QualityRulesResponse
@@ -258,14 +258,14 @@ func (s *ServerSuite) TestHandleQualityRulesDefaultConfigRunsAgainstGraph() {
 
 func (s *ServerSuite) TestHandleQualityRulesUsesCustomConfig() {
 	s.channelWithDir("ch-1", s.T().TempDir())
-	s.srv.SetQualityGraphProvider(&graphProviderHit{g: smallGraph()})
+	s.srv.quality.setGraphProvider(&graphProviderHit{g: smallGraph()})
 	// All disabled — every rule reports as "pass" with a "disabled" message.
 	cfg := rules.Config{Rules: map[string]rules.RuleConfig{
 		rules.SignalFloor:    {Enabled: false},
 		rules.NoImportCycles: {Enabled: false},
 		rules.ParseFail:      {Enabled: false},
 	}}
-	s.srv.SetQualityRulesLoader(func(string, string) *rules.Config { return &cfg })
+	s.srv.quality.setRulesLoader(func(string, string) *rules.Config { return &cfg })
 	rec := s.testRequest("GET", "/api/channels/ch-1/quality/rules", "")
 	require.Equal(s.T(), http.StatusOK, rec.Code)
 	var resp QualityRulesResponse
@@ -281,7 +281,7 @@ func (s *ServerSuite) TestHandleQualityRulesEmitsCitationsForFailedRules() {
 		{Path: "a.go", Imports: []parser.Import{{Path: "./b"}}},
 		{Path: "b.go", Imports: []parser.Import{{Path: "./a"}}},
 	})
-	s.srv.SetQualityGraphProvider(&graphProviderHit{g: cyc})
+	s.srv.quality.setGraphProvider(&graphProviderHit{g: cyc})
 	rec := s.testRequest("GET", "/api/channels/ch-1/quality/rules", "")
 	require.Equal(s.T(), http.StatusOK, rec.Code)
 	var resp QualityRulesResponse
@@ -304,33 +304,33 @@ func (s *ServerSuite) TestHandleQualityWhatifGraphProviderUnset() {
 }
 
 func (s *ServerSuite) TestHandleQualityWhatifNoCachedGraph() {
-	s.srv.SetQualityGraphProvider(&fakeGraphProvider{g: nil})
+	s.srv.quality.setGraphProvider(&fakeGraphProvider{g: nil})
 	rec := s.testRequest("POST", "/api/channels/ch-1/quality/whatif", `{"mutations":[{"op":"delete","path":"x.go"}]}`)
 	require.Equal(s.T(), http.StatusServiceUnavailable, rec.Code)
 }
 
 func (s *ServerSuite) TestHandleQualityWhatifInvalidJSON() {
-	s.srv.SetQualityGraphProvider(&graphProviderHit{g: smallGraph()})
+	s.srv.quality.setGraphProvider(&graphProviderHit{g: smallGraph()})
 	rec := s.testRequest("POST", "/api/channels/ch-1/quality/whatif", `not-json`)
 	require.Equal(s.T(), http.StatusBadRequest, rec.Code)
 	require.Contains(s.T(), rec.Body.String(), "decoding")
 }
 
 func (s *ServerSuite) TestHandleQualityWhatifEmptyMutations() {
-	s.srv.SetQualityGraphProvider(&graphProviderHit{g: smallGraph()})
+	s.srv.quality.setGraphProvider(&graphProviderHit{g: smallGraph()})
 	rec := s.testRequest("POST", "/api/channels/ch-1/quality/whatif", `{"mutations":[]}`)
 	require.Equal(s.T(), http.StatusBadRequest, rec.Code)
 	require.Contains(s.T(), rec.Body.String(), "at least one mutation")
 }
 
 func (s *ServerSuite) TestHandleQualityWhatifEmptyBodyTreatedAsNoMutations() {
-	s.srv.SetQualityGraphProvider(&graphProviderHit{g: smallGraph()})
+	s.srv.quality.setGraphProvider(&graphProviderHit{g: smallGraph()})
 	rec := s.testRequest("POST", "/api/channels/ch-1/quality/whatif", "")
 	require.Equal(s.T(), http.StatusBadRequest, rec.Code)
 }
 
 func (s *ServerSuite) TestHandleQualityWhatifBodyReadError() {
-	s.srv.SetQualityGraphProvider(&graphProviderHit{g: smallGraph()})
+	s.srv.quality.setGraphProvider(&graphProviderHit{g: smallGraph()})
 	req, _ := http.NewRequest("POST", "/api/channels/ch-1/quality/whatif", &errReader{})
 	w := httptest.NewRecorder()
 	s.mux.ServeHTTP(w, req)
@@ -340,7 +340,7 @@ func (s *ServerSuite) TestHandleQualityWhatifBodyReadError() {
 
 func (s *ServerSuite) TestHandleQualityWhatifSimulateError() {
 	s.channelWithDir("ch-1", s.T().TempDir())
-	s.srv.SetQualityGraphProvider(&graphProviderHit{g: smallGraph()})
+	s.srv.quality.setGraphProvider(&graphProviderHit{g: smallGraph()})
 	rec := s.testRequest("POST", "/api/channels/ch-1/quality/whatif", `{"mutations":[{"op":"delete","path":"missing.go"}]}`)
 	require.Equal(s.T(), http.StatusBadRequest, rec.Code)
 	require.Contains(s.T(), rec.Body.String(), "path not in graph")
@@ -348,7 +348,7 @@ func (s *ServerSuite) TestHandleQualityWhatifSimulateError() {
 
 func (s *ServerSuite) TestHandleQualityWhatifDeleteSucceeds() {
 	s.channelWithDir("ch-1", s.T().TempDir())
-	s.srv.SetQualityGraphProvider(&graphProviderHit{g: smallGraph()})
+	s.srv.quality.setGraphProvider(&graphProviderHit{g: smallGraph()})
 	rec := s.testRequest("POST", "/api/channels/ch-1/quality/whatif", `{"mutations":[{"op":"delete","path":"internal/api/u.go"}]}`)
 	require.Equal(s.T(), http.StatusOK, rec.Code)
 
@@ -382,14 +382,14 @@ func (s *ServerSuite) TestHandleQualityEvolutionHistoryReaderUnset() {
 }
 
 func (s *ServerSuite) TestHandleQualityEvolutionStoreUnset() {
-	s.srv.SetQualityHistoryReader(&fakeHistoryReader{})
+	s.srv.quality.setHistoryReader(&fakeHistoryReader{})
 	s.srv.store = nil
 	rec := s.testRequest("GET", "/api/channels/ch-1/quality/evolution", "")
 	require.Equal(s.T(), http.StatusNotImplemented, rec.Code)
 }
 
 func (s *ServerSuite) TestHandleQualityEvolutionResolveDirError() {
-	s.srv.SetQualityHistoryReader(&fakeHistoryReader{})
+	s.srv.quality.setHistoryReader(&fakeHistoryReader{})
 	s.store.On("GetChannel", mock.Anything, "ch-1").Return(&db.Channel{ChannelID: "ch-1"}, nil)
 	rec := s.testRequest("GET", "/api/channels/ch-1/quality/evolution", "")
 	require.Equal(s.T(), http.StatusBadRequest, rec.Code)
@@ -398,7 +398,7 @@ func (s *ServerSuite) TestHandleQualityEvolutionResolveDirError() {
 func (s *ServerSuite) TestHandleQualityEvolutionNoHistoryReturns404() {
 	dir := s.T().TempDir()
 	s.channelWithDir("ch-1", dir)
-	s.srv.SetQualityHistoryReader(&fakeHistoryReader{})
+	s.srv.quality.setHistoryReader(&fakeHistoryReader{})
 	rec := s.testRequest("GET", "/api/channels/ch-1/quality/evolution", "")
 	require.Equal(s.T(), http.StatusNotFound, rec.Code)
 }
@@ -406,7 +406,7 @@ func (s *ServerSuite) TestHandleQualityEvolutionNoHistoryReturns404() {
 func (s *ServerSuite) TestHandleQualityEvolutionAnalysisErrorReturns500() {
 	dir := s.T().TempDir()
 	s.channelWithDir("ch-1", dir)
-	s.srv.SetQualityHistoryReader(&fakeHistoryReader{err: errors.New("git failed")})
+	s.srv.quality.setHistoryReader(&fakeHistoryReader{err: errors.New("git failed")})
 	rec := s.testRequest("GET", "/api/channels/ch-1/quality/evolution", "")
 	require.Equal(s.T(), http.StatusInternalServerError, rec.Code)
 }
@@ -415,7 +415,7 @@ func (s *ServerSuite) TestHandleQualityEvolutionReturnsResult() {
 	dir := s.T().TempDir()
 	s.channelWithDir("ch-1", dir)
 	ts := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
-	s.srv.SetQualityHistoryReader(&fakeHistoryReader{
+	s.srv.quality.setHistoryReader(&fakeHistoryReader{
 		commits: []evolution.CommitFiles{
 			{Author: "alice", Timestamp: ts, Files: []string{"a.go", "b.go"}},
 			{Author: "alice", Timestamp: ts, Files: []string{"a.go", "b.go"}},
@@ -436,14 +436,14 @@ func (s *ServerSuite) TestHandleQualityBugFactorHistoryReaderUnset() {
 }
 
 func (s *ServerSuite) TestHandleQualityBugFactorStoreUnset() {
-	s.srv.SetQualityHistoryReader(&fakeHistoryReader{})
+	s.srv.quality.setHistoryReader(&fakeHistoryReader{})
 	s.srv.store = nil
 	rec := s.testRequest("GET", "/api/channels/ch-1/quality/bugfactor", "")
 	require.Equal(s.T(), http.StatusNotImplemented, rec.Code)
 }
 
 func (s *ServerSuite) TestHandleQualityBugFactorResolveDirError() {
-	s.srv.SetQualityHistoryReader(&fakeHistoryReader{})
+	s.srv.quality.setHistoryReader(&fakeHistoryReader{})
 	s.store.On("GetChannel", mock.Anything, "ch-1").Return(&db.Channel{ChannelID: "ch-1"}, nil)
 	rec := s.testRequest("GET", "/api/channels/ch-1/quality/bugfactor", "")
 	require.Equal(s.T(), http.StatusBadRequest, rec.Code)
@@ -452,7 +452,7 @@ func (s *ServerSuite) TestHandleQualityBugFactorResolveDirError() {
 func (s *ServerSuite) TestHandleQualityBugFactorNoHistoryReturns404() {
 	dir := s.T().TempDir()
 	s.channelWithDir("ch-1", dir)
-	s.srv.SetQualityHistoryReader(&fakeHistoryReader{})
+	s.srv.quality.setHistoryReader(&fakeHistoryReader{})
 	rec := s.testRequest("GET", "/api/channels/ch-1/quality/bugfactor", "")
 	require.Equal(s.T(), http.StatusNotFound, rec.Code)
 }
@@ -460,7 +460,7 @@ func (s *ServerSuite) TestHandleQualityBugFactorNoHistoryReturns404() {
 func (s *ServerSuite) TestHandleQualityBugFactorAnalysisErrorReturns500() {
 	dir := s.T().TempDir()
 	s.channelWithDir("ch-1", dir)
-	s.srv.SetQualityHistoryReader(&fakeHistoryReader{err: errors.New("git failed")})
+	s.srv.quality.setHistoryReader(&fakeHistoryReader{err: errors.New("git failed")})
 	rec := s.testRequest("GET", "/api/channels/ch-1/quality/bugfactor", "")
 	require.Equal(s.T(), http.StatusInternalServerError, rec.Code)
 }
@@ -469,7 +469,7 @@ func (s *ServerSuite) TestHandleQualityBugFactorReturnsRiskList() {
 	dir := s.T().TempDir()
 	s.channelWithDir("ch-1", dir)
 	ts := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
-	s.srv.SetQualityHistoryReader(&fakeHistoryReader{
+	s.srv.quality.setHistoryReader(&fakeHistoryReader{
 		commits: []evolution.CommitFiles{
 			{Author: "alice", Timestamp: ts, Files: []string{"solo.go"}},
 			{Author: "alice", Timestamp: ts, Files: []string{"solo.go"}},
@@ -488,13 +488,13 @@ func (s *ServerSuite) TestHandleQualityC4GraphProviderUnset() {
 }
 
 func (s *ServerSuite) TestHandleQualityC4NoCachedGraph() {
-	s.srv.SetQualityGraphProvider(&fakeGraphProvider{g: nil})
+	s.srv.quality.setGraphProvider(&fakeGraphProvider{g: nil})
 	rec := s.testRequest("GET", "/api/channels/ch-1/quality/c4", "")
 	require.Equal(s.T(), http.StatusServiceUnavailable, rec.Code)
 }
 
 func (s *ServerSuite) TestHandleQualityC4ReturnsDiagram() {
-	s.srv.SetQualityGraphProvider(&graphProviderHit{g: smallGraph()})
+	s.srv.quality.setGraphProvider(&graphProviderHit{g: smallGraph()})
 	rec := s.testRequest("GET", "/api/channels/ch-1/quality/c4", "")
 	require.Equal(s.T(), http.StatusOK, rec.Code)
 	require.Contains(s.T(), rec.Body.String(), "flowchart LR")

@@ -453,7 +453,7 @@ func testSlackConfig() *config.Config {
 
 // fakeAPIServer returns a newAPIServer func that creates a real api.Server
 // but binds to a random port (127.0.0.1:0).
-func fakeAPIServer() func(scheduler.Scheduler, api.ChannelEnsurer, api.ThreadEnsurer, api.ChannelLister, api.MessageSender, *slog.Logger) *api.Server {
+func fakeAPIServer() func(scheduler.Scheduler, api.ChannelEnsurer, api.ThreadEnsurer, api.ChannelLister, api.MessageSender, *slog.Logger, ...api.Option) *api.Server {
 	return api.NewServer
 }
 

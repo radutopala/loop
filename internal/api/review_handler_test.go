@@ -123,7 +123,7 @@ func (s *ReviewHandlerSuite) SetupTest() {
 	s.gh = new(mockGitHubReview)
 	s.wt = new(mockPR)
 	s.rs = review.NewStore()
-	s.srv.SetReviewService(s.gh, s.rs, s.wt)
+	s.srv.review.setBackends(s.gh, s.rs, s.wt)
 	// Stub config loaders so resolveGHUser/resolveReviewEnabled are
 	// deterministic in tests (otherwise they would shell out to the user's
 	// actual ~/.loop/config.json). Review is enabled in the base stub so
@@ -165,7 +165,7 @@ func (s *ReviewHandlerSuite) TestReviewEnabledGate403s() {
 		return &config.Config{Review: config.ReviewConfig{Enabled: false}}, nil
 	}
 	s.store.On("GetChannel", mock.Anything, "ch1").Return(&db.Channel{ChannelID: "ch1", DirPath: "/repo"}, nil)
-	s.srv.SetReviewAgent(&mockReviewRunner{}, "", "")
+	s.srv.review.setAgent(&mockReviewRunner{}, "", "")
 
 	readySession := func() *review.Session {
 		return &review.Session{
@@ -1419,7 +1419,7 @@ func (s *ReviewHandlerSuite) TestRunRunnerNotConfigured() {
 }
 
 func (s *ReviewHandlerSuite) TestRunNoSession() {
-	s.srv.SetReviewAgent(&mockReviewRunner{}, "", "")
+	s.srv.review.setAgent(&mockReviewRunner{}, "", "")
 	w := httptest.NewRecorder()
 	s.mux.ServeHTTP(w, httptest.NewRequest("POST", "/api/channels/ch1/review/run", nil))
 	require.Equal(s.T(), http.StatusNotFound, w.Code)
@@ -1427,7 +1427,7 @@ func (s *ReviewHandlerSuite) TestRunNoSession() {
 
 func (s *ReviewHandlerSuite) TestRunNoWorktree() {
 	s.rs.Put("ch1", &review.Session{Status: review.StatusReady})
-	s.srv.SetReviewAgent(&mockReviewRunner{}, "", "")
+	s.srv.review.setAgent(&mockReviewRunner{}, "", "")
 	w := httptest.NewRecorder()
 	s.mux.ServeHTTP(w, httptest.NewRequest("POST", "/api/channels/ch1/review/run", nil))
 	require.Equal(s.T(), http.StatusConflict, w.Code)
@@ -1435,7 +1435,7 @@ func (s *ReviewHandlerSuite) TestRunNoWorktree() {
 
 func (s *ReviewHandlerSuite) TestRunSessionNotReady() {
 	s.rs.Put("ch1", &review.Session{Status: review.StatusLoading, WorktreePath: "/wt"})
-	s.srv.SetReviewAgent(&mockReviewRunner{}, "", "")
+	s.srv.review.setAgent(&mockReviewRunner{}, "", "")
 	w := httptest.NewRecorder()
 	s.mux.ServeHTTP(w, httptest.NewRequest("POST", "/api/channels/ch1/review/run", nil))
 	require.Equal(s.T(), http.StatusConflict, w.Code)
@@ -1451,7 +1451,7 @@ func (s *ReviewHandlerSuite) TestRunHappyPathDispatchesCommentsAndStatus() {
 		onComment(&review.Comment{ID: "a", Path: "x.go", Line: 1, Side: "RIGHT", Body: "issue"})
 		return &agent.AgentResponse{}, nil
 	}
-	s.srv.SetReviewAgent(runner, "sys", "review-prompt-body")
+	s.srv.review.setAgent(runner, "sys", "review-prompt-body")
 
 	w := httptest.NewRecorder()
 	s.mux.ServeHTTP(w, httptest.NewRequest("POST", "/api/channels/ch1/review/run", nil))
@@ -1487,7 +1487,7 @@ func (s *ReviewHandlerSuite) TestRunPromptIncludesConfiguredGHUser() {
 		return &config.Config{GitHub: config.GitHubConfig{GHUser: "alice"}, Review: config.ReviewConfig{Enabled: true}}, nil
 	}
 	runner := &mockReviewRunner{done: make(chan struct{})}
-	s.srv.SetReviewAgent(runner, "", "")
+	s.srv.review.setAgent(runner, "", "")
 
 	w := httptest.NewRecorder()
 	s.mux.ServeHTTP(w, httptest.NewRequest("POST", "/api/channels/ch1/review/run", nil))
@@ -1528,7 +1528,7 @@ func (s *ReviewHandlerSuite) TestRunPromptListsExistingCommentsForDedup() {
 	}, nil).Maybe()
 	s.wt.On("Diff", mock.Anything, "/repo", "/repo/.worktrees/pr-7", "main", mock.Anything).Return([]byte("diff"), nil).Maybe()
 	runner := &mockReviewRunner{done: make(chan struct{})}
-	s.srv.SetReviewAgent(runner, "", "")
+	s.srv.review.setAgent(runner, "", "")
 
 	w := httptest.NewRecorder()
 	s.mux.ServeHTTP(w, httptest.NewRequest("POST", "/api/channels/ch1/review/run", nil))
@@ -1548,7 +1548,7 @@ func (s *ReviewHandlerSuite) TestRunAgentErrorTransitionsToErrorStatus() {
 	runner.runFn = func(_ func(*review.Comment)) (*agent.AgentResponse, error) {
 		return nil, errors.New("agent boom")
 	}
-	s.srv.SetReviewAgent(runner, "", "")
+	s.srv.review.setAgent(runner, "", "")
 
 	w := httptest.NewRecorder()
 	s.mux.ServeHTTP(w, httptest.NewRequest("POST", "/api/channels/ch1/review/run", nil))
@@ -1561,7 +1561,7 @@ func (s *ReviewHandlerSuite) TestRunAgentErrorTransitionsToErrorStatus() {
 func (s *ReviewHandlerSuite) TestRunUsesDefaultPromptWhenUnconfigured() {
 	s.wireReadySession()
 	runner := &mockReviewRunner{done: make(chan struct{})}
-	s.srv.SetReviewAgent(runner, "", "") // empty user prompt -> default
+	s.srv.review.setAgent(runner, "", "") // empty user prompt -> default
 	w := httptest.NewRecorder()
 	s.mux.ServeHTTP(w, httptest.NewRequest("POST", "/api/channels/ch1/review/run", nil))
 	require.Equal(s.T(), http.StatusAccepted, w.Code)
@@ -1577,7 +1577,7 @@ func (s *ReviewHandlerSuite) TestRunSecondCallCoalescesWhileInFlight() {
 		<-gate
 		return &agent.AgentResponse{}, nil
 	}
-	s.srv.SetReviewAgent(runner, "", "")
+	s.srv.review.setAgent(runner, "", "")
 
 	w1 := httptest.NewRecorder()
 	s.mux.ServeHTTP(w1, httptest.NewRequest("POST", "/api/channels/ch1/review/run", nil))
@@ -1615,7 +1615,7 @@ func (s *ReviewHandlerSuite) TestRunCommentDispatchSkippedWhenSessionDropped() {
 		onComment(&review.Comment{ID: "a", Path: "x.go", Line: 1, Body: "b"})
 		return &agent.AgentResponse{}, nil
 	}
-	s.srv.SetReviewAgent(runner, "", "")
+	s.srv.review.setAgent(runner, "", "")
 
 	w := httptest.NewRecorder()
 	s.mux.ServeHTTP(w, httptest.NewRequest("POST", "/api/channels/ch1/review/run", nil))
@@ -1679,7 +1679,7 @@ func (s *ReviewHandlerSuite) TestRunRediffsOnCommentOutsideHunk() {
 		onComment(&review.Comment{ID: "c1", Path: "x.go", Line: 42, Side: "RIGHT", Body: "issue"})
 		return &agent.AgentResponse{}, nil
 	}
-	s.srv.SetReviewAgent(runner, "", "")
+	s.srv.review.setAgent(runner, "", "")
 
 	w := httptest.NewRecorder()
 	s.mux.ServeHTTP(w, httptest.NewRequest("POST", "/api/channels/ch1/review/run", nil))
@@ -1726,7 +1726,7 @@ func (s *ReviewHandlerSuite) TestRunSkipsRediffWhenCommentInsideHunk() {
 		onComment(&review.Comment{ID: "c1", Path: "x.go", Line: 3, Side: "RIGHT", Body: "in-hunk"})
 		return &agent.AgentResponse{}, nil
 	}
-	s.srv.SetReviewAgent(runner, "", "")
+	s.srv.review.setAgent(runner, "", "")
 
 	w := httptest.NewRecorder()
 	s.mux.ServeHTTP(w, httptest.NewRequest("POST", "/api/channels/ch1/review/run", nil))
@@ -1769,7 +1769,7 @@ func (s *ReviewHandlerSuite) TestRunSkipsRediffWhenPathAbsentFromDiff() {
 		onComment(&review.Comment{ID: "c1", Path: "other.go", Line: 1, Side: "RIGHT", Body: "orphan"})
 		return &agent.AgentResponse{}, nil
 	}
-	s.srv.SetReviewAgent(runner, "", "")
+	s.srv.review.setAgent(runner, "", "")
 
 	w := httptest.NewRecorder()
 	s.mux.ServeHTTP(w, httptest.NewRequest("POST", "/api/channels/ch1/review/run", nil))
@@ -1802,7 +1802,7 @@ func (s *ReviewHandlerSuite) TestRunWorktreeThreadUsesParentChannelDir() {
 	s.wireRefreshMocks("/wt", "/wt/.worktrees/pr-7", 7, "main", []byte("diff"))
 
 	runner := &mockReviewRunner{done: make(chan struct{})}
-	s.srv.SetReviewAgent(runner, "", "")
+	s.srv.review.setAgent(runner, "", "")
 	w := httptest.NewRecorder()
 	s.mux.ServeHTTP(w, httptest.NewRequest("POST", "/api/channels/ch1/review/run", nil))
 	require.Equal(s.T(), http.StatusAccepted, w.Code)
@@ -1826,7 +1826,7 @@ func (s *ReviewHandlerSuite) TestRunRootChannelUsesOwnDir() {
 	s.wireRefreshMocks("/repo", "/repo/.worktrees/pr-7", 7, "main", []byte("diff"))
 
 	runner := &mockReviewRunner{done: make(chan struct{})}
-	s.srv.SetReviewAgent(runner, "", "")
+	s.srv.review.setAgent(runner, "", "")
 	w := httptest.NewRecorder()
 	s.mux.ServeHTTP(w, httptest.NewRequest("POST", "/api/channels/ch1/review/run", nil))
 	require.Equal(s.T(), http.StatusAccepted, w.Code)
@@ -1850,7 +1850,7 @@ func (s *ReviewHandlerSuite) TestRunLoopDirFallbackForParent() {
 	s.wireRefreshMocks("/loop/ch1/work", "/loop/ch1/work/.worktrees/pr-7", 7, "main", []byte("diff"))
 
 	runner := &mockReviewRunner{done: make(chan struct{})}
-	s.srv.SetReviewAgent(runner, "", "")
+	s.srv.review.setAgent(runner, "", "")
 	w := httptest.NewRecorder()
 	s.mux.ServeHTTP(w, httptest.NewRequest("POST", "/api/channels/ch1/review/run", nil))
 	require.Equal(s.T(), http.StatusAccepted, w.Code)
@@ -1874,7 +1874,7 @@ func (s *ReviewHandlerSuite) TestRunWorktreeThreadParentLookupFailureFallsBack()
 	s.wireRefreshMocks("/wt", "/wt/.worktrees/pr-7", 7, "main", []byte("diff"))
 
 	runner := &mockReviewRunner{done: make(chan struct{})}
-	s.srv.SetReviewAgent(runner, "", "")
+	s.srv.review.setAgent(runner, "", "")
 	w := httptest.NewRecorder()
 	s.mux.ServeHTTP(w, httptest.NewRequest("POST", "/api/channels/ch1/review/run", nil))
 	require.Equal(s.T(), http.StatusAccepted, w.Code)
@@ -1914,7 +1914,7 @@ func (s *ReviewHandlerSuite) TestRunRefreshBroadcastsWhenDiffChanges() {
 	s.srv.SetEventsHub(hub)
 
 	runner := &mockReviewRunner{done: make(chan struct{})}
-	s.srv.SetReviewAgent(runner, "", "")
+	s.srv.review.setAgent(runner, "", "")
 
 	w := httptest.NewRecorder()
 	s.mux.ServeHTTP(w, httptest.NewRequest("POST", "/api/channels/ch1/review/run", nil))
@@ -1943,7 +1943,7 @@ func (s *ReviewHandlerSuite) TestRunRefreshFailureReturnsError() {
 	s.gh.On("FetchPRHeadSHA", mock.Anything, "/repo", mock.Anything, 7).Return("", errors.New("gh down"))
 
 	runner := &mockReviewRunner{done: make(chan struct{})}
-	s.srv.SetReviewAgent(runner, "", "")
+	s.srv.review.setAgent(runner, "", "")
 	w := httptest.NewRecorder()
 	s.mux.ServeHTTP(w, httptest.NewRequest("POST", "/api/channels/ch1/review/run", nil))
 
@@ -1992,7 +1992,7 @@ func (s *ReviewHandlerSuite) TestMaybeRediffGuards() {
 		})
 		wt := new(mockPR)
 		wt.On("Diff", mock.Anything, "/repo", "/wt", "main", mock.Anything).Return([]byte(nil), errors.New("boom"))
-		s.srv.SetReviewService(s.gh, s.rs, wt)
+		s.srv.review.setBackends(s.gh, s.rs, wt)
 		s.srv.logger = logger
 		s.srv.review.maybeRediffForComment("ch1", "/wt", "/repo", c)
 		require.Equal(s.T(), raw, s.rs.Get("ch1").RawDiff)
@@ -2009,7 +2009,7 @@ func (s *ReviewHandlerSuite) TestMaybeRediffGuards() {
 		})
 		wt := new(mockPR)
 		wt.On("Diff", mock.Anything, "/repo", "/wt", "main", mock.Anything).Return([]byte(raw), nil)
-		s.srv.SetReviewService(s.gh, s.rs, wt)
+		s.srv.review.setBackends(s.gh, s.rs, wt)
 		hub := NewEventsHub(logger)
 		var events []Event
 		hub.captureHook = func(e Event) { events = append(events, e) }
@@ -2052,7 +2052,7 @@ func (s *ReviewHandlerSuite) TestRunRejectedWhenGetChannelFails() {
 	s.store.On("GetChannel", mock.Anything, "ch1").Return(nil, errors.New("db"))
 
 	runner := &mockReviewRunner{done: make(chan struct{})}
-	s.srv.SetReviewAgent(runner, "", "")
+	s.srv.review.setAgent(runner, "", "")
 	w := httptest.NewRecorder()
 	s.mux.ServeHTTP(w, httptest.NewRequest("POST", "/api/channels/ch1/review/run", nil))
 	require.Equal(s.T(), http.StatusBadRequest, w.Code)
@@ -2068,14 +2068,14 @@ func (s *ReviewHandlerSuite) TestRunRejectedWhenGetChannelFails() {
 // session at status=reviewing forever (the original bug).
 func (s *ReviewHandlerSuite) TestRunReviewAsyncTimeoutFlipsStatusToError() {
 	s.wireReadySession()
-	s.srv.SetReviewRunTimeout(10 * time.Millisecond)
+	s.srv.review.setRunTimeout(10 * time.Millisecond)
 
 	runner := &mockReviewRunner{done: make(chan struct{})}
 	runner.runWithCtxFn = func(ctx context.Context, _ func(*review.Comment)) (*agent.AgentResponse, error) {
 		<-ctx.Done()
 		return nil, ctx.Err()
 	}
-	s.srv.SetReviewAgent(runner, "", "")
+	s.srv.review.setAgent(runner, "", "")
 
 	w := httptest.NewRecorder()
 	s.mux.ServeHTTP(w, httptest.NewRequest("POST", "/api/channels/ch1/review/run", nil))
@@ -2094,13 +2094,13 @@ func (s *ReviewHandlerSuite) TestRunReviewAsyncTimeoutFlipsStatusToError() {
 // risk falsely flagging any error as a timeout once the ceiling is on.
 func (s *ReviewHandlerSuite) TestRunReviewAsyncTimeoutDoesNotMaskUnrelatedErrors() {
 	s.wireReadySession()
-	s.srv.SetReviewRunTimeout(time.Hour)
+	s.srv.review.setRunTimeout(time.Hour)
 
 	runner := &mockReviewRunner{done: make(chan struct{})}
 	runner.runFn = func(_ func(*review.Comment)) (*agent.AgentResponse, error) {
 		return nil, errors.New("gh auth failed")
 	}
-	s.srv.SetReviewAgent(runner, "", "")
+	s.srv.review.setAgent(runner, "", "")
 
 	w := httptest.NewRecorder()
 	s.mux.ServeHTTP(w, httptest.NewRequest("POST", "/api/channels/ch1/review/run", nil))
@@ -2117,13 +2117,13 @@ func (s *ReviewHandlerSuite) TestRunReviewAsyncTimeoutDoesNotMaskUnrelatedErrors
 // timeout ceiling doesn't accidentally fail successful fast runs.
 func (s *ReviewHandlerSuite) TestRunReviewAsyncTimeoutSuccessPath() {
 	s.wireReadySession()
-	s.srv.SetReviewRunTimeout(time.Hour)
+	s.srv.review.setRunTimeout(time.Hour)
 
 	runner := &mockReviewRunner{done: make(chan struct{})}
 	runner.runFn = func(_ func(*review.Comment)) (*agent.AgentResponse, error) {
 		return &agent.AgentResponse{}, nil
 	}
-	s.srv.SetReviewAgent(runner, "", "")
+	s.srv.review.setAgent(runner, "", "")
 
 	w := httptest.NewRecorder()
 	s.mux.ServeHTTP(w, httptest.NewRequest("POST", "/api/channels/ch1/review/run", nil))
@@ -2141,14 +2141,14 @@ func (s *ReviewHandlerSuite) TestRunReviewAsyncTimeoutSuccessPath() {
 // opaque string the agent happened to return.
 func (s *ReviewHandlerSuite) TestRunReviewAsyncTimeoutRewritesAgentDeadlineMessage() {
 	s.wireReadySession()
-	s.srv.SetReviewRunTimeout(10 * time.Millisecond)
+	s.srv.review.setRunTimeout(10 * time.Millisecond)
 
 	runner := &mockReviewRunner{done: make(chan struct{})}
 	runner.runWithCtxFn = func(ctx context.Context, _ func(*review.Comment)) (*agent.AgentResponse, error) {
 		<-ctx.Done()
 		return nil, errors.New("agent stream closed")
 	}
-	s.srv.SetReviewAgent(runner, "", "")
+	s.srv.review.setAgent(runner, "", "")
 
 	w := httptest.NewRecorder()
 	s.mux.ServeHTTP(w, httptest.NewRequest("POST", "/api/channels/ch1/review/run", nil))
@@ -2193,7 +2193,7 @@ func (s *ReviewHandlerSuite) TestRunReviewAsyncCancelledSilently() {
 		<-ctx.Done()
 		return nil, ctx.Err()
 	}
-	s.srv.SetReviewAgent(runner, "", "")
+	s.srv.review.setAgent(runner, "", "")
 
 	w := httptest.NewRecorder()
 	s.mux.ServeHTTP(w, httptest.NewRequest("POST", "/api/channels/ch1/review/run", nil))

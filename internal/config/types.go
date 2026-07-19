@@ -252,7 +252,7 @@ type MemoryConfig struct {
 //
 // MaxFiles, ExcludePaths, Rules, Complexity, and Clones are all
 // hot-reloaded on every Scan: the engine pulls them via config.Reload,
-// and the API server pulls Rules via apiSrv.SetQualityRulesLoader.
+// and the API server pulls Rules via the api.WithQuality RulesLoader.
 // Project-level `.loop/config.json` overrides (including the worktree →
 // parent → global layering) are picked up the same way. No daemon
 // restart needed.

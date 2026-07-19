@@ -71,7 +71,7 @@ func (s *ServerSuite) enableShare() (dir string, ft *fakeTunnel) {
 		return &config.Config{PlaygroundShare: config.PlaygroundShareConfig{Enabled: true}}, nil
 	}
 	ft = &fakeTunnel{}
-	s.srv.SetTunnelManager(ft)
+	s.srv.playground.setTunnel(ft)
 	return dir, ft
 }
 
@@ -230,7 +230,7 @@ func (s *ServerSuite) TestShareListURLNoTunnel() {
 func (s *ServerSuite) TestShareListURLTunnelDown() {
 	// Tunnel present but not started (empty PublicURL) → empty URL.
 	s.setPlaygroundDir()
-	s.srv.SetTunnelManager(&fakeTunnel{})
+	s.srv.playground.setTunnel(&fakeTunnel{})
 	s.srv.playground.shares.add("demo", "global", "", "/abs/demo")
 	rec := s.testRequest("GET", "/api/playground/share", "")
 	var resp map[string][]map[string]string
@@ -368,7 +368,7 @@ func (s *ServerSuite) TestPlaygroundShareInvalidName() {
 
 func (s *ServerSuite) TestEnsureShareInfraNilTunnelManager() {
 	s.setPlaygroundDir()
-	s.srv.SetTunnelManager(nil)
+	s.srv.playground.setTunnel(nil)
 	_, err := s.srv.playground.ensureShareInfra(context.Background())
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "tunnel manager not configured")
@@ -379,7 +379,7 @@ func (s *ServerSuite) TestEnsureShareInfraNilTunnelManager() {
 
 func (s *ServerSuite) TestEnsureShareInfraListenError() {
 	s.setPlaygroundDir()
-	s.srv.SetTunnelManager(&fakeTunnel{})
+	s.srv.playground.setTunnel(&fakeTunnel{})
 	s.srv.playground.listenTCP = func(string) (net.Listener, error) { return nil, os.ErrPermission }
 	_, err := s.srv.playground.ensureShareInfra(context.Background())
 	require.Error(s.T(), err)

@@ -154,10 +154,10 @@ func (s *MainSuite) TestServeSlackHappyPathShutdown() {
 
 	channelsCh := make(chan api.ChannelEnsurer, 1)
 	threadsCh := make(chan api.ThreadEnsurer, 1)
-	s.app.newAPIServer = func(sched scheduler.Scheduler, channels api.ChannelEnsurer, threads api.ThreadEnsurer, store api.ChannelLister, messages api.MessageSender, logger *slog.Logger) *api.Server {
+	s.app.newAPIServer = func(sched scheduler.Scheduler, channels api.ChannelEnsurer, threads api.ThreadEnsurer, store api.ChannelLister, messages api.MessageSender, logger *slog.Logger, opts ...api.Option) *api.Server {
 		channelsCh <- channels
 		threadsCh <- threads
-		return api.NewServer(sched, channels, threads, store, messages, logger)
+		return api.NewServer(sched, channels, threads, store, messages, logger, opts...)
 	}
 
 	errCh := make(chan error, 1)
@@ -422,7 +422,7 @@ func (s *MainSuite) TestServeHappyPathWithChannelService() {
 	m.setupHappyBot()
 
 	channelsCh := make(chan api.ChannelEnsurer, 1)
-	s.app.newAPIServer = func(sched scheduler.Scheduler, channels api.ChannelEnsurer, threads api.ThreadEnsurer, store api.ChannelLister, messages api.MessageSender, logger *slog.Logger) *api.Server {
+	s.app.newAPIServer = func(sched scheduler.Scheduler, channels api.ChannelEnsurer, threads api.ThreadEnsurer, store api.ChannelLister, messages api.MessageSender, logger *slog.Logger, _ ...api.Option) *api.Server {
 		channelsCh <- channels
 		return api.NewServer(sched, channels, threads, store, messages, logger)
 	}
@@ -481,7 +481,7 @@ func (s *MainSuite) TestServeHappyPathShutdownWithAPIStopError() {
 	m := s.setupServeMocks()
 	m.setupHappyBot()
 
-	s.app.newAPIServer = func(sched scheduler.Scheduler, channels api.ChannelEnsurer, threads api.ThreadEnsurer, store api.ChannelLister, messages api.MessageSender, logger *slog.Logger) *api.Server {
+	s.app.newAPIServer = func(sched scheduler.Scheduler, channels api.ChannelEnsurer, threads api.ThreadEnsurer, store api.ChannelLister, messages api.MessageSender, logger *slog.Logger, _ ...api.Option) *api.Server {
 		srv := api.NewServer(sched, channels, threads, store, messages, logger)
 		srv.SetStopError(errors.New("injected stop error"))
 		return srv

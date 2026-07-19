@@ -276,3 +276,36 @@ func (s *qualityService) resolveMetricsConfigForChannel(ctx context.Context, cha
 	}
 	return s.resolveMetricsConfig(dir, parent)
 }
+
+// Per-dependency wiring; each nil keeps its endpoints at 501 (scanner,
+// snapshots) or falls back to defaults (rules/metrics loaders, graph).
+func (s *qualityService) setScanner(sc QualityScanner)              { s.scanner = sc }
+func (s *qualityService) setGraphProvider(gp QualityGraphProvider)  { s.graph = gp }
+func (s *qualityService) setSnapshotReader(r QualitySnapshotReader) { s.snapshots = r }
+func (s *qualityService) setRulesLoader(l QualityRulesLoader)       { s.rulesLoad = l }
+func (s *qualityService) setMetricsLoader(l QualityMetricsLoader)   { s.metricsCfg = l }
+func (s *qualityService) setHistoryReader(r QualityHistoryReader)   { s.history = r }
+
+// QualityDeps bundles the quality engine's injection points for WithQuality.
+// The daemon wires all of them when the engine is enabled; zero fields keep
+// the corresponding endpoints at 501 / defaults.
+type QualityDeps struct {
+	Scanner       QualityScanner
+	Graph         QualityGraphProvider
+	Snapshots     QualitySnapshotReader
+	RulesLoader   QualityRulesLoader
+	MetricsLoader QualityMetricsLoader
+	History       QualityHistoryReader
+}
+
+// WithQuality configures the quality engine's dependencies at construction.
+func WithQuality(d QualityDeps) Option {
+	return func(s *Server) {
+		s.quality.setScanner(d.Scanner)
+		s.quality.setGraphProvider(d.Graph)
+		s.quality.setSnapshotReader(d.Snapshots)
+		s.quality.setRulesLoader(d.RulesLoader)
+		s.quality.setMetricsLoader(d.MetricsLoader)
+		s.quality.setHistoryReader(d.History)
+	}
+}

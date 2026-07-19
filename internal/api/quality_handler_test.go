@@ -179,7 +179,7 @@ func (s *ServerSuite) TestHandleQualityScanNotConfigured() {
 
 func (s *ServerSuite) TestHandleQualityScanResolveDirError() {
 	scanner := &fakeQualityScanner{}
-	s.srv.SetQualityScanner(scanner)
+	s.srv.quality.setScanner(scanner)
 	// No DirPath, no LoopDir → resolveDirPath returns an error.
 	s.store.On("GetChannel", mock.Anything, "ch-1").Return(&db.Channel{ChannelID: "ch-1"}, nil)
 
@@ -204,13 +204,13 @@ func (s *ServerSuite) TestHandleQualityScanSuccessBroadcastsEvents() {
 			ScannedAt: time.Date(2026, 5, 1, 12, 0, 0, 0, time.UTC),
 		},
 	}
-	s.srv.SetQualityScanner(scanner)
+	s.srv.quality.setScanner(scanner)
 	// Provide a graph so rules eval emits real results.
 	healthyGraph := graph.Build([]*parser.FileFacts{
 		{Path: "a.go", Language: "go", LOC: 10, Imports: []parser.Import{{Path: "b.go"}}},
 		{Path: "b.go", Language: "go", LOC: 10},
 	})
-	s.srv.SetQualityGraphProvider(&fakeGraphProvider{g: healthyGraph})
+	s.srv.quality.setGraphProvider(&fakeGraphProvider{g: healthyGraph})
 	cap := s.hookHub()
 
 	rec := s.testRequest("POST", "/api/channels/ch-1/quality/scan", "")
@@ -249,8 +249,8 @@ func (s *ServerSuite) TestHandleQualityScanWorktreePassesParentDirPath() {
 	}, nil)
 
 	scanner := &fakeQualityScanner{result: engine.ScanResult{Signal: metrics.Signal{Value: 8000}}}
-	s.srv.SetQualityScanner(scanner)
-	s.srv.SetQualityGraphProvider(&fakeGraphProvider{g: graph.Build(nil)})
+	s.srv.quality.setScanner(scanner)
+	s.srv.quality.setGraphProvider(&fakeGraphProvider{g: graph.Build(nil)})
 	cap := s.hookHub()
 
 	rec := s.testRequest("POST", "/api/channels/ch-1/quality/scan", "")
@@ -268,8 +268,8 @@ func (s *ServerSuite) TestHandleQualityScanNonWorktreeOmitsParentDirPath() {
 	s.channelWithDir("ch-1", dir)
 
 	scanner := &fakeQualityScanner{result: engine.ScanResult{Signal: metrics.Signal{Value: 8000}}}
-	s.srv.SetQualityScanner(scanner)
-	s.srv.SetQualityGraphProvider(&fakeGraphProvider{g: graph.Build(nil)})
+	s.srv.quality.setScanner(scanner)
+	s.srv.quality.setGraphProvider(&fakeGraphProvider{g: graph.Build(nil)})
 	cap := s.hookHub()
 
 	rec := s.testRequest("POST", "/api/channels/ch-1/quality/scan", "")
@@ -294,8 +294,8 @@ func (s *ServerSuite) TestHandleQualityScanWorktreeWithMissingParentSilentlyDrop
 	s.store.On("GetChannel", mock.Anything, "missing").Return((*db.Channel)(nil), errors.New("not found"))
 
 	scanner := &fakeQualityScanner{result: engine.ScanResult{Signal: metrics.Signal{Value: 8000}}}
-	s.srv.SetQualityScanner(scanner)
-	s.srv.SetQualityGraphProvider(&fakeGraphProvider{g: graph.Build(nil)})
+	s.srv.quality.setScanner(scanner)
+	s.srv.quality.setGraphProvider(&fakeGraphProvider{g: graph.Build(nil)})
 	cap := s.hookHub()
 
 	rec := s.testRequest("POST", "/api/channels/ch-1/quality/scan", "")
@@ -318,8 +318,8 @@ func (s *ServerSuite) TestHandleQualityScanRulesViolatedFires() {
 			FileCount: 1,
 		},
 	}
-	s.srv.SetQualityScanner(scanner)
-	s.srv.SetQualityGraphProvider(&fakeGraphProvider{g: graph.Build(nil)})
+	s.srv.quality.setScanner(scanner)
+	s.srv.quality.setGraphProvider(&fakeGraphProvider{g: graph.Build(nil)})
 	cap := s.hookHub()
 
 	rec := s.testRequest("POST", "/api/channels/ch-1/quality/scan", "")
@@ -339,8 +339,8 @@ func (s *ServerSuite) TestHandleQualityScanCustomRulesConfig() {
 	scanner := &fakeQualityScanner{
 		result: engine.ScanResult{Signal: metrics.Signal{Value: 100}, FileCount: 1},
 	}
-	s.srv.SetQualityScanner(scanner)
-	s.srv.SetQualityGraphProvider(&fakeGraphProvider{g: graph.Build(nil)})
+	s.srv.quality.setScanner(scanner)
+	s.srv.quality.setGraphProvider(&fakeGraphProvider{g: graph.Build(nil)})
 
 	// Disable the floor rule entirely — even at signal=100 it should pass.
 	cfg := rules.Config{Rules: map[string]rules.RuleConfig{
@@ -348,7 +348,7 @@ func (s *ServerSuite) TestHandleQualityScanCustomRulesConfig() {
 		rules.NoImportCycles: {Enabled: true},
 		rules.ParseFail:      {Enabled: true, Threshold: rules.ParseFailMaxDefault},
 	}}
-	s.srv.SetQualityRulesLoader(func(string, string) *rules.Config { return &cfg })
+	s.srv.quality.setRulesLoader(func(string, string) *rules.Config { return &cfg })
 	cap := s.hookHub()
 
 	rec := s.testRequest("POST", "/api/channels/ch-1/quality/scan", "")
@@ -373,8 +373,8 @@ func (s *ServerSuite) TestHandleQualityScanInProgressOnSecondCall() {
 		delay:    100 * time.Millisecond,
 		cancelOn: cancelOn,
 	}
-	s.srv.SetQualityScanner(scanner)
-	s.srv.SetQualityGraphProvider(&fakeGraphProvider{g: graph.Build(nil)})
+	s.srv.quality.setScanner(scanner)
+	s.srv.quality.setGraphProvider(&fakeGraphProvider{g: graph.Build(nil)})
 	cap := s.hookHub()
 
 	// Kick off the first scan asynchronously — it'll occupy the in-flight slot.
@@ -400,7 +400,7 @@ func (s *ServerSuite) TestHandleQualityScanEngineError() {
 	s.channelWithDir("ch-1", dir)
 
 	scanner := &fakeQualityScanner{err: errors.New("disk full")}
-	s.srv.SetQualityScanner(scanner)
+	s.srv.quality.setScanner(scanner)
 	cap := s.hookHub()
 
 	rec := s.testRequest("POST", "/api/channels/ch-1/quality/scan", "")
@@ -420,7 +420,7 @@ func (s *ServerSuite) TestHandleQualityScanRepoTooLargeIncludesDetail() {
 	s.channelWithDir("ch-1", dir)
 
 	scanner := &fakeQualityScanner{err: &graph.RepoTooLargeError{FileCount: 30000, Limit: 25000}}
-	s.srv.SetQualityScanner(scanner)
+	s.srv.quality.setScanner(scanner)
 	cap := s.hookHub()
 
 	rec := s.testRequest("POST", "/api/channels/ch-1/quality/scan", "")
@@ -440,7 +440,7 @@ func (s *ServerSuite) TestHandleQualityScanInProgressFromEngine() {
 	s.channelWithDir("ch-1", dir)
 
 	scanner := &fakeQualityScanner{result: engine.ScanResult{InProgress: true}}
-	s.srv.SetQualityScanner(scanner)
+	s.srv.quality.setScanner(scanner)
 	cap := s.hookHub()
 
 	rec := s.testRequest("POST", "/api/channels/ch-1/quality/scan", "")
@@ -454,7 +454,7 @@ func (s *ServerSuite) TestHandleQualityScanEventsHubNilStillSucceeds() {
 	dir := s.T().TempDir()
 	s.channelWithDir("ch-1", dir)
 	scanner := &fakeQualityScanner{result: engine.ScanResult{Signal: metrics.Signal{Value: 8000}}}
-	s.srv.SetQualityScanner(scanner)
+	s.srv.quality.setScanner(scanner)
 	s.srv.eventsHub = nil
 
 	rec := s.testRequest("POST", "/api/channels/ch-1/quality/scan", "")
@@ -475,7 +475,7 @@ func (s *ServerSuite) TestHandleQualitySnapshotNotConfigured() {
 }
 
 func (s *ServerSuite) TestHandleQualitySnapshotResolveDirError() {
-	s.srv.SetQualitySnapshotReader(&fakeSnapshotReader{})
+	s.srv.quality.setSnapshotReader(&fakeSnapshotReader{})
 	s.store.On("GetChannel", mock.Anything, "ch-1").Return(&db.Channel{ChannelID: "ch-1"}, nil)
 
 	rec := s.testRequest("GET", "/api/channels/ch-1/quality/snapshot", "")
@@ -485,7 +485,7 @@ func (s *ServerSuite) TestHandleQualitySnapshotResolveDirError() {
 func (s *ServerSuite) TestHandleQualitySnapshotNoneReturns404() {
 	dir := s.T().TempDir()
 	s.channelWithDir("ch-1", dir)
-	s.srv.SetQualitySnapshotReader(&fakeSnapshotReader{})
+	s.srv.quality.setSnapshotReader(&fakeSnapshotReader{})
 
 	rec := s.testRequest("GET", "/api/channels/ch-1/quality/snapshot", "")
 	require.Equal(s.T(), http.StatusNotFound, rec.Code)
@@ -506,7 +506,7 @@ func (s *ServerSuite) TestHandleQualitySnapshotCurrentBranchHit() {
 			},
 		},
 	}
-	s.srv.SetQualitySnapshotReader(reader)
+	s.srv.quality.setSnapshotReader(reader)
 
 	rec := s.testRequest("GET", "/api/channels/ch-1/quality/snapshot", "")
 	require.Equal(s.T(), http.StatusOK, rec.Code)
@@ -532,7 +532,7 @@ func (s *ServerSuite) TestHandleQualitySnapshotBranchMismatchFallsBackToLatest()
 			GeoMean:   0.6,
 		},
 	}
-	s.srv.SetQualitySnapshotReader(reader)
+	s.srv.quality.setSnapshotReader(reader)
 
 	rec := s.testRequest("GET", "/api/channels/ch-1/quality/snapshot", "")
 	require.Equal(s.T(), http.StatusOK, rec.Code)
@@ -549,7 +549,7 @@ func (s *ServerSuite) TestHandleQualitySnapshotGetError() {
 	dir := s.T().TempDir()
 	s.channelWithDir("ch-1", dir)
 	reader := &fakeSnapshotReader{getErr: errors.New("db unavailable")}
-	s.srv.SetQualitySnapshotReader(reader)
+	s.srv.quality.setSnapshotReader(reader)
 
 	rec := s.testRequest("GET", "/api/channels/ch-1/quality/snapshot", "")
 	require.Equal(s.T(), http.StatusInternalServerError, rec.Code)
@@ -564,7 +564,7 @@ func (s *ServerSuite) TestHandleQualitySnapshotMissingMetricBreakdown() {
 			"main": {ChannelID: "ch-1", Branch: "main", Value: 1000},
 		},
 	}
-	s.srv.SetQualitySnapshotReader(reader)
+	s.srv.quality.setSnapshotReader(reader)
 
 	rec := s.testRequest("GET", "/api/channels/ch-1/quality/snapshot", "")
 	require.Equal(s.T(), http.StatusOK, rec.Code)
@@ -586,7 +586,7 @@ func (s *ServerSuite) TestHandleQualitySnapshotBadMetricBreakdownLogsAndReturnsE
 			},
 		},
 	}
-	s.srv.SetQualitySnapshotReader(reader)
+	s.srv.quality.setSnapshotReader(reader)
 
 	rec := s.testRequest("GET", "/api/channels/ch-1/quality/snapshot", "")
 	require.Equal(s.T(), http.StatusOK, rec.Code)
@@ -610,7 +610,7 @@ func (s *ServerSuite) TestHandleQualitySnapshotPopulatesTiles() {
 			},
 		},
 	}
-	s.srv.SetQualitySnapshotReader(reader)
+	s.srv.quality.setSnapshotReader(reader)
 
 	rec := s.testRequest("GET", "/api/channels/ch-1/quality/snapshot", "")
 	require.Equal(s.T(), http.StatusOK, rec.Code)
@@ -632,7 +632,7 @@ func (s *ServerSuite) TestHandleQualitySnapshotMissingTileData() {
 			"main": {ChannelID: "ch-1", Branch: "main", Value: 1000},
 		},
 	}
-	s.srv.SetQualitySnapshotReader(reader)
+	s.srv.quality.setSnapshotReader(reader)
 
 	rec := s.testRequest("GET", "/api/channels/ch-1/quality/snapshot", "")
 	require.Equal(s.T(), http.StatusOK, rec.Code)
@@ -654,7 +654,7 @@ func (s *ServerSuite) TestHandleQualitySnapshotBadTileDataLogsAndReturnsEmpty() 
 			},
 		},
 	}
-	s.srv.SetQualitySnapshotReader(reader)
+	s.srv.quality.setSnapshotReader(reader)
 
 	rec := s.testRequest("GET", "/api/channels/ch-1/quality/snapshot", "")
 	require.Equal(s.T(), http.StatusOK, rec.Code)
@@ -700,7 +700,7 @@ func (s *ServerSuite) TestCollectRulesNoGraphProviderReturnsNil() {
 }
 
 func (s *ServerSuite) TestCollectRulesNilGraphReturnsNil() {
-	s.srv.SetQualityGraphProvider(&fakeGraphProvider{g: nil})
+	s.srv.quality.setGraphProvider(&fakeGraphProvider{g: nil})
 	out := s.srv.quality.collectRules("ch-1", "", "", metrics.Signal{})
 	require.Nil(s.T(), out)
 }
@@ -709,7 +709,7 @@ func (s *ServerSuite) TestCollectRulesNilGraphReturnsNil() {
 // semantic as no loader being wired at all. Ensures the loader can opt
 // out without forcing callers to clear it.
 func (s *ServerSuite) TestResolveRulesConfigLoaderReturnsNilFallsBackToDefault() {
-	s.srv.SetQualityRulesLoader(func(string, string) *rules.Config { return nil })
+	s.srv.quality.setRulesLoader(func(string, string) *rules.Config { return nil })
 	got := s.srv.quality.resolveRulesConfig("", "")
 	require.Equal(s.T(), rules.DefaultConfig(), got)
 }
@@ -728,7 +728,7 @@ func (s *ServerSuite) TestBroadcastQualityEventDelivers() {
 // --- Coverage for the "store not configured" guard branches ---
 
 func (s *ServerSuite) TestHandleQualityScanStoreNotConfigured() {
-	s.srv.SetQualityScanner(&fakeQualityScanner{})
+	s.srv.quality.setScanner(&fakeQualityScanner{})
 	s.srv.store = nil
 
 	rec := s.testRequest("POST", "/api/channels/ch-1/quality/scan", "")
@@ -736,7 +736,7 @@ func (s *ServerSuite) TestHandleQualityScanStoreNotConfigured() {
 }
 
 func (s *ServerSuite) TestHandleQualitySnapshotStoreNotConfigured() {
-	s.srv.SetQualitySnapshotReader(&fakeSnapshotReader{})
+	s.srv.quality.setSnapshotReader(&fakeSnapshotReader{})
 	s.srv.store = nil
 
 	rec := s.testRequest("GET", "/api/channels/ch-1/quality/snapshot", "")
