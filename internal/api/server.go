@@ -14,7 +14,6 @@ import (
 
 	"github.com/radutopala/loop/internal/agentregistry"
 	"github.com/radutopala/loop/internal/bot"
-	"github.com/radutopala/loop/internal/browser"
 	"github.com/radutopala/loop/internal/container"
 	"github.com/radutopala/loop/internal/osutil"
 	"github.com/radutopala/loop/internal/scheduler"
@@ -123,14 +122,6 @@ type Server struct {
 	memoryIndexer           MemoryIndexer
 	termManager             TerminalManager
 	hostTermManager         TerminalManager
-	dockerBrowserProvider   BrowserProvider
-	hostBrowserProvider     BrowserProvider                // for host Chrome mode
-	activeBrowserMode       map[string]string              // channelID -> "docker"|"host"; nil defaults to docker
-	browserModeMu           sync.Mutex                     // protects activeBrowserMode
-	cdpManagers             map[string]*browser.CDPManager // "channelID|mode" -> CDPManager
-	cdpManagersMu           sync.Mutex
-	browserCaptures         map[string]*browser.CaptureState // channelID -> state
-	browserCapturesMu       sync.Mutex
 	cmdBuilder              InteractiveCmdBuilder
 	containerRegistry       ContainerManager
 	activeChatLister        ActiveChatLister
@@ -142,8 +133,6 @@ type Server struct {
 	interactionHandler      InteractionHandler
 	agentRegistry           *agentregistry.Registry
 	imageManager            ImageManager
-	browserKeepAlive        time.Duration // delay before removing idle browser containers
-	screenshotDir           string        // if set, write screenshots to this dir instead of base64
 	server                  *http.Server
 	listener                net.Listener
 	stopErr                 error             // if set, Stop returns this error (for testing)
@@ -167,6 +156,8 @@ type Server struct {
 	quality *qualityService // quality-scan domain: scanner, graph/snapshot/history readers, in-flight scan registry
 
 	playground *playgroundService // playground + public-share domain: playground CRUD/serving, share store, tunnel
+
+	browser *browserService // browser domain: docker/host providers, CDP manager lifecycle, capture state
 }
 
 // AuditDirResolver maps a channel ID to the host directory that backs the
@@ -215,27 +206,15 @@ func (s *Server) SetLoopDir(dir string) {
 	s.workspace.loopDir = dir
 }
 
-// SetScreenshotDir sets the directory for file-based screenshots.
-// When set, screenshots are written as files instead of base64-encoded in JSON.
-func (s *Server) SetScreenshotDir(dir string) {
-	s.screenshotDir = dir
-}
-
-// BrowserCleaner stops all browser sessions. Implemented by DockerProvider.
-type BrowserCleaner interface {
-	Cleanup(ctx context.Context)
-}
-
 // CleanupBrowsers stops all Docker browser containers during shutdown.
 func (s *Server) CleanupBrowsers(ctx context.Context) {
-	if c, ok := s.dockerBrowserProvider.(BrowserCleaner); ok {
-		c.Cleanup(ctx)
-	}
+	s.browser.cleanup(ctx)
 }
 
 // SetContainerRegistry configures the container registry for the /api/containers endpoint.
 func (s *Server) SetContainerRegistry(reg ContainerManager) {
 	s.containerRegistry = reg
+	s.browser.containerRegistry = reg
 }
 
 // SetActiveChatLister configures the active chat lister for the channel list endpoint.
@@ -258,11 +237,6 @@ func (s *Server) SetIncomingMessageHandler(h IncomingMessageHandler) {
 // SetInteractionHandler configures the handler for slash command interactions.
 func (s *Server) SetInteractionHandler(h InteractionHandler) {
 	s.interactionHandler = h
-}
-
-// SetBrowserKeepAlive sets the delay before idle browser containers are removed.
-func (s *Server) SetBrowserKeepAlive(d time.Duration) {
-	s.browserKeepAlive = d
 }
 
 // SetImageManager configures the image lifecycle manager for the /api/image/* endpoints.
@@ -337,6 +311,7 @@ func NewServer(sched scheduler.Scheduler, channels ChannelEnsurer, threads Threa
 	s.review = newReviewService(&s.serverDeps)
 	s.playground = newPlaygroundService(&s.serverDeps)
 	s.quality = newQualityService(&s.serverDeps)
+	s.browser = newBrowserService(&s.serverDeps)
 	for _, opt := range opts {
 		opt(s)
 	}
@@ -535,8 +510,8 @@ func (s *Server) registerSystemRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/channels/{id}/audit", s.handleListAuditFiles)
 	mux.HandleFunc("DELETE /api/channels/{id}/audit/{date}", s.handleDeleteAuditFile)
 	mux.HandleFunc("GET /api/channels/{id}/timeline", s.handleTimeline)
-	mux.HandleFunc("POST /api/browser/action", s.handleBrowserAction)
-	mux.HandleFunc("POST /api/browser/mode", s.handleBrowserMode)
+	mux.HandleFunc("POST /api/browser/action", s.browser.handleBrowserAction)
+	mux.HandleFunc("POST /api/browser/mode", s.browser.handleBrowserMode)
 	mux.HandleFunc("GET /api/config/schema", s.handleConfigSchema)
 	mux.HandleFunc("GET /api/config", s.handleGetConfig)
 	mux.HandleFunc("PUT /api/config", s.handleSaveConfig)
@@ -548,7 +523,7 @@ func (s *Server) registerSystemRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/builtins/restore", s.handleRestoreBuiltins)
 	mux.HandleFunc("GET /api/health", handleHealth)
 	mux.HandleFunc("GET /api/ws/terminal", s.handleTerminalWS)
-	mux.HandleFunc("GET /api/ws/browser", s.handleBrowserWS)
+	mux.HandleFunc("GET /api/ws/browser", s.browser.handleBrowserWS)
 	mux.HandleFunc("GET /api/ws", s.handleEventsWS)
 }
 
@@ -632,4 +607,11 @@ func (s *Server) Stop(ctx context.Context) error {
 // (done==total) tick so the panel can clear the spinner cleanly.
 func (s *Server) EmitQualityProgress(channelID string, done, total int) {
 	s.quality.emitProgress(channelID, done, total)
+}
+
+// RunBrowserIdleMonitor periodically checks for idle browser sessions and
+// stops them. Runs until ctx is canceled; wired by the daemon as a
+// long-lived goroutine.
+func (s *Server) RunBrowserIdleMonitor(ctx context.Context, timeout time.Duration) {
+	s.browser.runIdleMonitor(ctx, timeout, time.Minute)
 }

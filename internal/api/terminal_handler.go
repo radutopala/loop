@@ -870,7 +870,7 @@ func (s *Server) handleTerminalWS(w http.ResponseWriter, r *http.Request) {
 
 	tc := newTerminalWSConn(conn, s.termManager, s.hostTermManager, s.containerRegistry, s.cmdBuilder, s.store, s.loopDir, s.logger)
 	tc.rootDirs = s.allDirPaths
-	tc.browserProvider = s.dockerBrowserProvider
+	tc.browserProvider = s.browser.dockerProvider
 	defer tc.close()
 
 	for {

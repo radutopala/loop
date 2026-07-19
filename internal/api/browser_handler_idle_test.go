@@ -32,20 +32,20 @@ func (s *BrowserHandlerSuite) TestCleanIdleBrowserSessions() {
 	})
 	cdpMgr.Touch() // sets lastUsedAt to 2020
 
-	s.srv.cdpManagersMu.Lock()
-	if s.srv.cdpManagers == nil {
-		s.srv.cdpManagers = make(map[string]*browser.CDPManager)
+	s.srv.browser.cdpManagersMu.Lock()
+	if s.srv.browser.cdpManagers == nil {
+		s.srv.browser.cdpManagers = make(map[string]*browser.CDPManager)
 	}
-	s.srv.cdpManagers["ch-1|docker"] = cdpMgr
-	s.srv.cdpManagersMu.Unlock()
+	s.srv.browser.cdpManagers["ch-1|docker"] = cdpMgr
+	s.srv.browser.cdpManagersMu.Unlock()
 
 	s.browserMgr.On("StopBrowser", mock.Anything, "ch-1").Return("", nil)
 
-	s.srv.cleanIdleBrowserSessions(context.Background(), time.Minute)
+	s.srv.browser.cleanIdleBrowserSessions(context.Background(), time.Minute)
 
-	s.srv.cdpManagersMu.Lock()
-	_, exists := s.srv.cdpManagers["ch-1|docker"]
-	s.srv.cdpManagersMu.Unlock()
+	s.srv.browser.cdpManagersMu.Lock()
+	_, exists := s.srv.browser.cdpManagers["ch-1|docker"]
+	s.srv.browser.cdpManagersMu.Unlock()
 	require.False(s.T(), exists)
 }
 
@@ -56,59 +56,59 @@ func (s *BrowserHandlerSuite) TestCleanIdleBrowserSessionsSchedulesRemove() {
 	})
 	cdpMgr.Touch()
 
-	s.srv.cdpManagersMu.Lock()
-	if s.srv.cdpManagers == nil {
-		s.srv.cdpManagers = make(map[string]*browser.CDPManager)
+	s.srv.browser.cdpManagersMu.Lock()
+	if s.srv.browser.cdpManagers == nil {
+		s.srv.browser.cdpManagers = make(map[string]*browser.CDPManager)
 	}
-	s.srv.cdpManagers["ch-1|docker"] = cdpMgr
-	s.srv.cdpManagersMu.Unlock()
+	s.srv.browser.cdpManagers["ch-1|docker"] = cdpMgr
+	s.srv.browser.cdpManagersMu.Unlock()
 
 	s.browserMgr.On("StopBrowser", mock.Anything, "ch-1").Return("chrome-c1", nil)
 
 	reg := new(mockContainerManager)
 	reg.On("ScheduleRemove", "chrome-c1", 5*time.Minute)
-	s.srv.containerRegistry = reg
-	s.srv.browserKeepAlive = 5 * time.Minute
+	s.srv.SetContainerRegistry(reg)
+	s.srv.browser.setKeepAlive(5 * time.Minute)
 
-	s.srv.cleanIdleBrowserSessions(context.Background(), time.Minute)
+	s.srv.browser.cleanIdleBrowserSessions(context.Background(), time.Minute)
 
 	reg.AssertCalled(s.T(), "ScheduleRemove", "chrome-c1", 5*time.Minute)
 }
 
 func (s *BrowserHandlerSuite) TestSetBrowserKeepAlive() {
-	s.srv.SetBrowserKeepAlive(10 * time.Minute)
-	require.Equal(s.T(), 10*time.Minute, s.srv.browserKeepAlive)
+	s.srv.browser.setKeepAlive(10 * time.Minute)
+	require.Equal(s.T(), 10*time.Minute, s.srv.browser.keepAlive)
 }
 
 // --- activeMode ---
 
 func (s *BrowserHandlerSuite) TestActiveMode() {
-	require.Equal(s.T(), "docker", s.srv.activeMode("ch-1"))
+	require.Equal(s.T(), "docker", s.srv.browser.modeFor("ch-1"))
 
-	s.srv.browserModeMu.Lock()
-	if s.srv.activeBrowserMode == nil {
-		s.srv.activeBrowserMode = make(map[string]string)
+	s.srv.browser.modeMu.Lock()
+	if s.srv.browser.activeMode == nil {
+		s.srv.browser.activeMode = make(map[string]string)
 	}
-	s.srv.activeBrowserMode["ch-1"] = "host"
-	s.srv.browserModeMu.Unlock()
+	s.srv.browser.activeMode["ch-1"] = "host"
+	s.srv.browser.modeMu.Unlock()
 
-	require.Equal(s.T(), "host", s.srv.activeMode("ch-1"))
+	require.Equal(s.T(), "host", s.srv.browser.modeFor("ch-1"))
 }
 
 // --- getOrCreateCDPManager ---
 
 func (s *BrowserHandlerSuite) TestGetOrCreateCDPManager() {
 	s.browserMgr.On("GetCDPEndpoint", "ch-1").Return("ws://127.0.0.1:9222").Maybe()
-	mgr := s.srv.getOrCreateCDPManager("ch-1", "docker", s.browserMgr)
+	mgr := s.srv.browser.getOrCreateCDPManager("ch-1", "docker", s.browserMgr)
 	require.NotNil(s.T(), mgr)
 
 	// Second call should return the same manager.
-	mgr2 := s.srv.getOrCreateCDPManager("ch-1", "docker", s.browserMgr)
+	mgr2 := s.srv.browser.getOrCreateCDPManager("ch-1", "docker", s.browserMgr)
 	require.Equal(s.T(), mgr, mgr2)
 }
 
 func (s *BrowserHandlerSuite) TestGetActiveCDPManagerNotFound() {
-	require.Nil(s.T(), s.srv.getActiveCDPManager("nonexistent"))
+	require.Nil(s.T(), s.srv.browser.getActiveCDPManager("nonexistent"))
 }
 
 // --- mockHostBrowserProvider ---
@@ -144,7 +144,7 @@ func (s *BrowserHandlerSuite) TestGetOrCreateCDPManagerHostMode() {
 	hostProvider := new(mockHostBrowserProvider)
 	hostProvider.On("GetCDPEndpoint", "ch-1").Return("ws://127.0.0.1:9222")
 
-	mgr := s.srv.getOrCreateCDPManager("ch-1", "host", hostProvider)
+	mgr := s.srv.browser.getOrCreateCDPManager("ch-1", "host", hostProvider)
 	require.NotNil(s.T(), mgr)
 	// Host mode: DiscoverExisting should be false, MaxRetries should be 1.
 	require.False(s.T(), mgr.DiscoverExisting())
@@ -153,9 +153,9 @@ func (s *BrowserHandlerSuite) TestGetOrCreateCDPManagerHostMode() {
 func (s *BrowserHandlerSuite) TestGetOrCreateCDPManagerNilMap() {
 	// Ensure it works when cdpManagers map is nil.
 	srv := nilServer()
-	srv.SetBrowserProvider(s.browserMgr)
+	srv.browser.setProviders(s.browserMgr, srv.browser.hostProvider)
 	s.browserMgr.On("GetCDPEndpoint", "ch-1").Return("ws://127.0.0.1:9222").Maybe()
-	mgr := srv.getOrCreateCDPManager("ch-1", "docker", s.browserMgr)
+	mgr := srv.browser.getOrCreateCDPManager("ch-1", "docker", s.browserMgr)
 	require.NotNil(s.T(), mgr)
 }
 
@@ -204,12 +204,12 @@ func (s *BrowserHandlerSuite) TestHandleStartReusesCachedCDP() {
 	// Connect it so IsConnected() returns true.
 	require.NoError(s.T(), cdpMgr.Connect(context.Background()))
 
-	s.srv.cdpManagersMu.Lock()
-	if s.srv.cdpManagers == nil {
-		s.srv.cdpManagers = make(map[string]*browser.CDPManager)
+	s.srv.browser.cdpManagersMu.Lock()
+	if s.srv.browser.cdpManagers == nil {
+		s.srv.browser.cdpManagers = make(map[string]*browser.CDPManager)
 	}
-	s.srv.cdpManagers["ch-2|docker"] = cdpMgr
-	s.srv.cdpManagersMu.Unlock()
+	s.srv.browser.cdpManagers["ch-2|docker"] = cdpMgr
+	s.srv.browser.cdpManagersMu.Unlock()
 
 	ws, ts := s.dialBrowserWS()
 	defer ts.Close()
@@ -237,13 +237,13 @@ func (s *BrowserHandlerSuite) TestHandleStartHostModeActivatesTab() {
 	hostProvider.On("GetCDPEndpoint", "ch-host").Return("ws://127.0.0.1:9222")
 
 	srv := nilServer()
-	srv.SetHostBrowserProvider(hostProvider)
-	srv.SetBrowserProvider(s.browserMgr)
+	srv.browser.setProviders(srv.browser.dockerProvider, hostProvider)
+	srv.browser.setProviders(s.browserMgr, srv.browser.hostProvider)
 
 	// Set mode to host for this channel.
-	srv.browserModeMu.Lock()
-	srv.activeBrowserMode = map[string]string{"ch-host": "host"}
-	srv.browserModeMu.Unlock()
+	srv.browser.modeMu.Lock()
+	srv.browser.activeMode = map[string]string{"ch-host": "host"}
+	srv.browser.modeMu.Unlock()
 
 	// Create and pre-connect a CDPManager.
 	cdpMgr := browser.NewCDPManager("ws://127.0.0.1:9222", browser.CDPManagerConfig{
@@ -255,12 +255,12 @@ func (s *BrowserHandlerSuite) TestHandleStartHostModeActivatesTab() {
 		return mockCDP, nil
 	})
 
-	srv.cdpManagersMu.Lock()
-	srv.cdpManagers = map[string]*browser.CDPManager{"ch-host|host": cdpMgr}
-	srv.cdpManagersMu.Unlock()
+	srv.browser.cdpManagersMu.Lock()
+	srv.browser.cdpManagers = map[string]*browser.CDPManager{"ch-host|host": cdpMgr}
+	srv.browser.cdpManagersMu.Unlock()
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /api/ws/browser", srv.handleBrowserWS)
+	mux.HandleFunc("GET /api/ws/browser", srv.browser.handleBrowserWS)
 	ts := httptest.NewServer(mux)
 	defer ts.Close()
 
@@ -297,14 +297,14 @@ func (s *BrowserHandlerSuite) TestGetBrowserCDPReusesCached() {
 	})
 	require.NoError(s.T(), cdpMgr.Connect(context.Background()))
 
-	s.srv.cdpManagersMu.Lock()
-	if s.srv.cdpManagers == nil {
-		s.srv.cdpManagers = make(map[string]*browser.CDPManager)
+	s.srv.browser.cdpManagersMu.Lock()
+	if s.srv.browser.cdpManagers == nil {
+		s.srv.browser.cdpManagers = make(map[string]*browser.CDPManager)
 	}
-	s.srv.cdpManagers["ch-cache|docker"] = cdpMgr
-	s.srv.cdpManagersMu.Unlock()
+	s.srv.browser.cdpManagers["ch-cache|docker"] = cdpMgr
+	s.srv.browser.cdpManagersMu.Unlock()
 
-	cdpCl, err := s.srv.getBrowserCDP(context.Background(), "ch-cache")
+	cdpCl, err := s.srv.browser.getBrowserCDP(context.Background(), "ch-cache")
 	require.NoError(s.T(), err)
 	require.NotNil(s.T(), cdpCl)
 }
@@ -328,15 +328,15 @@ func (s *BrowserHandlerSuite) TestGetBrowserCDPConnectWithEmptyTargetID() {
 		return mockCDP, nil
 	})
 
-	s.srv.cdpManagersMu.Lock()
-	if s.srv.cdpManagers == nil {
-		s.srv.cdpManagers = make(map[string]*browser.CDPManager)
+	s.srv.browser.cdpManagersMu.Lock()
+	if s.srv.browser.cdpManagers == nil {
+		s.srv.browser.cdpManagers = make(map[string]*browser.CDPManager)
 	}
-	s.srv.cdpManagers["ch-empty|docker"] = cdpMgr
-	s.srv.cdpManagersMu.Unlock()
+	s.srv.browser.cdpManagers["ch-empty|docker"] = cdpMgr
+	s.srv.browser.cdpManagersMu.Unlock()
 
 	// Even with empty target ID, Connect sets activeClient, so getBrowserCDP succeeds.
-	cdp, err := s.srv.getBrowserCDP(context.Background(), "ch-empty")
+	cdp, err := s.srv.browser.getBrowserCDP(context.Background(), "ch-empty")
 	require.NoError(s.T(), err)
 	require.NotNil(s.T(), cdp)
 }
@@ -353,19 +353,19 @@ func (s *BrowserHandlerSuite) TestRunBrowserIdleMonitorTickerFires() {
 	})
 	cdpMgr.Touch()
 
-	s.srv.cdpManagersMu.Lock()
-	if s.srv.cdpManagers == nil {
-		s.srv.cdpManagers = make(map[string]*browser.CDPManager)
+	s.srv.browser.cdpManagersMu.Lock()
+	if s.srv.browser.cdpManagers == nil {
+		s.srv.browser.cdpManagers = make(map[string]*browser.CDPManager)
 	}
-	s.srv.cdpManagers["ch-idle|docker"] = cdpMgr
-	s.srv.cdpManagersMu.Unlock()
+	s.srv.browser.cdpManagers["ch-idle|docker"] = cdpMgr
+	s.srv.browser.cdpManagersMu.Unlock()
 
 	s.browserMgr.On("StopBrowser", mock.Anything, "ch-idle").Return("chrome-idle-1", nil)
 
 	done := make(chan struct{})
 	go func() {
 		// Use very short ticker interval so it fires within the test.
-		s.srv.runBrowserIdleMonitorWithInterval(ctx, time.Nanosecond, time.Millisecond)
+		s.srv.browser.runIdleMonitor(ctx, time.Nanosecond, time.Millisecond)
 		close(done)
 	}()
 
@@ -389,19 +389,19 @@ func (s *BrowserHandlerSuite) TestCleanIdleBrowserSessionsHostMode() {
 	})
 	cdpMgr.Touch()
 
-	s.srv.cdpManagersMu.Lock()
-	if s.srv.cdpManagers == nil {
-		s.srv.cdpManagers = make(map[string]*browser.CDPManager)
+	s.srv.browser.cdpManagersMu.Lock()
+	if s.srv.browser.cdpManagers == nil {
+		s.srv.browser.cdpManagers = make(map[string]*browser.CDPManager)
 	}
-	s.srv.cdpManagers["ch-1|host"] = cdpMgr
-	s.srv.cdpManagersMu.Unlock()
+	s.srv.browser.cdpManagers["ch-1|host"] = cdpMgr
+	s.srv.browser.cdpManagersMu.Unlock()
 
 	// Host mode — should NOT call StopBrowser.
-	s.srv.cleanIdleBrowserSessions(context.Background(), time.Minute)
+	s.srv.browser.cleanIdleBrowserSessions(context.Background(), time.Minute)
 
-	s.srv.cdpManagersMu.Lock()
-	_, exists := s.srv.cdpManagers["ch-1|host"]
-	s.srv.cdpManagersMu.Unlock()
+	s.srv.browser.cdpManagersMu.Lock()
+	_, exists := s.srv.browser.cdpManagers["ch-1|host"]
+	s.srv.browser.cdpManagersMu.Unlock()
 	require.False(s.T(), exists)
 }
 
@@ -452,12 +452,11 @@ func (s *BrowserHandlerSuite) TestBrowserActionListTabsHostMode() {
 	hostProvider.On("GetCDPEndpoint", "ch-host").Return("ws://127.0.0.1:9222").Maybe()
 
 	srv := nilServer()
-	srv.SetBrowserProvider(s.browserMgr)
-	srv.SetHostBrowserProvider(hostProvider)
+	srv.browser.setProviders(s.browserMgr, hostProvider)
 
-	srv.browserModeMu.Lock()
-	srv.activeBrowserMode = map[string]string{"ch-host": "host"}
-	srv.browserModeMu.Unlock()
+	srv.browser.modeMu.Lock()
+	srv.browser.activeMode = map[string]string{"ch-host": "host"}
+	srv.browser.modeMu.Unlock()
 
 	cdpMgr := browser.NewCDPManager("ws://127.0.0.1:9222", browser.CDPManagerConfig{
 		DiscoverExisting: false,
@@ -470,14 +469,14 @@ func (s *BrowserHandlerSuite) TestBrowserActionListTabsHostMode() {
 	require.NoError(s.T(), cdpMgr.Connect(context.Background()))
 	cdpMgr.TrackTab("t1") // Only track t1.
 
-	srv.cdpManagersMu.Lock()
-	srv.cdpManagers = map[string]*browser.CDPManager{"ch-host|host": cdpMgr}
-	srv.cdpManagersMu.Unlock()
+	srv.browser.cdpManagersMu.Lock()
+	srv.browser.cdpManagers = map[string]*browser.CDPManager{"ch-host|host": cdpMgr}
+	srv.browser.cdpManagersMu.Unlock()
 
 	data, _ := json.Marshal(browserActionRequest{ChannelID: "ch-host", Action: "list_tabs"})
 	r := httptest.NewRequest(http.MethodPost, "/api/browser/action", strings.NewReader(string(data)))
 	w := httptest.NewRecorder()
-	srv.handleBrowserAction(w, r)
+	srv.browser.handleBrowserAction(w, r)
 
 	var resp browserActionResponse
 	require.NoError(s.T(), json.Unmarshal(w.Body.Bytes(), &resp))
@@ -508,12 +507,12 @@ func (s *BrowserHandlerSuite) TestHandleStartWithModeDocker() {
 		return mockCDP, nil
 	})
 
-	s.srv.cdpManagersMu.Lock()
-	if s.srv.cdpManagers == nil {
-		s.srv.cdpManagers = make(map[string]*browser.CDPManager)
+	s.srv.browser.cdpManagersMu.Lock()
+	if s.srv.browser.cdpManagers == nil {
+		s.srv.browser.cdpManagers = make(map[string]*browser.CDPManager)
 	}
-	s.srv.cdpManagers["ch-mode|docker"] = cdpMgr
-	s.srv.cdpManagersMu.Unlock()
+	s.srv.browser.cdpManagers["ch-mode|docker"] = cdpMgr
+	s.srv.browser.cdpManagersMu.Unlock()
 
 	ws, ts := s.dialBrowserWS()
 	defer ts.Close()
@@ -529,9 +528,9 @@ func (s *BrowserHandlerSuite) TestHandleStartWithModeDocker() {
 	require.Equal(s.T(), bwsRespStarted, resp.Type)
 
 	// Verify mode was set.
-	s.srv.browserModeMu.Lock()
-	require.Equal(s.T(), "docker", s.srv.activeBrowserMode["ch-mode"])
-	s.srv.browserModeMu.Unlock()
+	s.srv.browser.modeMu.Lock()
+	require.Equal(s.T(), "docker", s.srv.browser.activeMode["ch-mode"])
+	s.srv.browser.modeMu.Unlock()
 }
 
 // --- list_tabs: active tab marking ---
@@ -540,9 +539,9 @@ func (s *BrowserHandlerSuite) TestBrowserActionListTabsWithActiveMarking() {
 	mockCDP := new(mockCDPSession)
 	s.setupActionMocks(mockCDP)
 
-	s.srv.cdpManagersMu.Lock()
-	cdpMgr := s.srv.cdpManagers["ch-1|docker"]
-	s.srv.cdpManagersMu.Unlock()
+	s.srv.browser.cdpManagersMu.Lock()
+	cdpMgr := s.srv.browser.cdpManagers["ch-1|docker"]
+	s.srv.browser.cdpManagersMu.Unlock()
 	cdpMgr.TrackTab("test-target")
 
 	mockCDP.On("ListTabs", mock.Anything).Return([]browser.TabInfo{
@@ -578,8 +577,8 @@ func (s *BrowserHandlerSuite) TestBrowserActionNewTabWithCDPMgrTracking() {
 	require.Contains(s.T(), resp.Result, "new-t-id")
 
 	// Verify the CDPManager tracked the new tab.
-	s.srv.cdpManagersMu.Lock()
-	cdpMgr := s.srv.cdpManagers["ch-1|docker"]
-	s.srv.cdpManagersMu.Unlock()
+	s.srv.browser.cdpManagersMu.Lock()
+	cdpMgr := s.srv.browser.cdpManagers["ch-1|docker"]
+	s.srv.browser.cdpManagersMu.Unlock()
 	require.True(s.T(), cdpMgr.IsTrackedTab("new-t-id"))
 }

@@ -16,7 +16,7 @@ func (s *BrowserHandlerSuite) TestReadConsoleMessagesNilCapture() {
 	// Call readConsoleMessages directly (not through handleBrowserAction)
 	// to test the cs == nil path. handleBrowserAction always calls
 	// ensureBrowserCapture first, so cs is never nil through the normal flow.
-	resp := s.srv.readConsoleMessages("no-capture-channel", nil)
+	resp := s.srv.browser.readConsoleMessages("no-capture-channel", nil)
 	require.Contains(s.T(), resp.Result, "No console messages")
 }
 
@@ -24,9 +24,9 @@ func (s *BrowserHandlerSuite) TestReadConsoleMessagesWithFilter() {
 	mockCDP := new(mockCDPSession)
 	s.setupActionMocks(mockCDP)
 
-	s.srv.browserCapturesMu.Lock()
-	if s.srv.browserCaptures == nil {
-		s.srv.browserCaptures = make(map[string]*browser.CaptureState)
+	s.srv.browser.capturesMu.Lock()
+	if s.srv.browser.captures == nil {
+		s.srv.browser.captures = make(map[string]*browser.CaptureState)
 	}
 	cs := &browser.CaptureState{Started: true}
 	cs.ConsoleMsgs = []browser.ConsoleMessage{
@@ -34,8 +34,8 @@ func (s *BrowserHandlerSuite) TestReadConsoleMessagesWithFilter() {
 		{Level: "error", Text: "critical error", Time: time.Now()},
 		{Level: "log", Text: "other msg", Time: time.Now()},
 	}
-	s.srv.browserCaptures["ch-1"] = cs
-	s.srv.browserCapturesMu.Unlock()
+	s.srv.browser.captures["ch-1"] = cs
+	s.srv.browser.capturesMu.Unlock()
 
 	// Test pattern filter.
 	w := s.postBrowserAction(browserActionRequest{
@@ -53,17 +53,17 @@ func (s *BrowserHandlerSuite) TestReadConsoleMessagesOnlyErrors() {
 	mockCDP := new(mockCDPSession)
 	s.setupActionMocks(mockCDP)
 
-	s.srv.browserCapturesMu.Lock()
-	if s.srv.browserCaptures == nil {
-		s.srv.browserCaptures = make(map[string]*browser.CaptureState)
+	s.srv.browser.capturesMu.Lock()
+	if s.srv.browser.captures == nil {
+		s.srv.browser.captures = make(map[string]*browser.CaptureState)
 	}
 	cs := &browser.CaptureState{Started: true}
 	cs.ConsoleMsgs = []browser.ConsoleMessage{
 		{Level: "log", Text: "info msg", Time: time.Now()},
 		{Level: "error", Text: "err msg", Time: time.Now()},
 	}
-	s.srv.browserCaptures["ch-1"] = cs
-	s.srv.browserCapturesMu.Unlock()
+	s.srv.browser.captures["ch-1"] = cs
+	s.srv.browser.capturesMu.Unlock()
 
 	w := s.postBrowserAction(browserActionRequest{
 		ChannelID: "ch-1",
@@ -80,16 +80,16 @@ func (s *BrowserHandlerSuite) TestReadConsoleMessagesClear() {
 	mockCDP := new(mockCDPSession)
 	s.setupActionMocks(mockCDP)
 
-	s.srv.browserCapturesMu.Lock()
-	if s.srv.browserCaptures == nil {
-		s.srv.browserCaptures = make(map[string]*browser.CaptureState)
+	s.srv.browser.capturesMu.Lock()
+	if s.srv.browser.captures == nil {
+		s.srv.browser.captures = make(map[string]*browser.CaptureState)
 	}
 	cs := &browser.CaptureState{Started: true}
 	cs.ConsoleMsgs = []browser.ConsoleMessage{
 		{Level: "log", Text: "msg", Time: time.Now()},
 	}
-	s.srv.browserCaptures["ch-1"] = cs
-	s.srv.browserCapturesMu.Unlock()
+	s.srv.browser.captures["ch-1"] = cs
+	s.srv.browser.capturesMu.Unlock()
 
 	w := s.postBrowserAction(browserActionRequest{
 		ChannelID: "ch-1",
@@ -110,12 +110,12 @@ func (s *BrowserHandlerSuite) TestReadConsoleMessagesInvalidRegex() {
 	mockCDP := new(mockCDPSession)
 	s.setupActionMocks(mockCDP)
 
-	s.srv.browserCapturesMu.Lock()
-	if s.srv.browserCaptures == nil {
-		s.srv.browserCaptures = make(map[string]*browser.CaptureState)
+	s.srv.browser.capturesMu.Lock()
+	if s.srv.browser.captures == nil {
+		s.srv.browser.captures = make(map[string]*browser.CaptureState)
 	}
-	s.srv.browserCaptures["ch-1"] = &browser.CaptureState{Started: true}
-	s.srv.browserCapturesMu.Unlock()
+	s.srv.browser.captures["ch-1"] = &browser.CaptureState{Started: true}
+	s.srv.browser.capturesMu.Unlock()
 
 	w := s.postBrowserAction(browserActionRequest{
 		ChannelID: "ch-1",
@@ -135,13 +135,13 @@ func (s *BrowserHandlerSuite) TestReadConsoleMessagesLimitExceeded() {
 	for i := range msgs {
 		msgs[i] = browser.ConsoleMessage{Level: "log", Text: fmt.Sprintf("msg-%d", i), Time: time.Now()}
 	}
-	s.srv.browserCapturesMu.Lock()
-	if s.srv.browserCaptures == nil {
-		s.srv.browserCaptures = make(map[string]*browser.CaptureState)
+	s.srv.browser.capturesMu.Lock()
+	if s.srv.browser.captures == nil {
+		s.srv.browser.captures = make(map[string]*browser.CaptureState)
 	}
 	cs := &browser.CaptureState{Started: true, ConsoleMsgs: msgs}
-	s.srv.browserCaptures["ch-1"] = cs
-	s.srv.browserCapturesMu.Unlock()
+	s.srv.browser.captures["ch-1"] = cs
+	s.srv.browser.capturesMu.Unlock()
 
 	w := s.postBrowserAction(browserActionRequest{
 		ChannelID: "ch-1",
@@ -157,12 +157,12 @@ func (s *BrowserHandlerSuite) TestReadConsoleMessagesEmpty() {
 	mockCDP := new(mockCDPSession)
 	s.setupActionMocks(mockCDP)
 
-	s.srv.browserCapturesMu.Lock()
-	if s.srv.browserCaptures == nil {
-		s.srv.browserCaptures = make(map[string]*browser.CaptureState)
+	s.srv.browser.capturesMu.Lock()
+	if s.srv.browser.captures == nil {
+		s.srv.browser.captures = make(map[string]*browser.CaptureState)
 	}
-	s.srv.browserCaptures["ch-1"] = &browser.CaptureState{Started: true}
-	s.srv.browserCapturesMu.Unlock()
+	s.srv.browser.captures["ch-1"] = &browser.CaptureState{Started: true}
+	s.srv.browser.capturesMu.Unlock()
 
 	w := s.postBrowserAction(browserActionRequest{ChannelID: "ch-1", Action: "read_console"})
 	var resp browserActionResponse
@@ -173,7 +173,7 @@ func (s *BrowserHandlerSuite) TestReadConsoleMessagesEmpty() {
 // --- readNetworkRequests additional coverage ---
 
 func (s *BrowserHandlerSuite) TestReadNetworkRequestsNilCapture() {
-	resp := s.srv.readNetworkRequests("no-capture-channel", nil)
+	resp := s.srv.browser.readNetworkRequests("no-capture-channel", nil)
 	require.Contains(s.T(), resp.Result, "No network requests")
 }
 
@@ -181,17 +181,17 @@ func (s *BrowserHandlerSuite) TestReadNetworkRequestsWithFilter() {
 	mockCDP := new(mockCDPSession)
 	s.setupActionMocks(mockCDP)
 
-	s.srv.browserCapturesMu.Lock()
-	if s.srv.browserCaptures == nil {
-		s.srv.browserCaptures = make(map[string]*browser.CaptureState)
+	s.srv.browser.capturesMu.Lock()
+	if s.srv.browser.captures == nil {
+		s.srv.browser.captures = make(map[string]*browser.CaptureState)
 	}
 	cs := &browser.CaptureState{Started: true}
 	cs.NetworkReqs = []browser.NetworkRequest{
 		{URL: "https://api.example.com/v1", Method: "GET", Status: 200, StatusText: "OK", Time: time.Now()},
 		{URL: "https://cdn.example.com/asset.js", Method: "GET", Status: 200, StatusText: "OK", Time: time.Now()},
 	}
-	s.srv.browserCaptures["ch-1"] = cs
-	s.srv.browserCapturesMu.Unlock()
+	s.srv.browser.captures["ch-1"] = cs
+	s.srv.browser.capturesMu.Unlock()
 
 	w := s.postBrowserAction(browserActionRequest{
 		ChannelID: "ch-1",
@@ -207,16 +207,16 @@ func (s *BrowserHandlerSuite) TestReadNetworkRequestsClear() {
 	mockCDP := new(mockCDPSession)
 	s.setupActionMocks(mockCDP)
 
-	s.srv.browserCapturesMu.Lock()
-	if s.srv.browserCaptures == nil {
-		s.srv.browserCaptures = make(map[string]*browser.CaptureState)
+	s.srv.browser.capturesMu.Lock()
+	if s.srv.browser.captures == nil {
+		s.srv.browser.captures = make(map[string]*browser.CaptureState)
 	}
 	cs := &browser.CaptureState{Started: true}
 	cs.NetworkReqs = []browser.NetworkRequest{
 		{URL: "https://a.com", Method: "GET", Status: 200, StatusText: "OK", Time: time.Now()},
 	}
-	s.srv.browserCaptures["ch-1"] = cs
-	s.srv.browserCapturesMu.Unlock()
+	s.srv.browser.captures["ch-1"] = cs
+	s.srv.browser.capturesMu.Unlock()
 
 	w := s.postBrowserAction(browserActionRequest{
 		ChannelID: "ch-1",
@@ -236,12 +236,12 @@ func (s *BrowserHandlerSuite) TestReadNetworkRequestsInvalidRegex() {
 	mockCDP := new(mockCDPSession)
 	s.setupActionMocks(mockCDP)
 
-	s.srv.browserCapturesMu.Lock()
-	if s.srv.browserCaptures == nil {
-		s.srv.browserCaptures = make(map[string]*browser.CaptureState)
+	s.srv.browser.capturesMu.Lock()
+	if s.srv.browser.captures == nil {
+		s.srv.browser.captures = make(map[string]*browser.CaptureState)
 	}
-	s.srv.browserCaptures["ch-1"] = &browser.CaptureState{Started: true}
-	s.srv.browserCapturesMu.Unlock()
+	s.srv.browser.captures["ch-1"] = &browser.CaptureState{Started: true}
+	s.srv.browser.capturesMu.Unlock()
 
 	w := s.postBrowserAction(browserActionRequest{
 		ChannelID: "ch-1",
@@ -261,13 +261,13 @@ func (s *BrowserHandlerSuite) TestReadNetworkRequestsLimitExceeded() {
 	for i := range reqs {
 		reqs[i] = browser.NetworkRequest{URL: fmt.Sprintf("https://req%d.com", i), Method: "GET", Status: 200, StatusText: "OK", Time: time.Now()}
 	}
-	s.srv.browserCapturesMu.Lock()
-	if s.srv.browserCaptures == nil {
-		s.srv.browserCaptures = make(map[string]*browser.CaptureState)
+	s.srv.browser.capturesMu.Lock()
+	if s.srv.browser.captures == nil {
+		s.srv.browser.captures = make(map[string]*browser.CaptureState)
 	}
 	cs := &browser.CaptureState{Started: true, NetworkReqs: reqs}
-	s.srv.browserCaptures["ch-1"] = cs
-	s.srv.browserCapturesMu.Unlock()
+	s.srv.browser.captures["ch-1"] = cs
+	s.srv.browser.capturesMu.Unlock()
 
 	w := s.postBrowserAction(browserActionRequest{
 		ChannelID: "ch-1",
@@ -283,12 +283,12 @@ func (s *BrowserHandlerSuite) TestReadNetworkRequestsEmpty() {
 	mockCDP := new(mockCDPSession)
 	s.setupActionMocks(mockCDP)
 
-	s.srv.browserCapturesMu.Lock()
-	if s.srv.browserCaptures == nil {
-		s.srv.browserCaptures = make(map[string]*browser.CaptureState)
+	s.srv.browser.capturesMu.Lock()
+	if s.srv.browser.captures == nil {
+		s.srv.browser.captures = make(map[string]*browser.CaptureState)
 	}
-	s.srv.browserCaptures["ch-1"] = &browser.CaptureState{Started: true}
-	s.srv.browserCapturesMu.Unlock()
+	s.srv.browser.captures["ch-1"] = &browser.CaptureState{Started: true}
+	s.srv.browser.capturesMu.Unlock()
 
 	w := s.postBrowserAction(browserActionRequest{ChannelID: "ch-1", Action: "read_network"})
 	var resp browserActionResponse

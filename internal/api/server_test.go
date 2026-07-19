@@ -403,7 +403,7 @@ func (s *ServerSuite) TestSetApprovalResolver() {
 func (s *ServerSuite) TestCleanupBrowsersWithProvider() {
 	browserMgr := new(mockBrowserProvider)
 	browserMgr.On("Cleanup", mock.Anything).Return()
-	s.srv.SetBrowserProvider(browserMgr)
+	s.srv.browser.setProviders(browserMgr, s.srv.browser.hostProvider)
 
 	s.srv.CleanupBrowsers(context.Background())
 	browserMgr.AssertCalled(s.T(), "Cleanup", mock.Anything)
@@ -599,8 +599,8 @@ func (s *ServerSuite) TestBuildMux() {
 }
 
 func (s *ServerSuite) TestSetScreenshotDir() {
-	s.srv.SetScreenshotDir("/tmp/screenshots")
-	require.Equal(s.T(), "/tmp/screenshots", s.srv.screenshotDir)
+	s.srv.browser.setScreenshotDir("/tmp/screenshots")
+	require.Equal(s.T(), "/tmp/screenshots", s.srv.browser.screenshotDir)
 }
 
 // --- GetReadme tests ---

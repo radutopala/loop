@@ -271,8 +271,8 @@ func (s *BrowserHandlerSuite) TestBrowserActionScreenshotToFile() {
 	mockCDP.On("Screenshot", mock.Anything).Return([]byte{0x89, 0x50, 0x4E, 0x47}, nil)
 
 	tmpDir := s.T().TempDir()
-	s.srv.SetScreenshotDir(tmpDir)
-	defer s.srv.SetScreenshotDir("")
+	s.srv.browser.setScreenshotDir(tmpDir)
+	defer s.srv.browser.setScreenshotDir("")
 
 	w := s.postBrowserAction(browserActionRequest{ChannelID: "ch-1", Action: "screenshot"})
 	var resp browserActionResponse
@@ -288,8 +288,8 @@ func (s *BrowserHandlerSuite) TestBrowserActionScreenshotToFileWriteError() {
 	mockCDP.On("Screenshot", mock.Anything).Return([]byte{0x89, 0x50, 0x4E, 0x47}, nil)
 
 	// Set screenshot dir to a non-existent directory to trigger write error.
-	s.srv.SetScreenshotDir("/nonexistent-dir-12345")
-	defer s.srv.SetScreenshotDir("")
+	s.srv.browser.setScreenshotDir("/nonexistent-dir-12345")
+	defer s.srv.browser.setScreenshotDir("")
 
 	w := s.postBrowserAction(browserActionRequest{ChannelID: "ch-1", Action: "screenshot"})
 	var resp browserActionResponse
@@ -416,9 +416,9 @@ func (s *BrowserHandlerSuite) TestBrowserActionCloseTabWithNextTab() {
 	mockCDP.On("CloseTab", mock.Anything, "t2").Return(nil)
 
 	// Pre-populate the CDPManager with tracked tabs so NextTabID returns a valid next tab.
-	s.srv.cdpManagersMu.Lock()
-	cdpMgr := s.srv.cdpManagers["ch-1|docker"]
-	s.srv.cdpManagersMu.Unlock()
+	s.srv.browser.cdpManagersMu.Lock()
+	cdpMgr := s.srv.browser.cdpManagers["ch-1|docker"]
+	s.srv.browser.cdpManagersMu.Unlock()
 	cdpMgr.TrackTab("t1")
 	cdpMgr.TrackTab("t2")
 	cdpMgr.TrackTab("t3")
