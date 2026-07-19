@@ -91,51 +91,65 @@ type serverSystem interface {
 }
 
 // Server exposes a lightweight HTTP API for task CRUD operations.
-type Server struct {
-	scheduler             scheduler.Scheduler
-	channels              ChannelEnsurer
-	threads               ThreadEnsurer
-	store                 ChannelLister
-	messages              MessageSender
-	memoryIndexer         MemoryIndexer
-	termManager           TerminalManager
-	hostTermManager       TerminalManager
-	dockerBrowserProvider BrowserProvider
-	hostBrowserProvider   BrowserProvider                // for host Chrome mode
-	activeBrowserMode     map[string]string              // channelID -> "docker"|"host"; nil defaults to docker
-	browserModeMu         sync.Mutex                     // protects activeBrowserMode
-	cdpManagers           map[string]*browser.CDPManager // "channelID|mode" -> CDPManager
-	cdpManagersMu         sync.Mutex
-	browserCaptures       map[string]*browser.CaptureState // channelID -> state
-	browserCapturesMu     sync.Mutex
-	cmdBuilder            InteractiveCmdBuilder
-	containerRegistry     ContainerManager
-	activeChatLister      ActiveChatLister
-	branchPoller          *BranchPoller
-	msgHandler            IncomingMessageHandler
-	runCanceller          RunCanceller
-	planResolver          PlanResolver
-	askResolver           AskResolver
-	interactionHandler    InteractionHandler
-	agentRegistry         *agentregistry.Registry
-	eventsHub             *EventsHub
-	imageManager          ImageManager
-	browserKeepAlive      time.Duration // delay before removing idle browser containers
-	loopDir               string
-	screenshotDir         string // if set, write screenshots to this dir instead of base64
-	logger                *slog.Logger
-	server                *http.Server
-	listener              net.Listener
-	stopErr               error             // if set, Stop returns this error (for testing)
-	agentWSWriteJSON      func(v any) error // injectable for testing agent-channel WS write errors
-	workflowEngine        WorkflowEngine
-	worktreeCreator       *worktree.Creator
-	sys                   serverSystem
+// serverDeps is the shared infrastructure every domain sees: storage,
+// logging, the events hub, the daemon home dir, the filesystem, and the
+// workspace/config resolvers. Server embeds it by value and each domain
+// service aliases &Server.serverDeps, giving services an explicit, narrow
+// dependency contract instead of a back-pointer to the whole server.
+type serverDeps struct {
+	store     ChannelLister
+	eventsHub *EventsHub
+	loopDir   string
+	logger    *slog.Logger
+	sys       serverSystem
 	// workspace resolves dir_path/channel_id to workspace directories;
 	// configs answers layered-config questions. Value types so a zero
 	// Server (test literals) keeps the pre-extraction default behavior.
-	workspace               workspaceResolver
-	configs                 configResolver
+	workspace workspaceResolver
+	configs   configResolver
+}
+
+type Server struct {
+	// serverDeps is the shared infrastructure bundle (see its doc). Embedded
+	// by value so a zero Server keeps zero-value behavior; the domain services
+	// hold a pointer to this same instance, so post-construction wiring
+	// (SetLoopDir, SetEventsHub, test injections) is visible to them live.
+	serverDeps
+
+	scheduler               scheduler.Scheduler
+	channels                ChannelEnsurer
+	threads                 ThreadEnsurer
+	messages                MessageSender
+	memoryIndexer           MemoryIndexer
+	termManager             TerminalManager
+	hostTermManager         TerminalManager
+	dockerBrowserProvider   BrowserProvider
+	hostBrowserProvider     BrowserProvider                // for host Chrome mode
+	activeBrowserMode       map[string]string              // channelID -> "docker"|"host"; nil defaults to docker
+	browserModeMu           sync.Mutex                     // protects activeBrowserMode
+	cdpManagers             map[string]*browser.CDPManager // "channelID|mode" -> CDPManager
+	cdpManagersMu           sync.Mutex
+	browserCaptures         map[string]*browser.CaptureState // channelID -> state
+	browserCapturesMu       sync.Mutex
+	cmdBuilder              InteractiveCmdBuilder
+	containerRegistry       ContainerManager
+	activeChatLister        ActiveChatLister
+	branchPoller            *BranchPoller
+	msgHandler              IncomingMessageHandler
+	runCanceller            RunCanceller
+	planResolver            PlanResolver
+	askResolver             AskResolver
+	interactionHandler      InteractionHandler
+	agentRegistry           *agentregistry.Registry
+	imageManager            ImageManager
+	browserKeepAlive        time.Duration // delay before removing idle browser containers
+	screenshotDir           string        // if set, write screenshots to this dir instead of base64
+	server                  *http.Server
+	listener                net.Listener
+	stopErr                 error             // if set, Stop returns this error (for testing)
+	agentWSWriteJSON        func(v any) error // injectable for testing agent-channel WS write errors
+	workflowEngine          WorkflowEngine
+	worktreeCreator         *worktree.Creator
 	readFile                func(string) ([]byte, error) // injectable for testing
 	ticketStoreOpener       func(dir string) TicketStore // injectable for testing
 	approvalResolver        bot.ApprovalResolver         // gate approval dispatcher
@@ -309,22 +323,24 @@ func (s *Server) SetAuditDirResolver(r AuditDirResolver) {
 func NewServer(sched scheduler.Scheduler, channels ChannelEnsurer, threads ThreadEnsurer, store ChannelLister, messages MessageSender, logger *slog.Logger) *Server {
 	sys := osutil.RealSystem{}
 	s := &Server{
+		serverDeps: serverDeps{
+			store:     store,
+			logger:    logger,
+			sys:       sys,
+			workspace: workspaceResolver{store: store},
+		},
 		scheduler: sched,
 		channels:  channels,
 		threads:   threads,
-		store:     store,
-		workspace: workspaceResolver{store: store},
 		messages:  messages,
-		logger:    logger,
 		worktreeCreator: &worktree.Creator{
 			Sys: sys,
 			Run: worktree.ExecCommandRunner,
 		},
-		sys: sys,
 	}
-	s.review = &reviewService{srv: s, active: map[string]context.CancelFunc{}}
-	s.playground = &playgroundService{srv: s, shares: newShareStore()}
-	s.quality = &qualityService{srv: s, cancellers: map[string]context.CancelFunc{}}
+	s.review = &reviewService{deps: &s.serverDeps, active: map[string]context.CancelFunc{}}
+	s.playground = &playgroundService{deps: &s.serverDeps, shares: newShareStore()}
+	s.quality = &qualityService{deps: &s.serverDeps, cancellers: map[string]context.CancelFunc{}}
 	return s
 }
 

@@ -219,7 +219,7 @@ func (s *Server) EmitQualityProgress(channelID string, done, total int) {
 }
 
 func (s *qualityService) emitProgress(channelID string, done, total int) {
-	hub := s.srv.eventsHub
+	hub := s.deps.eventsHub
 	if hub == nil {
 		return
 	}
@@ -260,17 +260,17 @@ func (s *qualityService) handleQualityScan(w http.ResponseWriter, r *http.Reques
 	if !requireConfigured(w, s.scanner, "quality scanner not configured") {
 		return
 	}
-	if !requireConfigured(w, s.srv.store, "channel store not configured") {
+	if !requireConfigured(w, s.deps.store, "channel store not configured") {
 		return
 	}
 
 	channelID := r.PathValue("id")
-	dirPath, err := s.srv.workspace.resolveDirPath(r.Context(), "", channelID)
+	dirPath, err := s.deps.workspace.resolveDirPath(r.Context(), "", channelID)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	parentDirPath := s.srv.workspace.resolveParentDirPath(r.Context(), channelID)
+	parentDirPath := s.deps.workspace.resolveParentDirPath(r.Context(), channelID)
 	branch := gitBranch(r.Context(), dirPath)
 	if branch == "" {
 		branch = "main"
@@ -283,11 +283,11 @@ func (s *qualityService) handleQualityScan(w http.ResponseWriter, r *http.Reques
 	scanCtx, cancel := context.WithCancel(context.Background())
 	if !s.registerQualityScan(channelID, cancel) {
 		cancel()
-		writeHTTPJSON(w, http.StatusAccepted, scanResponse{Status: "in_progress"}, s.srv.logger)
+		writeHTTPJSON(w, http.StatusAccepted, scanResponse{Status: "in_progress"}, s.deps.logger)
 		return
 	}
 
-	if hub := s.srv.eventsHub; hub != nil {
+	if hub := s.deps.eventsHub; hub != nil {
 		hub.BroadcastQualityEvent(EventQualitySessionStarted, channelID, map[string]string{
 			"dir_path": dirPath,
 			"branch":   branch,
@@ -295,7 +295,7 @@ func (s *qualityService) handleQualityScan(w http.ResponseWriter, r *http.Reques
 	}
 
 	go s.runQualityScanAsync(scanCtx, channelID, dirPath, parentDirPath, branch)
-	writeHTTPJSON(w, http.StatusAccepted, scanResponse{Status: "started"}, s.srv.logger)
+	writeHTTPJSON(w, http.StatusAccepted, scanResponse{Status: "started"}, s.deps.logger)
 }
 
 // runQualityScanAsync runs the engine scan, broadcasts the result, and
@@ -319,7 +319,7 @@ func (s *qualityService) runQualityScanAsync(ctx context.Context, channelID, dir
 
 	report := buildQualityReport(dirPath, branch, res, s.collectRules(channelID, dirPath, parentDirPath, res.Signal))
 
-	if hub := s.srv.eventsHub; hub != nil {
+	if hub := s.deps.eventsHub; hub != nil {
 		hub.BroadcastQualityEvent(EventQualityScanned, channelID, report)
 		if len(report.Rules.Failed) > 0 {
 			hub.BroadcastQualityEvent(EventQualityRulesViolated, channelID, report.Rules)
@@ -336,7 +336,7 @@ func (s *qualityService) runQualityScanAsync(ctx context.Context, channelID, dir
 // quality.scanned event fires on error — the panel keeps the previous
 // snapshot rendered.
 func (s *qualityService) broadcastQualityError(channelID, dirPath, branch string, err error) {
-	hub := s.srv.eventsHub
+	hub := s.deps.eventsHub
 	if hub == nil {
 		return
 	}
@@ -416,12 +416,12 @@ func (s *qualityService) handleQualitySnapshot(w http.ResponseWriter, r *http.Re
 	if !requireConfigured(w, s.snapshots, "quality snapshot reader not configured") {
 		return
 	}
-	if !requireConfigured(w, s.srv.store, "channel store not configured") {
+	if !requireConfigured(w, s.deps.store, "channel store not configured") {
 		return
 	}
 
 	channelID := r.PathValue("id")
-	dirPath, err := s.srv.workspace.resolveDirPath(r.Context(), "", channelID)
+	dirPath, err := s.deps.workspace.resolveDirPath(r.Context(), "", channelID)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
@@ -460,10 +460,10 @@ func (s *qualityService) handleQualitySnapshot(w http.ResponseWriter, r *http.Re
 		PreviousSignal: snap.PreviousValue,
 		GeoMean:        snap.GeoMean,
 		ScannedAt:      snap.ScannedAt,
-		Metrics:        unmarshalMetricBreakdown(snap.MetricBreakdown, s.srv.logger),
-		Tiles:          unmarshalTileData(snap.TileData, s.srv.logger),
+		Metrics:        unmarshalMetricBreakdown(snap.MetricBreakdown, s.deps.logger),
+		Tiles:          unmarshalTileData(snap.TileData, s.deps.logger),
 	}
-	writeHTTPJSON(w, http.StatusOK, resp, s.srv.logger)
+	writeHTTPJSON(w, http.StatusOK, resp, s.deps.logger)
 }
 
 // unmarshalMetricBreakdown decodes the snapshot row's stored metrics

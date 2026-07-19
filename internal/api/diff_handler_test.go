@@ -34,7 +34,7 @@ func (s *ServerSuite) TestGitDiffGetChannelError() {
 }
 
 func (s *ServerSuite) TestGitDiffStoreNotConfigured() {
-	srv := &Server{logger: s.srv.logger}
+	srv := &Server{serverDeps: serverDeps{logger: s.srv.logger}}
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/channels/{id}/diff", srv.handleGitDiff)
