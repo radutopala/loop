@@ -57,13 +57,13 @@ func (s *ServerSuite) TestHandleQualityComplexityGraphProviderUnset() {
 }
 
 func (s *ServerSuite) TestHandleQualityComplexityNoCachedGraph() {
-	s.srv.SetQualityGraphProvider(&fakeGraphProvider{g: nil})
+	s.srv.quality.setGraphProvider(&fakeGraphProvider{g: nil})
 	rec := s.testRequest("GET", "/api/channels/ch-1/quality/complexity", "")
 	require.Equal(s.T(), http.StatusServiceUnavailable, rec.Code)
 }
 
 func (s *ServerSuite) TestHandleQualityComplexityReturnsHotspots() {
-	s.srv.SetQualityGraphProvider(&graphProviderHit{g: complexityGraph()})
+	s.srv.quality.setGraphProvider(&graphProviderHit{g: complexityGraph()})
 	rec := s.testRequest("GET", "/api/channels/ch-1/quality/complexity", "")
 	require.Equal(s.T(), http.StatusOK, rec.Code)
 
@@ -79,7 +79,7 @@ func (s *ServerSuite) TestHandleQualityComplexityReturnsHotspots() {
 }
 
 func (s *ServerSuite) TestHandleQualityComplexityRespectsLimit() {
-	s.srv.SetQualityGraphProvider(&graphProviderHit{g: complexityGraph()})
+	s.srv.quality.setGraphProvider(&graphProviderHit{g: complexityGraph()})
 	rec := s.testRequest("GET", "/api/channels/ch-1/quality/complexity?limit=1", "")
 	require.Equal(s.T(), http.StatusOK, rec.Code)
 
@@ -91,7 +91,7 @@ func (s *ServerSuite) TestHandleQualityComplexityRespectsLimit() {
 }
 
 func (s *ServerSuite) TestHandleQualityComplexityRespectsOffset() {
-	s.srv.SetQualityGraphProvider(&graphProviderHit{g: complexityGraph()})
+	s.srv.quality.setGraphProvider(&graphProviderHit{g: complexityGraph()})
 	rec := s.testRequest("GET", "/api/channels/ch-1/quality/complexity?offset=1", "")
 	require.Equal(s.T(), http.StatusOK, rec.Code)
 
@@ -105,7 +105,7 @@ func (s *ServerSuite) TestHandleQualityComplexityRespectsOffset() {
 }
 
 func (s *ServerSuite) TestHandleQualityComplexityOffsetBeyondReturnsEmpty() {
-	s.srv.SetQualityGraphProvider(&graphProviderHit{g: complexityGraph()})
+	s.srv.quality.setGraphProvider(&graphProviderHit{g: complexityGraph()})
 	rec := s.testRequest("GET", "/api/channels/ch-1/quality/complexity?offset=100", "")
 	require.Equal(s.T(), http.StatusOK, rec.Code)
 
@@ -116,7 +116,7 @@ func (s *ServerSuite) TestHandleQualityComplexityOffsetBeyondReturnsEmpty() {
 }
 
 func (s *ServerSuite) TestHandleQualityComplexityClampsLimitToMax() {
-	s.srv.SetQualityGraphProvider(&graphProviderHit{g: complexityGraph()})
+	s.srv.quality.setGraphProvider(&graphProviderHit{g: complexityGraph()})
 	rec := s.testRequest("GET", "/api/channels/ch-1/quality/complexity?limit=9999", "")
 	require.Equal(s.T(), http.StatusOK, rec.Code)
 
@@ -126,24 +126,24 @@ func (s *ServerSuite) TestHandleQualityComplexityClampsLimitToMax() {
 }
 
 func (s *ServerSuite) TestHandleQualityComplexityRejectsBadLimit() {
-	s.srv.SetQualityGraphProvider(&graphProviderHit{g: complexityGraph()})
+	s.srv.quality.setGraphProvider(&graphProviderHit{g: complexityGraph()})
 	rec := s.testRequest("GET", "/api/channels/ch-1/quality/complexity?limit=abc", "")
 	require.Equal(s.T(), http.StatusBadRequest, rec.Code)
 }
 
 func (s *ServerSuite) TestHandleQualityComplexityRejectsNegativeOffset() {
-	s.srv.SetQualityGraphProvider(&graphProviderHit{g: complexityGraph()})
+	s.srv.quality.setGraphProvider(&graphProviderHit{g: complexityGraph()})
 	rec := s.testRequest("GET", "/api/channels/ch-1/quality/complexity?offset=-1", "")
 	require.Equal(s.T(), http.StatusBadRequest, rec.Code)
 }
 
 func (s *ServerSuite) TestHandleQualityComplexityUsesProjectThresholds() {
 	s.channelWithDir("ch-1", s.T().TempDir())
-	s.srv.SetQualityGraphProvider(&graphProviderHit{g: complexityGraph()})
+	s.srv.quality.setGraphProvider(&graphProviderHit{g: complexityGraph()})
 	// Crank cyclomatic threshold up so even the "Hot" function scores 1.0
 	// — proves the handler actually consults the resolveMetricsConfig
 	// path rather than falling back to defaults silently.
-	s.srv.SetQualityMetricsLoader(func(string, string) metrics.Config {
+	s.srv.quality.setMetricsLoader(func(string, string) metrics.Config {
 		return metrics.Config{
 			Complexity: metrics.ComplexityConfig{
 				CyclomaticT: 1000, CognitiveT: 1000, NestingT: 100,
@@ -168,13 +168,13 @@ func (s *ServerSuite) TestHandleQualityClonesGraphProviderUnset() {
 }
 
 func (s *ServerSuite) TestHandleQualityClonesNoCachedGraph() {
-	s.srv.SetQualityGraphProvider(&fakeGraphProvider{g: nil})
+	s.srv.quality.setGraphProvider(&fakeGraphProvider{g: nil})
 	rec := s.testRequest("GET", "/api/channels/ch-1/quality/clones", "")
 	require.Equal(s.T(), http.StatusServiceUnavailable, rec.Code)
 }
 
 func (s *ServerSuite) TestHandleQualityClonesReturnsClusters() {
-	s.srv.SetQualityGraphProvider(&graphProviderHit{g: clonesGraph()})
+	s.srv.quality.setGraphProvider(&graphProviderHit{g: clonesGraph()})
 	rec := s.testRequest("GET", "/api/channels/ch-1/quality/clones", "")
 	require.Equal(s.T(), http.StatusOK, rec.Code)
 
@@ -188,7 +188,7 @@ func (s *ServerSuite) TestHandleQualityClonesReturnsClusters() {
 }
 
 func (s *ServerSuite) TestHandleQualityClonesRespectsLimit() {
-	s.srv.SetQualityGraphProvider(&graphProviderHit{g: clonesGraph()})
+	s.srv.quality.setGraphProvider(&graphProviderHit{g: clonesGraph()})
 	rec := s.testRequest("GET", "/api/channels/ch-1/quality/clones?limit=1", "")
 	require.Equal(s.T(), http.StatusOK, rec.Code)
 
@@ -199,7 +199,7 @@ func (s *ServerSuite) TestHandleQualityClonesRespectsLimit() {
 }
 
 func (s *ServerSuite) TestHandleQualityClonesOffsetBeyondReturnsEmpty() {
-	s.srv.SetQualityGraphProvider(&graphProviderHit{g: clonesGraph()})
+	s.srv.quality.setGraphProvider(&graphProviderHit{g: clonesGraph()})
 	rec := s.testRequest("GET", "/api/channels/ch-1/quality/clones?offset=100", "")
 	require.Equal(s.T(), http.StatusOK, rec.Code)
 
@@ -210,7 +210,7 @@ func (s *ServerSuite) TestHandleQualityClonesOffsetBeyondReturnsEmpty() {
 }
 
 func (s *ServerSuite) TestHandleQualityClonesClampsLimitToMax() {
-	s.srv.SetQualityGraphProvider(&graphProviderHit{g: clonesGraph()})
+	s.srv.quality.setGraphProvider(&graphProviderHit{g: clonesGraph()})
 	rec := s.testRequest("GET", "/api/channels/ch-1/quality/clones?limit=9999", "")
 	require.Equal(s.T(), http.StatusOK, rec.Code)
 
@@ -220,22 +220,22 @@ func (s *ServerSuite) TestHandleQualityClonesClampsLimitToMax() {
 }
 
 func (s *ServerSuite) TestHandleQualityClonesRejectsBadOffset() {
-	s.srv.SetQualityGraphProvider(&graphProviderHit{g: clonesGraph()})
+	s.srv.quality.setGraphProvider(&graphProviderHit{g: clonesGraph()})
 	rec := s.testRequest("GET", "/api/channels/ch-1/quality/clones?offset=abc", "")
 	require.Equal(s.T(), http.StatusBadRequest, rec.Code)
 }
 
 func (s *ServerSuite) TestHandleQualityClonesRejectsBadLimit() {
-	s.srv.SetQualityGraphProvider(&graphProviderHit{g: clonesGraph()})
+	s.srv.quality.setGraphProvider(&graphProviderHit{g: clonesGraph()})
 	rec := s.testRequest("GET", "/api/channels/ch-1/quality/clones?limit=0", "")
 	require.Equal(s.T(), http.StatusBadRequest, rec.Code)
 }
 
 func (s *ServerSuite) TestHandleQualityClonesUsesProjectThresholds() {
 	s.channelWithDir("ch-1", s.T().TempDir())
-	s.srv.SetQualityGraphProvider(&graphProviderHit{g: clonesGraph()})
+	s.srv.quality.setGraphProvider(&graphProviderHit{g: clonesGraph()})
 	// MinLOC=999 disqualifies every function so no cluster is detected.
-	s.srv.SetQualityMetricsLoader(func(string, string) metrics.Config {
+	s.srv.quality.setMetricsLoader(func(string, string) metrics.Config {
 		return metrics.Config{
 			Clones: metrics.ClonesConfig{MinLOC: 999, MaxDistance: 0},
 		}
@@ -259,7 +259,7 @@ func (s *ServerSuite) TestResolveMetricsConfigForChannelNoLoader() {
 }
 
 func (s *ServerSuite) TestResolveMetricsConfigForChannelLoaderReturnsZero() {
-	s.srv.SetQualityMetricsLoader(func(string, string) metrics.Config { return metrics.Config{} })
+	s.srv.quality.setMetricsLoader(func(string, string) metrics.Config { return metrics.Config{} })
 	s.channelWithDir("ch-1", s.T().TempDir())
 	cfg := s.srv.quality.resolveMetricsConfigForChannel(s.T().Context(), "ch-1")
 	require.Equal(s.T(), metrics.DefaultConfig(), cfg)
@@ -269,7 +269,7 @@ func (s *ServerSuite) TestResolveMetricsConfigForChannelStoreUnset() {
 	s.srv.store = nil
 	custom := metrics.Config{Complexity: metrics.ComplexityConfig{CyclomaticT: 99}}
 	var capturedDir, capturedParent string
-	s.srv.SetQualityMetricsLoader(func(d, p string) metrics.Config {
+	s.srv.quality.setMetricsLoader(func(d, p string) metrics.Config {
 		capturedDir, capturedParent = d, p
 		return custom
 	})
@@ -282,7 +282,7 @@ func (s *ServerSuite) TestResolveMetricsConfigForChannelStoreUnset() {
 func (s *ServerSuite) TestResolveMetricsConfigForChannelDirResolveError() {
 	s.store.On("GetChannel", mock.Anything, "ch-1").Return((*db.Channel)(nil), errors.New("missing"))
 	custom := metrics.Config{Complexity: metrics.ComplexityConfig{CyclomaticT: 42}}
-	s.srv.SetQualityMetricsLoader(func(string, string) metrics.Config { return custom })
+	s.srv.quality.setMetricsLoader(func(string, string) metrics.Config { return custom })
 	cfg := s.srv.quality.resolveMetricsConfigForChannel(s.T().Context(), "ch-1")
 	require.Equal(s.T(), custom, cfg)
 }

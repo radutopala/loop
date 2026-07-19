@@ -492,9 +492,61 @@ func (a *app) serve() error {
 		}
 	}
 
-	apiSrv := a.newAPIServer(sched, channelSvc, threadSvc, store, chatBot, logger)
+	// Stage-2 domain dependencies are constructed up front and injected at
+	// server construction via options — none of them need the server; only
+	// the engine's progress hook flows the other way and is wired after.
+	ghClient := githubapi.NewClient()
+	reviewPrompt, reviewErr := cfg.Review.ResolvePrompt(cfg.LoopDir, os.ReadFile)
+	if reviewErr != nil {
+		logger.Warn("review prompt resolve failed, using built-in default", "error", reviewErr)
+		reviewPrompt = ""
+	}
+	serverOpts := []api.Option{
+		api.WithTunnel(tunnel.NewManager(filepath.Join(cfg.LoopDir, "bin"), logger)),
+		api.WithReview(ghClient, review.NewStore(), &review.GitPR{Run: worktree.ExecCommandRunner}),
+		api.WithReviewAgent(&review.Runner{Agent: runner}, "", reviewPrompt),
+		// Ceiling for the daemon-side review goroutine. Picked below the
+		// CLI's `loop review run --timeout` default (60m) so the daemon
+		// flips the session to status=error first and the CLI surfaces the
+		// daemon's "timed out" message instead of its own generic wrapper.
+		api.WithReviewRunTimeout(50 * time.Minute),
+	}
+
+	// Quality engine: parser + graph cache + SQL-backed snapshot store. The
+	// HTTP handlers stay 501 unless all deps are wired; CLI (`loop quality
+	// scan`) uses its own ephemeral instances. Scans are manual or
+	// agent-triggered (via the MCP `scan` tool); there is no live-rescan loop.
+	var qEngine *engine.Engine
+	if w, ok := store.(interface{ WriterDB() *sql.DB }); ok && w.WriterDB() != nil {
+		qParser, qErr := a.newQualityParser()
+		if qErr != nil {
+			logger.Warn("quality engine disabled: parser init failed", "error", qErr)
+		} else {
+			qCache := graph.NewCache()
+			qStore := snapshot.NewSQLStore(w.WriterDB())
+			qEngine = engine.New(qParser, qStore, qCache, engine.OSFileSystem{}, engine.Config{
+				MaxFiles:     cfg.Quality.MaxFiles,
+				ExcludePaths: cfg.Quality.ExcludePaths,
+				Metrics:      buildMetricsConfig(cfg.Quality),
+			}, qualityConfigLoader(cfg, reloadConfig), nil)
+			serverOpts = append(serverOpts, api.WithQuality(api.QualityDeps{
+				Scanner:       qEngine,
+				Graph:         qCache,
+				Snapshots:     qStore,
+				RulesLoader:   qualityRulesLoader(cfg, reloadConfig),
+				MetricsLoader: qualityMetricsLoader(cfg, reloadConfig),
+				History:       evolution.NewExecReader(),
+			}))
+		}
+	} else {
+		logger.Warn("quality engine disabled: store does not expose WriterDB")
+	}
+
+	apiSrv := a.newAPIServer(sched, channelSvc, threadSvc, store, chatBot, logger, serverOpts...)
 	apiSrv.SetLoopDir(cfg.LoopDir)
-	apiSrv.SetTunnelManager(tunnel.NewManager(filepath.Join(cfg.LoopDir, "bin"), logger))
+	if qEngine != nil {
+		qEngine.SetProgress(apiSrv.EmitQualityProgress)
+	}
 	apiSrv.SetContainerRegistry(containerReg)
 	apiSrv.SetAgentRegistry(agentReg)
 	apiSrv.SetAuditDirResolver(runner)
@@ -554,26 +606,7 @@ func (a *app) serve() error {
 
 	eventsHub := api.NewEventsHub(logger)
 	apiSrv.SetEventsHub(eventsHub)
-	ghClient := githubapi.NewClient()
 	apiSrv.SetGitHubLookup(ghClient)
-	apiSrv.SetReviewService(
-		ghClient,
-		review.NewStore(),
-		&review.GitPR{Run: worktree.ExecCommandRunner},
-	)
-	reviewPrompt, reviewErr := cfg.Review.ResolvePrompt(cfg.LoopDir, os.ReadFile)
-	if reviewErr != nil {
-		logger.Warn("review prompt resolve failed, using built-in default", "error", reviewErr)
-		reviewPrompt = ""
-	}
-	apiSrv.SetReviewAgent(&review.Runner{Agent: runner}, "", reviewPrompt)
-	// Ceiling for the daemon-side review goroutine. Picked below the CLI's
-	// `loop review run --timeout` default (60m) so the daemon flips the
-	// session to status=error first and the CLI surfaces the daemon's
-	// "timed out" message instead of its own generic wrapper. A hung agent
-	// container would otherwise leak the goroutine and pin the session at
-	// status=reviewing until the next daemon restart.
-	apiSrv.SetReviewRunTimeout(50 * time.Minute)
 	branchPoller := api.NewBranchPoller(store, eventsHub, cfg.LoopDir, 0, logger)
 	apiSrv.SetBranchPoller(branchPoller)
 	branchPoller.SetOnDirChange(apiSrv.InvalidatePRCacheForDir)
@@ -626,34 +659,6 @@ func (a *app) serve() error {
 	screenshotDir := filepath.Join(cfg.LoopDir, "screenshots")
 	_ = os.MkdirAll(screenshotDir, 0o755)
 	apiSrv.SetScreenshotDir(screenshotDir)
-
-	// Quality engine: parser + graph cache + SQL-backed snapshot store. The
-	// HTTP handlers stay 501 until all three are wired; CLI (`loop quality
-	// scan`) uses its own ephemeral instances. Scans are manual or
-	// agent-triggered (via the MCP `scan` tool); there is no live-rescan loop.
-	if w, ok := store.(interface{ WriterDB() *sql.DB }); ok && w.WriterDB() != nil {
-		qParser, qErr := a.newQualityParser()
-		if qErr != nil {
-			logger.Warn("quality engine disabled: parser init failed", "error", qErr)
-		} else {
-			qCache := graph.NewCache()
-			qStore := snapshot.NewSQLStore(w.WriterDB())
-			qEngine := engine.New(qParser, qStore, qCache, engine.OSFileSystem{}, engine.Config{
-				MaxFiles:     cfg.Quality.MaxFiles,
-				ExcludePaths: cfg.Quality.ExcludePaths,
-				Metrics:      buildMetricsConfig(cfg.Quality),
-			}, qualityConfigLoader(cfg, reloadConfig), nil)
-			qEngine.SetProgress(apiSrv.EmitQualityProgress)
-			apiSrv.SetQualityScanner(qEngine)
-			apiSrv.SetQualityGraphProvider(qCache)
-			apiSrv.SetQualitySnapshotReader(qStore)
-			apiSrv.SetQualityHistoryReader(evolution.NewExecReader())
-			apiSrv.SetQualityRulesLoader(qualityRulesLoader(cfg, reloadConfig))
-			apiSrv.SetQualityMetricsLoader(qualityMetricsLoader(cfg, reloadConfig))
-		}
-	} else {
-		logger.Warn("quality engine disabled: store does not expose WriterDB")
-	}
 
 	orch := orchestrator.New(store, chatBot, runner, sched, logger, *cfg, reloadConfig)
 	orch.SetEventBroadcaster(eventsHub)

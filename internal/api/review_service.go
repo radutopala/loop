@@ -373,3 +373,42 @@ func (s *reviewService) broadcastReviewStatus(channelID string, status review.St
 		Error:  errMsg,
 	})
 }
+
+// setBackends wires the gh client, session store, and PR-worktree
+// lifecycle. All three are required; leaving any nil keeps the review
+// routes returning 501 (not configured).
+func (s *reviewService) setBackends(client GitHubReview, sessions *review.Store, wt review.PR) {
+	s.client = client
+	s.sessions = sessions
+	s.worktree = wt
+}
+
+// setAgent wires the agent-run side of the review panel: the runner plus
+// the resolved system/user prompt pair ("" -> built-in default).
+func (s *reviewService) setAgent(runner ReviewRunner, systemPrompt, userPrompt string) {
+	s.runner = runner
+	s.systemPrompt = systemPrompt
+	s.userPrompt = userPrompt
+}
+
+// setRunTimeout caps runReviewAsync; 0 leaves it unbounded. Production
+// callers should stay below the CLI's --timeout so the daemon flips the
+// session to status=error first.
+func (s *reviewService) setRunTimeout(d time.Duration) {
+	s.runTimeout = d
+}
+
+// WithReview configures the review panel's backends at construction.
+func WithReview(client GitHubReview, sessions *review.Store, wt review.PR) Option {
+	return func(s *Server) { s.review.setBackends(client, sessions, wt) }
+}
+
+// WithReviewAgent configures the review panel's agent runner and prompts.
+func WithReviewAgent(runner ReviewRunner, systemPrompt, userPrompt string) Option {
+	return func(s *Server) { s.review.setAgent(runner, systemPrompt, userPrompt) }
+}
+
+// WithReviewRunTimeout caps the daemon-side review run goroutine.
+func WithReviewRunTimeout(d time.Duration) Option {
+	return func(s *Server) { s.review.setRunTimeout(d) }
+}

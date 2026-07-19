@@ -100,7 +100,7 @@ func (a *app) newReviewRunCmd() *cobra.Command {
 	cmd.Flags().StringVar(&pr, "pr", "", "PR number or URL to load and review first (default: the channel's already-loaded review)")
 	cmd.Flags().BoolVar(&wait, "wait", false, "Block until the daemon flips to a terminal status, then print JSON")
 	// 60m default chosen to sit above the daemon-side review ceiling
-	// (SetReviewRunTimeout in cmd/loop/serve.go, currently 50m): the daemon
+	// (api.WithReviewRunTimeout in cmd/loop/serve.go, currently 50m): the daemon
 	// flips the session to status=error first with a meaningful message,
 	// and the CLI exits with that message rather than its generic
 	// "timed out after 60m" wrapper. The earlier 30m default fired before

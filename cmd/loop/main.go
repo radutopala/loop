@@ -126,7 +126,7 @@ type app struct {
 	ensureAllChannelsFn func(string, string) ([]ensureResult, error)
 
 	// Serve dependencies
-	newAPIServer           func(scheduler.Scheduler, api.ChannelEnsurer, api.ThreadEnsurer, api.ChannelLister, api.MessageSender, *slog.Logger) *api.Server
+	newAPIServer           func(scheduler.Scheduler, api.ChannelEnsurer, api.ThreadEnsurer, api.ChannelLister, api.MessageSender, *slog.Logger, ...api.Option) *api.Server
 	newMCPServer           func(string, string, string, mcpserver.HTTPClient, *slog.Logger, ...mcpserver.MemoryOption) *mcpserver.Server
 	newDockerClient        func() (container.DockerClient, error)
 	ensureImage            func(context.Context, container.DockerClient, *config.Config) error

@@ -17,7 +17,6 @@ import (
 	"github.com/radutopala/loop/internal/browser"
 	"github.com/radutopala/loop/internal/container"
 	"github.com/radutopala/loop/internal/osutil"
-	"github.com/radutopala/loop/internal/review"
 	"github.com/radutopala/loop/internal/scheduler"
 	"github.com/radutopala/loop/internal/worktree"
 )
@@ -310,9 +309,14 @@ func (s *Server) SetAuditDirResolver(r AuditDirResolver) {
 	s.auditDirResolver = r
 }
 
+// Option configures an optional domain at construction time. Options run
+// after the domain services are created, so they may reach into them —
+// each domain defines its With* options next to its service.
+type Option func(*Server)
+
 // NewServer creates a new API server. The channels, threads, store, and messages
 // parameters may be nil if those features are not configured.
-func NewServer(sched scheduler.Scheduler, channels ChannelEnsurer, threads ThreadEnsurer, store ChannelLister, messages MessageSender, logger *slog.Logger) *Server {
+func NewServer(sched scheduler.Scheduler, channels ChannelEnsurer, threads ThreadEnsurer, store ChannelLister, messages MessageSender, logger *slog.Logger, opts ...Option) *Server {
 	sys := osutil.RealSystem{}
 	s := &Server{
 		serverDeps: serverDeps{
@@ -333,6 +337,9 @@ func NewServer(sched scheduler.Scheduler, channels ChannelEnsurer, threads Threa
 	s.review = newReviewService(&s.serverDeps)
 	s.playground = newPlaygroundService(&s.serverDeps)
 	s.quality = newQualityService(&s.serverDeps)
+	for _, opt := range opts {
+		opt(s)
+	}
 	return s
 }
 
@@ -619,89 +626,10 @@ func (s *Server) Stop(ctx context.Context) error {
 	return s.server.Shutdown(ctx)
 }
 
-// SetTunnelManager wires the cloudflared tunnel manager used by the public
-// playground-share feature. Left nil in tests that don't exercise sharing.
-func (s *Server) SetTunnelManager(tm TunnelManager) {
-	s.playground.tunnel = tm
-}
-
-// SetReviewService wires the dependencies for the /api/channels/{id}/review/*
-// endpoints. All three are required; passing nil for any of them leaves
-// the routes returning 501 (not configured).
-func (s *Server) SetReviewService(client GitHubReview, store *review.Store, wt review.PR) {
-	s.review.client = client
-	s.review.sessions = store
-	s.review.worktree = wt
-}
-
-// SetReviewAgent wires the agent-run side of the review panel. runner
-// drives the agent; systemPrompt + userPrompt are the resolved prompt
-// pair (caller is expected to have read them out of config and applied
-// any defaulting). All three are required: nil/"" leaves
-// POST .../review/run returning 501.
-func (s *Server) SetReviewAgent(runner ReviewRunner, systemPrompt, userPrompt string) {
-	s.review.runner = runner
-	s.review.systemPrompt = systemPrompt
-	s.review.userPrompt = userPrompt
-}
-
-// SetReviewRunTimeout caps the runReviewAsync goroutine. A value of 0
-// (the zero default) leaves the previous unbounded behavior — useful for
-// tests that drive runReviewAsync directly without wanting a deadline.
-// Production callsites should set this below the CLI's --timeout so the
-// daemon flips the session to status=error first and the CLI exits with
-// a meaningful message instead of its generic "timed out" wrapper.
-func (s *Server) SetReviewRunTimeout(d time.Duration) {
-	s.review.runTimeout = d
-}
-
 // EmitQualityProgress is the engine's ProgressFunc hook — wired by the daemon
 // at startup. Throttles to one event per channel per progressThrottle window
 // so the bus doesn't drown in per-file pings. Always emits the terminal
 // (done==total) tick so the panel can clear the spinner cleanly.
 func (s *Server) EmitQualityProgress(channelID string, done, total int) {
 	s.quality.emitProgress(channelID, done, total)
-}
-
-// SetQualityScanner wires the scanner used by the POST scan endpoint.
-// Nil disables the endpoint (501).
-func (s *Server) SetQualityScanner(sc QualityScanner) {
-	s.quality.scanner = sc
-}
-
-// SetQualityGraphProvider wires the graph cache used to evaluate rules
-// on the just-completed scan. Nil disables rule evaluation but the scan
-// endpoint stays alive (returns empty rule lists).
-func (s *Server) SetQualityGraphProvider(gp QualityGraphProvider) {
-	s.quality.graph = gp
-}
-
-// SetQualitySnapshotReader wires the snapshot lookup for the GET endpoint.
-// Nil disables the endpoint (501).
-func (s *Server) SetQualitySnapshotReader(r QualitySnapshotReader) {
-	s.quality.snapshots = r
-}
-
-// SetQualityRulesLoader wires the per-scan rules-config resolver. Nil
-// disables overrides — handlers fall back to rules.DefaultConfig() at
-// evaluation time. Replaces the static SetQualityRulesConfig so changes
-// to project-level rule overrides are picked up without restarting the
-// daemon (mirrors qualityConfigLoader for the engine config).
-func (s *Server) SetQualityRulesLoader(loader QualityRulesLoader) {
-	s.quality.rulesLoad = loader
-}
-
-// SetQualityMetricsLoader wires the per-scan metrics-config resolver
-// used by handlers that recompute the signal from the cached graph
-// (rules, whatif). Nil disables overrides — handlers fall back to
-// metrics.DefaultConfig() at evaluation time, matching the behaviour
-// before per-metric thresholds were configurable.
-func (s *Server) SetQualityMetricsLoader(loader QualityMetricsLoader) {
-	s.quality.metricsCfg = loader
-}
-
-// SetQualityHistoryReader wires the git-history reader for the evolution
-// and bug-factor endpoints. Nil disables those endpoints (501).
-func (s *Server) SetQualityHistoryReader(r QualityHistoryReader) {
-	s.quality.history = r
 }
