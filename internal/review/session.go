@@ -177,6 +177,13 @@ func (s *Store) AddComment(channelID string, c *Comment) bool {
 	if !ok {
 		return false
 	}
+	// Dedup by stable id: the agent may report the same finding twice
+	// (retries, or a rerun over an existing session).
+	for _, existing := range sess.Comments {
+		if existing != nil && existing.ID == c.ID {
+			return false
+		}
+	}
 	sess.Comments = append(sess.Comments, c)
 	sess.UpdatedAt = time.Now()
 	return true

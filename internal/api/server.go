@@ -409,6 +409,7 @@ func (s *Server) registerReviewRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/channels/{id}/review/comments/{cid}/push", s.review.handleReviewPushComment)
 	mux.HandleFunc("DELETE /api/channels/{id}/review/comments/{cid}", s.review.handleReviewDeleteComment)
 	mux.HandleFunc("POST /api/channels/{id}/review/push-all", s.review.handleReviewPushAll)
+	mux.HandleFunc("POST /api/channels/{id}/review/comments", s.review.handleReviewIngestComments)
 }
 
 // registerFileRoutes registers the file tree, paste-image, readme, and memory routes.

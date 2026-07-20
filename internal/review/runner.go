@@ -15,10 +15,10 @@ type AgentRunner interface {
 }
 
 // Runner drives a single review pass: it builds an AgentRequest pointed
-// at the PR worktree, streams the agent's turns, parses `<review-comment>`
-// blocks out of each turn, and dispatches each unique comment to the
-// onComment callback. Persistence and broadcasting are the caller's job
-// — the runner only orchestrates.
+// at the PR worktree and runs it to completion. Findings don't travel
+// through the agent's stdout — the agent reports them itself via the
+// report_review_findings MCP tool, which POSTs back into the daemon's
+// review-comments endpoint. Persistence and broadcasting live there.
 type Runner struct {
 	Agent AgentRunner
 }
@@ -31,32 +31,17 @@ type Runner struct {
 // the container, and the agent dies on startup. systemPrompt + prompt
 // are passed straight through to the agent (the caller is expected to
 // have resolved the configured review prompt and assembled the diff
-// context). For each `<review-comment>` block the agent emits,
-// onComment fires with the parsed Comment exactly once — duplicate ids
-// that arrive in a later turn are ignored so reruns don't double-
-// broadcast.
-func (r *Runner) Run(ctx context.Context, channelID, dirPath, parentDirPath, systemPrompt, prompt string, onComment func(*Comment)) (*agent.AgentResponse, error) {
+// context).
+func (r *Runner) Run(ctx context.Context, channelID, dirPath, parentDirPath, systemPrompt, prompt string) (*agent.AgentResponse, error) {
 	if r.Agent == nil {
 		return nil, errors.New("review runner: agent not configured")
 	}
-	seen := make(map[string]struct{})
 	req := &agent.AgentRequest{
 		ChannelID:     channelID,
 		DirPath:       dirPath,
 		ParentDirPath: parentDirPath,
 		SystemPrompt:  systemPrompt,
 		Prompt:        prompt,
-		OnTurn: func(text string) {
-			for _, c := range ParseComments(text) {
-				if _, dup := seen[c.ID]; dup {
-					continue
-				}
-				seen[c.ID] = struct{}{}
-				if onComment != nil {
-					onComment(c)
-				}
-			}
-		},
 	}
 	return r.Agent.Run(ctx, req)
 }

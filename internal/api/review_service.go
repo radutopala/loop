@@ -56,12 +56,13 @@ type GitHubReview interface {
 	DeletePRReviewComment(ctx context.Context, workdir, ghUser string, slug githubapi.RepoSlug, commentID int64) error
 }
 
-// ReviewRunner kicks off a single review pass and streams the parsed
-// comments out through onComment. Satisfied by *review.Runner; held as
-// an interface so tests can drive the handler without a real agent
-// container.
+// ReviewRunner kicks off a single review pass. Findings arrive out of
+// band: the agent reports them through the report_review_findings MCP
+// tool, which POSTs to the review-comments endpoint (ingestComment).
+// Satisfied by *review.Runner; held as an interface so tests can drive
+// the handler without a real agent container.
 type ReviewRunner interface {
-	Run(ctx context.Context, channelID, dirPath, parentDirPath, systemPrompt, prompt string, onComment func(*review.Comment)) (*agent.AgentResponse, error)
+	Run(ctx context.Context, channelID, dirPath, parentDirPath, systemPrompt, prompt string) (*agent.AgentResponse, error)
 }
 
 // refreshReviewSession fast-forwards the worktree to the PR's current
@@ -216,28 +217,13 @@ func (s *reviewService) pushOneComment(ctx context.Context, channelID string, se
 // would keep hitting status=reviewing until its own deadline fired.
 func (s *reviewService) runReviewAsync(runCtx context.Context, channelID, worktreePath, parentDirPath, systemPrompt, prompt string) {
 	defer s.unregisterReviewRun(channelID)
-	onComment := func(c *review.Comment) {
-		if !s.sessions.AddComment(channelID, c) {
-			return
-		}
-		if hub := s.deps.eventsHub; hub != nil {
-			hub.BroadcastReviewComment(channelID, events.ReviewCommentEventData{
-				ID:   c.ID,
-				Path: c.Path,
-				Line: c.Line,
-				Side: c.Side,
-				Body: c.Body,
-			})
-		}
-		s.maybeRediffForComment(channelID, worktreePath, parentDirPath, c)
-	}
 	ctx := runCtx
 	if s.runTimeout > 0 {
 		var cancel context.CancelFunc
 		ctx, cancel = context.WithTimeout(ctx, s.runTimeout)
 		defer cancel()
 	}
-	_, err := s.runner.Run(ctx, channelID, worktreePath, parentDirPath, systemPrompt, prompt, onComment)
+	_, err := s.runner.Run(ctx, channelID, worktreePath, parentDirPath, systemPrompt, prompt)
 	if err != nil {
 		msg := err.Error()
 		// Re-shape ctx-deadline into a user-readable message. errors.Is
@@ -261,6 +247,29 @@ func (s *reviewService) runReviewAsync(runCtx context.Context, channelID, worktr
 	}
 	s.sessions.UpdateStatus(channelID, review.StatusReady, "")
 	s.broadcastReviewStatus(channelID, review.StatusReady, "")
+}
+
+// ingestComment persists one agent-reported finding into the channel's
+// review session and broadcasts it to the panel. Returns false when the
+// session is gone or the finding is a duplicate (same stable id) — the
+// caller reports the added count back to the agent. worktreePath /
+// parentDirPath feed the widened-context rediff, same as the in-run
+// callback used to.
+func (s *reviewService) ingestComment(channelID, worktreePath, parentDirPath string, c *review.Comment) bool {
+	if !s.sessions.AddComment(channelID, c) {
+		return false
+	}
+	if hub := s.deps.eventsHub; hub != nil {
+		hub.BroadcastReviewComment(channelID, events.ReviewCommentEventData{
+			ID:   c.ID,
+			Path: c.Path,
+			Line: c.Line,
+			Side: c.Side,
+			Body: c.Body,
+		})
+	}
+	s.maybeRediffForComment(channelID, worktreePath, parentDirPath, c)
+	return true
 }
 
 // maybeRediffForComment re-runs git diff with widened unified context if

@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -1319,14 +1320,14 @@ type mockReviewRunner struct {
 	lastParent string
 	lastSys    string
 	lastUser   string
-	runFn      func(onComment func(*review.Comment)) (*agent.AgentResponse, error)
+	runFn      func() (*agent.AgentResponse, error)
 	// runWithCtxFn, when set, takes precedence over runFn so tests can
 	// observe ctx cancellation (used by the runReviewAsync timeout test).
-	runWithCtxFn func(ctx context.Context, onComment func(*review.Comment)) (*agent.AgentResponse, error)
+	runWithCtxFn func(ctx context.Context) (*agent.AgentResponse, error)
 	done         chan struct{} // closed after Run returns
 }
 
-func (m *mockReviewRunner) Run(ctx context.Context, _, dirPath, parentDirPath, systemPrompt, prompt string, onComment func(*review.Comment)) (*agent.AgentResponse, error) {
+func (m *mockReviewRunner) Run(ctx context.Context, _, dirPath, parentDirPath, systemPrompt, prompt string) (*agent.AgentResponse, error) {
 	m.mu.Lock()
 	m.calls++
 	m.lastDir = dirPath
@@ -1343,12 +1344,22 @@ func (m *mockReviewRunner) Run(ctx context.Context, _, dirPath, parentDirPath, s
 		}
 	}()
 	if ctxFn != nil {
-		return ctxFn(ctx, onComment)
+		return ctxFn(ctx)
 	}
 	if fn != nil {
-		return fn(onComment)
+		return fn()
 	}
 	return &agent.AgentResponse{}, nil
+}
+
+// reportFindingViaAPI drives the report_review_findings ingestion path the
+// way the MCP tool does: a POST to the review-comments endpoint. Returns
+// the HTTP status so callers can assert 404 after a session delete.
+func (s *ReviewHandlerSuite) reportFindingViaAPI(path string, line int, side, body string) int {
+	payload := fmt.Sprintf(`{"findings":[{"path":%q,"line":%d,"side":%q,"body":%q}]}`, path, line, side, body)
+	w := httptest.NewRecorder()
+	s.mux.ServeHTTP(w, httptest.NewRequest("POST", "/api/channels/ch1/review/comments", strings.NewReader(payload)))
+	return w.Code
 }
 
 func (s *ReviewHandlerSuite) waitFor(cond func() bool) {
@@ -1447,8 +1458,8 @@ func (s *ReviewHandlerSuite) TestRunHappyPathDispatchesCommentsAndStatus() {
 	s.srv.SetEventsHub(hub)
 
 	runner := &mockReviewRunner{done: make(chan struct{})}
-	runner.runFn = func(onComment func(*review.Comment)) (*agent.AgentResponse, error) {
-		onComment(&review.Comment{ID: "a", Path: "x.go", Line: 1, Side: "RIGHT", Body: "issue"})
+	runner.runFn = func() (*agent.AgentResponse, error) {
+		require.Equal(s.T(), http.StatusOK, s.reportFindingViaAPI("x.go", 1, "RIGHT", "issue"))
 		return &agent.AgentResponse{}, nil
 	}
 	s.srv.review.setAgent(runner, "sys", "review-prompt-body")
@@ -1477,6 +1488,48 @@ func (s *ReviewHandlerSuite) TestRunHappyPathDispatchesCommentsAndStatus() {
 	sess := s.rs.Get("ch1")
 	require.Len(s.T(), sess.Comments, 1)
 	require.Equal(s.T(), "x.go", sess.Comments[0].Path)
+}
+
+func (s *ReviewHandlerSuite) TestIngestCommentsNoSession404() {
+	require.Equal(s.T(), http.StatusNotFound, s.reportFindingViaAPI("a.go", 1, "", "b"))
+}
+
+func (s *ReviewHandlerSuite) TestIngestCommentsBadJSON() {
+	s.wireReadySession()
+	s.store.On("GetChannel", mock.Anything, "ch1").Return(&db.Channel{ChannelID: "ch1", DirPath: "/repo"}, nil).Maybe()
+	w := httptest.NewRecorder()
+	s.mux.ServeHTTP(w, httptest.NewRequest("POST", "/api/channels/ch1/review/comments", strings.NewReader("not json")))
+	require.Equal(s.T(), http.StatusBadRequest, w.Code)
+}
+
+func (s *ReviewHandlerSuite) TestIngestCommentsSkipsInvalidAndDuplicates() {
+	s.wireReadySession()
+	s.store.On("GetChannel", mock.Anything, "ch1").Return(&db.Channel{ChannelID: "ch1", DirPath: "/repo"}, nil).Maybe()
+	payload := `{"findings":[
+		{"path":"a.go","line":1,"body":"bug"},
+		{"path":"a.go","line":1,"body":"bug"},
+		{"path":"","line":1,"body":"no path"},
+		{"path":"b.go","line":0,"body":"bad line"}
+	]}`
+	w := httptest.NewRecorder()
+	s.mux.ServeHTTP(w, httptest.NewRequest("POST", "/api/channels/ch1/review/comments", strings.NewReader(payload)))
+	require.Equal(s.T(), http.StatusOK, w.Code)
+	var res map[string]int
+	require.NoError(s.T(), json.Unmarshal(w.Body.Bytes(), &res))
+	require.Equal(s.T(), 1, res["added"])
+	require.Equal(s.T(), 3, res["skipped"])
+	require.Len(s.T(), s.rs.Get("ch1").Comments, 1)
+}
+
+func (s *ReviewHandlerSuite) TestIngestCommentsLoopDirFallback() {
+	// Channel row has no dir_path: the parent dir falls back to the
+	// loopDir-derived workdir, same as handleReviewRun.
+	s.wireReadySession()
+	s.store.ExpectedCalls = nil
+	s.store.On("GetChannel", mock.Anything, "ch1").Return(&db.Channel{ChannelID: "ch1", DirPath: ""}, nil).Maybe()
+	require.Equal(s.T(), http.StatusOK, s.reportFindingViaAPI("z.go", 2, "LEFT", "fallback path"))
+	require.Len(s.T(), s.rs.Get("ch1").Comments, 1)
+	require.Equal(s.T(), "LEFT", s.rs.Get("ch1").Comments[0].Side)
 }
 
 // When a gh_user is configured, the run prompt includes a switch hint so
@@ -1547,7 +1600,7 @@ func (s *ReviewHandlerSuite) TestRunPromptListsExistingCommentsForDedup() {
 func (s *ReviewHandlerSuite) TestRunAgentErrorTransitionsToErrorStatus() {
 	s.wireReadySession()
 	runner := &mockReviewRunner{done: make(chan struct{})}
-	runner.runFn = func(_ func(*review.Comment)) (*agent.AgentResponse, error) {
+	runner.runFn = func() (*agent.AgentResponse, error) {
 		return nil, errors.New("agent boom")
 	}
 	s.srv.review.setAgent(runner, "", "")
@@ -1569,8 +1622,8 @@ func (s *ReviewHandlerSuite) TestRunUsesDefaultPromptWhenUnconfigured() {
 	require.Equal(s.T(), http.StatusAccepted, w.Code)
 	<-runner.done
 	require.Equal(s.T(), defaultReviewPrompt, runner.lastUser)
-	require.Contains(s.T(), runner.lastSys, "<review-comment")
-	require.Contains(s.T(), runner.lastSys, "ReportFindings")
+	require.Contains(s.T(), runner.lastSys, "report_review_findings")
+	require.Contains(s.T(), runner.lastSys, "do not use the ReportFindings tool")
 	require.Contains(s.T(), runner.lastSys, "Pull request under review:")
 }
 
@@ -1578,7 +1631,7 @@ func (s *ReviewHandlerSuite) TestRunSecondCallCoalescesWhileInFlight() {
 	s.wireReadySession()
 	gate := make(chan struct{})
 	runner := &mockReviewRunner{done: make(chan struct{})}
-	runner.runFn = func(_ func(*review.Comment)) (*agent.AgentResponse, error) {
+	runner.runFn = func() (*agent.AgentResponse, error) {
 		<-gate
 		return &agent.AgentResponse{}, nil
 	}
@@ -1613,11 +1666,11 @@ func (s *ReviewHandlerSuite) TestRunCommentDispatchSkippedWhenSessionDropped() {
 	s.wireReadySession()
 	gate := make(chan struct{})
 	runner := &mockReviewRunner{done: make(chan struct{})}
-	runner.runFn = func(onComment func(*review.Comment)) (*agent.AgentResponse, error) {
+	runner.runFn = func() (*agent.AgentResponse, error) {
 		<-gate
-		// Session was deleted in the meantime — AddComment returns false
-		// and the broadcast is skipped. We just confirm no panic.
-		onComment(&review.Comment{ID: "a", Path: "x.go", Line: 1, Body: "b"})
+		// Session was deleted in the meantime — the ingest endpoint
+		// answers 404 and nothing is persisted or broadcast.
+		require.Equal(s.T(), http.StatusNotFound, s.reportFindingViaAPI("x.go", 1, "", "b"))
 		return &agent.AgentResponse{}, nil
 	}
 	s.srv.review.setAgent(runner, "", "")
@@ -1680,8 +1733,8 @@ func (s *ReviewHandlerSuite) TestRunRediffsOnCommentOutsideHunk() {
 	s.wt.On("Diff", mock.Anything, "/repo", "/repo/.worktrees/pr-7", "main", mock.Anything).Return(widened, nil).Once()
 
 	runner := &mockReviewRunner{done: make(chan struct{})}
-	runner.runFn = func(onComment func(*review.Comment)) (*agent.AgentResponse, error) {
-		onComment(&review.Comment{ID: "c1", Path: "x.go", Line: 42, Side: "RIGHT", Body: "issue"})
+	runner.runFn = func() (*agent.AgentResponse, error) {
+		require.Equal(s.T(), http.StatusOK, s.reportFindingViaAPI("x.go", 42, "RIGHT", "issue"))
 		return &agent.AgentResponse{}, nil
 	}
 	s.srv.review.setAgent(runner, "", "")
@@ -1726,9 +1779,9 @@ func (s *ReviewHandlerSuite) TestRunSkipsRediffWhenCommentInsideHunk() {
 	s.srv.SetEventsHub(hub)
 
 	runner := &mockReviewRunner{done: make(chan struct{})}
-	runner.runFn = func(onComment func(*review.Comment)) (*agent.AgentResponse, error) {
+	runner.runFn = func() (*agent.AgentResponse, error) {
 		// Line 3 is inside +1,5 (covers 1..5).
-		onComment(&review.Comment{ID: "c1", Path: "x.go", Line: 3, Side: "RIGHT", Body: "in-hunk"})
+		require.Equal(s.T(), http.StatusOK, s.reportFindingViaAPI("x.go", 3, "RIGHT", "in-hunk"))
 		return &agent.AgentResponse{}, nil
 	}
 	s.srv.review.setAgent(runner, "", "")
@@ -1770,8 +1823,8 @@ func (s *ReviewHandlerSuite) TestRunSkipsRediffWhenPathAbsentFromDiff() {
 	s.srv.SetEventsHub(hub)
 
 	runner := &mockReviewRunner{done: make(chan struct{})}
-	runner.runFn = func(onComment func(*review.Comment)) (*agent.AgentResponse, error) {
-		onComment(&review.Comment{ID: "c1", Path: "other.go", Line: 1, Side: "RIGHT", Body: "orphan"})
+	runner.runFn = func() (*agent.AgentResponse, error) {
+		require.Equal(s.T(), http.StatusOK, s.reportFindingViaAPI("other.go", 1, "RIGHT", "orphan"))
 		return &agent.AgentResponse{}, nil
 	}
 	s.srv.review.setAgent(runner, "", "")
@@ -2076,7 +2129,7 @@ func (s *ReviewHandlerSuite) TestRunReviewAsyncTimeoutFlipsStatusToError() {
 	s.srv.review.setRunTimeout(10 * time.Millisecond)
 
 	runner := &mockReviewRunner{done: make(chan struct{})}
-	runner.runWithCtxFn = func(ctx context.Context, _ func(*review.Comment)) (*agent.AgentResponse, error) {
+	runner.runWithCtxFn = func(ctx context.Context) (*agent.AgentResponse, error) {
 		<-ctx.Done()
 		return nil, ctx.Err()
 	}
@@ -2102,7 +2155,7 @@ func (s *ReviewHandlerSuite) TestRunReviewAsyncTimeoutDoesNotMaskUnrelatedErrors
 	s.srv.review.setRunTimeout(time.Hour)
 
 	runner := &mockReviewRunner{done: make(chan struct{})}
-	runner.runFn = func(_ func(*review.Comment)) (*agent.AgentResponse, error) {
+	runner.runFn = func() (*agent.AgentResponse, error) {
 		return nil, errors.New("gh auth failed")
 	}
 	s.srv.review.setAgent(runner, "", "")
@@ -2125,7 +2178,7 @@ func (s *ReviewHandlerSuite) TestRunReviewAsyncTimeoutSuccessPath() {
 	s.srv.review.setRunTimeout(time.Hour)
 
 	runner := &mockReviewRunner{done: make(chan struct{})}
-	runner.runFn = func(_ func(*review.Comment)) (*agent.AgentResponse, error) {
+	runner.runFn = func() (*agent.AgentResponse, error) {
 		return &agent.AgentResponse{}, nil
 	}
 	s.srv.review.setAgent(runner, "", "")
@@ -2149,7 +2202,7 @@ func (s *ReviewHandlerSuite) TestRunReviewAsyncTimeoutRewritesAgentDeadlineMessa
 	s.srv.review.setRunTimeout(10 * time.Millisecond)
 
 	runner := &mockReviewRunner{done: make(chan struct{})}
-	runner.runWithCtxFn = func(ctx context.Context, _ func(*review.Comment)) (*agent.AgentResponse, error) {
+	runner.runWithCtxFn = func(ctx context.Context) (*agent.AgentResponse, error) {
 		<-ctx.Done()
 		return nil, errors.New("agent stream closed")
 	}
@@ -2194,7 +2247,7 @@ func (s *ReviewHandlerSuite) TestPushCommentGhIDZeroLeavesUnpushed() {
 func (s *ReviewHandlerSuite) TestRunReviewAsyncCancelledSilently() {
 	s.wireReadySession()
 	runner := &mockReviewRunner{done: make(chan struct{})}
-	runner.runWithCtxFn = func(ctx context.Context, _ func(*review.Comment)) (*agent.AgentResponse, error) {
+	runner.runWithCtxFn = func(ctx context.Context) (*agent.AgentResponse, error) {
 		<-ctx.Done()
 		return nil, ctx.Err()
 	}

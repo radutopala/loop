@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -415,6 +416,60 @@ type pushAllResult struct {
 	Errors []string `json:"errors,omitempty"`
 }
 
+// handleReviewIngestComments accepts agent-reported findings from the
+// report_review_findings MCP tool and feeds each through ingestComment
+// (persist + broadcast + widened-context rediff). 404 when the channel
+// has no review session — e.g. the session was deleted while the agent
+// was still running. Malformed findings (empty path/body, line <= 0)
+// and duplicates are skipped; the response reports how many were added
+// so the agent can tell a dead session from an all-dup batch.
+func (s *reviewService) handleReviewIngestComments(w http.ResponseWriter, r *http.Request) {
+	channelID := r.PathValue("id")
+	sess := s.sessions.Get(channelID)
+	if sess == nil {
+		http.Error(w, "no review session for channel", http.StatusNotFound)
+		return
+	}
+	var body struct {
+		Findings []struct {
+			Path string `json:"path"`
+			Line int    `json:"line"`
+			Side string `json:"side"`
+			Body string `json:"body"`
+		} `json:"findings"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		http.Error(w, "invalid JSON body: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	// Same parent-dir resolution as handleReviewRun: for a root channel
+	// the worktree-parent resolver returns "" and the channel's own dir
+	// (the main repo) is the diff workdir.
+	parentDirPath := s.deps.workspace.resolveParentDirPath(r.Context(), channelID)
+	if parentDirPath == "" && s.deps.store != nil {
+		if ch, err := s.deps.store.GetChannel(r.Context(), channelID); err == nil && ch != nil {
+			parentDirPath = ch.DirPath
+			if parentDirPath == "" && s.deps.loopDir != "" {
+				parentDirPath = filepath.Join(s.deps.loopDir, ch.ChannelID, "work")
+			}
+		}
+	}
+	added, skipped := 0, 0
+	for _, f := range body.Findings {
+		c := review.NewComment(f.Path, f.Line, f.Side, f.Body)
+		if c == nil {
+			skipped++
+			continue
+		}
+		if s.ingestComment(channelID, sess.WorktreePath, parentDirPath, c) {
+			added++
+		} else {
+			skipped++
+		}
+	}
+	writeHTTPJSON(w, http.StatusOK, map[string]int{"added": added, "skipped": skipped}, s.deps.logger)
+}
+
 func (s *reviewService) handleReviewPushAll(w http.ResponseWriter, r *http.Request) {
 	if !requireConfigured(w, s.deps.store, "channel listing not configured") {
 		return
@@ -675,18 +730,17 @@ func (s *reviewService) handleReviewRun(w http.ResponseWriter, r *http.Request) 
 const defaultReviewPrompt = `/code-review`
 
 // defaultReviewSystemPrompt carries the review-panel output contract when
-// the prompt is the bare /code-review slash command. The explicit
-// ReportFindings ban is load-bearing: the skill's own instructions tell the
-// model to report through that tool, which exists even in --print runs —  a
-// successful call would swallow every finding into a channel Loop never
-// reads, so the run would look clean with zero comments.
-const defaultReviewSystemPrompt = `You are reviewing a GitHub pull request for an external review pipeline. When the review completes, translate each finding into exactly one block in this XML format and emit nothing else:
+// the prompt is the bare /code-review slash command: findings are reported
+// through Loop's report_review_findings MCP tool, which POSTs them straight
+// into the daemon's review session (persist + broadcast to the panel). The
+// explicit ReportFindings ban is load-bearing: the skill's own instructions
+// steer the model toward that harness tool, which exists even in --print
+// runs — a successful call would swallow every finding into a channel Loop
+// never reads, so the run would look clean with zero comments. Belt and
+// braces, the tool is also stripped via claude_batch_disallowed_tools.
+const defaultReviewSystemPrompt = `You are reviewing a GitHub pull request for an external review pipeline. When the review completes, report every finding by calling the mcp__loop__report_review_findings tool once with the full list. Each finding needs the repo-relative path, the 1-based line, side (RIGHT for added/modified lines — the default; LEFT only for lines removed from the base), and a one-paragraph body: the bug, the concrete inputs/state that trigger it, and the wrong output or crash.
 
-<review-comment path="path/to/file" line="N" side="RIGHT">
-One paragraph: the bug, the concrete inputs/state that trigger it, and the wrong output or crash.
-</review-comment>
-
-Use side="RIGHT" for added/modified lines (the default). Use side="LEFT" only when the finding is anchored on a line removed from the base. Report findings ONLY as these blocks — do not call or emulate the ReportFindings tool or any other reporting format. If there are no findings, emit no blocks. Do not fix anything yourself — the user triages comments from the Review panel.`
+Report findings ONLY through that tool — do not use the ReportFindings tool, do not emit XML blocks, and do not print the findings as your reply. If there are no findings, skip the tool call. Do not fix anything yourself — the user triages comments from the Review panel.`
 
 // buildReviewContext renders the per-PR context block appended to the
 // configured review prompt. Each known field gets its own labelled line so
