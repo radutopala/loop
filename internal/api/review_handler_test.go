@@ -1493,8 +1493,8 @@ func (s *ReviewHandlerSuite) TestRunPromptIncludesConfiguredGHUser() {
 	s.mux.ServeHTTP(w, httptest.NewRequest("POST", "/api/channels/ch1/review/run", nil))
 	require.Equal(s.T(), http.StatusAccepted, w.Code)
 	<-runner.done
-	require.Contains(s.T(), runner.lastUser, "GitHub CLI account: alice")
-	require.Contains(s.T(), runner.lastUser, "gh auth switch -u alice")
+	require.Contains(s.T(), runner.lastSys, "GitHub CLI account: alice")
+	require.Contains(s.T(), runner.lastSys, "gh auth switch -u alice")
 }
 
 // When the session already carries comments (from a prior run or from
@@ -1534,12 +1534,14 @@ func (s *ReviewHandlerSuite) TestRunPromptListsExistingCommentsForDedup() {
 	s.mux.ServeHTTP(w, httptest.NewRequest("POST", "/api/channels/ch1/review/run", nil))
 	require.Equal(s.T(), http.StatusAccepted, w.Code)
 	<-runner.done
-	require.Contains(s.T(), runner.lastUser, "do NOT re-emit")
-	require.Contains(s.T(), runner.lastUser, "[github @bob] a.go:L5 (RIGHT): nit body")
-	require.Contains(s.T(), runner.lastUser, "[agent] b.go:L9 (LEFT): issue body")
+	// The default prompt is a slash command, so the PR context (including
+	// the dedup list) rides in the system prompt, not the user prompt.
+	require.Contains(s.T(), runner.lastSys, "do NOT re-emit")
+	require.Contains(s.T(), runner.lastSys, "[github @bob] a.go:L5 (RIGHT): nit body")
+	require.Contains(s.T(), runner.lastSys, "[agent] b.go:L9 (LEFT): issue body")
 	// authorless github comment falls back to bare "github" label and empty side
 	// defaults to RIGHT; long body is truncated with ellipsis.
-	require.Contains(s.T(), runner.lastUser, "[github] c.go:L3 (RIGHT): "+strings.Repeat("x", 240)+"...")
+	require.Contains(s.T(), runner.lastSys, "[github] c.go:L3 (RIGHT): "+strings.Repeat("x", 240)+"...")
 }
 
 func (s *ReviewHandlerSuite) TestRunAgentErrorTransitionsToErrorStatus() {
@@ -1566,7 +1568,10 @@ func (s *ReviewHandlerSuite) TestRunUsesDefaultPromptWhenUnconfigured() {
 	s.mux.ServeHTTP(w, httptest.NewRequest("POST", "/api/channels/ch1/review/run", nil))
 	require.Equal(s.T(), http.StatusAccepted, w.Code)
 	<-runner.done
-	require.Contains(s.T(), runner.lastUser, defaultReviewPrompt[:50])
+	require.Equal(s.T(), defaultReviewPrompt, runner.lastUser)
+	require.Contains(s.T(), runner.lastSys, "<review-comment")
+	require.Contains(s.T(), runner.lastSys, "ReportFindings")
+	require.Contains(s.T(), runner.lastSys, "Pull request under review:")
 }
 
 func (s *ReviewHandlerSuite) TestRunSecondCallCoalescesWhileInFlight() {

@@ -13,6 +13,8 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
 
+	"strings"
+
 	containerimage "github.com/radutopala/loop/internal/container/image"
 )
 
@@ -851,6 +853,42 @@ func (s *FSMigrateSuite) TestPatchBuiltinCodeReviewShortcutSkipsNonMatchingAndMa
 	sys.files[configPath] = append([]byte(nil), original...)
 	require.NoError(s.T(), patchBuiltinCodeReviewShortcutPrompt(context.Background(), &Ctx{Sys: sys, LoopDir: "/loop"}))
 	require.Equal(s.T(), original, sys.files[configPath], "no unmodified builtin entry — must not rewrite")
+}
+
+func (s *FSMigrateSuite) TestPatchBuiltinCodeReviewShortcutUpgradesSkillToolPrompt() {
+	// The Skill-tool-era prompt (which now always errors under
+	// disable-model-invocation) is treated as unmodified and rewritten to
+	// the slash-command form.
+	sys := newFakeSystem()
+	configPath := filepath.Join("/loop", "config.json")
+	entry := map[string]any{"prompt_shortcuts": []any{map[string]any{
+		"name": builtinCodeReviewShortcutName, "prompt": skillToolBuiltinCodeReviewShortcutPrompt,
+	}}}
+	raw, err := json.Marshal(entry)
+	require.NoError(s.T(), err)
+	sys.files[configPath] = raw
+	require.NoError(s.T(), patchBuiltinCodeReviewShortcutPrompt(context.Background(), &Ctx{Sys: sys, LoopDir: "/loop"}))
+	var cfg map[string]any
+	require.NoError(s.T(), json.Unmarshal(sys.files[configPath], &cfg))
+	sc := cfg["prompt_shortcuts"].([]any)[0].(map[string]any)
+	require.Equal(s.T(), builtinCodeReviewShortcutPrompt, sc["prompt"])
+}
+
+func (s *FSMigrateSuite) TestPatchBuiltinSimplifyShortcutUpgradesSkillToolPrompt() {
+	sys := newFakeSystem()
+	configPath := filepath.Join("/loop", "config.json")
+	entry := map[string]any{"prompt_shortcuts": []any{map[string]any{
+		"name": builtinSimplifyShortcutName, "prompt": skillToolBuiltinSimplifyShortcutPrompt,
+	}}}
+	raw, err := json.Marshal(entry)
+	require.NoError(s.T(), err)
+	sys.files[configPath] = raw
+	require.NoError(s.T(), patchBuiltinSimplifyShortcutPrompt(context.Background(), &Ctx{Sys: sys, LoopDir: "/loop"}))
+	var cfg map[string]any
+	require.NoError(s.T(), json.Unmarshal(sys.files[configPath], &cfg))
+	sc := cfg["prompt_shortcuts"].([]any)[0].(map[string]any)
+	require.Equal(s.T(), builtinSimplifyShortcutPrompt, sc["prompt"])
+	require.True(s.T(), strings.HasPrefix(sc["prompt"].(string), "/simplify"), "must lead with the slash command")
 }
 
 func (s *FSMigrateSuite) TestPatchBuiltinCodeReviewShortcutLeavesUserEditedPrompt() {

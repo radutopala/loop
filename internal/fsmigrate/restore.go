@@ -40,6 +40,13 @@ func RestoreBuiltinShortcuts(ctx context.Context, c *Ctx) (added []string, patch
 		return nil, nil, err
 	}
 	added = append(added, addedSimplify...)
+	didPatchSimplify, err := patchBuiltinSimplifyShortcutPromptReport(ctx, c)
+	if err != nil {
+		return nil, nil, err
+	}
+	if didPatchSimplify {
+		patched = append(patched, builtinSimplifyShortcutName)
+	}
 	return added, patched, nil
 }
 

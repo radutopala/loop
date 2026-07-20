@@ -639,9 +639,23 @@ func (s *reviewService) handleReviewRun(w http.ResponseWriter, r *http.Request) 
 	// long" before claude ever started. The worktree is already checked
 	// out at PR head with `origin/<base>` fetched, so the agent can run
 	// `git diff origin/<base>...HEAD` itself.
-	fullPrompt := prompt + "\n\n" + buildReviewContext(sess, ghUser)
+	//
+	// A slash-command prompt (the default /code-review, or a user-configured
+	// one) must stay bare — anything appended would be parsed as skill
+	// arguments — so the output contract and the PR context ride in the
+	// system prompt instead.
 	worktreePath := sess.WorktreePath
+	reviewContext := buildReviewContext(sess, ghUser)
+	fullPrompt := prompt
 	sysPrompt := s.systemPrompt
+	if strings.HasPrefix(prompt, "/") {
+		if sysPrompt == "" {
+			sysPrompt = defaultReviewSystemPrompt
+		}
+		sysPrompt = sysPrompt + "\n\n" + reviewContext
+	} else {
+		fullPrompt = prompt + "\n\n" + reviewContext
+	}
 
 	s.sessions.UpdateStatus(channelID, review.StatusReviewing, "")
 	s.broadcastReviewStatus(channelID, review.StatusReviewing, "")
@@ -650,21 +664,29 @@ func (s *reviewService) handleReviewRun(w http.ResponseWriter, r *http.Request) 
 	writeHTTPJSON(w, http.StatusAccepted, map[string]string{"status": "started"}, s.deps.logger)
 }
 
-// defaultReviewPrompt is the user-facing prompt sent to the review
-// agent when no override is configured. The system prompt (separately
-// configurable) is left empty in that case — the user prompt alone is
-// enough to drive the review.
-const defaultReviewPrompt = `You are reviewing a GitHub pull request. Run the built-in ` + "`code-review`" + ` skill (via the Skill tool with ` + "`skill=\"code-review\"`" + `) — it does the full multi-angle find / verify / sweep pass and returns a list of findings, each with at least ` + "`file`" + `, ` + "`line`" + `, and a description.
+// defaultReviewPrompt is the user-facing prompt sent to the review agent
+// when no override is configured. It is a bare slash command: the built-in
+// code-review skill ships with disable-model-invocation, so a Skill-tool
+// call from the model is rejected — but a prompt that IS the slash command
+// counts as a user invocation and runs the full skill. The output contract
+// rides in defaultReviewSystemPrompt instead (slash prompts can't carry
+// extra instructions), and the PR context block moves to the system prompt
+// too — see the slash-prompt branch in handleReviewStart.
+const defaultReviewPrompt = `/code-review`
 
-When the ` + "`code-review`" + ` skill completes, translate each finding into exactly one block in this XML format and emit nothing else:
+// defaultReviewSystemPrompt carries the review-panel output contract when
+// the prompt is the bare /code-review slash command. The explicit
+// ReportFindings ban is load-bearing: the skill's own instructions tell the
+// model to report through that tool, which exists even in --print runs —  a
+// successful call would swallow every finding into a channel Loop never
+// reads, so the run would look clean with zero comments.
+const defaultReviewSystemPrompt = `You are reviewing a GitHub pull request for an external review pipeline. When the review completes, translate each finding into exactly one block in this XML format and emit nothing else:
 
 <review-comment path="path/to/file" line="N" side="RIGHT">
 One paragraph: the bug, the concrete inputs/state that trigger it, and the wrong output or crash.
 </review-comment>
 
-Use ` + "`side=\"RIGHT\"`" + ` for added/modified lines (the default). Use ` + "`side=\"LEFT\"`" + ` only when the finding is anchored on a line removed from the base. If the ` + "`code-review`" + ` skill returns no findings, emit no blocks. Do not fix anything yourself — the user triages comments from the Review panel.
-
-If the ` + "`code-review`" + ` skill is unavailable in this environment, fall back to a recall-focused review yourself (read the diff under ` + "`git diff @{upstream}...HEAD`" + ` plus working-tree changes, surface every real bug you can confirm or reasonably suspect), and emit the same XML format.`
+Use side="RIGHT" for added/modified lines (the default). Use side="LEFT" only when the finding is anchored on a line removed from the base. Report findings ONLY as these blocks — do not call or emulate the ReportFindings tool or any other reporting format. If there are no findings, emit no blocks. Do not fix anything yourself — the user triages comments from the Review panel.`
 
 // buildReviewContext renders the per-PR context block appended to the
 // configured review prompt. Each known field gets its own labelled line so

@@ -2,6 +2,7 @@ package agent
 
 import (
 	"fmt"
+	"strings"
 )
 
 // AgentRequest is the input sent to the agent runner.
@@ -69,6 +70,12 @@ func (r *AgentRequest) BuildPrompt() string {
 	default:
 		if len(r.Messages) == 0 {
 			return r.Prompt
+		}
+		// A lone slash-command message must stay bare: a "role: " prefix
+		// stops the CLI from expanding it as a user-invoked skill, which is
+		// the only way to run skills shipped with disable-model-invocation.
+		if len(r.Messages) == 1 && strings.HasPrefix(r.Messages[0].Content, "/") {
+			return r.Messages[0].Content
 		}
 		var prompt string
 		for _, msg := range r.Messages {

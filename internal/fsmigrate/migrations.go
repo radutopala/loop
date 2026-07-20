@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/tailscale/hujson"
@@ -98,6 +99,20 @@ var migrations = []Migration{
 		Description: "patch review-loop/review-fix-loop to env-based review command + pr input",
 		Apply:       patchReviewLoopEnvAndPRInput,
 	},
+	{
+		// Claude Code ships the code-review/simplify skills with
+		// disable-model-invocation, so the Skill-tool prompts these
+		// shortcuts carried always error and degrade to the fallback
+		// self-review. Rewrite unmodified entries to slash-command form —
+		// a message that IS the slash command counts as a user invocation
+		// and runs the full skill.
+		Description: "patch builtin code review shortcut back to slash-command form",
+		Apply:       patchBuiltinCodeReviewShortcutPrompt,
+	},
+	{
+		Description: "patch builtin simplify shortcut back to slash-command form",
+		Apply:       patchBuiltinSimplifyShortcutPrompt,
+	},
 }
 
 // versionedContainerFiles are tracked by the daemon: each release ships a
@@ -161,14 +176,16 @@ func refreshContainerFiles(_ context.Context, c *Ctx) error {
 const builtinCodeReviewShortcutName = "builtin code review"
 
 // builtinCodeReviewShortcutPrompt is the prompt seeded for the "builtin code
-// review" shortcut. It mirrors the Review panel's default prompt (run the
-// /code-review skill, with a self-review fallback when it's unavailable),
-// trimmed to the chat use case — no panel review-comment XML — and adds an
-// importance grouping plus a triage question so the user decides what to fix.
+// review" shortcut. It leads with the bare /code-review slash command — the
+// built-in skill ships with disable-model-invocation, so a Skill-tool call
+// from the model is rejected, but a message that starts with the slash
+// command counts as a user invocation and runs the full skill (trailing
+// lines ride along as extra instructions). Adds an importance grouping plus
+// a triage question so the user decides what to fix.
 // Kept in sync with the same entry in config.global.example.json.
-const builtinCodeReviewShortcutPrompt = `Run the built-in code-review skill (via the Skill tool with skill="code-review") — it runs the full multi-angle find / verify / sweep pass and returns findings, each with at least a file, line, and description. If the skill is unavailable, fall back to a recall-focused review yourself: read the diff (git diff @{upstream}...HEAD plus any working-tree changes) and surface every real bug you can confirm or reasonably suspect.
+const builtinCodeReviewShortcutPrompt = `/code-review
 
-When the review completes, present the findings grouped by importance — Critical, High, Medium, Low — each as a short bullet with file:line, the bug, and the concrete trigger and resulting wrong behavior. Don't fix anything yet. After listing them, ask me which findings to address (for example: all Critical and High, specific items by number, or none).`
+When the review completes, present the findings grouped by importance — Critical, High, Medium, Low — each as a short bullet with file:line, the bug, and the concrete trigger and resulting wrong behavior. Report them as regular text — do not call or emulate the ReportFindings tool. Don't fix anything yet. After listing them, ask me which findings to address (for example: all Critical and High, specific items by number, or none).`
 
 // builtinCodeReviewShortcutDescription is the stock description seeded with the
 // shortcut. Kept in sync with config.global.example.json.
@@ -183,16 +200,30 @@ const (
 	oldBuiltinCodeReviewShortcutDescription = "Run Claude Code's built-in /code-review slash command"
 )
 
+// skillToolBuiltin*ShortcutPrompt are the interim prompts that told the model
+// to invoke the skills via the Skill tool. Claude Code now ships those skills
+// with disable-model-invocation, so the Skill call always errors and the run
+// degrades to the fallback self-review. The patchers rewrite entries still
+// holding these exact values back to slash-command form; user edits are left
+// untouched.
+const skillToolBuiltinCodeReviewShortcutPrompt = `Run the built-in code-review skill (via the Skill tool with skill="code-review") — it runs the full multi-angle find / verify / sweep pass and returns findings, each with at least a file, line, and description. If the skill is unavailable, fall back to a recall-focused review yourself: read the diff (git diff @{upstream}...HEAD plus any working-tree changes) and surface every real bug you can confirm or reasonably suspect.
+
+When the review completes, present the findings grouped by importance — Critical, High, Medium, Low — each as a short bullet with file:line, the bug, and the concrete trigger and resulting wrong behavior. Don't fix anything yet. After listing them, ask me which findings to address (for example: all Critical and High, specific items by number, or none).`
+
+const skillToolBuiltinSimplifyShortcutPrompt = `Run the built-in simplify skill (via the Skill tool with skill="simplify") — it reviews the changed code for reuse, simplification, efficiency, and altitude cleanups and applies the fixes (quality only — it does not hunt for bugs; use the code-review skill for that). If the skill is unavailable, do the cleanup review yourself on the diff (git diff @{upstream}...HEAD plus any working-tree changes) and apply the safe cleanups.
+
+When it completes, summarize the cleanups grouped by category — reuse, simplification, efficiency, altitude — each as a short bullet with file:line and what changed.`
+
 // builtinSimplifyShortcutName is the unique name for the simplify shortcut, as
 // it renders in the # picker.
 const builtinSimplifyShortcutName = "builtin simplify"
 
-// builtinSimplifyShortcutPrompt loads the simplify skill (same approach as the
-// code-review shortcut: run the skill via the Skill tool, with a self-review
-// fallback). Unlike code-review, simplify applies the cleanups, so the closing
-// step summarizes what changed rather than asking what to address. Kept in
-// sync with config.global.example.json.
-const builtinSimplifyShortcutPrompt = `Run the built-in simplify skill (via the Skill tool with skill="simplify") — it reviews the changed code for reuse, simplification, efficiency, and altitude cleanups and applies the fixes (quality only — it does not hunt for bugs; use the code-review skill for that). If the skill is unavailable, do the cleanup review yourself on the diff (git diff @{upstream}...HEAD plus any working-tree changes) and apply the safe cleanups.
+// builtinSimplifyShortcutPrompt leads with the bare /simplify slash command
+// (user-invoked skill — same reasoning as builtinCodeReviewShortcutPrompt).
+// Unlike code-review, simplify applies the cleanups, so the closing step
+// summarizes what changed rather than asking what to address. Kept in sync
+// with config.global.example.json.
+const builtinSimplifyShortcutPrompt = `/simplify
 
 When it completes, summarize the cleanups grouped by category — reuse, simplification, efficiency, altitude — each as a short bullet with file:line and what changed.`
 
@@ -302,9 +333,37 @@ func patchBuiltinCodeReviewShortcutPrompt(ctx context.Context, c *Ctx) error {
 
 // patchBuiltinCodeReviewShortcutPromptReport is the (bool, error) variant used
 // by RestoreBuiltinShortcuts to surface a patched-but-not-added shortcut to
-// the FE. The bool is true iff the patcher wrote to disk. Operates on the
-// hujson AST so the user's HJSON comments and key ordering survive.
+// the FE. The bool is true iff the patcher wrote to disk.
 func patchBuiltinCodeReviewShortcutPromptReport(_ context.Context, c *Ctx) (bool, error) {
+	return patchBuiltinShortcutPrompt(c, builtinCodeReviewShortcutName,
+		[]string{oldBuiltinCodeReviewShortcutPrompt, skillToolBuiltinCodeReviewShortcutPrompt},
+		builtinCodeReviewShortcutPrompt,
+		oldBuiltinCodeReviewShortcutDescription, builtinCodeReviewShortcutDescription)
+}
+
+// patchBuiltinSimplifyShortcutPrompt rewrites an unmodified "builtin
+// simplify" shortcut from the Skill-tool-era prompt back to slash-command
+// form. A user-edited prompt is left untouched.
+func patchBuiltinSimplifyShortcutPrompt(ctx context.Context, c *Ctx) error {
+	_, err := patchBuiltinSimplifyShortcutPromptReport(ctx, c)
+	return err
+}
+
+// patchBuiltinSimplifyShortcutPromptReport is the (bool, error) variant used
+// by RestoreBuiltinShortcuts.
+func patchBuiltinSimplifyShortcutPromptReport(_ context.Context, c *Ctx) (bool, error) {
+	return patchBuiltinShortcutPrompt(c, builtinSimplifyShortcutName,
+		[]string{skillToolBuiltinSimplifyShortcutPrompt},
+		builtinSimplifyShortcutPrompt,
+		builtinSimplifyShortcutDescription, builtinSimplifyShortcutDescription)
+}
+
+// patchBuiltinShortcutPrompt rewrites the named prompt shortcut's prompt to
+// newPrompt when the on-disk value exactly matches one of oldPrompts, and
+// refreshes the stock description the same way. Entries the user has edited
+// (any other value) are never overwritten. Operates on the hujson AST so the
+// user's HJSON comments and key ordering survive.
+func patchBuiltinShortcutPrompt(c *Ctx, name string, oldPrompts []string, newPrompt, oldDesc, newDesc string) (bool, error) {
 	v, configPath, err := loadConfigHJSON(c)
 	if err != nil || v == nil {
 		return false, err
@@ -327,7 +386,7 @@ func patchBuiltinCodeReviewShortcutPromptReport(_ context.Context, c *Ctx) (bool
 		if !ok {
 			continue
 		}
-		if name, _ := memberString(elemObj, "name"); name != builtinCodeReviewShortcutName {
+		if n, _ := memberString(elemObj, "name"); n != name {
 			continue
 		}
 		promptVal := findObjectMember(elemObj, "prompt")
@@ -335,14 +394,14 @@ func patchBuiltinCodeReviewShortcutPromptReport(_ context.Context, c *Ctx) (bool
 			continue
 		}
 		lit, ok := promptVal.Value.(hujson.Literal)
-		if !ok || lit.String() != oldBuiltinCodeReviewShortcutPrompt {
+		if !ok || !slices.Contains(oldPrompts, lit.String()) {
 			continue // user-edited (or unexpected shape) — never overwrite
 		}
-		promptVal.Value = hujson.String(builtinCodeReviewShortcutPrompt)
+		promptVal.Value = hujson.String(newPrompt)
 		// Refresh the stock description too, but only when it's unmodified.
 		if descVal := findObjectMember(elemObj, "description"); descVal != nil {
-			if dlit, ok := descVal.Value.(hujson.Literal); ok && dlit.String() == oldBuiltinCodeReviewShortcutDescription {
-				descVal.Value = hujson.String(builtinCodeReviewShortcutDescription)
+			if dlit, ok := descVal.Value.(hujson.Literal); ok && dlit.String() == oldDesc {
+				descVal.Value = hujson.String(newDesc)
 			}
 		}
 		patched = true
