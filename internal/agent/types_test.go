@@ -25,6 +25,17 @@ func (s *TypesSuite) TestBuildPromptWithMessages() {
 	require.Equal(s.T(), "user: hello\nassistant: hi there\n", req.BuildPrompt())
 }
 
+func (s *TypesSuite) TestBuildPromptSingleSlashMessageStaysBare() {
+	// A lone slash command must not get the "role: " prefix — the prefix
+	// stops the CLI from expanding it as a user-invoked skill.
+	req := &AgentRequest{
+		Messages: []AgentMessage{
+			{Role: "user", Content: "/code-review"},
+		},
+	}
+	require.Equal(s.T(), "/code-review", req.BuildPrompt())
+}
+
 func (s *TypesSuite) TestBuildPromptSingleMessage() {
 	req := &AgentRequest{
 		Messages: []AgentMessage{
