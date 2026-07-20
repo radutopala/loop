@@ -180,7 +180,7 @@ func (s *Store) AddComment(channelID string, c *Comment) bool {
 	// Dedup by stable id: the agent may report the same finding twice
 	// (retries, or a rerun over an existing session).
 	for _, existing := range sess.Comments {
-		if existing != nil && existing.ID == c.ID {
+		if existing != nil && existing.Path == c.Path {
 			return false
 		}
 	}
