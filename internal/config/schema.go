@@ -80,6 +80,45 @@ func buildSchema() *ConfigSchema {
 				XSection:    "Claude",
 				XOrder:      4,
 			},
+			"claude_batch_disallowed_tools": {
+				Type:        "array",
+				Title:       "Batch Disallowed Tools",
+				Description: "Tools passed as --disallowedTools in batch (--print) agent runs. These rely on a persistent interactive harness that one-shot mode lacks.",
+				Items:       &SchemaProperty{Type: "string"},
+				XSection:    "Claude",
+				XOrder:      5,
+			},
+			"claude_retry": {
+				Type:     "object",
+				Title:    "Retry",
+				XSection: "Claude",
+				XOrder:   6,
+				Properties: map[string]*SchemaProperty{
+					"max_attempts": {
+						Type:         "integer",
+						Title:        "Max Attempts",
+						Description:  "Additional attempts after a transient API failure (rate limit, overload, 5xx)",
+						XPlaceholder: "5",
+					},
+					"backoff_base_sec": {
+						Type:         "integer",
+						Title:        "Backoff Base (sec)",
+						Description:  "First retry delay; doubles each attempt",
+						XPlaceholder: "5",
+					},
+					"backoff_max_sec": {
+						Type:         "integer",
+						Title:        "Backoff Max (sec)",
+						XPlaceholder: "120",
+					},
+					"session_limit_auto_continue": {
+						Type:        "boolean",
+						Title:       "Session Limit Auto-continue",
+						Description: "Schedule a one-shot retry at the reset time announced in a session-limit error so the run continues automatically",
+						Default:     true,
+					},
+				},
+			},
 
 			// ── Authentication section ──
 			"claude_code_oauth_token": {
@@ -147,6 +186,14 @@ func buildSchema() *ConfigSchema {
 				XSection:    "Container",
 				XOrder:      6,
 			},
+			"container_image_autobuild": {
+				Type:        "boolean",
+				Title:       "Auto-rebuild Image",
+				Description: "Rebuild this project's container_image automatically whenever Loop's base agent image is rebuilt (requires a .loop/container/Dockerfile based on Loop's image)",
+				Default:     true,
+				XSection:    "Container",
+				XOrder:      7,
+			},
 
 			// ── Browser section (nested object) ──
 			"browser": {
@@ -187,6 +234,32 @@ func buildSchema() *ConfigSchema {
 						Title:       "Enabled",
 						Description: "Allow exposing a playground publicly over a cloudflared quick tunnel. Off by default.",
 						Default:     false,
+					},
+				},
+			},
+
+			// ── Review section (nested object) ──
+			"review": {
+				Type:     "object",
+				XSection: "Review",
+				Properties: map[string]*SchemaProperty{
+					"enabled": {
+						Type:        "boolean",
+						Title:       "Enabled",
+						Description: "Show the Review panel and enable the /review API. Off by default; layered per global/project/worktree.",
+						Default:     false,
+					},
+					"prompt": {
+						Type:        "string",
+						Title:       "Prompt",
+						Description: "Inline review-agent prompt (mutually exclusive with Prompt Path)",
+						XWidget:     "textarea",
+					},
+					"prompt_path": {
+						Type:         "string",
+						Title:        "Prompt Path",
+						Description:  "Prompt file under {loopDir}/review/",
+						XPlaceholder: "prompt.md",
 					},
 				},
 			},
@@ -390,6 +463,14 @@ func buildSchema() *ConfigSchema {
 				XSection:     "API",
 				XGlobalOnly:  true,
 				XPlaceholder: ":8222",
+			},
+			"api_advertise_url": {
+				Type:         "string",
+				Title:        "Advertise URL",
+				Description:  "External base URL agents use to reach the daemon's API (defaults to the listen address)",
+				XSection:     "API",
+				XGlobalOnly:  true,
+				XPlaceholder: "http://host.docker.internal:8222",
 			},
 			"db_path": {
 				Type:         "string",

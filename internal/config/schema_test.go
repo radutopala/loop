@@ -37,14 +37,16 @@ func (s *SchemaSuite) TestTopLevelProperties() {
 		"claude_code_oauth_token", "anthropic_api_key",
 		"container_image", "container_memory_mb", "container_cpus",
 		"container_timeout_sec", "keep_mcp_configs",
-		"browser", "memory", "playground_share",
+		"container_image_autobuild",
+		"claude_batch_disallowed_tools", "claude_retry",
+		"browser", "memory", "playground_share", "review",
 		"extra_dirs", "mounts", "copy_files",
 		"platforms",
 		"discord_token", "discord_app_id", "discord_guild_id",
 		"slack_bot_token", "slack_app_token",
 		"envs",
 		"log_level", "log_format", "log_file",
-		"api_addr", "db_path", "poll_interval_sec",
+		"api_addr", "api_advertise_url", "db_path", "poll_interval_sec",
 		"desktop", "workflow_bash_local",
 		"gates",
 	}
@@ -160,8 +162,10 @@ func (s *SchemaSuite) TestNonGlobalOnlyFields() {
 	nonGlobalKeys := []string{
 		"claude_model", "claude_bin_path",
 		"claude_dangerously_load_development_channels",
-		"container_image", "container_memory_mb", "container_cpus",
-		"browser", "memory", "extra_dirs", "mounts", "copy_files", "envs",
+		"container_image", "container_image_autobuild",
+		"container_memory_mb", "container_cpus",
+		"claude_batch_disallowed_tools", "claude_retry",
+		"browser", "memory", "review", "extra_dirs", "mounts", "copy_files", "envs",
 	}
 	for _, key := range nonGlobalKeys {
 		s.Run(key, func() {
@@ -302,19 +306,23 @@ func (s *SchemaSuite) TestGatesNestedObject() {
 func (s *SchemaSuite) TestSectionAssignment() {
 	schema := GlobalConfigSchema()
 	sectionChecks := map[string]string{
-		"claude_model":            "Claude",
-		"claude_code_oauth_token": "Authentication",
-		"container_image":         "Container",
-		"browser":                 "Browser",
-		"memory":                  "Memory",
-		"extra_dirs":              "Workspace",
-		"platforms":               "Platforms",
-		"discord_token":           "Discord",
-		"slack_bot_token":         "Slack",
-		"envs":                    "Environment",
-		"log_level":               "Logging",
-		"api_addr":                "API",
-		"gates":                   "Gates",
+		"claude_model":              "Claude",
+		"claude_code_oauth_token":   "Authentication",
+		"container_image":           "Container",
+		"container_image_autobuild": "Container",
+		"claude_retry":              "Claude",
+		"api_advertise_url":         "API",
+		"review":                    "Review",
+		"browser":                   "Browser",
+		"memory":                    "Memory",
+		"extra_dirs":                "Workspace",
+		"platforms":                 "Platforms",
+		"discord_token":             "Discord",
+		"slack_bot_token":           "Slack",
+		"envs":                      "Environment",
+		"log_level":                 "Logging",
+		"api_addr":                  "API",
+		"gates":                     "Gates",
 	}
 	for key, expectedSection := range sectionChecks {
 		s.Run(key, func() {
