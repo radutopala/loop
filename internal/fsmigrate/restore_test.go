@@ -317,6 +317,42 @@ func (s *FSMigrateSuite) TestRestoreBuiltinWorkflowsPatchesStaleBodyDeps() {
 // simplify seed specifically: the code-review entry is already present with
 // the current prompt (seed and patch both no-op, no writes), so the first
 // write attempt is the simplify seed, which fails.
+func (s *FSMigrateSuite) TestRestoreBuiltinShortcutsSimplifyPatchError() {
+	// Both shortcuts present (seeds no-op), code review already current
+	// (its patcher no-ops), simplify still on the Skill-tool prompt — the
+	// simplify patcher is the only writer, and its write fails.
+	sys := newFakeSystem()
+	configPath := filepath.Join("/loop", "config.json")
+	crJSON, merr := json.Marshal(builtinCodeReviewShortcutPrompt)
+	require.NoError(s.T(), merr)
+	smJSON, merr := json.Marshal(skillToolBuiltinSimplifyShortcutPrompt)
+	require.NoError(s.T(), merr)
+	cfg := fmt.Sprintf(`{"prompt_shortcuts":[{"name":%q,"prompt":%s},{"name":%q,"prompt":%s}]}`,
+		builtinCodeReviewShortcutName, crJSON, builtinSimplifyShortcutName, smJSON)
+	sys.files[configPath] = []byte(cfg)
+	sys.writeErr[configPath+".tmp"] = errors.New("io error")
+
+	_, _, err := RestoreBuiltinShortcuts(context.Background(), &Ctx{Sys: sys, LoopDir: "/loop"})
+	require.Error(s.T(), err)
+}
+
+func (s *FSMigrateSuite) TestRestoreBuiltinShortcutsPatchesSimplify() {
+	sys := newFakeSystem()
+	configPath := filepath.Join("/loop", "config.json")
+	crJSON, merr := json.Marshal(builtinCodeReviewShortcutPrompt)
+	require.NoError(s.T(), merr)
+	smJSON, merr := json.Marshal(skillToolBuiltinSimplifyShortcutPrompt)
+	require.NoError(s.T(), merr)
+	cfg := fmt.Sprintf(`{"prompt_shortcuts":[{"name":%q,"prompt":%s},{"name":%q,"prompt":%s}]}`,
+		builtinCodeReviewShortcutName, crJSON, builtinSimplifyShortcutName, smJSON)
+	sys.files[configPath] = []byte(cfg)
+
+	added, patched, err := RestoreBuiltinShortcuts(context.Background(), &Ctx{Sys: sys, LoopDir: "/loop"})
+	require.NoError(s.T(), err)
+	require.Empty(s.T(), added)
+	require.Equal(s.T(), []string{builtinSimplifyShortcutName}, patched)
+}
+
 func (s *FSMigrateSuite) TestRestoreBuiltinShortcutsSimplifySeedError() {
 	sys := newFakeSystem()
 	configPath := filepath.Join("/loop", "config.json")

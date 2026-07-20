@@ -282,6 +282,8 @@ func New(channelID, apiURL, authorID string, httpClient HTTPClient, logger *slog
 		s.registerWorkflowTools()
 	}
 
+	s.registerReviewTools()
+
 	// Register agent tools after mcpServer is created.
 	if s.agentID != "" {
 		s.registerAgentTools()

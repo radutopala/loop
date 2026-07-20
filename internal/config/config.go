@@ -510,8 +510,12 @@ func stringDefault(val, def string) string {
 // across turns — once the agent's single turn ends, the container exits and the
 // watch dies mid-stream, dropping the remaining events. Override via the
 // `claude_batch_disallowed_tools` config key (global/project/worktree).
+// ReportFindings is denied for a different reason: it reports code-review
+// findings into a harness UI channel that batch runs don't render — a
+// successful call swallows the findings invisibly. Loop's review flow
+// reports through the report_review_findings MCP tool instead.
 func DefaultBatchDisallowedTools() []string {
-	return []string{"ScheduleWakeup", "CronCreate", "CronDelete", "CronList", "Monitor"}
+	return []string{"ScheduleWakeup", "CronCreate", "CronDelete", "CronList", "Monitor", "ReportFindings"}
 }
 
 // DefaultAgentRetry returns the default backoff-retry policy for batch agent
