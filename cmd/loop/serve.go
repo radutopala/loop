@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -660,7 +661,7 @@ func (a *app) serve() error {
 	// optionally fall back to local shell execution when Docker is unavailable.
 	var bashRunner workflow.BashRunner = runner
 	if cfg.WorkflowBashLocal {
-		bashRunner = &workflow.LocalBashRunner{SafeDir: cfg.LoopDir}
+		bashRunner = &workflow.LocalBashRunner{SafeDir: cfg.LoopDir, APIURL: localAPIURL(cfg.APIAddr)}
 		logger.Info("workflow bash nodes will execute locally (workflow_bash_local=true)")
 	}
 	wfEngine := workflow.NewEngine(store, runner, bashRunner, eventsHub, workflowsFromConfig(cfg, reloadConfig), cfg.LoopDir, cfg.WorkflowConcurrency, logger)
@@ -989,4 +990,18 @@ func childProjectsLister(store channelLister, cfg *config.Config, loadProject fu
 		}
 		return out, nil
 	}
+}
+
+// localAPIURL turns the daemon's listen address into a URL that a process on
+// the same host can call: ":8222" and "0.0.0.0:8222" become
+// "http://localhost:8222"; an address with an explicit host is used as-is.
+func localAPIURL(apiAddr string) string {
+	host, port, err := net.SplitHostPort(apiAddr)
+	if err != nil || port == "" {
+		return "http://localhost:8222"
+	}
+	if host == "" || host == "0.0.0.0" || host == "::" {
+		host = "localhost"
+	}
+	return "http://" + net.JoinHostPort(host, port)
 }

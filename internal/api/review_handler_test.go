@@ -1490,6 +1490,35 @@ func (s *ReviewHandlerSuite) TestRunHappyPathDispatchesCommentsAndStatus() {
 	require.Equal(s.T(), "x.go", sess.Comments[0].Path)
 }
 
+func (s *ReviewHandlerSuite) TestIngestCommentsSessionsNotConfigured() {
+	srv := newServerForReviewTests(s.T())
+	srv.review.sessions = nil
+	mux := srv.buildMux()
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, httptest.NewRequest("POST", "/api/channels/ch1/review/comments", strings.NewReader(`{"findings":[]}`)))
+	require.Equal(s.T(), http.StatusNotImplemented, w.Code)
+}
+
+func (s *ReviewHandlerSuite) TestIngestCommentsMalformedFindingSkippedNotFatal() {
+	// One finding with a wrong type must not abort the batch: the valid
+	// sibling still lands and the bad one counts as skipped.
+	s.wireReadySession()
+	s.store.On("GetChannel", mock.Anything, "ch1").Return(&db.Channel{ChannelID: "ch1", DirPath: "/repo"}, nil).Maybe()
+	payload := `{"findings":[
+		{"path":"a.go","line":"NaN","body":"bad line type"},
+		{"path":"b.go","line":2,"body":"valid"}
+	]}`
+	w := httptest.NewRecorder()
+	s.mux.ServeHTTP(w, httptest.NewRequest("POST", "/api/channels/ch1/review/comments", strings.NewReader(payload)))
+	require.Equal(s.T(), http.StatusOK, w.Code)
+	var res map[string]int
+	require.NoError(s.T(), json.Unmarshal(w.Body.Bytes(), &res))
+	require.Equal(s.T(), 1, res["added"])
+	require.Equal(s.T(), 1, res["skipped"])
+	require.Len(s.T(), s.rs.Get("ch1").Comments, 1)
+	require.Equal(s.T(), "b.go", s.rs.Get("ch1").Comments[0].Path)
+}
+
 func (s *ReviewHandlerSuite) TestIngestCommentsNoSession404() {
 	require.Equal(s.T(), http.StatusNotFound, s.reportFindingViaAPI("a.go", 1, "", "b"))
 }

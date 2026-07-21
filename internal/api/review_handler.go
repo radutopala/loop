@@ -424,19 +424,22 @@ type pushAllResult struct {
 // and duplicates are skipped; the response reports how many were added
 // so the agent can tell a dead session from an all-dup batch.
 func (s *reviewService) handleReviewIngestComments(w http.ResponseWriter, r *http.Request) {
+	if s.sessions == nil {
+		http.Error(w, "review service not configured", http.StatusNotImplemented)
+		return
+	}
 	channelID := r.PathValue("id")
 	sess := s.sessions.Get(channelID)
 	if sess == nil {
 		http.Error(w, "no review session for channel", http.StatusNotFound)
 		return
 	}
+	// Findings decode individually so one malformed entry (e.g. a string
+	// where line should be a number) skips just that finding instead of
+	// failing the whole batch — the agent already gets per-finding
+	// accounting via the added/skipped counts.
 	var body struct {
-		Findings []struct {
-			Path string `json:"path"`
-			Line int    `json:"line"`
-			Side string `json:"side"`
-			Body string `json:"body"`
-		} `json:"findings"`
+		Findings []json.RawMessage `json:"findings"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		http.Error(w, "invalid JSON body: "+err.Error(), http.StatusBadRequest)
@@ -455,7 +458,17 @@ func (s *reviewService) handleReviewIngestComments(w http.ResponseWriter, r *htt
 		}
 	}
 	added, skipped := 0, 0
-	for _, f := range body.Findings {
+	for _, raw := range body.Findings {
+		var f struct {
+			Path string `json:"path"`
+			Line int    `json:"line"`
+			Side string `json:"side"`
+			Body string `json:"body"`
+		}
+		if err := json.Unmarshal(raw, &f); err != nil {
+			skipped++
+			continue
+		}
 		c := review.NewComment(f.Path, f.Line, f.Side, f.Body)
 		if c == nil {
 			skipped++

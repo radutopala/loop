@@ -272,7 +272,7 @@ Enables and configures the Review panel (see [review.md](review.md)).
 | `prompt` | `string` | Inline prompt text. Mutually exclusive with `prompt_path`. |
 | `prompt_path` | `string` | Path to a prompt file, resolved as `~/.loop/review/{prompt_path}`. Mutually exclusive with `prompt`. |
 
-Both prompt fields empty (the default) uses the daemon's built-in default prompt, which instructs the agent to emit `<review-comment>` blocks for actionable issues only.
+Both prompt fields empty (the default) uses the daemon's built-in default prompt: the bare `/code-review` slash command, with the output contract (report findings via the `report_review_findings` MCP tool for actionable issues only) carried in the system prompt.
 
 #### Playground share
 
