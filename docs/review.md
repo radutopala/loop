@@ -56,9 +56,9 @@ per-global / per-project / per-worktree the same way as `github.gh_user`.
    operator can see `review iter 2/3 — running`, `fixing — iter 2/3`,
    `paused at gate — …`, `done — 0 comments remaining`, or
    `stopped — no progress (same findings)` without leaving the Review
-   panel. The agent emits `<review-comment path="..." line="N"
-   side="RIGHT|LEFT">...body...</review-comment>` blocks, which are
-   parsed and streamed to the FE as they arrive.
+   panel. The agent reports findings by calling the
+   `report_review_findings` MCP tool, which posts them straight into the
+   review session; each comment is broadcast to the FE as it arrives.
 3. **Push** — each comment ships with **Push** (single) and a **Push all
    (N)** affordance in the header (when at least one comment is unpushed).
    The backend uses `gh api ... /pulls/N/comments` against the captured
@@ -151,24 +151,26 @@ error; setting neither uses the daemon's built-in default prompt.
 
 ### Required output format
 
-The parser anchors comments by the tag attributes, so an override prompt
-must instruct the agent to emit blocks shaped exactly like:
+Findings travel through the `report_review_findings` MCP tool (available
+in every agent container), so an override prompt must instruct the agent
+to call it with the full findings list. Each finding carries:
 
-```xml
-<review-comment path="path/to/file" line="N" side="RIGHT">
-One paragraph describing the issue.
-</review-comment>
-```
+- `path` — repo-relative file path.
+- `line` — the 1-based line on the indicated side of the diff.
+- `side` — `"RIGHT"` for added/modified lines (the common case, and the
+  default when omitted) or `"LEFT"` for lines removed from the base.
+  This matches GitHub's `pulls/{N}/comments` API, so the value is
+  forwarded as-is on push.
+- `body` — one paragraph describing the issue.
 
-- `path` is repo-relative.
-- `line` is the line on the indicated side of the diff.
-- `side` is `"RIGHT"` for added/modified lines (the common case) or
-  `"LEFT"` for lines removed from the base. This matches GitHub's
-  `pulls/{N}/comments` API, so the value is forwarded as-is on push.
-
-Blocks that fail to parse are silently dropped, and the parser
-deduplicates by content hash so re-emitting the same block during
-streaming is safe.
+Malformed findings (empty path/body, non-positive line) are skipped, and
+the daemon deduplicates by a stable content hash of path/line/body, so
+re-reporting the same finding — in the same call or a later run — is
+safe. The prompt should also tell the agent NOT to use the harness's
+`ReportFindings` tool: a successful call there swallows the findings
+into a UI channel the daemon never reads (the default prompt does this,
+and batch runs additionally deny the tool via
+`claude_batch_disallowed_tools`).
 
 ## See also
 

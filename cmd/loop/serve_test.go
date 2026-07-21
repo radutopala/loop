@@ -178,3 +178,18 @@ func (s *ServeSuite) TestWireGatePolicyHappyPathPlumbsPolicyDirIntoRunner() {
 	require.Equal(s.T(), "/tmp/loop-test/run", runner.PolicyDir(),
 		"wireGatePolicy must forward policyDir to runner.SetGatePolicy so the per-container JSON file is written under ~/.loop/run, not /run/loop")
 }
+
+func (s *ServeSuite) TestLocalAPIURL() {
+	cases := map[string]string{
+		":8222":          "http://localhost:8222",
+		"0.0.0.0:9000":   "http://localhost:9000",
+		"[::]:8222":      "http://localhost:8222",
+		"127.0.0.1:8222": "http://127.0.0.1:8222",
+		"myhost:8222":    "http://myhost:8222",
+		"not-an-addr":    "http://localhost:8222",
+		"":               "http://localhost:8222",
+	}
+	for in, want := range cases {
+		require.Equal(s.T(), want, localAPIURL(in), "input %q", in)
+	}
+}
