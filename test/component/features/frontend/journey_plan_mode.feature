@@ -41,3 +41,16 @@ Feature: Plan mode review card
     And I inject an agent.status running event
     Then the page should contain text "PLAN READY FOR REVIEW"
     And the page should contain text "Survive the running event"
+
+  Scenario: Sidebar lights the plan pill while the channel is parked on ExitPlanMode
+    # agent.exit_plan → applyEvent sets state.exitPlanRequest → refreshPlanMembership
+    # adds the channel ID to planChannelIdsRef → ChannelItem renders
+    # <StatusPill label="plan" title="Plan awaiting approval">. Discarding the
+    # card fires clearExitPlan() → clearPlanPill(channelId) → set delete →
+    # pill disappears.
+    When I inject an exit_plan event with plan "Pill lifecycle plan"
+    Then I wait for text "PLAN READY FOR REVIEW" to appear
+    And the element "[data-testid='sidebar'] [title='Plan awaiting approval']" should be visible
+    When I click on the button with text "Discard"
+    Then I wait for text "PLAN READY FOR REVIEW" to disappear
+    And the element "[data-testid='sidebar'] [title='Plan awaiting approval']" should not exist

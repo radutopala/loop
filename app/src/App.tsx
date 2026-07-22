@@ -270,7 +270,7 @@ function AppInner() {
   // Single app-level WS that subscribes to the selected channel + all running
   // channels. Replaces the previous dual-WS approach (one in App, one in
   // WorkspaceLayout). Chat state is persisted in the store across switches.
-  const { getState, saveState, isRunningMapRef, unreadIdsRef, gateChannelIdsRef, reviewChannelIdsRef, askUserChannelIdsRef, unreadCount, markRead, markAllRead, registerReviewView, clearAskUserPill, subscribeChatEvents } = useChatStateStore({
+  const { getState, saveState, isRunningMapRef, unreadIdsRef, gateChannelIdsRef, reviewChannelIdsRef, askUserChannelIdsRef, planChannelIdsRef, unreadCount, markRead, markAllRead, registerReviewView, clearAskUserPill, clearPlanPill, subscribeChatEvents } = useChatStateStore({
     channels,
     selectedId,
     onAppEvent,
@@ -583,6 +583,7 @@ function AppInner() {
         gateChannelIdsRef={gateChannelIdsRef}
         reviewChannelIdsRef={reviewChannelIdsRef}
         askUserChannelIdsRef={askUserChannelIdsRef}
+        planChannelIdsRef={planChannelIdsRef}
         unreadCount={unreadCount}
         onMarkAllRead={markAllRead}
         imageBuildStatus={imageBuildStatus}
@@ -618,6 +619,7 @@ function AppInner() {
             subscribeChatEvents={subscribeChatEvents}
             registerReviewView={registerReviewView}
             clearAskUserPill={clearAskUserPill}
+            clearPlanPill={clearPlanPill}
           />
           {readmeOpen && (
             <MarkdownFilePanel

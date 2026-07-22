@@ -62,6 +62,7 @@ interface UseChatStateOptions {
    * disappearing (the backend doesn't emit an ask.resolved event).
    */
   clearAskUserPill?: (channelId: string) => void;
+  clearPlanPill?: (channelId: string) => void;
 }
 
 /**
@@ -78,7 +79,7 @@ export function useChatState(
   initialRunningBot?: boolean,
   options?: UseChatStateOptions,
 ): ChatState {
-  const { initialState, onUnmount, subscribeChatEvents, clearAskUserPill } = options ?? {};
+  const { initialState, onUnmount, subscribeChatEvents, clearAskUserPill, clearPlanPill } = options ?? {};
 
   const {
     items,
@@ -436,7 +437,10 @@ export function useChatState(
       setAskUserQuestions(null);
       if (channelId) clearAskUserPill?.(channelId);
     }, [channelId, clearAskUserPill]),
-    clearExitPlan: useCallback(() => setExitPlanRequest(null), []),
+    clearExitPlan: useCallback(() => {
+      setExitPlanRequest(null);
+      if (channelId) clearPlanPill?.(channelId);
+    }, [channelId, clearPlanPill]),
     mode,
     setMode,
     completionInfo,

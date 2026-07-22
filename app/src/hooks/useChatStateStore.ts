@@ -87,6 +87,7 @@ export function useChatStateStore({
   const gateChannelIdsRef = useRef(new Set<string>());
   const reviewChannelIdsRef = useRef(new Set<string>());
   const askUserChannelIdsRef = useRef(new Set<string>());
+  const planChannelIdsRef = useRef(new Set<string>());
   // Channels that currently have a Review panel mounted in some
   // workspace tree. The WS event handler and rehydrate path both consult
   // this so a fresh `review.status: ready` (or a reconnect-driven
@@ -103,6 +104,7 @@ export function useChatStateStore({
   const [, setGateTick] = useState(0);
   const [, setReviewTick] = useState(0);
   const [, setAskUserTick] = useState(0);
+  const [, setPlanTick] = useState(0);
 
   // Reconcile the sidebar's gate-indicator set against a channel's current
   // gateApprovals. Called after every gate/agent.status apply so the pill
@@ -299,6 +301,24 @@ export function useChatStateStore({
     }
   }, [refreshAskUserMembership]);
 
+  // Reconcile the sidebar's plan-indicator set against a channel's current
+  // exitPlanRequest. The agent parks the channel's drain on ExitPlanMode, so
+  // the pill stays lit until the user approves/denies the plan
+  // (clearPlanPill) or the backend clears the park (agent.plan_resolved
+  // clears exitPlanRequest).
+  const refreshPlanMembership = useCallback((channelId: string, state: ActiveChatState) => {
+    const set = planChannelIdsRef.current;
+    const has = set.has(channelId);
+    const shouldHave = state.exitPlanRequest != null;
+    if (shouldHave && !has) {
+      set.add(channelId);
+      setPlanTick((v) => v + 1);
+    } else if (!shouldHave && has) {
+      set.delete(channelId);
+      setPlanTick((v) => v + 1);
+    }
+  }, []);
+
   // Rehydrate the ExitPlanMode card for every channel currently parked on
   // a plan. Run from WS onOpen so a renderer reload / WS reconnect re-renders
   // the card — agent.exit_plan only fires on the original tool call, so
@@ -324,6 +344,7 @@ export function useChatStateStore({
         storeRef.current.set(p.channel_id, state);
       }
       state.exitPlanRequest = p.data;
+      refreshPlanMembership(p.channel_id, state);
       if (p.channel_id === selectedIdRef.current) {
         const event: WSEvent = {
           type: "agent.exit_plan",
@@ -344,7 +365,18 @@ export function useChatStateStore({
         state.exitPlanRequest = null;
       }
     }
-  }, []);
+    // Drop pill ids whose backend snapshot no longer has them (resolved
+    // out-of-band, e.g. approved from another renderer).
+    const pillSet = planChannelIdsRef.current;
+    const toDelete: string[] = [];
+    for (const id of pillSet) {
+      if (!valid.has(id)) toDelete.push(id);
+    }
+    if (toDelete.length) {
+      for (const id of toDelete) pillSet.delete(id);
+      setPlanTick((v) => v + 1);
+    }
+  }, [refreshPlanMembership]);
 
   // Pull the live (channel_id, status) snapshot of every review session
   // and reconcile reviewChannelIdsRef against it. Run from WS onOpen so
@@ -518,6 +550,14 @@ export function useChatStateStore({
           (wsEvent.type === "agent.ask_user" || wsEvent.type === "agent.ask_resolved")
         ) {
           refreshAskUserMembership(stateTarget, state);
+        }
+        // agent.exit_plan sets exitPlanRequest; agent.plan_resolved clears it.
+        // Mirror those onto the sidebar's plan-pill set.
+        if (
+          state &&
+          (wsEvent.type === "agent.exit_plan" || wsEvent.type === "agent.plan_resolved")
+        ) {
+          refreshPlanMembership(stateTarget, state);
         }
       }
 
@@ -780,6 +820,18 @@ export function useChatStateStore({
     if (state) state.askUserQuestions = null;
   }, []);
 
+  // Called from useChatState's local clearExitPlan (which fires when the
+  // user approves/denies the plan card) so the sidebar pill clears in
+  // lockstep with the card disappearing.
+  const clearPlanPill = useCallback((channelId: string) => {
+    const set = planChannelIdsRef.current;
+    if (set.delete(channelId)) {
+      setPlanTick((v) => v + 1);
+    }
+    const state = storeRef.current.get(channelId);
+    if (state) state.exitPlanRequest = null;
+  }, []);
+
   // Mark a channel as "currently being viewed in a Review panel".
   // Drops the pill immediately AND prevents the WS event handler /
   // rehydrate path from relighting it for the lifetime of the
@@ -797,7 +849,7 @@ export function useChatStateStore({
     };
   }, []);
 
-  return { getState, saveState, removeState, isRunningMapRef, unreadIdsRef, gateChannelIdsRef, reviewChannelIdsRef, askUserChannelIdsRef, unreadCount, markRead, markAllRead, registerReviewView, clearAskUserPill, subscribeChatEvents };
+  return { getState, saveState, removeState, isRunningMapRef, unreadIdsRef, gateChannelIdsRef, reviewChannelIdsRef, askUserChannelIdsRef, planChannelIdsRef, unreadCount, markRead, markAllRead, registerReviewView, clearAskUserPill, clearPlanPill, subscribeChatEvents };
 }
 
 // ── Helpers ──
