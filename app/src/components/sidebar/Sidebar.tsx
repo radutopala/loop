@@ -1,4 +1,5 @@
 import { useCallback, useRef, useState } from "react";
+import type { PillKind } from "./pills";
 import type { Channel, ImageBuildStatusData, ImageUpdateAvailableData, UpdateStatus } from "../../types";
 import { useTheme } from "../../ThemeContext";
 import { ContextMenu } from "../shared/ContextMenu";
@@ -79,12 +80,9 @@ interface SidebarProps {
   /** Channels with unread agent completions. */
   unreadIdsRef?: React.RefObject<Set<string>>;
   /** Channels with at least one pending gate approval (chat or terminal). */
-  gateChannelIdsRef?: React.RefObject<Set<string>>;
+  pillsRef?: React.RefObject<Map<PillKind, Set<string>>>;
   /** Channels with a loaded review session (status=ready). */
-  reviewChannelIdsRef?: React.RefObject<Set<string>>;
   /** Channels parked on an AskUserQuestion card. */
-  askUserChannelIdsRef?: React.RefObject<Set<string>>;
-  planChannelIdsRef?: React.RefObject<Set<string>>;
   unreadCount?: number;
   onMarkAllRead?: () => void;
   imageBuildStatus?: ImageBuildStatusData | null;
@@ -119,10 +117,7 @@ export function Sidebar({
   onInstallUpdate,
   isRunningMapRef,
   unreadIdsRef,
-  gateChannelIdsRef,
-  reviewChannelIdsRef,
-  askUserChannelIdsRef,
-  planChannelIdsRef,
+  pillsRef,
   unreadCount,
   onMarkAllRead,
   imageBuildStatus,
@@ -500,10 +495,7 @@ export function Sidebar({
           onToggleCheck={toggleSelected}
           isRunningMapRef={isRunningMapRef}
           unreadIdsRef={unreadIdsRef}
-          gateChannelIdsRef={gateChannelIdsRef}
-          reviewChannelIdsRef={reviewChannelIdsRef}
-          askUserChannelIdsRef={askUserChannelIdsRef}
-          planChannelIdsRef={planChannelIdsRef}
+          pillsRef={pillsRef}
         />
       </div>
 

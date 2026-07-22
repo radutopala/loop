@@ -1,4 +1,5 @@
 import type { Channel } from "../../types";
+import type { PillKind } from "./pills";
 import { ChannelItem } from "./ChannelItem";
 import type { ThreadReorder } from "./ThreadItem";
 
@@ -24,10 +25,7 @@ interface ChannelListProps {
   onToggleCheck: (id: string) => void;
   isRunningMapRef?: React.RefObject<Map<string, string>>;
   unreadIdsRef?: React.RefObject<Set<string>>;
-  gateChannelIdsRef?: React.RefObject<Set<string>>;
-  reviewChannelIdsRef?: React.RefObject<Set<string>>;
-  askUserChannelIdsRef?: React.RefObject<Set<string>>;
-  planChannelIdsRef?: React.RefObject<Set<string>>;
+  pillsRef?: React.RefObject<Map<PillKind, Set<string>>>;
 }
 
 export function ChannelList({
@@ -52,10 +50,7 @@ export function ChannelList({
   onToggleCheck,
   isRunningMapRef,
   unreadIdsRef,
-  gateChannelIdsRef,
-  reviewChannelIdsRef,
-  askUserChannelIdsRef,
-  planChannelIdsRef,
+  pillsRef,
 }: ChannelListProps) {
   return (
     <>
@@ -84,10 +79,7 @@ export function ChannelList({
           onToggleCheck={onToggleCheck}
           isRunningMapRef={isRunningMapRef}
           unreadIdsRef={unreadIdsRef}
-          gateChannelIdsRef={gateChannelIdsRef}
-          reviewChannelIdsRef={reviewChannelIdsRef}
-          askUserChannelIdsRef={askUserChannelIdsRef}
-          planChannelIdsRef={planChannelIdsRef}
+          pillsRef={pillsRef}
         />
       )}
       {topLevel.map((channel) => (
@@ -114,10 +106,7 @@ export function ChannelList({
           onToggleCheck={onToggleCheck}
           isRunningMapRef={isRunningMapRef}
           unreadIdsRef={unreadIdsRef}
-          gateChannelIdsRef={gateChannelIdsRef}
-          reviewChannelIdsRef={reviewChannelIdsRef}
-          askUserChannelIdsRef={askUserChannelIdsRef}
-          planChannelIdsRef={planChannelIdsRef}
+          pillsRef={pillsRef}
         />
       ))}
     </>
