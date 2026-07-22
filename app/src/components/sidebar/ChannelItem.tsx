@@ -1,4 +1,6 @@
 import { useState } from "react";
+import { SIDEBAR_PILLS } from "./pills";
+import type { PillKind } from "./pills";
 import type { Channel } from "../../types";
 import { fonts } from "../../theme";
 import { useTheme } from "../../ThemeContext";
@@ -31,10 +33,7 @@ interface ChannelItemProps {
   /** Real-time running status from app-level chat state store. */
   isRunningMapRef?: React.RefObject<Map<string, string>>;
   unreadIdsRef?: React.RefObject<Set<string>>;
-  gateChannelIdsRef?: React.RefObject<Set<string>>;
-  reviewChannelIdsRef?: React.RefObject<Set<string>>;
-  askUserChannelIdsRef?: React.RefObject<Set<string>>;
-  planChannelIdsRef?: React.RefObject<Set<string>>;
+  pillsRef?: React.RefObject<Map<PillKind, Set<string>>>;
 }
 
 export function ChannelItem({
@@ -60,10 +59,7 @@ export function ChannelItem({
   onToggleCheck,
   isRunningMapRef,
   unreadIdsRef,
-  gateChannelIdsRef,
-  reviewChannelIdsRef,
-  askUserChannelIdsRef,
-  planChannelIdsRef,
+  pillsRef,
 }: ChannelItemProps) {
   const { colors } = useTheme();
   const [creating, setCreating] = useState(false);
@@ -194,18 +190,9 @@ export function ChannelItem({
           >
             {channel.name || channel.dir_path?.split("/").pop() || channel.id}
           </span>
-          {gateChannelIdsRef?.current?.has(channel.id) && (
-            <StatusPill label="gate" color={colors.warning} title="Approval needed" />
-          )}
-          {reviewChannelIdsRef?.current?.has(channel.id) && (
-            <StatusPill label="rev" color={colors.active} title="Review session open" />
-          )}
-          {askUserChannelIdsRef?.current?.has(channel.id) && (
-            <StatusPill label="ask" color={colors.warning} title="Agent is asking a question" />
-          )}
-          {planChannelIdsRef?.current?.has(channel.id) && (
-            <StatusPill label="plan" color={colors.warning} title="Plan awaiting approval" />
-          )}
+          {SIDEBAR_PILLS.filter((p) => pillsRef?.current?.get(p.kind)?.has(channel.id)).map((p) => (
+            <StatusPill key={p.kind} label={p.label} color={colors[p.color]} title={p.title} />
+          ))}
           {(channel.container_running || channel.agent_running || isRunningMapRef?.current?.get(channel.id)) && (
             <span
               style={{
@@ -309,10 +296,7 @@ export function ChannelItem({
             onToggleCheck={onToggleCheck}
             isRunningMapRef={isRunningMapRef}
             unreadIdsRef={unreadIdsRef}
-            gateChannelIdsRef={gateChannelIdsRef}
-            reviewChannelIdsRef={reviewChannelIdsRef}
-            askUserChannelIdsRef={askUserChannelIdsRef}
-            planChannelIdsRef={planChannelIdsRef}
+            pillsRef={pillsRef}
           />
         ))}
     </div>

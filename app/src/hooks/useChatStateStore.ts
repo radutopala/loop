@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import type { PillKind } from "../components/sidebar/pills";
 import { listPendingAsks, listPendingPlans } from "../api/channels";
 import { listPendingApprovals } from "../api/gate";
 import { listReviewSessions } from "../api/review";
@@ -84,10 +85,11 @@ export function useChatStateStore({
   // populated by the test hook — empty in production.
   const syntheticGateReqIdsRef = useRef(new Set<string>());
   const unreadIdsRef = useRef(new Set<string>());
-  const gateChannelIdsRef = useRef(new Set<string>());
-  const reviewChannelIdsRef = useRef(new Set<string>());
-  const askUserChannelIdsRef = useRef(new Set<string>());
-  const planChannelIdsRef = useRef(new Set<string>());
+  // One sidebar-pill set per kind. A single map + tick replaces the four
+  // parallel ref/tick pairs the pills accreted one feature at a time —
+  // adding a pill kind is now a PillKind union member plus a config row
+  // in the sidebar, not a new ref threaded through four components.
+  const pillsRef = useRef(new Map<PillKind, Set<string>>());
   // Channels that currently have a Review panel mounted in some
   // workspace tree. The WS event handler and rehydrate path both consult
   // this so a fresh `review.status: ready` (or a reconnect-driven
@@ -101,43 +103,45 @@ export function useChatStateStore({
   // stale snapshot).
   const reviewRehydrateSeqRef = useRef(0);
   const [unreadCount, setUnreadCount] = useState(0);
-  const [, setGateTick] = useState(0);
-  const [, setReviewTick] = useState(0);
-  const [, setAskUserTick] = useState(0);
-  const [, setPlanTick] = useState(0);
+  const [, setPillTick] = useState(0);
+
+  // pillSet returns the (lazily created) channel-id set for a pill kind.
+  const pillSet = useCallback((kind: PillKind): Set<string> => {
+    let set = pillsRef.current.get(kind);
+    if (!set) {
+      set = new Set<string>();
+      pillsRef.current.set(kind, set);
+    }
+    return set;
+  }, []);
+
+  // setPillMembership adds/removes a channel from a pill set, bumping the
+  // render tick only on actual transitions.
+  const setPillMembership = useCallback((kind: PillKind, channelId: string, shouldHave: boolean) => {
+    const set = pillSet(kind);
+    if (shouldHave && !set.has(channelId)) {
+      set.add(channelId);
+      setPillTick((v) => v + 1);
+    } else if (!shouldHave && set.has(channelId)) {
+      set.delete(channelId);
+      setPillTick((v) => v + 1);
+    }
+  }, [pillSet]);
 
   // Reconcile the sidebar's gate-indicator set against a channel's current
   // gateApprovals. Called after every gate/agent.status apply so the pill
   // appears as soon as a request lands and disappears once all sources resolve.
   const refreshGateMembership = useCallback((channelId: string, state: ActiveChatState) => {
-    const set = gateChannelIdsRef.current;
-    const has = set.has(channelId);
-    const shouldHave = Object.keys(state.gateApprovals).length > 0;
-    if (shouldHave && !has) {
-      set.add(channelId);
-      setGateTick((v) => v + 1);
-    } else if (!shouldHave && has) {
-      set.delete(channelId);
-      setGateTick((v) => v + 1);
-    }
-  }, []);
+    setPillMembership("gate", channelId, Object.keys(state.gateApprovals).length > 0);
+  }, [setPillMembership]);
 
   // Reconcile the sidebar's ask-indicator set against a channel's current
   // askUserQuestions. The agent pauses the channel's drain on AskUserQuestion,
   // so the pill stays lit until the user answers/cancels (clearAskUserPill) or
   // the backend clears the park (agent.ask_resolved clears askUserQuestions).
   const refreshAskUserMembership = useCallback((channelId: string, state: ActiveChatState) => {
-    const set = askUserChannelIdsRef.current;
-    const has = set.has(channelId);
-    const shouldHave = state.askUserQuestions != null;
-    if (shouldHave && !has) {
-      set.add(channelId);
-      setAskUserTick((v) => v + 1);
-    } else if (!shouldHave && has) {
-      set.delete(channelId);
-      setAskUserTick((v) => v + 1);
-    }
-  }, []);
+    setPillMembership("ask", channelId, state.askUserQuestions != null);
+  }, [setPillMembership]);
 
   // Chat event listeners registered by panels (useChatState, useEditorState, …)
   // for the selected channel. A Set so multiple subscribers can coexist.
@@ -286,20 +290,13 @@ export function useChatStateStore({
     // Drop pill ids whose backend snapshot no longer has them (cancelled
     // out-of-band, e.g. answered from another renderer).
     const valid = new Set<string>(asks.map((a) => a.channel_id));
-    const setIds = askUserChannelIdsRef.current;
-    const toDelete: string[] = [];
-    for (const id of setIds) {
-      if (!valid.has(id)) toDelete.push(id);
+    for (const id of [...pillSet("ask")]) {
+      if (valid.has(id)) continue;
+      setPillMembership("ask", id, false);
+      const state = storeRef.current.get(id);
+      if (state) state.askUserQuestions = null;
     }
-    if (toDelete.length) {
-      for (const id of toDelete) {
-        setIds.delete(id);
-        const state = storeRef.current.get(id);
-        if (state) state.askUserQuestions = null;
-      }
-      setAskUserTick((v) => v + 1);
-    }
-  }, [refreshAskUserMembership]);
+  }, [refreshAskUserMembership, pillSet, setPillMembership]);
 
   // Reconcile the sidebar's plan-indicator set against a channel's current
   // exitPlanRequest. The agent parks the channel's drain on ExitPlanMode, so
@@ -307,17 +304,8 @@ export function useChatStateStore({
   // (clearPlanPill) or the backend clears the park (agent.plan_resolved
   // clears exitPlanRequest).
   const refreshPlanMembership = useCallback((channelId: string, state: ActiveChatState) => {
-    const set = planChannelIdsRef.current;
-    const has = set.has(channelId);
-    const shouldHave = state.exitPlanRequest != null;
-    if (shouldHave && !has) {
-      set.add(channelId);
-      setPlanTick((v) => v + 1);
-    } else if (!shouldHave && has) {
-      set.delete(channelId);
-      setPlanTick((v) => v + 1);
-    }
-  }, []);
+    setPillMembership("plan", channelId, state.exitPlanRequest != null);
+  }, [setPillMembership]);
 
   // Rehydrate the ExitPlanMode card for every channel currently parked on
   // a plan. Run from WS onOpen so a renderer reload / WS reconnect re-renders
@@ -367,16 +355,10 @@ export function useChatStateStore({
     }
     // Drop pill ids whose backend snapshot no longer has them (resolved
     // out-of-band, e.g. approved from another renderer).
-    const pillSet = planChannelIdsRef.current;
-    const toDelete: string[] = [];
-    for (const id of pillSet) {
-      if (!valid.has(id)) toDelete.push(id);
+    for (const id of [...pillSet("plan")]) {
+      if (!valid.has(id)) setPillMembership("plan", id, false);
     }
-    if (toDelete.length) {
-      for (const id of toDelete) pillSet.delete(id);
-      setPlanTick((v) => v + 1);
-    }
-  }, [refreshPlanMembership]);
+  }, [refreshPlanMembership, pillSet, setPillMembership]);
 
   // Pull the live (channel_id, status) snapshot of every review session
   // and reconcile reviewChannelIdsRef against it. Run from WS onOpen so
@@ -399,25 +381,16 @@ export function useChatStateStore({
     for (const s of sessions) {
       if (s.status === "ready") ready.add(s.channel_id);
     }
-    const set = reviewChannelIdsRef.current;
     const viewing = viewingReviewChannelsRef.current;
-    let changed = false;
     for (const id of ready) {
       // Don't relight the pill on a channel whose Review panel is
       // currently open — the user is already looking at it.
-      if (viewing.has(id)) continue;
-      if (!set.has(id)) { set.add(id); changed = true; }
+      if (!viewing.has(id)) setPillMembership("rev", id, true);
     }
-    const toDelete: string[] = [];
-    for (const id of set) {
-      if (!ready.has(id)) toDelete.push(id);
+    for (const id of [...pillSet("rev")]) {
+      if (!ready.has(id)) setPillMembership("rev", id, false);
     }
-    for (const id of toDelete) {
-      set.delete(id);
-      changed = true;
-    }
-    if (changed) setReviewTick((v) => v + 1);
-  }, []);
+  }, [pillSet, setPillMembership]);
 
   // Also rehydrate when the user returns to Loop. The WS-onOpen path covers
   // reconnects and renderer reloads, but if a `gate.approval_requested`
@@ -448,7 +421,7 @@ export function useChatStateStore({
   // long a phantom card can survive regardless of event delivery.
   useEffect(() => {
     const id = setInterval(() => {
-      if (gateChannelIdsRef.current.size > 0) rehydrateGateApprovals();
+      if (pillSet("gate").size > 0) rehydrateGateApprovals();
     }, 30_000);
     return () => clearInterval(id);
   }, [rehydrateGateApprovals]);
@@ -567,17 +540,11 @@ export function useChatStateStore({
       // the user is already looking at it.
       if (channelId && wsEvent.type === "review.status") {
         const data = wsEvent.data as { status: string };
-        const set = reviewChannelIdsRef.current;
-        const has = set.has(channelId);
-        const shouldHave =
-          data.status === "ready" && !viewingReviewChannelsRef.current.has(channelId);
-        if (shouldHave && !has) {
-          set.add(channelId);
-          setReviewTick((v) => v + 1);
-        } else if (!shouldHave && has) {
-          set.delete(channelId);
-          setReviewTick((v) => v + 1);
-        }
+        setPillMembership(
+          "rev",
+          channelId,
+          data.status === "ready" && !viewingReviewChannelsRef.current.has(channelId),
+        );
       }
 
       // Track isRunning in the map for subscription management.
@@ -812,25 +779,19 @@ export function useChatStateStore({
   // with the card disappearing — the backend doesn't emit an "ask resolved"
   // event, the resumed run's agent.status running event does it.
   const clearAskUserPill = useCallback((channelId: string) => {
-    const set = askUserChannelIdsRef.current;
-    if (set.delete(channelId)) {
-      setAskUserTick((v) => v + 1);
-    }
+    setPillMembership("ask", channelId, false);
     const state = storeRef.current.get(channelId);
     if (state) state.askUserQuestions = null;
-  }, []);
+  }, [setPillMembership]);
 
   // Called from useChatState's local clearExitPlan (which fires when the
   // user approves/denies the plan card) so the sidebar pill clears in
   // lockstep with the card disappearing.
   const clearPlanPill = useCallback((channelId: string) => {
-    const set = planChannelIdsRef.current;
-    if (set.delete(channelId)) {
-      setPlanTick((v) => v + 1);
-    }
+    setPillMembership("plan", channelId, false);
     const state = storeRef.current.get(channelId);
     if (state) state.exitPlanRequest = null;
-  }, []);
+  }, [setPillMembership]);
 
   // Mark a channel as "currently being viewed in a Review panel".
   // Drops the pill immediately AND prevents the WS event handler /
@@ -841,15 +802,13 @@ export function useChatStateStore({
   // reconnect, and the Review panel's effect can't observe that.
   const registerReviewView = useCallback((channelId: string) => {
     viewingReviewChannelsRef.current.add(channelId);
-    if (reviewChannelIdsRef.current.delete(channelId)) {
-      setReviewTick((v) => v + 1);
-    }
+    setPillMembership("rev", channelId, false);
     return () => {
       viewingReviewChannelsRef.current.delete(channelId);
     };
-  }, []);
+  }, [setPillMembership]);
 
-  return { getState, saveState, removeState, isRunningMapRef, unreadIdsRef, gateChannelIdsRef, reviewChannelIdsRef, askUserChannelIdsRef, planChannelIdsRef, unreadCount, markRead, markAllRead, registerReviewView, clearAskUserPill, clearPlanPill, subscribeChatEvents };
+  return { getState, saveState, removeState, isRunningMapRef, unreadIdsRef, pillsRef, unreadCount, markRead, markAllRead, registerReviewView, clearAskUserPill, clearPlanPill, subscribeChatEvents };
 }
 
 // ── Helpers ──
