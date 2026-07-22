@@ -32,9 +32,10 @@ interface ThreadItemProps {
   gateChannelIdsRef?: React.RefObject<Set<string>>;
   reviewChannelIdsRef?: React.RefObject<Set<string>>;
   askUserChannelIdsRef?: React.RefObject<Set<string>>;
+  planChannelIdsRef?: React.RefObject<Set<string>>;
 }
 
-export function ThreadItem({ thread, subThreads, threadsByParent, selected, selectedId, isLast, onSelect, onContextMenu, reorder, selectMode, checked, onToggleCheck, isRunningMapRef, unreadIdsRef, gateChannelIdsRef, reviewChannelIdsRef, askUserChannelIdsRef }: ThreadItemProps) {
+export function ThreadItem({ thread, subThreads, threadsByParent, selected, selectedId, isLast, onSelect, onContextMenu, reorder, selectMode, checked, onToggleCheck, isRunningMapRef, unreadIdsRef, gateChannelIdsRef, reviewChannelIdsRef, askUserChannelIdsRef, planChannelIdsRef }: ThreadItemProps) {
   const { colors } = useTheme();
   const [hovered, setHovered] = useState(false);
   const [collapsed, setCollapsed] = useState(false);
@@ -43,6 +44,7 @@ export function ThreadItem({ thread, subThreads, threadsByParent, selected, sele
   const hasGate = gateChannelIdsRef?.current?.has(thread.id) ?? false;
   const hasReview = reviewChannelIdsRef?.current?.has(thread.id) ?? false;
   const hasAsk = askUserChannelIdsRef?.current?.has(thread.id) ?? false;
+  const hasPlan = planChannelIdsRef?.current?.has(thread.id) ?? false;
   const isEphemeral = thread.name.startsWith("[ephemeral] ");
   const isTaskThread = /^(\[ephemeral] )?(🧵 |⏱ )?task #/.test(thread.name);
   const displayName = isTaskThread
@@ -207,6 +209,14 @@ export function ThreadItem({ thread, subThreads, threadsByParent, selected, sele
           marginLeft={(isUnread || hasGate || hasReview || thread.diff_additions > 0 || thread.diff_deletions > 0) ? 4 : "auto"}
         />
       )}
+      {hasPlan && (
+        <StatusPill
+          label="plan"
+          color={colors.warning}
+          title="Plan awaiting approval"
+          marginLeft={(isUnread || hasGate || hasReview || hasAsk || thread.diff_additions > 0 || thread.diff_deletions > 0) ? 4 : "auto"}
+        />
+      )}
       {(thread.container_running || thread.agent_running || isRunningMapRef?.current?.get(thread.id)) && (
         <span
           style={{
@@ -215,7 +225,7 @@ export function ThreadItem({ thread, subThreads, threadsByParent, selected, sele
             borderRadius: "50%",
             backgroundColor: colors.active,
             flexShrink: 0,
-            marginLeft: (isUnread || hasGate || hasReview || hasAsk || thread.diff_additions > 0 || thread.diff_deletions > 0) ? 4 : "auto",
+            marginLeft: (isUnread || hasGate || hasReview || hasAsk || hasPlan || thread.diff_additions > 0 || thread.diff_deletions > 0) ? 4 : "auto",
           }}
         />
       )}
@@ -241,6 +251,7 @@ export function ThreadItem({ thread, subThreads, threadsByParent, selected, sele
             gateChannelIdsRef={gateChannelIdsRef}
             reviewChannelIdsRef={reviewChannelIdsRef}
             askUserChannelIdsRef={askUserChannelIdsRef}
+            planChannelIdsRef={planChannelIdsRef}
           />
         ))}
     </div>

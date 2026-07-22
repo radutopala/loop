@@ -84,6 +84,7 @@ interface SidebarProps {
   reviewChannelIdsRef?: React.RefObject<Set<string>>;
   /** Channels parked on an AskUserQuestion card. */
   askUserChannelIdsRef?: React.RefObject<Set<string>>;
+  planChannelIdsRef?: React.RefObject<Set<string>>;
   unreadCount?: number;
   onMarkAllRead?: () => void;
   imageBuildStatus?: ImageBuildStatusData | null;
@@ -121,6 +122,7 @@ export function Sidebar({
   gateChannelIdsRef,
   reviewChannelIdsRef,
   askUserChannelIdsRef,
+  planChannelIdsRef,
   unreadCount,
   onMarkAllRead,
   imageBuildStatus,
@@ -501,6 +503,7 @@ export function Sidebar({
           gateChannelIdsRef={gateChannelIdsRef}
           reviewChannelIdsRef={reviewChannelIdsRef}
           askUserChannelIdsRef={askUserChannelIdsRef}
+          planChannelIdsRef={planChannelIdsRef}
         />
       </div>
 

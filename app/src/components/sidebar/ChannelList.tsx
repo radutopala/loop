@@ -27,6 +27,7 @@ interface ChannelListProps {
   gateChannelIdsRef?: React.RefObject<Set<string>>;
   reviewChannelIdsRef?: React.RefObject<Set<string>>;
   askUserChannelIdsRef?: React.RefObject<Set<string>>;
+  planChannelIdsRef?: React.RefObject<Set<string>>;
 }
 
 export function ChannelList({
@@ -54,6 +55,7 @@ export function ChannelList({
   gateChannelIdsRef,
   reviewChannelIdsRef,
   askUserChannelIdsRef,
+  planChannelIdsRef,
 }: ChannelListProps) {
   return (
     <>
@@ -85,6 +87,7 @@ export function ChannelList({
           gateChannelIdsRef={gateChannelIdsRef}
           reviewChannelIdsRef={reviewChannelIdsRef}
           askUserChannelIdsRef={askUserChannelIdsRef}
+          planChannelIdsRef={planChannelIdsRef}
         />
       )}
       {topLevel.map((channel) => (
@@ -114,6 +117,7 @@ export function ChannelList({
           gateChannelIdsRef={gateChannelIdsRef}
           reviewChannelIdsRef={reviewChannelIdsRef}
           askUserChannelIdsRef={askUserChannelIdsRef}
+          planChannelIdsRef={planChannelIdsRef}
         />
       ))}
     </>

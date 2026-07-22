@@ -220,6 +220,7 @@ interface WorkspaceLayoutProps {
    * the card disappearing (the backend doesn't emit an ask.resolved event).
    */
   clearAskUserPill?: (channelId: string) => void;
+  clearPlanPill?: (channelId: string) => void;
 }
 
 export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutProps>(function WorkspaceLayout({
@@ -246,6 +247,7 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
   subscribeChatEvents,
   registerReviewView,
   clearAskUserPill,
+  clearPlanPill,
 }, ref) {
   const { colors } = useTheme();
   const { agents: agentInfoMap } = useAgentRegistry(channelId);
@@ -299,6 +301,7 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
     onUnmount: chatStateUnmount,
     subscribeChatEvents,
     clearAskUserPill,
+    clearPlanPill,
   });
 
   // Editor + file-tree shared state. Hoisted here so both panels (rendered
