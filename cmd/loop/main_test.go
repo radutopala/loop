@@ -77,6 +77,16 @@ func (m *mockDockerClient) ContainerRemove(ctx context.Context, containerID stri
 	return m.Called(ctx, containerID).Error(0)
 }
 
+// ContainerStats makes the mock satisfy api.ContainerStatsFetcher so serve's
+// SetContainerStatsFetcher wiring branch is exercised.
+func (m *mockDockerClient) ContainerStats(ctx context.Context, containerID string) (*container.ContainerStatsSummary, error) {
+	args := m.Called(ctx, containerID)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*container.ContainerStatsSummary), args.Error(1)
+}
+
 func (m *mockDockerClient) ContainerStop(ctx context.Context, containerID string) error {
 	return m.Called(ctx, containerID).Error(0)
 }

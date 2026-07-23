@@ -203,6 +203,12 @@ New migrations increment `CURRENT_VERSION` and add an entry to the `migrations` 
 
 ---
 
+## Container Stats Readout
+
+The chat panel header and every Docker Agent pane header (split and canvas layouts alike) show a compact live resource readout on their right side — `12% · 384M` — for the container backing the panel: the chat panel reads the channel's **agent** container, Docker Agent panes read the shared **shell** container all three open modes exec into. One `useContainerStats` poll per workspace hits [`GET /api/channels/{id}/container-stats`](api.md#get-apichannelsidcontainer-stats) every ~3s (paused while the window is hidden); hovering the readout shows the container id and exact CPU/memory-of-limit numbers. Nothing renders when no container is running.
+
+---
+
 ## Drag-to-Split
 
 Panels can be rearranged by dragging their headers.

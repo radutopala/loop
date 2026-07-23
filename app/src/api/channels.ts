@@ -411,3 +411,19 @@ export async function updateAgentConfig(channelId: string, model: string, effort
     throw new Error(body || `Failed to update agent config: ${res.statusText}`);
   }
 }
+
+/** One running container's live resource usage (GET …/container-stats). */
+export interface ContainerStatsEntry {
+  container_id: string;
+  type: string; // "agent" | "shell" | …
+  cpu_percent: number;
+  mem_usage: number;
+  mem_limit: number;
+}
+
+/** Fetches CPU/memory usage for the channel's running containers. */
+export async function fetchContainerStats(channelId: string): Promise<ContainerStatsEntry[]> {
+  const res = await fetch(`${getApiUrl()}/api/channels/${encodeURIComponent(channelId)}/container-stats`);
+  if (!res.ok) throw new Error(`Failed to fetch container stats: ${res.statusText}`);
+  return res.json();
+}

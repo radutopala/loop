@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { AgentInfo } from "../hooks/useAgentRegistry";
+import { type ContainerStatsByType, fmtBytes } from "../hooks/useContainerStats";
 import { useTheme } from "../ThemeContext";
+import { fonts } from "../theme";
 import { type LeafNode, PANEL_LABELS, PANEL_OPTIONS, type PanelType } from "../types/panels";
 import type { CanvasTile as CanvasTileType } from "./types";
 
@@ -12,6 +14,7 @@ interface CanvasTileProps {
   tile: CanvasTileType;
   renderLeaf: (leaf: LeafNode) => React.ReactNode;
   agentInfo?: AgentInfo;
+  containerStats?: ContainerStatsByType;
   /** Report movement delta (in world coordinates). */
   onMove: (id: string, dx: number, dy: number) => void;
   onResize: (id: string, width: number, height: number) => void;
@@ -33,6 +36,7 @@ export function CanvasTile({
   tile,
   renderLeaf,
   agentInfo,
+  containerStats,
   onMove,
   onResize,
   onBringToFront,
@@ -62,6 +66,9 @@ export function CanvasTile({
 
   const isAgent = tile.panel === "docker-agent";
   const label = isAgent ? agentInfo?.name || tile.id : PANEL_LABELS[tile.panel];
+  // Chat runs in the channel's agent container; docker-agent tiles exec
+  // into the shared shell container (same mapping as PaneLeafHeader).
+  const statsEntry = tile.panel === "chat" ? containerStats?.agent : isAgent ? containerStats?.shell : undefined;
 
   // --- Drag (reports deltas in world coords) ---
   const handleDragStart = useCallback(
@@ -306,7 +313,23 @@ export function CanvasTile({
           ×
         </button>
         <div style={{ flex: 1 }} />
-        <div id={`pane-header-slot-${tile.id}`} style={{ display: "flex", alignItems: "center", gap: 4, flexShrink: 0 }} />
+        {statsEntry && (
+          <span
+            title={`Container ${statsEntry.container_id.slice(0, 12)} — CPU ${statsEntry.cpu_percent.toFixed(1)}%, memory ${fmtBytes(statsEntry.mem_usage)} of ${fmtBytes(statsEntry.mem_limit)}`}
+            style={{ fontSize: 9, fontFamily: fonts.mono, color: colors.textDim, flexShrink: 0, marginRight: 2, whiteSpace: "nowrap" }}
+          >
+            {Math.round(statsEntry.cpu_percent)}% · {fmtBytes(statsEntry.mem_usage)}
+          </span>
+        )}
+        <div
+          id={`pane-header-slot-${tile.id}`}
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 4,
+            flexShrink: 0,
+          }}
+        />
       </div>
 
       {/* Content */}

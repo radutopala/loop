@@ -420,6 +420,36 @@ Set the channel's model/effort overrides. Empty strings clear an override (inher
 
 ---
 
+### `GET /api/channels/{id}/container-stats`
+
+Live CPU/memory usage for the channel's running containers, digested from the Docker stats endpoint with the docker-cli formulas (CPU% from cpu/system deltas × online CPUs; memory usage minus reclaimable page cache). The desktop app polls this every ~3s to render the readout in the chat and docker-agent pane headers.
+
+**Response (200):**
+```json
+[
+  {
+    "container_id": "0a1b2c…",
+    "type": "agent",
+    "cpu_percent": 12.5,
+    "mem_usage": 402653184,
+    "mem_limit": 4294967296
+  }
+]
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `type` | string | Registry container type: `agent` (chat runs), `shell` (terminal panes), `chrome`, … |
+| `cpu_percent` | number | Percent of one CPU; can exceed 100 on multi-core containers |
+| `mem_usage` / `mem_limit` | number | Bytes; usage excludes reclaimable page cache |
+
+**Behavior notes:**
+- Containers whose stats fetch fails (teardown race) are silently skipped.
+- Returns `[]` when the channel has no running containers or the daemon lacks a stats source — never an error.
+- The non-streaming Docker stats call takes ~1s server-side (the daemon primes the CPU delta), so responses are not instant.
+
+---
+
 ### `GET /api/channels/{id}/audit`
 
 List the agent-gate audit files accumulated for a channel. The files are rotating JSONL (`agentgate-YYYY-MM-DD.jsonl`) written by `FileAuditor` inside the container and kept on the host under `{policyDir}/<channel>/audit/`. See [Security Gate: Known gaps](gates.md#known-gaps) for the record schema and the `verbose` flag.

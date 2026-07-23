@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import type { AgentInfo } from "../hooks/useAgentRegistry";
+import { type ContainerStatsByType, fmtBytes } from "../hooks/useContainerStats";
 import { useTheme } from "../ThemeContext";
 import type { ColorPalette } from "../theme";
+import { fonts } from "../theme";
 import { AGENT_OPEN_MODE_OPTIONS, type AgentOpenMode, EXCLUSIVE_PANELS, PANEL_LABELS, PANEL_OPTIONS, type PanelType, SINGLETON_PANELS } from "../types/panels";
 import { DRAG_MIME, emitLayoutDragEnd, emitLayoutDragStart } from "./DropZoneOverlay";
 import type { DropPosition, SplitDirection } from "./types";
@@ -46,6 +48,10 @@ interface PaneLeafHeaderProps {
   isMinimized?: boolean;
   hiddenPanels?: PanelType[];
   agentInfo?: AgentInfo;
+  /** Live docker stats for the channel's containers; the header picks the
+   *  one backing this panel (chat → agent container, docker-agent panes →
+   *  the shared shell container). */
+  containerStats?: ContainerStatsByType;
   onRemove: () => void;
   onDrop: (dragId: string, dropId: string, position: DropPosition) => void;
   onSplitLeaf: (leafId: string, panel: PanelType, direction: SplitDirection, meta?: { openMode?: AgentOpenMode }) => void;
@@ -61,6 +67,7 @@ export function PaneLeafHeader({
   isMinimized,
   hiddenPanels,
   agentInfo,
+  containerStats,
   onRemove,
   onDrop,
   onSplitLeaf,
@@ -70,6 +77,9 @@ export function PaneLeafHeader({
   const { colors } = useTheme();
   const isAgent = panel === "docker-agent";
   const label = isAgent ? agentInfo?.name || leafId : PANEL_LABELS[panel];
+  // Chat runs in the channel's agent container; every docker-agent pane
+  // (resume / fork / fresh) execs into the shared shell container.
+  const statsEntry = panel === "chat" ? containerStats?.agent : isAgent ? containerStats?.shell : undefined;
 
   const btnStyle = buildBtnStyle(colors);
 
@@ -192,6 +202,14 @@ export function PaneLeafHeader({
         </svg>
       </button>
       <div style={{ flex: 1 }} />
+      {statsEntry && (
+        <span
+          title={`Container ${statsEntry.container_id.slice(0, 12)} — CPU ${statsEntry.cpu_percent.toFixed(1)}%, memory ${fmtBytes(statsEntry.mem_usage)} of ${fmtBytes(statsEntry.mem_limit)}`}
+          style={{ fontSize: 9, fontFamily: fonts.mono, color: colors.textDim, flexShrink: 0, marginRight: 2, whiteSpace: "nowrap" }}
+        >
+          {Math.round(statsEntry.cpu_percent)}% · {fmtBytes(statsEntry.mem_usage)}
+        </span>
+      )}
       <div id={`pane-header-slot-${leafId}`} style={{ display: "flex", alignItems: "center", gap: 4, flexShrink: 0 }} />
     </div>
   );

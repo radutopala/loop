@@ -4,8 +4,10 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -811,4 +813,61 @@ func (s *ClientSuite) TestDefaultDockerBuildFileLabelsCmd() {
 	cancel()
 	_, _ = s.client.defaultDockerBuildFileLabelsCmd(ctx, "/nonexistent", "Dockerfile", "test:latest",
 		map[string]string{"b": "2", "a": "1"})
+}
+
+func (m *mockDockerAPI) ContainerStats(ctx context.Context, containerID string, stream bool) (containertypes.StatsResponseReader, error) {
+	args := m.Called(ctx, containerID, stream)
+	return args.Get(0).(containertypes.StatsResponseReader), args.Error(1)
+}
+
+func statsBody(js string) containertypes.StatsResponseReader {
+	return containertypes.StatsResponseReader{Body: io.NopCloser(strings.NewReader(js))}
+}
+
+func (s *ClientSuite) TestContainerStats() {
+	// cgroup v2 shape: online_cpus set, inactive_file subtracted.
+	js := `{
+		"cpu_stats":{"cpu_usage":{"total_usage":400},"system_cpu_usage":2000,"online_cpus":2},
+		"precpu_stats":{"cpu_usage":{"total_usage":200},"system_cpu_usage":1000},
+		"memory_stats":{"usage":1000,"limit":4096,"stats":{"inactive_file":200}}
+	}`
+	s.api.On("ContainerStats", mock.Anything, "ctr-1", false).Return(statsBody(js), nil).Once()
+
+	st, err := s.client.ContainerStats(context.Background(), "ctr-1")
+	require.NoError(s.T(), err)
+	require.InDelta(s.T(), 40.0, st.CPUPercent, 0.01) // 200/1000 * 2 cpus * 100
+	require.Equal(s.T(), uint64(800), st.MemUsage)    // 1000 - 200 inactive_file
+	require.Equal(s.T(), uint64(4096), st.MemLimit)
+}
+
+func (s *ClientSuite) TestContainerStatsCgroupV1AndFallbacks() {
+	// No online_cpus → percpu length; total_inactive_file subtracted.
+	js := `{
+		"cpu_stats":{"cpu_usage":{"total_usage":300,"percpu_usage":[1,2,3,4]},"system_cpu_usage":2000},
+		"precpu_stats":{"cpu_usage":{"total_usage":100},"system_cpu_usage":1000},
+		"memory_stats":{"usage":1000,"limit":2048,"stats":{"total_inactive_file":100}}
+	}`
+	s.api.On("ContainerStats", mock.Anything, "ctr-1", false).Return(statsBody(js), nil).Once()
+	st, err := s.client.ContainerStats(context.Background(), "ctr-1")
+	require.NoError(s.T(), err)
+	require.InDelta(s.T(), 80.0, st.CPUPercent, 0.01) // 200/1000 * 4 * 100
+	require.Equal(s.T(), uint64(900), st.MemUsage)
+
+	// Zero deltas and no reclaimable-cache key: cpu 0, mem untouched.
+	js2 := `{"memory_stats":{"usage":500,"limit":1024,"stats":{"inactive_file":9999}}}`
+	s.api.On("ContainerStats", mock.Anything, "ctr-2", false).Return(statsBody(js2), nil).Once()
+	st2, err := s.client.ContainerStats(context.Background(), "ctr-2")
+	require.NoError(s.T(), err)
+	require.Zero(s.T(), st2.CPUPercent)
+	require.Equal(s.T(), uint64(500), st2.MemUsage, "inactive_file larger than usage is ignored")
+}
+
+func (s *ClientSuite) TestContainerStatsErrors() {
+	s.api.On("ContainerStats", mock.Anything, "ctr-1", false).Return(containertypes.StatsResponseReader{}, fmt.Errorf("boom")).Once()
+	_, err := s.client.ContainerStats(context.Background(), "ctr-1")
+	require.Error(s.T(), err)
+
+	s.api.On("ContainerStats", mock.Anything, "ctr-1", false).Return(statsBody("not json"), nil).Once()
+	_, err = s.client.ContainerStats(context.Background(), "ctr-1")
+	require.ErrorContains(s.T(), err, "decoding container stats")
 }

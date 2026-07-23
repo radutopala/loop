@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { AgentInfo } from "../hooks/useAgentRegistry";
+import type { ContainerStatsByType } from "../hooks/useContainerStats";
 import { EmptyLayoutPicker } from "../splitPane/AddPanelButton";
 import { useTheme } from "../ThemeContext";
 import { type AgentOpenMode, EXCLUSIVE_PANELS, type LeafNode, PANEL_OPTIONS, type PanelType, SINGLETON_PANELS } from "../types/panels";
@@ -14,12 +15,13 @@ interface CanvasLayoutProps {
   canvas: CanvasNode;
   renderLeaf: (leaf: LeafNode) => React.ReactNode;
   agentInfoMap?: Map<string, AgentInfo>;
+  containerStats?: ContainerStatsByType;
   onCanvasChange: (canvas: CanvasNode) => void;
   hiddenPanels?: PanelType[];
 }
 
 /** Free-form canvas layout with draggable/resizable tiles, pan & zoom. */
-export function CanvasLayout({ canvas, renderLeaf, agentInfoMap, onCanvasChange, hiddenPanels }: CanvasLayoutProps) {
+export function CanvasLayout({ canvas, renderLeaf, agentInfoMap, containerStats, onCanvasChange, hiddenPanels }: CanvasLayoutProps) {
   const { colors } = useTheme();
   const [showAddMenu, setShowAddMenu] = useState<{ x: number; y: number } | null>(null);
   const [maximizedId, setMaximizedId] = useState<string | null>(null);
@@ -317,6 +319,7 @@ export function CanvasLayout({ canvas, renderLeaf, agentInfoMap, onCanvasChange,
               tile={tile}
               renderLeaf={renderLeaf}
               agentInfo={tile.panel === "docker-agent" ? agentInfoMap?.get(tile.id) : undefined}
+              containerStats={containerStats}
               onMove={handleMoveTile}
               onResize={handleResizeTile}
               onBringToFront={handleBringToFront}
