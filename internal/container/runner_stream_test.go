@@ -324,6 +324,56 @@ func TestScanStreamJSONOnActivity(t *testing.T) {
 		require.Equal(t, []string{"thinking:200", "thinking:450"}, activities)
 	})
 
+	t.Run("tool_progress heartbeats emit an activity; malformed lines are skipped", func(t *testing.T) {
+		input := `{"type":"tool_progress","tool_use_id":"t1-heartbeat-2","tool_name":"Bash","elapsed_time_seconds":90,"heartbeat":true}
+{"type":"tool_progress","tool_name":""}
+{"type":"tool_progress","elapsed_time_seconds":"bad"}
+{"type":"result","result":"OK","session_id":"s1","is_error":false}
+`
+		var activities []string
+		cb := streamCallbacks{
+			onActivity: func(activity, detail string) {
+				activities = append(activities, activity+":"+detail)
+			},
+		}
+		_, err := scanStreamJSON(strings.NewReader(input), cb)
+		require.NoError(t, err)
+		require.Equal(t, []string{"tool_progress:Bash — running 90s"}, activities)
+	})
+
+	t.Run("task_notification summaries emit an activity; empty summaries are skipped", func(t *testing.T) {
+		input := `{"type":"system","subtype":"task_notification","status":"completed","summary":"tests green"}
+{"type":"system","subtype":"task_notification","status":"completed"}
+{"type":"result","result":"OK","session_id":"s1","is_error":false}
+`
+		var activities []string
+		cb := streamCallbacks{
+			onActivity: func(activity, detail string) {
+				activities = append(activities, activity+":"+detail)
+			},
+		}
+		_, err := scanStreamJSON(strings.NewReader(input), cb)
+		require.NoError(t, err)
+		require.Equal(t, []string{"task_notification:tests green"}, activities)
+	})
+
+	t.Run("api_retry emits an activity with attempt and backoff", func(t *testing.T) {
+		input := `{"type":"system","subtype":"api_retry","attempt":3,"max_retries":10,"retry_delay_ms":2133,"error_status":529,"error":"overloaded"}
+{"type":"system","subtype":"api_retry"}
+{"type":"result","result":"OK","session_id":"s1","is_error":false}
+`
+		var activities []string
+		cb := streamCallbacks{
+			onActivity: func(activity, detail string) {
+				activities = append(activities, activity+":"+detail)
+			},
+		}
+		_, err := scanStreamJSON(strings.NewReader(input), cb)
+		require.NoError(t, err)
+		require.Equal(t, []string{"api_retry:overloaded (529) — retry 3/10 in 2.1s"}, activities,
+			"malformed retry line (attempt 0) is skipped")
+	})
+
 	t.Run("result metadata parsed", func(t *testing.T) {
 		input := `{"type":"assistant","message":{"model":"claude-opus-4-6","content":[{"type":"text","text":"Done"}]}}
 {"type":"result","result":"OK","session_id":"s1","is_error":false,"duration_ms":5000,"num_turns":3,"stop_reason":"end_turn"}
