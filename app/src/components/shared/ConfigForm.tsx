@@ -42,6 +42,9 @@ export interface ConfigFormProps {
   onDirtyChange?: (dirty: boolean) => void;
   visibleSection?: string;
   jsonOnly?: boolean;
+  /** Parent-layer config content (global) shown as the effective value for
+   *  fields the project file leaves unset. Display-only fallback. */
+  inheritedConfig?: ConfigData | null;
 }
 
 /** Extract ordered section names from a schema. */
@@ -265,7 +268,7 @@ export interface ConfigFormHandle {
 }
 
 export const ConfigForm = forwardRef<ConfigFormHandle, ConfigFormProps>(function ConfigForm(
-  { schema, config, onSave, isGlobal, title, colors, onDirtyChange, visibleSection, jsonOnly }: ConfigFormProps,
+  { schema, config, onSave, isGlobal, title, colors, onDirtyChange, visibleSection, jsonOnly, inheritedConfig }: ConfigFormProps,
   ref,
 ) {
   const [viewMode, setViewMode] = useState<"form" | "json">(jsonOnly ? "json" : "form");
@@ -459,7 +462,15 @@ export const ConfigForm = forwardRef<ConfigFormHandle, ConfigFormProps>(function
               {!visibleSection && <div style={{ fontSize: 10, fontWeight: 700, color: colors.textDim, textTransform: "uppercase", letterSpacing: 0.8, marginBottom: 6 }}>{sec.name}</div>}
               <div style={{ backgroundColor: colors.bg, borderRadius: 8, padding: "4px 0" }}>
                 {sec.fields.map((f) => (
-                  <FieldRenderer key={f.key} field={f} value={getNestedValue(formData, f.key)} onChange={(v) => handleFormChange(f.key, v)} colors={colors} inputStyle={inputStyle} />
+                  <FieldRenderer
+                    key={f.key}
+                    field={f}
+                    value={getNestedValue(formData, f.key)}
+                    inheritedValue={inheritedConfig ? getNestedValue(inheritedConfig, f.key) : undefined}
+                    onChange={(v) => handleFormChange(f.key, v)}
+                    colors={colors}
+                    inputStyle={inputStyle}
+                  />
                 ))}
               </div>
             </div>
@@ -545,12 +556,14 @@ function JSONView({
 function FieldRenderer({
   field,
   value,
+  inheritedValue,
   onChange,
   colors,
   inputStyle,
 }: {
   field: FieldDef;
   value: ConfigData | FieldValue | ConfigData[] | undefined;
+  inheritedValue?: ConfigData | FieldValue | ConfigData[];
   onChange: (v: ConfigData | FieldValue | ConfigData[] | undefined) => void;
   colors: ColorPalette;
   inputStyle: React.CSSProperties;
@@ -577,8 +590,10 @@ function FieldRenderer({
       return <PasswordFieldRow field={field} value={(value ?? "") as string} onChange={onStr} colors={colors} inputStyle={inputStyle} />;
     case "number":
       return <NumberFieldRow field={field} value={value as number | undefined} onChange={onNum} colors={colors} inputStyle={inputStyle} />;
+    // Unset project toggles display the effective (inherited global) value,
+    // not the schema default — toggling then writes an explicit override.
     case "toggle":
-      return <ToggleFieldRow field={field} value={!!(value ?? field.defaultValue)} onChange={onBool} colors={colors} />;
+      return <ToggleFieldRow field={field} value={!!(value ?? inheritedValue ?? field.defaultValue)} onChange={onBool} colors={colors} />;
     case "dropdown":
       return <DropdownFieldRow field={field} value={(value ?? "") as string} onChange={onStr} colors={colors} inputStyle={inputStyle} />;
     case "array":
