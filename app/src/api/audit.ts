@@ -11,11 +11,7 @@ export interface AuditFilesResponse {
   total: number;
 }
 
-export async function fetchAuditFiles(
-  channelId: string,
-  offset: number,
-  limit: number,
-): Promise<AuditFilesResponse> {
+export async function fetchAuditFiles(channelId: string, offset: number, limit: number): Promise<AuditFilesResponse> {
   const url = `${getApiUrl()}/api/channels/${channelId}/audit?offset=${offset}&limit=${limit}`;
   const res = await fetch(url);
   if (!res.ok) throw new Error(`Failed to fetch audit files: ${res.statusText}`);

@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { DiffFile, DiffFileStatus } from "../../api/loopApi";
 import { fetchFileContent } from "../../api/loopApi";
-import { fonts } from "../../theme";
-import type { ColorPalette } from "../../theme";
 import { useTheme } from "../../ThemeContext";
+import type { ColorPalette } from "../../theme";
+import { fonts } from "../../theme";
 
 // ── Types ──
 
@@ -37,15 +37,13 @@ export function fileKey(file: { path: string; status?: DiffFileStatus }): string
 }
 
 export interface ExpandableGap {
-  startLine: number;   // 1-based new-file line where gap starts
-  endLine: number;     // 1-based new-file line where gap ends (inclusive)
-  oldStart: number;    // corresponding old-file line number
+  startLine: number; // 1-based new-file line where gap starts
+  endLine: number; // 1-based new-file line where gap ends (inclusive)
+  oldStart: number; // corresponding old-file line number
   totalLines: number;
 }
 
-export type DiffSegment =
-  | { kind: "hunk"; hunk: ParsedHunk; hunkIndex: number }
-  | { kind: "gap"; gap: ExpandableGap; position: "top" | "middle" | "bottom" };
+export type DiffSegment = { kind: "hunk"; hunk: ParsedHunk; hunkIndex: number } | { kind: "gap"; gap: ExpandableGap; position: "top" | "middle" | "bottom" };
 
 // ── Helper functions ──
 
@@ -77,7 +75,8 @@ export function formatRenamePath(oldPath: string, newPath: string): string {
 
 /** Return the first and last new-file line number in a hunk. */
 function hunkNewRange(hunk: ParsedHunk): { first: number; last: number } {
-  let first = Infinity, last = 0;
+  let first = Infinity,
+    last = 0;
   for (const line of hunk.lines) {
     if (line.newNum !== null) {
       if (line.newNum < first) first = line.newNum;
@@ -89,7 +88,8 @@ function hunkNewRange(hunk: ParsedHunk): { first: number; last: number } {
 
 /** Return the first and last old-file line number in a hunk. */
 function hunkOldRange(hunk: ParsedHunk): { first: number; last: number } {
-  let first = Infinity, last = 0;
+  let first = Infinity,
+    last = 0;
   for (const line of hunk.lines) {
     if (line.oldNum !== null) {
       if (line.oldNum < first) first = line.oldNum;
@@ -235,10 +235,14 @@ function buildLineColors(colors: ColorPalette) {
 
 function statusBadgeColor(status: DiffFileStatus, colors: ColorPalette): string {
   switch (status) {
-    case "staged":   return colors.active;
-    case "unstaged": return colors.warning;
-    case "untracked": return colors.textDim;
-    case "conflict": return colors.dangerText;
+    case "staged":
+      return colors.active;
+    case "unstaged":
+      return colors.warning;
+    case "untracked":
+      return colors.textDim;
+    case "conflict":
+      return colors.dangerText;
   }
 }
 
@@ -268,19 +272,7 @@ interface DiffViewerProps {
   onFileContextMenu: (e: React.MouseEvent, path: string) => void;
 }
 
-export function DiffViewer({
-  channelId,
-  files,
-  parsedFiles,
-  expandedFiles,
-  loading,
-  hasData,
-  totalFiles,
-  onToggleFile,
-  onExpandAll,
-  onCollapseAll,
-  onFileContextMenu,
-}: DiffViewerProps) {
+export function DiffViewer({ channelId, files, parsedFiles, expandedFiles, loading, hasData, totalFiles, onToggleFile, onExpandAll, onCollapseAll, onFileContextMenu }: DiffViewerProps) {
   const { colors } = useTheme();
   const fileContentCache = useRef<Map<string, string[]>>(new Map());
   const [expandedGaps, setExpandedGaps] = useState<Map<string, Map<string, { fromTop: number; fromBottom: number }>>>(new Map());
@@ -301,18 +293,23 @@ export function DiffViewer({
     setFocusedFileIndex(fileIndex);
   }, []);
 
-  const navigateToFile = useCallback((index: number) => {
-    if (index < 0 || index >= files.length) return;
-    isNavigatingRef.current = true;
-    setFocusedFileIndex(index);
-    const file = files[index]!;
-    const key = fileKey(file);
-    if (!expandedFiles.has(key)) onToggleFile(key);
-    requestAnimationFrame(() => {
-      fileRefs.current.get(index)?.scrollIntoView({ behavior: "smooth", block: "start" });
-      setTimeout(() => { isNavigatingRef.current = false; }, 500);
-    });
-  }, [files, expandedFiles, onToggleFile]);
+  const navigateToFile = useCallback(
+    (index: number) => {
+      if (index < 0 || index >= files.length) return;
+      isNavigatingRef.current = true;
+      setFocusedFileIndex(index);
+      const file = files[index]!;
+      const key = fileKey(file);
+      if (!expandedFiles.has(key)) onToggleFile(key);
+      requestAnimationFrame(() => {
+        fileRefs.current.get(index)?.scrollIntoView({ behavior: "smooth", block: "start" });
+        setTimeout(() => {
+          isNavigatingRef.current = false;
+        }, 500);
+      });
+    },
+    [files, expandedFiles, onToggleFile],
+  );
 
   const builtLineColors = buildLineColors(colors);
   const lineColors = {
@@ -322,40 +319,46 @@ export function DiffViewer({
   };
 
   // --- Expand context handlers ---
-  const ensureFileContent = useCallback(async (filePath: string): Promise<string[] | null> => {
-    const cached = fileContentCache.current.get(filePath);
-    if (cached) return cached;
-    if (!channelId) return null;
-    try {
-      const { content, binary } = await fetchFileContent(channelId, filePath);
-      if (binary) return null;
-      const lines = content.split("\n");
-      fileContentCache.current.set(filePath, lines);
-      return lines;
-    } catch {
-      return null;
-    }
-  }, [channelId]);
+  const ensureFileContent = useCallback(
+    async (filePath: string): Promise<string[] | null> => {
+      const cached = fileContentCache.current.get(filePath);
+      if (cached) return cached;
+      if (!channelId) return null;
+      try {
+        const { content, binary } = await fetchFileContent(channelId, filePath);
+        if (binary) return null;
+        const lines = content.split("\n");
+        fileContentCache.current.set(filePath, lines);
+        return lines;
+      } catch {
+        return null;
+      }
+    },
+    [channelId],
+  );
 
   const gapKey = (gap: ExpandableGap) => `${gap.startLine}-${gap.endLine}`;
 
-  const handleExpand = useCallback(async (filePath: string, gap: ExpandableGap, direction: "up" | "down" | "all") => {
-    await ensureFileContent(filePath);
-    setExpandedGaps((prev) => {
-      const fileGaps = new Map(prev.get(filePath) ?? []);
-      const current = fileGaps.get(gapKey(gap)) ?? { fromTop: 0, fromBottom: 0 };
-      if (direction === "down") {
-        fileGaps.set(gapKey(gap), { ...current, fromTop: current.fromTop + EXPAND_STEP });
-      } else if (direction === "up") {
-        fileGaps.set(gapKey(gap), { ...current, fromBottom: current.fromBottom + EXPAND_STEP });
-      } else {
-        fileGaps.set(gapKey(gap), { fromTop: gap.totalLines, fromBottom: 0 });
-      }
-      const next = new Map(prev);
-      next.set(filePath, fileGaps);
-      return next;
-    });
-  }, [ensureFileContent]);
+  const handleExpand = useCallback(
+    async (filePath: string, gap: ExpandableGap, direction: "up" | "down" | "all") => {
+      await ensureFileContent(filePath);
+      setExpandedGaps((prev) => {
+        const fileGaps = new Map(prev.get(filePath) ?? []);
+        const current = fileGaps.get(gapKey(gap)) ?? { fromTop: 0, fromBottom: 0 };
+        if (direction === "down") {
+          fileGaps.set(gapKey(gap), { ...current, fromTop: current.fromTop + EXPAND_STEP });
+        } else if (direction === "up") {
+          fileGaps.set(gapKey(gap), { ...current, fromBottom: current.fromBottom + EXPAND_STEP });
+        } else {
+          fileGaps.set(gapKey(gap), { fromTop: gap.totalLines, fromBottom: 0 });
+        }
+        const next = new Map(prev);
+        next.set(filePath, fileGaps);
+        return next;
+      });
+    },
+    [ensureFileContent],
+  );
 
   /** Render a block of HunkLine[] with the standard gutter + content layout. */
   const renderLines = (lines: HunkLine[]) => (
@@ -403,8 +406,14 @@ export function DiffViewer({
   /** Render an expand row for a gap. */
   const renderExpandRow = (filePath: string, gap: ExpandableGap, position: "top" | "middle" | "bottom", remaining: number) => {
     const expandBtnStyle: React.CSSProperties = {
-      background: "none", border: "none", color: colors.active, cursor: "pointer",
-      fontSize: 11, fontFamily: fonts.mono, padding: "0 8px", lineHeight: "20px",
+      background: "none",
+      border: "none",
+      color: colors.active,
+      cursor: "pointer",
+      fontSize: 11,
+      fontFamily: fonts.mono,
+      padding: "0 8px",
+      lineHeight: "20px",
     };
     const showAll = remaining <= SMALL_GAP_THRESHOLD;
     return (
@@ -414,29 +423,57 @@ export function DiffViewer({
         <span style={{ width: 14 }} />
         <span style={{ flex: 1, display: "flex", alignItems: "center", gap: 4 }}>
           {(position === "top" || position === "middle") && !showAll && (
-            <button style={expandBtnStyle} onClick={() => handleExpand(filePath, gap, "down")}
-              onMouseEnter={(e) => { e.currentTarget.style.textDecoration = "underline"; }}
-              onMouseLeave={(e) => { e.currentTarget.style.textDecoration = "none"; }}>
+            <button
+              style={expandBtnStyle}
+              onClick={() => handleExpand(filePath, gap, "down")}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.textDecoration = "underline";
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.textDecoration = "none";
+              }}
+            >
               ↓ {Math.min(EXPAND_STEP, remaining)} lines
             </button>
           )}
           {showAll ? (
-            <button style={expandBtnStyle} onClick={() => handleExpand(filePath, gap, "all")}
-              onMouseEnter={(e) => { e.currentTarget.style.textDecoration = "underline"; }}
-              onMouseLeave={(e) => { e.currentTarget.style.textDecoration = "none"; }}>
+            <button
+              style={expandBtnStyle}
+              onClick={() => handleExpand(filePath, gap, "all")}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.textDecoration = "underline";
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.textDecoration = "none";
+              }}
+            >
               Load all {remaining} lines
             </button>
           ) : (
-            <button style={expandBtnStyle} onClick={() => handleExpand(filePath, gap, "all")}
-              onMouseEnter={(e) => { e.currentTarget.style.textDecoration = "underline"; }}
-              onMouseLeave={(e) => { e.currentTarget.style.textDecoration = "none"; }}>
+            <button
+              style={expandBtnStyle}
+              onClick={() => handleExpand(filePath, gap, "all")}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.textDecoration = "underline";
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.textDecoration = "none";
+              }}
+            >
               ↕ all {remaining}
             </button>
           )}
           {(position === "bottom" || position === "middle") && !showAll && (
-            <button style={expandBtnStyle} onClick={() => handleExpand(filePath, gap, "up")}
-              onMouseEnter={(e) => { e.currentTarget.style.textDecoration = "underline"; }}
-              onMouseLeave={(e) => { e.currentTarget.style.textDecoration = "none"; }}>
+            <button
+              style={expandBtnStyle}
+              onClick={() => handleExpand(filePath, gap, "up")}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.textDecoration = "underline";
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.textDecoration = "none";
+              }}
+            >
               ↑ {Math.min(EXPAND_STEP, remaining)} lines
             </button>
           )}
@@ -463,9 +500,18 @@ export function DiffViewer({
   };
 
   const navBtnStyle: React.CSSProperties = {
-    display: "flex", alignItems: "center", justifyContent: "center",
-    width: 24, height: 24, border: `1px solid ${colors.border}`, borderRadius: 4,
-    background: "transparent", color: colors.textMuted, cursor: "pointer", fontSize: 14, lineHeight: 1,
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    width: 24,
+    height: 24,
+    border: `1px solid ${colors.border}`,
+    borderRadius: 4,
+    background: "transparent",
+    color: colors.textMuted,
+    cursor: "pointer",
+    fontSize: 14,
+    lineHeight: 1,
   };
 
   const anyExpanded = expandedFiles.size > 0;
@@ -476,20 +522,53 @@ export function DiffViewer({
     <div style={{ flex: 1, display: "flex", flexDirection: "column", minHeight: 0 }}>
       {/* File navigation bar */}
       {files.length > 0 && (
-        <div style={{
-          display: "flex", alignItems: "center", gap: 8, padding: "4px 12px",
-          background: colors.surface, borderBottom: `1px solid ${colors.border}`,
-          minHeight: 32, flexShrink: 0,
-        }}>
-          <button onClick={onExpandAll} title="Expand all" style={navBtnStyle}
-            onMouseEnter={(e) => { e.currentTarget.style.borderColor = colors.textDim; e.currentTarget.style.color = colors.textLight; }}
-            onMouseLeave={(e) => { e.currentTarget.style.borderColor = colors.border; e.currentTarget.style.color = colors.textMuted; }}>
-            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="7,8 12,13 17,8" /><polyline points="7,14 12,19 17,14" /></svg>
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 8,
+            padding: "4px 12px",
+            background: colors.surface,
+            borderBottom: `1px solid ${colors.border}`,
+            minHeight: 32,
+            flexShrink: 0,
+          }}
+        >
+          <button
+            onClick={onExpandAll}
+            title="Expand all"
+            style={navBtnStyle}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.borderColor = colors.textDim;
+              e.currentTarget.style.color = colors.textLight;
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.borderColor = colors.border;
+              e.currentTarget.style.color = colors.textMuted;
+            }}
+          >
+            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <polyline points="7,8 12,13 17,8" />
+              <polyline points="7,14 12,19 17,14" />
+            </svg>
           </button>
-          <button onClick={onCollapseAll} title="Collapse all" style={navBtnStyle}
-            onMouseEnter={(e) => { e.currentTarget.style.borderColor = colors.textDim; e.currentTarget.style.color = colors.textLight; }}
-            onMouseLeave={(e) => { e.currentTarget.style.borderColor = colors.border; e.currentTarget.style.color = colors.textMuted; }}>
-            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="7,14 12,9 17,14" /><polyline points="7,20 12,15 17,20" /></svg>
+          <button
+            onClick={onCollapseAll}
+            title="Collapse all"
+            style={navBtnStyle}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.borderColor = colors.textDim;
+              e.currentTarget.style.color = colors.textLight;
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.borderColor = colors.border;
+              e.currentTarget.style.color = colors.textMuted;
+            }}
+          >
+            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <polyline points="7,14 12,9 17,14" />
+              <polyline points="7,20 12,15 17,20" />
+            </svg>
           </button>
           <button
             style={{ ...navBtnStyle, opacity: clampedIndex <= 0 ? 0.3 : 1, cursor: clampedIndex <= 0 ? "default" : "pointer" }}
@@ -497,7 +576,9 @@ export function DiffViewer({
             onClick={() => navigateToFile(clampedIndex - 1)}
             title="Previous file"
           >
-            <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M2.5 6.5L5 3.5L7.5 6.5" /></svg>
+            <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M2.5 6.5L5 3.5L7.5 6.5" />
+            </svg>
           </button>
           <button
             style={{ ...navBtnStyle, opacity: clampedIndex >= files.length - 1 ? 0.3 : 1, cursor: clampedIndex >= files.length - 1 ? "default" : "pointer" }}
@@ -505,23 +586,19 @@ export function DiffViewer({
             onClick={() => navigateToFile(clampedIndex + 1)}
             title="Next file"
           >
-            <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M2.5 3.5L5 6.5L7.5 3.5" /></svg>
+            <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M2.5 3.5L5 6.5L7.5 3.5" />
+            </svg>
           </button>
-          <span style={{ flex: 1, fontFamily: fonts.mono, fontSize: 12, color: colors.textLight, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-            {focusedPath}
-          </span>
+          <span style={{ flex: 1, fontFamily: fonts.mono, fontSize: 12, color: colors.textLight, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{focusedPath}</span>
           <span style={{ fontFamily: fonts.mono, fontSize: 11, color: colors.textDim, flexShrink: 0 }}>
             {clampedIndex + 1} / {files.length}
           </span>
         </div>
       )}
       <div ref={scrollRef} style={{ flex: 1, overflow: "auto", minHeight: 0 }}>
-        {loading && !hasData && (
-          <div style={{ padding: "20px 12px", color: colors.textDim, fontSize: 13 }}>Loading...</div>
-        )}
-        {hasData && totalFiles === 0 && (
-          <div style={{ padding: "20px 12px", color: colors.textDim, fontSize: 13 }}>No changes</div>
-        )}
+        {loading && !hasData && <div style={{ padding: "20px 12px", color: colors.textDim, fontSize: 13 }}>Loading...</div>}
+        {hasData && totalFiles === 0 && <div style={{ padding: "20px 12px", color: colors.textDim, fontSize: 13 }}>No changes</div>}
         {files.map((file, fileIndex) => {
           const key = fileKey(file);
           const expanded = expandedFiles.has(key);
@@ -533,25 +610,54 @@ export function DiffViewer({
             <div
               key={`${key}:${fileIndex}`}
               data-file-idx={fileIndex}
-              ref={(el) => { if (el) fileRefs.current.set(fileIndex, el); else fileRefs.current.delete(fileIndex); }}
+              ref={(el) => {
+                if (el) fileRefs.current.set(fileIndex, el);
+                else fileRefs.current.delete(fileIndex);
+              }}
               onMouseEnter={() => handleFileMouseEnter(fileIndex)}
               style={{ borderLeft: `3px solid ${focused ? colors.active : "transparent"}`, transition: "border-color 0.15s ease" }}
             >
               <button
-                onClick={() => { setFocusedFileIndex(fileIndex); onToggleFile(key); }}
-                onContextMenu={(e) => { e.preventDefault(); onFileContextMenu(e, file.path); }}
-                style={{
-                  display: "flex", alignItems: "center", gap: 6, width: "100%",
-                  padding: "4px 12px", border: "none",
-                  background: expanded ? colors.hoverBg : "transparent",
-                  color: colors.textLight, fontSize: 12, fontFamily: fonts.mono,
-                  textAlign: "left", cursor: "pointer",
+                onClick={() => {
+                  setFocusedFileIndex(fileIndex);
+                  onToggleFile(key);
                 }}
-                onMouseEnter={(e) => { if (!expanded) e.currentTarget.style.background = colors.hoverBg; }}
-                onMouseLeave={(e) => { if (!expanded) e.currentTarget.style.background = "transparent"; }}
+                onContextMenu={(e) => {
+                  e.preventDefault();
+                  onFileContextMenu(e, file.path);
+                }}
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 6,
+                  width: "100%",
+                  padding: "4px 12px",
+                  border: "none",
+                  background: expanded ? colors.hoverBg : "transparent",
+                  color: colors.textLight,
+                  fontSize: 12,
+                  fontFamily: fonts.mono,
+                  textAlign: "left",
+                  cursor: "pointer",
+                }}
+                onMouseEnter={(e) => {
+                  if (!expanded) e.currentTarget.style.background = colors.hoverBg;
+                }}
+                onMouseLeave={(e) => {
+                  if (!expanded) e.currentTarget.style.background = "transparent";
+                }}
               >
-                <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"
-                  style={{ transition: "transform 0.15s ease", transform: expanded ? "rotate(0deg)" : "rotate(-90deg)", flexShrink: 0, color: colors.textDim }}>
+                <svg
+                  width="10"
+                  height="10"
+                  viewBox="0 0 10 10"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="1.5"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  style={{ transition: "transform 0.15s ease", transform: expanded ? "rotate(0deg)" : "rotate(-90deg)", flexShrink: 0, color: colors.textDim }}
+                >
                   <path d="M2.5 3.5L5 6.5L7.5 3.5" />
                 </svg>
                 <span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", direction: "rtl", textAlign: "left" }}>
@@ -559,13 +665,18 @@ export function DiffViewer({
                 </span>
                 <span style={{ flexShrink: 0, width: 70, textAlign: "left" }}>
                   {file.status && (
-                    <span style={{
-                      display: "inline-block", fontSize: 10, fontFamily: fonts.mono,
-                      padding: "1px 5px", borderRadius: 3,
-                      color: statusBadgeColor(file.status, colors),
-                      border: `1px solid ${statusBadgeColor(file.status, colors)}`,
-                      textTransform: "lowercase",
-                    }}>
+                    <span
+                      style={{
+                        display: "inline-block",
+                        fontSize: 10,
+                        fontFamily: fonts.mono,
+                        padding: "1px 5px",
+                        borderRadius: 3,
+                        color: statusBadgeColor(file.status, colors),
+                        border: `1px solid ${statusBadgeColor(file.status, colors)}`,
+                        textTransform: "lowercase",
+                      }}
+                    >
                       {statusBadgeLabel(file.status)}
                     </span>
                   )}
@@ -574,7 +685,9 @@ export function DiffViewer({
                   {file.binary ? (
                     <span style={{ color: colors.textDim }}>binary</span>
                   ) : (
-                    <><span style={{ color: colors.diffAddText }}>+{file.additions}</span>{" "}<span style={{ color: colors.diffDelText }}>-{file.deletions}</span></>
+                    <>
+                      <span style={{ color: colors.diffAddText }}>+{file.additions}</span> <span style={{ color: colors.diffDelText }}>-{file.deletions}</span>
+                    </>
                   )}
                 </span>
               </button>
@@ -584,7 +697,18 @@ export function DiffViewer({
                     <div key={si}>
                       {seg.kind === "hunk" ? (
                         <>
-                          <div style={{ padding: "2px 12px", fontSize: 11, fontFamily: fonts.mono, color: colors.textDim, backgroundColor: colors.diffHunkBg, whiteSpace: "pre", overflow: "hidden", textOverflow: "ellipsis" }}>
+                          <div
+                            style={{
+                              padding: "2px 12px",
+                              fontSize: 11,
+                              fontFamily: fonts.mono,
+                              color: colors.textDim,
+                              backgroundColor: colors.diffHunkBg,
+                              whiteSpace: "pre",
+                              overflow: "hidden",
+                              textOverflow: "ellipsis",
+                            }}
+                          >
                             {seg.hunk.header}
                           </div>
                           {renderLines(seg.hunk.lines)}
@@ -594,9 +718,7 @@ export function DiffViewer({
                       )}
                     </div>
                   ))}
-                  {file.binary && (
-                    <div style={{ padding: "8px 12px", color: colors.textDim, fontSize: 12 }}>Binary file — no content preview</div>
-                  )}
+                  {file.binary && <div style={{ padding: "8px 12px", color: colors.textDim, fontSize: 12 }}>Binary file — no content preview</div>}
                 </div>
               )}
             </div>

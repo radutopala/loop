@@ -1,6 +1,6 @@
 import type { Channel } from "../../types";
-import type { PillKind } from "./pills";
 import { ChannelItem } from "./ChannelItem";
+import type { PillKind } from "./pills";
 import type { ThreadReorder } from "./ThreadItem";
 
 interface ChannelListProps {

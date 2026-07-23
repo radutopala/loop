@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useTheme } from "../../ThemeContext";
-import { fonts } from "../../theme";
+import { sendMessage } from "../../api/channels";
 import {
   deleteReviewComment,
   deleteReviewSession,
@@ -9,15 +8,16 @@ import {
   loadReviewPR,
   pushAllReviewComments,
   pushReviewComment,
-  syncReviewSession,
   type ReviewComment,
   type ReviewPR,
   type ReviewSession,
   type ReviewStatus,
+  syncReviewSession,
 } from "../../api/review";
-import { sendMessage } from "../../api/channels";
 import { FetchWorkflowRunError, fetchWorkflowRun, startWorkflowRun } from "../../api/workflows";
 import type { ChatEventListener } from "../../hooks/useChatStateStore";
+import { useTheme } from "../../ThemeContext";
+import { fonts } from "../../theme";
 import type { GateApprovalRequestedData, WSEvent } from "../../types";
 import { ApprovalCard } from "../chat/ApprovalCard";
 import { ContextMenu } from "../shared/ContextMenu";
@@ -63,9 +63,11 @@ interface ReviewRunIdChangedDetail {
 }
 function broadcastReviewRunIdChange(channelId: string, runId: string | null): void {
   if (typeof window === "undefined") return;
-  window.dispatchEvent(new CustomEvent<ReviewRunIdChangedDetail>(REVIEW_RUN_ID_EVENT, {
-    detail: { channelId, runId },
-  }));
+  window.dispatchEvent(
+    new CustomEvent<ReviewRunIdChangedDetail>(REVIEW_RUN_ID_EVENT, {
+      detail: { channelId, runId },
+    }),
+  );
 }
 
 function readStoredMode(): ReviewMode {
@@ -155,22 +157,20 @@ interface ReviewPanelProps {
 
 function statusLabel(status: ReviewStatus): string {
   switch (status) {
-    case "idle": return "Idle";
-    case "loading": return "Loading PR...";
-    case "ready": return "Ready";
-    case "reviewing": return "Reviewing...";
-    case "error": return "Error";
+    case "idle":
+      return "Idle";
+    case "loading":
+      return "Loading PR...";
+    case "ready":
+      return "Ready";
+    case "reviewing":
+      return "Reviewing...";
+    case "error":
+      return "Error";
   }
 }
 
-export function ReviewPanel({
-  channelId,
-  subscribeChatEvents,
-  registerReviewView,
-  hasChatPanel,
-  gateApprovals,
-  onClearGateApproval,
-}: ReviewPanelProps) {
+export function ReviewPanel({ channelId, subscribeChatEvents, registerReviewView, hasChatPanel, gateApprovals, onClearGateApproval }: ReviewPanelProps) {
   const { colors, fontSizes } = useTheme();
   const [session, setSession] = useState<ReviewSession | null>(null);
   const [prList, setPrList] = useState<ReviewPR[] | null>(null);
@@ -241,7 +241,9 @@ export function ReviewPanel({
         if (!cancelled) setError(e instanceof Error ? e.message : String(e));
       }
     })();
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+    };
   }, [channelId]);
 
   // Fetch open PRs when there's no active session — i.e. show the picker.
@@ -262,7 +264,9 @@ export function ReviewPanel({
         if (!cancelled) setListLoading(false);
       }
     })();
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+    };
   }, [channelId, hasSession]);
 
   // Persist mode + max_iterations to localStorage so the primary button
@@ -287,7 +291,9 @@ export function ReviewPanel({
   // to tear down and re-subscribe whenever the parent layout re-renders
   // with a fresh `hasChatPanel` value.
   const hasChatPanelRef = useRef(hasChatPanel);
-  useEffect(() => { hasChatPanelRef.current = hasChatPanel; }, [hasChatPanel]);
+  useEffect(() => {
+    hasChatPanelRef.current = hasChatPanel;
+  }, [hasChatPanel]);
 
   // Cross-instance loopActive/loopRunId sync. Two ReviewPanels mounted in
   // the same window for the same channel (split layout, dual-pane) only read
@@ -488,117 +494,127 @@ export function ReviewPanel({
         });
       } else if (event.type === "review.status") {
         const d = event.data as { status: ReviewStatus; error?: string };
-        setSession((prev) => prev ? { ...prev, status: d.status, error: d.error ?? "" } : prev);
+        setSession((prev) => (prev ? { ...prev, status: d.status, error: d.error ?? "" } : prev));
       } else if (event.type === "review.diff") {
         // Backend re-rendered the diff with widened context after an
         // agent comment landed outside the current hunks. Swap the
         // raw_diff in place — the diff view re-parses on the new value
         // and existing comments re-bind to the wider hunk set.
         const d = event.data as { raw_diff: string };
-        setSession((prev) => prev ? { ...prev, raw_diff: d.raw_diff } : prev);
+        setSession((prev) => (prev ? { ...prev, raw_diff: d.raw_diff } : prev));
       }
     };
     return subscribeChatEvents(listener);
   }, [channelId, subscribeChatEvents]);
 
-  const onSelectPR = useCallback(async (pr: ReviewPR) => {
-    setBusy(true); setError(null); setLoadingPR(pr.number);
-    try {
-      const resp = await loadReviewPR(channelId, pr.number);
-      if (resp.present && resp.session) setSession(resp.session);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
-    } finally {
-      setBusy(false); setLoadingPR(null);
-    }
-  }, [channelId]);
+  const onSelectPR = useCallback(
+    async (pr: ReviewPR) => {
+      setBusy(true);
+      setError(null);
+      setLoadingPR(pr.number);
+      try {
+        const resp = await loadReviewPR(channelId, pr.number);
+        if (resp.present && resp.session) setSession(resp.session);
+      } catch (e) {
+        setError(e instanceof Error ? e.message : String(e));
+      } finally {
+        setBusy(false);
+        setLoadingPR(null);
+      }
+    },
+    [channelId],
+  );
 
-  const runMode = useCallback(async (m: ReviewMode) => {
-    setBusy(true); setError(null);
-    setLoopChip("starting...");
-    setLoopActive(true);
-    try {
-      // Re-verify the daemon-side session exists before dispatching the
-      // workflow. The session lives in the daemon's in-memory reviewStore
-      // and gets wiped on restart, while the FE may still hold a stale
-      // session object in React state. Without this check the workflow
-      // starts and immediately fails on the CLI's POST /review/run with
-      // a cryptic "node loop failed: script exited with status 1".
-      const server = await getReviewSession(channelId);
-      if (!server.present || !server.session) {
-        setSession(null);
-        throw new Error("No review session loaded — pick a PR first, then run the loop.");
+  const runMode = useCallback(
+    async (m: ReviewMode) => {
+      setBusy(true);
+      setError(null);
+      setLoopChip("starting...");
+      setLoopActive(true);
+      try {
+        // Re-verify the daemon-side session exists before dispatching the
+        // workflow. The session lives in the daemon's in-memory reviewStore
+        // and gets wiped on restart, while the FE may still hold a stale
+        // session object in React state. Without this check the workflow
+        // starts and immediately fails on the CLI's POST /review/run with
+        // a cryptic "node loop failed: script exited with status 1".
+        const server = await getReviewSession(channelId);
+        if (!server.present || !server.session) {
+          setSession(null);
+          throw new Error("No review session loaded — pick a PR first, then run the loop.");
+        }
+        setSession(server.session);
+        // Optimistically flip to "reviewing" so the Run button stays disabled
+        // even before the review.status WS event lands — otherwise there's a
+        // brief window after setBusy(false) where status is still "ready" and
+        // the button re-enables itself.
+        setSession((prev) => (prev ? { ...prev, status: "reviewing" } : prev));
+        const workflowName = m === "review-fix" ? REVIEW_FIX_LOOP_WORKFLOW : REVIEW_LOOP_WORKFLOW;
+        // Carry the loaded PR number into the run so it's explicit in the
+        // workflow's inputs (and the review CLI's `--pr`). The CLI skips the
+        // redundant load when the session is already on this PR.
+        const prNumber = session?.pr?.number;
+        const resp = await startWorkflowRun({
+          workflow_name: workflowName,
+          channel_id: channelId,
+          inputs: {
+            max_iterations: String(maxIter),
+            ...(prNumber ? { pr: String(prNumber) } : {}),
+          },
+        });
+        // Persist the run id before setLoopRunId so the resync effect (which
+        // fires on loopRunId changes) sees the storage entry. Without this the
+        // initial mount-and-set would land at the same wall-clock tick as the
+        // sessionStorage write, and a competing remount in another browser
+        // process could observe an empty key.
+        if (typeof window !== "undefined") {
+          window.sessionStorage.setItem(reviewRunIdKey(channelId), resp.run_id);
+          window.sessionStorage.setItem(reviewDrawerRunIdKey(channelId), resp.run_id);
+        }
+        broadcastReviewRunIdChange(channelId, resp.run_id);
+        // Bind the bottom drawer to this run so its canvas is in front of the
+        // user as the loop runs (expanded by default; respects a prior collapse).
+        setDrawerRunId(resp.run_id);
+        // The workflow.run_started event for this run may have already fired
+        // (and been dropped by the chip listener — it returns early when
+        // loopRunId is null) before this setState lands. Paint the initial
+        // chip here so the chip doesn't sit on "starting..." until the first
+        // node_started event arrives in iteration 1.
+        setLoopChip("running iter 1");
+        setLoopRunId(resp.run_id);
+        // Only persist the mode after the run actually launched. A failed
+        // session check would otherwise silently flip the user's last-mode
+        // (and the primary button label on next mount) even though no run
+        // ever started.
+        setMode(m);
+      } catch (e) {
+        setError(e instanceof Error ? e.message : String(e));
+        setSession((prev) => (prev ? { ...prev, status: "ready" } : prev));
+        // Show an explicit "failed" chip alongside the error banner instead of
+        // clearing it. Clearing made the failure invisible in the header — the
+        // user only saw the error text below and had to infer that no run
+        // started. A terminal chip mirrors the workflow.run_completed("failed")
+        // path so the visual state is consistent across the two failure modes
+        // (pre-dispatch throw here vs. daemon-side failure observed via WS).
+        setLoopChip("failed");
+        setLoopActive(false);
+        // Also clear loopRunId in React state. Without this, a setLoopRunId
+        // from a *prior* successful run that's still in flight would keep the
+        // hydration resync effect firing against a now-stale id. Belt-and-
+        // braces with the sessionStorage clear below.
+        setLoopRunId(null);
+        // No run was dispatched — make sure no stale id from a prior attempt
+        // sticks around to fool the next remount's hydration.
+        if (typeof window !== "undefined") {
+          window.sessionStorage.removeItem(reviewRunIdKey(channelId));
+        }
+        broadcastReviewRunIdChange(channelId, null);
+      } finally {
+        setBusy(false);
       }
-      setSession(server.session);
-      // Optimistically flip to "reviewing" so the Run button stays disabled
-      // even before the review.status WS event lands — otherwise there's a
-      // brief window after setBusy(false) where status is still "ready" and
-      // the button re-enables itself.
-      setSession((prev) => prev ? { ...prev, status: "reviewing" } : prev);
-      const workflowName = m === "review-fix" ? REVIEW_FIX_LOOP_WORKFLOW : REVIEW_LOOP_WORKFLOW;
-      // Carry the loaded PR number into the run so it's explicit in the
-      // workflow's inputs (and the review CLI's `--pr`). The CLI skips the
-      // redundant load when the session is already on this PR.
-      const prNumber = session?.pr?.number;
-      const resp = await startWorkflowRun({
-        workflow_name: workflowName,
-        channel_id: channelId,
-        inputs: {
-          max_iterations: String(maxIter),
-          ...(prNumber ? { pr: String(prNumber) } : {}),
-        },
-      });
-      // Persist the run id before setLoopRunId so the resync effect (which
-      // fires on loopRunId changes) sees the storage entry. Without this the
-      // initial mount-and-set would land at the same wall-clock tick as the
-      // sessionStorage write, and a competing remount in another browser
-      // process could observe an empty key.
-      if (typeof window !== "undefined") {
-        window.sessionStorage.setItem(reviewRunIdKey(channelId), resp.run_id);
-        window.sessionStorage.setItem(reviewDrawerRunIdKey(channelId), resp.run_id);
-      }
-      broadcastReviewRunIdChange(channelId, resp.run_id);
-      // Bind the bottom drawer to this run so its canvas is in front of the
-      // user as the loop runs (expanded by default; respects a prior collapse).
-      setDrawerRunId(resp.run_id);
-      // The workflow.run_started event for this run may have already fired
-      // (and been dropped by the chip listener — it returns early when
-      // loopRunId is null) before this setState lands. Paint the initial
-      // chip here so the chip doesn't sit on "starting..." until the first
-      // node_started event arrives in iteration 1.
-      setLoopChip("running iter 1");
-      setLoopRunId(resp.run_id);
-      // Only persist the mode after the run actually launched. A failed
-      // session check would otherwise silently flip the user's last-mode
-      // (and the primary button label on next mount) even though no run
-      // ever started.
-      setMode(m);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
-      setSession((prev) => prev ? { ...prev, status: "ready" } : prev);
-      // Show an explicit "failed" chip alongside the error banner instead of
-      // clearing it. Clearing made the failure invisible in the header — the
-      // user only saw the error text below and had to infer that no run
-      // started. A terminal chip mirrors the workflow.run_completed("failed")
-      // path so the visual state is consistent across the two failure modes
-      // (pre-dispatch throw here vs. daemon-side failure observed via WS).
-      setLoopChip("failed");
-      setLoopActive(false);
-      // Also clear loopRunId in React state. Without this, a setLoopRunId
-      // from a *prior* successful run that's still in flight would keep the
-      // hydration resync effect firing against a now-stale id. Belt-and-
-      // braces with the sessionStorage clear below.
-      setLoopRunId(null);
-      // No run was dispatched — make sure no stale id from a prior attempt
-      // sticks around to fool the next remount's hydration.
-      if (typeof window !== "undefined") {
-        window.sessionStorage.removeItem(reviewRunIdKey(channelId));
-      }
-      broadcastReviewRunIdChange(channelId, null);
-    } finally {
-      setBusy(false);
-    }
-  }, [channelId, maxIter]);
+    },
+    [channelId, maxIter],
+  );
 
   const onPrimaryClick = useCallback(() => {
     void runMode(mode);
@@ -612,7 +628,8 @@ export function ReviewPanel({
   }, []);
 
   const onSync = useCallback(async () => {
-    setBusy(true); setError(null);
+    setBusy(true);
+    setError(null);
     try {
       const resp = await syncReviewSession(channelId);
       if (resp.present && resp.session) setSession(resp.session);
@@ -624,7 +641,8 @@ export function ReviewPanel({
   }, [channelId]);
 
   const onCloseSession = useCallback(async () => {
-    setBusy(true); setError(null);
+    setBusy(true);
+    setError(null);
     try {
       await deleteReviewSession(channelId);
       setSession(null);
@@ -640,41 +658,53 @@ export function ReviewPanel({
     }
   }, [channelId]);
 
-  const onPushOne = useCallback(async (c: ReviewComment) => {
-    setError(null);
-    try {
-      await pushReviewComment(channelId, c.id);
-      setSession((prev) => prev ? {
-        ...prev,
-        comments: prev.comments.map((x) => x.id === c.id ? { ...x, pushed: true } : x),
-      } : prev);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
-    }
-  }, [channelId]);
+  const onPushOne = useCallback(
+    async (c: ReviewComment) => {
+      setError(null);
+      try {
+        await pushReviewComment(channelId, c.id);
+        setSession((prev) =>
+          prev
+            ? {
+                ...prev,
+                comments: prev.comments.map((x) => (x.id === c.id ? { ...x, pushed: true } : x)),
+              }
+            : prev,
+        );
+      } catch (e) {
+        setError(e instanceof Error ? e.message : String(e));
+      }
+    },
+    [channelId],
+  );
 
-  const onDeleteOne = useCallback(async (c: ReviewComment) => {
-    // Confirm in-line: deleting a pushed/github comment removes it from
-    // the PR on GitHub too, which is irreversible — but for unpushed
-    // local agent comments it's just dropping a draft, so the prompt
-    // shouldn't be alarmist. Keep one prompt with a wording that adapts
-    // to the situation.
-    const hitsGitHub = !!c.github_id;
-    const msg = hitsGitHub
-      ? "Delete this comment from GitHub? This cannot be undone."
-      : "Discard this comment?";
-    if (!window.confirm(msg)) return;
-    setError(null);
-    try {
-      await deleteReviewComment(channelId, c.id);
-      setSession((prev) => prev ? {
-        ...prev,
-        comments: prev.comments.filter((x) => x.id !== c.id),
-      } : prev);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
-    }
-  }, [channelId]);
+  const onDeleteOne = useCallback(
+    async (c: ReviewComment) => {
+      // Confirm in-line: deleting a pushed/github comment removes it from
+      // the PR on GitHub too, which is irreversible — but for unpushed
+      // local agent comments it's just dropping a draft, so the prompt
+      // shouldn't be alarmist. Keep one prompt with a wording that adapts
+      // to the situation.
+      const hitsGitHub = !!c.github_id;
+      const msg = hitsGitHub ? "Delete this comment from GitHub? This cannot be undone." : "Discard this comment?";
+      if (!window.confirm(msg)) return;
+      setError(null);
+      try {
+        await deleteReviewComment(channelId, c.id);
+        setSession((prev) =>
+          prev
+            ? {
+                ...prev,
+                comments: prev.comments.filter((x) => x.id !== c.id),
+              }
+            : prev,
+        );
+      } catch (e) {
+        setError(e instanceof Error ? e.message : String(e));
+      }
+    },
+    [channelId],
+  );
 
   // Ask WorkspaceLayout to ensure a chat panel is mounted in the active
   // layout. The listener is a no-op if one already exists; otherwise it
@@ -688,16 +718,19 @@ export function ReviewPanel({
     );
   }, [channelId]);
 
-  const onPushOneToChat = useCallback(async (c: ReviewComment) => {
-    setError(null);
-    try {
-      ensureChatOpen();
-      const prompt = buildSinglePromptForChat(c, session?.head_sha, session?.pr?.number);
-      await sendMessage(channelId, prompt);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
-    }
-  }, [channelId, ensureChatOpen, session?.head_sha, session?.pr?.number]);
+  const onPushOneToChat = useCallback(
+    async (c: ReviewComment) => {
+      setError(null);
+      try {
+        ensureChatOpen();
+        const prompt = buildSinglePromptForChat(c, session?.head_sha, session?.pr?.number);
+        await sendMessage(channelId, prompt);
+      } catch (e) {
+        setError(e instanceof Error ? e.message : String(e));
+      }
+    },
+    [channelId, ensureChatOpen, session?.head_sha, session?.pr?.number],
+  );
 
   const onPushAllToChat = useCallback(async () => {
     const pending = (session?.comments ?? []).filter((c) => !c.pushed);
@@ -706,7 +739,8 @@ export function ReviewPanel({
     // header buttons (which all gate on `busy`) actually disable. Without
     // this the disabled={busy} on "Push all to chat" was a no-op and
     // double-clicks queued duplicate prompts to the agent.
-    setBusy(true); setError(null);
+    setBusy(true);
+    setError(null);
     try {
       ensureChatOpen();
       const prompt = buildBatchPromptForChat(pending, session?.head_sha, session?.pr?.number);
@@ -719,7 +753,8 @@ export function ReviewPanel({
   }, [channelId, ensureChatOpen, session?.comments, session?.head_sha, session?.pr?.number]);
 
   const onPushAll = useCallback(async () => {
-    setBusy(true); setError(null);
+    setBusy(true);
+    setError(null);
     try {
       const result = await pushAllReviewComments(channelId);
       // The backend's PushAllResult only reports aggregate counts, not
@@ -739,10 +774,7 @@ export function ReviewPanel({
     }
   }, [channelId]);
 
-  const pendingCount = useMemo(
-    () => (session?.comments ?? []).filter((c) => !c.pushed).length,
-    [session],
-  );
+  const pendingCount = useMemo(() => (session?.comments ?? []).filter((c) => !c.pushed).length, [session]);
 
   const btnStyle: React.CSSProperties = {
     background: "transparent",
@@ -773,9 +805,7 @@ export function ReviewPanel({
   // ("done"/"failed"/"cancelled"). Any other terminal status from the daemon
   // (e.g. "deleted" from engine.DeleteRun, or anything added later) left
   // isLoopTerminal false and trapped the Run button until the user reloaded.
-  const runDisabled = busy
-    || session?.status !== "ready"
-    || loopActive;
+  const runDisabled = busy || session?.status !== "ready" || loopActive;
   const closeDisabled = busy;
 
   return (
@@ -802,9 +832,7 @@ export function ReviewPanel({
         }}
       >
         {!hasSession ? (
-          <div style={{ flex: 1, fontSize: 12, color: colors.textDim, fontFamily: fonts.sans }}>
-            Select a PR to review
-          </div>
+          <div style={{ flex: 1, fontSize: 12, color: colors.textDim, fontFamily: fonts.sans }}>Select a PR to review</div>
         ) : (
           <>
             <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 2, minWidth: 0 }}>
@@ -825,16 +853,12 @@ export function ReviewPanel({
                     title={session.pr.url}
                   >
                     <span style={{ fontFamily: "monospace" }}>#{session.pr.number}</span>
-                    <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                      {session.pr.title ?? ""}
-                    </span>
+                    <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{session.pr.title ?? ""}</span>
                   </a>
                 ) : (
                   <>
                     <span style={{ fontFamily: "monospace" }}>#{session?.pr?.number}</span>
-                    <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                      {session?.pr?.title ?? ""}
-                    </span>
+                    <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{session?.pr?.title ?? ""}</span>
                   </>
                 )}
               </div>
@@ -848,7 +872,8 @@ export function ReviewPanel({
                     </span>
                   </>
                 )}
-                {" · "}{session ? statusLabel(session.status) : ""}
+                {" · "}
+                {session ? statusLabel(session.status) : ""}
               </div>
             </div>
             <button
@@ -897,11 +922,7 @@ export function ReviewPanel({
                   borderBottomRightRadius: 0,
                   borderRight: "none",
                 }}
-                title={
-                  session?.status === "reviewing"
-                    ? "Review already running"
-                    : `Start ${mode === "review-fix" ? "review + fix loop" : "review loop"}`
-                }
+                title={session?.status === "reviewing" ? "Review already running" : `Start ${mode === "review-fix" ? "review + fix loop" : "review loop"}`}
               >
                 {session?.status === "reviewing" ? "Running..." : modePrimaryLabel(mode)}
               </button>
@@ -961,13 +982,7 @@ export function ReviewPanel({
                 </button>
               </>
             )}
-            <button
-              data-testid="review-close-btn"
-              onClick={() => void onCloseSession()}
-              disabled={closeDisabled}
-              style={btnStyle}
-              title="Close review session and remove worktree"
-            >
+            <button data-testid="review-close-btn" onClick={() => void onCloseSession()} disabled={closeDisabled} style={btnStyle} title="Close review session and remove worktree">
               Close
             </button>
           </>
@@ -1005,28 +1020,13 @@ export function ReviewPanel({
           const [source, data] = entries[0]!;
           return (
             <div data-testid="review-inline-approval" style={{ padding: 8, borderBottom: `1px solid ${colors.border}` }}>
-              <ApprovalCard
-                data={data}
-                channelId={channelId}
-                onResolved={() => onClearGateApproval?.(source)}
-              />
+              <ApprovalCard data={data} channelId={channelId} onResolved={() => onClearGateApproval?.(source)} />
             </div>
           );
         })()}
-        {!hasSession && (
-          <PRListPicker
-            prs={prList}
-            loading={listLoading}
-            loadingPR={loadingPR}
-            disabled={busy}
-            colors={colors}
-            onSelect={onSelectPR}
-          />
-        )}
+        {!hasSession && <PRListPicker prs={prList} loading={listLoading} loadingPR={loadingPR} disabled={busy} colors={colors} onSelect={onSelectPR} />}
         {hasSession && session && session.status === "reviewing" && session.comments.length === 0 && (
-          <div style={{ padding: "6px 12px", color: colors.textDim, fontSize: 11, borderBottom: `1px solid ${colors.border}` }}>
-            Reviewing... comments will appear inline as the agent emits them.
-          </div>
+          <div style={{ padding: "6px 12px", color: colors.textDim, fontSize: 11, borderBottom: `1px solid ${colors.border}` }}>Reviewing... comments will appear inline as the agent emits them.</div>
         )}
         {hasSession && session && (
           <ReviewDiffView
@@ -1044,15 +1044,7 @@ export function ReviewPanel({
       {/* Bottom drawer: live workflow canvas for the active/last review run,
           so the user can watch the loop's nodes without opening the Workflows
           panel. Only shown once a run has been kicked off on this session. */}
-      {hasSession && drawerRunId && (
-        <ReviewRunDrawer
-          runId={drawerRunId}
-          colors={colors}
-          subscribeChatEvents={subscribeChatEvents}
-          collapsed={drawerCollapsed}
-          onToggleCollapsed={onToggleDrawer}
-        />
-      )}
+      {hasSession && drawerRunId && <ReviewRunDrawer runId={drawerRunId} colors={colors} subscribeChatEvents={subscribeChatEvents} collapsed={drawerCollapsed} onToggleCollapsed={onToggleDrawer} />}
       {menuPos && (
         <ContextMenu
           x={menuPos.x}
@@ -1066,11 +1058,15 @@ export function ReviewPanel({
               // Without the guard, clicking an item would start a second
               // overlapping workflow run on the same channel.
               label: "Run review (one-shot)",
-              onClick: () => { if (!runDisabled) void runMode("review-only"); },
+              onClick: () => {
+                if (!runDisabled) void runMode("review-only");
+              },
             },
             {
               label: "Run review + fix loop",
-              onClick: () => { if (!runDisabled) void runMode("review-fix"); },
+              onClick: () => {
+                if (!runDisabled) void runMode("review-fix");
+              },
             },
           ]}
         />
@@ -1150,12 +1146,8 @@ function PRListPicker({
                 draft
               </span>
             )}
-            <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1 }}>
-              {pr.title ?? ""}
-            </span>
-            {loadingPR === pr.number && (
-              <span style={{ fontSize: 10, color: colors.textDim }}>loading...</span>
-            )}
+            <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1 }}>{pr.title ?? ""}</span>
+            {loadingPR === pr.number && <span style={{ fontSize: 10, color: colors.textDim }}>loading...</span>}
           </div>
           <div style={{ fontSize: 10, color: colors.textDim }}>
             {pr.base_ref} ← {pr.head_ref}
@@ -1165,4 +1157,3 @@ function PRListPicker({
     </div>
   );
 }
-

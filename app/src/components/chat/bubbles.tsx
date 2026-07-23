@@ -1,17 +1,11 @@
 import { useCallback, useContext, useEffect, useRef, useState } from "react";
-import type { AgentActivityData, AskUserOption, AskUserQuestion, ExitPlanModeData, Message, TaskItem, TimelineItem } from "../../types";
 import { resolveAsk, resolvePlan } from "../../api/channels";
-import { fonts } from "../../theme";
 import { useTheme } from "../../ThemeContext";
-import { ContextMenu } from "../shared/ContextMenu";
+import { fonts } from "../../theme";
+import type { AgentActivityData, AskUserOption, AskUserQuestion, ExitPlanModeData, Message, TaskItem, TimelineItem } from "../../types";
 import type { MenuItem } from "../shared/ContextMenu";
-import {
-  ChannelContext,
-  buildMessageStyles,
-  buildActivityStyle,
-  FILE_PATH_TOOLS,
-  renderInputWithLinks,
-} from "./chatShared";
+import { ContextMenu } from "../shared/ContextMenu";
+import { buildActivityStyle, buildMessageStyles, ChannelContext, FILE_PATH_TOOLS, renderInputWithLinks } from "./chatShared";
 import { MarkdownContent } from "./markdown";
 
 export function CompactingMarker() {
@@ -25,7 +19,12 @@ export function CompactingMarker() {
   );
 }
 
-export function ToolRunBlock({ items, resultsByToolUseID, skippedToolResultIDs, isActive }: {
+export function ToolRunBlock({
+  items,
+  resultsByToolUseID,
+  skippedToolResultIDs,
+  isActive,
+}: {
   items: TimelineItem[];
   resultsByToolUseID: Map<string, { text: string; is_error: boolean; truncated: boolean }>;
   skippedToolResultIDs: Set<string>;
@@ -84,10 +83,10 @@ export function ToolRunBlock({ items, resultsByToolUseID, skippedToolResultIDs, 
           userSelect: "none",
         }}
       >
-        <span style={{ display: "inline-block", width: 10, transform: expanded ? "rotate(90deg)" : "none", transition: "transform 0.1s" }}>
-          &#9654;
+        <span style={{ display: "inline-block", width: 10, transform: expanded ? "rotate(90deg)" : "none", transition: "transform 0.1s" }}>&#9654;</span>
+        <span style={{ fontWeight: 600 }}>
+          {items.length} step{items.length === 1 ? "" : "s"}
         </span>
-        <span style={{ fontWeight: 600 }}>{items.length} step{items.length === 1 ? "" : "s"}</span>
         {summary && <span style={{ color: colors.textDim }}>· {summary}</span>}
         {errorCount > 0 && (
           <span style={{ marginLeft: "auto", color: colors.warning, fontSize: 11 }}>
@@ -96,9 +95,7 @@ export function ToolRunBlock({ items, resultsByToolUseID, skippedToolResultIDs, 
         )}
       </div>
       {expanded && (
-        <div style={{ paddingLeft: 12, borderLeft: `1px solid ${colors.border}`, marginLeft: 4 }}>
-          {items.map((it) => renderTimelineItem(it, resultsByToolUseID, skippedToolResultIDs))}
-        </div>
+        <div style={{ paddingLeft: 12, borderLeft: `1px solid ${colors.border}`, marginLeft: 4 }}>{items.map((it) => renderTimelineItem(it, resultsByToolUseID, skippedToolResultIDs))}</div>
       )}
     </div>
   );
@@ -112,23 +109,38 @@ export function ToolRunBlock({ items, resultsByToolUseID, skippedToolResultIDs, 
 export function CopyButton({ text, visible, style }: { text: string; visible: boolean; style?: React.CSSProperties }) {
   const { colors } = useTheme();
   const [copied, setCopied] = useState(false);
-  const copy = useCallback((e: React.MouseEvent) => {
-    e.stopPropagation();
-    e.preventDefault();
-    navigator.clipboard.writeText(text).then(() => {
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1200);
-    }).catch(() => { /* clipboard blocked — no-op */ });
-  }, [text]);
+  const copy = useCallback(
+    (e: React.MouseEvent) => {
+      e.stopPropagation();
+      e.preventDefault();
+      navigator.clipboard
+        .writeText(text)
+        .then(() => {
+          setCopied(true);
+          setTimeout(() => setCopied(false), 1200);
+        })
+        .catch(() => {
+          /* clipboard blocked — no-op */
+        });
+    },
+    [text],
+  );
   return (
     <button
       onClick={copy}
       title={copied ? "Copied" : "Copy"}
       aria-label="Copy to clipboard"
       style={{
-        display: "inline-flex", alignItems: "center", justifyContent: "center",
-        width: 20, height: 20, padding: 0, flexShrink: 0,
-        background: "none", border: "none", borderRadius: 4,
+        display: "inline-flex",
+        alignItems: "center",
+        justifyContent: "center",
+        width: 20,
+        height: 20,
+        padding: 0,
+        flexShrink: 0,
+        background: "none",
+        border: "none",
+        borderRadius: 4,
         cursor: "pointer",
         color: copied ? colors.active : colors.textDim,
         opacity: visible || copied ? 1 : 0,
@@ -136,19 +148,42 @@ export function CopyButton({ text, visible, style }: { text: string; visible: bo
         WebkitAppRegion: "no-drag",
         ...style,
       }}
-      onMouseEnter={(e) => { if (!copied) e.currentTarget.style.color = colors.textLight; }}
-      onMouseLeave={(e) => { if (!copied) e.currentTarget.style.color = colors.textDim; }}
+      onMouseEnter={(e) => {
+        if (!copied) e.currentTarget.style.color = colors.textLight;
+      }}
+      onMouseLeave={(e) => {
+        if (!copied) e.currentTarget.style.color = colors.textDim;
+      }}
     >
       {copied ? (
-        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12" /></svg>
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+          <polyline points="20 6 9 17 4 12" />
+        </svg>
       ) : (
-        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" /><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" /></svg>
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <rect x="9" y="9" width="13" height="13" rx="2" />
+          <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+        </svg>
       )}
     </button>
   );
 }
 
-export function MessageBubble({ message, showProcessing, showQueued, queuePosition, highlighted, onQuote }: { message: Message; showProcessing?: boolean; showQueued?: boolean; queuePosition?: string; highlighted?: boolean; onQuote?: (msg: Message) => void }) {
+export function MessageBubble({
+  message,
+  showProcessing,
+  showQueued,
+  queuePosition,
+  highlighted,
+  onQuote,
+}: {
+  message: Message;
+  showProcessing?: boolean;
+  showQueued?: boolean;
+  queuePosition?: string;
+  highlighted?: boolean;
+  onQuote?: (msg: Message) => void;
+}) {
   const { colors } = useTheme();
   const styles = buildMessageStyles(colors);
   const isUser = !message.is_bot;
@@ -159,15 +194,18 @@ export function MessageBubble({ message, showProcessing, showQueued, queuePositi
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; items: MenuItem[] } | null>(null);
   const [hovered, setHovered] = useState(false);
 
-  const handleContextMenu = useCallback((e: React.MouseEvent) => {
-    if (!onQuote) return;
-    e.preventDefault();
-    setCtxMenu({
-      x: e.clientX,
-      y: e.clientY,
-      items: [{ label: "Quote reply", onClick: () => onQuote(message) }],
-    });
-  }, [onQuote, message]);
+  const handleContextMenu = useCallback(
+    (e: React.MouseEvent) => {
+      if (!onQuote) return;
+      e.preventDefault();
+      setCtxMenu({
+        x: e.clientX,
+        y: e.clientY,
+        items: [{ label: "Quote reply", onClick: () => onQuote(message) }],
+      });
+    },
+    [onQuote, message],
+  );
 
   return (
     <div
@@ -203,20 +241,18 @@ export function MessageBubble({ message, showProcessing, showQueued, queuePositi
           padding: isUser ? "10px 16px" : "4px 0",
         }}
       >
-        {!isUser && (
-          <CopyButton text={message.content} visible={hovered} style={{ position: "absolute", top: 2, right: 0 }} />
-        )}
+        {!isUser && <CopyButton text={message.content} visible={hovered} style={{ position: "absolute", top: 2, right: 0 }} />}
         {!isUser && (
           <div style={styles.header}>
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" style={{ flexShrink: 0 }}>
-              <rect x="4" y="6" width="16" height="14" rx="3" stroke={colors.textLight} strokeWidth="1.5"/>
-              <circle cx="9" cy="12" r="2" fill={colors.textLight}/>
-              <circle cx="15" cy="12" r="2" fill={colors.textLight}/>
-              <line x1="12" y1="2" x2="12" y2="6" stroke={colors.textLight} strokeWidth="1.5" strokeLinecap="round"/>
-              <circle cx="12" cy="2" r="1.5" fill={colors.textLight}/>
-              <line x1="1" y1="11" x2="4" y2="11" stroke={colors.textLight} strokeWidth="1.5" strokeLinecap="round"/>
-              <line x1="20" y1="11" x2="23" y2="11" stroke={colors.textLight} strokeWidth="1.5" strokeLinecap="round"/>
-              <line x1="9" y1="17" x2="15" y2="17" stroke={colors.textLight} strokeWidth="1.5" strokeLinecap="round"/>
+              <rect x="4" y="6" width="16" height="14" rx="3" stroke={colors.textLight} strokeWidth="1.5" />
+              <circle cx="9" cy="12" r="2" fill={colors.textLight} />
+              <circle cx="15" cy="12" r="2" fill={colors.textLight} />
+              <line x1="12" y1="2" x2="12" y2="6" stroke={colors.textLight} strokeWidth="1.5" strokeLinecap="round" />
+              <circle cx="12" cy="2" r="1.5" fill={colors.textLight} />
+              <line x1="1" y1="11" x2="4" y2="11" stroke={colors.textLight} strokeWidth="1.5" strokeLinecap="round" />
+              <line x1="20" y1="11" x2="23" y2="11" stroke={colors.textLight} strokeWidth="1.5" strokeLinecap="round" />
+              <line x1="9" y1="17" x2="15" y2="17" stroke={colors.textLight} strokeWidth="1.5" strokeLinecap="round" />
             </svg>
             <span style={styles.time}>{time}</span>
           </div>
@@ -226,8 +262,38 @@ export function MessageBubble({ message, showProcessing, showQueued, queuePositi
         </div>
         {isUser && (
           <div style={{ display: "flex", justifyContent: "flex-end", alignItems: "center", gap: 6, marginTop: 4 }}>
-            {showQueued && <span style={{ fontSize: 10, color: colors.textDim, background: colors.surface, border: "1px solid rgba(255,255,255,0.2)", borderRadius: 4, padding: "2px 8px", fontWeight: 500, letterSpacing: 0.3 }}>{queuePosition ? `queued ${queuePosition}` : "queued"}</span>}
-            {showProcessing && <span style={{ fontSize: 10, color: colors.textMuted, background: colors.surface, border: "1px solid rgba(255,255,255,0.2)", borderRadius: 4, padding: "2px 8px", fontWeight: 500, letterSpacing: 0.3 }}>processing</span>}
+            {showQueued && (
+              <span
+                style={{
+                  fontSize: 10,
+                  color: colors.textDim,
+                  background: colors.surface,
+                  border: "1px solid rgba(255,255,255,0.2)",
+                  borderRadius: 4,
+                  padding: "2px 8px",
+                  fontWeight: 500,
+                  letterSpacing: 0.3,
+                }}
+              >
+                {queuePosition ? `queued ${queuePosition}` : "queued"}
+              </span>
+            )}
+            {showProcessing && (
+              <span
+                style={{
+                  fontSize: 10,
+                  color: colors.textMuted,
+                  background: colors.surface,
+                  border: "1px solid rgba(255,255,255,0.2)",
+                  borderRadius: 4,
+                  padding: "2px 8px",
+                  fontWeight: 500,
+                  letterSpacing: 0.3,
+                }}
+              >
+                processing
+              </span>
+            )}
             <span style={styles.time}>{time}</span>
           </div>
         )}
@@ -257,14 +323,14 @@ export function StreamingBubble({ content }: { content: string }) {
       >
         <div style={styles.header}>
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" style={{ flexShrink: 0 }}>
-            <rect x="4" y="6" width="16" height="14" rx="3" stroke={colors.textLight} strokeWidth="1.5"/>
-            <circle cx="9" cy="12" r="2" fill={colors.textLight}/>
-            <circle cx="15" cy="12" r="2" fill={colors.textLight}/>
-            <line x1="12" y1="2" x2="12" y2="6" stroke={colors.textLight} strokeWidth="1.5" strokeLinecap="round"/>
-            <circle cx="12" cy="2" r="1.5" fill={colors.textLight}/>
-            <line x1="1" y1="11" x2="4" y2="11" stroke={colors.textLight} strokeWidth="1.5" strokeLinecap="round"/>
-            <line x1="20" y1="11" x2="23" y2="11" stroke={colors.textLight} strokeWidth="1.5" strokeLinecap="round"/>
-            <line x1="9" y1="17" x2="15" y2="17" stroke={colors.textLight} strokeWidth="1.5" strokeLinecap="round"/>
+            <rect x="4" y="6" width="16" height="14" rx="3" stroke={colors.textLight} strokeWidth="1.5" />
+            <circle cx="9" cy="12" r="2" fill={colors.textLight} />
+            <circle cx="15" cy="12" r="2" fill={colors.textLight} />
+            <line x1="12" y1="2" x2="12" y2="6" stroke={colors.textLight} strokeWidth="1.5" strokeLinecap="round" />
+            <circle cx="12" cy="2" r="1.5" fill={colors.textLight} />
+            <line x1="1" y1="11" x2="4" y2="11" stroke={colors.textLight} strokeWidth="1.5" strokeLinecap="round" />
+            <line x1="20" y1="11" x2="23" y2="11" stroke={colors.textLight} strokeWidth="1.5" strokeLinecap="round" />
+            <line x1="9" y1="17" x2="15" y2="17" stroke={colors.textLight} strokeWidth="1.5" strokeLinecap="round" />
           </svg>
           <span style={{ ...styles.time, fontStyle: "italic" }}>streaming...</span>
         </div>
@@ -298,8 +364,8 @@ export function TriggerQuote({ content, time, onClick }: { content: string; time
       }}
     >
       <svg width="12" height="12" viewBox="0 0 16 16" fill="none" style={{ flexShrink: 0, opacity: 0.5 }}>
-        <path d="M14 10l-3 3-3-3" stroke={colors.textDim} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
-        <path d="M11 13V6a3 3 0 0 0-3-3H2" stroke={colors.textDim} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+        <path d="M14 10l-3 3-3-3" stroke={colors.textDim} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+        <path d="M11 13V6a3 3 0 0 0-3-3H2" stroke={colors.textDim} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
       </svg>
       <span style={{ flex: 1, fontSize: 12, color: colors.textDim, fontFamily: fonts.mono, lineHeight: 1.4 }}>{text}</span>
       {timeStr && <span style={{ fontSize: 11, color: colors.textDim, opacity: 0.7, flexShrink: 0 }}>{timeStr}</span>}
@@ -382,11 +448,7 @@ export function ToolActivityIndicator({ toolName, input, result }: { toolName: s
   const canExpand = fullText.length > 120;
   const resultColor = result?.is_error ? colors.warning : colors.textDim;
   return (
-    <div
-      onMouseEnter={() => setHovered(true)}
-      onMouseLeave={() => setHovered(false)}
-      style={{ ...activityStyle, flexDirection: "column", alignItems: "flex-start", gap: 2 }}
-    >
+    <div onMouseEnter={() => setHovered(true)} onMouseLeave={() => setHovered(false)} style={{ ...activityStyle, flexDirection: "column", alignItems: "flex-start", gap: 2 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 8, maxWidth: "100%" }}>
         <span style={{ opacity: 0.5 }}>&#9881;</span>
         <span style={{ color: colors.textMuted, fontWeight: 500 }}>{toolName}</span>
@@ -460,9 +522,7 @@ export function ThinkingBubble({ text, truncated }: { text?: string; truncated: 
         opacity: 0.85,
       }}
     >
-      <div style={{ fontSize: 10, fontWeight: 700, color: colors.textMuted, textTransform: "uppercase", letterSpacing: 1, marginBottom: 4 }}>
-        Thinking
-      </div>
+      <div style={{ fontSize: 10, fontWeight: 700, color: colors.textMuted, textTransform: "uppercase", letterSpacing: 1, marginBottom: 4 }}>Thinking</div>
       <div>{expanded ? safeText : preview}</div>
       {truncated && <div style={{ fontSize: 10, opacity: 0.5, marginTop: 4 }}>truncated</div>}
     </div>
@@ -474,36 +534,39 @@ export function TaskChecklist({ tasks }: { tasks: TaskItem[] }) {
   const completed = tasks.filter((t) => t.status === "completed").length;
   return (
     <div style={{ display: "flex", justifyContent: "center", padding: "4px 24px 0" }}>
-      <div style={{
-        width: "100%",
-        maxWidth: 768,
-        padding: "8px 14px",
-        borderRadius: 8,
-        border: `1px solid ${colors.border}`,
-        backgroundColor: colors.surface,
-        fontSize: 12,
-        fontFamily: fonts.mono,
-      }}>
+      <div
+        style={{
+          width: "100%",
+          maxWidth: 768,
+          padding: "8px 14px",
+          borderRadius: 8,
+          border: `1px solid ${colors.border}`,
+          backgroundColor: colors.surface,
+          fontSize: 12,
+          fontFamily: fonts.mono,
+        }}
+      >
         <div style={{ fontSize: 10, fontWeight: 700, color: colors.active, textTransform: "uppercase" as const, letterSpacing: 1, marginBottom: 4 }}>
           Tasks {completed}/{tasks.length}
         </div>
         {tasks.map((task) => (
-          <div key={task.id} style={{
-            display: "flex",
-            alignItems: "center",
-            gap: 6,
-            padding: "2px 0",
-            color: task.status === "pending" ? colors.textDim
-                 : task.status === "in_progress" ? colors.active
-                 : colors.text,
-          }}>
-            <span style={{ fontSize: 14, lineHeight: 1 }}>
-              {task.status === "completed" ? "☑" : "☐"}
-            </span>
-            <span style={{
-              textDecoration: task.status === "completed" ? "line-through" : "none",
-              opacity: task.status === "pending" ? 0.6 : 1,
-            }}>
+          <div
+            key={task.id}
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 6,
+              padding: "2px 0",
+              color: task.status === "pending" ? colors.textDim : task.status === "in_progress" ? colors.active : colors.text,
+            }}
+          >
+            <span style={{ fontSize: 14, lineHeight: 1 }}>{task.status === "completed" ? "☑" : "☐"}</span>
+            <span
+              style={{
+                textDecoration: task.status === "completed" ? "line-through" : "none",
+                opacity: task.status === "pending" ? 0.6 : 1,
+              }}
+            >
               {task.status === "in_progress" && task.activeForm ? task.activeForm : task.subject}
             </span>
           </div>
@@ -535,10 +598,15 @@ export function AskUserQuestionCard({ questions, channelId, mode, onSent }: { qu
       const next = new Map(prev);
       const cur = new Set(prev.get(qi) ?? []);
       if (multi) {
-        if (cur.has(label)) cur.delete(label); else cur.add(label);
+        if (cur.has(label)) cur.delete(label);
+        else cur.add(label);
       } else {
         // Single-select: replace, or clear if re-clicking the same chip.
-        if (cur.has(label) && cur.size === 1) cur.clear(); else { cur.clear(); cur.add(label); }
+        if (cur.has(label) && cur.size === 1) cur.clear();
+        else {
+          cur.clear();
+          cur.add(label);
+        }
       }
       next.set(qi, cur);
       return next;
@@ -546,18 +614,31 @@ export function AskUserQuestionCard({ questions, channelId, mode, onSent }: { qu
   };
 
   const setOtherText = (idx: number, value: string) => {
-    setOtherTexts((prev) => { const next = new Map(prev); next.set(idx, value); return next; });
+    setOtherTexts((prev) => {
+      const next = new Map(prev);
+      next.set(idx, value);
+      return next;
+    });
   };
 
   const setFocusedOpt = (qi: number, label: string) => {
-    setFocused((prev) => { const next = new Map(prev); next.set(qi, label); return next; });
+    setFocused((prev) => {
+      const next = new Map(prev);
+      next.set(qi, label);
+      return next;
+    });
   };
 
   // Drop the transient hover/focus so the description+preview panel doesn't
   // linger on the last-pointed option after the pointer leaves (which left a
   // stale box hovering above the "Other" textarea).
   const clearFocusedOpt = (qi: number) => {
-    setFocused((prev) => { if (!prev.has(qi)) return prev; const next = new Map(prev); next.delete(qi); return next; });
+    setFocused((prev) => {
+      if (!prev.has(qi)) return prev;
+      const next = new Map(prev);
+      next.delete(qi);
+      return next;
+    });
   };
 
   const handleSend = async () => {
@@ -574,13 +655,13 @@ export function AskUserQuestionCard({ questions, channelId, mode, onSent }: { qu
       // in context, so the short header alone would be ambiguous.
       parts.push(`Q: ${q.question}\nA: ${labels.join(", ")}`);
     }
-    const content = parts.length > 0
-      ? "Here are my answers:\n\n" + parts.join("\n\n")
-      : "No specific answers provided.";
+    const content = parts.length > 0 ? "Here are my answers:\n\n" + parts.join("\n\n") : "No specific answers provided.";
     try {
       await resolveAsk(channelId, "answer", content, mode);
       onSent?.();
-    } catch { /* ignore */ }
+    } catch {
+      /* ignore */
+    }
     setSending(false);
   };
 
@@ -597,123 +678,157 @@ export function AskUserQuestionCard({ questions, channelId, mode, onSent }: { qu
   };
 
   return (
-    <div style={{
-      margin: "8px 16px",
-      padding: "12px 16px",
-      borderRadius: 8,
-      border: `1px solid ${colors.active}`,
-      backgroundColor: colors.surface,
-    }}>
-      <div style={{ fontSize: 11, fontWeight: 700, color: colors.active, textTransform: "uppercase", letterSpacing: 1, marginBottom: 8 }}>
-        Claude has questions
-      </div>
+    <div
+      style={{
+        margin: "8px 16px",
+        padding: "12px 16px",
+        borderRadius: 8,
+        border: `1px solid ${colors.active}`,
+        backgroundColor: colors.surface,
+      }}
+    >
+      <div style={{ fontSize: 11, fontWeight: 700, color: colors.active, textTransform: "uppercase", letterSpacing: 1, marginBottom: 8 }}>Claude has questions</div>
       {questions.map((q, qi) => {
         const multi = !!q.multiSelect;
         const sel = selectedFor(qi);
         const focusOpt = focusedOption(qi);
         return (
-        // The hover clear lives on the whole question block (options row +
-        // panel), not on each option button: opening the panel grows the
-        // bottom-anchored chat and shifts the button out from under the
-        // cursor, so a per-button mouseLeave immediately cleared the focus
-        // and the panel flickered open/closed in a loop.
-        <div key={qi} onMouseLeave={() => clearFocusedOpt(qi)} style={{ marginBottom: qi < questions.length - 1 ? 12 : 0 }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 4 }}>
-            {q.header && <div style={{ fontSize: 10, fontWeight: 700, color: colors.active, textTransform: "uppercase", letterSpacing: 1, padding: "1px 6px", border: `1px solid ${colors.active}`, borderRadius: 4 }}>{q.header}</div>}
-            {multi && <div style={{ fontSize: 10, color: colors.textDim, fontFamily: fonts.mono }} title="Select one or more">multi-select</div>}
-          </div>
-          <div style={{ fontSize: 13, color: colors.text, marginBottom: 6 }}>{q.question}</div>
-          <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
-            {q.options?.map((opt) => {
-              const isSelected = sel.has(opt.label);
-              return (
-                <button
-                  key={opt.label}
-                  onClick={() => toggleOption(qi, opt.label, multi)}
-                  onMouseEnter={() => setFocusedOpt(qi, opt.label)}
-                  onFocus={() => setFocusedOpt(qi, opt.label)}
-                  title={opt.description}
+          // The hover clear lives on the whole question block (options row +
+          // panel), not on each option button: opening the panel grows the
+          // bottom-anchored chat and shifts the button out from under the
+          // cursor, so a per-button mouseLeave immediately cleared the focus
+          // and the panel flickered open/closed in a loop.
+          <div key={qi} onMouseLeave={() => clearFocusedOpt(qi)} style={{ marginBottom: qi < questions.length - 1 ? 12 : 0 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 4 }}>
+              {q.header && (
+                <div
                   style={{
-                    display: "inline-flex",
-                    alignItems: "center",
-                    gap: 6,
-                    padding: "4px 10px",
-                    fontSize: 12,
-                    fontFamily: fonts.mono,
-                    border: `1px solid ${isSelected ? colors.active : colors.border}`,
-                    borderRadius: multi ? 6 : 12,
-                    backgroundColor: isSelected ? colors.active : "transparent",
-                    color: isSelected ? "#fff" : colors.text,
-                    cursor: "pointer",
+                    fontSize: 10,
+                    fontWeight: 700,
+                    color: colors.active,
+                    textTransform: "uppercase",
+                    letterSpacing: 1,
+                    padding: "1px 6px",
+                    border: `1px solid ${colors.active}`,
+                    borderRadius: 4,
                   }}
                 >
-                  <span aria-hidden style={{ opacity: 0.9 }}>
-                    {multi ? (isSelected ? "☑" : "☐") : (isSelected ? "◉" : "○")}
-                  </span>
-                  {opt.label}
-                </button>
-              );
-            })}
-            <button
-              onClick={() => toggleOption(qi, OTHER, multi)}
-              style={{
-                padding: "4px 10px",
-                fontSize: 12,
-                fontFamily: fonts.mono,
-                border: `1px solid ${sel.has(OTHER) ? colors.active : colors.border}`,
-                borderRadius: multi ? 6 : 12,
-                backgroundColor: sel.has(OTHER) ? colors.active : "transparent",
-                color: sel.has(OTHER) ? "#fff" : colors.textDim,
-                cursor: "pointer",
-              }}
-            >
-              Other...
-            </button>
-          </div>
-          {/* Description + preview of the focused/selected option (Claude may
-              attach a mockup or code snippet to compare options). */}
-          {focusOpt && (focusOpt.description || focusOpt.preview) && (
-            <div style={{ marginTop: 6, padding: 8, backgroundColor: colors.bg, border: `1px solid ${colors.border}`, borderRadius: 6 }}>
-              <div style={{ fontSize: 11, fontWeight: 600, color: colors.textLight, marginBottom: focusOpt.description ? 4 : 0 }}>{focusOpt.label}</div>
-              {focusOpt.description && <div style={{ fontSize: 12, color: colors.textDim }}>{focusOpt.description}</div>}
-              {focusOpt.preview && (
-                <pre style={{ marginTop: focusOpt.description ? 6 : 4, marginBottom: 0, padding: 8, maxHeight: 220, overflow: "auto", fontSize: 11, fontFamily: fonts.mono, backgroundColor: colors.codeBlockBg, borderRadius: 4, color: colors.text, whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
-                  {focusOpt.preview}
-                </pre>
+                  {q.header}
+                </div>
+              )}
+              {multi && (
+                <div style={{ fontSize: 10, color: colors.textDim, fontFamily: fonts.mono }} title="Select one or more">
+                  multi-select
+                </div>
               )}
             </div>
-          )}
-          {sel.has(OTHER) && (
-            <textarea
-              autoFocus
-              placeholder="Type your answer (⌘/Ctrl+Enter to send)…"
-              value={otherTexts.get(qi) || ""}
-              onChange={(e) => setOtherText(qi, e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
-                  e.preventDefault();
-                  if (allAnswered && !sending) void handleSend();
-                }
-              }}
-              rows={3}
-              disabled={sending}
-              style={{
-                marginTop: 6,
-                width: "100%",
-                boxSizing: "border-box",
-                padding: 8,
-                fontSize: 12,
-                fontFamily: fonts.mono,
-                backgroundColor: colors.codeBlockBg,
-                border: `1px solid ${colors.border}`,
-                borderRadius: 6,
-                color: colors.text,
-                outline: "none",
-                resize: "vertical",
-              }}
-            />
-          )}
-        </div>
+            <div style={{ fontSize: 13, color: colors.text, marginBottom: 6 }}>{q.question}</div>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+              {q.options?.map((opt) => {
+                const isSelected = sel.has(opt.label);
+                return (
+                  <button
+                    key={opt.label}
+                    onClick={() => toggleOption(qi, opt.label, multi)}
+                    onMouseEnter={() => setFocusedOpt(qi, opt.label)}
+                    onFocus={() => setFocusedOpt(qi, opt.label)}
+                    title={opt.description}
+                    style={{
+                      display: "inline-flex",
+                      alignItems: "center",
+                      gap: 6,
+                      padding: "4px 10px",
+                      fontSize: 12,
+                      fontFamily: fonts.mono,
+                      border: `1px solid ${isSelected ? colors.active : colors.border}`,
+                      borderRadius: multi ? 6 : 12,
+                      backgroundColor: isSelected ? colors.active : "transparent",
+                      color: isSelected ? "#fff" : colors.text,
+                      cursor: "pointer",
+                    }}
+                  >
+                    <span aria-hidden style={{ opacity: 0.9 }}>
+                      {multi ? (isSelected ? "☑" : "☐") : isSelected ? "◉" : "○"}
+                    </span>
+                    {opt.label}
+                  </button>
+                );
+              })}
+              <button
+                onClick={() => toggleOption(qi, OTHER, multi)}
+                style={{
+                  padding: "4px 10px",
+                  fontSize: 12,
+                  fontFamily: fonts.mono,
+                  border: `1px solid ${sel.has(OTHER) ? colors.active : colors.border}`,
+                  borderRadius: multi ? 6 : 12,
+                  backgroundColor: sel.has(OTHER) ? colors.active : "transparent",
+                  color: sel.has(OTHER) ? "#fff" : colors.textDim,
+                  cursor: "pointer",
+                }}
+              >
+                Other...
+              </button>
+            </div>
+            {/* Description + preview of the focused/selected option (Claude may
+              attach a mockup or code snippet to compare options). */}
+            {focusOpt && (focusOpt.description || focusOpt.preview) && (
+              <div style={{ marginTop: 6, padding: 8, backgroundColor: colors.bg, border: `1px solid ${colors.border}`, borderRadius: 6 }}>
+                <div style={{ fontSize: 11, fontWeight: 600, color: colors.textLight, marginBottom: focusOpt.description ? 4 : 0 }}>{focusOpt.label}</div>
+                {focusOpt.description && <div style={{ fontSize: 12, color: colors.textDim }}>{focusOpt.description}</div>}
+                {focusOpt.preview && (
+                  <pre
+                    style={{
+                      marginTop: focusOpt.description ? 6 : 4,
+                      marginBottom: 0,
+                      padding: 8,
+                      maxHeight: 220,
+                      overflow: "auto",
+                      fontSize: 11,
+                      fontFamily: fonts.mono,
+                      backgroundColor: colors.codeBlockBg,
+                      borderRadius: 4,
+                      color: colors.text,
+                      whiteSpace: "pre-wrap",
+                      wordBreak: "break-word",
+                    }}
+                  >
+                    {focusOpt.preview}
+                  </pre>
+                )}
+              </div>
+            )}
+            {sel.has(OTHER) && (
+              <textarea
+                autoFocus
+                placeholder="Type your answer (⌘/Ctrl+Enter to send)…"
+                value={otherTexts.get(qi) || ""}
+                onChange={(e) => setOtherText(qi, e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+                    e.preventDefault();
+                    if (allAnswered && !sending) void handleSend();
+                  }
+                }}
+                rows={3}
+                disabled={sending}
+                style={{
+                  marginTop: 6,
+                  width: "100%",
+                  boxSizing: "border-box",
+                  padding: 8,
+                  fontSize: 12,
+                  fontFamily: fonts.mono,
+                  backgroundColor: colors.codeBlockBg,
+                  border: `1px solid ${colors.border}`,
+                  borderRadius: 6,
+                  color: colors.text,
+                  outline: "none",
+                  resize: "vertical",
+                }}
+              />
+            )}
+          </div>
         );
       })}
       <button
@@ -755,7 +870,9 @@ export function ExitPlanCard({ plan, channelId, setMode, onSent }: { plan: ExitP
       // leaves the pill on "agent" while the card still shows an unresolved plan.
       setMode("agent");
       onSent?.();
-    } catch { /* ignore */ }
+    } catch {
+      /* ignore */
+    }
     setSending(false);
   };
 
@@ -767,7 +884,9 @@ export function ExitPlanCard({ plan, channelId, setMode, onSent }: { plan: ExitP
       setMode("plan");
       await resolvePlan(channelId, "reject");
       onSent?.();
-    } catch { /* ignore */ }
+    } catch {
+      /* ignore */
+    }
     setSending(false);
   };
 
@@ -779,7 +898,9 @@ export function ExitPlanCard({ plan, channelId, setMode, onSent }: { plan: ExitP
       setMode("plan");
       await resolvePlan(channelId, "deny", prompt, "plan");
       onSent?.();
-    } catch { /* ignore */ }
+    } catch {
+      /* ignore */
+    }
     setSending(false);
   };
 
@@ -788,16 +909,16 @@ export function ExitPlanCard({ plan, channelId, setMode, onSent }: { plan: ExitP
   const hasMore = lines.length > 5;
 
   return (
-    <div style={{
-      margin: "8px 16px",
-      padding: "12px 16px",
-      borderRadius: 8,
-      border: `1px solid ${colors.warning}`,
-      backgroundColor: colors.surface,
-    }}>
-      <div style={{ fontSize: 11, fontWeight: 700, color: colors.warning, textTransform: "uppercase", letterSpacing: 1, marginBottom: 8 }}>
-        Plan ready for review
-      </div>
+    <div
+      style={{
+        margin: "8px 16px",
+        padding: "12px 16px",
+        borderRadius: 8,
+        border: `1px solid ${colors.warning}`,
+        backgroundColor: colors.surface,
+      }}
+    >
+      <div style={{ fontSize: 11, fontWeight: 700, color: colors.warning, textTransform: "uppercase", letterSpacing: 1, marginBottom: 8 }}>Plan ready for review</div>
       <div
         style={{
           fontSize: 12,
@@ -945,11 +1066,7 @@ export function ExitPlanCard({ plan, channelId, setMode, onSent }: { plan: ExitP
   );
 }
 
-export function renderTimelineItem(
-  it: TimelineItem,
-  resultsByToolUseID: Map<string, { text: string; is_error: boolean; truncated: boolean }>,
-  skippedToolResultIDs: Set<string>,
-): React.ReactNode {
+export function renderTimelineItem(it: TimelineItem, resultsByToolUseID: Map<string, { text: string; is_error: boolean; truncated: boolean }>, skippedToolResultIDs: Set<string>): React.ReactNode {
   if (it.kind === "thinking") {
     return <ThinkingBubble key={`t-${it.id}`} text={it.text} truncated={it.truncated ?? false} />;
   }

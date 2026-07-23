@@ -1,21 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { WorkflowDef, WorkflowNodeRun, WorkflowRun } from "../api/loopApi";
+import { cancelWorkflowRun, deleteWorkflowRun, fetchWorkflowRun, fetchWorkflowRuns, fetchWorkflows, resumeWorkflowRun, retryWorkflowRun, saveWorkflowDef, startWorkflowRun } from "../api/loopApi";
 import type { WSEvent } from "../types";
-import {
-  fetchWorkflows,
-  fetchWorkflowRuns,
-  fetchWorkflowRun,
-  startWorkflowRun,
-  saveWorkflowDef,
-  resumeWorkflowRun,
-  cancelWorkflowRun,
-  deleteWorkflowRun,
-  retryWorkflowRun,
-} from "../api/loopApi";
-import type {
-  WorkflowDef,
-  WorkflowRun,
-  WorkflowNodeRun,
-} from "../api/loopApi";
 
 export interface UseWorkflowStateOptions {
   channelId?: string;
@@ -25,13 +11,7 @@ export interface UseWorkflowStateOptions {
   listLimit?: number;
 }
 
-export function useWorkflowState({
-  channelId,
-  initialListWidth,
-  listWidthMin,
-  listWidthMax,
-  listLimit = 50,
-}: UseWorkflowStateOptions) {
+export function useWorkflowState({ channelId, initialListWidth, listWidthMin, listWidthMax, listLimit = 50 }: UseWorkflowStateOptions) {
   const [definitions, setDefinitions] = useState<WorkflowDef[]>([]);
   const [definitionsLoaded, setDefinitionsLoaded] = useState(false);
   const [runs, setRuns] = useState<WorkflowRun[]>([]);
@@ -90,7 +70,9 @@ export function useWorkflowState({
       const data = await fetchWorkflowRuns(channelId, fetchLimit, 0);
       setRuns(data);
       setHasMore(data.length >= fetchLimit);
-    } catch { /* ignore */ }
+    } catch {
+      /* ignore */
+    }
   }, [channelId, listLimit]);
 
   const loadMore = useCallback(async () => {
@@ -109,7 +91,8 @@ export function useWorkflowState({
         });
         setHasMore(data.length === listLimit);
       }
-    } catch { /* ignore */
+    } catch {
+      /* ignore */
     } finally {
       setLoadingMore(false);
     }
@@ -125,14 +108,18 @@ export function useWorkflowState({
       // re-attempted; keeping definitionsLoaded=false lets a subsequent
       // remount / channel change retry instead of silently failing.
       setDefinitionsLoaded(true);
-    } catch { /* ignore */ }
+    } catch {
+      /* ignore */
+    }
   }, [channelId]);
 
   const loadRunDetail = useCallback(async (runId: string) => {
     try {
       const detail = await fetchWorkflowRun(runId);
       setNodeRuns(detail.node_runs ?? []);
-    } catch { /* ignore */ }
+    } catch {
+      /* ignore */
+    }
   }, []);
 
   useEffect(() => {
@@ -159,61 +146,90 @@ export function useWorkflowState({
 
   // --- WebSocket event handler ---
 
-  const handleWorkflowEvent = useCallback((event: WSEvent | { type: string; data?: unknown }) => {
-    const data = event.data as Record<string, string> | undefined;
-    if (!data) return;
+  const handleWorkflowEvent = useCallback(
+    (event: WSEvent | { type: string; data?: unknown }) => {
+      const data = event.data as Record<string, string> | undefined;
+      if (!data) return;
 
-    if (event.type === "workflow.run_started" || event.type === "workflow.run_completed" || event.type === "workflow.run_paused") {
-      loadRuns();
-      if (data.run_id && data.run_id === selectedRunIdRef.current) {
-        loadRunDetail(data.run_id);
+      if (event.type === "workflow.run_started" || event.type === "workflow.run_completed" || event.type === "workflow.run_paused") {
+        loadRuns();
+        if (data.run_id && data.run_id === selectedRunIdRef.current) {
+          loadRunDetail(data.run_id);
+        }
       }
-    }
-    if (event.type === "workflow.node_started" || event.type === "workflow.node_completed") {
-      if (data.run_id && data.run_id === selectedRunIdRef.current) {
-        loadRunDetail(data.run_id);
+      if (event.type === "workflow.node_started" || event.type === "workflow.node_completed") {
+        if (data.run_id && data.run_id === selectedRunIdRef.current) {
+          loadRunDetail(data.run_id);
+        }
       }
-    }
-  }, [loadRuns, loadRunDetail]);
+    },
+    [loadRuns, loadRunDetail],
+  );
 
   // --- actions ---
 
-  const handleCancel = useCallback(async (runId: string) => {
-    try {
-      await cancelWorkflowRun(runId);
-      loadRuns();
-      if (runId === selectedRunIdRef.current) loadRunDetail(runId);
-    } catch (err) { console.error("workflow cancel failed:", err); }
-  }, [loadRuns, loadRunDetail]);
+  const handleCancel = useCallback(
+    async (runId: string) => {
+      try {
+        await cancelWorkflowRun(runId);
+        loadRuns();
+        if (runId === selectedRunIdRef.current) loadRunDetail(runId);
+      } catch (err) {
+        console.error("workflow cancel failed:", err);
+      }
+    },
+    [loadRuns, loadRunDetail],
+  );
 
-  const handleDelete = useCallback(async (runId: string) => {
-    try {
-      await deleteWorkflowRun(runId);
-      if (runId === selectedRunIdRef.current) setSelectedRunId(null);
-      loadRuns();
-    } catch (err) { console.error("workflow delete failed:", err); }
-  }, [loadRuns]);
+  const handleDelete = useCallback(
+    async (runId: string) => {
+      try {
+        await deleteWorkflowRun(runId);
+        if (runId === selectedRunIdRef.current) setSelectedRunId(null);
+        loadRuns();
+      } catch (err) {
+        console.error("workflow delete failed:", err);
+      }
+    },
+    [loadRuns],
+  );
 
-  const handleRetry = useCallback(async (runId: string) => {
-    try {
-      const { run_id } = await retryWorkflowRun(runId);
-      loadRuns();
-      setSelectedRunId(run_id);
-      loadRunDetail(run_id);
-      // Follow-up fetches to catch fast-completing retried runs.
-      setTimeout(() => { loadRuns(); if (run_id) loadRunDetail(run_id); }, 500);
-      setTimeout(() => { loadRuns(); if (run_id) loadRunDetail(run_id); }, 2000);
-    } catch (err) { console.error("workflow retry failed:", err); }
-  }, [loadRuns, loadRunDetail]);
+  const handleRetry = useCallback(
+    async (runId: string) => {
+      try {
+        const { run_id } = await retryWorkflowRun(runId);
+        loadRuns();
+        setSelectedRunId(run_id);
+        loadRunDetail(run_id);
+        // Follow-up fetches to catch fast-completing retried runs.
+        setTimeout(() => {
+          loadRuns();
+          if (run_id) loadRunDetail(run_id);
+        }, 500);
+        setTimeout(() => {
+          loadRuns();
+          if (run_id) loadRunDetail(run_id);
+        }, 2000);
+      } catch (err) {
+        console.error("workflow retry failed:", err);
+      }
+    },
+    [loadRuns, loadRunDetail],
+  );
 
-  const handleResume = useCallback(async (runId: string, response: string) => {
-    try {
-      await resumeWorkflowRun(runId, response || "approved");
-      setResumeResponse("");
-      loadRuns();
-      if (runId === selectedRunIdRef.current) loadRunDetail(runId);
-    } catch (err) { console.error("workflow resume failed:", err); }
-  }, [loadRuns, loadRunDetail]);
+  const handleResume = useCallback(
+    async (runId: string, response: string) => {
+      try {
+        await resumeWorkflowRun(runId, response || "approved");
+        setResumeResponse("");
+        loadRuns();
+        if (runId === selectedRunIdRef.current) loadRunDetail(runId);
+      } catch (err) {
+        console.error("workflow resume failed:", err);
+      }
+    },
+    [loadRuns, loadRunDetail],
+  );
 
   const handleStartRun = useCallback(async () => {
     if (!startWorkflowName) return;
@@ -231,67 +247,87 @@ export function useWorkflowState({
       // Fast-completing workflows (e.g. simple bash nodes) may finish before
       // the WebSocket subscription is established or before polling kicks in.
       // Schedule follow-up fetches to catch the completed status.
-      setTimeout(() => { loadRuns(); if (result.run_id) loadRunDetail(result.run_id); }, 500);
-      setTimeout(() => { loadRuns(); if (result.run_id) loadRunDetail(result.run_id); }, 2000);
-    } catch (err) { console.error("workflow start failed:", err); }
+      setTimeout(() => {
+        loadRuns();
+        if (result.run_id) loadRunDetail(result.run_id);
+      }, 500);
+      setTimeout(() => {
+        loadRuns();
+        if (result.run_id) loadRunDetail(result.run_id);
+      }, 2000);
+    } catch (err) {
+      console.error("workflow start failed:", err);
+    }
   }, [channelId, startWorkflowName, startInputs, loadRuns, loadRunDetail]);
 
-  const handleSelectWorkflow = useCallback((name: string) => {
-    setStartWorkflowName(name);
-    const def = definitions.find((d) => d.name === name);
-    if (def?.inputs) {
-      const initial: Record<string, string> = {};
-      for (const [k, v] of Object.entries(def.inputs)) {
-        initial[k] = v.default ?? "";
+  const handleSelectWorkflow = useCallback(
+    (name: string) => {
+      setStartWorkflowName(name);
+      const def = definitions.find((d) => d.name === name);
+      if (def?.inputs) {
+        const initial: Record<string, string> = {};
+        for (const [k, v] of Object.entries(def.inputs)) {
+          initial[k] = v.default ?? "";
+        }
+        setStartInputs(initial);
+      } else {
+        setStartInputs({});
       }
-      setStartInputs(initial);
-    } else {
-      setStartInputs({});
-    }
-  }, [definitions]);
+    },
+    [definitions],
+  );
 
   // Run a workflow from its row ("Run Now") — always opens the start dialog so
   // the user can review inputs and the full definition (and optionally edit it)
   // before starting.
-  const handleRunWorkflow = useCallback((name: string) => {
-    handleSelectWorkflow(name);
-    setShowStartDialog(true);
-  }, [handleSelectWorkflow]);
+  const handleRunWorkflow = useCallback(
+    (name: string) => {
+      handleSelectWorkflow(name);
+      setShowStartDialog(true);
+    },
+    [handleSelectWorkflow],
+  );
 
   // Persist an edited workflow definition (from the start dialog's JSON editor)
   // back to its config scope, then refresh the definition list. Returns an error
   // message on failure, or null on success.
-  const handleSaveWorkflowDef = useCallback(async (jsonText: string): Promise<string | null> => {
-    let parsed: WorkflowDef & { scope?: unknown };
-    try {
-      parsed = JSON.parse(jsonText);
-    } catch (err) {
-      return `Invalid JSON: ${err instanceof Error ? err.message : String(err)}`;
-    }
-    if (!parsed || typeof parsed.name !== "string" || parsed.name === "") {
-      return "Definition must have a non-empty \"name\".";
-    }
-    const scope = definitions.find((d) => d.name === parsed.name)?.scope ?? "global";
-    // scope is a UI-only tag, not part of the stored definition.
-    const { scope: _drop, ...workflow } = parsed;
-    void _drop;
-    try {
-      await saveWorkflowDef({ action: "update", scope, channel_id: channelId, workflow });
-      await loadDefinitions();
-      return null;
-    } catch (err) {
-      return err instanceof Error ? err.message : String(err);
-    }
-  }, [definitions, channelId, loadDefinitions]);
+  const handleSaveWorkflowDef = useCallback(
+    async (jsonText: string): Promise<string | null> => {
+      let parsed: WorkflowDef & { scope?: unknown };
+      try {
+        parsed = JSON.parse(jsonText);
+      } catch (err) {
+        return `Invalid JSON: ${err instanceof Error ? err.message : String(err)}`;
+      }
+      if (!parsed || typeof parsed.name !== "string" || parsed.name === "") {
+        return 'Definition must have a non-empty "name".';
+      }
+      const scope = definitions.find((d) => d.name === parsed.name)?.scope ?? "global";
+      // scope is a UI-only tag, not part of the stored definition.
+      const { scope: _drop, ...workflow } = parsed;
+      void _drop;
+      try {
+        await saveWorkflowDef({ action: "update", scope, channel_id: channelId, workflow });
+        await loadDefinitions();
+        return null;
+      } catch (err) {
+        return err instanceof Error ? err.message : String(err);
+      }
+    },
+    [definitions, channelId, loadDefinitions],
+  );
 
-  const toggleNodeExpand = useCallback((nodeId: string) => {
-    setExpandedNodeId((prev) => {
-      if (prev === nodeId) return null; // collapsing — no refetch needed
-      const runId = selectedRunIdRef.current;
-      if (runId) loadRunDetail(runId);
-      return nodeId;
-    });
-  }, [loadRunDetail]);
+  const toggleNodeExpand = useCallback(
+    (nodeId: string) => {
+      setExpandedNodeId((prev) => {
+        if (prev === nodeId) return null; // collapsing — no refetch needed
+        const runId = selectedRunIdRef.current;
+        if (runId) loadRunDetail(runId);
+        return nodeId;
+      });
+    },
+    [loadRunDetail],
+  );
 
   const selectRun = useCallback((runId: string) => {
     setSelectedRunId(runId);
@@ -316,38 +352,46 @@ export function useWorkflowState({
 
   // --- derived state (memoized) ---
 
-  const sortedRuns = useMemo(() =>
-    [...runs].sort((a, b) => {
-      const aActive = a.status === "running" || a.status === "paused" ? 0 : 1;
-      const bActive = b.status === "running" || b.status === "paused" ? 0 : 1;
-      if (aActive !== bActive) return aActive - bActive;
-      return new Date(b.started_at).getTime() - new Date(a.started_at).getTime();
-    }),
-  [runs]);
+  const sortedRuns = useMemo(
+    () =>
+      [...runs].sort((a, b) => {
+        const aActive = a.status === "running" || a.status === "paused" ? 0 : 1;
+        const bActive = b.status === "running" || b.status === "paused" ? 0 : 1;
+        if (aActive !== bActive) return aActive - bActive;
+        return new Date(b.started_at).getTime() - new Date(a.started_at).getTime();
+      }),
+    [runs],
+  );
 
   // Runs shown in the list: all, or filtered to the selected workflow definition.
-  const displayedRuns = useMemo(
-    () => selectedWorkflowName
-      ? sortedRuns.filter((r) => r.workflow_name === selectedWorkflowName)
-      : sortedRuns,
-    [sortedRuns, selectedWorkflowName],
-  );
+  const displayedRuns = useMemo(() => (selectedWorkflowName ? sortedRuns.filter((r) => r.workflow_name === selectedWorkflowName) : sortedRuns), [sortedRuns, selectedWorkflowName]);
 
   // Definitions grouped by config scope for the panel's Global / Project sections
   // (untagged legacy defs default to global).
-  const groupedDefinitions = useMemo(() => ({
-    global: definitions.filter((d) => (d.scope ?? "global") === "global"),
-    project: definitions.filter((d) => d.scope === "project"),
-  }), [definitions]);
+  const groupedDefinitions = useMemo(
+    () => ({
+      global: definitions.filter((d) => (d.scope ?? "global") === "global"),
+      project: definitions.filter((d) => d.scope === "project"),
+    }),
+    [definitions],
+  );
 
   const selectedRun = runs.find((r) => r.id === selectedRunId) ?? null;
 
   const selectedDef = useMemo(() => {
     if (!selectedRun) return null;
-    return definitions.find((d) => d.name === selectedRun.workflow_name)
-      ?? (selectedRun.workflow_def
-        ? (() => { try { return JSON.parse(selectedRun.workflow_def) as WorkflowDef; } catch { return null; } })()
-        : null);
+    return (
+      definitions.find((d) => d.name === selectedRun.workflow_name) ??
+      (selectedRun.workflow_def
+        ? (() => {
+            try {
+              return JSON.parse(selectedRun.workflow_def) as WorkflowDef;
+            } catch {
+              return null;
+            }
+          })()
+        : null)
+    );
   }, [selectedRun, definitions]);
 
   const selectedStartDef = definitions.find((d) => d.name === startWorkflowName);

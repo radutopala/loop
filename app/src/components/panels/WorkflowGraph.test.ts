@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { expandLoopBodies } from "./WorkflowGraph";
 import type { WorkflowNodeDef, WorkflowNodeRun } from "../../api/workflows";
+import { expandLoopBodies } from "./WorkflowGraph";
 
 function def(id: string, type: WorkflowNodeDef["type"], extra: Partial<WorkflowNodeDef> = {}): WorkflowNodeDef {
   return { id, type, ...extra };
@@ -36,16 +36,12 @@ describe("expandLoopBodies", () => {
   });
 
   it("falls back to one iteration when no runs exist yet", () => {
-    const defs = [
-      def("L", "loop", { body: [def("review", "bash"), def("fix", "prompt", { depends_on: ["review"] })] }),
-    ];
+    const defs = [def("L", "loop", { body: [def("review", "bash"), def("fix", "prompt", { depends_on: ["review"] })] })];
     const { effectiveDefs, groupSpecs } = expandLoopBodies(defs, []);
     expect(idsOf(effectiveDefs)).toEqual([synth("L", 0, "review"), synth("L", 0, "fix")]);
     // The loop container def itself is dropped.
     expect(idsOf(effectiveDefs)).not.toContain("L");
-    expect(groupSpecs).toEqual([
-      { loopId: "L", iterCount: 1, syntheticIds: [synth("L", 0, "review"), synth("L", 0, "fix")] },
-    ]);
+    expect(groupSpecs).toEqual([{ loopId: "L", iterCount: 1, syntheticIds: [synth("L", 0, "review"), synth("L", 0, "fix")] }]);
   });
 
   it("derives iteration count from max observed run iteration + 1", () => {
@@ -58,9 +54,7 @@ describe("expandLoopBodies", () => {
   });
 
   it("rewrites intra-body deps to the same iteration's synthetic ids", () => {
-    const defs = [
-      def("L", "loop", { body: [def("review", "bash"), def("fix", "prompt", { depends_on: ["review"] })] }),
-    ];
+    const defs = [def("L", "loop", { body: [def("review", "bash"), def("fix", "prompt", { depends_on: ["review"] })] })];
     const { effectiveDefs } = expandLoopBodies(defs, [run("review", 0), run("fix", 0)]);
     const fix0 = effectiveDefs.find((d) => d.id === synth("L", 0, "fix"))!;
     expect(fix0.depends_on).toEqual([synth("L", 0, "review")]);
@@ -76,20 +70,14 @@ describe("expandLoopBodies", () => {
   });
 
   it("keeps an external (pre-loop) dep on a body child", () => {
-    const defs = [
-      def("setup", "bash"),
-      def("L", "loop", { body: [def("review", "bash", { depends_on: ["setup"] })] }),
-    ];
+    const defs = [def("setup", "bash"), def("L", "loop", { body: [def("review", "bash", { depends_on: ["setup"] })] })];
     const { effectiveDefs } = expandLoopBodies(defs, [run("review", 0)]);
     const review0 = effectiveDefs.find((d) => d.id === synth("L", 0, "review"))!;
     expect(review0.depends_on).toContain("setup");
   });
 
   it("rewires a top-level dep on the loop id to the loop's final emitted node", () => {
-    const defs = [
-      def("L", "loop", { body: [def("review", "bash"), def("fix", "prompt")] }),
-      def("after", "bash", { depends_on: ["L"] }),
-    ];
+    const defs = [def("L", "loop", { body: [def("review", "bash"), def("fix", "prompt")] }), def("after", "bash", { depends_on: ["L"] })];
     const runs = [run("review", 0), run("fix", 0), run("review", 1), run("fix", 1)];
     const { effectiveDefs } = expandLoopBodies(defs, runs);
     const after = effectiveDefs.find((d) => d.id === "after")!;
@@ -98,11 +86,7 @@ describe("expandLoopBodies", () => {
   });
 
   it("does not rewire deps that don't reference a loop id", () => {
-    const defs = [
-      def("a", "bash"),
-      def("L", "loop", { body: [def("x", "bash")] }),
-      def("b", "bash", { depends_on: ["a"] }),
-    ];
+    const defs = [def("a", "bash"), def("L", "loop", { body: [def("x", "bash")] }), def("b", "bash", { depends_on: ["a"] })];
     const { effectiveDefs } = expandLoopBodies(defs, [run("x", 0)]);
     expect(effectiveDefs.find((d) => d.id === "b")!.depends_on).toEqual(["a"]);
   });

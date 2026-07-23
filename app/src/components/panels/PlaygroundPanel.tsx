@@ -1,19 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { useTheme } from "../../ThemeContext";
-import {
-  fetchPlayground,
-  fetchPlaygroundItems,
-  fetchPlaygroundShareStatus,
-  getApiUrl,
-  sharePlayground,
-  unsharePlayground,
-  type PlaygroundItem,
-} from "../../api/loopApi";
+import { fetchPlayground, fetchPlaygroundItems, fetchPlaygroundShareStatus, getApiUrl, type PlaygroundItem, sharePlayground, unsharePlayground } from "../../api/loopApi";
 import { useEventStream } from "../../hooks/useEventStream";
+import { useTheme } from "../../ThemeContext";
 import type { WSEvent } from "../../types";
-import { storageGetJSON, storageSetJSON } from "../../utils/storage";
 import { logErr } from "../../utils/log";
 import { openExternalUrl } from "../../utils/openExternal";
+import { storageGetJSON, storageSetJSON } from "../../utils/storage";
 
 interface PlaygroundCode {
   html: string;
@@ -69,12 +61,15 @@ export function PlaygroundPanel({ channelId, instanceId = "default" }: Playgroun
   const activeScopeRef = useRef<"global" | "project">("global");
   activeScopeRef.current = activeScope;
 
-  const selectItem = useCallback((name: string, scope?: "global" | "project") => {
-    setActiveItem(name);
-    const resolved = scope ?? itemsRef.current.find((i) => i.name === name)?.scope ?? "global";
-    setActiveScope(resolved);
-    storageSetJSON(storageKey, { name, scope: resolved });
-  }, [storageKey]);
+  const selectItem = useCallback(
+    (name: string, scope?: "global" | "project") => {
+      setActiveItem(name);
+      const resolved = scope ?? itemsRef.current.find((i) => i.name === name)?.scope ?? "global";
+      setActiveScope(resolved);
+      storageSetJSON(storageKey, { name, scope: resolved });
+    },
+    [storageKey],
+  );
 
   // Load items list on mount.
   useEffect(() => {
@@ -84,17 +79,19 @@ export function PlaygroundPanel({ channelId, instanceId = "default" }: Playgroun
   // Load content when active item changes.
   useEffect(() => {
     if (!activeItem) return;
-    fetchPlayground(activeItem, activeScope, channelId).then((data) => {
-      if (data) {
-        setCode(data);
-        setTitle(data.title || "");
-        setDescription(data.description || "");
-      } else {
-        setCode({ html: "" });
-        setTitle("");
-        setDescription("");
-      }
-    }).catch(logErr("loading playground item"));
+    fetchPlayground(activeItem, activeScope, channelId)
+      .then((data) => {
+        if (data) {
+          setCode(data);
+          setTitle(data.title || "");
+          setDescription(data.description || "");
+        } else {
+          setCode({ html: "" });
+          setTitle("");
+          setDescription("");
+        }
+      })
+      .catch(logErr("loading playground item"));
   }, [activeItem, activeScope, channelId]);
 
   // Resolve the active playground's share status from the daemon (by dir, so
@@ -113,58 +110,60 @@ export function PlaygroundPanel({ channelId, instanceId = "default" }: Playgroun
   // Listen for live updates from agent via EventsHub.
   useEventStream({
     channelId,
-    onEvent: useCallback((event: WSEvent) => {
-      if (event.type === "playground.update") {
-        const data = event.data as Record<string, string>;
-        const eventName = data.name || "";
-        if (!eventName) return;
-        const eventScope = data.scope === "project" ? "project" : "global";
-        const eventChannelId = data.channel_id || "";
-        // Share state change (e.g. shared/unshared from another thread or the
-        // global panel): re-resolve status for the active playground rather
-        // than trusting the event's channel_id, since a project playground can
-        // be shared from a different channel that maps to the same dir. Not a
-        // content update.
-        if (data.kind === "share") {
+    onEvent: useCallback(
+      (event: WSEvent) => {
+        if (event.type === "playground.update") {
+          const data = event.data as Record<string, string>;
+          const eventName = data.name || "";
+          if (!eventName) return;
+          const eventScope = data.scope === "project" ? "project" : "global";
+          const eventChannelId = data.channel_id || "";
+          // Share state change (e.g. shared/unshared from another thread or the
+          // global panel): re-resolve status for the active playground rather
+          // than trusting the event's channel_id, since a project playground can
+          // be shared from a different channel that maps to the same dir. Not a
+          // content update.
+          if (data.kind === "share") {
+            if (eventName === activeItemRef.current && eventScope === activeScopeRef.current) {
+              refreshShareStatus();
+            }
+            return;
+          }
+          if (eventScope === "project" && eventChannelId !== channelId) return;
+          // Refresh items list (a new item may have been created).
+          fetchPlaygroundItems(channelId)
+            .then((list) => {
+              setItems(list);
+              // Auto-switch to the playground being worked on.
+              if (eventName !== activeItemRef.current || eventScope !== activeScopeRef.current) {
+                const found = list.find((i) => i.name === eventName && i.scope === eventScope);
+                selectItem(eventName, found?.scope);
+              }
+            })
+            .catch(logErr("refreshing playground items"));
+          // Reload active item with fresh content from server.
           if (eventName === activeItemRef.current && eventScope === activeScopeRef.current) {
-            refreshShareStatus();
-          }
-          return;
-        }
-        if (eventScope === "project" && eventChannelId !== channelId) return;
-        // Refresh items list (a new item may have been created).
-        fetchPlaygroundItems(channelId).then((list) => {
-          setItems(list);
-          // Auto-switch to the playground being worked on.
-          if (eventName !== activeItemRef.current || eventScope !== activeScopeRef.current) {
-            const found = list.find((i) => i.name === eventName && i.scope === eventScope);
-            selectItem(eventName, found?.scope);
-          }
-        }).catch(logErr("refreshing playground items"));
-        // Reload active item with fresh content from server.
-        if (eventName === activeItemRef.current && eventScope === activeScopeRef.current) {
-          if (data.html) {
-            // Full playground update — update metadata (triggers iframe reload via code change).
-            setCode(data as unknown as PlaygroundCode);
-            setTitle(data.title || "");
-            setDescription(data.description || "");
-          } else {
-            // File-level update — just reload iframe (server serves fresh files from disk).
-            setIframeVersion((v) => v + 1);
+            if (data.html) {
+              // Full playground update — update metadata (triggers iframe reload via code change).
+              setCode(data as unknown as PlaygroundCode);
+              setTitle(data.title || "");
+              setDescription(data.description || "");
+            } else {
+              // File-level update — just reload iframe (server serves fresh files from disk).
+              setIframeVersion((v) => v + 1);
+            }
           }
         }
-      }
-    }, [channelId, selectItem, refreshShareStatus]),
+      },
+      [channelId, selectItem, refreshShareStatus],
+    ),
   });
 
   // Listen for console messages from iframe via postMessage.
   useEffect(() => {
     const onMessage = (e: MessageEvent) => {
       if (e.data && e.data.type === "playground-console") {
-        setConsoleMessages((prev) => [
-          ...prev.slice(-199),
-          { level: e.data.level, message: e.data.message, time: Date.now() },
-        ]);
+        setConsoleMessages((prev) => [...prev.slice(-199), { level: e.data.level, message: e.data.message, time: Date.now() }]);
       }
     };
     window.addEventListener("message", onMessage);
@@ -211,13 +210,10 @@ export function PlaygroundPanel({ channelId, instanceId = "default" }: Playgroun
 
   function handleCopyShareUrl() {
     if (!shareUrl) return;
-    navigator.clipboard.writeText(shareUrl).then(
-      () => {
-        setShareCopied(true);
-        setTimeout(() => setShareCopied(false), 1500);
-      },
-      logErr("copying share url"),
-    );
+    navigator.clipboard.writeText(shareUrl).then(() => {
+      setShareCopied(true);
+      setTimeout(() => setShareCopied(false), 1500);
+    }, logErr("copying share url"));
   }
 
   // Empty state — no item selected.
@@ -227,9 +223,7 @@ export function PlaygroundPanel({ channelId, instanceId = "default" }: Playgroun
         <div style={{ color: colors.textDim, fontSize: 13 }}>
           {items.length > 0 ? "Select a playground" : "No playgrounds yet — ask an agent to create one, or run onboard:global to install examples"}
         </div>
-        {items.length > 0 && (
-          <PlaygroundSelector items={items} value="" onChange={selectItem} colors={colors} style={{ fontSize: 13, padding: "6px 12px" }} />
-        )}
+        {items.length > 0 && <PlaygroundSelector items={items} value="" onChange={selectItem} colors={colors} style={{ fontSize: 13, padding: "6px 12px" }} />}
       </div>
     );
   }
@@ -249,9 +243,7 @@ export function PlaygroundPanel({ channelId, instanceId = "default" }: Playgroun
           fontSize: 12,
         }}
       >
-        {items.length > 0 && (
-          <PlaygroundSelector items={items} value={playgroundSelectionKey(activeItem, activeScope)} onChange={selectItem} colors={colors} />
-        )}
+        {items.length > 0 && <PlaygroundSelector items={items} value={playgroundSelectionKey(activeItem, activeScope)} onChange={selectItem} colors={colors} />}
         <ToolbarButton onClick={handleReset} title="Reset" colors={colors}>
           Reset
         </ToolbarButton>
@@ -263,11 +255,7 @@ export function PlaygroundPanel({ channelId, instanceId = "default" }: Playgroun
             Info
           </ToolbarButton>
         )}
-        <ToolbarButton
-          onClick={handleToggleShare}
-          title={shareUrl ? "Stop sharing publicly" : "Share publicly over the internet"}
-          colors={colors}
-        >
+        <ToolbarButton onClick={handleToggleShare} title={shareUrl ? "Stop sharing publicly" : "Share publicly over the internet"} colors={colors}>
           {sharePending ? "…" : shareUrl ? "Unshare" : "Share"}
         </ToolbarButton>
         {shareUrl && (
@@ -293,11 +281,7 @@ export function PlaygroundPanel({ channelId, instanceId = "default" }: Playgroun
             </ToolbarButton>
           </>
         )}
-        {title && (
-          <span style={{ marginLeft: 8, color: colors.textDim, fontSize: 11, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1 }}>
-            {title}
-          </span>
-        )}
+        {title && <span style={{ marginLeft: 8, color: colors.textDim, fontSize: 11, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1 }}>{title}</span>}
       </div>
 
       {/* Info panel (collapsible) */}
@@ -319,18 +303,15 @@ export function PlaygroundPanel({ channelId, instanceId = "default" }: Playgroun
       )}
 
       {/* Error banner */}
-      {error && (
-        <div style={{ padding: "4px 12px", fontSize: 11, color: colors.error, backgroundColor: "rgba(239,68,68,0.1)", borderBottom: `1px solid ${colors.border}` }}>
-          {error}
-        </div>
-      )}
+      {error && <div style={{ padding: "4px 12px", fontSize: 11, color: colors.error, backgroundColor: "rgba(239,68,68,0.1)", borderBottom: `1px solid ${colors.border}` }}>{error}</div>}
 
       {/* Sandbox iframe — served from the backend so relative imports work */}
       <iframe
         ref={iframeRef}
-        src={activeScope === "project"
-          ? `${getApiUrl()}/api/playground/serve-project/${encodeURIComponent(channelId)}/${encodeURIComponent(activeItem)}?v=${iframeVersion}`
-          : `${getApiUrl()}/api/playground/serve/${encodeURIComponent(activeItem)}?v=${iframeVersion}`
+        src={
+          activeScope === "project"
+            ? `${getApiUrl()}/api/playground/serve-project/${encodeURIComponent(channelId)}/${encodeURIComponent(activeItem)}?v=${iframeVersion}`
+            : `${getApiUrl()}/api/playground/serve/${encodeURIComponent(activeItem)}?v=${iframeVersion}`
         }
         sandbox="allow-scripts allow-same-origin allow-forms"
         style={{ flex: 1, border: "none", width: "100%" }}
@@ -354,13 +335,10 @@ export function PlaygroundPanel({ channelId, instanceId = "default" }: Playgroun
             fontFamily: "JetBrains Mono, Courier New, monospace",
           }}
         >
-          {consoleMessages.length === 0 && (
-            <div style={{ color: colors.textDim }}>No console output</div>
-          )}
+          {consoleMessages.length === 0 && <div style={{ color: colors.textDim }}>No console output</div>}
           {consoleMessages.map((msg, i) => (
             <div key={i} style={{ color: msg.level >= 3 ? colors.error : msg.level >= 2 ? "#f59e0b" : colors.textLight }}>
-              <span style={{ color: colors.textDim }}>[{new Date(msg.time).toLocaleTimeString()}]</span>{" "}
-              {msg.message}
+              <span style={{ color: colors.textDim }}>[{new Date(msg.time).toLocaleTimeString()}]</span> {msg.message}
             </div>
           ))}
         </div>
@@ -369,7 +347,13 @@ export function PlaygroundPanel({ channelId, instanceId = "default" }: Playgroun
   );
 }
 
-function PlaygroundSelector({ items, value, onChange, colors, style }: {
+function PlaygroundSelector({
+  items,
+  value,
+  onChange,
+  colors,
+  style,
+}: {
   items: PlaygroundItem[];
   value: string;
   onChange: (name: string, scope: "global" | "project") => void;
@@ -399,18 +383,26 @@ function PlaygroundSelector({ items, value, onChange, colors, style }: {
         ...style,
       }}
     >
-      {!value && <option value="" disabled>Choose playground...</option>}
+      {!value && (
+        <option value="" disabled>
+          Choose playground...
+        </option>
+      )}
       {projectItems.length > 0 && (
         <optgroup label="Project">
           {projectItems.map((item) => (
-            <option key={playgroundSelectionKey(item.name, item.scope)} value={playgroundSelectionKey(item.name, item.scope)}>{item.title || item.name}</option>
+            <option key={playgroundSelectionKey(item.name, item.scope)} value={playgroundSelectionKey(item.name, item.scope)}>
+              {item.title || item.name}
+            </option>
           ))}
         </optgroup>
       )}
       {globalItems.length > 0 && (
         <optgroup label="Global">
           {globalItems.map((item) => (
-            <option key={playgroundSelectionKey(item.name, item.scope)} value={playgroundSelectionKey(item.name, item.scope)}>{item.title || item.name}</option>
+            <option key={playgroundSelectionKey(item.name, item.scope)} value={playgroundSelectionKey(item.name, item.scope)}>
+              {item.title || item.name}
+            </option>
           ))}
         </optgroup>
       )}
@@ -418,12 +410,7 @@ function PlaygroundSelector({ items, value, onChange, colors, style }: {
   );
 }
 
-function ToolbarButton({ onClick, title, colors, children }: {
-  onClick: () => void;
-  title: string;
-  colors: { textDim: string; textLight: string };
-  children: React.ReactNode;
-}) {
+function ToolbarButton({ onClick, title, colors, children }: { onClick: () => void; title: string; colors: { textDim: string; textLight: string }; children: React.ReactNode }) {
   return (
     <button
       onClick={onClick}

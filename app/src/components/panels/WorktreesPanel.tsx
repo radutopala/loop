@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useState } from "react";
-import { useTheme } from "../../ThemeContext";
-import { useEventStream } from "../../hooks/useEventStream";
-import { fetchBranches, type WorktreeInfo } from "../../api/git";
 import { removeWorktree, setChannelLocked, setWorktreeLocked } from "../../api/channels";
+import { fetchBranches, type WorktreeInfo } from "../../api/git";
+import { useEventStream } from "../../hooks/useEventStream";
+import { useTheme } from "../../ThemeContext";
 import { fonts } from "../../theme";
 
 interface WorktreesPanelProps {
@@ -128,34 +128,20 @@ export function WorktreesPanel({ channelId, isWorktree, hasBranch, onImportWorkt
 
   if (isWorktree) {
     return (
-      <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", color: colors.textDim, fontSize: fontSizes.panels }}>
-        Worktrees are managed from the parent channel
-      </div>
+      <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", color: colors.textDim, fontSize: fontSizes.panels }}>Worktrees are managed from the parent channel</div>
     );
   }
 
   if (!hasBranch) {
-    return (
-      <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", color: colors.textDim, fontSize: fontSizes.panels }}>
-        No git repository detected
-      </div>
-    );
+    return <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", color: colors.textDim, fontSize: fontSizes.panels }}>No git repository detected</div>;
   }
 
   if (loading) {
-    return (
-      <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", color: colors.textDim, fontSize: fontSizes.panels }}>
-        Loading...
-      </div>
-    );
+    return <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", color: colors.textDim, fontSize: fontSizes.panels }}>Loading...</div>;
   }
 
   if (worktrees.length === 0) {
-    return (
-      <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", color: colors.textDim, fontSize: fontSizes.panels }}>
-        No worktrees
-      </div>
-    );
+    return <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", color: colors.textDim, fontSize: fontSizes.panels }}>No worktrees</div>;
   }
 
   const btnStyle: React.CSSProperties = {
@@ -213,12 +199,8 @@ export function WorktreesPanel({ channelId, isWorktree, hasBranch, onImportWorkt
                 </svg>
               )}
               <div style={{ minWidth: 0, flex: 1 }}>
-                <div style={{ fontSize: fontSizes.panels, color: colors.textLight, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-                  {wt.branch || "detached"}
-                </div>
-                <div style={{ fontSize: 10, color: colors.textDim, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-                  {basename}
-                </div>
+                <div style={{ fontSize: fontSizes.panels, color: colors.textLight, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{wt.branch || "detached"}</div>
+                <div style={{ fontSize: 10, color: colors.textDim, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{basename}</div>
               </div>
             </div>
             <div style={{ display: "flex", alignItems: "center", gap: 6, marginLeft: 12, flexShrink: 0 }}>
@@ -227,12 +209,7 @@ export function WorktreesPanel({ channelId, isWorktree, hasBranch, onImportWorkt
                   <button style={btnStyle} onClick={() => handleNavigate(wt)} title="Open worktree thread">
                     Go
                   </button>
-                  <button
-                    style={btnStyle}
-                    onClick={() => handleToggleLock(wt)}
-                    disabled={isTogglingLock}
-                    title={isLocked ? "Unlock worktree" : "Lock worktree"}
-                  >
+                  <button style={btnStyle} onClick={() => handleToggleLock(wt)} disabled={isTogglingLock} title={isLocked ? "Unlock worktree" : "Lock worktree"}>
                     {isTogglingLock ? "..." : isLocked ? "Unlock" : "Lock"}
                   </button>
                   {!isLocked && (
@@ -248,20 +225,10 @@ export function WorktreesPanel({ channelId, isWorktree, hasBranch, onImportWorkt
                 </>
               ) : (
                 <>
-                  <button
-                    style={btnStyle}
-                    onClick={() => handleImport(wt)}
-                    disabled={isImporting}
-                    title="Import worktree as thread"
-                  >
+                  <button style={btnStyle} onClick={() => handleImport(wt)} disabled={isImporting} title="Import worktree as thread">
                     {isImporting ? "..." : "Import"}
                   </button>
-                  <button
-                    style={btnStyle}
-                    onClick={() => handleToggleLock(wt)}
-                    disabled={isTogglingLock}
-                    title={isLocked ? "Unlock worktree" : "Lock worktree"}
-                  >
+                  <button style={btnStyle} onClick={() => handleToggleLock(wt)} disabled={isTogglingLock} title={isLocked ? "Unlock worktree" : "Lock worktree"}>
                     {isTogglingLock ? "..." : isLocked ? "Unlock" : "Lock"}
                   </button>
                   {!isLocked && (
@@ -309,8 +276,13 @@ export function WorktreesPanel({ channelId, isWorktree, hasBranch, onImportWorkt
                 <span style={{ color: colors.textLight }}>Delete?</span>
                 <button
                   onClick={() => {
-                    if (confirmingId) { setConfirmingId(null); handleDelete(wt); }
-                    else { setConfirmingPath(null); handleRemove(wt); }
+                    if (confirmingId) {
+                      setConfirmingId(null);
+                      handleDelete(wt);
+                    } else {
+                      setConfirmingPath(null);
+                      handleRemove(wt);
+                    }
                   }}
                   style={{
                     background: colors.dangerBg,
@@ -323,13 +295,22 @@ export function WorktreesPanel({ channelId, isWorktree, hasBranch, onImportWorkt
                     borderRadius: 4,
                     lineHeight: 1.4,
                   }}
-                  onMouseEnter={(e) => { e.currentTarget.style.background = colors.dangerHoverBg; e.currentTarget.style.color = colors.white; }}
-                  onMouseLeave={(e) => { e.currentTarget.style.background = colors.dangerBg; e.currentTarget.style.color = colors.dangerText; }}
+                  onMouseEnter={(e) => {
+                    e.currentTarget.style.background = colors.dangerHoverBg;
+                    e.currentTarget.style.color = colors.white;
+                  }}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.style.background = colors.dangerBg;
+                    e.currentTarget.style.color = colors.dangerText;
+                  }}
                 >
                   Yes
                 </button>
                 <button
-                  onClick={() => { setConfirmingId(null); setConfirmingPath(null); }}
+                  onClick={() => {
+                    setConfirmingId(null);
+                    setConfirmingPath(null);
+                  }}
                   style={{
                     background: "none",
                     border: `1px solid ${colors.border}`,
@@ -341,8 +322,14 @@ export function WorktreesPanel({ channelId, isWorktree, hasBranch, onImportWorkt
                     borderRadius: 4,
                     lineHeight: 1.4,
                   }}
-                  onMouseEnter={(e) => { e.currentTarget.style.color = colors.textLight; e.currentTarget.style.borderColor = colors.textDim; }}
-                  onMouseLeave={(e) => { e.currentTarget.style.color = colors.textDim; e.currentTarget.style.borderColor = colors.border; }}
+                  onMouseEnter={(e) => {
+                    e.currentTarget.style.color = colors.textLight;
+                    e.currentTarget.style.borderColor = colors.textDim;
+                  }}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.style.color = colors.textDim;
+                    e.currentTarget.style.borderColor = colors.border;
+                  }}
                 >
                   No
                 </button>

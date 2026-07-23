@@ -1,45 +1,58 @@
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from "react";
-import type { Channel } from "../../types";
-import type { SessionStatus } from "../../types";
-import type { PaneNode, LeafNode, PanelType, AgentOpenMode } from "../../types/panels";
-import { CHANNEL_ONLY_PANELS } from "../../types/panels";
-import type { SplitDirection, DropPosition } from "../../splitPane/types";
-import { makeLeaf, findLeafById, splitLeaf, removeLeaf, updateFlex, swapLeavesInTree, moveLeaf, leafCount, collectLeaves, canAddPanel, hasAgentLeaf, collectPanelTypes } from "../../splitPane/treeOps";
-import { saveLayout, clearLayout, saveActiveLayout, saveLayoutType, deleteLayout, renameLayout, reorderLayout, loadChannelLayouts, ensureDefaultLayouts, createDefaultLayouts, restoreDefaultLayouts, DEFAULT_LAYOUT_NAMES, DEFAULT_LAYOUT_TYPES } from "../../layouts/persistence";
-import type { LayoutType } from "../../layouts/persistence";
-import { SplitPaneLayout } from "../../splitPane/SplitPaneLayout";
-import { PaneLeafHeader } from "../../splitPane/PaneLeafHeader";
-import { useAgentRegistry } from "../../hooks/useAgentRegistry";
+import { killAgentContainer } from "../../api/loopApi";
 import { CanvasLayout } from "../../canvas/CanvasLayout";
 import type { CanvasNode } from "../../canvas/types";
+import { useAgentRegistry } from "../../hooks/useAgentRegistry";
+import { useChatState } from "../../hooks/useChatState";
+import type { ActiveChatState, ChatEventListener } from "../../hooks/useChatStateStore";
+import { useEditorState } from "../../hooks/useEditorState";
+import type { LayoutType } from "../../layouts/persistence";
+import {
+  clearLayout,
+  createDefaultLayouts,
+  DEFAULT_LAYOUT_NAMES,
+  DEFAULT_LAYOUT_TYPES,
+  deleteLayout,
+  ensureDefaultLayouts,
+  loadChannelLayouts,
+  renameLayout,
+  reorderLayout,
+  restoreDefaultLayouts,
+  saveActiveLayout,
+  saveLayout,
+  saveLayoutType,
+} from "../../layouts/persistence";
 import { EmptyLayoutPicker } from "../../splitPane/AddPanelButton";
-import { Terminal, getCloseForInstance } from "../panels/Terminal";
+import { PaneLeafHeader } from "../../splitPane/PaneLeafHeader";
+import { SplitPaneLayout } from "../../splitPane/SplitPaneLayout";
+import { canAddPanel, collectLeaves, collectPanelTypes, findLeafById, hasAgentLeaf, leafCount, makeLeaf, moveLeaf, removeLeaf, splitLeaf, swapLeavesInTree, updateFlex } from "../../splitPane/treeOps";
+import type { DropPosition, SplitDirection } from "../../splitPane/types";
+import { useTheme } from "../../ThemeContext";
+import type { ColorPalette } from "../../theme";
+import { fonts } from "../../theme";
+import type { Channel, SessionStatus } from "../../types";
+import type { AgentOpenMode, LeafNode, PanelType, PaneNode } from "../../types/panels";
+import { CHANNEL_ONLY_PANELS } from "../../types/panels";
 import { ChatView } from "../chat/ChatView";
 import type { FileLinkOpenDetail } from "../chat/FileLink";
+import { AuditPanel } from "../panels/AuditPanel";
+import { BrowserPanel } from "../panels/BrowserPanel";
 import { makePathKey } from "../panels/EditorFileTree";
 import { EditorPanel } from "../panels/EditorPanel";
 import { FileTreePanel } from "../panels/FileTreePanel";
-import { MemoryPanel } from "../panels/MemoryPanel";
 import { GitPanel } from "../panels/GitPanel";
-import { BrowserPanel } from "../panels/BrowserPanel";
-import { SessionsPanel } from "../panels/SessionsPanel";
-import { PlaygroundPanel } from "../panels/PlaygroundPanel";
-import { NotesPanel } from "../panels/NotesPanel";
-import { TasksPanel } from "../panels/TasksPanel";
 import { KanbanPanel } from "../panels/KanbanPanel";
-import { WorkflowsLayoutPanel } from "../panels/WorkflowsLayoutPanel";
-import { AuditPanel } from "../panels/AuditPanel";
+import { MemoryPanel } from "../panels/MemoryPanel";
+import { NotesPanel } from "../panels/NotesPanel";
+import { PlaygroundPanel } from "../panels/PlaygroundPanel";
 import { QualityPanel } from "../panels/QualityPanel";
 import { ReviewPanel } from "../panels/ReviewPanel";
-import { killAgentContainer } from "../../api/loopApi";
+import { SessionsPanel } from "../panels/SessionsPanel";
+import { TasksPanel } from "../panels/TasksPanel";
+import { getCloseForInstance, Terminal } from "../panels/Terminal";
+import { WorkflowsLayoutPanel } from "../panels/WorkflowsLayoutPanel";
 import { ChannelHeaderInfo } from "./ChannelHeaderInfo";
 import { HeaderBranchPicker } from "./HeaderBranchPicker";
-import { useChatState } from "../../hooks/useChatState";
-import { useEditorState } from "../../hooks/useEditorState";
-import type { ActiveChatState, ChatEventListener } from "../../hooks/useChatStateStore";
-import { fonts } from "../../theme";
-import type { ColorPalette } from "../../theme";
-import { useTheme } from "../../ThemeContext";
 
 type AgentState = "running" | "stopped" | "none";
 
@@ -87,7 +100,10 @@ function insertOppositeHorizontal(node: PaneNode, anchorId: string, newLeaf: Lea
       type: "split",
       direction: "horizontal",
       flex: node.flex,
-      children: [{ ...node, flex: 1 }, { ...newLeaf, flex: 1 }],
+      children: [
+        { ...node, flex: 1 },
+        { ...newLeaf, flex: 1 },
+      ],
     };
   }
   const directIdx = node.children.findIndex((c) => c.type === "leaf" && c.id === anchorId);
@@ -114,7 +130,10 @@ function insertOppositeHorizontal(node: PaneNode, anchorId: string, newLeaf: Lea
           type: "split" as const,
           direction: "horizontal" as const,
           flex: c.flex,
-          children: [{ ...c, flex: 1 }, { ...newLeaf, flex: 1 }],
+          children: [
+            { ...c, flex: 1 },
+            { ...newLeaf, flex: 1 },
+          ],
         };
       }),
     };
@@ -223,32 +242,35 @@ interface WorkspaceLayoutProps {
   clearPlanPill?: (channelId: string) => void;
 }
 
-export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutProps>(function WorkspaceLayout({
-  channelId,
-  channel,
-  sidebarOpen,
-  onToggleSidebar,
-  onOpenPalette,
-  scrollToMessageId,
-  onScrollComplete,
-  openMemoryFile,
-  onOpenMemoryFileComplete,
-  onStatusChange,
-  error,
-  onDismissError,
-  diffStats: _diffStats,
-  style,
-  parentIsWorktree,
-  onCreateWorktree,
-  onImportWorktree,
-  onSelectThread,
-  initialChatState,
-  onChatStateUnmount,
-  subscribeChatEvents,
-  registerReviewView,
-  clearAskUserPill,
-  clearPlanPill,
-}, ref) {
+export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutProps>(function WorkspaceLayout(
+  {
+    channelId,
+    channel,
+    sidebarOpen,
+    onToggleSidebar,
+    onOpenPalette,
+    scrollToMessageId,
+    onScrollComplete,
+    openMemoryFile,
+    onOpenMemoryFileComplete,
+    onStatusChange,
+    error,
+    onDismissError,
+    diffStats: _diffStats,
+    style,
+    parentIsWorktree,
+    onCreateWorktree,
+    onImportWorktree,
+    onSelectThread,
+    initialChatState,
+    onChatStateUnmount,
+    subscribeChatEvents,
+    registerReviewView,
+    clearAskUserPill,
+    clearPlanPill,
+  },
+  ref,
+) {
   const { colors } = useTheme();
   const { agents: agentInfoMap } = useAgentRegistry(channelId);
   const [branchError, setBranchError] = useState<string | null>(null);
@@ -285,17 +307,14 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
   const [canvasState, setCanvasState] = useState<CanvasNode | null>(() => {
     const ch = ensureDefaultLayouts(channelId);
     const lt = ch.types[ch.active] ?? "split";
-    return lt === "canvas" ? (ch.layouts[ch.active] as CanvasNode) ?? null : null;
+    return lt === "canvas" ? ((ch.layouts[ch.active] as CanvasNode) ?? null) : null;
   });
   treeRef.current = tree;
 
   // Chat state — hoisted here so the WebSocket + messages survive layout switches.
   // initialChatState restores state from the app-level store on mount;
   // onChatStateUnmount saves state back to the store on unmount.
-  const chatStateUnmount = useCallback(
-    (state: ActiveChatState) => onChatStateUnmount?.(channelId, state),
-    [channelId, onChatStateUnmount],
-  );
+  const chatStateUnmount = useCallback((state: ActiveChatState) => onChatStateUnmount?.(channelId, state), [channelId, onChatStateUnmount]);
   const chatState = useChatState(channelId, channel.agent_running, {
     initialState: initialChatState,
     onUnmount: chatStateUnmount,
@@ -323,7 +342,10 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
   // Close layout menu on outside click.
   useEffect(() => {
     if (!showLayoutMenu && !showNewLayoutMenu) return;
-    const handler = () => { setShowLayoutMenu(false); setShowNewLayoutMenu(false); };
+    const handler = () => {
+      setShowLayoutMenu(false);
+      setShowNewLayoutMenu(false);
+    };
     document.addEventListener("mousedown", handler);
     return () => document.removeEventListener("mousedown", handler);
   }, [showLayoutMenu, showNewLayoutMenu]);
@@ -333,20 +355,22 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
     if (!current) return "none";
     const terminalLeaves = collectLeaves(current).filter((l) => l.panel === "docker-agent" || l.panel === "host-shell" || l.panel === "docker-shell");
     if (terminalLeaves.length === 0) return "none";
-    const terminalStatuses = [...statusMapRef.current.entries()]
-      .filter(([leafId]) => {
-        const p = findLeafById(current, leafId)?.panel;
-        return p === "docker-agent" || p === "host-shell" || p === "docker-shell";
-      });
+    const terminalStatuses = [...statusMapRef.current.entries()].filter(([leafId]) => {
+      const p = findLeafById(current, leafId)?.panel;
+      return p === "docker-agent" || p === "host-shell" || p === "docker-shell";
+    });
     if (terminalStatuses.length === 0) return "running"; // terminal leaves exist but no status yet
     const allDead = terminalStatuses.every(([, s]) => s === "completed" || s === "failed");
     return allDead ? "stopped" : "running";
   }, []);
 
-  const handlePaneStatus = useCallback((id: string, status: SessionStatus) => {
-    statusMapRef.current.set(id, status);
-    setAgentState(computeAgentState());
-  }, [computeAgentState]);
+  const handlePaneStatus = useCallback(
+    (id: string, status: SessionStatus) => {
+      statusMapRef.current.set(id, status);
+      setAgentState(computeAgentState());
+    },
+    [computeAgentState],
+  );
 
   // Reload when channelId changes.
   const prevChannelRef = useRef(channelId);
@@ -387,32 +411,39 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
   }, [channelId, activeName, tree, canvasState]);
 
   // --- Layout tab operations ---
-  const switchLayout = useCallback((name: string) => {
-    const ch = loadChannelLayouts(channelId);
-    const lt = ch?.types[name] ?? DEFAULT_LAYOUT_TYPES[name] ?? "split";
-    const t = ch?.layouts[name] ?? null;
-    statusMapRef.current.clear();
-    setActiveName(name);
-    setLayoutType(lt);
-    if (lt === "canvas") {
-      setCanvasState((t as CanvasNode) ?? null);
-      setTree(null);
-    } else if (t) {
-      initIdCounter(channelId, t as PaneNode);
-      setTree(t as PaneNode);
-      setCanvasState(null);
-    } else {
-      setTree(null);
-      setCanvasState(null);
-    }
-    setAgentState("none");
-    setMaximizedLeafId(null);
-    saveActiveLayout(channelId, name);
-  }, [channelId]);
+  const switchLayout = useCallback(
+    (name: string) => {
+      const ch = loadChannelLayouts(channelId);
+      const lt = ch?.types[name] ?? DEFAULT_LAYOUT_TYPES[name] ?? "split";
+      const t = ch?.layouts[name] ?? null;
+      statusMapRef.current.clear();
+      setActiveName(name);
+      setLayoutType(lt);
+      if (lt === "canvas") {
+        setCanvasState((t as CanvasNode) ?? null);
+        setTree(null);
+      } else if (t) {
+        initIdCounter(channelId, t as PaneNode);
+        setTree(t as PaneNode);
+        setCanvasState(null);
+      } else {
+        setTree(null);
+        setCanvasState(null);
+      }
+      setAgentState("none");
+      setMaximizedLeafId(null);
+      saveActiveLayout(channelId, name);
+    },
+    [channelId],
+  );
 
-  useImperativeHandle(ref, () => ({
-    switchToLayout: switchLayout,
-  }), [switchLayout]);
+  useImperativeHandle(
+    ref,
+    () => ({
+      switchToLayout: switchLayout,
+    }),
+    [switchLayout],
+  );
 
   // Auto-switch to a layout with a chat pane when scrollToMessageId is set.
   useEffect(() => {
@@ -449,105 +480,117 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
     }
   }, [openMemoryFile, tree, channelId, switchLayout, onOpenMemoryFileComplete]);
 
-  const addLayout = useCallback((lt: LayoutType) => {
-    let n = 1;
-    let name = lt === "canvas" ? `Canvas ${n}` : `Layout ${n}`;
-    while (layoutNames.includes(name)) { n++; name = lt === "canvas" ? `Canvas ${n}` : `Layout ${n}`; }
-    setLayoutNames((prev) => [...prev, name]);
-    setActiveName(name);
-    setLayoutType(lt);
-    if (lt === "canvas") {
-      setCanvasState({ type: "canvas", viewport: { x: 0, y: 0, zoom: 1 }, tiles: [] });
-      setTree(null);
-    } else {
-      setTree(null);
-      setCanvasState(null);
-    }
-    saveLayoutType(channelId, name, lt);
-    statusMapRef.current.clear();
-    setAgentState("none");
-    setShowNewLayoutMenu(false);
-  }, [channelId, layoutNames]);
-
-  const handleRenameLayout = useCallback((oldName: string, newName: string) => {
-    const trimmed = newName.trim();
-    if (!trimmed || trimmed === oldName || layoutNames.includes(trimmed)) return;
-    renameLayout(channelId, oldName, trimmed);
-    setLayoutNames((prev) => prev.map((n) => (n === oldName ? trimmed : n)));
-    if (activeName === oldName) setActiveName(trimmed);
-  }, [channelId, layoutNames, activeName]);
-
-  const handleDeleteLayout = useCallback((name: string) => {
-    if (layoutNames.length <= 1) return;
-    // Kill terminal sessions if deleting the active layout
-    if (activeName === name) {
-      const current = treeRef.current;
-      if (current) {
-        for (const leaf of collectLeaves(current)) {
-          if (leaf.panel === "docker-agent" || leaf.panel === "host-shell" || leaf.panel === "docker-shell") {
-            const target = leaf.panel === "host-shell" ? "host" : "agent";
-            const closeKey = `${target}:${channelId}:${leaf.id}`;
-            getCloseForInstance(closeKey)?.();
-          }
-        }
-        if (hasAgentLeaf(current)) killAgentContainer(channelId);
+  const addLayout = useCallback(
+    (lt: LayoutType) => {
+      let n = 1;
+      let name = lt === "canvas" ? `Canvas ${n}` : `Layout ${n}`;
+      while (layoutNames.includes(name)) {
+        n++;
+        name = lt === "canvas" ? `Canvas ${n}` : `Layout ${n}`;
       }
-    }
-    deleteLayout(channelId, name);
-    const remaining = layoutNames.filter((n) => n !== name);
-    setLayoutNames(remaining);
-    if (activeName === name && remaining.length > 0) {
-      const next = remaining[0]!;
-      const ch = loadChannelLayouts(channelId);
-      const lt = ch?.types[next] ?? DEFAULT_LAYOUT_TYPES[next] ?? "split";
-      const t = ch?.layouts[next] ?? null;
-      setActiveName(next);
+      setLayoutNames((prev) => [...prev, name]);
+      setActiveName(name);
       setLayoutType(lt);
       if (lt === "canvas") {
-        setCanvasState((t as CanvasNode) ?? null);
+        setCanvasState({ type: "canvas", viewport: { x: 0, y: 0, zoom: 1 }, tiles: [] });
         setTree(null);
       } else {
-        if (t) initIdCounter(channelId, t as PaneNode);
-        setTree(t as PaneNode | null);
+        setTree(null);
         setCanvasState(null);
       }
+      saveLayoutType(channelId, name, lt);
       statusMapRef.current.clear();
       setAgentState("none");
-      saveActiveLayout(channelId, next);
-    }
-  }, [channelId, layoutNames, activeName]);
-
-  const handleReorderLayout = useCallback((fromName: string, toName: string) => {
-    if (fromName === toName) return;
-    setLayoutNames((prev) => {
-      const from = prev.indexOf(fromName);
-      const to = prev.indexOf(toName);
-      if (from < 0 || to < 0) return prev;
-      const next = prev.slice();
-      const [moved] = next.splice(from, 1);
-      next.splice(to, 0, moved!);
-      reorderLayout(channelId, from, to);
-      return next;
-    });
-  }, [channelId]);
-
-  // --- Tree operations ---
-  const handleDrop = useCallback(
-    (dragId: string, dropId: string, position: DropPosition) => {
-      if (dragId === dropId) return;
-      setTree((prev) => {
-        if (!prev) return prev;
-        if (position === "center") {
-          return swapLeavesInTree(prev, dragId, dropId);
-        }
-        return moveLeaf(prev, dragId, dropId, position);
-      });
+      setShowNewLayoutMenu(false);
     },
-    [],
+    [channelId, layoutNames],
   );
 
+  const handleRenameLayout = useCallback(
+    (oldName: string, newName: string) => {
+      const trimmed = newName.trim();
+      if (!trimmed || trimmed === oldName || layoutNames.includes(trimmed)) return;
+      renameLayout(channelId, oldName, trimmed);
+      setLayoutNames((prev) => prev.map((n) => (n === oldName ? trimmed : n)));
+      if (activeName === oldName) setActiveName(trimmed);
+    },
+    [channelId, layoutNames, activeName],
+  );
+
+  const handleDeleteLayout = useCallback(
+    (name: string) => {
+      if (layoutNames.length <= 1) return;
+      // Kill terminal sessions if deleting the active layout
+      if (activeName === name) {
+        const current = treeRef.current;
+        if (current) {
+          for (const leaf of collectLeaves(current)) {
+            if (leaf.panel === "docker-agent" || leaf.panel === "host-shell" || leaf.panel === "docker-shell") {
+              const target = leaf.panel === "host-shell" ? "host" : "agent";
+              const closeKey = `${target}:${channelId}:${leaf.id}`;
+              getCloseForInstance(closeKey)?.();
+            }
+          }
+          if (hasAgentLeaf(current)) killAgentContainer(channelId);
+        }
+      }
+      deleteLayout(channelId, name);
+      const remaining = layoutNames.filter((n) => n !== name);
+      setLayoutNames(remaining);
+      if (activeName === name && remaining.length > 0) {
+        const next = remaining[0]!;
+        const ch = loadChannelLayouts(channelId);
+        const lt = ch?.types[next] ?? DEFAULT_LAYOUT_TYPES[next] ?? "split";
+        const t = ch?.layouts[next] ?? null;
+        setActiveName(next);
+        setLayoutType(lt);
+        if (lt === "canvas") {
+          setCanvasState((t as CanvasNode) ?? null);
+          setTree(null);
+        } else {
+          if (t) initIdCounter(channelId, t as PaneNode);
+          setTree(t as PaneNode | null);
+          setCanvasState(null);
+        }
+        statusMapRef.current.clear();
+        setAgentState("none");
+        saveActiveLayout(channelId, next);
+      }
+    },
+    [channelId, layoutNames, activeName],
+  );
+
+  const handleReorderLayout = useCallback(
+    (fromName: string, toName: string) => {
+      if (fromName === toName) return;
+      setLayoutNames((prev) => {
+        const from = prev.indexOf(fromName);
+        const to = prev.indexOf(toName);
+        if (from < 0 || to < 0) return prev;
+        const next = prev.slice();
+        const [moved] = next.splice(from, 1);
+        next.splice(to, 0, moved!);
+        reorderLayout(channelId, from, to);
+        return next;
+      });
+    },
+    [channelId],
+  );
+
+  // --- Tree operations ---
+  const handleDrop = useCallback((dragId: string, dropId: string, position: DropPosition) => {
+    if (dragId === dropId) return;
+    setTree((prev) => {
+      if (!prev) return prev;
+      if (position === "center") {
+        return swapLeavesInTree(prev, dragId, dropId);
+      }
+      return moveLeaf(prev, dragId, dropId, position);
+    });
+  }, []);
+
   const handleUpdateFlex = useCallback((parentPath: number[], dividerIndex: number, flexA: number, flexB: number) => {
-    setTree((prev) => prev ? updateFlex(prev, parentPath, dividerIndex, flexA, flexB) : prev);
+    setTree((prev) => (prev ? updateFlex(prev, parentPath, dividerIndex, flexA, flexB) : prev));
   }, []);
 
   const handleRemoveLeaf = useCallback(
@@ -562,7 +605,7 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
         getCloseForInstance(closeKey)?.();
       }
       statusMapRef.current.delete(id);
-      setMaximizedLeafId((prev) => prev === id ? null : prev);
+      setMaximizedLeafId((prev) => (prev === id ? null : prev));
       setTree((prev) => {
         if (!prev) return prev;
         if (leafCount(prev) <= 1) {
@@ -789,27 +832,11 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
           );
         case "editor":
           return (
-            <EditorPanel
-              key={`layout-editor-${channelId}`}
-              channelId={channelId}
-              dirPath={dirPath}
-              branch={branch}
-              embedded
-              editorState={editorState}
-              onClose={() => handleRemoveLeaf(leaf.id)}
-            />
+            <EditorPanel key={`layout-editor-${channelId}`} channelId={channelId} dirPath={dirPath} branch={branch} embedded editorState={editorState} onClose={() => handleRemoveLeaf(leaf.id)} />
           );
         case "file-tree":
           return (
-            <FileTreePanel
-              key={`layout-file-tree-${channelId}`}
-              channelId={channelId}
-              dirPath={dirPath}
-              branch={branch}
-              embedded
-              editorState={editorState}
-              onClose={() => handleRemoveLeaf(leaf.id)}
-            />
+            <FileTreePanel key={`layout-file-tree-${channelId}`} channelId={channelId} dirPath={dirPath} branch={branch} embedded editorState={editorState} onClose={() => handleRemoveLeaf(leaf.id)} />
           );
         case "memory":
           return (
@@ -850,7 +877,11 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
           // to "fork" so behavior is unchanged for existing layouts.
           const openMode: AgentOpenMode = leaf.openMode ?? "fork";
           return (
-            <div key={`layout-docker-agent-${channelId}-${leaf.id}`} data-testid="docker-agent-pane" style={{ flex: 1, display: "flex", flexDirection: "column", minHeight: 0, overflow: "hidden", backgroundColor: colors.sidebar }}>
+            <div
+              key={`layout-docker-agent-${channelId}-${leaf.id}`}
+              data-testid="docker-agent-pane"
+              style={{ flex: 1, display: "flex", flexDirection: "column", minHeight: 0, overflow: "hidden", backgroundColor: colors.sidebar }}
+            >
               <Terminal
                 channelId={channelId}
                 target="agent"
@@ -868,14 +899,7 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
         case "host-shell":
           return (
             <div key={`layout-host-shell-${channelId}-${leaf.id}`} style={{ flex: 1, display: "flex", flexDirection: "column", minHeight: 0, overflow: "hidden", backgroundColor: colors.sidebar }}>
-              <Terminal
-                channelId={channelId}
-                target="host"
-                instanceId={leaf.id}
-                hideActions
-                onStatusChange={onStatusChange}
-                onPaneStatus={(status) => handlePaneStatus(leaf.id, status)}
-              />
+              <Terminal channelId={channelId} target="host" instanceId={leaf.id} hideActions onStatusChange={onStatusChange} onPaneStatus={(status) => handlePaneStatus(leaf.id, status)} />
             </div>
           );
         case "docker-shell":
@@ -893,88 +917,25 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
             </div>
           );
         case "docker-browser":
-          return (
-            <BrowserPanel
-              key={`layout-docker-browser-${channelId}`}
-              channelId={channelId}
-              fixedMode="docker"
-            />
-          );
+          return <BrowserPanel key={`layout-docker-browser-${channelId}`} channelId={channelId} fixedMode="docker" />;
         case "host-browser":
-          return (
-            <BrowserPanel
-              key={`layout-host-browser-${channelId}`}
-              channelId={channelId}
-              fixedMode="host"
-            />
-          );
+          return <BrowserPanel key={`layout-host-browser-${channelId}`} channelId={channelId} fixedMode="host" />;
         case "sessions":
-          return (
-            <SessionsPanel
-              key={`layout-sessions-${channelId}`}
-              channelId={channelId}
-              onStatusChange={onStatusChange}
-            />
-          );
+          return <SessionsPanel key={`layout-sessions-${channelId}`} channelId={channelId} onStatusChange={onStatusChange} />;
         case "playground":
-          return (
-            <PlaygroundPanel
-              key={`layout-playground-${channelId}-${leaf.id}`}
-              channelId={channelId}
-              instanceId={leaf.id}
-            />
-          );
+          return <PlaygroundPanel key={`layout-playground-${channelId}-${leaf.id}`} channelId={channelId} instanceId={leaf.id} />;
         case "notes":
-          return (
-            <NotesPanel
-              key={`layout-notes-${channelId}`}
-              channelId={channelId}
-            />
-          );
+          return <NotesPanel key={`layout-notes-${channelId}`} channelId={channelId} />;
         case "tasks":
-          return (
-            <TasksPanel
-              key={`layout-tasks-${channelId}`}
-              channelId={channelId}
-              allowWorktree={!channel.worktree && !!channel.branch}
-              onSelectChannel={onSelectThread}
-            />
-          );
+          return <TasksPanel key={`layout-tasks-${channelId}`} channelId={channelId} allowWorktree={!channel.worktree && !!channel.branch} onSelectChannel={onSelectThread} />;
         case "kanban":
-          return (
-            <KanbanPanel
-              key={`layout-kanban-${channelId}`}
-              channelId={channelId}
-              dirPath={dirPath}
-              allowWorktree={!channel.worktree && !!dirPath}
-              onSelectChannel={onSelectThread}
-            />
-          );
+          return <KanbanPanel key={`layout-kanban-${channelId}`} channelId={channelId} dirPath={dirPath} allowWorktree={!channel.worktree && !!dirPath} onSelectChannel={onSelectThread} />;
         case "workflows":
-          return (
-            <WorkflowsLayoutPanel
-              key={`layout-workflows-${channelId}`}
-              channelId={channelId}
-            />
-          );
+          return <WorkflowsLayoutPanel key={`layout-workflows-${channelId}`} channelId={channelId} />;
         case "audit":
-          return (
-            <AuditPanel
-              key={`layout-audit-${channelId}`}
-              channelId={channelId}
-            />
-          );
+          return <AuditPanel key={`layout-audit-${channelId}`} channelId={channelId} />;
         case "quality":
-          return (
-            <QualityPanel
-              key={`layout-quality-${channelId}`}
-              channelId={channelId}
-              dirPath={dirPath}
-              branch={branch}
-              embedded
-              onClose={() => handleRemoveLeaf(leaf.id)}
-            />
-          );
+          return <QualityPanel key={`layout-quality-${channelId}`} channelId={channelId} dirPath={dirPath} branch={branch} embedded onClose={() => handleRemoveLeaf(leaf.id)} />;
         case "review":
           return (
             <ReviewPanel
@@ -991,7 +952,22 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
           return null;
       }
     },
-    [channelId, chatState, editorState, dirPath, branch, scrollToMessageId, onScrollComplete, openMemoryFile, onStatusChange, handlePaneStatus, handleRemoveLeaf, subscribeChatEvents, registerReviewView, tree],
+    [
+      channelId,
+      chatState,
+      editorState,
+      dirPath,
+      branch,
+      scrollToMessageId,
+      onScrollComplete,
+      openMemoryFile,
+      onStatusChange,
+      handlePaneStatus,
+      handleRemoveLeaf,
+      subscribeChatEvents,
+      registerReviewView,
+      tree,
+    ],
   );
 
   return (
@@ -1072,7 +1048,15 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
             {branch && !channel.worktree && !parentIsWorktree && (
               <>
                 <span style={{ color: colors.border, flexShrink: 0, margin: "0 8px" }}>|</span>
-                <HeaderBranchPicker channelId={channelId} branch={branch} onBranchChanged={onStatusChange} onCreateWorktree={channel.parent_id ? undefined : onCreateWorktree} onImportWorktree={channel.parent_id ? undefined : onImportWorktree} onSelectThread={channel.parent_id ? undefined : onSelectThread} onError={setBranchError} />
+                <HeaderBranchPicker
+                  channelId={channelId}
+                  branch={branch}
+                  onBranchChanged={onStatusChange}
+                  onCreateWorktree={channel.parent_id ? undefined : onCreateWorktree}
+                  onImportWorktree={channel.parent_id ? undefined : onImportWorktree}
+                  onSelectThread={channel.parent_id ? undefined : onSelectThread}
+                  onError={setBranchError}
+                />
               </>
             )}
           </>
@@ -1096,7 +1080,10 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
         >
           <span>{branchError || error}</span>
           <button
-            onClick={() => { setBranchError(null); onDismissError?.(); }}
+            onClick={() => {
+              setBranchError(null);
+              onDismissError?.();
+            }}
             style={{
               background: "none",
               border: "none",
@@ -1143,17 +1130,19 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
           .filter((name) => !(channel.parent_id && (name === "Sessions" || name === "Kanban")))
           .filter((name) => !(name === "Review" && !channel.review_enabled))
           .map((name) => (
-          <LayoutTab
-            key={name}
-            name={name}
-            active={name === activeName}
-            canDelete={layoutNames.length > 1}
-            onSelect={() => { if (name !== activeName) switchLayout(name); }}
-            onRename={(newName) => handleRenameLayout(name, newName)}
-            onDelete={() => handleDeleteLayout(name)}
-            onReorder={handleReorderLayout}
-          />
-        ))}
+            <LayoutTab
+              key={name}
+              name={name}
+              active={name === activeName}
+              canDelete={layoutNames.length > 1}
+              onSelect={() => {
+                if (name !== activeName) switchLayout(name);
+              }}
+              onRename={(newName) => handleRenameLayout(name, newName)}
+              onDelete={() => handleDeleteLayout(name)}
+              onReorder={handleReorderLayout}
+            />
+          ))}
         <div style={{ position: "relative" }}>
           <button
             onClick={() => setShowNewLayoutMenu((v) => !v)}
@@ -1169,8 +1158,14 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
               display: "flex",
               alignItems: "center",
             }}
-            onMouseEnter={(e) => { e.currentTarget.style.color = colors.textLight; e.currentTarget.style.background = colors.hoverBg; }}
-            onMouseLeave={(e) => { e.currentTarget.style.color = colors.textDim; e.currentTarget.style.background = "none"; }}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.color = colors.textLight;
+              e.currentTarget.style.background = colors.hoverBg;
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.color = colors.textDim;
+              e.currentTarget.style.background = "none";
+            }}
           >
             <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
               <line x1="12" y1="5" x2="12" y2="19" />
@@ -1196,17 +1191,47 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
             >
               <button
                 onClick={() => addLayout("split")}
-                style={{ display: "block", width: "100%", padding: "4px 12px", background: "none", border: "none", color: colors.textLight, fontSize: 12, textAlign: "left", cursor: "pointer", borderRadius: 3 }}
-                onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = "rgba(255,255,255,0.08)"; }}
-                onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = "transparent"; }}
+                style={{
+                  display: "block",
+                  width: "100%",
+                  padding: "4px 12px",
+                  background: "none",
+                  border: "none",
+                  color: colors.textLight,
+                  fontSize: 12,
+                  textAlign: "left",
+                  cursor: "pointer",
+                  borderRadius: 3,
+                }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.backgroundColor = "rgba(255,255,255,0.08)";
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.backgroundColor = "transparent";
+                }}
               >
                 Split
               </button>
               <button
                 onClick={() => addLayout("canvas")}
-                style={{ display: "block", width: "100%", padding: "4px 12px", background: "none", border: "none", color: colors.textLight, fontSize: 12, textAlign: "left", cursor: "pointer", borderRadius: 3 }}
-                onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = "rgba(255,255,255,0.08)"; }}
-                onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = "transparent"; }}
+                style={{
+                  display: "block",
+                  width: "100%",
+                  padding: "4px 12px",
+                  background: "none",
+                  border: "none",
+                  color: colors.textLight,
+                  fontSize: 12,
+                  textAlign: "left",
+                  cursor: "pointer",
+                  borderRadius: 3,
+                }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.backgroundColor = "rgba(255,255,255,0.08)";
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.backgroundColor = "transparent";
+                }}
               >
                 Canvas
               </button>
@@ -1232,80 +1257,110 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
               alignItems: "center",
               gap: 4,
             }}
-            onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = colors.error; e.currentTarget.style.color = colors.textLight; }}
-            onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = "transparent"; e.currentTarget.style.color = colors.error; }}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.backgroundColor = colors.error;
+              e.currentTarget.style.color = colors.textLight;
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.backgroundColor = "transparent";
+              e.currentTarget.style.color = colors.error;
+            }}
           >
             Stop
           </button>
         )}
-        {(hasMissingDefaults || isDefaultLayout) && <div style={{ position: "relative" }}>
-          <button
-            onClick={() => setShowLayoutMenu((v) => !v)}
-            title="Layout options"
-            style={{
-              background: "none",
-              border: `1px solid ${colors.border}`,
-              color: colors.textDim,
-              cursor: "pointer",
-              padding: "2px 8px",
-              fontSize: 10,
-              fontFamily: fonts.mono,
-              lineHeight: 1,
-              borderRadius: 10,
-              display: "flex",
-              alignItems: "center",
-              gap: 4,
-            }}
-            onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = colors.hoverBg; e.currentTarget.style.color = colors.textLight; e.currentTarget.style.borderColor = colors.textDim; }}
-            onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = "transparent"; e.currentTarget.style.color = colors.textDim; e.currentTarget.style.borderColor = colors.border; }}
-          >
-            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M1 4v6h6" />
-              <path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10" />
-            </svg>
-            Reset
-          </button>
-          {showLayoutMenu && (
-            <div
+        {(hasMissingDefaults || isDefaultLayout) && (
+          <div style={{ position: "relative" }}>
+            <button
+              onClick={() => setShowLayoutMenu((v) => !v)}
+              title="Layout options"
               style={{
-                position: "absolute",
-                top: "100%",
-                right: 0,
-                marginTop: 4,
-                backgroundColor: colors.surface,
+                background: "none",
                 border: `1px solid ${colors.border}`,
-                borderRadius: 6,
-                padding: 4,
-                zIndex: 1000,
-                minWidth: 150,
-                boxShadow: `0 4px 12px ${colors.shadow}`,
-                fontFamily: fonts.sans,
+                color: colors.textDim,
+                cursor: "pointer",
+                padding: "2px 8px",
+                fontSize: 10,
+                fontFamily: fonts.mono,
+                lineHeight: 1,
+                borderRadius: 10,
+                display: "flex",
+                alignItems: "center",
+                gap: 4,
               }}
-              onMouseDown={(e) => e.stopPropagation()}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.backgroundColor = colors.hoverBg;
+                e.currentTarget.style.color = colors.textLight;
+                e.currentTarget.style.borderColor = colors.textDim;
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.backgroundColor = "transparent";
+                e.currentTarget.style.color = colors.textDim;
+                e.currentTarget.style.borderColor = colors.border;
+              }}
             >
-              {hasMissingDefaults && (
-                <button
-                  onClick={() => { restoreDefaults(); setShowLayoutMenu(false); }}
-                  style={buildLayoutMenuItemStyle(colors)}
-                  onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = colors.hoverBg; }}
-                  onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = "transparent"; }}
-                >
-                  Restore defaults
-                </button>
-              )}
-              {isDefaultLayout && (
-                <button
-                  onClick={() => { handleResetLayout(); setShowLayoutMenu(false); }}
-                  style={buildLayoutMenuItemStyle(colors)}
-                  onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = colors.hoverBg; }}
-                  onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = "transparent"; }}
-                >
-                  Reset current
-                </button>
-              )}
-            </div>
-          )}
-        </div>}
+              <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M1 4v6h6" />
+                <path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10" />
+              </svg>
+              Reset
+            </button>
+            {showLayoutMenu && (
+              <div
+                style={{
+                  position: "absolute",
+                  top: "100%",
+                  right: 0,
+                  marginTop: 4,
+                  backgroundColor: colors.surface,
+                  border: `1px solid ${colors.border}`,
+                  borderRadius: 6,
+                  padding: 4,
+                  zIndex: 1000,
+                  minWidth: 150,
+                  boxShadow: `0 4px 12px ${colors.shadow}`,
+                  fontFamily: fonts.sans,
+                }}
+                onMouseDown={(e) => e.stopPropagation()}
+              >
+                {hasMissingDefaults && (
+                  <button
+                    onClick={() => {
+                      restoreDefaults();
+                      setShowLayoutMenu(false);
+                    }}
+                    style={buildLayoutMenuItemStyle(colors)}
+                    onMouseEnter={(e) => {
+                      e.currentTarget.style.backgroundColor = colors.hoverBg;
+                    }}
+                    onMouseLeave={(e) => {
+                      e.currentTarget.style.backgroundColor = "transparent";
+                    }}
+                  >
+                    Restore defaults
+                  </button>
+                )}
+                {isDefaultLayout && (
+                  <button
+                    onClick={() => {
+                      handleResetLayout();
+                      setShowLayoutMenu(false);
+                    }}
+                    style={buildLayoutMenuItemStyle(colors)}
+                    onMouseEnter={(e) => {
+                      e.currentTarget.style.backgroundColor = colors.hoverBg;
+                    }}
+                    onMouseLeave={(e) => {
+                      e.currentTarget.style.backgroundColor = "transparent";
+                    }}
+                  >
+                    Reset current
+                  </button>
+                )}
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
       {/* Layout content */}
@@ -1315,7 +1370,9 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
             canvas={canvasState ?? { type: "canvas", viewport: { x: 0, y: 0, zoom: 1 }, tiles: [] }}
             renderLeaf={renderLeaf}
             agentInfoMap={agentInfoMap}
-            onCanvasChange={(c) => { setCanvasState(c); }}
+            onCanvasChange={(c) => {
+              setCanvasState(c);
+            }}
             hiddenPanels={hiddenPanels}
           />
         ) : !tree ? (
@@ -1325,7 +1382,20 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
             const leaf = findLeafById(tree, maximizedLeafId)!;
             const usedSingletons = collectPanelTypes(tree);
             return (
-              <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", minHeight: 0, minWidth: 0, borderRadius: colors.islandRadius, boxShadow: colors.islandShadow, border: colors.islandBorder, backgroundColor: colors.sidebar }}>
+              <div
+                style={{
+                  flex: 1,
+                  display: "flex",
+                  flexDirection: "column",
+                  overflow: "hidden",
+                  minHeight: 0,
+                  minWidth: 0,
+                  borderRadius: colors.islandRadius,
+                  boxShadow: colors.islandShadow,
+                  border: colors.islandBorder,
+                  backgroundColor: colors.sidebar,
+                }}
+              >
                 <PaneLeafHeader
                   leafId={leaf.id}
                   panel={leaf.panel}
@@ -1333,14 +1403,15 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
                   hiddenPanels={hiddenPanels}
                   agentInfo={leaf.panel === "docker-agent" ? agentInfoMap.get(leaf.id) : undefined}
                   isMaximized
-                  onRemove={() => { setMaximizedLeafId(null); handleRemoveLeaf(leaf.id); }}
+                  onRemove={() => {
+                    setMaximizedLeafId(null);
+                    handleRemoveLeaf(leaf.id);
+                  }}
                   onDrop={handleDrop}
                   onSplitLeaf={handleSplitLeaf}
                   onToggleMaximize={() => setMaximizedLeafId(null)}
                 />
-                <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", minHeight: 0 }}>
-                  {renderLeaf(leaf)}
-                </div>
+                <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", minHeight: 0 }}>{renderLeaf(leaf)}</div>
               </div>
             );
           })()
@@ -1356,12 +1427,14 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
             onRemoveLeaf={handleRemoveLeaf}
             onSplitLeaf={handleSplitLeaf}
             onMaximize={(leafId) => setMaximizedLeafId(leafId)}
-            onToggleMinimize={(leafId) => setMinimizedLeaves((prev) => {
-              const next = new Set(prev);
-              if (next.has(leafId)) next.delete(leafId);
-              else next.add(leafId);
-              return next;
-            })}
+            onToggleMinimize={(leafId) =>
+              setMinimizedLeaves((prev) => {
+                const next = new Set(prev);
+                if (next.has(leafId)) next.delete(leafId);
+                else next.add(leafId);
+                return next;
+              })
+            }
           />
         )}
       </div>
@@ -1373,7 +1446,15 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
 
 const TAB_DRAG_MIME = "application/x-loop-layout-tab";
 
-function LayoutTab({ name, active, canDelete, onSelect, onRename, onDelete, onReorder }: {
+function LayoutTab({
+  name,
+  active,
+  canDelete,
+  onSelect,
+  onRename,
+  onDelete,
+  onReorder,
+}: {
   name: string;
   active: boolean;
   canDelete: boolean;
@@ -1455,12 +1536,25 @@ function LayoutTab({ name, active, canDelete, onSelect, onRename, onDelete, onRe
         outlineOffset: dragOver ? -2 : undefined,
         cursor: editing ? "text" : "grab",
       }}
-      onMouseEnter={(e) => { if (!active) { e.currentTarget.style.background = colors.hoverBg; e.currentTarget.style.color = colors.textLight; } }}
-      onMouseLeave={(e) => { if (!active) { e.currentTarget.style.background = "transparent"; e.currentTarget.style.color = colors.textDim; } }}
+      onMouseEnter={(e) => {
+        if (!active) {
+          e.currentTarget.style.background = colors.hoverBg;
+          e.currentTarget.style.color = colors.textLight;
+        }
+      }}
+      onMouseLeave={(e) => {
+        if (!active) {
+          e.currentTarget.style.background = "transparent";
+          e.currentTarget.style.color = colors.textDim;
+        }
+      }}
     >
       {canDelete && !editing && (
         <button
-          onClick={(e) => { e.stopPropagation(); setConfirming(true); }}
+          onClick={(e) => {
+            e.stopPropagation();
+            setConfirming(true);
+          }}
           title="Delete layout"
           style={{
             background: "none",
@@ -1473,8 +1567,12 @@ function LayoutTab({ name, active, canDelete, onSelect, onRename, onDelete, onRe
             display: "flex",
             alignItems: "center",
           }}
-          onMouseEnter={(e) => { e.currentTarget.style.color = colors.textLight; }}
-          onMouseLeave={(e) => { e.currentTarget.style.color = colors.textDim; }}
+          onMouseEnter={(e) => {
+            e.currentTarget.style.color = colors.textLight;
+          }}
+          onMouseLeave={(e) => {
+            e.currentTarget.style.color = colors.textDim;
+          }}
         >
           <svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
             <line x1="18" y1="6" x2="6" y2="18" />
@@ -1490,7 +1588,10 @@ function LayoutTab({ name, active, canDelete, onSelect, onRename, onDelete, onRe
           onBlur={commitRename}
           onKeyDown={(e) => {
             if (e.key === "Enter") commitRename();
-            if (e.key === "Escape") { setEditValue(name); setEditing(false); }
+            if (e.key === "Escape") {
+              setEditValue(name);
+              setEditing(false);
+            }
           }}
           onClick={(e) => e.stopPropagation()}
           style={{
@@ -1507,7 +1608,11 @@ function LayoutTab({ name, active, canDelete, onSelect, onRename, onDelete, onRe
         />
       ) : (
         <span
-          onDoubleClick={(e) => { e.stopPropagation(); setEditValue(name); setEditing(true); }}
+          onDoubleClick={(e) => {
+            e.stopPropagation();
+            setEditValue(name);
+            setEditing(true);
+          }}
           title="Double-click to rename"
           style={{ flex: 1, textAlign: "center" }}
         >
@@ -1547,7 +1652,11 @@ function LayoutTab({ name, active, canDelete, onSelect, onRename, onDelete, onRe
           </svg>
           <span style={{ color: colors.textLight }}>Delete?</span>
           <button
-            onClick={(e) => { e.stopPropagation(); setConfirming(false); onDelete(); }}
+            onClick={(e) => {
+              e.stopPropagation();
+              setConfirming(false);
+              onDelete();
+            }}
             style={{
               background: colors.dangerBg,
               border: `1px solid ${colors.dangerText}`,
@@ -1559,13 +1668,22 @@ function LayoutTab({ name, active, canDelete, onSelect, onRename, onDelete, onRe
               borderRadius: 4,
               lineHeight: 1.4,
             }}
-            onMouseEnter={(e) => { e.currentTarget.style.background = colors.dangerHoverBg; e.currentTarget.style.color = colors.white; }}
-            onMouseLeave={(e) => { e.currentTarget.style.background = colors.dangerBg; e.currentTarget.style.color = colors.dangerText; }}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.background = colors.dangerHoverBg;
+              e.currentTarget.style.color = colors.white;
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.background = colors.dangerBg;
+              e.currentTarget.style.color = colors.dangerText;
+            }}
           >
             Yes
           </button>
           <button
-            onClick={(e) => { e.stopPropagation(); setConfirming(false); }}
+            onClick={(e) => {
+              e.stopPropagation();
+              setConfirming(false);
+            }}
             style={{
               background: "none",
               border: `1px solid ${colors.border}`,
@@ -1577,8 +1695,14 @@ function LayoutTab({ name, active, canDelete, onSelect, onRename, onDelete, onRe
               borderRadius: 4,
               lineHeight: 1.4,
             }}
-            onMouseEnter={(e) => { e.currentTarget.style.color = colors.textLight; e.currentTarget.style.borderColor = colors.textDim; }}
-            onMouseLeave={(e) => { e.currentTarget.style.color = colors.textDim; e.currentTarget.style.borderColor = colors.border; }}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.color = colors.textLight;
+              e.currentTarget.style.borderColor = colors.textDim;
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.color = colors.textDim;
+              e.currentTarget.style.borderColor = colors.border;
+            }}
           >
             No
           </button>

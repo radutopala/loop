@@ -1,8 +1,21 @@
-export type { PanelType } from "../types/panels";
-export { SINGLETON_PANELS, EXCLUSIVE_PANELS } from "../types/panels";
-export type { SplitDirection, DropPosition, LeafNode, SplitNode, PaneNode } from "./types";
-export { makeLeaf, findLeafById, removeLeaf, splitLeaf, updateFlex, collectLeaves, findLastLeaf, leafCount, swapLeavesInTree, moveLeaf, collectPanelTypes, canAddPanel, hasAgentLeaf } from "./treeOps";
-export { loadLayout, saveLayout, clearLayout, loadChannelLayouts, loadActiveLayoutName, saveActiveLayout, deleteLayout, renameLayout, getLayoutNames, DEFAULT_LAYOUT_NAMES, createDefaultLayouts, ensureDefaultLayouts } from "../layouts/persistence";
 export type { ChannelLayouts } from "../layouts/persistence";
-export { SplitPaneLayout } from "./SplitPaneLayout";
+export {
+  clearLayout,
+  createDefaultLayouts,
+  DEFAULT_LAYOUT_NAMES,
+  deleteLayout,
+  ensureDefaultLayouts,
+  getLayoutNames,
+  loadActiveLayoutName,
+  loadChannelLayouts,
+  loadLayout,
+  renameLayout,
+  saveActiveLayout,
+  saveLayout,
+} from "../layouts/persistence";
+export type { PanelType } from "../types/panels";
+export { EXCLUSIVE_PANELS, SINGLETON_PANELS } from "../types/panels";
 export { EmptyLayoutPicker } from "./AddPanelButton";
+export { SplitPaneLayout } from "./SplitPaneLayout";
+export { canAddPanel, collectLeaves, collectPanelTypes, findLastLeaf, findLeafById, hasAgentLeaf, leafCount, makeLeaf, moveLeaf, removeLeaf, splitLeaf, swapLeavesInTree, updateFlex } from "./treeOps";
+export type { DropPosition, LeafNode, PaneNode, SplitDirection, SplitNode } from "./types";

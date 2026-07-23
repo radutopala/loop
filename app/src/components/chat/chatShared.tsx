@@ -1,8 +1,8 @@
 import { createContext } from "react";
 import type { ColorPalette } from "../../theme";
 import { fonts } from "../../theme";
-import { FileLink } from "./FileLink";
 import { findCandidatePaths } from "../../utils/fileLinks";
+import { FileLink } from "./FileLink";
 
 // ChannelContext lets nested renderers (MarkdownContent, ToolActivityIndicator)
 // resolve the current channel without prop drilling through every helper.

@@ -19,8 +19,20 @@ export function LoopInfinityIcon({ color, animated, isDark = true }: { color?: s
     trail.style.strokeDasharray = `${totalLen * trailFrac} ${totalLen * (1 - trailFrac)}`;
 
     const COLORS = isDark
-      ? [[34, 197, 94], [134, 239, 172], [245, 158, 11], [251, 191, 36], [34, 197, 94]]
-      : [[60, 60, 60], [120, 120, 120], [80, 80, 80], [140, 140, 140], [60, 60, 60]];
+      ? [
+          [34, 197, 94],
+          [134, 239, 172],
+          [245, 158, 11],
+          [251, 191, 36],
+          [34, 197, 94],
+        ]
+      : [
+          [60, 60, 60],
+          [120, 120, 120],
+          [80, 80, 80],
+          [140, 140, 140],
+          [60, 60, 60],
+        ];
     function colorAt(p: number) {
       const idx = p * (COLORS.length - 1);
       const lo = Math.floor(idx);
@@ -28,7 +40,9 @@ export function LoopInfinityIcon({ color, animated, isDark = true }: { color?: s
       const t = idx - lo;
       return COLORS[lo]!.map((v, i) => Math.round(v + (COLORS[hi]![i]! - v) * t));
     }
-    function rgb(c: number[]) { return `rgb(${c[0]},${c[1]},${c[2]})`; }
+    function rgb(c: number[]) {
+      return `rgb(${c[0]},${c[1]},${c[2]})`;
+    }
 
     let progress = 0;
     let prev = 0;
@@ -39,7 +53,7 @@ export function LoopInfinityIcon({ color, animated, isDark = true }: { color?: s
       progress = (progress + speed * dt) % 1;
       const shift = (t * 0.0001) % 1;
       stops.forEach((s, i) => {
-        s.setAttribute("stop-color", rgb(colorAt(((i / (stops.length - 1)) + shift) % 1)));
+        s.setAttribute("stop-color", rgb(colorAt((i / (stops.length - 1) + shift) % 1)));
       });
       trail.style.strokeDashoffset = `${totalLen * (1 - progress)}`;
       const pulse = 0.7 + 0.3 * Math.sin(t * 0.003);

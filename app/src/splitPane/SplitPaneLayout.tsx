@@ -1,18 +1,18 @@
 import { Fragment, useCallback, useRef } from "react";
-import type { PaneNode, LeafNode, SplitDirection, DropPosition } from "./types";
-import type { PanelType } from "../types/panels";
-import { collectPanelTypes } from "./treeOps";
-import { PaneLeafHeader } from "./PaneLeafHeader";
-import { DropZoneOverlay } from "./DropZoneOverlay";
-import { useTheme } from "../ThemeContext";
 import type { AgentInfo } from "../hooks/useAgentRegistry";
+import { useTheme } from "../ThemeContext";
+import type { PanelType } from "../types/panels";
+import { DropZoneOverlay } from "./DropZoneOverlay";
+import { PaneLeafHeader } from "./PaneLeafHeader";
+import { collectPanelTypes } from "./treeOps";
+import type { DropPosition, LeafNode, PaneNode, SplitDirection } from "./types";
 
 const HEADER_HEIGHT = 22;
 
 /** Check if every leaf in a subtree is minimized. */
 function isSubtreeMinimized(node: PaneNode, minimizedLeaves?: Set<string>): boolean {
   if (node.type === "leaf") return minimizedLeaves?.has(node.id) ?? false;
-  return node.children.every(child => isSubtreeMinimized(child, minimizedLeaves));
+  return node.children.every((child) => isSubtreeMinimized(child, minimizedLeaves));
 }
 
 interface SplitPaneLayoutProps {
@@ -29,7 +29,19 @@ interface SplitPaneLayoutProps {
   hiddenPanels?: PanelType[];
 }
 
-export function SplitPaneLayout({ tree, renderLeaf, agentInfoMap, minimizedLeaves, onUpdateFlex, onDrop, onRemoveLeaf, onSplitLeaf, onMaximize, onToggleMinimize, hiddenPanels }: SplitPaneLayoutProps) {
+export function SplitPaneLayout({
+  tree,
+  renderLeaf,
+  agentInfoMap,
+  minimizedLeaves,
+  onUpdateFlex,
+  onDrop,
+  onRemoveLeaf,
+  onSplitLeaf,
+  onMaximize,
+  onToggleMinimize,
+  hiddenPanels,
+}: SplitPaneLayoutProps) {
   const usedSingletons = collectPanelTypes(tree);
   return (
     <PaneTree
@@ -70,7 +82,23 @@ interface PaneTreeProps {
   hiddenPanels?: PanelType[];
 }
 
-function PaneTree({ node, path, usedSingletons, renderLeaf, agentInfoMap, minimizedLeaves, flexOverride, parentDirection, onUpdateFlex, onDrop, onRemoveLeaf, onSplitLeaf, onMaximize, onToggleMinimize, hiddenPanels }: PaneTreeProps) {
+function PaneTree({
+  node,
+  path,
+  usedSingletons,
+  renderLeaf,
+  agentInfoMap,
+  minimizedLeaves,
+  flexOverride,
+  parentDirection,
+  onUpdateFlex,
+  onDrop,
+  onRemoveLeaf,
+  onSplitLeaf,
+  onMaximize,
+  onToggleMinimize,
+  hiddenPanels,
+}: PaneTreeProps) {
   const { colors } = useTheme();
   const containerRef = useRef<HTMLDivElement>(null);
 
@@ -123,7 +151,21 @@ function PaneTree({ node, path, usedSingletons, renderLeaf, agentInfoMap, minimi
     const isMinimized = minimizedLeaves?.has(node.id) ?? false;
     const effectiveFlex = flexOverride ?? node.flex;
     return (
-      <div style={{ flex: isMinimized ? "0 0 auto" : `${effectiveFlex} 1 0%`, display: "flex", flexDirection: "column", overflow: "hidden", minHeight: 0, minWidth: 0, position: "relative", borderRadius: colors.islandRadius, boxShadow: colors.islandShadow, border: colors.islandBorder, backgroundColor: colors.sidebar }}>
+      <div
+        style={{
+          flex: isMinimized ? "0 0 auto" : `${effectiveFlex} 1 0%`,
+          display: "flex",
+          flexDirection: "column",
+          overflow: "hidden",
+          minHeight: 0,
+          minWidth: 0,
+          position: "relative",
+          borderRadius: colors.islandRadius,
+          boxShadow: colors.islandShadow,
+          border: colors.islandBorder,
+          backgroundColor: colors.sidebar,
+        }}
+      >
         <PaneLeafHeader
           leafId={node.id}
           panel={node.panel}
@@ -138,11 +180,7 @@ function PaneTree({ node, path, usedSingletons, renderLeaf, agentInfoMap, minimi
           onToggleMinimize={onToggleMinimize ? () => onToggleMinimize(node.id) : undefined}
         />
         <DropZoneOverlay leafId={node.id} headerHeight={HEADER_HEIGHT} onDrop={onDrop} />
-        {!isMinimized && (
-          <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", minHeight: 0 }}>
-            {renderLeaf(node)}
-          </div>
-        )}
+        {!isMinimized && <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", minHeight: 0 }}>{renderLeaf(node)}</div>}
       </div>
     );
   }

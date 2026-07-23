@@ -1,15 +1,15 @@
 import { useCallback, useRef, useState } from "react";
-import type { ChatState } from "../../hooks/useChatState";
 import type { RootEntry } from "../../api/files";
-import type { Message } from "../../types";
-import { fonts } from "../../theme";
-import type { ColorPalette } from "../../theme";
+import type { ChatState } from "../../hooks/useChatState";
 import { useTheme } from "../../ThemeContext";
-import { LoopLogo } from "../shared/LoopLogo";
+import type { ColorPalette } from "../../theme";
+import { fonts } from "../../theme";
+import type { Message } from "../../types";
 import { LoopInfinityIcon } from "../LoopInfinityIcon";
+import { LoopLogo } from "../shared/LoopLogo";
 import { ChatInput } from "./ChatInput";
-import { ChatMessages } from "./ChatMessages";
 import type { ChatMessagesHandle } from "./ChatMessages";
+import { ChatMessages } from "./ChatMessages";
 
 function buildStyles(colors: ColorPalette): Record<string, React.CSSProperties> {
   return {
@@ -63,7 +63,11 @@ export function ChatView({ channelId, chatState, roots, scrollToMessageId, onScr
   const { colors, fontSizes } = useTheme();
   const styles = buildStyles(colors);
   const { items, liveTail, messages, loading, isRunning } = chatState;
-  const dismissCards = useCallback(() => { chatState.clearAskUser(); chatState.clearExitPlan(); chatState.clearGateApproval("chat"); }, [chatState]);
+  const dismissCards = useCallback(() => {
+    chatState.clearAskUser();
+    chatState.clearExitPlan();
+    chatState.clearGateApproval("chat");
+  }, [chatState]);
   const messagesRef = useRef<ChatMessagesHandle>(null);
   const [quotedMessage, setQuotedMessage] = useState<Message | null>(null);
   const clearQuote = useCallback(() => setQuotedMessage(null), []);
@@ -90,7 +94,20 @@ export function ChatView({ channelId, chatState, roots, scrollToMessageId, onScr
           <WelcomeScreen />
         </div>
         <div style={styles.inputBar}>
-          <ChatInput channelId={channelId} messages={messages} roots={roots} mode={chatState.mode} setMode={chatState.setMode} onDismissCards={dismissCards} onSent={scrollToBottom} quotedMessage={quotedMessage} onClearQuote={clearQuote} pendingGateReqId={chatState.gateApprovals["chat"]?.req_id ?? null} hasPendingExitPlan={!!chatState.exitPlanRequest} hasPendingAskUser={!!chatState.askUserQuestions} />
+          <ChatInput
+            channelId={channelId}
+            messages={messages}
+            roots={roots}
+            mode={chatState.mode}
+            setMode={chatState.setMode}
+            onDismissCards={dismissCards}
+            onSent={scrollToBottom}
+            quotedMessage={quotedMessage}
+            onClearQuote={clearQuote}
+            pendingGateReqId={chatState.gateApprovals["chat"]?.req_id ?? null}
+            hasPendingExitPlan={!!chatState.exitPlanRequest}
+            hasPendingAskUser={!!chatState.askUserQuestions}
+          />
         </div>
 
         <div style={styles.isolationLabel}>
@@ -105,7 +122,21 @@ export function ChatView({ channelId, chatState, roots, scrollToMessageId, onScr
     <div style={{ ...styles.container, zoom: fontSizes.chat / 13 }}>
       <ChatMessages ref={messagesRef} channelId={channelId} chatState={chatState} scrollToMessageId={scrollToMessageId} onScrollComplete={onScrollComplete} onQuote={setQuotedMessage} />
       <div style={styles.inputBar}>
-        <ChatInput channelId={channelId} messages={messages} roots={roots} isRunning={isRunning} mode={chatState.mode} setMode={chatState.setMode} onDismissCards={dismissCards} onSent={scrollToBottom} quotedMessage={quotedMessage} onClearQuote={clearQuote} pendingGateReqId={chatState.gateApprovals["chat"]?.req_id ?? null} hasPendingExitPlan={!!chatState.exitPlanRequest} hasPendingAskUser={!!chatState.askUserQuestions} />
+        <ChatInput
+          channelId={channelId}
+          messages={messages}
+          roots={roots}
+          isRunning={isRunning}
+          mode={chatState.mode}
+          setMode={chatState.setMode}
+          onDismissCards={dismissCards}
+          onSent={scrollToBottom}
+          quotedMessage={quotedMessage}
+          onClearQuote={clearQuote}
+          pendingGateReqId={chatState.gateApprovals["chat"]?.req_id ?? null}
+          hasPendingExitPlan={!!chatState.exitPlanRequest}
+          hasPendingAskUser={!!chatState.askUserQuestions}
+        />
       </div>
       <div style={styles.isolationLabel}>
         <LoopInfinityIcon color={isRunning ? undefined : colors.textDim} animated={isRunning} isDark={colors.isDark} />

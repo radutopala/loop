@@ -14,13 +14,7 @@ interface UseTerminalMessageDispatcherOptions {
  * Returns a message handler that dispatches incoming WebSocket messages
  * to the appropriate callback: binary PTY data, status updates, or errors.
  */
-export function useTerminalMessageDispatcher({
-  onData,
-  onStatus,
-  onError,
-  onSessionChange,
-  onSessionFailed,
-}: UseTerminalMessageDispatcherOptions) {
+export function useTerminalMessageDispatcher({ onData, onStatus, onError, onSessionChange, onSessionFailed }: UseTerminalMessageDispatcherOptions) {
   const handleMessage = useCallback(
     (event: MessageEvent) => {
       if (event.data instanceof ArrayBuffer) {
@@ -42,10 +36,7 @@ export function useTerminalMessageDispatcher({
           break;
         case "error":
           onError(msg.message);
-          if (
-            msg.error_code === "no_session" ||
-            msg.error_code === "session_failed"
-          ) {
+          if (msg.error_code === "no_session" || msg.error_code === "session_failed") {
             onSessionChange(null);
             onSessionFailed?.();
           }

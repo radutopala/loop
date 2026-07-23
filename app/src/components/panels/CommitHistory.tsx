@@ -1,7 +1,7 @@
 import { useCallback, useState } from "react";
 import type { CommitEntry } from "../../api/loopApi";
-import { fonts } from "../../theme";
 import { useTheme } from "../../ThemeContext";
+import { fonts } from "../../theme";
 
 interface CommitHistoryProps {
   commits: CommitEntry[];
@@ -16,26 +16,26 @@ export function CommitHistory({ commits, commitsLoading, onLoadMore }: CommitHis
   const toggle = useCallback((hash: string) => {
     setExpanded((prev) => {
       const next = new Set(prev);
-      if (next.has(hash)) next.delete(hash); else next.add(hash);
+      if (next.has(hash)) next.delete(hash);
+      else next.add(hash);
       return next;
     });
   }, []);
 
-  const handleScroll = useCallback((e: React.UIEvent<HTMLDivElement>) => {
-    const el = e.currentTarget;
-    if (el.scrollHeight - el.scrollTop - el.clientHeight < 100) {
-      onLoadMore();
-    }
-  }, [onLoadMore]);
+  const handleScroll = useCallback(
+    (e: React.UIEvent<HTMLDivElement>) => {
+      const el = e.currentTarget;
+      if (el.scrollHeight - el.scrollTop - el.clientHeight < 100) {
+        onLoadMore();
+      }
+    },
+    [onLoadMore],
+  );
 
   return (
     <div style={{ flex: 1, overflow: "auto", minHeight: 0 }} onScroll={handleScroll}>
-      {commitsLoading && commits.length === 0 && (
-        <div style={{ padding: "20px 12px", color: colors.textDim, fontSize: 13 }}>Loading...</div>
-      )}
-      {!commitsLoading && commits.length === 0 && (
-        <div style={{ padding: "20px 12px", color: colors.textDim, fontSize: 13 }}>No commits</div>
-      )}
+      {commitsLoading && commits.length === 0 && <div style={{ padding: "20px 12px", color: colors.textDim, fontSize: 13 }}>Loading...</div>}
+      {!commitsLoading && commits.length === 0 && <div style={{ padding: "20px 12px", color: colors.textDim, fontSize: 13 }}>No commits</div>}
       {commits.map((c) => {
         const isOpen = expanded.has(c.hash);
         const hasBody = !!c.body && c.body.trim() !== "";
@@ -48,17 +48,21 @@ export function CommitHistory({ commits, commitsLoading, onLoadMore }: CommitHis
               fontSize: 12,
               cursor: hasBody ? "pointer" : "default",
             }}
-            onClick={() => { if (hasBody) toggle(c.hash); }}
+            onClick={() => {
+              if (hasBody) toggle(c.hash);
+            }}
             title={hasBody ? (isOpen ? "Collapse message" : "Expand full message") : undefined}
-            onMouseEnter={(e) => { e.currentTarget.style.background = colors.hoverBg; }}
-            onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; }}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.background = colors.hoverBg;
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.background = "transparent";
+            }}
           >
             <div style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
               <span style={{ fontFamily: fonts.mono, fontSize: 11, color: colors.active, flexShrink: 0 }}>{c.short}</span>
               <span style={{ color: colors.textLight, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1 }}>{c.subject}</span>
-              {hasBody && (
-                <span style={{ color: colors.textDim, fontSize: 10, flexShrink: 0, fontFamily: fonts.mono }}>{isOpen ? "▾" : "▸"}</span>
-              )}
+              {hasBody && <span style={{ color: colors.textDim, fontSize: 10, flexShrink: 0, fontFamily: fonts.mono }}>{isOpen ? "▾" : "▸"}</span>}
             </div>
             <div style={{ display: "flex", gap: 8, fontSize: 11, color: colors.textDim, marginTop: 2 }}>
               <span>{c.author}</span>
@@ -86,9 +90,7 @@ export function CommitHistory({ commits, commitsLoading, onLoadMore }: CommitHis
           </div>
         );
       })}
-      {commitsLoading && commits.length > 0 && (
-        <div style={{ padding: "8px 12px", color: colors.textDim, fontSize: 11, textAlign: "center" }}>Loading more...</div>
-      )}
+      {commitsLoading && commits.length > 0 && <div style={{ padding: "8px 12px", color: colors.textDim, fontSize: 11, textAlign: "center" }}>Loading more...</div>}
     </div>
   );
 }

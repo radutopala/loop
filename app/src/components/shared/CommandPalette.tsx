@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { Channel } from "../../types";
-import { fonts } from "../../theme";
+import { type MemoryFileInfo, type SearchMessageResult, searchMemoryFiles, searchMessages } from "../../api/loopApi";
 import { useTheme } from "../../ThemeContext";
-import { searchMessages, searchMemoryFiles, type SearchMessageResult, type MemoryFileInfo } from "../../api/loopApi";
+import { fonts } from "../../theme";
+import type { Channel } from "../../types";
 
 interface CommandPaletteProps {
   channels: Channel[];
@@ -92,9 +92,7 @@ export function CommandPalette({ channels, selectedChannelId, open, onClose, onS
 
   const filteredChannels = useMemo(() => {
     if (!query.trim()) return allItems;
-    return allItems.filter(
-      (item) => fuzzyMatch(query, item.label) || fuzzyMatch(query, item.detail),
-    );
+    return allItems.filter((item) => fuzzyMatch(query, item.label) || fuzzyMatch(query, item.detail));
   }, [allItems, query]);
 
   // Convert message results to palette items.
@@ -139,17 +137,23 @@ export function CommandPalette({ channels, selectedChannelId, open, onClose, onS
     debounceRef.current = setTimeout(async () => {
       const promises: Promise<void>[] = [];
       promises.push(
-        searchMessages(q, 10).then(setMessageResults).catch(() => setMessageResults([])),
+        searchMessages(q, 10)
+          .then(setMessageResults)
+          .catch(() => setMessageResults([])),
       );
       if (selectedChannelId) {
         promises.push(
-          searchMemoryFiles(selectedChannelId, q).then(setMemoryFiles).catch(() => setMemoryFiles([])),
+          searchMemoryFiles(selectedChannelId, q)
+            .then(setMemoryFiles)
+            .catch(() => setMemoryFiles([])),
         );
       }
       await Promise.all(promises);
       setSearching(false);
     }, 300);
-    return () => { if (debounceRef.current) clearTimeout(debounceRef.current); };
+    return () => {
+      if (debounceRef.current) clearTimeout(debounceRef.current);
+    };
   }, [query, selectedChannelId]);
 
   // Reset state when opened.
@@ -227,10 +231,14 @@ export function CommandPalette({ channels, selectedChannelId, open, onClose, onS
 
   const kindIcon = (kind: PaletteItem["kind"]) => {
     switch (kind) {
-      case "channel": return "#";
-      case "thread": return "┗";
-      case "message": return "\uD83D\uDCAC";
-      case "memory": return "\uD83E\uDDE0";
+      case "channel":
+        return "#";
+      case "thread":
+        return "┗";
+      case "message":
+        return "\uD83D\uDCAC";
+      case "memory":
+        return "\uD83E\uDDE0";
     }
   };
 
@@ -266,7 +274,10 @@ export function CommandPalette({ channels, selectedChannelId, open, onClose, onS
           <input
             ref={inputRef}
             value={query}
-            onChange={(e) => { setQuery(e.target.value); setSelectedIndex(0); }}
+            onChange={(e) => {
+              setQuery(e.target.value);
+              setSelectedIndex(0);
+            }}
             onKeyDown={handleKeyDown}
             placeholder="Search channels, threads, messages, and memory..."
             style={{
@@ -284,11 +295,7 @@ export function CommandPalette({ channels, selectedChannelId, open, onClose, onS
           />
         </div>
         <div ref={listRef} style={{ flex: 1, overflow: "auto", padding: "8px 0" }}>
-          {combined.length === 0 && !searching && (
-            <div style={{ padding: "12px 16px", color: colors.textDim, fontSize: 13 }}>
-              No results
-            </div>
-          )}
+          {combined.length === 0 && !searching && <div style={{ padding: "12px 16px", color: colors.textDim, fontSize: 13 }}>No results</div>}
           {filteredChannels.map((item, i) => (
             <div
               key={item.id}
@@ -303,9 +310,7 @@ export function CommandPalette({ channels, selectedChannelId, open, onClose, onS
                 backgroundColor: i === selectedIndex ? colors.selectedBg : "transparent",
               }}
             >
-              <span style={{ color: colors.textDim, fontSize: 12, flexShrink: 0 }}>
-                {kindIcon(item.kind)}
-              </span>
+              <span style={{ color: colors.textDim, fontSize: 12, flexShrink: 0 }}>{kindIcon(item.kind)}</span>
               <div style={{ minWidth: 0, flex: 1 }}>
                 <div
                   style={{
@@ -364,9 +369,7 @@ export function CommandPalette({ channels, selectedChannelId, open, onClose, onS
                   backgroundColor: globalIndex === selectedIndex ? colors.selectedBg : "transparent",
                 }}
               >
-                <span style={{ color: colors.textDim, fontSize: 12, flexShrink: 0 }}>
-                  {kindIcon(item.kind)}
-                </span>
+                <span style={{ color: colors.textDim, fontSize: 12, flexShrink: 0 }}>{kindIcon(item.kind)}</span>
                 <div style={{ minWidth: 0, flex: 1 }}>
                   <div
                     style={{
@@ -404,8 +407,8 @@ export function CommandPalette({ channels, selectedChannelId, open, onClose, onS
                 color: colors.textDim,
                 textTransform: "uppercase",
                 letterSpacing: 1,
-                borderTop: (filteredChannels.length > 0 || memoryItems.length > 0) ? `1px solid ${colors.border}` : undefined,
-                marginTop: (filteredChannels.length > 0 || memoryItems.length > 0) ? 4 : 0,
+                borderTop: filteredChannels.length > 0 || memoryItems.length > 0 ? `1px solid ${colors.border}` : undefined,
+                marginTop: filteredChannels.length > 0 || memoryItems.length > 0 ? 4 : 0,
               }}
             >
               Messages
@@ -427,9 +430,7 @@ export function CommandPalette({ channels, selectedChannelId, open, onClose, onS
                   backgroundColor: globalIndex === selectedIndex ? colors.selectedBg : "transparent",
                 }}
               >
-                <span style={{ color: colors.textDim, fontSize: 12, flexShrink: 0 }}>
-                  {kindIcon(item.kind)}
-                </span>
+                <span style={{ color: colors.textDim, fontSize: 12, flexShrink: 0 }}>{kindIcon(item.kind)}</span>
                 <div style={{ minWidth: 0, flex: 1 }}>
                   <div
                     style={{
@@ -458,11 +459,7 @@ export function CommandPalette({ channels, selectedChannelId, open, onClose, onS
               </div>
             );
           })}
-          {searching && (
-            <div style={{ padding: "8px 16px", color: colors.textDim, fontSize: 12 }}>
-              Searching messages...
-            </div>
-          )}
+          {searching && <div style={{ padding: "8px 16px", color: colors.textDim, fontSize: 12 }}>Searching messages...</div>}
         </div>
       </div>
     </div>

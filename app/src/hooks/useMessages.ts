@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { Message } from "../types";
 import { fetchMessages } from "../api/loopApi";
+import type { Message } from "../types";
 import { logErr } from "../utils/log";
 
 const PAGE_SIZE = 50;
@@ -38,9 +38,7 @@ export function useMessages(channelId: string | null, aroundMessageId?: number |
     loadingRef.current = true;
 
     const around = aroundRef.current;
-    const opts = around
-      ? { limit: PAGE_SIZE, around }
-      : { limit: PAGE_SIZE };
+    const opts = around ? { limit: PAGE_SIZE, around } : { limit: PAGE_SIZE };
 
     fetchMessages(channelId, opts)
       .then((resp) => {

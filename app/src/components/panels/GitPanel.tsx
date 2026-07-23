@@ -1,22 +1,22 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { DiffResponse, PRInfo } from "../../api/loopApi";
-import { fetchDiff, fetchBranches, fetchCommits, fetchPR } from "../../api/loopApi";
 import { fetchRoots, type RootEntry } from "../../api/files";
+import type { DiffResponse, PRInfo } from "../../api/loopApi";
+import { fetchBranches, fetchCommits, fetchDiff, fetchPR } from "../../api/loopApi";
 import { useEventStream } from "../../hooks/useEventStream";
-import type { AgentStatusData, WSEvent } from "../../types";
-import { fonts } from "../../theme";
-import type { ColorPalette } from "../../theme";
 import { useTheme } from "../../ThemeContext";
-import { ContextMenu } from "../shared/ContextMenu";
-import { DiffViewer, fileKey, parseUnifiedDiff } from "./DiffViewer";
-import type { ParsedFile } from "./DiffViewer";
-import type { FileLinkOpenDetail } from "../chat/FileLink";
-import { CommitHistory } from "./CommitHistory";
-import { WorktreesPanel } from "./WorktreesPanel";
-import { BranchesPanel } from "./BranchesPanel";
-import { PaneRootSelect } from "./PaneRootSelect";
-import { storageGet, storageSet } from "../../utils/storage";
+import type { ColorPalette } from "../../theme";
+import { fonts } from "../../theme";
+import type { AgentStatusData, WSEvent } from "../../types";
 import { logErr } from "../../utils/log";
+import { storageGet, storageSet } from "../../utils/storage";
+import type { FileLinkOpenDetail } from "../chat/FileLink";
+import { ContextMenu } from "../shared/ContextMenu";
+import { BranchesPanel } from "./BranchesPanel";
+import { CommitHistory } from "./CommitHistory";
+import type { ParsedFile } from "./DiffViewer";
+import { DiffViewer, fileKey, parseUnifiedDiff } from "./DiffViewer";
+import { PaneRootSelect } from "./PaneRootSelect";
+import { WorktreesPanel } from "./WorktreesPanel";
 
 const MIN_WIDTH = 280;
 const MAX_WIDTH_PERCENT = 0.6;
@@ -72,7 +72,25 @@ function buildHeaderBtnStyle(colors: ColorPalette): React.CSSProperties {
   };
 }
 
-export function GitPanel({ channelId, dirPath, branch, maximized, sidebarOpen, tabBar, embedded, leafId, isWorktree, hasBranch, onToggleSidebar, onOpenPalette, onToggleMaximize, onImportWorktree, onSelectThread, onStatusChange, onClose }: GitPanelProps) {
+export function GitPanel({
+  channelId,
+  dirPath,
+  branch,
+  maximized,
+  sidebarOpen,
+  tabBar,
+  embedded,
+  leafId,
+  isWorktree,
+  hasBranch,
+  onToggleSidebar,
+  onOpenPalette,
+  onToggleMaximize,
+  onImportWorktree,
+  onSelectThread,
+  onStatusChange,
+  onClose,
+}: GitPanelProps) {
   const { colors, fontSizes } = useTheme();
   const [width, setWidth] = useState(loadWidth);
   const [resizing, setResizing] = useState(false);
@@ -118,23 +136,28 @@ export function GitPanel({ channelId, dirPath, branch, maximized, sidebarOpen, t
   // (only once per channel) so the Branches Diff mode defaults to the PR's
   // target rather than main. `fresh` bypasses the backend lookup cache —
   // used right after an agent run completes, when a new PR is most likely.
-  const loadPR = useCallback((fresh = false) => {
-    if (!channelId) {
-      setPR(null);
-      return;
-    }
-    fetchPR(channelId, fresh).then((res) => {
-      if (res.present && res.pr) {
-        setPR(res.pr);
-        if (prSeededRef.current !== channelId) {
-          setSourceBranch(res.pr.base_ref);
-          prSeededRef.current = channelId;
-        }
-      } else {
+  const loadPR = useCallback(
+    (fresh = false) => {
+      if (!channelId) {
         setPR(null);
+        return;
       }
-    }).catch(() => setPR(null));
-  }, [channelId]); // eslint-disable-line react-hooks/exhaustive-deps
+      fetchPR(channelId, fresh)
+        .then((res) => {
+          if (res.present && res.pr) {
+            setPR(res.pr);
+            if (prSeededRef.current !== channelId) {
+              setSourceBranch(res.pr.base_ref);
+              prSeededRef.current = channelId;
+            }
+          } else {
+            setPR(null);
+          }
+        })
+        .catch(() => setPR(null));
+    },
+    [channelId],
+  ); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Fetch PR info on mount and when channel changes.
   useEffect(() => {
@@ -152,9 +175,15 @@ export function GitPanel({ channelId, dirPath, branch, maximized, sidebarOpen, t
     }
     let cancelled = false;
     fetchRoots(channelId)
-      .then((r) => { if (!cancelled) setRoots(r); })
-      .catch(() => { if (!cancelled) setRoots([]); });
-    return () => { cancelled = true; };
+      .then((r) => {
+        if (!cancelled) setRoots(r);
+      })
+      .catch(() => {
+        if (!cancelled) setRoots([]);
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [channelId]);
 
   // Fetch branch list when switching to branch or commits mode. Re-runs when
@@ -163,31 +192,33 @@ export function GitPanel({ channelId, dirPath, branch, maximized, sidebarOpen, t
   // selectable option even if it isn't a local branch.
   useEffect(() => {
     if ((gitMode === "branches" || gitMode === "commits") && channelId) {
-      fetchBranches(channelId, rootIndex).then((info) => {
-        // Combine regular branches + current branch (which may be filtered out of the list).
-        const all = new Set(info.branches);
-        if (info.current) all.add(info.current);
-        // Also include worktree branches.
-        for (const wt of info.worktrees ?? []) {
-          if (wt.branch) all.add(wt.branch);
-        }
-        // The PR's base ref only applies to the primary root; extra_dirs may
-        // be unrelated repos so don't pollute their dropdown with it.
-        if (rootIndex === 0 && pr?.base_ref) all.add(pr.base_ref);
-        const sorted = [...all].sort();
-        setBranches(sorted);
-        // Reset any selection that doesn't exist in the new root's branch
-        // set — otherwise the dropdown points at a branch git can't resolve
-        // and the commits / diff view comes back empty.
-        const defaultSource = (() => {
-          if (rootIndex === 0 && pr?.base_ref && sorted.includes(pr.base_ref)) return pr.base_ref;
-          const main = sorted.find((b) => b === "main" || b === "master");
-          return main ?? info.current ?? sorted[0] ?? "";
-        })();
-        setSourceBranch((prev) => (prev && all.has(prev) ? prev : defaultSource));
-        setTargetBranch((prev) => (prev && all.has(prev) ? prev : info.current ?? ""));
-        setCommitBranch((prev) => (prev && all.has(prev) ? prev : info.current ?? ""));
-      }).catch(logErr("fetching branch info"));
+      fetchBranches(channelId, rootIndex)
+        .then((info) => {
+          // Combine regular branches + current branch (which may be filtered out of the list).
+          const all = new Set(info.branches);
+          if (info.current) all.add(info.current);
+          // Also include worktree branches.
+          for (const wt of info.worktrees ?? []) {
+            if (wt.branch) all.add(wt.branch);
+          }
+          // The PR's base ref only applies to the primary root; extra_dirs may
+          // be unrelated repos so don't pollute their dropdown with it.
+          if (rootIndex === 0 && pr?.base_ref) all.add(pr.base_ref);
+          const sorted = [...all].sort();
+          setBranches(sorted);
+          // Reset any selection that doesn't exist in the new root's branch
+          // set — otherwise the dropdown points at a branch git can't resolve
+          // and the commits / diff view comes back empty.
+          const defaultSource = (() => {
+            if (rootIndex === 0 && pr?.base_ref && sorted.includes(pr.base_ref)) return pr.base_ref;
+            const main = sorted.find((b) => b === "main" || b === "master");
+            return main ?? info.current ?? sorted[0] ?? "";
+          })();
+          setSourceBranch((prev) => (prev && all.has(prev) ? prev : defaultSource));
+          setTargetBranch((prev) => (prev && all.has(prev) ? prev : (info.current ?? "")));
+          setCommitBranch((prev) => (prev && all.has(prev) ? prev : (info.current ?? "")));
+        })
+        .catch(logErr("fetching branch info"));
     }
   }, [gitMode, channelId, pr?.base_ref, rootIndex]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -198,8 +229,14 @@ export function GitPanel({ channelId, dirPath, branch, maximized, sidebarOpen, t
     setCommitsLoading(true);
     setCommitsHasMore(true);
     fetchCommits(channelId, commitBranch, COMMITS_PAGE, 0, rootIndex)
-      .then((c) => { setCommits(c); setCommitsHasMore(c.length >= COMMITS_PAGE); })
-      .catch(() => { setCommits([]); setCommitsHasMore(false); })
+      .then((c) => {
+        setCommits(c);
+        setCommitsHasMore(c.length >= COMMITS_PAGE);
+      })
+      .catch(() => {
+        setCommits([]);
+        setCommitsHasMore(false);
+      })
       .finally(() => setCommitsLoading(false));
   }, [gitMode, channelId, commitBranch, rootIndex]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -207,7 +244,10 @@ export function GitPanel({ channelId, dirPath, branch, maximized, sidebarOpen, t
     if (!channelId || !commitBranch || commitsLoading || !commitsHasMore) return;
     setCommitsLoading(true);
     fetchCommits(channelId, commitBranch, COMMITS_PAGE, commits.length, rootIndex)
-      .then((c) => { setCommits((prev) => [...prev, ...c]); setCommitsHasMore(c.length >= COMMITS_PAGE); })
+      .then((c) => {
+        setCommits((prev) => [...prev, ...c]);
+        setCommitsHasMore(c.length >= COMMITS_PAGE);
+      })
       .catch(() => setCommitsHasMore(false))
       .finally(() => setCommitsLoading(false));
   }, [channelId, commitBranch, commitsLoading, commitsHasMore, commits.length, rootIndex]);
@@ -233,9 +273,7 @@ export function GitPanel({ channelId, dirPath, branch, maximized, sidebarOpen, t
     // In branch mode, both branches must be selected
     if (gitMode === "branches" && (!sourceBranch || !targetBranch)) return;
     try {
-      const d = gitMode === "branches"
-        ? await fetchDiff(channelId, sourceBranch, targetBranch, rootIndex)
-        : await fetchDiff(channelId, undefined, undefined, rootIndex);
+      const d = gitMode === "branches" ? await fetchDiff(channelId, sourceBranch, targetBranch, rootIndex) : await fetchDiff(channelId, undefined, undefined, rootIndex);
       // If diff changed, bump version to reset DiffViewer internal state
       if (d.diff !== prevDiffRef.current) {
         prevDiffRef.current = d.diff;
@@ -278,16 +316,24 @@ export function GitPanel({ channelId, dirPath, branch, maximized, sidebarOpen, t
   // after an agent run completes (a new PR is most likely, bypass the backend
   // cache), and from the (poller-invalidated) cache on branch/commit changes.
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const onEvent = useCallback((event: WSEvent) => {
-    if (debounceRef.current) clearTimeout(debounceRef.current);
-    debounceRef.current = setTimeout(load, 1_000);
-    if (event.type === "agent.status" && (event.data as AgentStatusData | undefined)?.status !== "running") {
-      loadPR(true);
-    } else if (event.type === "channel.updated") {
-      loadPR();
-    }
-  }, [load, loadPR]);
-  useEffect(() => () => { if (debounceRef.current) clearTimeout(debounceRef.current); }, []);
+  const onEvent = useCallback(
+    (event: WSEvent) => {
+      if (debounceRef.current) clearTimeout(debounceRef.current);
+      debounceRef.current = setTimeout(load, 1_000);
+      if (event.type === "agent.status" && (event.data as AgentStatusData | undefined)?.status !== "running") {
+        loadPR(true);
+      } else if (event.type === "channel.updated") {
+        loadPR();
+      }
+    },
+    [load, loadPR],
+  );
+  useEffect(
+    () => () => {
+      if (debounceRef.current) clearTimeout(debounceRef.current);
+    },
+    [],
+  );
   useEventStream({ channelId, onEvent });
 
   const toggleFile = useCallback((key: string) => {
@@ -405,37 +451,44 @@ export function GitPanel({ channelId, dirPath, branch, maximized, sidebarOpen, t
         }}
       >
         <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
-          <button style={modeTabStyle(gitMode === "uncommitted")} onClick={() => setGitMode("uncommitted")}>Uncommitted Diff</button>
-          <button style={modeTabStyle(gitMode === "branches")} onClick={() => setGitMode("branches")}>Branches Diff</button>
-          <button style={modeTabStyle(gitMode === "commits")} onClick={() => setGitMode("commits")}>Commits</button>
-          {hasBranch && <button style={modeTabStyle(gitMode === "branchlist")} onClick={() => setGitMode("branchlist")}>Branches</button>}
-          {hasBranch && <button style={modeTabStyle(gitMode === "worktrees")} onClick={() => setGitMode("worktrees")}>Worktrees</button>}
+          <button style={modeTabStyle(gitMode === "uncommitted")} onClick={() => setGitMode("uncommitted")}>
+            Uncommitted Diff
+          </button>
+          <button style={modeTabStyle(gitMode === "branches")} onClick={() => setGitMode("branches")}>
+            Branches Diff
+          </button>
+          <button style={modeTabStyle(gitMode === "commits")} onClick={() => setGitMode("commits")}>
+            Commits
+          </button>
+          {hasBranch && (
+            <button style={modeTabStyle(gitMode === "branchlist")} onClick={() => setGitMode("branchlist")}>
+              Branches
+            </button>
+          )}
+          {hasBranch && (
+            <button style={modeTabStyle(gitMode === "worktrees")} onClick={() => setGitMode("worktrees")}>
+              Worktrees
+            </button>
+          )}
           {gitMode !== "commits" && gitMode !== "worktrees" && gitMode !== "branchlist" && totalFiles > 0 && <span style={{ ...modeStatStyle, color: colors.textDim }}>{totalFiles}</span>}
           {gitMode !== "commits" && gitMode !== "worktrees" && gitMode !== "branchlist" && (totalAdd > 0 || totalDel > 0) && (
             <span style={{ ...modeStatStyle, fontFamily: fonts.mono }}>
-              <span style={{ color: colors.diffAddText }}>+{totalAdd}</span>{" "}
-              <span style={{ color: colors.diffDelText }}>-{totalDel}</span>
+              <span style={{ color: colors.diffAddText }}>+{totalAdd}</span> <span style={{ color: colors.diffDelText }}>-{totalDel}</span>
             </span>
           )}
         </span>
         <div style={{ flex: 1 }} />
         {/* Embedded in a pane: the root selector lives in the pane header and
             governs every tab. Standalone (no leafId): keep it in the toolbar. */}
-        {leafId && roots.length > 1 && (
-          <PaneRootSelect leafId={leafId} roots={roots} value={rootIndex} onChange={setRootIndex} testId="git-panel-root-select" title="Workspace root" />
-        )}
+        {leafId && roots.length > 1 && <PaneRootSelect leafId={leafId} roots={roots} value={rootIndex} onChange={setRootIndex} testId="git-panel-root-select" title="Workspace root" />}
         {!leafId && roots.length > 1 && (gitMode === "uncommitted" || gitMode === "branches" || gitMode === "commits") && (
           <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
             <span style={{ fontSize: 10, color: colors.textDim }}>root</span>
-            <select
-              value={rootIndex}
-              onChange={(e) => setRootIndex(Number(e.target.value))}
-              style={selectStyle}
-              title="Workspace root"
-              data-testid="git-panel-root-select"
-            >
+            <select value={rootIndex} onChange={(e) => setRootIndex(Number(e.target.value))} style={selectStyle} title="Workspace root" data-testid="git-panel-root-select">
               {roots.map((r) => (
-                <option key={r.index} value={r.index} title={r.path}>{r.path}</option>
+                <option key={r.index} value={r.index} title={r.path}>
+                  {r.path}
+                </option>
               ))}
             </select>
           </span>
@@ -443,42 +496,42 @@ export function GitPanel({ channelId, dirPath, branch, maximized, sidebarOpen, t
         {pr && <PRChip pr={pr} colors={colors} />}
         {gitMode !== "worktrees" && gitMode !== "branchlist" && (
           <button onClick={load} title="Refresh" style={headerBtnStyle} onMouseEnter={hoverIn} onMouseLeave={hoverOut}>
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 12a9 9 0 1 1-3-6.7" /><polyline points="21,3 21,9 15,9" /></svg>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M21 12a9 9 0 1 1-3-6.7" />
+              <polyline points="21,3 21,9 15,9" />
+            </svg>
           </button>
         )}
       </div>
       {gitMode === "branches" && (
         <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "3px 8px", fontSize: 11, color: colors.textDim }}>
-          <select
-            value={targetBranch}
-            onChange={(e) => setTargetBranch(e.target.value)}
-            style={selectStyle}
-            title="Changes from"
-          >
+          <select value={targetBranch} onChange={(e) => setTargetBranch(e.target.value)} style={selectStyle} title="Changes from">
             {!targetBranch && <option value="">from…</option>}
-            {branches.map((b) => <option key={b} value={b}>{b}</option>)}
+            {branches.map((b) => (
+              <option key={b} value={b}>
+                {b}
+              </option>
+            ))}
           </select>
           <span style={{ color: colors.textDim, fontSize: 11, flexShrink: 0 }}>→</span>
-          <select
-            value={sourceBranch}
-            onChange={(e) => setSourceBranch(e.target.value)}
-            style={selectStyle}
-            title="Land into"
-          >
+          <select value={sourceBranch} onChange={(e) => setSourceBranch(e.target.value)} style={selectStyle} title="Land into">
             {!sourceBranch && <option value="">into…</option>}
-            {branches.map((b) => <option key={b} value={b}>{b}</option>)}
+            {branches.map((b) => (
+              <option key={b} value={b}>
+                {b}
+              </option>
+            ))}
           </select>
         </div>
       )}
       {gitMode === "commits" && (
         <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "3px 8px", fontSize: 11, color: colors.textDim }}>
-          <select
-            value={commitBranch}
-            onChange={(e) => setCommitBranch(e.target.value)}
-            style={selectStyle}
-            title="Branch"
-          >
-            {branches.map((b) => <option key={b} value={b}>{b}</option>)}
+          <select value={commitBranch} onChange={(e) => setCommitBranch(e.target.value)} style={selectStyle} title="Branch">
+            {branches.map((b) => (
+              <option key={b} value={b}>
+                {b}
+              </option>
+            ))}
           </select>
         </div>
       )}
@@ -502,32 +555,14 @@ export function GitPanel({ channelId, dirPath, branch, maximized, sidebarOpen, t
     />
   );
 
-  const commitsContent = (
-    <CommitHistory
-      commits={commits}
-      commitsLoading={commitsLoading}
-      onLoadMore={loadMoreCommits}
-    />
-  );
+  const commitsContent = <CommitHistory commits={commits} commitsLoading={commitsLoading} onLoadMore={loadMoreCommits} />;
 
   const worktreesContent = channelId ? (
-    <WorktreesPanel
-      channelId={channelId}
-      isWorktree={isWorktree ?? false}
-      hasBranch={hasBranch ?? false}
-      onImportWorktree={onImportWorktree}
-      onSelectThread={onSelectThread}
-    />
+    <WorktreesPanel channelId={channelId} isWorktree={isWorktree ?? false} hasBranch={hasBranch ?? false} onImportWorktree={onImportWorktree} onSelectThread={onSelectThread} />
   ) : null;
 
   const branchesContent = channelId ? (
-    <BranchesPanel
-      channelId={channelId}
-      isWorktree={isWorktree ?? false}
-      hasBranch={hasBranch ?? false}
-      onSelectThread={onSelectThread}
-      onBranchChanged={onStatusChange}
-    />
+    <BranchesPanel channelId={channelId} isWorktree={isWorktree ?? false} hasBranch={hasBranch ?? false} onSelectThread={onSelectThread} onBranchChanged={onStatusChange} />
   ) : null;
 
   const contextMenuOverlay = fileContextMenu && (
@@ -536,17 +571,19 @@ export function GitPanel({ channelId, dirPath, branch, maximized, sidebarOpen, t
       y={fileContextMenu.y}
       items={[
         ...(channelId
-          ? [{
-              label: "Open file",
-              onClick: () => {
-                const detail: FileLinkOpenDetail = {
-                  channelId,
-                  target: { rootIndex: 0, relPath: fileContextMenu.path },
-                  line: null,
-                };
-                window.dispatchEvent(new CustomEvent<FileLinkOpenDetail>("loop:open-file", { detail }));
+          ? [
+              {
+                label: "Open file",
+                onClick: () => {
+                  const detail: FileLinkOpenDetail = {
+                    channelId,
+                    target: { rootIndex: 0, relPath: fileContextMenu.path },
+                    line: null,
+                  };
+                  window.dispatchEvent(new CustomEvent<FileLinkOpenDetail>("loop:open-file", { detail }));
+                },
               },
-            }]
+            ]
           : []),
         { label: "Copy relative path", onClick: () => navigator.clipboard.writeText(fileContextMenu.path) },
         { label: "Copy absolute path", onClick: () => navigator.clipboard.writeText((dirPath || "") + "/" + fileContextMenu.path) },
@@ -599,8 +636,12 @@ export function GitPanel({ channelId, dirPath, branch, maximized, sidebarOpen, t
             backgroundColor: resizing ? colors.textDim : "transparent",
             zIndex: 1,
           }}
-          onMouseEnter={(e) => { (e.currentTarget as HTMLDivElement).style.backgroundColor = colors.textDim; }}
-          onMouseLeave={(e) => { if (!resizing) (e.currentTarget as HTMLDivElement).style.backgroundColor = "transparent"; }}
+          onMouseEnter={(e) => {
+            (e.currentTarget as HTMLDivElement).style.backgroundColor = colors.textDim;
+          }}
+          onMouseLeave={(e) => {
+            if (!resizing) (e.currentTarget as HTMLDivElement).style.backgroundColor = "transparent";
+          }}
         />
       )}
 
@@ -635,10 +676,7 @@ export function GitPanel({ channelId, dirPath, branch, maximized, sidebarOpen, t
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
               <rect x="3" y="3" width="18" height="18" rx="3" />
               <line x1="9" y1="3" x2="9" y2="21" />
-              {sidebarOpen
-                ? <polyline points="15,9 12,12 15,15" />
-                : <polyline points="13,9 16,12 13,15" />
-              }
+              {sidebarOpen ? <polyline points="15,9 12,12 15,15" /> : <polyline points="13,9 16,12 13,15" />}
             </svg>
           </button>
         )}
@@ -690,7 +728,17 @@ export function GitPanel({ channelId, dirPath, branch, maximized, sidebarOpen, t
               <>
                 <span style={{ color: colors.border, flexShrink: 0 }}>|</span>
                 <span style={{ fontSize: 11, color: colors.active, fontFamily: fonts.mono, flexShrink: 0 }}>
-                  <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ marginRight: 2, verticalAlign: -1 }}>
+                  <svg
+                    width="10"
+                    height="10"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2.5"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    style={{ marginRight: 2, verticalAlign: -1 }}
+                  >
                     <line x1="6" y1="3" x2="6" y2="15" />
                     <circle cx="18" cy="6" r="3" />
                     <circle cx="6" cy="18" r="3" />
@@ -715,133 +763,146 @@ export function GitPanel({ channelId, dirPath, branch, maximized, sidebarOpen, t
           flexShrink: 0,
         }}
       >
-      <div
-        style={{
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "space-between",
-          padding: "3px 12px",
-          flexShrink: 0,
-          boxSizing: "border-box",
-          height: 35,
-        }}
-      >
-        <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0, overflow: "hidden" }}>
-          {maximized && tabBar}
-          {!maximized && (
-            <>
-              <button style={modeTabStyle(gitMode === "uncommitted")} onClick={() => setGitMode("uncommitted")}>Uncommitted Diff</button>
-              <button style={modeTabStyle(gitMode === "branches")} onClick={() => setGitMode("branches")}>Branches Diff</button>
-              <button style={modeTabStyle(gitMode === "commits")} onClick={() => setGitMode("commits")}>Commits</button>
-              {hasBranch && <button style={modeTabStyle(gitMode === "branchlist")} onClick={() => setGitMode("branchlist")}>Branches</button>}
-          {hasBranch && <button style={modeTabStyle(gitMode === "worktrees")} onClick={() => setGitMode("worktrees")}>Worktrees</button>}
-              {gitMode !== "commits" && gitMode !== "worktrees" && gitMode !== "branchlist" && totalFiles > 0 && (
-                <span style={{ ...modeStatStyle, color: colors.textDim }}>
-                  {totalFiles}
-                </span>
-              )}
-              {gitMode !== "commits" && gitMode !== "worktrees" && gitMode !== "branchlist" && (totalAdd > 0 || totalDel > 0) && (
-                <span style={{ ...modeStatStyle, fontFamily: fonts.mono }}>
-                  <span style={{ color: colors.diffAddText }}>+{totalAdd}</span>
-                  {" "}
-                  <span style={{ color: colors.diffDelText }}>-{totalDel}</span>
-                </span>
-              )}
-            </>
-          )}
-        </div>
-        <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
-          {maximized && (
-            <span style={{ display: "flex", alignItems: "center", gap: 8, marginRight: 8 }}>
-              <button style={modeTabStyle(gitMode === "uncommitted")} onClick={() => setGitMode("uncommitted")}>Uncommitted Diff</button>
-              <button style={modeTabStyle(gitMode === "branches")} onClick={() => setGitMode("branches")}>Branches Diff</button>
-              <button style={modeTabStyle(gitMode === "commits")} onClick={() => setGitMode("commits")}>Commits</button>
-              {hasBranch && <button style={modeTabStyle(gitMode === "branchlist")} onClick={() => setGitMode("branchlist")}>Branches</button>}
-          {hasBranch && <button style={modeTabStyle(gitMode === "worktrees")} onClick={() => setGitMode("worktrees")}>Worktrees</button>}
-              {gitMode !== "commits" && gitMode !== "worktrees" && gitMode !== "branchlist" && totalFiles > 0 && (
-                <span style={{ ...modeStatStyle, color: colors.textDim }}>
-                  {totalFiles}
-                </span>
-              )}
-              {gitMode !== "commits" && gitMode !== "worktrees" && gitMode !== "branchlist" && (totalAdd > 0 || totalDel > 0) && (
-                <span style={{ ...modeStatStyle, fontFamily: fonts.mono }}>
-                  <span style={{ color: colors.diffAddText }}>+{totalAdd}</span>
-                  {" "}
-                  <span style={{ color: colors.diffDelText }}>-{totalDel}</span>
-                </span>
-              )}
-            </span>
-          )}
-          {gitMode !== "worktrees" && (
-            <button onClick={load} title="Refresh" style={headerBtnStyle} onMouseEnter={hoverIn} onMouseLeave={hoverOut}>
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            padding: "3px 12px",
+            flexShrink: 0,
+            boxSizing: "border-box",
+            height: 35,
+          }}
+        >
+          <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0, overflow: "hidden" }}>
+            {maximized && tabBar}
+            {!maximized && (
+              <>
+                <button style={modeTabStyle(gitMode === "uncommitted")} onClick={() => setGitMode("uncommitted")}>
+                  Uncommitted Diff
+                </button>
+                <button style={modeTabStyle(gitMode === "branches")} onClick={() => setGitMode("branches")}>
+                  Branches Diff
+                </button>
+                <button style={modeTabStyle(gitMode === "commits")} onClick={() => setGitMode("commits")}>
+                  Commits
+                </button>
+                {hasBranch && (
+                  <button style={modeTabStyle(gitMode === "branchlist")} onClick={() => setGitMode("branchlist")}>
+                    Branches
+                  </button>
+                )}
+                {hasBranch && (
+                  <button style={modeTabStyle(gitMode === "worktrees")} onClick={() => setGitMode("worktrees")}>
+                    Worktrees
+                  </button>
+                )}
+                {gitMode !== "commits" && gitMode !== "worktrees" && gitMode !== "branchlist" && totalFiles > 0 && <span style={{ ...modeStatStyle, color: colors.textDim }}>{totalFiles}</span>}
+                {gitMode !== "commits" && gitMode !== "worktrees" && gitMode !== "branchlist" && (totalAdd > 0 || totalDel > 0) && (
+                  <span style={{ ...modeStatStyle, fontFamily: fonts.mono }}>
+                    <span style={{ color: colors.diffAddText }}>+{totalAdd}</span> <span style={{ color: colors.diffDelText }}>-{totalDel}</span>
+                  </span>
+                )}
+              </>
+            )}
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+            {maximized && (
+              <span style={{ display: "flex", alignItems: "center", gap: 8, marginRight: 8 }}>
+                <button style={modeTabStyle(gitMode === "uncommitted")} onClick={() => setGitMode("uncommitted")}>
+                  Uncommitted Diff
+                </button>
+                <button style={modeTabStyle(gitMode === "branches")} onClick={() => setGitMode("branches")}>
+                  Branches Diff
+                </button>
+                <button style={modeTabStyle(gitMode === "commits")} onClick={() => setGitMode("commits")}>
+                  Commits
+                </button>
+                {hasBranch && (
+                  <button style={modeTabStyle(gitMode === "branchlist")} onClick={() => setGitMode("branchlist")}>
+                    Branches
+                  </button>
+                )}
+                {hasBranch && (
+                  <button style={modeTabStyle(gitMode === "worktrees")} onClick={() => setGitMode("worktrees")}>
+                    Worktrees
+                  </button>
+                )}
+                {gitMode !== "commits" && gitMode !== "worktrees" && gitMode !== "branchlist" && totalFiles > 0 && <span style={{ ...modeStatStyle, color: colors.textDim }}>{totalFiles}</span>}
+                {gitMode !== "commits" && gitMode !== "worktrees" && gitMode !== "branchlist" && (totalAdd > 0 || totalDel > 0) && (
+                  <span style={{ ...modeStatStyle, fontFamily: fonts.mono }}>
+                    <span style={{ color: colors.diffAddText }}>+{totalAdd}</span> <span style={{ color: colors.diffDelText }}>-{totalDel}</span>
+                  </span>
+                )}
+              </span>
+            )}
+            {gitMode !== "worktrees" && (
+              <button onClick={load} title="Refresh" style={headerBtnStyle} onMouseEnter={hoverIn} onMouseLeave={hoverOut}>
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M21 12a9 9 0 1 1-3-6.7" />
+                  <polyline points="21,3 21,9 15,9" />
+                </svg>
+              </button>
+            )}
+            {onToggleMaximize && (
+              <button onClick={onToggleMaximize} title={maximized ? "Restore panel" : "Maximize panel"} style={headerBtnStyle} onMouseEnter={hoverIn} onMouseLeave={hoverOut}>
+                {maximized ? (
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <polyline points="4,14 10,14 10,20" />
+                    <polyline points="20,10 14,10 14,4" />
+                    <line x1="14" y1="10" x2="21" y2="3" />
+                    <line x1="3" y1="21" x2="10" y2="14" />
+                  </svg>
+                ) : (
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <polyline points="15,3 21,3 21,9" />
+                    <polyline points="9,21 3,21 3,15" />
+                    <line x1="21" y1="3" x2="14" y2="10" />
+                    <line x1="3" y1="21" x2="10" y2="14" />
+                  </svg>
+                )}
+              </button>
+            )}
+            <button onClick={onClose} title="Close panel" style={headerBtnStyle} onMouseEnter={hoverIn} onMouseLeave={hoverOut}>
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M21 12a9 9 0 1 1-3-6.7" />
-                <polyline points="21,3 21,9 15,9" />
+                <line x1="18" y1="6" x2="6" y2="18" />
+                <line x1="6" y1="6" x2="18" y2="18" />
               </svg>
             </button>
-          )}
-          {onToggleMaximize && (
-            <button onClick={onToggleMaximize} title={maximized ? "Restore panel" : "Maximize panel"} style={headerBtnStyle} onMouseEnter={hoverIn} onMouseLeave={hoverOut}>
-              {maximized ? (
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <polyline points="4,14 10,14 10,20" />
-                  <polyline points="20,10 14,10 14,4" />
-                  <line x1="14" y1="10" x2="21" y2="3" />
-                  <line x1="3" y1="21" x2="10" y2="14" />
-                </svg>
-              ) : (
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <polyline points="15,3 21,3 21,9" />
-                  <polyline points="9,21 3,21 3,15" />
-                  <line x1="21" y1="3" x2="14" y2="10" />
-                  <line x1="3" y1="21" x2="10" y2="14" />
-                </svg>
-              )}
-            </button>
-          )}
-          <button onClick={onClose} title="Close panel" style={headerBtnStyle} onMouseEnter={hoverIn} onMouseLeave={hoverOut}>
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <line x1="18" y1="6" x2="6" y2="18" />
-              <line x1="6" y1="6" x2="18" y2="18" />
-            </svg>
-          </button>
+          </div>
         </div>
-      </div>
-      {gitMode === "branches" && (
-        <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "3px 12px", fontSize: 11, color: colors.textDim }}>
-          <select
-            value={targetBranch}
-            onChange={(e) => setTargetBranch(e.target.value)}
-            style={selectStyle}
-            title="Changes from"
-          >
-            {!targetBranch && <option value="">from…</option>}
-            {branches.map((b) => <option key={b} value={b}>{b}</option>)}
-          </select>
-          <span style={{ color: colors.textDim, fontSize: 11, flexShrink: 0 }}>→</span>
-          <select
-            value={sourceBranch}
-            onChange={(e) => setSourceBranch(e.target.value)}
-            style={selectStyle}
-            title="Land into"
-          >
-            {!sourceBranch && <option value="">into…</option>}
-            {branches.map((b) => <option key={b} value={b}>{b}</option>)}
-          </select>
-        </div>
-      )}
-      {gitMode === "commits" && (
-        <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "3px 12px", fontSize: 11, color: colors.textDim }}>
-          <select
-            value={commitBranch}
-            onChange={(e) => setCommitBranch(e.target.value)}
-            style={selectStyle}
-            title="Branch"
-          >
-            {branches.map((b) => <option key={b} value={b}>{b}</option>)}
-          </select>
-        </div>
-      )}
+        {gitMode === "branches" && (
+          <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "3px 12px", fontSize: 11, color: colors.textDim }}>
+            <select value={targetBranch} onChange={(e) => setTargetBranch(e.target.value)} style={selectStyle} title="Changes from">
+              {!targetBranch && <option value="">from…</option>}
+              {branches.map((b) => (
+                <option key={b} value={b}>
+                  {b}
+                </option>
+              ))}
+            </select>
+            <span style={{ color: colors.textDim, fontSize: 11, flexShrink: 0 }}>→</span>
+            <select value={sourceBranch} onChange={(e) => setSourceBranch(e.target.value)} style={selectStyle} title="Land into">
+              {!sourceBranch && <option value="">into…</option>}
+              {branches.map((b) => (
+                <option key={b} value={b}>
+                  {b}
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
+        {gitMode === "commits" && (
+          <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "3px 12px", fontSize: 11, color: colors.textDim }}>
+            <select value={commitBranch} onChange={(e) => setCommitBranch(e.target.value)} style={selectStyle} title="Branch">
+              {branches.map((b) => (
+                <option key={b} value={b}>
+                  {b}
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
       </div>
 
       {/* File list + diffs / Commits / Worktrees */}
@@ -855,13 +916,7 @@ export function GitPanel({ channelId, dirPath, branch, maximized, sidebarOpen, t
 // GitHub: green dot for open, grey for draft, purple for merged, red for
 // closed. Clicking opens the PR URL in the user's browser.
 function PRChip({ pr, colors }: { pr: PRInfo; colors: ColorPalette }) {
-  const dot = pr.is_draft
-    ? colors.textDim
-    : pr.state === "MERGED"
-      ? "#a371f7"
-      : pr.state === "CLOSED"
-        ? "#cf222e"
-        : "#3fb950";
+  const dot = pr.is_draft ? colors.textDim : pr.state === "MERGED" ? "#a371f7" : pr.state === "CLOSED" ? "#cf222e" : "#3fb950";
   const label = pr.is_draft ? "draft" : pr.state.toLowerCase();
   const title = pr.title ? `#${pr.number} ${pr.title} (${label})` : `#${pr.number} (${label})`;
   return (

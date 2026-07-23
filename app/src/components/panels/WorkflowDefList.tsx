@@ -25,8 +25,7 @@ export function WorkflowDefList({ grouped, selectedName, onSelect, onRun, colors
   const { global, project } = useMemo(() => {
     const q = query.trim().toLowerCase();
     if (!q) return grouped;
-    const match = (d: WorkflowDef) =>
-      d.name.toLowerCase().includes(q) || (d.description ?? "").toLowerCase().includes(q);
+    const match = (d: WorkflowDef) => d.name.toLowerCase().includes(q) || (d.description ?? "").toLowerCase().includes(q);
     return { global: grouped.global.filter(match), project: grouped.project.filter(match) };
   }, [grouped, query]);
 
@@ -55,13 +54,14 @@ export function WorkflowDefList({ grouped, selectedName, onSelect, onRun, colors
           cursor: "pointer",
         }}
       >
-        <span style={{ flex: 1, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-          {name}
-        </span>
+        <span style={{ flex: 1, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{name}</span>
         <button
           data-testid={`workflow-run-${name}`}
           title={`Run ${name} now`}
-          onClick={(e) => { e.stopPropagation(); onRun(name); }}
+          onClick={(e) => {
+            e.stopPropagation();
+            onRun(name);
+          }}
           style={{
             flexShrink: 0,
             background: "transparent",
@@ -73,8 +73,12 @@ export function WorkflowDefList({ grouped, selectedName, onSelect, onRun, colors
             fontFamily: fonts.mono,
             cursor: "pointer",
           }}
-          onMouseEnter={(e) => { e.currentTarget.style.background = colors.hoverBg; }}
-          onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; }}
+          onMouseEnter={(e) => {
+            e.currentTarget.style.background = colors.hoverBg;
+          }}
+          onMouseLeave={(e) => {
+            e.currentTarget.style.background = "transparent";
+          }}
         >
           ▶ Run
         </button>
@@ -142,11 +146,7 @@ export function WorkflowDefList({ grouped, selectedName, onSelect, onRun, colors
         {global.map((d) => row(d.name, d.description))}
         {project.length > 0 && heading("Project")}
         {project.map((d) => row(d.name, d.description))}
-        {query.trim() !== "" && global.length === 0 && project.length === 0 && (
-          <div style={{ padding: "8px 12px", color: colors.textDim, fontSize: 11 }}>
-            No workflows match “{query.trim()}”
-          </div>
-        )}
+        {query.trim() !== "" && global.length === 0 && project.length === 0 && <div style={{ padding: "8px 12px", color: colors.textDim, fontSize: 11 }}>No workflows match “{query.trim()}”</div>}
       </div>
     </div>
   );

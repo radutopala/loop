@@ -26,10 +26,7 @@ export interface Ticket {
   created: string;
 }
 
-export async function fetchTickets(
-  dir: string,
-  filters?: { status?: string; assignee?: string; tag?: string; type?: string; sort?: string; reverse?: boolean },
-): Promise<Ticket[]> {
+export async function fetchTickets(dir: string, filters?: { status?: string; assignee?: string; tag?: string; type?: string; sort?: string; reverse?: boolean }): Promise<Ticket[]> {
   const params = new URLSearchParams({ dir });
   if (filters?.status) params.set("status", filters.status);
   if (filters?.assignee) params.set("assignee", filters.assignee);
@@ -115,10 +112,7 @@ export async function deleteTicket(id: string, dir: string): Promise<void> {
   await throwIfNotOk(res, "Failed to delete ticket");
 }
 
-export async function assignTicket(
-  id: string,
-  data: { dir: string; channel_id: string; branch?: string },
-): Promise<{ thread_id: string; worktree_path: string }> {
+export async function assignTicket(id: string, data: { dir: string; channel_id: string; branch?: string }): Promise<{ thread_id: string; worktree_path: string }> {
   const res = await fetch(`${getApiUrl()}/api/tickets/${encodeURIComponent(id)}/assign`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },

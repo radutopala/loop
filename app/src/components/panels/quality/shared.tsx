@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
-import { useTheme } from "../../../ThemeContext";
-import { fonts } from "../../../theme";
 import type { QualityFileTile, QualityRule } from "../../../api/quality";
+import type { useTheme } from "../../../ThemeContext";
+import { fonts } from "../../../theme";
 
 // ── Shared types ──────────────────────────────────────────────────────────────
 
@@ -130,25 +130,15 @@ export function useAsyncFetch<T>(fn: () => Promise<T>, deps: React.DependencyLis
 // ── Shared mini-states ────────────────────────────────────────────────────────
 
 export function LoadingState({ colors, fontSizes }: StateProps) {
-  return (
-    <div style={{ padding: 24, color: colors.textDim, fontSize: fontSizes.panels, textAlign: "center" }}>Loading…</div>
-  );
+  return <div style={{ padding: 24, color: colors.textDim, fontSize: fontSizes.panels, textAlign: "center" }}>Loading…</div>;
 }
 
 export function ErrorState({ message, colors, fontSizes }: StateProps & { message: string }) {
-  return (
-    <div style={{ padding: 12, color: colors.error, fontSize: fontSizes.panels, fontFamily: fonts.mono, wordBreak: "break-word" }}>
-      {message}
-    </div>
-  );
+  return <div style={{ padding: 12, color: colors.error, fontSize: fontSizes.panels, fontFamily: fonts.mono, wordBreak: "break-word" }}>{message}</div>;
 }
 
 export function EmptyState({ text, colors, fontSizes }: StateProps & { text: string }) {
-  return (
-    <div style={{ padding: 24, color: colors.textDim, fontSize: fontSizes.panels, textAlign: "center", lineHeight: 1.5 }}>
-      {text}
-    </div>
-  );
+  return <div style={{ padding: 24, color: colors.textDim, fontSize: fontSizes.panels, textAlign: "center", lineHeight: 1.5 }}>{text}</div>;
 }
 
 export function SectionHelp({ colors, children }: { colors: ReturnType<typeof useTheme>["colors"]; children: React.ReactNode }) {
@@ -177,9 +167,7 @@ export function TileDetail({ tile, onClose, onSimulateDelete, colors, fontSizes,
     <div style={{ margin: "0 12px 12px 12px", padding: 12, border: `1px solid ${colors.border}`, borderRadius: 6, background: colors.surface }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 8 }}>
         <div>
-          <div style={{ fontFamily: fonts.mono, fontSize: fontSizes.panels, color: colors.textLight, wordBreak: "break-all" }}>
-            {tile.path}
-          </div>
+          <div style={{ fontFamily: fonts.mono, fontSize: fontSizes.panels, color: colors.textLight, wordBreak: "break-all" }}>{tile.path}</div>
           <div style={{ marginTop: 4, fontSize: 11, color: colors.textDim }}>
             LOC {tile.loc} · deficit {tile.deficit.toFixed(2)}
             {tile.top_reason && ` · top reason ${metricLabel(tile.top_reason)}`}
@@ -189,7 +177,9 @@ export function TileDetail({ tile, onClose, onSimulateDelete, colors, fontSizes,
           <button style={btnStyle} onClick={() => onSimulateDelete(tile.path)}>
             Simulate delete
           </button>
-          <button style={btnStyle} onClick={onClose}>Close</button>
+          <button style={btnStyle} onClick={onClose}>
+            Close
+          </button>
         </div>
       </div>
       <div style={{ marginTop: 10, display: "flex", flexDirection: "column", gap: 4 }}>

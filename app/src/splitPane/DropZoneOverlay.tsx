@@ -4,8 +4,12 @@ import type { DropPosition } from "./types";
 const DRAG_START_EVENT = "layout-drag-start";
 const DRAG_END_EVENT = "layout-drag-end";
 
-export function emitLayoutDragStart() { document.dispatchEvent(new Event(DRAG_START_EVENT)); }
-export function emitLayoutDragEnd() { document.dispatchEvent(new Event(DRAG_END_EVENT)); }
+export function emitLayoutDragStart() {
+  document.dispatchEvent(new Event(DRAG_START_EVENT));
+}
+export function emitLayoutDragEnd() {
+  document.dispatchEvent(new Event(DRAG_END_EVENT));
+}
 
 const DRAG_MIME = "application/x-panel-drag";
 
@@ -22,7 +26,11 @@ export function DropZoneOverlay({ leafId, headerHeight, onDrop }: DropZoneOverla
 
   useEffect(() => {
     const onStart = () => setIsDragging(true);
-    const onEnd = () => { setIsDragging(false); setIsDragOver(false); setActiveZone(null); };
+    const onEnd = () => {
+      setIsDragging(false);
+      setIsDragOver(false);
+      setActiveZone(null);
+    };
     document.addEventListener(DRAG_START_EVENT, onStart);
     document.addEventListener(DRAG_END_EVENT, onEnd);
     document.addEventListener("dragend", onEnd);
@@ -46,13 +54,16 @@ export function DropZoneOverlay({ leafId, headerHeight, onDrop }: DropZoneOverla
     return "center";
   }, []);
 
-  const handleDragOver = useCallback((e: React.DragEvent<HTMLDivElement>) => {
-    if (!e.dataTransfer.types.includes(DRAG_MIME)) return;
-    e.preventDefault();
-    e.dataTransfer.dropEffect = "move";
-    setIsDragOver(true);
-    setActiveZone(getDropPosition(e));
-  }, [getDropPosition]);
+  const handleDragOver = useCallback(
+    (e: React.DragEvent<HTMLDivElement>) => {
+      if (!e.dataTransfer.types.includes(DRAG_MIME)) return;
+      e.preventDefault();
+      e.dataTransfer.dropEffect = "move";
+      setIsDragOver(true);
+      setActiveZone(getDropPosition(e));
+    },
+    [getDropPosition],
+  );
 
   const handleDragLeave = useCallback((e: React.DragEvent<HTMLDivElement>) => {
     if (e.currentTarget.contains(e.relatedTarget as Node)) return;
@@ -60,16 +71,19 @@ export function DropZoneOverlay({ leafId, headerHeight, onDrop }: DropZoneOverla
     setActiveZone(null);
   }, []);
 
-  const handleDrop = useCallback((e: React.DragEvent<HTMLDivElement>) => {
-    e.preventDefault();
-    const dragId = e.dataTransfer.getData(DRAG_MIME);
-    if (dragId && dragId !== leafId) {
-      onDrop(dragId, leafId, getDropPosition(e));
-    }
-    setIsDragOver(false);
-    setActiveZone(null);
-    emitLayoutDragEnd();
-  }, [leafId, onDrop, getDropPosition]);
+  const handleDrop = useCallback(
+    (e: React.DragEvent<HTMLDivElement>) => {
+      e.preventDefault();
+      const dragId = e.dataTransfer.getData(DRAG_MIME);
+      if (dragId && dragId !== leafId) {
+        onDrop(dragId, leafId, getDropPosition(e));
+      }
+      setIsDragOver(false);
+      setActiveZone(null);
+      emitLayoutDragEnd();
+    },
+    [leafId, onDrop, getDropPosition],
+  );
 
   const active = isDragging;
 
@@ -89,18 +103,24 @@ export function DropZoneOverlay({ leafId, headerHeight, onDrop }: DropZoneOverla
       }}
     >
       {isDragOver && activeZone && (
-        <div style={{
-          position: "absolute",
-          ...(activeZone === "top" ? { top: 0, left: 0, right: 0, height: "50%" } :
-            activeZone === "bottom" ? { bottom: 0, left: 0, right: 0, height: "50%" } :
-            activeZone === "left" ? { top: 0, left: 0, bottom: 0, width: "50%" } :
-            activeZone === "right" ? { top: 0, right: 0, bottom: 0, width: "50%" } :
-            { top: 0, left: 0, right: 0, bottom: 0 }),
-          backgroundColor: "rgba(96, 165, 250, 0.15)",
-          border: "2px solid rgba(96, 165, 250, 0.5)",
-          borderRadius: 4,
-          pointerEvents: "none",
-        }} />
+        <div
+          style={{
+            position: "absolute",
+            ...(activeZone === "top"
+              ? { top: 0, left: 0, right: 0, height: "50%" }
+              : activeZone === "bottom"
+                ? { bottom: 0, left: 0, right: 0, height: "50%" }
+                : activeZone === "left"
+                  ? { top: 0, left: 0, bottom: 0, width: "50%" }
+                  : activeZone === "right"
+                    ? { top: 0, right: 0, bottom: 0, width: "50%" }
+                    : { top: 0, left: 0, right: 0, bottom: 0 }),
+            backgroundColor: "rgba(96, 165, 250, 0.15)",
+            border: "2px solid rgba(96, 165, 250, 0.5)",
+            borderRadius: 4,
+            pointerEvents: "none",
+          }}
+        />
       )}
     </div>
   );

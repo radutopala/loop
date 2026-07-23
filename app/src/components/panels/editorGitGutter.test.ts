@@ -1,13 +1,6 @@
 import { describe, expect, it } from "vitest";
-import {
-  computeGitLineChanges,
-  emptyGitLineChanges,
-  gitGutterColors,
-  gitLineChangesForFile,
-  gitOverviewMarks,
-  hasGitLineChanges,
-} from "./editorGitGutter";
 import { parseUnifiedDiff } from "./DiffViewer";
+import { computeGitLineChanges, emptyGitLineChanges, gitGutterColors, gitLineChangesForFile, gitOverviewMarks, hasGitLineChanges } from "./editorGitGutter";
 
 const MODIFIED_DIFF = `diff --git a/main.go b/main.go
 --- a/main.go
@@ -68,8 +61,7 @@ describe("computeGitLineChanges", () => {
   });
 
   it("merges hunks from a partially-staged file (two ParsedFile entries)", () => {
-    const both = parseUnifiedDiff(MODIFIED_DIFF, "staged")
-      .concat(parseUnifiedDiff(PURE_DELETE_DIFF, "unstaged"));
+    const both = parseUnifiedDiff(MODIFIED_DIFF, "staged").concat(parseUnifiedDiff(PURE_DELETE_DIFF, "unstaged"));
     const changes = computeGitLineChanges(both);
     expect(changes.changed.get(2)).toBe("modified");
     expect(changes.deletedAbove.has(2)).toBe(true);

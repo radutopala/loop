@@ -1,6 +1,6 @@
-import { fonts } from "../../theme";
-import { useTheme } from "../../ThemeContext";
 import type { FileEntry } from "../../api/loopApi";
+import { useTheme } from "../../ThemeContext";
+import { fonts } from "../../theme";
 import { storageGet, storageSet } from "../../utils/storage";
 
 // ── Multi-root path key helpers ──
@@ -44,27 +44,67 @@ export function saveTreeWidth(width: number): void {
 function fileIcon(name: string): { color: string; label: string } {
   const ext = name.split(".").pop()?.toLowerCase() || "";
   switch (ext) {
-    case "go": return { color: "#00add8", label: "Go" };
-    case "ts": case "tsx": return { color: "#3178c6", label: "TS" };
-    case "js": case "jsx": case "mjs": case "cjs": return { color: "#f7df1e", label: "JS" };
-    case "py": return { color: "#3776ab", label: "Py" };
-    case "rs": return { color: "#dea584", label: "Rs" };
-    case "json": case "jsonl": return { color: "#cbcb41", label: "{}" };
-    case "yaml": case "yml": return { color: "#cb171e", label: "Y" };
-    case "toml": return { color: "#9c4221", label: "T" };
-    case "md": case "mdx": return { color: "#519aba", label: "M" };
-    case "html": case "htm": return { color: "#e34c26", label: "<>" };
-    case "css": case "scss": case "less": return { color: "#563d7c", label: "#" };
-    case "svg": return { color: "#ffb13b", label: "S" };
-    case "sh": case "bash": case "zsh": return { color: "#89e051", label: "$" };
-    case "sql": return { color: "#e38c00", label: "Q" };
-    case "mod": return { color: "#00add8", label: "Go" };
-    case "sum": return { color: "#00add8", label: "Go" };
-    case "dockerfile": return { color: "#384d54", label: "D" };
-    case "makefile": return { color: "#6d8086", label: "M" };
-    case "txt": case "log": case "out": return { color: "#6d8086", label: "" };
-    case "png": case "jpg": case "jpeg": case "gif": case "webp": case "ico": return { color: "#a074c4", label: "I" };
-    default: break;
+    case "go":
+      return { color: "#00add8", label: "Go" };
+    case "ts":
+    case "tsx":
+      return { color: "#3178c6", label: "TS" };
+    case "js":
+    case "jsx":
+    case "mjs":
+    case "cjs":
+      return { color: "#f7df1e", label: "JS" };
+    case "py":
+      return { color: "#3776ab", label: "Py" };
+    case "rs":
+      return { color: "#dea584", label: "Rs" };
+    case "json":
+    case "jsonl":
+      return { color: "#cbcb41", label: "{}" };
+    case "yaml":
+    case "yml":
+      return { color: "#cb171e", label: "Y" };
+    case "toml":
+      return { color: "#9c4221", label: "T" };
+    case "md":
+    case "mdx":
+      return { color: "#519aba", label: "M" };
+    case "html":
+    case "htm":
+      return { color: "#e34c26", label: "<>" };
+    case "css":
+    case "scss":
+    case "less":
+      return { color: "#563d7c", label: "#" };
+    case "svg":
+      return { color: "#ffb13b", label: "S" };
+    case "sh":
+    case "bash":
+    case "zsh":
+      return { color: "#89e051", label: "$" };
+    case "sql":
+      return { color: "#e38c00", label: "Q" };
+    case "mod":
+      return { color: "#00add8", label: "Go" };
+    case "sum":
+      return { color: "#00add8", label: "Go" };
+    case "dockerfile":
+      return { color: "#384d54", label: "D" };
+    case "makefile":
+      return { color: "#6d8086", label: "M" };
+    case "txt":
+    case "log":
+    case "out":
+      return { color: "#6d8086", label: "" };
+    case "png":
+    case "jpg":
+    case "jpeg":
+    case "gif":
+    case "webp":
+    case "ico":
+      return { color: "#a074c4", label: "I" };
+    default:
+      break;
   }
   const lower = name.toLowerCase();
   if (lower === "makefile") return { color: "#6d8086", label: "M" };
@@ -85,7 +125,9 @@ export function FileIcon({ name }: { name: string }) {
       <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" opacity="0.7" />
       <polyline points="14 2 14 8 20 8" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" opacity="0.7" />
       {label && (
-        <text x="12" y="18" textAnchor="middle" fill={color} fontSize="7" fontWeight="bold" fontFamily={fonts.mono}>{label}</text>
+        <text x="12" y="18" textAnchor="middle" fill={color} fontSize="7" fontWeight="bold" fontFamily={fonts.mono}>
+          {label}
+        </text>
       )}
     </svg>
   );
@@ -109,7 +151,21 @@ export interface FileTreeProps {
   onContextMenu: (e: React.MouseEvent, path: string, isDir: boolean) => void;
 }
 
-export function FileTree({ entries, dirContents, expandedDirs, selectedPath, previewTab, selectedDir, depth, parentPath, rootIndex, onDirClick, onFileClick, onFileDoubleClick, onContextMenu }: FileTreeProps) {
+export function FileTree({
+  entries,
+  dirContents,
+  expandedDirs,
+  selectedPath,
+  previewTab,
+  selectedDir,
+  depth,
+  parentPath,
+  rootIndex,
+  onDirClick,
+  onFileClick,
+  onFileDoubleClick,
+  onContextMenu,
+}: FileTreeProps) {
   const { colors } = useTheme();
   return (
     <>
@@ -128,8 +184,10 @@ export function FileTree({ entries, dirContents, expandedDirs, selectedPath, pre
         return (
           <div key={pathKey}>
             <button
-              onClick={() => isDir ? onDirClick(pathKey) : onFileClick(pathKey, entry)}
-              onDoubleClick={() => { if (!isDir) onFileDoubleClick(pathKey, entry); }}
+              onClick={() => (isDir ? onDirClick(pathKey) : onFileClick(pathKey, entry))}
+              onDoubleClick={() => {
+                if (!isDir) onFileDoubleClick(pathKey, entry);
+              }}
               onContextMenu={(e) => onContextMenu(e, pathKey, isDir)}
               style={{
                 display: "flex",
@@ -147,11 +205,23 @@ export function FileTree({ entries, dirContents, expandedDirs, selectedPath, pre
                 textAlign: "left",
                 whiteSpace: "nowrap",
               }}
-              onMouseEnter={(e) => { if (!isSelected && !isDirSelected) e.currentTarget.style.backgroundColor = colors.hoverBg; }}
-              onMouseLeave={(e) => { if (!isSelected && !isDirSelected) e.currentTarget.style.backgroundColor = "transparent"; }}
+              onMouseEnter={(e) => {
+                if (!isSelected && !isDirSelected) e.currentTarget.style.backgroundColor = colors.hoverBg;
+              }}
+              onMouseLeave={(e) => {
+                if (!isSelected && !isDirSelected) e.currentTarget.style.backgroundColor = "transparent";
+              }}
             >
               {isDir ? (
-                <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.5" style={{ flexShrink: 0, opacity: 0.6, transform: isExpanded ? "rotate(90deg)" : "none", transition: "transform 0.1s" }}>
+                <svg
+                  width="10"
+                  height="10"
+                  viewBox="0 0 10 10"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="1.5"
+                  style={{ flexShrink: 0, opacity: 0.6, transform: isExpanded ? "rotate(90deg)" : "none", transition: "transform 0.1s" }}
+                >
                   <polyline points="3,1 7,5 3,9" />
                 </svg>
               ) : (

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { useTheme } from "../../ThemeContext";
 import { switchBrowserMode } from "../../api/loopApi";
-import { useBrowserWs, type TabInfo } from "../../hooks/useBrowserWs";
+import { type TabInfo, useBrowserWs } from "../../hooks/useBrowserWs";
+import { useTheme } from "../../ThemeContext";
 import { storageGet, storageSet } from "../../utils/storage";
 
 interface BrowserPanelProps {
@@ -24,23 +24,7 @@ export function BrowserPanel({ channelId, fixedMode }: BrowserPanelProps) {
     return saved === "host" ? "host" : "docker";
   });
 
-  const {
-    connected,
-    started,
-    tabs,
-    activeTargetId,
-    startBrowser,
-    stopBrowser,
-    startStreaming,
-    navigate,
-    reload,
-    goBack,
-    goForward,
-    sendInput,
-    switchTab,
-    newTab,
-    closeTab,
-  } = useBrowserWs({
+  const { connected, started, tabs, activeTargetId, startBrowser, stopBrowser, startStreaming, navigate, reload, goBack, goForward, sendInput, switchTab, newTab, closeTab } = useBrowserWs({
     channelId,
     onFrame: useCallback((data: ArrayBuffer) => {
       const canvas = canvasRef.current;
@@ -194,16 +178,7 @@ export function BrowserPanel({ channelId, fixedMode }: BrowserPanelProps) {
       }}
     >
       {/* Tab strip — Chrome-style rounded tabs */}
-      <TabStrip
-        tabs={tabs}
-        activeTargetId={activeTargetId}
-        hoveredTab={hoveredTab}
-        colors={colors}
-        onTabClick={switchTab}
-        onTabClose={closeTab}
-        onNewTab={() => newTab()}
-        onHover={setHoveredTab}
-      />
+      <TabStrip tabs={tabs} activeTargetId={activeTargetId} hoveredTab={hoveredTab} colors={colors} onTabClick={switchTab} onTabClose={closeTab} onNewTab={() => newTab()} onHover={setHoveredTab} />
 
       {/* Toolbar — back/forward/reload + URL bar */}
       <div
@@ -294,7 +269,10 @@ export function BrowserPanel({ channelId, fixedMode }: BrowserPanelProps) {
               outline: "none",
               cursor: "default",
             }}
-            onClick={(e) => { handleCanvasMouseEvent(e); canvasRef.current?.focus(); }}
+            onClick={(e) => {
+              handleCanvasMouseEvent(e);
+              canvasRef.current?.focus();
+            }}
             onDoubleClick={handleCanvasMouseEvent}
             onContextMenu={handleCanvasMouseEvent}
             onMouseMove={handleCanvasMouseEvent}
@@ -302,9 +280,7 @@ export function BrowserPanel({ channelId, fixedMode }: BrowserPanelProps) {
             onKeyDown={handleCanvasKeyDown}
           />
         ) : (
-          <div style={{ color: colors.textDim, fontSize: 13 }}>
-            {connected ? "Starting browser..." : "Connecting..."}
-          </div>
+          <div style={{ color: colors.textDim, fontSize: 13 }}>{connected ? "Starting browser..." : "Connecting..."}</div>
         )}
       </div>
     </div>
@@ -313,13 +289,7 @@ export function BrowserPanel({ channelId, fixedMode }: BrowserPanelProps) {
 
 /* ---------- sub-components ---------- */
 
-function ModePill({
-  mode, onToggle, colors,
-}: {
-  mode: "docker" | "host";
-  onToggle: () => void;
-  colors: { textDim: string; textLight: string; active: string };
-}) {
+function ModePill({ mode, onToggle, colors }: { mode: "docker" | "host"; onToggle: () => void; colors: { textDim: string; textLight: string; active: string } }) {
   const activeStyle = { color: colors.active, fontWeight: 600 as const };
   const inactiveStyle = { color: colors.textDim };
   return (
@@ -349,14 +319,7 @@ function ModePill({
   );
 }
 
-function NavButton({
-  onClick, title, colors, children,
-}: {
-  onClick: () => void;
-  title: string;
-  colors: { textDim: string };
-  children: React.ReactNode;
-}) {
+function NavButton({ onClick, title, colors, children }: { onClick: () => void; title: string; colors: { textDim: string }; children: React.ReactNode }) {
   return (
     <button
       onClick={onClick}
@@ -380,15 +343,25 @@ function NavButton({
 }
 
 function TabStrip({
-  tabs, activeTargetId, hoveredTab, colors,
-  onTabClick, onTabClose, onNewTab, onHover,
+  tabs,
+  activeTargetId,
+  hoveredTab,
+  colors,
+  onTabClick,
+  onTabClose,
+  onNewTab,
+  onHover,
 }: {
   tabs: TabInfo[];
   activeTargetId: string;
   hoveredTab: string | null;
   colors: {
-    sidebar: string; surface: string; border: string;
-    textLight: string; textDim: string; textMuted: string;
+    sidebar: string;
+    surface: string;
+    border: string;
+    textLight: string;
+    textDim: string;
+    textMuted: string;
     isDark: boolean;
   };
   onTabClick: (id: string) => void;
@@ -424,7 +397,9 @@ function TabStrip({
             key={tab.target_id}
             onMouseEnter={() => onHover(tab.target_id)}
             onMouseLeave={() => onHover(null)}
-            onClick={() => { if (!isActive) onTabClick(tab.target_id); }}
+            onClick={() => {
+              if (!isActive) onTabClick(tab.target_id);
+            }}
             style={{
               display: "flex",
               alignItems: "center",
@@ -472,7 +447,10 @@ function TabStrip({
             </span>
             {/* Close button */}
             <span
-              onClick={(e) => { e.stopPropagation(); onTabClose(tab.target_id); }}
+              onClick={(e) => {
+                e.stopPropagation();
+                onTabClose(tab.target_id);
+              }}
               style={{
                 display: "flex",
                 alignItems: "center",
@@ -487,8 +465,14 @@ function TabStrip({
                 lineHeight: 1,
                 transition: "opacity 0.1s",
               }}
-              onMouseEnter={(e) => { (e.target as HTMLElement).style.opacity = "1"; (e.target as HTMLElement).style.backgroundColor = colors.isDark ? "rgba(255,255,255,0.1)" : "rgba(0,0,0,0.08)"; }}
-              onMouseLeave={(e) => { (e.target as HTMLElement).style.opacity = isActive ? "0.6" : "0"; (e.target as HTMLElement).style.backgroundColor = "transparent"; }}
+              onMouseEnter={(e) => {
+                (e.target as HTMLElement).style.opacity = "1";
+                (e.target as HTMLElement).style.backgroundColor = colors.isDark ? "rgba(255,255,255,0.1)" : "rgba(0,0,0,0.08)";
+              }}
+              onMouseLeave={(e) => {
+                (e.target as HTMLElement).style.opacity = isActive ? "0.6" : "0";
+                (e.target as HTMLElement).style.backgroundColor = "transparent";
+              }}
             >
               ✕
             </span>

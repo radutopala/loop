@@ -1,5 +1,5 @@
-import type { ImageBuildStatusData, ImageUpdateAvailableData, UpdateStatus } from "../../types";
 import { useTheme } from "../../ThemeContext";
+import type { ImageBuildStatusData, ImageUpdateAvailableData, UpdateStatus } from "../../types";
 
 interface SidebarFooterProps {
   updateStatus?: UpdateStatus | null;
@@ -60,8 +60,14 @@ export function SidebarFooter({
             color: updateStatus.downloaded ? colors.active : updateStatus.downloading ? colors.textDim : colors.active,
             cursor: updateStatus.downloading ? "default" : "pointer",
           }}
-          onMouseEnter={(e) => { if (!updateStatus.downloading) { e.currentTarget.style.backgroundColor = colors.hoverBg; } }}
-          onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = "transparent"; }}
+          onMouseEnter={(e) => {
+            if (!updateStatus.downloading) {
+              e.currentTarget.style.backgroundColor = colors.hoverBg;
+            }
+          }}
+          onMouseLeave={(e) => {
+            e.currentTarget.style.backgroundColor = "transparent";
+          }}
         >
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
             <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
@@ -86,7 +92,14 @@ export function SidebarFooter({
           }}
         >
           <svg
-            width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
+            width="14"
+            height="14"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
             style={{ animation: "spin 1s linear infinite" }}
           >
             <path d="M21 12a9 9 0 1 1-3-6.7" />
@@ -118,8 +131,12 @@ export function SidebarFooter({
             ...footerBtnStyle,
             color: colors.active,
           }}
-          onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = colors.hoverBg; }}
-          onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = "transparent"; }}
+          onMouseEnter={(e) => {
+            e.currentTarget.style.backgroundColor = colors.hoverBg;
+          }}
+          onMouseLeave={(e) => {
+            e.currentTarget.style.backgroundColor = "transparent";
+          }}
         >
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
             <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
@@ -133,8 +150,14 @@ export function SidebarFooter({
         data-testid="sidebar-settings-btn"
         onClick={onOpenSettings}
         style={footerBtnStyle}
-        onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = colors.hoverBg; e.currentTarget.style.color = colors.textLight; }}
-        onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = "transparent"; e.currentTarget.style.color = colors.textDim; }}
+        onMouseEnter={(e) => {
+          e.currentTarget.style.backgroundColor = colors.hoverBg;
+          e.currentTarget.style.color = colors.textLight;
+        }}
+        onMouseLeave={(e) => {
+          e.currentTarget.style.backgroundColor = "transparent";
+          e.currentTarget.style.color = colors.textDim;
+        }}
       >
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
           <path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z" />
@@ -146,8 +169,14 @@ export function SidebarFooter({
         data-testid="sidebar-tasks-btn"
         onClick={onOpenTasks}
         style={footerBtnStyle}
-        onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = colors.hoverBg; e.currentTarget.style.color = colors.textLight; }}
-        onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = "transparent"; e.currentTarget.style.color = colors.textDim; }}
+        onMouseEnter={(e) => {
+          e.currentTarget.style.backgroundColor = colors.hoverBg;
+          e.currentTarget.style.color = colors.textLight;
+        }}
+        onMouseLeave={(e) => {
+          e.currentTarget.style.backgroundColor = "transparent";
+          e.currentTarget.style.color = colors.textDim;
+        }}
       >
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
           <circle cx="12" cy="12" r="10" />
@@ -159,8 +188,14 @@ export function SidebarFooter({
         data-testid="sidebar-workflows-btn"
         onClick={onOpenWorkflows}
         style={footerBtnStyle}
-        onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = colors.hoverBg; e.currentTarget.style.color = colors.textLight; }}
-        onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = "transparent"; e.currentTarget.style.color = colors.textDim; }}
+        onMouseEnter={(e) => {
+          e.currentTarget.style.backgroundColor = colors.hoverBg;
+          e.currentTarget.style.color = colors.textLight;
+        }}
+        onMouseLeave={(e) => {
+          e.currentTarget.style.backgroundColor = "transparent";
+          e.currentTarget.style.color = colors.textDim;
+        }}
       >
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
           <circle cx="5" cy="6" r="2" />
@@ -177,8 +212,14 @@ export function SidebarFooter({
         data-testid="sidebar-shares-btn"
         onClick={onOpenShares}
         style={footerBtnStyle}
-        onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = colors.hoverBg; e.currentTarget.style.color = colors.textLight; }}
-        onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = "transparent"; e.currentTarget.style.color = colors.textDim; }}
+        onMouseEnter={(e) => {
+          e.currentTarget.style.backgroundColor = colors.hoverBg;
+          e.currentTarget.style.color = colors.textLight;
+        }}
+        onMouseLeave={(e) => {
+          e.currentTarget.style.backgroundColor = "transparent";
+          e.currentTarget.style.color = colors.textDim;
+        }}
       >
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
           <circle cx="18" cy="5" r="3" />
@@ -215,8 +256,14 @@ export function SidebarFooter({
       <button
         onClick={onOpenContainers}
         style={footerBtnStyle}
-        onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = colors.hoverBg; e.currentTarget.style.color = colors.textLight; }}
-        onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = "transparent"; e.currentTarget.style.color = colors.textDim; }}
+        onMouseEnter={(e) => {
+          e.currentTarget.style.backgroundColor = colors.hoverBg;
+          e.currentTarget.style.color = colors.textLight;
+        }}
+        onMouseLeave={(e) => {
+          e.currentTarget.style.backgroundColor = "transparent";
+          e.currentTarget.style.color = colors.textDim;
+        }}
       >
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
           <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z" />
@@ -228,8 +275,14 @@ export function SidebarFooter({
       <button
         onClick={onOpenReadme}
         style={footerBtnStyle}
-        onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = colors.hoverBg; e.currentTarget.style.color = colors.textLight; }}
-        onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = "transparent"; e.currentTarget.style.color = colors.textDim; }}
+        onMouseEnter={(e) => {
+          e.currentTarget.style.backgroundColor = colors.hoverBg;
+          e.currentTarget.style.color = colors.textLight;
+        }}
+        onMouseLeave={(e) => {
+          e.currentTarget.style.backgroundColor = "transparent";
+          e.currentTarget.style.color = colors.textDim;
+        }}
       >
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
           <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" />

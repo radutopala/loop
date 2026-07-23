@@ -1,8 +1,8 @@
 import { useEffect, useState } from "react";
+import type { WorkflowDef } from "../../api/loopApi";
 import type { ColorPalette } from "../../theme";
 import { fonts } from "../../theme";
-import type { WorkflowDef } from "../../api/loopApi";
-import { buildBtnStyle, buildBtnSecondaryStyle, buildInputStyle } from "../../utils/workflowHelpers";
+import { buildBtnSecondaryStyle, buildBtnStyle, buildInputStyle } from "../../utils/workflowHelpers";
 
 interface WorkflowStartDialogProps {
   show: boolean;
@@ -24,17 +24,7 @@ function defToJson(def: WorkflowDef): string {
   return JSON.stringify(rest, null, 2);
 }
 
-export function WorkflowStartDialog({
-  show,
-  startInputs,
-  selectedStartDef,
-  colors,
-  onClose,
-  onInputChange,
-  onStart,
-  onSave,
-  testId,
-}: WorkflowStartDialogProps) {
+export function WorkflowStartDialog({ show, startInputs, selectedStartDef, colors, onClose, onInputChange, onStart, onSave, testId }: WorkflowStartDialogProps) {
   const [configText, setConfigText] = useState("");
   const [saveError, setSaveError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
@@ -53,7 +43,10 @@ export function WorkflowStartDialog({
   useEffect(() => {
     if (!show) return;
     const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "Escape") { e.stopPropagation(); onClose(); }
+      if (e.key === "Escape") {
+        e.stopPropagation();
+        onClose();
+      }
     };
     window.addEventListener("keydown", onKeyDown, true);
     return () => window.removeEventListener("keydown", onKeyDown, true);
@@ -77,11 +70,7 @@ export function WorkflowStartDialog({
     else setSaved(true);
   };
 
-  const sectionLabel = (label: string) => (
-    <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: 1, textTransform: "uppercase", color: colors.textDim, marginBottom: 6 }}>
-      {label}
-    </div>
-  );
+  const sectionLabel = (label: string) => <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: 1, textTransform: "uppercase", color: colors.textDim, marginBottom: 6 }}>{label}</div>;
 
   return (
     <div
@@ -91,26 +80,23 @@ export function WorkflowStartDialog({
     >
       <div
         style={{
-          backgroundColor: colors.surface, borderRadius: 12, padding: "24px 28px",
-          maxWidth: 620, width: "92%", maxHeight: "88vh", overflowY: "auto",
+          backgroundColor: colors.surface,
+          borderRadius: 12,
+          padding: "24px 28px",
+          maxWidth: 620,
+          width: "92%",
+          maxHeight: "88vh",
+          overflowY: "auto",
           boxShadow: "0 8px 32px rgba(0,0,0,0.35)",
         }}
         onClick={(e) => e.stopPropagation()}
       >
-        <div style={{ fontSize: 12, fontWeight: 700, letterSpacing: 1, textTransform: "uppercase", color: colors.textDim, marginBottom: 14 }}>
-          Start Workflow
-        </div>
+        <div style={{ fontSize: 12, fontWeight: 700, letterSpacing: 1, textTransform: "uppercase", color: colors.textDim, marginBottom: 14 }}>Start Workflow</div>
 
         {/* Selected workflow: name + description (no selector — Run picks it) */}
         <div style={{ marginBottom: 18, paddingBottom: 14, borderBottom: `1px solid ${colors.border}` }}>
-          <div style={{ fontSize: 16, fontWeight: 600, color: colors.text, fontFamily: fonts.mono }}>
-            {selectedStartDef.name}
-          </div>
-          {selectedStartDef.description && (
-            <div style={{ fontSize: 12.5, color: colors.textDim, marginTop: 5, lineHeight: 1.5 }}>
-              {selectedStartDef.description}
-            </div>
-          )}
+          <div style={{ fontSize: 16, fontWeight: 600, color: colors.text, fontFamily: fonts.mono }}>{selectedStartDef.name}</div>
+          {selectedStartDef.description && <div style={{ fontSize: 12.5, color: colors.textDim, marginTop: 5, lineHeight: 1.5 }}>{selectedStartDef.description}</div>}
         </div>
 
         {/* Inputs */}
@@ -122,11 +108,10 @@ export function WorkflowStartDialog({
             inputEntries.map(([key, input]) => (
               <div key={key} style={{ display: "flex", flexDirection: "column", gap: 4 }}>
                 <label style={{ fontSize: 12, color: colors.text, fontFamily: fonts.mono }}>
-                  {key}{input.required ? " *" : ""}
+                  {key}
+                  {input.required ? " *" : ""}
                 </label>
-                {input.description && (
-                  <div style={{ fontSize: 11.5, color: colors.textDim }}>{input.description}</div>
-                )}
+                {input.description && <div style={{ fontSize: 11.5, color: colors.textDim }}>{input.description}</div>}
                 <input
                   type="text"
                   value={startInputs[key] ?? ""}
@@ -156,25 +141,37 @@ export function WorkflowStartDialog({
           <textarea
             data-testid="workflow-config-editor"
             value={configText}
-            onChange={(e) => { setConfigText(e.target.value); setSaved(false); }}
+            onChange={(e) => {
+              setConfigText(e.target.value);
+              setSaved(false);
+            }}
             spellCheck={false}
             style={{
-              width: "100%", boxSizing: "border-box", minHeight: 220, resize: "vertical",
-              background: colors.bg, border: `1px solid ${saveError ? (colors.error ?? "#ef4444") : colors.border}`,
-              borderRadius: 6, color: colors.textLight, fontFamily: fonts.mono, fontSize: 11.5,
-              lineHeight: 1.5, padding: "8px 10px", outline: "none",
+              width: "100%",
+              boxSizing: "border-box",
+              minHeight: 220,
+              resize: "vertical",
+              background: colors.bg,
+              border: `1px solid ${saveError ? (colors.error ?? "#ef4444") : colors.border}`,
+              borderRadius: 6,
+              color: colors.textLight,
+              fontFamily: fonts.mono,
+              fontSize: 11.5,
+              lineHeight: 1.5,
+              padding: "8px 10px",
+              outline: "none",
             }}
           />
-          {saveError && (
-            <div style={{ fontSize: 11.5, color: colors.error ?? "#ef4444", marginTop: 6, whiteSpace: "pre-wrap" }}>
-              {saveError}
-            </div>
-          )}
+          {saveError && <div style={{ fontSize: 11.5, color: colors.error ?? "#ef4444", marginTop: 6, whiteSpace: "pre-wrap" }}>{saveError}</div>}
         </div>
 
         <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 12 }}>
-          <button onClick={onClose} style={btnSecondaryStyle}>Cancel</button>
-          <button onClick={onStart} style={btnStyle}>Start</button>
+          <button onClick={onClose} style={btnSecondaryStyle}>
+            Cancel
+          </button>
+          <button onClick={onStart} style={btnStyle}>
+            Start
+          </button>
         </div>
       </div>
     </div>

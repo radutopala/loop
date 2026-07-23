@@ -1,15 +1,16 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { Message } from "../../types";
-import { resolveGateApproval, sendCommand, sendMessage } from "../../api/loopApi";
 import { fetchComposerHistory, resolveAsk, resolvePlan } from "../../api/channels";
-import { AgentConfigPill } from "./AgentConfigPill";
-import { firstClipboardImage, uploadPastedImage } from "../../utils/clipboardImage";
 import { fetchShortcuts, type PromptShortcut } from "../../api/configApi";
-import { searchFiles, type FileSearchResult, type RootEntry } from "../../api/files";
-import { fonts } from "../../theme";
-import type { ColorPalette } from "../../theme";
+import { type FileSearchResult, type RootEntry, searchFiles } from "../../api/files";
+import { resolveGateApproval, sendCommand, sendMessage } from "../../api/loopApi";
 import { useTheme } from "../../ThemeContext";
+import type { ColorPalette } from "../../theme";
+import { fonts } from "../../theme";
+import type { Message } from "../../types";
+import { firstClipboardImage, uploadPastedImage } from "../../utils/clipboardImage";
 import { storageGetJSON, storageSetJSON } from "../../utils/storage";
+import { AgentConfigPill } from "./AgentConfigPill";
+
 // Draft text per channel — persisted to localStorage across app restarts.
 const DRAFT_KEY = "loop-chat-drafts";
 const draftText = {
@@ -233,10 +234,29 @@ export interface ChatInputProps {
 }
 
 function buildQuotePrefix(msg: Message): string {
-  return msg.content.split("\n").map(l => `> ${l}`).join("\n") + "\n\n";
+  return (
+    msg.content
+      .split("\n")
+      .map((l) => `> ${l}`)
+      .join("\n") + "\n\n"
+  );
 }
 
-export function ChatInput({ channelId, messages, roots, isRunning, mode, setMode, onDismissCards, onSent, quotedMessage, onClearQuote, pendingGateReqId, hasPendingExitPlan, hasPendingAskUser }: ChatInputProps) {
+export function ChatInput({
+  channelId,
+  messages,
+  roots,
+  isRunning,
+  mode,
+  setMode,
+  onDismissCards,
+  onSent,
+  quotedMessage,
+  onClearQuote,
+  pendingGateReqId,
+  hasPendingExitPlan,
+  hasPendingAskUser,
+}: ChatInputProps) {
   const { colors } = useTheme();
   const styles = buildInputStyles(colors);
   const modeStyles = buildModeStyles(colors);
@@ -304,11 +324,15 @@ export function ChatInput({ channelId, messages, roots, isRunning, mode, setMode
       // cancelled-flag guard left history permanently on the page fallback.
       // The channel-match check below is the correct staleness guard: a late
       // response for a channel we've switched away from is discarded.
-      fetchComposerHistory(channelId).then((hist) => {
-        if (historyChannelRef.current === channelId && hist.length > 0) {
-          historyRef.current = hist;
-        }
-      }).catch(() => { /* keep the page-derived fallback */ });
+      fetchComposerHistory(channelId)
+        .then((hist) => {
+          if (historyChannelRef.current === channelId && hist.length > 0) {
+            historyRef.current = hist;
+          }
+        })
+        .catch(() => {
+          /* keep the page-derived fallback */
+        });
     }
   }, [channelId]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -331,7 +355,9 @@ export function ChatInput({ channelId, messages, roots, isRunning, mode, setMode
 
   // Fetch prompt shortcuts when channel changes.
   useEffect(() => {
-    fetchShortcuts(channelId).then(setShortcuts).catch(() => setShortcuts([]));
+    fetchShortcuts(channelId)
+      .then(setShortcuts)
+      .catch(() => setShortcuts([]));
   }, [channelId]);
 
   // Scroll selected shortcut item into view.
@@ -370,36 +396,39 @@ export function ChatInput({ channelId, messages, roots, isRunning, mode, setMode
 
   const isLoopCommand = useCallback((t: string) => t.trimStart().startsWith("/loop"), []);
 
-  const handlePaste = useCallback(async (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
-    // Find the first image item; if none, let the default text-paste happen.
-    const file = firstClipboardImage(e.clipboardData);
-    if (!file) return;
-    e.preventDefault();
+  const handlePaste = useCallback(
+    async (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
+      // Find the first image item; if none, let the default text-paste happen.
+      const file = firstClipboardImage(e.clipboardData);
+      if (!file) return;
+      e.preventDefault();
 
-    try {
-      const path = await uploadPastedImage(channelId, file);
-      const ta = inputRef.current;
-      if (!ta) {
-        setText((prev) => prev + path);
-        return;
+      try {
+        const path = await uploadPastedImage(channelId, file);
+        const ta = inputRef.current;
+        if (!ta) {
+          setText((prev) => prev + path);
+          return;
+        }
+        const start = ta.selectionStart ?? text.length;
+        const end = ta.selectionEnd ?? text.length;
+        const next = text.slice(0, start) + path + text.slice(end);
+        setText(next);
+        draftText.set(channelId, next);
+        // Restore the caret just after the inserted path.
+        requestAnimationFrame(() => {
+          if (!inputRef.current) return;
+          const pos = start + path.length;
+          inputRef.current.selectionStart = pos;
+          inputRef.current.selectionEnd = pos;
+          inputRef.current.focus();
+        });
+      } catch (err) {
+        console.error("[paste-image] upload failed", err);
       }
-      const start = ta.selectionStart ?? text.length;
-      const end = ta.selectionEnd ?? text.length;
-      const next = text.slice(0, start) + path + text.slice(end);
-      setText(next);
-      draftText.set(channelId, next);
-      // Restore the caret just after the inserted path.
-      requestAnimationFrame(() => {
-        if (!inputRef.current) return;
-        const pos = start + path.length;
-        inputRef.current.selectionStart = pos;
-        inputRef.current.selectionEnd = pos;
-        inputRef.current.focus();
-      });
-    } catch (err) {
-      console.error("[paste-image] upload failed", err);
-    }
-  }, [channelId, text]);
+    },
+    [channelId, text],
+  );
 
   const handleStop = useCallback(async () => {
     setStoppedOptimistic(true);
@@ -407,59 +436,62 @@ export function ChatInput({ channelId, messages, roots, isRunning, mode, setMode
     await sendCommand(channelId, "stop");
   }, [channelId, onDismissCards]);
 
-  const handleSend = useCallback(async (overrideMode?: SendMode) => {
-    const trimmed = text.trim();
-    if (!trimmed || sending) return;
-    setSending(true);
-    try {
-      if (isLoopCommand(trimmed)) {
-        const cmdText = trimmed.replace(/^\/loop\s*/, "");
-        if (cmdText) {
-          await sendCommand(channelId, cmdText);
-        }
-      } else {
-        const content = quotedMessage ? buildQuotePrefix(quotedMessage) + trimmed : trimmed;
-        // When the channel is parked on an AskUserQuestion card, route the
-        // send through `resolveAsk(answer)` so the backend clears the park
-        // flag and inserts the user's text as a priority-bumped continuation.
-        // `resolveAsk` already inserts the message, so skip the regular
-        // sendMessage call here.
-        if (hasPendingAskUser) {
-          await resolveAsk(channelId, "answer", content, mode);
-        } else if (hasPendingExitPlan) {
-          // When the channel is parked on an ExitPlanMode card, route the send
-          // through `resolvePlan(deny, prompt)` so the backend clears the park
-          // flag, inserts the user's text as a priority-bumped continuation,
-          // and resumes the drain. `resolvePlan` already inserts the message,
-          // so skip the regular sendMessage call here.
-          await resolvePlan(channelId, "deny", content, mode);
-        } else if (pendingGateReqId) {
-          // When a gate approval popup is pending, auto-deny it and force
-          // interrupt — same shape as ApprovalCard's "Deny with prompt".
-          await resolveGateApproval(pendingGateReqId, "deny");
-          await sendMessage(channelId, content, mode, true);
+  const handleSend = useCallback(
+    async (overrideMode?: SendMode) => {
+      const trimmed = text.trim();
+      if (!trimmed || sending) return;
+      setSending(true);
+      try {
+        if (isLoopCommand(trimmed)) {
+          const cmdText = trimmed.replace(/^\/loop\s*/, "");
+          if (cmdText) {
+            await sendCommand(channelId, cmdText);
+          }
         } else {
-          const effectiveMode = overrideMode ?? sendMode;
-          const interrupt = effectiveIsRunning && effectiveMode === "interrupt";
-          await sendMessage(channelId, content, mode, interrupt || undefined);
+          const content = quotedMessage ? buildQuotePrefix(quotedMessage) + trimmed : trimmed;
+          // When the channel is parked on an AskUserQuestion card, route the
+          // send through `resolveAsk(answer)` so the backend clears the park
+          // flag and inserts the user's text as a priority-bumped continuation.
+          // `resolveAsk` already inserts the message, so skip the regular
+          // sendMessage call here.
+          if (hasPendingAskUser) {
+            await resolveAsk(channelId, "answer", content, mode);
+          } else if (hasPendingExitPlan) {
+            // When the channel is parked on an ExitPlanMode card, route the send
+            // through `resolvePlan(deny, prompt)` so the backend clears the park
+            // flag, inserts the user's text as a priority-bumped continuation,
+            // and resumes the drain. `resolvePlan` already inserts the message,
+            // so skip the regular sendMessage call here.
+            await resolvePlan(channelId, "deny", content, mode);
+          } else if (pendingGateReqId) {
+            // When a gate approval popup is pending, auto-deny it and force
+            // interrupt — same shape as ApprovalCard's "Deny with prompt".
+            await resolveGateApproval(pendingGateReqId, "deny");
+            await sendMessage(channelId, content, mode, true);
+          } else {
+            const effectiveMode = overrideMode ?? sendMode;
+            const interrupt = effectiveIsRunning && effectiveMode === "interrupt";
+            await sendMessage(channelId, content, mode, interrupt || undefined);
+          }
         }
-      }
-      // Push to history.
-      historyRef.current.push(trimmed);
-      historyIdxRef.current = -1;
-      draftRef.current = "";
+        // Push to history.
+        historyRef.current.push(trimmed);
+        historyIdxRef.current = -1;
+        draftRef.current = "";
 
-      setText("");
-      draftText.delete(channelId);
-      onClearQuote?.();
-      onDismissCards?.();
-      onSent?.();
-    } finally {
-      setSending(false);
-      // Re-focus after React re-enables the textarea on the next render.
-      requestAnimationFrame(() => inputRef.current?.focus());
-    }
-  }, [channelId, text, sending, mode, isLoopCommand, effectiveIsRunning, sendMode, quotedMessage, onClearQuote, onDismissCards, pendingGateReqId, hasPendingExitPlan, hasPendingAskUser]);
+        setText("");
+        draftText.delete(channelId);
+        onClearQuote?.();
+        onDismissCards?.();
+        onSent?.();
+      } finally {
+        setSending(false);
+        // Re-focus after React re-enables the textarea on the next render.
+        requestAnimationFrame(() => inputRef.current?.focus());
+      }
+    },
+    [channelId, text, sending, mode, isLoopCommand, effectiveIsRunning, sendMode, quotedMessage, onClearQuote, onDismissCards, pendingGateReqId, hasPendingExitPlan, hasPendingAskUser],
+  );
 
   const updateCommandDropdown = useCallback((val: string) => {
     const trimmed = val.trimStart();
@@ -490,55 +522,57 @@ export function ChatInput({ channelId, messages, roots, isRunning, mode, setMode
       setShowCommands(false);
       return;
     }
-    const matches = LOOP_COMMANDS.filter((c) =>
-      c.name.startsWith(afterLoop.toLowerCase()),
-    );
+    const matches = LOOP_COMMANDS.filter((c) => c.name.startsWith(afterLoop.toLowerCase()));
     setFilteredCommands(matches);
     setCmdSelectedIdx(0);
     setShowCommands(matches.length > 0);
   }, []);
 
-  const updateShortcutDropdown = useCallback((val: string) => {
-    const trimmed = val.trimStart();
-    if (!trimmed.startsWith("#") || shortcuts.length === 0) {
-      setShowShortcuts(false);
-      return;
-    }
-    const query = trimmed.slice(1).toLowerCase();
-    const matches = query
-      ? shortcuts.filter((s) => s.name.toLowerCase().startsWith(query))
-      : shortcuts;
-    setFilteredShortcuts(matches);
-    setShortcutSelectedIdx(0);
-    setShowShortcuts(matches.length > 0);
-  }, [shortcuts]);
-
-  const acceptShortcut = useCallback(async (shortcut: PromptShortcut) => {
-    setShowShortcuts(false);
-    setText("");
-    draftText.delete(channelId);
-    setSending(true);
-    // Prepend the shortcut's #name so the sent message records which shortcut
-    // produced it — the chat bubble and history show the name, not just the
-    // expanded prompt body.
-    const composed = `#${shortcut.name}\n${shortcut.prompt}`;
-    try {
-      if (pendingGateReqId) {
-        await resolveGateApproval(pendingGateReqId, "deny");
-        await sendMessage(channelId, composed, mode, true);
-      } else {
-        await sendMessage(channelId, composed, mode);
+  const updateShortcutDropdown = useCallback(
+    (val: string) => {
+      const trimmed = val.trimStart();
+      if (!trimmed.startsWith("#") || shortcuts.length === 0) {
+        setShowShortcuts(false);
+        return;
       }
-      historyRef.current.push(composed);
-      historyIdxRef.current = -1;
-      draftRef.current = "";
-      onDismissCards?.();
-      onSent?.();
-    } finally {
-      setSending(false);
-      requestAnimationFrame(() => inputRef.current?.focus());
-    }
-  }, [channelId, mode, onDismissCards, onSent, pendingGateReqId]);
+      const query = trimmed.slice(1).toLowerCase();
+      const matches = query ? shortcuts.filter((s) => s.name.toLowerCase().startsWith(query)) : shortcuts;
+      setFilteredShortcuts(matches);
+      setShortcutSelectedIdx(0);
+      setShowShortcuts(matches.length > 0);
+    },
+    [shortcuts],
+  );
+
+  const acceptShortcut = useCallback(
+    async (shortcut: PromptShortcut) => {
+      setShowShortcuts(false);
+      setText("");
+      draftText.delete(channelId);
+      setSending(true);
+      // Prepend the shortcut's #name so the sent message records which shortcut
+      // produced it — the chat bubble and history show the name, not just the
+      // expanded prompt body.
+      const composed = `#${shortcut.name}\n${shortcut.prompt}`;
+      try {
+        if (pendingGateReqId) {
+          await resolveGateApproval(pendingGateReqId, "deny");
+          await sendMessage(channelId, composed, mode, true);
+        } else {
+          await sendMessage(channelId, composed, mode);
+        }
+        historyRef.current.push(composed);
+        historyIdxRef.current = -1;
+        draftRef.current = "";
+        onDismissCards?.();
+        onSent?.();
+      } finally {
+        setSending(false);
+        requestAnimationFrame(() => inputRef.current?.focus());
+      }
+    },
+    [channelId, mode, onDismissCards, onSent, pendingGateReqId],
+  );
 
   const handleChange = useCallback(
     (e: React.ChangeEvent<HTMLTextAreaElement>) => {
@@ -629,25 +663,28 @@ export function ChatInput({ channelId, messages, roots, isRunning, mode, setMode
   // Replace `@<partial>` with `@<absolute-path>`. Workspaces can have multiple
   // roots, so a relative path is ambiguous; the agent container mounts each
   // root at its host path, so absolute paths resolve correctly inside it.
-  const acceptFile = useCallback((r: FileSearchResult) => {
-    if (fileAtIdx < 0) return;
-    const root = roots?.find((x) => x.index === r.root_index);
-    const absPath = root ? `${root.path.replace(/\/$/, "")}/${r.rel_path}` : r.rel_path;
-    const token = r.root_index === -1 ? `@LoopBot ` : `@${absPath} `;
-    const pos = inputRef.current?.selectionStart ?? text.length;
-    const newText = text.slice(0, fileAtIdx) + token + text.slice(pos);
-    setText(newText);
-    draftText.set(channelId, newText);
-    setShowFilePicker(false);
-    requestAnimationFrame(() => {
-      const el = inputRef.current;
-      if (el) {
-        const cursorPos = fileAtIdx + token.length;
-        el.focus();
-        el.setSelectionRange(cursorPos, cursorPos);
-      }
-    });
-  }, [fileAtIdx, text, channelId, roots]);
+  const acceptFile = useCallback(
+    (r: FileSearchResult) => {
+      if (fileAtIdx < 0) return;
+      const root = roots?.find((x) => x.index === r.root_index);
+      const absPath = root ? `${root.path.replace(/\/$/, "")}/${r.rel_path}` : r.rel_path;
+      const token = r.root_index === -1 ? `@LoopBot ` : `@${absPath} `;
+      const pos = inputRef.current?.selectionStart ?? text.length;
+      const newText = text.slice(0, fileAtIdx) + token + text.slice(pos);
+      setText(newText);
+      draftText.set(channelId, newText);
+      setShowFilePicker(false);
+      requestAnimationFrame(() => {
+        const el = inputRef.current;
+        if (el) {
+          const cursorPos = fileAtIdx + token.length;
+          el.focus();
+          el.setSelectionRange(cursorPos, cursorPos);
+        }
+      });
+    },
+    [fileAtIdx, text, channelId, roots],
+  );
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
@@ -786,24 +823,45 @@ export function ChatInput({ channelId, messages, roots, isRunning, mode, setMode
         }
       }
     },
-    [handleSend, sendMode, text, channelId, showMention, acceptMention, showCommands, filteredCommands, cmdSelectedIdx, acceptCommand, showShortcuts, filteredShortcuts, shortcutSelectedIdx, acceptShortcut, showFilePicker, filePickerResults, filePickerIdx, acceptFile],
+    [
+      handleSend,
+      sendMode,
+      text,
+      channelId,
+      showMention,
+      acceptMention,
+      showCommands,
+      filteredCommands,
+      cmdSelectedIdx,
+      acceptCommand,
+      showShortcuts,
+      filteredShortcuts,
+      shortcutSelectedIdx,
+      acceptShortcut,
+      showFilePicker,
+      filePickerResults,
+      filePickerIdx,
+      acceptFile,
+    ],
   );
 
   return (
     <div style={{ position: "relative", ...styles.inputWrapper, flexDirection: "column" }}>
       {quotedMessage && (
-        <div style={{
-          display: "flex",
-          alignItems: "center",
-          gap: 8,
-          width: "100%",
-          padding: "4px 0 8px",
-          borderBottom: `1px solid ${colors.border}`,
-          marginBottom: 8,
-          fontSize: 12,
-          color: colors.textMuted,
-          fontFamily: fonts.sans,
-        }}>
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 8,
+            width: "100%",
+            padding: "4px 0 8px",
+            borderBottom: `1px solid ${colors.border}`,
+            marginBottom: 8,
+            fontSize: 12,
+            color: colors.textMuted,
+            fontFamily: fonts.sans,
+          }}
+        >
           <div style={{ borderLeft: `3px solid ${colors.border}`, paddingLeft: 8, flex: 1, overflow: "hidden", whiteSpace: "nowrap", textOverflow: "ellipsis" }}>
             {quotedMessage.content.length > 120 ? quotedMessage.content.slice(0, 120) + "\u2026" : quotedMessage.content}
           </div>
@@ -826,7 +884,10 @@ export function ChatInput({ channelId, messages, roots, isRunning, mode, setMode
                   ...commandStyles.item,
                   backgroundColor: i === cmdSelectedIdx ? colors.selectedBg : "transparent",
                 }}
-                onMouseDown={(e) => { e.preventDefault(); acceptCommand(cmd); }}
+                onMouseDown={(e) => {
+                  e.preventDefault();
+                  acceptCommand(cmd);
+                }}
                 onMouseEnter={() => setCmdSelectedIdx(i)}
               >
                 <div style={commandStyles.name}>/{cmd.name}</div>
@@ -847,7 +908,10 @@ export function ChatInput({ channelId, messages, roots, isRunning, mode, setMode
                   ...commandStyles.item,
                   backgroundColor: i === shortcutSelectedIdx ? colors.selectedBg : "transparent",
                 }}
-                onMouseDown={(e) => { e.preventDefault(); acceptShortcut(sc); }}
+                onMouseDown={(e) => {
+                  e.preventDefault();
+                  acceptShortcut(sc);
+                }}
                 onMouseEnter={() => setShortcutSelectedIdx(i)}
               >
                 <div style={commandStyles.name}>#{sc.name}</div>
@@ -862,11 +926,7 @@ export function ChatInput({ channelId, messages, roots, isRunning, mode, setMode
           <div ref={filePickerDropdownRef} style={commandStyles.scrollArea}>
             {filePickerResults.map((r, i) => {
               const rootName = roots?.find((x) => x.index === r.root_index)?.name ?? "";
-              const display = r.root_index === -1
-                ? `@LoopBot`
-                : r.root_index === 0 || !rootName
-                  ? `@${r.rel_path}`
-                  : `@${rootName}/${r.rel_path}`;
+              const display = r.root_index === -1 ? `@LoopBot` : r.root_index === 0 || !rootName ? `@${r.rel_path}` : `@${rootName}/${r.rel_path}`;
               return (
                 <div
                   key={`${r.root_index}:${r.rel_path}`}
@@ -874,7 +934,10 @@ export function ChatInput({ channelId, messages, roots, isRunning, mode, setMode
                     ...commandStyles.item,
                     backgroundColor: i === filePickerIdx ? colors.selectedBg : "transparent",
                   }}
-                  onMouseDown={(e) => { e.preventDefault(); acceptFile(r); }}
+                  onMouseDown={(e) => {
+                    e.preventDefault();
+                    acceptFile(r);
+                  }}
                   onMouseEnter={() => setFilePickerIdx(i)}
                 >
                   <div style={commandStyles.name}>{display}</div>
@@ -886,7 +949,13 @@ export function ChatInput({ channelId, messages, roots, isRunning, mode, setMode
         </div>
       )}
       {showMention && (
-        <div style={mentionStyles.dropdown} onMouseDown={(e) => { e.preventDefault(); acceptMention(); }}>
+        <div
+          style={mentionStyles.dropdown}
+          onMouseDown={(e) => {
+            e.preventDefault();
+            acceptMention();
+          }}
+        >
           <div style={mentionStyles.item}>
             <span style={mentionStyles.name}>@LoopBot</span>
           </div>
@@ -904,167 +973,181 @@ export function ChatInput({ channelId, messages, roots, isRunning, mode, setMode
         disabled={sending}
       />
       <div style={{ display: "flex", alignItems: "center", gap: 8, width: "100%" }}>
-      {shortcuts.length > 0 && (
-        <button
-          style={{
-            width: 28,
-            height: 28,
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            background: "transparent",
-            border: `1px solid ${colors.border}`,
-            borderRadius: 8,
-            color: colors.textDim,
-            cursor: "pointer",
-            flexShrink: 0,
-            fontFamily: fonts.mono,
-            fontSize: 14,
-            fontWeight: 600,
-          }}
-          title="Prompt shortcuts"
-          onClick={() => {
-            if (showShortcuts) {
-              setShowShortcuts(false);
-            } else {
-              setFilteredShortcuts(shortcuts);
-              setShortcutSelectedIdx(0);
-              setShowShortcuts(true);
-              inputRef.current?.focus();
-            }
-          }}
-        >
-          #
-        </button>
-      )}
-      <div style={{ flex: 1 }} />
-      <AgentConfigPill channelId={channelId} />
-      <div style={modeStyles.pill}>
-        <button
-          style={{
-            ...modeStyles.segment,
-            backgroundColor: mode === "agent" ? colors.pillActiveBg : "transparent",
-            color: mode === "agent" ? colors.pillActiveText : colors.textDim,
-          }}
-          onClick={() => setMode("agent")}
-        >
-          Agent
-        </button>
-        <button
-          style={{
-            ...modeStyles.segment,
-            backgroundColor: mode === "plan" ? colors.pillActiveBg : "transparent",
-            color: mode === "plan" ? colors.pillActiveText : colors.textDim,
-          }}
-          onClick={() => setMode("plan")}
-        >
-          Plan
-        </button>
-      </div>
-      <div style={{ position: "relative", display: "flex", alignItems: "center", flexShrink: 0 }}>
-        {effectiveIsRunning ? (
-          <button
-            style={{ ...styles.sendButton, background: "transparent", border: `1px solid ${colors.textDim}`, color: colors.textDim, borderRadius: "8px 0 0 8px" }}
-            onClick={handleStop}
-            title="Stop"
-          >
-            <svg width="10" height="10" viewBox="0 0 10 10" fill="none">
-              <rect width="10" height="10" rx="2" fill="currentColor"/>
-            </svg>
-          </button>
-        ) : (
+        {shortcuts.length > 0 && (
           <button
             style={{
-              ...styles.sendButton,
-              borderRadius: "8px 0 0 8px",
-              opacity: text.trim() && !sending ? 1 : 0.4,
+              width: 28,
+              height: 28,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              background: "transparent",
+              border: `1px solid ${colors.border}`,
+              borderRadius: 8,
+              color: colors.textDim,
+              cursor: "pointer",
+              flexShrink: 0,
+              fontFamily: fonts.mono,
+              fontSize: 14,
+              fontWeight: 600,
             }}
-            onClick={() => handleSend()}
-            disabled={!text.trim() || sending}
-            title={`${sendMode === "interrupt" ? "Send (interrupt)" : "Send (queue)"} — ${navigator.platform.includes("Mac") ? "⌘" : "Ctrl+"}Enter to ${sendMode === "interrupt" ? "queue" : "interrupt"}`}
+            title="Prompt shortcuts"
+            onClick={() => {
+              if (showShortcuts) {
+                setShowShortcuts(false);
+              } else {
+                setFilteredShortcuts(shortcuts);
+                setShortcutSelectedIdx(0);
+                setShowShortcuts(true);
+                inputRef.current?.focus();
+              }
+            }}
           >
-            <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
-              <path d="M8 14V2M8 2L3 7M8 2L13 7" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-            </svg>
+            #
           </button>
         )}
-        <button
-          style={{
-            height: 28,
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            gap: 2,
-            background: effectiveIsRunning ? "transparent" : colors.pillActiveBg,
-            border: effectiveIsRunning ? `1px solid ${colors.textDim}` : "none",
-            borderLeft: effectiveIsRunning ? "none" : `1px solid ${colors.pillActiveText}33`,
-            borderRadius: "0 8px 8px 0",
-            color: effectiveIsRunning ? colors.textDim : colors.pillActiveText,
-            cursor: "pointer",
-            flexShrink: 0,
-            padding: "0 6px 0 4px",
-            fontFamily: fonts.mono,
-            fontSize: 9,
-            fontWeight: 600,
-            letterSpacing: 0.3,
-          }}
-          onClick={() => setShowSendMenu(prev => !prev)}
-          title={`Send mode — ${navigator.platform.includes("Mac") ? "⌘" : "Ctrl+"}Enter sends with the other mode once`}
-        >
-          {sendMode === "interrupt" ? "INT" : "Q"}
-          <svg width="8" height="8" viewBox="0 0 8 8" fill="none">
-            <path d="M1.5 3L4 5.5L6.5 3" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
-          </svg>
-        </button>
-        {showSendMenu && (
-          <>
-            <div style={{ position: "fixed", inset: 0, zIndex: 999 }} onMouseDown={() => setShowSendMenu(false)} />
-            <div style={{
-              position: "absolute",
-              bottom: "calc(100% + 4px)",
-              right: 0,
-              backgroundColor: colors.surface,
-              border: `1px solid ${colors.border}`,
-              borderRadius: 6,
-              padding: 4,
-              minWidth: 140,
-              zIndex: 1000,
-              boxShadow: `0 4px 12px ${colors.shadow}`,
-              fontFamily: fonts.sans,
-            }}>
-              {([["queue", "Queue", "Messages wait for the agent to finish"], ["interrupt", "Interrupt", "Stop the agent, then send"]] as const).map(([key, label, desc]) => (
-                <button
-                  key={key}
-                  onClick={() => changeSendMode(key)}
-                  style={{
-                    display: "flex",
-                    flexDirection: "column",
-                    gap: 1,
-                    width: "100%",
-                    padding: "5px 8px",
-                    border: "none",
-                    background: sendMode === key ? colors.selectedBg : "transparent",
-                    color: colors.textLight,
-                    fontSize: 11,
-                    textAlign: "left",
-                    cursor: "pointer",
-                    borderRadius: 4,
-                    fontFamily: fonts.sans,
-                  }}
-                  onMouseEnter={(e) => { if (sendMode !== key) e.currentTarget.style.backgroundColor = "rgba(255,255,255,0.08)"; }}
-                  onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = sendMode === key ? colors.selectedBg : "transparent"; }}
-                >
-                  <span style={{ fontWeight: 600 }}>{label}{sendMode === key ? " \u2713" : ""}</span>
-                  <span style={{ fontSize: 10, color: colors.textDim }}>{desc}</span>
-                </button>
-              ))}
-              <div style={{ padding: "4px 8px 2px", fontSize: 10, color: colors.textDim, borderTop: `1px solid ${colors.border}`, marginTop: 2 }}>
-                {navigator.platform.includes("Mac") ? "⌘" : "Ctrl+"}Enter flips mode for one send
+        <div style={{ flex: 1 }} />
+        <AgentConfigPill channelId={channelId} />
+        <div style={modeStyles.pill}>
+          <button
+            style={{
+              ...modeStyles.segment,
+              backgroundColor: mode === "agent" ? colors.pillActiveBg : "transparent",
+              color: mode === "agent" ? colors.pillActiveText : colors.textDim,
+            }}
+            onClick={() => setMode("agent")}
+          >
+            Agent
+          </button>
+          <button
+            style={{
+              ...modeStyles.segment,
+              backgroundColor: mode === "plan" ? colors.pillActiveBg : "transparent",
+              color: mode === "plan" ? colors.pillActiveText : colors.textDim,
+            }}
+            onClick={() => setMode("plan")}
+          >
+            Plan
+          </button>
+        </div>
+        <div style={{ position: "relative", display: "flex", alignItems: "center", flexShrink: 0 }}>
+          {effectiveIsRunning ? (
+            <button
+              style={{ ...styles.sendButton, background: "transparent", border: `1px solid ${colors.textDim}`, color: colors.textDim, borderRadius: "8px 0 0 8px" }}
+              onClick={handleStop}
+              title="Stop"
+            >
+              <svg width="10" height="10" viewBox="0 0 10 10" fill="none">
+                <rect width="10" height="10" rx="2" fill="currentColor" />
+              </svg>
+            </button>
+          ) : (
+            <button
+              style={{
+                ...styles.sendButton,
+                borderRadius: "8px 0 0 8px",
+                opacity: text.trim() && !sending ? 1 : 0.4,
+              }}
+              onClick={() => handleSend()}
+              disabled={!text.trim() || sending}
+              title={`${sendMode === "interrupt" ? "Send (interrupt)" : "Send (queue)"} — ${navigator.platform.includes("Mac") ? "⌘" : "Ctrl+"}Enter to ${sendMode === "interrupt" ? "queue" : "interrupt"}`}
+            >
+              <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
+                <path d="M8 14V2M8 2L3 7M8 2L13 7" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+            </button>
+          )}
+          <button
+            style={{
+              height: 28,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              gap: 2,
+              background: effectiveIsRunning ? "transparent" : colors.pillActiveBg,
+              border: effectiveIsRunning ? `1px solid ${colors.textDim}` : "none",
+              borderLeft: effectiveIsRunning ? "none" : `1px solid ${colors.pillActiveText}33`,
+              borderRadius: "0 8px 8px 0",
+              color: effectiveIsRunning ? colors.textDim : colors.pillActiveText,
+              cursor: "pointer",
+              flexShrink: 0,
+              padding: "0 6px 0 4px",
+              fontFamily: fonts.mono,
+              fontSize: 9,
+              fontWeight: 600,
+              letterSpacing: 0.3,
+            }}
+            onClick={() => setShowSendMenu((prev) => !prev)}
+            title={`Send mode — ${navigator.platform.includes("Mac") ? "⌘" : "Ctrl+"}Enter sends with the other mode once`}
+          >
+            {sendMode === "interrupt" ? "INT" : "Q"}
+            <svg width="8" height="8" viewBox="0 0 8 8" fill="none">
+              <path d="M1.5 3L4 5.5L6.5 3" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+          </button>
+          {showSendMenu && (
+            <>
+              <div style={{ position: "fixed", inset: 0, zIndex: 999 }} onMouseDown={() => setShowSendMenu(false)} />
+              <div
+                style={{
+                  position: "absolute",
+                  bottom: "calc(100% + 4px)",
+                  right: 0,
+                  backgroundColor: colors.surface,
+                  border: `1px solid ${colors.border}`,
+                  borderRadius: 6,
+                  padding: 4,
+                  minWidth: 140,
+                  zIndex: 1000,
+                  boxShadow: `0 4px 12px ${colors.shadow}`,
+                  fontFamily: fonts.sans,
+                }}
+              >
+                {(
+                  [
+                    ["queue", "Queue", "Messages wait for the agent to finish"],
+                    ["interrupt", "Interrupt", "Stop the agent, then send"],
+                  ] as const
+                ).map(([key, label, desc]) => (
+                  <button
+                    key={key}
+                    onClick={() => changeSendMode(key)}
+                    style={{
+                      display: "flex",
+                      flexDirection: "column",
+                      gap: 1,
+                      width: "100%",
+                      padding: "5px 8px",
+                      border: "none",
+                      background: sendMode === key ? colors.selectedBg : "transparent",
+                      color: colors.textLight,
+                      fontSize: 11,
+                      textAlign: "left",
+                      cursor: "pointer",
+                      borderRadius: 4,
+                      fontFamily: fonts.sans,
+                    }}
+                    onMouseEnter={(e) => {
+                      if (sendMode !== key) e.currentTarget.style.backgroundColor = "rgba(255,255,255,0.08)";
+                    }}
+                    onMouseLeave={(e) => {
+                      e.currentTarget.style.backgroundColor = sendMode === key ? colors.selectedBg : "transparent";
+                    }}
+                  >
+                    <span style={{ fontWeight: 600 }}>
+                      {label}
+                      {sendMode === key ? " \u2713" : ""}
+                    </span>
+                    <span style={{ fontSize: 10, color: colors.textDim }}>{desc}</span>
+                  </button>
+                ))}
+                <div style={{ padding: "4px 8px 2px", fontSize: 10, color: colors.textDim, borderTop: `1px solid ${colors.border}`, marginTop: 2 }}>
+                  {navigator.platform.includes("Mac") ? "⌘" : "Ctrl+"}Enter flips mode for one send
+                </div>
               </div>
-            </div>
-          </>
-        )}
-      </div>
+            </>
+          )}
+        </div>
       </div>
     </div>
   );

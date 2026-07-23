@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { matchAbsPathToKey } from "./editorPaths";
 import type { RootEntry } from "../api/files";
+import { matchAbsPathToKey } from "./editorPaths";
 
 function root(index: number, path: string): RootEntry {
   return { index, path, name: path.split("/").pop() || path };

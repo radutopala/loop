@@ -8,11 +8,7 @@ export interface PlaygroundItem {
 }
 
 /** Fetch the current playground content by name. */
-export async function fetchPlayground(
-  name: string,
-  scope?: "global" | "project",
-  channelId?: string,
-): Promise<{ name: string; title?: string; html: string; description?: string } | null> {
+export async function fetchPlayground(name: string, scope?: "global" | "project", channelId?: string): Promise<{ name: string; title?: string; html: string; description?: string } | null> {
   const params = new URLSearchParams({ name });
   if (scope === "project" && channelId) {
     params.set("scope", "project");
@@ -50,11 +46,7 @@ function shareParams(name: string, scope?: "global" | "project", channelId?: str
 }
 
 /** Expose a playground publicly over a cloudflared tunnel; returns the public URL. */
-export async function sharePlayground(
-  name: string,
-  scope?: "global" | "project",
-  channelId?: string,
-): Promise<{ url: string; token: string }> {
+export async function sharePlayground(name: string, scope?: "global" | "project", channelId?: string): Promise<{ url: string; token: string }> {
   const res = await fetch(`${getApiUrl()}/api/playground/share?${shareParams(name, scope, channelId)}`, {
     method: "PUT",
   });
@@ -63,11 +55,7 @@ export async function sharePlayground(
 }
 
 /** Stop sharing a playground. */
-export async function unsharePlayground(
-  name: string,
-  scope?: "global" | "project",
-  channelId?: string,
-): Promise<void> {
+export async function unsharePlayground(name: string, scope?: "global" | "project", channelId?: string): Promise<void> {
   const res = await fetch(`${getApiUrl()}/api/playground/share?${shareParams(name, scope, channelId)}`, {
     method: "DELETE",
   });
@@ -86,11 +74,7 @@ export async function fetchPlaygroundShares(): Promise<PlaygroundShare[]> {
  * Share status for one playground — resolved by dir server-side, so it's
  * identical for every channel/thread that maps to the same playground.
  */
-export async function fetchPlaygroundShareStatus(
-  name: string,
-  scope?: "global" | "project",
-  channelId?: string,
-): Promise<{ shared: boolean; url: string }> {
+export async function fetchPlaygroundShareStatus(name: string, scope?: "global" | "project", channelId?: string): Promise<{ shared: boolean; url: string }> {
   const res = await fetch(`${getApiUrl()}/api/playground/share?${shareParams(name, scope, channelId)}`);
   if (!res.ok) throw new Error(`Failed to fetch playground share status: ${res.statusText}`);
   return res.json();

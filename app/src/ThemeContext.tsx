@@ -1,5 +1,5 @@
-import { createContext, useContext, useState, useEffect, type ReactNode } from "react";
-import { builtinThemes, darkColors, type ColorPalette } from "./theme";
+import { createContext, type ReactNode, useContext, useEffect, useState } from "react";
+import { builtinThemes, type ColorPalette, darkColors } from "./theme";
 import { storageSet } from "./utils/storage";
 
 export interface FontSizes {
@@ -40,7 +40,13 @@ const ThemeContext = createContext<ThemeContextValue>({
   setIslands: () => {},
 });
 
-export function ThemeProvider({ children, initialTheme, initialFontSizes, initialIslands, customThemes }: {
+export function ThemeProvider({
+  children,
+  initialTheme,
+  initialFontSizes,
+  initialIslands,
+  customThemes,
+}: {
   children: ReactNode;
   initialTheme?: string;
   initialFontSizes?: Partial<FontSizes>;
@@ -50,21 +56,21 @@ export function ThemeProvider({ children, initialTheme, initialFontSizes, initia
   const allThemes = { ...builtinThemes, ...customThemes };
   const availableThemes = Object.keys(allThemes);
 
-  const [themeName, setThemeNameState] = useState<string>(
-    initialTheme && allThemes[initialTheme] ? initialTheme : "dark"
-  );
+  const [themeName, setThemeNameState] = useState<string>(initialTheme && allThemes[initialTheme] ? initialTheme : "dark");
   const [fontSizes, setFontSizes] = useState<FontSizes>({ ...DEFAULT_FONT_SIZES, ...initialFontSizes });
   const [islands, setIslands] = useState(initialIslands ?? true);
 
   const baseColors = allThemes[themeName] ?? darkColors;
-  const colors = islands ? baseColors : {
-    ...baseColors,
-    canvas: baseColors.bg,
-    islandRadius: 0,
-    islandGap: 0,
-    islandShadow: "none",
-    islandBorder: "none",
-  };
+  const colors = islands
+    ? baseColors
+    : {
+        ...baseColors,
+        canvas: baseColors.bg,
+        islandRadius: 0,
+        islandGap: 0,
+        islandShadow: "none",
+        islandBorder: "none",
+      };
 
   // Wrap setThemeName to also persist to localStorage and broadcast to other
   // Electron windows so they update live.
@@ -119,11 +125,7 @@ export function ThemeProvider({ children, initialTheme, initialFontSizes, initia
     if (meta) meta.setAttribute("content", colors.canvas);
   }, [themeName, colors, islands]);
 
-  return (
-    <ThemeContext.Provider value={{ themeName, colors, setThemeName, availableThemes, fontSizes, setFontSizes, islands, setIslands }}>
-      {children}
-    </ThemeContext.Provider>
-  );
+  return <ThemeContext.Provider value={{ themeName, colors, setThemeName, availableThemes, fontSizes, setFontSizes, islands, setIslands }}>{children}</ThemeContext.Provider>;
 }
 
 export function useTheme() {

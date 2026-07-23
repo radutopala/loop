@@ -1,13 +1,46 @@
 // Panel types: chat/editor/file-tree/memory/git are singletons (max 1 each).
 // docker-browser/host-browser are mutually exclusive (only one browser type per layout).
 // docker-agent/host-shell/docker-shell/playground are multi-instance (multiple allowed, distinguished by id).
-export type PanelType = "chat" | "editor" | "file-tree" | "memory" | "git" | "docker-agent" | "host-shell" | "docker-shell" | "docker-browser" | "host-browser" | "sessions" | "playground" | "notes" | "tasks" | "kanban" | "workflows" | "audit" | "quality" | "review";
-export const SINGLETON_PANELS: PanelType[] = ["chat", "editor", "file-tree", "memory", "git", "docker-browser", "host-browser", "sessions", "notes", "tasks", "kanban", "workflows", "audit", "quality", "review"];
+export type PanelType =
+  | "chat"
+  | "editor"
+  | "file-tree"
+  | "memory"
+  | "git"
+  | "docker-agent"
+  | "host-shell"
+  | "docker-shell"
+  | "docker-browser"
+  | "host-browser"
+  | "sessions"
+  | "playground"
+  | "notes"
+  | "tasks"
+  | "kanban"
+  | "workflows"
+  | "audit"
+  | "quality"
+  | "review";
+export const SINGLETON_PANELS: PanelType[] = [
+  "chat",
+  "editor",
+  "file-tree",
+  "memory",
+  "git",
+  "docker-browser",
+  "host-browser",
+  "sessions",
+  "notes",
+  "tasks",
+  "kanban",
+  "workflows",
+  "audit",
+  "quality",
+  "review",
+];
 
 /** Panels that exclude each other -- if one is present, the others in the same group are blocked. */
-export const EXCLUSIVE_PANELS: PanelType[][] = [
-  ["docker-browser", "host-browser"],
-];
+export const EXCLUSIVE_PANELS: PanelType[][] = [["docker-browser", "host-browser"]];
 
 /** Panels only available in top-level channels (not threads or worktrees). */
 export const CHANNEL_ONLY_PANELS: PanelType[] = ["kanban"];
@@ -36,9 +69,7 @@ export const PANEL_OPTIONS: { panel: PanelType; label: string }[] = [
 ];
 
 /** Display labels for panel headers and tiles. */
-export const PANEL_LABELS: Record<PanelType, string> = Object.fromEntries(
-  PANEL_OPTIONS.map(({ panel, label }) => [panel, label]),
-) as Record<PanelType, string>;
+export const PANEL_LABELS: Record<PanelType, string> = Object.fromEntries(PANEL_OPTIONS.map(({ panel, label }) => [panel, label])) as Record<PanelType, string>;
 
 /** How a docker-agent terminal should boot Claude relative to the channel's stored session.
  *  - "resume": reuse the channel session in place (writes back to it).
@@ -55,7 +86,7 @@ export const AGENT_OPEN_MODE_OPTIONS: { mode: AgentOpenMode; label: string; desc
 
 export interface LeafNode {
   type: "leaf";
-  id: string;       // unique per leaf (e.g. "chat", "editor", "docker-agent-0", "host-shell-1")
+  id: string; // unique per leaf (e.g. "chat", "editor", "docker-agent-0", "host-shell-1")
   panel: PanelType; // determines what component to render
   flex: number;
   /** For docker-agent panes: how to handle the Claude session at boot.

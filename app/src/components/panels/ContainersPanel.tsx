@@ -1,12 +1,12 @@
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from "react";
-import type { Channel, WSEvent } from "../../types";
 import type { ContainerInfo } from "../../api/loopApi";
 import { fetchContainers } from "../../api/loopApi";
-import { fonts } from "../../theme";
-import type { ColorPalette } from "../../theme";
 import { useTheme } from "../../ThemeContext";
-import { ChannelHeaderInfo } from "../layout/ChannelHeaderInfo";
+import type { ColorPalette } from "../../theme";
+import { fonts } from "../../theme";
+import type { Channel, WSEvent } from "../../types";
 import { logErr } from "../../utils/log";
+import { ChannelHeaderInfo } from "../layout/ChannelHeaderInfo";
 
 function buildHeaderBtnStyle(colors: ColorPalette): React.CSSProperties {
   return {
@@ -73,9 +73,7 @@ export const ContainersPanel = forwardRef<ContainersPanelHandle, ContainersPanel
 
   // Load containers on mount.
   useEffect(() => {
-    fetchContainers()
-      .then(setContainers)
-      .catch(logErr("fetching containers"));
+    fetchContainers().then(setContainers).catch(logErr("fetching containers"));
   }, []);
 
   const handleContainerEvent = useCallback((event: WSEvent) => {
@@ -104,9 +102,7 @@ export const ContainersPanel = forwardRef<ContainersPanelHandle, ContainersPanel
       case "container.status_changed": {
         setContainers(
           containersRef.current.map((c) =>
-            c.container_id === data.container_id
-              ? { ...c, status: (data.status || c.status) as ContainerInfo["status"], remove_at: data.remove_at, updated_at: new Date().toISOString() }
-              : c,
+            c.container_id === data.container_id ? { ...c, status: (data.status || c.status) as ContainerInfo["status"], remove_at: data.remove_at, updated_at: new Date().toISOString() } : c,
           ),
         );
         break;
@@ -119,7 +115,10 @@ export const ContainersPanel = forwardRef<ContainersPanelHandle, ContainersPanel
   // Keyboard shortcut: Escape to close.
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "Escape") { e.preventDefault(); onClose(); }
+      if (e.key === "Escape") {
+        e.preventDefault();
+        onClose();
+      }
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
@@ -216,13 +215,7 @@ export const ContainersPanel = forwardRef<ContainersPanelHandle, ContainersPanel
         >
           Containers
         </span>
-        <button
-          onClick={onClose}
-          title="Close panel"
-          style={headerBtnStyle}
-          onMouseEnter={hoverIn}
-          onMouseLeave={hoverOut}
-        >
+        <button onClick={onClose} title="Close panel" style={headerBtnStyle} onMouseEnter={hoverIn} onMouseLeave={hoverOut}>
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
             <line x1="18" y1="6" x2="6" y2="18" />
             <line x1="6" y1="6" x2="18" y2="18" />
@@ -233,67 +226,64 @@ export const ContainersPanel = forwardRef<ContainersPanelHandle, ContainersPanel
       {/* Content */}
       <div style={{ flex: 1, overflow: "auto", padding: 12 }}>
         {containers.length === 0 ? (
-          <div style={{ color: colors.textDim, fontSize: 13, textAlign: "center", marginTop: 40 }}>
-            No containers
-          </div>
+          <div style={{ color: colors.textDim, fontSize: 13, textAlign: "center", marginTop: 40 }}>No containers</div>
         ) : (
           <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-            {[...containers].sort((a, b) => {
-              const ar = a.status === "running" ? 1 : 0;
-              const br = b.status === "running" ? 1 : 0;
-              if (ar !== br) return br - ar;
-              return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
-            }).map((c) => (
-              <div
-                key={c.container_id}
-                style={{
-                  backgroundColor: colors.bg,
-                  border: `1px solid ${colors.border}`,
-                  borderRadius: 8,
-                  padding: "10px 12px",
-                }}
-              >
-                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                    <span
-                      style={{
-                        fontSize: 10,
-                        fontWeight: 600,
-                        textTransform: "uppercase",
-                        letterSpacing: 0.5,
-                        color: colors.textLight,
-                        backgroundColor: colors.surface,
-                        padding: "2px 6px",
-                        borderRadius: 4,
-                      }}
-                    >
-                      {TYPE_LABELS[c.type] || c.type}
-                    </span>
-                    <span
-                      style={{
-                        width: 6,
-                        height: 6,
-                        borderRadius: "50%",
-                        backgroundColor: statusColor(c.status, colors),
-                      }}
-                    />
-                    <span style={{ fontSize: 11, color: colors.textDim }}>
-                      {c.status}{c.remove_at && ` (removal at ${formatTime(c.remove_at)})`}
-                    </span>
+            {[...containers]
+              .sort((a, b) => {
+                const ar = a.status === "running" ? 1 : 0;
+                const br = b.status === "running" ? 1 : 0;
+                if (ar !== br) return br - ar;
+                return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
+              })
+              .map((c) => (
+                <div
+                  key={c.container_id}
+                  style={{
+                    backgroundColor: colors.bg,
+                    border: `1px solid ${colors.border}`,
+                    borderRadius: 8,
+                    padding: "10px 12px",
+                  }}
+                >
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                      <span
+                        style={{
+                          fontSize: 10,
+                          fontWeight: 600,
+                          textTransform: "uppercase",
+                          letterSpacing: 0.5,
+                          color: colors.textLight,
+                          backgroundColor: colors.surface,
+                          padding: "2px 6px",
+                          borderRadius: 4,
+                        }}
+                      >
+                        {TYPE_LABELS[c.type] || c.type}
+                      </span>
+                      <span
+                        style={{
+                          width: 6,
+                          height: 6,
+                          borderRadius: "50%",
+                          backgroundColor: statusColor(c.status, colors),
+                        }}
+                      />
+                      <span style={{ fontSize: 11, color: colors.textDim }}>
+                        {c.status}
+                        {c.remove_at && ` (removal at ${formatTime(c.remove_at)})`}
+                      </span>
+                    </div>
+                  </div>
+                  {c.container_name && <div style={{ fontSize: 12, color: colors.textLight, fontFamily: fonts.mono, marginBottom: 4, wordBreak: "break-all" }}>{c.container_name}</div>}
+                  <div style={{ display: "flex", gap: 16, fontSize: 11, color: colors.textDim }}>
+                    <span title="Container ID">{c.container_id.slice(0, 12)}</span>
+                    <span title="Channel ID">ch: {c.channel_id.slice(0, 12)}</span>
+                    {c.created_at && <span title="Created">{formatTime(c.created_at)}</span>}
                   </div>
                 </div>
-                {c.container_name && (
-                  <div style={{ fontSize: 12, color: colors.textLight, fontFamily: fonts.mono, marginBottom: 4, wordBreak: "break-all" }}>
-                    {c.container_name}
-                  </div>
-                )}
-                <div style={{ display: "flex", gap: 16, fontSize: 11, color: colors.textDim }}>
-                  <span title="Container ID">{c.container_id.slice(0, 12)}</span>
-                  <span title="Channel ID">ch: {c.channel_id.slice(0, 12)}</span>
-                  {c.created_at && <span title="Created">{formatTime(c.created_at)}</span>}
-                </div>
-              </div>
-            ))}
+              ))}
           </div>
         )}
       </div>

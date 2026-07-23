@@ -1,5 +1,5 @@
-import type { PaneNode } from "../types/panels";
 import type { LayoutRoot } from "../canvas/types";
+import type { PaneNode } from "../types/panels";
 
 const LAYOUT_KEY = "loop-workspace-layout";
 
@@ -181,14 +181,18 @@ function loadAll(): Record<string, ChannelLayouts> {
         return parsed;
       }
     }
-  } catch { /* ignore */ }
+  } catch {
+    /* ignore */
+  }
   return {};
 }
 
 function saveAll(all: Record<string, ChannelLayouts>): void {
   try {
     localStorage.setItem(LAYOUT_KEY, JSON.stringify(all));
-  } catch { /* ignore */ }
+  } catch {
+    /* ignore */
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -312,18 +316,110 @@ export function createDefaultLayouts(): ChannelLayouts {
     types: { Canvas: "canvas" },
     version: CURRENT_VERSION,
     layouts: {
-      Chat: { type: "split", direction: "horizontal", flex: 1, children: [{ type: "leaf", id: "chat", panel: "chat", flex: 50 }, { type: "leaf", id: "git", panel: "git", flex: 50 }] },
-      Editor: { type: "split", direction: "horizontal", flex: 1, children: [{ type: "leaf", id: "file-tree", panel: "file-tree", flex: 18 }, { type: "split", direction: "vertical", flex: 52, children: [{ type: "leaf", id: "editor", panel: "editor", flex: 70 }, { type: "leaf", id: "host-shell-0", panel: "host-shell", flex: 30 }] }, { type: "leaf", id: "chat", panel: "chat", flex: 30 }] },
+      Chat: {
+        type: "split",
+        direction: "horizontal",
+        flex: 1,
+        children: [
+          { type: "leaf", id: "chat", panel: "chat", flex: 50 },
+          { type: "leaf", id: "git", panel: "git", flex: 50 },
+        ],
+      },
+      Editor: {
+        type: "split",
+        direction: "horizontal",
+        flex: 1,
+        children: [
+          { type: "leaf", id: "file-tree", panel: "file-tree", flex: 18 },
+          {
+            type: "split",
+            direction: "vertical",
+            flex: 52,
+            children: [
+              { type: "leaf", id: "editor", panel: "editor", flex: 70 },
+              { type: "leaf", id: "host-shell-0", panel: "host-shell", flex: 30 },
+            ],
+          },
+          { type: "leaf", id: "chat", panel: "chat", flex: 30 },
+        ],
+      },
       Memory: { type: "leaf", id: "memory", panel: "memory", flex: 1 },
       Git: { type: "leaf", id: "git", panel: "git", flex: 1 },
-      "Browser Chat": { type: "split", direction: "horizontal", flex: 1, children: [{ type: "leaf", id: "chat", panel: "chat", flex: 50 }, { type: "split", direction: "vertical", flex: 50, children: [{ type: "leaf", id: "docker-browser", panel: "docker-browser", flex: 70 }, { type: "leaf", id: "git", panel: "git", flex: 30 }] }] },
+      "Browser Chat": {
+        type: "split",
+        direction: "horizontal",
+        flex: 1,
+        children: [
+          { type: "leaf", id: "chat", panel: "chat", flex: 50 },
+          {
+            type: "split",
+            direction: "vertical",
+            flex: 50,
+            children: [
+              { type: "leaf", id: "docker-browser", panel: "docker-browser", flex: 70 },
+              { type: "leaf", id: "git", panel: "git", flex: 30 },
+            ],
+          },
+        ],
+      },
       Sessions: { type: "leaf", id: "sessions", panel: "sessions", flex: 1 },
-      Swarm: { type: "split", direction: "horizontal", flex: 1, children: [{ type: "leaf", id: "docker-agent-0", panel: "docker-agent", flex: 40 }, { type: "split", direction: "vertical", flex: 60, children: [{ type: "leaf", id: "docker-agent-1", panel: "docker-agent", flex: 1 }, { type: "leaf", id: "docker-agent-2", panel: "docker-agent", flex: 1 }] }] },
-      Canvas: { type: "canvas", viewport: { x: 0, y: 0, zoom: 1 }, tiles: [{ id: "docker-agent-0", panel: "docker-agent", x: 0, y: 0, width: 550, height: 800, zIndex: 0 }, { id: "docker-agent-1", panel: "docker-agent", x: 570, y: 0, width: 500, height: 390, zIndex: 0 }, { id: "docker-agent-2", panel: "docker-agent", x: 570, y: 410, width: 500, height: 390, zIndex: 0 }, { id: "git", panel: "git", x: 1090, y: 0, width: 600, height: 400, zIndex: 0 }, { id: "playground", panel: "playground", x: 1090, y: 420, width: 600, height: 380, zIndex: 0 }, { id: "memory", panel: "memory", x: 1710, y: 0, width: 800, height: 800, zIndex: 0 }] },
-      Playground: { type: "split", direction: "horizontal", flex: 1, children: [{ type: "leaf", id: "chat", panel: "chat", flex: 40 }, { type: "leaf", id: "playground", panel: "playground", flex: 60 }] },
+      Swarm: {
+        type: "split",
+        direction: "horizontal",
+        flex: 1,
+        children: [
+          { type: "leaf", id: "docker-agent-0", panel: "docker-agent", flex: 40 },
+          {
+            type: "split",
+            direction: "vertical",
+            flex: 60,
+            children: [
+              { type: "leaf", id: "docker-agent-1", panel: "docker-agent", flex: 1 },
+              { type: "leaf", id: "docker-agent-2", panel: "docker-agent", flex: 1 },
+            ],
+          },
+        ],
+      },
+      Canvas: {
+        type: "canvas",
+        viewport: { x: 0, y: 0, zoom: 1 },
+        tiles: [
+          { id: "docker-agent-0", panel: "docker-agent", x: 0, y: 0, width: 550, height: 800, zIndex: 0 },
+          { id: "docker-agent-1", panel: "docker-agent", x: 570, y: 0, width: 500, height: 390, zIndex: 0 },
+          { id: "docker-agent-2", panel: "docker-agent", x: 570, y: 410, width: 500, height: 390, zIndex: 0 },
+          { id: "git", panel: "git", x: 1090, y: 0, width: 600, height: 400, zIndex: 0 },
+          { id: "playground", panel: "playground", x: 1090, y: 420, width: 600, height: 380, zIndex: 0 },
+          { id: "memory", panel: "memory", x: 1710, y: 0, width: 800, height: 800, zIndex: 0 },
+        ],
+      },
+      Playground: {
+        type: "split",
+        direction: "horizontal",
+        flex: 1,
+        children: [
+          { type: "leaf", id: "chat", panel: "chat", flex: 40 },
+          { type: "leaf", id: "playground", panel: "playground", flex: 60 },
+        ],
+      },
       Kanban: { type: "leaf", id: "kanban", panel: "kanban", flex: 1 },
       Workflows: { type: "leaf", id: "workflows", panel: "workflows", flex: 1 },
-      Review: { type: "split", direction: "horizontal", flex: 1, children: [{ type: "split", direction: "vertical", flex: 40, children: [{ type: "leaf", id: "chat", panel: "chat", flex: 70 }, { type: "leaf", id: "git", panel: "git", flex: 30 }] }, { type: "leaf", id: "review", panel: "review", flex: 60 }] },
+      Review: {
+        type: "split",
+        direction: "horizontal",
+        flex: 1,
+        children: [
+          {
+            type: "split",
+            direction: "vertical",
+            flex: 40,
+            children: [
+              { type: "leaf", id: "chat", panel: "chat", flex: 70 },
+              { type: "leaf", id: "git", panel: "git", flex: 30 },
+            ],
+          },
+          { type: "leaf", id: "review", panel: "review", flex: 60 },
+        ],
+      },
     },
   };
 }
@@ -382,9 +478,9 @@ export function restoreDefaultLayouts(channelId: string): ChannelLayouts {
     }
     if (!ch.order.includes(name)) {
       // Insert at position matching DEFAULT_LAYOUT_NAMES order
-      const idx = DEFAULT_LAYOUT_NAMES.indexOf(name as typeof DEFAULT_LAYOUT_NAMES[number]);
+      const idx = DEFAULT_LAYOUT_NAMES.indexOf(name as (typeof DEFAULT_LAYOUT_NAMES)[number]);
       const insertAt = ch.order.findIndex((n) => {
-        const nIdx = DEFAULT_LAYOUT_NAMES.indexOf(n as typeof DEFAULT_LAYOUT_NAMES[number]);
+        const nIdx = DEFAULT_LAYOUT_NAMES.indexOf(n as (typeof DEFAULT_LAYOUT_NAMES)[number]);
         return nIdx >= 0 && nIdx > idx;
       });
       if (insertAt >= 0) {

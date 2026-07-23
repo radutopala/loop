@@ -1,8 +1,8 @@
 import { useRef, useState } from "react";
-import type { Message } from "../../types";
-import { fonts } from "../../theme";
-import { useTheme } from "../../ThemeContext";
 import { deleteQueuedMessage, reorderQueuedMessages } from "../../api/loopApi";
+import { useTheme } from "../../ThemeContext";
+import { fonts } from "../../theme";
+import type { Message } from "../../types";
 import { logErr } from "../../utils/log";
 
 interface QueuedMessagesPopupProps {
@@ -108,15 +108,17 @@ export function QueuedMessagesPopup({ messages, channelId }: QueuedMessagesPopup
 
   return (
     <div style={{ display: "flex", justifyContent: "center", padding: "4px 24px 0" }}>
-      <div style={{
-        width: "100%",
-        maxWidth: 768,
-        borderRadius: 8,
-        border: `1px solid ${colors.border}`,
-        backgroundColor: colors.surface,
-        fontFamily: fonts.mono,
-        fontSize: 12,
-      }}>
+      <div
+        style={{
+          width: "100%",
+          maxWidth: 768,
+          borderRadius: 8,
+          border: `1px solid ${colors.border}`,
+          backgroundColor: colors.surface,
+          fontFamily: fonts.mono,
+          fontSize: 12,
+        }}
+      >
         <button
           onClick={() => setExpanded((v) => !v)}
           style={{
@@ -134,8 +136,7 @@ export function QueuedMessagesPopup({ messages, channelId }: QueuedMessagesPopup
           }}
         >
           <span>
-            <span style={{ fontWeight: 700, color: colors.textLight }}>{messages.length}</span>
-            {" "}queued
+            <span style={{ fontWeight: 700, color: colors.textLight }}>{messages.length}</span> queued
           </span>
           <span style={{ fontSize: 10, opacity: 0.7 }}>{expanded ? "\u25B4" : "\u25BE"}</span>
         </button>
@@ -161,22 +162,30 @@ export function QueuedMessagesPopup({ messages, channelId }: QueuedMessagesPopup
                     padding: "6px 14px",
                     borderBottom: `1px solid ${colors.border}`,
                     opacity: isDeleting ? 0.5 : 1,
-                    boxShadow:
-                      dropTarget && dropTarget.id === msg.msg_id
-                        ? dropTarget.pos === "before"
-                          ? `inset 0 2px 0 0 ${colors.active}`
-                          : `inset 0 -2px 0 0 ${colors.active}`
-                        : undefined,
+                    boxShadow: dropTarget && dropTarget.id === msg.msg_id ? (dropTarget.pos === "before" ? `inset 0 2px 0 0 ${colors.active}` : `inset 0 -2px 0 0 ${colors.active}`) : undefined,
                   }}
                 >
                   <span
                     draggable
-                    onDragStart={(e) => { draggedIdRef.current = msg.msg_id; e.dataTransfer.effectAllowed = "move"; }}
-                    onDragEnd={() => { draggedIdRef.current = null; setDropTarget(null); }}
+                    onDragStart={(e) => {
+                      draggedIdRef.current = msg.msg_id;
+                      e.dataTransfer.effectAllowed = "move";
+                    }}
+                    onDragEnd={() => {
+                      draggedIdRef.current = null;
+                      setDropTarget(null);
+                    }}
                     title="Drag to reorder"
                     style={{ flexShrink: 0, cursor: "grab", color: colors.textDim, userSelect: "none", display: "flex", alignItems: "center", paddingTop: 2 }}
                   >
-                    <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><circle cx="9" cy="6" r="1.5" /><circle cx="15" cy="6" r="1.5" /><circle cx="9" cy="12" r="1.5" /><circle cx="15" cy="12" r="1.5" /><circle cx="9" cy="18" r="1.5" /><circle cx="15" cy="18" r="1.5" /></svg>
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor">
+                      <circle cx="9" cy="6" r="1.5" />
+                      <circle cx="15" cy="6" r="1.5" />
+                      <circle cx="9" cy="12" r="1.5" />
+                      <circle cx="15" cy="12" r="1.5" />
+                      <circle cx="9" cy="18" r="1.5" />
+                      <circle cx="15" cy="18" r="1.5" />
+                    </svg>
                   </span>
                   <button
                     onClick={() => toggleRow(msg.msg_id)}
@@ -218,13 +227,22 @@ export function QueuedMessagesPopup({ messages, channelId }: QueuedMessagesPopup
                       cursor: "pointer",
                       borderRadius: 4,
                     }}
-                    onMouseEnter={(e) => { if (!copiedIds.has(msg.msg_id)) e.currentTarget.style.color = colors.textLight; }}
-                    onMouseLeave={(e) => { if (!copiedIds.has(msg.msg_id)) e.currentTarget.style.color = colors.textDim; }}
+                    onMouseEnter={(e) => {
+                      if (!copiedIds.has(msg.msg_id)) e.currentTarget.style.color = colors.textLight;
+                    }}
+                    onMouseLeave={(e) => {
+                      if (!copiedIds.has(msg.msg_id)) e.currentTarget.style.color = colors.textDim;
+                    }}
                   >
                     {copiedIds.has(msg.msg_id) ? (
-                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12" /></svg>
+                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                        <polyline points="20 6 9 17 4 12" />
+                      </svg>
                     ) : (
-                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2" /><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" /></svg>
+                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                        <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
+                        <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+                      </svg>
                     )}
                   </button>
                   <button
@@ -244,8 +262,12 @@ export function QueuedMessagesPopup({ messages, channelId }: QueuedMessagesPopup
                       lineHeight: 1,
                       borderRadius: 4,
                     }}
-                    onMouseEnter={(e) => { if (!isDeleting) e.currentTarget.style.color = colors.dangerText; }}
-                    onMouseLeave={(e) => { e.currentTarget.style.color = colors.textDim; }}
+                    onMouseEnter={(e) => {
+                      if (!isDeleting) e.currentTarget.style.color = colors.dangerText;
+                    }}
+                    onMouseLeave={(e) => {
+                      e.currentTarget.style.color = colors.textDim;
+                    }}
                   >
                     {"\u00D7"}
                   </button>

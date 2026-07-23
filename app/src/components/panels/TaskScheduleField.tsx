@@ -1,11 +1,5 @@
 import type { CSSProperties } from "react";
-import {
-  rfc3339ToDatetimeLocal,
-  datetimeLocalToRFC3339,
-  parseIntervalToParts,
-  intervalPartsToString,
-  type IntervalUnit,
-} from "../../utils/taskUtils";
+import { datetimeLocalToRFC3339, type IntervalUnit, intervalPartsToString, parseIntervalToParts, rfc3339ToDatetimeLocal } from "../../utils/taskUtils";
 
 export type TaskType = "cron" | "interval" | "once" | "manual";
 
@@ -28,14 +22,7 @@ export function TaskScheduleField({ type, value, onChange, inputStyle, selectSty
   if (type === "manual") return null;
 
   if (type === "once") {
-    return (
-      <input
-        type="datetime-local"
-        value={rfc3339ToDatetimeLocal(value)}
-        onChange={(e) => onChange(datetimeLocalToRFC3339(e.target.value))}
-        style={{ ...inputStyle, flex: 2 }}
-      />
-    );
+    return <input type="datetime-local" value={rfc3339ToDatetimeLocal(value)} onChange={(e) => onChange(datetimeLocalToRFC3339(e.target.value))} style={{ ...inputStyle, flex: 2 }} />;
   }
 
   if (type === "interval") {
@@ -50,12 +37,7 @@ export function TaskScheduleField({ type, value, onChange, inputStyle, selectSty
           onChange={(e) => onChange(intervalPartsToString(Number(e.target.value), unit))}
           style={{ ...inputStyle, flex: 1 }}
         />
-        <select
-          data-testid="task-interval-unit"
-          value={unit}
-          onChange={(e) => onChange(intervalPartsToString(amount, e.target.value as IntervalUnit))}
-          style={{ ...selectStyle, flex: 1 }}
-        >
+        <select data-testid="task-interval-unit" value={unit} onChange={(e) => onChange(intervalPartsToString(amount, e.target.value as IntervalUnit))} style={{ ...selectStyle, flex: 1 }}>
           <option value="s">seconds</option>
           <option value="m">minutes</option>
           <option value="h">hours</option>
@@ -66,13 +48,5 @@ export function TaskScheduleField({ type, value, onChange, inputStyle, selectSty
   }
 
   // cron: raw 5-field expression.
-  return (
-    <input
-      type="text"
-      placeholder="*/30 * * * *"
-      value={value}
-      onChange={(e) => onChange(e.target.value)}
-      style={{ ...inputStyle, flex: 2 }}
-    />
-  );
+  return <input type="text" placeholder="*/30 * * * *" value={value} onChange={(e) => onChange(e.target.value)} style={{ ...inputStyle, flex: 2 }} />;
 }

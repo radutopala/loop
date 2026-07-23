@@ -1,7 +1,7 @@
+import type { WorkflowDef, WorkflowNodeRun, WorkflowRun } from "../../api/loopApi";
 import type { ColorPalette } from "../../theme";
 import { fonts } from "../../theme";
-import type { WorkflowDef, WorkflowRun, WorkflowNodeRun } from "../../api/loopApi";
-import { STATUS_COLORS, timeAgo, elapsed, buildBtnStyle, buildBtnSecondaryStyle, buildInputStyle } from "../../utils/workflowHelpers";
+import { buildBtnSecondaryStyle, buildBtnStyle, buildInputStyle, elapsed, STATUS_COLORS, timeAgo } from "../../utils/workflowHelpers";
 import { WorkflowGraph } from "./WorkflowGraph";
 
 interface WorkflowDetailProps {
@@ -38,11 +38,7 @@ export function WorkflowDetail({
   onConfirmDeleteChange,
 }: WorkflowDetailProps) {
   if (!selectedRun) {
-    return (
-      <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", color: colors.textDim, fontSize: 13 }}>
-        Select a workflow run to view details
-      </div>
-    );
+    return <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", color: colors.textDim, fontSize: 13 }}>Select a workflow run to view details</div>;
   }
 
   const btnSecondaryStyle = buildBtnSecondaryStyle(colors);
@@ -55,10 +51,16 @@ export function WorkflowDetail({
       <div style={{ padding: 12, borderBottom: `1px solid ${colors.border}`, display: "flex", flexDirection: "column", gap: 6 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
           <span style={{ fontSize: 13, fontWeight: 600, color: colors.text }}>{selectedRun.workflow_name}</span>
-          <span style={{
-            padding: "1px 5px", borderRadius: 3, fontSize: 10, fontWeight: 600,
-            color: "#fff", background: STATUS_COLORS[selectedRun.status] ?? colors.textDim,
-          }}>
+          <span
+            style={{
+              padding: "1px 5px",
+              borderRadius: 3,
+              fontSize: 10,
+              fontWeight: 600,
+              color: "#fff",
+              background: STATUS_COLORS[selectedRun.status] ?? colors.textDim,
+            }}
+          >
             {selectedRun.status.toUpperCase()}
           </span>
           <span style={{ color: colors.textDim, fontSize: 11, fontFamily: fonts.mono }}>{selectedRun.id}</span>
@@ -69,18 +71,12 @@ export function WorkflowDetail({
             </button>
           )}
           {(selectedRun.status === "running" || selectedRun.status === "paused") && (
-            <button
-              onClick={() => onCancel(selectedRun.id)}
-              style={{ ...btnSecondaryStyle, color: colors.error, borderColor: colors.error }}
-            >
+            <button onClick={() => onCancel(selectedRun.id)} style={{ ...btnSecondaryStyle, color: colors.error, borderColor: colors.error }}>
               Cancel
             </button>
           )}
           <div style={{ position: "relative" }}>
-            <button
-              onClick={() => onConfirmDeleteChange(selectedRun.id)}
-              style={{ ...btnSecondaryStyle, color: colors.error, borderColor: colors.error }}
-            >
+            <button onClick={() => onConfirmDeleteChange(selectedRun.id)} style={{ ...btnSecondaryStyle, color: colors.error, borderColor: colors.error }}>
               Delete
             </button>
             {confirmingDeleteId === selectedRun.id && (
@@ -114,7 +110,10 @@ export function WorkflowDetail({
                 </svg>
                 <span style={{ color: colors.textLight }}>Delete?</span>
                 <button
-                  onClick={() => { onConfirmDeleteChange(null); onDelete(selectedRun.id); }}
+                  onClick={() => {
+                    onConfirmDeleteChange(null);
+                    onDelete(selectedRun.id);
+                  }}
                   style={{
                     background: colors.dangerBg,
                     border: `1px solid ${colors.dangerText}`,
@@ -126,8 +125,14 @@ export function WorkflowDetail({
                     borderRadius: 4,
                     lineHeight: 1.4,
                   }}
-                  onMouseEnter={(e) => { e.currentTarget.style.background = colors.dangerHoverBg; e.currentTarget.style.color = colors.white; }}
-                  onMouseLeave={(e) => { e.currentTarget.style.background = colors.dangerBg; e.currentTarget.style.color = colors.dangerText; }}
+                  onMouseEnter={(e) => {
+                    e.currentTarget.style.background = colors.dangerHoverBg;
+                    e.currentTarget.style.color = colors.white;
+                  }}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.style.background = colors.dangerBg;
+                    e.currentTarget.style.color = colors.dangerText;
+                  }}
                 >
                   Yes
                 </button>
@@ -144,8 +149,14 @@ export function WorkflowDetail({
                     borderRadius: 4,
                     lineHeight: 1.4,
                   }}
-                  onMouseEnter={(e) => { e.currentTarget.style.color = colors.textLight; e.currentTarget.style.borderColor = colors.textDim; }}
-                  onMouseLeave={(e) => { e.currentTarget.style.color = colors.textDim; e.currentTarget.style.borderColor = colors.border; }}
+                  onMouseEnter={(e) => {
+                    e.currentTarget.style.color = colors.textLight;
+                    e.currentTarget.style.borderColor = colors.textDim;
+                  }}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.style.color = colors.textDim;
+                    e.currentTarget.style.borderColor = colors.border;
+                  }}
                 >
                   No
                 </button>
@@ -157,31 +168,19 @@ export function WorkflowDetail({
           Started {timeAgo(selectedRun.started_at)}
           {selectedRun.finished_at && <> &middot; Took {elapsed(selectedRun.started_at, selectedRun.finished_at)}</>}
         </div>
-        {selectedRun.dir_path && (
-          <div style={{ color: colors.textDim, fontSize: 11, fontFamily: fonts.mono }}>{selectedRun.dir_path}</div>
-        )}
-        {selectedRun.error_text && (
-          <div style={{ color: colors.error, fontSize: 11, padding: "4px 6px", borderRadius: 4, background: `${colors.error}18` }}>
-            {selectedRun.error_text}
-          </div>
-        )}
+        {selectedRun.dir_path && <div style={{ color: colors.textDim, fontSize: 11, fontFamily: fonts.mono }}>{selectedRun.dir_path}</div>}
+        {selectedRun.error_text && <div style={{ color: colors.error, fontSize: 11, padding: "4px 6px", borderRadius: 4, background: `${colors.error}18` }}>{selectedRun.error_text}</div>}
       </div>
 
       {/* Approval widget */}
       {selectedRun.status === "paused" && selectedRun.paused_node_id && (
         <div style={{ padding: 12, borderBottom: `1px solid ${colors.border}`, display: "flex", flexDirection: "column", gap: 8, background: `${STATUS_COLORS.paused}08` }}>
-          <div style={{ fontSize: 11, color: colors.textDim, textTransform: "uppercase", letterSpacing: 1 }}>
-            Approval Required &mdash; {selectedRun.paused_node_id}
-          </div>
+          <div style={{ fontSize: 11, color: colors.textDim, textTransform: "uppercase", letterSpacing: 1 }}>Approval Required &mdash; {selectedRun.paused_node_id}</div>
           {(() => {
             const pausedNode = nodeRuns.find((n) => n.node_id === selectedRun.paused_node_id && n.status === "paused");
             const approvalDef = selectedDef?.nodes.find((n) => n.id === selectedRun.paused_node_id);
             const message = approvalDef?.message || pausedNode?.output;
-            return message ? (
-              <div style={{ fontSize: 12, color: colors.text, whiteSpace: "pre-wrap", padding: "6px 8px", borderRadius: 4, background: colors.surface }}>
-                {message}
-              </div>
-            ) : null;
+            return message ? <div style={{ fontSize: 12, color: colors.text, whiteSpace: "pre-wrap", padding: "6px 8px", borderRadius: 4, background: colors.surface }}>{message}</div> : null;
           })()}
           <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
             <input
@@ -190,21 +189,15 @@ export function WorkflowDetail({
               placeholder="Response (optional)"
               value={resumeResponse}
               onChange={(e) => onResumeResponseChange(e.target.value)}
-              onKeyDown={(e) => { if (e.key === "Enter") onResume(selectedRun.id, resumeResponse); }}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") onResume(selectedRun.id, resumeResponse);
+              }}
               style={{ ...inputStyle, flex: 1 }}
             />
-            <button
-              data-testid="approval-approve-btn"
-              onClick={() => onResume(selectedRun.id, resumeResponse || "approved")}
-              style={btnStyle}
-            >
+            <button data-testid="approval-approve-btn" onClick={() => onResume(selectedRun.id, resumeResponse || "approved")} style={btnStyle}>
               Approve
             </button>
-            <button
-              data-testid="approval-reject-btn"
-              onClick={() => onResume(selectedRun.id, "rejected")}
-              style={{ ...btnSecondaryStyle, color: colors.error, borderColor: colors.error }}
-            >
+            <button data-testid="approval-reject-btn" onClick={() => onResume(selectedRun.id, "rejected")} style={{ ...btnSecondaryStyle, color: colors.error, borderColor: colors.error }}>
               Reject
             </button>
           </div>
@@ -212,13 +205,7 @@ export function WorkflowDetail({
       )}
 
       {/* Node graph */}
-      <WorkflowGraph
-        defs={selectedDef?.nodes ?? []}
-        nodeRuns={nodeRuns}
-        colors={colors}
-        onNodeClick={onToggleNodeExpand}
-        expandedNodeId={expandedNodeId}
-      />
+      <WorkflowGraph defs={selectedDef?.nodes ?? []} nodeRuns={nodeRuns} colors={colors} onNodeClick={onToggleNodeExpand} expandedNodeId={expandedNodeId} />
     </div>
   );
 }

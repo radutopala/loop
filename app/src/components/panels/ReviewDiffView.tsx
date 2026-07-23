@@ -1,11 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { fonts } from "../../theme";
-import type { ColorPalette } from "../../theme";
-import { useTheme } from "../../ThemeContext";
-import { ContextMenu } from "../shared/ContextMenu";
-import { computeSegments, parseUnifiedDiff, type HunkLine, type ParsedFile } from "./DiffViewer";
 import type { ReviewComment } from "../../api/review";
+import { useTheme } from "../../ThemeContext";
+import type { ColorPalette } from "../../theme";
+import { fonts } from "../../theme";
 import type { FileLinkOpenDetail } from "../chat/FileLink";
+import { ContextMenu } from "../shared/ContextMenu";
+import { computeSegments, type HunkLine, type ParsedFile, parseUnifiedDiff } from "./DiffViewer";
 
 interface ReviewDiffViewProps {
   channelId: string;
@@ -97,10 +97,7 @@ export function ReviewDiffView({ channelId, rawDiff, comments, worktreePath, onP
     return { byFile, orphans };
   }, [parsedFiles, comments]);
 
-  const summaries = useMemo(
-    () => parsedFiles.map((p) => summarize(p, byFile.get(p.path) ?? [])),
-    [parsedFiles, byFile],
-  );
+  const summaries = useMemo(() => parsedFiles.map((p) => summarize(p, byFile.get(p.path) ?? [])), [parsedFiles, byFile]);
 
   // Files that have any comments start expanded so the user sees
   // existing review context immediately on Load. Other files stay
@@ -149,27 +146,26 @@ export function ReviewDiffView({ channelId, rawDiff, comments, worktreePath, onP
   }, [summaries]);
   const fileRefs = useRef<Map<number, HTMLDivElement>>(new Map());
 
-  const navigateToFile = useCallback((idx: number) => {
-    if (idx < 0 || idx >= summaries.length) return;
-    setFocusedIdx(idx);
-    const sum = summaries[idx]!;
-    setExpanded((prev) => {
-      if (prev.has(sum.path)) return prev;
-      const next = new Set(prev);
-      next.add(sum.path);
-      return next;
-    });
-    requestAnimationFrame(() => {
-      fileRefs.current.get(idx)?.scrollIntoView({ behavior: "smooth", block: "start" });
-    });
-  }, [summaries]);
+  const navigateToFile = useCallback(
+    (idx: number) => {
+      if (idx < 0 || idx >= summaries.length) return;
+      setFocusedIdx(idx);
+      const sum = summaries[idx]!;
+      setExpanded((prev) => {
+        if (prev.has(sum.path)) return prev;
+        const next = new Set(prev);
+        next.add(sum.path);
+        return next;
+      });
+      requestAnimationFrame(() => {
+        fileRefs.current.get(idx)?.scrollIntoView({ behavior: "smooth", block: "start" });
+      });
+    },
+    [summaries],
+  );
 
   if (parsedFiles.length === 0 && comments.length === 0) {
-    return (
-      <div style={{ padding: 16, color: colors.textDim, fontSize: 12, textAlign: "center" }}>
-        No diff content. The PR may be empty or the worktree failed to load.
-      </div>
-    );
+    return <div style={{ padding: 16, color: colors.textDim, fontSize: 12, textAlign: "center" }}>No diff content. The PR may be empty or the worktree failed to load.</div>;
   }
 
   const clampedIdx = Math.min(focusedIdx, Math.max(summaries.length - 1, 0));
@@ -183,10 +179,7 @@ export function ReviewDiffView({ channelId, rawDiff, comments, worktreePath, onP
   // We also fold in unique orphan paths (GH comments whose file is no
   // longer in the diff) so "n / m commented" reflects every commented
   // entity the user can see, not just what's nav-able.
-  const commentedIndices = useMemo(
-    () => summaries.flatMap((s, i) => (s.agentCount + s.ghCount > 0 ? [i] : [])),
-    [summaries],
-  );
+  const commentedIndices = useMemo(() => summaries.flatMap((s, i) => (s.agentCount + s.ghCount > 0 ? [i] : [])), [summaries]);
   const orphanPathCount = useMemo(() => {
     const paths = new Set<string>();
     for (const c of orphans) paths.add(c.path);
@@ -238,7 +231,10 @@ export function ReviewDiffView({ channelId, rawDiff, comments, worktreePath, onP
               comments={byFile.get(sum.path) ?? []}
               expanded={expanded.has(sum.path)}
               colors={colors}
-              onToggle={() => { setFocusedIdx(idx); toggle(sum.path); }}
+              onToggle={() => {
+                setFocusedIdx(idx);
+                toggle(sum.path);
+              }}
               onContextMenu={handleFileContextMenu}
               onPushComment={onPushComment}
               onPushCommentToChat={onPushCommentToChat}
@@ -352,24 +348,12 @@ function DiffToolbar({
           <polyline points="7,20 12,15 17,20" />
         </svg>
       </button>
-      <button
-        data-testid="review-diff-prev-file"
-        style={{ ...btn, opacity: canPrev ? 1 : 0.3, cursor: canPrev ? "pointer" : "default" }}
-        disabled={!canPrev}
-        onClick={onPrev}
-        title="Previous file"
-      >
+      <button data-testid="review-diff-prev-file" style={{ ...btn, opacity: canPrev ? 1 : 0.3, cursor: canPrev ? "pointer" : "default" }} disabled={!canPrev} onClick={onPrev} title="Previous file">
         <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
           <path d="M2.5 6.5L5 3.5L7.5 6.5" />
         </svg>
       </button>
-      <button
-        data-testid="review-diff-next-file"
-        style={{ ...btn, opacity: canNext ? 1 : 0.3, cursor: canNext ? "pointer" : "default" }}
-        disabled={!canNext}
-        onClick={onNext}
-        title="Next file"
-      >
+      <button data-testid="review-diff-next-file" style={{ ...btn, opacity: canNext ? 1 : 0.3, cursor: canNext ? "pointer" : "default" }} disabled={!canNext} onClick={onNext} title="Next file">
         <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
           <path d="M2.5 3.5L5 6.5L7.5 3.5" />
         </svg>
@@ -388,11 +372,7 @@ function DiffToolbar({
         {focusedPath}
       </span>
       <span style={{ fontFamily: fonts.mono, fontSize: 11, color: colors.textDim, flexShrink: 0 }}>
-        {total === 0
-          ? "0 commented"
-          : index >= 0
-            ? `${index + 1} / ${total} commented`
-            : `– / ${total} commented`}
+        {total === 0 ? "0 commented" : index >= 0 ? `${index + 1} / ${total} commented` : `– / ${total} commented`}
       </span>
     </div>
   );
@@ -507,8 +487,7 @@ function FileSection({
           </span>
         )}
         <span style={{ flexShrink: 0, width: 80, fontSize: 11, textAlign: "right" }}>
-          <span style={{ color: colors.diffAddText }}>+{summary.additions}</span>{" "}
-          <span style={{ color: colors.diffDelText }}>-{summary.deletions}</span>
+          <span style={{ color: colors.diffAddText }}>+{summary.additions}</span> <span style={{ color: colors.diffDelText }}>-{summary.deletions}</span>
         </span>
       </button>
       {expanded && (
@@ -537,16 +516,7 @@ function FileSection({
                   return (
                     <div key={li}>
                       <DiffLineRow line={line} colors={colors} />
-                      {matched && matched.map((c) => (
-                        <InlineComment
-                          key={c.id}
-                          comment={c}
-                          colors={colors}
-                          onPush={onPushComment}
-                          onPushToChat={onPushCommentToChat}
-                          onDelete={onDeleteComment}
-                        />
-                      ))}
+                      {matched && matched.map((c) => <InlineComment key={c.id} comment={c} colors={colors} onPush={onPushComment} onPushToChat={onPushCommentToChat} onDelete={onDeleteComment} />)}
                     </div>
                   );
                 })}
@@ -600,12 +570,7 @@ function DiffLineRow({ line, colors }: { line: HunkLine; colors: ColorPalette })
         style={{
           width: 14,
           textAlign: "center",
-          color:
-            line.type === "add"
-              ? colors.diffAddText
-              : line.type === "del"
-                ? colors.diffDelText
-                : "transparent",
+          color: line.type === "add" ? colors.diffAddText : line.type === "del" ? colors.diffDelText : "transparent",
           userSelect: "none",
           flexShrink: 0,
         }}
@@ -657,11 +622,7 @@ function InlineComment({
     }
   };
   const isGitHub = comment.source === "github";
-  const headerLabel = isGitHub
-    ? comment.author
-      ? `@${comment.author}`
-      : "github"
-    : "agent";
+  const headerLabel = isGitHub ? (comment.author ? `@${comment.author}` : "github") : "agent";
   return (
     <div
       data-testid={`review-comment-${comment.id}`}
@@ -723,13 +684,7 @@ function InlineComment({
         )}
         <span style={{ flex: 1 }} />
         {comment.url && (
-          <a
-            href={comment.url}
-            target="_blank"
-            rel="noreferrer noopener"
-            style={{ fontSize: 10, color: colors.textDim, textDecoration: "none" }}
-            title="Open on GitHub"
-          >
+          <a href={comment.url} target="_blank" rel="noreferrer noopener" style={{ fontSize: 10, color: colors.textDim, textDecoration: "none" }} title="Open on GitHub">
             view
           </a>
         )}

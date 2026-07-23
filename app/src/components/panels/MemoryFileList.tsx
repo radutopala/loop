@@ -1,5 +1,5 @@
-import { fonts } from "../../theme";
 import { useTheme } from "../../ThemeContext";
+import { fonts } from "../../theme";
 
 // ── Tree data structure ──
 
@@ -19,14 +19,24 @@ export function MemoryFileIcon() {
     <svg width="12" height="12" viewBox="0 0 24 24" style={{ flexShrink: 0 }}>
       <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" opacity="0.7" />
       <polyline points="14 2 14 8 20 8" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" opacity="0.7" />
-      <text x="12" y="18" textAnchor="middle" fill={color} fontSize="7" fontWeight="bold" fontFamily={fonts.mono}>M</text>
+      <text x="12" y="18" textAnchor="middle" fill={color} fontSize="7" fontWeight="bold" fontFamily={fonts.mono}>
+        M
+      </text>
     </svg>
   );
 }
 
 // ── Recursive tree node ──
 
-function MemoryTreeNode({ node, depth, expandedDirs, selectedPath, onDirToggle, onFileClick, onFileDoubleClick }: {
+function MemoryTreeNode({
+  node,
+  depth,
+  expandedDirs,
+  selectedPath,
+  onDirToggle,
+  onFileClick,
+  onFileDoubleClick,
+}: {
   node: TreeNode;
   depth: number;
   expandedDirs: Set<string>;
@@ -61,10 +71,22 @@ function MemoryTreeNode({ node, depth, expandedDirs, selectedPath, onDirToggle, 
             textAlign: "left",
             whiteSpace: "nowrap",
           }}
-          onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = colors.hoverBg; }}
-          onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = "transparent"; }}
+          onMouseEnter={(e) => {
+            e.currentTarget.style.backgroundColor = colors.hoverBg;
+          }}
+          onMouseLeave={(e) => {
+            e.currentTarget.style.backgroundColor = "transparent";
+          }}
         >
-          <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.5" style={{ flexShrink: 0, opacity: 0.6, transform: isExpanded ? "rotate(90deg)" : "none", transition: "transform 0.1s" }}>
+          <svg
+            width="10"
+            height="10"
+            viewBox="0 0 10 10"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.5"
+            style={{ flexShrink: 0, opacity: 0.6, transform: isExpanded ? "rotate(90deg)" : "none", transition: "transform 0.1s" }}
+          >
             <polyline points="3,1 7,5 3,9" />
           </svg>
           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0, opacity: 0.6 }}>
@@ -72,18 +94,19 @@ function MemoryTreeNode({ node, depth, expandedDirs, selectedPath, onDirToggle, 
           </svg>
           {node.name}
         </button>
-        {isExpanded && node.children.map((child) => (
-          <MemoryTreeNode
-            key={child.key}
-            node={child}
-            depth={depth + 1}
-            expandedDirs={expandedDirs}
-            selectedPath={selectedPath}
-            onDirToggle={onDirToggle}
-            onFileClick={onFileClick}
-            onFileDoubleClick={onFileDoubleClick}
-          />
-        ))}
+        {isExpanded &&
+          node.children.map((child) => (
+            <MemoryTreeNode
+              key={child.key}
+              node={child}
+              depth={depth + 1}
+              expandedDirs={expandedDirs}
+              selectedPath={selectedPath}
+              onDirToggle={onDirToggle}
+              onFileClick={onFileClick}
+              onFileDoubleClick={onFileDoubleClick}
+            />
+          ))}
       </div>
     );
   }
@@ -91,8 +114,12 @@ function MemoryTreeNode({ node, depth, expandedDirs, selectedPath, onDirToggle, 
   const isSelected = node.fullPath === selectedPath;
   return (
     <button
-      onClick={() => { if (node.fullPath) onFileClick(node.fullPath); }}
-      onDoubleClick={() => { if (node.fullPath) onFileDoubleClick(node.fullPath); }}
+      onClick={() => {
+        if (node.fullPath) onFileClick(node.fullPath);
+      }}
+      onDoubleClick={() => {
+        if (node.fullPath) onFileDoubleClick(node.fullPath);
+      }}
       title={node.fullPath}
       style={{
         display: "flex",
@@ -110,8 +137,12 @@ function MemoryTreeNode({ node, depth, expandedDirs, selectedPath, onDirToggle, 
         textAlign: "left",
         whiteSpace: "nowrap",
       }}
-      onMouseEnter={(e) => { if (!isSelected) e.currentTarget.style.backgroundColor = colors.hoverBg; }}
-      onMouseLeave={(e) => { if (!isSelected) e.currentTarget.style.backgroundColor = "transparent"; }}
+      onMouseEnter={(e) => {
+        if (!isSelected) e.currentTarget.style.backgroundColor = colors.hoverBg;
+      }}
+      onMouseLeave={(e) => {
+        if (!isSelected) e.currentTarget.style.backgroundColor = "transparent";
+      }}
     >
       <span style={{ width: 10, flexShrink: 0 }} />
       <MemoryFileIcon />
@@ -173,8 +204,12 @@ export function MemoryFileList({
             onClick={onLoadFiles}
             title="Refresh files"
             style={{ background: "none", border: "none", color: colors.textDim, cursor: "pointer", padding: 0, lineHeight: 1, display: "flex", alignItems: "center" }}
-            onMouseEnter={(e) => { e.currentTarget.style.color = colors.textLight; }}
-            onMouseLeave={(e) => { e.currentTarget.style.color = colors.textDim; }}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.color = colors.textLight;
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.color = colors.textDim;
+            }}
           >
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
               <polyline points="23 4 23 10 17 10" />
@@ -207,8 +242,12 @@ export function MemoryFileList({
           flexShrink: 0,
           borderRight: `1px solid ${colors.border}`,
         }}
-        onMouseEnter={(e) => { (e.currentTarget as HTMLDivElement).style.backgroundColor = colors.textDim; }}
-        onMouseLeave={(e) => { if (!treeResizing) (e.currentTarget as HTMLDivElement).style.backgroundColor = "transparent"; }}
+        onMouseEnter={(e) => {
+          (e.currentTarget as HTMLDivElement).style.backgroundColor = colors.textDim;
+        }}
+        onMouseLeave={(e) => {
+          if (!treeResizing) (e.currentTarget as HTMLDivElement).style.backgroundColor = "transparent";
+        }}
       />
     </>
   );

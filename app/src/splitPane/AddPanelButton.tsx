@@ -1,5 +1,5 @@
-import { PANEL_OPTIONS, AGENT_OPEN_MODE_OPTIONS, type PanelType, type AgentOpenMode } from "../types/panels";
 import { useTheme } from "../ThemeContext";
+import { AGENT_OPEN_MODE_OPTIONS, type AgentOpenMode, PANEL_OPTIONS, type PanelType } from "../types/panels";
 
 const PANEL_ICONS: Record<PanelType, React.ReactNode> = {
   chat: (
@@ -192,8 +192,16 @@ export function EmptyLayoutPicker({ onAdd, hiddenPanels }: { onAdd: (panel: Pane
             key={key}
             onClick={() => onAdd(panel, openMode ? { openMode } : undefined)}
             style={pickerBtnStyle}
-            onMouseEnter={(e) => { e.currentTarget.style.borderColor = colors.textDim; e.currentTarget.style.color = colors.textLight; e.currentTarget.style.backgroundColor = colors.hoverBg; }}
-            onMouseLeave={(e) => { e.currentTarget.style.borderColor = colors.border; e.currentTarget.style.color = colors.textDim; e.currentTarget.style.backgroundColor = "transparent"; }}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.borderColor = colors.textDim;
+              e.currentTarget.style.color = colors.textLight;
+              e.currentTarget.style.backgroundColor = colors.hoverBg;
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.borderColor = colors.border;
+              e.currentTarget.style.color = colors.textDim;
+              e.currentTarget.style.backgroundColor = "transparent";
+            }}
           >
             {PANEL_ICONS[panel]}
             <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-start" }}>

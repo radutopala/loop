@@ -1,12 +1,8 @@
 import { useEffect, useRef, useState } from "react";
-import { fonts } from "../../theme";
 import { useTheme } from "../../ThemeContext";
+import { fonts } from "../../theme";
 
-function NewMenu({ onNewProject, onOpenDirectory, onClose }: {
-  onNewProject: () => void;
-  onOpenDirectory?: () => void;
-  onClose: () => void;
-}) {
+function NewMenu({ onNewProject, onOpenDirectory, onClose }: { onNewProject: () => void; onOpenDirectory?: () => void; onClose: () => void }) {
   const { colors } = useTheme();
   const ref = useRef<HTMLDivElement>(null);
 
@@ -58,8 +54,12 @@ function NewMenu({ onNewProject, onOpenDirectory, onClose }: {
       <button
         onClick={onNewProject}
         style={dropdownItemStyle}
-        onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = colors.hoverBg; }}
-        onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = "transparent"; }}
+        onMouseEnter={(e) => {
+          e.currentTarget.style.backgroundColor = colors.hoverBg;
+        }}
+        onMouseLeave={(e) => {
+          e.currentTarget.style.backgroundColor = "transparent";
+        }}
       >
         New project
       </button>
@@ -67,8 +67,12 @@ function NewMenu({ onNewProject, onOpenDirectory, onClose }: {
         <button
           onClick={onOpenDirectory}
           style={dropdownItemStyle}
-          onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = colors.hoverBg; }}
-          onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = "transparent"; }}
+          onMouseEnter={(e) => {
+            e.currentTarget.style.backgroundColor = colors.hoverBg;
+          }}
+          onMouseLeave={(e) => {
+            e.currentTarget.style.backgroundColor = "transparent";
+          }}
         >
           Open directory...
         </button>
@@ -164,8 +168,14 @@ export function SidebarHeader({
                   onClick={onBatchDelete}
                   title={`Delete ${selectedCount} selected`}
                   style={sidebarBtnStyle}
-                  onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = colors.hoverBg; e.currentTarget.style.color = colors.error; }}
-                  onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = "transparent"; e.currentTarget.style.color = colors.textDim; }}
+                  onMouseEnter={(e) => {
+                    e.currentTarget.style.backgroundColor = colors.hoverBg;
+                    e.currentTarget.style.color = colors.error;
+                  }}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.style.backgroundColor = "transparent";
+                    e.currentTarget.style.color = colors.textDim;
+                  }}
                 >
                   Delete ({selectedCount})
                 </button>
@@ -174,8 +184,14 @@ export function SidebarHeader({
                 onClick={onCancelSelectMode}
                 title="Cancel selection"
                 style={sidebarBtnStyle}
-                onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = colors.hoverBg; e.currentTarget.style.color = colors.textLight; }}
-                onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = "transparent"; e.currentTarget.style.color = colors.textDim; }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.backgroundColor = colors.hoverBg;
+                  e.currentTarget.style.color = colors.textLight;
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.backgroundColor = "transparent";
+                  e.currentTarget.style.color = colors.textDim;
+                }}
               >
                 Cancel
               </button>
@@ -187,8 +203,14 @@ export function SidebarHeader({
                   onClick={() => onMarkAllRead?.()}
                   title="Mark all as read"
                   style={sidebarBtnStyle}
-                  onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = colors.hoverBg; e.currentTarget.style.color = colors.textLight; }}
-                  onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = "transparent"; e.currentTarget.style.color = colors.textDim; }}
+                  onMouseEnter={(e) => {
+                    e.currentTarget.style.backgroundColor = colors.hoverBg;
+                    e.currentTarget.style.color = colors.textLight;
+                  }}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.style.backgroundColor = "transparent";
+                    e.currentTarget.style.color = colors.textDim;
+                  }}
                 >
                   Mark read
                 </button>
@@ -197,8 +219,14 @@ export function SidebarHeader({
                 onClick={onEnterSelectMode}
                 title="Select channels to delete"
                 style={sidebarBtnStyle}
-                onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = colors.hoverBg; e.currentTarget.style.color = colors.textLight; }}
-                onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = "transparent"; e.currentTarget.style.color = colors.textDim; }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.backgroundColor = colors.hoverBg;
+                  e.currentTarget.style.color = colors.textLight;
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.backgroundColor = "transparent";
+                  e.currentTarget.style.color = colors.textDim;
+                }}
               >
                 Select
               </button>
@@ -206,8 +234,14 @@ export function SidebarHeader({
                 onClick={() => setNewMenuOpen((v) => !v)}
                 title="New channel"
                 style={sidebarBtnStyle}
-                onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = colors.hoverBg; e.currentTarget.style.color = colors.textLight; }}
-                onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = "transparent"; e.currentTarget.style.color = colors.textDim; }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.backgroundColor = colors.hoverBg;
+                  e.currentTarget.style.color = colors.textLight;
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.backgroundColor = "transparent";
+                  e.currentTarget.style.color = colors.textDim;
+                }}
               >
                 + new
               </button>
@@ -221,11 +255,15 @@ export function SidebarHeader({
             setNewMenuOpen(false);
             onNewProject();
           }}
-          onOpenDirectory={onOpenDirectory ? async () => {
-            setNewMenuOpen(false);
-            const dirPath = await window.loopAPI?.showOpenDirectoryDialog?.();
-            if (dirPath) onOpenDirectory(dirPath);
-          } : undefined}
+          onOpenDirectory={
+            onOpenDirectory
+              ? async () => {
+                  setNewMenuOpen(false);
+                  const dirPath = await window.loopAPI?.showOpenDirectoryDialog?.();
+                  if (dirPath) onOpenDirectory(dirPath);
+                }
+              : undefined
+          }
           onClose={() => setNewMenuOpen(false)}
         />
       )}
@@ -248,7 +286,9 @@ export function SidebarHeader({
           <input
             value={searchQuery}
             onChange={(e) => onSearchQueryChange(e.target.value)}
-            onKeyDown={(e) => { if (e.key === "Escape") onSearchQueryChange(""); }}
+            onKeyDown={(e) => {
+              if (e.key === "Escape") onSearchQueryChange("");
+            }}
             placeholder="Search..."
             style={{
               width: "100%",

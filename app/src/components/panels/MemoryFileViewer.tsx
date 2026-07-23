@@ -1,16 +1,16 @@
 import "@fontsource/jetbrains-mono/400.css";
-import { useCallback, useEffect, useRef, useState } from "react";
-import { EditorView, keymap, lineNumbers, highlightActiveLine, highlightActiveLineGutter, drawSelection } from "@codemirror/view";
-import { EditorState, Compartment } from "@codemirror/state";
-import { defaultKeymap, indentWithTab, history, historyKeymap } from "@codemirror/commands";
-import { search, searchKeymap } from "@codemirror/search";
-import { bracketMatching, foldGutter, foldKeymap } from "@codemirror/language";
+import { defaultKeymap, history, historyKeymap, indentWithTab } from "@codemirror/commands";
 import { markdown } from "@codemirror/lang-markdown";
+import { bracketMatching, foldGutter, foldKeymap } from "@codemirror/language";
+import { search, searchKeymap } from "@codemirror/search";
+import { Compartment, EditorState } from "@codemirror/state";
+import { drawSelection, EditorView, highlightActiveLine, highlightActiveLineGutter, keymap, lineNumbers } from "@codemirror/view";
 import { marked } from "marked";
-import { fonts } from "../../theme";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useTheme } from "../../ThemeContext";
-import { buildMarkdownStyles } from "./FilePanel";
+import { fonts } from "../../theme";
 import { buildEditorTheme } from "./editorTheme";
+import { buildMarkdownStyles } from "./FilePanel";
 import { MemoryFileIcon } from "./MemoryFileList";
 
 export interface MemoryFileViewerProps {
@@ -88,13 +88,7 @@ export function MemoryFileViewer({
       search({ top: true }),
       markdown(),
       themeCompartment.current.of(buildEditorTheme(colors, fontSizes.panels)),
-      keymap.of([
-        ...defaultKeymap,
-        ...historyKeymap,
-        ...foldKeymap,
-        ...searchKeymap,
-        indentWithTab,
-      ]),
+      keymap.of([...defaultKeymap, ...historyKeymap, ...foldKeymap, ...searchKeymap, indentWithTab]),
       EditorView.updateListener.of((update) => {
         if (update.docChanged) {
           onMarkDirty();
@@ -126,7 +120,9 @@ export function MemoryFileViewer({
         const pct = scroller.scrollTop / Math.max(1, scroller.scrollHeight - scroller.clientHeight);
         el.scrollTop = pct * (el.scrollHeight - el.clientHeight);
       }
-      requestAnimationFrame(() => { scrollSyncSource.current = null; });
+      requestAnimationFrame(() => {
+        scrollSyncSource.current = null;
+      });
     };
     scroller?.addEventListener("scroll", onEditorScroll);
 
@@ -183,8 +179,12 @@ export function MemoryFileViewer({
               return (
                 <button
                   key={path}
-                  onClick={() => { if (!isActive) onSwitchToTab(path); }}
-                  onDoubleClick={() => { if (isPreview) onSetPreviewTab(null); }}
+                  onClick={() => {
+                    if (!isActive) onSwitchToTab(path);
+                  }}
+                  onDoubleClick={() => {
+                    if (isPreview) onSetPreviewTab(null);
+                  }}
                   title={path}
                   style={{
                     display: "flex",
@@ -202,22 +202,27 @@ export function MemoryFileViewer({
                     whiteSpace: "nowrap",
                     flexShrink: 0,
                   }}
-                  onMouseEnter={(e) => { if (!isActive) e.currentTarget.style.backgroundColor = colors.hoverBg; }}
-                  onMouseLeave={(e) => { if (!isActive) e.currentTarget.style.backgroundColor = "transparent"; }}
+                  onMouseEnter={(e) => {
+                    if (!isActive) e.currentTarget.style.backgroundColor = colors.hoverBg;
+                  }}
+                  onMouseLeave={(e) => {
+                    if (!isActive) e.currentTarget.style.backgroundColor = "transparent";
+                  }}
                 >
                   <MemoryFileIcon />
                   <span style={{ fontStyle: isPreview || isDirty ? "italic" : undefined }}>{name}</span>
-                  <span
-                    onClick={(e) => onCloseTab(path, e)}
-                    style={{ marginLeft: 2, width: 8, height: 8, display: "flex", alignItems: "center", justifyContent: "center" }}
-                  >
+                  <span onClick={(e) => onCloseTab(path, e)} style={{ marginLeft: 2, width: 8, height: 8, display: "flex", alignItems: "center", justifyContent: "center" }}>
                     {isDirty ? (
                       <span style={{ width: 6, height: 6, borderRadius: "50%", backgroundColor: colors.warning, display: "block" }} />
                     ) : (
                       <span
                         style={{ opacity: 0.5, fontSize: 14, lineHeight: 1 }}
-                        onMouseEnter={(e) => { e.currentTarget.style.opacity = "1"; }}
-                        onMouseLeave={(e) => { e.currentTarget.style.opacity = "0.5"; }}
+                        onMouseEnter={(e) => {
+                          e.currentTarget.style.opacity = "1";
+                        }}
+                        onMouseLeave={(e) => {
+                          e.currentTarget.style.opacity = "0.5";
+                        }}
                       >
                         &times;
                       </span>
@@ -252,15 +257,9 @@ export function MemoryFileViewer({
         </div>
       )}
       {/* Editor content */}
-      {!selectedPath && (
-        <div style={{ padding: 16, color: colors.textDim, fontSize: 13 }}>Select a file</div>
-      )}
-      {selectedPath && contentError && (
-        <div style={{ padding: 16, color: colors.textDim, fontSize: 13, fontStyle: "italic" }}>File not available on disk</div>
-      )}
-      {selectedPath && !contentError && fileContent === null && (
-        <div style={{ padding: 16, color: colors.textDim, fontSize: 13 }}>Loading...</div>
-      )}
+      {!selectedPath && <div style={{ padding: 16, color: colors.textDim, fontSize: 13 }}>Select a file</div>}
+      {selectedPath && contentError && <div style={{ padding: 16, color: colors.textDim, fontSize: 13, fontStyle: "italic" }}>File not available on disk</div>}
+      {selectedPath && !contentError && fileContent === null && <div style={{ padding: 16, color: colors.textDim, fontSize: 13 }}>Loading...</div>}
       <div style={{ flex: 1, display: fileContent !== null ? "flex" : "none", overflow: "hidden" }}>
         <div
           ref={editorRef}
@@ -286,7 +285,9 @@ export function MemoryFileViewer({
                   const pct = el.scrollTop / Math.max(1, el.scrollHeight - el.clientHeight);
                   ed.scrollTop = pct * (ed.scrollHeight - ed.clientHeight);
                 }
-                requestAnimationFrame(() => { scrollSyncSource.current = null; });
+                requestAnimationFrame(() => {
+                  scrollSyncSource.current = null;
+                });
               }}
               style={{
                 flex: 1,

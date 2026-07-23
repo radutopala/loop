@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { PillKind } from "../components/sidebar/pills";
 import { listPendingAsks, listPendingPlans } from "../api/channels";
 import { listPendingApprovals } from "../api/gate";
 import { listReviewSessions } from "../api/review";
+import type { PillKind } from "../components/sidebar/pills";
 import type {
   AgentActivityData,
   AgentStatusData,
+  AgentTasksData,
   AskUserQuestionData,
   ExitPlanModeData,
   GateApprovalRequestedData,
@@ -13,7 +14,6 @@ import type {
   MessageCreatedData,
   MessageStreamingData,
   MessagesProcessedData,
-  AgentTasksData,
   ToolUseData,
   WSEvent,
 } from "../types";
@@ -73,11 +73,7 @@ interface UseChatStateStoreOptions {
  * Events for non-selected running channels silently update the store so state
  * is warm when switching.
  */
-export function useChatStateStore({
-  channels,
-  selectedId,
-  onAppEvent,
-}: UseChatStateStoreOptions) {
+export function useChatStateStore({ channels, selectedId, onAppEvent }: UseChatStateStoreOptions) {
   const storeRef = useRef(new Map<string, ActiveChatState>());
   const isRunningMapRef = useRef(new Map<string, string>());
   // req_ids of gate approvals injected via the loop:test-event hook; exempt
@@ -117,31 +113,40 @@ export function useChatStateStore({
 
   // setPillMembership adds/removes a channel from a pill set, bumping the
   // render tick only on actual transitions.
-  const setPillMembership = useCallback((kind: PillKind, channelId: string, shouldHave: boolean) => {
-    const set = pillSet(kind);
-    if (shouldHave && !set.has(channelId)) {
-      set.add(channelId);
-      setPillTick((v) => v + 1);
-    } else if (!shouldHave && set.has(channelId)) {
-      set.delete(channelId);
-      setPillTick((v) => v + 1);
-    }
-  }, [pillSet]);
+  const setPillMembership = useCallback(
+    (kind: PillKind, channelId: string, shouldHave: boolean) => {
+      const set = pillSet(kind);
+      if (shouldHave && !set.has(channelId)) {
+        set.add(channelId);
+        setPillTick((v) => v + 1);
+      } else if (!shouldHave && set.has(channelId)) {
+        set.delete(channelId);
+        setPillTick((v) => v + 1);
+      }
+    },
+    [pillSet],
+  );
 
   // Reconcile the sidebar's gate-indicator set against a channel's current
   // gateApprovals. Called after every gate/agent.status apply so the pill
   // appears as soon as a request lands and disappears once all sources resolve.
-  const refreshGateMembership = useCallback((channelId: string, state: ActiveChatState) => {
-    setPillMembership("gate", channelId, Object.keys(state.gateApprovals).length > 0);
-  }, [setPillMembership]);
+  const refreshGateMembership = useCallback(
+    (channelId: string, state: ActiveChatState) => {
+      setPillMembership("gate", channelId, Object.keys(state.gateApprovals).length > 0);
+    },
+    [setPillMembership],
+  );
 
   // Reconcile the sidebar's ask-indicator set against a channel's current
   // askUserQuestions. The agent pauses the channel's drain on AskUserQuestion,
   // so the pill stays lit until the user answers/cancels (clearAskUserPill) or
   // the backend clears the park (agent.ask_resolved clears askUserQuestions).
-  const refreshAskUserMembership = useCallback((channelId: string, state: ActiveChatState) => {
-    setPillMembership("ask", channelId, state.askUserQuestions != null);
-  }, [setPillMembership]);
+  const refreshAskUserMembership = useCallback(
+    (channelId: string, state: ActiveChatState) => {
+      setPillMembership("ask", channelId, state.askUserQuestions != null);
+    },
+    [setPillMembership],
+  );
 
   // Chat event listeners registered by panels (useChatState, useEditorState, …)
   // for the selected channel. A Set so multiple subscribers can coexist.
@@ -225,9 +230,7 @@ export function useChatStateStore({
         state = createEmptyState();
         storeRef.current.set(pa.channel_id, state);
       }
-      const already = Object.values(state.gateApprovals).some(
-        (v) => v.req_id === pa.req_id,
-      );
+      const already = Object.values(state.gateApprovals).some((v) => v.req_id === pa.req_id);
       if (already) continue;
       const event: WSEvent = {
         type: "gate.approval_requested",
@@ -303,9 +306,12 @@ export function useChatStateStore({
   // the pill stays lit until the user approves/denies the plan
   // (clearPlanPill) or the backend clears the park (agent.plan_resolved
   // clears exitPlanRequest).
-  const refreshPlanMembership = useCallback((channelId: string, state: ActiveChatState) => {
-    setPillMembership("plan", channelId, state.exitPlanRequest != null);
-  }, [setPillMembership]);
+  const refreshPlanMembership = useCallback(
+    (channelId: string, state: ActiveChatState) => {
+      setPillMembership("plan", channelId, state.exitPlanRequest != null);
+    },
+    [setPillMembership],
+  );
 
   // Rehydrate the ExitPlanMode card for every channel currently parked on
   // a plan. Run from WS onOpen so a renderer reload / WS reconnect re-renders
@@ -405,8 +411,12 @@ export function useChatStateStore({
   // - `visibilitychange` covers the renderer-not-active-surface case (e.g.
   //   DevTools focused or window occluded) where `focus` may not fire
   useEffect(() => {
-    const rehydrate = () => { rehydrateGateApprovals(); };
-    const onVisibility = () => { if (!document.hidden) rehydrate(); };
+    const rehydrate = () => {
+      rehydrateGateApprovals();
+    };
+    const onVisibility = () => {
+      if (!document.hidden) rehydrate();
+    };
     window.addEventListener("focus", rehydrate);
     document.addEventListener("visibilitychange", onVisibility);
     return () => {
@@ -470,191 +480,173 @@ export function useChatStateStore({
 
   // Send subscribe on open.
   const handleMessage = useCallback((event: MessageEvent) => {
-      let wsEvent: WSEvent;
-      try {
-        wsEvent = JSON.parse(event.data);
-      } catch {
-        return;
+    let wsEvent: WSEvent;
+    try {
+      wsEvent = JSON.parse(event.data);
+    } catch {
+      return;
+    }
+
+    const channelId = wsEvent.channel_id;
+    const store = storeRef.current;
+    const runMap = isRunningMapRef.current;
+
+    // For agent.status events with thread_id, route state to the thread
+    // so the parent channel doesn't show a running indicator for thread work.
+    // The backend sends status to the parent with thread_id set; the frontend
+    // uses thread_id as the effective target for store/isRunningMap updates.
+    let stateTarget = channelId;
+    if (channelId && wsEvent.type === "agent.status") {
+      const statusData = wsEvent.data as AgentStatusData;
+      if (statusData.thread_id) {
+        stateTarget = statusData.thread_id;
       }
+    }
 
-      const channelId = wsEvent.channel_id;
-      const store = storeRef.current;
-      const runMap = isRunningMapRef.current;
-
-      // For agent.status events with thread_id, route state to the thread
-      // so the parent channel doesn't show a running indicator for thread work.
-      // The backend sends status to the parent with thread_id set; the frontend
-      // uses thread_id as the effective target for store/isRunningMap updates.
-      let stateTarget = channelId;
-      if (channelId && wsEvent.type === "agent.status") {
-        const statusData = wsEvent.data as AgentStatusData;
-        if (statusData.thread_id) {
-          stateTarget = statusData.thread_id;
-        }
+    // Always update the store for any channel's events so getState()
+    // returns current data even when a component remounts mid-stream.
+    if (stateTarget) {
+      let state = store.get(stateTarget);
+      if (state) {
+        applyEvent(state, wsEvent);
+      } else if (isRunningEvent(wsEvent)) {
+        const fresh = createEmptyState();
+        applyEvent(fresh, wsEvent);
+        store.set(stateTarget, fresh);
+        state = fresh;
       }
-
-      // Always update the store for any channel's events so getState()
-      // returns current data even when a component remounts mid-stream.
-      if (stateTarget) {
-        let state = store.get(stateTarget);
-        if (state) {
-          applyEvent(state, wsEvent);
-        } else if (isRunningEvent(wsEvent)) {
-          const fresh = createEmptyState();
-          applyEvent(fresh, wsEvent);
-          store.set(stateTarget, fresh);
-          state = fresh;
-        }
-        // gate.approval_requested / _resolved mutate gateApprovals directly;
-        // agent.status non-running clears any "chat" approval (see applyEvent).
-        // Each of those needs the sidebar set to follow along.
-        if (
-          state &&
-          (wsEvent.type === "gate.approval_requested" ||
-            wsEvent.type === "gate.approval_resolved" ||
-            wsEvent.type === "agent.status")
-        ) {
-          refreshGateMembership(stateTarget, state);
-        }
-        // agent.ask_user sets askUserQuestions; agent.ask_resolved clears it.
-        // Mirror those onto the sidebar's ask-pill set.
-        if (
-          state &&
-          (wsEvent.type === "agent.ask_user" || wsEvent.type === "agent.ask_resolved")
-        ) {
-          refreshAskUserMembership(stateTarget, state);
-        }
-        // agent.exit_plan sets exitPlanRequest; agent.plan_resolved clears it.
-        // Mirror those onto the sidebar's plan-pill set.
-        if (
-          state &&
-          (wsEvent.type === "agent.exit_plan" || wsEvent.type === "agent.plan_resolved")
-        ) {
-          refreshPlanMembership(stateTarget, state);
-        }
+      // gate.approval_requested / _resolved mutate gateApprovals directly;
+      // agent.status non-running clears any "chat" approval (see applyEvent).
+      // Each of those needs the sidebar set to follow along.
+      if (state && (wsEvent.type === "gate.approval_requested" || wsEvent.type === "gate.approval_resolved" || wsEvent.type === "agent.status")) {
+        refreshGateMembership(stateTarget, state);
       }
-
-      // Track which channels have a loaded review session so the sidebar
-      // can render a `rev` pill alongside `gate`. If the Review panel
-      // for this channel is currently mounted, skip lighting the pill —
-      // the user is already looking at it.
-      if (channelId && wsEvent.type === "review.status") {
-        const data = wsEvent.data as { status: string };
-        setPillMembership(
-          "rev",
-          channelId,
-          data.status === "ready" && !viewingReviewChannelsRef.current.has(channelId),
-        );
+      // agent.ask_user sets askUserQuestions; agent.ask_resolved clears it.
+      // Mirror those onto the sidebar's ask-pill set.
+      if (state && (wsEvent.type === "agent.ask_user" || wsEvent.type === "agent.ask_resolved")) {
+        refreshAskUserMembership(stateTarget, state);
       }
+      // agent.exit_plan sets exitPlanRequest; agent.plan_resolved clears it.
+      // Mirror those onto the sidebar's plan-pill set.
+      if (state && (wsEvent.type === "agent.exit_plan" || wsEvent.type === "agent.plan_resolved")) {
+        refreshPlanMembership(stateTarget, state);
+      }
+    }
 
-      // Track isRunning in the map for subscription management.
-      // The map value is the run_id so we can distinguish concurrent runs.
-      if (channelId && wsEvent.type === "agent.status") {
-        const data = wsEvent.data as AgentStatusData;
-        const runTarget = data.thread_id || channelId;
-        if (data.status === "running") {
-          runMap.set(runTarget, data.run_id ?? "");
-        } else {
-          // Clear the primary target (thread or channel).
-          const finishing = data.run_id ?? "";
-          {
-            const tracked = runMap.get(runTarget);
-            if (tracked === undefined || tracked === "" || finishing === "" || tracked === finishing) {
-              runMap.delete(runTarget);
+    // Track which channels have a loaded review session so the sidebar
+    // can render a `rev` pill alongside `gate`. If the Review panel
+    // for this channel is currently mounted, skip lighting the pill —
+    // the user is already looking at it.
+    if (channelId && wsEvent.type === "review.status") {
+      const data = wsEvent.data as { status: string };
+      setPillMembership("rev", channelId, data.status === "ready" && !viewingReviewChannelsRef.current.has(channelId));
+    }
+
+    // Track isRunning in the map for subscription management.
+    // The map value is the run_id so we can distinguish concurrent runs.
+    if (channelId && wsEvent.type === "agent.status") {
+      const data = wsEvent.data as AgentStatusData;
+      const runTarget = data.thread_id || channelId;
+      if (data.status === "running") {
+        runMap.set(runTarget, data.run_id ?? "");
+      } else {
+        // Clear the primary target (thread or channel).
+        const finishing = data.run_id ?? "";
+        {
+          const tracked = runMap.get(runTarget);
+          if (tracked === undefined || tracked === "" || finishing === "" || tracked === finishing) {
+            runMap.delete(runTarget);
+          }
+        }
+        // For thread-routed events, also clear the parent's entry if it
+        // tracks the same run (bootstrapped from first-run running event
+        // or seeded with "" by the channels-refresh effect on page reload).
+        // Exact run_id match guards against clearing a concurrent user run;
+        // empty-string match is safe because if the WS running event had
+        // arrived it would have replaced "" with the real run_id already.
+        if (runTarget !== channelId) {
+          const parentTracked = runMap.get(channelId);
+          if (parentTracked !== undefined && (parentTracked === "" || parentTracked === finishing)) {
+            runMap.delete(channelId);
+            // Also clear the parent's stored chat state and forward the
+            // event to the parent's chat listener (if the parent is the
+            // selected view). Without this, a first-run "running" event
+            // broadcast to the parent (no thread existed yet) leaves the
+            // parent's view stuck showing the stop button after the run
+            // completes — the completion event carries thread_id and
+            // gets routed exclusively to the thread's state.
+            const parentState = store.get(channelId);
+            if (parentState) {
+              applyEvent(parentState, wsEvent);
+            }
+            if (channelId === selectedIdRef.current) {
+              for (const listener of chatListenersRef.current) listener(wsEvent);
             }
           }
-          // For thread-routed events, also clear the parent's entry if it
-          // tracks the same run (bootstrapped from first-run running event
-          // or seeded with "" by the channels-refresh effect on page reload).
-          // Exact run_id match guards against clearing a concurrent user run;
-          // empty-string match is safe because if the WS running event had
-          // arrived it would have replaced "" with the real run_id already.
-          if (runTarget !== channelId) {
-            const parentTracked = runMap.get(channelId);
-            if (parentTracked !== undefined && (parentTracked === "" || parentTracked === finishing)) {
-              runMap.delete(channelId);
-              // Also clear the parent's stored chat state and forward the
-              // event to the parent's chat listener (if the parent is the
-              // selected view). Without this, a first-run "running" event
-              // broadcast to the parent (no thread existed yet) leaves the
-              // parent's view stuck showing the stop button after the run
-              // completes — the completion event carries thread_id and
-              // gets routed exclusively to the thread's state.
-              const parentState = store.get(channelId);
-              if (parentState) {
-                applyEvent(parentState, wsEvent);
-              }
-              if (channelId === selectedIdRef.current) {
-                for (const listener of chatListenersRef.current) listener(wsEvent);
-              }
-            }
-          }
-          // Keep the store entry — it holds completionInfo, mode, askUser, etc.
-          // that should be restored when the user switches back.
-
-          // Mark the task thread (or channel) as unread.
-          const unreadTarget = data.thread_id || channelId;
-          if (unreadTarget !== selectedIdRef.current || document.hidden) {
-            unreadIdsRef.current.add(unreadTarget);
-            setUnreadCount(unreadIdsRef.current.size);
-          }
-          if (document.hidden || unreadTarget !== selectedIdRef.current) {
-            const ch = channelsRef.current.find((c) => c.id === unreadTarget) ?? channelsRef.current.find((c) => c.id === channelId);
-            const name = ch?.name || channelId;
-            const body =
-              data.status === "completed"
-                ? `Completed in ${Math.round((data.duration_ms ?? 0) / 1000)}s`
-                : `Error: ${data.error ?? "unknown"}`;
-            new Notification(`Loop — ${name}`, { body });
-          }
-          // Skip the dock bounce for non-user-driven runs — scheduled tasks
-          // fire frequently and aren't user-actionable, and "bot" runs are
-          // indirect chains (an agent re-entering via send_message /
-          // create_thread MCP tools, often as part of a scheduled task).
-          // Real user replies stay tagged as empty/user and still bounce.
-          if (data.trigger !== "scheduled" && data.trigger !== "bot") {
-            window.loopAPI?.notifyTurnEnd?.();
-          }
         }
-      }
+        // Keep the store entry — it holds completionInfo, mode, askUser, etc.
+        // that should be restored when the user switches back.
 
-      // Notify on a fresh approval request — the agent is blocked until the
-      // user clicks Allow/Deny, so bounce the dock continuously and fire a
-      // Web Notification when the relevant view isn't focused.
-      if (channelId && wsEvent.type === "gate.approval_requested") {
-        const reqData = wsEvent.data as GateApprovalRequestedData;
-        const approvalTarget = stateTarget || channelId;
-        if (document.hidden || approvalTarget !== selectedIdRef.current) {
-          const ch = channelsRef.current.find((c) => c.id === approvalTarget) ?? channelsRef.current.find((c) => c.id === channelId);
+        // Mark the task thread (or channel) as unread.
+        const unreadTarget = data.thread_id || channelId;
+        if (unreadTarget !== selectedIdRef.current || document.hidden) {
+          unreadIdsRef.current.add(unreadTarget);
+          setUnreadCount(unreadIdsRef.current.size);
+        }
+        if (document.hidden || unreadTarget !== selectedIdRef.current) {
+          const ch = channelsRef.current.find((c) => c.id === unreadTarget) ?? channelsRef.current.find((c) => c.id === channelId);
           const name = ch?.name || channelId;
-          const body = reqData.target ? `Approval needed: ${reqData.target}` : "Approval needed";
+          const body = data.status === "completed" ? `Completed in ${Math.round((data.duration_ms ?? 0) / 1000)}s` : `Error: ${data.error ?? "unknown"}`;
           new Notification(`Loop — ${name}`, { body });
         }
-        console.log("[bounce] notifyApprovalNeeded reqId=%s channelId=%s target=%s", reqData.req_id, channelId, reqData.target);
-        window.loopAPI?.notifyApprovalNeeded?.(reqData.req_id);
+        // Skip the dock bounce for non-user-driven runs — scheduled tasks
+        // fire frequently and aren't user-actionable, and "bot" runs are
+        // indirect chains (an agent re-entering via send_message /
+        // create_thread MCP tools, often as part of a scheduled task).
+        // Real user replies stay tagged as empty/user and still bounce.
+        if (data.trigger !== "scheduled" && data.trigger !== "bot") {
+          window.loopAPI?.notifyTurnEnd?.();
+        }
       }
+    }
 
-      if (wsEvent.type === "gate.approval_resolved") {
-        const data = wsEvent.data as GateApprovalResolvedData;
-        console.log("[bounce] notifyApprovalResolved reqId=%s channelId=%s", data.req_id, channelId);
-        window.loopAPI?.notifyApprovalResolved?.(data.req_id);
+    // Notify on a fresh approval request — the agent is blocked until the
+    // user clicks Allow/Deny, so bounce the dock continuously and fire a
+    // Web Notification when the relevant view isn't focused.
+    if (channelId && wsEvent.type === "gate.approval_requested") {
+      const reqData = wsEvent.data as GateApprovalRequestedData;
+      const approvalTarget = stateTarget || channelId;
+      if (document.hidden || approvalTarget !== selectedIdRef.current) {
+        const ch = channelsRef.current.find((c) => c.id === approvalTarget) ?? channelsRef.current.find((c) => c.id === channelId);
+        const name = ch?.name || channelId;
+        const body = reqData.target ? `Approval needed: ${reqData.target}` : "Approval needed";
+        new Notification(`Loop — ${name}`, { body });
       }
+      console.log("[bounce] notifyApprovalNeeded reqId=%s channelId=%s target=%s", reqData.req_id, channelId, reqData.target);
+      window.loopAPI?.notifyApprovalNeeded?.(reqData.req_id);
+    }
 
-      // Forward events to the chat listener (useChatState) when the
-      // effective target matches the selected channel. Using stateTarget
-      // (not channelId) ensures that agent.status events routed to a
-      // thread via thread_id don't set isRunning on the parent view.
-      if (stateTarget && stateTarget === selectedIdRef.current) {
-        for (const listener of chatListenersRef.current) listener(wsEvent);
-      }
+    if (wsEvent.type === "gate.approval_resolved") {
+      const data = wsEvent.data as GateApprovalResolvedData;
+      console.log("[bounce] notifyApprovalResolved reqId=%s channelId=%s", data.req_id, channelId);
+      window.loopAPI?.notifyApprovalResolved?.(data.req_id);
+    }
 
-      // Forward selected channel + global events to App-level handler.
-      // Channel created/deleted are always forwarded so the sidebar refreshes
-      // regardless of which channel is currently selected.
-      if (!channelId || stateTarget === selectedIdRef.current || wsEvent.type === "channel.created" || wsEvent.type === "channel.deleted") {
-        onAppEventRef.current(wsEvent);
-      }
-    }, []);
+    // Forward events to the chat listener (useChatState) when the
+    // effective target matches the selected channel. Using stateTarget
+    // (not channelId) ensures that agent.status events routed to a
+    // thread via thread_id don't set isRunning on the parent view.
+    if (stateTarget && stateTarget === selectedIdRef.current) {
+      for (const listener of chatListenersRef.current) listener(wsEvent);
+    }
+
+    // Forward selected channel + global events to App-level handler.
+    // Channel created/deleted are always forwarded so the sidebar refreshes
+    // regardless of which channel is currently selected.
+    if (!channelId || stateTarget === selectedIdRef.current || wsEvent.type === "channel.created" || wsEvent.type === "channel.deleted") {
+      onAppEventRef.current(wsEvent);
+    }
+  }, []);
   onMessageRef.current = handleMessage;
 
   const { send } = useWebSocketConnection({
@@ -667,9 +659,7 @@ export function useChatStateStore({
         for (const [id] of isRunningMapRef.current) {
           set.add(id);
         }
-        ws.send(
-          JSON.stringify({ type: "subscribe", channels: [...set] }),
-        );
+        ws.send(JSON.stringify({ type: "subscribe", channels: [...set] }));
         // After a (re)connect the renderer's in-memory gateApprovals and the
         // electron-main dock-bouncer set may both be stale: WS drops + page
         // reloads don't replay missed gate.approval_requested/_resolved
@@ -681,12 +671,7 @@ export function useChatStateStore({
         // rehydrates drop any local card with no backend counterpart, so the
         // BDD harness must not inject synthetic cards before they finish.
         window.__loopWsRehydrated = false;
-        void Promise.allSettled([
-          rehydrateGateApprovals(),
-          rehydrateReviewSessions(),
-          rehydrateAskUser(),
-          rehydrateExitPlan(),
-        ]).then(() => {
+        void Promise.allSettled([rehydrateGateApprovals(), rehydrateReviewSessions(), rehydrateAskUser(), rehydrateExitPlan()]).then(() => {
           window.__loopWsRehydrated = true;
         });
       },
@@ -727,22 +712,16 @@ export function useChatStateStore({
    * store until overwritten by saveState on the next unmount. Safe to call
    * during render (React StrictMode double-renders).
    */
-  const getState = useCallback(
-    (channelId: string): ActiveChatState | undefined => {
-      return storeRef.current.get(channelId);
-    },
-    [],
-  );
+  const getState = useCallback((channelId: string): ActiveChatState | undefined => {
+    return storeRef.current.get(channelId);
+  }, []);
 
-  const saveState = useCallback(
-    (channelId: string, state: ActiveChatState) => {
-      storeRef.current.set(channelId, state);
-      if (state.isRunning) {
-        isRunningMapRef.current.set(channelId, state.runId ?? "");
-      }
-    },
-    [],
-  );
+  const saveState = useCallback((channelId: string, state: ActiveChatState) => {
+    storeRef.current.set(channelId, state);
+    if (state.isRunning) {
+      isRunningMapRef.current.set(channelId, state.runId ?? "");
+    }
+  }, []);
 
   const removeState = useCallback((channelId: string) => {
     storeRef.current.delete(channelId);
@@ -753,15 +732,12 @@ export function useChatStateStore({
    * for the currently selected channel without opening a separate WebSocket.
    * Returns an unsubscribe function.
    */
-  const subscribeChatEvents = useCallback(
-    (listener: ChatEventListener): (() => void) => {
-      chatListenersRef.current.add(listener);
-      return () => {
-        chatListenersRef.current.delete(listener);
-      };
-    },
-    [],
-  );
+  const subscribeChatEvents = useCallback((listener: ChatEventListener): (() => void) => {
+    chatListenersRef.current.add(listener);
+    return () => {
+      chatListenersRef.current.delete(listener);
+    };
+  }, []);
 
   const markRead = useCallback((channelId: string) => {
     unreadIdsRef.current.delete(channelId);
@@ -778,20 +754,26 @@ export function useChatStateStore({
   // user answers/cancels the card) so the sidebar pill clears in lockstep
   // with the card disappearing — the backend doesn't emit an "ask resolved"
   // event, the resumed run's agent.status running event does it.
-  const clearAskUserPill = useCallback((channelId: string) => {
-    setPillMembership("ask", channelId, false);
-    const state = storeRef.current.get(channelId);
-    if (state) state.askUserQuestions = null;
-  }, [setPillMembership]);
+  const clearAskUserPill = useCallback(
+    (channelId: string) => {
+      setPillMembership("ask", channelId, false);
+      const state = storeRef.current.get(channelId);
+      if (state) state.askUserQuestions = null;
+    },
+    [setPillMembership],
+  );
 
   // Called from useChatState's local clearExitPlan (which fires when the
   // user approves/denies the plan card) so the sidebar pill clears in
   // lockstep with the card disappearing.
-  const clearPlanPill = useCallback((channelId: string) => {
-    setPillMembership("plan", channelId, false);
-    const state = storeRef.current.get(channelId);
-    if (state) state.exitPlanRequest = null;
-  }, [setPillMembership]);
+  const clearPlanPill = useCallback(
+    (channelId: string) => {
+      setPillMembership("plan", channelId, false);
+      const state = storeRef.current.get(channelId);
+      if (state) state.exitPlanRequest = null;
+    },
+    [setPillMembership],
+  );
 
   // Mark a channel as "currently being viewed in a Review panel".
   // Drops the pill immediately AND prevents the WS event handler /
@@ -800,13 +782,16 @@ export function useChatStateStore({
   // cleanup. A fire-and-forget clear was not enough because rehydrate
   // unconditionally re-adds ready sessions to the pill set on every WS
   // reconnect, and the Review panel's effect can't observe that.
-  const registerReviewView = useCallback((channelId: string) => {
-    viewingReviewChannelsRef.current.add(channelId);
-    setPillMembership("rev", channelId, false);
-    return () => {
-      viewingReviewChannelsRef.current.delete(channelId);
-    };
-  }, [setPillMembership]);
+  const registerReviewView = useCallback(
+    (channelId: string) => {
+      viewingReviewChannelsRef.current.add(channelId);
+      setPillMembership("rev", channelId, false);
+      return () => {
+        viewingReviewChannelsRef.current.delete(channelId);
+      };
+    },
+    [setPillMembership],
+  );
 
   return { getState, saveState, removeState, isRunningMapRef, unreadIdsRef, pillsRef, unreadCount, markRead, markAllRead, registerReviewView, clearAskUserPill, clearPlanPill, subscribeChatEvents };
 }
@@ -832,16 +817,7 @@ function createEmptyState(): ActiveChatState {
 }
 
 function isRunningEvent(event: WSEvent): boolean {
-  return [
-    "message.streaming",
-    "tool.use",
-    "agent.activity",
-    "agent.ask_user",
-    "agent.exit_plan",
-    "agent.tasks",
-    "agent.status",
-    "gate.approval_requested",
-  ].includes(event.type);
+  return ["message.streaming", "tool.use", "agent.activity", "agent.ask_user", "agent.exit_plan", "agent.tasks", "agent.status", "gate.approval_requested"].includes(event.type);
 }
 
 /** Mutates `state` in place based on the event. */
@@ -905,7 +881,10 @@ function applyEvent(state: ActiveChatState, event: WSEvent): void {
       const next: Record<string, GateApprovalRequestedData> = {};
       let removed = false;
       for (const [k, v] of Object.entries(state.gateApprovals)) {
-        if (v.req_id === data.req_id) { removed = true; continue; }
+        if (v.req_id === data.req_id) {
+          removed = true;
+          continue;
+        }
         next[k] = v;
       }
       if (removed) state.gateApprovals = next;
@@ -955,10 +934,7 @@ function applyEvent(state: ActiveChatState, event: WSEvent): void {
           }
           state.processingMsgId = null;
         }
-        if (
-          data.status === "completed" &&
-          (data.duration_ms || data.stop_reason)
-        ) {
+        if (data.status === "completed" && (data.duration_ms || data.stop_reason)) {
           state.completionInfo = {
             duration_ms: data.duration_ms,
             num_turns: data.num_turns,

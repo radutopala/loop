@@ -1,10 +1,10 @@
 import { useCallback, useState } from "react";
-import { fonts } from "../../theme";
+import type { EditorStateApi } from "../../hooks/useEditorState";
 import { useTheme } from "../../ThemeContext";
-import { FilePanel } from "./FilePanel";
+import { fonts } from "../../theme";
 import { ContextMenu, type MenuItem } from "../shared/ContextMenu";
 import { FileTree, makePathKey, parsePathKey } from "./EditorFileTree";
-import type { EditorStateApi } from "../../hooks/useEditorState";
+import { FilePanel } from "./FilePanel";
 
 interface FileTreePanelProps {
   channelId: string;
@@ -80,9 +80,7 @@ export function FileTreePanel({ channelId: _channelId, dirPath, branch, editorSt
     return items;
   };
 
-  const fallbackRoot = roots.length === 0
-    ? [{ index: 0, path: dirPath, name: dirPath.split("/").pop() || dirPath }]
-    : roots;
+  const fallbackRoot = roots.length === 0 ? [{ index: 0, path: dirPath, name: dirPath.split("/").pop() || dirPath }] : roots;
 
   return (
     <FilePanel title="Files" dirPath={dirPath} branch={branch} noPadding embedded={embedded} dataTestId="file-tree-panel" {...panelProps}>
@@ -93,8 +91,12 @@ export function FileTreePanel({ channelId: _channelId, dirPath, branch, editorSt
             onClick={refreshTree}
             title="Refresh files"
             style={{ background: "none", border: "none", color: colors.textDim, cursor: "pointer", padding: 0, lineHeight: 1, display: "flex", alignItems: "center" }}
-            onMouseEnter={(e) => { e.currentTarget.style.color = colors.textLight; }}
-            onMouseLeave={(e) => { e.currentTarget.style.color = colors.textDim; }}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.color = colors.textLight;
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.color = colors.textDim;
+            }}
           >
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
               <polyline points="23 4 23 10 17 10" />
@@ -108,8 +110,12 @@ export function FileTreePanel({ channelId: _channelId, dirPath, branch, editorSt
             }}
             title="New file"
             style={{ background: "none", border: "none", color: colors.textDim, cursor: "pointer", padding: 0, lineHeight: 1, display: "flex", alignItems: "center", marginLeft: 4 }}
-            onMouseEnter={(e) => { e.currentTarget.style.color = colors.textLight; }}
-            onMouseLeave={(e) => { e.currentTarget.style.color = colors.textDim; }}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.color = colors.textLight;
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.color = colors.textDim;
+            }}
           >
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
               <line x1="12" y1="5" x2="12" y2="19" />
@@ -130,8 +136,12 @@ export function FileTreePanel({ channelId: _channelId, dirPath, branch, editorSt
               }}
               title="Add directory"
               style={{ background: "none", border: "none", color: colors.textDim, cursor: "pointer", padding: 0, lineHeight: 1, display: "flex", alignItems: "center", marginLeft: 4 }}
-              onMouseEnter={(e) => { e.currentTarget.style.color = colors.textLight; }}
-              onMouseLeave={(e) => { e.currentTarget.style.color = colors.textDim; }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.color = colors.textLight;
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.color = colors.textDim;
+              }}
             >
               <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                 <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
@@ -141,9 +151,7 @@ export function FileTreePanel({ channelId: _channelId, dirPath, branch, editorSt
             </button>
           )}
         </div>
-        {addDirError && (
-          <div style={{ padding: "2px 8px", color: colors.error, fontSize: 11 }}>{addDirError}</div>
-        )}
+        {addDirError && <div style={{ padding: "2px 8px", color: colors.error, fontSize: 11 }}>{addDirError}</div>}
         {newFileName !== null && (
           <div style={{ padding: "2px 8px" }}>
             <input
@@ -233,45 +241,67 @@ export function FileTreePanel({ channelId: _channelId, dirPath, branch, editorSt
                     textAlign: "left",
                     whiteSpace: "nowrap",
                   }}
-                  onMouseEnter={(e) => { if (!isRootSelected) e.currentTarget.style.backgroundColor = colors.hoverBg; }}
-                  onMouseLeave={(e) => { if (!isRootSelected) e.currentTarget.style.backgroundColor = "transparent"; }}
+                  onMouseEnter={(e) => {
+                    if (!isRootSelected) e.currentTarget.style.backgroundColor = colors.hoverBg;
+                  }}
+                  onMouseLeave={(e) => {
+                    if (!isRootSelected) e.currentTarget.style.backgroundColor = "transparent";
+                  }}
                 >
-                  <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0, opacity: 0.5, transform: isRootExpanded ? "rotate(90deg)" : "rotate(0deg)", transition: "transform 0.15s" }}>
+                  <svg
+                    width="10"
+                    height="10"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    style={{ flexShrink: 0, opacity: 0.5, transform: isRootExpanded ? "rotate(90deg)" : "rotate(0deg)", transition: "transform 0.15s" }}
+                  >
                     <polyline points="9 18 15 12 9 6" />
                   </svg>
-                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0, opacity: 0.6 }}>
+                  <svg
+                    width="12"
+                    height="12"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    style={{ flexShrink: 0, opacity: 0.6 }}
+                  >
                     <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
                   </svg>
                   {root.name}
                 </button>
-                {isRootExpanded && <FileTree
-                  entries={dirContents.get(rootKey) || []}
-                  dirContents={dirContents}
-                  expandedDirs={expandedDirs}
-                  selectedPath={selectedPath}
-                  previewTab={previewTab}
-                  selectedDir={selectedDir}
-                  depth={1}
-                  parentPath={rootKey}
-                  rootIndex={root.index}
-                  onDirClick={(pathKey) => { setSelectedDir(pathKey); toggleDir(pathKey); }}
-                  onFileClick={(path) => openFile(path)}
-                  onFileDoubleClick={(path) => promoteFile(path)}
-                  onContextMenu={handleContextMenu}
-                />}
+                {isRootExpanded && (
+                  <FileTree
+                    entries={dirContents.get(rootKey) || []}
+                    dirContents={dirContents}
+                    expandedDirs={expandedDirs}
+                    selectedPath={selectedPath}
+                    previewTab={previewTab}
+                    selectedDir={selectedDir}
+                    depth={1}
+                    parentPath={rootKey}
+                    rootIndex={root.index}
+                    onDirClick={(pathKey) => {
+                      setSelectedDir(pathKey);
+                      toggleDir(pathKey);
+                    }}
+                    onFileClick={(path) => openFile(path)}
+                    onFileDoubleClick={(path) => promoteFile(path)}
+                    onContextMenu={handleContextMenu}
+                  />
+                )}
               </div>
             );
           })}
         </div>
       </div>
-      {contextMenu && (
-        <ContextMenu
-          x={contextMenu.x}
-          y={contextMenu.y}
-          items={getContextMenuItems()}
-          onClose={() => setContextMenu(null)}
-        />
-      )}
+      {contextMenu && <ContextMenu x={contextMenu.x} y={contextMenu.y} items={getContextMenuItems()} onClose={() => setContextMenu(null)} />}
     </FilePanel>
   );
 }

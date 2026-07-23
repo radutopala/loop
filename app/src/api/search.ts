@@ -9,10 +9,7 @@ export interface SearchMessageResult {
   created_at: string;
 }
 
-export async function searchMessages(
-  query: string,
-  limit?: number,
-): Promise<SearchMessageResult[]> {
+export async function searchMessages(query: string, limit?: number): Promise<SearchMessageResult[]> {
   const params = new URLSearchParams({ q: query });
   if (limit) params.set("limit", String(limit));
   const res = await fetch(`${getApiUrl()}/api/messages/search?${params}`);

@@ -1,9 +1,9 @@
 import { useState } from "react";
-import { SIDEBAR_PILLS } from "./pills";
-import type { PillKind } from "./pills";
-import type { Channel } from "../../types";
-import { fonts } from "../../theme";
 import { useTheme } from "../../ThemeContext";
+import { fonts } from "../../theme";
+import type { Channel } from "../../types";
+import type { PillKind } from "./pills";
+import { SIDEBAR_PILLS } from "./pills";
 import { StatusPill } from "./StatusPill";
 
 /** Drag-to-reorder wiring for threads/worktrees under a common parent. */
@@ -34,7 +34,23 @@ interface ThreadItemProps {
   pillsRef?: React.RefObject<Map<PillKind, Set<string>>>;
 }
 
-export function ThreadItem({ thread, subThreads, threadsByParent, selected, selectedId, isLast, onSelect, onContextMenu, reorder, selectMode, checked, onToggleCheck, isRunningMapRef, unreadIdsRef, pillsRef }: ThreadItemProps) {
+export function ThreadItem({
+  thread,
+  subThreads,
+  threadsByParent,
+  selected,
+  selectedId,
+  isLast,
+  onSelect,
+  onContextMenu,
+  reorder,
+  selectMode,
+  checked,
+  onToggleCheck,
+  isRunningMapRef,
+  unreadIdsRef,
+  pillsRef,
+}: ThreadItemProps) {
   const { colors } = useTheme();
   const [hovered, setHovered] = useState(false);
   const [collapsed, setCollapsed] = useState(false);
@@ -44,9 +60,7 @@ export function ThreadItem({ thread, subThreads, threadsByParent, selected, sele
   const hasAnyPill = activePills.length > 0;
   const isEphemeral = thread.name.startsWith("[ephemeral] ");
   const isTaskThread = /^(\[ephemeral] )?(🧵 |⏱ )?task #/.test(thread.name);
-  const displayName = isTaskThread
-    ? thread.name.replace(/^(\[ephemeral] )?(🧵 |⏱ )?/, "")
-    : (thread.name || thread.id);
+  const displayName = isTaskThread ? thread.name.replace(/^(\[ephemeral] )?(🧵 |⏱ )?/, "") : thread.name || thread.id;
 
   return (
     <div style={{ position: "relative", margin: "0 8px" }}>
@@ -70,10 +84,24 @@ export function ThreadItem({ thread, subThreads, threadsByParent, selected, sele
       <button
         title={thread.dir_path || undefined}
         draggable={!!reorder}
-        onDragStart={reorder ? (e) => { e.stopPropagation(); reorder.onDragStart(thread.id, thread.parent_id); } : undefined}
+        onDragStart={
+          reorder
+            ? (e) => {
+                e.stopPropagation();
+                reorder.onDragStart(thread.id, thread.parent_id);
+              }
+            : undefined
+        }
         onDragOver={reorder ? (e) => reorder.onDragOver(e, thread.id, thread.parent_id) : undefined}
         onDrop={reorder ? (e) => reorder.onDrop(e, thread.id, thread.parent_id) : undefined}
-        onDragEnd={reorder ? (e) => { e.stopPropagation(); reorder.onDragEnd(); } : undefined}
+        onDragEnd={
+          reorder
+            ? (e) => {
+                e.stopPropagation();
+                reorder.onDragEnd();
+              }
+            : undefined
+        }
         onClick={() => onSelect(thread.id)}
         onContextMenu={(e) => onContextMenu(e, thread)}
         onMouseEnter={() => setHovered(true)}
@@ -85,11 +113,7 @@ export function ThreadItem({ thread, subThreads, threadsByParent, selected, sele
           width: "100%",
           padding: "4px 8px 4px 30px",
           border: "none",
-          background: selected
-            ? colors.selectedBg
-            : hovered
-              ? colors.hoverBg
-              : "transparent",
+          background: selected ? colors.selectedBg : hovered ? colors.hoverBg : "transparent",
           color: selected ? colors.textLight : colors.textDim,
           fontSize: 14,
           textAlign: "left",
@@ -99,112 +123,124 @@ export function ThreadItem({ thread, subThreads, threadsByParent, selected, sele
           boxShadow: reorder?.dragOverId === thread.id ? `inset 0 2px 0 ${colors.active}` : undefined,
         }}
       >
-      {hasChildren && (
-        <span
-          onClick={(e) => { e.stopPropagation(); setCollapsed((c) => !c); }}
-          style={{ display: "flex", alignItems: "center", flexShrink: 0, cursor: "pointer", marginRight: 2 }}
-        >
-          <svg width="8" height="8" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"
-            style={{ transition: "transform 0.15s ease", transform: collapsed ? "rotate(-90deg)" : "rotate(0deg)" }}>
-            <path d="M2.5 3.5L5 6.5L7.5 3.5" />
-          </svg>
-        </span>
-      )}
-      {selectMode && (
-        <span
-          onClick={(e) => { e.stopPropagation(); onToggleCheck?.(thread.id); }}
-          style={{ display: "flex", alignItems: "center", flexShrink: 0, cursor: "pointer" }}
-        >
-          <span style={{
-            width: 12,
-            height: 12,
-            borderRadius: 3,
-            border: `1.5px solid ${checked ? colors.active : colors.textDim}`,
-            backgroundColor: checked ? colors.active : "transparent",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            transition: "all 0.15s",
-          }}>
-            {checked && (
-              <svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke={colors.white} strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
-                <polyline points="20 6 9 17 4 12" />
-              </svg>
-            )}
+        {hasChildren && (
+          <span
+            onClick={(e) => {
+              e.stopPropagation();
+              setCollapsed((c) => !c);
+            }}
+            style={{ display: "flex", alignItems: "center", flexShrink: 0, cursor: "pointer", marginRight: 2 }}
+          >
+            <svg
+              width="8"
+              height="8"
+              viewBox="0 0 10 10"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.5"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              style={{ transition: "transform 0.15s ease", transform: collapsed ? "rotate(-90deg)" : "rotate(0deg)" }}
+            >
+              <path d="M2.5 3.5L5 6.5L7.5 3.5" />
+            </svg>
           </span>
-        </span>
-      )}
-      {thread.worktree && (
-        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke={colors.active} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
-          <circle cx="18" cy="18" r="3" />
-          <circle cx="6" cy="6" r="3" />
-          <path d="M6 21V9a9 9 0 0 0 9 9" />
-        </svg>
-      )}
-      {isTaskThread && !isEphemeral && (
-        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke={colors.textDim} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
-          <circle cx="12" cy="12" r="10" />
-          <polyline points="12 6 12 12 16 14" />
-        </svg>
-      )}
-      {isEphemeral && (
-        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke={colors.textDim} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0, opacity: 0.6 }}>
-          <path d="M17.7 7.7A7.5 7.5 0 1 0 5 16.6" />
-          <path d="M8 22l-4-4 4-4" />
-        </svg>
-      )}
-      <span
-        style={{
-          overflow: "hidden",
-          textOverflow: "ellipsis",
-          whiteSpace: "nowrap",
-          fontWeight: isUnread ? 600 : undefined,
-        }}
-      >
-        {displayName}
-      </span>
-      {(thread.diff_additions > 0 || thread.diff_deletions > 0) && (
-        <span style={{ flexShrink: 0, fontSize: 9, fontFamily: fonts.mono, marginLeft: "auto" }}>
-          {thread.diff_additions > 0 && <span style={{ color: colors.diffAddText }}>+{thread.diff_additions}</span>}
-          {thread.diff_additions > 0 && thread.diff_deletions > 0 && " "}
-          {thread.diff_deletions > 0 && <span style={{ color: colors.diffDelText }}>-{thread.diff_deletions}</span>}
-        </span>
-      )}
-      {isUnread && !selected && (
+        )}
+        {selectMode && (
+          <span
+            onClick={(e) => {
+              e.stopPropagation();
+              onToggleCheck?.(thread.id);
+            }}
+            style={{ display: "flex", alignItems: "center", flexShrink: 0, cursor: "pointer" }}
+          >
+            <span
+              style={{
+                width: 12,
+                height: 12,
+                borderRadius: 3,
+                border: `1.5px solid ${checked ? colors.active : colors.textDim}`,
+                backgroundColor: checked ? colors.active : "transparent",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                transition: "all 0.15s",
+              }}
+            >
+              {checked && (
+                <svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke={colors.white} strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+                  <polyline points="20 6 9 17 4 12" />
+                </svg>
+              )}
+            </span>
+          </span>
+        )}
+        {thread.worktree && (
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke={colors.active} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
+            <circle cx="18" cy="18" r="3" />
+            <circle cx="6" cy="6" r="3" />
+            <path d="M6 21V9a9 9 0 0 0 9 9" />
+          </svg>
+        )}
+        {isTaskThread && !isEphemeral && (
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke={colors.textDim} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
+            <circle cx="12" cy="12" r="10" />
+            <polyline points="12 6 12 12 16 14" />
+          </svg>
+        )}
+        {isEphemeral && (
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke={colors.textDim} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0, opacity: 0.6 }}>
+            <path d="M17.7 7.7A7.5 7.5 0 1 0 5 16.6" />
+            <path d="M8 22l-4-4 4-4" />
+          </svg>
+        )}
         <span
           style={{
-            width: 6,
-            height: 6,
-            borderRadius: "50%",
-            backgroundColor: "#5b9cf5",
-            flexShrink: 0,
-            marginLeft: (thread.diff_additions > 0 || thread.diff_deletions > 0) ? 4 : "auto",
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            whiteSpace: "nowrap",
+            fontWeight: isUnread ? 600 : undefined,
           }}
-        />
-      )}
-      {activePills.map((p, i) => (
-        <StatusPill
-          key={p.kind}
-          label={p.label}
-          color={colors[p.color]}
-          title={p.title}
-          marginLeft={(isUnread || i > 0 || thread.diff_additions > 0 || thread.diff_deletions > 0) ? 4 : "auto"}
-        />
-      ))}
-      {(thread.container_running || thread.agent_running || isRunningMapRef?.current?.get(thread.id)) && (
-        <span
-          style={{
-            width: 6,
-            height: 6,
-            borderRadius: "50%",
-            backgroundColor: colors.active,
-            flexShrink: 0,
-            marginLeft: (isUnread || hasAnyPill || thread.diff_additions > 0 || thread.diff_deletions > 0) ? 4 : "auto",
-          }}
-        />
-      )}
-    </button>
-      {hasChildren && !collapsed &&
+        >
+          {displayName}
+        </span>
+        {(thread.diff_additions > 0 || thread.diff_deletions > 0) && (
+          <span style={{ flexShrink: 0, fontSize: 9, fontFamily: fonts.mono, marginLeft: "auto" }}>
+            {thread.diff_additions > 0 && <span style={{ color: colors.diffAddText }}>+{thread.diff_additions}</span>}
+            {thread.diff_additions > 0 && thread.diff_deletions > 0 && " "}
+            {thread.diff_deletions > 0 && <span style={{ color: colors.diffDelText }}>-{thread.diff_deletions}</span>}
+          </span>
+        )}
+        {isUnread && !selected && (
+          <span
+            style={{
+              width: 6,
+              height: 6,
+              borderRadius: "50%",
+              backgroundColor: "#5b9cf5",
+              flexShrink: 0,
+              marginLeft: thread.diff_additions > 0 || thread.diff_deletions > 0 ? 4 : "auto",
+            }}
+          />
+        )}
+        {activePills.map((p, i) => (
+          <StatusPill key={p.kind} label={p.label} color={colors[p.color]} title={p.title} marginLeft={isUnread || i > 0 || thread.diff_additions > 0 || thread.diff_deletions > 0 ? 4 : "auto"} />
+        ))}
+        {(thread.container_running || thread.agent_running || isRunningMapRef?.current?.get(thread.id)) && (
+          <span
+            style={{
+              width: 6,
+              height: 6,
+              borderRadius: "50%",
+              backgroundColor: colors.active,
+              flexShrink: 0,
+              marginLeft: isUnread || hasAnyPill || thread.diff_additions > 0 || thread.diff_deletions > 0 ? 4 : "auto",
+            }}
+          />
+        )}
+      </button>
+      {hasChildren &&
+        !collapsed &&
         subThreads!.map((sub, i) => (
           <ThreadItem
             key={sub.id}

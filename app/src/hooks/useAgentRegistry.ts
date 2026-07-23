@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { WSEvent } from "../types";
-import { useEventStream } from "./useEventStream";
-import { logErr } from "../utils/log";
 import { getApiUrl } from "../api/api";
+import type { WSEvent } from "../types";
+import { logErr } from "../utils/log";
+import { useEventStream } from "./useEventStream";
 
 export interface AgentInfo {
   agent_id: string;
@@ -55,7 +55,9 @@ export function useAgentRegistry(channelId: string | null): UseAgentRegistryResu
         setAgents(next);
       })
       .catch(logErr("fetching agent registry"));
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+    };
   }, [channelId]);
 
   const onEvent = useCallback((event: WSEvent) => {

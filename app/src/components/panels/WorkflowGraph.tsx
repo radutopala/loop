@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { WorkflowNodeDef, WorkflowNodeRun } from "../../api/workflows";
 import type { ColorPalette } from "../../theme";
 import { fonts } from "../../theme";
-import type { WorkflowNodeDef, WorkflowNodeRun } from "../../api/workflows";
 
 // ---------------------------------------------------------------------------
 // Layout constants
@@ -26,36 +26,36 @@ const MINIMAP_H = 80;
 // ---------------------------------------------------------------------------
 
 const STATUS_FILLS: Record<string, string> = {
-  pending:  "#2a2a3a",
-  running:  "#1e2a4a",
-  success:  "#1a3a2a",
-  failed:   "#3a1a1a",
-  skipped:  "#2a2a2a",
-  paused:   "#3a2e1a",
+  pending: "#2a2a3a",
+  running: "#1e2a4a",
+  success: "#1a3a2a",
+  failed: "#3a1a1a",
+  skipped: "#2a2a2a",
+  paused: "#3a2e1a",
 };
 
 const STATUS_STROKES: Record<string, string> = {
-  pending:  "#555",
-  running:  "#818cf8",
-  success:  "#34d399",
-  failed:   "#ef4444",
-  skipped:  "#6b7280",
-  paused:   "#fbbf24",
+  pending: "#555",
+  running: "#818cf8",
+  success: "#34d399",
+  failed: "#ef4444",
+  skipped: "#6b7280",
+  paused: "#fbbf24",
 };
 
 const STATUS_ICONS: Record<string, string> = {
-  pending:  "\u25CB",
-  running:  "\u25CF",
-  success:  "\u2713",
-  failed:   "\u2717",
-  skipped:  "\u23ED",
-  paused:   "\u23F8",
+  pending: "\u25CB",
+  running: "\u25CF",
+  success: "\u2713",
+  failed: "\u2717",
+  skipped: "\u23ED",
+  paused: "\u23F8",
 };
 
 const TYPE_BADGES: Record<string, string> = {
-  prompt:   "P",
-  bash:     "B",
-  loop:     "L",
+  prompt: "P",
+  bash: "B",
+  loop: "L",
   approval: "A",
 };
 
@@ -115,10 +115,7 @@ function makeSyntheticId(loopId: string, iter: number, childId: string): string 
 // the first child of iteration N depends on the last child of iteration N-1.
 // Top-level defs that depend on a loopId are rewired onto the loop's last
 // emitted node.
-export function expandLoopBodies(
-  defs: WorkflowNodeDef[],
-  runs: WorkflowNodeRun[],
-): { effectiveDefs: WorkflowNodeDef[]; groupSpecs: { loopId: string; iterCount: number; syntheticIds: string[] }[] } {
+export function expandLoopBodies(defs: WorkflowNodeDef[], runs: WorkflowNodeRun[]): { effectiveDefs: WorkflowNodeDef[]; groupSpecs: { loopId: string; iterCount: number; syntheticIds: string[] }[] } {
   const groupSpecs: { loopId: string; iterCount: number; syntheticIds: string[] }[] = [];
   const rewires = new Map<string, string>();
   const out: WorkflowNodeDef[] = [];
@@ -177,7 +174,12 @@ export function expandLoopBodies(
       let changed = false;
       for (const dep of d.depends_on) {
         const rewired = rewires.get(dep);
-        if (rewired) { next.push(rewired); changed = true; } else { next.push(dep); }
+        if (rewired) {
+          next.push(rewired);
+          changed = true;
+        } else {
+          next.push(dep);
+        }
       }
       if (changed) out[i] = { ...d, depends_on: next };
     }
@@ -186,10 +188,7 @@ export function expandLoopBodies(
   return { effectiveDefs: out, groupSpecs };
 }
 
-function computeLayout(
-  defs: WorkflowNodeDef[],
-  runs: WorkflowNodeRun[],
-): { nodes: LayoutNode[]; edges: LayoutEdge[]; width: number; height: number; groupRects: GroupRect[] } {
+function computeLayout(defs: WorkflowNodeDef[], runs: WorkflowNodeRun[]): { nodes: LayoutNode[]; edges: LayoutEdge[]; width: number; height: number; groupRects: GroupRect[] } {
   // Expand any loop-with-body defs into per-iteration synthetic children.
   const { effectiveDefs: expanded, groupSpecs } = expandLoopBodies(defs, runs);
 
@@ -314,7 +313,10 @@ function computeLayout(
   for (const spec of groupSpecs) {
     const members = layoutNodes.filter((n) => n.synthetic?.loopId === spec.loopId);
     if (members.length === 0) continue;
-    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    let minX = Infinity,
+      minY = Infinity,
+      maxX = -Infinity,
+      maxY = -Infinity;
     for (const m of members) {
       if (m.x < minX) minX = m.x;
       if (m.y < minY) minY = m.y;
@@ -368,10 +370,7 @@ export function WorkflowGraph({ defs, nodeRuns, colors, onNodeClick, expandedNod
   const isPanning = useRef(false);
   const hasCentered = useRef(false);
 
-  const { nodes, edges, width, height, groupRects } = useMemo(
-    () => computeLayout(defs, nodeRuns),
-    [defs, nodeRuns],
-  );
+  const { nodes, edges, width, height, groupRects } = useMemo(() => computeLayout(defs, nodeRuns), [defs, nodeRuns]);
 
   // Auto-center graph ONCE — on first render with non-zero nodes. After
   // that, leave the user's pan/zoom alone: a later iteration adding
@@ -384,7 +383,7 @@ export function WorkflowGraph({ defs, nodeRuns, colors, onNodeClick, expandedNod
     const el = containerRef.current;
     if (!el) return;
     const rect = el.getBoundingClientRect();
-    const fitZoom = Math.min(1.2, rect.width * 0.9 / width, rect.height * 0.9 / height);
+    const fitZoom = Math.min(1.2, (rect.width * 0.9) / width, (rect.height * 0.9) / height);
     const z = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, fitZoom));
     const cx = (rect.width - width * z) / 2;
     const cy = (rect.height - height * z) / 2;
@@ -456,14 +455,10 @@ export function WorkflowGraph({ defs, nodeRuns, colors, onNodeClick, expandedNod
   }, []);
 
   if (nodes.length === 0) {
-    return (
-      <div style={{ padding: 16, color: colors.textDim, fontSize: 12, textAlign: "center" }}>
-        No nodes defined
-      </div>
-    );
+    return <div style={{ padding: 16, color: colors.textDim, fontSize: 12, textAlign: "center" }}>No nodes defined</div>;
   }
 
-  const expandedNode = expandedNodeId ? nodes.find(n => n.id === expandedNodeId) : null;
+  const expandedNode = expandedNodeId ? nodes.find((n) => n.id === expandedNodeId) : null;
   const expandedRun = expandedNode?.run;
 
   // Dot grid.
@@ -518,12 +513,7 @@ export function WorkflowGraph({ defs, nodeRuns, colors, onNodeClick, expandedNod
             willChange: "transform",
           }}
         >
-          <svg
-            width={width}
-            height={height}
-            viewBox={`0 0 ${width} ${height}`}
-            style={{ display: "block", overflow: "visible" }}
-          >
+          <svg width={width} height={height} viewBox={`0 0 ${width} ${height}`} style={{ display: "block", overflow: "visible" }}>
             {/* Arrowhead markers */}
             <defs>
               <marker id="wf-arrow" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
@@ -540,23 +530,8 @@ export function WorkflowGraph({ defs, nodeRuns, colors, onNodeClick, expandedNod
                 dashed border frames the iterations without obscuring them. */}
             {groupRects.map((g) => (
               <g key={`group-${g.loopId}`} data-testid={`wf-loop-group-${g.loopId}`}>
-                <rect
-                  x={g.x - 12}
-                  y={g.y - 28}
-                  width={g.width + 24}
-                  height={g.height + 40}
-                  fill="transparent"
-                  stroke={colors.border}
-                  strokeDasharray="6 4"
-                  rx={12}
-                />
-                <text
-                  x={g.x - 4}
-                  y={g.y - 12}
-                  fontSize={11}
-                  fontFamily={fonts.mono}
-                  fill={colors.textDim}
-                >
+                <rect x={g.x - 12} y={g.y - 28} width={g.width + 24} height={g.height + 40} fill="transparent" stroke={colors.border} strokeDasharray="6 4" rx={12} />
+                <text x={g.x - 4} y={g.y - 12} fontSize={11} fontFamily={fonts.mono} fill={colors.textDim}>
                   {g.loopId} · {g.iterCount} iter{g.iterCount === 1 ? "" : "s"}
                 </text>
               </g>
@@ -602,17 +577,7 @@ export function WorkflowGraph({ defs, nodeRuns, colors, onNodeClick, expandedNod
                   style={{ cursor: "pointer" }}
                 >
                   {isRunning && (
-                    <rect
-                      x={node.x - 2}
-                      y={node.y - 2}
-                      width={NODE_W + 4}
-                      height={NODE_H + 4}
-                      rx={NODE_RX + 2}
-                      fill="none"
-                      stroke={stroke}
-                      strokeWidth={1}
-                      opacity={0.3}
-                    >
+                    <rect x={node.x - 2} y={node.y - 2} width={NODE_W + 4} height={NODE_H + 4} rx={NODE_RX + 2} fill="none" stroke={stroke} strokeWidth={1} opacity={0.3}>
                       <animate attributeName="opacity" values="0.3;0.7;0.3" dur="2s" repeatCount="indefinite" />
                     </rect>
                   )}
@@ -628,86 +593,33 @@ export function WorkflowGraph({ defs, nodeRuns, colors, onNodeClick, expandedNod
                     strokeWidth={isExpanded ? 2 : isHovered ? 1.5 : 1}
                   />
 
-                  <text
-                    x={node.x + 12}
-                    y={node.y + NODE_H / 2 + 1}
-                    fill={stroke}
-                    fontSize={12}
-                    fontWeight={700}
-                    textAnchor="middle"
-                    dominantBaseline="middle"
-                  >
+                  <text x={node.x + 12} y={node.y + NODE_H / 2 + 1} fill={stroke} fontSize={12} fontWeight={700} textAnchor="middle" dominantBaseline="middle">
                     {icon}
                   </text>
 
-                  <text
-                    x={node.x + 24}
-                    y={node.y + NODE_H / 2 + 1}
-                    fill={colors.textLight}
-                    fontSize={11}
-                    fontFamily={fonts.mono}
-                    fontWeight={600}
-                    dominantBaseline="middle"
-                  >
+                  <text x={node.x + 24} y={node.y + NODE_H / 2 + 1} fill={colors.textLight} fontSize={11} fontFamily={fonts.mono} fontWeight={600} dominantBaseline="middle">
                     {(() => {
                       const label = node.synthetic?.srcId ?? node.id;
                       return label.length > 12 ? label.slice(0, 11) + "\u2026" : label;
                     })()}
                   </text>
 
-                  <rect
-                    x={node.x + NODE_W - 22}
-                    y={node.y + 4}
-                    width={18}
-                    height={14}
-                    rx={3}
-                    fill={stroke}
-                    opacity={0.25}
-                  />
-                  <text
-                    x={node.x + NODE_W - 13}
-                    y={node.y + 12}
-                    fill={stroke}
-                    fontSize={8}
-                    fontWeight={700}
-                    textAnchor="middle"
-                    dominantBaseline="middle"
-                  >
+                  <rect x={node.x + NODE_W - 22} y={node.y + 4} width={18} height={14} rx={3} fill={stroke} opacity={0.25} />
+                  <text x={node.x + NODE_W - 13} y={node.y + 12} fill={stroke} fontSize={8} fontWeight={700} textAnchor="middle" dominantBaseline="middle">
                     {typeBadge}
                   </text>
 
                   {node.run && node.run.attempt > 1 && (
                     <>
-                      <rect
-                        x={node.x + NODE_W - 30}
-                        y={node.y + NODE_H - 16}
-                        width={26}
-                        height={12}
-                        rx={3}
-                        fill="#fbbf2440"
-                      />
-                      <text
-                        x={node.x + NODE_W - 17}
-                        y={node.y + NODE_H - 10}
-                        fill="#fbbf24"
-                        fontSize={7}
-                        fontWeight={700}
-                        textAnchor="middle"
-                        dominantBaseline="middle"
-                      >
+                      <rect x={node.x + NODE_W - 30} y={node.y + NODE_H - 16} width={26} height={12} rx={3} fill="#fbbf2440" />
+                      <text x={node.x + NODE_W - 17} y={node.y + NODE_H - 10} fill="#fbbf24" fontSize={7} fontWeight={700} textAnchor="middle" dominantBaseline="middle">
                         R:{node.run.attempt - 1}
                       </text>
                     </>
                   )}
 
                   {node.run?.started_at && (
-                    <text
-                      x={node.x + 6}
-                      y={node.y + NODE_H - 6}
-                      fill={colors.textDim}
-                      fontSize={8}
-                      fontFamily={fonts.mono}
-                    >
+                    <text x={node.x + 6} y={node.y + NODE_H - 6} fill={colors.textDim} fontSize={8} fontFamily={fonts.mono}>
                       {elapsedShort(node.run.started_at, node.run.finished_at)}
                     </text>
                   )}
@@ -812,27 +724,44 @@ export function WorkflowGraph({ defs, nodeRuns, colors, onNodeClick, expandedNod
             }}
           >
             <button
-              onClick={(e) => { e.stopPropagation(); zoomTo(vp.zoom / 1.3); }}
+              onClick={(e) => {
+                e.stopPropagation();
+                zoomTo(vp.zoom / 1.3);
+              }}
               title="Zoom out"
               style={{ background: "none", border: "none", color: colors.textDim, cursor: "pointer", padding: "2px 6px", fontSize: 12, lineHeight: 1, fontWeight: 700 }}
-              onMouseEnter={(e) => { e.currentTarget.style.color = colors.textLight; }}
-              onMouseLeave={(e) => { e.currentTarget.style.color = colors.textDim; }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.color = colors.textLight;
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.color = colors.textDim;
+              }}
             >
               −
             </button>
             <span
-              onClick={(e) => { e.stopPropagation(); zoomTo(1); }}
+              onClick={(e) => {
+                e.stopPropagation();
+                zoomTo(1);
+              }}
               title="Reset zoom"
               style={{ fontSize: 9, color: colors.textDim, cursor: "pointer", padding: "0 4px", minWidth: 28, textAlign: "center" }}
             >
               {Math.round(vp.zoom * 100)}%
             </span>
             <button
-              onClick={(e) => { e.stopPropagation(); zoomTo(vp.zoom * 1.3); }}
+              onClick={(e) => {
+                e.stopPropagation();
+                zoomTo(vp.zoom * 1.3);
+              }}
               title="Zoom in"
               style={{ background: "none", border: "none", color: colors.textDim, cursor: "pointer", padding: "2px 6px", fontSize: 12, lineHeight: 1, fontWeight: 700 }}
-              onMouseEnter={(e) => { e.currentTarget.style.color = colors.textLight; }}
-              onMouseLeave={(e) => { e.currentTarget.style.color = colors.textDim; }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.color = colors.textLight;
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.color = colors.textDim;
+              }}
             >
               +
             </button>
@@ -842,42 +771,38 @@ export function WorkflowGraph({ defs, nodeRuns, colors, onNodeClick, expandedNod
 
       {/* Expanded node output panel below the graph */}
       {expandedNode && expandedRun && (
-        <div style={{
-          borderTop: `1px solid ${colors.border}`,
-          padding: "8px 12px",
-          flex: 1,
-          overflowY: "auto",
-          minHeight: 80,
-        }}>
+        <div
+          style={{
+            borderTop: `1px solid ${colors.border}`,
+            padding: "8px 12px",
+            flex: 1,
+            overflowY: "auto",
+            minHeight: 80,
+          }}
+        >
           <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 6 }}>
-            <span style={{ color: STATUS_STROKES[expandedRun.status] ?? colors.textDim, fontWeight: 700, fontSize: 13 }}>
-              {STATUS_ICONS[expandedRun.status] ?? "\u25CB"}
-            </span>
-            <span style={{ fontFamily: fonts.mono, fontWeight: 600, fontSize: 11, color: colors.textLight }}>
-              {expandedNode.synthetic?.srcId ?? expandedNode.id}
-            </span>
-            <span style={{ fontSize: 10, color: colors.textDim, padding: "0 4px", borderRadius: 3, border: `1px solid ${colors.border}` }}>
-              {expandedNode.def.type}
-            </span>
+            <span style={{ color: STATUS_STROKES[expandedRun.status] ?? colors.textDim, fontWeight: 700, fontSize: 13 }}>{STATUS_ICONS[expandedRun.status] ?? "\u25CB"}</span>
+            <span style={{ fontFamily: fonts.mono, fontWeight: 600, fontSize: 11, color: colors.textLight }}>{expandedNode.synthetic?.srcId ?? expandedNode.id}</span>
+            <span style={{ fontSize: 10, color: colors.textDim, padding: "0 4px", borderRadius: 3, border: `1px solid ${colors.border}` }}>{expandedNode.def.type}</span>
             {expandedNode.synthetic && (
-              <span style={{ fontSize: 10, color: colors.textDim, padding: "0 4px", borderRadius: 3, border: `1px solid ${colors.border}` }}>
-                iter {expandedNode.synthetic.iteration + 1}
-              </span>
+              <span style={{ fontSize: 10, color: colors.textDim, padding: "0 4px", borderRadius: 3, border: `1px solid ${colors.border}` }}>iter {expandedNode.synthetic.iteration + 1}</span>
             )}
-            {expandedRun.started_at && (
-              <span style={{ fontSize: 10, color: colors.textDim, marginLeft: "auto" }}>
-                {elapsedShort(expandedRun.started_at, expandedRun.finished_at)}
-              </span>
-            )}
+            {expandedRun.started_at && <span style={{ fontSize: 10, color: colors.textDim, marginLeft: "auto" }}>{elapsedShort(expandedRun.started_at, expandedRun.finished_at)}</span>}
           </div>
           {expandedRun.session_id && (
             <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 10, color: colors.textDim, marginBottom: 6 }}>
               <span>session</span>
-              <span style={{
-                fontFamily: fonts.mono, color: colors.textLight, background: colors.bg,
-                padding: "1px 5px", borderRadius: 3, border: `1px solid ${colors.border}`,
-                userSelect: "all",
-              }}>
+              <span
+                style={{
+                  fontFamily: fonts.mono,
+                  color: colors.textLight,
+                  background: colors.bg,
+                  padding: "1px 5px",
+                  borderRadius: 3,
+                  border: `1px solid ${colors.border}`,
+                  userSelect: "all",
+                }}
+              >
                 {expandedRun.session_id}
               </span>
               <span>— resume to continue this prompt's conversation</span>
@@ -886,33 +811,40 @@ export function WorkflowGraph({ defs, nodeRuns, colors, onNodeClick, expandedNod
           {expandedRun.input && (
             <>
               <div style={{ fontSize: 10, color: colors.textDim, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 3 }}>Input</div>
-              <div style={{
-                color: colors.textDim, fontSize: 11, whiteSpace: "pre-wrap",
-                fontFamily: fonts.mono, background: colors.bg, padding: "6px 8px", borderRadius: 4, marginBottom: 8,
-              }}>
+              <div
+                style={{
+                  color: colors.textDim,
+                  fontSize: 11,
+                  whiteSpace: "pre-wrap",
+                  fontFamily: fonts.mono,
+                  background: colors.bg,
+                  padding: "6px 8px",
+                  borderRadius: 4,
+                  marginBottom: 8,
+                }}
+              >
                 {expandedRun.input}
               </div>
             </>
           )}
-          {expandedRun.error_text && (
-            <div style={{ color: colors.error ?? "#ef4444", fontSize: 11, whiteSpace: "pre-wrap", marginBottom: 4 }}>
-              {expandedRun.error_text}
-            </div>
-          )}
-          {(expandedRun.output || expandedRun.input) && (
-            <div style={{ fontSize: 10, color: colors.textDim, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 3 }}>Output</div>
-          )}
+          {expandedRun.error_text && <div style={{ color: colors.error ?? "#ef4444", fontSize: 11, whiteSpace: "pre-wrap", marginBottom: 4 }}>{expandedRun.error_text}</div>}
+          {(expandedRun.output || expandedRun.input) && <div style={{ fontSize: 10, color: colors.textDim, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 3 }}>Output</div>}
           {expandedRun.output && (
-            <div style={{
-              color: colors.textDim, fontSize: 11, whiteSpace: "pre-wrap",
-              fontFamily: fonts.mono, background: colors.bg, padding: "6px 8px", borderRadius: 4,
-            }}>
+            <div
+              style={{
+                color: colors.textDim,
+                fontSize: 11,
+                whiteSpace: "pre-wrap",
+                fontFamily: fonts.mono,
+                background: colors.bg,
+                padding: "6px 8px",
+                borderRadius: 4,
+              }}
+            >
               {expandedRun.output}
             </div>
           )}
-          {!expandedRun.output && !expandedRun.error_text && (
-            <div style={{ color: colors.textDim, fontSize: 11 }}>No output</div>
-          )}
+          {!expandedRun.output && !expandedRun.error_text && <div style={{ color: colors.textDim, fontSize: 11 }}>No output</div>}
         </div>
       )}
     </div>

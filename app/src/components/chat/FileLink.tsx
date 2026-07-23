@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useTheme } from "../../ThemeContext";
-import { getValidationStatus, requestValidation, subscribe, type FileLinkTarget } from "../../utils/fileLinks";
+import { type FileLinkTarget, getValidationStatus, requestValidation, subscribe } from "../../utils/fileLinks";
 
 export interface FileLinkOpenDetail {
   channelId: string;
@@ -41,11 +41,7 @@ export function FileLink({ channelId, raw, line }: FileLinkProps) {
   };
 
   return (
-    <a
-      href="#"
-      onClick={handleClick}
-      style={{ color: colors.active, textDecoration: "underline", cursor: "pointer" }}
-    >
+    <a href="#" onClick={handleClick} style={{ color: colors.active, textDecoration: "underline", cursor: "pointer" }}>
       {display}
     </a>
   );

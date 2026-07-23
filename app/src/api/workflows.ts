@@ -110,11 +110,7 @@ export async function fetchWorkflows(channelId?: string): Promise<WorkflowDef[]>
   return (await res.json()) ?? [];
 }
 
-export async function fetchWorkflowRuns(
-  channelId?: string,
-  limit?: number,
-  offset?: number,
-): Promise<WorkflowRun[]> {
+export async function fetchWorkflowRuns(channelId?: string, limit?: number, offset?: number): Promise<WorkflowRun[]> {
   const params = new URLSearchParams();
   if (channelId) params.set("channel_id", channelId);
   if (limit !== undefined) params.set("limit", String(limit));
@@ -142,11 +138,7 @@ export async function fetchWorkflowRun(runId: string, opts?: { signal?: AbortSig
   return res.json();
 }
 
-export async function startWorkflowRun(data: {
-  workflow_name: string;
-  channel_id?: string;
-  inputs?: Record<string, string>;
-}): Promise<{ run_id: string }> {
+export async function startWorkflowRun(data: { workflow_name: string; channel_id?: string; inputs?: Record<string, string> }): Promise<{ run_id: string }> {
   const res = await fetch(`${getApiUrl()}/api/workflows/runs`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -156,13 +148,7 @@ export async function startWorkflowRun(data: {
   return res.json();
 }
 
-export async function saveWorkflowDef(params: {
-  action: "add" | "update" | "delete";
-  scope?: "global" | "project";
-  channel_id?: string;
-  name?: string;
-  workflow?: unknown;
-}): Promise<void> {
+export async function saveWorkflowDef(params: { action: "add" | "update" | "delete"; scope?: "global" | "project"; channel_id?: string; name?: string; workflow?: unknown }): Promise<void> {
   const res = await fetch(`${getApiUrl()}/api/workflows`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },

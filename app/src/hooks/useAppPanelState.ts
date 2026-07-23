@@ -74,22 +74,31 @@ export function useAppPanelState(): AppPanelState {
     setSettingsDirPath(dirPath ?? null);
   }, []);
 
-  const openConfig = useCallback((dirPath: string) => {
-    setReadmeOpen(false);
-    setContainersOpen(false);
-    setTasksOpen(false);
-    setWorkflowsOpen(false);
-    setSharesOpen(false);
-    setSettingsOpen((v) => {
-      if (v && settingsDirPath === dirPath) return false;
-      setSettingsDirPath(dirPath);
-      return true;
-    });
-  }, [settingsDirPath]);
+  const openConfig = useCallback(
+    (dirPath: string) => {
+      setReadmeOpen(false);
+      setContainersOpen(false);
+      setTasksOpen(false);
+      setWorkflowsOpen(false);
+      setSharesOpen(false);
+      setSettingsOpen((v) => {
+        if (v && settingsDirPath === dirPath) return false;
+        setSettingsDirPath(dirPath);
+        return true;
+      });
+    },
+    [settingsDirPath],
+  );
 
   const toggleSettingsKeyboard = useCallback(() => {
     setSettingsOpen((v) => {
-      if (!v) { setReadmeOpen(false); setContainersOpen(false); setTasksOpen(false); setWorkflowsOpen(false); setSharesOpen(false); }
+      if (!v) {
+        setReadmeOpen(false);
+        setContainersOpen(false);
+        setTasksOpen(false);
+        setWorkflowsOpen(false);
+        setSharesOpen(false);
+      }
       return !v;
     });
     setSettingsDirPath(null);
@@ -107,12 +116,24 @@ export function useAppPanelState(): AppPanelState {
 
   const closePanel = useCallback((panel: PanelName) => {
     switch (panel) {
-      case "settings": setSettingsOpen(false); break;
-      case "readme": setReadmeOpen(false); break;
-      case "containers": setContainersOpen(false); break;
-      case "tasks": setTasksOpen(false); break;
-      case "workflows": setWorkflowsOpen(false); break;
-      case "shares": setSharesOpen(false); break;
+      case "settings":
+        setSettingsOpen(false);
+        break;
+      case "readme":
+        setReadmeOpen(false);
+        break;
+      case "containers":
+        setContainersOpen(false);
+        break;
+      case "tasks":
+        setTasksOpen(false);
+        break;
+      case "workflows":
+        setWorkflowsOpen(false);
+        break;
+      case "shares":
+        setSharesOpen(false);
+        break;
     }
   }, []);
 

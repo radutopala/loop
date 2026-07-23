@@ -1,12 +1,20 @@
 import { Group } from "@visx/group";
-import { Treemap, hierarchy, treemapBinary } from "@visx/hierarchy";
-import { useTheme } from "../../../ThemeContext";
-import { fonts } from "../../../theme";
+import { type hierarchy, Treemap, treemapBinary } from "@visx/hierarchy";
 import type { QualityFileTile, QualityRule } from "../../../api/quality";
+import type { useTheme } from "../../../ThemeContext";
+import { fonts } from "../../../theme";
 import { deficitColor, metricLabel, TileDetail, type TreemapDatum } from "./shared";
 
 export interface OverviewTabProps {
-  display: { signal: number; geo_mean: number; metrics: { name: string; score: number; raw: number }[]; tiles: QualityFileTile[]; rules?: { failed: QualityRule[] }; scanned_at: string; branch: string } | null;
+  display: {
+    signal: number;
+    geo_mean: number;
+    metrics: { name: string; score: number; raw: number }[];
+    tiles: QualityFileTile[];
+    rules?: { failed: QualityRule[] };
+    scanned_at: string;
+    branch: string;
+  } | null;
   treemapRoot: ReturnType<typeof hierarchy<TreemapDatum>> | null;
   size: { width: number; height: number };
   containerRef: (el: HTMLDivElement | null) => void;
@@ -37,9 +45,7 @@ export function OverviewTab({ display, treemapRoot, size, containerRef, selected
               }}
             >
               <div style={{ fontSize: 10, color: colors.textDim, textTransform: "uppercase", letterSpacing: 0.5 }}>{metricLabel(m.name)}</div>
-              <div style={{ fontSize: 18, color: colors.textLight, fontFamily: fonts.mono, marginTop: 2 }}>
-                {m.score.toFixed(3)}
-              </div>
+              <div style={{ fontSize: 18, color: colors.textLight, fontFamily: fonts.mono, marginTop: 2 }}>{m.score.toFixed(3)}</div>
               <div style={{ fontSize: 10, color: colors.textDim, fontFamily: fonts.mono }}>raw {m.raw.toFixed(3)}</div>
             </div>
           ))}
@@ -50,13 +56,7 @@ export function OverviewTab({ display, treemapRoot, size, containerRef, selected
         <>
           <div ref={containerRef} style={{ flex: "1 1 240px", minHeight: 240, padding: "0 12px" }}>
             <svg width={size.width} height={size.height}>
-              <Treemap<TreemapDatum>
-                root={treemapRoot}
-                size={[size.width, size.height]}
-                tile={treemapBinary}
-                round
-                paddingInner={2}
-              >
+              <Treemap<TreemapDatum> root={treemapRoot} size={[size.width, size.height]} tile={treemapBinary} round paddingInner={2}>
                 {(treemap) => (
                   <Group>
                     {treemap.descendants().map((node, i) => {
@@ -81,9 +81,7 @@ export function OverviewTab({ display, treemapRoot, size, containerRef, selected
                             style={{ cursor: tile ? "pointer" : "default" }}
                             onClick={() => tile && setSelectedTile(tile)}
                           >
-                            {tile && (
-                              <title>{`${tile.path}\nLOC ${tile.loc} · deficit ${tile.deficit.toFixed(2)}${tile.top_reason ? ` · ${tile.top_reason}` : ""}`}</title>
-                            )}
+                            {tile && <title>{`${tile.path}\nLOC ${tile.loc} · deficit ${tile.deficit.toFixed(2)}${tile.top_reason ? ` · ${tile.top_reason}` : ""}`}</title>}
                           </rect>
                           {w > 60 && h > 24 && (
                             <text x={6} y={16} fontSize={11} fontFamily={fonts.sans} fill={colors.white} style={{ pointerEvents: "none" }}>
@@ -104,24 +102,13 @@ export function OverviewTab({ display, treemapRoot, size, containerRef, selected
             </svg>
           </div>
 
-          {selectedTile && (
-            <TileDetail
-              tile={selectedTile}
-              onClose={() => setSelectedTile(null)}
-              onSimulateDelete={onSimulateDelete}
-              colors={colors}
-              fontSizes={fontSizes}
-              btnStyle={btnStyle}
-            />
-          )}
+          {selectedTile && <TileDetail tile={selectedTile} onClose={() => setSelectedTile(null)} onSimulateDelete={onSimulateDelete} colors={colors} fontSizes={fontSizes} btnStyle={btnStyle} />}
         </>
       )}
 
       {failedRules.length > 0 && (
         <div style={{ padding: 12, borderTop: `1px solid ${colors.border}` }}>
-          <div style={{ fontSize: 11, color: colors.textDim, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 8 }}>
-            Failing rules ({failedRules.length})
-          </div>
+          <div style={{ fontSize: 11, color: colors.textDim, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 8 }}>Failing rules ({failedRules.length})</div>
           <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
             {failedRules.map((rule) => (
               <div

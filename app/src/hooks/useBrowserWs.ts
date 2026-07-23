@@ -45,14 +45,7 @@ interface UseBrowserWsOptions {
   onStopped?: () => void;
 }
 
-export function useBrowserWs({
-  channelId,
-  onFrame,
-  onPageInfo,
-  onError,
-  onStarted,
-  onStopped,
-}: UseBrowserWsOptions) {
+export function useBrowserWs({ channelId, onFrame, onPageInfo, onError, onStarted, onStopped }: UseBrowserWsOptions) {
   const wsRef = useRef<WebSocket | null>(null);
   const onFrameRef = useRef(onFrame);
   const onPageInfoRef = useRef(onPageInfo);
@@ -130,13 +123,7 @@ export function useBrowserWs({
             case "page_info":
               onPageInfoRef.current?.(msg.url || "", msg.title || "");
               // Update the active tab's title/URL in the tab bar.
-              setTabs((prev) =>
-                prev.map((t) =>
-                  t.target_id === activeTargetIdRef.current
-                    ? { ...t, url: msg.url || t.url, title: msg.title || t.title }
-                    : t,
-                ),
-              );
+              setTabs((prev) => prev.map((t) => (t.target_id === activeTargetIdRef.current ? { ...t, url: msg.url || t.url, title: msg.title || t.title } : t)));
               break;
             case "error":
               onErrorRef.current?.(msg.message || "Unknown error");
@@ -166,9 +153,7 @@ export function useBrowserWs({
               break;
             case "tab_closed":
               if (msg.target_id) {
-                setTabs((prev) =>
-                  prev.filter((t) => t.target_id !== msg.target_id),
-                );
+                setTabs((prev) => prev.filter((t) => t.target_id !== msg.target_id));
               }
               break;
           }
@@ -207,10 +192,13 @@ export function useBrowserWs({
     }
   }, []);
 
-  const startBrowser = useCallback((mode?: "docker" | "host") => {
-    if (!channelId) return;
-    send({ type: "start", channel_id: channelId, mode });
-  }, [channelId, send]);
+  const startBrowser = useCallback(
+    (mode?: "docker" | "host") => {
+      if (!channelId) return;
+      send({ type: "start", channel_id: channelId, mode });
+    },
+    [channelId, send],
+  );
 
   const stopBrowser = useCallback(() => {
     if (!channelId) return;
@@ -223,13 +211,7 @@ export function useBrowserWs({
       browserAction(channelId, "navigate", { url }).then((resp) => {
         if (resp.page_info) {
           onPageInfoRef.current?.(resp.page_info.url, resp.page_info.title);
-          setTabs((prev) =>
-            prev.map((t) =>
-              t.target_id === activeTargetIdRef.current
-                ? { ...t, url: resp.page_info!.url, title: resp.page_info!.title }
-                : t,
-            ),
-          );
+          setTabs((prev) => prev.map((t) => (t.target_id === activeTargetIdRef.current ? { ...t, url: resp.page_info!.url, title: resp.page_info!.title } : t)));
         }
         // Refresh tab list after page loads to get the final title
         // (Chrome may not have the title ready immediately after navigate).
@@ -255,22 +237,15 @@ export function useBrowserWs({
     if (channelId) browserAction(channelId, "go_forward");
   }, [channelId]);
 
-  const startStreaming = useCallback((width?: number, height?: number) => {
-    send({ type: "screencast", width, height });
-  }, [send]);
+  const startStreaming = useCallback(
+    (width?: number, height?: number) => {
+      send({ type: "screencast", width, height });
+    },
+    [send],
+  );
 
   const sendInput = useCallback(
-    (input: {
-      type: string;
-      x?: number;
-      y?: number;
-      button?: string;
-      clickCount?: number;
-      deltaX?: number;
-      deltaY?: number;
-      key?: string;
-      text?: string;
-    }) => {
+    (input: { type: string; x?: number; y?: number; button?: string; clickCount?: number; deltaX?: number; deltaY?: number; key?: string; text?: string }) => {
       send({
         type: "input",
         input_type: input.type,

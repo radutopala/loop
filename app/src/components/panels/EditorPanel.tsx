@@ -1,10 +1,10 @@
 import { useCallback, useState } from "react";
-import { fonts } from "../../theme";
-import { useTheme } from "../../ThemeContext";
-import { FilePanel } from "./FilePanel";
-import { FileIcon, parsePathKey } from "./EditorFileTree";
-import { CodeEditor, isMarkdownFile } from "./CodeEditor";
 import type { EditorStateApi } from "../../hooks/useEditorState";
+import { useTheme } from "../../ThemeContext";
+import { fonts } from "../../theme";
+import { CodeEditor, isMarkdownFile } from "./CodeEditor";
+import { FileIcon, parsePathKey } from "./EditorFileTree";
+import { FilePanel } from "./FilePanel";
 
 interface EditorPanelProps {
   channelId: string;
@@ -92,8 +92,12 @@ export function EditorPanel({ dirPath, branch, editorState, embedded, ...panelPr
                 return (
                   <button
                     key={tab}
-                    onClick={() => { if (!isActive) switchToTab(tab); }}
-                    onDoubleClick={() => { if (isPreview) promoteFile(tab); }}
+                    onClick={() => {
+                      if (!isActive) switchToTab(tab);
+                    }}
+                    onDoubleClick={() => {
+                      if (isPreview) promoteFile(tab);
+                    }}
                     title={hasPending ? `${tabRelPath} — agent edited externally` : tabRelPath}
                     style={{
                       display: "flex",
@@ -111,25 +115,28 @@ export function EditorPanel({ dirPath, branch, editorState, embedded, ...panelPr
                       whiteSpace: "nowrap",
                       flexShrink: 0,
                     }}
-                    onMouseEnter={(e) => { if (!isActive) e.currentTarget.style.backgroundColor = colors.hoverBg; }}
-                    onMouseLeave={(e) => { if (!isActive) e.currentTarget.style.backgroundColor = "transparent"; }}
+                    onMouseEnter={(e) => {
+                      if (!isActive) e.currentTarget.style.backgroundColor = colors.hoverBg;
+                    }}
+                    onMouseLeave={(e) => {
+                      if (!isActive) e.currentTarget.style.backgroundColor = "transparent";
+                    }}
                   >
                     <FileIcon name={fileName} />
                     <span style={{ fontStyle: isPreview || isDirty ? "italic" : undefined }}>{tabLabel}</span>
-                    {hasPending && (
-                      <span title="Agent modified this file" style={{ width: 6, height: 6, borderRadius: "50%", backgroundColor: colors.active, display: "block" }} />
-                    )}
-                    <span
-                      onClick={(e) => closeTab(tab, e)}
-                      style={{ marginLeft: 2, width: 8, height: 8, display: "flex", alignItems: "center", justifyContent: "center" }}
-                    >
+                    {hasPending && <span title="Agent modified this file" style={{ width: 6, height: 6, borderRadius: "50%", backgroundColor: colors.active, display: "block" }} />}
+                    <span onClick={(e) => closeTab(tab, e)} style={{ marginLeft: 2, width: 8, height: 8, display: "flex", alignItems: "center", justifyContent: "center" }}>
                       {isDirty ? (
                         <span style={{ width: 6, height: 6, borderRadius: "50%", backgroundColor: colors.warning, display: "block" }} />
                       ) : (
                         <span
                           style={{ opacity: 0.5, fontSize: 14, lineHeight: 1 }}
-                          onMouseEnter={(e) => { e.currentTarget.style.opacity = "1"; }}
-                          onMouseLeave={(e) => { e.currentTarget.style.opacity = "0.5"; }}
+                          onMouseEnter={(e) => {
+                            e.currentTarget.style.opacity = "1";
+                          }}
+                          onMouseLeave={(e) => {
+                            e.currentTarget.style.opacity = "0.5";
+                          }}
                         >
                           &times;
                         </span>
@@ -179,9 +186,7 @@ export function EditorPanel({ dirPath, branch, editorState, embedded, ...panelPr
               color: colors.textLight,
             }}
           >
-            <span style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-              The agent modified this file. Replace your unsaved changes?
-            </span>
+            <span style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>The agent modified this file. Replace your unsaved changes?</span>
             <button
               onClick={() => acceptPendingRefresh(selectedPath)}
               style={{

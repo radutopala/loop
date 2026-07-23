@@ -1,25 +1,33 @@
 import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
-import type { SessionStatus } from "../../types";
-import type { ColorPalette } from "../../theme";
 import { useTheme } from "../../ThemeContext";
+import type { ColorPalette } from "../../theme";
 import { fonts } from "../../theme";
+import type { SessionStatus } from "../../types";
 
 function statusColor(status: SessionStatus, colors: ColorPalette): string {
   switch (status) {
-    case "connecting": return colors.warning;
-    case "running": return colors.active;
-    case "completed": return colors.textDim;
-    case "failed": return colors.error;
+    case "connecting":
+      return colors.warning;
+    case "running":
+      return colors.active;
+    case "completed":
+      return colors.textDim;
+    case "failed":
+      return colors.error;
   }
 }
 
 function statusLabel(status: SessionStatus): string {
   switch (status) {
-    case "connecting": return "Connecting";
-    case "running": return "Running";
-    case "completed": return "Completed";
-    case "failed": return "Failed";
+    case "connecting":
+      return "Connecting";
+    case "running":
+      return "Running";
+    case "completed":
+      return "Completed";
+    case "failed":
+      return "Failed";
   }
 }
 

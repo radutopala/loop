@@ -13,9 +13,5 @@ function formatElapsed(s: number): string {
 
 export function ElapsedTimer({ seconds }: ElapsedTimerProps) {
   const { colors } = useTheme();
-  return (
-    <span style={{ color: colors.textMuted, fontSize: 12, fontFamily: "monospace" }}>
-      {formatElapsed(seconds)}
-    </span>
-  );
+  return <span style={{ color: colors.textMuted, fontSize: 12, fontFamily: "monospace" }}>{formatElapsed(seconds)}</span>;
 }

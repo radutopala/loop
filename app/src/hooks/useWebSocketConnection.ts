@@ -20,13 +20,7 @@ interface UseWebSocketConnectionOptions {
  * Low-level hook that manages a single WebSocket connection with
  * automatic reconnection.
  */
-export function useWebSocketConnection({
-  path,
-  enabled,
-  onOpen,
-  onMessage,
-  reconnectDelay = DEFAULT_RECONNECT_DELAY_MS,
-}: UseWebSocketConnectionOptions) {
+export function useWebSocketConnection({ path, enabled, onOpen, onMessage, reconnectDelay = DEFAULT_RECONNECT_DELAY_MS }: UseWebSocketConnectionOptions) {
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
   const [connected, setConnected] = useState(false);
