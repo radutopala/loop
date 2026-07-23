@@ -235,6 +235,7 @@ func (s *ServerSuite) SetupTest() {
 	s.mux.HandleFunc("PATCH /api/channels/{id}/lock", s.srv.handleSetChannelLocked)
 	s.mux.HandleFunc("POST /api/channels/{id}/plan/resolve", s.srv.handlePlanResolve)
 	s.mux.HandleFunc("POST /api/channels/{id}/ask/resolve", s.srv.handleAskResolve)
+	s.mux.HandleFunc("GET /api/channels/{id}/container-stats", s.srv.handleContainerStats)
 	s.mux.HandleFunc("GET /api/asks/pending", s.srv.handleListPendingAsks)
 	s.mux.HandleFunc("GET /api/plans/pending", s.srv.handleListPendingPlans)
 	s.mux.HandleFunc("POST /api/tasks", s.srv.handleCreateTask)

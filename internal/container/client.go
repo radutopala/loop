@@ -2,6 +2,7 @@ package container
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"maps"
@@ -34,6 +35,7 @@ type dockerAPI interface {
 	ContainerWait(ctx context.Context, container string, condition containertypes.WaitCondition) (<-chan containertypes.WaitResponse, <-chan error)
 	ContainerRemove(ctx context.Context, container string, options containertypes.RemoveOptions) error
 	ContainerStop(ctx context.Context, containerID string, options containertypes.StopOptions) error
+	ContainerStats(ctx context.Context, containerID string, stream bool) (containertypes.StatsResponseReader, error)
 	ContainerList(ctx context.Context, options containertypes.ListOptions) ([]containertypes.Summary, error)
 	ImageList(ctx context.Context, options image.ListOptions) ([]image.Summary, error)
 	ImageRemove(ctx context.Context, imageID string, options image.RemoveOptions) ([]image.DeleteResponse, error)
@@ -169,6 +171,56 @@ func (c *Client) ContainerCreate(ctx context.Context, cfg *ContainerConfig, name
 		return "", err
 	}
 	return resp.ID, nil
+}
+
+// ContainerStatsSummary is a one-shot resource snapshot of a running
+// container, digested from the Docker stats endpoint for UI display.
+type ContainerStatsSummary struct {
+	CPUPercent float64 `json:"cpu_percent"`
+	MemUsage   uint64  `json:"mem_usage"`
+	MemLimit   uint64  `json:"mem_limit"`
+}
+
+// ContainerStats fetches a single stats sample for the container and digests
+// it into CPU% and memory numbers. stream=false makes the daemon prime the
+// precpu sample itself, so the CPU delta is meaningful without a second read.
+func (c *Client) ContainerStats(ctx context.Context, containerID string) (*ContainerStatsSummary, error) {
+	resp, err := c.api.ContainerStats(ctx, containerID, false)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	var st containertypes.StatsResponse
+	if err := json.NewDecoder(resp.Body).Decode(&st); err != nil {
+		return nil, fmt.Errorf("decoding container stats: %w", err)
+	}
+	return digestStats(&st), nil
+}
+
+// digestStats converts a raw stats sample into the UI summary using the
+// standard docker-cli formulas.
+func digestStats(st *containertypes.StatsResponse) *ContainerStatsSummary {
+	s := &ContainerStatsSummary{}
+	cpuDelta := float64(st.CPUStats.CPUUsage.TotalUsage) - float64(st.PreCPUStats.CPUUsage.TotalUsage)
+	sysDelta := float64(st.CPUStats.SystemUsage) - float64(st.PreCPUStats.SystemUsage)
+	if cpuDelta > 0 && sysDelta > 0 {
+		cpus := float64(st.CPUStats.OnlineCPUs)
+		if cpus == 0 {
+			cpus = float64(len(st.CPUStats.CPUUsage.PercpuUsage))
+		}
+		s.CPUPercent = cpuDelta / sysDelta * cpus * 100
+	}
+	// Subtract the page cache the kernel can reclaim (docker-cli parity:
+	// cgroup v2 inactive_file, cgroup v1 total_inactive_file).
+	mem := st.MemoryStats.Usage
+	if v, ok := st.MemoryStats.Stats["inactive_file"]; ok && v < mem {
+		mem -= v
+	} else if v, ok := st.MemoryStats.Stats["total_inactive_file"]; ok && v < mem {
+		mem -= v
+	}
+	s.MemUsage = mem
+	s.MemLimit = st.MemoryStats.Limit
+	return s
 }
 
 // ContainerInspect returns detailed container information.

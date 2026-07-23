@@ -129,6 +129,7 @@ type Server struct {
 	runCanceller            RunCanceller
 	planResolver            PlanResolver
 	askResolver             AskResolver
+	containerStats          ContainerStatsFetcher
 	interactionHandler      InteractionHandler
 	agentRegistry           *agentregistry.Registry
 	imageManager            ImageManager
@@ -189,6 +190,12 @@ func (s *Server) SetPlanResolver(pr PlanResolver) {
 // /api/channels/{id}/ask/resolve.
 func (s *Server) SetAskResolver(ar AskResolver) {
 	s.askResolver = ar
+}
+
+// SetContainerStatsFetcher configures the docker stats source for
+// /api/channels/{id}/container-stats.
+func (s *Server) SetContainerStatsFetcher(f ContainerStatsFetcher) {
+	s.containerStats = f
 }
 
 // SetMemoryIndexer configures the memory indexer for the /api/memory/* endpoints.
@@ -352,6 +359,7 @@ func (s *Server) registerChannelRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("PATCH /api/channels/{id}/lock", s.handleSetChannelLocked)
 	mux.HandleFunc("POST /api/channels/{id}/plan/resolve", s.handlePlanResolve)
 	mux.HandleFunc("POST /api/channels/{id}/ask/resolve", s.handleAskResolve)
+	mux.HandleFunc("GET /api/channels/{id}/container-stats", s.handleContainerStats)
 	mux.HandleFunc("GET /api/asks/pending", s.handleListPendingAsks)
 	mux.HandleFunc("GET /api/plans/pending", s.handleListPendingPlans)
 	mux.HandleFunc("GET /api/channels/{id}/sessions", s.handleListSessions)

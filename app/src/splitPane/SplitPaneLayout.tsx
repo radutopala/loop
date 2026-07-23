@@ -1,5 +1,6 @@
 import { Fragment, useCallback, useRef } from "react";
 import type { AgentInfo } from "../hooks/useAgentRegistry";
+import type { ContainerStatsByType } from "../hooks/useContainerStats";
 import { useTheme } from "../ThemeContext";
 import type { PanelType } from "../types/panels";
 import { DropZoneOverlay } from "./DropZoneOverlay";
@@ -19,6 +20,7 @@ interface SplitPaneLayoutProps {
   tree: PaneNode;
   renderLeaf: (leaf: LeafNode) => React.ReactNode;
   agentInfoMap?: Map<string, AgentInfo>;
+  containerStats?: ContainerStatsByType;
   minimizedLeaves?: Set<string>;
   onUpdateFlex: (parentPath: number[], dividerIdx: number, flexA: number, flexB: number) => void;
   onDrop: (dragId: string, dropId: string, position: DropPosition) => void;
@@ -33,6 +35,7 @@ export function SplitPaneLayout({
   tree,
   renderLeaf,
   agentInfoMap,
+  containerStats,
   minimizedLeaves,
   onUpdateFlex,
   onDrop,
@@ -50,6 +53,7 @@ export function SplitPaneLayout({
       usedSingletons={usedSingletons}
       renderLeaf={renderLeaf}
       agentInfoMap={agentInfoMap}
+      containerStats={containerStats}
       minimizedLeaves={minimizedLeaves}
       onUpdateFlex={onUpdateFlex}
       onDrop={onDrop}
@@ -68,6 +72,7 @@ interface PaneTreeProps {
   usedSingletons: Set<PanelType>;
   renderLeaf: (leaf: LeafNode) => React.ReactNode;
   agentInfoMap?: Map<string, AgentInfo>;
+  containerStats?: ContainerStatsByType;
   minimizedLeaves?: Set<string>;
   /** Override node.flex — used by parent splits to scale flex when minimized siblings cause sum < 1. */
   flexOverride?: number;
@@ -88,6 +93,7 @@ function PaneTree({
   usedSingletons,
   renderLeaf,
   agentInfoMap,
+  containerStats,
   minimizedLeaves,
   flexOverride,
   parentDirection,
@@ -173,6 +179,7 @@ function PaneTree({
           isMinimized={isMinimized}
           hiddenPanels={hiddenPanels}
           agentInfo={node.panel === "docker-agent" ? agentInfoMap?.get(node.id) : undefined}
+          containerStats={containerStats}
           onRemove={() => onRemoveLeaf(node.id)}
           onDrop={onDrop}
           onSplitLeaf={onSplitLeaf}
@@ -249,6 +256,7 @@ function PaneTree({
             usedSingletons={usedSingletons}
             renderLeaf={renderLeaf}
             agentInfoMap={agentInfoMap}
+            containerStats={containerStats}
             minimizedLeaves={minimizedLeaves}
             flexOverride={childFlexes[i]! > 0 && flexScale !== 1 ? childFlexes[i]! * flexScale : undefined}
             parentDirection={node.direction}

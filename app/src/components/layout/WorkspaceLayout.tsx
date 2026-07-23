@@ -5,6 +5,7 @@ import type { CanvasNode } from "../../canvas/types";
 import { useAgentRegistry } from "../../hooks/useAgentRegistry";
 import { useChatState } from "../../hooks/useChatState";
 import type { ActiveChatState, ChatEventListener } from "../../hooks/useChatStateStore";
+import { useContainerStats } from "../../hooks/useContainerStats";
 import { useEditorState } from "../../hooks/useEditorState";
 import type { LayoutType } from "../../layouts/persistence";
 import {
@@ -273,6 +274,7 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
 ) {
   const { colors } = useTheme();
   const { agents: agentInfoMap } = useAgentRegistry(channelId);
+  const containerStats = useContainerStats(channelId);
   const [branchError, setBranchError] = useState<string | null>(null);
 
   // --- Named layouts state ---
@@ -1370,6 +1372,7 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
             canvas={canvasState ?? { type: "canvas", viewport: { x: 0, y: 0, zoom: 1 }, tiles: [] }}
             renderLeaf={renderLeaf}
             agentInfoMap={agentInfoMap}
+            containerStats={containerStats}
             onCanvasChange={(c) => {
               setCanvasState(c);
             }}
@@ -1402,6 +1405,7 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
                   usedSingletons={usedSingletons}
                   hiddenPanels={hiddenPanels}
                   agentInfo={leaf.panel === "docker-agent" ? agentInfoMap.get(leaf.id) : undefined}
+                  containerStats={containerStats}
                   isMaximized
                   onRemove={() => {
                     setMaximizedLeafId(null);
@@ -1420,6 +1424,7 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
             tree={tree}
             renderLeaf={renderLeaf}
             agentInfoMap={agentInfoMap}
+            containerStats={containerStats}
             minimizedLeaves={minimizedLeaves}
             hiddenPanels={hiddenPanels}
             onUpdateFlex={handleUpdateFlex}

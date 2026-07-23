@@ -679,6 +679,9 @@ func (a *app) serve() error {
 	apiSrv.SetRunCanceller(orch)
 	apiSrv.SetPlanResolver(orch)
 	apiSrv.SetAskResolver(orch)
+	if statsClient, ok := dockerClient.(api.ContainerStatsFetcher); ok {
+		apiSrv.SetContainerStatsFetcher(statsClient)
+	}
 	apiSrv.SetPendingAsksLister(orch)
 	apiSrv.SetPendingPlansLister(orch)
 	apiSrv.SetInteractionHandler(orch)
