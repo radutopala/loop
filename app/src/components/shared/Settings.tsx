@@ -457,6 +457,7 @@ export function Settings({
                   colors={colors}
                   onDirtyChange={setProjectDirty}
                   visibleSection={activeSection.replace("__proj_", "")}
+                  inheritedConfig={globalConfig?.content ?? null}
                 />
               )}
             </>
