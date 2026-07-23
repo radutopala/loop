@@ -1,5 +1,5 @@
-import { getApiUrl } from "./api";
 import type { GateApprovalRequestedData } from "../types";
+import { getApiUrl } from "./api";
 
 export type GateDecision = "once" | "session" | "deny";
 
@@ -23,18 +23,12 @@ export async function listPendingApprovals(): Promise<PendingApproval[]> {
   return body.approvals ?? [];
 }
 
-export async function resolveGateApproval(
-  reqId: string,
-  decision: GateDecision,
-): Promise<void> {
-  const res = await fetch(
-    `${getApiUrl()}/api/gate/approvals/${encodeURIComponent(reqId)}`,
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ decision }),
-    },
-  );
+export async function resolveGateApproval(reqId: string, decision: GateDecision): Promise<void> {
+  const res = await fetch(`${getApiUrl()}/api/gate/approvals/${encodeURIComponent(reqId)}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ decision }),
+  });
   if (res.status === 404) {
     // The request is gone — resolved elsewhere, timed out, or its container
     // exited. Callers treat this as "expired", not a failure.

@@ -1,50 +1,60 @@
 import "@fontsource/jetbrains-mono/400.css";
-import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef } from "react";
-import { EditorView, keymap, lineNumbers, highlightActiveLine, highlightActiveLineGutter, drawSelection } from "@codemirror/view";
-import { EditorSelection, EditorState, Compartment } from "@codemirror/state";
-import { defaultKeymap, indentWithTab, history, historyKeymap } from "@codemirror/commands";
-import { search, searchKeymap, openSearchPanel } from "@codemirror/search";
-import { bracketMatching, foldGutter, foldKeymap } from "@codemirror/language";
-import { javascript } from "@codemirror/lang-javascript";
+import { defaultKeymap, history, historyKeymap, indentWithTab } from "@codemirror/commands";
+import { css } from "@codemirror/lang-css";
 import { go } from "@codemirror/lang-go";
-import { python } from "@codemirror/lang-python";
+import { html } from "@codemirror/lang-html";
+import { javascript } from "@codemirror/lang-javascript";
 import { json } from "@codemirror/lang-json";
 import { markdown } from "@codemirror/lang-markdown";
-import { css } from "@codemirror/lang-css";
-import { html } from "@codemirror/lang-html";
+import { python } from "@codemirror/lang-python";
 import { yaml } from "@codemirror/lang-yaml";
+import { bracketMatching, foldGutter, foldKeymap } from "@codemirror/language";
+import { openSearchPanel, search, searchKeymap } from "@codemirror/search";
+import { Compartment, EditorSelection, EditorState } from "@codemirror/state";
+import { drawSelection, EditorView, highlightActiveLine, highlightActiveLineGutter, keymap, lineNumbers } from "@codemirror/view";
 import { marked } from "marked";
-import { fonts } from "../../theme";
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef } from "react";
 import { isVideoPath } from "../../api/files";
 import { useTheme } from "../../ThemeContext";
-import { buildMarkdownStyles } from "./FilePanel";
-import { buildEditorTheme } from "./editorTheme";
-import { gitChangeGutterExtension, setGitLineChanges, emptyGitLineChanges, type GitLineChanges } from "./editorGitGutter";
-import { GitChangeOverview } from "./editorGitOverview";
+import { fonts } from "../../theme";
 import { ContextMenu, type MenuItem } from "../shared/ContextMenu";
+import { emptyGitLineChanges, type GitLineChanges, gitChangeGutterExtension, setGitLineChanges } from "./editorGitGutter";
+import { GitChangeOverview } from "./editorGitOverview";
+import { buildEditorTheme } from "./editorTheme";
+import { buildMarkdownStyles } from "./FilePanel";
 
 // ── Helpers ──
 
 export function getLangExtension(filename: string) {
   const ext = filename.split(".").pop()?.toLowerCase();
   switch (ext) {
-    case "js": case "jsx": case "mjs": case "cjs":
+    case "js":
+    case "jsx":
+    case "mjs":
+    case "cjs":
       return javascript();
-    case "ts": case "tsx":
+    case "ts":
+    case "tsx":
       return javascript({ typescript: true, jsx: ext.includes("x") });
     case "go":
       return go();
     case "py":
       return python();
-    case "json": case "jsonl":
+    case "json":
+    case "jsonl":
       return json();
-    case "md": case "mdx":
+    case "md":
+    case "mdx":
       return markdown();
-    case "css": case "scss":
+    case "css":
+    case "scss":
       return css();
-    case "html": case "htm": case "svg":
+    case "html":
+    case "htm":
+    case "svg":
       return html();
-    case "yaml": case "yml":
+    case "yaml":
+    case "yml":
       return yaml();
     default:
       return null;
@@ -121,7 +131,24 @@ interface CodeEditorProps {
 }
 
 export const CodeEditor = forwardRef<CodeEditorHandle, CodeEditorProps>(function CodeEditor(
-  { fileContent, isBinary, binarySize, selectedRelPath, selectedPath, loading, error, previewMode, onDocChanged, onPreviewUpdate, editorMenu, onEditorMenuClose, onEditorContextMenu, previewHtml, imageURL, gitChanges },
+  {
+    fileContent,
+    isBinary,
+    binarySize,
+    selectedRelPath,
+    selectedPath,
+    loading,
+    error,
+    previewMode,
+    onDocChanged,
+    onPreviewUpdate,
+    editorMenu,
+    onEditorMenuClose,
+    onEditorContextMenu,
+    previewHtml,
+    imageURL,
+    gitChanges,
+  },
   ref,
 ) {
   const { colors, fontSizes } = useTheme();
@@ -243,13 +270,7 @@ export const CodeEditor = forwardRef<CodeEditorHandle, CodeEditorProps>(function
       history(),
       search({ top: true }),
       themeCompartment.current.of(buildEditorTheme(colors, fontSizes.editor)),
-      keymap.of([
-        ...defaultKeymap,
-        ...historyKeymap,
-        ...foldKeymap,
-        ...searchKeymap,
-        indentWithTab,
-      ]),
+      keymap.of([...defaultKeymap, ...historyKeymap, ...foldKeymap, ...searchKeymap, indentWithTab]),
       EditorView.updateListener.of((update) => {
         if (update.docChanged) {
           onDocChangedRef.current();
@@ -300,7 +321,9 @@ export const CodeEditor = forwardRef<CodeEditorHandle, CodeEditorProps>(function
         const pct = scroller.scrollTop / Math.max(1, scroller.scrollHeight - scroller.clientHeight);
         el.scrollTop = pct * (el.scrollHeight - el.clientHeight);
       }
-      requestAnimationFrame(() => { scrollSyncSource.current = null; });
+      requestAnimationFrame(() => {
+        scrollSyncSource.current = null;
+      });
     };
     scroller?.addEventListener("scroll", onEditorScroll);
 
@@ -333,27 +356,48 @@ export const CodeEditor = forwardRef<CodeEditorHandle, CodeEditorProps>(function
     const items: MenuItem[] = [];
     const hasSelection = view ? view.state.selection.main.from !== view.state.selection.main.to : false;
     if (hasSelection) {
-      items.push({ label: "Copy", onClick: () => { if (view) { const sel = view.state.sliceDoc(view.state.selection.main.from, view.state.selection.main.to); navigator.clipboard.writeText(sel); } } });
-      items.push({ label: "Cut", onClick: () => { if (view) { const sel = view.state.sliceDoc(view.state.selection.main.from, view.state.selection.main.to); navigator.clipboard.writeText(sel); view.dispatch({ changes: { from: view.state.selection.main.from, to: view.state.selection.main.to, insert: "" } }); } } });
+      items.push({
+        label: "Copy",
+        onClick: () => {
+          if (view) {
+            const sel = view.state.sliceDoc(view.state.selection.main.from, view.state.selection.main.to);
+            navigator.clipboard.writeText(sel);
+          }
+        },
+      });
+      items.push({
+        label: "Cut",
+        onClick: () => {
+          if (view) {
+            const sel = view.state.sliceDoc(view.state.selection.main.from, view.state.selection.main.to);
+            navigator.clipboard.writeText(sel);
+            view.dispatch({ changes: { from: view.state.selection.main.from, to: view.state.selection.main.to, insert: "" } });
+          }
+        },
+      });
     }
-    items.push({ label: "Select All", separator: hasSelection, onClick: () => { if (view) view.dispatch({ selection: { anchor: 0, head: view.state.doc.length } }); } });
-    items.push({ label: "Find...", separator: true, onClick: () => { if (view) openSearchPanel(view); } });
+    items.push({
+      label: "Select All",
+      separator: hasSelection,
+      onClick: () => {
+        if (view) view.dispatch({ selection: { anchor: 0, head: view.state.doc.length } });
+      },
+    });
+    items.push({
+      label: "Find...",
+      separator: true,
+      onClick: () => {
+        if (view) openSearchPanel(view);
+      },
+    });
     return items;
   };
 
   return (
     <>
-      {loading && (
-        <div style={{ padding: 16, color: colors.textDim, fontSize: 13 }}>Loading...</div>
-      )}
-      {error && (
-        <div style={{ padding: 16, color: colors.error, fontSize: 13 }}>{error}</div>
-      )}
-      {isBinary && !imageURL && (
-        <div style={{ padding: 16, color: colors.textDim, fontSize: 13 }}>
-          Binary file ({formatSize(binarySize)})
-        </div>
-      )}
+      {loading && <div style={{ padding: 16, color: colors.textDim, fontSize: 13 }}>Loading...</div>}
+      {error && <div style={{ padding: 16, color: colors.error, fontSize: 13 }}>{error}</div>}
+      {isBinary && !imageURL && <div style={{ padding: 16, color: colors.textDim, fontSize: 13 }}>Binary file ({formatSize(binarySize)})</div>}
       {imageURL && (
         <div
           style={{
@@ -367,23 +411,13 @@ export const CodeEditor = forwardRef<CodeEditorHandle, CodeEditorProps>(function
           }}
         >
           {isVideoPath(selectedRelPath || "") ? (
-            <video
-              src={imageURL}
-              controls
-              style={{ maxWidth: "100%", maxHeight: "100%" }}
-            />
+            <video src={imageURL} controls style={{ maxWidth: "100%", maxHeight: "100%" }} />
           ) : (
-            <img
-              src={imageURL}
-              alt=""
-              style={{ maxWidth: "100%", maxHeight: "100%", objectFit: "contain" }}
-            />
+            <img src={imageURL} alt="" style={{ maxWidth: "100%", maxHeight: "100%", objectFit: "contain" }} />
           )}
         </div>
       )}
-      {!selectedPath && !loading && (
-        <div style={{ padding: 16, color: colors.textDim, fontSize: 13 }}>Select a file</div>
-      )}
+      {!selectedPath && !loading && <div style={{ padding: 16, color: colors.textDim, fontSize: 13 }}>Select a file</div>}
       <div style={{ flex: 1, display: fileContent !== null && !isBinary ? "flex" : "none", overflow: "hidden" }} onContextMenu={onEditorContextMenu}>
         <div
           ref={editorRef}
@@ -393,13 +427,7 @@ export const CodeEditor = forwardRef<CodeEditorHandle, CodeEditorProps>(function
             display: isMd && previewMode === "preview" ? "none" : undefined,
           }}
         />
-        {!(isMd && previewMode === "preview") && (
-          <GitChangeOverview
-            changes={gitChanges ?? emptyGitLineChanges()}
-            totalLines={totalLines}
-            onJumpToLine={jumpToLine}
-          />
-        )}
+        {!(isMd && previewMode === "preview") && <GitChangeOverview changes={gitChanges ?? emptyGitLineChanges()} totalLines={totalLines} onJumpToLine={jumpToLine} />}
         {isMd && previewMode !== "editor" && previewHtml && (
           <>
             <div style={{ width: 1, backgroundColor: colors.border, flexShrink: 0 }} />
@@ -416,7 +444,9 @@ export const CodeEditor = forwardRef<CodeEditorHandle, CodeEditorProps>(function
                   const pct = el.scrollTop / Math.max(1, el.scrollHeight - el.clientHeight);
                   ed.scrollTop = pct * (ed.scrollHeight - ed.clientHeight);
                 }
-                requestAnimationFrame(() => { scrollSyncSource.current = null; });
+                requestAnimationFrame(() => {
+                  scrollSyncSource.current = null;
+                });
               }}
               style={{
                 flex: 1,
@@ -433,14 +463,7 @@ export const CodeEditor = forwardRef<CodeEditorHandle, CodeEditorProps>(function
           </>
         )}
       </div>
-      {editorMenu && (
-        <ContextMenu
-          x={editorMenu.x}
-          y={editorMenu.y}
-          items={getEditorMenuItems()}
-          onClose={onEditorMenuClose}
-        />
-      )}
+      {editorMenu && <ContextMenu x={editorMenu.x} y={editorMenu.y} items={getEditorMenuItems()} onClose={onEditorMenuClose} />}
     </>
   );
 });

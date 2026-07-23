@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { CanvasTile as CanvasTileType } from "./types";
-import { PANEL_OPTIONS, PANEL_LABELS, type LeafNode, type PanelType } from "../types/panels";
-import { useTheme } from "../ThemeContext";
 import type { AgentInfo } from "../hooks/useAgentRegistry";
+import { useTheme } from "../ThemeContext";
+import { type LeafNode, PANEL_LABELS, PANEL_OPTIONS, type PanelType } from "../types/panels";
+import type { CanvasTile as CanvasTileType } from "./types";
 
 const HEADER_HEIGHT = 24;
 const MIN_WIDTH = 200;
@@ -29,7 +29,21 @@ interface CanvasTileProps {
   hiddenPanels?: PanelType[];
 }
 
-export function CanvasTile({ tile, renderLeaf, agentInfo, onMove, onResize, onBringToFront, onClose, onAddTile, usedSingletons, onToggleMaximize, isMaximized, zoom = 1, hiddenPanels }: CanvasTileProps) {
+export function CanvasTile({
+  tile,
+  renderLeaf,
+  agentInfo,
+  onMove,
+  onResize,
+  onBringToFront,
+  onClose,
+  onAddTile,
+  usedSingletons,
+  onToggleMaximize,
+  isMaximized,
+  zoom = 1,
+  hiddenPanels,
+}: CanvasTileProps) {
   const { colors } = useTheme();
   const containerRef = useRef<HTMLDivElement>(null);
   const [dragging, setDragging] = useState(false);
@@ -47,56 +61,62 @@ export function CanvasTile({ tile, renderLeaf, agentInfo, onMove, onResize, onBr
   }, [showAddMenu]);
 
   const isAgent = tile.panel === "docker-agent";
-  const label = isAgent ? (agentInfo?.name || tile.id) : PANEL_LABELS[tile.panel];
+  const label = isAgent ? agentInfo?.name || tile.id : PANEL_LABELS[tile.panel];
 
   // --- Drag (reports deltas in world coords) ---
-  const handleDragStart = useCallback((e: React.MouseEvent) => {
-    e.preventDefault();
-    onBringToFront(tile.id);
-    let lastX = e.clientX;
-    let lastY = e.clientY;
-    setDragging(true);
+  const handleDragStart = useCallback(
+    (e: React.MouseEvent) => {
+      e.preventDefault();
+      onBringToFront(tile.id);
+      let lastX = e.clientX;
+      let lastY = e.clientY;
+      setDragging(true);
 
-    const onMouseMove = (ev: MouseEvent) => {
-      const dx = (ev.clientX - lastX) / zoom;
-      const dy = (ev.clientY - lastY) / zoom;
-      lastX = ev.clientX;
-      lastY = ev.clientY;
-      onMove(tile.id, dx, dy);
-    };
-    const onMouseUp = () => {
-      setDragging(false);
-      document.removeEventListener("mousemove", onMouseMove);
-      document.removeEventListener("mouseup", onMouseUp);
-    };
-    document.addEventListener("mousemove", onMouseMove);
-    document.addEventListener("mouseup", onMouseUp);
-  }, [tile.id, zoom, onMove, onBringToFront]);
+      const onMouseMove = (ev: MouseEvent) => {
+        const dx = (ev.clientX - lastX) / zoom;
+        const dy = (ev.clientY - lastY) / zoom;
+        lastX = ev.clientX;
+        lastY = ev.clientY;
+        onMove(tile.id, dx, dy);
+      };
+      const onMouseUp = () => {
+        setDragging(false);
+        document.removeEventListener("mousemove", onMouseMove);
+        document.removeEventListener("mouseup", onMouseUp);
+      };
+      document.addEventListener("mousemove", onMouseMove);
+      document.addEventListener("mouseup", onMouseUp);
+    },
+    [tile.id, zoom, onMove, onBringToFront],
+  );
 
   // --- Resize ---
-  const handleResizeStart = useCallback((e: React.MouseEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-    onBringToFront(tile.id);
-    const startX = e.clientX;
-    const startY = e.clientY;
-    const startW = tile.width;
-    const startH = tile.height;
-    setResizing(true);
+  const handleResizeStart = useCallback(
+    (e: React.MouseEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+      onBringToFront(tile.id);
+      const startX = e.clientX;
+      const startY = e.clientY;
+      const startW = tile.width;
+      const startH = tile.height;
+      setResizing(true);
 
-    const onMouseMove = (ev: MouseEvent) => {
-      const newW = Math.max(MIN_WIDTH, startW + (ev.clientX - startX) / zoom);
-      const newH = Math.max(MIN_HEIGHT, startH + (ev.clientY - startY) / zoom);
-      onResize(tile.id, newW, newH);
-    };
-    const onMouseUp = () => {
-      setResizing(false);
-      document.removeEventListener("mousemove", onMouseMove);
-      document.removeEventListener("mouseup", onMouseUp);
-    };
-    document.addEventListener("mousemove", onMouseMove);
-    document.addEventListener("mouseup", onMouseUp);
-  }, [tile.id, tile.width, tile.height, zoom, onResize, onBringToFront]);
+      const onMouseMove = (ev: MouseEvent) => {
+        const newW = Math.max(MIN_WIDTH, startW + (ev.clientX - startX) / zoom);
+        const newH = Math.max(MIN_HEIGHT, startH + (ev.clientY - startY) / zoom);
+        onResize(tile.id, newW, newH);
+      };
+      const onMouseUp = () => {
+        setResizing(false);
+        document.removeEventListener("mousemove", onMouseMove);
+        document.removeEventListener("mouseup", onMouseUp);
+      };
+      document.addEventListener("mousemove", onMouseMove);
+      document.addEventListener("mouseup", onMouseUp);
+    },
+    [tile.id, tile.width, tile.height, zoom, onResize, onBringToFront],
+  );
 
   // Create a synthetic LeafNode for renderLeaf.
   const leafNode: LeafNode = {
@@ -155,18 +175,23 @@ export function CanvasTile({ tile, renderLeaf, agentInfo, onMove, onResize, onBr
             }}
           />
         )}
-        <span style={{ fontSize: 10, fontWeight: 500, color: colors.textLight, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-          {label}
-        </span>
+        <span style={{ fontSize: 10, fontWeight: 500, color: colors.textLight, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{label}</span>
         <span style={{ width: 1, height: 10, backgroundColor: colors.border, flexShrink: 0, marginLeft: 2, marginRight: 2 }} />
         {/* Add panel button */}
         <div ref={addMenuRef} style={{ position: "relative", flexShrink: 0 }}>
           <button
-            onClick={(e) => { e.stopPropagation(); setShowAddMenu((v) => !v); }}
+            onClick={(e) => {
+              e.stopPropagation();
+              setShowAddMenu((v) => !v);
+            }}
             title="Add panel"
             style={{ background: "none", border: "none", color: colors.textDim, cursor: "pointer", padding: "0 2px", lineHeight: 0 }}
-            onMouseEnter={(e) => { e.currentTarget.style.color = colors.textLight; }}
-            onMouseLeave={(e) => { e.currentTarget.style.color = colors.textDim; }}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.color = colors.textLight;
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.color = colors.textDim;
+            }}
           >
             <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
               <line x1="12" y1="5" x2="12" y2="19" />
@@ -203,9 +228,25 @@ export function CanvasTile({ tile, renderLeaf, agentInfo, onMove, onResize, onBr
                         setShowAddMenu(false);
                       }
                     }}
-                    style={{ display: "block", width: "100%", padding: "4px 12px", background: "none", border: "none", color: disabled ? colors.textDim : colors.textLight, opacity: disabled ? 0.4 : 1, fontSize: 12, textAlign: "left", cursor: disabled ? "default" : "pointer", borderRadius: 3 }}
-                    onMouseEnter={(e) => { if (!disabled) e.currentTarget.style.backgroundColor = "rgba(255,255,255,0.08)"; }}
-                    onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = "transparent"; }}
+                    style={{
+                      display: "block",
+                      width: "100%",
+                      padding: "4px 12px",
+                      background: "none",
+                      border: "none",
+                      color: disabled ? colors.textDim : colors.textLight,
+                      opacity: disabled ? 0.4 : 1,
+                      fontSize: 12,
+                      textAlign: "left",
+                      cursor: disabled ? "default" : "pointer",
+                      borderRadius: 3,
+                    }}
+                    onMouseEnter={(e) => {
+                      if (!disabled) e.currentTarget.style.backgroundColor = "rgba(255,255,255,0.08)";
+                    }}
+                    onMouseLeave={(e) => {
+                      e.currentTarget.style.backgroundColor = "transparent";
+                    }}
                   >
                     {opt.label}
                   </button>
@@ -216,11 +257,18 @@ export function CanvasTile({ tile, renderLeaf, agentInfo, onMove, onResize, onBr
         </div>
         {onToggleMaximize && (
           <button
-            onClick={(e) => { e.stopPropagation(); onToggleMaximize(tile.id); }}
+            onClick={(e) => {
+              e.stopPropagation();
+              onToggleMaximize(tile.id);
+            }}
             title={isMaximized ? "Restore tile" : "Maximize tile"}
             style={{ background: "none", border: "none", color: colors.textDim, cursor: "pointer", padding: "0 2px", lineHeight: 0 }}
-            onMouseEnter={(e) => { e.currentTarget.style.color = colors.textLight; }}
-            onMouseLeave={(e) => { e.currentTarget.style.color = colors.textDim; }}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.color = colors.textLight;
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.color = colors.textDim;
+            }}
           >
             {isMaximized ? (
               <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
@@ -240,7 +288,10 @@ export function CanvasTile({ tile, renderLeaf, agentInfo, onMove, onResize, onBr
           </button>
         )}
         <button
-          onClick={(e) => { e.stopPropagation(); onClose(tile.id); }}
+          onClick={(e) => {
+            e.stopPropagation();
+            onClose(tile.id);
+          }}
           style={{
             background: "none",
             border: "none",
@@ -259,9 +310,7 @@ export function CanvasTile({ tile, renderLeaf, agentInfo, onMove, onResize, onBr
       </div>
 
       {/* Content */}
-      <div style={{ flex: 1, overflow: "hidden", minHeight: 0, display: "flex", flexDirection: "column" }}>
-        {renderLeaf(leafNode)}
-      </div>
+      <div style={{ flex: 1, overflow: "hidden", minHeight: 0, display: "flex", flexDirection: "column" }}>{renderLeaf(leafNode)}</div>
 
       {/* Resize handle (bottom-right corner) */}
       <div

@@ -1,35 +1,14 @@
 import { useState } from "react";
-import {
-  fetchQualityComplexity,
-  fetchQualityClones,
-  type QualityComplexityFunction,
-  type QualityComplexityResponse,
-  type QualityClonesResponse,
-  type QualityCloneCluster,
-} from "../../../api/quality";
+import { fetchQualityClones, fetchQualityComplexity, type QualityCloneCluster, type QualityClonesResponse, type QualityComplexityFunction, type QualityComplexityResponse } from "../../../api/quality";
 import { fonts } from "../../../theme";
-import {
-  useAsyncFetch,
-  LoadingState,
-  ErrorState,
-  SectionHelp,
-  deficitColor,
-  type AsyncTabProps,
-  type HotspotSectionProps,
-} from "./shared";
+import { type AsyncTabProps, deficitColor, ErrorState, type HotspotSectionProps, LoadingState, SectionHelp, useAsyncFetch } from "./shared";
 
 const HOTSPOT_FUNCTIONS_LIMIT = 50;
 const HOTSPOT_CLUSTERS_LIMIT = 25;
 
 export function HotspotsTab({ channelId, scanGeneration, colors, fontSizes }: AsyncTabProps) {
-  const complexity = useAsyncFetch<QualityComplexityResponse>(
-    () => fetchQualityComplexity(channelId, { limit: HOTSPOT_FUNCTIONS_LIMIT }),
-    [channelId, scanGeneration],
-  );
-  const clones = useAsyncFetch<QualityClonesResponse>(
-    () => fetchQualityClones(channelId, { limit: HOTSPOT_CLUSTERS_LIMIT }),
-    [channelId, scanGeneration],
-  );
+  const complexity = useAsyncFetch<QualityComplexityResponse>(() => fetchQualityComplexity(channelId, { limit: HOTSPOT_FUNCTIONS_LIMIT }), [channelId, scanGeneration]);
+  const clones = useAsyncFetch<QualityClonesResponse>(() => fetchQualityClones(channelId, { limit: HOTSPOT_CLUSTERS_LIMIT }), [channelId, scanGeneration]);
 
   const loading = complexity.loading || clones.loading;
   const error = complexity.error || clones.error;
@@ -52,11 +31,10 @@ function ComplexityHotspots({ data, colors, fontSizes }: HotspotSectionProps & {
         Complex functions ({data.over_threshold} of {data.total_functions} over threshold · score {data.score.toFixed(3)})
       </div>
       <SectionHelp colors={colors}>
-        Per-function score is the worst of cyclomatic, cognitive, max nesting, parameter count, and LOC against
-        their soft thresholds. The dimension score is <code>T/raw</code> above threshold — <b>0.50</b> at 2× T,
-        <b>0.25</b> at 4× T, <b>0.10</b> at 10× T — so badly-saturated functions stay distinguishable instead of
-        clamping to a wall of zeros. <b>1.0</b> means everything fits comfortably. The list is worst-first,
-        capped at {HOTSPOT_FUNCTIONS_LIMIT}.
+        Per-function score is the worst of cyclomatic, cognitive, max nesting, parameter count, and LOC against their soft thresholds. The dimension score is <code>T/raw</code> above threshold —{" "}
+        <b>0.50</b> at 2× T,
+        <b>0.25</b> at 4× T, <b>0.10</b> at 10× T — so badly-saturated functions stay distinguishable instead of clamping to a wall of zeros. <b>1.0</b> means everything fits comfortably. The list is
+        worst-first, capped at {HOTSPOT_FUNCTIONS_LIMIT}.
       </SectionHelp>
       {data.functions.length === 0 ? (
         <div style={{ color: colors.textDim, fontSize: fontSizes.panels }}>No functions over the complexity threshold.</div>
@@ -113,9 +91,8 @@ function CloneHotspots({ data, colors, fontSizes }: HotspotSectionProps & { data
         Clone clusters ({data.cluster_count} total · {data.duplicated_loc.toLocaleString()} of {data.total_loc.toLocaleString()} LOC duplicated)
       </div>
       <SectionHelp colors={colors}>
-        Functions whose AST shape is near-identical, grouped by SimHash + Hamming distance. <b>Max-distance 0</b> is
-        an exact-shape duplicate; higher numbers are looser matches. Showing the {showing} largest clusters by total
-        LOC; expand to see members.
+        Functions whose AST shape is near-identical, grouped by SimHash + Hamming distance. <b>Max-distance 0</b> is an exact-shape duplicate; higher numbers are looser matches. Showing the {showing}{" "}
+        largest clusters by total LOC; expand to see members.
       </SectionHelp>
       {data.clusters.length === 0 ? (
         <div style={{ color: colors.textDim, fontSize: fontSizes.panels }}>No clone clusters detected.</div>
@@ -165,8 +142,7 @@ function CloneClusterRow({ cluster, index, colors, fontSizes }: HotspotSectionPr
             <div key={j} style={{ display: "flex", justifyContent: "space-between", gap: 8 }}>
               <span style={{ wordBreak: "break-all", flex: 1 }}>
                 {m.path}
-                <span style={{ color: colors.textDim }}>:{m.start_line}</span>
-                {" "}{m.name}
+                <span style={{ color: colors.textDim }}>:{m.start_line}</span> {m.name}
               </span>
               <span style={{ color: colors.textDim, whiteSpace: "nowrap" }}>LOC {m.loc}</span>
             </div>

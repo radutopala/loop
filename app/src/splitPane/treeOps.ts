@@ -1,6 +1,6 @@
-import type { PaneNode, LeafNode, SplitDirection, DropPosition } from "./types";
 import type { PanelType } from "../types/panels";
-import { SINGLETON_PANELS, EXCLUSIVE_PANELS } from "../types/panels";
+import { EXCLUSIVE_PANELS, SINGLETON_PANELS } from "../types/panels";
+import type { DropPosition, LeafNode, PaneNode, SplitDirection } from "./types";
 
 export function makeLeaf(id: string, panel: PanelType, flex = 1, openMode?: import("../types/panels").AgentOpenMode): LeafNode {
   return { type: "leaf", id, panel, flex, ...(openMode ? { openMode } : {}) };
@@ -19,9 +19,7 @@ export function removeLeaf(node: PaneNode, id: string): PaneNode | null {
   if (node.type === "leaf") {
     return node.id === id ? null : node;
   }
-  const remaining = node.children
-    .map((c) => removeLeaf(c, id))
-    .filter((c): c is PaneNode => c !== null);
+  const remaining = node.children.map((c) => removeLeaf(c, id)).filter((c): c is PaneNode => c !== null);
   if (remaining.length === 0) return null;
   // Keep single-child splits intact: collapsing them changes the React tree
   // shape, which forces SplitPaneLayout's PaneTree to switch from its split
@@ -36,7 +34,10 @@ export function splitLeaf(node: PaneNode, leafId: string, direction: SplitDirect
     return {
       type: "split" as const,
       direction,
-      children: [{ ...node, flex: 1 }, { ...newLeaf, flex: 1 }],
+      children: [
+        { ...node, flex: 1 },
+        { ...newLeaf, flex: 1 },
+      ],
       flex: node.flex,
     };
   }
@@ -62,9 +63,7 @@ export function updateFlex(node: PaneNode, parentPath: number[], dividerIndex: n
   const [first, ...rest] = parentPath;
   return {
     ...node,
-    children: node.children.map((c, i) =>
-      i === first ? updateFlex(c, rest, dividerIndex, newFlexA, newFlexB) : c,
-    ),
+    children: node.children.map((c, i) => (i === first ? updateFlex(c, rest, dividerIndex, newFlexA, newFlexB) : c)),
   };
 }
 
@@ -116,9 +115,7 @@ export function moveLeaf(tree: PaneNode, dragId: string, dropId: string, positio
   const insertLeafAt = (node: PaneNode): PaneNode => {
     if (node.type === "leaf") {
       if (node.id !== dropId) return node;
-      const children = insertBefore
-        ? [makeLeaf(dragId, dragLeaf.panel), { ...node, flex: 1 }]
-        : [{ ...node, flex: 1 }, makeLeaf(dragId, dragLeaf.panel)];
+      const children = insertBefore ? [makeLeaf(dragId, dragLeaf.panel), { ...node, flex: 1 }] : [{ ...node, flex: 1 }, makeLeaf(dragId, dragLeaf.panel)];
       return { type: "split" as const, direction, children, flex: node.flex };
     }
     return { ...node, children: node.children.map((c) => insertLeafAt(c)) };

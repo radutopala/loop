@@ -218,10 +218,7 @@ export async function fetchQualityC4(channelId: string): Promise<QualityC4Respon
   return (await res.json()) as QualityC4Response;
 }
 
-export async function fetchQualityComplexity(
-  channelId: string,
-  opts: { limit?: number; offset?: number } = {},
-): Promise<QualityComplexityResponse> {
+export async function fetchQualityComplexity(channelId: string, opts: { limit?: number; offset?: number } = {}): Promise<QualityComplexityResponse> {
   const q = new URLSearchParams();
   if (opts.limit !== undefined) q.set("limit", String(opts.limit));
   if (opts.offset !== undefined) q.set("offset", String(opts.offset));
@@ -231,10 +228,7 @@ export async function fetchQualityComplexity(
   return (await res.json()) as QualityComplexityResponse;
 }
 
-export async function fetchQualityClones(
-  channelId: string,
-  opts: { limit?: number; offset?: number } = {},
-): Promise<QualityClonesResponse> {
+export async function fetchQualityClones(channelId: string, opts: { limit?: number; offset?: number } = {}): Promise<QualityClonesResponse> {
   const q = new URLSearchParams();
   if (opts.limit !== undefined) q.set("limit", String(opts.limit));
   if (opts.offset !== undefined) q.set("offset", String(opts.offset));
@@ -244,10 +238,7 @@ export async function fetchQualityClones(
   return (await res.json()) as QualityClonesResponse;
 }
 
-export async function simulateQualityWhatif(
-  channelId: string,
-  mutations: QualityMutation[],
-): Promise<QualityWhatifResponse> {
+export async function simulateQualityWhatif(channelId: string, mutations: QualityMutation[]): Promise<QualityWhatifResponse> {
   const res = await fetch(`${base(channelId)}/whatif`, {
     method: "POST",
     headers: { "content-type": "application/json" },

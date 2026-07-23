@@ -101,13 +101,13 @@ export async function loadReviewPR(channelId: string, prNumber: number): Promise
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ pr_number: prNumber }),
   });
-  if (!res.ok) throw new Error(await res.text() || `Failed to load PR: ${res.statusText}`);
+  if (!res.ok) throw new Error((await res.text()) || `Failed to load PR: ${res.statusText}`);
   return normalizeSession(await res.json());
 }
 
 export async function syncReviewSession(channelId: string): Promise<ReviewSessionResponse> {
   const res = await fetch(`${getApiUrl()}/api/channels/${channelId}/review/sync`, { method: "POST" });
-  if (!res.ok) throw new Error(await res.text() || `Failed to sync review: ${res.statusText}`);
+  if (!res.ok) throw new Error((await res.text()) || `Failed to sync review: ${res.statusText}`);
   return normalizeSession(await res.json());
 }
 
@@ -118,28 +118,22 @@ export async function deleteReviewSession(channelId: string): Promise<void> {
 
 export async function runReview(channelId: string): Promise<{ status: string }> {
   const res = await fetch(`${getApiUrl()}/api/channels/${channelId}/review/run`, { method: "POST" });
-  if (!res.ok) throw new Error(await res.text() || `Failed to start review: ${res.statusText}`);
+  if (!res.ok) throw new Error((await res.text()) || `Failed to start review: ${res.statusText}`);
   return res.json();
 }
 
 export async function pushReviewComment(channelId: string, commentId: string): Promise<void> {
-  const res = await fetch(
-    `${getApiUrl()}/api/channels/${channelId}/review/comments/${encodeURIComponent(commentId)}/push`,
-    { method: "POST" },
-  );
-  if (!res.ok) throw new Error(await res.text() || `Failed to push comment: ${res.statusText}`);
+  const res = await fetch(`${getApiUrl()}/api/channels/${channelId}/review/comments/${encodeURIComponent(commentId)}/push`, { method: "POST" });
+  if (!res.ok) throw new Error((await res.text()) || `Failed to push comment: ${res.statusText}`);
 }
 
 export async function deleteReviewComment(channelId: string, commentId: string): Promise<void> {
-  const res = await fetch(
-    `${getApiUrl()}/api/channels/${channelId}/review/comments/${encodeURIComponent(commentId)}`,
-    { method: "DELETE" },
-  );
-  if (!res.ok) throw new Error(await res.text() || `Failed to delete comment: ${res.statusText}`);
+  const res = await fetch(`${getApiUrl()}/api/channels/${channelId}/review/comments/${encodeURIComponent(commentId)}`, { method: "DELETE" });
+  if (!res.ok) throw new Error((await res.text()) || `Failed to delete comment: ${res.statusText}`);
 }
 
 export async function pushAllReviewComments(channelId: string): Promise<PushAllResult> {
   const res = await fetch(`${getApiUrl()}/api/channels/${channelId}/review/push-all`, { method: "POST" });
-  if (!res.ok) throw new Error(await res.text() || `Failed to push comments: ${res.statusText}`);
+  if (!res.ok) throw new Error((await res.text()) || `Failed to push comments: ${res.statusText}`);
   return res.json();
 }

@@ -1,10 +1,10 @@
-import { app, BrowserWindow, dialog, ipcMain, Menu, shell } from "electron";
-import { autoUpdater } from "electron-updater";
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { app, BrowserWindow, dialog, ipcMain, Menu, shell } from "electron";
+import { autoUpdater } from "electron-updater";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -101,7 +101,9 @@ function readDesktopConfig(): Record<string, unknown> {
     const data = fs.readFileSync(loopConfigPath(), "utf-8");
     const config = JSON.parse(stripHJSON(data));
     if (config.desktop && typeof config.desktop === "object") return config.desktop;
-  } catch { /* ignore */ }
+  } catch {
+    /* ignore */
+  }
   return {};
 }
 
@@ -213,9 +215,7 @@ function installCLI(interactive = false): void {
     return;
   }
 
-  const linkPath = process.platform === "win32"
-    ? path.join(process.env.LOCALAPPDATA || "", "Loop", "bin", "loop.cmd")
-    : "/usr/local/bin/loop";
+  const linkPath = process.platform === "win32" ? path.join(process.env.LOCALAPPDATA || "", "Loop", "bin", "loop.cmd") : "/usr/local/bin/loop";
 
   // Check if already installed correctly.
   try {
@@ -231,7 +231,9 @@ function installCLI(interactive = false): void {
         return;
       }
     }
-  } catch { /* not installed yet */ }
+  } catch {
+    /* not installed yet */
+  }
 
   try {
     if (process.platform === "win32") {
@@ -240,7 +242,11 @@ function installCLI(interactive = false): void {
       fs.writeFileSync(linkPath, `@echo off\n"${bundled}" %*\n`);
     } else {
       // Try direct symlink first.
-      try { fs.unlinkSync(linkPath); } catch { /* ignore */ }
+      try {
+        fs.unlinkSync(linkPath);
+      } catch {
+        /* ignore */
+      }
       fs.symlinkSync(bundled, linkPath);
     }
     if (interactive) dialog.showMessageBox({ message: "CLI installed.", detail: `${linkPath} -> ${bundled}`, buttons: ["OK"] });
@@ -264,9 +270,7 @@ const PROTOCOL = "loop";
 if (process.defaultApp) {
   // In dev mode, register with the path to the electron binary + script.
   if (process.argv.length >= 2) {
-    app.setAsDefaultProtocolClient(PROTOCOL, process.execPath, [
-      path.resolve(process.argv[1]!),
-    ]);
+    app.setAsDefaultProtocolClient(PROTOCOL, process.execPath, [path.resolve(process.argv[1]!)]);
   }
 } else {
   app.setAsDefaultProtocolClient(PROTOCOL);
@@ -280,9 +284,7 @@ if (!gotTheLock) {
 
 // Use the macOS-specific icon for the dock (has rounded-rect background).
 // The original loop.png is kept for internal UI use (favicon, panels).
-const iconMacos = process.env.VITE_DEV_SERVER_URL
-  ? path.join(__dirname, "../public/loop-macos.png")
-  : path.join(__dirname, "../dist/loop-macos.png");
+const iconMacos = process.env.VITE_DEV_SERVER_URL ? path.join(__dirname, "../public/loop-macos.png") : path.join(__dirname, "../dist/loop-macos.png");
 if (process.platform === "darwin") {
   app.dock?.setIcon(iconMacos);
 }
@@ -384,11 +386,7 @@ function createWindow(hash?: string): BrowserWindow {
 
 /** Returns the most recently focused window, or the first available one. */
 function getFocusedOrLastWindow(): BrowserWindow | null {
-  return (
-    BrowserWindow.getFocusedWindow() ??
-    BrowserWindow.getAllWindows()[0] ??
-    null
-  );
+  return BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0] ?? null;
 }
 
 function navigateToChannel(channelId: string) {
@@ -396,9 +394,7 @@ function navigateToChannel(channelId: string) {
   if (!channelId || !win) return;
   // Set hash directly on the page — triggers the renderer's hashchange listener.
   // This avoids IPC timing issues where the listener isn't mounted yet.
-  win.webContents.executeJavaScript(
-    `window.location.hash = ${JSON.stringify(channelId)}`,
-  );
+  win.webContents.executeJavaScript(`window.location.hash = ${JSON.stringify(channelId)}`);
   if (win.isMinimized()) win.restore();
   win.focus();
 }
@@ -500,7 +496,9 @@ function buildMenu() {
               try {
                 const h = await focused.webContents.executeJavaScript("window.location.hash.slice(1)");
                 if (h) hash = h;
-              } catch { /* ignore */ }
+              } catch {
+                /* ignore */
+              }
             }
             createWindow(hash);
           },
@@ -511,15 +509,7 @@ function buildMenu() {
     },
     {
       label: "Edit",
-      submenu: [
-        { role: "undo" },
-        { role: "redo" },
-        { type: "separator" },
-        { role: "cut" },
-        { role: "copy" },
-        { role: "paste" },
-        { role: "selectAll" },
-      ],
+      submenu: [{ role: "undo" }, { role: "redo" }, { type: "separator" }, { role: "cut" }, { role: "copy" }, { role: "paste" }, { role: "selectAll" }],
     },
     {
       label: "View",
@@ -546,7 +536,9 @@ function buildMenu() {
 // --- Auto-updater ---
 
 let updateStatus: { available: boolean; version?: string; downloading: boolean; downloaded: boolean; error?: string } = {
-  available: false, downloading: false, downloaded: false,
+  available: false,
+  downloading: false,
+  downloaded: false,
 };
 
 function setupAutoUpdater() {
@@ -587,9 +579,12 @@ function setupAutoUpdater() {
   });
 
   autoUpdater.checkForUpdates().catch(() => {});
-  setInterval(() => {
-    autoUpdater.checkForUpdates().catch(() => {});
-  }, 30 * 60 * 1000);
+  setInterval(
+    () => {
+      autoUpdater.checkForUpdates().catch(() => {});
+    },
+    30 * 60 * 1000,
+  );
 }
 
 app.on("ready", async () => {

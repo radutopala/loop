@@ -1,8 +1,8 @@
 import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import type { RootEntry } from "../../api/files";
-import { fonts } from "../../theme";
 import { useTheme } from "../../ThemeContext";
+import { fonts } from "../../theme";
 
 interface PaneRootSelectProps {
   /** Pane leaf id — the portal target is `pane-header-slot-${leafId}`. */
@@ -59,7 +59,9 @@ export function PaneRootSelect({ leafId, roots, value, onChange, testId, title }
         }}
       >
         {roots.map((r) => (
-          <option key={r.index} value={r.index} title={r.path}>{r.path}</option>
+          <option key={r.index} value={r.index} title={r.path}>
+            {r.path}
+          </option>
         ))}
       </select>
     </span>,

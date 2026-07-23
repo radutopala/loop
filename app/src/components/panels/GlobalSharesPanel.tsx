@@ -1,13 +1,12 @@
 import { useCallback, useEffect, useState } from "react";
-import type { Channel } from "../../types";
-import { fonts } from "../../theme";
-import { useTheme } from "../../ThemeContext";
-import { ChannelHeaderInfo } from "../layout/ChannelHeaderInfo";
-import { fetchPlaygroundShares, unsharePlayground, type PlaygroundShare } from "../../api/loopApi";
+import { fetchPlaygroundShares, type PlaygroundShare, unsharePlayground } from "../../api/loopApi";
 import { useEventStream } from "../../hooks/useEventStream";
-import type { WSEvent } from "../../types";
+import { useTheme } from "../../ThemeContext";
+import { fonts } from "../../theme";
+import type { Channel, WSEvent } from "../../types";
 import { logErr } from "../../utils/log";
 import { openExternalUrl } from "../../utils/openExternal";
+import { ChannelHeaderInfo } from "../layout/ChannelHeaderInfo";
 
 interface GlobalSharesPanelProps {
   channel?: Channel;
@@ -39,12 +38,15 @@ export function GlobalSharesPanel({ channel, sidebarOpen, onOpenPalette, onClose
   // channel filtering server-side, so any subscribed channel receives them.
   useEventStream({
     channelId: channel?.id ?? null,
-    onEvent: useCallback((event: WSEvent) => {
-      if (event.type === "playground.update") {
-        const data = event.data as { kind?: string } | undefined;
-        if (data?.kind === "share") load();
-      }
-    }, [load]),
+    onEvent: useCallback(
+      (event: WSEvent) => {
+        if (event.type === "playground.update") {
+          const data = event.data as { kind?: string } | undefined;
+          if (data?.kind === "share") load();
+        }
+      },
+      [load],
+    ),
   });
 
   async function handleUnshare(sh: PlaygroundShare) {
@@ -138,11 +140,7 @@ export function GlobalSharesPanel({ channel, sidebarOpen, onOpenPalette, onClose
         <span style={{ fontSize: 13, fontWeight: 600, color: colors.text }}>
           Playground Shares {shares.length > 0 && <span style={{ color: colors.textDim, fontWeight: 400 }}>({shares.length})</span>}
         </span>
-        <button
-          onClick={onClose}
-          title="Close"
-          style={{ background: "none", border: "none", color: colors.textDim, cursor: "pointer", fontSize: 16, lineHeight: 1 }}
-        >
+        <button onClick={onClose} title="Close" style={{ background: "none", border: "none", color: colors.textDim, cursor: "pointer", fontSize: 16, lineHeight: 1 }}>
           ×
         </button>
       </div>

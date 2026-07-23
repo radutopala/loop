@@ -1,6 +1,6 @@
 import { useMemo } from "react";
 import { useTheme } from "../../ThemeContext";
-import { gitGutterColors, gitOverviewMarks, hasGitLineChanges, type GitLineChanges } from "./editorGitGutter";
+import { type GitLineChanges, gitGutterColors, gitOverviewMarks, hasGitLineChanges } from "./editorGitGutter";
 
 interface GitChangeOverviewProps {
   changes: GitLineChanges;
@@ -23,8 +23,7 @@ export function GitChangeOverview({ changes, totalLines, onJumpToLine }: GitChan
 
   if (totalLines <= 0 || !hasGitLineChanges(changes)) return null;
 
-  const colorFor = (kind: "added" | "modified" | "deleted") =>
-    kind === "added" ? palette.added : kind === "modified" ? palette.modified : palette.deleted;
+  const colorFor = (kind: "added" | "modified" | "deleted") => (kind === "added" ? palette.added : kind === "modified" ? palette.modified : palette.deleted);
 
   return (
     <div

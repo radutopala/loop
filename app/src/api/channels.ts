@@ -58,11 +58,7 @@ export async function fetchChannels(): Promise<Channel[]> {
   }));
 }
 
-export async function createThread(
-  channelId: string,
-  name: string,
-  sessionId?: string,
-): Promise<string> {
+export async function createThread(channelId: string, name: string, sessionId?: string): Promise<string> {
   const body: Record<string, string> = {
     channel_id: channelId,
     name,
@@ -154,12 +150,7 @@ export async function setChannelLocked(channelId: string, locked: boolean): Prom
 
 export type PlanResolveAction = "approve" | "reject" | "deny";
 
-export async function resolvePlan(
-  channelId: string,
-  action: PlanResolveAction,
-  prompt?: string,
-  mode?: string,
-): Promise<void> {
+export async function resolvePlan(channelId: string, action: PlanResolveAction, prompt?: string, mode?: string): Promise<void> {
   const body: Record<string, string> = { action };
   if (prompt) body.prompt = prompt;
   if (mode) body.mode = mode;
@@ -173,12 +164,7 @@ export async function resolvePlan(
 
 export type AskResolveAction = "answer" | "cancel";
 
-export async function resolveAsk(
-  channelId: string,
-  action: AskResolveAction,
-  answer?: string,
-  mode?: string,
-): Promise<void> {
+export async function resolveAsk(channelId: string, action: AskResolveAction, answer?: string, mode?: string): Promise<void> {
   const body: Record<string, string> = { action };
   if (answer) body.answer = answer;
   if (mode) body.mode = mode;
@@ -267,12 +253,7 @@ export async function createChannel(name: string, platform = "local"): Promise<s
   return data.channel_id;
 }
 
-export async function sendMessage(
-  channelId: string,
-  content: string,
-  mode?: "agent" | "plan",
-  interrupt?: boolean,
-): Promise<void> {
+export async function sendMessage(channelId: string, content: string, mode?: "agent" | "plan", interrupt?: boolean): Promise<void> {
   const body: Record<string, string | boolean> = { channel_id: channelId, content };
   if (mode && mode !== "agent") body.mode = mode;
   if (interrupt) body.interrupt = true;
@@ -284,28 +265,18 @@ export async function sendMessage(
   if (!res.ok) throw new Error(`Failed to send message: ${res.statusText}`);
 }
 
-export async function pasteImage(
-  channelId: string,
-  base64Data: string,
-  mediaType: string,
-): Promise<string> {
-  const res = await fetch(
-    `${getApiUrl()}/api/channels/${encodeURIComponent(channelId)}/paste-image`,
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ data: base64Data, media_type: mediaType }),
-    },
-  );
+export async function pasteImage(channelId: string, base64Data: string, mediaType: string): Promise<string> {
+  const res = await fetch(`${getApiUrl()}/api/channels/${encodeURIComponent(channelId)}/paste-image`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ data: base64Data, media_type: mediaType }),
+  });
   if (!res.ok) throw new Error(`Failed to paste image: ${res.statusText}`);
   const data: { path: string } = await res.json();
   return data.path;
 }
 
-export async function deleteQueuedMessage(
-  channelId: string,
-  msgId: string,
-): Promise<void> {
+export async function deleteQueuedMessage(channelId: string, msgId: string): Promise<void> {
   const url = `${getApiUrl()}/api/messages/${encodeURIComponent(msgId)}?channel_id=${encodeURIComponent(channelId)}`;
   const res = await fetch(url, { method: "DELETE" });
   if (!res.ok) throw new Error(`Failed to delete queued message: ${res.statusText}`);
@@ -313,10 +284,7 @@ export async function deleteQueuedMessage(
 
 // reorderQueuedMessages persists a new order for the channel's queued messages
 // (first id = highest priority / runs next).
-export async function reorderQueuedMessages(
-  channelId: string,
-  orderedMsgIds: string[],
-): Promise<void> {
+export async function reorderQueuedMessages(channelId: string, orderedMsgIds: string[]): Promise<void> {
   const url = `${getApiUrl()}/api/channels/${encodeURIComponent(channelId)}/queued/reorder`;
   const res = await fetch(url, {
     method: "POST",
@@ -326,10 +294,7 @@ export async function reorderQueuedMessages(
   if (!res.ok) throw new Error(`Failed to reorder queued messages: ${res.statusText}`);
 }
 
-export async function sendCommand(
-  channelId: string,
-  command: string,
-): Promise<void> {
+export async function sendCommand(channelId: string, command: string): Promise<void> {
   const res = await fetch(`${getApiUrl()}/api/commands`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -338,11 +303,7 @@ export async function sendCommand(
   if (!res.ok) throw new Error(`Failed to send command: ${res.statusText}`);
 }
 
-export async function createWorktreeThread(
-  channelId: string,
-  branch: string,
-  name?: string,
-): Promise<{ threadId: string; worktreePath: string }> {
+export async function createWorktreeThread(channelId: string, branch: string, name?: string): Promise<{ threadId: string; worktreePath: string }> {
   const body: Record<string, string> = { channel_id: channelId, branch };
   if (name) body.name = name;
   const res = await fetch(`${getApiUrl()}/api/worktrees`, {
@@ -355,10 +316,7 @@ export async function createWorktreeThread(
   return { threadId: data.thread_id, worktreePath: data.worktree_path };
 }
 
-export async function importWorktree(
-  channelId: string,
-  worktreePath: string,
-): Promise<{ threadId: string; worktreePath: string }> {
+export async function importWorktree(channelId: string, worktreePath: string): Promise<{ threadId: string; worktreePath: string }> {
   const res = await fetch(`${getApiUrl()}/api/worktrees/import`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -374,17 +332,12 @@ interface MessagesResponse {
   next_cursor: number | null;
 }
 
-export async function fetchMessages(
-  channelId: string,
-  opts?: { limit?: number; cursor?: number; around?: number },
-): Promise<MessagesResponse> {
+export async function fetchMessages(channelId: string, opts?: { limit?: number; cursor?: number; around?: number }): Promise<MessagesResponse> {
   const params = new URLSearchParams();
   if (opts?.limit) params.set("limit", String(opts.limit));
   if (opts?.around) params.set("around", String(opts.around));
   else if (opts?.cursor) params.set("cursor", String(opts.cursor));
-  const res = await fetch(
-    `${getApiUrl()}/api/channels/${channelId}/messages?${params}`,
-  );
+  const res = await fetch(`${getApiUrl()}/api/channels/${channelId}/messages?${params}`);
   if (!res.ok) throw new Error(`Failed to fetch messages: ${res.statusText}`);
   return res.json();
 }
@@ -395,28 +348,19 @@ export async function fetchMessages(
  * list — rather than filtering the loaded chat history — so the queue stays
  * correct even when older pages are out of view.
  */
-export async function fetchQueuedMessages(
-  channelId: string,
-): Promise<Message[]> {
-  const res = await fetch(
-    `${getApiUrl()}/api/channels/${channelId}/queued`,
-  );
+export async function fetchQueuedMessages(channelId: string): Promise<Message[]> {
+  const res = await fetch(`${getApiUrl()}/api/channels/${channelId}/queued`);
   if (!res.ok) throw new Error(`Failed to fetch queued messages: ${res.statusText}`);
   const data: { messages: Message[] } = await res.json();
   return data.messages ?? [];
 }
 
-export async function fetchTimeline(
-  channelId: string,
-  opts?: { limit?: number; cursorPosition?: number; cursorId?: number },
-): Promise<TimelineResponse> {
+export async function fetchTimeline(channelId: string, opts?: { limit?: number; cursorPosition?: number; cursorId?: number }): Promise<TimelineResponse> {
   const params = new URLSearchParams();
   if (opts?.limit) params.set("limit", String(opts.limit));
   if (opts?.cursorPosition !== undefined) params.set("cursor_position", String(opts.cursorPosition));
   if (opts?.cursorId !== undefined) params.set("cursor_id", String(opts.cursorId));
-  const res = await fetch(
-    `${getApiUrl()}/api/channels/${channelId}/timeline?${params}`,
-  );
+  const res = await fetch(`${getApiUrl()}/api/channels/${channelId}/timeline?${params}`);
   if (!res.ok) throw new Error(`Failed to fetch timeline: ${res.statusText}`);
   return res.json();
 }

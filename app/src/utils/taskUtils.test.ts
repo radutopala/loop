@@ -1,14 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import {
-  timeAgo,
-  nextRunLabel,
-  TYPE_COLORS,
-  defaultScheduleForType,
-  rfc3339ToDatetimeLocal,
-  datetimeLocalToRFC3339,
-  parseIntervalToParts,
-  intervalPartsToString,
-} from "./taskUtils";
+import { datetimeLocalToRFC3339, defaultScheduleForType, intervalPartsToString, nextRunLabel, parseIntervalToParts, rfc3339ToDatetimeLocal, TYPE_COLORS, timeAgo } from "./taskUtils";
 
 const NOW = new Date("2026-06-10T12:00:00Z");
 

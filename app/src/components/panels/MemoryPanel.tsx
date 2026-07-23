@@ -1,13 +1,13 @@
+import type { EditorView } from "@codemirror/view";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { type EditorView } from "@codemirror/view";
-import { useTheme } from "../../ThemeContext";
-import { fetchMemoryFiles, fetchMemoryFileContent, saveMemoryFileContent, type MemoryFileInfo } from "../../api/loopApi";
 import { fetchGlobalConfig } from "../../api/configApi";
+import { fetchMemoryFileContent, fetchMemoryFiles, type MemoryFileInfo, saveMemoryFileContent } from "../../api/loopApi";
+import { useTheme } from "../../ThemeContext";
+import { logErr } from "../../utils/log";
+import { storageGet, storageGetJSON, storageSet, storageSetJSON } from "../../utils/storage";
 import { FilePanel } from "./FilePanel";
 import { MemoryFileList, type TreeNode } from "./MemoryFileList";
 import { MemoryFileViewer } from "./MemoryFileViewer";
-import { storageGet, storageSet, storageGetJSON, storageSetJSON } from "../../utils/storage";
-import { logErr } from "../../utils/log";
 
 const TREE_MIN_WIDTH = 120;
 const TREE_MAX_WIDTH = 400;
@@ -24,7 +24,10 @@ function loadTreeWidth(): number {
   return TREE_DEFAULT_WIDTH;
 }
 
-interface TabsState { tabs: string[]; selected: string | null; }
+interface TabsState {
+  tabs: string[];
+  selected: string | null;
+}
 
 function loadTabs(channelId: string): TabsState {
   const all = storageGetJSON<Record<string, TabsState>>(TABS_KEY);
@@ -90,12 +93,14 @@ export function MemoryPanel({ channelId, dirPath, branch, embedded, openMemoryFi
 
   // Load desktop settings from global config.
   useEffect(() => {
-    fetchGlobalConfig().then((cfg) => {
-      const d = cfg.content?.desktop;
-      if (!d) return;
-      if (typeof d.auto_save_on_blur === "boolean") setAutoSaveOnBlur(d.auto_save_on_blur);
-      if (typeof d.preview_tabs === "boolean") setPreviewTabsEnabled(d.preview_tabs);
-    }).catch(logErr("loading desktop settings"));
+    fetchGlobalConfig()
+      .then((cfg) => {
+        const d = cfg.content?.desktop;
+        if (!d) return;
+        if (typeof d.auto_save_on_blur === "boolean") setAutoSaveOnBlur(d.auto_save_on_blur);
+        if (typeof d.preview_tabs === "boolean") setPreviewTabsEnabled(d.preview_tabs);
+      })
+      .catch(logErr("loading desktop settings"));
   }, []);
 
   // Persist tabs (exclude preview tab).
@@ -109,32 +114,35 @@ export function MemoryPanel({ channelId, dirPath, branch, embedded, openMemoryFi
   // tree in place without the loading spinner, selection, or error churn — so
   // files indexed after the panel opened (e.g. by the re-indexer or the agent)
   // appear without a manual reload.
-  const loadFiles = useCallback((quiet = false) => {
-    if (!quiet) {
-      setLoading(true);
-      setListError(null);
-    }
-    fetchMemoryFiles(channelId)
-      .then((f) => {
-        setFiles(f);
-        // Quiet (poll) refresh only grows the expanded set so newly-indexed dirs
-        // become visible without collapsing the user's view; the initial load
-        // expands everything. Auto-opening the first file is handled by a
-        // separate effect so it goes through switchToTab (which fetches content).
-        if (quiet) {
-          setExpandedDirs((prev) => new Set([...prev, ...f.map((fi) => fi.dir_path)]));
-        } else {
-          setExpandedDirs(new Set(f.map((fi) => fi.dir_path)));
-        }
-      })
-      .catch((err) => {
-        if (!quiet) setListError(err instanceof Error ? err.message : "Failed to load");
-      })
-      .finally(() => {
-        if (!quiet) setLoading(false);
-      });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [channelId]);
+  const loadFiles = useCallback(
+    (quiet = false) => {
+      if (!quiet) {
+        setLoading(true);
+        setListError(null);
+      }
+      fetchMemoryFiles(channelId)
+        .then((f) => {
+          setFiles(f);
+          // Quiet (poll) refresh only grows the expanded set so newly-indexed dirs
+          // become visible without collapsing the user's view; the initial load
+          // expands everything. Auto-opening the first file is handled by a
+          // separate effect so it goes through switchToTab (which fetches content).
+          if (quiet) {
+            setExpandedDirs((prev) => new Set([...prev, ...f.map((fi) => fi.dir_path)]));
+          } else {
+            setExpandedDirs(new Set(f.map((fi) => fi.dir_path)));
+          }
+        })
+        .catch((err) => {
+          if (!quiet) setListError(err instanceof Error ? err.message : "Failed to load");
+        })
+        .finally(() => {
+          if (!quiet) setLoading(false);
+        });
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+    },
+    [channelId],
+  );
 
   useEffect(() => {
     setFiles([]);
@@ -158,9 +166,14 @@ export function MemoryPanel({ channelId, dirPath, branch, embedded, openMemoryFi
   const markDirty = useCallback(() => {
     const p = selectedPathRef.current;
     if (p) {
-      setDirtyTabs((prev) => { if (prev.has(p)) return prev; const next = new Set(prev); next.add(p); return next; });
+      setDirtyTabs((prev) => {
+        if (prev.has(p)) return prev;
+        const next = new Set(prev);
+        next.add(p);
+        return next;
+      });
       // Editing promotes a preview tab to permanent.
-      setPreviewTab((cur) => cur === p ? null : cur);
+      setPreviewTab((cur) => (cur === p ? null : cur));
     }
   }, []);
 
@@ -174,10 +187,17 @@ export function MemoryPanel({ channelId, dirPath, branch, embedded, openMemoryFi
       content += "\n";
       view.dispatch({ changes: { from: view.state.doc.length, insert: "\n" } });
     }
-    saveMemoryFileContent(channelIdRef.current, savePath, content).then(() => {
-      dirtyContentRef.current.delete(savePath);
-      setDirtyTabs((prev) => { if (!prev.has(savePath)) return prev; const next = new Set(prev); next.delete(savePath); return next; });
-    }).catch(logErr("saving memory file"));
+    saveMemoryFileContent(channelIdRef.current, savePath, content)
+      .then(() => {
+        dirtyContentRef.current.delete(savePath);
+        setDirtyTabs((prev) => {
+          if (!prev.has(savePath)) return prev;
+          const next = new Set(prev);
+          next.delete(savePath);
+          return next;
+        });
+      })
+      .catch(logErr("saving memory file"));
   }, []);
 
   const saveAllDirty = useCallback(() => {
@@ -188,36 +208,46 @@ export function MemoryPanel({ channelId, dirPath, branch, embedded, openMemoryFi
 
   // Save on unmount if auto-save enabled.
   useEffect(() => {
-    return () => { if (autoSaveOnBlurRef.current) saveAllDirty(); };
+    return () => {
+      if (autoSaveOnBlurRef.current) saveAllDirty();
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [channelId]);
 
-  const switchToTab = useCallback((path: string) => {
-    const curPath = selectedPathRef.current;
-    if (curPath && dirtyTabsRef.current.has(curPath)) {
-      const view = viewRef.current;
-      if (view) dirtyContentRef.current.set(curPath, view.state.doc.toString());
-      if (autoSaveOnBlurRef.current) saveAllDirty();
-    }
-    setSelectedPath(path);
-    setContentError(null);
-    const cached = dirtyContentRef.current.get(path);
-    if (cached !== undefined) {
-      setFileContent(cached);
-    } else {
-      setFileContent(null);
-      fetchMemoryFileContent(channelIdRef.current, path).then((content) => {
-        setFileContent(content);
-      }).catch((err) => {
-        setContentError(err instanceof Error ? err.message : "Failed to load file");
-      });
-    }
-  }, [saveAllDirty]);
+  const switchToTab = useCallback(
+    (path: string) => {
+      const curPath = selectedPathRef.current;
+      if (curPath && dirtyTabsRef.current.has(curPath)) {
+        const view = viewRef.current;
+        if (view) dirtyContentRef.current.set(curPath, view.state.doc.toString());
+        if (autoSaveOnBlurRef.current) saveAllDirty();
+      }
+      setSelectedPath(path);
+      setContentError(null);
+      const cached = dirtyContentRef.current.get(path);
+      if (cached !== undefined) {
+        setFileContent(cached);
+      } else {
+        setFileContent(null);
+        fetchMemoryFileContent(channelIdRef.current, path)
+          .then((content) => {
+            setFileContent(content);
+          })
+          .catch((err) => {
+            setContentError(err instanceof Error ? err.message : "Failed to load file");
+          });
+      }
+    },
+    [saveAllDirty],
+  );
 
-  const openFileInTab = useCallback((path: string) => {
-    setOpenTabs((prev) => prev.includes(path) ? prev : [...prev, path]);
-    if (selectedPathRef.current !== path) switchToTab(path);
-  }, [switchToTab]);
+  const openFileInTab = useCallback(
+    (path: string) => {
+      setOpenTabs((prev) => (prev.includes(path) ? prev : [...prev, path]));
+      if (selectedPathRef.current !== path) switchToTab(path);
+    },
+    [switchToTab],
+  );
 
   // Auto-open the first file once files are available and nothing is open yet —
   // on the initial load AND when files first appear via the poll. Routed through
@@ -230,110 +260,141 @@ export function MemoryPanel({ channelId, dirPath, branch, embedded, openMemoryFi
   }, [files, openTabs, openFileInTab]);
 
   // Single-click: open as preview (transient) tab, or permanently if preview disabled.
-  const handleFileClick = useCallback((path: string) => {
-    if (!previewTabsEnabled) {
-      openFileInTab(path);
-      return;
-    }
-    // If already a permanent tab, just switch.
-    if (openTabs.includes(path) && path !== previewTab) {
+  const handleFileClick = useCallback(
+    (path: string) => {
+      if (!previewTabsEnabled) {
+        openFileInTab(path);
+        return;
+      }
+      // If already a permanent tab, just switch.
+      if (openTabs.includes(path) && path !== previewTab) {
+        if (selectedPathRef.current !== path) switchToTab(path);
+        return;
+      }
+      // Replace the existing preview tab with this file.
+      setOpenTabs((prev) => {
+        const without = previewTab ? prev.filter((t) => t !== previewTab) : prev;
+        return without.includes(path) ? without : [...without, path];
+      });
+      setPreviewTab(path);
       if (selectedPathRef.current !== path) switchToTab(path);
-      return;
-    }
-    // Replace the existing preview tab with this file.
-    setOpenTabs((prev) => {
-      const without = previewTab ? prev.filter((t) => t !== previewTab) : prev;
-      return without.includes(path) ? without : [...without, path];
-    });
-    setPreviewTab(path);
-    if (selectedPathRef.current !== path) switchToTab(path);
-  }, [previewTabsEnabled, openTabs, previewTab, switchToTab, openFileInTab]);
+    },
+    [previewTabsEnabled, openTabs, previewTab, switchToTab, openFileInTab],
+  );
 
   // Double-click: promote preview to permanent.
-  const handleFileDoubleClick = useCallback((path: string) => {
-    setOpenTabs((prev) => prev.includes(path) ? prev : [...prev, path]);
-    if (previewTab === path) setPreviewTab(null);
-    if (selectedPathRef.current !== path) switchToTab(path);
-  }, [previewTab, switchToTab]);
+  const handleFileDoubleClick = useCallback(
+    (path: string) => {
+      setOpenTabs((prev) => (prev.includes(path) ? prev : [...prev, path]));
+      if (previewTab === path) setPreviewTab(null);
+      if (selectedPathRef.current !== path) switchToTab(path);
+    },
+    [previewTab, switchToTab],
+  );
 
-  const handleCloseTab = useCallback((path: string, e?: React.MouseEvent) => {
-    if (e) e.stopPropagation();
-    if (autoSaveOnBlurRef.current && path === selectedPath) saveAllDirty();
-    dirtyContentRef.current.delete(path);
-    setDirtyTabs((prev) => { if (!prev.has(path)) return prev; const next = new Set(prev); next.delete(path); return next; });
-    if (previewTab === path) setPreviewTab(null);
-    setOpenTabs((prev) => {
-      const next = prev.filter((p) => p !== path);
-      if (path === selectedPath) {
-        if (next.length > 0) {
-          const idx = Math.min(prev.indexOf(path), next.length - 1);
-          switchToTab(next[Math.max(0, idx)]!);
-        } else {
-          setSelectedPath(null);
-          setFileContent(null);
-          setContentError(null);
+  const handleCloseTab = useCallback(
+    (path: string, e?: React.MouseEvent) => {
+      if (e) e.stopPropagation();
+      if (autoSaveOnBlurRef.current && path === selectedPath) saveAllDirty();
+      dirtyContentRef.current.delete(path);
+      setDirtyTabs((prev) => {
+        if (!prev.has(path)) return prev;
+        const next = new Set(prev);
+        next.delete(path);
+        return next;
+      });
+      if (previewTab === path) setPreviewTab(null);
+      setOpenTabs((prev) => {
+        const next = prev.filter((p) => p !== path);
+        if (path === selectedPath) {
+          if (next.length > 0) {
+            const idx = Math.min(prev.indexOf(path), next.length - 1);
+            switchToTab(next[Math.max(0, idx)]!);
+          } else {
+            setSelectedPath(null);
+            setFileContent(null);
+            setContentError(null);
+          }
         }
-      }
-      return next;
-    });
-  }, [selectedPath, saveAllDirty, switchToTab]);
+        return next;
+      });
+    },
+    [selectedPath, saveAllDirty, switchToTab],
+  );
 
   // Load selected file content on mount.
   useEffect(() => {
     if (!selectedPath) return;
-    fetchMemoryFileContent(channelIdRef.current, selectedPath).then((content) => {
-      setFileContent(content);
-    }).catch((err) => {
-      setContentError(err instanceof Error ? err.message : "Failed to load file");
-    });
+    fetchMemoryFileContent(channelIdRef.current, selectedPath)
+      .then((content) => {
+        setFileContent(content);
+      })
+      .catch((err) => {
+        setContentError(err instanceof Error ? err.message : "Failed to load file");
+      });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Save on blur, reload on focus.
   useEffect(() => {
-    const onBlur = () => { if (autoSaveOnBlur) saveAllDirty(); };
+    const onBlur = () => {
+      if (autoSaveOnBlur) saveAllDirty();
+    };
     const onFocus = () => {
       const path = selectedPathRef.current;
       if (!path) return;
-      fetchMemoryFileContent(channelIdRef.current, path).then((content) => {
-        if (selectedPathRef.current !== path) return;
-        const view = viewRef.current;
-        if (!view) return;
-        const current = view.state.doc.toString();
-        if (content !== current) {
-          view.dispatch({ changes: { from: 0, to: current.length, insert: content } });
-          setDirtyTabs((prev) => { if (!prev.has(path)) return prev; const next = new Set(prev); next.delete(path); return next; });
-        }
-      }).catch(logErr("refreshing memory file on blur"));
+      fetchMemoryFileContent(channelIdRef.current, path)
+        .then((content) => {
+          if (selectedPathRef.current !== path) return;
+          const view = viewRef.current;
+          if (!view) return;
+          const current = view.state.doc.toString();
+          if (content !== current) {
+            view.dispatch({ changes: { from: 0, to: current.length, insert: content } });
+            setDirtyTabs((prev) => {
+              if (!prev.has(path)) return prev;
+              const next = new Set(prev);
+              next.delete(path);
+              return next;
+            });
+          }
+        })
+        .catch(logErr("refreshing memory file on blur"));
     };
     window.addEventListener("blur", onBlur);
     window.addEventListener("focus", onFocus);
-    return () => { window.removeEventListener("blur", onBlur); window.removeEventListener("focus", onFocus); };
+    return () => {
+      window.removeEventListener("blur", onBlur);
+      window.removeEventListener("focus", onFocus);
+    };
   }, [saveAllDirty, autoSaveOnBlur]);
 
-  const handleTreeResize = useCallback((e: React.MouseEvent) => {
-    e.preventDefault();
-    setTreeResizing(true);
-    const startX = e.clientX;
-    const startWidth = treeWidth;
-    let lastWidth = startWidth;
+  const handleTreeResize = useCallback(
+    (e: React.MouseEvent) => {
+      e.preventDefault();
+      setTreeResizing(true);
+      const startX = e.clientX;
+      const startWidth = treeWidth;
+      let lastWidth = startWidth;
 
-    const onMouseMove = (ev: MouseEvent) => {
-      const newWidth = Math.min(TREE_MAX_WIDTH, Math.max(TREE_MIN_WIDTH, startWidth + (ev.clientX - startX)));
-      lastWidth = newWidth;
-      setTreeWidth(newWidth);
-    };
+      const onMouseMove = (ev: MouseEvent) => {
+        const newWidth = Math.min(TREE_MAX_WIDTH, Math.max(TREE_MIN_WIDTH, startWidth + (ev.clientX - startX)));
+        lastWidth = newWidth;
+        setTreeWidth(newWidth);
+      };
 
-    const onMouseUp = () => {
-      setTreeResizing(false);
-      storageSet(TREE_WIDTH_KEY, String(lastWidth));
-      document.removeEventListener("mousemove", onMouseMove);
-      document.removeEventListener("mouseup", onMouseUp);
-    };
+      const onMouseUp = () => {
+        setTreeResizing(false);
+        storageSet(TREE_WIDTH_KEY, String(lastWidth));
+        document.removeEventListener("mousemove", onMouseMove);
+        document.removeEventListener("mouseup", onMouseUp);
+      };
 
-    document.addEventListener("mousemove", onMouseMove);
-    document.addEventListener("mouseup", onMouseUp);
-  }, [treeWidth]);
+      document.addEventListener("mousemove", onMouseMove);
+      document.addEventListener("mouseup", onMouseUp);
+    },
+    [treeWidth],
+  );
 
   // Build a unified tree from all file paths, collapsing common prefixes.
   const tree = useMemo((): TreeNode[] => {
@@ -372,7 +433,10 @@ export function MemoryPanel({ channelId, dirPath, branch, embedded, openMemoryFi
     const keys = new Set<string>();
     const collect = (nodes: TreeNode[]) => {
       for (const n of nodes) {
-        if (n.isDir) { keys.add(n.key); collect(n.children); }
+        if (n.isDir) {
+          keys.add(n.key);
+          collect(n.children);
+        }
       }
     };
     collect(tree);
@@ -382,22 +446,17 @@ export function MemoryPanel({ channelId, dirPath, branch, embedded, openMemoryFi
   const handleDirToggle = useCallback((key: string) => {
     setExpandedDirs((prev) => {
       const next = new Set(prev);
-      if (next.has(key)) next.delete(key); else next.add(key);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
       return next;
     });
   }, []);
 
   return (
     <FilePanel title="Memory" dirPath={dirPath} branch={branch} noPadding={!loading && files.length > 0} embedded={embedded} dataTestId="memory-panel" {...panelProps}>
-      {listError && (
-        <div style={{ color: colors.error, fontSize: 13 }}>{listError}</div>
-      )}
-      {loading && (
-        <div style={{ color: colors.textDim, fontSize: 13 }}>Loading...</div>
-      )}
-      {!loading && !listError && files.length === 0 && (
-        <div style={{ color: colors.textDim, fontSize: 13 }}>No memory files indexed</div>
-      )}
+      {listError && <div style={{ color: colors.error, fontSize: 13 }}>{listError}</div>}
+      {loading && <div style={{ color: colors.textDim, fontSize: 13 }}>Loading...</div>}
+      {!loading && !listError && files.length === 0 && <div style={{ color: colors.textDim, fontSize: 13 }}>No memory files indexed</div>}
       {!loading && files.length > 0 && (
         <div style={{ display: "flex", height: "100%", userSelect: treeResizing ? "none" : undefined }}>
           <MemoryFileList

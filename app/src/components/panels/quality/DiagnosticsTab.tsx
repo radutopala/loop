@@ -1,8 +1,8 @@
 import { useMemo, useState } from "react";
-import { useTheme } from "../../../ThemeContext";
-import { fonts } from "../../../theme";
 import type { QualityFileTile } from "../../../api/quality";
-import { deficitColor, metricLabel, EmptyState, TileDetail } from "./shared";
+import type { useTheme } from "../../../ThemeContext";
+import { fonts } from "../../../theme";
+import { deficitColor, EmptyState, metricLabel, TileDetail } from "./shared";
 
 export interface DiagnosticsTabProps {
   tiles: QualityFileTile[];
@@ -22,9 +22,7 @@ export function DiagnosticsTab({ tiles, colors, fontSizes, btnStyle, onSimulateD
 
   return (
     <div style={{ padding: 12, display: "flex", flexDirection: "column", gap: 4 }}>
-      <div style={{ fontSize: 11, color: colors.textDim, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 4 }}>
-        Files by deficit ({sorted.length})
-      </div>
+      <div style={{ fontSize: 11, color: colors.textDim, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 4 }}>Files by deficit ({sorted.length})</div>
       {sorted.map((t) => {
         const isOpen = expanded === t.path;
         return (
@@ -47,23 +45,13 @@ export function DiagnosticsTab({ tiles, colors, fontSizes, btnStyle, onSimulateD
               }}
             >
               <div style={{ width: 8, height: 8, borderRadius: 2, background: deficitColor(t.deficit), flexShrink: 0 }} />
-              <div style={{ flex: 1, fontFamily: fonts.mono, fontSize: 11, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                {t.path}
-              </div>
+              <div style={{ flex: 1, fontFamily: fonts.mono, fontSize: 11, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{t.path}</div>
               <div style={{ fontSize: 11, color: colors.textDim, fontFamily: fonts.mono }}>
-                {t.loc} LOC · {t.deficit.toFixed(2)}{t.top_reason ? ` · ${metricLabel(t.top_reason)}` : ""}
+                {t.loc} LOC · {t.deficit.toFixed(2)}
+                {t.top_reason ? ` · ${metricLabel(t.top_reason)}` : ""}
               </div>
             </button>
-            {isOpen && (
-              <TileDetail
-                tile={t}
-                onClose={() => setExpanded(null)}
-                onSimulateDelete={onSimulateDelete}
-                colors={colors}
-                fontSizes={fontSizes}
-                btnStyle={btnStyle}
-              />
-            )}
+            {isOpen && <TileDetail tile={t} onClose={() => setExpanded(null)} onSimulateDelete={onSimulateDelete} colors={colors} fontSizes={fontSizes} btnStyle={btnStyle} />}
           </div>
         );
       })}

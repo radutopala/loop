@@ -1,14 +1,14 @@
 import { useCallback, useRef, useState } from "react";
-import type { PillKind } from "./pills";
-import type { Channel, ImageBuildStatusData, ImageUpdateAvailableData, UpdateStatus } from "../../types";
 import { useTheme } from "../../ThemeContext";
-import { ContextMenu } from "../shared/ContextMenu";
-import type { MenuItem } from "../shared/ContextMenu";
-import { SidebarHeader } from "./SidebarHeader";
-import { ChannelList } from "./ChannelList";
-import { SidebarFooter } from "./SidebarFooter";
-import { RenameThreadDialog } from "./RenameThreadDialog";
+import type { Channel, ImageBuildStatusData, ImageUpdateAvailableData, UpdateStatus } from "../../types";
 import { storageGetJSON, storageSetJSON } from "../../utils/storage";
+import type { MenuItem } from "../shared/ContextMenu";
+import { ContextMenu } from "../shared/ContextMenu";
+import { ChannelList } from "./ChannelList";
+import type { PillKind } from "./pills";
+import { RenameThreadDialog } from "./RenameThreadDialog";
+import { SidebarFooter } from "./SidebarFooter";
+import { SidebarHeader } from "./SidebarHeader";
 
 const MIN_WIDTH = 180;
 const MAX_WIDTH_PERCENT = 0.25;
@@ -147,7 +147,8 @@ export function Sidebar({
   const toggleSelected = useCallback((id: string) => {
     setSelected((prev) => {
       const next = new Set(prev);
-      if (next.has(id)) next.delete(id); else next.add(id);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
       return next;
     });
   }, []);
@@ -172,24 +173,27 @@ export function Sidebar({
     setDragOverId(channelId);
   }, []);
 
-  const handleDrop = useCallback((e: React.DragEvent, targetId: string) => {
-    e.preventDefault();
-    setDragOverId(null);
-    const sourceId = draggedIdRef.current;
-    draggedIdRef.current = null;
-    if (!sourceId || sourceId === targetId) return;
+  const handleDrop = useCallback(
+    (e: React.DragEvent, targetId: string) => {
+      e.preventDefault();
+      setDragOverId(null);
+      const sourceId = draggedIdRef.current;
+      draggedIdRef.current = null;
+      if (!sourceId || sourceId === targetId) return;
 
-    const topLevel = channels.filter((c) => !c.parent_id && (c.name || c.dir_path));
-    const currentIds = sortByOrder(topLevel, channelOrder).map((c) => c.id);
-    const fromIdx = currentIds.indexOf(sourceId);
-    const toIdx = currentIds.indexOf(targetId);
-    if (fromIdx === -1 || toIdx === -1) return;
+      const topLevel = channels.filter((c) => !c.parent_id && (c.name || c.dir_path));
+      const currentIds = sortByOrder(topLevel, channelOrder).map((c) => c.id);
+      const fromIdx = currentIds.indexOf(sourceId);
+      const toIdx = currentIds.indexOf(targetId);
+      if (fromIdx === -1 || toIdx === -1) return;
 
-    currentIds.splice(fromIdx, 1);
-    currentIds.splice(toIdx, 0, sourceId);
-    setChannelOrder(currentIds);
-    saveOrder(currentIds);
-  }, [channels, channelOrder]);
+      currentIds.splice(fromIdx, 1);
+      currentIds.splice(toIdx, 0, sourceId);
+      setChannelOrder(currentIds);
+      saveOrder(currentIds);
+    },
+    [channels, channelOrder],
+  );
 
   const handleDragEnd = useCallback(() => {
     draggedIdRef.current = null;
@@ -213,31 +217,34 @@ export function Sidebar({
     setThreadDragOverId(threadId);
   }, []);
 
-  const handleThreadDrop = useCallback((e: React.DragEvent, targetId: string, parentId: string) => {
-    // Not a thread drag (e.g. a channel dropped over a thread row): let the
-    // event bubble to the channel row's drop handler instead of swallowing it.
-    if (!draggedThreadRef.current) return;
-    e.preventDefault();
-    e.stopPropagation();
-    setThreadDragOverId(null);
-    const src = draggedThreadRef.current;
-    draggedThreadRef.current = null;
-    // Only reorder among siblings of the same parent — no cross-parent moves.
-    if (src.id === targetId || src.parentId !== parentId) return;
+  const handleThreadDrop = useCallback(
+    (e: React.DragEvent, targetId: string, parentId: string) => {
+      // Not a thread drag (e.g. a channel dropped over a thread row): let the
+      // event bubble to the channel row's drop handler instead of swallowing it.
+      if (!draggedThreadRef.current) return;
+      e.preventDefault();
+      e.stopPropagation();
+      setThreadDragOverId(null);
+      const src = draggedThreadRef.current;
+      draggedThreadRef.current = null;
+      // Only reorder among siblings of the same parent — no cross-parent moves.
+      if (src.id === targetId || src.parentId !== parentId) return;
 
-    const siblings = channels.filter((c) => c.parent_id === parentId);
-    const ids = sortByOrder(siblings, threadOrder[parentId] ?? []).map((c) => c.id);
-    const from = ids.indexOf(src.id);
-    const to = ids.indexOf(targetId);
-    if (from === -1 || to === -1) return;
-    ids.splice(from, 1);
-    ids.splice(to, 0, src.id);
-    setThreadOrder((prev) => {
-      const next = { ...prev, [parentId]: ids };
-      saveThreadOrder(next);
-      return next;
-    });
-  }, [channels, threadOrder]);
+      const siblings = channels.filter((c) => c.parent_id === parentId);
+      const ids = sortByOrder(siblings, threadOrder[parentId] ?? []).map((c) => c.id);
+      const from = ids.indexOf(src.id);
+      const to = ids.indexOf(targetId);
+      if (from === -1 || to === -1) return;
+      ids.splice(from, 1);
+      ids.splice(to, 0, src.id);
+      setThreadOrder((prev) => {
+        const next = { ...prev, [parentId]: ids };
+        saveThreadOrder(next);
+        return next;
+      });
+    },
+    [channels, threadOrder],
+  );
 
   const handleThreadDragEnd = useCallback(() => {
     draggedThreadRef.current = null;
@@ -301,10 +308,7 @@ export function Sidebar({
 
       const onMouseMove = (ev: MouseEvent) => {
         const maxWidth = window.innerWidth * MAX_WIDTH_PERCENT;
-        const newWidth = Math.min(
-          maxWidth,
-          Math.max(MIN_WIDTH, startWidth + ev.clientX - startX),
-        );
+        const newWidth = Math.min(maxWidth, Math.max(MIN_WIDTH, startWidth + ev.clientX - startX));
         setWidth(newWidth);
       };
 
@@ -321,15 +325,12 @@ export function Sidebar({
   );
 
   const query = searchQuery.toLowerCase();
-  const threadsByParent = channels.reduce<Record<string, Channel[]>>(
-    (acc, c) => {
-      if (c.parent_id) {
-        (acc[c.parent_id] ??= []).push(c);
-      }
-      return acc;
-    },
-    {},
-  );
+  const threadsByParent = channels.reduce<Record<string, Channel[]>>((acc, c) => {
+    if (c.parent_id) {
+      (acc[c.parent_id] ??= []).push(c);
+    }
+    return acc;
+  }, {});
   // Apply the per-parent drag-reorder order; parents with no saved order keep
   // the backend's alphabetical order.
   for (const parentId of Object.keys(threadsByParent)) {
@@ -368,7 +369,10 @@ export function Sidebar({
   const getFilteredThreads = (parentId: string): Channel[] => {
     const threads = threadsByParent[parentId] ?? [];
     if (!query) return threads;
-    const parentMatches = allTopLevel.find((c) => c.id === parentId)?.name.toLowerCase().includes(query);
+    const parentMatches = allTopLevel
+      .find((c) => c.id === parentId)
+      ?.name.toLowerCase()
+      .includes(query);
     if (parentMatches) return threads;
     return threads.filter(threadTreeMatches);
   };
@@ -442,8 +446,14 @@ export function Sidebar({
         selectMode={selectMode}
         selectedCount={selected.size}
         onBatchDelete={handleBatchDelete}
-        onEnterSelectMode={() => { setSelectMode(true); setSelected(new Set()); }}
-        onCancelSelectMode={() => { setSelectMode(false); setSelected(new Set()); }}
+        onEnterSelectMode={() => {
+          setSelectMode(true);
+          setSelected(new Set());
+        }}
+        onCancelSelectMode={() => {
+          setSelectMode(false);
+          setSelected(new Set());
+        }}
         unreadCount={unreadCount}
         onMarkAllRead={onMarkAllRead}
         onNewProject={() => {
@@ -515,14 +525,7 @@ export function Sidebar({
         onOpenReadme={onOpenReadme}
       />
 
-      {contextMenu && (
-        <ContextMenu
-          x={contextMenu.x}
-          y={contextMenu.y}
-          items={contextMenu.items}
-          onClose={() => setContextMenu(null)}
-        />
-      )}
+      {contextMenu && <ContextMenu x={contextMenu.x} y={contextMenu.y} items={contextMenu.items} onClose={() => setContextMenu(null)} />}
 
       {renaming && (
         <RenameThreadDialog

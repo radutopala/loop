@@ -1,23 +1,12 @@
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from "react";
-import type { Message, TimelineItem } from "../../types";
 import type { ChatState } from "../../hooks/useChatState";
 import { useTheme } from "../../ThemeContext";
-import { QueuedMessagesPopup } from "./QueuedMessagesPopup";
+import type { Message, TimelineItem } from "../../types";
 import { ApprovalCard } from "./ApprovalCard";
+import { AgentActivityIndicator, AskUserQuestionCard, CompletionSummary, ExitPlanCard, MessageBubble, renderTimelineItem, StreamingBubble, TaskChecklist, ToolRunBlock, TriggerQuote } from "./bubbles";
+import { buildMessageStyles, ChannelContext } from "./chatShared";
 import { orderTimelineItems } from "./orderTimelineItems";
-import { ChannelContext, buildMessageStyles } from "./chatShared";
-import {
-  MessageBubble,
-  StreamingBubble,
-  ToolRunBlock,
-  TaskChecklist,
-  TriggerQuote,
-  AgentActivityIndicator,
-  CompletionSummary,
-  AskUserQuestionCard,
-  ExitPlanCard,
-  renderTimelineItem,
-} from "./bubbles";
+import { QueuedMessagesPopup } from "./QueuedMessagesPopup";
 
 export interface ChatMessagesProps {
   channelId: string;
@@ -34,7 +23,25 @@ export interface ChatMessagesHandle {
 export const ChatMessages = forwardRef<ChatMessagesHandle, ChatMessagesProps>(function ChatMessages({ channelId, chatState, scrollToMessageId, onScrollComplete, onQuote }, ref) {
   const { colors } = useTheme();
   const styles = buildMessageStyles(colors);
-  const { items, liveTail, messages, loading, loadMore, hasMore, streamingContent, isRunning, agentActivity, askUserQuestions, exitPlanRequest, agentTasks, completionInfo, triggerContent, gateApprovals, processingMsgId, queuedMessages: backendQueue } = chatState;
+  const {
+    items,
+    liveTail,
+    messages,
+    loading,
+    loadMore,
+    hasMore,
+    streamingContent,
+    isRunning,
+    agentActivity,
+    askUserQuestions,
+    exitPlanRequest,
+    agentTasks,
+    completionInfo,
+    triggerContent,
+    gateApprovals,
+    processingMsgId,
+    queuedMessages: backendQueue,
+  } = chatState;
   // The approval card belongs to chat only when the gate is attributed to the
   // chat agent. Terminal-sourced gates ("terminal:<leafId>") render in the
   // matching terminal pane instead.
@@ -68,9 +75,7 @@ export const ChatMessages = forwardRef<ChatMessagesHandle, ChatMessagesProps>(fu
       }
     }
   }
-  const visibleAllItems = suppressedCompactingId !== null
-    ? allItems.filter((it) => !(it.kind === "compacting" && it.id === suppressedCompactingId))
-    : allItems;
+  const visibleAllItems = suppressedCompactingId !== null ? allItems.filter((it) => !(it.kind === "compacting" && it.id === suppressedCompactingId)) : allItems;
   const bottomRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const autoScrollRef = useRef(true);
@@ -101,7 +106,22 @@ export const ChatMessages = forwardRef<ChatMessagesHandle, ChatMessagesProps>(fu
     // the sticky "currently running" quote banner, the quote's source/content
     // (processingMsgId/triggerContent), or the completion summary. Without these,
     // those elements appear below the fold and the view stays put.
-  }, [messages, items, liveTail, streamingContent, agentActivity, askUserQuestions, exitPlanRequest, agentTasks, chatGateApproval, isRunning, processingMsgId, backendQueue, triggerContent, completionInfo]);
+  }, [
+    messages,
+    items,
+    liveTail,
+    streamingContent,
+    agentActivity,
+    askUserQuestions,
+    exitPlanRequest,
+    agentTasks,
+    chatGateApproval,
+    isRunning,
+    processingMsgId,
+    backendQueue,
+    triggerContent,
+    completionInfo,
+  ]);
 
   // Scroll to a specific message (from search) and highlight it.
   useEffect(() => {
@@ -138,8 +158,7 @@ export const ChatMessages = forwardRef<ChatMessagesHandle, ChatMessagesProps>(fu
   //     we filter it out for the "waiting behind" list.
   // Fallback: during the brief startup window before the first agent.status
   // event arrives, use the first backend-queued message as the processing one.
-  const effectiveProcessingMsgId =
-    processingMsgId ?? (isRunning ? backendQueue[0]?.msg_id ?? null : null);
+  const effectiveProcessingMsgId = processingMsgId ?? (isRunning ? (backendQueue[0]?.msg_id ?? null) : null);
   // Messages waiting behind the currently-processing one; deletable from the popup.
   const queuedMessages = backendQueue.filter((m) => m.msg_id !== effectiveProcessingMsgId);
 
@@ -184,7 +203,10 @@ export const ChatMessages = forwardRef<ChatMessagesHandle, ChatMessagesProps>(fu
         if (prev.size === next.size) {
           let same = true;
           for (const [k, v] of next) {
-            if (prev.get(k) !== v) { same = false; break; }
+            if (prev.get(k) !== v) {
+              same = false;
+              break;
+            }
           }
           if (same) return prev;
         }
@@ -220,8 +242,7 @@ export const ChatMessages = forwardRef<ChatMessagesHandle, ChatMessagesProps>(fu
       // userMessages only spans the locally loaded window; for runs whose
       // trigger row predates the loaded pages, the backend queue (which
       // includes the in-flight row) still has the full Message.
-      const m = userMessages.find((u) => u.msg_id === effectiveProcessingMsgId)
-        ?? backendQueue.find((b) => b.msg_id === effectiveProcessingMsgId);
+      const m = userMessages.find((u) => u.msg_id === effectiveProcessingMsgId) ?? backendQueue.find((b) => b.msg_id === effectiveProcessingMsgId);
       const content = triggerContent ?? m?.content ?? "";
       if (!content) return null;
       return {
@@ -287,28 +308,21 @@ export const ChatMessages = forwardRef<ChatMessagesHandle, ChatMessagesProps>(fu
               const visible = g.items.filter((it) => !(it.kind === "tool_result" && it.tool_use_id && skippedToolResultIDs.has(it.tool_use_id)));
               if (visible.length === 0) return null;
               if (visible.length === 1) {
-                return (
-                  <div key={`g-${g.items[0]!.id}`}>
-                    {renderTimelineItem(visible[0]!, resultsByToolUseID, skippedToolResultIDs)}
-                  </div>
-                );
+                return <div key={`g-${g.items[0]!.id}`}>{renderTimelineItem(visible[0]!, resultsByToolUseID, skippedToolResultIDs)}</div>;
               }
-              return (
-                <ToolRunBlock
-                  key={`g-${g.items[0]!.id}`}
-                  items={visible}
-                  resultsByToolUseID={resultsByToolUseID}
-                  skippedToolResultIDs={skippedToolResultIDs}
-                  isActive={idx === lastIdx}
-                />
-              );
+              return <ToolRunBlock key={`g-${g.items[0]!.id}`} items={visible} resultsByToolUseID={resultsByToolUseID} skippedToolResultIDs={skippedToolResultIDs} isActive={idx === lastIdx} />;
             });
           })()}
-          {isRunning && agentActivity && (
-            <AgentActivityIndicator activity={agentActivity} />
-          )}
+          {isRunning && agentActivity && <AgentActivityIndicator activity={agentActivity} />}
           {chatGateApproval && (
-            <ApprovalCard data={chatGateApproval} channelId={channelId} onResolved={() => { chatState.clearGateApproval("chat"); scrollToBottom(); }} />
+            <ApprovalCard
+              data={chatGateApproval}
+              channelId={channelId}
+              onResolved={() => {
+                chatState.clearGateApproval("chat");
+                scrollToBottom();
+              }}
+            />
           )}
           {/* Ask/plan cards are sticky: rendered whenever the ask/plan is set,
               independent of isRunning. The card only clears on an explicit
@@ -316,17 +330,29 @@ export const ChatMessages = forwardRef<ChatMessagesHandle, ChatMessagesProps>(fu
               event — so a sibling run starting while the channel is parked can
               no longer hide the still-pending question. */}
           {askUserQuestions && channelId && (
-            <AskUserQuestionCard questions={askUserQuestions.questions} channelId={channelId} mode={chatState.mode} onSent={() => { chatState.clearAskUser(); scrollToBottom(); }} />
+            <AskUserQuestionCard
+              questions={askUserQuestions.questions}
+              channelId={channelId}
+              mode={chatState.mode}
+              onSent={() => {
+                chatState.clearAskUser();
+                scrollToBottom();
+              }}
+            />
           )}
           {exitPlanRequest && !askUserQuestions && channelId && (
-            <ExitPlanCard plan={exitPlanRequest} channelId={channelId} setMode={chatState.setMode} onSent={() => { chatState.clearExitPlan(); scrollToBottom(); }} />
+            <ExitPlanCard
+              plan={exitPlanRequest}
+              channelId={channelId}
+              setMode={chatState.setMode}
+              onSent={() => {
+                chatState.clearExitPlan();
+                scrollToBottom();
+              }}
+            />
           )}
-          {streamingContent && (
-            <StreamingBubble content={streamingContent} />
-          )}
-          {completionInfo && !isRunning && (
-            <CompletionSummary info={completionInfo} />
-          )}
+          {streamingContent && <StreamingBubble content={streamingContent} />}
+          {completionInfo && !isRunning && <CompletionSummary info={completionInfo} />}
           <div ref={bottomRef} />
         </div>
         {quoteAnchor?.position === "bottom" && (
@@ -344,19 +370,13 @@ export const ChatMessages = forwardRef<ChatMessagesHandle, ChatMessagesProps>(fu
           </div>
         )}
       </div>
-      {agentTasks && agentTasks.tasks.length > 0 && (
-        <TaskChecklist tasks={agentTasks.tasks} />
-      )}
-      {queuedMessages.length > 0 && (
-        <QueuedMessagesPopup messages={queuedMessages} channelId={channelId} />
-      )}
+      {agentTasks && agentTasks.tasks.length > 0 && <TaskChecklist tasks={agentTasks.tasks} />}
+      {queuedMessages.length > 0 && <QueuedMessagesPopup messages={queuedMessages} channelId={channelId} />}
     </ChannelContext.Provider>
   );
 });
 
-type TimelineGroup =
-  | { kind: "message"; data: Extract<TimelineItem, { kind: "message" }> }
-  | { kind: "agent"; items: TimelineItem[] };
+type TimelineGroup = { kind: "message"; data: Extract<TimelineItem, { kind: "message" }> } | { kind: "agent"; items: TimelineItem[] };
 
 // groupTimelineItems renders user messages together with the bot replies and
 // agent events their run produced (matched by trigger_msg_id). This survives
@@ -397,7 +417,9 @@ function groupTimelineItems(items: TimelineItem[], queuedMsgIdSet: Set<string>):
     let blocked = false;
     for (const qi of queuedIndices) {
       if (qi <= triggerIdx) continue;
-      if (qi < i) { blocked = true; }
+      if (qi < i) {
+        blocked = true;
+      }
       break;
     }
     if (blocked) continue;

@@ -12,8 +12,13 @@ async function probeApiUrl(): Promise<void> {
   for (const url of candidates) {
     try {
       const res = await fetch(`${url}/api/health`, { signal: AbortSignal.timeout(1000) });
-      if (res.ok) { apiUrl = url; return; }
-    } catch { /* try next */ }
+      if (res.ok) {
+        apiUrl = url;
+        return;
+      }
+    } catch {
+      /* try next */
+    }
   }
 }
 

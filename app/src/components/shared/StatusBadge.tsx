@@ -1,15 +1,19 @@
 import { useState } from "react";
-import type { SessionStatus } from "../../types";
-import type { ColorPalette } from "../../theme";
 import { useTheme } from "../../ThemeContext";
+import type { ColorPalette } from "../../theme";
 import { fonts } from "../../theme";
+import type { SessionStatus } from "../../types";
 
 function statusColor(status: SessionStatus, colors: ColorPalette): string {
   switch (status) {
-    case "connecting": return colors.warning;
-    case "running": return colors.active;
-    case "completed": return colors.textDim;
-    case "failed": return colors.error;
+    case "connecting":
+      return colors.warning;
+    case "running":
+      return colors.active;
+    case "completed":
+      return colors.textDim;
+    case "failed":
+      return colors.error;
   }
 }
 

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { Message, TimelineCursor, TimelineItem } from "../types";
 import { fetchTimeline } from "../api/loopApi";
+import type { Message, TimelineCursor, TimelineItem } from "../types";
 import { logErr } from "../utils/log";
 
 const PAGE_SIZE = 50;
@@ -110,23 +110,23 @@ export function useTimeline(channelId: string | null): UseTimelineResult {
       });
   }, [channelId, hasMore]);
 
-  const appendLiveMessage = useCallback((msg: Message) => {
-    setLiveTail((prev) => {
-      // Dedup by msg_id — message.created can fire twice across reconnect/resume.
-      if (prev.some((it) => it.kind === "message" && it.data.msg_id === msg.msg_id)) return prev;
-      return [
-        ...prev,
-        { kind: "message", position: 0, id: nextLiveId(), data: msg, trigger_msg_id: msg.trigger_msg_id },
-      ];
-    });
-  }, [nextLiveId]);
+  const appendLiveMessage = useCallback(
+    (msg: Message) => {
+      setLiveTail((prev) => {
+        // Dedup by msg_id — message.created can fire twice across reconnect/resume.
+        if (prev.some((it) => it.kind === "message" && it.data.msg_id === msg.msg_id)) return prev;
+        return [...prev, { kind: "message", position: 0, id: nextLiveId(), data: msg, trigger_msg_id: msg.trigger_msg_id }];
+      });
+    },
+    [nextLiveId],
+  );
 
-  const appendLiveThinking = useCallback((text: string, triggerMsgId?: string) => {
-    setLiveTail((prev) => [
-      ...prev,
-      { kind: "thinking", position: 0, id: nextLiveId(), text, truncated: false, trigger_msg_id: triggerMsgId },
-    ]);
-  }, [nextLiveId]);
+  const appendLiveThinking = useCallback(
+    (text: string, triggerMsgId?: string) => {
+      setLiveTail((prev) => [...prev, { kind: "thinking", position: 0, id: nextLiveId(), text, truncated: false, trigger_msg_id: triggerMsgId }]);
+    },
+    [nextLiveId],
+  );
 
   const appendLiveToolUse = useCallback(
     (toolUseID: string | undefined, toolName: string, input: string, triggerMsgId?: string) => {
@@ -164,16 +164,19 @@ export function useTimeline(channelId: string | null): UseTimelineResult {
     [nextLiveId],
   );
 
-  const appendLiveCompacting = useCallback((triggerMsgId?: string) => {
-    setLiveTail((prev) => {
-      // Coalesce repeated compacting events: if the last item is already a
-      // compacting marker, skip — the runner can emit the status multiple times
-      // during a single /compact pass.
-      const last = prev[prev.length - 1];
-      if (last && last.kind === "compacting") return prev;
-      return [...prev, { kind: "compacting", position: 0, id: nextLiveId(), trigger_msg_id: triggerMsgId }];
-    });
-  }, [nextLiveId]);
+  const appendLiveCompacting = useCallback(
+    (triggerMsgId?: string) => {
+      setLiveTail((prev) => {
+        // Coalesce repeated compacting events: if the last item is already a
+        // compacting marker, skip — the runner can emit the status multiple times
+        // during a single /compact pass.
+        const last = prev[prev.length - 1];
+        if (last && last.kind === "compacting") return prev;
+        return [...prev, { kind: "compacting", position: 0, id: nextLiveId(), trigger_msg_id: triggerMsgId }];
+      });
+    },
+    [nextLiveId],
+  );
 
   const markProcessed = useCallback((msgIds: string[]) => {
     if (msgIds.length === 0) return;
@@ -231,9 +234,7 @@ export function useTimeline(channelId: string | null): UseTimelineResult {
         // /timeline returns DESC by chain_position.
         collected.push(...resp.items);
         const oldest = resp.items[resp.items.length - 1]!;
-        const reached =
-          oldest.position < bridgeCp ||
-          (oldest.position === bridgeCp && oldest.id <= bridgeId);
+        const reached = oldest.position < bridgeCp || (oldest.position === bridgeCp && oldest.id <= bridgeId);
         if (reached || resp.next_cursor === null) break;
         cursor = resp.next_cursor;
       }
@@ -246,8 +247,7 @@ export function useTimeline(channelId: string | null): UseTimelineResult {
       for (const it of collected) {
         if (it.kind === "message") bridgedMsgIds.add(it.data.msg_id);
       }
-      const pruneLive = (prev: TimelineItem[]): TimelineItem[] =>
-        prev.filter((it) => it.kind === "message" && !bridgedMsgIds.has(it.data.msg_id));
+      const pruneLive = (prev: TimelineItem[]): TimelineItem[] => prev.filter((it) => it.kind === "message" && !bridgedMsgIds.has(it.data.msg_id));
 
       if (collected.length === 0) {
         setLiveTail(pruneLive);

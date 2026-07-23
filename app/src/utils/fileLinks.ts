@@ -33,8 +33,7 @@ export interface ParsedCandidate {
 //   - Two-segment minimum prevents matching common URLs ("foo.com")
 //   - Limit chars to filename-safe set (no spaces / quotes / parens)
 //   - Trailing punctuation (".", ",", ")", "]", "'", '"', ";", ":") is excluded
-const PATH_REGEX =
-  /(?<![\w./])((?:\/|(?:[\w.\-+@]+\/)+)[\w.\-+@]+(?:\/[\w.\-+@]+)*\.[a-zA-Z0-9]{1,8})(?::(\d+))?(?![\w/])/g;
+const PATH_REGEX = /(?<![\w./])((?:\/|(?:[\w.\-+@]+\/)+)[\w.\-+@]+(?:\/[\w.\-+@]+)*\.[a-zA-Z0-9]{1,8})(?::(\d+))?(?![\w/])/g;
 
 export function findCandidatePaths(text: string): ParsedCandidate[] {
   const out: ParsedCandidate[] = [];
@@ -66,11 +65,7 @@ function looksLikeUrl(text: string, idx: number): boolean {
 
 // ── Per-channel validation cache ──
 
-type Status =
-  | { kind: "unknown" }
-  | { kind: "pending" }
-  | { kind: "valid"; target: FileLinkTarget }
-  | { kind: "invalid" };
+type Status = { kind: "unknown" } | { kind: "pending" } | { kind: "valid"; target: FileLinkTarget } | { kind: "invalid" };
 
 interface ChannelCache {
   statuses: Map<string, Status>;

@@ -1,9 +1,9 @@
-import { useCallback, useEffect, useRef } from "react";
 import type { RefObject } from "react";
+import { useCallback, useEffect, useRef } from "react";
 import "@xterm/xterm/css/xterm.css";
 import { type ColorPalette, fonts } from "../theme";
-import { logErr } from "../utils/log";
 import { firstClipboardImage } from "../utils/clipboardImage";
+import { logErr } from "../utils/log";
 
 // Patterns matching terminal→app *report replies* that xterm.js emits in
 // answer to capability queries. These must never be forwarded to the PTY as
@@ -90,14 +90,7 @@ interface UseXTerminalOptions {
  * Returns a `write` callback for pushing data into the terminal and a ref to
  * the underlying Terminal instance.
  */
-export function useXTerminal({
-  containerRef,
-  colors,
-  fontSize: termFontSize,
-  onInput,
-  onResize,
-  onPasteImage,
-}: UseXTerminalOptions) {
+export function useXTerminal({ containerRef, colors, fontSize: termFontSize, onInput, onResize, onPasteImage }: UseXTerminalOptions) {
   const xtermRef = useRef<import("@xterm/xterm").Terminal | null>(null);
   // Hold the latest paste handler in a ref so the one-time paste listener
   // installed in init() always calls the current callback (it closes over the
@@ -161,14 +154,16 @@ export function useXTerminal({
       // link. Going straight to shell.openExternal avoids the popup entirely.
       // In a plain browser (dev mode at localhost:5173), fall back to
       // window.open with noopener.
-      term.loadAddon(new WebLinksAddon((event, url) => {
-        if (event.defaultPrevented) return;
-        if (window.loopAPI?.openExternal) {
-          void window.loopAPI.openExternal(url);
-        } else {
-          window.open(url, "_blank", "noopener,noreferrer");
-        }
-      }));
+      term.loadAddon(
+        new WebLinksAddon((event, url) => {
+          if (event.defaultPrevented) return;
+          if (window.loopAPI?.openExternal) {
+            void window.loopAPI.openExternal(url);
+          } else {
+            window.open(url, "_blank", "noopener,noreferrer");
+          }
+        }),
+      );
 
       injectScrollbarStyle();
       term.open(containerRef.current!);
@@ -251,9 +246,7 @@ export function useXTerminal({
         if (!file) return; // no image → let xterm handle the text paste
         e.preventDefault();
         e.stopImmediatePropagation();
-        void Promise.resolve(handler(file)).catch((err) =>
-          console.warn("[terminal] image paste failed:", err),
-        );
+        void Promise.resolve(handler(file)).catch((err) => console.warn("[terminal] image paste failed:", err));
       };
       const pasteTarget = containerRef.current!;
       pasteTarget.addEventListener("paste", pasteHandler, true);
@@ -265,9 +258,7 @@ export function useXTerminal({
 
       // Attach selection getter to the .xterm element so external consumers can
       // read the selection on mouseup without a module-level singleton.
-      const xtermEl = containerRef.current!.querySelector(".xterm") as
-        | (Element & { _xtermGetSelection?: () => string })
-        | null;
+      const xtermEl = containerRef.current!.querySelector(".xterm") as (Element & { _xtermGetSelection?: () => string }) | null;
 
       // Manual drag-selection tracking for when mouse reporting is active
       // (e.g. Claude Code TUI). xterm forwards mouse events to PTY, so
@@ -290,10 +281,7 @@ export function useXTerminal({
         return { col, row };
       };
 
-      const getBufferText = (
-        startCol: number, startRow: number,
-        endCol: number, endRow: number,
-      ): string => {
+      const getBufferText = (startCol: number, startRow: number, endCol: number, endRow: number): string => {
         // startRow/endRow are viewport-relative; add viewportY to get buffer rows.
         const viewportY = term.buffer.active.viewportY;
         let r0 = startRow + viewportY;
@@ -341,7 +329,10 @@ export function useXTerminal({
       const onDragMouseUp = (e: MouseEvent) => {
         if (e.button !== 0 || !dragStart) return;
         const end = getCellCoords(e.clientX, e.clientY);
-        if (!end) { dragStart = null; return; }
+        if (!end) {
+          dragStart = null;
+          return;
+        }
         // Only populate dragSel when the user actually dragged (not a plain click).
         if (end.col !== dragStart.col || end.row !== dragStart.row) {
           dragSel = getBufferText(dragStart.col, dragStart.row, end.col, end.row).trim();

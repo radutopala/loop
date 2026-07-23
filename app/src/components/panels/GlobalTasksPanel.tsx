@@ -1,19 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { Channel } from "../../types";
+import type { ScheduledTask, TaskRunLog, WorkflowDef } from "../../api/loopApi";
+import { deleteTask, fetchAllTasks, fetchTaskRuns, fetchWorkflows, runTaskNow, updateTask } from "../../api/loopApi";
+import { useTheme } from "../../ThemeContext";
 import type { ColorPalette } from "../../theme";
 import { fonts } from "../../theme";
-import { useTheme } from "../../ThemeContext";
+import type { Channel } from "../../types";
+import { defaultScheduleForType, nextRunLabel, TYPE_COLORS, timeAgo } from "../../utils/taskUtils";
 import { ChannelHeaderInfo } from "../layout/ChannelHeaderInfo";
-import {
-  fetchAllTasks,
-  updateTask,
-  deleteTask,
-  fetchTaskRuns,
-  runTaskNow,
-  fetchWorkflows,
-} from "../../api/loopApi";
-import type { ScheduledTask, TaskRunLog, WorkflowDef } from "../../api/loopApi";
-import { timeAgo, nextRunLabel, TYPE_COLORS, defaultScheduleForType } from "../../utils/taskUtils";
 import { TaskScheduleField, type TaskType } from "./TaskScheduleField";
 
 function buildHeaderBtnStyle(colors: ColorPalette): React.CSSProperties {
@@ -39,13 +32,7 @@ interface GlobalTasksPanelProps {
   onSelectChannel?: (channelId: string) => void;
 }
 
-export function GlobalTasksPanel({
-  channel,
-  sidebarOpen,
-  onOpenPalette,
-  onClose,
-  onSelectChannel,
-}: GlobalTasksPanelProps) {
+export function GlobalTasksPanel({ channel, sidebarOpen, onOpenPalette, onClose, onSelectChannel }: GlobalTasksPanelProps) {
   const { colors, fontSizes } = useTheme();
   const [tasks, setTasks] = useState<ScheduledTask[]>([]);
   const [selectedId, setSelectedId] = useState<number | null>(null);
@@ -114,14 +101,24 @@ export function GlobalTasksPanel({
   // so the picker shows definitions visible from that task's channel.
   const selectedChannelId = tasks.find((t) => t.id === selectedId)?.channel_id;
   useEffect(() => {
-    if (!selectedChannelId) { setWorkflows([]); return; }
-    fetchWorkflows(selectedChannelId).then(setWorkflows).catch(() => { /* ignore */ });
+    if (!selectedChannelId) {
+      setWorkflows([]);
+      return;
+    }
+    fetchWorkflows(selectedChannelId)
+      .then(setWorkflows)
+      .catch(() => {
+        /* ignore */
+      });
   }, [selectedChannelId]);
 
   // Escape to close
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "Escape") { e.preventDefault(); onClose(); }
+      if (e.key === "Escape") {
+        e.preventDefault();
+        onClose();
+      }
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
@@ -185,7 +182,11 @@ export function GlobalTasksPanel({
     setEditBashScript(task.bash_script || "");
     let parsedInputs: Record<string, string> = {};
     if (task.workflow_inputs) {
-      try { parsedInputs = JSON.parse(task.workflow_inputs); } catch { /* ignore */ }
+      try {
+        parsedInputs = JSON.parse(task.workflow_inputs);
+      } catch {
+        /* ignore */
+      }
     }
     setEditWorkflowInputs(parsedInputs);
     setEditWorktree(task.worktree);
@@ -273,7 +274,10 @@ export function GlobalTasksPanel({
       <div
         key={task.id}
         data-testid={`task-row-${task.id}`}
-        onClick={() => { setSelectedId(task.id); setEditing(false); }}
+        onClick={() => {
+          setSelectedId(task.id);
+          setEditing(false);
+        }}
         style={{
           padding: "6px 8px",
           cursor: "pointer",
@@ -285,8 +289,12 @@ export function GlobalTasksPanel({
           fontSize: 12,
           opacity: task.enabled ? 1 : 0.5,
         }}
-        onMouseEnter={(e) => { if (!isSelected) e.currentTarget.style.background = "rgba(255,255,255,0.04)"; }}
-        onMouseLeave={(e) => { if (!isSelected) e.currentTarget.style.background = "transparent"; }}
+        onMouseEnter={(e) => {
+          if (!isSelected) e.currentTarget.style.background = "rgba(255,255,255,0.04)";
+        }}
+        onMouseLeave={(e) => {
+          if (!isSelected) e.currentTarget.style.background = "transparent";
+        }}
       >
         <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
           <span
@@ -303,16 +311,19 @@ export function GlobalTasksPanel({
           >
             {task.type}
           </span>
-          <span style={{ color: colors.textLight, fontFamily: "monospace", fontSize: 11, flexShrink: 0 }}>
-            {task.type === "manual" ? "on demand" : task.schedule}
-          </span>
+          <span style={{ color: colors.textLight, fontFamily: "monospace", fontSize: 11, flexShrink: 0 }}>{task.type === "manual" ? "on demand" : task.schedule}</span>
           {task.worktree && (
-            <span title="Runs in worktree" style={{ fontSize: 11, flexShrink: 0 }}>wt</span>
+            <span title="Runs in worktree" style={{ fontSize: 11, flexShrink: 0 }}>
+              wt
+            </span>
           )}
           <div style={{ flex: 1 }} />
           <span style={{ color: colors.textLight, fontSize: 10, flexShrink: 0 }}>#{task.id}</span>
           <button
-            onClick={(e) => { e.stopPropagation(); handleToggle(task); }}
+            onClick={(e) => {
+              e.stopPropagation();
+              handleToggle(task);
+            }}
             title={task.enabled ? "Disable" : "Enable"}
             style={{
               background: "none",
@@ -347,7 +358,9 @@ export function GlobalTasksPanel({
             #{task.channel_name ?? task.channel_id.slice(0, 8)}
           </span>
           {task.channel_worktree && (
-            <span title="Channel is a worktree" style={{ fontSize: 10, color: colors.textDim, border: `1px solid ${colors.border}`, borderRadius: 3, padding: "0 3px", flexShrink: 0 }}>wt</span>
+            <span title="Channel is a worktree" style={{ fontSize: 10, color: colors.textDim, border: `1px solid ${colors.border}`, borderRadius: 3, padding: "0 3px", flexShrink: 0 }}>
+              wt
+            </span>
           )}
           <span
             style={{
@@ -362,27 +375,15 @@ export function GlobalTasksPanel({
             {task.workflow_name ? `workflow: ${task.workflow_name}` : task.bash_script ? `bash: ${task.bash_script}` : task.prompt}
           </span>
         </div>
-        {task.dir_path && (
-          <div style={{ color: colors.textDim, fontSize: 10, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-            {task.dir_path}
-          </div>
-        )}
-        {task.enabled && task.type !== "manual" && (
-          <div style={{ color: colors.textDim, fontSize: 10 }}>
-            Next: {nextRunLabel(task.next_run_at)}
-          </div>
-        )}
+        {task.dir_path && <div style={{ color: colors.textDim, fontSize: 10, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{task.dir_path}</div>}
+        {task.enabled && task.type !== "manual" && <div style={{ color: colors.textDim, fontSize: 10 }}>Next: {nextRunLabel(task.next_run_at)}</div>}
       </div>
     );
   };
 
   const renderDetail = () => {
     if (!selectedTask) {
-      return (
-        <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", color: colors.textDim, fontSize: 13 }}>
-          Select a task to view details
-        </div>
-      );
+      return <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", color: colors.textDim, fontSize: 13 }}>Select a task to view details</div>;
     }
 
     if (editing) {
@@ -402,7 +403,15 @@ export function GlobalTasksPanel({
         <div style={{ flex: 1, overflowY: "auto", padding: 12, display: "flex", flexDirection: "column", gap: 8 }}>
           <div style={{ fontSize: 13, fontWeight: 600, color: colors.text }}>Edit Task #{selectedTask.id}</div>
           <div style={{ display: "flex", gap: 6 }}>
-            <select value={editType} onChange={(e) => { const t = e.target.value as TaskType; setEditType(t); setEditSchedule(defaultScheduleForType(t)); }} style={{ ...selectStyle, flex: 1 }}>
+            <select
+              value={editType}
+              onChange={(e) => {
+                const t = e.target.value as TaskType;
+                setEditType(t);
+                setEditSchedule(defaultScheduleForType(t));
+              }}
+              style={{ ...selectStyle, flex: 1 }}
+            >
               <option value="cron">Cron</option>
               <option value="interval">Interval</option>
               <option value="once">Once</option>
@@ -413,7 +422,13 @@ export function GlobalTasksPanel({
           <div style={{ display: "flex", gap: 4 }}>
             <button
               onClick={() => setEditMode("prompt")}
-              style={{ ...btnSecondaryStyle, padding: "2px 8px", fontSize: 11, background: editMode === "prompt" ? colors.surface : "transparent", color: editMode === "prompt" ? colors.text : colors.textDim }}
+              style={{
+                ...btnSecondaryStyle,
+                padding: "2px 8px",
+                fontSize: 11,
+                background: editMode === "prompt" ? colors.surface : "transparent",
+                color: editMode === "prompt" ? colors.text : colors.textDim,
+              }}
             >
               Prompt
             </button>
@@ -421,73 +436,68 @@ export function GlobalTasksPanel({
               onClick={() => setEditMode("workflow")}
               disabled={workflows.length === 0}
               title={workflows.length === 0 ? "No workflows defined" : ""}
-              style={{ ...btnSecondaryStyle, padding: "2px 8px", fontSize: 11, background: editMode === "workflow" ? colors.surface : "transparent", color: editMode === "workflow" ? colors.text : colors.textDim, opacity: workflows.length === 0 ? 0.5 : 1 }}
+              style={{
+                ...btnSecondaryStyle,
+                padding: "2px 8px",
+                fontSize: 11,
+                background: editMode === "workflow" ? colors.surface : "transparent",
+                color: editMode === "workflow" ? colors.text : colors.textDim,
+                opacity: workflows.length === 0 ? 0.5 : 1,
+              }}
             >
               Workflow
             </button>
             <button
               onClick={() => setEditMode("bash")}
               title="Run a shell script in the channel's agent container"
-              style={{ ...btnSecondaryStyle, padding: "2px 8px", fontSize: 11, background: editMode === "bash" ? colors.surface : "transparent", color: editMode === "bash" ? colors.text : colors.textDim }}
+              style={{
+                ...btnSecondaryStyle,
+                padding: "2px 8px",
+                fontSize: 11,
+                background: editMode === "bash" ? colors.surface : "transparent",
+                color: editMode === "bash" ? colors.text : colors.textDim,
+              }}
             >
               Bash
             </button>
           </div>
           {editMode === "prompt" ? (
-            <textarea
-              value={editPrompt}
-              onChange={(e) => setEditPrompt(e.target.value)}
-              rows={5}
-              style={{ ...inputStyle, resize: "vertical", fontFamily: "inherit" }}
-            />
+            <textarea value={editPrompt} onChange={(e) => setEditPrompt(e.target.value)} rows={5} style={{ ...inputStyle, resize: "vertical", fontFamily: "inherit" }} />
           ) : editMode === "bash" ? (
-            <textarea
-              value={editBashScript}
-              onChange={(e) => setEditBashScript(e.target.value)}
-              rows={5}
-              spellCheck={false}
-              style={{ ...inputStyle, resize: "vertical", fontFamily: "monospace" }}
-            />
+            <textarea value={editBashScript} onChange={(e) => setEditBashScript(e.target.value)} rows={5} spellCheck={false} style={{ ...inputStyle, resize: "vertical", fontFamily: "monospace" }} />
           ) : (
             <>
-              <select
-                value={editWorkflowName}
-                onChange={(e) => onSelectEditWorkflow(e.target.value)}
-                style={selectStyle}
-              >
+              <select value={editWorkflowName} onChange={(e) => onSelectEditWorkflow(e.target.value)} style={selectStyle}>
                 <option value="">Select workflow...</option>
                 {workflows.map((w) => (
-                  <option key={w.name} value={w.name}>{w.name}</option>
+                  <option key={w.name} value={w.name}>
+                    {w.name}
+                  </option>
                 ))}
               </select>
-              {selectedEditWorkflow?.inputs && Object.entries(selectedEditWorkflow.inputs).map(([key, def]) => (
-                <input
-                  key={key}
-                  type="text"
-                  placeholder={def.description ? `${key} — ${def.description}` : key}
-                  value={editWorkflowInputs[key] ?? ""}
-                  onChange={(e) => setEditWorkflowInputs((prev) => ({ ...prev, [key]: e.target.value }))}
-                  style={inputStyle}
-                />
-              ))}
+              {selectedEditWorkflow?.inputs &&
+                Object.entries(selectedEditWorkflow.inputs).map(([key, def]) => (
+                  <input
+                    key={key}
+                    type="text"
+                    placeholder={def.description ? `${key} — ${def.description}` : key}
+                    value={editWorkflowInputs[key] ?? ""}
+                    onChange={(e) => setEditWorkflowInputs((prev) => ({ ...prev, [key]: e.target.value }))}
+                    style={inputStyle}
+                  />
+                ))}
             </>
           )}
           <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
             {!selectedTask.channel_worktree && (
-            <label style={{ display: "flex", alignItems: "center", gap: 4, color: colors.textDim, fontSize: 11, cursor: "pointer" }}>
-              <input type="checkbox" checked={editWorktree} onChange={(e) => setEditWorktree(e.target.checked)} />
-              Worktree
-            </label>
+              <label style={{ display: "flex", alignItems: "center", gap: 4, color: colors.textDim, fontSize: 11, cursor: "pointer" }}>
+                <input type="checkbox" checked={editWorktree} onChange={(e) => setEditWorktree(e.target.checked)} />
+                Worktree
+              </label>
             )}
             {editWorktree && (
               <>
-                <input
-                  type="text"
-                  placeholder="Origin branch (auto-detect)"
-                  value={editOriginBranch}
-                  onChange={(e) => setEditOriginBranch(e.target.value)}
-                  style={{ ...inputStyle, width: 150 }}
-                />
+                <input type="text" placeholder="Origin branch (auto-detect)" value={editOriginBranch} onChange={(e) => setEditOriginBranch(e.target.value)} style={{ ...inputStyle, width: 150 }} />
                 <label style={{ display: "flex", alignItems: "center", gap: 4, color: colors.textDim, fontSize: 11, cursor: "pointer" }}>
                   <input type="checkbox" checked={editUpdateBeforeRun} onChange={(e) => setEditUpdateBeforeRun(e.target.checked)} />
                   Update before run
@@ -500,8 +510,12 @@ export function GlobalTasksPanel({
             </label>
           </div>
           <div style={{ display: "flex", gap: 6 }}>
-            <button onClick={() => setEditing(false)} style={btnSecondaryStyle}>Cancel</button>
-            <button onClick={handleSaveEdit} style={btnStyle}>Save</button>
+            <button onClick={() => setEditing(false)} style={btnSecondaryStyle}>
+              Cancel
+            </button>
+            <button onClick={handleSaveEdit} style={btnStyle}>
+              Save
+            </button>
           </div>
         </div>
       );
@@ -526,9 +540,7 @@ export function GlobalTasksPanel({
             >
               {selectedTask.type}
             </span>
-            {selectedTask.worktree && (
-              <span style={{ fontSize: 11, color: colors.textDim, border: `1px solid ${colors.border}`, borderRadius: 3, padding: "0 4px" }}>worktree</span>
-            )}
+            {selectedTask.worktree && <span style={{ fontSize: 11, color: colors.textDim, border: `1px solid ${colors.border}`, borderRadius: 3, padding: "0 4px" }}>worktree</span>}
             <span
               onClick={() => onSelectChannel?.(selectedTask.channel_id)}
               style={{
@@ -542,54 +554,36 @@ export function GlobalTasksPanel({
             >
               #{selectedTask.channel_name ?? selectedTask.channel_id.slice(0, 8)}
             </span>
-            {selectedTask.channel_worktree && (
-              <span style={{ fontSize: 11, color: colors.textDim, border: `1px solid ${colors.border}`, borderRadius: 3, padding: "0 4px" }}>channel worktree</span>
-            )}
+            {selectedTask.channel_worktree && <span style={{ fontSize: 11, color: colors.textDim, border: `1px solid ${colors.border}`, borderRadius: 3, padding: "0 4px" }}>channel worktree</span>}
             <div style={{ flex: 1 }} />
             {selectedTask.running && selectedTask.thread_id ? (
-              <button
-                onClick={() => onSelectChannel?.(selectedTask.thread_id!)}
-                style={{ ...btnStyle, background: colors.warning ?? "#eab308" }}
-              >
+              <button onClick={() => onSelectChannel?.(selectedTask.thread_id!)} style={{ ...btnStyle, background: colors.warning ?? "#eab308" }}>
                 Running...
               </button>
             ) : (
-              <button
-                onClick={() => handleRunNow(selectedTask.id)}
-                disabled={runningNow || selectedTask.running}
-                style={{ ...btnStyle, opacity: runningNow || selectedTask.running ? 0.5 : 1 }}
-              >
+              <button onClick={() => handleRunNow(selectedTask.id)} disabled={runningNow || selectedTask.running} style={{ ...btnStyle, opacity: runningNow || selectedTask.running ? 0.5 : 1 }}>
                 {selectedTask.running ? "Running..." : runningNow ? "Starting..." : "\u25B6 Run Now"}
               </button>
             )}
             <button onClick={() => handleToggle(selectedTask)} style={{ ...btnSecondaryStyle, color: selectedTask.enabled ? (colors.warning ?? "#eab308") : colors.active }}>
               {selectedTask.enabled ? "Disable" : "Enable"}
             </button>
-            <button onClick={() => startEdit(selectedTask)} style={btnSecondaryStyle}>Edit</button>
-            <button
-              onClick={() => handleDelete(selectedTask.id)}
-              style={{ ...btnSecondaryStyle, color: colors.error ?? "#ef4444", borderColor: colors.error ?? "#ef4444" }}
-            >
+            <button onClick={() => startEdit(selectedTask)} style={btnSecondaryStyle}>
+              Edit
+            </button>
+            <button onClick={() => handleDelete(selectedTask.id)} style={{ ...btnSecondaryStyle, color: colors.error ?? "#ef4444", borderColor: colors.error ?? "#ef4444" }}>
               Delete
             </button>
           </div>
-          <div style={{ color: colors.textLight, fontSize: 12, fontFamily: "monospace" }}>
-            {selectedTask.type === "manual" ? "on demand (run manually)" : selectedTask.schedule}
-          </div>
-          {selectedTask.dir_path && (
-            <div style={{ color: colors.textDim, fontSize: 11, fontFamily: "monospace" }}>
-              {selectedTask.dir_path}
-            </div>
-          )}
+          <div style={{ color: colors.textLight, fontSize: 12, fontFamily: "monospace" }}>{selectedTask.type === "manual" ? "on demand (run manually)" : selectedTask.schedule}</div>
+          {selectedTask.dir_path && <div style={{ color: colors.textDim, fontSize: 11, fontFamily: "monospace" }}>{selectedTask.dir_path}</div>}
           {selectedTask.workflow_name ? (
             <>
               <div style={{ color: colors.text, fontSize: 12 }}>
                 <span style={{ color: colors.active, fontWeight: 600 }}>Workflow:</span> {selectedTask.workflow_name}
               </div>
               {selectedTask.workflow_inputs && selectedTask.workflow_inputs !== "{}" && (
-                <div style={{ color: colors.textDim, fontSize: 11, fontFamily: "monospace", whiteSpace: "pre-wrap" }}>
-                  Inputs: {selectedTask.workflow_inputs}
-                </div>
+                <div style={{ color: colors.textDim, fontSize: 11, fontFamily: "monospace", whiteSpace: "pre-wrap" }}>Inputs: {selectedTask.workflow_inputs}</div>
               )}
             </>
           ) : selectedTask.bash_script ? (
@@ -600,38 +594,25 @@ export function GlobalTasksPanel({
               </pre>
             </div>
           ) : (
-            <div style={{ color: colors.text, fontSize: 12, whiteSpace: "pre-wrap" }}>
-              {selectedTask.prompt}
-            </div>
+            <div style={{ color: colors.text, fontSize: 12, whiteSpace: "pre-wrap" }}>{selectedTask.prompt}</div>
           )}
-          {selectedTask.enabled && selectedTask.type !== "manual" && (
-            <div style={{ color: colors.textDim, fontSize: 11 }}>
-              Next run: {nextRunLabel(selectedTask.next_run_at)}
-            </div>
-          )}
+          {selectedTask.enabled && selectedTask.type !== "manual" && <div style={{ color: colors.textDim, fontSize: 11 }}>Next run: {nextRunLabel(selectedTask.next_run_at)}</div>}
           {selectedTask.worktree && selectedTask.origin_branch && (
             <div style={{ color: colors.textDim, fontSize: 11 }}>
-              Branch: {selectedTask.origin_branch}{selectedTask.update_before_run ? " (updates before run)" : ""}
+              Branch: {selectedTask.origin_branch}
+              {selectedTask.update_before_run ? " (updates before run)" : ""}
             </div>
           )}
-          {selectedTask.auto_delete_sec > 0 && (
-            <div style={{ color: colors.textDim, fontSize: 11 }}>
-              Auto-delete after {selectedTask.auto_delete_sec}s
-            </div>
-          )}
+          {selectedTask.auto_delete_sec > 0 && <div style={{ color: colors.textDim, fontSize: 11 }}>Auto-delete after {selectedTask.auto_delete_sec}s</div>}
         </div>
 
         {/* Run history */}
         <div style={{ padding: "8px 12px", borderBottom: `1px solid ${colors.border}` }}>
-          <div style={{ fontSize: 11, color: colors.textDim, textTransform: "uppercase", letterSpacing: 1 }}>
-            Run History
-          </div>
+          <div style={{ fontSize: 11, color: colors.textDim, textTransform: "uppercase", letterSpacing: 1 }}>Run History</div>
         </div>
         <div style={{ flex: 1, minHeight: 0, overflowY: "auto" }}>
           {runs.length === 0 ? (
-            <div style={{ padding: 16, color: colors.textDim, fontSize: 12, textAlign: "center" }}>
-              No runs yet
-            </div>
+            <div style={{ padding: 16, color: colors.textDim, fontSize: 12, textAlign: "center" }}>No runs yet</div>
           ) : (
             runs.map((run) => (
               <div
@@ -656,25 +637,21 @@ export function GlobalTasksPanel({
                     }}
                   />
                   <span style={{ color: colors.text }}>{run.status}</span>
-                  <span style={{ color: colors.textDim, fontSize: 11, marginLeft: "auto" }}>
-                    {timeAgo(run.started_at)}
-                  </span>
+                  <span style={{ color: colors.textDim, fontSize: 11, marginLeft: "auto" }}>{timeAgo(run.started_at)}</span>
                 </div>
-                {run.error_text && (
-                  <div style={{ color: colors.error ?? "#ef4444", fontSize: 11, paddingLeft: 14 }}>
-                    {run.error_text}
-                  </div>
-                )}
+                {run.error_text && <div style={{ color: colors.error ?? "#ef4444", fontSize: 11, paddingLeft: 14 }}>{run.error_text}</div>}
                 {run.response_text && (
-                  <div style={{
-                    color: colors.textDim,
-                    fontSize: 11,
-                    paddingLeft: 14,
-                    overflow: "hidden",
-                    textOverflow: "ellipsis",
-                    whiteSpace: "nowrap",
-                    maxWidth: "100%",
-                  }}>
+                  <div
+                    style={{
+                      color: colors.textDim,
+                      fontSize: 11,
+                      paddingLeft: 14,
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                      whiteSpace: "nowrap",
+                      maxWidth: "100%",
+                    }}
+                  >
                     {run.response_text.slice(0, 200)}
                   </div>
                 )}
@@ -768,13 +745,7 @@ export function GlobalTasksPanel({
         >
           Tasks ({tasks.length})
         </span>
-        <button
-          onClick={onClose}
-          title="Close panel"
-          style={headerBtnStyle}
-          onMouseEnter={hoverIn}
-          onMouseLeave={hoverOut}
-        >
+        <button onClick={onClose} title="Close panel" style={headerBtnStyle} onMouseEnter={hoverIn} onMouseLeave={hoverOut}>
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
             <line x1="18" y1="6" x2="6" y2="18" />
             <line x1="6" y1="6" x2="18" y2="18" />
@@ -797,11 +768,7 @@ export function GlobalTasksPanel({
         >
           <div style={{ flex: 1, overflowY: "auto" }}>
             {sortedTasks.map((t) => renderTaskRow(t))}
-            {tasks.length === 0 && (
-              <div style={{ padding: 16, color: colors.textDim, fontSize: 12, textAlign: "center" }}>
-                No scheduled tasks
-              </div>
-            )}
+            {tasks.length === 0 && <div style={{ padding: 16, color: colors.textDim, fontSize: 12, textAlign: "center" }}>No scheduled tasks</div>}
           </div>
         </div>
 
@@ -817,9 +784,7 @@ export function GlobalTasksPanel({
         />
 
         {/* Right: detail view */}
-        <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
-          {renderDetail()}
-        </div>
+        <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>{renderDetail()}</div>
       </div>
     </div>
   );

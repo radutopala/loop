@@ -1,8 +1,8 @@
 import { useContext } from "react";
-import { FileLink } from "./FileLink";
-import { findCandidatePaths } from "../../utils/fileLinks";
-import { ChannelContext, buildMessageStyles } from "./chatShared";
 import { useTheme } from "../../ThemeContext";
+import { findCandidatePaths } from "../../utils/fileLinks";
+import { buildMessageStyles, ChannelContext } from "./chatShared";
+import { FileLink } from "./FileLink";
 
 function isTableRow(line: string): boolean {
   return line.includes("|") && line.trim().length > 0 && !line.trim().startsWith("```");
@@ -36,9 +36,7 @@ function linkifyText(text: string, keyBase: number, channelId: string): React.Re
   // matches that overlap a URL match are dropped (URLs win — they often contain
   // a `.ext` suffix that would otherwise be mis-detected as a path).
   const urlRegex = /(https?:\/\/[^\s<>)"']+)/g;
-  type Hit =
-    | { kind: "url"; start: number; length: number; href: string }
-    | { kind: "path"; start: number; length: number; raw: string; line: number | null };
+  type Hit = { kind: "url"; start: number; length: number; href: string } | { kind: "path"; start: number; length: number; raw: string; line: number | null };
   const hits: Hit[] = [];
   for (;;) {
     const m = urlRegex.exec(text);
@@ -60,25 +58,12 @@ function linkifyText(text: string, keyBase: number, channelId: string): React.Re
     if (h.start > last) parts.push(text.slice(last, h.start));
     if (h.kind === "url") {
       parts.push(
-        <a
-          key={`link-${keyBase}-${parts.length}`}
-          href={h.href}
-          target="_blank"
-          rel="noopener noreferrer"
-          style={{ color: "#6ba3f7", textDecoration: "underline" }}
-        >
+        <a key={`link-${keyBase}-${parts.length}`} href={h.href} target="_blank" rel="noopener noreferrer" style={{ color: "#6ba3f7", textDecoration: "underline" }}>
           {h.href}
         </a>,
       );
     } else {
-      parts.push(
-        <FileLink
-          key={`file-${keyBase}-${parts.length}`}
-          channelId={channelId}
-          raw={h.raw}
-          line={h.line}
-        />,
-      );
+      parts.push(<FileLink key={`file-${keyBase}-${parts.length}`} channelId={channelId} raw={h.raw} line={h.line} />);
     }
     last = h.start + h.length;
   }
@@ -110,22 +95,14 @@ function formatInline(text: string, s: Record<string, React.CSSProperties>, chan
     } else if (token.startsWith("**")) {
       // Linkify inside bold/italic so a bare URL emphasized by the agent
       // (e.g. **https://…**) is still clickable.
-      nodes.push(
-        <strong key={nodes.length}>{linkifyText(token.slice(2, -2), nodes.length, channelId)}</strong>,
-      );
+      nodes.push(<strong key={nodes.length}>{linkifyText(token.slice(2, -2), nodes.length, channelId)}</strong>);
     } else if (token.startsWith("*")) {
       nodes.push(<em key={nodes.length}>{linkifyText(token.slice(1, -1), nodes.length, channelId)}</em>);
     } else if (token.startsWith("[")) {
       const mdMatch = token.match(/^\[([^\]]+)\]\(([^)]+)\)$/);
       if (mdMatch) {
         nodes.push(
-          <a
-            key={nodes.length}
-            href={mdMatch[2]}
-            target="_blank"
-            rel="noopener noreferrer"
-            style={{ color: "#6ba3f7", textDecoration: "underline" }}
-          >
+          <a key={nodes.length} href={mdMatch[2]} target="_blank" rel="noopener noreferrer" style={{ color: "#6ba3f7", textDecoration: "underline" }}>
             {mdMatch[1]}
           </a>,
         );
@@ -217,7 +194,9 @@ function parseMarkdown(text: string, s: Record<string, React.CSSProperties>, cha
       nodes.push(
         <blockquote key={nodes.length} style={s.blockquote}>
           {quoteLines.map((ql, qi) => (
-            <p key={qi} style={s.paragraph}>{ql ? formatInline(ql, s, channelId) : <br />}</p>
+            <p key={qi} style={s.paragraph}>
+              {ql ? formatInline(ql, s, channelId) : <br />}
+            </p>
           ))}
         </blockquote>,
       );

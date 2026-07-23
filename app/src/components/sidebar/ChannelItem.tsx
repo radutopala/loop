@@ -1,13 +1,13 @@
 import { useState } from "react";
-import { SIDEBAR_PILLS } from "./pills";
-import type { PillKind } from "./pills";
-import type { Channel } from "../../types";
-import { fonts } from "../../theme";
 import { useTheme } from "../../ThemeContext";
-import { ThreadItem, type ThreadReorder } from "./ThreadItem";
+import { fonts } from "../../theme";
+import type { Channel } from "../../types";
 import { NewThreadInput } from "./NewThreadInput";
+import type { PillKind } from "./pills";
+import { SIDEBAR_PILLS } from "./pills";
 import { SidebarWorktreeButton } from "./SidebarWorktreeButton";
 import { StatusPill } from "./StatusPill";
+import { ThreadItem, type ThreadReorder } from "./ThreadItem";
 
 interface ChannelItemProps {
   channel: Channel;
@@ -69,13 +69,7 @@ export function ChannelItem({
   const hasThreads = threads.length > 0;
 
   return (
-    <div
-      draggable
-      onDragStart={() => onDragStart(channel.id)}
-      onDragOver={(e) => onDragOver(e, channel.id)}
-      onDrop={(e) => onDrop(e, channel.id)}
-      onDragEnd={onDragEnd}
-    >
+    <div draggable onDragStart={() => onDragStart(channel.id)} onDragOver={(e) => onDragOver(e, channel.id)} onDrop={(e) => onDrop(e, channel.id)} onDragEnd={onDragEnd}>
       <div
         title={channel.dir_path || undefined}
         style={{
@@ -83,11 +77,7 @@ export function ChannelItem({
           alignItems: "center",
           borderRadius: 6,
           margin: "0 8px",
-          backgroundColor: selected
-            ? colors.selectedBg
-            : hovered
-              ? colors.hoverBg
-              : "transparent",
+          backgroundColor: selected ? colors.selectedBg : hovered ? colors.hoverBg : "transparent",
           borderTop: isDragOver ? `2px solid ${colors.active}` : "2px solid transparent",
         }}
         onContextMenu={(e) => onContextMenu(e, channel)}
@@ -96,7 +86,10 @@ export function ChannelItem({
       >
         {selectMode && !pinned ? (
           <span
-            onClick={(e) => { e.stopPropagation(); onToggleCheck?.(channel.id); }}
+            onClick={(e) => {
+              e.stopPropagation();
+              onToggleCheck?.(channel.id);
+            }}
             style={{
               width: 20,
               flexShrink: 0,
@@ -106,17 +99,19 @@ export function ChannelItem({
               cursor: "pointer",
             }}
           >
-            <span style={{
-              width: 12,
-              height: 12,
-              borderRadius: 3,
-              border: `1.5px solid ${checkedIds?.has(channel.id) ? colors.active : colors.textDim}`,
-              backgroundColor: checkedIds?.has(channel.id) ? colors.active : "transparent",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              transition: "all 0.15s",
-            }}>
+            <span
+              style={{
+                width: 12,
+                height: 12,
+                borderRadius: 3,
+                border: `1.5px solid ${checkedIds?.has(channel.id) ? colors.active : colors.textDim}`,
+                backgroundColor: checkedIds?.has(channel.id) ? colors.active : "transparent",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                transition: "all 0.15s",
+              }}
+            >
               {checkedIds?.has(channel.id) && (
                 <svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke={colors.white} strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
                   <polyline points="20 6 9 17 4 12" />
@@ -231,8 +226,14 @@ export function ChannelItem({
                 display: "flex",
                 alignItems: "center",
               }}
-              onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = colors.hoverBg; e.currentTarget.style.color = colors.textLight; }}
-              onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = "transparent"; e.currentTarget.style.color = colors.textDim; }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.backgroundColor = colors.hoverBg;
+                e.currentTarget.style.color = colors.textLight;
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.backgroundColor = "transparent";
+                e.currentTarget.style.color = colors.textDim;
+              }}
             >
               <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                 <path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z" />
@@ -257,14 +258,18 @@ export function ChannelItem({
               borderRadius: 4,
               whiteSpace: "nowrap",
             }}
-            onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = colors.hoverBg; e.currentTarget.style.color = colors.textLight; }}
-            onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = "transparent"; e.currentTarget.style.color = colors.textDim; }}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.backgroundColor = colors.hoverBg;
+              e.currentTarget.style.color = colors.textLight;
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.backgroundColor = "transparent";
+              e.currentTarget.style.color = colors.textDim;
+            }}
           >
             + thread
           </button>
-          {channel.dir_path && onCreateWorktree && (
-            <SidebarWorktreeButton channelId={channel.id} onCreateWorktree={onCreateWorktree} />
-          )}
+          {channel.dir_path && onCreateWorktree && <SidebarWorktreeButton channelId={channel.id} onCreateWorktree={onCreateWorktree} />}
         </div>
       </div>
 

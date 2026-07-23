@@ -1,17 +1,17 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { fetchRoots, type RootEntry } from "../../api/files";
+import { useElapsedTimer } from "../../hooks/useElapsedTimer";
+import { useTerminalWs } from "../../hooks/useTerminalWs";
+import { useXTerminal } from "../../hooks/useXTerminal";
+import { useTheme } from "../../ThemeContext";
 import type { GateApprovalRequestedData, SessionStatus, TerminalTarget } from "../../types";
 import type { AgentOpenMode } from "../../types/panels";
-import { fetchRoots, type RootEntry } from "../../api/files";
 import { uploadPastedImage } from "../../utils/clipboardImage";
-import { useTheme } from "../../ThemeContext";
-import { PaneRootSelect } from "./PaneRootSelect";
-import { useTerminalWs } from "../../hooks/useTerminalWs";
-import { useElapsedTimer } from "../../hooks/useElapsedTimer";
-import { useXTerminal } from "../../hooks/useXTerminal";
-import { TerminalToolbar } from "./TerminalToolbar";
-import { PaneHeaderStatus } from "./PaneHeaderStatus";
-import { TerminalShortcuts } from "./TerminalShortcuts";
 import { ApprovalCard } from "../chat/ApprovalCard";
+import { PaneHeaderStatus } from "./PaneHeaderStatus";
+import { PaneRootSelect } from "./PaneRootSelect";
+import { TerminalShortcuts } from "./TerminalShortcuts";
+import { TerminalToolbar } from "./TerminalToolbar";
 
 /** Module-level registry so TerminalPanes can call sendClose for a specific instance. */
 const closeRegistry = new Map<string, () => void>();
@@ -53,7 +53,22 @@ interface TerminalProps {
   onGateApprovalResolved?: () => void;
 }
 
-export function Terminal({ channelId, target = "agent", instanceId, claudeSessionId, newSession, openMode, cmd, hideActions, killSignal, onStatusChange, onPaneStatus, onSessionEnd, gateApproval, onGateApprovalResolved }: TerminalProps) {
+export function Terminal({
+  channelId,
+  target = "agent",
+  instanceId,
+  claudeSessionId,
+  newSession,
+  openMode,
+  cmd,
+  hideActions,
+  killSignal,
+  onStatusChange,
+  onPaneStatus,
+  onSessionEnd,
+  gateApproval,
+  onGateApprovalResolved,
+}: TerminalProps) {
   const { colors, fontSizes } = useTheme();
   const terminalRef = useRef<HTMLDivElement>(null);
   const [status, setStatus] = useState<SessionStatus>("connecting");
@@ -67,12 +82,21 @@ export function Terminal({ channelId, target = "agent", instanceId, claudeSessio
 
   useEffect(() => {
     setRootIndex(0);
-    if (!channelId || !isShell) { setRoots([]); return; }
+    if (!channelId || !isShell) {
+      setRoots([]);
+      return;
+    }
     let cancelled = false;
     fetchRoots(channelId)
-      .then((r) => { if (!cancelled) setRoots(r); })
-      .catch(() => { if (!cancelled) setRoots([]); });
-    return () => { cancelled = true; };
+      .then((r) => {
+        if (!cancelled) setRoots(r);
+      })
+      .catch(() => {
+        if (!cancelled) setRoots([]);
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [channelId, isShell]);
 
   const getStartTimeRef = useRef<(() => number | undefined) | null>(null);
@@ -109,9 +133,7 @@ export function Terminal({ channelId, target = "agent", instanceId, claudeSessio
         // Reset terminal mouse tracking modes that the killed process may not
         // have cleaned up.  Without this, mouse movements generate raw escape
         // sequences that the shell interprets as text input.
-        writeRef.current?.(
-          "\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1006l",
-        );
+        writeRef.current?.("\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1006l");
         onSessionEnd?.();
       }
       onStatusChange?.();
@@ -121,9 +143,7 @@ export function Terminal({ channelId, target = "agent", instanceId, claudeSessio
   );
 
   const onError = useCallback((message: string) => {
-    writeRef.current?.(
-      new TextEncoder().encode(`\r\n\x1b[31m[error] ${message}\x1b[0m\r\n`),
-    );
+    writeRef.current?.(new TextEncoder().encode(`\r\n\x1b[31m[error] ${message}\x1b[0m\r\n`));
   }, []);
 
   // Ref to access xterm dimensions when sending create/attach messages.
@@ -151,11 +171,14 @@ export function Terminal({ channelId, target = "agent", instanceId, claudeSessio
   sendInputRef.current = sendInput;
 
   // Cancel any pending deny-with-prompt submit when the pane unmounts.
-  useEffect(() => () => {
-    const ps = pendingSubmitRef.current;
-    if (ps?.idleTimer) clearTimeout(ps.idleTimer);
-    pendingSubmitRef.current = null;
-  }, []);
+  useEffect(
+    () => () => {
+      const ps = pendingSubmitRef.current;
+      if (ps?.idleTimer) clearTimeout(ps.idleTimer);
+      pendingSubmitRef.current = null;
+    },
+    [],
+  );
 
   // Register sendClose so TerminalPanes can call it when explicitly closing a pane.
   const registryKey = `${target}:${channelId}:${instanceId}`;
@@ -164,7 +187,9 @@ export function Terminal({ channelId, target = "agent", instanceId, claudeSessio
   useEffect(() => {
     const key = registryKey;
     closeRegistry.set(key, () => sendCloseRef.current());
-    return () => { closeRegistry.delete(key); };
+    return () => {
+      closeRegistry.delete(key);
+    };
   }, [registryKey]);
 
   // Kill when killSignal increments from parent.
@@ -199,19 +224,22 @@ export function Terminal({ channelId, target = "agent", instanceId, claudeSessio
     sendCreateRef.current();
   }, [rootIndex, reset]);
 
-  const handleShortcutPick = useCallback((text: string) => {
-    if (target === "agent" && !cmd) {
-      // Claude TUI: bracketed paste so multi-line prompts (e.g. file-backed
-      // shortcuts) land as a single paste buffer instead of one Enter-per-
-      // newline; trailing \r submits.
-      sendInput(`\x1b[200~${text}\x1b[201~\r`);
-    } else {
-      // Raw shell (host or docker-shell). Bash doesn't enable bracketed paste
-      // by default, so the \x1b[200~ … \x1b[201~ wrappers would leak through
-      // as literal text. Send the command + newline to execute immediately.
-      sendInput(`${text}\n`);
-    }
-  }, [sendInput, target, cmd]);
+  const handleShortcutPick = useCallback(
+    (text: string) => {
+      if (target === "agent" && !cmd) {
+        // Claude TUI: bracketed paste so multi-line prompts (e.g. file-backed
+        // shortcuts) land as a single paste buffer instead of one Enter-per-
+        // newline; trailing \r submits.
+        sendInput(`\x1b[200~${text}\x1b[201~\r`);
+      } else {
+        // Raw shell (host or docker-shell). Bash doesn't enable bracketed paste
+        // by default, so the \x1b[200~ … \x1b[201~ wrappers would leak through
+        // as literal text. Send the command + newline to execute immediately.
+        sendInput(`${text}\n`);
+      }
+    },
+    [sendInput, target, cmd],
+  );
 
   // Paste an image into the pane: upload it to the channel workspace and insert
   // the saved absolute path, mirroring the chat input's paste UX. We inject the
@@ -219,11 +247,14 @@ export function Terminal({ channelId, target = "agent", instanceId, claudeSessio
   // agent TUI treats a bracketed image-file path as an inline attachment
   // ([Image #1]) and hides the path, whereas the user expects to see the literal
   // absolute path (which the agent can then Read). Raw text works for shells too.
-  const handlePasteImage = useCallback(async (file: File) => {
-    if (!channelId) return;
-    const path = await uploadPastedImage(channelId, file);
-    sendInput(path);
-  }, [channelId, sendInput]);
+  const handlePasteImage = useCallback(
+    async (file: File) => {
+      if (!channelId) return;
+      const path = await uploadPastedImage(channelId, file);
+      sendInput(path);
+    },
+    [channelId, sendInput],
+  );
 
   const { write, xtermRef } = useXTerminal({
     containerRef: terminalRef,
@@ -278,16 +309,18 @@ export function Terminal({ channelId, target = "agent", instanceId, claudeSessio
           <div ref={terminalRef} style={{ width: "100%", height: "100%" }} />
         </div>
         {gateApproval && channelId && (
-          <div style={{
-            position: "absolute",
-            inset: 0,
-            backgroundColor: "rgba(0, 0, 0, 0.55)",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            padding: 16,
-            zIndex: 10,
-          }}>
+          <div
+            style={{
+              position: "absolute",
+              inset: 0,
+              backgroundColor: "rgba(0, 0, 0, 0.55)",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              padding: 16,
+              zIndex: 10,
+            }}
+          >
             <div style={{ width: "100%", maxWidth: 520, boxShadow: "0 8px 24px rgba(0,0,0,0.35)", borderRadius: 8 }}>
               <ApprovalCard
                 data={gateApproval}
@@ -310,15 +343,7 @@ export function Terminal({ channelId, target = "agent", instanceId, claudeSessio
           </div>
         )}
       </div>
-      {instanceId && (
-        <TerminalShortcuts
-          channelId={channelId}
-          leafId={instanceId}
-          onPick={handleShortcutPick}
-          target={target}
-          showPrompts={target === "agent" && !cmd}
-        />
-      )}
+      {instanceId && <TerminalShortcuts channelId={channelId} leafId={instanceId} onPick={handleShortcutPick} target={target} showPrompts={target === "agent" && !cmd} />}
     </div>
   );
 }

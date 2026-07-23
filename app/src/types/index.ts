@@ -1,5 +1,5 @@
 export type { PanelType } from "./panels";
-export { SINGLETON_PANELS, EXCLUSIVE_PANELS } from "./panels";
+export { EXCLUSIVE_PANELS, SINGLETON_PANELS } from "./panels";
 
 export interface Channel {
   id: string;
@@ -247,12 +247,7 @@ export interface StopMessage {
   type: "stop";
 }
 
-export type ClientMessage =
-  | CreateMessage
-  | AttachMessage
-  | InputMessage
-  | ResizeMessage
-  | StopMessage;
+export type ClientMessage = CreateMessage | AttachMessage | InputMessage | ResizeMessage | StopMessage;
 
 // --- Server → Client messages ---
 

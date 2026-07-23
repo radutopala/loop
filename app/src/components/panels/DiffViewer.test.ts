@@ -96,20 +96,17 @@ describe("computeSegments", () => {
 
 describe("formatRenamePath", () => {
   it("collapses the common prefix and suffix", () => {
-    expect(formatRenamePath("internal/api/old_handler.go", "internal/api/new_handler.go"))
-      .toBe("internal/api/{old_handler.go => new_handler.go}");
+    expect(formatRenamePath("internal/api/old_handler.go", "internal/api/new_handler.go")).toBe("internal/api/{old_handler.go => new_handler.go}");
   });
 
   it("handles a move across directories with a shared file name", () => {
-    expect(formatRenamePath("pkg/a/util.go", "pkg/b/util.go"))
-      .toBe("pkg/{a => b}/util.go");
+    expect(formatRenamePath("pkg/a/util.go", "pkg/b/util.go")).toBe("pkg/{a => b}/util.go");
   });
 });
 
 describe("fileKey", () => {
   it("disambiguates the same path with different statuses", () => {
-    expect(fileKey({ path: "x.go", status: "staged" }))
-      .not.toBe(fileKey({ path: "x.go", status: "unstaged" }));
+    expect(fileKey({ path: "x.go", status: "staged" })).not.toBe(fileKey({ path: "x.go", status: "unstaged" }));
     expect(fileKey({ path: "x.go" })).toBe(":x.go");
   });
 });

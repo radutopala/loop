@@ -1,11 +1,17 @@
 import { useEffect, useRef, useState } from "react";
-import type { GateApprovalRequestedData } from "../../types";
-import { resolveGateApproval, sendMessage } from "../../api/loopApi";
 import { GateApprovalGoneError, type GateDecision } from "../../api/gate";
-import { fonts } from "../../theme";
+import { resolveGateApproval, sendMessage } from "../../api/loopApi";
 import { useTheme } from "../../ThemeContext";
+import { fonts } from "../../theme";
+import type { GateApprovalRequestedData } from "../../types";
 
-export function ApprovalCard({ data, channelId, onResolved, onDenyWithPrompt, style }: {
+export function ApprovalCard({
+  data,
+  channelId,
+  onResolved,
+  onDenyWithPrompt,
+  style,
+}: {
   data: GateApprovalRequestedData;
   channelId: string;
   onResolved?: () => void;
@@ -106,72 +112,71 @@ export function ApprovalCard({ data, channelId, onResolved, onDenyWithPrompt, st
   const label = data.kind ? data.kind.toUpperCase() : "APPROVAL";
 
   return (
-    <div ref={cardRef} style={{
-      margin: "8px 16px",
-      padding: "12px 16px",
-      borderRadius: 8,
-      border: `1px solid ${colors.warning}`,
-      backgroundColor: colors.surface,
-      ...style,
-    }}>
-      <div style={{ fontSize: 11, fontWeight: 700, color: colors.warning, textTransform: "uppercase", letterSpacing: 1, marginBottom: 8 }}>
-        Gate · {label}
-      </div>
-      <div style={{ fontSize: 13, color: colors.text, marginBottom: 4, fontFamily: fonts.mono, wordBreak: "break-word" }}>
-        {data.target}
-      </div>
-      {data.message && (
-        <div style={{ fontSize: 12, color: colors.textDim, marginBottom: 10 }}>
-          {data.message}
-        </div>
-      )}
+    <div
+      ref={cardRef}
+      style={{
+        margin: "8px 16px",
+        padding: "12px 16px",
+        borderRadius: 8,
+        border: `1px solid ${colors.warning}`,
+        backgroundColor: colors.surface,
+        ...style,
+      }}
+    >
+      <div style={{ fontSize: 11, fontWeight: 700, color: colors.warning, textTransform: "uppercase", letterSpacing: 1, marginBottom: 8 }}>Gate · {label}</div>
+      <div style={{ fontSize: 13, color: colors.text, marginBottom: 4, fontFamily: fonts.mono, wordBreak: "break-word" }}>{data.target}</div>
+      {data.message && <div style={{ fontSize: 12, color: colors.textDim, marginBottom: 10 }}>{data.message}</div>}
       {data.details && Object.keys(data.details).length > 0 && (
-        <div style={{
-          fontSize: 12,
-          fontFamily: fonts.mono,
-          marginBottom: 10,
-          padding: "6px 10px",
-          borderRadius: 6,
-          backgroundColor: colors.codeBlockBg,
-          color: colors.textDim,
-        }}>
-          {Object.keys(data.details).sort().map((k) => (
-            <div key={k} style={{ wordBreak: "break-word" }}>
-              <span style={{ color: colors.text }}>{k}</span>: {data.details![k]}
-            </div>
-          ))}
+        <div
+          style={{
+            fontSize: 12,
+            fontFamily: fonts.mono,
+            marginBottom: 10,
+            padding: "6px 10px",
+            borderRadius: 6,
+            backgroundColor: colors.codeBlockBg,
+            color: colors.textDim,
+          }}
+        >
+          {Object.keys(data.details)
+            .sort()
+            .map((k) => (
+              <div key={k} style={{ wordBreak: "break-word" }}>
+                <span style={{ color: colors.text }}>{k}</span>: {data.details![k]}
+              </div>
+            ))}
         </div>
       )}
       {expired ? (
-        <div
-          data-testid="approval-expired"
-          style={{ fontSize: 12, fontFamily: fonts.mono, color: colors.textDim, fontStyle: "italic" }}
-        >
+        <div data-testid="approval-expired" style={{ fontSize: 12, fontFamily: fonts.mono, color: colors.textDim, fontStyle: "italic" }}>
           Expired — the request timed out and was denied.
         </div>
       ) : (
-      <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-        <ApprovalButton label="Allow once"        decision="once"    busy={sending === "once"}    disabled={sending !== null} onClick={resolve} variant="primary"   />
-        <ApprovalButton label="Allow for session" decision="session" busy={sending === "session"} disabled={sending !== null} onClick={resolve} variant="secondary" />
-        <ApprovalButton label="Deny"              decision="deny"    busy={sending === "deny"}    disabled={sending !== null} onClick={resolve} variant="danger"    />
-        <button
-          onClick={() => { setShowPrompt((s) => !s); setError(null); }}
-          disabled={sending !== null}
-          style={{
-            padding: "4px 12px",
-            fontSize: 12,
-            fontFamily: fonts.mono,
-            border: `1px solid ${colors.warning}`,
-            borderRadius: 12,
-            backgroundColor: "transparent",
-            color: colors.warning,
-            cursor: sending !== null ? "default" : "pointer",
-            opacity: sending !== null ? 0.5 : 1,
-          }}
-        >
-          Deny with prompt…
-        </button>
-      </div>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          <ApprovalButton label="Allow once" decision="once" busy={sending === "once"} disabled={sending !== null} onClick={resolve} variant="primary" />
+          <ApprovalButton label="Allow for session" decision="session" busy={sending === "session"} disabled={sending !== null} onClick={resolve} variant="secondary" />
+          <ApprovalButton label="Deny" decision="deny" busy={sending === "deny"} disabled={sending !== null} onClick={resolve} variant="danger" />
+          <button
+            onClick={() => {
+              setShowPrompt((s) => !s);
+              setError(null);
+            }}
+            disabled={sending !== null}
+            style={{
+              padding: "4px 12px",
+              fontSize: 12,
+              fontFamily: fonts.mono,
+              border: `1px solid ${colors.warning}`,
+              borderRadius: 12,
+              backgroundColor: "transparent",
+              color: colors.warning,
+              cursor: sending !== null ? "default" : "pointer",
+              opacity: sending !== null ? 0.5 : 1,
+            }}
+          >
+            Deny with prompt…
+          </button>
+        </div>
       )}
       {!expired && showPrompt && (
         <div style={{ marginTop: 10, display: "flex", flexDirection: "column", gap: 6 }}>
@@ -200,7 +205,10 @@ export function ApprovalCard({ data, channelId, onResolved, onDenyWithPrompt, st
           />
           <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
             <button
-              onClick={() => { setShowPrompt(false); setPrompt(""); }}
+              onClick={() => {
+                setShowPrompt(false);
+                setPrompt("");
+              }}
               disabled={sending !== null}
               style={{
                 padding: "4px 12px",
@@ -227,8 +235,8 @@ export function ApprovalCard({ data, channelId, onResolved, onDenyWithPrompt, st
                 borderRadius: 12,
                 backgroundColor: colors.warning,
                 color: "#fff",
-                cursor: (sending !== null || prompt.trim().length === 0) ? "default" : "pointer",
-                opacity: (sending !== null || prompt.trim().length === 0) ? 0.5 : sending === "deny-with-prompt" ? 0.7 : 1,
+                cursor: sending !== null || prompt.trim().length === 0 ? "default" : "pointer",
+                opacity: sending !== null || prompt.trim().length === 0 ? 0.5 : sending === "deny-with-prompt" ? 0.7 : 1,
               }}
             >
               {sending === "deny-with-prompt" ? "..." : "Deny & send prompt"}
@@ -238,9 +246,7 @@ export function ApprovalCard({ data, channelId, onResolved, onDenyWithPrompt, st
       )}
       {error && (
         <div style={{ marginTop: 8, display: "flex", alignItems: "flex-start", gap: 8, justifyContent: "space-between" }}>
-          <div style={{ fontSize: 11, color: colors.warning, fontFamily: fonts.mono, flex: 1, wordBreak: "break-word" }}>
-            {error}
-          </div>
+          <div style={{ fontSize: 11, color: colors.warning, fontFamily: fonts.mono, flex: 1, wordBreak: "break-word" }}>{error}</div>
           <button
             onClick={() => onResolved?.()}
             style={{
@@ -263,7 +269,14 @@ export function ApprovalCard({ data, channelId, onResolved, onDenyWithPrompt, st
   );
 }
 
-function ApprovalButton({ label, decision, busy, disabled, onClick, variant }: {
+function ApprovalButton({
+  label,
+  decision,
+  busy,
+  disabled,
+  onClick,
+  variant,
+}: {
   label: string;
   decision: GateDecision;
   busy: boolean;

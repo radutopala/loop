@@ -1,15 +1,8 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { useTheme } from "../../ThemeContext";
-import { useEventStream } from "../../hooks/useEventStream";
-import {
-  fetchTickets,
-  createTicket,
-  updateTicket,
-  updateTicketStatus,
-  deleteTicket,
-  assignTicket,
-} from "../../api/loopApi";
 import type { Ticket } from "../../api/loopApi";
+import { assignTicket, createTicket, deleteTicket, fetchTickets, updateTicket, updateTicketStatus } from "../../api/loopApi";
+import { useEventStream } from "../../hooks/useEventStream";
+import { useTheme } from "../../ThemeContext";
 
 interface KanbanPanelProps {
   channelId: string;
@@ -67,7 +60,11 @@ function renderRefLink(value: string, title: string, linkColor: string, dimColor
       </a>
     );
   }
-  return <span title={title} style={{ fontFamily: "monospace", color: dimColor }}>{value}</span>;
+  return (
+    <span title={title} style={{ fontFamily: "monospace", color: dimColor }}>
+      {value}
+    </span>
+  );
 }
 
 export function KanbanPanel({ channelId, dirPath, allowWorktree, onSelectChannel }: KanbanPanelProps) {
@@ -82,8 +79,23 @@ export function KanbanPanel({ channelId, dirPath, allowWorktree, onSelectChannel
   const loadDraft = useCallback(() => {
     try {
       const raw = localStorage.getItem(draftKey);
-      if (raw) return JSON.parse(raw) as { title?: string; type?: string; priority?: number; description?: string; assignee?: string; tags?: string; external_ref?: string; pr?: string; parent?: string; design?: string; acceptance?: string };
-    } catch { /* ignore */ }
+      if (raw)
+        return JSON.parse(raw) as {
+          title?: string;
+          type?: string;
+          priority?: number;
+          description?: string;
+          assignee?: string;
+          tags?: string;
+          external_ref?: string;
+          pr?: string;
+          parent?: string;
+          design?: string;
+          acceptance?: string;
+        };
+    } catch {
+      /* ignore */
+    }
     return null;
   }, [draftKey]);
   const draft = useMemo(() => loadDraft(), [loadDraft]);
@@ -104,7 +116,22 @@ export function KanbanPanel({ channelId, dirPath, allowWorktree, onSelectChannel
   useEffect(() => {
     const hasContent = newTitle || newDescription || newType !== "task" || newPriority !== 2 || newAssignee || newTags || newExternalRef || newPR || newParent || newDesign || newAcceptance;
     if (hasContent) {
-      localStorage.setItem(draftKey, JSON.stringify({ title: newTitle, type: newType, priority: newPriority, description: newDescription, assignee: newAssignee, tags: newTags, external_ref: newExternalRef, pr: newPR, parent: newParent, design: newDesign, acceptance: newAcceptance }));
+      localStorage.setItem(
+        draftKey,
+        JSON.stringify({
+          title: newTitle,
+          type: newType,
+          priority: newPriority,
+          description: newDescription,
+          assignee: newAssignee,
+          tags: newTags,
+          external_ref: newExternalRef,
+          pr: newPR,
+          parent: newParent,
+          design: newDesign,
+          acceptance: newAcceptance,
+        }),
+      );
     } else {
       localStorage.removeItem(draftKey);
     }
@@ -166,7 +193,10 @@ export function KanbanPanel({ channelId, dirPath, allowWorktree, onSelectChannel
   const handleCreate = useCallback(async () => {
     if (!newTitle.trim() || !dirPath) return;
     try {
-      const parsedTags = newTags.split(",").map((t) => t.trim()).filter(Boolean);
+      const parsedTags = newTags
+        .split(",")
+        .map((t) => t.trim())
+        .filter(Boolean);
       await createTicket({
         dir: dirPath,
         title: newTitle.trim(),
@@ -266,8 +296,14 @@ export function KanbanPanel({ channelId, dirPath, allowWorktree, onSelectChannel
   const handleEdit = useCallback(async () => {
     if (!editing || !editTitle.trim() || !dirPath) return;
     try {
-      const parsedTags = editTags.split(",").map((t) => t.trim()).filter(Boolean);
-      const parsedDeps = editDeps.split(",").map((d) => d.trim()).filter(Boolean);
+      const parsedTags = editTags
+        .split(",")
+        .map((t) => t.trim())
+        .filter(Boolean);
+      const parsedDeps = editDeps
+        .split(",")
+        .map((d) => d.trim())
+        .filter(Boolean);
       await updateTicket(editing.id, {
         dir: dirPath,
         title: editTitle.trim(),
@@ -369,11 +405,7 @@ export function KanbanPanel({ channelId, dirPath, allowWorktree, onSelectChannel
         </div>
 
         {/* Title */}
-        <div
-          onClick={() => openEdit(ticket)}
-          style={{ fontSize: 12, color: colors.text, fontWeight: 500, lineHeight: 1.3, cursor: "pointer" }}
-          title="Click to edit"
-        >
+        <div onClick={() => openEdit(ticket)} style={{ fontSize: 12, color: colors.text, fontWeight: 500, lineHeight: 1.3, cursor: "pointer" }} title="Click to edit">
           {ticket.title}
         </div>
 
@@ -422,11 +454,7 @@ export function KanbanPanel({ channelId, dirPath, allowWorktree, onSelectChannel
                 Start
               </button>
               {allowWorktree && (
-                <button
-                  onClick={() => handleAssign(ticket.id)}
-                  disabled={isAssigning}
-                  style={{ ...btnStyle, opacity: isAssigning ? 0.5 : 1 }}
-                >
+                <button onClick={() => handleAssign(ticket.id)} disabled={isAssigning} style={{ ...btnStyle, opacity: isAssigning ? 0.5 : 1 }}>
                   {isAssigning ? "Assigning..." : "Assign Worktree"}
                 </button>
               )}
@@ -535,10 +563,7 @@ export function KanbanPanel({ channelId, dirPath, allowWorktree, onSelectChannel
           }}
         >
           <span style={{ flex: 1 }}>{error}</span>
-          <button
-            onClick={() => setError(null)}
-            style={{ background: "none", border: "none", color: "#ef4444", cursor: "pointer", fontSize: 11, padding: 0 }}
-          >
+          <button onClick={() => setError(null)} style={{ background: "none", border: "none", color: "#ef4444", cursor: "pointer", fontSize: 11, padding: 0 }}>
             dismiss
           </button>
         </div>
@@ -582,7 +607,9 @@ export function KanbanPanel({ channelId, dirPath, allowWorktree, onSelectChannel
               placeholder="Title"
               value={newTitle}
               onChange={(e) => setNewTitle(e.target.value)}
-              onKeyDown={(e) => { if (e.key === "Enter" && newTitle.trim()) handleCreate(); }}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && newTitle.trim()) handleCreate();
+              }}
               style={inputStyle}
               autoFocus
             />
@@ -628,12 +655,22 @@ export function KanbanPanel({ channelId, dirPath, allowWorktree, onSelectChannel
                 </div>
                 <input type="text" placeholder="PR URL (e.g. https://github.com/owner/repo/pull/123)" value={newPR} onChange={(e) => setNewPR(e.target.value)} style={inputStyle} />
                 <textarea placeholder="Design notes" value={newDesign} onChange={(e) => setNewDesign(e.target.value)} rows={5} style={{ ...inputStyle, resize: "vertical", fontFamily: "inherit" }} />
-                <textarea placeholder="Acceptance criteria" value={newAcceptance} onChange={(e) => setNewAcceptance(e.target.value)} rows={5} style={{ ...inputStyle, resize: "vertical", fontFamily: "inherit" }} />
+                <textarea
+                  placeholder="Acceptance criteria"
+                  value={newAcceptance}
+                  onChange={(e) => setNewAcceptance(e.target.value)}
+                  rows={5}
+                  style={{ ...inputStyle, resize: "vertical", fontFamily: "inherit" }}
+                />
               </div>
             )}
             <div style={{ display: "flex", gap: 6, justifyContent: "flex-end" }}>
-              <button onClick={() => setShowCreate(false)} style={btnSecondaryStyle}>Cancel</button>
-              <button onClick={handleCreate} disabled={!newTitle.trim()} style={{ ...btnStyle, opacity: newTitle.trim() ? 1 : 0.5 }}>Create</button>
+              <button onClick={() => setShowCreate(false)} style={btnSecondaryStyle}>
+                Cancel
+              </button>
+              <button onClick={handleCreate} disabled={!newTitle.trim()} style={{ ...btnStyle, opacity: newTitle.trim() ? 1 : 0.5 }}>
+                Create
+              </button>
             </div>
           </div>
         </div>
@@ -680,7 +717,9 @@ export function KanbanPanel({ channelId, dirPath, allowWorktree, onSelectChannel
               placeholder="Title"
               value={editTitle}
               onChange={(e) => setEditTitle(e.target.value)}
-              onKeyDown={(e) => { if (e.key === "Enter" && editTitle.trim()) handleEdit(); }}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && editTitle.trim()) handleEdit();
+              }}
               style={inputStyle}
               autoFocus
             />
@@ -724,22 +763,38 @@ export function KanbanPanel({ channelId, dirPath, allowWorktree, onSelectChannel
                 <input type="text" placeholder="External ref (URL or e.g. gh-123)" value={editExternalRef} onChange={(e) => setEditExternalRef(e.target.value)} style={inputStyle} />
                 <input type="text" placeholder="PR URL (e.g. https://github.com/owner/repo/pull/123)" value={editPR} onChange={(e) => setEditPR(e.target.value)} style={inputStyle} />
                 <textarea placeholder="Design notes" value={editDesign} onChange={(e) => setEditDesign(e.target.value)} rows={5} style={{ ...inputStyle, resize: "vertical", fontFamily: "inherit" }} />
-                <textarea placeholder="Acceptance criteria" value={editAcceptance} onChange={(e) => setEditAcceptance(e.target.value)} rows={5} style={{ ...inputStyle, resize: "vertical", fontFamily: "inherit" }} />
+                <textarea
+                  placeholder="Acceptance criteria"
+                  value={editAcceptance}
+                  onChange={(e) => setEditAcceptance(e.target.value)}
+                  rows={5}
+                  style={{ ...inputStyle, resize: "vertical", fontFamily: "inherit" }}
+                />
               </div>
             )}
             <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
               {confirmDelete === editing.id ? (
                 <>
                   <span style={{ fontSize: 11, color: "#ef4444" }}>Delete?</span>
-                  <button onClick={() => handleDelete(editing.id)} style={{ ...btnStyle, background: "#ef4444", fontSize: 10 }}>Yes</button>
-                  <button onClick={() => setConfirmDelete(null)} style={{ ...btnSecondaryStyle, fontSize: 10 }}>No</button>
+                  <button onClick={() => handleDelete(editing.id)} style={{ ...btnStyle, background: "#ef4444", fontSize: 10 }}>
+                    Yes
+                  </button>
+                  <button onClick={() => setConfirmDelete(null)} style={{ ...btnSecondaryStyle, fontSize: 10 }}>
+                    No
+                  </button>
                 </>
               ) : (
-                <button onClick={() => setConfirmDelete(editing.id)} style={{ ...btnSecondaryStyle, color: "#ef4444", borderColor: "#ef444444" }}>Delete</button>
+                <button onClick={() => setConfirmDelete(editing.id)} style={{ ...btnSecondaryStyle, color: "#ef4444", borderColor: "#ef444444" }}>
+                  Delete
+                </button>
               )}
               <div style={{ flex: 1 }} />
-              <button onClick={() => setEditing(null)} style={btnSecondaryStyle}>Cancel</button>
-              <button onClick={handleEdit} disabled={!editTitle.trim()} style={{ ...btnStyle, opacity: editTitle.trim() ? 1 : 0.5 }}>Save</button>
+              <button onClick={() => setEditing(null)} style={btnSecondaryStyle}>
+                Cancel
+              </button>
+              <button onClick={handleEdit} disabled={!editTitle.trim()} style={{ ...btnStyle, opacity: editTitle.trim() ? 1 : 0.5 }}>
+                Save
+              </button>
             </div>
           </div>
         </div>
@@ -785,12 +840,8 @@ export function KanbanPanel({ channelId, dirPath, allowWorktree, onSelectChannel
                   flexShrink: 0,
                 }}
               />
-              <span style={{ fontSize: 12, fontWeight: 600, color: colors.text }}>
-                {col.label}
-              </span>
-              <span style={{ fontSize: 11, color: colors.textDim }}>
-                {columns[col.key]?.length ?? 0}
-              </span>
+              <span style={{ fontSize: 12, fontWeight: 600, color: colors.text }}>{col.label}</span>
+              <span style={{ fontSize: 11, color: colors.textDim }}>{columns[col.key]?.length ?? 0}</span>
             </div>
 
             {/* Cards */}
@@ -805,11 +856,7 @@ export function KanbanPanel({ channelId, dirPath, allowWorktree, onSelectChannel
               }}
             >
               {(columns[col.key] ?? []).map((t) => renderCard(t))}
-              {(columns[col.key] ?? []).length === 0 && (
-                <div style={{ padding: 12, color: colors.textDim, fontSize: 11, textAlign: "center" }}>
-                  No tickets
-                </div>
-              )}
+              {(columns[col.key] ?? []).length === 0 && <div style={{ padding: 12, color: colors.textDim, fontSize: 11, textAlign: "center" }}>No tickets</div>}
             </div>
           </div>
         ))}

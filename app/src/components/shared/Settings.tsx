@@ -1,14 +1,14 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { Channel, DaemonInfo, ImageBuildStatusData, ImageStatusResponse, ImageUpdateAvailableData } from "../../types";
+import { type BuiltinKind, restoreBuiltins } from "../../api/builtins";
+import { type ConfigResponse, type ConfigSchema, fetchConfigSchema, fetchGlobalConfig, fetchProjectConfig, saveGlobalConfig, saveProjectConfig } from "../../api/configApi";
 import { getImageStatus } from "../../api/loopApi";
-import { fetchConfigSchema, fetchGlobalConfig, saveGlobalConfig, fetchProjectConfig, saveProjectConfig, type ConfigSchema, type ConfigResponse } from "../../api/configApi";
-import { fonts } from "../../theme";
+import { DEFAULT_FONT_SIZES, useTheme } from "../../ThemeContext";
 import type { ColorPalette } from "../../theme";
-import { useTheme, DEFAULT_FONT_SIZES } from "../../ThemeContext";
-import { ConfigForm, getSections, type ConfigFormHandle } from "./ConfigForm";
-import { ChannelHeaderInfo } from "../layout/ChannelHeaderInfo";
-import { restoreBuiltins, type BuiltinKind } from "../../api/builtins";
+import { fonts } from "../../theme";
+import type { Channel, DaemonInfo, ImageBuildStatusData, ImageStatusResponse, ImageUpdateAvailableData } from "../../types";
 import { logErr } from "../../utils/log";
+import { ChannelHeaderInfo } from "../layout/ChannelHeaderInfo";
+import { ConfigForm, type ConfigFormHandle, getSections } from "./ConfigForm";
 
 function buildHeaderBtnStyle(colors: ColorPalette): React.CSSProperties {
   return {
@@ -40,7 +40,20 @@ interface SettingsProps {
   onConfigDirtyChange?: (dirty: boolean) => void;
 }
 
-export function Settings({ open, projectDirPath, channelId, channel, sidebarOpen, onOpenPalette, onClose, onDaemonRestarted, imageBuildStatus, imageUpdateAvailable, onRebuildImage, onConfigDirtyChange }: SettingsProps) {
+export function Settings({
+  open,
+  projectDirPath,
+  channelId,
+  channel,
+  sidebarOpen,
+  onOpenPalette,
+  onClose,
+  onDaemonRestarted,
+  imageBuildStatus,
+  imageUpdateAvailable,
+  onRebuildImage,
+  onConfigDirtyChange,
+}: SettingsProps) {
   const { colors, setThemeName, setFontSizes, setIslands } = useTheme();
   const [daemonInfo, setDaemonInfo] = useState<DaemonInfo | null>(null);
   const [restarting, setRestarting] = useState(false);
@@ -70,12 +83,18 @@ export function Settings({ open, projectDirPath, channelId, channel, sidebarOpen
   // edits would be silently overwritten by setGlobalConfig(fresh). Reading
   // through a ref instead always sees the current value.
   const globalDirtyRef = useRef(globalDirty);
-  useEffect(() => { globalDirtyRef.current = globalDirty; }, [globalDirty]);
+  useEffect(() => {
+    globalDirtyRef.current = globalDirty;
+  }, [globalDirty]);
 
-  useEffect(() => { onConfigDirtyChange?.(configDirty); }, [configDirty, onConfigDirtyChange]);
+  useEffect(() => {
+    onConfigDirtyChange?.(configDirty);
+  }, [configDirty, onConfigDirtyChange]);
 
   // Reset the restore-builtins toast when the user navigates away.
-  useEffect(() => { setRestoreMsgByKind({ workflows: null, shortcuts: null }); }, [activeSection]);
+  useEffect(() => {
+    setRestoreMsgByKind({ workflows: null, shortcuts: null });
+  }, [activeSection]);
 
   // Build section groups for sidebar nav.
   const HARDCODED_GLOBAL = ["Daemon", "Docker Image"];
@@ -95,12 +114,7 @@ export function Settings({ open, projectDirPath, channelId, channel, sidebarOpen
   const loadAll = useCallback(() => {
     const daemonP = window.loopAPI?.getDaemonInfo?.() ?? Promise.resolve(null);
 
-    Promise.all([
-      daemonP,
-      fetchConfigSchema().catch(() => null),
-      fetchGlobalConfig().catch(() => null),
-      getImageStatus().catch(() => null),
-    ])
+    Promise.all([daemonP, fetchConfigSchema().catch(() => null), fetchGlobalConfig().catch(() => null), getImageStatus().catch(() => null)])
       .then(([d, sch, cfg, img]) => {
         if (d) setDaemonInfo(d);
         if (sch) setSchema(sch);
@@ -135,14 +149,15 @@ export function Settings({ open, projectDirPath, channelId, channel, sidebarOpen
       .catch(() => setProjectConfig(null));
   }, [open, channelId]);
 
-
   const handleRestart = async () => {
     setRestarting(true);
     try {
       const info = await window.loopAPI?.restartDaemon?.();
       if (info) setDaemonInfo(info);
       onDaemonRestarted?.();
-    } catch { /* ignore */ }
+    } catch {
+      /* ignore */
+    }
     setRestarting(false);
   };
 
@@ -155,12 +170,12 @@ export function Settings({ open, projectDirPath, channelId, channel, sidebarOpen
         const desktop = parsed.desktop;
         if (desktop) {
           setThemeName(desktop.theme || "dark");
-          setFontSizes(desktop.font_sizes
-            ? { ...DEFAULT_FONT_SIZES, ...desktop.font_sizes }
-            : { ...DEFAULT_FONT_SIZES });
+          setFontSizes(desktop.font_sizes ? { ...DEFAULT_FONT_SIZES, ...desktop.font_sizes } : { ...DEFAULT_FONT_SIZES });
           setIslands(desktop.islands ?? false);
         }
-      } catch { /* ignore parse errors */ }
+      } catch {
+        /* ignore parse errors */
+      }
       // Re-fetch so other sections see the updated values.
       fetchGlobalConfig().then(setGlobalConfig).catch(logErr("re-fetching global config"));
       return null;
@@ -320,13 +335,7 @@ export function Settings({ open, projectDirPath, channelId, channel, sidebarOpen
         >
           Settings
         </span>
-        <button
-          onClick={tryClose}
-          title="Close panel"
-          style={headerBtnStyle}
-          onMouseEnter={hoverIn}
-          onMouseLeave={hoverOut}
-        >
+        <button onClick={tryClose} title="Close panel" style={headerBtnStyle} onMouseEnter={hoverIn} onMouseLeave={hoverOut}>
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
             <line x1="18" y1="6" x2="6" y2="18" />
             <line x1="6" y1="6" x2="18" y2="18" />
@@ -338,21 +347,21 @@ export function Settings({ open, projectDirPath, channelId, channel, sidebarOpen
       <div style={{ flex: 1, display: "flex", overflow: "hidden" }}>
         {/* Left: section nav */}
         {loaded && (
-          <div style={{
-            width: 150,
-            flexShrink: 0,
-            borderRight: `1px solid ${colors.border}`,
-            overflow: "auto",
-            padding: "8px 0",
-          }}>
+          <div
+            style={{
+              width: 150,
+              flexShrink: 0,
+              borderRight: `1px solid ${colors.border}`,
+              overflow: "auto",
+              padding: "8px 0",
+            }}
+          >
             {/* Global group */}
             <NavGroupLabel colors={colors}>Global</NavGroupLabel>
             {[...HARDCODED_GLOBAL, ...globalSchemaSections].map((name) => (
               <NavButton key={name} name={name} active={activeSection === name} colors={colors} onClick={() => setActiveSection(name)} />
             ))}
-            {globalConfig && (
-              <NavButton name="JSON" active={activeSection === "__global_json__"} colors={colors} onClick={() => setActiveSection("__global_json__")} />
-            )}
+            {globalConfig && <NavButton name="JSON" active={activeSection === "__global_json__"} colors={colors} onClick={() => setActiveSection("__global_json__")} />}
 
             {/* Project group */}
             {projectSchemaSections.length > 0 && (
@@ -369,34 +378,23 @@ export function Settings({ open, projectDirPath, channelId, channel, sidebarOpen
         )}
 
         {/* Right: section content */}
-        <div style={{
-          flex: 1,
-          display: "flex",
-          flexDirection: "column",
-          overflow: activeSection.includes("json") ? "hidden" : "auto",
-          padding: "16px 16px 24px",
-        }}>
+        <div
+          style={{
+            flex: 1,
+            display: "flex",
+            flexDirection: "column",
+            overflow: activeSection.includes("json") ? "hidden" : "auto",
+            padding: "16px 16px 24px",
+          }}
+        >
           {!loaded ? (
             <div style={{ color: colors.textDim, fontSize: 13, padding: "20px 0", textAlign: "center" }}>Loading...</div>
           ) : (
             <>
-              {activeSection === "Daemon" && (
-                <DaemonSection
-                  colors={colors}
-                  daemonInfo={daemonInfo}
-                  restarting={restarting}
-                  onRestart={handleRestart}
-                />
-              )}
+              {activeSection === "Daemon" && <DaemonSection colors={colors} daemonInfo={daemonInfo} restarting={restarting} onRestart={handleRestart} />}
 
               {activeSection === "Docker Image" && (
-                <DockerImageSection
-                  colors={colors}
-                  imageBuildStatus={imageBuildStatus}
-                  imageStatus={imageStatus}
-                  imageUpdateAvailable={imageUpdateAvailable}
-                  onRebuildImage={onRebuildImage}
-                />
+                <DockerImageSection colors={colors} imageBuildStatus={imageBuildStatus} imageStatus={imageStatus} imageUpdateAvailable={imageUpdateAvailable} onRebuildImage={onRebuildImage} />
               )}
 
               {activeSection === "__global_json__" && globalConfig && (
@@ -415,18 +413,11 @@ export function Settings({ open, projectDirPath, channelId, channel, sidebarOpen
 
               {globalConfig && globalSchemaSections.includes(activeSection) && (
                 <>
-                  {(activeSection === "Workflows" || activeSection === "Prompt Shortcuts") && (() => {
-                    const k: BuiltinKind = activeSection === "Workflows" ? "workflows" : "shortcuts";
-                    return (
-                      <RestoreBuiltinsBar
-                        colors={colors}
-                        kind={k}
-                        restoring={restoringByKind[k]}
-                        message={restoreMsgByKind[k]}
-                        onClick={handleRestoreBuiltins}
-                      />
-                    );
-                  })()}
+                  {(activeSection === "Workflows" || activeSection === "Prompt Shortcuts") &&
+                    (() => {
+                      const k: BuiltinKind = activeSection === "Workflows" ? "workflows" : "shortcuts";
+                      return <RestoreBuiltinsBar colors={colors} kind={k} restoring={restoringByKind[k]} message={restoreMsgByKind[k]} onClick={handleRestoreBuiltins} />;
+                    })()}
                   <ConfigForm
                     ref={globalFormRef}
                     title="Global Config"
@@ -475,25 +466,51 @@ export function Settings({ open, projectDirPath, channelId, channel, sidebarOpen
 
       {/* Floating save/cancel bar */}
       {configDirty && (
-        <div style={{
-          padding: "10px 16px",
-          borderTop: `1px solid ${colors.border}`,
-          display: "flex",
-          gap: 8,
-          justifyContent: "flex-end",
-          alignItems: "center",
-          backgroundColor: colors.sidebar,
-          flexShrink: 0,
-        }}>
-          <button onClick={handleFloatingCancel} style={{
-            padding: "6px 14px", backgroundColor: "transparent", border: `1px solid ${colors.border}`,
-            borderRadius: 6, color: colors.text, fontSize: 12, cursor: "pointer", fontFamily: "inherit",
-          }}>Cancel</button>
-          <button onClick={handleFloatingSave} disabled={saving} style={{
-            padding: "6px 14px", backgroundColor: colors.active, border: "none", borderRadius: 6,
-            color: colors.white, fontSize: 12, fontWeight: 500, cursor: saving ? "default" : "pointer",
-            opacity: saving ? 0.6 : 1, fontFamily: "inherit",
-          }}>{saving ? "Saving..." : "Save"}</button>
+        <div
+          style={{
+            padding: "10px 16px",
+            borderTop: `1px solid ${colors.border}`,
+            display: "flex",
+            gap: 8,
+            justifyContent: "flex-end",
+            alignItems: "center",
+            backgroundColor: colors.sidebar,
+            flexShrink: 0,
+          }}
+        >
+          <button
+            onClick={handleFloatingCancel}
+            style={{
+              padding: "6px 14px",
+              backgroundColor: "transparent",
+              border: `1px solid ${colors.border}`,
+              borderRadius: 6,
+              color: colors.text,
+              fontSize: 12,
+              cursor: "pointer",
+              fontFamily: "inherit",
+            }}
+          >
+            Cancel
+          </button>
+          <button
+            onClick={handleFloatingSave}
+            disabled={saving}
+            style={{
+              padding: "6px 14px",
+              backgroundColor: colors.active,
+              border: "none",
+              borderRadius: 6,
+              color: colors.white,
+              fontSize: 12,
+              fontWeight: 500,
+              cursor: saving ? "default" : "pointer",
+              opacity: saving ? 0.6 : 1,
+              fontFamily: "inherit",
+            }}
+          >
+            {saving ? "Saving..." : "Save"}
+          </button>
         </div>
       )}
 
@@ -502,23 +519,49 @@ export function Settings({ open, projectDirPath, channelId, channel, sidebarOpen
 
       {/* Unsaved changes confirmation modal */}
       {showDirtyModal && (
-        <div style={{ position: "fixed", inset: 0, zIndex: 9999, display: "flex", alignItems: "center", justifyContent: "center", backgroundColor: "rgba(0,0,0,0.5)" }}
-          onClick={() => setShowDirtyModal(false)}>
-          <div style={{ backgroundColor: colors.surface, borderRadius: 12, padding: "20px 24px", maxWidth: 360, boxShadow: "0 8px 32px rgba(0,0,0,0.3)" }}
-            onClick={(e) => e.stopPropagation()}>
+        <div
+          style={{ position: "fixed", inset: 0, zIndex: 9999, display: "flex", alignItems: "center", justifyContent: "center", backgroundColor: "rgba(0,0,0,0.5)" }}
+          onClick={() => setShowDirtyModal(false)}
+        >
+          <div style={{ backgroundColor: colors.surface, borderRadius: 12, padding: "20px 24px", maxWidth: 360, boxShadow: "0 8px 32px rgba(0,0,0,0.3)" }} onClick={(e) => e.stopPropagation()}>
             <div style={{ fontSize: 14, fontWeight: 600, color: colors.text, marginBottom: 8 }}>Unsaved Changes</div>
-            <div style={{ fontSize: 13, color: colors.textDim, marginBottom: 16, lineHeight: 1.5 }}>
-              You have unsaved config changes. Discard them and close?
-            </div>
+            <div style={{ fontSize: 13, color: colors.textDim, marginBottom: 16, lineHeight: 1.5 }}>You have unsaved config changes. Discard them and close?</div>
             <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
-              <button onClick={() => setShowDirtyModal(false)} style={{
-                padding: "6px 14px", backgroundColor: "transparent", border: `1px solid ${colors.border}`,
-                borderRadius: 6, color: colors.text, fontSize: 12, cursor: "pointer", fontFamily: "inherit",
-              }}>Cancel</button>
-              <button onClick={() => { setShowDirtyModal(false); handleFloatingCancel(); onClose(); }} style={{
-                padding: "6px 14px", backgroundColor: colors.error, border: "none",
-                borderRadius: 6, color: colors.white, fontSize: 12, fontWeight: 500, cursor: "pointer", fontFamily: "inherit",
-              }}>Discard & Close</button>
+              <button
+                onClick={() => setShowDirtyModal(false)}
+                style={{
+                  padding: "6px 14px",
+                  backgroundColor: "transparent",
+                  border: `1px solid ${colors.border}`,
+                  borderRadius: 6,
+                  color: colors.text,
+                  fontSize: 12,
+                  cursor: "pointer",
+                  fontFamily: "inherit",
+                }}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => {
+                  setShowDirtyModal(false);
+                  handleFloatingCancel();
+                  onClose();
+                }}
+                style={{
+                  padding: "6px 14px",
+                  backgroundColor: colors.error,
+                  border: "none",
+                  borderRadius: 6,
+                  color: colors.white,
+                  fontSize: 12,
+                  fontWeight: 500,
+                  cursor: "pointer",
+                  fontFamily: "inherit",
+                }}
+              >
+                Discard & Close
+              </button>
             </div>
           </div>
         </div>
@@ -527,7 +570,13 @@ export function Settings({ open, projectDirPath, channelId, channel, sidebarOpen
   );
 }
 
-function RestoreBuiltinsBar({ colors, kind, restoring, message, onClick }: {
+function RestoreBuiltinsBar({
+  colors,
+  kind,
+  restoring,
+  message,
+  onClick,
+}: {
   colors: ColorPalette;
   kind: BuiltinKind;
   restoring: boolean;
@@ -536,16 +585,19 @@ function RestoreBuiltinsBar({ colors, kind, restoring, message, onClick }: {
 }) {
   const label = kind === "workflows" ? "Restore built-in workflows" : "Restore built-in shortcuts";
   return (
-    <div data-testid={`restore-builtins-${kind}`} style={{
-      display: "flex",
-      gap: 10,
-      alignItems: "center",
-      marginBottom: 12,
-      padding: "8px 10px",
-      backgroundColor: colors.bg,
-      border: `1px solid ${colors.border}`,
-      borderRadius: 6,
-    }}>
+    <div
+      data-testid={`restore-builtins-${kind}`}
+      style={{
+        display: "flex",
+        gap: 10,
+        alignItems: "center",
+        marginBottom: 12,
+        padding: "8px 10px",
+        backgroundColor: colors.bg,
+        border: `1px solid ${colors.border}`,
+        borderRadius: 6,
+      }}
+    >
       <button
         onClick={() => onClick(kind)}
         disabled={restoring}
@@ -563,34 +615,29 @@ function RestoreBuiltinsBar({ colors, kind, restoring, message, onClick }: {
       >
         {restoring ? "Restoring…" : label}
       </button>
-      <span style={{ fontSize: 11, color: colors.textDim, lineHeight: 1.4 }}>
-        {message ?? "Re-adds any built-ins missing from your config. Items you kept (or modified) are left untouched."}
-      </span>
+      <span style={{ fontSize: 11, color: colors.textDim, lineHeight: 1.4 }}>{message ?? "Re-adds any built-ins missing from your config. Items you kept (or modified) are left untouched."}</span>
     </div>
   );
 }
 
 function NavGroupLabel({ colors, children }: { colors: ColorPalette; children: React.ReactNode }) {
   return (
-    <div style={{
-      fontSize: 9,
-      fontWeight: 700,
-      color: colors.textDim,
-      textTransform: "uppercase",
-      letterSpacing: 1,
-      padding: "6px 16px 2px",
-    }}>
+    <div
+      style={{
+        fontSize: 9,
+        fontWeight: 700,
+        color: colors.textDim,
+        textTransform: "uppercase",
+        letterSpacing: 1,
+        padding: "6px 16px 2px",
+      }}
+    >
       {children}
     </div>
   );
 }
 
-function NavButton({ name, active, colors, onClick }: {
-  name: string;
-  active: boolean;
-  colors: ColorPalette;
-  onClick: () => void;
-}) {
+function NavButton({ name, active, colors, onClick }: { name: string; active: boolean; colors: ColorPalette; onClick: () => void }) {
   const testId = `settings-nav-${name.toLowerCase().replace(/\s+/g, "-")}`;
   return (
     <button
@@ -616,37 +663,38 @@ function NavButton({ name, active, colors, onClick }: {
   );
 }
 
-function DaemonSection({ colors, daemonInfo, restarting, onRestart }: {
-  colors: ColorPalette;
-  daemonInfo: DaemonInfo | null;
-  restarting: boolean;
-  onRestart: () => void;
-}) {
+function DaemonSection({ colors, daemonInfo, restarting, onRestart }: { colors: ColorPalette; daemonInfo: DaemonInfo | null; restarting: boolean; onRestart: () => void }) {
   return (
     <>
       {daemonInfo && (
-        <div style={{
-          backgroundColor: colors.bg,
-          borderRadius: 8,
-          padding: "10px 12px",
-          marginBottom: 12,
-          fontSize: 12,
-          fontFamily: fonts.mono,
-        }}>
+        <div
+          style={{
+            backgroundColor: colors.bg,
+            borderRadius: 8,
+            padding: "10px 12px",
+            marginBottom: 12,
+            fontSize: 12,
+            fontFamily: fonts.mono,
+          }}
+        >
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: daemonInfo.binaryPath ? 6 : 0 }}>
             <span style={{ color: colors.textDim }}>Status</span>
             <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
-              <span style={{
-                width: 6,
-                height: 6,
-                borderRadius: "50%",
-                backgroundColor: daemonInfo.running ? colors.active : colors.error,
-                display: "inline-block",
-              }} />
-              <span style={{
-                color: daemonInfo.running ? colors.active : colors.error,
-                fontWeight: 500,
-              }}>
+              <span
+                style={{
+                  width: 6,
+                  height: 6,
+                  borderRadius: "50%",
+                  backgroundColor: daemonInfo.running ? colors.active : colors.error,
+                  display: "inline-block",
+                }}
+              />
+              <span
+                style={{
+                  color: daemonInfo.running ? colors.active : colors.error,
+                  fontWeight: 500,
+                }}
+              >
                 {daemonInfo.running ? "Running" : "Stopped"}
               </span>
             </span>
@@ -679,11 +727,22 @@ function DaemonSection({ colors, daemonInfo, restarting, onRestart }: {
             cursor: restarting ? "default" : "pointer",
             fontFamily: "inherit",
           }}
-          onMouseEnter={(e) => { if (!restarting) e.currentTarget.style.borderColor = colors.textDim; }}
-          onMouseLeave={(e) => { e.currentTarget.style.borderColor = colors.border; }}
+          onMouseEnter={(e) => {
+            if (!restarting) e.currentTarget.style.borderColor = colors.textDim;
+          }}
+          onMouseLeave={(e) => {
+            e.currentTarget.style.borderColor = colors.border;
+          }}
         >
           <svg
-            width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
+            width="12"
+            height="12"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
             style={restarting ? { animation: "spin 1s linear infinite" } : undefined}
           >
             <path d="M21 12a9 9 0 1 1-3-6.7" />
@@ -696,7 +755,13 @@ function DaemonSection({ colors, daemonInfo, restarting, onRestart }: {
   );
 }
 
-function DockerImageSection({ colors, imageBuildStatus, imageStatus, imageUpdateAvailable, onRebuildImage }: {
+function DockerImageSection({
+  colors,
+  imageBuildStatus,
+  imageStatus,
+  imageUpdateAvailable,
+  onRebuildImage,
+}: {
   colors: ColorPalette;
   imageBuildStatus?: ImageBuildStatusData | null;
   imageStatus: ImageStatusResponse | null;
@@ -705,37 +770,35 @@ function DockerImageSection({ colors, imageBuildStatus, imageStatus, imageUpdate
 }) {
   return (
     <>
-      <div style={{
-        backgroundColor: colors.bg,
-        borderRadius: 8,
-        padding: "10px 12px",
-        marginBottom: 12,
-        fontSize: 12,
-        fontFamily: fonts.mono,
-      }}>
+      <div
+        style={{
+          backgroundColor: colors.bg,
+          borderRadius: 8,
+          padding: "10px 12px",
+          marginBottom: 12,
+          fontSize: 12,
+          fontFamily: fonts.mono,
+        }}
+      >
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
           <span style={{ color: colors.textDim }}>Status</span>
           <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
-            <span style={{
-              width: 6,
-              height: 6,
-              borderRadius: "50%",
-              backgroundColor:
-                (imageBuildStatus?.state === "building") ? colors.warning
-                : (imageBuildStatus?.state === "failed") ? colors.error
-                : colors.active,
-              display: "inline-block",
-            }} />
-            <span style={{
-              color:
-                (imageBuildStatus?.state === "building") ? colors.warning
-                : (imageBuildStatus?.state === "failed") ? colors.error
-                : colors.active,
-              fontWeight: 500,
-            }}>
-              {imageBuildStatus?.state === "building" ? "Building"
-                : imageBuildStatus?.state === "failed" ? "Failed"
-                : "Ready"}
+            <span
+              style={{
+                width: 6,
+                height: 6,
+                borderRadius: "50%",
+                backgroundColor: imageBuildStatus?.state === "building" ? colors.warning : imageBuildStatus?.state === "failed" ? colors.error : colors.active,
+                display: "inline-block",
+              }}
+            />
+            <span
+              style={{
+                color: imageBuildStatus?.state === "building" ? colors.warning : imageBuildStatus?.state === "failed" ? colors.error : colors.active,
+                fontWeight: 500,
+              }}
+            >
+              {imageBuildStatus?.state === "building" ? "Building" : imageBuildStatus?.state === "failed" ? "Failed" : "Ready"}
               {imageBuildStatus?.phase ? ` — ${imageBuildStatus.phase}` : ""}
             </span>
           </span>
@@ -759,25 +822,29 @@ function DockerImageSection({ colors, imageBuildStatus, imageStatus, imageUpdate
       </div>
 
       {imageUpdateAvailable && (
-        <div style={{
-          backgroundColor: "rgba(255, 200, 50, 0.1)",
-          border: `1px solid rgba(255, 200, 50, 0.3)`,
-          borderRadius: 8,
-          padding: "8px 12px",
-          marginBottom: 12,
-          fontSize: 12,
-          color: colors.warning,
-        }}>
+        <div
+          style={{
+            backgroundColor: "rgba(255, 200, 50, 0.1)",
+            border: `1px solid rgba(255, 200, 50, 0.3)`,
+            borderRadius: 8,
+            padding: "8px 12px",
+            marginBottom: 12,
+            fontSize: 12,
+            color: colors.warning,
+          }}
+        >
           Claude Code update available: v{imageUpdateAvailable.current_version} → v{imageUpdateAvailable.latest_version}
         </div>
       )}
 
       {imageBuildStatus?.state === "failed" && imageBuildStatus.error && (
-        <div style={{
-          fontSize: 11,
-          color: colors.error,
-          marginBottom: 8,
-        }}>
+        <div
+          style={{
+            fontSize: 11,
+            color: colors.error,
+            marginBottom: 8,
+          }}
+        >
           {imageBuildStatus.error}
         </div>
       )}
@@ -801,11 +868,22 @@ function DockerImageSection({ colors, imageBuildStatus, imageStatus, imageUpdate
             cursor: imageBuildStatus?.state === "building" ? "default" : "pointer",
             fontFamily: "inherit",
           }}
-          onMouseEnter={(e) => { if (imageBuildStatus?.state !== "building") e.currentTarget.style.borderColor = colors.textDim; }}
-          onMouseLeave={(e) => { e.currentTarget.style.borderColor = colors.border; }}
+          onMouseEnter={(e) => {
+            if (imageBuildStatus?.state !== "building") e.currentTarget.style.borderColor = colors.textDim;
+          }}
+          onMouseLeave={(e) => {
+            e.currentTarget.style.borderColor = colors.border;
+          }}
         >
           <svg
-            width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
+            width="12"
+            height="12"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
             style={imageBuildStatus?.state === "building" ? { animation: "spin 1s linear infinite" } : undefined}
           >
             <path d="M21 12a9 9 0 1 1-3-6.7" />

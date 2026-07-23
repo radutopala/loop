@@ -1,19 +1,10 @@
 import { useEffect, useRef, useState } from "react";
 import { fetchQualityC4, type QualityC4Response } from "../../../api/quality";
 import { useTheme } from "../../../ThemeContext";
-import {
-  useAsyncFetch,
-  LoadingState,
-  ErrorState,
-  EmptyState,
-  type AsyncTabProps,
-} from "./shared";
+import { type AsyncTabProps, EmptyState, ErrorState, LoadingState, useAsyncFetch } from "./shared";
 
 export function C4Tab({ channelId, scanGeneration, colors, fontSizes }: AsyncTabProps) {
-  const { data, error, loading } = useAsyncFetch<QualityC4Response>(
-    () => fetchQualityC4(channelId),
-    [channelId, scanGeneration],
-  );
+  const { data, error, loading } = useAsyncFetch<QualityC4Response>(() => fetchQualityC4(channelId), [channelId, scanGeneration]);
   const { colors: theme } = useTheme();
   const containerEl = useRef<HTMLDivElement | null>(null);
   const [renderError, setRenderError] = useState<string | null>(null);

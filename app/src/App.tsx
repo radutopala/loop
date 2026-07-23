@@ -1,24 +1,41 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { Channel, ChannelUpdatedData, ImageBuildStatusData, ImageUpdateAvailableData, UpdateStatus, WSEvent } from "./types";
-import { fonts } from "./theme";
-import { ThemeProvider, useTheme, DEFAULT_FONT_SIZES } from "./ThemeContext";
-import { createChannel, createThread, createWorktreeThread, deleteChannel, deleteThread, ensureChannel, fetchChannels, fetchDiff, fetchPlaygroundShares, getImageStatus, importWorktree, initApiUrl, moveWorktree, rebuildImage, renameChannel, setChannelLocked } from "./api/loopApi";
 import { fetchGlobalConfig } from "./api/configApi";
-import { Sidebar } from "./components/sidebar/Sidebar";
-import { MarkdownFilePanel } from "./components/panels/FilePanel";
-import { WorkspaceLayout, type WorkspaceLayoutRef } from "./components/layout/WorkspaceLayout";
-import { LoopLogo } from "./components/shared/LoopLogo";
+import {
+  createChannel,
+  createThread,
+  createWorktreeThread,
+  deleteChannel,
+  deleteThread,
+  ensureChannel,
+  fetchChannels,
+  fetchDiff,
+  fetchPlaygroundShares,
+  getImageStatus,
+  importWorktree,
+  initApiUrl,
+  moveWorktree,
+  rebuildImage,
+  renameChannel,
+  setChannelLocked,
+} from "./api/loopApi";
 import horizontalLogo from "./assets/logo-horizontal.svg";
-import { CommandPalette } from "./components/shared/CommandPalette";
-import { Settings } from "./components/shared/Settings";
+import { WorkspaceLayout, type WorkspaceLayoutRef } from "./components/layout/WorkspaceLayout";
 import { ContainersPanel, type ContainersPanelHandle } from "./components/panels/ContainersPanel";
-import { GlobalTasksPanel } from "./components/panels/GlobalTasksPanel";
+import { MarkdownFilePanel } from "./components/panels/FilePanel";
 import { GlobalSharesPanel } from "./components/panels/GlobalSharesPanel";
+import { GlobalTasksPanel } from "./components/panels/GlobalTasksPanel";
 import { WorkflowsGlobalPanel, type WorkflowsGlobalPanelHandle } from "./components/panels/WorkflowsGlobalPanel";
-import { useChatStateStore, type ActiveChatState } from "./hooks/useChatStateStore";
+import { CommandPalette } from "./components/shared/CommandPalette";
+import { LoopLogo } from "./components/shared/LoopLogo";
+import { Settings } from "./components/shared/Settings";
+import { Sidebar } from "./components/sidebar/Sidebar";
 import { useAppPanelState } from "./hooks/useAppPanelState";
-import { storageGet, storageSet, storageRemove } from "./utils/storage";
+import { type ActiveChatState, useChatStateStore } from "./hooks/useChatStateStore";
+import { DEFAULT_FONT_SIZES, ThemeProvider, useTheme } from "./ThemeContext";
+import { fonts } from "./theme";
+import type { Channel, ChannelUpdatedData, ImageBuildStatusData, ImageUpdateAvailableData, UpdateStatus, WSEvent } from "./types";
 import { logErr } from "./utils/log";
+import { storageGet, storageRemove, storageSet } from "./utils/storage";
 
 const LAST_CHANNEL_KEY = "loop-last-channel";
 
@@ -43,11 +60,7 @@ export default function App() {
   if (desktop === undefined) return null;
 
   return (
-    <ThemeProvider
-      initialTheme={desktop?.theme}
-      initialFontSizes={desktop?.font_sizes ? { ...DEFAULT_FONT_SIZES, ...desktop.font_sizes } : undefined}
-      initialIslands={desktop?.islands ?? true}
-    >
+    <ThemeProvider initialTheme={desktop?.theme} initialFontSizes={desktop?.font_sizes ? { ...DEFAULT_FONT_SIZES, ...desktop.font_sizes } : undefined} initialIslands={desktop?.islands ?? true}>
       <AppInner />
     </ThemeProvider>
   );
@@ -64,12 +77,23 @@ function AppInner() {
   const [diffStats, setDiffStats] = useState<{ add: number; del: number }>({ add: 0, del: 0 });
   const [paletteOpen, setPaletteOpen] = useState(false);
   const {
-    settingsOpen, readmeOpen, containersOpen, tasksOpen, workflowsOpen, sharesOpen,
-    settingsDirPath, configDirty, pendingSelectId,
-    setConfigDirty, setPendingSelectId,
-    togglePanel, openConfig,
-    toggleSettingsKeyboard, forceOpenSettings,
-    closePanel, closeAllPanels,
+    settingsOpen,
+    readmeOpen,
+    containersOpen,
+    tasksOpen,
+    workflowsOpen,
+    sharesOpen,
+    settingsDirPath,
+    configDirty,
+    pendingSelectId,
+    setConfigDirty,
+    setPendingSelectId,
+    togglePanel,
+    openConfig,
+    toggleSettingsKeyboard,
+    forceOpenSettings,
+    closePanel,
+    closeAllPanels,
   } = useAppPanelState();
   const [scrollToMessageId, setScrollToMessageId] = useState<number | null>(null);
   const containersPanelRef = useRef<ContainersPanelHandle | null>(null);
@@ -82,9 +106,15 @@ function AppInner() {
   // on the sidebar so the user always sees they have public tunnels open.
   const [shareCount, setShareCount] = useState(0);
   const refreshShareCount = useCallback(() => {
-    fetchPlaygroundShares().then((sh) => setShareCount(sh.length)).catch(() => { /* ignore */ });
+    fetchPlaygroundShares()
+      .then((sh) => setShareCount(sh.length))
+      .catch(() => {
+        /* ignore */
+      });
   }, []);
-  useEffect(() => { refreshShareCount(); }, [refreshShareCount]);
+  useEffect(() => {
+    refreshShareCount();
+  }, [refreshShareCount]);
 
   const layoutRef = useRef<WorkspaceLayoutRef>(null);
 
@@ -107,15 +137,19 @@ function AppInner() {
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // API URL already initialized by parent App component.
-  useEffect(() => { setReady(true); }, []);
+  useEffect(() => {
+    setReady(true);
+  }, []);
 
   // Seed image build status and update availability from API on mount.
   useEffect(() => {
     if (!ready) return;
-    getImageStatus().then((img) => {
-      if (img?.status && img.status.state !== "idle") setImageBuildStatus(img.status);
-      if (img?.update_available) setImageUpdateAvailable(img.update_available);
-    }).catch(logErr("fetching agent-image status"));
+    getImageStatus()
+      .then((img) => {
+        if (img?.status && img.status.state !== "idle") setImageBuildStatus(img.status);
+        if (img?.update_available) setImageUpdateAvailable(img.update_available);
+      })
+      .catch(logErr("fetching agent-image status"));
   }, [ready]);
 
   // Sync hash and localStorage with selected channel.
@@ -166,7 +200,9 @@ function AppInner() {
   // Listen for Settings menu item from main process.
   useEffect(() => {
     if (window.loopAPI?.onOpenSettings) {
-      window.loopAPI.onOpenSettings(() => { forceOpenSettings(); });
+      window.loopAPI.onOpenSettings(() => {
+        forceOpenSettings();
+      });
     }
   }, []);
 
@@ -177,7 +213,11 @@ function AppInner() {
   }, []);
 
   const handleDownloadUpdate = useCallback(async () => {
-    try { await window.loopAPI?.downloadUpdate?.(); } catch (e) { console.warn("download update failed:", e); }
+    try {
+      await window.loopAPI?.downloadUpdate?.();
+    } catch (e) {
+      console.warn("download update failed:", e);
+    }
   }, []);
 
   const handleInstallUpdate = useCallback(() => {
@@ -185,7 +225,11 @@ function AppInner() {
   }, []);
 
   const handleRebuildImage = useCallback(async () => {
-    try { await rebuildImage(); } catch (e) { console.warn("rebuild image failed:", e); }
+    try {
+      await rebuildImage();
+    } catch (e) {
+      console.warn("rebuild image failed:", e);
+    }
   }, []);
 
   const dmEnsuredRef = useRef(false);
@@ -202,7 +246,9 @@ function AppInner() {
           try {
             await createChannel("dm");
             chs = await fetchChannels();
-          } catch { /* ignore — channel creation might not be configured */ }
+          } catch {
+            /* ignore — channel creation might not be configured */
+          }
         }
       }
       setChannels(chs);
@@ -217,69 +263,81 @@ function AppInner() {
     return () => clearInterval(id);
   }, [loadChannels]);
 
-  const onAppEvent = useCallback((event: WSEvent) => {
-    if (event.type === "channel.created") {
-      loadChannels();
-      return;
-    }
-    if (event.type === "channel.deleted") {
-      if (event.channel_id === selectedId) {
-        setSelectedId(null);
+  const onAppEvent = useCallback(
+    (event: WSEvent) => {
+      if (event.type === "channel.created") {
+        loadChannels();
+        return;
       }
-      loadChannels();
-      return;
-    }
-    if (event.type === "channel.updated") {
-      const d = event.data as ChannelUpdatedData;
-      setChannels((prev) => prev.map((c) => c.id === d.channel_id ? {
-        ...c,
-        branch: d.branch,
-        commit: d.commit,
-        diff_additions: d.diff_additions,
-        diff_deletions: d.diff_deletions,
-        ...(d.name !== undefined ? { name: d.name } : {}),
-        ...(d.dir_path !== undefined ? { dir_path: d.dir_path } : {}),
-      } : c));
-      return;
-    }
-    if (event.type === "image.build_status") {
-      setImageBuildStatus(event.data as ImageBuildStatusData);
-      return;
-    }
-    if (event.type === "image.update_available") {
-      setImageUpdateAvailable(event.data as ImageUpdateAvailableData);
-      return;
-    }
-    if (event.type.startsWith("container.")) {
-      containersPanelRef.current?.handleContainerEvent(event);
-      return;
-    }
-    if (event.type.startsWith("workflow.")) {
-      workflowsPanelRef.current?.handleWorkflowEvent(event);
-      return;
-    }
-    if (event.type === "playground.update" && (event.data as { kind?: string })?.kind === "share") {
-      refreshShareCount();
-      return;
-    }
-    if (debounceRef.current) clearTimeout(debounceRef.current);
-    debounceRef.current = setTimeout(loadDiffStats, 1_000);
-  }, [loadDiffStats, selectedId, loadChannels, refreshShareCount]);
-  useEffect(() => () => { if (debounceRef.current) clearTimeout(debounceRef.current); }, []);
+      if (event.type === "channel.deleted") {
+        if (event.channel_id === selectedId) {
+          setSelectedId(null);
+        }
+        loadChannels();
+        return;
+      }
+      if (event.type === "channel.updated") {
+        const d = event.data as ChannelUpdatedData;
+        setChannels((prev) =>
+          prev.map((c) =>
+            c.id === d.channel_id
+              ? {
+                  ...c,
+                  branch: d.branch,
+                  commit: d.commit,
+                  diff_additions: d.diff_additions,
+                  diff_deletions: d.diff_deletions,
+                  ...(d.name !== undefined ? { name: d.name } : {}),
+                  ...(d.dir_path !== undefined ? { dir_path: d.dir_path } : {}),
+                }
+              : c,
+          ),
+        );
+        return;
+      }
+      if (event.type === "image.build_status") {
+        setImageBuildStatus(event.data as ImageBuildStatusData);
+        return;
+      }
+      if (event.type === "image.update_available") {
+        setImageUpdateAvailable(event.data as ImageUpdateAvailableData);
+        return;
+      }
+      if (event.type.startsWith("container.")) {
+        containersPanelRef.current?.handleContainerEvent(event);
+        return;
+      }
+      if (event.type.startsWith("workflow.")) {
+        workflowsPanelRef.current?.handleWorkflowEvent(event);
+        return;
+      }
+      if (event.type === "playground.update" && (event.data as { kind?: string })?.kind === "share") {
+        refreshShareCount();
+        return;
+      }
+      if (debounceRef.current) clearTimeout(debounceRef.current);
+      debounceRef.current = setTimeout(loadDiffStats, 1_000);
+    },
+    [loadDiffStats, selectedId, loadChannels, refreshShareCount],
+  );
+  useEffect(
+    () => () => {
+      if (debounceRef.current) clearTimeout(debounceRef.current);
+    },
+    [],
+  );
 
   // Single app-level WS that subscribes to the selected channel + all running
   // channels. Replaces the previous dual-WS approach (one in App, one in
   // WorkspaceLayout). Chat state is persisted in the store across switches.
-  const { getState, saveState, isRunningMapRef, unreadIdsRef, pillsRef, unreadCount, markRead, markAllRead, registerReviewView, clearAskUserPill, clearPlanPill, subscribeChatEvents } = useChatStateStore({
-    channels,
-    selectedId,
-    onAppEvent,
-  });
+  const { getState, saveState, isRunningMapRef, unreadIdsRef, pillsRef, unreadCount, markRead, markAllRead, registerReviewView, clearAskUserPill, clearPlanPill, subscribeChatEvents } =
+    useChatStateStore({
+      channels,
+      selectedId,
+      onAppEvent,
+    });
 
-  const handleChatStateUnmount = useCallback(
-    (channelId: string, state: ActiveChatState) => saveState(channelId, state),
-    [saveState],
-  );
+  const handleChatStateUnmount = useCallback((channelId: string, state: ActiveChatState) => saveState(channelId, state), [saveState]);
 
   // Update window title based on selected channel/thread.
   useEffect(() => {
@@ -294,39 +352,43 @@ function AppInner() {
     }
     if (selected.parent_id) {
       const parent = channels.find((c) => c.id === selected.parent_id);
-      document.title = parent
-        ? `${parent.name} › ${selected.name} — Loop`
-        : `${selected.name} — Loop`;
+      document.title = parent ? `${parent.name} › ${selected.name} — Loop` : `${selected.name} — Loop`;
     } else {
       document.title = `${selected.name} — Loop`;
     }
   }, [selectedId, channels]);
 
-  const doSelect = useCallback((id: string | null) => {
-    setScrollToMessageId(null);
-    closeAllPanels();
-    if (id) {
-      markRead(id);
-      // Refresh channels so the opened channel's agent_running (which seeds the
-      // Stop button) is current — its run may have started while we weren't
-      // subscribed (e.g. a freshly-created worktree thread). Fire-and-forget.
-      loadChannels();
-    }
-    setSelectedId((prev) => {
-      if (id !== null && id === prev) {
-        setMountKey((k) => k + 1);
+  const doSelect = useCallback(
+    (id: string | null) => {
+      setScrollToMessageId(null);
+      closeAllPanels();
+      if (id) {
+        markRead(id);
+        // Refresh channels so the opened channel's agent_running (which seeds the
+        // Stop button) is current — its run may have started while we weren't
+        // subscribed (e.g. a freshly-created worktree thread). Fire-and-forget.
+        loadChannels();
       }
-      return id;
-    });
-  }, [markRead, closeAllPanels, loadChannels]);
+      setSelectedId((prev) => {
+        if (id !== null && id === prev) {
+          setMountKey((k) => k + 1);
+        }
+        return id;
+      });
+    },
+    [markRead, closeAllPanels, loadChannels],
+  );
 
-  const handleSelect = useCallback((id: string | null) => {
-    if (configDirty && settingsOpen) {
-      setPendingSelectId(id);
-      return;
-    }
-    doSelect(id);
-  }, [configDirty, settingsOpen, doSelect]);
+  const handleSelect = useCallback(
+    (id: string | null) => {
+      if (configDirty && settingsOpen) {
+        setPendingSelectId(id);
+        return;
+      }
+      doSelect(id);
+    },
+    [configDirty, settingsOpen, doSelect],
+  );
 
   // Auto-select DM channel if nothing is selected on first load.
   const autoSelectedRef = useRef(false);
@@ -356,36 +418,42 @@ function AppInner() {
     layoutRef.current?.switchToLayout("Memory");
   }, []);
 
-  const handleOpenDirectory = useCallback(async (dirPath: string) => {
-    setError(null);
-    try {
-      // Run onboard:local to set up .mcp.json, .loop/config.json, templates
-      const result = await window.loopAPI?.onboardLocal?.(dirPath);
-      if (result && !result.ok) {
-        console.warn("onboard:local failed:", result.error);
+  const handleOpenDirectory = useCallback(
+    async (dirPath: string) => {
+      setError(null);
+      try {
+        // Run onboard:local to set up .mcp.json, .loop/config.json, templates
+        const result = await window.loopAPI?.onboardLocal?.(dirPath);
+        if (result && !result.ok) {
+          console.warn("onboard:local failed:", result.error);
+        }
+        const channel = await ensureChannel(dirPath);
+        await loadChannels();
+        handleSelect(channel.id);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : "Failed to open directory";
+        setError(message);
+        console.error("open directory failed:", err);
       }
-      const channel = await ensureChannel(dirPath);
-      await loadChannels();
-      handleSelect(channel.id);
-    } catch (err) {
-      const message = err instanceof Error ? err.message : "Failed to open directory";
-      setError(message);
-      console.error("open directory failed:", err);
-    }
-  }, [loadChannels, handleSelect]);
+    },
+    [loadChannels, handleSelect],
+  );
 
-  const handleCreateChannel = useCallback(async (name: string) => {
-    setError(null);
-    try {
-      const channelId = await createChannel(name);
-      await loadChannels();
-      handleSelect(channelId);
-    } catch (err) {
-      const message = err instanceof Error ? err.message : "Failed to create channel";
-      setError(message);
-      console.error("create channel failed:", err);
-    }
-  }, [loadChannels, handleSelect]);
+  const handleCreateChannel = useCallback(
+    async (name: string) => {
+      setError(null);
+      try {
+        const channelId = await createChannel(name);
+        await loadChannels();
+        handleSelect(channelId);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : "Failed to create channel";
+        setError(message);
+        console.error("create channel failed:", err);
+      }
+    },
+    [loadChannels, handleSelect],
+  );
 
   const handleCreateThread = useCallback(
     async (parentId: string, name: string) => {
@@ -522,9 +590,7 @@ function AppInner() {
   const selectedBranch = selectedChannel?.branch || "";
 
   // Derive channel ID/object for Settings when opened from a channel's config button.
-  const settingsChannel = settingsDirPath
-    ? channels.find((c) => c.dir_path === settingsDirPath && !c.parent_id) ?? null
-    : null;
+  const settingsChannel = settingsDirPath ? (channels.find((c) => c.dir_path === settingsDirPath && !c.parent_id) ?? null) : null;
   const settingsChannelId = settingsChannel?.id ?? null;
 
   return (
@@ -664,7 +730,10 @@ function AppInner() {
               onToggleSidebar={() => setSidebarOpen((v) => !v)}
               onOpenPalette={() => setPaletteOpen(true)}
               onClose={() => closePanel("tasks")}
-              onSelectChannel={(id) => { closePanel("tasks"); handleSelect(id); }}
+              onSelectChannel={(id) => {
+                closePanel("tasks");
+                handleSelect(id);
+              }}
             />
           )}
           {workflowsOpen && (
@@ -674,17 +743,13 @@ function AppInner() {
               sidebarOpen={sidebarOpen}
               onOpenPalette={() => setPaletteOpen(true)}
               onClose={() => closePanel("workflows")}
-              onSelectChannel={(id) => { closePanel("workflows"); handleSelect(id); }}
+              onSelectChannel={(id) => {
+                closePanel("workflows");
+                handleSelect(id);
+              }}
             />
           )}
-          {sharesOpen && (
-            <GlobalSharesPanel
-              channel={selectedChannel}
-              sidebarOpen={sidebarOpen}
-              onOpenPalette={() => setPaletteOpen(true)}
-              onClose={() => closePanel("shares")}
-            />
-          )}
+          {sharesOpen && <GlobalSharesPanel channel={selectedChannel} sidebarOpen={sidebarOpen} onOpenPalette={() => setPaletteOpen(true)} onClose={() => closePanel("shares")} />}
         </>
       ) : (
         <>
@@ -717,7 +782,10 @@ function AppInner() {
               onToggleSidebar={() => setSidebarOpen((v) => !v)}
               onOpenPalette={() => setPaletteOpen(true)}
               onClose={() => closePanel("tasks")}
-              onSelectChannel={(id) => { closePanel("tasks"); handleSelect(id); }}
+              onSelectChannel={(id) => {
+                closePanel("tasks");
+                handleSelect(id);
+              }}
             />
           ) : workflowsOpen ? (
             <WorkflowsGlobalPanel
@@ -725,14 +793,13 @@ function AppInner() {
               sidebarOpen={sidebarOpen}
               onOpenPalette={() => setPaletteOpen(true)}
               onClose={() => closePanel("workflows")}
-              onSelectChannel={(id) => { closePanel("workflows"); handleSelect(id); }}
+              onSelectChannel={(id) => {
+                closePanel("workflows");
+                handleSelect(id);
+              }}
             />
           ) : sharesOpen ? (
-            <GlobalSharesPanel
-              sidebarOpen={sidebarOpen}
-              onOpenPalette={() => setPaletteOpen(true)}
-              onClose={() => closePanel("shares")}
-            />
+            <GlobalSharesPanel sidebarOpen={sidebarOpen} onOpenPalette={() => setPaletteOpen(true)} onClose={() => closePanel("shares")} />
           ) : (
             <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center" }}>
               <LoopLogo />
@@ -752,23 +819,49 @@ function AppInner() {
 
       {/* Unsaved config changes — confirm channel switch */}
       {pendingSelectId !== null && (
-        <div style={{ position: "fixed", inset: 0, zIndex: 9999, display: "flex", alignItems: "center", justifyContent: "center", backgroundColor: "rgba(0,0,0,0.5)" }}
-          onClick={() => setPendingSelectId(null)}>
-          <div style={{ backgroundColor: colors.surface, borderRadius: 12, padding: "20px 24px", maxWidth: 360, boxShadow: "0 8px 32px rgba(0,0,0,0.3)" }}
-            onClick={(e) => e.stopPropagation()}>
+        <div
+          style={{ position: "fixed", inset: 0, zIndex: 9999, display: "flex", alignItems: "center", justifyContent: "center", backgroundColor: "rgba(0,0,0,0.5)" }}
+          onClick={() => setPendingSelectId(null)}
+        >
+          <div style={{ backgroundColor: colors.surface, borderRadius: 12, padding: "20px 24px", maxWidth: 360, boxShadow: "0 8px 32px rgba(0,0,0,0.3)" }} onClick={(e) => e.stopPropagation()}>
             <div style={{ fontSize: 14, fontWeight: 600, color: colors.text, marginBottom: 8 }}>Unsaved Changes</div>
-            <div style={{ fontSize: 13, color: colors.textDim, marginBottom: 16, lineHeight: 1.5 }}>
-              You have unsaved config changes. Discard them and switch channels?
-            </div>
+            <div style={{ fontSize: 13, color: colors.textDim, marginBottom: 16, lineHeight: 1.5 }}>You have unsaved config changes. Discard them and switch channels?</div>
             <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
-              <button onClick={() => setPendingSelectId(null)} style={{
-                padding: "6px 14px", backgroundColor: "transparent", border: `1px solid ${colors.border}`,
-                borderRadius: 6, color: colors.text, fontSize: 12, cursor: "pointer", fontFamily: "inherit",
-              }}>Cancel</button>
-              <button onClick={() => { const id = pendingSelectId; setPendingSelectId(null); doSelect(id); }} style={{
-                padding: "6px 14px", backgroundColor: colors.error, border: "none",
-                borderRadius: 6, color: colors.white, fontSize: 12, fontWeight: 500, cursor: "pointer", fontFamily: "inherit",
-              }}>Discard & Switch</button>
+              <button
+                onClick={() => setPendingSelectId(null)}
+                style={{
+                  padding: "6px 14px",
+                  backgroundColor: "transparent",
+                  border: `1px solid ${colors.border}`,
+                  borderRadius: 6,
+                  color: colors.text,
+                  fontSize: 12,
+                  cursor: "pointer",
+                  fontFamily: "inherit",
+                }}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => {
+                  const id = pendingSelectId;
+                  setPendingSelectId(null);
+                  doSelect(id);
+                }}
+                style={{
+                  padding: "6px 14px",
+                  backgroundColor: colors.error,
+                  border: "none",
+                  borderRadius: 6,
+                  color: colors.white,
+                  fontSize: 12,
+                  fontWeight: 500,
+                  cursor: "pointer",
+                  fontFamily: "inherit",
+                }}
+              >
+                Discard & Switch
+              </button>
             </div>
           </div>
         </div>

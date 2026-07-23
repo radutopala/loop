@@ -1,6 +1,6 @@
-import { gutter, GutterMarker } from "@codemirror/view";
-import { StateField, StateEffect } from "@codemirror/state";
-import { parseUnifiedDiff, type ParsedFile } from "./DiffViewer";
+import { StateEffect, StateField } from "@codemirror/state";
+import { GutterMarker, gutter } from "@codemirror/view";
+import { type ParsedFile, parseUnifiedDiff } from "./DiffViewer";
 
 // VCS change markers in the editor gutter: a thin
 // coloured bar to the left of each line that has been added or modified

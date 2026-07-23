@@ -1,33 +1,28 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
 import { hierarchy } from "@visx/hierarchy";
-import { useTheme } from "../../ThemeContext";
-import { useEventStream } from "../../hooks/useEventStream";
-import { fonts } from "../../theme";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   fetchQualitySnapshot,
   NoPreviousSignal,
-  simulateQualityWhatif,
-  triggerQualityScan,
   type QualityFileTile,
   type QualityMetric,
   type QualityRule,
   type QualityScanReport,
   type QualitySnapshot,
   type QualityWhatifResponse,
+  simulateQualityWhatif,
+  triggerQualityScan,
 } from "../../api/quality";
-import {
-  bandColor,
-  buildTreemapData,
-  formatScannedAt,
-  type TreemapDatum,
-} from "./quality/shared";
-import { OverviewTab } from "./quality/OverviewTab";
-import { DiagnosticsTab } from "./quality/DiagnosticsTab";
-import { HotspotsTab } from "./quality/HotspotsTab";
-import { CyclesTab } from "./quality/CyclesTab";
-import { EvolutionTab } from "./quality/EvolutionTab";
-import { WhatifTab } from "./quality/WhatifTab";
+import { useEventStream } from "../../hooks/useEventStream";
+import { useTheme } from "../../ThemeContext";
+import { fonts } from "../../theme";
 import { C4Tab } from "./quality/C4Tab";
+import { CyclesTab } from "./quality/CyclesTab";
+import { DiagnosticsTab } from "./quality/DiagnosticsTab";
+import { EvolutionTab } from "./quality/EvolutionTab";
+import { HotspotsTab } from "./quality/HotspotsTab";
+import { OverviewTab } from "./quality/OverviewTab";
+import { bandColor, buildTreemapData, formatScannedAt, type TreemapDatum } from "./quality/shared";
+import { WhatifTab } from "./quality/WhatifTab";
 
 interface QualityPanelProps {
   channelId: string;
@@ -152,34 +147,39 @@ export function QualityPanel({ channelId, embedded, onClose }: QualityPanelProps
     ro.observe(el);
   }, []);
 
-  const display: { signal: number; previous_signal: number; geo_mean: number; metrics: QualityMetric[]; tiles: QualityFileTile[]; rules?: { failed: QualityRule[] }; scanned_at: string; branch: string } | null =
-    scanReport
+  const display: {
+    signal: number;
+    previous_signal: number;
+    geo_mean: number;
+    metrics: QualityMetric[];
+    tiles: QualityFileTile[];
+    rules?: { failed: QualityRule[] };
+    scanned_at: string;
+    branch: string;
+  } | null = scanReport
+    ? {
+        signal: scanReport.signal,
+        previous_signal: scanReport.previous_signal,
+        geo_mean: scanReport.geo_mean,
+        metrics: scanReport.metrics,
+        tiles: scanReport.tiles ?? [],
+        rules: { failed: scanReport.rules?.failed ?? [] },
+        scanned_at: scanReport.scanned_at,
+        branch: scanReport.branch,
+      }
+    : snapshot
       ? {
-          signal: scanReport.signal,
-          previous_signal: scanReport.previous_signal,
-          geo_mean: scanReport.geo_mean,
-          metrics: scanReport.metrics,
-          tiles: scanReport.tiles ?? [],
-          rules: { failed: scanReport.rules?.failed ?? [] },
-          scanned_at: scanReport.scanned_at,
-          branch: scanReport.branch,
+          signal: snapshot.signal,
+          previous_signal: snapshot.previous_signal,
+          geo_mean: snapshot.geo_mean,
+          metrics: snapshot.metrics,
+          tiles: snapshot.tiles ?? [],
+          scanned_at: snapshot.scanned_at,
+          branch: snapshot.branch,
         }
-      : snapshot
-        ? {
-            signal: snapshot.signal,
-            previous_signal: snapshot.previous_signal,
-            geo_mean: snapshot.geo_mean,
-            metrics: snapshot.metrics,
-            tiles: snapshot.tiles ?? [],
-            scanned_at: snapshot.scanned_at,
-            branch: snapshot.branch,
-          }
-        : null;
+      : null;
 
-  const treemapData = useMemo(
-    () => (display ? buildTreemapData(display.tiles) : null),
-    [display],
-  );
+  const treemapData = useMemo(() => (display ? buildTreemapData(display.tiles) : null), [display]);
 
   const treemapRoot = useMemo(() => {
     if (!treemapData) return null;
@@ -245,11 +245,13 @@ export function QualityPanel({ channelId, embedded, onClose }: QualityPanelProps
       <div style={containerStyle}>
         <div style={headerStyle}>
           <span>Quality</span>
-          {!embedded && <button style={btnStyle} onClick={onClose}>Close</button>}
+          {!embedded && (
+            <button style={btnStyle} onClick={onClose}>
+              Close
+            </button>
+          )}
         </div>
-        <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", color: colors.textDim, fontSize: fontSizes.panels }}>
-          Loading…
-        </div>
+        <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", color: colors.textDim, fontSize: fontSizes.panels }}>Loading…</div>
       </div>
     );
   }
@@ -260,7 +262,11 @@ export function QualityPanel({ channelId, embedded, onClose }: QualityPanelProps
       <div style={containerStyle}>
         <div style={headerStyle}>
           <span>Quality</span>
-          {!embedded && <button style={btnStyle} onClick={onClose}>Close</button>}
+          {!embedded && (
+            <button style={btnStyle} onClick={onClose}>
+              Close
+            </button>
+          )}
         </div>
         <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 12, padding: 20, textAlign: "center" }}>
           <button
@@ -296,25 +302,21 @@ export function QualityPanel({ channelId, embedded, onClose }: QualityPanelProps
   const deltaLabel = delta > 0 ? `Δ +${delta}` : `Δ ${delta}`;
   const failedRules = display && "rules" in display && display.rules ? display.rules.failed : [];
   const showProgress = scanning && progress !== null;
-  const headerLabel = scanning
-    ? showProgress
-      ? `Scanning… ${progress!.done}/${progress!.total} files`
-      : "Scanning…"
-    : null;
+  const headerLabel = scanning ? (showProgress ? `Scanning… ${progress!.done}/${progress!.total} files` : "Scanning…") : null;
 
   return (
     <div style={containerStyle}>
       <div style={headerStyle}>
         <span>Quality</span>
         <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-          <button
-            style={{ ...btnStyle, opacity: scanning ? 0.5 : 1, cursor: scanning ? "not-allowed" : "pointer" }}
-            onClick={handleScan}
-            disabled={scanning}
-          >
+          <button style={{ ...btnStyle, opacity: scanning ? 0.5 : 1, cursor: scanning ? "not-allowed" : "pointer" }} onClick={handleScan} disabled={scanning}>
             {scanning ? "Scanning…" : "Scan now"}
           </button>
-          {!embedded && <button style={btnStyle} onClick={onClose}>Close</button>}
+          {!embedded && (
+            <button style={btnStyle} onClick={onClose}>
+              Close
+            </button>
+          )}
         </div>
       </div>
 
@@ -324,11 +326,7 @@ export function QualityPanel({ channelId, embedded, onClose }: QualityPanelProps
         </div>
       )}
 
-      {error && (
-        <div style={{ padding: "6px 12px", background: "rgba(239, 68, 68, 0.15)", color: colors.error, fontSize: fontSizes.panels, borderBottom: `1px solid ${colors.border}` }}>
-          {error}
-        </div>
-      )}
+      {error && <div style={{ padding: "6px 12px", background: "rgba(239, 68, 68, 0.15)", color: colors.error, fontSize: fontSizes.panels, borderBottom: `1px solid ${colors.border}` }}>{error}</div>}
 
       {/* Headline (always visible, regardless of tab) */}
       <div style={{ padding: "16px 12px", borderBottom: `1px solid ${colors.border}` }}>
@@ -347,19 +345,13 @@ export function QualityPanel({ channelId, embedded, onClose }: QualityPanelProps
           // Δ-since-last-scan rides alongside as a secondary chip and
           // the previous value drops below in muted text.
           <div style={{ display: "flex", alignItems: "baseline", gap: 14, flexWrap: "wrap" }}>
-            <span style={{ fontSize: 48, fontWeight: 700, color: sigColor, fontFamily: fonts.mono, lineHeight: 1 }}>
-              {sig}
-            </span>
-            <span
-              style={{ fontSize: 18, fontWeight: 600, color: deltaColor, fontFamily: fonts.mono }}
-              title="Change in signal since the last scan of this branch"
-            >
+            <span style={{ fontSize: 48, fontWeight: 700, color: sigColor, fontFamily: fonts.mono, lineHeight: 1 }}>{sig}</span>
+            <span style={{ fontSize: 18, fontWeight: 600, color: deltaColor, fontFamily: fonts.mono }} title="Change in signal since the last scan of this branch">
               {deltaLabel}
             </span>
             <span style={{ color: colors.textDim, fontSize: 12 }}>
               from <span style={{ fontFamily: fonts.mono }}>{prev}</span>
-              {" · "}geo-mean {display?.geo_mean.toFixed(3)} · branch "{display?.branch}"
-              {display?.scanned_at ? ` · ${formatScannedAt(display.scanned_at)}` : ""}
+              {" · "}geo-mean {display?.geo_mean.toFixed(3)} · branch "{display?.branch}"{display?.scanned_at ? ` · ${formatScannedAt(display.scanned_at)}` : ""}
             </span>
           </div>
         ) : (
@@ -368,8 +360,7 @@ export function QualityPanel({ channelId, embedded, onClose }: QualityPanelProps
           <div style={{ display: "flex", alignItems: "baseline", gap: 12, flexWrap: "wrap" }}>
             <span style={{ fontSize: 48, fontWeight: 700, color: sigColor, fontFamily: fonts.mono, lineHeight: 1 }}>{sig}</span>
             <span style={{ color: colors.textDim, fontSize: 12 }}>
-              first scan · geo-mean {display?.geo_mean.toFixed(3)} · branch "{display?.branch}"
-              {display?.scanned_at ? ` · ${formatScannedAt(display.scanned_at)}` : ""}
+              first scan · geo-mean {display?.geo_mean.toFixed(3)} · branch "{display?.branch}"{display?.scanned_at ? ` · ${formatScannedAt(display.scanned_at)}` : ""}
             </span>
           </div>
         )}
@@ -418,42 +409,17 @@ export function QualityPanel({ channelId, embedded, onClose }: QualityPanelProps
           />
         )}
 
-        {activeTab === "diagnostics" && (
-          <DiagnosticsTab
-            tiles={display?.tiles ?? []}
-            colors={colors}
-            fontSizes={fontSizes}
-            btnStyle={btnStyle}
-            onSimulateDelete={runWhatifDelete}
-          />
-        )}
+        {activeTab === "diagnostics" && <DiagnosticsTab tiles={display?.tiles ?? []} colors={colors} fontSizes={fontSizes} btnStyle={btnStyle} onSimulateDelete={runWhatifDelete} />}
 
-        {activeTab === "hotspots" && (
-          <HotspotsTab channelId={channelId} scanGeneration={scanGeneration} colors={colors} fontSizes={fontSizes} />
-        )}
+        {activeTab === "hotspots" && <HotspotsTab channelId={channelId} scanGeneration={scanGeneration} colors={colors} fontSizes={fontSizes} />}
 
-        {activeTab === "cycles" && (
-          <CyclesTab channelId={channelId} scanGeneration={scanGeneration} colors={colors} fontSizes={fontSizes} />
-        )}
+        {activeTab === "cycles" && <CyclesTab channelId={channelId} scanGeneration={scanGeneration} colors={colors} fontSizes={fontSizes} />}
 
-        {activeTab === "evolution" && (
-          <EvolutionTab channelId={channelId} scanGeneration={scanGeneration} colors={colors} fontSizes={fontSizes} />
-        )}
+        {activeTab === "evolution" && <EvolutionTab channelId={channelId} scanGeneration={scanGeneration} colors={colors} fontSizes={fontSizes} />}
 
-        {activeTab === "whatif" && (
-          <WhatifTab
-            target={whatifTarget}
-            loading={whatifLoading}
-            error={whatifError}
-            result={whatifResult}
-            colors={colors}
-            fontSizes={fontSizes}
-          />
-        )}
+        {activeTab === "whatif" && <WhatifTab target={whatifTarget} loading={whatifLoading} error={whatifError} result={whatifResult} colors={colors} fontSizes={fontSizes} />}
 
-        {activeTab === "c4" && (
-          <C4Tab channelId={channelId} scanGeneration={scanGeneration} colors={colors} fontSizes={fontSizes} />
-        )}
+        {activeTab === "c4" && <C4Tab channelId={channelId} scanGeneration={scanGeneration} colors={colors} fontSizes={fontSizes} />}
       </div>
     </div>
   );

@@ -1,5 +1,5 @@
-import { useCallback, useRef } from "react";
 import type { RefObject } from "react";
+import { useCallback, useRef } from "react";
 import type { TerminalTarget } from "../types";
 import type { AgentOpenMode } from "../types/panels";
 
@@ -39,9 +39,7 @@ export function useSessionPersistence(
   rootIndex?: number,
 ) {
   const key = channelId ? sessionKey(channelId, target, instanceId) : null;
-  const sessionIdRef = useRef<string | null>(
-    key ? (sessionsByChannel.get(key) ?? null) : null,
-  );
+  const sessionIdRef = useRef<string | null>(key ? (sessionsByChannel.get(key) ?? null) : null);
   /** Set to true after kill to prevent auto-creating a new session on reconnect. */
   const killedRef = useRef(false);
 
@@ -84,7 +82,20 @@ export function useSessionPersistence(
         );
       } else if (channelId && !killedRef.current) {
         const size = getTerminalSizeRef?.current?.();
-        ws.send(JSON.stringify({ type: "create", channel_id: channelId, target, ...(target === "agent" && instanceId ? { agent_id: instanceId, leaf_id: instanceId } : {}), ...(claudeSessionId ? { session_id: claudeSessionId } : {}), ...(newSession ? { new_session: true } : {}), ...(openMode ? { open_mode: openMode } : {}), ...(rootIndex ? { root_index: rootIndex } : {}), ...(cmd && cmd.length > 0 ? { cmd } : {}), ...size }));
+        ws.send(
+          JSON.stringify({
+            type: "create",
+            channel_id: channelId,
+            target,
+            ...(target === "agent" && instanceId ? { agent_id: instanceId, leaf_id: instanceId } : {}),
+            ...(claudeSessionId ? { session_id: claudeSessionId } : {}),
+            ...(newSession ? { new_session: true } : {}),
+            ...(openMode ? { open_mode: openMode } : {}),
+            ...(rootIndex ? { root_index: rootIndex } : {}),
+            ...(cmd && cmd.length > 0 ? { cmd } : {}),
+            ...size,
+          }),
+        );
       }
     },
     [channelId, target, instanceId, claudeSessionId, newSession, openMode, rootIndex, cmd, getTerminalSizeRef],

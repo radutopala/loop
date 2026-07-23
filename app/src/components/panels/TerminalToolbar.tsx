@@ -1,5 +1,5 @@
-import type { SessionStatus } from "../../types";
 import { useTheme } from "../../ThemeContext";
+import type { SessionStatus } from "../../types";
 import { StatusBadge } from "../shared/StatusBadge";
 
 interface TerminalToolbarProps {

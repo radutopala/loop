@@ -1,6 +1,23 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { fetchQueuedMessages } from "../api/channels";
-import type { AgentActivityData, AgentStatusData, AgentThinkingData, AgentTasksData, AskUserQuestionData, ExitPlanModeData, GateApprovalRequestedData, GateApprovalResolvedData, Message, MessageCreatedData, MessagesProcessedData, MessageStreamingData, TimelineItem, ToolResultData, ToolUseData, WSEvent } from "../types";
+import type {
+  AgentActivityData,
+  AgentStatusData,
+  AgentTasksData,
+  AgentThinkingData,
+  AskUserQuestionData,
+  ExitPlanModeData,
+  GateApprovalRequestedData,
+  GateApprovalResolvedData,
+  Message,
+  MessageCreatedData,
+  MessageStreamingData,
+  MessagesProcessedData,
+  TimelineItem,
+  ToolResultData,
+  ToolUseData,
+  WSEvent,
+} from "../types";
 import type { ActiveChatState, ChatEventListener } from "./useChatStateStore";
 import { useTimeline } from "./useTimeline";
 
@@ -74,11 +91,7 @@ interface UseChatStateOptions {
  * app-level store), events arrive via the store's single WebSocket. Otherwise,
  * no events are received (the hook relies on initialState for restoration).
  */
-export function useChatState(
-  channelId: string | null,
-  initialRunningBot?: boolean,
-  options?: UseChatStateOptions,
-): ChatState {
+export function useChatState(channelId: string | null, initialRunningBot?: boolean, options?: UseChatStateOptions): ChatState {
   const { initialState, onUnmount, subscribeChatEvents, clearAskUserPill, clearPlanPill } = options ?? {};
 
   const {
@@ -322,7 +335,10 @@ export function useChatState(
           const next: Record<string, GateApprovalRequestedData> = {};
           let removed = false;
           for (const [k, v] of Object.entries(prev)) {
-            if (v.req_id === data.req_id) { removed = true; continue; }
+            if (v.req_id === data.req_id) {
+              removed = true;
+              continue;
+            }
             next[k] = v;
           }
           return removed ? next : prev;

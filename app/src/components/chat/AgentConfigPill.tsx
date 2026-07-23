@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { fetchAgentConfig, updateAgentConfig } from "../../api/channels";
-import { fonts } from "../../theme";
 import { useTheme } from "../../ThemeContext";
+import { fonts } from "../../theme";
 import { logErr } from "../../utils/log";
 
 // Mirrors the config schema's claude_model options (internal/config/schema.go);
@@ -32,77 +32,110 @@ export function AgentConfigPill({ channelId }: { channelId: string }) {
 
   useEffect(() => {
     let cancelled = false;
-    fetchAgentConfig(channelId).then((cfg) => {
-      if (cancelled) return;
-      setModel(cfg.model);
-      setEffort(cfg.effort);
-      setDefaults({ model: cfg.default_model, effort: cfg.default_effort });
-    }).catch(logErr("fetching agent config"));
-    return () => { cancelled = true; };
+    fetchAgentConfig(channelId)
+      .then((cfg) => {
+        if (cancelled) return;
+        setModel(cfg.model);
+        setEffort(cfg.effort);
+        setDefaults({ model: cfg.default_model, effort: cfg.default_effort });
+      })
+      .catch(logErr("fetching agent config"));
+    return () => {
+      cancelled = true;
+    };
   }, [channelId]);
 
-  const apply = useCallback(async (nextModel: string, nextEffort: string) => {
-    setError(null);
-    const prev = { model, effort };
-    setModel(nextModel);
-    setEffort(nextEffort);
-    try {
-      await updateAgentConfig(channelId, nextModel, nextEffort);
-    } catch (e) {
-      setModel(prev.model);
-      setEffort(prev.effort);
-      setError(e instanceof Error ? e.message : "Failed to update");
-    }
-  }, [channelId, model, effort]);
+  const apply = useCallback(
+    async (nextModel: string, nextEffort: string) => {
+      setError(null);
+      const prev = { model, effort };
+      setModel(nextModel);
+      setEffort(nextEffort);
+      try {
+        await updateAgentConfig(channelId, nextModel, nextEffort);
+      } catch (e) {
+        setModel(prev.model);
+        setEffort(prev.effort);
+        setError(e instanceof Error ? e.message : "Failed to update");
+      }
+    },
+    [channelId, model, effort],
+  );
 
   const overridden = model !== "" || effort !== "";
-  const label = overridden
-    ? [model ? shortModel(model) : null, effort || null].filter(Boolean).join(" · ")
-    : "model";
+  const label = overridden ? [model ? shortModel(model) : null, effort || null].filter(Boolean).join(" · ") : "model";
 
   const rowStyle = (selected: boolean): React.CSSProperties => ({
-    display: "flex", alignItems: "center", gap: 6, width: "100%",
-    padding: "3px 10px", border: "none", background: "transparent",
+    display: "flex",
+    alignItems: "center",
+    gap: 6,
+    width: "100%",
+    padding: "3px 10px",
+    border: "none",
+    background: "transparent",
     color: selected ? colors.textLight : colors.textDim,
-    cursor: "pointer", fontSize: 11, fontFamily: fonts.mono, textAlign: "left",
+    cursor: "pointer",
+    fontSize: 11,
+    fontFamily: fonts.mono,
+    textAlign: "left",
   });
   const sectionStyle: React.CSSProperties = {
-    padding: "4px 10px 2px", fontSize: 9, color: colors.textDim,
-    textTransform: "uppercase", letterSpacing: 1,
+    padding: "4px 10px 2px",
+    fontSize: 9,
+    color: colors.textDim,
+    textTransform: "uppercase",
+    letterSpacing: 1,
   };
 
   return (
     <div style={{ position: "relative", display: "flex", alignItems: "center", flexShrink: 0, marginRight: 8 }}>
       <button
         onClick={() => setOpen((v) => !v)}
-        title={overridden
-          ? `Model/effort override active for this channel:\n${model || `(default ${defaults.model})`} · ${effort || `(default effort)`}\nApplies from the next run.`
-          : `Override the model/effort for this channel's runs (default: ${defaults.model || "config"}${defaults.effort ? ` · ${defaults.effort}` : ""})`}
+        title={
+          overridden
+            ? `Model/effort override active for this channel:\n${model || `(default ${defaults.model})`} · ${effort || `(default effort)`}\nApplies from the next run.`
+            : `Override the model/effort for this channel's runs (default: ${defaults.model || "config"}${defaults.effort ? ` · ${defaults.effort}` : ""})`
+        }
         style={{
-          display: "flex", alignItems: "center", gap: 4,
-          height: 24, padding: "0 8px",
+          display: "flex",
+          alignItems: "center",
+          gap: 4,
+          height: 24,
+          padding: "0 8px",
           background: "transparent",
           border: `1px solid ${overridden ? colors.active : colors.border}`,
           borderRadius: 12,
           color: overridden ? colors.active : colors.textDim,
-          cursor: "pointer", fontFamily: fonts.mono, fontSize: 10,
+          cursor: "pointer",
+          fontFamily: fonts.mono,
+          fontSize: 10,
         }}
       >
         <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
-          <line x1="4" y1="8" x2="20" y2="8" /><circle cx="9" cy="8" r="2.5" fill="currentColor" stroke="none" />
-          <line x1="4" y1="16" x2="20" y2="16" /><circle cx="15" cy="16" r="2.5" fill="currentColor" stroke="none" />
+          <line x1="4" y1="8" x2="20" y2="8" />
+          <circle cx="9" cy="8" r="2.5" fill="currentColor" stroke="none" />
+          <line x1="4" y1="16" x2="20" y2="16" />
+          <circle cx="15" cy="16" r="2.5" fill="currentColor" stroke="none" />
         </svg>
         {label}
       </button>
       {open && (
         <>
           <div style={{ position: "fixed", inset: 0, zIndex: 999 }} onMouseDown={() => setOpen(false)} />
-          <div style={{
-            position: "absolute", bottom: "calc(100% + 6px)", right: 0, zIndex: 1000,
-            minWidth: 240, backgroundColor: colors.surface,
-            border: `1px solid ${colors.border}`, borderRadius: 8,
-            boxShadow: `0 4px 12px ${colors.shadow}`, padding: "4px 0",
-          }}>
+          <div
+            style={{
+              position: "absolute",
+              bottom: "calc(100% + 6px)",
+              right: 0,
+              zIndex: 1000,
+              minWidth: 240,
+              backgroundColor: colors.surface,
+              border: `1px solid ${colors.border}`,
+              borderRadius: 8,
+              boxShadow: `0 4px 12px ${colors.shadow}`,
+              padding: "4px 0",
+            }}
+          >
             <div style={sectionStyle}>Model</div>
             <button style={rowStyle(model === "")} onClick={() => apply("", effort)}>
               <span style={{ width: 12 }}>{model === "" ? "✓" : ""}</span>
@@ -132,9 +165,15 @@ export function AgentConfigPill({ channelId }: { channelId: string }) {
                 }}
                 placeholder="custom model id…"
                 style={{
-                  flex: 1, padding: "3px 6px", fontSize: 11, fontFamily: fonts.mono,
-                  backgroundColor: colors.bg, border: `1px solid ${colors.border}`,
-                  borderRadius: 4, color: colors.text, outline: "none",
+                  flex: 1,
+                  padding: "3px 6px",
+                  fontSize: 11,
+                  fontFamily: fonts.mono,
+                  backgroundColor: colors.bg,
+                  border: `1px solid ${colors.border}`,
+                  borderRadius: 4,
+                  color: colors.text,
+                  outline: "none",
                 }}
               />
             </div>
@@ -154,12 +193,8 @@ export function AgentConfigPill({ channelId }: { channelId: string }) {
                 {ef}
               </button>
             ))}
-            {error && (
-              <div style={{ padding: "4px 10px", fontSize: 10, color: colors.warning }}>{error}</div>
-            )}
-            <div style={{ padding: "4px 10px 2px", fontSize: 9, color: colors.textDim }}>
-              Applies to this channel's next run
-            </div>
+            {error && <div style={{ padding: "4px 10px", fontSize: 10, color: colors.warning }}>{error}</div>}
+            <div style={{ padding: "4px 10px 2px", fontSize: 9, color: colors.textDim }}>Applies to this channel's next run</div>
           </div>
         </>
       )}

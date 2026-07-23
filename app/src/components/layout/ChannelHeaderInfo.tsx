@@ -1,8 +1,8 @@
-import { useState, useEffect } from "react";
-import type { Channel } from "../../types";
+import { useEffect, useState } from "react";
+import { fetchCommits } from "../../api/git";
 import type { ColorPalette } from "../../theme";
 import { fonts } from "../../theme";
-import { fetchCommits } from "../../api/git";
+import type { Channel } from "../../types";
 import { logErr } from "../../utils/log";
 
 interface ChannelHeaderInfoProps {
@@ -36,7 +36,9 @@ export function ChannelHeaderInfo({ channel, colors, hideBranch }: ChannelHeader
         setAtBase(!!tip && (tip.short === commit || tip.hash.startsWith(commit)));
       })
       .catch(logErr("fetching base branch commit"));
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+    };
   }, [channel.id, channel.worktree, channel.base_branch, commit]);
 
   if (!dirPath) return null;
@@ -44,7 +46,11 @@ export function ChannelHeaderInfo({ channel, colors, hideBranch }: ChannelHeader
   return (
     <>
       <span
-        onDoubleClick={(e) => { navigator.clipboard.writeText(dirPath); const sel = window.getSelection(); sel?.selectAllChildren(e.currentTarget); }}
+        onDoubleClick={(e) => {
+          navigator.clipboard.writeText(dirPath);
+          const sel = window.getSelection();
+          sel?.selectAllChildren(e.currentTarget);
+        }}
         title="Double-click to copy path"
         style={{
           fontSize: 12,
@@ -70,7 +76,11 @@ export function ChannelHeaderInfo({ channel, colors, hideBranch }: ChannelHeader
           <span aria-label="Channel">#</span>
         )}
         <span
-          onDoubleClick={(e) => { navigator.clipboard.writeText(channel.id); const sel = window.getSelection(); sel?.selectAllChildren(e.currentTarget); }}
+          onDoubleClick={(e) => {
+            navigator.clipboard.writeText(channel.id);
+            const sel = window.getSelection();
+            sel?.selectAllChildren(e.currentTarget);
+          }}
           title={`${channel.parent_id ? "Thread" : "Channel"} ${channel.id}\nDouble-click to copy`}
           style={{ cursor: "default", WebkitAppRegion: "no-drag" }}
         >
@@ -88,7 +98,11 @@ export function ChannelHeaderInfo({ channel, colors, hideBranch }: ChannelHeader
           </svg>
           {channel.session_id ? (
             <span
-              onDoubleClick={(e) => { navigator.clipboard.writeText(channel.session_id); const sel = window.getSelection(); sel?.selectAllChildren(e.currentTarget); }}
+              onDoubleClick={(e) => {
+                navigator.clipboard.writeText(channel.session_id);
+                const sel = window.getSelection();
+                sel?.selectAllChildren(e.currentTarget);
+              }}
               title={`Session: ${channel.session_id}\nDouble-click to copy`}
               style={{ cursor: "default", WebkitAppRegion: "no-drag" }}
             >
@@ -109,7 +123,11 @@ export function ChannelHeaderInfo({ channel, colors, hideBranch }: ChannelHeader
               <line x1="15" y1="12" x2="21" y2="12" />
             </svg>
             <span
-              onDoubleClick={(e) => { navigator.clipboard.writeText(commit); const sel = window.getSelection(); sel?.selectAllChildren(e.currentTarget); }}
+              onDoubleClick={(e) => {
+                navigator.clipboard.writeText(commit);
+                const sel = window.getSelection();
+                sel?.selectAllChildren(e.currentTarget);
+              }}
               title="Double-click to copy commit hash"
               style={{ cursor: "default", WebkitAppRegion: "no-drag" }}
             >
@@ -122,13 +140,25 @@ export function ChannelHeaderInfo({ channel, colors, hideBranch }: ChannelHeader
         <>
           <span style={{ color: colors.border, flexShrink: 0, margin: "0 8px" }}>|</span>
           <span
-            onDoubleClick={(e) => { navigator.clipboard.writeText(branch); const sel = window.getSelection(); sel?.selectAllChildren(e.currentTarget); }}
-            title="Double-click to copy branch name"
-            style={{ fontSize: 11, color: channel.worktree ? colors.active : colors.textDim, fontFamily: fonts.mono, flexShrink: 0, cursor: "default",
-              WebkitAppRegion: "no-drag",
+            onDoubleClick={(e) => {
+              navigator.clipboard.writeText(branch);
+              const sel = window.getSelection();
+              sel?.selectAllChildren(e.currentTarget);
             }}
+            title="Double-click to copy branch name"
+            style={{ fontSize: 11, color: channel.worktree ? colors.active : colors.textDim, fontFamily: fonts.mono, flexShrink: 0, cursor: "default", WebkitAppRegion: "no-drag" }}
           >
-            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ marginRight: 2, verticalAlign: -1 }}>
+            <svg
+              width="10"
+              height="10"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2.5"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              style={{ marginRight: 2, verticalAlign: -1 }}
+            >
               <line x1="6" y1="3" x2="6" y2="15" />
               <circle cx="18" cy="6" r="3" />
               <circle cx="6" cy="18" r="3" />

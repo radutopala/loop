@@ -1,17 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { useTheme } from "../../ThemeContext";
-import { useEventStream } from "../../hooks/useEventStream";
-import {
-  fetchTasks,
-  createTask,
-  updateTask,
-  deleteTask,
-  fetchTaskRuns,
-  runTaskNow,
-  fetchWorkflows,
-} from "../../api/loopApi";
 import type { ScheduledTask, TaskRunLog, WorkflowDef } from "../../api/loopApi";
-import { timeAgo, nextRunLabel, TYPE_COLORS, defaultScheduleForType } from "../../utils/taskUtils";
+import { createTask, deleteTask, fetchTaskRuns, fetchTasks, fetchWorkflows, runTaskNow, updateTask } from "../../api/loopApi";
+import { useEventStream } from "../../hooks/useEventStream";
+import { useTheme } from "../../ThemeContext";
+import { defaultScheduleForType, nextRunLabel, TYPE_COLORS, timeAgo } from "../../utils/taskUtils";
 import { TaskScheduleField, type TaskType } from "./TaskScheduleField";
 
 interface TasksPanelProps {
@@ -83,7 +75,11 @@ export function TasksPanel({ channelId, allowWorktree, onSelectChannel }: TasksP
   }, [loadTasks]);
 
   useEffect(() => {
-    fetchWorkflows(channelId).then(setWorkflows).catch(() => { /* ignore */ });
+    fetchWorkflows(channelId)
+      .then(setWorkflows)
+      .catch(() => {
+        /* ignore */
+      });
   }, [channelId]);
 
   useEffect(() => {
@@ -186,7 +182,11 @@ export function TasksPanel({ channelId, allowWorktree, onSelectChannel }: TasksP
     setEditBashScript(task.bash_script || "");
     let parsedInputs: Record<string, string> = {};
     if (task.workflow_inputs) {
-      try { parsedInputs = JSON.parse(task.workflow_inputs); } catch { /* ignore */ }
+      try {
+        parsedInputs = JSON.parse(task.workflow_inputs);
+      } catch {
+        /* ignore */
+      }
     }
     setEditWorkflowInputs(parsedInputs);
     setEditWorktree(task.worktree);
@@ -288,7 +288,15 @@ export function TasksPanel({ channelId, allowWorktree, onSelectChannel }: TasksP
   const renderCreateForm = () => (
     <div style={{ padding: 8, borderBottom: `1px solid ${colors.border}`, display: "flex", flexDirection: "column", gap: 6 }}>
       <div style={{ display: "flex", gap: 6 }}>
-        <select value={newType} onChange={(e) => { const t = e.target.value as TaskType; setNewType(t); setNewSchedule(defaultScheduleForType(t)); }} style={{ ...selectStyle, flex: 1 }}>
+        <select
+          value={newType}
+          onChange={(e) => {
+            const t = e.target.value as TaskType;
+            setNewType(t);
+            setNewSchedule(defaultScheduleForType(t));
+          }}
+          style={{ ...selectStyle, flex: 1 }}
+        >
           <option value="cron">Cron</option>
           <option value="interval">Interval</option>
           <option value="once">Once</option>
@@ -299,7 +307,13 @@ export function TasksPanel({ channelId, allowWorktree, onSelectChannel }: TasksP
       <div style={{ display: "flex", gap: 4 }}>
         <button
           onClick={() => setNewMode("prompt")}
-          style={{ ...btnSecondaryStyle, padding: "2px 8px", fontSize: 11, background: newMode === "prompt" ? colors.surface : "transparent", color: newMode === "prompt" ? colors.text : colors.textDim }}
+          style={{
+            ...btnSecondaryStyle,
+            padding: "2px 8px",
+            fontSize: 11,
+            background: newMode === "prompt" ? colors.surface : "transparent",
+            color: newMode === "prompt" ? colors.text : colors.textDim,
+          }}
         >
           Prompt
         </button>
@@ -307,7 +321,14 @@ export function TasksPanel({ channelId, allowWorktree, onSelectChannel }: TasksP
           onClick={() => setNewMode("workflow")}
           disabled={workflows.length === 0}
           title={workflows.length === 0 ? "No workflows defined" : ""}
-          style={{ ...btnSecondaryStyle, padding: "2px 8px", fontSize: 11, background: newMode === "workflow" ? colors.surface : "transparent", color: newMode === "workflow" ? colors.text : colors.textDim, opacity: workflows.length === 0 ? 0.5 : 1 }}
+          style={{
+            ...btnSecondaryStyle,
+            padding: "2px 8px",
+            fontSize: 11,
+            background: newMode === "workflow" ? colors.surface : "transparent",
+            color: newMode === "workflow" ? colors.text : colors.textDim,
+            opacity: workflows.length === 0 ? 0.5 : 1,
+          }}
         >
           Workflow
         </button>
@@ -320,13 +341,7 @@ export function TasksPanel({ channelId, allowWorktree, onSelectChannel }: TasksP
         </button>
       </div>
       {newMode === "prompt" ? (
-        <textarea
-          placeholder="Task prompt..."
-          value={newPrompt}
-          onChange={(e) => setNewPrompt(e.target.value)}
-          rows={3}
-          style={{ ...inputStyle, resize: "vertical", fontFamily: "inherit" }}
-        />
+        <textarea placeholder="Task prompt..." value={newPrompt} onChange={(e) => setNewPrompt(e.target.value)} rows={3} style={{ ...inputStyle, resize: "vertical", fontFamily: "inherit" }} />
       ) : newMode === "bash" ? (
         <textarea
           placeholder={"Shell script… (runs in the agent container; output is posted to the channel)"}
@@ -338,30 +353,31 @@ export function TasksPanel({ channelId, allowWorktree, onSelectChannel }: TasksP
         />
       ) : (
         <>
-          <select
-            value={newWorkflowName}
-            onChange={(e) => onSelectNewWorkflow(e.target.value)}
-            style={selectStyle}
-          >
+          <select value={newWorkflowName} onChange={(e) => onSelectNewWorkflow(e.target.value)} style={selectStyle}>
             <option value="">Select workflow...</option>
             {workflows.map((w) => (
-              <option key={w.name} value={w.name}>{w.name}</option>
+              <option key={w.name} value={w.name}>
+                {w.name}
+              </option>
             ))}
           </select>
-          {selectedNewWorkflow?.inputs && Object.entries(selectedNewWorkflow.inputs).map(([key, def]) => (
-            <div key={key} style={{ display: "flex", flexDirection: "column", gap: 2 }}>
-              <label style={{ fontSize: 11, color: colors.textDim }}>
-                {key}{def.required ? " *" : ""}{def.description ? ` — ${def.description}` : ""}
-              </label>
-              <input
-                type="text"
-                placeholder={def.default ? `default: ${def.default}` : key}
-                value={newWorkflowInputs[key] ?? ""}
-                onChange={(e) => setNewWorkflowInputs((prev) => ({ ...prev, [key]: e.target.value }))}
-                style={inputStyle}
-              />
-            </div>
-          ))}
+          {selectedNewWorkflow?.inputs &&
+            Object.entries(selectedNewWorkflow.inputs).map(([key, def]) => (
+              <div key={key} style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+                <label style={{ fontSize: 11, color: colors.textDim }}>
+                  {key}
+                  {def.required ? " *" : ""}
+                  {def.description ? ` — ${def.description}` : ""}
+                </label>
+                <input
+                  type="text"
+                  placeholder={def.default ? `default: ${def.default}` : key}
+                  value={newWorkflowInputs[key] ?? ""}
+                  onChange={(e) => setNewWorkflowInputs((prev) => ({ ...prev, [key]: e.target.value }))}
+                  style={inputStyle}
+                />
+              </div>
+            ))}
         </>
       )}
       <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
@@ -373,13 +389,7 @@ export function TasksPanel({ channelId, allowWorktree, onSelectChannel }: TasksP
         )}
         {newWorktree && (
           <>
-            <input
-              type="text"
-              placeholder="Origin branch (auto-detect)"
-              value={newOriginBranch}
-              onChange={(e) => setNewOriginBranch(e.target.value)}
-              style={{ ...inputStyle, width: 150 }}
-            />
+            <input type="text" placeholder="Origin branch (auto-detect)" value={newOriginBranch} onChange={(e) => setNewOriginBranch(e.target.value)} style={{ ...inputStyle, width: 150 }} />
             <label style={{ display: "flex", alignItems: "center", gap: 4, color: colors.textDim, fontSize: 11, cursor: "pointer" }}>
               <input type="checkbox" checked={newUpdateBeforeRun} onChange={(e) => setNewUpdateBeforeRun(e.target.checked)} />
               Update before run
@@ -391,8 +401,12 @@ export function TasksPanel({ channelId, allowWorktree, onSelectChannel }: TasksP
           <input type="number" value={newAutoDelete} onChange={(e) => setNewAutoDelete(Number(e.target.value))} style={{ ...inputStyle, width: 60 }} min={0} />
         </label>
         <div style={{ flex: 1 }} />
-        <button onClick={() => setShowCreate(false)} style={btnSecondaryStyle}>Cancel</button>
-        <button onClick={handleCreate} disabled={!newCanSubmit} style={{ ...btnStyle, opacity: newCanSubmit ? 1 : 0.5 }}>Create</button>
+        <button onClick={() => setShowCreate(false)} style={btnSecondaryStyle}>
+          Cancel
+        </button>
+        <button onClick={handleCreate} disabled={!newCanSubmit} style={{ ...btnStyle, opacity: newCanSubmit ? 1 : 0.5 }}>
+          Create
+        </button>
       </div>
     </div>
   );
@@ -403,7 +417,10 @@ export function TasksPanel({ channelId, allowWorktree, onSelectChannel }: TasksP
       <div
         key={task.id}
         data-testid={`task-row-${task.id}`}
-        onClick={() => { setSelectedId(task.id); setEditing(false); }}
+        onClick={() => {
+          setSelectedId(task.id);
+          setEditing(false);
+        }}
         style={{
           padding: "6px 8px",
           cursor: "pointer",
@@ -415,8 +432,12 @@ export function TasksPanel({ channelId, allowWorktree, onSelectChannel }: TasksP
           fontSize: 12,
           opacity: task.enabled ? 1 : 0.5,
         }}
-        onMouseEnter={(e) => { if (!isSelected) e.currentTarget.style.background = "rgba(255,255,255,0.04)"; }}
-        onMouseLeave={(e) => { if (!isSelected) e.currentTarget.style.background = "transparent"; }}
+        onMouseEnter={(e) => {
+          if (!isSelected) e.currentTarget.style.background = "rgba(255,255,255,0.04)";
+        }}
+        onMouseLeave={(e) => {
+          if (!isSelected) e.currentTarget.style.background = "transparent";
+        }}
       >
         <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
           <span
@@ -433,16 +454,19 @@ export function TasksPanel({ channelId, allowWorktree, onSelectChannel }: TasksP
           >
             {task.type}
           </span>
-          <span style={{ color: colors.textLight, fontFamily: "monospace", fontSize: 11, flexShrink: 0 }}>
-            {task.type === "manual" ? "on demand" : task.schedule}
-          </span>
+          <span style={{ color: colors.textLight, fontFamily: "monospace", fontSize: 11, flexShrink: 0 }}>{task.type === "manual" ? "on demand" : task.schedule}</span>
           {task.worktree && (
-            <span title="Runs in worktree" style={{ fontSize: 11, flexShrink: 0 }}>wt</span>
+            <span title="Runs in worktree" style={{ fontSize: 11, flexShrink: 0 }}>
+              wt
+            </span>
           )}
           <div style={{ flex: 1 }} />
           <span style={{ color: colors.textLight, fontSize: 10, flexShrink: 0 }}>#{task.id}</span>
           <button
-            onClick={(e) => { e.stopPropagation(); handleToggle(task); }}
+            onClick={(e) => {
+              e.stopPropagation();
+              handleToggle(task);
+            }}
             title={task.enabled ? "Disable" : "Enable"}
             style={{
               background: "none",
@@ -468,22 +492,14 @@ export function TasksPanel({ channelId, allowWorktree, onSelectChannel }: TasksP
         >
           {task.workflow_name ? `workflow: ${task.workflow_name}` : task.bash_script ? `bash: ${task.bash_script}` : task.prompt}
         </div>
-        {task.enabled && task.type !== "manual" && (
-          <div style={{ color: colors.textDim, fontSize: 10 }}>
-            Next: {nextRunLabel(task.next_run_at)}
-          </div>
-        )}
+        {task.enabled && task.type !== "manual" && <div style={{ color: colors.textDim, fontSize: 10 }}>Next: {nextRunLabel(task.next_run_at)}</div>}
       </div>
     );
   };
 
   const renderDetail = () => {
     if (!selectedTask) {
-      return (
-        <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", color: colors.textDim, fontSize: 13 }}>
-          Select a task to view details
-        </div>
-      );
+      return <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", color: colors.textDim, fontSize: 13 }}>Select a task to view details</div>;
     }
 
     if (editing) {
@@ -503,7 +519,15 @@ export function TasksPanel({ channelId, allowWorktree, onSelectChannel }: TasksP
         <div style={{ flex: 1, overflowY: "auto", padding: 12, display: "flex", flexDirection: "column", gap: 8 }}>
           <div style={{ fontSize: 13, fontWeight: 600, color: colors.text }}>Edit Task #{selectedTask.id}</div>
           <div style={{ display: "flex", gap: 6 }}>
-            <select value={editType} onChange={(e) => { const t = e.target.value as TaskType; setEditType(t); setEditSchedule(defaultScheduleForType(t)); }} style={{ ...selectStyle, flex: 1 }}>
+            <select
+              value={editType}
+              onChange={(e) => {
+                const t = e.target.value as TaskType;
+                setEditType(t);
+                setEditSchedule(defaultScheduleForType(t));
+              }}
+              style={{ ...selectStyle, flex: 1 }}
+            >
               <option value="cron">Cron</option>
               <option value="interval">Interval</option>
               <option value="once">Once</option>
@@ -514,7 +538,13 @@ export function TasksPanel({ channelId, allowWorktree, onSelectChannel }: TasksP
           <div style={{ display: "flex", gap: 4 }}>
             <button
               onClick={() => setEditMode("prompt")}
-              style={{ ...btnSecondaryStyle, padding: "2px 8px", fontSize: 11, background: editMode === "prompt" ? colors.surface : "transparent", color: editMode === "prompt" ? colors.text : colors.textDim }}
+              style={{
+                ...btnSecondaryStyle,
+                padding: "2px 8px",
+                fontSize: 11,
+                background: editMode === "prompt" ? colors.surface : "transparent",
+                color: editMode === "prompt" ? colors.text : colors.textDim,
+              }}
             >
               Prompt
             </button>
@@ -522,59 +552,62 @@ export function TasksPanel({ channelId, allowWorktree, onSelectChannel }: TasksP
               onClick={() => setEditMode("workflow")}
               disabled={workflows.length === 0}
               title={workflows.length === 0 ? "No workflows defined" : ""}
-              style={{ ...btnSecondaryStyle, padding: "2px 8px", fontSize: 11, background: editMode === "workflow" ? colors.surface : "transparent", color: editMode === "workflow" ? colors.text : colors.textDim, opacity: workflows.length === 0 ? 0.5 : 1 }}
+              style={{
+                ...btnSecondaryStyle,
+                padding: "2px 8px",
+                fontSize: 11,
+                background: editMode === "workflow" ? colors.surface : "transparent",
+                color: editMode === "workflow" ? colors.text : colors.textDim,
+                opacity: workflows.length === 0 ? 0.5 : 1,
+              }}
             >
               Workflow
             </button>
             <button
               onClick={() => setEditMode("bash")}
               title="Run a shell script in the channel's agent container"
-              style={{ ...btnSecondaryStyle, padding: "2px 8px", fontSize: 11, background: editMode === "bash" ? colors.surface : "transparent", color: editMode === "bash" ? colors.text : colors.textDim }}
+              style={{
+                ...btnSecondaryStyle,
+                padding: "2px 8px",
+                fontSize: 11,
+                background: editMode === "bash" ? colors.surface : "transparent",
+                color: editMode === "bash" ? colors.text : colors.textDim,
+              }}
             >
               Bash
             </button>
           </div>
           {editMode === "prompt" ? (
-            <textarea
-              value={editPrompt}
-              onChange={(e) => setEditPrompt(e.target.value)}
-              rows={5}
-              style={{ ...inputStyle, resize: "vertical", fontFamily: "inherit" }}
-            />
+            <textarea value={editPrompt} onChange={(e) => setEditPrompt(e.target.value)} rows={5} style={{ ...inputStyle, resize: "vertical", fontFamily: "inherit" }} />
           ) : editMode === "bash" ? (
-            <textarea
-              value={editBashScript}
-              onChange={(e) => setEditBashScript(e.target.value)}
-              rows={5}
-              spellCheck={false}
-              style={{ ...inputStyle, resize: "vertical", fontFamily: "monospace" }}
-            />
+            <textarea value={editBashScript} onChange={(e) => setEditBashScript(e.target.value)} rows={5} spellCheck={false} style={{ ...inputStyle, resize: "vertical", fontFamily: "monospace" }} />
           ) : (
             <>
-              <select
-                value={editWorkflowName}
-                onChange={(e) => onSelectEditWorkflow(e.target.value)}
-                style={selectStyle}
-              >
+              <select value={editWorkflowName} onChange={(e) => onSelectEditWorkflow(e.target.value)} style={selectStyle}>
                 <option value="">Select workflow...</option>
                 {workflows.map((w) => (
-                  <option key={w.name} value={w.name}>{w.name}</option>
+                  <option key={w.name} value={w.name}>
+                    {w.name}
+                  </option>
                 ))}
               </select>
-              {selectedEditWorkflow?.inputs && Object.entries(selectedEditWorkflow.inputs).map(([key, def]) => (
-                <div key={key} style={{ display: "flex", flexDirection: "column", gap: 2 }}>
-                  <label style={{ fontSize: 11, color: colors.textDim }}>
-                    {key}{def.required ? " *" : ""}{def.description ? ` — ${def.description}` : ""}
-                  </label>
-                  <input
-                    type="text"
-                    placeholder={def.default ? `default: ${def.default}` : key}
-                    value={editWorkflowInputs[key] ?? ""}
-                    onChange={(e) => setEditWorkflowInputs((prev) => ({ ...prev, [key]: e.target.value }))}
-                    style={inputStyle}
-                  />
-                </div>
-              ))}
+              {selectedEditWorkflow?.inputs &&
+                Object.entries(selectedEditWorkflow.inputs).map(([key, def]) => (
+                  <div key={key} style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+                    <label style={{ fontSize: 11, color: colors.textDim }}>
+                      {key}
+                      {def.required ? " *" : ""}
+                      {def.description ? ` — ${def.description}` : ""}
+                    </label>
+                    <input
+                      type="text"
+                      placeholder={def.default ? `default: ${def.default}` : key}
+                      value={editWorkflowInputs[key] ?? ""}
+                      onChange={(e) => setEditWorkflowInputs((prev) => ({ ...prev, [key]: e.target.value }))}
+                      style={inputStyle}
+                    />
+                  </div>
+                ))}
             </>
           )}
           <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
@@ -586,13 +619,7 @@ export function TasksPanel({ channelId, allowWorktree, onSelectChannel }: TasksP
             )}
             {editWorktree && (
               <>
-                <input
-                  type="text"
-                  placeholder="Origin branch (auto-detect)"
-                  value={editOriginBranch}
-                  onChange={(e) => setEditOriginBranch(e.target.value)}
-                  style={{ ...inputStyle, width: 150 }}
-                />
+                <input type="text" placeholder="Origin branch (auto-detect)" value={editOriginBranch} onChange={(e) => setEditOriginBranch(e.target.value)} style={{ ...inputStyle, width: 150 }} />
                 <label style={{ display: "flex", alignItems: "center", gap: 4, color: colors.textDim, fontSize: 11, cursor: "pointer" }}>
                   <input type="checkbox" checked={editUpdateBeforeRun} onChange={(e) => setEditUpdateBeforeRun(e.target.checked)} />
                   Update before run
@@ -605,8 +632,12 @@ export function TasksPanel({ channelId, allowWorktree, onSelectChannel }: TasksP
             </label>
           </div>
           <div style={{ display: "flex", gap: 6 }}>
-            <button onClick={() => setEditing(false)} style={btnSecondaryStyle}>Cancel</button>
-            <button onClick={handleSaveEdit} style={btnStyle}>Save</button>
+            <button onClick={() => setEditing(false)} style={btnSecondaryStyle}>
+              Cancel
+            </button>
+            <button onClick={handleSaveEdit} style={btnStyle}>
+              Save
+            </button>
           </div>
         </div>
       );
@@ -631,49 +662,35 @@ export function TasksPanel({ channelId, allowWorktree, onSelectChannel }: TasksP
             >
               {selectedTask.type}
             </span>
-            {selectedTask.worktree && (
-              <span style={{ fontSize: 11, color: colors.textDim, border: `1px solid ${colors.border}`, borderRadius: 3, padding: "0 4px" }}>worktree</span>
-            )}
+            {selectedTask.worktree && <span style={{ fontSize: 11, color: colors.textDim, border: `1px solid ${colors.border}`, borderRadius: 3, padding: "0 4px" }}>worktree</span>}
             <div style={{ flex: 1 }} />
             {selectedTask.running && selectedTask.thread_id ? (
-              <button
-                onClick={() => onSelectChannel?.(selectedTask.thread_id!)}
-                style={{ ...btnStyle, background: colors.warning ?? "#eab308" }}
-              >
+              <button onClick={() => onSelectChannel?.(selectedTask.thread_id!)} style={{ ...btnStyle, background: colors.warning ?? "#eab308" }}>
                 Running...
               </button>
             ) : (
-              <button
-                onClick={() => handleRunNow(selectedTask.id)}
-                disabled={runningNow || selectedTask.running}
-                style={{ ...btnStyle, opacity: runningNow || selectedTask.running ? 0.5 : 1 }}
-              >
+              <button onClick={() => handleRunNow(selectedTask.id)} disabled={runningNow || selectedTask.running} style={{ ...btnStyle, opacity: runningNow || selectedTask.running ? 0.5 : 1 }}>
                 {selectedTask.running ? "Running..." : runningNow ? "Starting..." : "\u25B6 Run Now"}
               </button>
             )}
             <button onClick={() => handleToggle(selectedTask)} style={{ ...btnSecondaryStyle, color: selectedTask.enabled ? (colors.warning ?? "#eab308") : colors.active }}>
               {selectedTask.enabled ? "Disable" : "Enable"}
             </button>
-            <button onClick={() => startEdit(selectedTask)} style={btnSecondaryStyle}>Edit</button>
-            <button
-              onClick={() => handleDelete(selectedTask.id)}
-              style={{ ...btnSecondaryStyle, color: colors.error ?? "#ef4444", borderColor: colors.error ?? "#ef4444" }}
-            >
+            <button onClick={() => startEdit(selectedTask)} style={btnSecondaryStyle}>
+              Edit
+            </button>
+            <button onClick={() => handleDelete(selectedTask.id)} style={{ ...btnSecondaryStyle, color: colors.error ?? "#ef4444", borderColor: colors.error ?? "#ef4444" }}>
               Delete
             </button>
           </div>
-          <div style={{ color: colors.textLight, fontSize: 12, fontFamily: "monospace" }}>
-            {selectedTask.type === "manual" ? "on demand (run manually)" : selectedTask.schedule}
-          </div>
+          <div style={{ color: colors.textLight, fontSize: 12, fontFamily: "monospace" }}>{selectedTask.type === "manual" ? "on demand (run manually)" : selectedTask.schedule}</div>
           {selectedTask.workflow_name ? (
             <>
               <div style={{ color: colors.text, fontSize: 12 }}>
                 <span style={{ color: colors.active, fontWeight: 600 }}>Workflow:</span> {selectedTask.workflow_name}
               </div>
               {selectedTask.workflow_inputs && selectedTask.workflow_inputs !== "{}" && (
-                <div style={{ color: colors.textDim, fontSize: 11, fontFamily: "monospace", whiteSpace: "pre-wrap" }}>
-                  Inputs: {selectedTask.workflow_inputs}
-                </div>
+                <div style={{ color: colors.textDim, fontSize: 11, fontFamily: "monospace", whiteSpace: "pre-wrap" }}>Inputs: {selectedTask.workflow_inputs}</div>
               )}
             </>
           ) : selectedTask.bash_script ? (
@@ -684,38 +701,25 @@ export function TasksPanel({ channelId, allowWorktree, onSelectChannel }: TasksP
               </pre>
             </div>
           ) : (
-            <div style={{ color: colors.text, fontSize: 12, whiteSpace: "pre-wrap" }}>
-              {selectedTask.prompt}
-            </div>
+            <div style={{ color: colors.text, fontSize: 12, whiteSpace: "pre-wrap" }}>{selectedTask.prompt}</div>
           )}
-          {selectedTask.enabled && selectedTask.type !== "manual" && (
-            <div style={{ color: colors.textDim, fontSize: 11 }}>
-              Next run: {nextRunLabel(selectedTask.next_run_at)}
-            </div>
-          )}
+          {selectedTask.enabled && selectedTask.type !== "manual" && <div style={{ color: colors.textDim, fontSize: 11 }}>Next run: {nextRunLabel(selectedTask.next_run_at)}</div>}
           {selectedTask.worktree && selectedTask.origin_branch && (
             <div style={{ color: colors.textDim, fontSize: 11 }}>
-              Branch: {selectedTask.origin_branch}{selectedTask.update_before_run ? " (updates before run)" : ""}
+              Branch: {selectedTask.origin_branch}
+              {selectedTask.update_before_run ? " (updates before run)" : ""}
             </div>
           )}
-          {selectedTask.auto_delete_sec > 0 && (
-            <div style={{ color: colors.textDim, fontSize: 11 }}>
-              Auto-delete after {selectedTask.auto_delete_sec}s
-            </div>
-          )}
+          {selectedTask.auto_delete_sec > 0 && <div style={{ color: colors.textDim, fontSize: 11 }}>Auto-delete after {selectedTask.auto_delete_sec}s</div>}
         </div>
 
         {/* Run history */}
         <div style={{ padding: "8px 12px", borderBottom: `1px solid ${colors.border}` }}>
-          <div style={{ fontSize: 11, color: colors.textDim, textTransform: "uppercase", letterSpacing: 1 }}>
-            Run History
-          </div>
+          <div style={{ fontSize: 11, color: colors.textDim, textTransform: "uppercase", letterSpacing: 1 }}>Run History</div>
         </div>
         <div style={{ flex: 1, minHeight: 0, overflowY: "auto" }}>
           {runs.length === 0 ? (
-            <div style={{ padding: 16, color: colors.textDim, fontSize: 12, textAlign: "center" }}>
-              No runs yet
-            </div>
+            <div style={{ padding: 16, color: colors.textDim, fontSize: 12, textAlign: "center" }}>No runs yet</div>
           ) : (
             runs.map((run) => (
               <div
@@ -740,25 +744,21 @@ export function TasksPanel({ channelId, allowWorktree, onSelectChannel }: TasksP
                     }}
                   />
                   <span style={{ color: colors.text }}>{run.status}</span>
-                  <span style={{ color: colors.textDim, fontSize: 11, marginLeft: "auto" }}>
-                    {timeAgo(run.started_at)}
-                  </span>
+                  <span style={{ color: colors.textDim, fontSize: 11, marginLeft: "auto" }}>{timeAgo(run.started_at)}</span>
                 </div>
-                {run.error_text && (
-                  <div style={{ color: colors.error ?? "#ef4444", fontSize: 11, paddingLeft: 14 }}>
-                    {run.error_text}
-                  </div>
-                )}
+                {run.error_text && <div style={{ color: colors.error ?? "#ef4444", fontSize: 11, paddingLeft: 14 }}>{run.error_text}</div>}
                 {run.response_text && (
-                  <div style={{
-                    color: colors.textDim,
-                    fontSize: 11,
-                    paddingLeft: 14,
-                    overflow: "hidden",
-                    textOverflow: "ellipsis",
-                    whiteSpace: "nowrap",
-                    maxWidth: "100%",
-                  }}>
+                  <div
+                    style={{
+                      color: colors.textDim,
+                      fontSize: 11,
+                      paddingLeft: 14,
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                      whiteSpace: "nowrap",
+                      maxWidth: "100%",
+                    }}
+                  >
                     {run.response_text.slice(0, 200)}
                   </div>
                 )}
@@ -808,11 +808,7 @@ export function TasksPanel({ channelId, allowWorktree, onSelectChannel }: TasksP
 
         <div style={{ flex: 1, overflowY: "auto" }}>
           {tasks.map((t) => renderTaskRow(t))}
-          {tasks.length === 0 && !showCreate && (
-            <div style={{ padding: 16, color: colors.textDim, fontSize: 12, textAlign: "center" }}>
-              No scheduled tasks
-            </div>
-          )}
+          {tasks.length === 0 && !showCreate && <div style={{ padding: 16, color: colors.textDim, fontSize: 12, textAlign: "center" }}>No scheduled tasks</div>}
         </div>
       </div>
 
@@ -828,9 +824,7 @@ export function TasksPanel({ channelId, allowWorktree, onSelectChannel }: TasksP
       />
 
       {/* Right: detail view */}
-      <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
-        {renderDetail()}
-      </div>
+      <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>{renderDetail()}</div>
     </div>
   );
 }

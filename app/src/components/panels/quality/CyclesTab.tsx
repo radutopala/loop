@@ -1,6 +1,6 @@
 import { fetchQualityCycles } from "../../../api/quality";
 import { fonts } from "../../../theme";
-import { useAsyncFetch, LoadingState, ErrorState, EmptyState, type AsyncTabProps } from "./shared";
+import { type AsyncTabProps, EmptyState, ErrorState, LoadingState, useAsyncFetch } from "./shared";
 
 export function CyclesTab({ channelId, scanGeneration, colors, fontSizes }: AsyncTabProps) {
   const { data, error, loading } = useAsyncFetch(() => fetchQualityCycles(channelId), [channelId, scanGeneration]);
@@ -18,7 +18,9 @@ export function CyclesTab({ channelId, scanGeneration, colors, fontSizes }: Asyn
       </div>
       {data.cycles.map((cyc, idx) => (
         <div key={idx} style={{ border: `1px solid ${colors.border}`, borderRadius: 4, padding: "8px 10px", background: colors.surface }}>
-          <div style={{ fontSize: 11, color: colors.textDim, marginBottom: 4 }}>Cycle #{idx + 1} ({cyc.length} files)</div>
+          <div style={{ fontSize: 11, color: colors.textDim, marginBottom: 4 }}>
+            Cycle #{idx + 1} ({cyc.length} files)
+          </div>
           <div style={{ display: "flex", flexDirection: "column", gap: 2, fontFamily: fonts.mono, fontSize: 11, color: colors.textLight }}>
             {cyc.map((f, j) => (
               <div key={j} style={{ display: "flex", alignItems: "center", gap: 6 }}>

@@ -1,4 +1,4 @@
-import type { PanelType, PaneNode, AgentOpenMode } from "../types/panels";
+import type { AgentOpenMode, PanelType, PaneNode } from "../types/panels";
 
 export interface CanvasNode {
   type: "canvas";

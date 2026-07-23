@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import { type BashShortcut, fetchBashShortcuts, fetchShortcuts, type PromptShortcut } from "../../api/configApi";
 import { useTheme } from "../../ThemeContext";
 import { fonts } from "../../theme";
-import { fetchShortcuts, fetchBashShortcuts, type PromptShortcut, type BashShortcut } from "../../api/configApi";
 import type { TerminalTarget } from "../../types";
 
 interface TerminalShortcutsProps {
@@ -27,7 +27,7 @@ type MenuKind = "prompt" | "bash";
  * Each opens a dropdown popping upward.
  */
 export function TerminalShortcuts({ channelId, leafId, onPick, target = "agent", showPrompts }: TerminalShortcutsProps) {
-  const promptsEnabled = showPrompts ?? (target === "agent");
+  const promptsEnabled = showPrompts ?? target === "agent";
   const { colors } = useTheme();
   const [prompts, setPrompts] = useState<PromptShortcut[]>([]);
   const [bash, setBash] = useState<BashShortcut[]>([]);
@@ -42,14 +42,24 @@ export function TerminalShortcuts({ channelId, leafId, onPick, target = "agent",
     let cancelled = false;
     if (promptsEnabled) {
       fetchShortcuts(channelId)
-        .then((list) => { if (!cancelled) setPrompts(list); })
-        .catch(() => { if (!cancelled) setPrompts([]); });
+        .then((list) => {
+          if (!cancelled) setPrompts(list);
+        })
+        .catch(() => {
+          if (!cancelled) setPrompts([]);
+        });
     } else {
       fetchBashShortcuts(channelId)
-        .then((list) => { if (!cancelled) setBash(list); })
-        .catch(() => { if (!cancelled) setBash([]); });
+        .then((list) => {
+          if (!cancelled) setBash(list);
+        })
+        .catch(() => {
+          if (!cancelled) setBash([]);
+        });
     }
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+    };
   }, [channelId, promptsEnabled]);
 
   useLayoutEffect(() => {
@@ -73,15 +83,21 @@ export function TerminalShortcuts({ channelId, leafId, onPick, target = "agent",
     return () => document.removeEventListener("mousedown", handler);
   }, [openKind]);
 
-  const pickPrompt = useCallback((sc: PromptShortcut) => {
-    setOpenKind(null);
-    onPick(sc.prompt);
-  }, [onPick]);
+  const pickPrompt = useCallback(
+    (sc: PromptShortcut) => {
+      setOpenKind(null);
+      onPick(sc.prompt);
+    },
+    [onPick],
+  );
 
-  const pickBash = useCallback((sc: BashShortcut) => {
-    setOpenKind(null);
-    onPick(sc.command);
-  }, [onPick]);
+  const pickBash = useCallback(
+    (sc: BashShortcut) => {
+      setOpenKind(null);
+      onPick(sc.command);
+    },
+    [onPick],
+  );
 
   const showPromptBtn = promptsEnabled && prompts.length > 0;
   const showBashBtn = !promptsEnabled && bash.length > 0;
@@ -123,7 +139,10 @@ export function TerminalShortcuts({ channelId, leafId, onPick, target = "agent",
       {showPromptBtn && (
         <button
           ref={promptBtnRef}
-          onClick={() => { setSelectedIdx(0); setOpenKind((k) => (k === "prompt" ? null : "prompt")); }}
+          onClick={() => {
+            setSelectedIdx(0);
+            setOpenKind((k) => (k === "prompt" ? null : "prompt"));
+          }}
           title="Prompt shortcuts"
           data-testid={`terminal-shortcuts-btn-${leafId}`}
           style={pickerBtnStyle(colors)}
@@ -142,7 +161,10 @@ export function TerminalShortcuts({ channelId, leafId, onPick, target = "agent",
       {showBashBtn && (
         <button
           ref={bashBtnRef}
-          onClick={() => { setSelectedIdx(0); setOpenKind((k) => (k === "bash" ? null : "bash")); }}
+          onClick={() => {
+            setSelectedIdx(0);
+            setOpenKind((k) => (k === "bash" ? null : "bash"));
+          }}
           title="Bash shortcuts"
           data-testid={`terminal-bash-shortcuts-btn-${leafId}`}
           style={pickerBtnStyle(colors)}
@@ -158,53 +180,56 @@ export function TerminalShortcuts({ channelId, leafId, onPick, target = "agent",
           $
         </button>
       )}
-      {openKind !== null && createPortal(
-        <div
-          ref={menuRef}
-          data-testid={`terminal-shortcuts-menu-${leafId}`}
-          style={{
-            position: "fixed",
-            bottom: menuPos.bottom,
-            left: menuPos.left,
-            zIndex: 1000,
-            backgroundColor: colors.sidebar,
-            border: `1px solid ${colors.border}`,
-            borderRadius: 8,
-            padding: "6px 0",
-            minWidth: 240,
-            maxHeight: 280,
-            overflow: "hidden",
-            boxShadow: `0 4px 12px ${colors.shadow}`,
-          }}
-        >
-          <div style={{ maxHeight: 268, overflowY: "auto", padding: "0 4px" }}>
-            {items.map((it, i) => (
-              <div
-                key={it.name}
-                onMouseDown={(e) => { e.preventDefault(); pickItem(i); }}
-                onMouseEnter={() => setSelectedIdx(i)}
-                style={{
-                  padding: "8px 12px",
-                  borderRadius: 6,
-                  cursor: "pointer",
-                  display: "flex",
-                  flexDirection: "column",
-                  gap: 2,
-                  backgroundColor: i === selectedIdx ? colors.selectedBg : "transparent",
-                }}
-              >
-                <div style={{ color: colors.textLight, fontWeight: 600, fontSize: 13, fontFamily: fonts.mono }}>
-                  {sigil}{it.name}
+      {openKind !== null &&
+        createPortal(
+          <div
+            ref={menuRef}
+            data-testid={`terminal-shortcuts-menu-${leafId}`}
+            style={{
+              position: "fixed",
+              bottom: menuPos.bottom,
+              left: menuPos.left,
+              zIndex: 1000,
+              backgroundColor: colors.sidebar,
+              border: `1px solid ${colors.border}`,
+              borderRadius: 8,
+              padding: "6px 0",
+              minWidth: 240,
+              maxHeight: 280,
+              overflow: "hidden",
+              boxShadow: `0 4px 12px ${colors.shadow}`,
+            }}
+          >
+            <div style={{ maxHeight: 268, overflowY: "auto", padding: "0 4px" }}>
+              {items.map((it, i) => (
+                <div
+                  key={it.name}
+                  onMouseDown={(e) => {
+                    e.preventDefault();
+                    pickItem(i);
+                  }}
+                  onMouseEnter={() => setSelectedIdx(i)}
+                  style={{
+                    padding: "8px 12px",
+                    borderRadius: 6,
+                    cursor: "pointer",
+                    display: "flex",
+                    flexDirection: "column",
+                    gap: 2,
+                    backgroundColor: i === selectedIdx ? colors.selectedBg : "transparent",
+                  }}
+                >
+                  <div style={{ color: colors.textLight, fontWeight: 600, fontSize: 13, fontFamily: fonts.mono }}>
+                    {sigil}
+                    {it.name}
+                  </div>
+                  <div style={{ color: colors.textMuted, fontSize: 12, fontFamily: fonts.sans }}>{it.description}</div>
                 </div>
-                <div style={{ color: colors.textMuted, fontSize: 12, fontFamily: fonts.sans }}>
-                  {it.description}
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>,
-        document.body,
-      )}
+              ))}
+            </div>
+          </div>,
+          document.body,
+        )}
     </div>
   );
 }

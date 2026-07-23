@@ -4,6 +4,7 @@ import { firstClipboardImage, uploadPastedImage } from "./clipboardImage";
 vi.mock("../api/channels", () => ({
   pasteImage: vi.fn(async () => "/work/.loop/pastes/paste-x.png"),
 }));
+
 import { pasteImage } from "../api/channels";
 
 // A minimal DataTransfer stand-in: firstClipboardImage only touches `.items`.

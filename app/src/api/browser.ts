@@ -20,10 +20,7 @@ export async function browserAction(
 }
 
 /** Switch browser mode between docker and host Chrome. */
-export async function switchBrowserMode(
-  channelId: string,
-  mode: "docker" | "host",
-): Promise<{ mode: string }> {
+export async function switchBrowserMode(channelId: string, mode: "docker" | "host"): Promise<{ mode: string }> {
   const res = await fetch(`${getApiUrl()}/api/browser/mode`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },

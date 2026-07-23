@@ -1,12 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { fetchWorkflowRun, type WorkflowNodeDef, type WorkflowNodeRun } from "../../api/workflows";
+import type { ChatEventListener } from "../../hooks/useChatStateStore";
 import type { ColorPalette } from "../../theme";
 import { fonts } from "../../theme";
-import {
-  fetchWorkflowRun,
-  type WorkflowNodeDef,
-  type WorkflowNodeRun,
-} from "../../api/workflows";
-import type { ChatEventListener } from "../../hooks/useChatStateStore";
 import type { WSEvent } from "../../types";
 import { WorkflowGraph } from "./WorkflowGraph";
 
@@ -41,13 +37,7 @@ function parseDefs(workflowDef: string | undefined): WorkflowNodeDef[] {
 // ReviewRunDrawer shows the live workflow canvas for a single review-loop run
 // as a collapsible drawer pinned to the bottom of the Review panel, so the
 // user can watch the loop's nodes progress without opening the Workflows panel.
-export function ReviewRunDrawer({
-  runId,
-  colors,
-  subscribeChatEvents,
-  collapsed,
-  onToggleCollapsed,
-}: ReviewRunDrawerProps) {
+export function ReviewRunDrawer({ runId, colors, subscribeChatEvents, collapsed, onToggleCollapsed }: ReviewRunDrawerProps) {
   const [defs, setDefs] = useState<WorkflowNodeDef[]>([]);
   const [nodeRuns, setNodeRuns] = useState<WorkflowNodeRun[]>([]);
   const [expandedNodeId, setExpandedNodeId] = useState<string | null>(null);
@@ -59,18 +49,21 @@ export function ReviewRunDrawer({
   const collapsedRef = useRef(collapsed);
   collapsedRef.current = collapsed;
 
-  const refetch = useCallback(async (signal?: AbortSignal) => {
-    try {
-      const detail = await fetchWorkflowRun(runId, signal ? { signal } : undefined);
-      setDefs(parseDefs(detail.run?.workflow_def));
-      setNodeRuns(detail.node_runs ?? []);
-      setWorkflowName(detail.run?.workflow_name ?? "");
-      const status = detail.run?.status;
-      setRunActive(status === "running" || status === "paused");
-    } catch {
-      /* transient — leave the last-known canvas in place */
-    }
-  }, [runId]);
+  const refetch = useCallback(
+    async (signal?: AbortSignal) => {
+      try {
+        const detail = await fetchWorkflowRun(runId, signal ? { signal } : undefined);
+        setDefs(parseDefs(detail.run?.workflow_def));
+        setNodeRuns(detail.node_runs ?? []);
+        setWorkflowName(detail.run?.workflow_name ?? "");
+        const status = detail.run?.status;
+        setRunActive(status === "running" || status === "paused");
+      } catch {
+        /* transient — leave the last-known canvas in place */
+      }
+    },
+    [runId],
+  );
 
   // Initial + on-runId-change fetch. Reset the expanded node so a new run
   // doesn't inherit the previous run's open node.
@@ -155,25 +148,13 @@ export function ReviewRunDrawer({
         }}
         title={collapsed ? "Show workflow canvas" : "Hide workflow canvas"}
       >
-        <span style={{ fontSize: 9, width: 8, display: "inline-block" }}>
-          {collapsed ? "▶" : "▼"}
-        </span>
+        <span style={{ fontSize: 9, width: 8, display: "inline-block" }}>{collapsed ? "▶" : "▼"}</span>
         <span style={{ fontWeight: 600 }}>Workflow canvas</span>
-        {workflowName && (
-          <span style={{ fontFamily: fonts.mono, color: colors.textDim, opacity: 0.8 }}>
-            {workflowName}
-          </span>
-        )}
+        {workflowName && <span style={{ fontFamily: fonts.mono, color: colors.textDim, opacity: 0.8 }}>{workflowName}</span>}
       </button>
       {!collapsed && (
         <div style={{ height: DRAWER_BODY_HEIGHT, display: "flex", flexDirection: "column" }}>
-          <WorkflowGraph
-            defs={defs}
-            nodeRuns={nodeRuns}
-            colors={colors}
-            onNodeClick={onNodeClick}
-            expandedNodeId={expandedNodeId}
-          />
+          <WorkflowGraph defs={defs} nodeRuns={nodeRuns} colors={colors} onNodeClick={onNodeClick} expandedNodeId={expandedNodeId} />
         </div>
       )}
     </div>

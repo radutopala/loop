@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import type { SessionEntry } from "../../api/loopApi";
+import { createThread, fetchSessions } from "../../api/loopApi";
 import { useTheme } from "../../ThemeContext";
 import { Terminal } from "./Terminal";
-import { fetchSessions, createThread } from "../../api/loopApi";
-import type { SessionEntry } from "../../api/loopApi";
 
 interface SessionsPanelProps {
   channelId: string;
@@ -57,9 +57,7 @@ export function SessionsPanel({ channelId, onStatusChange }: SessionsPanelProps)
     [channelId, onStatusChange],
   );
 
-  const filtered = filter
-    ? sessions.filter((s) => s.session_id.includes(filter) || (s.last_message && s.last_message.toLowerCase().includes(filter.toLowerCase())))
-    : sessions;
+  const filtered = filter ? sessions.filter((s) => s.session_id.includes(filter) || (s.last_message && s.last_message.toLowerCase().includes(filter.toLowerCase()))) : sessions;
 
   const importedSessions = filtered.filter((s) => importedIds.has(s.session_id));
   const availableSessions = filtered.filter((s) => !importedIds.has(s.session_id));
@@ -86,7 +84,10 @@ export function SessionsPanel({ channelId, onStatusChange }: SessionsPanelProps)
     return (
       <div
         key={s.session_id}
-        onClick={() => { setSelectedId(s.session_id); setStartingNew(false); }}
+        onClick={() => {
+          setSelectedId(s.session_id);
+          setStartingNew(false);
+        }}
         style={{
           padding: "6px 8px",
           cursor: "pointer",
@@ -105,9 +106,7 @@ export function SessionsPanel({ channelId, onStatusChange }: SessionsPanelProps)
         }}
       >
         <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-          {isCurrent && (
-            <span style={{ color: colors.active, fontWeight: 600 }}>*</span>
-          )}
+          {isCurrent && <span style={{ color: colors.active, fontWeight: 600 }}>*</span>}
           <span
             style={{
               flex: 1,
@@ -121,9 +120,7 @@ export function SessionsPanel({ channelId, onStatusChange }: SessionsPanelProps)
           >
             {s.session_id.slice(0, 12)}
           </span>
-          <span style={{ color: colors.textDim, fontSize: 11, flexShrink: 0 }}>
-            {timeAgo(s.last_modified)}
-          </span>
+          <span style={{ color: colors.textDim, fontSize: 11, flexShrink: 0 }}>{timeAgo(s.last_modified)}</span>
           {showImport && (
             <button
               onClick={(e) => handleImport(e, s.session_id)}
@@ -147,14 +144,16 @@ export function SessionsPanel({ channelId, onStatusChange }: SessionsPanelProps)
           )}
         </div>
         {s.last_message && (
-          <div style={{
-            color: colors.textDim,
-            fontSize: 11,
-            overflow: "hidden",
-            textOverflow: "ellipsis",
-            whiteSpace: "nowrap",
-            paddingLeft: isCurrent ? 14 : 0,
-          }}>
+          <div
+            style={{
+              color: colors.textDim,
+              fontSize: 11,
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              whiteSpace: "nowrap",
+              paddingLeft: isCurrent ? 14 : 0,
+            }}
+          >
             {s.last_message}
           </div>
         )}
@@ -213,7 +212,11 @@ export function SessionsPanel({ channelId, onStatusChange }: SessionsPanelProps)
             &#x21bb;
           </button>
           <button
-            onClick={() => { setStartingNew(true); setSelectedId(null); setNewSessionKey(`new-${Date.now()}`); }}
+            onClick={() => {
+              setStartingNew(true);
+              setSelectedId(null);
+              setNewSessionKey(`new-${Date.now()}`);
+            }}
             title="Start a new session"
             style={{
               background: "none",
@@ -236,9 +239,7 @@ export function SessionsPanel({ channelId, onStatusChange }: SessionsPanelProps)
           {availableSessions.length > 0 && (
             <>
               {importedSessions.length > 0 && (
-                <div style={{ padding: "6px 8px", fontSize: 10, color: colors.textDim, textTransform: "uppercase", letterSpacing: 1, borderBottom: `1px solid ${colors.border}` }}>
-                  Available
-                </div>
+                <div style={{ padding: "6px 8px", fontSize: 10, color: colors.textDim, textTransform: "uppercase", letterSpacing: 1, borderBottom: `1px solid ${colors.border}` }}>Available</div>
               )}
               {availableSessions.map((s) => renderSessionRow(s, true))}
             </>
@@ -246,18 +247,24 @@ export function SessionsPanel({ channelId, onStatusChange }: SessionsPanelProps)
           {importedSessions.length > 0 && (
             <>
               {availableSessions.length > 0 && (
-                <div style={{ padding: "6px 8px", fontSize: 10, color: colors.textDim, textTransform: "uppercase", letterSpacing: 1, borderBottom: `1px solid ${colors.border}`, borderTop: `1px solid ${colors.border}` }}>
+                <div
+                  style={{
+                    padding: "6px 8px",
+                    fontSize: 10,
+                    color: colors.textDim,
+                    textTransform: "uppercase",
+                    letterSpacing: 1,
+                    borderBottom: `1px solid ${colors.border}`,
+                    borderTop: `1px solid ${colors.border}`,
+                  }}
+                >
                   Imported
                 </div>
               )}
               {importedSessions.map((s) => renderSessionRow(s, false))}
             </>
           )}
-          {filtered.length === 0 && (
-            <div style={{ padding: 16, color: colors.textDim, fontSize: 12, textAlign: "center" }}>
-              {sessions.length === 0 ? "No sessions found" : "No matches"}
-            </div>
-          )}
+          {filtered.length === 0 && <div style={{ padding: 16, color: colors.textDim, fontSize: 12, textAlign: "center" }}>{sessions.length === 0 ? "No sessions found" : "No matches"}</div>}
         </div>
       </div>
 
@@ -282,17 +289,13 @@ export function SessionsPanel({ channelId, onStatusChange }: SessionsPanelProps)
             instanceId={newSessionKey}
             newSession
             onStatusChange={onStatusChange}
-            onSessionEnd={() => { setStartingNew(false); loadSessions(); }}
+            onSessionEnd={() => {
+              setStartingNew(false);
+              loadSessions();
+            }}
           />
         ) : selectedId ? (
-          <Terminal
-            key={`session-${selectedId}`}
-            channelId={channelId}
-            target="agent"
-            instanceId={`session-${selectedId.slice(0, 8)}`}
-            claudeSessionId={selectedId}
-            onStatusChange={onStatusChange}
-          />
+          <Terminal key={`session-${selectedId}`} channelId={channelId} target="agent" instanceId={`session-${selectedId.slice(0, 8)}`} claudeSessionId={selectedId} onStatusChange={onStatusChange} />
         ) : (
           <div
             style={{

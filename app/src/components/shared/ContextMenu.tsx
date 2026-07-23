@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { fonts } from "../../theme";
 import { useTheme } from "../../ThemeContext";
+import { fonts } from "../../theme";
 
 export interface MenuItem {
   label: string;
@@ -35,9 +35,7 @@ export function ContextMenu({ x, y, items, onClose }: ContextMenuProps) {
 
   // Indices of the "real" (non-separator) menu items — arrow nav skips
   // separators so the user never lands on a non-actionable row.
-  const itemIndices = items
-    .map((it, i) => (it.separator ? -1 : i))
-    .filter((i) => i >= 0);
+  const itemIndices = items.map((it, i) => (it.separator ? -1 : i)).filter((i) => i >= 0);
 
   useLayoutEffect(() => {
     const el = menuRef.current;

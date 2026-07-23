@@ -1,10 +1,18 @@
-import { useState, useCallback, useEffect, useRef } from "react";
-import { fetchBranches, switchBranch, type BranchInfo } from "../../api/loopApi";
-import { fonts } from "../../theme";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { type BranchInfo, fetchBranches, switchBranch } from "../../api/loopApi";
 import { useTheme } from "../../ThemeContext";
+import { fonts } from "../../theme";
 import { logErr } from "../../utils/log";
 
-export function HeaderBranchPicker({ channelId, branch, onBranchChanged, onCreateWorktree, onImportWorktree, onSelectThread, onError }: {
+export function HeaderBranchPicker({
+  channelId,
+  branch,
+  onBranchChanged,
+  onCreateWorktree,
+  onImportWorktree,
+  onSelectThread,
+  onError,
+}: {
   channelId: string;
   branch: string;
   onBranchChanged?: () => void;
@@ -36,25 +44,24 @@ export function HeaderBranchPicker({ channelId, branch, onBranchChanged, onCreat
     setTimeout(() => searchRef.current?.focus(), 0);
   }, [channelId]);
 
-  const handleSelect = useCallback(async (b: string) => {
-    setOpen(false);
-    if (b === branch) return;
-    try {
-      await switchBranch(channelId, b);
-      onBranchChanged?.();
-    } catch (e) {
-      onError?.(e instanceof Error ? e.message : "Failed to switch branch");
-    }
-  }, [channelId, branch, onBranchChanged, onError]);
+  const handleSelect = useCallback(
+    async (b: string) => {
+      setOpen(false);
+      if (b === branch) return;
+      try {
+        await switchBranch(channelId, b);
+        onBranchChanged?.();
+      } catch (e) {
+        onError?.(e instanceof Error ? e.message : "Failed to switch branch");
+      }
+    },
+    [channelId, branch, onBranchChanged, onError],
+  );
 
-  const filtered = branchInfo?.branches.filter((b) =>
-    !search || b.toLowerCase().includes(search.toLowerCase()),
-  ) ?? [];
+  const filtered = branchInfo?.branches.filter((b) => !search || b.toLowerCase().includes(search.toLowerCase())) ?? [];
 
   const lowerSearch = search.toLowerCase();
-  const filteredWorktrees = (branchInfo?.worktrees ?? []).filter((wt) =>
-    !search || wt.branch.toLowerCase().includes(lowerSearch) || wt.path.split("/").pop()?.toLowerCase().includes(lowerSearch),
-  );
+  const filteredWorktrees = (branchInfo?.worktrees ?? []).filter((wt) => !search || wt.branch.toLowerCase().includes(lowerSearch) || wt.path.split("/").pop()?.toLowerCase().includes(lowerSearch));
 
   const hasWorktrees = (branchInfo?.worktrees ?? []).length > 0 && (!!onImportWorktree || !!onSelectThread);
 
@@ -77,8 +84,12 @@ export function HeaderBranchPicker({ channelId, branch, onBranchChanged, onCreat
           flexShrink: 0,
           WebkitAppRegion: "no-drag",
         }}
-        onMouseEnter={(e) => { e.currentTarget.style.opacity = "0.8"; }}
-        onMouseLeave={(e) => { e.currentTarget.style.opacity = "1"; }}
+        onMouseEnter={(e) => {
+          e.currentTarget.style.opacity = "0.8";
+        }}
+        onMouseLeave={(e) => {
+          e.currentTarget.style.opacity = "1";
+        }}
       >
         <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ marginRight: 2 }}>
           <line x1="6" y1="3" x2="6" y2="15" />
@@ -138,9 +149,7 @@ export function HeaderBranchPicker({ channelId, branch, onBranchChanged, onCreat
           </div>
           {/* Branches section */}
           <div style={{ flex: 1, minHeight: 0, overflow: "auto", padding: "4px 0" }}>
-            <div style={{ padding: "4px 12px 2px", fontSize: 10, color: colors.textDim, textTransform: "uppercase", letterSpacing: 1 }}>
-              Branches
-            </div>
+            <div style={{ padding: "4px 12px 2px", fontSize: 10, color: colors.textDim, textTransform: "uppercase", letterSpacing: 1 }}>Branches</div>
             {filtered.map((b) => {
               const isCurrent = b === (branchInfo?.current ?? branch);
               return (
@@ -151,8 +160,12 @@ export function HeaderBranchPicker({ channelId, branch, onBranchChanged, onCreat
                     alignItems: "center",
                     borderRadius: 4,
                   }}
-                  onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = "rgba(255,255,255,0.08)"; }}
-                  onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = "transparent"; }}
+                  onMouseEnter={(e) => {
+                    e.currentTarget.style.backgroundColor = "rgba(255,255,255,0.08)";
+                  }}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.style.backgroundColor = "transparent";
+                  }}
                 >
                   <button
                     onClick={() => handleSelect(b)}
@@ -172,7 +185,17 @@ export function HeaderBranchPicker({ channelId, branch, onBranchChanged, onCreat
                       whiteSpace: "nowrap",
                     }}
                   >
-                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0, opacity: 0.5 }}>
+                    <svg
+                      width="12"
+                      height="12"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      style={{ flexShrink: 0, opacity: 0.5 }}
+                    >
                       <line x1="6" y1="3" x2="6" y2="15" />
                       <circle cx="18" cy="6" r="3" />
                       <circle cx="6" cy="18" r="3" />
@@ -182,7 +205,10 @@ export function HeaderBranchPicker({ channelId, branch, onBranchChanged, onCreat
                     {isCurrent && <span style={{ color: colors.active, flexShrink: 0 }}>&#10003;</span>}
                   </button>
                   <button
-                    onClick={(e) => { e.stopPropagation(); navigator.clipboard.writeText(b); }}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      navigator.clipboard.writeText(b);
+                    }}
                     title="Copy branch name"
                     style={{
                       padding: "2px 6px",
@@ -195,14 +221,22 @@ export function HeaderBranchPicker({ channelId, branch, onBranchChanged, onCreat
                       fontSize: 10,
                       fontFamily: fonts.mono,
                     }}
-                    onMouseEnter={(e) => { e.currentTarget.style.color = colors.textLight; }}
-                    onMouseLeave={(e) => { e.currentTarget.style.color = colors.textDim; }}
+                    onMouseEnter={(e) => {
+                      e.currentTarget.style.color = colors.textLight;
+                    }}
+                    onMouseLeave={(e) => {
+                      e.currentTarget.style.color = colors.textDim;
+                    }}
                   >
                     cp
                   </button>
                   {onCreateWorktree && (
                     <button
-                      onClick={(e) => { e.stopPropagation(); setOpen(false); onCreateWorktree(channelId, b); }}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setOpen(false);
+                        onCreateWorktree(channelId, b);
+                      }}
                       title={`New worktree thread from ${b}`}
                       style={{
                         padding: "2px 6px",
@@ -215,8 +249,12 @@ export function HeaderBranchPicker({ channelId, branch, onBranchChanged, onCreat
                         fontSize: 10,
                         fontFamily: fonts.mono,
                       }}
-                      onMouseEnter={(e) => { e.currentTarget.style.color = colors.active; }}
-                      onMouseLeave={(e) => { e.currentTarget.style.color = colors.textDim; }}
+                      onMouseEnter={(e) => {
+                        e.currentTarget.style.color = colors.active;
+                      }}
+                      onMouseLeave={(e) => {
+                        e.currentTarget.style.color = colors.textDim;
+                      }}
                     >
                       +wt
                     </button>
@@ -224,16 +262,12 @@ export function HeaderBranchPicker({ channelId, branch, onBranchChanged, onCreat
                 </div>
               );
             })}
-            {filtered.length === 0 && (
-              <div style={{ padding: "8px 12px", color: colors.textDim, fontSize: 12 }}>No branches found</div>
-            )}
+            {filtered.length === 0 && <div style={{ padding: "8px 12px", color: colors.textDim, fontSize: 12 }}>No branches found</div>}
           </div>
           {/* Worktrees section */}
           {hasWorktrees && (
             <div style={{ flex: 1, minHeight: 0, overflow: "auto", padding: "4px 0", borderTop: `1px solid ${colors.border}` }}>
-              <div style={{ padding: "4px 12px 2px", fontSize: 10, color: colors.textDim, textTransform: "uppercase", letterSpacing: 1 }}>
-                Worktrees
-              </div>
+              <div style={{ padding: "4px 12px 2px", fontSize: 10, color: colors.textDim, textTransform: "uppercase", letterSpacing: 1 }}>Worktrees</div>
               {filteredWorktrees.map((wt) => {
                 const dirName = wt.path.split("/").pop() || wt.path;
                 const hasThread = !!wt.thread_id;
@@ -245,8 +279,12 @@ export function HeaderBranchPicker({ channelId, branch, onBranchChanged, onCreat
                       alignItems: "center",
                       borderRadius: 4,
                     }}
-                    onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = "rgba(255,255,255,0.08)"; }}
-                    onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = "transparent"; }}
+                    onMouseEnter={(e) => {
+                      e.currentTarget.style.backgroundColor = "rgba(255,255,255,0.08)";
+                    }}
+                    onMouseLeave={(e) => {
+                      e.currentTarget.style.backgroundColor = "transparent";
+                    }}
                   >
                     <div
                       style={{
@@ -263,7 +301,17 @@ export function HeaderBranchPicker({ channelId, branch, onBranchChanged, onCreat
                       }}
                     >
                       {/* Folder icon */}
-                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke={colors.textDim} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0, opacity: 0.5 }}>
+                      <svg
+                        width="12"
+                        height="12"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke={colors.textDim}
+                        strokeWidth="2"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        style={{ flexShrink: 0, opacity: 0.5 }}
+                      >
                         <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
                       </svg>
                       <span style={{ color: colors.text, overflow: "hidden", textOverflow: "ellipsis" }}>{wt.branch || "(detached)"}</span>
@@ -271,7 +319,11 @@ export function HeaderBranchPicker({ channelId, branch, onBranchChanged, onCreat
                     </div>
                     {hasThread && onSelectThread ? (
                       <button
-                        onClick={(e) => { e.stopPropagation(); setOpen(false); onSelectThread(wt.thread_id!); }}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setOpen(false);
+                          onSelectThread(wt.thread_id!);
+                        }}
                         title="Go to thread"
                         style={{
                           padding: "2px 6px",
@@ -284,14 +336,22 @@ export function HeaderBranchPicker({ channelId, branch, onBranchChanged, onCreat
                           fontSize: 10,
                           fontFamily: fonts.mono,
                         }}
-                        onMouseEnter={(e) => { e.currentTarget.style.opacity = "0.7"; }}
-                        onMouseLeave={(e) => { e.currentTarget.style.opacity = "1"; }}
+                        onMouseEnter={(e) => {
+                          e.currentTarget.style.opacity = "0.7";
+                        }}
+                        onMouseLeave={(e) => {
+                          e.currentTarget.style.opacity = "1";
+                        }}
                       >
                         go
                       </button>
                     ) : onImportWorktree ? (
                       <button
-                        onClick={(e) => { e.stopPropagation(); setOpen(false); onImportWorktree(channelId, wt.path); }}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setOpen(false);
+                          onImportWorktree(channelId, wt.path);
+                        }}
                         title="Import worktree as thread"
                         style={{
                           padding: "2px 6px",
@@ -304,8 +364,12 @@ export function HeaderBranchPicker({ channelId, branch, onBranchChanged, onCreat
                           fontSize: 10,
                           fontFamily: fonts.mono,
                         }}
-                        onMouseEnter={(e) => { e.currentTarget.style.color = colors.active; }}
-                        onMouseLeave={(e) => { e.currentTarget.style.color = colors.textDim; }}
+                        onMouseEnter={(e) => {
+                          e.currentTarget.style.color = colors.active;
+                        }}
+                        onMouseLeave={(e) => {
+                          e.currentTarget.style.color = colors.textDim;
+                        }}
                       >
                         imp
                       </button>
@@ -313,9 +377,7 @@ export function HeaderBranchPicker({ channelId, branch, onBranchChanged, onCreat
                   </div>
                 );
               })}
-              {filteredWorktrees.length === 0 && (
-                <div style={{ padding: "8px 12px", color: colors.textDim, fontSize: 12 }}>No worktrees found</div>
-              )}
+              {filteredWorktrees.length === 0 && <div style={{ padding: "8px 12px", color: colors.textDim, fontSize: 12 }}>No worktrees found</div>}
             </div>
           )}
         </div>

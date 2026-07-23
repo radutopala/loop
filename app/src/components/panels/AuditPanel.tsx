@@ -1,10 +1,10 @@
 import "@fontsource/jetbrains-mono/400.css";
 import type { MouseEvent as ReactMouseEvent } from "react";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { fonts } from "../../theme";
-import { useTheme } from "../../ThemeContext";
-import { fetchAuditFiles, deleteAuditFile } from "../../api/audit";
 import type { AuditFileEntry } from "../../api/audit";
+import { deleteAuditFile, fetchAuditFiles } from "../../api/audit";
+import { useTheme } from "../../ThemeContext";
+import { fonts } from "../../theme";
 import { Terminal } from "./Terminal";
 
 const PAGE_SIZE = 50;
@@ -130,11 +130,13 @@ export function AuditPanel({ channelId }: AuditPanelProps) {
         }}
       >
         <div style={{ padding: "6px 8px", borderBottom: `1px solid ${colors.border}`, display: "flex", gap: 6, alignItems: "center" }}>
-          <span style={{ flex: 1, color: colors.textDim, fontSize: 11, fontFamily: fonts.sans }}>
-            Audit logs {total > 0 ? `(${total})` : ""}
-          </span>
+          <span style={{ flex: 1, color: colors.textDim, fontSize: 11, fontFamily: fonts.sans }}>Audit logs {total > 0 ? `(${total})` : ""}</span>
           <button
-            onClick={() => { setFiles([]); setTotal(0); loadPage(0, false); }}
+            onClick={() => {
+              setFiles([]);
+              setTotal(0);
+              loadPage(0, false);
+            }}
             title="Refresh"
             style={{
               background: "none",
@@ -152,16 +154,8 @@ export function AuditPanel({ channelId }: AuditPanelProps) {
             &#x21bb;
           </button>
         </div>
-        <div
-          ref={scrollRef}
-          onScroll={onListScroll}
-          style={{ flex: 1, overflowY: "auto" }}
-        >
-          {files.length === 0 && !loading && (
-            <div style={{ padding: 16, color: colors.textDim, fontSize: 12, textAlign: "center" }}>
-              No audit logs yet
-            </div>
-          )}
+        <div ref={scrollRef} onScroll={onListScroll} style={{ flex: 1, overflowY: "auto" }}>
+          {files.length === 0 && !loading && <div style={{ padding: 16, color: colors.textDim, fontSize: 12, textAlign: "center" }}>No audit logs yet</div>}
           {files.map((f) => {
             const isSelected = f.date === selectedDate;
             const isHovered = f.date === hoveredDate;
@@ -204,8 +198,14 @@ export function AuditPanel({ channelId }: AuditPanelProps) {
                         cursor: "pointer",
                         fontFamily: fonts.sans,
                       }}
-                      onMouseEnter={(e) => { e.currentTarget.style.borderColor = colors.textLight; e.currentTarget.style.color = colors.dangerText; }}
-                      onMouseLeave={(e) => { e.currentTarget.style.borderColor = colors.border; e.currentTarget.style.color = "#ef4444"; }}
+                      onMouseEnter={(e) => {
+                        e.currentTarget.style.borderColor = colors.textLight;
+                        e.currentTarget.style.color = colors.dangerText;
+                      }}
+                      onMouseLeave={(e) => {
+                        e.currentTarget.style.borderColor = colors.border;
+                        e.currentTarget.style.color = "#ef4444";
+                      }}
                     >
                       Delete
                     </button>
@@ -247,7 +247,11 @@ export function AuditPanel({ channelId }: AuditPanelProps) {
                     </svg>
                     <span style={{ color: colors.textLight }}>Delete?</span>
                     <button
-                      onClick={(e) => { e.stopPropagation(); setConfirmingDate(null); void onDelete(f.date); }}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setConfirmingDate(null);
+                        void onDelete(f.date);
+                      }}
                       style={{
                         background: colors.dangerBg,
                         border: `1px solid ${colors.dangerText}`,
@@ -259,13 +263,22 @@ export function AuditPanel({ channelId }: AuditPanelProps) {
                         borderRadius: 4,
                         lineHeight: 1.4,
                       }}
-                      onMouseEnter={(e) => { e.currentTarget.style.background = colors.dangerHoverBg; e.currentTarget.style.color = colors.white; }}
-                      onMouseLeave={(e) => { e.currentTarget.style.background = colors.dangerBg; e.currentTarget.style.color = colors.dangerText; }}
+                      onMouseEnter={(e) => {
+                        e.currentTarget.style.background = colors.dangerHoverBg;
+                        e.currentTarget.style.color = colors.white;
+                      }}
+                      onMouseLeave={(e) => {
+                        e.currentTarget.style.background = colors.dangerBg;
+                        e.currentTarget.style.color = colors.dangerText;
+                      }}
                     >
                       Yes
                     </button>
                     <button
-                      onClick={(e) => { e.stopPropagation(); setConfirmingDate(null); }}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setConfirmingDate(null);
+                      }}
                       style={{
                         background: "none",
                         border: `1px solid ${colors.border}`,
@@ -277,8 +290,14 @@ export function AuditPanel({ channelId }: AuditPanelProps) {
                         borderRadius: 4,
                         lineHeight: 1.4,
                       }}
-                      onMouseEnter={(e) => { e.currentTarget.style.color = colors.textLight; e.currentTarget.style.borderColor = colors.textDim; }}
-                      onMouseLeave={(e) => { e.currentTarget.style.color = colors.textDim; e.currentTarget.style.borderColor = colors.border; }}
+                      onMouseEnter={(e) => {
+                        e.currentTarget.style.color = colors.textLight;
+                        e.currentTarget.style.borderColor = colors.textDim;
+                      }}
+                      onMouseLeave={(e) => {
+                        e.currentTarget.style.color = colors.textDim;
+                        e.currentTarget.style.borderColor = colors.border;
+                      }}
                     >
                       No
                     </button>
@@ -287,11 +306,7 @@ export function AuditPanel({ channelId }: AuditPanelProps) {
               </div>
             );
           })}
-          {loading && (
-            <div style={{ padding: 12, color: colors.textDim, fontSize: 11, textAlign: "center" }}>
-              Loading...
-            </div>
-          )}
+          {loading && <div style={{ padding: 12, color: colors.textDim, fontSize: 11, textAlign: "center" }}>Loading...</div>}
         </div>
       </div>
 
@@ -324,12 +339,8 @@ export function AuditPanel({ channelId }: AuditPanelProps) {
                 fontFamily: fonts.sans,
               }}
             >
-              <span style={{ color: colors.textDim, opacity: 0.7 }}>
-                agentgate-{selectedDate}.jsonl
-              </span>
-              <span style={{ color: colors.textDim, opacity: 0.7 }}>
-                tail -f -n 100 (agent container)
-              </span>
+              <span style={{ color: colors.textDim, opacity: 0.7 }}>agentgate-{selectedDate}.jsonl</span>
+              <span style={{ color: colors.textDim, opacity: 0.7 }}>tail -f -n 100 (agent container)</span>
             </div>
             {/* Remount the Terminal on date change so each file gets a fresh
                 exec + PTY; instanceId carries the date so the WS session key

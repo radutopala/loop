@@ -1,32 +1,35 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import {
-  fetchRoots,
-  fetchFiles,
-  fetchFileContent,
-  saveFileContent,
-  deleteFile,
-  createDir,
-  updateExtraDirs,
-  buildFileUrl,
-  isImagePath,
-  isVideoPath,
-  type FileEntry,
-  type RootEntry,
-} from "../api/loopApi";
 import { fetchGlobalConfig } from "../api/configApi";
 import { fetchDiff } from "../api/git";
-import { makePathKey, parsePathKey } from "../components/panels/EditorFileTree";
-import { matchAbsPathToKey } from "./editorPaths";
-import { gitLineChangesForFile, emptyGitLineChanges, type GitLineChanges } from "../components/panels/editorGitGutter";
+import {
+  buildFileUrl,
+  createDir,
+  deleteFile,
+  type FileEntry,
+  fetchFileContent,
+  fetchFiles,
+  fetchRoots,
+  isImagePath,
+  isVideoPath,
+  type RootEntry,
+  saveFileContent,
+  updateExtraDirs,
+} from "../api/loopApi";
 import type { CodeEditorHandle } from "../components/panels/CodeEditor";
-import type { ChatEventListener } from "./useChatStateStore";
+import { makePathKey, parsePathKey } from "../components/panels/EditorFileTree";
+import { emptyGitLineChanges, type GitLineChanges, gitLineChangesForFile } from "../components/panels/editorGitGutter";
 import type { ToolUseData, WSEvent } from "../types";
-import { storageGetJSON, storageSetJSON } from "../utils/storage";
 import { logErr } from "../utils/log";
+import { storageGetJSON, storageSetJSON } from "../utils/storage";
+import { matchAbsPathToKey } from "./editorPaths";
+import type { ChatEventListener } from "./useChatStateStore";
 
 const EDITOR_TABS_KEY = "loop-editor-tabs";
 
-interface EditorTabsState { tabs: string[]; selected: string | null }
+interface EditorTabsState {
+  tabs: string[];
+  selected: string | null;
+}
 
 function loadEditorTabs(channelId: string, key: string): EditorTabsState {
   const all = storageGetJSON<Record<string, EditorTabsState>>(key);
@@ -166,12 +169,14 @@ export function useEditorState(channelId: string, options?: UseEditorStateOption
 
   // Load desktop settings.
   useEffect(() => {
-    fetchGlobalConfig().then((cfg) => {
-      const d = cfg.content?.desktop;
-      if (!d) return;
-      if (typeof d.auto_save_on_blur === "boolean") setAutoSaveOnBlur(d.auto_save_on_blur);
-      if (typeof d.preview_tabs === "boolean") setPreviewTabsEnabled(d.preview_tabs);
-    }).catch(logErr("loading desktop settings"));
+    fetchGlobalConfig()
+      .then((cfg) => {
+        const d = cfg.content?.desktop;
+        if (!d) return;
+        if (typeof d.auto_save_on_blur === "boolean") setAutoSaveOnBlur(d.auto_save_on_blur);
+        if (typeof d.preview_tabs === "boolean") setPreviewTabsEnabled(d.preview_tabs);
+      })
+      .catch(logErr("loading desktop settings"));
   }, []);
 
   // Persist tab list (excluding preview tab).
@@ -181,33 +186,38 @@ export function useEditorState(channelId: string, options?: UseEditorStateOption
     saveEditorTabs(channelId, { tabs: persistedTabs, selected: persistedSelected }, tabsKey);
   }, [channelId, openTabs, selectedPath, previewTab, tabsKey]);
 
-  const loadDir = useCallback(async (path: string, rootIndex = 0) => {
-    try {
-      const entries = await fetchFiles(channelId, path, rootIndex);
-      const mapKey = makePathKey(rootIndex, path === "." ? "" : path);
-      setDirContents((prev) => {
-        const next = new Map(prev);
-        next.set(mapKey, entries);
-        return next;
-      });
-    } catch {
-      /* directory may not exist */
-    }
-  }, [channelId]);
+  const loadDir = useCallback(
+    async (path: string, rootIndex = 0) => {
+      try {
+        const entries = await fetchFiles(channelId, path, rootIndex);
+        const mapKey = makePathKey(rootIndex, path === "." ? "" : path);
+        setDirContents((prev) => {
+          const next = new Map(prev);
+          next.set(mapKey, entries);
+          return next;
+        });
+      } catch {
+        /* directory may not exist */
+      }
+    },
+    [channelId],
+  );
 
   // Load roots on mount.
   useEffect(() => {
-    fetchRoots(channelId).then((r) => {
-      setRoots(r);
-      setExpandedDirs((prev) => {
-        const next = new Set(prev);
-        for (const root of r) next.add(makePathKey(root.index, ""));
-        return next;
+    fetchRoots(channelId)
+      .then((r) => {
+        setRoots(r);
+        setExpandedDirs((prev) => {
+          const next = new Set(prev);
+          for (const root of r) next.add(makePathKey(root.index, ""));
+          return next;
+        });
+        for (const root of r) loadDir(".", root.index);
+      })
+      .catch(() => {
+        loadDir(".", 0);
       });
-      for (const root of r) loadDir(".", root.index);
-    }).catch(() => {
-      loadDir(".", 0);
-    });
   }, [channelId, loadDir]);
 
   // On mount, if a tab was persisted, fetch its content.
@@ -221,17 +231,20 @@ export function useEditorState(channelId: string, options?: UseEditorStateOption
       return;
     }
     setLoading(true);
-    fetchFileContent(channelId, rp, ri).then((result) => {
-      if (result.binary) {
-        setIsBinary(true);
-        setBinarySize(0);
-        setFileContent(null);
-      } else {
-        setFileContent(result.content);
-      }
-    }).catch((err) => {
-      setError(err instanceof Error ? err.message : "Failed to load file");
-    }).finally(() => setLoading(false));
+    fetchFileContent(channelId, rp, ri)
+      .then((result) => {
+        if (result.binary) {
+          setIsBinary(true);
+          setBinarySize(0);
+          setFileContent(null);
+        } else {
+          setFileContent(result.content);
+        }
+      })
+      .catch((err) => {
+        setError(err instanceof Error ? err.message : "Failed to load file");
+      })
+      .finally(() => setLoading(false));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -269,8 +282,13 @@ export function useEditorState(channelId: string, options?: UseEditorStateOption
   const markDirty = useCallback(() => {
     const p = selectedPathRef.current;
     if (!p) return;
-    setDirtyTabs((prev) => { if (prev.has(p)) return prev; const next = new Set(prev); next.add(p); return next; });
-    setPreviewTab((cur) => cur === p ? null : cur);
+    setDirtyTabs((prev) => {
+      if (prev.has(p)) return prev;
+      const next = new Set(prev);
+      next.add(p);
+      return next;
+    });
+    setPreviewTab((cur) => (cur === p ? null : cur));
     // Editing also implicitly dismisses any pending agent refresh for this tab.
     setPendingRefresh((prev) => {
       if (!prev.has(p)) return prev;
@@ -280,85 +298,104 @@ export function useEditorState(channelId: string, options?: UseEditorStateOption
     });
   }, []);
 
-  const saveFile = useCallback((filePath?: string) => {
-    const savePath = filePath ?? selectedPathRef.current;
-    if (!savePath) return;
-    const editor = codeEditorRef.current;
-    if (!editor || savePath !== selectedPathRef.current) return;
-    editor.appendNewlineIfMissing();
-    const content = editor.getContent();
-    if (content === null) return;
-    const { rootIndex: ri, relativePath: rp } = parsePathKey(savePath);
-    saveFileContent(channelId, rp, content, ri).then(() => {
-      dirtyContentRef.current.delete(savePath);
-      setDirtyTabs((prev) => { if (!prev.has(savePath)) return prev; const next = new Set(prev); next.delete(savePath); return next; });
-      if (savePath === selectedPathRef.current) refreshGitChangesRef.current();
-    }).catch(logErr("saving file"));
-  }, [channelId]);
+  const saveFile = useCallback(
+    (filePath?: string) => {
+      const savePath = filePath ?? selectedPathRef.current;
+      if (!savePath) return;
+      const editor = codeEditorRef.current;
+      if (!editor || savePath !== selectedPathRef.current) return;
+      editor.appendNewlineIfMissing();
+      const content = editor.getContent();
+      if (content === null) return;
+      const { rootIndex: ri, relativePath: rp } = parsePathKey(savePath);
+      saveFileContent(channelId, rp, content, ri)
+        .then(() => {
+          dirtyContentRef.current.delete(savePath);
+          setDirtyTabs((prev) => {
+            if (!prev.has(savePath)) return prev;
+            const next = new Set(prev);
+            next.delete(savePath);
+            return next;
+          });
+          if (savePath === selectedPathRef.current) refreshGitChangesRef.current();
+        })
+        .catch(logErr("saving file"));
+    },
+    [channelId],
+  );
 
   const saveAllDirty = useCallback(() => {
     if (dirtyTabsRef.current.has(selectedPathRef.current ?? "")) saveFile();
   }, [saveFile]);
 
-  const switchToTab = useCallback((pathKey: string) => {
-    const curPath = selectedPathRef.current;
-    if (curPath && dirtyTabsRef.current.has(curPath)) {
-      const editor = codeEditorRef.current;
-      if (editor) {
-        const content = editor.getContent();
-        if (content !== null) dirtyContentRef.current.set(curPath, content);
+  const switchToTab = useCallback(
+    (pathKey: string) => {
+      const curPath = selectedPathRef.current;
+      if (curPath && dirtyTabsRef.current.has(curPath)) {
+        const editor = codeEditorRef.current;
+        if (editor) {
+          const content = editor.getContent();
+          if (content !== null) dirtyContentRef.current.set(curPath, content);
+        }
+        if (autoSaveOnBlurRef.current) saveAllDirty();
       }
-      if (autoSaveOnBlurRef.current) saveAllDirty();
-    }
-    setSelectedPath(pathKey);
-    setError(null);
-    setIsBinary(false);
-    const { rootIndex: ri, relativePath: rp } = parsePathKey(pathKey);
-    if (isImagePath(rp) || isVideoPath(rp)) {
-      setImageURL(buildFileUrl(channelId, rp, ri, imageVersionRef.current));
-      setFileContent(null);
-      setLoading(false);
-      return;
-    }
-    setImageURL(null);
-    const cached = dirtyContentRef.current.get(pathKey);
-    if (cached !== undefined) {
-      setFileContent(cached);
-      return;
-    }
-    setLoading(true);
-    setFileContent(null);
-    fetchFileContent(channelId, rp, ri).then((result) => {
-      if (result.binary) {
-        setIsBinary(true);
-        setBinarySize(0);
+      setSelectedPath(pathKey);
+      setError(null);
+      setIsBinary(false);
+      const { rootIndex: ri, relativePath: rp } = parsePathKey(pathKey);
+      if (isImagePath(rp) || isVideoPath(rp)) {
+        setImageURL(buildFileUrl(channelId, rp, ri, imageVersionRef.current));
         setFileContent(null);
-      } else {
-        setFileContent(result.content);
+        setLoading(false);
+        return;
       }
-    }).catch((err) => {
-      setError(err instanceof Error ? err.message : "Failed to load file");
-    }).finally(() => setLoading(false));
-  }, [channelId, saveAllDirty]);
+      setImageURL(null);
+      const cached = dirtyContentRef.current.get(pathKey);
+      if (cached !== undefined) {
+        setFileContent(cached);
+        return;
+      }
+      setLoading(true);
+      setFileContent(null);
+      fetchFileContent(channelId, rp, ri)
+        .then((result) => {
+          if (result.binary) {
+            setIsBinary(true);
+            setBinarySize(0);
+            setFileContent(null);
+          } else {
+            setFileContent(result.content);
+          }
+        })
+        .catch((err) => {
+          setError(err instanceof Error ? err.message : "Failed to load file");
+        })
+        .finally(() => setLoading(false));
+    },
+    [channelId, saveAllDirty],
+  );
 
   // Single-click open: preview tab if enabled, else permanent.
-  const openFile = useCallback((path: string) => {
-    if (!previewTabsEnabled) {
-      setOpenTabs((prev) => prev.includes(path) ? prev : [...prev, path]);
+  const openFile = useCallback(
+    (path: string) => {
+      if (!previewTabsEnabled) {
+        setOpenTabs((prev) => (prev.includes(path) ? prev : [...prev, path]));
+        if (selectedPathRef.current !== path) switchToTab(path);
+        return;
+      }
+      if (openTabs.includes(path) && path !== previewTab) {
+        if (selectedPathRef.current !== path) switchToTab(path);
+        return;
+      }
+      setOpenTabs((prev) => {
+        const without = previewTab ? prev.filter((t) => t !== previewTab) : prev;
+        return without.includes(path) ? without : [...without, path];
+      });
+      setPreviewTab(path);
       if (selectedPathRef.current !== path) switchToTab(path);
-      return;
-    }
-    if (openTabs.includes(path) && path !== previewTab) {
-      if (selectedPathRef.current !== path) switchToTab(path);
-      return;
-    }
-    setOpenTabs((prev) => {
-      const without = previewTab ? prev.filter((t) => t !== previewTab) : prev;
-      return without.includes(path) ? without : [...without, path];
-    });
-    setPreviewTab(path);
-    if (selectedPathRef.current !== path) switchToTab(path);
-  }, [previewTab, previewTabsEnabled, openTabs, switchToTab]);
+    },
+    [previewTab, previewTabsEnabled, openTabs, switchToTab],
+  );
 
   const tryFlushPendingScroll = useCallback(() => {
     const pending = pendingScrollRef.current;
@@ -383,51 +420,70 @@ export function useEditorState(channelId: string, options?: UseEditorStateOption
   const fileContentRef = useRef(fileContent);
   fileContentRef.current = fileContent;
 
-  const openFileAtLine = useCallback((path: string, line: number | null) => {
-    if (line !== null) {
-      pendingScrollRef.current = { pathKey: path, line };
-    } else {
-      pendingScrollRef.current = null;
-    }
-    openFile(path);
-    // If it's already the active tab with content loaded, openFile is a no-op
-    // and no fileContent effect will fire — scroll synchronously.
-    if (line !== null && selectedPathRef.current === path && fileContentRef.current !== null) {
-      tryFlushPendingScroll();
-    }
-  }, [openFile, tryFlushPendingScroll]);
+  const openFileAtLine = useCallback(
+    (path: string, line: number | null) => {
+      if (line !== null) {
+        pendingScrollRef.current = { pathKey: path, line };
+      } else {
+        pendingScrollRef.current = null;
+      }
+      openFile(path);
+      // If it's already the active tab with content loaded, openFile is a no-op
+      // and no fileContent effect will fire — scroll synchronously.
+      if (line !== null && selectedPathRef.current === path && fileContentRef.current !== null) {
+        tryFlushPendingScroll();
+      }
+    },
+    [openFile, tryFlushPendingScroll],
+  );
 
   // Double-click promote: ensure permanent and active.
-  const promoteFile = useCallback((path: string) => {
-    setOpenTabs((prev) => prev.includes(path) ? prev : [...prev, path]);
-    if (previewTab === path) setPreviewTab(null);
-    if (selectedPathRef.current !== path) switchToTab(path);
-  }, [previewTab, switchToTab]);
+  const promoteFile = useCallback(
+    (path: string) => {
+      setOpenTabs((prev) => (prev.includes(path) ? prev : [...prev, path]));
+      if (previewTab === path) setPreviewTab(null);
+      if (selectedPathRef.current !== path) switchToTab(path);
+    },
+    [previewTab, switchToTab],
+  );
 
-  const closeTab = useCallback((path: string, e?: React.MouseEvent) => {
-    if (e) e.stopPropagation();
-    if (autoSaveOnBlurRef.current && path === selectedPathRef.current) saveAllDirty();
-    dirtyContentRef.current.delete(path);
-    setDirtyTabs((prev) => { if (!prev.has(path)) return prev; const next = new Set(prev); next.delete(path); return next; });
-    setPendingRefresh((prev) => { if (!prev.has(path)) return prev; const next = new Map(prev); next.delete(path); return next; });
-    if (previewTab === path) setPreviewTab(null);
-    setOpenTabs((prev) => {
-      const next = prev.filter((p) => p !== path);
-      if (path === selectedPathRef.current) {
-        if (next.length > 0) {
-          const idx = Math.min(prev.indexOf(path), next.length - 1);
-          switchToTab(next[Math.max(0, idx)]!);
-        } else {
-          setSelectedPath(null);
-          setFileContent(null);
-          setIsBinary(false);
-          setImageURL(null);
-          setError(null);
+  const closeTab = useCallback(
+    (path: string, e?: React.MouseEvent) => {
+      if (e) e.stopPropagation();
+      if (autoSaveOnBlurRef.current && path === selectedPathRef.current) saveAllDirty();
+      dirtyContentRef.current.delete(path);
+      setDirtyTabs((prev) => {
+        if (!prev.has(path)) return prev;
+        const next = new Set(prev);
+        next.delete(path);
+        return next;
+      });
+      setPendingRefresh((prev) => {
+        if (!prev.has(path)) return prev;
+        const next = new Map(prev);
+        next.delete(path);
+        return next;
+      });
+      if (previewTab === path) setPreviewTab(null);
+      setOpenTabs((prev) => {
+        const next = prev.filter((p) => p !== path);
+        if (path === selectedPathRef.current) {
+          if (next.length > 0) {
+            const idx = Math.min(prev.indexOf(path), next.length - 1);
+            switchToTab(next[Math.max(0, idx)]!);
+          } else {
+            setSelectedPath(null);
+            setFileContent(null);
+            setIsBinary(false);
+            setImageURL(null);
+            setError(null);
+          }
         }
-      }
-      return next;
-    });
-  }, [previewTab, saveAllDirty, switchToTab]);
+        return next;
+      });
+    },
+    [previewTab, saveAllDirty, switchToTab],
+  );
 
   const refreshTree = useCallback(async () => {
     try {
@@ -457,126 +513,164 @@ export function useEditorState(channelId: string, options?: UseEditorStateOption
         const current = editor.getContent();
         if (current !== null && result.content !== current) {
           editor.replaceContent(result.content);
-          setDirtyTabs((prev) => { if (!prev.has(pathKey)) return prev; const next = new Set(prev); next.delete(pathKey); return next; });
+          setDirtyTabs((prev) => {
+            if (!prev.has(pathKey)) return prev;
+            const next = new Set(prev);
+            next.delete(pathKey);
+            return next;
+          });
         }
-      } catch { /* file may have been deleted */ }
+      } catch {
+        /* file may have been deleted */
+      }
     }
   }, [loadDir, channelId]);
 
-  const toggleDir = useCallback((pathKey: string) => {
-    setExpandedDirs((prev) => {
-      const next = new Set(prev);
-      if (next.has(pathKey)) {
-        next.delete(pathKey);
-      } else {
-        next.add(pathKey);
-        if (!dirContents.has(pathKey)) {
-          const { rootIndex, relativePath } = parsePathKey(pathKey);
-          loadDir(relativePath === "" ? "." : relativePath, rootIndex);
-        }
-      }
-      return next;
-    });
-  }, [dirContents, loadDir]);
-
-  const handleCreateFile = useCallback((name: string) => {
-    const trimmed = name.trim();
-    if (!trimmed) return;
-    const { rootIndex } = parsePathKey(selectedDir);
-    const { rootIndex: ri, relativePath: rp } = parsePathKey(trimmed);
-    const actualRoot = trimmed.includes(":") ? ri : rootIndex;
-    const actualPath = trimmed.includes(":") ? rp : trimmed;
-    saveFileContent(channelId, actualPath, "", actualRoot).then(() => {
-      const parentRelPath = actualPath.includes("/") ? actualPath.substring(0, actualPath.lastIndexOf("/")) : ".";
-      loadDir(parentRelPath, actualRoot);
-      const newKey = makePathKey(actualRoot, actualPath);
-      setOpenTabs((prev) => prev.includes(newKey) ? prev : [...prev, newKey]);
-      switchToTab(newKey);
-    }).catch((err) => {
-      setError(err instanceof Error ? err.message : "Failed to create file");
-    });
-  }, [channelId, loadDir, switchToTab, selectedDir]);
-
-  const handleDeleteFilePath = useCallback((pathKey: string) => {
-    const { rootIndex: ri, relativePath: rp } = parsePathKey(pathKey);
-    deleteFile(channelId, rp, ri).then(() => {
-      setOpenTabs((prev) => {
-        const next = prev.filter((p) => p !== pathKey);
-        if (pathKey === selectedPathRef.current) {
-          if (next.length > 0) {
-            switchToTab(next[Math.max(0, Math.min(prev.indexOf(pathKey), next.length - 1))]!);
-          } else {
-            setSelectedPath(null);
-            setFileContent(null);
-            setIsBinary(false);
-            setImageURL(null);
-            setError(null);
+  const toggleDir = useCallback(
+    (pathKey: string) => {
+      setExpandedDirs((prev) => {
+        const next = new Set(prev);
+        if (next.has(pathKey)) {
+          next.delete(pathKey);
+        } else {
+          next.add(pathKey);
+          if (!dirContents.has(pathKey)) {
+            const { rootIndex, relativePath } = parsePathKey(pathKey);
+            loadDir(relativePath === "" ? "." : relativePath, rootIndex);
           }
         }
         return next;
       });
-      dirtyContentRef.current.delete(pathKey);
-      setDirtyTabs((prev) => { if (!prev.has(pathKey)) return prev; const next = new Set(prev); next.delete(pathKey); return next; });
-      const parentRelPath = rp.includes("/") ? rp.substring(0, rp.lastIndexOf("/")) : ".";
-      loadDir(parentRelPath, ri);
-    }).catch((err) => {
-      setError(err instanceof Error ? err.message : "Failed to delete file");
-    });
-  }, [channelId, loadDir, switchToTab]);
+    },
+    [dirContents, loadDir],
+  );
 
-  const handleCreateDirPath = useCallback((name: string) => {
-    const trimmed = name.trim();
-    if (!trimmed) return;
-    const { rootIndex } = parsePathKey(selectedDir);
-    const { rootIndex: ri, relativePath: rp } = parsePathKey(trimmed);
-    const actualRoot = trimmed.includes(":") ? ri : rootIndex;
-    const actualPath = trimmed.includes(":") ? rp : trimmed;
-    createDir(channelId, actualPath, actualRoot).then(() => {
-      const parentRelPath = actualPath.includes("/") ? actualPath.substring(0, actualPath.lastIndexOf("/")) : ".";
-      loadDir(parentRelPath, actualRoot);
-    }).catch((err) => {
-      setError(err instanceof Error ? err.message : "Failed to create directory");
-    });
-  }, [channelId, loadDir, selectedDir]);
+  const handleCreateFile = useCallback(
+    (name: string) => {
+      const trimmed = name.trim();
+      if (!trimmed) return;
+      const { rootIndex } = parsePathKey(selectedDir);
+      const { rootIndex: ri, relativePath: rp } = parsePathKey(trimmed);
+      const actualRoot = trimmed.includes(":") ? ri : rootIndex;
+      const actualPath = trimmed.includes(":") ? rp : trimmed;
+      saveFileContent(channelId, actualPath, "", actualRoot)
+        .then(() => {
+          const parentRelPath = actualPath.includes("/") ? actualPath.substring(0, actualPath.lastIndexOf("/")) : ".";
+          loadDir(parentRelPath, actualRoot);
+          const newKey = makePathKey(actualRoot, actualPath);
+          setOpenTabs((prev) => (prev.includes(newKey) ? prev : [...prev, newKey]));
+          switchToTab(newKey);
+        })
+        .catch((err) => {
+          setError(err instanceof Error ? err.message : "Failed to create file");
+        });
+    },
+    [channelId, loadDir, switchToTab, selectedDir],
+  );
 
-  const handleDeleteDirPath = useCallback((pathKey: string) => {
-    const { rootIndex: ri, relativePath: rp } = parsePathKey(pathKey);
-    deleteFile(channelId, rp, ri).then(() => {
-      setOpenTabs((prev) => {
-        const next = prev.filter((p) => p !== pathKey && !p.startsWith(pathKey + "/"));
-        const cur = selectedPathRef.current;
-        if (cur && (cur === pathKey || cur.startsWith(pathKey + "/"))) {
-          if (next.length > 0) {
-            switchToTab(next[0]!);
-          } else {
-            setSelectedPath(null);
-            setFileContent(null);
-            setIsBinary(false);
-            setImageURL(null);
-            setError(null);
-          }
-        }
+  const handleDeleteFilePath = useCallback(
+    (pathKey: string) => {
+      const { rootIndex: ri, relativePath: rp } = parsePathKey(pathKey);
+      deleteFile(channelId, rp, ri)
+        .then(() => {
+          setOpenTabs((prev) => {
+            const next = prev.filter((p) => p !== pathKey);
+            if (pathKey === selectedPathRef.current) {
+              if (next.length > 0) {
+                switchToTab(next[Math.max(0, Math.min(prev.indexOf(pathKey), next.length - 1))]!);
+              } else {
+                setSelectedPath(null);
+                setFileContent(null);
+                setIsBinary(false);
+                setImageURL(null);
+                setError(null);
+              }
+            }
+            return next;
+          });
+          dirtyContentRef.current.delete(pathKey);
+          setDirtyTabs((prev) => {
+            if (!prev.has(pathKey)) return prev;
+            const next = new Set(prev);
+            next.delete(pathKey);
+            return next;
+          });
+          const parentRelPath = rp.includes("/") ? rp.substring(0, rp.lastIndexOf("/")) : ".";
+          loadDir(parentRelPath, ri);
+        })
+        .catch((err) => {
+          setError(err instanceof Error ? err.message : "Failed to delete file");
+        });
+    },
+    [channelId, loadDir, switchToTab],
+  );
+
+  const handleCreateDirPath = useCallback(
+    (name: string) => {
+      const trimmed = name.trim();
+      if (!trimmed) return;
+      const { rootIndex } = parsePathKey(selectedDir);
+      const { rootIndex: ri, relativePath: rp } = parsePathKey(trimmed);
+      const actualRoot = trimmed.includes(":") ? ri : rootIndex;
+      const actualPath = trimmed.includes(":") ? rp : trimmed;
+      createDir(channelId, actualPath, actualRoot)
+        .then(() => {
+          const parentRelPath = actualPath.includes("/") ? actualPath.substring(0, actualPath.lastIndexOf("/")) : ".";
+          loadDir(parentRelPath, actualRoot);
+        })
+        .catch((err) => {
+          setError(err instanceof Error ? err.message : "Failed to create directory");
+        });
+    },
+    [channelId, loadDir, selectedDir],
+  );
+
+  const handleDeleteDirPath = useCallback(
+    (pathKey: string) => {
+      const { rootIndex: ri, relativePath: rp } = parsePathKey(pathKey);
+      deleteFile(channelId, rp, ri)
+        .then(() => {
+          setOpenTabs((prev) => {
+            const next = prev.filter((p) => p !== pathKey && !p.startsWith(pathKey + "/"));
+            const cur = selectedPathRef.current;
+            if (cur && (cur === pathKey || cur.startsWith(pathKey + "/"))) {
+              if (next.length > 0) {
+                switchToTab(next[0]!);
+              } else {
+                setSelectedPath(null);
+                setFileContent(null);
+                setIsBinary(false);
+                setImageURL(null);
+                setError(null);
+              }
+            }
+            return next;
+          });
+          const parentRelPath = rp.includes("/") ? rp.substring(0, rp.lastIndexOf("/")) : ".";
+          loadDir(parentRelPath, ri);
+        })
+        .catch((err) => {
+          setError(err instanceof Error ? err.message : "Failed to delete directory");
+        });
+    },
+    [channelId, loadDir, switchToTab],
+  );
+
+  const addExtraDir = useCallback(
+    async (dir: string) => {
+      const currentExtras = rootsRef.current.filter((r) => r.index > 0).map((r) => r.path);
+      await updateExtraDirs(channelId, [...currentExtras, dir]);
+      const r = await fetchRoots(channelId);
+      setRoots(r);
+      for (const root of r) loadDir(".", root.index);
+      setExpandedDirs((prev) => {
+        const next = new Set(prev);
+        for (const root of r) next.add(makePathKey(root.index, ""));
         return next;
       });
-      const parentRelPath = rp.includes("/") ? rp.substring(0, rp.lastIndexOf("/")) : ".";
-      loadDir(parentRelPath, ri);
-    }).catch((err) => {
-      setError(err instanceof Error ? err.message : "Failed to delete directory");
-    });
-  }, [channelId, loadDir, switchToTab]);
-
-  const addExtraDir = useCallback(async (dir: string) => {
-    const currentExtras = rootsRef.current.filter((r) => r.index > 0).map((r) => r.path);
-    await updateExtraDirs(channelId, [...currentExtras, dir]);
-    const r = await fetchRoots(channelId);
-    setRoots(r);
-    for (const root of r) loadDir(".", root.index);
-    setExpandedDirs((prev) => {
-      const next = new Set(prev);
-      for (const root of r) next.add(makePathKey(root.index, ""));
-      return next;
-    });
-  }, [channelId, loadDir]);
+    },
+    [channelId, loadDir],
+  );
 
   // Cmd+S — immediate save.
   useEffect(() => {
@@ -592,7 +686,9 @@ export function useEditorState(channelId: string, options?: UseEditorStateOption
 
   // Save on blur, reload from disk on focus (picks up external edits).
   useEffect(() => {
-    const onBlur = () => { if (autoSaveOnBlurRef.current) saveAllDirty(); };
+    const onBlur = () => {
+      if (autoSaveOnBlurRef.current) saveAllDirty();
+    };
     const onFocus = () => {
       const pathKey = selectedPathRef.current;
       if (!pathKey) return;
@@ -602,66 +698,81 @@ export function useEditorState(channelId: string, options?: UseEditorStateOption
         setImageURL(buildFileUrl(channelId, rp, ri, imageVersionRef.current));
         return;
       }
-      fetchFileContent(channelId, rp, ri).then((result) => {
-        if (selectedPathRef.current !== pathKey) return;
-        if (result.binary) return;
-        const editor = codeEditorRef.current;
-        if (!editor) return;
-        const current = editor.getContent();
-        if (current !== null && result.content !== current) {
-          editor.replaceContent(result.content);
-          setDirtyTabs((prev) => { if (!prev.has(pathKey)) return prev; const next = new Set(prev); next.delete(pathKey); return next; });
-        }
-        refreshGitChangesRef.current();
-      }).catch(logErr("refreshing file on blur"));
+      fetchFileContent(channelId, rp, ri)
+        .then((result) => {
+          if (selectedPathRef.current !== pathKey) return;
+          if (result.binary) return;
+          const editor = codeEditorRef.current;
+          if (!editor) return;
+          const current = editor.getContent();
+          if (current !== null && result.content !== current) {
+            editor.replaceContent(result.content);
+            setDirtyTabs((prev) => {
+              if (!prev.has(pathKey)) return prev;
+              const next = new Set(prev);
+              next.delete(pathKey);
+              return next;
+            });
+          }
+          refreshGitChangesRef.current();
+        })
+        .catch(logErr("refreshing file on blur"));
     };
     window.addEventListener("blur", onBlur);
     window.addEventListener("focus", onFocus);
-    return () => { window.removeEventListener("blur", onBlur); window.removeEventListener("focus", onFocus); };
+    return () => {
+      window.removeEventListener("blur", onBlur);
+      window.removeEventListener("focus", onFocus);
+    };
   }, [channelId, saveAllDirty]);
 
   const openTabsRef = useRef(openTabs);
   openTabsRef.current = openTabs;
 
-  const applyAgentRefresh = useCallback((pathKey: string) => {
-    const { rootIndex: ri, relativePath: rp } = parsePathKey(pathKey);
-    if (isImagePath(rp) || isVideoPath(rp)) {
-      if (pathKey === selectedPathRef.current) {
-        imageVersionRef.current++;
-        setImageURL(buildFileUrl(channelId, rp, ri, imageVersionRef.current));
-      }
-      return;
-    }
-    fetchFileContent(channelId, rp, ri).then((result) => {
-      if (result.binary) return;
-      const isDirty = dirtyTabsRef.current.has(pathKey);
-      if (isDirty) {
-        // Stash latest disk content; the user resolves via Replace / Keep mine.
-        setPendingRefresh((prev) => {
-          const next = new Map(prev);
-          next.set(pathKey, result.content);
-          return next;
-        });
+  const applyAgentRefresh = useCallback(
+    (pathKey: string) => {
+      const { rootIndex: ri, relativePath: rp } = parsePathKey(pathKey);
+      if (isImagePath(rp) || isVideoPath(rp)) {
+        if (pathKey === selectedPathRef.current) {
+          imageVersionRef.current++;
+          setImageURL(buildFileUrl(channelId, rp, ri, imageVersionRef.current));
+        }
         return;
       }
-      if (pathKey === selectedPathRef.current) {
-        const editor = codeEditorRef.current;
-        if (editor) {
-          const current = editor.getContent();
-          if (current !== null && current !== result.content) {
-            editor.replaceContent(result.content);
-          } else if (current === null) {
-            setFileContent(result.content);
+      fetchFileContent(channelId, rp, ri)
+        .then((result) => {
+          if (result.binary) return;
+          const isDirty = dirtyTabsRef.current.has(pathKey);
+          if (isDirty) {
+            // Stash latest disk content; the user resolves via Replace / Keep mine.
+            setPendingRefresh((prev) => {
+              const next = new Map(prev);
+              next.set(pathKey, result.content);
+              return next;
+            });
+            return;
           }
-        } else {
-          setFileContent(result.content);
-        }
-        refreshGitChangesRef.current();
-      } else {
-        dirtyContentRef.current.delete(pathKey);
-      }
-    }).catch(logErr("auto-refreshing file"));
-  }, [channelId]);
+          if (pathKey === selectedPathRef.current) {
+            const editor = codeEditorRef.current;
+            if (editor) {
+              const current = editor.getContent();
+              if (current !== null && current !== result.content) {
+                editor.replaceContent(result.content);
+              } else if (current === null) {
+                setFileContent(result.content);
+              }
+            } else {
+              setFileContent(result.content);
+            }
+            refreshGitChangesRef.current();
+          } else {
+            dirtyContentRef.current.delete(pathKey);
+          }
+        })
+        .catch(logErr("auto-refreshing file"));
+    },
+    [channelId],
+  );
 
   // Auto-refresh on agent Edit/Write/MultiEdit tool events.
   const applyAgentRefreshRef = useRef(applyAgentRefresh);
@@ -700,26 +811,34 @@ export function useEditorState(channelId: string, options?: UseEditorStateOption
     return subscribeChatEvents(handler);
   }, [subscribeChatEvents]);
 
-  const acceptPendingRefresh = useCallback((pathKey: string) => {
-    const content = pendingRefresh.get(pathKey);
-    if (content === undefined) return;
-    setPendingRefresh((prev) => {
-      if (!prev.has(pathKey)) return prev;
-      const next = new Map(prev);
-      next.delete(pathKey);
-      return next;
-    });
-    dirtyContentRef.current.delete(pathKey);
-    setDirtyTabs((prev) => { if (!prev.has(pathKey)) return prev; const next = new Set(prev); next.delete(pathKey); return next; });
-    if (pathKey === selectedPathRef.current) {
-      const editor = codeEditorRef.current;
-      if (editor) {
-        editor.replaceContent(content);
-      } else {
-        setFileContent(content);
+  const acceptPendingRefresh = useCallback(
+    (pathKey: string) => {
+      const content = pendingRefresh.get(pathKey);
+      if (content === undefined) return;
+      setPendingRefresh((prev) => {
+        if (!prev.has(pathKey)) return prev;
+        const next = new Map(prev);
+        next.delete(pathKey);
+        return next;
+      });
+      dirtyContentRef.current.delete(pathKey);
+      setDirtyTabs((prev) => {
+        if (!prev.has(pathKey)) return prev;
+        const next = new Set(prev);
+        next.delete(pathKey);
+        return next;
+      });
+      if (pathKey === selectedPathRef.current) {
+        const editor = codeEditorRef.current;
+        if (editor) {
+          editor.replaceContent(content);
+        } else {
+          setFileContent(content);
+        }
       }
-    }
-  }, [pendingRefresh]);
+    },
+    [pendingRefresh],
+  );
 
   const dismissPendingRefresh = useCallback((pathKey: string) => {
     setPendingRefresh((prev) => {

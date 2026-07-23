@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { orderTimelineItems } from "./orderTimelineItems";
 import type { Message, TimelineItem } from "../../types";
+import { orderTimelineItems } from "./orderTimelineItems";
 
 // --- builders ---
 
@@ -47,8 +47,7 @@ function toolUse(triggerMsgId: string, position: number): TimelineItem {
   };
 }
 
-const ids = (items: TimelineItem[]) =>
-  items.map((it) => (it.kind === "message" ? it.data.msg_id : `${it.kind}:${it.trigger_msg_id}`));
+const ids = (items: TimelineItem[]) => items.map((it) => (it.kind === "message" ? it.data.msg_id : `${it.kind}:${it.trigger_msg_id}`));
 
 describe("orderTimelineItems", () => {
   it("preserves order when each user already sits before its first reply", () => {
@@ -71,24 +70,10 @@ describe("orderTimelineItems", () => {
   });
 
   it("relocates only the user row, keeping the intervening turn intact", () => {
-    const list = [
-      userMsg("A", 0),
-      userMsg("B", 1),
-      toolUse("B", 2),
-      botMsg("b1", "B", 3),
-      toolUse("A", 4),
-      botMsg("a1", "A", 5),
-    ];
+    const list = [userMsg("A", 0), userMsg("B", 1), toolUse("B", 2), botMsg("b1", "B", 3), toolUse("A", 4), botMsg("a1", "A", 5)];
     // A jumps down to right before its first reply (the tool_use at idx 4);
     // B's group is untouched and stays first.
-    expect(ids(orderTimelineItems(list))).toEqual([
-      "B",
-      "tool_use:B",
-      "b1",
-      "A",
-      "tool_use:A",
-      "a1",
-    ]);
+    expect(ids(orderTimelineItems(list))).toEqual(["B", "tool_use:B", "b1", "A", "tool_use:A", "a1"]);
   });
 
   it("leaves a user message with no reply in the window in place", () => {
@@ -100,24 +85,13 @@ describe("orderTimelineItems", () => {
   it("matches replies by trigger_msg_id, not by adjacency", () => {
     // Two queued users A and B; replies interleaved. Each user moves before its
     // own first reply.
-    const list = [
-      userMsg("A", 0),
-      userMsg("B", 1),
-      botMsg("a1", "A", 2),
-      botMsg("b1", "B", 3),
-    ];
+    const list = [userMsg("A", 0), userMsg("B", 1), botMsg("a1", "A", 2), botMsg("b1", "B", 3)];
     // A's first reply is idx 2, B's is idx 3. A inserts before a1; B before b1.
     expect(ids(orderTimelineItems(list))).toEqual(["A", "a1", "B", "b1"]);
   });
 
   it("uses the FIRST reply position when a user has several replies", () => {
-    const list = [
-      userMsg("A", 0),
-      userMsg("B", 1),
-      botMsg("b1", "B", 2),
-      botMsg("a1", "A", 3),
-      botMsg("a2", "A", 4),
-    ];
+    const list = [userMsg("A", 0), userMsg("B", 1), botMsg("b1", "B", 2), botMsg("a1", "A", 3), botMsg("a2", "A", 4)];
     expect(ids(orderTimelineItems(list))).toEqual(["B", "b1", "A", "a1", "a2"]);
   });
 

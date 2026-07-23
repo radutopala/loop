@@ -1,10 +1,10 @@
-import { type ReactNode, useCallback, useEffect, useMemo, useState } from "react";
 import { marked } from "marked";
-import type { Channel } from "../../types";
-import { fonts } from "../../theme";
-import type { ColorPalette } from "../../theme";
-import { useTheme } from "../../ThemeContext";
+import { type ReactNode, useCallback, useEffect, useMemo, useState } from "react";
 import { fetchReadme } from "../../api/loopApi";
+import { useTheme } from "../../ThemeContext";
+import type { ColorPalette } from "../../theme";
+import { fonts } from "../../theme";
+import type { Channel } from "../../types";
 import { storageGet, storageSet } from "../../utils/storage";
 import { ChannelHeaderInfo } from "../layout/ChannelHeaderInfo";
 
@@ -89,10 +89,21 @@ export function FilePanel({ title, channel, maximized, sidebarOpen, noPadding, e
 
   if (embedded) {
     return (
-      <div data-testid={dataTestId} style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", backgroundColor: colors.sidebar, zoom: fontSizes.panels / 12, borderRadius: colors.islandRadius, boxShadow: colors.islandShadow, border: colors.islandBorder }}>
-        <div style={contentStyle(noPadding)}>
-          {children}
-        </div>
+      <div
+        data-testid={dataTestId}
+        style={{
+          flex: 1,
+          display: "flex",
+          flexDirection: "column",
+          overflow: "hidden",
+          backgroundColor: colors.sidebar,
+          zoom: fontSizes.panels / 12,
+          borderRadius: colors.islandRadius,
+          boxShadow: colors.islandShadow,
+          border: colors.islandBorder,
+        }}
+      >
+        <div style={contentStyle(noPadding)}>{children}</div>
       </div>
     );
   }
@@ -160,8 +171,12 @@ export function FilePanel({ title, channel, maximized, sidebarOpen, noPadding, e
             backgroundColor: resizing ? colors.textDim : "transparent",
             zIndex: 1,
           }}
-          onMouseEnter={(e) => { (e.currentTarget as HTMLDivElement).style.backgroundColor = colors.textDim; }}
-          onMouseLeave={(e) => { if (!resizing) (e.currentTarget as HTMLDivElement).style.backgroundColor = "transparent"; }}
+          onMouseEnter={(e) => {
+            (e.currentTarget as HTMLDivElement).style.backgroundColor = colors.textDim;
+          }}
+          onMouseLeave={(e) => {
+            if (!resizing) (e.currentTarget as HTMLDivElement).style.backgroundColor = "transparent";
+          }}
         />
       )}
 
@@ -237,13 +252,7 @@ export function FilePanel({ title, channel, maximized, sidebarOpen, noPadding, e
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
           {onToggleMaximize && (
-            <button
-              onClick={onToggleMaximize}
-              title={maximized ? "Restore panel" : "Maximize panel"}
-              style={headerBtnStyle}
-              onMouseEnter={hoverIn}
-              onMouseLeave={hoverOut}
-            >
+            <button onClick={onToggleMaximize} title={maximized ? "Restore panel" : "Maximize panel"} style={headerBtnStyle} onMouseEnter={hoverIn} onMouseLeave={hoverOut}>
               {maximized ? (
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                   <polyline points="4,14 10,14 10,20" />
@@ -261,13 +270,7 @@ export function FilePanel({ title, channel, maximized, sidebarOpen, noPadding, e
               )}
             </button>
           )}
-          <button
-            onClick={onClose}
-            title="Close panel"
-            style={headerBtnStyle}
-            onMouseEnter={hoverIn}
-            onMouseLeave={hoverOut}
-          >
+          <button onClick={onClose} title="Close panel" style={headerBtnStyle} onMouseEnter={hoverIn} onMouseLeave={hoverOut}>
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
               <line x1="18" y1="6" x2="6" y2="18" />
               <line x1="6" y1="6" x2="18" y2="18" />
@@ -277,9 +280,7 @@ export function FilePanel({ title, channel, maximized, sidebarOpen, noPadding, e
       </div>
 
       {/* Content */}
-      <div style={contentStyle(noPadding)}>
-        {children}
-      </div>
+      <div style={contentStyle(noPadding)}>{children}</div>
     </div>
   );
 }
@@ -316,12 +317,8 @@ export function MarkdownFilePanel({ dirPath, branch, channel, ...props }: Markdo
 
   return (
     <FilePanel title="README" dirPath={dirPath} branch={branch} channel={channel} dataTestId="file-panel" {...props}>
-      {error && (
-        <div style={{ color: colors.error, fontSize: 13 }}>{error}</div>
-      )}
-      {!content && !error && (
-        <div style={{ color: colors.textDim, fontSize: 13 }}>Loading...</div>
-      )}
+      {error && <div style={{ color: colors.error, fontSize: 13 }}>{error}</div>}
+      {!content && !error && <div style={{ color: colors.textDim, fontSize: 13 }}>Loading...</div>}
       {content && (
         <div
           className="readme-content"

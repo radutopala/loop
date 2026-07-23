@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useState } from "react";
-import { useTheme } from "../../ThemeContext";
-import { useEventStream } from "../../hooks/useEventStream";
-import { fetchBranches, switchBranch, deleteBranch } from "../../api/git";
 import { createWorktreeThread } from "../../api/channels";
+import { deleteBranch, fetchBranches, switchBranch } from "../../api/git";
+import { useEventStream } from "../../hooks/useEventStream";
+import { useTheme } from "../../ThemeContext";
 import { fonts } from "../../theme";
 
 interface BranchesPanelProps {
@@ -104,34 +104,20 @@ export function BranchesPanel({ channelId, isWorktree, hasBranch, onSelectThread
 
   if (isWorktree) {
     return (
-      <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", color: colors.textDim, fontSize: fontSizes.panels }}>
-        Branches are managed from the parent channel
-      </div>
+      <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", color: colors.textDim, fontSize: fontSizes.panels }}>Branches are managed from the parent channel</div>
     );
   }
 
   if (!hasBranch) {
-    return (
-      <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", color: colors.textDim, fontSize: fontSizes.panels }}>
-        No git repository detected
-      </div>
-    );
+    return <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", color: colors.textDim, fontSize: fontSizes.panels }}>No git repository detected</div>;
   }
 
   if (loading) {
-    return (
-      <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", color: colors.textDim, fontSize: fontSizes.panels }}>
-        Loading...
-      </div>
-    );
+    return <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", color: colors.textDim, fontSize: fontSizes.panels }}>Loading...</div>;
   }
 
   if (branches.length === 0) {
-    return (
-      <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", color: colors.textDim, fontSize: fontSizes.panels }}>
-        No branches
-      </div>
-    );
+    return <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", color: colors.textDim, fontSize: fontSizes.panels }}>No branches</div>;
   }
 
   const btnStyle: React.CSSProperties = {
@@ -169,7 +155,8 @@ export function BranchesPanel({ channelId, isWorktree, hasBranch, onSelectThread
           >
             <div style={{ minWidth: 0, flex: 1 }}>
               <div style={{ fontSize: fontSizes.panels, color: colors.textLight, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", fontWeight: isCurrent ? 600 : 400 }}>
-                {branch}{isCurrent ? " *" : ""}
+                {branch}
+                {isCurrent ? " *" : ""}
               </div>
             </div>
             <div style={{ display: "flex", alignItems: "center", gap: 6, marginLeft: 12, flexShrink: 0 }}>
@@ -179,8 +166,14 @@ export function BranchesPanel({ channelId, isWorktree, hasBranch, onSelectThread
                   onClick={() => handleSwitch(branch)}
                   disabled={isSwitching}
                   title="Switch to this branch"
-                  onMouseEnter={(e) => { e.currentTarget.style.borderColor = colors.textLight; e.currentTarget.style.color = colors.white; }}
-                  onMouseLeave={(e) => { e.currentTarget.style.borderColor = colors.border; e.currentTarget.style.color = colors.textLight; }}
+                  onMouseEnter={(e) => {
+                    e.currentTarget.style.borderColor = colors.textLight;
+                    e.currentTarget.style.color = colors.white;
+                  }}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.style.borderColor = colors.border;
+                    e.currentTarget.style.color = colors.textLight;
+                  }}
                 >
                   {isSwitching ? "..." : "Switch"}
                 </button>
@@ -190,8 +183,14 @@ export function BranchesPanel({ channelId, isWorktree, hasBranch, onSelectThread
                 onClick={() => handleCreateWorktree(branch)}
                 disabled={isCreating}
                 title="Create worktree from this branch"
-                onMouseEnter={(e) => { e.currentTarget.style.borderColor = colors.textLight; e.currentTarget.style.color = colors.white; }}
-                onMouseLeave={(e) => { e.currentTarget.style.borderColor = colors.border; e.currentTarget.style.color = colors.textLight; }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.borderColor = colors.textLight;
+                  e.currentTarget.style.color = colors.white;
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.borderColor = colors.border;
+                  e.currentTarget.style.color = colors.textLight;
+                }}
               >
                 {isCreating ? "..." : "+wt"}
               </button>
@@ -201,8 +200,14 @@ export function BranchesPanel({ channelId, isWorktree, hasBranch, onSelectThread
                   onClick={() => setConfirmingBranch(branch)}
                   disabled={isDeleting}
                   title="Delete this branch"
-                  onMouseEnter={(e) => { e.currentTarget.style.borderColor = colors.textLight; e.currentTarget.style.color = colors.dangerText; }}
-                  onMouseLeave={(e) => { e.currentTarget.style.borderColor = colors.border; e.currentTarget.style.color = "#ef4444"; }}
+                  onMouseEnter={(e) => {
+                    e.currentTarget.style.borderColor = colors.textLight;
+                    e.currentTarget.style.color = colors.dangerText;
+                  }}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.style.borderColor = colors.border;
+                    e.currentTarget.style.color = "#ef4444";
+                  }}
                 >
                   {isDeleting ? "..." : "Delete"}
                 </button>
@@ -239,7 +244,10 @@ export function BranchesPanel({ channelId, isWorktree, hasBranch, onSelectThread
                 </svg>
                 <span style={{ color: colors.textLight }}>Delete?</span>
                 <button
-                  onClick={() => { setConfirmingBranch(null); handleDelete(branch); }}
+                  onClick={() => {
+                    setConfirmingBranch(null);
+                    handleDelete(branch);
+                  }}
                   style={{
                     background: colors.dangerBg,
                     border: `1px solid ${colors.dangerText}`,
@@ -251,8 +259,14 @@ export function BranchesPanel({ channelId, isWorktree, hasBranch, onSelectThread
                     borderRadius: 4,
                     lineHeight: 1.4,
                   }}
-                  onMouseEnter={(e) => { e.currentTarget.style.background = colors.dangerHoverBg; e.currentTarget.style.color = colors.white; }}
-                  onMouseLeave={(e) => { e.currentTarget.style.background = colors.dangerBg; e.currentTarget.style.color = colors.dangerText; }}
+                  onMouseEnter={(e) => {
+                    e.currentTarget.style.background = colors.dangerHoverBg;
+                    e.currentTarget.style.color = colors.white;
+                  }}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.style.background = colors.dangerBg;
+                    e.currentTarget.style.color = colors.dangerText;
+                  }}
                 >
                   Yes
                 </button>
@@ -269,8 +283,14 @@ export function BranchesPanel({ channelId, isWorktree, hasBranch, onSelectThread
                     borderRadius: 4,
                     lineHeight: 1.4,
                   }}
-                  onMouseEnter={(e) => { e.currentTarget.style.color = colors.textLight; e.currentTarget.style.borderColor = colors.textDim; }}
-                  onMouseLeave={(e) => { e.currentTarget.style.color = colors.textDim; e.currentTarget.style.borderColor = colors.border; }}
+                  onMouseEnter={(e) => {
+                    e.currentTarget.style.color = colors.textLight;
+                    e.currentTarget.style.borderColor = colors.textDim;
+                  }}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.style.color = colors.textDim;
+                    e.currentTarget.style.borderColor = colors.border;
+                  }}
                 >
                   No
                 </button>

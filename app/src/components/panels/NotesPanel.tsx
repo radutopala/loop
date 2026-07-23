@@ -1,13 +1,13 @@
 import "@fontsource/jetbrains-mono/400.css";
-import { useCallback, useEffect, useRef, useState } from "react";
-import { EditorView, keymap, lineNumbers, highlightActiveLine, highlightActiveLineGutter, drawSelection } from "@codemirror/view";
-import { EditorState, Compartment } from "@codemirror/state";
 import { defaultKeymap, history, historyKeymap } from "@codemirror/commands";
 import { markdown } from "@codemirror/lang-markdown";
+import { Compartment, EditorState } from "@codemirror/state";
+import { drawSelection, EditorView, highlightActiveLine, highlightActiveLineGutter, keymap, lineNumbers } from "@codemirror/view";
 import { marked } from "marked";
-import { fonts } from "../../theme";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { createDir, fetchFileContent, saveFileContent } from "../../api/loopApi";
 import { useTheme } from "../../ThemeContext";
-import { fetchFileContent, saveFileContent, createDir } from "../../api/loopApi";
+import { fonts } from "../../theme";
 import { buildEditorTheme } from "./editorTheme";
 import { buildMarkdownStyles } from "./FilePanel";
 
@@ -42,33 +42,39 @@ export function NotesPanel({ channelId }: NotesPanelProps) {
     }, PREVIEW_DEBOUNCE_MS);
   }, []);
 
-  const doSave = useCallback(async (content: string) => {
-    setSaveStatus("saving");
-    try {
-      await saveFileContent(channelId, NOTES_PATH, content);
-      setSaveStatus("saved");
-    } catch {
-      // Directory may not exist yet — create .loop/ and retry once.
+  const doSave = useCallback(
+    async (content: string) => {
+      setSaveStatus("saving");
       try {
-        await createDir(channelId, ".loop");
         await saveFileContent(channelId, NOTES_PATH, content);
         setSaveStatus("saved");
       } catch {
-        setSaveStatus("error");
+        // Directory may not exist yet — create .loop/ and retry once.
+        try {
+          await createDir(channelId, ".loop");
+          await saveFileContent(channelId, NOTES_PATH, content);
+          setSaveStatus("saved");
+        } catch {
+          setSaveStatus("error");
+        }
       }
-    }
-  }, [channelId]);
+    },
+    [channelId],
+  );
 
-  const scheduleSave = useCallback((content: string) => {
-    pendingContentRef.current = content;
-    setSaveStatus("unsaved");
-    if (debounceRef.current) clearTimeout(debounceRef.current);
-    debounceRef.current = setTimeout(() => {
-      debounceRef.current = null;
-      pendingContentRef.current = null;
-      doSave(content);
-    }, SAVE_DEBOUNCE_MS);
-  }, [doSave]);
+  const scheduleSave = useCallback(
+    (content: string) => {
+      pendingContentRef.current = content;
+      setSaveStatus("unsaved");
+      if (debounceRef.current) clearTimeout(debounceRef.current);
+      debounceRef.current = setTimeout(() => {
+        debounceRef.current = null;
+        pendingContentRef.current = null;
+        doSave(content);
+      }, SAVE_DEBOUNCE_MS);
+    },
+    [doSave],
+  );
 
   // Mount: fetch content and create editor.
   useEffect(() => {
@@ -119,7 +125,9 @@ export function NotesPanel({ channelId }: NotesPanelProps) {
             const pct = scroller.scrollTop / Math.max(1, scroller.scrollHeight - scroller.clientHeight);
             el.scrollTop = pct * (el.scrollHeight - el.clientHeight);
           }
-          requestAnimationFrame(() => { scrollSyncSource.current = null; });
+          requestAnimationFrame(() => {
+            scrollSyncSource.current = null;
+          });
         };
         scroller.addEventListener("scroll", onEditorScroll);
 
@@ -132,7 +140,10 @@ export function NotesPanel({ channelId }: NotesPanelProps) {
 
     return () => {
       cancelled = true;
-      if (previewTimerRef.current) { clearTimeout(previewTimerRef.current); previewTimerRef.current = null; }
+      if (previewTimerRef.current) {
+        clearTimeout(previewTimerRef.current);
+        previewTimerRef.current = null;
+      }
       // Flush pending save on unmount.
       if (debounceRef.current) {
         clearTimeout(debounceRef.current);
@@ -155,26 +166,33 @@ export function NotesPanel({ channelId }: NotesPanelProps) {
     });
   }, [colors, fontSizes.panels]);
 
-  const statusLabel = saveStatus === "saving" ? "Saving..."
-    : saveStatus === "saved" ? "Saved"
-    : saveStatus === "error" ? "Save failed"
-    : saveStatus === "unsaved" ? "\u25CF" // bullet
-    : "";
+  const statusLabel =
+    saveStatus === "saving"
+      ? "Saving..."
+      : saveStatus === "saved"
+        ? "Saved"
+        : saveStatus === "error"
+          ? "Save failed"
+          : saveStatus === "unsaved"
+            ? "\u25CF" // bullet
+            : "";
 
   return (
     <div data-testid="notes-panel" style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", backgroundColor: colors.sidebar, zoom: fontSizes.panels / 12 }}>
-      <div style={{
-        height: 22,
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "space-between",
-        padding: "0 10px",
-        backgroundColor: colors.surface,
-        borderBottom: `1px solid ${colors.border}`,
-        flexShrink: 0,
-        fontSize: 11,
-        fontFamily: fonts.sans,
-      }}>
+      <div
+        style={{
+          height: 22,
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          padding: "0 10px",
+          backgroundColor: colors.surface,
+          borderBottom: `1px solid ${colors.border}`,
+          flexShrink: 0,
+          fontSize: 11,
+          fontFamily: fonts.sans,
+        }}
+      >
         <span style={{ color: colors.textDim, opacity: 0.7 }}>.loop/NOTES.md</span>
         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
           <div style={{ display: "flex", border: `1px solid ${colors.border}`, borderRadius: 4, overflow: "hidden" }}>
@@ -198,11 +216,13 @@ export function NotesPanel({ channelId }: NotesPanelProps) {
               </button>
             ))}
           </div>
-          <span style={{
-            color: saveStatus === "error" ? colors.error ?? "#f87171" : colors.textDim,
-            opacity: saveStatus === "idle" ? 0 : 0.7,
-            transition: "opacity 0.3s",
-          }}>
+          <span
+            style={{
+              color: saveStatus === "error" ? (colors.error ?? "#f87171") : colors.textDim,
+              opacity: saveStatus === "idle" ? 0 : 0.7,
+              transition: "opacity 0.3s",
+            }}
+          >
             {statusLabel}
           </span>
         </div>
@@ -232,7 +252,9 @@ export function NotesPanel({ channelId }: NotesPanelProps) {
                   const pct = el.scrollTop / Math.max(1, el.scrollHeight - el.clientHeight);
                   ed.scrollTop = pct * (ed.scrollHeight - ed.clientHeight);
                 }
-                requestAnimationFrame(() => { scrollSyncSource.current = null; });
+                requestAnimationFrame(() => {
+                  scrollSyncSource.current = null;
+                });
               }}
               style={{
                 flex: 1,
