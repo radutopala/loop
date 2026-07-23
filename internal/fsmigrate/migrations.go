@@ -113,6 +113,15 @@ var migrations = []Migration{
 		Description: "patch builtin simplify shortcut back to slash-command form",
 		Apply:       patchBuiltinSimplifyShortcutPrompt,
 	},
+	{
+		// Ships the entrypoint.sh chown-skip guard: `chown -R` over the
+		// multi-GB named cache volumes (/go, ~/.npm, ~/.cache) ran on every
+		// container start and dominated cold-spawn latency (~15s observed);
+		// the refreshed entrypoint stats the volume root and skips the walk
+		// when it is already agent-owned.
+		Description: "refresh container/ files: skip redundant chown -R over cache volumes",
+		Apply:       refreshContainerFiles,
+	},
 }
 
 // versionedContainerFiles are tracked by the daemon: each release ships a

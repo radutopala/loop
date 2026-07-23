@@ -34,6 +34,9 @@ else
     CHOWN_OWNER="$AGENT_USER:$AGENT_USER"
 fi
 chown "$CHOWN_OWNER" "$AGENT_HOME" 2>/dev/null || true
+# The uid the chowns below should produce — used to skip already-owned
+# volumes without paying a recursive walk.
+WANT_UID="${HOST_UID:-$(id -u "$AGENT_USER" 2>/dev/null || echo 1000)}"
 
 # Fix ownership of paths that need to be writable by the agent user
 # (named volumes created as root, files copied via CopyToContainer, etc.).
@@ -42,7 +45,15 @@ if [ -n "$CHOWN_PATHS" ]; then
     IFS=:
     for path in $CHOWN_PATHS; do
         if [ -d "$path" ]; then
-            chown -R "$CHOWN_OWNER" "$path" 2>/dev/null || true
+            # Skip the recursive chown when the volume root is already
+            # owned by the agent — after the first-ever container start
+            # everything inside is agent-owned (the agent user creates all
+            # subsequent files), and `chown -R` over multi-GB cache volumes
+            # (/go, ~/.npm, ~/.cache) costs 15s+ of cold-start latency on
+            # every spawn for nothing.
+            if [ "$(stat -c %u "$path" 2>/dev/null)" != "$WANT_UID" ]; then
+                chown -R "$CHOWN_OWNER" "$path" 2>/dev/null || true
+            fi
         elif [ -f "$path" ]; then
             chown "$CHOWN_OWNER" "$path" 2>/dev/null || true
         fi
