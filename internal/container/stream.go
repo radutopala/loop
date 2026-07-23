@@ -53,6 +53,14 @@ type systemEvent struct {
 	Description     string `json:"description"`
 	Status          string `json:"status"`
 	EstimatedTokens int    `json:"estimated_tokens"`
+	Summary         string `json:"summary"`
+	// api_retry fields: the CLI is backing off on an upstream API error
+	// (e.g. 529 overloaded) before retrying the request itself.
+	Attempt      int    `json:"attempt"`
+	MaxRetries   int    `json:"max_retries"`
+	RetryDelayMs int    `json:"retry_delay_ms"`
+	Error        string `json:"error"`
+	ErrorStatus  int    `json:"error_status"`
 }
 
 // extractText joins all text content blocks from an assistant message.
@@ -367,6 +375,21 @@ func scanStreamJSON(r io.Reader, cb streamCallbacks) (*claudeResponse, error) {
 					cb.onActivity("subagent_started", evt.Description)
 				case "task_progress":
 					cb.onActivity("subagent_progress", evt.Description)
+				case "task_notification":
+					// A background task finished (or was stopped); summary
+					// carries its one-line outcome. Surface it so the user
+					// sees background completions instead of them vanishing.
+					if evt.Summary != "" {
+						cb.onActivity("task_notification", evt.Summary)
+					}
+				case "api_retry":
+					// The CLI is retrying an upstream API error with backoff —
+					// surface it so long silent stalls (529 storms back off
+					// for minutes) are visible instead of looking like a hang.
+					if evt.Attempt > 0 {
+						cb.onActivity("api_retry", fmt.Sprintf("%s (%d) — retry %d/%d in %.1fs",
+							evt.Error, evt.ErrorStatus, evt.Attempt, evt.MaxRetries, float64(evt.RetryDelayMs)/1000))
+					}
 				case "status":
 					cb.onActivity(evt.Status, evt.Description)
 				case "thinking_tokens":
@@ -376,6 +399,21 @@ func scanStreamJSON(r io.Reader, cb streamCallbacks) (*claudeResponse, error) {
 					// progress indicator, mirroring sonnet's thinking display.
 					cb.onActivity("thinking", fmt.Sprintf("%d", evt.EstimatedTokens))
 				}
+			}
+		case "tool_progress":
+			// Periodic heartbeat the CLI emits while a long-running tool
+			// executes (e.g. a multi-minute Bash call): tool name + elapsed
+			// seconds. Surfaced as activity so the chat UI can show "Bash —
+			// running 90s" instead of a silent spinner.
+			if cb.onActivity != nil {
+				var evt struct {
+					ToolName string  `json:"tool_name"`
+					Elapsed  float64 `json:"elapsed_time_seconds"`
+				}
+				if err := json.Unmarshal(line, &evt); err != nil || evt.ToolName == "" {
+					continue
+				}
+				cb.onActivity("tool_progress", fmt.Sprintf("%s — running %ds", evt.ToolName, int(evt.Elapsed)))
 			}
 		case "result":
 			var evt claudeResponse
