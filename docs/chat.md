@@ -604,6 +604,14 @@ Until the first `agent.status` event arrives (or after a hard reload while `isRu
 |-------|-------|-------|
 | Processing | `processing` | 10px dimmed text, pill badge below the message |
 | Queued | `queued` | 10px dimmed text, pill badge below the message |
+| Delayed | `⏱ m:ss` countdown | live-ticking chip next to the `queued` pill (see [Delay Countdown](#delay-countdown)) |
+
+### Delay Countdown
+
+A message queued via [`queue_message`](mcpserver.md) with `delay_seconds` carries a `not_before` (unix seconds) on its row. `DelayCountdown` (`src/components/chat/DelayCountdown.tsx`) renders a `⏱ m:ss` (or `h:mm:ss`) chip that re-computes `not_before − now` on a 1s `setInterval` and removes itself once the delay elapses — at which point the backend's [delay poller](orchestrator.md#delayed-messages) claims the row and it starts running. `formatCountdown` clamps negatives to `0:00` and floors fractional seconds. The chip renders on both surfaces that show the message:
+
+- **Queued Messages Popup** — one chip per delayed row, sourced from the `not_before` field on [`GET /api/channels/{id}/queued`](api.md#get-apichannelsidqueued).
+- **Message bubble** — the delayed user bubble shows the same chip next to its `queued` pill. `not_before` reaches the bubble both on reload (from the messages endpoint) and on live insert, because the [`message.created`](events.md#messagecreated) event carries `not_before` — so the countdown appears immediately without a refresh.
 
 ### Trigger Quote
 
@@ -626,7 +634,7 @@ A `QueuedMessagesPopup` component (`src/components/chat/QueuedMessagesPopup.tsx`
 
 - **List source** — the rows shown come from `chatState.queuedMessages`, which is the [`GET /api/channels/{id}/queued`](api.md#get-apichannelsidqueued) response with the in-flight `processingMsgId` row filtered out. The list is independent of how many pages of chat history are loaded.
 - **Collapsible header** — shows `N queued` with a chevron. Click to expand the list.
-- **Row layout** — one line per message, truncated with ellipsis. Clicking a row toggles an inline expanded view (full content, pre-wrapped).
+- **Row layout** — one line per message, truncated with ellipsis. Clicking a row toggles an inline expanded view (full content, pre-wrapped). A delayed row also shows a live [`⏱` countdown](#delay-countdown) between the content and the copy button.
 - **Delete button** — a `×` button on each row calls `DELETE /api/messages/{msg_id}?channel_id=...` via the `deleteQueuedMessage` API client. The row dims while the request is in flight; the server broadcasts a `message.deleted` WebSocket event, which both removes the row from the local timeline and re-fetches the queue. Deleting a queued row is safe even mid-run — `ClaimNextPending` only sees `is_running=0 AND is_processed=0` rows, so the deletion lands before the row can be claimed.
 - **Safety** — the row identified by `processingMsgId` (see [Processing State](#processing-state)) is filtered out of the popup. Use the existing stop button to cancel an in-flight run, or "Deny with prompt" on a gate card to interrupt with a new prompt that runs ahead of the queue without dropping queued rows.
 

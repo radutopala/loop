@@ -6,6 +6,7 @@ import type { AgentActivityData, AskUserOption, AskUserQuestion, ExitPlanModeDat
 import type { MenuItem } from "../shared/ContextMenu";
 import { ContextMenu } from "../shared/ContextMenu";
 import { buildActivityStyle, buildMessageStyles, ChannelContext, FILE_PATH_TOOLS, renderInputWithLinks } from "./chatShared";
+import { DelayCountdown } from "./DelayCountdown";
 import { MarkdownContent } from "./markdown";
 
 export function CompactingMarker() {
@@ -270,6 +271,7 @@ export function MessageBubble({
         </div>
         {isUser && (
           <div style={{ display: "flex", justifyContent: "flex-end", alignItems: "center", gap: 6, marginTop: 4 }}>
+            {message.not_before ? <DelayCountdown notBefore={message.not_before} /> : null}
             {showQueued && (
               <span
                 style={{

@@ -320,16 +320,18 @@ Send a message to a channel. When an orchestrator is configured, routes through 
   "channel_id": "abc123",
   "content": "Hello, bot!",
   "mode": "plan",
-  "interrupt": false
+  "interrupt": false,
+  "delay_seconds": 0
 }
 ```
 
-| Field        | Type   | Required | Description |
-|--------------|--------|----------|-------------|
-| `channel_id` | string | yes      | Target channel or thread ID |
-| `content`    | string | yes      | Message text |
-| `mode`       | string | no       | Agent mode hint (e.g. `"plan"`) |
-| `interrupt`  | bool   | no       | When `true`, cancels the active run on the channel and inserts this message with `priority = MaxQueuedPriority(channel_id) + 1` so it claims next ahead of any queued rows. Existing queued messages are preserved (not deleted). Used by the chat UI's "Deny with prompt" gate flow. |
+| Field           | Type   | Required | Description |
+|-----------------|--------|----------|-------------|
+| `channel_id`    | string | yes      | Target channel or thread ID |
+| `content`       | string | yes      | Message text |
+| `mode`          | string | no       | Agent mode hint (e.g. `"plan"`) |
+| `interrupt`     | bool   | no       | When `true`, cancels the active run on the channel and inserts this message with `priority = MaxQueuedPriority(channel_id) + 1` so it claims next ahead of any queued rows. Existing queued messages are preserved (not deleted). Used by the chat UI's "Deny with prompt" gate flow. |
+| `delay_seconds` | int    | no       | When `> 0`, holds the message back for that many seconds. The row is inserted with `not_before = now + delay_seconds` (unix seconds); `ClaimNextPending` skips it until then and a background poller drains the channel once it comes due. Takes precedence over `interrupt` (an interrupt would be pointless if the message runs later). Set by the [`queue_message`](mcpserver.md) MCP tool. |
 
 **Response:** `204 No Content`
 
@@ -337,6 +339,7 @@ Send a message to a channel. When an orchestrator is configured, routes through 
 - When an `IncomingMessageHandler` is set, the message is dispatched asynchronously with a detached context (the HTTP response returns immediately).
 - When no handler is set, falls back to direct `PostMessage` via the configured message sender.
 - `interrupt=true` requires both a `RunCanceller` and a `Store` on the server; the orchestrator wires both during startup.
+- `delay_seconds > 0` routes through `HandleIncomingMessageDelayed`, which stamps `not_before` on the inserted row. Because the row is not yet due, the immediate drain claims nothing; the orchestrator's delay poller re-drains the channel once `not_before` passes (this also recovers pending delays across a daemon restart, since the drain is event-driven).
 
 **Errors:** `400` if `channel_id` or `content` is empty. `501` if message sending is not configured and no handler is set.
 
@@ -618,7 +621,7 @@ Return the canonical queue of unprocessed user messages for a channel — every 
 }
 ```
 
-The in-flight message (the one with `is_running = 1` on the row) is **included** in the response — clients use the [`agent.status`](events.md#agentstatus) event's `msg_id` to distinguish "processing" from "queued". Higher `priority` values sort first; `priority` is omitted when zero.
+The in-flight message (the one with `is_running = 1` on the row) is **included** in the response — clients use the [`agent.status`](events.md#agentstatus) event's `msg_id` to distinguish "processing" from "queued". Higher `priority` values sort first; `priority` is omitted when zero. Rows queued with a delay carry `not_before` (unix seconds); the chat UI renders a live countdown chip until it elapses. `not_before` is omitted when zero (immediate).
 
 **Errors:** `501` if message listing is not configured. `500` on database error.
 

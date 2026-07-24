@@ -100,6 +100,26 @@ func (s *MCPServerSuite) TestQueueMessageInterrupt() {
 	require.Contains(s.T(), text, "run next")
 }
 
+func (s *MCPServerSuite) TestQueueMessageDelayed() {
+	s.httpClient.doFunc = func(req *http.Request) (*http.Response, error) {
+		body, _ := io.ReadAll(req.Body)
+		require.Contains(s.T(), string(body), `"delay_seconds":30`)
+		// A delay overrides interrupt — it is forced false on the wire.
+		require.Contains(s.T(), string(body), `"interrupt":false`)
+		return noContentResponse(http.StatusNoContent), nil
+	}
+
+	text, isError := s.callTool("queue_message", map[string]any{"content": "later", "delay_seconds": 30, "interrupt": true})
+	require.False(s.T(), isError)
+	require.Contains(s.T(), text, "30s delay")
+}
+
+func (s *MCPServerSuite) TestQueueMessageNegativeDelay() {
+	text, isError := s.callTool("queue_message", map[string]any{"content": "later", "delay_seconds": -5})
+	require.True(s.T(), isError)
+	require.Contains(s.T(), text, "delay_seconds cannot be negative")
+}
+
 func (s *MCPServerSuite) TestQueueMessageValidation() {
 	text, isError := s.callTool("queue_message", map[string]any{"content": ""})
 	require.True(s.T(), isError)

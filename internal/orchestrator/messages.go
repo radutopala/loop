@@ -84,6 +84,7 @@ func (o *Orchestrator) HandleMessage(ctx context.Context, msg *bot.IncomingMessa
 		IsTriggered: triggered && allowed,
 		Priority:    msg.Priority,
 		Mode:        msg.Mode,
+		NotBefore:   msg.NotBefore,
 		CreatedAt:   msg.Timestamp,
 	}); err != nil {
 		o.logger.Error("inserting message", "error", err, "channel_id", msg.ChannelID)
@@ -97,6 +98,7 @@ func (o *Orchestrator) HandleMessage(ctx context.Context, msg *bot.IncomingMessa
 			AuthorName: msg.AuthorName,
 			Content:    msg.Content,
 			Priority:   msg.Priority,
+			NotBefore:  msg.NotBefore,
 		})
 	}
 

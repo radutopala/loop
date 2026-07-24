@@ -1,4 +1,4 @@
-.PHONY: help build install test test-integration test-component test-runner-build test-runner-push bdd-serve lint coverage coverage-check codeql-download codeql docker-build docs-build docs-serve docs-capture run clean restart docker-shell docker-snapshot app-dev app-dev-docker app-test app-install app-build-binary app-dist-linux app-icons _sync-loop-overrides
+.PHONY: help build install test test-integration test-component test-runner-build test-runner-push bdd-serve lint lint-go lint-app coverage coverage-check codeql-download codeql docker-build docs-build docs-serve docs-capture run clean restart docker-shell docker-snapshot app-dev app-dev-docker app-test app-install app-build-binary app-dist-linux app-icons _sync-loop-overrides
 .DEFAULT_GOAL := help
 
 # Strip gate-child env inheritance when invoking make from inside a
@@ -115,16 +115,24 @@ test-runner-build: ## Build the test-runner Docker image
 test-runner-push: test-runner-build ## Build and push the test-runner Docker image
 	docker push $(TEST_RUNNER_IMAGE)
 
-lint: ## Run golangci-lint + biome (with auto-fix)
+lint: lint-go lint-app ## Run golangci-lint + biome/tsc (with auto-fix)
+
+lint-go: ## Run golangci-lint (with auto-fix)
 	@if [ -n "$$(docker ps --filter name=^loop-lint$$ --quiet)" ]; then \
 		echo "error: another loop-lint container is already running; aborting" >&2; \
 		exit 1; \
 	fi
 	docker run --rm --name loop-lint -v "$$(pwd)":/app -v /app/app/node_modules -w /app golangci/golangci-lint:v2.11.4 golangci-lint run -v --fix ./...
+
+lint-app: ## Run biome (with auto-fix) + tsc typecheck on the app
+	@if [ -n "$$(docker ps --filter name=^loop-lint-biome$$ --quiet)" ]; then \
+		echo "error: another loop-lint-biome container is already running; aborting" >&2; \
+		exit 1; \
+	fi
 	docker run --rm --name loop-lint-biome \
 		-v "$$(pwd)/app":/app -w /app \
 		-v loop-npmcache:/root/.npm \
-		node:24-alpine sh -c "npm install && npm run format"
+		node:24-alpine sh -c "npm install && npm run format && npm run typecheck"
 
 coverage: ## Generate HTML coverage report
 	go generate ./internal/readme/

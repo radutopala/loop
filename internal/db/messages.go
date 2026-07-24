@@ -13,11 +13,11 @@ func (s *SQLiteStore) InsertMessage(ctx context.Context, msg *Message) error {
 	// row sorts after every prior chat-or-event row. Single-writer SQLite
 	// serialises Exec calls, so this subselect can't race itself.
 	result, err := s.db.ExecContext(ctx,
-		`INSERT INTO messages (chat_id, channel_id, msg_id, author_id, author_name, content, is_bot, is_processed, is_triggered, priority, mode, trigger_msg_id, created_at, chain_position)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE((SELECT MAX(chain_position) FROM messages WHERE channel_id = ?), 0) + 1)`,
+		`INSERT INTO messages (chat_id, channel_id, msg_id, author_id, author_name, content, is_bot, is_processed, is_triggered, priority, mode, trigger_msg_id, not_before, created_at, chain_position)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE((SELECT MAX(chain_position) FROM messages WHERE channel_id = ?), 0) + 1)`,
 		msg.ChatID, msg.ChannelID, msg.MsgID, msg.AuthorID, msg.AuthorName, msg.Content,
 		boolToInt(msg.IsBot), boolToInt(msg.IsProcessed), boolToInt(msg.IsTriggered),
-		msg.Priority, msg.Mode, msg.TriggerMsgID, msg.CreatedAt, msg.ChannelID,
+		msg.Priority, msg.Mode, msg.TriggerMsgID, msg.NotBefore, msg.CreatedAt, msg.ChannelID,
 	)
 	if err != nil {
 		return err
@@ -52,7 +52,8 @@ func (s *SQLiteStore) MarkMessagesProcessed(ctx context.Context, ids []int64) er
 
 // ClaimNextPending atomically picks the highest-priority pending row for a channel
 // and marks it is_running=1 in a single transaction. Eligibility: is_processed=0,
-// is_triggered=1, is_running=0, kind='message'. Order: priority DESC, id ASC.
+// is_triggered=1, is_running=0, kind='message', and not delayed into the future
+// (not_before = 0 or already reached). Order: priority DESC, id ASC.
 // Returns nil with no error when the channel has nothing to process.
 func (s *SQLiteStore) ClaimNextPending(ctx context.Context, channelID string) (*Message, error) {
 	var msg *Message
@@ -61,6 +62,7 @@ func (s *SQLiteStore) ClaimNextPending(ctx context.Context, channelID string) (*
 			`SELECT `+messageColumns+` FROM messages
 			 WHERE channel_id = ? AND is_processed = 0 AND is_triggered = 1
 			   AND is_running = 0 AND kind = 'message'
+			   AND (not_before = 0 OR not_before <= strftime('%s','now'))
 			 ORDER BY priority DESC, id ASC LIMIT 1`,
 			channelID,
 		)
@@ -79,6 +81,35 @@ func (s *SQLiteStore) ClaimNextPending(ctx context.Context, channelID string) (*
 		return nil
 	})
 	return msg, err
+}
+
+// ChannelsWithDueDelayedMessages returns the distinct channel ids that have at
+// least one delayed message (not_before > 0) whose delay has now elapsed and is
+// still eligible to run (pending, triggered, not already running). The drain is
+// event-driven, so nothing re-triggers a delayed row on its own once the delay
+// passes — the orchestrator's delay poller calls this to find channels that
+// need a fresh drain. Rows that never carried a delay (not_before = 0) are
+// excluded so the poller only ever wakes channels that actually deferred work.
+func (s *SQLiteStore) ChannelsWithDueDelayedMessages(ctx context.Context) ([]string, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT DISTINCT channel_id FROM messages
+		 WHERE not_before > 0 AND not_before <= strftime('%s','now')
+		   AND is_processed = 0 AND is_triggered = 1 AND is_running = 0
+		   AND kind = 'message'`,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
 }
 
 // ReleaseRunningMessage clears the is_running flag on a row. When processed=true

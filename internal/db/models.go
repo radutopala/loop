@@ -113,6 +113,10 @@ type Message struct {
 	// (thinking, tool_use, tool_result, compacting). Empty for user-authored
 	// rows and for legacy pre-migration rows.
 	TriggerMsgID string `json:"trigger_msg_id,omitempty"`
+	// NotBefore is a unix-seconds timestamp before which the drain/claim must
+	// not run this row. 0 (the common case) means eligible immediately. Set via
+	// the delayed queue_message path to schedule a follow-up turn for later.
+	NotBefore int64 `json:"not_before,omitempty"`
 }
 
 // ScheduledTask represents a task scheduled for execution.

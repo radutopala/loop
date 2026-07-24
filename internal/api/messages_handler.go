@@ -17,6 +17,11 @@ type sendMessageRequest struct {
 	Content   string `json:"content"`
 	Mode      string `json:"mode,omitempty"`
 	Interrupt bool   `json:"interrupt,omitempty"`
+	// DelaySeconds defers the message: the drain skips it until this many
+	// seconds from now have elapsed. 0 (default) sends immediately. A positive
+	// delay takes precedence over Interrupt (a deferred message can't also jump
+	// the queue). Set only via the delayed queue_message MCP path.
+	DelaySeconds int `json:"delay_seconds,omitempty"`
 }
 
 func (s *Server) handleSendMessage(w http.ResponseWriter, r *http.Request) {
@@ -39,6 +44,15 @@ func (s *Server) handleSendMessage(w http.ResponseWriter, r *http.Request) {
 	// drains in its own goroutine), so we can call it on the request thread
 	// and rely on the insert being persisted before this function returns.
 	if s.msgHandler != nil {
+		// Delayed mode: persist a deferred row the drain skips until the delay
+		// elapses. Checked before interrupt — a scheduled follow-up can't also
+		// jump the active run.
+		if req.DelaySeconds > 0 {
+			notBefore := time.Now().Add(time.Duration(req.DelaySeconds) * time.Second).Unix()
+			s.msgHandler.HandleIncomingMessageDelayed(context.Background(), req.ChannelID, "", req.Content, req.Mode, notBefore)
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
 		// Interrupt mode: ORDER MATTERS. The new (priority-bumped) row must be
 		// inserted BEFORE we cancel the active run — otherwise the cancelled
 		// run's drain loop can re-claim an older queued row in the window
@@ -144,6 +158,10 @@ type messageResponse struct {
 	Priority     int       `json:"priority,omitempty"`
 	TriggerMsgID string    `json:"trigger_msg_id,omitempty"`
 	CreatedAt    time.Time `json:"created_at"`
+	// NotBefore is the unix-seconds timestamp a delayed message becomes eligible
+	// to run; 0/omitted for immediate messages. The FE renders a live countdown
+	// from it while it is still in the future.
+	NotBefore int64 `json:"not_before,omitempty"`
 }
 
 type messagesListResponse struct {
@@ -164,6 +182,7 @@ func toMessageResponse(m *db.Message) messageResponse {
 		Priority:     m.Priority,
 		TriggerMsgID: m.TriggerMsgID,
 		CreatedAt:    m.CreatedAt,
+		NotBefore:    m.NotBefore,
 	}
 }
 

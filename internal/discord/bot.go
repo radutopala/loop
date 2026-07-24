@@ -483,6 +483,11 @@ func (b *DiscordBot) HandleIncomingMessage(_ context.Context, _, _, _, _ string)
 func (b *DiscordBot) HandleIncomingMessageWithPriority(_ context.Context, _, _, _, _ string, _ int) {
 }
 
+// HandleIncomingMessageDelayed is a no-op on Discord — chat platforms don't
+// drive the API delayed queue_message path.
+func (b *DiscordBot) HandleIncomingMessageDelayed(_ context.Context, _, _, _, _ string, _ int64) {
+}
+
 // HandleThreadCreated posts the initial message (with a bot mention) to the
 // thread so that the normal message event handler picks it up and triggers a
 // new agent run.

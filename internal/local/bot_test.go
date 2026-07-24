@@ -532,6 +532,35 @@ func (s *BotSuite) TestHandleIncomingMessagePlanMode() {
 	require.Equal(s.T(), "plan this", received.Content)
 }
 
+func (s *BotSuite) TestHandleIncomingMessageWithPriority() {
+	var received *bot.IncomingMessage
+	s.bot.OnMessage(func(_ context.Context, msg *bot.IncomingMessage) {
+		received = msg
+	})
+
+	s.bot.HandleIncomingMessageWithPriority(context.Background(), "ch-1", "user-1", "urgent", "", 5)
+
+	require.NotNil(s.T(), received)
+	require.Equal(s.T(), "urgent", received.Content)
+	require.Equal(s.T(), 5, received.Priority)
+	require.Zero(s.T(), received.NotBefore)
+}
+
+func (s *BotSuite) TestHandleIncomingMessageDelayed() {
+	var received *bot.IncomingMessage
+	s.bot.OnMessage(func(_ context.Context, msg *bot.IncomingMessage) {
+		received = msg
+	})
+
+	notBefore := time.Now().Add(30 * time.Second).Unix()
+	s.bot.HandleIncomingMessageDelayed(context.Background(), "ch-1", "user-1", "later", "", notBefore)
+
+	require.NotNil(s.T(), received)
+	require.Equal(s.T(), "later", received.Content)
+	require.Equal(s.T(), notBefore, received.NotBefore)
+	require.Zero(s.T(), received.Priority)
+}
+
 // --- HandleThreadCreated ---
 
 func (s *BotSuite) TestHandleThreadCreated() {

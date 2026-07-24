@@ -46,7 +46,7 @@ Agent (Claude Code)  ←→  MCP Protocol (stdio)  ←→  loop mcp  ←→  HTT
 | Tool | Description |
 |------|-------------|
 | `send_message` | Send a message to a channel or thread. `channel_id` is optional — omit it to target the current channel/thread. Supports `@BotName` mentions (auto-converted to proper mentions). |
-| `queue_message` | Queue a follow-up prompt for yourself in the current channel/thread/worktree. Enqueues a new turn behind any running/queued work (shows in the chat's queued-messages list); `interrupt=true` cancels the active run and jumps the queue to run next. |
+| `queue_message` | Queue a follow-up prompt for yourself in the current channel/thread/worktree. Enqueues a new turn behind any running/queued work (shows in the chat's queued-messages list); `interrupt=true` cancels the active run and jumps the queue to run next. `delay_seconds` (optional, non-negative) holds the prompt back until the delay elapses — it stays queued with a live countdown in the UI and a background poller drains it once due; a delay forces `interrupt` off. |
 | `create_channel` | Create a new channel (bot auto-joins) |
 | `create_thread` | Create a thread in the current channel. If message provided, triggers an agent immediately. |
 | `create_worktree_thread` | Create a thread backed by a fresh git worktree (mirrors the UI `+wt` button). `branch` is the existing **base** to fork from (e.g. `main`); a new `worktree/<name>` branch is created and checked out off it. Optional `name` for the worktree directory; optional `message` triggers an agent immediately. |

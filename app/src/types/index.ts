@@ -37,6 +37,10 @@ export interface Message {
   // this reply. Empty for user messages and pre-feature rows. Used to group
   // agent events with their triggering user message at reload time.
   trigger_msg_id?: string;
+  // Unix-seconds timestamp before which a delayed (queue_message with a delay)
+  // message runs. Missing/0 = immediate. While in the future the UI shows a
+  // live countdown until it fires.
+  not_before?: number;
   created_at: string;
 }
 
@@ -79,6 +83,7 @@ export interface MessageCreatedData {
   is_processed: boolean;
   priority?: number;
   trigger_msg_id?: string;
+  not_before?: number;
 }
 
 export interface MessagesProcessedData {
