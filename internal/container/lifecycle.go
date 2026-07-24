@@ -41,6 +41,14 @@ type ImageVersions struct {
 	BuiltAt       time.Time `json:"built_at"`
 }
 
+// ReclaimResult reports the bytes freed by a "reclaim Docker space" action,
+// broken down by source so the UI can show what was cleaned.
+type ReclaimResult struct {
+	BuildCacheReclaimed uint64 `json:"build_cache_reclaimed"`
+	ImagesReclaimed     uint64 `json:"images_reclaimed"`
+	TotalReclaimed      uint64 `json:"total_reclaimed"`
+}
+
 // containerUnregisterer is the subset of ContainerRegistry needed to clean up
 // stale entries when containers are force-removed during image rebuild/removal.
 type containerUnregisterer interface {
@@ -169,6 +177,27 @@ func (m *ImageLifecycleManager) RemoveImage(ctx context.Context) error {
 		}
 	}
 	return nil
+}
+
+// ReclaimSpace frees Docker disk by pruning all currently-unused BuildKit
+// cache (unusedFor=0) and dangling images, returning the bytes freed by each.
+// Build-cache pruning is daemon-global, not scoped to Loop's builds. If image
+// pruning fails after the cache was already dropped, the build-cache total is
+// still reported alongside the error so nothing looks silently lost.
+func (m *ImageLifecycleManager) ReclaimSpace(ctx context.Context) (ReclaimResult, error) {
+	buildCache, err := m.client.PruneBuildCache(ctx, 0)
+	if err != nil {
+		return ReclaimResult{}, err
+	}
+	images, err := m.client.PruneDanglingImages(ctx)
+	if err != nil {
+		return ReclaimResult{BuildCacheReclaimed: buildCache, TotalReclaimed: buildCache}, err
+	}
+	return ReclaimResult{
+		BuildCacheReclaimed: buildCache,
+		ImagesReclaimed:     images,
+		TotalReclaimed:      buildCache + images,
+	}, nil
 }
 
 // Rebuild removes the old image and builds a new one asynchronously.

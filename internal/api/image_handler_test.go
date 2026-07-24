@@ -44,6 +44,11 @@ func (m *MockImageManager) Rebuild(ctx context.Context) error {
 	return m.Called(ctx).Error(0)
 }
 
+func (m *MockImageManager) ReclaimSpace(ctx context.Context) (container.ReclaimResult, error) {
+	args := m.Called(ctx)
+	return args.Get(0).(container.ReclaimResult), args.Error(1)
+}
+
 // --- GET /api/image/status ---
 
 func (s *ServerSuite) TestImageStatusSuccess() {
@@ -185,6 +190,54 @@ func (s *ServerSuite) TestImageRemoveNotConfigured() {
 	// imageManager is nil by default in SetupTest — do not set it.
 	s.mux.HandleFunc("DELETE /api/image", s.srv.handleImageRemove)
 	rec := s.testRequest("DELETE", "/api/image", "")
+
+	require.Equal(s.T(), http.StatusNotImplemented, rec.Code)
+	require.Contains(s.T(), rec.Body.String(), "image management not configured")
+}
+
+// --- POST /api/image/reclaim ---
+
+func (s *ServerSuite) TestImageReclaimSuccess() {
+	mockImgMgr := new(MockImageManager)
+	s.srv.imageManager = mockImgMgr
+
+	mockImgMgr.On("ReclaimSpace", mock.Anything).Return(container.ReclaimResult{
+		BuildCacheReclaimed: 4096,
+		ImagesReclaimed:     8192,
+		TotalReclaimed:      12288,
+	}, nil)
+
+	s.mux.HandleFunc("POST /api/image/reclaim", s.srv.handleImageReclaim)
+	rec := s.testRequest("POST", "/api/image/reclaim", "")
+
+	require.Equal(s.T(), http.StatusOK, rec.Code)
+
+	var resp container.ReclaimResult
+	require.NoError(s.T(), json.Unmarshal(rec.Body.Bytes(), &resp))
+	require.Equal(s.T(), uint64(4096), resp.BuildCacheReclaimed)
+	require.Equal(s.T(), uint64(8192), resp.ImagesReclaimed)
+	require.Equal(s.T(), uint64(12288), resp.TotalReclaimed)
+	mockImgMgr.AssertExpectations(s.T())
+}
+
+func (s *ServerSuite) TestImageReclaimError() {
+	mockImgMgr := new(MockImageManager)
+	s.srv.imageManager = mockImgMgr
+
+	mockImgMgr.On("ReclaimSpace", mock.Anything).Return(container.ReclaimResult{}, errors.New("daemon down"))
+
+	s.mux.HandleFunc("POST /api/image/reclaim", s.srv.handleImageReclaim)
+	rec := s.testRequest("POST", "/api/image/reclaim", "")
+
+	require.Equal(s.T(), http.StatusInternalServerError, rec.Code)
+	require.Contains(s.T(), rec.Body.String(), "daemon down")
+	mockImgMgr.AssertExpectations(s.T())
+}
+
+func (s *ServerSuite) TestImageReclaimNotConfigured() {
+	// imageManager is nil by default in SetupTest — do not set it.
+	s.mux.HandleFunc("POST /api/image/reclaim", s.srv.handleImageReclaim)
+	rec := s.testRequest("POST", "/api/image/reclaim", "")
 
 	require.Equal(s.T(), http.StatusNotImplemented, rec.Code)
 	require.Contains(s.T(), rec.Body.String(), "image management not configured")

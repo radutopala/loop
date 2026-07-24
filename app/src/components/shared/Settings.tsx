@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { type BuiltinKind, restoreBuiltins } from "../../api/builtins";
 import { type ConfigResponse, type ConfigSchema, fetchConfigSchema, fetchGlobalConfig, fetchProjectConfig, saveGlobalConfig, saveProjectConfig } from "../../api/configApi";
-import { getImageStatus } from "../../api/loopApi";
+import { getImageStatus, reclaimDockerSpace } from "../../api/loopApi";
 import { DEFAULT_FONT_SIZES, useTheme } from "../../ThemeContext";
 import type { ColorPalette } from "../../theme";
 import { fonts } from "../../theme";
@@ -9,6 +9,15 @@ import type { Channel, DaemonInfo, ImageBuildStatusData, ImageStatusResponse, Im
 import { logErr } from "../../utils/log";
 import { ChannelHeaderInfo } from "../layout/ChannelHeaderInfo";
 import { ConfigForm, type ConfigFormHandle, getSections } from "./ConfigForm";
+
+// formatBytes renders a byte count as a compact human-readable size.
+export function formatBytes(n: number): string {
+  if (!Number.isFinite(n) || n <= 0) return "0 B";
+  const units = ["B", "KB", "MB", "GB", "TB"];
+  const i = Math.min(units.length - 1, Math.floor(Math.log(n) / Math.log(1024)));
+  const val = n / 1024 ** i;
+  return `${val >= 10 || i === 0 ? Math.round(val) : val.toFixed(1)} ${units[i]}`;
+}
 
 function buildHeaderBtnStyle(colors: ColorPalette): React.CSSProperties {
   return {
@@ -74,6 +83,8 @@ export function Settings({
   // as "Restoring…" while the Workflows POST is still in flight.
   const [restoringByKind, setRestoringByKind] = useState<Record<BuiltinKind, boolean>>({ workflows: false, shortcuts: false });
   const [restoreMsgByKind, setRestoreMsgByKind] = useState<Record<BuiltinKind, string | null>>({ workflows: null, shortcuts: null });
+  const [reclaiming, setReclaiming] = useState(false);
+  const [reclaimMsg, setReclaimMsg] = useState<string | null>(null);
   const globalFormRef = useRef<ConfigFormHandle>(null);
   const projectFormRef = useRef<ConfigFormHandle>(null);
 
@@ -94,10 +105,11 @@ export function Settings({
   // Reset the restore-builtins toast when the user navigates away.
   useEffect(() => {
     setRestoreMsgByKind({ workflows: null, shortcuts: null });
+    setReclaimMsg(null);
   }, [activeSection]);
 
   // Build section groups for sidebar nav.
-  const HARDCODED_GLOBAL = ["Daemon", "Docker Image"];
+  const HARDCODED_GLOBAL = ["Daemon", "Docker Image", "Containers"];
   const globalSchemaSections = getSections(schema, true);
   const projectSchemaSections = projectDirPath ? getSections(schema, false) : [];
 
@@ -206,6 +218,21 @@ export function Settings({
       setRestoringByKind((prev) => ({ ...prev, [kind]: false }));
     }
     setRestoreMsgByKind((prev) => ({ ...prev, [kind]: msg }));
+  };
+
+  const handleReclaimSpace = async () => {
+    setReclaiming(true);
+    setReclaimMsg(null);
+    let msg: string;
+    try {
+      const r = await reclaimDockerSpace();
+      msg = `Reclaimed ${formatBytes(r.total_reclaimed)} — build cache ${formatBytes(r.build_cache_reclaimed)}, dangling images ${formatBytes(r.images_reclaimed)}.`;
+    } catch (e: any) {
+      msg = e?.message ?? "Reclaim failed";
+    } finally {
+      setReclaiming(false);
+    }
+    setReclaimMsg(msg);
   };
 
   const handleSaveProjectConfig = async (content: string): Promise<string | null> => {
@@ -396,6 +423,8 @@ export function Settings({
               {activeSection === "Docker Image" && (
                 <DockerImageSection colors={colors} imageBuildStatus={imageBuildStatus} imageStatus={imageStatus} imageUpdateAvailable={imageUpdateAvailable} onRebuildImage={onRebuildImage} />
               )}
+
+              {activeSection === "Containers" && <ContainersSection colors={colors} reclaiming={reclaiming} reclaimMsg={reclaimMsg} onReclaim={handleReclaimSpace} />}
 
               {activeSection === "__global_json__" && globalConfig && (
                 <ConfigForm
@@ -893,6 +922,103 @@ function DockerImageSection({
           {imageBuildStatus?.state === "building" ? "Building..." : "Rebuild Image"}
         </button>
       </div>
+    </>
+  );
+}
+
+function ContainersSection({ colors, reclaiming, reclaimMsg, onReclaim }: { colors: ColorPalette; reclaiming: boolean; reclaimMsg: string | null; onReclaim: () => void }) {
+  const [confirming, setConfirming] = useState(false);
+
+  return (
+    <>
+      <div
+        style={{
+          backgroundColor: colors.bg,
+          borderRadius: 8,
+          padding: "10px 12px",
+          marginBottom: 12,
+          fontSize: 12,
+          color: colors.textDim,
+          lineHeight: 1.5,
+        }}
+      >
+        Reclaim Docker disk by pruning unused BuildKit cache and dangling (untagged) images left behind by repeated Loop builds. Tagged images in use —{" "}
+        <code style={{ fontFamily: fonts.mono }}>loop-agent</code> and your project images — are kept. Build-cache pruning is daemon-wide, not scoped to Loop, and the next image build will be slower.
+      </div>
+
+      {confirming ? (
+        <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
+          <button
+            data-testid="reclaim-confirm"
+            onClick={() => {
+              setConfirming(false);
+              onReclaim();
+            }}
+            style={{
+              flex: 1,
+              padding: "8px 12px",
+              backgroundColor: colors.error,
+              border: `1px solid ${colors.error}`,
+              borderRadius: 8,
+              color: "#fff",
+              fontSize: 12,
+              cursor: "pointer",
+              fontFamily: "inherit",
+            }}
+          >
+            Prune now
+          </button>
+          <button
+            onClick={() => setConfirming(false)}
+            style={{
+              flex: 1,
+              padding: "8px 12px",
+              backgroundColor: colors.bg,
+              border: `1px solid ${colors.border}`,
+              borderRadius: 8,
+              color: colors.text,
+              fontSize: 12,
+              cursor: "pointer",
+              fontFamily: "inherit",
+            }}
+          >
+            Cancel
+          </button>
+        </div>
+      ) : (
+        <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
+          <button
+            data-testid="reclaim-space"
+            onClick={() => setConfirming(true)}
+            disabled={reclaiming}
+            style={{
+              flex: 1,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              gap: 6,
+              padding: "8px 12px",
+              backgroundColor: colors.bg,
+              border: `1px solid ${colors.border}`,
+              borderRadius: 8,
+              color: reclaiming ? colors.textDim : colors.text,
+              fontSize: 12,
+              cursor: reclaiming ? "default" : "pointer",
+              fontFamily: "inherit",
+            }}
+            onMouseEnter={(e) => {
+              if (!reclaiming) e.currentTarget.style.borderColor = colors.textDim;
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.borderColor = colors.border;
+            }}
+          >
+            {reclaiming ? "Reclaiming…" : "Reclaim Docker space"}
+          </button>
+        </div>
+      )}
+
+      {reclaimMsg && <div style={{ fontSize: 11, color: colors.textDim, lineHeight: 1.5 }}>{reclaimMsg}</div>}
     </>
   );
 }

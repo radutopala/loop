@@ -422,6 +422,19 @@ The build:
 - Passes `CLAUDE_VERSION` as a build arg, fetched from `https://storage.googleapis.com/claude-code-dist-.../latest` (falls back to a timestamp if the lookup fails).
 - Injects `~/.gitconfig` as a build secret (if the file exists) so Git configuration is available during the build.
 
+After a successful startup build, `PruneBuildCache` drops BuildKit cache entries unused for 30+ days so a long-lived install doesn't balloon to 100GB+ of cache.
+
+---
+
+## Reclaiming Docker Space
+
+The **Containers** settings section exposes a "Reclaim Docker space" action (`POST /api/image/reclaim`) that frees disk on demand:
+
+- `PruneBuildCache(unusedFor=0)` drops **all currently-unused** BuildKit cache.
+- `PruneDanglingImages` removes **dangling (untagged)** images — layers orphaned by repeated rebuilds. Tagged images still in use (`loop-agent`, project images) are preserved.
+
+The handler returns a `ReclaimResult` (`build_cache_reclaimed`, `images_reclaimed`, `total_reclaimed`, in bytes) and the UI reports the space freed. Build-cache pruning is daemon-global, not scoped to Loop's own builds, and the next image build runs slower until the cache warms again.
+
 ---
 
 ## Resource Limits

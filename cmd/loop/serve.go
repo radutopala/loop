@@ -127,7 +127,7 @@ func (a *app) defaultEnsureImage(ctx context.Context, client container.DockerCli
 	// in real-world installs. Logged-and-ignored on failure — a stale
 	// cache is preferable to a failed startup.
 	if built {
-		if err := client.PruneBuildCache(ctx, 30*24*time.Hour); err != nil {
+		if _, err := client.PruneBuildCache(ctx, 30*24*time.Hour); err != nil {
 			slog.Warn("build cache prune failed", "error", err)
 		}
 	}

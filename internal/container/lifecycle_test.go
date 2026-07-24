@@ -212,6 +212,47 @@ func (s *LifecycleSuite) TestRemoveImage_ErrorDoesNotUnregister() {
 	require.Len(s.T(), reg.List(), 1)
 }
 
+// --- ReclaimSpace ---
+
+func (s *LifecycleSuite) TestReclaimSpace_Success() {
+	m := s.newManager(func() string { return "" })
+
+	s.client.On("PruneBuildCache", mock.Anything, time.Duration(0)).Return(uint64(4096), nil)
+	s.client.On("PruneDanglingImages", mock.Anything).Return(uint64(8192), nil)
+
+	result, err := m.ReclaimSpace(context.Background())
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), uint64(4096), result.BuildCacheReclaimed)
+	require.Equal(s.T(), uint64(8192), result.ImagesReclaimed)
+	require.Equal(s.T(), uint64(12288), result.TotalReclaimed)
+	s.client.AssertExpectations(s.T())
+}
+
+func (s *LifecycleSuite) TestReclaimSpace_BuildCacheError() {
+	m := s.newManager(func() string { return "" })
+
+	s.client.On("PruneBuildCache", mock.Anything, time.Duration(0)).Return(uint64(0), errors.New("cache fail"))
+
+	result, err := m.ReclaimSpace(context.Background())
+	require.EqualError(s.T(), err, "cache fail")
+	require.Zero(s.T(), result.TotalReclaimed)
+	// Images prune must not run once the cache prune fails.
+	s.client.AssertNotCalled(s.T(), "PruneDanglingImages", mock.Anything)
+}
+
+func (s *LifecycleSuite) TestReclaimSpace_ImagesErrorStillReportsCache() {
+	m := s.newManager(func() string { return "" })
+
+	s.client.On("PruneBuildCache", mock.Anything, time.Duration(0)).Return(uint64(4096), nil)
+	s.client.On("PruneDanglingImages", mock.Anything).Return(uint64(0), errors.New("images fail"))
+
+	result, err := m.ReclaimSpace(context.Background())
+	require.EqualError(s.T(), err, "images fail")
+	require.Equal(s.T(), uint64(4096), result.BuildCacheReclaimed)
+	require.Equal(s.T(), uint64(4096), result.TotalReclaimed)
+	require.Zero(s.T(), result.ImagesReclaimed)
+}
+
 func (s *LifecycleSuite) TestSetContainerRegistry() {
 	m := s.newManager(func() string { return "" })
 	require.Nil(s.T(), m.registry)
