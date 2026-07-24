@@ -294,6 +294,51 @@ func (s *MCPServerSuite) TestDeleteThreadErrors() {
 	})
 }
 
+// --- fork_thread ---
+
+func (s *MCPServerSuite) TestForkThreadSuccess() {
+	s.httpClient.doFunc = func(req *http.Request) (*http.Response, error) {
+		require.Equal(s.T(), "POST", req.Method)
+		require.Contains(s.T(), req.URL.String(), "/api/threads/thread-1/fork")
+		return jsonResponse(http.StatusCreated, `{"thread_id":"thread-2"}`), nil
+	}
+
+	text, isError := s.callTool("fork_thread", map[string]any{"thread_id": "thread-1"})
+	require.False(s.T(), isError)
+	require.Contains(s.T(), text, "thread-2")
+	require.Contains(s.T(), text, "forked")
+	require.Contains(s.T(), text, "send_message")
+}
+
+func (s *MCPServerSuite) TestForkThreadSuccessWorktree() {
+	s.httpClient.doFunc = func(req *http.Request) (*http.Response, error) {
+		require.Contains(s.T(), req.URL.String(), "/api/threads/wt-1/fork")
+		return jsonResponse(http.StatusCreated, `{"thread_id":"thread-3","worktree_path":"/tmp/wt/wt-fork"}`), nil
+	}
+
+	text, isError := s.callTool("fork_thread", map[string]any{"thread_id": "wt-1"})
+	require.False(s.T(), isError)
+	require.Contains(s.T(), text, "thread-3")
+	require.Contains(s.T(), text, "/tmp/wt/wt-fork")
+	require.Contains(s.T(), text, "worktree")
+}
+
+func (s *MCPServerSuite) TestForkThreadEmptyID() {
+	text, isError := s.callTool("fork_thread", map[string]any{"thread_id": ""})
+	require.True(s.T(), isError)
+	require.Contains(s.T(), text, "thread_id is required")
+}
+
+func (s *MCPServerSuite) TestForkThreadErrors() {
+	s.runToolErrorCases(toolErrorSpec{
+		tool:         "fork_thread",
+		args:         map[string]any{"thread_id": "thread-1"},
+		apiStatus:    http.StatusBadRequest,
+		apiBody:      "thread not found",
+		decodeStatus: http.StatusCreated,
+	})
+}
+
 // --- search_channels ---
 
 func (s *MCPServerSuite) TestSearchChannelsSuccess() {

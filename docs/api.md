@@ -275,6 +275,21 @@ Create a new thread under a parent channel. If the channel ID points to a thread
 
 ---
 
+### `POST /api/threads/{id}/fork`
+
+Forks a thread: creates a sibling thread that continues the source thread's conversation. The new thread copies the source's Claude session id (marked fork-pending) and imports its history for display; the orchestrator runs the fork's first message with `--fork-session`, so the two threads diverge instead of clobbering each other — the SOURCE thread keeps its session untouched.
+
+For **worktree threads**, the fork additionally creates a new git worktree branched from the source worktree's branch (its committed state — uncommitted changes stay behind), and the new thread's `base_branch` is set to the source's branch so its diff shows only the fork's own delta.
+
+**Response (201):**
+```json
+{ "thread_id": "abc123", "worktree_path": "/path/to/.worktrees/wt-1a2b" }
+```
+
+`worktree_path` is present only for worktree forks. **Errors:** `400` when the id is not a thread; `500` on git/store failures.
+
+---
+
 ### `DELETE /api/threads/{id}`
 
 Delete a thread.

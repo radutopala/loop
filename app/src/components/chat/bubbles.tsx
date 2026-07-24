@@ -198,11 +198,19 @@ export function MessageBubble({
     (e: React.MouseEvent) => {
       if (!onQuote) return;
       e.preventDefault();
-      setCtxMenu({
-        x: e.clientX,
-        y: e.clientY,
-        items: [{ label: "Quote reply", onClick: () => onQuote(message) }],
-      });
+      // Offer "Quote selection" only when there's a non-empty text selection
+      // that lives inside this bubble — otherwise it would quote text the user
+      // highlighted in a different message.
+      const bubble = e.currentTarget;
+      const sel = window.getSelection();
+      const selectedText = sel?.toString().trim() ?? "";
+      const inThisBubble = !!sel && sel.rangeCount > 0 && bubble.contains(sel.anchorNode);
+      const items: MenuItem[] = [];
+      if (selectedText && inThisBubble) {
+        items.push({ label: "Quote selection", onClick: () => onQuote({ ...message, content: selectedText }) });
+      }
+      items.push({ label: "Quote reply", onClick: () => onQuote(message) });
+      setCtxMenu({ x: e.clientX, y: e.clientY, items });
     },
     [onQuote, message],
   );

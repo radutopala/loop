@@ -207,24 +207,57 @@ export function ChannelItem({
             </span>
           )}
         </button>
-        <div style={{ display: "flex", alignItems: "center", gap: 2, opacity: hovered ? 1 : 0, marginRight: 4, flexShrink: 0 }}>
-          {channel.dir_path && onOpenConfig && (
+        {hovered && (
+          <div style={{ display: "flex", alignItems: "center", gap: 2, marginRight: 4, flexShrink: 0 }}>
+            {channel.dir_path && onOpenConfig && (
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onOpenConfig(channel.dir_path);
+                }}
+                title="Project config"
+                style={{
+                  background: "none",
+                  border: "none",
+                  color: colors.textDim,
+                  cursor: "pointer",
+                  padding: "3px 4px",
+                  lineHeight: 1,
+                  borderRadius: 4,
+                  display: "flex",
+                  alignItems: "center",
+                }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.backgroundColor = colors.hoverBg;
+                  e.currentTarget.style.color = colors.textLight;
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.backgroundColor = "transparent";
+                  e.currentTarget.style.color = colors.textDim;
+                }}
+              >
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z" />
+                  <circle cx="12" cy="12" r="3" />
+                </svg>
+              </button>
+            )}
             <button
               onClick={(e) => {
                 e.stopPropagation();
-                onOpenConfig(channel.dir_path);
+                setCreating((v) => !v);
               }}
-              title="Project config"
+              title="New thread"
               style={{
                 background: "none",
                 border: "none",
                 color: colors.textDim,
                 cursor: "pointer",
-                padding: "3px 4px",
+                padding: "2px 6px",
+                fontSize: 11,
                 lineHeight: 1,
                 borderRadius: 4,
-                display: "flex",
-                alignItems: "center",
+                whiteSpace: "nowrap",
               }}
               onMouseEnter={(e) => {
                 e.currentTarget.style.backgroundColor = colors.hoverBg;
@@ -235,42 +268,11 @@ export function ChannelItem({
                 e.currentTarget.style.color = colors.textDim;
               }}
             >
-              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z" />
-                <circle cx="12" cy="12" r="3" />
-              </svg>
+              + thread
             </button>
-          )}
-          <button
-            onClick={(e) => {
-              e.stopPropagation();
-              setCreating((v) => !v);
-            }}
-            title="New thread"
-            style={{
-              background: "none",
-              border: "none",
-              color: colors.textDim,
-              cursor: "pointer",
-              padding: "2px 6px",
-              fontSize: 11,
-              lineHeight: 1,
-              borderRadius: 4,
-              whiteSpace: "nowrap",
-            }}
-            onMouseEnter={(e) => {
-              e.currentTarget.style.backgroundColor = colors.hoverBg;
-              e.currentTarget.style.color = colors.textLight;
-            }}
-            onMouseLeave={(e) => {
-              e.currentTarget.style.backgroundColor = "transparent";
-              e.currentTarget.style.color = colors.textDim;
-            }}
-          >
-            + thread
-          </button>
-          {channel.dir_path && onCreateWorktree && <SidebarWorktreeButton channelId={channel.id} onCreateWorktree={onCreateWorktree} />}
-        </div>
+            {channel.dir_path && onCreateWorktree && <SidebarWorktreeButton channelId={channel.id} onCreateWorktree={onCreateWorktree} />}
+          </div>
+        )}
       </div>
 
       {creating && (

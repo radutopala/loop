@@ -28,7 +28,7 @@ Agent (Claude Code)  ←→  MCP Protocol (stdio)  ←→  loop mcp  ←→  HTT
 
 ## Registered Tools
 
-### Always Available (18 tools)
+### Always Available (19 tools)
 
 #### Task Management
 
@@ -52,6 +52,7 @@ Agent (Claude Code)  ←→  MCP Protocol (stdio)  ←→  loop mcp  ←→  HTT
 | `create_worktree_thread` | Create a thread backed by a fresh git worktree (mirrors the UI `+wt` button). `branch` is the existing **base** to fork from (e.g. `main`); a new `worktree/<name>` branch is created and checked out off it. Optional `name` for the worktree directory; optional `message` triggers an agent immediately. |
 | `rename_thread` | Rename a thread or channel's display name. Only updates the name — the directory and Claude sessions are preserved. |
 | `rename_worktree_thread` | Rename a worktree thread to `new_name`: renames the worktree directory and its `worktree/<name>` branch, relocates the Claude session store, and updates the display name. Sessions are preserved; rejected with `409` if a run is active. |
+| `fork_thread` | Fork a thread by ID (mirrors the sidebar `+fork` action): creates a sibling that continues the source's conversation on a forked Claude session, leaving the source untouched. Worktree threads also get a fresh worktree branched from the source's committed state. No agent is triggered — follow up with `send_message` to task the fork. |
 | `delete_thread` | Delete a thread by ID |
 | `search_channels` | Search channels and threads by optional query. Returns IDs, names, directory paths, parent IDs, and active status. |
 

@@ -351,7 +351,11 @@ func (o *Orchestrator) prepareAgentRequest(ctx context.Context, msg *bot.Incomin
 	if channel.ParentID != "" {
 		parent, err := o.store.GetChannel(ctx, channel.ParentID)
 		if err == nil && parent != nil {
-			if req.SessionID != "" && channel.SessionID == parent.SessionID {
+			// ForkPending marks fork-created threads: their session id is
+			// borrowed from a SOURCE thread (not the parent), so the parent
+			// comparison alone would miss them — and a shared-count check
+			// would be symmetric, wrongly forking the source too.
+			if req.SessionID != "" && (channel.SessionID == parent.SessionID || channel.ForkPending) {
 				req.ForkSession = true
 			}
 			// Pass the root project checkout so the runner can mount it for

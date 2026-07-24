@@ -213,3 +213,115 @@ func (s *Server) importSessionMessages(ctx context.Context, parentChannelID, thr
 		}
 	}
 }
+
+type forkThreadResponse struct {
+	ThreadID     string `json:"thread_id"`
+	WorktreePath string `json:"worktree_path,omitempty"`
+}
+
+// handleForkThread creates a sibling of the given thread that continues its
+// conversation: the new thread copies the source's Claude session id (history
+// imported for display; the orchestrator forks the session on the first
+// message because the id is now shared) — a "branch this conversation" for
+// threads. For WORKTREE threads it additionally creates a new git worktree
+// branched from the source worktree's branch, so the fork continues from the
+// source's committed code state; base_branch is set to the source's branch so
+// the fork's diff shows its own delta.
+func (s *Server) handleForkThread(w http.ResponseWriter, r *http.Request) {
+	if !requireConfigured(w, s.store, "channel listing not configured") {
+		return
+	}
+	if !requireConfigured(w, s.threads, "thread creation not configured") {
+		return
+	}
+	threadID := r.PathValue("id")
+
+	src, err := s.store.GetChannel(r.Context(), threadID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if src == nil || src.ParentID == "" {
+		http.Error(w, "thread not found", http.StatusBadRequest)
+		return
+	}
+
+	if src.Worktree {
+		s.forkWorktreeThread(w, r, src)
+		return
+	}
+
+	newID, err := s.threads.CreateThread(r.Context(), src.ParentID, src.Name+" (fork)", "", "")
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if src.SessionID != "" {
+		if err := s.store.MarkSessionForkPending(r.Context(), newID, src.SessionID); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		s.importSessionMessages(r.Context(), src.ParentID, newID, src.SessionID)
+	}
+	if s.eventsHub != nil {
+		s.eventsHub.BroadcastChannelCreated(src.ParentID, newID)
+	}
+	writeHTTPJSON(w, http.StatusCreated, forkThreadResponse{ThreadID: newID}, s.logger)
+}
+
+// forkWorktreeThread is the worktree-thread arm of handleForkThread: new
+// worktree branched from the SOURCE worktree's branch (its committed state),
+// new thread carrying the source's session.
+func (s *Server) forkWorktreeThread(w http.ResponseWriter, r *http.Request, src *db.Channel) {
+	parent, err := s.store.GetChannel(r.Context(), src.ParentID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if parent == nil || parent.DirPath == "" {
+		http.Error(w, "parent project channel not found", http.StatusInternalServerError)
+		return
+	}
+
+	// The worktree branch convention is worktree/<dir basename> (see
+	// worktree.Creator.Create).
+	srcBranch := "worktree/" + filepath.Base(src.DirPath)
+	name := "wt-" + randutil.HexID(4)
+	result, err := s.worktreeCreator.Create(r.Context(), parent.DirPath, srcBranch, name, src.SessionID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	newID, err := s.threads.CreateThread(r.Context(), src.ParentID, name+" (fork of "+srcBranch+")", "", "")
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	ch, err := s.store.GetChannel(r.Context(), newID)
+	if err != nil || ch == nil {
+		http.Error(w, "failed to get created thread", http.StatusInternalServerError)
+		return
+	}
+	ch.DirPath = result.WorktreePath
+	ch.Worktree = true
+	ch.BaseBranch = srcBranch
+	if err := s.store.UpsertChannel(r.Context(), ch); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if src.SessionID != "" {
+		if err := s.store.MarkSessionForkPending(r.Context(), newID, src.SessionID); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		s.importSessionMessages(r.Context(), src.ParentID, newID, src.SessionID)
+	}
+	if s.eventsHub != nil {
+		s.eventsHub.BroadcastChannelCreated(src.ParentID, newID)
+	}
+	writeHTTPJSON(w, http.StatusCreated, forkThreadResponse{
+		ThreadID:     newID,
+		WorktreePath: result.WorktreePath,
+	}, s.logger)
+}

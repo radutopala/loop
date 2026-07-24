@@ -1,4 +1,5 @@
 import { useCallback, useRef, useState } from "react";
+import { forkThread } from "../../api/channels";
 import { useTheme } from "../../ThemeContext";
 import type { Channel, ImageBuildStatusData, ImageUpdateAvailableData, UpdateStatus } from "../../types";
 import { storageGetJSON, storageSetJSON } from "../../utils/storage";
@@ -266,19 +267,32 @@ export function Sidebar({
           onClick: () => navigator.clipboard.writeText(channel.id),
         },
       ];
+      // Fork is offered for threads (incl. worktree threads) only — it mirrors
+      // the row's +fork action. It is non-destructive to the source (creates a
+      // sibling on a forked session), so it stays available even when locked.
+      if (isThread) {
+        items.push({
+          label: channel.worktree ? "Fork Worktree" : "Fork Thread",
+          separator: true,
+          onClick: () => {
+            forkThread(channel.id)
+              .then((newId) => onSelect(newId))
+              .catch((err) => console.warn("[sidebar] fork thread failed:", err));
+          },
+        });
+      }
       // Rename is offered for threads (incl. worktree threads) only — never the
       // DM, and not while locked (mirrors Delete: unlock first to confirm intent).
       if (isThread && !isDm && !channel.locked && onRenameThread) {
         items.push({
           label: channel.worktree ? "Rename Worktree" : "Rename Thread",
-          separator: true,
           onClick: () => setRenaming(channel),
         });
       }
       if (!isDm && onSetLocked) {
         items.push({
           label: channel.locked ? "Unlock" : "Lock",
-          separator: !(isThread && !channel.locked && onRenameThread),
+          separator: !isThread,
           onClick: () => onSetLocked(channel.id, !channel.locked),
         });
       }
@@ -295,7 +309,7 @@ export function Sidebar({
       }
       setContextMenu({ x: e.clientX, y: e.clientY, items });
     },
-    [onDeleteThread, onRenameThread, onSetLocked],
+    [onDeleteThread, onRenameThread, onSetLocked, onSelect],
   );
 
   const handleMouseDown = useCallback(

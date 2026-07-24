@@ -427,3 +427,15 @@ export async function fetchContainerStats(channelId: string): Promise<ContainerS
   if (!res.ok) throw new Error(`Failed to fetch container stats: ${res.statusText}`);
   return res.json();
 }
+
+/**
+ * Forks a thread: creates a sibling thread continuing the source's Claude
+ * session (worktree threads also get a new git worktree branched from the
+ * source's branch). Returns the new thread id.
+ */
+export async function forkThread(threadId: string): Promise<string> {
+  const res = await fetch(`${getApiUrl()}/api/threads/${encodeURIComponent(threadId)}/fork`, { method: "POST" });
+  if (!res.ok) throw new Error(`Failed to fork thread: ${(await res.text()) || res.statusText}`);
+  const data = await res.json();
+  return data.thread_id;
+}
