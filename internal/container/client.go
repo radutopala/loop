@@ -46,6 +46,7 @@ type dockerAPI interface {
 	NetworkCreate(ctx context.Context, name string, options network.CreateOptions) (network.CreateResponse, error)
 	NetworkRemove(ctx context.Context, networkID string) error
 	BuildCachePrune(ctx context.Context, opts build.CachePruneOptions) (*build.CachePruneReport, error)
+	ImagesPrune(ctx context.Context, pruneFilters filters.Args) (image.PruneReport, error)
 	Events(ctx context.Context, options events.ListOptions) (<-chan events.Message, <-chan error)
 	Close() error
 }
@@ -502,18 +503,38 @@ func (c *Client) ImageBuildFile(ctx context.Context, contextDir, dockerfile, tag
 }
 
 // PruneBuildCache drops BuildKit cache entries not used in the past unusedFor
-// window. Called after a successful image build so frequently-used layers
-// stay warm but stale entries don't accumulate across many `make restart` /
-// daemon-restart cycles. Without this, a single Loop install can balloon to
-// 100GB+ of build cache over months.
-func (c *Client) PruneBuildCache(ctx context.Context, unusedFor time.Duration) error {
+// window and returns the number of bytes reclaimed. Called after a successful
+// image build so frequently-used layers stay warm but stale entries don't
+// accumulate across many `make restart` / daemon-restart cycles. Without this,
+// a single Loop install can balloon to 100GB+ of build cache over months. Also
+// exposed via the settings "reclaim Docker space" action (with unusedFor=0 to
+// drop all currently-unused cache). Note: BuildKit cache is daemon-global and
+// not tagged per-project, so this is not scoped to Loop's own builds.
+func (c *Client) PruneBuildCache(ctx context.Context, unusedFor time.Duration) (uint64, error) {
 	f := filters.NewArgs()
 	f.Add("unused-for", unusedFor.String())
-	_, err := c.api.BuildCachePrune(ctx, build.CachePruneOptions{Filters: f})
+	report, err := c.api.BuildCachePrune(ctx, build.CachePruneOptions{Filters: f})
 	if err != nil {
-		return fmt.Errorf("pruning build cache: %w", err)
+		return 0, fmt.Errorf("pruning build cache: %w", err)
 	}
-	return nil
+	if report == nil {
+		return 0, nil
+	}
+	return report.SpaceReclaimed, nil
+}
+
+// PruneDanglingImages removes dangling (untagged) images and returns the
+// number of bytes reclaimed. Scoped to dangling images so tagged images still
+// referenced by Loop (loop-agent, project images) are preserved — the common
+// case is layers orphaned by repeated image rebuilds.
+func (c *Client) PruneDanglingImages(ctx context.Context) (uint64, error) {
+	f := filters.NewArgs()
+	f.Add("dangling", "true")
+	report, err := c.api.ImagesPrune(ctx, f)
+	if err != nil {
+		return 0, fmt.Errorf("pruning dangling images: %w", err)
+	}
+	return report.SpaceReclaimed, nil
 }
 
 func (c *Client) defaultDockerBuildFileLabelsCmd(ctx context.Context, contextDir, dockerfile, tag string, labels map[string]string) ([]byte, error) {

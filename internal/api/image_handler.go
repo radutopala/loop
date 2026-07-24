@@ -15,6 +15,7 @@ type ImageManager interface {
 	UpdateAvailable() *events.ImageUpdateAvailableData
 	RemoveImage(ctx context.Context) error
 	Rebuild(ctx context.Context) error
+	ReclaimSpace(ctx context.Context) (container.ReclaimResult, error)
 }
 
 type imageStatusResponse struct {
@@ -60,4 +61,18 @@ func (s *Server) handleImageRemove(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) handleImageReclaim(w http.ResponseWriter, r *http.Request) {
+	if !requireConfigured(w, s.imageManager, "image management not configured") {
+		return
+	}
+
+	result, err := s.imageManager.ReclaimSpace(r.Context())
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	writeHTTPJSON(w, http.StatusOK, result, s.logger)
 }

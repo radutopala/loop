@@ -300,6 +300,12 @@ export interface ImageStatusResponse {
   update_available?: ImageUpdateAvailableData;
 }
 
+export interface DockerReclaimResult {
+  build_cache_reclaimed: number;
+  images_reclaimed: number;
+  total_reclaimed: number;
+}
+
 export interface DaemonInfo {
   running: boolean;
   binaryPath: string | null;

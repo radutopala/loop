@@ -116,8 +116,14 @@ func (m *mockDockerClient) ImageBuildFileLabels(ctx context.Context, contextDir,
 	return args.Error(0)
 }
 
-func (m *mockDockerClient) PruneBuildCache(ctx context.Context, unusedFor time.Duration) error {
-	return m.Called(ctx, unusedFor).Error(0)
+func (m *mockDockerClient) PruneBuildCache(ctx context.Context, unusedFor time.Duration) (uint64, error) {
+	args := m.Called(ctx, unusedFor)
+	return args.Get(0).(uint64), args.Error(1)
+}
+
+func (m *mockDockerClient) PruneDanglingImages(ctx context.Context) (uint64, error) {
+	args := m.Called(ctx)
+	return args.Get(0).(uint64), args.Error(1)
 }
 
 func (m *mockDockerClient) ContainerList(ctx context.Context, labelKey, labelValue string) ([]string, error) {
