@@ -252,6 +252,17 @@ export function useChatState(channelId: string | null, initialRunningBot?: boole
       if (event.type === "messages.processed") {
         const data = event.data as MessagesProcessedData;
         markProcessed(data.msg_ids);
+        // Second, content-coupled end-of-turn signal alongside agent.status
+        // "done", which can be missed (observed live: reply rendered, its
+        // container stopped, stop button stuck forever — worktree threads
+        // route status events through thread-id remapping with more ways
+        // to lose the clear). messages.processed is broadcast exactly once
+        // per user turn after delivery — never for mid-turn streamed bot
+        // bubbles — so clearing here cannot hide a live run. A queued next
+        // turn re-lights via its own agent.status "running".
+        isRunningRef.current = false;
+        setIsRunning(false);
+        setRunId(null);
         if (processingMsgIdRef.current && data.msg_ids.includes(processingMsgIdRef.current)) {
           setProcessingMsgId(null);
         }
