@@ -137,6 +137,48 @@ func (s *ServerSuite) TestListShortcutsWithChannelMerge() {
 	require.Equal(s.T(), "local", result[1].Name)
 }
 
+func (s *ServerSuite) TestListShortcutsNestedWorktreeThreadUsesRootDir() {
+	// Regression: a task thread (non-worktree) created under a worktree thread
+	// must resolve the ROOT project's .loop/config.json for its project-level
+	// shortcuts, not the worktree checkout's dir (which usually has no .loop
+	// overrides). Chain: task-1 -> wt-1 (worktree) -> ch-root.
+	s.srv.configs.load = func() (*config.Config, error) {
+		return &config.Config{
+			LoopDir: "/home/testuser/.loop",
+			PromptShortcuts: []config.PromptShortcut{
+				{Name: "global", Description: "Global shortcut", Prompt: "global prompt"},
+			},
+		}, nil
+	}
+	s.store.On("GetChannel", mock.Anything, "task-1").Return(&db.Channel{
+		ChannelID: "task-1", DirPath: "/projects/app/.worktrees/wt-1", ParentID: "wt-1",
+	}, nil)
+	s.store.On("GetChannel", mock.Anything, "wt-1").Return(&db.Channel{
+		ChannelID: "wt-1", DirPath: "/projects/app/.worktrees/wt-1", ParentID: "ch-root", Worktree: true,
+	}, nil)
+	s.store.On("GetChannel", mock.Anything, "ch-root").Return(&db.Channel{
+		ChannelID: "ch-root", DirPath: "/projects/app",
+	}, nil)
+	s.srv.configs.loadProject = func(dir string, base *config.Config) (*config.Config, error) {
+		// Must be the root project dir, not the worktree checkout dir.
+		require.Equal(s.T(), "/projects/app", dir)
+		merged := *base
+		merged.PromptShortcuts = append(merged.PromptShortcuts,
+			config.PromptShortcut{Name: "local", Description: "Project shortcut", Prompt: "project prompt"},
+		)
+		return &merged, nil
+	}
+
+	rec := s.testRequest("GET", "/api/shortcuts?channel_id=task-1", "")
+
+	require.Equal(s.T(), http.StatusOK, rec.Code)
+	var result []shortcutResponse
+	require.NoError(s.T(), json.Unmarshal(rec.Body.Bytes(), &result))
+	require.Len(s.T(), result, 2)
+	require.Equal(s.T(), "global", result[0].Name)
+	require.Equal(s.T(), "local", result[1].Name)
+}
+
 func (s *ServerSuite) TestListShortcutsLoopDirFallback() {
 	s.srv.configs.load = func() (*config.Config, error) {
 		return &config.Config{

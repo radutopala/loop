@@ -7,8 +7,6 @@ import (
 	"net/http"
 	"path/filepath"
 	"sync"
-
-	"github.com/radutopala/loop/internal/db"
 )
 
 // playgroundService owns the playground and public-share domain: playground
@@ -94,7 +92,7 @@ func (s *playgroundService) projectPlaygroundDir(ctx context.Context, channelID 
 	if ch == nil {
 		return "", fmt.Errorf("channel %s not found", channelID)
 	}
-	if root := s.worktreeRootDir(ctx, ch); root != "" {
+	if root := worktreeRootDirPath(ctx, s.deps.store, ch); root != "" {
 		return root, nil
 	}
 	if ch.DirPath == "" {
@@ -104,41 +102,6 @@ func (s *playgroundService) projectPlaygroundDir(ctx context.Context, channelID 
 		return "", fmt.Errorf("channel %s has no dir_path", channelID)
 	}
 	return ch.DirPath, nil
-}
-
-// worktreeRootDir returns the DirPath of the nearest non-worktree ancestor for
-// an already-fetched channel that is (or lives under) a worktree chain, or ""
-// when it isn't part of one. Handles worktree channels, threads that share a
-// worktree's dir without the worktree flag, and nested worktrees. The walk is
-// bounded to guard against parent-id cycles. Mirrors the orchestrator's
-// worktreeRootFor.
-func (s *playgroundService) worktreeRootDir(ctx context.Context, ch *db.Channel) string {
-	cur := ch
-	if !cur.Worktree {
-		// A thread row under a worktree channel: hop to the worktree itself.
-		if cur.ParentID == "" {
-			return ""
-		}
-		p, err := s.deps.store.GetChannel(ctx, cur.ParentID)
-		if err != nil || p == nil || !p.Worktree {
-			return ""
-		}
-		cur = p
-	}
-	for range 8 {
-		if cur.ParentID == "" {
-			return ""
-		}
-		p, err := s.deps.store.GetChannel(ctx, cur.ParentID)
-		if err != nil || p == nil {
-			return ""
-		}
-		if !p.Worktree {
-			return p.DirPath
-		}
-		cur = p
-	}
-	return ""
 }
 
 // resolveProjectPlaygroundDir resolves a playground dir from channel_id and name path values.
