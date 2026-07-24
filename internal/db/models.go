@@ -26,10 +26,14 @@ type Channel struct {
 	// ModelOverride / EffortOverride replace the config's claude_model /
 	// claude_effort for this channel's agent runs when non-empty. Set from the
 	// chat UI per channel/thread/worktree; empty means inherit from config.
-	ModelOverride  string    `json:"model_override"`
-	EffortOverride string    `json:"effort_override"`
-	CreatedAt      time.Time `json:"created_at"`
-	UpdatedAt      time.Time `json:"updated_at"`
+	ModelOverride  string `json:"model_override"`
+	EffortOverride string `json:"effort_override"`
+	// ForkPending marks a fork-created thread whose session id is borrowed
+	// from its source thread; the first message must --fork-session. Cleared
+	// on the next session id update.
+	ForkPending bool      `json:"fork_pending"`
+	CreatedAt   time.Time `json:"created_at"`
+	UpdatedAt   time.Time `json:"updated_at"`
 }
 
 // StaleRunningMessage describes a (channel_id, msg_id) pair returned by

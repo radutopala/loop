@@ -23,6 +23,7 @@ type ChannelLister interface {
 	GetMessagesAround(ctx context.Context, channelID string, messageID int64, limit int) ([]*db.Message, error)
 	GetTimeline(ctx context.Context, channelID string, cursorPosition, cursorID int64, limit int) ([]*db.Message, error)
 	UpdateSessionID(ctx context.Context, channelID string, sessionID string) error
+	MarkSessionForkPending(ctx context.Context, channelID string, sessionID string) error
 	UpdateChannelAgentOverrides(ctx context.Context, channelID, model, effort string) error
 	UpdateChannelLocked(ctx context.Context, channelID string, locked bool) error
 	UpdateChannelName(ctx context.Context, channelID, name string) error

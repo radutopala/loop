@@ -38,7 +38,7 @@ func (s *SQLiteStore) UpsertChannel(ctx context.Context, ch *Channel) error {
 
 func (s *SQLiteStore) GetChannel(ctx context.Context, channelID string) (*Channel, error) {
 	row := s.db.QueryRowContext(ctx,
-		`SELECT id, channel_id, guild_id, name, dir_path, parent_id, platform, active, session_id, permissions, worktree, base_branch, locked, model_override, effort_override, created_at, updated_at FROM channels WHERE channel_id = ?`,
+		`SELECT id, channel_id, guild_id, name, dir_path, parent_id, platform, active, session_id, permissions, worktree, base_branch, locked, model_override, effort_override, fork_pending, created_at, updated_at FROM channels WHERE channel_id = ?`,
 		channelID,
 	)
 	ch, err := scanChannel(row)
@@ -50,7 +50,7 @@ func (s *SQLiteStore) GetChannel(ctx context.Context, channelID string) (*Channe
 
 func (s *SQLiteStore) GetChannelByDirPath(ctx context.Context, dirPath string, platform types.Platform) (*Channel, error) {
 	row := s.db.QueryRowContext(ctx,
-		`SELECT id, channel_id, guild_id, name, dir_path, parent_id, platform, active, session_id, permissions, worktree, base_branch, locked, model_override, effort_override, created_at, updated_at
+		`SELECT id, channel_id, guild_id, name, dir_path, parent_id, platform, active, session_id, permissions, worktree, base_branch, locked, model_override, effort_override, fork_pending, created_at, updated_at
 		 FROM channels WHERE dir_path = ? AND platform = ? AND parent_id = ''`,
 		dirPath, platform,
 	)
@@ -63,7 +63,7 @@ func (s *SQLiteStore) GetChannelByDirPath(ctx context.Context, dirPath string, p
 
 func (s *SQLiteStore) GetChannelsByDirPath(ctx context.Context, dirPath string) ([]*Channel, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, channel_id, guild_id, name, dir_path, parent_id, platform, active, session_id, permissions, worktree, base_branch, locked, model_override, effort_override, created_at, updated_at
+		`SELECT id, channel_id, guild_id, name, dir_path, parent_id, platform, active, session_id, permissions, worktree, base_branch, locked, model_override, effort_override, fork_pending, created_at, updated_at
 		 FROM channels WHERE dir_path = ? AND parent_id = ''`,
 		dirPath,
 	)
@@ -86,9 +86,22 @@ func (s *SQLiteStore) IsChannelActive(ctx context.Context, channelID string) (bo
 	return count > 0, nil
 }
 
+// MarkSessionForkPending sets a fork-created thread's session id together
+// with the fork_pending flag: the id is borrowed from the SOURCE thread, so
+// the first message must run with --fork-session or it would write into the
+// source's conversation. The flag clears on the next UpdateSessionID (every
+// run updates the session id, and by then the fork has happened).
+func (s *SQLiteStore) MarkSessionForkPending(ctx context.Context, channelID string, sessionID string) error {
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE channels SET session_id = ?, fork_pending = 1, updated_at = ? WHERE channel_id = ?`,
+		sessionID, s.nowFunc(), channelID,
+	)
+	return err
+}
+
 func (s *SQLiteStore) UpdateSessionID(ctx context.Context, channelID string, sessionID string) error {
 	_, err := s.db.ExecContext(ctx,
-		`UPDATE channels SET session_id = ?, updated_at = ? WHERE channel_id = ?`,
+		`UPDATE channels SET session_id = ?, fork_pending = 0, updated_at = ? WHERE channel_id = ?`,
 		sessionID, s.nowFunc(), channelID,
 	)
 	return err
@@ -201,7 +214,7 @@ func (s *SQLiteStore) ListChannelIDsByParentID(ctx context.Context, parentID str
 
 func (s *SQLiteStore) ListChannels(ctx context.Context) ([]*Channel, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, channel_id, guild_id, name, dir_path, parent_id, platform, active, session_id, permissions, worktree, base_branch, locked, model_override, effort_override, created_at, updated_at
+		`SELECT id, channel_id, guild_id, name, dir_path, parent_id, platform, active, session_id, permissions, worktree, base_branch, locked, model_override, effort_override, fork_pending, created_at, updated_at
 		 FROM channels ORDER BY name ASC`)
 	if err != nil {
 		return nil, err

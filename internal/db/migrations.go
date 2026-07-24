@@ -353,6 +353,11 @@ var migrations = []migration{
 	// input+output and the run can hand off resumable prompt sessions.
 	sqlMigration(`ALTER TABLE workflow_node_runs ADD COLUMN input TEXT NOT NULL DEFAULT ''`),
 	sqlMigration(`ALTER TABLE workflow_node_runs ADD COLUMN session_id TEXT NOT NULL DEFAULT ''`),
+	// fork_pending marks a thread created by the fork endpoint: its session
+	// id is borrowed from the SOURCE thread, so the first message must run
+	// with --fork-session. Cleared whenever the row's session id is updated
+	// after a run. Appended last so it never renumbers existing migrations.
+	sqlMigration(`ALTER TABLE channels ADD COLUMN fork_pending INTEGER NOT NULL DEFAULT 0`),
 }
 
 // migrateScheduledTasksAddManualType rebuilds scheduled_tasks to widen the

@@ -25,6 +25,10 @@ type deleteThreadInput struct {
 	ThreadID string `json:"thread_id" jsonschema:"The ID of the thread to delete"`
 }
 
+type forkThreadInput struct {
+	ThreadID string `json:"thread_id" jsonschema:"required,The ID of the thread to fork. A sibling thread is created that continues this thread's conversation on a forked session."`
+}
+
 func (s *Server) handleCreateThread(_ context.Context, _ *mcp.CallToolRequest, input createThreadInput) (*mcp.CallToolResult, any, error) {
 	s.logger.Info("mcp tool call", "tool", "create_thread", "channel_id", s.channelID, "name", input.Name)
 
@@ -119,6 +123,33 @@ func (s *Server) handleDeleteThread(_ context.Context, _ *mcp.CallToolRequest, i
 	return &mcp.CallToolResult{
 		Content: []mcp.Content{
 			&mcp.TextContent{Text: fmt.Sprintf("Thread %s deleted successfully.", input.ThreadID)},
+		},
+	}, nil, nil
+}
+
+func (s *Server) handleForkThread(_ context.Context, _ *mcp.CallToolRequest, input forkThreadInput) (*mcp.CallToolResult, any, error) {
+	s.logger.Info("mcp tool call", "tool", "fork_thread", "thread_id", input.ThreadID)
+
+	if input.ThreadID == "" {
+		return errorResult("thread_id is required"), nil, nil
+	}
+
+	type forkResult struct {
+		ThreadID     string `json:"thread_id"`
+		WorktreePath string `json:"worktree_path"`
+	}
+	result, errResult, err := doAPICall[forkResult](s, "POST", fmt.Sprintf("%s/api/threads/%s/fork", s.apiURL, input.ThreadID), http.StatusCreated, nil)
+	if errResult != nil || err != nil {
+		return errResult, nil, err
+	}
+
+	msg := fmt.Sprintf("Thread %s forked (new thread ID: %s). It continues the source conversation on a forked session — the source thread is untouched. No agent is triggered; use send_message with the new thread's ID to post a task into the fork.", input.ThreadID, result.ThreadID)
+	if result.WorktreePath != "" {
+		msg = fmt.Sprintf("Worktree thread %s forked (new thread ID: %s, path: %s). A fresh worktree is branched from the source worktree's committed state, and the fork continues the source conversation on a forked session — the source thread is untouched. No agent is triggered; use send_message with the new thread's ID to post a task into the fork.", input.ThreadID, result.ThreadID, result.WorktreePath)
+	}
+	return &mcp.CallToolResult{
+		Content: []mcp.Content{
+			&mcp.TextContent{Text: msg},
 		},
 	}, nil, nil
 }

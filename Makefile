@@ -115,12 +115,16 @@ test-runner-build: ## Build the test-runner Docker image
 test-runner-push: test-runner-build ## Build and push the test-runner Docker image
 	docker push $(TEST_RUNNER_IMAGE)
 
-lint: ## Run golangci-lint (with auto-fix)
+lint: ## Run golangci-lint + biome (with auto-fix)
 	@if [ -n "$$(docker ps --filter name=^loop-lint$$ --quiet)" ]; then \
 		echo "error: another loop-lint container is already running; aborting" >&2; \
 		exit 1; \
 	fi
 	docker run --rm --name loop-lint -v "$$(pwd)":/app -v /app/app/node_modules -w /app golangci/golangci-lint:v2.11.4 golangci-lint run -v --fix ./...
+	docker run --rm --name loop-lint-biome \
+		-v "$$(pwd)/app":/app -w /app \
+		-v loop-npmcache:/root/.npm \
+		node:24-alpine sh -c "npm install && npm run format"
 
 coverage: ## Generate HTML coverage report
 	go generate ./internal/readme/

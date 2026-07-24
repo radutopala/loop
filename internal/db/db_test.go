@@ -35,7 +35,7 @@ func (s *StoreSuite) TearDownTest() {
 }
 
 func newMockChannelRows() *sqlmock.Rows {
-	return sqlmock.NewRows([]string{"id", "channel_id", "guild_id", "name", "dir_path", "parent_id", "platform", "active", "session_id", "permissions", "worktree", "base_branch", "locked", "model_override", "effort_override", "created_at", "updated_at"})
+	return sqlmock.NewRows([]string{"id", "channel_id", "guild_id", "name", "dir_path", "parent_id", "platform", "active", "session_id", "permissions", "worktree", "base_branch", "locked", "model_override", "effort_override", "fork_pending", "created_at", "updated_at"})
 }
 
 func newMockTaskRows() *sqlmock.Rows {

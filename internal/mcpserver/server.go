@@ -143,6 +143,11 @@ func New(channelID, apiURL, authorID string, httpClient HTTPClient, logger *slog
 	}, s.handleDeleteThread)
 
 	mcp.AddTool(s.mcpServer, &mcp.Tool{
+		Name:        "fork_thread",
+		Description: "Fork a thread by its ID, like the sidebar +fork action: creates a sibling thread that continues the source thread's conversation on a forked Claude session, so the two diverge and the source is left untouched. For a worktree thread, the fork also gets a fresh git worktree branched from the source's committed state. No agent is triggered — call send_message with the returned thread ID to task the fork.",
+	}, s.handleForkThread)
+
+	mcp.AddTool(s.mcpServer, &mcp.Tool{
 		Name:        "rename_thread",
 		Description: "Rename a thread or channel's display name. Only updates the name — sessions and directory are preserved.",
 	}, s.handleRenameThread)
