@@ -325,6 +325,9 @@ func (s *ServerSuite) TestSaveProjectConfigWorktreeUsesParentDir() {
 }
 
 func (s *ServerSuite) TestGetProjectConfigWorktreeParentLookupError() {
+	// Parent lookup fails while walking to the root project: the worktree-root
+	// walk gracefully treats it as "not part of a resolvable chain" and falls
+	// back to the worktree's own DirPath rather than failing the request.
 	s.store.On("GetChannel", mock.Anything, "wt-1").Return(&db.Channel{
 		ChannelID: "wt-1",
 		DirPath:   "/projects/myapp/.worktrees/wt-1",
@@ -332,11 +335,17 @@ func (s *ServerSuite) TestGetProjectConfigWorktreeParentLookupError() {
 		Worktree:  true,
 	}, nil)
 	s.store.On("GetChannel", mock.Anything, "ch-1").Return(nil, errors.New("db error"))
-	s.srv.sys = s.sys
+
+	sys := new(testutil.MockSystem)
+	sys.On("ReadFile", "/projects/myapp/.worktrees/wt-1/.loop/config.json").Return(nil, os.ErrNotExist)
+	s.srv.sys = sys
 
 	rec := s.testRequest("GET", "/api/config/project?channel_id=wt-1", "")
-	require.Equal(s.T(), http.StatusBadRequest, rec.Code)
-	require.Contains(s.T(), rec.Body.String(), "looking up parent channel")
+	require.Equal(s.T(), http.StatusOK, rec.Code)
+
+	var resp configResponse
+	require.NoError(s.T(), json.Unmarshal(rec.Body.Bytes(), &resp))
+	require.Equal(s.T(), "/projects/myapp/.worktrees/wt-1/.loop/config.json", resp.Path)
 }
 
 func (s *ServerSuite) TestGetProjectConfigWorktreeParentNoDirPath() {

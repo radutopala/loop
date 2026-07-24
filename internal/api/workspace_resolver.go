@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"path/filepath"
+
+	"github.com/radutopala/loop/internal/db"
 )
 
 // workspaceResolver resolves request-supplied dir_path / channel_id pairs to
@@ -45,22 +47,56 @@ func (w *workspaceResolver) resolveDirPath(ctx context.Context, dirPath, channel
 	return ch.DirPath, nil
 }
 
-// resolveParentDirPath returns the parent project's dir_path for a
-// worktree channel, or "" for non-worktree channels (and for any
-// lookup error — callers treat that as "no parent" rather than a hard
-// failure). Used by the quality engine config-merge layer so worktree
+// resolveParentDirPath returns the root project's dir_path for a channel that
+// is (or lives under) a worktree chain, or "" for channels outside such a chain
+// (and for any lookup error — callers treat that as "no parent" rather than a
+// hard failure). Used by the quality engine config-merge layer so worktree
 // scans see the parent project's `.loop/config.json` overrides.
 func (w *workspaceResolver) resolveParentDirPath(ctx context.Context, channelID string) string {
 	if channelID == "" || w.store == nil {
 		return ""
 	}
 	ch, err := w.store.GetChannel(ctx, channelID)
-	if err != nil || ch == nil || !ch.Worktree || ch.ParentID == "" {
+	if err != nil || ch == nil {
 		return ""
 	}
-	parent, err := w.store.GetChannel(ctx, ch.ParentID)
-	if err != nil || parent == nil {
-		return ""
+	return worktreeRootDirPath(ctx, w.store, ch)
+}
+
+// worktreeRootDirPath returns the DirPath of the nearest non-worktree ancestor
+// for an already-fetched channel that is (or lives under) a worktree chain, or
+// "" when it isn't part of one. It handles worktree channels, threads that
+// share a worktree's dir without carrying the worktree flag (e.g. a task
+// thread created under a worktree thread), and nested worktrees. The walk is
+// bounded to guard against parent-id cycles. Shared by the config, shortcut,
+// workflow, quality, and playground domains so worktree-nested threads resolve
+// the root project's .loop/config.json rather than the worktree checkout's
+// (which usually has no .loop overrides of its own).
+func worktreeRootDirPath(ctx context.Context, store ChannelLister, ch *db.Channel) string {
+	cur := ch
+	if !cur.Worktree {
+		// A thread row under a worktree channel: hop to the worktree itself.
+		if cur.ParentID == "" {
+			return ""
+		}
+		p, err := store.GetChannel(ctx, cur.ParentID)
+		if err != nil || p == nil || !p.Worktree {
+			return ""
+		}
+		cur = p
 	}
-	return parent.DirPath
+	for range 8 {
+		if cur.ParentID == "" {
+			return ""
+		}
+		p, err := store.GetChannel(ctx, cur.ParentID)
+		if err != nil || p == nil {
+			return ""
+		}
+		if !p.Worktree {
+			return p.DirPath
+		}
+		cur = p
+	}
+	return ""
 }

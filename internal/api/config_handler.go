@@ -111,8 +111,9 @@ func (s *Server) handleSaveProjectConfig(w http.ResponseWriter, r *http.Request)
 }
 
 // resolveProjectConfigDirPath returns the directory to use for project config.
-// For worktree channels it returns the parent channel's dir path, so all
-// worktrees share the root project's .loop/config.json.
+// Worktree channels — and threads nested under them, such as task threads
+// created under a worktree thread — delegate config to the root project so all
+// worktrees share the root's .loop/config.json.
 func (s *Server) resolveProjectConfigDirPath(ctx context.Context, channelID string) (string, error) {
 	if channelID == "" {
 		return "", fmt.Errorf("dir_path or channel_id is required")
@@ -127,15 +128,10 @@ func (s *Server) resolveProjectConfigDirPath(ctx context.Context, channelID stri
 	if ch == nil {
 		return "", fmt.Errorf("channel %s not found", channelID)
 	}
-	// Worktree channels delegate config to the parent project.
-	if ch.Worktree && ch.ParentID != "" {
-		parent, err := s.store.GetChannel(ctx, ch.ParentID)
-		if err != nil {
-			return "", fmt.Errorf("looking up parent channel: %w", err)
-		}
-		if parent != nil && parent.DirPath != "" {
-			return parent.DirPath, nil
-		}
+	// Worktree channels (and threads living under them) delegate config to the
+	// nearest non-worktree ancestor — the root project checkout.
+	if root := worktreeRootDirPath(ctx, s.store, ch); root != "" {
+		return root, nil
 	}
 	if ch.DirPath == "" {
 		if s.loopDir != "" {
@@ -147,9 +143,10 @@ func (s *Server) resolveProjectConfigDirPath(ctx context.Context, channelID stri
 }
 
 // resolveWorkflowConfigPaths returns dirPath and parentDirPath for workflow
-// config resolution. For worktree channels, parentDirPath is set to the parent
-// channel's dir so that three-layer merging (global → parent → worktree) can
-// be performed. For regular channels/threads, parentDirPath is empty.
+// config resolution. For worktree channels — and threads nested under them —
+// parentDirPath is set to the root project's dir so that three-layer merging
+// (global → root project → worktree) can be performed. For channels/threads
+// outside a worktree chain, parentDirPath is empty.
 func (s *Server) resolveWorkflowConfigPaths(ctx context.Context, channelID string) (dirPath, parentDirPath string, err error) {
 	if channelID == "" {
 		return "", "", fmt.Errorf("channel_id is required")
@@ -164,14 +161,8 @@ func (s *Server) resolveWorkflowConfigPaths(ctx context.Context, channelID strin
 	if ch == nil {
 		return "", "", fmt.Errorf("channel %s not found", channelID)
 	}
-	if ch.Worktree && ch.ParentID != "" {
-		parent, err := s.store.GetChannel(ctx, ch.ParentID)
-		if err != nil {
-			return ch.DirPath, "", nil
-		}
-		if parent != nil && parent.DirPath != "" {
-			return ch.DirPath, parent.DirPath, nil
-		}
+	if root := worktreeRootDirPath(ctx, s.store, ch); root != "" {
+		return ch.DirPath, root, nil
 	}
 	if ch.DirPath == "" {
 		if s.loopDir != "" {
