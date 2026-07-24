@@ -44,7 +44,7 @@ Exactly one of these should be set. OAuth takes precedence if both are provided.
 | Field | Type | Default | Description |
 |---|---|---|---|
 | `claude_bin_path` | `string` | `"claude"` | Path to the Claude CLI binary inside containers. |
-| `claude_model` | `string` | `"claude-sonnet-5"` | Claude model to use. Options: `"claude-sonnet-5"`, `"claude-fable-5"`, `"claude-opus-4-8"`, `"claude-opus-4-7"`, `"claude-opus-4-6[1m]"`, `"claude-opus-4-6"`, `"claude-sonnet-4-6"`. |
+| `claude_model` | `string` | `"claude-sonnet-5"` | Claude model to use. Options: `"claude-opus-5"`, `"claude-sonnet-5"`, `"claude-fable-5"`, `"claude-opus-4-8"`, `"claude-opus-4-7"`, `"claude-opus-4-6[1m]"`, `"claude-opus-4-6"`, `"claude-sonnet-4-6"`. |
 | `claude_effort` | `string` | `""` | Reasoning-effort level passed to the Claude CLI as `--effort`. Empty leaves it unset (model default). Options: `"low"`, `"medium"`, `"high"`, `"xhigh"`, `"max"`. |
 
 Both `claude_model` and `claude_effort` can additionally be **overridden per channel/thread/worktree on demand** from the chat composer's model pill (persisted on the channel row, applied from the next run) — see [Chat: Model / Effort Override](chat.md#model--effort-override). The per-channel override beats the merged config value.
