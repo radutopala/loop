@@ -217,6 +217,36 @@ func (s *ServerSuite) TestSendMessageNoInterrupt() {
 	canceller.AssertNotCalled(s.T(), "CancelActiveRun")
 }
 
+func (s *ServerSuite) TestSendMessageDelayed() {
+	handler := new(MockIncomingMessageHandler)
+	canceller := new(MockRunCanceller)
+	s.srv.SetIncomingMessageHandler(handler)
+	s.srv.SetRunCanceller(canceller)
+
+	called := make(chan struct{}, 1)
+	before := time.Now().Add(30 * time.Second).Unix()
+	handler.On("HandleIncomingMessageDelayed", mock.Anything, "ch-1", "", "later", "",
+		mock.MatchedBy(func(notBefore int64) bool {
+			after := time.Now().Add(30 * time.Second).Unix()
+			return notBefore >= before && notBefore <= after
+		})).
+		Run(func(_ mock.Arguments) { called <- struct{}{} }).Return()
+
+	// delay_seconds takes precedence over interrupt: the run is never cancelled.
+	rec := s.testRequest("POST", "/api/messages", `{"channel_id":"ch-1","content":"later","delay_seconds":30,"interrupt":true}`)
+
+	require.Equal(s.T(), http.StatusNoContent, rec.Code)
+
+	select {
+	case <-called:
+	case <-time.After(time.Second):
+		s.T().Fatal("HandleIncomingMessageDelayed was not called within 1s")
+	}
+
+	handler.AssertExpectations(s.T())
+	canceller.AssertNotCalled(s.T(), "CancelActiveRun")
+}
+
 func (s *ServerSuite) TestDeleteQueuedMessageSuccess() {
 	s.store.On("DeleteQueuedMessage", mock.Anything, "ch-1", "msg-queued").Return(true, nil)
 

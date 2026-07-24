@@ -76,6 +76,10 @@ type MessageEventData struct {
 	// TriggerMsgID is the msg_id of the user message whose run produced this
 	// bot reply. Empty for user messages and bot rows not emitted by a run.
 	TriggerMsgID string `json:"trigger_msg_id,omitempty"`
+	// NotBefore is a unix-seconds timestamp before which a delayed message runs.
+	// Carried so the FE bubble can render the live countdown on live insert (not
+	// just after a reload). Missing/0 = immediate.
+	NotBefore int64 `json:"not_before,omitempty"`
 }
 
 // MessagesProcessedData is the payload for messages.processed events.

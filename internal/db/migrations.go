@@ -358,6 +358,12 @@ var migrations = []migration{
 	// with --fork-session. Cleared whenever the row's session id is updated
 	// after a run. Appended last so it never renumbers existing migrations.
 	sqlMigration(`ALTER TABLE channels ADD COLUMN fork_pending INTEGER NOT NULL DEFAULT 0`),
+	// not_before delays a queued message: the claim/drain skips the row until the
+	// wall clock reaches this unix-seconds timestamp. 0 (the default) means no
+	// delay — the row is eligible immediately, so every existing row keeps its
+	// current behaviour. Set only via the delayed queue_message path. Appended
+	// last so it never renumbers existing migrations.
+	sqlMigration(`ALTER TABLE messages ADD COLUMN not_before INTEGER NOT NULL DEFAULT 0`),
 }
 
 // migrateScheduledTasksAddManualType rebuilds scheduled_tasks to widen the

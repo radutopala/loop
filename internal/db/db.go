@@ -36,6 +36,7 @@ type Store interface {
 	MarkMessagesProcessed(ctx context.Context, ids []int64) error
 	DeleteQueuedMessage(ctx context.Context, channelID, msgID string) (bool, error)
 	ClaimNextPending(ctx context.Context, channelID string) (*Message, error)
+	ChannelsWithDueDelayedMessages(ctx context.Context) ([]string, error)
 	ReleaseRunningMessage(ctx context.Context, id int64, processed bool) error
 	ResetStaleRunningMessages(ctx context.Context) ([]StaleRunningMessage, error)
 	MaxQueuedPriority(ctx context.Context, channelID string) (int, error)
@@ -224,7 +225,7 @@ func (s *SQLiteStore) withTx(ctx context.Context, fn func(tx *sql.Tx) error) err
 
 // Column lists for SELECT queries.
 const (
-	messageColumns = `id, chat_id, channel_id, msg_id, author_id, author_name, content, is_bot, is_processed, is_triggered, is_running, priority, mode, created_at, kind, chain_position, tool_use_id, tool_name, is_error, trigger_msg_id`
+	messageColumns = `id, chat_id, channel_id, msg_id, author_id, author_name, content, is_bot, is_processed, is_triggered, is_running, priority, mode, created_at, kind, chain_position, tool_use_id, tool_name, is_error, trigger_msg_id, not_before`
 	taskColumns    = `id, channel_id, guild_id, schedule, type, prompt, enabled, next_run_at, created_at, updated_at, template_name, auto_delete_sec, thread_id, worktree, origin_branch, update_before_run, running, workflow_name, workflow_inputs, bash_script`
 )
 
@@ -299,7 +300,7 @@ func scanMessageRow(scanner rowScanner) (*Message, error) {
 		&msg.CreatedAt,
 		&kind, &msg.ChainPosition,
 		&msg.ToolUseID, &msg.ToolName, &isError,
-		&msg.TriggerMsgID,
+		&msg.TriggerMsgID, &msg.NotBefore,
 	); err != nil {
 		return nil, err
 	}

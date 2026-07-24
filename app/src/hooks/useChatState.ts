@@ -242,6 +242,7 @@ export function useChatState(channelId: string | null, initialRunningBot?: boole
           is_processed: data.is_processed,
           priority: data.priority,
           trigger_msg_id: data.trigger_msg_id,
+          not_before: data.not_before,
           created_at: new Date(event.timestamp).toISOString(),
         });
         // A new user message may have just been queued (incl. priority-bumped

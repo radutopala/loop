@@ -50,6 +50,7 @@ type Bot interface {
 	CreateSimpleThread(ctx context.Context, channelID, name, initialMessage string) (string, error)
 	HandleIncomingMessage(ctx context.Context, channelID, authorID, content, mode string)
 	HandleIncomingMessageWithPriority(ctx context.Context, channelID, authorID, content, mode string, priority int)
+	HandleIncomingMessageDelayed(ctx context.Context, channelID, authorID, content, mode string, notBefore int64)
 	HandleThreadCreated(ctx context.Context, threadID, authorID, message string)
 }
 
@@ -93,6 +94,9 @@ type Orchestrator struct {
 	removeMCPConfig   func(string, string) error
 	timeNow           func() time.Time // injectable clock (session-limit reset math, tests)
 	tasks             *taskRegistry
+	delayPollInterval time.Duration // how often the delay poller wakes; 0 disables it
+	delayStop         chan struct{} // closed by Stop to end the delay poller
+	delayStopOnce     sync.Once     // guards delayStop close
 }
 
 // defaultRemoveMCPConfig delegates to bot.RemoveMCPConfig.
@@ -115,6 +119,8 @@ func New(store db.Store, bot Bot, runner Runner, sched scheduler.Scheduler, logg
 		removeMCPConfig:   defaultRemoveMCPConfig,
 		timeNow:           time.Now,
 		tasks:             newTaskRegistry(),
+		delayPollInterval: DelayPollInterval,
+		delayStop:         make(chan struct{}),
 	}
 	o.cfg.Store(&cfg)
 	o.drainSpawn = func(fn func()) { o.drainWG.Go(fn) }
@@ -433,13 +439,54 @@ func (o *Orchestrator) Start(ctx context.Context) error {
 		return fmt.Errorf("starting scheduler: %w", err)
 	}
 
+	o.startDelayPoller()
+
 	o.logger.Info("orchestrator started")
 	return nil
+}
+
+// startDelayPoller launches the background loop that re-drains channels whose
+// delayed messages have come due. The drain is event-driven, so once a delayed
+// row's not_before passes nothing wakes the channel on its own — this poller is
+// that wake-up (and it recovers delays that outlived a daemon restart). A
+// non-positive interval disables it (tests that drive drainDueDelayed directly).
+func (o *Orchestrator) startDelayPoller() {
+	if o.delayPollInterval <= 0 {
+		return
+	}
+	go func() {
+		ticker := time.NewTicker(o.delayPollInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-o.delayStop:
+				return
+			case <-ticker.C:
+				o.drainDueDelayed(context.Background())
+			}
+		}
+	}()
+}
+
+// drainDueDelayed drains every channel that has a delayed message whose delay
+// has elapsed. drainChannel is idempotent and per-channel serialised, so waking
+// a channel that is already draining (or parked on a plan/ask card) is harmless.
+func (o *Orchestrator) drainDueDelayed(ctx context.Context) {
+	channels, err := o.store.ChannelsWithDueDelayedMessages(ctx)
+	if err != nil {
+		o.logger.Error("listing channels with due delayed messages", "error", err)
+		return
+	}
+	for _, channelID := range channels {
+		o.drainAsync(channelID, nil)
+	}
 }
 
 // Stop gracefully shuts down the bot, scheduler, and runner.
 func (o *Orchestrator) Stop() error {
 	o.logger.Info("orchestrator stopping")
+
+	o.delayStopOnce.Do(func() { close(o.delayStop) })
 
 	var errs []string
 
@@ -465,6 +512,11 @@ const recentMessageLimit = 50
 
 // TypingInterval is the default interval between typing indicator refreshes.
 const TypingInterval = 8 * time.Second
+
+// DelayPollInterval is how often the delay poller checks for delayed messages
+// whose not_before has elapsed. Kept short so a countdown that hits zero fires
+// promptly, while the query it runs is a cheap indexed lookup.
+const DelayPollInterval = 1 * time.Second
 
 // HandleChannelJoin auto-registers a channel when the bot is added to it.
 func (o *Orchestrator) HandleChannelJoin(ctx context.Context, channelID string, platform types.Platform) {

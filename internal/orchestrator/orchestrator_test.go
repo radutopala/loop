@@ -127,6 +127,10 @@ func (m *MockBot) HandleIncomingMessageWithPriority(ctx context.Context, channel
 	m.Called(ctx, channelID, authorID, content, mode, priority)
 }
 
+func (m *MockBot) HandleIncomingMessageDelayed(ctx context.Context, channelID, authorID, content, mode string, notBefore int64) {
+	m.Called(ctx, channelID, authorID, content, mode, notBefore)
+}
+
 func (m *MockBot) HandleThreadCreated(ctx context.Context, threadID, authorID, message string) {
 	m.Called(ctx, threadID, authorID, message)
 }
@@ -367,6 +371,11 @@ func (s *OrchestratorSuite) SetupTest() {
 	// (runner.Run, MarkMessagesProcessed, …) are observed before the test
 	// body's AssertExpectations calls — TearDown / Cleanup fires too late.
 	s.orch.SetSynchronousDrain()
+
+	// Disable the background delay poller by default so Start-based tests don't
+	// spawn a ticking goroutine that queries the store after the test returns.
+	// The dedicated poller tests set delayPollInterval explicitly.
+	s.orch.delayPollInterval = 0
 }
 
 func (s *OrchestratorSuite) TestNew() {
@@ -1151,4 +1160,53 @@ func (s *OrchestratorSuite) TestParkPersistenceErrorsAreLoggedNotFatal() {
 	require.True(s.T(), orch.IsChannelPlanned("ch-2"))
 	orch.ClearPlannedChannel("ch-2")
 	require.False(s.T(), orch.IsChannelPlanned("ch-2"))
+}
+
+// --- Delay poller ---
+
+func (s *OrchestratorSuite) TestDrainDueDelayedDrainsChannels() {
+	s.store.On("ChannelsWithDueDelayedMessages", mock.Anything).Return([]string{"ch-due"}, nil)
+
+	s.orch.drainDueDelayed(s.ctx)
+
+	s.store.AssertCalled(s.T(), "ChannelsWithDueDelayedMessages", mock.Anything)
+	// drainAsync (synchronous in tests) reaches ClaimNextPending for the channel.
+	s.store.AssertCalled(s.T(), "ClaimNextPending", mock.Anything, "ch-due")
+}
+
+func (s *OrchestratorSuite) TestDrainDueDelayedListError() {
+	s.store.On("ChannelsWithDueDelayedMessages", mock.Anything).Return(nil, errors.New("boom"))
+
+	s.orch.drainDueDelayed(s.ctx)
+
+	s.store.AssertCalled(s.T(), "ChannelsWithDueDelayedMessages", mock.Anything)
+	s.store.AssertNotCalled(s.T(), "ClaimNextPending", mock.Anything, mock.Anything)
+}
+
+func (s *OrchestratorSuite) TestStartDelayPollerDisabled() {
+	s.orch.delayPollInterval = 0
+	s.orch.startDelayPoller()
+	// No goroutine spawned — the poller never queries the store.
+	s.store.AssertNotCalled(s.T(), "ChannelsWithDueDelayedMessages", mock.Anything)
+}
+
+func (s *OrchestratorSuite) TestStartDelayPollerTicks() {
+	ticked := make(chan struct{}, 1)
+	s.store.On("ChannelsWithDueDelayedMessages", mock.Anything).
+		Run(func(mock.Arguments) {
+			select {
+			case ticked <- struct{}{}:
+			default:
+			}
+		}).Return([]string{}, nil)
+
+	s.orch.delayPollInterval = time.Millisecond
+	s.orch.startDelayPoller()
+	defer close(s.orch.delayStop)
+
+	select {
+	case <-ticked:
+	case <-time.After(time.Second):
+		s.T().Fatal("delay poller did not query the store within 1s")
+	}
 }

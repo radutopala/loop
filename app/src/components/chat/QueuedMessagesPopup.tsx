@@ -4,6 +4,7 @@ import { useTheme } from "../../ThemeContext";
 import { fonts } from "../../theme";
 import type { Message } from "../../types";
 import { logErr } from "../../utils/log";
+import { DelayCountdown } from "./DelayCountdown";
 
 interface QueuedMessagesPopupProps {
   messages: Message[];
@@ -210,6 +211,7 @@ export function QueuedMessagesPopup({ messages, channelId }: QueuedMessagesPopup
                   >
                     {msg.content}
                   </button>
+                  {msg.not_before ? <DelayCountdown notBefore={msg.not_before} /> : null}
                   <button
                     onClick={() => handleCopy(msg.msg_id, msg.content)}
                     title={copiedIds.has(msg.msg_id) ? "Copied" : "Copy to clipboard"}

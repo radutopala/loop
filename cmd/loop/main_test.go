@@ -259,6 +259,10 @@ func (m *mockBot) HandleIncomingMessageWithPriority(ctx context.Context, channel
 	m.Called(ctx, channelID, authorID, content, mode, priority)
 }
 
+func (m *mockBot) HandleIncomingMessageDelayed(ctx context.Context, channelID, authorID, content, mode string, notBefore int64) {
+	m.Called(ctx, channelID, authorID, content, mode, notBefore)
+}
+
 func (m *mockBot) HandleThreadCreated(ctx context.Context, threadID, authorID, message string) {
 	m.Called(ctx, threadID, authorID, message)
 }

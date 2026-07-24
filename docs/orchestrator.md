@@ -15,6 +15,7 @@ The `Orchestrator` struct holds references to:
 - `channelLocks` (`sync.Map`) -- Per-channel `*sync.Mutex` that serialises the drain loop so only one agent run executes per channel at a time
 - `activeRuns` (`sync.Map`) -- Maps channel IDs to cancel functions for stop-button support
 - `activeRunMsgIDs` (`sync.Map`) -- Maps channel IDs to the `msg_id` of the row currently running; surfaced via `ActiveRunMessageID` for the interrupt path and FE diagnostics
+- `delayPollInterval` (`time.Duration`) / `delayStop` (`chan struct{}`) -- Drive the delay poller (see [Delayed messages](#delayed-messages)); the poller ticks every `DelayPollInterval` (1s) and is stopped on `Stop`
 - `cfg` (`config.Config`) -- Application configuration
 
 ## Startup Flow
@@ -25,6 +26,7 @@ When `Start` is called:
 2. Register slash commands on all platforms (`bot.RegisterCommands`).
 3. Start the bot (opens connections to Discord/Slack/etc.).
 4. Start the scheduler (loads tasks from DB, begins cron loop).
+5. Start the delay poller (`startDelayPoller`) — a 1s ticker that re-drains channels whose delayed messages have come due (see [Delayed messages](#delayed-messages)). `Stop` closes `delayStop` (once) to shut it down.
 
 After `Start` returns, `cmd/loop/serve.go` runs the **DB-queue resume sweep** before signalling readiness:
 
@@ -89,7 +91,7 @@ See [Permission & RBAC System](permissions.md) for the full merge logic.
 
 ### Step 4: Message Storage
 
-Every message is stored in the database via `store.InsertMessage`. The message ID is the platform's native ID (Discord snowflake, Slack timestamp) when available, or a generated `ask-{hex}` ID when the platform does not provide one. The row carries `is_triggered` (gated by trigger + permission), `priority` (used to bump deny-with-prompt interrupts ahead of queued rows — see [Interrupting an active run](#interrupting-an-active-run)), and `mode` (`"plan"` for plan-mode runs) so a daemon restart can resume work without losing fields the in-flight `bot.IncomingMessage` would otherwise carry.
+Every message is stored in the database via `store.InsertMessage`. The message ID is the platform's native ID (Discord snowflake, Slack timestamp) when available, or a generated `ask-{hex}` ID when the platform does not provide one. The row carries `is_triggered` (gated by trigger + permission), `priority` (used to bump deny-with-prompt interrupts ahead of queued rows — see [Interrupting an active run](#interrupting-an-active-run)), `mode` (`"plan"` for plan-mode runs), and `not_before` (unix seconds; `0` = immediate, `> 0` holds the row back — see [Delayed messages](#delayed-messages)) so a daemon restart can resume work without losing fields the in-flight `bot.IncomingMessage` would otherwise carry.
 
 If an event broadcaster is configured, a `message.created` event is broadcast with the message data so the Electron app can update its UI in real time.
 
@@ -110,7 +112,7 @@ func (o *Orchestrator) drainChannel(ctx, channelID, incoming *bot.IncomingMessag
 }
 ```
 
-`ClaimNextPending` runs inside a single SQLite write transaction and returns the next row matching `is_processed=0 AND is_triggered=1 AND is_running=0 AND kind='message'` for the channel, ordered by `priority DESC, id ASC`. The atomic SELECT + UPDATE serialises the claim against every other writer, so concurrent drains for the same channel can never hand the same row to two agents.
+`ClaimNextPending` runs inside a single SQLite write transaction and returns the next row matching `is_processed=0 AND is_triggered=1 AND is_running=0 AND kind='message'` for the channel, ordered by `priority DESC, id ASC`. It additionally requires `(not_before = 0 OR not_before <= now)`, so a [delayed row](#delayed-messages) is invisible to the claim until its time arrives. The atomic SELECT + UPDATE serialises the claim against every other writer, so concurrent drains for the same channel can never hand the same row to two agents.
 
 `processClaimedMessage` reconstructs a minimal `bot.IncomingMessage` from the row (`AuthorID`, `Content`, `Mode`, `MsgID`, `Priority`) and overlays the bot-side fields (`Platform`, `IsBotMention`, `IsReplyToBot`, `IsDM`, `AuthorRoles`, `GuildID`) from `incoming` when the msg_ids match. For priority-bumped or daemon-restart-resume rows the `incoming` value does not match (or is `nil`), and the run executes from the row alone. The remainder of the body matches the previous in-memory flow:
 
@@ -141,6 +143,18 @@ There is no notify channel and no idle processor goroutine: each `HandleMessage`
 ## Interrupting an active run
 
 When the user clicks "Deny with prompt" on a gate approval (or the API receives `POST /api/messages` with `interrupt=true`), `messages_handler.go` cancels the active run via `runCanceller.CancelActiveRun(channelID)` and inserts the prompt with `priority = MaxQueuedPriority(channelID) + 1`. The interrupt row outranks any queued messages on the next `ClaimNextPending` (which orders by `priority DESC`) so the prompt runs ahead of them, but **no queued rows are deleted** — they keep their original `priority=0` and resume in FIFO order once the interrupt finishes. This replaces an earlier destructive design that dropped the queued rows entirely.
+
+## Delayed messages
+
+The [`queue_message`](mcpserver.md) MCP tool can hold a prompt back with `delay_seconds`. `POST /api/messages` with `delay_seconds > 0` routes through `HandleIncomingMessageDelayed`, which stamps `not_before = now + delay_seconds` (unix seconds) on the inserted row. Because `ClaimNextPending` skips rows whose `not_before` is still in the future, the immediate drain that `HandleMessage` kicks off claims nothing for that row.
+
+Since the drain is purely event-driven (there is no idle processor goroutine — see [Per-channel Drain Serialization](#per-channel-drain-serialization)), nothing would ever re-attempt the claim once the delay elapses. The **delay poller** closes that gap:
+
+- `startDelayPoller` runs a `time.Ticker` at `DelayPollInterval` (1s). On each tick it calls `store.ChannelsWithDueDelayedMessages`, which returns the distinct channels that have a `kind='message'`, unprocessed, triggered, not-running row with `0 < not_before <= now`.
+- For each such channel it calls `drainAsync(channelID, nil)` — the same drain path as a fresh message, but reconstructed from the row alone. The now-due row is claimable, so it runs.
+- `Stop` closes `delayStop` (guarded by a `sync.Once`) to terminate the ticker goroutine. A non-positive `delayPollInterval` disables the poller (tests set it to `0`).
+
+Because eligibility lives entirely in the row's `not_before` column and the poller re-derives due channels from the DB, pending delays survive a **daemon restart**: after the resume sweep, the poller picks up any still-due rows on its next tick without special-casing restart recovery.
 
 ## Agent Request Preparation
 

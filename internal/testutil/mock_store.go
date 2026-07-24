@@ -119,6 +119,14 @@ func (m *MockStore) ClaimNextPending(ctx context.Context, channelID string) (*db
 	return msg, args.Error(1)
 }
 
+func (m *MockStore) ChannelsWithDueDelayedMessages(ctx context.Context) ([]string, error) {
+	args := m.Called(ctx)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]string), args.Error(1)
+}
+
 func (m *MockStore) ReleaseRunningMessage(ctx context.Context, id int64, processed bool) error {
 	return m.Called(ctx, id, processed).Error(0)
 }
