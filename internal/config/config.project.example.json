@@ -1,6 +1,6 @@
 {
   // Claude model override for this project (e.g. "claude-sonnet-5")
-  //"claude_model": "", // defaults to "claude-sonnet-5"; options: "claude-sonnet-5", "claude-fable-5", "claude-opus-4-8", "claude-opus-4-7", "claude-opus-4-6[1m]", "claude-opus-4-6", "claude-sonnet-4-6"
+  //"claude_model": "", // defaults to "claude-sonnet-5"; options: "claude-opus-5", "claude-sonnet-5", "claude-fable-5", "claude-opus-4-8", "claude-opus-4-7", "claude-opus-4-6[1m]", "claude-opus-4-6", "claude-sonnet-4-6"
 
   // Reasoning-effort override passed to Claude as --effort; empty = unset (model default)
   //"claude_effort": "", // options: "low", "medium", "high", "xhigh", "max"
