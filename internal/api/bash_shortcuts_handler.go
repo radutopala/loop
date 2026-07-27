@@ -10,23 +10,31 @@ type bashShortcutResponse struct {
 	Name        string `json:"name"`
 	Description string `json:"description"`
 	Command     string `json:"command"`
+	Scope       string `json:"scope"`
 }
 
 // handleListBashShortcuts returns the configured bash shortcuts with resolved
 // command text. Accepts an optional channel_id query parameter to merge
 // project-level shortcuts on top of global ones.
 func (s *Server) handleListBashShortcuts(w http.ResponseWriter, r *http.Request) { //nolint:dupl
-	cfg, loopDirs, readFile, ok := s.resolveShortcutContext(w, r)
+	cfg, projectCfg, loopDirs, readFile, ok := s.resolveShortcutContext(w, r)
 	if !ok {
 		return
 	}
+	projectNames := make(map[string]bool)
+	if projectCfg != nil {
+		for _, sc := range projectCfg.BashShortcuts {
+			projectNames[sc.Name] = true
+		}
+	}
+	scopeOf := scopeLabeler(projectNames)
 	result := listShortcutItems(
 		cfg.BashShortcuts, loopDirs, readFile,
 		func(sc config.BashShortcut, dir string, rf func(string) ([]byte, error)) (string, error) {
 			return sc.ResolveCommand(dir, rf)
 		},
 		func(sc config.BashShortcut, value string) bashShortcutResponse {
-			return bashShortcutResponse{Name: sc.Name, Description: sc.Description, Command: value}
+			return bashShortcutResponse{Name: sc.Name, Description: sc.Description, Command: value, Scope: scopeOf(sc.Name)}
 		},
 		func(sc config.BashShortcut) {
 			s.logger.Warn("skipping bash shortcut with unresolvable command", "name", sc.Name)

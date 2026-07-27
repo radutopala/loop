@@ -96,6 +96,7 @@ func (s *MCPServerSuite) TestShortcutAdd() {
 
 	text, isError := s.callTool("prompt_shortcut", map[string]any{
 		"action":      "add",
+		"scope":       "global",
 		"name":        "lint",
 		"description": "Run linter",
 		"prompt":      "make lint",
@@ -139,6 +140,7 @@ func (s *MCPServerSuite) TestShortcutAddWithPromptPath() {
 
 	text, isError := s.callTool("prompt_shortcut", map[string]any{
 		"action":      "add",
+		"scope":       "global",
 		"name":        "review",
 		"prompt_path": "review-code.md",
 	})
@@ -149,6 +151,7 @@ func (s *MCPServerSuite) TestShortcutAddWithPromptPath() {
 func (s *MCPServerSuite) TestShortcutAddMissingName() {
 	text, isError := s.callTool("prompt_shortcut", map[string]any{
 		"action": "add",
+		"scope":  "global",
 		"prompt": "do stuff",
 	})
 	require.True(s.T(), isError)
@@ -162,6 +165,7 @@ func (s *MCPServerSuite) TestShortcutAddAPIError() {
 
 	text, isError := s.callTool("prompt_shortcut", map[string]any{
 		"action": "add",
+		"scope":  "global",
 		"name":   "dup",
 		"prompt": "x",
 	})
@@ -182,6 +186,7 @@ func (s *MCPServerSuite) TestShortcutUpdate() {
 
 	text, isError := s.callTool("prompt_shortcut", map[string]any{
 		"action": "update",
+		"scope":  "global",
 		"name":   "lint",
 		"prompt": "make lint --fix",
 	})
@@ -197,6 +202,7 @@ func (s *MCPServerSuite) TestShortcutUpdateNotFound() {
 
 	text, isError := s.callTool("prompt_shortcut", map[string]any{
 		"action": "update",
+		"scope":  "global",
 		"name":   "nope",
 		"prompt": "x",
 	})
@@ -216,6 +222,7 @@ func (s *MCPServerSuite) TestShortcutDelete() {
 
 	text, isError := s.callTool("prompt_shortcut", map[string]any{
 		"action": "delete",
+		"scope":  "global",
 		"name":   "lint",
 	})
 	require.False(s.T(), isError)
@@ -226,6 +233,7 @@ func (s *MCPServerSuite) TestShortcutDelete() {
 func (s *MCPServerSuite) TestShortcutDeleteMissingName() {
 	text, isError := s.callTool("prompt_shortcut", map[string]any{
 		"action": "delete",
+		"scope":  "global",
 	})
 	require.True(s.T(), isError)
 	require.Contains(s.T(), text, "name is required")
@@ -238,6 +246,7 @@ func (s *MCPServerSuite) TestShortcutDeleteNotFound() {
 
 	text, isError := s.callTool("prompt_shortcut", map[string]any{
 		"action": "delete",
+		"scope":  "global",
 		"name":   "nope",
 	})
 	require.True(s.T(), isError)
@@ -259,6 +268,7 @@ func (s *MCPServerSuite) TestShortcutDeleteNetworkError() {
 
 	text, isError := s.callTool("prompt_shortcut", map[string]any{
 		"action": "delete",
+		"scope":  "global",
 		"name":   "lint",
 	})
 	require.True(s.T(), isError)

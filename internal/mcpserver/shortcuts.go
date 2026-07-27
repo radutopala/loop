@@ -49,7 +49,7 @@ type shortcutInput struct {
 	Description string `json:"description,omitempty" jsonschema:"Human-readable description shown in the # picker"`
 	Prompt      string `json:"prompt,omitempty" jsonschema:"Inline prompt text (mutually exclusive with prompt_path)"`
 	PromptPath  string `json:"prompt_path,omitempty" jsonschema:"Path to prompt file relative to shortcuts/ dir (mutually exclusive with prompt)"`
-	Scope       string `json:"scope,omitempty" jsonschema:"Storage scope: 'global' (default, ~/.loop/config.json) or 'project' (project .loop/config.json). Requires channel context for project scope."`
+	Scope       string `json:"scope,omitempty" jsonschema:"Storage scope for add/update/delete — required, no default: 'global' (~/.loop/config.json) or 'project' (project .loop/config.json, needs channel context). A shortcut is only visible in the scope it was written to; run list first and pass back the scope it reports."`
 }
 
 type bashShortcutInput struct {
@@ -58,7 +58,7 @@ type bashShortcutInput struct {
 	Description string `json:"description,omitempty" jsonschema:"Human-readable description shown in the $ picker"`
 	Command     string `json:"command,omitempty" jsonschema:"Inline bash command text (mutually exclusive with command_path)"`
 	CommandPath string `json:"command_path,omitempty" jsonschema:"Path to command file relative to bash-shortcuts/ dir (mutually exclusive with command)"`
-	Scope       string `json:"scope,omitempty" jsonschema:"Storage scope: 'global' (default, ~/.loop/config.json) or 'project' (project .loop/config.json). Requires channel context for project scope."`
+	Scope       string `json:"scope,omitempty" jsonschema:"Storage scope for add/update/delete — required, no default: 'global' (~/.loop/config.json) or 'project' (project .loop/config.json, needs channel context). A shortcut is only visible in the scope it was written to; run list first and pass back the scope it reports."`
 }
 
 func (s *Server) handlePromptShortcut(_ context.Context, _ *mcp.CallToolRequest, input shortcutInput) (*mcp.CallToolResult, any, error) {
@@ -129,18 +129,26 @@ func (s *Server) modifyShortcutByKind(k shortcutKind, op shortcutOp) (*mcp.CallT
 	if op.Name == "" {
 		return errorResult("name is required for " + op.Action), nil, nil
 	}
+	// Scope is explicit rather than defaulting to global: a shortcut written to
+	// one scope is invisible to the other, so a silent default turned every
+	// project-scoped update or delete into a confusing "not found".
+	switch op.Scope {
+	case "global", "project":
+	case "":
+		return errorResult(fmt.Sprintf(
+			"scope is required for %s — pass 'global' or 'project'. Run the list action first; it reports the scope each %s lives in.",
+			op.Action, k.display)), nil, nil
+	default:
+		return errorResult(fmt.Sprintf("scope must be 'global' or 'project', got %q", op.Scope)), nil, nil
+	}
 
 	body := map[string]string{
 		"action": op.Action,
 		"name":   op.Name,
+		"scope":  op.Scope,
 	}
-	if op.Scope == "project" {
-		body["scope"] = "project"
-		if s.channelID != "" {
-			body["channel_id"] = s.channelID
-		}
-	} else {
-		body["scope"] = "global"
+	if op.Scope == "project" && s.channelID != "" {
+		body["channel_id"] = s.channelID
 	}
 	if op.Description != "" {
 		body["description"] = op.Description

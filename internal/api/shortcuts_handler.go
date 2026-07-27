@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -53,13 +54,28 @@ type shortcutResponse struct {
 	Name        string `json:"name"`
 	Description string `json:"description"`
 	Prompt      string `json:"prompt"`
+	Scope       string `json:"scope"`
+}
+
+// scopeLabeler reports which config file a shortcut name came from, so list
+// output can tell an agent the scope to pass back to add/update/delete. Names
+// defined in the project overlay win, mirroring the merge order.
+func scopeLabeler(projectNames map[string]bool) func(name string) string {
+	return func(name string) string {
+		if projectNames[name] {
+			return "project"
+		}
+		return "global"
+	}
 }
 
 // resolveShortcutContext loads the global config, optionally merges a
 // project-level overlay when channel_id is present, and returns the resolution
-// dirs and a readFile to use for loading file-backed shortcut bodies. Writes
-// an HTTP error and returns ok=false on failure.
-func (s *Server) resolveShortcutContext(w http.ResponseWriter, r *http.Request) (cfg *config.Config, loopDirs []string, readFile func(string) ([]byte, error), ok bool) {
+// dirs and a readFile to use for loading file-backed shortcut bodies. projectCfg
+// holds only the project overlay's own entries (nil when there is no overlay) so
+// callers can label each shortcut's scope. Writes an HTTP error and returns
+// ok=false on failure.
+func (s *Server) resolveShortcutContext(w http.ResponseWriter, r *http.Request) (cfg *config.Config, projectCfg *config.Config, loopDirs []string, readFile func(string) ([]byte, error), ok bool) {
 	loadConfig := s.configs.load
 	if loadConfig == nil {
 		loadConfig = config.Load
@@ -67,7 +83,7 @@ func (s *Server) resolveShortcutContext(w http.ResponseWriter, r *http.Request) 
 	c, err := loadConfig()
 	if err != nil {
 		http.Error(w, "failed to load config", http.StatusInternalServerError)
-		return nil, nil, nil, false
+		return nil, nil, nil, nil, false
 	}
 
 	loadProjectConfig := s.configs.loadProject
@@ -76,12 +92,18 @@ func (s *Server) resolveShortcutContext(w http.ResponseWriter, r *http.Request) 
 	}
 
 	var dirPath string
+	var projectOnly *config.Config
 	if channelID := r.URL.Query().Get("channel_id"); channelID != "" {
 		dp, dirErr := s.resolveProjectConfigDirPath(r.Context(), channelID)
 		if dirErr == nil && dp != "" {
 			dirPath = dp
 			if merged, mergeErr := loadProjectConfig(dirPath, c); mergeErr == nil {
 				c = merged
+			}
+			// Merging onto an empty base yields the overlay's own entries,
+			// which is what distinguishes project shortcuts from global ones.
+			if only, onlyErr := loadProjectConfig(dirPath, &config.Config{}); onlyErr == nil {
+				projectOnly = only
 			}
 		}
 	}
@@ -101,7 +123,7 @@ func (s *Server) resolveShortcutContext(w http.ResponseWriter, r *http.Request) 
 	if dirPath != "" {
 		dirs = []string{filepath.Join(dirPath, ".loop"), loopDir}
 	}
-	return c, dirs, rf, true
+	return c, projectOnly, dirs, rf, true
 }
 
 // listShortcutItems is the generic resolution + collection loop used by both
@@ -140,17 +162,24 @@ func listShortcutItems[T any, R any](
 // prompt text. Accepts an optional channel_id query parameter to merge
 // project-level shortcuts on top of global ones.
 func (s *Server) handleListShortcuts(w http.ResponseWriter, r *http.Request) { //nolint:dupl
-	cfg, loopDirs, readFile, ok := s.resolveShortcutContext(w, r)
+	cfg, projectCfg, loopDirs, readFile, ok := s.resolveShortcutContext(w, r)
 	if !ok {
 		return
 	}
+	projectNames := make(map[string]bool)
+	if projectCfg != nil {
+		for _, sc := range projectCfg.PromptShortcuts {
+			projectNames[sc.Name] = true
+		}
+	}
+	scopeOf := scopeLabeler(projectNames)
 	result := listShortcutItems(
 		cfg.PromptShortcuts, loopDirs, readFile,
 		func(sc config.PromptShortcut, dir string, rf func(string) ([]byte, error)) (string, error) {
 			return sc.ResolvePrompt(dir, rf)
 		},
 		func(sc config.PromptShortcut, value string) shortcutResponse {
-			return shortcutResponse{Name: sc.Name, Description: sc.Description, Prompt: value}
+			return shortcutResponse{Name: sc.Name, Description: sc.Description, Prompt: value, Scope: scopeOf(sc.Name)}
 		},
 		func(sc config.PromptShortcut) {
 			s.logger.Warn("skipping shortcut with unresolvable prompt", "name", sc.Name)
@@ -180,6 +209,16 @@ type shortcutEntryRequest struct {
 	Description string
 	Inline      string
 	Path        string
+}
+
+// notFoundInScope explains which config file was searched. A shortcut defined
+// in the other scope is invisible here, so naming the file that was read turns
+// a bare 404 into the next step: retry with the scope `list` reported.
+func notFoundInScope(scope, configPath string) string {
+	if scope == "" {
+		scope = "global"
+	}
+	return fmt.Sprintf("shortcut not found in %s scope (%s); check the scope reported by list", scope, configPath)
 }
 
 // shortcutEntryFields names the config-map keys for a shortcut kind.
@@ -311,7 +350,7 @@ func (s *Server) modifyShortcutEntry(w http.ResponseWriter, r *http.Request, req
 			}
 		}
 		if !found {
-			http.Error(w, "shortcut not found", http.StatusNotFound)
+			http.Error(w, notFoundInScope(req.Scope, configPath), http.StatusNotFound)
 			return
 		}
 
@@ -326,7 +365,7 @@ func (s *Server) modifyShortcutEntry(w http.ResponseWriter, r *http.Request, req
 			filtered = append(filtered, sc)
 		}
 		if !found {
-			http.Error(w, "shortcut not found", http.StatusNotFound)
+			http.Error(w, notFoundInScope(req.Scope, configPath), http.StatusNotFound)
 			return
 		}
 		shortcuts = filtered

@@ -68,6 +68,8 @@ export interface PromptShortcut {
   name: string;
   description: string;
   prompt: string;
+  /** Config file the shortcut is defined in — pass it back to add/update/delete. */
+  scope: "global" | "project";
 }
 
 export async function fetchShortcuts(channelId?: string): Promise<PromptShortcut[]> {
@@ -83,6 +85,8 @@ export interface BashShortcut {
   name: string;
   description: string;
   command: string;
+  /** Config file the shortcut is defined in — pass it back to add/update/delete. */
+  scope: "global" | "project";
 }
 
 export async function fetchBashShortcuts(channelId?: string): Promise<BashShortcut[]> {

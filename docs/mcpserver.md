@@ -74,8 +74,25 @@ Agent (Claude Code)  ←→  MCP Protocol (stdio)  ←→  loop mcp  ←→  HTT
 
 | Tool | Description |
 |------|-------------|
-| `prompt_shortcut` | Manage prompt shortcuts triggered via `#` in chat. Actions: `list`, `add`, `update`, `delete`. Scope: `global` (default, `~/.loop/config.json`) or `project` (project `.loop/config.json`). |
+| `prompt_shortcut` | Manage prompt shortcuts triggered via `#` in chat. Actions: `list`, `add`, `update`, `delete`. Scope: `global` (`~/.loop/config.json`) or `project` (project `.loop/config.json`). |
 | `bash_shortcut` | Manage bash shortcuts triggered via `$` in the terminal shortcuts bar. Actions: `list`, `add`, `update`, `delete`. Scope: `global` or `project`. |
+
+#### Shortcut scopes
+
+`list` is cross-scope: it returns global and project shortcuts merged, with each
+entry labelled by the `scope` it is defined in (project entries shadow global
+ones of the same name).
+
+`add`, `update` and `delete` operate on **one** config file and therefore
+require an explicit `scope` — there is no default. A shortcut written to one
+scope is invisible to the other, so a `delete` that omitted the scope used to
+silently search the global config and report a bare "shortcut not found" for a
+shortcut that `list` had just displayed. Run `list` first and pass back the
+scope it reports. A not-found error now names the scope and config file that
+were searched.
+
+Names are stored verbatim, including spaces — `git pull` is a valid shortcut
+name and is matched exactly, never slugified.
 
 ### Agent Tools (when `--agent-id` set)
 

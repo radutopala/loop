@@ -600,3 +600,103 @@ func (s *ServerSuite) TestModifyBashShortcutMarshalError() {
 	require.Equal(s.T(), http.StatusInternalServerError, rec.Code)
 	require.Contains(s.T(), rec.Body.String(), "failed to serialize config")
 }
+
+// --- Scope labelling + scope-aware 404 (regression: `list` showed the merged
+// global+project union with no scope, so an agent could not tell which config
+// file to target and delete fell back to an empty global array with a bare
+// "shortcut not found") ---
+
+func (s *ServerSuite) TestListBashShortcutsLabelsScope() {
+	s.srv.configs.load = func() (*config.Config, error) {
+		return &config.Config{
+			LoopDir: "/home/testuser/.loop",
+			BashShortcuts: []config.BashShortcut{
+				{Name: "glob", Description: "Global one", Command: "echo global"},
+			},
+		}, nil
+	}
+	s.store.On("GetChannel", mock.Anything, "ch-proj").Return(&db.Channel{ChannelID: "ch-proj", DirPath: "/projects/app"}, nil)
+	s.srv.configs.loadProject = func(_ string, base *config.Config) (*config.Config, error) {
+		merged := *base
+		merged.BashShortcuts = append(append([]config.BashShortcut{}, base.BashShortcuts...),
+			config.BashShortcut{Name: "git pull", Description: "Sync", Command: "git pull"},
+		)
+		return &merged, nil
+	}
+
+	rec := s.testRequest("GET", "/api/bash-shortcuts?channel_id=ch-proj", "")
+
+	require.Equal(s.T(), http.StatusOK, rec.Code)
+	var result []bashShortcutResponse
+	require.NoError(s.T(), json.Unmarshal(rec.Body.Bytes(), &result))
+	require.Len(s.T(), result, 2)
+	byName := map[string]string{}
+	for _, r := range result {
+		byName[r.Name] = r.Scope
+	}
+	require.Equal(s.T(), "global", byName["glob"])
+	require.Equal(s.T(), "project", byName["git pull"])
+}
+
+func (s *ServerSuite) TestListBashShortcutsScopeGlobalWithoutChannel() {
+	s.srv.configs.load = func() (*config.Config, error) {
+		return &config.Config{
+			LoopDir:       "/home/testuser/.loop",
+			BashShortcuts: []config.BashShortcut{{Name: "ll", Command: "ls -la"}},
+		}, nil
+	}
+
+	rec := s.testRequest("GET", "/api/bash-shortcuts", "")
+
+	require.Equal(s.T(), http.StatusOK, rec.Code)
+	var result []bashShortcutResponse
+	require.NoError(s.T(), json.Unmarshal(rec.Body.Bytes(), &result))
+	require.Len(s.T(), result, 1)
+	require.Equal(s.T(), "global", result[0].Scope)
+}
+
+func (s *ServerSuite) TestModifyBashShortcutNotFoundNamesScopeAndPath() {
+	sys := new(testutil.MockSystem)
+	sys.On("UserHomeDir").Return("/home/testuser", nil)
+	sys.On("ReadFile", "/home/testuser/.loop/config.json").Return([]byte(`{"bash_shortcuts":[]}`), nil)
+	s.srv.sys = sys
+
+	rec := s.testRequest("POST", "/api/bash-shortcuts", `{
+		"action": "delete",
+		"scope": "global",
+		"name": "git pull"
+	}`)
+
+	require.Equal(s.T(), http.StatusNotFound, rec.Code)
+	require.Contains(s.T(), rec.Body.String(), "not found in global scope")
+	require.Contains(s.T(), rec.Body.String(), "/home/testuser/.loop/config.json")
+	require.Contains(s.T(), rec.Body.String(), "scope reported by list")
+}
+
+// The reported bug end to end: a project-scoped name containing a space is
+// deletable when the caller passes the scope `list` reported for it.
+func (s *ServerSuite) TestModifyBashShortcutDeleteProjectNameWithSpaces() {
+	sys := new(testutil.MockSystem)
+	sys.On("MkdirAll", "/projects/app/.loop", os.FileMode(0755)).Return(nil)
+	sys.On("ReadFile", "/projects/app/.loop/config.json").Return(
+		[]byte(`{"bash_shortcuts":[{"name":"git pull","command":"git pull"},{"name":"lint","command":"make lint"}]}`), nil)
+	var written []byte
+	sys.On("WriteFile", "/projects/app/.loop/config.json", mock.Anything, mock.Anything).
+		Run(func(args mock.Arguments) { written = args.Get(1).([]byte) }).Return(nil)
+	s.srv.sys = sys
+	s.store.On("GetChannel", mock.Anything, "ch-proj").Return(&db.Channel{ChannelID: "ch-proj", DirPath: "/projects/app"}, nil)
+
+	rec := s.testRequest("POST", "/api/bash-shortcuts", `{
+		"action": "delete",
+		"scope": "project",
+		"channel_id": "ch-proj",
+		"name": "git pull"
+	}`)
+
+	require.Equal(s.T(), http.StatusNoContent, rec.Code)
+	var cfg map[string]any
+	require.NoError(s.T(), json.Unmarshal(written, &cfg))
+	shortcuts := cfg["bash_shortcuts"].([]any)
+	require.Len(s.T(), shortcuts, 1)
+	require.Equal(s.T(), "lint", shortcuts[0].(map[string]any)["name"])
+}
