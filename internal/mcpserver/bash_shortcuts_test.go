@@ -96,6 +96,7 @@ func (s *MCPServerSuite) TestBashShortcutAdd() {
 
 	text, isError := s.callTool("bash_shortcut", map[string]any{
 		"action":      "add",
+		"scope":       "global",
 		"name":        "lint",
 		"description": "Run linter",
 		"command":     "make lint",
@@ -139,6 +140,7 @@ func (s *MCPServerSuite) TestBashShortcutAddWithCommandPath() {
 
 	text, isError := s.callTool("bash_shortcut", map[string]any{
 		"action":       "add",
+		"scope":        "global",
 		"name":         "deploy",
 		"command_path": "deploy.sh",
 	})
@@ -149,6 +151,7 @@ func (s *MCPServerSuite) TestBashShortcutAddWithCommandPath() {
 func (s *MCPServerSuite) TestBashShortcutAddMissingName() {
 	text, isError := s.callTool("bash_shortcut", map[string]any{
 		"action":  "add",
+		"scope":   "global",
 		"command": "echo hi",
 	})
 	require.True(s.T(), isError)
@@ -162,6 +165,7 @@ func (s *MCPServerSuite) TestBashShortcutAddAPIError() {
 
 	text, isError := s.callTool("bash_shortcut", map[string]any{
 		"action":  "add",
+		"scope":   "global",
 		"name":    "dup",
 		"command": "x",
 	})
@@ -182,6 +186,7 @@ func (s *MCPServerSuite) TestBashShortcutUpdate() {
 
 	text, isError := s.callTool("bash_shortcut", map[string]any{
 		"action":  "update",
+		"scope":   "global",
 		"name":    "lint",
 		"command": "make lint-fix",
 	})
@@ -197,6 +202,7 @@ func (s *MCPServerSuite) TestBashShortcutUpdateNotFound() {
 
 	text, isError := s.callTool("bash_shortcut", map[string]any{
 		"action":  "update",
+		"scope":   "global",
 		"name":    "nope",
 		"command": "x",
 	})
@@ -216,6 +222,7 @@ func (s *MCPServerSuite) TestBashShortcutDelete() {
 
 	text, isError := s.callTool("bash_shortcut", map[string]any{
 		"action": "delete",
+		"scope":  "global",
 		"name":   "lint",
 	})
 	require.False(s.T(), isError)
@@ -226,6 +233,7 @@ func (s *MCPServerSuite) TestBashShortcutDelete() {
 func (s *MCPServerSuite) TestBashShortcutDeleteMissingName() {
 	text, isError := s.callTool("bash_shortcut", map[string]any{
 		"action": "delete",
+		"scope":  "global",
 	})
 	require.True(s.T(), isError)
 	require.Contains(s.T(), text, "name is required")
@@ -238,6 +246,7 @@ func (s *MCPServerSuite) TestBashShortcutDeleteNotFound() {
 
 	text, isError := s.callTool("bash_shortcut", map[string]any{
 		"action": "delete",
+		"scope":  "global",
 		"name":   "nope",
 	})
 	require.True(s.T(), isError)
@@ -259,8 +268,93 @@ func (s *MCPServerSuite) TestBashShortcutDeleteNetworkError() {
 
 	text, isError := s.callTool("bash_shortcut", map[string]any{
 		"action": "delete",
+		"scope":  "global",
 		"name":   "lint",
 	})
 	require.True(s.T(), isError)
 	require.Contains(s.T(), text, "calling API")
+}
+
+// --- Scope enforcement (regression: a missing scope silently defaulted to
+// global, so project-scoped shortcuts were invisible to update/delete) ---
+
+func (s *MCPServerSuite) TestBashShortcutRequiresExplicitScope() {
+	called := false
+	s.httpClient.doFunc = func(_ *http.Request) (*http.Response, error) {
+		called = true
+		return noContentResponse(http.StatusNoContent), nil
+	}
+
+	for _, action := range []string{"add", "update", "delete"} {
+		text, isError := s.callTool("bash_shortcut", map[string]any{
+			"action":  action,
+			"name":    "git pull",
+			"command": "git pull",
+		})
+		require.True(s.T(), isError, "action %s must reject a missing scope", action)
+		require.Contains(s.T(), text, "scope is required for "+action)
+		require.Contains(s.T(), text, "list action first")
+	}
+	require.False(s.T(), called, "no API call should be made without an explicit scope")
+}
+
+func (s *MCPServerSuite) TestBashShortcutRejectsUnknownScope() {
+	called := false
+	s.httpClient.doFunc = func(_ *http.Request) (*http.Response, error) {
+		called = true
+		return noContentResponse(http.StatusNoContent), nil
+	}
+
+	text, isError := s.callTool("bash_shortcut", map[string]any{
+		"action":  "delete",
+		"name":    "lint",
+		"scope":   "workspace",
+		"command": "make lint",
+	})
+	require.True(s.T(), isError)
+	require.Contains(s.T(), text, `scope must be 'global' or 'project'`)
+	require.Contains(s.T(), text, `"workspace"`)
+	require.False(s.T(), called)
+}
+
+// A name with spaces round-trips untouched — no slugging anywhere in the path.
+func (s *MCPServerSuite) TestBashShortcutDeleteNameWithSpaces() {
+	s.httpClient.doFunc = func(req *http.Request) (*http.Response, error) {
+		body, _ := io.ReadAll(req.Body)
+		var payload map[string]string
+		require.NoError(s.T(), json.Unmarshal(body, &payload))
+		require.Equal(s.T(), "git pull", payload["name"])
+		require.Equal(s.T(), "project", payload["scope"])
+		return noContentResponse(http.StatusNoContent), nil
+	}
+
+	text, isError := s.callTool("bash_shortcut", map[string]any{
+		"action": "delete",
+		"name":   "git pull",
+		"scope":  "project",
+	})
+	require.False(s.T(), isError)
+	require.Contains(s.T(), text, "Deleted")
+	require.Contains(s.T(), text, "git pull")
+}
+
+func (s *MCPServerSuite) TestPromptShortcutRequiresExplicitScope() {
+	text, isError := s.callTool("prompt_shortcut", map[string]any{
+		"action": "delete",
+		"name":   "lint",
+	})
+	require.True(s.T(), isError)
+	require.Contains(s.T(), text, "scope is required for delete")
+	require.Contains(s.T(), text, "prompt shortcut")
+}
+
+// list stays cross-scope: it must not demand a scope.
+func (s *MCPServerSuite) TestBashShortcutListNeedsNoScope() {
+	s.httpClient.doFunc = func(_ *http.Request) (*http.Response, error) {
+		return stringResponse(http.StatusOK, `[{"name":"lint","command":"make lint","scope":"project"}]`), nil
+	}
+
+	text, isError := s.callTool("bash_shortcut", map[string]any{"action": "list"})
+	require.False(s.T(), isError)
+	require.Contains(s.T(), text, `"scope": "project"`)
 }
