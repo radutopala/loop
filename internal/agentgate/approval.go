@@ -112,11 +112,20 @@ type Manager struct {
 
 	mu           sync.Mutex
 	cache        map[string]types.Decision
+	burst        map[string]burstEntry
+	burstTTL     time.Duration // burst-memo lifetime; see burstCacheTTL
 	pending      map[string]*pendingEntry
 	totalPrompts int
 	timeout      time.Duration // prompt deadline; see approvalTimeout
 	recent       []time.Time
 	totalTripped bool
+}
+
+// burstEntry is a short-lived memo of a once-scoped decision, used to collapse
+// a burst of identical traps into a single prompt. See burstCacheTTL.
+type burstEntry struct {
+	decision types.Decision
+	expires  time.Time
 }
 
 // pendingEntry is the internal record of an in-flight approval — the
@@ -140,16 +149,38 @@ type resolution struct {
 // request.
 const approvalTimeout = 10 * time.Minute
 
+// burstCacheTTL is how long a once-scoped decision ("Allow once" / "Deny") is
+// remembered so an immediately-repeated identical request reuses it instead of
+// prompting again.
+//
+// Why this exists: a single logical command can trap the gate many times. The
+// common case is a PATH search — anything launched through a wrapper such as
+// timeout(1), env(1) or nohup(1) is resolved with execvp(3), which issues one
+// execve(2) per PATH entry until one succeeds. Each of those probes carries
+// byte-identical argv, so each produced its own approval card and one
+// `timeout 110 git push …` could stack ten of them. Bare `git push` traps once
+// because the shell stats its way to the absolute path first.
+//
+// The window only has to span the burst itself (probes arrive ~1ms apart), so
+// it is deliberately short: a genuinely new invocation a few seconds later
+// still prompts. The trade-off is that a script re-running the same command
+// inside the window rides the first decision — which is why this is measured
+// in seconds, not minutes, and why "Allow for session" remains the only way to
+// stop being asked at all.
+const burstCacheTTL = 5 * time.Second
+
 // NewManager constructs a Manager. Zero-valued RateLimits fields disable that cap.
 func NewManager(bots BotRouter, limits types.RateLimits) *Manager {
 	return &Manager{
-		bots:    bots,
-		limits:  limits,
-		timeout: approvalTimeout,
-		now:     time.Now,
-		idGen:   randomID,
-		cache:   map[string]types.Decision{},
-		pending: map[string]*pendingEntry{},
+		bots:     bots,
+		limits:   limits,
+		timeout:  approvalTimeout,
+		burstTTL: burstCacheTTL,
+		now:      time.Now,
+		idGen:    randomID,
+		cache:    map[string]types.Decision{},
+		burst:    map[string]burstEntry{},
+		pending:  map[string]*pendingEntry{},
 	}
 }
 
@@ -157,11 +188,8 @@ func NewManager(bots BotRouter, limits types.RateLimits) *Manager {
 // Outcome.Decision is always Allow or Deny — never Approve.
 func (m *Manager) Request(ctx context.Context, channelID string, req ApprovalRequest) Outcome {
 	if req.CacheKey != "" {
-		m.mu.Lock()
-		d, ok := m.cache[req.CacheKey]
-		m.mu.Unlock()
-		if ok {
-			return Outcome{Decision: d, FromCache: true, Reason: "cache-hit"}
+		if out, ok := m.lookupCached(req.CacheKey); ok {
+			return out
 		}
 	}
 
@@ -326,6 +354,38 @@ func (m *Manager) checkLimits() (Outcome, bool) {
 	return Outcome{}, true
 }
 
+// lookupCached resolves a CacheKey against the session cache first, then the
+// short-lived burst memo. An expired burst entry is dropped on read so the
+// caller prompts again.
+func (m *Manager) lookupCached(key string) (Outcome, bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if d, ok := m.cache[key]; ok {
+		return Outcome{Decision: d, FromCache: true, Reason: "cache-hit"}, true
+	}
+	e, ok := m.burst[key]
+	if !ok {
+		return Outcome{}, false
+	}
+	if !m.now().Before(e.expires) {
+		delete(m.burst, key)
+		return Outcome{}, false
+	}
+	return Outcome{Decision: e.decision, FromCache: true, Reason: "burst-hit"}, true
+}
+
+// rememberBurstLocked memoises a once-scoped decision for burstTTL, sweeping
+// entries that have already expired. Caller holds m.mu.
+func (m *Manager) rememberBurstLocked(key string, d types.Decision) {
+	now := m.now()
+	for k, e := range m.burst {
+		if !now.Before(e.expires) {
+			delete(m.burst, k)
+		}
+	}
+	m.burst[key] = burstEntry{decision: d, expires: now.Add(m.burstTTL)}
+}
+
 func (m *Manager) applyResolution(cacheKey string, r resolution) Outcome {
 	var d types.Decision
 	persist := false
@@ -341,9 +401,16 @@ func (m *Manager) applyResolution(cacheKey string, r resolution) Outcome {
 		d = types.DecisionDeny
 		persist = true
 	}
-	if persist && cacheKey != "" {
+	if cacheKey != "" {
 		m.mu.Lock()
-		m.cache[cacheKey] = d
+		switch {
+		case persist:
+			// Session scope supersedes any burst memo for the same key.
+			m.cache[cacheKey] = d
+			delete(m.burst, cacheKey)
+		case m.burstTTL > 0:
+			m.rememberBurstLocked(cacheKey, d)
+		}
 		m.mu.Unlock()
 	}
 	return Outcome{Decision: d, Actor: r.actor}
