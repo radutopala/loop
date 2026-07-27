@@ -259,6 +259,171 @@ func (s *ApprovalSuite) TestResolveEmptyCacheKeySessionSkipsCache() {
 	require.Equal(s.T(), 0, size)
 }
 
+// --- Burst memo ---
+//
+// A single logical command can trap the gate many times with byte-identical
+// argv — most often a PATH search, where execvp(3) issues one execve(2) per
+// PATH entry. These cover the short-lived memo that collapses such a burst
+// into one prompt without granting session scope.
+
+// movableClock returns a clock function plus a knob to advance it, so the
+// burst TTL can be crossed without sleeping.
+func movableClock() (now func() time.Time, advance func(time.Duration)) {
+	var mu sync.Mutex
+	t := fixedNow
+	return func() time.Time {
+			mu.Lock()
+			defer mu.Unlock()
+			return t
+		}, func(d time.Duration) {
+			mu.Lock()
+			defer mu.Unlock()
+			t = t.Add(d)
+		}
+}
+
+func (s *ApprovalSuite) TestOnceDecisionCollapsesRepeatBurst() {
+	bot := &fakeBot{}
+	m := s.newManager(bot, types.RateLimits{})
+
+	outCh := s.request(m, ApprovalRequest{CacheKey: "execve:git:push origin"})
+	reqID := s.waitForPending(m, 1)
+	require.NoError(s.T(), m.Resolve(reqID, DecisionOnce, "u"))
+	require.Equal(s.T(), types.DecisionAllow, (<-outCh).Decision)
+
+	// The next PATH probe arrives microseconds later with the same key.
+	var promptFired bool
+	out := m.Request(context.Background(), "chan1", ApprovalRequest{
+		CacheKey: "execve:git:push origin",
+		OnPrompt: func() { promptFired = true },
+	})
+
+	require.Equal(s.T(), types.DecisionAllow, out.Decision)
+	require.True(s.T(), out.FromCache)
+	require.Equal(s.T(), "burst-hit", out.Reason)
+	require.False(s.T(), promptFired)
+	require.Equal(s.T(), 1, bot.sendCount, "the burst must cost exactly one card")
+
+	// Once-scope must still stay out of the session cache.
+	m.mu.Lock()
+	_, cached := m.cache["execve:git:push origin"]
+	m.mu.Unlock()
+	require.False(s.T(), cached)
+}
+
+func (s *ApprovalSuite) TestDenyOnceCollapsesRepeatBurst() {
+	bot := &fakeBot{}
+	m := s.newManager(bot, types.RateLimits{})
+
+	outCh := s.request(m, ApprovalRequest{CacheKey: "k"})
+	reqID := s.waitForPending(m, 1)
+	require.NoError(s.T(), m.Resolve(reqID, DecisionDeny, "u"))
+	<-outCh
+
+	out := m.Request(context.Background(), "chan1", ApprovalRequest{CacheKey: "k"})
+	require.Equal(s.T(), types.DecisionDeny, out.Decision)
+	require.Equal(s.T(), "burst-hit", out.Reason)
+	require.Equal(s.T(), 1, bot.sendCount)
+}
+
+func (s *ApprovalSuite) TestBurstMemoExpiresAndPromptsAgain() {
+	bot := &fakeBot{}
+	m := s.newManager(bot, types.RateLimits{})
+	now, advance := movableClock()
+	m.now = now
+
+	outCh := s.request(m, ApprovalRequest{CacheKey: "k"})
+	reqID := s.waitForPending(m, 1)
+	require.NoError(s.T(), m.Resolve(reqID, DecisionOnce, "u"))
+	<-outCh
+
+	advance(m.burstTTL) // exactly at the deadline — expired, not "still valid"
+
+	outCh = s.request(m, ApprovalRequest{CacheKey: "k"})
+	reqID = s.waitForPending(m, 1)
+	require.NoError(s.T(), m.Resolve(reqID, DecisionOnce, "u"))
+	require.Equal(s.T(), types.DecisionAllow, (<-outCh).Decision)
+	require.Equal(s.T(), 2, bot.sendCount, "an expired memo must prompt again")
+}
+
+func (s *ApprovalSuite) TestSessionDecisionSupersedesBurstMemo() {
+	bot := &fakeBot{}
+	m := s.newManager(bot, types.RateLimits{})
+
+	// Two identical traps land before either is answered, so both prompt.
+	// The first click memoises once-scope; the second must supersede it.
+	firstCh := s.request(m, ApprovalRequest{ID: "a", CacheKey: "k"})
+	secondCh := s.request(m, ApprovalRequest{ID: "b", CacheKey: "k"})
+	s.waitForPending(m, 2)
+	require.NoError(s.T(), m.Resolve("a", DecisionOnce, "u"))
+	<-firstCh
+	require.NoError(s.T(), m.Resolve("b", DecisionSession, "u"))
+	<-secondCh
+
+	m.mu.Lock()
+	_, stillMemoed := m.burst["k"]
+	cached := m.cache["k"]
+	m.mu.Unlock()
+	require.False(s.T(), stillMemoed, "session scope must drop the stale once-memo")
+	require.Equal(s.T(), types.DecisionAllow, cached)
+
+	out := m.Request(context.Background(), "chan1", ApprovalRequest{CacheKey: "k"})
+	require.Equal(s.T(), types.DecisionAllow, out.Decision)
+	require.Equal(s.T(), "cache-hit", out.Reason)
+}
+
+func (s *ApprovalSuite) TestZeroBurstTTLDisablesMemo() {
+	bot := &fakeBot{}
+	m := s.newManager(bot, types.RateLimits{})
+	m.burstTTL = 0
+
+	outCh := s.request(m, ApprovalRequest{CacheKey: "k"})
+	reqID := s.waitForPending(m, 1)
+	require.NoError(s.T(), m.Resolve(reqID, DecisionOnce, "u"))
+	<-outCh
+
+	m.mu.Lock()
+	size := len(m.burst)
+	m.mu.Unlock()
+	require.Equal(s.T(), 0, size)
+}
+
+func (s *ApprovalSuite) TestBurstMemoSweepsExpiredKeys() {
+	bot := &fakeBot{}
+	m := s.newManager(bot, types.RateLimits{})
+	m.burst["stale"] = burstEntry{decision: types.DecisionAllow, expires: fixedNow.Add(-time.Second)}
+	m.burst["fresh"] = burstEntry{decision: types.DecisionAllow, expires: fixedNow.Add(time.Minute)}
+
+	outCh := s.request(m, ApprovalRequest{CacheKey: "k"})
+	reqID := s.waitForPending(m, 1)
+	require.NoError(s.T(), m.Resolve(reqID, DecisionOnce, "u"))
+	<-outCh
+
+	m.mu.Lock()
+	_, stale := m.burst["stale"]
+	_, fresh := m.burst["fresh"]
+	_, added := m.burst["k"]
+	m.mu.Unlock()
+	require.False(s.T(), stale, "writing a memo sweeps expired ones")
+	require.True(s.T(), fresh)
+	require.True(s.T(), added)
+}
+
+func (s *ApprovalSuite) TestEmptyCacheKeyLeavesNoBurstMemo() {
+	bot := &fakeBot{}
+	m := s.newManager(bot, types.RateLimits{})
+
+	outCh := s.request(m, ApprovalRequest{CacheKey: ""})
+	reqID := s.waitForPending(m, 1)
+	require.NoError(s.T(), m.Resolve(reqID, DecisionOnce, "u"))
+	<-outCh
+
+	m.mu.Lock()
+	size := len(m.burst)
+	m.mu.Unlock()
+	require.Equal(s.T(), 0, size)
+}
+
 // --- Resolve errors ---
 
 func (s *ApprovalSuite) TestResolveUnknownReqIDError() {
