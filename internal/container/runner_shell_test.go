@@ -3,6 +3,7 @@ package container
 import (
 	"archive/tar"
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"os"
@@ -57,6 +58,62 @@ func (s *RunnerSuite) TestRunWithOnTurnStreaming() {
 	// ContainerLogs should NOT be called in streaming path
 	s.client.AssertNotCalled(s.T(), "ContainerLogs", mock.Anything, mock.Anything)
 	s.client.AssertExpectations(s.T())
+}
+
+// A review request sets OnToolUseRaw and nothing else. Before collectOutput
+// asked streamCallbacks.any(), that shape fell through to the batch read,
+// which drops every callback — so ReportFindings findings never reached the
+// review panel even though the tool call was right there on the stream.
+func (s *RunnerSuite) TestRunWithOnlyOnToolUseRawStreams() {
+	ctx := context.Background()
+
+	var raws []string
+	req := &agent.AgentRequest{
+		ChannelID: "ch-1",
+		OnToolUseRaw: func(_, name, rawInput string) {
+			raws = append(raws, name+":"+rawInput)
+		},
+	}
+
+	streamOutput := `{"type":"assistant","message":{"content":[{"type":"tool_use","id":"tu-1","name":"ReportFindings","input":{"findings":[{"file":"a.go","line":2}]}}]}}
+{"type":"result","result":"done","session_id":"sess-raw","is_error":false}
+`
+
+	waitCh := make(chan WaitResponse, 1)
+	waitCh <- WaitResponse{StatusCode: 0}
+	errCh := make(chan error, 1)
+
+	s.client.On("ContainerCreate", ctx, mock.AnythingOfType("*container.ContainerConfig"), testContainerName).Return(testContainerID, nil)
+	s.client.On("ContainerStart", ctx, testContainerID).Return(nil)
+	s.client.On("ContainerLogsFollow", ctx, testContainerID).Return(io.NopCloser(strings.NewReader(streamOutput)), nil)
+	s.client.On("ContainerWait", ctx, testContainerID).Return((<-chan WaitResponse)(waitCh), (<-chan error)(errCh))
+
+	_, err := s.runner.Run(ctx, req)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), []string{`ReportFindings:{"findings":[{"file":"a.go","line":2}]}`}, raws)
+	s.client.AssertNotCalled(s.T(), "ContainerLogs", mock.Anything, mock.Anything)
+	s.client.AssertExpectations(s.T())
+}
+
+func (s *RunnerSuite) TestStreamCallbacksAny() {
+	tests := []struct {
+		name string
+		cb   streamCallbacks
+		want bool
+	}{
+		{"empty", streamCallbacks{}, false},
+		{"onTurn", streamCallbacks{onTurn: func(string) {}}, true},
+		{"onToolUse", streamCallbacks{onToolUse: func(_, _, _ string) {}}, true},
+		{"onToolUseRaw", streamCallbacks{onToolUseRaw: func(_, _, _ string) {}}, true},
+		{"onActivity", streamCallbacks{onActivity: func(_, _ string) {}}, true},
+		{"onThinking", streamCallbacks{onThinking: func(string) {}}, true},
+		{"onToolResult", streamCallbacks{onToolResult: func(_, _ string, _ bool) {}}, true},
+	}
+	for _, tt := range tests {
+		s.Run(tt.name, func() {
+			require.Equal(s.T(), tt.want, tt.cb.any())
+		})
+	}
 }
 
 func (s *RunnerSuite) TestRunWithOnTurnFollowError() {
@@ -681,6 +738,50 @@ func (s *RunnerSuite) TestBuildClaudeCmdModelEffortOverride() {
 	require.Contains(s.T(), got, "--effort high")
 	require.Equal(s.T(), "claude-sonnet-5", cfg.ClaudeModel)
 	require.Equal(s.T(), "medium", cfg.ClaudeEffort)
+}
+
+// TestBuildClaudeCmdReviewMode verifies a review run keeps ReportFindings
+// available (the built-in code-review command only runs inline — same
+// session, same model, streamed output — when it can call that tool) while
+// the other batch denials stand, and that the shared config is untouched.
+func (s *RunnerSuite) TestBuildClaudeCmdReviewMode() {
+	disallowed := config.DefaultBatchDisallowedTools()
+	cfg := &config.Config{ClaudeBinPath: "claude", ClaudeBatchDisallowedTools: disallowed}
+	req := &agent.AgentRequest{
+		ChannelID: "ch-1",
+		Messages:  []agent.AgentMessage{{Role: "user", Content: "/code-review"}},
+	}
+
+	got := strings.Join(buildClaudeCmd(cfg, "/work/.loop/mcp-ch-1.json", req), " ")
+	require.Contains(s.T(), got, "ReportFindings")
+	require.NotContains(s.T(), got, "--settings")
+
+	req.ReviewMode = true
+	cmd := buildClaudeCmd(cfg, "/work/.loop/mcp-ch-1.json", req)
+	got = strings.Join(cmd, " ")
+	require.NotContains(s.T(), got, "ReportFindings")
+	require.Contains(s.T(), got, "--disallowedTools ScheduleWakeup,CronCreate,CronDelete,CronList,Monitor")
+	require.Equal(s.T(), disallowed, cfg.ClaudeBatchDisallowedTools)
+
+	// --settings, not container env: settings scopes are assigned over
+	// process.env in the order userSettings → flagSettings, so a bind-mounted
+	// ~/.claude/settings.json outranks anything the container exports.
+	i := slices.Index(cmd, "--settings")
+	require.NotEqual(s.T(), -1, i, "review runs pass --settings")
+	require.Equal(s.T(), reviewModeSettings, cmd[i+1])
+
+	var settings struct {
+		Env map[string]string `json:"env"`
+	}
+	require.NoError(s.T(), json.Unmarshal([]byte(reviewModeSettings), &settings))
+	require.Equal(s.T(), map[string]string{
+		"CLAUDE_CODE_REPORT_FINDINGS": "1",
+		"CLAUDE_CODE_SUBAGENT_MODEL":  "inherit",
+	}, settings.Env)
+
+	// The flag must precede --print: --disallowedTools is variadic and would
+	// otherwise swallow it.
+	require.Less(s.T(), i, slices.Index(cmd, "--print"))
 }
 
 func (s *RunnerSuite) TestBuildClaudeCmdPermissionPromptTool() {

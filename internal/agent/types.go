@@ -22,6 +22,22 @@ type AgentRequest struct {
 	// for this run when non-empty (per-channel on-demand override).
 	Model  string `json:"model,omitempty"`
 	Effort string `json:"effort,omitempty"`
+	// ReviewMode runs the request as a code-review pass, so that the built-in
+	// /code-review command executes in the main session instead of forking a
+	// subagent. It takes ReportFindings out of claude_batch_disallowed_tools
+	// and passes --settings with two env keys (see reviewModeSettings):
+	//
+	//   - CLAUDE_CODE_REPORT_FINDINGS=1. The command runs inline only when
+	//     this is set AND ReportFindings is available AND the output format is
+	//     stream-json (batch runs always are); otherwise it forks. A fork emits
+	//     nothing on the parent stream — the run looks hung for minutes — and
+	//     its findings never reach a tool call the parent can see.
+	//   - CLAUDE_CODE_SUBAGENT_MODEL=inherit, so any subagent that does get
+	//     spawned runs on this request's model. This key outranks every other
+	//     source of a subagent's model, so a host ~/.claude/settings.json
+	//     setting it to e.g. "sonnet" (that mount is shared with the container)
+	//     otherwise silently downgrades the run.
+	ReviewMode bool `json:"review_mode,omitempty"`
 	// OnTurn is called for each assistant turn's text content during streaming.
 	// When set, the runner follows container logs in real-time instead of waiting
 	// for the container to exit. When nil, the runner uses the existing
@@ -31,6 +47,11 @@ type AgentRequest struct {
 	// toolUseID is the per-block id from the assistant message; pairs with
 	// the toolUseID delivered by OnToolResult.
 	OnToolUse func(toolUseID, name, input string) `json:"-"`
+	// OnToolUseRaw sees the same invocations as OnToolUse, but rawInput is the
+	// tool's argument JSON verbatim instead of the chat-facing summary — which
+	// is lossy, and empty for tools whose schema the summarizer doesn't know.
+	// Set this (not OnToolUse) when the arguments have to be decoded.
+	OnToolUseRaw func(toolUseID, name, rawInput string) `json:"-"`
 	// OnActivity is called for model detection and system events (subagent progress).
 	OnActivity func(activity, detail string) `json:"-"`
 	// OnThinking is called for each "thinking" content block emitted by the

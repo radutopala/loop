@@ -511,9 +511,11 @@ func stringDefault(val, def string) string {
 // watch dies mid-stream, dropping the remaining events. Override via the
 // `claude_batch_disallowed_tools` config key (global/project/worktree).
 // ReportFindings is denied for a different reason: it reports code-review
-// findings into a harness UI channel that batch runs don't render — a
-// successful call swallows the findings invisibly. Loop's review flow
-// reports through the report_review_findings MCP tool instead.
+// findings into a harness UI channel that batch runs don't render, so an
+// ordinary batch run that calls it swallows the findings invisibly. Review
+// runs are the exception and re-enable it: the built-in /code-review command
+// only runs inline when it can call that tool, and the review runner reads
+// the findings off the stream — see agent.AgentRequest.ReviewMode.
 func DefaultBatchDisallowedTools() []string {
 	return []string{"ScheduleWakeup", "CronCreate", "CronDelete", "CronList", "Monitor", "ReportFindings"}
 }

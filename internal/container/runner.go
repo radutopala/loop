@@ -486,6 +486,7 @@ func (r *DockerRunner) runOnce(ctx context.Context, req *agent.AgentRequest) (*a
 	claudeResp, err := r.collectOutput(ctx, containerID, streamCallbacks{
 		onTurn:       req.OnTurn,
 		onToolUse:    req.OnToolUse,
+		onToolUseRaw: req.OnToolUseRaw,
 		onActivity:   req.OnActivity,
 		onThinking:   req.OnThinking,
 		onToolResult: req.OnToolResult,
@@ -728,7 +729,7 @@ func (r *DockerRunner) createAndStartContainer(
 // collectOutput reads container logs (streaming or batch) and waits for exit.
 // Returns the parsed Claude response or an error.
 func (r *DockerRunner) collectOutput(ctx context.Context, containerID string, cb streamCallbacks) (*claudeResponse, error) {
-	if cb.onTurn != nil || cb.onThinking != nil || cb.onToolResult != nil {
+	if cb.any() {
 		return r.collectStreamingOutput(ctx, containerID, cb)
 	}
 	return r.collectBatchOutput(ctx, containerID)

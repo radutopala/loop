@@ -430,6 +430,37 @@ func (s *RunnerSuite) TestRunClaudeModelConfig() {
 	}
 }
 
+// A review run carries its two overrides on the claude command line, not in
+// the container env. Container env is the losing end of Claude Code's
+// settings precedence: every settings scope is assigned over process.env, so
+// the bind-mounted ~/.claude/settings.json here would win and pin subagents
+// to sonnet. The config's own env still reaches the container untouched —
+// review mode routes around it rather than fighting it there.
+func (s *RunnerSuite) TestRunReviewModeSettings() {
+	s.client = new(MockDockerClient)
+	s.cfg.Envs = map[string]string{"CLAUDE_CODE_SUBAGENT_MODEL": "sonnet"}
+	s.runner = NewDockerRunner(s.client, s.cfg, nil)
+	s.applyMockDefaults()
+
+	ctx := context.Background()
+	req := &agent.AgentRequest{
+		Messages:   []agent.AgentMessage{{Role: "user", Content: "/code-review"}},
+		ChannelID:  "ch-1",
+		ReviewMode: true,
+	}
+	check := func(cfg *ContainerConfig) bool {
+		return slices.Contains(cfg.Cmd, reviewModeSettings) &&
+			findEnv(cfg.Env, "CLAUDE_CODE_SUBAGENT_MODEL") == "sonnet" &&
+			findEnv(cfg.Env, "CLAUDE_CODE_REPORT_FINDINGS") == ""
+	}
+	s.setupMockRun(ctx, mock.MatchedBy(check), testContainerName, testJSONOK)
+
+	resp, err := s.runner.Run(ctx, req)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "ok", resp.Response)
+	s.client.AssertExpectations(s.T())
+}
+
 func (s *RunnerSuite) TestRunClaudeEffortConfig() {
 	tests := []struct {
 		name        string

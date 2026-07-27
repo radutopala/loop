@@ -90,15 +90,19 @@ type ToolUse struct {
 	ID    string // per-block tool_use id, pairs with the matching tool_result
 	Name  string
 	Input string // short summary of the input
+	Raw   string // the tool input JSON, verbatim
 }
 
 // extractToolUses returns tool_use content blocks from an assistant message.
+// Input is a chat-facing summary and is lossy — summarizeToolInput returns ""
+// for any tool whose schema it doesn't know. Raw keeps the untouched JSON for
+// callers that need to decode the arguments (see onToolUseRaw).
 func (m *assistantMessage) extractToolUses() []ToolUse {
 	var tools []ToolUse
 	for _, c := range m.Message.Content {
 		if c.Type == "tool_use" && c.Name != "" {
 			summary := summarizeToolInput(c.Name, c.Input)
-			tools = append(tools, ToolUse{ID: c.ID, Name: c.Name, Input: summary})
+			tools = append(tools, ToolUse{ID: c.ID, Name: c.Name, Input: summary, Raw: string(c.Input)})
 		}
 	}
 	return tools
@@ -169,11 +173,26 @@ func summarizeToolInput(name string, raw json.RawMessage) string {
 
 // streamCallbacks holds optional callbacks for scanStreamJSON.
 type streamCallbacks struct {
-	onTurn       func(string)
-	onToolUse    func(toolUseID, name, input string)
+	onTurn    func(string)
+	onToolUse func(toolUseID, name, input string)
+	// onToolUseRaw sees the same tool_use blocks as onToolUse but with the
+	// input JSON verbatim rather than summarized, for callers that decode it.
+	onToolUseRaw func(toolUseID, name, rawInput string)
 	onActivity   func(activity, detail string)
 	onThinking   func(text string)
 	onToolResult func(toolUseID, output string, isError bool)
+}
+
+// any reports whether at least one callback is set. collectOutput uses it to
+// pick between following the container's logs live and reading them once at
+// exit — with nothing to deliver mid-run the cheaper batch read wins, and it
+// drops the callbacks entirely. Every field must be listed: a callback left
+// out here is silently never invoked for a request that sets only that one.
+// A review request sets only onToolUseRaw, and that is exactly how the
+// ReportFindings findings went missing.
+func (cb streamCallbacks) any() bool {
+	return cb.onTurn != nil || cb.onToolUse != nil || cb.onToolUseRaw != nil ||
+		cb.onActivity != nil || cb.onThinking != nil || cb.onToolResult != nil
 }
 
 // userEventMaxBytes caps the size of "user" stream-json lines we will fully
@@ -343,9 +362,14 @@ func scanStreamJSON(r io.Reader, cb streamCallbacks) (*claudeResponse, error) {
 					cb.onThinking(text)
 				}
 			}
-			if cb.onToolUse != nil {
+			if cb.onToolUse != nil || cb.onToolUseRaw != nil {
 				for _, tu := range msg.extractToolUses() {
-					cb.onToolUse(tu.ID, tu.Name, tu.Input)
+					if cb.onToolUse != nil {
+						cb.onToolUse(tu.ID, tu.Name, tu.Input)
+					}
+					if cb.onToolUseRaw != nil {
+						cb.onToolUseRaw(tu.ID, tu.Name, tu.Raw)
+					}
 				}
 			}
 		case "user":

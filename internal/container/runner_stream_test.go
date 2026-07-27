@@ -242,6 +242,40 @@ func TestScanStreamJSONOnToolUse(t *testing.T) {
 	require.Equal(t, []string{"Bash:go test"}, tools)
 }
 
+// onToolUseRaw gets the input JSON untouched. The ReportFindings case is the
+// reason it exists: summarizeToolInput has no case for it and none of the
+// fallback keys match, so onToolUse alone hands the consumer an empty string.
+func TestScanStreamJSONOnToolUseRaw(t *testing.T) {
+	input := `{"type":"assistant","message":{"content":[{"type":"tool_use","id":"tu-1","name":"ReportFindings","input":{"findings":[{"file":"a.go","line":2}]}}]}}
+{"type":"result","result":"OK","session_id":"s1","is_error":false}
+`
+	var summaries, raws []string
+	cb := streamCallbacks{
+		onToolUse:    func(_, name, in string) { summaries = append(summaries, name+":"+in) },
+		onToolUseRaw: func(id, name, raw string) { raws = append(raws, id+":"+name+":"+raw) },
+	}
+	resp, err := scanStreamJSON(strings.NewReader(input), cb)
+	require.NoError(t, err)
+	require.Equal(t, "OK", resp.Result)
+	require.Equal(t, []string{"ReportFindings:"}, summaries)
+	require.Equal(t, []string{`tu-1:ReportFindings:{"findings":[{"file":"a.go","line":2}]}`}, raws)
+}
+
+// The raw callback still fires when onToolUse is unset — the two are dispatched
+// from one loop guarded by "either is set".
+func TestScanStreamJSONOnToolUseRawOnly(t *testing.T) {
+	input := `{"type":"assistant","message":{"content":[{"type":"tool_use","id":"tu-1","name":"Bash","input":{"command":"ls"}}]}}
+{"type":"result","result":"OK","session_id":"s1","is_error":false}
+`
+	var raws []string
+	cb := streamCallbacks{
+		onToolUseRaw: func(_, name, raw string) { raws = append(raws, name+":"+raw) },
+	}
+	_, err := scanStreamJSON(strings.NewReader(input), cb)
+	require.NoError(t, err)
+	require.Equal(t, []string{`Bash:{"command":"ls"}`}, raws)
+}
+
 func TestScanStreamJSONOnActivity(t *testing.T) {
 	t.Run("model detected from assistant events", func(t *testing.T) {
 		input := `{"type":"assistant","message":{"model":"claude-opus-4-6","content":[{"type":"text","text":"Hello"}]}}
