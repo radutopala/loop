@@ -53,3 +53,60 @@ func (s *ParserSuite) TestNewCommentStableID() {
 	require.Equal(s.T(), a.ID, b.ID)
 	require.NotEqual(s.T(), a.ID, c.ID)
 }
+
+func (s *ParserSuite) TestParseReportFindingsBody() {
+	tests := []struct {
+		name    string
+		finding string
+		want    string
+	}{
+		{
+			name:    "summary and scenario",
+			finding: `{"file":"a.go","line":1,"summary":"leak","failure_scenario":"fd stays open"}`,
+			want:    "leak\n\nfd stays open",
+		},
+		{
+			name:    "summary only",
+			finding: `{"file":"a.go","line":1,"summary":"leak"}`,
+			want:    "leak",
+		},
+		{
+			name:    "scenario only",
+			finding: `{"file":"a.go","line":1,"failure_scenario":"fd stays open"}`,
+			want:    "fd stays open",
+		},
+	}
+	for _, tc := range tests {
+		s.Run(tc.name, func() {
+			got := ParseReportFindings(`{"findings":[` + tc.finding + `]}`)
+			require.Len(s.T(), got, 1)
+			require.Equal(s.T(), tc.want, got[0].Body)
+			// ReportFindings carries no side; findings are against head.
+			require.Equal(s.T(), "RIGHT", got[0].Side)
+		})
+	}
+}
+
+// A verbatim ReportFindings payload captured off a real review run. The
+// first implementation parsed hand-written fixtures fine but ingested
+// nothing in production, because the stream handed it a summarized (empty)
+// input rather than this JSON — so pin the real shape, extra keys included.
+func (s *ParserSuite) TestParseReportFindingsRealPayload() {
+	const raw = `{"findings":[{"file":"internal/idfree/memory_store.go","line":48,"summary":"File-monitor/reload machinery duplicated verbatim across store packages","short_summary":"Duplicated file-monitor/reload machinery","failure_scenario":"MemoryStore.loadFile/checkAndReload/Monitor plus the pollInterval/openFile/lastMod fields are a line-for-line copy of internal/offer and internal/publisher.","category":"reuse"},{"file":"internal/idfree/memory_store.go","line":180,"summary":"parseModels accepts a JSON top-level null, silently yielding an empty store","short_summary":"Top-level JSON null yields empty store silently","failure_scenario":"If the file content is the literal ` + "`null`" + `, json.Unmarshal succeeds leaving parsed nil with no error.","category":"correctness"}]}`
+
+	got := ParseReportFindings(raw)
+	require.Len(s.T(), got, 2)
+	require.Equal(s.T(), "internal/idfree/memory_store.go", got[0].Path)
+	require.Equal(s.T(), 48, got[0].Line)
+	require.Contains(s.T(), got[0].Body, "duplicated verbatim across store packages")
+	require.Contains(s.T(), got[0].Body, "line-for-line copy")
+	require.Equal(s.T(), 180, got[1].Line)
+	require.NotEqual(s.T(), got[0].ID, got[1].ID)
+}
+
+func (s *ParserSuite) TestParseReportFindingsRejects() {
+	require.Nil(s.T(), ParseReportFindings("{"), "malformed json")
+	require.Empty(s.T(), ParseReportFindings(`{"findings":[]}`), "no findings")
+	require.Empty(s.T(), ParseReportFindings(`{"findings":[{"file":"a.go","line":1}]}`), "no text")
+	require.Empty(s.T(), ParseReportFindings(`{"findings":[{"line":1,"summary":"x"}]}`), "no file")
+}

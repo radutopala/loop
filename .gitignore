@@ -49,6 +49,9 @@ memory/
 tickets/
 .worktrees/
 
+# Throwaway working files (binary dumps, captured payloads) — never committed
+.scratch/
+
 # Component test artifacts
 test/component/screenshots/
 

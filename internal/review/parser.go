@@ -3,9 +3,56 @@ package review
 import (
 	"crypto/sha1"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"strings"
 )
+
+// ReportFindingsTool is the built-in Claude Code tool the code-review
+// command calls to hand its findings to the host. Loop watches the agent's
+// stream for a tool_use block with this name and turns its input into
+// review comments — see ParseReportFindings.
+const ReportFindingsTool = "ReportFindings"
+
+// reportFindings mirrors the ReportFindings tool's input schema. Only the
+// fields the review panel renders are decoded; `level`, `short_summary`,
+// `category`, `verdict` and `outcome` are ignored.
+type reportFindings struct {
+	Findings []struct {
+		File            string `json:"file"`
+		Line            int    `json:"line"`
+		Summary         string `json:"summary"`
+		FailureScenario string `json:"failure_scenario"`
+	} `json:"findings"`
+}
+
+// ParseReportFindings converts a ReportFindings tool_use input into review
+// comments. Findings the panel can't place — no file, no positive line, no
+// text — are dropped rather than failing the batch, matching NewComment's
+// best-effort contract. A body pairs the one-line summary with the concrete
+// failure scenario, which is what the panel shows per comment. The tool
+// carries no LEFT/RIGHT side; every finding is reported against the head
+// revision, so NewComment's RIGHT default is correct.
+func ParseReportFindings(input string) []*Comment {
+	var parsed reportFindings
+	if err := json.Unmarshal([]byte(input), &parsed); err != nil {
+		return nil
+	}
+	comments := make([]*Comment, 0, len(parsed.Findings))
+	for _, f := range parsed.Findings {
+		body := strings.TrimSpace(f.Summary)
+		if scenario := strings.TrimSpace(f.FailureScenario); scenario != "" {
+			if body != "" {
+				body += "\n\n"
+			}
+			body += scenario
+		}
+		if c := NewComment(f.File, f.Line, "", body); c != nil {
+			comments = append(comments, c)
+		}
+	}
+	return comments
+}
 
 // NewComment builds a Comment from the raw finding fields the agent
 // reports through the report_review_findings MCP tool, normalizing side

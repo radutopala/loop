@@ -56,11 +56,40 @@ func buildBaseClaudeCmd(cfg *config.Config, mcpConfigPath, sessionID, agentID st
 // restrictions) from the next turn onward.
 const planModePromptPrefix = "Call the EnterPlanMode tool before doing anything else, then follow the plan-mode instructions that follow.\n\n"
 
+// reportFindingsTool is Claude Code's built-in code-review reporting tool.
+// Denied by default in batch runs (see config.DefaultBatchDisallowedTools),
+// re-enabled for review runs.
+const reportFindingsTool = "ReportFindings"
+
+// withoutTool returns tools with name removed, preserving order. The input
+// slice is never mutated — it belongs to the cached config.
+func withoutTool(tools []string, name string) []string {
+	out := make([]string, 0, len(tools))
+	for _, t := range tools {
+		if t != name {
+			out = append(out, t)
+		}
+	}
+	return out
+}
+
+// reviewModeSettings is the --settings payload for a review run. It carries
+// env, not container env vars, because Claude Code applies each settings
+// scope over process.env with a plain assign, in the fixed order
+// userSettings → flagSettings → policySettings. A container-level env var is
+// therefore *lower* precedence than ~/.claude/settings.json, which Loop
+// bind-mounts from the host into every agent container: a host setting of
+// e.g. CLAUDE_CODE_SUBAGENT_MODEL=sonnet silently overwrote it. --settings is
+// the flagSettings scope, so it lands after the user's file and wins.
+//
+// Both keys are load-bearing; see agent.AgentRequest.ReviewMode.
+const reviewModeSettings = `{"env":{"CLAUDE_CODE_REPORT_FINDINGS":"1","CLAUDE_CODE_SUBAGENT_MODEL":"inherit"}}`
+
 // buildClaudeCmd assembles the Claude CLI command with all flags for batch mode.
 func buildClaudeCmd(cfg *config.Config, mcpConfigPath string, req *agent.AgentRequest) []string {
 	// Per-channel on-demand overrides beat the merged config's model/effort.
 	// Shallow-copy so the cached config is never mutated.
-	if req.Model != "" || req.Effort != "" {
+	if req.Model != "" || req.Effort != "" || req.ReviewMode {
 		override := *cfg
 		if req.Model != "" {
 			override.ClaudeModel = req.Model
@@ -68,9 +97,19 @@ func buildClaudeCmd(cfg *config.Config, mcpConfigPath string, req *agent.AgentRe
 		if req.Effort != "" {
 			override.ClaudeEffort = req.Effort
 		}
+		// A review run is the one batch case that wants ReportFindings: it's
+		// how the built-in code-review command hands its findings back, and
+		// keeping it available is half of what makes that command run inline
+		// rather than fork. See agent.AgentRequest.ReviewMode.
+		if req.ReviewMode {
+			override.ClaudeBatchDisallowedTools = withoutTool(cfg.ClaudeBatchDisallowedTools, reportFindingsTool)
+		}
 		cfg = &override
 	}
 	cmd := buildBaseClaudeCmd(cfg, mcpConfigPath, req.SessionID, req.AgentID, req.ForkSession, false, cfg.ExtraDirs)
+	if req.ReviewMode {
+		cmd = append(cmd, "--settings", reviewModeSettings)
+	}
 	// Deny tools that only make sense in a persistent interactive harness.
 	// In one-shot `--print` mode the container exits at end of turn, so tools
 	// like ScheduleWakeup / Cron* schedule re-invocations that never fire —

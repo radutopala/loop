@@ -743,17 +743,23 @@ func (s *reviewService) handleReviewRun(w http.ResponseWriter, r *http.Request) 
 const defaultReviewPrompt = `/code-review`
 
 // defaultReviewSystemPrompt carries the review-panel output contract when
-// the prompt is the bare /code-review slash command: findings are reported
-// through Loop's report_review_findings MCP tool, which POSTs them straight
-// into the daemon's review session (persist + broadcast to the panel). The
-// explicit ReportFindings ban is load-bearing: the skill's own instructions
-// steer the model toward that harness tool, which exists even in --print
-// runs — a successful call would swallow every finding into a channel Loop
-// never reads, so the run would look clean with zero comments. Belt and
-// braces, the tool is also stripped via claude_batch_disallowed_tools.
-const defaultReviewSystemPrompt = `You are reviewing a GitHub pull request for an external review pipeline. When the review completes, report every finding by calling the mcp__loop__report_review_findings tool once with the full list. Each finding needs the repo-relative path, the 1-based line, side (RIGHT for added/modified lines — the default; LEFT only for lines removed from the base), and a one-paragraph body: the bug, the concrete inputs/state that trigger it, and the wrong output or crash.
+// the prompt is the bare /code-review slash command. The command reports
+// through Claude Code's own ReportFindings tool, and a review run enables
+// it (agent.AgentRequest.ReviewMode) precisely so it can: Loop reads the
+// tool_use straight off the agent's stream and ingests each finding. So
+// this prompt reinforces the skill's own contract instead of competing
+// with it — steering the model to Loop's MCP tool here would fight the
+// skill's instructions, and pulling ReportFindings back out would make
+// the command fork into a silent subagent again.
+//
+// The `line` requirement is the one addition that matters: ReportFindings
+// treats line as optional, but a finding without one can't be placed in
+// the diff and gets dropped on ingest.
+const defaultReviewSystemPrompt = `You are reviewing a GitHub pull request for an external review pipeline. Report every finding by calling the ReportFindings tool once with the full list.
 
-Report findings ONLY through that tool — do not use the ReportFindings tool, do not emit XML blocks, and do not print the findings as your reply. If there are no findings, skip the tool call. Do not fix anything yourself — the user triages comments from the Review panel.`
+Every finding MUST carry a repo-relative ` + "`file`" + ` and a 1-based ` + "`line`" + ` in the current revision — a finding without a line is discarded, so pick the most relevant line rather than omitting it. Write ` + "`summary`" + ` as the one-line defect and ` + "`failure_scenario`" + ` as the concrete inputs or state that trigger it plus the wrong output or crash; both are shown to the reviewer.
+
+Do not print the findings as your reply and do not emit XML blocks — the tool call is the only channel that reaches the reviewer. If there are no findings, skip the call. Do not fix anything yourself: the user triages comments from the Review panel.`
 
 // buildReviewContext renders the per-PR context block appended to the
 // configured review prompt. Each known field gets its own labelled line so

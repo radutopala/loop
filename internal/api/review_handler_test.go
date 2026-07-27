@@ -1324,10 +1324,13 @@ type mockReviewRunner struct {
 	// runWithCtxFn, when set, takes precedence over runFn so tests can
 	// observe ctx cancellation (used by the runReviewAsync timeout test).
 	runWithCtxFn func(ctx context.Context) (*agent.AgentResponse, error)
-	done         chan struct{} // closed after Run returns
+	// findings, when set, are handed to the run's onComment callback the
+	// way the agent's ReportFindings tool_use would deliver them.
+	findings []*review.Comment
+	done     chan struct{} // closed after Run returns
 }
 
-func (m *mockReviewRunner) Run(ctx context.Context, _, dirPath, parentDirPath, systemPrompt, prompt string) (*agent.AgentResponse, error) {
+func (m *mockReviewRunner) Run(ctx context.Context, _, dirPath, parentDirPath, systemPrompt, prompt string, onComment func(*review.Comment)) (*agent.AgentResponse, error) {
 	m.mu.Lock()
 	m.calls++
 	m.lastDir = dirPath
@@ -1337,7 +1340,13 @@ func (m *mockReviewRunner) Run(ctx context.Context, _, dirPath, parentDirPath, s
 	ctxFn := m.runWithCtxFn
 	fn := m.runFn
 	done := m.done
+	findings := m.findings
 	m.mu.Unlock()
+	if onComment != nil {
+		for _, c := range findings {
+			onComment(c)
+		}
+	}
 	defer func() {
 		if done != nil {
 			close(done)
@@ -1561,6 +1570,34 @@ func (s *ReviewHandlerSuite) TestIngestCommentsLoopDirFallback() {
 	require.Equal(s.T(), "LEFT", s.rs.Get("ch1").Comments[0].Side)
 }
 
+// Findings the agent reports through the built-in ReportFindings tool
+// reach the panel via the run's onComment callback — the same ingest path
+// the report_review_findings MCP endpoint uses, so duplicates collapse.
+func (s *ReviewHandlerSuite) TestRunIngestsStreamedFindings() {
+	s.wireReadySession()
+	s.store.On("GetChannel", mock.Anything, "ch1").Return(&db.Channel{ChannelID: "ch1", DirPath: "/repo"}, nil).Maybe()
+	runner := &mockReviewRunner{
+		done: make(chan struct{}),
+		findings: []*review.Comment{
+			review.NewComment("a.go", 3, "", "leak\n\nfd stays open"),
+			review.NewComment("a.go", 3, "", "leak\n\nfd stays open"), // same id -> deduped
+			review.NewComment("b.go", 9, "", "panic\n\nnil deref"),
+		},
+	}
+	s.srv.review.setAgent(runner, "", "")
+
+	w := httptest.NewRecorder()
+	s.mux.ServeHTTP(w, httptest.NewRequest("POST", "/api/channels/ch1/review/run", nil))
+	require.Equal(s.T(), http.StatusAccepted, w.Code)
+	<-runner.done
+
+	comments := s.rs.Get("ch1").Comments
+	require.Len(s.T(), comments, 2)
+	require.Equal(s.T(), "a.go", comments[0].Path)
+	require.Equal(s.T(), "leak\n\nfd stays open", comments[0].Body)
+	require.Equal(s.T(), "b.go", comments[1].Path)
+}
+
 // When a gh_user is configured, the run prompt includes a switch hint so
 // the agent can `gh auth switch -u <user>` before running gh commands.
 func (s *ReviewHandlerSuite) TestRunPromptIncludesConfiguredGHUser() {
@@ -1651,8 +1688,8 @@ func (s *ReviewHandlerSuite) TestRunUsesDefaultPromptWhenUnconfigured() {
 	require.Equal(s.T(), http.StatusAccepted, w.Code)
 	<-runner.done
 	require.Equal(s.T(), defaultReviewPrompt, runner.lastUser)
-	require.Contains(s.T(), runner.lastSys, "report_review_findings")
-	require.Contains(s.T(), runner.lastSys, "do not use the ReportFindings tool")
+	require.Contains(s.T(), runner.lastSys, "calling the ReportFindings tool")
+	require.Contains(s.T(), runner.lastSys, "1-based `line`")
 	require.Contains(s.T(), runner.lastSys, "Pull request under review:")
 }
 

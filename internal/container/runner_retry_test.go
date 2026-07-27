@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"sync/atomic"
 	"time"
 
@@ -14,20 +15,23 @@ import (
 	"github.com/radutopala/loop/internal/config"
 )
 
-// setupMockAttempts wires N sequential non-streaming container runs, each
-// returning the corresponding jsonOutput. Distinct container IDs per attempt
-// keep the ContainerLogs/Wait expectations unambiguous. All attempts share the
-// deterministic container name from osRandRead.
+// setupMockAttempts wires N sequential container runs, each returning the
+// corresponding jsonOutput. Distinct container IDs per attempt keep the
+// logs/Wait expectations unambiguous. All attempts share the deterministic
+// container name from osRandRead. Whether a run reads the logs once at exit
+// or follows them live is up to the request's callbacks (streamCallbacks.any),
+// so both readers are wired and each is optional; the tests assert on the
+// parsed response, which only a consumed stream can produce.
 func (s *RunnerSuite) setupMockAttempts(ctx context.Context, jsonOutputs ...string) {
 	s.client.On("NetworkEnsure", ctx, mock.Anything).Maybe().Return(nil)
 	for i, out := range jsonOutputs {
 		cid := fmt.Sprintf("container-attempt-%d", i)
-		reader := bytes.NewReader([]byte(out))
 		waitCh := make(chan WaitResponse, 1)
 		waitCh <- WaitResponse{StatusCode: 0}
 		errCh := make(chan error, 1)
 		s.client.On("ContainerCreate", ctx, mock.MatchedBy(func(*ContainerConfig) bool { return true }), testContainerName).Return(cid, nil).Once()
-		s.client.On("ContainerLogs", ctx, cid).Return(reader, nil)
+		s.client.On("ContainerLogs", ctx, cid).Maybe().Return(bytes.NewReader([]byte(out)), nil)
+		s.client.On("ContainerLogsFollow", ctx, cid).Maybe().Return(io.NopCloser(bytes.NewReader([]byte(out))), nil)
 		s.client.On("ContainerStart", ctx, cid).Return(nil)
 		s.client.On("ContainerWait", ctx, cid).Return((<-chan WaitResponse)(waitCh), (<-chan error)(errCh))
 	}

@@ -56,13 +56,15 @@ type GitHubReview interface {
 	DeletePRReviewComment(ctx context.Context, workdir, ghUser string, slug githubapi.RepoSlug, commentID int64) error
 }
 
-// ReviewRunner kicks off a single review pass. Findings arrive out of
-// band: the agent reports them through the report_review_findings MCP
-// tool, which POSTs to the review-comments endpoint (ingestComment).
-// Satisfied by *review.Runner; held as an interface so tests can drive
-// the handler without a real agent container.
+// ReviewRunner kicks off a single review pass. Findings arrive either
+// through onComment — the built-in ReportFindings tool, picked off the
+// agent's stream as it runs — or out of band through the
+// report_review_findings MCP tool, which POSTs to the review-comments
+// endpoint. Both funnel into ingestComment. Satisfied by *review.Runner;
+// held as an interface so tests can drive the handler without a real
+// agent container.
 type ReviewRunner interface {
-	Run(ctx context.Context, channelID, dirPath, parentDirPath, systemPrompt, prompt string) (*agent.AgentResponse, error)
+	Run(ctx context.Context, channelID, dirPath, parentDirPath, systemPrompt, prompt string, onComment func(*review.Comment)) (*agent.AgentResponse, error)
 }
 
 // refreshReviewSession fast-forwards the worktree to the PR's current
@@ -223,7 +225,14 @@ func (s *reviewService) runReviewAsync(runCtx context.Context, channelID, worktr
 		ctx, cancel = context.WithTimeout(ctx, s.runTimeout)
 		defer cancel()
 	}
-	_, err := s.runner.Run(ctx, channelID, worktreePath, parentDirPath, systemPrompt, prompt)
+	// Findings stream in as the agent reports them, so the panel fills up
+	// during the run rather than all at once at the end. ingestComment is
+	// safe to call concurrently and dedups by stable comment id, so a
+	// finding that also arrives over MCP lands once.
+	onComment := func(c *review.Comment) {
+		s.ingestComment(channelID, worktreePath, parentDirPath, c)
+	}
+	_, err := s.runner.Run(ctx, channelID, worktreePath, parentDirPath, systemPrompt, prompt, onComment)
 	if err != nil {
 		msg := err.Error()
 		// Re-shape ctx-deadline into a user-readable message. errors.Is

@@ -776,7 +776,7 @@ The renderer treats event delivery as best-effort: on every WebSocket reconnect 
 
 ### `review.comment`
 
-Emitted once per finding the review agent reports through the `report_review_findings` MCP tool during a run. Deduplicated by comment id upstream so each id arrives at most once.
+Emitted once per finding the review agent reports during a run, via either the built-in `ReportFindings` tool (read off the agent's stream) or the `report_review_findings` MCP tool. Deduplicated by comment id upstream so each id arrives at most once.
 
 **Payload schema:**
 
