@@ -19,7 +19,7 @@
   "linter": {
     "enabled": true,
     "rules": {
-      "recommended": true,
+      "preset": "recommended",
       // Rules below fail on the pre-Biome codebase and only offer unsafe
       // fixes. Disabled at adoption to keep the reformat commit
       // behavior-neutral; re-enable incrementally as the violations get
