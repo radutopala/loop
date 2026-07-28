@@ -1,7 +1,12 @@
 import type { GateApprovalRequestedData } from "../types";
 import { getApiUrl } from "./api";
 
-export type GateDecision = "once" | "session" | "deny";
+/**
+ * `deny-session` caches the denial under the request's CacheKey for the
+ * container's lifetime, so an agent that retries the same blocked operation
+ * is refused without re-prompting the operator. See Manager.applyResolution.
+ */
+export type GateDecision = "once" | "session" | "deny" | "deny-session";
 
 /** One pending approval as returned by GET /api/gate/approvals. */
 export interface PendingApproval extends GateApprovalRequestedData {

@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState } from "react";
 import { GateApprovalGoneError, type GateDecision } from "../../api/gate";
-import { resolveGateApproval, sendMessage } from "../../api/loopApi";
+import { resolveGateApproval, sendCommand, sendMessage } from "../../api/loopApi";
 import { useTheme } from "../../ThemeContext";
 import { fonts } from "../../theme";
 import type { GateApprovalRequestedData } from "../../types";
+import { ContextMenu, type MenuItem } from "../shared/ContextMenu";
 
 export function ApprovalCard({
   data,
@@ -38,10 +39,23 @@ export function ApprovalCard({
     });
     return () => cancelAnimationFrame(id);
   }, []);
-  const [sending, setSending] = useState<GateDecision | "deny-with-prompt" | null>(null);
+  const [sending, setSending] = useState<GateDecision | "deny-with-prompt" | "deny-and-stop" | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [showPrompt, setShowPrompt] = useState(false);
   const [prompt, setPrompt] = useState("");
+
+  // The deny variants live behind a caret next to Deny rather than as their
+  // own pills: plain Deny is the only non-terminal one and by far the common
+  // choice, and four side-by-side deny buttons made the card read as if they
+  // were unrelated options.
+  const caretRef = useRef<HTMLButtonElement | null>(null);
+  const [menuPos, setMenuPos] = useState<{ x: number; y: number } | null>(null);
+  const openDenyMenu = () => {
+    const el = caretRef.current;
+    if (!el) return;
+    const r = el.getBoundingClientRect();
+    setMenuPos({ x: r.left, y: r.bottom + 2 });
+  };
 
   // Expiry: the gate auto-denies at data.expires_at. Track it locally so the
   // card greys out on time even if the gate.approval_resolved event was
@@ -87,6 +101,30 @@ export function ApprovalCard({
     }
   };
 
+  // Deny the request and end the run outright, rather than letting the agent
+  // carry on from the denial. The orchestrator's drain loop claims the next
+  // queued message as soon as the cancelled run returns, so this is the way
+  // to abandon what the agent is doing and move on to what's waiting behind
+  // it. Deny lands first so the agent sees a clean tool-denied result while
+  // its container is torn down, matching the deny-with-prompt ordering.
+  const denyAndStop = async () => {
+    setSending("deny-and-stop");
+    setError(null);
+    try {
+      await resolveGateApproval(data.req_id, "deny");
+      await sendCommand(channelId, "stop");
+      onResolved?.();
+    } catch (e) {
+      if (e instanceof GateApprovalGoneError) {
+        setExpired(true);
+        setSending(null);
+        return;
+      }
+      setError(e instanceof Error ? e.message : String(e));
+      setSending(null);
+    }
+  };
+
   const denyWithPrompt = async () => {
     const text = prompt.trim();
     if (!text) return;
@@ -108,6 +146,44 @@ export function ApprovalCard({
       setSending(null);
     }
   };
+
+  // Each entry re-checks `sending`: the caret is disabled while a decision is
+  // in flight, but one can start between opening the menu and clicking an item
+  // (the card also resolves on a peer's click via gate.approval_resolved).
+  const denyMenuItems: MenuItem[] = [
+    {
+      label: "Deny for session",
+      danger: true,
+      onClick: () => {
+        if (sending === null) void resolve("deny-session");
+      },
+    },
+    // Chat/review only: `/loop stop` cancels the orchestrator run that owns the
+    // message queue. A terminal pane's agent isn't that run (it's a TUI on the
+    // pane's stdin, with nothing queued behind it), and those panes are exactly
+    // the ones that pass onDenyWithPrompt.
+    ...(onDenyWithPrompt
+      ? []
+      : [
+          {
+            label: "Deny & stop run",
+            danger: true,
+            onClick: () => {
+              if (sending === null) void denyAndStop();
+            },
+          },
+        ]),
+    {
+      label: "Deny with prompt…",
+      danger: true,
+      separator: true,
+      onClick: () => {
+        if (sending !== null) return;
+        setShowPrompt(true);
+        setError(null);
+      },
+    },
+  ];
 
   const label = data.kind ? data.kind.toUpperCase() : "APPROVAL";
 
@@ -155,27 +231,45 @@ export function ApprovalCard({
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
           <ApprovalButton label="Allow once" decision="once" busy={sending === "once"} disabled={sending !== null} onClick={resolve} variant="primary" />
           <ApprovalButton label="Allow for session" decision="session" busy={sending === "session"} disabled={sending !== null} onClick={resolve} variant="secondary" />
-          <ApprovalButton label="Deny" decision="deny" busy={sending === "deny"} disabled={sending !== null} onClick={resolve} variant="danger" />
-          <button
-            onClick={() => {
-              setShowPrompt((s) => !s);
-              setError(null);
-            }}
-            disabled={sending !== null}
-            style={{
-              padding: "4px 12px",
-              fontSize: 12,
-              fontFamily: fonts.mono,
-              border: `1px solid ${colors.warning}`,
-              borderRadius: 12,
-              backgroundColor: "transparent",
-              color: colors.warning,
-              cursor: sending !== null ? "default" : "pointer",
-              opacity: sending !== null ? 0.5 : 1,
-            }}
-          >
-            Deny with prompt…
-          </button>
+          {/* Split button: the default action is the plain, non-terminal deny —
+              block this one call and let the agent carry on. The variants that
+              change what happens *after* the denial hang off the caret. */}
+          <div style={{ display: "flex", alignItems: "stretch" }}>
+            <ApprovalButton
+              label="Deny"
+              decision="deny"
+              busy={sending === "deny"}
+              disabled={sending !== null}
+              onClick={resolve}
+              variant="danger"
+              title="Deny this request; the agent keeps going from the denial"
+              style={{ borderTopRightRadius: 0, borderBottomRightRadius: 0, borderRight: "none" }}
+            />
+            <button
+              ref={caretRef}
+              data-testid="approval-deny-caret"
+              onClick={openDenyMenu}
+              disabled={sending !== null}
+              aria-label="More deny options"
+              title="More deny options"
+              style={{
+                padding: "4px 6px",
+                fontSize: 12,
+                fontFamily: fonts.mono,
+                border: `1px solid ${colors.warning}`,
+                borderRadius: 12,
+                borderTopLeftRadius: 0,
+                borderBottomLeftRadius: 0,
+                backgroundColor: colors.warning,
+                color: "#fff",
+                cursor: sending !== null ? "default" : "pointer",
+                opacity: sending !== null ? 0.5 : 1,
+              }}
+            >
+              ▾
+            </button>
+          </div>
+          {sending === "deny-session" || sending === "deny-and-stop" ? <span style={{ alignSelf: "center", fontSize: 12, fontFamily: fonts.mono, color: colors.textDim }}>...</span> : null}
         </div>
       )}
       {!expired && showPrompt && (
@@ -265,6 +359,7 @@ export function ApprovalCard({
           </button>
         </div>
       )}
+      {menuPos && <ContextMenu x={menuPos.x} y={menuPos.y} onClose={() => setMenuPos(null)} items={denyMenuItems} />}
     </div>
   );
 }
@@ -276,6 +371,8 @@ function ApprovalButton({
   disabled,
   onClick,
   variant,
+  title,
+  style,
 }: {
   label: string;
   decision: GateDecision;
@@ -283,6 +380,9 @@ function ApprovalButton({
   disabled: boolean;
   onClick: (d: GateDecision) => void;
   variant: "primary" | "secondary" | "danger";
+  title?: string;
+  /** Merged last, so a split-button caller can flatten the adjoining corners. */
+  style?: React.CSSProperties;
 }) {
   const { colors } = useTheme();
   const accent = variant === "primary" ? colors.active : variant === "danger" ? colors.warning : colors.border;
@@ -292,6 +392,7 @@ function ApprovalButton({
     <button
       onClick={() => onClick(decision)}
       disabled={disabled}
+      title={title}
       style={{
         padding: "4px 12px",
         fontSize: 12,
@@ -302,6 +403,7 @@ function ApprovalButton({
         color: textColor,
         cursor: disabled ? "default" : "pointer",
         opacity: disabled && !busy ? 0.5 : busy ? 0.7 : 1,
+        ...style,
       }}
     >
       {busy ? "..." : label}

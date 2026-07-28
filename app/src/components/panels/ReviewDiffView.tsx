@@ -17,7 +17,7 @@ interface ReviewDiffViewProps {
   onDeleteComment: (c: ReviewComment) => void | Promise<void>;
 }
 
-interface FileSummary {
+export interface FileSummary {
   path: string;
   additions: number;
   deletions: number;
@@ -46,6 +46,61 @@ function dispatchOpenFile(channelId: string, relPath: string) {
     line: null,
   };
   window.dispatchEvent(new CustomEvent<FileLinkOpenDetail>("loop:open-file", { detail }));
+}
+
+// Key a diff line the way FileSection's comment map does, so a comment's
+// (line, side) can be located among a hunk's lines. Context lines carry both
+// numbers and key as RIGHT, matching where comments render.
+function lineKey(line: HunkLine): string {
+  if (line.newNum !== null) return `R:${line.newNum}`;
+  if (line.oldNum !== null) return `L:${line.oldNum}`;
+  return "";
+}
+
+/** One comment's position in the rendered scroll, for the floating navigator. */
+export interface CommentAnchor {
+  id: string;
+  /** Owning file, so navigation can expand a collapsed section first. */
+  path: string;
+  /** Index into `summaries`, or -1 for an orphan. Drives the file rail. */
+  fileIdx: number;
+}
+
+// Comments in the order they appear on screen: files top-to-bottom, within a
+// file by the hunk line each comment anchors to, then orphans last (the
+// out-of-diff section renders below every file). Comments whose file is
+// collapsed are included — navigation expands the file rather than skipping
+// them, so the total doesn't shift under the user as sections open and close.
+export function orderedComments(summaries: FileSummary[], byFile: Map<string, ReviewComment[]>, orphans: ReviewComment[]): CommentAnchor[] {
+  const out: CommentAnchor[] = [];
+  summaries.forEach((sum, fileIdx) => {
+    const cs = byFile.get(sum.path);
+    if (!cs || cs.length === 0) return;
+    // Position of each line key in the flattened hunk list. First occurrence
+    // wins: a key repeats only when a line number appears in two hunks, and
+    // the comment renders under the first of them.
+    const pos = new Map<string, number>();
+    let n = 0;
+    for (const h of sum.parsed.hunks) {
+      for (const l of h.lines) {
+        const k = lineKey(l);
+        if (k && !pos.has(k)) pos.set(k, n);
+        n++;
+      }
+    }
+    // Stable within a line: several comments on one line stack in array
+    // order, which is exactly how FileSection renders them. A comment whose
+    // line falls outside every hunk is dropped — FileSection has no row to
+    // hang it under, so counting it would strand the navigator on a target
+    // that never scrolls anywhere.
+    const sorted = cs
+      .map((c, i) => ({ c, i, at: pos.get(commentLineSide(c) === "LEFT" ? `L:${c.line}` : `R:${c.line}`) }))
+      .filter((e): e is { c: ReviewComment; i: number; at: number } => e.at !== undefined)
+      .sort((a, b) => a.at - b.at || a.i - b.i);
+    for (const { c } of sorted) out.push({ id: c.id, path: sum.path, fileIdx });
+  });
+  for (const c of orphans) out.push({ id: c.id, path: c.path, fileIdx: -1 });
+  return out;
 }
 
 function summarize(parsed: ParsedFile, fileComments: ReviewComment[]): FileSummary {
@@ -164,9 +219,80 @@ export function ReviewDiffView({ channelId, rawDiff, comments, worktreePath, onP
     [summaries],
   );
 
-  if (parsedFiles.length === 0 && comments.length === 0) {
-    return <div style={{ padding: 16, color: colors.textDim, fontSize: 12, textAlign: "center" }}>No diff content. The PR may be empty or the worktree failed to load.</div>;
-  }
+  // ---- Floating comment navigator ----------------------------------------
+  // The toolbar's prev/next steps file-to-file, which is too coarse once a
+  // file carries several comments. This walks individual comments instead,
+  // and floats over the scroll so it stays reachable at any depth.
+  const anchors = useMemo(() => orderedComments(summaries, byFile, orphans), [summaries, byFile, orphans]);
+  const commentRefs = useRef<Map<string, HTMLDivElement>>(new Map());
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const [activeComment, setActiveComment] = useState(0);
+  const syncRafRef = useRef(0);
+
+  const registerCommentRef = useCallback((id: string, el: HTMLDivElement | null) => {
+    if (el) commentRefs.current.set(id, el);
+    else commentRefs.current.delete(id);
+  }, []);
+
+  // Which comment the counter reports: the one whose midpoint sits nearest
+  // the viewport's midpoint. Measured on scroll rather than tracked with an
+  // IntersectionObserver so that navigating (which centres the target) lands
+  // on exactly the index we asked for, with no observer/animation race.
+  const syncActiveComment = useCallback(() => {
+    const sc = scrollRef.current;
+    if (!sc) return;
+    const r = sc.getBoundingClientRect();
+    const mid = r.top + r.height / 2;
+    let best = -1;
+    let bestDist = Number.POSITIVE_INFINITY;
+    anchors.forEach((a, i) => {
+      const el = commentRefs.current.get(a.id);
+      if (!el) return;
+      const er = el.getBoundingClientRect();
+      const d = Math.abs(er.top + er.height / 2 - mid);
+      if (d < bestDist) {
+        bestDist = d;
+        best = i;
+      }
+    });
+    // Every comment collapsed out of the DOM: keep the last index rather
+    // than snapping the counter to 1.
+    if (best >= 0) setActiveComment(best);
+  }, [anchors]);
+
+  const onScroll = useCallback(() => {
+    if (syncRafRef.current) return;
+    syncRafRef.current = requestAnimationFrame(() => {
+      syncRafRef.current = 0;
+      syncActiveComment();
+    });
+  }, [syncActiveComment]);
+
+  useEffect(() => {
+    return () => {
+      if (syncRafRef.current) cancelAnimationFrame(syncRafRef.current);
+    };
+  }, []);
+
+  const navigateToComment = useCallback(
+    (idx: number) => {
+      const a = anchors[idx];
+      if (!a) return;
+      setActiveComment(idx);
+      if (a.fileIdx >= 0) setFocusedIdx(a.fileIdx);
+      setExpanded((prev) => {
+        if (a.fileIdx < 0 || prev.has(a.path)) return prev;
+        const next = new Set(prev);
+        next.add(a.path);
+        return next;
+      });
+      // Deferred so a just-expanded file has mounted and registered its ref.
+      requestAnimationFrame(() => {
+        commentRefs.current.get(a.id)?.scrollIntoView({ behavior: "smooth", block: "center" });
+      });
+    },
+    [anchors],
+  );
 
   const clampedIdx = Math.min(focusedIdx, Math.max(summaries.length - 1, 0));
   const focusedPath = summaries[clampedIdx]?.path ?? "";
@@ -185,7 +311,6 @@ export function ReviewDiffView({ channelId, rawDiff, comments, worktreePath, onP
     for (const c of orphans) paths.add(c.path);
     return paths.size;
   }, [orphans]);
-  const totalCommented = commentedIndices.length + orphanPathCount;
   const prevCommentedIdx = useMemo(() => {
     for (let i = commentedIndices.length - 1; i >= 0; i--) {
       if (commentedIndices[i]! < clampedIdx) return commentedIndices[i]!;
@@ -198,10 +323,22 @@ export function ReviewDiffView({ channelId, rawDiff, comments, worktreePath, onP
     }
     return -1;
   }, [commentedIndices, clampedIdx]);
+
+  // Every hook must run before this bail-out: the branch flips when the first
+  // out-of-diff comment lands on an empty session, and React counts hooks per
+  // render. The four memos above used to sit below it.
+  if (parsedFiles.length === 0 && comments.length === 0) {
+    return <div style={{ padding: 16, color: colors.textDim, fontSize: 12, textAlign: "center" }}>No diff content. The PR may be empty or the worktree failed to load.</div>;
+  }
+
+  // Comments stream in while the agent reviews, so the index can outrun the
+  // list on a Sync that drops rows.
+  const commentIdx = Math.min(activeComment, Math.max(anchors.length - 1, 0));
+  const totalCommented = commentedIndices.length + orphanPathCount;
   const positionInCommented = commentedIndices.indexOf(clampedIdx);
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", flex: 1, minHeight: 0 }}>
+    <div style={{ display: "flex", flexDirection: "column", flex: 1, minHeight: 0, position: "relative" }}>
       {summaries.length > 0 && (
         <DiffToolbar
           colors={colors}
@@ -216,7 +353,7 @@ export function ReviewDiffView({ channelId, rawDiff, comments, worktreePath, onP
           onNext={() => navigateToFile(nextCommentedIdx)}
         />
       )}
-      <div style={{ flex: 1, overflow: "auto", minHeight: 0 }}>
+      <div ref={scrollRef} onScroll={onScroll} style={{ flex: 1, overflow: "auto", minHeight: 0 }}>
         {summaries.map((sum, idx) => (
           <div
             key={sum.path}
@@ -239,6 +376,7 @@ export function ReviewDiffView({ channelId, rawDiff, comments, worktreePath, onP
               onPushComment={onPushComment}
               onPushCommentToChat={onPushCommentToChat}
               onDeleteComment={onDeleteComment}
+              registerCommentRef={registerCommentRef}
             />
           </div>
         ))}
@@ -250,9 +388,13 @@ export function ReviewDiffView({ channelId, rawDiff, comments, worktreePath, onP
             onPushComment={onPushComment}
             onPushCommentToChat={onPushCommentToChat}
             onDeleteComment={onDeleteComment}
+            registerCommentRef={registerCommentRef}
           />
         )}
       </div>
+      {anchors.length > 0 && (
+        <CommentNavigator colors={colors} index={commentIdx} total={anchors.length} onPrev={() => navigateToComment(commentIdx - 1)} onNext={() => navigateToComment(commentIdx + 1)} />
+      )}
       {fileContextMenu && (
         <ContextMenu
           x={fileContextMenu.x}
@@ -283,6 +425,63 @@ function firstFileWithComments(summaries: FileSummary[]): number {
     if (s.agentCount + s.ghCount > 0) return i;
   }
   return 0;
+}
+
+// Floating prev/next over the diff scroll. Stepping a comment at a time is
+// what a reviewer actually wants once a file carries several of them — the
+// toolbar's pair only moves file-to-file. Pinned bottom-right so it clears
+// the inline comment cards, which are indented from the left gutter.
+function CommentNavigator({ colors, index, total, onPrev, onNext }: { colors: ColorPalette; index: number; total: number; onPrev: () => void; onNext: () => void }) {
+  const canPrev = index > 0;
+  const canNext = index < total - 1;
+  const btn = (enabled: boolean): React.CSSProperties => ({
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    width: 22,
+    height: 22,
+    border: "none",
+    borderRadius: 11,
+    background: "transparent",
+    color: colors.textLight,
+    cursor: enabled ? "pointer" : "default",
+    opacity: enabled ? 1 : 0.3,
+    padding: 0,
+  });
+  return (
+    <div
+      data-testid="review-comment-nav"
+      style={{
+        position: "absolute",
+        right: 14,
+        bottom: 14,
+        display: "flex",
+        alignItems: "center",
+        gap: 2,
+        padding: "3px 6px",
+        borderRadius: 14,
+        border: `1px solid ${colors.border}`,
+        background: colors.surface,
+        boxShadow: `0 2px 10px ${colors.shadow}`,
+        // Above the diff rows, below ContextMenu (999/1000).
+        zIndex: 5,
+      }}
+    >
+      <button data-testid="review-comment-nav-prev" style={btn(canPrev)} disabled={!canPrev} onClick={onPrev} title="Previous comment" aria-label="Previous comment">
+        <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M2.5 6.5L5 3.5L7.5 6.5" />
+        </svg>
+      </button>
+      <span style={{ fontFamily: fonts.mono, fontSize: 11, color: colors.textDim, minWidth: 52, textAlign: "center", userSelect: "none" }} title={`Comment ${index + 1} of ${total}`}>
+        {index + 1} / {total}
+      </span>
+      <button data-testid="review-comment-nav-next" style={btn(canNext)} disabled={!canNext} onClick={onNext} title="Next comment" aria-label="Next comment">
+        <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M2.5 3.5L5 6.5L7.5 3.5" />
+        </svg>
+      </button>
+    </div>
+  );
 }
 
 function DiffToolbar({
@@ -388,6 +587,7 @@ function FileSection({
   onPushComment,
   onPushCommentToChat,
   onDeleteComment,
+  registerCommentRef,
 }: {
   summary: FileSummary;
   comments: ReviewComment[];
@@ -398,16 +598,12 @@ function FileSection({
   onPushComment: (c: ReviewComment) => void | Promise<void>;
   onPushCommentToChat: (c: ReviewComment) => void | Promise<void>;
   onDeleteComment: (c: ReviewComment) => void | Promise<void>;
+  registerCommentRef: (id: string, el: HTMLDivElement | null) => void;
 }) {
   // Group comments by (line, side) so multiple comments on the same line
   // render as a stack underneath that line. The backend widens git's
   // `-U` enough to land every comment on a hunk line, so we don't need
   // a separate out-of-hunk path here.
-  const lineKey = (line: HunkLine) => {
-    if (line.newNum !== null) return `R:${line.newNum}`;
-    if (line.oldNum !== null) return `L:${line.oldNum}`;
-    return "";
-  };
   const commentMap = new Map<string, ReviewComment[]>();
   for (const c of comments) {
     const k = commentLineSide(c) === "LEFT" ? `L:${c.line}` : `R:${c.line}`;
@@ -516,7 +712,10 @@ function FileSection({
                   return (
                     <div key={li}>
                       <DiffLineRow line={line} colors={colors} />
-                      {matched && matched.map((c) => <InlineComment key={c.id} comment={c} colors={colors} onPush={onPushComment} onPushToChat={onPushCommentToChat} onDelete={onDeleteComment} />)}
+                      {matched &&
+                        matched.map((c) => (
+                          <InlineComment key={c.id} comment={c} colors={colors} onPush={onPushComment} onPushToChat={onPushCommentToChat} onDelete={onDeleteComment} registerRef={registerCommentRef} />
+                        ))}
                     </div>
                   );
                 })}
@@ -600,12 +799,15 @@ function InlineComment({
   onPush,
   onPushToChat,
   onDelete,
+  registerRef,
 }: {
   comment: ReviewComment;
   colors: ColorPalette;
   onPush: (c: ReviewComment) => void | Promise<void>;
   onPushToChat: (c: ReviewComment) => void | Promise<void>;
   onDelete: (c: ReviewComment) => void | Promise<void>;
+  /** Hands the card's node to the floating navigator so it can scroll to it. */
+  registerRef: (id: string, el: HTMLDivElement | null) => void;
 }) {
   // Local in-flight flag for the "Push to chat" button. Push-to-chat
   // doesn't flip the comment to `pushed`, so without this guard rapid
@@ -626,6 +828,7 @@ function InlineComment({
   return (
     <div
       data-testid={`review-comment-${comment.id}`}
+      ref={(el) => registerRef(comment.id, el)}
       style={{
         margin: "4px 8px 4px 88px",
         padding: "6px 10px",
@@ -774,6 +977,7 @@ function OrphanCommentsSection({
   onPushComment,
   onPushCommentToChat,
   onDeleteComment,
+  registerCommentRef,
 }: {
   comments: ReviewComment[];
   colors: ColorPalette;
@@ -781,6 +985,7 @@ function OrphanCommentsSection({
   onPushComment: (c: ReviewComment) => void | Promise<void>;
   onPushCommentToChat: (c: ReviewComment) => void | Promise<void>;
   onDeleteComment: (c: ReviewComment) => void | Promise<void>;
+  registerCommentRef: (id: string, el: HTMLDivElement | null) => void;
 }) {
   return (
     <div data-testid="review-diff-orphans">
@@ -809,7 +1014,7 @@ function OrphanCommentsSection({
           >
             {c.path}:{c.line}
           </div>
-          <InlineComment comment={c} colors={colors} onPush={onPushComment} onPushToChat={onPushCommentToChat} onDelete={onDeleteComment} />
+          <InlineComment comment={c} colors={colors} onPush={onPushComment} onPushToChat={onPushCommentToChat} onDelete={onDeleteComment} registerRef={registerCommentRef} />
         </div>
       ))}
     </div>

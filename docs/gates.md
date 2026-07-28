@@ -252,7 +252,7 @@ Approve decisions cross three platforms through the same `orchestrator.Bot.Appro
 - **Allow for session** — caches on `CacheKey` so the same operation skips future prompts for the life of the container.
 - **Deny** — blocks this call (subsequent identical calls prompt again).
 
-Discord renders an `ActionsRow` with three buttons; Slack renders a `NewActionBlock`; the desktop renders the `ApprovalCard` component via the [`gate.approval_requested` WebSocket event](events.md#gateapproval_requested) and resolves via [`POST /api/gate/approvals/{id}`](api.md#post-apigateapprovalsid). See [Chat: Gate Approval Card](chat.md#gate-approval-card) for the desktop rendering.
+Discord renders an `ActionsRow` with three buttons; Slack renders a `NewActionBlock`; the desktop renders the `ApprovalCard` component via the [`gate.approval_requested` WebSocket event](events.md#gateapproval_requested) and resolves via [`POST /api/gate/approvals/{id}`](api.md#post-apigateapprovalsid). The desktop card additionally hangs three deny variants — `deny-session`, deny-and-stop, and deny-with-prompt — off a caret next to **Deny**; the chat platforms only offer the three decisions above. See [Chat: Gate Approval Card](chat.md#gate-approval-card) for the desktop rendering.
 
 **Cache key scheme:**
 

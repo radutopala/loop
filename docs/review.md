@@ -70,6 +70,28 @@ per-global / per-project / per-worktree the same way as `github.gh_user`.
 4. **Close** — closing the session deletes the in-memory session record
    and removes the worktree on disk. Pushed comments remain on GitHub.
 
+## Navigating comments
+
+The diff view offers two granularities of navigation, because a review with
+twenty comments spread over four files is painful to scroll by hand:
+
+- **Toolbar prev/next** (top of the diff, always visible) steps **file to
+  file**, skipping files with no comments. The counter reads
+  `n / m commented`, where `m` folds in unique out-of-diff paths so it
+  matches every commented entity on screen.
+- **Floating prev/next** (`review-comment-nav`, pinned bottom-right over the
+  scroll) steps **comment to comment**, in render order: files top-to-bottom,
+  within a file by the diff line each comment anchors to, then out-of-diff
+  comments last. Jumping to a comment in a collapsed file expands that file
+  first and moves the file rail's highlight with it. The widget only appears
+  once the session has at least one anchored comment.
+
+The floating counter re-measures on scroll and reports whichever comment sits
+nearest the viewport's midpoint, so it stays honest when the user scrolls by
+hand rather than by button. A comment whose line falls outside every hunk has
+no row to render under and is excluded from the count — the backend widens
+`git diff -U` enough that this should not happen in practice.
+
 ## Concurrency
 
 A second `POST /review/run` while the first is still in flight returns
