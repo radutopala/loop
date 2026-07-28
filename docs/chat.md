@@ -227,13 +227,15 @@ When the agent container hits a gate rule with `decision: approve`, the backend 
 - **Target:** the full target string (socket path, command line, or `METHOD /path`) in a monospace style.
 - **Message:** the matching rule's `message` field, shown as a second-line caption when non-empty.
 - **Details:** for `DOCKER-HTTP` prompts on `/containers/create`, `/containers/{id}/exec`, `/networks/create`, and `/volumes/create`, the proxy extracts the security-relevant body fields (e.g. `cmd`, `user`, `privileged`, `binds`) and the card renders them as a sorted `key: value` list under the target. See [Gates: Body details surfaced in the prompt](gates.md#body-details-surfaced-in-the-prompt) for the full key set per endpoint.
-- **Buttons:** four monospace pills, left-to-right:
+- **Buttons:** three monospace controls, left-to-right:
   - `Allow once` — primary accent, lets this one syscall through.
   - `Allow for session` — secondary outline, caches the allow for the container's lifetime.
-  - `Deny` — warning accent, rejects the syscall.
-  - `Deny with prompt…` — warning outline. Expands an inline textarea: typing a follow-up and hitting `⌘/Ctrl+Enter` denies the gate, cancels the now-resumed run, and immediately sends the prompt with `interrupt=true` so it claims the next slot ahead of any queued messages (without deleting them — see [Message Queue Indicators](#message-queue-indicators)).
+  - `Deny ▾` — warning accent **split button**. Clicking the label body rejects the syscall and lets the agent carry on from the denial; this is the only non-terminal deny, which is why it stays the default action. The `▾` caret opens a [`ContextMenu`](../app/src/components/shared/ContextMenu.tsx) anchored under it with the variants that change what happens *after* the denial:
+    - `Deny for session` — sends the `deny-session` decision, which caches the denial under the request's cache key for the container's lifetime. An agent that retries the same blocked operation is refused without re-prompting.
+    - `Deny & stop run` — denies the gate and then issues `/loop stop`, ending the run instead of letting the agent continue. The orchestrator's drain loop claims the next queued message as soon as the cancelled run returns, so this is how to abandon the current run and move straight to what's waiting behind it. Omitted in terminal panes, where the agent is a TUI on the pane's stdin rather than the orchestrator run that owns the queue.
+    - `Deny with prompt…` — expands an inline textarea below the card: typing a follow-up and hitting `Enter` (`Shift+Enter` for a newline) denies the gate, cancels the now-resumed run, and immediately sends the prompt with `interrupt=true` so it claims the next slot ahead of any queued messages (without deleting them — see [Message Queue Indicators](#message-queue-indicators)).
 
-While a button is busy it shows a dim "…" label; failures are rendered below the buttons in the warning color so the user can retry.
+Every menu entry re-checks that no decision is already in flight, since the caret only guards menu-*open*: a peer window's click can resolve the card while the menu sits open. While a button is busy it shows a dim "…" label; failures are rendered below the buttons in the warning color so the user can retry.
 
 ### Dock bounce
 
