@@ -697,7 +697,7 @@ func (r *DockerRunner) writeGatePolicyFile(cfg *config.Config, channelID, workDi
 		DefaultDecision: cfg.Gates.Agentgate.DefaultDecision,
 		PathRules:       cfg.Gates.Agentgate.PathRules,
 		CommandRules:    injectWorkspaceRmRfRule(cfg.Gates.Agentgate.CommandRules, workDir, parentDirPath),
-		FileRules:       injectWorkspaceRule(cfg.Gates.Agentgate.FileRules, workDir, parentDirPath),
+		FileRules:       injectPolicySelfDenyRule(injectWorkspaceRule(cfg.Gates.Agentgate.FileRules, workDir, parentDirPath)),
 	}
 	raw, _ := json.Marshal(payload)
 	path := filepath.Join(dir, "gate-policy.json")
@@ -860,5 +860,39 @@ func injectWorkspaceRule(rules []types.FileRule, workDir, parentDirPath string) 
 	out = append(out, rules[:insertAt]...)
 	out = append(out, ws)
 	out = append(out, rules[insertAt:]...)
+	return out
+}
+
+// gatePolicyMountDir is where runner.go bind-mounts the gate and docker-proxy
+// policy files (read-only) inside the agent container.
+const gatePolicyMountDir = "/etc/loop"
+
+// injectPolicySelfDenyRule pins a Deny on the gate's own policy directory at
+// the head of the file rules, so the gate cannot be talked out of protecting
+// the file it was compiled from.
+//
+// Position matters. Both config layers author rules by *prepending* them
+// (config.mergeProjectConfig), and the project layer is {workDir}/.loop/
+// config.json — which sits inside the workspace the agent may write. So a rule
+// that reaches the policy through config can always be shadowed by an `allow`
+// the agent writes for itself, taking effect on the next container start.
+// Injecting here, after every merge, is the one position no config can precede.
+//
+// `link` belongs in the operation list even though the generic /etc/** deny
+// omits it: linkat/symlinkat are matched on the *new* path only (see
+// agentgate.syscallSpecs), so without it an agent could hardlink the policy
+// file into the workspace — same filesystem, blanket-allowed — and write
+// through the second name. Reads stay allowed; the file is not a secret and
+// seeing the active policy is useful when debugging a denial.
+func injectPolicySelfDenyRule(rules []types.FileRule) []types.FileRule {
+	self := types.FileRule{
+		Paths:      []string{gatePolicyMountDir + "/**"},
+		Operations: []string{"write", "create", "delete", "chmod", "chown", "link"},
+		Decision:   types.DecisionDeny,
+		Message:    "gate policy directory is read-only to the agent",
+	}
+	out := make([]types.FileRule, 0, len(rules)+1)
+	out = append(out, self)
+	out = append(out, rules...)
 	return out
 }

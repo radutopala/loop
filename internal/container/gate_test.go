@@ -296,6 +296,73 @@ func (s *GateSuite) TestInjectWorkspaceRuleAppendsWhenNoAllow() {
 	require.Equal(s.T(), types.DecisionAllow, out[1].Decision, "appended at end when no existing Allow")
 }
 
+// --- injectPolicySelfDenyRule ---
+
+func (s *GateSuite) TestInjectPolicySelfDenyRuleShape() {
+	out := injectPolicySelfDenyRule(nil)
+
+	require.Len(s.T(), out, 1)
+	require.Equal(s.T(), []string{"/etc/loop/**"}, out[0].Paths)
+	require.Equal(s.T(), types.DecisionDeny, out[0].Decision)
+	// link closes the hardlink route: linkat is matched on the new path, so a
+	// link into the (blanket-allowed) workspace would otherwise hand the agent
+	// a writable second name for the same inode.
+	require.Contains(s.T(), out[0].Operations, "link")
+	// Reads stay allowed — seeing the active policy helps debug a denial.
+	require.NotContains(s.T(), out[0].Operations, "read")
+}
+
+// The whole point of injecting here rather than in the static defaults: config
+// layers prepend their rules and first-match-wins, and the project layer lives
+// in the agent-writable workspace. An allow the agent authors for itself must
+// not be able to get in front of this deny.
+func (s *GateSuite) TestInjectPolicySelfDenyRulePrecedesConfigSuppliedAllow() {
+	in := []types.FileRule{
+		{Paths: []string{"/etc/**"}, Operations: []string{"write"}, Decision: types.DecisionAllow, Message: "project override"},
+		{Paths: []string{"**/.ssh/**"}, Decision: types.DecisionDeny},
+	}
+	out := injectPolicySelfDenyRule(in)
+
+	require.Len(s.T(), out, 3)
+	require.Equal(s.T(), "gate policy directory is read-only to the agent", out[0].Message)
+	require.Equal(s.T(), "project override", out[1].Message, "config rules keep their order behind the pinned deny")
+}
+
+func (s *GateSuite) TestWriteGatePolicyFilePinsSelfDenyFirst() {
+	sys := newDefaultMockSystem()
+	var captured []byte
+	sys.ExpectedCalls = nil
+	sys.On("MkdirAll", mock.Anything, mock.Anything).Return(nil)
+	sys.On("WriteFile", mock.Anything, mock.Anything, mock.Anything).
+		Run(func(args mock.Arguments) { captured = append([]byte(nil), args.Get(1).([]byte)...) }).
+		Return(nil)
+
+	s.runner.sys = sys
+	s.runner.policyDir = "/run/loop"
+	cfg := &config.Config{
+		Gates: config.GatesConfig{
+			Agentgate: config.AgentgateConfig{
+				Enabled: true,
+				FileRules: []types.FileRule{
+					{Paths: []string{"/etc/loop/**"}, Operations: []string{"write"}, Decision: types.DecisionAllow},
+				},
+			},
+		},
+	}
+
+	_, err := s.runner.writeGatePolicyFile(cfg, "ch-1", "/host/work", "")
+	require.NoError(s.T(), err)
+
+	var got gatePolicyJSON
+	require.NoError(s.T(), json.Unmarshal(captured, &got))
+	require.Equal(s.T(), []string{"/etc/loop/**"}, got.FileRules[0].Paths)
+	require.Equal(s.T(), types.DecisionDeny, got.FileRules[0].Decision, "self-deny wins over a config allow on the same path")
+	// The config allow is the list's first Allow, so the workspace rule lands
+	// ahead of it — both still behind the pinned deny.
+	require.Equal(s.T(), "workspace fast-path", got.FileRules[1].Message)
+	require.Equal(s.T(), types.DecisionAllow, got.FileRules[2].Decision)
+}
+
 // --- injectWorkspaceRmRfRule ---
 
 func (s *GateSuite) TestInjectWorkspaceRmRfRuleEmptyWorkDirReturnsInput() {
