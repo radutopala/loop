@@ -19,7 +19,15 @@ Feature: Per-source gate approval routing
     Then I wait for text "/tmp/bdd-gate-chat-A.txt" to appear
     And the page should contain text "Allow once"
     And the page should contain text "Allow for session"
-    And the page should contain text "Deny with prompt"
+    And the page should contain text "Deny"
+    # The deny variants hang off a caret rather than sitting as their own
+    # pills — plain Deny is the only non-terminal one, so it stays the default.
+    When I click on the button with title "More deny options"
+    Then I wait for text "Deny with prompt" to appear
+    And the page should contain text "Deny for session"
+    # Chat's agent is an orchestrator run that owns a message queue, so the
+    # run-stopping variant is offered here.
+    And the page should contain text "Deny & stop run"
 
   Scenario: Missing source defaults to chat (back-compat)
     # Older agentgate builds and the non-Linux stub omit `source` from the
@@ -35,7 +43,12 @@ Feature: Per-source gate approval routing
     When I add a "Docker Agent" panel
     And I inject a gate.approval_requested event with req_id "gate-term-A", source "terminal:newest-docker-agent", and target "/tmp/bdd-gate-term-A.txt"
     Then I wait for text "/tmp/bdd-gate-term-A.txt" to appear
-    And the page should contain text "Deny with prompt"
+    When I click on the button with title "More deny options"
+    Then I wait for text "Deny with prompt" to appear
+    And the page should contain text "Deny for session"
+    # A pane's agent is a TUI on the pane's stdin with nothing queued behind
+    # it, not an orchestrator run — so deny-and-stop is withheld there.
+    And the page should not contain text "Deny & stop run"
 
   Scenario: Gate for a non-existent terminal pane renders nowhere
     # source="terminal:agent-99" doesn't match any pane (the layout has none
