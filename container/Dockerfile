@@ -1,4 +1,4 @@
-FROM golang:1.26 AS builder
+FROM golang:1.27 AS builder
 ENV GOTOOLCHAIN=auto
 WORKDIR /src
 COPY go.mod go.sum ./
@@ -9,7 +9,7 @@ RUN go generate ./internal/readme/ && \
 RUN go install github.com/radutopala/ticket/cmd/tk@latest
 RUN go install golang.org/x/tools/gopls@latest
 
-FROM golang:1.26
+FROM golang:1.27
 ENV GOTOOLCHAIN=auto
 # Node comes from nodesource (24.x LTS, npm bundled) instead of Debian's
 # distro package — Debian ships Node 20, which is end-of-life. Keep the

@@ -47,7 +47,7 @@ This occurs on corporate networks where a proxy or firewall (e.g. Palo Alto, Zsc
    For example, the builder stage becomes:
 
    ```dockerfile
-   FROM golang:1.26 AS builder
+   FROM golang:1.27 AS builder
    COPY corporate-ca.pem /usr/local/share/ca-certificates/corporate-ca.crt
    RUN update-ca-certificates
    ```

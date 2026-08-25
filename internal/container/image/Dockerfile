@@ -1,8 +1,8 @@
-FROM golang:1.26 AS builder
+FROM golang:1.27 AS builder
 ENV GOTOOLCHAIN=auto
 RUN go install golang.org/x/tools/gopls@latest
 
-FROM golang:1.26
+FROM golang:1.27
 ENV GOTOOLCHAIN=auto
 # Node comes from nodesource (24.x LTS, npm bundled) instead of Debian's
 # distro package — Debian ships Node 20, which is end-of-life. Keep the
