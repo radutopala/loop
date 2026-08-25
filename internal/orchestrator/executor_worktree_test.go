@@ -641,11 +641,14 @@ func (s *TaskExecutorSuite) TestWorktreeNoUpdatePromptWhenDisabled() {
 }
 
 // mockWorktreeSys is a minimal System implementation for worktree tests.
-type mockWorktreeSys struct{}
+// mockWorktreeSys stands in for the filesystem the worktree Creator touches.
+// readFileErr, when set, makes the session-transcript copy fail — the pruned
+// -transcript case.
+type mockWorktreeSys struct{ readFileErr error }
 
 func (m *mockWorktreeSys) MkdirAll(string, os.FileMode) error          { return nil }
 func (m *mockWorktreeSys) WriteFile(string, []byte, os.FileMode) error { return nil }
-func (m *mockWorktreeSys) ReadFile(string) ([]byte, error)             { return nil, nil }
+func (m *mockWorktreeSys) ReadFile(string) ([]byte, error)             { return nil, m.readFileErr }
 func (m *mockWorktreeSys) UserHomeDir() (string, error)                { return "/home/test", nil }
 
 func (s *TaskExecutorSuite) TestRefreshConfigReloads() {
@@ -754,4 +757,41 @@ func (s *TaskExecutorSuite) TestWorktreeFirstRunInjectsPromptIntoWorktreeThread(
 	require.Equal(s.T(), "build the thing", inserted[0].Content)
 	require.Equal(s.T(), "wt-thread", inserted[0].ChannelID)
 	require.True(s.T(), inserted[1].IsBot)
+}
+
+// TestWorktreeSessionNotStagedRunsFresh: Claude Code prunes transcripts after
+// 30 days, so the copy into the new worktree can fail even though the channel
+// still pins the id. Forking it anyway would fail the task on every run.
+func (s *TaskExecutorSuite) TestWorktreeSessionNotStagedRunsFresh() {
+	task := &db.ScheduledTask{
+		ID: 10, ChannelID: "ch1", Prompt: "build", Type: db.TaskTypeCron,
+		Schedule: "0 * * * *", Worktree: true,
+	}
+
+	s.store.On("GetChannel", s.ctx, "ch1").Return(&db.Channel{
+		ChannelID: "ch1", DirPath: "/proj", SessionID: "sess-pruned", Platform: types.PlatformLocal,
+	}, nil)
+	s.store.On("GetScheduledTask", s.ctx, int64(10)).Return(&db.ScheduledTask{ID: 10, Type: db.TaskTypeCron}, nil)
+	s.allowBotInserts()
+
+	s.executor.SetWorktreeCreator(&worktree.Creator{
+		Sys: &mockWorktreeSys{readFileErr: os.ErrNotExist},
+		Run: func(ctx context.Context, dir, name string, args ...string) ([]byte, error) {
+			if name == "git" && len(args) > 0 && args[0] == "rev-parse" && args[1] == "--abbrev-ref" {
+				return []byte("main\n"), nil
+			}
+			return nil, nil
+		},
+	})
+	s.store.On("UpdateScheduledTaskOriginBranch", s.ctx, int64(10), "main").Return(nil)
+
+	s.runner.On("Run", mock.Anything, mock.MatchedBy(func(req *agent.AgentRequest) bool {
+		return req.SessionID == "" && !req.ForkSession
+	})).Return(&agent.AgentResponse{Response: "done", SessionID: "s2"}, nil)
+	s.store.On("UpdateSessionID", s.ctx, "ch1", "s2").Return(nil)
+	s.bot.On("SendMessage", s.ctx, mock.Anything).Return(nil)
+
+	resp, err := s.executor.ExecuteTask(s.ctx, task)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "done", resp)
 }

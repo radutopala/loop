@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -109,6 +110,13 @@ type DockerRunner struct {
 	sleep      func(ctx context.Context, d time.Duration) error
 	registry   ContainerRegistry
 	instanceID string // unique per daemon, used to scope Cleanup
+	// logger is optional; nil means the runner stays silent. Set via
+	// SetLogger from serve.go, mirroring Registry.SetLogger.
+	logger *slog.Logger
+	// transcriptMissing reports whether Claude Code has no transcript on
+	// disk for a (workDir, sessionID) pair. Injectable so tests can assert
+	// both branches without staging ~/.claude/projects trees.
+	transcriptMissing func(workDir, sessionID string) bool
 
 	// Docker HTTP proxy (stage 2 of agentgate). When cfg.Gates.DockerProxy.Enabled,
 	// the runner writes proxy-policy.json into policyDir/<channel>/ and mounts it
@@ -161,8 +169,17 @@ func NewDockerRunner(client DockerClient, cfg *config.Config, configLoad func() 
 		sleep:                     sleepCtx,
 		instanceID:                hex.EncodeToString(b),
 	}
+	r.transcriptMissing = func(workDir, sessionID string) bool {
+		return claudeTranscriptMissing(r.sys.Stat, r.sys.UserHomeDir, workDir, sessionID)
+	}
 	r.cfg.Store(cfg)
 	return r
+}
+
+// SetLogger configures the runner logger. Optional — an unset logger just
+// means the runner reports nothing.
+func (r *DockerRunner) SetLogger(logger *slog.Logger) {
+	r.logger = logger
 }
 
 // SetDockerProxyDeps wires the host dir for per-container policy files and
@@ -455,6 +472,20 @@ func (r *DockerRunner) RunBash(ctx context.Context, script, channelID, dirPath s
 
 // runOnce executes a single container run.
 func (r *DockerRunner) runOnce(ctx context.Context, req *agent.AgentRequest) (*agent.AgentResponse, error) {
+	// Resuming a transcript that Claude Code has already pruned fails the
+	// run outright, and nothing rewrites the channel's session id on
+	// failure — so the channel would stay wedged on every later turn too.
+	// Start a fresh session instead of shipping a doomed --resume.
+	if r.transcriptMissing(r.resolveWorkDir(req.ChannelID, req.DirPath), req.SessionID) {
+		if r.logger != nil {
+			r.logger.Warn("session transcript not found; starting a fresh session",
+				"channel_id", req.ChannelID, "session_id", req.SessionID)
+		}
+		fresh := *req
+		fresh.SessionID = ""
+		fresh.ForkSession = false
+		req = &fresh
+	}
 	containerID, ctrName, mcpConfigPath, keepMCP, err := r.createAndStartContainer(ctx, req.ChannelID, req.DirPath, req.AuthorID, req.ParentDirPath, req.AgentID,
 		ContainerTypeAgent,
 		func(cfg *config.Config, mcpConfigPath string) []string {
@@ -517,16 +548,24 @@ func (r *DockerRunner) runOnce(ctx context.Context, req *agent.AgentRequest) (*a
 // container with the command returned by buildCmd, and starts it.
 // The mcpConfigPath is returned so the caller can clean it up if needed.
 // keepMCPConfig reflects the merged config's KeepMCPConfigs flag.
+// resolveWorkDir returns the directory a container for this channel runs in:
+// the channel's own dir when it has one, else the per-channel scratch dir
+// under LoopDir. It is also the key Claude Code stores session transcripts
+// under, so anything reasoning about --resume must use the same value.
+func (r *DockerRunner) resolveWorkDir(channelID, dirPath string) string {
+	if dirPath != "" {
+		return dirPath
+	}
+	return filepath.Join(r.currentConfig().LoopDir, channelID, "work")
+}
+
 func (r *DockerRunner) createAndStartContainer(
 	ctx context.Context,
 	channelID, dirPath, authorID, parentDirPath, agentID string,
 	cType ContainerType,
 	buildCmd func(cfg *config.Config, mcpConfigPath string) []string,
 ) (containerID, containerName, mcpConfigPath string, keepMCPConfig bool, err error) {
-	workDir := filepath.Join(r.currentConfig().LoopDir, channelID, "work")
-	if dirPath != "" {
-		workDir = dirPath
-	}
+	workDir := r.resolveWorkDir(channelID, dirPath)
 
 	baseCfg := r.currentConfig()
 	var cfg *config.Config

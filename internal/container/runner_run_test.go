@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"log/slog"
 	"slices"
 	"strings"
 	"testing"
@@ -876,4 +877,65 @@ func (s *RunnerSuite) TestRunMkdirAllMCPSubdirError() {
 	require.Nil(s.T(), resp)
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "creating host directory")
+}
+
+// TestRunDropsResumeWhenTranscriptMissing covers the case that wedged a
+// channel in practice: Claude Code pruned the transcript its session id
+// points at, so --resume would fail every turn from then on. The runner
+// drops the flags and starts fresh instead.
+func (s *RunnerSuite) TestRunDropsResumeWhenTranscriptMissing() {
+	var buf bytes.Buffer
+	s.runner.SetLogger(slog.New(slog.NewTextHandler(&buf, nil)))
+	var gotWorkDir, gotSession string
+	s.runner.transcriptMissing = func(workDir, sessionID string) bool {
+		gotWorkDir, gotSession = workDir, sessionID
+		return true
+	}
+
+	ctx := context.Background()
+	req := &agent.AgentRequest{
+		SessionID:   "sess-pruned",
+		ForkSession: true,
+		Messages:    []agent.AgentMessage{{Role: "user", Content: "hello"}},
+		ChannelID:   "ch-1",
+	}
+
+	s.setupMockRun(ctx, mock.MatchedBy(func(cfg *ContainerConfig) bool {
+		return !slices.Contains(cfg.Cmd, "--resume") && !slices.Contains(cfg.Cmd, "--fork-session")
+	}), testContainerName, `{"type":"result","result":"Fresh!","session_id":"sess-new","is_error":false}`)
+
+	resp, err := s.runner.Run(ctx, req)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "sess-new", resp.SessionID)
+	require.Equal(s.T(), "/home/testuser/.loop/ch-1/work", gotWorkDir)
+	require.Equal(s.T(), "sess-pruned", gotSession)
+	require.Contains(s.T(), buf.String(), "session transcript not found")
+	// The caller's request is left alone — the drop applies to this run only.
+	require.Equal(s.T(), "sess-pruned", req.SessionID)
+	require.True(s.T(), req.ForkSession)
+
+	s.client.AssertExpectations(s.T())
+}
+
+// TestRunDropsResumeWithoutLogger is the same drop with no logger wired up:
+// SetLogger is optional, and a nil logger must not panic.
+func (s *RunnerSuite) TestRunDropsResumeWithoutLogger() {
+	s.runner.transcriptMissing = func(string, string) bool { return true }
+
+	ctx := context.Background()
+	req := &agent.AgentRequest{
+		SessionID: "sess-pruned",
+		Messages:  []agent.AgentMessage{{Role: "user", Content: "hello"}},
+		ChannelID: "ch-1",
+	}
+
+	s.setupMockRun(ctx, mock.MatchedBy(func(cfg *ContainerConfig) bool {
+		return !slices.Contains(cfg.Cmd, "--resume")
+	}), testContainerName, `{"type":"result","result":"Fresh!","session_id":"sess-new","is_error":false}`)
+
+	resp, err := s.runner.Run(ctx, req)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "sess-new", resp.SessionID)
+
+	s.client.AssertExpectations(s.T())
 }

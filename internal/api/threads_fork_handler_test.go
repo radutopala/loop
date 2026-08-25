@@ -181,3 +181,40 @@ func (s *ServerSuite) TestForkThread_WorktreeThreadRowErrors() {
 	rec = s.testRequest("POST", "/api/threads/wtR/fork", "")
 	require.Equal(s.T(), http.StatusInternalServerError, rec.Code)
 }
+
+// TestForkThread_WorktreeSessionNotStaged: Claude Code prunes transcripts
+// after 30 days while the channel keeps pinning the id, so the copy into the
+// new worktree's project dir can fail. The fork must then start clean —
+// pinning the id anyway makes every turn die on `--resume`.
+func (s *ServerSuite) TestForkThread_WorktreeSessionNotStaged() {
+	dir := initGitRepo(s.T())
+	cmd := exec.Command("git", "worktree", "add", "-b", "worktree/stale-wt", dir+"/.worktrees/stale-wt")
+	cmd.Dir = dir
+	out, err := cmd.CombinedOutput()
+	require.NoError(s.T(), err, string(out))
+
+	// The transcript is gone from ~/.claude/projects, so the copy fails.
+	s.sys.Override("ReadFile", mock.Anything).Return(nil, os.ErrNotExist)
+
+	s.store.On("GetChannel", mock.Anything, "wt1").Return(&db.Channel{
+		ChannelID: "wt1", ParentID: "ch1", Name: "src", Worktree: true,
+		DirPath: dir + "/.worktrees/stale-wt", SessionID: "sess-pruned",
+	}, nil)
+	s.store.On("GetChannel", mock.Anything, "ch1").Return(&db.Channel{ChannelID: "ch1", DirPath: dir}, nil)
+	s.threads.On("CreateThread", mock.Anything, "ch1", mock.Anything, "", "").Return("wt2", nil)
+	s.store.On("GetChannel", mock.Anything, "wt2").Return(&db.Channel{ChannelID: "wt2", ParentID: "ch1", Active: true}, nil)
+	upserted := make(chan *db.Channel, 1)
+	s.store.On("UpsertChannel", mock.Anything, mock.Anything).Run(func(args mock.Arguments) {
+		select {
+		case upserted <- args.Get(1).(*db.Channel):
+		default:
+		}
+	}).Return(nil)
+
+	rec := s.testRequest("POST", "/api/threads/wt1/fork", "")
+	require.Equal(s.T(), http.StatusCreated, rec.Code, rec.Body.String())
+
+	ch := <-upserted
+	require.Empty(s.T(), ch.SessionID)
+	s.store.AssertNotCalled(s.T(), "MarkSessionForkPending", mock.Anything, "wt2", mock.Anything)
+}

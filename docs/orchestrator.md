@@ -203,6 +203,14 @@ When a channel has a `SessionID`, the agent request includes it. The Docker runn
 
 Thread sessions are forked from the parent's session on the first message. The `--resume <sessionID> --fork-session` flags create a new session that inherits the parent's context. After forking, the thread gets its own `SessionID` stored in the database.
 
+### Pruned transcripts
+
+Claude Code deletes old transcripts while Loop keeps pinning the channel's
+session id, so a stored id can outlive the file it names. Before resuming, the
+runner checks that the transcript exists and silently starts a fresh session
+when it provably doesn't — otherwise `--resume` would fail every turn from then
+on. See [Pruned transcripts](sessions.md#pruned-transcripts).
+
 ### Compact on Too-Long
 
 If an agent run fails with "Prompt is too long", the runner automatically:

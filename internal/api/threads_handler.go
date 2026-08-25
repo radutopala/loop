@@ -306,11 +306,19 @@ func (s *Server) forkWorktreeThread(w http.ResponseWriter, r *http.Request, src 
 	ch.DirPath = result.WorktreePath
 	ch.Worktree = true
 	ch.BaseBranch = srcBranch
+	// A fork whose transcript never reached the worktree's project dir is
+	// not a fork — drop the inherited id so the thread starts clean rather
+	// than resuming a conversation that isn't on disk.
+	if src.SessionID != "" && !result.SessionStaged {
+		s.logger.Warn("fork session transcript unavailable; starting thread fresh",
+			"thread_id", newID, "session_id", src.SessionID)
+		ch.SessionID = ""
+	}
 	if err := s.store.UpsertChannel(r.Context(), ch); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	if src.SessionID != "" {
+	if src.SessionID != "" && result.SessionStaged {
 		if err := s.store.MarkSessionForkPending(r.Context(), newID, src.SessionID); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return

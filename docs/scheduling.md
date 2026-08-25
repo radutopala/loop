@@ -243,7 +243,7 @@ Tasks with `worktree = true` run the agent in an isolated git worktree so change
    - The executor determines the base branch: if `origin_branch` is set on the task, that value is used; otherwise, the current branch is auto-detected via `git rev-parse --abbrev-ref HEAD` and persisted to `origin_branch` for future runs.
    - A new worktree is created at `{dir_path}/.worktrees/task-{id}-{hex}` on branch `worktree/task-{id}-{hex}`.
    - The worktree's `.loop/config.json` is seeded with `extra_dirs` pointing back to the parent project.
-   - The parent channel's session file is copied so `--resume --fork-session` works.
+   - The parent channel's session file is copied so `--resume --fork-session` works. If that copy fails — usually because Claude Code already pruned the transcript (see [Pruned transcripts](sessions.md#pruned-transcripts)) — the task runs in a fresh session instead of forking one that isn't there.
    - The agent runs in the worktree directory instead of the channel directory.
 
 2. **Subsequent runs** (recurring tasks with existing `thread_id`):

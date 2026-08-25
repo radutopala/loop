@@ -796,3 +796,34 @@ func (s *ServerSuite) TestAssignTicket_AutoStartAgent() {
 	time.Sleep(50 * time.Millisecond)
 	msgHandler.AssertCalled(s.T(), "HandleThreadCreated", mock.Anything, "ag-thread", "", "Do the work")
 }
+
+// TestAssignTicket_SessionNotStaged mirrors TestForkThread_WorktreeSessionNotStaged:
+// a pruned transcript must not be pinned on the assignee thread.
+func (s *ServerSuite) TestAssignTicket_SessionNotStaged() {
+	dir := initGitRepoWithTickets(s.T())
+	writeTestTicket(s.T(), dir, "tic-stale", "Assign me", tk.StatusOpen)
+
+	s.srv.sys = s.sys
+	s.sys.Override("ReadFile", mock.Anything).Return(nil, os.ErrNotExist)
+	s.store.On("GetChannel", mock.Anything, "ch1").Return(&db.Channel{
+		ChannelID: "ch1", DirPath: dir, SessionID: "sess-pruned",
+	}, nil)
+	s.threads.On("CreateThread", mock.Anything, "ch1", mock.Anything, "", "").Return("asgn-thread", nil)
+	s.store.On("GetChannel", mock.Anything, "asgn-thread").Return(&db.Channel{
+		ChannelID: "asgn-thread", DirPath: dir, ParentID: "ch1", Active: true, SessionID: "sess-pruned",
+	}, nil)
+	upserted := make(chan *db.Channel, 1)
+	s.store.On("UpsertChannel", mock.Anything, mock.Anything).Run(func(args mock.Arguments) {
+		select {
+		case upserted <- args.Get(1).(*db.Channel):
+		default:
+		}
+	}).Return(nil)
+
+	body := fmt.Sprintf(`{"dir": %q, "channel_id": "ch1"}`, dir)
+	rec := s.testRequest("POST", "/api/tickets/tic-stale/assign", body)
+	require.Equal(s.T(), http.StatusCreated, rec.Code, rec.Body.String())
+
+	ch := <-upserted
+	require.Empty(s.T(), ch.SessionID)
+}
