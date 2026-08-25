@@ -188,39 +188,10 @@ func (o *Orchestrator) WaitDrains() {
 
 // worktreeRootFor returns the root project checkout dir for a channel that is
 // (or lives under) a worktree chain: the DirPath of the nearest non-worktree
-// ancestor. It handles arbitrary nesting (a worktree created from another
-// worktree, e.g. by a worktree task scheduled on a worktree channel) and
-// threads that share a worktree's dir_path without carrying the worktree
-// flag. Returns "" when the channel isn't part of a worktree chain or the
-// chain can't be resolved; the walk is bounded to guard against parent-id
-// cycles.
+// ancestor. Returns "" when the channel isn't part of a worktree chain or the
+// chain can't be resolved.
 func worktreeRootFor(ctx context.Context, store db.Store, ch *db.Channel) string {
-	cur := ch
-	if !cur.Worktree {
-		// A thread row under a worktree channel: hop to the worktree itself.
-		if cur.ParentID == "" {
-			return ""
-		}
-		p, err := store.GetChannel(ctx, cur.ParentID)
-		if err != nil || p == nil || !p.Worktree {
-			return ""
-		}
-		cur = p
-	}
-	for range 8 {
-		if cur.ParentID == "" {
-			return ""
-		}
-		p, err := store.GetChannel(ctx, cur.ParentID)
-		if err != nil || p == nil {
-			return ""
-		}
-		if !p.Worktree {
-			return p.DirPath
-		}
-		cur = p
-	}
-	return ""
+	return db.WorktreeRootDirPath(ctx, store, ch)
 }
 
 // markPlannedChannel parks a channel on an ExitPlanMode card. While parked,

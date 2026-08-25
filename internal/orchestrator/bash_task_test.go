@@ -23,8 +23,8 @@ type mockBashRunner struct {
 	MockRunner
 }
 
-func (m *mockBashRunner) RunBash(ctx context.Context, script, channelID, dirPath string) (string, error) {
-	args := m.Called(ctx, script, channelID, dirPath)
+func (m *mockBashRunner) RunBash(ctx context.Context, script, channelID, dirPath, parentDirPath string) (string, error) {
+	args := m.Called(ctx, script, channelID, dirPath, parentDirPath)
 	return args.String(0), args.Error(1)
 }
 
@@ -58,7 +58,7 @@ func (s *TaskExecutorSuite) TestExecuteBashTaskCreatesThread() {
 
 	s.store.On("GetChannel", mock.Anything, "ch1").Return(localChannel("/work/project"), nil)
 	s.expectBashThreadCreation(7, "th-7")
-	br.On("RunBash", mock.Anything, "echo hello", "ch1", "/work/project").Return("hello\n", nil)
+	br.On("RunBash", mock.Anything, "echo hello", "ch1", "/work/project", "").Return("hello\n", nil)
 	// Output goes to the thread, not the channel.
 	s.bot.On("SendMessage", mock.Anything, mock.MatchedBy(func(out *bot.OutgoingMessage) bool {
 		return out.ChannelID == "th-7" && strings.Contains(out.Content, "task #7") && strings.Contains(out.Content, "hello")
@@ -80,7 +80,7 @@ func (s *TaskExecutorSuite) TestExecuteBashTaskReusesThread() {
 
 	s.store.On("GetChannel", mock.Anything, "ch1").Return(localChannel("/work"), nil)
 	s.store.On("GetChannel", mock.Anything, "th-8").Return(&db.Channel{ID: 9, ChannelID: "th-8", ParentID: "ch1", DirPath: "/work"}, nil)
-	br.On("RunBash", mock.Anything, "true", "ch1", "/work").Return("   \n", nil)
+	br.On("RunBash", mock.Anything, "true", "ch1", "/work", "").Return("   \n", nil)
 	s.bot.On("SendMessage", mock.Anything, mock.MatchedBy(func(out *bot.OutgoingMessage) bool {
 		return out.ChannelID == "th-8" && strings.Contains(out.Content, "(no output)")
 	})).Return(nil)
@@ -99,7 +99,7 @@ func (s *TaskExecutorSuite) TestExecuteBashTaskThreadDeletedRecreates() {
 	s.store.On("GetChannel", mock.Anything, "ch1").Return(localChannel("/work"), nil)
 	s.store.On("GetChannel", mock.Anything, "th-gone").Return(nil, nil)
 	s.expectBashThreadCreation(9, "th-new")
-	br.On("RunBash", mock.Anything, "true", "ch1", "/work").Return("", nil)
+	br.On("RunBash", mock.Anything, "true", "ch1", "/work", "").Return("", nil)
 	s.bot.On("SendMessage", mock.Anything, mock.MatchedBy(func(out *bot.OutgoingMessage) bool {
 		return out.ChannelID == "th-new"
 	})).Return(nil)
@@ -121,7 +121,7 @@ func (s *TaskExecutorSuite) TestExecuteBashTaskOnceDoesNotLinkThread() {
 		return ch.ChannelID == "th-once"
 	})).Return(nil)
 	s.store.On("GetChannel", mock.Anything, "th-once").Return(&db.Channel{ID: 9, ChannelID: "th-once"}, nil).Maybe()
-	br.On("RunBash", mock.Anything, "true", "ch1", "/work").Return("", nil)
+	br.On("RunBash", mock.Anything, "true", "ch1", "/work", "").Return("", nil)
 	s.bot.On("SendMessage", mock.Anything, mock.Anything).Return(nil)
 	s.store.On("InsertMessage", mock.Anything, mock.Anything).Return(nil)
 
@@ -137,7 +137,7 @@ func (s *TaskExecutorSuite) TestExecuteBashTaskThreadCreateFailsFallsBackToChann
 
 	s.store.On("GetChannel", mock.Anything, "ch1").Return(localChannel("/work"), nil)
 	s.bot.On("CreateSimpleThread", mock.Anything, "ch1", mock.Anything, "").Return("", errors.New("thread create failed"))
-	br.On("RunBash", mock.Anything, "echo hi", "ch1", "/work").Return("hi\n", nil)
+	br.On("RunBash", mock.Anything, "echo hi", "ch1", "/work", "").Return("hi\n", nil)
 	s.bot.On("SendMessage", mock.Anything, mock.MatchedBy(func(out *bot.OutgoingMessage) bool {
 		return out.ChannelID == "ch1" && strings.Contains(out.Content, "hi")
 	})).Return(nil)
@@ -158,7 +158,7 @@ func (s *TaskExecutorSuite) TestExecuteBashTaskNoChannelRowPersistsThreadID() {
 	s.bot.On("CreateSimpleThread", mock.Anything, "ch1", mock.Anything, "").Return("th-12", nil)
 	s.store.On("UpdateScheduledTaskThreadID", mock.Anything, int64(12), "th-12").Return(nil)
 	s.store.On("GetChannel", mock.Anything, "th-12").Return(nil, nil).Maybe()
-	br.On("RunBash", mock.Anything, "true", "ch1", "").Return("", nil)
+	br.On("RunBash", mock.Anything, "true", "ch1", "", "").Return("", nil)
 	s.bot.On("SendMessage", mock.Anything, mock.Anything).Return(nil)
 	s.store.On("InsertMessage", mock.Anything, mock.Anything).Return(nil).Maybe()
 
@@ -174,7 +174,7 @@ func (s *TaskExecutorSuite) TestExecuteBashTaskTruncatesLongOutput() {
 
 	s.store.On("GetChannel", mock.Anything, "ch1").Return(localChannel("/work"), nil)
 	s.store.On("GetChannel", mock.Anything, "th-13").Return(&db.Channel{ID: 9, ChannelID: "th-13"}, nil)
-	br.On("RunBash", mock.Anything, mock.Anything, "ch1", "/work").Return(long, nil)
+	br.On("RunBash", mock.Anything, mock.Anything, "ch1", "/work", "").Return(long, nil)
 	s.bot.On("SendMessage", mock.Anything, mock.MatchedBy(func(out *bot.OutgoingMessage) bool {
 		return strings.Contains(out.Content, "(truncated)") && len(out.Content) < bashOutputMaxLen+200
 	})).Return(nil)
@@ -192,7 +192,7 @@ func (s *TaskExecutorSuite) TestExecuteBashTaskError() {
 
 	s.store.On("GetChannel", mock.Anything, "ch1").Return(localChannel("/work"), nil)
 	s.store.On("GetChannel", mock.Anything, "th-14").Return(&db.Channel{ID: 9, ChannelID: "th-14"}, nil)
-	br.On("RunBash", mock.Anything, "exit 1", "ch1", "/work").Return("partial out", errors.New("exit status 1"))
+	br.On("RunBash", mock.Anything, "exit 1", "ch1", "/work", "").Return("partial out", errors.New("exit status 1"))
 	s.bot.On("SendMessage", mock.Anything, mock.MatchedBy(func(out *bot.OutgoingMessage) bool {
 		return out.ChannelID == "th-14" && strings.Contains(out.Content, "failed") && strings.Contains(out.Content, "partial out")
 	})).Return(nil)
@@ -209,7 +209,7 @@ func (s *TaskExecutorSuite) TestExecuteBashTaskErrorNoOutput() {
 
 	s.store.On("GetChannel", mock.Anything, "ch1").Return(localChannel("/work"), nil)
 	s.store.On("GetChannel", mock.Anything, "th-15").Return(&db.Channel{ID: 9, ChannelID: "th-15"}, nil)
-	br.On("RunBash", mock.Anything, "exit 1", "ch1", "/work").Return("", errors.New("boom"))
+	br.On("RunBash", mock.Anything, "exit 1", "ch1", "/work", "").Return("", errors.New("boom"))
 	s.bot.On("SendMessage", mock.Anything, mock.MatchedBy(func(out *bot.OutgoingMessage) bool {
 		return strings.Contains(out.Content, "failed") && !strings.Contains(out.Content, "```")
 	})).Return(nil)
@@ -237,7 +237,7 @@ func (s *TaskExecutorSuite) TestExecuteBashTaskSendErrorLogged() {
 
 	s.store.On("GetChannel", mock.Anything, "ch1").Return(localChannel("/work"), nil)
 	s.store.On("GetChannel", mock.Anything, "th-17").Return(&db.Channel{ID: 9, ChannelID: "th-17"}, nil)
-	br.On("RunBash", mock.Anything, "echo hi", "ch1", "/work").Return("hi\n", nil)
+	br.On("RunBash", mock.Anything, "echo hi", "ch1", "/work", "").Return("hi\n", nil)
 	s.bot.On("SendMessage", mock.Anything, mock.Anything).Return(errors.New("send failed"))
 	s.store.On("InsertMessage", mock.Anything, mock.Anything).Return(nil)
 
@@ -270,9 +270,12 @@ func (s *TaskExecutorSuite) TestExecuteBashTaskWorktreeFirstRun() {
 		return ch.ChannelID == "th-18" && ch.Worktree && strings.Contains(ch.DirPath, ".worktrees/task-18-")
 	}), int64(18), "th-18").Return(nil)
 	s.store.On("GetChannel", mock.Anything, "th-18").Return(&db.Channel{ID: 9, ChannelID: "th-18"}, nil).Maybe()
+	// The script runs in the new worktree but must still resolve the root
+	// project's .loop/config.json (mounts, image, gates) — the worktree's own
+	// copy is untracked and holds only extra_dirs.
 	br.On("RunBash", mock.Anything, "make build", "ch1", mock.MatchedBy(func(dir string) bool {
 		return strings.Contains(dir, "/work/project/.worktrees/task-18-")
-	})).Return("ok\n", nil)
+	}), "/work/project").Return("ok\n", nil)
 	s.bot.On("SendMessage", mock.Anything, mock.MatchedBy(func(out *bot.OutgoingMessage) bool {
 		return out.ChannelID == "th-18"
 	})).Return(nil)
@@ -302,7 +305,7 @@ func (s *TaskExecutorSuite) TestExecuteBashTaskWorktreeReuseViaThread() {
 		ID: 9, ChannelID: "th-19", ParentID: "ch1", Worktree: true,
 		DirPath: "/work/project/.worktrees/task-19-abcd",
 	}, nil)
-	br.On("RunBash", mock.Anything, "make test", "ch1", "/work/project/.worktrees/task-19-abcd").Return("ok\n", nil)
+	br.On("RunBash", mock.Anything, "make test", "ch1", "/work/project/.worktrees/task-19-abcd", "/work/project").Return("ok\n", nil)
 	s.bot.On("SendMessage", mock.Anything, mock.MatchedBy(func(out *bot.OutgoingMessage) bool {
 		return out.ChannelID == "th-19"
 	})).Return(nil)
@@ -346,11 +349,36 @@ func (s *TaskExecutorSuite) TestExecuteBashTaskManualThreadNameAndBroadcast() {
 	}), "").Return("th-30", nil)
 	s.store.On("LinkTaskThread", mock.Anything, mock.Anything, int64(30), "th-30").Return(nil)
 	s.store.On("GetChannel", mock.Anything, "th-30").Return(&db.Channel{ID: 9, ChannelID: "th-30"}, nil).Maybe()
-	br.On("RunBash", mock.Anything, "true", "ch1", "/work").Return("", nil)
+	br.On("RunBash", mock.Anything, "true", "ch1", "/work", "").Return("", nil)
 	s.bot.On("SendMessage", mock.Anything, mock.Anything).Return(nil)
 	s.store.On("InsertMessage", mock.Anything, mock.Anything).Return(nil)
 
 	_, err := exec.ExecuteTask(s.ctx, task)
 	require.NoError(s.T(), err)
 	eb.AssertExpectations(s.T())
+}
+
+func (s *TaskExecutorSuite) TestExecuteBashTaskOnWorktreeChannelResolvesRootProject() {
+	// A plain (non-worktree) bash task scheduled on a channel that already IS
+	// a worktree. Its dir is the worktree checkout, whose .loop/config.json is
+	// untracked and normally carries only extra_dirs, so the container layer
+	// must be handed the root project dir to merge against — otherwise the
+	// project's mounts, image, and gates silently fall back to the globals.
+	task := &db.ScheduledTask{ID: 21, ChannelID: "wt1", BashScript: "make sync", ThreadID: "th-21", Type: db.TaskTypeCron, Schedule: "0 * * * *"}
+	exec, br := s.newBashExecutor()
+
+	s.store.On("GetChannel", mock.Anything, "wt1").Return(&db.Channel{
+		ID: 2, ChannelID: "wt1", ParentID: "root", Worktree: true,
+		DirPath: "/work/project/.worktrees/feature", Platform: types.PlatformLocal,
+	}, nil)
+	s.store.On("GetChannel", mock.Anything, "root").Return(localChannel("/work/project"), nil)
+	s.store.On("GetChannel", mock.Anything, "th-21").Return(&db.Channel{ID: 9, ChannelID: "th-21", ParentID: "wt1"}, nil)
+	br.On("RunBash", mock.Anything, "make sync", "wt1", "/work/project/.worktrees/feature", "/work/project").Return("synced\n", nil)
+	s.bot.On("SendMessage", mock.Anything, mock.Anything).Return(nil)
+	s.store.On("InsertMessage", mock.Anything, mock.Anything).Return(nil).Maybe()
+
+	resp, err := exec.ExecuteTask(s.ctx, task)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "synced\n", resp)
+	br.AssertExpectations(s.T())
 }

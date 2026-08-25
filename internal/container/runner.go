@@ -415,9 +415,13 @@ func (r *DockerRunner) runWithRecovery(ctx context.Context, req *agent.AgentRequ
 }
 
 // RunBash executes a shell script in a Docker container and returns stdout.
-// Uses the same container configuration (mounts, env) as agent runs.
-func (r *DockerRunner) RunBash(ctx context.Context, script, channelID, dirPath string) (string, error) {
-	containerID, ctrName, mcpConfigPath, keepMCP, err := r.createAndStartContainer(ctx, channelID, dirPath, "", "", "",
+// Uses the same container configuration (mounts, env) as agent runs, including
+// the worktree config merge chain: parentDirPath must carry the root project
+// checkout for worktree dirs, otherwise the merge resolves against the
+// worktree's own .loop/config.json (which normally holds nothing but
+// extra_dirs) and the project's mounts, image, and gates are silently lost.
+func (r *DockerRunner) RunBash(ctx context.Context, script, channelID, dirPath, parentDirPath string) (string, error) {
+	containerID, ctrName, mcpConfigPath, keepMCP, err := r.createAndStartContainer(ctx, channelID, dirPath, "", parentDirPath, "",
 		ContainerTypeAgent,
 		func(_ *config.Config, _ string) []string {
 			return []string{"/bin/sh", "-c", script}

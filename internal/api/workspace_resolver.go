@@ -65,38 +65,10 @@ func (w *workspaceResolver) resolveParentDirPath(ctx context.Context, channelID 
 
 // worktreeRootDirPath returns the DirPath of the nearest non-worktree ancestor
 // for an already-fetched channel that is (or lives under) a worktree chain, or
-// "" when it isn't part of one. It handles worktree channels, threads that
-// share a worktree's dir without carrying the worktree flag (e.g. a task
-// thread created under a worktree thread), and nested worktrees. The walk is
-// bounded to guard against parent-id cycles. Shared by the config, shortcut,
-// workflow, quality, and playground domains so worktree-nested threads resolve
-// the root project's .loop/config.json rather than the worktree checkout's
-// (which usually has no .loop overrides of its own).
+// "" when it isn't part of one. Shared by the config, shortcut, workflow,
+// quality, and playground domains so worktree-nested threads resolve the root
+// project's .loop/config.json rather than the worktree checkout's (which
+// usually has no .loop overrides of its own).
 func worktreeRootDirPath(ctx context.Context, store ChannelLister, ch *db.Channel) string {
-	cur := ch
-	if !cur.Worktree {
-		// A thread row under a worktree channel: hop to the worktree itself.
-		if cur.ParentID == "" {
-			return ""
-		}
-		p, err := store.GetChannel(ctx, cur.ParentID)
-		if err != nil || p == nil || !p.Worktree {
-			return ""
-		}
-		cur = p
-	}
-	for range 8 {
-		if cur.ParentID == "" {
-			return ""
-		}
-		p, err := store.GetChannel(ctx, cur.ParentID)
-		if err != nil || p == nil {
-			return ""
-		}
-		if !p.Worktree {
-			return p.DirPath
-		}
-		cur = p
-	}
-	return ""
+	return db.WorktreeRootDirPath(ctx, store, ch)
 }

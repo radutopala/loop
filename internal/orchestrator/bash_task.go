@@ -1,6 +1,8 @@
 // bash_task.go holds the bash flavor of scheduled tasks: instead of an agent
 // prompt or a workflow, the task runs a shell script inside the channel's
-// agent container (same image, mounts, and gates as agent runs). Output goes
+// agent container (same image, mounts, and gates as agent runs — including the
+// worktree config merge chain, which is why parentDirPath is threaded through
+// to RunBash). Output goes
 // to the task's sub-thread — created on first run exactly like prompt tasks
 // (a worktree thread when the task has worktree enabled) and reused on
 // subsequent runs via task.ThreadID.
@@ -21,7 +23,7 @@ import (
 // DockerRunner implements it; the type assertion in executeBashTask keeps the
 // core Runner interface (Run/Cleanup) unchanged for mocks that don't care.
 type BashRunner interface {
-	RunBash(ctx context.Context, script, channelID, dirPath string) (string, error)
+	RunBash(ctx context.Context, script, channelID, dirPath, parentDirPath string) (string, error)
 }
 
 // bashOutputMaxLen caps the portion of the script output posted to the chat;
@@ -33,8 +35,11 @@ const bashOutputMaxLen = 3500
 // thread creation fails). Returns the raw output so the scheduler's run log
 // captures it in full. dirPath already points at the task's worktree when the
 // task has worktree enabled — the shared worktree block in ExecuteTask ran
-// before this dispatch.
-func (e *TaskExecutor) executeBashTask(ctx context.Context, task *db.ScheduledTask, dirPath string, channel *db.Channel, worktreeCreated bool) (string, error) {
+// before this dispatch. parentDirPath is the root project checkout resolved by
+// ExecuteTask ("" outside a worktree chain); the container layer needs it to
+// merge the root project's .loop/config.json, since a worktree's own copy
+// carries only extra_dirs.
+func (e *TaskExecutor) executeBashTask(ctx context.Context, task *db.ScheduledTask, dirPath, parentDirPath string, channel *db.Channel, worktreeCreated bool) (string, error) {
 	br, ok := e.runner.(BashRunner)
 	if !ok {
 		return "", fmt.Errorf("bash runner not available")
@@ -68,7 +73,7 @@ func (e *TaskExecutor) executeBashTask(ctx context.Context, task *db.ScheduledTa
 		defer cancel()
 	}
 
-	output, err := br.RunBash(runCtx, task.BashScript, task.ChannelID, dirPath)
+	output, err := br.RunBash(runCtx, task.BashScript, task.ChannelID, dirPath, parentDirPath)
 	if err != nil {
 		// Surface the failure (with any partial output) so a broken script is
 		// visible without opening the task run logs.

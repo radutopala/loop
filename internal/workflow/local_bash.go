@@ -44,7 +44,11 @@ func (r *LocalBashRunner) safePath(dirPath string) (string, bool) {
 // from HTTP-supplied workflow inputs into argv — closing the CodeQL
 // `go/command-injection` sink while preserving identical execution
 // semantics (sh reads the script from stdin, runs it, exits on EOF).
-func (r *LocalBashRunner) RunBash(ctx context.Context, script, channelID, dirPath string) (string, error) {
+//
+// parentDirPath is accepted to satisfy the BashRunner contract and ignored:
+// local runs execute directly on the host, so there is no container config to
+// merge a parent project's .loop/config.json into.
+func (r *LocalBashRunner) RunBash(ctx context.Context, script, channelID, dirPath, _ string) (string, error) {
 	cmd := exec.CommandContext(ctx, "/bin/sh")
 	cmd.Stdin = strings.NewReader(script)
 	// Mirror the agent-container contract: scripts read $CHANNEL_ID and

@@ -23,44 +23,44 @@ func (s *LocalBashSuite) SetupTest() {
 }
 
 func (s *LocalBashSuite) TestRunBashSuccess() {
-	output, err := s.runner.RunBash(context.Background(), "echo hello", "", "")
+	output, err := s.runner.RunBash(context.Background(), "echo hello", "", "", "")
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), "hello\n", output)
 }
 
 func (s *LocalBashSuite) TestRunBashWithDir() {
-	output, err := s.runner.RunBash(context.Background(), "pwd", "", "/tmp")
+	output, err := s.runner.RunBash(context.Background(), "pwd", "", "/tmp", "")
 	require.NoError(s.T(), err)
 	require.Contains(s.T(), output, "/tmp")
 }
 
 func (s *LocalBashSuite) TestRunBashWithNonExistentDir() {
-	output, err := s.runner.RunBash(context.Background(), "echo works", "", "/tmp/nonexistent-dir-12345")
+	output, err := s.runner.RunBash(context.Background(), "echo works", "", "/tmp/nonexistent-dir-12345", "")
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), "works\n", output)
 }
 
 func (s *LocalBashSuite) TestRunBashRejectsOutsidePath() {
-	output, err := s.runner.RunBash(context.Background(), "echo safe", "", "/etc")
+	output, err := s.runner.RunBash(context.Background(), "echo safe", "", "/etc", "")
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), "safe\n", output)
 }
 
 func (s *LocalBashSuite) TestRunBashRejectsTraversal() {
-	output, err := s.runner.RunBash(context.Background(), "echo safe", "", "/tmp/../etc")
+	output, err := s.runner.RunBash(context.Background(), "echo safe", "", "/tmp/../etc", "")
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), "safe\n", output)
 }
 
 func (s *LocalBashSuite) TestRunBashEmptySafeDirRejectsAll() {
 	r := &LocalBashRunner{}
-	output, err := r.RunBash(context.Background(), "echo safe", "", "/tmp")
+	output, err := r.RunBash(context.Background(), "echo safe", "", "/tmp", "")
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), "safe\n", output)
 }
 
 func (s *LocalBashSuite) TestRunBashFailure() {
-	output, err := s.runner.RunBash(context.Background(), "exit 1", "", "")
+	output, err := s.runner.RunBash(context.Background(), "exit 1", "", "", "")
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "local bash:")
 	require.Empty(s.T(), output)
@@ -88,13 +88,13 @@ func (s *LocalBashSuite) TestSafePathAbsErrorReturnsFalse() {
 func (s *LocalBashSuite) TestRunBashContextCancel() {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	_, err := s.runner.RunBash(ctx, "sleep 10", "", "")
+	_, err := s.runner.RunBash(ctx, "sleep 10", "", "", "")
 	require.Error(s.T(), err)
 }
 
 func (s *LocalBashSuite) TestRunBashInjectsChannelAndAPIURL() {
 	r := &LocalBashRunner{SafeDir: s.T().TempDir(), APIURL: "http://localhost:9999"}
-	out, err := r.RunBash(context.Background(), `printf '%s|%s' "$CHANNEL_ID" "$API_URL"`, "ch-42", "")
+	out, err := r.RunBash(context.Background(), `printf '%s|%s' "$CHANNEL_ID" "$API_URL"`, "ch-42", "", "")
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), "ch-42|http://localhost:9999", out)
 }
@@ -105,7 +105,7 @@ func (s *LocalBashSuite) TestRunBashEmptyAPIURLInheritsProcessEnv() {
 	// os.Environ so it wins).
 	s.T().Setenv("API_URL", "http://inherited:1")
 	r := &LocalBashRunner{SafeDir: s.T().TempDir()}
-	out, err := r.RunBash(context.Background(), `printf '%s|%s' "$CHANNEL_ID" "$API_URL"`, "ch-1", "")
+	out, err := r.RunBash(context.Background(), `printf '%s|%s' "$CHANNEL_ID" "$API_URL"`, "ch-1", "", "")
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), "ch-1|http://inherited:1", out)
 }

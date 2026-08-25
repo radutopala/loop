@@ -78,7 +78,7 @@ func (s *RunnerSuite) TestRunBashHappyPath() {
 	s.client.On("ContainerWait", ctx, testContainerID).Return((<-chan WaitResponse)(waitCh), (<-chan error)(errCh))
 	s.client.On("ContainerLogs", ctx, testContainerID).Return(strings.NewReader("hello\n"), nil)
 
-	output, err := s.runner.RunBash(ctx, "echo hello", "ch-1", "")
+	output, err := s.runner.RunBash(ctx, "echo hello", "ch-1", "", "")
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), "hello\n", output)
 
@@ -91,7 +91,7 @@ func (s *RunnerSuite) TestRunBashCreateFails() {
 
 	s.client.On("ContainerCreate", ctx, mock.AnythingOfType("*container.ContainerConfig"), testContainerName).Return("", errors.New("docker create failed"))
 
-	output, err := s.runner.RunBash(ctx, "echo hello", "ch-1", "")
+	output, err := s.runner.RunBash(ctx, "echo hello", "ch-1", "", "")
 	require.Error(s.T(), err)
 	require.Empty(s.T(), output)
 	require.Contains(s.T(), err.Error(), "creating container")
@@ -111,7 +111,7 @@ func (s *RunnerSuite) TestRunBashWaitError() {
 	s.client.On("ContainerStart", ctx, testContainerID).Return(nil)
 	s.client.On("ContainerWait", ctx, testContainerID).Return((<-chan WaitResponse)(waitCh), (<-chan error)(errCh))
 
-	output, err := s.runner.RunBash(ctx, "echo hello", "ch-1", "")
+	output, err := s.runner.RunBash(ctx, "echo hello", "ch-1", "", "")
 	require.Error(s.T(), err)
 	require.Empty(s.T(), output)
 	require.Contains(s.T(), err.Error(), "waiting for container")
@@ -133,7 +133,7 @@ func (s *RunnerSuite) TestRunBashNonZeroExit() {
 	s.client.On("ContainerWait", ctx, testContainerID).Return((<-chan WaitResponse)(waitCh), (<-chan error)(errCh))
 	s.client.On("ContainerLogs", ctx, testContainerID).Return(strings.NewReader("some output\n"), nil)
 
-	output, err := s.runner.RunBash(ctx, "exit 1", "ch-1", "")
+	output, err := s.runner.RunBash(ctx, "exit 1", "ch-1", "", "")
 	require.Error(s.T(), err)
 	require.Equal(s.T(), "some output\n", output)
 	require.Contains(s.T(), err.Error(), "script exited with status 1")
@@ -155,7 +155,7 @@ func (s *RunnerSuite) TestRunBashLogsFails() {
 	s.client.On("ContainerWait", ctx, testContainerID).Return((<-chan WaitResponse)(waitCh), (<-chan error)(errCh))
 	s.client.On("ContainerLogs", ctx, testContainerID).Return(nil, errors.New("logs failed"))
 
-	output, err := s.runner.RunBash(ctx, "echo hello", "ch-1", "")
+	output, err := s.runner.RunBash(ctx, "echo hello", "ch-1", "", "")
 	require.Error(s.T(), err)
 	require.Empty(s.T(), output)
 	require.Contains(s.T(), err.Error(), "reading container logs")
@@ -178,7 +178,7 @@ func (s *RunnerSuite) TestRunBashContextCancelled() {
 	// Cancel context before waiting can complete.
 	cancel()
 
-	output, err := s.runner.RunBash(ctx, "sleep 999", "ch-1", "")
+	output, err := s.runner.RunBash(ctx, "sleep 999", "ch-1", "", "")
 	require.Error(s.T(), err)
 	require.Empty(s.T(), output)
 	require.ErrorIs(s.T(), err, context.Canceled)
@@ -199,7 +199,7 @@ func (s *RunnerSuite) TestRunBashContainerError() {
 	s.client.On("ContainerStart", ctx, testContainerID).Return(nil)
 	s.client.On("ContainerWait", ctx, testContainerID).Return((<-chan WaitResponse)(waitCh), (<-chan error)(errCh))
 
-	output, err := s.runner.RunBash(ctx, "stress --vm 1", "ch-1", "")
+	output, err := s.runner.RunBash(ctx, "stress --vm 1", "ch-1", "", "")
 	require.Error(s.T(), err)
 	require.Empty(s.T(), output)
 	require.Contains(s.T(), err.Error(), "container error")

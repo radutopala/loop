@@ -24,7 +24,7 @@ type Runner interface {
 // BashRunner executes shell scripts (typically in Docker containers) and returns
 // the combined stdout/stderr.
 type BashRunner interface {
-	RunBash(ctx context.Context, script, channelID, dirPath string) (string, error)
+	RunBash(ctx context.Context, script, channelID, dirPath, parentDirPath string) (string, error)
 }
 
 // EventBroadcaster sends workflow events to connected clients.
@@ -305,7 +305,7 @@ func (e *defaultEngine) RetryRun(ctx context.Context, runID string) (string, err
 		WorkflowName:  run.WorkflowName,
 		ChannelID:     run.ChannelID,
 		DirPath:       run.DirPath,
-		ParentDirPath: "", // not stored; will use channel-based resolution
+		ParentDirPath: e.parentDirFor(ctx, run.ChannelID), // not stored on the run; recomputed from the channel
 		Inputs:        inputs,
 	})
 }
@@ -343,6 +343,24 @@ func (e *defaultEngine) findWorkflow(name, dirPath, parentDirPath string) (*conf
 		}
 	}
 	return nil, fmt.Errorf("workflow not found: %s", name)
+}
+
+// parentDirFor resolves the root project checkout for a run's channel: the
+// DirPath of the nearest non-worktree ancestor, or "" when the channel isn't
+// part of a worktree chain. Runs don't persist their parent dir, so bash nodes
+// and retries recompute it from the channel here — without it the container
+// layer merges only the worktree's own .loop/config.json, which normally holds
+// nothing but extra_dirs, so the root project's mounts, image, and gates are
+// dropped. Errors degrade to "" (the pre-existing global-config behavior).
+func (e *defaultEngine) parentDirFor(ctx context.Context, channelID string) string {
+	if channelID == "" {
+		return ""
+	}
+	ch, err := e.store.GetChannel(ctx, channelID)
+	if err != nil || ch == nil {
+		return ""
+	}
+	return db.WorktreeRootDirPath(ctx, e.store, ch)
 }
 
 // resolveWorkflowDef returns the version-pinned definition stored in the run

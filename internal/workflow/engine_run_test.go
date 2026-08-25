@@ -49,13 +49,13 @@ func (s *EngineSuite) TestStartRunSeedsBlankDefaultInputs() {
 	done := s.waitForRunStatus()
 
 	// Blank pr → shell-quoted '' in the rendered script, never "<no value>".
-	s.bashRunner.On("RunBash", mock.Anything, "loop review run --pr '' --wait", "", "").Return("ok", nil)
+	s.bashRunner.On("RunBash", mock.Anything, "loop review run --pr '' --wait", "", "", "").Return("ok", nil)
 
 	_, err := s.engine.StartRun(context.Background(), StartRunOptions{WorkflowName: "blank-input"})
 	require.NoError(s.T(), err)
 
 	s.awaitStatus(done, db.WorkflowRunStatusCompleted)
-	s.bashRunner.AssertCalled(s.T(), "RunBash", mock.Anything, "loop review run --pr '' --wait", "", "")
+	s.bashRunner.AssertCalled(s.T(), "RunBash", mock.Anything, "loop review run --pr '' --wait", "", "", "")
 }
 
 func (s *EngineSuite) TestStartRunSingleBashNode() {
@@ -69,7 +69,7 @@ func (s *EngineSuite) TestStartRunSingleBashNode() {
 	s.expectRunPersistence()
 	done := s.waitForRunStatus()
 
-	s.bashRunner.On("RunBash", mock.Anything, "echo hello", "", "").Return("hello\n", nil)
+	s.bashRunner.On("RunBash", mock.Anything, "echo hello", "", "", "").Return("hello\n", nil)
 
 	runID, err := s.engine.StartRun(context.Background(), StartRunOptions{WorkflowName: "hello"})
 	require.NoError(s.T(), err)
@@ -77,7 +77,52 @@ func (s *EngineSuite) TestStartRunSingleBashNode() {
 
 	s.awaitStatus(done, db.WorkflowRunStatusCompleted)
 
-	s.bashRunner.AssertCalled(s.T(), "RunBash", mock.Anything, "echo hello", "", "")
+	s.bashRunner.AssertCalled(s.T(), "RunBash", mock.Anything, "echo hello", "", "", "")
+}
+
+func (s *EngineSuite) TestStartRunBashNodeOnWorktreeChannelResolvesRootProject() {
+	// Bash nodes get the same worktree config inheritance as agent runs: the
+	// run's dir is the worktree checkout, but the container layer needs the
+	// root project dir to merge its .loop/config.json (mounts, image, gates).
+	// Runs don't persist a parent dir, so the engine re-resolves it from the
+	// channel at node-exec time.
+	s.workflows = []config.WorkflowDef{
+		{
+			Name:  "deploy",
+			Nodes: []config.NodeDef{{ID: "run", Type: config.NodeTypeBash, Script: "make deploy"}},
+		},
+	}
+
+	// Not resetStore: this test needs real channel rows back from GetChannel,
+	// and the catch-all "no such channel" the helper registers would shadow
+	// them (testify matches the first registered expectation).
+	s.store.ExpectedCalls = nil
+	s.store.On("GetWorkflowRun", mock.Anything, mock.Anything).Return(
+		&db.WorkflowRun{Status: db.WorkflowRunStatusRunning}, nil,
+	).Maybe()
+	s.store.On("UpdateNodeHeartbeat", mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Maybe()
+	s.store.On("GetChannel", mock.Anything, "wt1").Return(&db.Channel{
+		ChannelID: "wt1", ParentID: "root", Worktree: true,
+		DirPath: "/work/project/.worktrees/feature",
+	}, nil)
+	s.store.On("GetChannel", mock.Anything, "root").Return(&db.Channel{
+		ChannelID: "root", DirPath: "/work/project",
+	}, nil)
+	s.expectRunPersistence()
+	done := s.waitForRunStatus()
+
+	s.bashRunner.On("RunBash", mock.Anything, "make deploy", "wt1",
+		"/work/project/.worktrees/feature", "/work/project").Return("deployed\n", nil)
+
+	_, err := s.engine.StartRun(context.Background(), StartRunOptions{
+		WorkflowName: "deploy",
+		ChannelID:    "wt1",
+		DirPath:      "/work/project/.worktrees/feature",
+	})
+	require.NoError(s.T(), err)
+
+	s.awaitStatus(done, db.WorkflowRunStatusCompleted)
+	s.bashRunner.AssertExpectations(s.T())
 }
 
 func (s *EngineSuite) TestStartRunSinglePromptNode() {
@@ -119,7 +164,7 @@ func (s *EngineSuite) TestStartRunLinearChain() {
 	s.expectRunPersistence()
 	done := s.waitForRunStatus()
 
-	s.bashRunner.On("RunBash", mock.Anything, "git diff", "", "").Return("+added line", nil)
+	s.bashRunner.On("RunBash", mock.Anything, "git diff", "", "", "").Return("+added line", nil)
 	s.runner.On("Run", mock.Anything, mock.Anything).Return(&agent.AgentResponse{Response: "LGTM"}, nil)
 
 	_, err := s.engine.StartRun(context.Background(), StartRunOptions{WorkflowName: "chain"})
@@ -149,8 +194,8 @@ func (s *EngineSuite) TestStartRunParallelFanOut() {
 	s.expectRunPersistence()
 	done := s.waitForRunStatus()
 
-	s.bashRunner.On("RunBash", mock.Anything, "make test", "", "").Return("PASS", nil)
-	s.bashRunner.On("RunBash", mock.Anything, "make lint", "", "").Return("OK", nil)
+	s.bashRunner.On("RunBash", mock.Anything, "make test", "", "", "").Return("PASS", nil)
+	s.bashRunner.On("RunBash", mock.Anything, "make lint", "", "", "").Return("OK", nil)
 	s.runner.On("Run", mock.Anything, mock.Anything).Return(&agent.AgentResponse{Response: "All good"}, nil)
 
 	_, err := s.engine.StartRun(context.Background(), StartRunOptions{WorkflowName: "parallel"})
@@ -176,7 +221,7 @@ func (s *EngineSuite) TestStartRunBashNodeFailure() {
 	s.expectRunPersistence()
 	done := s.waitForRunStatus()
 
-	s.bashRunner.On("RunBash", mock.Anything, "exit 1", "", "").Return("", fmt.Errorf("exit code 1"))
+	s.bashRunner.On("RunBash", mock.Anything, "exit 1", "", "", "").Return("", fmt.Errorf("exit code 1"))
 
 	_, err := s.engine.StartRun(context.Background(), StartRunOptions{WorkflowName: "fail"})
 	require.NoError(s.T(), err)
@@ -198,14 +243,14 @@ func (s *EngineSuite) TestStartRunInputDefaults() {
 	s.expectRunPersistence()
 	done := s.waitForRunStatus()
 
-	s.bashRunner.On("RunBash", mock.Anything, "echo 'main'", "", "").Return("main", nil)
+	s.bashRunner.On("RunBash", mock.Anything, "echo 'main'", "", "", "").Return("main", nil)
 
 	_, err := s.engine.StartRun(context.Background(), StartRunOptions{WorkflowName: "defaults"})
 	require.NoError(s.T(), err)
 
 	s.awaitStatus(done, db.WorkflowRunStatusCompleted)
 
-	s.bashRunner.AssertCalled(s.T(), "RunBash", mock.Anything, "echo 'main'", "", "")
+	s.bashRunner.AssertCalled(s.T(), "RunBash", mock.Anything, "echo 'main'", "", "", "")
 }
 
 func (s *EngineSuite) TestStartRunInputOverridesDefault() {
@@ -222,7 +267,7 @@ func (s *EngineSuite) TestStartRunInputOverridesDefault() {
 	s.expectRunPersistence()
 	done := s.waitForRunStatus()
 
-	s.bashRunner.On("RunBash", mock.Anything, "echo 'develop'", "", "").Return("develop", nil)
+	s.bashRunner.On("RunBash", mock.Anything, "echo 'develop'", "", "", "").Return("develop", nil)
 
 	_, err := s.engine.StartRun(context.Background(), StartRunOptions{
 		WorkflowName: "override",
@@ -232,7 +277,7 @@ func (s *EngineSuite) TestStartRunInputOverridesDefault() {
 
 	s.awaitStatus(done, db.WorkflowRunStatusCompleted)
 
-	s.bashRunner.AssertCalled(s.T(), "RunBash", mock.Anything, "echo 'develop'", "", "")
+	s.bashRunner.AssertCalled(s.T(), "RunBash", mock.Anything, "echo 'develop'", "", "", "")
 }
 
 // TestStartRunSkipsEmptyStringInputs covers the explicit empty-string skip
@@ -256,7 +301,7 @@ func (s *EngineSuite) TestStartRunSkipsEmptyStringInputs() {
 
 	// Should run "echo 'main'" — the empty-string input was skipped so the
 	// default survives. The value is shell-quoted by renderBashScript.
-	s.bashRunner.On("RunBash", mock.Anything, "echo 'main'", "", "").Return("main", nil)
+	s.bashRunner.On("RunBash", mock.Anything, "echo 'main'", "", "", "").Return("main", nil)
 
 	_, err := s.engine.StartRun(context.Background(), StartRunOptions{
 		WorkflowName: "empty-input-defaults",
@@ -266,7 +311,7 @@ func (s *EngineSuite) TestStartRunSkipsEmptyStringInputs() {
 
 	s.awaitStatus(done, db.WorkflowRunStatusCompleted)
 
-	s.bashRunner.AssertCalled(s.T(), "RunBash", mock.Anything, "echo 'main'", "", "")
+	s.bashRunner.AssertCalled(s.T(), "RunBash", mock.Anything, "echo 'main'", "", "", "")
 }
 
 func (s *EngineSuite) TestCancelRun() {
@@ -280,7 +325,7 @@ func (s *EngineSuite) TestCancelRun() {
 	s.expectRunPersistence()
 	s.store.On("UpdateWorkflowRun", mock.Anything, mock.Anything).Return(nil)
 
-	s.bashRunner.On("RunBash", mock.Anything, "sleep 10", "", "").
+	s.bashRunner.On("RunBash", mock.Anything, "sleep 10", "", "", "").
 		Run(func(args mock.Arguments) {
 			ctx := args.Get(0).(context.Context)
 			<-ctx.Done()
@@ -310,7 +355,7 @@ func (s *EngineSuite) TestCancelRun() {
 }
 
 func (s *EngineSuite) TestCancelRunNotFound() {
-	s.store.ExpectedCalls = nil
+	s.resetStore()
 	s.store.On("GetWorkflowRun", mock.Anything, "missing").Return(nil, nil)
 
 	err := s.engine.CancelRun(context.Background(), "missing")
@@ -318,7 +363,7 @@ func (s *EngineSuite) TestCancelRunNotFound() {
 }
 
 func (s *EngineSuite) TestCancelRunAlreadyCompleted() {
-	s.store.ExpectedCalls = nil
+	s.resetStore()
 	s.store.On("GetWorkflowRun", mock.Anything, "done").Return(&db.WorkflowRun{
 		ID:     "done",
 		Status: db.WorkflowRunStatusCompleted,
@@ -329,7 +374,7 @@ func (s *EngineSuite) TestCancelRunAlreadyCompleted() {
 }
 
 func (s *EngineSuite) TestGetRun() {
-	s.store.ExpectedCalls = nil
+	s.resetStore()
 	run := &db.WorkflowRun{ID: "r1", WorkflowName: "test", Status: db.WorkflowRunStatusCompleted}
 	nodeRuns := []*db.NodeRun{{RunID: "r1", NodeID: "n1", Status: db.NodeRunStatusSuccess}}
 
@@ -343,7 +388,7 @@ func (s *EngineSuite) TestGetRun() {
 }
 
 func (s *EngineSuite) TestGetRunNotFound() {
-	s.store.ExpectedCalls = nil
+	s.resetStore()
 	s.store.On("GetWorkflowRun", mock.Anything, "missing").Return(nil, nil)
 
 	run, nodes, err := s.engine.GetRun(context.Background(), "missing")
@@ -404,7 +449,7 @@ func (s *EngineSuite) TestWhenConditionSkipsNode() {
 	s.expectRunPersistence()
 	done := s.waitForRunStatus()
 
-	s.bashRunner.On("RunBash", mock.Anything, "echo yes", "", "").Return("yes", nil)
+	s.bashRunner.On("RunBash", mock.Anything, "echo yes", "", "", "").Return("yes", nil)
 
 	_, err := s.engine.StartRun(context.Background(), StartRunOptions{WorkflowName: "when-test"})
 	require.NoError(s.T(), err)
@@ -412,7 +457,7 @@ func (s *EngineSuite) TestWhenConditionSkipsNode() {
 	s.awaitStatus(done, db.WorkflowRunStatusCompleted)
 
 	// "never" node should not have called RunBash with "echo no".
-	s.bashRunner.AssertNotCalled(s.T(), "RunBash", mock.Anything, "echo no", mock.Anything, mock.Anything)
+	s.bashRunner.AssertNotCalled(s.T(), "RunBash", mock.Anything, "echo no", mock.Anything, mock.Anything, mock.Anything)
 }
 
 func (s *EngineSuite) TestTriggerRuleAllDone() {
@@ -429,7 +474,7 @@ func (s *EngineSuite) TestTriggerRuleAllDone() {
 	s.expectRunPersistence()
 	done := s.waitForRunStatus()
 
-	s.bashRunner.On("RunBash", mock.Anything, "exit 1", "", "").Return("", fmt.Errorf("exit 1"))
+	s.bashRunner.On("RunBash", mock.Anything, "exit 1", "", "", "").Return("", fmt.Errorf("exit 1"))
 	s.runner.On("Run", mock.Anything, mock.Anything).Return(&agent.AgentResponse{Response: "Done"}, nil)
 
 	_, err := s.engine.StartRun(context.Background(), StartRunOptions{WorkflowName: "all-done"})
@@ -459,7 +504,7 @@ func (s *EngineSuite) TestTriggerRuleAllSuccessSkips() {
 	s.expectRunPersistence()
 	done := s.waitForRunStatus()
 
-	s.bashRunner.On("RunBash", mock.Anything, "exit 1", "", "").Return("", fmt.Errorf("exit 1"))
+	s.bashRunner.On("RunBash", mock.Anything, "exit 1", "", "", "").Return("", fmt.Errorf("exit 1"))
 
 	_, err := s.engine.StartRun(context.Background(), StartRunOptions{WorkflowName: "skip-on-fail"})
 	require.NoError(s.T(), err)
@@ -481,7 +526,7 @@ func (s *EngineSuite) TestBroadcasterEventsEmitted() {
 	s.expectRunPersistence()
 	done := s.waitForRunStatus()
 
-	s.bashRunner.On("RunBash", mock.Anything, "echo hi", "", "").Return("hi", nil)
+	s.bashRunner.On("RunBash", mock.Anything, "echo hi", "", "", "").Return("hi", nil)
 
 	_, err := s.engine.StartRun(context.Background(), StartRunOptions{WorkflowName: "events"})
 	require.NoError(s.T(), err)
@@ -640,8 +685,8 @@ func (s *EngineSuite) TestTriggerRuleOneSuccess() {
 	s.expectRunPersistence()
 	done := s.waitForRunStatus()
 
-	s.bashRunner.On("RunBash", mock.Anything, "exit 1", "", "").Return("", fmt.Errorf("exit 1"))
-	s.bashRunner.On("RunBash", mock.Anything, "echo ok", "", "").Return("ok", nil)
+	s.bashRunner.On("RunBash", mock.Anything, "exit 1", "", "", "").Return("", fmt.Errorf("exit 1"))
+	s.bashRunner.On("RunBash", mock.Anything, "echo ok", "", "", "").Return("ok", nil)
 	s.runner.On("Run", mock.Anything, mock.Anything).Return(&agent.AgentResponse{Response: "Done"}, nil)
 
 	_, err := s.engine.StartRun(context.Background(), StartRunOptions{WorkflowName: "one-success"})
@@ -670,7 +715,7 @@ func (s *EngineSuite) TestWhenConditionTemplateError() {
 	s.expectRunPersistence()
 	done := s.waitForRunStatus()
 
-	s.bashRunner.On("RunBash", mock.Anything, "echo ok", "", "").Return("ok", nil)
+	s.bashRunner.On("RunBash", mock.Anything, "echo ok", "", "", "").Return("ok", nil)
 
 	_, err := s.engine.StartRun(context.Background(), StartRunOptions{WorkflowName: "bad-when"})
 	require.NoError(s.T(), err)
@@ -683,11 +728,11 @@ func (s *EngineSuite) TestWhenConditionTemplateError() {
 		s.T().Fatal("timeout")
 	}
 
-	s.bashRunner.AssertCalled(s.T(), "RunBash", mock.Anything, "echo ok", "", "")
+	s.bashRunner.AssertCalled(s.T(), "RunBash", mock.Anything, "echo ok", "", "", "")
 }
 
 func (s *EngineSuite) TestGetRunGetWorkflowRunError() {
-	s.store.ExpectedCalls = nil
+	s.resetStore()
 	s.store.On("GetWorkflowRun", mock.Anything, "r1").Return(nil, fmt.Errorf("db error"))
 
 	_, _, err := s.engine.GetRun(context.Background(), "r1")
@@ -717,7 +762,7 @@ func (s *EngineSuite) TestStartRunCreateWorkflowRunError() {
 }
 
 func (s *EngineSuite) TestCancelRunGetWorkflowRunError() {
-	s.store.ExpectedCalls = nil
+	s.resetStore()
 	s.store.On("GetWorkflowRun", mock.Anything, "r1").Return(nil, fmt.Errorf("db error"))
 
 	err := s.engine.CancelRun(context.Background(), "r1")
@@ -758,7 +803,7 @@ func (s *EngineSuite) TestTriggerRuleOneSuccessNoneSucceeded() {
 	s.expectRunPersistence()
 	done := s.waitForRunStatus()
 
-	s.bashRunner.On("RunBash", mock.Anything, "exit 1", "", "").Return("", fmt.Errorf("exit 1"))
+	s.bashRunner.On("RunBash", mock.Anything, "exit 1", "", "", "").Return("", fmt.Errorf("exit 1"))
 
 	_, err := s.engine.StartRun(context.Background(), StartRunOptions{WorkflowName: "one-none"})
 	require.NoError(s.T(), err)
@@ -788,7 +833,7 @@ func (s *EngineSuite) TestTriggerRuleUnknown() {
 	s.expectRunPersistence()
 	done := s.waitForRunStatus()
 
-	s.bashRunner.On("RunBash", mock.Anything, "echo ok", "", "").Return("ok", nil)
+	s.bashRunner.On("RunBash", mock.Anything, "echo ok", "", "", "").Return("ok", nil)
 	s.runner.On("Run", mock.Anything, mock.Anything).Return(&agent.AgentResponse{Response: "Done"}, nil)
 
 	_, err := s.engine.StartRun(context.Background(), StartRunOptions{WorkflowName: "unknown-rule"})
@@ -841,7 +886,7 @@ func (s *EngineSuite) TestUpdateWorkflowRunErrorLogging() {
 		}
 	}).Return(fmt.Errorf("db error"))
 
-	s.bashRunner.On("RunBash", mock.Anything, "echo ok", "", "").Return("ok", nil)
+	s.bashRunner.On("RunBash", mock.Anything, "echo ok", "", "", "").Return("ok", nil)
 
 	_, err := s.engine.StartRun(context.Background(), StartRunOptions{WorkflowName: "update-err"})
 	require.NoError(s.T(), err)
@@ -869,7 +914,7 @@ func (s *EngineSuite) TestUpsertNodeRunErrorLogging() {
 	s.store.On("UpsertNodeRun", mock.Anything, mock.Anything).Return(fmt.Errorf("db error"))
 
 	done := s.waitForRunStatus()
-	s.bashRunner.On("RunBash", mock.Anything, "echo ok", "", "").Return("ok", nil)
+	s.bashRunner.On("RunBash", mock.Anything, "echo ok", "", "", "").Return("ok", nil)
 
 	_, err := s.engine.StartRun(context.Background(), StartRunOptions{WorkflowName: "upsert-log-err"})
 	require.NoError(s.T(), err)
