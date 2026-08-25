@@ -300,12 +300,17 @@ app-icons: ## Regenerate app icons from SVG sources (requires rsvg-convert, icon
 	@rsvg-convert -w 512 -h 512 app/build/icon-transparent.svg -o app/public/loop.png
 	@echo "Generated: app/build/icon.icns, app/public/loop-macos.png, app/public/loop.png"
 
+# CodeQL's Go extractor lags the toolchain: it caps at the language version in
+# go.mod and forces GOTOOLCHAIN=local, so it must run on the Go release that
+# matches that cap, not the toolchain we build with. Keep these containers on
+# CODEQL_GO_VERSION until the bundle supports a newer language version.
 CODEQL_VERSION ?= v2.25.2
+CODEQL_GO_VERSION ?= 1.26
 
 codeql-download: ## Download CodeQL bundle into Docker volume (one-time)
 	@echo "==> Downloading CodeQL $(CODEQL_VERSION) (linux64)..."
 	@curl -fsSL "https://github.com/github/codeql-action/releases/download/codeql-bundle-$(CODEQL_VERSION)/codeql-bundle-linux64.tar.gz" \
-		| docker run --rm -i --platform linux/amd64 -v loop-codeql:/opt/codeql golang:1.27 tar xz -C /opt/codeql
+		| docker run --rm -i --platform linux/amd64 -v loop-codeql:/opt/codeql golang:$(CODEQL_GO_VERSION) tar xz -C /opt/codeql
 	@echo "==> Cached in volume loop-codeql"
 
 codeql: ## Run CodeQL security analysis locally (via Docker)
@@ -315,7 +320,8 @@ codeql: ## Run CodeQL security analysis locally (via Docker)
 		-v loop-codeql:/opt/codeql \
 		-v loop-codeql-db:/db \
 		-w /src \
-		golang:1.27 bash -c '\
+		-e GOTOOLCHAIN=local \
+		golang:$(CODEQL_GO_VERSION) bash -c '\
 		set -e; \
 		if [ ! -x /opt/codeql/codeql/codeql ]; then \
 			echo "CodeQL not cached — run: make codeql-download" >&2; exit 1; \
