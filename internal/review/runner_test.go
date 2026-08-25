@@ -26,7 +26,7 @@ func TestRunnerSuite(t *testing.T) { suite.Run(t, new(RunnerSuite)) }
 
 func (s *RunnerSuite) TestRunNoAgentConfigured() {
 	r := &Runner{}
-	_, err := r.Run(context.Background(), "ch", "/dir", "/parent", "sys", "p", nil)
+	_, err := r.Run(context.Background(), "ch", "/dir", "/parent", "sys", "p", "", nil)
 	require.ErrorContains(s.T(), err, "agent not configured")
 }
 
@@ -34,7 +34,7 @@ func (s *RunnerSuite) TestRunAgentErrorPropagates() {
 	a := new(mockAgentRunner)
 	a.On("Run", mock.Anything, mock.Anything).Return(nil, errors.New("boom"))
 	r := &Runner{Agent: a}
-	_, err := r.Run(context.Background(), "ch", "/dir", "/parent", "sys", "p", nil)
+	_, err := r.Run(context.Background(), "ch", "/dir", "/parent", "sys", "p", "", nil)
 	require.ErrorContains(s.T(), err, "boom")
 }
 
@@ -48,10 +48,37 @@ func (s *RunnerSuite) TestRunBuildsRequest() {
 	})).Return(&agent.AgentResponse{Response: "done"}, nil)
 
 	r := &Runner{Agent: a}
-	resp, err := r.Run(context.Background(), "ch", "/wt", "/repo", "sys", "p", nil)
+	resp, err := r.Run(context.Background(), "ch", "/wt", "/repo", "sys", "p", "", nil)
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), "done", resp.Response)
 	a.AssertExpectations(s.T())
+}
+
+// A fork session id rides through as --resume + --fork-session; without
+// one the request stays blank so the run starts a fresh session.
+func (s *RunnerSuite) TestRunForkSession() {
+	tests := []struct {
+		name        string
+		forkID      string
+		wantSession string
+		wantFork    bool
+	}{
+		{name: "no fork", forkID: "", wantSession: "", wantFork: false},
+		{name: "fork", forkID: "sess-abc", wantSession: "sess-abc", wantFork: true},
+	}
+	for _, tc := range tests {
+		s.Run(tc.name, func() {
+			a := new(mockAgentRunner)
+			a.On("Run", mock.Anything, mock.MatchedBy(func(req *agent.AgentRequest) bool {
+				return req.SessionID == tc.wantSession && req.ForkSession == tc.wantFork
+			})).Return(&agent.AgentResponse{}, nil)
+
+			r := &Runner{Agent: a}
+			_, err := r.Run(context.Background(), "ch", "/wt", "/repo", "sys", "p", tc.forkID, nil)
+			require.NoError(s.T(), err)
+			a.AssertExpectations(s.T())
+		})
+	}
 }
 
 // The ReportFindings tool_use is fanned out to onComment one comment at a
@@ -96,7 +123,7 @@ func (s *RunnerSuite) TestRunForwardsReportFindings() {
 
 			var got []string
 			r := &Runner{Agent: a}
-			_, err := r.Run(context.Background(), "ch", "/wt", "/repo", "sys", "p", func(c *Comment) {
+			_, err := r.Run(context.Background(), "ch", "/wt", "/repo", "sys", "p", "", func(c *Comment) {
 				got = append(got, c.Body)
 			})
 			require.NoError(s.T(), err)

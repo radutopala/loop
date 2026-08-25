@@ -322,6 +322,52 @@ func (s *reviewService) handleReviewGet(w http.ResponseWriter, r *http.Request) 
 	writeHTTPJSON(w, http.StatusOK, reviewSessionResponse{Present: true, Session: sess}, s.deps.logger)
 }
 
+// reviewForkRequest is the body of PUT /review/fork. mode is one of
+// "" (none), "current", or "custom"; session_id is read only for
+// "custom".
+type reviewForkRequest struct {
+	Mode      string `json:"mode"`
+	SessionID string `json:"session_id"`
+}
+
+// handleReviewSetFork records which Claude session the next review run
+// should fork from. The choice is stored on the review session rather
+// than passed per-run because the FE's Run button dispatches a workflow,
+// and the review CLI inside that workflow has no channel for per-run
+// options.
+//
+// Returns the updated session so the FE renders the new state without a
+// follow-up GET.
+func (s *reviewService) handleReviewSetFork(w http.ResponseWriter, r *http.Request) {
+	if s.sessions == nil {
+		http.Error(w, "review service not configured", http.StatusNotImplemented)
+		return
+	}
+	channelID := r.PathValue("id")
+	var body reviewForkRequest
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		http.Error(w, "invalid JSON body", http.StatusBadRequest)
+		return
+	}
+	mode := review.ForkMode(body.Mode)
+	switch mode {
+	case review.ForkNone, review.ForkCurrent:
+	case review.ForkCustom:
+		if strings.TrimSpace(body.SessionID) == "" {
+			http.Error(w, "session_id is required for mode=custom", http.StatusBadRequest)
+			return
+		}
+	default:
+		http.Error(w, "invalid mode (want \"\", \"current\", or \"custom\")", http.StatusBadRequest)
+		return
+	}
+	if !s.sessions.UpdateFork(channelID, mode, strings.TrimSpace(body.SessionID)) {
+		http.Error(w, "no review session for channel", http.StatusNotFound)
+		return
+	}
+	writeHTTPJSON(w, http.StatusOK, reviewSessionResponse{Present: true, Session: s.sessions.Get(channelID)}, s.deps.logger)
+}
+
 // handleReviewSessions returns a (channel_id, status) summary for every
 // live session. Used at FE startup to seed the sidebar's `rev` pill set
 // so the indicator survives a renderer reload — review.status WS events
@@ -725,10 +771,21 @@ func (s *reviewService) handleReviewRun(w http.ResponseWriter, r *http.Request) 
 		fullPrompt = prompt + "\n\n" + reviewContext
 	}
 
+	// Resolve and stage the fork before flipping to Reviewing: a bad fork
+	// config (no chat session yet, an id with no transcript on disk) is the
+	// user's to fix, and it should surface as a failed Run rather than as a
+	// session stuck in Reviewing behind a container that never had a chance.
+	forkSessionID, err := s.prepareForkSession(r.Context(), sess, channelID, channelDirPath, worktreePath)
+	if err != nil {
+		s.unregisterReviewRun(channelID)
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
 	s.sessions.UpdateStatus(channelID, review.StatusReviewing, "")
 	s.broadcastReviewStatus(channelID, review.StatusReviewing, "")
 
-	go s.runReviewAsync(runCtx, channelID, worktreePath, parentDirPath, sysPrompt, fullPrompt)
+	go s.runReviewAsync(runCtx, channelID, worktreePath, parentDirPath, sysPrompt, fullPrompt, forkSessionID)
 	writeHTTPJSON(w, http.StatusAccepted, map[string]string{"status": "started"}, s.deps.logger)
 }
 

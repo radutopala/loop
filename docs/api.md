@@ -1727,7 +1727,40 @@ run continues in the background, streaming `review.comment` and
 
 A concurrent call while a run is in flight returns `202 {"status":"in_progress"}` without restarting.
 
-**Errors:** `404` if no session. `409` if the session is not in `ready` status. `501` if the review agent is not wired.
+If the session is configured to fork (see below), the chosen session's
+transcript is copied into the worktree's Claude project dir before the
+agent starts, and the run is launched with `--resume <id> --fork-session`.
+
+**Errors:** `404` if no session. `409` if the session is not in `ready`
+status. `400` if the configured fork cannot be resolved or staged (no chat
+session yet, unknown session id, transcript missing on disk). `501` if the
+review agent is not wired.
+
+### `PUT /api/channels/{id}/review/fork`
+
+Choose which Claude session the *next* review run forks from. Body:
+`{"mode": "", "session_id": ""}` where `mode` is one of:
+
+| `mode` | Behaviour |
+|---|---|
+| `""` | Fresh session — the default; the reviewer sees only the diff. |
+| `"current"` | Fork whatever session the channel's chat is on when the run starts. |
+| `"custom"` | Fork `session_id`. |
+
+It is always a fork, never a resume — review turns never land in the chat
+session the user is still talking to. `session_id` is stored only for
+`custom` and cleared on any other mode.
+
+The choice lives on the review session (not on the run request) because
+the desktop app's Run button dispatches a workflow whose `loop review run`
+step has nowhere to carry per-run options. It is in-memory, so it resets
+when the daemon restarts.
+
+Response: `{"present": true, "session": { ... }}` — the updated session.
+
+**Errors:** `400` on invalid JSON, an unknown `mode`, or `custom` without a
+`session_id`. `404` if the channel has no review session. `501` if the
+review service is not configured.
 
 ### `POST /api/channels/{id}/review/comments/{cid}/push`
 

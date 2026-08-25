@@ -9,9 +9,11 @@ import {
   pushAllReviewComments,
   pushReviewComment,
   type ReviewComment,
+  type ReviewForkMode,
   type ReviewPR,
   type ReviewSession,
   type ReviewStatus,
+  setReviewFork,
   syncReviewSession,
 } from "../../api/review";
 import { FetchWorkflowRunError, fetchWorkflowRun, startWorkflowRun } from "../../api/workflows";
@@ -213,6 +215,12 @@ export function ReviewPanel({ channelId, subscribeChatEvents, registerReviewView
   });
   const [menuPos, setMenuPos] = useState<{ x: number; y: number } | null>(null);
   const caretRef = useRef<HTMLButtonElement | null>(null);
+  // The fork control is edited locally and committed to the daemon on
+  // change/blur. Two drafts because "custom" is only a legal server-side
+  // choice once an id exists — the dropdown can sit on it while the
+  // adjacent input is still empty.
+  const [forkModeDraft, setForkModeDraft] = useState<ReviewForkMode>("");
+  const [forkDraft, setForkDraft] = useState("");
 
   const hasSession = session !== null && session.status !== "idle" && session.status !== "error";
 
@@ -232,11 +240,20 @@ export function ReviewPanel({ channelId, subscribeChatEvents, registerReviewView
     setSession(null);
     setPrList(null);
     setError(null);
+    setForkModeDraft("");
+    setForkDraft("");
     (async () => {
       try {
         const resp = await getReviewSession(channelId);
         if (cancelled) return;
-        if (resp.present && resp.session) setSession(resp.session);
+        if (resp.present && resp.session) {
+          setSession(resp.session);
+          // Seed the fork control from the daemon's copy. Only here —
+          // later setSession calls (status flips, diff swaps) must not
+          // clobber a half-typed custom session id.
+          setForkModeDraft(resp.session.fork_mode ?? "");
+          setForkDraft(resp.session.fork_session_id ?? "");
+        }
       } catch (e) {
         if (!cancelled) setError(e instanceof Error ? e.message : String(e));
       }
@@ -627,6 +644,39 @@ export function ReviewPanel({ channelId, subscribeChatEvents, registerReviewView
     setMenuPos({ x: r.left, y: r.bottom + 2 });
   }, []);
 
+  // Push the fork choice to the daemon, which stores it on the review
+  // session — the Run button dispatches a workflow, so there is no
+  // per-run request to hang the option off. Reverts the local draft on
+  // failure so the control never shows a choice the daemon didn't take.
+  const commitFork = useCallback(
+    async (m: ReviewForkMode, sid: string) => {
+      setError(null);
+      try {
+        const resp = await setReviewFork(channelId, m, sid);
+        if (resp.present && resp.session) setSession(resp.session);
+      } catch (e) {
+        setError(e instanceof Error ? e.message : String(e));
+        setForkDraft(session?.fork_session_id ?? "");
+      }
+    },
+    [channelId, session?.fork_session_id],
+  );
+
+  const onForkModeChange = useCallback(
+    (m: ReviewForkMode) => {
+      // "custom" needs an id before the daemon will accept it; hold the
+      // selection locally and commit once the user types one in.
+      if (m === "custom") {
+        setForkModeDraft("custom");
+        if (forkDraft.trim()) void commitFork("custom", forkDraft.trim());
+        return;
+      }
+      setForkModeDraft(m);
+      void commitFork(m, "");
+    },
+    [commitFork, forkDraft],
+  );
+
   const onSync = useCallback(async () => {
     setBusy(true);
     setError(null);
@@ -911,6 +961,55 @@ export function ReviewPanel({ channelId, subscribeChatEvents, registerReviewView
                 textAlign: "right",
               }}
             />
+            <select
+              data-testid="review-fork-mode"
+              value={forkModeDraft}
+              onChange={(e) => onForkModeChange(e.target.value as ReviewForkMode)}
+              disabled={runDisabled}
+              aria-label="Session the review run forks from"
+              title="Which Claude session the review run starts from. Forking gives the reviewer the chat's context; it never appends to the chat session."
+              style={{
+                background: "transparent",
+                color: colors.text,
+                border: `1px solid ${colors.border}`,
+                borderRadius: 4,
+                padding: "3px 4px",
+                fontSize: 11,
+                fontFamily: fonts.sans,
+              }}
+            >
+              <option value="">Fresh session</option>
+              <option value="current">Fork chat session</option>
+              <option value="custom">Fork session id...</option>
+            </select>
+            {forkModeDraft === "custom" && (
+              <input
+                data-testid="review-fork-session-id"
+                value={forkDraft}
+                onChange={(e) => setForkDraft(e.target.value)}
+                onBlur={() => {
+                  const v = forkDraft.trim();
+                  if (v && v !== session?.fork_session_id) void commitFork("custom", v);
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") e.currentTarget.blur();
+                }}
+                disabled={runDisabled}
+                placeholder="session id"
+                aria-label="Claude session id to fork"
+                title="Claude session id to fork (from ~/.claude/projects/<project>/<id>.jsonl)"
+                style={{
+                  width: 120,
+                  background: "transparent",
+                  color: colors.text,
+                  border: `1px solid ${session?.fork_session_id ? colors.border : colors.dangerText}`,
+                  borderRadius: 4,
+                  padding: "3px 4px",
+                  fontSize: 11,
+                  fontFamily: fonts.mono,
+                }}
+              />
+            )}
             <div style={{ display: "flex", alignItems: "stretch" }}>
               <button
                 data-testid="review-run-btn"

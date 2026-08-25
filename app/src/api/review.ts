@@ -29,6 +29,11 @@ export interface ReviewComment {
   github_id?: number;
 }
 
+// Which Claude session a review run starts from. "" (the default) runs
+// the review in a fresh session; "current" forks whatever session the
+// channel's chat is on when the run starts; "custom" forks fork_session_id.
+export type ReviewForkMode = "" | "current" | "custom";
+
 export interface ReviewSession {
   channel_id: string;
   pr?: ReviewPR;
@@ -38,6 +43,8 @@ export interface ReviewSession {
   comments: ReviewComment[];
   status: ReviewStatus;
   error?: string;
+  fork_mode?: ReviewForkMode;
+  fork_session_id?: string;
   updated_at: string;
 }
 
@@ -120,6 +127,23 @@ export async function runReview(channelId: string): Promise<{ status: string }> 
   const res = await fetch(`${getApiUrl()}/api/channels/${channelId}/review/run`, { method: "POST" });
   if (!res.ok) throw new Error((await res.text()) || `Failed to start review: ${res.statusText}`);
   return res.json();
+}
+
+/**
+ * Record which Claude session the next review run should fork from. The
+ * choice lives on the review session rather than on the run request
+ * because the Run button dispatches a workflow, and the `loop review run`
+ * CLI inside it has nowhere to carry per-run options. Returns the updated
+ * session so the caller can render the new state without a follow-up GET.
+ */
+export async function setReviewFork(channelId: string, mode: ReviewForkMode, sessionId?: string): Promise<ReviewSessionResponse> {
+  const res = await fetch(`${getApiUrl()}/api/channels/${channelId}/review/fork`, {
+    method: "PUT",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ mode, session_id: sessionId ?? "" }),
+  });
+  if (!res.ok) throw new Error((await res.text()) || `Failed to set fork mode: ${res.statusText}`);
+  return normalizeSession(await res.json());
 }
 
 export async function pushReviewComment(channelId: string, commentId: string): Promise<void> {

@@ -10,6 +10,8 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -23,7 +25,9 @@ import (
 	"github.com/radutopala/loop/internal/config"
 	"github.com/radutopala/loop/internal/db"
 	"github.com/radutopala/loop/internal/githubapi"
+	"github.com/radutopala/loop/internal/osutil"
 	"github.com/radutopala/loop/internal/review"
+	"github.com/radutopala/loop/internal/testutil"
 )
 
 func newServerForReviewTests(t *testing.T) *Server {
@@ -1320,6 +1324,7 @@ type mockReviewRunner struct {
 	lastParent string
 	lastSys    string
 	lastUser   string
+	lastFork   string
 	runFn      func() (*agent.AgentResponse, error)
 	// runWithCtxFn, when set, takes precedence over runFn so tests can
 	// observe ctx cancellation (used by the runReviewAsync timeout test).
@@ -1330,13 +1335,14 @@ type mockReviewRunner struct {
 	done     chan struct{} // closed after Run returns
 }
 
-func (m *mockReviewRunner) Run(ctx context.Context, _, dirPath, parentDirPath, systemPrompt, prompt string, onComment func(*review.Comment)) (*agent.AgentResponse, error) {
+func (m *mockReviewRunner) Run(ctx context.Context, _, dirPath, parentDirPath, systemPrompt, prompt, forkSessionID string, onComment func(*review.Comment)) (*agent.AgentResponse, error) {
 	m.mu.Lock()
 	m.calls++
 	m.lastDir = dirPath
 	m.lastParent = parentDirPath
 	m.lastSys = systemPrompt
 	m.lastUser = prompt
+	m.lastFork = forkSessionID
 	ctxFn := m.runWithCtxFn
 	fn := m.runFn
 	done := m.done
@@ -1497,6 +1503,218 @@ func (s *ReviewHandlerSuite) TestRunHappyPathDispatchesCommentsAndStatus() {
 	sess := s.rs.Get("ch1")
 	require.Len(s.T(), sess.Comments, 1)
 	require.Equal(s.T(), "x.go", sess.Comments[0].Path)
+}
+
+// ---- fork option ----
+
+func (s *ReviewHandlerSuite) putFork(body any) *httptest.ResponseRecorder {
+	buf, err := json.Marshal(body)
+	require.NoError(s.T(), err)
+	return s.doRaw("PUT", "/api/channels/ch1/review/fork", buf)
+}
+
+func (s *ReviewHandlerSuite) TestSetForkReviewStoreNotConfigured() {
+	srv := newServerForReviewTests(s.T())
+	mux := srv.buildMux()
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, httptest.NewRequest("PUT", "/api/channels/ch1/review/fork", nil))
+	require.Equal(s.T(), http.StatusNotImplemented, w.Code)
+}
+
+func (s *ReviewHandlerSuite) TestSetForkBadJSON() {
+	w := s.doRaw("PUT", "/api/channels/ch1/review/fork", []byte("{"))
+	require.Equal(s.T(), http.StatusBadRequest, w.Code)
+}
+
+func (s *ReviewHandlerSuite) TestSetForkRejectsBadInput() {
+	s.rs.Put("ch1", &review.Session{})
+	tests := []struct {
+		name string
+		body reviewForkRequest
+		want string
+	}{
+		{name: "unknown mode", body: reviewForkRequest{Mode: "resume"}, want: "invalid mode"},
+		{name: "custom without id", body: reviewForkRequest{Mode: "custom"}, want: "session_id is required"},
+		{name: "custom with blank id", body: reviewForkRequest{Mode: "custom", SessionID: "  "}, want: "session_id is required"},
+	}
+	for _, tc := range tests {
+		s.Run(tc.name, func() {
+			w := s.putFork(tc.body)
+			require.Equal(s.T(), http.StatusBadRequest, w.Code)
+			require.Contains(s.T(), w.Body.String(), tc.want)
+		})
+	}
+}
+
+func (s *ReviewHandlerSuite) TestSetForkNoSession() {
+	w := s.putFork(reviewForkRequest{Mode: "current"})
+	require.Equal(s.T(), http.StatusNotFound, w.Code)
+}
+
+// The updated session comes back on the response so the FE doesn't have
+// to re-GET to render the new choice.
+func (s *ReviewHandlerSuite) TestSetForkStoresChoiceAndEchoesSession() {
+	tests := []struct {
+		name       string
+		body       reviewForkRequest
+		wantMode   review.ForkMode
+		wantSessID string
+	}{
+		{name: "none", body: reviewForkRequest{Mode: ""}, wantMode: review.ForkNone},
+		{name: "current", body: reviewForkRequest{Mode: "current"}, wantMode: review.ForkCurrent},
+		{name: "custom trims id", body: reviewForkRequest{Mode: "custom", SessionID: " sess-9 "}, wantMode: review.ForkCustom, wantSessID: "sess-9"},
+	}
+	for _, tc := range tests {
+		s.Run(tc.name, func() {
+			s.rs.Put("ch1", &review.Session{})
+			w := s.putFork(tc.body)
+			require.Equal(s.T(), http.StatusOK, w.Code)
+
+			var got reviewSessionResponse
+			require.NoError(s.T(), json.Unmarshal(w.Body.Bytes(), &got))
+			require.True(s.T(), got.Present)
+			require.Equal(s.T(), tc.wantMode, got.Session.ForkMode)
+			require.Equal(s.T(), tc.wantSessID, got.Session.ForkSessionID)
+			require.Equal(s.T(), tc.wantMode, s.rs.Get("ch1").ForkMode)
+		})
+	}
+}
+
+// The refresh that precedes every run replaces the whole session, so the
+// fork choice has to survive it — otherwise the run would always see the
+// default.
+func (s *ReviewHandlerSuite) TestRunForksCurrentChatSession() {
+	s.wireReadySession()
+	require.True(s.T(), s.rs.UpdateFork("ch1", review.ForkCurrent, ""))
+	s.store.ExpectedCalls = nil
+	s.store.On("GetChannel", mock.Anything, "ch1").
+		Return(&db.Channel{ChannelID: "ch1", DirPath: "/repo", SessionID: "chat-sess"}, nil).Maybe()
+
+	sys := new(testutil.MockSystem)
+	sys.On("UserHomeDir").Return("/home/u", nil)
+	sys.On("ReadFile", mock.Anything).Return([]byte("transcript"), nil)
+	sys.On("MkdirAll", mock.Anything, mock.Anything).Return(nil)
+	sys.On("WriteFile", mock.Anything, []byte("transcript"), mock.Anything).Return(nil)
+	s.srv.sys = sys
+
+	runner := &mockReviewRunner{done: make(chan struct{})}
+	s.srv.review.setAgent(runner, "sys", "p")
+
+	w := httptest.NewRecorder()
+	s.mux.ServeHTTP(w, httptest.NewRequest("POST", "/api/channels/ch1/review/run", nil))
+	require.Equal(s.T(), http.StatusAccepted, w.Code)
+	<-runner.done
+
+	require.Equal(s.T(), "chat-sess", runner.lastFork)
+	// Staged from the channel's project dir into the worktree's, so the
+	// agent running with the worktree as CWD can find the transcript.
+	src := filepath.Join("/home/u", ".claude", "projects", osutil.EncodeClaudeProjectPath("/repo"), "chat-sess.jsonl")
+	dst := filepath.Join("/home/u", ".claude", "projects", osutil.EncodeClaudeProjectPath("/repo/.worktrees/pr-7"), "chat-sess.jsonl")
+	sys.AssertCalled(s.T(), "ReadFile", src)
+	sys.AssertCalled(s.T(), "WriteFile", dst, []byte("transcript"), os.FileMode(0o644))
+}
+
+func (s *ReviewHandlerSuite) TestRunForksCustomSession() {
+	s.wireReadySession()
+	require.True(s.T(), s.rs.UpdateFork("ch1", review.ForkCustom, "manual-id"))
+
+	sys := new(testutil.MockSystem)
+	sys.On("UserHomeDir").Return("/home/u", nil)
+	sys.On("ReadFile", mock.Anything).Return([]byte("t"), nil)
+	sys.On("MkdirAll", mock.Anything, mock.Anything).Return(nil)
+	sys.On("WriteFile", mock.Anything, mock.Anything, mock.Anything).Return(nil)
+	s.srv.sys = sys
+
+	runner := &mockReviewRunner{done: make(chan struct{})}
+	s.srv.review.setAgent(runner, "sys", "p")
+
+	w := httptest.NewRecorder()
+	s.mux.ServeHTTP(w, httptest.NewRequest("POST", "/api/channels/ch1/review/run", nil))
+	require.Equal(s.T(), http.StatusAccepted, w.Code)
+	<-runner.done
+	require.Equal(s.T(), "manual-id", runner.lastFork)
+}
+
+// A fork that can't be resolved or staged fails the Run outright rather
+// than leaving the session stuck in Reviewing.
+func (s *ReviewHandlerSuite) TestRunForkFailuresReject() {
+	tests := []struct {
+		name    string
+		setup   func()
+		wantMsg string
+	}{
+		{
+			name: "channel has no chat session yet",
+			setup: func() {
+				require.True(s.T(), s.rs.UpdateFork("ch1", review.ForkCurrent, ""))
+			},
+			wantMsg: "no chat session to fork yet",
+		},
+		{
+			name: "custom id cleared out from under us",
+			setup: func() {
+				require.True(s.T(), s.rs.UpdateFork("ch1", review.ForkCustom, "x"))
+				sess := s.rs.Get("ch1")
+				sess.ForkSessionID = ""
+				s.rs.Put("ch1", sess)
+			},
+			wantMsg: "no session id configured",
+		},
+		{
+			name: "unknown mode",
+			setup: func() {
+				sess := s.rs.Get("ch1")
+				sess.ForkMode = review.ForkMode("bogus")
+				s.rs.Put("ch1", sess)
+			},
+			wantMsg: "unknown fork mode",
+		},
+		{
+			name: "transcript missing on disk",
+			setup: func() {
+				require.True(s.T(), s.rs.UpdateFork("ch1", review.ForkCustom, "gone"))
+				sys := new(testutil.MockSystem)
+				sys.On("UserHomeDir").Return("/home/u", nil)
+				sys.On("ReadFile", mock.Anything).Return(nil, errors.New("no such file"))
+				s.srv.sys = sys
+			},
+			wantMsg: "staging session gone",
+		},
+	}
+	for _, tc := range tests {
+		s.Run(tc.name, func() {
+			s.SetupTest()
+			s.wireReadySession()
+			runner := &mockReviewRunner{done: make(chan struct{})}
+			s.srv.review.setAgent(runner, "sys", "p")
+			tc.setup()
+
+			w := httptest.NewRecorder()
+			s.mux.ServeHTTP(w, httptest.NewRequest("POST", "/api/channels/ch1/review/run", nil))
+			require.Equal(s.T(), http.StatusBadRequest, w.Code)
+			require.Contains(s.T(), w.Body.String(), tc.wantMsg)
+			require.Equal(s.T(), 0, runner.calls)
+			// The run slot is released, so a corrected retry isn't
+			// swallowed as a coalesced duplicate.
+			require.Equal(s.T(), review.StatusReady, s.rs.Get("ch1").Status)
+		})
+	}
+}
+
+// ForkCurrent needs the channel store to look the session id up; without
+// one there is nothing to fork.
+func (s *ReviewHandlerSuite) TestPrepareForkSessionNoChannelStore() {
+	s.srv.review.deps = &serverDeps{logger: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	_, err := s.srv.review.prepareForkSession(context.Background(),
+		&review.Session{ForkMode: review.ForkCurrent}, "ch1", "/repo", "/wt")
+	require.ErrorContains(s.T(), err, "channel storage not configured")
+}
+
+func (s *ReviewHandlerSuite) TestPrepareForkSessionChannelLookupFails() {
+	s.store.On("GetChannel", mock.Anything, "ch1").Return(nil, errors.New("db down"))
+	_, err := s.srv.review.prepareForkSession(context.Background(),
+		&review.Session{ForkMode: review.ForkCurrent}, "ch1", "/repo", "/wt")
+	require.ErrorContains(s.T(), err, "channel not found")
 }
 
 func (s *ReviewHandlerSuite) TestIngestCommentsSessionsNotConfigured() {

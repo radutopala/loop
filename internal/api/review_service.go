@@ -64,7 +64,7 @@ type GitHubReview interface {
 // held as an interface so tests can drive the handler without a real
 // agent container.
 type ReviewRunner interface {
-	Run(ctx context.Context, channelID, dirPath, parentDirPath, systemPrompt, prompt string, onComment func(*review.Comment)) (*agent.AgentResponse, error)
+	Run(ctx context.Context, channelID, dirPath, parentDirPath, systemPrompt, prompt, forkSessionID string, onComment func(*review.Comment)) (*agent.AgentResponse, error)
 }
 
 // refreshReviewSession fast-forwards the worktree to the PR's current
@@ -111,6 +111,10 @@ func (s *reviewService) refreshReviewSession(ctx context.Context, channelID, dir
 		RawDiff:      raw,
 		Comments:     merged,
 		Status:       review.StatusReady,
+		// Put replaces the whole session, so the user's fork choice has to
+		// be carried across — Run refreshes right before it reads it.
+		ForkMode:      sess.ForkMode,
+		ForkSessionID: sess.ForkSessionID,
 	})
 	if raw != sess.RawDiff {
 		if hub := s.deps.eventsHub; hub != nil {
@@ -217,7 +221,7 @@ func (s *reviewService) pushOneComment(ctx context.Context, channelID string, se
 // message instead of staying at status=reviewing forever. Without this
 // gate, a hung container would leak the goroutine and any CLI/FE poller
 // would keep hitting status=reviewing until its own deadline fired.
-func (s *reviewService) runReviewAsync(runCtx context.Context, channelID, worktreePath, parentDirPath, systemPrompt, prompt string) {
+func (s *reviewService) runReviewAsync(runCtx context.Context, channelID, worktreePath, parentDirPath, systemPrompt, prompt, forkSessionID string) {
 	defer s.unregisterReviewRun(channelID)
 	ctx := runCtx
 	if s.runTimeout > 0 {
@@ -232,7 +236,7 @@ func (s *reviewService) runReviewAsync(runCtx context.Context, channelID, worktr
 	onComment := func(c *review.Comment) {
 		s.ingestComment(channelID, worktreePath, parentDirPath, c)
 	}
-	_, err := s.runner.Run(ctx, channelID, worktreePath, parentDirPath, systemPrompt, prompt, onComment)
+	_, err := s.runner.Run(ctx, channelID, worktreePath, parentDirPath, systemPrompt, prompt, forkSessionID, onComment)
 	if err != nil {
 		msg := err.Error()
 		// Re-shape ctx-deadline into a user-readable message. errors.Is
@@ -390,6 +394,52 @@ func (s *reviewService) broadcastReviewStatus(channelID string, status review.St
 		Status: string(status),
 		Error:  errMsg,
 	})
+}
+
+// prepareForkSession resolves the session the run should fork from and
+// stages its transcript where the agent will look for it. Returns "" when
+// the session isn't configured to fork, which is the default — the run
+// then starts from a blank session, as it always did.
+//
+// ForkCurrent is resolved here rather than when the user picks it: the
+// channel's session id moves as the conversation does (compaction, a fork
+// of its own), and the useful thing to review against is whatever the chat
+// is on when the run starts.
+//
+// The transcript has to be copied because the agent's CWD is the PR
+// worktree, and Claude Code keys its session files by CWD — the chat's
+// transcript lives under the channel dir's project key, where a run rooted
+// in the worktree will never find it. Same staging the worktree-thread
+// fork does; see worktree.Creator.Create.
+func (s *reviewService) prepareForkSession(ctx context.Context, sess *review.Session, channelID, channelDirPath, worktreePath string) (string, error) {
+	var sessionID string
+	switch sess.ForkMode {
+	case review.ForkCurrent:
+		if s.deps.store == nil {
+			return "", errors.New("cannot fork the chat session: channel storage not configured")
+		}
+		ch, err := s.deps.store.GetChannel(ctx, channelID)
+		if err != nil || ch == nil {
+			return "", errors.New("cannot fork the chat session: channel not found")
+		}
+		sessionID = ch.SessionID
+		if sessionID == "" {
+			return "", errors.New("channel has no chat session to fork yet — send a message first, or enter a session id")
+		}
+	case review.ForkCustom:
+		sessionID = sess.ForkSessionID
+		if sessionID == "" {
+			return "", errors.New("no session id configured to fork")
+		}
+	case review.ForkNone:
+		return "", nil
+	default:
+		return "", fmt.Errorf("unknown fork mode %q", sess.ForkMode)
+	}
+	if err := copyClaudeSessionFile(s.deps.sys, channelDirPath, worktreePath, sessionID); err != nil {
+		return "", fmt.Errorf("staging session %s for the review worktree: %w", sessionID, err)
+	}
+	return sessionID, nil
 }
 
 // setBackends wires the gh client, session store, and PR-worktree

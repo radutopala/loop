@@ -54,6 +54,25 @@ const (
 	StatusError     Status = "error"
 )
 
+// ForkMode selects which Claude session a review run starts from. The
+// zero value is the historical behaviour — every run gets a brand-new
+// session that knows nothing about the channel's conversation.
+//
+// Forking is always a fork, never a plain resume: the review agent must
+// not append its turns to the chat session the user is still talking to.
+type ForkMode string
+
+const (
+	// ForkNone runs the review in a fresh session (default).
+	ForkNone ForkMode = ""
+	// ForkCurrent forks whatever session the channel is on at run time.
+	// Resolved per run, not pinned at selection time, so a session that
+	// rolls over (compaction, a fork of its own) is picked up.
+	ForkCurrent ForkMode = "current"
+	// ForkCustom forks the session id the user typed in.
+	ForkCustom ForkMode = "custom"
+)
+
 // Session is the per-channel review state. All mutations go through
 // Store so the mutex stays inside the package.
 type Session struct {
@@ -66,6 +85,13 @@ type Session struct {
 	Status       Status            `json:"status"`
 	Error        string            `json:"error,omitempty"`
 	UpdatedAt    time.Time         `json:"updated_at"`
+	// ForkMode / ForkSessionID are the user's choice for what the *next*
+	// run forks from. They live on the session (not the request) so the
+	// choice survives the FE's workflow-driven Run button, which reaches
+	// /review/run through the CLI inside a workflow node and has nowhere
+	// to put per-run options.
+	ForkMode      ForkMode `json:"fork_mode,omitempty"`
+	ForkSessionID string   `json:"fork_session_id,omitempty"`
 }
 
 // Store is the in-memory registry of active sessions keyed by channel id.
@@ -148,6 +174,26 @@ func (s *Store) UpdateStatus(channelID string, status Status, errMsg string) boo
 	}
 	sess.Status = status
 	sess.Error = errMsg
+	sess.UpdatedAt = time.Now()
+	return true
+}
+
+// UpdateFork records which session the next review run should fork.
+// sessionID is only meaningful for ForkCustom and is cleared otherwise,
+// so a mode switch can't leave a stale id behind to be picked up later.
+// Returns false if no session exists for channelID.
+func (s *Store) UpdateFork(channelID string, mode ForkMode, sessionID string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	sess, ok := s.sessions[channelID]
+	if !ok {
+		return false
+	}
+	sess.ForkMode = mode
+	sess.ForkSessionID = ""
+	if mode == ForkCustom {
+		sess.ForkSessionID = sessionID
+	}
 	sess.UpdatedAt = time.Now()
 	return true
 }

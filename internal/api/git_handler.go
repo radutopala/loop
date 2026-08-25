@@ -796,13 +796,20 @@ func (s *Server) handleSetWorktreeLocked(w http.ResponseWriter, r *http.Request)
 // copySessionFile copies a Claude session file from the parent project dir
 // to the worktree project dir so that --resume --fork-session can find it.
 func (s *Server) copySessionFile(parentDirPath, worktreeDirPath, sessionID string) error {
+	return copyClaudeSessionFile(s.sys, parentDirPath, worktreeDirPath, sessionID)
+}
+
+// copyClaudeSessionFile is the sys-injected form of copySessionFile, shared
+// with the review panel's fork option (which lives on reviewService, not
+// Server, and so can't reach the method above).
+func copyClaudeSessionFile(sys serverSystem, parentDirPath, worktreeDirPath, sessionID string) error {
 	// Sanitise sessionID to prevent path traversal.
 	sessionID = filepath.Base(sessionID)
 	if sessionID == "." || sessionID == ".." || sessionID == "" {
 		return fmt.Errorf("invalid session ID")
 	}
 
-	home, err := s.sys.UserHomeDir()
+	home, err := sys.UserHomeDir()
 	if err != nil {
 		return fmt.Errorf("getting home dir: %w", err)
 	}
@@ -811,14 +818,14 @@ func (s *Server) copySessionFile(parentDirPath, worktreeDirPath, sessionID strin
 	dstDir := filepath.Join(home, ".claude", "projects", osutil.EncodeClaudeProjectPath(worktreeDirPath))
 	dst := filepath.Join(dstDir, sessionID+".jsonl")
 
-	data, err := s.sys.ReadFile(src)
+	data, err := sys.ReadFile(src)
 	if err != nil {
 		return fmt.Errorf("reading session file: %w", err)
 	}
-	if err := s.sys.MkdirAll(dstDir, 0o755); err != nil {
+	if err := sys.MkdirAll(dstDir, 0o755); err != nil {
 		return fmt.Errorf("creating project dir: %w", err)
 	}
-	if err := s.sys.WriteFile(dst, data, 0o644); err != nil {
+	if err := sys.WriteFile(dst, data, 0o644); err != nil {
 		return fmt.Errorf("writing session file: %w", err)
 	}
 	return nil
