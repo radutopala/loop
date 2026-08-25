@@ -2,7 +2,7 @@
 
 # Loop
 
-[![Go](https://img.shields.io/badge/Go-1.26-blue)](https://go.dev/) [![CI](https://github.com/radutopala/loop/actions/workflows/ci.yaml/badge.svg)](https://github.com/radutopala/loop/actions/workflows/ci.yaml) [![coverage](https://img.shields.io/badge/coverage-100%25-brightgreen)](https://github.com/radutopala/loop/actions/workflows/ci.yaml) [![release](https://img.shields.io/github/v/release/radutopala/loop)](https://github.com/radutopala/loop/releases/latest) [![docs](https://img.shields.io/badge/docs-radutopala.github.io%2Floop-blue)](https://radutopala.github.io/loop/) [![license](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
+[![Go](https://img.shields.io/badge/Go-1.27-blue)](https://go.dev/) [![CI](https://github.com/radutopala/loop/actions/workflows/ci.yaml/badge.svg)](https://github.com/radutopala/loop/actions/workflows/ci.yaml) [![coverage](https://img.shields.io/badge/coverage-100%25-brightgreen)](https://github.com/radutopala/loop/actions/workflows/ci.yaml) [![release](https://img.shields.io/github/v/release/radutopala/loop)](https://github.com/radutopala/loop/releases/latest) [![docs](https://img.shields.io/badge/docs-radutopala.github.io%2Floop-blue)](https://radutopala.github.io/loop/) [![license](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 
 AI agents powered by Claude, running in Docker containers. Use the **desktop app** for a local-first experience, or connect to **Slack** / **Discord** for team collaboration — or run all three at once.
 
@@ -544,7 +544,7 @@ Relative paths in project mounts (e.g., `./data`) are resolved relative to the p
 
 The agent Docker image is auto-built on first `loop serve` / `loop daemon:start` if it doesn't exist. The Dockerfile and entrypoint are embedded in the binary: `loop onboard:global` writes the initial baseline to `~/.loop/container/`, and each `loop serve` startup refreshes the versioned files so they track the running binary. Local edits are preserved as `<name>.bkp` before any overwrite (see [Global onboard details](#global-onboard-details)).
 
-The default image ships with Go 1.26, Node.js, and common development tools. You can build any custom Dockerfile to suit your stack — edit `~/.loop/container/Dockerfile`, then `docker rmi loop-agent:latest` and restart.
+The default image ships with Go 1.27, Node.js, and common development tools. You can build any custom Dockerfile to suit your stack — edit `~/.loop/container/Dockerfile`, then `docker rmi loop-agent:latest` and restart.
 
 For development: `make docker-build` builds from `container/Dockerfile` in the repo.
 
@@ -1173,7 +1173,7 @@ In headless/Linux environments where Electron can't launch, `LOOP_NO_ELECTRON=1 
 
 ## Development
 
-Requires [Go 1.26+](https://go.dev/dl/).
+Requires [Go 1.27+](https://go.dev/dl/).
 
 ```sh
 make build            # Build the loop binary

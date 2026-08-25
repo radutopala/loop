@@ -122,7 +122,7 @@ lint-go: ## Run golangci-lint (with auto-fix)
 		echo "error: another loop-lint container is already running; aborting" >&2; \
 		exit 1; \
 	fi
-	docker run --rm --name loop-lint -v "$$(pwd)":/app -v /app/app/node_modules -w /app golangci/golangci-lint:v2.11.4 golangci-lint run -v --fix ./...
+	docker run --rm --name loop-lint -v "$$(pwd)":/app -v /app/app/node_modules -w /app golangci/golangci-lint:v2.13.1 golangci-lint run -v --fix ./...
 
 lint-app: ## Run biome (with auto-fix) + tsc typecheck on the app
 	@if [ -n "$$(docker ps --filter name=^loop-lint-biome$$ --quiet)" ]; then \
@@ -150,7 +150,7 @@ coverage-check: ## Run tests and enforce 100% coverage (via Docker on host, dire
 	@if [ "$$CI" = "true" ] || [ -f /.dockerenv ]; then \
 		$(MAKE) _coverage-check-run; \
 	else \
-		docker run --rm -v "$$(pwd)":/app -w /app golang:1.26 make _coverage-check-run; \
+		docker run --rm -v "$$(pwd)":/app -w /app golang:1.27 make _coverage-check-run; \
 	fi
 
 # Hugo version pinned to match .github/workflows/pages.yaml so local
@@ -305,7 +305,7 @@ CODEQL_VERSION ?= v2.25.2
 codeql-download: ## Download CodeQL bundle into Docker volume (one-time)
 	@echo "==> Downloading CodeQL $(CODEQL_VERSION) (linux64)..."
 	@curl -fsSL "https://github.com/github/codeql-action/releases/download/codeql-bundle-$(CODEQL_VERSION)/codeql-bundle-linux64.tar.gz" \
-		| docker run --rm -i --platform linux/amd64 -v loop-codeql:/opt/codeql golang:1.26 tar xz -C /opt/codeql
+		| docker run --rm -i --platform linux/amd64 -v loop-codeql:/opt/codeql golang:1.27 tar xz -C /opt/codeql
 	@echo "==> Cached in volume loop-codeql"
 
 codeql: ## Run CodeQL security analysis locally (via Docker)
@@ -315,7 +315,7 @@ codeql: ## Run CodeQL security analysis locally (via Docker)
 		-v loop-codeql:/opt/codeql \
 		-v loop-codeql-db:/db \
 		-w /src \
-		golang:1.26 bash -c '\
+		golang:1.27 bash -c '\
 		set -e; \
 		if [ ! -x /opt/codeql/codeql/codeql ]; then \
 			echo "CodeQL not cached — run: make codeql-download" >&2; exit 1; \

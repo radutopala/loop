@@ -27,7 +27,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v6
         with:
-          go-version: "1.26"
+          go-version: "1.27"
 
       - name: Run tests and enforce 100% coverage
         run: make coverage-check
@@ -38,7 +38,7 @@ jobs:
       - uses: actions/checkout@v6
       - uses: actions/setup-go@v6
         with:
-          go-version: "1.26"
+          go-version: "1.27"
       - run: go generate ./internal/readme/
       - uses: golangci/golangci-lint-action@v9
 
@@ -55,7 +55,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v6
         with:
-          go-version: "1.26"
+          go-version: "1.27"
 
       - name: Build
         env:
@@ -75,7 +75,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v6
         with:
-          go-version: "1.26"
+          go-version: "1.27"
 
       - name: Run Windows terminal tests
         run: go test -race -count=1 -v ./internal/terminal/

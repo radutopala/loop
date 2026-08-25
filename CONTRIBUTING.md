@@ -4,7 +4,7 @@ Thanks for contributing! This page covers the local dev setup and the checks a c
 
 ## Backend (Go)
 
-Requires [Go 1.26+](https://go.dev/dl/) and Docker (several make targets run inside containers).
+Requires [Go 1.27+](https://go.dev/dl/) and Docker (several make targets run inside containers).
 
 ```sh
 make build            # Build the loop binary (runs go generate first)
