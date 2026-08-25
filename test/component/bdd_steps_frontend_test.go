@@ -5,6 +5,7 @@ package component
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -1194,44 +1195,57 @@ func (tc *TestContext) assertElementNotExist(selector string) error {
 }
 
 func (tc *TestContext) addPanel(panelName string) error {
-	// Click "Add panel" button, wait for dropdown, then click the panel option.
-	// The dropdown is a grid of buttons inside a position:absolute div near
-	// the "Add panel" button. Each button has text like "Chat ↓", "Tasks →", etc.
-	js := fmt.Sprintf(`
-		(function() {
-			// Click the Add panel button to open the dropdown.
+	// Click "Add panel", wait for the dropdown, then click the panel option.
+	// The dropdown is portaled to document.body as [data-testid="add-panel-menu"];
+	// each button has text like "Chat ↓", "Tasks →", etc.
+	//
+	// This is deliberately three plain evaluations rather than one that returns
+	// a setTimeout-backed Promise: awaiting a pending Promise across the CDP
+	// boundary lets V8 collect it before it settles, which showed up as a flaky
+	// `addPanel: Promise was collected (-32000)`. Polling for the dropdown is
+	// also faster than a fixed sleep and matches the rest of this suite.
+	openJS := `(() => {
+		const addBtn = document.querySelector('button[title="Add panel"]');
+		if (!addBtn) return false;
+		addBtn.click();
+		return true;
+	})()`
+	// Singleton panels (Tasks, Git, Memory, ...) render the option disabled when
+	// one is already open. Treat that as a no-op so the step stays idempotent
+	// when navigating back to a channel whose saved layout already has the
+	// panel, and re-click the toggle to close the dropdown so it does not block
+	// later clicks.
+	clickJS := fmt.Sprintf(`(() => {
+		const dropdown = document.querySelector('[data-testid="add-panel-menu"]');
+		if (!dropdown) return "no dropdown found";
+		const btn = Array.from(dropdown.querySelectorAll('button')).find(
+			b => b.textContent.includes('%s')
+		);
+		if (!btn) return "panel option not found in dropdown";
+		if (btn.disabled) {
 			const addBtn = document.querySelector('button[title="Add panel"]');
-			if (!addBtn) return "no Add panel button found";
-			addBtn.click();
+			if (addBtn) addBtn.click();
+			return "ok";
+		}
+		btn.click();
+		return "ok";
+	})()`, panelName)
 
-			// Wait a tick for React to render the dropdown.
-			return new Promise(resolve => {
-				setTimeout(() => {
-					// The menu is portaled to document.body with data-testid="add-panel-menu".
-					const dropdown = document.querySelector('[data-testid="add-panel-menu"]');
-					if (!dropdown) { resolve("no dropdown found"); return; }
-					const btn = Array.from(dropdown.querySelectorAll('button')).find(
-						b => b.textContent.includes('%s')
-					);
-					if (!btn) { resolve("panel option not found in dropdown"); return; }
-					// Singleton panels (Tasks, Git, Memory, ...) render the option
-					// disabled when one is already open. Treat as a no-op so the
-					// step is idempotent across navigation back to a channel whose
-					// saved layout already contains the panel; close the dropdown
-					// by re-clicking the toggle so it doesn't block later clicks.
-					if (btn.disabled) { addBtn.click(); resolve("ok"); return; }
-					btn.click();
-					resolve("ok");
-				}, 300);
-			});
-		})()
-	`, panelName)
+	var opened bool
 	var result string
-	if err := chromedp.Run(tc.chromeTab.ctx,
-		chromedp.Evaluate(js, &result, func(ep *runtime.EvaluateParams) *runtime.EvaluateParams {
-			return ep.WithAwaitPromise(true)
+	err := chromedp.Run(tc.chromeTab.ctx,
+		chromedp.Evaluate(openJS, &opened),
+		chromedp.ActionFunc(func(ctx context.Context) error {
+			if !opened {
+				return errors.New("no Add panel button found")
+			}
+			return nil
 		}),
-	); err != nil {
+		chromedp.Poll(`!!document.querySelector('[data-testid="add-panel-menu"]')`, nil,
+			chromedp.WithPollingTimeout(10*time.Second)),
+		chromedp.Evaluate(clickJS, &result),
+	)
+	if err != nil {
 		return fmt.Errorf("addPanel %q: %w", panelName, err)
 	}
 	if result != "ok" {
