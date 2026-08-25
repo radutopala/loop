@@ -163,13 +163,33 @@ func (e *TaskExecutor) ExecuteTask(ctx context.Context, task *db.ScheduledTask) 
 		}
 	}
 
+	// Track the root project dir for worktree config inheritance (gates,
+	// model, MCP servers) via worktreeRootFor, which walks to the nearest
+	// non-worktree ancestor. Covers:
+	// 1. task.Worktree=true on a plain channel → executor creates a worktree;
+	//    the channel's own DirPath is the root.
+	// 2. task.Worktree=true on a worktree channel (or a thread under one) →
+	//    the task creates a NESTED worktree; the chain must anchor at the
+	//    root checkout, not the intermediate worktree (whose untracked
+	//    .loop/config.json doesn't exist).
+	// 3. task on a worktree channel, or on a thread under one → same root
+	//    resolution, otherwise the root project's .loop/config.json is
+	//    silently ignored for the runs.
+	parentDirPath := ""
+	if channel != nil {
+		parentDirPath = worktreeRootFor(ctx, e.store, channel)
+		if parentDirPath == "" && task.Worktree {
+			parentDirPath = channel.DirPath
+		}
+	}
+
 	// Bash tasks: run the script in the channel's agent container instead of
 	// an agent prompt. They share the worktree block above (thread-keyed, so a
 	// recurring task reuses the worktree through its thread's DirPath) and get
 	// the same thread behavior as prompt tasks: a sub-thread on first run
 	// (a worktree thread when worktree is checked), reused afterwards.
 	if task.BashScript != "" {
-		return e.executeBashTask(ctx, task, dirPath, channel, worktreeCreated)
+		return e.executeBashTask(ctx, task, dirPath, parentDirPath, channel, worktreeCreated)
 	}
 
 	// Determine which session to resume:
@@ -189,25 +209,6 @@ func (e *TaskExecutor) ExecuteTask(ctx context.Context, task *db.ScheduledTask) 
 	systemPrompt := "IMPORTANT: Do NOT use the send_message, create_thread, or create_channel MCP tools. Your text responses are automatically delivered to the chat. Just respond with text directly. You MAY use queue_message to enqueue a follow-up prompt for yourself in this task's thread."
 	if task.AutoDeleteSec > 0 {
 		systemPrompt += "\nIf you have nothing meaningful to report, start your response with [EPHEMERAL]. Otherwise respond normally."
-	}
-	// Track the root project dir for worktree config inheritance (gates,
-	// model, MCP servers) via worktreeRootFor, which walks to the nearest
-	// non-worktree ancestor. Covers:
-	// 1. task.Worktree=true on a plain channel → executor creates a worktree;
-	//    the channel's own DirPath is the root.
-	// 2. task.Worktree=true on a worktree channel (or a thread under one) →
-	//    the task creates a NESTED worktree; the chain must anchor at the
-	//    root checkout, not the intermediate worktree (whose untracked
-	//    .loop/config.json doesn't exist).
-	// 3. task on a worktree channel, or on a thread under one → same root
-	//    resolution, otherwise the root project's .loop/config.json is
-	//    silently ignored for the runs.
-	parentDirPath := ""
-	if channel != nil {
-		parentDirPath = worktreeRootFor(ctx, e.store, channel)
-		if parentDirPath == "" && task.Worktree {
-			parentDirPath = channel.DirPath
-		}
 	}
 
 	// Prepend git update instructions to the user prompt when enabled.

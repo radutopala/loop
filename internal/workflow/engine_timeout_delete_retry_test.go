@@ -30,7 +30,7 @@ func (s *EngineSuite) TestNodeTimeoutBashNode() {
 	s.expectRunPersistence()
 	done := s.waitForTerminalStatus()
 
-	s.bashRunner.On("RunBash", mock.Anything, "sleep 100", "", "").
+	s.bashRunner.On("RunBash", mock.Anything, "sleep 100", "", "", "").
 		Run(func(args mock.Arguments) {
 			ctx := args.Get(0).(context.Context)
 			<-ctx.Done() // block until node timeout cancels context
@@ -108,7 +108,7 @@ func (s *EngineSuite) TestNodeTimeoutNotTriggeredWhenFast() {
 	s.expectRunPersistence()
 	done := s.waitForRunStatus()
 
-	s.bashRunner.On("RunBash", mock.Anything, "echo fast", "", "").Return("fast\n", nil)
+	s.bashRunner.On("RunBash", mock.Anything, "echo fast", "", "", "").Return("fast\n", nil)
 
 	_, err := s.engine.StartRun(context.Background(), StartRunOptions{WorkflowName: "fast-with-timeout"})
 	require.NoError(s.T(), err)
@@ -129,7 +129,7 @@ func (s *EngineSuite) TestNodeTimeoutInvalidDurationIgnored() {
 	s.expectRunPersistence()
 	done := s.waitForRunStatus()
 
-	s.bashRunner.On("RunBash", mock.Anything, "echo ok", "", "").Return("ok\n", nil)
+	s.bashRunner.On("RunBash", mock.Anything, "echo ok", "", "", "").Return("ok\n", nil)
 
 	_, err := s.engine.StartRun(context.Background(), StartRunOptions{WorkflowName: "bad-node-timeout"})
 	require.NoError(s.T(), err)
@@ -164,7 +164,7 @@ func (s *EngineSuite) TestWorkflowTimeout() {
 		}
 	}).Return(nil)
 
-	s.bashRunner.On("RunBash", mock.Anything, "sleep 100", "", "").
+	s.bashRunner.On("RunBash", mock.Anything, "sleep 100", "", "", "").
 		Run(func(args mock.Arguments) {
 			ctx := args.Get(0).(context.Context)
 			<-ctx.Done()
@@ -197,7 +197,7 @@ func (s *EngineSuite) TestWorkflowTimeoutNotTriggeredWhenFast() {
 	s.expectRunPersistence()
 	done := s.waitForRunStatus()
 
-	s.bashRunner.On("RunBash", mock.Anything, "echo fast", "", "").Return("fast\n", nil)
+	s.bashRunner.On("RunBash", mock.Anything, "echo fast", "", "", "").Return("fast\n", nil)
 
 	_, err := s.engine.StartRun(context.Background(), StartRunOptions{WorkflowName: "fast-wf-timeout"})
 	require.NoError(s.T(), err)
@@ -232,7 +232,7 @@ func (s *EngineSuite) TestCreateRunContextWithTimeout() {
 
 func (s *EngineSuite) TestDeleteRunHappyPath() {
 	// Deleting a completed run should call DeleteWorkflowRun and broadcast the event.
-	s.store.ExpectedCalls = nil
+	s.resetStore()
 	s.store.On("GetWorkflowRun", mock.Anything, "r1").Return(&db.WorkflowRun{
 		ID:           "r1",
 		WorkflowName: "my-wf",
@@ -263,7 +263,7 @@ func (s *EngineSuite) TestDeleteRunHappyPath() {
 }
 
 func (s *EngineSuite) TestDeleteRunNotFound() {
-	s.store.ExpectedCalls = nil
+	s.resetStore()
 	s.store.On("GetWorkflowRun", mock.Anything, "missing").Return(nil, nil)
 
 	err := s.engine.DeleteRun(context.Background(), "missing")
@@ -271,7 +271,7 @@ func (s *EngineSuite) TestDeleteRunNotFound() {
 }
 
 func (s *EngineSuite) TestDeleteRunGetWorkflowRunError() {
-	s.store.ExpectedCalls = nil
+	s.resetStore()
 	s.store.On("GetWorkflowRun", mock.Anything, "r1").Return(nil, fmt.Errorf("db error"))
 
 	err := s.engine.DeleteRun(context.Background(), "r1")
@@ -280,7 +280,7 @@ func (s *EngineSuite) TestDeleteRunGetWorkflowRunError() {
 
 func (s *EngineSuite) TestDeleteRunDeleteStoreError() {
 	// When DeleteWorkflowRun fails the error should be wrapped and returned.
-	s.store.ExpectedCalls = nil
+	s.resetStore()
 	s.store.On("GetWorkflowRun", mock.Anything, "r1").Return(&db.WorkflowRun{
 		ID:     "r1",
 		Status: db.WorkflowRunStatusCompleted,
@@ -294,7 +294,7 @@ func (s *EngineSuite) TestDeleteRunDeleteStoreError() {
 
 func (s *EngineSuite) TestDeleteRunActiveRunCancelledBeforeDelete() {
 	// Deleting a running run should cancel it first, then delete.
-	s.store.ExpectedCalls = nil
+	s.resetStore()
 	// GetWorkflowRun is called twice: once in DeleteRun, once in CancelRun.
 	s.store.On("GetWorkflowRun", mock.Anything, "r-running").
 		Return(&db.WorkflowRun{ID: "r-running", WorkflowName: "wf", ChannelID: "ch1", Status: db.WorkflowRunStatusRunning}, nil).Once()
@@ -312,7 +312,7 @@ func (s *EngineSuite) TestDeleteRunActiveRunCancelledBeforeDelete() {
 
 func (s *EngineSuite) TestDeleteRunPausedRunCancelledBeforeDelete() {
 	// Deleting a paused run should also cancel it first.
-	s.store.ExpectedCalls = nil
+	s.resetStore()
 	s.store.On("GetWorkflowRun", mock.Anything, "r-paused").
 		Return(&db.WorkflowRun{ID: "r-paused", WorkflowName: "wf", ChannelID: "ch2", Status: db.WorkflowRunStatusPaused}, nil).Once()
 	s.store.On("GetWorkflowRun", mock.Anything, "r-paused").
@@ -333,7 +333,7 @@ func (s *EngineSuite) TestDeleteRunNilBroadcaster() {
 		return nil
 	}, "", config.WorkflowConcurrency{}, slog.Default())
 
-	s.store.ExpectedCalls = nil
+	s.resetStore()
 	s.store.On("GetWorkflowRun", mock.Anything, "r-nobc").Return(&db.WorkflowRun{
 		ID:     "r-nobc",
 		Status: db.WorkflowRunStatusFailed,
@@ -355,7 +355,7 @@ func (s *EngineSuite) TestRetryRunHappyPath() {
 		},
 	}
 
-	s.store.ExpectedCalls = nil
+	s.resetStore()
 	s.store.On("UpdateNodeHeartbeat", mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Maybe()
 	// First call returns the original run; subsequent calls from the async DAG
 	// (finalizeDAG, updateRunStatus) return a running run.
@@ -373,7 +373,7 @@ func (s *EngineSuite) TestRetryRunHappyPath() {
 	s.expectRunPersistence()
 	// Accept UpdateWorkflowRun from the async DAG execution.
 	s.store.On("UpdateWorkflowRun", mock.Anything, mock.Anything).Return(nil)
-	s.bashRunner.On("RunBash", mock.Anything, "echo ok", "ch1", "/work").Return("ok", nil)
+	s.bashRunner.On("RunBash", mock.Anything, "echo ok", "ch1", "/work", "").Return("ok", nil)
 
 	newID, err := s.engine.RetryRun(context.Background(), "original")
 	require.NoError(s.T(), err)
@@ -382,7 +382,7 @@ func (s *EngineSuite) TestRetryRunHappyPath() {
 }
 
 func (s *EngineSuite) TestRetryRunNotFound() {
-	s.store.ExpectedCalls = nil
+	s.resetStore()
 	s.store.On("GetWorkflowRun", mock.Anything, "missing").Return(nil, nil)
 
 	_, err := s.engine.RetryRun(context.Background(), "missing")
@@ -390,7 +390,7 @@ func (s *EngineSuite) TestRetryRunNotFound() {
 }
 
 func (s *EngineSuite) TestRetryRunGetWorkflowRunError() {
-	s.store.ExpectedCalls = nil
+	s.resetStore()
 	s.store.On("GetWorkflowRun", mock.Anything, "r1").Return(nil, fmt.Errorf("db error"))
 
 	_, err := s.engine.RetryRun(context.Background(), "r1")
@@ -399,7 +399,7 @@ func (s *EngineSuite) TestRetryRunGetWorkflowRunError() {
 
 func (s *EngineSuite) TestRetryRunStillRunning() {
 	// Cannot retry a run that is still active.
-	s.store.ExpectedCalls = nil
+	s.resetStore()
 	s.store.On("GetWorkflowRun", mock.Anything, "r-active").Return(&db.WorkflowRun{
 		ID:     "r-active",
 		Status: db.WorkflowRunStatusRunning,
@@ -411,7 +411,7 @@ func (s *EngineSuite) TestRetryRunStillRunning() {
 
 func (s *EngineSuite) TestRetryRunStillPaused() {
 	// Cannot retry a run that is paused.
-	s.store.ExpectedCalls = nil
+	s.resetStore()
 	s.store.On("GetWorkflowRun", mock.Anything, "r-paused").Return(&db.WorkflowRun{
 		ID:     "r-paused",
 		Status: db.WorkflowRunStatusPaused,
@@ -423,7 +423,7 @@ func (s *EngineSuite) TestRetryRunStillPaused() {
 
 func (s *EngineSuite) TestRetryRunInvalidInputsJSON() {
 	// If the stored inputs JSON is malformed, RetryRun should return an error.
-	s.store.ExpectedCalls = nil
+	s.resetStore()
 	s.store.On("GetWorkflowRun", mock.Anything, "r-bad").Return(&db.WorkflowRun{
 		ID:           "r-bad",
 		WorkflowName: "some-wf",
@@ -444,7 +444,7 @@ func (s *EngineSuite) TestRetryRunWithNoInputs() {
 		},
 	}
 
-	s.store.ExpectedCalls = nil
+	s.resetStore()
 	s.store.On("UpdateNodeHeartbeat", mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Maybe()
 	// First call returns the original (completed) run; async DAG calls get a running run.
 	s.store.On("GetWorkflowRun", mock.Anything, "r-noinput").Return(&db.WorkflowRun{
@@ -459,7 +459,7 @@ func (s *EngineSuite) TestRetryRunWithNoInputs() {
 	).Maybe()
 	s.expectRunPersistence()
 	s.store.On("UpdateWorkflowRun", mock.Anything, mock.Anything).Return(nil)
-	s.bashRunner.On("RunBash", mock.Anything, "echo hi", "ch1", "").Return("hi", nil)
+	s.bashRunner.On("RunBash", mock.Anything, "echo hi", "ch1", "", "").Return("hi", nil)
 
 	newID, err := s.engine.RetryRun(context.Background(), "r-noinput")
 	require.NoError(s.T(), err)
@@ -471,7 +471,7 @@ func (s *EngineSuite) TestRetryRunWorkflowNotFound() {
 	// propagate the error returned by StartRun.
 	s.workflows = nil // no workflows defined
 
-	s.store.ExpectedCalls = nil
+	s.resetStore()
 	// Only one GetWorkflowRun call is made (for the original run); StartRun
 	// fails immediately with "workflow not found" before any DB writes.
 	s.store.On("GetWorkflowRun", mock.Anything, "r-gone").Return(&db.WorkflowRun{
@@ -554,7 +554,7 @@ func (s *EngineSuite) TestRecoverRunsCheckpointUpdateStatusError() {
 		Inputs:       `{}`,
 	}
 
-	s.store.ExpectedCalls = nil
+	s.resetStore()
 	s.store.On("ListWorkflowRunsByStatus", mock.Anything, mock.Anything).Return([]*db.WorkflowRun{pausedRun}, nil)
 	s.store.On("ListNodeRuns", mock.Anything, "wfr-cpfail").Return([]*db.NodeRun{
 		{RunID: "wfr-cpfail", NodeID: "gate", Status: db.NodeRunStatusRunning},

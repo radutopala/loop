@@ -30,12 +30,12 @@ func (s *EngineSuite) TestApprovalNodePauseAndResume() {
 	s.expectRunPersistence()
 	s.store.On("UpdateWorkflowRun", mock.Anything, mock.Anything).Return(nil)
 
-	s.bashRunner.On("RunBash", mock.Anything, "echo pre", "", "").Return("pre", nil)
-	s.bashRunner.On("RunBash", mock.Anything, "echo deploying", "", "").Return("deployed", nil)
+	s.bashRunner.On("RunBash", mock.Anything, "echo pre", "", "", "").Return("pre", nil)
+	s.bashRunner.On("RunBash", mock.Anything, "echo deploying", "", "", "").Return("deployed", nil)
 
 	done := make(chan db.WorkflowRunStatus, 1)
 	updateCalls := 0
-	s.store.ExpectedCalls = nil // clear existing mocks
+	s.resetStore()
 	s.expectRunPersistence()
 	s.store.On("UpdateNodeHeartbeat", mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Maybe()
 	// GetWorkflowRun: used by updateRunStatus, executeDAG final write, and
@@ -68,7 +68,7 @@ func (s *EngineSuite) TestApprovalNodePauseAndResume() {
 	s.awaitStatus(done, db.WorkflowRunStatusCompleted)
 
 	// Verify deploy ran after approval.
-	s.bashRunner.AssertCalled(s.T(), "RunBash", mock.Anything, "echo deploying", "", "")
+	s.bashRunner.AssertCalled(s.T(), "RunBash", mock.Anything, "echo deploying", "", "", "")
 }
 
 func (s *EngineSuite) TestApprovalNodeTimeout() {
@@ -140,7 +140,7 @@ func (s *EngineSuite) TestResumeRunNotPending() {
 }
 
 func (s *EngineSuite) TestResumeRunNotFound() {
-	s.store.ExpectedCalls = nil
+	s.resetStore()
 	s.store.On("GetWorkflowRun", mock.Anything, "missing").Return(nil, nil)
 
 	err := s.engine.ResumeRun(context.Background(), "missing", "ok")
@@ -148,7 +148,7 @@ func (s *EngineSuite) TestResumeRunNotFound() {
 }
 
 func (s *EngineSuite) TestResumeRunGetError() {
-	s.store.ExpectedCalls = nil
+	s.resetStore()
 	s.store.On("GetWorkflowRun", mock.Anything, "r1").Return(nil, fmt.Errorf("db error"))
 
 	err := s.engine.ResumeRun(context.Background(), "r1", "ok")
@@ -156,7 +156,7 @@ func (s *EngineSuite) TestResumeRunGetError() {
 }
 
 func (s *EngineSuite) TestResumeRunNoPausedNode() {
-	s.store.ExpectedCalls = nil
+	s.resetStore()
 	s.store.On("GetWorkflowRun", mock.Anything, "r1").Return(&db.WorkflowRun{
 		ID: "r1", Status: db.WorkflowRunStatusRunning,
 	}, nil)

@@ -43,8 +43,8 @@ func (s *EngineSuite) TestExecuteLoopWithBodyRunsChildrenInOrder() {
 	done := s.waitForTerminalStatus()
 
 	var firstCalls, secondCalls atomic.Int32
-	s.bashRunner.On("RunBash", mock.Anything, "echo first", "", "").Return("ok-1", nil).Run(func(_ mock.Arguments) { firstCalls.Add(1) })
-	s.bashRunner.On("RunBash", mock.Anything, "echo second", "", "").Return("ok-2", nil).Run(func(_ mock.Arguments) { secondCalls.Add(1) })
+	s.bashRunner.On("RunBash", mock.Anything, "echo first", "", "", "").Return("ok-1", nil).Run(func(_ mock.Arguments) { firstCalls.Add(1) })
+	s.bashRunner.On("RunBash", mock.Anything, "echo second", "", "", "").Return("ok-2", nil).Run(func(_ mock.Arguments) { secondCalls.Add(1) })
 
 	_, err := s.engine.StartRun(context.Background(), StartRunOptions{WorkflowName: "loop-body"})
 	require.NoError(s.T(), err)
@@ -83,7 +83,7 @@ func (s *EngineSuite) TestExecuteLoopBodyBreaksOnReviewNoComments() {
 	done := s.waitForTerminalStatus()
 
 	var calls atomic.Int32
-	s.bashRunner.On("RunBash", mock.Anything, "loop review run", "", "").Return(`{"status":"ready","no_comments":true,"comments":[]}`, nil).Run(func(_ mock.Arguments) { calls.Add(1) })
+	s.bashRunner.On("RunBash", mock.Anything, "loop review run", "", "", "").Return(`{"status":"ready","no_comments":true,"comments":[]}`, nil).Run(func(_ mock.Arguments) { calls.Add(1) })
 
 	_, err := s.engine.StartRun(context.Background(), StartRunOptions{WorkflowName: "review-loop"})
 	require.NoError(s.T(), err)
@@ -122,7 +122,7 @@ func (s *EngineSuite) TestExecuteLoopBodyBreaksOnSameAsPrev() {
 	var calls atomic.Int32
 	// Same comment ID set every call — first iter sets PrevIDs=nil so
 	// SameAsPrev=false; second iter sees PrevIDs=["x"] equal to current → break.
-	s.bashRunner.On("RunBash", mock.Anything, "loop review run", "", "").
+	s.bashRunner.On("RunBash", mock.Anything, "loop review run", "", "", "").
 		Return(`{"status":"ready","no_comments":false,"comments":[{"id":"x"}]}`, nil).
 		Run(func(_ mock.Arguments) { calls.Add(1) })
 
@@ -157,7 +157,7 @@ func (s *EngineSuite) TestExecuteLoopBodyChildErrorPropagates() {
 	done := s.waitForTerminalStatus()
 
 	var calls atomic.Int32
-	s.bashRunner.On("RunBash", mock.Anything, "false", "", "").
+	s.bashRunner.On("RunBash", mock.Anything, "false", "", "", "").
 		Return("", fmt.Errorf("bash failed")).
 		Run(func(_ mock.Arguments) { calls.Add(1) })
 
@@ -203,7 +203,7 @@ func (s *EngineSuite) TestExecuteLoopBodyWhenGatesChild() {
 	s.store.On("UpsertNodeRun", mock.Anything, mock.Anything).Return(nil)
 	done := s.waitForTerminalStatus()
 
-	s.bashRunner.On("RunBash", mock.Anything, "echo always", "", "").Return("ok", nil)
+	s.bashRunner.On("RunBash", mock.Anything, "echo always", "", "", "").Return("ok", nil)
 
 	_, err := s.engine.StartRun(context.Background(), StartRunOptions{WorkflowName: "loop-when"})
 	require.NoError(s.T(), err)
@@ -217,7 +217,7 @@ func (s *EngineSuite) TestExecuteLoopBodyWhenGatesChild() {
 	s.awaitStatus(done, db.WorkflowRunStatusCompleted)
 
 	// The skipped child's script should never have been invoked.
-	s.bashRunner.AssertNotCalled(s.T(), "RunBash", mock.Anything, "echo never", "", "")
+	s.bashRunner.AssertNotCalled(s.T(), "RunBash", mock.Anything, "echo never", "", "", "")
 }
 
 // TestExecuteLoopBodyUnknownChildTypeFailsAtStartRun verifies the validator
@@ -294,7 +294,7 @@ func (s *EngineSuite) TestLoopBodyMaxIterFromInputs() {
 	done := s.waitForTerminalStatus()
 
 	var calls atomic.Int32
-	s.bashRunner.On("RunBash", mock.Anything, "echo tick", "", "").
+	s.bashRunner.On("RunBash", mock.Anything, "echo tick", "", "", "").
 		Return("ok", nil).
 		Run(func(_ mock.Arguments) { calls.Add(1) })
 
@@ -333,7 +333,7 @@ func (s *EngineSuite) TestLoopBodyMaxIterInvalidInputFallsBackToDefault() {
 	s.expectRunPersistence()
 	done := s.waitForTerminalStatus()
 
-	s.bashRunner.On("RunBash", mock.Anything, "echo tick", "", "").Return("ok", nil)
+	s.bashRunner.On("RunBash", mock.Anything, "echo tick", "", "", "").Return("ok", nil)
 
 	_, err := s.engine.StartRun(context.Background(), StartRunOptions{
 		WorkflowName: "loop-bad-input",
@@ -412,13 +412,13 @@ func (s *EngineSuite) TestLoopBodyContextCancelBetweenChildren() {
 	// — a CI-only flake because local timing happens to favor the test.
 	idReady := make(chan struct{})
 	var runID string
-	s.bashRunner.On("RunBash", mock.Anything, "echo first", "", "").
+	s.bashRunner.On("RunBash", mock.Anything, "echo first", "", "", "").
 		Return("ok", nil).
 		Run(func(_ mock.Arguments) {
 			<-idReady
 			_ = s.engine.CancelRun(context.Background(), runID)
 		})
-	s.bashRunner.On("RunBash", mock.Anything, "echo second", "", "").Return("never", nil).Maybe()
+	s.bashRunner.On("RunBash", mock.Anything, "echo second", "", "", "").Return("never", nil).Maybe()
 
 	var err error
 	runID, err = s.engine.StartRun(context.Background(), StartRunOptions{WorkflowName: "loop-ctx-cancel"})
@@ -430,7 +430,7 @@ func (s *EngineSuite) TestLoopBodyContextCancelBetweenChildren() {
 	case <-time.After(5 * time.Second):
 		s.T().Fatal("timeout")
 	}
-	s.bashRunner.AssertNotCalled(s.T(), "RunBash", mock.Anything, "echo second", "", "")
+	s.bashRunner.AssertNotCalled(s.T(), "RunBash", mock.Anything, "echo second", "", "", "")
 }
 
 // TestLoopBodyUpsertNodeRunErrorsAreLogged drives all three UpsertNodeRun
@@ -455,7 +455,7 @@ func (s *EngineSuite) TestLoopBodyUpsertNodeRunErrorsAreLogged() {
 		},
 	}
 
-	s.store.ExpectedCalls = nil
+	s.resetStore()
 	s.store.On("GetWorkflowRun", mock.Anything, mock.Anything).Return(
 		&db.WorkflowRun{Status: db.WorkflowRunStatusRunning}, nil,
 	).Maybe()
@@ -467,7 +467,7 @@ func (s *EngineSuite) TestLoopBodyUpsertNodeRunErrorsAreLogged() {
 	s.store.On("UpsertNodeRun", mock.Anything, mock.Anything).Return(errors.New("db down"))
 	done := s.waitForTerminalStatus()
 
-	s.bashRunner.On("RunBash", mock.Anything, "echo tick", "", "").Return("ok", nil)
+	s.bashRunner.On("RunBash", mock.Anything, "echo tick", "", "", "").Return("ok", nil)
 
 	_, err := s.engine.StartRun(context.Background(), StartRunOptions{WorkflowName: "loop-upsert-fail"})
 	require.NoError(s.T(), err)
@@ -516,7 +516,7 @@ func (s *EngineSuite) TestLoopBodyChildTimeoutAppliesAndCancels() {
 			observedDeadline = d
 		}
 		return ok && time.Until(d) < 200*time.Millisecond
-	}), "echo slow", "", "").Return("ok", nil)
+	}), "echo slow", "", "", "").Return("ok", nil)
 
 	_, err := s.engine.StartRun(context.Background(), StartRunOptions{WorkflowName: "loop-child-timeout"})
 	require.NoError(s.T(), err)
@@ -553,7 +553,7 @@ func (s *EngineSuite) TestLoopBodyChildTimeoutInvalidDurationIgnored() {
 		// Bad timeout string is silently ignored — child runs without a per-child deadline.
 		_, hasDeadline := ctx.Deadline()
 		return !hasDeadline
-	}), "echo ok", "", "").Return("ok", nil)
+	}), "echo ok", "", "", "").Return("ok", nil)
 
 	_, err := s.engine.StartRun(context.Background(), StartRunOptions{WorkflowName: "loop-child-bad-timeout"})
 	require.NoError(s.T(), err)
@@ -586,7 +586,7 @@ func (s *EngineSuite) TestLoopBodyConditionTemplateErrorContinues() {
 	done := s.waitForTerminalStatus()
 
 	var calls atomic.Int32
-	s.bashRunner.On("RunBash", mock.Anything, "echo tick", "", "").
+	s.bashRunner.On("RunBash", mock.Anything, "echo tick", "", "", "").
 		Return("ok", nil).
 		Run(func(_ mock.Arguments) { calls.Add(1) })
 
@@ -608,7 +608,7 @@ func (s *EngineSuite) TestLoopBodyConditionTemplateErrorContinues() {
 func (s *EngineSuite) TestLoopBodyReviewExecErrorRotatesPrevIDs() {
 	e := s.engine.(*defaultEngine)
 	s.store.On("UpsertNodeRun", mock.Anything, mock.Anything).Return(nil)
-	s.bashRunner.On("RunBash", mock.Anything, "loop review run", "", "").
+	s.bashRunner.On("RunBash", mock.Anything, "loop review run", "", "", "").
 		Return("", fmt.Errorf("review CLI exit 1"))
 
 	loopNode := &config.NodeDef{
@@ -653,7 +653,7 @@ func (s *EngineSuite) TestLoopBodyReviewExecErrorRotatesPrevIDs() {
 func (s *EngineSuite) TestLoopBodyReviewExecErrorOnUnseededWorkflowSkipsRotation() {
 	e := s.engine.(*defaultEngine)
 	s.store.On("UpsertNodeRun", mock.Anything, mock.Anything).Return(nil)
-	s.bashRunner.On("RunBash", mock.Anything, "review.sh", "", "").
+	s.bashRunner.On("RunBash", mock.Anything, "review.sh", "", "", "").
 		Return("", fmt.Errorf("script exit 1"))
 
 	loopNode := &config.NodeDef{

@@ -56,7 +56,7 @@ func (s *EngineSuite) TestStartRunSnapshotsWorkflowDef() {
 	}).Return(nil)
 	s.store.On("UpsertNodeRun", mock.Anything, mock.Anything).Return(nil)
 	done := s.waitForRunStatus()
-	s.bashRunner.On("RunBash", mock.Anything, "echo hi", "", "").Return("hi", nil)
+	s.bashRunner.On("RunBash", mock.Anything, "echo hi", "", "", "").Return("hi", nil)
 
 	_, err := s.engine.StartRun(context.Background(), StartRunOptions{WorkflowName: "pin-test"})
 	require.NoError(s.T(), err)
@@ -125,7 +125,7 @@ func (s *EngineSuite) TestHeartbeatFiresDuringNodeExecution() {
 	done := s.waitForRunStatus()
 
 	// Block the bash runner long enough for the initial heartbeat to fire.
-	s.bashRunner.On("RunBash", mock.Anything, "slow", "", "").Run(func(_ mock.Arguments) {
+	s.bashRunner.On("RunBash", mock.Anything, "slow", "", "", "").Run(func(_ mock.Arguments) {
 		time.Sleep(100 * time.Millisecond)
 	}).Return("done", nil)
 
@@ -157,7 +157,7 @@ func (s *EngineSuite) TestRecoverPausedRunUsePinnedDef() {
 		{RunID: "wfr-pinned", NodeID: "done", Status: db.NodeRunStatusPending},
 	}
 
-	s.store.ExpectedCalls = nil
+	s.resetStore()
 	s.store.On("ListWorkflowRunsByStatus", mock.Anything, mock.Anything).Return([]*db.WorkflowRun{pausedRun}, nil)
 	s.store.On("ListNodeRuns", mock.Anything, "wfr-pinned").Return(nodeRuns, nil)
 	s.store.On("UpsertNodeRun", mock.Anything, mock.Anything).Return(nil)
@@ -177,7 +177,7 @@ func (s *EngineSuite) TestRecoverPausedRunUsePinnedDef() {
 		}
 	}).Return(nil)
 
-	s.bashRunner.On("RunBash", mock.Anything, "echo done", "ch1", "").Return("done", nil)
+	s.bashRunner.On("RunBash", mock.Anything, "echo done", "ch1", "", "").Return("done", nil)
 
 	// No workflows in live config — recovery must use pinned def.
 	s.workflows = nil
@@ -194,7 +194,7 @@ func (s *EngineSuite) TestRecoverPausedRunUsePinnedDef() {
 
 	s.awaitStatus(done, db.WorkflowRunStatusCompleted)
 
-	s.bashRunner.AssertCalled(s.T(), "RunBash", mock.Anything, "echo done", "ch1", "")
+	s.bashRunner.AssertCalled(s.T(), "RunBash", mock.Anything, "echo done", "ch1", "", "")
 }
 
 func (s *EngineSuite) TestCheckpointNodeNotInDBTreatedAsPending() {
@@ -224,7 +224,7 @@ func (s *EngineSuite) TestCheckpointNodeNotInDBTreatedAsPending() {
 		{RunID: "wfr-missing", NodeID: "a", Status: db.NodeRunStatusSuccess, Output: "a"},
 	}
 
-	s.store.ExpectedCalls = nil
+	s.resetStore()
 	s.store.On("ListWorkflowRunsByStatus", mock.Anything, mock.Anything).Return([]*db.WorkflowRun{pausedRun}, nil)
 	s.store.On("ListNodeRuns", mock.Anything, "wfr-missing").Return(nodeRuns, nil)
 	s.store.On("UpsertNodeRun", mock.Anything, mock.Anything).Return(nil)
@@ -244,7 +244,7 @@ func (s *EngineSuite) TestCheckpointNodeNotInDBTreatedAsPending() {
 		}
 	}).Return(nil)
 
-	s.bashRunner.On("RunBash", mock.Anything, "echo b", "ch1", "").Return("b", nil)
+	s.bashRunner.On("RunBash", mock.Anything, "echo b", "ch1", "", "").Return("b", nil)
 
 	err := s.engine.RecoverRuns(context.Background())
 	require.NoError(s.T(), err)
@@ -252,7 +252,7 @@ func (s *EngineSuite) TestCheckpointNodeNotInDBTreatedAsPending() {
 	s.awaitStatus(done, db.WorkflowRunStatusCompleted)
 
 	// Node "b" should have been executed (it was not in DB, treated as pending).
-	s.bashRunner.AssertCalled(s.T(), "RunBash", mock.Anything, "echo b", "ch1", "")
+	s.bashRunner.AssertCalled(s.T(), "RunBash", mock.Anything, "echo b", "ch1", "", "")
 }
 
 func (s *EngineSuite) TestHeartbeatErrorPaths() {
@@ -268,7 +268,7 @@ func (s *EngineSuite) TestHeartbeatErrorPaths() {
 	// Use a very short heartbeat interval so the ticker fires during the test.
 	s.engine.(*defaultEngine).heartbeatInterval = 10 * time.Millisecond
 
-	s.store.ExpectedCalls = nil
+	s.resetStore()
 	s.expectRunPersistence()
 	s.store.On("GetWorkflowRun", mock.Anything, mock.Anything).Return(
 		&db.WorkflowRun{Status: db.WorkflowRunStatusRunning}, nil,
@@ -288,7 +288,7 @@ func (s *EngineSuite) TestHeartbeatErrorPaths() {
 	}).Return(nil)
 
 	// Make bash runner slow enough that the ticker fires at least once.
-	s.bashRunner.On("RunBash", mock.Anything, "echo ok", "", "").Run(func(_ mock.Arguments) {
+	s.bashRunner.On("RunBash", mock.Anything, "echo ok", "", "", "").Run(func(_ mock.Arguments) {
 		time.Sleep(50 * time.Millisecond)
 	}).Return("ok", nil)
 
@@ -351,7 +351,7 @@ func (s *EngineSuite) TestRecoverRunningRunFreshHeartbeatReExecutes() {
 		{RunID: "wfr-fresh", NodeID: "b", Status: db.NodeRunStatusPending},
 	}
 
-	s.store.ExpectedCalls = nil
+	s.resetStore()
 	s.store.On("ListWorkflowRunsByStatus", mock.Anything, mock.Anything).Return([]*db.WorkflowRun{runningRun}, nil)
 	s.store.On("ListNodeRuns", mock.Anything, "wfr-fresh").Return(nodeRuns, nil)
 	s.store.On("UpsertNodeRun", mock.Anything, mock.Anything).Return(nil)
@@ -372,16 +372,16 @@ func (s *EngineSuite) TestRecoverRunningRunFreshHeartbeatReExecutes() {
 	}).Return(nil)
 
 	// Both nodes should be re-/executed.
-	s.bashRunner.On("RunBash", mock.Anything, "echo a", "ch1", "").Return("a", nil)
-	s.bashRunner.On("RunBash", mock.Anything, "echo b", "ch1", "").Return("b", nil)
+	s.bashRunner.On("RunBash", mock.Anything, "echo a", "ch1", "", "").Return("a", nil)
+	s.bashRunner.On("RunBash", mock.Anything, "echo b", "ch1", "", "").Return("b", nil)
 
 	err := s.engine.RecoverRuns(context.Background())
 	require.NoError(s.T(), err)
 
 	s.awaitStatus(done, db.WorkflowRunStatusCompleted)
 
-	s.bashRunner.AssertCalled(s.T(), "RunBash", mock.Anything, "echo a", "ch1", "")
-	s.bashRunner.AssertCalled(s.T(), "RunBash", mock.Anything, "echo b", "ch1", "")
+	s.bashRunner.AssertCalled(s.T(), "RunBash", mock.Anything, "echo a", "ch1", "", "")
+	s.bashRunner.AssertCalled(s.T(), "RunBash", mock.Anything, "echo b", "ch1", "", "")
 }
 
 func (s *EngineSuite) TestRecoverRunningRunStaleHeartbeatFails() {
@@ -411,7 +411,7 @@ func (s *EngineSuite) TestRecoverRunningRunStaleHeartbeatFails() {
 		{RunID: "wfr-stale-hb", NodeID: "b", Status: db.NodeRunStatusPending},
 	}
 
-	s.store.ExpectedCalls = nil
+	s.resetStore()
 	s.store.On("ListWorkflowRunsByStatus", mock.Anything, mock.Anything).Return([]*db.WorkflowRun{runningRun}, nil)
 	s.store.On("ListNodeRuns", mock.Anything, "wfr-stale-hb").Return(nodeRuns, nil)
 	s.store.On("UpsertNodeRun", mock.Anything, mock.Anything).Return(nil)
@@ -466,7 +466,7 @@ func (s *EngineSuite) TestRecoverRunningRunNoHeartbeatFails() {
 		{RunID: "wfr-nohb", NodeID: "only", Status: db.NodeRunStatusRunning, LastHeartbeatAt: nil},
 	}
 
-	s.store.ExpectedCalls = nil
+	s.resetStore()
 	s.store.On("ListWorkflowRunsByStatus", mock.Anything, mock.Anything).Return([]*db.WorkflowRun{runningRun}, nil)
 	s.store.On("ListNodeRuns", mock.Anything, "wfr-nohb").Return(nodeRuns, nil)
 	s.store.On("UpsertNodeRun", mock.Anything, mock.Anything).Return(nil)
@@ -526,7 +526,7 @@ func (s *EngineSuite) TestRecoverRunningRunMixedNodes() {
 		{RunID: "wfr-mixed", NodeID: "final", Status: db.NodeRunStatusPending},
 	}
 
-	s.store.ExpectedCalls = nil
+	s.resetStore()
 	s.store.On("ListWorkflowRunsByStatus", mock.Anything, mock.Anything).Return([]*db.WorkflowRun{runningRun}, nil)
 	s.store.On("ListNodeRuns", mock.Anything, "wfr-mixed").Return(nodeRuns, nil)
 	s.store.On("UpsertNodeRun", mock.Anything, mock.Anything).Return(nil)
@@ -547,7 +547,7 @@ func (s *EngineSuite) TestRecoverRunningRunMixedNodes() {
 	}).Return(nil)
 
 	// Only "fresh" should be re-executed. "done" was already completed. "stale" stays failed.
-	s.bashRunner.On("RunBash", mock.Anything, "echo fresh", "ch1", "").Return("fresh", nil)
+	s.bashRunner.On("RunBash", mock.Anything, "echo fresh", "ch1", "", "").Return("fresh", nil)
 
 	err := s.engine.RecoverRuns(context.Background())
 	require.NoError(s.T(), err)
@@ -561,8 +561,8 @@ func (s *EngineSuite) TestRecoverRunningRunMixedNodes() {
 	}
 
 	// "fresh" was re-executed, "done" was not (already completed).
-	s.bashRunner.AssertCalled(s.T(), "RunBash", mock.Anything, "echo fresh", "ch1", "")
-	s.bashRunner.AssertNotCalled(s.T(), "RunBash", mock.Anything, "echo done", "ch1", "")
+	s.bashRunner.AssertCalled(s.T(), "RunBash", mock.Anything, "echo fresh", "ch1", "", "")
+	s.bashRunner.AssertNotCalled(s.T(), "RunBash", mock.Anything, "echo done", "ch1", "", "")
 }
 
 func (s *EngineSuite) TestRecoverRunningRunBadInputsFallsBack() {
@@ -579,7 +579,7 @@ func (s *EngineSuite) TestRecoverRunningRunBadInputsFallsBack() {
 		Inputs:       `INVALID JSON`,
 	}
 
-	s.store.ExpectedCalls = nil
+	s.resetStore()
 	s.store.On("ListWorkflowRunsByStatus", mock.Anything, mock.Anything).Return([]*db.WorkflowRun{runningRun}, nil)
 	s.store.On("ListNodeRuns", mock.Anything, "wfr-bad-inp").Return([]*db.NodeRun{
 		{RunID: "wfr-bad-inp", NodeID: "a", Status: db.NodeRunStatusPending},
@@ -604,7 +604,7 @@ func (s *EngineSuite) TestRecoverRunningRunNodeListErrorFallsBack() {
 		Status:       db.WorkflowRunStatusRunning,
 	}
 
-	s.store.ExpectedCalls = nil
+	s.resetStore()
 	s.store.On("ListWorkflowRunsByStatus", mock.Anything, mock.Anything).Return([]*db.WorkflowRun{runningRun}, nil)
 	s.store.On("ListNodeRuns", mock.Anything, "wfr-nle").Return(nil, fmt.Errorf("db error"))
 	s.store.On("MarkRunFailedWithStaleNodes", mock.Anything, "wfr-nle", mock.Anything, mock.Anything, mock.Anything).Return(nil)
@@ -635,7 +635,7 @@ func (s *EngineSuite) TestRecoverRunningRunSemaphoreFullFallsBack() {
 		Inputs:       `{}`,
 	}
 
-	s.store.ExpectedCalls = nil
+	s.resetStore()
 	s.store.On("ListWorkflowRunsByStatus", mock.Anything, mock.Anything).Return([]*db.WorkflowRun{runningRun}, nil)
 	s.store.On("ListNodeRuns", mock.Anything, "wfr-sem").Return([]*db.NodeRun{
 		{RunID: "wfr-sem", NodeID: "a", Status: db.NodeRunStatusPending},

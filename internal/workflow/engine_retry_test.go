@@ -31,8 +31,8 @@ func (s *EngineSuite) TestRetryBashNode() {
 	done := s.waitForRunStatus()
 
 	// First call fails, second succeeds.
-	s.bashRunner.On("RunBash", mock.Anything, "flaky-cmd", "", "").Return("", fmt.Errorf("flaky")).Once()
-	s.bashRunner.On("RunBash", mock.Anything, "flaky-cmd", "", "").Return("success", nil)
+	s.bashRunner.On("RunBash", mock.Anything, "flaky-cmd", "", "", "").Return("", fmt.Errorf("flaky")).Once()
+	s.bashRunner.On("RunBash", mock.Anything, "flaky-cmd", "", "", "").Return("success", nil)
 
 	_, err := s.engine.StartRun(context.Background(), StartRunOptions{WorkflowName: "retry-test"})
 	require.NoError(s.T(), err)
@@ -57,7 +57,7 @@ func (s *EngineSuite) TestRetryExhausted() {
 	s.expectRunPersistence()
 	done := s.waitForRunStatus()
 
-	s.bashRunner.On("RunBash", mock.Anything, "fail-cmd", "", "").Return("", fmt.Errorf("always fails"))
+	s.bashRunner.On("RunBash", mock.Anything, "fail-cmd", "", "", "").Return("", fmt.Errorf("always fails"))
 
 	_, err := s.engine.StartRun(context.Background(), StartRunOptions{WorkflowName: "retry-exhausted"})
 	require.NoError(s.T(), err)
@@ -77,7 +77,7 @@ func (s *EngineSuite) TestRetryNoConfig() {
 	s.expectRunPersistence()
 	done := s.waitForRunStatus()
 
-	s.bashRunner.On("RunBash", mock.Anything, "fail", "", "").Return("", fmt.Errorf("error")).Once()
+	s.bashRunner.On("RunBash", mock.Anything, "fail", "", "", "").Return("", fmt.Errorf("error")).Once()
 
 	_, err := s.engine.StartRun(context.Background(), StartRunOptions{WorkflowName: "no-retry"})
 	require.NoError(s.T(), err)
@@ -224,7 +224,7 @@ func (s *EngineSuite) TestApprovalNodePauseStatusWriteError() {
 func (s *EngineSuite) TestResumeRunAlreadyResumed() {
 	// Manually set up a pending approval and resume it twice.
 	// ResumeRun reads PausedNodeID from DB to form composite key "run:node".
-	s.store.ExpectedCalls = nil
+	s.resetStore()
 	e := s.engine.(*defaultEngine)
 	ch := make(chan string, 1)
 	e.pendingApprovals.Store("test-run:gate", ch)
@@ -257,7 +257,7 @@ func (s *EngineSuite) TestRetryBackoffMaxCapped() {
 	s.expectRunPersistence()
 	done := s.waitForRunStatus()
 
-	s.bashRunner.On("RunBash", mock.Anything, "fail", "", "").Return("", fmt.Errorf("error"))
+	s.bashRunner.On("RunBash", mock.Anything, "fail", "", "", "").Return("", fmt.Errorf("error"))
 
 	_, err := s.engine.StartRun(context.Background(), StartRunOptions{WorkflowName: "retry-cap"})
 	require.NoError(s.T(), err)
@@ -286,7 +286,7 @@ func (s *EngineSuite) TestRetryUpsertNodeRunError() {
 	s.store.On("UpsertNodeRun", mock.Anything, mock.Anything).Return(fmt.Errorf("upsert failed"))
 	done := s.waitForRunStatus()
 
-	s.bashRunner.On("RunBash", mock.Anything, "fail", "", "").Return("", fmt.Errorf("error"))
+	s.bashRunner.On("RunBash", mock.Anything, "fail", "", "", "").Return("", fmt.Errorf("error"))
 
 	_, err := s.engine.StartRun(context.Background(), StartRunOptions{WorkflowName: "retry-upsert-err"})
 	require.NoError(s.T(), err)
@@ -321,7 +321,7 @@ func (s *EngineSuite) TestRetryCancelledDuringBackoff() {
 	s.store.On("GetWorkflowRun", mock.Anything, mock.Anything).
 		Return(&db.WorkflowRun{Status: db.WorkflowRunStatusRunning}, nil).Maybe()
 
-	s.bashRunner.On("RunBash", mock.Anything, "fail", "", "").Return("", fmt.Errorf("error"))
+	s.bashRunner.On("RunBash", mock.Anything, "fail", "", "", "").Return("", fmt.Errorf("error"))
 
 	runID, err := s.engine.StartRun(context.Background(), StartRunOptions{WorkflowName: "retry-cancel"})
 	require.NoError(s.T(), err)
@@ -337,7 +337,7 @@ func (s *EngineSuite) TestRetryCancelledDuringBackoff() {
 }
 
 func (s *EngineSuite) TestUpdateRunStatusGetError() {
-	s.store.ExpectedCalls = nil
+	s.resetStore()
 	s.store.On("GetWorkflowRun", mock.Anything, "r1").Return(nil, fmt.Errorf("db down"))
 
 	e := s.engine.(*defaultEngine)
@@ -347,7 +347,7 @@ func (s *EngineSuite) TestUpdateRunStatusGetError() {
 }
 
 func (s *EngineSuite) TestUpdateRunStatusGetNil() {
-	s.store.ExpectedCalls = nil
+	s.resetStore()
 	s.store.On("GetWorkflowRun", mock.Anything, "r1").Return(nil, nil)
 
 	e := s.engine.(*defaultEngine)
@@ -356,7 +356,7 @@ func (s *EngineSuite) TestUpdateRunStatusGetNil() {
 }
 
 func (s *EngineSuite) TestUpdateRunStatusUpdateError() {
-	s.store.ExpectedCalls = nil
+	s.resetStore()
 	s.store.On("GetWorkflowRun", mock.Anything, "r1").Return(&db.WorkflowRun{
 		ID: "r1", Status: db.WorkflowRunStatusRunning,
 	}, nil)
@@ -377,7 +377,7 @@ func (s *EngineSuite) TestExecuteDAGFinalWriteGetError() {
 		},
 	}
 
-	s.store.ExpectedCalls = nil
+	s.resetStore()
 	s.expectRunPersistence()
 	s.store.On("UpdateNodeHeartbeat", mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Maybe()
 	// GetWorkflowRun returns error — the final write in executeDAG will log it.
@@ -385,7 +385,7 @@ func (s *EngineSuite) TestExecuteDAGFinalWriteGetError() {
 	// UpdateWorkflowRun may still be called; accept it.
 	s.store.On("UpdateWorkflowRun", mock.Anything, mock.Anything).Return(nil)
 
-	s.bashRunner.On("RunBash", mock.Anything, "echo ok", "", "").Return("ok", nil)
+	s.bashRunner.On("RunBash", mock.Anything, "echo ok", "", "", "").Return("ok", nil)
 
 	_, err := s.engine.StartRun(context.Background(), StartRunOptions{WorkflowName: "final-err"})
 	require.NoError(s.T(), err)

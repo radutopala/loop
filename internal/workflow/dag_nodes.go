@@ -70,7 +70,7 @@ func (e *defaultEngine) executeBashNode(ctx context.Context, run *db.WorkflowRun
 		return nodeExecResult{}, fmt.Errorf("rendering script template: %w", err)
 	}
 
-	output, err := e.bashRunner.RunBash(ctx, script, run.ChannelID, run.DirPath)
+	output, err := e.bashRunner.RunBash(ctx, script, run.ChannelID, run.DirPath, e.parentDirFor(ctx, run.ChannelID))
 	if err != nil {
 		return nodeExecResult{output: output, input: script}, err
 	}

@@ -36,8 +36,8 @@ type mockBashRunner struct {
 	mock.Mock
 }
 
-func (m *mockBashRunner) RunBash(ctx context.Context, script, channelID, dirPath string) (string, error) {
-	args := m.Called(ctx, script, channelID, dirPath)
+func (m *mockBashRunner) RunBash(ctx context.Context, script, channelID, dirPath, parentDirPath string) (string, error) {
+	args := m.Called(ctx, script, channelID, dirPath, parentDirPath)
 	return args.String(0), args.Error(1)
 }
 
@@ -108,6 +108,21 @@ func (s *EngineSuite) SetupTest() {
 	// Default heartbeat mock — the heartbeat goroutine fires from executeNode
 	// and its timing is non-deterministic in tests.
 	s.store.On("UpdateNodeHeartbeat", mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(nil).Maybe()
+
+	// Default channel lookup — parentDirFor resolves the worktree root for
+	// every bash node and retry. Suite channels aren't worktrees, so the
+	// default is "no such channel", which yields an empty parent dir. Tests
+	// that exercise worktree inheritance override this.
+	s.store.On("GetChannel", mock.Anything, mock.Anything).Return(nil, nil).Maybe()
+}
+
+// resetStore clears every store expectation and re-registers the channel
+// lookup that parentDirFor performs on each bash node and retry. Tests reset
+// the mock to assert an exact call sequence; the lookup isn't part of what
+// they assert, so it goes back in as a Maybe.
+func (s *EngineSuite) resetStore() {
+	s.store.ExpectedCalls = nil
+	s.store.On("GetChannel", mock.Anything, mock.Anything).Return(nil, nil).Maybe()
 }
 
 // waitForRunStatus sets up UpdateWorkflowRun to signal on a channel when the

@@ -152,7 +152,7 @@ func (s *EngineSuite) TestRecoverRunsPausedResumeApproval() {
 		{RunID: "wfr-recover", NodeID: "deploy", Status: db.NodeRunStatusPending},
 	}
 
-	s.store.ExpectedCalls = nil
+	s.resetStore()
 	s.store.On("ListWorkflowRunsByStatus", mock.Anything, mock.Anything).Return([]*db.WorkflowRun{pausedRun}, nil)
 	s.store.On("ListNodeRuns", mock.Anything, "wfr-recover").Return(nodeRuns, nil)
 	s.store.On("UpsertNodeRun", mock.Anything, mock.Anything).Return(nil)
@@ -175,7 +175,7 @@ func (s *EngineSuite) TestRecoverRunsPausedResumeApproval() {
 		}
 	}).Return(nil)
 
-	s.bashRunner.On("RunBash", mock.Anything, "echo deploying", "ch1", "").Return("deployed", nil)
+	s.bashRunner.On("RunBash", mock.Anything, "echo deploying", "ch1", "", "").Return("deployed", nil)
 
 	err := s.engine.RecoverRuns(context.Background())
 	require.NoError(s.T(), err)
@@ -189,12 +189,12 @@ func (s *EngineSuite) TestRecoverRunsPausedResumeApproval() {
 
 	s.awaitStatus(done, db.WorkflowRunStatusCompleted)
 
-	s.bashRunner.AssertCalled(s.T(), "RunBash", mock.Anything, "echo deploying", "ch1", "")
+	s.bashRunner.AssertCalled(s.T(), "RunBash", mock.Anything, "echo deploying", "ch1", "", "")
 }
 
 func (s *EngineSuite) TestFailStaleRunStoreError() {
 	// MarkRunFailedWithStaleNodes error is logged, not fatal.
-	s.store.ExpectedCalls = nil
+	s.resetStore()
 	s.store.On("ListWorkflowRunsByStatus", mock.Anything, mock.Anything).Return([]*db.WorkflowRun{
 		{ID: "wfr-err", WorkflowName: "wf", Status: db.WorkflowRunStatusRunning},
 	}, nil)
@@ -237,7 +237,7 @@ func (s *EngineSuite) TestRecoverRunsCheckpointWithStaleRunningNode() {
 		{RunID: "wfr-stalenode", NodeID: "final", Status: db.NodeRunStatusPending},
 	}
 
-	s.store.ExpectedCalls = nil
+	s.resetStore()
 	s.store.On("ListWorkflowRunsByStatus", mock.Anything, mock.Anything).Return([]*db.WorkflowRun{pausedRun}, nil)
 	s.store.On("ListNodeRuns", mock.Anything, "wfr-stalenode").Return(nodeRuns, nil)
 	s.store.On("UpsertNodeRun", mock.Anything, mock.Anything).Return(nil)
@@ -282,7 +282,7 @@ func (s *EngineSuite) TestFailStaleRunNilBroadcaster() {
 		return nil
 	}, "", config.WorkflowConcurrency{}, slog.Default())
 
-	s.store.ExpectedCalls = nil
+	s.resetStore()
 	s.store.On("ListWorkflowRunsByStatus", mock.Anything, mock.Anything).Return([]*db.WorkflowRun{
 		{ID: "wfr-nobc", WorkflowName: "wf", Status: db.WorkflowRunStatusRunning},
 	}, nil)
@@ -304,7 +304,7 @@ func (s *EngineSuite) TestRunConcurrencyLimit() {
 
 	// Block the bash runner so the first run doesn't complete immediately.
 	bashBlock := make(chan struct{})
-	s.bashRunner.On("RunBash", mock.Anything, mock.Anything, mock.Anything, mock.Anything).
+	s.bashRunner.On("RunBash", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).
 		Run(func(args mock.Arguments) { <-bashBlock }).
 		Return("ok", nil)
 	s.expectRunPersistence()
@@ -358,7 +358,7 @@ func (s *EngineSuite) TestNodeConcurrencyLimit() {
 
 	var concurrent atomic.Int32
 	var maxConcurrent atomic.Int32
-	s.bashRunner.On("RunBash", mock.Anything, mock.Anything, mock.Anything, mock.Anything).
+	s.bashRunner.On("RunBash", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).
 		Run(func(args mock.Arguments) {
 			cur := concurrent.Add(1)
 			for {
@@ -396,7 +396,7 @@ func (s *EngineSuite) TestRecoverPausedRunSemaphoreFull() {
 	de := e.(*defaultEngine)
 	de.runSem <- struct{}{}
 
-	s.store.ExpectedCalls = nil
+	s.resetStore()
 	s.store.On("ListWorkflowRunsByStatus", mock.Anything, mock.Anything).Return([]*db.WorkflowRun{
 		{ID: "wfr-paused", WorkflowName: "wf", Status: db.WorkflowRunStatusPaused, PausedNodeID: "n1", Inputs: "{}"},
 	}, nil)
@@ -454,13 +454,13 @@ func (s *EngineSuite) TestNodeSlotCancelledDuringDAG() {
 	s.expectRunPersistence()
 
 	bashStarted := make(chan struct{}, 1)
-	s.bashRunner.On("RunBash", mock.Anything, "sleep 10", mock.Anything, mock.Anything).
+	s.bashRunner.On("RunBash", mock.Anything, "sleep 10", mock.Anything, mock.Anything, mock.Anything).
 		Run(func(args mock.Arguments) {
 			bashStarted <- struct{}{}
 			<-args.Get(0).(context.Context).Done()
 		}).
 		Return("", context.Canceled)
-	s.bashRunner.On("RunBash", mock.Anything, "echo never", mock.Anything, mock.Anything).Return("never", nil)
+	s.bashRunner.On("RunBash", mock.Anything, "echo never", mock.Anything, mock.Anything, mock.Anything).Return("never", nil)
 
 	done := s.waitForRunStatus()
 	runID, err := e.StartRun(context.Background(), StartRunOptions{WorkflowName: "wf"})
@@ -478,7 +478,7 @@ func (s *EngineSuite) TestNodeSlotCancelledDuringDAG() {
 
 	// child's goroutine is dispatched after slow finishes (post-cancel) and
 	// must exit at acquireNodeSlot without calling RunBash.
-	s.bashRunner.AssertNotCalled(s.T(), "RunBash", mock.Anything, "echo never", mock.Anything, mock.Anything)
+	s.bashRunner.AssertNotCalled(s.T(), "RunBash", mock.Anything, "echo never", mock.Anything, mock.Anything, mock.Anything)
 }
 
 func (s *EngineSuite) TestNodeSlotCancelledDuringCheckpoint() {
@@ -511,7 +511,7 @@ func (s *EngineSuite) TestNodeSlotCancelledDuringCheckpoint() {
 		{RunID: "wfr-ck", NodeID: "child", Status: db.NodeRunStatusPending},
 	}
 
-	s.store.ExpectedCalls = nil
+	s.resetStore()
 	s.store.On("ListWorkflowRunsByStatus", mock.Anything, mock.Anything).Return([]*db.WorkflowRun{pausedRun}, nil)
 	s.store.On("ListNodeRuns", mock.Anything, "wfr-ck").Return(nodeRuns, nil)
 	s.store.On("UpsertNodeRun", mock.Anything, mock.Anything).Return(nil)
@@ -556,7 +556,7 @@ func (s *EngineSuite) TestNodeSlotCancelledDuringCheckpoint() {
 		s.T().Fatal("timeout waiting for cancelled run to finalize")
 	}
 
-	s.bashRunner.AssertNotCalled(s.T(), "RunBash", mock.Anything, "echo never", mock.Anything, mock.Anything)
+	s.bashRunner.AssertNotCalled(s.T(), "RunBash", mock.Anything, "echo never", mock.Anything, mock.Anything, mock.Anything)
 }
 
 func (s *EngineSuite) TestFinalizeDAGAlreadyTerminal() {
@@ -570,7 +570,7 @@ func (s *EngineSuite) TestFinalizeDAGAlreadyTerminal() {
 	}
 
 	s.expectRunPersistence()
-	s.bashRunner.On("RunBash", mock.Anything, "echo done", mock.Anything, mock.Anything).Return("done", nil)
+	s.bashRunner.On("RunBash", mock.Anything, "echo done", mock.Anything, mock.Anything, mock.Anything).Return("done", nil)
 
 	// Override default GetWorkflowRun to return "cancelled" — simulating
 	// CancelRun having already written a terminal status before finalizeDAG runs.
@@ -694,7 +694,7 @@ func (s *EngineSuite) TestRecoverPausedRunFailsOnInvalidPinnedDef() {
 		Inputs:       `{}`,
 		WorkflowDef:  pinnedDef,
 	}
-	s.store.ExpectedCalls = nil
+	s.resetStore()
 	s.store.On("ListWorkflowRunsByStatus", mock.Anything, mock.Anything).Return([]*db.WorkflowRun{pausedRun}, nil)
 	s.store.On("MarkRunFailedWithStaleNodes", mock.Anything, "wfr-bad-pinned", mock.Anything, mock.Anything, mock.Anything).Return(nil)
 	s.workflows = nil
@@ -720,7 +720,7 @@ func (s *EngineSuite) TestRecoverRunningRunFailsOnInvalidPinnedDef() {
 		Inputs:       `{}`,
 		WorkflowDef:  pinnedDef,
 	}
-	s.store.ExpectedCalls = nil
+	s.resetStore()
 	s.store.On("ListWorkflowRunsByStatus", mock.Anything, mock.Anything).Return([]*db.WorkflowRun{runningRun}, nil)
 	s.store.On("MarkRunFailedWithStaleNodes", mock.Anything, "wfr-bad-pinned-r", mock.Anything, mock.Anything, mock.Anything).Return(nil)
 	s.workflows = nil
@@ -787,7 +787,7 @@ func (s *EngineSuite) TestRecoverPausedRunHighestIterationOutputWins() {
 		{RunID: "wfr-hi-iter", NodeID: "loop", Iteration: 0, Status: db.NodeRunStatusSuccess, Output: "iter2-out"},
 	}
 
-	s.store.ExpectedCalls = nil
+	s.resetStore()
 	s.store.On("ListWorkflowRunsByStatus", mock.Anything, mock.Anything).Return([]*db.WorkflowRun{pausedRun}, nil)
 	s.store.On("ListNodeRuns", mock.Anything, "wfr-hi-iter").Return(nodeRuns, nil)
 	s.store.On("UpsertNodeRun", mock.Anything, mock.Anything).Return(nil)
@@ -809,7 +809,7 @@ func (s *EngineSuite) TestRecoverPausedRunHighestIterationOutputWins() {
 
 	// Capture the script after rendering — must contain "iter2-out".
 	var actualScript atomic.Value
-	s.bashRunner.On("RunBash", mock.Anything, mock.AnythingOfType("string"), "ch1", "").
+	s.bashRunner.On("RunBash", mock.Anything, mock.AnythingOfType("string"), "ch1", "", "").
 		Return("after-out", nil).
 		Run(func(args mock.Arguments) {
 			actualScript.Store(args.Get(1).(string))
@@ -864,7 +864,7 @@ func (s *EngineSuite) TestRecoverRunningRunHighestIterationOutputWins() {
 		{RunID: "wfr-hi-iter-r", NodeID: "loop", Iteration: 0, Status: db.NodeRunStatusSuccess, Output: "winner"},
 	}
 
-	s.store.ExpectedCalls = nil
+	s.resetStore()
 	s.store.On("ListWorkflowRunsByStatus", mock.Anything, mock.Anything).Return([]*db.WorkflowRun{runningRun}, nil)
 	s.store.On("ListNodeRuns", mock.Anything, "wfr-hi-iter-r").Return(nodeRuns, nil)
 	s.store.On("UpsertNodeRun", mock.Anything, mock.Anything).Return(nil)
@@ -885,7 +885,7 @@ func (s *EngineSuite) TestRecoverRunningRunHighestIterationOutputWins() {
 	}).Return(nil)
 
 	var actualScript atomic.Value
-	s.bashRunner.On("RunBash", mock.Anything, mock.AnythingOfType("string"), "ch1", "").
+	s.bashRunner.On("RunBash", mock.Anything, mock.AnythingOfType("string"), "ch1", "", "").
 		Return("after-out", nil).
 		Run(func(args mock.Arguments) {
 			actualScript.Store(args.Get(1).(string))
