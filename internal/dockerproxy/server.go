@@ -110,10 +110,15 @@ func NewServer(cfg ServerConfig) (*Server, error) {
 		ResponseHeaderTimeout: 30 * time.Second,
 	}
 	rp := &httputil.ReverseProxy{
-		Director: func(r *http.Request) {
-			r.URL.Scheme = "http"
-			r.URL.Host = "docker"
-			r.Host = "docker"
+		// Rewrite, not Director: Director is deprecated as of Go 1.26. The
+		// difference that matters is X-Forwarded-*, which Rewrite drops
+		// unless asked for — and we don't want it. The upstream is the
+		// Docker daemon over a unix socket; it ignores those headers, and
+		// forwarding a container's view of its own address is noise.
+		Rewrite: func(pr *httputil.ProxyRequest) {
+			pr.Out.URL.Scheme = "http"
+			pr.Out.URL.Host = "docker"
+			pr.Out.Host = "docker"
 		},
 		Transport:     transport,
 		FlushInterval: 100 * time.Millisecond,
