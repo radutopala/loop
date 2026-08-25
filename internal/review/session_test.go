@@ -110,6 +110,37 @@ func (s *SessionSuite) TestUpdateRawDiffSwapsAndStampsTime() {
 	require.False(s.T(), got.UpdatedAt.IsZero())
 }
 
+func (s *SessionSuite) TestUpdateForkMissingReturnsFalse() {
+	store := NewStore()
+	require.False(s.T(), store.UpdateFork("nope", ForkCurrent, ""))
+}
+
+// The id only sticks for ForkCustom — switching away must not leave a stale
+// one behind that a later mode switch would silently pick up.
+func (s *SessionSuite) TestUpdateForkStoresModeAndClearsIDUnlessCustom() {
+	tests := []struct {
+		name       string
+		mode       ForkMode
+		sessionID  string
+		wantSessID string
+	}{
+		{name: "custom keeps id", mode: ForkCustom, sessionID: "sess-1", wantSessID: "sess-1"},
+		{name: "current clears id", mode: ForkCurrent, sessionID: "sess-1"},
+		{name: "none clears id", mode: ForkNone, sessionID: "sess-1"},
+	}
+	for _, tc := range tests {
+		s.Run(tc.name, func() {
+			store := NewStore()
+			store.Put("ch1", &Session{ForkMode: ForkCustom, ForkSessionID: "stale"})
+			require.True(s.T(), store.UpdateFork("ch1", tc.mode, tc.sessionID))
+			got := store.Get("ch1")
+			require.Equal(s.T(), tc.mode, got.ForkMode)
+			require.Equal(s.T(), tc.wantSessID, got.ForkSessionID)
+			require.False(s.T(), got.UpdatedAt.IsZero())
+		})
+	}
+}
+
 func (s *SessionSuite) TestUpdateStatus() {
 	store := NewStore()
 	store.Put("ch1", &Session{Status: StatusIdle})

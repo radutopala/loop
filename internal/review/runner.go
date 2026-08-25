@@ -36,7 +36,14 @@ type Runner struct {
 // context). onComment, when set, receives each finding the agent reports
 // through the built-in ReportFindings tool, in the order reported; it runs
 // on the stream-reading goroutine, so it must not block for long.
-func (r *Runner) Run(ctx context.Context, channelID, dirPath, parentDirPath, systemPrompt, prompt string, onComment func(*Comment)) (*agent.AgentResponse, error) {
+//
+// forkSessionID, when set, starts the review from a copy of that Claude
+// session instead of a blank one, so the reviewer inherits the context of
+// the conversation that produced the change. It is always paired with
+// ForkSession: a plain --resume would append the review's turns to the
+// session the user is still chatting in. The caller is responsible for
+// having placed the session file in dirPath's Claude project dir.
+func (r *Runner) Run(ctx context.Context, channelID, dirPath, parentDirPath, systemPrompt, prompt, forkSessionID string, onComment func(*Comment)) (*agent.AgentResponse, error) {
 	if r.Agent == nil {
 		return nil, errors.New("review runner: agent not configured")
 	}
@@ -47,6 +54,8 @@ func (r *Runner) Run(ctx context.Context, channelID, dirPath, parentDirPath, sys
 		SystemPrompt:  systemPrompt,
 		Prompt:        prompt,
 		ReviewMode:    true,
+		SessionID:     forkSessionID,
+		ForkSession:   forkSessionID != "",
 	}
 	if onComment != nil {
 		// OnToolUseRaw, not OnToolUse: the latter carries a chat-facing

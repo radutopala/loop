@@ -416,6 +416,7 @@ func (s *Server) registerReviewRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/channels/{id}/review", s.review.handleReviewGet)
 	mux.HandleFunc("DELETE /api/channels/{id}/review", s.review.handleReviewDelete)
 	mux.HandleFunc("POST /api/channels/{id}/review/run", s.review.handleReviewRun)
+	mux.HandleFunc("PUT /api/channels/{id}/review/fork", s.review.handleReviewSetFork)
 	mux.HandleFunc("POST /api/channels/{id}/review/comments/{cid}/push", s.review.handleReviewPushComment)
 	mux.HandleFunc("DELETE /api/channels/{id}/review/comments/{cid}", s.review.handleReviewDeleteComment)
 	mux.HandleFunc("POST /api/channels/{id}/review/push-all", s.review.handleReviewPushAll)

@@ -70,6 +70,41 @@ per-global / per-project / per-worktree the same way as `github.gh_user`.
 4. **Close** — closing the session deletes the in-memory session record
    and removes the worktree on disk. Pushed comments remain on GitHub.
 
+## Forking the chat session
+
+By default a review run starts from a **fresh** Claude session: the
+reviewer sees the diff and the prompt, nothing else. That is usually what
+you want — a reviewer with no memory of how the code was written has no
+sunk cost in it.
+
+When the chat's context *is* the point (a long design discussion, a
+constraint the diff can't show), the dropdown next to the Run button
+switches the run to fork it:
+
+- **Fresh session** — the default, described above.
+- **Fork chat session** — forks whatever session the channel's chat is on
+  at the moment the run starts. Resolved per run, not when you pick it,
+  so a session that rolls over (compaction, its own fork) is picked up.
+- **Fork session id…** — forks the id typed into the adjacent input.
+  Useful for replaying a review against an older conversation.
+
+It is always a **fork**, never a resume: the review agent gets a copy of
+the conversation and its own turns land in a new session, so the chat you
+are still typing into is untouched.
+
+Mechanically, the daemon copies the source session's transcript from the
+channel's Claude project dir into the worktree's before launching, because
+Claude Code keys session files by CWD and the review runs rooted in the PR
+worktree. The agent is then started with `--resume <id> --fork-session`.
+If the fork can't be resolved or staged — no chat session yet, an id with
+no transcript on disk — the Run fails up front with a `400` rather than
+leaving the session stuck in `reviewing`.
+
+The choice is stored on the in-memory review session (it resets when the
+daemon restarts) rather than on the run request, because the Run button
+dispatches a workflow whose `loop review run` step has nowhere to carry
+per-run options. See [`PUT /review/fork`](api.md).
+
 ## Navigating comments
 
 The diff view offers two granularities of navigation, because a review with
