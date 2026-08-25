@@ -81,6 +81,29 @@ When the gate is enabled, agents talk to a filtered Docker socket (`loop dockerp
 - Check the Audit panel to see which rule matched.
 - Add or adjust `gates.docker_proxy.http_rules` for the method/path being blocked; like the gate, project-level rules can only tighten policy, and `gates.docker_proxy.enabled` can be turned off per-project but not re-enabled past a global off.
 
+## Agent fails with "No conversation found with session ID"
+
+Claude Code prunes transcripts under `~/.claude/projects` after
+`cleanupPeriodDays` (30 by default), while Loop pins a channel's session id
+until a run succeeds — so a channel idle for longer than the window points at a
+file that is gone, and every turn fails on `--resume`.
+
+Loop now detects the missing transcript and starts a fresh session instead
+(agent runs, terminal panes, and new worktrees alike; see
+[Pruned transcripts](sessions.md#pruned-transcripts)), so this should
+self-correct. If you hit it on an older build, or you want the conversation
+back rather than a fresh start:
+
+- **Recover the transcript** if a copy survives. Worktrees get their own copy
+  under `~/.claude/projects/<encoded-worktree-path>/`, and those copies are
+  pruned on their own schedule — `ls -t ~/.claude/projects/*/<session-id>.jsonl`
+  often turns one up. Copy it back into the channel's own project dir
+  (the dir path with `/` and `.` replaced by `-`).
+- **Or start clean** — clear the channel's stored session from the Sessions
+  panel (**+ New**) and let the next turn open a new one.
+- **Keep transcripts longer** by raising `cleanupPeriodDays` in
+  `~/.claude/settings.json`.
+
 ## Memory search returns nothing / Ollama issues
 
 Semantic memory is **off by default** — `search_memory` silently returns no results until you set `memory.enabled: true` in the global config and configure `memory.paths`.

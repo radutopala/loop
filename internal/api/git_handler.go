@@ -541,6 +541,15 @@ func (s *Server) handleCreateWorktree(w http.ResponseWriter, r *http.Request) {
 	ch.DirPath = worktreePath
 	ch.Worktree = true
 	ch.BaseBranch = req.Branch
+	// CreateThread inherits the parent's session id. Keep it only if the
+	// transcript actually made it into the worktree's project dir —
+	// otherwise the thread would resume a conversation that no longer
+	// exists on disk and fail on every turn.
+	if parent.SessionID != "" && !result.SessionStaged {
+		s.logger.Warn("worktree session transcript unavailable; starting thread fresh",
+			"thread_id", threadID, "session_id", parent.SessionID)
+		ch.SessionID = ""
+	}
 	if err := s.store.UpsertChannel(r.Context(), ch); err != nil {
 		http.Error(w, fmt.Sprintf("updating thread: %s", err), http.StatusInternalServerError)
 		return

@@ -420,6 +420,7 @@ func (a *app) serve() error {
 	// parsed once instead of on every message/run/request.
 	reloadConfig := config.NewCachedReloader().Reload
 	runner := container.NewDockerRunner(dockerClient, cfg, reloadConfig)
+	runner.SetLogger(logger)
 	// Per-container policy files live under ~/.loop/run/<cid>/ (not
 	// /run/loop/<cid>/) because macOS /run is on the read-only system
 	// volume. Linux hosts could use /run/loop but we keep one path for both

@@ -484,6 +484,13 @@ func (s *Server) handleAssignTicket(w http.ResponseWriter, r *http.Request) {
 	}
 	ch.DirPath = result.WorktreePath
 	ch.Worktree = true
+	// See the same guard in handleCreateWorktree: an inherited session id
+	// is only usable if its transcript was staged into the worktree.
+	if parent.SessionID != "" && !result.SessionStaged {
+		s.logger.Warn("worktree session transcript unavailable; starting thread fresh",
+			"thread_id", threadID, "session_id", parent.SessionID)
+		ch.SessionID = ""
+	}
 	if err := s.store.UpsertChannel(r.Context(), ch); err != nil {
 		http.Error(w, fmt.Sprintf("updating thread: %s", err), http.StatusInternalServerError)
 		return

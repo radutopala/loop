@@ -95,6 +95,7 @@ func (s *CreatorSuite) TestCreateSuccess() {
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), filepath.Join("/proj", ".worktrees", "wt-abc"), result.WorktreePath)
 	require.Equal(s.T(), "worktree/wt-abc", result.BranchName)
+	require.False(s.T(), result.SessionStaged, "no session was asked for")
 
 	require.Len(s.T(), s.runArgs, 1)
 	require.Equal(s.T(), []string{"/proj", "git", "worktree", "add", "-b", "worktree/wt-abc", filepath.Join("/proj", ".worktrees", "wt-abc"), "main"}, s.runArgs[0])
@@ -115,6 +116,8 @@ func (s *CreatorSuite) TestCreateWithSessionCopy() {
 
 	require.NoError(s.T(), err)
 	require.NotNil(s.T(), result)
+
+	require.True(s.T(), result.SessionStaged)
 
 	// Config write + session file write
 	require.Len(s.T(), s.sys.writeFileCalls, 2)
@@ -164,6 +167,9 @@ func (s *CreatorSuite) TestCreateSessionCopyReadError() {
 
 	require.NoError(s.T(), err)
 	require.NotNil(s.T(), result)
+	// The worktree is usable, but it has no conversation to fork — callers
+	// must not pin the session id on it.
+	require.False(s.T(), result.SessionStaged)
 }
 
 func (s *CreatorSuite) TestCreateSessionCopyHomeDirError() {

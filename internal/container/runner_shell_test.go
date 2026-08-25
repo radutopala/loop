@@ -18,6 +18,7 @@ import (
 
 	"github.com/radutopala/loop/internal/agent"
 	"github.com/radutopala/loop/internal/config"
+	"github.com/radutopala/loop/internal/osutil"
 )
 
 // --- Tests for streaming path in Run ---
@@ -899,6 +900,9 @@ func (s *RunnerSuite) TestClaudeCmdBuilder() {
 				LoopDir:       tc.loopDir,
 			}
 			builder := NewClaudeCmdBuilder(cfg, nil)
+			// The transcript exists; the missing-transcript branch has its
+			// own test below.
+			builder.transcriptMissing = func(string, string) bool { return false }
 			got := builder.BuildInteractiveCmd(tc.channelID, tc.dirPath, "", tc.sessionID, "", tc.forkSession)
 			expectedMCP := tc.wantDir + "/.loop/mcp-" + tc.channelID + ".json"
 			require.Equal(s.T(), "CLAUDE_CODE_NO_FLICKER=1 claude --mcp-config "+expectedMCP+" --dangerously-skip-permissions"+tc.wantExtra+claudeExitTrailer, got)
@@ -1139,4 +1143,125 @@ func (s *RunnerSuite) TestCreateShellContainerNoRegistryOnError() {
 
 	// Registry.Register should NOT be called on error.
 	reg.AssertNotCalled(s.T(), "Register", mock.Anything)
+}
+
+func (s *RunnerSuite) TestClaudeTranscriptMissing() {
+	const home = "/home/testuser"
+	// The path claudeTranscriptMissing must derive for the cases below.
+	wantPath := filepath.Join(home, ".claude", "projects",
+		osutil.EncodeClaudeProjectPath("/projects/myapp"), "sess-1.jsonl")
+
+	homeOK := func() (string, error) { return home, nil }
+	tests := []struct {
+		name      string
+		workDir   string
+		sessionID string
+		homeDir   func() (string, error)
+		statErr   error
+		want      bool
+		wantStat  string
+	}{
+		{
+			name:      "no session id short-circuits",
+			workDir:   "/projects/myapp",
+			sessionID: "",
+			homeDir:   homeOK,
+			want:      false,
+		},
+		{
+			name:      "no work dir short-circuits",
+			workDir:   "",
+			sessionID: "sess-1",
+			homeDir:   homeOK,
+			want:      false,
+		},
+		{
+			// Unknown home dir means unknown transcript path; keep --resume
+			// rather than discard a conversation on a guess.
+			name:      "home dir error keeps the session",
+			workDir:   "/projects/myapp",
+			sessionID: "sess-1",
+			homeDir:   func() (string, error) { return "", errors.New("no home") },
+			want:      false,
+		},
+		{
+			name:      "transcript present",
+			workDir:   "/projects/myapp",
+			sessionID: "sess-1",
+			homeDir:   homeOK,
+			statErr:   nil,
+			want:      false,
+			wantStat:  wantPath,
+		},
+		{
+			name:      "transcript pruned",
+			workDir:   "/projects/myapp",
+			sessionID: "sess-1",
+			homeDir:   homeOK,
+			statErr:   os.ErrNotExist,
+			want:      true,
+			wantStat:  wantPath,
+		},
+		{
+			// A permission error is not proof of absence.
+			name:      "other stat error keeps the session",
+			workDir:   "/projects/myapp",
+			sessionID: "sess-1",
+			homeDir:   homeOK,
+			statErr:   os.ErrPermission,
+			want:      false,
+			wantStat:  wantPath,
+		},
+		{
+			// A session id is never a path component.
+			name:      "session id is sanitized",
+			workDir:   "/projects/myapp",
+			sessionID: "../../etc/sess-1",
+			homeDir:   homeOK,
+			statErr:   os.ErrNotExist,
+			want:      true,
+			wantStat:  wantPath,
+		},
+	}
+	for _, tc := range tests {
+		s.Run(tc.name, func() {
+			var gotStat string
+			stat := func(name string) (os.FileInfo, error) {
+				gotStat = name
+				return nil, tc.statErr
+			}
+			got := claudeTranscriptMissing(stat, tc.homeDir, tc.workDir, tc.sessionID)
+			require.Equal(s.T(), tc.want, got)
+			require.Equal(s.T(), tc.wantStat, gotStat)
+		})
+	}
+}
+
+// TestClaudeCmdBuilderDropsResumeWhenTranscriptMissing: a pruned transcript
+// would make `claude --resume` exit immediately and kill the pane, so the
+// pane opens on a fresh session instead.
+func (s *RunnerSuite) TestClaudeCmdBuilderDropsResumeWhenTranscriptMissing() {
+	cfg := &config.Config{ClaudeBinPath: "claude", LoopDir: "/home/user/.loop"}
+	builder := NewClaudeCmdBuilder(cfg, nil)
+	var gotWorkDir, gotSession string
+	builder.transcriptMissing = func(workDir, sessionID string) bool {
+		gotWorkDir, gotSession = workDir, sessionID
+		return true
+	}
+
+	got := builder.BuildInteractiveCmd("ch-1", "/projects/myapp", "", "sess-pruned", "", true)
+
+	require.Equal(s.T(), "/projects/myapp", gotWorkDir)
+	require.Equal(s.T(), "sess-pruned", gotSession)
+	require.NotContains(s.T(), got, "--resume")
+	require.NotContains(s.T(), got, "--fork-session")
+}
+
+// TestClaudeCmdBuilderDefaultTranscriptCheck exercises the real predicate
+// NewClaudeCmdBuilder wires up: a session id with nothing on disk is dropped.
+func (s *RunnerSuite) TestClaudeCmdBuilderDefaultTranscriptCheck() {
+	cfg := &config.Config{ClaudeBinPath: "claude", LoopDir: "/home/user/.loop"}
+	builder := NewClaudeCmdBuilder(cfg, nil)
+	got := builder.BuildInteractiveCmd("ch-1", s.T().TempDir(), "", "sess-never-existed", "", true)
+	require.NotContains(s.T(), got, "--resume")
 }

@@ -267,6 +267,9 @@ func (s *RunnerSuite) SetupTest() {
 		return len(b), nil
 	}
 	s.runner.osTimeLocalName = func() string { return "Local" }
+	// Transcripts exist by default: most tests here assert the --resume
+	// flags survive. See TestRunDropsResumeWhenTranscriptMissing.
+	s.runner.transcriptMissing = func(string, string) bool { return false }
 }
 
 // newDefaultMockSystem creates a MockSystem with default expectations for runner tests.
@@ -298,6 +301,7 @@ func (s *RunnerSuite) applyMockDefaults() {
 		return len(b), nil
 	}
 	s.runner.osTimeLocalName = func() string { return "Local" }
+	s.runner.transcriptMissing = func(string, string) bool { return false }
 }
 
 // setupMockRun sets up mocks for a successful non-streaming container Run cycle.

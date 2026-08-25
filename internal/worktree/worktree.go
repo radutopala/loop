@@ -26,6 +26,17 @@ type CommandRunner func(ctx context.Context, dir, name string, args ...string) (
 type CreateResult struct {
 	WorktreePath string
 	BranchName   string
+	// SessionStaged reports whether the parent's transcript was actually
+	// copied into the worktree's Claude project dir. False when no session
+	// was asked for, and false when the copy failed — most often because
+	// Claude Code already pruned the transcript (~/.claude/projects is
+	// cleaned after cleanupPeriodDays, 30 by default) while the channel
+	// still pins its id.
+	//
+	// Callers must not pin that id on the new worktree channel: every turn
+	// would run `--resume <id>` against a transcript that isn't there and
+	// die with "No conversation found with session ID".
+	SessionStaged bool
 }
 
 // ExecCommandRunner is a CommandRunner that uses exec.CommandContext.
@@ -62,13 +73,18 @@ func (c *Creator) Create(ctx context.Context, dirPath, branch, name, sessionID s
 	}
 
 	// Copy session file so --resume --fork-session works in the worktree dir.
+	// A failure here is not fatal — the worktree is usable, it just has no
+	// conversation to fork — but it must be reported, because a caller that
+	// pins the session id anyway produces a thread that fails on every turn.
+	staged := false
 	if sessionID != "" {
-		_ = c.copySessionFile(dirPath, worktreePath, sessionID)
+		staged = c.copySessionFile(dirPath, worktreePath, sessionID) == nil
 	}
 
 	return &CreateResult{
-		WorktreePath: worktreePath,
-		BranchName:   wtBranch,
+		WorktreePath:  worktreePath,
+		BranchName:    wtBranch,
+		SessionStaged: staged,
 	}, nil
 }
 

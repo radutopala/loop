@@ -11,7 +11,37 @@ import (
 
 	"github.com/radutopala/loop/internal/agent"
 	"github.com/radutopala/loop/internal/config"
+	"github.com/radutopala/loop/internal/osutil"
 )
+
+// claudeTranscriptMissing reports whether Claude Code definitely has no
+// transcript for sessionID under workDir.
+//
+// Claude keys session files by CWD
+// (~/.claude/projects/<encoded cwd>/<id>.jsonl) and prunes them once they
+// pass cleanupPeriodDays (30 by default), while Loop pins a channel's
+// session id in the database forever and only rewrites it after a
+// *successful* run. A channel that sat idle for a month therefore points
+// at a file that no longer exists, and `--resume` fails the whole turn
+// with "No conversation found with session ID" — every turn, permanently.
+//
+// Only a definitive "not there" counts. A stat that fails for any other
+// reason (unreadable home dir, permissions) leaves the flag alone rather
+// than silently dropping the user's conversation.
+func claudeTranscriptMissing(stat func(string) (os.FileInfo, error), homeDir func() (string, error), workDir, sessionID string) bool {
+	if sessionID == "" || workDir == "" {
+		return false
+	}
+	home, err := homeDir()
+	if err != nil {
+		return false
+	}
+	path := filepath.Join(home, ".claude", "projects", osutil.EncodeClaudeProjectPath(workDir), filepath.Base(sessionID)+".jsonl")
+	if _, err := stat(path); err != nil {
+		return os.IsNotExist(err)
+	}
+	return false
+}
 
 // buildBaseClaudeCmd returns the common Claude CLI flags shared by both
 // batch and interactive modes. When continueSession is true, sessionID is
@@ -201,6 +231,9 @@ type ClaudeCmdBuilder struct {
 	loadWorktreeProjectConfig func(string, string, *config.Config) (*config.Config, error)
 	writeFile                 func(string, []byte, os.FileMode) error
 	mkdirAll                  func(string, os.FileMode) error
+	// transcriptMissing reports whether Claude Code has no transcript on
+	// disk for a (workDir, sessionID) pair. Injectable for tests.
+	transcriptMissing func(workDir, sessionID string) bool
 }
 
 // NewClaudeCmdBuilder creates a builder that uses the given config.
@@ -211,6 +244,9 @@ func NewClaudeCmdBuilder(cfg *config.Config, configLoad func() (*config.Config, 
 		loadWorktreeProjectConfig: config.LoadWorktreeProjectConfig,
 		writeFile:                 os.WriteFile,
 		mkdirAll:                  os.MkdirAll,
+		transcriptMissing: func(workDir, sessionID string) bool {
+			return claudeTranscriptMissing(os.Stat, os.UserHomeDir, workDir, sessionID)
+		},
 	}
 	b.cfg.Store(cfg)
 	return b
@@ -237,6 +273,13 @@ func (b *ClaudeCmdBuilder) currentConfig() *config.Config {
 // the agent can identify itself via the MCP tools.
 func (b *ClaudeCmdBuilder) BuildInteractiveCmd(channelID, dirPath, parentDirPath, sessionID, agentID string, forkSession bool) string {
 	cfg, workDir := b.resolveCmdConfig(channelID, dirPath, parentDirPath, agentID)
+	// A pruned transcript makes `--resume` kill the pane on launch with
+	// "No conversation found with session ID". An empty session id opens a
+	// fresh one instead, which is what the user can actually work in.
+	if b.transcriptMissing(workDir, sessionID) {
+		sessionID = ""
+		forkSession = false
+	}
 	return buildInteractiveClaudeCmd(cfg, channelID, workDir, sessionID, agentID, forkSession, false)
 }
 

@@ -107,6 +107,9 @@ func (e *TaskExecutor) ExecuteTask(ctx context.Context, task *db.ScheduledTask) 
 	// Worktree: on first run, create a git worktree; on subsequent runs, reuse
 	// the thread's DirPath which already points to the worktree.
 	worktreeCreated := false
+	// Cleared when a worktree is created but the channel's transcript could
+	// not be staged into it — see the Create call below.
+	forkParentSession := true
 	if task.Worktree && e.worktreeCreator != nil && dirPath != "" {
 		// If ThreadID points to a deleted thread (no channel row, or row
 		// with empty DirPath), treat this run as a first run and create a
@@ -146,6 +149,14 @@ func (e *TaskExecutor) ExecuteTask(ctx context.Context, task *db.ScheduledTask) 
 			if wtErr != nil {
 				return "", fmt.Errorf("creating worktree for task %d: %w", task.ID, wtErr)
 			}
+			// Only fork the channel's session below if its transcript
+			// actually landed in the new worktree's project dir; Claude
+			// Code prunes old transcripts out from under a pinned id.
+			if sessionForCopy != "" && !result.SessionStaged {
+				e.logger.Warn("channel session transcript unavailable; task starts fresh",
+					"task_id", task.ID, "session_id", sessionForCopy)
+				forkParentSession = false
+			}
 			dirPath = result.WorktreePath
 			worktreeCreated = true
 			e.logger.Info("created worktree for task", "task_id", task.ID, "worktree_path", dirPath)
@@ -170,7 +181,7 @@ func (e *TaskExecutor) ExecuteTask(ctx context.Context, task *db.ScheduledTask) 
 		if threadCh, err := e.store.GetChannel(ctx, task.ThreadID); err == nil && threadCh != nil {
 			sessionID = threadCh.SessionID
 		}
-	} else if channel != nil && channel.SessionID != "" {
+	} else if channel != nil && channel.SessionID != "" && forkParentSession {
 		sessionID = channel.SessionID
 		forkSession = true
 	}

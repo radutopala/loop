@@ -76,6 +76,7 @@ Create a new terminal session. Detaches any currently attached session first.
   - `"fork"` — resume the channel session with the fork flag, so the new run gets its own session id. Auto-disabled (treated as `"resume"`) when the channel has no `session_id`.
   - `"fresh"` — ignore the stored `session_id` entirely; Claude starts a new conversation.
   - Empty / missing — preserves the legacy behavior: threads that share the parent's session set the fork flag automatically; channels resume in place.
+  - Any mode that would resume falls back to a fresh session when the stored id's transcript is no longer on disk — resuming a pruned transcript kills the pane on launch. See [Pruned transcripts](sessions.md#pruned-transcripts).
 - When no explicit `cmd` is given and a `cmdBuilder` is configured, sends the interactive Claude command as shell input after session creation.
 - Maximum of 64 command arguments; empty arguments are rejected.
 
