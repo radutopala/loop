@@ -17,6 +17,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && curl -fsSL https://deb.nodesource.com/setup_24.x | bash - \
     && apt-get install -y --no-install-recommends nodejs \
     && rm -rf /var/lib/apt/lists/*
+# Docker Desktop's VirtioFS intermittently stats host bind mounts as uid 0
+# instead of the host uid, which makes git abort with "detected dubious
+# ownership" on a random fraction of calls — the flap hits the worktree dir
+# more often than .git, so it looks like a ghost. safe.directory is additive
+# across config scopes, so a system-level entry survives the host ~/.gitconfig
+# mounted over the agent's global config. The trust check buys nothing here
+# anyway: the container is single-tenant, runs with permissions skipped, and
+# only ever mounts the user's own directories.
+RUN git config --system --add safe.directory '*'
 RUN pip install --break-system-packages --no-cache-dir pre-commit uv awscli
 ENV USE_BUILTIN_RIPGREP=0
 ARG LOOP_VERSION=main
