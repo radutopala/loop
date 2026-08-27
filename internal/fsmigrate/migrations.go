@@ -130,6 +130,15 @@ var migrations = []Migration{
 		Description: "refresh container/ files: golang 1.27 base image",
 		Apply:       refreshContainerFiles,
 	},
+	{
+		// Ships the system-level git safe.directory entry: VirtioFS stats
+		// host bind mounts as uid 0 on a random fraction of calls, which
+		// made git abort with "detected dubious ownership" mid-run. The
+		// Dockerfile carries the fix, so existing installs need the
+		// refreshed copy before their next image rebuild.
+		Description: "refresh container/ files: git safe.directory for VirtioFS uid flap",
+		Apply:       refreshContainerFiles,
+	},
 }
 
 // versionedContainerFiles are tracked by the daemon: each release ships a
