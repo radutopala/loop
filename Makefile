@@ -300,12 +300,12 @@ app-icons: ## Regenerate app icons from SVG sources (requires rsvg-convert, icon
 	@rsvg-convert -w 512 -h 512 app/build/icon-transparent.svg -o app/public/loop.png
 	@echo "Generated: app/build/icon.icns, app/public/loop-macos.png, app/public/loop.png"
 
-# CodeQL's Go extractor lags the toolchain: it caps at the language version in
-# go.mod and forces GOTOOLCHAIN=local, so it must run on the Go release that
-# matches that cap, not the toolchain we build with. Keep these containers on
-# CODEQL_GO_VERSION until the bundle supports a newer language version.
-CODEQL_VERSION ?= v2.25.2
-CODEQL_GO_VERSION ?= 1.26
+# CodeQL's Go extractor caps at the language version in go.mod and forces
+# GOTOOLCHAIN=local, so these containers must run the Go release matching that
+# cap. Bundle and Go version move together: bumping one without the other hands
+# the extractor export data it cannot read.
+CODEQL_VERSION ?= v2.26.4
+CODEQL_GO_VERSION ?= 1.27
 
 codeql-download: ## Download CodeQL bundle into Docker volume (one-time)
 	@echo "==> Downloading CodeQL $(CODEQL_VERSION) (linux64)..."
