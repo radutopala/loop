@@ -122,6 +122,14 @@ var migrations = []Migration{
 		Description: "refresh container/ files: skip redundant chown -R over cache volumes",
 		Apply:       refreshContainerFiles,
 	},
+	{
+		// The Go 1.27 upgrade bumped both stages of the embedded agent
+		// Dockerfile to golang:1.27. Existing installs kept the 1.26 copy
+		// an earlier refresh wrote, so their agent image stayed a release
+		// behind the toolchain the daemon builds and tests with.
+		Description: "refresh container/ files: golang 1.27 base image",
+		Apply:       refreshContainerFiles,
+	},
 }
 
 // versionedContainerFiles are tracked by the daemon: each release ships a
