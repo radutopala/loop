@@ -16,7 +16,7 @@ ENV GOTOOLCHAIN=auto
 # version in sync with internal/container/image/Dockerfile,
 # scripts/test-runner.Dockerfile, and the CI node-version pins.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        bash ca-certificates curl git make patch \
+        bash ca-certificates curl git git-lfs make patch \
         docker-cli docker-compose \
         gosu ripgrep openssh-client \
         python3 python3-pip python3-venv \
@@ -24,6 +24,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && curl -fsSL https://deb.nodesource.com/setup_24.x | bash - \
     && apt-get install -y --no-install-recommends nodejs \
     && rm -rf /var/lib/apt/lists/*
+# The git-lfs postinst registers the system-level lfs filters in
+# /etc/gitconfig, so a repo whose .gitattributes routes paths through lfs
+# works without further setup — and system scope survives the host
+# ~/.gitconfig being mounted over the container's global config.
 RUN pip install --break-system-packages --no-cache-dir pre-commit uv awscli
 ENV USE_BUILTIN_RIPGREP=0
 ARG LOOP_VERSION=dev
