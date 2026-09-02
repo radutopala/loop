@@ -139,6 +139,14 @@ var migrations = []Migration{
 		Description: "refresh container/ files: git safe.directory for VirtioFS uid flap",
 		Apply:       refreshContainerFiles,
 	},
+	{
+		// Adds git-lfs to the agent image. A repo whose .gitattributes
+		// points at lfs aborts every checkout with "git-lfs was not found
+		// on your path" when the binary is missing, so existing installs
+		// need the refreshed Dockerfile before their next image rebuild.
+		Description: "refresh container/ files: git-lfs in the agent image",
+		Apply:       refreshContainerFiles,
+	},
 }
 
 // versionedContainerFiles are tracked by the daemon: each release ships a
