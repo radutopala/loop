@@ -9,7 +9,7 @@ ENV GOTOOLCHAIN=auto
 # version in sync with scripts/test-runner.Dockerfile and the CI
 # node-version pins.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        bash ca-certificates curl git make patch \
+        bash ca-certificates curl git git-lfs make patch \
         docker-cli docker-compose \
         gosu ripgrep openssh-client \
         python3 python3-pip python3-venv \
@@ -26,6 +26,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # anyway: the container is single-tenant, runs with permissions skipped, and
 # only ever mounts the user's own directories.
 RUN git config --system --add safe.directory '*'
+# The git-lfs postinst registers the system-level lfs filters in
+# /etc/gitconfig, so a repo whose .gitattributes routes paths through lfs
+# works without further setup — and system scope survives the host
+# ~/.gitconfig being mounted over the container's global config.
 RUN pip install --break-system-packages --no-cache-dir pre-commit uv awscli
 ENV USE_BUILTIN_RIPGREP=0
 ARG LOOP_VERSION=main
