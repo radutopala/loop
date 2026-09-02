@@ -33,7 +33,16 @@ func collectGitState(ctx context.Context, dir string) gitState {
 	cmd.Dir = dir
 	out, err := cmd.Output()
 	if err != nil {
-		return gitState{}
+		// `git status` reads the worktree, so it fails in situations that
+		// leave the repo perfectly identifiable. The one seen in practice is
+		// a repo whose .gitattributes routes paths through git-lfs: the
+		// repo-local filter.lfs.required makes a missing git-lfs binary a
+		// fatal "external filter failed" rather than a warning. Returning the
+		// zero value there blanks the channel header and hides the branch
+		// picker for a repo git can still describe perfectly well, so fall
+		// back to the ref lookups, which never touch the worktree. Diff
+		// counts stay zero — that part genuinely could not be computed.
+		return refState(ctx, dir)
 	}
 	st, untracked := parseStatusV2(string(out))
 
@@ -59,6 +68,32 @@ func collectGitState(ctx context.Context, dir string) gitState {
 	}
 
 	return st
+}
+
+// refState resolves branch and short commit with plumbing that never reads the
+// worktree, so it survives the filter failures that take `git status` down. A
+// non-repo dir returns the zero value, matching the status path.
+func refState(ctx context.Context, dir string) gitState {
+	branch, ok := gitOutput(ctx, dir, "rev-parse", "--abbrev-ref", "HEAD")
+	if !ok {
+		return gitState{}
+	}
+	// --short=7 matches the width parseStatusV2 slices off branch.oid.
+	commit, _ := gitOutput(ctx, dir, "rev-parse", "--short=7", "HEAD")
+	return gitState{Branch: branch, Commit: commit}
+}
+
+// gitOutput runs a git command in dir and returns its trimmed stdout. ok is
+// false when the command fails or produces no output.
+func gitOutput(ctx context.Context, dir string, args ...string) (string, bool) {
+	cmd := exec.CommandContext(ctx, "git", args...)
+	cmd.Dir = dir
+	out, err := cmd.Output()
+	if err != nil {
+		return "", false
+	}
+	s := strings.TrimSpace(string(out))
+	return s, s != ""
 }
 
 // parseStatusV2 extracts the branch name, short commit, and untracked paths
