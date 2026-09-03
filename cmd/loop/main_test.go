@@ -507,6 +507,10 @@ func (s *MainSuite) setupServeMocks() *serveMocks {
 	m.store.On("ListPausedChannels", mock.Anything).Return(nil, nil).Maybe()
 	m.store.On("ListPendingChannels", mock.Anything).Return(([]string)(nil), nil).Maybe()
 	m.dockerClient.On("LatestClaudeVersion").Return("1.0.0").Maybe()
+	// The update checker reads the installed Claude version off the image
+	// labels at startup; no image exists in these tests.
+	m.dockerClient.On("ImageInspectLabels", mock.Anything, mock.Anything).
+		Return(map[string]string(nil), errors.New("no such image")).Maybe()
 	// The child-image cascade runs after a successful ensure-image; with no
 	// base image present it exits before touching anything else.
 	m.dockerClient.On("ImageList", mock.Anything, mock.Anything).Return([]string{}, nil).Maybe()

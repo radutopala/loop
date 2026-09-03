@@ -569,6 +569,8 @@ func (s *MainSuite) TestServeDockerClientCloserCalled() {
 	closeCalled := false
 	innerClient := new(mockDockerClient)
 	innerClient.On("LatestClaudeVersion").Return("1.0.0").Maybe()
+	innerClient.On("ImageInspectLabels", mock.Anything, mock.Anything).
+		Return(map[string]string(nil), errors.New("no such image")).Maybe()
 	innerClient.On("ListContainerInfos", mock.Anything).Return([]*container.ContainerInfo{}, nil).Maybe()
 	innerClient.On("OOMEvents", mock.Anything).
 		Return((<-chan events.Message)(nil), (<-chan error)(nil)).Maybe()
