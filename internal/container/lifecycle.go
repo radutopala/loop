@@ -253,20 +253,28 @@ func (m *ImageLifecycleManager) doRebuild(ctx context.Context) {
 
 	m.broadcastStatus()
 	m.logger.Info("image lifecycle: build completed", "loop_version", v.LoopVersion, "claude_version", v.ClaudeVersion)
+	// Re-check now rather than waiting for the next tick of the update
+	// checker, which is half an hour away: the build was very likely the
+	// answer to a pending update prompt.
+	m.checkAndBroadcast()
 	m.RebuildChildren(ctx)
 }
 
 // CheckClaudeUpdate checks if a newer Claude Code version is available.
+//
+// The current version comes from the image's own labels (via Versions, which
+// falls back to the in-memory copy when the image cannot be inspected) rather
+// than from the in-memory copy alone. That copy is only written by a rebuild
+// in this process, so reading it directly means a daemon that has not rebuilt
+// anything never reports an update at all, and one that just rebuilt keeps
+// comparing against the version it replaced.
 func (m *ImageLifecycleManager) CheckClaudeUpdate() (latestVersion string, available bool) {
 	latest := m.latestClaudeVersion()
 	if latest == "" || len(latest) > 20 {
 		return "", false // invalid or error response
 	}
 
-	m.mu.Lock()
-	current := m.versions.ClaudeVersion
-	m.mu.Unlock()
-
+	current := m.Versions().ClaudeVersion
 	if current == "" || current == latest {
 		return "", false
 	}
@@ -295,14 +303,21 @@ func (m *ImageLifecycleManager) checkAndBroadcast() {
 	latest, available := m.CheckClaudeUpdate()
 	if !available {
 		m.mu.Lock()
+		had := m.updateAvailable != nil
 		m.updateAvailable = nil
 		m.mu.Unlock()
+		// Clearing has to be announced, not just recorded: subscribers latch
+		// the banner on the last event they saw, so without this the prompt to
+		// update survives the rebuild that satisfied it. An empty
+		// latest_version is the "nothing to update" signal.
+		if had && m.broadcaster != nil {
+			m.logger.Info("image lifecycle: Claude Code update no longer pending")
+			m.broadcaster.BroadcastImageUpdateAvailable(events.ImageUpdateAvailableData{Component: "claude_code"})
+		}
 		return
 	}
 
-	m.mu.Lock()
-	current := m.versions.ClaudeVersion
-	m.mu.Unlock()
+	current := m.Versions().ClaudeVersion
 
 	data := &events.ImageUpdateAvailableData{
 		CurrentVersion: current,

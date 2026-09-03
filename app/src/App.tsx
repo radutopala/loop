@@ -300,7 +300,10 @@ function AppInner() {
         return;
       }
       if (event.type === "image.update_available") {
-        setImageUpdateAvailable(event.data as ImageUpdateAvailableData);
+        const data = event.data as ImageUpdateAvailableData;
+        // An empty latest_version means the update is no longer pending —
+        // usually because the rebuild that installed it just finished.
+        setImageUpdateAvailable(data.latest_version ? data : null);
         return;
       }
       if (event.type.startsWith("container.")) {
