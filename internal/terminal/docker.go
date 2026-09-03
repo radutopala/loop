@@ -96,6 +96,31 @@ func formatExecUser(uid, gid int) string {
 	return fmt.Sprintf("%d:%d", uid, gid)
 }
 
+// execUserWaitScript is the preamble an interactive exec runs before handing
+// off to the requested command. The image entrypoint creates the container
+// user with useradd, which lands a few tens of milliseconds after Docker
+// reports the container started — but the terminal opens its exec as soon as
+// ContainerStart returns, so a shell can start before /etc/passwd has an entry
+// for its uid. Numeric exec IDs (see defaultExecUser) sail past runc's own
+// lookup, so instead of failing the exec succeeds and bash, which resolves its
+// user name once at startup, renders "I have no name!@<host>" for the whole
+// session.
+//
+// The loop waits ~2s for the entry to appear and then runs the command
+// regardless: a uid that genuinely has no entry (a custom image ignoring
+// HOST_UID) ends up exactly where it is today rather than losing its shell.
+// getent is skipped when the image lacks it so nothing spins for images
+// without libc tooling.
+const execUserWaitScript = `if command -v getent >/dev/null 2>&1; then i=0; while [ "$i" -lt 100 ] && ! getent passwd "$(id -u)" >/dev/null 2>&1; do i=$((i+1)); sleep 0.02; done; fi; exec "$@"`
+
+// waitForExecUser wraps cmd in execUserWaitScript. The command is passed as
+// positional arguments rather than interpolated into the script so no argument
+// needs quoting, and the final exec replaces the wrapper, leaving the process
+// tree (and the PID the shell writes to its pid file) unchanged.
+func waitForExecUser(cmd []string) []string {
+	return append([]string{"/bin/sh", "-c", execUserWaitScript, "sh"}, cmd...)
+}
+
 // DefaultShellCmd returns a /bin/bash command that writes its PID to pidFile
 // for reliable process group cleanup inside the container. Bash is started
 // with an explicit --rcfile so image-baked aliases (e.g. `claude` →
@@ -122,6 +147,12 @@ func (c *DockerExecClient) ExecCreate(ctx context.Context, containerID string, c
 func (c *DockerExecClient) ExecCreateWithEnv(ctx context.Context, containerID string, cmd, env []string, tty bool) (string, error) {
 	if len(cmd) == 0 {
 		cmd = []string{"/bin/sh"}
+	}
+	// Only interactive execs need the wait: they are the ones running a shell
+	// that prints a prompt. Non-TTY execs (e.g. the session kill helper) do no
+	// name lookup, so they skip the extra layer.
+	if tty {
+		cmd = waitForExecUser(cmd)
 	}
 	resp, err := c.api.ContainerExecCreate(ctx, containerID, containertypes.ExecOptions{
 		User:         c.execUser(),
