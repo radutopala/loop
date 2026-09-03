@@ -6,6 +6,8 @@ import (
 	"errors"
 	"io"
 	"net"
+	"os"
+	"os/exec"
 	"testing"
 
 	"github.com/docker/docker/api/types"
@@ -80,7 +82,7 @@ func (s *DockerSuite) TestExecCreate() {
 
 	expectedOpts := containertypes.ExecOptions{
 		User:         "1000:1000",
-		Cmd:          []string{"/bin/sh"},
+		Cmd:          waitForExecUser([]string{"/bin/sh"}),
 		Tty:          true,
 		AttachStdin:  true,
 		AttachStdout: true,
@@ -103,7 +105,7 @@ func (s *DockerSuite) TestExecCreateDefaultCmd() {
 
 	expectedOpts := containertypes.ExecOptions{
 		User:         "1000:1000",
-		Cmd:          []string{"/bin/sh"},
+		Cmd:          waitForExecUser([]string{"/bin/sh"}),
 		Tty:          true,
 		AttachStdin:  true,
 		AttachStdout: true,
@@ -375,4 +377,39 @@ func (s *DockerSuite) TestExecCreateNoTTY() {
 	require.Equal(s.T(), "exec-456", id)
 
 	api.AssertExpectations(s.T())
+}
+
+// TestWaitForExecUser pins the wrapper shape: the requested command is handed
+// to the preamble as positional arguments, so no argument needs quoting.
+func (s *DockerSuite) TestWaitForExecUser() {
+	require.Equal(s.T(),
+		[]string{"/bin/sh", "-c", execUserWaitScript, "sh", "/bin/bash", "-c", "echo hi"},
+		waitForExecUser([]string{"/bin/bash", "-c", "echo hi"}))
+}
+
+// TestExecUserWaitScriptRunsCommand runs the real preamble under a real
+// /bin/sh: the trailing exec must pass every argument through untouched,
+// including ones containing spaces.
+func (s *DockerSuite) TestExecUserWaitScriptRunsCommand() {
+	if _, err := os.Stat("/bin/sh"); err != nil {
+		s.T().Skip("no /bin/sh on this platform")
+	}
+	wrapped := waitForExecUser([]string{"/bin/sh", "-c", `printf '%s|' "$@"`, "sh", "a b", "c"})
+	out, err := exec.Command(wrapped[0], wrapped[1:]...).Output()
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "a b|c|", string(out))
+}
+
+// TestExecUserWaitScriptPreservesExitStatus guards the exec at the end of the
+// preamble: the wrapper must not swallow the command's failure, since the
+// terminal reports session exits from it.
+func (s *DockerSuite) TestExecUserWaitScriptPreservesExitStatus() {
+	if _, err := os.Stat("/bin/sh"); err != nil {
+		s.T().Skip("no /bin/sh on this platform")
+	}
+	wrapped := waitForExecUser([]string{"/bin/sh", "-c", "exit 7"})
+	var exitErr *exec.ExitError
+	err := exec.Command(wrapped[0], wrapped[1:]...).Run()
+	require.ErrorAs(s.T(), err, &exitErr)
+	require.Equal(s.T(), 7, exitErr.ExitCode())
 }
