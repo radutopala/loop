@@ -229,6 +229,9 @@ func (s *MainSuite) TestEnsureImageWithBroadcastSuccess() {
 
 	dc := new(mockDockerClient)
 	dc.On("LatestClaudeVersion").Return("1.0.0").Maybe()
+	// The update checker's startup pass reads the installed version off the
+	// image labels before the cancelled context stops it.
+	dc.On("ImageInspectLabels", mock.Anything, "").Return(map[string]string(nil), errors.New("no such image")).Maybe()
 	mgr := container.NewImageLifecycleManager(dc, hub, s.app.sys, nil, "", "", "", dc.LatestClaudeVersion)
 
 	s.app.ensureImageWithBroadcast(ctx, dc, testConfig(), hub, mgr, slog.New(slog.NewTextHandler(io.Discard, nil)))
@@ -244,6 +247,9 @@ func (s *MainSuite) TestEnsureImageWithBroadcastError() {
 
 	dc := new(mockDockerClient)
 	dc.On("LatestClaudeVersion").Return("1.0.0").Maybe()
+	// The update checker's startup pass reads the installed version off the
+	// image labels before the cancelled context stops it.
+	dc.On("ImageInspectLabels", mock.Anything, "").Return(map[string]string(nil), errors.New("no such image")).Maybe()
 	mgr := container.NewImageLifecycleManager(dc, hub, s.app.sys, nil, "", "", "", dc.LatestClaudeVersion)
 
 	s.app.ensureImageWithBroadcast(ctx, dc, testConfig(), hub, mgr, slog.New(slog.NewTextHandler(io.Discard, nil)))
