@@ -66,6 +66,22 @@ func (s *LifecycleSuite) newManager(latestClaudeVersion func() string) *ImageLif
 	)
 }
 
+// expectImageClaudeVersion makes the image on disk report claudeVersion, which
+// is where CheckClaudeUpdate reads the installed version from.
+func (s *LifecycleSuite) expectImageClaudeVersion(claudeVersion string) {
+	s.client.On("ImageInspectLabels", mock.Anything, s.imageName).Return(map[string]string{
+		"loop.version":        s.loopVersion,
+		"loop.claude_version": claudeVersion,
+	}, nil).Maybe()
+}
+
+// expectUninspectableImage makes image inspection fail, which is what sends
+// CheckClaudeUpdate to the version recorded by the last build in this process.
+func (s *LifecycleSuite) expectUninspectableImage() {
+	s.client.On("ImageInspectLabels", mock.Anything, s.imageName).
+		Return(map[string]string(nil), errors.New("no such image")).Maybe()
+}
+
 // --- NewImageLifecycleManager ---
 
 func (s *LifecycleSuite) TestNewImageLifecycleManager_DefaultState() {
@@ -340,6 +356,31 @@ func (s *LifecycleSuite) TestDoRebuild_Success_WithLabels() {
 	require.Equal(s.T(), "3.0.0", m.Versions().ClaudeVersion)
 }
 
+func (s *LifecycleSuite) TestDoRebuild_ClearsPendingUpdate() {
+	m := s.newManager(func() string { return "3.0.0" })
+	m.mu.Lock()
+	m.updateAvailable = &events.ImageUpdateAvailableData{
+		CurrentVersion: "2.0.0",
+		LatestVersion:  "3.0.0",
+		Component:      "claude_code",
+	}
+	m.mu.Unlock()
+
+	s.client.On("ImageBuild", mock.Anything, s.containerDir, s.imageName).Return(nil)
+	s.expectImageClaudeVersion("3.0.0")
+	s.broadcaster.On("BroadcastImageBuildStatus", mock.Anything).Return()
+	s.broadcaster.On("BroadcastImageUpdateAvailable", mock.Anything).Return()
+
+	m.doRebuild(context.Background())
+
+	// The build answered the pending prompt, so the recheck runs immediately
+	// instead of leaving the banner up until the next half-hourly tick.
+	require.Nil(s.T(), m.UpdateAvailable())
+	s.broadcaster.AssertCalled(s.T(), "BroadcastImageUpdateAvailable", events.ImageUpdateAvailableData{
+		Component: "claude_code",
+	})
+}
+
 func (s *LifecycleSuite) TestDoRebuild_Success_LabelInspectFails() {
 	m := s.newManager(func() string { return "" })
 	m.mu.Lock()
@@ -456,9 +497,7 @@ func (s *LifecycleSuite) TestDoRebuild_NilBroadcaster() {
 
 func (s *LifecycleSuite) TestCheckClaudeUpdate_CurrentEqualsLatest() {
 	m := s.newManager(func() string { return "2.0.0" })
-	m.mu.Lock()
-	m.versions.ClaudeVersion = "2.0.0"
-	m.mu.Unlock()
+	s.expectImageClaudeVersion("2.0.0")
 
 	latest, available := m.CheckClaudeUpdate()
 	require.False(s.T(), available)
@@ -467,9 +506,7 @@ func (s *LifecycleSuite) TestCheckClaudeUpdate_CurrentEqualsLatest() {
 
 func (s *LifecycleSuite) TestCheckClaudeUpdate_EmptyLatest() {
 	m := s.newManager(func() string { return "" })
-	m.mu.Lock()
-	m.versions.ClaudeVersion = "2.0.0"
-	m.mu.Unlock()
+	s.expectImageClaudeVersion("2.0.0")
 
 	latest, available := m.CheckClaudeUpdate()
 	require.False(s.T(), available)
@@ -479,9 +516,7 @@ func (s *LifecycleSuite) TestCheckClaudeUpdate_EmptyLatest() {
 func (s *LifecycleSuite) TestCheckClaudeUpdate_LatestTooLong() {
 	longVersion := "123456789012345678901" // 21 chars > 20
 	m := s.newManager(func() string { return longVersion })
-	m.mu.Lock()
-	m.versions.ClaudeVersion = "2.0.0"
-	m.mu.Unlock()
+	s.expectImageClaudeVersion("2.0.0")
 
 	latest, available := m.CheckClaudeUpdate()
 	require.False(s.T(), available)
@@ -491,9 +526,7 @@ func (s *LifecycleSuite) TestCheckClaudeUpdate_LatestTooLong() {
 func (s *LifecycleSuite) TestCheckClaudeUpdate_LatestExactly20Chars() {
 	version20 := "12345678901234567890" // exactly 20 chars
 	m := s.newManager(func() string { return version20 })
-	m.mu.Lock()
-	m.versions.ClaudeVersion = "2.0.0"
-	m.mu.Unlock()
+	s.expectImageClaudeVersion("2.0.0")
 
 	latest, available := m.CheckClaudeUpdate()
 	require.True(s.T(), available)
@@ -502,7 +535,7 @@ func (s *LifecycleSuite) TestCheckClaudeUpdate_LatestExactly20Chars() {
 
 func (s *LifecycleSuite) TestCheckClaudeUpdate_EmptyCurrent() {
 	m := s.newManager(func() string { return "3.0.0" })
-	// versions.ClaudeVersion is empty by default
+	s.expectImageClaudeVersion("")
 
 	latest, available := m.CheckClaudeUpdate()
 	require.False(s.T(), available)
@@ -511,9 +544,7 @@ func (s *LifecycleSuite) TestCheckClaudeUpdate_EmptyCurrent() {
 
 func (s *LifecycleSuite) TestCheckClaudeUpdate_UpdateAvailable() {
 	m := s.newManager(func() string { return "3.0.0" })
-	m.mu.Lock()
-	m.versions.ClaudeVersion = "2.0.0"
-	m.mu.Unlock()
+	s.expectImageClaudeVersion("2.0.0")
 
 	latest, available := m.CheckClaudeUpdate()
 	require.True(s.T(), available)
@@ -521,6 +552,19 @@ func (s *LifecycleSuite) TestCheckClaudeUpdate_UpdateAvailable() {
 }
 
 // --- RunUpdateChecker ---
+
+func (s *LifecycleSuite) TestCheckClaudeUpdate_UninspectableImageUsesLastBuild() {
+	m := s.newManager(func() string { return "3.0.0" })
+	s.expectUninspectableImage()
+	m.mu.Lock()
+	m.versions.ClaudeVersion = "2.0.0"
+	m.mu.Unlock()
+
+	latest, available := m.CheckClaudeUpdate()
+
+	require.True(s.T(), available)
+	require.Equal(s.T(), "3.0.0", latest)
+}
 
 func (s *LifecycleSuite) TestRunUpdateChecker_CancelledContext() {
 	m := s.newManager(func() string { return "" })
@@ -545,9 +589,7 @@ func (s *LifecycleSuite) TestRunUpdateChecker_CancelledContext() {
 func (s *LifecycleSuite) TestRunUpdateChecker_ChecksAtStartup() {
 	var called atomic.Bool
 	m := s.newManager(func() string { return "3.0.0" })
-	m.mu.Lock()
-	m.versions.ClaudeVersion = "2.0.0"
-	m.mu.Unlock()
+	s.expectImageClaudeVersion("2.0.0")
 
 	s.broadcaster.On("BroadcastImageUpdateAvailable", mock.Anything).Run(func(_ mock.Arguments) {
 		called.Store(true)
@@ -580,9 +622,7 @@ func (s *LifecycleSuite) TestRunUpdateChecker_TickerFires() {
 		callCount.Add(1)
 		return "3.0.0"
 	})
-	m.mu.Lock()
-	m.versions.ClaudeVersion = "2.0.0"
-	m.mu.Unlock()
+	s.expectImageClaudeVersion("2.0.0")
 
 	s.broadcaster.On("BroadcastImageUpdateAvailable", mock.Anything).Return()
 
@@ -608,9 +648,7 @@ func (s *LifecycleSuite) TestRunUpdateChecker_TickerFires() {
 
 func (s *LifecycleSuite) TestCheckAndBroadcast_UpdateAvailable() {
 	m := s.newManager(func() string { return "3.0.0" })
-	m.mu.Lock()
-	m.versions.ClaudeVersion = "2.0.0"
-	m.mu.Unlock()
+	s.expectImageClaudeVersion("2.0.0")
 
 	s.broadcaster.On("BroadcastImageUpdateAvailable", mock.Anything).Return()
 
@@ -630,9 +668,7 @@ func (s *LifecycleSuite) TestCheckAndBroadcast_UpdateAvailable() {
 
 func (s *LifecycleSuite) TestCheckAndBroadcast_NoUpdateAvailable() {
 	m := s.newManager(func() string { return "2.0.0" })
-	m.mu.Lock()
-	m.versions.ClaudeVersion = "2.0.0"
-	m.mu.Unlock()
+	s.expectImageClaudeVersion("2.0.0")
 
 	m.checkAndBroadcast()
 
@@ -648,12 +684,53 @@ func (s *LifecycleSuite) TestCheckAndBroadcast_NilBroadcaster() {
 		s.containerDir, s.imageName, s.loopVersion,
 		func() string { return "3.0.0" },
 	)
+	s.expectImageClaudeVersion("2.0.0")
+
+	// Should not panic with nil broadcaster.
+	m.checkAndBroadcast()
+}
+
+func (s *LifecycleSuite) TestCheckAndBroadcast_ClearsPendingUpdate() {
+	m := s.newManager(func() string { return "2.0.0" })
+	s.expectImageClaudeVersion("2.0.0")
 	m.mu.Lock()
-	m.versions.ClaudeVersion = "2.0.0"
+	m.updateAvailable = &events.ImageUpdateAvailableData{
+		CurrentVersion: "1.0.0",
+		LatestVersion:  "2.0.0",
+		Component:      "claude_code",
+	}
+	m.mu.Unlock()
+
+	s.broadcaster.On("BroadcastImageUpdateAvailable", mock.Anything).Return()
+
+	m.checkAndBroadcast()
+
+	// An empty latest_version tells subscribers the pending prompt is gone;
+	// without it the banner outlives the rebuild that satisfied it.
+	s.broadcaster.AssertCalled(s.T(), "BroadcastImageUpdateAvailable", events.ImageUpdateAvailableData{
+		Component: "claude_code",
+	})
+	require.Nil(s.T(), m.UpdateAvailable())
+}
+
+func (s *LifecycleSuite) TestCheckAndBroadcast_ClearsPendingUpdateNilBroadcaster() {
+	s.sys.On("UserHomeDir").Return("/home/test", nil).Maybe()
+	s.sys.On("ReadFile", "/home/test/.loop/image-versions.json").Return(nil, os.ErrNotExist).Maybe()
+
+	m := NewImageLifecycleManager(
+		s.client, nil, s.sys, nil,
+		s.containerDir, s.imageName, s.loopVersion,
+		func() string { return "2.0.0" },
+	)
+	s.expectImageClaudeVersion("2.0.0")
+	m.mu.Lock()
+	m.updateAvailable = &events.ImageUpdateAvailableData{LatestVersion: "2.0.0"}
 	m.mu.Unlock()
 
 	// Should not panic with nil broadcaster.
 	m.checkAndBroadcast()
+
+	require.Nil(s.T(), m.UpdateAvailable())
 }
 
 // --- broadcastStatus ---
