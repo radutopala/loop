@@ -10,6 +10,7 @@ import type { Message } from "../../types";
 import { firstClipboardImage, uploadPastedImage } from "../../utils/clipboardImage";
 import { storageGetJSON, storageSetJSON } from "../../utils/storage";
 import { AgentConfigPill } from "./AgentConfigPill";
+import { chooseSendRoute, type SendMode } from "./sendRouting";
 
 // Draft text per channel — persisted to localStorage across app restarts.
 const DRAFT_KEY = "loop-chat-drafts";
@@ -202,7 +203,8 @@ const LOOP_COMMANDS: CommandDef[] = [
   { name: "workflow-delete", description: "Delete a workflow run", usage: "<run_id>" },
 ];
 
-export type SendMode = "queue" | "interrupt";
+export type { SendMode } from "./sendRouting";
+
 const SEND_MODE_KEY = "loop-send-mode";
 
 export interface ChatInputProps {
@@ -212,7 +214,11 @@ export interface ChatInputProps {
   isRunning?: boolean;
   mode: "agent" | "plan";
   setMode: (m: "agent" | "plan") => void;
-  onDismissCards?: () => void;
+  // Drops the chat-sourced gate approval card after a send denied it (or a
+  // stop made it moot). Ask/plan cards are NOT dismissed here: they clear on
+  // the backend's agent.ask_resolved / agent.plan_resolved events, so a send
+  // that never touched the park cannot hide a still-blocking card.
+  onDismissGate?: () => void;
   onSent?: () => void;
   quotedMessage?: Message | null;
   onClearQuote?: () => void;
@@ -249,7 +255,7 @@ export function ChatInput({
   isRunning,
   mode,
   setMode,
-  onDismissCards,
+  onDismissGate,
   onSent,
   quotedMessage,
   onClearQuote,
@@ -432,9 +438,45 @@ export function ChatInput({
 
   const handleStop = useCallback(async () => {
     setStoppedOptimistic(true);
-    onDismissCards?.();
+    onDismissGate?.();
     await sendCommand(channelId, "stop");
-  }, [channelId, onDismissCards]);
+  }, [channelId, onDismissGate]);
+
+  // Single delivery path for every composer send (typed text and prompt
+  // shortcuts alike). Routing lives in `chooseSendRoute` so a parked channel
+  // cannot be bypassed by a caller that forgot to check for a pending card.
+  const deliver = useCallback(
+    async (content: string, overrideMode?: SendMode) => {
+      const route = chooseSendRoute({
+        hasPendingAskUser,
+        hasPendingExitPlan,
+        pendingGateReqId,
+        isRunning: effectiveIsRunning,
+        sendMode: overrideMode ?? sendMode,
+      });
+      switch (route.kind) {
+        case "ask":
+          // The backend clears the park flag and inserts the text as a
+          // priority-bumped continuation, so no sendMessage call here.
+          await resolveAsk(channelId, "answer", content, mode);
+          return;
+        case "plan":
+          // Same as the ask park, via the plan resolver's deny-with-prompt.
+          await resolvePlan(channelId, "deny", content, mode);
+          return;
+        case "gate":
+          // Auto-deny the pending approval and force interrupt — same shape as
+          // ApprovalCard's "Deny with prompt".
+          await resolveGateApproval(route.reqId, "deny");
+          await sendMessage(channelId, content, mode, true);
+          onDismissGate?.();
+          return;
+        case "message":
+          await sendMessage(channelId, content, mode, route.interrupt || undefined);
+      }
+    },
+    [channelId, mode, sendMode, effectiveIsRunning, hasPendingAskUser, hasPendingExitPlan, pendingGateReqId, onDismissGate],
+  );
 
   const handleSend = useCallback(
     async (overrideMode?: SendMode) => {
@@ -449,30 +491,7 @@ export function ChatInput({
           }
         } else {
           const content = quotedMessage ? buildQuotePrefix(quotedMessage) + trimmed : trimmed;
-          // When the channel is parked on an AskUserQuestion card, route the
-          // send through `resolveAsk(answer)` so the backend clears the park
-          // flag and inserts the user's text as a priority-bumped continuation.
-          // `resolveAsk` already inserts the message, so skip the regular
-          // sendMessage call here.
-          if (hasPendingAskUser) {
-            await resolveAsk(channelId, "answer", content, mode);
-          } else if (hasPendingExitPlan) {
-            // When the channel is parked on an ExitPlanMode card, route the send
-            // through `resolvePlan(deny, prompt)` so the backend clears the park
-            // flag, inserts the user's text as a priority-bumped continuation,
-            // and resumes the drain. `resolvePlan` already inserts the message,
-            // so skip the regular sendMessage call here.
-            await resolvePlan(channelId, "deny", content, mode);
-          } else if (pendingGateReqId) {
-            // When a gate approval popup is pending, auto-deny it and force
-            // interrupt — same shape as ApprovalCard's "Deny with prompt".
-            await resolveGateApproval(pendingGateReqId, "deny");
-            await sendMessage(channelId, content, mode, true);
-          } else {
-            const effectiveMode = overrideMode ?? sendMode;
-            const interrupt = effectiveIsRunning && effectiveMode === "interrupt";
-            await sendMessage(channelId, content, mode, interrupt || undefined);
-          }
+          await deliver(content, overrideMode);
         }
         // Push to history.
         historyRef.current.push(trimmed);
@@ -482,7 +501,6 @@ export function ChatInput({
         setText("");
         draftText.delete(channelId);
         onClearQuote?.();
-        onDismissCards?.();
         onSent?.();
       } finally {
         setSending(false);
@@ -490,7 +508,7 @@ export function ChatInput({
         requestAnimationFrame(() => inputRef.current?.focus());
       }
     },
-    [channelId, text, sending, mode, isLoopCommand, effectiveIsRunning, sendMode, quotedMessage, onClearQuote, onDismissCards, pendingGateReqId, hasPendingExitPlan, hasPendingAskUser],
+    [channelId, text, sending, isLoopCommand, quotedMessage, onClearQuote, onSent, deliver],
   );
 
   const updateCommandDropdown = useCallback((val: string) => {
@@ -555,23 +573,17 @@ export function ChatInput({
       // expanded prompt body.
       const composed = `#${shortcut.name}\n${shortcut.prompt}`;
       try {
-        if (pendingGateReqId) {
-          await resolveGateApproval(pendingGateReqId, "deny");
-          await sendMessage(channelId, composed, mode, true);
-        } else {
-          await sendMessage(channelId, composed, mode);
-        }
+        await deliver(composed);
         historyRef.current.push(composed);
         historyIdxRef.current = -1;
         draftRef.current = "";
-        onDismissCards?.();
         onSent?.();
       } finally {
         setSending(false);
         requestAnimationFrame(() => inputRef.current?.focus());
       }
     },
-    [channelId, mode, onDismissCards, onSent, pendingGateReqId],
+    [channelId, onSent, deliver],
   );
 
   const handleChange = useCallback(

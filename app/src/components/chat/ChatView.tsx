@@ -63,9 +63,11 @@ export function ChatView({ channelId, chatState, roots, scrollToMessageId, onScr
   const { colors, fontSizes } = useTheme();
   const styles = buildStyles(colors);
   const { items, liveTail, messages, loading, isRunning } = chatState;
-  const dismissCards = useCallback(() => {
-    chatState.clearAskUser();
-    chatState.clearExitPlan();
+  // Only the chat-sourced gate card is dismissed locally. Ask/plan cards stay
+  // up until the backend says the park is resolved (agent.ask_resolved /
+  // agent.plan_resolved) — hiding them early leaves the channel blocked with
+  // nothing left to answer.
+  const dismissGate = useCallback(() => {
     chatState.clearGateApproval("chat");
   }, [chatState]);
   const messagesRef = useRef<ChatMessagesHandle>(null);
@@ -100,7 +102,7 @@ export function ChatView({ channelId, chatState, roots, scrollToMessageId, onScr
             roots={roots}
             mode={chatState.mode}
             setMode={chatState.setMode}
-            onDismissCards={dismissCards}
+            onDismissGate={dismissGate}
             onSent={scrollToBottom}
             quotedMessage={quotedMessage}
             onClearQuote={clearQuote}
@@ -129,7 +131,7 @@ export function ChatView({ channelId, chatState, roots, scrollToMessageId, onScr
           isRunning={isRunning}
           mode={chatState.mode}
           setMode={chatState.setMode}
-          onDismissCards={dismissCards}
+          onDismissGate={dismissGate}
           onSent={scrollToBottom}
           quotedMessage={quotedMessage}
           onClearQuote={clearQuote}
