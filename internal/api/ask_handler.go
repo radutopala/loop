@@ -11,6 +11,7 @@ import (
 const (
 	askActionAnswer = "answer"
 	askActionCancel = "cancel"
+	askActionSkip   = "skip"
 
 	// Stock prompt sent to the agent when the user clicks "Cancel" on an
 	// AskUserQuestion card. Kept short and explicit so the agent treats it as
@@ -31,6 +32,9 @@ type askResolveRequest struct {
 //     the ask card was up still run after the agent resumes.
 //   - cancel: same flow but with a stock "cancelled" prompt, letting the
 //     agent decide how to proceed without the answer.
+//   - skip: clears the pause and resumes the drain without inserting
+//     anything, so the channel unblocks and whatever the user queued while
+//     the card was up runs next, in the order they queued it.
 func (s *Server) handleAskResolve(w http.ResponseWriter, r *http.Request) {
 	if !requireConfigured(w, s.askResolver, "ask resolve not configured") {
 		return
@@ -46,29 +50,39 @@ func (s *Server) handleAskResolve(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Inherit the asking run's composer mode when the request doesn't set one,
-	// so an ask raised mid-plan resumes in plan mode instead of a normal agent
-	// run that implements without plan approval.
-	mode := req.Mode
-	if mode == "" {
-		mode = s.askResolver.AskedChannelMode(channelID)
-	}
-
 	switch req.Action {
 	case askActionAnswer:
 		if req.Answer == "" {
 			http.Error(w, "answer is required for answer", http.StatusBadRequest)
 			return
 		}
-		s.insertAskContinuation(r.Context(), channelID, req.Answer, mode)
+		s.insertAskContinuation(r.Context(), channelID, req.Answer, s.askMode(req, channelID))
 	case askActionCancel:
-		s.insertAskContinuation(r.Context(), channelID, askCancelPrompt, mode)
+		s.insertAskContinuation(r.Context(), channelID, askCancelPrompt, s.askMode(req, channelID))
+	case askActionSkip:
+		// Nothing to insert: the user declined to answer and just wants the
+		// channel back. Mirrors the plan card's "Discard" so any queued
+		// messages keep their own order instead of being jumped by a
+		// priority-bumped continuation.
+		s.askResolver.ClearAskedChannel(channelID)
+		s.askResolver.ResumeChannel(context.Background(), channelID)
 	default:
 		http.Error(w, "invalid action", http.StatusBadRequest)
 		return
 	}
 
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// askMode picks the mode the continuation runs in: the request's own mode when
+// set, otherwise the asking run's composer mode — so an ask raised mid-plan
+// resumes in plan mode instead of a normal agent run that implements without
+// plan approval.
+func (s *Server) askMode(req askResolveRequest, channelID string) string {
+	if req.Mode != "" {
+		return req.Mode
+	}
+	return s.askResolver.AskedChannelMode(channelID)
 }
 
 // insertAskContinuation clears the pause flag and inserts a priority-bumped

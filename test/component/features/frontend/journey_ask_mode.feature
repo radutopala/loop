@@ -92,3 +92,13 @@ Feature: Ask user question card
     And I click on the button with title "Stop"
     Then the page should contain text "CLAUDE HAS QUESTIONS"
     And the page should contain text "Which database?"
+
+  Scenario: Skip unparks the channel without answering
+    # POST /ask/resolve {"action":"skip"} clears the park and resumes the drain
+    # without inserting a continuation, so anything queued while the card was
+    # up runs next in its own order. The card drops on agent.ask_resolved.
+    When I inject an ask_user event with question "Which database?" and options "postgres,sqlite"
+    And I wait for text "CLAUDE HAS QUESTIONS" to appear
+    And I click on the button with text "Skip"
+    Then I wait for text "CLAUDE HAS QUESTIONS" to disappear
+    And the element "[data-testid='sidebar'] [title='Agent is asking a question']" should not exist

@@ -197,6 +197,29 @@ func (s *ServerSuite) TestAskResolveCancel() {
 	resolver.AssertExpectations(s.T())
 }
 
+// TestAskResolveSkip verifies the skip action just unparks the channel: no
+// continuation is inserted, so anything the user queued while the card was up
+// runs next in its own order instead of behind a priority-bumped prompt.
+func (s *ServerSuite) TestAskResolveSkip() {
+	handler := new(MockIncomingMessageHandler)
+	resolver := new(MockAskResolver)
+	s.srv.SetIncomingMessageHandler(handler)
+	s.srv.SetAskResolver(resolver)
+
+	resolver.On("ClearAskedChannel", "ch-1").Return()
+	resumed := make(chan struct{}, 1)
+	resolver.On("ResumeChannel", mock.Anything, "ch-1").
+		Run(func(_ mock.Arguments) { resumed <- struct{}{} }).Return()
+
+	rec := s.testRequest("POST", "/api/channels/ch-1/ask/resolve", `{"action":"skip"}`)
+	require.Equal(s.T(), http.StatusNoContent, rec.Code)
+
+	s.awaitAskCall("ResumeChannel", resumed)
+	handler.AssertNotCalled(s.T(), "HandleIncomingMessageWithPriority")
+	resolver.AssertNotCalled(s.T(), "AskedChannelMode")
+	resolver.AssertExpectations(s.T())
+}
+
 func (s *ServerSuite) TestAskResolveInvalidAction() {
 	resolver := new(MockAskResolver)
 	s.srv.SetIncomingMessageHandler(new(MockIncomingMessageHandler))
