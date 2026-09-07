@@ -58,3 +58,37 @@ Feature: Ask user question card
     And I click on the button with text "Send Answers"
     Then I wait for text "CLAUDE HAS QUESTIONS" to disappear
     And the element "[data-testid='sidebar'] [title='Agent is asking a question']" should not exist
+
+  Scenario: A /loop command leaves a still-pending ask card up
+    # The composer used to dismiss the ask/plan cards after every send, so a
+    # /loop command (which never touches the park) hid the question while the
+    # backend kept blocking the channel — no card left to answer, no drain.
+    When I inject an ask_user event with question "Which database?" and options "postgres,sqlite"
+    And I wait for text "CLAUDE HAS QUESTIONS" to appear
+    # Trailing space so the /loop command dropdown hides and Enter sends
+    # instead of accepting a dropdown entry.
+    And I type "/loop status " into "textarea"
+    And I press Enter
+    Then the page should contain text "CLAUDE HAS QUESTIONS"
+    And the page should contain text "Which database?"
+
+  Scenario: Typing an answer resolves the ask and the backend event drops the card
+    # Typed text while parked routes through POST /ask/resolve; the card is
+    # cleared only by the resulting agent.ask_resolved broadcast, so the FE can
+    # never hide a question the backend still considers pending.
+    When I inject an ask_user event with question "Which database?" and options "postgres,sqlite"
+    And I wait for text "CLAUDE HAS QUESTIONS" to appear
+    And I type "postgres please" into "textarea"
+    And I press Enter
+    Then I wait for text "CLAUDE HAS QUESTIONS" to disappear
+
+  Scenario: Stopping the run leaves a still-pending ask card up
+    # Stop used to dismiss the ask/plan cards too, so hitting it while parked
+    # hid the question without resolving the park — the channel stayed blocked
+    # with nothing left for the user to answer.
+    When I inject an ask_user event with question "Which database?" and options "postgres,sqlite"
+    And I wait for text "CLAUDE HAS QUESTIONS" to appear
+    And I inject an agent.status running event
+    And I click on the button with title "Stop"
+    Then the page should contain text "CLAUDE HAS QUESTIONS"
+    And the page should contain text "Which database?"

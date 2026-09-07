@@ -328,6 +328,17 @@ export function useChatState(channelId: string | null, initialRunningBot?: boole
         setRunId(null);
         return;
       }
+      if (event.type === "agent.ask_resolved") {
+        // The backend cleared the ask park (answered, cancelled, or resolved
+        // from another surface). This is the only signal that drops the card,
+        // so the composer can never hide a question that still blocks the run.
+        setAskUserQuestions(null);
+        return;
+      }
+      if (event.type === "agent.plan_resolved") {
+        setExitPlanRequest(null);
+        return;
+      }
       if (event.type === "agent.tasks") {
         const data = event.data as AgentTasksData;
         setAgentTasks(data);
