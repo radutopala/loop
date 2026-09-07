@@ -162,7 +162,9 @@ export async function resolvePlan(channelId: string, action: PlanResolveAction, 
   if (!res.ok) throw new Error(`Failed to resolve plan: ${res.statusText}`);
 }
 
-export type AskResolveAction = "answer" | "cancel";
+// "skip" unparks the channel without inserting anything, so queued messages
+// run next in their own order.
+export type AskResolveAction = "answer" | "cancel" | "skip";
 
 export async function resolveAsk(channelId: string, action: AskResolveAction, answer?: string, mode?: string): Promise<void> {
   const body: Record<string, string> = { action };

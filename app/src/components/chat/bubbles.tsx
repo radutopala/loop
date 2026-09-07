@@ -684,6 +684,20 @@ export function AskUserQuestionCard({ questions, channelId, mode, onSent }: { qu
     setSending(false);
   };
 
+  // Skip resolves the park without an answer: the agent's asking run is
+  // already over, so nothing is sent and the channel simply unblocks, letting
+  // anything queued behind the card run next.
+  const handleSkip = async () => {
+    setSending(true);
+    try {
+      await resolveAsk(channelId, "skip");
+      onSent?.();
+    } catch {
+      /* ignore */
+    }
+    setSending(false);
+  };
+
   const allAnswered = questions.every((_, i) => selectedFor(i).size > 0);
 
   // The option whose description+preview panel is shown: strictly the one under
@@ -850,24 +864,43 @@ export function AskUserQuestionCard({ questions, channelId, mode, onSent }: { qu
           </div>
         );
       })}
-      <button
-        onClick={handleSend}
-        disabled={!allAnswered || sending}
-        style={{
-          marginTop: 10,
-          padding: "5px 16px",
-          fontSize: 12,
-          fontFamily: fonts.mono,
-          border: `1px solid ${colors.active}`,
-          borderRadius: 12,
-          backgroundColor: allAnswered ? colors.active : "transparent",
-          color: allAnswered ? "#fff" : colors.textDim,
-          cursor: allAnswered ? "pointer" : "default",
-          opacity: sending ? 0.5 : 1,
-        }}
-      >
-        {sending ? "Sending..." : "Send Answers"}
-      </button>
+      <div style={{ marginTop: 10, display: "flex", gap: 8 }}>
+        <button
+          onClick={handleSend}
+          disabled={!allAnswered || sending}
+          style={{
+            padding: "5px 16px",
+            fontSize: 12,
+            fontFamily: fonts.mono,
+            border: `1px solid ${colors.active}`,
+            borderRadius: 12,
+            backgroundColor: allAnswered ? colors.active : "transparent",
+            color: allAnswered ? "#fff" : colors.textDim,
+            cursor: allAnswered ? "pointer" : "default",
+            opacity: sending ? 0.5 : 1,
+          }}
+        >
+          {sending ? "Sending..." : "Send Answers"}
+        </button>
+        <button
+          onClick={handleSkip}
+          disabled={sending}
+          title="Unblock the channel without answering — anything queued runs next"
+          style={{
+            padding: "5px 16px",
+            fontSize: 12,
+            fontFamily: fonts.mono,
+            border: `1px solid ${colors.border}`,
+            borderRadius: 12,
+            backgroundColor: "transparent",
+            color: colors.text,
+            cursor: "pointer",
+            opacity: sending ? 0.5 : 1,
+          }}
+        >
+          Skip
+        </button>
+      </div>
     </div>
   );
 }
