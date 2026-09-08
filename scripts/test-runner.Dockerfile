@@ -1,4 +1,8 @@
-FROM golang:1.27
+# Pinned to the exact patch release in go.mod: the official golang images set
+# GOTOOLCHAIN=local, so a runner older than the go directive cannot build the
+# module. The floating 1.27 tag also left CI stale, because ensure-test-runner
+# keys its cache on this file's hash and never noticed upstream moving.
+FROM golang:1.27.1
 
 RUN apt-get update -qq && \
     apt-get install -yqq --no-install-recommends \
