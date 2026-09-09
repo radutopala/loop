@@ -49,6 +49,9 @@ type CDPClient struct {
 	targetID target.ID   // the page target this client is attached to
 	exec     cdpExecutor // injectable cdp.Execute
 
+	// attachTimeout bounds NewContextForTarget; zero means defaultAttachTimeout.
+	attachTimeout time.Duration
+
 	mu                 sync.Mutex
 	screencasting      bool
 	listenerRegistered bool        // true after first listenFunc registration
@@ -81,6 +84,24 @@ func (c *CDPClient) SwitchTarget(targetID string) error {
 	return nil
 }
 
+// defaultAttachTimeout bounds an attach to a page target.
+//
+// Chrome can accept Target.attachToTarget and then never finish the handshake —
+// a renderer blocked on a modal dialog or a wedged page will not answer
+// Page.enable, and the call has no deadline of its own. Observed in practice:
+// four attaches to one tab sat for six minutes until the whole CDP connection
+// was torn down, during which the pane kept showing, and acting on, the tab it
+// was attached to before. Failing loudly is better than blocking.
+const defaultAttachTimeout = 15 * time.Second
+
+// attachDeadline returns the configured attach timeout, or the default.
+func (c *CDPClient) attachDeadline() time.Duration {
+	if c.attachTimeout > 0 {
+		return c.attachTimeout
+	}
+	return defaultAttachTimeout
+}
+
 // NewContextForTarget creates a new CDPClient attached to a different target,
 // reusing the existing browser WebSocket connection. Uses Target.attachToTarget
 // internally — no new WS dial, no Chrome permission prompt.
@@ -92,9 +113,25 @@ func (c *CDPClient) NewContextForTarget(targetID string) (CDPSession, error) {
 	cdpCtx, cdpCancel := chromedp.NewContext(c.ctx,
 		chromedp.WithTargetID(tid))
 
-	if err := c.runFn(cdpCtx); err != nil {
+	// The attach cannot simply run on a context.WithTimeout: chromedp keeps the
+	// context it was handed for the session's lifetime, so a deadline would kill
+	// the tab a few seconds after it was attached. Time out around the call
+	// instead and cancel the whole target context, which unblocks it.
+	done := make(chan error, 1)
+	go func() { done <- c.runFn(cdpCtx) }()
+
+	timer := time.NewTimer(c.attachDeadline())
+	defer timer.Stop()
+
+	select {
+	case err := <-done:
+		if err != nil {
+			cdpCancel()
+			return nil, fmt.Errorf("attaching to target %s: %w", targetID, err)
+		}
+	case <-timer.C:
 		cdpCancel()
-		return nil, fmt.Errorf("attaching to target %s: %w", targetID, err)
+		return nil, fmt.Errorf("attaching to target %s: timed out after %s", targetID, c.attachDeadline())
 	}
 
 	return &CDPClient{
@@ -106,6 +143,7 @@ func (c *CDPClient) NewContextForTarget(targetID string) (CDPSession, error) {
 		targetID:      tid,
 		exec:          c.exec,
 		logger:        c.logger,
+		attachTimeout: c.attachTimeout,
 		runFn:         c.runFn,
 		targetsFunc:   c.targetsFunc,
 		listenFunc:    c.listenFunc,

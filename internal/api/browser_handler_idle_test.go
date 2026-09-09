@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -665,4 +666,66 @@ func (s *BrowserHandlerSuite) TestGetBrowserCDPDropsDeadCached() {
 	got := srv.browser.cdpManagers["ch-dead2|host"]
 	srv.browser.cdpManagersMu.Unlock()
 	require.NotSame(s.T(), dead, got)
+}
+
+// --- getBrowserCDP: the active tab moved ahead of the attached client ---
+
+// newSyncTestManager wires a connected CDPManager whose initial client is
+// attached to "tab-1", registered for channel ch.
+func (s *BrowserHandlerSuite) newSyncTestManager(ch string, initial *mockCDPSession) *browser.CDPManager {
+	cdpMgr := browser.NewCDPManager("ws://127.0.0.1:9222", browser.CDPManagerConfig{
+		MaxRetries: 1,
+		RetryDelay: time.Millisecond,
+	}, slog.Default())
+	browser.SetCDPFactoryForTest(cdpMgr, func(_ context.Context, _ string, _ *slog.Logger, _ ...browser.CDPOption) (browser.CDPSession, error) {
+		return initial, nil
+	})
+	require.NoError(s.T(), cdpMgr.Connect(context.Background()))
+
+	s.srv.browser.cdpManagersMu.Lock()
+	if s.srv.browser.cdpManagers == nil {
+		s.srv.browser.cdpManagers = make(map[string]*browser.CDPManager)
+	}
+	s.srv.browser.cdpManagers[ch+"|docker"] = cdpMgr
+	s.srv.browser.cdpManagersMu.Unlock()
+	return cdpMgr
+}
+
+func (s *BrowserHandlerSuite) TestGetBrowserCDPAttachesToMovedActiveTab() {
+	opened := new(mockCDPSession)
+	opened.On("TargetID").Return("tab-2").Maybe()
+	opened.On("EnableConsoleCapture", mock.Anything, mock.Anything).Return(nil).Maybe()
+	opened.On("EnableNetworkCapture", mock.Anything, mock.Anything).Return(nil).Maybe()
+
+	initial := new(mockCDPSession)
+	initial.On("TargetID").Return("tab-1").Maybe()
+	initial.attachFn = func(targetID string) (browser.CDPSession, error) {
+		require.Equal(s.T(), "tab-2", targetID)
+		return opened, nil
+	}
+
+	cdpMgr := s.newSyncTestManager("ch-moved", initial)
+	// Opening a tab records it as active before anything attaches to it.
+	cdpMgr.NotifyTargetSwitch("tab-2")
+
+	cdpCl, err := s.srv.browser.getBrowserCDP(context.Background(), "ch-moved")
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "tab-2", cdpCl.TargetID(), "actions must run on the tab the pane made active")
+}
+
+func (s *BrowserHandlerSuite) TestGetBrowserCDPFailsWhenActiveTabWontAttach() {
+	initial := new(mockCDPSession)
+	initial.On("TargetID").Return("tab-1").Maybe()
+	initial.attachFn = func(string) (browser.CDPSession, error) {
+		return nil, errors.New("timed out")
+	}
+
+	cdpMgr := s.newSyncTestManager("ch-wedged", initial)
+	cdpMgr.NotifyTargetSwitch("tab-2")
+
+	// Silently falling back to tab-1 is what navigated the wrong tab.
+	cdpCl, err := s.srv.browser.getBrowserCDP(context.Background(), "ch-wedged")
+	require.Error(s.T(), err)
+	require.Nil(s.T(), cdpCl)
+	require.Contains(s.T(), err.Error(), "attaching to active tab tab-2")
 }
