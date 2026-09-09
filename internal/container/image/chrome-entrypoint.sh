@@ -10,5 +10,4 @@ exec chromium-browser \
     --remote-allow-origins=* \
     --disable-dev-shm-usage \
     --disable-software-rasterizer \
-    --disable-extensions \
     "$@"

@@ -226,6 +226,16 @@ type BrowserConfig struct {
 	// volume, so logins survive the sidecar being idle-stopped and removed.
 	// Default true; set false to get a throwaway profile every time.
 	PersistProfile bool
+
+	// Extensions lists host directories holding unpacked Chrome extensions to
+	// load into every sidecar. Empty (the default) runs Chrome with
+	// --disable-extensions.
+	//
+	// Unpacked directories are the only workable install route: the Web Store's
+	// "Add to Chrome" ends in a native confirmation bubble and "Load unpacked"
+	// opens a native file picker, and neither is reachable through the
+	// screencast, which only streams the page.
+	Extensions []string
 }
 
 // AgentRetryConfig controls automatic backoff-retry of batch agent runs that

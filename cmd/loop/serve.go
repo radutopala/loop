@@ -577,7 +577,7 @@ func (a *app) serve() error {
 	}
 
 	if cfg.Browser.Enabled {
-		dockerProvider, browserErr := a.newBrowserProvider(cfg.Browser.ChromeImage, cfg.Browser.PersistProfile, logger)
+		dockerProvider, browserErr := a.newBrowserProvider(cfg.Browser, logger)
 		if browserErr != nil {
 			logger.Warn("browser docker provider unavailable", "error", browserErr)
 		} else if dp, ok := dockerProvider.(*browser.DockerProvider); ok {

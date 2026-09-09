@@ -53,7 +53,11 @@
   //  "enabled": true,
   //  "chrome_image": "loop-chrome:latest",
   //  "host_cdp_port": 9222,
-  //  "persist_profile": true
+  //  "persist_profile": true,
+  //  // Unpacked Chrome extensions to load into the sidecar (Docker mode).
+  //  // Each entry is a host directory containing a manifest.json. Empty
+  //  // (the default) runs Chrome with extensions disabled.
+  //  "extensions": ["/Users/me/chrome-extensions/ublock"]
   //},
 
   // Public playground share: expose a playground over the internet through a

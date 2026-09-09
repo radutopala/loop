@@ -90,6 +90,40 @@ collide on the profile singleton lock.
   written by a *newer* Chromium. That only comes up if `browser.chrome_image` is
   pinned back to an older tag — **Reset profile** is the recovery path.
 
+## Extensions
+
+Chromium in the sidecar runs `--headless=new`, which supports extensions — but
+loop starts it with `--disable-extensions` unless `browser.extensions` is set.
+
+The list holds **host directories, each containing an unpacked extension's
+`manifest.json`**. Every entry is bind-mounted read-only into the sidecar and
+handed to Chrome via `--load-extension`:
+
+```json
+"browser": {
+  "extensions": ["/Users/me/chrome-extensions/ublock"]
+}
+```
+
+Unpacked directories are the only route that works here. The Chrome Web Store's
+"Add to Chrome" ends in a native confirmation bubble and `chrome://extensions`'
+"Load unpacked" opens a native file picker; neither is part of the page, and the
+screencast only streams the page — so neither can be driven from the browser
+pane. A Web Store extension has to be unpacked to a directory on the host first.
+
+Notes:
+
+- Changing the list takes effect on the next sidecar start (**Reset profile**, or
+  let it idle out), not on a running one.
+- Order matters and is worth keeping stable: an unpacked extension's ID is
+  derived from its path, and paths are assigned by position.
+- `--disable-extensions` moved out of the image's entrypoint into the sidecar's
+  args, because Chrome has no switch that undoes it — `--enable-extensions`
+  alongside it still leaves extensions off. An install whose chrome image
+  predates that change ignores the setting until the image is rebuilt, which
+  happens automatically on the next loop version bump (see below) or immediately
+  with `make docker-build`.
+
 ## Chrome image freshness
 
 The sidecar image (`browser.chrome_image`, default `loop-chrome:latest`) is built

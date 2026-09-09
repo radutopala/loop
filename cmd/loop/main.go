@@ -134,7 +134,7 @@ type app struct {
 	loadProjectMemoryPaths func(string) []string
 	newDockerExecClient    func() (terminal.ExecClient, error)
 	newHostExecClient      func() terminal.ExecClient
-	newBrowserProvider     func(string, bool, *slog.Logger) (api.BrowserProvider, error)
+	newBrowserProvider     func(config.BrowserConfig, *slog.Logger) (api.BrowserProvider, error)
 	discoverWSEndpoint     func() (string, error)
 	openLogFile            func(string) (*os.File, error)
 
@@ -234,12 +234,12 @@ func newApp() *app {
 		newHostExecClient: func() terminal.ExecClient {
 			return terminal.NewHostExecClient()
 		},
-		newBrowserProvider: func(chromeImage string, persistProfile bool, logger *slog.Logger) (api.BrowserProvider, error) {
+		newBrowserProvider: func(cfg config.BrowserConfig, logger *slog.Logger) (api.BrowserProvider, error) {
 			dockerClient, err := dockerclient.NewClientWithOpts(dockerclient.FromEnv, dockerclient.WithAPIVersionNegotiation())
 			if err != nil {
 				return nil, err
 			}
-			return browser.NewDockerProvider(dockerClient, chromeImage, "1920,1080", persistProfile, logger), nil
+			return browser.NewDockerProvider(dockerClient, cfg.ChromeImage, "1920,1080", cfg.PersistProfile, cfg.Extensions, logger), nil
 		},
 
 		// MCP host browser

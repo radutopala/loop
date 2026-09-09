@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"strings"
 
 	containertypes "github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/filters"
@@ -53,6 +54,11 @@ type DockerProvider struct {
 	// Chromium falls back to a throwaway profile inside the container and
 	// every login is lost when the idle monitor removes it.
 	persistProfile bool
+
+	// extensions are host directories holding unpacked Chrome extensions. Each
+	// is bind-mounted read-only and handed to Chrome via --load-extension;
+	// when empty, Chrome runs with --disable-extensions.
+	extensions []string
 }
 
 const (
@@ -72,12 +78,20 @@ const (
 	// chromeProfileDir is where the profile volume is mounted inside the
 	// sidecar, and what Chrome is pointed at via --user-data-dir.
 	chromeProfileDir = "/profile"
+
+	// chromeExtensionsDir is the parent of the per-extension mount points
+	// inside the sidecar. Extensions live at <dir>/0, <dir>/1, ... in config
+	// order: an unpacked extension's ID is derived from its path, so indexing
+	// by position keeps IDs — and therefore each extension's stored state —
+	// stable across sidecar restarts.
+	chromeExtensionsDir = "/extensions"
 )
 
 // NewDockerProvider creates a new browser DockerProvider. When persistProfile
 // is set, each channel's Chrome runs on a named-volume profile that survives
-// container removal.
-func NewDockerProvider(api DockerClient, image, screen string, persistProfile bool, logger *slog.Logger) *DockerProvider {
+// container removal. extensions are host directories holding unpacked Chrome
+// extensions to load into every sidecar.
+func NewDockerProvider(api DockerClient, image, screen string, persistProfile bool, extensions []string, logger *slog.Logger) *DockerProvider {
 	return &DockerProvider{
 		sessionManager: newSessionManager(),
 		api:            api,
@@ -86,6 +100,7 @@ func NewDockerProvider(api DockerClient, image, screen string, persistProfile bo
 		logger:         logger,
 		inContainer:    inDockerContainer(),
 		persistProfile: persistProfile,
+		extensions:     extensions,
 	}
 }
 
@@ -142,7 +157,26 @@ func (m *DockerProvider) chromeArgs() []string {
 	if m.persistProfile {
 		args = append(args, "--user-data-dir="+chromeProfileDir)
 	}
+	// --disable-extensions is a CMD arg rather than part of the image, because
+	// Chrome has no counter-switch that re-enables them: passing
+	// --enable-extensions alongside it leaves extensions off. Whether they are
+	// available at all therefore has to be decided here, per configuration.
+	if len(m.extensions) == 0 {
+		args = append(args, "--disable-extensions")
+	} else {
+		args = append(args, "--load-extension="+strings.Join(m.extensionDirs(), ","))
+	}
 	return append(args, "about:blank")
+}
+
+// extensionDirs returns the in-container path of each configured extension, in
+// config order.
+func (m *DockerProvider) extensionDirs() []string {
+	dirs := make([]string, len(m.extensions))
+	for i := range m.extensions {
+		dirs[i] = fmt.Sprintf("%s/%d", chromeExtensionsDir, i)
+	}
+	return dirs
 }
 
 // ChromeHostname returns the Chrome container hostname for a channel.
@@ -168,6 +202,23 @@ func (m *DockerProvider) profileMounts(channelID string) []mount.Mount {
 		Source: ChromeProfileVolume(channelID),
 		Target: chromeProfileDir,
 	}}
+}
+
+// containerMounts returns everything the sidecar mounts: the profile volume
+// plus one read-only bind per configured extension. Read-only because Chrome
+// only ever reads an unpacked extension, and a sidecar the agent drives should
+// not be able to rewrite code on the host.
+func (m *DockerProvider) containerMounts(channelID string) []mount.Mount {
+	mounts := m.profileMounts(channelID)
+	for i, dir := range m.extensionDirs() {
+		mounts = append(mounts, mount.Mount{
+			Type:     mount.TypeBind,
+			Source:   m.extensions[i],
+			Target:   dir,
+			ReadOnly: true,
+		})
+	}
+	return mounts
 }
 
 // RemoveProfile deletes a channel's persistent Chrome profile volume, wiping
@@ -313,7 +364,7 @@ func (m *DockerProvider) EnsureBrowser(ctx context.Context, channelID, _ string)
 			PortBindings: nat.PortMap{
 				"9222/tcp": []nat.PortBinding{{HostIP: "127.0.0.1", HostPort: "0"}},
 			},
-			Mounts: m.profileMounts(channelID),
+			Mounts: m.containerMounts(channelID),
 		},
 		nil, nil, containerName,
 	)

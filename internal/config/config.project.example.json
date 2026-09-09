@@ -31,7 +31,8 @@
   //"browser": {
   //  "enabled": false,
   //  "chrome_image": "loop-chrome:latest",
-  //  "persist_profile": true
+  //  "persist_profile": true,
+  //  "extensions": ["/Users/me/chrome-extensions/ublock"]
   //},
 
   // Quality config override for this project. Scans run on demand (panel,
