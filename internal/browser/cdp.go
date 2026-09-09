@@ -480,9 +480,21 @@ func (c *CDPClient) StartScreencast(quality, maxWidth, maxHeight int) <-chan []b
 			c.mu.Lock()
 			ch := c.frameCh
 			c.mu.Unlock()
-			select {
-			case ch <- data:
-			default:
+			// Keep the newest frame, not the oldest. A full buffer means the
+			// pane is behind; discarding the frame that just arrived would
+			// hand it another stale one and hold the lag open, so an old
+			// frame is dropped to make room instead.
+			for {
+				select {
+				case ch <- data:
+					return
+				default:
+				}
+				select {
+				case <-ch:
+				default:
+					// Drained by the consumer in between; try again.
+				}
 			}
 		})
 	}

@@ -30,6 +30,10 @@ type browserWSConn struct {
 	// its endpoint points at a host port that will not come back.
 	closeCDPMgr func(channelID string)
 
+	// inputQ decouples pointer input from the read loop and collapses bursts;
+	// see inputQueue for why dispatching inline made the pane lag.
+	inputQ *inputQueue
+
 	mu               sync.Mutex
 	cdpMgr           *browser.CDPManager // active CDPManager
 	cdp              browser.CDPSession  // active tab's CDP client
@@ -133,8 +137,10 @@ func (s *browserService) handleBrowserWS(w http.ResponseWriter, r *http.Request)
 			s.closeCDPManager(channelID, s.modeFor(channelID))
 		},
 		stopCh: make(chan struct{}),
+		inputQ: newInputQueue(),
 	}
 	defer bc.cleanup()
+	go bc.runInputWorker()
 
 	for {
 		_, msgData, err := conn.ReadMessage()
@@ -296,7 +302,10 @@ func (bc *browserWSConn) handleInput(msg browserWSMessage) {
 		Text:       msg.Text,
 		Modifiers:  msg.Modifiers,
 	}
-	bc.dispatchInput(ev)
+	// Queued rather than dispatched here: a wheel or move event costs about a
+	// compositor frame, and blocking the read loop on that is what made a
+	// scroll burst arrive as a backlog.
+	bc.inputQ.push(ev)
 }
 
 func (bc *browserWSConn) dispatchInput(ev browser.InputEvent) {
@@ -571,6 +580,9 @@ func (bc *browserWSConn) watchMCPTabChanges() {
 }
 
 func (bc *browserWSConn) cleanup() {
+	// Stops the input worker, and any frame pipe still waiting on it.
+	close(bc.stopCh)
+
 	bc.mu.Lock()
 	defer bc.mu.Unlock()
 

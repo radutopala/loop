@@ -85,7 +85,7 @@ func (s *CDPSuite) TestStartScreencastFrameDecodeError() {
 	}
 }
 
-func (s *CDPSuite) TestStartScreencastFrameDropped() {
+func (s *CDPSuite) TestStartScreencastDropsOldestFrameWhenBehind() {
 	var listenerFn func(any)
 	s.client.listenFunc = func(_ context.Context, fn func(any)) {
 		listenerFn = fn
@@ -93,15 +93,24 @@ func (s *CDPSuite) TestStartScreencastFrameDropped() {
 
 	_ = s.client.StartScreencast(60, 1920, 1080)
 
-	// Fill the channel.
-	encoded := base64.StdEncoding.EncodeToString([]byte("frame1"))
-	listenerFn(&cdppage.EventScreencastFrame{Data: encoded, SessionID: 1})
-	listenerFn(&cdppage.EventScreencastFrame{Data: encoded, SessionID: 2})
+	send := func(body string, session int64) {
+		listenerFn(&cdppage.EventScreencastFrame{
+			Data:      base64.StdEncoding.EncodeToString([]byte(body)),
+			SessionID: session,
+		})
+	}
 
-	// Third should be dropped (channel buffer = 2).
-	listenerFn(&cdppage.EventScreencastFrame{Data: encoded, SessionID: 3})
+	// Fill the buffer (cap 2), then overflow it twice.
+	send("frame1", 1)
+	send("frame2", 2)
+	send("frame3", 3)
+	send("frame4", 4)
 
+	// A pane that is behind must get the newest frames, not the oldest ones:
+	// handing it stale frames is what keeps the lag open.
 	require.Len(s.T(), s.client.frameCh, 2)
+	require.Equal(s.T(), "frame3", string(<-s.client.frameCh))
+	require.Equal(s.T(), "frame4", string(<-s.client.frameCh))
 }
 
 func (s *CDPSuite) TestStartScreencastNonFrameEvent() {
