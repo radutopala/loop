@@ -63,6 +63,17 @@ func (s *ProfileIntegrationSuite) TearDownSuite() {
 // Docker refuses to remove a volume that is still in use.
 func (s *ProfileIntegrationSuite) tearDownSidecar() {
 	ctx := context.Background()
+
+	// Mirror CDPManager.Close and let Chrome shut itself down first. Stopping
+	// the container skips its profile flush, so a cookie set seconds earlier
+	// would never reach the volume and this suite would be testing the flush
+	// timer rather than the volume.
+	if _, ok := s.provider.GetContainerID(s.channelID); ok {
+		client := dialCDP(s.T(), s.provider.GetCDPEndpoint(s.channelID))
+		require.NoError(s.T(), client.CloseBrowser(ctx))
+		client.Close()
+	}
+
 	containerID, _ := s.provider.StopBrowser(ctx, s.channelID)
 	if containerID != "" {
 		_ = s.api.ContainerRemove(ctx, containerID, containertypes.RemoveOptions{Force: true})
@@ -75,11 +86,7 @@ func (s *ProfileIntegrationSuite) cookieRoundTrip(js string) string {
 	ctx := context.Background()
 	require.NoError(s.T(), s.provider.EnsureBrowser(ctx, s.channelID, ""))
 
-	endpoint := s.provider.GetCDPEndpoint(s.channelID)
-	allowDirectCDP(s.T(), endpoint)
-
-	client, err := NewCDPClient(ctx, endpoint, slog.New(slog.NewTextHandler(os.Stderr, nil)))
-	require.NoError(s.T(), err)
+	client := dialCDP(s.T(), s.provider.GetCDPEndpoint(s.channelID))
 	defer client.Close()
 
 	require.NoError(s.T(), client.Navigate(ctx, s.testURL))

@@ -376,6 +376,7 @@ var errTestAPI = errors.New("test error")
 
 type mockCDPSession struct {
 	mock.Mock
+	closeBrowserErr error
 	// dead makes Alive report a session whose context died with its container.
 	// A field rather than an expectation, so the many tests that never exercise
 	// liveness need no extra setup.
@@ -383,6 +384,10 @@ type mockCDPSession struct {
 }
 
 func (m *mockCDPSession) Alive() bool { return !m.dead }
+
+// closeBrowserErr is what CloseBrowser returns; a field, since the manager
+// calls it on the way down in tests that are not about the flush.
+func (m *mockCDPSession) CloseBrowser(_ context.Context) error { return m.closeBrowserErr }
 
 func (m *mockCDPSession) Navigate(ctx context.Context, url string) error {
 	return m.Called(ctx, url).Error(0)

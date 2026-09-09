@@ -16,11 +16,20 @@ import (
 // mockCDPSession implements CDPSession for testing.
 type mockCDPSession struct {
 	mock.Mock
+	closeBrowserErr   error
+	closeBrowserCalls int
 	// dead makes Alive report a session whose context died with its container.
 	dead bool
 }
 
 func (m *mockCDPSession) Alive() bool { return !m.dead }
+
+// closeBrowserErr is what CloseBrowser returns; a field, since the manager
+// calls it on the way down in tests that are not about the flush.
+func (m *mockCDPSession) CloseBrowser(_ context.Context) error {
+	m.closeBrowserCalls++
+	return m.closeBrowserErr
+}
 
 func (m *mockCDPSession) TargetID() string                   { return m.Called().String(0) }
 func (m *mockCDPSession) SwitchTarget(targetID string) error { return m.Called(targetID).Error(0) }
@@ -170,12 +179,26 @@ func (s *CDPManagerSuite) TestConnectWithDiscoverExisting() {
 	// Docker mode: only our connected tab is tracked, other existing tabs are ignored.
 	mgr, mockClient := s.newTestManager(true)
 	mockClient.On("TargetID").Return("t-auto")
+	mockClient.On("SwitchTarget", "t-auto").Return(nil)
 	mockClient.On("Close").Return().Maybe()
 
 	err := mgr.Connect(context.Background())
 	require.NoError(s.T(), err)
 	require.True(s.T(), mgr.IsTrackedTab("t-auto"))
 	require.Equal(s.T(), "t-auto", mgr.ActiveTargetID())
+	// The tab is brought to the foreground, or Chrome would never acknowledge a
+	// wheel event dispatched to it.
+	mockClient.AssertCalled(s.T(), "SwitchTarget", "t-auto")
+}
+
+func (s *CDPManagerSuite) TestConnectActivationFailureIsNotFatal() {
+	mgr, mockClient := s.newTestManager(true)
+	mockClient.On("TargetID").Return("t-auto")
+	mockClient.On("SwitchTarget", "t-auto").Return(errors.New("activate failed"))
+	mockClient.On("Close").Return().Maybe()
+
+	require.NoError(s.T(), mgr.Connect(context.Background()))
+	require.True(s.T(), mgr.IsConnected())
 }
 
 func (s *CDPManagerSuite) TestConnectFailure() {
@@ -449,6 +472,58 @@ func (s *CDPManagerSuite) TestClose() {
 	require.Nil(s.T(), mgr.ActiveClient())
 	require.Equal(s.T(), "", mgr.ActiveTargetID())
 	mockClient.AssertCalled(s.T(), "Close")
+}
+
+func (s *CDPManagerSuite) TestCloseShutsChromeDownInDockerMode() {
+	mgr, mockClient := s.newTestManager(true)
+	mockClient.On("TargetID").Return("t1")
+	mockClient.On("SwitchTarget", "t1").Return(nil)
+	mockClient.On("Close").Return()
+
+	require.NoError(s.T(), mgr.Connect(context.Background()))
+	mgr.Close()
+
+	// Chrome only writes the profile out at a clean shutdown, so closing the
+	// manager has to ask for one before the container is stopped.
+	require.Equal(s.T(), 1, mockClient.closeBrowserCalls)
+}
+
+func (s *CDPManagerSuite) TestCloseSurvivesShutdownFailure() {
+	mgr, mockClient := s.newTestManager(true)
+	mockClient.closeBrowserErr = errors.New("already gone")
+	mockClient.On("TargetID").Return("t1")
+	mockClient.On("SwitchTarget", "t1").Return(nil)
+	mockClient.On("Close").Return()
+
+	require.NoError(s.T(), mgr.Connect(context.Background()))
+	mgr.Close()
+	require.False(s.T(), mgr.IsConnected())
+}
+
+func (s *CDPManagerSuite) TestCloseLeavesHostChromeRunning() {
+	mgr, mockClient := s.newTestManager(false)
+	mockClient.On("TargetID").Return("t1")
+	mockClient.On("Close").Return()
+
+	require.NoError(s.T(), mgr.Connect(context.Background()))
+	mgr.Close()
+
+	// Host mode drives the user's own browser; closing it is not ours to do.
+	require.Equal(s.T(), 0, mockClient.closeBrowserCalls)
+}
+
+func (s *CDPManagerSuite) TestCloseSkipsShutdownForDeadClient() {
+	mgr, mockClient := s.newTestManager(true)
+	mockClient.On("TargetID").Return("t1")
+	mockClient.On("SwitchTarget", "t1").Return(nil)
+	mockClient.On("Close").Return()
+
+	require.NoError(s.T(), mgr.Connect(context.Background()))
+	// The container is already gone — there is nothing left to ask.
+	mockClient.dead = true
+	mgr.Close()
+
+	require.Equal(s.T(), 0, mockClient.closeBrowserCalls)
 }
 
 func (s *CDPManagerSuite) TestGetOrCreateAlwaysCreatesFresh() {

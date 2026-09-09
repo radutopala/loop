@@ -5,10 +5,8 @@ package browser
 import (
 	"context"
 	"fmt"
-	"log/slog"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"os/exec"
 	"strings"
 	"testing"
@@ -69,7 +67,7 @@ type CDPIntegrationSuite struct {
 	hostPort    string
 	client      *CDPClient
 	testServer  *httptest.Server
-	testURL     string // URL accessible from inside Docker (host.docker.internal)
+	testURL     string // base URL of testServer as reachable from Chrome's container
 }
 
 func TestCDPIntegration(t *testing.T) {
@@ -93,11 +91,7 @@ func (s *CDPIntegrationSuite) SetupSuite() {
 		w.Header().Set("Content-Type", "text/html")
 		fmt.Fprint(w, `<html><head><title>Page 3</title></head><body><h1>Page 3</h1></body></html>`)
 	})
-	s.testServer = httptest.NewServer(mux)
-
-	// Chrome runs in Docker — use host.docker.internal to reach the host test server.
-	port := strings.Split(s.testServer.URL, ":")[2]
-	s.testURL = fmt.Sprintf("http://host.docker.internal:%s", port)
+	s.testServer, s.testURL = startPageServer(t, mux)
 
 	// Start Chrome container.
 	out, err := exec.Command("docker", "run", "-d", "--rm",
@@ -127,22 +121,13 @@ func (s *CDPIntegrationSuite) SetupSuite() {
 		require.NotEmpty(t, ip, "chrome container has no bridge IP")
 		cdpAddr = fmt.Sprintf("%s:%d", ip, CDPPort)
 	}
-	allowDirectCDP(t, cdpAddr)
-
-	// Wait for Chrome to be ready.
-	wsURL := "ws://" + cdpAddr
-	var client *CDPClient
-	for i := range 20 {
-		client, err = NewCDPClient(context.Background(), wsURL, slog.New(slog.NewTextHandler(os.Stderr, nil)))
-		if err == nil {
-			break
-		}
-		if i == 19 {
-			t.Fatalf("chrome not ready after 10s: %v", err)
-		}
-		time.Sleep(500 * time.Millisecond)
-	}
+	client := dialCDP(t, "ws://"+cdpAddr)
 	s.client = client
+
+	// Mirror CDPManager.Connect and bring the tab to the foreground. Without it
+	// headless Chrome never acknowledges a wheel event, so MouseScroll blocks
+	// forever instead of failing.
+	require.NoError(t, client.SwitchTarget(client.TargetID()))
 }
 
 func (s *CDPIntegrationSuite) TearDownSuite() {
@@ -173,7 +158,7 @@ func (s *CDPIntegrationSuite) TestPageInfo() {
 	s.nav()
 	info, err := s.client.GetPageInfo(context.Background())
 	require.NoError(s.T(), err)
-	require.Contains(s.T(), info.URL, "host.docker.internal")
+	require.Equal(s.T(), s.testURL+"/", info.URL)
 	require.Equal(s.T(), "Loop CDP Test Page", info.Title)
 }
 
