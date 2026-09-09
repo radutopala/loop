@@ -1,4 +1,4 @@
-.PHONY: help build install test test-integration test-component test-runner-build test-runner-push bdd-serve lint lint-go lint-app coverage coverage-check codeql-download codeql docker-build docs-build docs-serve docs-capture run clean restart docker-shell docker-snapshot app-dev app-dev-docker app-test app-install app-build-binary app-dist-linux app-icons _sync-loop-overrides
+.PHONY: help build install test test-integration test-integration-browser test-component test-runner-build test-runner-push bdd-serve lint lint-go lint-app coverage coverage-check codeql-download codeql docker-build docs-build docs-serve docs-capture run clean restart docker-shell docker-snapshot app-dev app-dev-docker app-test app-install app-build-binary app-dist-linux app-icons _sync-loop-overrides
 .DEFAULT_GOAL := help
 
 # Strip gate-child env inheritance when invoking make from inside a
@@ -32,6 +32,11 @@ test: ## Run all tests
 
 test-integration: ## Run integration tests (requires tokens in ~/.loop/config.integration.json)
 	go test -v -tags integration -race -count=1 -timeout 10m ./internal/slack/ ./internal/discord/
+
+test-integration-browser: ## Run browser integration tests (requires Docker; builds loop-chrome if missing)
+	@docker image inspect loop-chrome:latest >/dev/null 2>&1 || \
+		docker build -t loop-chrome -f internal/container/image/chrome.Dockerfile internal/container/image/
+	go test -v -tags integration -race -count=1 -timeout 10m ./internal/browser/
 
 # Documentation-capture scenarios are tagged @docs and excluded by default so
 # normal runs (and CI) stay fast and don't write assets. `make docs-capture`
