@@ -3,6 +3,7 @@ import { resetBrowserProfile, switchBrowserMode } from "../../api/loopApi";
 import { type TabInfo, useBrowserWs } from "../../hooks/useBrowserWs";
 import { useTheme } from "../../ThemeContext";
 import { storageGet, storageSet } from "../../utils/storage";
+import { normalizeNavigateUrl } from "./browserUrl";
 
 interface BrowserPanelProps {
   channelId: string;
@@ -118,11 +119,8 @@ export function BrowserPanel({ channelId, fixedMode }: BrowserPanelProps) {
       e.preventDefault();
       const input = urlInputRef.current;
       if (!input) return;
-      let targetUrl = input.value.trim();
+      const targetUrl = normalizeNavigateUrl(input.value);
       if (!targetUrl) return;
-      if (!/^https?:\/\//i.test(targetUrl)) {
-        targetUrl = "https://" + targetUrl;
-      }
       navigate(targetUrl);
     },
     [navigate],
