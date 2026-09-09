@@ -381,6 +381,9 @@ type mockCDPSession struct {
 	// A field rather than an expectation, so the many tests that never exercise
 	// liveness need no extra setup.
 	dead bool
+	// attachFn models attaching to another tab; nil attaches to this session,
+	// which is what almost every test wants.
+	attachFn func(targetID string) (browser.CDPSession, error)
 }
 
 func (m *mockCDPSession) Alive() bool { return !m.dead }
@@ -481,7 +484,10 @@ func (m *mockCDPSession) MouseDown(ctx context.Context, x, y float64, button str
 func (m *mockCDPSession) MouseUp(ctx context.Context, x, y float64, button string) error {
 	return m.Called(ctx, x, y, button).Error(0)
 }
-func (m *mockCDPSession) NewContextForTarget(_ string) (browser.CDPSession, error) {
+func (m *mockCDPSession) NewContextForTarget(targetID string) (browser.CDPSession, error) {
+	if m.attachFn != nil {
+		return m.attachFn(targetID)
+	}
 	return m, nil
 }
 

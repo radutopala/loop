@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"testing"
+	"time"
 
 	"github.com/chromedp/cdproto/accessibility"
 	"github.com/chromedp/cdproto/cdp"
@@ -765,6 +766,42 @@ func (s *CDPSuite) TestNewContextForTargetRunError() {
 	require.Error(s.T(), err)
 	require.Nil(s.T(), newClient)
 	require.Contains(s.T(), err.Error(), "attaching to target bad-target")
+}
+
+func (s *CDPSuite) TestNewContextForTargetTimesOut() {
+	// A tab whose renderer never answers the attach handshake: chromedp.Run
+	// blocks with no deadline of its own, which used to wedge the pane on the
+	// previously attached tab for as long as the CDP connection lived.
+	blocked := make(chan struct{})
+	defer close(blocked)
+
+	callCount := 0
+	c, err := NewCDPClient(context.Background(), "ws://test:9222", slog.Default(),
+		WithAllocator(func(parent context.Context, _ string) (context.Context, context.CancelFunc) {
+			return context.WithCancel(parent)
+		}),
+		WithRunFunc(func(_ context.Context, _ ...chromedp.Action) error {
+			callCount++
+			if callCount > 1 {
+				<-blocked
+			}
+			return nil
+		}),
+	)
+	require.NoError(s.T(), err)
+	defer c.Close()
+
+	c.attachTimeout = 10 * time.Millisecond
+
+	newClient, err := c.NewContextForTarget("wedged-target")
+	require.Error(s.T(), err)
+	require.Nil(s.T(), newClient)
+	require.Contains(s.T(), err.Error(), "attaching to target wedged-target: timed out after 10ms")
+}
+
+func (s *CDPSuite) TestAttachDeadline() {
+	require.Equal(s.T(), defaultAttachTimeout, (&CDPClient{}).attachDeadline())
+	require.Equal(s.T(), time.Second, (&CDPClient{attachTimeout: time.Second}).attachDeadline())
 }
 
 // --- NewCDPClient with no target ID (resolvedTargetID == "" after run) ---

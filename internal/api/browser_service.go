@@ -169,9 +169,18 @@ func (s *browserService) getBrowserCDP(ctx context.Context, channelID string) (b
 	if cdpMgr != nil {
 		if activeClient := cdpMgr.ActiveClient(); activeClient != nil {
 			if activeClient.Alive() {
+				// The active tab can move ahead of the attached client: opening a
+				// tab, or an agent switching one, records the new target before
+				// anything attaches to it. Acting on the cached client then drives
+				// a tab the user is not looking at — which is how a URL typed into
+				// the pane ended up loading in the previous tab.
+				synced, err := s.syncActiveClient(cdpMgr, activeClient)
+				if err != nil {
+					return nil, err
+				}
 				s.deps.logger.Info("getBrowserCDP: reusing cached CDP", "channel_id", channelID)
-				s.ensureBrowserCapture(ctx, channelID, activeClient)
-				return activeClient, nil
+				s.ensureBrowserCapture(ctx, channelID, synced)
+				return synced, nil
 			}
 			// The sidecar went away under us — stopped from the browser pane,
 			// killed from the terminal, or crashed. The manager also carries the
@@ -211,6 +220,27 @@ func (s *browserService) getBrowserCDP(ctx context.Context, channelID string) (b
 	s.ensureBrowserCapture(ctx, channelID, cdpClient)
 
 	return cdpClient, nil
+}
+
+// syncActiveClient returns a client attached to the manager's active target,
+// attaching when the cached client sits on a different tab.
+//
+// Attaching can fail — a wedged tab refuses the handshake until the attach times
+// out — and the error is returned rather than swallowed: falling back to the
+// previously attached tab would silently act on the wrong page.
+func (s *browserService) syncActiveClient(cdpMgr *browser.CDPManager, cached browser.CDPSession) (browser.CDPSession, error) {
+	want := cdpMgr.ActiveTargetID()
+	if want == "" || cached.TargetID() == want {
+		return cached, nil
+	}
+	s.deps.logger.Info("getBrowserCDP: active tab moved, attaching",
+		"target_id", want, "attached_target_id", cached.TargetID())
+	client, err := cdpMgr.GetOrCreate(want)
+	if err != nil {
+		return nil, fmt.Errorf("attaching to active tab %s: %w", want, err)
+	}
+	cdpMgr.SwitchActive(want)
+	return client, nil
 }
 
 // ensureBrowserCapture initializes console/network capture for a channel if not already started.

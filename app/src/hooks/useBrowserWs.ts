@@ -144,6 +144,11 @@ export function useBrowserWs({ channelId, onFrame, onPageInfo, onError, onStarte
               break;
             case "tab_created":
               if (msg.target_id) {
+                // The backend makes a newly opened tab active as soon as it is
+                // created, so mark it here too — waiting for "tab_switched"
+                // (sent once the pane has attached) leaves the strip pointing at
+                // the previous tab while actions already go to the new one.
+                setActiveTargetId(msg.target_id);
                 setTabs((prev) => {
                   // Deduplicate — the tab may already exist from a "tabs" response.
                   if (prev.some((t) => t.target_id === msg.target_id)) return prev;
