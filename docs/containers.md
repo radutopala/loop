@@ -360,6 +360,14 @@ The host API server manages all CDP connections centrally. The MCP server inside
 
 Chrome containers follow the pattern `loop-chrome-{sanitized-channel-id}`. The same sanitization rules apply as for agent containers.
 
+### Persistent Profile
+
+With `browser.persist_profile` (default `true`), each Chrome container mounts a named volume `loop-chrome-profile-{sanitized-channel-id}` at `/profile` and runs with `--user-data-dir=/profile`. Named volumes survive `RemoveVolumes: true`, so logins outlive the idle stop and the scheduled container removal. The volume is deleted by the browser pane's **Reset profile** action and when the channel itself is deleted. See [Browser](browser.md#agent-profile).
+
+### Image Freshness
+
+The chrome image carries `loop.version` / `loop.built_at` labels and is rebuilt with `docker build --pull --no-cache` when it is missing, unlabelled, or stamped with a different loop version — the same release-driven trigger as the agent image. Without that it would be built once and frozen, and Chromium would never pick up an upstream security fix. `make docker-build` rebuilds manually.
+
 ### Built-in "loop-browser" MCP Server
 
 When browser is enabled, a `loop-browser` MCP server is registered in the container's MCP config:

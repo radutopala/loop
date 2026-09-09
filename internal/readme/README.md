@@ -359,6 +359,7 @@ On startup, `loop serve` keeps the versioned container files (`Dockerfile`, `ent
 | `browser.enabled` | `true` | Enable Chrome browser automation |
 | `browser.chrome_image` | `"loop-chrome:latest"` | Docker image for Chrome sidecar containers |
 | `browser.host_cdp_port` | `9222` | CDP port for Host mode (requires `chrome://inspect/#remote-debugging` in Chrome) |
+| `browser.persist_profile` | `true` | Keep the agent's cookies and logins across browser restarts (Docker mode) |
 | `poll_interval_sec` | `30` | Task scheduler poll interval |
 | `claude_model` | `"claude-sonnet-5"` | Claude model (e.g. `"claude-fable-5"`, `"claude-opus-4-8"`). Overridable per channel from the chat composer |
 | `claude_effort` | `""` | Reasoning effort passed as `--effort` (`low`…`max`); empty uses the model default. Overridable per channel from the chat composer |
@@ -1087,6 +1088,7 @@ In headless/Linux environments where Electron can't launch, `LOOP_NO_ELECTRON=1 
 | `GET` | `/api/playground/files?name=...` | List files in a playground |
 | `POST` | `/api/browser/action` | Browser automation (navigate, tabs, screenshot, input, etc.) |
 | `POST` | `/api/browser/mode` | Switch browser mode (docker/host) |
+| `POST` | `/api/browser/profile/reset` | Wipe the channel's persistent browser profile (docker mode only) |
 | `GET` | `/api/tickets` | List tickets for a project directory (filter by status, tag, assignee, type) |
 | `POST` | `/api/tickets` | Create a ticket |
 | `GET` | `/api/tickets/{id}` | Get a single ticket by ID |

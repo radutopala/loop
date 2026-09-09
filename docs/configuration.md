@@ -82,6 +82,7 @@ Browser settings are grouped under `"browser"`:
 | `browser.enabled` | `bool` | `true` | Enable Chrome browser automation. When disabled, no Chrome container is started and the `loop-browser` MCP server is not registered. |
 | `browser.chrome_image` | `string` | `"loop-chrome:latest"` | Docker image for Chrome sidecar containers. |
 | `browser.host_cdp_port` | `int` | `9222` | CDP port for Host mode. Requires `chrome://inspect/#remote-debugging` enabled in Chrome. |
+| `browser.persist_profile` | `bool` | `true` | Keep the agent's cookies and logins across browser restarts, in a per-channel Docker volume. Docker mode only. |
 
 #### Networking & Scheduling
 
@@ -583,6 +584,7 @@ Not all global fields are available in project configs. The following fields can
 | `browser.enabled` | **Overrides** global value when set. |
 | `browser.chrome_image` | **Overrides** global value when set. |
 | `browser.host_cdp_port` | **Overrides** global value when set. |
+| `browser.persist_profile` | **Overrides** global value when set. |
 | `github.gh_user` | **Overrides** global value when set. |
 | `review.enabled` / `review.prompt` / `review.prompt_path` | Each field **overrides** the global value only when explicitly set (see [Review](#review)). |
 | `gates.agentgate.enabled` | **Narrows only**: project may set `false` to disable the gate for this project; it **cannot** re-enable the gate when global `gates.agentgate.enabled` is `false`. Transitively disables `gates.docker_proxy.enabled` when the project turns the gate off. |
@@ -652,7 +654,8 @@ The merge follows these principles:
   //"browser": {
   //  "enabled": true,
   //  "chrome_image": "loop-chrome:latest",
-  //  "host_cdp_port": 9222
+  //  "host_cdp_port": 9222,
+  //  "persist_profile": true
   //},
 
   // GitHub integration (used by the Git panel's PR chip)
@@ -810,7 +813,8 @@ The merge follows these principles:
   // Browser automation override
   //"browser": {
   //  "enabled": false,
-  //  "chrome_image": "loop-chrome:latest"
+  //  "chrome_image": "loop-chrome:latest",
+  //  "persist_profile": true
   //},
 
   // GitHub override (per-project gh CLI account)

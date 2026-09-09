@@ -261,6 +261,9 @@ func (l *Loader) loadProjectConfig(workDir string, mainConfig *Config) (*Config,
 		if pc.Browser.HostCDPPort != nil {
 			merged.Browser.HostCDPPort = *pc.Browser.HostCDPPort
 		}
+		if pc.Browser.PersistProfile != nil {
+			merged.Browser.PersistProfile = *pc.Browser.PersistProfile
+		}
 	}
 
 	// Quality config: project overrides global per-key. Rules merge by

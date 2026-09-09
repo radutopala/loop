@@ -62,12 +62,12 @@ func (s *CDPSuite) TestMouseScrollError() {
 // --- KeyPress ---
 
 func (s *CDPSuite) TestKeyPressSuccess() {
-	require.NoError(s.T(), s.client.KeyPress(context.Background(), "Enter"))
+	require.NoError(s.T(), s.client.KeyPress(context.Background(), "Enter", 0))
 }
 
 func (s *CDPSuite) TestKeyPressError() {
 	s.setRunFn(func(_ context.Context, _ ...chromedp.Action) error { return errors.New("fail") })
-	require.Error(s.T(), s.client.KeyPress(context.Background(), "Enter"))
+	require.Error(s.T(), s.client.KeyPress(context.Background(), "Enter", 0))
 }
 
 // --- TypeText ---
@@ -191,4 +191,74 @@ func (s *CDPSuite) TestCloseTabError() {
 	err := s.client.CloseTab(context.Background(), "t1")
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "close failed")
+}
+
+// --- key resolution ---
+
+func (s *CDPSuite) TestResolveKey() {
+	tests := []struct {
+		name string
+		key  string
+		want namedKey
+		ok   bool
+	}{
+		{"named key carries text", "Enter", namedKey{"Enter", 13, "\r"}, true},
+		{"named key without text", "Tab", namedKey{"Tab", 9, ""}, true},
+		{"lowercase letter maps to uppercase", "v", namedKey{"KeyV", 'V', "v"}, true},
+		{"uppercase letter", "V", namedKey{"KeyV", 'V', "V"}, true},
+		{"digit", "7", namedKey{"Digit7", '7', "7"}, true},
+		{"punctuation is unresolved", "-", namedKey{}, false},
+		{"unknown multi-rune key is unresolved", "F12", namedKey{}, false},
+		{"empty key is unresolved", "", namedKey{}, false},
+	}
+	for _, tt := range tests {
+		s.Run(tt.name, func() {
+			nk, ok := resolveKey(tt.key)
+			require.Equal(s.T(), tt.ok, ok)
+			require.Equal(s.T(), tt.want, nk)
+		})
+	}
+}
+
+func (s *CDPSuite) TestKeyPressWithModifiers() {
+	require.NoError(s.T(), s.client.KeyPress(context.Background(), "a", 2))
+}
+
+// Shift still produces text, so Shift+Enter must keep the newline; Ctrl+Enter
+// is a shortcut and must not.
+func (s *CDPSuite) TestKeyPressEnterWithShift() {
+	require.NoError(s.T(), s.client.KeyPress(context.Background(), "Enter", modShift))
+}
+
+func (s *CDPSuite) TestKeyPressEnterWithCtrl() {
+	require.NoError(s.T(), s.client.KeyPress(context.Background(), "Enter", 2))
+}
+
+func (s *CDPSuite) TestKeyPressUnmappedKey() {
+	require.NoError(s.T(), s.client.KeyPress(context.Background(), "F12", 0))
+}
+
+// --- InsertText ---
+
+func (s *CDPSuite) TestInsertTextSuccess() {
+	require.NoError(s.T(), s.client.InsertText(context.Background(), "pasted"))
+}
+
+func (s *CDPSuite) TestInsertTextError() {
+	s.setRunFn(func(_ context.Context, _ ...chromedp.Action) error { return errors.New("fail") })
+	require.Error(s.T(), s.client.InsertText(context.Background(), "pasted"))
+}
+
+// --- ReadSelection ---
+
+func (s *CDPSuite) TestReadSelectionSuccess() {
+	sel, err := s.client.ReadSelection(context.Background())
+	require.NoError(s.T(), err)
+	require.Empty(s.T(), sel)
+}
+
+func (s *CDPSuite) TestReadSelectionError() {
+	s.setRunFn(func(_ context.Context, _ ...chromedp.Action) error { return errors.New("fail") })
+	_, err := s.client.ReadSelection(context.Background())
+	require.Error(s.T(), err)
 }

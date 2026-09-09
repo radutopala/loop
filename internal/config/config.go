@@ -112,10 +112,11 @@ type jsonQualityRuleConfig struct {
 
 // jsonBrowserConfig is the JSON representation of the browser block.
 type jsonBrowserConfig struct {
-	Enabled     *bool  `json:"enabled"`
-	ChromeImage string `json:"chrome_image"`
-	Mode        string `json:"mode"`
-	HostCDPPort *int   `json:"host_cdp_port"`
+	Enabled        *bool  `json:"enabled"`
+	ChromeImage    string `json:"chrome_image"`
+	Mode           string `json:"mode"`
+	HostCDPPort    *int   `json:"host_cdp_port"`
+	PersistProfile *bool  `json:"persist_profile"`
 }
 
 // jsonAgentRetryConfig is the JSON representation of the claude_retry block.
@@ -266,10 +267,11 @@ func (l *Loader) parse() (*Config, error) {
 
 	// Browser config: nested struct with defaults.
 	cfg.Browser = BrowserConfig{
-		Enabled:     true,
-		ChromeImage: "loop-chrome:latest",
-		Mode:        "docker",
-		HostCDPPort: 9222,
+		Enabled:        true,
+		ChromeImage:    "loop-chrome:latest",
+		Mode:           "docker",
+		HostCDPPort:    9222,
+		PersistProfile: true,
 	}
 	if jc.Browser != nil {
 		cfg.Browser.Enabled = ptrDefault(jc.Browser.Enabled, true)
@@ -280,6 +282,7 @@ func (l *Loader) parse() (*Config, error) {
 			cfg.Browser.Mode = jc.Browser.Mode
 		}
 		cfg.Browser.HostCDPPort = ptrDefault(jc.Browser.HostCDPPort, 9222)
+		cfg.Browser.PersistProfile = ptrDefault(jc.Browser.PersistProfile, true)
 	}
 
 	// Agent retry: backoff policy for transient API errors. Defaults applied

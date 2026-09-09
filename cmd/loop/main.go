@@ -129,12 +129,12 @@ type app struct {
 	newAPIServer           func(scheduler.Scheduler, api.ChannelEnsurer, api.ThreadEnsurer, api.ChannelLister, api.MessageSender, *slog.Logger, ...api.Option) *api.Server
 	newMCPServer           func(string, string, string, mcpserver.HTTPClient, *slog.Logger, ...mcpserver.MemoryOption) *mcpserver.Server
 	newDockerClient        func() (container.DockerClient, error)
-	ensureImage            func(context.Context, container.DockerClient, *config.Config) error
+	ensureImage            func(context.Context, container.DockerClient, *config.Config, func(string)) error
 	newEmbedder            func(*config.Config) (embeddings.Embedder, error)
 	loadProjectMemoryPaths func(string) []string
 	newDockerExecClient    func() (terminal.ExecClient, error)
 	newHostExecClient      func() terminal.ExecClient
-	newBrowserProvider     func(string, *slog.Logger) (api.BrowserProvider, error)
+	newBrowserProvider     func(string, bool, *slog.Logger) (api.BrowserProvider, error)
 	discoverWSEndpoint     func() (string, error)
 	openLogFile            func(string) (*os.File, error)
 
@@ -234,12 +234,12 @@ func newApp() *app {
 		newHostExecClient: func() terminal.ExecClient {
 			return terminal.NewHostExecClient()
 		},
-		newBrowserProvider: func(chromeImage string, logger *slog.Logger) (api.BrowserProvider, error) {
+		newBrowserProvider: func(chromeImage string, persistProfile bool, logger *slog.Logger) (api.BrowserProvider, error) {
 			dockerClient, err := dockerclient.NewClientWithOpts(dockerclient.FromEnv, dockerclient.WithAPIVersionNegotiation())
 			if err != nil {
 				return nil, err
 			}
-			return browser.NewDockerProvider(dockerClient, chromeImage, "1920,1080", logger), nil
+			return browser.NewDockerProvider(dockerClient, chromeImage, "1920,1080", persistProfile, logger), nil
 		},
 
 		// MCP host browser

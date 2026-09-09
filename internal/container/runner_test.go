@@ -90,6 +90,11 @@ func (m *MockDockerClient) ImageBuildFileLabels(ctx context.Context, contextDir,
 	return args.Error(0)
 }
 
+func (m *MockDockerClient) ImageBuildFileFresh(ctx context.Context, contextDir, dockerfile, tag string, labels map[string]string) error {
+	args := m.Called(ctx, contextDir, dockerfile, tag, labels)
+	return args.Error(0)
+}
+
 func (m *MockDockerClient) PruneBuildCache(ctx context.Context, unusedFor time.Duration) (uint64, error) {
 	args := m.Called(ctx, unusedFor)
 	return args.Get(0).(uint64), args.Error(1)

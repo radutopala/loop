@@ -528,6 +528,7 @@ func (s *Server) registerSystemRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/channels/{id}/timeline", s.handleTimeline)
 	mux.HandleFunc("POST /api/browser/action", s.browser.handleBrowserAction)
 	mux.HandleFunc("POST /api/browser/mode", s.browser.handleBrowserMode)
+	mux.HandleFunc("POST /api/browser/profile/reset", s.browser.handleBrowserProfileReset)
 	mux.HandleFunc("GET /api/config/schema", s.handleConfigSchema)
 	mux.HandleFunc("GET /api/config", s.handleGetConfig)
 	mux.HandleFunc("PUT /api/config", s.handleSaveConfig)

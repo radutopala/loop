@@ -17,6 +17,7 @@ interface BrowserWSMessage {
   delta_y?: number;
   key?: string;
   text?: string;
+  modifiers?: number;
   target_id?: string;
 }
 
@@ -34,6 +35,7 @@ interface BrowserWSResponse {
   tabs?: TabInfo[];
   active_target_id?: string;
   target_id?: string;
+  text?: string;
 }
 
 interface UseBrowserWsOptions {
@@ -124,6 +126,11 @@ export function useBrowserWs({ channelId, onFrame, onPageInfo, onError, onStarte
               onPageInfoRef.current?.(msg.url || "", msg.title || "");
               // Update the active tab's title/URL in the tab bar.
               setTabs((prev) => prev.map((t) => (t.target_id === activeTargetIdRef.current ? { ...t, url: msg.url || t.url, title: msg.title || t.title } : t)));
+              break;
+            case "clipboard":
+              // The sidecar's clipboard is unreachable from here, so a copy in
+              // the page comes back as text and is written to the host clipboard.
+              if (msg.text) void navigator.clipboard?.writeText(msg.text).catch(() => {});
               break;
             case "error":
               onErrorRef.current?.(msg.message || "Unknown error");
@@ -245,7 +252,7 @@ export function useBrowserWs({ channelId, onFrame, onPageInfo, onError, onStarte
   );
 
   const sendInput = useCallback(
-    (input: { type: string; x?: number; y?: number; button?: string; clickCount?: number; deltaX?: number; deltaY?: number; key?: string; text?: string }) => {
+    (input: { type: string; x?: number; y?: number; button?: string; clickCount?: number; deltaX?: number; deltaY?: number; key?: string; text?: string; modifiers?: number }) => {
       send({
         type: "input",
         input_type: input.type,
@@ -257,6 +264,7 @@ export function useBrowserWs({ channelId, onFrame, onPageInfo, onError, onStarte
         delta_y: input.deltaY,
         key: input.key,
         text: input.text,
+        modifiers: input.modifiers,
       });
     },
     [send],

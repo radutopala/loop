@@ -10,6 +10,7 @@ import (
 
 	containertypes "github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/filters"
+	"github.com/docker/docker/api/types/mount"
 	"github.com/docker/docker/api/types/network"
 	"github.com/docker/go-connections/nat"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
@@ -25,6 +26,7 @@ type DockerClient interface {
 	ContainerRemove(ctx context.Context, container string, options containertypes.RemoveOptions) error
 	ContainerInspect(ctx context.Context, containerID string) (containertypes.InspectResponse, error)
 	ContainerList(ctx context.Context, options containertypes.ListOptions) ([]containertypes.Summary, error)
+	VolumeRemove(ctx context.Context, volumeID string, force bool) error
 }
 
 // DockerProvider manages Chrome sidecar containers (one per channel).
@@ -45,6 +47,12 @@ type DockerProvider struct {
 	// connect to the sidecar's bridge IP on the in-container port instead.
 	// Set by NewDockerProvider; overridable in tests via the struct field.
 	inContainer bool
+
+	// persistProfile mounts a per-channel named volume as Chrome's
+	// --user-data-dir, so cookies and logins outlive the sidecar. Without it
+	// Chromium falls back to a throwaway profile inside the container and
+	// every login is lost when the idle monitor removes it.
+	persistProfile bool
 }
 
 const (
@@ -56,10 +64,20 @@ const (
 
 	// containerPrefix is the prefix for Chrome container names.
 	containerPrefix = "loop-chrome-"
+
+	// profileVolumePrefix is the prefix for the named volumes holding each
+	// channel's persistent Chrome profile.
+	profileVolumePrefix = "loop-chrome-profile-"
+
+	// chromeProfileDir is where the profile volume is mounted inside the
+	// sidecar, and what Chrome is pointed at via --user-data-dir.
+	chromeProfileDir = "/profile"
 )
 
-// NewDockerProvider creates a new browser DockerProvider.
-func NewDockerProvider(api DockerClient, image, screen string, logger *slog.Logger) *DockerProvider {
+// NewDockerProvider creates a new browser DockerProvider. When persistProfile
+// is set, each channel's Chrome runs on a named-volume profile that survives
+// container removal.
+func NewDockerProvider(api DockerClient, image, screen string, persistProfile bool, logger *slog.Logger) *DockerProvider {
 	return &DockerProvider{
 		sessionManager: newSessionManager(),
 		api:            api,
@@ -67,6 +85,7 @@ func NewDockerProvider(api DockerClient, image, screen string, logger *slog.Logg
 		screen:         screen,
 		logger:         logger,
 		inContainer:    inDockerContainer(),
+		persistProfile: persistProfile,
 	}
 }
 
@@ -115,14 +134,61 @@ func (m *DockerProvider) SetContainerRegistry(reg container.ContainerRegistry) {
 	m.registry = reg
 }
 
-// chromeArgs returns CMD args for the chrome container (appended to ENTRYPOINT).
+// chromeArgs returns CMD args for the chrome container. The entrypoint ends in
+// `exec chromium-browser ... "$@"`, so these are appended to Chrome's own flags
+// — which is how --user-data-dir gets set without rebuilding the image.
 func (m *DockerProvider) chromeArgs() []string {
-	return []string{"--window-size=" + m.screen, "about:blank"}
+	args := []string{"--window-size=" + m.screen}
+	if m.persistProfile {
+		args = append(args, "--user-data-dir="+chromeProfileDir)
+	}
+	return append(args, "about:blank")
 }
 
 // ChromeHostname returns the Chrome container hostname for a channel.
 func ChromeHostname(channelID string) string {
 	return containerPrefix + container.SanitizeName(channelID)
+}
+
+// ChromeProfileVolume returns the name of the Docker volume holding a channel's
+// persistent Chrome profile.
+func ChromeProfileVolume(channelID string) string {
+	return profileVolumePrefix + container.SanitizeName(channelID)
+}
+
+// profileMounts returns the volume mount for the channel's persistent profile,
+// or nil when profiles are ephemeral. Docker creates the named volume on first
+// use, so there is no separate create call.
+func (m *DockerProvider) profileMounts(channelID string) []mount.Mount {
+	if !m.persistProfile {
+		return nil
+	}
+	return []mount.Mount{{
+		Type:   mount.TypeVolume,
+		Source: ChromeProfileVolume(channelID),
+		Target: chromeProfileDir,
+	}}
+}
+
+// RemoveProfile deletes a channel's persistent Chrome profile volume, wiping
+// every cookie and login the agent accumulated. The caller is responsible for
+// stopping and removing the sidecar first — Docker refuses to remove a volume
+// still attached to a container.
+//
+// Named volumes are deliberately not covered by the RemoveVolumes flag used on
+// container removal (that only drops anonymous volumes), which is what lets the
+// profile survive an idle stop; the flip side is that this is the only thing
+// that ever deletes one.
+func (m *DockerProvider) RemoveProfile(ctx context.Context, channelID string) error {
+	if !m.persistProfile {
+		return nil
+	}
+	name := ChromeProfileVolume(channelID)
+	if err := m.api.VolumeRemove(ctx, name, true); err != nil {
+		return fmt.Errorf("removing chrome profile volume %s: %w", name, err)
+	}
+	m.logger.Info("Chrome profile removed", "channel_id", channelID, "volume", name)
+	return nil
 }
 
 // EnsureBrowser ensures a Chrome sidecar container is running for the channel.
@@ -247,6 +313,7 @@ func (m *DockerProvider) EnsureBrowser(ctx context.Context, channelID, _ string)
 			PortBindings: nat.PortMap{
 				"9222/tcp": []nat.PortBinding{{HostIP: "127.0.0.1", HostPort: "0"}},
 			},
+			Mounts: m.profileMounts(channelID),
 		},
 		nil, nil, containerName,
 	)

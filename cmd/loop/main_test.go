@@ -116,6 +116,11 @@ func (m *mockDockerClient) ImageBuildFileLabels(ctx context.Context, contextDir,
 	return args.Error(0)
 }
 
+func (m *mockDockerClient) ImageBuildFileFresh(ctx context.Context, contextDir, dockerfile, tag string, labels map[string]string) error {
+	args := m.Called(ctx, contextDir, dockerfile, tag, labels)
+	return args.Error(0)
+}
+
 func (m *mockDockerClient) PruneBuildCache(ctx context.Context, unusedFor time.Duration) (uint64, error) {
 	args := m.Called(ctx, unusedFor)
 	return args.Get(0).(uint64), args.Error(1)
@@ -522,10 +527,12 @@ func (s *MainSuite) setupServeMocks() *serveMocks {
 	s.app.newDiscordBot = func(_, _, _ string, _ *slog.Logger) (orchestrator.Bot, error) { return m.bot, nil }
 	s.app.newLocalBot = func(_ db.Store, _ *slog.Logger) orchestrator.Bot { return m.bot }
 	s.app.newDockerClient = func() (container.DockerClient, error) { return m.dockerClient, nil }
-	s.app.ensureImage = func(_ context.Context, _ container.DockerClient, _ *config.Config) error { return nil }
+	s.app.ensureImage = func(_ context.Context, _ container.DockerClient, _ *config.Config, _ func(string)) error { return nil }
 	s.app.newDockerExecClient = func() (terminal.ExecClient, error) { return nil, errors.New("no docker") }
 	s.app.newHostExecClient = func() terminal.ExecClient { return &noopExecClient{} }
-	s.app.newBrowserProvider = func(_ string, _ *slog.Logger) (api.BrowserProvider, error) { return nil, errors.New("no browser") }
+	s.app.newBrowserProvider = func(_ string, _ bool, _ *slog.Logger) (api.BrowserProvider, error) {
+		return nil, errors.New("no browser")
+	}
 	s.app.newAPIServer = fakeAPIServer()
 	return m
 }
@@ -820,7 +827,7 @@ func (s *MainSuite) TestServeWithBrowserProvider() {
 	m.setupHappyBot()
 	m.cfg.Browser.Enabled = true
 
-	s.app.newBrowserProvider = func(_ string, _ *slog.Logger) (api.BrowserProvider, error) {
+	s.app.newBrowserProvider = func(_ string, _ bool, _ *slog.Logger) (api.BrowserProvider, error) {
 		return &noopBrowserProvider{}, nil
 	}
 
@@ -845,8 +852,8 @@ func (s *MainSuite) TestServeWithDockerBrowserProvider() {
 	m.setupHappyBot()
 	m.cfg.Browser.Enabled = true
 
-	s.app.newBrowserProvider = func(_ string, logger *slog.Logger) (api.BrowserProvider, error) {
-		return browser.NewDockerProvider(nil, "loop-chrome:latest", "1920,1080", logger), nil
+	s.app.newBrowserProvider = func(_ string, _ bool, logger *slog.Logger) (api.BrowserProvider, error) {
+		return browser.NewDockerProvider(nil, "loop-chrome:latest", "1920,1080", true, logger), nil
 	}
 
 	errCh := make(chan error, 1)
@@ -926,7 +933,7 @@ func (s *MainSuite) TestServeWithBrowserProviderError() {
 	m.setupHappyBot()
 	m.cfg.Browser.Enabled = true
 
-	s.app.newBrowserProvider = func(_ string, _ *slog.Logger) (api.BrowserProvider, error) {
+	s.app.newBrowserProvider = func(_ string, _ bool, _ *slog.Logger) (api.BrowserProvider, error) {
 		return nil, errors.New("no docker")
 	}
 
@@ -1104,10 +1111,11 @@ func (n *noopBrowserProvider) EnsureBrowser(_ context.Context, _, _ string) erro
 func (n *noopBrowserProvider) StopBrowser(_ context.Context, _ string) (string, error) {
 	return "", nil
 }
-func (n *noopBrowserProvider) IsRunning(_ context.Context, _ string) bool { return false }
-func (n *noopBrowserProvider) GetCDPEndpoint(_ string) string             { return "" }
-func (n *noopBrowserProvider) GetContainerID(_ string) (string, bool)     { return "", false }
-func (n *noopBrowserProvider) IsHostMode() bool                           { return false }
+func (n *noopBrowserProvider) IsRunning(_ context.Context, _ string) bool  { return false }
+func (n *noopBrowserProvider) GetCDPEndpoint(_ string) string              { return "" }
+func (n *noopBrowserProvider) GetContainerID(_ string) (string, bool)      { return "", false }
+func (n *noopBrowserProvider) IsHostMode() bool                            { return false }
+func (n *noopBrowserProvider) RemoveProfile(context.Context, string) error { return nil }
 
 func (s *MainSuite) TestDumpPlaygroundExamplesSkipExisting() {
 	dir := s.T().TempDir()

@@ -72,6 +72,7 @@ type Client struct {
 	dockerBuildCmd           func(ctx context.Context, contextDir, tag string) ([]byte, error)
 	dockerBuildFileCmd       func(ctx context.Context, contextDir, dockerfile, tag string) ([]byte, error)
 	dockerBuildFileLabelsCmd func(ctx context.Context, contextDir, dockerfile, tag string, labels map[string]string) ([]byte, error)
+	dockerBuildFileFreshCmd  func(ctx context.Context, contextDir, dockerfile, tag string, labels map[string]string) ([]byte, error)
 	claudeVersionURL         string
 	latestClaudeVersion      func() string
 	loopVersion              string
@@ -97,6 +98,7 @@ func NewClientWith(apiFactory func() (dockerAPI, error)) (*Client, error) {
 	c.latestClaudeVersion = c.defaultLatestClaudeVersion
 	c.dockerBuildCmd = c.defaultDockerBuildCmd
 	c.dockerBuildFileLabelsCmd = c.defaultDockerBuildFileLabelsCmd
+	c.dockerBuildFileFreshCmd = c.defaultDockerBuildFileFreshCmd
 	c.dockerBuildFileCmd = c.defaultDockerBuildFileCmd
 	return c, nil
 }
@@ -493,6 +495,17 @@ func (c *Client) ImageBuildFileLabels(ctx context.Context, contextDir, dockerfil
 	return nil
 }
 
+// ImageBuildFileFresh builds a Docker image from a specific Dockerfile with
+// caching disabled and the base image re-pulled, attaching the given labels.
+// Used for the Chrome sidecar so a rebuild actually picks up a newer Chromium.
+func (c *Client) ImageBuildFileFresh(ctx context.Context, contextDir, dockerfile, tag string, labels map[string]string) error {
+	output, err := c.dockerBuildFileFreshCmd(ctx, contextDir, dockerfile, tag, labels)
+	if err != nil {
+		return fmt.Errorf("building image: %s: %w", strings.TrimSpace(string(output)), err)
+	}
+	return nil
+}
+
 // ImageBuildFile builds a Docker image from a specific Dockerfile in the context directory.
 func (c *Client) ImageBuildFile(ctx context.Context, contextDir, dockerfile, tag string) error {
 	output, err := c.dockerBuildFileCmd(ctx, contextDir, dockerfile, tag)
@@ -544,6 +557,31 @@ func (c *Client) defaultDockerBuildFileLabelsCmd(ctx context.Context, contextDir
 	}
 	args = append(args, "-t", tag, contextDir)
 	return exec.CommandContext(ctx, "docker", args...).CombinedOutput()
+}
+
+// defaultDockerBuildFileFreshCmd builds with --pull --no-cache so the result
+// reflects today's upstream packages rather than whatever layers happen to be
+// cached. Used for the Chrome sidecar image: `apk add --no-cache chromium` only
+// suppresses apk's own index cache, so without --no-cache a rebuild silently
+// re-tags the same months-old Chromium, and --pull alone is not enough either
+// because Alpine ships browser patches into the branch repo without always
+// republishing the base image.
+//
+// Deliberately not folded into defaultDockerBuildFileLabelsCmd: the child-image
+// cascade uses that to build FROM a local-only loop-agent tag, where --pull
+// fails outright.
+func (c *Client) defaultDockerBuildFileFreshCmd(ctx context.Context, contextDir, dockerfile, tag string, labels map[string]string) ([]byte, error) {
+	return exec.CommandContext(ctx, "docker", buildFileFreshArgs(contextDir, dockerfile, tag, labels)...).CombinedOutput()
+}
+
+// buildFileFreshArgs assembles the `docker build` argv for a fresh build. Split
+// out from the exec call so the flags can be asserted in a unit test.
+func buildFileFreshArgs(contextDir, dockerfile, tag string, labels map[string]string) []string {
+	args := []string{"build", "--pull", "--no-cache", "-f", filepath.Join(contextDir, dockerfile)}
+	for _, k := range slices.Sorted(maps.Keys(labels)) {
+		args = append(args, "--label", k+"="+labels[k])
+	}
+	return append(args, "-t", tag, contextDir)
 }
 
 func (c *Client) defaultDockerBuildFileCmd(ctx context.Context, contextDir, dockerfile, tag string) ([]byte, error) {

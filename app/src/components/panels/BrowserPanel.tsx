@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { switchBrowserMode } from "../../api/loopApi";
+import { resetBrowserProfile, switchBrowserMode } from "../../api/loopApi";
 import { type TabInfo, useBrowserWs } from "../../hooks/useBrowserWs";
 import { useTheme } from "../../ThemeContext";
 import { storageGet, storageSet } from "../../utils/storage";
@@ -8,6 +8,15 @@ interface BrowserPanelProps {
   channelId: string;
   /** When set, locks the browser to this mode and hides the Docker|Host pill. */
   fixedMode?: "docker" | "host";
+}
+
+/**
+ * cdpModifiers builds Chrome's modifier bitmask (Alt=1, Ctrl=2, Meta=4,
+ * Shift=8). The sidecar runs Linux, where shortcuts are Ctrl-based, so a macOS
+ * Command press is sent as Ctrl.
+ */
+function cdpModifiers(e: React.KeyboardEvent): number {
+  return (e.altKey ? 1 : 0) | (e.ctrlKey || e.metaKey ? 2 : 0) | (e.shiftKey ? 8 : 0);
 }
 
 export function BrowserPanel({ channelId, fixedMode }: BrowserPanelProps) {
@@ -96,6 +105,14 @@ export function BrowserPanel({ channelId, fixedMode }: BrowserPanelProps) {
     });
   }, [channelId, browserMode, stopBrowser, startBrowser]);
 
+  const handleProfileReset = useCallback(() => {
+    if (!window.confirm("Reset the browser profile? The agent will be signed out of every site it has logged into.")) return;
+    stopBrowser();
+    resetBrowserProfile(channelId).then(() => {
+      setTimeout(() => startBrowser(browserMode), 500);
+    });
+  }, [channelId, browserMode, stopBrowser, startBrowser]);
+
   const handleNavigate = useCallback(
     (e: React.FormEvent) => {
       e.preventDefault();
@@ -157,10 +174,30 @@ export function BrowserPanel({ channelId, fixedMode }: BrowserPanelProps) {
     (e: React.KeyboardEvent<HTMLCanvasElement>) => {
       e.preventDefault();
       e.stopPropagation();
-      if (e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey) {
+      const accel = e.ctrlKey || e.metaKey;
+      if (accel && !e.altKey) {
+        const k = e.key.toLowerCase();
+        if (k === "c" || k === "x") {
+          // Read the selection first — a cut clears it — then let the page
+          // perform the cut itself.
+          sendInput({ type: "copy" });
+          if (k === "x") sendInput({ type: "keypress", key: k, modifiers: cdpModifiers(e) });
+          return;
+        }
+        if (k === "v") {
+          void navigator.clipboard
+            ?.readText()
+            .then((text) => {
+              if (text) sendInput({ type: "paste", text });
+            })
+            .catch(() => setError("Clipboard read was blocked, so paste is unavailable."));
+          return;
+        }
+      }
+      if (e.key.length === 1 && !accel && !e.altKey) {
         sendInput({ type: "typetext", text: e.key });
       } else {
-        sendInput({ type: "keypress", key: e.key });
+        sendInput({ type: "keypress", key: e.key, modifiers: cdpModifiers(e) });
       }
     },
     [sendInput],
@@ -230,6 +267,9 @@ export function BrowserPanel({ channelId, fixedMode }: BrowserPanelProps) {
 
         {/* Docker / Host mode toggle pill — hidden when fixedMode is set */}
         {!fixedMode && <ModePill mode={browserMode} onToggle={handleModeToggle} colors={colors} />}
+
+        {/* Profile reset — docker mode only; host mode uses the user's own Chrome profile */}
+        {browserMode === "docker" && fixedMode !== "host" && <ResetProfileButton onReset={handleProfileReset} colors={colors} />}
       </div>
 
       {/* Error bar */}
@@ -288,6 +328,33 @@ export function BrowserPanel({ channelId, fixedMode }: BrowserPanelProps) {
 }
 
 /* ---------- sub-components ---------- */
+
+function ResetProfileButton({ onReset, colors }: { onReset: () => void; colors: { textDim: string } }) {
+  return (
+    <button
+      onClick={onReset}
+      title="Reset browser profile (signs the agent out everywhere)"
+      aria-label="Reset browser profile"
+      style={{
+        display: "flex",
+        alignItems: "center",
+        padding: "3px 8px",
+        marginLeft: 4,
+        background: "none",
+        border: `1px solid ${colors.textDim}33`,
+        borderRadius: 10,
+        color: colors.textDim,
+        cursor: "pointer",
+        fontSize: 10,
+        lineHeight: "14px",
+        whiteSpace: "nowrap",
+        flexShrink: 0,
+      }}
+    >
+      Reset profile
+    </button>
+  );
+}
 
 function ModePill({ mode, onToggle, colors }: { mode: "docker" | "host"; onToggle: () => void; colors: { textDim: string; textLight: string; active: string } }) {
   const activeStyle = { color: colors.active, fontWeight: 600 as const };

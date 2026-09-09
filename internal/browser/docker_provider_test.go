@@ -9,6 +9,7 @@ import (
 	"time"
 
 	containertypes "github.com/docker/docker/api/types/container"
+	"github.com/docker/docker/api/types/mount"
 	"github.com/docker/docker/api/types/network"
 	"github.com/docker/go-connections/nat"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
@@ -54,6 +55,11 @@ func (m *mockDockerClient) ContainerList(ctx context.Context, options containert
 	return args.Get(0).([]containertypes.Summary), args.Error(1)
 }
 
+func (m *mockDockerClient) VolumeRemove(ctx context.Context, volumeID string, force bool) error {
+	args := m.Called(ctx, volumeID, force)
+	return args.Error(0)
+}
+
 type ManagerSuite struct {
 	suite.Suite
 	api *mockDockerClient
@@ -66,7 +72,7 @@ func TestManagerSuite(t *testing.T) {
 
 func (s *ManagerSuite) SetupTest() {
 	s.api = new(mockDockerClient)
-	s.mgr = NewDockerProvider(s.api, "loop-agent:latest", "1920,1080", slog.Default())
+	s.mgr = NewDockerProvider(s.api, "loop-agent:latest", "1920,1080", false, slog.Default())
 	// Default to host-run daemon (the common deployment): the CDP endpoint is the
 	// mapped 127.0.0.1:hostPort and no extra inspect is needed. Containerized
 	// behavior is exercised explicitly by setting inContainer=true per test.
@@ -104,7 +110,7 @@ func inspectStopped() containertypes.InspectResponse {
 }
 
 func (s *ManagerSuite) TestNewDockerProvider() {
-	mgr := NewDockerProvider(s.api, "loop-agent:latest", "1920,1080", slog.Default())
+	mgr := NewDockerProvider(s.api, "loop-agent:latest", "1920,1080", false, slog.Default())
 	require.NotNil(s.T(), mgr)
 	require.Equal(s.T(), "1920,1080", mgr.screen)
 	require.Equal(s.T(), "loop-agent:latest", mgr.image)
@@ -117,6 +123,63 @@ func (s *ManagerSuite) TestIsHostMode() {
 func (s *ManagerSuite) TestChromeArgs() {
 	args := s.mgr.chromeArgs()
 	require.Equal(s.T(), []string{"--window-size=1920,1080", "about:blank"}, args)
+}
+
+func (s *ManagerSuite) TestChromeArgsPersistProfile() {
+	mgr := NewDockerProvider(s.api, "loop-agent:latest", "1920,1080", true, slog.Default())
+	require.Equal(s.T(),
+		[]string{"--window-size=1920,1080", "--user-data-dir=/profile", "about:blank"},
+		mgr.chromeArgs(),
+	)
+}
+
+func (s *ManagerSuite) TestChromeProfileVolume() {
+	tests := []struct {
+		name      string
+		channelID string
+		want      string
+	}{
+		{"plain", "C123", "loop-chrome-profile-c123"},
+		{"sanitized", "chan/with:odd chars", "loop-chrome-profile-chan-with-odd-chars"},
+	}
+	for _, tt := range tests {
+		s.Run(tt.name, func() {
+			require.Equal(s.T(), tt.want, ChromeProfileVolume(tt.channelID))
+		})
+	}
+}
+
+func (s *ManagerSuite) TestProfileMountsDisabled() {
+	require.Nil(s.T(), s.mgr.profileMounts("C123"))
+}
+
+func (s *ManagerSuite) TestProfileMountsEnabled() {
+	mgr := NewDockerProvider(s.api, "loop-agent:latest", "1920,1080", true, slog.Default())
+	mounts := mgr.profileMounts("C123")
+	require.Len(s.T(), mounts, 1)
+	require.Equal(s.T(), mount.TypeVolume, mounts[0].Type)
+	require.Equal(s.T(), "loop-chrome-profile-c123", mounts[0].Source)
+	require.Equal(s.T(), "/profile", mounts[0].Target)
+}
+
+func (s *ManagerSuite) TestRemoveProfileDisabled() {
+	require.NoError(s.T(), s.mgr.RemoveProfile(context.Background(), "C123"))
+	s.api.AssertNotCalled(s.T(), "VolumeRemove", mock.Anything, mock.Anything, mock.Anything)
+}
+
+func (s *ManagerSuite) TestRemoveProfile() {
+	mgr := NewDockerProvider(s.api, "loop-agent:latest", "1920,1080", true, slog.Default())
+	s.api.On("VolumeRemove", mock.Anything, "loop-chrome-profile-c123", true).Return(nil)
+	require.NoError(s.T(), mgr.RemoveProfile(context.Background(), "C123"))
+	s.api.AssertExpectations(s.T())
+}
+
+func (s *ManagerSuite) TestRemoveProfileError() {
+	mgr := NewDockerProvider(s.api, "loop-agent:latest", "1920,1080", true, slog.Default())
+	s.api.On("VolumeRemove", mock.Anything, "loop-chrome-profile-c123", true).Return(errors.New("boom"))
+	err := mgr.RemoveProfile(context.Background(), "C123")
+	require.ErrorContains(s.T(), err, "removing chrome profile volume loop-chrome-profile-c123")
+	s.api.AssertExpectations(s.T())
 }
 
 func (s *ManagerSuite) TestEnsureBrowserNewSession() {

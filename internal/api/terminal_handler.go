@@ -129,9 +129,12 @@ type terminalWSConn struct {
 	hostManager       TerminalManager  // may be nil
 	containerRegistry ContainerManager // may be nil
 	browserProvider   BrowserProvider  // may be nil
-	cmdBuilder        InteractiveCmdBuilder
-	store             ChannelLister
-	loopDir           string // fallback work dir root (e.g. ~/.loop)
+	// closeBrowserCDP drops the channel's cached browser CDPManager, which is
+	// tied to the sidecar container this connection may destroy. May be nil.
+	closeBrowserCDP func(channelID string)
+	cmdBuilder      InteractiveCmdBuilder
+	store           ChannelLister
+	loopDir         string // fallback work dir root (e.g. ~/.loop)
 	// rootDirs returns the channel's ordered workspace roots (index 0 = primary
 	// dir, 1+ = extra_dirs). Used to resolve a shell pane's RootIndex to an
 	// absolute path. May be nil (then RootIndex is ignored — primary dir only).
@@ -847,6 +850,11 @@ func (t *terminalWSConn) handleKill(ctx context.Context, msg wsControlMessage) {
 	}
 	// Also stop and remove the Chrome sidecar container for this channel.
 	if t.browserProvider != nil {
+		// The cached manager outlives the container unless it is dropped here,
+		// and every later browser call would reuse its canceled client.
+		if t.closeBrowserCDP != nil {
+			t.closeBrowserCDP(msg.ChannelID)
+		}
 		containerID, _ := t.browserProvider.StopBrowser(ctx, msg.ChannelID)
 		if containerID != "" && t.containerRegistry != nil {
 			_ = t.containerRegistry.RemoveContainer(ctx, containerID)
@@ -871,6 +879,9 @@ func (s *Server) handleTerminalWS(w http.ResponseWriter, r *http.Request) {
 	tc := newTerminalWSConn(conn, s.termManager, s.hostTermManager, s.containerRegistry, s.cmdBuilder, s.store, s.loopDir, s.logger)
 	tc.rootDirs = s.allDirPaths
 	tc.browserProvider = s.browser.dockerProvider
+	tc.closeBrowserCDP = func(channelID string) {
+		s.browser.closeCDPManager(channelID, s.browser.modeFor(channelID))
+	}
 	defer tc.close()
 
 	for {

@@ -280,6 +280,15 @@ func (s *Server) cleanupChannelContainers(ctx context.Context, channelID string)
 				)
 			}
 		}
+		// The profile volume is a named one, so container removal leaves it
+		// behind by design. Nothing else will ever collect it once the channel
+		// is gone, so drop it here.
+		if err := s.browser.dockerProvider.RemoveProfile(ctx, channelID); err != nil {
+			s.logger.Warn("channel cleanup: chrome profile remove failed",
+				"channel_id", channelID,
+				"error", err,
+			)
+		}
 	}
 }
 

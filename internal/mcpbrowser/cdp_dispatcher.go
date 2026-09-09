@@ -41,7 +41,7 @@ type directCDP interface {
 	MouseScroll(ctx context.Context, x, y, deltaX, deltaY float64) error
 	MouseDown(ctx context.Context, x, y float64, button string) error
 	MouseUp(ctx context.Context, x, y float64, button string) error
-	KeyPress(ctx context.Context, key string) error
+	KeyPress(ctx context.Context, key string, modifiers int) error
 	TypeText(ctx context.Context, text string) error
 	Screenshot(ctx context.Context) ([]byte, error)
 	EvaluateJS(ctx context.Context, expression string) (string, error)
@@ -211,7 +211,7 @@ func (d *cdpDispatcher) dispatch(ctx context.Context, action string, params map[
 
 	case "key_press":
 		key, _ := params["key"].(string)
-		if err := cdp.KeyPress(ctx, key); err != nil {
+		if err := cdp.KeyPress(ctx, key, 0); err != nil {
 			return nil, fmt.Errorf("key press failed: %w", err)
 		}
 		return &actionResponse{Result: fmt.Sprintf("Pressed %s", key)}, nil

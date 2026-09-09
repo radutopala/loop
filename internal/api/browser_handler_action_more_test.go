@@ -151,7 +151,7 @@ func (s *BrowserHandlerSuite) TestBrowserActionMouseUpError() {
 func (s *BrowserHandlerSuite) TestBrowserActionKeyPress() {
 	mockCDP := new(mockCDPSession)
 	s.setupActionMocks(mockCDP)
-	mockCDP.On("KeyPress", mock.Anything, "Enter").Return(nil)
+	mockCDP.On("KeyPress", mock.Anything, "Enter", 0).Return(nil)
 
 	w := s.postBrowserAction(browserActionRequest{
 		ChannelID: "ch-1",
@@ -166,7 +166,7 @@ func (s *BrowserHandlerSuite) TestBrowserActionKeyPress() {
 func (s *BrowserHandlerSuite) TestBrowserActionKeyPressError() {
 	mockCDP := new(mockCDPSession)
 	s.setupActionMocks(mockCDP)
-	mockCDP.On("KeyPress", mock.Anything, mock.Anything).Return(errors.New("key fail"))
+	mockCDP.On("KeyPress", mock.Anything, mock.Anything, mock.Anything).Return(errors.New("key fail"))
 
 	w := s.postBrowserAction(browserActionRequest{
 		ChannelID: "ch-1",

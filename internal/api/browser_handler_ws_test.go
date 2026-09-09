@@ -146,10 +146,10 @@ func (s *BrowserHandlerSuite) TestInputKeyPress() {
 	defer ts.Close()
 	defer ws.Close()
 
-	mockCDP.On("KeyPress", mock.Anything, "Enter").Return(nil)
+	mockCDP.On("KeyPress", mock.Anything, "Enter", 0).Return(nil)
 	require.NoError(s.T(), ws.WriteJSON(browserWSMessage{Type: bwsMsgInput, InputType: "keypress", Key: "Enter"}))
 	time.Sleep(20 * time.Millisecond)
-	mockCDP.AssertCalled(s.T(), "KeyPress", mock.Anything, "Enter")
+	mockCDP.AssertCalled(s.T(), "KeyPress", mock.Anything, "Enter", 0)
 }
 
 func (s *BrowserHandlerSuite) TestInputTypeText() {
@@ -161,6 +161,53 @@ func (s *BrowserHandlerSuite) TestInputTypeText() {
 	require.NoError(s.T(), ws.WriteJSON(browserWSMessage{Type: bwsMsgInput, InputType: "typetext", Text: "hello"}))
 	time.Sleep(20 * time.Millisecond)
 	mockCDP.AssertCalled(s.T(), "TypeText", mock.Anything, "hello")
+}
+
+func (s *BrowserHandlerSuite) TestInputKeyPressWithModifiers() {
+	ws, ts, mockCDP := s.startBrowserWS()
+	defer ts.Close()
+	defer ws.Close()
+
+	mockCDP.On("KeyPress", mock.Anything, "x", 2).Return(nil)
+	require.NoError(s.T(), ws.WriteJSON(browserWSMessage{Type: bwsMsgInput, InputType: "keypress", Key: "x", Modifiers: 2}))
+	time.Sleep(20 * time.Millisecond)
+	mockCDP.AssertCalled(s.T(), "KeyPress", mock.Anything, "x", 2)
+}
+
+func (s *BrowserHandlerSuite) TestInputPaste() {
+	ws, ts, mockCDP := s.startBrowserWS()
+	defer ts.Close()
+	defer ws.Close()
+
+	mockCDP.On("InsertText", mock.Anything, "from host").Return(nil)
+	require.NoError(s.T(), ws.WriteJSON(browserWSMessage{Type: bwsMsgInput, InputType: bwsInputPaste, Text: "from host"}))
+	time.Sleep(20 * time.Millisecond)
+	mockCDP.AssertCalled(s.T(), "InsertText", mock.Anything, "from host")
+}
+
+func (s *BrowserHandlerSuite) TestInputCopyReturnsSelection() {
+	ws, ts, mockCDP := s.startBrowserWS()
+	defer ts.Close()
+	defer ws.Close()
+
+	mockCDP.On("ReadSelection", mock.Anything).Return("selected words", nil)
+	require.NoError(s.T(), ws.WriteJSON(browserWSMessage{Type: bwsMsgInput, InputType: bwsInputCopy}))
+	resp := s.readResp(ws)
+	require.Equal(s.T(), bwsRespClipboard, resp.Type)
+	require.Equal(s.T(), "selected words", resp.Text)
+}
+
+func (s *BrowserHandlerSuite) TestInputCopyError() {
+	ws, ts, mockCDP := s.startBrowserWS()
+	defer ts.Close()
+	defer ws.Close()
+
+	mockCDP.On("ReadSelection", mock.Anything).Return("", errors.New("no selection"))
+	require.NoError(s.T(), ws.WriteJSON(browserWSMessage{Type: bwsMsgInput, InputType: bwsInputCopy}))
+	time.Sleep(20 * time.Millisecond)
+	require.NoError(s.T(), ws.WriteJSON(browserWSMessage{Type: "unknown"}))
+	resp := s.readResp(ws)
+	require.Equal(s.T(), bwsRespError, resp.Type)
 }
 
 func (s *BrowserHandlerSuite) TestInputDispatchError() {
