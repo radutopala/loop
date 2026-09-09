@@ -3,6 +3,7 @@ import { resetBrowserProfile, switchBrowserMode } from "../../api/loopApi";
 import { type TabInfo, useBrowserWs } from "../../hooks/useBrowserWs";
 import { useTheme } from "../../ThemeContext";
 import { storageGet, storageSet } from "../../utils/storage";
+import { type BrowserInput, createFrameRenderer, createInputCoalescer } from "./browserStream";
 import { normalizeNavigateUrl } from "./browserUrl";
 
 interface BrowserPanelProps {
@@ -34,23 +35,18 @@ export function BrowserPanel({ channelId, fixedMode }: BrowserPanelProps) {
     return saved === "host" ? "host" : "docker";
   });
 
+  // Decodes off the main thread and skips frames that a slower decode has
+  // already made stale.
+  const drawFrameRef = useRef(createFrameRenderer(() => canvasRef.current));
+  // Set right after useBrowserWs returns; the coalescer outlives any single
+  // sendInput identity, so it reads the current one through this ref.
+  const sendInputRef = useRef<(ev: BrowserInput) => void>(() => {});
+  const inputQueueRef = useRef(createInputCoalescer((ev) => sendInputRef.current(ev)));
+
   const { connected, started, tabs, activeTargetId, startBrowser, stopBrowser, startStreaming, navigate, reload, goBack, goForward, sendInput, switchTab, newTab, closeTab } = useBrowserWs({
     channelId,
     onFrame: useCallback((data: ArrayBuffer) => {
-      const canvas = canvasRef.current;
-      if (!canvas) return;
-      const ctx = canvas.getContext("2d");
-      if (!ctx) return;
-
-      const blob = new Blob([data], { type: "image/jpeg" });
-      const img = new Image();
-      img.onload = () => {
-        canvas.width = img.width;
-        canvas.height = img.height;
-        ctx.drawImage(img, 0, 0);
-        URL.revokeObjectURL(img.src);
-      };
-      img.src = URL.createObjectURL(blob);
+      drawFrameRef.current(data);
     }, []),
     onPageInfo: useCallback((pageUrl: string, _pageTitle: string) => {
       setUrl(pageUrl);
@@ -63,6 +59,14 @@ export function BrowserPanel({ channelId, fixedMode }: BrowserPanelProps) {
       setUrl("");
     }, []),
   });
+  sendInputRef.current = sendInput;
+
+  // Every canvas gesture goes through the coalescer, so a burst of moves or
+  // wheel ticks becomes one dispatch per frame while clicks and keys still go
+  // out immediately, in the order the user made them.
+  const pushInput = useCallback((ev: BrowserInput) => {
+    inputQueueRef.current.push(ev);
+  }, []);
 
   // Auto-start browser when connected. Pass current mode so the server
   // restores it after daemon restart (server loses in-memory mode state).
@@ -137,21 +141,21 @@ export function BrowserPanel({ channelId, fixedMode }: BrowserPanelProps) {
       const y = (e.clientY - rect.top) * scaleY;
       switch (e.type) {
         case "click":
-          sendInput({ type: "click", x, y, button: "left", clickCount: 1 });
+          pushInput({ type: "click", x, y, button: "left", clickCount: 1 });
           break;
         case "dblclick":
-          sendInput({ type: "click", x, y, button: "left", clickCount: 2 });
+          pushInput({ type: "click", x, y, button: "left", clickCount: 2 });
           break;
         case "contextmenu":
           e.preventDefault();
-          sendInput({ type: "click", x, y, button: "right", clickCount: 1 });
+          pushInput({ type: "click", x, y, button: "right", clickCount: 1 });
           break;
         case "mousemove":
-          sendInput({ type: "mousemove", x, y });
+          pushInput({ type: "mousemove", x, y });
           break;
       }
     },
-    [sendInput],
+    [pushInput],
   );
 
   const handleCanvasWheel = useCallback(
@@ -163,9 +167,9 @@ export function BrowserPanel({ channelId, fixedMode }: BrowserPanelProps) {
       const scaleY = canvas.height / rect.height;
       const x = (e.clientX - rect.left) * scaleX;
       const y = (e.clientY - rect.top) * scaleY;
-      sendInput({ type: "scroll", x, y, deltaX: e.deltaX, deltaY: e.deltaY });
+      pushInput({ type: "scroll", x, y, deltaX: e.deltaX, deltaY: e.deltaY });
     },
-    [sendInput],
+    [pushInput],
   );
 
   const handleCanvasKeyDown = useCallback(
@@ -178,27 +182,27 @@ export function BrowserPanel({ channelId, fixedMode }: BrowserPanelProps) {
         if (k === "c" || k === "x") {
           // Read the selection first — a cut clears it — then let the page
           // perform the cut itself.
-          sendInput({ type: "copy" });
-          if (k === "x") sendInput({ type: "keypress", key: k, modifiers: cdpModifiers(e) });
+          pushInput({ type: "copy" });
+          if (k === "x") pushInput({ type: "keypress", key: k, modifiers: cdpModifiers(e) });
           return;
         }
         if (k === "v") {
           void navigator.clipboard
             ?.readText()
             .then((text) => {
-              if (text) sendInput({ type: "paste", text });
+              if (text) pushInput({ type: "paste", text });
             })
             .catch(() => setError("Clipboard read was blocked, so paste is unavailable."));
           return;
         }
       }
       if (e.key.length === 1 && !accel && !e.altKey) {
-        sendInput({ type: "typetext", text: e.key });
+        pushInput({ type: "typetext", text: e.key });
       } else {
-        sendInput({ type: "keypress", key: e.key, modifiers: cdpModifiers(e) });
+        pushInput({ type: "keypress", key: e.key, modifiers: cdpModifiers(e) });
       }
     },
-    [sendInput],
+    [pushInput],
   );
 
   return (
