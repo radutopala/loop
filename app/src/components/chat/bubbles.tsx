@@ -8,6 +8,7 @@ import { ContextMenu } from "../shared/ContextMenu";
 import { buildActivityStyle, buildMessageStyles, ChannelContext, FILE_PATH_TOOLS, renderInputWithLinks } from "./chatShared";
 import { DelayCountdown } from "./DelayCountdown";
 import { MarkdownContent } from "./markdown";
+import { formatMessageTimestamp } from "./timestamps";
 
 export function CompactingMarker() {
   const { colors } = useTheme();
@@ -188,10 +189,7 @@ export function MessageBubble({
   const { colors } = useTheme();
   const styles = buildMessageStyles(colors);
   const isUser = !message.is_bot;
-  const time = new Date(message.created_at).toLocaleTimeString([], {
-    hour: "2-digit",
-    minute: "2-digit",
-  });
+  const time = formatMessageTimestamp(message.created_at);
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; items: MenuItem[] } | null>(null);
   const [hovered, setHovered] = useState(false);
 
