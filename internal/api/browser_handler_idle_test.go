@@ -137,6 +137,9 @@ func (m *mockHostBrowserProvider) GetContainerID(channelID string) (string, bool
 func (m *mockHostBrowserProvider) IsHostMode() bool {
 	return true
 }
+func (m *mockHostBrowserProvider) RemoveProfile(ctx context.Context, channelID string) error {
+	return m.Called(ctx, channelID).Error(0)
+}
 
 // --- getOrCreateCDPManager host mode ---
 
@@ -581,4 +584,85 @@ func (s *BrowserHandlerSuite) TestBrowserActionNewTabWithCDPMgrTracking() {
 	cdpMgr := s.srv.browser.cdpManagers["ch-1|docker"]
 	s.srv.browser.cdpManagersMu.Unlock()
 	require.True(s.T(), cdpMgr.IsTrackedTab("new-t-id"))
+}
+
+// --- dead cached CDP is dropped, not reused ---
+
+// deadCDPManager returns a connected CDPManager whose client reports itself as
+// dead — the state left behind when the sidecar it was talking to is stopped.
+func (s *BrowserHandlerSuite) deadCDPManager() (*browser.CDPManager, *mockCDPSession) {
+	mockCDP := &mockCDPSession{dead: true}
+	mockCDP.On("TargetID").Return("dead-target").Maybe()
+	mockCDP.On("Close").Return().Maybe()
+	mockCDP.On("StopScreencast").Return().Maybe()
+
+	cdpMgr := browser.NewCDPManager("ws://127.0.0.1:1", browser.CDPManagerConfig{
+		MaxRetries: 1,
+		RetryDelay: time.Millisecond,
+	}, slog.Default())
+	browser.SetCDPFactoryForTest(cdpMgr, func(_ context.Context, _ string, _ *slog.Logger, _ ...browser.CDPOption) (browser.CDPSession, error) {
+		return mockCDP, nil
+	})
+	require.NoError(s.T(), cdpMgr.Connect(context.Background()))
+	return cdpMgr, mockCDP
+}
+
+// hostServerWithDeadCDP wires a host-mode server holding a dead cached manager
+// for channelID. Host mode is used so the reconnect that follows the drop gives
+// up after a single attempt instead of retrying for ten seconds.
+func (s *BrowserHandlerSuite) hostServerWithDeadCDP(channelID string) (*Server, *browser.CDPManager) {
+	hostProvider := new(mockHostBrowserProvider)
+	hostProvider.On("EnsureBrowser", mock.Anything, channelID, "").Return(nil)
+	hostProvider.On("GetCDPEndpoint", channelID).Return("ws://127.0.0.1:1")
+
+	srv := nilServer()
+	srv.browser.setProviders(s.browserMgr, hostProvider)
+	srv.browser.modeMu.Lock()
+	srv.browser.activeMode = map[string]string{channelID: "host"}
+	srv.browser.modeMu.Unlock()
+
+	cdpMgr, _ := s.deadCDPManager()
+	srv.browser.cdpManagersMu.Lock()
+	srv.browser.cdpManagers = map[string]*browser.CDPManager{channelID + "|host": cdpMgr}
+	srv.browser.cdpManagersMu.Unlock()
+	return srv, cdpMgr
+}
+
+func (s *BrowserHandlerSuite) TestHandleStartDropsDeadCachedCDP() {
+	srv, dead := s.hostServerWithDeadCDP("ch-dead")
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /api/ws/browser", srv.browser.handleBrowserWS)
+	ts := httptest.NewServer(mux)
+	defer ts.Close()
+
+	wsURL := "ws" + strings.TrimPrefix(ts.URL, "http") + "/api/ws/browser"
+	ws, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
+	require.NoError(s.T(), err)
+	defer ws.Close()
+
+	require.NoError(s.T(), ws.WriteJSON(browserWSMessage{Type: bwsMsgStart, ChannelID: "ch-dead"}))
+	var resp browserWSResponse
+	require.NoError(s.T(), ws.ReadJSON(&resp))
+	// The dead client is not handed back as if it worked; a fresh connection is
+	// attempted instead, and there is nothing listening in the test.
+	require.Equal(s.T(), bwsRespError, resp.Type)
+
+	srv.browser.cdpManagersMu.Lock()
+	got := srv.browser.cdpManagers["ch-dead|host"]
+	srv.browser.cdpManagersMu.Unlock()
+	require.NotSame(s.T(), dead, got)
+}
+
+func (s *BrowserHandlerSuite) TestGetBrowserCDPDropsDeadCached() {
+	srv, dead := s.hostServerWithDeadCDP("ch-dead2")
+
+	cdpCl, err := srv.browser.getBrowserCDP(context.Background(), "ch-dead2")
+	require.Error(s.T(), err)
+	require.Nil(s.T(), cdpCl)
+
+	srv.browser.cdpManagersMu.Lock()
+	got := srv.browser.cdpManagers["ch-dead2|host"]
+	srv.browser.cdpManagersMu.Unlock()
+	require.NotSame(s.T(), dead, got)
 }

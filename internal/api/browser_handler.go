@@ -25,6 +25,10 @@ type browserWSConn struct {
 	resolveCDPMgr  func(channelID, mode string, provider BrowserProvider) *browser.CDPManager
 	setMode        func(channelID, mode string) // sets active browser mode
 	scheduleRemove func(containerID string)     // schedules delayed container removal
+	// closeCDPMgr drops the channel's cached CDPManager. Stopping the sidecar
+	// invalidates the manager: its client's context dies with the container and
+	// its endpoint points at a host port that will not come back.
+	closeCDPMgr func(channelID string)
 
 	mu               sync.Mutex
 	cdpMgr           *browser.CDPManager // active CDPManager
@@ -42,7 +46,7 @@ type browserWSMessage struct {
 	Width     int    `json:"width,omitempty"`
 	Height    int    `json:"height,omitempty"`
 	// Input fields
-	InputType  string  `json:"input_type,omitempty"` // "click", "mousemove", "scroll", "keypress", "typetext"
+	InputType  string  `json:"input_type,omitempty"` // "click", "mousemove", "scroll", "keypress", "typetext", "paste", "copy"
 	X          float64 `json:"x,omitempty"`
 	Y          float64 `json:"y,omitempty"`
 	Button     string  `json:"button,omitempty"`
@@ -51,6 +55,7 @@ type browserWSMessage struct {
 	DeltaY     float64 `json:"delta_y,omitempty"`
 	Key        string  `json:"key,omitempty"`
 	Text       string  `json:"text,omitempty"`
+	Modifiers  int     `json:"modifiers,omitempty"`
 }
 
 // browserTabInfo mirrors browser.TabInfo for WS responses.
@@ -69,6 +74,7 @@ type browserWSResponse struct {
 	Tabs           []browserTabInfo `json:"tabs,omitempty"`
 	ActiveTargetID string           `json:"active_target_id,omitempty"`
 	TargetID       string           `json:"target_id,omitempty"`
+	Text           string           `json:"text,omitempty"`
 }
 
 const (
@@ -77,6 +83,10 @@ const (
 	bwsMsgScreencast = "screencast"
 	bwsMsgInput      = "input"
 
+	bwsInputPaste = "paste"
+	bwsInputCopy  = "copy"
+
+	bwsRespClipboard   = "clipboard"
 	bwsRespStarted     = "started"
 	bwsRespStopped     = "stopped"
 	bwsRespError       = "error"
@@ -118,6 +128,9 @@ func (s *browserService) handleBrowserWS(w http.ResponseWriter, r *http.Request)
 			if containerID != "" && s.containerRegistry != nil {
 				s.containerRegistry.ScheduleRemove(containerID, s.keepAlive)
 			}
+		},
+		closeCDPMgr: func(channelID string) {
+			s.closeCDPManager(channelID, s.modeFor(channelID))
 		},
 		stopCh: make(chan struct{}),
 	}
@@ -193,16 +206,27 @@ func (bc *browserWSConn) handleStart(ctx context.Context, msg browserWSMessage) 
 	// Reuse cached CDP client if available (survives WS reconnections).
 	if cdpMgr.IsConnected() {
 		if activeClient := cdpMgr.ActiveClient(); activeClient != nil {
-			bc.logger.Info("browser ws: reusing cached CDP")
-			activeClient.ResetScreencast()
-			cdpMgr.PaneConnected()
-			bc.mu.Lock()
-			bc.cdpMgr = cdpMgr
-			bc.cdp = activeClient
-			bc.mu.Unlock()
-			bc.sendJSON(browserWSResponse{Type: bwsRespStarted})
-			go bc.watchMCPTabChanges()
-			return
+			if !activeClient.Alive() {
+				// The sidecar this manager was built for is gone, and the
+				// manager holds its old endpoint, so reconnecting in place
+				// would dial a dead port. Start over on a fresh one.
+				bc.logger.Info("browser ws: dropping dead CDP", "channel_id", msg.ChannelID)
+				if bc.closeCDPMgr != nil {
+					bc.closeCDPMgr(msg.ChannelID)
+				}
+				cdpMgr = bc.resolveCDPMgr(msg.ChannelID, mode, bc.browserProvider)
+			} else {
+				bc.logger.Info("browser ws: reusing cached CDP")
+				activeClient.ResetScreencast()
+				cdpMgr.PaneConnected()
+				bc.mu.Lock()
+				bc.cdpMgr = cdpMgr
+				bc.cdp = activeClient
+				bc.mu.Unlock()
+				bc.sendJSON(browserWSResponse{Type: bwsRespStarted})
+				go bc.watchMCPTabChanges()
+				return
+			}
 		}
 	}
 
@@ -243,6 +267,13 @@ func (bc *browserWSConn) handleStop(ctx context.Context, msg browserWSMessage) {
 	bc.cleanup()
 
 	if msg.ChannelID != "" {
+		// Drop the cached manager before the container goes away. cleanup only
+		// clears this connection's own references, so without this the next
+		// start — or any MCP browser tool — would reuse a client bound to the
+		// container being destroyed and fail with "context canceled".
+		if bc.closeCDPMgr != nil {
+			bc.closeCDPMgr(msg.ChannelID)
+		}
 		containerID, _ := bc.browserProvider.StopBrowser(ctx, msg.ChannelID)
 		if bc.scheduleRemove != nil {
 			bc.scheduleRemove(containerID)
@@ -263,6 +294,7 @@ func (bc *browserWSConn) handleInput(msg browserWSMessage) {
 		DeltaY:     msg.DeltaY,
 		Key:        msg.Key,
 		Text:       msg.Text,
+		Modifiers:  msg.Modifiers,
 	}
 	bc.dispatchInput(ev)
 }
@@ -295,14 +327,32 @@ func (bc *browserWSConn) dispatchInput(ev browser.InputEvent) {
 	case "scroll":
 		err = cdp.MouseScroll(ctx, ev.X, ev.Y, ev.DeltaX, ev.DeltaY)
 	case "keypress":
-		err = cdp.KeyPress(ctx, ev.Key)
+		err = cdp.KeyPress(ctx, ev.Key, ev.Modifiers)
 	case "typetext":
 		err = cdp.TypeText(ctx, ev.Text)
+	case bwsInputPaste:
+		// The sidecar has its own clipboard that the host cannot reach, so the
+		// client sends the text and it is inserted directly.
+		err = cdp.InsertText(ctx, ev.Text)
+	case bwsInputCopy:
+		err = bc.sendSelection(ctx, cdp)
 	}
 
 	if err != nil {
 		bc.logger.Error("input dispatch failed", "type", ev.Type, "error", err)
 	}
+}
+
+// sendSelection reads the page selection and hands it back to the client, which
+// writes it to the host clipboard. Copying inside the sidecar would otherwise
+// land in a clipboard nobody can read.
+func (bc *browserWSConn) sendSelection(ctx context.Context, cdp browser.CDPSession) error {
+	text, err := cdp.ReadSelection(ctx)
+	if err != nil {
+		return err
+	}
+	bc.sendJSON(browserWSResponse{Type: bwsRespClipboard, Text: text})
+	return nil
 }
 
 // frameSender sends frames and signals when to stop.
@@ -602,6 +652,71 @@ func (s *browserService) handleBrowserMode(w http.ResponseWriter, r *http.Reques
 	json.NewEncoder(w).Encode(struct { //nolint:errcheck
 		Mode string `json:"mode"`
 	}{Mode: body.Mode})
+}
+
+// handleBrowserProfileReset handles POST /api/browser/profile/reset — wipes the
+// channel's persistent Chrome profile, signing the agent out of everything.
+//
+// The sidecar must be gone before the volume can be dropped, so this tears the
+// session down synchronously rather than going through ScheduleRemove: Docker
+// refuses to remove a volume that is still attached to a container. The next
+// EnsureBrowser builds a fresh sidecar on a fresh volume.
+func (s *browserService) handleBrowserProfileReset(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		ChannelID string `json:"channel_id"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		http.Error(w, "invalid JSON", http.StatusBadRequest)
+		return
+	}
+	if body.ChannelID == "" {
+		http.Error(w, "channel_id required", http.StatusBadRequest)
+		return
+	}
+	if s.dockerProvider == nil {
+		http.Error(w, "docker browser not configured", http.StatusServiceUnavailable)
+		return
+	}
+	if s.modeFor(body.ChannelID) == "host" {
+		http.Error(w, "host mode uses your own Chrome profile; switch to docker mode to reset", http.StatusConflict)
+		return
+	}
+
+	s.closeCDPManager(body.ChannelID, "docker")
+
+	containerID, _ := s.dockerProvider.StopBrowser(r.Context(), body.ChannelID)
+	if containerID != "" && s.containerRegistry != nil {
+		if err := s.containerRegistry.RemoveContainer(r.Context(), containerID); err != nil {
+			s.deps.logger.Warn("browser profile reset: container remove failed",
+				"channel_id", body.ChannelID, "container_id", containerID, "error", err)
+		}
+	}
+
+	if err := s.dockerProvider.RemoveProfile(r.Context(), body.ChannelID); err != nil {
+		s.deps.logger.Error("browser profile reset failed", "channel_id", body.ChannelID, "error", err)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	s.capturesMu.Lock()
+	delete(s.captures, body.ChannelID)
+	s.capturesMu.Unlock()
+
+	s.deps.logger.Info("browser profile reset", "channel_id", body.ChannelID)
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// closeCDPManager drops and closes the CDPManager for a channel/mode pair, if
+// one is live. Mirrors the teardown half of cleanIdleBrowserSessions.
+func (s *browserService) closeCDPManager(channelID, mode string) {
+	key := channelID + "|" + mode
+	s.cdpManagersMu.Lock()
+	mgr := s.cdpManagers[key]
+	delete(s.cdpManagers, key)
+	s.cdpManagersMu.Unlock()
+	if mgr != nil {
+		mgr.Close()
+	}
 }
 
 // browserActionRequest is the request body for POST /api/browser/action.

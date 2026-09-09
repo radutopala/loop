@@ -221,6 +221,11 @@ type BrowserConfig struct {
 	ChromeImage string
 	Mode        string // "docker" (default) or "host"
 	HostCDPPort int    // default 9222
+
+	// PersistProfile keeps each channel's Chrome profile on a named Docker
+	// volume, so logins survive the sidecar being idle-stopped and removed.
+	// Default true; set false to get a throwaway profile every time.
+	PersistProfile bool
 }
 
 // AgentRetryConfig controls automatic backoff-retry of batch agent runs that

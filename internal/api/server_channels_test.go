@@ -230,6 +230,7 @@ func (s *ServerSuite) TestDeleteChannelCleansUpContainers() {
 
 	browserMgr := new(mockBrowserProvider)
 	browserMgr.On("StopBrowser", mock.Anything, "ch-1").Return("chrome-c3", nil)
+	browserMgr.On("RemoveProfile", mock.Anything, "ch-1").Return(nil)
 	reg.On("RemoveContainer", mock.Anything, "chrome-c3").Return(nil)
 
 	s.srv.containerRegistry = reg
@@ -244,6 +245,7 @@ func (s *ServerSuite) TestDeleteChannelCleansUpContainers() {
 	reg.AssertCalled(s.T(), "RemoveContainer", mock.Anything, "shell-c2")
 	reg.AssertCalled(s.T(), "RemoveContainer", mock.Anything, "chrome-c3")
 	browserMgr.AssertCalled(s.T(), "StopBrowser", mock.Anything, "ch-1")
+	browserMgr.AssertCalled(s.T(), "RemoveProfile", mock.Anything, "ch-1")
 }
 
 func (s *ServerSuite) TestDeleteChannelContainerRemoveError() {
@@ -279,6 +281,7 @@ func (s *ServerSuite) TestDeleteChannelChromeRemoveError() {
 
 	browserMgr := new(mockBrowserProvider)
 	browserMgr.On("StopBrowser", mock.Anything, "ch-1").Return("chrome-c1", nil)
+	browserMgr.On("RemoveProfile", mock.Anything, "ch-1").Return(errors.New("volume in use"))
 	reg.On("RemoveContainer", mock.Anything, "chrome-c1").Return(errors.New("chrome remove failed"))
 
 	s.srv.containerRegistry = reg

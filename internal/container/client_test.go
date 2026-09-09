@@ -854,6 +854,49 @@ func (s *ClientSuite) TestDefaultDockerBuildFileLabelsCmd() {
 		map[string]string{"b": "2", "a": "1"})
 }
 
+func (s *ClientSuite) TestImageBuildFileFresh() {
+	s.client.dockerBuildFileFreshCmd = func(_ context.Context, contextDir, dockerfile, tag string, labels map[string]string) ([]byte, error) {
+		require.Equal(s.T(), "/proj/.loop/container", contextDir)
+		require.Equal(s.T(), "chrome.Dockerfile", dockerfile)
+		require.Equal(s.T(), "loop-chrome:latest", tag)
+		require.Equal(s.T(), map[string]string{"loop.version": "2.0.0"}, labels)
+		return []byte("Successfully built"), nil
+	}
+	err := s.client.ImageBuildFileFresh(context.Background(), "/proj/.loop/container", "chrome.Dockerfile", "loop-chrome:latest",
+		map[string]string{"loop.version": "2.0.0"})
+	require.NoError(s.T(), err)
+}
+
+func (s *ClientSuite) TestImageBuildFileFreshError() {
+	s.client.dockerBuildFileFreshCmd = func(_ context.Context, _, _, _ string, _ map[string]string) ([]byte, error) {
+		return []byte("error: build failed"), errors.New("exit status 1")
+	}
+	err := s.client.ImageBuildFileFresh(context.Background(), "/x", "chrome.Dockerfile", "t:latest", nil)
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "build failed")
+}
+
+// --pull --no-cache is the whole point of the fresh build: without both, a
+// rebuild re-tags the same cached Chromium layer and picks up no security fix.
+func (s *ClientSuite) TestBuildFileFreshArgs() {
+	args := buildFileFreshArgs("/ctx", "chrome.Dockerfile", "loop-chrome:latest",
+		map[string]string{"loop.version": "2.0.0", "loop.built_at": "2026-09-09T00:00:00Z"})
+	require.Equal(s.T(), []string{
+		"build", "--pull", "--no-cache",
+		"-f", "/ctx/chrome.Dockerfile",
+		"--label", "loop.built_at=2026-09-09T00:00:00Z",
+		"--label", "loop.version=2.0.0",
+		"-t", "loop-chrome:latest", "/ctx",
+	}, args)
+}
+
+func (s *ClientSuite) TestDefaultDockerBuildFileFreshCmd() {
+	// Cancelled context so the docker invocation exits immediately.
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, _ = s.client.defaultDockerBuildFileFreshCmd(ctx, "/nonexistent", "chrome.Dockerfile", "test:latest", nil)
+}
+
 func (m *mockDockerAPI) ContainerStats(ctx context.Context, containerID string, stream bool) (containertypes.StatsResponseReader, error) {
 	args := m.Called(ctx, containerID, stream)
 	return args.Get(0).(containertypes.StatsResponseReader), args.Error(1)

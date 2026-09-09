@@ -556,22 +556,24 @@ func (s *ConfigSuite) TestLoadProjectConfigOverrides() {
 		},
 		{
 			name:        "Browser/Override",
-			projectJSON: `{"browser": {"enabled": false, "mode": "host", "host_cdp_port": 9333}}`,
-			mainCfg:     &Config{Browser: BrowserConfig{Enabled: true, Mode: "docker", HostCDPPort: 9222}},
+			projectJSON: `{"browser": {"enabled": false, "mode": "host", "host_cdp_port": 9333, "persist_profile": false}}`,
+			mainCfg:     &Config{Browser: BrowserConfig{Enabled: true, Mode: "docker", HostCDPPort: 9222, PersistProfile: true}},
 			assert: func(merged, _ *Config) {
 				require.False(s.T(), merged.Browser.Enabled)
 				require.Equal(s.T(), "host", merged.Browser.Mode)
 				require.Equal(s.T(), 9333, merged.Browser.HostCDPPort)
+				require.False(s.T(), merged.Browser.PersistProfile)
 			},
 		},
 		{
 			name:        "Browser/NoOverride",
 			projectJSON: `{}`,
-			mainCfg:     &Config{Browser: BrowserConfig{Enabled: true, Mode: "docker", HostCDPPort: 9222}},
+			mainCfg:     &Config{Browser: BrowserConfig{Enabled: true, Mode: "docker", HostCDPPort: 9222, PersistProfile: true}},
 			assert: func(merged, _ *Config) {
 				require.True(s.T(), merged.Browser.Enabled)
 				require.Equal(s.T(), "docker", merged.Browser.Mode)
 				require.Equal(s.T(), 9222, merged.Browser.HostCDPPort)
+				require.True(s.T(), merged.Browser.PersistProfile)
 			},
 		},
 		{

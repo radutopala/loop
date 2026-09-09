@@ -48,6 +48,10 @@ func (s *HostProviderSuite) TearDownTest() {
 	s.server.Close()
 }
 
+func (s *HostProviderSuite) TestRemoveProfileIsNoOp() {
+	require.NoError(s.T(), s.provider.RemoveProfile(context.Background(), "ch-1"))
+}
+
 func (s *HostProviderSuite) TestEnsureBrowserSuccess() {
 	err := s.provider.EnsureBrowser(context.Background(), "ch-1", "")
 	require.NoError(s.T(), err)

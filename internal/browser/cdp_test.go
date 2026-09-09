@@ -805,3 +805,19 @@ func (s *CDPSuite) TestNewCDPClientTargetIDFromContext() {
 	require.Equal(s.T(), "auto-target-42", c.TargetID())
 	c.Close()
 }
+
+// --- Alive ---
+
+func (s *CDPSuite) TestAlive() {
+	require.True(s.T(), s.client.Alive())
+
+	// A client with no context has nothing to talk to.
+	require.False(s.T(), (&CDPClient{}).Alive())
+
+	// Cancelling is what Close does, and what happens when the container the
+	// connection belongs to goes away.
+	ctx, cancel := context.WithCancel(context.Background())
+	s.client.ctx = ctx
+	cancel()
+	require.False(s.T(), s.client.Alive())
+}

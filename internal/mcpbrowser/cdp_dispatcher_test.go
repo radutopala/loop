@@ -48,8 +48,8 @@ func (m *mockDirectCDP) MouseMove(ctx context.Context, x, y float64, buttons int
 func (m *mockDirectCDP) MouseScroll(ctx context.Context, x, y, deltaX, deltaY float64) error {
 	return m.Called(ctx, x, y, deltaX, deltaY).Error(0)
 }
-func (m *mockDirectCDP) KeyPress(ctx context.Context, key string) error {
-	return m.Called(ctx, key).Error(0)
+func (m *mockDirectCDP) KeyPress(ctx context.Context, key string, modifiers int) error {
+	return m.Called(ctx, key, modifiers).Error(0)
 }
 func (m *mockDirectCDP) TypeText(ctx context.Context, text string) error {
 	return m.Called(ctx, text).Error(0)
@@ -259,14 +259,14 @@ func (s *CDPDispatcherSuite) TestMouseScrollError() {
 }
 
 func (s *CDPDispatcherSuite) TestKeyPress() {
-	s.mock.On("KeyPress", mock.Anything, "Enter").Return(nil)
+	s.mock.On("KeyPress", mock.Anything, "Enter", 0).Return(nil)
 	resp, err := s.d.dispatch(context.Background(), "key_press", map[string]any{"key": "Enter"})
 	require.NoError(s.T(), err)
 	require.Contains(s.T(), resp.Result, "Pressed Enter")
 }
 
 func (s *CDPDispatcherSuite) TestKeyPressError() {
-	s.mock.On("KeyPress", mock.Anything, mock.Anything).Return(fmt.Errorf("err"))
+	s.mock.On("KeyPress", mock.Anything, mock.Anything, mock.Anything).Return(fmt.Errorf("err"))
 	_, err := s.d.dispatch(context.Background(), "key_press", map[string]any{"key": "x"})
 	require.ErrorContains(s.T(), err, "key press failed")
 }

@@ -52,7 +52,8 @@
   //"browser": {
   //  "enabled": true,
   //  "chrome_image": "loop-chrome:latest",
-  //  "host_cdp_port": 9222
+  //  "host_cdp_port": 9222,
+  //  "persist_profile": true
   //},
 
   // Public playground share: expose a playground over the internet through a

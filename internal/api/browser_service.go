@@ -23,6 +23,7 @@ type BrowserProvider interface {
 	GetCDPEndpoint(channelID string) string
 	GetContainerID(channelID string) (string, bool)
 	IsHostMode() bool
+	RemoveProfile(ctx context.Context, channelID string) error
 }
 
 // BrowserCleaner stops all browser sessions. Implemented by DockerProvider.
@@ -167,9 +168,17 @@ func (s *browserService) getBrowserCDP(ctx context.Context, channelID string) (b
 	cdpMgr := s.getActiveCDPManager(channelID)
 	if cdpMgr != nil {
 		if activeClient := cdpMgr.ActiveClient(); activeClient != nil {
-			s.deps.logger.Info("getBrowserCDP: reusing cached CDP", "channel_id", channelID)
-			s.ensureBrowserCapture(ctx, channelID, activeClient)
-			return activeClient, nil
+			if activeClient.Alive() {
+				s.deps.logger.Info("getBrowserCDP: reusing cached CDP", "channel_id", channelID)
+				s.ensureBrowserCapture(ctx, channelID, activeClient)
+				return activeClient, nil
+			}
+			// The sidecar went away under us — stopped from the browser pane,
+			// killed from the terminal, or crashed. The manager also carries the
+			// dead container's endpoint, so it is dropped rather than reconnected
+			// and the code below builds a new one against the new sidecar.
+			s.deps.logger.Info("getBrowserCDP: dropping dead CDP", "channel_id", channelID)
+			s.closeCDPManager(channelID, s.modeFor(channelID))
 		}
 	}
 
@@ -342,7 +351,7 @@ func (s *browserService) dispatchBrowserAction(req browserActionRequest, cdpCl b
 
 	case "key_press":
 		key := paramStr(params, "key")
-		if err := cdpCl.KeyPress(bg, key); err != nil {
+		if err := cdpCl.KeyPress(bg, key, 0); err != nil {
 			return browserActionResponse{Error: fmt.Sprintf("key press failed: %v", err)}
 		}
 		return browserActionResponse{Result: fmt.Sprintf("Pressed key %q", key)}

@@ -69,6 +69,7 @@ func (s *ConfigSuite) TestLoadDefaults() {
 	require.Empty(s.T(), cfg.DiscordGuildID)
 	require.Nil(s.T(), cfg.MCPServers)
 	require.True(s.T(), cfg.Browser.Enabled)
+	require.True(s.T(), cfg.Browser.PersistProfile)
 	require.Empty(s.T(), cfg.CopyFiles) // runner prepends ~/.claude.json per container; not defaulted here
 	require.False(s.T(), cfg.KeepMCPConfigs)
 	require.False(s.T(), cfg.Desktop.AutoSaveOnBlur)
@@ -161,7 +162,8 @@ func (s *ConfigSuite) TestLoadBrowserFullConfig() {
 				"enabled": true,
 				"chrome_image": "my-chrome:v2",
 				"mode": "host",
-				"host_cdp_port": 9333
+				"host_cdp_port": 9333,
+				"persist_profile": false
 			}
 		}`), nil
 	}
@@ -172,6 +174,7 @@ func (s *ConfigSuite) TestLoadBrowserFullConfig() {
 	require.Equal(s.T(), "my-chrome:v2", cfg.Browser.ChromeImage)
 	require.Equal(s.T(), "host", cfg.Browser.Mode)
 	require.Equal(s.T(), 9333, cfg.Browser.HostCDPPort)
+	require.False(s.T(), cfg.Browser.PersistProfile)
 }
 
 func (s *ConfigSuite) TestMissingRequired() {

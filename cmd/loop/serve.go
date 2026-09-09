@@ -70,7 +70,11 @@ func (a *app) ensureImageWithBroadcast(ctx context.Context, client container.Doc
 	mgr.SetStatus(container.ImageBuildStatus{State: "building", Phase: "checking"})
 	hub.BroadcastImageBuildStatus(events.ImageBuildStatusData{State: "building", Phase: "checking"})
 	logger.Info("ensuring agent image", "image", cfg.ContainerImage)
-	if err := a.ensureImage(ctx, client, cfg); err != nil {
+	setPhase := func(phase string) {
+		mgr.SetStatus(container.ImageBuildStatus{State: "building", Phase: phase})
+		hub.BroadcastImageBuildStatus(events.ImageBuildStatusData{State: "building", Phase: phase})
+	}
+	if err := a.ensureImage(ctx, client, cfg, setPhase); err != nil {
 		logger.Error("ensuring agent image failed", "error", err)
 		mgr.SetStatus(container.ImageBuildStatus{State: "failed", Error: err.Error()})
 		hub.BroadcastImageBuildStatus(events.ImageBuildStatusData{State: "failed", Error: err.Error()})
@@ -83,7 +87,15 @@ func (a *app) ensureImageWithBroadcast(ctx context.Context, client container.Doc
 	go mgr.RunUpdateChecker(ctx, 30*time.Minute)
 }
 
-func (a *app) defaultEnsureImage(ctx context.Context, client container.DockerClient, cfg *config.Config) error {
+// isReleaseVersion reports whether v looks like a tagged release rather than a
+// local or development build. Only release builds carry a version worth
+// comparing against an image label; dev builds would otherwise trigger a
+// rebuild on every start.
+func isReleaseVersion(v string) bool {
+	return v != "" && v != "dev" && !strings.Contains(v, "-g") && !strings.Contains(v, "-dirty")
+}
+
+func (a *app) defaultEnsureImage(ctx context.Context, client container.DockerClient, cfg *config.Config, setPhase func(string)) error {
 	// container/ files are populated by fsmigrate.Run earlier in serve(),
 	// so we only need to manage the docker images here.
 	containerDir := filepath.Join(cfg.LoopDir, "container")
@@ -94,7 +106,7 @@ func (a *app) defaultEnsureImage(ctx context.Context, client container.DockerCli
 		return fmt.Errorf("listing images: %w", err)
 	}
 	needsBuild := len(ids) == 0
-	if !needsBuild && a.version != "" && a.version != "dev" && !strings.Contains(a.version, "-g") && !strings.Contains(a.version, "-dirty") {
+	if !needsBuild && isReleaseVersion(a.version) {
 		if labels, err := client.ImageInspectLabels(ctx, cfg.ContainerImage); err == nil && labels != nil {
 			if imgVersion := labels["loop.version"]; imgVersion != "" && imgVersion != a.version {
 				needsBuild = true
@@ -109,13 +121,31 @@ func (a *app) defaultEnsureImage(ctx context.Context, client container.DockerCli
 		built = true
 	}
 
-	// Build chrome image if missing
+	// Build the chrome sidecar image if it is missing, unlabelled (every
+	// install from before the image was stamped), or built by a different
+	// loop version. Without this the image is built once and frozen, so
+	// Chromium never picks up an upstream security fix.
 	chromeIDs, err := client.ImageList(ctx, cfg.Browser.ChromeImage)
 	if err != nil {
 		return fmt.Errorf("listing chrome images: %w", err)
 	}
-	if len(chromeIDs) == 0 {
-		if err := client.ImageBuildFile(ctx, containerDir, "chrome.Dockerfile", cfg.Browser.ChromeImage); err != nil {
+	needsChromeBuild := len(chromeIDs) == 0
+	if !needsChromeBuild && isReleaseVersion(a.version) {
+		if labels, err := client.ImageInspectLabels(ctx, cfg.Browser.ChromeImage); err == nil {
+			if labels["loop.version"] != a.version {
+				needsChromeBuild = true
+			}
+		}
+	}
+	if needsChromeBuild {
+		if setPhase != nil {
+			setPhase("browser")
+		}
+		labels := map[string]string{"loop.built_at": time.Now().UTC().Format(time.RFC3339)}
+		if isReleaseVersion(a.version) {
+			labels["loop.version"] = a.version
+		}
+		if err := client.ImageBuildFileFresh(ctx, containerDir, "chrome.Dockerfile", cfg.Browser.ChromeImage, labels); err != nil {
 			return err
 		}
 		built = true
@@ -547,7 +577,7 @@ func (a *app) serve() error {
 	}
 
 	if cfg.Browser.Enabled {
-		dockerProvider, browserErr := a.newBrowserProvider(cfg.Browser.ChromeImage, logger)
+		dockerProvider, browserErr := a.newBrowserProvider(cfg.Browser.ChromeImage, cfg.Browser.PersistProfile, logger)
 		if browserErr != nil {
 			logger.Warn("browser docker provider unavailable", "error", browserErr)
 		} else if dp, ok := dockerProvider.(*browser.DockerProvider); ok {

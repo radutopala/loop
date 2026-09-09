@@ -365,6 +365,14 @@ func NewCDPClient(ctx context.Context, wsURL string, logger *slog.Logger, opts .
 	}, nil
 }
 
+// Alive reports whether the connection is still usable. A client whose context
+// has been canceled — because Close was called, or the sidecar it was talking to
+// was stopped — fails every action with "context canceled", so callers holding a
+// cached client need a way to tell it apart from a working one.
+func (c *CDPClient) Alive() bool {
+	return c.ctx != nil && c.ctx.Err() == nil
+}
+
 // Close shuts down the CDP connection and closes the page target.
 func (c *CDPClient) Close() {
 	c.mu.Lock()
@@ -568,22 +576,110 @@ func (c *CDPClient) MouseScroll(ctx context.Context, x, y, deltaX, deltaY float6
 	)
 }
 
-// keyCodeMap maps key names to their virtual key codes for special keys.
-var keyCodeMap = map[string]int64{
-	"Backspace": 8, "Tab": 9, "Enter": 13, "Escape": 27,
-	"ArrowLeft": 37, "ArrowUp": 38, "ArrowRight": 39, "ArrowDown": 40,
-	"Delete": 46, "Home": 36, "End": 35, "PageUp": 33, "PageDown": 34,
+// modShift is the CDP modifier bit for Shift. Shift is the one modifier that
+// still produces text, so it is excluded when deciding whether a key press is
+// a shortcut.
+const modShift = 8
+
+// namedKey carries the DispatchKeyEvent fields Chrome needs for a key that is
+// not a single printable character.
+type namedKey struct {
+	code string
+	vk   int64
+	// text is non-empty for keys that also produce input. Chrome raises keydown
+	// without it, but never generates the char event, so Enter would submit a
+	// form yet fail to insert a newline in a textarea.
+	text string
 }
 
-// KeyPress dispatches key down and key up events.
-func (c *CDPClient) KeyPress(ctx context.Context, key string) error {
-	down := input.DispatchKeyEvent(input.KeyDown).WithKey(key)
-	up := input.DispatchKeyEvent(input.KeyUp).WithKey(key)
-	if code, ok := keyCodeMap[key]; ok {
-		down = down.WithWindowsVirtualKeyCode(code).WithNativeVirtualKeyCode(code)
-		up = up.WithWindowsVirtualKeyCode(code).WithNativeVirtualKeyCode(code)
+// namedKeys mirrors chromedp's own keyboard table (chromedp/kb) for the keys
+// the browser pane forwards.
+var namedKeys = map[string]namedKey{
+	"Backspace":  {"Backspace", 8, ""},
+	"Tab":        {"Tab", 9, ""},
+	"Enter":      {"Enter", 13, "\r"},
+	"Escape":     {"Escape", 27, ""},
+	"PageUp":     {"PageUp", 33, ""},
+	"PageDown":   {"PageDown", 34, ""},
+	"End":        {"End", 35, ""},
+	"Home":       {"Home", 36, ""},
+	"ArrowLeft":  {"ArrowLeft", 37, ""},
+	"ArrowUp":    {"ArrowUp", 38, ""},
+	"ArrowRight": {"ArrowRight", 39, ""},
+	"ArrowDown":  {"ArrowDown", 40, ""},
+	"Delete":     {"Delete", 46, ""},
+}
+
+// printableKey resolves the code and virtual key code for a single ASCII
+// letter or digit. Chrome matches shortcuts against the uppercase code point,
+// and `event.code` checks in a page need the physical-key name.
+func printableKey(key string) (namedKey, bool) {
+	if len(key) != 1 {
+		return namedKey{}, false
+	}
+	switch ch := key[0]; {
+	case ch >= 'a' && ch <= 'z':
+		upper := ch - 'a' + 'A'
+		return namedKey{"Key" + string(upper), int64(upper), key}, true
+	case ch >= 'A' && ch <= 'Z':
+		return namedKey{"Key" + key, int64(ch), key}, true
+	case ch >= '0' && ch <= '9':
+		return namedKey{"Digit" + key, int64(ch), key}, true
+	}
+	return namedKey{}, false
+}
+
+// resolveKey describes a key name for DispatchKeyEvent.
+func resolveKey(key string) (namedKey, bool) {
+	if nk, ok := namedKeys[key]; ok {
+		return nk, true
+	}
+	return printableKey(key)
+}
+
+// KeyPress dispatches key down and key up events. modifiers is the CDP modifier
+// bitmask (Alt=1, Ctrl=2, Meta=4, Shift=8); without it Chrome cannot recognise
+// shortcuts such as Ctrl+A.
+func (c *CDPClient) KeyPress(ctx context.Context, key string, modifiers int) error {
+	down := input.DispatchKeyEvent(input.KeyDown).WithKey(key).WithModifiers(input.Modifier(modifiers))
+	up := input.DispatchKeyEvent(input.KeyUp).WithKey(key).WithModifiers(input.Modifier(modifiers))
+	nk, ok := resolveKey(key)
+	if !ok {
+		return c.runFn(c.ctx, down, up)
+	}
+	down = down.WithCode(nk.code).WithWindowsVirtualKeyCode(nk.vk).WithNativeVirtualKeyCode(nk.vk)
+	up = up.WithCode(nk.code).WithWindowsVirtualKeyCode(nk.vk).WithNativeVirtualKeyCode(nk.vk)
+	// Text is what makes the key produce input rather than only raise keydown.
+	// A shortcut such as Ctrl+A must not carry it, or the page receives an "a".
+	if nk.text != "" && modifiers&^modShift == 0 {
+		down = down.WithText(nk.text).WithUnmodifiedText(nk.text)
 	}
 	return c.runFn(c.ctx, down, up)
+}
+
+// InsertText inserts text into the focused element in one shot, the way a paste
+// does, instead of synthesizing a key event per character. The sidecar's own
+// clipboard is unreachable from the host, so this is how host clipboard content
+// crosses into the page.
+func (c *CDPClient) InsertText(ctx context.Context, text string) error {
+	return c.runFn(c.ctx, input.InsertText(text))
+}
+
+// selectionJS reads the current selection. window.getSelection() returns an
+// empty string for selections inside form fields, so those are read off the
+// active element instead.
+const selectionJS = `(() => {
+  const a = document.activeElement;
+  if (a && (a.tagName === 'INPUT' || a.tagName === 'TEXTAREA') && a.selectionStart !== a.selectionEnd) {
+    return a.value.substring(a.selectionStart, a.selectionEnd);
+  }
+  return String(window.getSelection() || '');
+})()`
+
+// ReadSelection returns the text currently selected in the page, so a copy in
+// the remote browser can be handed back to the host clipboard.
+func (c *CDPClient) ReadSelection(ctx context.Context) (string, error) {
+	return c.EvaluateJS(ctx, selectionJS)
 }
 
 // TypeText types text character by character.

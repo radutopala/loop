@@ -53,6 +53,9 @@ type CDPSession interface {
 	NewTab(ctx context.Context, url string) (string, error)
 	CloseTab(ctx context.Context, targetID string) error
 	Close()
+	// Alive reports whether the session can still be used; a cached client whose
+	// context died with its container must be dropped rather than reused.
+	Alive() bool
 	ResetScreencast()
 	StartScreencast(quality, maxWidth, maxHeight int) <-chan []byte
 	StopScreencast()
@@ -64,8 +67,10 @@ type CDPSession interface {
 	MouseClick(ctx context.Context, x, y float64, button string, clickCount int) error
 	MouseMove(ctx context.Context, x, y float64, buttons int) error
 	MouseScroll(ctx context.Context, x, y, deltaX, deltaY float64) error
-	KeyPress(ctx context.Context, key string) error
+	KeyPress(ctx context.Context, key string, modifiers int) error
 	TypeText(ctx context.Context, text string) error
+	InsertText(ctx context.Context, text string) error
+	ReadSelection(ctx context.Context) (string, error)
 	EvaluateJS(ctx context.Context, expression string) (string, error)
 	Screenshot(ctx context.Context) ([]byte, error)
 	GetElementRefs(ctx context.Context) ([]ElementRef, error)

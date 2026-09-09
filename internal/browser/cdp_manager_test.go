@@ -16,7 +16,11 @@ import (
 // mockCDPSession implements CDPSession for testing.
 type mockCDPSession struct {
 	mock.Mock
+	// dead makes Alive report a session whose context died with its container.
+	dead bool
 }
+
+func (m *mockCDPSession) Alive() bool { return !m.dead }
 
 func (m *mockCDPSession) TargetID() string                   { return m.Called().String(0) }
 func (m *mockCDPSession) SwitchTarget(targetID string) error { return m.Called(targetID).Error(0) }
@@ -60,8 +64,15 @@ func (m *mockCDPSession) MouseMove(ctx context.Context, x, y float64, buttons in
 func (m *mockCDPSession) MouseScroll(ctx context.Context, x, y, deltaX, deltaY float64) error {
 	return m.Called(ctx, x, y, deltaX, deltaY).Error(0)
 }
-func (m *mockCDPSession) KeyPress(ctx context.Context, key string) error {
-	return m.Called(ctx, key).Error(0)
+func (m *mockCDPSession) KeyPress(ctx context.Context, key string, modifiers int) error {
+	return m.Called(ctx, key, modifiers).Error(0)
+}
+func (m *mockCDPSession) InsertText(ctx context.Context, text string) error {
+	return m.Called(ctx, text).Error(0)
+}
+func (m *mockCDPSession) ReadSelection(ctx context.Context) (string, error) {
+	args := m.Called(ctx)
+	return args.String(0), args.Error(1)
 }
 func (m *mockCDPSession) TypeText(ctx context.Context, text string) error {
 	return m.Called(ctx, text).Error(0)

@@ -222,6 +222,12 @@ func buildSchema() *ConfigSchema {
 						Description:  "Chrome DevTools port (when mode is host)",
 						XPlaceholder: "9222",
 					},
+					"persist_profile": {
+						Type:        "boolean",
+						Title:       "Persist Profile",
+						Description: "Keep the agent's cookies and logins across browser restarts",
+						Default:     true,
+					},
 				},
 			},
 

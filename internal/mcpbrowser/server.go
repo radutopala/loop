@@ -170,7 +170,7 @@ func (s *Server) registerTools() {
 	}
 	mcp.AddTool(s.mcpServer, &mcp.Tool{
 		Name:        "navigate",
-		Description: "Navigate the browser to a URL.",
+		Description: "Navigate the browser to a URL. The browser keeps a persistent profile, so logins survive across sessions — if a page needs a sign-in or a CAPTCHA, call AskUserQuestion to ask the user to sign in via the Browser panel, then continue once they answer.",
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, input navigateInput) (*mcp.CallToolResult, any, error) {
 		if input.URL == "" {
 			return errorResult("url is required"), nil, nil
@@ -187,7 +187,7 @@ func (s *Server) registerTools() {
 
 	mcp.AddTool(s.mcpServer, &mcp.Tool{
 		Name:        "read_page",
-		Description: "Get the accessibility tree of interactive elements on the current page. Returns element refs that can be used with the computer tool.",
+		Description: "Get the accessibility tree of interactive elements on the current page. Returns element refs that can be used with the computer tool. If the page turns out to be a login wall or a CAPTCHA, do not try to solve it — call AskUserQuestion so the user can sign in through the Browser panel; the session persists afterwards.",
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, _ struct{}) (*mcp.CallToolResult, any, error) {
 		resp, err := s.callAction(ctx, "get_element_refs", nil)
 		if err != nil {

@@ -194,3 +194,9 @@ func (h *HostProvider) IsRunning(_ context.Context, _ string) bool {
 func (h *HostProvider) IsHostMode() bool {
 	return true
 }
+
+// RemoveProfile is a no-op. Host mode drives the user's own Chrome against
+// their own profile directory; wiping it is never ours to do.
+func (h *HostProvider) RemoveProfile(_ context.Context, _ string) error {
+	return nil
+}
