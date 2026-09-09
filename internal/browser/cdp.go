@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/chromedp/cdproto/accessibility"
+	cdpbrowser "github.com/chromedp/cdproto/browser"
 	"github.com/chromedp/cdproto/cdp"
 	cdpdom "github.com/chromedp/cdproto/dom"
 	"github.com/chromedp/cdproto/emulation"
@@ -371,6 +372,19 @@ func NewCDPClient(ctx context.Context, wsURL string, logger *slog.Logger, opts .
 // cached client need a way to tell it apart from a working one.
 func (c *CDPClient) Alive() bool {
 	return c.ctx != nil && c.ctx.Err() == nil
+}
+
+// CloseBrowser asks Chrome itself to shut down.
+//
+// Chrome commits pending profile writes — cookies above all — on a ~30 second
+// timer or at a clean shutdown, and stopping the container from outside is
+// neither: SIGTERM makes it exit without flushing. A sign-in performed seconds
+// before the sidecar is stopped would be lost, which is exactly what the
+// persistent profile exists to prevent.
+func (c *CDPClient) CloseBrowser(ctx context.Context) error {
+	return c.runFn(c.ctx, chromedp.ActionFunc(func(ctx context.Context) error {
+		return cdpbrowser.Close().Do(ctx)
+	}))
 }
 
 // Close shuts down the CDP connection and closes the page target.

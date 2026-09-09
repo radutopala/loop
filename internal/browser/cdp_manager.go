@@ -56,6 +56,8 @@ type CDPSession interface {
 	// Alive reports whether the session can still be used; a cached client whose
 	// context died with its container must be dropped rather than reused.
 	Alive() bool
+	// CloseBrowser shuts Chrome down cleanly so it commits its profile to disk.
+	CloseBrowser(ctx context.Context) error
 	ResetScreencast()
 	StartScreencast(quality, maxWidth, maxHeight int) <-chan []byte
 	StopScreencast()
@@ -146,6 +148,18 @@ func (m *CDPManager) Connect(ctx context.Context) error {
 	if tid != "" {
 		m.activeTargetID = tid
 		m.trackTabLocked(tid)
+		if m.cfg.DiscoverExisting {
+			// Bring the sidecar's tab to the foreground. Headless Chrome never
+			// acknowledges a mouse wheel event dispatched to a backgrounded
+			// target, so Input.dispatchMouseEvent blocks forever — a scroll from
+			// an agent tool would hang with no timeout to rescue it. The browser
+			// pane already does this after connecting; doing it here covers the
+			// case where no pane is ever opened. Host mode is left alone: that
+			// tab belongs to the user, and stealing focus is not ours to do.
+			if err := client.SwitchTarget(tid); err != nil {
+				m.logger.Warn("activating CDP target failed", "target_id", tid, "error", err)
+			}
+		}
 	}
 
 	m.connected = true
@@ -411,6 +425,16 @@ func (m *CDPManager) Close() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.client != nil {
+		// Every caller closes the manager on its way to stopping the sidecar, so
+		// give Chrome the chance to write the profile out first — it does not
+		// flush when the container is stopped from outside. Host mode is
+		// excluded: that browser belongs to the user and closing it is not ours
+		// to do.
+		if m.cfg.DiscoverExisting && m.client.Alive() {
+			if err := m.client.CloseBrowser(context.Background()); err != nil {
+				m.logger.Warn("closing Chrome cleanly failed", "error", err)
+			}
+		}
 		m.client.Close()
 	}
 	m.client = nil

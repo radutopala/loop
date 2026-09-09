@@ -821,3 +821,25 @@ func (s *CDPSuite) TestAlive() {
 	cancel()
 	require.False(s.T(), s.client.Alive())
 }
+
+// --- CloseBrowser ---
+
+func (s *CDPSuite) TestCloseBrowser() {
+	var ran int
+	s.setRunFn(func(ctx context.Context, actions ...chromedp.Action) error {
+		for _, a := range actions {
+			ran++
+			// No executor on this context, so the command errors out — running it
+			// is only here to prove the action is the browser-close one.
+			_ = a.Do(ctx)
+		}
+		return nil
+	})
+	require.NoError(s.T(), s.client.CloseBrowser(context.Background()))
+	require.Equal(s.T(), 1, ran)
+}
+
+func (s *CDPSuite) TestCloseBrowserError() {
+	s.setRunFn(func(_ context.Context, _ ...chromedp.Action) error { return errors.New("connection gone") })
+	require.Error(s.T(), s.client.CloseBrowser(context.Background()))
+}
