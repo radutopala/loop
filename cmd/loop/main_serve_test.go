@@ -904,7 +904,7 @@ func (s *MainSuite) TestDefaultNewHostExecClient() {
 
 func (s *MainSuite) TestDefaultNewBrowserProvider() {
 	// Exercise the default newBrowserProvider to cover main.go factory body.
-	_, _ = newApp().newBrowserProvider("loop-chrome:latest", true, slog.Default())
+	_, _ = newApp().newBrowserProvider(config.BrowserConfig{ChromeImage: "loop-chrome:latest", PersistProfile: true}, slog.Default())
 }
 
 func (s *MainSuite) TestDefaultNewBrowserProviderDockerError() {
@@ -912,7 +912,7 @@ func (s *MainSuite) TestDefaultNewBrowserProviderDockerError() {
 	// verification with a non-existent cert path.
 	s.T().Setenv("DOCKER_TLS_VERIFY", "1")
 	s.T().Setenv("DOCKER_CERT_PATH", "/nonexistent/certs")
-	_, err := newApp().newBrowserProvider("loop-chrome:latest", true, slog.Default())
+	_, err := newApp().newBrowserProvider(config.BrowserConfig{ChromeImage: "loop-chrome:latest", PersistProfile: true}, slog.Default())
 	require.Error(s.T(), err)
 }
 

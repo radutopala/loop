@@ -530,7 +530,7 @@ func (s *MainSuite) setupServeMocks() *serveMocks {
 	s.app.ensureImage = func(_ context.Context, _ container.DockerClient, _ *config.Config, _ func(string)) error { return nil }
 	s.app.newDockerExecClient = func() (terminal.ExecClient, error) { return nil, errors.New("no docker") }
 	s.app.newHostExecClient = func() terminal.ExecClient { return &noopExecClient{} }
-	s.app.newBrowserProvider = func(_ string, _ bool, _ *slog.Logger) (api.BrowserProvider, error) {
+	s.app.newBrowserProvider = func(_ config.BrowserConfig, _ *slog.Logger) (api.BrowserProvider, error) {
 		return nil, errors.New("no browser")
 	}
 	s.app.newAPIServer = fakeAPIServer()
@@ -827,7 +827,7 @@ func (s *MainSuite) TestServeWithBrowserProvider() {
 	m.setupHappyBot()
 	m.cfg.Browser.Enabled = true
 
-	s.app.newBrowserProvider = func(_ string, _ bool, _ *slog.Logger) (api.BrowserProvider, error) {
+	s.app.newBrowserProvider = func(_ config.BrowserConfig, _ *slog.Logger) (api.BrowserProvider, error) {
 		return &noopBrowserProvider{}, nil
 	}
 
@@ -852,8 +852,8 @@ func (s *MainSuite) TestServeWithDockerBrowserProvider() {
 	m.setupHappyBot()
 	m.cfg.Browser.Enabled = true
 
-	s.app.newBrowserProvider = func(_ string, _ bool, logger *slog.Logger) (api.BrowserProvider, error) {
-		return browser.NewDockerProvider(nil, "loop-chrome:latest", "1920,1080", true, logger), nil
+	s.app.newBrowserProvider = func(_ config.BrowserConfig, logger *slog.Logger) (api.BrowserProvider, error) {
+		return browser.NewDockerProvider(nil, "loop-chrome:latest", "1920,1080", true, nil, logger), nil
 	}
 
 	errCh := make(chan error, 1)
@@ -933,7 +933,7 @@ func (s *MainSuite) TestServeWithBrowserProviderError() {
 	m.setupHappyBot()
 	m.cfg.Browser.Enabled = true
 
-	s.app.newBrowserProvider = func(_ string, _ bool, _ *slog.Logger) (api.BrowserProvider, error) {
+	s.app.newBrowserProvider = func(_ config.BrowserConfig, _ *slog.Logger) (api.BrowserProvider, error) {
 		return nil, errors.New("no docker")
 	}
 

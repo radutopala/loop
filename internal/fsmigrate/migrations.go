@@ -147,6 +147,15 @@ var migrations = []Migration{
 		Description: "refresh container/ files: git-lfs in the agent image",
 		Apply:       refreshContainerFiles,
 	},
+	{
+		// Moves --disable-extensions out of the chrome entrypoint and into
+		// the sidecar's CMD args, so browser.extensions can turn extensions
+		// on. Chrome has no switch that undoes --disable-extensions, so an
+		// install still running the old entrypoint would silently ignore
+		// every configured extension.
+		Description: "refresh container/ files: chrome entrypoint without --disable-extensions",
+		Apply:       refreshContainerFiles,
+	},
 }
 
 // versionedContainerFiles are tracked by the daemon: each release ships a

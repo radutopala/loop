@@ -264,6 +264,9 @@ func (l *Loader) loadProjectConfig(workDir string, mainConfig *Config) (*Config,
 		if pc.Browser.PersistProfile != nil {
 			merged.Browser.PersistProfile = *pc.Browser.PersistProfile
 		}
+		if pc.Browser.Extensions != nil {
+			merged.Browser.Extensions = pc.Browser.Extensions
+		}
 	}
 
 	// Quality config: project overrides global per-key. Rules merge by

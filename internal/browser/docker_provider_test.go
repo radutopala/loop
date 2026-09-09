@@ -3,6 +3,7 @@ package browser
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net"
 	"testing"
@@ -72,7 +73,7 @@ func TestManagerSuite(t *testing.T) {
 
 func (s *ManagerSuite) SetupTest() {
 	s.api = new(mockDockerClient)
-	s.mgr = NewDockerProvider(s.api, "loop-agent:latest", "1920,1080", false, slog.Default())
+	s.mgr = NewDockerProvider(s.api, "loop-agent:latest", "1920,1080", false, nil, slog.Default())
 	// Default to host-run daemon (the common deployment): the CDP endpoint is the
 	// mapped 127.0.0.1:hostPort and no extra inspect is needed. Containerized
 	// behavior is exercised explicitly by setting inContainer=true per test.
@@ -110,7 +111,7 @@ func inspectStopped() containertypes.InspectResponse {
 }
 
 func (s *ManagerSuite) TestNewDockerProvider() {
-	mgr := NewDockerProvider(s.api, "loop-agent:latest", "1920,1080", false, slog.Default())
+	mgr := NewDockerProvider(s.api, "loop-agent:latest", "1920,1080", false, nil, slog.Default())
 	require.NotNil(s.T(), mgr)
 	require.Equal(s.T(), "1920,1080", mgr.screen)
 	require.Equal(s.T(), "loop-agent:latest", mgr.image)
@@ -122,13 +123,44 @@ func (s *ManagerSuite) TestIsHostMode() {
 
 func (s *ManagerSuite) TestChromeArgs() {
 	args := s.mgr.chromeArgs()
-	require.Equal(s.T(), []string{"--window-size=1920,1080", "about:blank"}, args)
+	require.Equal(s.T(), []string{"--window-size=1920,1080", "--disable-extensions", "about:blank"}, args)
+}
+
+func (s *ManagerSuite) TestChromeArgsExtensions() {
+	tests := []struct {
+		name       string
+		extensions []string
+		want       []string
+	}{
+		{
+			name: "none configured disables extensions",
+			want: []string{"--window-size=1920,1080", "--disable-extensions", "about:blank"},
+		},
+		{
+			name:       "one extension",
+			extensions: []string{"/host/ublock"},
+			want:       []string{"--window-size=1920,1080", "--load-extension=/extensions/0", "about:blank"},
+		},
+		{
+			// Chrome takes a single comma-separated list, and the paths are
+			// positional so an extension keeps its generated ID across restarts.
+			name:       "several extensions keep config order",
+			extensions: []string{"/host/a", "/host/b", "/host/c"},
+			want:       []string{"--window-size=1920,1080", "--load-extension=/extensions/0,/extensions/1,/extensions/2", "about:blank"},
+		},
+	}
+	for _, tt := range tests {
+		s.Run(tt.name, func() {
+			mgr := NewDockerProvider(s.api, "loop-agent:latest", "1920,1080", false, tt.extensions, slog.Default())
+			require.Equal(s.T(), tt.want, mgr.chromeArgs())
+		})
+	}
 }
 
 func (s *ManagerSuite) TestChromeArgsPersistProfile() {
-	mgr := NewDockerProvider(s.api, "loop-agent:latest", "1920,1080", true, slog.Default())
+	mgr := NewDockerProvider(s.api, "loop-agent:latest", "1920,1080", true, nil, slog.Default())
 	require.Equal(s.T(),
-		[]string{"--window-size=1920,1080", "--user-data-dir=/profile", "about:blank"},
+		[]string{"--window-size=1920,1080", "--user-data-dir=/profile", "--disable-extensions", "about:blank"},
 		mgr.chromeArgs(),
 	)
 }
@@ -154,12 +186,38 @@ func (s *ManagerSuite) TestProfileMountsDisabled() {
 }
 
 func (s *ManagerSuite) TestProfileMountsEnabled() {
-	mgr := NewDockerProvider(s.api, "loop-agent:latest", "1920,1080", true, slog.Default())
+	mgr := NewDockerProvider(s.api, "loop-agent:latest", "1920,1080", true, nil, slog.Default())
 	mounts := mgr.profileMounts("C123")
 	require.Len(s.T(), mounts, 1)
 	require.Equal(s.T(), mount.TypeVolume, mounts[0].Type)
 	require.Equal(s.T(), "loop-chrome-profile-c123", mounts[0].Source)
 	require.Equal(s.T(), "/profile", mounts[0].Target)
+}
+
+func (s *ManagerSuite) TestContainerMountsExtensionsOnly() {
+	mgr := NewDockerProvider(s.api, "loop-agent:latest", "1920,1080", false, []string{"/host/a", "/host/b"}, slog.Default())
+	mounts := mgr.containerMounts("C123")
+	require.Len(s.T(), mounts, 2)
+	for i, want := range []string{"/host/a", "/host/b"} {
+		require.Equal(s.T(), mount.TypeBind, mounts[i].Type)
+		require.Equal(s.T(), want, mounts[i].Source)
+		require.Equal(s.T(), fmt.Sprintf("/extensions/%d", i), mounts[i].Target)
+		require.True(s.T(), mounts[i].ReadOnly, "the agent drives this sidecar; it must not be able to rewrite host code")
+	}
+}
+
+func (s *ManagerSuite) TestContainerMountsProfileAndExtensions() {
+	mgr := NewDockerProvider(s.api, "loop-agent:latest", "1920,1080", true, []string{"/host/a"}, slog.Default())
+	mounts := mgr.containerMounts("C123")
+	require.Len(s.T(), mounts, 2)
+	require.Equal(s.T(), mount.TypeVolume, mounts[0].Type)
+	require.Equal(s.T(), "/profile", mounts[0].Target)
+	require.Equal(s.T(), mount.TypeBind, mounts[1].Type)
+	require.Equal(s.T(), "/extensions/0", mounts[1].Target)
+}
+
+func (s *ManagerSuite) TestContainerMountsNoneConfigured() {
+	require.Empty(s.T(), s.mgr.containerMounts("C123"))
 }
 
 func (s *ManagerSuite) TestRemoveProfileDisabled() {
@@ -168,14 +226,14 @@ func (s *ManagerSuite) TestRemoveProfileDisabled() {
 }
 
 func (s *ManagerSuite) TestRemoveProfile() {
-	mgr := NewDockerProvider(s.api, "loop-agent:latest", "1920,1080", true, slog.Default())
+	mgr := NewDockerProvider(s.api, "loop-agent:latest", "1920,1080", true, nil, slog.Default())
 	s.api.On("VolumeRemove", mock.Anything, "loop-chrome-profile-c123", true).Return(nil)
 	require.NoError(s.T(), mgr.RemoveProfile(context.Background(), "C123"))
 	s.api.AssertExpectations(s.T())
 }
 
 func (s *ManagerSuite) TestRemoveProfileError() {
-	mgr := NewDockerProvider(s.api, "loop-agent:latest", "1920,1080", true, slog.Default())
+	mgr := NewDockerProvider(s.api, "loop-agent:latest", "1920,1080", true, nil, slog.Default())
 	s.api.On("VolumeRemove", mock.Anything, "loop-chrome-profile-c123", true).Return(errors.New("boom"))
 	err := mgr.RemoveProfile(context.Background(), "C123")
 	require.ErrorContains(s.T(), err, "removing chrome profile volume loop-chrome-profile-c123")

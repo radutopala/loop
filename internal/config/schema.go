@@ -228,6 +228,12 @@ func buildSchema() *ConfigSchema {
 						Description: "Keep the agent's cookies and logins across browser restarts",
 						Default:     true,
 					},
+					"extensions": {
+						Type:        "array",
+						Title:       "Extensions",
+						Description: "Host directories holding unpacked Chrome extensions to load into the sidecar. Empty runs Chrome with extensions disabled.",
+						Items:       &SchemaProperty{Type: "string"},
+					},
 				},
 			},
 
