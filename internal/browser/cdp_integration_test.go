@@ -115,8 +115,22 @@ func (s *CDPIntegrationSuite) SetupSuite() {
 	parts := strings.Split(strings.TrimSpace(string(portOut)), ":")
 	s.hostPort = parts[len(parts)-1]
 
+	// Mirror resolveCDPHostPort: when the test itself runs inside a container,
+	// the sidecar's 127.0.0.1:hostPort binding lives on the Docker host and is
+	// unreachable from here, so dial the sidecar's bridge IP directly.
+	cdpAddr := "127.0.0.1:" + s.hostPort
+	if inDockerContainer() {
+		ipOut, err := exec.Command("docker", "inspect", "-f",
+			"{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}", s.containerID).CombinedOutput()
+		require.NoError(t, err, "inspect chrome container IP: %s", ipOut)
+		ip := strings.TrimSpace(string(ipOut))
+		require.NotEmpty(t, ip, "chrome container has no bridge IP")
+		cdpAddr = fmt.Sprintf("%s:%d", ip, CDPPort)
+	}
+	allowDirectCDP(t, cdpAddr)
+
 	// Wait for Chrome to be ready.
-	wsURL := fmt.Sprintf("ws://127.0.0.1:%s", s.hostPort)
+	wsURL := "ws://" + cdpAddr
 	var client *CDPClient
 	for i := range 20 {
 		client, err = NewCDPClient(context.Background(), wsURL, slog.New(slog.NewTextHandler(os.Stderr, nil)))
@@ -312,8 +326,170 @@ func (s *CDPIntegrationSuite) TestTypeText() {
 
 func (s *CDPIntegrationSuite) TestKeyPress() {
 	s.nav()
-	err := s.client.KeyPress(context.Background(), "Tab")
+	err := s.client.KeyPress(context.Background(), "Tab", 0)
 	require.NoError(s.T(), err)
+}
+
+// TestKeyPressEnterInsertsNewline proves Enter reaches the page as an actual
+// text-producing key. Without the text field on the keydown, Chrome raises
+// keydown but inserts nothing.
+func (s *CDPIntegrationSuite) TestKeyPressEnterInsertsNewline() {
+	s.nav()
+	_, err := s.client.EvaluateJS(context.Background(), `(() => {
+  const ta = document.createElement("textarea");
+  ta.id = "ta";
+  document.body.appendChild(ta);
+  ta.focus();
+  return "ok";
+})()`)
+	require.NoError(s.T(), err)
+
+	require.NoError(s.T(), s.client.TypeText(context.Background(), "a"))
+	require.NoError(s.T(), s.client.KeyPress(context.Background(), "Enter", 0))
+	require.NoError(s.T(), s.client.TypeText(context.Background(), "b"))
+
+	val, err := s.client.EvaluateJS(context.Background(), `document.getElementById("ta").value`)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "a\nb", val)
+}
+
+// TestKeyPressCtrlEnterInsertsNothing is the other half: a shortcut must not
+// carry text, or Ctrl+Enter would type a newline into the page.
+func (s *CDPIntegrationSuite) TestKeyPressCtrlEnterInsertsNothing() {
+	s.nav()
+	_, err := s.client.EvaluateJS(context.Background(), `(() => {
+  const ta = document.createElement("textarea");
+  ta.id = "ta2";
+  document.body.appendChild(ta);
+  ta.focus();
+  return "ok";
+})()`)
+	require.NoError(s.T(), err)
+
+	const ctrl = 2
+	require.NoError(s.T(), s.client.KeyPress(context.Background(), "Enter", ctrl))
+
+	val, err := s.client.EvaluateJS(context.Background(), `document.getElementById("ta2").value`)
+	require.NoError(s.T(), err)
+	require.Empty(s.T(), val)
+}
+
+// TestKeyPressEnterSubmitsForm covers implicit form submission, the other thing
+// Enter has to do from the browser pane.
+func (s *CDPIntegrationSuite) TestKeyPressEnterSubmitsForm() {
+	s.nav()
+	s.focusUsername()
+	require.NoError(s.T(), s.client.KeyPress(context.Background(), "Enter", 0))
+
+	out, err := s.client.EvaluateJS(context.Background(), `document.getElementById("output").textContent`)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "form submitted", out)
+}
+
+// --- Clipboard ---
+//
+// The sidecar has its own clipboard that the host cannot reach, so copy and
+// paste in the browser pane are implemented as InsertText / ReadSelection over
+// the WebSocket. Only a real Chromium proves those two actually behave like a
+// paste and a copy; the unit tests stub the CDP round-trip out entirely.
+
+// focusUsername clicks the username textbox so keyboard and insertText events
+// land in it.
+func (s *CDPIntegrationSuite) focusUsername() {
+	refs, err := s.client.GetElementRefs(context.Background())
+	require.NoError(s.T(), err)
+	for _, r := range refs {
+		if r.Role == "textbox" && strings.Contains(r.Name, "Username") {
+			require.NoError(s.T(), s.client.MouseClick(context.Background(), r.X+r.Width/2, r.Y+r.Height/2, "left", 1))
+			return
+		}
+	}
+	s.T().Fatal("username textbox not found")
+}
+
+func (s *CDPIntegrationSuite) TestInsertTextIntoFocusedField() {
+	s.nav()
+	s.focusUsername()
+
+	require.NoError(s.T(), s.client.InsertText(context.Background(), "pasted from host"))
+
+	val, err := s.client.EvaluateJS(context.Background(), `document.getElementById("username").value`)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "pasted from host", val)
+}
+
+// TestInsertTextAtCaret covers the case a paste normally lands in: existing
+// content, with the insertion happening at the caret rather than replacing the
+// field.
+func (s *CDPIntegrationSuite) TestInsertTextAtCaret() {
+	s.nav()
+	s.focusUsername()
+
+	require.NoError(s.T(), s.client.TypeText(context.Background(), "ab"))
+	require.NoError(s.T(), s.client.InsertText(context.Background(), "-cd"))
+
+	val, err := s.client.EvaluateJS(context.Background(), `document.getElementById("username").value`)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "ab-cd", val)
+}
+
+func (s *CDPIntegrationSuite) TestReadSelectionEmpty() {
+	s.nav()
+	sel, err := s.client.ReadSelection(context.Background())
+	require.NoError(s.T(), err)
+	require.Empty(s.T(), sel)
+}
+
+func (s *CDPIntegrationSuite) TestReadSelectionFromPage() {
+	s.nav()
+	_, err := s.client.EvaluateJS(context.Background(), `(() => {
+  const r = document.createRange();
+  r.selectNodeContents(document.querySelector("h1"));
+  const sel = window.getSelection();
+  sel.removeAllRanges();
+  sel.addRange(r);
+  return "ok";
+})()`)
+	require.NoError(s.T(), err)
+
+	sel, err := s.client.ReadSelection(context.Background())
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "CDP Integration Test", sel)
+}
+
+// TestReadSelectionFromInput covers the branch window.getSelection() cannot
+// serve: a selection inside a form field reports as empty there, so
+// ReadSelection has to read it off the active element instead.
+func (s *CDPIntegrationSuite) TestReadSelectionFromInput() {
+	s.nav()
+	_, err := s.client.EvaluateJS(context.Background(), `(() => {
+  const el = document.getElementById("username");
+  el.value = "copy this part";
+  el.focus();
+  el.setSelectionRange(5, 9);
+  return "ok";
+})()`)
+	require.NoError(s.T(), err)
+
+	sel, err := s.client.ReadSelection(context.Background())
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "this", sel)
+}
+
+// TestKeyPressModifierSelectsAll proves the modifier bitmask and the virtual
+// key code reach Chrome as a real shortcut. Without either one, Ctrl+A is
+// delivered as a bare "a" and types a character instead of selecting.
+func (s *CDPIntegrationSuite) TestKeyPressModifierSelectsAll() {
+	s.nav()
+	s.focusUsername()
+	require.NoError(s.T(), s.client.TypeText(context.Background(), "select me"))
+
+	const ctrl = 2
+	require.NoError(s.T(), s.client.KeyPress(context.Background(), "a", ctrl))
+
+	sel, err := s.client.ReadSelection(context.Background())
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "select me", sel)
 }
 
 // --- ClickRef ---
