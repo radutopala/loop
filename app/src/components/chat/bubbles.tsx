@@ -3,6 +3,7 @@ import { resolveAsk, resolvePlan } from "../../api/channels";
 import { useTheme } from "../../ThemeContext";
 import { fonts } from "../../theme";
 import type { AgentActivityData, AskUserOption, AskUserQuestion, ExitPlanModeData, Message, TaskItem, TimelineItem } from "../../types";
+import { Chevron } from "../shared/Chevron";
 import type { MenuItem } from "../shared/ContextMenu";
 import { ContextMenu } from "../shared/ContextMenu";
 import { buildActivityStyle, buildMessageStyles, ChannelContext, FILE_PATH_TOOLS, renderInputWithLinks } from "./chatShared";
@@ -85,7 +86,7 @@ export function ToolRunBlock({
           userSelect: "none",
         }}
       >
-        <span style={{ display: "inline-block", width: 10, transform: expanded ? "rotate(90deg)" : "none", transition: "transform 0.1s" }}>&#9654;</span>
+        <Chevron deg={expanded ? 90 : 0} />
         <span style={{ fontWeight: 600 }}>
           {items.length} step{items.length === 1 ? "" : "s"}
         </span>
