@@ -13,6 +13,7 @@ import (
 
 	"github.com/chromedp/cdproto/cdp"
 	"github.com/radutopala/loop/internal/browser"
+	"github.com/radutopala/loop/internal/browsercookies"
 )
 
 // BrowserProvider is the interface for managing browser lifecycle.
@@ -56,6 +57,11 @@ type browserService struct {
 	captures   map[string]*browser.CaptureState // channelID -> state
 	capturesMu sync.Mutex
 
+	// cookieReader reads the host browser's cookie stores for the import
+	// flow. Struct field, not a package function, so tests inject a fake
+	// instead of touching a real Keychain.
+	cookieReader CookieReader
+
 	containerRegistry ContainerManager // mirrored from Server.SetContainerRegistry
 	keepAlive         time.Duration    // delay before removing idle browser containers
 	screenshotDir     string           // if set, write screenshots to this dir instead of base64
@@ -66,10 +72,11 @@ type browserService struct {
 // options — the daemon builds the docker/host providers after config load.
 func newBrowserService(deps *serverDeps) *browserService {
 	return &browserService{
-		deps:        deps,
-		activeMode:  make(map[string]string),
-		cdpManagers: make(map[string]*browser.CDPManager),
-		captures:    make(map[string]*browser.CaptureState),
+		deps:         deps,
+		activeMode:   make(map[string]string),
+		cdpManagers:  make(map[string]*browser.CDPManager),
+		captures:     make(map[string]*browser.CaptureState),
+		cookieReader: browsercookies.NewReader(),
 	}
 }
 
@@ -215,6 +222,13 @@ func (s *browserService) getBrowserCDP(ctx context.Context, channelID string) (b
 
 	// Connect always sets activeClient on success, so this is safe.
 	cdpClient := cdpMgr.ActiveClient()
+
+	// A freshly connected sidecar is the one moment an auto-import is worth
+	// doing: the profile is either brand new or has been idle long enough
+	// for its sessions to have gone stale.
+	if !isHost {
+		s.autoImportCookies(ctx, channelID, cdpClient)
+	}
 
 	// Start capture if needed.
 	s.ensureBrowserCapture(ctx, channelID, cdpClient)

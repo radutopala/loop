@@ -71,6 +71,7 @@ func (s *ConfigSuite) TestLoadDefaults() {
 	require.True(s.T(), cfg.Browser.Enabled)
 	require.True(s.T(), cfg.Browser.PersistProfile)
 	require.Empty(s.T(), cfg.Browser.Extensions)
+	require.Equal(s.T(), CookieImportConfig{}, cfg.Browser.CookieImport)
 	require.Empty(s.T(), cfg.CopyFiles) // runner prepends ~/.claude.json per container; not defaulted here
 	require.False(s.T(), cfg.KeepMCPConfigs)
 	require.False(s.T(), cfg.Desktop.AutoSaveOnBlur)
@@ -165,7 +166,13 @@ func (s *ConfigSuite) TestLoadBrowserFullConfig() {
 				"mode": "host",
 				"host_cdp_port": 9333,
 				"persist_profile": false,
-				"extensions": ["/host/ublock", "/host/other"]
+				"extensions": ["/host/ublock", "/host/other"],
+				"cookie_import": {
+					"source": "chrome:Default",
+					"domains": ["example.com"],
+					"sensitive_domains": ["my-bank.example"],
+					"auto": true
+				}
 			}
 		}`), nil
 	}
@@ -178,6 +185,30 @@ func (s *ConfigSuite) TestLoadBrowserFullConfig() {
 	require.Equal(s.T(), 9333, cfg.Browser.HostCDPPort)
 	require.False(s.T(), cfg.Browser.PersistProfile)
 	require.Equal(s.T(), []string{"/host/ublock", "/host/other"}, cfg.Browser.Extensions)
+	require.Equal(s.T(), CookieImportConfig{
+		Source:           "chrome:Default",
+		Domains:          []string{"example.com"},
+		SensitiveDomains: []string{"my-bank.example"},
+		Auto:             true,
+	}, cfg.Browser.CookieImport)
+}
+
+// Auto is the one field that moves credentials without anyone watching, so
+// an omitted block must leave it off.
+func (s *ConfigSuite) TestLoadCookieImportDefaultsAutoOff() {
+	s.loader.readFile = func(_ string) ([]byte, error) {
+		return []byte(`{
+			"platforms": ["discord"],
+			"discord_token": "t",
+			"discord_app_id": "a",
+			"browser": {"cookie_import": {"source": "firefox:default"}}
+		}`), nil
+	}
+
+	cfg, err := s.loader.load()
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "firefox:default", cfg.Browser.CookieImport.Source)
+	require.False(s.T(), cfg.Browser.CookieImport.Auto)
 }
 
 func (s *ConfigSuite) TestMissingRequired() {

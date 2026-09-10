@@ -40,3 +40,43 @@ export async function switchBrowserMode(channelId: string, mode: "docker" | "hos
   });
   return res.json();
 }
+
+/** How sensitive a site's cookies are; drives the picker's badge and default. */
+export type CookieCategory = "" | "email" | "signin" | "bank" | "sensitive";
+
+export interface CookieDomain {
+  domain: string;
+  count: number;
+  category: CookieCategory;
+}
+
+export interface CookieSource {
+  id: string;
+  browser: string;
+  name: string;
+  domains?: CookieDomain[];
+  /** Set when this one profile could not be read; the others still are. */
+  error?: string;
+}
+
+/**
+ * List the browser profiles on this machine and the cookie scopes each holds.
+ * On macOS the first call raises the Keychain prompt. Counts and categories
+ * only — cookie values never cross this boundary.
+ */
+export async function listCookieSources(channelId: string): Promise<CookieSource[]> {
+  const res = await fetch(`${getApiUrl()}/api/browser/cookies/sources?channel_id=${encodeURIComponent(channelId)}`);
+  if (!res.ok) throw new Error((await res.text()) || "failed to list cookie sources");
+  return res.json();
+}
+
+/** Import the chosen cookie scopes into the channel's browser profile. */
+export async function importCookies(channelId: string, source: string, domains: string[]): Promise<{ imported: number; domains: number }> {
+  const res = await fetch(`${getApiUrl()}/api/browser/cookies/import`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ channel_id: channelId, source, domains }),
+  });
+  if (!res.ok) throw new Error((await res.text()) || "cookie import failed");
+  return res.json();
+}

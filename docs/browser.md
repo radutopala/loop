@@ -90,6 +90,94 @@ collide on the profile singleton lock.
   written by a *newer* Chromium. That only comes up if `browser.chrome_image` is
   pinned back to an older tag — **Reset profile** is the recovery path.
 
+## Importing cookies from your own browser
+
+A fresh sidecar profile is signed out of everything. **Import cookies** in the
+browser pane copies cookies out of the browser you already use — Chrome, Edge or
+Firefox — so pages the agent opens are already authenticated, without anyone
+driving a login form through the screencast.
+
+The promises the dialog makes are the feature's boundaries:
+
+- **Cookies only.** Passwords, autofill, history and bookmarks are never read.
+- **You choose the sites.** Nothing is imported that was not ticked.
+- **Nothing leaves this computer.** The values go straight from the local
+  profile into the local sidecar. They are never logged, never returned by the
+  API and never written into loop's own storage.
+
+### The site picker
+
+The second step lists one row per **cookie scope** — the cookie's own
+`host_key`, so `google.com` and `oauth.officeapps.live.com` are separate rows
+and ticking one grants exactly the scope printed on it. Rows carrying real
+account access are badged and **left unchecked by default**:
+
+| Badge | What it covers |
+|---|---|
+| `Email` | Mailboxes. Mail access is account recovery for everything else. |
+| `Sign-in provider` | Identity providers, SSO and OAuth endpoints, password vaults. |
+| `Bank or payments` | Banks, brokers, card networks, payment processors. |
+| `Sensitive` | Anything listed in `browser.cookie_import.sensitive_domains`. |
+
+Classification is advisory, never blocking: a badged site is still importable,
+it just costs a deliberate click. It errs toward classifying — a false positive
+costs one click, a false negative hands a bank session to an agent. Add sites
+the built-in list has never heard of, such as a regional bank, to
+`browser.cookie_import.sensitive_domains`.
+
+**Select all** only ever reaches the unbadged rows. Clearing clears everything.
+
+### Where the data lives
+
+Nowhere. loop stores the chosen **domain list**, never the cookies: values are
+re-read from the live browser on every import. A domain list is not a
+credential, and rotating a session in Chrome means the next import picks up the
+new value instead of replaying a stale one.
+
+The panel remembers the last profile and selection client-side. To have the
+import replay into every new sidecar unattended, put it in config:
+
+```json
+"browser": {
+  "cookie_import": {
+    "source": "chrome:Default",
+    "domains": ["github.com", "example.com"],
+    "sensitive_domains": ["my-credit-union.example"],
+    "auto": true
+  }
+}
+```
+
+`auto` is off by default: moving credentials around while nobody is watching
+deserves an explicit opt-in. When it is on, the import runs once per freshly
+connected sidecar, and any failure is a warning — a cookie problem never stops
+the browser from starting.
+
+### Limits
+
+- **macOS only** for Chrome and Edge. Their cookie values are encrypted with a
+  key held in the login Keychain, and reading it shells out to
+  `/usr/bin/security`, which makes macOS show its own consent prompt: an
+  OS-level gate loop cannot fake or bypass. Linux (libsecret) and Windows
+  (DPAPI) return a clear "unsupported on this platform" rather than silently
+  importing nothing. Firefox stores cookies in the clear and works anywhere.
+- **Safari is not offered.** Its store is a proprietary binary format behind TCC.
+- **Docker mode only.** Host mode already uses your own profile, cookies
+  included, so both endpoints return `409` there.
+- **Session cookies are skipped.** They are meaningless outside the browser
+  session that owns them.
+- The daemon must be running as a **host binary** to see your profile
+  directories at all. A daemon inside a container reports no browsers found.
+- Cookies are installed over CDP (`Storage.setCookies`), browser-wide, so Chrome
+  writes them into the persistent profile volume itself — loop never touches the
+  profile's files. With `browser.persist_profile` off there is nothing to
+  persist into, and the import lasts only as long as the sidecar.
+
+`GET /api/browser/cookies/sources` lists the profiles and their scopes (this is
+the call that triggers the Keychain prompt);
+`POST /api/browser/cookies/import` `{channel_id, source, domains[]}` performs
+the import.
+
 ## Extensions
 
 Chromium in the sidecar runs `--headless=new`, which supports extensions — but

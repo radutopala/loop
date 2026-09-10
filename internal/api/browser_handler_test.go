@@ -490,6 +490,9 @@ func (m *mockCDPSession) NewContextForTarget(targetID string) (browser.CDPSessio
 	}
 	return m, nil
 }
+func (m *mockCDPSession) SetCookies(ctx context.Context, cookies []browser.Cookie) error {
+	return m.Called(ctx, cookies).Error(0)
+}
 
 // --- Helper: start browser and get WS with CDP mock ---
 

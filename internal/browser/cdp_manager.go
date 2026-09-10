@@ -86,6 +86,8 @@ type CDPSession interface {
 	// NewContextForTarget creates a new CDP client for a different target,
 	// reusing the existing browser WS connection (no new dial / permission prompt).
 	NewContextForTarget(targetID string) (CDPSession, error)
+	// SetCookies installs cookies into the attached browser profile.
+	SetCookies(ctx context.Context, cookies []Cookie) error
 }
 
 // NewCDPManager creates a new CDPManager for the given WebSocket endpoint.

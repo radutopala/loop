@@ -579,6 +579,49 @@ func (s *ConfigSuite) TestLoadProjectConfigOverrides() {
 			},
 		},
 		{
+			// A project that only flips "auto" keeps the global source and
+			// site list — the per-key merge is what makes the block usable
+			// globally and tweakable per project.
+			name:        "Browser/CookieImportPartialOverride",
+			projectJSON: `{"browser": {"cookie_import": {"auto": true}}}`,
+			mainCfg: &Config{Browser: BrowserConfig{CookieImport: CookieImportConfig{
+				Source: "chrome:Default", Domains: []string{"example.com"},
+			}}},
+			assert: func(merged, _ *Config) {
+				require.True(s.T(), merged.Browser.CookieImport.Auto)
+				require.Equal(s.T(), "chrome:Default", merged.Browser.CookieImport.Source)
+				require.Equal(s.T(), []string{"example.com"}, merged.Browser.CookieImport.Domains)
+			},
+		},
+		{
+			name: "Browser/CookieImportFullOverride",
+			projectJSON: `{"browser": {"cookie_import": {"source": "firefox:work", "domains": ["a.example"],` +
+				` "sensitive_domains": ["b.example"], "auto": false}}}`,
+			mainCfg: &Config{Browser: BrowserConfig{CookieImport: CookieImportConfig{
+				Source: "chrome:Default", Domains: []string{"example.com"},
+				SensitiveDomains: []string{"old.example"}, Auto: true,
+			}}},
+			assert: func(merged, _ *Config) {
+				require.Equal(s.T(), CookieImportConfig{
+					Source:           "firefox:work",
+					Domains:          []string{"a.example"},
+					SensitiveDomains: []string{"b.example"},
+				}, merged.Browser.CookieImport)
+			},
+		},
+		{
+			name:        "Browser/CookieImportNoOverride",
+			projectJSON: `{"browser": {"enabled": true}}`,
+			mainCfg: &Config{Browser: BrowserConfig{CookieImport: CookieImportConfig{
+				Source: "chrome:Default", Domains: []string{"example.com"}, Auto: true,
+			}}},
+			assert: func(merged, _ *Config) {
+				require.Equal(s.T(), CookieImportConfig{
+					Source: "chrome:Default", Domains: []string{"example.com"}, Auto: true,
+				}, merged.Browser.CookieImport)
+			},
+		},
+		{
 			name:        "KeepMCPConfigs/Override",
 			projectJSON: `{"keep_mcp_configs": true}`,
 			mainCfg:     &Config{KeepMCPConfigs: false},

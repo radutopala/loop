@@ -57,7 +57,18 @@
   //  // Unpacked Chrome extensions to load into the sidecar (Docker mode).
   //  // Each entry is a host directory containing a manifest.json. Empty
   //  // (the default) runs Chrome with extensions disabled.
-  //  "extensions": ["/Users/me/chrome-extensions/ublock"]
+  //  "extensions": ["/Users/me/chrome-extensions/ublock"],
+  //  // Cookies imported out of your own browser, so the agent lands on
+  //  // pages already signed in. Values are never stored here or anywhere
+  //  // else in loop — only the list of scopes to re-read at import time.
+  //  "cookie_import": {
+  //    "source": "chrome:Default",
+  //    "domains": [".github.com", "news.ycombinator.com"],
+  //    // Extra sites to leave unchecked by default in the picker.
+  //    "sensitive_domains": ["my-regional-bank.example"],
+  //    // Re-import into every new sidecar without being asked.
+  //    "auto": false
+  //  }
   //},
 
   // Public playground share: expose a playground over the internet through a

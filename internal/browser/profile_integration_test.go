@@ -110,3 +110,30 @@ func (s *ProfileIntegrationSuite) TestProfileSurvivesContainerRemoval() {
 	require.NoError(s.T(), s.provider.RemoveProfile(context.Background(), s.channelID))
 	require.NotContains(s.T(), s.cookieRoundTrip(`document.cookie`), "loopprofile=kept")
 }
+
+// TestImportedCookieSurvivesContainerRemoval pairs the cookie import with the
+// persistent profile, which is the whole reason the import is a one-shot
+// action rather than something the agent redoes every session. Cookies go in
+// over CDP, the container is destroyed, and a fresh one still has them.
+func (s *ProfileIntegrationSuite) TestImportedCookieSurvivesContainerRemoval() {
+	ctx := context.Background()
+	require.NoError(s.T(), s.provider.EnsureBrowser(ctx, s.channelID, ""))
+
+	client := dialCDP(s.T(), s.provider.GetCDPEndpoint(s.channelID))
+	require.NoError(s.T(), client.SetCookies(ctx, []Cookie{{
+		Domain:  "127.0.0.1",
+		Name:    "loopimported",
+		Value:   "from-host-browser",
+		Path:    "/",
+		Expires: time.Now().Add(time.Hour).Unix(),
+	}}))
+	client.Close()
+
+	// Storage.setCookies is browser-wide, so no navigation was needed to put
+	// it there — but the page has to be loaded to read it back.
+	require.Contains(s.T(), s.cookieRoundTrip(`document.cookie`), "loopimported=from-host-browser")
+	s.tearDownSidecar()
+
+	require.Contains(s.T(), s.cookieRoundTrip(`document.cookie`), "loopimported=from-host-browser")
+	s.tearDownSidecar()
+}
