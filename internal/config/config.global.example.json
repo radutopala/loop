@@ -71,8 +71,6 @@
   //  "cookie_import": {
   //    "source": "chrome:Default",
   //    "domains": [".github.com", "news.ycombinator.com"],
-  //    // Extra sites to leave unchecked by default in the picker.
-  //    "sensitive_domains": ["my-regional-bank.example"],
   //    // Re-import into every new sidecar without being asked.
   //    "auto": false
   //  }

@@ -600,16 +600,14 @@ func (s *ConfigSuite) TestLoadProjectConfigOverrides() {
 		{
 			name: "Browser/CookieImportFullOverride",
 			projectJSON: `{"browser": {"cookie_import": {"source": "firefox:work", "domains": ["a.example"],` +
-				` "sensitive_domains": ["b.example"], "auto": false}}}`,
+				` "auto": false}}}`,
 			mainCfg: &Config{Browser: BrowserConfig{CookieImport: CookieImportConfig{
-				Source: "chrome:Default", Domains: []string{"example.com"},
-				SensitiveDomains: []string{"old.example"}, Auto: true,
+				Source: "chrome:Default", Domains: []string{"example.com"}, Auto: true,
 			}}},
 			assert: func(merged, _ *Config) {
 				require.Equal(s.T(), CookieImportConfig{
-					Source:           "firefox:work",
-					Domains:          []string{"a.example"},
-					SensitiveDomains: []string{"b.example"},
+					Source:  "firefox:work",
+					Domains: []string{"a.example"},
 				}, merged.Browser.CookieImport)
 			},
 		},

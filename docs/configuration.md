@@ -86,7 +86,6 @@ Browser settings are grouped under `"browser"`:
 | `browser.extensions` | `[]string` | `[]` | Host directories holding unpacked Chrome extensions, loaded into every sidecar. Empty runs Chrome with `--disable-extensions`. Docker mode only. See [Browser](browser.md#extensions). |
 | `browser.cookie_import.source` | `string` | `""` | Browser profile to import cookies from, e.g. `"chrome:Default"`. See [Browser](browser.md#importing-cookies-from-your-own-browser). |
 | `browser.cookie_import.domains` | `[]string` | `[]` | Cookie scopes to bring over, matched exactly against the scope shown in the picker. |
-| `browser.cookie_import.sensitive_domains` | `[]string` | `[]` | Extra sites that stay unchecked by default in the picker, on top of the built-in email / sign-in / bank list. |
 | `browser.cookie_import.auto` | `bool` | `false` | Re-import `source` + `domains` into every newly started sidecar. Off by default: importing unattended is an explicit opt-in. |
 
 #### Networking & Scheduling
@@ -593,7 +592,7 @@ Not all global fields are available in project configs. The following fields can
 | `browser.memory_mb` | **Overrides** global value when set. Read when the channel's sidecar is created. |
 | `browser.cpus` | **Overrides** global value when set. Read when the channel's sidecar is created. |
 | `browser.extensions` | **Replaces** the global list when set (entries are not merged). Read when the channel's sidecar is created. |
-| `browser.cookie_import` | **Overrides** per key: `source` and `auto` when set, `domains` / `sensitive_domains` **replace** the global list when present. |
+| `browser.cookie_import` | **Overrides** per key: `source` and `auto` when set, `domains` **replaces** the global list when present. |
 | `github.gh_user` | **Overrides** global value when set. |
 | `review.enabled` / `review.prompt` / `review.prompt_path` | Each field **overrides** the global value only when explicitly set (see [Review](#review)). |
 | `gates.agentgate.enabled` | **Narrows only**: project may set `false` to disable the gate for this project; it **cannot** re-enable the gate when global `gates.agentgate.enabled` is `false`. Transitively disables `gates.docker_proxy.enabled` when the project turns the gate off. |
@@ -671,7 +670,6 @@ The merge follows these principles:
   //  "cookie_import": {
   //    "source": "chrome:Default",       // browser profile to import cookies from
   //    "domains": ["github.com"],        // cookie scopes to bring over
-  //    "sensitive_domains": [],          // extra sites left unchecked in the picker
   //    "auto": false                     // re-import into every new sidecar
   //  }
   //},
@@ -839,7 +837,6 @@ The merge follows these principles:
   //  "cookie_import": {
   //    "source": "chrome:Default",       // browser profile to import cookies from
   //    "domains": ["github.com"],        // cookie scopes to bring over
-  //    "sensitive_domains": [],          // extra sites left unchecked in the picker
   //    "auto": false                     // re-import into every new sidecar
   //  }
   //},

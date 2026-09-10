@@ -44,16 +44,6 @@ type cookieImportResponse struct {
 	Domains  int `json:"domains"`
 }
 
-// cookieClassifier builds a classifier seeded with the user's extra
-// sensitive domains from config.
-func (s *browserService) cookieClassifier() *browsercookies.Classifier {
-	var extra []string
-	if cfg := s.deps.configs.merged("", ""); cfg != nil {
-		extra = cfg.Browser.CookieImport.SensitiveDomains
-	}
-	return browsercookies.NewClassifier(extra)
-}
-
 // handleBrowserCookieSources handles GET /api/browser/cookies/sources — the
 // browser profiles on this machine and the cookie scopes each one holds.
 //
@@ -73,7 +63,6 @@ func (s *browserService) handleBrowserCookieSources(w http.ResponseWriter, r *ht
 		return
 	}
 
-	classifier := s.cookieClassifier()
 	sources := s.cookieReader.Sources()
 	out := make([]cookieSourceResponse, 0, len(sources))
 	for _, src := range sources {
@@ -84,7 +73,7 @@ func (s *browserService) handleBrowserCookieSources(w http.ResponseWriter, r *ht
 			s.deps.logger.Warn("cookie import: reading profile failed",
 				"source", src.ID(), "error", err)
 		} else {
-			resp.Domains = browsercookies.Summarise(cookies, classifier)
+			resp.Domains = browsercookies.Summarise(cookies)
 		}
 		out = append(out, resp)
 	}

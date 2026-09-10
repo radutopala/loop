@@ -144,10 +144,9 @@ type jsonBrowserConfig struct {
 // jsonCookieImportConfig is the JSON representation of the
 // browser.cookie_import block.
 type jsonCookieImportConfig struct {
-	Source           string   `json:"source"`
-	Domains          []string `json:"domains"`
-	SensitiveDomains []string `json:"sensitive_domains"`
-	Auto             *bool    `json:"auto"`
+	Source  string   `json:"source"`
+	Domains []string `json:"domains"`
+	Auto    *bool    `json:"auto"`
 }
 
 // jsonAgentRetryConfig is the JSON representation of the claude_retry block.
@@ -321,10 +320,9 @@ func (l *Loader) parse() (*Config, error) {
 		cfg.Browser.CPUs = ptrDefault(jc.Browser.CPUs, defaultBrowserCPUs)
 		if ci := jc.Browser.CookieImport; ci != nil {
 			cfg.Browser.CookieImport = CookieImportConfig{
-				Source:           ci.Source,
-				Domains:          ci.Domains,
-				SensitiveDomains: ci.SensitiveDomains,
-				Auto:             ptrDefault(ci.Auto, false),
+				Source:  ci.Source,
+				Domains: ci.Domains,
+				Auto:    ptrDefault(ci.Auto, false),
 			}
 		}
 	}

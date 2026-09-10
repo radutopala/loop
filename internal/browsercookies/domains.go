@@ -7,9 +7,8 @@ import (
 
 // DomainSummary is one row of the site picker.
 type DomainSummary struct {
-	Domain   string   `json:"domain"`
-	Count    int      `json:"count"`
-	Category Category `json:"category"`
+	Domain string `json:"domain"`
+	Count  int    `json:"count"`
 }
 
 // NormaliseDomain strips the leading dot Chromium and Firefox use to mark a
@@ -27,10 +26,10 @@ func NormaliseDomain(host string) string {
 // registrable domain would let one checkbox hand over every tenant cookie in
 // the profile. Ticking a row grants exactly the scope printed on it.
 //
-// Rows come back classified-first, then by cookie count descending, then
-// alphabetically. Putting the risky ones where they cannot be scrolled past
-// is the opposite of the usual instinct to bury them.
-func Summarise(cookies []Cookie, classifier *Classifier) []DomainSummary {
+// Rows come back by cookie count descending, then alphabetically. Nothing is
+// ticked until the user ticks it, so the order is a convenience rather than a
+// guard: the busiest scopes are the ones somebody scrolling is looking for.
+func Summarise(cookies []Cookie) []DomainSummary {
 	counts := make(map[string]int)
 	for _, c := range cookies {
 		counts[NormaliseDomain(c.Domain)]++
@@ -38,18 +37,11 @@ func Summarise(cookies []Cookie, classifier *Classifier) []DomainSummary {
 
 	out := make([]DomainSummary, 0, len(counts))
 	for domain, count := range counts {
-		out = append(out, DomainSummary{
-			Domain:   domain,
-			Count:    count,
-			Category: classifier.Classify(domain),
-		})
+		out = append(out, DomainSummary{Domain: domain, Count: count})
 	}
 
 	sort.Slice(out, func(i, j int) bool {
 		a, b := out[i], out[j]
-		if (a.Category != CategoryNone) != (b.Category != CategoryNone) {
-			return a.Category != CategoryNone
-		}
 		if a.Count != b.Count {
 			return a.Count > b.Count
 		}
