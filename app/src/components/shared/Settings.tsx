@@ -942,8 +942,10 @@ function ContainersSection({ colors, reclaiming, reclaimMsg, onReclaim }: { colo
           lineHeight: 1.5,
         }}
       >
-        Reclaim Docker disk by pruning unused BuildKit cache and dangling (untagged) images left behind by repeated Loop builds. Tagged images in use —{" "}
-        <code style={{ fontFamily: fonts.mono }}>loop-agent</code> and your project images — are kept. Build-cache pruning is daemon-wide, not scoped to Loop, and the next image build will be slower.
+        Reclaim Docker disk by pruning the BuildKit cache and dangling (untagged) images left behind by repeated Loop builds. This drops reusable cache too (
+        <code style={{ fontFamily: fonts.mono }}>docker builder prune -a</code>), which is where the space actually is — keeping only unshared entries typically frees a few GB where this frees tens.
+        Tagged images in use — <code style={{ fontFamily: fonts.mono }}>loop-agent</code> and your project images — are kept. Build-cache pruning is daemon-wide, not scoped to Loop, and the next image
+        build will be slower.
       </div>
 
       {confirming ? (

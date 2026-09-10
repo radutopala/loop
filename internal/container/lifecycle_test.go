@@ -233,7 +233,7 @@ func (s *LifecycleSuite) TestRemoveImage_ErrorDoesNotUnregister() {
 func (s *LifecycleSuite) TestReclaimSpace_Success() {
 	m := s.newManager(func() string { return "" })
 
-	s.client.On("PruneBuildCache", mock.Anything, time.Duration(0)).Return(uint64(4096), nil)
+	s.client.On("PruneBuildCache", mock.Anything, time.Duration(0), true).Return(uint64(4096), nil)
 	s.client.On("PruneDanglingImages", mock.Anything).Return(uint64(8192), nil)
 
 	result, err := m.ReclaimSpace(context.Background())
@@ -247,7 +247,7 @@ func (s *LifecycleSuite) TestReclaimSpace_Success() {
 func (s *LifecycleSuite) TestReclaimSpace_BuildCacheError() {
 	m := s.newManager(func() string { return "" })
 
-	s.client.On("PruneBuildCache", mock.Anything, time.Duration(0)).Return(uint64(0), errors.New("cache fail"))
+	s.client.On("PruneBuildCache", mock.Anything, time.Duration(0), true).Return(uint64(0), errors.New("cache fail"))
 
 	result, err := m.ReclaimSpace(context.Background())
 	require.EqualError(s.T(), err, "cache fail")
@@ -259,7 +259,7 @@ func (s *LifecycleSuite) TestReclaimSpace_BuildCacheError() {
 func (s *LifecycleSuite) TestReclaimSpace_ImagesErrorStillReportsCache() {
 	m := s.newManager(func() string { return "" })
 
-	s.client.On("PruneBuildCache", mock.Anything, time.Duration(0)).Return(uint64(4096), nil)
+	s.client.On("PruneBuildCache", mock.Anything, time.Duration(0), true).Return(uint64(4096), nil)
 	s.client.On("PruneDanglingImages", mock.Anything).Return(uint64(0), errors.New("images fail"))
 
 	result, err := m.ReclaimSpace(context.Background())

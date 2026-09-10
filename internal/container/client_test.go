@@ -657,12 +657,27 @@ func (s *ClientSuite) TestPruneBuildCache() {
 	ctx := context.Background()
 	s.api.On("BuildCachePrune", ctx, mock.MatchedBy(func(opts build.CachePruneOptions) bool {
 		v := opts.Filters.Get("unused-for")
-		return len(v) == 1 && v[0] == "720h0m0s"
+		return len(v) == 1 && v[0] == "720h0m0s" && !opts.All
 	})).Return(&build.CachePruneReport{SpaceReclaimed: 4096}, nil)
 
-	reclaimed, err := s.client.PruneBuildCache(ctx, 720*time.Hour)
+	reclaimed, err := s.client.PruneBuildCache(ctx, 720*time.Hour, false)
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), uint64(4096), reclaimed)
+	s.api.AssertExpectations(s.T())
+}
+
+// Without All, BuildKit leaves every record it considers shared in place —
+// which on a long-lived install is nearly all of it, and nearly all of the
+// disk the caller was trying to get back.
+func (s *ClientSuite) TestPruneBuildCacheAllPrunesReusableEntries() {
+	ctx := context.Background()
+	s.api.On("BuildCachePrune", ctx, mock.MatchedBy(func(opts build.CachePruneOptions) bool {
+		return opts.All
+	})).Return(&build.CachePruneReport{SpaceReclaimed: 113 << 30}, nil)
+
+	reclaimed, err := s.client.PruneBuildCache(ctx, 0, true)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), uint64(113<<30), reclaimed)
 	s.api.AssertExpectations(s.T())
 }
 
@@ -670,7 +685,7 @@ func (s *ClientSuite) TestPruneBuildCacheNilReport() {
 	ctx := context.Background()
 	s.api.On("BuildCachePrune", ctx, mock.Anything).Return((*build.CachePruneReport)(nil), nil)
 
-	reclaimed, err := s.client.PruneBuildCache(ctx, 720*time.Hour)
+	reclaimed, err := s.client.PruneBuildCache(ctx, 720*time.Hour, false)
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), uint64(0), reclaimed)
 }
@@ -679,7 +694,7 @@ func (s *ClientSuite) TestPruneBuildCacheError() {
 	ctx := context.Background()
 	s.api.On("BuildCachePrune", ctx, mock.Anything).Return((*build.CachePruneReport)(nil), errors.New("daemon down"))
 
-	_, err := s.client.PruneBuildCache(ctx, 720*time.Hour)
+	_, err := s.client.PruneBuildCache(ctx, 720*time.Hour, false)
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "pruning build cache")
 	require.Contains(s.T(), err.Error(), "daemon down")

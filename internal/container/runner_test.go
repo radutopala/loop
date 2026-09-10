@@ -95,8 +95,8 @@ func (m *MockDockerClient) ImageBuildFileFresh(ctx context.Context, contextDir, 
 	return args.Error(0)
 }
 
-func (m *MockDockerClient) PruneBuildCache(ctx context.Context, unusedFor time.Duration) (uint64, error) {
-	args := m.Called(ctx, unusedFor)
+func (m *MockDockerClient) PruneBuildCache(ctx context.Context, unusedFor time.Duration, all bool) (uint64, error) {
+	args := m.Called(ctx, unusedFor, all)
 	return args.Get(0).(uint64), args.Error(1)
 }
 
