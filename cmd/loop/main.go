@@ -239,7 +239,13 @@ func newApp() *app {
 			if err != nil {
 				return nil, err
 			}
-			return browser.NewDockerProvider(dockerClient, cfg.ChromeImage, "1920,1080", cfg.PersistProfile, cfg.Extensions, logger), nil
+			return browser.NewDockerProvider(dockerClient, browser.DockerProviderConfig{
+				Image:          cfg.ChromeImage,
+				Screen:         "1920,1080",
+				PersistProfile: cfg.PersistProfile,
+				Extensions:     cfg.Extensions,
+				MemoryMB:       cfg.MemoryMB,
+			}, logger), nil
 		},
 
 		// MCP host browser

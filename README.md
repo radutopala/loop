@@ -360,6 +360,7 @@ On startup, `loop serve` keeps the versioned container files (`Dockerfile`, `ent
 | `browser.chrome_image` | `"loop-chrome:latest"` | Docker image for Chrome sidecar containers |
 | `browser.host_cdp_port` | `9222` | CDP port for Host mode (requires `chrome://inspect/#remote-debugging` in Chrome) |
 | `browser.persist_profile` | `true` | Keep the agent's cookies and logins across browser restarts (Docker mode) |
+| `browser.memory_mb` | `512` | Memory cap per Chrome sidecar in MB; `0` for no cap (Docker mode) |
 | `browser.extensions` | `[]` | Host directories holding unpacked Chrome extensions to load into the sidecar (Docker mode) |
 | `browser.cookie_import` | `{}` | Import cookies from your own Chrome/Edge/Firefox profile into the sidecar: `source`, `domains`, `sensitive_domains`, `auto` |
 | `poll_interval_sec` | `30` | Task scheduler poll interval |

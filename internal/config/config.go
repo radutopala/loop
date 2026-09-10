@@ -110,6 +110,9 @@ type jsonQualityRuleConfig struct {
 	Threshold float64 `json:"threshold"`
 }
 
+// defaultBrowserMemoryMB is the per-sidecar memory cap when none is set.
+const defaultBrowserMemoryMB = 512
+
 // jsonBrowserConfig is the JSON representation of the browser block.
 type jsonBrowserConfig struct {
 	Enabled        *bool    `json:"enabled"`
@@ -118,6 +121,7 @@ type jsonBrowserConfig struct {
 	HostCDPPort    *int     `json:"host_cdp_port"`
 	PersistProfile *bool    `json:"persist_profile"`
 	Extensions     []string `json:"extensions"`
+	MemoryMB       *int64   `json:"memory_mb"`
 
 	CookieImport *jsonCookieImportConfig `json:"cookie_import"`
 }
@@ -284,6 +288,7 @@ func (l *Loader) parse() (*Config, error) {
 		Mode:           "docker",
 		HostCDPPort:    9222,
 		PersistProfile: true,
+		MemoryMB:       defaultBrowserMemoryMB,
 	}
 	if jc.Browser != nil {
 		cfg.Browser.Enabled = ptrDefault(jc.Browser.Enabled, true)
@@ -296,6 +301,7 @@ func (l *Loader) parse() (*Config, error) {
 		cfg.Browser.HostCDPPort = ptrDefault(jc.Browser.HostCDPPort, 9222)
 		cfg.Browser.PersistProfile = ptrDefault(jc.Browser.PersistProfile, true)
 		cfg.Browser.Extensions = jc.Browser.Extensions
+		cfg.Browser.MemoryMB = ptrDefault(jc.Browser.MemoryMB, defaultBrowserMemoryMB)
 		if ci := jc.Browser.CookieImport; ci != nil {
 			cfg.Browser.CookieImport = CookieImportConfig{
 				Source:           ci.Source,

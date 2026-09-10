@@ -234,6 +234,13 @@ func buildSchema() *ConfigSchema {
 						Description: "Host directories holding unpacked Chrome extensions to load into the sidecar. Empty runs Chrome with extensions disabled.",
 						Items:       &SchemaProperty{Type: "string"},
 					},
+					"memory_mb": {
+						Type:         "integer",
+						Title:        "Memory (MB)",
+						Description:  "Memory cap per browser container; 0 for no cap. Applies to the next sidecar, not one already running.",
+						Default:      512,
+						XPlaceholder: "512",
+					},
 					"cookie_import": {
 						Type:     "object",
 						Title:    "Cookie Import",

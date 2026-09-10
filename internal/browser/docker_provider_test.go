@@ -73,7 +73,7 @@ func TestManagerSuite(t *testing.T) {
 
 func (s *ManagerSuite) SetupTest() {
 	s.api = new(mockDockerClient)
-	s.mgr = NewDockerProvider(s.api, "loop-agent:latest", "1920,1080", false, nil, slog.Default())
+	s.mgr = NewDockerProvider(s.api, DockerProviderConfig{Image: "loop-agent:latest", Screen: "1920,1080"}, slog.Default())
 	// Default to host-run daemon (the common deployment): the CDP endpoint is the
 	// mapped 127.0.0.1:hostPort and no extra inspect is needed. Containerized
 	// behavior is exercised explicitly by setting inContainer=true per test.
@@ -111,7 +111,7 @@ func inspectStopped() containertypes.InspectResponse {
 }
 
 func (s *ManagerSuite) TestNewDockerProvider() {
-	mgr := NewDockerProvider(s.api, "loop-agent:latest", "1920,1080", false, nil, slog.Default())
+	mgr := NewDockerProvider(s.api, DockerProviderConfig{Image: "loop-agent:latest", Screen: "1920,1080"}, slog.Default())
 	require.NotNil(s.T(), mgr)
 	require.Equal(s.T(), "1920,1080", mgr.screen)
 	require.Equal(s.T(), "loop-agent:latest", mgr.image)
@@ -151,14 +151,14 @@ func (s *ManagerSuite) TestChromeArgsExtensions() {
 	}
 	for _, tt := range tests {
 		s.Run(tt.name, func() {
-			mgr := NewDockerProvider(s.api, "loop-agent:latest", "1920,1080", false, tt.extensions, slog.Default())
+			mgr := NewDockerProvider(s.api, DockerProviderConfig{Image: "loop-agent:latest", Screen: "1920,1080", Extensions: tt.extensions}, slog.Default())
 			require.Equal(s.T(), tt.want, mgr.chromeArgs())
 		})
 	}
 }
 
 func (s *ManagerSuite) TestChromeArgsPersistProfile() {
-	mgr := NewDockerProvider(s.api, "loop-agent:latest", "1920,1080", true, nil, slog.Default())
+	mgr := NewDockerProvider(s.api, DockerProviderConfig{Image: "loop-agent:latest", Screen: "1920,1080", PersistProfile: true}, slog.Default())
 	require.Equal(s.T(),
 		[]string{"--window-size=1920,1080", "--user-data-dir=/profile", "--disable-extensions", "about:blank"},
 		mgr.chromeArgs(),
@@ -186,7 +186,7 @@ func (s *ManagerSuite) TestProfileMountsDisabled() {
 }
 
 func (s *ManagerSuite) TestProfileMountsEnabled() {
-	mgr := NewDockerProvider(s.api, "loop-agent:latest", "1920,1080", true, nil, slog.Default())
+	mgr := NewDockerProvider(s.api, DockerProviderConfig{Image: "loop-agent:latest", Screen: "1920,1080", PersistProfile: true}, slog.Default())
 	mounts := mgr.profileMounts("C123")
 	require.Len(s.T(), mounts, 1)
 	require.Equal(s.T(), mount.TypeVolume, mounts[0].Type)
@@ -195,7 +195,7 @@ func (s *ManagerSuite) TestProfileMountsEnabled() {
 }
 
 func (s *ManagerSuite) TestContainerMountsExtensionsOnly() {
-	mgr := NewDockerProvider(s.api, "loop-agent:latest", "1920,1080", false, []string{"/host/a", "/host/b"}, slog.Default())
+	mgr := NewDockerProvider(s.api, DockerProviderConfig{Image: "loop-agent:latest", Screen: "1920,1080", Extensions: []string{"/host/a", "/host/b"}}, slog.Default())
 	mounts := mgr.containerMounts("C123")
 	require.Len(s.T(), mounts, 2)
 	for i, want := range []string{"/host/a", "/host/b"} {
@@ -207,7 +207,7 @@ func (s *ManagerSuite) TestContainerMountsExtensionsOnly() {
 }
 
 func (s *ManagerSuite) TestContainerMountsProfileAndExtensions() {
-	mgr := NewDockerProvider(s.api, "loop-agent:latest", "1920,1080", true, []string{"/host/a"}, slog.Default())
+	mgr := NewDockerProvider(s.api, DockerProviderConfig{Image: "loop-agent:latest", Screen: "1920,1080", PersistProfile: true, Extensions: []string{"/host/a"}}, slog.Default())
 	mounts := mgr.containerMounts("C123")
 	require.Len(s.T(), mounts, 2)
 	require.Equal(s.T(), mount.TypeVolume, mounts[0].Type)
@@ -226,14 +226,14 @@ func (s *ManagerSuite) TestRemoveProfileDisabled() {
 }
 
 func (s *ManagerSuite) TestRemoveProfile() {
-	mgr := NewDockerProvider(s.api, "loop-agent:latest", "1920,1080", true, nil, slog.Default())
+	mgr := NewDockerProvider(s.api, DockerProviderConfig{Image: "loop-agent:latest", Screen: "1920,1080", PersistProfile: true}, slog.Default())
 	s.api.On("VolumeRemove", mock.Anything, "loop-chrome-profile-c123", true).Return(nil)
 	require.NoError(s.T(), mgr.RemoveProfile(context.Background(), "C123"))
 	s.api.AssertExpectations(s.T())
 }
 
 func (s *ManagerSuite) TestRemoveProfileError() {
-	mgr := NewDockerProvider(s.api, "loop-agent:latest", "1920,1080", true, nil, slog.Default())
+	mgr := NewDockerProvider(s.api, DockerProviderConfig{Image: "loop-agent:latest", Screen: "1920,1080", PersistProfile: true}, slog.Default())
 	s.api.On("VolumeRemove", mock.Anything, "loop-chrome-profile-c123", true).Return(errors.New("boom"))
 	err := mgr.RemoveProfile(context.Background(), "C123")
 	require.ErrorContains(s.T(), err, "removing chrome profile volume loop-chrome-profile-c123")
@@ -261,6 +261,49 @@ func (s *ManagerSuite) TestEnsureBrowserNewSession() {
 	require.Equal(s.T(), "ws://127.0.0.1:49152", s.mgr.GetCDPEndpoint("ch-1"))
 
 	s.api.AssertExpectations(s.T())
+}
+
+// The cap is what a page-heavy site runs into, so the configured value has to
+// reach Docker — a sidecar created with the wrong one is OOM-killed mid-session
+// and the tab it was showing dies with it.
+func (s *ManagerSuite) TestEnsureBrowserMemoryLimit() {
+	tests := []struct {
+		name     string
+		memoryMB int64
+		want     int64
+	}{
+		{name: "configured cap", memoryMB: 2048, want: 2048 * 1024 * 1024},
+		{name: "zero means no cap", memoryMB: 0, want: 0},
+	}
+
+	for _, tt := range tests {
+		s.Run(tt.name, func() {
+			ctx := context.Background()
+			api := new(mockDockerClient)
+			mgr := NewDockerProvider(api, DockerProviderConfig{
+				Image:    "loop-agent:latest",
+				Screen:   "1920,1080",
+				MemoryMB: tt.memoryMB,
+			}, slog.Default())
+			mgr.inContainer = false
+
+			api.On("ContainerList", ctx, mock.Anything).
+				Return([]containertypes.Summary{}, nil)
+			api.On("ContainerCreate", ctx, mock.Anything,
+				mock.MatchedBy(func(hc *containertypes.HostConfig) bool {
+					return hc.Memory == tt.want
+				}),
+				(*network.NetworkingConfig)(nil), (*ocispec.Platform)(nil), "loop-chrome-ch-1").
+				Return(containertypes.CreateResponse{ID: "chrome-ctr-1"}, nil)
+			api.On("ContainerStart", ctx, "chrome-ctr-1", containertypes.StartOptions{}).
+				Return(nil)
+			api.On("ContainerInspect", ctx, "chrome-ctr-1").
+				Return(inspectResponseWithPort("49152"), nil)
+
+			require.NoError(s.T(), mgr.EnsureBrowser(ctx, "ch-1", ""))
+			api.AssertExpectations(s.T())
+		})
+	}
 }
 
 func (s *ManagerSuite) TestEnsureBrowserAlreadyRunning() {

@@ -38,7 +38,7 @@ func (s *ProfileIntegrationSuite) SetupSuite() {
 	s.api = api
 
 	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
-	s.provider = NewDockerProvider(api, "loop-chrome:latest", "1280,800", true, nil, logger)
+	s.provider = NewDockerProvider(api, DockerProviderConfig{Image: "loop-chrome:latest", Screen: "1280,800", PersistProfile: true}, logger)
 	s.channelID = fmt.Sprintf("profile-it-%d", time.Now().UnixNano())
 
 	// document.cookie needs a real http origin — about:blank and data: URLs are

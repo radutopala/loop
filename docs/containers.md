@@ -398,7 +398,7 @@ The idle monitor runs every minute and stops Chrome for sessions where `paneCoun
 ### Resource Limits
 
 Chrome sidecar containers run with:
-- **Memory:** 512 MB
+- **Memory:** `browser.memory_mb`, default 512 MB (`0` for no cap). Docker fixes a container's limit when it is created, so a change takes effect on the next sidecar — stop the running one to pick it up.
 - **CPU:** 0.5 cores (50% of one core)
 
 ---

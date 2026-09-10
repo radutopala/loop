@@ -853,7 +853,7 @@ func (s *MainSuite) TestServeWithDockerBrowserProvider() {
 	m.cfg.Browser.Enabled = true
 
 	s.app.newBrowserProvider = func(_ config.BrowserConfig, logger *slog.Logger) (api.BrowserProvider, error) {
-		return browser.NewDockerProvider(nil, "loop-chrome:latest", "1920,1080", true, nil, logger), nil
+		return browser.NewDockerProvider(nil, browser.DockerProviderConfig{Image: "loop-chrome:latest", Screen: "1920,1080", PersistProfile: true}, logger), nil
 	}
 
 	errCh := make(chan error, 1)

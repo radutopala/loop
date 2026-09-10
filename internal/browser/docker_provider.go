@@ -59,6 +59,9 @@ type DockerProvider struct {
 	// is bind-mounted read-only and handed to Chrome via --load-extension;
 	// when empty, Chrome runs with --disable-extensions.
 	extensions []string
+
+	// memoryMB caps each sidecar's memory, in megabytes. Zero means no cap.
+	memoryMB int64
 }
 
 const (
@@ -87,20 +90,38 @@ const (
 	chromeExtensionsDir = "/extensions"
 )
 
-// NewDockerProvider creates a new browser DockerProvider. When persistProfile
-// is set, each channel's Chrome runs on a named-volume profile that survives
-// container removal. extensions are host directories holding unpacked Chrome
-// extensions to load into every sidecar.
-func NewDockerProvider(api DockerClient, image, screen string, persistProfile bool, extensions []string, logger *slog.Logger) *DockerProvider {
+// DockerProviderConfig describes the Chrome sidecars a DockerProvider creates.
+type DockerProviderConfig struct {
+	// Image is the Chrome Docker image to run.
+	Image string
+
+	// Screen is Chrome's --window-size, e.g. "1920,1080".
+	Screen string
+
+	// PersistProfile runs each channel's Chrome on a named-volume profile
+	// that survives container removal.
+	PersistProfile bool
+
+	// Extensions are host directories holding unpacked Chrome extensions to
+	// load into every sidecar.
+	Extensions []string
+
+	// MemoryMB caps each sidecar's memory, in megabytes. Zero means no cap.
+	MemoryMB int64
+}
+
+// NewDockerProvider creates a new browser DockerProvider.
+func NewDockerProvider(api DockerClient, cfg DockerProviderConfig, logger *slog.Logger) *DockerProvider {
 	return &DockerProvider{
 		sessionManager: newSessionManager(),
 		api:            api,
-		image:          image,
-		screen:         screen,
+		image:          cfg.Image,
+		screen:         cfg.Screen,
 		logger:         logger,
 		inContainer:    inDockerContainer(),
-		persistProfile: persistProfile,
-		extensions:     extensions,
+		persistProfile: cfg.PersistProfile,
+		extensions:     cfg.Extensions,
+		memoryMB:       cfg.MemoryMB,
 	}
 }
 
@@ -357,7 +378,7 @@ func (m *DockerProvider) EnsureBrowser(ctx context.Context, channelID, _ string)
 		},
 		&containertypes.HostConfig{
 			Resources: containertypes.Resources{
-				Memory:    512 * 1024 * 1024,
+				Memory:    m.memoryMB * 1024 * 1024,
 				CPUQuota:  50000,
 				CPUPeriod: 100000,
 			},
