@@ -108,9 +108,18 @@ The promises the dialog makes are the feature's boundaries:
 ### The site picker
 
 The second step lists one row per **cookie scope** — the cookie's own
-`host_key`, so `google.com` and `oauth.officeapps.live.com` are separate rows
-and ticking one grants exactly the scope printed on it. Rows carrying real
-account access are badged and **left unchecked by default**:
+`host_key` — folded under the parent scope it sits beneath. A site's session is
+usually split across several: the cookies that sign you into Gmail are on
+`google.com`, while `mail.google.com` holds Gmail's app cookies and nothing
+that authenticates. Ticking the `google.com` parent takes every scope under it;
+expanding the row picks them one at a time. Either way a tick grants exactly
+the scopes printed, and the import sends those scopes, not the group.
+
+The parent is only ever another scope from the same jar, so no public suffix
+list is involved and no group is invented: `fidelity.co.uk` stands alone,
+because nothing sets cookies on `co.uk` — browsers refuse to.
+
+Rows carrying real account access are badged and **left unchecked by default**:
 
 | Badge | What it covers |
 |---|---|
@@ -126,6 +135,8 @@ the built-in list has never heard of, such as a regional bank, to
 `browser.cookie_import.sensitive_domains`.
 
 **Select all** only ever reaches the unbadged rows. Clearing clears everything.
+A parent checkbox does reach its badged members — the row is badged and the
+click is deliberate, the same bar a badged row on its own has to clear.
 
 ### Where the data lives
 
