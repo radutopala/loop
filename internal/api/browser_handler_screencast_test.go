@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -68,7 +69,7 @@ func (s *BrowserHandlerSuite) TestRestartScreencastForTargetClosesOldStopCh() {
 	frameCh := make(chan []byte, 2)
 	mockCDP.On("StartScreencast", 60, 1920, 1080).Return((<-chan []byte)(frameCh))
 	mockCDP.On("EvaluateJS", mock.Anything, mock.Anything).Return("", nil)
-	mockCDP.On("ListTabs", mock.Anything).Return([]browser.TabInfo(nil), nil)
+	mockCDP.On("ListTabs", mock.Anything).Return([]browser.TabInfo{{TargetID: "t-new"}}, nil)
 	mockCDP.On("StopScreencast").Return().Maybe()
 	mockCDP.On("Close").Return().Maybe()
 
@@ -365,7 +366,7 @@ func (s *BrowserHandlerSuite) TestWatchMCPTabChangesSwitchDifferentTarget() {
 	frameCh := make(chan []byte, 2)
 	mockCDP.On("StartScreencast", 60, 1920, 1080).Return((<-chan []byte)(frameCh))
 	mockCDP.On("EvaluateJS", mock.Anything, mock.Anything).Return("", nil)
-	mockCDP.On("ListTabs", mock.Anything).Return([]browser.TabInfo(nil), nil)
+	mockCDP.On("ListTabs", mock.Anything).Return([]browser.TabInfo{{TargetID: "t-new"}}, nil)
 	mockCDP.On("StopScreencast").Return().Maybe()
 	mockCDP.On("Close").Return().Maybe()
 
@@ -480,3 +481,131 @@ func (s *BrowserHandlerSuite) TestWatchMCPTabChangesNilCDPMgr() {
 }
 
 // --- handleStart: reuse cached CDP ---
+
+// --- restartScreencastForTarget: the tab asked for is gone ---
+
+// wsTestPair dials a WebSocket against a throwaway server and returns both
+// ends, so the tests below can assert on what the pane was actually sent.
+func (s *BrowserHandlerSuite) wsTestPair() (client *websocket.Conn, server *websocket.Conn) {
+	connReady := make(chan *websocket.Conn, 1)
+	tsSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := wsUpgrader.Upgrade(w, r, nil)
+		if err != nil {
+			return
+		}
+		connReady <- conn
+	}))
+	s.T().Cleanup(tsSrv.Close)
+
+	wsURL := "ws" + strings.TrimPrefix(tsSrv.URL, "http") + "/"
+	client, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
+	require.NoError(s.T(), err)
+	s.T().Cleanup(func() { _ = client.Close() })
+	return client, <-connReady
+}
+
+// goneTargetManager returns a manager whose browser client sees only t-live,
+// so any attach to another target is an attach to a tab that has gone.
+func (s *BrowserHandlerSuite) goneTargetManager() *browser.CDPManager {
+	mgrClient := new(mockCDPSession)
+	mgrClient.On("ListTabs", mock.Anything).Return([]browser.TabInfo{{TargetID: "t-live"}}, nil)
+	mgrClient.On("Close").Return().Maybe()
+
+	cdpMgr := browser.NewCDPManager("ws://test:9222", browser.CDPManagerConfig{
+		MaxRetries: 1,
+		RetryDelay: time.Millisecond,
+	}, slog.Default())
+	cdpMgr.SetClientForTarget("t-live", mgrClient)
+	cdpMgr.TrackTab("t-live")
+	return cdpMgr
+}
+
+func (s *BrowserHandlerSuite) TestRestartScreencastForTargetTabGoneKeepsCurrentTab() {
+	current := new(mockCDPSession)
+	current.On("TargetID").Return("t-live")
+	current.On("ListTabs", mock.Anything).Return([]browser.TabInfo{
+		{TargetID: "t-live", URL: "https://example.com", Title: "Live"},
+	}, nil)
+	current.On("Favicons").Return(map[string]string(nil)).Maybe()
+
+	clientWS, serverConn := s.wsTestPair()
+	oldStopCh := make(chan struct{})
+	bc := &browserWSConn{
+		conn:             serverConn,
+		browserProvider:  s.browserMgr,
+		logger:           slog.Default(),
+		cdpMgr:           s.goneTargetManager(),
+		cdp:              current,
+		stopCh:           make(chan struct{}),
+		screencastStopCh: oldStopCh,
+	}
+
+	bc.restartScreencastForTarget(context.Background(), current, "t-gone")
+
+	// The pane was showing a tab that still works, so its stream must survive
+	// a click on one that does not.
+	select {
+	case <-oldStopCh:
+		s.T().Fatal("screencast for the live tab should not have been stopped")
+	default:
+	}
+
+	require.NoError(s.T(), clientWS.SetReadDeadline(time.Now().Add(2*time.Second)))
+	var errResp browserWSResponse
+	require.NoError(s.T(), clientWS.ReadJSON(&errResp))
+	require.Equal(s.T(), bwsRespError, errResp.Type)
+	require.Equal(s.T(), "that tab is no longer open", errResp.Message)
+
+	var tabsResp browserWSResponse
+	require.NoError(s.T(), clientWS.ReadJSON(&tabsResp))
+	require.Equal(s.T(), bwsRespTabs, tabsResp.Type)
+	require.Equal(s.T(), "t-live", tabsResp.ActiveTargetID)
+	require.Len(s.T(), tabsResp.Tabs, 1)
+	require.Equal(s.T(), "t-live", tabsResp.Tabs[0].TargetID)
+}
+
+func (s *BrowserHandlerSuite) TestRestartScreencastForTargetTabGoneWithoutCurrentClient() {
+	clientWS, serverConn := s.wsTestPair()
+	bc := &browserWSConn{
+		conn:            serverConn,
+		browserProvider: s.browserMgr,
+		logger:          slog.Default(),
+		cdpMgr:          s.goneTargetManager(),
+		stopCh:          make(chan struct{}),
+	}
+
+	bc.restartScreencastForTarget(context.Background(), nil, "t-gone")
+
+	require.NoError(s.T(), clientWS.SetReadDeadline(time.Now().Add(2*time.Second)))
+	var errResp browserWSResponse
+	require.NoError(s.T(), clientWS.ReadJSON(&errResp))
+	require.Equal(s.T(), bwsRespError, errResp.Type)
+	// With no client there is no tab list to redraw, so the error stands alone.
+	require.NoError(s.T(), clientWS.SetReadDeadline(time.Now().Add(200*time.Millisecond)))
+	require.Error(s.T(), clientWS.ReadJSON(&errResp))
+}
+
+func (s *BrowserHandlerSuite) TestRestartScreencastForTargetTabGoneListingFails() {
+	current := new(mockCDPSession)
+	current.On("TargetID").Return("t-live").Maybe()
+	current.On("ListTabs", mock.Anything).Return([]browser.TabInfo(nil), errors.New("no listing"))
+
+	clientWS, serverConn := s.wsTestPair()
+	bc := &browserWSConn{
+		conn:            serverConn,
+		browserProvider: s.browserMgr,
+		logger:          slog.Default(),
+		cdpMgr:          s.goneTargetManager(),
+		cdp:             current,
+		stopCh:          make(chan struct{}),
+	}
+
+	bc.restartScreencastForTarget(context.Background(), current, "t-gone")
+
+	require.NoError(s.T(), clientWS.SetReadDeadline(time.Now().Add(2*time.Second)))
+	var errResp browserWSResponse
+	require.NoError(s.T(), clientWS.ReadJSON(&errResp))
+	require.Equal(s.T(), bwsRespError, errResp.Type)
+	require.NoError(s.T(), clientWS.SetReadDeadline(time.Now().Add(200*time.Millisecond)))
+	require.Error(s.T(), clientWS.ReadJSON(&errResp))
+}
