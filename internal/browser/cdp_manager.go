@@ -213,6 +213,55 @@ func (m *CDPManager) GetOrCreate(targetID string) (CDPSession, error) {
 	return newClient, nil
 }
 
+// EnsureLiveTarget re-points the active client when the tab it is attached to
+// has gone away.
+//
+// Alive only reports on the connection, so a client whose page target was
+// closed — by window.close, a crashed renderer, or anything driving CDP
+// alongside us — stays "alive" and every action on it silently goes nowhere:
+// the pane keeps asking a dead session for a screencast and shows a blank
+// rectangle for as long as the daemon runs. The browser itself is fine, so
+// dropping the whole manager is the wrong cure; re-attaching is the right
+// one, and Chrome with no tabs at all gets one.
+func (m *CDPManager) EnsureLiveTarget(ctx context.Context) (CDPSession, error) {
+	m.mu.Lock()
+	client, want := m.activeClient, m.activeTargetID
+	m.mu.Unlock()
+
+	// No active target means there is nothing to check: the client was never
+	// pointed at a page, so it cannot have lost one.
+	if client == nil || want == "" {
+		return client, nil
+	}
+	tabs, err := client.ListTabs(ctx)
+	if err != nil {
+		// Reuse the client rather than guess: a failed listing is not
+		// evidence the target is gone.
+		return client, nil
+	}
+	for _, t := range tabs {
+		if t.TargetID == want {
+			return client, nil
+		}
+	}
+
+	tid := ""
+	if len(tabs) > 0 {
+		tid = tabs[0].TargetID
+	} else if tid, err = client.NewTab(ctx, "about:blank"); err != nil {
+		return nil, fmt.Errorf("opening a tab after the last one closed: %w", err)
+	}
+
+	m.logger.Info("CDP target vanished, re-attaching", "gone_target_id", want, "target_id", tid)
+	fresh, err := m.GetOrCreate(tid)
+	if err != nil {
+		return nil, err
+	}
+	m.SwitchActive(tid)
+	m.TrackTab(tid)
+	return fresh, nil
+}
+
 // SwitchActive sets the active target ID and updates lastUsedAt.
 func (m *CDPManager) SwitchActive(targetID string) {
 	m.mu.Lock()

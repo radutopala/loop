@@ -189,7 +189,9 @@ func (s *BrowserHandlerSuite) TestHandleStartReusesCachedCDP() {
 	mockCDP := new(mockCDPSession)
 	mockCDP.On("TargetID").Return("test-target").Maybe()
 	mockCDP.On("ResetScreencast").Return()
-	mockCDP.On("ListTabs", mock.Anything).Return([]browser.TabInfo(nil), nil).Maybe()
+	// The tab the client is attached to is still open, so the liveness check
+	// finds it and leaves the cached client alone.
+	mockCDP.On("ListTabs", mock.Anything).Return([]browser.TabInfo{{TargetID: "test-target"}}, nil).Maybe()
 	mockCDP.On("StopScreencast").Return().Maybe()
 	mockCDP.On("Close").Return().Maybe()
 
@@ -224,6 +226,118 @@ func (s *BrowserHandlerSuite) TestHandleStartReusesCachedCDP() {
 	require.Equal(s.T(), bwsRespStarted, resp.Type)
 
 	mockCDP.AssertCalled(s.T(), "ResetScreencast")
+}
+
+// reuseTestManager registers a connected manager for ch whose initial client
+// is whatever the factory hands back.
+func (s *BrowserHandlerSuite) reuseTestManager(ch string, initial *mockCDPSession) *browser.CDPManager {
+	cdpMgr := browser.NewCDPManager("ws://127.0.0.1:9222", browser.CDPManagerConfig{
+		MaxRetries: 1,
+		RetryDelay: time.Millisecond,
+	}, slog.Default())
+	browser.SetCDPFactoryForTest(cdpMgr, func(_ context.Context, _ string, _ *slog.Logger, _ ...browser.CDPOption) (browser.CDPSession, error) {
+		return initial, nil
+	})
+	require.NoError(s.T(), cdpMgr.Connect(context.Background()))
+
+	s.srv.browser.cdpManagersMu.Lock()
+	if s.srv.browser.cdpManagers == nil {
+		s.srv.browser.cdpManagers = make(map[string]*browser.CDPManager)
+	}
+	s.srv.browser.cdpManagers[ch+"|docker"] = cdpMgr
+	s.srv.browser.cdpManagersMu.Unlock()
+	return cdpMgr
+}
+
+// The tab the cached client was attached to closed while the pane was away.
+// Streaming from it would leave the pane a blank rectangle forever, so the
+// screencast has to come off the tab that is actually open.
+func (s *BrowserHandlerSuite) TestHandleStartReattachesAfterTabVanished() {
+	fresh := new(mockCDPSession)
+	fresh.On("TargetID").Return("live-target").Maybe()
+	fresh.On("ResetScreencast").Return()
+	fresh.On("ListTabs", mock.Anything).Return([]browser.TabInfo{{TargetID: "live-target"}}, nil).Maybe()
+	fresh.On("StopScreencast").Return().Maybe()
+	fresh.On("Close").Return().Maybe()
+
+	stale := new(mockCDPSession)
+	stale.On("TargetID").Return("gone-target").Maybe()
+	stale.On("ListTabs", mock.Anything).Return([]browser.TabInfo{{TargetID: "live-target"}}, nil)
+	stale.On("StopScreencast").Return().Maybe()
+	stale.On("Close").Return().Maybe()
+	stale.attachFn = func(targetID string) (browser.CDPSession, error) {
+		require.Equal(s.T(), "live-target", targetID)
+		return fresh, nil
+	}
+
+	s.browserMgr.On("EnsureBrowser", mock.Anything, "ch-vanished", "").Return(nil)
+	s.browserMgr.On("GetCDPEndpoint", "ch-vanished").Return("ws://127.0.0.1:9222")
+	cdpMgr := s.reuseTestManager("ch-vanished", stale)
+
+	ws, ts := s.dialBrowserWS()
+	defer ts.Close()
+	defer ws.Close()
+
+	require.NoError(s.T(), ws.WriteJSON(browserWSMessage{Type: bwsMsgStart, ChannelID: "ch-vanished"}))
+	require.Equal(s.T(), bwsRespStarted, s.readResp(ws).Type)
+
+	fresh.AssertCalled(s.T(), "ResetScreencast")
+	stale.AssertNotCalled(s.T(), "ResetScreencast")
+	require.Equal(s.T(), "live-target", cdpMgr.ActiveTargetID())
+}
+
+// Chrome refusing a replacement tab is not something the pane can paper over.
+func (s *BrowserHandlerSuite) TestHandleStartReportsReattachFailure() {
+	stale := new(mockCDPSession)
+	stale.On("TargetID").Return("gone-target").Maybe()
+	stale.On("ListTabs", mock.Anything).Return([]browser.TabInfo(nil), nil)
+	stale.On("NewTab", mock.Anything, "about:blank").Return("", errors.New("browser closing"))
+	stale.On("StopScreencast").Return().Maybe()
+	stale.On("Close").Return().Maybe()
+
+	s.browserMgr.On("EnsureBrowser", mock.Anything, "ch-noreattach", "").Return(nil)
+	s.browserMgr.On("GetCDPEndpoint", "ch-noreattach").Return("ws://127.0.0.1:9222")
+	s.reuseTestManager("ch-noreattach", stale)
+
+	ws, ts := s.dialBrowserWS()
+	defer ts.Close()
+	defer ws.Close()
+
+	require.NoError(s.T(), ws.WriteJSON(browserWSMessage{Type: bwsMsgStart, ChannelID: "ch-noreattach"}))
+	resp := s.readResp(ws)
+	require.Equal(s.T(), bwsRespError, resp.Type)
+	require.Contains(s.T(), resp.Message, "failed to reattach CDP")
+}
+
+// The HTTP action path is wedged by the same dead target as the pane is.
+func (s *BrowserHandlerSuite) TestGetBrowserCDPReattachesAfterTabVanished() {
+	fresh := new(mockCDPSession)
+	fresh.On("TargetID").Return("live-target").Maybe()
+	fresh.On("EnableConsoleCapture", mock.Anything, mock.Anything).Return(nil).Maybe()
+	fresh.On("EnableNetworkCapture", mock.Anything, mock.Anything).Return(nil).Maybe()
+
+	stale := new(mockCDPSession)
+	stale.On("TargetID").Return("gone-target").Maybe()
+	stale.On("ListTabs", mock.Anything).Return([]browser.TabInfo{{TargetID: "live-target"}}, nil)
+	stale.attachFn = func(string) (browser.CDPSession, error) { return fresh, nil }
+	s.reuseTestManager("ch-gone", stale)
+
+	cdpCl, err := s.srv.browser.getBrowserCDP(context.Background(), "ch-gone")
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "live-target", cdpCl.TargetID())
+}
+
+func (s *BrowserHandlerSuite) TestGetBrowserCDPFailsWhenReattachFails() {
+	stale := new(mockCDPSession)
+	stale.On("TargetID").Return("gone-target").Maybe()
+	stale.On("ListTabs", mock.Anything).Return([]browser.TabInfo{{TargetID: "live-target"}}, nil)
+	stale.attachFn = func(string) (browser.CDPSession, error) { return nil, errors.New("target closed again") }
+	s.reuseTestManager("ch-gone-hard", stale)
+
+	cdpCl, err := s.srv.browser.getBrowserCDP(context.Background(), "ch-gone-hard")
+	require.Error(s.T(), err)
+	require.Nil(s.T(), cdpCl)
+	require.Contains(s.T(), err.Error(), "target closed again")
 }
 
 // --- handleStart: host mode activates tab ---
@@ -288,6 +402,7 @@ func (s *BrowserHandlerSuite) TestHandleStartHostModeActivatesTab() {
 func (s *BrowserHandlerSuite) TestGetBrowserCDPReusesCached() {
 	mockCDP := new(mockCDPSession)
 	mockCDP.On("TargetID").Return("test-target").Maybe()
+	mockCDP.On("ListTabs", mock.Anything).Return([]browser.TabInfo{{TargetID: "test-target"}}, nil).Maybe()
 	mockCDP.On("EnableConsoleCapture", mock.Anything, mock.Anything).Return(nil).Maybe()
 	mockCDP.On("EnableNetworkCapture", mock.Anything, mock.Anything).Return(nil).Maybe()
 
@@ -673,6 +788,10 @@ func (s *BrowserHandlerSuite) TestGetBrowserCDPDropsDeadCached() {
 // newSyncTestManager wires a connected CDPManager whose initial client is
 // attached to "tab-1", registered for channel ch.
 func (s *BrowserHandlerSuite) newSyncTestManager(ch string, initial *mockCDPSession) *browser.CDPManager {
+	// Both tabs are open — the client has not lost its target, it is simply
+	// on the older of the two.
+	initial.On("ListTabs", mock.Anything).
+		Return([]browser.TabInfo{{TargetID: "tab-1"}, {TargetID: "tab-2"}}, nil).Maybe()
 	cdpMgr := browser.NewCDPManager("ws://127.0.0.1:9222", browser.CDPManagerConfig{
 		MaxRetries: 1,
 		RetryDelay: time.Millisecond,
