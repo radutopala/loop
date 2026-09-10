@@ -134,6 +134,7 @@ func (s *browserService) channelBrowserSettings(ctx context.Context, channelID s
 		PersistProfile: bc.PersistProfile,
 		Extensions:     bc.Extensions,
 		MemoryMB:       bc.MemoryMB,
+		CPUs:           bc.CPUs,
 	}, true
 }
 

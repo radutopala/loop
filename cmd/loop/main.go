@@ -245,6 +245,7 @@ func newApp() *app {
 				PersistProfile: cfg.PersistProfile,
 				Extensions:     cfg.Extensions,
 				MemoryMB:       cfg.MemoryMB,
+				CPUs:           cfg.CPUs,
 			}, logger), nil
 		},
 

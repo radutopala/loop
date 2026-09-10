@@ -21,7 +21,7 @@
   // (Dockerfile at .loop/container/Dockerfile), Loop rebuilds it automatically
   // whenever the base agent image changes. Set to false to opt out.
   //"container_image_autobuild": true,
-  //"container_memory_mb": 512,
+  //"container_memory_mb": 2048,
   //"container_cpus": 1.0,
 
   // Preserve MCP config JSON files after container runs (useful for debugging)
@@ -32,7 +32,8 @@
   //  "enabled": false,
   //  "chrome_image": "loop-chrome:latest",
   //  "persist_profile": true,
-  //  "memory_mb": 512,
+  //  "memory_mb": 2048,
+  //  "cpus": 1.0,
   //  "extensions": ["/Users/me/chrome-extensions/ublock"],
   //  "cookie_import": {"source": "chrome:Default", "domains": [".github.com"]}
   //},

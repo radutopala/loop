@@ -351,6 +351,7 @@ func (s *ManagerSuite) TestEnsureBrowserResolvedSettings() {
 			PersistProfile: true,
 			Extensions:     []string{"/host/ublock"},
 			MemoryMB:       1024,
+			CPUs:           1.5,
 		}, true
 	})
 
@@ -364,6 +365,7 @@ func (s *ManagerSuite) TestEnsureBrowserResolvedSettings() {
 		}),
 		mock.MatchedBy(func(hc *containertypes.HostConfig) bool {
 			return hc.Memory == 1024*1024*1024 &&
+				hc.CPUQuota == 150000 && hc.CPUPeriod == 100000 &&
 				len(hc.Mounts) == 2 &&
 				hc.Mounts[0].Source == "loop-chrome-profile-ch-1" &&
 				hc.Mounts[1].Source == "/host/ublock"

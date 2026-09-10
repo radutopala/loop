@@ -29,7 +29,7 @@
   //"log_format": "text",
   //"container_image": "loop-agent:latest",
   //"container_timeout_sec": 3600,
-  //"container_memory_mb": 1024,
+  //"container_memory_mb": 2048,
   //"container_cpus": 1.0,
   //"container_keep_alive_sec": 300,
   //"poll_interval_sec": 30,
@@ -57,7 +57,10 @@
   //  // Memory cap per Chrome container, in MB; 0 for no cap. Raise it when a
   //  // page-heavy site keeps getting its tab killed. Applies to the next
   //  // sidecar, not one already running.
-  //  "memory_mb": 512,
+  //  "memory_mb": 2048,
+  //  // CPU cap per Chrome container, in cores; 0 for no cap. Same timing:
+  //  // it applies to the next sidecar, not one already running.
+  //  "cpus": 1.0,
   //  // Unpacked Chrome extensions to load into the sidecar (Docker mode).
   //  // Each entry is a host directory containing a manifest.json. Empty
   //  // (the default) runs Chrome with extensions disabled.

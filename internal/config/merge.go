@@ -270,6 +270,9 @@ func (l *Loader) loadProjectConfig(workDir string, mainConfig *Config) (*Config,
 		if pc.Browser.MemoryMB != nil {
 			merged.Browser.MemoryMB = *pc.Browser.MemoryMB
 		}
+		if pc.Browser.CPUs != nil {
+			merged.Browser.CPUs = *pc.Browser.CPUs
+		}
 		mergeCookieImport(&merged.Browser.CookieImport, pc.Browser.CookieImport)
 	}
 

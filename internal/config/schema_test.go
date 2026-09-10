@@ -79,7 +79,7 @@ func (s *SchemaSuite) TestContainerMemoryMBIsInteger() {
 	prop := GlobalConfigSchema().Properties["container_memory_mb"]
 	require.NotNil(s.T(), prop)
 	require.Equal(s.T(), "integer", prop.Type)
-	require.Equal(s.T(), 1024, prop.Default)
+	require.Equal(s.T(), 2048, prop.Default)
 }
 
 func (s *SchemaSuite) TestDiscordTokenIsSecret() {
@@ -103,6 +103,18 @@ func (s *SchemaSuite) TestBrowserNestedObject() {
 	chromeImage := prop.Properties["chrome_image"]
 	require.Equal(s.T(), "string", chromeImage.Type)
 	require.Equal(s.T(), "loop-chrome:latest", chromeImage.XPlaceholder)
+
+	// The settings UI renders straight off the schema, so the sidecar's
+	// resource caps are only reachable without hand-editing config.json if
+	// they are declared here.
+	memoryMB := prop.Properties["memory_mb"]
+	require.Equal(s.T(), "integer", memoryMB.Type)
+	require.Equal(s.T(), 2048, memoryMB.Default)
+
+	cpus := prop.Properties["cpus"]
+	require.Equal(s.T(), "number", cpus.Type)
+	require.Equal(s.T(), 1.0, cpus.Default)
+	require.Equal(s.T(), 0.5, cpus.XStep)
 }
 
 // The settings UI renders straight off the schema, so a field missing here

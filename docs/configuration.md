@@ -67,7 +67,7 @@ Both `claude_model` and `claude_effort` can additionally be **overridden per cha
 |---|---|---|---|
 | `container_image` | `string` | `"loop-agent:latest"` | Docker image for agent containers. |
 | `container_timeout_sec` | `int` | `3600` | Maximum execution time per container run (seconds). |
-| `container_memory_mb` | `int` | `1024` | Memory limit per container (MB). |
+| `container_memory_mb` | `int` | `2048` | Memory limit per container (MB); `0` for no cap. Builds and test runs under the agent are what reach it. |
 | `container_cpus` | `float` | `1.0` | CPU limit per container (fractional cores). |
 | `container_keep_alive_sec` | `int` | `300` | Seconds to keep a finished container before removal (for `docker logs` debugging). |
 
@@ -81,7 +81,8 @@ Browser settings are grouped under `"browser"`:
 | `browser.chrome_image` | `string` | `"loop-chrome:latest"` | Docker image for Chrome sidecar containers. |
 | `browser.host_cdp_port` | `int` | `9222` | CDP port for Host mode. Requires `chrome://inspect/#remote-debugging` enabled in Chrome. Resolved per channel, but a port discovered from a Chrome already running for that channel wins over the configured one. |
 | `browser.persist_profile` | `bool` | `true` | Keep the agent's cookies and logins across browser restarts, in a per-channel Docker volume. Docker mode only. |
-| `browser.memory_mb` | `int` | `512` | Memory cap per Chrome sidecar (MB); `0` for no cap. A page-heavy site can exhaust the default and get its container OOM-killed. Docker fixes the limit at container creation, so a change applies to the next sidecar, not a running one — delete the channel's container to pick up a new value. Docker mode only. |
+| `browser.memory_mb` | `int` | `2048` | Memory cap per Chrome sidecar (MB); `0` for no cap. Docker fixes the limit at container creation, so a change applies to the next sidecar, not a running one — delete the channel's container to pick up a new value. Docker mode only. |
+| `browser.cpus` | `float` | `1.0` | CPU cap per Chrome sidecar, in cores; `0` for no cap. Rendering is bursty, so a starved sidecar shows up as a pane that stutters under input. Fixed at container creation, like `memory_mb`. Docker mode only. |
 | `browser.extensions` | `[]string` | `[]` | Host directories holding unpacked Chrome extensions, loaded into every sidecar. Empty runs Chrome with `--disable-extensions`. Docker mode only. See [Browser](browser.md#extensions). |
 | `browser.cookie_import.source` | `string` | `""` | Browser profile to import cookies from, e.g. `"chrome:Default"`. See [Browser](browser.md#importing-cookies-from-your-own-browser). |
 | `browser.cookie_import.domains` | `[]string` | `[]` | Cookie scopes to bring over, matched exactly against the scope shown in the picker. |
@@ -590,6 +591,7 @@ Not all global fields are available in project configs. The following fields can
 | `browser.host_cdp_port` | **Overrides** global value when set, unless a port was discovered from a Chrome already running for the channel. |
 | `browser.persist_profile` | **Overrides** global value when set. Read when the channel's sidecar is created. |
 | `browser.memory_mb` | **Overrides** global value when set. Read when the channel's sidecar is created. |
+| `browser.cpus` | **Overrides** global value when set. Read when the channel's sidecar is created. |
 | `browser.extensions` | **Replaces** the global list when set (entries are not merged). Read when the channel's sidecar is created. |
 | `browser.cookie_import` | **Overrides** per key: `source` and `auto` when set, `domains` / `sensitive_domains` **replace** the global list when present. |
 | `github.gh_user` | **Overrides** global value when set. |
@@ -644,7 +646,7 @@ The merge follows these principles:
   // Container settings
   //"container_image": "loop-agent:latest",
   //"container_timeout_sec": 3600,
-  //"container_memory_mb": 1024,
+  //"container_memory_mb": 2048,
   //"container_cpus": 1.0,
   //"container_keep_alive_sec": 300,
 
@@ -663,7 +665,8 @@ The merge follows these principles:
   //  "chrome_image": "loop-chrome:latest",
   //  "host_cdp_port": 9222,
   //  "persist_profile": true,
-  //  "memory_mb": 512,                   // memory cap per sidecar; 0 for no cap
+  //  "memory_mb": 2048,                  // memory cap per sidecar; 0 for no cap
+  //  "cpus": 1.0,                        // CPU cap per sidecar, in cores; 0 for no cap
   //  "extensions": ["/Users/me/chrome-extensions/ublock"],
   //  "cookie_import": {
   //    "source": "chrome:Default",       // browser profile to import cookies from
@@ -830,7 +833,8 @@ The merge follows these principles:
   //  "enabled": false,
   //  "chrome_image": "loop-chrome:latest",
   //  "persist_profile": true,
-  //  "memory_mb": 512,                   // memory cap per sidecar; 0 for no cap
+  //  "memory_mb": 2048,                  // memory cap per sidecar; 0 for no cap
+  //  "cpus": 1.0,                        // CPU cap per sidecar, in cores; 0 for no cap
   //  "extensions": ["/Users/me/chrome-extensions/ublock"],
   //  "cookie_import": {
   //    "source": "chrome:Default",       // browser profile to import cookies from

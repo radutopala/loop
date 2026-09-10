@@ -59,7 +59,7 @@ func (s *ConfigSuite) TestLoadDefaults() {
 	require.Equal(s.T(), "text", cfg.LogFormat)
 	require.Equal(s.T(), "loop-agent:latest", cfg.ContainerImage)
 	require.Equal(s.T(), 43200*time.Second, cfg.ContainerTimeout)
-	require.Equal(s.T(), int64(1024), cfg.ContainerMemoryMB)
+	require.Equal(s.T(), int64(2048), cfg.ContainerMemoryMB)
 	require.Equal(s.T(), 1.0, cfg.ContainerCPUs)
 	require.Equal(s.T(), 300*time.Second, cfg.ContainerKeepAlive)
 	require.Equal(s.T(), 30*time.Second, cfg.PollInterval)
@@ -70,7 +70,8 @@ func (s *ConfigSuite) TestLoadDefaults() {
 	require.Nil(s.T(), cfg.MCPServers)
 	require.True(s.T(), cfg.Browser.Enabled)
 	require.True(s.T(), cfg.Browser.PersistProfile)
-	require.Equal(s.T(), int64(512), cfg.Browser.MemoryMB)
+	require.Equal(s.T(), int64(2048), cfg.Browser.MemoryMB)
+	require.Equal(s.T(), 1.0, cfg.Browser.CPUs)
 	require.Empty(s.T(), cfg.Browser.Extensions)
 	require.Equal(s.T(), CookieImportConfig{}, cfg.Browser.CookieImport)
 	require.Empty(s.T(), cfg.CopyFiles) // runner prepends ~/.claude.json per container; not defaulted here
@@ -412,7 +413,8 @@ func (s *ConfigSuite) TestZeroNumericValues() {
 			"container_memory_mb": 0,
 			"container_cpus": 0,
 			"container_keep_alive_sec": 0,
-			"poll_interval_sec": 0
+			"poll_interval_sec": 0,
+			"browser": {"memory_mb": 0, "cpus": 0}
 		}`), nil
 	}
 
@@ -423,6 +425,10 @@ func (s *ConfigSuite) TestZeroNumericValues() {
 	require.Equal(s.T(), 0.0, cfg.ContainerCPUs)
 	require.Equal(s.T(), time.Duration(0), cfg.ContainerKeepAlive)
 	require.Equal(s.T(), time.Duration(0), cfg.PollInterval)
+	// Zero is the documented escape hatch from the caps, so it has to survive
+	// defaulting rather than be read as "unset".
+	require.Equal(s.T(), int64(0), cfg.Browser.MemoryMB)
+	require.Equal(s.T(), 0.0, cfg.Browser.CPUs)
 }
 
 func (s *ConfigSuite) TestJSONWithComments() {
