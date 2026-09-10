@@ -78,11 +78,16 @@ export function CookieImportDialog({ channelId, onClose, onImported }: CookieImp
       .finally(() => setBusy(false));
   }, [channelId, sourceId, selected, onImported]);
 
+  // maxHeight is 100% of the overlay, i.e. of the browser pane — not of the
+  // window. The pane is routinely shorter than the window, and a dialog
+  // measured against vh spills past both its ends.
   const panelStyle: React.CSSProperties = {
     width: 520,
-    maxHeight: "80vh",
+    maxWidth: "100%",
+    maxHeight: "100%",
     display: "flex",
     flexDirection: "column",
+    minHeight: 0,
     backgroundColor: colors.surface,
     border: `1px solid ${colors.border}`,
     borderRadius: 12,
@@ -102,34 +107,37 @@ export function CookieImportDialog({ channelId, onClose, onImported }: CookieImp
         alignItems: "center",
         justifyContent: "center",
         backgroundColor: "rgba(0,0,0,0.5)",
+        padding: 12,
         zIndex: 20,
       }}
     >
       <div style={panelStyle}>
-        {step === "consent" ? (
-          <ConsentStep colors={colors} sources={sources} sourceId={sourceId} onSelectSource={setSourceId} busy={busy} />
-        ) : (
-          <SiteStep
-            colors={colors}
-            source={source}
-            visible={visible}
-            selected={selected}
-            total={domains.length}
-            query={query}
-            allState={allState}
-            onQuery={setQuery}
-            onToggle={toggle}
-            onToggleAll={() => setSelected(toggleAll(domains, selected))}
-          />
-        )}
+        <div style={{ display: "flex", flexDirection: "column", flex: "1 1 auto", minHeight: 0 }}>
+          {step === "consent" ? (
+            <ConsentStep colors={colors} sources={sources} sourceId={sourceId} onSelectSource={setSourceId} busy={busy} />
+          ) : (
+            <SiteStep
+              colors={colors}
+              source={source}
+              visible={visible}
+              selected={selected}
+              total={domains.length}
+              query={query}
+              allState={allState}
+              onQuery={setQuery}
+              onToggle={toggle}
+              onToggleAll={() => setSelected(toggleAll(domains, selected))}
+            />
+          )}
+        </div>
 
         {error && (
-          <div style={{ marginTop: 12, color: colors.error, fontSize: 12 }} role="alert">
+          <div style={{ marginTop: 12, flexShrink: 0, color: colors.error, fontSize: 12 }} role="alert">
             {error}
           </div>
         )}
 
-        <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 16 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 16, flexShrink: 0 }}>
           <span style={{ flex: 1, color: colors.textDim, fontSize: 12 }}>{step === "sites" ? `${selected.size} of ${domains.length} selected` : ""}</span>
           <DialogButton colors={colors} onClick={step === "consent" ? onClose : () => setStep("consent")}>
             {step === "consent" ? "Not now" : "Back"}
@@ -213,8 +221,8 @@ function SiteStep({
 }) {
   return (
     <>
-      <h2 style={{ margin: 0, fontSize: 16 }}>Choose sites to bring over</h2>
-      <p style={{ margin: "6px 0 12px", color: colors.textDim, fontSize: 12 }}>
+      <h2 style={{ margin: 0, flexShrink: 0, fontSize: 16 }}>Choose sites to bring over</h2>
+      <p style={{ margin: "6px 0 12px", flexShrink: 0, color: colors.textDim, fontSize: 12 }}>
         Sites with cookies in your {browserLabel(source?.browser ?? "")} profile “{source?.name ?? ""}”.
       </p>
 
@@ -226,6 +234,7 @@ function SiteStep({
         style={{
           padding: "6px 10px",
           marginBottom: 10,
+          flexShrink: 0,
           backgroundColor: colors.bg,
           color: colors.textLight,
           border: `1px solid ${colors.border}`,
@@ -241,6 +250,7 @@ function SiteStep({
           alignItems: "center",
           gap: 8,
           paddingBottom: 8,
+          flexShrink: 0,
           borderBottom: `1px solid ${colors.border}`,
         }}
       >
@@ -257,7 +267,7 @@ function SiteStep({
         <span style={{ flex: 1, textAlign: "right", color: colors.textDim, fontSize: 11 }}>Email, bank and sign-in sites stay unchecked by default</span>
       </div>
 
-      <div style={{ flex: 1, overflowY: "auto", minHeight: 120 }}>
+      <div style={{ flex: "1 1 auto", overflowY: "auto", minHeight: 0 }}>
         {visible.length === 0 && <div style={{ padding: "12px 0", color: colors.textDim, fontSize: 12 }}>{total === 0 ? "No cookies in this profile." : "No sites match that filter."}</div>}
         {visible.map((d) => (
           <label key={d.domain} title={`${d.count} cookie${d.count === 1 ? "" : "s"}`} style={{ display: "flex", alignItems: "center", gap: 8, padding: "5px 0", cursor: "pointer" }}>

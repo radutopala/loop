@@ -228,6 +228,10 @@ export function BrowserPanel({ channelId, fixedMode }: BrowserPanelProps) {
         flexDirection: "column",
         backgroundColor: colors.sidebar,
         overflow: "hidden",
+        // Containing block for the cookie import overlay, which is absolute
+        // inset:0 — without it the overlay resolves to an ancestor and the
+        // dialog centres itself over the whole window.
+        position: "relative",
       }}
     >
       {/* Tab strip — Chrome-style rounded tabs */}
