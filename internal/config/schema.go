@@ -148,10 +148,10 @@ func buildSchema() *ConfigSchema {
 			"container_memory_mb": {
 				Type:         "integer",
 				Title:        "Memory (MB)",
-				Default:      1024,
+				Default:      2048,
 				XSection:     "Container",
 				XOrder:       2,
-				XPlaceholder: "1024",
+				XPlaceholder: "2048",
 			},
 			"container_cpus": {
 				Type:         "number",
@@ -238,8 +238,16 @@ func buildSchema() *ConfigSchema {
 						Type:         "integer",
 						Title:        "Memory (MB)",
 						Description:  "Memory cap per browser container; 0 for no cap. Applies to the next sidecar, not one already running.",
-						Default:      512,
-						XPlaceholder: "512",
+						Default:      2048,
+						XPlaceholder: "2048",
+					},
+					"cpus": {
+						Type:         "number",
+						Title:        "CPUs",
+						Description:  "CPU cap per browser container, in cores; 0 for no cap. Applies to the next sidecar, not one already running.",
+						Default:      1.0,
+						XStep:        0.5,
+						XPlaceholder: "1.0",
 					},
 					"cookie_import": {
 						Type:     "object",

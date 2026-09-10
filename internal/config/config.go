@@ -110,8 +110,22 @@ type jsonQualityRuleConfig struct {
 	Threshold float64 `json:"threshold"`
 }
 
-// defaultBrowserMemoryMB is the per-sidecar memory cap when none is set.
-const defaultBrowserMemoryMB = 512
+// defaultContainerMemoryMB is the agent container's memory cap when none is
+// set. Builds and test runs inside the agent are the usual squeeze, and an
+// agent OOM-killed mid-task loses the work it was doing.
+const defaultContainerMemoryMB = 2048
+
+const (
+	// defaultBrowserMemoryMB is the per-sidecar memory cap when none is set.
+	// Sized so an ordinary page-heavy web app does not reach it: a cap that
+	// is routinely hit is not a safety net, it is a crash.
+	defaultBrowserMemoryMB = 2048
+
+	// defaultBrowserCPUs is the per-sidecar CPU quota when none is set.
+	// Rendering is bursty, and a sidecar starved during layout shows up as a
+	// pane that stutters under input.
+	defaultBrowserCPUs = 1.0
+)
 
 // jsonBrowserConfig is the JSON representation of the browser block.
 type jsonBrowserConfig struct {
@@ -122,6 +136,7 @@ type jsonBrowserConfig struct {
 	PersistProfile *bool    `json:"persist_profile"`
 	Extensions     []string `json:"extensions"`
 	MemoryMB       *int64   `json:"memory_mb"`
+	CPUs           *float64 `json:"cpus"`
 
 	CookieImport *jsonCookieImportConfig `json:"cookie_import"`
 }
@@ -266,7 +281,7 @@ func (l *Loader) parse() (*Config, error) {
 		ContainerImage:                           stringDefault(jc.ContainerImage, "loop-agent:latest"),
 		ContainerImageAutobuild:                  jc.ContainerImageAutobuild == nil || *jc.ContainerImageAutobuild,
 		ContainerTimeout:                         time.Duration(ptrDefault(jc.ContainerTimeoutSec, 43200)) * time.Second,
-		ContainerMemoryMB:                        ptrDefault(jc.ContainerMemoryMB, 1024),
+		ContainerMemoryMB:                        ptrDefault(jc.ContainerMemoryMB, defaultContainerMemoryMB),
 		ContainerCPUs:                            ptrDefault(jc.ContainerCPUs, 1.0),
 		ContainerKeepAlive:                       time.Duration(ptrDefault(jc.ContainerKeepAliveSec, 300)) * time.Second,
 		PollInterval:                             time.Duration(ptrDefault(jc.PollIntervalSec, 30)) * time.Second,
@@ -289,6 +304,7 @@ func (l *Loader) parse() (*Config, error) {
 		HostCDPPort:    9222,
 		PersistProfile: true,
 		MemoryMB:       defaultBrowserMemoryMB,
+		CPUs:           defaultBrowserCPUs,
 	}
 	if jc.Browser != nil {
 		cfg.Browser.Enabled = ptrDefault(jc.Browser.Enabled, true)
@@ -302,6 +318,7 @@ func (l *Loader) parse() (*Config, error) {
 		cfg.Browser.PersistProfile = ptrDefault(jc.Browser.PersistProfile, true)
 		cfg.Browser.Extensions = jc.Browser.Extensions
 		cfg.Browser.MemoryMB = ptrDefault(jc.Browser.MemoryMB, defaultBrowserMemoryMB)
+		cfg.Browser.CPUs = ptrDefault(jc.Browser.CPUs, defaultBrowserCPUs)
 		if ci := jc.Browser.CookieImport; ci != nil {
 			cfg.Browser.CookieImport = CookieImportConfig{
 				Source:           ci.Source,

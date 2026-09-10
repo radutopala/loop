@@ -84,6 +84,9 @@ type ChannelSettings struct {
 
 	// MemoryMB caps the sidecar's memory, in megabytes. Zero means no cap.
 	MemoryMB int64
+
+	// CPUs caps the sidecar's CPU, in cores. Zero means no cap.
+	CPUs float64
 }
 
 const (
@@ -103,6 +106,10 @@ const (
 	// chromeProfileDir is where the profile volume is mounted inside the
 	// sidecar, and what Chrome is pointed at via --user-data-dir.
 	chromeProfileDir = "/profile"
+
+	// cpuPeriod is the CFS scheduling window CPUQuota is expressed against:
+	// a quota of one period is one core. Docker's own default.
+	cpuPeriod = 100000
 
 	// chromeExtensionsDir is the parent of the per-extension mount points
 	// inside the sidecar. Extensions live at <dir>/0, <dir>/1, ... in config
@@ -130,6 +137,9 @@ type DockerProviderConfig struct {
 
 	// MemoryMB caps each sidecar's memory, in megabytes. Zero means no cap.
 	MemoryMB int64
+
+	// CPUs caps each sidecar's CPU, in cores. Zero means no cap.
+	CPUs float64
 }
 
 // NewDockerProvider creates a new browser DockerProvider.
@@ -145,6 +155,7 @@ func NewDockerProvider(api DockerClient, cfg DockerProviderConfig, logger *slog.
 			PersistProfile: cfg.PersistProfile,
 			Extensions:     cfg.Extensions,
 			MemoryMB:       cfg.MemoryMB,
+			CPUs:           cfg.CPUs,
 		},
 	}
 }
@@ -427,8 +438,8 @@ func (m *DockerProvider) EnsureBrowser(ctx context.Context, channelID, _ string)
 		&containertypes.HostConfig{
 			Resources: containertypes.Resources{
 				Memory:    cs.MemoryMB * 1024 * 1024,
-				CPUQuota:  50000,
-				CPUPeriod: 100000,
+				CPUQuota:  int64(cs.CPUs * cpuPeriod),
+				CPUPeriod: cpuPeriod,
 			},
 			PortBindings: nat.PortMap{
 				"9222/tcp": []nat.PortBinding{{HostIP: "127.0.0.1", HostPort: "0"}},

@@ -556,27 +556,29 @@ func (s *ConfigSuite) TestLoadProjectConfigOverrides() {
 		},
 		{
 			name:        "Browser/Override",
-			projectJSON: `{"browser": {"enabled": false, "mode": "host", "host_cdp_port": 9333, "persist_profile": false, "memory_mb": 2048, "extensions": ["/host/a"]}}`,
-			mainCfg:     &Config{Browser: BrowserConfig{Enabled: true, Mode: "docker", HostCDPPort: 9222, PersistProfile: true, MemoryMB: 512, Extensions: []string{"/global/x"}}},
+			projectJSON: `{"browser": {"enabled": false, "mode": "host", "host_cdp_port": 9333, "persist_profile": false, "memory_mb": 4096, "cpus": 2, "extensions": ["/host/a"]}}`,
+			mainCfg:     &Config{Browser: BrowserConfig{Enabled: true, Mode: "docker", HostCDPPort: 9222, PersistProfile: true, MemoryMB: 2048, CPUs: 1, Extensions: []string{"/global/x"}}},
 			assert: func(merged, _ *Config) {
 				require.False(s.T(), merged.Browser.Enabled)
 				require.Equal(s.T(), "host", merged.Browser.Mode)
 				require.Equal(s.T(), 9333, merged.Browser.HostCDPPort)
 				require.False(s.T(), merged.Browser.PersistProfile)
-				require.Equal(s.T(), int64(2048), merged.Browser.MemoryMB)
+				require.Equal(s.T(), int64(4096), merged.Browser.MemoryMB)
+				require.Equal(s.T(), 2.0, merged.Browser.CPUs)
 				require.Equal(s.T(), []string{"/host/a"}, merged.Browser.Extensions)
 			},
 		},
 		{
 			name:        "Browser/NoOverride",
 			projectJSON: `{}`,
-			mainCfg:     &Config{Browser: BrowserConfig{Enabled: true, Mode: "docker", HostCDPPort: 9222, PersistProfile: true, MemoryMB: 512, Extensions: []string{"/global/x"}}},
+			mainCfg:     &Config{Browser: BrowserConfig{Enabled: true, Mode: "docker", HostCDPPort: 9222, PersistProfile: true, MemoryMB: 2048, CPUs: 1, Extensions: []string{"/global/x"}}},
 			assert: func(merged, _ *Config) {
 				require.True(s.T(), merged.Browser.Enabled)
 				require.Equal(s.T(), "docker", merged.Browser.Mode)
 				require.Equal(s.T(), 9222, merged.Browser.HostCDPPort)
 				require.True(s.T(), merged.Browser.PersistProfile)
-				require.Equal(s.T(), int64(512), merged.Browser.MemoryMB)
+				require.Equal(s.T(), int64(2048), merged.Browser.MemoryMB)
+				require.Equal(s.T(), 1.0, merged.Browser.CPUs)
 				require.Equal(s.T(), []string{"/global/x"}, merged.Browser.Extensions)
 			},
 		},

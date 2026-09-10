@@ -398,8 +398,10 @@ The idle monitor runs every minute and stops Chrome for sessions where `paneCoun
 ### Resource Limits
 
 Chrome sidecar containers run with:
-- **Memory:** `browser.memory_mb`, default 512 MB (`0` for no cap). Docker fixes a container's limit when it is created, so a change takes effect on the next sidecar — stop the running one to pick it up.
-- **CPU:** 0.5 cores (50% of one core)
+- **Memory:** `browser.memory_mb`, default 2048 MB (`0` for no cap). Docker fixes a container's limit when it is created, so a change takes effect on the next sidecar — stop the running one to pick it up.
+- **CPU:** `browser.cpus`, default 1.0 cores (`0` for no cap), fixed at creation the same way.
+
+Both are resolved from the channel's own config layers, so a project can raise or lift them for its own sidecars. Keeping a cap is what makes a runaway page attributable: the container is OOM-killed with `State.OOMKilled` set, instead of the kernel picking a victim across the whole Docker VM.
 
 ---
 
@@ -455,7 +457,7 @@ Containers are created with configurable resource limits:
 
 | Config Field | Default | Docker Parameter |
 |---|---|---|
-| `container_memory_mb` | `1024` | `Resources.Memory` (in bytes) |
+| `container_memory_mb` | `2048` | `Resources.Memory` (in bytes) |
 | `container_cpus` | `1.0` | `Resources.CPUQuota` / `Resources.CPUPeriod` |
 | `container_timeout_sec` | `3600` | Context timeout on the `Run` call |
 
