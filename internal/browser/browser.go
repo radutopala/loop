@@ -26,6 +26,7 @@ type browserSession struct {
 	chromeContainerID string // only used by DockerProvider
 	hostPort          string // only used by DockerProvider
 	cdpAddr           string // host:port the daemon uses to reach CDP (DockerProvider)
+	cdpPort           int    // port this channel's host Chrome was reached on (HostProvider)
 	lastUsedAt        time.Time
 }
 

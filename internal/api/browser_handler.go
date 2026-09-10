@@ -18,7 +18,8 @@ import (
 type browserWSConn struct {
 	conn            *websocket.Conn
 	browserProvider BrowserProvider
-	resolveProvider func(string) BrowserProvider // resolves active provider by channel ID
+	resolveProvider func(string) BrowserProvider       // resolves active provider by channel ID
+	browserEnabled  func(context.Context, string) bool // per-project browser.enabled
 	logger          *slog.Logger
 	writeMu         sync.Mutex
 
@@ -123,6 +124,7 @@ func (s *browserService) handleBrowserWS(w http.ResponseWriter, r *http.Request)
 		conn:            conn,
 		browserProvider: s.dockerProvider,
 		resolveProvider: s.activeBrowserProvider,
+		browserEnabled:  s.browserEnabledFor,
 		logger:          s.deps.logger,
 		resolveCDPMgr:   s.getOrCreateCDPManager,
 		setMode: func(channelID, mode string) {
@@ -197,6 +199,10 @@ func (bc *browserWSConn) handleStart(ctx context.Context, msg browserWSMessage) 
 	bc.logger.Info("browser ws: resolved provider", "channel_id", msg.ChannelID, "host_mode", isHost)
 
 	// Ensure browser is running for this channel.
+	if bc.browserEnabled != nil && !bc.browserEnabled(ctx, msg.ChannelID) {
+		bc.sendError(errBrowserDisabled.Error())
+		return
+	}
 	if err := bc.browserProvider.EnsureBrowser(ctx, msg.ChannelID, ""); err != nil {
 		bc.sendError("failed to start browser: " + err.Error())
 		return

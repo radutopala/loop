@@ -25,6 +25,14 @@ type HostProvider struct {
 	port   int
 	logger *slog.Logger
 
+	// portFor resolves browser.host_cdp_port for one channel. The port is
+	// per-project config while the provider is a single daemon-lifetime
+	// object, so the constructor's value can only ever be the global layer;
+	// asking per channel is what lets a project's override apply to its own
+	// channels. Returning false means "no answer" — the constructor's port
+	// stands.
+	portFor func(ctx context.Context, channelID string) (int, bool)
+
 	// readFile is injectable for testing.
 	readFile func(string) ([]byte, error)
 	// userHomeDir is injectable for testing.
@@ -40,6 +48,42 @@ func NewHostProvider(port int, logger *slog.Logger) *HostProvider {
 		readFile:       os.ReadFile,
 		userHomeDir:    os.UserHomeDir,
 	}
+}
+
+// SetPortResolver installs the per-channel CDP port lookup. Called once
+// during wiring, before any channel connects.
+func (h *HostProvider) SetPortResolver(fn func(ctx context.Context, channelID string) (int, bool)) {
+	h.portFor = fn
+}
+
+// PortFor returns the port channelID's host Chrome is expected on: the port
+// discovered for a live session, else the resolver's answer, else the
+// constructor's.
+//
+// Discovery wins because it is evidence — DevToolsActivePort is written by
+// the Chrome that is actually running — while config is only a statement of
+// intent.
+func (h *HostProvider) PortFor(ctx context.Context, channelID string) int {
+	h.mu.Lock()
+	if sess, ok := h.sessions[channelID]; ok && sess.cdpPort != 0 {
+		port := sess.cdpPort
+		h.mu.Unlock()
+		return port
+	}
+	h.mu.Unlock()
+	return h.configuredPort(ctx, channelID)
+}
+
+// configuredPort returns the channel's configured port, ignoring any live
+// session. Kept separate from PortFor because EnsureBrowser resolves it while
+// already holding h.mu.
+func (h *HostProvider) configuredPort(ctx context.Context, channelID string) int {
+	if h.portFor != nil {
+		if port, ok := h.portFor(ctx, channelID); ok && port > 0 {
+			return port
+		}
+	}
+	return h.port
 }
 
 // devToolsActivePort reads Chrome's DevToolsActivePort file and returns
@@ -123,13 +167,15 @@ func chromeUserDataDirForOS(homeDir func() (string, error), goos string) string 
 
 // EnsureBrowser discovers the host Chrome via DevToolsActivePort or falls back
 // to the configured port.
-func (h *HostProvider) EnsureBrowser(_ context.Context, channelID, _ string) error {
+func (h *HostProvider) EnsureBrowser(ctx context.Context, channelID, _ string) error {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
 	if _, ok := h.sessions[channelID]; ok {
 		return nil // session already exists
 	}
+
+	configured := h.configuredPort(ctx, channelID)
 
 	// Try DevToolsActivePort discovery first.
 	if wsEndpoint, port, err := h.devToolsActivePort(); err == nil {
@@ -140,7 +186,9 @@ func (h *HostProvider) EnsureBrowser(_ context.Context, channelID, _ string) err
 				h.logger.Info("host browser: discovered via DevToolsActivePort", "ws_endpoint", wsEndpoint, "port", port)
 			}
 			h.port = port
-			h.sessions[channelID] = newBrowserSession(h.timeNow())
+			sess := newBrowserSession(h.timeNow())
+			sess.cdpPort = port
+			h.sessions[channelID] = sess
 			return nil
 		}
 		if h.logger != nil {
@@ -149,8 +197,10 @@ func (h *HostProvider) EnsureBrowser(_ context.Context, channelID, _ string) err
 	}
 
 	// Fallback: try the configured port with /json/version.
-	if isChromeReachable(fmt.Sprintf("127.0.0.1:%d", h.port)) {
-		h.sessions[channelID] = newBrowserSession(h.timeNow())
+	if isChromeReachable(fmt.Sprintf("127.0.0.1:%d", configured)) {
+		sess := newBrowserSession(h.timeNow())
+		sess.cdpPort = configured
+		h.sessions[channelID] = sess
 		return nil
 	}
 
@@ -160,12 +210,12 @@ func (h *HostProvider) EnsureBrowser(_ context.Context, channelID, _ string) err
 // GetCDPEndpoint returns the WebSocket endpoint for the host Chrome.
 // If DevToolsActivePort was discovered, returns the full WS endpoint.
 // Otherwise returns ws://127.0.0.1:{port}.
-func (h *HostProvider) GetCDPEndpoint(_ string) string {
+func (h *HostProvider) GetCDPEndpoint(channelID string) string {
 	// Try DevToolsActivePort for the full WS endpoint with browser GUID.
 	if wsEndpoint, _, err := h.devToolsActivePort(); err == nil {
 		return wsEndpoint
 	}
-	return fmt.Sprintf("ws://127.0.0.1:%d", h.port)
+	return fmt.Sprintf("ws://127.0.0.1:%d", h.PortFor(context.Background(), channelID))
 }
 
 // GetContainerID always returns empty since there is no container.
@@ -183,11 +233,11 @@ func (h *HostProvider) StopBrowser(_ context.Context, channelID string) (string,
 }
 
 // IsRunning checks if host Chrome is reachable.
-func (h *HostProvider) IsRunning(_ context.Context, _ string) bool {
+func (h *HostProvider) IsRunning(ctx context.Context, channelID string) bool {
 	if _, _, err := h.devToolsActivePort(); err == nil {
 		return true
 	}
-	return isChromeReachable(fmt.Sprintf("127.0.0.1:%d", h.port))
+	return isChromeReachable(fmt.Sprintf("127.0.0.1:%d", h.PortFor(ctx, channelID)))
 }
 
 // IsHostMode returns true — this provider always uses the host browser.

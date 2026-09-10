@@ -37,7 +37,6 @@ type DockerProvider struct {
 	sessionManager // embedded shared session management
 
 	api      DockerClient
-	image    string // Docker image to use for Chrome containers
 	screen   string
 	logger   *slog.Logger
 	registry container.ContainerRegistry
@@ -49,27 +48,42 @@ type DockerProvider struct {
 	// Set by NewDockerProvider; overridable in tests via the struct field.
 	inContainer bool
 
-	// persistProfile mounts a per-channel named volume as Chrome's
+	// defaults are the settings a sidecar is built from when settingsFor has
+	// no answer for the channel — the global config layer, as read at daemon
+	// start.
+	defaults ChannelSettings
+
+	// settingsFor resolves one channel's settings at container-create time.
+	// The browser block is per-project config while the provider is a single
+	// daemon-lifetime object, so anything baked in at construction can only
+	// ever be the global layer; asking per channel is what lets a project's
+	// overrides reach its own sidecar.
+	settingsFor func(ctx context.Context, channelID string) (ChannelSettings, bool)
+}
+
+// ChannelSettings is the part of a channel's browser config that shapes its
+// Chrome sidecar. Resolved per channel because each one works in a project
+// that may override the global values.
+//
+// Docker fixes image, mounts and resources when a container is created, so a
+// change here reaches the next sidecar, never a running one.
+type ChannelSettings struct {
+	// Image is the Chrome Docker image to run.
+	Image string
+
+	// PersistProfile mounts a per-channel named volume as Chrome's
 	// --user-data-dir, so cookies and logins outlive the sidecar. Without it
 	// Chromium falls back to a throwaway profile inside the container and
 	// every login is lost when the idle monitor removes it.
-	persistProfile bool
+	PersistProfile bool
 
-	// extensions are host directories holding unpacked Chrome extensions. Each
-	// is bind-mounted read-only and handed to Chrome via --load-extension;
-	// when empty, Chrome runs with --disable-extensions.
-	extensions []string
+	// Extensions are host directories holding unpacked Chrome extensions.
+	// Each is bind-mounted read-only and handed to Chrome via
+	// --load-extension; when empty, Chrome runs with --disable-extensions.
+	Extensions []string
 
-	// memoryMB caps each sidecar's memory, in megabytes. Zero means no cap.
-	// Used when memoryLimitFor is unset or has no answer for the channel.
-	memoryMB int64
-
-	// memoryLimitFor resolves the cap for one channel at container-create
-	// time. The cap is per-project config (browser.memory_mb) while the
-	// provider is a single daemon-wide object, so a value baked in at
-	// construction can only ever be the global one; asking per channel is
-	// what lets a project's override reach its own sidecar.
-	memoryLimitFor func(ctx context.Context, channelID string) (int64, bool)
+	// MemoryMB caps the sidecar's memory, in megabytes. Zero means no cap.
+	MemoryMB int64
 }
 
 const (
@@ -123,13 +137,15 @@ func NewDockerProvider(api DockerClient, cfg DockerProviderConfig, logger *slog.
 	return &DockerProvider{
 		sessionManager: newSessionManager(),
 		api:            api,
-		image:          cfg.Image,
 		screen:         cfg.Screen,
 		logger:         logger,
 		inContainer:    inDockerContainer(),
-		persistProfile: cfg.PersistProfile,
-		extensions:     cfg.Extensions,
-		memoryMB:       cfg.MemoryMB,
+		defaults: ChannelSettings{
+			Image:          cfg.Image,
+			PersistProfile: cfg.PersistProfile,
+			Extensions:     cfg.Extensions,
+			MemoryMB:       cfg.MemoryMB,
+		},
 	}
 }
 
@@ -173,22 +189,22 @@ func (m *DockerProvider) getContainerIP(ctx context.Context, containerID string)
 	return ""
 }
 
-// SetMemoryLimitResolver installs the per-channel memory cap lookup. fn
-// returning false means "no answer" — the constructor's MemoryMB stands.
-// Called once during wiring, before any container is created.
-func (m *DockerProvider) SetMemoryLimitResolver(fn func(ctx context.Context, channelID string) (int64, bool)) {
-	m.memoryLimitFor = fn
+// SetSettingsResolver installs the per-channel settings lookup. fn returning
+// false means "no answer" — the constructor's settings stand. Called once
+// during wiring, before any container is created.
+func (m *DockerProvider) SetSettingsResolver(fn func(ctx context.Context, channelID string) (ChannelSettings, bool)) {
+	m.settingsFor = fn
 }
 
-// MemoryLimitMB returns the cap channelID's sidecar is created with, in
-// megabytes: the resolver's answer when it has one, else the constructor's.
-func (m *DockerProvider) MemoryLimitMB(ctx context.Context, channelID string) int64 {
-	if m.memoryLimitFor != nil {
-		if mb, ok := m.memoryLimitFor(ctx, channelID); ok {
-			return mb
+// SettingsFor returns the settings channelID's sidecar is created with: the
+// resolver's answer when it has one, else the constructor's.
+func (m *DockerProvider) SettingsFor(ctx context.Context, channelID string) ChannelSettings {
+	if m.settingsFor != nil {
+		if cs, ok := m.settingsFor(ctx, channelID); ok {
+			return cs
 		}
 	}
-	return m.memoryMB
+	return m.defaults
 }
 
 // SetContainerRegistry configures the container registry for lifecycle tracking.
@@ -199,28 +215,28 @@ func (m *DockerProvider) SetContainerRegistry(reg container.ContainerRegistry) {
 // chromeArgs returns CMD args for the chrome container. The entrypoint ends in
 // `exec chromium-browser ... "$@"`, so these are appended to Chrome's own flags
 // — which is how --user-data-dir gets set without rebuilding the image.
-func (m *DockerProvider) chromeArgs() []string {
+func (m *DockerProvider) chromeArgs(cs ChannelSettings) []string {
 	args := []string{"--window-size=" + m.screen}
-	if m.persistProfile {
+	if cs.PersistProfile {
 		args = append(args, "--user-data-dir="+chromeProfileDir)
 	}
 	// --disable-extensions is a CMD arg rather than part of the image, because
 	// Chrome has no counter-switch that re-enables them: passing
 	// --enable-extensions alongside it leaves extensions off. Whether they are
 	// available at all therefore has to be decided here, per configuration.
-	if len(m.extensions) == 0 {
+	if len(cs.Extensions) == 0 {
 		args = append(args, "--disable-extensions")
 	} else {
-		args = append(args, "--load-extension="+strings.Join(m.extensionDirs(), ","))
+		args = append(args, "--load-extension="+strings.Join(extensionDirs(cs.Extensions), ","))
 	}
 	return append(args, "about:blank")
 }
 
 // extensionDirs returns the in-container path of each configured extension, in
 // config order.
-func (m *DockerProvider) extensionDirs() []string {
-	dirs := make([]string, len(m.extensions))
-	for i := range m.extensions {
+func extensionDirs(extensions []string) []string {
+	dirs := make([]string, len(extensions))
+	for i := range extensions {
 		dirs[i] = fmt.Sprintf("%s/%d", chromeExtensionsDir, i)
 	}
 	return dirs
@@ -240,8 +256,8 @@ func ChromeProfileVolume(channelID string) string {
 // profileMounts returns the volume mount for the channel's persistent profile,
 // or nil when profiles are ephemeral. Docker creates the named volume on first
 // use, so there is no separate create call.
-func (m *DockerProvider) profileMounts(channelID string) []mount.Mount {
-	if !m.persistProfile {
+func (m *DockerProvider) profileMounts(cs ChannelSettings, channelID string) []mount.Mount {
+	if !cs.PersistProfile {
 		return nil
 	}
 	return []mount.Mount{{
@@ -255,12 +271,12 @@ func (m *DockerProvider) profileMounts(channelID string) []mount.Mount {
 // plus one read-only bind per configured extension. Read-only because Chrome
 // only ever reads an unpacked extension, and a sidecar the agent drives should
 // not be able to rewrite code on the host.
-func (m *DockerProvider) containerMounts(channelID string) []mount.Mount {
-	mounts := m.profileMounts(channelID)
-	for i, dir := range m.extensionDirs() {
+func (m *DockerProvider) containerMounts(cs ChannelSettings, channelID string) []mount.Mount {
+	mounts := m.profileMounts(cs, channelID)
+	for i, dir := range extensionDirs(cs.Extensions) {
 		mounts = append(mounts, mount.Mount{
 			Type:     mount.TypeBind,
-			Source:   m.extensions[i],
+			Source:   cs.Extensions[i],
 			Target:   dir,
 			ReadOnly: true,
 		})
@@ -278,7 +294,7 @@ func (m *DockerProvider) containerMounts(channelID string) []mount.Mount {
 // profile survive an idle stop; the flip side is that this is the only thing
 // that ever deletes one.
 func (m *DockerProvider) RemoveProfile(ctx context.Context, channelID string) error {
-	if !m.persistProfile {
+	if !m.SettingsFor(ctx, channelID).PersistProfile {
 		return nil
 	}
 	name := ChromeProfileVolume(channelID)
@@ -387,31 +403,37 @@ func (m *DockerProvider) EnsureBrowser(ctx context.Context, channelID, _ string)
 		}
 	}
 
+	// The channel's own config layers decide what gets created — image,
+	// profile, extensions, memory cap. Resolved once here, so a config edited
+	// mid-create cannot produce a container half-built from each version.
+	cs := m.SettingsFor(ctx, channelID)
+
 	m.logger.Info("creating Chrome sidecar container",
 		"channel_id", channelID,
 		"container", containerName,
+		"image", cs.Image,
 	)
 
 	// Create Chrome container without a Docker network — the host connects via
 	// the mapped 127.0.0.1:hostPort, not through a Docker network.
 	resp, err := m.api.ContainerCreate(ctx,
 		&containertypes.Config{
-			Image:        m.image,
-			Cmd:          m.chromeArgs(),
+			Image:        cs.Image,
+			Cmd:          m.chromeArgs(cs),
 			Labels:       map[string]string{chromeLabel: channelID},
 			ExposedPorts: nat.PortSet{"9222/tcp": struct{}{}},
 			Hostname:     containerName,
 		},
 		&containertypes.HostConfig{
 			Resources: containertypes.Resources{
-				Memory:    m.MemoryLimitMB(ctx, channelID) * 1024 * 1024,
+				Memory:    cs.MemoryMB * 1024 * 1024,
 				CPUQuota:  50000,
 				CPUPeriod: 100000,
 			},
 			PortBindings: nat.PortMap{
 				"9222/tcp": []nat.PortBinding{{HostIP: "127.0.0.1", HostPort: "0"}},
 			},
-			Mounts: m.containerMounts(channelID),
+			Mounts: m.containerMounts(cs, channelID),
 		},
 		nil, nil, containerName,
 	)
