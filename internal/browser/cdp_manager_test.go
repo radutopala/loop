@@ -541,9 +541,10 @@ func (s *CDPManagerSuite) TestGetOrCreateAlwaysCreatesFresh() {
 
 	// GetOrCreate creates a new context from the initial client.
 	newMock := new(mockCDPSession)
+	mockClient.On("ListTabs", mock.Anything).Return([]TabInfo{{TargetID: "t-other"}}, nil)
 	mockClient.On("NewContextForTarget", "t-other").Return(newMock, nil)
 
-	got, err := mgr.GetOrCreate("t-other")
+	got, err := mgr.GetOrCreate(context.Background(), "t-other")
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), newMock, got)
 	// activeClient is updated.
@@ -580,6 +581,7 @@ func (s *CDPManagerSuite) TestGetOrCreateReusesAllocator() {
 	newMock := new(mockCDPSession)
 	newMock.On("TargetID").Return("t-new").Maybe()
 
+	existingMock.On("ListTabs", mock.Anything).Return([]TabInfo{{TargetID: "t-new"}}, nil)
 	existingMock.On("NewContextForTarget", "t-new").Return(newMock, nil)
 
 	mgr := NewCDPManager("ws://test:9222", CDPManagerConfig{
@@ -588,7 +590,7 @@ func (s *CDPManagerSuite) TestGetOrCreateReusesAllocator() {
 	}, slog.Default())
 	mgr.SetClientForTarget("t-existing", existingMock)
 
-	got, err := mgr.GetOrCreate("t-new")
+	got, err := mgr.GetOrCreate(context.Background(), "t-new")
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), newMock, got)
 	existingMock.AssertCalled(s.T(), "NewContextForTarget", "t-new")
@@ -596,12 +598,13 @@ func (s *CDPManagerSuite) TestGetOrCreateReusesAllocator() {
 
 func (s *CDPManagerSuite) TestGetOrCreateAttachError() {
 	existingMock := new(mockCDPSession)
+	existingMock.On("ListTabs", mock.Anything).Return([]TabInfo{{TargetID: "t-new"}}, nil)
 	existingMock.On("NewContextForTarget", "t-new").Return(nil, errors.New("attach failed"))
 
 	mgr := NewCDPManager("ws://test:9222", CDPManagerConfig{}, slog.Default())
 	mgr.SetClientForTarget("t-existing", existingMock)
 
-	_, err := mgr.GetOrCreate("t-new")
+	_, err := mgr.GetOrCreate(context.Background(), "t-new")
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "attaching to target t-new")
 }
@@ -609,7 +612,7 @@ func (s *CDPManagerSuite) TestGetOrCreateAttachError() {
 func (s *CDPManagerSuite) TestGetOrCreateNoExistingClient() {
 	mgr := NewCDPManager("ws://test:9222", CDPManagerConfig{}, slog.Default())
 
-	_, err := mgr.GetOrCreate("t-new")
+	_, err := mgr.GetOrCreate(context.Background(), "t-new")
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "call Connect first")
 }
@@ -726,4 +729,34 @@ func (s *CDPManagerSuite) TestEnsureLiveTargetAttachError() {
 	_, err := mgr.EnsureLiveTarget(context.Background())
 	s.ErrorContains(err, "target closed again")
 	s.Equal("t-gone", mgr.ActiveTargetID())
+}
+
+func (s *CDPManagerSuite) TestGetOrCreateTargetGone() {
+	existingMock := new(mockCDPSession)
+	existingMock.On("ListTabs", mock.Anything).Return([]TabInfo{{TargetID: "t-live"}}, nil)
+
+	mgr := NewCDPManager("ws://test:9222", CDPManagerConfig{}, slog.Default())
+	mgr.SetClientForTarget("t-live", existingMock)
+
+	_, err := mgr.GetOrCreate(context.Background(), "t-closed")
+	require.ErrorIs(s.T(), err, ErrTargetGone)
+	// Attaching to a dead target hangs rather than failing, so the point of
+	// the check is that the attach is never attempted.
+	existingMock.AssertNotCalled(s.T(), "NewContextForTarget", "t-closed")
+}
+
+func (s *CDPManagerSuite) TestGetOrCreateAttachesWhenListingFails() {
+	newMock := new(mockCDPSession)
+	existingMock := new(mockCDPSession)
+	existingMock.On("ListTabs", mock.Anything).Return([]TabInfo(nil), errors.New("no listing"))
+	existingMock.On("NewContextForTarget", "t-new").Return(newMock, nil)
+
+	mgr := NewCDPManager("ws://test:9222", CDPManagerConfig{}, slog.Default())
+	mgr.SetClientForTarget("t-existing", existingMock)
+
+	// A listing that failed says nothing about the target, so the attach goes
+	// ahead exactly as it did before the check existed.
+	got, err := mgr.GetOrCreate(context.Background(), "t-new")
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), newMock, got)
 }

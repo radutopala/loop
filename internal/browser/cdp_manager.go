@@ -2,6 +2,7 @@ package browser
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"sync"
@@ -9,6 +10,21 @@ import (
 
 	"github.com/chromedp/cdproto/cdp"
 )
+
+// ErrTargetGone reports that the tab a caller asked for is no longer open.
+// Callers that have somewhere else to go — the pane, which is already showing
+// a working tab — can tell this apart from a connection that is broken.
+var ErrTargetGone = errors.New("tab is no longer open")
+
+// hasTarget reports whether targetID is among the open page targets.
+func hasTarget(tabs []TabInfo, targetID string) bool {
+	for _, t := range tabs {
+		if t.TargetID == targetID {
+			return true
+		}
+	}
+	return false
+}
 
 // CDPManagerConfig configures a CDPManager instance.
 type CDPManagerConfig struct {
@@ -195,7 +211,13 @@ func (m *CDPManager) ActiveTargetID() string {
 // GetOrCreate creates a new CDP client for the given target by reusing the
 // browser WS connection from Connect(). Each call creates a fresh context —
 // no caching. Must be called after Connect().
-func (m *CDPManager) GetOrCreate(targetID string) (CDPSession, error) {
+//
+// A target that is no longer open is reported as ErrTargetGone instead of
+// being attached to. Attaching to a dead target does not fail, it hangs: the
+// attach sits there until its deadline, so a click on a tab whose renderer
+// was killed would freeze the pane for fifteen seconds before saying
+// anything. Chrome can answer "that tab is gone" immediately, so ask.
+func (m *CDPManager) GetOrCreate(ctx context.Context, targetID string) (CDPSession, error) {
 	m.mu.Lock()
 	initial := m.client
 	m.mu.Unlock()
@@ -204,6 +226,19 @@ func (m *CDPManager) GetOrCreate(targetID string) (CDPSession, error) {
 		return nil, fmt.Errorf("no CDP connection for target %s (call Connect first)", targetID)
 	}
 
+	// Only a listing that succeeded is evidence: if Chrome will not say what
+	// is open, attach and let the deadline decide, exactly as before.
+	if tabs, err := initial.ListTabs(ctx); err == nil && !hasTarget(tabs, targetID) {
+		return nil, fmt.Errorf("attaching to target %s: %w", targetID, ErrTargetGone)
+	}
+	return m.attach(initial, targetID)
+}
+
+// attach opens a session on targetID over the browser connection and makes it
+// the active client, with no liveness check. Callers that already know the
+// target is open use this: re-listing would cost a round-trip to learn what
+// they just saw, and a tab opened moments ago may not be listed yet.
+func (m *CDPManager) attach(initial CDPSession, targetID string) (CDPSession, error) {
 	newClient, err := initial.NewContextForTarget(targetID)
 	if err != nil {
 		return nil, fmt.Errorf("attaching to target %s: %w", targetID, err)
@@ -227,7 +262,7 @@ func (m *CDPManager) GetOrCreate(targetID string) (CDPSession, error) {
 // one, and Chrome with no tabs at all gets one.
 func (m *CDPManager) EnsureLiveTarget(ctx context.Context) (CDPSession, error) {
 	m.mu.Lock()
-	client, want := m.activeClient, m.activeTargetID
+	client, want, initial := m.activeClient, m.activeTargetID, m.client
 	m.mu.Unlock()
 
 	// No active target means there is nothing to check: the client was never
@@ -241,10 +276,8 @@ func (m *CDPManager) EnsureLiveTarget(ctx context.Context) (CDPSession, error) {
 		// evidence the target is gone.
 		return client, nil
 	}
-	for _, t := range tabs {
-		if t.TargetID == want {
-			return client, nil
-		}
+	if hasTarget(tabs, want) {
+		return client, nil
 	}
 
 	tid := ""
@@ -255,7 +288,7 @@ func (m *CDPManager) EnsureLiveTarget(ctx context.Context) (CDPSession, error) {
 	}
 
 	m.logger.Info("CDP target vanished, re-attaching", "gone_target_id", want, "target_id", tid)
-	fresh, err := m.GetOrCreate(tid)
+	fresh, err := m.attach(initial, tid)
 	if err != nil {
 		return nil, err
 	}

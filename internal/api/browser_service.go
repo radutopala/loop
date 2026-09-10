@@ -259,7 +259,7 @@ func (s *browserService) syncActiveClient(ctx context.Context, cdpMgr *browser.C
 	}
 	s.deps.logger.Info("getBrowserCDP: active tab moved, attaching",
 		"target_id", want, "attached_target_id", cached.TargetID())
-	client, err := cdpMgr.GetOrCreate(want)
+	client, err := cdpMgr.GetOrCreate(ctx, want)
 	if err != nil {
 		return nil, fmt.Errorf("attaching to active tab %s: %w", want, err)
 	}

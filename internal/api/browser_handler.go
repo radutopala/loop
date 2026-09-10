@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"net/http"
 	"sync"
@@ -471,14 +472,8 @@ func (bc *browserWSConn) pipeFrames(frameCh <-chan []byte, stream frameSender, t
 func (bc *browserWSConn) restartScreencastForTarget(ctx context.Context, _ browser.CDPSession, targetID string) {
 	bc.logger.Info("browser ws: switching target", "target_id", targetID)
 
-	// Stop the old pipeFrames goroutine.
 	bc.mu.Lock()
-	if bc.screencastStopCh != nil {
-		close(bc.screencastStopCh)
-	}
-	newStopCh := make(chan struct{})
-	bc.screencastStopCh = newStopCh
-	cdpMgr := bc.cdpMgr
+	cdpMgr, current := bc.cdpMgr, bc.cdp
 	bc.mu.Unlock()
 
 	if cdpMgr == nil {
@@ -486,13 +481,37 @@ func (bc *browserWSConn) restartScreencastForTarget(ctx context.Context, _ brows
 		return
 	}
 
-	// Get or create a CDP client for the target.
-	client, err := cdpMgr.GetOrCreate(targetID)
+	// Attach before tearing the running screencast down. A tab can die
+	// between the strip being drawn and the click on it arriving — a renderer
+	// killed for running the sidecar out of memory is enough — and stopping
+	// the stream first would blank a pane that was working in order to show a
+	// tab that no longer exists.
+	client, err := cdpMgr.GetOrCreate(ctx, targetID)
 	if err != nil {
-		bc.logger.Error("browser ws: switch target failed", "error", err)
-		bc.sendError("switch target failed: " + err.Error())
+		bc.logger.Error("browser ws: switch target failed", "target_id", targetID, "error", err)
+		if !errors.Is(err, browser.ErrTargetGone) {
+			bc.sendError("switch target failed: " + err.Error())
+			return
+		}
+		// Say what happened and redraw the strip without the tab that went
+		// away, so it stops being something the user can click again.
+		bc.sendError("that tab is no longer open")
+		if current != nil {
+			if tabs, listErr := current.ListTabs(ctx); listErr == nil {
+				bc.sendTabsResponse(tabs, current.TargetID())
+			}
+		}
 		return
 	}
+
+	// Stop the old pipeFrames goroutine.
+	bc.mu.Lock()
+	if bc.screencastStopCh != nil {
+		close(bc.screencastStopCh)
+	}
+	newStopCh := make(chan struct{})
+	bc.screencastStopCh = newStopCh
+	bc.mu.Unlock()
 
 	activeCDP := client
 
