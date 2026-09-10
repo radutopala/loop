@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { AgentInfo } from "../hooks/useAgentRegistry";
-import { type ContainerStatsByType, fmtBytes } from "../hooks/useContainerStats";
+import { type ContainerStatsByType, fmtBytes, statsForPanel } from "../hooks/useContainerStats";
 import { useTheme } from "../ThemeContext";
 import { fonts } from "../theme";
 import { type LeafNode, PANEL_LABELS, PANEL_OPTIONS, type PanelType } from "../types/panels";
@@ -66,9 +66,7 @@ export function CanvasTile({
 
   const isAgent = tile.panel === "docker-agent";
   const label = isAgent ? agentInfo?.name || tile.id : PANEL_LABELS[tile.panel];
-  // Chat runs in the channel's agent container; docker-agent tiles exec
-  // into the shared shell container (same mapping as PaneLeafHeader).
-  const statsEntry = tile.panel === "chat" ? containerStats?.agent : isAgent ? containerStats?.shell : undefined;
+  const statsEntry = statsForPanel(tile.panel, containerStats);
 
   // --- Drag (reports deltas in world coords) ---
   const handleDragStart = useCallback(
