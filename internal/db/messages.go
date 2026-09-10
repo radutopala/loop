@@ -221,6 +221,36 @@ func (s *SQLiteStore) DeleteQueuedMessage(ctx context.Context, channelID, msgID 
 	return n > 0, nil
 }
 
+// SteerQueuedMessage promotes a waiting user message to the front of the
+// channel's queue so the next claim takes it. Returns true when a row was
+// promoted, false when no matching row exists (already claimed, processed,
+// wrong channel, bot message, or never existed).
+//
+// A delayed row has its not_before pulled back to 1 rather than 0: 1 is
+// already in the past, so the claim accepts it, while staying > 0 keeps the
+// row visible to the delay poller — which is the only thing that wakes an
+// idle channel, and which ignores rows that never carried a delay.
+func (s *SQLiteStore) SteerQueuedMessage(ctx context.Context, channelID, msgID string) (bool, error) {
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE messages
+		 SET priority = COALESCE((SELECT MAX(priority) FROM messages
+		                          WHERE channel_id = ? AND is_processed = 0
+		                            AND is_triggered = 1 AND kind = 'message'), 0) + 1,
+		     not_before = MIN(not_before, 1)
+		 WHERE channel_id = ? AND msg_id = ? AND is_bot = 0 AND is_processed = 0
+		   AND is_running = 0 AND kind = 'message'`,
+		channelID, channelID, msgID,
+	)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	return n > 0, nil
+}
+
 // ListUserMessageContents returns the contents of the channel's most recent
 // user-sent chat messages in chronological order, capped at limit. It backs
 // the composer's ArrowUp history, so it deliberately excludes bot rows, agent

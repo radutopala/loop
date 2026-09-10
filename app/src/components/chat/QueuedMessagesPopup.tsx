@@ -1,5 +1,5 @@
 import { useRef, useState } from "react";
-import { deleteQueuedMessage, reorderQueuedMessages } from "../../api/loopApi";
+import { deleteQueuedMessage, reorderQueuedMessages, steerQueuedMessage } from "../../api/loopApi";
 import { useTheme } from "../../ThemeContext";
 import { fonts } from "../../theme";
 import type { Message } from "../../types";
@@ -9,13 +9,18 @@ import { DelayCountdown } from "./DelayCountdown";
 interface QueuedMessagesPopupProps {
   messages: Message[];
   channelId: string;
+  // Steering only means something while a turn is in flight — with the channel
+  // idle the queue is already draining, so the row would just be reordering
+  // itself. The button is hidden rather than disabled to keep the row quiet.
+  isRunning?: boolean;
 }
 
-export function QueuedMessagesPopup({ messages, channelId }: QueuedMessagesPopupProps) {
+export function QueuedMessagesPopup({ messages, channelId, isRunning }: QueuedMessagesPopupProps) {
   const { colors } = useTheme();
   const [expanded, setExpanded] = useState(false);
   const [expandedRowIds, setExpandedRowIds] = useState<Set<string>>(new Set());
   const [deletingIds, setDeletingIds] = useState<Set<string>>(new Set());
+  const [steeringIds, setSteeringIds] = useState<Set<string>>(new Set());
   const [copiedIds, setCopiedIds] = useState<Set<string>>(new Set());
   const [order, setOrder] = useState<string[] | null>(null);
   // The row the cursor is over while dragging, plus which edge the dragged item
@@ -48,6 +53,24 @@ export function QueuedMessagesPopup({ messages, channelId }: QueuedMessagesPopup
         return next;
       });
     }, 1200);
+  };
+
+  // Steering stops the run and hands the agent this row next. The local order
+  // is updated too: the backend has already re-prioritised it, and without this
+  // the row would keep its old position until the queue refetches.
+  const handleSteer = async (msgId: string) => {
+    setSteeringIds((prev) => new Set(prev).add(msgId));
+    try {
+      await steerQueuedMessage(channelId, msgId);
+      setOrder([msgId, ...displayed.map((m) => m.msg_id).filter((id) => id !== msgId)]);
+    } catch {
+      // Leave the row where it is — the queue is unchanged if the call failed.
+    }
+    setSteeringIds((prev) => {
+      const next = new Set(prev);
+      next.delete(msgId);
+      return next;
+    });
   };
 
   const handleDelete = async (msgId: string) => {
@@ -108,13 +131,33 @@ export function QueuedMessagesPopup({ messages, channelId }: QueuedMessagesPopup
   };
 
   return (
-    <div style={{ display: "flex", justifyContent: "center", padding: "4px 24px 0" }}>
+    <div
+      style={{
+        display: "flex",
+        justifyContent: "center",
+        padding: "0 24px",
+        // Cancel the input bar's 12px top padding so the card's bottom edge
+        // meets the composer's top edge with no seam — the queue is meant to
+        // read as one surface continuing into the input, not a separate card.
+        marginBottom: -12,
+      }}
+    >
       <div
         style={{
           width: "100%",
-          maxWidth: 768,
-          borderRadius: 8,
-          border: `1px solid ${colors.border}`,
+          // Inset 12px per side from the composer's 768 so the queue sits *on
+          // top of* the input rather than flush with it — the stacked look the
+          // card is copying. Rounded on top only; the bottom runs into the
+          // composer, and its side borders line up with nothing below on
+          // purpose.
+          maxWidth: 744,
+          borderRadius: "12px 12px 0 0",
+          overflow: "hidden",
+          // Dashed, and a shade brighter than the composer's solid border, so
+          // the queue tray stays legible as its own thing even though it runs
+          // into the input below it.
+          border: `1px dashed ${colors.inputBorder}`,
+          borderBottom: "none",
           backgroundColor: colors.surface,
           fontFamily: fonts.mono,
           fontSize: 12,
@@ -127,7 +170,7 @@ export function QueuedMessagesPopup({ messages, channelId }: QueuedMessagesPopup
             display: "flex",
             alignItems: "center",
             justifyContent: "space-between",
-            padding: "8px 14px",
+            padding: "8px 18px",
             background: "none",
             border: "none",
             color: colors.textMuted,
@@ -160,8 +203,7 @@ export function QueuedMessagesPopup({ messages, channelId }: QueuedMessagesPopup
                     display: "flex",
                     alignItems: "flex-start",
                     gap: 8,
-                    padding: "6px 14px",
-                    borderBottom: `1px solid ${colors.border}`,
+                    padding: "6px 18px",
                     opacity: isDeleting ? 0.5 : 1,
                     boxShadow: dropTarget && dropTarget.id === msg.msg_id ? (dropTarget.pos === "before" ? `inset 0 2px 0 0 ${colors.active}` : `inset 0 -2px 0 0 ${colors.active}`) : undefined,
                   }}
@@ -212,6 +254,40 @@ export function QueuedMessagesPopup({ messages, channelId }: QueuedMessagesPopup
                     {msg.content}
                   </button>
                   {msg.not_before ? <DelayCountdown notBefore={msg.not_before} /> : null}
+                  {isRunning ? (
+                    <button
+                      onClick={() => handleSteer(msg.msg_id)}
+                      disabled={steeringIds.has(msg.msg_id) || isDeleting}
+                      title="Stop the agent and send this next"
+                      style={{
+                        flexShrink: 0,
+                        display: "flex",
+                        alignItems: "center",
+                        gap: 3,
+                        height: 20,
+                        padding: "0 4px",
+                        background: "none",
+                        border: "none",
+                        color: colors.textDim,
+                        cursor: steeringIds.has(msg.msg_id) ? "default" : "pointer",
+                        fontFamily: fonts.mono,
+                        fontSize: 11,
+                        borderRadius: 4,
+                      }}
+                      onMouseEnter={(e) => {
+                        if (!steeringIds.has(msg.msg_id)) e.currentTarget.style.color = colors.textLight;
+                      }}
+                      onMouseLeave={(e) => {
+                        e.currentTarget.style.color = colors.textDim;
+                      }}
+                    >
+                      <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                        <polyline points="15 10 20 15 15 20" />
+                        <path d="M4 4v7a4 4 0 0 0 4 4h12" />
+                      </svg>
+                      Steer
+                    </button>
+                  ) : null}
                   <button
                     onClick={() => handleCopy(msg.msg_id, msg.content)}
                     title={copiedIds.has(msg.msg_id) ? "Copied" : "Copy to clipboard"}

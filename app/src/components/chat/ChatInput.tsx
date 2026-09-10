@@ -10,7 +10,7 @@ import type { Message } from "../../types";
 import { firstClipboardImage, uploadPastedImage } from "../../utils/clipboardImage";
 import { storageGetJSON, storageSetJSON } from "../../utils/storage";
 import { AgentConfigPill } from "./AgentConfigPill";
-import { chooseSendRoute, type SendMode } from "./sendRouting";
+import { chooseSendRoute, normalizeSendMode, type SendMode } from "./sendRouting";
 
 // Draft text per channel — persisted to localStorage across app restarts.
 const DRAFT_KEY = "loop-chat-drafts";
@@ -223,7 +223,7 @@ export interface ChatInputProps {
   quotedMessage?: Message | null;
   onClearQuote?: () => void;
   // When a gate approval popup is showing, sending a message auto-denies the
-  // gate, interrupts the resumed run, and queues the user's text — same flow
+  // gate, stops the resumed run, and queues the user's text — same flow
   // as ApprovalCard's "Deny with prompt".
   pendingGateReqId?: string | null;
   // When an ExitPlanMode card is parked on this channel, sending a free-text
@@ -279,7 +279,7 @@ export function ChatInput({
   const [showShortcuts, setShowShortcuts] = useState(false);
   const [filteredShortcuts, setFilteredShortcuts] = useState<PromptShortcut[]>([]);
   const [shortcutSelectedIdx, setShortcutSelectedIdx] = useState(0);
-  const [sendMode, setSendMode] = useState<SendMode>(() => (storageGetJSON<string>(SEND_MODE_KEY) as SendMode) || "queue");
+  const [sendMode, setSendMode] = useState<SendMode>(() => normalizeSendMode(storageGetJSON<string>(SEND_MODE_KEY)));
   const [showSendMenu, setShowSendMenu] = useState(false);
   // Optimistic stop: flip to true on stop press, so the UI updates instantly
   // without waiting for the backend round-trip. Reset when isRunning prop changes.
@@ -465,14 +465,14 @@ export function ChatInput({
           await resolvePlan(channelId, "deny", content, mode);
           return;
         case "gate":
-          // Auto-deny the pending approval and force interrupt — same shape as
+          // Auto-deny the pending approval and force a steer — same shape as
           // ApprovalCard's "Deny with prompt".
           await resolveGateApproval(route.reqId, "deny");
           await sendMessage(channelId, content, mode, true);
           onDismissGate?.();
           return;
         case "message":
-          await sendMessage(channelId, content, mode, route.interrupt || undefined);
+          await sendMessage(channelId, content, mode, route.steer || undefined);
       }
     },
     [channelId, mode, sendMode, effectiveIsRunning, hasPendingAskUser, hasPendingExitPlan, pendingGateReqId, onDismissGate],
@@ -829,7 +829,7 @@ export function ChatInput({
       if (e.key === "Enter" && !e.shiftKey) {
         e.preventDefault();
         if (e.metaKey || e.ctrlKey) {
-          handleSend(sendMode === "interrupt" ? "queue" : "interrupt");
+          handleSend(sendMode === "steer" ? "queue" : "steer");
         } else {
           handleSend();
         }
@@ -980,7 +980,7 @@ export function ChatInput({
         onChange={handleChange}
         onKeyDown={handleKeyDown}
         onPaste={handlePaste}
-        placeholder={`Ask Loop anything, / for commands, @ for files${shortcuts.length > 0 ? ", # for shortcuts" : ""} — ${navigator.platform.includes("Mac") ? "⌘" : "Ctrl+"}Enter to ${sendMode === "interrupt" ? "queue" : "interrupt"}`}
+        placeholder={`Ask Loop anything, / for commands, @ for files${shortcuts.length > 0 ? ", # for shortcuts" : ""} — ${navigator.platform.includes("Mac") ? "⌘" : "Ctrl+"}Enter to ${sendMode === "steer" ? "queue" : "steer"}`}
         rows={3}
         disabled={sending}
       />
@@ -1062,7 +1062,7 @@ export function ChatInput({
               }}
               onClick={() => handleSend()}
               disabled={!text.trim() || sending}
-              title={`${sendMode === "interrupt" ? "Send (interrupt)" : "Send (queue)"} — ${navigator.platform.includes("Mac") ? "⌘" : "Ctrl+"}Enter to ${sendMode === "interrupt" ? "queue" : "interrupt"}`}
+              title={`${sendMode === "steer" ? "Send (steer)" : "Send (queue)"} — ${navigator.platform.includes("Mac") ? "⌘" : "Ctrl+"}Enter to ${sendMode === "steer" ? "queue" : "steer"}`}
             >
               <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
                 <path d="M8 14V2M8 2L3 7M8 2L13 7" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
@@ -1092,7 +1092,7 @@ export function ChatInput({
             onClick={() => setShowSendMenu((prev) => !prev)}
             title={`Send mode — ${navigator.platform.includes("Mac") ? "⌘" : "Ctrl+"}Enter sends with the other mode once`}
           >
-            {sendMode === "interrupt" ? "INT" : "Q"}
+            {sendMode === "steer" ? "STEER" : "QUEUE"}
             <svg width="8" height="8" viewBox="0 0 8 8" fill="none">
               <path d="M1.5 3L4 5.5L6.5 3" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
             </svg>
@@ -1118,7 +1118,7 @@ export function ChatInput({
                 {(
                   [
                     ["queue", "Queue", "Messages wait for the agent to finish"],
-                    ["interrupt", "Interrupt", "Stop the agent, then send"],
+                    ["steer", "Steer", "Stop the agent, then send"],
                   ] as const
                 ).map(([key, label, desc]) => (
                   <button

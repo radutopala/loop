@@ -141,6 +141,39 @@ func (s *Server) handleReorderQueuedMessages(w http.ResponseWriter, r *http.Requ
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// handleSteerQueuedMessage promotes one queued message to the front of the
+// channel's queue and stops the active run so the agent picks it up now
+// instead of when the current turn finishes. It is the per-row equivalent of
+// the composer's interrupt mode: the cancelled run's session is resumed on the
+// next turn, so steering redirects the work rather than discarding it.
+//
+// Promote-then-cancel, in that order, for the same reason the interrupt branch
+// does it: cancelling first leaves a window where the dying run's drain can
+// claim an older row ahead of the steered one.
+func (s *Server) handleSteerQueuedMessage(w http.ResponseWriter, r *http.Request) {
+	if !requireConfigured(w, s.store, "queued message steering not configured") {
+		return
+	}
+
+	channelID := r.PathValue("id")
+	msgID := r.PathValue("msg_id")
+
+	steered, err := s.store.SteerQueuedMessage(r.Context(), channelID, msgID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if !steered {
+		http.Error(w, "not found or already running", http.StatusNotFound)
+		return
+	}
+
+	if s.runCanceller != nil {
+		s.runCanceller.CancelActiveRun(channelID)
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
 const defaultMessageLimit = 50
 
 // maxMessageLimit is the upper bound for the limit query parameter.

@@ -1,5 +1,17 @@
 /** How the composer delivers text while a run is active. */
-export type SendMode = "queue" | "interrupt";
+export type SendMode = "queue" | "steer";
+
+/**
+ * Reads a persisted send mode, tolerating the name this mode used to have.
+ *
+ * "steer" was called "interrupt" until the queue grew its own per-row steer
+ * action and the two had to read as the same thing. Anyone who picked the mode
+ * before that has "interrupt" in local storage; without this they would be
+ * silently dropped back to queueing.
+ */
+export function normalizeSendMode(stored: unknown): SendMode {
+  return stored === "steer" || stored === "interrupt" ? "steer" : "queue";
+}
 
 /**
  * Where a composer send has to go.
@@ -14,7 +26,7 @@ export type SendMode = "queue" | "interrupt";
  * to send instead of deciding for itself, so no path can grow its own idea of
  * what a parked channel means.
  */
-export type SendRoute = { kind: "ask" } | { kind: "plan" } | { kind: "gate"; reqId: string } | { kind: "message"; interrupt: boolean };
+export type SendRoute = { kind: "ask" } | { kind: "plan" } | { kind: "gate"; reqId: string } | { kind: "message"; steer: boolean };
 
 export interface SendRouteInput {
   /** Channel is parked on an AskUserQuestion card. */
@@ -35,5 +47,5 @@ export function chooseSendRoute({ hasPendingAskUser, hasPendingExitPlan, pending
   if (hasPendingAskUser) return { kind: "ask" };
   if (hasPendingExitPlan) return { kind: "plan" };
   if (pendingGateReqId) return { kind: "gate", reqId: pendingGateReqId };
-  return { kind: "message", interrupt: Boolean(isRunning) && sendMode === "interrupt" };
+  return { kind: "message", steer: Boolean(isRunning) && sendMode === "steer" };
 }

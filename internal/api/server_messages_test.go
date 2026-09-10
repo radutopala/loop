@@ -313,6 +313,66 @@ func (s *ServerSuite) TestReorderQueuedMessagesNotConfigured() {
 	require.Equal(s.T(), http.StatusNotImplemented, rec.Code)
 }
 
+func (s *ServerSuite) TestSteerQueuedMessageSuccess() {
+	canceller := new(MockRunCanceller)
+	s.srv.SetRunCanceller(canceller)
+
+	// Same ordering rule as the interrupt send: the row is promoted before the
+	// run is cancelled, so the dying run's drain cannot claim an older row
+	// ahead of the steered one.
+	var order []string
+	s.store.On("SteerQueuedMessage", mock.Anything, "ch-1", "msg-7").
+		Run(func(_ mock.Arguments) { order = append(order, "promote") }).Return(true, nil)
+	canceller.On("CancelActiveRun", "ch-1").
+		Run(func(_ mock.Arguments) { order = append(order, "cancel") }).Return(true)
+
+	rec := s.testRequest("POST", "/api/channels/ch-1/queued/msg-7/steer", "")
+	require.Equal(s.T(), http.StatusNoContent, rec.Code)
+	require.Equal(s.T(), []string{"promote", "cancel"}, order)
+	s.store.AssertExpectations(s.T())
+	canceller.AssertExpectations(s.T())
+}
+
+func (s *ServerSuite) TestSteerQueuedMessageNoCanceller() {
+	// runCanceller is nil — the promotion still stands and nothing panics.
+	s.store.On("SteerQueuedMessage", mock.Anything, "ch-1", "msg-7").Return(true, nil)
+
+	rec := s.testRequest("POST", "/api/channels/ch-1/queued/msg-7/steer", "")
+	require.Equal(s.T(), http.StatusNoContent, rec.Code)
+	s.store.AssertExpectations(s.T())
+}
+
+func (s *ServerSuite) TestSteerQueuedMessageNotFound() {
+	canceller := new(MockRunCanceller)
+	s.srv.SetRunCanceller(canceller)
+	s.store.On("SteerQueuedMessage", mock.Anything, "ch-1", "gone").Return(false, nil)
+
+	rec := s.testRequest("POST", "/api/channels/ch-1/queued/gone/steer", "")
+	require.Equal(s.T(), http.StatusNotFound, rec.Code)
+	// A row that was never promoted must not cost the user their running turn.
+	canceller.AssertNotCalled(s.T(), "CancelActiveRun", "ch-1")
+	s.store.AssertExpectations(s.T())
+}
+
+func (s *ServerSuite) TestSteerQueuedMessageError() {
+	s.store.On("SteerQueuedMessage", mock.Anything, "ch-1", "msg-7").Return(false, errors.New("boom"))
+
+	rec := s.testRequest("POST", "/api/channels/ch-1/queued/msg-7/steer", "")
+	require.Equal(s.T(), http.StatusInternalServerError, rec.Code)
+	s.store.AssertExpectations(s.T())
+}
+
+func (s *ServerSuite) TestSteerQueuedMessageNotConfigured() {
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	srv := NewServer(nil, nil, nil, nil, nil, logger)
+	mux := http.NewServeMux()
+	mux.HandleFunc("POST /api/channels/{id}/queued/{msg_id}/steer", srv.handleSteerQueuedMessage)
+	req := httptest.NewRequest("POST", "/api/channels/ch-1/queued/msg-7/steer", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	require.Equal(s.T(), http.StatusNotImplemented, rec.Code)
+}
+
 func (s *ServerSuite) TestSetIncomingMessageHandler() {
 	require.Nil(s.T(), s.srv.msgHandler)
 

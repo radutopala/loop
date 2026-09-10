@@ -35,6 +35,7 @@ type Store interface {
 	InsertMessage(ctx context.Context, msg *Message) error
 	MarkMessagesProcessed(ctx context.Context, ids []int64) error
 	DeleteQueuedMessage(ctx context.Context, channelID, msgID string) (bool, error)
+	SteerQueuedMessage(ctx context.Context, channelID, msgID string) (bool, error)
 	ClaimNextPending(ctx context.Context, channelID string) (*Message, error)
 	ChannelsWithDueDelayedMessages(ctx context.Context) ([]string, error)
 	ReleaseRunningMessage(ctx context.Context, id int64, processed bool) error

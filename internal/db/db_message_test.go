@@ -117,6 +117,46 @@ func (s *StoreSuite) TestDeleteQueuedMessageRowsAffectedError() {
 	require.False(s.T(), ok)
 }
 
+func (s *StoreSuite) TestSteerQueuedMessage() {
+	s.mock.ExpectExec(`UPDATE messages\s+SET priority = COALESCE`).
+		WithArgs("ch1", "ch1", "msg-queued").
+		WillReturnResult(sqlmock.NewResult(0, 1))
+
+	ok, err := s.store.SteerQueuedMessage(context.Background(), "ch1", "msg-queued")
+	require.NoError(s.T(), err)
+	require.True(s.T(), ok)
+}
+
+func (s *StoreSuite) TestSteerQueuedMessageNotFound() {
+	s.mock.ExpectExec(`UPDATE messages`).
+		WithArgs("ch1", "ch1", "missing").
+		WillReturnResult(sqlmock.NewResult(0, 0))
+
+	ok, err := s.store.SteerQueuedMessage(context.Background(), "ch1", "missing")
+	require.NoError(s.T(), err)
+	require.False(s.T(), ok)
+}
+
+func (s *StoreSuite) TestSteerQueuedMessageExecError() {
+	s.mock.ExpectExec(`UPDATE messages`).
+		WithArgs("ch1", "ch1", "msg1").
+		WillReturnError(sql.ErrConnDone)
+
+	ok, err := s.store.SteerQueuedMessage(context.Background(), "ch1", "msg1")
+	require.Error(s.T(), err)
+	require.False(s.T(), ok)
+}
+
+func (s *StoreSuite) TestSteerQueuedMessageRowsAffectedError() {
+	s.mock.ExpectExec(`UPDATE messages`).
+		WithArgs("ch1", "ch1", "msg1").
+		WillReturnResult(sqlmock.NewErrorResult(sql.ErrConnDone))
+
+	ok, err := s.store.SteerQueuedMessage(context.Background(), "ch1", "msg1")
+	require.Error(s.T(), err)
+	require.False(s.T(), ok)
+}
+
 func (s *StoreSuite) TestReorderQueuedMessages() {
 	s.mock.ExpectBegin()
 	// First id gets the highest priority (n-i), in a single write transaction.

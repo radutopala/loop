@@ -285,23 +285,23 @@ The active segment has white background with black text; inactive has transparen
 |--------|---------|
 | Send message | Press `Enter` (without Shift) |
 | New line | Press `Shift+Enter` |
-| Send with opposite mode (Queue ↔ Interrupt) | `⌘+Enter` on macOS / `Ctrl+Enter` elsewhere — flips the active send mode for this send only without changing the persisted preference |
+| Send with opposite mode (Queue ↔ Steer) | `⌘+Enter` on macOS / `Ctrl+Enter` elsewhere — flips the active send mode for this send only without changing the persisted preference |
 | Stop running agent | Click the Stop button (square icon with `colors.textDim` border) |
 
 The send button:
-- **Not running:** White circle with up-arrow icon. Disabled (40% opacity) when textarea is empty. A small `Q` or `INT` chip on the button indicates the active send mode.
+- **Not running:** White circle with up-arrow icon. Disabled (40% opacity) when textarea is empty. A small `QUEUE` or `STEER` chip on the button indicates the active send mode.
 - **Running:** Transparent with dimmed border, contains a filled square (stop) icon. Pressing **Stop** is optimistic — the UI flips to "not running" immediately and re-syncs when `agent.status` lands.
 
 After sending, the textarea is cleared and re-focused via `requestAnimationFrame`.
 
-### Send Mode (Queue vs Interrupt)
+### Send Mode (Queue vs Steer)
 
 While the agent is running, a small chip beside the send button selects what `Enter` does. Click the chip to flip between the two modes; the choice is persisted in `localStorage` under `loop-send-mode`.
 
 | Mode | Behavior |
 |------|----------|
-| **Queue** (default, `Q`) | Message is appended to the queue and processed when the current run finishes. |
-| **Interrupt** (`INT`) | Cancels the active run and sends the message with `interrupt=true`. The server inserts it at `priority = MaxQueuedPriority + 1` so it claims the next slot ahead of any already-queued rows; queued rows are preserved (not deleted). |
+| **Queue** (default, `QUEUE`) | Message is appended to the queue and processed when the current run finishes. |
+| **Steer** (`STEER`) | Cancels the active run and sends the message with `interrupt=true` (the wire field kept its original name). The server inserts it at `priority = MaxQueuedPriority + 1` so it claims the next slot ahead of any already-queued rows; queued rows are preserved (not deleted). The cancelled run's session is resumed on the next turn, so steering redirects the work rather than discarding it. |
 
 `⌘/Ctrl+Enter` sends with the opposite mode for one send only (it does not persist). The button tooltip and placeholder reflect the active mode and the keyboard hint at all times.
 
@@ -637,8 +637,9 @@ A `QueuedMessagesPopup` component (`src/components/chat/QueuedMessagesPopup.tsx`
 - **List source** — the rows shown come from `chatState.queuedMessages`, which is the [`GET /api/channels/{id}/queued`](api.md#get-apichannelsidqueued) response with the in-flight `processingMsgId` row filtered out. The list is independent of how many pages of chat history are loaded.
 - **Collapsible header** — shows `N queued` with a chevron. Click to expand the list.
 - **Row layout** — one line per message, truncated with ellipsis. Clicking a row toggles an inline expanded view (full content, pre-wrapped). A delayed row also shows a live [`⏱` countdown](#delay-countdown) between the content and the copy button.
+- **Steer button** — shown on each row only while a run is active, since with the channel idle the queue is already draining and steering would just be a reorder. It calls `POST /api/channels/{id}/queued/{msg_id}/steer` via the `steerQueuedMessage` API client, which promotes the row to the front of the queue and cancels the active run — the per-row equivalent of the composer's steer send mode. The row moves to the top of the local list immediately, since the backend has already re-prioritised it.
 - **Delete button** — a `×` button on each row calls `DELETE /api/messages/{msg_id}?channel_id=...` via the `deleteQueuedMessage` API client. The row dims while the request is in flight; the server broadcasts a `message.deleted` WebSocket event, which both removes the row from the local timeline and re-fetches the queue. Deleting a queued row is safe even mid-run — `ClaimNextPending` only sees `is_running=0 AND is_processed=0` rows, so the deletion lands before the row can be claimed.
-- **Safety** — the row identified by `processingMsgId` (see [Processing State](#processing-state)) is filtered out of the popup. Use the existing stop button to cancel an in-flight run, or "Deny with prompt" on a gate card to interrupt with a new prompt that runs ahead of the queue without dropping queued rows.
+- **Safety** — the row identified by `processingMsgId` (see [Processing State](#processing-state)) is filtered out of the popup, and the backend refuses to steer a claimed row, so neither path can re-prioritise the message the agent is already running. Use the existing stop button to cancel an in-flight run without queueing anything, or "Deny with prompt" on a gate card to steer with a new prompt that runs ahead of the queue without dropping queued rows.
 
 ---
 
