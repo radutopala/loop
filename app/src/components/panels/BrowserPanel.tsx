@@ -5,6 +5,7 @@ import { useTheme } from "../../ThemeContext";
 import { storageGet, storageSet } from "../../utils/storage";
 import { type BrowserInput, createFrameRenderer, createInputCoalescer } from "./browserStream";
 import { normalizeNavigateUrl } from "./browserUrl";
+import { CookieImportDialog } from "./CookieImportDialog";
 
 interface BrowserPanelProps {
   channelId: string;
@@ -29,6 +30,8 @@ export function BrowserPanel({ channelId, fixedMode }: BrowserPanelProps) {
   const [url, setUrl] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [hoveredTab, setHoveredTab] = useState<string | null>(null);
+  const [showCookieImport, setShowCookieImport] = useState(false);
+  const [importNotice, setImportNotice] = useState<string | null>(null);
   const [browserMode, setBrowserMode] = useState<"docker" | "host">(() => {
     if (fixedMode) return fixedMode;
     const saved = storageGet(`browserMode:${channelId}`);
@@ -109,6 +112,17 @@ export function BrowserPanel({ channelId, fixedMode }: BrowserPanelProps) {
       }
     });
   }, [channelId, browserMode, stopBrowser, startBrowser]);
+
+  const handleCookiesImported = useCallback(
+    (count: number) => {
+      setShowCookieImport(false);
+      // Cookies only take effect on the next load of the page that owns them.
+      reload();
+      setImportNotice(`Imported ${count} cookie${count === 1 ? "" : "s"}`);
+      setTimeout(() => setImportNotice(null), 4000);
+    },
+    [reload],
+  );
 
   const handleProfileReset = useCallback(() => {
     if (!window.confirm("Reset the browser profile? The agent will be signed out of every site it has logged into.")) return;
@@ -270,9 +284,19 @@ export function BrowserPanel({ channelId, fixedMode }: BrowserPanelProps) {
         {/* Docker / Host mode toggle pill — hidden when fixedMode is set */}
         {!fixedMode && <ModePill mode={browserMode} onToggle={handleModeToggle} colors={colors} />}
 
-        {/* Profile reset — docker mode only; host mode uses the user's own Chrome profile */}
-        {browserMode === "docker" && fixedMode !== "host" && <ResetProfileButton onReset={handleProfileReset} colors={colors} />}
+        {/* Cookie import and profile reset — docker mode only; host mode
+            already runs on the user's own Chrome profile, cookies included */}
+        {browserMode === "docker" && fixedMode !== "host" && (
+          <>
+            <ToolbarButton onClick={() => setShowCookieImport(true)} title="Import cookies from your own browser" label="Import cookies" colors={colors} />
+            <ToolbarButton onClick={handleProfileReset} title="Reset browser profile (signs the agent out everywhere)" label="Reset profile" colors={colors} />
+          </>
+        )}
       </div>
+
+      {showCookieImport && <CookieImportDialog channelId={channelId} onClose={() => setShowCookieImport(false)} onImported={handleCookiesImported} />}
+
+      {importNotice && <div style={{ padding: "4px 12px", fontSize: 11, color: colors.textDim, borderBottom: `1px solid ${colors.border}` }}>{importNotice}</div>}
 
       {/* Error bar */}
       {error && (
@@ -331,12 +355,12 @@ export function BrowserPanel({ channelId, fixedMode }: BrowserPanelProps) {
 
 /* ---------- sub-components ---------- */
 
-function ResetProfileButton({ onReset, colors }: { onReset: () => void; colors: { textDim: string } }) {
+function ToolbarButton({ onClick, title, label, colors }: { onClick: () => void; title: string; label: string; colors: { textDim: string } }) {
   return (
     <button
-      onClick={onReset}
-      title="Reset browser profile (signs the agent out everywhere)"
-      aria-label="Reset browser profile"
+      onClick={onClick}
+      title={title}
+      aria-label={label}
       style={{
         display: "flex",
         alignItems: "center",
@@ -353,7 +377,7 @@ function ResetProfileButton({ onReset, colors }: { onReset: () => void; colors: 
         flexShrink: 0,
       }}
     >
-      Reset profile
+      {label}
     </button>
   );
 }

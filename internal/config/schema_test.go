@@ -105,6 +105,19 @@ func (s *SchemaSuite) TestBrowserNestedObject() {
 	require.Equal(s.T(), "loop-chrome:latest", chromeImage.XPlaceholder)
 }
 
+// The settings UI renders straight off the schema, so a field missing here
+// is a field the user cannot set without hand-editing config.json.
+func (s *SchemaSuite) TestCookieImportNestedObject() {
+	prop := GlobalConfigSchema().Properties["browser"].Properties["cookie_import"]
+	require.NotNil(s.T(), prop)
+	require.Equal(s.T(), "object", prop.Type)
+	for _, key := range []string{"source", "domains", "sensitive_domains", "auto"} {
+		require.Contains(s.T(), prop.Properties, key)
+	}
+	require.Equal(s.T(), "string", prop.Properties["domains"].Items.Type)
+	require.Equal(s.T(), false, prop.Properties["auto"].Default)
+}
+
 func (s *SchemaSuite) TestPlaygroundShareNestedObject() {
 	prop := GlobalConfigSchema().Properties["playground_share"]
 	require.NotNil(s.T(), prop)

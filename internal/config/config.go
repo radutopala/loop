@@ -118,6 +118,17 @@ type jsonBrowserConfig struct {
 	HostCDPPort    *int     `json:"host_cdp_port"`
 	PersistProfile *bool    `json:"persist_profile"`
 	Extensions     []string `json:"extensions"`
+
+	CookieImport *jsonCookieImportConfig `json:"cookie_import"`
+}
+
+// jsonCookieImportConfig is the JSON representation of the
+// browser.cookie_import block.
+type jsonCookieImportConfig struct {
+	Source           string   `json:"source"`
+	Domains          []string `json:"domains"`
+	SensitiveDomains []string `json:"sensitive_domains"`
+	Auto             *bool    `json:"auto"`
 }
 
 // jsonAgentRetryConfig is the JSON representation of the claude_retry block.
@@ -285,6 +296,14 @@ func (l *Loader) parse() (*Config, error) {
 		cfg.Browser.HostCDPPort = ptrDefault(jc.Browser.HostCDPPort, 9222)
 		cfg.Browser.PersistProfile = ptrDefault(jc.Browser.PersistProfile, true)
 		cfg.Browser.Extensions = jc.Browser.Extensions
+		if ci := jc.Browser.CookieImport; ci != nil {
+			cfg.Browser.CookieImport = CookieImportConfig{
+				Source:           ci.Source,
+				Domains:          ci.Domains,
+				SensitiveDomains: ci.SensitiveDomains,
+				Auto:             ptrDefault(ci.Auto, false),
+			}
+		}
 	}
 
 	// Agent retry: backoff policy for transient API errors. Defaults applied

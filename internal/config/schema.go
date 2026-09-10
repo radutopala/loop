@@ -234,6 +234,37 @@ func buildSchema() *ConfigSchema {
 						Description: "Host directories holding unpacked Chrome extensions to load into the sidecar. Empty runs Chrome with extensions disabled.",
 						Items:       &SchemaProperty{Type: "string"},
 					},
+					"cookie_import": {
+						Type:     "object",
+						Title:    "Cookie Import",
+						XSection: "Browser",
+						Properties: map[string]*SchemaProperty{
+							"source": {
+								Type:         "string",
+								Title:        "Source Profile",
+								Description:  "Browser profile to import cookies from, e.g. chrome:Default",
+								XPlaceholder: "chrome:Default",
+							},
+							"domains": {
+								Type:        "array",
+								Title:       "Domains",
+								Description: "Cookie scopes to bring over, exactly as shown in the picker",
+								Items:       &SchemaProperty{Type: "string"},
+							},
+							"sensitive_domains": {
+								Type:        "array",
+								Title:       "Sensitive Domains",
+								Description: "Extra sites that stay unchecked by default in the picker",
+								Items:       &SchemaProperty{Type: "string"},
+							},
+							"auto": {
+								Type:        "boolean",
+								Title:       "Auto Import",
+								Description: "Re-import the chosen cookies into every new sidecar",
+								Default:     false,
+							},
+						},
+					},
 				},
 			},
 

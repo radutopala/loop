@@ -126,6 +126,9 @@ func (m *mockCDPSession) NewContextForTarget(targetID string) (CDPSession, error
 	c, _ := a.Get(0).(CDPSession)
 	return c, a.Error(1)
 }
+func (m *mockCDPSession) SetCookies(ctx context.Context, cookies []Cookie) error {
+	return m.Called(ctx, cookies).Error(0)
+}
 
 type CDPManagerSuite struct {
 	suite.Suite

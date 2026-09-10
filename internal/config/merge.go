@@ -267,6 +267,7 @@ func (l *Loader) loadProjectConfig(workDir string, mainConfig *Config) (*Config,
 		if pc.Browser.Extensions != nil {
 			merged.Browser.Extensions = pc.Browser.Extensions
 		}
+		mergeCookieImport(&merged.Browser.CookieImport, pc.Browser.CookieImport)
 	}
 
 	// Quality config: project overrides global per-key. Rules merge by
@@ -516,4 +517,25 @@ func (l *Loader) loadProjectConfig(workDir string, mainConfig *Config) (*Config,
 	}
 
 	return &merged, nil
+}
+
+// mergeCookieImport applies a project-level browser.cookie_import block over
+// the global one, per key: a project that only sets "auto" keeps the global
+// source and domain list.
+func mergeCookieImport(merged *CookieImportConfig, pc *jsonCookieImportConfig) {
+	if pc == nil {
+		return
+	}
+	if pc.Source != "" {
+		merged.Source = pc.Source
+	}
+	if pc.Domains != nil {
+		merged.Domains = pc.Domains
+	}
+	if pc.SensitiveDomains != nil {
+		merged.SensitiveDomains = pc.SensitiveDomains
+	}
+	if pc.Auto != nil {
+		merged.Auto = *pc.Auto
+	}
 }

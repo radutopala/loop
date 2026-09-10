@@ -236,6 +236,28 @@ type BrowserConfig struct {
 	// opens a native file picker, and neither is reachable through the
 	// screencast, which only streams the page.
 	Extensions []string
+
+	// CookieImport configures importing cookies out of the user's own
+	// browser into a channel's sidecar. loop never writes this block back —
+	// the panel remembers the last picker selection client-side so hand-
+	// written HJSON comments survive.
+	CookieImport CookieImportConfig
+}
+
+// CookieImportConfig controls the browser cookie import.
+type CookieImportConfig struct {
+	// Source is the browser profile to import from, e.g. "chrome:Default".
+	Source string
+	// Domains lists the cookie scopes to bring over, matched exactly against
+	// the scope shown in the picker (a leading dot is ignored).
+	Domains []string
+	// SensitiveDomains extends the built-in list of sites that stay
+	// unchecked by default, for a regional bank the list has never heard of.
+	SensitiveDomains []string
+	// Auto re-imports Source/Domains into every new sidecar. Off by default:
+	// moving credentials around while nobody is watching deserves an
+	// explicit opt-in.
+	Auto bool
 }
 
 // AgentRetryConfig controls automatic backoff-retry of batch agent runs that
