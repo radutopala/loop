@@ -261,30 +261,71 @@ func resolveBrowserWSURL(wsURL string, logger *slog.Logger) string {
 	return v.WebSocketDebuggerURL
 }
 
+// devtoolsTarget is the part of a /json/list entry loop reads. The list is
+// Chrome's own view of its targets and carries one thing CDP does not offer:
+// the favicon the tab is showing.
+type devtoolsTarget struct {
+	Type       string `json:"type"`
+	ID         string `json:"id"`
+	FaviconURL string `json:"faviconUrl"`
+}
+
+// devtoolsTargets fetches Chrome's /json/list for the browser behind wsURL.
+//
+// Direct, never through a proxy, for the reason spelled out on
+// resolveBrowserWSURL: this is a loopback request to a sidecar, and a
+// corporate HTTP_PROXY would swallow it.
+func devtoolsTargets(wsURL string) ([]devtoolsTarget, error) {
+	u, err := url.Parse(wsURL)
+	if err != nil || u.Host == "" {
+		return nil, fmt.Errorf("no host in CDP endpoint %q", wsURL)
+	}
+	client := &http.Client{Transport: &http.Transport{Proxy: nil}, Timeout: 5 * time.Second}
+	resp, err := client.Get("http://" + u.Host + "/json/list")
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	var targets []devtoolsTarget
+	if err := json.NewDecoder(resp.Body).Decode(&targets); err != nil {
+		return nil, fmt.Errorf("decoding target list: %w", err)
+	}
+	return targets, nil
+}
+
+// faviconURLs maps page target ID to the icon Chrome is showing for it.
+//
+// Best effort by design: a tab with no icon, a page that has not loaded one
+// yet and a browser that will not answer at all are all the same answer here —
+// no entry, and the strip falls back to its plain dot.
+func faviconURLs(wsURL string, logger *slog.Logger) map[string]string {
+	targets, err := devtoolsTargets(wsURL)
+	if err != nil {
+		if logger != nil {
+			logger.Debug("favicon lookup failed", "error", err)
+		}
+		return nil
+	}
+	out := make(map[string]string, len(targets))
+	for _, t := range targets {
+		if t.Type == "page" && t.FaviconURL != "" {
+			out[t.ID] = t.FaviconURL
+		}
+	}
+	return out
+}
+
 // discoverFirstPageTarget queries Chrome's /json/list endpoint (direct, no proxy)
 // and returns the ID of the first existing page target — Chrome's initial
 // about:blank tab. Attaching to it (instead of creating a new tab) lets the
 // browser panel and the agent's tools share one tab. Returns "" on any error.
 func discoverFirstPageTarget(wsURL string, logger *slog.Logger) string {
-	u, err := url.Parse(wsURL)
-	if err != nil || u.Host == "" {
-		return ""
-	}
-	client := &http.Client{Transport: &http.Transport{Proxy: nil}, Timeout: 5 * time.Second}
-	resp, err := client.Get("http://" + u.Host + "/json/list")
+	targets, err := devtoolsTargets(wsURL)
 	if err != nil {
 		if logger != nil {
-			logger.Debug("CDP target discovery failed", "host", u.Host, "error", err)
+			logger.Debug("CDP target discovery failed", "ws_url", wsURL, "error", err)
 		}
-		return ""
-	}
-	defer resp.Body.Close()
-
-	var targets []struct {
-		Type string `json:"type"`
-		ID   string `json:"id"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&targets); err != nil {
 		return ""
 	}
 	for _, t := range targets {
@@ -963,10 +1004,11 @@ func (c *CDPClient) Screenshot(ctx context.Context) ([]byte, error) {
 
 // TabInfo holds information about a browser tab.
 type TabInfo struct {
-	TargetID string `json:"target_id"`
-	URL      string `json:"url"`
-	Title    string `json:"title"`
-	Active   bool   `json:"active,omitempty"`
+	TargetID   string `json:"target_id"`
+	URL        string `json:"url"`
+	Title      string `json:"title"`
+	Active     bool   `json:"active,omitempty"`
+	FaviconURL string `json:"favicon_url,omitempty"`
 }
 
 // ListTabs returns all open browser tabs via CDP protocol.
@@ -986,6 +1028,15 @@ func (c *CDPClient) ListTabs(_ context.Context) ([]TabInfo, error) {
 		}
 	}
 	return tabs, nil
+}
+
+// Favicons maps page target ID to the icon Chrome resolved for that tab.
+//
+// It goes to Chrome's HTTP endpoint rather than CDP because there is no
+// favicon anywhere in Target.getTargets — the DevTools list is the only place
+// Chrome publishes what each tab resolved and fetched.
+func (c *CDPClient) Favicons() map[string]string {
+	return faviconURLs(c.wsURL, c.logger)
 }
 
 // NewTab opens a new tab with the given URL.

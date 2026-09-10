@@ -50,6 +50,8 @@ type CDPSession interface {
 	TargetID() string
 	SwitchTarget(targetID string) error
 	ListTabs(ctx context.Context) ([]TabInfo, error)
+	// Favicons maps page target ID to the icon Chrome resolved for that tab.
+	Favicons() map[string]string
 	NewTab(ctx context.Context, url string) (string, error)
 	CloseTab(ctx context.Context, targetID string) error
 	Close()
