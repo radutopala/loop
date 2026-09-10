@@ -22,3 +22,30 @@ export function normalizeNavigateUrl(input: string): string | null {
   if (KNOWN_SCHEME.test(trimmed)) return trimmed;
   return "https://" + trimmed;
 }
+
+/**
+ * The one icon form the tab strip accepts: a base64 raster the daemon inlined.
+ *
+ * The six types are exactly what the daemon's content sniff can name, spelled
+ * the way it spells them. SVG is absent because the sniff never reports it —
+ * markup is not something a 12px icon needs to be.
+ */
+const SAFE_ICON_URL = /^data:image\/(?:png|jpeg|gif|webp|bmp|x-icon);base64,[A-Za-z0-9+/=]+$/;
+
+/**
+ * safeFaviconUrl returns the icon only when the pane may render it, and
+ * undefined otherwise, which leaves the strip drawing its plain dot.
+ *
+ * Tab icons arrive already inlined: the daemon pulls the bytes through the
+ * sidecar's own network and hands the pane a data: URL. A remote URL reaching
+ * here would mean the page named a host and the renderer fetched it from the
+ * user's machine, so anything that is not an inline raster is dropped rather
+ * than loaded.
+ */
+export function safeFaviconUrl(url: string | undefined): string | undefined {
+  if (!url) return undefined;
+  const candidate = url.trim();
+  if (!candidate.startsWith("data:image/")) return undefined;
+  if (!SAFE_ICON_URL.test(candidate)) return undefined;
+  return candidate;
+}

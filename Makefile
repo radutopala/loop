@@ -1,4 +1,4 @@
-.PHONY: help build install test test-integration test-integration-browser test-component test-runner-build test-runner-push bdd-serve lint lint-go lint-app coverage coverage-check codeql-download codeql docker-build docs-build docs-serve docs-capture run clean restart docker-shell docker-snapshot app-dev app-dev-docker app-test app-install app-build-binary app-dist-linux app-icons _sync-loop-overrides
+.PHONY: help build install test test-integration test-integration-browser test-component test-runner-build test-runner-push bdd-serve lint lint-go lint-app coverage coverage-check codeql-download codeql codeql-js docker-build docs-build docs-serve docs-capture run clean restart docker-shell docker-snapshot app-dev app-dev-docker app-test app-install app-build-binary app-dist-linux app-icons _sync-loop-overrides
 .DEFAULT_GOAL := help
 
 # Strip gate-child env inheritance when invoking make from inside a
@@ -339,6 +339,33 @@ codeql: ## Run CodeQL security analysis locally (via Docker)
 			--format=sarifv2.1.0 --output=/db/results.sarif; \
 		echo "==> Results:"; \
 		python3 -c "import json,sys; d=json.load(open(\"/db/results.sarif\")); rs=d.get(\"runs\",[{}])[0].get(\"results\",[]); [print(\"  \"+r[\"ruleId\"]+\" \"+r[\"locations\"][0][\"physicalLocation\"][\"artifactLocation\"][\"uri\"]+\":\"+str(r[\"locations\"][0][\"physicalLocation\"][\"region\"][\"startLine\"])+\" - \"+r[\"message\"][\"text\"]) for r in rs] or print(\"  No issues found.\"); sys.exit(len(rs))"; \
+		'
+
+# The JavaScript extractor needs node on PATH, so this one runs on a node
+# image rather than the Go one. Source root is app/ alone: the built docs and
+# app/dist are generated bundles, and scanning them buries the real findings.
+CODEQL_NODE_VERSION ?= 22
+
+codeql-js: ## Run CodeQL security analysis on the frontend (via Docker)
+	@docker rm -f loop-codeql-js 2>/dev/null || true
+	docker run --rm --name loop-codeql-js --platform linux/amd64 \
+		-v "$$(pwd)/app":/src:ro -v /src/node_modules -v /src/dist \
+		-v loop-codeql:/opt/codeql \
+		-v loop-codeql-db:/db \
+		-w /src \
+		node:$(CODEQL_NODE_VERSION) bash -c '\
+		set -e; \
+		if [ ! -x /opt/codeql/codeql/codeql ]; then \
+			echo "CodeQL not cached — run: make codeql-download" >&2; exit 1; \
+		fi; \
+		echo "==> Creating database..."; \
+		/opt/codeql/codeql/codeql database create /db/loop-js --language=javascript-typescript \
+			--source-root=/src --overwrite; \
+		echo "==> Analyzing..."; \
+		/opt/codeql/codeql/codeql database analyze /db/loop-js javascript-security-and-quality \
+			--ram=4096 --threads=2 --format=sarifv2.1.0 --output=/db/results-js.sarif; \
+		echo "==> Results:"; \
+		node -e "const rs=JSON.parse(require(\"fs\").readFileSync(\"/db/results-js.sarif\",\"utf8\")).runs[0].results||[]; for(const r of rs){const l=r.locations[0].physicalLocation; console.log(\"  \"+r.ruleId+\" \"+l.artifactLocation.uri+\":\"+l.region.startLine+\" - \"+r.message.text)}; if(!rs.length)console.log(\"  No issues found.\"); process.exit(rs.length)"; \
 		'
 
 deps-outdated: ## List outdated Go and npm dependencies (no changes made)
