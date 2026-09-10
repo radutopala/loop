@@ -523,10 +523,17 @@ func (c *Client) ImageBuildFile(ctx context.Context, contextDir, dockerfile, tag
 // exposed via the settings "reclaim Docker space" action (with unusedFor=0 to
 // drop all currently-unused cache). Note: BuildKit cache is daemon-global and
 // not tagged per-project, so this is not scoped to Loop's own builds.
-func (c *Client) PruneBuildCache(ctx context.Context, unusedFor time.Duration) (uint64, error) {
+//
+// all is `docker builder prune -a`. Without it BuildKit only drops records it
+// considers unshared, which is a small fraction of what a long-lived install
+// accumulates: measured on a 250GB Docker VM at 96% full, the default freed
+// 3.7GB where all freed 113.2GB. Reclaiming space is worth a slower next
+// build, so the settings action passes it; the post-build hygiene pass does
+// not, because the whole point there is to keep warm layers warm.
+func (c *Client) PruneBuildCache(ctx context.Context, unusedFor time.Duration, all bool) (uint64, error) {
 	f := filters.NewArgs()
 	f.Add("unused-for", unusedFor.String())
-	report, err := c.api.BuildCachePrune(ctx, build.CachePruneOptions{Filters: f})
+	report, err := c.api.BuildCachePrune(ctx, build.CachePruneOptions{All: all, Filters: f})
 	if err != nil {
 		return 0, fmt.Errorf("pruning build cache: %w", err)
 	}

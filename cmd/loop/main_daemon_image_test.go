@@ -200,7 +200,7 @@ func (s *MainSuite) TestEnsureImageBuildsWhenMissing() {
 	dockerClient.On("ImageBuild", mock.Anything, mock.Anything, "loop-agent:latest").Return(nil)
 	dockerClient.On("ImageList", mock.Anything, "loop-chrome:latest").Return([]string{}, nil)
 	dockerClient.On("ImageBuildFileFresh", mock.Anything, mock.Anything, "chrome.Dockerfile", "loop-chrome:latest", mock.Anything).Return(nil)
-	dockerClient.On("PruneBuildCache", mock.Anything, 30*24*time.Hour).Return(uint64(0), nil)
+	dockerClient.On("PruneBuildCache", mock.Anything, 30*24*time.Hour, false).Return(uint64(0), nil)
 
 	cfg := &config.Config{
 		LoopDir:        s.T().TempDir(),
@@ -351,7 +351,7 @@ func (s *MainSuite) TestEnsureImageRebuildsOnVersionMismatch() {
 	dockerClient.On("ImageInspectLabels", mock.Anything, "loop-chrome:latest").Return(map[string]string{
 		"loop.version": "2.0.0",
 	}, nil)
-	dockerClient.On("PruneBuildCache", mock.Anything, 30*24*time.Hour).Return(uint64(0), nil)
+	dockerClient.On("PruneBuildCache", mock.Anything, 30*24*time.Hour, false).Return(uint64(0), nil)
 
 	cfg := &config.Config{
 		LoopDir:        s.T().TempDir(),
@@ -378,7 +378,7 @@ func (s *MainSuite) TestEnsureImagePruneBuildCacheErrorIsIgnored() {
 	dockerClient.On("ImageBuild", mock.Anything, mock.Anything, "loop-agent:latest").Return(nil)
 	dockerClient.On("ImageList", mock.Anything, "loop-chrome:latest").Return([]string{}, nil)
 	dockerClient.On("ImageBuildFileFresh", mock.Anything, mock.Anything, "chrome.Dockerfile", "loop-chrome:latest", mock.Anything).Return(nil)
-	dockerClient.On("PruneBuildCache", mock.Anything, 30*24*time.Hour).Return(uint64(0), errors.New("prune broke"))
+	dockerClient.On("PruneBuildCache", mock.Anything, 30*24*time.Hour, false).Return(uint64(0), errors.New("prune broke"))
 
 	cfg := &config.Config{
 		LoopDir:        s.T().TempDir(),
@@ -441,7 +441,7 @@ func (s *MainSuite) TestEnsureImageChromeRebuildTrigger() {
 				Return(tt.labels, tt.labelsErr).Maybe()
 			if tt.wantRebuild {
 				dockerClient.On("ImageBuildFileFresh", mock.Anything, mock.Anything, "chrome.Dockerfile", "loop-chrome:latest", mock.Anything).Return(nil)
-				dockerClient.On("PruneBuildCache", mock.Anything, 30*24*time.Hour).Return(uint64(0), nil)
+				dockerClient.On("PruneBuildCache", mock.Anything, 30*24*time.Hour, false).Return(uint64(0), nil)
 			}
 
 			s.app.version = tt.version
@@ -479,7 +479,7 @@ func (s *MainSuite) TestEnsureImageChromeLabels() {
 			dockerClient.On("ImageList", mock.Anything, "loop-chrome:latest").Return([]string{}, nil)
 			dockerClient.On("ImageBuildFileFresh", mock.Anything, mock.Anything, "chrome.Dockerfile", "loop-chrome:latest", mock.Anything).
 				Run(func(args mock.Arguments) { got = args.Get(4).(map[string]string) }).Return(nil)
-			dockerClient.On("PruneBuildCache", mock.Anything, 30*24*time.Hour).Return(uint64(0), nil)
+			dockerClient.On("PruneBuildCache", mock.Anything, 30*24*time.Hour, false).Return(uint64(0), nil)
 
 			s.app.version = tt.version
 			s.app.sys = newPassthroughMock()
@@ -503,7 +503,7 @@ func (s *MainSuite) TestEnsureImageChromeReportsBrowserPhase() {
 	dockerClient.On("ImageList", mock.Anything, "loop-agent:latest").Return([]string{"sha256:abc"}, nil)
 	dockerClient.On("ImageList", mock.Anything, "loop-chrome:latest").Return([]string{}, nil)
 	dockerClient.On("ImageBuildFileFresh", mock.Anything, mock.Anything, "chrome.Dockerfile", "loop-chrome:latest", mock.Anything).Return(nil)
-	dockerClient.On("PruneBuildCache", mock.Anything, 30*24*time.Hour).Return(uint64(0), nil)
+	dockerClient.On("PruneBuildCache", mock.Anything, 30*24*time.Hour, false).Return(uint64(0), nil)
 
 	s.app.sys = newPassthroughMock()
 	err := s.app.defaultEnsureImage(context.Background(), dockerClient, s.chromeImageTestConfig(),

@@ -63,7 +63,7 @@ type DockerClient interface {
 	ImageBuildFile(ctx context.Context, contextDir, dockerfile, tag string) error
 	ImageBuildFileLabels(ctx context.Context, contextDir, dockerfile, tag string, labels map[string]string) error
 	ImageBuildFileFresh(ctx context.Context, contextDir, dockerfile, tag string, labels map[string]string) error
-	PruneBuildCache(ctx context.Context, unusedFor time.Duration) (uint64, error)
+	PruneBuildCache(ctx context.Context, unusedFor time.Duration, all bool) (uint64, error)
 	PruneDanglingImages(ctx context.Context) (uint64, error)
 	RemoveImageAndContainers(ctx context.Context, imageName string) error
 	ImageInspectLabels(ctx context.Context, imageName string) (map[string]string, error)

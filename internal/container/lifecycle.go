@@ -179,13 +179,18 @@ func (m *ImageLifecycleManager) RemoveImage(ctx context.Context) error {
 	return nil
 }
 
-// ReclaimSpace frees Docker disk by pruning all currently-unused BuildKit
-// cache (unusedFor=0) and dangling images, returning the bytes freed by each.
-// Build-cache pruning is daemon-global, not scoped to Loop's builds. If image
-// pruning fails after the cache was already dropped, the build-cache total is
-// still reported alongside the error so nothing looks silently lost.
+// ReclaimSpace frees Docker disk by pruning every BuildKit cache entry not in
+// use by a running build (unusedFor=0, all) and dangling images, returning the
+// bytes freed by each. Build-cache pruning is daemon-global, not scoped to
+// Loop's builds. If image pruning fails after the cache was already dropped,
+// the build-cache total is still reported alongside the error so nothing looks
+// silently lost.
+//
+// This is the action reached for when Docker is out of room, so it prunes
+// reusable cache too: the alternative left most of the disk unreclaimed, which
+// is worse than the slower build that follows.
 func (m *ImageLifecycleManager) ReclaimSpace(ctx context.Context) (ReclaimResult, error) {
-	buildCache, err := m.client.PruneBuildCache(ctx, 0)
+	buildCache, err := m.client.PruneBuildCache(ctx, 0, true)
 	if err != nil {
 		return ReclaimResult{}, err
 	}
