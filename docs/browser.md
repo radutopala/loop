@@ -109,15 +109,15 @@ The promises the dialog makes are the feature's boundaries:
 
 The second step lists one row per **cookie scope** — the cookie's own
 `host_key` — folded under the parent scope it sits beneath. A site's session is
-usually split across several: the cookies that sign you into Gmail are on
-`google.com`, while `mail.google.com` holds Gmail's app cookies and nothing
-that authenticates. Ticking the `google.com` parent takes every scope under it;
-expanding the row picks them one at a time. Either way a tick grants exactly
-the scopes printed, and the import sends those scopes, not the group.
+usually split across several: the cookies that sign you in tend to sit on the
+parent scope, while the subdomain an app is served from holds that app's own
+cookies and nothing that authenticates. Ticking the parent takes every scope
+under it; expanding the row picks them one at a time. Either way a tick grants
+exactly the scopes printed, and the import sends those scopes, not the group.
 
 The parent is only ever another scope from the same jar, so no public suffix
-list is involved and no group is invented: `fidelity.co.uk` stands alone,
-because nothing sets cookies on `co.uk` — browsers refuse to.
+list is involved and no group is invented: a site whose parent is a public
+suffix stands alone, because nothing sets cookies there — browsers refuse to.
 
 Rows carrying real account access are badged and **left unchecked by default**:
 

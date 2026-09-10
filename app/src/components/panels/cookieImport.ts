@@ -72,16 +72,16 @@ export interface DomainGroup {
 /**
  * Fold scopes under the parent they sit beneath.
  *
- * A site's session usually lives on the parent scope: ticking
- * mail.google.com alone imports Gmail's app cookies and none of the ones
- * that sign you in. Grouping puts that one click within reach without
- * widening what a tick grants — every member is still an exact scope, and
- * the import sends the members, not the group.
+ * A site's session usually lives on the parent scope: ticking the
+ * subdomain an app is served from imports that app's own cookies and none
+ * of the ones that sign you in. Grouping puts that one click within reach
+ * without widening what a tick grants — every member is still an exact
+ * scope, and the import sends the members, not the group.
  *
  * The parent is only ever another scope from the same jar, so no public
- * suffix list is needed and no group can be invented: fidelity.co.uk stands
- * alone because nothing in the jar sets cookies on co.uk, which is a thing
- * browsers refuse anyway.
+ * suffix list is needed and no group can be invented: a site whose parent
+ * is a public suffix stands alone, because nothing in the jar sets cookies
+ * there, which is a thing browsers refuse anyway.
  */
 export function groupDomains(domains: CookieDomain[]): DomainGroup[] {
   const present = new Set(domains.map((d) => d.domain));
@@ -121,8 +121,9 @@ function rootScope(domain: string, present: Set<string>): string {
 /**
  * Keep the groups a query touches.
  *
- * Matching the parent keeps the whole group — someone typing "google" wants
- * all of it — while matching a member narrows the group to what matched.
+ * Matching the parent keeps the whole group — someone typing a site's name
+ * wants all of it — while matching a member narrows the group to what
+ * matched.
  */
 export function filterGroups(groups: DomainGroup[], query: string): DomainGroup[] {
   const q = query.trim().toLowerCase();
