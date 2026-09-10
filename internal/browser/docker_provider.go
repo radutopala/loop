@@ -61,7 +61,15 @@ type DockerProvider struct {
 	extensions []string
 
 	// memoryMB caps each sidecar's memory, in megabytes. Zero means no cap.
+	// Used when memoryLimitFor is unset or has no answer for the channel.
 	memoryMB int64
+
+	// memoryLimitFor resolves the cap for one channel at container-create
+	// time. The cap is per-project config (browser.memory_mb) while the
+	// provider is a single daemon-wide object, so a value baked in at
+	// construction can only ever be the global one; asking per channel is
+	// what lets a project's override reach its own sidecar.
+	memoryLimitFor func(ctx context.Context, channelID string) (int64, bool)
 }
 
 const (
@@ -163,6 +171,24 @@ func (m *DockerProvider) getContainerIP(ctx context.Context, containerID string)
 		}
 	}
 	return ""
+}
+
+// SetMemoryLimitResolver installs the per-channel memory cap lookup. fn
+// returning false means "no answer" — the constructor's MemoryMB stands.
+// Called once during wiring, before any container is created.
+func (m *DockerProvider) SetMemoryLimitResolver(fn func(ctx context.Context, channelID string) (int64, bool)) {
+	m.memoryLimitFor = fn
+}
+
+// MemoryLimitMB returns the cap channelID's sidecar is created with, in
+// megabytes: the resolver's answer when it has one, else the constructor's.
+func (m *DockerProvider) MemoryLimitMB(ctx context.Context, channelID string) int64 {
+	if m.memoryLimitFor != nil {
+		if mb, ok := m.memoryLimitFor(ctx, channelID); ok {
+			return mb
+		}
+	}
+	return m.memoryMB
 }
 
 // SetContainerRegistry configures the container registry for lifecycle tracking.
@@ -378,7 +404,7 @@ func (m *DockerProvider) EnsureBrowser(ctx context.Context, channelID, _ string)
 		},
 		&containertypes.HostConfig{
 			Resources: containertypes.Resources{
-				Memory:    m.memoryMB * 1024 * 1024,
+				Memory:    m.MemoryLimitMB(ctx, channelID) * 1024 * 1024,
 				CPUQuota:  50000,
 				CPUPeriod: 100000,
 			},

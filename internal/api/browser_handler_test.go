@@ -17,6 +17,8 @@ import (
 	"github.com/stretchr/testify/suite"
 
 	"github.com/radutopala/loop/internal/browser"
+	"github.com/radutopala/loop/internal/config"
+	"github.com/radutopala/loop/internal/db"
 )
 
 type mockBrowserProvider struct {
@@ -71,6 +73,64 @@ func (s *BrowserHandlerSuite) SetupTest() {
 	s.browserMgr = new(mockBrowserProvider)
 	s.srv = nilServer()
 	s.srv.browser.setProviders(s.browserMgr, s.srv.browser.hostProvider)
+}
+
+// The cap lives in per-project config while the provider is built once, at
+// daemon start, from the global layer — so the sidecar only sees a project's
+// browser.memory_mb if the provider asks per channel.
+func (s *BrowserHandlerSuite) TestChannelMemoryLimitMB() {
+	store := new(MockChannelLister)
+	store.On("GetChannel", mock.Anything, "ch-1").
+		Return(&db.Channel{ChannelID: "ch-1", DirPath: "/home/user/project"}, nil)
+	srv := NewServer(nil, nil, nil, store, nil, testLogger())
+	srv.configs.load = func() (*config.Config, error) {
+		return &config.Config{Browser: config.BrowserConfig{MemoryMB: 512}}, nil
+	}
+	srv.configs.loadProject = func(_ string, base *config.Config) (*config.Config, error) {
+		merged := *base
+		merged.Browser.MemoryMB = 2048
+		return &merged, nil
+	}
+
+	mb, ok := srv.browser.channelMemoryLimitMB(context.Background(), "ch-1")
+	require.True(s.T(), ok)
+	require.Equal(s.T(), int64(2048), mb)
+}
+
+func (s *BrowserHandlerSuite) TestChannelMemoryLimitMBUnresolvableChannel() {
+	// No store to look the channel up in: the provider keeps what it has.
+	mb, ok := s.srv.browser.channelMemoryLimitMB(context.Background(), "ch-1")
+	require.False(s.T(), ok)
+	require.Zero(s.T(), mb)
+}
+
+func (s *BrowserHandlerSuite) TestChannelMemoryLimitMBConfigUnreadable() {
+	store := new(MockChannelLister)
+	store.On("GetChannel", mock.Anything, "ch-1").
+		Return(&db.Channel{ChannelID: "ch-1", DirPath: "/home/user/project"}, nil)
+	srv := NewServer(nil, nil, nil, store, nil, testLogger())
+	srv.configs.load = func() (*config.Config, error) { return nil, errors.New("unreadable") }
+
+	mb, ok := srv.browser.channelMemoryLimitMB(context.Background(), "ch-1")
+	require.False(s.T(), ok)
+	require.Zero(s.T(), mb)
+}
+
+// setProviders hands the docker provider the lookup, so the value a channel
+// resolves to is the value its container is created with.
+func (s *BrowserHandlerSuite) TestSetProvidersInstallsMemoryLimitResolver() {
+	store := new(MockChannelLister)
+	store.On("GetChannel", mock.Anything, "ch-1").
+		Return(&db.Channel{ChannelID: "ch-1", DirPath: "/home/user/project"}, nil)
+	srv := NewServer(nil, nil, nil, store, nil, testLogger())
+	srv.configs.load = func() (*config.Config, error) {
+		return &config.Config{Browser: config.BrowserConfig{MemoryMB: 2048}}, nil
+	}
+
+	dp := browser.NewDockerProvider(nil, browser.DockerProviderConfig{MemoryMB: 512}, testLogger())
+	srv.browser.setProviders(dp, nil)
+
+	require.Equal(s.T(), int64(2048), dp.MemoryLimitMB(context.Background(), "ch-1"))
 }
 
 func (s *BrowserHandlerSuite) dialBrowserWS() (*websocket.Conn, *httptest.Server) {

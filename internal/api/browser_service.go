@@ -86,6 +86,32 @@ func newBrowserService(deps *serverDeps) *browserService {
 func (s *browserService) setProviders(docker, host BrowserProvider) {
 	s.dockerProvider = docker
 	s.hostProvider = host
+	// The docker provider is built once at daemon start, so the only browser
+	// config it can hold is the global layer. Hand it a lookup instead, and a
+	// project's browser.memory_mb reaches the sidecar of every channel that
+	// works in that project.
+	if dp, ok := docker.(*browser.DockerProvider); ok {
+		dp.SetMemoryLimitResolver(s.channelMemoryLimitMB)
+	}
+}
+
+// channelMemoryLimitMB resolves browser.memory_mb for a channel through the
+// global → project → worktree layers. Reported as not-found when the channel
+// has no directory to resolve against or the config will not load, leaving the
+// provider on the value it was built with.
+//
+// The layers are re-read per call, so an edited cap applies to the next
+// sidecar without restarting the daemon.
+func (s *browserService) channelMemoryLimitMB(ctx context.Context, channelID string) (int64, bool) {
+	dir, err := s.deps.workspace.resolveDirPath(ctx, "", channelID)
+	if err != nil {
+		return 0, false
+	}
+	cfg := s.deps.configs.merged(dir, s.deps.workspace.resolveParentDirPath(ctx, channelID))
+	if cfg == nil {
+		return 0, false
+	}
+	return cfg.Browser.MemoryMB, true
 }
 
 // setKeepAlive sets the delay before idle browser containers are removed.
