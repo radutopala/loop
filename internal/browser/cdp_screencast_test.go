@@ -194,3 +194,62 @@ func (s *CDPSuite) TestStopScreencastNotScreencasting() {
 	s.client.StopScreencast()
 	require.False(s.T(), s.client.screencasting)
 }
+
+// screencastingNow reads the flag under the client's own lock, so the test does
+// not race the goroutine that clears it.
+func (s *CDPSuite) screencastingNow() bool {
+	s.client.mu.Lock()
+	defer s.client.mu.Unlock()
+	return s.client.screencasting
+}
+
+// A failed start leaves Chrome not streaming. If the flag stayed set, every
+// later StartScreencast would take the "already screencasting" shortcut and
+// hand back a channel nothing ever writes to.
+func (s *CDPSuite) TestStartScreencastClearsFlagWhenCommandFails() {
+	s.setRunFn(func(_ context.Context, _ ...chromedp.Action) error {
+		return errors.New("target closed")
+	})
+
+	s.client.StartScreencast(60, 1920, 1080)
+
+	require.Eventually(s.T(), func() bool { return !s.screencastingNow() },
+		time.Second, 5*time.Millisecond,
+		"a failed start must leave the client free to try again")
+}
+
+// A backgrounded or wedged renderer accepts Page.startScreencast and never
+// answers. Without a deadline the goroutine parks forever and the pane sits on
+// its last frame with nothing logged.
+func (s *CDPSuite) TestStartScreencastClearsFlagWhenCommandHangs() {
+	release := make(chan struct{})
+	defer close(release)
+
+	s.client.screencastTimeout = 20 * time.Millisecond
+	s.setRunFn(func(_ context.Context, _ ...chromedp.Action) error {
+		<-release
+		return nil
+	})
+
+	s.client.StartScreencast(60, 1920, 1080)
+
+	require.Eventually(s.T(), func() bool { return !s.screencastingNow() },
+		time.Second, 5*time.Millisecond,
+		"a hung start must time out rather than block silently")
+}
+
+// A start that succeeds must leave the flag set, or the next call would issue a
+// duplicate command.
+func (s *CDPSuite) TestStartScreencastKeepsFlagWhenCommandSucceeds() {
+	s.client.StartScreencast(60, 1920, 1080)
+
+	require.Never(s.T(), func() bool { return !s.screencastingNow() },
+		100*time.Millisecond, 10*time.Millisecond)
+}
+
+func (s *CDPSuite) TestScreencastDeadline() {
+	require.Equal(s.T(), defaultScreencastTimeout, s.client.screencastDeadline())
+
+	s.client.screencastTimeout = 3 * time.Second
+	require.Equal(s.T(), 3*time.Second, s.client.screencastDeadline())
+}

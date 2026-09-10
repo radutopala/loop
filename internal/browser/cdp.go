@@ -52,6 +52,10 @@ type CDPClient struct {
 	// attachTimeout bounds NewContextForTarget; zero means defaultAttachTimeout.
 	attachTimeout time.Duration
 
+	// screencastTimeout bounds the Page.startScreencast call; zero means
+	// defaultScreencastTimeout.
+	screencastTimeout time.Duration
+
 	mu                 sync.Mutex
 	screencasting      bool
 	listenerRegistered bool        // true after first listenFunc registration
@@ -102,6 +106,22 @@ func (c *CDPClient) attachDeadline() time.Duration {
 	return defaultAttachTimeout
 }
 
+// defaultScreencastTimeout bounds the Page.startScreencast call.
+//
+// A backgrounded or wedged renderer accepts the command and never answers, and
+// the call has no deadline of its own. The pane then holds its last frame with
+// nothing logged anywhere — the failure mode is silence, which is the hardest
+// kind to chase. Failing loudly is better than blocking.
+const defaultScreencastTimeout = 10 * time.Second
+
+// screencastDeadline returns the configured screencast timeout, or the default.
+func (c *CDPClient) screencastDeadline() time.Duration {
+	if c.screencastTimeout > 0 {
+		return c.screencastTimeout
+	}
+	return defaultScreencastTimeout
+}
+
 // NewContextForTarget creates a new CDPClient attached to a different target,
 // reusing the existing browser WebSocket connection. Uses Target.attachToTarget
 // internally — no new WS dial, no Chrome permission prompt.
@@ -135,21 +155,22 @@ func (c *CDPClient) NewContextForTarget(targetID string) (CDPSession, error) {
 	}
 
 	return &CDPClient{
-		allocCtx:      c.allocCtx,
-		allocCancel:   func() {},
-		ctxCancel:     cdpCancel,
-		ctx:           cdpCtx,
-		wsURL:         c.wsURL,
-		targetID:      tid,
-		exec:          c.exec,
-		logger:        c.logger,
-		attachTimeout: c.attachTimeout,
-		runFn:         c.runFn,
-		targetsFunc:   c.targetsFunc,
-		listenFunc:    c.listenFunc,
-		axTreeFunc:    makeAxTreeFuncWith(c.runFn, c.exec),
-		createTabFunc: c.createTabFunc,
-		activateFunc:  c.activateFunc,
+		allocCtx:          c.allocCtx,
+		allocCancel:       func() {},
+		ctxCancel:         cdpCancel,
+		ctx:               cdpCtx,
+		wsURL:             c.wsURL,
+		targetID:          tid,
+		exec:              c.exec,
+		logger:            c.logger,
+		attachTimeout:     c.attachTimeout,
+		screencastTimeout: c.screencastTimeout,
+		runFn:             c.runFn,
+		targetsFunc:       c.targetsFunc,
+		listenFunc:        c.listenFunc,
+		axTreeFunc:        makeAxTreeFuncWith(c.runFn, c.exec),
+		createTabFunc:     c.createTabFunc,
+		activateFunc:      c.activateFunc,
 		closeTabFunc: func(_ context.Context, closeTID string) error {
 			tabCtx, tabCancel := chromedp.NewContext(cdpCtx, chromedp.WithTargetID(target.ID(closeTID)))
 			defer tabCancel()
@@ -583,17 +604,43 @@ func (c *CDPClient) StartScreencast(quality, maxWidth, maxHeight int) <-chan []b
 		c.stopCh = make(chan struct{})
 
 		go func() {
-			err := c.runFn(c.ctx,
-				cdppage.StartScreencast().
-					WithFormat(cdppage.ScreencastFormatJpeg).
-					WithQuality(int64(quality)).
-					WithMaxWidth(int64(maxWidth)).
-					WithMaxHeight(int64(maxHeight)).
-					WithEveryNthFrame(1),
-			)
-			if err != nil {
-				c.logger.Error("failed to start screencast", "error", err)
+			done := make(chan error, 1)
+			go func() {
+				done <- c.runFn(c.ctx,
+					cdppage.StartScreencast().
+						WithFormat(cdppage.ScreencastFormatJpeg).
+						WithQuality(int64(quality)).
+						WithMaxWidth(int64(maxWidth)).
+						WithMaxHeight(int64(maxHeight)).
+						WithEveryNthFrame(1),
+				)
+			}()
+
+			timer := time.NewTimer(c.screencastDeadline())
+			defer timer.Stop()
+
+			var err error
+			select {
+			case err = <-done:
+			case <-timer.C:
+				// Cancelling the call would mean cancelling the target context,
+				// which takes the tab with it. Report instead, and let the reset
+				// below leave the door open for a later attempt.
+				err = fmt.Errorf("timed out after %s", c.screencastDeadline())
 			}
+			if err == nil {
+				return
+			}
+			c.logger.Error("failed to start screencast", "error", err, "target_id", string(c.targetID))
+
+			// Chrome is not streaming, so leaving the flag set would make every
+			// later StartScreencast skip the command and hand back a channel
+			// nothing ever writes to — a pane blank for as long as the client
+			// lives. Clearing it costs at most a duplicate startScreencast,
+			// which Chrome accepts.
+			c.mu.Lock()
+			c.screencasting = false
+			c.mu.Unlock()
 		}()
 	}
 
