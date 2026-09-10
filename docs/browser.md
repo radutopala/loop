@@ -119,24 +119,17 @@ The parent is only ever another scope from the same jar, so no public suffix
 list is involved and no group is invented: a site whose parent is a public
 suffix stands alone, because nothing sets cookies there — browsers refuse to.
 
-Rows carrying real account access are badged and **left unchecked by default**:
+**Nothing is checked when the dialog opens.** Every scope that crosses into the
+sidecar is one the user picked out by name, and the search box is there to find
+it. Rows come sorted by cookie count, busiest first.
 
-| Badge | What it covers |
-|---|---|
-| `Email` | Mailboxes. Mail access is account recovery for everything else. |
-| `Sign-in provider` | Identity providers, SSO and OAuth endpoints, password vaults. |
-| `Bank or payments` | Banks, brokers, card networks, payment processors. |
-| `Sensitive` | Anything listed in `browser.cookie_import.sensitive_domains`. |
+The picker used to guess instead: it classified mailboxes, banks and identity
+providers from a built-in list, left those unchecked, and ticked everything
+else. That default was the problem — a site no list had heard of went over
+without being asked, and no list closes that set. Starting empty closes it.
 
-Classification is advisory, never blocking: a badged site is still importable,
-it just costs a deliberate click. It errs toward classifying — a false positive
-costs one click, a false negative hands a bank session to an agent. Add sites
-the built-in list has never heard of, such as a regional bank, to
-`browser.cookie_import.sensitive_domains`.
-
-**Select all** only ever reaches the unbadged rows. Clearing clears everything.
-A parent checkbox does reach its badged members — the row is badged and the
-click is deliberate, the same bar a badged row on its own has to clear.
+**Select all** reaches every row, because there is no longer a class of row it
+steps around. Clearing clears everything.
 
 ### Where the data lives
 
@@ -153,7 +146,6 @@ import replay into every new sidecar unattended, put it in config:
   "cookie_import": {
     "source": "chrome:Default",
     "domains": ["github.com", "example.com"],
-    "sensitive_domains": ["my-credit-union.example"],
     "auto": true
   }
 }

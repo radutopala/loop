@@ -41,13 +41,9 @@ export async function switchBrowserMode(channelId: string, mode: "docker" | "hos
   return res.json();
 }
 
-/** How sensitive a site's cookies are; drives the picker's badge and default. */
-export type CookieCategory = "" | "email" | "signin" | "bank" | "sensitive";
-
 export interface CookieDomain {
   domain: string;
   count: number;
-  category: CookieCategory;
 }
 
 export interface CookieSource {

@@ -173,7 +173,6 @@ func (s *ConfigSuite) TestLoadBrowserFullConfig() {
 				"cookie_import": {
 					"source": "chrome:Default",
 					"domains": ["example.com"],
-					"sensitive_domains": ["my-bank.example"],
 					"auto": true
 				}
 			}
@@ -190,10 +189,9 @@ func (s *ConfigSuite) TestLoadBrowserFullConfig() {
 	require.Equal(s.T(), int64(2048), cfg.Browser.MemoryMB)
 	require.Equal(s.T(), []string{"/host/ublock", "/host/other"}, cfg.Browser.Extensions)
 	require.Equal(s.T(), CookieImportConfig{
-		Source:           "chrome:Default",
-		Domains:          []string{"example.com"},
-		SensitiveDomains: []string{"my-bank.example"},
-		Auto:             true,
+		Source:  "chrome:Default",
+		Domains: []string{"example.com"},
+		Auto:    true,
 	}, cfg.Browser.CookieImport)
 }
 

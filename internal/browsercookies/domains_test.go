@@ -20,8 +20,8 @@ func (s *DomainsSuite) TestNormaliseDomain() {
 	s.Empty(NormaliseDomain(""))
 }
 
-// Risky rows first, then the busiest, then alphabetically — the ordering is
-// what stops a bank scrolling past unread in a 599-row list.
+// Busiest first, then alphabetically. Nothing is ticked until the user ticks
+// it, so the order only has to put what somebody is looking for near the top.
 func (s *DomainsSuite) TestSummarise() {
 	cookies := []Cookie{
 		{Domain: ".example.com", Name: "a"},
@@ -33,19 +33,19 @@ func (s *DomainsSuite) TestSummarise() {
 		{Domain: "oauth.officeapps.live.com", Name: "g"},
 	}
 
-	got := Summarise(cookies, NewClassifier(nil))
+	got := Summarise(cookies)
 
 	s.Equal([]DomainSummary{
-		{Domain: "oauth.officeapps.live.com", Count: 1, Category: CategorySignin},
-		{Domain: "stripe.com", Count: 1, Category: CategoryBank},
 		{Domain: "example.com", Count: 3},
 		{Domain: "beta.example", Count: 1},
+		{Domain: "oauth.officeapps.live.com", Count: 1},
 		{Domain: "other.example", Count: 1},
+		{Domain: "stripe.com", Count: 1},
 	}, got)
 }
 
 func (s *DomainsSuite) TestSummariseEmpty() {
-	s.Empty(Summarise(nil, NewClassifier(nil)))
+	s.Empty(Summarise(nil))
 }
 
 // Ticking a row grants exactly that scope. A subdomain listed as its own row

@@ -123,7 +123,7 @@ func (s *SchemaSuite) TestCookieImportNestedObject() {
 	prop := GlobalConfigSchema().Properties["browser"].Properties["cookie_import"]
 	require.NotNil(s.T(), prop)
 	require.Equal(s.T(), "object", prop.Type)
-	for _, key := range []string{"source", "domains", "sensitive_domains", "auto"} {
+	for _, key := range []string{"source", "domains", "auto"} {
 		require.Contains(s.T(), prop.Properties, key)
 	}
 	require.Equal(s.T(), "string", prop.Properties["domains"].Items.Type)

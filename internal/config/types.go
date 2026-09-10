@@ -266,9 +266,6 @@ type CookieImportConfig struct {
 	// Domains lists the cookie scopes to bring over, matched exactly against
 	// the scope shown in the picker (a leading dot is ignored).
 	Domains []string
-	// SensitiveDomains extends the built-in list of sites that stay
-	// unchecked by default, for a regional bank the list has never heard of.
-	SensitiveDomains []string
 	// Auto re-imports Source/Domains into every new sidecar. Off by default:
 	// moving credentials around while nobody is watching deserves an
 	// explicit opt-in.

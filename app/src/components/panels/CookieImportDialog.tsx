@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { type CookieSource, importCookies, listCookieSources } from "../../api/loopApi";
 import { useTheme } from "../../ThemeContext";
 import { storageGet, storageGetJSON, storageSet } from "../../utils/storage";
-import { CATEGORY_LABELS, type DomainGroup, defaultSelection, filterGroups, groupDomains, groupState, selectAllState, toggleAll, toggleGroup } from "./cookieImport";
+import { type DomainGroup, defaultSelection, filterGroups, groupDomains, groupState, selectAllState, toggleAll, toggleGroup } from "./cookieImport";
 
 interface CookieImportDialogProps {
   channelId: string;
@@ -279,7 +279,7 @@ function SiteStep({
           aria-label="Select all"
         />
         <span>Select all</span>
-        <span style={{ flex: 1, textAlign: "right", color: colors.textDim, fontSize: 11 }}>Email, bank and sign-in sites stay unchecked by default</span>
+        <span style={{ flex: 1, textAlign: "right", color: colors.textDim, fontSize: 11 }}>Nothing is imported until you pick it</span>
       </div>
 
       <div style={{ flex: "1 1 auto", overflowY: "auto", minHeight: 0 }}>
@@ -331,7 +331,7 @@ function GroupRow({
 
   if (children.length === 0) {
     const only = group.members[0];
-    return only ? <DomainRow colors={colors} domain={only} checked={selected.has(only.domain)} onToggle={() => onToggle(only.domain)} /> : null;
+    return only ? <DomainRow domain={only} checked={selected.has(only.domain)} onToggle={() => onToggle(only.domain)} /> : null;
   }
 
   return (
@@ -356,26 +356,13 @@ function GroupRow({
           <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{group.root}</span>
           <span style={{ color: colors.textDim, fontSize: 11 }}>+{children.length}</span>
         </button>
-        <CategoryBadge colors={colors} category={group.category} />
       </div>
-      {expanded && group.members.map((m) => <DomainRow key={m.domain} colors={colors} domain={m} checked={selected.has(m.domain)} onToggle={() => onToggle(m.domain)} indent />)}
+      {expanded && group.members.map((m) => <DomainRow key={m.domain} domain={m} checked={selected.has(m.domain)} onToggle={() => onToggle(m.domain)} indent />)}
     </>
   );
 }
 
-function DomainRow({
-  colors,
-  domain,
-  checked,
-  onToggle,
-  indent,
-}: {
-  colors: Colors;
-  domain: { domain: string; count: number; category: keyof typeof CATEGORY_LABELS };
-  checked: boolean;
-  onToggle: () => void;
-  indent?: boolean;
-}) {
+function DomainRow({ domain, checked, onToggle, indent }: { domain: { domain: string; count: number }; checked: boolean; onToggle: () => void; indent?: boolean }) {
   return (
     <label
       title={`${domain.count} cookie${domain.count === 1 ? "" : "s"}`}
@@ -383,26 +370,7 @@ function DomainRow({
     >
       <input type="checkbox" checked={checked} onChange={onToggle} />
       <span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{domain.domain}</span>
-      <CategoryBadge colors={colors} category={domain.category} />
     </label>
-  );
-}
-
-function CategoryBadge({ colors, category }: { colors: Colors; category: keyof typeof CATEGORY_LABELS }) {
-  if (category === "") return null;
-  return (
-    <span
-      style={{
-        padding: "1px 6px",
-        borderRadius: 4,
-        fontSize: 10,
-        color: colors.warning,
-        backgroundColor: `${colors.warning}22`,
-        whiteSpace: "nowrap",
-      }}
-    >
-      {CATEGORY_LABELS[category]}
-    </span>
   );
 }
 

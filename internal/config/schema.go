@@ -266,12 +266,6 @@ func buildSchema() *ConfigSchema {
 								Description: "Cookie scopes to bring over, exactly as shown in the picker",
 								Items:       &SchemaProperty{Type: "string"},
 							},
-							"sensitive_domains": {
-								Type:        "array",
-								Title:       "Sensitive Domains",
-								Description: "Extra sites that stay unchecked by default in the picker",
-								Items:       &SchemaProperty{Type: "string"},
-							},
 							"auto": {
 								Type:        "boolean",
 								Title:       "Auto Import",

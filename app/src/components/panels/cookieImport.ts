@@ -1,28 +1,21 @@
-import type { CookieCategory, CookieDomain } from "../../api/loopApi";
-
-/** Badge text per category; "" is an ordinary site and gets no badge. */
-export const CATEGORY_LABELS: Record<CookieCategory, string> = {
-  "": "",
-  email: "Email",
-  signin: "Sign-in provider",
-  bank: "Bank or payments",
-  sensitive: "Sensitive",
-};
+import type { CookieDomain } from "../../api/loopApi";
 
 /**
- * The default tick state: ordinary sites on, classified ones off.
+ * The default tick state: nothing.
  *
- * A mailbox, an identity provider or a bank is never handed over by a
- * default — reaching one always costs a deliberate click. A saved selection
- * overrides this wholesale, including any classified sites the user
- * previously chose on purpose.
+ * Nothing is handed to an agent that the user did not pick out by name. The
+ * picker used to tick everything it did not recognise as a mailbox, a bank
+ * or an identity provider, which meant every site no list had heard of went
+ * over by default — an open-ended set no list can close. Starting empty
+ * closes it: what is unrecognised is simply not selected. A saved selection
+ * overrides this wholesale.
  */
 export function defaultSelection(domains: CookieDomain[], saved?: string[]): Set<string> {
   if (saved && saved.length > 0) {
     const available = new Set(domains.map((d) => d.domain));
     return new Set(saved.filter((d) => available.has(d)));
   }
-  return new Set(domains.filter((d) => d.category === "").map((d) => d.domain));
+  return new Set();
 }
 
 /** Substring match on the domain; a blank query matches everything. */
@@ -34,26 +27,23 @@ export function filterDomains(domains: CookieDomain[], query: string): CookieDom
 
 /** Tri-state for the "Select all" checkbox. */
 export function selectAllState(domains: CookieDomain[], selected: Set<string>): "none" | "some" | "all" {
-  const ordinary = domains.filter((d) => d.category === "");
-  if (ordinary.length === 0) return selected.size > 0 ? "some" : "none";
-  const picked = ordinary.filter((d) => selected.has(d.domain)).length;
+  if (domains.length === 0) return selected.size > 0 ? "some" : "none";
+  const picked = domains.filter((d) => selected.has(d.domain)).length;
   if (picked === 0) return selected.size > 0 ? "some" : "none";
-  return picked === ordinary.length ? "all" : "some";
+  return picked === domains.length ? "all" : "some";
 }
 
 /**
- * Toggle every ordinary site at once.
+ * Toggle every site at once.
  *
- * "Select all" only ever reaches the unclassified rows — that is the whole
- * point of classifying them. Clearing, on the other hand, clears everything,
- * because a user reaching for "none" means none.
+ * "Select all" reaches every row, because there is no longer a class of row
+ * it steps around: what it grants is exactly what the list shows, and the
+ * user asked for it by name.
  */
 export function toggleAll(domains: CookieDomain[], selected: Set<string>): Set<string> {
   if (selectAllState(domains, selected) === "all") return new Set();
   const next = new Set(selected);
-  for (const d of domains) {
-    if (d.category === "") next.add(d.domain);
-  }
+  for (const d of domains) next.add(d.domain);
   return next;
 }
 
@@ -65,8 +55,6 @@ export interface DomainGroup {
   members: CookieDomain[];
   /** Cookies across the whole group. */
   count: number;
-  /** The root's category, or a member's when the root is unclassified. */
-  category: CookieCategory;
 }
 
 /**
@@ -91,17 +79,15 @@ export function groupDomains(domains: CookieDomain[]): DomainGroup[] {
     const root = rootScope(d.domain, present);
     const group = groups.get(root);
     if (!group) {
-      groups.set(root, { root, members: [d], count: d.count, category: d.domain === root ? d.category : "" });
+      groups.set(root, { root, members: [d], count: d.count });
       continue;
     }
-    // The root's own row carries the group's identity, wherever it turns up
-    // in the incoming order.
+    // The root's own row comes first, wherever it turns up in the incoming
+    // order.
     if (d.domain === root) {
       group.members.unshift(d);
-      group.category = d.category;
     } else {
       group.members.push(d);
-      if (group.category === "") group.category = d.category;
     }
     group.count += d.count;
   }
@@ -153,9 +139,8 @@ export function groupState(group: DomainGroup, selected: Set<string>): "none" | 
 /**
  * Toggle a whole group.
  *
- * Ticking reaches the classified members too: the row is badged and the
- * click is deliberate, which is the same bar a classified row on its own
- * has to clear.
+ * The group is a convenience over its members and nothing more: ticking it
+ * selects exactly the scopes listed under it, one grant each.
  */
 export function toggleGroup(group: DomainGroup, selected: Set<string>): Set<string> {
   const next = new Set(selected);

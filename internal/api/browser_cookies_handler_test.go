@@ -94,11 +94,6 @@ func (s *BrowserHandlerSuite) postCookieImport(body string) *httptest.ResponseRe
 
 func (s *BrowserHandlerSuite) TestCookieSources() {
 	s.srv.browser.cookieReader = s.newCookieReader()
-	s.srv.configs.load = func() (*config.Config, error) {
-		return &config.Config{Browser: config.BrowserConfig{
-			CookieImport: config.CookieImportConfig{SensitiveDomains: []string{"my-bank.example"}},
-		}}, nil
-	}
 
 	w := s.getCookieSources("?channel_id=ch-1")
 	require.Equal(s.T(), http.StatusOK, w.Code)
@@ -110,9 +105,9 @@ func (s *BrowserHandlerSuite) TestCookieSources() {
 	require.Equal(s.T(), "chrome:Default", got[0].ID)
 	require.Empty(s.T(), got[0].Error)
 	require.Equal(s.T(), []browsercookies.DomainSummary{
-		{Domain: "my-bank.example", Count: 1, Category: browsercookies.CategorySensitive},
-		{Domain: "stripe.com", Count: 1, Category: browsercookies.CategoryBank},
 		{Domain: "example.com", Count: 2},
+		{Domain: "my-bank.example", Count: 1},
+		{Domain: "stripe.com", Count: 1},
 	}, got[0].Domains)
 	require.Equal(s.T(), "firefox:work", got[1].ID)
 
@@ -159,15 +154,6 @@ func (s *BrowserHandlerSuite) TestCookieSourcesWithoutReader() {
 
 	w := s.getCookieSources("")
 	require.Equal(s.T(), http.StatusServiceUnavailable, w.Code)
-}
-
-// A config that will not load must not take the picker down with it: the
-// classifier just falls back to its built-in list.
-func (s *BrowserHandlerSuite) TestCookieClassifierWithoutConfig() {
-	s.srv.configs.load = func() (*config.Config, error) { return nil, errors.New("no config") }
-
-	require.Equal(s.T(), browsercookies.CategoryBank,
-		s.srv.browser.cookieClassifier().Classify("stripe.com"))
 }
 
 /* ---------- import ---------- */

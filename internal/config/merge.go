@@ -538,9 +538,6 @@ func mergeCookieImport(merged *CookieImportConfig, pc *jsonCookieImportConfig) {
 	if pc.Domains != nil {
 		merged.Domains = pc.Domains
 	}
-	if pc.SensitiveDomains != nil {
-		merged.SensitiveDomains = pc.SensitiveDomains
-	}
 	if pc.Auto != nil {
 		merged.Auto = *pc.Auto
 	}
