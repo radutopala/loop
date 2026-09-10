@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { type CookieSource, importCookies, listCookieSources } from "../../api/loopApi";
 import { useTheme } from "../../ThemeContext";
 import { storageGet, storageGetJSON, storageSet } from "../../utils/storage";
-import { CATEGORY_LABELS, defaultSelection, filterDomains, selectAllState, toggleAll } from "./cookieImport";
+import { CATEGORY_LABELS, type DomainGroup, defaultSelection, filterGroups, groupDomains, groupState, selectAllState, toggleAll, toggleGroup } from "./cookieImport";
 
 interface CookieImportDialogProps {
   channelId: string;
@@ -30,7 +30,8 @@ export function CookieImportDialog({ channelId, onClose, onImported }: CookieImp
 
   const source = useMemo(() => sources?.find((s) => s.id === sourceId), [sources, sourceId]);
   const domains = useMemo(() => source?.domains ?? [], [source]);
-  const visible = useMemo(() => filterDomains(domains, query), [domains, query]);
+  const groups = useMemo(() => groupDomains(domains), [domains]);
+  const visible = useMemo(() => filterGroups(groups, query), [groups, query]);
   const allState = selectAllState(domains, selected);
 
   const loadSources = useCallback(() => {
@@ -126,6 +127,7 @@ export function CookieImportDialog({ channelId, onClose, onImported }: CookieImp
               allState={allState}
               onQuery={setQuery}
               onToggle={toggle}
+              onToggleGroup={(g) => setSelected(toggleGroup(g, selected))}
               onToggleAll={() => setSelected(toggleAll(domains, selected))}
             />
           )}
@@ -206,19 +208,32 @@ function SiteStep({
   allState,
   onQuery,
   onToggle,
+  onToggleGroup,
   onToggleAll,
 }: {
   colors: Colors;
   source: CookieSource | undefined;
-  visible: { domain: string; count: number; category: keyof typeof CATEGORY_LABELS }[];
+  visible: DomainGroup[];
   selected: Set<string>;
   total: number;
   query: string;
   allState: "none" | "some" | "all";
   onQuery: (q: string) => void;
   onToggle: (domain: string) => void;
+  onToggleGroup: (group: DomainGroup) => void;
   onToggleAll: () => void;
 }) {
+  // A filtered list is already narrow, so it expands on its own; otherwise
+  // groups stay folded, which is what turns 889 rows into something a
+  // person can read.
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const toggleExpanded = (root: string) =>
+    setExpanded((prev) => {
+      const next = new Set(prev);
+      if (!next.delete(root)) next.add(root);
+      return next;
+    });
+
   return (
     <>
       <h2 style={{ margin: 0, flexShrink: 0, fontSize: 16 }}>Choose sites to bring over</h2>
@@ -269,28 +284,124 @@ function SiteStep({
 
       <div style={{ flex: "1 1 auto", overflowY: "auto", minHeight: 0 }}>
         {visible.length === 0 && <div style={{ padding: "12px 0", color: colors.textDim, fontSize: 12 }}>{total === 0 ? "No cookies in this profile." : "No sites match that filter."}</div>}
-        {visible.map((d) => (
-          <label key={d.domain} title={`${d.count} cookie${d.count === 1 ? "" : "s"}`} style={{ display: "flex", alignItems: "center", gap: 8, padding: "5px 0", cursor: "pointer" }}>
-            <input type="checkbox" checked={selected.has(d.domain)} onChange={() => onToggle(d.domain)} />
-            <span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{d.domain}</span>
-            {d.category !== "" && (
-              <span
-                style={{
-                  padding: "1px 6px",
-                  borderRadius: 4,
-                  fontSize: 10,
-                  color: colors.warning,
-                  backgroundColor: `${colors.warning}22`,
-                  whiteSpace: "nowrap",
-                }}
-              >
-                {CATEGORY_LABELS[d.category]}
-              </span>
-            )}
-          </label>
+        {visible.map((g) => (
+          <GroupRow
+            key={g.root}
+            colors={colors}
+            group={g}
+            selected={selected}
+            expanded={expanded.has(g.root) || query.trim() !== ""}
+            onExpand={() => toggleExpanded(g.root)}
+            onToggle={onToggle}
+            onToggleGroup={onToggleGroup}
+          />
         ))}
       </div>
     </>
+  );
+}
+
+/**
+ * One parent scope and, when expanded, the scopes under it.
+ *
+ * The parent checkbox covers every member, because a site's session is
+ * usually split across them — the cookies that sign you into Gmail are on
+ * google.com, not on mail.google.com. A group of one renders as a plain row.
+ */
+function GroupRow({
+  colors,
+  group,
+  selected,
+  expanded,
+  onExpand,
+  onToggle,
+  onToggleGroup,
+}: {
+  colors: Colors;
+  group: DomainGroup;
+  selected: Set<string>;
+  expanded: boolean;
+  onExpand: () => void;
+  onToggle: (domain: string) => void;
+  onToggleGroup: (group: DomainGroup) => void;
+}) {
+  const state = groupState(group, selected);
+  const children = group.members.filter((m) => m.domain !== group.root);
+
+  if (children.length === 0) {
+    const only = group.members[0];
+    return only ? <DomainRow colors={colors} domain={only} checked={selected.has(only.domain)} onToggle={() => onToggle(only.domain)} /> : null;
+  }
+
+  return (
+    <>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "5px 0" }}>
+        <input
+          type="checkbox"
+          checked={state === "all"}
+          ref={(el) => {
+            if (el) el.indeterminate = state === "some";
+          }}
+          onChange={() => onToggleGroup(group)}
+          aria-label={`${group.root} and ${children.length} sites under it`}
+        />
+        <button
+          type="button"
+          onClick={onExpand}
+          title={`${group.count} cookie${group.count === 1 ? "" : "s"} across ${group.members.length} sites`}
+          style={{ flex: 1, display: "flex", alignItems: "center", gap: 6, padding: 0, border: "none", background: "none", color: "inherit", font: "inherit", cursor: "pointer", textAlign: "left" }}
+        >
+          <span style={{ width: 8, color: colors.textDim, fontSize: 9 }}>{expanded ? "▼" : "▶"}</span>
+          <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{group.root}</span>
+          <span style={{ color: colors.textDim, fontSize: 11 }}>+{children.length}</span>
+        </button>
+        <CategoryBadge colors={colors} category={group.category} />
+      </div>
+      {expanded && group.members.map((m) => <DomainRow key={m.domain} colors={colors} domain={m} checked={selected.has(m.domain)} onToggle={() => onToggle(m.domain)} indent />)}
+    </>
+  );
+}
+
+function DomainRow({
+  colors,
+  domain,
+  checked,
+  onToggle,
+  indent,
+}: {
+  colors: Colors;
+  domain: { domain: string; count: number; category: keyof typeof CATEGORY_LABELS };
+  checked: boolean;
+  onToggle: () => void;
+  indent?: boolean;
+}) {
+  return (
+    <label
+      title={`${domain.count} cookie${domain.count === 1 ? "" : "s"}`}
+      style={{ display: "flex", alignItems: "center", gap: 8, padding: "5px 0", paddingLeft: indent ? 22 : 0, cursor: "pointer" }}
+    >
+      <input type="checkbox" checked={checked} onChange={onToggle} />
+      <span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{domain.domain}</span>
+      <CategoryBadge colors={colors} category={domain.category} />
+    </label>
+  );
+}
+
+function CategoryBadge({ colors, category }: { colors: Colors; category: keyof typeof CATEGORY_LABELS }) {
+  if (category === "") return null;
+  return (
+    <span
+      style={{
+        padding: "1px 6px",
+        borderRadius: 4,
+        fontSize: 10,
+        color: colors.warning,
+        backgroundColor: `${colors.warning}22`,
+        whiteSpace: "nowrap",
+      }}
+    >
+      {CATEGORY_LABELS[category]}
+    </span>
   );
 }
 

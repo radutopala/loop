@@ -1,11 +1,11 @@
 import { describe, expect, it } from "vitest";
 import type { CookieDomain } from "../../api/loopApi";
-import { CATEGORY_LABELS, defaultSelection, filterDomains, selectAllState, toggleAll } from "./cookieImport";
+import { CATEGORY_LABELS, defaultSelection, filterDomains, filterGroups, groupDomains, groupState, selectAllState, toggleAll, toggleGroup } from "./cookieImport";
 
 const stripe: CookieDomain = { domain: "stripe.com", count: 3, category: "bank" };
 
 const domains: CookieDomain[] = [
-  { domain: "mail.google.com", count: 12, category: "email" },
+  { domain: "mail.example.com", count: 12, category: "email" },
   stripe,
   { domain: "example.okta.com", count: 2, category: "signin" },
   { domain: "my-bank.example", count: 1, category: "sensitive" },
@@ -93,5 +93,102 @@ describe("CATEGORY_LABELS", () => {
       bank: "Bank or payments",
       sensitive: "Sensitive",
     });
+  });
+});
+
+// A login spread across a parent scope and the subdomains under it, plus a
+// site whose parent is a public suffix nobody sets cookies on.
+const spread: CookieDomain[] = [
+  { domain: "example.com", count: 20, category: "email" },
+  { domain: "mail.example.com", count: 10, category: "email" },
+  { domain: "accounts.example.com", count: 6, category: "signin" },
+  { domain: "access.workspace.example.com", count: 3, category: "email" },
+  { domain: "example.co.uk", count: 4, category: "bank" },
+  { domain: "example.net", count: 2, category: "" },
+  { domain: "login.example.net", count: 1, category: "signin" },
+];
+
+describe("groupDomains", () => {
+  it("folds every scope under the parent that is itself in the jar", () => {
+    expect(groupDomains(spread).map((g) => [g.root, g.members.map((m) => m.domain)])).toEqual([
+      ["example.com", ["example.com", "mail.example.com", "accounts.example.com", "access.workspace.example.com"]],
+      ["example.co.uk", ["example.co.uk"]],
+      ["example.net", ["example.net", "login.example.net"]],
+    ]);
+  });
+
+  it("sums the cookies across the group", () => {
+    expect(groupDomains(spread)[0]?.count).toBe(39);
+  });
+
+  // No public suffix list is consulted, so no group can be invented for a
+  // scope no browser would accept a cookie on.
+  it("leaves a site alone when its parent sets no cookies", () => {
+    expect(groupDomains(spread)[1]).toEqual({
+      root: "example.co.uk",
+      members: [{ domain: "example.co.uk", count: 4, category: "bank" }],
+      count: 4,
+      category: "bank",
+    });
+  });
+
+  it("takes the root's badge, or a member's when the root has none", () => {
+    const [g, , plain] = groupDomains(spread);
+    expect(g?.category).toBe("email");
+    expect(plain?.category).toBe("signin");
+  });
+
+  // The parent can arrive after its children when it holds fewer cookies.
+  it("puts the root first however late it turns up", () => {
+    const g = groupDomains([
+      { domain: "mail.example.com", count: 9, category: "" },
+      { domain: "example.com", count: 1, category: "email" },
+    ])[0];
+    expect(g?.root).toBe("example.com");
+    expect(g?.members.map((m) => m.domain)).toEqual(["example.com", "mail.example.com"]);
+    expect(g?.category).toBe("email");
+  });
+});
+
+describe("filterGroups", () => {
+  it("keeps the whole group when the parent matches", () => {
+    const [g] = filterGroups(groupDomains(spread), "EXAMPLE.com ");
+    expect(g?.members).toHaveLength(4);
+  });
+
+  it("narrows the group to the members that match", () => {
+    const got = filterGroups(groupDomains(spread), "accounts");
+    expect(got).toHaveLength(1);
+    expect(got[0]?.members.map((m) => m.domain)).toEqual(["accounts.example.com"]);
+    expect(got[0]?.count).toBe(6);
+  });
+
+  it("returns everything for a blank query and nothing for a miss", () => {
+    expect(filterGroups(groupDomains(spread), "  ")).toHaveLength(3);
+    expect(filterGroups(groupDomains(spread), "nope")).toEqual([]);
+  });
+});
+
+describe("groupState and toggleGroup", () => {
+  const [g] = groupDomains(spread);
+
+  it("reports none, some and all across the members", () => {
+    if (!g) throw new Error("no group");
+    expect(groupState(g, new Set())).toBe("none");
+    expect(groupState(g, new Set(["mail.example.com"]))).toBe("some");
+    expect(groupState(g, new Set(g.members.map((m) => m.domain)))).toBe("all");
+  });
+
+  // One click has to reach the classified members, or the group cannot do
+  // the job it exists for: signing you in.
+  it("ticks every member, classified ones included", () => {
+    if (!g) throw new Error("no group");
+    expect(toggleGroup(g, new Set(["other.example"]))).toEqual(new Set(["other.example", "example.com", "mail.example.com", "accounts.example.com", "access.workspace.example.com"]));
+  });
+
+  it("clears the group without touching anything else", () => {
+    if (!g) throw new Error("no group");
+    const all = new Set([...g.members.map((m) => m.domain), "other.example"]);
+    expect(toggleGroup(g, all)).toEqual(new Set(["other.example"]));
   });
 });
