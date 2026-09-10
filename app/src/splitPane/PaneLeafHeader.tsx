@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import type { AgentInfo } from "../hooks/useAgentRegistry";
-import { type ContainerStatsByType, fmtBytes } from "../hooks/useContainerStats";
+import { type ContainerStatsByType, fmtBytes, statsForPanel } from "../hooks/useContainerStats";
 import { useTheme } from "../ThemeContext";
 import type { ColorPalette } from "../theme";
 import { fonts } from "../theme";
@@ -77,9 +77,7 @@ export function PaneLeafHeader({
   const { colors } = useTheme();
   const isAgent = panel === "docker-agent";
   const label = isAgent ? agentInfo?.name || leafId : PANEL_LABELS[panel];
-  // Chat runs in the channel's agent container; every docker-agent pane
-  // (resume / fork / fresh) execs into the shared shell container.
-  const statsEntry = panel === "chat" ? containerStats?.agent : isAgent ? containerStats?.shell : undefined;
+  const statsEntry = statsForPanel(panel, containerStats);
 
   const btnStyle = buildBtnStyle(colors);
 

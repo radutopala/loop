@@ -1,11 +1,26 @@
 import { useEffect, useState } from "react";
 import { type ContainerStatsEntry, fetchContainerStats } from "../api/channels";
 
-/** Per-container-type stats for one channel: agent (chat runs) and shell
- *  (docker-agent terminal panes exec into the shared shell container). */
+/** Per-container-type stats for one channel: agent (chat runs), shell
+ *  (docker-agent terminal panes exec into the shared shell container) and
+ *  chrome (the browser pane's sidecar). */
 export interface ContainerStatsByType {
   agent?: ContainerStatsEntry;
   shell?: ContainerStatsEntry;
+  chrome?: ContainerStatsEntry;
+}
+
+/**
+ * Picks the container whose usage belongs in a panel's header. A browser pane
+ * has its own container to answer for: Chrome is memory-capped separately from
+ * the agent, and a page heavy enough to be OOM-killed takes the pane's tab with
+ * it, so the number that predicts that has to be the sidecar's own.
+ */
+export function statsForPanel(panel: string, stats?: ContainerStatsByType): ContainerStatsEntry | undefined {
+  if (panel === "chat") return stats?.agent;
+  if (panel === "docker-agent") return stats?.shell;
+  if (panel === "docker-browser") return stats?.chrome;
+  return undefined;
 }
 
 const POLL_MS = 3000;
@@ -35,6 +50,7 @@ export function useContainerStats(channelId: string | null): ContainerStatsByTyp
             // stable so the display doesn't flap between duplicate agents.
             if (e.type === "agent" && !next.agent) next.agent = e;
             if (e.type === "shell" && !next.shell) next.shell = e;
+            if (e.type === "chrome" && !next.chrome) next.chrome = e;
           }
           setStats(next);
         } catch {
