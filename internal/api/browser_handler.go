@@ -234,6 +234,19 @@ func (bc *browserWSConn) handleStart(ctx context.Context, msg browserWSMessage) 
 				}
 				bc.logger.Info("browser ws: reusing cached CDP")
 				activeClient.ResetScreencast()
+				// Chrome does not composite a backgrounded tab, so a screencast
+				// restarted on one streams nothing and the pane sits on its last
+				// frame — indistinguishable from a hang, and silent. Anything
+				// that opened a tab while the pane was away leaves this client
+				// holding a background one, so reuse has to activate for the
+				// same reason the fresh-connect path below does.
+				//
+				// Order matters: ResetScreencast above clears the stale flag so
+				// SwitchTarget skips its CDP stop, which is unbounded and would
+				// otherwise block on the very tab being recovered.
+				if tid := activeClient.TargetID(); tid != "" {
+					_ = activeClient.SwitchTarget(tid)
+				}
 				cdpMgr.PaneConnected()
 				bc.mu.Lock()
 				bc.cdpMgr = cdpMgr

@@ -192,6 +192,7 @@ func (s *BrowserHandlerSuite) TestHandleStartReusesCachedCDP() {
 	// The tab the client is attached to is still open, so the liveness check
 	// finds it and leaves the cached client alone.
 	mockCDP.On("ListTabs", mock.Anything).Return([]browser.TabInfo{{TargetID: "test-target"}}, nil).Maybe()
+	mockCDP.On("SwitchTarget", "test-target").Return(nil)
 	mockCDP.On("StopScreencast").Return().Maybe()
 	mockCDP.On("Close").Return().Maybe()
 
@@ -226,6 +227,8 @@ func (s *BrowserHandlerSuite) TestHandleStartReusesCachedCDP() {
 	require.Equal(s.T(), bwsRespStarted, resp.Type)
 
 	mockCDP.AssertCalled(s.T(), "ResetScreencast")
+	// Activated, not merely reused: a tab left in the background streams nothing.
+	mockCDP.AssertCalled(s.T(), "SwitchTarget", "test-target")
 }
 
 // reuseTestManager registers a connected manager for ch whose initial client
@@ -257,6 +260,7 @@ func (s *BrowserHandlerSuite) TestHandleStartReattachesAfterTabVanished() {
 	fresh.On("TargetID").Return("live-target").Maybe()
 	fresh.On("ResetScreencast").Return()
 	fresh.On("ListTabs", mock.Anything).Return([]browser.TabInfo{{TargetID: "live-target"}}, nil).Maybe()
+	fresh.On("SwitchTarget", "live-target").Return(nil)
 	fresh.On("StopScreencast").Return().Maybe()
 	fresh.On("Close").Return().Maybe()
 
@@ -282,6 +286,7 @@ func (s *BrowserHandlerSuite) TestHandleStartReattachesAfterTabVanished() {
 	require.Equal(s.T(), bwsRespStarted, s.readResp(ws).Type)
 
 	fresh.AssertCalled(s.T(), "ResetScreencast")
+	fresh.AssertCalled(s.T(), "SwitchTarget", "live-target")
 	stale.AssertNotCalled(s.T(), "ResetScreencast")
 	require.Equal(s.T(), "live-target", cdpMgr.ActiveTargetID())
 }
@@ -847,4 +852,36 @@ func (s *BrowserHandlerSuite) TestGetBrowserCDPFailsWhenActiveTabWontAttach() {
 	require.Error(s.T(), err)
 	require.Nil(s.T(), cdpCl)
 	require.Contains(s.T(), err.Error(), "attaching to active tab tab-2")
+}
+
+// SwitchTarget stops the screencast on its way through, and that CDP stop is
+// unbounded — against the backgrounded tab being recovered it would block the
+// pane's start handler. Clearing the stale flag first makes the stop a no-op,
+// so the order here is load-bearing, not cosmetic.
+func (s *BrowserHandlerSuite) TestHandleStartResetsScreencastBeforeActivating() {
+	mockCDP := new(mockCDPSession)
+	mockCDP.On("TargetID").Return("bg-target").Maybe()
+	mockCDP.On("ListTabs", mock.Anything).Return([]browser.TabInfo{{TargetID: "bg-target"}}, nil).Maybe()
+	mockCDP.On("Close").Return().Maybe()
+
+	var reset bool
+	var resetBeforeSwitch bool
+	mockCDP.On("ResetScreencast").Return().Run(func(mock.Arguments) { reset = true })
+	mockCDP.On("SwitchTarget", "bg-target").Return(nil).Run(func(mock.Arguments) {
+		resetBeforeSwitch = reset
+	})
+
+	s.browserMgr.On("EnsureBrowser", mock.Anything, "ch-bg", "").Return(nil)
+	s.browserMgr.On("GetCDPEndpoint", "ch-bg").Return("ws://127.0.0.1:9222")
+	s.reuseTestManager("ch-bg", mockCDP)
+
+	ws, ts := s.dialBrowserWS()
+	defer ts.Close()
+	defer ws.Close()
+
+	require.NoError(s.T(), ws.WriteJSON(browserWSMessage{Type: bwsMsgStart, ChannelID: "ch-bg"}))
+	require.Equal(s.T(), bwsRespStarted, s.readResp(ws).Type)
+
+	mockCDP.AssertCalled(s.T(), "SwitchTarget", "bg-target")
+	require.True(s.T(), resetBeforeSwitch, "screencast must be reset before the target is activated")
 }
