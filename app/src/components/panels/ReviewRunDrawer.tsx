@@ -4,6 +4,7 @@ import type { ChatEventListener } from "../../hooks/useChatStateStore";
 import type { ColorPalette } from "../../theme";
 import { fonts } from "../../theme";
 import type { WSEvent } from "../../types";
+import { Chevron } from "../shared/Chevron";
 import { WorkflowGraph } from "./WorkflowGraph";
 
 interface ReviewRunDrawerProps {
@@ -148,7 +149,7 @@ export function ReviewRunDrawer({ runId, colors, subscribeChatEvents, collapsed,
         }}
         title={collapsed ? "Show workflow canvas" : "Hide workflow canvas"}
       >
-        <span style={{ fontSize: 9, width: 8, display: "inline-block" }}>{collapsed ? "▶" : "▼"}</span>
+        <Chevron deg={collapsed ? 0 : 90} size={9} />
         <span style={{ fontWeight: 600 }}>Workflow canvas</span>
         {workflowName && <span style={{ fontFamily: fonts.mono, color: colors.textDim, opacity: 0.8 }}>{workflowName}</span>}
       </button>

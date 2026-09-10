@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { type CookieSource, importCookies, listCookieSources } from "../../api/loopApi";
 import { useTheme } from "../../ThemeContext";
 import { storageGet, storageGetJSON, storageSet } from "../../utils/storage";
+import { Chevron } from "../shared/Chevron";
 import { type DomainGroup, defaultSelection, filterGroups, groupDomains, groupState, selectAllState, toggleAll, toggleGroup } from "./cookieImport";
 
 interface CookieImportDialogProps {
@@ -352,7 +353,7 @@ function GroupRow({
           title={`${group.count} cookie${group.count === 1 ? "" : "s"} across ${group.members.length} sites`}
           style={{ flex: 1, display: "flex", alignItems: "center", gap: 6, padding: 0, border: "none", background: "none", color: "inherit", font: "inherit", cursor: "pointer", textAlign: "left" }}
         >
-          <span style={{ width: 8, color: colors.textDim, fontSize: 9 }}>{expanded ? "▼" : "▶"}</span>
+          <Chevron deg={expanded ? 90 : 0} size={9} style={{ color: colors.textDim }} />
           <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{group.root}</span>
           <span style={{ color: colors.textDim, fontSize: 11 }}>+{children.length}</span>
         </button>

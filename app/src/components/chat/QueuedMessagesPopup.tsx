@@ -4,6 +4,7 @@ import { useTheme } from "../../ThemeContext";
 import { fonts } from "../../theme";
 import type { Message } from "../../types";
 import { logErr } from "../../utils/log";
+import { Chevron } from "../shared/Chevron";
 import { DelayCountdown } from "./DelayCountdown";
 
 interface QueuedMessagesPopupProps {
@@ -182,7 +183,7 @@ export function QueuedMessagesPopup({ messages, channelId, isRunning }: QueuedMe
           <span>
             <span style={{ fontWeight: 700, color: colors.textLight }}>{messages.length}</span> queued
           </span>
-          <span style={{ fontSize: 10, opacity: 0.7 }}>{expanded ? "\u25B4" : "\u25BE"}</span>
+          <Chevron deg={expanded ? -90 : 90} style={{ opacity: 0.7 }} />
         </button>
         {expanded && (
           <div style={{ borderTop: `1px solid ${colors.border}` }}>
