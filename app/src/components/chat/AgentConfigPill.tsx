@@ -63,7 +63,13 @@ export function AgentConfigPill({ channelId }: { channelId: string }) {
   );
 
   const overridden = model !== "" || effort !== "";
-  const label = overridden ? [model ? shortModel(model) : null, effort || null].filter(Boolean).join(" · ") : "model";
+  // Always name what will actually run — the channel override where set, the
+  // config default otherwise — so the pill reads "opus-5 · high" instead of a
+  // generic "model" that hides the effective settings. The accent colour, not
+  // the text, is what marks an override.
+  const effectiveModel = model || defaults.model;
+  const effectiveEffort = effort || defaults.effort;
+  const label = [effectiveModel ? shortModel(effectiveModel) : null, effectiveEffort || null].filter(Boolean).join(" · ") || "model";
 
   const rowStyle = (selected: boolean): React.CSSProperties => ({
     display: "flex",
