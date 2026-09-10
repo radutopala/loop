@@ -270,10 +270,30 @@ func (s *ManagerSuite) TestEnsureBrowserMemoryLimit() {
 	tests := []struct {
 		name     string
 		memoryMB int64
+		resolver func(ctx context.Context, channelID string) (int64, bool)
 		want     int64
 	}{
 		{name: "configured cap", memoryMB: 2048, want: 2048 * 1024 * 1024},
 		{name: "zero means no cap", memoryMB: 0, want: 0},
+		{
+			// The per-channel lookup is the only way a project's override can
+			// reach a provider that was built once, from the global layer.
+			name:     "resolver wins over the constructor",
+			memoryMB: 512,
+			resolver: func(_ context.Context, channelID string) (int64, bool) {
+				if channelID != "ch-1" {
+					return 0, false
+				}
+				return 2048, true
+			},
+			want: 2048 * 1024 * 1024,
+		},
+		{
+			name:     "resolver with no answer falls back",
+			memoryMB: 512,
+			resolver: func(context.Context, string) (int64, bool) { return 4096, false },
+			want:     512 * 1024 * 1024,
+		},
 	}
 
 	for _, tt := range tests {
@@ -286,6 +306,9 @@ func (s *ManagerSuite) TestEnsureBrowserMemoryLimit() {
 				MemoryMB: tt.memoryMB,
 			}, slog.Default())
 			mgr.inContainer = false
+			if tt.resolver != nil {
+				mgr.SetMemoryLimitResolver(tt.resolver)
+			}
 
 			api.On("ContainerList", ctx, mock.Anything).
 				Return([]containertypes.Summary{}, nil)
