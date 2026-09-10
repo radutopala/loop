@@ -142,7 +142,7 @@ func signinPrefixCategory(domain string) Category {
 }
 
 // seedCategory matches a domain or any of its parents against the seed list,
-// so mail.google.com inherits google.com's label.
+// so a subdomain inherits the label its parent carries.
 func (c *Classifier) seedCategory(domain string) Category {
 	for _, d := range parentDomains(domain) {
 		if cat, ok := c.seed[d]; ok {
@@ -163,8 +163,8 @@ func matchSuffix(set map[string]struct{}, domain string) bool {
 }
 
 // parentDomains yields the domain followed by each parent that still has two
-// labels, so mail.google.com yields itself and google.com but never a bare
-// "com" — a suffix rule that matched a TLD would classify half the web.
+// labels, so "a.b.example" yields itself and "b.example" but never a bare
+// "example" — a suffix rule that matched a TLD would classify half the web.
 func parentDomains(domain string) []string {
 	out := []string{domain}
 	for d := domain; ; {

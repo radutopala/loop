@@ -22,10 +22,10 @@ func NormaliseDomain(host string) string {
 //
 // Grouping is by the cookie's own scope — its host_key with the leading dot
 // removed — not by registrable domain. That choice is what keeps the picker
-// honest: ".google.com" and "oauth.officeapps.live.com" are two genuinely
-// different grants, and folding the second into "live.com" would let one
-// checkbox hand over every Microsoft tenant cookie in the profile. Ticking a
-// row grants exactly the scope printed on it.
+// honest: a vendor's own scope and one of its customer tenants are two
+// genuinely different grants, and folding the tenant into the vendor's
+// registrable domain would let one checkbox hand over every tenant cookie in
+// the profile. Ticking a row grants exactly the scope printed on it.
 //
 // Rows come back classified-first, then by cookie count descending, then
 // alphabetically. Putting the risky ones where they cannot be scrolled past

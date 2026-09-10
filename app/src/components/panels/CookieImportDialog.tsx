@@ -305,8 +305,9 @@ function SiteStep({
  * One parent scope and, when expanded, the scopes under it.
  *
  * The parent checkbox covers every member, because a site's session is
- * usually split across them — the cookies that sign you into Gmail are on
- * google.com, not on mail.google.com. A group of one renders as a plain row.
+ * usually split across them — the cookies that sign you in sit on the parent
+ * scope, not on the subdomain its app is served from. A group of one renders
+ * as a plain row.
  */
 function GroupRow({
   colors,
