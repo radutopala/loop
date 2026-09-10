@@ -54,6 +54,10 @@
   //  "chrome_image": "loop-chrome:latest",
   //  "host_cdp_port": 9222,
   //  "persist_profile": true,
+  //  // Memory cap per Chrome container, in MB; 0 for no cap. Raise it when a
+  //  // page-heavy site keeps getting its tab killed. Applies to the next
+  //  // sidecar, not one already running.
+  //  "memory_mb": 512,
   //  // Unpacked Chrome extensions to load into the sidecar (Docker mode).
   //  // Each entry is a host directory containing a manifest.json. Empty
   //  // (the default) runs Chrome with extensions disabled.

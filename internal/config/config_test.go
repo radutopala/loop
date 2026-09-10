@@ -70,6 +70,7 @@ func (s *ConfigSuite) TestLoadDefaults() {
 	require.Nil(s.T(), cfg.MCPServers)
 	require.True(s.T(), cfg.Browser.Enabled)
 	require.True(s.T(), cfg.Browser.PersistProfile)
+	require.Equal(s.T(), int64(512), cfg.Browser.MemoryMB)
 	require.Empty(s.T(), cfg.Browser.Extensions)
 	require.Equal(s.T(), CookieImportConfig{}, cfg.Browser.CookieImport)
 	require.Empty(s.T(), cfg.CopyFiles) // runner prepends ~/.claude.json per container; not defaulted here
@@ -166,6 +167,7 @@ func (s *ConfigSuite) TestLoadBrowserFullConfig() {
 				"mode": "host",
 				"host_cdp_port": 9333,
 				"persist_profile": false,
+				"memory_mb": 2048,
 				"extensions": ["/host/ublock", "/host/other"],
 				"cookie_import": {
 					"source": "chrome:Default",
@@ -184,6 +186,7 @@ func (s *ConfigSuite) TestLoadBrowserFullConfig() {
 	require.Equal(s.T(), "host", cfg.Browser.Mode)
 	require.Equal(s.T(), 9333, cfg.Browser.HostCDPPort)
 	require.False(s.T(), cfg.Browser.PersistProfile)
+	require.Equal(s.T(), int64(2048), cfg.Browser.MemoryMB)
 	require.Equal(s.T(), []string{"/host/ublock", "/host/other"}, cfg.Browser.Extensions)
 	require.Equal(s.T(), CookieImportConfig{
 		Source:           "chrome:Default",

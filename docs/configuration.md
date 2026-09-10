@@ -83,6 +83,7 @@ Browser settings are grouped under `"browser"`:
 | `browser.chrome_image` | `string` | `"loop-chrome:latest"` | Docker image for Chrome sidecar containers. |
 | `browser.host_cdp_port` | `int` | `9222` | CDP port for Host mode. Requires `chrome://inspect/#remote-debugging` enabled in Chrome. |
 | `browser.persist_profile` | `bool` | `true` | Keep the agent's cookies and logins across browser restarts, in a per-channel Docker volume. Docker mode only. |
+| `browser.memory_mb` | `int` | `512` | Memory cap per Chrome sidecar (MB); `0` for no cap. A page-heavy site can exhaust the default and get its container OOM-killed. Docker fixes the limit at container creation, so a change applies to the next sidecar, not a running one. Docker mode only. |
 | `browser.extensions` | `[]string` | `[]` | Host directories holding unpacked Chrome extensions, loaded into every sidecar. Empty runs Chrome with `--disable-extensions`. Docker mode only. See [Browser](browser.md#extensions). |
 | `browser.cookie_import.source` | `string` | `""` | Browser profile to import cookies from, e.g. `"chrome:Default"`. See [Browser](browser.md#importing-cookies-from-your-own-browser). |
 | `browser.cookie_import.domains` | `[]string` | `[]` | Cookie scopes to bring over, matched exactly against the scope shown in the picker. |
@@ -590,6 +591,7 @@ Not all global fields are available in project configs. The following fields can
 | `browser.chrome_image` | **Overrides** global value when set. |
 | `browser.host_cdp_port` | **Overrides** global value when set. |
 | `browser.persist_profile` | **Overrides** global value when set. |
+| `browser.memory_mb` | **Overrides** global value when set. |
 | `browser.extensions` | **Replaces** the global list when set (entries are not merged). |
 | `browser.cookie_import` | **Overrides** per key: `source` and `auto` when set, `domains` / `sensitive_domains` **replace** the global list when present. |
 | `github.gh_user` | **Overrides** global value when set. |
@@ -663,6 +665,7 @@ The merge follows these principles:
   //  "chrome_image": "loop-chrome:latest",
   //  "host_cdp_port": 9222,
   //  "persist_profile": true,
+  //  "memory_mb": 512,                   // memory cap per sidecar; 0 for no cap
   //  "extensions": ["/Users/me/chrome-extensions/ublock"],
   //  "cookie_import": {
   //    "source": "chrome:Default",       // browser profile to import cookies from
@@ -829,6 +832,7 @@ The merge follows these principles:
   //  "enabled": false,
   //  "chrome_image": "loop-chrome:latest",
   //  "persist_profile": true,
+  //  "memory_mb": 512,                   // memory cap per sidecar; 0 for no cap
   //  "extensions": ["/Users/me/chrome-extensions/ublock"],
   //  "cookie_import": {
   //    "source": "chrome:Default",       // browser profile to import cookies from

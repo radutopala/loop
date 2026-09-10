@@ -237,6 +237,13 @@ type BrowserConfig struct {
 	// screencast, which only streams the page.
 	Extensions []string
 
+	// MemoryMB caps each channel's Chrome sidecar, in megabytes. Default 512,
+	// which a page-heavy web app like a chat client can exhaust — the
+	// container is then OOM-killed and the pane's tab dies. Zero lifts the cap
+	// entirely. Docker fixes a container's limit when it is created, so a
+	// change takes effect on the next sidecar, not the running one.
+	MemoryMB int64
+
 	// CookieImport configures importing cookies out of the user's own
 	// browser into a channel's sidecar. loop never writes this block back —
 	// the panel remembers the last picker selection client-side so hand-

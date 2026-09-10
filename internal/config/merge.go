@@ -267,6 +267,9 @@ func (l *Loader) loadProjectConfig(workDir string, mainConfig *Config) (*Config,
 		if pc.Browser.Extensions != nil {
 			merged.Browser.Extensions = pc.Browser.Extensions
 		}
+		if pc.Browser.MemoryMB != nil {
+			merged.Browser.MemoryMB = *pc.Browser.MemoryMB
+		}
 		mergeCookieImport(&merged.Browser.CookieImport, pc.Browser.CookieImport)
 	}
 
