@@ -4,7 +4,7 @@ import { type TabInfo, useBrowserWs } from "../../hooks/useBrowserWs";
 import { useTheme } from "../../ThemeContext";
 import { storageGet, storageSet } from "../../utils/storage";
 import { type BrowserInput, createFrameRenderer, createInputCoalescer } from "./browserStream";
-import { normalizeNavigateUrl } from "./browserUrl";
+import { normalizeNavigateUrl, safeFaviconUrl } from "./browserUrl";
 import { CookieImportDialog } from "./CookieImportDialog";
 
 interface BrowserPanelProps {
@@ -496,6 +496,7 @@ function TabStrip({
       {tabs.map((tab) => {
         const isActive = tab.target_id === activeTargetId;
         const isHovered = tab.target_id === hoveredTab;
+        const icon = safeFaviconUrl(tab.favicon_url);
 
         return (
           <div
@@ -529,7 +530,7 @@ function TabStrip({
               zIndex: isActive ? 1 : 0,
             }}
           >
-            <TabIcon url={tab.favicon_url} broken={brokenIcons.has(tab.favicon_url ?? "")} isActive={isActive} colors={colors} onBroken={markIconBroken} />
+            <TabIcon url={icon} broken={brokenIcons.has(icon ?? "")} isActive={isActive} colors={colors} onBroken={markIconBroken} />
             <span
               style={{
                 overflow: "hidden",
@@ -607,7 +608,9 @@ function TabStrip({
  * The tab's own favicon, falling back to the dot the strip used to draw.
  *
  * The box keeps its 12px either way, so a strip whose icons arrive late does
- * not shuffle its titles sideways as they land.
+ * not shuffle its titles sideways as they land. `url` is expected to have come
+ * through safeFaviconUrl — the site chooses it, so nothing else may reach the
+ * img.
  */
 function TabIcon({
   url,

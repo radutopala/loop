@@ -18,6 +18,7 @@ import (
 	cdpdom "github.com/chromedp/cdproto/dom"
 	"github.com/chromedp/cdproto/emulation"
 	"github.com/chromedp/cdproto/input"
+	cdpio "github.com/chromedp/cdproto/io"
 	"github.com/chromedp/cdproto/network"
 	cdppage "github.com/chromedp/cdproto/page"
 	cdpruntime "github.com/chromedp/cdproto/runtime"
@@ -61,6 +62,7 @@ type CDPClient struct {
 	commandTimeout time.Duration
 
 	mu                 sync.Mutex
+	faviconData        map[string]string // icon URL -> data URL, "" when it could not be fetched
 	screencasting      bool
 	listenerRegistered bool        // true after first listenFunc registration
 	frameCh            chan []byte // decoded JPEG frames
@@ -1152,13 +1154,149 @@ func (c *CDPClient) ListTabs(_ context.Context) ([]TabInfo, error) {
 	return tabs, nil
 }
 
-// Favicons maps page target ID to the icon Chrome resolved for that tab.
+// maxFaviconBytes caps one inlined icon. A favicon is a few kilobytes; past
+// this it is not an icon the strip needs, and the data URL rides the tab list
+// on every refresh.
+const maxFaviconBytes = 64 * 1024
+
+// maxFaviconCache bounds how many icons one session keeps inlined. Reached
+// only by a pane left open across dozens of sites; the map is then dropped
+// whole rather than evicted entry by entry, since a refetch costs one CDP
+// round trip.
+const maxFaviconCache = 64
+
+// maxFaviconChunks bounds the IO.read loop. The size cap already ends a
+// well-behaved stream; this ends the one that answers with empty chunks and
+// never sets EOF, which would otherwise spin a goroutine the command deadline
+// has already stopped waiting for.
+const maxFaviconChunks = 64
+
+// Favicons maps page target ID to that tab's icon, inlined as a data: URL.
 //
-// It goes to Chrome's HTTP endpoint rather than CDP because there is no
-// favicon anywhere in Target.getTargets — the DevTools list is the only place
-// Chrome publishes what each tab resolved and fetched.
+// The URLs come from Chrome's HTTP endpoint rather than CDP because there is
+// no favicon anywhere in Target.getTargets — the DevTools list is the only
+// place Chrome publishes what each tab resolved. The bytes are then fetched
+// here rather than by the pane: the URL is named by whatever page the tab
+// loaded, so an <img src> built from it would have the user's own machine
+// contact a host that page chose, which is the isolation the sidecar exists
+// to provide.
 func (c *CDPClient) Favicons() map[string]string {
-	return faviconURLs(c.wsURL, c.logger)
+	urls := faviconURLs(c.wsURL, c.logger)
+	if len(urls) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(urls))
+	for id, iconURL := range urls {
+		if data := c.faviconAsData(iconURL); data != "" {
+			out[id] = data
+		}
+	}
+	return out
+}
+
+// faviconAsData returns iconURL inlined as a data: URL, fetching it once.
+//
+// Failures are cached as the empty string: an icon that 404s is asked for once
+// per session rather than on every tab-list refresh.
+func (c *CDPClient) faviconAsData(iconURL string) string {
+	c.mu.Lock()
+	data, cached := c.faviconData[iconURL]
+	c.mu.Unlock()
+	if cached {
+		return data
+	}
+
+	data, err := c.fetchFavicon(iconURL)
+	if err != nil {
+		c.logger.Debug("favicon fetch failed", "url", iconURL, "error", err)
+	}
+
+	c.mu.Lock()
+	if c.faviconData == nil || len(c.faviconData) >= maxFaviconCache {
+		c.faviconData = make(map[string]string, maxFaviconCache)
+	}
+	c.faviconData[iconURL] = data
+	c.mu.Unlock()
+	return data
+}
+
+// fetchFavicon loads one icon through the browser's own network stack and
+// returns it as a data: URL.
+//
+// Network.loadNetworkResource is what DevTools itself uses to pull a resource
+// the page referenced: the request leaves from the browser, on the browser's
+// network, so a sidecar in a container reaches the icon exactly the way the
+// tab reached the page. Credentials stay off — an icon is not worth sending a
+// cookie for.
+func (c *CDPClient) fetchFavicon(iconURL string) (string, error) {
+	var dataURL string
+	err := c.runActions(chromedp.ActionFunc(func(ctx context.Context) error {
+		tree, err := cdppage.GetFrameTree().Do(ctx)
+		if err != nil {
+			return fmt.Errorf("frame tree: %w", err)
+		}
+
+		res, err := network.LoadNetworkResource(iconURL, &network.LoadNetworkResourceOptions{
+			DisableCache:       false,
+			IncludeCredentials: false,
+		}).WithFrameID(tree.Frame.ID).Do(ctx)
+		if err != nil {
+			return fmt.Errorf("loading icon: %w", err)
+		}
+		if !res.Success || res.Stream == "" {
+			return fmt.Errorf("loading icon: %s, http status %d",
+				res.NetErrorName, int(res.HTTPStatusCode))
+		}
+		defer func() { _ = cdpio.Close(res.Stream).Do(ctx) }()
+
+		raw, err := c.readStream(ctx, res.Stream)
+		if err != nil {
+			return err
+		}
+		// Sniffed, not taken from Content-Type: the type decides how the pane
+		// renders the bytes, and the server does not get to name it.
+		mime := http.DetectContentType(raw)
+		if !strings.HasPrefix(mime, "image/") {
+			return fmt.Errorf("icon is %s, not an image", mime)
+		}
+		dataURL = "data:" + mime + ";base64," + base64.StdEncoding.EncodeToString(raw)
+		return nil
+	}))
+	if err != nil {
+		return "", err
+	}
+	return dataURL, nil
+}
+
+// readStream drains one IO stream, up to the icon size cap.
+func (c *CDPClient) readStream(ctx context.Context, handle cdpio.StreamHandle) ([]byte, error) {
+	var buf []byte
+	for range maxFaviconChunks {
+		// Raw rather than IO.read's typed helper: that one drops the
+		// base64Encoded flag, and an icon arrives base64 or not depending on
+		// what Chrome decides the stream holds.
+		var res cdpio.ReadReturns
+		if err := c.exec(ctx, cdpio.CommandRead,
+			cdpio.Read(handle).WithSize(maxFaviconBytes), &res); err != nil {
+			return nil, fmt.Errorf("reading icon: %w", err)
+		}
+		chunk := []byte(res.Data)
+		if res.Base64encoded {
+			decoded, err := base64.StdEncoding.DecodeString(res.Data)
+			if err != nil {
+				return nil, fmt.Errorf("decoding icon: %w", err)
+			}
+			chunk = decoded
+		}
+		buf = append(buf, chunk...)
+		if len(buf) > maxFaviconBytes {
+			return nil, fmt.Errorf("icon larger than %d bytes", maxFaviconBytes)
+		}
+		if res.EOF {
+			return buf, nil
+		}
+	}
+	return nil, fmt.Errorf("icon stream did not end within %d chunks", maxFaviconChunks)
 }
 
 // NewTab opens a new tab with the given URL.
