@@ -466,6 +466,14 @@ function TabStrip({
   onNewTab: () => void;
   onHover: (id: string | null) => void;
 }) {
+  // An icon Chrome knows about can still fail to load here — it may be behind
+  // a login, or on a network only the sidecar can reach. Remembering the ones
+  // that failed keeps the row from retrying the same 404 on every render.
+  const [brokenIcons, setBrokenIcons] = useState<Set<string>>(new Set());
+  const markIconBroken = useCallback((url: string) => {
+    setBrokenIcons((prev) => (prev.has(url) ? prev : new Set(prev).add(url)));
+  }, []);
+
   // Darker strip behind tabs, like Chrome's tab strip.
   const stripBg = colors.isDark ? "#1a1a1a" : "#e0e0e0";
   const activeBg = colors.surface;
@@ -521,17 +529,7 @@ function TabStrip({
               zIndex: isActive ? 1 : 0,
             }}
           >
-            {/* Favicon placeholder dot */}
-            <span
-              style={{
-                width: 6,
-                height: 6,
-                borderRadius: "50%",
-                backgroundColor: isActive ? colors.textLight : colors.textDim,
-                flexShrink: 0,
-                opacity: 0.5,
-              }}
-            />
+            <TabIcon url={tab.favicon_url} broken={brokenIcons.has(tab.favicon_url ?? "")} isActive={isActive} colors={colors} onBroken={markIconBroken} />
             <span
               style={{
                 overflow: "hidden",
@@ -602,5 +600,43 @@ function TabStrip({
       {/* Spacer — absorbs remaining width */}
       <div style={{ flex: 1 }} />
     </div>
+  );
+}
+
+/**
+ * The tab's own favicon, falling back to the dot the strip used to draw.
+ *
+ * The box keeps its 12px either way, so a strip whose icons arrive late does
+ * not shuffle its titles sideways as they land.
+ */
+function TabIcon({
+  url,
+  broken,
+  isActive,
+  colors,
+  onBroken,
+}: {
+  url: string | undefined;
+  broken: boolean;
+  isActive: boolean;
+  colors: { textLight: string; textDim: string };
+  onBroken: (url: string) => void;
+}) {
+  return (
+    <span style={{ width: 12, height: 12, flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center" }}>
+      {url && !broken ? (
+        <img src={url} alt="" width={12} height={12} style={{ borderRadius: 2, opacity: isActive ? 1 : 0.8 }} onError={() => onBroken(url)} />
+      ) : (
+        <span
+          style={{
+            width: 6,
+            height: 6,
+            borderRadius: "50%",
+            backgroundColor: isActive ? colors.textLight : colors.textDim,
+            opacity: 0.5,
+          }}
+        />
+      )}
+    </span>
   );
 }

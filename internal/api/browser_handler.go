@@ -64,9 +64,10 @@ type browserWSMessage struct {
 
 // browserTabInfo mirrors browser.TabInfo for WS responses.
 type browserTabInfo struct {
-	TargetID string `json:"target_id"`
-	URL      string `json:"url"`
-	Title    string `json:"title"`
+	TargetID   string `json:"target_id"`
+	URL        string `json:"url"`
+	Title      string `json:"title"`
+	FaviconURL string `json:"favicon_url,omitempty"`
 }
 
 // browserWSResponse is a status message sent to the client.
@@ -506,7 +507,7 @@ func (bc *browserWSConn) restartScreencastForTarget(ctx context.Context, _ brows
 // sendTabsResponse sends a tabs response with the current tab list and active target.
 func (bc *browserWSConn) sendTabsResponse(tabs []browser.TabInfo, activeTargetID string) {
 	bc.mu.Lock()
-	cdpMgr := bc.cdpMgr
+	cdpMgr, client := bc.cdpMgr, bc.cdp
 	bc.mu.Unlock()
 
 	// Filter to agent-tracked tabs only (hides Chrome's startup tabs
@@ -523,12 +524,20 @@ func (bc *browserWSConn) sendTabsResponse(tabs []browser.TabInfo, activeTargetID
 	if cdpMgr != nil {
 		tabs = cdpMgr.OrderTabs(tabs)
 	}
+	// Icons come from Chrome itself rather than being guessed from the URL,
+	// so an intranet page with its own icon gets it and a page with none
+	// keeps the plain dot instead of a broken image.
+	var favicons map[string]string
+	if client != nil {
+		favicons = client.Favicons()
+	}
 	tabInfos := make([]browserTabInfo, len(tabs))
 	for i, t := range tabs {
 		tabInfos[i] = browserTabInfo{
-			TargetID: t.TargetID,
-			URL:      t.URL,
-			Title:    t.Title,
+			TargetID:   t.TargetID,
+			URL:        t.URL,
+			Title:      t.Title,
+			FaviconURL: favicons[t.TargetID],
 		}
 	}
 	bc.sendJSON(browserWSResponse{

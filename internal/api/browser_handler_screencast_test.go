@@ -227,6 +227,53 @@ func (s *BrowserHandlerSuite) TestSendTabsResponseDockerMode() {
 	require.Len(s.T(), resp.Tabs, 2)
 }
 
+// The strip draws what Chrome resolved for each tab; a tab Chrome has no icon
+// for simply carries none, which is what the plain dot is for.
+func (s *BrowserHandlerSuite) TestSendTabsResponseCarriesFavicons() {
+	connReady := make(chan *websocket.Conn, 1)
+	tsSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := wsUpgrader.Upgrade(w, r, nil)
+		if err != nil {
+			return
+		}
+		connReady <- conn
+	}))
+	defer tsSrv.Close()
+
+	wsURL := "ws" + strings.TrimPrefix(tsSrv.URL, "http") + "/"
+	clientWS, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
+	require.NoError(s.T(), err)
+	defer clientWS.Close()
+
+	cdpMgr := browser.NewCDPManager("ws://test:9222", browser.CDPManagerConfig{}, slog.Default())
+	cdpMgr.TrackTab("t1")
+	cdpMgr.TrackTab("t2")
+
+	mockCDP := new(mockCDPSession)
+	mockCDP.favicons = map[string]string{"t1": "https://a.example/favicon.ico"}
+
+	bc := &browserWSConn{
+		conn:            <-connReady,
+		browserProvider: s.browserMgr,
+		logger:          slog.Default(),
+		cdpMgr:          cdpMgr,
+		cdp:             mockCDP,
+		stopCh:          make(chan struct{}),
+	}
+
+	bc.sendTabsResponse([]browser.TabInfo{
+		{TargetID: "t1", URL: "https://a.example", Title: "A"},
+		{TargetID: "t2", URL: "https://b.example", Title: "B"},
+	}, "t1")
+
+	require.NoError(s.T(), clientWS.SetReadDeadline(time.Now().Add(2*time.Second)))
+	var resp browserWSResponse
+	require.NoError(s.T(), clientWS.ReadJSON(&resp))
+	require.Len(s.T(), resp.Tabs, 2)
+	require.Equal(s.T(), "https://a.example/favicon.ico", resp.Tabs[0].FaviconURL)
+	require.Empty(s.T(), resp.Tabs[1].FaviconURL)
+}
+
 func (s *BrowserHandlerSuite) TestSendTabsResponseHostMode() {
 	connReady := make(chan *websocket.Conn, 1)
 	tsSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

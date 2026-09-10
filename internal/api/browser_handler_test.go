@@ -384,6 +384,8 @@ type mockCDPSession struct {
 	// attachFn models attaching to another tab; nil attaches to this session,
 	// which is what almost every test wants.
 	attachFn func(targetID string) (browser.CDPSession, error)
+	// favicons is what Favicons returns; nil for the tabs that have none.
+	favicons map[string]string
 }
 
 func (m *mockCDPSession) Alive() bool { return !m.dead }
@@ -441,6 +443,11 @@ func (m *mockCDPSession) ListTabs(ctx context.Context) ([]browser.TabInfo, error
 	tabs, _ := args.Get(0).([]browser.TabInfo)
 	return tabs, args.Error(1)
 }
+
+// favicons is a field rather than an expectation: the tab strip asks for
+// icons on every tabs message, and almost no test cares what comes back.
+func (m *mockCDPSession) Favicons() map[string]string { return m.favicons }
+
 func (m *mockCDPSession) NewTab(ctx context.Context, url string) (string, error) {
 	args := m.Called(ctx, url)
 	return args.String(0), args.Error(1)

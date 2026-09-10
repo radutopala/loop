@@ -102,3 +102,35 @@ func (s *ResolveWSURLSuite) TestDiscoverReturnsFirstPageID() {
 	defer srv.Close()
 	require.Equal(s.T(), "PAGE-T0", discoverFirstPageTarget("ws://"+strings.TrimPrefix(srv.URL, "http://"), slog.Default()))
 }
+
+// --- FaviconURLs ---
+
+func (s *ResolveWSURLSuite) TestFaviconsUnreachable() {
+	require.Nil(s.T(), faviconURLs("://nope", slog.Default()))
+	require.Nil(s.T(), faviconURLs("ws://127.0.0.1:1", slog.Default()))
+	require.Nil(s.T(), faviconURLs("ws://127.0.0.1:1", nil)) // nil logger path
+}
+
+func (s *ResolveWSURLSuite) TestFaviconsBadJSON() {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte("not json"))
+	}))
+	defer srv.Close()
+	require.Nil(s.T(), faviconURLs("ws://"+strings.TrimPrefix(srv.URL, "http://"), slog.Default()))
+}
+
+// Only page targets carry an icon worth showing, and a page that has not
+// resolved one yet must not turn into a broken image in the strip.
+func (s *ResolveWSURLSuite) TestFaviconsKeepsPagesWithIcons() {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.Equal(s.T(), "/json/list", r.URL.Path)
+		_, _ = w.Write([]byte(`[
+			{"type":"page","id":"T1","faviconUrl":"https://site.example/favicon.ico"},
+			{"type":"page","id":"T2"},
+			{"type":"background_page","id":"BG","faviconUrl":"https://site.example/bg.png"}
+		]`))
+	}))
+	defer srv.Close()
+	got := faviconURLs("ws://"+strings.TrimPrefix(srv.URL, "http://"), slog.Default())
+	require.Equal(s.T(), map[string]string{"T1": "https://site.example/favicon.ico"}, got)
+}

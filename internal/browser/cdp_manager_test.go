@@ -38,6 +38,8 @@ func (m *mockCDPSession) ListTabs(ctx context.Context) ([]TabInfo, error) {
 	t, _ := a.Get(0).([]TabInfo)
 	return t, a.Error(1)
 }
+func (m *mockCDPSession) Favicons() map[string]string { return nil }
+
 func (m *mockCDPSession) NewTab(ctx context.Context, url string) (string, error) {
 	a := m.Called(ctx, url)
 	return a.String(0), a.Error(1)

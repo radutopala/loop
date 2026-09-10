@@ -25,6 +25,8 @@ export interface TabInfo {
   target_id: string;
   url: string;
   title: string;
+  // Absent when Chrome has no icon for the tab yet, or would not say.
+  favicon_url?: string;
 }
 
 interface BrowserWSResponse {
