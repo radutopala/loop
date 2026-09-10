@@ -341,6 +341,11 @@ func (bc *browserWSConn) dispatchInput(ev browser.InputEvent) {
 		return
 	}
 
+	// Background, not a deadline: every CDP command runs on the session's own
+	// context and cancelling that closes the tab, so the client bounds these
+	// itself — see defaultCommandTimeout. Without that bound one event
+	// dispatched to a backgrounded target would park this worker for good and
+	// silently swallow every event queued behind it.
 	ctx := context.Background()
 	var err error
 
@@ -610,6 +615,9 @@ func (bc *browserWSConn) watchMCPTabChanges() {
 				bc.logger.Debug("watchMCPTabChanges: skipping switch to same target", "target_id", targetID)
 				continue
 			}
+			// Detached on purpose: the switch must outlive whatever
+			// prompted it, and the CDP calls it makes carry their own
+			// deadlines.
 			bc.restartScreencastForTarget(context.Background(), cdp, targetID)
 		case tab := <-tabAddedCh:
 			bc.sendJSON(browserWSResponse{
