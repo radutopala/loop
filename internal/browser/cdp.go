@@ -56,6 +56,10 @@ type CDPClient struct {
 	// defaultScreencastTimeout.
 	screencastTimeout time.Duration
 
+	// commandTimeout bounds a single CDP command; zero means
+	// defaultCommandTimeout.
+	commandTimeout time.Duration
+
 	mu                 sync.Mutex
 	screencasting      bool
 	listenerRegistered bool        // true after first listenFunc registration
@@ -72,7 +76,8 @@ func (c *CDPClient) TargetID() string {
 func (c *CDPClient) SwitchTarget(targetID string) error {
 	c.StopScreencast()
 
-	if err := c.activateFunc(c.ctx, target.ID(targetID)); err != nil {
+	activate := func() error { return c.activateFunc(c.ctx, target.ID(targetID)) }
+	if err := c.runBounded(activate); err != nil {
 		c.logger.Error("SwitchTarget: activate failed", "error", err)
 		return err
 	}
@@ -122,6 +127,66 @@ func (c *CDPClient) screencastDeadline() time.Duration {
 	return defaultScreencastTimeout
 }
 
+// defaultCommandTimeout bounds a single CDP command.
+//
+// The deadline cannot ride on the caller's context: every command runs on
+// c.ctx, the session's own context, and cancelling that closes the tab. The
+// ctx parameters these methods take are therefore not deadlines and never
+// were. Chrome meanwhile never acknowledges input dispatched to a
+// backgrounded target, and one worker drains the pane's input queue in order,
+// so an unbounded dispatch parks that worker for good: frames keep arriving
+// on their own goroutine and the pane looks alive while every later click,
+// keystroke and paste piles up undelivered. Five seconds is far longer than
+// any of these commands takes when Chrome is answering at all.
+const defaultCommandTimeout = 5 * time.Second
+
+// commandDeadline returns the configured command timeout, or the default.
+func (c *CDPClient) commandDeadline() time.Duration {
+	if c.commandTimeout > 0 {
+		return c.commandTimeout
+	}
+	return defaultCommandTimeout
+}
+
+// bounded runs fn on its own goroutine and stops waiting once the command
+// deadline passes. The call is abandoned rather than cancelled — cancelling
+// would take the session, and with it the tab — so a wedged target costs one
+// parked goroutine instead of the caller. fn owns everything it writes to, so
+// a late return races nothing.
+func bounded[T any](c *CDPClient, fn func() (T, error)) (T, error) {
+	type result struct {
+		val T
+		err error
+	}
+	done := make(chan result, 1)
+	go func() {
+		val, err := fn()
+		done <- result{val: val, err: err}
+	}()
+
+	timer := time.NewTimer(c.commandDeadline())
+	defer timer.Stop()
+
+	select {
+	case r := <-done:
+		return r.val, r.err
+	case <-timer.C:
+		var zero T
+		return zero, fmt.Errorf("cdp command timed out after %s", c.commandDeadline())
+	}
+}
+
+// runBounded runs fn under the command deadline, for calls with no result.
+func (c *CDPClient) runBounded(fn func() error) error {
+	_, err := bounded(c, func() (struct{}, error) { return struct{}{}, fn() })
+	return err
+}
+
+// runActions issues actions on the session context under the command deadline.
+func (c *CDPClient) runActions(actions ...chromedp.Action) error {
+	return c.runBounded(func() error { return c.runFn(c.ctx, actions...) })
+}
+
 // NewContextForTarget creates a new CDPClient attached to a different target,
 // reusing the existing browser WebSocket connection. Uses Target.attachToTarget
 // internally — no new WS dial, no Chrome permission prompt.
@@ -165,6 +230,7 @@ func (c *CDPClient) NewContextForTarget(targetID string) (CDPSession, error) {
 		logger:            c.logger,
 		attachTimeout:     c.attachTimeout,
 		screencastTimeout: c.screencastTimeout,
+		commandTimeout:    c.commandTimeout,
 		runFn:             c.runFn,
 		targetsFunc:       c.targetsFunc,
 		listenFunc:        c.listenFunc,
@@ -496,7 +562,7 @@ func (c *CDPClient) Close() {
 
 	if wasScreencasting {
 		close(c.stopCh)
-		_ = c.runFn(c.ctx, cdppage.StopScreencast())
+		_ = c.runActions(cdppage.StopScreencast())
 	}
 
 	c.ctxCancel()
@@ -665,7 +731,11 @@ func (c *CDPClient) StopScreencast() {
 	if wasScreencasting {
 		close(c.stopCh)
 		c.logger.Info("StopScreencast: sending CDP stop command")
-		_ = c.runFn(c.ctx, cdppage.StopScreencast())
+		// SwitchTarget stops before it activates, so an unbounded stop here
+		// meant one wedged tab could freeze every later tab switch.
+		if err := c.runActions(cdppage.StopScreencast()); err != nil {
+			c.logger.Error("StopScreencast: stop command failed", "error", err, "target_id", string(c.targetID))
+		}
 		c.logger.Info("StopScreencast: done")
 	}
 }
@@ -699,7 +769,7 @@ func mouseButtonBitmask(button string) int64 {
 func (c *CDPClient) MouseClick(ctx context.Context, x, y float64, button string, clickCount int) error {
 	btn := parseMouseButton(button)
 
-	return c.runFn(c.ctx,
+	return c.runActions(
 		input.DispatchMouseEvent(input.MousePressed, x, y).
 			WithButton(btn).
 			WithClickCount(int64(clickCount)),
@@ -716,12 +786,12 @@ func (c *CDPClient) MouseMove(ctx context.Context, x, y float64, buttons int) er
 	if buttons > 0 {
 		evt = evt.WithButtons(int64(buttons))
 	}
-	return c.runFn(c.ctx, evt)
+	return c.runActions(evt)
 }
 
 // MouseScroll dispatches a mouse wheel event.
 func (c *CDPClient) MouseScroll(ctx context.Context, x, y, deltaX, deltaY float64) error {
-	return c.runFn(c.ctx,
+	return c.runActions(
 		input.DispatchMouseEvent(input.MouseWheel, x, y).
 			WithDeltaX(deltaX).
 			WithDeltaY(deltaY),
@@ -797,7 +867,7 @@ func (c *CDPClient) KeyPress(ctx context.Context, key string, modifiers int) err
 	up := input.DispatchKeyEvent(input.KeyUp).WithKey(key).WithModifiers(input.Modifier(modifiers))
 	nk, ok := resolveKey(key)
 	if !ok {
-		return c.runFn(c.ctx, down, up)
+		return c.runActions(down, up)
 	}
 	down = down.WithCode(nk.code).WithWindowsVirtualKeyCode(nk.vk).WithNativeVirtualKeyCode(nk.vk)
 	up = up.WithCode(nk.code).WithWindowsVirtualKeyCode(nk.vk).WithNativeVirtualKeyCode(nk.vk)
@@ -806,7 +876,7 @@ func (c *CDPClient) KeyPress(ctx context.Context, key string, modifiers int) err
 	if nk.text != "" && modifiers&^modShift == 0 {
 		down = down.WithText(nk.text).WithUnmodifiedText(nk.text)
 	}
-	return c.runFn(c.ctx, down, up)
+	return c.runActions(down, up)
 }
 
 // InsertText inserts text into the focused element in one shot, the way a paste
@@ -814,7 +884,7 @@ func (c *CDPClient) KeyPress(ctx context.Context, key string, modifiers int) err
 // clipboard is unreachable from the host, so this is how host clipboard content
 // crosses into the page.
 func (c *CDPClient) InsertText(ctx context.Context, text string) error {
-	return c.runFn(c.ctx, input.InsertText(text))
+	return c.runActions(input.InsertText(text))
 }
 
 // selectionJS reads the current selection. window.getSelection() returns an
@@ -830,15 +900,17 @@ const selectionJS = `(() => {
 
 // ReadSelection returns the text currently selected in the page, so a copy in
 // the remote browser can be handed back to the host clipboard.
+// A copy arrives on the same worker as every other pane event, so an
+// evaluation that never answers would stall the input queue behind it.
 func (c *CDPClient) ReadSelection(ctx context.Context) (string, error) {
-	return c.EvaluateJS(ctx, selectionJS)
+	return bounded(c, func() (string, error) { return c.EvaluateJS(ctx, selectionJS) })
 }
 
 // TypeText types text character by character.
 func (c *CDPClient) TypeText(ctx context.Context, text string) error {
 	for _, ch := range text {
 		s := string(ch)
-		if err := c.runFn(c.ctx,
+		if err := c.runActions(
 			input.DispatchKeyEvent(input.KeyDown).WithText(s).WithKey(s),
 			input.DispatchKeyEvent(input.KeyUp).WithKey(s),
 		); err != nil {
@@ -1059,8 +1131,11 @@ type TabInfo struct {
 }
 
 // ListTabs returns all open browser tabs via CDP protocol.
+// The listing gates every tab switch and the pane's own liveness check, so it
+// is bounded for the same reason the input path is: a target that stops
+// answering must not take the caller with it.
 func (c *CDPClient) ListTabs(_ context.Context) ([]TabInfo, error) {
-	targets, err := c.targetsFunc(c.ctx)
+	targets, err := bounded(c, func() ([]*target.Info, error) { return c.targetsFunc(c.ctx) })
 	if err != nil {
 		return nil, fmt.Errorf("listing targets: %w", err)
 	}
@@ -1223,12 +1298,12 @@ func (c *CDPClient) ScrollIntoView(ctx context.Context, backendNodeID cdp.Backen
 
 // MouseDown dispatches a mouse pressed event at the given coordinates.
 func (c *CDPClient) MouseDown(ctx context.Context, x, y float64, button string) error {
-	return c.runFn(c.ctx, input.DispatchMouseEvent(input.MousePressed, x, y).
+	return c.runActions(input.DispatchMouseEvent(input.MousePressed, x, y).
 		WithButton(parseMouseButton(button)).WithButtons(mouseButtonBitmask(button)).WithClickCount(1))
 }
 
 // MouseUp dispatches a mouse released event at the given coordinates.
 func (c *CDPClient) MouseUp(ctx context.Context, x, y float64, button string) error {
-	return c.runFn(c.ctx, input.DispatchMouseEvent(input.MouseReleased, x, y).
+	return c.runActions(input.DispatchMouseEvent(input.MouseReleased, x, y).
 		WithButton(parseMouseButton(button)).WithClickCount(1))
 }
