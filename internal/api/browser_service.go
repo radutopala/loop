@@ -181,7 +181,7 @@ func (s *browserService) getBrowserCDP(ctx context.Context, channelID string) (b
 				// anything attaches to it. Acting on the cached client then drives
 				// a tab the user is not looking at — which is how a URL typed into
 				// the pane ended up loading in the previous tab.
-				synced, err := s.syncActiveClient(cdpMgr, activeClient)
+				synced, err := s.syncActiveClient(ctx, cdpMgr, activeClient)
 				if err != nil {
 					return nil, err
 				}
@@ -242,7 +242,17 @@ func (s *browserService) getBrowserCDP(ctx context.Context, channelID string) (b
 // Attaching can fail — a wedged tab refuses the handshake until the attach times
 // out — and the error is returned rather than swallowed: falling back to the
 // previously attached tab would silently act on the wrong page.
-func (s *browserService) syncActiveClient(cdpMgr *browser.CDPManager, cached browser.CDPSession) (browser.CDPSession, error) {
+func (s *browserService) syncActiveClient(ctx context.Context, cdpMgr *browser.CDPManager, cached browser.CDPSession) (browser.CDPSession, error) {
+	// The tab may not just have moved on — it may be gone, in which case the
+	// cached client is attached to nothing and every action lands nowhere.
+	live, err := cdpMgr.EnsureLiveTarget(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if live != nil {
+		cached = live
+	}
+
 	want := cdpMgr.ActiveTargetID()
 	if want == "" || cached.TargetID() == want {
 		return cached, nil

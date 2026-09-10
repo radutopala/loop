@@ -222,6 +222,15 @@ func (bc *browserWSConn) handleStart(ctx context.Context, msg browserWSMessage) 
 				}
 				cdpMgr = bc.resolveCDPMgr(msg.ChannelID, mode, bc.browserProvider)
 			} else {
+				// A tab that closed while the pane was away leaves this client
+				// attached to nothing, and the screencast below would stream
+				// from a target that no longer exists.
+				if live, err := cdpMgr.EnsureLiveTarget(ctx); err != nil {
+					bc.sendError("failed to reattach CDP: " + err.Error())
+					return
+				} else if live != nil {
+					activeClient = live
+				}
 				bc.logger.Info("browser ws: reusing cached CDP")
 				activeClient.ResetScreencast()
 				cdpMgr.PaneConnected()

@@ -629,3 +629,99 @@ func (s *CDPManagerSuite) TestSetTimeNowForTest() {
 	SetTimeNowForTest(mgr, func() time.Time { return fixed })
 	require.Equal(s.T(), fixed, mgr.timeNow())
 }
+
+// ensureLiveManager wires a manager whose active client is attached to
+// "t-gone", the tab the tests then make disappear.
+func (s *CDPManagerSuite) ensureLiveManager() (*CDPManager, *mockCDPSession) {
+	mgr, mockClient := s.newTestManager(false)
+	mgr.SetClientForTarget("t-gone", mockClient)
+	return mgr, mockClient
+}
+
+func (s *CDPManagerSuite) TestEnsureLiveTargetWithoutClient() {
+	mgr, _ := s.newTestManager(false)
+
+	client, err := mgr.EnsureLiveTarget(context.Background())
+	s.Require().NoError(err)
+	s.Nil(client)
+}
+
+// A client with no active target has no page to have lost, and listing tabs
+// to discover that would be a round trip on every action.
+func (s *CDPManagerSuite) TestEnsureLiveTargetWithoutActiveTarget() {
+	mgr, mockClient := s.newTestManager(false)
+	mgr.SetClientForTarget("", mockClient)
+
+	client, err := mgr.EnsureLiveTarget(context.Background())
+	s.Require().NoError(err)
+	s.Equal(mockClient, client)
+	mockClient.AssertNotCalled(s.T(), "ListTabs", mock.Anything)
+}
+
+func (s *CDPManagerSuite) TestEnsureLiveTargetStillThere() {
+	mgr, mockClient := s.ensureLiveManager()
+	mockClient.On("ListTabs", mock.Anything).Return([]TabInfo{{TargetID: "t-other"}, {TargetID: "t-gone"}}, nil)
+
+	client, err := mgr.EnsureLiveTarget(context.Background())
+	s.Require().NoError(err)
+	s.Equal(mockClient, client)
+	s.Equal("t-gone", mgr.ActiveTargetID())
+	mockClient.AssertNotCalled(s.T(), "NewContextForTarget", mock.Anything)
+}
+
+// A listing that fails says nothing about the target, so the client stands.
+func (s *CDPManagerSuite) TestEnsureLiveTargetListError() {
+	mgr, mockClient := s.ensureLiveManager()
+	mockClient.On("ListTabs", mock.Anything).Return(nil, errors.New("no connection"))
+
+	client, err := mgr.EnsureLiveTarget(context.Background())
+	s.Require().NoError(err)
+	s.Equal(mockClient, client)
+}
+
+func (s *CDPManagerSuite) TestEnsureLiveTargetReattaches() {
+	mgr, mockClient := s.ensureLiveManager()
+	fresh := new(mockCDPSession)
+	mockClient.On("ListTabs", mock.Anything).Return([]TabInfo{{TargetID: "t-live"}}, nil)
+	mockClient.On("NewContextForTarget", "t-live").Return(fresh, nil)
+
+	client, err := mgr.EnsureLiveTarget(context.Background())
+	s.Require().NoError(err)
+	s.Equal(fresh, client)
+	s.Equal("t-live", mgr.ActiveTargetID())
+	s.Contains(mgr.tabOrder, "t-live")
+}
+
+// Chrome with every tab closed is still a usable browser; it just needs one.
+func (s *CDPManagerSuite) TestEnsureLiveTargetOpensATab() {
+	mgr, mockClient := s.ensureLiveManager()
+	fresh := new(mockCDPSession)
+	mockClient.On("ListTabs", mock.Anything).Return([]TabInfo{}, nil)
+	mockClient.On("NewTab", mock.Anything, "about:blank").Return("t-new", nil)
+	mockClient.On("NewContextForTarget", "t-new").Return(fresh, nil)
+
+	client, err := mgr.EnsureLiveTarget(context.Background())
+	s.Require().NoError(err)
+	s.Equal(fresh, client)
+	s.Equal("t-new", mgr.ActiveTargetID())
+}
+
+func (s *CDPManagerSuite) TestEnsureLiveTargetNewTabError() {
+	mgr, mockClient := s.ensureLiveManager()
+	mockClient.On("ListTabs", mock.Anything).Return(nil, nil)
+	mockClient.On("NewTab", mock.Anything, "about:blank").Return("", errors.New("browser closing"))
+
+	_, err := mgr.EnsureLiveTarget(context.Background())
+	s.ErrorContains(err, "opening a tab after the last one closed")
+	s.ErrorContains(err, "browser closing")
+}
+
+func (s *CDPManagerSuite) TestEnsureLiveTargetAttachError() {
+	mgr, mockClient := s.ensureLiveManager()
+	mockClient.On("ListTabs", mock.Anything).Return([]TabInfo{{TargetID: "t-live"}}, nil)
+	mockClient.On("NewContextForTarget", "t-live").Return(nil, errors.New("target closed again"))
+
+	_, err := mgr.EnsureLiveTarget(context.Background())
+	s.ErrorContains(err, "target closed again")
+	s.Equal("t-gone", mgr.ActiveTargetID())
+}
