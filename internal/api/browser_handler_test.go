@@ -75,62 +75,127 @@ func (s *BrowserHandlerSuite) SetupTest() {
 	s.srv.browser.setProviders(s.browserMgr, s.srv.browser.hostProvider)
 }
 
-// The cap lives in per-project config while the provider is built once, at
-// daemon start, from the global layer — so the sidecar only sees a project's
-// browser.memory_mb if the provider asks per channel.
-func (s *BrowserHandlerSuite) TestChannelMemoryLimitMB() {
+// The browser block lives in per-project config while the providers are built
+// once, at daemon start, from the global layer — so a project's overrides only
+// reach its channels if the providers ask per channel.
+func (s *BrowserHandlerSuite) TestChannelBrowserConfig() {
 	store := new(MockChannelLister)
 	store.On("GetChannel", mock.Anything, "ch-1").
 		Return(&db.Channel{ChannelID: "ch-1", DirPath: "/home/user/project"}, nil)
 	srv := NewServer(nil, nil, nil, store, nil, testLogger())
 	srv.configs.load = func() (*config.Config, error) {
-		return &config.Config{Browser: config.BrowserConfig{MemoryMB: 512}}, nil
+		return &config.Config{Browser: config.BrowserConfig{
+			Enabled:     true,
+			ChromeImage: "loop-chrome:latest",
+			HostCDPPort: 9222,
+			MemoryMB:    512,
+		}}, nil
 	}
 	srv.configs.loadProject = func(_ string, base *config.Config) (*config.Config, error) {
 		merged := *base
+		merged.Browser.ChromeImage = "project-chrome:latest"
+		merged.Browser.PersistProfile = true
+		merged.Browser.Extensions = []string{"/host/ublock"}
+		merged.Browser.HostCDPPort = 9333
 		merged.Browser.MemoryMB = 2048
 		return &merged, nil
 	}
+	ctx := context.Background()
 
-	mb, ok := srv.browser.channelMemoryLimitMB(context.Background(), "ch-1")
+	cs, ok := srv.browser.channelBrowserSettings(ctx, "ch-1")
 	require.True(s.T(), ok)
-	require.Equal(s.T(), int64(2048), mb)
+	require.Equal(s.T(), browser.ChannelSettings{
+		Image:          "project-chrome:latest",
+		PersistProfile: true,
+		Extensions:     []string{"/host/ublock"},
+		MemoryMB:       2048,
+	}, cs)
+
+	port, ok := srv.browser.channelHostCDPPort(ctx, "ch-1")
+	require.True(s.T(), ok)
+	require.Equal(s.T(), 9333, port)
+
+	require.True(s.T(), srv.browser.browserEnabledFor(ctx, "ch-1"))
 }
 
-func (s *BrowserHandlerSuite) TestChannelMemoryLimitMBUnresolvableChannel() {
-	// No store to look the channel up in: the provider keeps what it has.
-	mb, ok := s.srv.browser.channelMemoryLimitMB(context.Background(), "ch-1")
+// A project that turns the browser off gets no sidecar for its channels, which
+// is the whole point of the flag; every other channel is untouched.
+func (s *BrowserHandlerSuite) TestBrowserEnabledForDisabledProject() {
+	store := new(MockChannelLister)
+	store.On("GetChannel", mock.Anything, "ch-1").
+		Return(&db.Channel{ChannelID: "ch-1", DirPath: "/home/user/project"}, nil)
+	srv := NewServer(nil, nil, nil, store, nil, testLogger())
+	srv.configs.load = func() (*config.Config, error) {
+		return &config.Config{Browser: config.BrowserConfig{Enabled: true}}, nil
+	}
+	srv.configs.loadProject = func(_ string, base *config.Config) (*config.Config, error) {
+		merged := *base
+		merged.Browser.Enabled = false
+		return &merged, nil
+	}
+
+	require.False(s.T(), srv.browser.browserEnabledFor(context.Background(), "ch-1"))
+}
+
+func (s *BrowserHandlerSuite) TestChannelBrowserConfigUnresolvableChannel() {
+	// No store to look the channel up in: the providers keep what they have,
+	// and a browser that has always worked keeps working.
+	ctx := context.Background()
+
+	cs, ok := s.srv.browser.channelBrowserSettings(ctx, "ch-1")
 	require.False(s.T(), ok)
-	require.Zero(s.T(), mb)
+	require.Zero(s.T(), cs)
+
+	port, ok := s.srv.browser.channelHostCDPPort(ctx, "ch-1")
+	require.False(s.T(), ok)
+	require.Zero(s.T(), port)
+
+	require.True(s.T(), s.srv.browser.browserEnabledFor(ctx, "ch-1"))
 }
 
-func (s *BrowserHandlerSuite) TestChannelMemoryLimitMBConfigUnreadable() {
+func (s *BrowserHandlerSuite) TestChannelBrowserConfigUnreadable() {
 	store := new(MockChannelLister)
 	store.On("GetChannel", mock.Anything, "ch-1").
 		Return(&db.Channel{ChannelID: "ch-1", DirPath: "/home/user/project"}, nil)
 	srv := NewServer(nil, nil, nil, store, nil, testLogger())
 	srv.configs.load = func() (*config.Config, error) { return nil, errors.New("unreadable") }
+	ctx := context.Background()
 
-	mb, ok := srv.browser.channelMemoryLimitMB(context.Background(), "ch-1")
+	cs, ok := srv.browser.channelBrowserSettings(ctx, "ch-1")
 	require.False(s.T(), ok)
-	require.Zero(s.T(), mb)
+	require.Zero(s.T(), cs)
+
+	port, ok := srv.browser.channelHostCDPPort(ctx, "ch-1")
+	require.False(s.T(), ok)
+	require.Zero(s.T(), port)
+
+	require.True(s.T(), srv.browser.browserEnabledFor(ctx, "ch-1"))
 }
 
-// setProviders hands the docker provider the lookup, so the value a channel
-// resolves to is the value its container is created with.
-func (s *BrowserHandlerSuite) TestSetProvidersInstallsMemoryLimitResolver() {
+// setProviders hands both providers the lookup, so the values a channel
+// resolves to are the values its browser is built from.
+func (s *BrowserHandlerSuite) TestSetProvidersInstallsResolvers() {
 	store := new(MockChannelLister)
 	store.On("GetChannel", mock.Anything, "ch-1").
 		Return(&db.Channel{ChannelID: "ch-1", DirPath: "/home/user/project"}, nil)
 	srv := NewServer(nil, nil, nil, store, nil, testLogger())
 	srv.configs.load = func() (*config.Config, error) {
-		return &config.Config{Browser: config.BrowserConfig{MemoryMB: 2048}}, nil
+		return &config.Config{Browser: config.BrowserConfig{
+			ChromeImage: "project-chrome:latest",
+			HostCDPPort: 9333,
+			MemoryMB:    2048,
+		}}, nil
 	}
+	ctx := context.Background()
 
-	dp := browser.NewDockerProvider(nil, browser.DockerProviderConfig{MemoryMB: 512}, testLogger())
-	srv.browser.setProviders(dp, nil)
+	dp := browser.NewDockerProvider(nil, browser.DockerProviderConfig{Image: "loop-chrome:latest", MemoryMB: 512}, testLogger())
+	hp := browser.NewHostProvider(9222, testLogger())
+	srv.browser.setProviders(dp, hp)
 
-	require.Equal(s.T(), int64(2048), dp.MemoryLimitMB(context.Background(), "ch-1"))
+	cs := dp.SettingsFor(ctx, "ch-1")
+	require.Equal(s.T(), "project-chrome:latest", cs.Image)
+	require.Equal(s.T(), int64(2048), cs.MemoryMB)
+	require.Equal(s.T(), 9333, hp.PortFor(ctx, "ch-1"))
 }
 
 func (s *BrowserHandlerSuite) dialBrowserWS() (*websocket.Conn, *httptest.Server) {
@@ -338,6 +403,51 @@ func (s *BrowserHandlerSuite) TestStartEnsureBrowserError() {
 	resp := s.readResp(ws)
 	require.Equal(s.T(), bwsRespError, resp.Type)
 	require.Contains(s.T(), resp.Message, "failed to start browser")
+}
+
+// Disabling the browser for a project has to stop the pane from starting one,
+// not just hide the MCP server from its agents.
+func (s *BrowserHandlerSuite) TestStartBrowserDisabledForProject() {
+	store := new(MockChannelLister)
+	store.On("GetChannel", mock.Anything, "ch-1").
+		Return(&db.Channel{ChannelID: "ch-1", DirPath: "/home/user/project"}, nil)
+	srv := NewServer(nil, nil, nil, store, nil, testLogger())
+	srv.configs.load = func() (*config.Config, error) {
+		return &config.Config{Browser: config.BrowserConfig{Enabled: false}}, nil
+	}
+	srv.browser.setProviders(s.browserMgr, nil)
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /api/ws/browser", srv.browser.handleBrowserWS)
+	ts := httptest.NewServer(mux)
+	defer ts.Close()
+	ws, _, err := websocket.DefaultDialer.Dial("ws"+strings.TrimPrefix(ts.URL, "http")+"/api/ws/browser", nil)
+	require.NoError(s.T(), err)
+	defer ws.Close()
+
+	require.NoError(s.T(), ws.WriteJSON(browserWSMessage{Type: bwsMsgStart, ChannelID: "ch-1"}))
+
+	resp := s.readResp(ws)
+	require.Equal(s.T(), bwsRespError, resp.Type)
+	require.Contains(s.T(), resp.Message, "browser is disabled for this project")
+	s.browserMgr.AssertNotCalled(s.T(), "EnsureBrowser", mock.Anything, mock.Anything, mock.Anything)
+}
+
+// Same gate on the action path the agent's MCP tools come through.
+func (s *BrowserHandlerSuite) TestGetBrowserCDPDisabledForProject() {
+	store := new(MockChannelLister)
+	store.On("GetChannel", mock.Anything, "ch-1").
+		Return(&db.Channel{ChannelID: "ch-1", DirPath: "/home/user/project"}, nil)
+	srv := NewServer(nil, nil, nil, store, nil, testLogger())
+	srv.configs.load = func() (*config.Config, error) {
+		return &config.Config{Browser: config.BrowserConfig{Enabled: false}}, nil
+	}
+	srv.browser.setProviders(s.browserMgr, nil)
+
+	cdpCl, err := srv.browser.getBrowserCDP(context.Background(), "ch-1")
+	require.ErrorIs(s.T(), err, errBrowserDisabled)
+	require.Nil(s.T(), cdpCl)
+	s.browserMgr.AssertNotCalled(s.T(), "EnsureBrowser", mock.Anything, mock.Anything, mock.Anything)
 }
 
 func (s *BrowserHandlerSuite) TestStopNoSession() {

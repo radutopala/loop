@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -14,7 +15,12 @@ import (
 	"github.com/chromedp/cdproto/cdp"
 	"github.com/radutopala/loop/internal/browser"
 	"github.com/radutopala/loop/internal/browsercookies"
+	"github.com/radutopala/loop/internal/config"
 )
+
+// errBrowserDisabled is returned instead of starting a browser for a channel
+// whose project sets browser.enabled to false.
+var errBrowserDisabled = errors.New("browser is disabled for this project (browser.enabled)")
 
 // BrowserProvider is the interface for managing browser lifecycle.
 type BrowserProvider interface {
@@ -86,32 +92,73 @@ func newBrowserService(deps *serverDeps) *browserService {
 func (s *browserService) setProviders(docker, host BrowserProvider) {
 	s.dockerProvider = docker
 	s.hostProvider = host
-	// The docker provider is built once at daemon start, so the only browser
-	// config it can hold is the global layer. Hand it a lookup instead, and a
-	// project's browser.memory_mb reaches the sidecar of every channel that
-	// works in that project.
+	// Both providers are built once at daemon start, so the only browser
+	// config they can hold is the global layer. Hand them a lookup instead,
+	// and a project's browser block reaches every channel that works in it.
 	if dp, ok := docker.(*browser.DockerProvider); ok {
-		dp.SetMemoryLimitResolver(s.channelMemoryLimitMB)
+		dp.SetSettingsResolver(s.channelBrowserSettings)
+	}
+	if hp, ok := host.(*browser.HostProvider); ok {
+		hp.SetPortResolver(s.channelHostCDPPort)
 	}
 }
 
-// channelMemoryLimitMB resolves browser.memory_mb for a channel through the
+// channelBrowserConfig resolves the browser block for a channel through the
 // global → project → worktree layers. Reported as not-found when the channel
-// has no directory to resolve against or the config will not load, leaving the
-// provider on the value it was built with.
+// has no directory to resolve against or the config will not load, leaving
+// each caller on whatever it was built with.
 //
-// The layers are re-read per call, so an edited cap applies to the next
+// The layers are re-read per call, so an edited setting applies to the next
 // sidecar without restarting the daemon.
-func (s *browserService) channelMemoryLimitMB(ctx context.Context, channelID string) (int64, bool) {
+func (s *browserService) channelBrowserConfig(ctx context.Context, channelID string) (config.BrowserConfig, bool) {
 	dir, err := s.deps.workspace.resolveDirPath(ctx, "", channelID)
 	if err != nil {
-		return 0, false
+		return config.BrowserConfig{}, false
 	}
 	cfg := s.deps.configs.merged(dir, s.deps.workspace.resolveParentDirPath(ctx, channelID))
 	if cfg == nil {
+		return config.BrowserConfig{}, false
+	}
+	return cfg.Browser, true
+}
+
+// channelBrowserSettings is the docker provider's view of that block: what a
+// sidecar is created from.
+func (s *browserService) channelBrowserSettings(ctx context.Context, channelID string) (browser.ChannelSettings, bool) {
+	bc, ok := s.channelBrowserConfig(ctx, channelID)
+	if !ok {
+		return browser.ChannelSettings{}, false
+	}
+	return browser.ChannelSettings{
+		Image:          bc.ChromeImage,
+		PersistProfile: bc.PersistProfile,
+		Extensions:     bc.Extensions,
+		MemoryMB:       bc.MemoryMB,
+	}, true
+}
+
+// channelHostCDPPort is the host provider's view: the port this channel's own
+// Chrome is expected to listen on.
+func (s *browserService) channelHostCDPPort(ctx context.Context, channelID string) (int, bool) {
+	bc, ok := s.channelBrowserConfig(ctx, channelID)
+	if !ok {
 		return 0, false
 	}
-	return cfg.Browser.MemoryMB, true
+	return bc.HostCDPPort, true
+}
+
+// browserEnabledFor reports whether a browser may be started for the channel.
+//
+// Fails open: a channel whose config cannot be read keeps the browser it has
+// always had. Only an explicit browser.enabled = false takes one away, and
+// only for channels working in the project that sets it — the daemon-wide
+// flag is decided at startup, before any channel exists.
+func (s *browserService) browserEnabledFor(ctx context.Context, channelID string) bool {
+	bc, ok := s.channelBrowserConfig(ctx, channelID)
+	if !ok {
+		return true
+	}
+	return bc.Enabled
 }
 
 // setKeepAlive sets the delay before idle browser containers are removed.
@@ -229,6 +276,9 @@ func (s *browserService) getBrowserCDP(ctx context.Context, channelID string) (b
 	isHost := provider.IsHostMode()
 	s.deps.logger.Info("getBrowserCDP: no cached CDP, creating new", "channel_id", channelID, "host_mode", isHost)
 
+	if !s.browserEnabledFor(ctx, channelID) {
+		return nil, errBrowserDisabled
+	}
 	if err := provider.EnsureBrowser(ctx, channelID, ""); err != nil {
 		return nil, fmt.Errorf("ensuring browser: %w", err)
 	}

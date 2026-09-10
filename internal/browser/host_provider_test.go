@@ -48,6 +48,59 @@ func (s *HostProviderSuite) TearDownTest() {
 	s.server.Close()
 }
 
+// host_cdp_port is per-project config while the provider is built once, so a
+// project's own Chrome is only reachable if the port is asked for per channel.
+func (s *HostProviderSuite) TestPortFor() {
+	ctx := context.Background()
+	live := s.server.Listener.Addr().(*net.TCPAddr).Port
+
+	// No resolver: the constructor's port stands.
+	require.Equal(s.T(), live, s.provider.PortFor(ctx, "ch-1"))
+
+	s.provider.SetPortResolver(func(_ context.Context, channelID string) (int, bool) {
+		switch channelID {
+		case "ch-2":
+			return 9333, true
+		case "ch-3":
+			return 0, true // an unset override is not an answer
+		default:
+			return 0, false
+		}
+	})
+	require.Equal(s.T(), live, s.provider.PortFor(ctx, "ch-1"), "no answer falls back")
+	require.Equal(s.T(), 9333, s.provider.PortFor(ctx, "ch-2"))
+	require.Equal(s.T(), live, s.provider.PortFor(ctx, "ch-3"))
+
+	// Once a channel has a live session, the port Chrome actually answered on
+	// wins over anything config says: config is intent, a reachable session is
+	// evidence.
+	require.NoError(s.T(), s.provider.EnsureBrowser(ctx, "ch-1", ""))
+	s.provider.SetPortResolver(func(context.Context, string) (int, bool) { return 9333, true })
+	require.Equal(s.T(), live, s.provider.PortFor(ctx, "ch-1"))
+	require.Equal(s.T(), 9333, s.provider.PortFor(ctx, "ch-4"), "a channel with no session still follows config")
+}
+
+// A channel whose project points at another port must not be told to connect
+// to the daemon-wide one.
+func (s *HostProviderSuite) TestGetCDPEndpointPerChannel() {
+	s.provider.SetPortResolver(func(context.Context, string) (int, bool) { return 9333, true })
+	require.Equal(s.T(), "ws://127.0.0.1:9333", s.provider.GetCDPEndpoint("ch-1"))
+}
+
+func (s *HostProviderSuite) TestIsRunningPerChannel() {
+	ctx := context.Background()
+	live := s.server.Listener.Addr().(*net.TCPAddr).Port
+	s.provider.SetPortResolver(func(_ context.Context, channelID string) (int, bool) {
+		if channelID == "ch-dead" {
+			return 19999, true
+		}
+		return live, true
+	})
+
+	require.True(s.T(), s.provider.IsRunning(ctx, "ch-1"))
+	require.False(s.T(), s.provider.IsRunning(ctx, "ch-dead"))
+}
+
 func (s *HostProviderSuite) TestRemoveProfileIsNoOp() {
 	require.NoError(s.T(), s.provider.RemoveProfile(context.Background(), "ch-1"))
 }

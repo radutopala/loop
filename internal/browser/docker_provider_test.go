@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
+	"slices"
 	"testing"
 	"time"
 
@@ -114,7 +115,7 @@ func (s *ManagerSuite) TestNewDockerProvider() {
 	mgr := NewDockerProvider(s.api, DockerProviderConfig{Image: "loop-agent:latest", Screen: "1920,1080"}, slog.Default())
 	require.NotNil(s.T(), mgr)
 	require.Equal(s.T(), "1920,1080", mgr.screen)
-	require.Equal(s.T(), "loop-agent:latest", mgr.image)
+	require.Equal(s.T(), "loop-agent:latest", mgr.defaults.Image)
 }
 
 func (s *ManagerSuite) TestIsHostMode() {
@@ -122,7 +123,7 @@ func (s *ManagerSuite) TestIsHostMode() {
 }
 
 func (s *ManagerSuite) TestChromeArgs() {
-	args := s.mgr.chromeArgs()
+	args := s.mgr.chromeArgs(s.mgr.defaults)
 	require.Equal(s.T(), []string{"--window-size=1920,1080", "--disable-extensions", "about:blank"}, args)
 }
 
@@ -152,7 +153,7 @@ func (s *ManagerSuite) TestChromeArgsExtensions() {
 	for _, tt := range tests {
 		s.Run(tt.name, func() {
 			mgr := NewDockerProvider(s.api, DockerProviderConfig{Image: "loop-agent:latest", Screen: "1920,1080", Extensions: tt.extensions}, slog.Default())
-			require.Equal(s.T(), tt.want, mgr.chromeArgs())
+			require.Equal(s.T(), tt.want, mgr.chromeArgs(mgr.defaults))
 		})
 	}
 }
@@ -161,7 +162,7 @@ func (s *ManagerSuite) TestChromeArgsPersistProfile() {
 	mgr := NewDockerProvider(s.api, DockerProviderConfig{Image: "loop-agent:latest", Screen: "1920,1080", PersistProfile: true}, slog.Default())
 	require.Equal(s.T(),
 		[]string{"--window-size=1920,1080", "--user-data-dir=/profile", "--disable-extensions", "about:blank"},
-		mgr.chromeArgs(),
+		mgr.chromeArgs(mgr.defaults),
 	)
 }
 
@@ -182,12 +183,12 @@ func (s *ManagerSuite) TestChromeProfileVolume() {
 }
 
 func (s *ManagerSuite) TestProfileMountsDisabled() {
-	require.Nil(s.T(), s.mgr.profileMounts("C123"))
+	require.Nil(s.T(), s.mgr.profileMounts(s.mgr.defaults, "C123"))
 }
 
 func (s *ManagerSuite) TestProfileMountsEnabled() {
 	mgr := NewDockerProvider(s.api, DockerProviderConfig{Image: "loop-agent:latest", Screen: "1920,1080", PersistProfile: true}, slog.Default())
-	mounts := mgr.profileMounts("C123")
+	mounts := mgr.profileMounts(mgr.defaults, "C123")
 	require.Len(s.T(), mounts, 1)
 	require.Equal(s.T(), mount.TypeVolume, mounts[0].Type)
 	require.Equal(s.T(), "loop-chrome-profile-c123", mounts[0].Source)
@@ -196,7 +197,7 @@ func (s *ManagerSuite) TestProfileMountsEnabled() {
 
 func (s *ManagerSuite) TestContainerMountsExtensionsOnly() {
 	mgr := NewDockerProvider(s.api, DockerProviderConfig{Image: "loop-agent:latest", Screen: "1920,1080", Extensions: []string{"/host/a", "/host/b"}}, slog.Default())
-	mounts := mgr.containerMounts("C123")
+	mounts := mgr.containerMounts(mgr.defaults, "C123")
 	require.Len(s.T(), mounts, 2)
 	for i, want := range []string{"/host/a", "/host/b"} {
 		require.Equal(s.T(), mount.TypeBind, mounts[i].Type)
@@ -208,7 +209,7 @@ func (s *ManagerSuite) TestContainerMountsExtensionsOnly() {
 
 func (s *ManagerSuite) TestContainerMountsProfileAndExtensions() {
 	mgr := NewDockerProvider(s.api, DockerProviderConfig{Image: "loop-agent:latest", Screen: "1920,1080", PersistProfile: true, Extensions: []string{"/host/a"}}, slog.Default())
-	mounts := mgr.containerMounts("C123")
+	mounts := mgr.containerMounts(mgr.defaults, "C123")
 	require.Len(s.T(), mounts, 2)
 	require.Equal(s.T(), mount.TypeVolume, mounts[0].Type)
 	require.Equal(s.T(), "/profile", mounts[0].Target)
@@ -217,7 +218,7 @@ func (s *ManagerSuite) TestContainerMountsProfileAndExtensions() {
 }
 
 func (s *ManagerSuite) TestContainerMountsNoneConfigured() {
-	require.Empty(s.T(), s.mgr.containerMounts("C123"))
+	require.Empty(s.T(), s.mgr.containerMounts(s.mgr.defaults, "C123"))
 }
 
 func (s *ManagerSuite) TestRemoveProfileDisabled() {
@@ -270,7 +271,7 @@ func (s *ManagerSuite) TestEnsureBrowserMemoryLimit() {
 	tests := []struct {
 		name     string
 		memoryMB int64
-		resolver func(ctx context.Context, channelID string) (int64, bool)
+		resolver func(ctx context.Context, channelID string) (ChannelSettings, bool)
 		want     int64
 	}{
 		{name: "configured cap", memoryMB: 2048, want: 2048 * 1024 * 1024},
@@ -280,19 +281,21 @@ func (s *ManagerSuite) TestEnsureBrowserMemoryLimit() {
 			// reach a provider that was built once, from the global layer.
 			name:     "resolver wins over the constructor",
 			memoryMB: 512,
-			resolver: func(_ context.Context, channelID string) (int64, bool) {
+			resolver: func(_ context.Context, channelID string) (ChannelSettings, bool) {
 				if channelID != "ch-1" {
-					return 0, false
+					return ChannelSettings{}, false
 				}
-				return 2048, true
+				return ChannelSettings{Image: "loop-agent:latest", MemoryMB: 2048}, true
 			},
 			want: 2048 * 1024 * 1024,
 		},
 		{
 			name:     "resolver with no answer falls back",
 			memoryMB: 512,
-			resolver: func(context.Context, string) (int64, bool) { return 4096, false },
-			want:     512 * 1024 * 1024,
+			resolver: func(context.Context, string) (ChannelSettings, bool) {
+				return ChannelSettings{MemoryMB: 4096}, false
+			},
+			want: 512 * 1024 * 1024,
 		},
 	}
 
@@ -307,7 +310,7 @@ func (s *ManagerSuite) TestEnsureBrowserMemoryLimit() {
 			}, slog.Default())
 			mgr.inContainer = false
 			if tt.resolver != nil {
-				mgr.SetMemoryLimitResolver(tt.resolver)
+				mgr.SetSettingsResolver(tt.resolver)
 			}
 
 			api.On("ContainerList", ctx, mock.Anything).
@@ -327,6 +330,67 @@ func (s *ManagerSuite) TestEnsureBrowserMemoryLimit() {
 			api.AssertExpectations(s.T())
 		})
 	}
+}
+
+// Everything that shapes a sidecar comes from the resolved settings, not from
+// the provider's own fields: image, profile volume, extension mounts and the
+// Chrome flags that go with them. A project that overrides any of these gets a
+// container built to its own config, not the daemon's.
+func (s *ManagerSuite) TestEnsureBrowserResolvedSettings() {
+	ctx := context.Background()
+	api := new(mockDockerClient)
+	mgr := NewDockerProvider(api, DockerProviderConfig{
+		Image:  "global-chrome:latest",
+		Screen: "1920,1080",
+	}, slog.Default())
+	mgr.inContainer = false
+	mgr.SetSettingsResolver(func(_ context.Context, channelID string) (ChannelSettings, bool) {
+		require.Equal(s.T(), "ch-1", channelID)
+		return ChannelSettings{
+			Image:          "project-chrome:latest",
+			PersistProfile: true,
+			Extensions:     []string{"/host/ublock"},
+			MemoryMB:       1024,
+		}, true
+	})
+
+	api.On("ContainerList", ctx, mock.Anything).
+		Return([]containertypes.Summary{}, nil)
+	api.On("ContainerCreate", ctx,
+		mock.MatchedBy(func(c *containertypes.Config) bool {
+			return c.Image == "project-chrome:latest" &&
+				slices.Contains(c.Cmd, "--user-data-dir=/profile") &&
+				slices.Contains(c.Cmd, "--load-extension=/extensions/0")
+		}),
+		mock.MatchedBy(func(hc *containertypes.HostConfig) bool {
+			return hc.Memory == 1024*1024*1024 &&
+				len(hc.Mounts) == 2 &&
+				hc.Mounts[0].Source == "loop-chrome-profile-ch-1" &&
+				hc.Mounts[1].Source == "/host/ublock"
+		}),
+		(*network.NetworkingConfig)(nil), (*ocispec.Platform)(nil), "loop-chrome-ch-1").
+		Return(containertypes.CreateResponse{ID: "chrome-ctr-1"}, nil)
+	api.On("ContainerStart", ctx, "chrome-ctr-1", containertypes.StartOptions{}).
+		Return(nil)
+	api.On("ContainerInspect", ctx, "chrome-ctr-1").
+		Return(inspectResponseWithPort("49152"), nil)
+
+	require.NoError(s.T(), mgr.EnsureBrowser(ctx, "ch-1", ""))
+	api.AssertExpectations(s.T())
+}
+
+// A provider built without persistence still has to wipe the volume of a
+// channel whose project turned it on — otherwise "reset profile" silently
+// leaves the cookies in place.
+func (s *ManagerSuite) TestRemoveProfileResolvedPerChannel() {
+	s.mgr.SetSettingsResolver(func(_ context.Context, channelID string) (ChannelSettings, bool) {
+		return ChannelSettings{PersistProfile: channelID == "ch-1"}, true
+	})
+	s.api.On("VolumeRemove", mock.Anything, "loop-chrome-profile-ch-1", true).Return(nil)
+
+	require.NoError(s.T(), s.mgr.RemoveProfile(context.Background(), "ch-1"))
+	require.NoError(s.T(), s.mgr.RemoveProfile(context.Background(), "ch-2"))
+	s.api.AssertNumberOfCalls(s.T(), "VolumeRemove", 1)
 }
 
 func (s *ManagerSuite) TestEnsureBrowserAlreadyRunning() {

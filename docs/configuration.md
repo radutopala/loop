@@ -73,17 +73,15 @@ Both `claude_model` and `claude_effort` can additionally be **overridden per cha
 
 #### Browser Automation
 
-| Field | Type | Default | Description |
-|---|---|---|---|
 Browser settings are grouped under `"browser"`:
 
 | Field | Type | Default | Description |
 |---|---|---|---|
-| `browser.enabled` | `bool` | `true` | Enable Chrome browser automation. When disabled, no Chrome container is started and the `loop-browser` MCP server is not registered. |
+| `browser.enabled` | `bool` | `true` | Enable Chrome browser automation. When disabled, no Chrome container is started and the `loop-browser` MCP server is not registered. The global value decides what the daemon builds at startup (providers, idle monitor, sidecar image); a project may set `false` to keep a browser from starting for its own channels, but cannot set `true` to get one back when the global value is `false`. |
 | `browser.chrome_image` | `string` | `"loop-chrome:latest"` | Docker image for Chrome sidecar containers. |
-| `browser.host_cdp_port` | `int` | `9222` | CDP port for Host mode. Requires `chrome://inspect/#remote-debugging` enabled in Chrome. |
+| `browser.host_cdp_port` | `int` | `9222` | CDP port for Host mode. Requires `chrome://inspect/#remote-debugging` enabled in Chrome. Resolved per channel, but a port discovered from a Chrome already running for that channel wins over the configured one. |
 | `browser.persist_profile` | `bool` | `true` | Keep the agent's cookies and logins across browser restarts, in a per-channel Docker volume. Docker mode only. |
-| `browser.memory_mb` | `int` | `512` | Memory cap per Chrome sidecar (MB); `0` for no cap. A page-heavy site can exhaust the default and get its container OOM-killed. Docker fixes the limit at container creation, so a change applies to the next sidecar, not a running one. Docker mode only. |
+| `browser.memory_mb` | `int` | `512` | Memory cap per Chrome sidecar (MB); `0` for no cap. A page-heavy site can exhaust the default and get its container OOM-killed. Docker fixes the limit at container creation, so a change applies to the next sidecar, not a running one — delete the channel's container to pick up a new value. Docker mode only. |
 | `browser.extensions` | `[]string` | `[]` | Host directories holding unpacked Chrome extensions, loaded into every sidecar. Empty runs Chrome with `--disable-extensions`. Docker mode only. See [Browser](browser.md#extensions). |
 | `browser.cookie_import.source` | `string` | `""` | Browser profile to import cookies from, e.g. `"chrome:Default"`. See [Browser](browser.md#importing-cookies-from-your-own-browser). |
 | `browser.cookie_import.domains` | `[]string` | `[]` | Cookie scopes to bring over, matched exactly against the scope shown in the picker. |
@@ -587,12 +585,12 @@ Not all global fields are available in project configs. The following fields can
 | `workflows` | **Merged** by name. Project workflows override global workflows with the same name; new names are appended. |
 | `workflow_concurrency.max_concurrent_runs` | **Overrides** global value when > 0. |
 | `workflow_concurrency.max_concurrent_nodes` | **Overrides** global value when > 0. |
-| `browser.enabled` | **Overrides** global value when set. |
-| `browser.chrome_image` | **Overrides** global value when set. |
-| `browser.host_cdp_port` | **Overrides** global value when set. |
-| `browser.persist_profile` | **Overrides** global value when set. |
-| `browser.memory_mb` | **Overrides** global value when set. |
-| `browser.extensions` | **Replaces** the global list when set (entries are not merged). |
+| `browser.enabled` | **Narrows only**: a project may set `false` to stop a browser starting for its channels. It **cannot** re-enable one when global `browser.enabled` is `false` — the providers and the `loop-browser` MCP server are only built at daemon startup. |
+| `browser.chrome_image` | **Overrides** global value when set. Read when the channel's sidecar is created. |
+| `browser.host_cdp_port` | **Overrides** global value when set, unless a port was discovered from a Chrome already running for the channel. |
+| `browser.persist_profile` | **Overrides** global value when set. Read when the channel's sidecar is created. |
+| `browser.memory_mb` | **Overrides** global value when set. Read when the channel's sidecar is created. |
+| `browser.extensions` | **Replaces** the global list when set (entries are not merged). Read when the channel's sidecar is created. |
 | `browser.cookie_import` | **Overrides** per key: `source` and `auto` when set, `domains` / `sensitive_domains` **replace** the global list when present. |
 | `github.gh_user` | **Overrides** global value when set. |
 | `review.enabled` / `review.prompt` / `review.prompt_path` | Each field **overrides** the global value only when explicitly set (see [Review](#review)). |
