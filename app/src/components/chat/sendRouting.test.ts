@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { chooseSendRoute } from "./sendRouting";
+import { chooseSendRoute, normalizeSendMode } from "./sendRouting";
 
 describe("chooseSendRoute", () => {
   it("routes to the ask resolver while the channel is parked on a question", () => {
@@ -30,13 +30,30 @@ describe("chooseSendRoute", () => {
   });
 
   it("sends a plain message when the channel is idle", () => {
-    expect(chooseSendRoute({})).toEqual({ kind: "message", interrupt: false });
-    expect(chooseSendRoute({ pendingGateReqId: null, sendMode: "queue" })).toEqual({ kind: "message", interrupt: false });
+    expect(chooseSendRoute({})).toEqual({ kind: "message", steer: false });
+    expect(chooseSendRoute({ pendingGateReqId: null, sendMode: "queue" })).toEqual({ kind: "message", steer: false });
   });
 
-  it("interrupts only when a run is active and the composer is in interrupt mode", () => {
-    expect(chooseSendRoute({ isRunning: true, sendMode: "interrupt" })).toEqual({ kind: "message", interrupt: true });
-    expect(chooseSendRoute({ isRunning: true, sendMode: "queue" })).toEqual({ kind: "message", interrupt: false });
-    expect(chooseSendRoute({ isRunning: false, sendMode: "interrupt" })).toEqual({ kind: "message", interrupt: false });
+  it("steers only when a run is active and the composer is in steer mode", () => {
+    expect(chooseSendRoute({ isRunning: true, sendMode: "steer" })).toEqual({ kind: "message", steer: true });
+    expect(chooseSendRoute({ isRunning: true, sendMode: "queue" })).toEqual({ kind: "message", steer: false });
+    expect(chooseSendRoute({ isRunning: false, sendMode: "steer" })).toEqual({ kind: "message", steer: false });
+  });
+});
+
+describe("normalizeSendMode", () => {
+  it("keeps a stored steer mode", () => {
+    expect(normalizeSendMode("steer")).toBe("steer");
+  });
+
+  it("reads the pre-rename name as steer", () => {
+    expect(normalizeSendMode("interrupt")).toBe("steer");
+  });
+
+  it("falls back to queue for anything else", () => {
+    expect(normalizeSendMode("queue")).toBe("queue");
+    expect(normalizeSendMode(null)).toBe("queue");
+    expect(normalizeSendMode(undefined)).toBe("queue");
+    expect(normalizeSendMode("nonsense")).toBe("queue");
   });
 });

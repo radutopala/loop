@@ -2,8 +2,10 @@ package db
 
 import (
 	"context"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
@@ -114,4 +116,90 @@ func (s *IntegrationSuite) TestOldScheduledTaskIndexDropped() {
 	require.NoError(s.T(), err)
 	defer rows.Close()
 	require.False(s.T(), rows.Next(), "old idx_scheduled_tasks_type_next_run should have been dropped")
+}
+
+// TestSteerQueuedMessageOrdersAndUndelays runs the steer UPDATE against a real
+// SQLite so the two things its SQL claims are checked end to end: the steered
+// row outranks everything else queued, and a row that was delayed into the
+// future becomes claimable now while staying visible to the delay poller
+// (which ignores not_before = 0).
+func (s *IntegrationSuite) TestSteerQueuedMessageOrdersAndUndelays() {
+	// A file DB, not ":memory:": the store splits reads and writes across two
+	// connections, and two in-memory connections are two different databases.
+	store, err := NewSQLiteStore(filepath.Join(s.T().TempDir(), "loop.db"))
+	require.NoError(s.T(), err)
+	defer store.Close()
+
+	ctx := context.Background()
+	chatID := seedChannel(s.T(), store, "ch1")
+	queue := func(msgID string, priority int, notBefore int64) {
+		require.NoError(s.T(), store.InsertMessage(ctx, &Message{
+			ChatID:      chatID,
+			ChannelID:   "ch1",
+			MsgID:       msgID,
+			Content:     msgID,
+			IsTriggered: true,
+			Priority:    priority,
+			NotBefore:   notBefore,
+			Kind:        MessageKindMessage,
+			CreatedAt:   time.Now(),
+		}))
+	}
+	queue("first", 5, 0)
+	queue("second", 0, 0)
+	queue("delayed", 0, time.Now().Add(time.Hour).Unix())
+
+	steered, err := store.SteerQueuedMessage(ctx, "ch1", "delayed")
+	require.NoError(s.T(), err)
+	require.True(s.T(), steered)
+
+	// Due now, and still flagged as a delayed row so the poller wakes the
+	// channel even when nothing is draining it.
+	due, err := store.ChannelsWithDueDelayedMessages(ctx)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), []string{"ch1"}, due)
+
+	claimed, err := store.ClaimNextPending(ctx, "ch1")
+	require.NoError(s.T(), err)
+	require.NotNil(s.T(), claimed)
+	require.Equal(s.T(), "delayed", claimed.MsgID)
+	require.Greater(s.T(), claimed.Priority, 5)
+}
+
+// TestSteerQueuedMessageSkipsClaimedRow guards the one row steering must not
+// touch: the message the agent is already running. Re-prioritising it would
+// hand the next claim a row that is mid-flight.
+func (s *IntegrationSuite) TestSteerQueuedMessageSkipsClaimedRow() {
+	store, err := NewSQLiteStore(filepath.Join(s.T().TempDir(), "loop.db"))
+	require.NoError(s.T(), err)
+	defer store.Close()
+
+	ctx := context.Background()
+	require.NoError(s.T(), store.InsertMessage(ctx, &Message{
+		ChatID:      seedChannel(s.T(), store, "ch1"),
+		ChannelID:   "ch1",
+		MsgID:       "running",
+		Content:     "running",
+		IsTriggered: true,
+		Kind:        MessageKindMessage,
+		CreatedAt:   time.Now(),
+	}))
+	claimed, err := store.ClaimNextPending(ctx, "ch1")
+	require.NoError(s.T(), err)
+	require.NotNil(s.T(), claimed)
+
+	steered, err := store.SteerQueuedMessage(ctx, "ch1", "running")
+	require.NoError(s.T(), err)
+	require.False(s.T(), steered)
+}
+
+// seedChannel creates the channel row a message's chat_id foreign key points
+// at, returning the row id to use as ChatID.
+func seedChannel(t *testing.T, store *SQLiteStore, channelID string) int64 {
+	t.Helper()
+	ctx := context.Background()
+	require.NoError(t, store.UpsertChannel(ctx, &Channel{ChannelID: channelID, Name: channelID, DirPath: "/tmp/" + channelID}))
+	ch, err := store.GetChannel(ctx, channelID)
+	require.NoError(t, err)
+	return ch.ID
 }

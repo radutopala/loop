@@ -110,6 +110,11 @@ func (m *MockStore) DeleteQueuedMessage(ctx context.Context, channelID, msgID st
 	return args.Bool(0), args.Error(1)
 }
 
+func (m *MockStore) SteerQueuedMessage(ctx context.Context, channelID, msgID string) (bool, error) {
+	args := m.Called(ctx, channelID, msgID)
+	return args.Bool(0), args.Error(1)
+}
+
 func (m *MockStore) ClaimNextPending(ctx context.Context, channelID string) (*db.Message, error) {
 	args := m.Called(ctx, channelID)
 	if fn, ok := args.Get(0).(func(context.Context, string) *db.Message); ok {

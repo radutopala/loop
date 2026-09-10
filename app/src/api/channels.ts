@@ -255,10 +255,13 @@ export async function createChannel(name: string, platform = "local"): Promise<s
   return data.channel_id;
 }
 
-export async function sendMessage(channelId: string, content: string, mode?: "agent" | "plan", interrupt?: boolean): Promise<void> {
+// steer stops the active run before the message is queued in front of it —
+// the wire field keeps its original `interrupt` name, which is what the
+// backend's cancel-then-claim path has always been called.
+export async function sendMessage(channelId: string, content: string, mode?: "agent" | "plan", steer?: boolean): Promise<void> {
   const body: Record<string, string | boolean> = { channel_id: channelId, content };
   if (mode && mode !== "agent") body.mode = mode;
-  if (interrupt) body.interrupt = true;
+  if (steer) body.interrupt = true;
   const res = await fetch(`${getApiUrl()}/api/messages`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -282,6 +285,17 @@ export async function deleteQueuedMessage(channelId: string, msgId: string): Pro
   const url = `${getApiUrl()}/api/messages/${encodeURIComponent(msgId)}?channel_id=${encodeURIComponent(channelId)}`;
   const res = await fetch(url, { method: "DELETE" });
   if (!res.ok) throw new Error(`Failed to delete queued message: ${res.statusText}`);
+}
+
+// steerQueuedMessage promotes one queued message to the front of the queue and
+// stops the active run, so the agent takes that message next instead of when
+// the current turn ends. Server-side it is the same trade as the composer's
+// steer send mode: the run is cancelled, and its session resumes on the next
+// turn, so the work so far is redirected rather than thrown away.
+export async function steerQueuedMessage(channelId: string, msgId: string): Promise<void> {
+  const url = `${getApiUrl()}/api/channels/${encodeURIComponent(channelId)}/queued/${encodeURIComponent(msgId)}/steer`;
+  const res = await fetch(url, { method: "POST" });
+  if (!res.ok) throw new Error(`Failed to steer queued message: ${res.statusText}`);
 }
 
 // reorderQueuedMessages persists a new order for the channel's queued messages

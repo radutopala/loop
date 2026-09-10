@@ -371,7 +371,7 @@ export const ChatMessages = forwardRef<ChatMessagesHandle, ChatMessagesProps>(fu
         )}
       </div>
       {agentTasks && agentTasks.tasks.length > 0 && <TaskChecklist tasks={agentTasks.tasks} />}
-      {queuedMessages.length > 0 && <QueuedMessagesPopup messages={queuedMessages} channelId={channelId} />}
+      {queuedMessages.length > 0 && <QueuedMessagesPopup messages={queuedMessages} channelId={channelId} isRunning={isRunning} />}
     </ChannelContext.Provider>
   );
 });

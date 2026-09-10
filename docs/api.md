@@ -627,6 +627,27 @@ The in-flight message (the one with `is_running = 1` on the row) is **included**
 
 ---
 
+### `POST /api/channels/{id}/queued/{msg_id}/steer`
+
+Promote one queued message to the front of the channel's queue and cancel the active run, so the agent takes that message next instead of when the current turn ends. This is the per-row form of `POST /api/messages` with `interrupt=true`, and makes the same trade: the cancelled run's session is resumed on the next turn, so the work so far is redirected rather than discarded. Queued rows are preserved.
+
+**Path Parameters:**
+
+| Param    | Type   | Description |
+|----------|--------|-------------|
+| `id`     | string | Channel or thread ID |
+| `msg_id` | string | `msg_id` of the queued row to steer |
+
+**Request Body:** none.
+
+**Response:** `204 No Content`.
+
+Ordering matters and is handled server-side: the row is promoted **before** the run is cancelled, or the dying run's drain loop could claim an older queued row in the window between the two. A row already claimed by a run (`is_running = 1`) is never promoted — the response is `404` and the active run is left alone. A row that was queued with a delay has its `not_before` pulled back to `1`: already in the past, so `ClaimNextPending` accepts it, but still non-zero so the delay poller keeps seeing it and wakes an otherwise idle channel.
+
+**Errors:** `404` if no matching queued row exists (already processed, already running, wrong channel, or never existed). `501` if the store is not configured. `500` on database error.
+
+---
+
 ### `GET /api/channels/{id}/timeline`
 
 List the channel's interleaved timeline — chat messages plus persisted agent events (thinking blocks, tool calls, tool results) — in canonical chain order. Each row carries a `kind` discriminator and a per-channel `chain_position`.
