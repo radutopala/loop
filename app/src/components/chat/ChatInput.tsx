@@ -984,7 +984,15 @@ export function ChatInput({
         rows={3}
         disabled={sending}
       />
-      <div style={{ display: "flex", alignItems: "center", gap: 8, width: "100%" }}>
+      {/*
+        Wrapping is what keeps this row inside the composer in a narrow chat
+        column: the pills and the send group are all flexShrink: 0, so without
+        it they overflow the rounded border instead of reflowing. The spacer
+        has a 0 basis, so while everything fits on one line it simply absorbs
+        the slack and nothing moves; once it doesn't, the trailing controls
+        drop to a second line and justifyContent keeps them right-aligned.
+      */}
+      <div style={{ display: "flex", alignItems: "center", gap: 8, rowGap: 8, flexWrap: "wrap", justifyContent: "flex-end", width: "100%" }}>
         {shortcuts.length > 0 && (
           <button
             style={{
