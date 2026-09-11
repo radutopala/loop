@@ -136,7 +136,13 @@ export function QueuedMessagesPopup({ messages, channelId, isRunning }: QueuedMe
       style={{
         display: "flex",
         justifyContent: "center",
-        padding: "0 24px",
+        // 12px more gutter per side than the input bar's 24px, which is what
+        // actually produces the inset. maxWidth alone only insets the tray
+        // while the composer is wide enough to hit its 768 cap; in a narrow
+        // chat column both clamp to the same available width and the tray
+        // lines up flush with the input, stacking its dashed border straight
+        // onto the composer's solid one.
+        padding: "0 36px",
         // Cancel the input bar's 12px top padding so the card's bottom edge
         // meets the composer's top edge with no seam — the queue is meant to
         // read as one surface continuing into the input, not a separate card.
@@ -146,11 +152,12 @@ export function QueuedMessagesPopup({ messages, channelId, isRunning }: QueuedMe
       <div
         style={{
           width: "100%",
-          // Inset 12px per side from the composer's 768 so the queue sits *on
-          // top of* the input rather than flush with it — the stacked look the
-          // card is copying. Rounded on top only; the bottom runs into the
-          // composer, and its side borders line up with nothing below on
-          // purpose.
+          // Caps the tray 12px per side inside the composer's 768 once the
+          // input stops growing, so the queue sits *on top of* the input
+          // rather than flush with it — the stacked look the card is copying.
+          // Below that cap the wrapper's extra gutter holds the same inset.
+          // Rounded on top only; the bottom runs into the composer, and its
+          // side borders line up with nothing below on purpose.
           maxWidth: 744,
           borderRadius: "12px 12px 0 0",
           overflow: "hidden",

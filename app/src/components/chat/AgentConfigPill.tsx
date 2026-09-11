@@ -94,7 +94,11 @@ export function AgentConfigPill({ channelId }: { channelId: string }) {
   };
 
   return (
-    <div style={{ position: "relative", display: "flex", alignItems: "center", flexShrink: 0, marginRight: 8 }}>
+    // The model/effort label is the one piece of this row that can lose
+    // characters without losing meaning (the full value stays in the title),
+    // so it shrinks and ellipsises first — that buys the footer a good 40px
+    // before it has to wrap onto a second line.
+    <div style={{ position: "relative", display: "flex", alignItems: "center", minWidth: 0, marginRight: 8 }}>
       <button
         onClick={() => setOpen((v) => !v)}
         title={
@@ -115,15 +119,17 @@ export function AgentConfigPill({ channelId }: { channelId: string }) {
           cursor: "pointer",
           fontFamily: fonts.mono,
           fontSize: 10,
+          minWidth: 0,
+          overflow: "hidden",
         }}
       >
-        <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+        <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" style={{ flexShrink: 0 }}>
           <line x1="4" y1="8" x2="20" y2="8" />
           <circle cx="9" cy="8" r="2.5" fill="currentColor" stroke="none" />
           <line x1="4" y1="16" x2="20" y2="16" />
           <circle cx="15" cy="16" r="2.5" fill="currentColor" stroke="none" />
         </svg>
-        {label}
+        <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{label}</span>
       </button>
       {open && (
         <>
