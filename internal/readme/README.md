@@ -365,7 +365,7 @@ On startup, `loop serve` keeps the versioned container files (`Dockerfile`, `ent
 | `browser.extensions` | `[]` | Host directories holding unpacked Chrome extensions to load into the sidecar (Docker mode) |
 | `browser.cookie_import` | `{}` | Import cookies from your own Chrome/Edge/Firefox profile into the sidecar: `source`, `domains`, `auto` |
 | `poll_interval_sec` | `30` | Task scheduler poll interval |
-| `claude_model` | `"claude-sonnet-5"` | Claude model (e.g. `"claude-fable-5"`, `"claude-opus-4-8"`). Overridable per channel from the chat composer |
+| `claude_model` | `"claude-sonnet-5"` | Claude model (e.g. `"claude-fable-5-1"`, `"claude-opus-4-8"`). Overridable per channel from the chat composer |
 | `claude_effort` | `""` | Reasoning effort passed as `--effort` (`low`…`max`); empty uses the model default. Overridable per channel from the chat composer |
 | `claude_bin_path` | `"claude"` | Path to Claude Code binary |
 | `mounts` | `[]` | Host directories to mount into containers |
