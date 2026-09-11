@@ -43,3 +43,29 @@ Feature: Diff Viewer Journey
     And the page should contain text "staged"
     And the page should contain text "unstaged"
     And the page should contain text "new"
+
+  Scenario: Find bar counts content matches and jumps to a file by path
+    Given I set up a test channel via API for git repo "bdd-diff-search"
+    And I modify "README.md" without staging
+    And I create uncommitted files "src/alpha.txt" in the repo
+    And I open the app in a browser
+    And I wait for text "bdd-diff-search" to appear
+
+    When I click on "bdd-diff-search" in the sidebar
+    And I wait for "textarea" to be visible
+    And I wait for text "UNCOMMITTED DIFF" to appear
+    Then I wait for text "README.md" to appear
+
+    # Content mode: the rewritten README line is the only hunk line with the term.
+    When I click on "[data-testid='diff-search-toggle']"
+    And I type "unstaged README" into "[data-testid='diff-search-input']"
+    Then the element "[data-testid='diff-search-count']" should contain text "1 / 1"
+
+    # A leading ">" turns the same box into a ranked file jump.
+    When I clear and type ">alpha" into "[data-testid='diff-search-input']"
+    Then I wait for "[data-testid='diff-search-path-result']" to be visible
+    And the element "[data-testid='diff-search-path-result']" should contain text "src/alpha.txt"
+
+    # Enter opens the chosen file and dismisses the bar.
+    When I press Enter
+    Then the element "[data-testid='diff-search-input']" should not exist

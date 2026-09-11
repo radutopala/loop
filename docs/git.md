@@ -33,6 +33,34 @@ The panel keeps itself current without manual polling:
 
 Because the workdir is bind-mounted into the agent container, commits the agent makes (with the repo-local git identity) appear in **Commits** as soon as they land.
 
+## Searching a diff
+
+**Component:** `app/src/components/panels/DiffViewer.tsx`, matching in `diffSearch.ts`
+
+Both diff tabs share one find bar, opened with the magnifier in the file-navigation
+bar or with `⌘F` / `Ctrl+F` while the diff has focus. `Esc` closes it.
+
+The box has two modes, chosen by what you type:
+
+| Input | Mode | Behaviour |
+|-------|------|-----------|
+| `errTimeout` | **Content** | Literal search over every hunk line. Matches are highlighted, counted (`3 / 57`), and stepped with `Enter` / `Shift+Enter` — which wraps, and expands a collapsed file when the next match is inside one. |
+| `>git pan` | **Path jump** | Fuzzy file search, ranked. `↑` / `↓` move through the results, `Enter` opens the file and scrolls to it. The characters your query matched are highlighted in each path. |
+
+Path ranking is a port of fzf's `FuzzyMatchV1` — two linear passes, no matrix —
+with fzf's own bonuses, so a query that starts a path segment (`git` in
+`src/git/panel.ts`) outranks the same characters mid-word (`src/legit.ts`), and an
+unbroken run outranks a scattered one.
+
+Both modes use smart case, the rule fzf and most editors use: an all-lowercase
+query ignores case, a query with any uppercase letter in it does not. So `readme`
+finds `README.md`, while `errTimeout` skips a line that only says `errtimeout`.
+
+Searching is entirely client-side over the diff the panel already holds — no extra
+requests. Only hunk lines are searched: context you reveal by expanding a gap is
+fetched on demand and is not part of the diff, so including it would make the match
+count depend on which gaps happen to be open.
+
 ## Multi-root repositories
 
 For multi-root workspaces, a root selector lets you scope the diff to a specific directory; the diff endpoint accepts a `root` index so each root's changes are viewed independently.
