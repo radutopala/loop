@@ -1,9 +1,10 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { DiffFile, DiffFileStatus } from "../../api/loopApi";
 import { fetchFileContent } from "../../api/loopApi";
 import { useTheme } from "../../ThemeContext";
 import type { ColorPalette } from "../../theme";
 import { fonts } from "../../theme";
+import { lineAddr, matchesInLine, parseQuery, searchContent, searchPaths } from "./diffSearch";
 
 // ── Types ──
 
@@ -255,6 +256,31 @@ function statusBadgeLabel(status: DiffFileStatus): string {
 
 const EXPAND_STEP = 20;
 const SMALL_GAP_THRESHOLD = 40;
+/** Amber reads as "found it" against both the add-green and delete-red row
+ * backgrounds, which the theme's own accent colours do not. */
+const MATCH_BG = "rgba(245, 158, 11, 0.3)";
+const ACTIVE_MATCH_BG = "#f59e0b";
+const ACTIVE_MATCH_TEXT = "#1a1a1a";
+/** Path-jump results shown at once. The list is ranked, so the tail is noise. */
+const MAX_PATH_RESULTS = 12;
+
+/** Split a line into plain text and highlighted match spans. */
+function highlightContent(content: string, ranges: Array<{ start: number; end: number }>, activeStart: number): React.ReactNode[] {
+  const out: React.ReactNode[] = [];
+  let at = 0;
+  for (const r of ranges) {
+    if (r.start > at) out.push(content.slice(at, r.start));
+    const isActive = r.start === activeStart;
+    out.push(
+      <span key={r.start} style={{ backgroundColor: isActive ? ACTIVE_MATCH_BG : MATCH_BG, color: isActive ? ACTIVE_MATCH_TEXT : undefined, borderRadius: 2 }}>
+        {content.slice(r.start, r.end)}
+      </span>,
+    );
+    at = r.end;
+  }
+  if (at < content.length) out.push(content.slice(at));
+  return out;
+}
 
 // ── Component ──
 
@@ -280,12 +306,33 @@ export function DiffViewer({ channelId, files, parsedFiles, expandedFiles, loadi
   const fileRefs = useRef<Map<number, HTMLDivElement>>(new Map());
   const scrollRef = useRef<HTMLDivElement>(null);
   const isNavigatingRef = useRef(false);
+  const rootRef = useRef<HTMLDivElement>(null);
+  const searchInputRef = useRef<HTMLInputElement>(null);
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [query, setQuery] = useState("");
+  const [activeMatch, setActiveMatch] = useState(0);
+  const [pathCursor, setPathCursor] = useState(0);
+
+  // A bare query searches the diff text; a leading ">" jumps to a file. One box
+  // for both because they answer the same question ("where is X?") and a diff
+  // is small enough that the answer is always one of the two.
+  const { mode, term } = parseQuery(query);
+  const contentTerm = mode === "content" ? term.trim() : "";
+  const contentMatches = useMemo(() => (mode === "content" ? searchContent(files, parsedFiles, term) : []), [mode, term, files, parsedFiles]);
+  const pathMatches = useMemo(() => (mode === "path" ? searchPaths(files, term).slice(0, MAX_PATH_RESULTS) : []), [mode, term, files]);
 
   // Reset focused index to first file when file list changes
   const fileListSignature = files.map(fileKey).join("\n");
   useEffect(() => {
     setFocusedFileIndex(0);
   }, [fileListSignature]);
+
+  // Every keystroke restarts the walk, so stepping always begins at the first
+  // match of the term you are actually looking at.
+  useEffect(() => {
+    setActiveMatch(0);
+    setPathCursor(0);
+  }, [query]);
 
   // Update focused file on mouse hover over file sections.
   const handleFileMouseEnter = useCallback((fileIndex: number) => {
@@ -310,6 +357,89 @@ export function DiffViewer({ channelId, files, parsedFiles, expandedFiles, loadi
     },
     [files, expandedFiles, onToggleFile],
   );
+
+  // Walk the active content match into view, expanding its file first when it
+  // is collapsed. The expansion re-runs this effect via `expandedFiles`, and by
+  // then the line exists in the DOM to scroll to.
+  const expandedSignature = [...expandedFiles].join("\n");
+  // `expandedSignature` is the dependency rather than the Set itself: the
+  // parent rebuilds it on every render, which would re-run this on every render.
+  useEffect(() => {
+    const match = contentMatches[activeMatch];
+    if (!match) return;
+    const file = files[match.fileIndex];
+    if (!file) return;
+    const key = fileKey(file);
+    if (!expandedFiles.has(key)) {
+      onToggleFile(key);
+      return;
+    }
+    setFocusedFileIndex(match.fileIndex);
+    const addr = lineAddr(match.fileIndex, match.hunkIndex, match.lineIndex);
+    const frame = requestAnimationFrame(() => {
+      scrollRef.current?.querySelector(`[data-diff-line="${addr}"]`)?.scrollIntoView({ block: "center", behavior: "smooth" });
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [activeMatch, contentMatches, files, expandedSignature, onToggleFile]);
+
+  const stepMatch = useCallback(
+    (delta: number) => {
+      if (contentMatches.length === 0) return;
+      // Wrap, like every find bar — reaching the end of a diff should not be a
+      // dead end when the match you want is above where you started.
+      setActiveMatch((i) => (i + delta + contentMatches.length) % contentMatches.length);
+    },
+    [contentMatches.length],
+  );
+
+  const closeSearch = useCallback(() => {
+    setSearchOpen(false);
+    setQuery("");
+    rootRef.current?.focus({ preventScroll: true });
+  }, []);
+
+  const openSearch = useCallback(() => {
+    setSearchOpen(true);
+    requestAnimationFrame(() => searchInputRef.current?.select());
+  }, []);
+
+  const handleRootKeyDown = (e: React.KeyboardEvent) => {
+    if ((e.metaKey || e.ctrlKey) && e.key === "f") {
+      e.preventDefault();
+      openSearch();
+    }
+  };
+
+  const handleSearchKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === "Escape") {
+      e.preventDefault();
+      closeSearch();
+      return;
+    }
+    if (mode === "path") {
+      if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+        e.preventDefault();
+        if (pathMatches.length === 0) return;
+        const delta = e.key === "ArrowDown" ? 1 : -1;
+        setPathCursor((i) => (i + delta + pathMatches.length) % pathMatches.length);
+        return;
+      }
+      if (e.key === "Enter") {
+        e.preventDefault();
+        const hit = pathMatches[pathCursor];
+        if (hit) {
+          navigateToFile(hit.fileIndex);
+          closeSearch();
+        }
+        return;
+      }
+      return;
+    }
+    if (e.key === "Enter") {
+      e.preventDefault();
+      stepMatch(e.shiftKey ? -1 : 1);
+    }
+  };
 
   const builtLineColors = buildLineColors(colors);
   const lineColors = {
@@ -360,8 +490,11 @@ export function DiffViewer({ channelId, files, parsedFiles, expandedFiles, loadi
     [ensureFileContent],
   );
 
-  /** Render a block of HunkLine[] with the standard gutter + content layout. */
-  const renderLines = (lines: HunkLine[]) => (
+  /** Render a block of HunkLine[] with the standard gutter + content layout.
+   * `addr` is set only for hunk lines, which are the ones content search knows
+   * about — gap-revealed context is fetched on demand and is not part of the
+   * diff, so it is never highlighted or stepped through. */
+  const renderLines = (lines: HunkLine[], addr?: { fileIndex: number; hunkIndex: number }) => (
     <div style={{ display: "flex" }}>
       <div style={{ flexShrink: 0 }}>
         {lines.map((line, li) => {
@@ -381,9 +514,16 @@ export function DiffViewer({ channelId, files, parsedFiles, expandedFiles, loadi
         <div style={{ display: "inline-block", minWidth: "100%" }}>
           {lines.map((line, li) => {
             const lc = lineColors[line.type];
+            const ranges = addr && contentTerm ? matchesInLine(line.content, contentTerm) : [];
+            const active = contentMatches[activeMatch];
+            const activeStart = active && addr && active.fileIndex === addr.fileIndex && active.hunkIndex === addr.hunkIndex && active.lineIndex === li ? active.start : -1;
             return (
-              <div key={li} style={{ lineHeight: "20px", fontFamily: fonts.mono, fontSize: 12, whiteSpace: "pre", color: lc.text, backgroundColor: lc.bg, paddingRight: 8 }}>
-                {line.content || " "}
+              <div
+                key={li}
+                data-diff-line={addr ? lineAddr(addr.fileIndex, addr.hunkIndex, li) : undefined}
+                style={{ lineHeight: "20px", fontFamily: fonts.mono, fontSize: 12, whiteSpace: "pre", color: lc.text, backgroundColor: lc.bg, paddingRight: 8 }}
+              >
+                {ranges.length > 0 ? highlightContent(line.content, ranges, activeStart) : line.content || " "}
               </div>
             );
           })}
@@ -519,7 +659,15 @@ export function DiffViewer({ channelId, files, parsedFiles, expandedFiles, loadi
   const focusedPath = anyExpanded ? (files[clampedIndex]?.path ?? "") : "";
 
   return (
-    <div style={{ flex: 1, display: "flex", flexDirection: "column", minHeight: 0 }}>
+    // Focusable wrapper: this is what scopes Cmd+F to this pane rather than
+    // grabbing the shortcut globally, which a window listener would.
+    <div
+      ref={rootRef}
+      tabIndex={-1}
+      onKeyDown={handleRootKeyDown}
+      onMouseDown={() => rootRef.current?.focus({ preventScroll: true })}
+      style={{ flex: 1, display: "flex", flexDirection: "column", minHeight: 0, outline: "none" }}
+    >
       {/* File navigation bar */}
       {files.length > 0 && (
         <div
@@ -590,10 +738,141 @@ export function DiffViewer({ channelId, files, parsedFiles, expandedFiles, loadi
               <path d="M2.5 3.5L5 6.5L7.5 3.5" />
             </svg>
           </button>
+          <button
+            onClick={() => (searchOpen ? closeSearch() : openSearch())}
+            title={`Find in diff (${navigator.platform.includes("Mac") ? "\u2318F" : "Ctrl+F"})`}
+            data-testid="diff-search-toggle"
+            style={{ ...navBtnStyle, color: searchOpen ? colors.textLight : colors.textMuted, borderColor: searchOpen ? colors.textDim : colors.border }}
+          >
+            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <circle cx="11" cy="11" r="7" />
+              <path d="M20 20L16 16" />
+            </svg>
+          </button>
           <span style={{ flex: 1, fontFamily: fonts.mono, fontSize: 12, color: colors.textLight, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{focusedPath}</span>
           <span style={{ fontFamily: fonts.mono, fontSize: 11, color: colors.textDim, flexShrink: 0 }}>
             {clampedIndex + 1} / {files.length}
           </span>
+        </div>
+      )}
+      {files.length > 0 && searchOpen && (
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 6,
+            padding: "4px 12px",
+            background: colors.surface,
+            borderBottom: `1px solid ${colors.border}`,
+            flexShrink: 0,
+            position: "relative",
+          }}
+        >
+          <input
+            ref={searchInputRef}
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            onKeyDown={handleSearchKeyDown}
+            placeholder="Find in diff — type > to jump to a file"
+            data-testid="diff-search-input"
+            style={{
+              flex: 1,
+              minWidth: 0,
+              background: colors.bg,
+              border: `1px solid ${colors.inputBorder}`,
+              borderRadius: 4,
+              color: colors.textLight,
+              fontFamily: fonts.mono,
+              fontSize: 12,
+              padding: "3px 8px",
+              outline: "none",
+            }}
+          />
+          {mode === "content" && contentTerm !== "" && (
+            <span data-testid="diff-search-count" style={{ fontFamily: fonts.mono, fontSize: 11, color: contentMatches.length > 0 ? colors.textDim : colors.error, flexShrink: 0 }}>
+              {contentMatches.length > 0 ? `${activeMatch + 1} / ${contentMatches.length}` : "no matches"}
+            </span>
+          )}
+          {mode === "path" && (
+            <span style={{ fontFamily: fonts.mono, fontSize: 11, color: colors.textDim, flexShrink: 0 }}>
+              {term === "" ? "jump to file" : `${pathMatches.length} file${pathMatches.length === 1 ? "" : "s"}`}
+            </span>
+          )}
+          {mode === "content" && (
+            <>
+              <button
+                style={{ ...navBtnStyle, opacity: contentMatches.length === 0 ? 0.3 : 1 }}
+                disabled={contentMatches.length === 0}
+                onClick={() => stepMatch(-1)}
+                title="Previous match (Shift+Enter)"
+              >
+                <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M2.5 6.5L5 3.5L7.5 6.5" />
+                </svg>
+              </button>
+              <button style={{ ...navBtnStyle, opacity: contentMatches.length === 0 ? 0.3 : 1 }} disabled={contentMatches.length === 0} onClick={() => stepMatch(1)} title="Next match (Enter)">
+                <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M2.5 3.5L5 6.5L7.5 3.5" />
+                </svg>
+              </button>
+            </>
+          )}
+          <button style={navBtnStyle} onClick={closeSearch} title="Close (Esc)">
+            <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round">
+              <path d="M2 2L8 8M8 2L2 8" />
+            </svg>
+          </button>
+          {mode === "path" && pathMatches.length > 0 && (
+            <div
+              style={{
+                position: "absolute",
+                top: "100%",
+                left: 12,
+                right: 12,
+                zIndex: 5,
+                maxHeight: 240,
+                overflowY: "auto",
+                background: colors.bg,
+                border: `1px solid ${colors.border}`,
+                borderTop: "none",
+                borderRadius: "0 0 4px 4px",
+                boxShadow: `0 4px 12px ${colors.shadow}`,
+              }}
+            >
+              {pathMatches.map((hit, i) => (
+                <button
+                  key={hit.fileIndex}
+                  data-testid="diff-search-path-result"
+                  onClick={() => {
+                    navigateToFile(hit.fileIndex);
+                    closeSearch();
+                  }}
+                  onMouseEnter={() => setPathCursor(i)}
+                  style={{
+                    display: "block",
+                    width: "100%",
+                    textAlign: "left",
+                    border: "none",
+                    background: i === pathCursor ? colors.selectedBg : "transparent",
+                    color: colors.textLight,
+                    fontFamily: fonts.mono,
+                    fontSize: 12,
+                    padding: "3px 8px",
+                    cursor: "pointer",
+                    whiteSpace: "nowrap",
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                  }}
+                >
+                  {highlightContent(
+                    hit.path,
+                    hit.positions.map((pos) => ({ start: pos, end: pos + 1 })),
+                    -1,
+                  )}
+                </button>
+              ))}
+            </div>
+          )}
         </div>
       )}
       <div ref={scrollRef} style={{ flex: 1, overflow: "auto", minHeight: 0 }}>
@@ -711,7 +990,7 @@ export function DiffViewer({ channelId, files, parsedFiles, expandedFiles, loadi
                           >
                             {seg.hunk.header}
                           </div>
-                          {renderLines(seg.hunk.lines)}
+                          {renderLines(seg.hunk.lines, { fileIndex, hunkIndex: seg.hunkIndex })}
                         </>
                       ) : (
                         renderGapSegment(file.path, seg.gap, seg.position)
