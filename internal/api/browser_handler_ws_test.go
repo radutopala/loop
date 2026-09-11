@@ -29,7 +29,7 @@ func (s *BrowserHandlerSuite) TestStartCDPConnectError() {
 	s.browserMgr.On("GetCDPEndpoint", "ch-1").Return("ws://127.0.0.1:9222")
 
 	// Create a CDPManager with a factory that always fails.
-	cdpMgr := browser.NewCDPManager("ws://test:9222", browser.CDPManagerConfig{
+	cdpMgr := browser.NewCDPManager("ws://127.0.0.1:9222", browser.CDPManagerConfig{
 		MaxRetries: 1,
 		RetryDelay: time.Millisecond,
 	}, slog.Default())

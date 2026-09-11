@@ -26,7 +26,7 @@ func (s *BrowserHandlerSuite) TestRunBrowserIdleMonitorCancelledContext() {
 }
 
 func (s *BrowserHandlerSuite) TestCleanIdleBrowserSessions() {
-	cdpMgr := browser.NewCDPManager("ws://test:9222", browser.CDPManagerConfig{}, slog.Default())
+	cdpMgr := browser.NewCDPManager("ws://127.0.0.1:9222", browser.CDPManagerConfig{}, slog.Default())
 	// Make lastUsedAt old by using a fixed time.
 	browser.SetTimeNowForTest(cdpMgr, func() time.Time {
 		return time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC)
@@ -51,7 +51,7 @@ func (s *BrowserHandlerSuite) TestCleanIdleBrowserSessions() {
 }
 
 func (s *BrowserHandlerSuite) TestCleanIdleBrowserSessionsSchedulesRemove() {
-	cdpMgr := browser.NewCDPManager("ws://test:9222", browser.CDPManagerConfig{}, slog.Default())
+	cdpMgr := browser.NewCDPManager("ws://127.0.0.1:9222", browser.CDPManagerConfig{}, slog.Default())
 	browser.SetTimeNowForTest(cdpMgr, func() time.Time {
 		return time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC)
 	})
@@ -106,6 +106,45 @@ func (s *BrowserHandlerSuite) TestGetOrCreateCDPManager() {
 	// Second call should return the same manager.
 	mgr2 := s.srv.browser.getOrCreateCDPManager("ch-1", "docker", s.browserMgr)
 	require.Equal(s.T(), mgr, mgr2)
+}
+
+// A sidecar recreated between attempts comes back on a different ephemeral
+// port. The cached manager keeps the port it was built with, so without this
+// it dials a dead one until the idle sweep drops it — and every retry from the
+// pane pushes that sweep further out.
+func (s *BrowserHandlerSuite) TestGetOrCreateCDPManagerRebuildsWhenEndpointMoves() {
+	s.browserMgr.On("GetCDPEndpoint", "ch-1").Return("ws://127.0.0.1:55090").Once()
+	first := s.srv.browser.getOrCreateCDPManager("ch-1", "docker", s.browserMgr)
+	require.Equal(s.T(), "ws://127.0.0.1:55090", first.WSEndpoint())
+
+	s.browserMgr.On("GetCDPEndpoint", "ch-1").Return("ws://127.0.0.1:55091").Once()
+	second := s.srv.browser.getOrCreateCDPManager("ch-1", "docker", s.browserMgr)
+	require.NotSame(s.T(), first, second)
+	require.Equal(s.T(), "ws://127.0.0.1:55091", second.WSEndpoint())
+}
+
+// A manager holding a working client is kept whatever the provider now reports:
+// the client is proof its endpoint is reachable, and host mode reports a bare
+// port whenever DevToolsActivePort is briefly unreadable.
+func (s *BrowserHandlerSuite) TestGetOrCreateCDPManagerKeepsLiveClient() {
+	live := new(mockCDPSession)
+	live.On("TargetID").Return("t-1").Maybe()
+	mgr := s.reuseTestManager("ch-1", live)
+
+	s.browserMgr.On("GetCDPEndpoint", "ch-1").Return("ws://127.0.0.1:55091")
+	require.Same(s.T(), mgr, s.srv.browser.getOrCreateCDPManager("ch-1", "docker", s.browserMgr))
+}
+
+func (s *BrowserHandlerSuite) TestGetOrCreateCDPManagerRebuildsOverDeadClient() {
+	dead := &mockCDPSession{dead: true}
+	dead.On("TargetID").Return("t-1").Maybe()
+	dead.On("Close").Return()
+	stale := s.reuseTestManager("ch-1", dead)
+
+	s.browserMgr.On("GetCDPEndpoint", "ch-1").Return("ws://127.0.0.1:55091")
+	fresh := s.srv.browser.getOrCreateCDPManager("ch-1", "docker", s.browserMgr)
+	require.NotSame(s.T(), stale, fresh)
+	dead.AssertCalled(s.T(), "Close")
 }
 
 func (s *BrowserHandlerSuite) TestGetActiveCDPManagerNotFound() {
@@ -471,7 +510,7 @@ func (s *BrowserHandlerSuite) TestRunBrowserIdleMonitorTickerFires() {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	// Set up an idle CDPManager.
-	cdpMgr := browser.NewCDPManager("ws://test:9222", browser.CDPManagerConfig{}, slog.Default())
+	cdpMgr := browser.NewCDPManager("ws://127.0.0.1:9222", browser.CDPManagerConfig{}, slog.Default())
 	browser.SetTimeNowForTest(cdpMgr, func() time.Time {
 		return time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC)
 	})
@@ -507,7 +546,7 @@ func (s *BrowserHandlerSuite) TestRunBrowserIdleMonitorTickerFires() {
 // --- cleanIdleBrowserSessions: host mode cleanup ---
 
 func (s *BrowserHandlerSuite) TestCleanIdleBrowserSessionsHostMode() {
-	cdpMgr := browser.NewCDPManager("ws://test:9222", browser.CDPManagerConfig{}, slog.Default())
+	cdpMgr := browser.NewCDPManager("ws://127.0.0.1:9222", browser.CDPManagerConfig{}, slog.Default())
 	browser.SetTimeNowForTest(cdpMgr, func() time.Time {
 		return time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC)
 	})
