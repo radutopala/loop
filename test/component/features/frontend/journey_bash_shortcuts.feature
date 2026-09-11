@@ -61,6 +61,9 @@ Feature: Terminal Bash Shortcuts Journey
     When I click on "bdd-bash-agent" in the sidebar
     Then I wait for "textarea" to be visible
 
+    # Scope both assertions to the Docker Agent leaf: leaf ids are
+    # "<panel>-<n>", and the default Chat tab already ships a Host Shell pane
+    # that legitimately carries its own $ picker.
     When I add a "Docker Agent" panel
-    Then I wait for "button[data-testid^='terminal-shortcuts-btn-']" to be visible
-    And the element "button[data-testid^='terminal-bash-shortcuts-btn-']" should not exist
+    Then I wait for "button[data-testid^='terminal-shortcuts-btn-docker-agent-']" to be visible
+    And the element "button[data-testid^='terminal-bash-shortcuts-btn-docker-agent-']" should not exist

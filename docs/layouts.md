@@ -135,11 +135,11 @@ Default layouts are created for every new channel:
 
 | Name | Structure | Notes |
 |------|-----------|-------|
-| **Chat** | Horizontal split: Chat (50%) + Git (50%) | |
+| **Chat** | Horizontal split: Chat (50%) + (Git 70% over Host Shell 30%, stacked) | |
 | **Editor** | Horizontal split: (Editor + Host Shell stacked, 65%) + Chat (35%) | |
 | **Memory** | Single leaf: Memory | |
 | **Git** | Single leaf: Git | |
-| **Browser Chat** | Horizontal split: Chat (50%) + (Docker Browser + Git stacked) | |
+| **Browser Chat** | Horizontal split: Chat (30%) + (Docker Browser 70% over a 30% row of Git 50% \| Host Shell 50%) | |
 | **Sessions** | Single leaf: Sessions | Channels only — hidden for threads |
 | **Swarm** | Three Docker Agent panels in a split | |
 
@@ -168,7 +168,7 @@ All layout state is stored in `localStorage` under the key `loop-workspace-layou
 
 ```typescript
 Record<channelId, {
-  version: number;                   // migration version (current: 11)
+  version: number;                   // migration version (current: 13)
   active: string;                    // name of the active layout
   layouts: Record<string, PaneNode>; // layout name -> tree (split layouts)
   order: string[];                   // tab display order
@@ -196,6 +196,8 @@ const migrations: Record<number, (data: ChannelData) => ChannelData> = {
   9: addKanbanLayout,
   10: addWorkflowsLayout,
   11: renameAgentShellPanels,         // panel:"agent" -> "docker-agent", "shell" -> "host-shell" (rewrites leaf IDs too)
+  12: splitFileTreeFromEditor,        // wraps editor leaves in Split.h[file-tree, editor]; refreshes Editor
+  13: updateChatAndBrowserLayouts,    // Chat gains a host shell under Git; Browser Chat -> 30% chat + a host shell beside Git
 };
 ```
 

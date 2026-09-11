@@ -31,7 +31,7 @@ export const DEFAULT_LAYOUT_TYPES: Record<string, LayoutType> = {
 // ---------------------------------------------------------------------------
 
 /** Current schema version. Bump when adding a new migration. */
-const CURRENT_VERSION = 12;
+const CURRENT_VERSION = 13;
 
 /**
  * Each migration transforms a ChannelLayouts from version N-1 to N.
@@ -141,6 +141,20 @@ const migrations: Record<number, (ch: ChannelLayouts) => void> = {
     const defaults = createDefaultLayouts();
     if (defaults.layouts["Editor"] && ch.layouts["Editor"]) {
       ch.layouts["Editor"] = defaults.layouts["Editor"];
+    }
+  },
+
+  // v13: Chat's right column becomes Git over a host shell, and Browser Chat's
+  // chat column narrows to 30% with a host shell beside its Git pane. Both are
+  // refreshed from defaults — the same wholesale swap v6 and v12 use for
+  // Editor — since a nested split cannot be derived from the old flat tree.
+  // A tab the user turned into a canvas is left alone.
+  13: (ch) => {
+    const defaults = createDefaultLayouts();
+    for (const name of ["Chat", "Browser Chat"]) {
+      if (!ch.layouts[name] || ch.types?.[name] === "canvas") continue;
+      const fresh = defaults.layouts[name];
+      if (fresh) ch.layouts[name] = fresh;
     }
   },
 };
@@ -322,7 +336,15 @@ export function createDefaultLayouts(): ChannelLayouts {
         flex: 1,
         children: [
           { type: "leaf", id: "chat", panel: "chat", flex: 50 },
-          { type: "leaf", id: "git", panel: "git", flex: 50 },
+          {
+            type: "split",
+            direction: "vertical",
+            flex: 50,
+            children: [
+              { type: "leaf", id: "git", panel: "git", flex: 70 },
+              { type: "leaf", id: "host-shell-0", panel: "host-shell", flex: 30 },
+            ],
+          },
         ],
       },
       Editor: {
@@ -350,14 +372,22 @@ export function createDefaultLayouts(): ChannelLayouts {
         direction: "horizontal",
         flex: 1,
         children: [
-          { type: "leaf", id: "chat", panel: "chat", flex: 50 },
+          { type: "leaf", id: "chat", panel: "chat", flex: 30 },
           {
             type: "split",
             direction: "vertical",
-            flex: 50,
+            flex: 70,
             children: [
               { type: "leaf", id: "docker-browser", panel: "docker-browser", flex: 70 },
-              { type: "leaf", id: "git", panel: "git", flex: 30 },
+              {
+                type: "split",
+                direction: "horizontal",
+                flex: 30,
+                children: [
+                  { type: "leaf", id: "git", panel: "git", flex: 50 },
+                  { type: "leaf", id: "host-shell-1", panel: "host-shell", flex: 50 },
+                ],
+              },
             ],
           },
         ],
