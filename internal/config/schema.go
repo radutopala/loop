@@ -51,7 +51,7 @@ func buildSchema() *ConfigSchema {
 				Type:        "string",
 				Title:       "Model",
 				Description: "Claude model override",
-				Enum:        []any{"", "claude-opus-5", "claude-sonnet-5", "claude-fable-5", "claude-opus-4-8", "claude-opus-4-7", "claude-opus-4-6[1m]", "claude-opus-4-6", "claude-sonnet-4-6"},
+				Enum:        []any{"", "claude-opus-5", "claude-sonnet-5", "claude-fable-5-1", "claude-fable-5", "claude-opus-4-8"},
 				Default:     "claude-sonnet-5",
 				XSection:    "Claude",
 				XOrder:      1,
