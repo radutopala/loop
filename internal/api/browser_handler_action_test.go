@@ -19,7 +19,7 @@ import (
 // --- watchMCPTabChanges ---
 
 func (s *BrowserHandlerSuite) TestWatchMCPTabChangesStopCh() {
-	cdpMgr := browser.NewCDPManager("ws://test:9222", browser.CDPManagerConfig{}, slog.Default())
+	cdpMgr := browser.NewCDPManager("ws://127.0.0.1:9222", browser.CDPManagerConfig{}, slog.Default())
 
 	bc := &browserWSConn{
 		logger: slog.Default(),
@@ -42,7 +42,7 @@ func (s *BrowserHandlerSuite) TestWatchMCPTabChangesStopCh() {
 }
 
 func (s *BrowserHandlerSuite) TestWatchMCPTabChangesSwitchNoCDP() {
-	cdpMgr := browser.NewCDPManager("ws://test:9222", browser.CDPManagerConfig{}, slog.Default())
+	cdpMgr := browser.NewCDPManager("ws://127.0.0.1:9222", browser.CDPManagerConfig{}, slog.Default())
 
 	bc := &browserWSConn{
 		logger: slog.Default(),

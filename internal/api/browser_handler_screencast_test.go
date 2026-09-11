@@ -29,7 +29,7 @@ func (s *BrowserHandlerSuite) TestRestartScreencastForTargetNoCDPMgr() {
 
 func (s *BrowserHandlerSuite) TestRestartScreencastForTargetGetOrCreateError() {
 	// Set up a CDPManager with no active clients.
-	cdpMgr := browser.NewCDPManager("ws://test:9222", browser.CDPManagerConfig{
+	cdpMgr := browser.NewCDPManager("ws://127.0.0.1:9222", browser.CDPManagerConfig{
 		MaxRetries: 1,
 		RetryDelay: time.Millisecond,
 	}, slog.Default())
@@ -73,7 +73,7 @@ func (s *BrowserHandlerSuite) TestRestartScreencastForTargetClosesOldStopCh() {
 	mockCDP.On("StopScreencast").Return().Maybe()
 	mockCDP.On("Close").Return().Maybe()
 
-	cdpMgr := browser.NewCDPManager("ws://test:9222", browser.CDPManagerConfig{
+	cdpMgr := browser.NewCDPManager("ws://127.0.0.1:9222", browser.CDPManagerConfig{
 		MaxRetries: 1,
 		RetryDelay: time.Millisecond,
 	}, slog.Default())
@@ -135,7 +135,7 @@ func (s *BrowserHandlerSuite) TestRestartScreencastForTargetSuccess() {
 	mockCDP.On("StopScreencast").Return().Maybe()
 	mockCDP.On("Close").Return().Maybe()
 
-	cdpMgr := browser.NewCDPManager("ws://test:9222", browser.CDPManagerConfig{
+	cdpMgr := browser.NewCDPManager("ws://127.0.0.1:9222", browser.CDPManagerConfig{
 		MaxRetries: 1,
 		RetryDelay: time.Millisecond,
 	}, slog.Default())
@@ -201,7 +201,7 @@ func (s *BrowserHandlerSuite) TestSendTabsResponseDockerMode() {
 
 	serverConn := <-connReady
 
-	cdpMgr := browser.NewCDPManager("ws://test:9222", browser.CDPManagerConfig{}, slog.Default())
+	cdpMgr := browser.NewCDPManager("ws://127.0.0.1:9222", browser.CDPManagerConfig{}, slog.Default())
 	cdpMgr.TrackTab("t1")
 	cdpMgr.TrackTab("t2")
 
@@ -246,7 +246,7 @@ func (s *BrowserHandlerSuite) TestSendTabsResponseCarriesFavicons() {
 	require.NoError(s.T(), err)
 	defer clientWS.Close()
 
-	cdpMgr := browser.NewCDPManager("ws://test:9222", browser.CDPManagerConfig{}, slog.Default())
+	cdpMgr := browser.NewCDPManager("ws://127.0.0.1:9222", browser.CDPManagerConfig{}, slog.Default())
 	cdpMgr.TrackTab("t1")
 	cdpMgr.TrackTab("t2")
 
@@ -293,7 +293,7 @@ func (s *BrowserHandlerSuite) TestSendTabsResponseHostMode() {
 
 	serverConn := <-connReady
 
-	cdpMgr := browser.NewCDPManager("ws://test:9222", browser.CDPManagerConfig{}, slog.Default())
+	cdpMgr := browser.NewCDPManager("ws://127.0.0.1:9222", browser.CDPManagerConfig{}, slog.Default())
 	cdpMgr.TrackTab("t1") // Only track t1, not t2.
 
 	hostProvider := new(mockHostBrowserProvider)
@@ -370,7 +370,7 @@ func (s *BrowserHandlerSuite) TestWatchMCPTabChangesSwitchDifferentTarget() {
 	mockCDP.On("StopScreencast").Return().Maybe()
 	mockCDP.On("Close").Return().Maybe()
 
-	cdpMgr := browser.NewCDPManager("ws://test:9222", browser.CDPManagerConfig{
+	cdpMgr := browser.NewCDPManager("ws://127.0.0.1:9222", browser.CDPManagerConfig{
 		MaxRetries: 1,
 		RetryDelay: time.Millisecond,
 	}, slog.Default())
@@ -431,7 +431,7 @@ func (s *BrowserHandlerSuite) TestWatchMCPTabChangesSwitchSameTarget() {
 	mockCDP := new(mockCDPSession)
 	mockCDP.On("TargetID").Return("t-current")
 
-	cdpMgr := browser.NewCDPManager("ws://test:9222", browser.CDPManagerConfig{}, slog.Default())
+	cdpMgr := browser.NewCDPManager("ws://127.0.0.1:9222", browser.CDPManagerConfig{}, slog.Default())
 
 	bc := &browserWSConn{
 		logger: slog.Default(),
@@ -511,7 +511,7 @@ func (s *BrowserHandlerSuite) goneTargetManager() *browser.CDPManager {
 	mgrClient.On("ListTabs", mock.Anything).Return([]browser.TabInfo{{TargetID: "t-live"}}, nil)
 	mgrClient.On("Close").Return().Maybe()
 
-	cdpMgr := browser.NewCDPManager("ws://test:9222", browser.CDPManagerConfig{
+	cdpMgr := browser.NewCDPManager("ws://127.0.0.1:9222", browser.CDPManagerConfig{
 		MaxRetries: 1,
 		RetryDelay: time.Millisecond,
 	}, slog.Default())

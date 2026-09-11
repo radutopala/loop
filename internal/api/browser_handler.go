@@ -271,9 +271,15 @@ func (bc *browserWSConn) handleStart(ctx context.Context, msg browserWSMessage) 
 	cdpMgr.PaneConnected()
 
 	// Connect CDP — CDPManager handles retries internally.
-	bc.logger.Info("browser ws: connecting CDP", "endpoint", bc.browserProvider.GetCDPEndpoint(msg.ChannelID))
+	//
+	// Log the manager's own endpoint, not the provider's: they can differ, and
+	// the one that gets dialed is the manager's. Log the failure too — the retry
+	// attempts underneath are Debug and sendError only reaches the panel, so a
+	// pane that never connects otherwise leaves nothing behind to read.
+	bc.logger.Info("browser ws: connecting CDP", "channel_id", msg.ChannelID, "endpoint", cdpMgr.WSEndpoint())
 	if err := cdpMgr.Connect(ctx); err != nil {
 		cdpMgr.PaneDisconnected()
+		bc.logger.Error("browser ws: CDP connect failed", "channel_id", msg.ChannelID, "endpoint", cdpMgr.WSEndpoint(), "error", err)
 		bc.sendError("failed to connect CDP: " + err.Error())
 		return
 	}

@@ -677,7 +677,7 @@ func (m *mockCDPSession) SetCookies(ctx context.Context, cookies []browser.Cooki
 // The mock CDP session is wired in separately by the caller via
 // browser.SetCDPFactoryForTest, so this helper takes no arguments.
 func newTestCDPManager() *browser.CDPManager {
-	mgr := browser.NewCDPManager("ws://test:9222", browser.CDPManagerConfig{
+	mgr := browser.NewCDPManager("ws://127.0.0.1:9222", browser.CDPManagerConfig{
 		DiscoverExisting: false,
 		MaxRetries:       1,
 		RetryDelay:       time.Millisecond,

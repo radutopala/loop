@@ -202,12 +202,24 @@ func (s *browserService) activeBrowserProvider(channelID string) BrowserProvider
 }
 
 // getOrCreateCDPManager returns or creates a CDPManager for the given channel+mode.
+//
+// A manager pins the endpoint it was built with, and a recreated sidecar comes
+// back on a fresh ephemeral port, so a cached manager that never managed to
+// connect would keep dialing the dead port for as long as it stays in the map —
+// which is until the idle sweep, and every retry from the pane pushes that
+// further out. Rebuild it against the endpoint the provider reports now.
 func (s *browserService) getOrCreateCDPManager(channelID, mode string, provider BrowserProvider) *browser.CDPManager {
-	s.cdpManagersMu.Lock()
-	defer s.cdpManagersMu.Unlock()
+	wsEndpoint := provider.GetCDPEndpoint(channelID)
 	key := channelID + "|" + mode
-	if mgr, ok := s.cdpManagers[key]; ok {
-		return mgr
+
+	s.cdpManagersMu.Lock()
+	stale := s.cdpManagers[key]
+	if stale != nil {
+		if stale.WSEndpoint() == wsEndpoint || hasLiveClient(stale) {
+			s.cdpManagersMu.Unlock()
+			return stale
+		}
+		delete(s.cdpManagers, key)
 	}
 	isHost := provider.IsHostMode()
 	cfg := browser.CDPManagerConfig{
@@ -218,10 +230,27 @@ func (s *browserService) getOrCreateCDPManager(channelID, mode string, provider 
 	if isHost {
 		cfg.MaxRetries = 1
 	}
-	wsEndpoint := provider.GetCDPEndpoint(channelID)
 	mgr := browser.NewCDPManager(wsEndpoint, cfg, s.deps.logger)
 	s.cdpManagers[key] = mgr
+	s.cdpManagersMu.Unlock()
+
+	if stale != nil {
+		s.deps.logger.Info("browser: CDP endpoint moved, rebuilding manager",
+			"channel_id", channelID, "mode", mode, "old", stale.WSEndpoint(), "new", wsEndpoint)
+		stale.Close()
+	}
 	return mgr
+}
+
+// hasLiveClient reports whether a manager holds a client that still works.
+//
+// That client is proof its endpoint is reachable, whatever the provider says
+// now — host mode falls back to a bare port when DevToolsActivePort is briefly
+// unreadable, and tearing a working pane down over that would be a worse bug
+// than the one the endpoint check is here to fix.
+func hasLiveClient(mgr *browser.CDPManager) bool {
+	client := mgr.ActiveClient()
+	return client != nil && client.Alive()
 }
 
 // getActiveCDPManager returns the CDPManager for the given channel's active mode.
