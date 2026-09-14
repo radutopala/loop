@@ -17,6 +17,7 @@ import type {
   ToolUseData,
   WSEvent,
 } from "../types";
+import { shouldForwardToChatListeners } from "./chatEventRouting";
 import { useWebSocketConnection } from "./useWebSocketConnection";
 
 /** Ephemeral per-channel state that survives channel switches. */
@@ -636,7 +637,9 @@ export function useChatStateStore({ channels, selectedId, onAppEvent }: UseChatS
     // effective target matches the selected channel. Using stateTarget
     // (not channelId) ensures that agent.status events routed to a
     // thread via thread_id don't set isRunning on the parent view.
-    if (stateTarget && stateTarget === selectedIdRef.current) {
+    // Globally-broadcast workflow.* events are the documented exception —
+    // see shouldForwardToChatListeners.
+    if (shouldForwardToChatListeners(wsEvent.type, stateTarget, selectedIdRef.current)) {
       for (const listener of chatListenersRef.current) listener(wsEvent);
     }
 
