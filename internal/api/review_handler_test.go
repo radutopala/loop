@@ -518,6 +518,53 @@ func (s *ReviewHandlerSuite) TestLoadLoopDirFallback() {
 	require.Equal(s.T(), http.StatusOK, w.Code)
 }
 
+// A worktree thread's own dir is itself a worktree, so the repository
+// that owns the shared gitdir — and therefore the .worktrees/pr-N the
+// review checks out into — is the parent channel's. gh calls and the
+// diff keep running in the thread's own dir.
+func (s *ReviewHandlerSuite) TestLoadWorktreeThreadAddsUnderParentRepo() {
+	s.store.On("GetChannel", mock.Anything, "ch1").Return(
+		&db.Channel{ChannelID: "ch1", DirPath: "/wt", Worktree: true, ParentID: "parent-ch"}, nil)
+	s.store.On("GetChannel", mock.Anything, "parent-ch").Return(
+		&db.Channel{ChannelID: "parent-ch", DirPath: "/main-repo"}, nil)
+	pr := &githubapi.PRInfo{Number: 7, BaseRef: "main"}
+	s.gh.On("FetchPRByNumber", mock.Anything, "/wt", "", 7).Return(pr, nil)
+	s.gh.On("FetchPRHeadSHA", mock.Anything, "/wt", "", 7).Return("abc", nil)
+	s.wt.On("Add", mock.Anything, "/main-repo", 7).Return("/main-repo/.worktrees/pr-7", nil).Once()
+	s.gh.On("FetchRepoSlug", mock.Anything, "/wt", "").Return((*githubapi.RepoSlug)(nil), errors.New("no slug"))
+	s.wt.On("Diff", mock.Anything, "/wt", "/main-repo/.worktrees/pr-7", "main", mock.Anything).Return([]byte("d"), nil)
+
+	w := s.postJSON("/api/channels/ch1/review/load", map[string]any{"pr_number": 7})
+	require.Equal(s.T(), http.StatusOK, w.Code)
+	s.wt.AssertExpectations(s.T())
+	s.wt.AssertNotCalled(s.T(), "Add", mock.Anything, "/wt", mock.Anything)
+}
+
+// The overwrite Remove has to name the same repo Add used, or the stale
+// worktree is never dropped from the repository that registered it.
+func (s *ReviewHandlerSuite) TestLoadWorktreeThreadRemovesPreviousUnderParentRepo() {
+	s.rs.Put("ch1", &review.Session{
+		PR:           &githubapi.PRInfo{Number: 100, BaseRef: "main"},
+		WorktreePath: "/main-repo/.worktrees/pr-100",
+		Status:       review.StatusError,
+	})
+	s.store.On("GetChannel", mock.Anything, "ch1").Return(
+		&db.Channel{ChannelID: "ch1", DirPath: "/wt", Worktree: true, ParentID: "parent-ch"}, nil)
+	s.store.On("GetChannel", mock.Anything, "parent-ch").Return(
+		&db.Channel{ChannelID: "parent-ch", DirPath: "/main-repo"}, nil)
+	s.wt.On("Remove", mock.Anything, "/main-repo", "/main-repo/.worktrees/pr-100").Return(nil).Once()
+	pr := &githubapi.PRInfo{Number: 200, BaseRef: "main"}
+	s.gh.On("FetchPRByNumber", mock.Anything, "/wt", "", 200).Return(pr, nil)
+	s.gh.On("FetchPRHeadSHA", mock.Anything, "/wt", "", 200).Return("sha", nil)
+	s.wt.On("Add", mock.Anything, "/main-repo", 200).Return("/main-repo/.worktrees/pr-200", nil)
+	s.gh.On("FetchRepoSlug", mock.Anything, "/wt", "").Return((*githubapi.RepoSlug)(nil), errors.New("no slug"))
+	s.wt.On("Diff", mock.Anything, "/wt", "/main-repo/.worktrees/pr-200", "main", mock.Anything).Return([]byte("d"), nil)
+
+	w := s.postJSON("/api/channels/ch1/review/load", map[string]any{"pr_number": 200})
+	require.Equal(s.T(), http.StatusOK, w.Code)
+	s.wt.AssertExpectations(s.T())
+}
+
 // ---- sync ----
 
 func (s *ReviewHandlerSuite) wireSyncSession() {
@@ -820,6 +867,37 @@ func (s *ReviewHandlerSuite) TestDeleteSessionGetChannelError() {
 	s.mux.ServeHTTP(w, req)
 	// Even when the channel lookup fails we still drop the session so a
 	// stale entry can't block reload.
+	require.Equal(s.T(), http.StatusNoContent, w.Code)
+	require.Nil(s.T(), s.rs.Get("ch1"))
+	s.wt.AssertNotCalled(s.T(), "Remove", mock.Anything, mock.Anything, mock.Anything)
+}
+
+// Close, like Load, has to remove the worktree through the repository
+// that owns it — the parent's, for a worktree thread.
+func (s *ReviewHandlerSuite) TestDeleteWorktreeThreadRemovesUnderParentRepo() {
+	s.rs.Put("ch1", &review.Session{WorktreePath: "/main-repo/.worktrees/pr-7"})
+	s.store.On("GetChannel", mock.Anything, "ch1").Return(
+		&db.Channel{ChannelID: "ch1", DirPath: "/wt", Worktree: true, ParentID: "parent-ch"}, nil)
+	s.store.On("GetChannel", mock.Anything, "parent-ch").Return(
+		&db.Channel{ChannelID: "parent-ch", DirPath: "/main-repo"}, nil)
+	s.wt.On("Remove", mock.Anything, "/main-repo", "/main-repo/.worktrees/pr-7").Return(nil).Once()
+	w := httptest.NewRecorder()
+	s.mux.ServeHTTP(w, httptest.NewRequest("DELETE", "/api/channels/ch1/review", nil))
+	require.Equal(s.T(), http.StatusNoContent, w.Code)
+	require.Nil(s.T(), s.rs.Get("ch1"))
+	s.wt.AssertExpectations(s.T())
+	s.wt.AssertNotCalled(s.T(), "Remove", mock.Anything, "/wt", mock.Anything)
+}
+
+// A channel with neither a dir_path nor a loopDir resolves to no repo at
+// all; there is nowhere to run `git worktree remove`, so Close drops the
+// session and leaves the path alone rather than shelling out in the
+// daemon's own cwd.
+func (s *ReviewHandlerSuite) TestDeleteWithoutResolvableRepoDirSkipsRemove() {
+	s.rs.Put("ch1", &review.Session{WorktreePath: "/somewhere/.worktrees/pr-7"})
+	s.store.On("GetChannel", mock.Anything, "ch1").Return(&db.Channel{ChannelID: "ch1"}, nil)
+	w := httptest.NewRecorder()
+	s.mux.ServeHTTP(w, httptest.NewRequest("DELETE", "/api/channels/ch1/review", nil))
 	require.Equal(s.T(), http.StatusNoContent, w.Code)
 	require.Nil(s.T(), s.rs.Get("ch1"))
 	s.wt.AssertNotCalled(s.T(), "Remove", mock.Anything, mock.Anything, mock.Anything)

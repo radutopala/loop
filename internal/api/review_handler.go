@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/radutopala/loop/internal/db"
 	"github.com/radutopala/loop/internal/githubapi"
 	"github.com/radutopala/loop/internal/review"
 )
@@ -37,6 +38,67 @@ func (s *reviewService) requireReviewEnabled(w http.ResponseWriter, dirPath, par
 		return false
 	}
 	return true
+}
+
+// resolveReviewDirs returns the channel's own working dir and the dir
+// whose repo owns the shared gitdir.
+//
+// For a worktree-thread channel the channel itself IS a worktree, so the
+// repository — and the shared gitdir its `.git` pointer file references —
+// lives under the *parent* channel's dir, and resolveParentDirPath walks
+// that chain. For a root channel it returns "", and the channel's own dir
+// already is the repository.
+func (s *reviewService) resolveReviewDirs(ctx context.Context, channelID string) (channelDirPath, parentDirPath string) {
+	parentDirPath = s.deps.workspace.resolveParentDirPath(ctx, channelID)
+	if s.deps.store != nil {
+		if ch, err := s.deps.store.GetChannel(ctx, channelID); err == nil && ch != nil {
+			channelDirPath = channelWorkDir(ch, s.deps.loopDir)
+		}
+	}
+	if parentDirPath == "" {
+		parentDirPath = channelDirPath
+	}
+	return channelDirPath, parentDirPath
+}
+
+// channelWorkDir is the directory a channel's git and gh commands run
+// in: its own dir_path, or the per-channel workspace the daemon manages
+// when the channel has none.
+func channelWorkDir(ch *db.Channel, loopDir string) string {
+	if ch.DirPath != "" {
+		return ch.DirPath
+	}
+	if loopDir == "" {
+		return ""
+	}
+	return filepath.Join(loopDir, ch.ChannelID, "work")
+}
+
+// reviewRepoDir picks the directory that owns the PR worktree: the
+// repository root.
+//
+// GitPR.Add builds its path as <parentDir>/.worktrees/pr-<n>, so when the
+// channel is itself a worktree — the Review panel opened in a worktree
+// thread — passing the channel's own dir nests a `.worktrees/pr-N` inside
+// that worktree. Removing the outer worktree later takes the nested one's
+// files with it and leaves its registration dangling in the repository
+// until a prune, and the nested path shows up as untracked cruft in the
+// thread's own git panel unless the repo happens to ignore `.worktrees/`.
+//
+// resolveParentDirPath returns "" for a root channel, whose own dir
+// already is the repository root, so this is a no-op for every channel
+// that is not a worktree.
+//
+// Only worktree ownership moves. Refresh and Diff keep taking the
+// channel's own dir: neither uses it as the worktree's parent — Refresh
+// ignores it entirely and Diff only fetches the base ref through it,
+// which resolves via the shared gitdir from either side. gh commands and
+// config layering stay on the channel dir for the same reason.
+func reviewRepoDir(channelDirPath, parentDirPath string) string {
+	if parentDirPath != "" {
+		return parentDirPath
+	}
+	return channelDirPath
 }
 
 // errReviewDisabled is the sentinel returned from helpers (pushOneComment,
@@ -95,10 +157,7 @@ func (s *reviewService) handleReviewLoad(w http.ResponseWriter, r *http.Request)
 		http.Error(w, "channel not found", http.StatusNotFound)
 		return
 	}
-	dirPath := ch.DirPath
-	if dirPath == "" && s.deps.loopDir != "" {
-		dirPath = filepath.Join(s.deps.loopDir, ch.ChannelID, "work")
-	}
+	dirPath := channelWorkDir(ch, s.deps.loopDir)
 	if dirPath == "" {
 		http.Error(w, "channel has no dir_path", http.StatusBadRequest)
 		return
@@ -109,6 +168,7 @@ func (s *reviewService) handleReviewLoad(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	ghUser := s.deps.configs.ghUser(dirPath, parentDirPath)
+	repoDirPath := reviewRepoDir(dirPath, parentDirPath)
 
 	// Refuse to Load over an in-flight run. The async run goroutine would
 	// otherwise stomp the new StatusLoading session on completion, and
@@ -124,7 +184,7 @@ func (s *reviewService) handleReviewLoad(w http.ResponseWriter, r *http.Request)
 	// never explicitly closed. Best-effort: a remove failure is logged
 	// but does not block the new Load.
 	if prev := s.sessions.Get(channelID); prev != nil && prev.WorktreePath != "" {
-		if err := s.worktree.Remove(r.Context(), dirPath, prev.WorktreePath); err != nil {
+		if err := s.worktree.Remove(r.Context(), repoDirPath, prev.WorktreePath); err != nil {
 			s.deps.logger.Warn("review worktree remove failed on load overwrite",
 				"channel_id", channelID, "path", prev.WorktreePath, "err", err)
 		}
@@ -155,7 +215,7 @@ func (s *reviewService) handleReviewLoad(w http.ResponseWriter, r *http.Request)
 
 	// Check out the PR head locally first so the diff (and the review
 	// agent) can read the actual files in their post-merge form.
-	worktreePath, err := s.worktree.Add(r.Context(), dirPath, req.PRNumber)
+	worktreePath, err := s.worktree.Add(r.Context(), repoDirPath, req.PRNumber)
 	if err != nil {
 		s.sessions.UpdateStatus(channelID, review.StatusError, errorMessage(err))
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -240,10 +300,7 @@ func (s *reviewService) handleReviewSync(w http.ResponseWriter, r *http.Request)
 		http.Error(w, "channel not found", http.StatusNotFound)
 		return
 	}
-	dirPath := ch.DirPath
-	if dirPath == "" && s.deps.loopDir != "" {
-		dirPath = filepath.Join(s.deps.loopDir, ch.ChannelID, "work")
-	}
+	dirPath := channelWorkDir(ch, s.deps.loopDir)
 	if dirPath == "" {
 		http.Error(w, "channel has no dir_path", http.StatusBadRequest)
 		return
@@ -282,10 +339,7 @@ func (s *reviewService) handleReviewListPRs(w http.ResponseWriter, r *http.Reque
 		http.Error(w, "channel not found", http.StatusNotFound)
 		return
 	}
-	dirPath := ch.DirPath
-	if dirPath == "" && s.deps.loopDir != "" {
-		dirPath = filepath.Join(s.deps.loopDir, ch.ChannelID, "work")
-	}
+	dirPath := channelWorkDir(ch, s.deps.loopDir)
 	if dirPath == "" {
 		http.Error(w, "channel has no dir_path", http.StatusBadRequest)
 		return
@@ -405,9 +459,9 @@ func (s *reviewService) handleReviewDelete(w http.ResponseWriter, r *http.Reques
 	// into a deleted session.
 	s.cancelReviewRun(channelID)
 	if sess.WorktreePath != "" {
-		ch, err := s.deps.store.GetChannel(r.Context(), channelID)
-		if err == nil && ch != nil && ch.DirPath != "" {
-			if err := s.worktree.Remove(r.Context(), ch.DirPath, sess.WorktreePath); err != nil {
+		repoDirPath := reviewRepoDir(s.resolveReviewDirs(r.Context(), channelID))
+		if repoDirPath != "" {
+			if err := s.worktree.Remove(r.Context(), repoDirPath, sess.WorktreePath); err != nil {
 				s.deps.logger.Warn("review worktree remove failed", "channel_id", channelID, "path", sess.WorktreePath, "err", err)
 			}
 		}
@@ -494,15 +548,7 @@ func (s *reviewService) handleReviewIngestComments(w http.ResponseWriter, r *htt
 	// Same parent-dir resolution as handleReviewRun: for a root channel
 	// the worktree-parent resolver returns "" and the channel's own dir
 	// (the main repo) is the diff workdir.
-	parentDirPath := s.deps.workspace.resolveParentDirPath(r.Context(), channelID)
-	if parentDirPath == "" && s.deps.store != nil {
-		if ch, err := s.deps.store.GetChannel(r.Context(), channelID); err == nil && ch != nil {
-			parentDirPath = ch.DirPath
-			if parentDirPath == "" && s.deps.loopDir != "" {
-				parentDirPath = filepath.Join(s.deps.loopDir, ch.ChannelID, "work")
-			}
-		}
-	}
+	_, parentDirPath := s.resolveReviewDirs(r.Context(), channelID)
 	added, skipped := 0, 0
 	for _, raw := range body.Findings {
 		var f struct {
@@ -695,15 +741,7 @@ func (s *reviewService) handleReviewRun(w http.ResponseWriter, r *http.Request) 
 	// channel's dir — resolveParentDirPath walks that chain. For a
 	// root channel, resolveParentDirPath returns "" and we fall back to
 	// the channel's own dir (which is the main repo).
-	parentDirPath := s.deps.workspace.resolveParentDirPath(r.Context(), channelID)
-	if parentDirPath == "" && s.deps.store != nil {
-		if ch, err := s.deps.store.GetChannel(r.Context(), channelID); err == nil && ch != nil {
-			parentDirPath = ch.DirPath
-			if parentDirPath == "" && s.deps.loopDir != "" {
-				parentDirPath = filepath.Join(s.deps.loopDir, ch.ChannelID, "work")
-			}
-		}
-	}
+	channelDirPath, parentDirPath := s.resolveReviewDirs(r.Context(), channelID)
 
 	prompt := s.userPrompt
 	if prompt == "" {
@@ -713,15 +751,6 @@ func (s *reviewService) handleReviewRun(w http.ResponseWriter, r *http.Request) 
 	// account to switch to before shelling out to gh. dirPath is the
 	// channel's own workdir (used for project-config layering), and
 	// parentDirPath provides the worktree-merge layer.
-	channelDirPath := ""
-	if s.deps.store != nil {
-		if ch, err := s.deps.store.GetChannel(r.Context(), channelID); err == nil && ch != nil {
-			channelDirPath = ch.DirPath
-			if channelDirPath == "" && s.deps.loopDir != "" {
-				channelDirPath = filepath.Join(s.deps.loopDir, ch.ChannelID, "work")
-			}
-		}
-	}
 	if !s.deps.configs.reviewEnabled(channelDirPath, parentDirPath) {
 		s.unregisterReviewRun(channelID)
 		http.Error(w, "review panel disabled for this project", http.StatusForbidden)
