@@ -761,6 +761,7 @@ func (s *reviewService) handleReviewRun(w http.ResponseWriter, r *http.Request) 
 	// system prompt instead.
 	worktreePath := sess.WorktreePath
 	reviewContext := buildReviewContext(sess, ghUser)
+	subagentPrompt := buildSubagentReviewContext(sess)
 	fullPrompt := prompt
 	sysPrompt := s.systemPrompt
 	if strings.HasPrefix(prompt, "/") {
@@ -786,7 +787,7 @@ func (s *reviewService) handleReviewRun(w http.ResponseWriter, r *http.Request) 
 	s.sessions.UpdateStatus(channelID, review.StatusReviewing, "")
 	s.broadcastReviewStatus(channelID, review.StatusReviewing, "")
 
-	go s.runReviewAsync(runCtx, channelID, worktreePath, parentDirPath, sysPrompt, fullPrompt, forkSessionID)
+	go s.runReviewAsync(runCtx, channelID, worktreePath, parentDirPath, sysPrompt, subagentPrompt, fullPrompt, forkSessionID)
 	writeHTTPJSON(w, http.StatusAccepted, map[string]string{"status": "started"}, s.deps.logger)
 }
 
@@ -865,8 +866,10 @@ func buildReviewContext(sess *review.Session, ghUser string) string {
 }
 
 // buildReviewDedupList renders the "already reported, do not repeat" block,
-// or "" when the session has no comments yet. Split out of buildReviewContext
-// so the list can be rendered on its own.
+// or "" when the session has no comments yet. It is built separately from
+// the rest of the PR context because it has two audiences: the main agent,
+// via buildReviewContext, and — through buildSubagentReviewContext — the
+// fan-out subagents that actually derive the findings.
 func buildReviewDedupList(sess *review.Session) string {
 	if len(sess.Comments) == 0 {
 		return ""
@@ -896,6 +899,29 @@ func buildReviewDedupList(sess *review.Session) string {
 		return ""
 	}
 	return b.String()
+}
+
+// buildSubagentReviewContext renders the dedup list for the subagents the
+// review command fans out to, or "" when there is nothing to dedup against
+// (in which case no --append-subagent-system-prompt flag is passed at all).
+//
+// The built-in /code-review skill derives its candidate findings in "finder
+// subagents", then verifies and reports them from the main agent. The CLI
+// applies --append-system-prompt to the main agent only — the separate
+// --append-subagent-system-prompt flag exists precisely because it does not
+// propagate — so without this the agents doing the reviewing re-derive
+// findings that are already sitting in the panel, and the orchestrator has
+// to catch every duplicate on the way out.
+//
+// The framing line matters as much as the list: text that arrives in a
+// subagent's system prompt telling it what not to say reads like a prompt
+// injection unless it is attributed to the host that launched the run.
+func buildSubagentReviewContext(sess *review.Session) string {
+	list := buildReviewDedupList(sess)
+	if list == "" {
+		return ""
+	}
+	return "Review pipeline context (authoritative, supplied by the host that launched this review):\n\n" + list
 }
 
 // dedupEntryBody renders a comment body as a single line for the

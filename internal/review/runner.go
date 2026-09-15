@@ -30,8 +30,8 @@ type Runner struct {
 // main repo dir, plumbed through to AgentRequest.ParentDirPath so the
 // container runner also mounts the parent — without it the worktree's
 // `.git` pointer file references a host path that's not visible inside
-// the container, and the agent dies on startup. systemPrompt + prompt
-// are passed straight through to the agent (the caller is expected to
+// the container, and the agent dies on startup. systemPrompt,
+// subagentSystemPrompt + prompt are passed straight through to the agent (the caller is expected to
 // have resolved the configured review prompt and assembled the diff
 // context). onComment, when set, receives each finding the agent reports
 // through the built-in ReportFindings tool, in the order reported; it runs
@@ -43,7 +43,7 @@ type Runner struct {
 // ForkSession: a plain --resume would append the review's turns to the
 // session the user is still chatting in. The caller is responsible for
 // having placed the session file in dirPath's Claude project dir.
-func (r *Runner) Run(ctx context.Context, channelID, dirPath, parentDirPath, systemPrompt, prompt, forkSessionID string, onComment func(*Comment)) (*agent.AgentResponse, error) {
+func (r *Runner) Run(ctx context.Context, channelID, dirPath, parentDirPath, systemPrompt, subagentSystemPrompt, prompt, forkSessionID string, onComment func(*Comment)) (*agent.AgentResponse, error) {
 	if r.Agent == nil {
 		return nil, errors.New("review runner: agent not configured")
 	}
@@ -52,10 +52,13 @@ func (r *Runner) Run(ctx context.Context, channelID, dirPath, parentDirPath, sys
 		DirPath:       dirPath,
 		ParentDirPath: parentDirPath,
 		SystemPrompt:  systemPrompt,
-		Prompt:        prompt,
-		ReviewMode:    true,
-		SessionID:     forkSessionID,
-		ForkSession:   forkSessionID != "",
+		// Carries the dedup list to /code-review's fan-out subagents, which
+		// is where the findings are actually derived.
+		SubagentSystemPrompt: subagentSystemPrompt,
+		Prompt:               prompt,
+		ReviewMode:           true,
+		SessionID:            forkSessionID,
+		ForkSession:          forkSessionID != "",
 	}
 	if onComment != nil {
 		// OnToolUseRaw, not OnToolUse: the latter carries a chat-facing

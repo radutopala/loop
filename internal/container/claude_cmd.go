@@ -169,6 +169,14 @@ func buildClaudeCmd(cfg *config.Config, mcpConfigPath string, req *agent.AgentRe
 	if req.SystemPrompt != "" {
 		cmd = append(cmd, "--append-system-prompt", req.SystemPrompt)
 	}
+	// --append-system-prompt reaches the main agent only; subagents spawned
+	// through the Task tool get their own system prompt. This is the flag
+	// that seeds those (and nested ones). It requires --print, which the
+	// line above always sets, and implies
+	// CLAUDE_CODE_ENABLE_APPEND_SUBAGENT_PROMPT=1, so no env var is needed.
+	if req.SubagentSystemPrompt != "" {
+		cmd = append(cmd, "--append-subagent-system-prompt", req.SubagentSystemPrompt)
+	}
 	prompt := req.BuildPrompt()
 	if req.PlanMode {
 		prompt = planModePromptPrefix + prompt
