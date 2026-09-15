@@ -56,6 +56,9 @@ Both modes use smart case, the rule fzf and most editors use: an all-lowercase
 query ignores case, a query with any uppercase letter in it does not. So `readme`
 finds `README.md`, while `errTimeout` skips a line that only says `errtimeout`.
 
+The [Review panel](review.md#searching-the-diff) reuses this find bar over the PR
+diff, with the same two modes and the same matching rules.
+
 Searching is entirely client-side over the diff the panel already holds — no extra
 requests. Only hunk lines are searched: context you reveal by expanding a gap is
 fetched on demand and is not part of the diff, so including it would make the match
