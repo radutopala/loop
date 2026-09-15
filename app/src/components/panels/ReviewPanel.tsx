@@ -132,7 +132,9 @@ function buildSinglePromptForChat(c: ReviewComment, headSHA?: string, prNumber?:
 // chat agent can derive from its own channel. The paths resolve as-is inside
 // the agent container, which runs with HOME set to the host home and ~/.claude
 // bind-mounted at its host path.
-export function buildDiscussDraft(c: ReviewComment, session?: ReviewSession | null): string {
+export const WHY_QUESTION = "Please explain why we need this.";
+
+export function buildDiscussDraft(c: ReviewComment, session?: ReviewSession | null, question?: string): string {
   const lines = [`> ${c.path}:${c.line}`];
   for (const ln of c.body.split("\n")) lines.push(ln ? `> ${ln}` : ">");
   const dir = session?.transcript_dir;
@@ -144,7 +146,12 @@ export function buildDiscussDraft(c: ReviewComment, session?: ReviewSession | nu
   }
   // Trailing blank line: markdown needs one to close the blockquote, and it
   // puts the caret on an empty line instead of at the end of the quote.
-  return `${lines.join("\n")}\n\n`;
+  const draft = `${lines.join("\n")}\n\n`;
+  // "Why?" is the same draft with the question already typed. It still stops
+  // at the composer: the canned wording saves keystrokes, it does not take the
+  // decision to send away from the user, and it stays editable for the times
+  // the stock question is not quite the one being asked.
+  return question ? `${draft}${question}` : draft;
 }
 
 function buildBatchPromptForChat(cs: ReviewComment[], headSHA?: string, prNumber?: number): string {
@@ -814,20 +821,24 @@ export function ReviewPanel({ channelId, subscribeChatEvents, registerReviewView
     [channelId, ensureChatOpen, session?.head_sha, session?.pr?.number],
   );
 
-  // Discuss doesn't send anything: it opens the chat beside the diff and
-  // drops a quoted copy of the finding into the composer, leaving the
-  // question — and the decision to send — to the user.
-  const onDiscussOne = useCallback(
-    (c: ReviewComment) => {
+  // Neither Discuss nor Why? sends anything: they open the chat beside the
+  // diff and drop a quoted copy of the finding into the composer. Discuss
+  // leaves the question to the user; Why? fills in the one that gets asked
+  // most. The decision to send stays with the user either way.
+  const composeAboutComment = useCallback(
+    (c: ReviewComment, question?: string) => {
       ensureChatOpen();
       window.dispatchEvent(
         new CustomEvent("loop:chat-compose", {
-          detail: { channelId, text: buildDiscussDraft(c, session) },
+          detail: { channelId, text: buildDiscussDraft(c, session, question) },
         }),
       );
     },
     [channelId, ensureChatOpen, session],
   );
+
+  const onDiscussOne = useCallback((c: ReviewComment) => composeAboutComment(c), [composeAboutComment]);
+  const onWhyOne = useCallback((c: ReviewComment) => composeAboutComment(c, WHY_QUESTION), [composeAboutComment]);
 
   const onPushAllToChat = useCallback(async () => {
     const pending = (session?.comments ?? []).filter((c) => !c.pushed);
@@ -1183,6 +1194,7 @@ export function ReviewPanel({ channelId, subscribeChatEvents, registerReviewView
             onPushComment={onPushOne}
             onPushCommentToChat={onPushOneToChat}
             onDiscussComment={onDiscussOne}
+            onWhyComment={onWhyOne}
             onDeleteComment={onDeleteOne}
           />
         )}
