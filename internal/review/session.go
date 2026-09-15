@@ -258,7 +258,8 @@ func (s *Store) UpdateRawDiff(channelID, rawDiff string) bool {
 }
 
 // AddComment appends a comment to the session. Returns false if no
-// session exists for channelID.
+// session exists for channelID, or if the comment duplicates one the
+// session already holds.
 func (s *Store) AddComment(channelID string, c *Comment) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -273,9 +274,34 @@ func (s *Store) AddComment(channelID string, c *Comment) bool {
 			return false
 		}
 	}
+	// Then by content, for the same finding written twice in different
+	// words — which is what a re-run produces, since each run re-derives
+	// its findings rather than copying the last run's text. Anchored to
+	// the line first: two findings that far apart in wording are only
+	// plausibly the same finding when they are about the same place.
+	for _, existing := range sess.Comments {
+		if existing != nil && sameAnchor(existing, c) && nearDuplicate(existing.Body, c.Body) {
+			return false
+		}
+	}
 	sess.Comments = append(sess.Comments, c)
 	sess.UpdatedAt = time.Now()
 	return true
+}
+
+// sameAnchor reports whether two comments hang off the same diff line.
+// Side is compared through its effective value: the parser leaves it empty
+// for the common case and the FE renders that as RIGHT, so an empty side
+// and an explicit "RIGHT" are the same line, not two.
+func sameAnchor(a, b *Comment) bool {
+	return a.Path == b.Path && a.Line == b.Line && effectiveSide(a.Side) == effectiveSide(b.Side)
+}
+
+func effectiveSide(side string) string {
+	if side == "" {
+		return "RIGHT"
+	}
+	return side
 }
 
 // MarkPushed flips Pushed=true on the comment with the matching ID and

@@ -287,8 +287,9 @@ func (s *reviewService) transcriptDir(worktreePath string) string {
 
 // ingestComment persists one agent-reported finding into the channel's
 // review session and broadcasts it to the panel. Returns false when the
-// session is gone or the finding is a duplicate (same stable id) — the
-// caller reports the added count back to the agent. worktreePath /
+// session is gone or the finding duplicates one already held — by id, or
+// by saying the same thing about the same line in different words — and
+// the caller reports the added count back to the agent. worktreePath /
 // parentDirPath feed the widened-context rediff, same as the in-run
 // callback used to.
 func (s *reviewService) ingestComment(channelID, worktreePath, parentDirPath string, c *review.Comment) bool {

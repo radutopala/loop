@@ -210,6 +210,55 @@ func (s *SessionSuite) TestAddCommentAppends() {
 	require.Equal(s.T(), "b", got.Comments[1].ID)
 }
 
+// An agent retry re-reports the identical body, which hashes to the id the
+// session already holds.
+func (s *SessionSuite) TestAddCommentDropsSameID() {
+	store := NewStore()
+	store.Put("ch1", &Session{})
+	require.True(s.T(), store.AddComment("ch1", &Comment{ID: "a", Path: "a.go", Line: 1, Body: reportedOnce}))
+	require.False(s.T(), store.AddComment("ch1", &Comment{ID: "a", Path: "a.go", Line: 1, Body: reportedOnce}))
+	require.Len(s.T(), store.Get("ch1").Comments, 1)
+}
+
+// A re-run re-derives its findings instead of copying the previous run's
+// text, so the id hash never matches and only the content check catches it.
+func (s *SessionSuite) TestAddCommentDropsRewordedFindingOnSameLine() {
+	store := NewStore()
+	store.Put("ch1", &Session{})
+	first := &Comment{ID: "a", Path: "internal/telemetry/bidcache.go", Line: 174, Body: reportedOnce}
+	again := &Comment{ID: "b", Path: "internal/telemetry/bidcache.go", Line: 174, Side: "RIGHT", Body: reportedAgain}
+	require.True(s.T(), store.AddComment("ch1", first))
+	require.False(s.T(), store.AddComment("ch1", again))
+	require.Len(s.T(), store.Get("ch1").Comments, 1)
+}
+
+func (s *SessionSuite) TestAddCommentKeepsDistinctFindingOnSameLine() {
+	store := NewStore()
+	store.Put("ch1", &Session{})
+	require.True(s.T(), store.AddComment("ch1", &Comment{ID: "a", Path: "a.go", Line: 174, Body: reportedOnce}))
+	require.True(s.T(), store.AddComment("ch1", &Comment{ID: "b", Path: "a.go", Line: 174, Body: differentFinding}))
+	require.Len(s.T(), store.Get("ch1").Comments, 2)
+}
+
+// The same wording about a different line is a different finding: the gate
+// is anchored so that a fix applied in two places still gets flagged twice.
+func (s *SessionSuite) TestAddCommentKeepsSameWordingOnAnotherLine() {
+	store := NewStore()
+	store.Put("ch1", &Session{})
+	require.True(s.T(), store.AddComment("ch1", &Comment{ID: "a", Path: "a.go", Line: 174, Body: reportedOnce}))
+	require.True(s.T(), store.AddComment("ch1", &Comment{ID: "b", Path: "a.go", Line: 900, Body: reportedOnce}))
+	require.True(s.T(), store.AddComment("ch1", &Comment{ID: "c", Path: "b.go", Line: 174, Body: reportedOnce}))
+	require.Len(s.T(), store.Get("ch1").Comments, 3)
+}
+
+// Nil entries are skipped by both passes, not just the id one.
+func (s *SessionSuite) TestAddCommentToleratesNilComments() {
+	store := NewStore()
+	store.Put("ch1", &Session{Comments: []*Comment{nil}})
+	require.True(s.T(), store.AddComment("ch1", &Comment{ID: "a", Path: "a.go", Line: 1, Body: reportedOnce}))
+	require.Len(s.T(), store.Get("ch1").Comments, 2)
+}
+
 func (s *SessionSuite) TestMarkPushedMissingSession() {
 	store := NewStore()
 	require.False(s.T(), store.MarkPushed("nope", "x", 0))
