@@ -56,9 +56,9 @@ describe("buildDiscussDraft", () => {
     expect(buildDiscussDraft(comment("x", { path: "a.go", line: 1 }))).toMatch(/\n\n$/);
   });
 
-  // "Why?" is the same draft with the question typed into the space Discuss
-  // leaves empty, so the caret still lands after it and the wording stays
-  // editable.
+  // "Why?" sends this text as-is, so the question has to read as a question to
+  // the agent on its own: it lands in the blank line Discuss leaves for the
+  // user, below the quote rather than inside it.
   it("types the question into the blank line when one is given", () => {
     expect(buildDiscussDraft(comment("leaks the lock"), null, WHY_QUESTION)).toBe(`> internal/api/x.go:12\n> leaks the lock\n\n${WHY_QUESTION}`);
   });
