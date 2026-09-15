@@ -17,7 +17,6 @@ interface ReviewDiffViewProps {
   comments: ReviewComment[];
   worktreePath?: string;
   onPushComment: (c: ReviewComment) => void | Promise<void>;
-  onPushCommentToChat: (c: ReviewComment) => void | Promise<void>;
   onDiscussComment: (c: ReviewComment) => void;
   onWhyComment: (c: ReviewComment) => void | Promise<void>;
   onAddressComment: (c: ReviewComment) => void | Promise<void>;
@@ -128,18 +127,7 @@ function summarize(parsed: ParsedFile, fileComments: ReviewComment[]): FileSumma
   return { path: parsed.path, additions, deletions, parsed, agentCount, ghCount };
 }
 
-export function ReviewDiffView({
-  channelId,
-  rawDiff,
-  comments,
-  worktreePath,
-  onPushComment,
-  onPushCommentToChat,
-  onDiscussComment,
-  onWhyComment,
-  onAddressComment,
-  onDeleteComment,
-}: ReviewDiffViewProps) {
+export function ReviewDiffView({ channelId, rawDiff, comments, worktreePath, onPushComment, onDiscussComment, onWhyComment, onAddressComment, onDeleteComment }: ReviewDiffViewProps) {
   const { colors } = useTheme();
   const [fileContextMenu, setFileContextMenu] = useState<{ x: number; y: number; path: string } | null>(null);
 
@@ -547,7 +535,6 @@ export function ReviewDiffView({
               }}
               onContextMenu={handleFileContextMenu}
               onPushComment={onPushComment}
-              onPushCommentToChat={onPushCommentToChat}
               onDiscussComment={onDiscussComment}
               onWhyComment={onWhyComment}
               onAddressComment={onAddressComment}
@@ -562,7 +549,6 @@ export function ReviewDiffView({
             colors={colors}
             onContextMenu={handleFileContextMenu}
             onPushComment={onPushComment}
-            onPushCommentToChat={onPushCommentToChat}
             onDiscussComment={onDiscussComment}
             onWhyComment={onWhyComment}
             onAddressComment={onAddressComment}
@@ -935,7 +921,6 @@ function FileSection({
   onToggle,
   onContextMenu,
   onPushComment,
-  onPushCommentToChat,
   onDiscussComment,
   onWhyComment,
   onAddressComment,
@@ -952,7 +937,6 @@ function FileSection({
   onToggle: () => void;
   onContextMenu: (e: React.MouseEvent, path: string) => void;
   onPushComment: (c: ReviewComment) => void | Promise<void>;
-  onPushCommentToChat: (c: ReviewComment) => void | Promise<void>;
   onDiscussComment: (c: ReviewComment) => void;
   onWhyComment: (c: ReviewComment) => void | Promise<void>;
   onAddressComment: (c: ReviewComment) => void | Promise<void>;
@@ -1079,7 +1063,6 @@ function FileSection({
                             comment={c}
                             colors={colors}
                             onPush={onPushComment}
-                            onPushToChat={onPushCommentToChat}
                             onDiscuss={onDiscussComment}
                             onWhy={onWhyComment}
                             onAddress={onAddressComment}
@@ -1170,7 +1153,6 @@ function InlineComment({
   comment,
   colors,
   onPush,
-  onPushToChat,
   onDiscuss,
   onWhy,
   onAddress,
@@ -1180,7 +1162,6 @@ function InlineComment({
   comment: ReviewComment;
   colors: ColorPalette;
   onPush: (c: ReviewComment) => void | Promise<void>;
-  onPushToChat: (c: ReviewComment) => void | Promise<void>;
   onDiscuss: (c: ReviewComment) => void;
   onWhy: (c: ReviewComment) => void | Promise<void>;
   onAddress: (c: ReviewComment) => void | Promise<void>;
@@ -1188,18 +1169,17 @@ function InlineComment({
   /** Hands the card's node to the floating navigator so it can scroll to it. */
   registerRef: (id: string, el: HTMLDivElement | null) => void;
 }) {
-  // Local in-flight flag for the "Push to chat" button. Push-to-chat
-  // doesn't flip the comment to `pushed`, so without this guard rapid
-  // double-clicks during the sendMessage round-trip would queue
-  // duplicate prompts to the agent.
-  const [sendingChat, setSendingChat] = useState(false);
-  const handlePushToChat = async () => {
-    if (sendingChat) return;
-    setSendingChat(true);
+  // Local in-flight flag for the "Address" button. Sending doesn't flip the
+  // comment to `pushed`, so without this guard rapid double-clicks during the
+  // sendMessage round-trip would queue duplicate prompts to the agent.
+  const [sending, setSending] = useState(false);
+  const handleAddress = async () => {
+    if (sending) return;
+    setSending(true);
     try {
-      await onPushToChat(comment);
+      await onAddress(comment);
     } finally {
-      setSendingChat(false);
+      setSending(false);
     }
   };
   const isGitHub = comment.source === "github";
@@ -1306,7 +1286,8 @@ function InlineComment({
         </button>
         <button
           data-testid={`review-comment-address-${comment.id}`}
-          onClick={() => void onAddress(comment)}
+          onClick={() => void handleAddress()}
+          disabled={sending}
           style={{
             background: "transparent",
             color: colors.text,
@@ -1315,53 +1296,33 @@ function InlineComment({
             padding: "1px 6px",
             fontSize: 10,
             fontFamily: fonts.sans,
-            cursor: "pointer",
+            cursor: sending ? "not-allowed" : "pointer",
+            opacity: sending ? 0.5 : 1,
           }}
-          title="Ask the chat agent to fix this (sends straight away)"
+          title="Send this comment to the chat as a fix request (sends straight away)"
         >
-          Address
+          {sending ? "Sending..." : "Address"}
         </button>
         {comment.pushed ? (
           <span style={{ fontSize: 10, color: colors.textDim }}>{isGitHub ? "on github" : "pushed"}</span>
         ) : (
-          <>
-            <button
-              data-testid={`review-comment-push-chat-${comment.id}`}
-              onClick={() => void handlePushToChat()}
-              disabled={sendingChat}
-              style={{
-                background: "transparent",
-                color: colors.text,
-                border: `1px solid ${colors.border}`,
-                borderRadius: 3,
-                padding: "1px 6px",
-                fontSize: 10,
-                fontFamily: fonts.sans,
-                cursor: sendingChat ? "not-allowed" : "pointer",
-                opacity: sendingChat ? 0.5 : 1,
-              }}
-              title="Send this comment to the chat as a prompt for the agent"
-            >
-              {sendingChat ? "Sending..." : "Push to chat"}
-            </button>
-            <button
-              data-testid={`review-comment-push-${comment.id}`}
-              onClick={() => void onPush(comment)}
-              style={{
-                background: "transparent",
-                color: colors.text,
-                border: `1px solid ${colors.border}`,
-                borderRadius: 3,
-                padding: "1px 6px",
-                fontSize: 10,
-                fontFamily: fonts.sans,
-                cursor: "pointer",
-              }}
-              title="Push this comment to GitHub"
-            >
-              Push to GitHub
-            </button>
-          </>
+          <button
+            data-testid={`review-comment-push-${comment.id}`}
+            onClick={() => void onPush(comment)}
+            style={{
+              background: "transparent",
+              color: colors.text,
+              border: `1px solid ${colors.border}`,
+              borderRadius: 3,
+              padding: "1px 6px",
+              fontSize: 10,
+              fontFamily: fonts.sans,
+              cursor: "pointer",
+            }}
+            title="Push this comment to GitHub"
+          >
+            Push to GitHub
+          </button>
         )}
         <button
           data-testid={`review-comment-delete-${comment.id}`}
@@ -1405,7 +1366,6 @@ function OrphanCommentsSection({
   colors,
   onContextMenu,
   onPushComment,
-  onPushCommentToChat,
   onDiscussComment,
   onWhyComment,
   onAddressComment,
@@ -1416,7 +1376,6 @@ function OrphanCommentsSection({
   colors: ColorPalette;
   onContextMenu: (e: React.MouseEvent, path: string) => void;
   onPushComment: (c: ReviewComment) => void | Promise<void>;
-  onPushCommentToChat: (c: ReviewComment) => void | Promise<void>;
   onDiscussComment: (c: ReviewComment) => void;
   onWhyComment: (c: ReviewComment) => void | Promise<void>;
   onAddressComment: (c: ReviewComment) => void | Promise<void>;
@@ -1454,7 +1413,6 @@ function OrphanCommentsSection({
             comment={c}
             colors={colors}
             onPush={onPushComment}
-            onPushToChat={onPushCommentToChat}
             onDiscuss={onDiscussComment}
             onWhy={onWhyComment}
             onAddress={onAddressComment}

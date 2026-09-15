@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { ReviewComment, ReviewSession } from "../../api/review";
-import { ADDRESS_REQUEST, buildDiscussDraft, WHY_QUESTION } from "./ReviewPanel";
+import { buildAddressAllPrompt, buildAddressPrompt, buildDiscussDraft, WHY_QUESTION } from "./ReviewPanel";
 
 function comment(body: string, extra: Partial<ReviewComment> = {}): ReviewComment {
   return { id: "c1", path: "internal/api/x.go", line: 12, side: "RIGHT", body, pushed: false, ...extra };
@@ -76,21 +76,123 @@ describe("buildDiscussDraft", () => {
     expect(buildDiscussDraft(comment("leaks the lock"), null, "")).toBe("> internal/api/x.go:12\n> leaks the lock\n\n");
   });
 
-  // Address and Why? differ by their ask and nothing else, which is the point:
-  // one builder means the quote, the transcripts and the spacing can't drift
-  // apart between the two buttons.
-  it("builds the same draft for either canned ask", () => {
-    const sess = session({ transcript_dir: "/home/u/.claude/projects/-repo--worktrees-pr-7", run_session_ids: ["sess-1"] });
-    const why = buildDiscussDraft(comment("leaks the lock"), sess, WHY_QUESTION);
-    const address = buildDiscussDraft(comment("leaks the lock"), sess, ADDRESS_REQUEST);
-    expect(address).toBe(why.replace(WHY_QUESTION, ADDRESS_REQUEST));
-    expect(address.endsWith(`\n\n${ADDRESS_REQUEST}`)).toBe(true);
+  // The question is sent verbatim, so its wording is part of the contract.
+  it("sends a question that reads as an instruction on its own", () => {
+    expect(WHY_QUESTION).toBe("Please explain why we need this.");
+  });
+});
+
+describe("buildAddressPrompt", () => {
+  const dir = "/home/u/.claude/projects/-repo--worktrees-pr-7";
+
+  it("leads with the instruction, then the metadata, then the finding", () => {
+    expect(buildAddressPrompt(comment("leaks the lock"))).toBe(
+      "Please address this review comment from the PR:\n\n" + "- File: `internal/api/x.go`\n" + "- Line: 12 (RIGHT \u2014 added/new)\n\n" + "Comment:\n\n" + "> leaks the lock",
+    );
   });
 
-  // The asks are sent verbatim, so their wording is part of the contract: one
-  // asks for an explanation, the other for a change.
-  it("sends asks that read as instructions on their own", () => {
-    expect(WHY_QUESTION).toBe("Please explain why we need this.");
-    expect(ADDRESS_REQUEST).toBe("Please address this with a fix.");
+  it("adds the PR, commit and author when the session knows them", () => {
+    const sess = session({ head_sha: "abc1234", pr: { number: 7, title: "t", url: "u", head_ref: "h", base_ref: "b", state: "open" } });
+    expect(buildAddressPrompt(comment("leaks the lock", { author: "octocat" }), sess)).toBe(
+      "Please address this review comment from the PR:\n\n" +
+        "- File: `internal/api/x.go`\n" +
+        "- Line: 12 (RIGHT \u2014 added/new)\n" +
+        "- PR: #7\n" +
+        "- Commit: abc1234\n" +
+        "- Author: @octocat\n\n" +
+        "Comment:\n\n" +
+        "> leaks the lock",
+    );
+  });
+
+  it("labels a comment on the old side of the diff", () => {
+    expect(buildAddressPrompt(comment("was load-bearing", { side: "LEFT" }))).toContain("- Line: 12 (LEFT \u2014 deleted/old)");
+  });
+
+  // Address replaced "Push to chat", which sent this metadata without the
+  // transcripts. Carrying both is the whole reason the two buttons collapsed
+  // into one: the agent gets the location and the reasoning behind the finding.
+  it("appends one transcript path per run, oldest first", () => {
+    const sess = session({ transcript_dir: dir, run_session_ids: ["sess-1", "sess-2"] });
+    expect(buildAddressPrompt(comment("leaks the lock"), sess)).toBe(
+      "Please address this review comment from the PR:\n\n" +
+        "- File: `internal/api/x.go`\n" +
+        "- Line: 12 (RIGHT \u2014 added/new)\n\n" +
+        "Comment:\n\n" +
+        "> leaks the lock\n\n" +
+        "Transcripts of the review runs that produced this, oldest first:\n" +
+        `- ${dir}/sess-1.jsonl\n` +
+        `- ${dir}/sess-2.jsonl`,
+    );
+  });
+
+  // Same rule as the Discuss draft: half an address is worse than none.
+  it("omits the transcript block unless both a dir and an id are known", () => {
+    const tail = "> leaks the lock";
+    expect(buildAddressPrompt(comment("leaks the lock")).endsWith(tail)).toBe(true);
+    expect(buildAddressPrompt(comment("leaks the lock"), session()).endsWith(tail)).toBe(true);
+    expect(buildAddressPrompt(comment("leaks the lock"), session({ run_session_ids: ["sess-1"] })).endsWith(tail)).toBe(true);
+    expect(buildAddressPrompt(comment("leaks the lock"), session({ transcript_dir: dir })).endsWith(tail)).toBe(true);
+    expect(buildAddressPrompt(comment("leaks the lock"), session({ transcript_dir: dir, run_session_ids: [""] })).endsWith(tail)).toBe(true);
+  });
+
+  it("quotes every line of a multi-paragraph finding", () => {
+    expect(buildAddressPrompt(comment("leaks the lock\n\nWhen Foo returns err the mutex stays held."))).toContain("> leaks the lock\n> \n> When Foo returns err the mutex stays held.");
+  });
+});
+
+describe("buildAddressAllPrompt", () => {
+  const dir = "/home/u/.claude/projects/-repo--worktrees-pr-7";
+
+  // "Address all" is Address over every pending finding, so the two have
+  // to agree on what the agent is told: same instruction, same metadata, same
+  // transcripts. The only difference is that findings become numbered blocks.
+  it("states the count, then the metadata, then one block per finding", () => {
+    const sess = session({ head_sha: "abc1234", pr: { number: 7, url: "u", base_ref: "b", head_ref: "h", state: "open" } });
+    expect(buildAddressAllPrompt([comment("leaks the lock"), comment("drops the error", { id: "c2", path: "b.go", line: 3 })], sess)).toBe(
+      "Please address the following 2 review comments from the PR:\n\n" +
+        "- PR: #7\n" +
+        "- Commit: abc1234\n\n" +
+        "---\n" +
+        "### 1. `internal/api/x.go`:12 (RIGHT — added/new)\n\n" +
+        "> leaks the lock\n\n" +
+        "---\n" +
+        "### 2. `b.go`:3 (RIGHT — added/new)\n\n" +
+        "> drops the error",
+    );
+  });
+
+  it("says comment, singular, for one finding", () => {
+    expect(buildAddressAllPrompt([comment("leaks the lock")])).toContain("the following 1 review comment from the PR:");
+  });
+
+  // Session-level, not finding-level: the runs produced the whole batch, so
+  // the paths are listed once at the end rather than repeated under each block.
+  it("lists the run transcripts once, after the last finding", () => {
+    const sess = session({ transcript_dir: dir, run_session_ids: ["sess-1", "sess-2"] });
+    expect(buildAddressAllPrompt([comment("leaks the lock"), comment("drops the error", { id: "c2" })], sess)).toBe(
+      "Please address the following 2 review comments from the PR:\n\n" +
+        "---\n" +
+        "### 1. `internal/api/x.go`:12 (RIGHT — added/new)\n\n" +
+        "> leaks the lock\n\n" +
+        "---\n" +
+        "### 2. `internal/api/x.go`:12 (RIGHT — added/new)\n\n" +
+        "> drops the error\n\n" +
+        "---\n\n" +
+        "Transcripts of the review runs that produced these, oldest first:\n" +
+        `- ${dir}/sess-1.jsonl\n` +
+        `- ${dir}/sess-2.jsonl`,
+    );
+  });
+
+  it("omits the transcript block unless both a dir and an id are known", () => {
+    const tail = "> leaks the lock";
+    expect(buildAddressAllPrompt([comment("leaks the lock")]).endsWith(tail)).toBe(true);
+    expect(buildAddressAllPrompt([comment("leaks the lock")], session({ transcript_dir: dir })).endsWith(tail)).toBe(true);
+    expect(buildAddressAllPrompt([comment("leaks the lock")], session({ run_session_ids: ["sess-1"] })).endsWith(tail)).toBe(true);
+  });
+
+  it("carries the author when the finding has one", () => {
+    expect(buildAddressAllPrompt([comment("leaks the lock", { author: "octocat" })])).toContain("### 1. `internal/api/x.go`:12 (RIGHT — added/new) — @octocat");
   });
 });

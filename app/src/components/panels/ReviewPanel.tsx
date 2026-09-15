@@ -99,64 +99,85 @@ function sideLabel(side?: string): string {
   return side === "LEFT" ? "deleted/old" : "added/new";
 }
 
-function buildSinglePromptForChat(c: ReviewComment, headSHA?: string, prNumber?: number): string {
+// buildAddressPrompt is what "Address" sends: the metadata the agent needs to
+// locate the line, the finding verbatim, and the transcripts of the runs that
+// produced it. It was two buttons until it wasn't — "Push to chat" sent the
+// metadata and "Address" sent the transcripts, which left the user choosing
+// between two phrasings of the same request. One button now carries both.
+export function buildAddressPrompt(c: ReviewComment, session?: ReviewSession | null): string {
   const lines: string[] = [];
   lines.push(`Please address this review comment from the PR:`);
   lines.push("");
   lines.push(`- File: \`${c.path}\``);
   lines.push(`- Line: ${c.line} (${c.side || "RIGHT"} — ${sideLabel(c.side)})`);
-  if (prNumber) lines.push(`- PR: #${prNumber}`);
-  if (headSHA) lines.push(`- Commit: ${headSHA}`);
+  if (session?.pr?.number) lines.push(`- PR: #${session.pr.number}`);
+  if (session?.head_sha) lines.push(`- Commit: ${session.head_sha}`);
   if (c.author) lines.push(`- Author: @${c.author}`);
   lines.push("");
   lines.push(`Comment:`);
   lines.push("");
   for (const ln of c.body.split("\n")) lines.push(`> ${ln}`);
+  const refs = transcriptRefs(session);
+  if (refs.length > 0) {
+    lines.push("");
+    lines.push(`Transcripts of the review runs that produced this, oldest first:`);
+    for (const ref of refs) lines.push(`- ${ref}`);
+  }
   return lines.join("\n");
+}
+
+// transcriptRefs turns a session's run ids into transcript paths, oldest
+// first. The reasoning behind a finding lives in those files and nowhere else
+// — the panel only keeps the verdict. Full paths, not bare session ids: Claude
+// keys transcripts by the agent's CWD, which for a review run is the PR
+// worktree, so the directory is not one the chat agent can derive from its own
+// channel. The paths resolve as-is inside the agent container, which runs with
+// HOME set to the host home and ~/.claude bind-mounted at its host path.
+function transcriptRefs(session?: ReviewSession | null): string[] {
+  const dir = session?.transcript_dir;
+  if (!dir) return [];
+  return (session?.run_session_ids ?? []).filter((id) => id).map((id) => `${dir}/${id}.jsonl`);
 }
 
 // buildDiscussDraft renders a finding as a quoted block to drop into the
 // chat composer, so the user can type their question under it and send it
-// themselves. Unlike buildSinglePromptForChat this is deliberately not an
+// themselves. Unlike buildAddressPrompt this is deliberately not an
 // instruction to the agent: "Discuss" is for asking why a finding was made,
 // which is a different intent from "go fix this".
 //
 // The path:line header rides inside the quote because the body alone rarely
 // says where it applies, and the agent can't act on "explain this" without
 // somewhere to look.
-//
-// The transcripts of the review runs ride along because the reasoning behind
-// a finding lives in them and nowhere else — the panel only keeps the verdict.
-// Full paths, not bare session ids: Claude keys transcripts by the agent's CWD,
-// which for a review run is the PR worktree, so the directory is not one the
-// chat agent can derive from its own channel. The paths resolve as-is inside
-// the agent container, which runs with HOME set to the host home and ~/.claude
-// bind-mounted at its host path.
-// The two canned asks. They sit next to the builder rather than inside it so
-// a test can assert the exact wording that goes out, and so the difference
-// between the buttons stays one string rather than one code path each.
+
+// The canned ask. It sits next to the builder rather than inside it so a test
+// can assert the exact wording that goes out, and so the difference between
+// Discuss and Why? stays one string rather than one code path each.
 export const WHY_QUESTION = "Please explain why we need this.";
-export const ADDRESS_REQUEST = "Please address this with a fix.";
 
 export function buildDiscussDraft(c: ReviewComment, session?: ReviewSession | null, ask?: string): string {
   const lines = [`> ${c.path}:${c.line}`];
   for (const ln of c.body.split("\n")) lines.push(ln ? `> ${ln}` : ">");
-  const dir = session?.transcript_dir;
-  const ids = (session?.run_session_ids ?? []).filter((id) => id);
-  if (dir && ids.length > 0) {
+  const refs = transcriptRefs(session);
+  if (refs.length > 0) {
     lines.push(">");
     lines.push("> transcripts of the review runs that produced this, oldest first:");
-    for (const id of ids) lines.push(`> ${dir}/${id}.jsonl`);
+    for (const ref of refs) lines.push(`> ${ref}`);
   }
   // Trailing blank line: markdown needs one to close the blockquote, and it
   // puts the caret on an empty line instead of at the end of the quote.
   const draft = `${lines.join("\n")}\n\n`;
-  // Why? and Address are this same draft with their ask filled into the blank
-  // line the quote ends on, which is where the user would have typed it.
+  // Why? is this same draft with its question filled into the blank line the
+  // quote ends on, which is where the user would have typed it.
   return ask ? `${draft}${ask}` : draft;
 }
 
-function buildBatchPromptForChat(cs: ReviewComment[], headSHA?: string, prNumber?: number): string {
+// The batch form of buildAddressPrompt: same request, same metadata, same
+// trailing transcripts — the findings are numbered blocks instead of one quote.
+// The transcripts belong to the session rather than to any one finding, so they
+// are listed once at the end rather than repeated under every block.
+export function buildAddressAllPrompt(cs: ReviewComment[], session?: ReviewSession | null): string {
+  const prNumber = session?.pr?.number;
+  const headSHA = session?.head_sha;
   const header: string[] = [];
   header.push(`Please address the following ${cs.length} review comment${cs.length === 1 ? "" : "s"} from the PR:`);
   if (prNumber || headSHA) header.push("");
@@ -171,7 +192,16 @@ function buildBatchPromptForChat(cs: ReviewComment[], headSHA?: string, prNumber
     for (const ln of c.body.split("\n")) b.push(`> ${ln}`);
     return b.join("\n");
   });
-  return [...header, ...blocks].join("\n");
+  const refs = transcriptRefs(session);
+  const tail: string[] = [];
+  if (refs.length > 0) {
+    tail.push("");
+    tail.push(`---`);
+    tail.push("");
+    tail.push(`Transcripts of the review runs that produced these, oldest first:`);
+    for (const ref of refs) tail.push(`- ${ref}`);
+  }
+  return [...header, ...blocks, ...tail].join("\n");
 }
 
 interface ReviewPanelProps {
@@ -809,20 +839,6 @@ export function ReviewPanel({ channelId, subscribeChatEvents, registerReviewView
     );
   }, [channelId]);
 
-  const onPushOneToChat = useCallback(
-    async (c: ReviewComment) => {
-      setError(null);
-      try {
-        ensureChatOpen();
-        const prompt = buildSinglePromptForChat(c, session?.head_sha, session?.pr?.number);
-        await sendMessage(channelId, prompt);
-      } catch (e) {
-        setError(e instanceof Error ? e.message : String(e));
-      }
-    },
-    [channelId, ensureChatOpen, session?.head_sha, session?.pr?.number],
-  );
-
   // Discuss stops at the composer: it opens the chat beside the diff, drops a
   // quoted copy of the finding in, and leaves both the question and the
   // decision to send to the user.
@@ -838,46 +854,44 @@ export function ReviewPanel({ channelId, subscribeChatEvents, registerReviewView
     [channelId, ensureChatOpen, session],
   );
 
-  // Why? and Address send. Each is the same draft with a canned ask already in
-  // it, so there is nothing left to type and stopping at the composer would
-  // only cost a click — Discuss is still there for the times the wording needs
-  // work. Both go out through sendMessage, like pushing a single comment to
-  // chat does.
+  // Why? and Address both send. There is nothing left to type in either, so
+  // stopping at the composer would only cost a click — Discuss is still there
+  // for the times the wording needs work.
   const sendAboutComment = useCallback(
-    async (c: ReviewComment, ask: string) => {
+    async (prompt: string) => {
       setError(null);
       try {
         ensureChatOpen();
-        await sendMessage(channelId, buildDiscussDraft(c, session, ask));
+        await sendMessage(channelId, prompt);
       } catch (e) {
         setError(e instanceof Error ? e.message : String(e));
       }
     },
-    [channelId, ensureChatOpen, session],
+    [channelId, ensureChatOpen],
   );
 
-  const onWhyOne = useCallback((c: ReviewComment) => sendAboutComment(c, WHY_QUESTION), [sendAboutComment]);
-  const onAddressOne = useCallback((c: ReviewComment) => sendAboutComment(c, ADDRESS_REQUEST), [sendAboutComment]);
+  const onWhyOne = useCallback((c: ReviewComment) => sendAboutComment(buildDiscussDraft(c, session, WHY_QUESTION)), [sendAboutComment, session]);
+  const onAddressOne = useCallback((c: ReviewComment) => sendAboutComment(buildAddressPrompt(c, session)), [sendAboutComment, session]);
 
-  const onPushAllToChat = useCallback(async () => {
+  const onAddressAll = useCallback(async () => {
     const pending = (session?.comments ?? []).filter((c) => !c.pushed);
     if (pending.length === 0) return;
     // Toggle `busy` for the duration of the sendMessage round-trip so the
     // header buttons (which all gate on `busy`) actually disable. Without
-    // this the disabled={busy} on "Push all to chat" was a no-op and
+    // this the disabled={busy} on "Address all" was a no-op and
     // double-clicks queued duplicate prompts to the agent.
     setBusy(true);
     setError(null);
     try {
       ensureChatOpen();
-      const prompt = buildBatchPromptForChat(pending, session?.head_sha, session?.pr?.number);
+      const prompt = buildAddressAllPrompt(pending, session);
       await sendMessage(channelId, prompt);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
       setBusy(false);
     }
-  }, [channelId, ensureChatOpen, session?.comments, session?.head_sha, session?.pr?.number]);
+  }, [channelId, ensureChatOpen, session]);
 
   const onPushAll = useCallback(async () => {
     setBusy(true);
@@ -1139,13 +1153,13 @@ export function ReviewPanel({ channelId, subscribeChatEvents, registerReviewView
             {pendingCount > 0 && (
               <>
                 <button
-                  data-testid="review-push-all-chat-btn"
-                  onClick={() => void onPushAllToChat()}
+                  data-testid="review-address-all-btn"
+                  onClick={() => void onAddressAll()}
                   disabled={busy}
                   style={busy ? { ...btnStyle, ...disabledStyle } : btnStyle}
-                  title="Send all unpushed comments to the chat as a single agent prompt"
+                  title="Send every unpushed finding to the chat as one fix request"
                 >
-                  Push all to chat ({pendingCount})
+                  Address all ({pendingCount})
                 </button>
                 <button
                   data-testid="review-push-all-btn"
@@ -1211,7 +1225,6 @@ export function ReviewPanel({ channelId, subscribeChatEvents, registerReviewView
             comments={session.comments}
             worktreePath={session.worktree_path}
             onPushComment={onPushOne}
-            onPushCommentToChat={onPushOneToChat}
             onDiscussComment={onDiscussOne}
             onWhyComment={onWhyOne}
             onAddressComment={onAddressOne}
