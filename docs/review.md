@@ -109,40 +109,43 @@ per-run options. See [`PUT /review/fork`](api.md).
 ## Handing a finding to the agent
 
 A finding can also go to the channel's chat instead of (or before) GitHub.
-Five affordances do that, and they differ in **who writes the message** and
+Four affordances do that, and they differ in **who writes the message** and
 **whether it is sent**:
 
 | Button | Message | Sent? |
 |--------|---------|-------|
 | **Discuss** | The finding quoted under its `path:line`, with a blank line below it | No — it lands in the composer for you to finish |
 | **Why?** | The same quote, with `Please explain why we need this.` filled into that blank line | Yes, straight away |
-| **Address** | The same quote, with `Please address this with a fix.` in that line instead | Yes, straight away |
-| **Push to chat** | `Please address this review comment from the PR:` plus file, line, side, PR number, head SHA and author, then the quoted body | Yes, straight away |
-| **Push all to chat (N)** | The same, batched over every unpushed comment | Yes, straight away |
+| **Address** | `Please address this review comment from the PR:` plus file, line, side, PR number, head SHA and author, then the quoted body and the run transcripts | Yes, straight away |
+| **Address all (N)** | The same request over every unpushed finding: the metadata header once, then a numbered block per finding, then the run transcripts | Yes, straight away |
 
-Discuss, Why? and Address are one builder and one send path differing by a
-single string, so the quote, the transcripts and the spacing cannot drift
-apart between them. Discuss exists for the ask you have to phrase yourself;
-the other two are the asks common enough to be worth a button, and since they
-leave nothing to type they send rather than parking a finished message in the
-composer.
+Discuss and Why? are one builder and one send path differing by a single
+string, so the quote, the transcripts and the spacing cannot drift apart
+between them. Discuss exists for the ask you have to phrase yourself; Why? is
+the ask common enough to be worth a button, and since it leaves nothing to
+type it sends rather than parking a finished message in the composer.
 
-**Address overlaps with Push to chat**, deliberately. They differ in what the
-agent is given and when they are available: Push to chat sends a metadata
-block (side, head SHA, author) and no transcripts, and it disappears once the
-comment is pushed to GitHub — both push buttons collapse into an `on github`
-marker. Discuss, Why? and Address stay on a comment for its whole life, so
-they are what remains for a finding already filed.
+**Address** is the one that asks for a change, so it carries the most: the
+metadata the agent needs to find the line *and* the transcripts that explain
+the finding. It used to be two buttons — a "Push to chat" that sent the
+metadata and an Address that sent the transcripts — which asked the user to
+choose between two phrasings of the same request. They are one button now.
+Unlike the old Push to chat it stays on a comment for its whole life, so it is
+still there for a finding already filed to GitHub; only **Push to GitHub**
+collapses into the `on github` marker once pushed.
 
-All five first dispatch `loop:open-panel`, so a Chat panel is mounted in the
+All four first dispatch `loop:open-panel`, so a Chat panel is mounted in the
 current layout — anchored to the right of the Review panel when one has to be
 created, so the answer arrives beside the diff it is about.
 
-### The quoted forms carry the run transcripts
+### Every form carries the run transcripts
 
 The panel keeps a finding's verdict; the reasoning behind it lives only in the
-transcript of the run that produced it. So all three quoted forms append every
-run transcript the session knows, oldest first:
+transcript of the run that produced it. So all four forms append every run
+transcript the session knows, oldest first — inside the quote for Discuss and
+Why?, as a trailing list for Address and Address all. The transcripts
+belong to the session rather than to any one finding, which is why the batch
+lists them once at the end rather than under every block:
 
 ```
 > internal/api/x.go:12
