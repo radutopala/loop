@@ -16,6 +16,7 @@ import (
 	"sync"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
@@ -2376,6 +2377,50 @@ func (s *ReviewHandlerSuite) TestBuildReviewContextSkipsNilComment() {
 	ctx := buildReviewContext(sess, "alice")
 	require.Contains(s.T(), ctx, "real")
 	require.Contains(s.T(), ctx, "gh auth switch -u alice")
+}
+
+// Every agent finding is "summary\n\nfailure scenario", so the
+// "do NOT re-emit" list used to break each entry across three lines and
+// leave the scenario floating between bullets as its own paragraph. One
+// bullet per comment is the whole point of the list.
+func (s *ReviewHandlerSuite) TestBuildReviewContextDedupEntriesAreOneLine() {
+	sess := &review.Session{
+		PR: &githubapi.PRInfo{Number: 7, BaseRef: "main", HeadRef: "feat-x"},
+		Comments: []*review.Comment{
+			{ID: "c1", Path: "a.go", Line: 12, Side: "RIGHT", Body: "leaks the lock\n\nWhen Foo returns err\tthe mutex stays held."},
+			{ID: "c2", Path: "b.go", Line: 3, Source: "github", Author: "bob", Body: "nit:\nrename this"},
+		},
+	}
+	ctx := buildReviewContext(sess, "alice")
+	require.Contains(s.T(), ctx, "- [agent] a.go:L12 (RIGHT): leaks the lock When Foo returns err the mutex stays held.\n")
+	require.Contains(s.T(), ctx, "- [github @bob] b.go:L3 (RIGHT): nit: rename this\n")
+}
+
+func (s *ReviewHandlerSuite) TestDedupEntryBody() {
+	cases := []struct {
+		name string
+		body string
+		want string
+	}{
+		{name: "empty", body: "", want: ""},
+		{name: "collapses newlines and tabs", body: " a\n\nb\tc \n", want: "a b c"},
+		{name: "at the cap is kept whole", body: strings.Repeat("x", 240), want: strings.Repeat("x", 240)},
+		{name: "over the cap is truncated", body: strings.Repeat("x", 241), want: strings.Repeat("x", 240) + "..."},
+		{
+			// The cap must not land mid-rune: byte 240 here is the
+			// middle of a 3-byte character, so the cut backs up.
+			name: "backs up to a rune boundary",
+			body: strings.Repeat("x", 238) + "€€",
+			want: strings.Repeat("x", 238) + "...",
+		},
+	}
+	for _, tc := range cases {
+		s.Run(tc.name, func() {
+			got := dedupEntryBody(tc.body)
+			require.Equal(s.T(), tc.want, got)
+			require.True(s.T(), utf8.ValidString(got))
+		})
+	}
 }
 
 // GetChannel error on both lookups leaves channelDirPath as "" — the
