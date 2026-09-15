@@ -342,6 +342,37 @@ export function ChatInput({
     }
   }, [channelId]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // The Review panel's "Discuss" button quotes a finding into this composer
+  // without sending it, so the user can add their question first. It arrives
+  // as a window event rather than a prop because the two panels are siblings
+  // in the layout with no shared owner — the same reason "loop:open-panel"
+  // exists.
+  //
+  // Appends rather than replaces: the user may already be mid-sentence, and
+  // silently dropping their text would be worse than an awkward join.
+  useEffect(() => {
+    const onCompose = (e: Event) => {
+      const detail = (e as CustomEvent<{ channelId?: string; text?: string }>).detail;
+      if (!detail?.text || detail.channelId !== channelId) return;
+      setText((prev) => {
+        const next = prev.trim() ? `${prev.replace(/\n+$/, "")}\n\n${detail.text}` : detail.text;
+        draftText.set(channelId, next as string);
+        return next as string;
+      });
+      // After React has committed the new value, put the caret at the end —
+      // on the blank line the quote leaves behind — and focus the composer so
+      // the user can just start typing.
+      requestAnimationFrame(() => {
+        const el = inputRef.current;
+        if (!el) return;
+        el.focus();
+        el.setSelectionRange(el.value.length, el.value.length);
+      });
+    };
+    window.addEventListener("loop:chat-compose", onCompose);
+    return () => window.removeEventListener("loop:chat-compose", onCompose);
+  }, [channelId]);
+
   // Auto-focus textarea on mount; move cursor to end if restoring a draft.
   useEffect(() => {
     const el = inputRef.current;

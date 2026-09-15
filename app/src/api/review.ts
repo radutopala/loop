@@ -45,6 +45,11 @@ export interface ReviewSession {
   error?: string;
   fork_mode?: ReviewForkMode;
   fork_session_id?: string;
+  // Claude sessions the review runs used, oldest first — one per run, and
+  // the directory their transcripts live in (keyed by the run's CWD, i.e.
+  // the PR worktree, so it is not derivable from the channel).
+  run_session_ids?: string[];
+  transcript_dir?: string;
   updated_at: string;
 }
 

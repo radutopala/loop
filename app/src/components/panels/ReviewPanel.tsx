@@ -115,6 +115,38 @@ function buildSinglePromptForChat(c: ReviewComment, headSHA?: string, prNumber?:
   return lines.join("\n");
 }
 
+// buildDiscussDraft renders a finding as a quoted block to drop into the
+// chat composer, so the user can type their question under it and send it
+// themselves. Unlike buildSinglePromptForChat this is deliberately not an
+// instruction to the agent: "Discuss" is for asking why a finding was made,
+// which is a different intent from "go fix this".
+//
+// The path:line header rides inside the quote because the body alone rarely
+// says where it applies, and the agent can't act on "explain this" without
+// somewhere to look.
+//
+// The transcripts of the review runs ride along because the reasoning behind
+// a finding lives in them and nowhere else — the panel only keeps the verdict.
+// Full paths, not bare session ids: Claude keys transcripts by the agent's CWD,
+// which for a review run is the PR worktree, so the directory is not one the
+// chat agent can derive from its own channel. The paths resolve as-is inside
+// the agent container, which runs with HOME set to the host home and ~/.claude
+// bind-mounted at its host path.
+export function buildDiscussDraft(c: ReviewComment, session?: ReviewSession | null): string {
+  const lines = [`> ${c.path}:${c.line}`];
+  for (const ln of c.body.split("\n")) lines.push(ln ? `> ${ln}` : ">");
+  const dir = session?.transcript_dir;
+  const ids = (session?.run_session_ids ?? []).filter((id) => id);
+  if (dir && ids.length > 0) {
+    lines.push(">");
+    lines.push("> transcripts of the review runs that produced this, oldest first:");
+    for (const id of ids) lines.push(`> ${dir}/${id}.jsonl`);
+  }
+  // Trailing blank line: markdown needs one to close the blockquote, and it
+  // puts the caret on an empty line instead of at the end of the quote.
+  return `${lines.join("\n")}\n\n`;
+}
+
 function buildBatchPromptForChat(cs: ReviewComment[], headSHA?: string, prNumber?: number): string {
   const header: string[] = [];
   header.push(`Please address the following ${cs.length} review comment${cs.length === 1 ? "" : "s"} from the PR:`);
@@ -782,6 +814,21 @@ export function ReviewPanel({ channelId, subscribeChatEvents, registerReviewView
     [channelId, ensureChatOpen, session?.head_sha, session?.pr?.number],
   );
 
+  // Discuss doesn't send anything: it opens the chat beside the diff and
+  // drops a quoted copy of the finding into the composer, leaving the
+  // question — and the decision to send — to the user.
+  const onDiscussOne = useCallback(
+    (c: ReviewComment) => {
+      ensureChatOpen();
+      window.dispatchEvent(
+        new CustomEvent("loop:chat-compose", {
+          detail: { channelId, text: buildDiscussDraft(c, session) },
+        }),
+      );
+    },
+    [channelId, ensureChatOpen, session],
+  );
+
   const onPushAllToChat = useCallback(async () => {
     const pending = (session?.comments ?? []).filter((c) => !c.pushed);
     if (pending.length === 0) return;
@@ -1135,6 +1182,7 @@ export function ReviewPanel({ channelId, subscribeChatEvents, registerReviewView
             worktreePath={session.worktree_path}
             onPushComment={onPushOne}
             onPushCommentToChat={onPushOneToChat}
+            onDiscussComment={onDiscussOne}
             onDeleteComment={onDeleteOne}
           />
         )}

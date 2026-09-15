@@ -1583,6 +1583,91 @@ func (s *ReviewHandlerSuite) TestSetForkStoresChoiceAndEchoesSession() {
 	}
 }
 
+// Every run's Claude session id is recorded, oldest first, so a Discuss
+// chat turn can point the agent at the transcript that produced a finding.
+// The second run doubles as the proof that the refresh preceding each run
+// — which replaces the whole session — carries the earlier ids across.
+func (s *ReviewHandlerSuite) TestRunRecordsClaudeSessionIDPerRun() {
+	s.wireReadySession()
+	sys := new(testutil.MockSystem)
+	sys.On("UserHomeDir").Return("/home/u", nil)
+	s.srv.sys = sys
+	for _, id := range []string{"run-1", "run-2"} {
+		runner := &mockReviewRunner{done: make(chan struct{})}
+		runner.runFn = func() (*agent.AgentResponse, error) {
+			return &agent.AgentResponse{SessionID: id}, nil
+		}
+		s.srv.review.setAgent(runner, "sys", "p")
+
+		w := httptest.NewRecorder()
+		s.mux.ServeHTTP(w, httptest.NewRequest("POST", "/api/channels/ch1/review/run", nil))
+		require.Equal(s.T(), http.StatusAccepted, w.Code)
+		<-runner.done
+		s.waitFor(func() bool { return s.rs.Get("ch1").Status == review.StatusReady })
+	}
+	got := s.rs.Get("ch1")
+	require.Equal(s.T(), []string{"run-1", "run-2"}, got.RunSessionIDs)
+	// Keyed by the run's CWD — the worktree, not the channel's dir — because
+	// that is where Claude actually wrote the transcripts.
+	require.Equal(s.T(), "/home/u/.claude/projects/-repo--worktrees-pr-7", got.TranscriptDir)
+}
+
+// Without a home dir there is no path to hand out, and half an address
+// (an id under an unknown directory) is worse than none — the ids are
+// still recorded, the directory stays empty, and the panel omits the
+// whole block.
+func (s *ReviewHandlerSuite) TestRunRecordsNoTranscriptDirWhenHomeUnreadable() {
+	s.wireReadySession()
+	sys := new(testutil.MockSystem)
+	sys.On("UserHomeDir").Return("", errors.New("no home"))
+	s.srv.sys = sys
+
+	runner := &mockReviewRunner{done: make(chan struct{})}
+	runner.runFn = func() (*agent.AgentResponse, error) {
+		return &agent.AgentResponse{SessionID: "run-1"}, nil
+	}
+	s.srv.review.setAgent(runner, "sys", "p")
+
+	w := httptest.NewRecorder()
+	s.mux.ServeHTTP(w, httptest.NewRequest("POST", "/api/channels/ch1/review/run", nil))
+	require.Equal(s.T(), http.StatusAccepted, w.Code)
+	<-runner.done
+	s.waitFor(func() bool { return s.rs.Get("ch1").Status == review.StatusReady })
+
+	got := s.rs.Get("ch1")
+	require.Equal(s.T(), []string{"run-1"}, got.RunSessionIDs)
+	require.Empty(s.T(), got.TranscriptDir)
+}
+
+// A run that ended in an error usually reported findings before it died,
+// so its transcript is still the one to read. A runner that returned no
+// response at all has no id to record — and must not panic reaching for it.
+func (s *ReviewHandlerSuite) TestRunRecordsClaudeSessionIDFromFailedRuns() {
+	tests := []struct {
+		name string
+		resp *agent.AgentResponse
+		want []string
+	}{
+		{name: "failed run keeps its session", resp: &agent.AgentResponse{SessionID: "run-err"}, want: []string{"run-err"}},
+		{name: "no response, nothing to record", resp: nil},
+	}
+	for _, tc := range tests {
+		s.Run(tc.name, func() {
+			s.wireReadySession()
+			runner := &mockReviewRunner{done: make(chan struct{})}
+			runner.runFn = func() (*agent.AgentResponse, error) { return tc.resp, errors.New("boom") }
+			s.srv.review.setAgent(runner, "sys", "p")
+
+			w := httptest.NewRecorder()
+			s.mux.ServeHTTP(w, httptest.NewRequest("POST", "/api/channels/ch1/review/run", nil))
+			require.Equal(s.T(), http.StatusAccepted, w.Code)
+			<-runner.done
+			s.waitFor(func() bool { return s.rs.Get("ch1").Status == review.StatusError })
+			require.Equal(s.T(), tc.want, s.rs.Get("ch1").RunSessionIDs)
+		})
+	}
+}
+
 // The refresh that precedes every run replaces the whole session, so the
 // fork choice has to survive it — otherwise the run would always see the
 // default.
