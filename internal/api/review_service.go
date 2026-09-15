@@ -64,7 +64,7 @@ type GitHubReview interface {
 // held as an interface so tests can drive the handler without a real
 // agent container.
 type ReviewRunner interface {
-	Run(ctx context.Context, channelID, dirPath, parentDirPath, systemPrompt, prompt, forkSessionID string, onComment func(*review.Comment)) (*agent.AgentResponse, error)
+	Run(ctx context.Context, channelID, dirPath, parentDirPath, systemPrompt, subagentSystemPrompt, prompt, forkSessionID string, onComment func(*review.Comment)) (*agent.AgentResponse, error)
 }
 
 // refreshReviewSession fast-forwards the worktree to the PR's current
@@ -221,7 +221,7 @@ func (s *reviewService) pushOneComment(ctx context.Context, channelID string, se
 // message instead of staying at status=reviewing forever. Without this
 // gate, a hung container would leak the goroutine and any CLI/FE poller
 // would keep hitting status=reviewing until its own deadline fired.
-func (s *reviewService) runReviewAsync(runCtx context.Context, channelID, worktreePath, parentDirPath, systemPrompt, prompt, forkSessionID string) {
+func (s *reviewService) runReviewAsync(runCtx context.Context, channelID, worktreePath, parentDirPath, systemPrompt, subagentSystemPrompt, prompt, forkSessionID string) {
 	defer s.unregisterReviewRun(channelID)
 	ctx := runCtx
 	if s.runTimeout > 0 {
@@ -236,7 +236,7 @@ func (s *reviewService) runReviewAsync(runCtx context.Context, channelID, worktr
 	onComment := func(c *review.Comment) {
 		s.ingestComment(channelID, worktreePath, parentDirPath, c)
 	}
-	_, err := s.runner.Run(ctx, channelID, worktreePath, parentDirPath, systemPrompt, prompt, forkSessionID, onComment)
+	_, err := s.runner.Run(ctx, channelID, worktreePath, parentDirPath, systemPrompt, subagentSystemPrompt, prompt, forkSessionID, onComment)
 	if err != nil {
 		msg := err.Error()
 		// Re-shape ctx-deadline into a user-readable message. errors.Is

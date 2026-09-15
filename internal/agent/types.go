@@ -7,17 +7,24 @@ import (
 
 // AgentRequest is the input sent to the agent runner.
 type AgentRequest struct {
-	SessionID     string         `json:"session_id"`
-	ForkSession   bool           `json:"fork_session,omitempty"`
-	Messages      []AgentMessage `json:"messages"`
-	SystemPrompt  string         `json:"system_prompt"`
-	ChannelID     string         `json:"channel_id"`
-	AuthorID      string         `json:"author_id,omitempty"`
-	DirPath       string         `json:"dir_path,omitempty"`
-	ParentDirPath string         `json:"parent_dir_path,omitempty"`
-	PlanMode      bool           `json:"plan_mode,omitempty"`
-	Prompt        string         `json:"prompt,omitempty"`
-	AgentID       string         `json:"agent_id,omitempty"`
+	SessionID    string         `json:"session_id"`
+	ForkSession  bool           `json:"fork_session,omitempty"`
+	Messages     []AgentMessage `json:"messages"`
+	SystemPrompt string         `json:"system_prompt"`
+	// SubagentSystemPrompt is appended to the system prompt of every
+	// Task-tool subagent the run spawns (and to nested ones), separately
+	// from SystemPrompt — which the CLI applies to the main agent only.
+	// Review runs need this: /code-review derives its candidate findings
+	// in fan-out subagents, so context that only reaches the orchestrator
+	// (the dedup list) never reaches the agents doing the reviewing.
+	SubagentSystemPrompt string `json:"subagent_system_prompt,omitempty"`
+	ChannelID            string `json:"channel_id"`
+	AuthorID             string `json:"author_id,omitempty"`
+	DirPath              string `json:"dir_path,omitempty"`
+	ParentDirPath        string `json:"parent_dir_path,omitempty"`
+	PlanMode             bool   `json:"plan_mode,omitempty"`
+	Prompt               string `json:"prompt,omitempty"`
+	AgentID              string `json:"agent_id,omitempty"`
 	// Model / Effort override the merged config's claude_model / claude_effort
 	// for this run when non-empty (per-channel on-demand override).
 	Model  string `json:"model,omitempty"`

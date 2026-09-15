@@ -704,6 +704,30 @@ func (s *RunnerSuite) TestBuildClaudeCmdPlanMode() {
 	require.True(s.T(), strings.HasPrefix(cmd[len(cmd)-1], "Call the EnterPlanMode tool"))
 }
 
+// The subagent prompt is a separate CLI flag because the CLI does not
+// propagate --append-system-prompt into Task-tool subagents. Omitted
+// entirely when empty, so a first review run (nothing to dedup against)
+// doesn't pass a bare flag.
+func (s *RunnerSuite) TestBuildClaudeCmdSubagentSystemPrompt() {
+	cfg := &config.Config{ClaudeBinPath: "claude"}
+	req := &agent.AgentRequest{
+		ChannelID: "ch-1",
+		Messages:  []agent.AgentMessage{{Role: "user", Content: "hello"}},
+	}
+
+	cmd := buildClaudeCmd(cfg, "/work/.loop/mcp-ch-1.json", req)
+	require.NotContains(s.T(), strings.Join(cmd, " "), "--append-subagent-system-prompt")
+
+	req.SystemPrompt = "main rules"
+	req.SubagentSystemPrompt = "subagent rules"
+	cmd = buildClaudeCmd(cfg, "/work/.loop/mcp-ch-1.json", req)
+	got := strings.Join(cmd, " ")
+	require.Contains(s.T(), got, "--append-system-prompt main rules")
+	require.Contains(s.T(), got, "--append-subagent-system-prompt subagent rules")
+	// The flag requires --print, which buildClaudeCmd always sets.
+	require.Contains(s.T(), got, "--print")
+}
+
 // TestBuildClaudeCmdModelEffortOverride verifies per-request model/effort
 // overrides replace the config values in the CLI flags without mutating the
 // shared config.

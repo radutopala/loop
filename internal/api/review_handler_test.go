@@ -1324,6 +1324,7 @@ type mockReviewRunner struct {
 	lastDir    string
 	lastParent string
 	lastSys    string
+	lastSubSys string
 	lastUser   string
 	lastFork   string
 	runFn      func() (*agent.AgentResponse, error)
@@ -1336,12 +1337,13 @@ type mockReviewRunner struct {
 	done     chan struct{} // closed after Run returns
 }
 
-func (m *mockReviewRunner) Run(ctx context.Context, _, dirPath, parentDirPath, systemPrompt, prompt, forkSessionID string, onComment func(*review.Comment)) (*agent.AgentResponse, error) {
+func (m *mockReviewRunner) Run(ctx context.Context, _, dirPath, parentDirPath, systemPrompt, subagentSystemPrompt, prompt, forkSessionID string, onComment func(*review.Comment)) (*agent.AgentResponse, error) {
 	m.mu.Lock()
 	m.calls++
 	m.lastDir = dirPath
 	m.lastParent = parentDirPath
 	m.lastSys = systemPrompt
+	m.lastSubSys = subagentSystemPrompt
 	m.lastUser = prompt
 	m.lastFork = forkSessionID
 	ctxFn := m.runWithCtxFn
@@ -1880,6 +1882,15 @@ func (s *ReviewHandlerSuite) TestRunPromptListsExistingCommentsForDedup() {
 	// authorless github comment falls back to bare "github" label and empty side
 	// defaults to RIGHT; long body is truncated with ellipsis.
 	require.Contains(s.T(), runner.lastSys, "[github] c.go:L3 (RIGHT): "+strings.Repeat("x", 240)+"...")
+	// The same list also rides the subagent prompt: the review command
+	// derives its findings in fan-out subagents, which never see
+	// --append-system-prompt.
+	require.Contains(s.T(), runner.lastSubSys, "Review pipeline context")
+	require.Contains(s.T(), runner.lastSubSys, "do NOT re-emit")
+	require.Contains(s.T(), runner.lastSubSys, "[agent] b.go:L9 (LEFT): issue body")
+	// PR metadata and gh auth are orchestrator business — the finders only
+	// need to know what has already been said.
+	require.NotContains(s.T(), runner.lastSubSys, "Pull request under review:")
 }
 
 func (s *ReviewHandlerSuite) TestRunAgentErrorTransitionsToErrorStatus() {
@@ -2394,6 +2405,34 @@ func (s *ReviewHandlerSuite) TestBuildReviewContextDedupEntriesAreOneLine() {
 	ctx := buildReviewContext(sess, "alice")
 	require.Contains(s.T(), ctx, "- [agent] a.go:L12 (RIGHT): leaks the lock When Foo returns err the mutex stays held.\n")
 	require.Contains(s.T(), ctx, "- [github @bob] b.go:L3 (RIGHT): nit: rename this\n")
+}
+
+// With nothing to dedup against there is no subagent prompt at all, so
+// no bare --append-subagent-system-prompt flag is passed on a first run.
+// A slice holding only nil entries counts as nothing.
+func (s *ReviewHandlerSuite) TestBuildSubagentReviewContext() {
+	tests := []struct {
+		name     string
+		comments []*review.Comment
+		want     string
+	}{
+		{name: "no comments", comments: nil},
+		{name: "only nil entries", comments: []*review.Comment{nil}},
+		{
+			name:     "renders the list under an attributed header",
+			comments: []*review.Comment{{ID: "c1", Path: "a.go", Line: 12, Side: "RIGHT", Body: "leaks the lock"}},
+			want:     "Review pipeline context (authoritative, supplied by the host that launched this review):\n\nExisting review comments on this PR — do NOT re-emit any of these. Only add NEW, non-duplicate findings.\n- [agent] a.go:L12 (RIGHT): leaks the lock\n",
+		},
+	}
+	for _, tc := range tests {
+		s.Run(tc.name, func() {
+			sess := &review.Session{
+				PR:       &githubapi.PRInfo{Number: 7, BaseRef: "main"},
+				Comments: tc.comments,
+			}
+			require.Equal(s.T(), tc.want, buildSubagentReviewContext(sess))
+		})
+	}
 }
 
 func (s *ReviewHandlerSuite) TestDedupEntryBody() {

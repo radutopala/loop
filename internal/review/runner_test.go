@@ -26,7 +26,7 @@ func TestRunnerSuite(t *testing.T) { suite.Run(t, new(RunnerSuite)) }
 
 func (s *RunnerSuite) TestRunNoAgentConfigured() {
 	r := &Runner{}
-	_, err := r.Run(context.Background(), "ch", "/dir", "/parent", "sys", "p", "", nil)
+	_, err := r.Run(context.Background(), "ch", "/dir", "/parent", "sys", "subsys", "p", "", nil)
 	require.ErrorContains(s.T(), err, "agent not configured")
 }
 
@@ -34,7 +34,7 @@ func (s *RunnerSuite) TestRunAgentErrorPropagates() {
 	a := new(mockAgentRunner)
 	a.On("Run", mock.Anything, mock.Anything).Return(nil, errors.New("boom"))
 	r := &Runner{Agent: a}
-	_, err := r.Run(context.Background(), "ch", "/dir", "/parent", "sys", "p", "", nil)
+	_, err := r.Run(context.Background(), "ch", "/dir", "/parent", "sys", "subsys", "p", "", nil)
 	require.ErrorContains(s.T(), err, "boom")
 }
 
@@ -44,11 +44,12 @@ func (s *RunnerSuite) TestRunBuildsRequest() {
 	a := new(mockAgentRunner)
 	a.On("Run", mock.Anything, mock.MatchedBy(func(req *agent.AgentRequest) bool {
 		return req.ChannelID == "ch" && req.DirPath == "/wt" && req.ParentDirPath == "/repo" &&
-			req.SystemPrompt == "sys" && req.Prompt == "p" && req.ReviewMode && req.OnToolUseRaw == nil
+			req.SystemPrompt == "sys" && req.SubagentSystemPrompt == "subsys" &&
+			req.Prompt == "p" && req.ReviewMode && req.OnToolUseRaw == nil
 	})).Return(&agent.AgentResponse{Response: "done"}, nil)
 
 	r := &Runner{Agent: a}
-	resp, err := r.Run(context.Background(), "ch", "/wt", "/repo", "sys", "p", "", nil)
+	resp, err := r.Run(context.Background(), "ch", "/wt", "/repo", "sys", "subsys", "p", "", nil)
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), "done", resp.Response)
 	a.AssertExpectations(s.T())
@@ -74,7 +75,7 @@ func (s *RunnerSuite) TestRunForkSession() {
 			})).Return(&agent.AgentResponse{}, nil)
 
 			r := &Runner{Agent: a}
-			_, err := r.Run(context.Background(), "ch", "/wt", "/repo", "sys", "p", tc.forkID, nil)
+			_, err := r.Run(context.Background(), "ch", "/wt", "/repo", "sys", "subsys", "p", tc.forkID, nil)
 			require.NoError(s.T(), err)
 			a.AssertExpectations(s.T())
 		})
@@ -123,7 +124,7 @@ func (s *RunnerSuite) TestRunForwardsReportFindings() {
 
 			var got []string
 			r := &Runner{Agent: a}
-			_, err := r.Run(context.Background(), "ch", "/wt", "/repo", "sys", "p", "", func(c *Comment) {
+			_, err := r.Run(context.Background(), "ch", "/wt", "/repo", "sys", "subsys", "p", "", func(c *Comment) {
 				got = append(got, c.Body)
 			})
 			require.NoError(s.T(), err)
