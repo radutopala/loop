@@ -225,8 +225,8 @@ func (s *SessionSuite) TestAddCommentDropsSameID() {
 func (s *SessionSuite) TestAddCommentDropsRewordedFindingOnSameLine() {
 	store := NewStore()
 	store.Put("ch1", &Session{})
-	first := &Comment{ID: "a", Path: "internal/telemetry/bidcache.go", Line: 174, Body: reportedOnce}
-	again := &Comment{ID: "b", Path: "internal/telemetry/bidcache.go", Line: 174, Side: "RIGHT", Body: reportedAgain}
+	first := &Comment{ID: "a", Path: "internal/queue/writer.go", Line: 174, Body: reportedOnce}
+	again := &Comment{ID: "b", Path: "internal/queue/writer.go", Line: 174, Side: "RIGHT", Body: reportedAgain}
 	require.True(s.T(), store.AddComment("ch1", first))
 	require.False(s.T(), store.AddComment("ch1", again))
 	require.Len(s.T(), store.Get("ch1").Comments, 1)

@@ -15,18 +15,18 @@ func TestSimilaritySuite(t *testing.T) {
 	suite.Run(t, new(SimilaritySuite))
 }
 
-// The pair that prompted this gate: one finding reported twice by
-// consecutive iterations of a review loop. The tail is identical and only
-// the opening sentence was rewritten, which is the shape a re-derived
-// finding takes.
+// Modelled on the pair that prompted this gate: one finding reported twice by
+// consecutive iterations of a review loop. The subject is invented, but the
+// shape is the real one — the tail is identical and only the opening sentence
+// was rewritten, which is what a re-derived finding looks like.
 const (
-	reportedOnce = "StoreBid treats an empty entry slice as an error, so a RecordBid call with a nil (or record-less) BidTelemetry now withdraws the bid, even though the same code path explicitly tolerates a nil bid when building the event.\n\n" +
-		"Writer.RecordBid guards `if bid != nil` before reading bid.MAID, so a nil BidTelemetry is a supported input. With a bid cache attached, that same call reaches cacheBid -> bidCacheEntries(nil) -> nil slice -> StoreBid returns errNoBidCacheEntries without ever contacting the cache, so RecordBid fails and the caller converts an otherwise-valid response into a no-bid."
-	reportedAgain = "StoreBid treats an empty entry slice as an error, so RecordBid with a nil or record-less BidTelemetry now withdraws the bid, although the same path explicitly tolerates a nil bid when building the event.\n\n" +
-		"Writer.RecordBid guards `if bid != nil` before reading bid.MAID, so a nil BidTelemetry is a supported input. With a bid cache attached, that same call reaches cacheBid -> bidCacheEntries(nil) -> nil slice -> StoreBid returns errNoBidCacheEntries without contacting the cache, so RecordBid fails and the caller converts an otherwise-valid response into a no-bid."
+	reportedOnce = "Flush treats an empty batch as an error, so an Append call with a nil (or record-less) Envelope now drops the record, even though the same code path explicitly tolerates a nil payload when building the entry.\n\n" +
+		"Writer.Append guards `if payload != nil` before reading payload.Key, so a nil Envelope is a supported input. With a batch buffer attached, that same call reaches bufferAppend -> batchEntries(nil) -> nil slice -> Flush returns errNoBatchEntries without ever contacting the buffer, so Append fails and the caller converts an otherwise-valid write into a drop."
+	reportedAgain = "Flush treats an empty batch as an error, so Append with a nil or record-less Envelope now drops the record, although the same path explicitly tolerates a nil payload when building the entry.\n\n" +
+		"Writer.Append guards `if payload != nil` before reading payload.Key, so a nil Envelope is a supported input. With a batch buffer attached, that same call reaches bufferAppend -> batchEntries(nil) -> nil slice -> Flush returns errNoBatchEntries without contacting the buffer, so Append fails and the caller converts an otherwise-valid write into a drop."
 	// A different claim about the same code, sharing its identifiers. This is
 	// the case the threshold must not swallow.
-	differentFinding = "The write is unbounded: StoreBid inherits the request context, so a slow cache keeps the auction goroutine parked for as long as the caller allows instead of failing fast on its own timeout."
+	differentFinding = "The write is unbounded: Flush inherits the request context, so a slow buffer keeps the worker goroutine parked for as long as the caller allows instead of failing fast on its own timeout."
 )
 
 func (s *SimilaritySuite) TestNearDuplicate() {
