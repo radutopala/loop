@@ -20,6 +20,7 @@ interface ReviewDiffViewProps {
   onPushCommentToChat: (c: ReviewComment) => void | Promise<void>;
   onDiscussComment: (c: ReviewComment) => void;
   onWhyComment: (c: ReviewComment) => void | Promise<void>;
+  onAddressComment: (c: ReviewComment) => void | Promise<void>;
   onDeleteComment: (c: ReviewComment) => void | Promise<void>;
 }
 
@@ -127,7 +128,18 @@ function summarize(parsed: ParsedFile, fileComments: ReviewComment[]): FileSumma
   return { path: parsed.path, additions, deletions, parsed, agentCount, ghCount };
 }
 
-export function ReviewDiffView({ channelId, rawDiff, comments, worktreePath, onPushComment, onPushCommentToChat, onDiscussComment, onWhyComment, onDeleteComment }: ReviewDiffViewProps) {
+export function ReviewDiffView({
+  channelId,
+  rawDiff,
+  comments,
+  worktreePath,
+  onPushComment,
+  onPushCommentToChat,
+  onDiscussComment,
+  onWhyComment,
+  onAddressComment,
+  onDeleteComment,
+}: ReviewDiffViewProps) {
   const { colors } = useTheme();
   const [fileContextMenu, setFileContextMenu] = useState<{ x: number; y: number; path: string } | null>(null);
 
@@ -538,6 +550,7 @@ export function ReviewDiffView({ channelId, rawDiff, comments, worktreePath, onP
               onPushCommentToChat={onPushCommentToChat}
               onDiscussComment={onDiscussComment}
               onWhyComment={onWhyComment}
+              onAddressComment={onAddressComment}
               onDeleteComment={onDeleteComment}
               registerCommentRef={registerCommentRef}
             />
@@ -552,6 +565,7 @@ export function ReviewDiffView({ channelId, rawDiff, comments, worktreePath, onP
             onPushCommentToChat={onPushCommentToChat}
             onDiscussComment={onDiscussComment}
             onWhyComment={onWhyComment}
+            onAddressComment={onAddressComment}
             onDeleteComment={onDeleteComment}
             registerCommentRef={registerCommentRef}
           />
@@ -924,6 +938,7 @@ function FileSection({
   onPushCommentToChat,
   onDiscussComment,
   onWhyComment,
+  onAddressComment,
   onDeleteComment,
   registerCommentRef,
 }: {
@@ -940,6 +955,7 @@ function FileSection({
   onPushCommentToChat: (c: ReviewComment) => void | Promise<void>;
   onDiscussComment: (c: ReviewComment) => void;
   onWhyComment: (c: ReviewComment) => void | Promise<void>;
+  onAddressComment: (c: ReviewComment) => void | Promise<void>;
   onDeleteComment: (c: ReviewComment) => void | Promise<void>;
   registerCommentRef: (id: string, el: HTMLDivElement | null) => void;
 }) {
@@ -1066,6 +1082,7 @@ function FileSection({
                             onPushToChat={onPushCommentToChat}
                             onDiscuss={onDiscussComment}
                             onWhy={onWhyComment}
+                            onAddress={onAddressComment}
                             onDelete={onDeleteComment}
                             registerRef={registerCommentRef}
                           />
@@ -1156,6 +1173,7 @@ function InlineComment({
   onPushToChat,
   onDiscuss,
   onWhy,
+  onAddress,
   onDelete,
   registerRef,
 }: {
@@ -1165,6 +1183,7 @@ function InlineComment({
   onPushToChat: (c: ReviewComment) => void | Promise<void>;
   onDiscuss: (c: ReviewComment) => void;
   onWhy: (c: ReviewComment) => void | Promise<void>;
+  onAddress: (c: ReviewComment) => void | Promise<void>;
   onDelete: (c: ReviewComment) => void | Promise<void>;
   /** Hands the card's node to the floating navigator so it can scroll to it. */
   registerRef: (id: string, el: HTMLDivElement | null) => void;
@@ -1270,7 +1289,7 @@ function InlineComment({
         </button>
         <button
           data-testid={`review-comment-why-${comment.id}`}
-          onClick={() => onWhy(comment)}
+          onClick={() => void onWhy(comment)}
           style={{
             background: "transparent",
             color: colors.text,
@@ -1284,6 +1303,23 @@ function InlineComment({
           title="Ask the chat agent why this is needed (sends straight away)"
         >
           Why?
+        </button>
+        <button
+          data-testid={`review-comment-address-${comment.id}`}
+          onClick={() => void onAddress(comment)}
+          style={{
+            background: "transparent",
+            color: colors.text,
+            border: `1px solid ${colors.border}`,
+            borderRadius: 3,
+            padding: "1px 6px",
+            fontSize: 10,
+            fontFamily: fonts.sans,
+            cursor: "pointer",
+          }}
+          title="Ask the chat agent to fix this (sends straight away)"
+        >
+          Address
         </button>
         {comment.pushed ? (
           <span style={{ fontSize: 10, color: colors.textDim }}>{isGitHub ? "on github" : "pushed"}</span>
@@ -1372,6 +1408,7 @@ function OrphanCommentsSection({
   onPushCommentToChat,
   onDiscussComment,
   onWhyComment,
+  onAddressComment,
   onDeleteComment,
   registerCommentRef,
 }: {
@@ -1382,6 +1419,7 @@ function OrphanCommentsSection({
   onPushCommentToChat: (c: ReviewComment) => void | Promise<void>;
   onDiscussComment: (c: ReviewComment) => void;
   onWhyComment: (c: ReviewComment) => void | Promise<void>;
+  onAddressComment: (c: ReviewComment) => void | Promise<void>;
   onDeleteComment: (c: ReviewComment) => void | Promise<void>;
   registerCommentRef: (id: string, el: HTMLDivElement | null) => void;
 }) {
@@ -1419,6 +1457,7 @@ function OrphanCommentsSection({
             onPushToChat={onPushCommentToChat}
             onDiscuss={onDiscussComment}
             onWhy={onWhyComment}
+            onAddress={onAddressComment}
             onDelete={onDeleteComment}
             registerRef={registerCommentRef}
           />

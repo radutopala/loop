@@ -132,9 +132,13 @@ function buildSinglePromptForChat(c: ReviewComment, headSHA?: string, prNumber?:
 // chat agent can derive from its own channel. The paths resolve as-is inside
 // the agent container, which runs with HOME set to the host home and ~/.claude
 // bind-mounted at its host path.
+// The two canned asks. They sit next to the builder rather than inside it so
+// a test can assert the exact wording that goes out, and so the difference
+// between the buttons stays one string rather than one code path each.
 export const WHY_QUESTION = "Please explain why we need this.";
+export const ADDRESS_REQUEST = "Please address this with a fix.";
 
-export function buildDiscussDraft(c: ReviewComment, session?: ReviewSession | null, question?: string): string {
+export function buildDiscussDraft(c: ReviewComment, session?: ReviewSession | null, ask?: string): string {
   const lines = [`> ${c.path}:${c.line}`];
   for (const ln of c.body.split("\n")) lines.push(ln ? `> ${ln}` : ">");
   const dir = session?.transcript_dir;
@@ -147,9 +151,9 @@ export function buildDiscussDraft(c: ReviewComment, session?: ReviewSession | nu
   // Trailing blank line: markdown needs one to close the blockquote, and it
   // puts the caret on an empty line instead of at the end of the quote.
   const draft = `${lines.join("\n")}\n\n`;
-  // "Why?" is the same draft with the question filled into the blank line the
-  // quote ends on, which is where the user would have typed it.
-  return question ? `${draft}${question}` : draft;
+  // Why? and Address are this same draft with their ask filled into the blank
+  // line the quote ends on, which is where the user would have typed it.
+  return ask ? `${draft}${ask}` : draft;
 }
 
 function buildBatchPromptForChat(cs: ReviewComment[], headSHA?: string, prNumber?: number): string {
@@ -834,23 +838,26 @@ export function ReviewPanel({ channelId, subscribeChatEvents, registerReviewView
     [channelId, ensureChatOpen, session],
   );
 
-  // Why? sends. It is the same draft with the question that gets asked most
-  // already in it, so there is nothing left to type and stopping at the
-  // composer would only cost a click — Discuss is still there for the times
-  // the question needs editing. Goes out through sendMessage, like pushing a
-  // single comment to chat does.
-  const onWhyOne = useCallback(
-    async (c: ReviewComment) => {
+  // Why? and Address send. Each is the same draft with a canned ask already in
+  // it, so there is nothing left to type and stopping at the composer would
+  // only cost a click — Discuss is still there for the times the wording needs
+  // work. Both go out through sendMessage, like pushing a single comment to
+  // chat does.
+  const sendAboutComment = useCallback(
+    async (c: ReviewComment, ask: string) => {
       setError(null);
       try {
         ensureChatOpen();
-        await sendMessage(channelId, buildDiscussDraft(c, session, WHY_QUESTION));
+        await sendMessage(channelId, buildDiscussDraft(c, session, ask));
       } catch (e) {
         setError(e instanceof Error ? e.message : String(e));
       }
     },
     [channelId, ensureChatOpen, session],
   );
+
+  const onWhyOne = useCallback((c: ReviewComment) => sendAboutComment(c, WHY_QUESTION), [sendAboutComment]);
+  const onAddressOne = useCallback((c: ReviewComment) => sendAboutComment(c, ADDRESS_REQUEST), [sendAboutComment]);
 
   const onPushAllToChat = useCallback(async () => {
     const pending = (session?.comments ?? []).filter((c) => !c.pushed);
@@ -1207,6 +1214,7 @@ export function ReviewPanel({ channelId, subscribeChatEvents, registerReviewView
             onPushCommentToChat={onPushOneToChat}
             onDiscussComment={onDiscussOne}
             onWhyComment={onWhyOne}
+            onAddressComment={onAddressOne}
             onDeleteComment={onDeleteOne}
           />
         )}

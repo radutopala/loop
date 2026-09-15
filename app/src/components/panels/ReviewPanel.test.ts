@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { ReviewComment, ReviewSession } from "../../api/review";
-import { buildDiscussDraft, WHY_QUESTION } from "./ReviewPanel";
+import { ADDRESS_REQUEST, buildDiscussDraft, WHY_QUESTION } from "./ReviewPanel";
 
 function comment(body: string, extra: Partial<ReviewComment> = {}): ReviewComment {
   return { id: "c1", path: "internal/api/x.go", line: 12, side: "RIGHT", body, pushed: false, ...extra };
@@ -72,7 +72,25 @@ describe("buildDiscussDraft", () => {
     );
   });
 
-  it("falls back to the plain draft for an empty question", () => {
+  it("falls back to the plain draft for an empty ask", () => {
     expect(buildDiscussDraft(comment("leaks the lock"), null, "")).toBe("> internal/api/x.go:12\n> leaks the lock\n\n");
+  });
+
+  // Address and Why? differ by their ask and nothing else, which is the point:
+  // one builder means the quote, the transcripts and the spacing can't drift
+  // apart between the two buttons.
+  it("builds the same draft for either canned ask", () => {
+    const sess = session({ transcript_dir: "/home/u/.claude/projects/-repo--worktrees-pr-7", run_session_ids: ["sess-1"] });
+    const why = buildDiscussDraft(comment("leaks the lock"), sess, WHY_QUESTION);
+    const address = buildDiscussDraft(comment("leaks the lock"), sess, ADDRESS_REQUEST);
+    expect(address).toBe(why.replace(WHY_QUESTION, ADDRESS_REQUEST));
+    expect(address.endsWith(`\n\n${ADDRESS_REQUEST}`)).toBe(true);
+  });
+
+  // The asks are sent verbatim, so their wording is part of the contract: one
+  // asks for an explanation, the other for a change.
+  it("sends asks that read as instructions on their own", () => {
+    expect(WHY_QUESTION).toBe("Please explain why we need this.");
+    expect(ADDRESS_REQUEST).toBe("Please address this with a fix.");
   });
 });
