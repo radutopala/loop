@@ -141,6 +141,50 @@ func (s *SessionSuite) TestUpdateForkStoresModeAndClearsIDUnlessCustom() {
 	}
 }
 
+func (s *SessionSuite) TestAppendRunSessionRejects() {
+	store := NewStore()
+	store.Put("ch1", &Session{})
+	tests := []struct {
+		name      string
+		channelID string
+		sessionID string
+	}{
+		{name: "no session", channelID: "nope", sessionID: "sess-1"},
+		{name: "empty id", channelID: "ch1"},
+	}
+	for _, tc := range tests {
+		s.Run(tc.name, func() {
+			require.False(s.T(), store.AppendRunSession(tc.channelID, tc.sessionID, "/dir"))
+			require.Empty(s.T(), store.Get("ch1").RunSessionIDs)
+			require.Empty(s.T(), store.Get("ch1").TranscriptDir)
+		})
+	}
+}
+
+// One entry per run, in run order, and a repeat of an id already recorded
+// is dropped — a resumed run would otherwise list itself twice. The dir is
+// last-run-wins, but an unknown dir must not blank a known one.
+func (s *SessionSuite) TestAppendRunSessionAppendsOnceInOrder() {
+	store := NewStore()
+	store.Put("ch1", &Session{})
+	require.True(s.T(), store.AppendRunSession("ch1", "sess-1", "/dir-a"))
+	require.True(s.T(), store.AppendRunSession("ch1", "sess-2", ""))
+	require.Equal(s.T(), "/dir-a", store.Get("ch1").TranscriptDir)
+	require.True(s.T(), store.AppendRunSession("ch1", "sess-3", "/dir-b"))
+	require.False(s.T(), store.AppendRunSession("ch1", "sess-1", "/dir-c"))
+	require.Equal(s.T(), []string{"sess-1", "sess-2", "sess-3"}, store.Get("ch1").RunSessionIDs)
+	require.Equal(s.T(), "/dir-b", store.Get("ch1").TranscriptDir)
+}
+
+func (s *SessionSuite) TestGetReturnsCopyWithIndependentRunSessionIDs() {
+	store := NewStore()
+	store.Put("ch1", &Session{})
+	store.AppendRunSession("ch1", "sess-1", "/dir")
+	got := store.Get("ch1")
+	got.RunSessionIDs = append(got.RunSessionIDs, "sess-2")
+	require.Equal(s.T(), []string{"sess-1"}, store.Get("ch1").RunSessionIDs)
+}
+
 func (s *SessionSuite) TestUpdateStatus() {
 	store := NewStore()
 	store.Put("ch1", &Session{Status: StatusIdle})

@@ -9,6 +9,7 @@
 package review
 
 import (
+	"slices"
 	"sync"
 	"time"
 
@@ -92,6 +93,18 @@ type Session struct {
 	// to put per-run options.
 	ForkMode      ForkMode `json:"fork_mode,omitempty"`
 	ForkSessionID string   `json:"fork_session_id,omitempty"`
+	// RunSessionIDs are the Claude sessions the review runs for this
+	// session actually used, oldest first. Runs always fork, so each one
+	// mints a new id and the list grows by one per run. Kept so a chat
+	// turn can be pointed at the transcripts that produced a finding —
+	// the reasoning behind a finding lives there and nowhere else.
+	RunSessionIDs []string `json:"run_session_ids,omitempty"`
+	// TranscriptDir is the directory those transcripts live in — Claude
+	// keys them by CWD, which for a review run is the PR worktree, so it
+	// is not a path anyone can guess from the channel. Absolute and valid
+	// *inside* an agent container too: containers run with HOME set to the
+	// host home and ~/.claude bind-mounted at its host path.
+	TranscriptDir string `json:"transcript_dir,omitempty"`
 }
 
 // Store is the in-memory registry of active sessions keyed by channel id.
@@ -121,6 +134,7 @@ func (s *Store) Get(channelID string) *Session {
 	// instead of `null` when there are no comments yet — the renderer reads
 	// `session.comments.length` directly and crashes on null.
 	cp.Comments = append(make([]*Comment, 0, len(sess.Comments)), sess.Comments...)
+	cp.RunSessionIDs = append([]string(nil), sess.RunSessionIDs...)
 	return &cp
 }
 
@@ -161,6 +175,35 @@ func (s *Store) Delete(channelID string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	delete(s.sessions, channelID)
+}
+
+// AppendRunSession records the Claude session a review run used, together
+// with the directory its transcript landed in. Both are recorded under one
+// lock because an id without its directory is not addressable.
+//
+// Empty ids (the runner returned no response) and ids already recorded are
+// ignored, so a resumed run cannot double-list itself. Returns false when
+// nothing was recorded.
+func (s *Store) AppendRunSession(channelID, sessionID, transcriptDir string) bool {
+	if sessionID == "" {
+		return false
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	sess, ok := s.sessions[channelID]
+	if !ok {
+		return false
+	}
+	if slices.Contains(sess.RunSessionIDs, sessionID) {
+		return false
+	}
+	sess.RunSessionIDs = append(sess.RunSessionIDs, sessionID)
+	// Last run wins: a worktree that moved re-keys the project dir, and the
+	// newest run is the one most likely to be asked about.
+	if transcriptDir != "" {
+		sess.TranscriptDir = transcriptDir
+	}
+	return true
 }
 
 // UpdateStatus transitions the session's status. Returns false if no

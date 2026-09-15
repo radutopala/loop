@@ -14,6 +14,7 @@ interface ReviewDiffViewProps {
   worktreePath?: string;
   onPushComment: (c: ReviewComment) => void | Promise<void>;
   onPushCommentToChat: (c: ReviewComment) => void | Promise<void>;
+  onDiscussComment: (c: ReviewComment) => void;
   onDeleteComment: (c: ReviewComment) => void | Promise<void>;
 }
 
@@ -121,7 +122,7 @@ function summarize(parsed: ParsedFile, fileComments: ReviewComment[]): FileSumma
   return { path: parsed.path, additions, deletions, parsed, agentCount, ghCount };
 }
 
-export function ReviewDiffView({ channelId, rawDiff, comments, worktreePath, onPushComment, onPushCommentToChat, onDeleteComment }: ReviewDiffViewProps) {
+export function ReviewDiffView({ channelId, rawDiff, comments, worktreePath, onPushComment, onPushCommentToChat, onDiscussComment, onDeleteComment }: ReviewDiffViewProps) {
   const { colors } = useTheme();
   const [fileContextMenu, setFileContextMenu] = useState<{ x: number; y: number; path: string } | null>(null);
 
@@ -375,6 +376,7 @@ export function ReviewDiffView({ channelId, rawDiff, comments, worktreePath, onP
               onContextMenu={handleFileContextMenu}
               onPushComment={onPushComment}
               onPushCommentToChat={onPushCommentToChat}
+              onDiscussComment={onDiscussComment}
               onDeleteComment={onDeleteComment}
               registerCommentRef={registerCommentRef}
             />
@@ -387,6 +389,7 @@ export function ReviewDiffView({ channelId, rawDiff, comments, worktreePath, onP
             onContextMenu={handleFileContextMenu}
             onPushComment={onPushComment}
             onPushCommentToChat={onPushCommentToChat}
+            onDiscussComment={onDiscussComment}
             onDeleteComment={onDeleteComment}
             registerCommentRef={registerCommentRef}
           />
@@ -586,6 +589,7 @@ function FileSection({
   onContextMenu,
   onPushComment,
   onPushCommentToChat,
+  onDiscussComment,
   onDeleteComment,
   registerCommentRef,
 }: {
@@ -597,6 +601,7 @@ function FileSection({
   onContextMenu: (e: React.MouseEvent, path: string) => void;
   onPushComment: (c: ReviewComment) => void | Promise<void>;
   onPushCommentToChat: (c: ReviewComment) => void | Promise<void>;
+  onDiscussComment: (c: ReviewComment) => void;
   onDeleteComment: (c: ReviewComment) => void | Promise<void>;
   registerCommentRef: (id: string, el: HTMLDivElement | null) => void;
 }) {
@@ -714,7 +719,16 @@ function FileSection({
                       <DiffLineRow line={line} colors={colors} />
                       {matched &&
                         matched.map((c) => (
-                          <InlineComment key={c.id} comment={c} colors={colors} onPush={onPushComment} onPushToChat={onPushCommentToChat} onDelete={onDeleteComment} registerRef={registerCommentRef} />
+                          <InlineComment
+                            key={c.id}
+                            comment={c}
+                            colors={colors}
+                            onPush={onPushComment}
+                            onPushToChat={onPushCommentToChat}
+                            onDiscuss={onDiscussComment}
+                            onDelete={onDeleteComment}
+                            registerRef={registerCommentRef}
+                          />
                         ))}
                     </div>
                   );
@@ -798,6 +812,7 @@ function InlineComment({
   colors,
   onPush,
   onPushToChat,
+  onDiscuss,
   onDelete,
   registerRef,
 }: {
@@ -805,6 +820,7 @@ function InlineComment({
   colors: ColorPalette;
   onPush: (c: ReviewComment) => void | Promise<void>;
   onPushToChat: (c: ReviewComment) => void | Promise<void>;
+  onDiscuss: (c: ReviewComment) => void;
   onDelete: (c: ReviewComment) => void | Promise<void>;
   /** Hands the card's node to the floating navigator so it can scroll to it. */
   registerRef: (id: string, el: HTMLDivElement | null) => void;
@@ -891,6 +907,23 @@ function InlineComment({
             view
           </a>
         )}
+        <button
+          data-testid={`review-comment-discuss-${comment.id}`}
+          onClick={() => onDiscuss(comment)}
+          style={{
+            background: "transparent",
+            color: colors.text,
+            border: `1px solid ${colors.border}`,
+            borderRadius: 3,
+            padding: "1px 6px",
+            fontSize: 10,
+            fontFamily: fonts.sans,
+            cursor: "pointer",
+          }}
+          title="Quote this comment into the chat composer (doesn't send)"
+        >
+          Discuss
+        </button>
         {comment.pushed ? (
           <span style={{ fontSize: 10, color: colors.textDim }}>{isGitHub ? "on github" : "pushed"}</span>
         ) : (
@@ -976,6 +1009,7 @@ function OrphanCommentsSection({
   onContextMenu,
   onPushComment,
   onPushCommentToChat,
+  onDiscussComment,
   onDeleteComment,
   registerCommentRef,
 }: {
@@ -984,6 +1018,7 @@ function OrphanCommentsSection({
   onContextMenu: (e: React.MouseEvent, path: string) => void;
   onPushComment: (c: ReviewComment) => void | Promise<void>;
   onPushCommentToChat: (c: ReviewComment) => void | Promise<void>;
+  onDiscussComment: (c: ReviewComment) => void;
   onDeleteComment: (c: ReviewComment) => void | Promise<void>;
   registerCommentRef: (id: string, el: HTMLDivElement | null) => void;
 }) {
@@ -1014,7 +1049,15 @@ function OrphanCommentsSection({
           >
             {c.path}:{c.line}
           </div>
-          <InlineComment comment={c} colors={colors} onPush={onPushComment} onPushToChat={onPushCommentToChat} onDelete={onDeleteComment} registerRef={registerCommentRef} />
+          <InlineComment
+            comment={c}
+            colors={colors}
+            onPush={onPushComment}
+            onPushToChat={onPushCommentToChat}
+            onDiscuss={onDiscussComment}
+            onDelete={onDeleteComment}
+            registerRef={registerCommentRef}
+          />
         </div>
       ))}
     </div>

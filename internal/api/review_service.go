@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"sync"
 	"time"
 
@@ -11,6 +12,7 @@ import (
 
 	"github.com/radutopala/loop/internal/agent"
 	"github.com/radutopala/loop/internal/githubapi"
+	"github.com/radutopala/loop/internal/osutil"
 
 	"github.com/radutopala/loop/internal/review"
 )
@@ -115,6 +117,8 @@ func (s *reviewService) refreshReviewSession(ctx context.Context, channelID, dir
 		// be carried across — Run refreshes right before it reads it.
 		ForkMode:      sess.ForkMode,
 		ForkSessionID: sess.ForkSessionID,
+		RunSessionIDs: sess.RunSessionIDs,
+		TranscriptDir: sess.TranscriptDir,
 	})
 	if raw != sess.RawDiff {
 		if hub := s.deps.eventsHub; hub != nil {
@@ -236,7 +240,13 @@ func (s *reviewService) runReviewAsync(runCtx context.Context, channelID, worktr
 	onComment := func(c *review.Comment) {
 		s.ingestComment(channelID, worktreePath, parentDirPath, c)
 	}
-	_, err := s.runner.Run(ctx, channelID, worktreePath, parentDirPath, systemPrompt, subagentSystemPrompt, prompt, forkSessionID, onComment)
+	resp, err := s.runner.Run(ctx, channelID, worktreePath, parentDirPath, systemPrompt, subagentSystemPrompt, prompt, forkSessionID, onComment)
+	// Record the session even when the run failed: a timed-out run has
+	// usually already reported findings, and its transcript is exactly
+	// what someone asking "why was this flagged?" needs to read.
+	if resp != nil {
+		s.sessions.AppendRunSession(channelID, resp.SessionID, s.transcriptDir(worktreePath))
+	}
 	if err != nil {
 		msg := err.Error()
 		// Re-shape ctx-deadline into a user-readable message. errors.Is
@@ -260,6 +270,19 @@ func (s *reviewService) runReviewAsync(runCtx context.Context, channelID, worktr
 	}
 	s.sessions.UpdateStatus(channelID, review.StatusReady, "")
 	s.broadcastReviewStatus(channelID, review.StatusReady, "")
+}
+
+// transcriptDir returns the directory Claude wrote this run's transcript
+// to. Claude keys transcripts by the agent's CWD, which for a review run
+// is the PR worktree — so the directory is neither the channel's nor
+// guessable from it. Returns "" when the home dir is unreadable: a
+// missing path is better than a wrong one.
+func (s *reviewService) transcriptDir(worktreePath string) string {
+	home, err := s.deps.sys.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+	return filepath.Join(home, ".claude", "projects", osutil.EncodeClaudeProjectPath(worktreePath))
 }
 
 // ingestComment persists one agent-reported finding into the channel's
