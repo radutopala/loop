@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { ReviewComment, ReviewSession } from "../../api/review";
-import { buildDiscussDraft } from "./ReviewPanel";
+import { buildDiscussDraft, WHY_QUESTION } from "./ReviewPanel";
 
 function comment(body: string, extra: Partial<ReviewComment> = {}): ReviewComment {
   return { id: "c1", path: "internal/api/x.go", line: 12, side: "RIGHT", body, pushed: false, ...extra };
@@ -54,5 +54,25 @@ describe("buildDiscussDraft", () => {
   // quote rather than inside it.
   it("ends with a blank line", () => {
     expect(buildDiscussDraft(comment("x", { path: "a.go", line: 1 }))).toMatch(/\n\n$/);
+  });
+
+  // "Why?" is the same draft with the question typed into the space Discuss
+  // leaves empty, so the caret still lands after it and the wording stays
+  // editable.
+  it("types the question into the blank line when one is given", () => {
+    expect(buildDiscussDraft(comment("leaks the lock"), null, WHY_QUESTION)).toBe(`> internal/api/x.go:12\n> leaks the lock\n\n${WHY_QUESTION}`);
+  });
+
+  it("keeps the question below the transcript block", () => {
+    const sess = session({ transcript_dir: "/home/u/.claude/projects/-repo--worktrees-pr-7", run_session_ids: ["sess-1"] });
+    expect(buildDiscussDraft(comment("leaks the lock"), sess, WHY_QUESTION)).toBe(
+      "> internal/api/x.go:12\n> leaks the lock\n>\n" +
+        "> transcripts of the review runs that produced this, oldest first:\n" +
+        `> /home/u/.claude/projects/-repo--worktrees-pr-7/sess-1.jsonl\n\n${WHY_QUESTION}`,
+    );
+  });
+
+  it("falls back to the plain draft for an empty question", () => {
+    expect(buildDiscussDraft(comment("leaks the lock"), null, "")).toBe("> internal/api/x.go:12\n> leaks the lock\n\n");
   });
 });

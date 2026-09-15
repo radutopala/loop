@@ -19,6 +19,7 @@ interface ReviewDiffViewProps {
   onPushComment: (c: ReviewComment) => void | Promise<void>;
   onPushCommentToChat: (c: ReviewComment) => void | Promise<void>;
   onDiscussComment: (c: ReviewComment) => void;
+  onWhyComment: (c: ReviewComment) => void;
   onDeleteComment: (c: ReviewComment) => void | Promise<void>;
 }
 
@@ -126,7 +127,7 @@ function summarize(parsed: ParsedFile, fileComments: ReviewComment[]): FileSumma
   return { path: parsed.path, additions, deletions, parsed, agentCount, ghCount };
 }
 
-export function ReviewDiffView({ channelId, rawDiff, comments, worktreePath, onPushComment, onPushCommentToChat, onDiscussComment, onDeleteComment }: ReviewDiffViewProps) {
+export function ReviewDiffView({ channelId, rawDiff, comments, worktreePath, onPushComment, onPushCommentToChat, onDiscussComment, onWhyComment, onDeleteComment }: ReviewDiffViewProps) {
   const { colors } = useTheme();
   const [fileContextMenu, setFileContextMenu] = useState<{ x: number; y: number; path: string } | null>(null);
 
@@ -536,6 +537,7 @@ export function ReviewDiffView({ channelId, rawDiff, comments, worktreePath, onP
               onPushComment={onPushComment}
               onPushCommentToChat={onPushCommentToChat}
               onDiscussComment={onDiscussComment}
+              onWhyComment={onWhyComment}
               onDeleteComment={onDeleteComment}
               registerCommentRef={registerCommentRef}
             />
@@ -549,6 +551,7 @@ export function ReviewDiffView({ channelId, rawDiff, comments, worktreePath, onP
             onPushComment={onPushComment}
             onPushCommentToChat={onPushCommentToChat}
             onDiscussComment={onDiscussComment}
+            onWhyComment={onWhyComment}
             onDeleteComment={onDeleteComment}
             registerCommentRef={registerCommentRef}
           />
@@ -920,6 +923,7 @@ function FileSection({
   onPushComment,
   onPushCommentToChat,
   onDiscussComment,
+  onWhyComment,
   onDeleteComment,
   registerCommentRef,
 }: {
@@ -935,6 +939,7 @@ function FileSection({
   onPushComment: (c: ReviewComment) => void | Promise<void>;
   onPushCommentToChat: (c: ReviewComment) => void | Promise<void>;
   onDiscussComment: (c: ReviewComment) => void;
+  onWhyComment: (c: ReviewComment) => void;
   onDeleteComment: (c: ReviewComment) => void | Promise<void>;
   registerCommentRef: (id: string, el: HTMLDivElement | null) => void;
 }) {
@@ -1060,6 +1065,7 @@ function FileSection({
                             onPush={onPushComment}
                             onPushToChat={onPushCommentToChat}
                             onDiscuss={onDiscussComment}
+                            onWhy={onWhyComment}
                             onDelete={onDeleteComment}
                             registerRef={registerCommentRef}
                           />
@@ -1149,6 +1155,7 @@ function InlineComment({
   onPush,
   onPushToChat,
   onDiscuss,
+  onWhy,
   onDelete,
   registerRef,
 }: {
@@ -1157,6 +1164,7 @@ function InlineComment({
   onPush: (c: ReviewComment) => void | Promise<void>;
   onPushToChat: (c: ReviewComment) => void | Promise<void>;
   onDiscuss: (c: ReviewComment) => void;
+  onWhy: (c: ReviewComment) => void;
   onDelete: (c: ReviewComment) => void | Promise<void>;
   /** Hands the card's node to the floating navigator so it can scroll to it. */
   registerRef: (id: string, el: HTMLDivElement | null) => void;
@@ -1260,6 +1268,23 @@ function InlineComment({
         >
           Discuss
         </button>
+        <button
+          data-testid={`review-comment-why-${comment.id}`}
+          onClick={() => onWhy(comment)}
+          style={{
+            background: "transparent",
+            color: colors.text,
+            border: `1px solid ${colors.border}`,
+            borderRadius: 3,
+            padding: "1px 6px",
+            fontSize: 10,
+            fontFamily: fonts.sans,
+            cursor: "pointer",
+          }}
+          title="Quote this comment into the chat composer with the question already typed (doesn't send)"
+        >
+          Why?
+        </button>
         {comment.pushed ? (
           <span style={{ fontSize: 10, color: colors.textDim }}>{isGitHub ? "on github" : "pushed"}</span>
         ) : (
@@ -1346,6 +1371,7 @@ function OrphanCommentsSection({
   onPushComment,
   onPushCommentToChat,
   onDiscussComment,
+  onWhyComment,
   onDeleteComment,
   registerCommentRef,
 }: {
@@ -1355,6 +1381,7 @@ function OrphanCommentsSection({
   onPushComment: (c: ReviewComment) => void | Promise<void>;
   onPushCommentToChat: (c: ReviewComment) => void | Promise<void>;
   onDiscussComment: (c: ReviewComment) => void;
+  onWhyComment: (c: ReviewComment) => void;
   onDeleteComment: (c: ReviewComment) => void | Promise<void>;
   registerCommentRef: (id: string, el: HTMLDivElement | null) => void;
 }) {
@@ -1391,6 +1418,7 @@ function OrphanCommentsSection({
             onPush={onPushComment}
             onPushToChat={onPushCommentToChat}
             onDiscuss={onDiscussComment}
+            onWhy={onWhyComment}
             onDelete={onDeleteComment}
             registerRef={registerCommentRef}
           />
