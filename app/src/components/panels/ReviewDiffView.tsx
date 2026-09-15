@@ -5,7 +5,11 @@ import type { ColorPalette } from "../../theme";
 import { fonts } from "../../theme";
 import type { FileLinkOpenDetail } from "../chat/FileLink";
 import { ContextMenu } from "../shared/ContextMenu";
-import { computeSegments, type HunkLine, type ParsedFile, parseUnifiedDiff } from "./DiffViewer";
+import { computeSegments, type HunkLine, highlightContent, type ParsedFile, parseUnifiedDiff } from "./DiffViewer";
+import { type ContentMatch, lineAddr, matchesInLine, type PathMatch, parseQuery, type SearchMode, searchParsedFiles, searchPaths } from "./diffSearch";
+
+/** Same cap the Git panel's find bar uses — a dropdown, not a file tree. */
+const MAX_PATH_RESULTS = 12;
 
 interface ReviewDiffViewProps {
   channelId: string;
@@ -295,6 +299,126 @@ export function ReviewDiffView({ channelId, rawDiff, comments, worktreePath, onP
     [anchors],
   );
 
+  // ---- Find in diff ------------------------------------------------------
+  // Same box and same rules as the Git panel's diff: a bare query searches the
+  // patch text, a leading ">" jumps to a file. Findings are not searched — the
+  // comment navigator already walks those, and folding them in here would make
+  // "3 / 40" count two different kinds of thing.
+  const rootRef = useRef<HTMLDivElement>(null);
+  const searchInputRef = useRef<HTMLInputElement>(null);
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [query, setQuery] = useState("");
+  const [activeMatch, setActiveMatch] = useState(0);
+  const [pathCursor, setPathCursor] = useState(0);
+
+  const { mode, term } = parseQuery(query);
+  const contentTerm = mode === "content" ? term.trim() : "";
+  // summaries are already in render order, so the index a match carries is the
+  // index of the row it belongs to — no pairing step, unlike the Git panel.
+  const contentMatches = useMemo(
+    () =>
+      mode === "content"
+        ? searchParsedFiles(
+            summaries.map((sum) => sum.parsed),
+            term,
+          )
+        : [],
+    [mode, term, summaries],
+  );
+  const pathMatches = useMemo(() => (mode === "path" ? searchPaths(summaries, term).slice(0, MAX_PATH_RESULTS) : []), [mode, term, summaries]);
+
+  // Every keystroke restarts the walk, so stepping always begins at the first
+  // match of the term you are actually looking at.
+  useEffect(() => {
+    setActiveMatch(0);
+    setPathCursor(0);
+  }, [query]);
+
+  // Walk the active match into view, expanding its file first when collapsed.
+  // The expansion re-runs this effect through `expandedSignature`, and by then
+  // the line exists in the DOM to scroll to.
+  const expandedSignature = [...expanded].join("\n");
+  // `expandedSignature` is the dependency rather than the Set itself, which is
+  // rebuilt on every toggle and would re-run this for reasons unrelated to it.
+  useEffect(() => {
+    const match = contentMatches[activeMatch];
+    if (!match) return;
+    const sum = summaries[match.fileIndex];
+    if (!sum) return;
+    if (!expanded.has(sum.path)) {
+      setExpanded((prev) => {
+        const next = new Set(prev);
+        next.add(sum.path);
+        return next;
+      });
+      return;
+    }
+    setFocusedIdx(match.fileIndex);
+    const addr = lineAddr(match.fileIndex, match.hunkIndex, match.lineIndex);
+    const frame = requestAnimationFrame(() => {
+      scrollRef.current?.querySelector(`[data-review-line="${addr}"]`)?.scrollIntoView({ block: "center", behavior: "smooth" });
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [activeMatch, contentMatches, summaries, expandedSignature]);
+
+  const stepMatch = useCallback(
+    (delta: number) => {
+      if (contentMatches.length === 0) return;
+      // Wrap, like every find bar — the end of a diff should not be a dead end
+      // when the match you want is above where you started.
+      setActiveMatch((i) => (i + delta + contentMatches.length) % contentMatches.length);
+    },
+    [contentMatches.length],
+  );
+
+  const openSearch = useCallback(() => {
+    setSearchOpen(true);
+    requestAnimationFrame(() => searchInputRef.current?.select());
+  }, []);
+
+  const closeSearch = useCallback(() => {
+    setSearchOpen(false);
+    setQuery("");
+    rootRef.current?.focus({ preventScroll: true });
+  }, []);
+
+  const handleRootKeyDown = (e: React.KeyboardEvent) => {
+    if ((e.metaKey || e.ctrlKey) && e.key === "f") {
+      e.preventDefault();
+      openSearch();
+    }
+  };
+
+  const handleSearchKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === "Escape") {
+      e.preventDefault();
+      closeSearch();
+      return;
+    }
+    if (mode === "path") {
+      if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+        e.preventDefault();
+        if (pathMatches.length === 0) return;
+        const delta = e.key === "ArrowDown" ? 1 : -1;
+        setPathCursor((i) => (i + delta + pathMatches.length) % pathMatches.length);
+        return;
+      }
+      if (e.key === "Enter") {
+        e.preventDefault();
+        const hit = pathMatches[pathCursor];
+        if (hit) {
+          navigateToFile(hit.fileIndex);
+          closeSearch();
+        }
+      }
+      return;
+    }
+    if (e.key === "Enter") {
+      e.preventDefault();
+      stepMatch(e.shiftKey ? -1 : 1);
+    }
+  };
+
   const clampedIdx = Math.min(focusedIdx, Math.max(summaries.length - 1, 0));
   const focusedPath = summaries[clampedIdx]?.path ?? "";
 
@@ -339,11 +463,21 @@ export function ReviewDiffView({ channelId, rawDiff, comments, worktreePath, onP
   const positionInCommented = commentedIndices.indexOf(clampedIdx);
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", flex: 1, minHeight: 0, position: "relative" }}>
+    // Focusable wrapper: this is what scopes Cmd+F to this pane rather than
+    // grabbing the shortcut globally, which a window listener would.
+    <div
+      ref={rootRef}
+      tabIndex={-1}
+      onKeyDown={handleRootKeyDown}
+      onMouseDown={() => rootRef.current?.focus({ preventScroll: true })}
+      style={{ display: "flex", flexDirection: "column", flex: 1, minHeight: 0, position: "relative", outline: "none" }}
+    >
       {summaries.length > 0 && (
         <DiffToolbar
           colors={colors}
           focusedPath={focusedPath}
+          searchOpen={searchOpen}
+          onToggleSearch={() => (searchOpen ? closeSearch() : openSearch())}
           index={positionInCommented >= 0 ? positionInCommented : -1}
           total={totalCommented}
           canPrev={prevCommentedIdx >= 0}
@@ -352,6 +486,28 @@ export function ReviewDiffView({ channelId, rawDiff, comments, worktreePath, onP
           onCollapseAll={collapseAll}
           onPrev={() => navigateToFile(prevCommentedIdx)}
           onNext={() => navigateToFile(nextCommentedIdx)}
+        />
+      )}
+      {summaries.length > 0 && searchOpen && (
+        <SearchBar
+          colors={colors}
+          inputRef={searchInputRef}
+          query={query}
+          onQueryChange={setQuery}
+          onKeyDown={handleSearchKeyDown}
+          mode={mode}
+          term={term}
+          contentTerm={contentTerm}
+          contentMatches={contentMatches}
+          activeMatch={activeMatch}
+          pathMatches={pathMatches}
+          pathCursor={pathCursor}
+          onStep={stepMatch}
+          onPickPath={(fileIndex) => {
+            navigateToFile(fileIndex);
+            closeSearch();
+          }}
+          onClose={closeSearch}
         />
       )}
       <div ref={scrollRef} onScroll={onScroll} style={{ flex: 1, overflow: "auto", minHeight: 0 }}>
@@ -366,9 +522,12 @@ export function ReviewDiffView({ channelId, rawDiff, comments, worktreePath, onP
           >
             <FileSection
               summary={sum}
+              fileIndex={idx}
               comments={byFile.get(sum.path) ?? []}
               expanded={expanded.has(sum.path)}
               colors={colors}
+              searchTerm={contentTerm}
+              activeMatch={contentMatches[activeMatch]}
               onToggle={() => {
                 setFocusedIdx(idx);
                 toggle(sum.path);
@@ -494,6 +653,8 @@ function DiffToolbar({
   total,
   canPrev,
   canNext,
+  searchOpen,
+  onToggleSearch,
   onExpandAll,
   onCollapseAll,
   onPrev,
@@ -505,6 +666,8 @@ function DiffToolbar({
   total: number;
   canPrev: boolean;
   canNext: boolean;
+  searchOpen: boolean;
+  onToggleSearch: () => void;
   onExpandAll: () => void;
   onCollapseAll: () => void;
   onPrev: () => void;
@@ -560,6 +723,17 @@ function DiffToolbar({
           <path d="M2.5 3.5L5 6.5L7.5 3.5" />
         </svg>
       </button>
+      <button
+        data-testid="review-diff-search-toggle"
+        onClick={onToggleSearch}
+        title={`Find in diff (${navigator.platform.includes("Mac") ? "\u2318F" : "Ctrl+F"})`}
+        style={{ ...btn, color: searchOpen ? colors.textLight : colors.textMuted, borderColor: searchOpen ? colors.textDim : colors.border }}
+      >
+        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <circle cx="11" cy="11" r="7" />
+          <path d="M20 20L16 16" />
+        </svg>
+      </button>
       <span
         style={{
           flex: 1,
@@ -580,11 +754,167 @@ function DiffToolbar({
   );
 }
 
+function SearchBar({
+  colors,
+  inputRef,
+  query,
+  onQueryChange,
+  onKeyDown,
+  mode,
+  term,
+  contentTerm,
+  contentMatches,
+  activeMatch,
+  pathMatches,
+  pathCursor,
+  onStep,
+  onPickPath,
+  onClose,
+}: {
+  colors: ColorPalette;
+  inputRef: React.RefObject<HTMLInputElement | null>;
+  query: string;
+  onQueryChange: (v: string) => void;
+  onKeyDown: (e: React.KeyboardEvent<HTMLInputElement>) => void;
+  mode: SearchMode;
+  term: string;
+  contentTerm: string;
+  contentMatches: ContentMatch[];
+  activeMatch: number;
+  pathMatches: PathMatch[];
+  pathCursor: number;
+  onStep: (delta: number) => void;
+  onPickPath: (fileIndex: number) => void;
+  onClose: () => void;
+}) {
+  const btn: React.CSSProperties = {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    width: 24,
+    height: 24,
+    border: `1px solid ${colors.border}`,
+    borderRadius: 4,
+    background: "transparent",
+    color: colors.textMuted,
+    cursor: "pointer",
+    fontSize: 14,
+    lineHeight: 1,
+  };
+  const none = contentMatches.length === 0;
+  return (
+    <div
+      data-testid="review-diff-search"
+      style={{ display: "flex", alignItems: "center", gap: 6, padding: "4px 12px", background: colors.surface, borderBottom: `1px solid ${colors.border}`, flexShrink: 0, position: "relative" }}
+    >
+      <input
+        ref={inputRef}
+        value={query}
+        onChange={(e) => onQueryChange(e.target.value)}
+        onKeyDown={onKeyDown}
+        placeholder="Find in diff — type > to jump to a file"
+        data-testid="review-diff-search-input"
+        style={{
+          flex: 1,
+          minWidth: 0,
+          background: colors.bg,
+          border: `1px solid ${colors.inputBorder}`,
+          borderRadius: 4,
+          color: colors.textLight,
+          fontFamily: fonts.mono,
+          fontSize: 12,
+          padding: "3px 8px",
+          outline: "none",
+        }}
+      />
+      {mode === "content" && contentTerm !== "" && (
+        <span data-testid="review-diff-search-count" style={{ fontFamily: fonts.mono, fontSize: 11, color: none ? colors.error : colors.textDim, flexShrink: 0 }}>
+          {none ? "no matches" : `${activeMatch + 1} / ${contentMatches.length}`}
+        </span>
+      )}
+      {mode === "path" && (
+        <span style={{ fontFamily: fonts.mono, fontSize: 11, color: colors.textDim, flexShrink: 0 }}>
+          {term === "" ? "jump to file" : `${pathMatches.length} file${pathMatches.length === 1 ? "" : "s"}`}
+        </span>
+      )}
+      {mode === "content" && (
+        <>
+          <button style={{ ...btn, opacity: none ? 0.3 : 1 }} disabled={none} onClick={() => onStep(-1)} title="Previous match (Shift+Enter)">
+            <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M2.5 6.5L5 3.5L7.5 6.5" />
+            </svg>
+          </button>
+          <button style={{ ...btn, opacity: none ? 0.3 : 1 }} disabled={none} onClick={() => onStep(1)} title="Next match (Enter)">
+            <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M2.5 3.5L5 6.5L7.5 3.5" />
+            </svg>
+          </button>
+        </>
+      )}
+      <button style={btn} onClick={onClose} title="Close (Esc)">
+        <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round">
+          <path d="M2 2L8 8M8 2L2 8" />
+        </svg>
+      </button>
+      {mode === "path" && pathMatches.length > 0 && (
+        <div
+          style={{
+            position: "absolute",
+            top: "100%",
+            left: 12,
+            right: 12,
+            zIndex: 5,
+            maxHeight: 240,
+            overflowY: "auto",
+            background: colors.bg,
+            border: `1px solid ${colors.border}`,
+            borderTop: "none",
+            borderRadius: "0 0 4px 4px",
+            boxShadow: `0 4px 12px ${colors.shadow}`,
+          }}
+        >
+          {pathMatches.map((hit, i) => (
+            <button
+              key={hit.fileIndex}
+              data-testid="review-diff-search-path-result"
+              onClick={() => onPickPath(hit.fileIndex)}
+              style={{
+                display: "block",
+                width: "100%",
+                textAlign: "left",
+                border: "none",
+                background: i === pathCursor ? colors.selectedBg : "transparent",
+                color: colors.textLight,
+                fontFamily: fonts.mono,
+                fontSize: 12,
+                padding: "3px 8px",
+                cursor: "pointer",
+                whiteSpace: "nowrap",
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+              }}
+            >
+              {highlightContent(
+                hit.path,
+                hit.positions.map((pos) => ({ start: pos, end: pos + 1 })),
+                -1,
+              )}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function FileSection({
   summary,
+  fileIndex,
   comments,
   expanded,
   colors,
+  searchTerm,
+  activeMatch,
   onToggle,
   onContextMenu,
   onPushComment,
@@ -594,9 +924,12 @@ function FileSection({
   registerCommentRef,
 }: {
   summary: FileSummary;
+  fileIndex: number;
   comments: ReviewComment[];
   expanded: boolean;
   colors: ColorPalette;
+  searchTerm: string;
+  activeMatch: ContentMatch | undefined;
   onToggle: () => void;
   onContextMenu: (e: React.MouseEvent, path: string) => void;
   onPushComment: (c: ReviewComment) => void | Promise<void>;
@@ -714,9 +1047,10 @@ function FileSection({
                 {seg.hunk.lines.map((line, li) => {
                   const key = lineKey(line);
                   const matched = key ? commentMap.get(key) : undefined;
+                  const active = activeMatch && activeMatch.fileIndex === fileIndex && activeMatch.hunkIndex === seg.hunkIndex && activeMatch.lineIndex === li ? activeMatch.start : -1;
                   return (
                     <div key={li}>
-                      <DiffLineRow line={line} colors={colors} />
+                      <DiffLineRow line={line} colors={colors} addr={lineAddr(fileIndex, seg.hunkIndex, li)} searchTerm={searchTerm} activeStart={active} />
                       {matched &&
                         matched.map((c) => (
                           <InlineComment
@@ -742,7 +1076,8 @@ function FileSection({
   );
 }
 
-function DiffLineRow({ line, colors }: { line: HunkLine; colors: ColorPalette }) {
+function DiffLineRow({ line, colors, addr, searchTerm, activeStart }: { line: HunkLine; colors: ColorPalette; addr: string; searchTerm: string; activeStart: number }) {
+  const ranges = searchTerm ? matchesInLine(line.content, searchTerm) : [];
   const lineColors = {
     add: { bg: colors.diffAddBg, numBg: colors.diffAddNumBg, text: colors.diffAddText },
     del: { bg: colors.diffDelBg, numBg: colors.diffDelNumBg, text: colors.diffDelText },
@@ -791,6 +1126,7 @@ function DiffLineRow({ line, colors }: { line: HunkLine; colors: ColorPalette })
         {line.type === "add" ? "+" : line.type === "del" ? "−" : " "}
       </span>
       <span
+        data-review-line={addr}
         style={{
           flex: 1,
           fontSize: 12,
@@ -801,7 +1137,7 @@ function DiffLineRow({ line, colors }: { line: HunkLine; colors: ColorPalette })
           textOverflow: "ellipsis",
         }}
       >
-        {line.content || " "}
+        {ranges.length > 0 ? highlightContent(line.content, ranges, activeStart) : line.content || " "}
       </span>
     </div>
   );

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { ParsedFile } from "./DiffViewer";
-import { fuzzyScore, lineAddr, matchesInLine, parseQuery, searchContent, searchPaths } from "./diffSearch";
+import { fuzzyScore, lineAddr, matchesInLine, parseQuery, searchContent, searchParsedFiles, searchPaths } from "./diffSearch";
 
 describe("fuzzyScore", () => {
   it("returns null when the query is not a subsequence", () => {
@@ -157,6 +157,35 @@ describe("searchContent", () => {
     const hits = searchContent([{ path: "a.go", status: "unstaged" }], [staged, unstaged], "miss");
     expect(hits).toHaveLength(1);
     expect(hits[0]!.fileIndex).toBe(0);
+  });
+});
+
+describe("searchParsedFiles", () => {
+  // The form the Review panel uses: it renders straight from ParsedFile[],
+  // with no DiffFile list to pair against.
+  const parsedFiles: ParsedFile[] = [
+    { path: "a.go", hunks: [{ header: "@@", lines: [{ type: "add", content: "errTimeout", oldNum: null, newNum: 1 }] }] },
+    { path: "b.go", hunks: [{ header: "@@", lines: [{ type: "ctx", content: "errTimeout errTimeout", oldNum: 1, newNum: 1 }] }] },
+  ];
+
+  it("returns nothing for a blank query", () => {
+    expect(searchParsedFiles(parsedFiles, "  ")).toEqual([]);
+  });
+
+  it("indexes files by their position in the list it was given", () => {
+    expect(searchParsedFiles(parsedFiles, "errtimeout").map((m) => m.fileIndex)).toEqual([0, 1, 1]);
+  });
+
+  it("reports every match in a line, left to right", () => {
+    const hits = searchParsedFiles([parsedFiles[1]!], "errTimeout");
+    expect(hits.map((m) => m.start)).toEqual([0, 11]);
+  });
+
+  it("skips a hole without shifting the indices after it", () => {
+    // A caller whose list has a gap (no parsed counterpart for a row) must
+    // still get indices that address its own rows.
+    const hits = searchParsedFiles([undefined, parsedFiles[0]!], "errtimeout");
+    expect(hits.map((m) => m.fileIndex)).toEqual([1]);
   });
 });
 

@@ -203,22 +203,21 @@ export function matchesInLine(content: string, query: string): Array<{ start: nu
 }
 
 /**
- * All content matches across the diff, in render order, so stepping through
- * them walks the view top to bottom.
+ * All content matches across an already-ordered list of files, in render
+ * order, so stepping through them walks the view top to bottom. A hole in the
+ * list is skipped but still consumes its index, which is what keeps
+ * `fileIndex` addressing the row the caller renders.
  *
  * Only hunk lines are searched. Context revealed by expanding a gap is fetched
  * on demand and isn't part of the diff, so including it would make the match
  * count depend on which gaps happen to be open.
  */
-export function searchContent(files: Array<Pick<DiffFile, "path" | "status">>, parsedFiles: ParsedFile[], query: string): ContentMatch[] {
+export function searchParsedFiles(parsedFiles: Array<ParsedFile | undefined>, query: string): ContentMatch[] {
   const q = query.trim();
   if (q === "") return [];
   const out: ContentMatch[] = [];
-  for (let fileIndex = 0; fileIndex < files.length; fileIndex++) {
-    const file = files[fileIndex];
-    if (!file) continue;
-    // Same pairing rule the renderer uses, so fileIndex addresses the same row.
-    const parsed = parsedFiles.find((pf) => pf.path === file.path && pf.status === file.status);
+  for (let fileIndex = 0; fileIndex < parsedFiles.length; fileIndex++) {
+    const parsed = parsedFiles[fileIndex];
     if (!parsed) continue;
     for (let hunkIndex = 0; hunkIndex < parsed.hunks.length; hunkIndex++) {
       const lines = parsed.hunks[hunkIndex]?.lines ?? [];
@@ -230,6 +229,19 @@ export function searchContent(files: Array<Pick<DiffFile, "path" | "status">>, p
     }
   }
   return out;
+}
+
+/**
+ * All content matches across a diff the DiffViewer renders, which addresses
+ * files through a separate `DiffFile[]` list. The Review panel renders
+ * straight from `ParsedFile[]` and calls `searchParsedFiles` instead.
+ */
+export function searchContent(files: Array<Pick<DiffFile, "path" | "status">>, parsedFiles: ParsedFile[], query: string): ContentMatch[] {
+  // Same pairing rule the renderer uses, so fileIndex addresses the same row.
+  return searchParsedFiles(
+    files.map((file) => (file ? parsedFiles.find((pf) => pf.path === file.path && pf.status === file.status) : undefined)),
+    query,
+  );
 }
 
 export type SearchMode = "content" | "path";
