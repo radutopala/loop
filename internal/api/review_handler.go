@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"path/filepath"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/radutopala/loop/internal/githubapi"
 	"github.com/radutopala/loop/internal/review"
@@ -857,31 +858,70 @@ func buildReviewContext(sess *review.Session, ghUser string) string {
 		fmt.Fprintf(&b, "\nGitHub CLI account: %s\n", ghUser)
 		fmt.Fprintf(&b, "If you need to run gh, switch to that account first with `gh auth switch -u %s` (only if it isn't already active).\n", ghUser)
 	}
-	if len(sess.Comments) > 0 {
-		b.WriteString("\nExisting review comments on this PR — do NOT re-emit any of these. Only add NEW, non-duplicate findings.\n")
-		for _, c := range sess.Comments {
-			if c == nil {
-				continue
-			}
-			label := "agent"
-			if c.Source == "github" {
-				label = "github"
-				if c.Author != "" {
-					label = "github @" + c.Author
-				}
-			}
-			side := c.Side
-			if side == "" {
-				side = "RIGHT"
-			}
-			body := strings.TrimSpace(c.Body)
-			if len(body) > 240 {
-				body = body[:240] + "..."
-			}
-			fmt.Fprintf(&b, "- [%s] %s:L%d (%s): %s\n", label, c.Path, c.Line, side, body)
-		}
+	if list := buildReviewDedupList(sess); list != "" {
+		b.WriteString("\n" + list)
 	}
 	return b.String()
+}
+
+// buildReviewDedupList renders the "already reported, do not repeat" block,
+// or "" when the session has no comments yet. Split out of buildReviewContext
+// so the list can be rendered on its own.
+func buildReviewDedupList(sess *review.Session) string {
+	if len(sess.Comments) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString("Existing review comments on this PR — do NOT re-emit any of these. Only add NEW, non-duplicate findings.\n")
+	n := 0
+	for _, c := range sess.Comments {
+		if c == nil {
+			continue
+		}
+		n++
+		label := "agent"
+		if c.Source == "github" {
+			label = "github"
+			if c.Author != "" {
+				label = "github @" + c.Author
+			}
+		}
+		side := c.Side
+		if side == "" {
+			side = "RIGHT"
+		}
+		fmt.Fprintf(&b, "- [%s] %s:L%d (%s): %s\n", label, c.Path, c.Line, side, dedupEntryBody(c.Body))
+	}
+	if n == 0 {
+		return ""
+	}
+	return b.String()
+}
+
+// dedupEntryBody renders a comment body as a single line for the
+// "do NOT re-emit" list.
+//
+// Every agent finding is summary + blank line + failure scenario (see
+// review.ParseReportFindings), so writing the body verbatim turned each
+// entry into three lines and left the scenario sitting between bullets
+// as its own paragraph — after a few findings the list stops reading as
+// a list at all, which is the shape a model skims past. Collapsing
+// runs of whitespace keeps one bullet per finding.
+//
+// The cap keeps a handful of long findings from crowding out the diff
+// itself; it is applied after collapsing, and backs up to a rune
+// boundary so a multi-byte character is never cut in half.
+func dedupEntryBody(body string) string {
+	body = strings.Join(strings.Fields(body), " ")
+	const maxLen = 240
+	if len(body) <= maxLen {
+		return body
+	}
+	cut := maxLen
+	for cut > 0 && !utf8.RuneStart(body[cut]) {
+		cut--
+	}
+	return body[:cut] + "..."
 }
 
 // respondReviewError maps gh-specific errors to the right HTTP status
