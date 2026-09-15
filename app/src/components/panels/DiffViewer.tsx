@@ -265,7 +265,12 @@ const ACTIVE_MATCH_TEXT = "#1a1a1a";
 const MAX_PATH_RESULTS = 12;
 
 /** Split a line into plain text and highlighted match spans. */
-function highlightContent(content: string, ranges: Array<{ start: number; end: number }>, activeStart: number): React.ReactNode[] {
+/**
+ * Wrap each match in a highlight span, the one at `activeStart` more strongly.
+ * Exported for the Review panel's diff, which renders its own rows but should
+ * not invent a second pair of highlight colours.
+ */
+export function highlightContent(content: string, ranges: Array<{ start: number; end: number }>, activeStart: number): React.ReactNode[] {
   const out: React.ReactNode[] = [];
   let at = 0;
   for (const r of ranges) {
