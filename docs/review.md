@@ -62,11 +62,12 @@ per-global / per-project / per-worktree the same way as `github.gh_user`.
    arrives. An override prompt can instead use the
    `report_review_findings` MCP tool — see
    [Required output format](#required-output-format).
-3. **Push** — each comment ships with **Push** (single) and a **Push all
-   (N)** affordance in the header (when at least one comment is unpushed).
-   The backend uses `gh api ... /pulls/N/comments` against the captured
-   head SHA so comments anchor to the right commit even if the PR is
-   force-pushed later.
+3. **Push** — each comment ships with **Push** (single) and the header
+   carries **Push all to GitHub (N)** (when at least one comment is
+   unpushed). The backend uses `gh api ... /pulls/N/comments` against the
+   captured head SHA so comments anchor to the right commit even if the PR
+   is force-pushed later. GitHub is not the only exit — see
+   [Handing a finding to the agent](#handing-a-finding-to-the-agent).
 4. **Close** — closing the session deletes the in-memory session record
    and removes the worktree on disk. Pushed comments remain on GitHub.
 
@@ -104,6 +105,81 @@ The choice is stored on the in-memory review session (it resets when the
 daemon restarts) rather than on the run request, because the Run button
 dispatches a workflow whose `loop review run` step has nowhere to carry
 per-run options. See [`PUT /review/fork`](api.md).
+
+## Handing a finding to the agent
+
+A finding can also go to the channel's chat instead of (or before) GitHub.
+Four affordances do that, and they differ in **who writes the message** and
+**whether it is sent**:
+
+| Button | Message | Sent? |
+|--------|---------|-------|
+| **Discuss** | The finding quoted under its `path:line`, with a blank line below it | No — it lands in the composer for you to finish |
+| **Why?** | The same quote, with `Please explain why we need this.` filled into that blank line | Yes, straight away |
+| **Push to chat** | `Please address this review comment from the PR:` plus file, line, side, PR number, head SHA and author, then the quoted body | Yes, straight away |
+| **Push all to chat (N)** | The same, batched over every unpushed comment | Yes, straight away |
+
+The split that matters is intent, not wording. The two Push-to-chat prompts
+are **instructions** — go fix this. Discuss and Why? deliberately carry no
+instruction: asking why a finding was made is a different request from asking
+for it to be fixed, and a prompt that says both gets the second one.
+
+Discuss exists for the question you have to phrase yourself. Why? is the one
+question common enough to be worth a button, and since it leaves nothing to
+type it sends rather than parking a finished message in the composer.
+
+Discuss and Why? stay on a comment for its whole life. **Push to chat** does
+not: once a comment is pushed to GitHub, both push buttons collapse into an
+`on github` marker, so the question buttons are what remains for a finding
+already filed.
+
+All four first dispatch `loop:open-panel`, so a Chat panel is mounted in the
+current layout — anchored to the right of the Review panel when one has to be
+created, so the answer arrives beside the diff it is about.
+
+### Discuss and Why? carry the run transcripts
+
+The panel keeps a finding's verdict; the reasoning behind it lives only in the
+transcript of the run that produced it. So both quotes append every run
+transcript the session knows, oldest first:
+
+```
+> internal/api/x.go:12
+> leaks the lock on the error path
+>
+> transcripts of the review runs that produced this, oldest first:
+> /home/u/.claude/projects/-repo--worktrees-pr-7/<session-id>.jsonl
+
+Please explain why we need this.
+```
+
+Full paths rather than bare ids, because Claude keys transcripts by the
+agent's CWD — the PR worktree — which is not a directory the chat agent can
+derive from its own channel. They resolve as-is inside an agent container,
+which runs with `HOME` set to the host home and `~/.claude` bind-mounted at
+its host path.
+
+Each run records its id as it completes, and the first one records the
+directory (`run_session_ids` and `transcript_dir` on `GET /review`). Until a
+run has completed under the current daemon the session has neither, and the
+block is omitted rather than half-written — an id with no directory is not a
+path anyone can open, and a directory with no ids points at nothing.
+
+## Searching the diff
+
+The review diff carries the same find bar as the Git panel's, opened with the
+magnifier in the file-navigation bar or with `⌘F` / `Ctrl+F` while the diff has
+focus; `Esc` closes it. A bare query searches the patch text, and a leading `>`
+switches to a fuzzy file jump. The matching rules — fzf `FuzzyMatchV1` path
+ranking, smart case, wrapping `Enter` / `Shift+Enter` — are documented once, in
+[git.md](git.md#searching-a-diff).
+
+Two differences follow from this being a review:
+
+- Stepping onto a match inside a **collapsed file expands it first**, the same
+  way the comment navigator does.
+- **Findings are not searched.** The comment navigator already walks those, and
+  folding them in would make `3 / 40` count two different kinds of thing.
 
 ## Navigating comments
 
@@ -245,3 +321,4 @@ in a later run — is safe.
 
 - [api.md](api.md) — full HTTP and event surface.
 - [layouts.md](layouts.md) — how to add a Review pane.
+- [git.md](git.md#searching-a-diff) — the find bar the review diff shares.
