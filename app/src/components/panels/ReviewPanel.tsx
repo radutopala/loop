@@ -147,10 +147,8 @@ export function buildDiscussDraft(c: ReviewComment, session?: ReviewSession | nu
   // Trailing blank line: markdown needs one to close the blockquote, and it
   // puts the caret on an empty line instead of at the end of the quote.
   const draft = `${lines.join("\n")}\n\n`;
-  // "Why?" is the same draft with the question already typed. It still stops
-  // at the composer: the canned wording saves keystrokes, it does not take the
-  // decision to send away from the user, and it stays editable for the times
-  // the stock question is not quite the one being asked.
+  // "Why?" is the same draft with the question filled into the blank line the
+  // quote ends on, which is where the user would have typed it.
   return question ? `${draft}${question}` : draft;
 }
 
@@ -821,24 +819,38 @@ export function ReviewPanel({ channelId, subscribeChatEvents, registerReviewView
     [channelId, ensureChatOpen, session?.head_sha, session?.pr?.number],
   );
 
-  // Neither Discuss nor Why? sends anything: they open the chat beside the
-  // diff and drop a quoted copy of the finding into the composer. Discuss
-  // leaves the question to the user; Why? fills in the one that gets asked
-  // most. The decision to send stays with the user either way.
-  const composeAboutComment = useCallback(
-    (c: ReviewComment, question?: string) => {
+  // Discuss stops at the composer: it opens the chat beside the diff, drops a
+  // quoted copy of the finding in, and leaves both the question and the
+  // decision to send to the user.
+  const onDiscussOne = useCallback(
+    (c: ReviewComment) => {
       ensureChatOpen();
       window.dispatchEvent(
         new CustomEvent("loop:chat-compose", {
-          detail: { channelId, text: buildDiscussDraft(c, session, question) },
+          detail: { channelId, text: buildDiscussDraft(c, session) },
         }),
       );
     },
     [channelId, ensureChatOpen, session],
   );
 
-  const onDiscussOne = useCallback((c: ReviewComment) => composeAboutComment(c), [composeAboutComment]);
-  const onWhyOne = useCallback((c: ReviewComment) => composeAboutComment(c, WHY_QUESTION), [composeAboutComment]);
+  // Why? sends. It is the same draft with the question that gets asked most
+  // already in it, so there is nothing left to type and stopping at the
+  // composer would only cost a click — Discuss is still there for the times
+  // the question needs editing. Goes out through sendMessage, like pushing a
+  // single comment to chat does.
+  const onWhyOne = useCallback(
+    async (c: ReviewComment) => {
+      setError(null);
+      try {
+        ensureChatOpen();
+        await sendMessage(channelId, buildDiscussDraft(c, session, WHY_QUESTION));
+      } catch (e) {
+        setError(e instanceof Error ? e.message : String(e));
+      }
+    },
+    [channelId, ensureChatOpen, session],
+  );
 
   const onPushAllToChat = useCallback(async () => {
     const pending = (session?.comments ?? []).filter((c) => !c.pushed);

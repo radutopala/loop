@@ -19,7 +19,7 @@ interface ReviewDiffViewProps {
   onPushComment: (c: ReviewComment) => void | Promise<void>;
   onPushCommentToChat: (c: ReviewComment) => void | Promise<void>;
   onDiscussComment: (c: ReviewComment) => void;
-  onWhyComment: (c: ReviewComment) => void;
+  onWhyComment: (c: ReviewComment) => void | Promise<void>;
   onDeleteComment: (c: ReviewComment) => void | Promise<void>;
 }
 
@@ -939,7 +939,7 @@ function FileSection({
   onPushComment: (c: ReviewComment) => void | Promise<void>;
   onPushCommentToChat: (c: ReviewComment) => void | Promise<void>;
   onDiscussComment: (c: ReviewComment) => void;
-  onWhyComment: (c: ReviewComment) => void;
+  onWhyComment: (c: ReviewComment) => void | Promise<void>;
   onDeleteComment: (c: ReviewComment) => void | Promise<void>;
   registerCommentRef: (id: string, el: HTMLDivElement | null) => void;
 }) {
@@ -1164,7 +1164,7 @@ function InlineComment({
   onPush: (c: ReviewComment) => void | Promise<void>;
   onPushToChat: (c: ReviewComment) => void | Promise<void>;
   onDiscuss: (c: ReviewComment) => void;
-  onWhy: (c: ReviewComment) => void;
+  onWhy: (c: ReviewComment) => void | Promise<void>;
   onDelete: (c: ReviewComment) => void | Promise<void>;
   /** Hands the card's node to the floating navigator so it can scroll to it. */
   registerRef: (id: string, el: HTMLDivElement | null) => void;
@@ -1281,7 +1281,7 @@ function InlineComment({
             fontFamily: fonts.sans,
             cursor: "pointer",
           }}
-          title="Quote this comment into the chat composer with the question already typed (doesn't send)"
+          title="Ask the chat agent why this is needed (sends straight away)"
         >
           Why?
         </button>
@@ -1381,7 +1381,7 @@ function OrphanCommentsSection({
   onPushComment: (c: ReviewComment) => void | Promise<void>;
   onPushCommentToChat: (c: ReviewComment) => void | Promise<void>;
   onDiscussComment: (c: ReviewComment) => void;
-  onWhyComment: (c: ReviewComment) => void;
+  onWhyComment: (c: ReviewComment) => void | Promise<void>;
   onDeleteComment: (c: ReviewComment) => void | Promise<void>;
   registerCommentRef: (id: string, el: HTMLDivElement | null) => void;
 }) {
