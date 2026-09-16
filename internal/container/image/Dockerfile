@@ -8,14 +8,30 @@ ENV GOTOOLCHAIN=auto
 # distro package — Debian ships Node 20, which is end-of-life. Keep the
 # version in sync with scripts/test-runner.Dockerfile and the CI
 # node-version pins.
+#
+# The Docker CLI and its plugins come from Docker's own apt repository rather
+# than Debian's, which pins buildx at 0.13.1 and the CLI at 26.1.5. Without the
+# buildx plugin a `docker build --platform` falls back to the classic builder,
+# which cannot cross-build and dies at the first COPY with "does not provide
+# the specified platform" on an arm64 host. docker-compose-plugin drops the
+# hyphenated /usr/bin/docker-compose that Debian's package installed, so a shim
+# keeps `docker-compose ...` working for projects whose scripts still use it.
 RUN apt-get update && apt-get install -y --no-install-recommends \
         bash ca-certificates curl git git-lfs make patch \
-        docker-cli docker-compose \
         gosu ripgrep openssh-client \
         python3 python3-pip python3-venv \
         gcc libc6-dev \
+    && install -m 0755 -d /etc/apt/keyrings \
+    && curl -fsSL https://download.docker.com/linux/debian/gpg -o /etc/apt/keyrings/docker.asc \
+    && chmod a+r /etc/apt/keyrings/docker.asc \
+    && echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/debian $(. /etc/os-release && echo $VERSION_CODENAME) stable" \
+        > /etc/apt/sources.list.d/docker.list \
     && curl -fsSL https://deb.nodesource.com/setup_24.x | bash - \
-    && apt-get install -y --no-install-recommends nodejs \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends \
+        docker-ce-cli docker-buildx-plugin docker-compose-plugin nodejs \
+    && printf '#!/bin/sh\nexec docker compose "$@"\n' > /usr/local/bin/docker-compose \
+    && chmod 0755 /usr/local/bin/docker-compose \
     && rm -rf /var/lib/apt/lists/*
 # Docker Desktop's VirtioFS intermittently stats host bind mounts as uid 0
 # instead of the host uid, which makes git abort with "detected dubious

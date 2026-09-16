@@ -156,6 +156,17 @@ var migrations = []Migration{
 		Description: "refresh container/ files: chrome entrypoint without --disable-extensions",
 		Apply:       refreshContainerFiles,
 	},
+	{
+		// Moves the Docker CLI and its plugins to Docker's own apt repo and
+		// adds buildx. Without the buildx plugin a `docker build --platform`
+		// falls back to the classic builder, which cannot cross-build and
+		// dies at the first COPY with "does not provide the specified
+		// platform". Existing installs keep their old Dockerfile until this
+		// refresh lands, so their next image rebuild would still ship
+		// without it.
+		Description: "refresh container/ files: Docker CLI + buildx/compose plugins from Docker's apt repo",
+		Apply:       refreshContainerFiles,
+	},
 }
 
 // versionedContainerFiles are tracked by the daemon: each release ships a
