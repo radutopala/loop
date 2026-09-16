@@ -230,7 +230,10 @@ func (r *DockerRunner) buildContainerEnv(cfg *config.Config, channelID, apiURL s
 		"CLAUDE_CODE_NO_FLICKER=1",
 	}
 	env = addAuthEnv(env, cfg)
-	env = r.addProxyEnv(env)
+	// The Chrome sidecar is a bare hostname on the shared Docker network, so
+	// dockerBridgeCIDR does not cover it — CDP would go through the proxy and
+	// come back 502.
+	env = r.addProxyEnv(env, ChromeHostname(channelID))
 
 	for k, v := range cfg.Envs {
 		expanded, err := r.expandPath(v)
@@ -255,13 +258,39 @@ func addAuthEnv(env []string, cfg *config.Config) []string {
 	return env
 }
 
-// addProxyEnv forwards host proxy environment variables into env,
-// rewriting localhost addresses to host.docker.internal.
-// extraNoProxyHosts are added to NO_PROXY (e.g. Chrome container hostname).
-func (r *DockerRunner) addProxyEnv(env []string, extraNoProxyHosts ...string) []string {
+// ChromeContainerPrefix is the name and hostname prefix of the Chrome sidecar
+// container. It lives here rather than in internal/browser so container env
+// can name the sidecar without an import cycle — browser already imports this
+// package.
+const ChromeContainerPrefix = "loop-chrome-"
+
+// ChromeHostname returns the Chrome sidecar hostname for a channel.
+func ChromeHostname(channelID string) string {
+	return ChromeContainerPrefix + SanitizeName(channelID)
+}
+
+// proxyEnvKeys are the proxy variables a container inherits from the daemon's
+// own environment, in the order they are emitted.
+var proxyEnvKeys = []string{"HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "http_proxy", "https_proxy", "no_proxy"}
+
+// dockerBridgeCIDR covers the address space Docker hands out to the default
+// bridge and to user-defined networks. Sibling-container addresses have to
+// bypass the proxy: a proxy reached via host.docker.internal runs on the Docker
+// host, which has no route back into the bridge, so a proxied request to a
+// sibling hangs until it times out rather than failing fast.
+const dockerBridgeCIDR = "172.16.0.0/12"
+
+// ProxyEnv returns the proxy environment entries a container should inherit,
+// read through getenv and with localhost addresses rewritten to
+// host.docker.internal. extraNoProxyHosts are added to NO_PROXY (e.g. the
+// Chrome sidecar hostname, which the agent reaches over the shared network).
+// The result is empty when the daemon has no proxy configured, so callers can
+// append it unconditionally.
+func ProxyEnv(getenv func(string) string, extraNoProxyHosts ...string) []string {
+	var env []string
 	hasProxy := false
-	for _, key := range []string{"HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "http_proxy", "https_proxy", "no_proxy"} {
-		if v := r.sys.Getenv(key); v != "" {
+	for _, key := range proxyEnvKeys {
+		if v := getenv(key); v != "" {
 			env = append(env, key+"="+localhostToDockerHost(v))
 			if key != "NO_PROXY" && key != "no_proxy" {
 				hasProxy = true
@@ -274,10 +303,17 @@ func (r *DockerRunner) addProxyEnv(env []string, extraNoProxyHosts ...string) []
 	return env
 }
 
+// addProxyEnv forwards host proxy environment variables into env,
+// rewriting localhost addresses to host.docker.internal.
+// extraNoProxyHosts are added to NO_PROXY (e.g. Chrome container hostname).
+func (r *DockerRunner) addProxyEnv(env []string, extraNoProxyHosts ...string) []string {
+	return append(env, ProxyEnv(r.sys.Getenv, extraNoProxyHosts...)...)
+}
+
 // ensureNoProxy ensures host.docker.internal (and any extra hosts) are in
 // NO_PROXY and no_proxy so the container's API calls bypass the proxy.
 func ensureNoProxy(env []string, extraHosts ...string) []string {
-	hosts := append([]string{"host.docker.internal", "localhost", "127.0.0.1", "::1"}, extraHosts...)
+	hosts := append([]string{"host.docker.internal", "localhost", "127.0.0.1", "::1", dockerBridgeCIDR}, extraHosts...)
 	found := false
 	for i, e := range env {
 		for _, key := range []string{"NO_PROXY=", "no_proxy="} {

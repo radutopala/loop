@@ -53,6 +53,11 @@ type DockerProvider struct {
 	// start.
 	defaults ChannelSettings
 
+	// getenv reads the daemon's own environment, and is what the sidecar's
+	// proxy settings are derived from. Overridable in tests via the struct
+	// field.
+	getenv func(string) string
+
 	// settingsFor resolves one channel's settings at container-create time.
 	// The browser block is per-project config while the provider is a single
 	// daemon-lifetime object, so anything baked in at construction can only
@@ -95,9 +100,6 @@ const (
 
 	// chromeLabel identifies Chrome sidecar containers.
 	chromeLabel = "loop-chrome"
-
-	// containerPrefix is the prefix for Chrome container names.
-	containerPrefix = "loop-chrome-"
 
 	// profileVolumePrefix is the prefix for the named volumes holding each
 	// channel's persistent Chrome profile.
@@ -150,6 +152,7 @@ func NewDockerProvider(api DockerClient, cfg DockerProviderConfig, logger *slog.
 		screen:         cfg.Screen,
 		logger:         logger,
 		inContainer:    inDockerContainer(),
+		getenv:         os.Getenv,
 		defaults: ChannelSettings{
 			Image:          cfg.Image,
 			PersistProfile: cfg.PersistProfile,
@@ -255,7 +258,7 @@ func extensionDirs(extensions []string) []string {
 
 // ChromeHostname returns the Chrome container hostname for a channel.
 func ChromeHostname(channelID string) string {
-	return containerPrefix + container.SanitizeName(channelID)
+	return container.ChromeHostname(channelID)
 }
 
 // ChromeProfileVolume returns the name of the Docker volume holding a channel's
@@ -434,8 +437,17 @@ func (m *DockerProvider) EnsureBrowser(ctx context.Context, channelID, _ string)
 			Labels:       map[string]string{chromeLabel: channelID},
 			ExposedPorts: nat.PortSet{"9222/tcp": struct{}{}},
 			Hostname:     containerName,
+			// Chrome inherits the daemon's proxy the same way agent containers
+			// do. Without it the sidecar resolves names through Docker's own
+			// resolver, which only forwards to the host's unscoped resolvers —
+			// so any split-DNS zone the host can reach is NXDOMAIN in here.
+			Env: container.ProxyEnv(m.getenv),
 		},
 		&containertypes.HostConfig{
+			// Docker Desktop resolves host.docker.internal on its own, plain
+			// Docker Engine does not — and the proxy above is addressed by
+			// that name.
+			ExtraHosts: []string{"host.docker.internal:host-gateway"},
 			Resources: containertypes.Resources{
 				Memory:    cs.MemoryMB * 1024 * 1024,
 				CPUQuota:  int64(cs.CPUs * cpuPeriod),

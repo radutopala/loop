@@ -12,7 +12,6 @@ import (
 
 	"github.com/radutopala/loop/internal/agent"
 	"github.com/radutopala/loop/internal/config"
-	"github.com/radutopala/loop/internal/testutil"
 )
 
 func (s *RunnerSuite) TestAddAuthEnv() {
@@ -55,43 +54,52 @@ func (s *RunnerSuite) TestAddAuthEnv() {
 	}
 }
 
-func (s *RunnerSuite) TestAddProxyEnv() {
+func (s *RunnerSuite) TestProxyEnv() {
+	const noProxy = "host.docker.internal,localhost,127.0.0.1,::1,172.16.0.0/12"
 	tests := []struct {
-		name string
-		envs map[string]string
-		want []string
+		name       string
+		envs       map[string]string
+		extraHosts []string
+		want       []string
 	}{
 		{
 			name: "no proxy vars",
 			envs: map[string]string{},
-			want: []string{"BASE=1"},
+			want: nil,
 		},
 		{
 			name: "HTTP_PROXY forwarded with NO_PROXY added",
 			envs: map[string]string{"HTTP_PROXY": "http://proxy:8080"},
-			want: []string{"BASE=1", "HTTP_PROXY=http://proxy:8080", "NO_PROXY=host.docker.internal,localhost,127.0.0.1,::1", "no_proxy=host.docker.internal,localhost,127.0.0.1,::1"},
+			want: []string{"HTTP_PROXY=http://proxy:8080", "NO_PROXY=" + noProxy, "no_proxy=" + noProxy},
 		},
 		{
 			name: "localhost rewritten to docker host",
 			envs: map[string]string{"HTTP_PROXY": "http://localhost:3128"},
-			want: []string{"BASE=1", "HTTP_PROXY=http://host.docker.internal:3128", "NO_PROXY=host.docker.internal,localhost,127.0.0.1,::1", "no_proxy=host.docker.internal,localhost,127.0.0.1,::1"},
+			want: []string{"HTTP_PROXY=http://host.docker.internal:3128", "NO_PROXY=" + noProxy, "no_proxy=" + noProxy},
+		},
+		{
+			name:       "extra hosts bypass the proxy too",
+			envs:       map[string]string{"HTTP_PROXY": "http://proxy:8080"},
+			extraHosts: []string{"loop-chrome-ch1"},
+			want:       []string{"HTTP_PROXY=http://proxy:8080", "NO_PROXY=" + noProxy + ",loop-chrome-ch1", "no_proxy=" + noProxy + ",loop-chrome-ch1"},
+		},
+		{
+			name:       "extra hosts ignored without a proxy",
+			envs:       map[string]string{"NO_PROXY": "localhost"},
+			extraHosts: []string{"loop-chrome-ch1"},
+			want:       []string{"NO_PROXY=localhost"},
 		},
 	}
 	for _, tc := range tests {
 		s.Run(tc.name, func() {
-			sys := new(testutil.MockSystem)
-			for k, v := range tc.envs {
-				sys.On("Getenv", k).Return(v)
-			}
-			sys.On("Getenv", mock.Anything).Return("")
-			s.runner.sys = sys
-
-			result := s.runner.addProxyEnv([]string{"BASE=1"})
-			require.Equal(s.T(), tc.want, result)
-
-			s.runner.sys = s.sys // restore
+			getenv := func(key string) string { return tc.envs[key] }
+			require.Equal(s.T(), tc.want, ProxyEnv(getenv, tc.extraHosts...))
 		})
 	}
+}
+
+func (s *RunnerSuite) TestChromeHostname() {
+	require.Equal(s.T(), "loop-chrome-ch-1", ChromeHostname("ch-1"))
 }
 
 func (s *RunnerSuite) TestLocalhostToDockerHost() {
@@ -137,43 +145,43 @@ func (s *RunnerSuite) TestEnsureNoProxy() {
 			"appends to existing NO_PROXY",
 			[]string{"HTTP_PROXY=http://proxy:8080", "NO_PROXY=localhost,127.0.0.1"},
 			nil,
-			[]string{"HTTP_PROXY=http://proxy:8080", "NO_PROXY=localhost,127.0.0.1,host.docker.internal,::1"},
+			[]string{"HTTP_PROXY=http://proxy:8080", "NO_PROXY=localhost,127.0.0.1,host.docker.internal,::1,172.16.0.0/12"},
 		},
 		{
 			"appends to existing no_proxy",
 			[]string{"http_proxy=http://proxy:8080", "no_proxy=localhost"},
 			nil,
-			[]string{"http_proxy=http://proxy:8080", "no_proxy=localhost,host.docker.internal,127.0.0.1,::1"},
+			[]string{"http_proxy=http://proxy:8080", "no_proxy=localhost,host.docker.internal,127.0.0.1,::1,172.16.0.0/12"},
 		},
 		{
 			"adds both NO_PROXY and no_proxy when missing",
 			[]string{"HTTP_PROXY=http://proxy:8080"},
 			nil,
-			[]string{"HTTP_PROXY=http://proxy:8080", "NO_PROXY=host.docker.internal,localhost,127.0.0.1,::1", "no_proxy=host.docker.internal,localhost,127.0.0.1,::1"},
+			[]string{"HTTP_PROXY=http://proxy:8080", "NO_PROXY=host.docker.internal,localhost,127.0.0.1,::1,172.16.0.0/12", "no_proxy=host.docker.internal,localhost,127.0.0.1,::1,172.16.0.0/12"},
 		},
 		{
 			"no-op when already present",
-			[]string{"NO_PROXY=host.docker.internal,localhost,127.0.0.1,::1,other"},
+			[]string{"NO_PROXY=host.docker.internal,localhost,127.0.0.1,::1,172.16.0.0/12,other"},
 			nil,
-			[]string{"NO_PROXY=host.docker.internal,localhost,127.0.0.1,::1,other"},
+			[]string{"NO_PROXY=host.docker.internal,localhost,127.0.0.1,::1,172.16.0.0/12,other"},
 		},
 		{
 			"empty NO_PROXY value",
 			[]string{"NO_PROXY="},
 			nil,
-			[]string{"NO_PROXY=host.docker.internal,localhost,127.0.0.1,::1"},
+			[]string{"NO_PROXY=host.docker.internal,localhost,127.0.0.1,::1,172.16.0.0/12"},
 		},
 		{
 			"extra hosts added to NO_PROXY",
 			[]string{"HTTP_PROXY=http://proxy:8080", "NO_PROXY=localhost"},
 			[]string{"loop-chrome-ch1"},
-			[]string{"HTTP_PROXY=http://proxy:8080", "NO_PROXY=localhost,host.docker.internal,127.0.0.1,::1,loop-chrome-ch1"},
+			[]string{"HTTP_PROXY=http://proxy:8080", "NO_PROXY=localhost,host.docker.internal,127.0.0.1,::1,172.16.0.0/12,loop-chrome-ch1"},
 		},
 		{
 			"extra hosts added when NO_PROXY missing",
 			[]string{"HTTP_PROXY=http://proxy:8080"},
 			[]string{"loop-chrome-ch1"},
-			[]string{"HTTP_PROXY=http://proxy:8080", "NO_PROXY=host.docker.internal,localhost,127.0.0.1,::1,loop-chrome-ch1", "no_proxy=host.docker.internal,localhost,127.0.0.1,::1,loop-chrome-ch1"},
+			[]string{"HTTP_PROXY=http://proxy:8080", "NO_PROXY=host.docker.internal,localhost,127.0.0.1,::1,172.16.0.0/12,loop-chrome-ch1", "no_proxy=host.docker.internal,localhost,127.0.0.1,::1,172.16.0.0/12,loop-chrome-ch1"},
 		},
 	}
 	for _, tc := range tests {

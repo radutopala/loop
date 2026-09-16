@@ -79,6 +79,9 @@ func (s *ManagerSuite) SetupTest() {
 	// mapped 127.0.0.1:hostPort and no extra inspect is needed. Containerized
 	// behavior is exercised explicitly by setting inContainer=true per test.
 	s.mgr.inContainer = false
+	// Never inherit the developer's own proxy settings — it would make the
+	// sidecar's Env depend on who runs the suite.
+	s.mgr.getenv = func(string) string { return "" }
 }
 
 // inspectResponseWithPort returns a ContainerInspect response with the given host port mapping.
@@ -264,6 +267,61 @@ func (s *ManagerSuite) TestEnsureBrowserNewSession() {
 	s.api.AssertExpectations(s.T())
 }
 
+// Docker's own resolver only forwards to the host's unscoped resolvers, so a
+// sidecar without the daemon's proxy cannot reach any split-DNS zone the host
+// can. host.docker.internal has to be mapped explicitly: plain Docker Engine
+// does not provide it, and it is the address the proxy is named by.
+func (s *ManagerSuite) TestEnsureBrowserForwardsProxyEnv() {
+	ctx := context.Background()
+	env := map[string]string{
+		"HTTP_PROXY":  "http://localhost:3128",
+		"HTTPS_PROXY": "http://localhost:3128",
+	}
+	s.mgr.getenv = func(key string) string { return env[key] }
+
+	s.api.On("ContainerList", ctx, mock.Anything).
+		Return([]containertypes.Summary{}, nil)
+	s.api.On("ContainerCreate", ctx,
+		mock.MatchedBy(func(c *containertypes.Config) bool {
+			return slices.Contains(c.Env, "HTTP_PROXY=http://host.docker.internal:3128") &&
+				slices.Contains(c.Env, "HTTPS_PROXY=http://host.docker.internal:3128") &&
+				slices.Contains(c.Env, "NO_PROXY=host.docker.internal,localhost,127.0.0.1,::1,172.16.0.0/12")
+		}),
+		mock.MatchedBy(func(hc *containertypes.HostConfig) bool {
+			return slices.Contains(hc.ExtraHosts, "host.docker.internal:host-gateway")
+		}),
+		(*network.NetworkingConfig)(nil), (*ocispec.Platform)(nil), "loop-chrome-ch-1").
+		Return(containertypes.CreateResponse{ID: "chrome-ctr-1"}, nil)
+	s.api.On("ContainerStart", ctx, "chrome-ctr-1", containertypes.StartOptions{}).
+		Return(nil)
+	s.api.On("ContainerInspect", ctx, "chrome-ctr-1").
+		Return(inspectResponseWithPort("49152"), nil)
+
+	require.NoError(s.T(), s.mgr.EnsureBrowser(ctx, "ch-1", ""))
+	s.api.AssertExpectations(s.T())
+}
+
+// Without a proxy in the daemon's environment the sidecar gets no proxy env at
+// all, rather than an empty-valued one that Chrome would still parse.
+func (s *ManagerSuite) TestEnsureBrowserNoProxyEnvWhenUnset() {
+	ctx := context.Background()
+
+	s.api.On("ContainerList", ctx, mock.Anything).
+		Return([]containertypes.Summary{}, nil)
+	s.api.On("ContainerCreate", ctx,
+		mock.MatchedBy(func(c *containertypes.Config) bool { return len(c.Env) == 0 }),
+		mock.Anything,
+		(*network.NetworkingConfig)(nil), (*ocispec.Platform)(nil), "loop-chrome-ch-1").
+		Return(containertypes.CreateResponse{ID: "chrome-ctr-1"}, nil)
+	s.api.On("ContainerStart", ctx, "chrome-ctr-1", containertypes.StartOptions{}).
+		Return(nil)
+	s.api.On("ContainerInspect", ctx, "chrome-ctr-1").
+		Return(inspectResponseWithPort("49152"), nil)
+
+	require.NoError(s.T(), s.mgr.EnsureBrowser(ctx, "ch-1", ""))
+	s.api.AssertExpectations(s.T())
+}
+
 // The cap is what a page-heavy site runs into, so the configured value has to
 // reach Docker — a sidecar created with the wrong one is OOM-killed mid-session
 // and the tab it was showing dies with it.
@@ -344,6 +402,7 @@ func (s *ManagerSuite) TestEnsureBrowserResolvedSettings() {
 		Screen: "1920,1080",
 	}, slog.Default())
 	mgr.inContainer = false
+	mgr.getenv = func(string) string { return "" }
 	mgr.SetSettingsResolver(func(_ context.Context, channelID string) (ChannelSettings, bool) {
 		require.Equal(s.T(), "ch-1", channelID)
 		return ChannelSettings{
