@@ -619,7 +619,7 @@ func (s *RunnerSuite) TestRunProxyEnv() {
 			checkEnv: func(cfg *ContainerConfig) bool {
 				return slices.Contains(cfg.Env, "HTTP_PROXY=http://proxy:8080") &&
 					slices.Contains(cfg.Env, "HTTPS_PROXY=http://proxy:8443") &&
-					slices.Contains(cfg.Env, "NO_PROXY=localhost,127.0.0.1,host.docker.internal,::1")
+					slices.Contains(cfg.Env, "NO_PROXY=localhost,127.0.0.1,host.docker.internal,::1,172.16.0.0/12,loop-chrome-ch-1")
 			},
 		},
 		{
@@ -629,8 +629,8 @@ func (s *RunnerSuite) TestRunProxyEnv() {
 			},
 			checkEnv: func(cfg *ContainerConfig) bool {
 				return slices.Contains(cfg.Env, "HTTP_PROXY=http://proxy:8080") &&
-					slices.Contains(cfg.Env, "NO_PROXY=host.docker.internal,localhost,127.0.0.1,::1") &&
-					slices.Contains(cfg.Env, "no_proxy=host.docker.internal,localhost,127.0.0.1,::1")
+					slices.Contains(cfg.Env, "NO_PROXY=host.docker.internal,localhost,127.0.0.1,::1,172.16.0.0/12,loop-chrome-ch-1") &&
+					slices.Contains(cfg.Env, "no_proxy=host.docker.internal,localhost,127.0.0.1,::1,172.16.0.0/12,loop-chrome-ch-1")
 			},
 		},
 	}

@@ -167,6 +167,16 @@ var migrations = []Migration{
 		Description: "refresh container/ files: Docker CLI + buildx/compose plugins from Docker's apt repo",
 		Apply:       refreshContainerFiles,
 	},
+	{
+		// Gives the Chrome sidecar the daemon's proxy settings and teaches its
+		// entrypoint to load the image's CAs into NSS. Chrome ignores
+		// /etc/ssl/certs, so without the second half every host behind a
+		// locally added CA answers with an interstitial. Existing installs keep
+		// their old chrome.Dockerfile until this refresh lands, so their next
+		// sidecar rebuild would still ship without certutil.
+		Description: "refresh container/ files: Chrome sidecar loads image CAs into its NSS store",
+		Apply:       refreshContainerFiles,
+	},
 }
 
 // versionedContainerFiles are tracked by the daemon: each release ships a
