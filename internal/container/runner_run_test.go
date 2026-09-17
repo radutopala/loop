@@ -1,8 +1,10 @@
 package container
 
 import (
+	"archive/tar"
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"log/slog"
@@ -654,9 +656,35 @@ func (s *RunnerSuite) TestRunProxyEnv() {
 
 			s.setupMockRun(ctx, mock.MatchedBy(tt.checkEnv), testContainerName, testJSONOK)
 
+			// The same values have to reach ~/.docker/config.json, or a
+			// `docker run` issued by the agent starts a container with no
+			// proxy at all — the CLI never passes on its own environment.
+			var cliConfig []byte
+			s.client.On("CopyToContainer", ctx, testContainerID, "/", mock.Anything).
+				Run(func(args mock.Arguments) {
+					tr := tar.NewReader(args.Get(3).(io.Reader))
+					for {
+						h, err := tr.Next()
+						if errors.Is(err, io.EOF) {
+							return
+						}
+						require.NoError(s.T(), err)
+						if h.Name == "home/testuser/.docker/config.json" {
+							cliConfig, err = io.ReadAll(tr)
+							require.NoError(s.T(), err)
+						}
+					}
+				}).Return(nil)
+
 			resp, err := s.runner.Run(ctx, req)
 			require.NoError(s.T(), err)
 			require.Equal(s.T(), "ok", resp.Response)
+
+			var decoded map[string]any
+			require.NoError(s.T(), json.Unmarshal(cliConfig, &decoded))
+			proxies := decoded["proxies"].(map[string]any)["default"].(map[string]any)
+			require.Equal(s.T(), "http://proxy:8080", proxies["httpProxy"])
+			require.Contains(s.T(), proxies["noProxy"], "172.16.0.0/12")
 
 			s.client.AssertExpectations(s.T())
 		})

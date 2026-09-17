@@ -108,7 +108,21 @@ If any of `HTTP_PROXY`, `HTTPS_PROXY`, `http_proxy`, or `https_proxy` are set on
 - `://localhost:` and `://127.0.0.1:` become `://host.docker.internal:`
 - Bare port values like `:3128` become `http://host.docker.internal:3128`
 
-When proxy variables are present, `NO_PROXY` and `no_proxy` are ensured to include `host.docker.internal` so that the container's calls to the Loop API bypass the proxy.
+When proxy variables are present, `NO_PROXY` and `no_proxy` are ensured to include `host.docker.internal`, `localhost`, `127.0.0.1`, `::1`, `172.16.0.0/12` and the channel's Chrome sidecar hostname. The Loop API and the sidecar are reached directly; the CIDR covers every other container on a Docker bridge, which a proxy running on the Docker host has no route back into — proxying those would hang until the request timed out rather than failing fast.
+
+### Docker CLI Proxy Config
+
+Forwarding the variables covers what the agent itself talks to. It does **not** cover containers the agent creates: Docker CLI proxy injection is client-side — the CLI reads `proxies.default.{httpProxy,httpsProxy,noProxy}` from its config file and stamps those into each container, and never passes on its own environment. (`docker info` reporting an `HttpProxy` is the *daemon's* setting, used for pulling images; it does not reach containers.)
+
+So when a proxy is configured, Loop also writes a Docker CLI config into the container before it starts, using the same rewritten values the container's own env got:
+
+- Location: `$DOCKER_CONFIG` when the container env sets one, otherwise `$HOME/.docker/config.json`.
+- `proxies` is the only key written. The host's config is not used as a template for it: that config carries machine-local settings — `currentContext` naming a Docker Desktop context, `credsStore` naming a helper binary — which are meaningless inside the container. A `currentContext` that cannot be resolved makes every `docker` command abort before it does anything (`unable to resolve docker endpoint`), and a missing credential helper fails any pull that needs a lookup.
+- The file is written from scratch. The agent image ships no Docker CLI config, so there is nothing to preserve; a custom `container_image` that bakes one in has it replaced.
+- Nothing is written when no proxy is configured — no file, and no Docker API call.
+- The copy is extracted at `/` and carries every ancestor directory, owned by the agent's uid/gid. The daemon rejects a copy whose destination does not exist, and the home directory frequently does not exist at create time: the image has no `/home/<user>`, and the container mirrors the host home path, which only appears once a bind mount under it materialises.
+
+**Injection happens at image-build and container-create time, never at `docker exec`.** A container created before the config existed keeps its empty proxy env for its whole life, so an already-running stack needs a `docker compose down` (or an equivalent recreate) before this takes effect — otherwise it reads as though the config were being ignored.
 
 ### Custom Environment Variables
 
