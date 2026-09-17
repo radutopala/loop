@@ -100,7 +100,7 @@ func (s *CDPSuite) TestStopScreencastGivesUpOnAWedgedTarget() {
 	s.client.screencasting = true
 
 	s.returnsWithin(time.Second, s.client.StopScreencast)
-	require.False(s.T(), s.screencastingNow())
+	require.False(s.T(), screencastingNow(s.client))
 }
 
 // The listing gates every tab switch and the pane's liveness check.

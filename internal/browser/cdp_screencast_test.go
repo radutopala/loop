@@ -196,11 +196,15 @@ func (s *CDPSuite) TestStopScreencastNotScreencasting() {
 }
 
 // screencastingNow reads the flag under the client's own lock, so the test does
-// not race the goroutine that clears it.
-func (s *CDPSuite) screencastingNow() bool {
-	s.client.mu.Lock()
-	defer s.client.mu.Unlock()
-	return s.client.screencasting
+// not race the goroutine that clears it. It takes the client rather than
+// reaching for s.client: require.Never returns when its timer fires without
+// waiting for the condition goroutine it spawned on the last tick, so that
+// goroutine can still be running once the next test's SetupTest is assigning
+// s.client — a race on the suite field that no lock on the client covers.
+func screencastingNow(c *CDPClient) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.screencasting
 }
 
 // A failed start leaves Chrome not streaming. If the flag stayed set, every
@@ -211,9 +215,10 @@ func (s *CDPSuite) TestStartScreencastClearsFlagWhenCommandFails() {
 		return errors.New("target closed")
 	})
 
-	s.client.StartScreencast(60, 1920, 1080)
+	client := s.client
+	client.StartScreencast(60, 1920, 1080)
 
-	require.Eventually(s.T(), func() bool { return !s.screencastingNow() },
+	require.Eventually(s.T(), func() bool { return !screencastingNow(client) },
 		time.Second, 5*time.Millisecond,
 		"a failed start must leave the client free to try again")
 }
@@ -231,9 +236,10 @@ func (s *CDPSuite) TestStartScreencastClearsFlagWhenCommandHangs() {
 		return nil
 	})
 
-	s.client.StartScreencast(60, 1920, 1080)
+	client := s.client
+	client.StartScreencast(60, 1920, 1080)
 
-	require.Eventually(s.T(), func() bool { return !s.screencastingNow() },
+	require.Eventually(s.T(), func() bool { return !screencastingNow(client) },
 		time.Second, 5*time.Millisecond,
 		"a hung start must time out rather than block silently")
 }
@@ -241,9 +247,10 @@ func (s *CDPSuite) TestStartScreencastClearsFlagWhenCommandHangs() {
 // A start that succeeds must leave the flag set, or the next call would issue a
 // duplicate command.
 func (s *CDPSuite) TestStartScreencastKeepsFlagWhenCommandSucceeds() {
-	s.client.StartScreencast(60, 1920, 1080)
+	client := s.client
+	client.StartScreencast(60, 1920, 1080)
 
-	require.Never(s.T(), func() bool { return !s.screencastingNow() },
+	require.Never(s.T(), func() bool { return !screencastingNow(client) },
 		100*time.Millisecond, 10*time.Millisecond)
 }
 
