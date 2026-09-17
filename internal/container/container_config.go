@@ -303,6 +303,168 @@ func ProxyEnv(getenv func(string) string, extraNoProxyHosts ...string) []string 
 	return env
 }
 
+// dockerCLIConfigName is the file the Docker CLI reads its client-side
+// settings from, inside the directory dockerCLIConfigDir resolves.
+const dockerCLIConfigName = "config.json"
+
+// dockerCLIConfigDir returns the directory the Docker CLI *inside the
+// container* reads its config from: $DOCKER_CONFIG when the container env sets
+// one, otherwise $HOME/.docker. Later entries win, matching how Docker resolves
+// a duplicated variable. Returns "" when the env names neither.
+func dockerCLIConfigDir(env []string) string {
+	var home, dockerConfig string
+	for _, e := range env {
+		if v, ok := strings.CutPrefix(e, "DOCKER_CONFIG="); ok {
+			dockerConfig = v
+		} else if v, ok := strings.CutPrefix(e, "HOME="); ok {
+			home = v
+		}
+	}
+	switch {
+	case dockerConfig != "":
+		return dockerConfig
+	case home != "":
+		return filepath.Join(home, ".docker")
+	default:
+		return ""
+	}
+}
+
+// proxiesFromEnv picks the proxy settings out of a container env, returning
+// them in the key names the Docker CLI config uses. Both cases are accepted
+// because a daemon may only export the lowercase names; later entries win, as
+// they do for the container itself. ok is false when no proxy is configured —
+// the whole feature is then a no-op.
+func proxiesFromEnv(env []string) (httpProxy, httpsProxy, noProxy string, ok bool) {
+	for _, e := range env {
+		k, v, found := strings.Cut(e, "=")
+		if !found {
+			continue
+		}
+		switch strings.ToUpper(k) {
+		case "HTTP_PROXY":
+			httpProxy = v
+		case "HTTPS_PROXY":
+			httpsProxy = v
+		case "NO_PROXY":
+			noProxy = v
+		}
+	}
+	return httpProxy, httpsProxy, noProxy, httpProxy != "" || httpsProxy != ""
+}
+
+// dockerCLIProxyConfig renders Docker CLI config content carrying nothing but
+// proxies.default, taken from env. Returns nil when env names no proxy, so the
+// caller writes nothing at all.
+//
+// Docker CLI proxy injection is client-side: the CLI stamps
+// proxies.default.{httpProxy,httpsProxy,noProxy} into every container it builds
+// or creates, and does not pass on its own environment. So forwarding the proxy
+// into the agent container covers what the agent itself talks to, but leaves
+// any container the agent starts with no proxy — which is what this file fixes.
+//
+// Proxies are the only key written. The host's config is not a template for
+// this one: it carries machine-local settings — currentContext naming a Docker
+// Desktop context, credsStore naming a helper binary — that are meaningless in
+// the container and break the CLI outright there.
+func dockerCLIProxyConfig(env []string) []byte {
+	httpProxy, httpsProxy, noProxy, ok := proxiesFromEnv(env)
+	if !ok {
+		return nil
+	}
+
+	def := map[string]string{}
+	for key, val := range map[string]string{"httpProxy": httpProxy, "httpsProxy": httpsProxy, "noProxy": noProxy} {
+		if val == "" {
+			continue
+		}
+		def[key] = val
+	}
+
+	out, _ := json.Marshal(map[string]any{"proxies": map[string]any{"default": def}}) // strings only, never fails
+	return out
+}
+
+// writeDockerCLIConfig renders the Docker CLI config into the container so that
+// containers the agent creates inherit the proxy (see mergeDockerCLIProxies).
+// The values are the ones the container itself got — already rewritten to
+// host.docker.internal, already carrying the full NO_PROXY bypass list — so
+// there is one source of truth for them.
+//
+// The file is written from scratch rather than derived from the host's, whose
+// machine-local keys would break the CLI inside the container. Loop's own agent
+// image ships no Docker CLI config, so there is nothing to preserve; a custom
+// container_image that bakes one in has it replaced.
+//
+// Nothing is written when no proxy is configured. The file is stamped with the
+// agent user's ids rather than relying on the entrypoint's chown, which skips
+// directories that are already agent-owned.
+//
+// The tar is extracted at / and carries every ancestor directory, because the
+// daemon rejects a copy whose destination does not exist yet and the home dir
+// often does not: the image has no /home/<user>, and the container mirrors the
+// host home path, which only appears once a bind mount under it materialises.
+func (r *DockerRunner) writeDockerCLIConfig(ctx context.Context, containerID string, env []string) error {
+	// Checked before anything else so that a daemon with no proxy configured
+	// costs nothing: no config read, no copy, no Docker API call at all.
+	if _, _, _, ok := proxiesFromEnv(env); !ok {
+		return nil
+	}
+	dir := dockerCLIConfigDir(env)
+	if dir == "" {
+		return nil
+	}
+
+	data := dockerCLIProxyConfig(env)
+
+	uid, gid := r.sys.Getuid(), r.sys.Getgid()
+	var buf bytes.Buffer
+	tw := tar.NewWriter(&buf)
+	// Ancestors stay 0755 so any other uid can still traverse them; only the
+	// config dir itself, which may end up holding credentials, is locked down.
+	for _, ancestor := range ancestorDirs(dir) {
+		_ = tw.WriteHeader(&tar.Header{
+			Name:     ancestor + "/",
+			Typeflag: tar.TypeDir,
+			Mode:     0755,
+			Uid:      uid,
+			Gid:      gid,
+		})
+	}
+	rel := strings.TrimPrefix(dir, "/")
+	_ = tw.WriteHeader(&tar.Header{
+		Name:     rel + "/",
+		Typeflag: tar.TypeDir,
+		Mode:     0700,
+		Uid:      uid,
+		Gid:      gid,
+	})
+	_ = tw.WriteHeader(&tar.Header{
+		Name: filepath.Join(rel, dockerCLIConfigName),
+		Mode: 0600,
+		Size: int64(len(data)),
+		Uid:  uid,
+		Gid:  gid,
+	})
+	_, _ = tw.Write(data)
+	_ = tw.Close()
+
+	return r.client.CopyToContainer(ctx, containerID, "/", &buf)
+}
+
+// ancestorDirs returns dir's ancestors below the root, outermost first and
+// relative to /, as tar entry names. The root itself is left out — it always
+// exists, and an entry for it would rewrite its mode and owner.
+func ancestorDirs(dir string) []string {
+	rel := strings.Trim(dir, "/")
+	parts := strings.Split(rel, "/")
+	var out []string
+	for i := 1; i < len(parts); i++ {
+		out = append(out, strings.Join(parts[:i], "/"))
+	}
+	return out
+}
+
 // addProxyEnv forwards host proxy environment variables into env,
 // rewriting localhost addresses to host.docker.internal.
 // extraNoProxyHosts are added to NO_PROXY (e.g. Chrome container hostname).

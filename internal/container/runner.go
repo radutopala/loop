@@ -763,6 +763,13 @@ func (r *DockerRunner) createAndStartContainer(
 		return containerID, containerName, mcpConfigPath, keepMCPConfig, fmt.Errorf("copying files: %w", err)
 	}
 
+	// Must land before the container starts: the Docker CLI reads this at the
+	// moment it builds or creates a container, so a nested `docker run` issued
+	// by the agent would otherwise see no proxy.
+	if err := r.writeDockerCLIConfig(ctx, containerID, env); err != nil {
+		return containerID, containerName, mcpConfigPath, keepMCPConfig, fmt.Errorf("writing docker cli config: %w", err)
+	}
+
 	if err := r.client.ContainerStart(ctx, containerID); err != nil {
 		return containerID, containerName, mcpConfigPath, keepMCPConfig, fmt.Errorf("starting container: %w", err)
 	}
