@@ -186,6 +186,14 @@ func buildSchema() *ConfigSchema {
 				XSection:    "Container",
 				XOrder:      6,
 			},
+			"no_proxy_hosts": {
+				Type:        "array",
+				Title:       "No-proxy Hosts",
+				Description: "Extra hostnames to bypass the proxy, e.g. compose service names reached by bare name from sibling containers",
+				Items:       &SchemaProperty{Type: "string"},
+				XSection:    "Container",
+				XOrder:      8,
+			},
 			"container_image_autobuild": {
 				Type:        "boolean",
 				Title:       "Auto-rebuild Image",

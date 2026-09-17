@@ -232,8 +232,9 @@ func (r *DockerRunner) buildContainerEnv(cfg *config.Config, channelID, apiURL s
 	env = addAuthEnv(env, cfg)
 	// The Chrome sidecar is a bare hostname on the shared Docker network, so
 	// dockerBridgeCIDR does not cover it — CDP would go through the proxy and
-	// come back 502.
-	env = r.addProxyEnv(env, ChromeHostname(channelID))
+	// come back 502. Every sibling reached by name has the same problem, hence
+	// config.no_proxy_hosts for a project's own compose services.
+	env = r.addProxyEnv(env, append([]string{ChromeHostname(channelID)}, cfg.NoProxyHosts...)...)
 
 	for k, v := range cfg.Envs {
 		expanded, err := r.expandPath(v)

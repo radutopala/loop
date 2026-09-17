@@ -421,9 +421,15 @@ type Config struct {
 	PromptShortcuts      []PromptShortcut
 	BashShortcuts        []BashShortcut
 	Mounts               []string
-	CopyFiles            []string
-	Envs                 map[string]string
-	ClaudeModel          string
+	// NoProxyHosts are hostnames added to the container's NO_PROXY, and to the
+	// proxies.noProxy Loop writes for the Docker CLI. Sibling containers on a
+	// shared Docker network are reached by bare name, which no CIDR entry can
+	// cover: Go's proxy matcher compares the URL host before DNS resolves it,
+	// so a compose service name never matches an IP range.
+	NoProxyHosts []string
+	CopyFiles    []string
+	Envs         map[string]string
+	ClaudeModel  string
 	// ClaudeEffort is passed to the Claude CLI as `--effort` when non-empty,
 	// selecting the model's reasoning-effort level (e.g. low, medium, high,
 	// xhigh, max). Empty by default (no flag). Hierarchy: global → project →

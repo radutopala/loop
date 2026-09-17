@@ -104,6 +104,14 @@
   //  "loop-gocache:/go"
   //],
 
+  // Extra no-proxy hostnames for this project, appended to the global list.
+  // Put your compose service names here: a sibling container reached as
+  // http://my-service:8080 is matched by name, which no IP range covers.
+  //"no_proxy_hosts": [
+  //  "my-service",
+  //  "my-cache"
+  //],
+
   // Permissions override for this project (replaces global permissions when set)
   //"permissions": {
   //  "owners":  { "users": [], "roles": [] },

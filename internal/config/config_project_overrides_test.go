@@ -501,6 +501,23 @@ func (s *ConfigSuite) TestLoadProjectConfigOverrides() {
 			},
 		},
 		{
+			name:        "NoProxyHosts/Appended",
+			projectJSON: `{"no_proxy_hosts": ["floci", "valkey"]}`,
+			mainCfg:     &Config{NoProxyHosts: []string{"artifacts.internal"}},
+			assert: func(merged, main *Config) {
+				require.Equal(s.T(), []string{"artifacts.internal", "floci", "valkey"}, merged.NoProxyHosts)
+				require.Len(s.T(), main.NoProxyHosts, 1)
+			},
+		},
+		{
+			name:        "NoProxyHosts/NoOverride",
+			projectJSON: `{}`,
+			mainCfg:     &Config{NoProxyHosts: []string{"artifacts.internal"}},
+			assert: func(merged, _ *Config) {
+				require.Equal(s.T(), []string{"artifacts.internal"}, merged.NoProxyHosts)
+			},
+		},
+		{
 			name: "MaxChunkChars/Override",
 			projectJSON: `{
 				"memory": {

@@ -234,6 +234,14 @@
     "loop-ollama:~/.ollama"
   ],
 
+  // Extra hostnames that bypass the proxy, on top of localhost and the Docker
+  // bridge range. Needed for any container reached by bare name: NO_PROXY is
+  // matched against the hostname before DNS resolves it, so a name never
+  // matches an IP range no matter which network it is on.
+  //"no_proxy_hosts": [
+  //  "artifacts.example.internal"
+  //],
+
   // Task templates
   // Each template must have either "prompt" (inline) or "prompt_path" (loads from ~/.loop/templates/<path>), but not both.
   "task_templates": [
