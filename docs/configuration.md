@@ -133,6 +133,18 @@ Format: `host_path:container_path[:mode]`
 
 See [Containers: File Copying](containers.md#file-copying).
 
+#### No-proxy Hosts
+
+```jsonc
+"no_proxy_hosts": ["my-service", "my-cache"]
+```
+
+| Field | Type | Default | Description |
+|---|---|---|---|
+| `no_proxy_hosts` | `string[]` | `[]` | Extra hostnames added to the container's `NO_PROXY` (both letter cases) and to the `proxies.noProxy` Loop writes for the Docker CLI. |
+
+Only consulted when a proxy is configured. Name every container the agent reaches by hostname: `NO_PROXY` is matched against the hostname before DNS resolves it, so the default `172.16.0.0/12` entry covers a container dialled by IP but never one dialled as `http://my-service:8080`. See [Containers — Proxy Forwarding](containers.md#the-cidr-does-not-cover-sibling-containers-reached-by-name).
+
 #### Custom Environment Variables
 
 ```jsonc
@@ -565,6 +577,7 @@ Not all global fields are available in project configs. The following fields can
 | `mounts` | **Replaces** global mounts entirely. Relative host paths are resolved relative to `workDir`. |
 | `copy_files` | **Replaces** global `copy_files` entirely when set. |
 | `extra_dirs` | **Replaces** global value when set. In **worktree** configs the parent project's `extra_dirs` are **unioned** with the worktree's (deduped, parent first), so a worktree inherits the same extra roots as its parent channel. |
+| `no_proxy_hosts` | **Appended** to the global list, so a project adds its own compose service names without losing the global ones. |
 | `mcp.servers` | **Merged** with global servers. Project servers override global servers with the same name. |
 | `envs` | **Merged** with global envs. Project values override global values with the same key. |
 | `claude_model` | **Overrides** global value when set. |
@@ -609,7 +622,7 @@ The merge follows these principles:
 
 - **Replace**: The project value completely replaces the global value (mounts, copy_files, permissions).
 - **Merge**: Both global and project values are combined, with project taking precedence on conflicts (MCP servers, envs, task templates, workflows).
-- **Append**: Project values are added to the global list (memory paths).
+- **Append**: Project values are added to the global list (memory paths, no_proxy_hosts).
 - **Override**: A single scalar value replaces the global one (claude_model, container_image, etc.).
 - **Narrow merge**: Security-sensitive fields under `gates` (`agentgate`, `docker_proxy`) have a locked-down merge: project rules prepend, `allow` rules are rejected at load, and `default_decision` / `rate_limits` / `audit` are ignored so a compromised project file cannot loosen global policy.
 - **Absent = inherit**: If a field is not set in the project config, the global value is used unchanged.
@@ -717,6 +730,9 @@ The merge follows these principles:
 
   // Files copied into containers (not mounted)
   "copy_files": ["~/.claude.json"],
+
+  // Extra hostnames that bypass the proxy (matched by name, so a CIDR won't do)
+  "no_proxy_hosts": [],
 
   // Container mounts
   "mounts": [
@@ -876,6 +892,11 @@ The merge follows these principles:
   //  "~/.gitconfig:~/.gitconfig:ro",
   //  "~/.ssh:~/.ssh:ro"
   //],
+
+  // Extra no-proxy hosts for this project (appended to the global list).
+  // Name the compose services the agent talks to: a sibling reached as
+  // http://my-service:8080 is matched by name, which no IP range covers.
+  //"no_proxy_hosts": ["my-service", "my-cache"],
 
   // Permissions override (replaces global permissions when set)
   //"permissions": {

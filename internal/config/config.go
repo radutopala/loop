@@ -44,6 +44,7 @@ type jsonConfig struct {
 	PromptShortcuts                          []PromptShortcut           `json:"prompt_shortcuts"`
 	BashShortcuts                            []BashShortcut             `json:"bash_shortcuts"`
 	Mounts                                   []string                   `json:"mounts"`
+	NoProxyHosts                             []string                   `json:"no_proxy_hosts"`
 	CopyFiles                                []string                   `json:"copy_files"`
 	Envs                                     map[string]any             `json:"envs"`
 	ClaudeModel                              string                     `json:"claude_model"`
@@ -416,6 +417,7 @@ func (l *Loader) parse() (*Config, error) {
 	cfg.PromptShortcuts = jc.PromptShortcuts
 	cfg.BashShortcuts = jc.BashShortcuts
 	cfg.Mounts = jc.Mounts
+	cfg.NoProxyHosts = jc.NoProxyHosts
 	// ~/.claude.json is no longer defaulted here — the container runner always
 	// prepends it (flag-merged) to copy_files so every agent gets it regardless.
 	cfg.CopyFiles = jc.CopyFiles

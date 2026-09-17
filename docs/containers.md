@@ -108,7 +108,20 @@ If any of `HTTP_PROXY`, `HTTPS_PROXY`, `http_proxy`, or `https_proxy` are set on
 - `://localhost:` and `://127.0.0.1:` become `://host.docker.internal:`
 - Bare port values like `:3128` become `http://host.docker.internal:3128`
 
-When proxy variables are present, `NO_PROXY` and `no_proxy` are ensured to include `host.docker.internal`, `localhost`, `127.0.0.1`, `::1`, `172.16.0.0/12` and the channel's Chrome sidecar hostname. The Loop API and the sidecar are reached directly; the CIDR covers every other container on a Docker bridge, which a proxy running on the Docker host has no route back into — proxying those would hang until the request timed out rather than failing fast.
+When proxy variables are present, `NO_PROXY` and `no_proxy` are ensured to include `host.docker.internal`, `localhost`, `127.0.0.1`, `::1`, `172.16.0.0/12`, the channel's Chrome sidecar hostname, and anything listed in `no_proxy_hosts`. The Loop API and the sidecar are reached directly; the CIDR covers every other container on a Docker bridge, which a proxy running on the Docker host has no route back into — proxying those would hang until the request timed out rather than failing fast.
+
+#### The CIDR does not cover sibling containers reached by name
+
+`172.16.0.0/12` looks like it exempts every container on a bridge network, and it does not. Go's proxy matcher — `http.ProxyFromEnvironment`, and the same logic in most other runtimes — compares `NO_PROXY` entries against the **hostname in the URL, before DNS resolves it**. A request to `http://my-service:4566` is matched as the literal string `my-service`, which is never tested against an IP range. So it goes to the proxy, which has no route onto the Docker network, and comes back 502. The CIDR only helps when a bare IP is dialled.
+
+This is why the Chrome sidecar is passed by hostname rather than relying on the CIDR, and why a project whose agent talks to its own compose stack has to name those services:
+
+```json
+// .loop/config.json in the project
+{ "no_proxy_hosts": ["my-service", "my-cache"] }
+```
+
+Loop cannot discover these itself. The agent container is created before the project's stack exists and is not on the network compose later creates, so there is nothing to enumerate at that point. Project values are appended to the global list, and the same list is written into the Docker CLI config below, so containers the agent creates inherit it.
 
 ### Docker CLI Proxy Config
 
