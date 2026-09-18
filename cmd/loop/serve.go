@@ -366,6 +366,42 @@ func (a *app) memoryDir(dirPath string) (string, error) {
 	return filepath.Join(home, ".claude", "projects", encoded, "memory"), nil
 }
 
+// logContainerProxy records the proxy containers created by this daemon will
+// run with. A daemon launched before the proxy was exported resolves none, and
+// every container it creates inherits that for its whole life — so the empty
+// case is logged as a warning with the way out, not passed over in silence.
+// projectDirs returns the distinct checkouts Loop has channels for, so a
+// filesystem migration can reach the .loop/config.json inside them as well as
+// the global one. Listing failures are not fatal: migrations then run against
+// ~/.loop alone rather than the daemon refusing to start.
+func projectDirs(ctx context.Context, store db.Store, logger *slog.Logger) []string {
+	channels, err := store.ListChannels(ctx)
+	if err != nil {
+		logger.Warn("listing channels for fs migrations", "error", err)
+		return nil
+	}
+	seen := make(map[string]bool, len(channels))
+	dirs := make([]string, 0, len(channels))
+	for _, ch := range channels {
+		if ch.DirPath == "" || seen[ch.DirPath] {
+			continue
+		}
+		seen[ch.DirPath] = true
+		dirs = append(dirs, ch.DirPath)
+	}
+	return dirs
+}
+
+func logContainerProxy(logger *slog.Logger, cfg *config.Config, getenv func(string) string) {
+	value, source := container.ProxySummary(container.ProxySettingsFromConfig(cfg), getenv)
+	if value == "" {
+		logger.Warn("no proxy for containers: neither config nor this daemon's environment names one",
+			"hint", "set http_proxy/https_proxy in ~/.loop/config.json, or restart the daemon with the proxy exported")
+		return
+	}
+	logger.Info("container proxy", "url", value, "source", source)
+}
+
 func (a *app) serve() error {
 	cfg, err := a.configLoad()
 	if err != nil {
@@ -374,6 +410,7 @@ func (a *app) serve() error {
 
 	logger := logging.NewLogger(cfg.LogLevel, cfg.LogFormat)
 	logger.Info("starting loop", "db_path", cfg.DBPath)
+	logContainerProxy(logger, cfg, os.Getenv)
 
 	store, err := a.newSQLiteStore(cfg.DBPath)
 	if err != nil {
@@ -386,9 +423,10 @@ func (a *app) serve() error {
 	if w, ok := store.(interface{ WriterDB() *sql.DB }); ok {
 		if writer := w.WriterDB(); writer != nil {
 			if err := a.fsMigrateRun(context.Background(), writer, &fsmigrate.Ctx{
-				Sys:     a.sys,
-				LoopDir: cfg.LoopDir,
-				Version: a.version,
+				Sys:         a.sys,
+				LoopDir:     cfg.LoopDir,
+				Version:     a.version,
+				ProjectDirs: projectDirs(context.Background(), store, logger),
 			}); err != nil {
 				return fmt.Errorf("running fs migrations: %w", err)
 			}

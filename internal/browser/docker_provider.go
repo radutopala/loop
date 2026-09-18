@@ -92,6 +92,11 @@ type ChannelSettings struct {
 
 	// CPUs caps the sidecar's CPU, in cores. Zero means no cap.
 	CPUs float64
+
+	// Proxy is the channel's configured proxy, which wins over the daemon's
+	// own environment. Zero when the channel has no config to resolve against
+	// — the sidecar then inherits the daemon environment as it always has.
+	Proxy container.ProxySettings
 }
 
 const (
@@ -441,7 +446,7 @@ func (m *DockerProvider) EnsureBrowser(ctx context.Context, channelID, _ string)
 			// do. Without it the sidecar resolves names through Docker's own
 			// resolver, which only forwards to the host's unscoped resolvers —
 			// so any split-DNS zone the host can reach is NXDOMAIN in here.
-			Env: container.ProxyEnv(m.getenv),
+			Env: container.ProxyEnv(cs.Proxy, m.getenv),
 		},
 		&containertypes.HostConfig{
 			// Docker Desktop resolves host.docker.internal on its own, plain

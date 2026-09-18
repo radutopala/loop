@@ -58,6 +58,7 @@ func (s *RunnerSuite) TestProxyEnv() {
 	const noProxy = "host.docker.internal,localhost,127.0.0.1,::1,172.16.0.0/12"
 	tests := []struct {
 		name       string
+		proxy      ProxySettings
 		envs       map[string]string
 		extraHosts []string
 		want       []string
@@ -68,32 +69,114 @@ func (s *RunnerSuite) TestProxyEnv() {
 			want: nil,
 		},
 		{
-			name: "HTTP_PROXY forwarded with NO_PROXY added",
+			name: "HTTP_PROXY forwarded in both spellings with NO_PROXY added",
 			envs: map[string]string{"HTTP_PROXY": "http://proxy:8080"},
-			want: []string{"HTTP_PROXY=http://proxy:8080", "NO_PROXY=" + noProxy, "no_proxy=" + noProxy},
+			want: []string{
+				"HTTP_PROXY=http://proxy:8080", "http_proxy=http://proxy:8080",
+				"NO_PROXY=" + noProxy, "no_proxy=" + noProxy,
+			},
+		},
+		{
+			name: "lower-case daemon spelling answers for both",
+			envs: map[string]string{"http_proxy": "http://proxy:8080"},
+			want: []string{
+				"HTTP_PROXY=http://proxy:8080", "http_proxy=http://proxy:8080",
+				"NO_PROXY=" + noProxy, "no_proxy=" + noProxy,
+			},
 		},
 		{
 			name: "localhost rewritten to docker host",
 			envs: map[string]string{"HTTP_PROXY": "http://localhost:3128"},
-			want: []string{"HTTP_PROXY=http://host.docker.internal:3128", "NO_PROXY=" + noProxy, "no_proxy=" + noProxy},
+			want: []string{
+				"HTTP_PROXY=http://host.docker.internal:3128", "http_proxy=http://host.docker.internal:3128",
+				"NO_PROXY=" + noProxy, "no_proxy=" + noProxy,
+			},
+		},
+		{
+			// The whole point of the config layer: a daemon launched before the
+			// proxy was exported still creates containers that can reach it.
+			name:  "config proxy used when the daemon has none",
+			proxy: ProxySettings{HTTPProxy: "http://127.0.0.1:3128"},
+			envs:  map[string]string{},
+			want: []string{
+				"HTTP_PROXY=http://host.docker.internal:3128", "http_proxy=http://host.docker.internal:3128",
+				"NO_PROXY=" + noProxy, "no_proxy=" + noProxy,
+			},
+		},
+		{
+			name:  "config wins over the daemon environment",
+			proxy: ProxySettings{HTTPProxy: "http://cfg:3128", HTTPSProxy: "http://cfg:3128"},
+			envs:  map[string]string{"HTTP_PROXY": "http://env:8080", "HTTPS_PROXY": "http://env:8080"},
+			want: []string{
+				"HTTP_PROXY=http://cfg:3128", "http_proxy=http://cfg:3128",
+				"HTTPS_PROXY=http://cfg:3128", "https_proxy=http://cfg:3128",
+				"NO_PROXY=" + noProxy, "no_proxy=" + noProxy,
+			},
+		},
+		{
+			// Per variable, not all-or-nothing: config naming only the HTTPS
+			// proxy leaves the daemon's HTTP one in place.
+			name:  "config and environment merge per variable",
+			proxy: ProxySettings{HTTPSProxy: "http://cfg:3128"},
+			envs:  map[string]string{"HTTP_PROXY": "http://env:8080"},
+			want: []string{
+				"HTTP_PROXY=http://env:8080", "http_proxy=http://env:8080",
+				"HTTPS_PROXY=http://cfg:3128", "https_proxy=http://cfg:3128",
+				"NO_PROXY=" + noProxy, "no_proxy=" + noProxy,
+			},
+		},
+		{
+			// Additive, not a replacement: configured entries land after
+			// loop's own bypasses and after whatever the daemon carried.
+			name:  "configured no_proxy adds to loop's own bypasses",
+			proxy: ProxySettings{HTTPProxy: "http://cfg:3128", NoProxy: []string{"*.internal"}},
+			envs:  map[string]string{},
+			want: []string{
+				"HTTP_PROXY=http://cfg:3128", "http_proxy=http://cfg:3128",
+				"NO_PROXY=" + noProxy + ",*.internal", "no_proxy=" + noProxy + ",*.internal",
+			},
+		},
+		{
+			name:  "configured no_proxy keeps the daemon's own list",
+			proxy: ProxySettings{NoProxy: []string{"my-service"}},
+			envs:  map[string]string{"HTTP_PROXY": "http://env:8080", "NO_PROXY": "*.corp"},
+			want: []string{
+				"HTTP_PROXY=http://env:8080", "http_proxy=http://env:8080",
+				"NO_PROXY=*.corp," + noProxy + ",my-service", "no_proxy=*.corp," + noProxy + ",my-service",
+			},
+		},
+		{
+			// The sidecar hostname is passed by the caller and the project's
+			// own entries ride in the settings; both end up in the list.
+			name:       "extra hosts and configured entries combine",
+			proxy:      ProxySettings{HTTPProxy: "http://cfg:3128", NoProxy: []string{"my-service"}},
+			extraHosts: []string{"loop-chrome-ch1"},
+			want: []string{
+				"HTTP_PROXY=http://cfg:3128", "http_proxy=http://cfg:3128",
+				"NO_PROXY=" + noProxy + ",loop-chrome-ch1,my-service",
+				"no_proxy=" + noProxy + ",loop-chrome-ch1,my-service",
+			},
 		},
 		{
 			name:       "extra hosts bypass the proxy too",
 			envs:       map[string]string{"HTTP_PROXY": "http://proxy:8080"},
 			extraHosts: []string{"loop-chrome-ch1"},
-			want:       []string{"HTTP_PROXY=http://proxy:8080", "NO_PROXY=" + noProxy + ",loop-chrome-ch1", "no_proxy=" + noProxy + ",loop-chrome-ch1"},
+			want: []string{
+				"HTTP_PROXY=http://proxy:8080", "http_proxy=http://proxy:8080",
+				"NO_PROXY=" + noProxy + ",loop-chrome-ch1", "no_proxy=" + noProxy + ",loop-chrome-ch1",
+			},
 		},
 		{
 			name:       "extra hosts ignored without a proxy",
 			envs:       map[string]string{"NO_PROXY": "localhost"},
 			extraHosts: []string{"loop-chrome-ch1"},
-			want:       []string{"NO_PROXY=localhost"},
+			want:       []string{"NO_PROXY=localhost", "no_proxy=localhost"},
 		},
 	}
 	for _, tc := range tests {
 		s.Run(tc.name, func() {
 			getenv := func(key string) string { return tc.envs[key] }
-			require.Equal(s.T(), tc.want, ProxyEnv(getenv, tc.extraHosts...))
+			require.Equal(s.T(), tc.want, ProxyEnv(tc.proxy, getenv, tc.extraHosts...))
 		})
 	}
 }

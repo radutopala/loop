@@ -18,6 +18,7 @@ import (
 
 	"github.com/radutopala/loop/internal/browser"
 	"github.com/radutopala/loop/internal/config"
+	"github.com/radutopala/loop/internal/container"
 	"github.com/radutopala/loop/internal/db"
 )
 
@@ -98,6 +99,10 @@ func (s *BrowserHandlerSuite) TestChannelBrowserConfig() {
 		merged.Browser.Extensions = []string{"/host/ublock"}
 		merged.Browser.HostCDPPort = 9333
 		merged.Browser.MemoryMB = 2048
+		// The sidecar is created from more than the browser block: a project
+		// behind its own proxy needs Chrome behind it too.
+		merged.HTTPProxy = "http://proj:3128"
+		merged.NoProxy = []string{"my-service"}
 		return &merged, nil
 	}
 	ctx := context.Background()
@@ -109,6 +114,10 @@ func (s *BrowserHandlerSuite) TestChannelBrowserConfig() {
 		PersistProfile: true,
 		Extensions:     []string{"/host/ublock"},
 		MemoryMB:       2048,
+		Proxy: container.ProxySettings{
+			HTTPProxy: "http://proj:3128",
+			NoProxy:   []string{"my-service"},
+		},
 	}, cs)
 
 	port, ok := srv.browser.channelHostCDPPort(ctx, "ch-1")

@@ -32,6 +32,12 @@ type Ctx struct {
 	Sys     System
 	LoopDir string
 	Version string
+	// ProjectDirs are the project checkouts Loop has channels for. Most
+	// migrations only touch ~/.loop, but a config key Loop renames lives in
+	// project .loop/config.json files too, and those are Loop's own files to
+	// keep current. Empty when the caller has no channel list to offer, which
+	// leaves a migration with just ~/.loop to work on.
+	ProjectDirs []string
 }
 
 // Migration is a single filesystem migration step.

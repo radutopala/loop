@@ -421,15 +421,30 @@ type Config struct {
 	PromptShortcuts      []PromptShortcut
 	BashShortcuts        []BashShortcut
 	Mounts               []string
-	// NoProxyHosts are hostnames added to the container's NO_PROXY, and to the
-	// proxies.noProxy Loop writes for the Docker CLI. Sibling containers on a
-	// shared Docker network are reached by bare name, which no CIDR entry can
-	// cover: Go's proxy matcher compares the URL host before DNS resolves it,
-	// so a compose service name never matches an IP range.
-	NoProxyHosts []string
-	CopyFiles    []string
-	Envs         map[string]string
-	ClaudeModel  string
+	// HTTPProxy, HTTPSProxy and NoProxy are the proxy a container is created
+	// with. They take precedence over the daemon's own environment, which is
+	// frozen at `loop serve` launch: a daemon started before the proxy was
+	// exported hands every container it creates an empty proxy, for the life
+	// of that container, with no way to fix it short of a restart. Config is
+	// re-read per run, so setting these here makes the proxy a property of the
+	// project rather than of how the daemon happened to be launched.
+	// Empty falls back to the daemon environment. Hierarchy: global → project
+	// → worktree.
+	HTTPProxy  string
+	HTTPSProxy string
+
+	// NoProxy holds entries added to the container's NO_PROXY, and to the
+	// proxies.noProxy Loop writes for the Docker CLI: hostnames, suffixes or
+	// CIDRs. Additive — Loop's own required bypasses (host.docker.internal,
+	// loopback, the Docker bridge CIDR, the Chrome sidecar) and the daemon's
+	// own NO_PROXY are kept, so this need only name what the project adds.
+	// Sibling containers on a shared Docker network have to be named here:
+	// they are reached by bare name, which no CIDR entry can cover, because
+	// Go's proxy matcher compares the URL host before DNS resolves it.
+	NoProxy     []string
+	CopyFiles   []string
+	Envs        map[string]string
+	ClaudeModel string
 	// ClaudeEffort is passed to the Claude CLI as `--effort` when non-empty,
 	// selecting the model's reasoning-effort level (e.g. low, medium, high,
 	// xhigh, max). Empty by default (no flag). Hierarchy: global → project →

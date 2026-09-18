@@ -126,6 +126,29 @@ func (s *ConfigSuite) TestLoadCustomValues() {
 	require.True(s.T(), cfg.Desktop.AutoSaveOnBlur)
 }
 
+func (s *ConfigSuite) TestLoadNoProxy() {
+	tests := []struct {
+		name     string
+		keys     string
+		expected []string
+	}{
+		{name: "set", keys: `"no_proxy": ["my-service", "my-cache"]`, expected: []string{"my-service", "my-cache"}},
+		{name: "unset", keys: `"api_addr": ":9999"`, expected: nil},
+	}
+
+	for _, tt := range tests {
+		s.Run(tt.name, func() {
+			s.loader.readFile = func(_ string) ([]byte, error) {
+				return []byte(`{"platforms":["discord"],"discord_token":"t","discord_app_id":"a",` + tt.keys + `}`), nil
+			}
+
+			cfg, err := s.loader.load()
+			require.NoError(s.T(), err)
+			require.Equal(s.T(), tt.expected, cfg.NoProxy)
+		})
+	}
+}
+
 func (s *ConfigSuite) TestLoadGitHubConfig() {
 	s.loader.readFile = func(_ string) ([]byte, error) {
 		return []byte(`{

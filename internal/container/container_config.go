@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 
 	"github.com/radutopala/loop/internal/config"
@@ -233,8 +234,8 @@ func (r *DockerRunner) buildContainerEnv(cfg *config.Config, channelID, apiURL s
 	// The Chrome sidecar is a bare hostname on the shared Docker network, so
 	// dockerBridgeCIDR does not cover it — CDP would go through the proxy and
 	// come back 502. Every sibling reached by name has the same problem, hence
-	// config.no_proxy_hosts for a project's own compose services.
-	env = r.addProxyEnv(env, append([]string{ChromeHostname(channelID)}, cfg.NoProxyHosts...)...)
+	// config.no_proxy for a project's own compose services.
+	env = r.addProxyEnv(env, cfg, ChromeHostname(channelID))
 
 	for k, v := range cfg.Envs {
 		expanded, err := r.expandPath(v)
@@ -270,9 +271,42 @@ func ChromeHostname(channelID string) string {
 	return ChromeContainerPrefix + SanitizeName(channelID)
 }
 
-// proxyEnvKeys are the proxy variables a container inherits from the daemon's
-// own environment, in the order they are emitted.
-var proxyEnvKeys = []string{"HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "http_proxy", "https_proxy", "no_proxy"}
+// proxyEnvKeys pairs each proxy variable's upper- and lower-case spellings,
+// in the order they are emitted. Both are set from one resolved value: tools
+// in the container disagree about which spelling they read.
+var proxyEnvKeys = []struct{ upper, lower string }{
+	{"HTTP_PROXY", "http_proxy"},
+	{"HTTPS_PROXY", "https_proxy"},
+	{"NO_PROXY", "no_proxy"},
+}
+
+// ProxySettings is the configured proxy for a container. It comes from the
+// config layers (global → project → worktree), and a non-empty field wins over
+// the daemon's own environment. That precedence is the point: the daemon's
+// environment is frozen at launch, so a daemon started before the proxy was
+// exported would otherwise create proxy-less containers until it restarts,
+// while config is re-read on every run.
+type ProxySettings struct {
+	HTTPProxy  string
+	HTTPSProxy string
+	// NoProxy is additive: entries are added to the daemon's own NO_PROXY and
+	// to Loop's required bypasses, never substituted for them.
+	NoProxy []string
+}
+
+// ProxySettingsFromConfig reads the proxy a container configured by cfg runs
+// with.
+func ProxySettingsFromConfig(cfg *config.Config) ProxySettings {
+	if cfg == nil {
+		return ProxySettings{}
+	}
+	return ProxySettings{
+		HTTPProxy:  cfg.HTTPProxy,
+		HTTPSProxy: cfg.HTTPSProxy,
+		NoProxy:    cfg.NoProxy,
+	}
+
+}
 
 // dockerBridgeCIDR covers the address space Docker hands out to the default
 // bridge and to user-defined networks. Sibling-container addresses have to
@@ -281,27 +315,62 @@ var proxyEnvKeys = []string{"HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "http_proxy
 // sibling hangs until it times out rather than failing fast.
 const dockerBridgeCIDR = "172.16.0.0/12"
 
-// ProxyEnv returns the proxy environment entries a container should inherit,
-// read through getenv and with localhost addresses rewritten to
-// host.docker.internal. extraNoProxyHosts are added to NO_PROXY (e.g. the
-// Chrome sidecar hostname, which the agent reaches over the shared network).
-// The result is empty when the daemon has no proxy configured, so callers can
-// append it unconditionally.
-func ProxyEnv(getenv func(string) string, extraNoProxyHosts ...string) []string {
+// ProxyEnv returns the proxy environment entries a container should run with:
+// proxy taking precedence over getenv per variable, with localhost addresses
+// rewritten to host.docker.internal. extraNoProxyHosts are added to NO_PROXY
+// (e.g. the Chrome sidecar hostname, which the agent reaches over the shared
+// network). The result is empty when neither the config nor the daemon names a
+// proxy, so callers can append it unconditionally.
+func ProxyEnv(proxy ProxySettings, getenv func(string) string, extraNoProxyHosts ...string) []string {
+	// NO_PROXY has no entry here: proxy.NoProxy adds to whatever the daemon
+	// carries rather than replacing it, and is applied by ensureNoProxy below.
+	configured := []string{proxy.HTTPProxy, proxy.HTTPSProxy, ""}
 	var env []string
 	hasProxy := false
-	for _, key := range proxyEnvKeys {
-		if v := getenv(key); v != "" {
-			env = append(env, key+"="+localhostToDockerHost(v))
-			if key != "NO_PROXY" && key != "no_proxy" {
-				hasProxy = true
+	for i, key := range proxyEnvKeys {
+		v := configured[i]
+		if v == "" {
+			// A daemon may carry only one spelling; either answers for both.
+			if v = getenv(key.upper); v == "" {
+				v = getenv(key.lower)
 			}
+		}
+		if v == "" {
+			continue
+		}
+		v = localhostToDockerHost(v)
+		env = append(env, key.upper+"="+v, key.lower+"="+v)
+		if key.upper != "NO_PROXY" {
+			hasProxy = true
 		}
 	}
 	if hasProxy {
-		env = ensureNoProxy(env, extraNoProxyHosts...)
+		env = ensureNoProxy(env, slices.Concat(extraNoProxyHosts, proxy.NoProxy)...)
 	}
 	return env
+}
+
+// ProxySummary describes the proxy the next container will be created with:
+// the proxy URL, and where it was resolved from. An empty value means
+// containers get no proxy at all — the failure mode worth naming out loud,
+// since a container's proxy is fixed at create time and cannot be repaired
+// afterwards.
+func ProxySummary(proxy ProxySettings, getenv func(string) string) (value, source string) {
+	for _, e := range ProxyEnv(proxy, getenv) {
+		for _, key := range []string{"HTTP_PROXY=", "HTTPS_PROXY="} {
+			if v, ok := strings.CutPrefix(e, key); ok && value == "" {
+				value = v
+			}
+		}
+	}
+	switch {
+	case value == "":
+		return "", "none"
+	case proxy.HTTPProxy != "" || proxy.HTTPSProxy != "":
+		return value, "config"
+	default:
+		return value, "daemon environment"
+	}
 }
 
 // dockerCLIConfigName is the file the Docker CLI reads its client-side
@@ -466,11 +535,26 @@ func ancestorDirs(dir string) []string {
 	return out
 }
 
-// addProxyEnv forwards host proxy environment variables into env,
-// rewriting localhost addresses to host.docker.internal.
+// addProxyEnv adds cfg's proxy — falling back to the daemon's own environment
+// — to env, rewriting localhost addresses to host.docker.internal.
 // extraNoProxyHosts are added to NO_PROXY (e.g. Chrome container hostname).
-func (r *DockerRunner) addProxyEnv(env []string, extraNoProxyHosts ...string) []string {
-	return append(env, ProxyEnv(r.sys.Getenv, extraNoProxyHosts...)...)
+func (r *DockerRunner) addProxyEnv(env []string, cfg *config.Config, extraNoProxyHosts ...string) []string {
+	proxyEnv := ProxyEnv(ProxySettingsFromConfig(cfg), r.sys.Getenv, extraNoProxyHosts...)
+	r.warnProxyMissing(cfg, proxyEnv)
+	return append(env, proxyEnv...)
+}
+
+// warnProxyMissing logs when a container is about to be created with no proxy
+// even though the config carries proxy settings — no_proxy is only worth
+// setting behind a proxy. Without this the container looks healthy right up
+// until an outbound call fails minutes later, and the cause (a daemon launched
+// before the proxy was exported) is invisible from inside.
+func (r *DockerRunner) warnProxyMissing(cfg *config.Config, proxyEnv []string) {
+	if len(proxyEnv) > 0 || r.logger == nil || cfg == nil || len(cfg.NoProxy) == 0 {
+		return
+	}
+	r.logger.Warn("creating container with no proxy: config sets no_proxy but neither config nor the daemon environment names a proxy",
+		"hint", "set http_proxy/https_proxy in config, or restart the daemon with the proxy exported")
 }
 
 // ensureNoProxy ensures host.docker.internal (and any extra hosts) are in

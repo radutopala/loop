@@ -193,3 +193,45 @@ func (s *ServeSuite) TestLocalAPIURL() {
 		require.Equal(s.T(), want, localAPIURL(in), "input %q", in)
 	}
 }
+
+// A container's proxy is fixed the moment it is created, so a daemon that
+// resolves none will hand every container it creates an empty one for that
+// container's whole life. The startup log is where that becomes visible.
+func (s *ServeSuite) TestLogContainerProxy() {
+	tests := []struct {
+		name    string
+		cfg     *config.Config
+		envs    map[string]string
+		want    string
+		notWant string
+	}{
+		{
+			name: "from config",
+			cfg:  &config.Config{HTTPProxy: "http://cfg:3128"},
+			want: `source=config`,
+		},
+		{
+			name: "from the daemon environment",
+			cfg:  &config.Config{},
+			envs: map[string]string{"HTTP_PROXY": "http://env:8080"},
+			want: `source="daemon environment"`,
+		},
+		{
+			name:    "none anywhere warns with the way out",
+			cfg:     &config.Config{},
+			want:    "no proxy for containers",
+			notWant: "container proxy",
+		},
+	}
+	for _, tc := range tests {
+		s.Run(tc.name, func() {
+			var buf bytes.Buffer
+			logger := slog.New(slog.NewTextHandler(&buf, nil))
+			logContainerProxy(logger, tc.cfg, func(key string) string { return tc.envs[key] })
+			require.Contains(s.T(), buf.String(), tc.want)
+			if tc.notWant != "" {
+				require.NotContains(s.T(), buf.String(), tc.notWant)
+			}
+		})
+	}
+}

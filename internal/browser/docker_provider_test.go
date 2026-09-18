@@ -301,6 +301,45 @@ func (s *ManagerSuite) TestEnsureBrowserForwardsProxyEnv() {
 	s.api.AssertExpectations(s.T())
 }
 
+// The channel's configured proxy wins over the daemon's environment here for
+// the same reason it does for agent containers: the daemon's copy is frozen at
+// launch, the config layers are re-read per sidecar.
+func (s *ManagerSuite) TestEnsureBrowserPrefersConfiguredProxy() {
+	ctx := context.Background()
+	env := map[string]string{"HTTP_PROXY": "http://env:8080", "HTTPS_PROXY": "http://env:8080"}
+	s.mgr.getenv = func(key string) string { return env[key] }
+	s.mgr.SetSettingsResolver(func(context.Context, string) (ChannelSettings, bool) {
+		return ChannelSettings{
+			Image: "loop-chrome:latest",
+			Proxy: container.ProxySettings{
+				HTTPProxy: "http://127.0.0.1:3128",
+				// Chrome talks to the project's own services too, so the
+				// project's bypass list has to reach the sidecar.
+				NoProxy: []string{"my-service"},
+			},
+		}, true
+	})
+
+	s.api.On("ContainerList", ctx, mock.Anything).
+		Return([]containertypes.Summary{}, nil)
+	s.api.On("ContainerCreate", ctx,
+		mock.MatchedBy(func(c *containertypes.Config) bool {
+			return slices.Contains(c.Env, "HTTP_PROXY=http://host.docker.internal:3128") &&
+				slices.Contains(c.Env, "HTTPS_PROXY=http://env:8080") &&
+				slices.Contains(c.Env, "NO_PROXY=host.docker.internal,localhost,127.0.0.1,::1,172.16.0.0/12,my-service")
+		}),
+		mock.Anything,
+		(*network.NetworkingConfig)(nil), (*ocispec.Platform)(nil), "loop-chrome-ch-1").
+		Return(containertypes.CreateResponse{ID: "chrome-ctr-1"}, nil)
+	s.api.On("ContainerStart", ctx, "chrome-ctr-1", containertypes.StartOptions{}).
+		Return(nil)
+	s.api.On("ContainerInspect", ctx, "chrome-ctr-1").
+		Return(inspectResponseWithPort("49152"), nil)
+
+	require.NoError(s.T(), s.mgr.EnsureBrowser(ctx, "ch-1", ""))
+	s.api.AssertExpectations(s.T())
+}
+
 // Without a proxy in the daemon's environment the sidecar gets no proxy env at
 // all, rather than an empty-valued one that Chrome would still parse.
 func (s *ManagerSuite) TestEnsureBrowserNoProxyEnvWhenUnset() {
