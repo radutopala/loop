@@ -19,7 +19,9 @@ import (
 // projectConfig is the structure for project-specific .loop/config.json files.
 type projectConfig struct {
 	Mounts                                   []string                   `json:"mounts"`
-	NoProxyHosts                             []string                   `json:"no_proxy_hosts"`
+	HTTPProxy                                string                     `json:"http_proxy"`
+	HTTPSProxy                               string                     `json:"https_proxy"`
+	NoProxy                                  []string                   `json:"no_proxy"`
 	CopyFiles                                []string                   `json:"copy_files"`
 	Envs                                     map[string]any             `json:"envs"`
 	MCP                                      *jsonMCPConfig             `json:"mcp"`
@@ -58,7 +60,8 @@ type projectConfig struct {
 //
 // Merge behavior:
 // - Mounts: Project mounts replace global mounts entirely
-// - NoProxyHosts: Project hosts are appended to the global ones
+// - HTTPProxy/HTTPSProxy: Project value replaces the global one when set
+// - NoProxy: Project entries are appended to the global ones
 // - MCP Servers: Merged with project servers taking precedence over main config
 //
 // Relative paths in project mounts are resolved relative to workDir.
@@ -177,10 +180,19 @@ func (l *Loader) loadProjectConfig(workDir string, mainConfig *Config) (*Config,
 		merged.Mounts = resolvedMounts
 	}
 
+	// A project behind its own proxy overrides the global one outright —
+	// unlike NoProxy below, two proxy URLs cannot be combined.
+	if pc.HTTPProxy != "" {
+		merged.HTTPProxy = pc.HTTPProxy
+	}
+	if pc.HTTPSProxy != "" {
+		merged.HTTPSProxy = pc.HTTPSProxy
+	}
+
 	// Appended, not replaced: a project declares the sibling names its own
 	// compose stack uses, on top of whatever the global config bypasses.
-	if len(pc.NoProxyHosts) > 0 {
-		merged.NoProxyHosts = append(merged.NoProxyHosts, pc.NoProxyHosts...)
+	if len(pc.NoProxy) > 0 {
+		merged.NoProxy = append(merged.NoProxy, pc.NoProxy...)
 	}
 
 	// CopyFiles: project replaces global when set.

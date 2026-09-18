@@ -186,13 +186,29 @@ func buildSchema() *ConfigSchema {
 				XSection:    "Container",
 				XOrder:      6,
 			},
-			"no_proxy_hosts": {
+			"http_proxy": {
+				Type:         "string",
+				Title:        "HTTP Proxy",
+				Description:  "Proxy for http:// traffic in containers. Overrides the daemon's own environment, which is fixed at daemon start; leave empty to inherit it",
+				XSection:     "Container",
+				XOrder:       8,
+				XPlaceholder: "http://127.0.0.1:3128",
+			},
+			"https_proxy": {
+				Type:         "string",
+				Title:        "HTTPS Proxy",
+				Description:  "Proxy for https:// traffic in containers. Overrides the daemon's own environment, which is fixed at daemon start; leave empty to inherit it",
+				XSection:     "Container",
+				XOrder:       9,
+				XPlaceholder: "http://127.0.0.1:3128",
+			},
+			"no_proxy": {
 				Type:        "array",
-				Title:       "No-proxy Hosts",
-				Description: "Extra hostnames to bypass the proxy, e.g. compose service names reached by bare name from sibling containers",
+				Title:       "No Proxy",
+				Description: "Extra hostnames, suffixes or CIDRs that bypass the proxy, added to Loop's own bypasses. Name every compose service the agent reaches by bare name — a hostname is never covered by an IP range",
 				Items:       &SchemaProperty{Type: "string"},
 				XSection:    "Container",
-				XOrder:      8,
+				XOrder:      10,
 			},
 			"container_image_autobuild": {
 				Type:        "boolean",

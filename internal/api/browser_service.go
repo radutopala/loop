@@ -16,6 +16,7 @@ import (
 	"github.com/radutopala/loop/internal/browser"
 	"github.com/radutopala/loop/internal/browsercookies"
 	"github.com/radutopala/loop/internal/config"
+	"github.com/radutopala/loop/internal/container"
 )
 
 // errBrowserDisabled is returned instead of starting a browser for a channel
@@ -111,30 +112,43 @@ func (s *browserService) setProviders(docker, host BrowserProvider) {
 // The layers are re-read per call, so an edited setting applies to the next
 // sidecar without restarting the daemon.
 func (s *browserService) channelBrowserConfig(ctx context.Context, channelID string) (config.BrowserConfig, bool) {
-	dir, err := s.deps.workspace.resolveDirPath(ctx, "", channelID)
-	if err != nil {
-		return config.BrowserConfig{}, false
-	}
-	cfg := s.deps.configs.merged(dir, s.deps.workspace.resolveParentDirPath(ctx, channelID))
-	if cfg == nil {
+	cfg, ok := s.channelConfig(ctx, channelID)
+	if !ok {
 		return config.BrowserConfig{}, false
 	}
 	return cfg.Browser, true
 }
 
+// channelConfig resolves the full config for a channel through the same
+// layers. Separate from channelBrowserConfig because the sidecar is created
+// from more than the browser block — the proxy lives at the top level.
+func (s *browserService) channelConfig(ctx context.Context, channelID string) (*config.Config, bool) {
+	dir, err := s.deps.workspace.resolveDirPath(ctx, "", channelID)
+	if err != nil {
+		return nil, false
+	}
+	cfg := s.deps.configs.merged(dir, s.deps.workspace.resolveParentDirPath(ctx, channelID))
+	if cfg == nil {
+		return nil, false
+	}
+	return cfg, true
+}
+
 // channelBrowserSettings is the docker provider's view of that block: what a
 // sidecar is created from.
 func (s *browserService) channelBrowserSettings(ctx context.Context, channelID string) (browser.ChannelSettings, bool) {
-	bc, ok := s.channelBrowserConfig(ctx, channelID)
+	cfg, ok := s.channelConfig(ctx, channelID)
 	if !ok {
 		return browser.ChannelSettings{}, false
 	}
+	bc := cfg.Browser
 	return browser.ChannelSettings{
 		Image:          bc.ChromeImage,
 		PersistProfile: bc.PersistProfile,
 		Extensions:     bc.Extensions,
 		MemoryMB:       bc.MemoryMB,
 		CPUs:           bc.CPUs,
+		Proxy:          container.ProxySettingsFromConfig(cfg),
 	}, true
 }
 

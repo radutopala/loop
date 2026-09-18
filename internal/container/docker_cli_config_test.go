@@ -128,7 +128,7 @@ func (s *RunnerSuite) TestDockerCLIProxyConfig() {
 // agent container's own loopback.
 func (s *RunnerSuite) TestDockerCLIProxyConfigRewritesLocalhost() {
 	env := map[string]string{"HTTP_PROXY": "http://localhost:3128", "HTTPS_PROXY": "https://127.0.0.1:3128"}
-	data := dockerCLIProxyConfig(ProxyEnv(func(k string) string { return env[k] }))
+	data := dockerCLIProxyConfig(ProxyEnv(ProxySettings{}, func(k string) string { return env[k] }))
 
 	var decoded struct {
 		Proxies struct {

@@ -501,20 +501,47 @@ func (s *ConfigSuite) TestLoadProjectConfigOverrides() {
 			},
 		},
 		{
-			name:        "NoProxyHosts/Appended",
-			projectJSON: `{"no_proxy_hosts": ["floci", "valkey"]}`,
-			mainCfg:     &Config{NoProxyHosts: []string{"artifacts.internal"}},
+			// Two proxy URLs cannot be combined, so the project's replaces the
+			// global one outright — unlike no_proxy, which appends.
+			name:        "Proxy/Override",
+			projectJSON: `{"http_proxy": "http://proj:3128", "https_proxy": "http://proj:3128"}`,
+			mainCfg: &Config{
+				HTTPProxy:  "http://global:3128",
+				HTTPSProxy: "http://global:3128",
+			},
 			assert: func(merged, main *Config) {
-				require.Equal(s.T(), []string{"artifacts.internal", "floci", "valkey"}, merged.NoProxyHosts)
-				require.Len(s.T(), main.NoProxyHosts, 1)
+				require.Equal(s.T(), "http://proj:3128", merged.HTTPProxy)
+				require.Equal(s.T(), "http://proj:3128", merged.HTTPSProxy)
+				require.Equal(s.T(), "http://global:3128", main.HTTPProxy)
 			},
 		},
 		{
-			name:        "NoProxyHosts/NoOverride",
+			name:        "Proxy/NoOverride",
 			projectJSON: `{}`,
-			mainCfg:     &Config{NoProxyHosts: []string{"artifacts.internal"}},
+			mainCfg: &Config{
+				HTTPProxy:  "http://global:3128",
+				HTTPSProxy: "http://global:3128",
+			},
 			assert: func(merged, _ *Config) {
-				require.Equal(s.T(), []string{"artifacts.internal"}, merged.NoProxyHosts)
+				require.Equal(s.T(), "http://global:3128", merged.HTTPProxy)
+				require.Equal(s.T(), "http://global:3128", merged.HTTPSProxy)
+			},
+		},
+		{
+			name:        "NoProxy/Appended",
+			projectJSON: `{"no_proxy": ["my-service", "my-cache"]}`,
+			mainCfg:     &Config{NoProxy: []string{"artifacts.internal"}},
+			assert: func(merged, main *Config) {
+				require.Equal(s.T(), []string{"artifacts.internal", "my-service", "my-cache"}, merged.NoProxy)
+				require.Len(s.T(), main.NoProxy, 1)
+			},
+		},
+		{
+			name:        "NoProxy/NoOverride",
+			projectJSON: `{}`,
+			mainCfg:     &Config{NoProxy: []string{"artifacts.internal"}},
+			assert: func(merged, _ *Config) {
+				require.Equal(s.T(), []string{"artifacts.internal"}, merged.NoProxy)
 			},
 		},
 		{

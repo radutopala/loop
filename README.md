@@ -370,7 +370,9 @@ On startup, `loop serve` keeps the versioned container files (`Dockerfile`, `ent
 | `claude_bin_path` | `"claude"` | Path to Claude Code binary |
 | `mounts` | `[]` | Host directories to mount into containers |
 | `copy_files` | `["~/.claude.json"]` | Files copied (not mounted) into each container |
-| `no_proxy_hosts` | `[]` | Extra hostnames that bypass the proxy. Needed for containers reached by bare name (e.g. your own compose services) — no-proxy entries are matched against the hostname before DNS resolves it, so an IP range never covers a service name |
+| `http_proxy` | `""` | Proxy for `http://` traffic in containers. Empty inherits the daemon's own environment — which is fixed when the daemon starts, while this is re-read per run |
+| `https_proxy` | `""` | Proxy for `https://` traffic in containers. Empty inherits the daemon's own environment |
+| `no_proxy` | `[]` | Extra entries that bypass the proxy, added to Loop's own bypasses. Needed for containers reached by bare name (e.g. your own compose services) — no-proxy entries are matched against the hostname before DNS resolves it, so an IP range never covers a service name |
 | `mcp` | `{}` | MCP server configurations |
 | `task_templates` | `[]` | Reusable task templates |
 | `prompt_shortcuts` | `[]` | Quick-access prompt shortcuts (triggered via `#` in chat) |
@@ -503,7 +505,8 @@ Project config overrides specific global settings. Only these fields are allowed
 |---|---|
 | `mounts` | **Replaces** global mounts entirely |
 | `copy_files` | **Replaces** global copy_files entirely |
-| `no_proxy_hosts` | **Appended** to the global list |
+| `http_proxy`, `https_proxy` | **Override** the global value when set |
+| `no_proxy` | **Appended** to the global list |
 | `mcp` | **Merged** with global; project servers take precedence |
 | `task_templates` | **Merged** with global; project overrides by name |
 | `prompt_shortcuts` | **Merged** with global; project overrides by name |

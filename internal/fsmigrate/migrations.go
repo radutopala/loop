@@ -177,6 +177,15 @@ var migrations = []Migration{
 		Description: "refresh container/ files: Chrome sidecar loads image CAs into its NSS store",
 		Apply:       refreshContainerFiles,
 	},
+	{
+		// no_proxy_hosts shipped in v2026.9.16 and v2026.9.17 and is now
+		// spelled no_proxy. Config loading ignores keys it does not know, so
+		// an install that upgrades past those versions would keep a config
+		// that reads fine and quietly proxies the hosts it used to bypass —
+		// which surfaces as a request that hangs, not as a config error.
+		Description: "rename no_proxy_hosts to no_proxy in config.json",
+		Apply:       renameNoProxyHosts,
+	},
 }
 
 // versionedContainerFiles are tracked by the daemon: each release ships a
@@ -806,6 +815,80 @@ type workflowInputValue struct {
 	Default     string `json:"default"`
 }
 
+// renameNoProxyHosts renames the no_proxy_hosts key to no_proxy in every config
+// Loop owns: the global one and the .loop/config.json in each project checkout
+// it has a channel for, since a project is the likelier place for the key. The
+// rename is done on the AST rather than by rewriting the file, so the entries
+// keep their order, their indentation and whatever comments the author wrote
+// around them.
+//
+// When a config carries both spellings the old entries are appended to the new
+// list: the two are additive bypass lists, so neither spelling winning outright
+// would match what the author asked for. A no-op when the file is missing, when
+// the old key is absent, or when either key holds something that is not an
+// array.
+func renameNoProxyHosts(_ context.Context, c *Ctx) error {
+	for _, configPath := range configPaths(c) {
+		if err := renameNoProxyHostsAt(c.Sys, configPath); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// configPaths returns every config file Loop owns: the global one, then one per
+// project checkout it has a channel for.
+func configPaths(c *Ctx) []string {
+	paths := []string{filepath.Join(c.LoopDir, "config.json")}
+	for _, dir := range c.ProjectDirs {
+		paths = append(paths, filepath.Join(dir, ".loop", "config.json"))
+	}
+	return paths
+}
+
+func renameNoProxyHostsAt(sys System, configPath string) error {
+	v, err := loadHJSONAt(sys, configPath)
+	if err != nil || v == nil {
+		return err
+	}
+	rootObj, ok := v.Value.(*hujson.Object)
+	if !ok {
+		return fmt.Errorf("parsing %s: expected JSON object at top level", configPath)
+	}
+
+	legacy := objectMemberIndex(rootObj, "no_proxy_hosts")
+	if legacy < 0 {
+		return nil
+	}
+
+	if current := findObjectMember(rootObj, "no_proxy"); current != nil {
+		from, fromOK := arrayValue(&rootObj.Members[legacy].Value)
+		into, intoOK := arrayValue(current)
+		if !fromOK || !intoOK {
+			return nil
+		}
+		into.Elements = append(into.Elements, from.Elements...)
+		rootObj.Members = slices.Delete(rootObj.Members, legacy, legacy+1)
+	} else {
+		rootObj.Members[legacy].Name.Value = hujson.String("no_proxy")
+	}
+
+	if err := atomicWriteConfig(sys, configPath, v.Pack(), 0644); err != nil {
+		return fmt.Errorf("writing %s: %w", configPath, err)
+	}
+	return nil
+}
+
+// objectMemberIndex returns the index of the named member, or -1.
+// findObjectMember answers with the value; renaming or removing a member needs
+// its position instead.
+func objectMemberIndex(obj *hujson.Object, name string) int {
+	return slices.IndexFunc(obj.Members, func(m hujson.ObjectMember) bool {
+		lit, ok := m.Name.Value.(hujson.Literal)
+		return ok && lit.String() == name
+	})
+}
+
 // arrayValue returns v's underlying hujson.Array when v is non-nil and holds
 // an array. A small guard used by the review-loop patcher's node/body walk.
 func arrayValue(v *hujson.Value) (*hujson.Array, bool) {
@@ -948,18 +1031,25 @@ func atomicWriteConfig(sys System, path string, data []byte, perm os.FileMode) e
 // — the caller usually short-circuits with `if v == nil { return ..., err }`.
 func loadConfigHJSON(c *Ctx) (*hujson.Value, string, error) {
 	configPath := filepath.Join(c.LoopDir, "config.json")
-	data, err := c.Sys.ReadFile(configPath)
+	v, err := loadHJSONAt(c.Sys, configPath)
+	return v, configPath, err
+}
+
+// loadHJSONAt is loadConfigHJSON for a config that is not the global one —
+// a project's .loop/config.json. Same contract: a missing file is (nil, nil).
+func loadHJSONAt(sys System, configPath string) (*hujson.Value, error) {
+	data, err := sys.ReadFile(configPath)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			return nil, configPath, nil
+			return nil, nil
 		}
-		return nil, configPath, fmt.Errorf("reading %s: %w", configPath, err)
+		return nil, fmt.Errorf("reading %s: %w", configPath, err)
 	}
 	v, err := hujson.Parse(data)
 	if err != nil {
-		return nil, configPath, fmt.Errorf("parsing %s: %w", configPath, err)
+		return nil, fmt.Errorf("parsing %s: %w", configPath, err)
 	}
-	return &v, configPath, nil
+	return &v, nil
 }
 
 // findObjectMember returns a pointer to the named member's Value, or nil if

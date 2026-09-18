@@ -234,11 +234,19 @@
     "loop-ollama:~/.ollama"
   ],
 
-  // Extra hostnames that bypass the proxy, on top of localhost and the Docker
+  // Proxy for containers. Prefer these over exporting the variables for the
+  // daemon: the daemon's environment is fixed when it starts and a container's
+  // is fixed when it is created, so a daemon launched before the proxy was
+  // exported creates proxy-less containers until it restarts. These are re-read
+  // per run. Empty inherits the daemon's own environment, per variable.
+  //"http_proxy": "http://127.0.0.1:3128",
+  //"https_proxy": "http://127.0.0.1:3128",
+
+  // Extra entries that bypass the proxy, on top of localhost and the Docker
   // bridge range. Needed for any container reached by bare name: NO_PROXY is
   // matched against the hostname before DNS resolves it, so a name never
   // matches an IP range no matter which network it is on.
-  //"no_proxy_hosts": [
+  //"no_proxy": [
   //  "artifacts.example.internal"
   //],
 

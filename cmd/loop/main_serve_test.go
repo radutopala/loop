@@ -134,6 +134,7 @@ func (s *MainSuite) TestServeFSMigrationError() {
 
 	s.app.configLoad = func() (*config.Config, error) { return testConfig(), nil }
 	s.app.newSQLiteStore = func(_ string) (db.Store, error) { return wrapped, nil }
+	store.On("ListChannels", mock.Anything).Return([]*db.Channel{}, nil)
 	s.app.fsMigrateRun = func(_ context.Context, _ *sql.DB, _ *fsmigrate.Ctx) error {
 		return errors.New("migration boom")
 	}
@@ -143,6 +144,58 @@ func (s *MainSuite) TestServeFSMigrationError() {
 	require.Contains(s.T(), err.Error(), "running fs migrations")
 	require.Contains(s.T(), err.Error(), "migration boom")
 	store.AssertExpectations(s.T())
+}
+
+// TestServeFSMigrationProjectDirs covers the channel dirs handed to the
+// migration runner: migrations that rewrite a config key have to reach the
+// .loop/config.json in each project checkout, not just the global one.
+func (s *MainSuite) TestServeFSMigrationProjectDirs() {
+	tests := []struct {
+		name     string
+		channels []*db.Channel
+		listErr  error
+		expected []string
+	}{
+		{
+			name: "distinct dirs, in channel order",
+			channels: []*db.Channel{
+				{DirPath: "/work/a"},
+				{DirPath: ""},
+				{DirPath: "/work/b"},
+				{DirPath: "/work/a"},
+			},
+			expected: []string{"/work/a", "/work/b"},
+		},
+		{
+			name:    "channels cannot be listed",
+			listErr: errors.New("db gone"),
+		},
+	}
+
+	for _, tt := range tests {
+		s.Run(tt.name, func() {
+			store := new(testutil.MockStore)
+			store.On("Close").Return(nil)
+			store.On("ListChannels", mock.Anything).Return(tt.channels, tt.listErr)
+			sqlMock, _, err := sqlmock.New()
+			require.NoError(s.T(), err)
+			s.T().Cleanup(func() { _ = sqlMock.Close() })
+
+			var got []string
+			s.app.configLoad = func() (*config.Config, error) { return testConfig(), nil }
+			s.app.newSQLiteStore = func(_ string) (db.Store, error) {
+				return &writerDBStore{MockStore: store, writer: sqlMock}, nil
+			}
+			s.app.fsMigrateRun = func(_ context.Context, _ *sql.DB, c *fsmigrate.Ctx) error {
+				got = c.ProjectDirs
+				// Stop serve() here: the dirs are all this test is after.
+				return errors.New("stop")
+			}
+
+			require.Error(s.T(), s.app.serve())
+			require.Equal(s.T(), tt.expected, got)
+		})
+	}
 }
 
 func (s *MainSuite) TestServeSlackHappyPathShutdown() {
