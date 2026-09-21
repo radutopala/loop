@@ -1167,7 +1167,7 @@ In headless/Linux environments where Electron can't launch, `LOOP_NO_ELECTRON=1 
 | `resume_workflow_run` | Resume a paused workflow with an optional response |
 | | **Browser Automation** |
 | `navigate` | Navigate the browser to a URL |
-| `read_page` | Get the accessibility tree of interactive elements |
+| `read_page` | Get the page's interactive elements |
 | `computer` | Perform click, type, key, scroll, move, screenshot, drag actions |
 | `screenshot` | Take a screenshot of the current page |
 | `find` | Find interactive elements by natural language query |

@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/base64"
 	"errors"
+	"fmt"
+	"slices"
 	"sync"
 	"time"
 
@@ -259,4 +261,118 @@ func (s *CDPSuite) TestScreencastDeadline() {
 
 	s.client.screencastTimeout = 3 * time.Second
 	require.Equal(s.T(), 3*time.Second, s.client.screencastDeadline())
+}
+
+// --- crashed target recovery ---
+
+// screencastCalls records which CDP commands the screencast path issued, so a
+// test can tell a reload apart from a start without reaching into Chrome.
+func (s *CDPSuite) screencastCalls(fail func(call string, n int) error) func() []string {
+	var mu sync.Mutex
+	var calls []string
+
+	s.setRunFn(func(_ context.Context, actions ...chromedp.Action) error {
+		call := "other"
+		switch actions[0].(type) {
+		case *cdppage.StartScreencastParams:
+			call = "start"
+		case *cdppage.ReloadParams:
+			call = "reload"
+		}
+
+		mu.Lock()
+		calls = append(calls, call)
+		n := 0
+		for _, c := range calls {
+			if c == call {
+				n++
+			}
+		}
+		mu.Unlock()
+
+		return fail(call, n)
+	})
+
+	return func() []string {
+		mu.Lock()
+		defer mu.Unlock()
+		return slices.Clone(calls)
+	}
+}
+
+// Chrome keeps a target whose renderer died and answers every command on it the
+// same way, so waiting alone never brings the pane back: reconnect after
+// reconnect logged "Target crashed" against a dead frame until the agent
+// happened to navigate. Reloading is what the crashed tab's own button does.
+func (s *CDPSuite) TestStartScreencastReloadsACrashedTarget() {
+	calls := s.screencastCalls(func(call string, n int) error {
+		if call == "start" && n == 1 {
+			return errors.New("Target crashed (-32000)")
+		}
+		return nil
+	})
+
+	client := s.client
+	client.StartScreencast(60, 1920, 1080)
+
+	require.Eventually(s.T(), func() bool {
+		return slices.Equal(calls(), []string{"start", "reload", "start"})
+	}, time.Second, 5*time.Millisecond,
+		"a crashed target must be reloaded and the screencast asked for again")
+	require.True(s.T(), screencastingNow(client))
+}
+
+// A reload that fails, and a reloaded tab that crashes again, both leave Chrome
+// not streaming — so the flag has to come off, or every later StartScreencast
+// takes the "already screencasting" shortcut and hands back a dead channel.
+func (s *CDPSuite) TestStartScreencastClearsFlagWhenRecoveryFails() {
+	cases := []struct {
+		name string
+		fail func(call string, n int) error
+	}{
+		{"reload refused", func(call string, _ int) error {
+			if call == "reload" {
+				return errors.New("reload failed")
+			}
+			return errors.New("Target crashed (-32000)")
+		}},
+		{"reloaded tab crashes again", func(call string, _ int) error {
+			if call == "reload" {
+				return nil
+			}
+			return errors.New("Target crashed (-32000)")
+		}},
+	}
+
+	for _, tc := range cases {
+		s.Run(tc.name, func() {
+			s.screencastCalls(tc.fail)
+
+			client := s.client
+			client.StartScreencast(60, 1920, 1080)
+
+			require.Eventually(s.T(), func() bool { return !screencastingNow(client) },
+				time.Second, 5*time.Millisecond,
+				"a start that could not be recovered must leave the client free to try again")
+		})
+	}
+}
+
+func (s *CDPSuite) TestTargetCrashed() {
+	cases := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{"no error", nil, false},
+		{"crashed target", errors.New("Target crashed (-32000)"), true},
+		{"crashed target, wrapped", fmt.Errorf("starting screencast: %w", errors.New("Target crashed (-32000)")), true},
+		{"some other failure", errors.New("Target closed"), false},
+	}
+
+	for _, tc := range cases {
+		s.Run(tc.name, func() {
+			require.Equal(s.T(), tc.want, targetCrashed(tc.err))
+		})
+	}
 }

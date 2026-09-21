@@ -186,6 +186,21 @@ var migrations = []Migration{
 		Description: "rename no_proxy_hosts to no_proxy in config.json",
 		Apply:       renameNoProxyHosts,
 	},
+	{
+		// Settles what the sidecar's Chromium can and cannot do. It renders
+		// WebGL through SwiftShader, in place of the
+		// --disable-gpu/--disable-software-rasterizer pair that left the
+		// container with no rasterizer at all; it stops offering WebGPU and
+		// the on-device model, neither of which works without a GPU and each
+		// of which logged its own failure every time a page asked; and it
+		// starts a D-Bus the password-store and battery probes can be told
+		// "no" by. Until this refresh lands an install keeps the old
+		// entrypoint, so its next sidecar rebuild still starts a Chromium
+		// whose WebGL contexts come back null and whose log fills with a
+		// missing Vulkan driver and a missing bus.
+		Description: "refresh container/ files: Chrome sidecar graphics and D-Bus",
+		Apply:       refreshContainerFiles,
+	},
 }
 
 // versionedContainerFiles are tracked by the daemon: each release ships a

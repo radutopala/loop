@@ -35,6 +35,23 @@ func TestCaptureSuite(t *testing.T) {
 	suite.Run(t, new(CaptureSuite))
 }
 
+// drained waits for the capture goroutines to move what the test sent into the
+// buffers. The hand-off is a buffered channel read by a goroutine, so a fixed
+// sleep either pads every run or loses the race on a loaded machine.
+func (s *CaptureSuite) drained(cs *CaptureState, console, network int) {
+	require.Eventually(s.T(), func() bool {
+		cs.ConsoleMu.Lock()
+		gotConsole := len(cs.ConsoleMsgs)
+		cs.ConsoleMu.Unlock()
+
+		cs.NetworkMu.Lock()
+		gotNetwork := len(cs.NetworkReqs)
+		cs.NetworkMu.Unlock()
+
+		return gotConsole >= console && gotNetwork >= network
+	}, 5*time.Second, time.Millisecond, "capture goroutines did not drain what the test sent")
+}
+
 func (s *CaptureSuite) TestEnable() {
 	cs := &CaptureState{}
 	client := &mockCaptureClient{}
@@ -46,7 +63,7 @@ func (s *CaptureSuite) TestEnable() {
 
 	// Send a console message and verify it's captured.
 	client.consoleCh <- ConsoleMessage{Level: "log", Text: "hello", Time: time.Now()}
-	time.Sleep(10 * time.Millisecond)
+	s.drained(cs, 1, 0)
 
 	result, err := cs.ReadConsole("", false, 100, false)
 	require.NoError(s.T(), err)
@@ -76,7 +93,7 @@ func (s *CaptureSuite) TestRewireAfterTabSwitch() {
 
 	client1.consoleCh <- ConsoleMessage{Level: "log", Text: "from tab 1", Time: time.Now()}
 	client1.networkCh <- NetworkRequest{URL: "https://tab1.example.com", Method: "GET", Status: 200, Time: time.Now()}
-	time.Sleep(10 * time.Millisecond)
+	s.drained(cs, 1, 1)
 
 	// Switch to tab 2 — rewire capture.
 	client2 := &mockCaptureClient{}
@@ -87,7 +104,7 @@ func (s *CaptureSuite) TestRewireAfterTabSwitch() {
 
 	client2.consoleCh <- ConsoleMessage{Level: "error", Text: "from tab 2", Time: time.Now()}
 	client2.networkCh <- NetworkRequest{URL: "https://tab2.example.com", Method: "POST", Status: 201, Time: time.Now()}
-	time.Sleep(10 * time.Millisecond)
+	s.drained(cs, 2, 2)
 
 	// Both tabs' events should be in the buffer.
 	consoleResult, err := cs.ReadConsole("", false, 100, false)
@@ -132,7 +149,7 @@ func (s *CaptureSuite) TestReadConsoleFiltering() {
 	client.consoleCh <- ConsoleMessage{Level: "log", Text: "info msg", Time: now}
 	client.consoleCh <- ConsoleMessage{Level: "error", Text: "error msg", Time: now}
 	client.consoleCh <- ConsoleMessage{Level: "warning", Text: "warn msg", Time: now}
-	time.Sleep(10 * time.Millisecond)
+	s.drained(cs, 3, 0)
 
 	// Only errors.
 	result, err := cs.ReadConsole("", true, 100, false)
@@ -160,7 +177,7 @@ func (s *CaptureSuite) TestReadConsoleClear() {
 	cs.Enable(context.Background(), client)
 
 	client.consoleCh <- ConsoleMessage{Level: "log", Text: "msg", Time: time.Now()}
-	time.Sleep(10 * time.Millisecond)
+	s.drained(cs, 1, 0)
 
 	result, err := cs.ReadConsole("", false, 100, true)
 	require.NoError(s.T(), err)
@@ -180,7 +197,7 @@ func (s *CaptureSuite) TestReadConsoleLimit() {
 	for i := 0; i < 5; i++ {
 		client.consoleCh <- ConsoleMessage{Level: "log", Text: "msg", Time: time.Now()}
 	}
-	time.Sleep(10 * time.Millisecond)
+	s.drained(cs, 5, 0)
 
 	result, err := cs.ReadConsole("", false, 2, false)
 	require.NoError(s.T(), err)
@@ -195,7 +212,7 @@ func (s *CaptureSuite) TestReadNetworkFiltering() {
 	now := time.Now()
 	client.networkCh <- NetworkRequest{URL: "https://api.example.com/users", Method: "GET", Status: 200, Time: now}
 	client.networkCh <- NetworkRequest{URL: "https://cdn.example.com/style.css", Method: "GET", Status: 200, Time: now}
-	time.Sleep(10 * time.Millisecond)
+	s.drained(cs, 0, 2)
 
 	result, err := cs.ReadNetwork("api\\.example", 100, false)
 	require.NoError(s.T(), err)
@@ -216,7 +233,7 @@ func (s *CaptureSuite) TestReadNetworkClear() {
 	cs.Enable(context.Background(), client)
 
 	client.networkCh <- NetworkRequest{URL: "https://example.com", Method: "GET", Status: 200, Time: time.Now()}
-	time.Sleep(10 * time.Millisecond)
+	s.drained(cs, 0, 1)
 
 	result, err := cs.ReadNetwork("", 100, true)
 	require.NoError(s.T(), err)
@@ -235,7 +252,7 @@ func (s *CaptureSuite) TestReadNetworkLimit() {
 	for i := 0; i < 5; i++ {
 		client.networkCh <- NetworkRequest{URL: "https://example.com", Method: "GET", Status: 200, Time: time.Now()}
 	}
-	time.Sleep(10 * time.Millisecond)
+	s.drained(cs, 0, 5)
 
 	result, err := cs.ReadNetwork("", 2, false)
 	require.NoError(s.T(), err)
