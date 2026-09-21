@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -42,6 +43,7 @@ type CDPClient struct {
 	targetsFunc   func(context.Context) ([]*target.Info, error)
 	listenFunc    func(context.Context, func(any))
 	axTreeFunc    func(context.Context) ([]*accessibility.Node, error)
+	scanRefsFunc  func(context.Context) ([]ElementRef, error)
 	boxModelFunc  func(context.Context, cdp.BackendNodeID) (*cdpdom.BoxModel, error)
 	createTabFunc func(context.Context, string) (target.ID, error)
 	activateFunc  func(context.Context, target.ID) error
@@ -60,6 +62,14 @@ type CDPClient struct {
 	// commandTimeout bounds a single CDP command; zero means
 	// defaultCommandTimeout.
 	commandTimeout time.Duration
+
+	// pageReadTimeout bounds a read of the whole page; zero means
+	// defaultPageReadTimeout.
+	pageReadTimeout time.Duration
+
+	// navigationTimeout bounds a navigation; zero means
+	// defaultNavigationTimeout.
+	navigationTimeout time.Duration
 
 	mu                 sync.Mutex
 	faviconData        map[string]string // icon URL -> data URL, "" when it could not be fetched
@@ -150,12 +160,47 @@ func (c *CDPClient) commandDeadline() time.Duration {
 	return defaultCommandTimeout
 }
 
-// bounded runs fn on its own goroutine and stops waiting once the command
-// deadline passes. The call is abandoned rather than cancelled — cancelling
-// would take the session, and with it the tab — so a wedged target costs one
-// parked goroutine instead of the caller. fn owns everything it writes to, so
-// a late return races nothing.
-func bounded[T any](c *CDPClient, fn func() (T, error)) (T, error) {
+// defaultPageReadTimeout bounds a read of the whole page: the accessibility
+// tree walk behind find, and a screenshot capture.
+//
+// These are not single commands — the walk asks for the full tree and then for
+// a box model per interactive element — so the command deadline is too short
+// for them on a heavy page, but they still need one of their own. A renderer
+// that dies mid-walk answers nothing further, and the call then has no reason
+// to return: observed in practice on a crashed tab, find sat until the MCP
+// client gave up two minutes later, twice in a row, four minutes spent to
+// learn nothing about why.
+const defaultPageReadTimeout = 30 * time.Second
+
+// pageReadDeadline returns the configured page-read timeout, or the default.
+func (c *CDPClient) pageReadDeadline() time.Duration {
+	if c.pageReadTimeout > 0 {
+		return c.pageReadTimeout
+	}
+	return defaultPageReadTimeout
+}
+
+// defaultNavigationTimeout bounds a navigation: Navigate and Reload wait for
+// the load event, which a slow site legitimately takes tens of seconds to
+// reach, so neither the command nor the page-read deadline fits them. A tab
+// whose renderer has died reaches it never, and the wait is then only over
+// when something further up gives up — the MCP client, two minutes later.
+const defaultNavigationTimeout = 60 * time.Second
+
+// navigationDeadline returns the configured navigation timeout, or the default.
+func (c *CDPClient) navigationDeadline() time.Duration {
+	if c.navigationTimeout > 0 {
+		return c.navigationTimeout
+	}
+	return defaultNavigationTimeout
+}
+
+// boundedFor runs fn on its own goroutine and stops waiting once d passes or
+// ctx is done. The call is abandoned rather than cancelled — cancelling would
+// take the session, and with it the tab — so a wedged target costs one parked
+// goroutine instead of the caller. fn owns everything it writes to, so a late
+// return races nothing.
+func boundedFor[T any](ctx context.Context, d time.Duration, fn func() (T, error)) (T, error) {
 	type result struct {
 		val T
 		err error
@@ -166,21 +211,37 @@ func bounded[T any](c *CDPClient, fn func() (T, error)) (T, error) {
 		done <- result{val: val, err: err}
 	}()
 
-	timer := time.NewTimer(c.commandDeadline())
+	timer := time.NewTimer(d)
 	defer timer.Stop()
 
 	select {
 	case r := <-done:
 		return r.val, r.err
+	case <-ctx.Done():
+		var zero T
+		return zero, fmt.Errorf("cdp command abandoned: %w", ctx.Err())
 	case <-timer.C:
 		var zero T
-		return zero, fmt.Errorf("cdp command timed out after %s", c.commandDeadline())
+		return zero, fmt.Errorf("cdp command timed out after %s", d)
 	}
+}
+
+// bounded runs fn under the command deadline. Callers holding a context of
+// their own want boundedFor instead.
+func bounded[T any](c *CDPClient, fn func() (T, error)) (T, error) {
+	return boundedFor(context.Background(), c.commandDeadline(), fn)
 }
 
 // runBounded runs fn under the command deadline, for calls with no result.
 func (c *CDPClient) runBounded(fn func() error) error {
 	_, err := bounded(c, func() (struct{}, error) { return struct{}{}, fn() })
+	return err
+}
+
+// runBoundedFor is runBounded for a caller holding a context and a deadline of
+// its own.
+func runBoundedFor(ctx context.Context, d time.Duration, fn func() error) error {
+	_, err := boundedFor(ctx, d, func() (struct{}, error) { return struct{}{}, fn() })
 	return err
 }
 
@@ -237,6 +298,7 @@ func (c *CDPClient) NewContextForTarget(targetID string) (CDPSession, error) {
 		targetsFunc:       c.targetsFunc,
 		listenFunc:        c.listenFunc,
 		axTreeFunc:        makeAxTreeFuncWith(c.runFn, c.exec),
+		scanRefsFunc:      makeScanRefsFuncWith(c.runFn, c.exec),
 		createTabFunc:     c.createTabFunc,
 		activateFunc:      c.activateFunc,
 		closeTabFunc: func(_ context.Context, closeTID string) error {
@@ -497,7 +559,8 @@ func NewCDPClient(ctx context.Context, wsURL string, logger *slog.Logger, opts .
 		listenFunc: func(ctx context.Context, fn func(any)) {
 			chromedp.ListenTarget(ctx, fn)
 		},
-		axTreeFunc: makeAxTreeFuncWith(cfg.runFunc, cfg.exec),
+		axTreeFunc:   makeAxTreeFuncWith(cfg.runFunc, cfg.exec),
+		scanRefsFunc: makeScanRefsFuncWith(cfg.runFunc, cfg.exec),
 		boxModelFunc: func(ctx context.Context, nodeID cdp.BackendNodeID) (*cdpdom.BoxModel, error) {
 			var returns cdpdom.GetBoxModelReturns
 			err := cfg.runFunc(ctx, chromedp.ActionFunc(func(ctx context.Context) error {
@@ -573,24 +636,36 @@ func (c *CDPClient) Close() {
 
 // Navigate navigates to the given URL.
 func (c *CDPClient) Navigate(ctx context.Context, url string) error {
-	return c.runFn(c.ctx, chromedp.Navigate(url))
+	return runBoundedFor(ctx, c.navigationDeadline(), func() error {
+		return c.runFn(c.ctx, chromedp.Navigate(url))
+	})
 }
 
-// Reload reloads the current page.
+// Reload reloads the current page. Bounded like Navigate: it waits for the
+// same load event.
 func (c *CDPClient) Reload(ctx context.Context) error {
-	return c.runFn(c.ctx, chromedp.Reload())
+	return runBoundedFor(ctx, c.navigationDeadline(), func() error {
+		return c.runFn(c.ctx, chromedp.Reload())
+	})
 }
 
 // GoBack navigates back in history via window.history.back().
 // This is a no-op if there is no history to go back to.
+//
+// The history call returns without waiting for whatever navigation it starts,
+// so this is bounded as the single command it is rather than as a navigation.
 func (c *CDPClient) GoBack(ctx context.Context) error {
-	return c.runFn(c.ctx, chromedp.Evaluate(`void(window.history.back())`, nil))
+	return runBoundedFor(ctx, c.commandDeadline(), func() error {
+		return c.runFn(c.ctx, chromedp.Evaluate(`void(window.history.back())`, nil))
+	})
 }
 
 // GoForward navigates forward in history via window.history.forward().
 // This is a no-op if there is no history to go forward to.
 func (c *CDPClient) GoForward(ctx context.Context) error {
-	return c.runFn(c.ctx, chromedp.Evaluate(`void(window.history.forward())`, nil))
+	return runBoundedFor(ctx, c.commandDeadline(), func() error {
+		return c.runFn(c.ctx, chromedp.Evaluate(`void(window.history.forward())`, nil))
+	})
 }
 
 // PageInfo holds the current page URL and title.
@@ -601,14 +676,16 @@ type PageInfo struct {
 
 // GetPageInfo returns the current page URL and title.
 func (c *CDPClient) GetPageInfo(ctx context.Context) (*PageInfo, error) {
-	var url, title string
-	if err := c.runFn(c.ctx,
-		chromedp.Location(&url),
-		chromedp.Title(&title),
-	); err != nil {
-		return nil, fmt.Errorf("getting page info: %w", err)
-	}
-	return &PageInfo{URL: url, Title: title}, nil
+	return boundedFor(ctx, c.commandDeadline(), func() (*PageInfo, error) {
+		var url, title string
+		if err := c.runFn(c.ctx,
+			chromedp.Location(&url),
+			chromedp.Title(&title),
+		); err != nil {
+			return nil, fmt.Errorf("getting page info: %w", err)
+		}
+		return &PageInfo{URL: url, Title: title}, nil
+	})
 }
 
 // StartScreencast begins streaming JPEG frames from Chrome.
@@ -672,29 +749,9 @@ func (c *CDPClient) StartScreencast(quality, maxWidth, maxHeight int) <-chan []b
 		c.stopCh = make(chan struct{})
 
 		go func() {
-			done := make(chan error, 1)
-			go func() {
-				done <- c.runFn(c.ctx,
-					cdppage.StartScreencast().
-						WithFormat(cdppage.ScreencastFormatJpeg).
-						WithQuality(int64(quality)).
-						WithMaxWidth(int64(maxWidth)).
-						WithMaxHeight(int64(maxHeight)).
-						WithEveryNthFrame(1),
-				)
-			}()
-
-			timer := time.NewTimer(c.screencastDeadline())
-			defer timer.Stop()
-
-			var err error
-			select {
-			case err = <-done:
-			case <-timer.C:
-				// Cancelling the call would mean cancelling the target context,
-				// which takes the tab with it. Report instead, and let the reset
-				// below leave the door open for a later attempt.
-				err = fmt.Errorf("timed out after %s", c.screencastDeadline())
+			err := c.startScreencastCmd(quality, maxWidth, maxHeight)
+			if targetCrashed(err) {
+				err = c.restartCrashedScreencast(quality, maxWidth, maxHeight)
 			}
 			if err == nil {
 				return
@@ -713,6 +770,58 @@ func (c *CDPClient) StartScreencast(quality, maxWidth, maxHeight int) <-chan []b
 	}
 
 	return c.frameCh
+}
+
+// startScreencastCmd issues Page.startScreencast under the screencast deadline.
+func (c *CDPClient) startScreencastCmd(quality, maxWidth, maxHeight int) error {
+	done := make(chan error, 1)
+	go func() {
+		done <- c.runFn(c.ctx,
+			cdppage.StartScreencast().
+				WithFormat(cdppage.ScreencastFormatJpeg).
+				WithQuality(int64(quality)).
+				WithMaxWidth(int64(maxWidth)).
+				WithMaxHeight(int64(maxHeight)).
+				WithEveryNthFrame(1),
+		)
+	}()
+
+	timer := time.NewTimer(c.screencastDeadline())
+	defer timer.Stop()
+
+	select {
+	case err := <-done:
+		return err
+	case <-timer.C:
+		// Cancelling the call would mean cancelling the target context, which
+		// takes the tab with it. Report instead, and let the caller's reset
+		// leave the door open for a later attempt.
+		return fmt.Errorf("timed out after %s", c.screencastDeadline())
+	}
+}
+
+// restartCrashedScreencast reloads a tab whose renderer died, then asks for the
+// screencast again.
+//
+// Chrome keeps the target after a renderer crash and answers every command on
+// it the same way, so nothing about waiting makes the tab come back. Observed
+// in practice: each reconnect logged "Target crashed" and left the pane on a
+// dead frame, for minutes, until the agent happened to navigate on its own.
+// Reloading is what the crashed tab's own button does.
+func (c *CDPClient) restartCrashedScreencast(quality, maxWidth, maxHeight int) error {
+	c.logger.Warn("screencast target crashed, reloading", "target_id", string(c.targetID))
+	if err := c.runActions(cdppage.Reload()); err != nil {
+		return fmt.Errorf("reloading crashed target: %w", err)
+	}
+	return c.startScreencastCmd(quality, maxWidth, maxHeight)
+}
+
+// targetCrashed reports whether err is Chrome's answer for a page whose
+// renderer has died. The match is on the message: the error reaches here
+// wrapped, and its -32000 code is the generic one every server-side CDP
+// failure carries.
+func targetCrashed(err error) bool {
+	return err != nil && strings.Contains(err.Error(), "Target crashed")
 }
 
 // ResetScreencast marks the screencast as stopped without sending a CDP command.
@@ -1028,8 +1137,185 @@ var interactiveRoles = map[string]bool{
 	"menuitemradio":    true,
 }
 
-// GetElementRefs returns interactive elements from the accessibility tree with bounding boxes.
+// maxScannedRefs caps how many interactive elements one scan reports. find
+// answers with at most twenty of them, and a page carrying more than this has
+// already stopped being a page an agent navigates by ref — shipping the rest
+// costs a megabyte of JSON per call and buys nothing.
+const maxScannedRefs = 5000
+
+// scanRefsJS collects the page's interactive elements in a single pass: role,
+// accessible-ish name, and viewport rect, the same fields the accessibility
+// walk produces.
+//
+// It exists because the walk asks Chrome for the whole accessibility tree,
+// which the renderer has to compute and serialize in one piece. Measured on a
+// synthetic page of 4000 cards (16k interactive elements), that cost 7.3s and
+// ~270MB of renderer memory, plus 5.6s more for a box model per element; this
+// scan returned the same 16000 elements in 146ms and no measurable memory. A
+// sidecar sitting near its cap is then one page read away from a renderer that
+// dies mid-walk, which is how a crashed tab was first seen here.
+//
+// The walk in axElementRefs stays as the fallback: it sees cross-origin frames,
+// which script in the page cannot.
+var scanRefsJS = fmt.Sprintf(scanRefsJSTemplate, scanRoleList, maxScannedRefs)
+
+// scanRefsJSTemplate takes the interactive role list and the ref budget.
+const scanRefsJSTemplate = `(() => {
+  const roles = new Set([%s]);
+  const text = (el) => (el.innerText || el.textContent || "").trim().replace(/\s+/g, " ").slice(0, 200);
+  const named = (el) => {
+    const label = el.getAttribute("aria-label");
+    if (label) return label.trim();
+    const by = (el.getAttribute("aria-labelledby") || "").split(/\s+/).filter(Boolean);
+    if (by.length) {
+      const parts = by.map((id) => {
+        const t = el.ownerDocument.getElementById(id);
+        return t ? text(t) : "";
+      }).filter(Boolean);
+      if (parts.length) return parts.join(" ");
+    }
+    const own = text(el);
+    if (own) return own;
+    return (el.getAttribute("placeholder") || el.getAttribute("title") || el.getAttribute("alt") || "").trim();
+  };
+  const roleOf = (el) => {
+    const explicit = (el.getAttribute("role") || "").trim().toLowerCase();
+    if (explicit) return explicit;
+    const tag = el.tagName.toLowerCase();
+    if (tag === "a") return el.hasAttribute("href") ? "link" : "";
+    if (tag === "button" || tag === "summary") return "button";
+    if (tag === "select") return el.multiple ? "listbox" : "combobox";
+    if (tag === "textarea") return "textbox";
+    if (tag === "option") return "option";
+    if (tag === "input") {
+      const t = (el.getAttribute("type") || "text").toLowerCase();
+      if (t === "checkbox" || t === "radio" || t === "option") return t;
+      if (t === "range") return "slider";
+      if (t === "number") return "spinbutton";
+      if (t === "search") return "searchbox";
+      if (t === "hidden") return "";
+      if (t === "button" || t === "submit" || t === "reset" || t === "image" || t === "file" || t === "color") return "button";
+      return "textbox";
+    }
+    return el.isContentEditable ? "textbox" : "";
+  };
+  const out = [];
+  const visit = (root, dx, dy) => {
+    for (const el of root.querySelectorAll("*")) {
+      if (out.length >= %d) return;
+      if (el.shadowRoot) visit(el.shadowRoot, dx, dy);
+      if (el.tagName === "IFRAME") {
+        try {
+          const doc = el.contentDocument;
+          if (doc) {
+            const box = el.getBoundingClientRect();
+            visit(doc, dx + box.x, dy + box.y);
+          }
+        } catch (e) { /* cross-origin: the accessibility walk is the only way in */ }
+      }
+      const role = roleOf(el);
+      if (!roles.has(role)) continue;
+      if (el.checkVisibility && !el.checkVisibility({ visibilityProperty: true, opacityProperty: true, contentVisibilityAuto: true })) continue;
+      const box = el.getBoundingClientRect();
+      if (box.width <= 0 || box.height <= 0) continue;
+      out.push({
+        role: role,
+        name: named(el),
+        description: (el.getAttribute("aria-description") || el.getAttribute("title") || "").trim(),
+        value: typeof el.value === "string" ? el.value.slice(0, 200) : "",
+        x: box.x + dx,
+        y: box.y + dy,
+        width: box.width,
+        height: box.height,
+      });
+    }
+  };
+  visit(document, 0, 0);
+  return out;
+})()`
+
+// scanRoleList is the interactiveRoles keys as a JS array literal, so the scan
+// and the accessibility walk agree on what counts as interactive.
+var scanRoleList = func() string {
+	names := make([]string, 0, len(interactiveRoles))
+	for role := range interactiveRoles {
+		names = append(names, `"`+role+`"`)
+	}
+	sort.Strings(names)
+	return strings.Join(names, ", ")
+}()
+
+// makeScanRefsFunc creates the in-page element scan. Like makeAxTreeFunc it
+// goes through runFn and an injectable cdp.Execute rather than calling
+// chromedp directly, so tests can answer it without a browser.
+func makeScanRefsFunc(runFn func(context.Context, ...chromedp.Action) error) func(context.Context) ([]ElementRef, error) {
+	return makeScanRefsFuncWith(runFn, cdp.Execute)
+}
+
+func makeScanRefsFuncWith(runFn func(context.Context, ...chromedp.Action) error, exec cdpExecutor) func(context.Context) ([]ElementRef, error) {
+	return func(ctx context.Context) ([]ElementRef, error) {
+		var refs []ElementRef
+		err := runFn(ctx, chromedp.ActionFunc(func(ctx context.Context) error {
+			var res struct {
+				Result struct {
+					Value json.RawMessage `json:"value"`
+				} `json:"result"`
+				ExceptionDetails *struct {
+					Text string `json:"text"`
+				} `json:"exceptionDetails"`
+			}
+			params := cdpruntime.Evaluate(scanRefsJS).WithReturnByValue(true).WithAwaitPromise(false)
+			if e := exec(ctx, string(cdpruntime.CommandEvaluate), params, &res); e != nil {
+				return e
+			}
+			if res.ExceptionDetails != nil {
+				return fmt.Errorf("scanning page: %s", res.ExceptionDetails.Text)
+			}
+			if len(res.Result.Value) == 0 {
+				return nil
+			}
+			return json.Unmarshal(res.Result.Value, &refs)
+		}))
+		if err != nil {
+			return nil, err
+		}
+		return refs, nil
+	}
+}
+
+// GetElementRefs returns interactive elements from the accessibility tree with
+// bounding boxes.
+//
+// The caller's context bounds the wait, alongside the page-read deadline. It
+// cannot bound the work: that runs on c.ctx, the session's own context, and
+// cancelling it would close the tab.
 func (c *CDPClient) GetElementRefs(ctx context.Context) ([]ElementRef, error) {
+	return boundedFor(ctx, c.pageReadDeadline(), c.elementRefs)
+}
+
+// elementRefs collects the page's interactive elements, in-page scan first.
+//
+// The accessibility walk answers only when the scan cannot: script in the page
+// sees neither cross-origin frames nor a document that has already stopped
+// answering, and both end here with no refs at all.
+func (c *CDPClient) elementRefs() ([]ElementRef, error) {
+	refs, err := c.scanRefsFunc(c.ctx)
+	if err != nil {
+		c.logger.Debug("in-page element scan failed, falling back to the accessibility tree",
+			"error", err, "target_id", string(c.targetID))
+	}
+	if err == nil && len(refs) > 0 {
+		for i := range refs {
+			refs[i].RefID = fmt.Sprintf("ref_%d", i+1)
+		}
+		return refs, nil
+	}
+	return c.axElementRefs()
+}
+
+// axElementRefs walks the whole accessibility tree, asking for a box model per
+// interactive node.
+func (c *CDPClient) axElementRefs() ([]ElementRef, error) {
 	// Get the accessibility tree.
 	nodes, err := c.axTreeFunc(c.ctx)
 	if err != nil {
@@ -1114,13 +1400,16 @@ func (c *CDPClient) ClickRef(ctx context.Context, refs []ElementRef, refIndex in
 	return c.MouseClick(ctx, centerX, centerY, "left", 1)
 }
 
-// Screenshot captures a full-page screenshot as PNG.
+// Screenshot captures a full-page screenshot as PNG. Bounded like
+// GetElementRefs: a crashed renderer never answers the capture either.
 func (c *CDPClient) Screenshot(ctx context.Context) ([]byte, error) {
-	var buf []byte
-	if err := c.runFn(c.ctx, chromedp.CaptureScreenshot(&buf)); err != nil {
-		return nil, fmt.Errorf("capturing screenshot: %w", err)
-	}
-	return buf, nil
+	return boundedFor(ctx, c.pageReadDeadline(), func() ([]byte, error) {
+		var buf []byte
+		if err := c.runFn(c.ctx, chromedp.CaptureScreenshot(&buf)); err != nil {
+			return nil, fmt.Errorf("capturing screenshot: %w", err)
+		}
+		return buf, nil
+	})
 }
 
 // TabInfo holds information about a browser tab.
@@ -1319,12 +1608,20 @@ func (c *CDPClient) CloseTab(ctx context.Context, targetID string) error {
 }
 
 // EvaluateJS evaluates a JavaScript expression and returns the result as a string.
+//
+// The expression is the agent's own, and a page busy enough to take a while
+// over it is ordinary, so this runs under the page-read deadline rather than
+// the command one. It needs a deadline all the same: on a tab whose renderer
+// had died, one evaluate sat for 73 seconds, and what ended it was the CDP
+// connection dropping rather than anything here noticing.
 func (c *CDPClient) EvaluateJS(ctx context.Context, expression string) (string, error) {
-	var result string
-	if err := c.runFn(c.ctx, chromedp.Evaluate(expression, &result)); err != nil {
-		return "", fmt.Errorf("evaluating JS: %w", err)
-	}
-	return result, nil
+	return boundedFor(ctx, c.pageReadDeadline(), func() (string, error) {
+		var result string
+		if err := c.runFn(c.ctx, chromedp.Evaluate(expression, &result)); err != nil {
+			return "", fmt.Errorf("evaluating JS: %w", err)
+		}
+		return result, nil
+	})
 }
 
 // ConsoleMessage represents a captured browser console message.

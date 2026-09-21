@@ -36,12 +36,15 @@ func (s *CDPSuite) SetupTest() {
 	}
 
 	s.client = &CDPClient{
-		ctx:          context.Background(),
-		logger:       slog.Default(),
-		runFn:        noopRun,
-		targetsFunc:  func(_ context.Context) ([]*target.Info, error) { return nil, nil },
-		listenFunc:   func(_ context.Context, _ func(any)) {},
-		axTreeFunc:   func(_ context.Context) ([]*accessibility.Node, error) { return nil, nil },
+		ctx:         context.Background(),
+		logger:      slog.Default(),
+		runFn:       noopRun,
+		targetsFunc: func(_ context.Context) ([]*target.Info, error) { return nil, nil },
+		listenFunc:  func(_ context.Context, _ func(any)) {},
+		axTreeFunc:  func(_ context.Context) ([]*accessibility.Node, error) { return nil, nil },
+		// No refs from the scan, so the tests below exercise the
+		// accessibility walk behind it; the scan has its own tests.
+		scanRefsFunc: func(_ context.Context) ([]ElementRef, error) { return nil, nil },
 		boxModelFunc: func(_ context.Context, _ cdp.BackendNodeID) (*cdpdom.BoxModel, error) { return nil, nil },
 		createTabFunc: func(_ context.Context, _ string) (target.ID, error) {
 			return "", nil

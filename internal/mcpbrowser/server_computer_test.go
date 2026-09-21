@@ -449,6 +449,26 @@ func (s *ServerSuite) TestComputerScrollTo() {
 	require.Contains(s.T(), getText(s.T(), res), "Scrolled ref 1")
 }
 
+// Refs from the in-page scan carry no backend node id, so scroll_to has to
+// reach the element by its rect instead of asking Chrome to scroll a node.
+func (s *ServerSuite) TestComputerScrollToScannedRef() {
+	var expr string
+	srv, session := setupTest(s.T(), func(w http.ResponseWriter, r *http.Request) {
+		_, action, params := decodeActionRequest(s.T(), r)
+		require.Equal(s.T(), "evaluate_js", action)
+		expr, _ = params["expression"].(string)
+		writeJSON(w, actionResponse{Result: "scrolled"})
+	})
+	srv.refs = []browser.ElementRef{
+		{RefID: "ref_1", Role: "button", Name: "Submit", Y: 4000, Height: 40},
+	}
+	res := callTool(s.T(), session, "computer", map[string]any{"action": "scroll_to", "ref": 1})
+	require.False(s.T(), res.IsError)
+	require.Contains(s.T(), getText(s.T(), res), "Scrolled ref 1")
+	require.Contains(s.T(), expr, "window.scrollBy")
+	require.Contains(s.T(), expr, "4000")
+}
+
 func (s *ServerSuite) TestComputerScrollToOutOfRange() {
 	srv := New("http://x", "ch", nil)
 	srv.refs = []browser.ElementRef{}

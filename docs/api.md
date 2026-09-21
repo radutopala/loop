@@ -1967,7 +1967,7 @@ Unified endpoint for all browser operations. Used by both the `loop-browser` MCP
 | `go_back` | — | Navigate back in history |
 | `go_forward` | — | Navigate forward in history |
 | `get_page_info` | — | Get current URL and title |
-| `get_element_refs` | — | Get accessibility tree elements |
+| `get_element_refs` | — | Get the page's interactive elements |
 | `mouse_click` | `x`, `y`, `button`, `click_count` | Click at coordinates |
 | `mouse_move` | `x`, `y` | Move mouse |
 | `mouse_scroll` | `x`, `y`, `delta_x`, `delta_y` | Scroll |

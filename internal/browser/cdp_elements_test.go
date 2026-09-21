@@ -3,6 +3,7 @@ package browser
 import (
 	"context"
 	"errors"
+	"time"
 
 	"github.com/chromedp/cdproto/accessibility"
 	"github.com/chromedp/cdproto/cdp"
@@ -219,4 +220,74 @@ func (s *CDPSuite) TestGetElementRefsNilNameDescValue() {
 	require.Empty(s.T(), refs[0].Name)
 	require.Empty(s.T(), refs[0].Description)
 	require.Empty(s.T(), refs[0].Value)
+}
+
+// --- GetElementRefs deadlines ---
+
+// find walks the whole accessibility tree and then asks for a box model per
+// interactive element, so it runs under the page-read deadline rather than the
+// command one. On a crashed renderer it used to run under no deadline at all:
+// the walk never returned, and the agent learned something was wrong only when
+// the MCP client gave up two minutes later.
+func (s *CDPSuite) TestGetElementRefsGivesUpOnAWedgedTarget() {
+	release := make(chan struct{})
+	s.T().Cleanup(func() { close(release) })
+
+	cases := []struct {
+		name  string
+		wedge func()
+	}{
+		{"tree never answers", func() {
+			s.client.axTreeFunc = func(_ context.Context) ([]*accessibility.Node, error) {
+				<-release
+				return nil, nil
+			}
+		}},
+		{"box models never answer", func() {
+			s.client.axTreeFunc = func(_ context.Context) ([]*accessibility.Node, error) {
+				return []*accessibility.Node{{
+					Role:             &accessibility.Value{Value: jsontext.Value("button")},
+					BackendDOMNodeID: cdp.BackendNodeID(1),
+				}}, nil
+			}
+			s.client.boxModelFunc = func(_ context.Context, _ cdp.BackendNodeID) (*cdpdom.BoxModel, error) {
+				<-release
+				return nil, nil
+			}
+		}},
+	}
+
+	for _, tc := range cases {
+		s.Run(tc.name, func() {
+			// A fresh client per case: the wedged call from the case before is
+			// abandoned, not cancelled, and it is still holding the one it ran on.
+			s.SetupTest()
+			s.client.pageReadTimeout = 20 * time.Millisecond
+			tc.wedge()
+
+			var err error
+			s.returnsWithin(time.Second, func() { _, err = s.client.GetElementRefs(context.Background()) })
+			require.ErrorContains(s.T(), err, "timed out")
+		})
+	}
+}
+
+// The context these methods take never bounded the work — it cannot, since the
+// work runs on the session context and cancelling that closes the tab — but it
+// can bound the wait, so a caller that has given up is not held by the tab.
+func (s *CDPSuite) TestGetElementRefsAbandonedWhenCallerGivesUp() {
+	release := make(chan struct{})
+	s.T().Cleanup(func() { close(release) })
+
+	s.client.axTreeFunc = func(_ context.Context) ([]*accessibility.Node, error) {
+		<-release
+		return nil, nil
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	var err error
+	s.returnsWithin(time.Second, func() { _, err = s.client.GetElementRefs(ctx) })
+	require.ErrorIs(s.T(), err, context.Canceled)
 }

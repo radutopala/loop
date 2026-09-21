@@ -607,7 +607,15 @@ func (s *Server) handleComputer(ctx context.Context, input computerInput) (*mcp.
 			return errorResult(fmt.Sprintf("ref %d out of range (1-%d)", input.Ref, len(s.refs))), nil, nil
 		}
 		ref := s.refs[input.Ref-1]
-		if _, err := s.callAction(ctx, "scroll_into_view", map[string]any{"backend_node_id": ref.BackendDOMNodeID}); err != nil {
+		// Refs from the in-page scan carry no backend node id — the scan
+		// never asks Chrome to name the nodes it found, which is most of
+		// why it is cheap. Their rect is viewport-relative, so scrolling
+		// by the difference puts the element on screen.
+		action, params := "scroll_into_view", map[string]any{"backend_node_id": ref.BackendDOMNodeID}
+		if ref.BackendDOMNodeID == 0 {
+			action, params = "evaluate_js", map[string]any{"expression": scrollToRefJS(ref)}
+		}
+		if _, err := s.callAction(ctx, action, params); err != nil {
 			return errorResult(fmt.Sprintf("scroll_to failed: %v", err)), nil, nil
 		}
 		return textResult(fmt.Sprintf("Scrolled ref %d (%s: %s) into view", input.Ref, ref.Role, ref.Name)), nil, nil
@@ -618,6 +626,15 @@ func (s *Server) handleComputer(ctx context.Context, input computerInput) (*mcp.
 	default:
 		return errorResult(fmt.Sprintf("unknown action: %s", input.Action)), nil, nil
 	}
+}
+
+// scrollToRefJS centres a scanned ref in the viewport. It returns a string
+// because EvaluateJS decodes the result into one, and window.scrollBy answers
+// with undefined.
+func scrollToRefJS(ref browser.ElementRef) string {
+	return fmt.Sprintf(
+		`(() => { window.scrollBy(0, %f - (window.innerHeight - %f) / 2); return "scrolled"; })()`,
+		ref.Y, ref.Height)
 }
 
 // handleFind searches element refs from the host for matches against a natural language query.
