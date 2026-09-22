@@ -75,6 +75,18 @@ type ImageLifecycleManager struct {
 	loopVersion         string
 	latestClaudeVersion func() string
 	childRebuilder      func(context.Context) // optional child-image cascade; see SetChildRebuilder
+	sidecarRebuilder    func(context.Context) error
+}
+
+// SetSidecarRebuilder wires the browser sidecar image build, run as part of
+// every API-driven rebuild.
+//
+// The daemon builds that image itself at startup, but only when it is missing,
+// so an install that edits the sidecar Dockerfile has no other way to act on
+// the edit: the rebuild action offers to rebuild "the image" and used to leave
+// the sidecar on whatever it was built with months ago.
+func (m *ImageLifecycleManager) SetSidecarRebuilder(fn func(context.Context) error) {
+	m.sidecarRebuilder = fn
 }
 
 // SetContainerRegistry configures the registry so that containers removed
@@ -224,14 +236,43 @@ func (m *ImageLifecycleManager) Rebuild(ctx context.Context) error {
 	return nil
 }
 
+// failBuild records a failed build, tells the UI, and logs why.
+func (m *ImageLifecycleManager) failBuild(err error, msg string) {
+	m.mu.Lock()
+	m.status = ImageBuildStatus{State: "failed", Error: err.Error()}
+	m.mu.Unlock()
+	m.broadcastStatus()
+	m.logger.Error(msg, "error", err)
+}
+
+// rebuildSidecar builds the browser sidecar image, when one is wired.
+//
+// It reports its own phase because the build is a slow one — the sidecar image
+// is built with --pull --no-cache, so it fetches a fresh Chromium every time —
+// and a UI that said only "building" for those minutes would look stuck after
+// the agent image was already done.
+func (m *ImageLifecycleManager) rebuildSidecar(ctx context.Context) error {
+	if m.sidecarRebuilder == nil {
+		return nil
+	}
+
+	m.mu.Lock()
+	m.status = ImageBuildStatus{State: "building", Phase: "browser", StartedAt: m.status.StartedAt}
+	m.mu.Unlock()
+	m.broadcastStatus()
+
+	return m.sidecarRebuilder(ctx)
+}
+
 func (m *ImageLifecycleManager) doRebuild(ctx context.Context) {
 	// No need to remove — docker build with the same tag overwrites in place.
 	if err := m.client.ImageBuild(ctx, m.containerDir, m.imageName); err != nil {
-		m.mu.Lock()
-		m.status = ImageBuildStatus{State: "failed", Error: err.Error()}
-		m.mu.Unlock()
-		m.broadcastStatus()
-		m.logger.Error("image lifecycle: build failed", "error", err)
+		m.failBuild(err, "image lifecycle: build failed")
+		return
+	}
+
+	if err := m.rebuildSidecar(ctx); err != nil {
+		m.failBuild(err, "image lifecycle: browser sidecar build failed")
 		return
 	}
 

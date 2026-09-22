@@ -558,3 +558,59 @@ func (s *MainSuite) TestEnsureImageSkipsRebuildWhenVersionMatches() {
 	require.NoError(s.T(), err)
 	dockerClient.AssertNotCalled(s.T(), "ImageBuild", mock.Anything, mock.Anything, mock.Anything)
 }
+
+// --- buildChromeImage / chromeRebuilder ---
+
+// The sidecar image is stamped with the version that built it, but only for
+// release builds: a dev build's version would make every later start think the
+// image was stale and rebuild it.
+func (s *MainSuite) TestBuildChromeImageLabels() {
+	tests := []struct {
+		name       string
+		version    string
+		wantLabels []string
+	}{
+		{name: "release stamps the version", version: "2.0.0", wantLabels: []string{"loop.built_at", "loop.version"}},
+		{name: "dev build stamps only the time", version: "dev", wantLabels: []string{"loop.built_at"}},
+	}
+	for _, tt := range tests {
+		s.Run(tt.name, func() {
+			dockerClient := new(mockDockerClient)
+			var got map[string]string
+			dockerClient.On("ImageBuildFileFresh", mock.Anything, "/container", "chrome.Dockerfile", "loop-chrome:latest", mock.Anything).
+				Run(func(args mock.Arguments) { got = args.Get(4).(map[string]string) }).Return(nil)
+
+			s.app.version = tt.version
+			err := s.app.buildChromeImage(context.Background(), dockerClient, "/container", "loop-chrome:latest")
+			require.NoError(s.T(), err)
+
+			require.Len(s.T(), got, len(tt.wantLabels))
+			for _, label := range tt.wantLabels {
+				require.Contains(s.T(), got, label)
+			}
+			if tt.version == "2.0.0" {
+				require.Equal(s.T(), "2.0.0", got["loop.version"])
+			}
+		})
+	}
+}
+
+func (s *MainSuite) TestBuildChromeImageError() {
+	dockerClient := new(mockDockerClient)
+	dockerClient.On("ImageBuildFileFresh", mock.Anything, "/container", "chrome.Dockerfile", "loop-chrome:latest", mock.Anything).
+		Return(errors.New("chromium is gone"))
+
+	err := s.app.buildChromeImage(context.Background(), dockerClient, "/container", "loop-chrome:latest")
+	require.EqualError(s.T(), err, "chromium is gone")
+}
+
+// chromeRebuilder is what the lifecycle manager calls, so it has to reach the
+// same build the startup path uses.
+func (s *MainSuite) TestChromeRebuilderRebuild() {
+	dockerClient := new(mockDockerClient)
+	dockerClient.On("ImageBuildFileFresh", mock.Anything, "/container", "chrome.Dockerfile", "loop-chrome:latest", mock.Anything).Return(nil)
+
+	r := chromeRebuilder{app: s.app, client: dockerClient, containerDir: "/container", image: "loop-chrome:latest"}
+	require.NoError(s.T(), r.rebuild(context.Background()))
+	dockerClient.AssertExpectations(s.T())
+}
