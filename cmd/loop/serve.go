@@ -95,6 +95,33 @@ func isReleaseVersion(v string) bool {
 	return v != "" && v != "dev" && !strings.Contains(v, "-g") && !strings.Contains(v, "-dirty")
 }
 
+// buildChromeImage builds the browser sidecar image from the container/ files,
+// stamping it with the version that built it so a later start can tell whether
+// it has fallen behind. Shared by the startup check and the rebuild action, so
+// the two cannot label the same image differently.
+func (a *app) buildChromeImage(ctx context.Context, client container.DockerClient, containerDir, chromeImage string) error {
+	labels := map[string]string{"loop.built_at": time.Now().UTC().Format(time.RFC3339)}
+	if isReleaseVersion(a.version) {
+		labels["loop.version"] = a.version
+	}
+	return client.ImageBuildFileFresh(ctx, containerDir, "chrome.Dockerfile", chromeImage, labels)
+}
+
+// chromeRebuilder binds the sidecar build to the deps it needs, so the
+// lifecycle manager can ask for one without knowing about config or the
+// version. A named type rather than a closure so it can be tested directly.
+type chromeRebuilder struct {
+	app          *app
+	client       container.DockerClient
+	containerDir string
+	image        string
+}
+
+// rebuild matches the signature SetSidecarRebuilder wants.
+func (c chromeRebuilder) rebuild(ctx context.Context) error {
+	return c.app.buildChromeImage(ctx, c.client, c.containerDir, c.image)
+}
+
 func (a *app) defaultEnsureImage(ctx context.Context, client container.DockerClient, cfg *config.Config, setPhase func(string)) error {
 	// container/ files are populated by fsmigrate.Run earlier in serve(),
 	// so we only need to manage the docker images here.
@@ -141,11 +168,7 @@ func (a *app) defaultEnsureImage(ctx context.Context, client container.DockerCli
 		if setPhase != nil {
 			setPhase("browser")
 		}
-		labels := map[string]string{"loop.built_at": time.Now().UTC().Format(time.RFC3339)}
-		if isReleaseVersion(a.version) {
-			labels["loop.version"] = a.version
-		}
-		if err := client.ImageBuildFileFresh(ctx, containerDir, "chrome.Dockerfile", cfg.Browser.ChromeImage, labels); err != nil {
+		if err := a.buildChromeImage(ctx, client, containerDir, cfg.Browser.ChromeImage); err != nil {
 			return err
 		}
 		built = true
@@ -711,6 +734,9 @@ func (a *app) serve() error {
 		dockerClient.LatestClaudeVersion,
 	)
 	lifecycleMgr.SetContainerRegistry(containerReg)
+	lifecycleMgr.SetSidecarRebuilder(chromeRebuilder{
+		app: a, client: dockerClient, containerDir: containerDir, image: cfg.Browser.ChromeImage,
+	}.rebuild)
 	apiSrv.SetImageManager(lifecycleMgr)
 
 	// Child-image cascade: projects overriding container_image with a

@@ -790,3 +790,74 @@ func (s *LifecycleSuite) TestRebuildChildrenInvokesWiredRebuilder() {
 	m.RebuildChildren(context.Background())
 	require.True(s.T(), called)
 }
+
+// --- sidecar rebuild ---
+
+func (s *LifecycleSuite) TestDoRebuild_RebuildsSidecar() {
+	m := s.newManager(func() string { return "" })
+	m.mu.Lock()
+	m.status = ImageBuildStatus{State: "building", Phase: "building"}
+	m.mu.Unlock()
+
+	var phaseDuringBuild string
+	m.SetSidecarRebuilder(func(context.Context) error {
+		phaseDuringBuild = m.Status().Phase
+		return nil
+	})
+
+	s.client.On("ImageBuild", mock.Anything, s.containerDir, s.imageName).Return(nil)
+	s.client.On("ImageInspectLabels", mock.Anything, s.imageName).Return(map[string]string{}, nil)
+	s.sys.On("WriteFile", "/home/test/.loop/image-versions.json", mock.Anything, os.FileMode(0o644)).Return(nil)
+	s.broadcaster.On("BroadcastImageBuildStatus", mock.Anything).Return()
+
+	m.doRebuild(context.Background())
+
+	require.Equal(s.T(), "browser", phaseDuringBuild, "the UI should be told the sidecar is what is building")
+	require.Equal(s.T(), "completed", m.Status().State)
+}
+
+func (s *LifecycleSuite) TestDoRebuild_SidecarFailureFailsTheBuild() {
+	m := s.newManager(func() string { return "" })
+	m.mu.Lock()
+	m.status = ImageBuildStatus{State: "building", Phase: "building"}
+	m.mu.Unlock()
+	m.SetSidecarRebuilder(func(context.Context) error { return errors.New("no chromium for you") })
+
+	s.client.On("ImageBuild", mock.Anything, s.containerDir, s.imageName).Return(nil)
+	s.broadcaster.On("BroadcastImageBuildStatus", mock.Anything).Return()
+
+	m.doRebuild(context.Background())
+
+	st := m.Status()
+	require.Equal(s.T(), "failed", st.State)
+	require.Equal(s.T(), "no chromium for you", st.Error)
+	s.client.AssertNotCalled(s.T(), "ImageInspectLabels", mock.Anything, mock.Anything)
+}
+
+// A manager with no sidecar wired is the daemon before the browser feature is
+// configured, and must rebuild the agent image exactly as it always did.
+func (s *LifecycleSuite) TestRebuildSidecar_NoneWired() {
+	m := s.newManager(func() string { return "" })
+	m.mu.Lock()
+	m.status = ImageBuildStatus{State: "building", Phase: "building"}
+	m.mu.Unlock()
+
+	require.NoError(s.T(), m.rebuildSidecar(context.Background()))
+	require.Equal(s.T(), "building", m.Status().Phase, "phase should be left alone")
+	s.broadcaster.AssertNotCalled(s.T(), "BroadcastImageBuildStatus", mock.Anything)
+}
+
+// The sidecar phase keeps the start time the rebuild began with, so the UI
+// reports one build rather than restarting its clock partway through.
+func (s *LifecycleSuite) TestRebuildSidecar_KeepsStartedAt() {
+	m := s.newManager(func() string { return "" })
+	started := time.Now().Add(-time.Minute)
+	m.mu.Lock()
+	m.status = ImageBuildStatus{State: "building", Phase: "building", StartedAt: started}
+	m.mu.Unlock()
+	m.SetSidecarRebuilder(func(context.Context) error { return nil })
+	s.broadcaster.On("BroadcastImageBuildStatus", mock.Anything).Return()
+
+	require.NoError(s.T(), m.rebuildSidecar(context.Background()))
+	require.Equal(s.T(), started, m.Status().StartedAt)
+}
