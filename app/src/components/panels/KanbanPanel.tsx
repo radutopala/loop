@@ -142,7 +142,7 @@ function TicketDrawer({ open, onClose, testId, header, footer, children }: Ticke
           top: 0,
           right: 0,
           bottom: 0,
-          width: "min(760px, 100%)",
+          width: "max(75%, min(760px, 100%))",
           background: colors.bg,
           borderLeft: `1px solid ${colors.border}`,
           boxShadow: "-8px 0 32px rgba(0,0,0,0.3)",
