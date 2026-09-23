@@ -75,6 +75,18 @@ function formatNoteTime(timestamp: string): string {
   return Number.isNaN(d.getTime()) ? timestamp : d.toLocaleString();
 }
 
+/** A form control with its name above it, so a filled-in field still says
+ *  what it is once its placeholder is gone. */
+function FormField({ label, children }: { label: string; children: ReactNode }) {
+  const { colors } = useTheme();
+  return (
+    <label style={{ display: "flex", flexDirection: "column", gap: 4, flex: 1, minWidth: 0 }}>
+      <span style={{ fontSize: 11, fontWeight: 600, color: colors.textDim }}>{label}</span>
+      {children}
+    </label>
+  );
+}
+
 const DRAWER_MS = 220;
 
 interface TicketDrawerProps {
@@ -759,43 +771,55 @@ export function KanbanPanel({ channelId, dirPath, rootDirPath, allowWorktree, on
           </>
         }
       >
-        <input
-          type="text"
-          placeholder="Title"
-          value={newTitle}
-          onChange={(e) => setNewTitle(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter" && newTitle.trim()) handleCreate();
-          }}
-          style={inputStyle}
-          data-autofocus
-        />
+        <FormField label="Title">
+          <input
+            type="text"
+            placeholder="Title"
+            value={newTitle}
+            onChange={(e) => setNewTitle(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && newTitle.trim()) handleCreate();
+            }}
+            style={inputStyle}
+            data-autofocus
+          />
+        </FormField>
         <div style={{ display: "flex", gap: 6 }}>
-          <select value={newType} onChange={(e) => setNewType(e.target.value)} style={{ ...inputStyle, flex: 1, cursor: "pointer" }}>
-            <option value="task">Task</option>
-            <option value="bug">Bug</option>
-            <option value="feature">Feature</option>
-            <option value="epic">Epic</option>
-            <option value="chore">Chore</option>
-          </select>
-          <select value={newPriority} onChange={(e) => setNewPriority(Number(e.target.value))} style={{ ...inputStyle, flex: 1, cursor: "pointer" }}>
-            <option value={0}>P0 - Critical</option>
-            <option value={1}>P1 - High</option>
-            <option value={2}>P2 - Medium</option>
-            <option value={3}>P3 - Low</option>
-            <option value={4}>P4 - Lowest</option>
-          </select>
+          <FormField label="Type">
+            <select value={newType} onChange={(e) => setNewType(e.target.value)} style={{ ...inputStyle, cursor: "pointer" }}>
+              <option value="task">Task</option>
+              <option value="bug">Bug</option>
+              <option value="feature">Feature</option>
+              <option value="epic">Epic</option>
+              <option value="chore">Chore</option>
+            </select>
+          </FormField>
+          <FormField label="Priority">
+            <select value={newPriority} onChange={(e) => setNewPriority(Number(e.target.value))} style={{ ...inputStyle, cursor: "pointer" }}>
+              <option value={0}>P0 - Critical</option>
+              <option value={1}>P1 - High</option>
+              <option value={2}>P2 - Medium</option>
+              <option value={3}>P3 - Low</option>
+              <option value={4}>P4 - Lowest</option>
+            </select>
+          </FormField>
         </div>
-        <textarea
-          placeholder="Description (optional)"
-          value={newDescription}
-          onChange={(e) => setNewDescription(e.target.value)}
-          rows={8}
-          style={{ ...inputStyle, resize: "vertical", fontFamily: "inherit" }}
-        />
+        <FormField label="Description">
+          <textarea
+            placeholder="Description (optional)"
+            value={newDescription}
+            onChange={(e) => setNewDescription(e.target.value)}
+            rows={8}
+            style={{ ...inputStyle, resize: "vertical", fontFamily: "inherit" }}
+          />
+        </FormField>
         <div style={{ display: "flex", gap: 6 }}>
-          <input type="text" placeholder="Assignee" value={newAssignee} onChange={(e) => setNewAssignee(e.target.value)} style={{ ...inputStyle, flex: 1 }} />
-          <input type="text" placeholder="Tags (comma-separated)" value={newTags} onChange={(e) => setNewTags(e.target.value)} style={{ ...inputStyle, flex: 1 }} />
+          <FormField label="Assignee">
+            <input type="text" placeholder="Assignee" value={newAssignee} onChange={(e) => setNewAssignee(e.target.value)} style={inputStyle} />
+          </FormField>
+          <FormField label="Tags">
+            <input type="text" placeholder="Tags (comma-separated)" value={newTags} onChange={(e) => setNewTags(e.target.value)} style={inputStyle} />
+          </FormField>
         </div>
         <button
           type="button"
@@ -807,18 +831,28 @@ export function KanbanPanel({ channelId, dirPath, rootDirPath, allowWorktree, on
         {showCreateAdvanced && (
           <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
             <div style={{ display: "flex", gap: 6 }}>
-              <input type="text" placeholder="External ref (URL or e.g. gh-123)" value={newExternalRef} onChange={(e) => setNewExternalRef(e.target.value)} style={{ ...inputStyle, flex: 1 }} />
-              <input type="text" placeholder="Parent ticket ID" value={newParent} onChange={(e) => setNewParent(e.target.value)} style={{ ...inputStyle, flex: 1 }} />
+              <FormField label="External ref">
+                <input type="text" placeholder="External ref (URL or e.g. gh-123)" value={newExternalRef} onChange={(e) => setNewExternalRef(e.target.value)} style={inputStyle} />
+              </FormField>
+              <FormField label="Parent">
+                <input type="text" placeholder="Parent ticket ID" value={newParent} onChange={(e) => setNewParent(e.target.value)} style={inputStyle} />
+              </FormField>
             </div>
-            <input type="text" placeholder="PR URL (e.g. https://github.com/owner/repo/pull/123)" value={newPR} onChange={(e) => setNewPR(e.target.value)} style={inputStyle} />
-            <textarea placeholder="Design notes" value={newDesign} onChange={(e) => setNewDesign(e.target.value)} rows={5} style={{ ...inputStyle, resize: "vertical", fontFamily: "inherit" }} />
-            <textarea
-              placeholder="Acceptance criteria"
-              value={newAcceptance}
-              onChange={(e) => setNewAcceptance(e.target.value)}
-              rows={5}
-              style={{ ...inputStyle, resize: "vertical", fontFamily: "inherit" }}
-            />
+            <FormField label="Pull request">
+              <input type="text" placeholder="PR URL (e.g. https://github.com/owner/repo/pull/123)" value={newPR} onChange={(e) => setNewPR(e.target.value)} style={inputStyle} />
+            </FormField>
+            <FormField label="Design">
+              <textarea placeholder="Design notes" value={newDesign} onChange={(e) => setNewDesign(e.target.value)} rows={5} style={{ ...inputStyle, resize: "vertical", fontFamily: "inherit" }} />
+            </FormField>
+            <FormField label="Acceptance criteria">
+              <textarea
+                placeholder="Acceptance criteria"
+                value={newAcceptance}
+                onChange={(e) => setNewAcceptance(e.target.value)}
+                rows={5}
+                style={{ ...inputStyle, resize: "vertical", fontFamily: "inherit" }}
+              />
+            </FormField>
           </div>
         )}
       </TicketDrawer>
@@ -867,43 +901,55 @@ export function KanbanPanel({ channelId, dirPath, rootDirPath, allowWorktree, on
       >
         {editing && (
           <>
-            <input
-              type="text"
-              placeholder="Title"
-              value={editTitle}
-              onChange={(e) => setEditTitle(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" && editTitle.trim()) handleEdit();
-              }}
-              style={inputStyle}
-              data-autofocus
-            />
+            <FormField label="Title">
+              <input
+                type="text"
+                placeholder="Title"
+                value={editTitle}
+                onChange={(e) => setEditTitle(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && editTitle.trim()) handleEdit();
+                }}
+                style={inputStyle}
+                data-autofocus
+              />
+            </FormField>
             <div style={{ display: "flex", gap: 6 }}>
-              <select value={editType} onChange={(e) => setEditType(e.target.value)} style={{ ...inputStyle, flex: 1, cursor: "pointer" }}>
-                <option value="task">Task</option>
-                <option value="bug">Bug</option>
-                <option value="feature">Feature</option>
-                <option value="epic">Epic</option>
-                <option value="chore">Chore</option>
-              </select>
-              <select value={editPriority} onChange={(e) => setEditPriority(Number(e.target.value))} style={{ ...inputStyle, flex: 1, cursor: "pointer" }}>
-                <option value={0}>P0 - Critical</option>
-                <option value={1}>P1 - High</option>
-                <option value={2}>P2 - Medium</option>
-                <option value={3}>P3 - Low</option>
-                <option value={4}>P4 - Lowest</option>
-              </select>
+              <FormField label="Type">
+                <select value={editType} onChange={(e) => setEditType(e.target.value)} style={{ ...inputStyle, cursor: "pointer" }}>
+                  <option value="task">Task</option>
+                  <option value="bug">Bug</option>
+                  <option value="feature">Feature</option>
+                  <option value="epic">Epic</option>
+                  <option value="chore">Chore</option>
+                </select>
+              </FormField>
+              <FormField label="Priority">
+                <select value={editPriority} onChange={(e) => setEditPriority(Number(e.target.value))} style={{ ...inputStyle, cursor: "pointer" }}>
+                  <option value={0}>P0 - Critical</option>
+                  <option value={1}>P1 - High</option>
+                  <option value={2}>P2 - Medium</option>
+                  <option value={3}>P3 - Low</option>
+                  <option value={4}>P4 - Lowest</option>
+                </select>
+              </FormField>
             </div>
-            <textarea
-              placeholder="Description (optional)"
-              value={editDescription}
-              onChange={(e) => setEditDescription(e.target.value)}
-              rows={8}
-              style={{ ...inputStyle, resize: "vertical", fontFamily: "inherit" }}
-            />
+            <FormField label="Description">
+              <textarea
+                placeholder="Description (optional)"
+                value={editDescription}
+                onChange={(e) => setEditDescription(e.target.value)}
+                rows={8}
+                style={{ ...inputStyle, resize: "vertical", fontFamily: "inherit" }}
+              />
+            </FormField>
             <div style={{ display: "flex", gap: 6 }}>
-              <input type="text" placeholder="Assignee" value={editAssignee} onChange={(e) => setEditAssignee(e.target.value)} style={{ ...inputStyle, flex: 1 }} />
-              <input type="text" placeholder="Tags (comma-separated)" value={editTags} onChange={(e) => setEditTags(e.target.value)} style={{ ...inputStyle, flex: 1 }} />
+              <FormField label="Assignee">
+                <input type="text" placeholder="Assignee" value={editAssignee} onChange={(e) => setEditAssignee(e.target.value)} style={inputStyle} />
+              </FormField>
+              <FormField label="Tags">
+                <input type="text" placeholder="Tags (comma-separated)" value={editTags} onChange={(e) => setEditTags(e.target.value)} style={inputStyle} />
+              </FormField>
             </div>
             <button
               type="button"
@@ -914,17 +960,33 @@ export function KanbanPanel({ channelId, dirPath, rootDirPath, allowWorktree, on
             </button>
             {showEditAdvanced && (
               <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                <input type="text" placeholder="Dependencies (comma-separated IDs)" value={editDeps} onChange={(e) => setEditDeps(e.target.value)} style={inputStyle} />
-                <input type="text" placeholder="External ref (URL or e.g. gh-123)" value={editExternalRef} onChange={(e) => setEditExternalRef(e.target.value)} style={inputStyle} />
-                <input type="text" placeholder="PR URL (e.g. https://github.com/owner/repo/pull/123)" value={editPR} onChange={(e) => setEditPR(e.target.value)} style={inputStyle} />
-                <textarea placeholder="Design notes" value={editDesign} onChange={(e) => setEditDesign(e.target.value)} rows={5} style={{ ...inputStyle, resize: "vertical", fontFamily: "inherit" }} />
-                <textarea
-                  placeholder="Acceptance criteria"
-                  value={editAcceptance}
-                  onChange={(e) => setEditAcceptance(e.target.value)}
-                  rows={5}
-                  style={{ ...inputStyle, resize: "vertical", fontFamily: "inherit" }}
-                />
+                <FormField label="Dependencies">
+                  <input type="text" placeholder="Dependencies (comma-separated IDs)" value={editDeps} onChange={(e) => setEditDeps(e.target.value)} style={inputStyle} />
+                </FormField>
+                <FormField label="External ref">
+                  <input type="text" placeholder="External ref (URL or e.g. gh-123)" value={editExternalRef} onChange={(e) => setEditExternalRef(e.target.value)} style={inputStyle} />
+                </FormField>
+                <FormField label="Pull request">
+                  <input type="text" placeholder="PR URL (e.g. https://github.com/owner/repo/pull/123)" value={editPR} onChange={(e) => setEditPR(e.target.value)} style={inputStyle} />
+                </FormField>
+                <FormField label="Design">
+                  <textarea
+                    placeholder="Design notes"
+                    value={editDesign}
+                    onChange={(e) => setEditDesign(e.target.value)}
+                    rows={5}
+                    style={{ ...inputStyle, resize: "vertical", fontFamily: "inherit" }}
+                  />
+                </FormField>
+                <FormField label="Acceptance criteria">
+                  <textarea
+                    placeholder="Acceptance criteria"
+                    value={editAcceptance}
+                    onChange={(e) => setEditAcceptance(e.target.value)}
+                    rows={5}
+                    style={{ ...inputStyle, resize: "vertical", fontFamily: "inherit" }}
+                  />
+                </FormField>
               </div>
             )}
 

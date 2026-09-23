@@ -89,7 +89,7 @@ Click **"+ New"** in the panel header to open the create drawer.
 
 ### Drawer
 
-The create and edit forms open in a drawer that slides in from the right edge of the panel and takes its full height. It covers at least 75% of the panel's width, and 760px (or the whole panel, if narrower) on smaller panels: `max(75%, min(760px, 100%))`. The header (title, ticket ID, **×**) and the action buttons stay put while the fields scroll between them. The description textarea is 8 rows; design and acceptance textareas are 5 rows. Clicking the dimmed board to the left, **×**, or `Esc` closes the drawer without saving; it slides back out before it unmounts. The create form's draft autosave keeps what was typed.
+The create and edit forms open in a drawer that slides in from the right edge of the panel and takes its full height. It covers at least 75% of the panel's width, and 760px (or the whole panel, if narrower) on smaller panels: `max(75%, min(760px, 100%))`. The header (title, ticket ID, **×**) and the action buttons stay put while the fields scroll between them. Every field has its name above it, so a filled-in field still says what it is. The description textarea is 8 rows; design and acceptance textareas are 5 rows. Clicking the dimmed board to the left, **×**, or `Esc` closes the drawer without saving; it slides back out before it unmounts. The create form's draft autosave keeps what was typed.
 
 Draft form state auto-persists to `localStorage` per channel under the key `kanban-draft:{channelId}`, so in-progress ticket creation survives page reloads and panel switches. The draft is cleared on save and on explicit cancel-with-empty-form.
 
