@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Ticket } from "../../api/loopApi";
-import { assignTicket, createTicket, deleteTicket, fetchTickets, updateTicket, updateTicketStatus } from "../../api/loopApi";
+import { addTicketNote, assignTicket, createTicket, deleteTicket, fetchTickets, updateTicket, updateTicketStatus } from "../../api/loopApi";
 import { useEventStream } from "../../hooks/useEventStream";
 import { useTheme } from "../../ThemeContext";
 
@@ -67,6 +67,106 @@ function renderRefLink(value: string, title: string, linkColor: string, dimColor
     <span title={title} style={{ fontFamily: "monospace", color: dimColor }}>
       {value}
     </span>
+  );
+}
+
+function formatNoteTime(timestamp: string): string {
+  const d = new Date(timestamp);
+  return Number.isNaN(d.getTime()) ? timestamp : d.toLocaleString();
+}
+
+const DRAWER_MS = 220;
+
+interface TicketDrawerProps {
+  open: boolean;
+  onClose: () => void;
+  testId: string;
+  header: ReactNode;
+  footer: ReactNode;
+  children: ReactNode;
+}
+
+/** Full-height drawer on the right edge of the panel. It slides in from the
+ *  right on open and back out on close, unmounting only once the slide ends;
+ *  meanwhile it keeps showing what it last showed open, so the form doesn't
+ *  go blank mid-slide when the caller clears its state. */
+function TicketDrawer({ open, onClose, testId, header, footer, children }: TicketDrawerProps) {
+  const { colors } = useTheme();
+  const [mounted, setMounted] = useState(open);
+  const [shown, setShown] = useState(false);
+  const panelRef = useRef<HTMLDivElement>(null);
+  const lastContent = useRef({ header, footer, children });
+  if (open) lastContent.current = { header, footer, children };
+  if (open && !mounted) setMounted(true);
+
+  useEffect(() => {
+    if (open) {
+      // Paint once off-screen, then slide in on the next frame.
+      const frame = requestAnimationFrame(() => {
+        setShown(true);
+        // preventScroll: a plain focus would scroll the panel sideways to
+        // reveal the still off-screen input.
+        panelRef.current?.querySelector<HTMLElement>("[data-autofocus]")?.focus({ preventScroll: true });
+      });
+      return () => cancelAnimationFrame(frame);
+    }
+    setShown(false);
+    const timer = setTimeout(() => setMounted(false), DRAWER_MS);
+    return () => clearTimeout(timer);
+  }, [open]);
+
+  if (!mounted) return null;
+  const content = lastContent.current;
+  return (
+    <div
+      onClick={onClose}
+      style={{
+        position: "absolute",
+        inset: 0,
+        zIndex: 100,
+        overflow: "hidden",
+        background: shown ? "rgba(0,0,0,0.4)" : "rgba(0,0,0,0)",
+        transition: `background ${DRAWER_MS}ms ease`,
+        pointerEvents: open ? "auto" : "none",
+      }}
+    >
+      <div
+        ref={panelRef}
+        data-testid={testId}
+        onClick={(e) => e.stopPropagation()}
+        onKeyDown={(e) => {
+          if (e.key === "Escape") onClose();
+        }}
+        style={{
+          position: "absolute",
+          top: 0,
+          right: 0,
+          bottom: 0,
+          width: "min(760px, 100%)",
+          background: colors.bg,
+          borderLeft: `1px solid ${colors.border}`,
+          boxShadow: "-8px 0 32px rgba(0,0,0,0.3)",
+          transform: shown ? "translateX(0)" : "translateX(100%)",
+          transition: `transform ${DRAWER_MS}ms cubic-bezier(0.2, 0, 0, 1)`,
+          display: "flex",
+          flexDirection: "column",
+        }}
+      >
+        <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "14px 20px", borderBottom: `1px solid ${colors.border}`, flexShrink: 0 }}>
+          {content.header}
+          <button
+            onClick={onClose}
+            title="Close (Esc)"
+            aria-label="Close"
+            style={{ background: "none", border: "none", color: colors.textDim, cursor: "pointer", fontSize: 16, lineHeight: 1, padding: "0 2px" }}
+          >
+            ×
+          </button>
+        </div>
+        <div style={{ flex: 1, overflowY: "auto", padding: 20, display: "flex", flexDirection: "column", gap: 14 }}>{content.children}</div>
+        <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "12px 20px", borderTop: `1px solid ${colors.border}`, flexShrink: 0 }}>{content.footer}</div>
+      </div>
+    </div>
   );
 }
 
@@ -171,6 +271,9 @@ export function KanbanPanel({ channelId, dirPath, rootDirPath, allowWorktree, on
   const [editAcceptance, setEditAcceptance] = useState("");
   const [showEditAdvanced, setShowEditAdvanced] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
+  const [noteDraft, setNoteDraft] = useState("");
+  const [noteError, setNoteError] = useState<string | null>(null);
+  const [addingNote, setAddingNote] = useState(false);
 
   const loadTickets = useCallback(async () => {
     if (!boardDir) return;
@@ -295,7 +398,29 @@ export function KanbanPanel({ channelId, dirPath, rootDirPath, allowWorktree, on
     setEditDesign(ticket.design || "");
     setEditAcceptance(ticket.acceptance || "");
     setShowEditAdvanced(!!(ticket.deps.length || ticket.external_ref || ticket.pr || ticket.design || ticket.acceptance));
+    setNoteDraft("");
+    setNoteError(null);
   }, []);
+
+  // Read notes off the live list rather than the snapshot taken on open, so a
+  // `tk add-note` from chat or a terminal shows up while the drawer is open.
+  const editNotes = (editing && (tickets.find((t) => t.id === editing.id) ?? editing).notes) || [];
+
+  const handleAddNote = useCallback(async () => {
+    const content = noteDraft.trim();
+    if (!editing || !content || !boardDir) return;
+    setAddingNote(true);
+    setNoteError(null);
+    try {
+      const updated = await addTicketNote(editing.id, { dir: boardDir, content });
+      setTickets((prev) => prev.map((t) => (t.id === updated.id ? updated : t)));
+      setNoteDraft("");
+    } catch (err) {
+      setNoteError(err instanceof Error ? err.message : "Failed to add note");
+    } finally {
+      setAddingNote(false);
+    }
+  }, [editing, boardDir, noteDraft]);
 
   const handleDelete = useCallback(
     async (ticketId: string) => {
@@ -616,149 +741,132 @@ export function KanbanPanel({ channelId, dirPath, rootDirPath, allowWorktree, on
         </div>
       )}
 
-      {/* Create modal */}
-      {showCreate && (
-        <div
-          onClick={() => setShowCreate(false)}
-          style={{
-            position: "absolute",
-            inset: 0,
-            zIndex: 100,
-            background: "rgba(0,0,0,0.5)",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
+      {/* Create drawer */}
+      <TicketDrawer
+        open={showCreate}
+        onClose={() => setShowCreate(false)}
+        testId="kanban-create-drawer"
+        header={<div style={{ fontSize: 14, fontWeight: 600, color: colors.text, flex: 1 }}>New Ticket</div>}
+        footer={
+          <>
+            <div style={{ flex: 1 }} />
+            <button onClick={() => setShowCreate(false)} style={btnSecondaryStyle}>
+              Cancel
+            </button>
+            <button onClick={handleCreate} disabled={!newTitle.trim()} style={{ ...btnStyle, opacity: newTitle.trim() ? 1 : 0.5 }}>
+              Create
+            </button>
+          </>
+        }
+      >
+        <input
+          type="text"
+          placeholder="Title"
+          value={newTitle}
+          onChange={(e) => setNewTitle(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" && newTitle.trim()) handleCreate();
           }}
+          style={inputStyle}
+          data-autofocus
+        />
+        <div style={{ display: "flex", gap: 6 }}>
+          <select value={newType} onChange={(e) => setNewType(e.target.value)} style={{ ...inputStyle, flex: 1, cursor: "pointer" }}>
+            <option value="task">Task</option>
+            <option value="bug">Bug</option>
+            <option value="feature">Feature</option>
+            <option value="epic">Epic</option>
+            <option value="chore">Chore</option>
+          </select>
+          <select value={newPriority} onChange={(e) => setNewPriority(Number(e.target.value))} style={{ ...inputStyle, flex: 1, cursor: "pointer" }}>
+            <option value={0}>P0 - Critical</option>
+            <option value={1}>P1 - High</option>
+            <option value={2}>P2 - Medium</option>
+            <option value={3}>P3 - Low</option>
+            <option value={4}>P4 - Lowest</option>
+          </select>
+        </div>
+        <textarea
+          placeholder="Description (optional)"
+          value={newDescription}
+          onChange={(e) => setNewDescription(e.target.value)}
+          rows={8}
+          style={{ ...inputStyle, resize: "vertical", fontFamily: "inherit" }}
+        />
+        <div style={{ display: "flex", gap: 6 }}>
+          <input type="text" placeholder="Assignee" value={newAssignee} onChange={(e) => setNewAssignee(e.target.value)} style={{ ...inputStyle, flex: 1 }} />
+          <input type="text" placeholder="Tags (comma-separated)" value={newTags} onChange={(e) => setNewTags(e.target.value)} style={{ ...inputStyle, flex: 1 }} />
+        </div>
+        <button
+          type="button"
+          onClick={() => setShowCreateAdvanced(!showCreateAdvanced)}
+          style={{ background: "none", border: "none", color: colors.textDim, fontSize: 11, cursor: "pointer", padding: 0, textAlign: "left" }}
         >
-          <div
-            onClick={(e) => e.stopPropagation()}
-            style={{
-              background: colors.bg,
-              border: `1px solid ${colors.border}`,
-              borderRadius: 8,
-              padding: 24,
-              width: "70vw",
-              minWidth: 600,
-              maxWidth: 1200,
-              maxHeight: "90vh",
-              overflowY: "auto",
-              display: "flex",
-              flexDirection: "column",
-              gap: 14,
-              boxShadow: "0 8px 32px rgba(0,0,0,0.3)",
-            }}
-          >
-            <div style={{ fontSize: 14, fontWeight: 600, color: colors.text }}>New Ticket</div>
-            <input
-              type="text"
-              placeholder="Title"
-              value={newTitle}
-              onChange={(e) => setNewTitle(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" && newTitle.trim()) handleCreate();
-              }}
-              style={inputStyle}
-              autoFocus
-            />
+          {showCreateAdvanced ? "▾ Less" : "▸ More fields"}
+        </button>
+        {showCreateAdvanced && (
+          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
             <div style={{ display: "flex", gap: 6 }}>
-              <select value={newType} onChange={(e) => setNewType(e.target.value)} style={{ ...inputStyle, flex: 1, cursor: "pointer" }}>
-                <option value="task">Task</option>
-                <option value="bug">Bug</option>
-                <option value="feature">Feature</option>
-                <option value="epic">Epic</option>
-                <option value="chore">Chore</option>
-              </select>
-              <select value={newPriority} onChange={(e) => setNewPriority(Number(e.target.value))} style={{ ...inputStyle, flex: 1, cursor: "pointer" }}>
-                <option value={0}>P0 - Critical</option>
-                <option value={1}>P1 - High</option>
-                <option value={2}>P2 - Medium</option>
-                <option value={3}>P3 - Low</option>
-                <option value={4}>P4 - Lowest</option>
-              </select>
+              <input type="text" placeholder="External ref (URL or e.g. gh-123)" value={newExternalRef} onChange={(e) => setNewExternalRef(e.target.value)} style={{ ...inputStyle, flex: 1 }} />
+              <input type="text" placeholder="Parent ticket ID" value={newParent} onChange={(e) => setNewParent(e.target.value)} style={{ ...inputStyle, flex: 1 }} />
             </div>
+            <input type="text" placeholder="PR URL (e.g. https://github.com/owner/repo/pull/123)" value={newPR} onChange={(e) => setNewPR(e.target.value)} style={inputStyle} />
+            <textarea placeholder="Design notes" value={newDesign} onChange={(e) => setNewDesign(e.target.value)} rows={5} style={{ ...inputStyle, resize: "vertical", fontFamily: "inherit" }} />
             <textarea
-              placeholder="Description (optional)"
-              value={newDescription}
-              onChange={(e) => setNewDescription(e.target.value)}
-              rows={6}
+              placeholder="Acceptance criteria"
+              value={newAcceptance}
+              onChange={(e) => setNewAcceptance(e.target.value)}
+              rows={5}
               style={{ ...inputStyle, resize: "vertical", fontFamily: "inherit" }}
             />
-            <div style={{ display: "flex", gap: 6 }}>
-              <input type="text" placeholder="Assignee" value={newAssignee} onChange={(e) => setNewAssignee(e.target.value)} style={{ ...inputStyle, flex: 1 }} />
-              <input type="text" placeholder="Tags (comma-separated)" value={newTags} onChange={(e) => setNewTags(e.target.value)} style={{ ...inputStyle, flex: 1 }} />
-            </div>
-            <button
-              type="button"
-              onClick={() => setShowCreateAdvanced(!showCreateAdvanced)}
-              style={{ background: "none", border: "none", color: colors.textDim, fontSize: 11, cursor: "pointer", padding: 0, textAlign: "left" }}
-            >
-              {showCreateAdvanced ? "▾ Less" : "▸ More fields"}
-            </button>
-            {showCreateAdvanced && (
-              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                <div style={{ display: "flex", gap: 6 }}>
-                  <input type="text" placeholder="External ref (URL or e.g. gh-123)" value={newExternalRef} onChange={(e) => setNewExternalRef(e.target.value)} style={{ ...inputStyle, flex: 1 }} />
-                  <input type="text" placeholder="Parent ticket ID" value={newParent} onChange={(e) => setNewParent(e.target.value)} style={{ ...inputStyle, flex: 1 }} />
-                </div>
-                <input type="text" placeholder="PR URL (e.g. https://github.com/owner/repo/pull/123)" value={newPR} onChange={(e) => setNewPR(e.target.value)} style={inputStyle} />
-                <textarea placeholder="Design notes" value={newDesign} onChange={(e) => setNewDesign(e.target.value)} rows={5} style={{ ...inputStyle, resize: "vertical", fontFamily: "inherit" }} />
-                <textarea
-                  placeholder="Acceptance criteria"
-                  value={newAcceptance}
-                  onChange={(e) => setNewAcceptance(e.target.value)}
-                  rows={5}
-                  style={{ ...inputStyle, resize: "vertical", fontFamily: "inherit" }}
-                />
-              </div>
-            )}
-            <div style={{ display: "flex", gap: 6, justifyContent: "flex-end" }}>
-              <button onClick={() => setShowCreate(false)} style={btnSecondaryStyle}>
-                Cancel
-              </button>
-              <button onClick={handleCreate} disabled={!newTitle.trim()} style={{ ...btnStyle, opacity: newTitle.trim() ? 1 : 0.5 }}>
-                Create
-              </button>
-            </div>
           </div>
-        </div>
-      )}
+        )}
+      </TicketDrawer>
 
-      {/* Edit modal */}
-      {editing && (
-        <div
-          onClick={() => setEditing(null)}
-          style={{
-            position: "absolute",
-            inset: 0,
-            zIndex: 100,
-            background: "rgba(0,0,0,0.5)",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-          }}
-        >
-          <div
-            onClick={(e) => e.stopPropagation()}
-            style={{
-              background: colors.bg,
-              border: `1px solid ${colors.border}`,
-              borderRadius: 8,
-              padding: 24,
-              width: "70vw",
-              minWidth: 600,
-              maxWidth: 1200,
-              maxHeight: "90vh",
-              overflowY: "auto",
-              display: "flex",
-              flexDirection: "column",
-              gap: 14,
-              boxShadow: "0 8px 32px rgba(0,0,0,0.3)",
-            }}
-          >
-            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+      {/* Edit drawer */}
+      <TicketDrawer
+        open={!!editing}
+        onClose={() => setEditing(null)}
+        testId="kanban-edit-drawer"
+        header={
+          editing && (
+            <>
               <div style={{ fontSize: 14, fontWeight: 600, color: colors.text, flex: 1 }}>Edit Ticket</div>
               <span style={{ fontSize: 11, color: colors.textDim, fontFamily: "monospace" }}>{editing.id}</span>
-            </div>
+            </>
+          )
+        }
+        footer={
+          editing && (
+            <>
+              {confirmDelete === editing.id ? (
+                <>
+                  <span style={{ fontSize: 11, color: "#ef4444" }}>Delete?</span>
+                  <button onClick={() => handleDelete(editing.id)} style={{ ...btnStyle, background: "#ef4444", fontSize: 10 }}>
+                    Yes
+                  </button>
+                  <button onClick={() => setConfirmDelete(null)} style={{ ...btnSecondaryStyle, fontSize: 10 }}>
+                    No
+                  </button>
+                </>
+              ) : (
+                <button onClick={() => setConfirmDelete(editing.id)} style={{ ...btnSecondaryStyle, color: "#ef4444", borderColor: "#ef444444" }}>
+                  Delete
+                </button>
+              )}
+              <div style={{ flex: 1 }} />
+              <button onClick={() => setEditing(null)} style={btnSecondaryStyle}>
+                Cancel
+              </button>
+              <button onClick={handleEdit} disabled={!editTitle.trim()} style={{ ...btnStyle, opacity: editTitle.trim() ? 1 : 0.5 }}>
+                Save
+              </button>
+            </>
+          )
+        }
+      >
+        {editing && (
+          <>
             <input
               type="text"
               placeholder="Title"
@@ -768,7 +876,7 @@ export function KanbanPanel({ channelId, dirPath, rootDirPath, allowWorktree, on
                 if (e.key === "Enter" && editTitle.trim()) handleEdit();
               }}
               style={inputStyle}
-              autoFocus
+              data-autofocus
             />
             <div style={{ display: "flex", gap: 6 }}>
               <select value={editType} onChange={(e) => setEditType(e.target.value)} style={{ ...inputStyle, flex: 1, cursor: "pointer" }}>
@@ -790,7 +898,7 @@ export function KanbanPanel({ channelId, dirPath, rootDirPath, allowWorktree, on
               placeholder="Description (optional)"
               value={editDescription}
               onChange={(e) => setEditDescription(e.target.value)}
-              rows={6}
+              rows={8}
               style={{ ...inputStyle, resize: "vertical", fontFamily: "inherit" }}
             />
             <div style={{ display: "flex", gap: 6 }}>
@@ -819,33 +927,48 @@ export function KanbanPanel({ channelId, dirPath, rootDirPath, allowWorktree, on
                 />
               </div>
             )}
-            <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-              {confirmDelete === editing.id ? (
-                <>
-                  <span style={{ fontSize: 11, color: "#ef4444" }}>Delete?</span>
-                  <button onClick={() => handleDelete(editing.id)} style={{ ...btnStyle, background: "#ef4444", fontSize: 10 }}>
-                    Yes
-                  </button>
-                  <button onClick={() => setConfirmDelete(null)} style={{ ...btnSecondaryStyle, fontSize: 10 }}>
-                    No
-                  </button>
-                </>
-              ) : (
-                <button onClick={() => setConfirmDelete(editing.id)} style={{ ...btnSecondaryStyle, color: "#ef4444", borderColor: "#ef444444" }}>
-                  Delete
+
+            {/* Notes — append-only, like `tk add-note`; adding one saves it straight away */}
+            <div data-testid="kanban-ticket-notes" style={{ display: "flex", flexDirection: "column", gap: 8, borderTop: `1px solid ${colors.border}`, paddingTop: 12 }}>
+              <div style={{ display: "flex", alignItems: "baseline", gap: 6 }}>
+                <span style={{ fontSize: 12, fontWeight: 600, color: colors.text }}>Notes</span>
+                <span style={{ fontSize: 11, color: colors.textDim }}>{editNotes.length}</span>
+              </div>
+              {editNotes.length === 0 && <div style={{ fontSize: 11, color: colors.textDim }}>No notes yet</div>}
+              {editNotes.map((note, i) => (
+                <div
+                  key={`${note.timestamp}-${i}`}
+                  style={{ padding: "6px 8px", background: colors.surface, border: `1px solid ${colors.border}`, borderRadius: 4, display: "flex", flexDirection: "column", gap: 3 }}
+                >
+                  <span title={note.timestamp} style={{ fontSize: 10, color: colors.textDim }}>
+                    {formatNoteTime(note.timestamp)}
+                  </span>
+                  <span style={{ fontSize: 12, color: colors.text, whiteSpace: "pre-wrap", wordBreak: "break-word" }}>{note.content}</span>
+                </div>
+              ))}
+              <textarea
+                placeholder="Add a note (⌘/Ctrl+Enter to add)"
+                value={noteDraft}
+                onChange={(e) => setNoteDraft(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+                    e.preventDefault();
+                    handleAddNote();
+                  }
+                }}
+                rows={3}
+                style={{ ...inputStyle, resize: "vertical", fontFamily: "inherit" }}
+              />
+              {noteError && <div style={{ fontSize: 11, color: "#ef4444" }}>{noteError}</div>}
+              <div style={{ display: "flex", justifyContent: "flex-end" }}>
+                <button onClick={handleAddNote} disabled={!noteDraft.trim() || addingNote} style={{ ...btnSecondaryStyle, opacity: noteDraft.trim() && !addingNote ? 1 : 0.5 }}>
+                  {addingNote ? "Adding..." : "Add note"}
                 </button>
-              )}
-              <div style={{ flex: 1 }} />
-              <button onClick={() => setEditing(null)} style={btnSecondaryStyle}>
-                Cancel
-              </button>
-              <button onClick={handleEdit} disabled={!editTitle.trim()} style={{ ...btnStyle, opacity: editTitle.trim() ? 1 : 0.5 }}>
-                Save
-              </button>
+              </div>
             </div>
-          </div>
-        </div>
-      )}
+          </>
+        )}
+      </TicketDrawer>
 
       {/* Kanban columns */}
       <div

@@ -40,11 +40,11 @@ Each card displays:
 | Priority badge | `P0`–`P4`, highlighted red for P0–P1 |
 | Type tag | `bug`, `feature`, `task`, `epic`, `chore` — color-coded |
 | Ticket ID | Short ID (e.g., `tic-a1b2`) |
-| Title | Clickable — opens the edit modal |
+| Title | Clickable — opens the edit drawer |
 | Tags | Comma-separated list |
 | Assignee | Shown when set |
-| External ref | Shown when set. If the value starts with `http://` or `https://` it renders as an underlined link that opens in a new tab (`target="_blank"`); otherwise it's plain monospace text. The click is `stopPropagation`'d so it doesn't open the edit modal. |
-| Pull request | Same rendering as External ref — clickable link when the value is a URL, plain text otherwise. Set via the `pr` field on the ticket; surfaced in both the create and edit modals' "More fields" section. |
+| External ref | Shown when set. If the value starts with `http://` or `https://` it renders as an underlined link that opens in a new tab (`target="_blank"`); otherwise it's plain monospace text. The click is `stopPropagation`'d so it doesn't open the edit drawer. |
+| Pull request | Same rendering as External ref — clickable link when the value is a URL, plain text otherwise. Set via the `pr` field on the ticket; surfaced in both the create and edit drawers' "More fields" section. |
 | Dependency count | Shown when the ticket has dependencies |
 
 ### Status Actions
@@ -59,7 +59,7 @@ Each card displays:
 
 ## Create Ticket
 
-Click **"+ New"** in the panel header to open the create modal.
+Click **"+ New"** in the panel header to open the create drawer.
 
 ### Required Fields
 
@@ -87,9 +87,9 @@ Click **"+ New"** in the panel header to open the create modal.
 | Design | Design notes (markdown) |
 | Acceptance | Acceptance criteria (markdown) |
 
-### Modal Sizing
+### Drawer
 
-The create and edit modals are sized for serious editing rather than quick capture: `width: 70vw`, `minWidth: 600`, `maxWidth: 1200`, with `maxHeight: 90vh` and internal scroll for overflowing content. The description textarea is 6 rows; design and acceptance textareas are 5 rows. Backdrop-click outside the modal cancels without saving (form state is preserved in the draft autosave).
+The create and edit forms open in a drawer that slides in from the right edge of the panel and takes its full height, `min(760px, 100%)` wide. The header (title, ticket ID, **×**) and the action buttons stay put while the fields scroll between them. The description textarea is 8 rows; design and acceptance textareas are 5 rows. Clicking the dimmed board to the left, **×**, or `Esc` closes the drawer without saving; it slides back out before it unmounts. The create form's draft autosave keeps what was typed.
 
 Draft form state auto-persists to `localStorage` per channel under the key `kanban-draft:{channelId}`, so in-progress ticket creation survives page reloads and panel switches. The draft is cleared on save and on explicit cancel-with-empty-form.
 
@@ -97,13 +97,19 @@ Draft form state auto-persists to `localStorage` per channel under the key `kanb
 
 ## Edit Ticket
 
-Click a ticket's title to open the edit modal. All fields from the create form are editable, plus:
+Click a ticket's title to open the edit drawer. All fields from the create form are editable, plus:
 
 | Field | Description |
 |-------|-------------|
 | Dependencies | Comma-separated ticket IDs that must close before this ticket becomes ready |
 
-The edit modal also includes an inline **Delete** button with "Delete? Yes / No" confirmation.
+The edit drawer also includes an inline **Delete** button with "Delete? Yes / No" confirmation.
+
+### Notes
+
+Below the fields, the edit drawer lists the ticket's notes, oldest first, each with its timestamp in local time. These are the notes `tk add-note` writes. Type in **Add a note** and click **Add note** (or `⌘/Ctrl+Enter`) to append one. It is saved immediately, separately from **Save**, with the current time.
+
+Notes are append-only, as in `tk`: the drawer can't edit or remove them, and saving the ticket's other fields leaves them untouched. A note added from chat or a terminal while the drawer is open appears as soon as the board refreshes.
 
 ---
 
@@ -148,8 +154,9 @@ The Kanban panel and the `tk` CLI are two interfaces to the same ticket store:
 | Close | "Close" button | `tk close <id>` |
 | Assign worktree | "Assign Worktree" button | Manual: `tk start` + git worktree + thread |
 | View details | Click title | `tk show <id>` |
-| Delete | Edit modal → Delete | `tk delete <id>` |
-| Add dependency | Edit modal → Dependencies | `tk dep add <id> <dep-id>` |
+| Delete | Edit drawer → Delete | `tk delete <id>` |
+| Add dependency | Edit drawer → Dependencies | `tk dep add <id> <dep-id>` |
+| Add note | Edit drawer → Notes | `tk add-note <id> "text"` |
 
 Changes from either side are reflected in real-time (Kanban via WebSocket events, CLI visible on next `tk` command).
 
@@ -166,6 +173,7 @@ See [HTTP API — Tickets](api.md#tickets) for full endpoint documentation.
 | `GET` | `/api/tickets/{id}` | Get a ticket by ID |
 | `PATCH` | `/api/tickets/{id}` | Update ticket fields |
 | `DELETE` | `/api/tickets/{id}` | Delete a ticket |
+| `POST` | `/api/tickets/{id}/notes` | Append a note |
 | `POST` | `/api/tickets/{id}/assign` | Assign worktree and start agent |
 
 ---

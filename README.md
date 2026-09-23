@@ -1103,6 +1103,7 @@ In headless/Linux environments where Electron can't launch, `LOOP_NO_ELECTRON=1 
 | `GET` | `/api/tickets/{id}` | Get a single ticket by ID |
 | `PATCH` | `/api/tickets/{id}` | Update ticket fields (status, title, description, deps, etc.) |
 | `DELETE` | `/api/tickets/{id}` | Delete a ticket |
+| `POST` | `/api/tickets/{id}/notes` | Append a timestamped note to a ticket (same as `tk add-note`) |
 | `POST` | `/api/tickets/{id}/assign` | Assign a worktree to a ticket (claim, create worktree, start agent) |
 | `GET` | `/api/workflows` | List workflow definitions from merged config |
 | `POST` | `/api/workflows/runs` | Start a new workflow run |

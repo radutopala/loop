@@ -345,6 +345,7 @@ func (s *ServerSuite) TestListTickets_NullArraysAreEmptyArrays() {
 	require.Contains(s.T(), body, `"tags":[]`)
 	require.Contains(s.T(), body, `"deps":[]`)
 	require.Contains(s.T(), body, `"links":[]`)
+	require.Contains(s.T(), body, `"notes":[]`)
 }
 
 // ── Missing dir / bad JSON tests ──
@@ -507,6 +508,117 @@ func (s *ServerSuite) TestDeleteTicket_DeleteError() {
 	rec := s.testRequest("DELETE", "/api/tickets/tic-dlfl?dir=/any", "")
 	require.Equal(s.T(), http.StatusInternalServerError, rec.Code)
 	require.Contains(s.T(), rec.Body.String(), "permission denied")
+}
+
+// ── Ticket note tests ──
+
+func (s *ServerSuite) TestAddTicketNote_AppendsAfterExistingNotes() {
+	dir := createTicketsDir(s.T())
+	first := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
+	store := tk.Open(dir)
+	require.NoError(s.T(), store.Write(&tk.Ticket{
+		ID: "tic-note", Title: "Has notes", Status: tk.StatusOpen, Type: tk.TypeTask, Created: first,
+		Notes: []tk.Note{{Timestamp: first, Content: "written by tk add-note"}},
+	}))
+
+	before := time.Now().UTC().Truncate(time.Second)
+	body := fmt.Sprintf(`{"dir": %q, "content": "  from the board\nsecond line  "}`, dir)
+	rec := s.testRequest("POST", "/api/tickets/tic-note/notes", body)
+	require.Equal(s.T(), http.StatusCreated, rec.Code)
+
+	var resp ticketResponse
+	require.NoError(s.T(), json.Unmarshal(rec.Body.Bytes(), &resp))
+	require.Equal(s.T(), "Has notes", resp.Title)
+	require.Len(s.T(), resp.Notes, 2)
+	require.Equal(s.T(), noteResponse{Timestamp: "2026-01-02T03:04:05Z", Content: "written by tk add-note"}, resp.Notes[0])
+	require.Equal(s.T(), "from the board\nsecond line", resp.Notes[1].Content)
+	added, err := time.Parse(time.RFC3339, resp.Notes[1].Timestamp)
+	require.NoError(s.T(), err)
+	require.False(s.T(), added.Before(before))
+
+	// Persisted in the store, where tk reads it back.
+	stored, err := store.Read("tic-note")
+	require.NoError(s.T(), err)
+	require.Len(s.T(), stored.Notes, 2)
+	require.Equal(s.T(), "from the board\nsecond line", stored.Notes[1].Content)
+}
+
+func (s *ServerSuite) TestAddTicketNote_RequestErrors() {
+	dir := createTicketsDir(s.T())
+	writeTestTicket(s.T(), dir, "tic-nerr", "Note errors", tk.StatusOpen)
+
+	tests := []struct {
+		name     string
+		id       string
+		body     string
+		wantCode int
+		wantBody string
+	}{
+		{name: "bad json", id: "tic-nerr", body: `{`, wantCode: http.StatusBadRequest},
+		{name: "blank content", id: "tic-nerr", body: fmt.Sprintf(`{"dir": %q, "content": "  \n "}`, dir), wantCode: http.StatusBadRequest, wantBody: "content is required"},
+		{name: "missing dir", id: "tic-nerr", body: `{"content": "hi"}`, wantCode: http.StatusBadRequest, wantBody: "dir is required"},
+		{name: "unknown ticket", id: "tic-none", body: fmt.Sprintf(`{"dir": %q, "content": "hi"}`, dir), wantCode: http.StatusNotFound},
+	}
+	for _, tc := range tests {
+		s.Run(tc.name, func() {
+			rec := s.testRequest("POST", "/api/tickets/"+tc.id+"/notes", tc.body)
+			require.Equal(s.T(), tc.wantCode, rec.Code)
+			require.Contains(s.T(), rec.Body.String(), tc.wantBody)
+		})
+	}
+
+	stored, err := tk.Open(dir).Read("tic-nerr")
+	require.NoError(s.T(), err)
+	require.Empty(s.T(), stored.Notes)
+}
+
+func (s *ServerSuite) TestAddTicketNote_StoreErrors() {
+	tests := []struct {
+		name  string
+		setup func(ms *MockTicketStore)
+		want  string
+	}{
+		{
+			name: "read fails",
+			setup: func(ms *MockTicketStore) {
+				ms.On("Read", "tic-stfl").Return(nil, fmt.Errorf("unreadable"))
+			},
+			want: "unreadable",
+		},
+		{
+			name: "write fails",
+			setup: func(ms *MockTicketStore) {
+				ms.On("Read", "tic-stfl").Return(&tk.Ticket{ID: "tic-stfl", Title: "Store fail", Status: tk.StatusOpen, Type: tk.TypeTask}, nil)
+				ms.On("Write", mock.Anything).Return(fmt.Errorf("disk full"))
+			},
+			want: "disk full",
+		},
+	}
+	for _, tc := range tests {
+		s.Run(tc.name, func() {
+			ms := new(MockTicketStore)
+			ms.On("ResolveID", "tic-stfl").Return("tic-stfl", nil)
+			tc.setup(ms)
+			s.srv.ticketStoreOpener = func(string) TicketStore { return ms }
+			s.T().Cleanup(func() { s.srv.ticketStoreOpener = nil })
+
+			rec := s.testRequest("POST", "/api/tickets/tic-stfl/notes", `{"dir": "/any", "content": "hi"}`)
+			require.Equal(s.T(), http.StatusInternalServerError, rec.Code)
+			require.Contains(s.T(), rec.Body.String(), tc.want)
+			ms.AssertExpectations(s.T())
+		})
+	}
+}
+
+func (s *ServerSuite) TestAddTicketNote_WithEventsHub() {
+	dir := createTicketsDir(s.T())
+	writeTestTicket(s.T(), dir, "tic-evnt", "Event note", tk.StatusOpen)
+	hub := NewEventsHub(s.srv.logger)
+	s.srv.SetEventsHub(hub)
+
+	body := fmt.Sprintf(`{"dir": %q, "content": "hi"}`, dir)
+	rec := s.testRequest("POST", "/api/tickets/tic-evnt/notes", body)
+	require.Equal(s.T(), http.StatusCreated, rec.Code)
 }
 
 // ── Assign ticket tests ──
