@@ -2600,7 +2600,7 @@ With no `name`: list every active share — `{ "shares": [{ name, scope, channel
 
 The ticket API manages filesystem-backed tickets stored in `.tickets/` within a project directory. Tickets are powered by the [`github.com/radutopala/ticket`](https://github.com/radutopala/ticket) library. See [Kanban Panel](kanban.md) for the frontend UI.
 
-All ticket endpoints require a `dir` query parameter specifying the project directory path.
+All ticket endpoints require a `dir` query parameter specifying the directory path. The store opened is always `dir/.tickets/` — the same one the `tk` CLI reads in that directory — so a worktree passed as `dir` gets the worktree's own store, not the store of the checkout it was cut from.
 
 ### `GET /api/tickets`
 

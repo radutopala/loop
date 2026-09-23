@@ -1,4 +1,4 @@
-@frontend @slow
+@frontend @slow @kanban
 Feature: Kanban panel
   Ticket board with create, edit, and status transitions.
 
@@ -79,8 +79,9 @@ Feature: Kanban panel
     And I wait for text "Updated title" to appear
     And the page should not contain text "Original title"
 
-  Scenario: Kanban panel is not available in threads
+  Scenario: Kanban panel in a thread shows the project board
     Given I set up a test channel via API for git repo "kanban-thread"
+    And I create a ticket "Fix login bug" with type "bug" via API
     And I create a thread "child-thread" under the current channel via API
     And I open the app in a browser
 
@@ -89,8 +90,28 @@ Feature: Kanban panel
     And I wait for text "child-thread" to appear
     And I click on "child-thread" in the sidebar
 
-    # Kanban tab should not be visible in thread
-    And the page should not contain text "Kanban"
+    # The thread reads the same store as its channel
+    And I wait for text "Kanban" to appear
+    And I click on the element with text "Kanban"
+    And I wait for text "Fix login bug" to appear
+    And the page should contain text "1 ticket"
+
+  Scenario: Kanban panel in a worktree thread shows that worktree's board
+    Given I set up a test channel via API for git repo "kanban-wt"
+    And I create a ticket "Deploy pipeline" with type "task" via API
+    And I set up a worktree "board-wt" on branch "main" under the current channel via API
+    And I open the app in a browser
+
+    # Navigate to the worktree thread
+    And I click on "kanban-wt" in the sidebar
+    And I wait for text "board-wt" to appear
+    And I click on "board-wt" in the sidebar
+
+    # The board follows the worktree's own checkout, which carries no .tickets/
+    And I wait for text "Kanban" to appear
+    And I click on the element with text "Kanban"
+    And I wait for text "0 tickets" to appear
+    And the page should not contain text "Deploy pipeline"
 
   Scenario: Toolbar shows tk CLI tip
     Given I set up a test channel via API for git repo "kanban-tip"

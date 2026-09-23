@@ -8,6 +8,7 @@ import (
 
 	tk "github.com/radutopala/ticket/pkg/ticket"
 
+	"github.com/radutopala/loop/internal/db"
 	"github.com/radutopala/loop/internal/randutil"
 )
 
@@ -125,8 +126,11 @@ type TicketStore interface {
 
 // ── Helpers ──
 
-// openTicketStore opens a ticket store for the given directory.
-// dir must be the project root (parent of .tickets/).
+// openTicketStore opens the ticket store of the directory the caller works in:
+// dir/.tickets/, the same store the tk CLI reads from that directory. Every
+// kind of channel opens its own dir this way — a worktree thread sees the
+// tickets its checkout carries, not the ones sitting in the project it was cut
+// from.
 func (s *Server) openTicketStore(w http.ResponseWriter, dir string) TicketStore {
 	if dir == "" {
 		http.Error(w, "dir is required", http.StatusBadRequest)
@@ -448,6 +452,13 @@ func (s *Server) handleAssignTicket(w http.ResponseWriter, r *http.Request) {
 		if grandparent != nil && grandparent.DirPath != "" {
 			parent = grandparent
 		}
+	}
+	// A board opened inside a worktree — the worktree thread itself, or a
+	// scheduled task's thread under it — resolves further, to the checkout the
+	// worktree was cut from. Without this the new worktree would be nested in
+	// the caller's, on the caller's branch.
+	if root := db.WorktreeRootChannel(r.Context(), s.store, parent); root != nil && root.DirPath != "" {
+		parent = root
 	}
 
 	// Use the parent channel's current branch as the base ref for the worktree.

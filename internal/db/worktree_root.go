@@ -27,30 +27,42 @@ const worktreeChainDepth = 8
 // Any lookup error is treated as "no parent" rather than a hard failure — the
 // callers all degrade to the global config, which is the pre-existing behavior.
 func WorktreeRootDirPath(ctx context.Context, store ChannelGetter, ch *Channel) string {
+	root := WorktreeRootChannel(ctx, store, ch)
+	if root == nil {
+		return ""
+	}
+	return root.DirPath
+}
+
+// WorktreeRootChannel returns the nearest non-worktree ancestor channel for a
+// channel that is (or lives under) a worktree chain, or nil when the channel
+// isn't part of one. See WorktreeRootDirPath for the walk's rationale; callers
+// that need more of the root than its path — its session, say — take it here.
+func WorktreeRootChannel(ctx context.Context, store ChannelGetter, ch *Channel) *Channel {
 	cur := ch
 	if !cur.Worktree {
 		// A thread row under a worktree channel: hop to the worktree itself.
 		if cur.ParentID == "" {
-			return ""
+			return nil
 		}
 		p, err := store.GetChannel(ctx, cur.ParentID)
 		if err != nil || p == nil || !p.Worktree {
-			return ""
+			return nil
 		}
 		cur = p
 	}
 	for range worktreeChainDepth {
 		if cur.ParentID == "" {
-			return ""
+			return nil
 		}
 		p, err := store.GetChannel(ctx, cur.ParentID)
 		if err != nil || p == nil {
-			return ""
+			return nil
 		}
 		if !p.Worktree {
-			return p.DirPath
+			return p
 		}
 		cur = p
 	}
-	return ""
+	return nil
 }
