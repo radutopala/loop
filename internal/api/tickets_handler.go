@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	tk "github.com/radutopala/ticket/pkg/ticket"
@@ -15,22 +16,29 @@ import (
 // ── Types ──
 
 type ticketResponse struct {
-	ID          string   `json:"id"`
-	Title       string   `json:"title"`
-	Description string   `json:"description,omitempty"`
-	Status      string   `json:"status"`
-	Type        string   `json:"type,omitempty"`
-	Priority    int      `json:"priority"`
-	Assignee    string   `json:"assignee,omitempty"`
-	Tags        []string `json:"tags"`
-	Deps        []string `json:"deps"`
-	Links       []string `json:"links"`
-	Parent      string   `json:"parent,omitempty"`
-	ExternalRef string   `json:"external_ref,omitempty"`
-	PR          string   `json:"pr,omitempty"`
-	Design      string   `json:"design,omitempty"`
-	Acceptance  string   `json:"acceptance,omitempty"`
-	Created     string   `json:"created"`
+	ID          string         `json:"id"`
+	Title       string         `json:"title"`
+	Description string         `json:"description,omitempty"`
+	Status      string         `json:"status"`
+	Type        string         `json:"type,omitempty"`
+	Priority    int            `json:"priority"`
+	Assignee    string         `json:"assignee,omitempty"`
+	Tags        []string       `json:"tags"`
+	Deps        []string       `json:"deps"`
+	Links       []string       `json:"links"`
+	Parent      string         `json:"parent,omitempty"`
+	ExternalRef string         `json:"external_ref,omitempty"`
+	PR          string         `json:"pr,omitempty"`
+	Design      string         `json:"design,omitempty"`
+	Acceptance  string         `json:"acceptance,omitempty"`
+	Notes       []noteResponse `json:"notes"`
+	Created     string         `json:"created"`
+}
+
+// noteResponse is one timestamped note, as `tk add-note` appends them.
+type noteResponse struct {
+	Timestamp string `json:"timestamp"`
+	Content   string `json:"content"`
 }
 
 func ticketToResponse(t *tk.Ticket) ticketResponse {
@@ -45,6 +53,10 @@ func ticketToResponse(t *tk.Ticket) ticketResponse {
 	links := t.Links
 	if links == nil {
 		links = []string{}
+	}
+	notes := make([]noteResponse, 0, len(t.Notes))
+	for _, n := range t.Notes {
+		notes = append(notes, noteResponse{Timestamp: n.Timestamp.Format(time.RFC3339), Content: n.Content})
 	}
 	return ticketResponse{
 		ID:          t.ID,
@@ -62,6 +74,7 @@ func ticketToResponse(t *tk.Ticket) ticketResponse {
 		PR:          t.PR,
 		Design:      t.Design,
 		Acceptance:  t.Acceptance,
+		Notes:       notes,
 		Created:     t.Created.Format(time.RFC3339),
 	}
 }
@@ -96,6 +109,11 @@ type updateTicketRequest struct {
 	PR          *string  `json:"pr,omitempty"`
 	Design      *string  `json:"design,omitempty"`
 	Acceptance  *string  `json:"acceptance,omitempty"`
+}
+
+type addTicketNoteRequest struct {
+	Dir     string `json:"dir"`
+	Content string `json:"content"`
 }
 
 type assignTicketRequest struct {
@@ -365,6 +383,49 @@ func (s *Server) handleUpdateTicket(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeHTTPJSON(w, http.StatusOK, ticketToResponse(ticket), s.logger)
+}
+
+// handleAddTicketNote appends a timestamped note, the same thing `tk add-note`
+// does. Notes are append-only: there is no endpoint to edit or remove one.
+func (s *Server) handleAddTicketNote(w http.ResponseWriter, r *http.Request) {
+	var req addTicketNoteRequest
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	content := strings.TrimSpace(req.Content)
+	if content == "" {
+		http.Error(w, "content is required", http.StatusBadRequest)
+		return
+	}
+
+	store := s.openTicketStore(w, req.Dir)
+	if store == nil {
+		return
+	}
+
+	fullID, err := store.ResolveID(r.PathValue("id"))
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusNotFound)
+		return
+	}
+
+	ticket, err := store.Read(fullID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	ticket.Notes = append(ticket.Notes, tk.Note{Timestamp: time.Now().UTC(), Content: content})
+	if err := store.Write(ticket); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	if s.eventsHub != nil {
+		s.eventsHub.BroadcastTicketEvent(EventTicketUpdated, ticket.ID)
+	}
+
+	writeHTTPJSON(w, http.StatusCreated, ticketToResponse(ticket), s.logger)
 }
 
 func (s *Server) handleDeleteTicket(w http.ResponseWriter, r *http.Request) {

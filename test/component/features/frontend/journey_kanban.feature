@@ -79,6 +79,33 @@ Feature: Kanban panel
     And I wait for text "Updated title" to appear
     And the page should not contain text "Original title"
 
+  Scenario: Add a note to a ticket from the edit drawer
+    Given I set up a test channel via API for git repo "kanban-notes"
+    And I create a ticket "Flaky deploy" with type "bug" via API
+    And I open the app in a browser
+
+    And I click on "kanban-notes" in the sidebar
+    And I wait for text "Kanban" to appear
+    And I click on the element with text "Kanban"
+    And I wait for text "Flaky deploy" to appear
+
+    # The edit drawer lists notes, none yet
+    And I click on "Flaky deploy" in the kanban panel
+    And I wait for text "Edit Ticket" to appear
+    And I wait for text "No notes yet" to appear
+
+    # Adding one saves it straight away and lists it
+    And I type "Retry fixed it on the second run" into "textarea[placeholder^='Add a note']"
+    And I click button "Add note" in the kanban panel
+    And I wait for text "Retry fixed it on the second run" to appear
+    And I wait for text "No notes yet" to disappear
+
+    # It survives closing and reopening the drawer
+    And I click button "Cancel" in the kanban panel
+    And I wait for text "Edit Ticket" to disappear
+    And I click on "Flaky deploy" in the kanban panel
+    And I wait for text "Retry fixed it on the second run" to appear
+
   Scenario: Kanban panel in a thread shows the project board
     Given I set up a test channel via API for git repo "kanban-thread"
     And I create a ticket "Fix login bug" with type "bug" via API

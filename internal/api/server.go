@@ -519,6 +519,7 @@ func (s *Server) registerTicketRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/tickets", s.handleCreateTicket)
 	mux.HandleFunc("PATCH /api/tickets/{id}", s.handleUpdateTicket)
 	mux.HandleFunc("DELETE /api/tickets/{id}", s.handleDeleteTicket)
+	mux.HandleFunc("POST /api/tickets/{id}/notes", s.handleAddTicketNote)
 	mux.HandleFunc("POST /api/tickets/{id}/assign", s.handleAssignTicket)
 }
 

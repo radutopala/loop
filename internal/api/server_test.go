@@ -293,6 +293,7 @@ func (s *ServerSuite) SetupTest() {
 	s.mux.HandleFunc("POST /api/tickets", s.srv.handleCreateTicket)
 	s.mux.HandleFunc("PATCH /api/tickets/{id}", s.srv.handleUpdateTicket)
 	s.mux.HandleFunc("DELETE /api/tickets/{id}", s.srv.handleDeleteTicket)
+	s.mux.HandleFunc("POST /api/tickets/{id}/notes", s.srv.handleAddTicketNote)
 	s.mux.HandleFunc("POST /api/tickets/{id}/assign", s.srv.handleAssignTicket)
 	s.mux.HandleFunc("POST /api/worktrees", s.srv.handleCreateWorktree)
 	s.mux.HandleFunc("POST /api/worktrees/import", s.srv.handleImportWorktree)

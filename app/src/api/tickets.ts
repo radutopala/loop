@@ -23,7 +23,14 @@ export interface Ticket {
   pr?: string;
   design?: string;
   acceptance?: string;
+  /** Append-only, oldest first — what `tk add-note` writes. */
+  notes?: TicketNote[];
   created: string;
+}
+
+export interface TicketNote {
+  timestamp: string;
+  content: string;
 }
 
 export async function fetchTickets(dir: string, filters?: { status?: string; assignee?: string; tag?: string; type?: string; sort?: string; reverse?: boolean }): Promise<Ticket[]> {
@@ -102,6 +109,16 @@ export async function updateTicket(
     body: JSON.stringify(data),
   });
   await throwIfNotOk(res, "Failed to update ticket");
+  return res.json();
+}
+
+export async function addTicketNote(id: string, data: { dir: string; content: string }): Promise<Ticket> {
+  const res = await fetch(`${getApiUrl()}/api/tickets/${encodeURIComponent(id)}/notes`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(data),
+  });
+  await throwIfNotOk(res, "Failed to add note");
   return res.json();
 }
 

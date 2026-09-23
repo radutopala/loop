@@ -2636,6 +2636,9 @@ List tickets for a project directory.
     "external_ref": "JIRA-1234",
     "design": "",
     "acceptance": "SSO login works for all providers",
+    "notes": [
+      { "timestamp": "2026-04-11T09:30:00Z", "content": "Reproduced with the Okta provider only" }
+    ],
     "created": "2026-04-10T10:00:00Z",
     "updated": "2026-04-10T10:00:00Z"
   }
@@ -2727,6 +2730,25 @@ Delete a ticket.
 **Response:** `204 No Content` on success.
 
 Broadcasts `ticket.deleted` WebSocket event.
+
+---
+
+### `POST /api/tickets/{id}/notes`
+
+Append a timestamped note to a ticket — the same thing `tk add-note` does. Notes are append-only: no endpoint edits or removes one, and `PATCH` leaves them untouched. The timestamp is the server's current time in UTC.
+
+**Request Body:**
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `dir` | string | yes | Project directory path |
+| `content` | string | yes | Note text (Markdown); leading and trailing whitespace is trimmed |
+
+**Response (201):** The updated ticket object, with the new note last in `notes`.
+
+**Errors:** `400` for a missing `dir` or blank `content`; `404` if ticket not found.
+
+Broadcasts `ticket.updated` WebSocket event.
 
 ---
 
