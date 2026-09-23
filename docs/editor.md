@@ -14,6 +14,7 @@ The `EditorPanel` component (`src/components/panels/EditorPanel.tsx`) combines:
 - A **tab bar** for open files
 - A **CodeMirror 6 editor** for the active file
 - An optional **markdown preview** pane for `.md`/`.mdx` files
+- An **HTML preview** for `.html`/`.htm` files, with a switch to the source
 
 All file I/O goes through the backend REST API (`/api/channels/{id}/files`, `/api/channels/{id}/file`), not direct filesystem access. This ensures path traversal protection, Docker container support, and compatibility with browser development mode.
 
@@ -261,7 +262,18 @@ For `.md` and `.mdx` files, the editor shows a split view with:
 - CodeMirror editor on the left
 - Rendered HTML preview on the right (using the `marked` library)
 
-The preview updates with a 300ms debounce after each edit. A toggle button lets the user show/hide the preview pane.
+The preview updates with a 300ms debounce after each edit. An **Edit / Split / Preview** switch in the tab bar picks the editor only, both side by side (the default), or the preview only.
+
+---
+
+## HTML Preview
+
+`.html` and `.htm` files open rendered, with a **Source / Split / Preview** switch in the tab bar (`data-testid="preview-mode-{editor,both,preview}"`). HTML files default to **Preview**; markdown and HTML each remember their own mode.
+
+- **Rendering:** the editor buffer is shown in an `<iframe sandbox="allow-scripts" srcdoc>` (`data-testid="html-preview"`), updated with the same 300ms debounce as markdown, so unsaved edits show up live. Without `allow-same-origin` the page runs in an opaque origin: its scripts run, but they can't reach the app's DOM, storage or API.
+- **Relative assets:** `htmlPreview.ts` injects a `<base href>` pointing at the file's directory on [`GET /api/channels/{id}/raw/{root}/{path...}`](api.md#get-apichannelsidrawrootpath), so `css/style.css` or `img/logo.png` load from disk. A page that declares its own `<base>` keeps it.
+- **In-page links:** with a `<base>`, `#section` links would navigate the frame to the base URL, so a small injected script turns them into in-page scrolls.
+- There's no scroll sync between source and preview; the frame's opaque origin rules it out.
 
 ---
 
@@ -281,7 +293,7 @@ A thin per-line bar in the rightmost gutter column (hugging the code) marks each
 
 ### Overview Ruler
 
-A 10px full-height strip to the right of the editor (`data-testid="git-overview-ruler"`) maps **every** change onto the whole document — a bird's-eye view of all changes regardless of scroll position. Consecutive same-kind lines are coalesced into one proportional block. Clicking anywhere on the ruler jumps the editor to the corresponding line. The ruler is hidden when the file has no uncommitted changes, and in markdown preview-only mode.
+A 10px full-height strip to the right of the editor (`data-testid="git-overview-ruler"`) maps **every** change onto the whole document — a bird's-eye view of all changes regardless of scroll position. Consecutive same-kind lines are coalesced into one proportional block. Clicking anywhere on the ruler jumps the editor to the corresponding line. The ruler is hidden when the file has no uncommitted changes, and in markdown or HTML preview-only mode.
 
 ### Data Source
 

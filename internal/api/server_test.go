@@ -279,6 +279,7 @@ func (s *ServerSuite) SetupTest() {
 	s.mux.HandleFunc("GET /api/channels/{id}/file", s.srv.handleReadFile)
 	s.mux.HandleFunc("PUT /api/channels/{id}/file", s.srv.handleWriteFile)
 	s.mux.HandleFunc("DELETE /api/channels/{id}/file", s.srv.handleDeleteFile)
+	s.mux.HandleFunc("GET /api/channels/{id}/raw/{root}/{path...}", s.srv.handleRawFile)
 	s.mux.HandleFunc("POST /api/channels/{id}/files/exists", s.srv.handleFilesExists)
 	s.mux.HandleFunc("POST /api/channels/{id}/dir", s.srv.handleCreateDir)
 	s.mux.HandleFunc("POST /api/channels/{id}/paste-image", s.srv.handlePasteImage)

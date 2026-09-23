@@ -439,6 +439,7 @@ func (s *Server) registerFileRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/channels/{id}/file", s.handleReadFile)
 	mux.HandleFunc("PUT /api/channels/{id}/file", s.handleWriteFile)
 	mux.HandleFunc("DELETE /api/channels/{id}/file", s.handleDeleteFile)
+	mux.HandleFunc("GET /api/channels/{id}/raw/{root}/{path...}", s.handleRawFile)
 	mux.HandleFunc("POST /api/channels/{id}/files/exists", s.handleFilesExists)
 	mux.HandleFunc("POST /api/channels/{id}/dir", s.handleCreateDir)
 	mux.HandleFunc("POST /api/channels/{id}/paste-image", s.handlePasteImage)

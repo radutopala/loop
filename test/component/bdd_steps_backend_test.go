@@ -52,6 +52,7 @@ func registerBackendSteps(ctx *godog.ScenarioContext, tc *TestContext) {
 	ctx.Step(`^I stage a new file "([^"]*)" in the repo$`, tc.stageNewFile)
 	ctx.Step(`^I modify "([^"]*)" without staging$`, tc.modifyWithoutStaging)
 	ctx.Step(`^I create a (\d+)-page PDF "([^"]*)" reading "([^"]*)" in the repo$`, tc.createPDF)
+	ctx.Step(`^I create a file "([^"]*)" in the repo with:$`, tc.createRepoFile)
 
 	// Ticket setup steps
 	ctx.Step(`^I create a ticket "([^"]*)" with type "([^"]*)" via API$`, tc.createTicketViaAPI)
@@ -687,6 +688,19 @@ func (tc *TestContext) modifyWithoutStaging(name string) error {
 		return fmt.Errorf("writing %s: %w", name, err)
 	}
 	return nil
+}
+
+// createRepoFile writes a file with the given content into the channel's repo,
+// creating parent directories as needed.
+func (tc *TestContext) createRepoFile(name string, body *godog.DocString) error {
+	if tc.ChannelDir == "" {
+		return fmt.Errorf("no channel dir set; use 'I set up a test channel via API for git repo' step first")
+	}
+	fpath := filepath.Join(tc.ChannelDir, name)
+	if err := os.MkdirAll(filepath.Dir(fpath), 0o755); err != nil {
+		return fmt.Errorf("creating dirs for %s: %w", name, err)
+	}
+	return os.WriteFile(fpath, []byte(body.Content), 0o644)
 }
 
 // createPDF writes a minimal PDF with `pages` pages into the channel's repo,

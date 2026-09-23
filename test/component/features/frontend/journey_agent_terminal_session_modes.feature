@@ -26,6 +26,22 @@ Feature: Agent Terminal Session Mode Picker Journey
     And the page should contain text "Docker Agent (Resume with fork)"
     And the page should contain text "Docker Agent (Fresh session)"
 
+  Scenario: Pane-split menu stays inside the window for a pane near the bottom
+    Given I set up a test channel via API for directory "/tmp/bdd-agent-modes-bottom"
+    And I open the app in a browser
+    And I wait for text "bdd-agent-modes-bottom" to appear
+    When I click on "bdd-agent-modes-bottom" in the sidebar
+    Then I wait for "textarea" to be visible
+
+    # Stack two panes below the chat so the last pane's header sits low on
+    # screen, where the tall menu used to run past the bottom edge.
+    When I click the last "button[title='Add panel']"
+    And I add the "Memory" panel below in the menu
+    And I click the last "button[title='Add panel']"
+    And I add the "Files" panel below in the menu
+    And I click the last "button[title='Add panel']"
+    Then the element "[data-testid='add-panel-menu']" should fit inside the window
+
   Scenario: Adding a Docker Agent (Fresh session) variant mounts a pane
     Given I set up a test channel via API for directory "/tmp/bdd-agent-modes-fresh"
     And I open the app in a browser

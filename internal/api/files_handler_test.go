@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"time"
 
 	"github.com/stretchr/testify/mock"
@@ -1647,4 +1648,138 @@ func (s *ServerSuite) TestResolveAndStat_AbsoluteFile() {
 // mockFileInfoSizeBytes returns a non-dir file info for tests.
 func mockFileInfoSizeBytes(size int64) fs.FileInfo {
 	return &mockFileInfo{name: "x", size: size, modTime: time.Time{}}
+}
+
+func (s *ServerSuite) TestRawFile_ServesByPath() {
+	tmpDir := s.T().TempDir()
+	files := map[string][]byte{
+		"site/index.html":     []byte("<html><body>hi</body></html>"),
+		"site/css/style.css":  []byte("body{color:red}"),
+		"site/img/logo.png":   {0x89, 0x50, 0x4e, 0x47},
+		"site/data.unknownxt": []byte("raw"),
+	}
+	for name, data := range files {
+		require.NoError(s.T(), os.MkdirAll(filepath.Dir(filepath.Join(tmpDir, name)), 0o755))
+		require.NoError(s.T(), os.WriteFile(filepath.Join(tmpDir, name), data, 0o644))
+	}
+	s.store.On("GetChannel", mock.Anything, "ch-1").
+		Return(&db.Channel{ChannelID: "ch-1", DirPath: tmpDir}, nil)
+
+	cases := []struct {
+		path string
+		mime string
+	}{
+		{"site/index.html", "text/html; charset=utf-8"},
+		{"site/css/style.css", "text/css; charset=utf-8"},
+		{"site/img/logo.png", "image/png"},
+		{"site/data.unknownxt", "application/octet-stream"},
+	}
+	for _, tc := range cases {
+		s.Run(tc.path, func() {
+			rec := s.testRequest("GET", "/api/channels/ch-1/raw/0/"+tc.path, "")
+			require.Equal(s.T(), http.StatusOK, rec.Code)
+			require.Equal(s.T(), tc.mime, rec.Header().Get("Content-Type"))
+			require.Equal(s.T(), "nosniff", rec.Header().Get("X-Content-Type-Options"))
+			require.Equal(s.T(), "sandbox allow-scripts", rec.Header().Get("Content-Security-Policy"))
+			require.Equal(s.T(), files[tc.path], rec.Body.Bytes())
+		})
+	}
+}
+
+func (s *ServerSuite) TestRawFile_RangeRequest() {
+	tmpDir := s.T().TempDir()
+	require.NoError(s.T(), os.WriteFile(filepath.Join(tmpDir, "a.txt"), []byte("0123456789"), 0o644))
+	s.store.On("GetChannel", mock.Anything, "ch-1").
+		Return(&db.Channel{ChannelID: "ch-1", DirPath: tmpDir}, nil)
+
+	req := httptest.NewRequest("GET", "/api/channels/ch-1/raw/0/a.txt", nil)
+	req.RemoteAddr = "127.0.0.1:0"
+	req.Header.Set("Range", "bytes=2-4")
+	rec := httptest.NewRecorder()
+	s.mux.ServeHTTP(rec, req)
+
+	require.Equal(s.T(), http.StatusPartialContent, rec.Code)
+	require.Equal(s.T(), []byte("234"), rec.Body.Bytes())
+}
+
+func (s *ServerSuite) TestRawFile_ExtraRoot() {
+	primary := s.T().TempDir()
+	extra := s.T().TempDir()
+	require.NoError(s.T(), os.WriteFile(filepath.Join(extra, "page.html"), []byte("extra page"), 0o644))
+	require.NoError(s.T(), os.MkdirAll(filepath.Join(primary, ".loop"), 0o755))
+	cfgJSON := `{"extra_dirs":[` + strconv.Quote(extra) + `]}`
+	require.NoError(s.T(), os.WriteFile(filepath.Join(primary, ".loop", "config.json"), []byte(cfgJSON), 0o644))
+
+	s.store.On("GetChannel", mock.Anything, "ch-roots").
+		Return(&db.Channel{ChannelID: "ch-roots", DirPath: primary}, nil)
+	s.store.On("ListChannels", mock.Anything).Return(([]*db.Channel)(nil), nil)
+
+	rec := s.testRequest("GET", "/api/channels/ch-roots/raw/1/page.html", "")
+	require.Equal(s.T(), http.StatusOK, rec.Code)
+	require.Equal(s.T(), "extra page", rec.Body.String())
+}
+
+func (s *ServerSuite) TestRawFile_Errors() {
+	tmpDir := s.T().TempDir()
+	require.NoError(s.T(), os.MkdirAll(filepath.Join(tmpDir, "sub"), 0o755))
+	s.store.On("GetChannel", mock.Anything, "ch-1").
+		Return(&db.Channel{ChannelID: "ch-1", DirPath: tmpDir}, nil)
+	s.store.On("ListChannels", mock.Anything).Return(([]*db.Channel)(nil), nil)
+
+	cases := []struct {
+		name string
+		url  string
+		code int
+		body string
+	}{
+		{"non-numeric root", "/api/channels/ch-1/raw/abc/a.html", http.StatusBadRequest, "invalid root index"},
+		{"root out of range", "/api/channels/ch-1/raw/5/a.html", http.StatusBadRequest, "invalid root index 5"},
+		{"invalid path", "/api/channels/ch-1/raw/0/a%00.html", http.StatusBadRequest, "invalid characters"},
+		{"missing file", "/api/channels/ch-1/raw/0/missing.html", http.StatusNotFound, "file not found"},
+		{"directory", "/api/channels/ch-1/raw/0/sub", http.StatusBadRequest, "path is a directory"},
+	}
+	for _, tc := range cases {
+		s.Run(tc.name, func() {
+			rec := s.testRequest("GET", tc.url, "")
+			require.Equal(s.T(), tc.code, rec.Code)
+			require.Contains(s.T(), rec.Body.String(), tc.body)
+		})
+	}
+}
+
+func (s *ServerSuite) TestRawFile_StatError() {
+	tmpDir := s.T().TempDir()
+	require.NoError(s.T(), os.WriteFile(filepath.Join(tmpDir, "a.html"), []byte("x"), 0o644))
+	s.store.On("GetChannel", mock.Anything, "ch-1").
+		Return(&db.Channel{ChannelID: "ch-1", DirPath: tmpDir}, nil)
+	s.sys.Override("Stat", mock.Anything).Return(nil, fmt.Errorf("injected stat error"))
+	s.srv.sys = &realOpenSys{s.sys}
+
+	rec := s.testRequest("GET", "/api/channels/ch-1/raw/0/a.html", "")
+	require.Equal(s.T(), http.StatusInternalServerError, rec.Code)
+	require.Contains(s.T(), rec.Body.String(), "failed to stat file")
+}
+
+func (s *ServerSuite) TestRawFile_OpenError() {
+	tmpDir := s.T().TempDir()
+	require.NoError(s.T(), os.WriteFile(filepath.Join(tmpDir, "a.html"), []byte("x"), 0o644))
+	s.store.On("GetChannel", mock.Anything, "ch-1").
+		Return(&db.Channel{ChannelID: "ch-1", DirPath: tmpDir}, nil)
+	s.srv.sys = failOpenSys{s.sys}
+
+	rec := s.testRequest("GET", "/api/channels/ch-1/raw/0/a.html", "")
+	require.Equal(s.T(), http.StatusInternalServerError, rec.Code)
+	require.Contains(s.T(), rec.Body.String(), "failed to read file")
+}
+
+func (s *ServerSuite) TestRawFile_NotConfigured() {
+	srv := nilServer()
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /api/channels/{id}/raw/{root}/{path...}", srv.handleRawFile)
+
+	req, _ := http.NewRequest("GET", "/api/channels/ch-1/raw/0/a.html", nil)
+	w := newRecorder()
+	mux.ServeHTTP(w, req)
+
+	require.Equal(s.T(), http.StatusNotImplemented, w.Code)
 }

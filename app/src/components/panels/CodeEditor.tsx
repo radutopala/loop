@@ -22,6 +22,7 @@ import { emptyGitLineChanges, type GitLineChanges, gitChangeGutterExtension, set
 import { GitChangeOverview } from "./editorGitOverview";
 import { buildEditorTheme } from "./editorTheme";
 import { buildMarkdownStyles } from "./FilePanel";
+import { withBaseHref } from "./htmlPreview";
 
 // pdf.js is large; load the viewer (and pdf.js with it) on the first PDF tab.
 const PdfViewer = lazy(() => import("./PdfViewer"));
@@ -69,6 +70,18 @@ export function isMarkdownFile(path: string): boolean {
   return ext === "md" || ext === "mdx";
 }
 
+export function isHtmlFile(path: string): boolean {
+  const ext = path.split(".").pop()?.toLowerCase();
+  return ext === "html" || ext === "htm";
+}
+
+/** Preview payload for a file: rendered markdown, raw HTML source, or "" when the file has no preview. */
+export function previewSource(path: string, content: string): string {
+  if (isMarkdownFile(path)) return marked.parse(content, { async: false }) as string;
+  if (isHtmlFile(path)) return content;
+  return "";
+}
+
 export function formatSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
@@ -113,7 +126,7 @@ interface CodeEditorProps {
   loading: boolean;
   /** Error message to display, if any. */
   error: string | null;
-  /** Markdown preview mode. */
+  /** Markdown / HTML preview mode. */
   previewMode: "editor" | "both" | "preview";
   /** Called when the document changes (for dirty tracking). */
   onDocChanged: () => void;
@@ -125,8 +138,10 @@ interface CodeEditorProps {
   onEditorMenuClose: () => void;
   /** Open the editor context menu. */
   onEditorContextMenu: (e: React.MouseEvent) => void;
-  /** Pre-rendered preview HTML for markdown. */
+  /** Pre-rendered preview HTML for markdown, or the raw source for HTML files. */
   previewHtml: string;
+  /** Base URL relative assets of an HTML preview resolve against. */
+  htmlBaseURL?: string | null;
   /** When set, render the file as an image via this URL instead of the text editor. */
   imageURL?: string | null;
   /** VCS change markers for the open file (added/modified/deleted lines vs git HEAD). */
@@ -149,6 +164,7 @@ export const CodeEditor = forwardRef<CodeEditorHandle, CodeEditorProps>(function
     onEditorMenuClose,
     onEditorContextMenu,
     previewHtml,
+    htmlBaseURL,
     imageURL,
     gitChanges,
   },
@@ -173,6 +189,9 @@ export const CodeEditor = forwardRef<CodeEditorHandle, CodeEditorProps>(function
   gitChangesRef.current = gitChanges;
 
   const isMd = selectedRelPath ? isMarkdownFile(selectedRelPath) : false;
+  const isHtml = selectedRelPath ? isHtmlFile(selectedRelPath) : false;
+  const previewOnly = (isMd || isHtml) && previewMode === "preview";
+  const htmlDoc = useMemo(() => (isHtml ? withBaseHref(previewHtml, htmlBaseURL ?? "") : ""), [isHtml, previewHtml, htmlBaseURL]);
 
   // Whole-document line count backing the right-side VCS overview ruler.
   const totalLines = useMemo(() => (fileContent ? fileContent.split("\n").length : 0), [fileContent]);
@@ -278,11 +297,11 @@ export const CodeEditor = forwardRef<CodeEditorHandle, CodeEditorProps>(function
         if (update.docChanged) {
           onDocChangedRef.current();
           const curRel = selectedRelPathRef.current;
-          if (curRel && isMarkdownFile(curRel)) {
+          if (curRel && (isMarkdownFile(curRel) || isHtmlFile(curRel))) {
             if (previewTimerRef.current) clearTimeout(previewTimerRef.current);
             previewTimerRef.current = setTimeout(() => {
               previewTimerRef.current = null;
-              onPreviewUpdateRef.current(marked.parse(update.state.doc.toString(), { async: false }) as string);
+              onPreviewUpdateRef.current(previewSource(curRel, update.state.doc.toString()));
             }, 300);
           }
         }
@@ -307,12 +326,8 @@ export const CodeEditor = forwardRef<CodeEditorHandle, CodeEditorProps>(function
     // Seed the VCS change gutter for the freshly-mounted view.
     view.dispatch({ effects: setGitLineChanges.of(gitChangesRef.current ?? emptyGitLineChanges()) });
 
-    // Set initial markdown preview.
-    if (selectedRelPath && isMarkdownFile(selectedRelPath)) {
-      onPreviewUpdateRef.current(marked.parse(fileContent, { async: false }) as string);
-    } else {
-      onPreviewUpdateRef.current("");
-    }
+    // Set initial markdown / HTML preview.
+    onPreviewUpdateRef.current(selectedRelPath ? previewSource(selectedRelPath, fileContent) : "");
 
     // Sync editor scroll -> preview.
     const scroller = editorRef.current;
@@ -432,10 +447,10 @@ export const CodeEditor = forwardRef<CodeEditorHandle, CodeEditorProps>(function
           style={{
             flex: 1,
             overflow: "auto",
-            display: isMd && previewMode === "preview" ? "none" : undefined,
+            display: previewOnly ? "none" : undefined,
           }}
         />
-        {!(isMd && previewMode === "preview") && <GitChangeOverview changes={gitChanges ?? emptyGitLineChanges()} totalLines={totalLines} onJumpToLine={jumpToLine} />}
+        {!previewOnly && <GitChangeOverview changes={gitChanges ?? emptyGitLineChanges()} totalLines={totalLines} onJumpToLine={jumpToLine} />}
         {isMd && previewMode !== "editor" && previewHtml && (
           <>
             <div style={{ width: 1, backgroundColor: colors.border, flexShrink: 0 }} />
@@ -468,6 +483,13 @@ export const CodeEditor = forwardRef<CodeEditorHandle, CodeEditorProps>(function
               }}
             />
             <style>{buildMarkdownStyles(colors)}</style>
+          </>
+        )}
+        {isHtml && previewMode !== "editor" && (
+          <>
+            {!previewOnly && <div style={{ width: 1, backgroundColor: colors.border, flexShrink: 0 }} />}
+            {/* Sandboxed without allow-same-origin: page scripts run but cannot reach the app. */}
+            <iframe title="HTML preview" data-testid="html-preview" sandbox="allow-scripts" srcDoc={htmlDoc} style={{ flex: 1, border: "none", backgroundColor: "#fff" }} />
           </>
         )}
       </div>
