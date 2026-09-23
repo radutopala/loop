@@ -7,6 +7,9 @@ import { useTheme } from "../../ThemeContext";
 interface KanbanPanelProps {
   channelId: string;
   dirPath: string;
+  /** Inside a worktree chain: the checkout it was cut from. The toolbar then
+   *  switches between the worktree's own board and that checkout's. */
+  rootDirPath?: string;
   allowWorktree?: boolean;
   onSelectChannel?: (channelId: string) => void;
 }
@@ -67,9 +70,25 @@ function renderRefLink(value: string, title: string, linkColor: string, dimColor
   );
 }
 
-export function KanbanPanel({ channelId, dirPath, allowWorktree, onSelectChannel }: KanbanPanelProps) {
+type BoardScope = "local" | "root";
+
+export function KanbanPanel({ channelId, dirPath, rootDirPath, allowWorktree, onSelectChannel }: KanbanPanelProps) {
   const { colors, fontSizes } = useTheme();
   const [tickets, setTickets] = useState<Ticket[]>([]);
+
+  // Which board a worktree channel shows sticks per channel, so switching
+  // layouts (which remounts the panel) keeps it.
+  const scopeKey = `kanban-scope:${channelId}`;
+  const [scope, setScope] = useState<BoardScope>(() => (localStorage.getItem(scopeKey) === "root" ? "root" : "local"));
+  const canSwitchScope = !!rootDirPath && rootDirPath !== dirPath;
+  const boardDir = canSwitchScope && scope === "root" && rootDirPath ? rootDirPath : dirPath;
+  const pickScope = useCallback(
+    (next: BoardScope) => {
+      setScope(next);
+      localStorage.setItem(scopeKey, next);
+    },
+    [scopeKey],
+  );
   const [showCreate, setShowCreate] = useState(false);
   const [assigning, setAssigning] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -154,14 +173,14 @@ export function KanbanPanel({ channelId, dirPath, allowWorktree, onSelectChannel
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
 
   const loadTickets = useCallback(async () => {
-    if (!dirPath) return;
+    if (!boardDir) return;
     try {
-      const data = await fetchTickets(dirPath, { sort: "priority" });
+      const data = await fetchTickets(boardDir, { sort: "priority" });
       setTickets(data);
     } catch {
       /* ignore */
     }
-  }, [dirPath]);
+  }, [boardDir]);
 
   useEffect(() => {
     loadTickets();
@@ -191,14 +210,14 @@ export function KanbanPanel({ channelId, dirPath, allowWorktree, onSelectChannel
   }, [tickets]);
 
   const handleCreate = useCallback(async () => {
-    if (!newTitle.trim() || !dirPath) return;
+    if (!newTitle.trim() || !boardDir) return;
     try {
       const parsedTags = newTags
         .split(",")
         .map((t) => t.trim())
         .filter(Boolean);
       await createTicket({
-        dir: dirPath,
+        dir: boardDir,
         title: newTitle.trim(),
         type: newType,
         priority: newPriority,
@@ -229,28 +248,28 @@ export function KanbanPanel({ channelId, dirPath, allowWorktree, onSelectChannel
     } catch {
       /* ignore */
     }
-  }, [dirPath, draftKey, newTitle, newType, newPriority, newDescription, newAssignee, newTags, newExternalRef, newPR, newParent, newDesign, newAcceptance, loadTickets]);
+  }, [boardDir, draftKey, newTitle, newType, newPriority, newDescription, newAssignee, newTags, newExternalRef, newPR, newParent, newDesign, newAcceptance, loadTickets]);
 
   const handleStatusChange = useCallback(
     async (ticketId: string, newStatus: string) => {
-      if (!dirPath) return;
+      if (!boardDir) return;
       try {
-        await updateTicketStatus(ticketId, newStatus, dirPath);
+        await updateTicketStatus(ticketId, newStatus, boardDir);
         loadTickets();
       } catch {
         /* ignore */
       }
     },
-    [dirPath, loadTickets],
+    [boardDir, loadTickets],
   );
 
   const handleAssign = useCallback(
     async (ticketId: string) => {
-      if (!dirPath) return;
+      if (!boardDir) return;
       setAssigning(ticketId);
       setError(null);
       try {
-        const result = await assignTicket(ticketId, { dir: dirPath, channel_id: channelId });
+        const result = await assignTicket(ticketId, { dir: boardDir, channel_id: channelId });
         onSelectChannel?.(result.thread_id);
         loadTickets();
       } catch (err) {
@@ -259,7 +278,7 @@ export function KanbanPanel({ channelId, dirPath, allowWorktree, onSelectChannel
         setAssigning(null);
       }
     },
-    [dirPath, channelId, onSelectChannel, loadTickets],
+    [boardDir, channelId, onSelectChannel, loadTickets],
   );
 
   const openEdit = useCallback((ticket: Ticket) => {
@@ -280,9 +299,9 @@ export function KanbanPanel({ channelId, dirPath, allowWorktree, onSelectChannel
 
   const handleDelete = useCallback(
     async (ticketId: string) => {
-      if (!dirPath) return;
+      if (!boardDir) return;
       try {
-        await deleteTicket(ticketId, dirPath);
+        await deleteTicket(ticketId, boardDir);
         setConfirmDelete(null);
         setEditing(null);
         loadTickets();
@@ -290,11 +309,11 @@ export function KanbanPanel({ channelId, dirPath, allowWorktree, onSelectChannel
         /* ignore */
       }
     },
-    [dirPath, loadTickets],
+    [boardDir, loadTickets],
   );
 
   const handleEdit = useCallback(async () => {
-    if (!editing || !editTitle.trim() || !dirPath) return;
+    if (!editing || !editTitle.trim() || !boardDir) return;
     try {
       const parsedTags = editTags
         .split(",")
@@ -305,7 +324,7 @@ export function KanbanPanel({ channelId, dirPath, allowWorktree, onSelectChannel
         .map((d) => d.trim())
         .filter(Boolean);
       await updateTicket(editing.id, {
-        dir: dirPath,
+        dir: boardDir,
         title: editTitle.trim(),
         type: editType,
         priority: editPriority,
@@ -324,7 +343,7 @@ export function KanbanPanel({ channelId, dirPath, allowWorktree, onSelectChannel
     } catch {
       /* ignore */
     }
-  }, [editing, dirPath, editTitle, editType, editPriority, editDescription, editAssignee, editTags, editDeps, editExternalRef, editPR, editDesign, editAcceptance, loadTickets]);
+  }, [editing, boardDir, editTitle, editType, editPriority, editDescription, editAssignee, editTags, editDeps, editExternalRef, editPR, editDesign, editAcceptance, loadTickets]);
 
   const inputStyle: React.CSSProperties = {
     width: "100%",
@@ -523,6 +542,34 @@ export function KanbanPanel({ channelId, dirPath, allowWorktree, onSelectChannel
           flexShrink: 0,
         }}
       >
+        {canSwitchScope && (
+          <div style={{ display: "flex", border: `1px solid ${colors.border}`, borderRadius: 3, overflow: "hidden", flexShrink: 0 }}>
+            {(
+              [
+                ["local", "Local", dirPath],
+                ["root", "Root", rootDirPath],
+              ] as const
+            ).map(([value, label, path]) => (
+              <button
+                key={value}
+                data-testid={`kanban-scope-${value}`}
+                title={`${path}/.tickets`}
+                onClick={() => pickScope(value)}
+                style={{
+                  background: scope === value ? colors.surface : "none",
+                  border: "none",
+                  color: scope === value ? colors.active : colors.textDim,
+                  cursor: "pointer",
+                  padding: "1px 8px",
+                  fontSize: 11,
+                  lineHeight: 1.4,
+                }}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+        )}
         <span style={{ fontSize: 12, color: colors.textDim }}>
           {tickets.length} ticket{tickets.length !== 1 ? "s" : ""}
         </span>

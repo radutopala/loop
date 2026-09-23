@@ -25,6 +25,10 @@ The panel displays three status columns — **Open**, **In Progress**, and **Clo
 
 The panel is a **singleton** (one per layout) and available in any channel, thread or worktree thread. It shows the tickets of the directory that channel works in — `<dir>/.tickets/`, exactly what `tk` lists from a shell in the same place. A thread inherits its channel's directory and so shares its board; a worktree thread has its own checkout, so it shows the tickets that checkout carries (none, when `.tickets/` is untracked). Live updates arrive via WebSocket events (`ticket.created`, `ticket.updated`, `ticket.deleted`, `channel.created`).
 
+### Local / Root board in worktrees
+
+Inside a worktree chain — a worktree thread, a thread under it, or a worktree cut from another worktree — the toolbar shows a **Local | Root** switch. **Local** (the default) is the worktree's own `<worktree>/.tickets/`; **Root** is the `.tickets/` of the checkout the chain was cut from, the board the project channel shows. Hovering either button shows the directory it reads. Everything on the board acts on the store it lists: creating, editing, moving, deleting and assigning a ticket from the Root board changes the root checkout's `.tickets/`. The choice sticks per channel in `localStorage` under `kanban-scope:{channelId}`, so it survives reloads and layout switches. Channels outside a worktree chain have one board and show no switch.
+
 ---
 
 ## Ticket Cards

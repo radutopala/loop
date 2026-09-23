@@ -931,7 +931,9 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
         case "kanban":
           // Assigning from inside a worktree is fine: the daemon resolves the
           // ticket store and the new worktree's base to the root checkout.
-          return <KanbanPanel key={`layout-kanban-${channelId}`} channelId={channelId} dirPath={dirPath} allowWorktree={!!dirPath} onSelectChannel={onSelectThread} />;
+          return (
+            <KanbanPanel key={`layout-kanban-${channelId}`} channelId={channelId} dirPath={dirPath} rootDirPath={channel.root_dir_path} allowWorktree={!!dirPath} onSelectChannel={onSelectThread} />
+          );
         case "workflows":
           return <WorkflowsLayoutPanel key={`layout-workflows-${channelId}`} channelId={channelId} />;
         case "audit":
@@ -959,6 +961,7 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
       chatState,
       editorState,
       dirPath,
+      channel.root_dir_path,
       branch,
       scrollToMessageId,
       onScrollComplete,

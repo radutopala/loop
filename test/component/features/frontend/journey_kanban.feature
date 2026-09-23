@@ -113,6 +113,16 @@ Feature: Kanban panel
     And I wait for text "0 tickets" to appear
     And the page should not contain text "Deploy pipeline"
 
+    # Root switches to the board of the checkout the worktree was cut from
+    And I click button "Root" in the kanban panel
+    And I wait for text "Deploy pipeline" to appear
+    And the page should contain text "1 ticket"
+
+    # Local switches back to the worktree's own board
+    And I click button "Local" in the kanban panel
+    And I wait for text "0 tickets" to appear
+    And the page should not contain text "Deploy pipeline"
+
   Scenario: Toolbar shows tk CLI tip
     Given I set up a test channel via API for git repo "kanban-tip"
     And I open the app in a browser
