@@ -488,8 +488,12 @@ export const CodeEditor = forwardRef<CodeEditorHandle, CodeEditorProps>(function
         {isHtml && previewMode !== "editor" && (
           <>
             {!previewOnly && <div style={{ width: 1, backgroundColor: colors.border, flexShrink: 0 }} />}
-            {/* Sandboxed without allow-same-origin: page scripts run but cannot reach the app. */}
-            <iframe title="HTML preview" data-testid="html-preview" sandbox="allow-scripts" srcDoc={htmlDoc} style={{ flex: 1, border: "none", backgroundColor: "#fff" }} />
+            {/* Sandboxed without allow-same-origin: page scripts run but cannot reach the app.
+                Keyed by the document so each change mounts a fresh frame: Chromium can drop a
+                srcdoc update that lands while the previous srcdoc is still loading, leaving the
+                frame blank. The frame mounts before its file has loaded (first open) or with the
+                last tab's preview (tab switch), so the file's own document is always an update. */}
+            <iframe key={htmlDoc} title="HTML preview" data-testid="html-preview" sandbox="allow-scripts" srcDoc={htmlDoc} style={{ flex: 1, border: "none", backgroundColor: "#fff" }} />
           </>
         )}
       </div>

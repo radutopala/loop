@@ -15,7 +15,9 @@ import (
 	"sync"
 	"time"
 
+	"github.com/chromedp/cdproto/cdp"
 	"github.com/chromedp/cdproto/emulation"
+	"github.com/chromedp/cdproto/fetch"
 	"github.com/chromedp/cdproto/input"
 	"github.com/chromedp/cdproto/runtime"
 	"github.com/chromedp/chromedp"
@@ -162,6 +164,9 @@ func registerFrontendSteps(ctx *godog.ScenarioContext, tc *TestContext) {
 	ctx.Step(`^I append "([^"]*)" to the code editor$`, tc.appendToCodeEditor)
 	ctx.Step(`^I save the editor$`, tc.saveEditor)
 	ctx.Step(`^I record messages posted by frames$`, tc.recordFrameMessages)
+	ctx.Step(`^I delay requests matching "([^"]*)" by "([^"]*)"$`, tc.delayRequests)
+	ctx.Step(`^I mark the element "([^"]*)"$`, tc.markElement)
+	ctx.Step(`^the element "([^"]*)" should not be marked$`, tc.assertElementNotMarked)
 	ctx.Step(`^I wait for a frame message "([^"]*)"$`, tc.waitForFrameMessage)
 	ctx.Step(`^I click the last "([^"]*)"$`, tc.clickLast)
 	ctx.Step(`^the element "([^"]*)" should fit inside the window$`, tc.assertElementInsideWindow)
@@ -2262,6 +2267,58 @@ func (tc *TestContext) injectGateApprovalResolved(reqID string) error {
 
 // recordFrameMessages collects every postMessage payload the page receives,
 // so steps can observe sandboxed iframes whose DOM is cross-origin.
+// delayRequests holds each request whose URL matches pattern (a CDP glob:
+// * is any run, ? is one character, \ escapes) for the given duration before
+// letting it through, to open timing windows such as a panel rendering
+// before its content has loaded.
+func (tc *TestContext) delayRequests(pattern, durStr string) error {
+	d, err := time.ParseDuration(durStr)
+	if err != nil {
+		return fmt.Errorf("invalid duration %q: %w", durStr, err)
+	}
+	ctx := tc.chromeTab.ctx
+	chromedp.ListenTarget(ctx, func(ev any) {
+		e, ok := ev.(*fetch.EventRequestPaused)
+		if !ok {
+			return
+		}
+		// Listeners must not block, so continue the request from a goroutine.
+		go func() {
+			time.Sleep(d)
+			_ = fetch.ContinueRequest(e.RequestID).Do(cdp.WithExecutor(ctx, chromedp.FromContext(ctx).Target))
+		}()
+	})
+	return chromedp.Run(ctx, fetch.Enable().WithPatterns([]*fetch.RequestPattern{{URLPattern: pattern}}))
+}
+
+// markElement tags the element matching selector once it's in the DOM, so a
+// later step can tell whether the element there now is the same one or a
+// replacement.
+func (tc *TestContext) markElement(selector string) error {
+	var ok bool
+	js := fmt.Sprintf(`(() => { const el = document.querySelector(%q); if (!el) return false; el.dataset.bddMark = "1"; return true; })()`, selector)
+	// Present in the DOM is enough: the element may still be hidden.
+	if err := chromedp.Run(tc.chromeTab.ctx, chromedp.WaitReady(selector, chromedp.ByQuery), chromedp.Evaluate(js, &ok)); err != nil {
+		return err
+	}
+	if !ok {
+		return fmt.Errorf("no element %q to mark", selector)
+	}
+	return nil
+}
+
+func (tc *TestContext) assertElementNotMarked(selector string) error {
+	var marked bool
+	js := fmt.Sprintf(`document.querySelector(%q)?.dataset.bddMark === "1"`, selector)
+	if err := chromedp.Run(tc.chromeTab.ctx, chromedp.Evaluate(js, &marked)); err != nil {
+		return err
+	}
+	if marked {
+		return fmt.Errorf("element %q is still the marked one", selector)
+	}
+	return nil
+}
+
 func (tc *TestContext) recordFrameMessages() error {
 	return chromedp.Run(tc.chromeTab.ctx, chromedp.Evaluate(`(() => {
 		window.__frameMessages = [];
