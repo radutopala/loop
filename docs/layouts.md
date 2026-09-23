@@ -107,7 +107,7 @@ interface SplitNode {
 
 **Singleton panels** (chat, editor, memory, git, docker-browser, host-browser, sessions, notes, tasks, kanban, workflows, audit) can appear at most once in a layout tree. The `canAddPanel()` function enforces this: if the panel type is in `SINGLETON_PANELS` and already present in the tree, the add operation is rejected.
 
-**Channel-only panels**: The Sessions and Kanban panels are only available for channels (not threads or worktrees). Their tabs are hidden from the layout tab bar when viewing a thread or worktree.
+**Hidden layout tabs**: The Sessions tab is hidden from the layout tab bar in threads; the Review tab is hidden unless the channel has reviews enabled. Every other tab, Kanban included, is available in channels, threads and worktree threads alike.
 
 **Multi-instance panels** (docker-agent, host-shell, docker-shell, playground) can appear multiple times. Each instance gets a unique numbered ID (e.g., `docker-agent-0`, `host-shell-1`, `docker-shell-0`, `playground-0`) from a per-channel counter.
 

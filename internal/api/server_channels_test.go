@@ -809,6 +809,40 @@ func (s *ServerSuite) TestSearchChannelsReviewEnabledWorktreeUsesParentDir() {
 	}
 }
 
+// TestSearchChannelsRootDirPath covers every shape of worktree chain: only
+// channels inside one carry the checkout it was cut from, resolved from the
+// listed channels alone.
+func (s *ServerSuite) TestSearchChannelsRootDirPath() {
+	channels := []*db.Channel{
+		{ChannelID: "proj", DirPath: "/proj", Platform: types.PlatformLocal},
+		{ChannelID: "thread", DirPath: "/proj", ParentID: "proj", Platform: types.PlatformLocal},
+		{ChannelID: "wt", DirPath: "/proj/.worktrees/wt", ParentID: "proj", Worktree: true, Platform: types.PlatformLocal},
+		{ChannelID: "task", DirPath: "/proj/.worktrees/wt", ParentID: "wt", Platform: types.PlatformLocal},
+		{ChannelID: "wt2", DirPath: "/proj/.worktrees/wt2", ParentID: "wt", Worktree: true, Platform: types.PlatformLocal},
+		{ChannelID: "orphan", DirPath: "/gone/.worktrees/o", ParentID: "missing", Worktree: true, Platform: types.PlatformLocal},
+	}
+	s.store.On("ListChannels", mock.Anything).Return(channels, nil)
+
+	rec := s.testRequest("GET", "/api/channels", "")
+	require.Equal(s.T(), http.StatusOK, rec.Code)
+	var resp []channelResponse
+	require.NoError(s.T(), json.NewDecoder(rec.Body).Decode(&resp))
+
+	got := make(map[string]string, len(resp))
+	for _, r := range resp {
+		got[r.ChannelID] = r.RootDirPath
+	}
+	require.Equal(s.T(), map[string]string{
+		"proj":   "",
+		"thread": "",
+		"wt":     "/proj",
+		"task":   "/proj",
+		"wt2":    "/proj",
+		"orphan": "",
+	}, got)
+	s.store.AssertNotCalled(s.T(), "GetChannel", mock.Anything, mock.Anything)
+}
+
 func (s *ServerSuite) TestSearchChannelsDiffStats() {
 	// Create a temp git repo with a committed file, then modify it and add an untracked file.
 	dir := s.T().TempDir()

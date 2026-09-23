@@ -76,6 +76,7 @@ List all channels with optional filtering. Enriches each channel with container 
 - `branch` is resolved by running `git rev-parse --abbrev-ref HEAD` in the channel's directory.
 - `commit` is the short commit hash from `git rev-parse --short HEAD`.
 - `worktree` is true for threads created via `POST /api/worktrees`.
+- `root_dir_path` is set on rows inside a worktree chain — the worktree thread itself, a thread under it (e.g. a scheduled task's), or a worktree cut from another worktree — and holds the `dir_path` of the non-worktree checkout the chain was cut from. Omitted everywhere else. The Kanban panel uses it for its Local/Root board switch.
 - `locked` is true when the channel/thread is guarded against accidental deletion (toggle via [`PATCH /api/channels/{id}/lock`](#patch-apichannelsidlock)). `DELETE /api/channels/{id}` and `DELETE /api/threads/{id}` return `409 Conflict` while a row is locked.
 
 **Errors:** `501` if channel listing is not configured.
@@ -2600,7 +2601,7 @@ With no `name`: list every active share — `{ "shares": [{ name, scope, channel
 
 The ticket API manages filesystem-backed tickets stored in `.tickets/` within a project directory. Tickets are powered by the [`github.com/radutopala/ticket`](https://github.com/radutopala/ticket) library. See [Kanban Panel](kanban.md) for the frontend UI.
 
-All ticket endpoints require a `dir` query parameter specifying the project directory path.
+All ticket endpoints require a `dir` query parameter specifying the directory path. The store opened is always `dir/.tickets/` — the same one the `tk` CLI reads in that directory — so a worktree passed as `dir` gets the worktree's own store, not the store of the checkout it was cut from.
 
 ### `GET /api/tickets`
 

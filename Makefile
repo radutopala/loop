@@ -206,8 +206,12 @@ docs-serve: ## Build docs (baseURL=localhost) and serve at http://localhost:$(DO
 
 CLAUDE_VERSION := $(shell curl -sf https://storage.googleapis.com/claude-code-dist-86c565f3-f756-42ad-8dfa-d59b1c096819/claude-code-releases/latest 2>/dev/null || echo latest)
 
+# Host module download cache, handed to the agent image build as a local
+# GOPROXY (see container/Dockerfile). Skipped when the host has none yet.
+HOST_GOMODCACHE := $(shell go env GOMODCACHE 2>/dev/null)/cache/download
+
 docker-build: ## Build the Docker container images (agent + chrome)
-	docker build --build-arg CLAUDE_VERSION=$(CLAUDE_VERSION) --secret id=gitconfig,src=$(HOME)/.gitconfig -t loop-agent -f container/Dockerfile .
+	docker build --build-arg CLAUDE_VERSION=$(CLAUDE_VERSION) --secret id=gitconfig,src=$(HOME)/.gitconfig $(if $(wildcard $(HOST_GOMODCACHE)),--build-context gomodcache=$(HOST_GOMODCACHE)) -t loop-agent -f container/Dockerfile .
 	docker build -t loop-chrome -f internal/container/image/chrome.Dockerfile internal/container/image/
 
 run: build ## Build and run the bot

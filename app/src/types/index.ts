@@ -15,6 +15,8 @@ export interface Channel {
   worktree: boolean;
   /** For worktree threads: the branch this worktree was created from. */
   base_branch?: string;
+  /** Inside a worktree chain (the worktree thread or a thread under it): the dir of the checkout it was cut from. */
+  root_dir_path?: string;
   locked: boolean;
   diff_additions: number;
   diff_deletions: number;

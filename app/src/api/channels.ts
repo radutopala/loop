@@ -28,6 +28,7 @@ interface ChannelAPIResponse {
   commit?: string;
   worktree?: boolean;
   base_branch?: string;
+  root_dir_path?: string;
   locked?: boolean;
   diff_additions?: number;
   diff_deletions?: number;
@@ -51,6 +52,7 @@ export async function fetchChannels(): Promise<Channel[]> {
     commit: c.commit || "",
     worktree: c.worktree ?? false,
     base_branch: c.base_branch ?? "",
+    root_dir_path: c.root_dir_path,
     locked: c.locked ?? false,
     diff_additions: c.diff_additions ?? 0,
     diff_deletions: c.diff_deletions ?? 0,

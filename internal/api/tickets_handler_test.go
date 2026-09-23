@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"testing"
 	"time"
@@ -826,4 +827,59 @@ func (s *ServerSuite) TestAssignTicket_SessionNotStaged() {
 
 	ch := <-upserted
 	require.Empty(s.T(), ch.SessionID)
+}
+
+// ── Worktree assignment ──
+
+// addWorktree creates a linked worktree of repo at <repo>/.worktrees/<name>.
+func addWorktree(t *testing.T, repo, name string) string {
+	t.Helper()
+	path := filepath.Join(repo, ".worktrees", name)
+	cmd := exec.Command("git", "worktree", "add", "-b", "worktree/"+name, path, "HEAD")
+	cmd.Dir = repo
+	out, err := cmd.CombinedOutput()
+	require.NoError(t, err, string(out))
+	return path
+}
+
+// TestAssignTicket_FromThreadUnderWorktreeUsesRootCheckout covers the deeper
+// chain a scheduled task produces: its thread carries the worktree's dir
+// without the worktree flag, so only the walk past the worktree channel finds
+// the checkout the new worktree must be cut from. The ticket itself is read
+// from — and claimed in — the store of the dir the board was opened on.
+func (s *ServerSuite) TestAssignTicket_FromThreadUnderWorktreeUsesRootCheckout() {
+	project := initGitRepo(s.T())
+	wt := addWorktree(s.T(), project, "wtasgn")
+	require.NoError(s.T(), os.MkdirAll(filepath.Join(wt, ".tickets"), 0755))
+	writeTestTicket(s.T(), wt, "tic-deep", "Assign from a task thread", tk.StatusOpen)
+
+	s.srv.sys = s.sys
+	s.store.On("GetChannel", mock.Anything, "task-thread").Return(&db.Channel{
+		ChannelID: "task-thread", DirPath: wt, ParentID: "wt-ch",
+	}, nil)
+	s.store.On("GetChannel", mock.Anything, "wt-ch").Return(&db.Channel{
+		ChannelID: "wt-ch", DirPath: wt, ParentID: "ch1", Worktree: true,
+	}, nil)
+	s.store.On("GetChannel", mock.Anything, "ch1").Return(&db.Channel{
+		ChannelID: "ch1", DirPath: project,
+	}, nil)
+	s.threads.On("CreateThread", mock.Anything, "task-thread", mock.Anything, "", "").Return("deep-thread", nil)
+	s.store.On("GetChannel", mock.Anything, "deep-thread").Return(&db.Channel{
+		ChannelID: "deep-thread", DirPath: project, ParentID: "ch1", Active: true,
+	}, nil)
+	s.store.On("UpsertChannel", mock.Anything, mock.Anything).Return(nil)
+	s.srv.SetEventsHub(NewEventsHub(s.srv.logger))
+
+	body := fmt.Sprintf(`{"dir": %q, "channel_id": "task-thread"}`, wt)
+	rec := s.testRequest("POST", "/api/tickets/tic-deep/assign", body)
+	require.Equal(s.T(), http.StatusCreated, rec.Code, rec.Body.String())
+
+	var resp assignTicketResponse
+	require.NoError(s.T(), json.Unmarshal(rec.Body.Bytes(), &resp))
+	// The new worktree hangs off the project, not off the caller's worktree.
+	require.Equal(s.T(), filepath.Join(project, ".worktrees"), filepath.Dir(resp.WorktreePath))
+
+	ticket, err := tk.Open(wt).Read("tic-deep")
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), tk.StatusInProgress, ticket.Status)
 }

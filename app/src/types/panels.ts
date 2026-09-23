@@ -42,9 +42,6 @@ export const SINGLETON_PANELS: PanelType[] = [
 /** Panels that exclude each other -- if one is present, the others in the same group are blocked. */
 export const EXCLUSIVE_PANELS: PanelType[][] = [["docker-browser", "host-browser"]];
 
-/** Panels only available in top-level channels (not threads or worktrees). */
-export const CHANNEL_ONLY_PANELS: PanelType[] = ["kanban"];
-
 /** Canonical panel list with display metadata. Order determines UI ordering. */
 export const PANEL_OPTIONS: { panel: PanelType; label: string }[] = [
   { panel: "chat", label: "Chat" },

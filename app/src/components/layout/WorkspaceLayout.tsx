@@ -33,7 +33,6 @@ import type { ColorPalette } from "../../theme";
 import { fonts } from "../../theme";
 import type { Channel, SessionStatus } from "../../types";
 import type { AgentOpenMode, LeafNode, PanelType, PaneNode } from "../../types/panels";
-import { CHANNEL_ONLY_PANELS } from "../../types/panels";
 import { ChatView } from "../chat/ChatView";
 import type { FileLinkOpenDetail } from "../chat/FileLink";
 import { AuditPanel } from "../panels/AuditPanel";
@@ -813,10 +812,9 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
   const branch = channel.branch || "";
   const hiddenPanels = useMemo<PanelType[] | undefined>(() => {
     const hidden: PanelType[] = [];
-    if (channel.parent_id) hidden.push(...CHANNEL_ONLY_PANELS);
     if (!channel.review_enabled) hidden.push("review");
     return hidden.length > 0 ? hidden : undefined;
-  }, [channel.parent_id, channel.review_enabled]);
+  }, [channel.review_enabled]);
 
   const renderLeaf = useCallback(
     (leaf: LeafNode): React.ReactNode => {
@@ -931,7 +929,11 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
         case "tasks":
           return <TasksPanel key={`layout-tasks-${channelId}`} channelId={channelId} allowWorktree={!channel.worktree && !!channel.branch} onSelectChannel={onSelectThread} />;
         case "kanban":
-          return <KanbanPanel key={`layout-kanban-${channelId}`} channelId={channelId} dirPath={dirPath} allowWorktree={!channel.worktree && !!dirPath} onSelectChannel={onSelectThread} />;
+          // Assigning from inside a worktree is fine: the daemon resolves the
+          // ticket store and the new worktree's base to the root checkout.
+          return (
+            <KanbanPanel key={`layout-kanban-${channelId}`} channelId={channelId} dirPath={dirPath} rootDirPath={channel.root_dir_path} allowWorktree={!!dirPath} onSelectChannel={onSelectThread} />
+          );
         case "workflows":
           return <WorkflowsLayoutPanel key={`layout-workflows-${channelId}`} channelId={channelId} />;
         case "audit":
@@ -959,6 +961,7 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
       chatState,
       editorState,
       dirPath,
+      channel.root_dir_path,
       branch,
       scrollToMessageId,
       onScrollComplete,
@@ -1129,7 +1132,7 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
           Layouts
         </span>
         {layoutNames
-          .filter((name) => !(channel.parent_id && (name === "Sessions" || name === "Kanban")))
+          .filter((name) => !(channel.parent_id && name === "Sessions"))
           .filter((name) => !(name === "Review" && !channel.review_enabled))
           .map((name) => (
             <LayoutTab

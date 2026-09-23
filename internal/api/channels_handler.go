@@ -46,6 +46,7 @@ type channelResponse struct {
 	Commit           string `json:"commit,omitempty"`
 	Worktree         bool   `json:"worktree"`
 	BaseBranch       string `json:"base_branch,omitempty"`
+	RootDirPath      string `json:"root_dir_path,omitempty"` // inside a worktree chain: the checkout it was cut from
 	Locked           bool   `json:"locked"`
 	DiffAdditions    int    `json:"diff_additions,omitempty"`
 	DiffDeletions    int    `json:"diff_deletions,omitempty"`
@@ -100,6 +101,14 @@ func (s *Server) handleCreateChannel(w http.ResponseWriter, r *http.Request) {
 	writeHTTPJSON(w, http.StatusCreated, createChannelResponse{ChannelID: channelID}, s.logger)
 }
 
+// channelIndex serves GetChannel from channels a request has already loaded,
+// so an ancestor walk over them issues no queries.
+type channelIndex map[string]*db.Channel
+
+func (idx channelIndex) GetChannel(_ context.Context, channelID string) (*db.Channel, error) {
+	return idx[channelID], nil
+}
+
 func (s *Server) handleSearchChannels(w http.ResponseWriter, r *http.Request) {
 	if !requireConfigured(w, s.store, "channel listing not configured") {
 		return
@@ -129,7 +138,7 @@ func (s *Server) handleSearchChannels(w http.ResponseWriter, r *http.Request) {
 	// Build a channel-id → channel index once so per-row parent lookups
 	// for review-enabled resolution stay in-memory instead of issuing
 	// O(N) GetChannel queries against the store.
-	byID := make(map[string]*db.Channel, len(channels))
+	byID := make(channelIndex, len(channels))
 	for _, ch := range channels {
 		byID[ch.ChannelID] = ch
 	}
@@ -190,6 +199,7 @@ func (s *Server) handleSearchChannels(w http.ResponseWriter, r *http.Request) {
 			Commit:           git.Commit,
 			Worktree:         ch.Worktree,
 			BaseBranch:       ch.BaseBranch,
+			RootDirPath:      db.WorktreeRootDirPath(r.Context(), byID, ch),
 			Locked:           ch.Locked,
 			DiffAdditions:    git.DiffAdditions,
 			DiffDeletions:    git.DiffDeletions,
