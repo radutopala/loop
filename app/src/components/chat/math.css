@@ -1,0 +1,5 @@
+/* KaTeX gives display math a 1em margin of its own; chat messages already
+   space blocks with their blank lines, so the wrapper sets the spacing. */
+.loop-chat-math .katex-display {
+  margin: 0;
+}

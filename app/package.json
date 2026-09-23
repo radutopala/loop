@@ -55,6 +55,7 @@
     "@xterm/xterm": "^5.5.0",
     "dayjs": "^1.11.21",
     "electron-updater": "^6.8.9",
+    "katex": "^0.16.47",
     "marked": "^17.0.6",
     "mermaid": "^11.15.0",
     "pdfjs-dist": "^6.3.289",

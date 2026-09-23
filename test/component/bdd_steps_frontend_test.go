@@ -246,6 +246,7 @@ func registerFrontendSteps(ctx *godog.ScenarioContext, tc *TestContext) {
 	ctx.Step(`^I scroll the chat messages to top$`, tc.scrollChatMessagesToTop)
 	ctx.Step(`^I inject (\d+) bot messages with content "([^"]*)"$`, tc.injectBotMessages)
 	ctx.Step(`^I inject a user message with content "([^"]*)"$`, tc.injectUserMessage)
+	ctx.Step(`^I inject a bot message with:$`, tc.injectBotMessage)
 
 	// Event injection (chromedp dispatches a CustomEvent that the chat store
 	// listens for; routes through the same handler as a real WS message).
@@ -1958,6 +1959,35 @@ func (tc *TestContext) injectBotMessages(countStr, content string) error {
 		payloads = append(payloads, p)
 	}
 	return tc.dispatchTestEvents(payloads...)
+}
+
+// injectBotMessage dispatches one synthetic bot message.created event whose
+// content is the step's DocString, for messages that span several lines.
+func (tc *TestContext) injectBotMessage(doc *godog.DocString) error {
+	if tc.ChannelID == "" {
+		return fmt.Errorf("no channel_id set; use 'I set up a test channel via API' step first")
+	}
+	if err := tc.ensureChromeTab(); err != nil {
+		return err
+	}
+	p, err := json.Marshal(map[string]any{
+		"type":       "message.created",
+		"channel_id": tc.ChannelID,
+		"timestamp":  2,
+		"data": map[string]any{
+			"msg_id":       "bdd-bot-doc",
+			"author_id":    "bot",
+			"author_name":  "bot",
+			"content":      doc.Content,
+			"is_bot":       true,
+			"is_processed": true,
+			"priority":     0,
+		},
+	})
+	if err != nil {
+		return err
+	}
+	return tc.dispatchTestEvents(p)
 }
 
 // seedChatTimeline injects a synthetic message.created event so
