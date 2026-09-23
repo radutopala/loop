@@ -163,6 +163,8 @@ func registerFrontendSteps(ctx *godog.ScenarioContext, tc *TestContext) {
 	ctx.Step(`^I save the editor$`, tc.saveEditor)
 	ctx.Step(`^I record messages posted by frames$`, tc.recordFrameMessages)
 	ctx.Step(`^I wait for a frame message "([^"]*)"$`, tc.waitForFrameMessage)
+	ctx.Step(`^I click the last "([^"]*)"$`, tc.clickLast)
+	ctx.Step(`^the element "([^"]*)" should fit inside the window$`, tc.assertElementInsideWindow)
 	ctx.Step(`^I click "([^"]*)" in the git panel$`, tc.clickInGitPanel)
 
 	// DOM interaction — text-based (scoped to a data-testid region)
@@ -2243,6 +2245,47 @@ func (tc *TestContext) waitForFrameMessage(msg string) error {
 		var got []string
 		_ = chromedp.Run(tc.chromeTab.ctx, chromedp.Evaluate(`window.__frameMessages || []`, &got))
 		return fmt.Errorf("no frame message %q (got %q): %w", msg, got, err)
+	}
+	return nil
+}
+
+// clickLast clicks the last element matching selector, e.g. the header
+// button of the bottom-most pane.
+func (tc *TestContext) clickLast(selector string) error {
+	js := fmt.Sprintf(`(() => {
+		const els = document.querySelectorAll(%q);
+		if (!els.length) return false;
+		els[els.length - 1].click();
+		return true;
+	})()`, selector)
+	var ok bool
+	if err := chromedp.Run(tc.chromeTab.ctx, chromedp.Evaluate(js, &ok)); err != nil {
+		return err
+	}
+	if !ok {
+		return fmt.Errorf("no element matches %q", selector)
+	}
+	return nil
+}
+
+// assertElementInsideWindow checks the element's box lies fully within the
+// viewport, so no part of it (e.g. a dropdown's last items) is cut off.
+func (tc *TestContext) assertElementInsideWindow(selector string) error {
+	js := fmt.Sprintf(`(() => {
+		const el = document.querySelector(%q);
+		if (!el) return "not found";
+		const r = el.getBoundingClientRect();
+		if (r.top < 0 || r.left < 0 || r.bottom > window.innerHeight || r.right > window.innerWidth) {
+			return "box " + JSON.stringify(r) + " outside " + window.innerWidth + "x" + window.innerHeight;
+		}
+		return "ok";
+	})()`, selector)
+	var res string
+	if err := chromedp.Run(tc.chromeTab.ctx, chromedp.Poll(`!!document.querySelector(`+strconv.Quote(selector)+`)`, nil, chromedp.WithPollingTimeout(5*time.Second)), chromedp.Evaluate(js, &res)); err != nil {
+		return err
+	}
+	if res != "ok" {
+		return fmt.Errorf("element %q: %s", selector, res)
 	}
 	return nil
 }

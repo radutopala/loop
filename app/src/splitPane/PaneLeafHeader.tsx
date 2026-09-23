@@ -7,6 +7,7 @@ import type { ColorPalette } from "../theme";
 import { fonts } from "../theme";
 import { AGENT_OPEN_MODE_OPTIONS, type AgentOpenMode, EXCLUSIVE_PANELS, PANEL_LABELS, PANEL_OPTIONS, type PanelType, SINGLETON_PANELS } from "../types/panels";
 import { DRAG_MIME, emitLayoutDragEnd, emitLayoutDragStart } from "./DropZoneOverlay";
+import { type MenuPlacement, placeMenu } from "./menuPlacement";
 import type { DropPosition, SplitDirection } from "./types";
 
 function buildBtnStyle(colors: ColorPalette): React.CSSProperties {
@@ -228,7 +229,7 @@ function PaneSplitMenu({
   const [open, setOpen] = useState(false);
   const btnRef = useRef<HTMLButtonElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
-  const [menuPos, setMenuPos] = useState<{ top: number; left: number }>({ top: 0, left: 0 });
+  const [menuPos, setMenuPos] = useState<MenuPlacement>({ top: 0, left: 0 });
 
   const btnStyle = buildBtnStyle(colors);
   const menuItemStyle = buildMenuItemStyle(colors);
@@ -248,10 +249,14 @@ function PaneSplitMenu({
     e.currentTarget.style.backgroundColor = "transparent";
   };
 
+  // Measure the rendered menu before paint and keep it inside the window: the
+  // list is tall, so a "+" low on screen would otherwise push items off the
+  // bottom edge.
   useLayoutEffect(() => {
-    if (!open || !btnRef.current) return;
-    const r = btnRef.current.getBoundingClientRect();
-    setMenuPos({ top: r.bottom + 2, left: r.left });
+    if (!open || !btnRef.current || !menuRef.current) return;
+    const anchor = btnRef.current.getBoundingClientRect();
+    const menu = { width: menuRef.current.offsetWidth, height: menuRef.current.scrollHeight };
+    setMenuPos(placeMenu(anchor, menu, { width: window.innerWidth, height: window.innerHeight }));
   }, [open]);
 
   useEffect(() => {
@@ -283,6 +288,8 @@ function PaneSplitMenu({
               position: "fixed",
               top: menuPos.top,
               left: menuPos.left,
+              maxHeight: menuPos.maxHeight,
+              overflowY: menuPos.maxHeight ? "auto" : undefined,
               zIndex: 1000,
               backgroundColor: colors.surface,
               border: `1px solid ${colors.border}`,
