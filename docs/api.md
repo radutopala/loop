@@ -1145,6 +1145,27 @@ Delete a file or directory.
 
 ---
 
+### `GET /api/channels/{id}/raw/{root}/{path...}`
+
+Serve a file's raw bytes by path. The editor's HTML preview uses this as the `<base href>` of the rendered page, so relative stylesheets, scripts and images resolve against the file's directory. The root index is a path segment rather than a query parameter because relative URL resolution drops the query string.
+
+**Path Parameters:**
+
+| Param  | Type   | Description |
+|--------|--------|-------------|
+| `root` | int    | Root directory index (0 = primary, 1+ = extra directories) |
+| `path` | string | Relative path to the file |
+
+**Response (200):** The file's bytes with `Content-Type` from its extension (`application/octet-stream` when unknown). `Range` requests return `206 Partial Content`.
+
+**Behavior notes:**
+- Responses carry `X-Content-Type-Options: nosniff` and `Content-Security-Policy: sandbox allow-scripts`, so a page opened directly from this route runs in an opaque origin and can't call the API with the app's origin.
+- Path validation matches the other file routes: absolute paths, `..` traversal and symlink escapes are rejected.
+
+**Errors:** `400` if the root index or path is invalid, or the path is a directory. `404` if file not found.
+
+---
+
 ### `POST /api/channels/{id}/dir`
 
 Create a directory (including nested intermediate directories).

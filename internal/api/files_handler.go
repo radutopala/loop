@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"mime"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -160,6 +161,12 @@ func (s *Server) resolveRootParam(w http.ResponseWriter, r *http.Request, channe
 // multi-root workspaces via the "root" query parameter (0-indexed, default 0).
 func (s *Server) resolveRootDir(ctx context.Context, channelID string, r *http.Request) (string, error) {
 	rootIdx, _ := strconv.Atoi(r.URL.Query().Get("root")) // default 0
+	return s.rootDirByIndex(ctx, channelID, rootIdx)
+}
+
+// rootDirByIndex returns the channel's workspace root at rootIdx: 0 is the
+// primary directory, 1+ the extra directories in config order.
+func (s *Server) rootDirByIndex(ctx context.Context, channelID string, rootIdx int) (string, error) {
 	if rootIdx == 0 {
 		return s.workspace.resolveDirPath(ctx, "", channelID)
 	}
@@ -553,6 +560,67 @@ func (s *Server) handleReadFile(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	w.Write(data) //nolint:errcheck
+}
+
+// handleRawFile serves a workspace file by path:
+// GET /api/channels/{id}/raw/{root}/{path...}. Unlike GET .../file?path=, the
+// root and path live in the URL path, so relative URLs inside a served HTML
+// page (style.css, img/logo.png) resolve against it — the editor's HTML
+// preview points its <base href> here. Every file is served as-is with its
+// extension's MIME type; the CSP sandbox keeps a page opened directly from
+// running with the API's origin.
+func (s *Server) handleRawFile(w http.ResponseWriter, r *http.Request) {
+	if !requireConfigured(w, s.store, "channel listing not configured") {
+		return
+	}
+
+	rootIdx, err := strconv.Atoi(r.PathValue("root"))
+	if err != nil {
+		http.Error(w, "invalid root index", http.StatusBadRequest)
+		return
+	}
+	dirPath, err := s.rootDirByIndex(r.Context(), r.PathValue("id"), rootIdx)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	absPath, err := s.validateFilePath(dirPath, r.PathValue("path"))
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	info, err := s.sys.Stat(absPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			http.Error(w, "file not found", http.StatusNotFound)
+			return
+		}
+		http.Error(w, "failed to stat file", http.StatusInternalServerError)
+		return
+	}
+	if info.IsDir() {
+		http.Error(w, "path is a directory", http.StatusBadRequest)
+		return
+	}
+
+	// Opened through s.sys rather than http.ServeFile, which is a
+	// path-injection sink (see the streaming branch in handleReadFile).
+	f, err := s.sys.Open(absPath)
+	if err != nil {
+		http.Error(w, "failed to read file", http.StatusInternalServerError)
+		return
+	}
+	defer f.Close() //nolint:errcheck
+
+	ct := mime.TypeByExtension(filepath.Ext(absPath))
+	if ct == "" {
+		ct = "application/octet-stream"
+	}
+	w.Header().Set("Content-Type", ct)
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.Header().Set("Content-Security-Policy", "sandbox allow-scripts")
+	http.ServeContent(w, r, filepath.Base(absPath), info.ModTime(), f)
 }
 
 // imageMIMEByExt returns the MIME type for known image extensions, or "" for

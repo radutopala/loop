@@ -161,6 +161,8 @@ func registerFrontendSteps(ctx *godog.ScenarioContext, tc *TestContext) {
 	ctx.Step(`^I open the file "([^"]*)" in the editor tree$`, tc.openFileInEditorTree)
 	ctx.Step(`^I append "([^"]*)" to the code editor$`, tc.appendToCodeEditor)
 	ctx.Step(`^I save the editor$`, tc.saveEditor)
+	ctx.Step(`^I record messages posted by frames$`, tc.recordFrameMessages)
+	ctx.Step(`^I wait for a frame message "([^"]*)"$`, tc.waitForFrameMessage)
 	ctx.Step(`^I click "([^"]*)" in the git panel$`, tc.clickInGitPanel)
 
 	// DOM interaction — text-based (scoped to a data-testid region)
@@ -2224,4 +2226,23 @@ func (tc *TestContext) injectGateApprovalResolved(reqID string) error {
 		return fmt.Errorf("marshalling gate.approval_resolved payload: %w", err)
 	}
 	return tc.dispatchTestEvents(payload)
+}
+
+// recordFrameMessages collects every postMessage payload the page receives,
+// so steps can observe sandboxed iframes whose DOM is cross-origin.
+func (tc *TestContext) recordFrameMessages() error {
+	return chromedp.Run(tc.chromeTab.ctx, chromedp.Evaluate(`(() => {
+		window.__frameMessages = [];
+		window.addEventListener("message", (e) => window.__frameMessages.push(String(e.data)));
+	})()`, nil))
+}
+
+func (tc *TestContext) waitForFrameMessage(msg string) error {
+	js := fmt.Sprintf(`(window.__frameMessages || []).includes(%q)`, msg)
+	if err := chromedp.Run(tc.chromeTab.ctx, chromedp.Poll(js, nil, chromedp.WithPollingTimeout(15*time.Second))); err != nil {
+		var got []string
+		_ = chromedp.Run(tc.chromeTab.ctx, chromedp.Evaluate(`window.__frameMessages || []`, &got))
+		return fmt.Errorf("no frame message %q (got %q): %w", msg, got, err)
+	}
+	return nil
 }

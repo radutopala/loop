@@ -1,8 +1,9 @@
 import { useCallback, useState } from "react";
+import { buildRawFileBase } from "../../api/files";
 import type { EditorStateApi } from "../../hooks/useEditorState";
 import { useTheme } from "../../ThemeContext";
 import { fonts } from "../../theme";
-import { CodeEditor, isMarkdownFile } from "./CodeEditor";
+import { CodeEditor, isHtmlFile, isMarkdownFile } from "./CodeEditor";
 import { FileIcon, parsePathKey } from "./EditorFileTree";
 import { FilePanel } from "./FilePanel";
 
@@ -19,6 +20,8 @@ interface EditorPanelProps {
   onToggleMaximize?: () => void;
   onClose: () => void;
 }
+
+type PreviewMode = "editor" | "both" | "preview";
 
 export function EditorPanel({ dirPath, branch, editorState, embedded, ...panelProps }: EditorPanelProps) {
   const { colors } = useTheme();
@@ -45,12 +48,19 @@ export function EditorPanel({ dirPath, branch, editorState, embedded, ...panelPr
     dismissPendingRefresh,
   } = editorState;
 
-  const [previewMode, setPreviewMode] = useState<"editor" | "both" | "preview">("both");
+  const [mdMode, setMdMode] = useState<PreviewMode>("both");
+  const [htmlMode, setHtmlMode] = useState<PreviewMode>("preview");
   const [previewHtml, setPreviewHtml] = useState("");
   const [editorMenu, setEditorMenu] = useState<{ x: number; y: number } | null>(null);
 
-  const selectedRelPath = selectedPath ? parsePathKey(selectedPath).relativePath : null;
+  const selected = selectedPath ? parsePathKey(selectedPath) : null;
+  const selectedRelPath = selected ? selected.relativePath : null;
   const isMd = selectedRelPath ? isMarkdownFile(selectedRelPath) : false;
+  const isHtml = selectedRelPath ? isHtmlFile(selectedRelPath) : false;
+  // Markdown opens split, HTML opens rendered; each type remembers its own mode.
+  const previewMode = isHtml ? htmlMode : mdMode;
+  const setPreviewMode = isHtml ? setHtmlMode : setMdMode;
+  const htmlBaseURL = isHtml && selected ? buildRawFileBase(panelProps.channelId, selected.relativePath, selected.rootIndex) : null;
   const hasMultipleRoots = roots.length > 1;
 
   const handlePreviewUpdate = useCallback((html: string) => {
@@ -146,13 +156,14 @@ export function EditorPanel({ dirPath, branch, editorState, embedded, ...panelPr
                 );
               })}
             </div>
-            {isMd && (
+            {(isMd || isHtml) && (
               <div style={{ display: "flex", flexShrink: 0, margin: "0 6px", border: `1px solid ${colors.border}`, borderRadius: 4, overflow: "hidden" }}>
                 {(["editor", "both", "preview"] as const).map((mode) => (
                   <button
                     key={mode}
+                    data-testid={`preview-mode-${mode}`}
                     onClick={() => setPreviewMode(mode)}
-                    title={mode === "editor" ? "Editor only" : mode === "both" ? "Editor + Preview" : "Preview only"}
+                    title={mode === "editor" ? (isHtml ? "Source only" : "Editor only") : mode === "both" ? (isHtml ? "Source + Preview" : "Editor + Preview") : "Preview only"}
                     style={{
                       fontSize: 10,
                       color: previewMode === mode ? colors.active : colors.textDim,
@@ -164,7 +175,7 @@ export function EditorPanel({ dirPath, branch, editorState, embedded, ...panelPr
                       lineHeight: 1,
                     }}
                   >
-                    {mode === "editor" ? "Edit" : mode === "both" ? "Split" : "Preview"}
+                    {mode === "editor" ? (isHtml ? "Source" : "Edit") : mode === "both" ? "Split" : "Preview"}
                   </button>
                 ))}
               </div>
@@ -237,6 +248,7 @@ export function EditorPanel({ dirPath, branch, editorState, embedded, ...panelPr
           onEditorMenuClose={() => setEditorMenu(null)}
           onEditorContextMenu={handleEditorContextMenu}
           previewHtml={previewHtml}
+          htmlBaseURL={htmlBaseURL}
           imageURL={imageURL}
           gitChanges={gitChanges}
         />

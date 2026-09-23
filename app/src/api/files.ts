@@ -174,3 +174,13 @@ export async function searchFiles(channelId: string, q: string, limit = 30): Pro
   const data: { results: FileSearchResult[] } = await res.json();
   return data.results ?? [];
 }
+
+// buildRawFileBase returns the directory URL of `path` on the path-based raw
+// file endpoint (GET /api/channels/{id}/raw/{root}/{path...}), with a trailing
+// slash. The editor's HTML preview uses it as <base href> so the page's
+// relative URLs (style.css, img/logo.png) load from the workspace.
+export function buildRawFileBase(channelId: string, path: string, root?: number): string {
+  const dir = path.split("/").slice(0, -1);
+  const segments = [String(root ?? 0), ...dir].map(encodeURIComponent).join("/");
+  return `${getApiUrl()}/api/channels/${encodeURIComponent(channelId)}/raw/${segments}/`;
+}
