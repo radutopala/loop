@@ -44,6 +44,14 @@ describe("splitTableRow", () => {
   it("keeps cells when the outer pipes are absent", () => {
     expect(splitTableRow("a | b")).toEqual(["a", "b"]);
   });
+
+  it("keeps escaped pipes inside a cell", () => {
+    expect(splitTableRow("| \\|3 − 2x\\| | 3 − 2x ≥ 5 |")).toEqual(["|3 − 2x|", "3 − 2x ≥ 5"]);
+  });
+
+  it("keeps an escaped pipe that ends the row", () => {
+    expect(splitTableRow("a | b \\|")).toEqual(["a", "b |"]);
+  });
 });
 
 describe("parseTableBlock", () => {

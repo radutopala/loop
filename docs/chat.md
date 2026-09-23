@@ -87,6 +87,8 @@ Messages are rendered through the `MarkdownContent` component, which uses a cust
 |---------|--------|-----------|
 | Fenced code block | ` ``` ` ... ` ``` ` | `<pre>` with `colors.surface` background, 8px border-radius, 13px monospace font |
 | Language label | ` ```go ` | Shown above the code block in `colors.textDim`, 11px font |
+| Display math | `$$...$$` or `\[...\]`, on one line or spread over several | Centered [KaTeX](https://katex.org) formula, scrolls sideways when wider than the chat; hover shows a button that copies the LaTeX |
+| Table | GFM header row, separator row, body rows | `<table>`; a pipe escaped with a backslash is text in its cell, not a column break |
 | Paragraph | Any non-empty line | `<p>` with 2px vertical margin |
 | Empty line | Blank line | `<br>` |
 
@@ -97,8 +99,15 @@ Messages are rendered through the `MarkdownContent` component, which uses a cust
 | Inline code | `` `code` `` | `<code>` with `colors.surface` background, 3px border-radius, 13px monospace font |
 | Bold | `**text**` | `<strong>` |
 | Italic | `*text*` | `<em>` |
+| Inline math | `$...$`, `\(...\)` or `$$...$$` inside a line | KaTeX formula in the text flow; also inside bold, italic and table cells |
 
-Inline elements are parsed via regex: `` /(`[^`]+`|\*\*[^*]+\*\*|\*[^*]+\*)/ ``
+Inline elements are parsed via one regex, in this order: inline code, math, bold, italic, links. Math comes before bold and italic so a `*` in a formula isn't read as emphasis, and code comes first so `$` inside backticks stays code.
+
+### Math
+
+Formulas are rendered with KaTeX (`app/src/components/chat/math.ts`), which works offline and ships with the app. `$...$` follows pandoc's rules, so dollar amounts and shell variables stay text: the opening `$` must be followed by a non-space, and the closing `$` must follow a non-space and must not be followed by a digit or letter. So `costs $5 and $10` and `$HOME/$USER` are left alone, and `\$` is a literal dollar sign.
+
+A formula with an error doesn't break the message: KaTeX shows its source in red at the error. Rendering runs without KaTeX's `trust` option, so commands like `\href` can't add links or HTML. Messages re-render on every streamed chunk, so rendered formulas are cached.
 
 ---
 

@@ -31,11 +31,15 @@ export function parseTableAligns(separator: string): TableAlign[] {
   });
 }
 
+/**
+ * splitTableRow splits a row into its cells. As in GFM, \| is a literal pipe
+ * inside a cell, not a column break, so |x| can be written \|x\|.
+ */
 export function splitTableRow(line: string): string[] {
   let s = line.trim();
   if (s.startsWith("|")) s = s.slice(1);
-  if (s.endsWith("|")) s = s.slice(0, -1);
-  return s.split("|").map((c) => c.trim());
+  if (s.endsWith("|") && !s.endsWith("\\|")) s = s.slice(0, -1);
+  return s.split(/(?<!\\)\|/).map((c) => c.replaceAll("\\|", "|").trim());
 }
 
 /** startsTable reports whether a table begins at lines[i] (header + separator). */

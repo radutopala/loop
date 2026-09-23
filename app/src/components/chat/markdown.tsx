@@ -1,3 +1,5 @@
+import "katex/dist/katex.min.css";
+import "./math.css";
 import { useContext, useState } from "react";
 import { useTheme } from "../../ThemeContext";
 import { findCandidatePaths } from "../../utils/fileLinks";
@@ -5,6 +7,7 @@ import { CopyButton } from "../shared/CopyButton";
 import { buildMessageStyles, ChannelContext } from "./chatShared";
 import { FileLink } from "./FileLink";
 import { parseTableBlock, startsTable, type TableAlign, tableToHTML, tableToTSV } from "./markdownTable";
+import { findMathBlock, inlineMathPattern, inlineMathTeX, isInlineMath, renderMath } from "./math";
 
 function linkifyText(text: string, keyBase: number, channelId: string): React.ReactNode[] {
   // Collect URL and file-path matches, then merge by start position. File-path
@@ -48,8 +51,9 @@ function linkifyText(text: string, keyBase: number, channelId: string): React.Re
 
 function formatInline(text: string, s: Record<string, React.CSSProperties>, channelId: string): React.ReactNode[] {
   const nodes: React.ReactNode[] = [];
-  // Match inline code, bold, italic, markdown links.
-  const regex = /(`[^`]+`|\*\*[^*]+\*\*|\*[^*]+\*|\[[^\]]+\]\([^)]+\))/g;
+  // Match inline code, math, bold, italic, markdown links. Math comes before
+  // bold and italic so the * in a formula isn't read as emphasis.
+  const regex = new RegExp(`(\`[^\`]+\`|${inlineMathPattern}|\\*\\*[^*]+\\*\\*|\\*[^*]+\\*|\\[[^\\]]+\\]\\([^)]+\\))`, "g");
   let lastIndex = 0;
 
   for (;;) {
@@ -61,18 +65,21 @@ function formatInline(text: string, s: Record<string, React.CSSProperties>, chan
     }
 
     const token = match[0];
-    if (token.startsWith("`")) {
+    if (isInlineMath(token)) {
+      nodes.push(<span key={nodes.length} dangerouslySetInnerHTML={{ __html: renderMath(inlineMathTeX(token), false) }} />);
+    } else if (token.startsWith("`")) {
       nodes.push(
         <code key={nodes.length} style={s.inlineCode}>
           {token.slice(1, -1)}
         </code>,
       );
     } else if (token.startsWith("**")) {
-      // Linkify inside bold/italic so a bare URL emphasized by the agent
-      // (e.g. **https://…**) is still clickable.
-      nodes.push(<strong key={nodes.length}>{linkifyText(token.slice(2, -2), nodes.length, channelId)}</strong>);
+      // Format inside bold/italic too, so a bare URL (**https://…**) stays
+      // clickable and a formula (**$x = 1$**) renders. Their content has no *,
+      // so this can't recurse forever.
+      nodes.push(<strong key={nodes.length}>{formatInline(token.slice(2, -2), s, channelId)}</strong>);
     } else if (token.startsWith("*")) {
-      nodes.push(<em key={nodes.length}>{linkifyText(token.slice(1, -1), nodes.length, channelId)}</em>);
+      nodes.push(<em key={nodes.length}>{formatInline(token.slice(1, -1), s, channelId)}</em>);
     } else if (token.startsWith("[")) {
       const mdMatch = token.match(/^\[([^\]]+)\]\(([^)]+)\)$/);
       if (mdMatch) {
@@ -181,6 +188,24 @@ function MarkdownTable({
   );
 }
 
+/** A display formula, centered, with a hover-revealed button that copies its LaTeX. */
+function MathDisplay({ tex, source }: { tex: string; source: string }) {
+  const [hovered, setHovered] = useState(false);
+  return (
+    <div
+      data-testid="math-display"
+      className="loop-chat-math"
+      style={{ position: "relative", margin: "4px 0", padding: "0 24px" }}
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+    >
+      <CopyButton text={source} visible={hovered} title="Copy as LaTeX" style={{ position: "absolute", top: 0, right: 0 }} />
+      {/* KaTeX output, without trust, is markup only: no scripts, links or handlers. */}
+      <div style={{ overflowX: "auto", overflowY: "hidden" }} dangerouslySetInnerHTML={{ __html: renderMath(tex, true) }} />
+    </div>
+  );
+}
+
 function parseMarkdown(text: string, s: Record<string, React.CSSProperties>, channelId: string): React.ReactNode[] {
   const nodes: React.ReactNode[] = [];
   const lines = text.split("\n");
@@ -205,6 +230,14 @@ function parseMarkdown(text: string, s: Record<string, React.CSSProperties>, cha
           <code>{codeLines.join("\n")}</code>
         </pre>,
       );
+      continue;
+    }
+
+    // Display math: $$…$$ or \[…\], on one line or several.
+    const math = findMathBlock(lines, i);
+    if (math) {
+      i = math.next;
+      nodes.push(<MathDisplay key={nodes.length} tex={math.tex} source={math.source} />);
       continue;
     }
 
