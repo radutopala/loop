@@ -80,7 +80,7 @@ function formatNoteTime(timestamp: string): string {
 function FormField({ label, children }: { label: string; children: ReactNode }) {
   const { colors } = useTheme();
   return (
-    <label style={{ display: "flex", flexDirection: "column", gap: 4, flex: 1, minWidth: 0 }}>
+    <label style={{ display: "flex", flexDirection: "column", gap: 4, minWidth: 0 }}>
       <span style={{ fontSize: 11, fontWeight: 600, color: colors.textDim }}>{label}</span>
       {children}
     </label>
@@ -784,7 +784,7 @@ export function KanbanPanel({ channelId, dirPath, rootDirPath, allowWorktree, on
             data-autofocus
           />
         </FormField>
-        <div style={{ display: "flex", gap: 6 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6 }}>
           <FormField label="Type">
             <select value={newType} onChange={(e) => setNewType(e.target.value)} style={{ ...inputStyle, cursor: "pointer" }}>
               <option value="task">Task</option>
@@ -813,7 +813,7 @@ export function KanbanPanel({ channelId, dirPath, rootDirPath, allowWorktree, on
             style={{ ...inputStyle, resize: "vertical", fontFamily: "inherit" }}
           />
         </FormField>
-        <div style={{ display: "flex", gap: 6 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6 }}>
           <FormField label="Assignee">
             <input type="text" placeholder="Assignee" value={newAssignee} onChange={(e) => setNewAssignee(e.target.value)} style={inputStyle} />
           </FormField>
@@ -830,7 +830,7 @@ export function KanbanPanel({ channelId, dirPath, rootDirPath, allowWorktree, on
         </button>
         {showCreateAdvanced && (
           <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-            <div style={{ display: "flex", gap: 6 }}>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6 }}>
               <FormField label="External ref">
                 <input type="text" placeholder="External ref (URL or e.g. gh-123)" value={newExternalRef} onChange={(e) => setNewExternalRef(e.target.value)} style={inputStyle} />
               </FormField>
@@ -914,7 +914,7 @@ export function KanbanPanel({ channelId, dirPath, rootDirPath, allowWorktree, on
                 data-autofocus
               />
             </FormField>
-            <div style={{ display: "flex", gap: 6 }}>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6 }}>
               <FormField label="Type">
                 <select value={editType} onChange={(e) => setEditType(e.target.value)} style={{ ...inputStyle, cursor: "pointer" }}>
                   <option value="task">Task</option>
@@ -943,7 +943,7 @@ export function KanbanPanel({ channelId, dirPath, rootDirPath, allowWorktree, on
                 style={{ ...inputStyle, resize: "vertical", fontFamily: "inherit" }}
               />
             </FormField>
-            <div style={{ display: "flex", gap: 6 }}>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6 }}>
               <FormField label="Assignee">
                 <input type="text" placeholder="Assignee" value={editAssignee} onChange={(e) => setEditAssignee(e.target.value)} style={inputStyle} />
               </FormField>
