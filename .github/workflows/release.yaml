@@ -62,13 +62,15 @@ jobs:
           ref: ${{ env.RELEASE_TAG }}
 
       - name: Download loop binary from release
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           VERSION="${RELEASE_TAG#v}"
           ARCHIVE="loop_${VERSION}_darwin_${{ matrix.goreleaser_arch }}.tar.gz"
           mkdir -p app/resources/mac/${{ matrix.arch }}
-          gh release download "$RELEASE_TAG" --pattern "$ARCHIVE" --dir /tmp
+          # By the direct download URL rather than `gh release download`: the
+          # asset list that command filters is sometimes returned empty (or
+          # partial) right after goreleaser uploads, so it finds nothing even
+          # though the file is there.
+          curl -fsSL --retry 5 --retry-all-errors --retry-delay 5 -o "/tmp/$ARCHIVE" "https://github.com/${{ github.repository }}/releases/download/$RELEASE_TAG/$ARCHIVE"
           tar -xzf "/tmp/$ARCHIVE" -C app/resources/mac/${{ matrix.arch }}
 
       - name: Set up Node.js
@@ -135,13 +137,15 @@ jobs:
           ref: ${{ env.RELEASE_TAG }}
 
       - name: Download loop binary from release
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           VERSION="${RELEASE_TAG#v}"
           ARCHIVE="loop_${VERSION}_linux_${{ matrix.goreleaser_arch }}.tar.gz"
           mkdir -p app/resources/linux/${{ matrix.arch }}
-          gh release download "$RELEASE_TAG" --pattern "$ARCHIVE" --dir /tmp
+          # By the direct download URL rather than `gh release download`: the
+          # asset list that command filters is sometimes returned empty (or
+          # partial) right after goreleaser uploads, so it finds nothing even
+          # though the file is there.
+          curl -fsSL --retry 5 --retry-all-errors --retry-delay 5 -o "/tmp/$ARCHIVE" "https://github.com/${{ github.repository }}/releases/download/$RELEASE_TAG/$ARCHIVE"
           tar -xzf "/tmp/$ARCHIVE" -C app/resources/linux/${{ matrix.arch }}
 
       - name: Set up Node.js
@@ -190,14 +194,16 @@ jobs:
           ref: ${{ env.RELEASE_TAG }}
 
       - name: Download loop binary from release
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         shell: bash
         run: |
           VERSION="${RELEASE_TAG#v}"
           ARCHIVE="loop_${VERSION}_windows_${{ matrix.goreleaser_arch }}.zip"
           mkdir -p app/resources/win/${{ matrix.arch }}
-          gh release download "$RELEASE_TAG" --pattern "$ARCHIVE" --dir "$RUNNER_TEMP"
+          # By the direct download URL rather than `gh release download`: the
+          # asset list that command filters is sometimes returned empty (or
+          # partial) right after goreleaser uploads, so it finds nothing even
+          # though the file is there.
+          curl -fsSL --retry 5 --retry-all-errors --retry-delay 5 -o "$RUNNER_TEMP/$ARCHIVE" "https://github.com/${{ github.repository }}/releases/download/$RELEASE_TAG/$ARCHIVE"
           unzip "$RUNNER_TEMP/$ARCHIVE" -d app/resources/win/${{ matrix.arch }}
 
       - name: Set up Node.js
