@@ -556,7 +556,7 @@ The agent Docker image is auto-built on first `loop serve` / `loop daemon:start`
 
 The default image ships with Go 1.27, Node.js, and common development tools. You can build any custom Dockerfile to suit your stack — edit `~/.loop/container/Dockerfile`, then `docker rmi loop-agent:latest` and restart.
 
-For development: `make docker-build` builds from `container/Dockerfile` in the repo.
+For development: `make docker-build` builds from `container/Dockerfile` in the repo. It hands the host's Go module download cache to the build as a local module proxy, so modules the host already fetched aren't downloaded again (anything missing falls through to `proxy.golang.org`).
 
 ## CLI Commands
 

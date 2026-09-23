@@ -1,8 +1,16 @@
+# `make docker-build` overrides this empty stage with the host's module
+# download cache (--build-context gomodcache=...), which the builder reads as
+# a local GOPROXY so modules the host already fetched aren't downloaded again.
+# Anything missing there, or a plain `docker build`, falls through to the
+# network proxy.
+FROM scratch AS gomodcache
+
 FROM golang:1.27 AS builder
 ENV GOTOOLCHAIN=auto
 WORKDIR /src
 COPY go.mod go.sum ./
-RUN go mod download
+RUN --mount=type=bind,from=gomodcache,target=/hostmod \
+    GOPROXY=file:///hostmod,https://proxy.golang.org,direct go mod download
 COPY . .
 RUN go generate ./internal/readme/ && \
     go build -o /loop ./cmd/loop
