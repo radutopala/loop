@@ -1,0 +1,81 @@
+/* Text-selection layer for the editor's PDF viewer: the subset of pdf.js's
+   web/pdf_viewer.css that TextLayer needs (the full file is ~160 KB of viewer
+   chrome we don't use). Spans are transparent and sit over the canvas so the
+   page text can be selected and copied. */
+.loop-pdf-page {
+  --user-unit: 1;
+  --total-scale-factor: calc(var(--scale-factor) * var(--user-unit));
+  --scale-round-x: 1px;
+  --scale-round-y: 1px;
+}
+
+.loop-pdf-page .textLayer {
+  position: absolute;
+  text-align: initial;
+  inset: 0;
+  overflow: clip;
+  opacity: 1;
+  line-height: 1;
+  letter-spacing: normal;
+  word-spacing: normal;
+  text-size-adjust: none;
+  forced-color-adjust: none;
+  transform-origin: 0 0;
+  caret-color: CanvasText;
+  z-index: 0;
+  --min-font-size: 1;
+  --text-scale-factor: calc(var(--total-scale-factor) * var(--min-font-size));
+  --min-font-size-inv: calc(1 / var(--min-font-size));
+}
+
+.loop-pdf-page .textLayer :is(span, br) {
+  color: transparent;
+  position: absolute;
+  white-space: pre;
+  cursor: text;
+  transform-origin: 0% 0%;
+  user-select: text;
+}
+
+.loop-pdf-page .textLayer > :not(.markedContent),
+.loop-pdf-page .textLayer .markedContent span:not(.markedContent) {
+  z-index: 1;
+  --font-height: 0;
+  font-size: calc(var(--text-scale-factor) * var(--font-height));
+  --scale-x: 1;
+  --rotate: 0deg;
+  transform: rotate(var(--rotate)) scaleX(var(--scale-x)) scale(var(--min-font-size-inv));
+}
+
+.loop-pdf-page .textLayer .markedContent {
+  display: contents;
+}
+
+.loop-pdf-page .textLayer span[role="img"] {
+  user-select: none;
+  cursor: default;
+}
+
+.loop-pdf-page .textLayer ::selection {
+  background: color-mix(in srgb, AccentColor, transparent 50%);
+  color: transparent;
+}
+
+.loop-pdf-page .textLayer br::selection {
+  background: transparent;
+}
+
+/* pdf.js appends this after the spans; stretching it over the page while a
+   selection is being dragged keeps the drag from jumping between spans. */
+.loop-pdf-page .textLayer .endOfContent {
+  display: block;
+  position: absolute;
+  inset: 100% 0 0;
+  z-index: 0;
+  cursor: default;
+  user-select: none;
+}
+
+.loop-pdf-page .textLayer.selecting .endOfContent {
+  top: 0;
+}

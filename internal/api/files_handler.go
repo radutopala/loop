@@ -498,14 +498,14 @@ func (s *Server) handleReadFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Video files: stream straight from disk with Range support so the editor's
-	// <video> player can seek. This runs before the maxFileSize check and never
-	// buffers the whole file into memory — videos are routinely larger than the
-	// text cap. We open through s.sys (an *os.File, hence an io.ReadSeeker)
+	// Video and PDF files: stream straight from disk with Range support so the
+	// editor's <video> player can seek and its PDF viewer can fetch ranges. This
+	// runs before the maxFileSize check and never buffers the whole file into
+	// memory — both are routinely larger than the text cap. We open through s.sys (an *os.File, hence an io.ReadSeeker)
 	// rather than calling http.ServeFile, which is a path-injection sink: the
 	// user-supplied path would reach it even though validateFilePath already
 	// contains the request to the channel dir.
-	if mime := videoMIMEByExt(absPath); mime != "" {
+	if mime := streamedMIMEByExt(absPath); mime != "" {
 		f, openErr := s.sys.Open(absPath)
 		if openErr != nil {
 			http.Error(w, "failed to read file", http.StatusInternalServerError)
@@ -572,10 +572,13 @@ func imageMIMEByExt(path string) string {
 	return ""
 }
 
-// videoMIMEByExt returns the MIME type for known video extensions, or "" for
-// non-video files. Extension match only (same approach as imageMIMEByExt).
-func videoMIMEByExt(path string) string {
+// streamedMIMEByExt returns the MIME type for the video and PDF extensions the
+// editor streams with Range support, or "" for anything else. Extension match
+// only (same approach as imageMIMEByExt).
+func streamedMIMEByExt(path string) string {
 	switch strings.ToLower(filepath.Ext(path)) {
+	case ".pdf":
+		return "application/pdf"
 	case ".mp4":
 		return "video/mp4"
 	case ".webm":

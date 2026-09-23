@@ -1086,12 +1086,13 @@ Read a file's contents.
 **Response (200):**
 - **Text files:** `Content-Type: text/plain; charset=utf-8` with file contents as body.
 - **Image files** (`.png`, `.jpg`/`.jpeg`, `.gif`, `.webp`): `Content-Type` set to the matching `image/*` MIME with the raw bytes as the body. No `X-File-Binary` header — the desktop app uses this endpoint directly as `<img src>` so the browser handles caching and decoding.
+- **Video and PDF files** (`.mp4`, `.webm`, `.mov`, `.pdf`): streamed from disk with `Content-Type` set to the matching `video/*` or `application/pdf` MIME and `Accept-Ranges: bytes`, so `Range` requests return `206 Partial Content`. The desktop app plays videos with `<video src>` and renders PDFs with its pdf.js viewer.
 - **Other binary files:** Empty body with `X-File-Binary: true` header and `Content-Length` set.
 
 **Behavior notes:**
-- The image branch is matched on extension and runs before null-byte binary detection.
+- The image, video and PDF branches are matched on extension and run before null-byte binary detection.
 - Binary detection checks the first 512 bytes for null bytes.
-- Maximum file size is **5 MB** (5,242,880 bytes). Larger files return `413`.
+- Maximum file size is **5 MB** (5,242,880 bytes). Larger files return `413`. Videos and PDFs are exempt: they're streamed, never buffered whole.
 - Path validation rejects absolute paths, `..` traversal, and symlink escapes.
 
 **Errors:** `400` if path is invalid. `404` if file not found. `413` if file too large.
