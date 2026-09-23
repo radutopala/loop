@@ -9,13 +9,21 @@ FROM golang:1.27 AS builder
 ENV GOTOOLCHAIN=auto
 WORKDIR /src
 COPY go.mod go.sum ./
+# The module and build caches are BuildKit cache mounts, so they persist
+# across builds without landing in a layer: a rebuild only fetches what
+# changed instead of re-downloading every dependency of the @latest installs.
 RUN --mount=type=bind,from=gomodcache,target=/hostmod \
+    --mount=type=cache,target=/go/pkg/mod \
     GOPROXY=file:///hostmod,https://proxy.golang.org,direct go mod download
 COPY . .
-RUN go generate ./internal/readme/ && \
+RUN --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=cache,target=/root/.cache/go-build \
+    go generate ./internal/readme/ && \
     go build -o /loop ./cmd/loop
-RUN go install github.com/radutopala/ticket/cmd/tk@latest
-RUN go install golang.org/x/tools/gopls@latest
+RUN --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=cache,target=/root/.cache/go-build \
+    go install github.com/radutopala/ticket/cmd/tk@latest && \
+    go install golang.org/x/tools/gopls@latest
 
 FROM golang:1.27
 ENV GOTOOLCHAIN=auto
@@ -63,6 +71,15 @@ RUN git config --system --add safe.directory '*'
 # ~/.gitconfig being mounted over the container's global config.
 RUN pip install --break-system-packages --no-cache-dir pre-commit uv awscli
 ENV USE_BUILTIN_RIPGREP=0
+# setup.sh runs before the per-build ARGs and the freshly built binaries, so
+# its layer stays cached until the script itself changes. The Go caches are
+# cache mounts shared with the builder stage, so the script's go installs
+# don't hit the network for modules an earlier build already fetched.
+COPY internal/container/image/setup.sh .loop/setup.s[h] /usr/local/bin/
+RUN --mount=type=secret,id=gitconfig,target=/root/.gitconfig \
+    --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=cache,target=/root/.cache/go-build \
+    chmod +x /usr/local/bin/setup.sh && /usr/local/bin/setup.sh
 ARG LOOP_VERSION=dev
 ARG CLAUDE_VERSION=latest
 LABEL loop.version="${LOOP_VERSION}" \
@@ -71,8 +88,6 @@ RUN curl -fsSL https://claude.ai/install.sh | bash && cp -L ~/.local/bin/claude 
 COPY --from=builder /loop /usr/local/bin/loop
 COPY --from=builder /go/bin/tk /usr/local/bin/tk
 COPY --from=builder /go/bin/gopls /usr/local/bin/gopls
-COPY internal/container/image/setup.sh .loop/setup.s[h] /usr/local/bin/
-RUN --mount=type=secret,id=gitconfig,target=/root/.gitconfig chmod +x /usr/local/bin/setup.sh && /usr/local/bin/setup.sh
 COPY internal/container/image/entrypoint.sh /usr/local/bin/entrypoint.sh
 COPY internal/container/image/agent-bashrc /etc/loop/bashrc
 RUN chmod +x /usr/local/bin/entrypoint.sh
