@@ -13,8 +13,8 @@ import { openSearchPanel, search, searchKeymap } from "@codemirror/search";
 import { Compartment, EditorSelection, EditorState } from "@codemirror/state";
 import { drawSelection, EditorView, highlightActiveLine, highlightActiveLineGutter, keymap, lineNumbers } from "@codemirror/view";
 import { marked } from "marked";
-import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef } from "react";
-import { isVideoPath } from "../../api/files";
+import { forwardRef, lazy, Suspense, useCallback, useEffect, useImperativeHandle, useMemo, useRef } from "react";
+import { isPdfPath, isVideoPath } from "../../api/files";
 import { useTheme } from "../../ThemeContext";
 import { fonts } from "../../theme";
 import { ContextMenu, type MenuItem } from "../shared/ContextMenu";
@@ -22,6 +22,9 @@ import { emptyGitLineChanges, type GitLineChanges, gitChangeGutterExtension, set
 import { GitChangeOverview } from "./editorGitOverview";
 import { buildEditorTheme } from "./editorTheme";
 import { buildMarkdownStyles } from "./FilePanel";
+
+// pdf.js is large; load the viewer (and pdf.js with it) on the first PDF tab.
+const PdfViewer = lazy(() => import("./PdfViewer"));
 
 // ── Helpers ──
 
@@ -398,7 +401,12 @@ export const CodeEditor = forwardRef<CodeEditorHandle, CodeEditorProps>(function
       {loading && <div style={{ padding: 16, color: colors.textDim, fontSize: 13 }}>Loading...</div>}
       {error && <div style={{ padding: 16, color: colors.error, fontSize: 13 }}>{error}</div>}
       {isBinary && !imageURL && <div style={{ padding: 16, color: colors.textDim, fontSize: 13 }}>Binary file ({formatSize(binarySize)})</div>}
-      {imageURL && (
+      {imageURL && isPdfPath(selectedRelPath || "") && (
+        <Suspense fallback={<div style={{ padding: 16, color: colors.textDim, fontSize: 13 }}>Loading PDF...</div>}>
+          <PdfViewer url={imageURL} />
+        </Suspense>
+      )}
+      {imageURL && !isPdfPath(selectedRelPath || "") && (
         <div
           style={{
             flex: 1,

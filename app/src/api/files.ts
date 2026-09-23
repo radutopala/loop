@@ -78,13 +78,25 @@ export function isImagePath(path: string): boolean {
 }
 
 // Video extensions the editor renders inline via <video src=...>. Matches the
-// backend's videoMIMEByExt in internal/api/files_handler.go — keep in sync.
+// backend's streamedMIMEByExt in internal/api/files_handler.go — keep in sync.
 const VIDEO_EXTS = new Set([".mp4", ".webm", ".mov"]);
 
 export function isVideoPath(path: string): boolean {
   const dot = path.lastIndexOf(".");
   if (dot < 0) return false;
   return VIDEO_EXTS.has(path.slice(dot).toLowerCase());
+}
+
+// PDF extension the editor renders with its pdf.js viewer. Matches the
+// backend's streamedMIMEByExt in internal/api/files_handler.go — keep in sync.
+export function isPdfPath(path: string): boolean {
+  return path.toLowerCase().endsWith(".pdf");
+}
+
+// isMediaPath reports whether the editor shows the file through a URL-backed
+// viewer (image, video or PDF) instead of fetching it as text.
+export function isMediaPath(path: string): boolean {
+  return isImagePath(path) || isVideoPath(path) || isPdfPath(path);
 }
 
 // buildFileUrl returns the absolute /api URL for the file-read endpoint, with

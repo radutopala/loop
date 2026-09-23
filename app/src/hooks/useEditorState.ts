@@ -1,20 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { fetchGlobalConfig } from "../api/configApi";
 import { fetchDiff } from "../api/git";
-import {
-  buildFileUrl,
-  createDir,
-  deleteFile,
-  type FileEntry,
-  fetchFileContent,
-  fetchFiles,
-  fetchRoots,
-  isImagePath,
-  isVideoPath,
-  type RootEntry,
-  saveFileContent,
-  updateExtraDirs,
-} from "../api/loopApi";
+import { buildFileUrl, createDir, deleteFile, type FileEntry, fetchFileContent, fetchFiles, fetchRoots, isMediaPath, type RootEntry, saveFileContent, updateExtraDirs } from "../api/loopApi";
 import type { CodeEditorHandle } from "../components/panels/CodeEditor";
 import { makePathKey, parsePathKey } from "../components/panels/EditorFileTree";
 import { emptyGitLineChanges, type GitLineChanges, gitLineChangesForFile } from "../components/panels/editorGitGutter";
@@ -224,7 +211,7 @@ export function useEditorState(channelId: string, options?: UseEditorStateOption
   useEffect(() => {
     if (!selectedPath) return;
     const { rootIndex: ri, relativePath: rp } = parsePathKey(selectedPath);
-    if (isImagePath(rp) || isVideoPath(rp)) {
+    if (isMediaPath(rp)) {
       setImageURL(buildFileUrl(channelId, rp, ri, imageVersionRef.current));
       setFileContent(null);
       setIsBinary(false);
@@ -257,7 +244,7 @@ export function useEditorState(channelId: string, options?: UseEditorStateOption
       return;
     }
     const { rootIndex: ri, relativePath: rp } = parsePathKey(pathKey);
-    if (isImagePath(rp) || isVideoPath(rp)) {
+    if (isMediaPath(rp)) {
       setGitChanges(emptyGitLineChanges());
       return;
     }
@@ -343,7 +330,7 @@ export function useEditorState(channelId: string, options?: UseEditorStateOption
       setError(null);
       setIsBinary(false);
       const { rootIndex: ri, relativePath: rp } = parsePathKey(pathKey);
-      if (isImagePath(rp) || isVideoPath(rp)) {
+      if (isMediaPath(rp)) {
         setImageURL(buildFileUrl(channelId, rp, ri, imageVersionRef.current));
         setFileContent(null);
         setLoading(false);
@@ -500,7 +487,7 @@ export function useEditorState(channelId: string, options?: UseEditorStateOption
     const pathKey = selectedPathRef.current;
     if (pathKey) {
       const { rootIndex: ri, relativePath: rp } = parsePathKey(pathKey);
-      if (isImagePath(rp) || isVideoPath(rp)) {
+      if (isMediaPath(rp)) {
         imageVersionRef.current++;
         setImageURL(buildFileUrl(channelId, rp, ri, imageVersionRef.current));
         return;
@@ -693,7 +680,7 @@ export function useEditorState(channelId: string, options?: UseEditorStateOption
       const pathKey = selectedPathRef.current;
       if (!pathKey) return;
       const { rootIndex: ri, relativePath: rp } = parsePathKey(pathKey);
-      if (isImagePath(rp) || isVideoPath(rp)) {
+      if (isMediaPath(rp)) {
         imageVersionRef.current++;
         setImageURL(buildFileUrl(channelId, rp, ri, imageVersionRef.current));
         return;
@@ -732,7 +719,7 @@ export function useEditorState(channelId: string, options?: UseEditorStateOption
   const applyAgentRefresh = useCallback(
     (pathKey: string) => {
       const { rootIndex: ri, relativePath: rp } = parsePathKey(pathKey);
-      if (isImagePath(rp) || isVideoPath(rp)) {
+      if (isMediaPath(rp)) {
         if (pathKey === selectedPathRef.current) {
           imageVersionRef.current++;
           setImageURL(buildFileUrl(channelId, rp, ri, imageVersionRef.current));

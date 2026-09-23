@@ -51,6 +51,7 @@ func registerBackendSteps(ctx *godog.ScenarioContext, tc *TestContext) {
 	ctx.Step(`^I create uncommitted files "([^"]*)" in the repo$`, tc.createUncommittedFiles)
 	ctx.Step(`^I stage a new file "([^"]*)" in the repo$`, tc.stageNewFile)
 	ctx.Step(`^I modify "([^"]*)" without staging$`, tc.modifyWithoutStaging)
+	ctx.Step(`^I create a (\d+)-page PDF "([^"]*)" reading "([^"]*)" in the repo$`, tc.createPDF)
 
 	// Ticket setup steps
 	ctx.Step(`^I create a ticket "([^"]*)" with type "([^"]*)" via API$`, tc.createTicketViaAPI)
@@ -686,6 +687,52 @@ func (tc *TestContext) modifyWithoutStaging(name string) error {
 		return fmt.Errorf("writing %s: %w", name, err)
 	}
 	return nil
+}
+
+// createPDF writes a minimal PDF with `pages` pages into the channel's repo,
+// each showing "<text> <n>" in Helvetica, for the editor's PDF viewer.
+func (tc *TestContext) createPDF(pages int, name, text string) error {
+	if tc.ChannelDir == "" {
+		return fmt.Errorf("no channel dir set; use 'I set up a test channel via API for git repo' step first")
+	}
+	return os.WriteFile(filepath.Join(tc.ChannelDir, name), minimalPDF(pages, text), 0o644)
+}
+
+// minimalPDF builds a valid PDF by hand: catalog, page tree, one shared font,
+// then a page + content stream per page, and a byte-exact xref table.
+func minimalPDF(pages int, text string) []byte {
+	// Object numbers: 1 catalog, 2 page tree, 3 font, then page/content pairs.
+	objs := []string{
+		"<< /Type /Catalog /Pages 2 0 R >>",
+		"", // page tree, filled in once the kids are known
+		"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+	}
+	kids := make([]string, 0, pages)
+	for i := 1; i <= pages; i++ {
+		pageObj := len(objs) + 1
+		kids = append(kids, fmt.Sprintf("%d 0 R", pageObj))
+		content := fmt.Sprintf("BT /F1 24 Tf 72 720 Td (%s %d) Tj ET", text, i)
+		objs = append(objs,
+			fmt.Sprintf("<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 3 0 R >> >> /Contents %d 0 R >>", pageObj+1),
+			fmt.Sprintf("<< /Length %d >>\nstream\n%s\nendstream", len(content), content),
+		)
+	}
+	objs[1] = fmt.Sprintf("<< /Type /Pages /Kids [%s] /Count %d >>", strings.Join(kids, " "), pages)
+
+	var b strings.Builder
+	b.WriteString("%PDF-1.4\n")
+	offsets := make([]int, len(objs))
+	for i, obj := range objs {
+		offsets[i] = b.Len()
+		fmt.Fprintf(&b, "%d 0 obj\n%s\nendobj\n", i+1, obj)
+	}
+	xref := b.Len()
+	fmt.Fprintf(&b, "xref\n0 %d\n0000000000 65535 f \n", len(objs)+1)
+	for _, off := range offsets {
+		fmt.Fprintf(&b, "%010d 00000 n \n", off)
+	}
+	fmt.Fprintf(&b, "trailer\n<< /Size %d /Root 1 0 R >>\nstartxref\n%d\n%%%%EOF\n", len(objs)+1, xref)
+	return []byte(b.String())
 }
 
 // createDiskOnlyWorktree creates a raw git worktree on disk without importing

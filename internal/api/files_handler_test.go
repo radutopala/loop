@@ -657,11 +657,13 @@ func (s *ServerSuite) TestReadFile_Image() {
 	}
 }
 
-func (s *ServerSuite) TestReadFile_Video() {
+func (s *ServerSuite) TestReadFile_Streamed() {
 	cases := []struct {
 		name string
 		mime string
 	}{
+		{"doc.pdf", "application/pdf"},
+		{"doc.PDF", "application/pdf"},
 		{"clip.mp4", "video/mp4"},
 		{"clip.MP4", "video/mp4"},
 		{"clip.webm", "video/webm"},
@@ -687,25 +689,39 @@ func (s *ServerSuite) TestReadFile_Video() {
 	}
 }
 
-// Videos must stream even when larger than maxFileSize — they bypass the text
-// cap (and are never buffered whole into memory). Regression guard: an earlier
-// fix accidentally moved the video branch below the size check, 413-ing clips.
-func (s *ServerSuite) TestReadFile_VideoLargerThanMaxFileSize() {
-	tmpDir := s.T().TempDir()
-	data := make([]byte, maxFileSize+1024)
-	for i := range data {
-		data[i] = byte(i % 251)
+// Videos and PDFs must stream even when larger than maxFileSize — they bypass
+// the text cap (and are never buffered whole into memory). Regression guard: an
+// earlier fix accidentally moved the video branch below the size check,
+// 413-ing clips.
+func (s *ServerSuite) TestReadFile_StreamedLargerThanMaxFileSize() {
+	cases := []struct {
+		name string
+		mime string
+	}{
+		{"big.mp4", "video/mp4"},
+		{"big.pdf", "application/pdf"},
 	}
-	require.NoError(s.T(), os.WriteFile(filepath.Join(tmpDir, "big.mp4"), data, 0644))
 
-	s.store.On("GetChannel", mock.Anything, "ch-1").
-		Return(&db.Channel{ChannelID: "ch-1", DirPath: tmpDir}, nil)
+	for _, tc := range cases {
+		s.Run(tc.name, func() {
+			tmpDir := s.T().TempDir()
+			data := make([]byte, maxFileSize+1024)
+			for i := range data {
+				data[i] = byte(i % 251)
+			}
+			require.NoError(s.T(), os.WriteFile(filepath.Join(tmpDir, tc.name), data, 0644))
 
-	rec := s.testRequest("GET", "/api/channels/ch-1/file?path=big.mp4", "")
-	require.Equal(s.T(), http.StatusOK, rec.Code)
-	require.Equal(s.T(), "video/mp4", rec.Header().Get("Content-Type"))
-	require.Equal(s.T(), "bytes", rec.Header().Get("Accept-Ranges"))
-	require.Equal(s.T(), data, rec.Body.Bytes())
+			chID := "ch-" + tc.name
+			s.store.On("GetChannel", mock.Anything, chID).
+				Return(&db.Channel{ChannelID: chID, DirPath: tmpDir}, nil)
+
+			rec := s.testRequest("GET", "/api/channels/"+chID+"/file?path="+tc.name, "")
+			require.Equal(s.T(), http.StatusOK, rec.Code)
+			require.Equal(s.T(), tc.mime, rec.Header().Get("Content-Type"))
+			require.Equal(s.T(), "bytes", rec.Header().Get("Accept-Ranges"))
+			require.Equal(s.T(), data, rec.Body.Bytes())
+		})
+	}
 }
 
 // A Range request on a video returns 206 with just the requested bytes, so the

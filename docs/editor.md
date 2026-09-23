@@ -210,7 +210,7 @@ All operations go through the Go backend API for security.
 | Operation | API | Notes |
 |-----------|-----|-------|
 | List directory | `GET /api/channels/{id}/files?path=<dir>` | Returns `FileEntry[]` with name, type, size |
-| Read file | `GET /api/channels/{id}/file?path=<path>` | Returns text content; `X-File-Binary: true` header for binary files |
+| Read file | `GET /api/channels/{id}/file?path=<path>` | Returns text content; images, videos and PDFs as raw bytes with their MIME type; `X-File-Binary: true` header for other binary files |
 | Save file | `PUT /api/channels/{id}/file?path=<path>` | Body is raw file content. Appends trailing newline if missing. |
 | Delete file | `DELETE /api/channels/{id}/file?path=<path>` | Removes file from disk |
 | Create file | `PUT` with empty body | Same as save with empty content |
@@ -226,6 +226,20 @@ For files whose extension is `.png`, `.jpg`/`.jpeg`, `.gif`, or `.webp`, the bac
 The URL carries an `imageVersionRef` cache-buster (`?t=<n>`). The counter bumps when the agent overwrites the file (`tool.use` for `Write`/`Edit`/`MultiEdit`), when the window regains focus, and on the manual refresh button — forcing the browser to re-fetch even though the URL would otherwise be byte-identical. `imageURL` is cleared on close or when switching to a non-image tab so the placeholder slot doesn't leak across tabs.
 
 Pairs with [Chat: Paste Images](chat.md#paste-images) — pasted images land under `.loop/pastes/` and their path renders as a clickable [file link](chat.md#file-links); clicking opens this image tab.
+
+### Video Files
+
+`.mp4`, `.webm` and `.mov` files follow the same URL-backed path as images and render as a `<video controls>` player. The backend streams them with `Range` support so the player can seek.
+
+### PDF Files
+
+`.pdf` files also take the URL-backed path, but `CodeEditor` hands the URL to `PdfViewer`, a pdf.js ([`pdfjs-dist`](https://github.com/mozilla/pdf.js)) viewer loaded with `React.lazy` so pdf.js stays out of the main bundle until the first PDF tab opens. The backend streams PDFs like videos, so they aren't subject to the 5MB cap below.
+
+- **Pages:** stacked vertically on a scrollable pane. Each page renders to a canvas only while it's near the viewport and frees its bitmap when scrolled far away, so long documents stay light. Canvases render at the screen's pixel ratio, capped at pdf.js's 2²⁵-pixel limit per page.
+- **Text:** a pdf.js text layer sits over each canvas, so page text can be selected and copied.
+- **Toolbar:** zoom out / zoom in (steps 25%–400%), **Fit width** (the default, re-fitting as the pane resizes), and a `Page N / M` indicator that follows the scroll position. Ctrl/Cmd + wheel (and trackpad pinch) zooms too.
+- **Refresh:** the same `imageVersionRef` cache-buster as images. When the file changes, the viewer reloads it and keeps the previous render on screen until the new one is ready.
+- Password-protected PDFs aren't supported; the viewer shows an error instead.
 
 ### Maximum File Size
 
