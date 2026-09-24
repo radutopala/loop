@@ -1,10 +1,11 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { forkThread } from "../../api/channels";
 import { useTheme } from "../../ThemeContext";
 import { fonts } from "../../theme";
 import type { Channel } from "../../types";
 import type { PillKind } from "./pills";
 import { SIDEBAR_PILLS } from "./pills";
+import { RowInfoPopup } from "./RowInfoPopup";
 import { StatusPill } from "./StatusPill";
 
 /** Drag-to-reorder wiring for threads/worktrees under a common parent. */
@@ -54,6 +55,7 @@ export function ThreadItem({
 }: ThreadItemProps) {
   const { colors } = useTheme();
   const [hovered, setHovered] = useState(false);
+  const rowRef = useRef<HTMLDivElement>(null);
   const [forking, setForking] = useState(false);
   const [collapsed, setCollapsed] = useState(false);
   const hasChildren = (subThreads?.length ?? 0) > 0;
@@ -83,7 +85,10 @@ export function ThreadItem({
         <line x1="1" y1="0" x2="1" y2={isLast ? "50%" : "100%"} stroke={colors.textDisabled} strokeWidth="1.5" />
         <line x1="1" y1="50%" x2="10" y2="50%" stroke={colors.textDisabled} strokeWidth="1.5" />
       </svg>
+      <RowInfoPopup channel={thread} anchorRef={rowRef} hovered={hovered} />
       <div
+        ref={rowRef}
+        data-testid="sidebar-thread-row"
         onMouseEnter={() => setHovered(true)}
         onMouseLeave={() => setHovered(false)}
         style={{
@@ -96,7 +101,6 @@ export function ThreadItem({
         }}
       >
         <button
-          title={thread.dir_path || undefined}
           draggable={!!reorder}
           onDragStart={
             reorder

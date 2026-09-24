@@ -7,6 +7,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/radutopala/loop/internal/db"
 	"github.com/radutopala/loop/internal/events"
 )
 
@@ -17,8 +18,20 @@ import (
 type gitState struct {
 	Branch        string
 	Commit        string
+	Subject       string // the commit's subject line
 	DiffAdditions int
 	DiffDeletions int
+	// Upstream is the branch's tracking branch, e.g. origin/main, with the
+	// commits the branch is ahead of and behind it.
+	Upstream string
+	Ahead    int
+	Behind   int
+	// SyncBase is the branch a worktree thread's checkout was cut from, set
+	// when it still resolves, with the commits the checkout is ahead of and
+	// behind it.
+	SyncBase   string
+	BaseAhead  int
+	BaseBehind int
 }
 
 // BranchPoller polls each channel's workdir for branch/commit/diff changes
@@ -35,7 +48,7 @@ type BranchPoller struct {
 	loopDir  string
 	interval time.Duration
 	logger   *slog.Logger
-	gitInfo  func(ctx context.Context, dir string) gitState
+	gitInfo  func(ctx context.Context, dir, base string, prev gitState) gitState
 	// onDirChange fires once per dir per tick when its git state changed
 	// since the previous tick. Wired to Server.InvalidatePRCacheForDir so a
 	// new commit/branch (the push that precedes a PR) makes the next PR
@@ -112,21 +125,22 @@ func (p *BranchPoller) tick(ctx context.Context, prime bool) {
 
 	// Compute once per unique dir — channels and threads sharing a worktree
 	// dir would otherwise multiply the git subprocess cost.
+	bases := worktreeBases(channels, p.loopDir)
+	p.mu.Lock()
+	prevDirs := p.dirState
+	p.mu.Unlock()
 	computed := make(map[string]gitState)
 	changedDirs := make(map[string]struct{})
 	seen := make(map[string]struct{}, len(channels))
 	for _, ch := range channels {
 		seen[ch.ChannelID] = struct{}{}
-		dirPath := ch.DirPath
-		if dirPath == "" && p.loopDir != "" {
-			dirPath = filepath.Join(p.loopDir, ch.ChannelID, "work")
-		}
+		dirPath := channelDir(ch, p.loopDir)
 		if dirPath == "" {
 			continue
 		}
 		next, ok := computed[dirPath]
 		if !ok {
-			next = p.gitInfo(ctx, dirPath)
+			next = p.gitInfo(ctx, dirPath, bases[dirPath], prevDirs[dirPath])
 			computed[dirPath] = next
 		}
 
@@ -135,19 +149,28 @@ func (p *BranchPoller) tick(ctx context.Context, prime bool) {
 		p.state[ch.ChannelID] = next
 		p.mu.Unlock()
 
-		if prime || !known {
+		if prime || (known && prev == next) {
 			continue
 		}
-		if prev == next {
-			continue
+		// A channel first seen after the prime tick is broadcast too: the
+		// sidebar fetched it when it was created, and its git state may have
+		// moved on since (e.g. a commit right after a worktree was cut).
+		if known {
+			changedDirs[dirPath] = struct{}{}
 		}
-		changedDirs[dirPath] = struct{}{}
 		p.hub.BroadcastChannelUpdated(events.ChannelUpdatedData{
 			ChannelID:     ch.ChannelID,
 			Branch:        next.Branch,
 			Commit:        next.Commit,
+			Subject:       next.Subject,
 			DiffAdditions: next.DiffAdditions,
 			DiffDeletions: next.DiffDeletions,
+			Upstream:      next.Upstream,
+			Ahead:         next.Ahead,
+			Behind:        next.Behind,
+			SyncBase:      next.SyncBase,
+			BaseAhead:     next.BaseAhead,
+			BaseBehind:    next.BaseBehind,
 		})
 	}
 	if p.onDirChange != nil {
@@ -166,4 +189,25 @@ func (p *BranchPoller) tick(ctx context.Context, prime bool) {
 		}
 	}
 	p.mu.Unlock()
+}
+
+// channelDir is the directory a channel's git state is read from: its own,
+// or its workspace under loopDir when it has none. Empty when neither is set.
+func channelDir(ch *db.Channel, loopDir string) string {
+	if ch.DirPath == "" && loopDir != "" {
+		return filepath.Join(loopDir, ch.ChannelID, "work")
+	}
+	return ch.DirPath
+}
+
+// worktreeBases maps each worktree thread's dir to the branch it was cut
+// from, so its git state can count the commits between them.
+func worktreeBases(channels []*db.Channel, loopDir string) map[string]string {
+	bases := make(map[string]string)
+	for _, ch := range channels {
+		if ch.Worktree && ch.BaseBranch != "" {
+			bases[channelDir(ch, loopDir)] = ch.BaseBranch
+		}
+	}
+	return bases
 }

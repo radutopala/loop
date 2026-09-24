@@ -207,6 +207,12 @@ func registerFrontendSteps(ctx *godog.ScenarioContext, tc *TestContext) {
 	ctx.Step(`^I click the worktree button for "([^"]*)" in the sidebar$`, tc.clickWorktreeButtonForChannel)
 	ctx.Step(`^I hover over the element with text "([^"]*)"$`, tc.hoverElementWithText)
 	ctx.Step(`^I hover over "([^"]*)" in the sidebar$`, tc.hoverInSidebar)
+	ctx.Step(`^I rest the pointer on "([^"]*)" in the sidebar$`, tc.restPointerInSidebar)
+	ctx.Step(`^I move the pointer off the sidebar$`, tc.movePointerOffSidebar)
+	ctx.Step(`^the row info should show the (channel|worktree)'s path and branch "([^"]*)"$`, tc.assertRowInfo)
+	ctx.Step(`^the row info "(branch-detail|commit|commit-detail|sync|model|status)" should read "([^"]*)"$`, tc.assertRowInfoLine)
+	ctx.Step(`^the row info should not show "(commit|sync|model|status)"$`, tc.assertRowInfoLineAbsent)
+	ctx.Step(`^I commit "([^"]*)" in the worktree$`, tc.commitInWorktree)
 	ctx.Step(`^I right-click on the element with text "([^"]*)"$`, tc.rightClickElementWithText)
 	ctx.Step(`^I right-click on "([^"]*)" in the sidebar$`, tc.rightClickInSidebar)
 
@@ -1075,6 +1081,118 @@ func (tc *TestContext) hoverInSidebar(text string) error {
 			})()
 		`, xpath), nil),
 	)
+}
+
+// restPointerInSidebar moves the real mouse to the middle of a sidebar row's
+// text, so the page sees the pointer enter it (and leave the last one).
+func (tc *TestContext) restPointerInSidebar(text string) error {
+	js := fmt.Sprintf(`(() => {
+		const el = document.evaluate(%q, document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
+		if (!el) return null;
+		const r = el.getBoundingClientRect();
+		return r.width > 0 ? [r.left + r.width / 2, r.top + r.height / 2] : null;
+	})()`, fmt.Sprintf(`(//*[@data-testid='sidebar']//*[contains(text(), '%s')])[1]`, text))
+	var at []float64
+	if err := chromedp.Run(tc.chromeTab.ctx, chromedp.Poll(js, &at, chromedp.WithPollingTimeout(10*time.Second))); err != nil {
+		return fmt.Errorf("sidebar row %q: %w", text, err)
+	}
+	return chromedp.Run(tc.chromeTab.ctx, chromedp.MouseEvent(input.MouseMoved, at[0], at[1]))
+}
+
+func (tc *TestContext) movePointerOffSidebar() error {
+	js := `(() => { const r = document.querySelector("[data-testid='sidebar']").getBoundingClientRect(); return [r.right + 200, r.top + 200]; })()`
+	var at []float64
+	if err := chromedp.Run(tc.chromeTab.ctx, chromedp.Evaluate(js, &at)); err != nil {
+		return err
+	}
+	return chromedp.Run(tc.chromeTab.ctx, chromedp.MouseEvent(input.MouseMoved, at[0], at[1]))
+}
+
+// assertRowInfo checks the one row-info popup shows the channel's (or
+// worktree's) directory and the given branch line. It shows as the pointer
+// arrives, so it gets only a moment's grace.
+func (tc *TestContext) assertRowInfo(kind, branch string) error {
+	path := tc.ChannelDir
+	if kind == "worktree" {
+		path = tc.WorktreePath
+	}
+	want := path + "|" + branch
+	js := `(() => {
+		const popups = document.querySelectorAll("[data-testid='sidebar-row-info']");
+		if (popups.length !== 1) return popups.length + " popups";
+		const text = (id) => popups[0].querySelector("[data-testid='" + id + "']")?.textContent ?? "";
+		return text("sidebar-row-info-path") + "|" + text("sidebar-row-info-branch");
+	})()`
+	var got string
+	deadline := time.Now().Add(100 * time.Millisecond)
+	for {
+		if err := chromedp.Run(tc.chromeTab.ctx, chromedp.Evaluate(js, &got)); err != nil {
+			return err
+		}
+		if got == want {
+			return nil
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf("row info shows %q right after hovering, want %q", got, want)
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+}
+
+// assertRowInfoLine checks the row-info popup's line reads want, with
+// {head} standing for the channel's short HEAD commit.
+func (tc *TestContext) assertRowInfoLine(key, want string) error {
+	if strings.Contains(want, "{head}") {
+		out, err := exec.Command("git", "-C", tc.ChannelDir, "rev-parse", "--short=7", "HEAD").CombinedOutput()
+		if err != nil {
+			return fmt.Errorf("git rev-parse: %v: %s", err, out)
+		}
+		want = strings.ReplaceAll(want, "{head}", strings.TrimSpace(string(out)))
+	}
+	return tc.pollRowInfoLine(key, func(got string) bool { return got == want }, "want %q", want)
+}
+
+// assertRowInfoLineAbsent checks the row-info popup has no such line.
+func (tc *TestContext) assertRowInfoLineAbsent(key string) error {
+	return tc.pollRowInfoLine(key, func(got string) bool { return got == "<none>" }, "want no %s line", key)
+}
+
+// pollRowInfoLine waits for the one row-info popup's key line to satisfy
+// ok; "<none>" stands for a missing line. The wait covers a branch poller
+// tick (5s), for lines that change after a commit.
+func (tc *TestContext) pollRowInfoLine(key string, ok func(string) bool, wantFormat string, wantArgs ...any) error {
+	js := fmt.Sprintf(`(() => {
+		const popups = document.querySelectorAll("[data-testid='sidebar-row-info']");
+		if (popups.length !== 1) return popups.length + " popups";
+		return popups[0].querySelector("[data-testid='sidebar-row-info-%s']")?.textContent ?? "<none>";
+	})()`, key)
+	var got string
+	deadline := time.Now().Add(8 * time.Second)
+	for {
+		if err := chromedp.Run(tc.chromeTab.ctx, chromedp.Evaluate(js, &got)); err != nil {
+			return err
+		}
+		if ok(got) {
+			return nil
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf("row info %s line is %q, "+wantFormat, append([]any{key, got}, wantArgs...)...)
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+}
+
+// commitInWorktree makes an empty commit in the worktree set up by the
+// "I set up a worktree" step.
+func (tc *TestContext) commitInWorktree(message string) error {
+	if tc.WorktreePath == "" {
+		return fmt.Errorf("no worktree set up")
+	}
+	out, err := exec.Command("git", "-C", tc.WorktreePath, "commit", "--allow-empty", "-m", message).CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("git commit: %v: %s", err, out)
+	}
+	return nil
 }
 
 func (tc *TestContext) rightClickElementWithText(text string) error {

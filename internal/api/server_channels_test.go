@@ -843,6 +843,55 @@ func (s *ServerSuite) TestSearchChannelsRootDirPath() {
 	s.store.AssertNotCalled(s.T(), "GetChannel", mock.Anything, mock.Anything)
 }
 
+// TestSearchChannelsAgentOverrides checks a channel's model/effort overrides
+// are listed, and left out when it inherits them from config.
+func (s *ServerSuite) TestSearchChannelsAgentOverrides() {
+	channels := []*db.Channel{
+		{ChannelID: "set", DirPath: "/a", Platform: types.PlatformLocal, ModelOverride: "claude-opus-5-5", EffortOverride: "high"},
+		{ChannelID: "inherit", DirPath: "/b", Platform: types.PlatformLocal},
+	}
+	s.store.On("ListChannels", mock.Anything).Return(channels, nil)
+
+	rec := s.testRequest("GET", "/api/channels", "")
+	require.Equal(s.T(), http.StatusOK, rec.Code)
+	var resp []map[string]any
+	require.NoError(s.T(), json.NewDecoder(rec.Body).Decode(&resp))
+	require.Len(s.T(), resp, 2)
+	require.Equal(s.T(), "claude-opus-5-5", resp[0]["model_override"])
+	require.Equal(s.T(), "high", resp[0]["effort_override"])
+	require.NotContains(s.T(), resp[1], "model_override")
+	require.NotContains(s.T(), resp[1], "effort_override")
+}
+
+// TestSearchChannelsGitDetails checks a worktree thread lists its commit's
+// subject and how far it is from its base branch, computed inline when the
+// poller hasn't covered its dir.
+func (s *ServerSuite) TestSearchChannelsGitDetails() {
+	dir := initGitRepo(s.T())
+	for _, args := range [][]string{
+		{"branch", "-M", "main"},
+		{"checkout", "-q", "-b", "feat"},
+		{"commit", "--allow-empty", "-m", "feat work"},
+	} {
+		cmd := exec.Command("git", args...)
+		cmd.Dir = dir
+		require.NoError(s.T(), cmd.Run())
+	}
+	s.store.On("ListChannels", mock.Anything).Return([]*db.Channel{
+		{ChannelID: "wt", DirPath: dir, Worktree: true, BaseBranch: "main", Platform: types.PlatformLocal},
+	}, nil)
+
+	rec := s.testRequest("GET", "/api/channels", "")
+	require.Equal(s.T(), http.StatusOK, rec.Code)
+	var resp []channelResponse
+	require.NoError(s.T(), json.NewDecoder(rec.Body).Decode(&resp))
+	require.Len(s.T(), resp, 1)
+	require.Equal(s.T(), "feat work", resp[0].Subject)
+	require.Equal(s.T(), "main", resp[0].SyncBase)
+	require.Equal(s.T(), 1, resp[0].BaseAhead)
+	require.Zero(s.T(), resp[0].BaseBehind)
+}
+
 func (s *ServerSuite) TestSearchChannelsDiffStats() {
 	// Create a temp git repo with a committed file, then modify it and add an untracked file.
 	dir := s.T().TempDir()

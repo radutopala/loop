@@ -433,7 +433,7 @@ The `channel_id` in the event envelope identifies which channel was deleted.
 
 A channel's git state changed (branch switch, new commit, or diff size). Broadcast globally so the sidebar branch label, diff counts, and any open Git panel can react without re-fetching `/api/channels`.
 
-Emitted by the in-process `BranchPoller` goroutine, which ticks every 5s (default), compares each channel's working directory against the previous tick, and broadcasts only when at least one field changed. The first tick after startup primes the cache without broadcasting.
+Emitted by the in-process `BranchPoller` goroutine, which ticks every 5s (default), compares each channel's working directory against the previous tick, and broadcasts only when at least one field changed. The first tick after startup primes the cache without broadcasting; a channel first seen on a later tick (created since) is broadcast once, since its git state may have moved on since the sidebar fetched it.
 
 Also emitted by the rename endpoints ([`POST /api/channels/{id}/rename`](api.md#post-apichannelsidrename) and [`POST /api/worktrees/move`](api.md#post-apiworktreesmove)), which carry the new `name` and — for a worktree rename — `dir_path`, so the sidebar reflects the rename live.
 
@@ -456,8 +456,33 @@ Also emitted by the rename endpoints ([`POST /api/channels/{id}/rename`](api.md#
 | `commit`         | string | Short commit hash (`git rev-parse --short HEAD`) |
 | `diff_additions` | int    | Lines added in the working-tree diff |
 | `diff_deletions` | int    | Lines removed in the working-tree diff |
+| `subject`        | string | The commit's subject line |
+| `upstream`       | string | Tracking branch, e.g. `origin/main` (omitted when there's none) |
+| `ahead` / `behind` | int  | Commits the branch is ahead of / behind `upstream` |
+| `sync_base`      | string | A worktree thread's base branch, when it still resolves |
+| `base_ahead` / `base_behind` | int | Commits the checkout is ahead of / behind `sync_base` |
 | `name`           | string | New display name (only on rename; omitted otherwise) |
 | `dir_path`       | string | New directory path (only on worktree rename; omitted otherwise) |
+
+---
+
+### `channel.agent_config`
+
+A channel's model/effort overrides changed via [`PATCH /api/channels/{id}/agent-config`](api.md#patch-apichannelsidagent-config). Broadcast globally so the sidebar's row info shows them without re-fetching `/api/channels`.
+
+**Payload schema:**
+
+```json
+{
+  "model_override": "claude-opus-5-5",
+  "effort_override": "high"
+}
+```
+
+| Field             | Type   | Description |
+|-------------------|--------|-------------|
+| `model_override`  | string | The channel's model, or empty when it inherits the config's |
+| `effort_override` | string | The channel's effort, or empty when it inherits the config's |
 
 ---
 
@@ -856,6 +881,7 @@ Emitted on every review session status transition (`idle → loading → ready �
 | `BroadcastChannelCreated` | `channel.created` | `map[string]string{"channel_id": id}` | Channel |
 | `BroadcastChannelDeleted` | `channel.deleted` | `nil` | Channel |
 | `BroadcastChannelUpdated` | `channel.updated` | `ChannelUpdatedData` | Global |
+| `BroadcastChannelAgentConfig` | `channel.agent_config` | `map[string]string{"model_override", "effort_override"}` | Global |
 | `BroadcastAgentInstanceRegistered` | `agent_instance.registered` | `AgentInstanceEventData` | Channel |
 | `BroadcastAgentInstanceUnregistered` | `agent_instance.unregistered` | `AgentInstanceEventData` | Channel |
 | `BroadcastAgentInstanceMetadata` | `agent_instance.metadata` | `AgentInstanceEventData` | Channel |

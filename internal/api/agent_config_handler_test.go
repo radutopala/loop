@@ -186,6 +186,16 @@ func (s *ServerSuite) TestAgentConfigSet() {
 	s.store.AssertCalled(s.T(), "UpdateChannelAgentOverrides", mock.Anything, "ch-1", "claude-opus-4-8", "xhigh")
 }
 
+func (s *ServerSuite) TestAgentConfigSetBroadcasts() {
+	// The event's shape is covered by TestBroadcastChannelAgentConfig.
+	s.srv.eventsHub = NewEventsHub(testLogger())
+	s.store.On("GetChannel", mock.Anything, "ch-1").Return(&db.Channel{ChannelID: "ch-1"}, nil)
+	s.store.On("UpdateChannelAgentOverrides", mock.Anything, "ch-1", "claude-opus-4-8", "").Return(nil)
+
+	w := s.agentConfigPatch("ch-1", `{"model":"claude-opus-4-8","effort":""}`)
+	require.Equal(s.T(), http.StatusNoContent, w.Code)
+}
+
 func (s *ServerSuite) TestAgentConfigSetClear() {
 	s.store.On("GetChannel", mock.Anything, "ch-1").Return(&db.Channel{ChannelID: "ch-1"}, nil)
 	s.store.On("UpdateChannelAgentOverrides", mock.Anything, "ch-1", "", "").Return(nil)

@@ -74,9 +74,12 @@ List all channels with optional filtering. Enriches each channel with container 
 - `container_running` is determined by querying the Docker daemon for running containers.
 - `agent_running` indicates whether an active Claude agent run exists for the channel.
 - `branch` is resolved by running `git rev-parse --abbrev-ref HEAD` in the channel's directory.
-- `commit` is the short commit hash from `git rev-parse --short HEAD`.
+- `commit` is the short commit hash from `git rev-parse --short HEAD`, and `subject` its subject line.
+- `upstream` is the branch's tracking branch (e.g. `origin/main`), with `ahead` / `behind` counting the commits between them. Omitted when there's none.
+- `sync_base` is set on a worktree thread whose base branch still resolves, with `base_ahead` / `base_behind` counting the commits between the checkout and it.
 - `worktree` is true for threads created via `POST /api/worktrees`.
 - `root_dir_path` is set on rows inside a worktree chain — the worktree thread itself, a thread under it (e.g. a scheduled task's), or a worktree cut from another worktree — and holds the `dir_path` of the non-worktree checkout the chain was cut from. Omitted everywhere else. The Kanban panel uses it for its Local/Root board switch.
+- `model_override` / `effort_override` are the model and effort picked for the channel (see [`PATCH /api/channels/{id}/agent-config`](#patch-apichannelsidagent-config)). Omitted when it inherits the config's.
 - `locked` is true when the channel/thread is guarded against accidental deletion (toggle via [`PATCH /api/channels/{id}/lock`](#patch-apichannelsidlock)). `DELETE /api/channels/{id}` and `DELETE /api/threads/{id}` return `409 Conflict` while a row is locked.
 
 **Errors:** `501` if channel listing is not configured.
@@ -434,6 +437,8 @@ Set the channel's model/effort overrides. Empty strings clear an override (inher
 `effort` must be one of `low`, `medium`, `high`, `xhigh`, `max`, or empty. `model` is free text (any Claude model id).
 
 **Response:** `204 No Content`.
+
+**Behavior notes:** Broadcasts a [`channel.agent_config`](events.md#channelagent_config) event with the new overrides so the sidebar updates live.
 
 **Errors:** `400` on invalid effort. `404` if the channel doesn't exist. `501` if the store is not configured.
 

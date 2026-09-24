@@ -62,6 +62,9 @@ interface UseChatStateStoreOptions {
   onAppEvent: (event: WSEvent) => void;
 }
 
+/** Channel events the sidebar shows for every row, not just the selected one. */
+const SIDEBAR_EVENTS = new Set(["channel.created", "channel.deleted", "channel.updated", "channel.agent_config"]);
+
 /**
  * App-level store that keeps per-channel chat state in memory and maintains a
  * single WebSocket connection subscribed to all "interesting" channels
@@ -644,9 +647,9 @@ export function useChatStateStore({ channels, selectedId, onAppEvent }: UseChatS
     }
 
     // Forward selected channel + global events to App-level handler.
-    // Channel created/deleted are always forwarded so the sidebar refreshes
-    // regardless of which channel is currently selected.
-    if (!channelId || stateTarget === selectedIdRef.current || wsEvent.type === "channel.created" || wsEvent.type === "channel.deleted") {
+    // Sidebar events are always forwarded so every row refreshes regardless
+    // of which channel is selected.
+    if (!channelId || stateTarget === selectedIdRef.current || SIDEBAR_EVENTS.has(wsEvent.type)) {
       onAppEventRef.current(wsEvent);
     }
   }, []);

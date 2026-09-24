@@ -22,10 +22,34 @@ import (
 // (binary files add nothing, via buildUntrackedEntry).
 // A non-repo dir returns the zero value, matching the previous behavior of
 // the individual helpers.
-func collectGitState(ctx context.Context, dir string) gitState {
+//
+// On top of that it names the commit's subject — reusing prev's when the
+// commit hasn't moved, so a steady repo costs no extra subprocess — and, when
+// base is set (a worktree thread's base branch), counts the commits HEAD is
+// ahead of and behind it.
+func collectGitState(ctx context.Context, dir, base string, prev gitState) gitState {
 	if dir == "" {
 		return gitState{}
 	}
+	st := statusState(ctx, dir)
+	if st.Commit == "" {
+		return st
+	}
+	if prev.Commit == st.Commit {
+		st.Subject = prev.Subject
+	} else {
+		st.Subject, _ = gitOutput(ctx, dir, "log", "-1", "--format=%s")
+	}
+	if base != "" {
+		if ahead, behind, ok := aheadBehind(ctx, dir, base); ok {
+			st.SyncBase, st.BaseAhead, st.BaseBehind = base, ahead, behind
+		}
+	}
+	return st
+}
+
+// statusState is collectGitState's branch, commit, upstream and diff part.
+func statusState(ctx context.Context, dir string) gitState {
 
 	// --untracked-files=all lists files inside untracked directories
 	// individually (parity with `ls-files --others`); -z avoids path quoting.
@@ -83,6 +107,17 @@ func refState(ctx context.Context, dir string) gitState {
 	return gitState{Branch: branch, Commit: commit}
 }
 
+// aheadBehind counts the commits HEAD has that base doesn't, and the other way
+// round. ok is false when base can't be resolved (e.g. it was deleted).
+func aheadBehind(ctx context.Context, dir, base string) (ahead, behind int, ok bool) {
+	out, ok := gitOutput(ctx, dir, "rev-list", "--left-right", "--count", base+"...HEAD")
+	if !ok {
+		return 0, 0, false
+	}
+	_, _ = fmt.Sscanf(out, "%d %d", &behind, &ahead)
+	return ahead, behind, true
+}
+
 // gitOutput runs a git command in dir and returns its trimmed stdout. ok is
 // false when the command fails or produces no output.
 func gitOutput(ctx context.Context, dir string, args ...string) (string, bool) {
@@ -96,8 +131,9 @@ func gitOutput(ctx context.Context, dir string, args ...string) (string, bool) {
 	return s, s != ""
 }
 
-// parseStatusV2 extracts the branch name, short commit, and untracked paths
-// from NUL-terminated `git status --porcelain=v2 --branch` output. A detached
+// parseStatusV2 extracts the branch name, short commit, upstream with the
+// commits ahead of and behind it, and untracked paths from NUL-terminated
+// `git status --porcelain=v2 --branch` output. A detached
 // HEAD reports "HEAD" (parity with `rev-parse --abbrev-ref HEAD`); an unborn
 // branch ("(initial)") reports an empty commit.
 func parseStatusV2(out string) (st gitState, untracked []string) {
@@ -114,6 +150,10 @@ func parseStatusV2(out string) (st gitState, untracked []string) {
 			if oid != "(initial)" && len(oid) >= 7 {
 				st.Commit = oid[:7]
 			}
+		case strings.HasPrefix(line, "# branch.upstream "):
+			st.Upstream = strings.TrimPrefix(line, "# branch.upstream ")
+		case strings.HasPrefix(line, "# branch.ab "):
+			_, _ = fmt.Sscanf(strings.TrimPrefix(line, "# branch.ab "), "+%d -%d", &st.Ahead, &st.Behind)
 		case strings.HasPrefix(line, "? "):
 			untracked = append(untracked, strings.TrimPrefix(line, "? "))
 		}
