@@ -295,7 +295,11 @@ func (s *LifecycleSuite) TestRebuild_StartsAsyncBuild() {
 
 	// Set up all mocks needed by doRebuild.
 	s.client.On("RemoveImageAndContainers", mock.Anything, s.imageName).Return(nil)
-	s.client.On("ImageBuild", mock.Anything, s.containerDir, s.imageName).Return(nil)
+	// Hold the build until "building" is observed, so the async goroutine
+	// can't finish before the status is read.
+	release := make(chan struct{})
+	s.client.On("ImageBuild", mock.Anything, s.containerDir, s.imageName).
+		Run(func(mock.Arguments) { <-release }).Return(nil)
 	s.client.On("ImageInspectLabels", mock.Anything, s.imageName).Return(map[string]string{
 		"loop.version":        "1.0.0",
 		"loop.claude_version": "2.0.0",
@@ -309,6 +313,7 @@ func (s *LifecycleSuite) TestRebuild_StartsAsyncBuild() {
 	// The status should be "building" immediately after Rebuild returns.
 	st := m.Status()
 	require.Equal(s.T(), "building", st.State)
+	close(release)
 
 	// Wait for the async goroutine to finish.
 	require.Eventually(s.T(), func() bool {
