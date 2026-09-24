@@ -74,13 +74,15 @@ Feature: Chat Components Journey
       {
         "template": "canvas",
         "title": "Plot",
-        "js": "canvas.addEventListener('resize', () => parent.postMessage('canvas:' + (innerHeight > 500 ? 'large' : 'inline') + ':' + (canvas.width > 0), '*'));"
+        "js": "const report = () => parent.postMessage('canvas:' + (innerHeight > 500 ? 'large' : 'inline') + ':' + (canvas.clientWidth > 0 && canvas.width === Math.round(canvas.clientWidth * devicePixelRatio)), '*'); canvas.addEventListener('resize', report); report();"
       }
       """
     Then the response status should be 201
 
     # The overlay's frame has no size while its document parses; the canvas
-    # is sized once it does
+    # is sized once it does. The script reports at start as well as on
+    # resize, as the guide says to draw: a module script runs after parsing,
+    # so the first resize can come before it's listening.
     And I wait for "[data-testid='chat-component'][data-template='canvas']" to be visible
     And I wait for a frame message "canvas:inline:true"
     When I click on "[data-testid='chat-component-expand']"
