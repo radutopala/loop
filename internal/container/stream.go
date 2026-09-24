@@ -158,6 +158,18 @@ func summarizeToolInput(name string, raw json.RawMessage) string {
 		}
 	case "AskUserQuestion", "ExitPlanMode", "TodoWrite", "TaskCreate", "TaskUpdate":
 		return string(raw)
+	case "mcp__loop__chat_component":
+		// Its html/css/js can run to hundreds of KB and none of the fallback
+		// keys match; the template and title say what's being shown.
+		tmpl, _ := m["template"].(string)
+		if tmpl == "" {
+			action, _ := m["action"].(string)
+			return action
+		}
+		if title, _ := m["title"].(string); title != "" {
+			return tmpl + ": " + title
+		}
+		return tmpl
 	}
 	// For other tools, try common keys.
 	for _, key := range []string{"description", "query", "prompt", "path", "url"} {

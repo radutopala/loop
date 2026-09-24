@@ -168,6 +168,7 @@ func registerFrontendSteps(ctx *godog.ScenarioContext, tc *TestContext) {
 	ctx.Step(`^I mark the element "([^"]*)"$`, tc.markElement)
 	ctx.Step(`^the element "([^"]*)" should not be marked$`, tc.assertElementNotMarked)
 	ctx.Step(`^I wait for a frame message "([^"]*)"$`, tc.waitForFrameMessage)
+	ctx.Step(`^I wait for "([^"]*)" to be at least (\d+)px tall$`, tc.waitForElementHeight)
 	ctx.Step(`^I click the last "([^"]*)"$`, tc.clickLast)
 	ctx.Step(`^the element "([^"]*)" should fit inside the window$`, tc.assertElementInsideWindow)
 	ctx.Step(`^I click "([^"]*)" in the git panel$`, tc.clickInGitPanel)
@@ -2332,6 +2333,18 @@ func (tc *TestContext) waitForFrameMessage(msg string) error {
 		var got []string
 		_ = chromedp.Run(tc.chromeTab.ctx, chromedp.Evaluate(`window.__frameMessages || []`, &got))
 		return fmt.Errorf("no frame message %q (got %q): %w", msg, got, err)
+	}
+	return nil
+}
+
+// waitForElementHeight polls until the element is at least minPx tall, for
+// frames that size themselves to their content after loading.
+func (tc *TestContext) waitForElementHeight(selector string, minPx int) error {
+	js := fmt.Sprintf(`(document.querySelector(%q)?.getBoundingClientRect().height ?? 0) >= %d`, selector, minPx)
+	if err := chromedp.Run(tc.chromeTab.ctx, chromedp.Poll(js, nil, chromedp.WithPollingTimeout(15*time.Second))); err != nil {
+		var h float64
+		_ = chromedp.Run(tc.chromeTab.ctx, chromedp.Evaluate(fmt.Sprintf(`document.querySelector(%q)?.getBoundingClientRect().height ?? -1`, selector), &h))
+		return fmt.Errorf("element %q is %.0fpx tall, want at least %dpx: %w", selector, h, minPx, err)
 	}
 	return nil
 }

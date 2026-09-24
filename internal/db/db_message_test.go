@@ -586,6 +586,39 @@ func (s *StoreSuite) TestReleaseRunningMessageError() {
 	require.Error(s.T(), s.store.ReleaseRunningMessage(context.Background(), 42, true))
 }
 
+// --- RunningMessageID tests ---
+
+func (s *StoreSuite) TestRunningMessageID() {
+	tests := []struct {
+		name    string
+		rows    *sqlmock.Rows
+		err     error
+		want    string
+		wantErr bool
+	}{
+		{name: "a run in progress", rows: sqlmock.NewRows([]string{"msg_id"}).AddRow("msg-a"), want: "msg-a"},
+		{name: "no run", rows: sqlmock.NewRows([]string{"msg_id"}), want: ""},
+		{name: "query error", err: sql.ErrConnDone, wantErr: true},
+	}
+	for _, tc := range tests {
+		s.Run(tc.name, func() {
+			q := s.mock.ExpectQuery(`SELECT msg_id FROM messages WHERE channel_id = \? AND is_running = 1`).WithArgs("ch-1")
+			if tc.err != nil {
+				q.WillReturnError(tc.err)
+			} else {
+				q.WillReturnRows(tc.rows)
+			}
+			got, err := s.store.RunningMessageID(context.Background(), "ch-1")
+			if tc.wantErr {
+				require.Error(s.T(), err)
+				return
+			}
+			require.NoError(s.T(), err)
+			require.Equal(s.T(), tc.want, got)
+		})
+	}
+}
+
 // --- ResetStaleRunningMessages tests ---
 
 func (s *StoreSuite) TestResetStaleRunningMessages() {

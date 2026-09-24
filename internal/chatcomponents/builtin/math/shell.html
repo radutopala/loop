@@ -1,0 +1,19 @@
+<div class="paper">{{content}}</div>
+<script>
+  // Put the notebook's lines under the writing: measure how far down its
+  // square a line of working has its baseline (it depends on the font the
+  // system picked), and shift the grid by that much. The frame isn't laid
+  // out while the document parses, so it's measured when the ResizeObserver
+  // first reports a size.
+  new ResizeObserver(() => {
+    const paper = document.querySelector(".paper");
+    const probe = document.createElement("div");
+    probe.className = "expr";
+    probe.style.cssText = "position:absolute;visibility:hidden;white-space:nowrap";
+    probe.innerHTML = 'x<span style="display:inline-block;height:0"></span>';
+    paper.append(probe);
+    const base = probe.lastChild.getBoundingClientRect().top - probe.getBoundingClientRect().top;
+    probe.remove();
+    if (base > 0) document.documentElement.style.setProperty("--base", base + "px");
+  }).observe(document.documentElement);
+</script>

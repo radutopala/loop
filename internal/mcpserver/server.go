@@ -209,6 +209,11 @@ func New(channelID, apiURL, authorID string, httpClient HTTPClient, logger *slog
 	}, s.handleBashShortcut)
 
 	mcp.AddTool(s.mcpServer, &mcp.Tool{
+		Name:        "chat_component",
+		Description: "Show a rich visual component inline in the Loop desktop chat — math worked step by step on a math notebook page, a canvas plot or diagram, or a template the project defines. You pick a template and fill it with your own HTML, CSS and JS; it renders in a sandboxed frame where the call was made. Actions: templates (list the templates and how to fill them — call it first), show (template + title + html, optional css/js). Desktop app only; on Slack or Discord answer in text. For a standalone app the user keeps, use playground instead.",
+	}, s.handleChatComponent)
+
+	mcp.AddTool(s.mcpServer, &mcp.Tool{
 		Name:        "playground",
 		Description: "Manage playgrounds — live interactive sandboxes for HTML/CSS/JS that render in the user's Playground panel. Actions: create (new playground with html + title + description), update (modify html/title/description), delete (remove entirely). After creating, use playground_file to add script.js, style.css, and other files. JS runs as ES module — use import for npm packages via esm.sh CDN.",
 	}, s.handlePlayground)

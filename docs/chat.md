@@ -85,7 +85,7 @@ Messages are rendered through the `MarkdownContent` component, which uses a cust
 
 | Element | Syntax | Rendering |
 |---------|--------|-----------|
-| Fenced code block | ` ``` ` ... ` ``` ` | `<pre>` with `colors.surface` background, 8px border-radius, 13px monospace font |
+| Fenced code block | ` ``` ` ... ` ``` ` | `<pre>` with `colors.surface` background, 8px border-radius, 13px monospace font. Closes on a line of only backticks at least as long as the opening fence. A closed `loop-component` fence is a [component](#components) |
 | Language label | ` ```go ` | Shown above the code block in `colors.textDim`, 11px font |
 | Display math | `$$...$$` or `\[...\]`, on one line or spread over several | Centered [KaTeX](https://katex.org) formula, scrolls sideways when wider than the chat; hover shows a button that copies the LaTeX |
 | Table | GFM header row, separator row, body rows | `<table>`; a pipe escaped with a backslash is text in its cell, not a column break |
@@ -108,6 +108,29 @@ Inline elements are parsed via one regex, in this order: inline code, math, bold
 Formulas are rendered with KaTeX (`app/src/components/chat/math.ts`), which works offline and ships with the app. `$...$` follows pandoc's rules, so dollar amounts and shell variables stay text: the opening `$` must be followed by a non-space, and the closing `$` must follow a non-space and must not be followed by a digit or letter. So `costs $5 and $10` and `$HOME/$USER` are left alone, and `\$` is a literal dollar sign.
 
 A formula with an error doesn't break the message: KaTeX shows its source in red at the error. Rendering runs without KaTeX's `trust` option, so commands like `\href` can't add links or HTML. Messages re-render on every streamed chunk, so rendered formulas are cached.
+
+### Components
+
+For more than a formula, an agent can show a **component**: a template filled with the agent's own HTML, CSS and JS, rendered inline in the chat. The agent calls the `chat_component` MCP tool: `templates` lists the templates and how to fill each one, and `show` takes a template name, a title, and the content.
+
+| Template | For |
+|---|---|
+| `math` | Math worked step by step on a math notebook page, squared paper with every line of writing on the grid and each fraction across two squares: fractions with a bar, crossed-out factors, highlights and a boxed result, all plain HTML and CSS. The template loads nothing from the network; `$...$` is not rendered inside it, and the agent imports KaTeX in its JS when it needs notation HTML can't carry |
+| `canvas` | Drawing from JS on a `<canvas>`: plots, geometry, diagrams, animations |
+
+Projects and `~/.loop/config.json` can add templates or replace these under `chat_components`; see [Chat Components](configuration.md#chat-components).
+
+The backend composes the template and the content into one self-contained HTML document and posts it as an agent message, grouped under the running turn:
+
+````
+```loop-component math Fracții algebrice
+<!doctype html>…
+```
+````
+
+The fence is longer than any backtick run in the document, so the document can't close it. The chat renders a closed `loop-component` fence as a framed component: a title bar with **Copy source** and **Open in the whole pane** buttons, over a sandboxed `srcdoc` iframe (`sandbox="allow-scripts"`, so scripts run with an opaque origin and can't reach the app). The document reports its height with `postMessage`, and the frame follows it between 80 and 900 px. **Open in the whole pane** maximizes the chat pane and shows the component across it, in place of the chat, sized to the pane; Escape or ✕ goes back to the chat and restores the pane (it stays maximized if it already was). A fence that never closes stays a code block.
+
+Every component gets a small stepper: each `<section data-step="Title">` becomes one step, shown one at a time with ◀ n/N ▶ buttons and the arrow keys. Since the document is stored in the message, a component looks the same after a reload, even if its template changes. Only the desktop app renders components; on Slack and Discord the tool returns an error telling the agent to answer in text.
 
 ---
 

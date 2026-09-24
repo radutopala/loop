@@ -4,7 +4,9 @@ import { useContext, useState } from "react";
 import { useTheme } from "../../ThemeContext";
 import { findCandidatePaths } from "../../utils/fileLinks";
 import { CopyButton } from "../shared/CopyButton";
+import { ChatComponent } from "./ChatComponent";
 import { buildMessageStyles, ChannelContext } from "./chatShared";
+import { parseComponentInfo, readFence } from "./componentFence";
 import { FileLink } from "./FileLink";
 import { parseTableBlock, startsTable, type TableAlign, tableToHTML, tableToTSV } from "./markdownTable";
 import { findMathBlock, inlineMathPattern, inlineMathTeX, isInlineMath, renderMath } from "./math";
@@ -214,20 +216,19 @@ function parseMarkdown(text: string, s: Record<string, React.CSSProperties>, cha
   while (i < lines.length) {
     const line = lines[i] ?? "";
 
-    // Fenced code block.
-    if (line.startsWith("```")) {
-      const lang = line.slice(3).trim();
-      const codeLines: string[] = [];
-      i++;
-      while (i < lines.length && !(lines[i] ?? "").startsWith("```")) {
-        codeLines.push(lines[i] ?? "");
-        i++;
+    // Fenced block: a chat component once it's closed, else code.
+    const fence = readFence(lines, i);
+    if (fence) {
+      i = fence.next;
+      const component = fence.closed ? parseComponentInfo(fence.info) : null;
+      if (component) {
+        nodes.push(<ChatComponent key={nodes.length} template={component.template} title={component.title} doc={fence.body} />);
+        continue;
       }
-      i++; // skip closing ```
       nodes.push(
         <pre key={nodes.length} style={s.codeBlock}>
-          {lang && <div style={s.codeLang}>{lang}</div>}
-          <code>{codeLines.join("\n")}</code>
+          {fence.info && <div style={s.codeLang}>{fence.info}</div>}
+          <code>{fence.body}</code>
         </pre>,
       );
       continue;

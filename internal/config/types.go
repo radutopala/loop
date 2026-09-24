@@ -138,6 +138,27 @@ func (s *BashShortcut) ResolveCommand(loopDir string, readFile func(string) ([]b
 	return resolvePromptField(s.Name, s.Command, s.CommandPath, filepath.Join(loopDir, "bash-shortcuts"), readFile)
 }
 
+// ChatComponent is a template an agent fills with its own HTML, CSS and JS to
+// show a component in the desktop chat (the chat_component MCP tool). Its files
+// live in {loopDir}/components/{path}/: shell.html (with a {{content}} slot),
+// style.css and guide.md, each optional. A name matching a built-in template
+// (math, canvas) replaces it.
+type ChatComponent struct {
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	Path        string `json:"path"`
+}
+
+// Dir returns the template's directory under loopDir: path, or the name
+// when path is unset.
+func (c *ChatComponent) Dir(loopDir string) string {
+	p := c.Path
+	if p == "" {
+		p = c.Name
+	}
+	return filepath.Join(loopDir, "components", p)
+}
+
 // resolvePromptField resolves a prompt from either an inline value or a file path.
 // Exactly one of prompt or promptPath must be set.
 func resolvePromptField(name, prompt, promptPath, baseDir string, readFile func(string) ([]byte, error)) (string, error) {
@@ -420,6 +441,7 @@ type Config struct {
 	WorkflowConcurrency  WorkflowConcurrency
 	PromptShortcuts      []PromptShortcut
 	BashShortcuts        []BashShortcut
+	ChatComponents       []ChatComponent
 	Mounts               []string
 	// HTTPProxy, HTTPSProxy and NoProxy are the proxy a container is created
 	// with. They take precedence over the daemon's own environment, which is
