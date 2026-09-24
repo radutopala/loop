@@ -15,10 +15,11 @@ import (
 // produced this bot reply; pass "" for bot rows that aren't run-emitted.
 func storeBotMessage(ctx context.Context, store db.Store, broadcaster events.Broadcaster, channelID, content, triggerMsgID string) {
 	msgID := generateMessageID()
+	var rowID int64
 	if store != nil {
 		ch, err := store.GetChannel(ctx, channelID)
 		if err == nil && ch != nil {
-			_ = store.InsertMessage(ctx, &db.Message{
+			row := &db.Message{
 				ChatID:       ch.ID,
 				ChannelID:    channelID,
 				MsgID:        msgID,
@@ -28,11 +29,14 @@ func storeBotMessage(ctx context.Context, store db.Store, broadcaster events.Bro
 				IsProcessed:  true,
 				TriggerMsgID: triggerMsgID,
 				CreatedAt:    time.Now().UTC(),
-			})
+			}
+			_ = store.InsertMessage(ctx, row)
+			rowID = row.ID
 		}
 	}
 	if broadcaster != nil {
 		broadcaster.BroadcastMessageCreated(channelID, events.MessageEventData{
+			ID:           rowID,
 			MsgID:        msgID,
 			AuthorName:   "agent",
 			Content:      content,
@@ -61,10 +65,11 @@ func StoreSystemNotice(ctx context.Context, store db.Store, broadcaster events.B
 // or broadcaster may be nil.
 func storeUserTaskPrompt(ctx context.Context, store db.Store, broadcaster events.Broadcaster, channelID, content string) {
 	msgID := generateMessageID()
+	var rowID int64
 	if store != nil {
 		ch, err := store.GetChannel(ctx, channelID)
 		if err == nil && ch != nil {
-			_ = store.InsertMessage(ctx, &db.Message{
+			row := &db.Message{
 				ChatID:      ch.ID,
 				ChannelID:   channelID,
 				MsgID:       msgID,
@@ -74,11 +79,14 @@ func storeUserTaskPrompt(ctx context.Context, store db.Store, broadcaster events
 				IsBot:       false,
 				IsProcessed: true,
 				CreatedAt:   time.Now().UTC(),
-			})
+			}
+			_ = store.InsertMessage(ctx, row)
+			rowID = row.ID
 		}
 	}
 	if broadcaster != nil {
 		broadcaster.BroadcastMessageCreated(channelID, events.MessageEventData{
+			ID:         rowID,
 			MsgID:      msgID,
 			AuthorID:   "scheduled-task",
 			AuthorName: "scheduled task",

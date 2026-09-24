@@ -65,13 +65,20 @@ Hovering a bot message fades in a square-on-square **copy button** in the top-ri
 - When the agent is processing, the last user message shows an eyes indicator (processing indicator)
 - Max width: 85% of the container
 
+### Message Ids and Links
+
+Each message shows its row id in the database, `#1234`, next to its time. A message that arrives live carries the same id it has after a reload. The id is part of the message's link, `loop://channel/<channel-id>/<message-id>`:
+
+- Click the `#id` label, or right-click the message and pick **Copy link to message**, to copy the link.
+- A `loop://channel/...` link in a message opens inside the app rather than in the browser.
+- Following a link opens the channel, pages in older messages until the target is loaded, and scrolls it into view.
+
 ### Highlighted Messages
 
-When jumping to a message from search, the target message receives:
-- Background: `rgba(99, 102, 241, 0.15)` (indigo flash)
-- Extra padding: `4px 8px`
-- CSS transition: `background-color 0.5s ease`
-- The highlight fades after 2 seconds via `setTimeout`
+When jumping to a message from search or a message link, the target message:
+- Gets a 2px outline in the accent color (an outline, so the message doesn't move)
+- Blinks twice
+- Keeps the outline until it has been in view for 5 seconds straight; time scrolled away doesn't count
 
 Each message has a `data-msg-id` attribute for scroll targeting.
 

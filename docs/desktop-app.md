@@ -62,7 +62,7 @@ This complements the `setWindowOpenHandler` route used for `target="_blank"` lin
 
 The app registers the `loop://` protocol for deep linking to specific channels.
 
-**URL format:** `loop://channel/<channel-id>`
+**URL format:** `loop://channel/<channel-id>`, or `loop://channel/<channel-id>/<message-id>` to open a channel at a message (see [Message Ids and Links](chat.md#message-ids-and-links))
 
 ### Registration
 

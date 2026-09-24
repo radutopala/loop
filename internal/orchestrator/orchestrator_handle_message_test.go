@@ -756,7 +756,11 @@ func (s *OrchestratorSuite) TestHandleMessageWithEventBroadcaster() {
 
 	s.store.On("IsChannelActive", s.ctx, "ch1").Return(true, nil)
 	s.store.On("GetChannel", s.ctx, "ch1").Return(&db.Channel{ID: 1, ChannelID: "ch1", Active: true}, nil)
-	s.store.On("InsertMessage", s.ctx, mock.Anything).Return(nil)
+	s.store.On("InsertMessage", s.ctx, mock.Anything).Run(func(args mock.Arguments) {
+		if m := args.Get(1).(*db.Message); !m.IsBot {
+			m.ID = 10
+		}
+	}).Return(nil)
 	s.bot.On("SendTyping", mock.Anything, "ch1").Return(nil).Maybe()
 	// Recent messages ordered DESC.
 	//   m-20: newer than trigger — out of toMark window entirely.
@@ -782,7 +786,7 @@ func (s *OrchestratorSuite) TestHandleMessageWithEventBroadcaster() {
 
 	// Expect event broadcasts: user message, running status, completed status, bot message, messages processed
 	eb.On("BroadcastMessageCreated", "ch1", mock.MatchedBy(func(d events.MessageEventData) bool {
-		return d.AuthorName == "Alice" && d.Content == "hi" && !d.IsBot
+		return d.ID == 10 && d.AuthorName == "Alice" && d.Content == "hi" && !d.IsBot
 	})).Return()
 	eb.On("BroadcastAgentStatus", "ch1", mock.MatchedBy(func(d events.AgentStatusEventData) bool {
 		return d.Status == "running" && d.TriggerContent == "hi" && d.RunID != ""

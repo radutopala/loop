@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -259,6 +260,14 @@ func registerFrontendSteps(ctx *godog.ScenarioContext, tc *TestContext) {
 	ctx.Step(`^I inject (\d+) bot messages with content "([^"]*)"$`, tc.injectBotMessages)
 	ctx.Step(`^I inject a user message with content "([^"]*)"$`, tc.injectUserMessage)
 	ctx.Step(`^I inject a bot message with:$`, tc.injectBotMessage)
+	ctx.Step(`^the chat shows the stored id of each message$`, tc.assertChatShowsStoredMessageIDs)
+	ctx.Step(`^I follow a link to message (\d+) posted in the chat$`, tc.followMessageLinkInChat)
+	ctx.Step(`^I open the app at a link to the latest message$`, tc.openAppAtLatestMessageLink)
+	ctx.Step(`^the linked message should be highlighted in view$`, tc.assertLinkedMessageHighlighted)
+	ctx.Step(`^the linked message should blink twice$`, tc.assertLinkedMessageBlinks)
+	ctx.Step(`^I scroll the linked message out of view for "([^"]*)"$`, tc.scrollLinkedMessageAway)
+	ctx.Step(`^I scroll the linked message back into view$`, tc.scrollLinkedMessageBack)
+	ctx.Step(`^the linked message should stay highlighted for "([^"]*)" and clear by "([^"]*)"$`, tc.assertLinkedHighlightClears)
 
 	// Event injection (chromedp dispatches a CustomEvent that the chat store
 	// listens for; routes through the same handler as a real WS message).
@@ -1975,6 +1984,217 @@ func (tc *TestContext) injectBotMessages(countStr, content string) error {
 
 // injectBotMessage dispatches one synthetic bot message.created event whose
 // content is the step's DocString, for messages that span several lines.
+// assertChatShowsStoredMessageIDs checks that the chat shows each message's
+// row id, and that the ids are the ones the timeline API returns for the
+// channel, in the same order.
+func (tc *TestContext) assertChatShowsStoredMessageIDs() error {
+	ids, err := tc.timelineMessageIDs()
+	if err != nil {
+		return err
+	}
+	var want []string
+	for _, id := range ids {
+		want = append(want, "#"+strconv.FormatInt(id, 10))
+	}
+	if err := tc.ensureChromeTab(); err != nil {
+		return err
+	}
+	expected := strings.Join(want, ",")
+	js := `Array.from(document.querySelectorAll('[data-testid="message-db-id"]')).map((el) => el.textContent).join(",")`
+	var got string
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		if err := chromedp.Run(tc.chromeTab.ctx, chromedp.Evaluate(js, &got)); err != nil {
+			return err
+		}
+		if got == expected || time.Now().After(deadline) {
+			break
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	if got != expected {
+		return fmt.Errorf("chat shows message ids %q, the timeline has %q", got, expected)
+	}
+	return nil
+}
+
+// timelineMessageIDs returns the row ids of the channel's messages from the
+// timeline API, oldest first.
+func (tc *TestContext) timelineMessageIDs() ([]int64, error) {
+	if err := tc.doRequest(http.MethodGet, "/api/channels/{channel_id}/timeline", ""); err != nil {
+		return nil, err
+	}
+	var timeline struct {
+		Items []struct {
+			Kind string `json:"kind"`
+			ID   int64  `json:"id"`
+		} `json:"items"`
+	}
+	if err := json.Unmarshal(tc.LastBody, &timeline); err != nil {
+		return nil, fmt.Errorf("decoding timeline: %w", err)
+	}
+	var ids []int64
+	// The timeline is newest first.
+	for i := len(timeline.Items) - 1; i >= 0; i-- {
+		if it := timeline.Items[i]; it.Kind == "message" {
+			ids = append(ids, it.ID)
+		}
+	}
+	if len(ids) == 0 {
+		return nil, fmt.Errorf("the timeline has no messages")
+	}
+	return ids, nil
+}
+
+// followMessageLinkInChat posts a bot message holding a loop:// link to a
+// message in the scenario's channel, and clicks the link.
+func (tc *TestContext) followMessageLinkInChat(idStr string) error {
+	id, err := strconv.ParseInt(idStr, 10, 64)
+	if err != nil {
+		return fmt.Errorf("invalid message id %q: %w", idStr, err)
+	}
+	tc.LinkedMessageID = id
+	if err := tc.injectBotMessage(&godog.DocString{Content: fmt.Sprintf("jump to loop://channel/%s/%d", tc.ChannelID, id)}); err != nil {
+		return err
+	}
+	sel := fmt.Sprintf(`a[href="#%s/%d"]`, tc.ChannelID, id)
+	return chromedp.Run(tc.chromeTab.ctx,
+		chromedp.WaitVisible(sel, chromedp.ByQuery),
+		chromedp.Click(sel, chromedp.ByQuery),
+	)
+}
+
+// openAppAtLatestMessageLink loads the app afresh at the link to the
+// channel's latest message, as a deep link or a pasted URL would.
+func (tc *TestContext) openAppAtLatestMessageLink() error {
+	ids, err := tc.timelineMessageIDs()
+	if err != nil {
+		return err
+	}
+	tc.LinkedMessageID = ids[len(ids)-1]
+	if err := tc.ensureChromeTab(); err != nil {
+		return err
+	}
+	return chromedp.Run(tc.chromeTab.ctx,
+		chromedp.Navigate("about:blank"),
+		chromedp.Navigate(fmt.Sprintf("%s#%s/%d", tc.AppURL, tc.ChannelID, tc.LinkedMessageID)),
+	)
+}
+
+// assertLinkedMessageHighlighted waits for the linked message to be
+// highlighted and inside the chat's visible area.
+func (tc *TestContext) assertLinkedMessageHighlighted() error {
+	js := fmt.Sprintf(`(() => {
+		const msg = document.querySelector('[data-msg-id="%d"]');
+		if (!msg) return 'not loaded';
+		if (msg.dataset.highlighted !== 'true') return 'not highlighted';
+		let el = msg.parentElement;
+		while (el && getComputedStyle(el).overflowY !== 'auto') el = el.parentElement;
+		if (!el) return 'no scroll container';
+		const box = el.getBoundingClientRect(), r = msg.getBoundingClientRect();
+		return r.bottom > box.top && r.top < box.bottom ? 'ok' : 'out of view';
+	})()`, tc.LinkedMessageID)
+	var state string
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		if err := chromedp.Run(tc.chromeTab.ctx, chromedp.Evaluate(js, &state)); err != nil {
+			return err
+		}
+		if state == "ok" {
+			return nil
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf("message %d: %s", tc.LinkedMessageID, state)
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+}
+
+func (tc *TestContext) linkedMessageEval(body string, out any) error {
+	js := fmt.Sprintf(`(() => {
+		const msg = document.querySelector('[data-msg-id="%d"]');
+		if (!msg) return 'not loaded';
+		let box = msg.parentElement;
+		while (box && getComputedStyle(box).overflowY !== 'auto') box = box.parentElement;
+		if (!box) return 'no scroll container';
+		%s
+	})()`, tc.LinkedMessageID, body)
+	return chromedp.Run(tc.chromeTab.ctx, chromedp.Evaluate(js, out))
+}
+
+func (tc *TestContext) assertLinkedMessageBlinks() error {
+	var state string
+	if err := tc.linkedMessageEval(`const cs = getComputedStyle(msg);
+		return [cs.outlineStyle, cs.animationName, cs.animationIterationCount].join(' ');`, &state); err != nil {
+		return err
+	}
+	if state != "solid loop-msg-blink 2" {
+		return fmt.Errorf("message %d: outline and animation %q, want %q", tc.LinkedMessageID, state, "solid loop-msg-blink 2")
+	}
+	return nil
+}
+
+func (tc *TestContext) scrollLinkedMessageAway(wait string) error {
+	d, err := time.ParseDuration(wait)
+	if err != nil {
+		return err
+	}
+	var state string
+	if err := tc.linkedMessageEval(`box.scrollTop = box.scrollHeight;
+		const b = box.getBoundingClientRect(), r = msg.getBoundingClientRect();
+		return r.bottom > b.top && r.top < b.bottom ? 'still in view' : 'ok';`, &state); err != nil {
+		return err
+	}
+	if state != "ok" {
+		return fmt.Errorf("message %d: %s", tc.LinkedMessageID, state)
+	}
+	time.Sleep(d)
+	return nil
+}
+
+func (tc *TestContext) scrollLinkedMessageBack() error {
+	var state string
+	if err := tc.linkedMessageEval(`msg.scrollIntoView({ block: 'center' }); return 'ok';`, &state); err != nil {
+		return err
+	}
+	if state != "ok" {
+		return fmt.Errorf("message %d: %s", tc.LinkedMessageID, state)
+	}
+	return nil
+}
+
+// assertLinkedHighlightClears checks the highlight is still there after
+// stay, and gone by clear, both counted from now.
+func (tc *TestContext) assertLinkedHighlightClears(stay, clear string) error {
+	stayFor, err := time.ParseDuration(stay)
+	if err != nil {
+		return err
+	}
+	clearBy, err := time.ParseDuration(clear)
+	if err != nil {
+		return err
+	}
+	start := time.Now()
+	for {
+		var state string
+		if err := tc.linkedMessageEval(`return msg.dataset.highlighted === 'true' ? 'highlighted' : 'cleared';`, &state); err != nil {
+			return err
+		}
+		elapsed := time.Since(start)
+		switch {
+		case state == "cleared" && elapsed < stayFor:
+			return fmt.Errorf("message %d: highlight cleared after %s, want at least %s", tc.LinkedMessageID, elapsed.Round(time.Millisecond), stayFor)
+		case state == "cleared":
+			return nil
+		case state != "highlighted":
+			return fmt.Errorf("message %d: %s", tc.LinkedMessageID, state)
+		case elapsed > clearBy:
+			return fmt.Errorf("message %d: still highlighted after %s", tc.LinkedMessageID, clearBy)
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+}
+
 func (tc *TestContext) injectBotMessage(doc *godog.DocString) error {
 	if tc.ChannelID == "" {
 		return fmt.Errorf("no channel_id set; use 'I set up a test channel via API' step first")

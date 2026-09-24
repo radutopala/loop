@@ -66,6 +66,10 @@ type ReviewDiffEventData struct {
 // Priority is carried so the FE can render queue position ("1/3") — higher
 // priority runs before lower; bot messages always carry 0.
 type MessageEventData struct {
+	// ID is the message's row id in the database, so a live message carries
+	// the same id it has after a reload. Missing/0 when the row isn't stored
+	// here.
+	ID          int64  `json:"id,omitempty"`
 	MsgID       string `json:"msg_id"`
 	AuthorID    string `json:"author_id"`
 	AuthorName  string `json:"author_name"`

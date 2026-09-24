@@ -35,15 +35,21 @@ import { DEFAULT_FONT_SIZES, ThemeProvider, useTheme } from "./ThemeContext";
 import { fonts } from "./theme";
 import type { Channel, ChannelUpdatedData, ImageBuildStatusData, ImageUpdateAvailableData, UpdateStatus, WSEvent } from "./types";
 import { logErr } from "./utils/log";
+import { parseChannelTarget } from "./utils/messageLinks";
 import { storageGet, storageRemove, storageSet } from "./utils/storage";
 
 const LAST_CHANNEL_KEY = "loop-last-channel";
 
 function getHashChannelId(): string | null {
-  const hash = window.location.hash.slice(1);
-  if (hash) return hash;
+  const target = parseChannelTarget(window.location.hash);
+  if (target) return target.channelId;
   // Restore last selected channel (Electron loses hash on restart).
   return storageGet(LAST_CHANNEL_KEY);
+}
+
+// A message link opened as the app's URL (#<channel-id>/<message-id>).
+function getHashMessageId(): number | null {
+  return parseChannelTarget(window.location.hash)?.messageId ?? null;
 }
 
 export default function App() {
@@ -95,7 +101,7 @@ function AppInner() {
     closePanel,
     closeAllPanels,
   } = useAppPanelState();
-  const [scrollToMessageId, setScrollToMessageId] = useState<number | null>(null);
+  const [scrollToMessageId, setScrollToMessageId] = useState<number | null>(getHashMessageId);
   const containersPanelRef = useRef<ContainersPanelHandle | null>(null);
   const workflowsPanelRef = useRef<WorkflowsGlobalPanelHandle | null>(null);
   const [openMemoryFile, setOpenMemoryFile] = useState<string | null>(null);
@@ -158,24 +164,6 @@ function AppInner() {
     if (selectedId) storageSet(LAST_CHANNEL_KEY, selectedId);
     else storageRemove(LAST_CHANNEL_KEY);
   }, [selectedId]);
-
-  // Handle back/forward navigation.
-  useEffect(() => {
-    const onHashChange = () => {
-      setSelectedId(getHashChannelId());
-    };
-    window.addEventListener("hashchange", onHashChange);
-    return () => window.removeEventListener("hashchange", onHashChange);
-  }, []);
-
-  // Handle deep link from protocol URL (loop://channel/<id>).
-  useEffect(() => {
-    if (window.loopAPI?.onNavigateChannel) {
-      window.loopAPI.onNavigateChannel((channelId: string) => {
-        setSelectedId(channelId);
-      });
-    }
-  }, []);
 
   // Cmd+K / Ctrl+K to toggle command palette, Cmd+, for settings, Cmd+E for editor layout.
   useEffect(() => {
@@ -414,6 +402,41 @@ function AppInner() {
       return channelId;
     });
   }, []);
+
+  // Opens a channel, or a message in it: "<channel-id>[/<message-id>]" from
+  // the hash or a loop://channel/ deep link.
+  const openChannelTarget = useCallback(
+    (raw: string) => {
+      const target = parseChannelTarget(raw);
+      if (!target) return;
+      if (target.messageId === null) {
+        setSelectedId(target.channelId);
+        return;
+      }
+      handleSelectMessage(target.channelId, target.messageId);
+      // Back to the plain channel hash, so opening the same link again is a
+      // change the browser reports.
+      window.history.replaceState(null, "", `#${target.channelId}`);
+    },
+    [handleSelectMessage],
+  );
+
+  // Handle back/forward navigation, and message links followed in the chat.
+  useEffect(() => {
+    const onHashChange = () => {
+      if (window.location.hash.length > 1) openChannelTarget(window.location.hash);
+      else setSelectedId(getHashChannelId());
+    };
+    window.addEventListener("hashchange", onHashChange);
+    return () => window.removeEventListener("hashchange", onHashChange);
+  }, [openChannelTarget]);
+
+  // Handle deep link from protocol URL (loop://channel/<id>[/<message-id>]).
+  useEffect(() => {
+    if (window.loopAPI?.onNavigateChannel) {
+      window.loopAPI.onNavigateChannel(openChannelTarget);
+    }
+  }, [openChannelTarget]);
 
   const handleSelectMemoryFile = useCallback((filePath: string) => {
     setOpenMemoryFile(filePath);

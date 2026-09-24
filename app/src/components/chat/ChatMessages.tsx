@@ -20,6 +20,9 @@ export interface ChatMessagesHandle {
   scrollToBottom: () => void;
 }
 
+// How long a linked or searched-for message stays outlined once it's in view.
+const HIGHLIGHT_IN_VIEW_MS = 5000;
+
 export const ChatMessages = forwardRef<ChatMessagesHandle, ChatMessagesProps>(function ChatMessages({ channelId, chatState, scrollToMessageId, onScrollComplete, onQuote }, ref) {
   const { colors } = useTheme();
   const styles = buildMessageStyles(colors);
@@ -148,19 +151,48 @@ export const ChatMessages = forwardRef<ChatMessagesHandle, ChatMessagesProps>(fu
     completionInfo,
   ]);
 
-  // Scroll to a specific message (from search) and highlight it.
+  // Scroll to a specific message (from search or a message link) and
+  // highlight it. A message older than what's loaded is paged in first.
   useEffect(() => {
     if (!scrollToMessageId || !containerRef.current) return;
     const el = containerRef.current.querySelector(`[data-msg-id="${scrollToMessageId}"]`);
     if (el) {
       autoScrollRef.current = false;
-      el.scrollIntoView({ behavior: "smooth", block: "center" });
+      // Straight there: a smooth scroll starts at the bottom, and its first
+      // scroll event would turn following the latest message back on.
+      el.scrollIntoView({ block: "center" });
       setHighlightedMsgId(scrollToMessageId);
       onScrollComplete?.();
-      const timer = setTimeout(() => setHighlightedMsgId(null), 2000);
-      return () => clearTimeout(timer);
+      return;
     }
-  }, [scrollToMessageId, messages]);
+    // Wait for the first page, and for a page that's on its way.
+    if (items.length === 0 || loading) return;
+    // Row ids grow with the timeline, so once the oldest loaded item is older
+    // than the message, it isn't in this channel's chat.
+    if (hasMore && items[0]!.id > scrollToMessageId) loadMore();
+    else onScrollComplete?.();
+  }, [scrollToMessageId, messages, items, loading, hasMore, loadMore]);
+
+  // The highlight stays until the message has been in view for a few seconds
+  // straight, so scrolling away before reading it doesn't lose the mark.
+  useEffect(() => {
+    const container = containerRef.current;
+    const el = highlightedMsgId === null ? null : container?.querySelector(`[data-msg-id="${highlightedMsgId}"]`);
+    if (!container || !el) return;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const observer = new IntersectionObserver(
+      ([entry]) => {
+        clearTimeout(timer);
+        if (entry?.isIntersecting) timer = setTimeout(() => setHighlightedMsgId(null), HIGHLIGHT_IN_VIEW_MS);
+      },
+      { root: container },
+    );
+    observer.observe(el);
+    return () => {
+      observer.disconnect();
+      clearTimeout(timer);
+    };
+  }, [highlightedMsgId]);
 
   // Track whether user has scrolled up.
   const handleScroll = useCallback(() => {
@@ -293,6 +325,7 @@ export const ChatMessages = forwardRef<ChatMessagesHandle, ChatMessagesProps>(fu
   return (
     <ChannelContext.Provider value={channelId}>
       <div ref={containerRef} style={styles.messages} onScroll={handleScroll}>
+        <style>{`@keyframes loop-msg-blink { 50% { outline-color: transparent; } }`}</style>
         {quoteAnchor?.position === "top" && (
           <div style={{ position: "sticky", top: 0, zIndex: 2, paddingBottom: 4, backgroundColor: "transparent" }}>
             <div style={{ maxWidth: 768, margin: "0 auto" }}>

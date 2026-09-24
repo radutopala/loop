@@ -77,6 +77,9 @@ export interface WSEvent {
 }
 
 export interface MessageCreatedData {
+  // The message's row id in the database. Missing when the row isn't stored
+  // by this backend.
+  id?: number;
   msg_id: string;
   author_id: string;
   author_name: string;

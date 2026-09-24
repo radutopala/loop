@@ -315,12 +315,34 @@ func (s *TaskExecutorSuite) TestStoreBotMessage() {
 	s.store.On("GetChannel", s.ctx, "ch1").Return(&db.Channel{ID: 5, ChannelID: "ch1"}, nil)
 	s.store.On("InsertMessage", s.ctx, mock.MatchedBy(func(m *db.Message) bool {
 		return m.ChatID == 5 && m.ChannelID == "ch1" && m.Content == "task done" && m.IsBot
-	})).Return(nil)
+	})).Run(func(args mock.Arguments) {
+		args.Get(1).(*db.Message).ID = 42
+	}).Return(nil)
+	// The event carries the row id the insert assigned.
 	eb.On("BroadcastMessageCreated", "ch1", mock.MatchedBy(func(d events.MessageEventData) bool {
-		return d.Content == "task done" && d.IsBot && d.AuthorName == "agent"
+		return d.ID == 42 && d.Content == "task done" && d.IsBot && d.AuthorName == "agent"
 	}))
 
 	storeBotMessage(s.ctx, s.store, eb, "ch1", "task done", "")
+
+	s.store.AssertExpectations(s.T())
+	eb.AssertExpectations(s.T())
+}
+
+func (s *TaskExecutorSuite) TestStoreUserTaskPromptBroadcastsRowID() {
+	eb := new(MockEventBroadcaster)
+
+	s.store.On("GetChannel", s.ctx, "ch1").Return(&db.Channel{ID: 5, ChannelID: "ch1"}, nil)
+	s.store.On("InsertMessage", s.ctx, mock.MatchedBy(func(m *db.Message) bool {
+		return m.ChatID == 5 && m.Content == "summarise" && !m.IsBot && m.IsProcessed
+	})).Run(func(args mock.Arguments) {
+		args.Get(1).(*db.Message).ID = 43
+	}).Return(nil)
+	eb.On("BroadcastMessageCreated", "ch1", mock.MatchedBy(func(d events.MessageEventData) bool {
+		return d.ID == 43 && d.Content == "summarise" && d.AuthorID == "scheduled-task" && !d.IsBot
+	}))
+
+	storeUserTaskPrompt(s.ctx, s.store, eb, "ch1", "summarise")
 
 	s.store.AssertExpectations(s.T())
 	eb.AssertExpectations(s.T())
