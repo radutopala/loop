@@ -4,7 +4,6 @@ import (
 	"context"
 	"net/http"
 	"os/exec"
-	"path/filepath"
 	"strings"
 
 	"github.com/radutopala/loop/internal/container"
@@ -44,6 +43,13 @@ type channelResponse struct {
 	AgentRunning     bool   `json:"agent_running"`
 	Branch           string `json:"branch,omitempty"`
 	Commit           string `json:"commit,omitempty"`
+	Subject          string `json:"subject,omitempty"`
+	Upstream         string `json:"upstream,omitempty"`
+	Ahead            int    `json:"ahead,omitempty"`
+	Behind           int    `json:"behind,omitempty"`
+	SyncBase         string `json:"sync_base,omitempty"`
+	BaseAhead        int    `json:"base_ahead,omitempty"`
+	BaseBehind       int    `json:"base_behind,omitempty"`
 	Worktree         bool   `json:"worktree"`
 	BaseBranch       string `json:"base_branch,omitempty"`
 	RootDirPath      string `json:"root_dir_path,omitempty"` // inside a worktree chain: the checkout it was cut from
@@ -51,6 +57,8 @@ type channelResponse struct {
 	DiffAdditions    int    `json:"diff_additions,omitempty"`
 	DiffDeletions    int    `json:"diff_deletions,omitempty"`
 	ReviewEnabled    bool   `json:"review_enabled"`
+	ModelOverride    string `json:"model_override,omitempty"`
+	EffortOverride   string `json:"effort_override,omitempty"`
 }
 
 func (s *Server) handleEnsureChannel(w http.ResponseWriter, r *http.Request) {
@@ -149,6 +157,7 @@ func (s *Server) handleSearchChannels(w http.ResponseWriter, r *http.Request) {
 	// hasn't covered yet (fresh channel between ticks, or no poller in tests)
 	// are computed inline, once per unique dir within this request.
 	gitStates := make(map[string]gitState)
+	bases := worktreeBases(channels, s.loopDir)
 	gitStateFor := func(dir string) gitState {
 		if st, ok := gitStates[dir]; ok {
 			return st
@@ -158,7 +167,7 @@ func (s *Server) handleSearchChannels(w http.ResponseWriter, r *http.Request) {
 			st, ok = s.branchPoller.Snapshot(dir)
 		}
 		if !ok {
-			st = collectGitState(r.Context(), dir)
+			st = collectGitState(r.Context(), dir, bases[dir], gitState{})
 		}
 		gitStates[dir] = st
 		return st
@@ -174,10 +183,7 @@ func (s *Server) handleSearchChannels(w http.ResponseWriter, r *http.Request) {
 		}
 		_, running := runningIDs[ch.ChannelID]
 		_, runningBot := chatRunIDs[ch.ChannelID]
-		dirPath := ch.DirPath
-		if dirPath == "" && s.loopDir != "" {
-			dirPath = filepath.Join(s.loopDir, ch.ChannelID, "work")
-		}
+		dirPath := channelDir(ch, s.loopDir)
 		git := gitStateFor(dirPath)
 		parentDirPath := ""
 		if ch.Worktree && ch.ParentID != "" {
@@ -197,6 +203,13 @@ func (s *Server) handleSearchChannels(w http.ResponseWriter, r *http.Request) {
 			AgentRunning:     runningBot,
 			Branch:           git.Branch,
 			Commit:           git.Commit,
+			Subject:          git.Subject,
+			Upstream:         git.Upstream,
+			Ahead:            git.Ahead,
+			Behind:           git.Behind,
+			SyncBase:         git.SyncBase,
+			BaseAhead:        git.BaseAhead,
+			BaseBehind:       git.BaseBehind,
 			Worktree:         ch.Worktree,
 			BaseBranch:       ch.BaseBranch,
 			RootDirPath:      db.WorktreeRootDirPath(r.Context(), byID, ch),
@@ -204,6 +217,8 @@ func (s *Server) handleSearchChannels(w http.ResponseWriter, r *http.Request) {
 			DiffAdditions:    git.DiffAdditions,
 			DiffDeletions:    git.DiffDeletions,
 			ReviewEnabled:    reviewEnabled,
+			ModelOverride:    ch.ModelOverride,
+			EffortOverride:   ch.EffortOverride,
 		})
 	}
 

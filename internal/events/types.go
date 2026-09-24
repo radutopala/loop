@@ -258,8 +258,15 @@ type ChannelUpdatedData struct {
 	ChannelID     string `json:"channel_id"`
 	Branch        string `json:"branch"`
 	Commit        string `json:"commit"`
+	Subject       string `json:"subject,omitempty"`
 	DiffAdditions int    `json:"diff_additions"`
 	DiffDeletions int    `json:"diff_deletions"`
+	Upstream      string `json:"upstream,omitempty"`
+	Ahead         int    `json:"ahead,omitempty"`
+	Behind        int    `json:"behind,omitempty"`
+	SyncBase      string `json:"sync_base,omitempty"`
+	BaseAhead     int    `json:"base_ahead,omitempty"`
+	BaseBehind    int    `json:"base_behind,omitempty"`
 	Name          string `json:"name,omitempty"`
 	DirPath       string `json:"dir_path,omitempty"`
 }

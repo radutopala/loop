@@ -26,6 +26,13 @@ interface ChannelAPIResponse {
   agent_running: boolean;
   branch?: string;
   commit?: string;
+  subject?: string;
+  upstream?: string;
+  ahead?: number;
+  behind?: number;
+  sync_base?: string;
+  base_ahead?: number;
+  base_behind?: number;
   worktree?: boolean;
   base_branch?: string;
   root_dir_path?: string;
@@ -33,6 +40,8 @@ interface ChannelAPIResponse {
   diff_additions?: number;
   diff_deletions?: number;
   review_enabled?: boolean;
+  model_override?: string;
+  effort_override?: string;
 }
 
 export async function fetchChannels(): Promise<Channel[]> {
@@ -50,6 +59,13 @@ export async function fetchChannels(): Promise<Channel[]> {
     agent_running: c.agent_running,
     branch: c.branch || "",
     commit: c.commit || "",
+    subject: c.subject,
+    upstream: c.upstream,
+    ahead: c.ahead,
+    behind: c.behind,
+    sync_base: c.sync_base,
+    base_ahead: c.base_ahead,
+    base_behind: c.base_behind,
     worktree: c.worktree ?? false,
     base_branch: c.base_branch ?? "",
     root_dir_path: c.root_dir_path,
@@ -57,6 +73,8 @@ export async function fetchChannels(): Promise<Channel[]> {
     diff_additions: c.diff_additions ?? 0,
     diff_deletions: c.diff_deletions ?? 0,
     review_enabled: c.review_enabled ?? false,
+    model_override: c.model_override,
+    effort_override: c.effort_override,
   }));
 }
 

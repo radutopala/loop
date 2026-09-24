@@ -88,6 +88,9 @@ func (s *Server) handleSetAgentConfig(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+	if s.eventsHub != nil {
+		s.eventsHub.BroadcastChannelAgentConfig(channelID, model, effort)
+	}
 	w.WriteHeader(http.StatusNoContent)
 }
 

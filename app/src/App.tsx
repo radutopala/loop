@@ -33,7 +33,7 @@ import { useAppPanelState } from "./hooks/useAppPanelState";
 import { type ActiveChatState, useChatStateStore } from "./hooks/useChatStateStore";
 import { DEFAULT_FONT_SIZES, ThemeProvider, useTheme } from "./ThemeContext";
 import { fonts } from "./theme";
-import type { Channel, ChannelUpdatedData, ImageBuildStatusData, ImageUpdateAvailableData, UpdateStatus, WSEvent } from "./types";
+import type { Channel, ChannelAgentConfigData, ChannelUpdatedData, ImageBuildStatusData, ImageUpdateAvailableData, UpdateStatus, WSEvent } from "./types";
 import { logErr } from "./utils/log";
 import { parseChannelTarget } from "./utils/messageLinks";
 import { storageGet, storageRemove, storageSet } from "./utils/storage";
@@ -275,12 +275,24 @@ function AppInner() {
                   commit: d.commit,
                   diff_additions: d.diff_additions,
                   diff_deletions: d.diff_deletions,
+                  subject: d.subject,
+                  upstream: d.upstream,
+                  ahead: d.ahead,
+                  behind: d.behind,
+                  sync_base: d.sync_base,
+                  base_ahead: d.base_ahead,
+                  base_behind: d.base_behind,
                   ...(d.name !== undefined ? { name: d.name } : {}),
                   ...(d.dir_path !== undefined ? { dir_path: d.dir_path } : {}),
                 }
               : c,
           ),
         );
+        return;
+      }
+      if (event.type === "channel.agent_config") {
+        const d = event.data as ChannelAgentConfigData;
+        setChannels((prev) => prev.map((c) => (c.id === event.channel_id ? { ...c, model_override: d.model_override, effort_override: d.effort_override } : c)));
         return;
       }
       if (event.type === "image.build_status") {

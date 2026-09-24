@@ -144,7 +144,7 @@ Each channel item (`ChannelItem` component) displays:
 | Click channel name | Select the channel |
 | Click collapse chevron | Toggle thread visibility |
 | Double-click channel row | Collapse/expand threads |
-| Hover | Shows config and thread buttons; applies `colors.hoverBg` background |
+| Hover | Shows config and thread buttons; applies `colors.hoverBg` background. Shows the [row info](#row-info) popup. |
 | Right-click | Opens context menu |
 | Drag | Initiates channel reorder |
 
@@ -159,6 +159,21 @@ Right-clicking a channel opens a context menu with:
 | **Delete Channel** | Deletes the channel (not shown for DM) |
 
 The "Delete Channel" item has `danger: true` styling (red text) and a separator above it.
+
+### Row Info
+
+Hovering a channel, thread or worktree thread shows a popup beside the row (`RowInfoPopup`) with:
+
+| Line | Shows |
+|------|-------|
+| **path** | The row's directory. For a worktree thread, that's the worktree's checkout. |
+| **branch** | The checked-out branch, e.g. `main`, picked out in the theme's accent color. A worktree thread adds the branch it was cut from, e.g. `worktree/fix (from main)`. A detached checkout shows `detached`. |
+| **commit** | The short commit hash and its subject line. |
+| **sync** | How far the branch is from its base (worktree threads) and its upstream, e.g. `↑3 ↓1 vs main · ↑1 vs origin/main`, or `even with main`. |
+| **model** | The model and effort picked for this channel in the chat, e.g. `claude-opus-5-5 · high`. Left out when it uses the config's. Updates as soon as they're changed. |
+| **status** | `agent running` or `container running`, and `locked`, when any of them apply. |
+
+The git lines follow the [branch poller](events.md#channelupdated), so they update within a few seconds of a commit, even while the popup is open. A line with nothing to show is left out, and a row with no lines has no popup. Moving off the row, clicking, dragging or scrolling hides it.
 
 ---
 
@@ -197,7 +212,7 @@ Threads are indented with `padding-left: 30px` (accounting for the tree connecto
 | Action | Behavior |
 |--------|----------|
 | Click | Select the thread |
-| Hover | `colors.hoverBg` background |
+| Hover | `colors.hoverBg` background. Shows the [row info](#row-info) popup. |
 | Right-click | Opens the same context menu as channels |
 
 ### Create Thread

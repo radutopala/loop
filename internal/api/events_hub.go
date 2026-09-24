@@ -31,6 +31,7 @@ const (
 	EventChannelCreated            = "channel.created"
 	EventChannelDeleted            = "channel.deleted"
 	EventChannelLocked             = "channel.locked"
+	EventChannelAgentConfig        = "channel.agent_config"
 	EventChannelUpdated            = "channel.updated"
 	EventAgentInstanceRegistered   = "agent_instance.registered"
 	EventAgentInstanceUnregistered = "agent_instance.unregistered"
@@ -277,6 +278,18 @@ func (h *EventsHub) BroadcastChannelLocked(channelID string, locked bool) {
 		Type:      EventChannelLocked,
 		ChannelID: channelID,
 		Data:      map[string]bool{"locked": locked},
+		Global:    true,
+	})
+}
+
+// BroadcastChannelAgentConfig sends a channel.agent_config event when a
+// channel's model/effort overrides change, so the sidebar can show them
+// without polling.
+func (h *EventsHub) BroadcastChannelAgentConfig(channelID, model, effort string) {
+	h.Broadcast(Event{
+		Type:      EventChannelAgentConfig,
+		ChannelID: channelID,
+		Data:      map[string]string{"model_override": model, "effort_override": effort},
 		Global:    true,
 	})
 }

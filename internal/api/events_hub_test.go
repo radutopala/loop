@@ -551,6 +551,39 @@ func (s *EventsHubSuite) TestBroadcastChannelLocked() {
 	require.Equal(s.T(), true, data["locked"])
 }
 
+func (s *EventsHubSuite) TestBroadcastChannelAgentConfig() {
+	hub := NewEventsHub(testLogger())
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := wsUpgrader.Upgrade(w, r, nil)
+		if err != nil {
+			return
+		}
+		hub.Register(conn, []string{"other"})
+		holdUntilClientDisconnects(conn)
+	}))
+	defer srv.Close()
+
+	wsURL := "ws" + strings.TrimPrefix(srv.URL, "http")
+	conn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
+	require.NoError(s.T(), err)
+	defer conn.Close()
+
+	time.Sleep(50 * time.Millisecond)
+
+	// Global, so a client subscribed to other channels still gets it.
+	hub.BroadcastChannelAgentConfig("ch-1", "claude-opus-5-5", "high")
+
+	_, msg, err := conn.ReadMessage()
+	require.NoError(s.T(), err)
+
+	var evt Event
+	require.NoError(s.T(), json.Unmarshal(msg, &evt))
+	require.Equal(s.T(), "channel.agent_config", evt.Type)
+	require.Equal(s.T(), "ch-1", evt.ChannelID)
+	require.Equal(s.T(), map[string]any{"model_override": "claude-opus-5-5", "effort_override": "high"}, evt.Data)
+}
+
 func (s *EventsHubSuite) TestBroadcastRemovesClosedConnections() {
 	hub := NewEventsHub(testLogger())
 

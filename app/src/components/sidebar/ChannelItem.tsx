@@ -1,10 +1,11 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { useTheme } from "../../ThemeContext";
 import { fonts } from "../../theme";
 import type { Channel } from "../../types";
 import { NewThreadInput } from "./NewThreadInput";
 import type { PillKind } from "./pills";
 import { SIDEBAR_PILLS } from "./pills";
+import { RowInfoPopup } from "./RowInfoPopup";
 import { SidebarWorktreeButton } from "./SidebarWorktreeButton";
 import { StatusPill } from "./StatusPill";
 import { ThreadItem, type ThreadReorder } from "./ThreadItem";
@@ -65,13 +66,16 @@ export function ChannelItem({
   const [creating, setCreating] = useState(false);
   const [collapsed, setCollapsed] = useState(false);
   const [hovered, setHovered] = useState(false);
+  const rowRef = useRef<HTMLDivElement>(null);
 
   const hasThreads = threads.length > 0;
 
   return (
     <div draggable onDragStart={() => onDragStart(channel.id)} onDragOver={(e) => onDragOver(e, channel.id)} onDrop={(e) => onDrop(e, channel.id)} onDragEnd={onDragEnd}>
+      <RowInfoPopup channel={channel} anchorRef={rowRef} hovered={hovered} />
       <div
-        title={channel.dir_path || undefined}
+        ref={rowRef}
+        data-testid="sidebar-channel-row"
         style={{
           display: "flex",
           alignItems: "center",

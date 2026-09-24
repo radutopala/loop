@@ -12,6 +12,16 @@ export interface Channel {
   agent_running: boolean;
   branch: string;
   commit: string;
+  /** The commit's subject line. */
+  subject?: string;
+  /** The branch's tracking branch, e.g. origin/main, and the commits it's ahead of and behind it. */
+  upstream?: string;
+  ahead?: number;
+  behind?: number;
+  /** Inside a worktree chain: the branch the worktree was cut from, set while it still exists, and the commits it's ahead of and behind it. */
+  sync_base?: string;
+  base_ahead?: number;
+  base_behind?: number;
   worktree: boolean;
   /** For worktree threads: the branch this worktree was created from. */
   base_branch?: string;
@@ -21,6 +31,10 @@ export interface Channel {
   diff_additions: number;
   diff_deletions: number;
   review_enabled: boolean;
+  /** The model this channel's agent runs with instead of the config's; unset inherits it. */
+  model_override?: string;
+  /** The reasoning effort this channel's agent runs with instead of the config's; unset inherits it. */
+  effort_override?: string;
 }
 
 export interface Message {
@@ -194,8 +208,21 @@ export interface ChannelUpdatedData {
   commit: string;
   diff_additions: number;
   diff_deletions: number;
+  subject?: string;
+  upstream?: string;
+  ahead?: number;
+  behind?: number;
+  sync_base?: string;
+  base_ahead?: number;
+  base_behind?: number;
   name?: string;
   dir_path?: string;
+}
+
+/** A channel's model/effort overrides after they change; empty clears one. */
+export interface ChannelAgentConfigData {
+  model_override: string;
+  effort_override: string;
 }
 
 export interface GateApprovalRequestedData {
