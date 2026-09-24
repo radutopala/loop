@@ -86,6 +86,31 @@ Feature: Chat Components Journey
     When I click on "[data-testid='chat-component-expand']"
     Then I wait for a frame message "canvas:large:true"
 
+  Scenario: A React component gets React by name and a root to mount on
+    Given I set up a test channel via API for git repo "bdd-chat-components-react"
+    And I open the app in a browser
+    And I wait for text "bdd-chat-components-react" to appear
+    And I record messages posted by frames
+
+    When I click on "bdd-chat-components-react" in the sidebar
+    And I wait for "textarea" to be visible
+    And I send a POST request to "/api/components?channel_id={channel_id}" with body:
+      """
+      {
+        "template": "react",
+        "title": "Counter",
+        "html": "<p id='below'>under the app</p>",
+        "js": "const map = JSON.parse(document.querySelector('script[type=importmap]').textContent).imports; const root = document.getElementById('root'); parent.postMessage('react:' + ['react', 'react-dom/client', 'htm'].every((k) => map[k]) + ':' + !!(root && root.compareDocumentPosition(document.getElementById('below')) & Node.DOCUMENT_POSITION_FOLLOWING), '*');"
+      }
+      """
+    Then the response status should be 201
+
+    # React itself loads from esm.sh, which the tests don't reach, so this
+    # checks what the page gives the app: the import map and the root, with
+    # the component's own HTML under it
+    And I wait for "[data-testid='chat-component'][data-template='react']" to be visible
+    And I wait for a frame message "react:true:true"
+
   Scenario: An unknown template is refused with the ones available
     Given I set up a test channel via API for git repo "bdd-chat-components-unknown"
     When I send a POST request to "/api/components?channel_id={channel_id}" with body:
@@ -93,7 +118,7 @@ Feature: Chat Components Journey
       {"template": "chart", "html": "<p>x</p>"}
       """
     Then the response status should be 400
-    And the response should contain "available: math, canvas"
+    And the response should contain "available: math, canvas, react"
 
   Scenario: A component fence that never closes stays a code block
     Given I set up a test channel via API for git repo "bdd-chat-components-open"

@@ -376,7 +376,7 @@ On startup, `loop serve` keeps the versioned container files (`Dockerfile`, `ent
 | `mcp` | `{}` | MCP server configurations |
 | `task_templates` | `[]` | Reusable task templates |
 | `prompt_shortcuts` | `[]` | Quick-access prompt shortcuts (triggered via `#` in chat) |
-| `chat_components` | `[]` | Templates agents fill to show components in the desktop chat (`math` and `canvas` built in) |
+| `chat_components` | `[]` | Templates agents fill to show components in the desktop chat (`math`, `canvas` and `react` built in) |
 | `workflows` | `[]` | Declarative DAG-based workflow definitions (see [Workflows](#workflows)) |
 | `workflow_concurrency` | `{}` | Max concurrent runs and nodes (`max_concurrent_runs`, `max_concurrent_nodes`; 0 = unlimited) |
 | `memory` | `{}` | Semantic memory search configuration (see below) |
@@ -1159,7 +1159,7 @@ In headless/Linux environments where Electron can't launch, `LOOP_NO_ELECTRON=1 
 | `get_readme` | Get the full Loop README documentation |
 | `playground` | Manage playgrounds (create/update/delete) |
 | `playground_file` | Manage files within a playground (create/update/read/delete/list) |
-| `chat_component` | Show a component inline in the desktop chat: a template (`math`, `canvas`, or one from config) filled with HTML/CSS/JS |
+| `chat_component` | Show a component inline in the desktop chat: a template (`math`, `canvas`, `react`, or one from config) filled with HTML/CSS/JS |
 | `prompt_shortcut` | Manage prompt shortcuts (list, add, update, delete) in global or project scope |
 | `bash_shortcut` | Manage bash shortcuts (list, add, update, delete) in global or project scope |
 | | **Workflows** |

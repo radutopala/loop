@@ -210,7 +210,7 @@ func New(channelID, apiURL, authorID string, httpClient HTTPClient, logger *slog
 
 	mcp.AddTool(s.mcpServer, &mcp.Tool{
 		Name:        "chat_component",
-		Description: "Show a rich visual component inline in the Loop desktop chat — math worked step by step on a math notebook page, a canvas plot or diagram, or a template the project defines. You pick a template and fill it with your own HTML, CSS and JS; it renders in a sandboxed frame where the call was made. Actions: templates (list the templates and how to fill them — call it first), show (template + title + html, optional css/js). Desktop app only; on Slack or Discord answer in text. For a standalone app the user keeps, use playground instead.",
+		Description: "Show a rich visual component inline in the Loop desktop chat — math worked step by step on a math notebook page, a canvas plot or diagram, an interactive React app, or a template the project defines. You pick a template and fill it with your own HTML, CSS and JS; it renders in a sandboxed frame where the call was made. Actions: templates (list the templates and how to fill them — call it first), show (template + title + html, optional css/js). Desktop app only; on Slack or Discord answer in text. For a standalone app the user keeps, use playground instead.",
 	}, s.handleChatComponent)
 
 	mcp.AddTool(s.mcpServer, &mcp.Tool{

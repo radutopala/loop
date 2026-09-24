@@ -48,9 +48,9 @@ func (s *ServerSuite) TestListComponents() {
 			check: func(body string) {
 				var got []chatcomponents.Template
 				require.NoError(s.T(), json.Unmarshal([]byte(body), &got))
-				require.Len(s.T(), got, 3)
+				require.Len(s.T(), got, 4)
 				require.Equal(s.T(), "math", got[0].Name)
-				require.Equal(s.T(), chatcomponents.Template{Name: "reaction", Description: "Reactions", Guide: "Balance it."}, got[2])
+				require.Equal(s.T(), chatcomponents.Template{Name: "reaction", Description: "Reactions", Guide: "Balance it."}, got[3])
 			},
 		},
 		{
@@ -195,7 +195,7 @@ func (s *ServerSuite) TestShowComponentErrors() {
 			body:     `{"template":"chart","html":"<p>x</p>"}`,
 			setup:    func() { s.store.On("GetChannel", mock.Anything, "ch-1").Return(local, nil) },
 			wantCode: http.StatusBadRequest,
-			wantBody: `unknown template "chart"; available: math, canvas`,
+			wantBody: `unknown template "chart"; available: math, canvas, react`,
 		},
 		{
 			name: "running turn lookup fails",

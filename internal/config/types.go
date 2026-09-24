@@ -142,7 +142,7 @@ func (s *BashShortcut) ResolveCommand(loopDir string, readFile func(string) ([]b
 // show a component in the desktop chat (the chat_component MCP tool). Its files
 // live in {loopDir}/components/{path}/: shell.html (with a {{content}} slot),
 // style.css and guide.md, each optional. A name matching a built-in template
-// (math, canvas) replaces it.
+// (math, canvas, react) replaces it.
 type ChatComponent struct {
 	Name        string `json:"name"`
 	Description string `json:"description"`
