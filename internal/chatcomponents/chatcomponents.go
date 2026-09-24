@@ -43,6 +43,7 @@ type Content struct {
 var builtins = []config.ChatComponent{
 	{Name: "math", Description: "A math notebook page, squared paper with every line written on the grid, for math worked step by step: fractions with a bar, crossed-out factors, highlights and a boxed result."},
 	{Name: "canvas", Description: "A canvas drawn from JS: plots, geometry, diagrams, animations and simulations."},
+	{Name: "react", Description: "An interactive React app on a dark page, written with htm instead of JSX: forms, calculators, tables, charts from a React library, anything with state."},
 }
 
 var validName = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]*$`)

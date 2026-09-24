@@ -716,7 +716,7 @@ func buildSchema() *ConfigSchema {
 			"chat_components": {
 				Type:        "array",
 				Title:       "Chat Components",
-				Description: "Templates an agent fills with HTML, CSS and JS to show a component in the desktop chat. Built-ins: math, canvas.",
+				Description: "Templates an agent fills with HTML, CSS and JS to show a component in the desktop chat. Built-ins: math, canvas, react.",
 				XSection:    "Chat Components",
 				Items: &SchemaProperty{
 					Type: "object",

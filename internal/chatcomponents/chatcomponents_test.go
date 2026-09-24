@@ -31,13 +31,17 @@ func files(m map[string]string) func(string) ([]byte, error) {
 
 func (s *ChatComponentsSuite) TestResolveBuiltins() {
 	got := Resolve(nil, nil, files(nil))
-	require.Len(s.T(), got, 2)
+	require.Len(s.T(), got, 3)
 	require.Equal(s.T(), "math", got[0].Name)
 	require.Contains(s.T(), got[0].Shell, "{{content}}")
 	require.Contains(s.T(), got[0].CSS, ".paper")
 	require.Contains(s.T(), got[0].Guide, "data-step")
 	require.Equal(s.T(), "canvas", got[1].Name)
 	require.Contains(s.T(), got[1].Shell, `<canvas id="c">`)
+	require.Equal(s.T(), "react", got[2].Name)
+	require.Contains(s.T(), got[2].Shell, `<script type="importmap">`)
+	require.Contains(s.T(), got[2].Shell, `<div id="root"></div>`)
+	require.Contains(s.T(), got[2].Guide, "htm")
 }
 
 func (s *ChatComponentsSuite) TestResolveConfigEntries() {
@@ -57,8 +61,8 @@ func (s *ChatComponentsSuite) TestResolveConfigEntries() {
 				"/home/.loop/components/reaction/shell.html": "<main>{{content}}</main>",
 			},
 			check: func(ts []Template) {
-				require.Len(s.T(), ts, 3)
-				require.Equal(s.T(), Template{Name: "reaction", Description: "Reactions", CSS: "project css", Shell: "<main>{{content}}</main>"}, ts[2])
+				require.Len(s.T(), ts, 4)
+				require.Equal(s.T(), Template{Name: "reaction", Description: "Reactions", CSS: "project css", Shell: "<main>{{content}}</main>"}, ts[3])
 			},
 		},
 		{
@@ -66,7 +70,7 @@ func (s *ChatComponentsSuite) TestResolveConfigEntries() {
 			entries: []config.ChatComponent{{Name: "math", Path: "paper"}},
 			files:   map[string]string{"/home/.loop/components/paper/style.css": "my paper"},
 			check: func(ts []Template) {
-				require.Len(s.T(), ts, 2)
+				require.Len(s.T(), ts, 3)
 				require.Equal(s.T(), "math", ts[0].Name)
 				require.Equal(s.T(), "my paper", ts[0].CSS)
 				require.Equal(s.T(), builtinMath.Shell, ts[0].Shell)
@@ -77,15 +81,15 @@ func (s *ChatComponentsSuite) TestResolveConfigEntries() {
 			name:    "a later entry with the same name replaces an earlier one",
 			entries: []config.ChatComponent{{Name: "chart", Description: "first"}, {Name: "chart", Description: "second"}},
 			check: func(ts []Template) {
-				require.Len(s.T(), ts, 3)
-				require.Equal(s.T(), "second", ts[2].Description)
+				require.Len(s.T(), ts, 4)
+				require.Equal(s.T(), "second", ts[3].Description)
 			},
 		},
 		{
 			name:    "names that can't sit in a fence info string are skipped",
 			entries: []config.ChatComponent{{Name: "two words"}, {Name: ""}, {Name: "Upper"}},
 			check: func(ts []Template) {
-				require.Len(s.T(), ts, 2)
+				require.Len(s.T(), ts, 3)
 			},
 		},
 	}

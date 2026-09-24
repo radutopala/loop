@@ -1,0 +1,19 @@
+<!--
+  React, ReactDOM and htm by bare name, pinned to one copy of React:
+  react-dom is built with react left external, so it imports the "react"
+  mapped here, and so does a library imported with ?external=react,react-dom.
+  Two copies of React on a page break hooks.
+-->
+<script type="importmap">
+{
+  "imports": {
+    "react": "https://esm.sh/react@19.3.0",
+    "react/jsx-runtime": "https://esm.sh/react@19.3.0/jsx-runtime",
+    "react-dom": "https://esm.sh/react-dom@19.3.0?external=react",
+    "react-dom/client": "https://esm.sh/react-dom@19.3.0/client?external=react",
+    "htm": "https://esm.sh/htm@3.1.1"
+  }
+}
+</script>
+<div id="root"></div>
+{{content}}

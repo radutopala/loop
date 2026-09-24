@@ -309,7 +309,7 @@
 
   // Chat components — templates an agent fills with its own HTML, CSS and JS to show a
   // component in the desktop chat (the chat_component MCP tool). "math" (a squared
-  // math notebook page) and "canvas" are built in. A template's files live in ~/.loop/components/<path>/
+  // math notebook page), "canvas" and "react" are built in. A template's files live in ~/.loop/components/<path>/
   // (path defaults to the name): shell.html with a {{content}} slot, style.css and
   // guide.md, each optional. A name matching a built-in replaces it.
   // Project-level configs can override or add templates by name.

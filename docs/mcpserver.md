@@ -74,7 +74,7 @@ Agent (Claude Code)  ←→  MCP Protocol (stdio)  ←→  loop mcp  ←→  HTT
 
 | Tool | Description |
 |------|-------------|
-| `chat_component` | Show a component inline in the desktop chat (action: templates/show). `templates` returns each template with a guide to filling it; `show` takes `template`, `title`, `html` and optional `css`/`js`, and posts the composed document as an agent message in the current channel. Built-in templates: `math`, `canvas`; more under `chat_components` in config. Rejected on Slack and Discord. See [Chat: Components](chat.md#components). |
+| `chat_component` | Show a component inline in the desktop chat (action: templates/show). `templates` returns each template with a guide to filling it; `show` takes `template`, `title`, `html` and optional `css`/`js`, and posts the composed document as an agent message in the current channel. Built-in templates: `math`, `canvas`, `react`; more under `chat_components` in config. Rejected on Slack and Discord. See [Chat: Components](chat.md#components). |
 
 #### Shortcuts
 

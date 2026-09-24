@@ -300,7 +300,7 @@ Shortcuts appear in the terminal footer `$` picker. They mount on **Docker Shell
 | `description` | `string` | What the template is for, shown to the agent. |
 | `path` | `string` | Folder of the template's files, under `.loop/components/` (project) or `~/.loop/components/` (global). Defaults to `name`. |
 
-A template is up to three files, each optional: `shell.html`, the markup the agent's HTML goes into at its `{{content}}` slot; `style.css`; and `guide.md`, which tells the agent which classes and markup to use. A file is read from the project's `.loop/components/<path>/` first, then `~/.loop/components/<path>/`, then from the built-in template of the same name. `math` (a squared math notebook page) and `canvas` are built in; an entry with either name replaces it, keeping whichever built-in files it doesn't supply. See [Components](chat.md#components). The API endpoint `GET /api/components` lists the templates; pass `?channel_id=<id>` to merge project-level ones.
+A template is up to three files, each optional: `shell.html`, the markup the agent's HTML goes into at its `{{content}}` slot; `style.css`; and `guide.md`, which tells the agent which classes and markup to use. A file is read from the project's `.loop/components/<path>/` first, then `~/.loop/components/<path>/`, then from the built-in template of the same name. `math` (a squared math notebook page), `canvas` and `react` are built in; an entry with one of those names replaces it, keeping whichever built-in files it doesn't supply. See [Components](chat.md#components). The API endpoint `GET /api/components` lists the templates; pass `?channel_id=<id>` to merge project-level ones.
 
 #### Review
 
@@ -820,7 +820,7 @@ The merge follows these principles:
     }
   ],
 
-  // Chat component templates (the chat_component MCP tool); math and canvas are built in
+  // Chat component templates (the chat_component MCP tool); math, canvas and react are built in
   "chat_components": [
     {
       "name": "reaction",

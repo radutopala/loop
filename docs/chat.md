@@ -117,6 +117,7 @@ For more than a formula, an agent can show a **component**: a template filled wi
 |---|---|
 | `math` | Math worked step by step on a math notebook page, squared paper with every line of writing on the grid and each fraction across two squares: fractions with a bar, crossed-out factors, highlights and a boxed result, all plain HTML and CSS. The template loads nothing from the network; `$...$` is not rendered inside it, and the agent imports KaTeX in its JS when it needs notation HTML can't carry |
 | `canvas` | Drawing from JS on a `<canvas>`: plots, geometry, diagrams, animations |
+| `react` | An interactive React 19 app on a dark page: forms, calculators, tables, charts from a React library. An import map provides `react`, `react-dom/client` and [htm](https://github.com/developit/htm) by name, and the app mounts on `#root`. There's no build step, so the markup is written with htm's tagged templates rather than JSX. React libraries are imported from esm.sh with `?external=react,react-dom` so they share the page's single copy of React. Everything loads from esm.sh, so this template needs the network |
 
 Projects and `~/.loop/config.json` can add templates or replace these under `chat_components`; see [Chat Components](configuration.md#chat-components).
 
