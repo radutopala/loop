@@ -599,6 +599,48 @@ func (s *ConfigSuite) TestLoadProjectConfigBashShortcutsMerge() {
 	require.Equal(s.T(), "local-only", merged.BashShortcuts[2].Name)
 }
 
+func (s *ConfigSuite) TestLoadProjectConfigChatComponentsMerge() {
+	tests := []struct {
+		name    string
+		global  []ChatComponent
+		project string
+		want    []ChatComponent
+	}{
+		{
+			name:    "project overrides by name and appends new names",
+			global:  []ChatComponent{{Name: "math", Path: "paper"}, {Name: "chart"}},
+			project: `{"chat_components": [{"name": "chart", "description": "project chart"}, {"name": "reaction", "path": "chem"}]}`,
+			want:    []ChatComponent{{Name: "math", Path: "paper"}, {Name: "chart", Description: "project chart"}, {Name: "reaction", Path: "chem"}},
+		},
+		{
+			name:    "no project entries keeps the global ones",
+			global:  []ChatComponent{{Name: "math"}},
+			project: `{}`,
+			want:    []ChatComponent{{Name: "math"}},
+		},
+		{
+			name:    "project entries with no global ones",
+			project: `{"chat_components": [{"name": "math"}, {"name": "math", "path": "second"}]}`,
+			want:    []ChatComponent{{Name: "math", Path: "second"}},
+		},
+	}
+	for _, tc := range tests {
+		s.Run(tc.name, func() {
+			s.setupProjectReadFile(tc.project)
+			base := &Config{ChatComponents: tc.global}
+			merged, err := s.loader.loadProjectConfig("/project", base)
+			require.NoError(s.T(), err)
+			require.Equal(s.T(), tc.want, merged.ChatComponents)
+			require.Equal(s.T(), tc.global, base.ChatComponents)
+		})
+	}
+}
+
+func (s *ConfigSuite) TestChatComponentDir() {
+	require.Equal(s.T(), "/loop/components/math", (&ChatComponent{Name: "math"}).Dir("/loop"))
+	require.Equal(s.T(), "/loop/components/paper", (&ChatComponent{Name: "math", Path: "paper"}).Dir("/loop"))
+}
+
 func (s *ConfigSuite) TestLoadProjectConfigExtraDirs() {
 	s.setupProjectReadFile(`{"extra_dirs": ["/home/user/lib", "/home/user/common"]}`)
 

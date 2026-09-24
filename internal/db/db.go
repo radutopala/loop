@@ -39,6 +39,7 @@ type Store interface {
 	ClaimNextPending(ctx context.Context, channelID string) (*Message, error)
 	ChannelsWithDueDelayedMessages(ctx context.Context) ([]string, error)
 	ReleaseRunningMessage(ctx context.Context, id int64, processed bool) error
+	RunningMessageID(ctx context.Context, channelID string) (string, error)
 	ResetStaleRunningMessages(ctx context.Context) ([]StaleRunningMessage, error)
 	MaxQueuedPriority(ctx context.Context, channelID string) (int, error)
 	ListPendingChannels(ctx context.Context) ([]string, error)

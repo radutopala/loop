@@ -712,6 +712,22 @@ func buildSchema() *ConfigSchema {
 				},
 			},
 
+			// ── Chat Components section ──
+			"chat_components": {
+				Type:        "array",
+				Title:       "Chat Components",
+				Description: "Templates an agent fills with HTML, CSS and JS to show a component in the desktop chat. Built-ins: math, canvas.",
+				XSection:    "Chat Components",
+				Items: &SchemaProperty{
+					Type: "object",
+					Properties: map[string]*SchemaProperty{
+						"name":        {Type: "string", Title: "Name"},
+						"description": {Type: "string", Title: "Description", Description: "Tells the agent when to use this template"},
+						"path":        {Type: "string", Title: "Path", Description: "Directory under ~/.loop/components/ (or .loop/components/ in a project) with shell.html, style.css and guide.md; defaults to the name"},
+					},
+				},
+			},
+
 			// ── Desktop section (Electron app preferences) ──
 			"desktop": {
 				Type:        "object",

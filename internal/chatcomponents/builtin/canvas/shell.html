@@ -1,0 +1,22 @@
+<canvas id="c"></canvas>
+<script>
+  // Keep the canvas's backing store at its CSS box times the screen's pixel
+  // ratio, so drawings stay sharp; window.canvas and window.ctx are ready
+  // for the component's own script. The frame may have no size yet when this
+  // runs (it isn't laid out while the document parses), so a ResizeObserver
+  // resizes it once the box is known and on every change, then fires
+  // "resize" on the canvas: resizing clears it, and a still drawing redraws
+  // from that event.
+  window.canvas = document.getElementById("c");
+  window.ctx = window.canvas.getContext("2d");
+  new ResizeObserver(() => {
+    const w = Math.round(canvas.clientWidth * devicePixelRatio);
+    const h = Math.round(canvas.clientHeight * devicePixelRatio);
+    if (w === canvas.width && h === canvas.height) return;
+    canvas.width = w;
+    canvas.height = h;
+    ctx.setTransform(devicePixelRatio, 0, 0, devicePixelRatio, 0, 0);
+    canvas.dispatchEvent(new Event("resize"));
+  }).observe(window.canvas);
+</script>
+{{content}}

@@ -33,6 +33,7 @@ import type { ColorPalette } from "../../theme";
 import { fonts } from "../../theme";
 import type { Channel, SessionStatus } from "../../types";
 import type { AgentOpenMode, LeafNode, PanelType, PaneNode } from "../../types/panels";
+import { ChatComponentFull, ComponentFocusContext, type ShownComponent } from "../chat/ChatComponent";
 import { ChatView } from "../chat/ChatView";
 import type { FileLinkOpenDetail } from "../chat/FileLink";
 import { AuditPanel } from "../panels/AuditPanel";
@@ -338,6 +339,19 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
   const [showLayoutMenu, setShowLayoutMenu] = useState(false);
   const [showNewLayoutMenu, setShowNewLayoutMenu] = useState(false);
   const [maximizedLeafId, setMaximizedLeafId] = useState<string | null>(null);
+  // A chat component opened across its pane. The pane is maximized while it
+  // shows and restored on close, unless it was maximized already.
+  const [shownComponent, setShownComponent] = useState<{ leafId: string; component: ShownComponent; wasMaximized: boolean } | null>(null);
+  const maximizedLeafIdRef = useRef(maximizedLeafId);
+  maximizedLeafIdRef.current = maximizedLeafId;
+  const openComponent = useCallback((leafId: string, component: ShownComponent) => {
+    setShownComponent({ leafId, component, wasMaximized: maximizedLeafIdRef.current === leafId });
+    setMaximizedLeafId(leafId);
+  }, []);
+  const closeComponent = useCallback(() => {
+    if (shownComponent && !shownComponent.wasMaximized) setMaximizedLeafId(null);
+    setShownComponent(null);
+  }, [shownComponent]);
   const [minimizedLeaves, setMinimizedLeaves] = useState<Set<string>>(new Set());
 
   // Close layout menu on outside click.
@@ -399,6 +413,7 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
       }
       setAgentState("none");
       setMaximizedLeafId(null);
+      setShownComponent(null);
     }
   }, [channelId]);
 
@@ -433,6 +448,7 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
       }
       setAgentState("none");
       setMaximizedLeafId(null);
+      setShownComponent(null);
       saveActiveLayout(channelId, name);
     },
     [channelId],
@@ -607,6 +623,7 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
       }
       statusMapRef.current.delete(id);
       setMaximizedLeafId((prev) => (prev === id ? null : prev));
+      setShownComponent((prev) => (prev?.leafId === id ? null : prev));
       setTree((prev) => {
         if (!prev) return prev;
         if (leafCount(prev) <= 1) {
@@ -821,14 +838,19 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
       switch (leaf.panel) {
         case "chat":
           return (
-            <ChatView
-              key={`layout-chat-${channelId}`}
-              channelId={channelId}
-              chatState={chatState}
-              roots={editorState.roots}
-              scrollToMessageId={scrollToMessageId}
-              onScrollComplete={onScrollComplete}
-            />
+            <ComponentFocusContext.Provider value={(c) => openComponent(leaf.id, c)}>
+              <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", minHeight: 0, position: "relative" }}>
+                <ChatView
+                  key={`layout-chat-${channelId}`}
+                  channelId={channelId}
+                  chatState={chatState}
+                  roots={editorState.roots}
+                  scrollToMessageId={scrollToMessageId}
+                  onScrollComplete={onScrollComplete}
+                />
+                {shownComponent?.leafId === leaf.id && <ChatComponentFull component={shownComponent.component} onClose={closeComponent} />}
+              </div>
+            </ComponentFocusContext.Provider>
           );
         case "editor":
           return (
@@ -972,6 +994,9 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
       subscribeChatEvents,
       registerReviewView,
       tree,
+      openComponent,
+      shownComponent,
+      closeComponent,
     ],
   );
 

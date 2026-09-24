@@ -32,6 +32,7 @@ type ChannelLister interface {
 	DeleteChannelsByParentID(ctx context.Context, parentID string) error
 	ListDistinctMemoryFilePaths(ctx context.Context, dirPath string) ([]db.MemoryFileInfo, error)
 	InsertMessage(ctx context.Context, msg *db.Message) error
+	RunningMessageID(ctx context.Context, channelID string) (string, error)
 	DeleteQueuedMessage(ctx context.Context, channelID, msgID string) (bool, error)
 	SteerQueuedMessage(ctx context.Context, channelID, msgID string) (bool, error)
 	ReorderQueuedMessages(ctx context.Context, channelID string, orderedMsgIDs []string) error

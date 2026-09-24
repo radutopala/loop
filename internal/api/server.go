@@ -389,6 +389,8 @@ func (s *Server) registerTaskRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/shortcuts", s.handleListShortcuts)
 	mux.HandleFunc("POST /api/shortcuts", s.handleModifyShortcut)
 	mux.HandleFunc("GET /api/bash-shortcuts", s.handleListBashShortcuts)
+	mux.HandleFunc("GET /api/components", s.handleListComponents)
+	mux.HandleFunc("POST /api/components", s.handleShowComponent)
 	mux.HandleFunc("POST /api/bash-shortcuts", s.handleModifyBashShortcut)
 	mux.HandleFunc("POST /api/commands", s.handleCommand)
 }

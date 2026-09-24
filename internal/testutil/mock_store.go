@@ -136,6 +136,11 @@ func (m *MockStore) ReleaseRunningMessage(ctx context.Context, id int64, process
 	return m.Called(ctx, id, processed).Error(0)
 }
 
+func (m *MockStore) RunningMessageID(ctx context.Context, channelID string) (string, error) {
+	args := m.Called(ctx, channelID)
+	return args.String(0), args.Error(1)
+}
+
 func (m *MockStore) ResetStaleRunningMessages(ctx context.Context) ([]db.StaleRunningMessage, error) {
 	args := m.Called(ctx)
 	if args.Get(0) == nil {

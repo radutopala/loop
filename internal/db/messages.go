@@ -4,6 +4,7 @@ package db
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"strings"
 )
@@ -122,6 +123,21 @@ func (s *SQLiteStore) ReleaseRunningMessage(ctx context.Context, id int64, proce
 		boolToInt(processed), id,
 	)
 	return err
+}
+
+// RunningMessageID returns the msg_id of the user message whose run is in
+// progress in the channel, or "" when none is — so a bot row posted mid-run
+// from outside the orchestrator can join that run's group in the chat.
+func (s *SQLiteStore) RunningMessageID(ctx context.Context, channelID string) (string, error) {
+	var msgID string
+	err := s.db.QueryRowContext(ctx,
+		`SELECT msg_id FROM messages WHERE channel_id = ? AND is_running = 1 AND kind = 'message' ORDER BY id DESC LIMIT 1`,
+		channelID,
+	).Scan(&msgID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	}
+	return msgID, err
 }
 
 // ResetStaleRunningMessages clears is_running=1 left over from a previous daemon

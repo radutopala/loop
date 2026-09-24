@@ -70,6 +70,12 @@ Agent (Claude Code)  ←→  MCP Protocol (stdio)  ←→  loop mcp  ←→  HTT
 | `playground_file` | Manage files within a playground (action: create/update/read/delete/list). Write script.js, style.css, importmap.json, lib/utils.js, etc. Files served at relative URLs for ES module imports. |
 | `playground_share` | Expose a playground publicly over a cloudflared quick tunnel, or stop (action: share/unshare). `share` returns a unique public URL; idempotent per playground. Requires `playground_share.enabled`. See [Playground: Public sharing](playground.md#public-sharing). |
 
+#### Chat Components
+
+| Tool | Description |
+|------|-------------|
+| `chat_component` | Show a component inline in the desktop chat (action: templates/show). `templates` returns each template with a guide to filling it; `show` takes `template`, `title`, `html` and optional `css`/`js`, and posts the composed document as an agent message in the current channel. Built-in templates: `math`, `canvas`; more under `chat_components` in config. Rejected on Slack and Discord. See [Chat: Components](chat.md#components). |
+
 #### Shortcuts
 
 | Tool | Description |

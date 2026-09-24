@@ -282,6 +282,26 @@ Shortcuts appear in the chat input when the user types `#`. Selecting a shortcut
 
 Shortcuts appear in the terminal footer `$` picker. They mount on **Docker Shell** and **Host Shell** panes (raw bash, sent with a trailing newline) and on **Docker Agent** panes (Claude TUI, sent as a bracketed paste + `\r` so multi-line scripts arrive as a single paste buffer). The `#` prompt picker and the `$` bash picker are mutually exclusive on a given pane — Docker Agent panes show `#`, raw-shell panes show `$`. The API endpoint `GET /api/bash-shortcuts` returns shortcuts with resolved command text; pass `?channel_id=<id>` to merge project-level shortcuts. Agents can manage them via the `bash_shortcut` MCP tool or the `POST /api/bash-shortcuts` endpoint.
 
+#### Chat Components
+
+```jsonc
+"chat_components": [
+  {
+    "name": "reaction",
+    "description": "A chemical reaction, balanced step by step",
+    "path": "reaction"
+  }
+]
+```
+
+| Field | Type | Description |
+|---|---|---|
+| `name` | `string` | Template name the agent passes to the `chat_component` tool. Lowercase letters, digits, `-` and `_`. |
+| `description` | `string` | What the template is for, shown to the agent. |
+| `path` | `string` | Folder of the template's files, under `.loop/components/` (project) or `~/.loop/components/` (global). Defaults to `name`. |
+
+A template is up to three files, each optional: `shell.html`, the markup the agent's HTML goes into at its `{{content}}` slot; `style.css`; and `guide.md`, which tells the agent which classes and markup to use. A file is read from the project's `.loop/components/<path>/` first, then `~/.loop/components/<path>/`, then from the built-in template of the same name. `math` (a squared math notebook page) and `canvas` are built in; an entry with either name replaces it, keeping whichever built-in files it doesn't supply. See [Components](chat.md#components). The API endpoint `GET /api/components` lists the templates; pass `?channel_id=<id>` to merge project-level ones.
+
 #### Review
 
 Enables and configures the Review panel (see [review.md](review.md)).
@@ -606,6 +626,7 @@ Not all global fields are available in project configs. The following fields can
 | `permissions` | **Replaces** global permissions entirely when set. |
 | `task_templates` | **Merged** by name. Project templates override global templates with the same name; new names are appended. |
 | `prompt_shortcuts` | **Merged** by name. Project shortcuts override global shortcuts with the same name; new names are appended. |
+| `chat_components` | **Merged** by name. Project templates override global and built-in templates with the same name; new names are appended. |
 | `workflows` | **Merged** by name. Project workflows override global workflows with the same name; new names are appended. |
 | `workflow_concurrency.max_concurrent_runs` | **Overrides** global value when > 0. |
 | `workflow_concurrency.max_concurrent_nodes` | **Overrides** global value when > 0. |
@@ -799,6 +820,14 @@ The merge follows these principles:
     }
   ],
 
+  // Chat component templates (the chat_component MCP tool); math and canvas are built in
+  "chat_components": [
+    {
+      "name": "reaction",
+      "description": "A chemical reaction, balanced step by step"
+    }
+  ],
+
   // Workflows — declarative DAG pipelines
   "workflows": [],
 
@@ -942,6 +971,15 @@ The merge follows these principles:
   //    "name": "lint",
   //    "description": "Run linter",
   //    "prompt": "Run make lint and fix any issues"
+  //  }
+  //],
+
+  // Chat component templates (merged by name; project overrides global and built-in templates with same name)
+  // Files load from .loop/components/<path>/, falling back to ~/.loop/components/<path>/
+  //"chat_components": [
+  //  {
+  //    "name": "reaction",
+  //    "description": "A chemical reaction, balanced step by step"
   //  }
   //],
 

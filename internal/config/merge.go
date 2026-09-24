@@ -8,6 +8,7 @@ import (
 	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -44,6 +45,7 @@ type projectConfig struct {
 	WorkflowConcurrency                      *WorkflowConcurrency       `json:"workflow_concurrency"`
 	PromptShortcuts                          []PromptShortcut           `json:"prompt_shortcuts"`
 	BashShortcuts                            []BashShortcut             `json:"bash_shortcuts"`
+	ChatComponents                           []ChatComponent            `json:"chat_components"`
 	Memory                                   *jsonMemoryConfig          `json:"memory"`
 	Quality                                  *jsonQualityConfig         `json:"quality"`
 	Permissions                              *jsonPermissionsConfig     `json:"permissions"`
@@ -511,6 +513,9 @@ func (l *Loader) loadProjectConfig(workDir string, mainConfig *Config) (*Config,
 		merged.BashShortcuts = mergedShortcuts
 	}
 
+	// Chat components: project templates override global ones by name.
+	merged.ChatComponents = mergeByName(merged.ChatComponents, pc.ChatComponents, func(c ChatComponent) string { return c.Name })
+
 	// ExtraDirs: project replaces global when set.
 	if len(pc.ExtraDirs) > 0 {
 		merged.ExtraDirs = pc.ExtraDirs
@@ -561,4 +566,27 @@ func mergeCookieImport(merged *CookieImportConfig, pc *jsonCookieImportConfig) {
 	if pc.Auto != nil {
 		merged.Auto = *pc.Auto
 	}
+}
+
+// mergeByName layers overlay onto base: an overlay entry replaces the base
+// entry with the same name in place, and new names are appended. base is
+// never mutated.
+func mergeByName[T any](base, overlay []T, name func(T) string) []T {
+	if len(overlay) == 0 {
+		return base
+	}
+	out := slices.Clone(base)
+	idx := make(map[string]int, len(out))
+	for i, it := range out {
+		idx[name(it)] = i
+	}
+	for _, it := range overlay {
+		if i, ok := idx[name(it)]; ok {
+			out[i] = it
+			continue
+		}
+		idx[name(it)] = len(out)
+		out = append(out, it)
+	}
+	return out
 }

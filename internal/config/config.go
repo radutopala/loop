@@ -43,6 +43,7 @@ type jsonConfig struct {
 	WorkflowConcurrency                      *WorkflowConcurrency       `json:"workflow_concurrency"`
 	PromptShortcuts                          []PromptShortcut           `json:"prompt_shortcuts"`
 	BashShortcuts                            []BashShortcut             `json:"bash_shortcuts"`
+	ChatComponents                           []ChatComponent            `json:"chat_components"`
 	Mounts                                   []string                   `json:"mounts"`
 	HTTPProxy                                string                     `json:"http_proxy"`
 	HTTPSProxy                               string                     `json:"https_proxy"`
@@ -418,6 +419,7 @@ func (l *Loader) parse() (*Config, error) {
 	}
 	cfg.PromptShortcuts = jc.PromptShortcuts
 	cfg.BashShortcuts = jc.BashShortcuts
+	cfg.ChatComponents = jc.ChatComponents
 	cfg.Mounts = jc.Mounts
 	cfg.HTTPProxy = jc.HTTPProxy
 	cfg.HTTPSProxy = jc.HTTPSProxy

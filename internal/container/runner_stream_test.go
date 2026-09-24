@@ -216,6 +216,9 @@ func TestSummarizeToolInput(t *testing.T) {
 		{"fallback over cap truncated", "WebSearch", `{"query":"` + strings.Repeat("y", toolInputSummaryMax+100) + `"}`, strings.Repeat("y", toolInputSummaryMax) + "..."},
 		{"AskUserQuestion raw", "AskUserQuestion", `{"questions":[{"question":"What?"}]}`, `{"questions":[{"question":"What?"}]}`},
 		{"ExitPlanMode raw", "ExitPlanMode", `{"plan":"# My Plan","planFilePath":"/tmp/p.md"}`, `{"plan":"# My Plan","planFilePath":"/tmp/p.md"}`},
+		{"chat_component show", "mcp__loop__chat_component", `{"action":"show","template":"math","title":"Fracții","html":"<p>x</p>"}`, "math: Fracții"},
+		{"chat_component untitled", "mcp__loop__chat_component", `{"action":"show","template":"canvas","js":"draw()"}`, "canvas"},
+		{"chat_component templates", "mcp__loop__chat_component", `{"action":"templates"}`, "templates"},
 		{"TodoWrite raw", "TodoWrite", `{"todos":[{"content":"Do thing","status":"pending","activeForm":"Doing thing"}]}`, `{"todos":[{"content":"Do thing","status":"pending","activeForm":"Doing thing"}]}`},
 	}
 	for _, tc := range tests {
