@@ -4,8 +4,9 @@ Feature: Prompt Shortcuts Journey
   and the # picker works with keyboard navigation.
 
   Scenario: Shortcut picker shows shortcuts and sends prompt
-    # Pre-seed a shortcut via API
+    # Pre-seed shortcuts via API
     Given I add a prompt shortcut "bdd-test-lint" with prompt "Run make lint and report results" via API
+    And I add a prompt shortcut "bdd-other" with prompt "Something else" via API
 
     # Set up channel and open browser
     Given I set up a test channel via API for directory "/tmp/bdd-shortcuts"
@@ -22,9 +23,26 @@ Feature: Prompt Shortcuts Journey
     Then I wait for text "#bdd-test-lint" to appear
     And the page should contain text "bdd-test-lint"
 
+    # The button types the # itself, so typing after it filters the picker
+    And the field "textarea" should hold "#"
+    And the page should contain text "#bdd-other"
+    When I type "bdd-test" into "textarea"
+    Then the field "textarea" should hold "#bdd-test"
+    And I wait for text "#bdd-other" to disappear
+    And the page should contain text "#bdd-test-lint"
+
     # Close by pressing Escape
     When I press Escape
     Then I wait for text "#bdd-test-lint" to disappear
+    And the field "textarea" should hold "#bdd-test"
+
+    # Closing without typing takes the button's # back out
+    When I clear the "textarea" field
+    And I click on the button with title "Prompt shortcuts"
+    Then I wait for text "#bdd-test-lint" to appear
+    When I press Escape
+    Then I wait for text "#bdd-test-lint" to disappear
+    And the field "textarea" should hold ""
 
     # Type # into textarea to trigger the picker via keyboard
     When I type "#" into "textarea"

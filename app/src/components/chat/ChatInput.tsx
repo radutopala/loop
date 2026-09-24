@@ -279,6 +279,9 @@ export function ChatInput({
   const [showShortcuts, setShowShortcuts] = useState(false);
   const [filteredShortcuts, setFilteredShortcuts] = useState<PromptShortcut[]>([]);
   const [shortcutSelectedIdx, setShortcutSelectedIdx] = useState(0);
+  // Set while the # the button typed is all the composer holds, so closing
+  // the picker without picking takes it back out.
+  const buttonHashRef = useRef(false);
   const [sendMode, setSendMode] = useState<SendMode>(() => normalizeSendMode(storageGetJSON<string>(SEND_MODE_KEY)));
   const [showSendMenu, setShowSendMenu] = useState(false);
   // Optimistic stop: flip to true on stop press, so the UI updates instantly
@@ -593,9 +596,36 @@ export function ChatInput({
     [shortcuts],
   );
 
+  // The # button types the # itself when the composer is empty, so typing
+  // after it filters the picker the same as typing # by hand.
+  const openShortcutPicker = useCallback(() => {
+    if (text.trim() === "") {
+      setText("#");
+      draftText.set(channelId, "#");
+      buttonHashRef.current = true;
+    }
+    // A draft that already starts with # keeps filtering by what follows it.
+    if (text.trimStart().startsWith("#")) updateShortcutDropdown(text);
+    else {
+      setFilteredShortcuts(shortcuts);
+      setShortcutSelectedIdx(0);
+      setShowShortcuts(true);
+    }
+    inputRef.current?.focus();
+  }, [text, channelId, shortcuts, updateShortcutDropdown]);
+
+  const closeShortcutPicker = useCallback(() => {
+    setShowShortcuts(false);
+    if (!buttonHashRef.current) return;
+    buttonHashRef.current = false;
+    setText("");
+    draftText.delete(channelId);
+  }, [channelId]);
+
   const acceptShortcut = useCallback(
     async (shortcut: PromptShortcut) => {
       setShowShortcuts(false);
+      buttonHashRef.current = false;
       setText("");
       draftText.delete(channelId);
       setSending(true);
@@ -620,6 +650,7 @@ export function ChatInput({
   const handleChange = useCallback(
     (e: React.ChangeEvent<HTMLTextAreaElement>) => {
       const val = e.target.value;
+      buttonHashRef.current = false;
       setText(val);
       if (val) draftText.set(channelId, val);
       else draftText.delete(channelId);
@@ -773,7 +804,7 @@ export function ChatInput({
           return;
         }
         if (e.key === "Escape") {
-          setShowShortcuts(false);
+          closeShortcutPicker();
           return;
         }
       }
@@ -881,6 +912,7 @@ export function ChatInput({
       filteredShortcuts,
       shortcutSelectedIdx,
       acceptShortcut,
+      closeShortcutPicker,
       showFilePicker,
       filePickerResults,
       filePickerIdx,
@@ -1043,16 +1075,7 @@ export function ChatInput({
               fontWeight: 600,
             }}
             title="Prompt shortcuts"
-            onClick={() => {
-              if (showShortcuts) {
-                setShowShortcuts(false);
-              } else {
-                setFilteredShortcuts(shortcuts);
-                setShortcutSelectedIdx(0);
-                setShowShortcuts(true);
-                inputRef.current?.focus();
-              }
-            }}
+            onClick={showShortcuts ? closeShortcutPicker : openShortcutPicker}
           >
             #
           </button>
