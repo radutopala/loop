@@ -72,7 +72,7 @@ List all channels with optional filtering. Enriches each channel with container 
 **Behavior notes:**
 - When a channel has no `dir_path`, falls back to `~/.loop/{channel_id}/work`.
 - `container_running` is determined by querying the Docker daemon for running containers.
-- `agent_running` indicates whether an active Claude agent run exists for the channel.
+- `agent_running` indicates whether an active Claude agent run exists for the channel. A run is registered before its `agent.status` "running" event is broadcast, so a response to a request made after that event reflects the run.
 - `branch` is resolved by running `git rev-parse --abbrev-ref HEAD` in the channel's directory.
 - `commit` is the short commit hash from `git rev-parse --short HEAD`, and `subject` its subject line.
 - `upstream` is the branch's tracking branch (e.g. `origin/main`), with `ahead` / `behind` counting the commits between them. Omitted when there's none.

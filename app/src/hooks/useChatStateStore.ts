@@ -56,6 +56,8 @@ export type ChatEventListener = (event: WSEvent) => void;
 interface UseChatStateStoreOptions {
   /** All known channels (used to seed isRunning from channel.agent_running). */
   channels: { id: string; name: string; agent_running: boolean }[];
+  /** performance.now() when the fetch that produced `channels` started. */
+  channelsFetchedAt?: number;
   /** Currently selected channel ID. */
   selectedId: string | null;
   /** Callback for app-level events on the selected channel (channel.created/deleted, diff refresh). */
@@ -77,9 +79,12 @@ const SIDEBAR_EVENTS = new Set(["channel.created", "channel.deleted", "channel.u
  * Events for non-selected running channels silently update the store so state
  * is warm when switching.
  */
-export function useChatStateStore({ channels, selectedId, onAppEvent }: UseChatStateStoreOptions) {
+export function useChatStateStore({ channels, channelsFetchedAt, selectedId, onAppEvent }: UseChatStateStoreOptions) {
   const storeRef = useRef(new Map<string, ActiveChatState>());
   const isRunningMapRef = useRef(new Map<string, string>());
+  // performance.now() of each channel's last agent.status "running" event,
+  // keyed like isRunningMap (thread_id || channel_id).
+  const lastRunningAtRef = useRef(new Map<string, number>());
   // req_ids of gate approvals injected via the loop:test-event hook; exempt
   // from rehydrate reconciliation (they have no backend counterpart). Only
   // populated by the test hook — empty in production.
@@ -182,6 +187,28 @@ export function useChatStateStore({ channels, selectedId, onAppEvent }: UseChatS
       }
     }
   }, [channels]);
+
+  // Clear a leftover Stop once a channel list proves the run ended: the
+  // "done" events can be lost (WS reconnect), and a stale list can light
+  // Stop at mount with nothing to turn it off. Only a fetch that started
+  // after the channel's last "running" event counts — the backend registers
+  // a run before broadcasting "running", so such a fetch can't miss a live
+  // one. A synthetic status event reuses both clear paths: the stored state
+  // and, for the open channel, the live view.
+  useEffect(() => {
+    if (channelsFetchedAt === undefined) return;
+    for (const ch of channels) {
+      if (!confirmedIdle(ch.agent_running, channelsFetchedAt, lastRunningAtRef.current.get(ch.id))) continue;
+      const state = storeRef.current.get(ch.id);
+      if (!isRunningMapRef.current.has(ch.id) && !state?.isRunning) continue;
+      const event: WSEvent = { type: "agent.status", channel_id: ch.id, data: { status: "completed" }, timestamp: Date.now() };
+      if (state) applyEvent(state, event);
+      isRunningMapRef.current.delete(ch.id);
+      if (ch.id === selectedIdRef.current) {
+        for (const listener of chatListenersRef.current) listener(event);
+      }
+    }
+  }, [channels, channelsFetchedAt]);
 
   // Pull the gate's current pending-approval list and reconcile both the
   // renderer's gateApprovals map and the electron-main dock-bouncer set
@@ -553,6 +580,7 @@ export function useChatStateStore({ channels, selectedId, onAppEvent }: UseChatS
       const runTarget = data.thread_id || channelId;
       if (data.status === "running") {
         runMap.set(runTarget, data.run_id ?? "");
+        lastRunningAtRef.current.set(runTarget, performance.now());
       } else {
         // Clear the primary target (thread or channel).
         const finishing = data.run_id ?? "";
@@ -804,7 +832,7 @@ export function useChatStateStore({ channels, selectedId, onAppEvent }: UseChatS
 
 // ── Helpers ──
 
-function createEmptyState(): ActiveChatState {
+export function createEmptyState(): ActiveChatState {
   return {
     streamingContent: null,
     isRunning: false,
@@ -826,8 +854,16 @@ function isRunningEvent(event: WSEvent): boolean {
   return ["message.streaming", "tool.use", "agent.activity", "agent.ask_user", "agent.exit_plan", "agent.tasks", "agent.status", "gate.approval_requested"].includes(event.type);
 }
 
+/**
+ * Whether a channel list entry proves the channel's run has ended: it says no
+ * agent is running and its fetch started after the last "running" event.
+ */
+export function confirmedIdle(agentRunning: boolean, fetchStartedAt: number, lastRunningAt: number | undefined): boolean {
+  return !agentRunning && fetchStartedAt > (lastRunningAt ?? 0);
+}
+
 /** Mutates `state` in place based on the event. */
-function applyEvent(state: ActiveChatState, event: WSEvent): void {
+export function applyEvent(state: ActiveChatState, event: WSEvent): void {
   switch (event.type) {
     case "message.streaming": {
       const data = event.data as MessageStreamingData;
@@ -898,6 +934,12 @@ function applyEvent(state: ActiveChatState, event: WSEvent): void {
     }
     case "messages.processed": {
       const data = event.data as MessagesProcessedData;
+      // Same end-of-turn clear as the live view (useChatState): a channel
+      // that finished in the background must not remount with a stuck stop
+      // button when its agent.status "done" was missed. A queued next turn
+      // re-lights via its own agent.status "running".
+      state.isRunning = false;
+      state.runId = null;
       if (state.processingMsgId && data.msg_ids.includes(state.processingMsgId)) {
         state.processingMsgId = null;
       }

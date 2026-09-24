@@ -42,6 +42,10 @@ interface ChatState {
 
 The `isRunning` flag is scoped per agent run via a `run_id` tracked internally by the state hooks. When a scheduled task and a chat agent run concurrently on the same channel, each has a unique `run_id` — the task completing only clears its own running state, not the chat agent's.
 
+`messages.processed` is a second end-of-turn signal: it also clears `isRunning`, both in the open chat and in the background store that a channel restores from when you switch back to it. A run that finishes while another channel is open therefore can't leave a stuck Stop button behind, even if its `agent.status` "done" was missed. A queued next turn turns it back on with its own `agent.status` "running".
+
+The channel list is the last resort. If both end-of-turn events were lost (for example while the WebSocket reconnected), or a stale list turned Stop on when the chat mounted, the next channel-list fetch clears it. That fetch happens when the channel is opened and every 30 seconds. It only counts if it started after the channel's last `agent.status` "running" event and reports `agent_running: false`. An older fetch could predate the run, so it is ignored. This is safe because the backend registers every chat and task run before it broadcasts "running".
+
 ---
 
 ## Message Rendering
