@@ -516,6 +516,21 @@ func (e *TaskExecutor) ExecuteTask(ctx context.Context, task *db.ScheduledTask) 
 	// on the same channel (e.g. a scheduled task vs. a chat agent).
 	runID := randutil.HexID(8)
 
+	runCtx, runCancel := context.WithTimeout(ctx, containerTimeout)
+	defer runCancel()
+
+	// Register cancel func so the stop button can cancel this task run.
+	// Key is req.ChannelID (thread ID for subsequent local runs, parent
+	// channel ID for first runs). Two different tasks on the same parent
+	// channel both on their first run simultaneously would collide here,
+	// but this is an extremely rare edge case. Registered before the running
+	// broadcast, so a channel list fetched after that event reports
+	// agent_running (the desktop app trusts such a fetch to clear Stop).
+	if e.activeRuns != nil {
+		e.activeRuns.Store(req.ChannelID, runCancel)
+		defer e.activeRuns.Delete(req.ChannelID)
+	}
+
 	// Broadcast running status. For subsequent runs, broadcast to both the
 	// thread (for direct subscribers) and the parent (with thread_id set, for
 	// subscription bootstrap). The frontend routes the parent event to the
@@ -526,19 +541,6 @@ func (e *TaskExecutor) ExecuteTask(ctx context.Context, task *db.ScheduledTask) 
 			e.events.BroadcastAgentStatus(threadID, status)
 		}
 		e.events.BroadcastAgentStatus(task.ChannelID, status)
-	}
-
-	runCtx, runCancel := context.WithTimeout(ctx, containerTimeout)
-	defer runCancel()
-
-	// Register cancel func so the stop button can cancel this task run.
-	// Key is req.ChannelID (thread ID for subsequent local runs, parent
-	// channel ID for first runs). Two different tasks on the same parent
-	// channel both on their first run simultaneously would collide here,
-	// but this is an extremely rare edge case.
-	if e.activeRuns != nil {
-		e.activeRuns.Store(req.ChannelID, runCancel)
-		defer e.activeRuns.Delete(req.ChannelID)
 	}
 
 	resp, err := e.runner.Run(runCtx, req)

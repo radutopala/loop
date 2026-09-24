@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { WSEvent } from "../types";
-import { applyEvent, createEmptyState } from "./useChatStateStore";
+import { applyEvent, confirmedIdle, createEmptyState } from "./useChatStateStore";
 
 function runningState() {
   const state = createEmptyState();
@@ -33,6 +33,23 @@ describe("applyEvent messages.processed", () => {
       expect(state.isRunning).toBe(false);
       expect(state.runId).toBeNull();
       expect(state.processingMsgId).toBe(tc.wantProcessing);
+    });
+  }
+});
+
+describe("confirmedIdle", () => {
+  // Only a fetch that started after the last "running" event can prove the
+  // run ended; an older one may predate the run and hide a live Stop.
+  const cases: { name: string; agentRunning: boolean; fetchStartedAt: number; lastRunningAt: number | undefined; want: boolean }[] = [
+    { name: "idle, fetched after the run started", agentRunning: false, fetchStartedAt: 200, lastRunningAt: 100, want: true },
+    { name: "idle, no run seen", agentRunning: false, fetchStartedAt: 200, lastRunningAt: undefined, want: true },
+    { name: "idle, fetched before the run started", agentRunning: false, fetchStartedAt: 100, lastRunningAt: 200, want: false },
+    { name: "idle, fetched at the same instant", agentRunning: false, fetchStartedAt: 100, lastRunningAt: 100, want: false },
+    { name: "still running", agentRunning: true, fetchStartedAt: 200, lastRunningAt: 100, want: false },
+  ];
+  for (const tc of cases) {
+    it(tc.name, () => {
+      expect(confirmedIdle(tc.agentRunning, tc.fetchStartedAt, tc.lastRunningAt)).toBe(tc.want);
     });
   }
 });

@@ -75,6 +75,10 @@ export default function App() {
 function AppInner() {
   const { colors } = useTheme();
   const [channels, setChannels] = useState<Channel[]>([]);
+  // performance.now() when the fetch behind `channels` started; the chat store
+  // trusts agent_running=false only from fetches newer than a run's start.
+  const [channelsFetchedAt, setChannelsFetchedAt] = useState<number | undefined>(undefined);
+  const channelsFetchedAtRef = useRef(0);
   const [selectedId, setSelectedId] = useState<string | null>(getHashChannelId);
   const [ready, setReady] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -224,6 +228,7 @@ function AppInner() {
 
   const loadChannels = useCallback(async () => {
     if (!ready) return;
+    const startedAt = performance.now();
     try {
       let chs = await fetchChannels();
       // Ensure a DM channel exists (once per session).
@@ -239,7 +244,11 @@ function AppInner() {
           }
         }
       }
+      // A slower, older fetch must not overwrite a newer one's list.
+      if (startedAt < channelsFetchedAtRef.current) return;
+      channelsFetchedAtRef.current = startedAt;
       setChannels(chs);
+      setChannelsFetchedAt(startedAt);
     } catch {
       /* will retry on next poll */
     }
@@ -336,6 +345,7 @@ function AppInner() {
   const { getState, saveState, isRunningMapRef, unreadIdsRef, pillsRef, unreadCount, markRead, markAllRead, registerReviewView, clearAskUserPill, clearPlanPill, subscribeChatEvents } =
     useChatStateStore({
       channels,
+      channelsFetchedAt,
       selectedId,
       onAppEvent,
     });
