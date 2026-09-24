@@ -253,6 +253,9 @@ func registerFrontendSteps(ctx *godog.ScenarioContext, tc *TestContext) {
 	ctx.Step(`^I serve a chat history of (\d+) messages from the timeline$`, tc.serveChatHistory)
 	ctx.Step(`^I scroll the chat to the top and note the first message$`, tc.scrollChatToTopNotingFirst)
 	ctx.Step(`^an older page loads above the noted message without moving it$`, tc.assertOlderPageKeepsNoted)
+	ctx.Step(`^I inject an agent\.status completed event$`, tc.injectAgentStatusCompleted)
+	ctx.Step(`^no chat message should appear twice$`, tc.assertNoDuplicateChatMessages)
+	ctx.Step(`^the chat fetches its latest messages again$`, tc.waitForTimelineHeadRefetch)
 	ctx.Step(`^I inject (\d+) bot messages with content "([^"]*)"$`, tc.injectBotMessages)
 	ctx.Step(`^I inject a user message with content "([^"]*)"$`, tc.injectUserMessage)
 	ctx.Step(`^I inject a bot message with:$`, tc.injectBotMessage)
@@ -2395,7 +2398,8 @@ func (tc *TestContext) assertElementInsideWindow(selector string) error {
 
 // serveChatHistory answers the chat's timeline requests in the page with a
 // history of n bot messages, "hist-0" (oldest) to "hist-<n-1>", paged by the
-// request's limit and cursor like the API. The harness can't store old
+// request's limit and cursor like the API. Requests for the latest page are
+// counted in window.__timelineHeadFetches. The harness can't store old
 // messages, and paging needs more than a page of them.
 func (tc *TestContext) serveChatHistory(countStr string) error {
 	n, err := strconv.Atoi(countStr)
@@ -2412,7 +2416,9 @@ func (tc *TestContext) serveChatHistory(countStr string) error {
 			const url = new URL(typeof input === "string" ? input : input.url, location.href);
 			if (!url.pathname.endsWith("/channels/" + channel + "/timeline")) return realFetch(input, init);
 			const limit = Number(url.searchParams.get("limit") || 50);
-			const before = url.searchParams.has("cursor_position") ? Number(url.searchParams.get("cursor_position")) : total + 1;
+			const head = !url.searchParams.has("cursor_position");
+			if (head) window.__timelineHeadFetches = (window.__timelineHeadFetches || 0) + 1;
+			const before = head ? total + 1 : Number(url.searchParams.get("cursor_position"));
 			const items = [];
 			for (let pos = before - 1; pos >= 1 && items.length < limit; pos--) {
 				const i = pos - 1;
@@ -2476,4 +2482,53 @@ func (tc *TestContext) assertOlderPageKeepsNoted() error {
 		return fmt.Errorf("the noted message moved %.0fpx on screen when the older page loaded", moved)
 	}
 	return nil
+}
+
+// injectAgentStatusCompleted fires a synthetic agent.status "completed"
+// event for the run injectAgentStatusRunning started, which ends it and
+// makes the chat refetch the head of its timeline.
+func (tc *TestContext) injectAgentStatusCompleted() error {
+	if tc.ChannelID == "" {
+		return fmt.Errorf("no channel_id set; use 'I set up a test channel via API' step first")
+	}
+	payload, err := json.Marshal(map[string]any{
+		"type":       "agent.status",
+		"channel_id": tc.ChannelID,
+		"data": map[string]any{
+			"status": "completed",
+			"run_id": "bdd-run-1",
+		},
+	})
+	if err != nil {
+		return fmt.Errorf("marshalling agent.status payload: %w", err)
+	}
+	return tc.dispatchTestEvents(payload)
+}
+
+// assertNoDuplicateChatMessages checks that every message bubble in the chat
+// is shown once.
+func (tc *TestContext) assertNoDuplicateChatMessages() error {
+	var dupes []string
+	js := `(() => {
+		const seen = new Set(), dupes = new Set();
+		for (const el of document.querySelectorAll('[data-msg-uuid]')) {
+			const id = el.dataset.msgUuid;
+			if (seen.has(id)) dupes.add(id);
+			seen.add(id);
+		}
+		return [...dupes];
+	})()`
+	if err := chromedp.Run(tc.chromeTab.ctx, chromedp.Evaluate(js, &dupes)); err != nil {
+		return err
+	}
+	if len(dupes) > 0 {
+		return fmt.Errorf("%d chat messages are shown more than once, e.g. %q", len(dupes), dupes[0])
+	}
+	return nil
+}
+
+// waitForTimelineHeadRefetch waits for the chat to ask the served history
+// for its latest page a second time, as it does when a run ends.
+func (tc *TestContext) waitForTimelineHeadRefetch() error {
+	return chromedp.Run(tc.chromeTab.ctx, chromedp.Poll(`(window.__timelineHeadFetches || 0) >= 2`, nil, chromedp.WithPollingTimeout(10*time.Second)))
 }
