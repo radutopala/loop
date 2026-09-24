@@ -232,7 +232,7 @@ export function useChatState(channelId: string | null, initialRunningBot?: boole
           setStreamingContent(null);
         }
         appendLiveMessage({
-          id: event.timestamp,
+          id: data.id ?? 0,
           channel_id: event.channel_id,
           msg_id: data.msg_id,
           author_id: data.author_id,

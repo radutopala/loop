@@ -3,6 +3,8 @@ import { resolveAsk, resolvePlan } from "../../api/channels";
 import { useTheme } from "../../ThemeContext";
 import { fonts } from "../../theme";
 import type { AgentActivityData, AskUserOption, AskUserQuestion, ExitPlanModeData, Message, TaskItem, TimelineItem } from "../../types";
+import { writeClipboard } from "../../utils/copyToClipboard";
+import { messageLink } from "../../utils/messageLinks";
 import { Chevron } from "../shared/Chevron";
 import type { MenuItem } from "../shared/ContextMenu";
 import { ContextMenu } from "../shared/ContextMenu";
@@ -143,6 +145,9 @@ export function MessageBubble({
         items.push({ label: "Quote selection", onClick: () => onQuote({ ...message, content: selectedText }) });
       }
       items.push({ label: "Quote reply", onClick: () => onQuote(message) });
+      if (message.id > 0) {
+        items.push({ label: "Copy link to message", onClick: () => void writeClipboard(messageLink(message.channel_id, message.id)).catch(() => {}) });
+      }
       setCtxMenu({ x: e.clientX, y: e.clientY, items });
     },
     [onQuote, message],
@@ -153,6 +158,7 @@ export function MessageBubble({
       data-msg-id={message.id}
       data-msg-uuid={message.msg_id}
       data-is-user={isUser ? "true" : undefined}
+      data-highlighted={highlighted ? "true" : undefined}
       onContextMenu={handleContextMenu}
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
@@ -162,9 +168,11 @@ export function MessageBubble({
         alignItems: isUser ? "flex-end" : "flex-start",
         marginBottom: 16,
         borderRadius: 8,
-        transition: "background-color 0.5s ease",
-        backgroundColor: highlighted ? "rgba(99, 102, 241, 0.15)" : "transparent",
-        padding: highlighted ? "4px 8px" : 0,
+        // An outline, not a fill or padding, so marking the message doesn't
+        // move it. Blinks twice to catch the eye, then stays until cleared.
+        outline: highlighted ? `2px solid ${colors.active}` : "none",
+        outlineOffset: 4,
+        animation: highlighted ? "loop-msg-blink 0.5s ease-in-out 2" : undefined,
       }}
     >
       {ctxMenu && <ContextMenu x={ctxMenu.x} y={ctxMenu.y} items={ctxMenu.items} onClose={() => setCtxMenu(null)} />}
@@ -196,6 +204,7 @@ export function MessageBubble({
               <line x1="9" y1="17" x2="15" y2="17" stroke={colors.textLight} strokeWidth="1.5" strokeLinecap="round" />
             </svg>
             <span style={styles.time}>{time}</span>
+            <MessageDbId id={message.id} channelId={message.channel_id} />
           </div>
         )}
         <div style={styles.content}>
@@ -236,11 +245,43 @@ export function MessageBubble({
                 processing
               </span>
             )}
+            <MessageDbId id={message.id} channelId={message.channel_id} />
             <span style={styles.time}>{time}</span>
           </div>
         )}
       </div>
     </div>
+  );
+}
+
+// MessageDbId shows the message's row id in the database next to its time;
+// clicking it copies a link to the message. A live message the backend didn't
+// store has none, so it shows nothing.
+function MessageDbId({ id, channelId }: { id: number; channelId: string }) {
+  const { colors } = useTheme();
+  const styles = buildMessageStyles(colors);
+  const [copied, setCopied] = useState(false);
+  const copy = useCallback(() => {
+    writeClipboard(messageLink(channelId, id))
+      .then(() => {
+        setCopied(true);
+        setTimeout(() => setCopied(false), 1200);
+      })
+      .catch(() => {
+        /* clipboard blocked — no-op */
+      });
+  }, [channelId, id]);
+  if (!(id > 0)) return null;
+  return (
+    <button
+      type="button"
+      data-testid="message-db-id"
+      onClick={copy}
+      title={copied ? "Link copied" : "Message id in the database — click to copy a link to this message"}
+      style={{ font: "inherit", background: "none", border: "none", padding: 0, cursor: "pointer", ...styles.time, ...(copied ? { color: colors.active } : {}) }}
+    >
+      #{id}
+    </button>
   );
 }
 

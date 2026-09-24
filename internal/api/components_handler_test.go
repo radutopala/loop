@@ -90,6 +90,7 @@ func (s *ServerSuite) TestShowComponent() {
 	var stored *db.Message
 	s.store.On("InsertMessage", mock.Anything, mock.AnythingOfType("*db.Message")).Run(func(args mock.Arguments) {
 		stored = args.Get(1).(*db.Message)
+		stored.ID = 99
 	}).Return(nil)
 
 	rec := s.testRequest("POST", "/api/components?channel_id=ch-1", `{"template":"math","title":"  Fracții\n algebrice ","html":"<p>x</p>","js":"go()"}`)
@@ -117,6 +118,7 @@ func (s *ServerSuite) TestShowComponent() {
 	require.Equal(s.T(), EventMessageCreated, evs[0].Type)
 	require.Equal(s.T(), "ch-1", evs[0].ChannelID)
 	require.Equal(s.T(), events.MessageEventData{
+		ID:           99,
 		MsgID:        resp.MsgID,
 		AuthorName:   "agent",
 		Content:      stored.Content,

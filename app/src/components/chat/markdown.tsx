@@ -3,6 +3,7 @@ import "./math.css";
 import { useContext, useState } from "react";
 import { useTheme } from "../../ThemeContext";
 import { findCandidatePaths } from "../../utils/fileLinks";
+import { inAppHref } from "../../utils/messageLinks";
 import { CopyButton } from "../shared/CopyButton";
 import { ChatComponent } from "./ChatComponent";
 import { buildMessageStyles, ChannelContext } from "./chatShared";
@@ -11,11 +12,30 @@ import { FileLink } from "./FileLink";
 import { parseTableBlock, startsTable, type TableAlign, tableToHTML, tableToTSV } from "./markdownTable";
 import { findMathBlock, inlineMathPattern, inlineMathTeX, isInlineMath, renderMath } from "./math";
 
+// Link opens a web link in a new window, and a loop://channel/ link to a
+// channel or a message in the app itself.
+function Link({ href, children }: { href: string; children: React.ReactNode }) {
+  const style = { color: "#6ba3f7", textDecoration: "underline" };
+  const inApp = inAppHref(href);
+  if (inApp) {
+    return (
+      <a href={inApp} style={style}>
+        {children}
+      </a>
+    );
+  }
+  return (
+    <a href={href} target="_blank" rel="noopener noreferrer" style={style}>
+      {children}
+    </a>
+  );
+}
+
 function linkifyText(text: string, keyBase: number, channelId: string): React.ReactNode[] {
   // Collect URL and file-path matches, then merge by start position. File-path
   // matches that overlap a URL match are dropped (URLs win — they often contain
   // a `.ext` suffix that would otherwise be mis-detected as a path).
-  const urlRegex = /(https?:\/\/[^\s<>)"']+)/g;
+  const urlRegex = /((?:https?:\/\/|loop:\/\/channel\/)[^\s<>)"']+)/g;
   type Hit = { kind: "url"; start: number; length: number; href: string } | { kind: "path"; start: number; length: number; raw: string; line: number | null };
   const hits: Hit[] = [];
   for (;;) {
@@ -38,9 +58,9 @@ function linkifyText(text: string, keyBase: number, channelId: string): React.Re
     if (h.start > last) parts.push(text.slice(last, h.start));
     if (h.kind === "url") {
       parts.push(
-        <a key={`link-${keyBase}-${parts.length}`} href={h.href} target="_blank" rel="noopener noreferrer" style={{ color: "#6ba3f7", textDecoration: "underline" }}>
+        <Link key={`link-${keyBase}-${parts.length}`} href={h.href}>
           {h.href}
-        </a>,
+        </Link>,
       );
     } else {
       parts.push(<FileLink key={`file-${keyBase}-${parts.length}`} channelId={channelId} raw={h.raw} line={h.line} />);
@@ -86,9 +106,9 @@ function formatInline(text: string, s: Record<string, React.CSSProperties>, chan
       const mdMatch = token.match(/^\[([^\]]+)\]\(([^)]+)\)$/);
       if (mdMatch) {
         nodes.push(
-          <a key={nodes.length} href={mdMatch[2]} target="_blank" rel="noopener noreferrer" style={{ color: "#6ba3f7", textDecoration: "underline" }}>
+          <Link key={nodes.length} href={mdMatch[2]!}>
             {mdMatch[1]}
-          </a>,
+          </Link>,
         );
       }
     }

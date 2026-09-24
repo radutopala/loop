@@ -27,6 +27,9 @@ type TestContext struct {
 	LastStatus   int
 	LastJSON     map[string]any
 
+	// LinkedMessageID is the message a scenario last opened a link to.
+	LinkedMessageID int64
+
 	// Entity tracking for cleanup
 	ChannelID                string
 	ChannelDir               string // git repo directory for the current channel

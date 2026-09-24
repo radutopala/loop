@@ -327,7 +327,7 @@ The selected item is highlighted with `colors.selectedBg` background. Mouse hove
 After selection, the palette closes. For messages, the chat view:
 1. Loads messages around the target using `around` pagination
 2. Scrolls the target message into view (centered)
-3. Highlights the message with an indigo flash (see [Chat - Highlighted Messages](chat.md#highlighted-messages))
+3. Outlines the message, blinking twice (see [Chat - Highlighted Messages](chat.md#highlighted-messages))
 
 ---
 

@@ -129,6 +129,7 @@ func (s *Server) handleShowComponent(w http.ResponseWriter, r *http.Request) {
 	}
 	if s.eventsHub != nil {
 		s.eventsHub.BroadcastMessageCreated(channelID, events.MessageEventData{
+			ID:           msg.ID,
 			MsgID:        msg.MsgID,
 			AuthorName:   msg.AuthorName,
 			Content:      msg.Content,

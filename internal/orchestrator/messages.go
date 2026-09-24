@@ -74,7 +74,7 @@ func (o *Orchestrator) HandleMessage(ctx context.Context, msg *bot.IncomingMessa
 		}
 	}
 
-	if err := o.store.InsertMessage(ctx, &db.Message{
+	row := &db.Message{
 		ChatID:      channel.ID,
 		ChannelID:   msg.ChannelID,
 		MsgID:       msgID,
@@ -86,13 +86,15 @@ func (o *Orchestrator) HandleMessage(ctx context.Context, msg *bot.IncomingMessa
 		Mode:        msg.Mode,
 		NotBefore:   msg.NotBefore,
 		CreatedAt:   msg.Timestamp,
-	}); err != nil {
+	}
+	if err := o.store.InsertMessage(ctx, row); err != nil {
 		o.logger.Error("inserting message", "error", err, "channel_id", msg.ChannelID)
 		return
 	}
 
 	if o.events != nil {
 		o.events.BroadcastMessageCreated(msg.ChannelID, events.MessageEventData{
+			ID:         row.ID,
 			MsgID:      msgID,
 			AuthorID:   msg.AuthorID,
 			AuthorName: msg.AuthorName,
