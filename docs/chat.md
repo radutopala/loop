@@ -42,6 +42,8 @@ interface ChatState {
 
 The `isRunning` flag is scoped per agent run via a `run_id` tracked internally by the state hooks. When a scheduled task and a chat agent run concurrently on the same channel, each has a unique `run_id` — the task completing only clears its own running state, not the chat agent's.
 
+`messages.processed` is a second end-of-turn signal: it also clears `isRunning`, both in the open chat and in the background store that a channel restores from when you switch back to it. A run that finishes while another channel is open therefore can't leave a stuck Stop button behind, even if its `agent.status` "done" was missed. A queued next turn turns it back on with its own `agent.status` "running".
+
 ---
 
 ## Message Rendering

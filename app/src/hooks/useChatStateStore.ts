@@ -804,7 +804,7 @@ export function useChatStateStore({ channels, selectedId, onAppEvent }: UseChatS
 
 // ── Helpers ──
 
-function createEmptyState(): ActiveChatState {
+export function createEmptyState(): ActiveChatState {
   return {
     streamingContent: null,
     isRunning: false,
@@ -827,7 +827,7 @@ function isRunningEvent(event: WSEvent): boolean {
 }
 
 /** Mutates `state` in place based on the event. */
-function applyEvent(state: ActiveChatState, event: WSEvent): void {
+export function applyEvent(state: ActiveChatState, event: WSEvent): void {
   switch (event.type) {
     case "message.streaming": {
       const data = event.data as MessageStreamingData;
@@ -898,6 +898,12 @@ function applyEvent(state: ActiveChatState, event: WSEvent): void {
     }
     case "messages.processed": {
       const data = event.data as MessagesProcessedData;
+      // Same end-of-turn clear as the live view (useChatState): a channel
+      // that finished in the background must not remount with a stuck stop
+      // button when its agent.status "done" was missed. A queued next turn
+      // re-lights via its own agent.status "running".
+      state.isRunning = false;
+      state.runId = null;
       if (state.processingMsgId && data.msg_ids.includes(state.processingMsgId)) {
         state.processingMsgId = null;
       }
