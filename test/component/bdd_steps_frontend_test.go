@@ -250,6 +250,9 @@ func registerFrontendSteps(ctx *godog.ScenarioContext, tc *TestContext) {
 	ctx.Step(`^the layout tabs should be in order "([^"]*)"$`, tc.assertLayoutTabOrder)
 	ctx.Step(`^I scroll the chat messages to bottom$`, tc.scrollChatMessagesToBottom)
 	ctx.Step(`^I scroll the chat messages to top$`, tc.scrollChatMessagesToTop)
+	ctx.Step(`^I serve a chat history of (\d+) messages from the timeline$`, tc.serveChatHistory)
+	ctx.Step(`^I scroll the chat to the top and note the first message$`, tc.scrollChatToTopNotingFirst)
+	ctx.Step(`^an older page loads above the noted message without moving it$`, tc.assertOlderPageKeepsNoted)
 	ctx.Step(`^I inject (\d+) bot messages with content "([^"]*)"$`, tc.injectBotMessages)
 	ctx.Step(`^I inject a user message with content "([^"]*)"$`, tc.injectUserMessage)
 	ctx.Step(`^I inject a bot message with:$`, tc.injectBotMessage)
@@ -2386,6 +2389,91 @@ func (tc *TestContext) assertElementInsideWindow(selector string) error {
 	}
 	if res != "ok" {
 		return fmt.Errorf("element %q: %s", selector, res)
+	}
+	return nil
+}
+
+// serveChatHistory answers the chat's timeline requests in the page with a
+// history of n bot messages, "hist-0" (oldest) to "hist-<n-1>", paged by the
+// request's limit and cursor like the API. The harness can't store old
+// messages, and paging needs more than a page of them.
+func (tc *TestContext) serveChatHistory(countStr string) error {
+	n, err := strconv.Atoi(countStr)
+	if err != nil {
+		return fmt.Errorf("invalid count %q: %w", countStr, err)
+	}
+	if err := tc.ensureChromeTab(); err != nil {
+		return err
+	}
+	js := fmt.Sprintf(`(() => {
+		const total = %d, channel = %q;
+		const realFetch = window.fetch;
+		window.fetch = (input, init) => {
+			const url = new URL(typeof input === "string" ? input : input.url, location.href);
+			if (!url.pathname.endsWith("/channels/" + channel + "/timeline")) return realFetch(input, init);
+			const limit = Number(url.searchParams.get("limit") || 50);
+			const before = url.searchParams.has("cursor_position") ? Number(url.searchParams.get("cursor_position")) : total + 1;
+			const items = [];
+			for (let pos = before - 1; pos >= 1 && items.length < limit; pos--) {
+				const i = pos - 1;
+				items.push({ kind: "message", position: pos, id: pos, data: {
+					id: pos, channel_id: channel, msg_id: "hist-" + i, author_id: "bot", author_name: "bot",
+					content: "history message " + i + "\n\nwith a second paragraph", is_bot: true, is_processed: true,
+					created_at: new Date(Date.UTC(2026, 0, 1, 0, i)).toISOString() } });
+			}
+			const last = items[items.length - 1];
+			const next = last && last.position > 1 ? { position: last.position, id: last.id } : null;
+			return Promise.resolve(new Response(JSON.stringify({ items, next_cursor: next }), { headers: { "Content-Type": "application/json" } }));
+		};
+	})()`, n, tc.ChannelID)
+	return chromedp.Run(tc.chromeTab.ctx, chromedp.Evaluate(js, nil))
+}
+
+// scrollChatToTopNotingFirst scrolls the chat to its top, which pages in
+// older messages, and notes the first message there and where it is on
+// screen, before the older page arrives.
+func (tc *TestContext) scrollChatToTopNotingFirst() error {
+	js := `(() => {
+		const first = document.querySelector('[data-msg-uuid]');
+		if (!first) return 'no message bubble';
+		let el = first.parentElement;
+		while (el && getComputedStyle(el).overflowY !== 'auto') el = el.parentElement;
+		if (!el) return 'no scroll container';
+		el.scrollTop = 0;
+		const top = document.querySelector('[data-msg-uuid]');
+		window.__noted = { id: top.dataset.msgUuid, top: top.getBoundingClientRect().top };
+		el.dispatchEvent(new Event('scroll'));
+		return 'ok';
+	})()`
+	var result string
+	if err := chromedp.Run(tc.chromeTab.ctx, chromedp.Evaluate(js, &result)); err != nil {
+		return err
+	}
+	if result != "ok" {
+		return fmt.Errorf("scrollChatToTopNotingFirst: %s", result)
+	}
+	return nil
+}
+
+// assertOlderPageKeepsNoted waits for messages to appear above the noted one
+// and checks it's still where it was on screen, so the reader stays on it.
+func (tc *TestContext) assertOlderPageKeepsNoted() error {
+	loaded := `document.querySelector('[data-msg-uuid]')?.dataset.msgUuid !== window.__noted.id`
+	if err := chromedp.Run(tc.chromeTab.ctx, chromedp.Poll(loaded, nil, chromedp.WithPollingTimeout(10*time.Second))); err != nil {
+		return fmt.Errorf("no older messages loaded above the noted one: %w", err)
+	}
+	js := `new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => {
+		const el = document.querySelector('[data-msg-uuid="' + window.__noted.id + '"]');
+		resolve(el ? el.getBoundingClientRect().top - window.__noted.top : 99999);
+	})))`
+	var moved float64
+	if err := chromedp.Run(tc.chromeTab.ctx, chromedp.Evaluate(js, &moved, func(p *runtime.EvaluateParams) *runtime.EvaluateParams {
+		return p.WithAwaitPromise(true)
+	})); err != nil {
+		return err
+	}
+	if moved < -2 || moved > 2 {
+		return fmt.Errorf("the noted message moved %.0fpx on screen when the older page loaded", moved)
 	}
 	return nil
 }

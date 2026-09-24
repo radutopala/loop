@@ -1,4 +1,4 @@
-import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from "react";
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { ChatState } from "../../hooks/useChatState";
 import { useTheme } from "../../ThemeContext";
 import type { Message, TimelineItem } from "../../types";
@@ -88,6 +88,31 @@ export const ChatMessages = forwardRef<ChatMessagesHandle, ChatMessagesProps>(fu
 
   useImperativeHandle(ref, () => ({ scrollToBottom }), [scrollToBottom]);
 
+  // An older page goes in above what's being read, and the view should stay
+  // on it. The browser only keeps the view in place when it's scrolled away
+  // from the very top, and paging starts at the top, so the view would stay
+  // there and show the start of the new page instead. So the distance from
+  // the bottom is measured while rendering the new items, when the DOM still
+  // holds the old ones, and the view is put back at that distance once
+  // they're in.
+  const firstItemRef = useRef<TimelineItem | undefined>(undefined);
+  const fromBottomRef = useRef<number | null>(null);
+  if (items[0] !== firstItemRef.current && containerRef.current) {
+    fromBottomRef.current = containerRef.current.scrollHeight - containerRef.current.scrollTop;
+  }
+  useLayoutEffect(() => {
+    const prevFirst = firstItemRef.current;
+    const fromBottom = fromBottomRef.current;
+    firstItemRef.current = items[0];
+    fromBottomRef.current = null;
+    const el = containerRef.current;
+    // Only when the old first item is still there, further down: a page was
+    // added above it (not a new channel, or the head refetched after a run).
+    if (el && prevFirst && fromBottom !== null && items.indexOf(prevFirst) > 0) {
+      el.scrollTop = el.scrollHeight - fromBottom;
+    }
+  }, [items]);
+
   // Auto-scroll to bottom on new messages, timeline growth, or streaming updates.
   useEffect(() => {
     if (!autoScrollRef.current) return;
@@ -144,8 +169,9 @@ export const ChatMessages = forwardRef<ChatMessagesHandle, ChatMessagesProps>(fu
     const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
     autoScrollRef.current = atBottom;
 
-    // Load more when scrolled to top.
-    if (el.scrollTop === 0 && hasMore && !loading) {
+    // Load more when nearing the top, so the next page is usually in before
+    // the top is reached.
+    if (el.scrollTop < el.clientHeight && hasMore && !loading) {
       loadMore();
     }
   }, [hasMore, loading, loadMore]);
