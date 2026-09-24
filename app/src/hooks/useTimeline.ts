@@ -98,8 +98,13 @@ export function useTimeline(channelId: string | null): UseTimelineResult {
       cursorId: cursorRef.current.id,
     })
       .then((resp) => {
+        // A head refetch can land while this page is in flight, so skip rows
+        // the list already has (by row id) rather than show them twice.
         const older = [...resp.items].reverse();
-        setItems((prev) => [...older, ...prev]);
+        setItems((prev) => {
+          const have = new Set(prev.map((it) => it.id));
+          return [...older.filter((it) => !have.has(it.id)), ...prev];
+        });
         setHasMore(resp.next_cursor !== null);
         cursorRef.current = resp.next_cursor;
       })
@@ -257,16 +262,15 @@ export function useTimeline(channelId: string | null): UseTimelineResult {
       const fresh = collected.slice().reverse();
       const oldestFreshPos = fresh[0]!.position;
       const oldestFreshId = fresh[0]!.id;
-      setItems((prev) => {
-        const tail = prev.filter((it) => {
-          if (it.position > oldestFreshPos) return false;
-          if (it.position === oldestFreshPos && it.id >= oldestFreshId) return false;
-          return true;
-        });
-        return [...tail, ...fresh];
-      });
-      setHasMore(nextCursor !== null);
-      cursorRef.current = nextCursor;
+      const olderThanFresh = (it: TimelineItem) => it.position < oldestFreshPos || (it.position === oldestFreshPos && it.id < oldestFreshId);
+      setItems((prev) => [...prev.filter(olderThanFresh), ...fresh]);
+      // The fresh pages' cursor points just below them. When older pages
+      // are already loaded under them, the cursor for paging further back
+      // is still the one those pages left; moving it would load them again.
+      if (!itemsRef.current.some(olderThanFresh)) {
+        setHasMore(nextCursor !== null);
+        cursorRef.current = nextCursor;
+      }
       setLiveTail(pruneLive);
     };
 
