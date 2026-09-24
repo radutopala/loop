@@ -213,6 +213,7 @@ func registerFrontendSteps(ctx *godog.ScenarioContext, tc *TestContext) {
 	// Keyboard
 	ctx.Step(`^I press Enter$`, tc.pressEnter)
 	ctx.Step(`^I press Escape$`, tc.pressEscape)
+	ctx.Step(`^I clear the "([^"]*)" field$`, tc.clearField)
 
 	// Wait
 	ctx.Step(`^I wait "([^"]*)"$`, tc.waitDuration)
@@ -223,6 +224,7 @@ func registerFrontendSteps(ctx *godog.ScenarioContext, tc *TestContext) {
 	ctx.Step(`^the element "([^"]*)" should be visible$`, tc.assertElementVisible)
 	ctx.Step(`^the element "([^"]*)" should not exist$`, tc.assertElementNotExist)
 	ctx.Step(`^the element "([^"]*)" should contain text "([^"]*)"$`, tc.assertElementContainsText)
+	ctx.Step(`^the field "([^"]*)" should hold "([^"]*)"$`, tc.assertFieldHolds)
 	ctx.Step(`^I wait for text "([^"]*)" to appear$`, tc.waitForTextToAppear)
 	ctx.Step(`^I wait for text "([^"]*)" to disappear$`, tc.waitForTextToDisappear)
 
@@ -438,6 +440,29 @@ func (tc *TestContext) clickOn(selector string) error {
 	actions = append(actions, leadCursorActions(fmt.Sprintf(`document.querySelector(%q)`, selector))...)
 	actions = append(actions, chromedp.Click(selector, chromedp.ByQuery))
 	return chromedp.Run(tc.chromeTab.ctx, actions...)
+}
+
+// assertFieldHolds checks an input or textarea's value, polling briefly so a
+// just-rendered value counts.
+func (tc *TestContext) assertFieldHolds(selector, want string) error {
+	js := fmt.Sprintf(`document.querySelector(%q)?.value ?? null`, selector)
+	var got *string
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		if err := chromedp.Run(tc.chromeTab.ctx, chromedp.Evaluate(js, &got)); err != nil {
+			return err
+		}
+		if got != nil && *got == want {
+			return nil
+		}
+		if time.Now().After(deadline) {
+			if got == nil {
+				return fmt.Errorf("no field matches %q", selector)
+			}
+			return fmt.Errorf("field %q holds %q, want %q", selector, *got, want)
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
 }
 
 func (tc *TestContext) typeInto(text, selector string) error {
@@ -1136,6 +1161,16 @@ func (tc *TestContext) pressEnter() error {
 
 func (tc *TestContext) pressEscape() error {
 	return chromedp.Run(tc.chromeTab.ctx, chromedp.KeyEvent("\x1b"))
+}
+
+// clearField selects a field's text and deletes it with a key press, so the
+// page sees the edit the way it would a user's.
+func (tc *TestContext) clearField(selector string) error {
+	return chromedp.Run(tc.chromeTab.ctx,
+		chromedp.Focus(selector, chromedp.ByQuery),
+		chromedp.Evaluate(fmt.Sprintf(`document.querySelector(%q).select()`, selector), nil),
+		chromedp.KeyEvent("\b"),
+	)
 }
 
 // --- Editor steps ---
