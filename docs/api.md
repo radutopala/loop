@@ -779,6 +779,26 @@ Full-text search across all messages using case-insensitive `LIKE %query%`.
 
 ---
 
+### `GET /api/channels/{id}/messages/search`
+
+Finds the channel's messages whose content contains `q`, case-insensitively. `%` and `_` in `q` match literally. Tool calls, tool results and thinking rows are not searched. Backs the chat's find bar.
+
+**Query Parameters:**
+
+| Param   | Type   | Default | Max  | Required | Description |
+|---------|--------|---------|------|----------|-------------|
+| `q`     | string | --      | --   | yes      | Text to find (trimmed) |
+| `limit` | int    | 500     | 1000 | no       | Max results |
+
+**Response (200):** the matching message ids, newest first.
+```json
+{ "ids": [812, 640, 57] }
+```
+
+**Errors:** `400` if `q` is empty or `limit` is invalid. `501` if message search is not configured.
+
+---
+
 ## Tasks
 
 ### `POST /api/tasks`

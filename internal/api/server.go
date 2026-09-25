@@ -371,6 +371,7 @@ func (s *Server) registerChannelRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/channels/{id}/queued/reorder", s.handleReorderQueuedMessages)
 	mux.HandleFunc("POST /api/channels/{id}/queued/{msg_id}/steer", s.handleSteerQueuedMessage)
 	mux.HandleFunc("GET /api/messages/search", s.handleSearchMessages)
+	mux.HandleFunc("GET /api/channels/{id}/messages/search", s.handleSearchChannelMessages)
 	mux.HandleFunc("POST /api/channels/{id}/rename", s.handleRenameChannel)
 	mux.HandleFunc("POST /api/worktrees/move", s.handleMoveWorktree)
 }

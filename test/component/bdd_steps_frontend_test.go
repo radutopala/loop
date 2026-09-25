@@ -219,6 +219,7 @@ func registerFrontendSteps(ctx *godog.ScenarioContext, tc *TestContext) {
 	// Keyboard
 	ctx.Step(`^I press Enter$`, tc.pressEnter)
 	ctx.Step(`^I press Escape$`, tc.pressEscape)
+	ctx.Step(`^I press Shift\+Enter$`, tc.pressShiftEnter)
 	ctx.Step(`^I clear the "([^"]*)" field$`, tc.clearField)
 
 	// Wait
@@ -272,6 +273,7 @@ func registerFrontendSteps(ctx *godog.ScenarioContext, tc *TestContext) {
 	ctx.Step(`^I follow a link to message (\d+) posted in the chat$`, tc.followMessageLinkInChat)
 	ctx.Step(`^I open the app at a link to the latest message$`, tc.openAppAtLatestMessageLink)
 	ctx.Step(`^the linked message should be highlighted in view$`, tc.assertLinkedMessageHighlighted)
+	ctx.Step(`^message (\d+) should be highlighted in view$`, tc.assertMessageHighlighted)
 	ctx.Step(`^the linked message should blink twice$`, tc.assertLinkedMessageBlinks)
 	ctx.Step(`^I scroll the linked message out of view for "([^"]*)"$`, tc.scrollLinkedMessageAway)
 	ctx.Step(`^I scroll the linked message back into view$`, tc.scrollLinkedMessageBack)
@@ -1277,6 +1279,10 @@ func (tc *TestContext) pressEnter() error {
 	return chromedp.Run(tc.chromeTab.ctx, chromedp.KeyEvent("\r"))
 }
 
+func (tc *TestContext) pressShiftEnter() error {
+	return chromedp.Run(tc.chromeTab.ctx, chromedp.KeyEvent("\r", chromedp.KeyModifiers(input.ModifierShift)))
+}
+
 func (tc *TestContext) pressEscape() error {
 	return chromedp.Run(tc.chromeTab.ctx, chromedp.KeyEvent("\x1b"))
 }
@@ -2263,6 +2269,17 @@ func (tc *TestContext) assertLinkedMessageHighlighted() error {
 	}
 }
 
+// assertMessageHighlighted waits for the message with the given id to be
+// highlighted and in view, as when the chat's find bar steps to it.
+func (tc *TestContext) assertMessageHighlighted(idStr string) error {
+	id, err := strconv.ParseInt(idStr, 10, 64)
+	if err != nil {
+		return fmt.Errorf("invalid message id %q: %w", idStr, err)
+	}
+	tc.LinkedMessageID = id
+	return tc.assertLinkedMessageHighlighted()
+}
+
 func (tc *TestContext) linkedMessageEval(body string, out any) error {
 	js := fmt.Sprintf(`(() => {
 		const msg = document.querySelector('[data-msg-id="%d"]');
@@ -2772,8 +2789,9 @@ func (tc *TestContext) assertElementInsideWindow(selector string) error {
 // serveChatHistory answers the chat's timeline requests in the page with a
 // history of n bot messages, "hist-0" (oldest) to "hist-<n-1>", paged by the
 // request's limit and cursor like the API. Requests for the latest page are
-// counted in window.__timelineHeadFetches. The harness can't store old
-// messages, and paging needs more than a page of them.
+// counted in window.__timelineHeadFetches. The channel's message search is
+// answered from the same history, so the find bar can step through it. The
+// harness can't store old messages, and paging needs more than a page of them.
 func (tc *TestContext) serveChatHistory(countStr string) error {
 	n, err := strconv.Atoi(countStr)
 	if err != nil {
@@ -2787,6 +2805,13 @@ func (tc *TestContext) serveChatHistory(countStr string) error {
 		const realFetch = window.fetch;
 		window.fetch = (input, init) => {
 			const url = new URL(typeof input === "string" ? input : input.url, location.href);
+			const content = (i) => "history message " + i + "\n\nwith a second paragraph";
+			if (url.pathname.endsWith("/channels/" + channel + "/messages/search")) {
+				const q = url.searchParams.get("q").toLowerCase();
+				const ids = [];
+				for (let i = total - 1; i >= 0; i--) if (content(i).toLowerCase().includes(q)) ids.push(i + 1);
+				return Promise.resolve(new Response(JSON.stringify({ ids }), { headers: { "Content-Type": "application/json" } }));
+			}
 			if (!url.pathname.endsWith("/channels/" + channel + "/timeline")) return realFetch(input, init);
 			const limit = Number(url.searchParams.get("limit") || 50);
 			const head = !url.searchParams.has("cursor_position");
@@ -2797,7 +2822,7 @@ func (tc *TestContext) serveChatHistory(countStr string) error {
 				const i = pos - 1;
 				items.push({ kind: "message", position: pos, id: pos, data: {
 					id: pos, channel_id: channel, msg_id: "hist-" + i, author_id: "bot", author_name: "bot",
-					content: "history message " + i + "\n\nwith a second paragraph", is_bot: true, is_processed: true,
+					content: content(i), is_bot: true, is_processed: true,
 					created_at: new Date(Date.UTC(2026, 0, 1, 0, i)).toISOString() } });
 			}
 			const last = items[items.length - 1];

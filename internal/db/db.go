@@ -49,6 +49,7 @@ type Store interface {
 	ReorderQueuedMessages(ctx context.Context, channelID string, orderedMsgIDs []string) error
 	GetMessagesCursor(ctx context.Context, channelID string, cursor int64, limit int) ([]*Message, error)
 	SearchMessages(ctx context.Context, query string, limit int) ([]*Message, error)
+	SearchChannelMessages(ctx context.Context, channelID, query string, limit int) ([]int64, error)
 	GetMessagesAround(ctx context.Context, channelID string, messageID int64, limit int) ([]*Message, error)
 	InsertAgentEvent(ctx context.Context, evt *Message) error
 	GetTimeline(ctx context.Context, channelID string, cursorPosition, cursorID int64, limit int) ([]*Message, error)

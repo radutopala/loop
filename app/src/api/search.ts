@@ -16,3 +16,13 @@ export async function searchMessages(query: string, limit?: number): Promise<Sea
   if (!res.ok) throw new Error(`Failed to search messages: ${res.statusText}`);
   return res.json();
 }
+
+// searchChannelMessages returns the ids of a channel's messages containing
+// query, newest first — what the chat's find bar steps through.
+export async function searchChannelMessages(channelId: string, query: string, signal?: AbortSignal): Promise<number[]> {
+  const params = new URLSearchParams({ q: query });
+  const res = await fetch(`${getApiUrl()}/api/channels/${encodeURIComponent(channelId)}/messages/search?${params}`, { signal });
+  if (!res.ok) throw new Error(`Failed to search messages: ${res.statusText}`);
+  const body: { ids: number[] } = await res.json();
+  return body.ids;
+}

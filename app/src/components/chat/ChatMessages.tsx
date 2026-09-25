@@ -4,6 +4,7 @@ import { useTheme } from "../../ThemeContext";
 import type { Message, TimelineItem } from "../../types";
 import { ApprovalCard } from "./ApprovalCard";
 import { AgentActivityIndicator, AskUserQuestionCard, CompletionSummary, ExitPlanCard, MessageBubble, renderTimelineItem, StreamingBubble, TaskChecklist, ToolRunBlock, TriggerQuote } from "./bubbles";
+import { locateMatch } from "./chatFind";
 import { buildMessageStyles, ChannelContext } from "./chatShared";
 import { orderTimelineItems } from "./orderTimelineItems";
 import { QueuedMessagesPopup } from "./QueuedMessagesPopup";
@@ -12,6 +13,8 @@ export interface ChatMessagesProps {
   channelId: string;
   chatState: ChatState;
   scrollToMessageId?: number | null;
+  /** The find bar's term: the view goes to it inside the message, and it's marked. */
+  findTerm?: string;
   onScrollComplete?: () => void;
   onQuote?: (msg: Message) => void;
 }
@@ -23,7 +26,46 @@ export interface ChatMessagesHandle {
 // How long a linked or searched-for message stays outlined once it's in view.
 const HIGHLIGHT_IN_VIEW_MS = 5000;
 
-export const ChatMessages = forwardRef<ChatMessagesHandle, ChatMessagesProps>(function ChatMessages({ channelId, chatState, scrollToMessageId, onScrollComplete, onQuote }, ref) {
+// The find bar's match is painted with the CSS Custom Highlight API, which
+// marks a Range without touching the DOM React renders.
+const FIND_HIGHLIGHT = "loop-find";
+
+// matchRange returns the first occurrence of term in el's rendered text.
+function matchRange(el: Element, term: string): Range | null {
+  const nodes: Text[] = [];
+  const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+  for (let n = walker.nextNode(); n; n = walker.nextNode()) nodes.push(n as Text);
+  const hit = locateMatch(
+    nodes.map((n) => n.data),
+    term,
+  );
+  if (!hit) return null;
+  const range = document.createRange();
+  range.setStart(nodes[hit.start.node]!, hit.start.offset);
+  range.setEnd(nodes[hit.end.node]!, hit.end.offset);
+  return range;
+}
+
+// revealMessage scrolls el into the middle of the container, or, when term
+// is in its text, that occurrence. A message taller than the view is shown
+// from its top instead: centring it would show only its middle, with neither
+// its header nor its outline's top edge in sight.
+function revealMessage(container: HTMLElement, el: Element, term: string | undefined): Range | null {
+  const range = term ? matchRange(el, term) : null;
+  if (range) {
+    const r = range.getBoundingClientRect();
+    const c = container.getBoundingClientRect();
+    // Rects are in viewport pixels, scrollTop in the container's own; they
+    // differ by the chat's zoom.
+    const scale = c.height / container.clientHeight || 1;
+    container.scrollTop += (r.top - c.top - (c.height - r.height) / 2) / scale;
+    return range;
+  }
+  el.scrollIntoView({ block: el.getBoundingClientRect().height > container.getBoundingClientRect().height ? "start" : "center" });
+  return null;
+}
+
+export const ChatMessages = forwardRef<ChatMessagesHandle, ChatMessagesProps>(function ChatMessages({ channelId, chatState, scrollToMessageId, findTerm, onScrollComplete, onQuote }, ref) {
   const { colors } = useTheme();
   const styles = buildMessageStyles(colors);
   const {
@@ -160,7 +202,8 @@ export const ChatMessages = forwardRef<ChatMessagesHandle, ChatMessagesProps>(fu
       autoScrollRef.current = false;
       // Straight there: a smooth scroll starts at the bottom, and its first
       // scroll event would turn following the latest message back on.
-      el.scrollIntoView({ block: "center" });
+      const range = revealMessage(containerRef.current, el, findTerm);
+      if (range) CSS.highlights?.set(FIND_HIGHLIGHT, new Highlight(range));
       setHighlightedMsgId(scrollToMessageId);
       onScrollComplete?.();
       return;
@@ -172,6 +215,9 @@ export const ChatMessages = forwardRef<ChatMessagesHandle, ChatMessagesProps>(fu
     if (hasMore && items[0]!.id > scrollToMessageId) loadMore();
     else onScrollComplete?.();
   }, [scrollToMessageId, messages, items, loading, hasMore, loadMore]);
+
+  // The marked occurrence goes when the find bar closes or its term changes.
+  useEffect(() => () => void CSS.highlights?.delete(FIND_HIGHLIGHT), [findTerm]);
 
   // The highlight stays until the message has been in view for a few seconds
   // straight, so scrolling away before reading it doesn't lose the mark.
@@ -325,7 +371,7 @@ export const ChatMessages = forwardRef<ChatMessagesHandle, ChatMessagesProps>(fu
   return (
     <ChannelContext.Provider value={channelId}>
       <div ref={containerRef} style={styles.messages} onScroll={handleScroll}>
-        <style>{`@keyframes loop-msg-blink { 50% { outline-color: transparent; } }`}</style>
+        <style>{`@keyframes loop-msg-blink { 50% { outline-color: transparent; } } ::highlight(${FIND_HIGHLIGHT}) { background-color: ${colors.warning}; color: #000; }`}</style>
         {quoteAnchor?.position === "top" && (
           <div style={{ position: "sticky", top: 0, zIndex: 2, paddingBottom: 4, backgroundColor: "transparent" }}>
             <div style={{ maxWidth: 768, margin: "0 auto" }}>

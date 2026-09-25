@@ -306,6 +306,55 @@ func (s *StoreSuite) TestSearchMessagesError() {
 	require.Nil(s.T(), msgs)
 }
 
+// --- SearchChannelMessages tests ---
+
+func (s *StoreSuite) TestSearchChannelMessages() {
+	tests := []struct {
+		name    string
+		query   string
+		pattern string
+	}{
+		{name: "plain", query: "hello", pattern: "%hello%"},
+		{name: "wildcards are literal", query: `50%_off\`, pattern: `%50\%\_off\\%`},
+	}
+	for _, tc := range tests {
+		s.Run(tc.name, func() {
+			s.mock.ExpectQuery(`SELECT id FROM messages WHERE channel_id = \? AND kind = 'message' AND content LIKE \? ESCAPE .+ ORDER BY id DESC LIMIT \?`).
+				WithArgs("ch1", tc.pattern, 500).
+				WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(int64(12)).AddRow(int64(7)))
+
+			ids, err := s.store.SearchChannelMessages(context.Background(), "ch1", tc.query, 500)
+			require.NoError(s.T(), err)
+			require.Equal(s.T(), []int64{12, 7}, ids)
+		})
+	}
+}
+
+func (s *StoreSuite) TestSearchChannelMessagesErrors() {
+	tests := []struct {
+		name  string
+		setup func()
+	}{
+		{name: "query", setup: func() {
+			s.mock.ExpectQuery(`SELECT id FROM messages`).WillReturnError(sql.ErrConnDone)
+		}},
+		{name: "scan", setup: func() {
+			s.mock.ExpectQuery(`SELECT id FROM messages`).WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow("not-a-number"))
+		}},
+		{name: "rows", setup: func() {
+			s.mock.ExpectQuery(`SELECT id FROM messages`).WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(int64(1)).RowError(0, sql.ErrConnDone))
+		}},
+	}
+	for _, tc := range tests {
+		s.Run(tc.name, func() {
+			tc.setup()
+			ids, err := s.store.SearchChannelMessages(context.Background(), "ch1", "x", 10)
+			require.Error(s.T(), err)
+			require.Nil(s.T(), ids)
+		})
+	}
+}
+
 // --- GetMessagesAround tests ---
 
 func (s *StoreSuite) TestGetMessagesAround() {

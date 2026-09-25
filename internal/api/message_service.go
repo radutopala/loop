@@ -20,6 +20,7 @@ type ChannelLister interface {
 	ListUserMessageContents(ctx context.Context, channelID string, limit int) ([]string, error)
 	ListQueuedUserMessages(ctx context.Context, channelID string) ([]*db.Message, error)
 	SearchMessages(ctx context.Context, query string, limit int) ([]*db.Message, error)
+	SearchChannelMessages(ctx context.Context, channelID, query string, limit int) ([]int64, error)
 	GetMessagesAround(ctx context.Context, channelID string, messageID int64, limit int) ([]*db.Message, error)
 	GetTimeline(ctx context.Context, channelID string, cursorPosition, cursorID int64, limit int) ([]*db.Message, error)
 	UpdateSessionID(ctx context.Context, channelID string, sessionID string) error
