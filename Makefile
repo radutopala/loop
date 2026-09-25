@@ -43,13 +43,19 @@ test-integration-browser: ## Run browser integration tests (requires Docker; bui
 # overrides this to run only @docs scenarios with capture enabled.
 GODOG_TAGS ?= ~@docs && ~@journey
 
+# The Docker run is detached and followed with `docker logs -f`, so the tests
+# outlive a killed client (an agent session that ends mid-run): reattach with
+# `docker logs -f loop-bdd`. Ctrl-C still stops them. /tmp/loop-bdd-data is
+# emptied rather than removed, as it's a mount point inside agent containers.
+
 test-component-bdd: ## Run BDD component tests (via Docker on host, natively in CI)
 	@if { [ "$$CI" = "true" ] || ([ -f /.dockerenv ] && [ "$$(id -u)" = "0" ] && command -v apt-get >/dev/null 2>&1); } && [ -z "$(LOOP_DOCS_CAPTURE)" ]; then \
 		GODOG_TAGS="$(GODOG_TAGS)" LOOP_DOCS_CAPTURE="$(LOOP_DOCS_CAPTURE)" $(if $(LOOP_DOCS_CAPTURE),LOOP_DOCS_HOST_CONFIG="$(HOME)/.loop/config.json") TEST_RUN=$${TEST_RUN:-"TestBDDBackendFeatures|TestBDDFrontendFeatures"} bash scripts/test-component.sh; \
 	else \
 		docker rm -f loop-bdd 2>/dev/null; \
-		rm -rf /tmp/loop-bdd-data && mkdir -p /tmp/loop-bdd-data; \
-		docker run --name loop-bdd -v "$$(pwd)":/app -w /app \
+		docker ps -aq --filter "name=loop-bdd-" | xargs -r docker rm -f 2>/dev/null; \
+		mkdir -p /tmp/loop-bdd-data && find /tmp/loop-bdd-data -mindepth 1 -delete; \
+		docker run -d --name loop-bdd -v "$$(pwd)":/app -w /app \
 			-v /var/run/docker.sock:/var/run/docker.sock \
 			-v /tmp/loop-bdd-data:/tmp/loop-bdd-data \
 			-v loop-gomod:/go/pkg/mod -v loop-gocache:/root/.cache/go-build \
@@ -57,13 +63,15 @@ test-component-bdd: ## Run BDD component tests (via Docker on host, natively in 
 			$(if $(GODOG_TAGS),-e GODOG_TAGS="$(GODOG_TAGS)") \
 			$(if $(LOOP_DOCS_CAPTURE),-e LOOP_DOCS_CAPTURE="$(LOOP_DOCS_CAPTURE)" -v "$(HOME)/.loop/config.json:/host-loop-config.json:ro" -e LOOP_DOCS_HOST_CONFIG=/host-loop-config.json) \
 			$(if $(GODOG_CONCURRENCY),-e GODOG_CONCURRENCY="$(GODOG_CONCURRENCY)") \
-			ghcr.io/radutopala/loop/test-runner:latest bash scripts/test-component.sh; \
-		rc=$$?; docker ps -aq --filter "name=loop-bdd-" | xargs -r docker rm -f 2>/dev/null || true; exit $$rc; \
+			ghcr.io/radutopala/loop/test-runner:latest bash scripts/test-component.sh >/dev/null || exit $$?; \
+		trap 'docker stop loop-bdd >/dev/null' INT; \
+		docker logs -f loop-bdd; \
+		rc=$$(docker wait loop-bdd); docker ps -aq --filter "name=loop-bdd-" | xargs -r docker rm -f 2>/dev/null || true; exit $$rc; \
 	fi
 
 bdd-serve: ## Build + run the daemon and UI inside Docker as a STANDING instance (no tests), with live agents, for manual / MCP-browser testing. Prints the bridge URL to connect to. Stop with: docker rm -f loop-dev
 	@docker rm -f loop-dev 2>/dev/null || true; \
-	rm -rf /tmp/loop-bdd-data && mkdir -p /tmp/loop-bdd-data; \
+	mkdir -p /tmp/loop-bdd-data && find /tmp/loop-bdd-data -mindepth 1 -delete; \
 	echo "Building + starting loop in Docker (container: loop-dev)..."; \
 	docker run -d --name loop-dev -v "$$(pwd)":/app -w /app \
 		-v /var/run/docker.sock:/var/run/docker.sock \
