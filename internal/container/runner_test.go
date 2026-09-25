@@ -290,6 +290,7 @@ func newDefaultMockSystem() *testutil.MockSystem {
 	sys.On("Stat", mock.Anything).Return(nil, os.ErrNotExist)
 	sys.On("ExecCommandOutput", mock.Anything, mock.Anything).Return([]byte{}, nil)
 	sys.On("Readlink", mock.Anything).Return("", os.ErrNotExist)
+	sys.On("EvalSymlinks", mock.Anything).Return("", os.ErrNotExist)
 	sys.On("ReadFile", mock.Anything).Return(nil, os.ErrNotExist)
 	sys.On("Remove", mock.Anything).Return(nil)
 	return sys

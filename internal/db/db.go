@@ -69,6 +69,7 @@ type Store interface {
 	GetScheduledTask(ctx context.Context, id int64) (*ScheduledTask, error)
 	GetScheduledTaskByTemplateName(ctx context.Context, channelID, templateName string) (*ScheduledTask, error)
 	ListChannels(ctx context.Context) ([]*Channel, error)
+	ChannelActivity(ctx context.Context) (map[string]time.Time, error)
 	InsertTaskRunLog(ctx context.Context, log *TaskRunLog) (int64, error)
 	UpdateTaskRunLog(ctx context.Context, log *TaskRunLog) error
 	ListTaskRunLogs(ctx context.Context, taskID int64, limit int) ([]*TaskRunLog, error)

@@ -41,7 +41,9 @@ rules:
   directory mounts (`LOOP_DOCKERPROXY_BIND_ROOTS`) become mounts of a
   `loop-bind-*` named volume bound to that mount, with the rest of the
   path as `VolumeOptions.Subpath`, so a symlink swapped in between
-  create and start can't redirect them.
+  create and start can't redirect them. An existing volume must be bound
+  to the mount, or to its resolved host path
+  (`LOOP_DOCKERPROXY_BIND_HOST_PATHS`), which Docker Desktop reports.
 
 Both use `Subpath`, so a request they rewrite needs Docker API 1.45+. See
 [docs/gates.md](../../docs/gates.md#nested-docker-socket) for the

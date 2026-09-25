@@ -532,6 +532,7 @@ func (s *ServerSuite) TestSearchChannelsSuccess() {
 		{ChannelID: "ch-2", Name: "random", DirPath: "/home/user/random", ParentID: "ch-1", Active: false, Platform: types.PlatformLocal},
 	}
 	s.store.On("ListChannels", mock.Anything).Return(channels, nil)
+	s.store.On("ChannelActivity", mock.Anything).Return(map[string]time.Time{}, nil)
 
 	rec := s.testRequest("GET", "/api/channels", "")
 
@@ -548,6 +549,49 @@ func (s *ServerSuite) TestSearchChannelsSuccess() {
 	s.store.AssertExpectations(s.T())
 }
 
+func (s *ServerSuite) TestSearchChannelsLastActivity() {
+	at := time.Date(2026, 9, 25, 11, 3, 6, 0, time.UTC)
+	tests := []struct {
+		name     string
+		activity map[string]time.Time
+		err      error
+		want     map[string]*time.Time
+	}{
+		{
+			name:     "newest message time per channel",
+			activity: map[string]time.Time{"ch-1": at},
+			want:     map[string]*time.Time{"ch-1": &at, "ch-2": nil},
+		},
+		{
+			name: "lookup failure still lists the channels",
+			err:  errors.New("db error"),
+			want: map[string]*time.Time{"ch-1": nil, "ch-2": nil},
+		},
+	}
+	for _, tc := range tests {
+		s.Run(tc.name, func() {
+			s.SetupTest()
+			s.store.On("ListChannels", mock.Anything).Return([]*db.Channel{
+				{ChannelID: "ch-1", Name: "general", DirPath: "/home/user/general", Platform: types.PlatformLocal},
+				{ChannelID: "ch-2", Name: "random", DirPath: "/home/user/random", Platform: types.PlatformLocal},
+			}, nil)
+			s.store.On("ChannelActivity", mock.Anything).Return(tc.activity, tc.err)
+
+			rec := s.testRequest("GET", "/api/channels", "")
+
+			require.Equal(s.T(), http.StatusOK, rec.Code)
+			var resp []channelResponse
+			require.NoError(s.T(), json.NewDecoder(rec.Body).Decode(&resp))
+			got := make(map[string]*time.Time, len(resp))
+			for _, ch := range resp {
+				got[ch.ChannelID] = ch.LastActivityAt
+			}
+			require.Equal(s.T(), tc.want, got)
+			s.store.AssertExpectations(s.T())
+		})
+	}
+}
+
 // TestSearchChannelsUsesBranchPollerSnapshot verifies the handler serves the
 // poller's per-dir git snapshot (no inline recompute) and that channels
 // sharing a dir get the same state.
@@ -557,6 +601,7 @@ func (s *ServerSuite) TestSearchChannelsUsesBranchPollerSnapshot() {
 		{ChannelID: "wt-thread", Name: "t", DirPath: "/repo/wt", ParentID: "wt", Active: true, Platform: types.PlatformLocal},
 	}
 	s.store.On("ListChannels", mock.Anything).Return(channels, nil)
+	s.store.On("ChannelActivity", mock.Anything).Return(map[string]time.Time{}, nil)
 
 	poller := NewBranchPoller(nil, nil, "", time.Second, testLogger())
 	poller.dirState["/repo/wt"] = gitState{Branch: "feat/x", Commit: "abc1234", DiffAdditions: 5, DiffDeletions: 2}
@@ -584,6 +629,7 @@ func (s *ServerSuite) TestSearchChannelsPollerMissFallsBack() {
 		{ChannelID: "fresh", Name: "fresh", DirPath: s.T().TempDir(), Active: true, Platform: types.PlatformLocal},
 	}
 	s.store.On("ListChannels", mock.Anything).Return(channels, nil)
+	s.store.On("ChannelActivity", mock.Anything).Return(map[string]time.Time{}, nil)
 	s.srv.SetBranchPoller(NewBranchPoller(nil, nil, "", time.Second, testLogger()))
 
 	rec := s.testRequest("GET", "/api/channels", "")
@@ -602,6 +648,7 @@ func (s *ServerSuite) TestSearchChannelsWithQuery() {
 		{ChannelID: "ch-2", Name: "random", DirPath: "/home/user/random", Active: true, Platform: types.PlatformLocal},
 	}
 	s.store.On("ListChannels", mock.Anything).Return(channels, nil)
+	s.store.On("ChannelActivity", mock.Anything).Return(map[string]time.Time{}, nil)
 
 	rec := s.testRequest("GET", "/api/channels?query=gen", "")
 
@@ -619,6 +666,7 @@ func (s *ServerSuite) TestSearchChannelsWithQueryNoMatch() {
 		{ChannelID: "ch-1", Name: "general", DirPath: "/home/user/general", Active: true, Platform: types.PlatformLocal},
 	}
 	s.store.On("ListChannels", mock.Anything).Return(channels, nil)
+	s.store.On("ChannelActivity", mock.Anything).Return(map[string]time.Time{}, nil)
 
 	rec := s.testRequest("GET", "/api/channels?query=nonexistent", "")
 
@@ -632,6 +680,7 @@ func (s *ServerSuite) TestSearchChannelsWithQueryNoMatch() {
 
 func (s *ServerSuite) TestSearchChannelsEmpty() {
 	s.store.On("ListChannels", mock.Anything).Return([]*db.Channel{}, nil)
+	s.store.On("ChannelActivity", mock.Anything).Return(map[string]time.Time{}, nil)
 
 	rec := s.testRequest("GET", "/api/channels", "")
 
@@ -650,6 +699,7 @@ func (s *ServerSuite) TestSearchChannelsFiltersByPlatform() {
 		{ChannelID: "ch-3", Name: "slack-ch", Platform: types.PlatformSlack, Active: true},
 	}
 	s.store.On("ListChannels", mock.Anything).Return(channels, nil)
+	s.store.On("ChannelActivity", mock.Anything).Return(map[string]time.Time{}, nil)
 
 	rec := s.testRequest("GET", "/api/channels?platform=local", "")
 
@@ -673,6 +723,7 @@ func (s *ServerSuite) TestSearchChannelsRunningFromContainers() {
 		{ChannelID: "ch-2", Name: "idle-ch", Platform: types.PlatformLocal, Active: true},
 	}
 	s.store.On("ListChannels", mock.Anything).Return(channels, nil)
+	s.store.On("ChannelActivity", mock.Anything).Return(map[string]time.Time{}, nil)
 
 	rec := s.testRequest("GET", "/api/channels", "")
 
@@ -695,6 +746,7 @@ func (s *ServerSuite) TestSearchChannelsAgentRunning() {
 		{ChannelID: "ch-2", Name: "idle-chat", Platform: types.PlatformLocal, Active: true},
 	}
 	s.store.On("ListChannels", mock.Anything).Return(channels, nil)
+	s.store.On("ChannelActivity", mock.Anything).Return(map[string]time.Time{}, nil)
 	chatLister.On("ActiveChatChannelIDs").Return(map[string]struct{}{"ch-1": {}})
 
 	rec := s.testRequest("GET", "/api/channels", "")
@@ -726,6 +778,7 @@ func (s *ServerSuite) TestSearchChannelsDirPathFallback() {
 		{ChannelID: "ch-2", Name: "has-dir", DirPath: "/custom/path", Active: true, Platform: types.PlatformLocal},
 	}
 	s.store.On("ListChannels", mock.Anything).Return(channels, nil)
+	s.store.On("ChannelActivity", mock.Anything).Return(map[string]time.Time{}, nil)
 
 	rec := s.testRequest("GET", "/api/channels", "")
 
@@ -764,6 +817,7 @@ func (s *ServerSuite) TestSearchChannelsBranch() {
 		{ChannelID: "ch-br", Name: "with-branch", DirPath: dir, Active: true, Platform: types.PlatformLocal},
 	}
 	s.store.On("ListChannels", mock.Anything).Return(channels, nil)
+	s.store.On("ChannelActivity", mock.Anything).Return(map[string]time.Time{}, nil)
 
 	rec := s.testRequest("GET", "/api/channels", "")
 	require.Equal(s.T(), http.StatusOK, rec.Code)
@@ -782,6 +836,7 @@ func (s *ServerSuite) TestSearchChannelsReviewEnabledWorktreeUsesParentDir() {
 		{ChannelID: "wt", Name: "w", DirPath: "/proj/.worktrees/wt", ParentID: "parent", Worktree: true, Platform: types.PlatformLocal},
 	}
 	s.store.On("ListChannels", mock.Anything).Return(channels, nil)
+	s.store.On("ChannelActivity", mock.Anything).Return(map[string]time.Time{}, nil)
 	s.srv.configs.load = func() (*config.Config, error) {
 		return &config.Config{Review: config.ReviewConfig{Enabled: false}}, nil
 	}
@@ -822,6 +877,7 @@ func (s *ServerSuite) TestSearchChannelsRootDirPath() {
 		{ChannelID: "orphan", DirPath: "/gone/.worktrees/o", ParentID: "missing", Worktree: true, Platform: types.PlatformLocal},
 	}
 	s.store.On("ListChannels", mock.Anything).Return(channels, nil)
+	s.store.On("ChannelActivity", mock.Anything).Return(map[string]time.Time{}, nil)
 
 	rec := s.testRequest("GET", "/api/channels", "")
 	require.Equal(s.T(), http.StatusOK, rec.Code)
@@ -851,6 +907,7 @@ func (s *ServerSuite) TestSearchChannelsAgentOverrides() {
 		{ChannelID: "inherit", DirPath: "/b", Platform: types.PlatformLocal},
 	}
 	s.store.On("ListChannels", mock.Anything).Return(channels, nil)
+	s.store.On("ChannelActivity", mock.Anything).Return(map[string]time.Time{}, nil)
 
 	rec := s.testRequest("GET", "/api/channels", "")
 	require.Equal(s.T(), http.StatusOK, rec.Code)
@@ -880,6 +937,7 @@ func (s *ServerSuite) TestSearchChannelsGitDetails() {
 	s.store.On("ListChannels", mock.Anything).Return([]*db.Channel{
 		{ChannelID: "wt", DirPath: dir, Worktree: true, BaseBranch: "main", Platform: types.PlatformLocal},
 	}, nil)
+	s.store.On("ChannelActivity", mock.Anything).Return(map[string]time.Time{}, nil)
 
 	rec := s.testRequest("GET", "/api/channels", "")
 	require.Equal(s.T(), http.StatusOK, rec.Code)
@@ -931,6 +989,7 @@ func (s *ServerSuite) TestSearchChannelsDiffStats() {
 		{ChannelID: "ch-diff", Name: "with-diff", DirPath: dir, Active: true, Platform: types.PlatformLocal},
 	}
 	s.store.On("ListChannels", mock.Anything).Return(channels, nil)
+	s.store.On("ChannelActivity", mock.Anything).Return(map[string]time.Time{}, nil)
 
 	rec := s.testRequest("GET", "/api/channels", "")
 	require.Equal(s.T(), http.StatusOK, rec.Code)

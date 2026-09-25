@@ -64,7 +64,8 @@ List all channels with optional filtering. Enriches each channel with container 
     "branch": "main",
     "commit": "abc1234",
     "worktree": false,
-    "locked": false
+    "locked": false,
+    "last_activity_at": "2026-03-25T14:30:00Z"
   }
 ]
 ```
@@ -80,6 +81,7 @@ List all channels with optional filtering. Enriches each channel with container 
 - `worktree` is true for threads created via `POST /api/worktrees`.
 - `root_dir_path` is set on rows inside a worktree chain — the worktree thread itself, a thread under it (e.g. a scheduled task's), or a worktree cut from another worktree — and holds the `dir_path` of the non-worktree checkout the chain was cut from. Omitted everywhere else. The Kanban panel uses it for its Local/Root board switch.
 - `model_override` / `effort_override` are the model and effort picked for the channel (see [`PATCH /api/channels/{id}/agent-config`](#patch-apichannelsidagent-config)). Omitted when it inherits the config's.
+- `last_activity_at` is when the channel's newest message was written. Omitted when it has none, or when the lookup fails (the list is still returned). The sidebar's Recent section sorts by it.
 - `locked` is true when the channel/thread is guarded against accidental deletion (toggle via [`PATCH /api/channels/{id}/lock`](#patch-apichannelsidlock)). `DELETE /api/channels/{id}` and `DELETE /api/threads/{id}` return `409 Conflict` while a row is locked.
 
 **Errors:** `501` if channel listing is not configured.

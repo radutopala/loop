@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"os/exec"
 	"strings"
+	"time"
 
 	"github.com/radutopala/loop/internal/container"
 	"github.com/radutopala/loop/internal/db"
@@ -59,6 +60,9 @@ type channelResponse struct {
 	ReviewEnabled    bool   `json:"review_enabled"`
 	ModelOverride    string `json:"model_override,omitempty"`
 	EffortOverride   string `json:"effort_override,omitempty"`
+	// LastActivityAt is when the channel's newest message was written; the
+	// sidebar's Recent section sorts by it. Absent for a channel with none.
+	LastActivityAt *time.Time `json:"last_activity_at,omitempty"`
 }
 
 func (s *Server) handleEnsureChannel(w http.ResponseWriter, r *http.Request) {
@@ -140,6 +144,13 @@ func (s *Server) handleSearchChannels(w http.ResponseWriter, r *http.Request) {
 		chatRunIDs = s.activeChatLister.ActiveChatChannelIDs()
 	}
 
+	// Activity is only for the sidebar's Recent section: without it the list
+	// still works, so a failure is logged rather than failing the request.
+	activity, err := s.store.ChannelActivity(r.Context())
+	if err != nil {
+		s.logger.Warn("channel activity lookup failed", "error", err)
+	}
+
 	query := r.URL.Query().Get("query")
 	platformFilter := r.URL.Query().Get("platform")
 
@@ -192,6 +203,10 @@ func (s *Server) handleSearchChannels(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		reviewEnabled := s.configs.reviewEnabled(dirPath, parentDirPath)
+		var lastActivity *time.Time
+		if at, ok := activity[ch.ChannelID]; ok {
+			lastActivity = &at
+		}
 		resp = append(resp, channelResponse{
 			ChannelID:        ch.ChannelID,
 			Name:             ch.Name,
@@ -219,6 +234,7 @@ func (s *Server) handleSearchChannels(w http.ResponseWriter, r *http.Request) {
 			ReviewEnabled:    reviewEnabled,
 			ModelOverride:    ch.ModelOverride,
 			EffortOverride:   ch.EffortOverride,
+			LastActivityAt:   lastActivity,
 		})
 	}
 

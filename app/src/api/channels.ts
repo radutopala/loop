@@ -42,6 +42,7 @@ interface ChannelAPIResponse {
   review_enabled?: boolean;
   model_override?: string;
   effort_override?: string;
+  last_activity_at?: string;
 }
 
 export async function fetchChannels(): Promise<Channel[]> {
@@ -75,6 +76,7 @@ export async function fetchChannels(): Promise<Channel[]> {
     review_enabled: c.review_enabled ?? false,
     model_override: c.model_override,
     effort_override: c.effort_override,
+    last_activity_at: c.last_activity_at ? Date.parse(c.last_activity_at) : undefined,
   }));
 }
 

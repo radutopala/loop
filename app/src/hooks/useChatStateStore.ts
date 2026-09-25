@@ -109,6 +109,9 @@ export function useChatStateStore({ channels, channelsFetchedAt, selectedId, onA
   const reviewRehydrateSeqRef = useRef(0);
   const [unreadCount, setUnreadCount] = useState(0);
   const [, setPillTick] = useState(0);
+  // Bumped when a channel starts or stops running, so the sidebar's running
+  // dots and Active section follow isRunningMap, a ref.
+  const [, setRunTick] = useState(0);
 
   // pillSet returns the (lazily created) channel-id set for a pill kind.
   const pillSet = useCallback((kind: PillKind): Set<string> => {
@@ -203,7 +206,7 @@ export function useChatStateStore({ channels, channelsFetchedAt, selectedId, onA
       if (!isRunningMapRef.current.has(ch.id) && !state?.isRunning) continue;
       const event: WSEvent = { type: "agent.status", channel_id: ch.id, data: { status: "completed" }, timestamp: Date.now() };
       if (state) applyEvent(state, event);
-      isRunningMapRef.current.delete(ch.id);
+      if (isRunningMapRef.current.delete(ch.id)) setRunTick((v) => v + 1);
       if (ch.id === selectedIdRef.current) {
         for (const listener of chatListenersRef.current) listener(event);
       }
@@ -579,6 +582,7 @@ export function useChatStateStore({ channels, channelsFetchedAt, selectedId, onA
       const data = wsEvent.data as AgentStatusData;
       const runTarget = data.thread_id || channelId;
       if (data.status === "running") {
+        if (!runMap.has(runTarget)) setRunTick((v) => v + 1);
         runMap.set(runTarget, data.run_id ?? "");
         lastRunningAtRef.current.set(runTarget, performance.now());
       } else {
@@ -586,8 +590,9 @@ export function useChatStateStore({ channels, channelsFetchedAt, selectedId, onA
         const finishing = data.run_id ?? "";
         {
           const tracked = runMap.get(runTarget);
-          if (tracked === undefined || tracked === "" || finishing === "" || tracked === finishing) {
+          if (tracked !== undefined && (tracked === "" || finishing === "" || tracked === finishing)) {
             runMap.delete(runTarget);
+            setRunTick((v) => v + 1);
           }
         }
         // For thread-routed events, also clear the parent's entry if it
@@ -600,6 +605,7 @@ export function useChatStateStore({ channels, channelsFetchedAt, selectedId, onA
           const parentTracked = runMap.get(channelId);
           if (parentTracked !== undefined && (parentTracked === "" || parentTracked === finishing)) {
             runMap.delete(channelId);
+            setRunTick((v) => v + 1);
             // Also clear the parent's stored chat state and forward the
             // event to the parent's chat listener (if the parent is the
             // selected view). Without this, a first-run "running" event

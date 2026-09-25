@@ -125,6 +125,7 @@ func (s *PinSuite) TestPinBinds() {
 	cases := []struct {
 		name        string
 		roots       []string
+		hostPaths   map[string]string
 		path        string
 		body        string
 		up          pinResponse
@@ -227,6 +228,22 @@ func (s *PinSuite) TestPinBinds() {
 			wantVolumes: []map[string]any{wsVol},
 		},
 		{
+			name:        "docker desktop reports the device with symlinks resolved",
+			body:        `{"HostConfig":{"Binds":["/ws/src:/app"]}}`,
+			hostPaths:   map[string]string{"/ws": "/private/ws"},
+			up:          pinResponse{volBody: `{"Driver":"local","Options":{"type":"none","o":"bind","device":"/host_mnt/private/ws"}}`},
+			wantHost:    map[string]any{"Binds": []any{}, "Mounts": []any{pinned("/ws", "/app", "src", false)}},
+			wantVolumes: []map[string]any{wsVol},
+		},
+		{
+			name:       "resolved device of another root",
+			body:       `{"HostConfig":{"Binds":["/ws/src:/app"]}}`,
+			hostPaths:  map[string]string{"/other": "/private/ws"},
+			up:         pinResponse{volBody: `{"Driver":"local","Options":{"type":"none","o":"bind","device":"/host_mnt/private/ws"}}`},
+			wantStatus: http.StatusBadGateway,
+			wantMsg:    "isn't bound to /ws",
+		},
+		{
 			name:       "existing volume bound elsewhere",
 			body:       `{"HostConfig":{"Binds":["/ws/src:/app"]}}`,
 			up:         pinResponse{volBody: `{"Driver":"local","Options":{"type":"none","o":"bind","device":"/elsewhere"}}`},
@@ -263,6 +280,7 @@ func (s *PinSuite) TestPinBinds() {
 			}
 			up := &pinUpstream{resp: tc.up}
 			srv, auditor := s.server(up, roots)
+			srv.cfg.BindHostPaths = tc.hostPaths
 			p := tc.path
 			if p == "" {
 				p = "/containers/create"

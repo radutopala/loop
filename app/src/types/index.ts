@@ -35,6 +35,8 @@ export interface Channel {
   model_override?: string;
   /** The reasoning effort this channel's agent runs with instead of the config's; unset inherits it. */
   effort_override?: string;
+  /** When the channel's newest message was written (ms since the epoch); unset when it has none. */
+  last_activity_at?: number;
 }
 
 export interface Message {

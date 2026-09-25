@@ -15,8 +15,8 @@ The sidebar is a vertical column on the left side of the app with the following 
 2. **Header bar** -- "CHANNELS" label with Select and "+ new" buttons
 3. **Search box** -- filter channels and threads
 4. **New channel input** -- inline text field (shown when creating)
-5. **DM channel** -- pinned at top
-6. **Project channels** -- sortable list with collapsible threads
+5. **Active** / **Recent** -- sessions from anywhere in the tree (see [Active & Recent Sessions](#active--recent-sessions))
+6. **All** -- the DM channel, pinned at top, then the project channels as a sortable list with collapsible threads
 7. **Spacer** -- pushes footer to bottom
 8. **Footer** -- update button, settings, README
 9. **Resize handle** -- right edge for width adjustment
@@ -55,6 +55,30 @@ Top-level channels (not threads, not DM) support drag-and-drop reordering:
 ### Persistence
 
 Channel order is stored in `localStorage` under the key `loop-channel-order` as a JSON array of channel IDs. Channels not in the stored order sort to the end.
+
+---
+
+## Active & Recent Sessions
+
+Above the tree, two sections list sessions (channels and threads alike) wherever they sit in it, so a running agent or one waiting on you is visible without expanding its parents.
+
+| Section | Holds | Order |
+|---------|-------|-------|
+| **Active** | Sessions waiting on you (an approval, a question, a plan, a ready review), then those with an agent running. A container that's only idling doesn't count. | Waiting first, then running |
+| **Recent** | The rest with activity in the last 24 hours | Newest first |
+| **All** | The channel tree, unchanged | As described in [Channel Ordering](#channel-ordering) |
+
+Activity is the time of the channel's newest message (`last_activity_at` from [`GET /api/channels`](api.md#get-apichannels)). A session that just left Active counts as active at that moment, so it moves straight into Recent before the next channel refresh.
+
+Each row shows:
+- a warning dot when it waits on you, or a spinner while its agent runs;
+- its name (task threads lose their marker prefix), in bold when unread, and below it the names of its parents, e.g. `loop-dc6a › updates`;
+- its uncommitted diff (`+N -N`), the unread dot and its status pills;
+- in Recent, how long ago it was active (`now`, `12m`, `3h`, `2d`), unless a pill is shown.
+
+Clicking a row opens the session; right-clicking opens the same context menu as the tree, and hovering shows the row's details popup.
+
+Recent shows 5 rows, with a "show N more" toggle for the rest. Each section header collapses its section; the state is stored in `localStorage` under `loop-sidebar-sections`. An empty section isn't shown, and when both Active and Recent are empty the All header isn't either. The search box filters Active and Recent by name or parent names, and both are hidden in selection mode.
 
 ---
 

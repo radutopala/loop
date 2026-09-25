@@ -98,6 +98,7 @@ type runnerSystem interface {
 	Remove(name string) error
 	MkdirAll(path string, perm os.FileMode) error
 	Readlink(name string) (string, error)
+	EvalSymlinks(path string) (string, error)
 	UserHomeDir() (string, error)
 	Getenv(key string) string
 	Getuid() int
@@ -680,6 +681,9 @@ func (r *DockerRunner) createAndStartContainer(
 		rw, _ := agentMountDirs(binds)
 		if roots := r.bindRoots(rw); len(roots) > 0 {
 			env = append(env, "LOOP_DOCKERPROXY_BIND_ROOTS="+strings.Join(roots, ":"))
+			if hosts := r.bindHostPaths(roots); len(hosts) > 0 {
+				env = append(env, "LOOP_DOCKERPROXY_BIND_HOST_PATHS="+strings.Join(hosts, ":"))
+			}
 		}
 		// The proxy also listens inside this anonymous volume so containers
 		// the agent starts with the docker socket mounted get the proxy, not
