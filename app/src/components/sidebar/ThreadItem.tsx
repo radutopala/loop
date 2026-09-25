@@ -7,6 +7,7 @@ import type { PillKind } from "./pills";
 import { SIDEBAR_PILLS } from "./pills";
 import { RowInfoPopup } from "./RowInfoPopup";
 import { StatusPill } from "./StatusPill";
+import { sessionName } from "./sessions";
 
 /** Drag-to-reorder wiring for threads/worktrees under a common parent. */
 export interface ThreadReorder {
@@ -64,7 +65,7 @@ export function ThreadItem({
   const hasAnyPill = activePills.length > 0;
   const isEphemeral = thread.name.startsWith("[ephemeral] ");
   const isTaskThread = /^(\[ephemeral] )?(🧵 |⏱ )?task #/.test(thread.name);
-  const displayName = isTaskThread ? thread.name.replace(/^(\[ephemeral] )?(🧵 |⏱ )?/, "") : thread.name || thread.id;
+  const displayName = sessionName(thread);
 
   return (
     <div style={{ position: "relative", margin: "0 8px" }}>

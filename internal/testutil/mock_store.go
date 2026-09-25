@@ -336,6 +336,14 @@ func (m *MockStore) ListChannels(ctx context.Context) ([]*db.Channel, error) {
 	return args.Get(0).([]*db.Channel), args.Error(1)
 }
 
+func (m *MockStore) ChannelActivity(ctx context.Context) (map[string]time.Time, error) {
+	args := m.Called(ctx)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(map[string]time.Time), args.Error(1)
+}
+
 func (m *MockStore) UpsertMemoryFile(ctx context.Context, file *db.MemoryFile) error {
 	return m.Called(ctx, file).Error(0)
 }

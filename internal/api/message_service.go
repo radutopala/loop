@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"time"
 
 	"github.com/radutopala/loop/internal/db"
 )
@@ -14,6 +15,7 @@ type MessageSender interface {
 // ChannelLister can list, look up, and delete channels and their messages from the database.
 type ChannelLister interface {
 	ListChannels(ctx context.Context) ([]*db.Channel, error)
+	ChannelActivity(ctx context.Context) (map[string]time.Time, error)
 	GetChannel(ctx context.Context, channelID string) (*db.Channel, error)
 	UpsertChannel(ctx context.Context, ch *db.Channel) error
 	GetMessagesCursor(ctx context.Context, channelID string, cursor int64, limit int) ([]*db.Message, error)

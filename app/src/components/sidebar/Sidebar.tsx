@@ -7,9 +7,12 @@ import type { MenuItem } from "../shared/ContextMenu";
 import { ContextMenu } from "../shared/ContextMenu";
 import { ChannelList } from "./ChannelList";
 import type { PillKind } from "./pills";
+import { SIDEBAR_PILLS } from "./pills";
 import { RenameThreadDialog } from "./RenameThreadDialog";
+import { SectionHeader, type SectionKey, SessionSections } from "./SessionSections";
 import { SidebarFooter } from "./SidebarFooter";
 import { SidebarHeader } from "./SidebarHeader";
+import { activeSessions, recentSessions, sessionContext, sessionName } from "./sessions";
 
 const MIN_WIDTH = 180;
 const MAX_WIDTH_PERCENT = 0.25;
@@ -19,6 +22,12 @@ const ORDER_STORAGE_KEY = "loop-channel-order";
 // only (localStorage), mirroring the channel-order approach — the backend
 // returns threads alphabetically and stays the source of truth for membership.
 const THREAD_ORDER_STORAGE_KEY = "loop-thread-order";
+// Which of the Active / Recent / All sections are collapsed.
+const SECTIONS_STORAGE_KEY = "loop-sidebar-sections";
+
+function loadSectionsCollapsed(): Record<SectionKey, boolean> {
+  return { active: false, recent: false, all: false, ...storageGetJSON<Partial<Record<SectionKey, boolean>>>(SECTIONS_STORAGE_KEY) };
+}
 
 function loadOrder(): string[] {
   return storageGetJSON<string[]>(ORDER_STORAGE_KEY) ?? [];
@@ -144,6 +153,19 @@ export function Sidebar({
   const newChannelInputRef = useRef<HTMLInputElement>(null);
   const draggedIdRef = useRef<string | null>(null);
   const sidebarRef = useRef<HTMLDivElement>(null);
+  const [sectionsCollapsed, setSectionsCollapsed] = useState<Record<SectionKey, boolean>>(loadSectionsCollapsed);
+  // When each session was last seen in Active. A run that just ended counts
+  // as recent activity before the next channel refresh brings its newest
+  // message's time.
+  const seenActiveAtRef = useRef(new Map<string, number>());
+
+  const toggleSection = useCallback((section: SectionKey) => {
+    setSectionsCollapsed((prev) => {
+      const next = { ...prev, [section]: !prev[section] };
+      storageSetJSON(SECTIONS_STORAGE_KEY, next);
+      return next;
+    });
+  }, []);
 
   const toggleSelected = useCallback((id: string) => {
     setSelected((prev) => {
@@ -391,6 +413,20 @@ export function Sidebar({
     return threads.filter(threadTreeMatches);
   };
 
+  // Active and Recent list sessions from anywhere in the tree. Select mode
+  // is about the tree's checkboxes, so they step aside for it.
+  const byId = new Map(channels.map((c) => [c.id, c]));
+  const isRunning = (id: string) => !!byId.get(id)?.agent_running || !!isRunningMapRef?.current?.has(id);
+  const pillsFor = (id: string): PillKind[] => SIDEBAR_PILLS.filter((p) => pillsRef?.current?.get(p.kind)?.has(id)).map((p) => p.kind);
+  const isUnread = (id: string) => unreadIdsRef?.current?.has(id) ?? false;
+  const matchesQuery = (c: Channel) => !query || sessionName(c).toLowerCase().includes(query) || sessionContext(c, byId).toLowerCase().includes(query);
+  const now = Date.now();
+  const active = selectMode ? [] : activeSessions(channels, isRunning, (id) => pillsFor(id).length > 0).filter(matchesQuery);
+  for (const c of active) seenActiveAtRef.current.set(c.id, now);
+  const lastActivity = (c: Channel): number | undefined => Math.max(c.last_activity_at ?? 0, seenActiveAtRef.current.get(c.id) ?? 0) || undefined;
+  const recent = selectMode ? [] : recentSessions(channels, new Set(active.map((c) => c.id)), lastActivity, now).filter(matchesQuery);
+  const hasSessions = active.length > 0 || recent.length > 0;
+
   if (collapsed) {
     return null;
   }
@@ -491,36 +527,53 @@ export function Sidebar({
         newChannelInputRef={newChannelInputRef}
       />
       <div style={{ flex: 1, overflowY: "auto", overflowX: "hidden", minHeight: 0 }}>
-        <ChannelList
-          dmChannel={dmChannel}
-          topLevel={topLevel}
+        <SessionSections
+          active={active}
+          recent={recent}
+          byId={byId}
           selectedId={selectedId}
+          isRunning={isRunning}
+          pillsFor={pillsFor}
+          isUnread={isUnread}
+          lastActivity={lastActivity}
+          collapsed={sectionsCollapsed}
+          onToggle={toggleSection}
           onSelect={onSelect}
-          onCreateThread={onCreateThread}
-          onCreateWorktree={onCreateWorktree}
-          threadReorder={{
-            onDragStart: handleThreadDragStart,
-            onDragOver: handleThreadDragOver,
-            onDrop: handleThreadDrop,
-            onDragEnd: handleThreadDragEnd,
-            dragOverId: threadDragOverId,
-          }}
-          onOpenConfig={onOpenConfig}
           onContextMenu={handleContextMenu}
-          onDragStart={handleDragStart}
-          onDragOver={handleDragOver}
-          onDrop={handleDrop}
-          onDragEnd={handleDragEnd}
-          dragOverId={dragOverId}
-          getFilteredThreads={getFilteredThreads}
-          threadsByParent={threadsByParent}
-          selectMode={selectMode}
-          checkedIds={selected}
-          onToggleCheck={toggleSelected}
-          isRunningMapRef={isRunningMapRef}
-          unreadIdsRef={unreadIdsRef}
-          pillsRef={pillsRef}
         />
+        {hasSessions && <SectionHeader section="all" label="All" collapsed={sectionsCollapsed.all} onToggle={() => toggleSection("all")} />}
+        {!(hasSessions && sectionsCollapsed.all) && (
+          <ChannelList
+            dmChannel={dmChannel}
+            topLevel={topLevel}
+            selectedId={selectedId}
+            onSelect={onSelect}
+            onCreateThread={onCreateThread}
+            onCreateWorktree={onCreateWorktree}
+            threadReorder={{
+              onDragStart: handleThreadDragStart,
+              onDragOver: handleThreadDragOver,
+              onDrop: handleThreadDrop,
+              onDragEnd: handleThreadDragEnd,
+              dragOverId: threadDragOverId,
+            }}
+            onOpenConfig={onOpenConfig}
+            onContextMenu={handleContextMenu}
+            onDragStart={handleDragStart}
+            onDragOver={handleDragOver}
+            onDrop={handleDrop}
+            onDragEnd={handleDragEnd}
+            dragOverId={dragOverId}
+            getFilteredThreads={getFilteredThreads}
+            threadsByParent={threadsByParent}
+            selectMode={selectMode}
+            checkedIds={selected}
+            onToggleCheck={toggleSelected}
+            isRunningMapRef={isRunningMapRef}
+            unreadIdsRef={unreadIdsRef}
+            pillsRef={pillsRef}
+          />
+        )}
       </div>
 
       <SidebarFooter

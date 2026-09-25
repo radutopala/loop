@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"time"
 
 	"github.com/radutopala/loop/internal/types"
 )
@@ -210,6 +211,33 @@ func (s *SQLiteStore) ListChannelIDsByParentID(ctx context.Context, parentID str
 		ids = append(ids, id)
 	}
 	return ids, rows.Err()
+}
+
+// ChannelActivity returns when each channel's newest message was written,
+// keyed by channel id. Channels without messages are absent. Each lookup
+// is the max id on idx_messages_channel_id, so it stays cheap however long
+// the history is.
+func (s *SQLiteStore) ChannelActivity(ctx context.Context) (map[string]time.Time, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT m.channel_id, m.created_at FROM channels c
+		 JOIN messages m ON m.id = (SELECT MAX(id) FROM messages WHERE channel_id = c.channel_id)`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	activity := make(map[string]time.Time)
+	for rows.Next() {
+		var id string
+		var at time.Time
+		if err := rows.Scan(&id, &at); err != nil {
+			return nil, err
+		}
+		activity[id] = at
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return activity, nil
 }
 
 func (s *SQLiteStore) ListChannels(ctx context.Context) ([]*Channel, error) {

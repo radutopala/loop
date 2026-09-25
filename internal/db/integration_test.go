@@ -3,6 +3,7 @@ package db
 import (
 	"context"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -202,6 +203,28 @@ func seedChannel(t *testing.T, store *SQLiteStore, channelID string) int64 {
 	ch, err := store.GetChannel(ctx, channelID)
 	require.NoError(t, err)
 	return ch.ID
+}
+
+// TestChannelActivityNewestMessage checks against a real SQLite that each
+// channel reports its newest message's time and a channel with none is
+// absent.
+func (s *IntegrationSuite) TestChannelActivityNewestMessage() {
+	store, err := NewSQLiteStore(filepath.Join(s.T().TempDir(), "loop.db"))
+	require.NoError(s.T(), err)
+	defer store.Close()
+
+	ctx := context.Background()
+	chatID := seedChannel(s.T(), store, "ch1")
+	seedChannel(s.T(), store, "ch2")
+	base := time.Date(2026, 9, 25, 10, 0, 0, 0, time.UTC)
+	for i, at := range []time.Time{base, base.Add(2 * time.Hour)} {
+		require.NoError(s.T(), store.InsertMessage(ctx, &Message{ChatID: chatID, ChannelID: "ch1", MsgID: "m" + strconv.Itoa(i), Content: "hi", Kind: MessageKindMessage, CreatedAt: at}))
+	}
+
+	activity, err := store.ChannelActivity(ctx)
+	require.NoError(s.T(), err)
+	require.Len(s.T(), activity, 1)
+	require.True(s.T(), activity["ch1"].Equal(base.Add(2*time.Hour)), activity["ch1"])
 }
 
 // TestSearchChannelMessagesMatchesLiterally runs the find-bar query against a

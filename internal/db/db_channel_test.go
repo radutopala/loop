@@ -475,6 +475,41 @@ func (s *StoreSuite) TestListChannelsEmpty() {
 	require.NoError(s.T(), s.mock.ExpectationsWereMet())
 }
 
+func (s *StoreSuite) TestChannelActivity() {
+	at := time.Date(2026, 9, 25, 11, 3, 6, 0, time.UTC)
+	s.mock.ExpectQuery(`SELECT m.channel_id, m.created_at FROM channels c\s+JOIN messages m ON m.id = \(SELECT MAX\(id\) FROM messages WHERE channel_id = c.channel_id\)`).
+		WillReturnRows(sqlmock.NewRows([]string{"channel_id", "created_at"}).AddRow("ch1", at).AddRow("ch2", at.Add(time.Hour)))
+
+	activity, err := s.store.ChannelActivity(context.Background())
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), map[string]time.Time{"ch1": at, "ch2": at.Add(time.Hour)}, activity)
+}
+
+func (s *StoreSuite) TestChannelActivityErrors() {
+	tests := []struct {
+		name  string
+		setup func()
+	}{
+		{name: "query", setup: func() {
+			s.mock.ExpectQuery(`SELECT m.channel_id`).WillReturnError(sql.ErrConnDone)
+		}},
+		{name: "scan", setup: func() {
+			s.mock.ExpectQuery(`SELECT m.channel_id`).WillReturnRows(sqlmock.NewRows([]string{"channel_id", "created_at"}).AddRow("ch1", "not-a-time"))
+		}},
+		{name: "rows", setup: func() {
+			s.mock.ExpectQuery(`SELECT m.channel_id`).WillReturnRows(sqlmock.NewRows([]string{"channel_id", "created_at"}).AddRow("ch1", time.Now()).RowError(0, sql.ErrConnDone))
+		}},
+	}
+	for _, tc := range tests {
+		s.Run(tc.name, func() {
+			tc.setup()
+			activity, err := s.store.ChannelActivity(context.Background())
+			require.Error(s.T(), err)
+			require.Nil(s.T(), activity)
+		})
+	}
+}
+
 func (s *StoreSuite) TestListChannelsErrors() {
 	s.mock.ExpectQuery(`SELECT .+ FROM channels ORDER BY name ASC`).WillReturnError(sql.ErrConnDone)
 	channels, err := s.store.ListChannels(context.Background())
