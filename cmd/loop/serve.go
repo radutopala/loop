@@ -63,7 +63,13 @@ func (a *app) newServeCmd() *cobra.Command {
 }
 
 func (a *app) ensureImageAsync(ctx context.Context, client container.DockerClient, cfg *config.Config, hub *api.EventsHub, mgr *container.ImageLifecycleManager, logger *slog.Logger) {
-	go a.ensureImageWithBroadcast(ctx, client, cfg, hub, mgr, logger)
+	// Begun here rather than in the goroutine, so a run the daemon starts
+	// right after this returns already waits for the build.
+	mgr.BeginBuild()
+	go func() {
+		defer mgr.EndBuild()
+		a.ensureImageWithBroadcast(ctx, client, cfg, hub, mgr, logger)
+	}()
 }
 
 func (a *app) ensureImageWithBroadcast(ctx context.Context, client container.DockerClient, cfg *config.Config, hub *api.EventsHub, mgr *container.ImageLifecycleManager, logger *slog.Logger) {
@@ -637,12 +643,14 @@ func (a *app) serve() error {
 		logger.Warn("quality engine disabled: store does not expose WriterDB")
 	}
 
+	var chromeProvider *browser.DockerProvider // gated on image builds below
 	if cfg.Browser.Enabled {
 		dockerProvider, browserErr := a.newBrowserProvider(cfg.Browser, logger)
 		if browserErr != nil {
 			logger.Warn("browser docker provider unavailable", "error", browserErr)
 		} else if dp, ok := dockerProvider.(*browser.DockerProvider); ok {
 			dp.SetContainerRegistry(containerReg)
+			chromeProvider = dp
 		}
 
 		// Always initialize host browser provider so the UI pill can switch to it.
@@ -745,6 +753,10 @@ func (a *app) serve() error {
 	childImages := container.NewChildImageManager(dockerClient, cfg.ContainerImage,
 		childProjectsLister(store, cfg, config.LoadProjectConfig), logger)
 	lifecycleMgr.SetChildRebuilder(childImages.RebuildStale)
+	runner.SetImageGate(lifecycleMgr, a.version)
+	if chromeProvider != nil {
+		chromeProvider.SetImageGate(lifecycleMgr)
+	}
 
 	// Ensure agent image asynchronously so the API is available during builds.
 	a.ensureImageAsync(ctx, dockerClient, cfg, eventsHub, lifecycleMgr, logger)

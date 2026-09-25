@@ -76,6 +76,58 @@ type ImageLifecycleManager struct {
 	latestClaudeVersion func() string
 	childRebuilder      func(context.Context) // optional child-image cascade; see SetChildRebuilder
 	sidecarRebuilder    func(context.Context) error
+
+	// builds counts the image builds in progress, the child-image cascade
+	// included; idle is closed when it drops to zero. See WaitBuilds.
+	buildsMu sync.Mutex
+	builds   int
+	idle     chan struct{}
+}
+
+// BeginBuild marks an image build as started, so containers created until
+// the matching EndBuild wait for it (see WaitBuilds). A build covers the
+// child-image cascade that follows it: the status says "completed" once the
+// base image is built, but project images FROM it are still being rebuilt,
+// and a container started meanwhile would run the old project image against
+// the new daemon.
+func (m *ImageLifecycleManager) BeginBuild() {
+	m.buildsMu.Lock()
+	defer m.buildsMu.Unlock()
+	if m.builds == 0 {
+		m.idle = make(chan struct{})
+	}
+	m.builds++
+}
+
+// EndBuild marks a build started with BeginBuild as finished, whether it
+// succeeded or not.
+func (m *ImageLifecycleManager) EndBuild() {
+	m.buildsMu.Lock()
+	defer m.buildsMu.Unlock()
+	m.builds--
+	if m.builds == 0 {
+		close(m.idle)
+	}
+}
+
+// WaitBuilds returns once no image build is in progress, or with ctx's error.
+// onWait, when not nil, is called first if it has to wait.
+func (m *ImageLifecycleManager) WaitBuilds(ctx context.Context, onWait func()) error {
+	m.buildsMu.Lock()
+	idle, busy := m.idle, m.builds > 0
+	m.buildsMu.Unlock()
+	if !busy {
+		return nil
+	}
+	if onWait != nil {
+		onWait()
+	}
+	select {
+	case <-idle:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }
 
 // SetSidecarRebuilder wires the browser sidecar image build, run as part of
@@ -227,12 +279,16 @@ func (m *ImageLifecycleManager) Rebuild(ctx context.Context) error {
 	}
 	m.status = ImageBuildStatus{State: "building", Phase: "building", StartedAt: time.Now()}
 	m.mu.Unlock()
+	m.BeginBuild()
 
 	m.broadcastStatus()
 
 	// Use a background context — the caller's request context will be
 	// canceled as soon as the 202 response is sent.
-	go m.doRebuild(context.Background())
+	go func() {
+		defer m.EndBuild()
+		m.doRebuild(context.Background())
+	}()
 	return nil
 }
 

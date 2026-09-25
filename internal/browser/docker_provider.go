@@ -64,6 +64,16 @@ type DockerProvider struct {
 	// ever be the global layer; asking per channel is what lets a project's
 	// overrides reach its own sidecar.
 	settingsFor func(ctx context.Context, channelID string) (ChannelSettings, bool)
+
+	// imageGate, when set, holds sidecar creation while an image build runs,
+	// the Chrome image's included. Set via SetImageGate.
+	imageGate container.ImageGate
+}
+
+// SetImageGate makes sidecar creation wait out image builds, so a sidecar
+// isn't created from the Chrome image a build is about to replace.
+func (m *DockerProvider) SetImageGate(gate container.ImageGate) {
+	m.imageGate = gate
 }
 
 // ChannelSettings is the part of a channel's browser config that shapes its
@@ -425,6 +435,14 @@ func (m *DockerProvider) EnsureBrowser(ctx context.Context, channelID, _ string)
 	// The channel's own config layers decide what gets created — image,
 	// profile, extensions, memory cap. Resolved once here, so a config edited
 	// mid-create cannot produce a container half-built from each version.
+	if m.imageGate != nil {
+		err := m.imageGate.WaitBuilds(ctx, func() {
+			m.logger.Info("waiting for the image build before creating the Chrome sidecar", "channel_id", channelID)
+		})
+		if err != nil {
+			return fmt.Errorf("waiting for the image build: %w", err)
+		}
+	}
 	cs := m.SettingsFor(ctx, channelID)
 
 	m.logger.Info("creating Chrome sidecar container",
