@@ -158,6 +158,10 @@ func (s *FoldSuite) TestDefaultRulesCapsNamespacesRuntime() {
 		{name: "pid of another container", path: "/containers/create", body: `{"HostConfig":{"PidMode":"container:loop-x"}}`, decision: types.DecisionApprove},
 		{name: "ipc of another container", path: "/containers/create", body: `{"HostConfig":{"IpcMode":"container:loop-x"}}`, decision: types.DecisionApprove},
 		{name: "network of another container", path: "/containers/create", body: `{"HostConfig":{"NetworkMode":"container:loop-x"}}`},
+		{name: "inline bind-style volume", path: "/containers/create", body: `{"HostConfig":{"Mounts":[{"Type":"volume","Source":"v","Target":"/x","VolumeOptions":{"DriverConfig":{"Name":"local","Options":{"type":"none","o":"bind","device":"/etc"}}}}]}}`, decision: types.DecisionApprove},
+		{name: "plain named volume", path: "/containers/create", body: `{"HostConfig":{"Mounts":[{"Type":"volume","Source":"v","Target":"/x"}]}}`},
+		{name: "bind-style volume create", path: "/volumes/create", body: `{"Name":"v","DriverOpts":{"type":"none","o":"bind","device":"/etc"}}`, decision: types.DecisionApprove},
+		{name: "plain volume create", path: "/volumes/create", body: `{"Name":"v","Driver":"local"}`},
 		{name: "update cap", path: "/containers/abc/update", body: `{"CapAdd":["cap_sys_module"]}`, decision: types.DecisionDeny},
 		{name: "update allowed cap", path: "/containers/abc/update", body: `{"CapAdd":["KILL"]}`},
 	}
@@ -185,4 +189,33 @@ func (s *FoldSuite) TestCapabilityNotInRequiresValues() {
 		Decision:   types.DecisionDeny,
 	}})
 	require.ErrorContains(s.T(), err, `op "capability_not_in" requires at least one value`)
+}
+
+func (s *FoldSuite) TestVolumeDetails() {
+	cases := []struct {
+		name string
+		path string
+		body string
+		want map[string]string
+	}{
+		{
+			name: "container mounts",
+			path: "/containers/create",
+			body: `{"HostConfig":{"Mounts":[{"Type":"volume","Source":"v","Target":"/x","VolumeOptions":{"DriverConfig":{"Options":{"o":"bind","device":"/etc"}}}},{"Type":"bind","Source":"/w","Target":"/w"},"junk"]}}`,
+			want: map[string]string{"mounts": "volume v→/x [device=/etc, o=bind], bind /w→/w"},
+		},
+		{
+			name: "volume driver opts",
+			path: "/volumes/create",
+			body: `{"Name":"v","DriverOpts":{"type":"none","device":"/etc"}}`,
+			want: map[string]string{"name": "v", "driver_opts": "device=/etc, type=none"},
+		},
+	}
+	for _, tc := range cases {
+		s.Run(tc.name, func() {
+			var body any
+			require.NoError(s.T(), json.Unmarshal([]byte(tc.body), &body))
+			require.Equal(s.T(), tc.want, extractApprovalDetails(http.MethodPost, tc.path, body))
+		})
+	}
 }

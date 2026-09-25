@@ -395,39 +395,58 @@ func (s *ServerSuite) TestBodyRuleBenignBodyFallsThrough() {
 	require.Equal(s.T(), original, string(receivedBody), "body must be forwarded byte-for-byte")
 }
 
-func (s *ServerSuite) TestBodyRuleOversizedBodyFallsThroughAndForwardsFullBody() {
-	var receivedLen int
-	sock, stop := upstreamUnix(s.T(), http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		b, _ := io.ReadAll(r.Body)
-		receivedLen = len(b)
-		w.WriteHeader(http.StatusCreated)
-	}))
-	defer stop()
+// Oversized bodies on endpoints with body rules: JSON is rejected (the
+// rules would not see it); other content types and endpoints whose cap only
+// comes from the approval details are forwarded whole.
+func (s *ServerSuite) TestBodyRuleOversizedBody() {
+	cases := []struct {
+		name        string
+		path        string
+		contentType string
+		wantStatus  int
+	}{
+		{name: "json on rule endpoint", path: "/volumes/create", contentType: "application/json", wantStatus: http.StatusRequestEntityTooLarge},
+		{name: "tar on rule endpoint", path: "/volumes/create", contentType: "application/x-tar", wantStatus: http.StatusCreated},
+		{name: "json on details-only endpoint", path: "/networks/create", contentType: "application/json", wantStatus: http.StatusCreated},
+	}
+	for _, tc := range cases {
+		s.Run(tc.name, func() {
+			var receivedLen int
+			sock, stop := upstreamUnix(s.T(), http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				b, _ := io.ReadAll(r.Body)
+				receivedLen = len(b)
+				w.WriteHeader(http.StatusCreated)
+			}))
+			defer stop()
 
-	policy, err := CompilePolicy(types.DecisionAllow,
-		[]types.HTTPServiceRule{
-			{Methods: []string{"POST"}, Paths: []string{"^/containers/create$"}, Decision: types.DecisionAllow},
-		},
-		[]types.BodyRule{{
-			AppliesTo:    "POST ^/containers/create$",
-			ContentTypes: []string{"application/json"},
-			MaxBodyBytes: 32, // tiny cap so we force the "too large" branch
-			JSONChecks: []types.JSONCheck{
-				{Path: "HostConfig.Privileged", Op: "equals", Values: []string{"true"}},
-			},
-			Decision: types.DecisionDeny,
-		}})
-	require.NoError(s.T(), err)
-	srv := s.newServer(policy, &fakeApprover{}, sock, nil)
+			policy, err := CompilePolicy(types.DecisionAllow, nil,
+				[]types.BodyRule{{
+					AppliesTo:    "POST ^/volumes/create$",
+					MaxBodyBytes: 32, // tiny cap so we force the "too large" branch
+					JSONChecks: []types.JSONCheck{
+						{Path: "HostConfig.Privileged", Op: "equals", Values: []string{"true"}},
+					},
+					Decision: types.DecisionDeny,
+				}})
+			require.NoError(s.T(), err)
+			auditor := &capturingAuditor{}
+			srv := s.newServer(policy, &fakeApprover{}, sock, auditor)
 
-	big := `{"Image":"ubuntu","HostConfig":{"Privileged":true,"Filler":"` + strings.Repeat("X", 200) + `"}}`
-	req := httptest.NewRequest(http.MethodPost, "/containers/create", strings.NewReader(big))
-	req.Header.Set("Content-Type", "application/json")
-	rr := httptest.NewRecorder()
-	srv.ServeHTTP(rr, req)
+			big := `{"Image":"ubuntu","HostConfig":{"Privileged":true,"Filler":"` + strings.Repeat("X", nestedBodyCap) + `"}}`
+			req := httptest.NewRequest(http.MethodPost, tc.path, strings.NewReader(big))
+			req.Header.Set("Content-Type", tc.contentType)
+			rr := httptest.NewRecorder()
+			srv.ServeHTTP(rr, req)
 
-	require.Equal(s.T(), http.StatusCreated, rr.Code)
-	require.Equal(s.T(), len(big), receivedLen, "full body must still reach upstream even when skipped")
+			require.Equal(s.T(), tc.wantStatus, rr.Code)
+			if tc.wantStatus == http.StatusRequestEntityTooLarge {
+				require.Zero(s.T(), receivedLen)
+				require.Equal(s.T(), "body-eval-error", auditor.snapshot()[0].RuleID)
+				return
+			}
+			require.Equal(s.T(), len(big), receivedLen, "full body must still reach upstream")
+		})
+	}
 }
 
 func (s *ServerSuite) TestBodyRuleInvalidJSONReturns400() {

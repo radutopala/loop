@@ -2,6 +2,7 @@ package dockerproxy
 
 import (
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 )
@@ -102,6 +103,9 @@ func detailsForContainerCreate(obj map[string]any) map[string]string {
 		if v := stringSliceField(host, "SecurityOpt"); v != "" {
 			d["security_opt"] = truncate(v, 200)
 		}
+		if v := mountsField(host); v != "" {
+			d["mounts"] = truncate(v, 400)
+		}
 	}
 	if len(d) == 0 {
 		return nil
@@ -161,10 +165,50 @@ func detailsForVolumeCreate(obj map[string]any) map[string]string {
 	if v := stringField(obj, "Driver"); v != "" {
 		d["driver"] = v
 	}
+	if v := mapField(obj, "DriverOpts"); v != "" {
+		d["driver_opts"] = truncate(v, 400)
+	}
 	if len(d) == 0 {
 		return nil
 	}
 	return d
+}
+
+// mountsField summarises HostConfig.Mounts as "type source→target", with a
+// volume's driver options in brackets; "" when there are none.
+func mountsField(host map[string]any) string {
+	v, _ := foldGet(host, "Mounts")
+	arr, _ := v.([]any)
+	parts := make([]string, 0, len(arr))
+	for _, e := range arr {
+		m, ok := e.(map[string]any)
+		if !ok {
+			continue
+		}
+		part := fmt.Sprintf("%s %s→%s", foldString(m, "Type"), foldString(m, "Source"), foldString(m, "Target"))
+		vo, _ := foldGet(m, "VolumeOptions")
+		voMap, _ := vo.(map[string]any)
+		dc, _ := foldGet(voMap, "DriverConfig")
+		dcMap, _ := dc.(map[string]any)
+		if opts := mapField(dcMap, "Options"); opts != "" {
+			part += " [" + opts + "]"
+		}
+		parts = append(parts, part)
+	}
+	return strings.Join(parts, ", ")
+}
+
+// mapField renders a JSON object field as sorted "k=v" pairs; "" when
+// missing or empty.
+func mapField(obj map[string]any, key string) string {
+	v, _ := foldGet(obj, key)
+	m, _ := v.(map[string]any)
+	parts := make([]string, 0, len(m))
+	for k, val := range m {
+		parts = append(parts, fmt.Sprintf("%s=%v", k, val))
+	}
+	slices.Sort(parts)
+	return strings.Join(parts, ", ")
 }
 
 // detailsFoldNames are the keys the approval details read. Bodies must not
@@ -174,7 +218,8 @@ var detailsFoldNames = []string{
 	"Image", "Cmd", "Entrypoint", "User", "WorkingDir", "HostConfig", "Binds",
 	"Privileged", "NetworkMode", "PidMode", "IpcMode", "UsernsMode", "CapAdd",
 	"Devices", "SecurityOpt", "AttachStdin", "Tty", "Name", "Driver",
-	"Internal", "Attachable",
+	"Internal", "Attachable", "Mounts", "Type", "Source", "Target",
+	"VolumeOptions", "DriverConfig", "Options", "DriverOpts",
 }
 
 // stringField returns the named string field (case-insensitive), "" if missing or wrong type.

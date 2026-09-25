@@ -205,7 +205,7 @@ The default posture is `allow`. The body rules below are the real container-esca
 
 All other Docker API calls fall through to `allow`: `_ping`, `version`, `info`, container create / start / stop / kill / restart / pause / wait / attach, image create / build / push / pull / rm, volume / network CRUD, events, logs, inspect, stats, top, and so on.
 
-### Docker body (`BodyRule`, 3 rules — the container-escape guardrails)
+### Docker body (`BodyRule`, 5 rules — the container-escape guardrails)
 
 Body rules are evaluated independently of the HTTP rule match and support all three decisions:
 
@@ -215,7 +215,7 @@ Body rules are evaluated independently of the HTTP rule match and support all th
 
 JSON paths match keys case-insensitively, as the daemon's decoder does: it creates a privileged container from `{"hostconfig":{"privileged":true}}`, so an exact-case match would let that through. A body holding two keys that differ only in case — where a rule path, the approval summary or the socket rewrite reads that key — is rejected with `400`, since the daemon keeps one of them depending on key order. Free-form maps such as `Labels` may still hold `foo` and `FOO`.
 
-Bodies larger than `MaxBodyBytes` (1 MiB default) skip body inspection and fall through to the `HTTPServiceRule` decision — except `POST /containers/create`, which is rejected with `413` above 1 MiB (see [Nested docker socket](#nested-docker-socket)).
+A JSON body larger than the matching rules' `MaxBodyBytes` (1 MiB default) is rejected with `413`: the rules can't inspect it, and padding (a big label) would otherwise carry any field past them. Other content types (build contexts) and endpoints without body rules are forwarded whole.
 
 **`POST /containers/create`** — denies any of:
 
@@ -241,6 +241,13 @@ Bodies larger than `MaxBodyBytes` (1 MiB default) skip body inspection and fall 
 | `HostConfig.ReadonlyPaths` | `empty_array` | — | Explicit `[]` makes kernel paths writable |
 
 **`POST /containers/create`** — asks for approval when the container joins another container's PID or IPC namespace (`HostConfig.PidMode` / `HostConfig.IpcMode` starting with `container:`). Like `exec`, that reaches into the other container: as root with the same caps, the new container can read `/proc/<pid>/root` of the target's processes, and the proxy can't tell the agent's own containers from others. Sharing a network namespace (`NetworkMode: container:…`, compose `network_mode: service:…`) stays allowed.
+
+**Device-backed volumes** — ask for approval. A `local` volume with a `device` option mounts that path or disk from the daemon's side (`docker volume create --opt type=none --opt o=bind --opt device=/etc`), which the bind-source deny list never sees since named-volume sources aren't host paths. tmpfs and NFS volumes use the option too, so it's an approval rather than a deny; the prompt shows the options.
+
+| Endpoint | JSON path | Op |
+|---|---|---|
+| `POST /volumes/create` | `DriverOpts.device` | `present` |
+| `POST /containers/create` | `HostConfig.Mounts[*].VolumeOptions.DriverConfig.Options.device` | `present` |
 
 **`POST /containers/{id}/update`** — denies:
 

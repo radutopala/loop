@@ -344,6 +344,30 @@ func DefaultDockerProxyBodyRules() []types.BodyRule {
 			Message:  "container joins another container's PID/IPC namespace",
 		},
 		{
+			// A local volume with a device option mounts that path (or disk)
+			// from the daemon's side, bypassing the bind-source deny list:
+			// `--opt type=none --opt o=bind --opt device=/etc`. tmpfs and NFS
+			// volumes use the option too, so ask rather than deny.
+			AppliesTo:    "POST ^/containers/create$",
+			ContentTypes: []string{"application/json"},
+			MaxBodyBytes: 1048576,
+			JSONChecks: []types.JSONCheck{
+				{Path: "HostConfig.Mounts[*].VolumeOptions.DriverConfig.Options.device", Op: "present"},
+			},
+			Decision: types.DecisionApprove,
+			Message:  "container mounts a volume backed by a host device or path",
+		},
+		{
+			AppliesTo:    "POST ^/volumes/create$",
+			ContentTypes: []string{"application/json"},
+			MaxBodyBytes: 1048576,
+			JSONChecks: []types.JSONCheck{
+				{Path: "DriverOpts.device", Op: "present"},
+			},
+			Decision: types.DecisionApprove,
+			Message:  "volume backed by a host device or path",
+		},
+		{
 			AppliesTo:    "POST ^/containers/[^/]+/update$",
 			ContentTypes: []string{"application/json"},
 			MaxBodyBytes: 1048576,
