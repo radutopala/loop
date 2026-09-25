@@ -245,7 +245,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	// Volume creates may not claim the names of pinned-bind volumes.
 	if r.Method == http.MethodPost && canonicalPath == "/volumes/create" && reservesBindVolume(r) {
-		msg := "volume names starting with " + bindVolumePrefix + " are reserved for the docker proxy"
+		msg := reservedVolumeMsg
 		s.audit(AuditEntry{
 			Ts:       start,
 			CID:      s.cfg.CID,

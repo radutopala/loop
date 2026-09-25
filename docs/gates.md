@@ -305,7 +305,7 @@ So once a `POST /containers/create` is approved, the proxy rewrites its host-pat
 - a source that resolves under one of the agent's mounts (the same paths as the bind allowlist, passed in as `LOOP_DOCKERPROXY_BIND_ROOTS`) becomes a mount of a named volume bound to that mount, with the rest of the path as `VolumeOptions.Subpath`. The daemon opens a subpath beneath the volume, one component at a time, when it mounts it, and mounts what it opened: a symlink leading out of the mount fails the start instead. The mounts themselves can't be swapped, since their parents aren't in the agent container; with nested mounts, the outermost one is used for the same reason. `NoCopy` is set, so an empty directory isn't filled with the image's files as a volume would be;
 - any other source was approved as the path it resolved to, and is forwarded as that path.
 
-The volumes are named `loop-bind-<hash of the path>` and labelled `app=loop-bind`. They hold no data — each only points at a host directory — and are reused by every container binding under the same path; the agent can't create volumes with that prefix. Leftovers are harmless, and `docker volume rm $(docker volume ls -q --filter label=app=loop-bind)` removes the ones not in use.
+The volumes are named `loop-bind-<hash of the path>` and labelled `app=loop-bind`. They hold no data — each only points at a host directory — and are reused by every container binding under the same path; the agent can't create or mount volumes with that prefix. Each rewritten mount carries the volume's driver options and label, so a volume removed between the proxy creating it and the container being created is recreated as it was. Whenever loop removes a container it also removes the `loop-bind` volumes no container uses; the proxy recreates them on next use.
 
 Differences from a plain bind, and rejections (audited with rule id `create-binds`):
 
@@ -314,6 +314,7 @@ Differences from a plain bind, and rejections (audited with rule id `create-bind
 | Source doesn't exist (a plain `-v` would create it) or can't be resolved | `400` |
 | Client pins Docker API < 1.45 and a bind is below a mount's top | `400` |
 | Daemon older than API 1.45, or a `loop-bind-*` volume bound elsewhere | `502` |
+| A mount or bind of a `loop-bind-*` volume by name | `403` |
 
 Bind options other than read-only (propagation, SELinux labels) are dropped.
 

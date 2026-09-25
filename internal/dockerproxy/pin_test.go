@@ -104,7 +104,11 @@ func (s *PinSuite) server(u *pinUpstream, roots []string) (*Server, *capturingAu
 }
 
 func pinned(root, target, subpath string, readOnly bool) map[string]any {
-	opts := map[string]any{"NoCopy": true}
+	opts := map[string]any{
+		"NoCopy":       true,
+		"DriverConfig": map[string]any{"Name": "local", "Options": map[string]any{"type": "none", "o": "bind", "device": root}},
+		"Labels":       map[string]any{"app": BindVolumeLabel},
+	}
 	if subpath != "" {
 		opts["Subpath"] = subpath
 	}
@@ -116,7 +120,7 @@ func (s *PinSuite) TestPinBinds() {
 		"Name":       bindVolumeName("/ws"),
 		"Driver":     "local",
 		"DriverOpts": map[string]any{"type": "none", "o": "bind", "device": "/ws"},
-		"Labels":     map[string]any{"app": bindVolumeLabel},
+		"Labels":     map[string]any{"app": BindVolumeLabel},
 	}
 	cases := []struct {
 		name        string
@@ -176,6 +180,18 @@ func (s *PinSuite) TestPinBinds() {
 			name:  "no roots",
 			roots: []string{},
 			body:  `{"HostConfig":{"Binds":["/ws/src:/app"]}}`,
+		},
+		{
+			name:       "mount of a pinned-bind volume by name",
+			body:       `{"HostConfig":{"Mounts":[{"Type":"volume","Source":"` + bindVolumeName("/ws") + `","Target":"/w"}]}}`,
+			wantStatus: http.StatusForbidden,
+			wantMsg:    "reserved for the docker proxy",
+		},
+		{
+			name:       "bind string naming a pinned-bind volume",
+			body:       `{"HostConfig":{"Binds":["` + bindVolumeName("/ws") + `:/w"]}}`,
+			wantStatus: http.StatusForbidden,
+			wantMsg:    "reserved for the docker proxy",
 		},
 		{
 			name:       "unresolvable source",

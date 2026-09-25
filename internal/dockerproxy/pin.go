@@ -31,10 +31,12 @@ import (
 
 const (
 	// bindVolumePrefix names the volumes pinBinds binds to a root. Requests
-	// from the agent may not create volumes with it (see volumeNameTaken).
+	// from the agent may not create or mount volumes with it (see
+	// reservesBindVolume and pinBinds).
 	bindVolumePrefix = "loop-bind-"
-	// bindVolumeLabel marks those volumes for cleanup.
-	bindVolumeLabel = "loop-bind"
+	// BindVolumeLabel is the value of the "app" label on those volumes;
+	// loop removes the unused ones when it removes a container.
+	BindVolumeLabel = "loop-bind"
 )
 
 // bindVolumeName is the volume pinBinds binds to root.
@@ -65,9 +67,9 @@ type pinnedBind struct {
 // pinBinds rewrites the host-path binds of a POST /containers/create body
 // (see the comment above). It runs after the policy has approved the
 // request, and returns a non-zero status (with a message) when the request
-// must be rejected instead: a source that doesn't resolve, a pinned bind
-// sent at an API version without Subpath, or a pin volume the daemon
-// couldn't provide.
+// must be rejected instead: a mount of a pinned-bind volume by name, a
+// source that doesn't resolve, a pinned bind sent at an API version without
+// Subpath, or a pin volume the daemon couldn't provide.
 func (s *Server) pinBinds(r *http.Request) (int, string) {
 	if len(s.cfg.BindRoots) == 0 || s.cfg.EvalSymlinks == nil || r.Body == nil || r.Body == http.NoBody ||
 		normalizeContentType(r.Header.Get("Content-Type")) != "application/json" {
@@ -108,6 +110,9 @@ func (s *Server) pinBinds(r *http.Request) (int, string) {
 	for _, m := range mounts {
 		mm, ok := m.(map[string]any)
 		src := foldString(mm, "Source")
+		if strings.HasPrefix(src, bindVolumePrefix) {
+			return http.StatusForbidden, reservedVolumeMsg
+		}
 		if !ok || foldString(mm, "Type") != "bind" || !strings.HasPrefix(src, "/") {
 			kept = append(kept, m)
 			continue
@@ -123,6 +128,9 @@ func (s *Server) pinBinds(r *http.Request) (int, string) {
 	for _, b := range binds {
 		str, _ := b.(string)
 		src, rest, found := strings.Cut(str, ":")
+		if strings.HasPrefix(src, bindVolumePrefix) {
+			return http.StatusForbidden, reservedVolumeMsg
+		}
 		if !found || !strings.HasPrefix(src, "/") {
 			keptBinds = append(keptBinds, b)
 			continue
@@ -161,7 +169,14 @@ func (s *Server) pinBinds(r *http.Request) (int, string) {
 			}
 			ensured[root] = true
 		}
-		opts := map[string]any{"NoCopy": true}
+		// The driver config and labels recreate the volume as ensured
+		// should it be removed (by a prune) before the container is
+		// created; the daemon ignores them for a volume that exists.
+		opts := map[string]any{
+			"NoCopy":       true,
+			"DriverConfig": map[string]any{"Name": "local", "Options": bindVolumeOptions(root)},
+			"Labels":       map[string]any{"app": BindVolumeLabel},
+		}
 		if rel != "" {
 			opts["Subpath"] = rel
 		}
@@ -196,8 +211,8 @@ func (s *Server) ensureBindVolume(ctx context.Context, root string, subpath bool
 	payload, _ := json.Marshal(map[string]any{
 		"Name":       name,
 		"Driver":     "local",
-		"DriverOpts": map[string]string{"type": "none", "o": "bind", "device": root},
-		"Labels":     map[string]string{"app": bindVolumeLabel},
+		"DriverOpts": bindVolumeOptions(root),
+		"Labels":     map[string]string{"app": BindVolumeLabel},
 	})
 	req, _ := http.NewRequestWithContext(ctx, http.MethodPost, "http://docker/volumes/create", bytes.NewReader(payload))
 	req.Header.Set("Content-Type", "application/json")
@@ -228,6 +243,11 @@ func (s *Server) ensureBindVolume(ctx context.Context, root string, subpath bool
 		}
 	}
 	return nil
+}
+
+// bindVolumeOptions are the local driver options that bind a volume to root.
+func bindVolumeOptions(root string) map[string]string {
+	return map[string]string{"type": "none", "o": "bind", "device": root}
 }
 
 // boundTo reports whether a local volume's options bind it to root. Docker
@@ -264,6 +284,9 @@ func reservesBindVolume(r *http.Request) bool {
 	}
 	return false
 }
+
+// reservedVolumeMsg rejects a request that names a pinned-bind volume.
+const reservedVolumeMsg = "volume names starting with " + bindVolumePrefix + " are reserved for the docker proxy"
 
 // sortRoots orders roots outermost first, for pinRoot.
 func sortRoots(roots []string) []string {
