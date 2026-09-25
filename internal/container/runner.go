@@ -673,10 +673,12 @@ func (r *DockerRunner) createAndStartContainer(
 		if len(readOnly) > 0 {
 			env = append(env, "LOOP_DOCKERPROXY_READONLY_DIRS="+strings.Join(readOnly, ":"))
 		}
-		// Binds under the agent's own mounts are pinned to volumes bound to
-		// them, so a symlink swapped in after the policy check can't
-		// redirect a nested container's mount.
-		if roots := agentMountDirs(binds); len(roots) > 0 {
+		// Binds under the agent's own read-write directories are pinned to
+		// volumes bound to them, so a symlink swapped in after the policy
+		// check can't redirect a nested container's mount. The agent can't
+		// create symlinks in its read-only mounts, so those aren't pinned.
+		rw, _ := agentMountDirs(binds)
+		if roots := r.bindRoots(rw); len(roots) > 0 {
 			env = append(env, "LOOP_DOCKERPROXY_BIND_ROOTS="+strings.Join(roots, ":"))
 		}
 		// The proxy also listens inside this anonymous volume so containers

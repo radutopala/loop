@@ -927,10 +927,11 @@ func (r *DockerRunner) writeProxyPolicyFile(cfg *config.Config, channelID string
 	if err := r.sys.MkdirAll(dir, 0o750); err != nil {
 		return "", fmt.Errorf("creating policy dir: %w", err)
 	}
+	rw, ro := agentMountDirs(binds)
 	payload := proxyPolicyJSON{
 		DefaultDecision: cfg.Gates.DockerProxy.DefaultDecision,
 		HTTPRules:       cfg.Gates.DockerProxy.HTTPRules,
-		BodyRules:       injectBindAllowlist(cfg.Gates.DockerProxy.BodyRules, agentMountDirs(binds)),
+		BodyRules:       injectBindAllowlist(cfg.Gates.DockerProxy.BodyRules, rw, ro),
 	}
 	raw, _ := json.Marshal(payload)
 	path := filepath.Join(dir, "proxy-policy.json")
@@ -1030,64 +1031,92 @@ func (r *DockerRunner) ensureGateAuditDir(channelID, dirPath string) (string, er
 	return dir, nil
 }
 
-// agentMountDirs returns the host paths the agent already has read-write
-// at the same path inside its container: the workspace, the worktree parent,
-// extra dirs, the playground and same-path config mounts. A nested container
-// binding one of them gets no access the agent lacks. Read-only mounts,
-// named volumes and the docker socket are left out.
-func agentMountDirs(binds []string) []string {
-	var dirs []string
+// agentMountDirs returns the host paths the agent already has at the same
+// path inside its container, read-write (the workspace, the worktree parent,
+// extra dirs, the playground and same-path config mounts) and read-only
+// (~/.gitconfig, ~/.ssh and the like). A nested container binding one of
+// them the same way gets no access the agent lacks. Named volumes and the
+// docker socket are left out.
+func agentMountDirs(binds []string) (rw, ro []string) {
 	for _, b := range binds {
 		ms, err := parseMountSpec(b)
 		if err != nil || !strings.HasPrefix(ms.Host, "/") || ms.Host != ms.Container ||
-			slices.Contains(strings.Split(ms.Mode, ","), "ro") ||
 			ms.Host == "/var/run/docker.sock" || ms.Host == "/run/docker.sock" ||
-			slices.Contains(dirs, ms.Host) {
+			slices.Contains(rw, ms.Host) || slices.Contains(ro, ms.Host) {
 			continue
 		}
-		dirs = append(dirs, ms.Host)
+		if slices.Contains(strings.Split(ms.Mode, ","), "ro") {
+			ro = append(ro, ms.Host)
+		} else {
+			rw = append(rw, ms.Host)
+		}
 	}
-	return dirs
+	return rw, ro
+}
+
+// bindRoots returns the directories among rw, the mounts the docker proxy
+// pins binds to (LOOP_DOCKERPROXY_BIND_ROOTS). A volume can't be bound to
+// a file ("not a directory" at start), and a file needs no pinning: it's a
+// mount point in the agent container, so the agent can't replace it with a
+// symlink (EBUSY). Paths that can't be stat'ed are kept.
+func (r *DockerRunner) bindRoots(rw []string) []string {
+	var roots []string
+	for _, d := range rw {
+		if fi, err := r.sys.Stat(d); err == nil && !fi.IsDir() {
+			continue
+		}
+		roots = append(roots, d)
+	}
+	return roots
 }
 
 // injectBindAllowlist confines the bind mounts of containers the agent
-// creates to the agent's own mounts (dirs):
+// creates to the agent's own mounts (rw, and ro for read-only binds):
 //
 //   - deny rules keep firing on their source_path_in values, except that a
-//     value matching one of dirs outright (`^/home(/|$)` against a workspace
-//     under /home on Linux) no longer fires for sources that resolve inside
-//     dirs — the value is split into its own check with an Except list, so
-//     narrower values (a user's `^<workspace>/secrets`) still fire;
+//     value matching one of the mounts outright (`^/home(/|$)` against a
+//     workspace under /home on Linux) no longer fires for sources that
+//     resolve inside them — the value is split into its own check with an
+//     Except list, so narrower values (a user's `^<workspace>/secrets`)
+//     still fire;
 //   - an approve rule appended last asks for any host-path bind that
-//     resolves outside dirs. On Docker Desktop the daemon resolves binds on
-//     the host's shared folders, so without it `-v /Users/<me>:/h` would
-//     hand a container the whole home directory.
+//     resolves outside the rw mounts, unless it is a read-only bind inside
+//     the ro ones. On Docker Desktop the daemon resolves binds on the
+//     host's shared folders, so without it `-v /Users/<me>:/h` would hand a
+//     container the whole home directory.
 //
 // Deny rules are matched per request, first match wins, so an allow rule
 // can't express "these binds are fine" without also skipping the denies for
 // the request's other fields.
-func injectBindAllowlist(rules []types.BodyRule, dirs []string) []types.BodyRule {
-	allowed := make([]string, len(dirs))
-	for i, d := range dirs {
-		allowed[i] = "^" + regexp.QuoteMeta(d) + "($|/)"
+func injectBindAllowlist(rules []types.BodyRule, rw, ro []string) []types.BodyRule {
+	patterns := func(dirs []string) []string {
+		var out []string
+		for _, d := range dirs {
+			out = append(out, "^"+regexp.QuoteMeta(d)+"($|/)")
+		}
+		return out
 	}
+	allowed, readOnly := patterns(rw), patterns(ro)
+	dirs := append(slices.Clone(rw), ro...)
+	exempt := append(slices.Clone(allowed), readOnly...)
 	out := make([]types.BodyRule, 0, len(rules)+1)
 	for _, r := range rules {
 		if r.Decision == types.DecisionDeny {
-			r.JSONChecks = exemptAgentMounts(r.JSONChecks, dirs, allowed)
+			r.JSONChecks = exemptAgentMounts(r.JSONChecks, dirs, exempt)
 		}
 		out = append(out, r)
 	}
 	notIn := func(path string) types.JSONCheck {
-		return types.JSONCheck{Path: path, Op: "source_path_not_in", Values: allowed}
+		return types.JSONCheck{Path: path, Op: "source_path_not_in", Values: allowed, ReadOnlyValues: readOnly}
 	}
 	return append(out, types.BodyRule{
 		AppliesTo:    "POST ^/containers/create$",
 		ContentTypes: []string{"application/json"},
 		MaxBodyBytes: 1048576,
-		JSONChecks:   []types.JSONCheck{notIn("HostConfig.Binds[*]"), notIn("HostConfig.Mounts[*].Source")},
-		Decision:     types.DecisionApprove,
-		Message:      "bind mount outside the agent's own mounts",
+		// Whole mounts, so the check sees ReadOnly next to Source.
+		JSONChecks: []types.JSONCheck{notIn("HostConfig.Binds[*]"), notIn("HostConfig.Mounts[*]")},
+		Decision:   types.DecisionApprove,
+		Message:    "bind mount outside the agent's own mounts",
 	})
 }
 

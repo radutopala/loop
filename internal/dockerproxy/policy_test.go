@@ -442,6 +442,8 @@ func (s *PolicySuite) TestCompileSourcePathErrors() {
 		{"bad value regex", types.JSONCheck{Path: "a", Op: "source_path_not_in", Values: []string{"("}}, "values[0] regex"},
 		{"bad except regex", types.JSONCheck{Path: "a", Op: "source_path_in", Values: []string{"^/"}, Except: []string{"("}}, "except[0] regex"},
 		{"except on another op", types.JSONCheck{Path: "a", Op: "source_path_not_in", Except: []string{"^/"}}, "except is only valid"},
+		{"bad read-only regex", types.JSONCheck{Path: "a", Op: "source_path_not_in", ReadOnlyValues: []string{"("}}, "read_only_values[0] regex"},
+		{"read-only values on another op", types.JSONCheck{Path: "a", Op: "source_path_in", ReadOnlyValues: []string{"^/"}}, "read_only_values is only valid"},
 	}
 	for _, tc := range cases {
 		s.Run(tc.name, func() {

@@ -166,7 +166,7 @@ func (s *ProxySuite) TestWriteProxyPolicyFileSerialisesConfig() {
 // --- bind allowlist ---
 
 func (s *ProxySuite) TestAgentMountDirs() {
-	got := agentMountDirs([]string{
+	rw, ro := agentMountDirs([]string{
 		"/Users/r/dev/loop:/Users/r/dev/loop",
 		"/Users/r/dev/loop:/Users/r/dev/loop", // duplicate
 		"/Users/r/.loop/playground:/Users/r/.loop/playground:rw",
@@ -176,9 +176,26 @@ func (s *ProxySuite) TestAgentMountDirs() {
 		"/var/run/docker.sock:/var/run/docker.sock",
 		"/run/docker.sock:/run/docker.sock",
 		"/srv/data:/srv/data:z,ro",
+		"/srv/data:/srv/data", // already read-only
 		"bogus",
 	})
-	require.Equal(s.T(), []string{"/Users/r/dev/loop", "/Users/r/.loop/playground"}, got)
+	require.Equal(s.T(), []string{"/Users/r/dev/loop", "/Users/r/.loop/playground"}, rw)
+	require.Equal(s.T(), []string{"/Users/r/.loop/screenshots", "/srv/data"}, ro)
+}
+
+func (s *ProxySuite) TestBindRoots() {
+	sys := new(testutil.MockSystem)
+	dir, err := os.Stat(s.T().TempDir())
+	require.NoError(s.T(), err)
+	file, err := os.Stat(os.Args[0])
+	require.NoError(s.T(), err)
+	sys.On("Stat", "/ws").Return(dir, nil)
+	sys.On("Stat", "/token").Return(file, nil)
+	sys.On("Stat", "/gone").Return(nil, os.ErrNotExist)
+	r := &DockerRunner{sys: sys}
+
+	require.Equal(s.T(), []string{"/ws", "/gone"}, r.bindRoots([]string{"/ws", "/token", "/gone"}))
+	require.Nil(s.T(), r.bindRoots(nil))
 }
 
 func (s *ProxySuite) TestInjectBindAllowlistShape() {
@@ -201,15 +218,17 @@ func (s *ProxySuite) TestInjectBindAllowlistShape() {
 	}
 	orig := slices.Clone(in[0].JSONChecks)
 
-	out := injectBindAllowlist(in, []string{"/home/r/proj", "/opt/x.y"})
+	out := injectBindAllowlist(in, []string{"/home/r/proj", "/opt/x.y"}, []string{"/home/r/.gitconfig"})
 
 	allowed := []string{`^/home/r/proj($|/)`, `^/opt/x\.y($|/)`}
+	readOnly := []string{`^/home/r/\.gitconfig($|/)`}
+	exempt := append(slices.Clone(allowed), readOnly...)
 	require.Equal(s.T(), []types.JSONCheck{
 		{Path: "HostConfig.Binds[*]", Op: "source_path_in", Values: []string{"^/$", "^/home/r/proj/secrets", "(["}},
-		{Path: "HostConfig.Binds[*]", Op: "source_path_in", Values: []string{"^/home(/|$)"}, Except: allowed},
+		{Path: "HostConfig.Binds[*]", Op: "source_path_in", Values: []string{"^/home(/|$)"}, Except: exempt},
 		{Path: "HostConfig.Mounts[*].Source", Op: "source_path_in", Values: []string{"^/etc(/|$)"}},
 		{Path: "HostConfig.Privileged", Op: "equals", Values: []string{"true"}},
-		{Path: "HostConfig.Binds[*]", Op: "source_path_in", Values: []string{"^/home(/|$)"}, Except: append([]string{"^/home/shared"}, allowed...)},
+		{Path: "HostConfig.Binds[*]", Op: "source_path_in", Values: []string{"^/home(/|$)"}, Except: append([]string{"^/home/shared"}, exempt...)},
 	}, out[0].JSONChecks)
 	require.Equal(s.T(), orig, in[0].JSONChecks, "input rules must not be mutated")
 	require.Equal(s.T(), in[1], out[1], "non-deny rules are untouched")
@@ -220,8 +239,8 @@ func (s *ProxySuite) TestInjectBindAllowlistShape() {
 		ContentTypes: []string{"application/json"},
 		MaxBodyBytes: 1048576,
 		JSONChecks: []types.JSONCheck{
-			{Path: "HostConfig.Binds[*]", Op: "source_path_not_in", Values: allowed},
-			{Path: "HostConfig.Mounts[*].Source", Op: "source_path_not_in", Values: allowed},
+			{Path: "HostConfig.Binds[*]", Op: "source_path_not_in", Values: allowed, ReadOnlyValues: readOnly},
+			{Path: "HostConfig.Mounts[*]", Op: "source_path_not_in", Values: allowed, ReadOnlyValues: readOnly},
 		},
 		Decision: types.DecisionApprove,
 		Message:  "bind mount outside the agent's own mounts",
@@ -246,7 +265,7 @@ func (s *ProxySuite) TestBindAllowlistDecisions() {
 		}
 		return p, nil
 	}
-	rules := injectBindAllowlist(config.DefaultDockerProxyBodyRules(), []string{ws, "/opt/extra"})
+	rules := injectBindAllowlist(config.DefaultDockerProxyBodyRules(), []string{ws, "/opt/extra"}, []string{"/home/r/.gitconfig", "/Users/r/.ssh"})
 	policy, err := dockerproxy.CompilePolicy(types.DecisionAllow, nil, rules)
 	require.NoError(s.T(), err)
 	policy.SetSymlinkResolver(resolve)
@@ -256,6 +275,9 @@ func (s *ProxySuite) TestBindAllowlistDecisions() {
 	}
 	mount := func(typ, src string) map[string]any {
 		return map[string]any{"HostConfig": map[string]any{"Mounts": []any{map[string]any{"Type": typ, "Source": src, "Target": "/m"}}}}
+	}
+	roMount := func(src string) map[string]any {
+		return map[string]any{"HostConfig": map[string]any{"Mounts": []any{map[string]any{"Type": "bind", "Source": src, "Target": "/m", "readonly": true}}}}
 	}
 	cases := []struct {
 		name string
@@ -279,6 +301,15 @@ func (s *ProxySuite) TestBindAllowlistDecisions() {
 		{"tmp", binds("/tmp/data:/d"), types.DecisionApprove},
 		{"bind mount outside", mount("bind", "/srv"), types.DecisionApprove},
 		{"sibling prefix", binds("/opt/extra2:/e"), types.DecisionApprove},
+		{"read-only mount, ro bind", binds("/home/r/.gitconfig:/root/.gitconfig:ro"), ""},
+		{"read-only mount, ro with options", binds("/Users/r/.ssh/config:/s:z,ro"), ""},
+		{"read-only mount, ro --mount", roMount("/Users/r/.ssh"), ""},
+		{"read-only mount, rw bind", binds("/home/r/.gitconfig:/root/.gitconfig"), types.DecisionApprove},
+		{"read-only mount, rw --mount", mount("bind", "/Users/r/.ssh"), types.DecisionApprove},
+		{"read-only mount, explicit rw", binds("/Users/r/.ssh:/s:rw"), types.DecisionApprove},
+		{"desktop host share", binds("/host_mnt/Users/r:/h:ro"), types.DecisionDeny},
+		{"desktop host services", mount("bind", "/run/host-services/docker.proxy.sock"), types.DecisionDeny},
+		{"desktop host services via /var", binds("/var/run/host-services/ssh-auth.sock:/s"), types.DecisionDeny},
 	}
 	for _, tc := range cases {
 		s.Run(tc.name, func() {

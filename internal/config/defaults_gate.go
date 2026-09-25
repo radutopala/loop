@@ -264,6 +264,10 @@ var dangerousBindSourceRegexes = []string{
 	"^/dev(/|$)",
 	`^(/var)?/run/docker\.sock$`,
 	"^/run/loop/",
+	// Docker Desktop VM paths: the host's shared folders and its own
+	// host-service sockets (the daemon's among them).
+	"^/host_mnt(/|$)",
+	`^(/var)?/run/host-services(/|$)`,
 }
 
 // allowedCapAdds lists the capabilities a container the agent creates may

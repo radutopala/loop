@@ -93,7 +93,7 @@ The following environment variables are set on every container:
 | `LOOP_DOCKERPROXY_UPSTREAM` | `/var/run/docker.sock.host` | Path inside the container to the real daemon socket (bind-mounted `:ro` from the host's `/var/run/docker.sock`). The proxy listens on `/var/run/docker.sock` (tmpfs) and reverse-proxies to this |
 | `LOOP_DOCKERPROXY_NESTED_DIR` | `/run/loop-dproxy` | Anonymous volume (removed with the container) where the proxy opens a second socket. Containers the agent starts with the docker socket mounted get this socket instead of the daemon's; see [Gates: Nested docker socket](gates.md#nested-docker-socket) |
 | `LOOP_DOCKERPROXY_READONLY_DIRS` | `<workDir>/.loop` | Colon-separated host directories containers the agent starts may only mount read-only — the project `.loop` dirs (plus the worktree parent's); see [Gates: Project config stays read-only](gates.md#project-config-stays-read-only-to-nested-containers) |
-| `LOOP_DOCKERPROXY_BIND_ROOTS` | the agent's read-write same-path mounts | Colon-separated host directories under which binds of containers the agent starts are pinned to a volume, so a symlink swapped in after the policy check can't redirect them; see [Gates: Binds are pinned](gates.md#binds-are-pinned-to-the-agents-mounts) |
+| `LOOP_DOCKERPROXY_BIND_ROOTS` | the agent's read-write same-path directory mounts | Colon-separated host directories under which binds of containers the agent starts are pinned to a volume, so a symlink swapped in after the policy check can't redirect them; see [Gates: Binds are pinned](gates.md#binds-are-pinned-to-the-agents-mounts) |
 
 ### Authentication
 

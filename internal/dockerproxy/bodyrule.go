@@ -87,12 +87,19 @@ func evalAtLeaf(c compiledJSONCheck, value any) bool {
 			return !slices.Contains(c.values, normalizeCapability(s))
 		})
 	case "source_path_in":
+		if m, ok := value.(map[string]any); ok {
+			return c.sourcePathIn(foldString(m, "Source"))
+		}
 		return stringMatch(value, func(s string) bool {
 			return c.sourcePathIn(extractSourcePath(s))
 		})
 	case "source_path_not_in":
+		if m, ok := value.(map[string]any); ok {
+			ro, _ := foldGet(m, "ReadOnly")
+			return c.sourcePathNotIn(foldString(m, "Source"), ro == true)
+		}
 		return stringMatch(value, func(s string) bool {
-			return c.sourcePathNotIn(extractSourcePath(s))
+			return c.sourcePathNotIn(extractSourcePath(s), bindReadOnly(s))
 		})
 	}
 	return false
@@ -130,10 +137,11 @@ func (c compiledJSONCheck) sourcePathIn(src string) bool {
 }
 
 // sourcePathNotIn reports whether a host-path bind source lies outside the
-// check's regexes once symlinks are resolved. Named volumes never fire. A
-// source that can't be resolved fires unless the rule allows: it can't be
-// shown to be inside.
-func (c compiledJSONCheck) sourcePathNotIn(src string) bool {
+// check's regexes once symlinks are resolved; for a read-only bind, the
+// ReadOnlyValues count as inside too. Named volumes never fire. A source
+// that can't be resolved fires unless the rule allows: it can't be shown to
+// be inside.
+func (c compiledJSONCheck) sourcePathNotIn(src string, readOnly bool) bool {
 	if !strings.HasPrefix(src, "/") {
 		return false
 	}
@@ -145,7 +153,14 @@ func (c compiledJSONCheck) sourcePathNotIn(src string) bool {
 		}
 		resolved = path.Clean(r)
 	}
-	return !matchAny(c.valuesRe, resolved)
+	return !matchAny(c.valuesRe, resolved) && (!readOnly || !matchAny(c.readOnlyRe, resolved))
+}
+
+// bindReadOnly reports whether a "source:target[:mode]" bind string asks
+// for a read-only mount.
+func bindReadOnly(bind string) bool {
+	parts := strings.SplitN(strings.TrimSpace(bind), ":", 3)
+	return len(parts) == 3 && hasMountOption(parts[2], "ro")
 }
 
 // matchAny reports whether any of res matches s.

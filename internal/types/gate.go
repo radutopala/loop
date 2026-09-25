@@ -65,6 +65,10 @@ type JSONCheck struct {
 	// Except lists path regexes a source_path_in check skips: a bind whose
 	// symlink-resolved source matches one doesn't fire the check.
 	Except []string `json:"except,omitempty"`
+	// ReadOnlyValues lists path regexes a source_path_not_in check counts
+	// as inside only for read-only binds: a read-write bind whose resolved
+	// source matches one (and none of Values) still fires.
+	ReadOnlyValues []string `json:"read_only_values,omitempty"`
 }
 
 // RateLimits caps prompt volume per gate-enabled container.

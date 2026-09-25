@@ -49,6 +49,8 @@ type compiledJSONCheck struct {
 	values   []string
 	valuesRe []*regexp.Regexp
 	exceptRe []*regexp.Regexp
+	// readOnlyRe are the ReadOnlyValues of a source_path_not_in check.
+	readOnlyRe []*regexp.Regexp
 	// resolveSymlinks, when non-nil, is applied to source paths before regex
 	// match in the source_path_in and source_path_not_in ops. Stamped
 	// per-check by SetSymlinkResolver.
@@ -307,6 +309,9 @@ func compileJSONCheck(c types.JSONCheck) (compiledJSONCheck, error) {
 		if compiled.exceptRe, err = compileRegexes("except", c.Except); err != nil {
 			return compiledJSONCheck{}, err
 		}
+		if compiled.readOnlyRe, err = compileRegexes("read_only_values", c.ReadOnlyValues); err != nil {
+			return compiledJSONCheck{}, err
+		}
 	case "capability_not_in":
 		if len(c.Values) == 0 {
 			return compiledJSONCheck{}, fmt.Errorf("op %q requires at least one value", c.Op)
@@ -326,6 +331,9 @@ func compileJSONCheck(c types.JSONCheck) (compiledJSONCheck, error) {
 	}
 	if len(c.Except) > 0 && c.Op != "source_path_in" {
 		return compiledJSONCheck{}, fmt.Errorf("except is only valid with op source_path_in, not %q", c.Op)
+	}
+	if len(c.ReadOnlyValues) > 0 && c.Op != "source_path_not_in" {
+		return compiledJSONCheck{}, fmt.Errorf("read_only_values is only valid with op source_path_not_in, not %q", c.Op)
 	}
 	return compiled, nil
 }
