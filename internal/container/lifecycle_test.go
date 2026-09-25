@@ -866,3 +866,56 @@ func (s *LifecycleSuite) TestRebuildSidecar_KeepsStartedAt() {
 	require.NoError(s.T(), m.rebuildSidecar(context.Background()))
 	require.Equal(s.T(), started, m.Status().StartedAt)
 }
+
+// --- build gate ---
+
+func (s *LifecycleSuite) TestWaitBuildsIdle() {
+	m := s.newManager(func() string { return "" })
+	called := false
+	require.NoError(s.T(), m.WaitBuilds(context.Background(), func() { called = true }))
+	require.False(s.T(), called)
+}
+
+func (s *LifecycleSuite) TestWaitBuildsWaitsForEveryBuild() {
+	m := s.newManager(func() string { return "" })
+	m.BeginBuild()
+	m.BeginBuild()
+
+	waited := make(chan struct{})
+	done := make(chan error, 1)
+	go func() { done <- m.WaitBuilds(context.Background(), func() { close(waited) }) }()
+	<-waited
+
+	m.EndBuild()
+	require.Never(s.T(), func() bool { return len(done) > 0 }, 50*time.Millisecond, 5*time.Millisecond)
+	m.EndBuild()
+	require.NoError(s.T(), <-done)
+
+	// Idle again: a later build gets a fresh gate.
+	m.BeginBuild()
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	require.ErrorIs(s.T(), m.WaitBuilds(ctx, nil), context.Canceled)
+	m.EndBuild()
+	require.NoError(s.T(), m.WaitBuilds(context.Background(), nil))
+}
+
+func (s *LifecycleSuite) TestRebuildHoldsGateThroughChildren() {
+	m := s.newManager(func() string { return "" })
+	s.client.On("ImageBuild", mock.Anything, s.containerDir, s.imageName).Return(nil)
+	s.client.On("ImageInspectLabels", mock.Anything, s.imageName).Return(map[string]string{"loop.version": "1.0.0"}, nil)
+	s.broadcaster.On("BroadcastImageBuildStatus", mock.Anything).Return()
+	release := make(chan struct{})
+	m.SetChildRebuilder(func(context.Context) { <-release })
+
+	require.NoError(s.T(), m.Rebuild(context.Background()))
+
+	// The base build completes, but the child cascade still holds the gate.
+	require.Eventually(s.T(), func() bool { return m.Status().State == "completed" }, 2*time.Second, 5*time.Millisecond)
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+	require.ErrorIs(s.T(), m.WaitBuilds(ctx, nil), context.DeadlineExceeded)
+
+	close(release)
+	require.NoError(s.T(), m.WaitBuilds(context.Background(), nil))
+}

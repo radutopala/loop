@@ -137,6 +137,12 @@ type DockerRunner struct {
 	// POST /api/gate/container-approval).
 	hostDockerSock string // "" -> "/var/run/docker.sock"
 
+	// imageGate, when set, holds container creation while an image build
+	// runs; loopVersion is the daemon's version, which the image must not
+	// be older than (see awaitImage). Set via SetImageGate.
+	imageGate   ImageGate
+	loopVersion string
+
 	// Gate approval wiring (stage 2 of agentgate). When both fields below are
 	// set, the runner constructs a per-container agentgate.Manager, registers
 	// it in gateResolver under the real container ID with a per-container
@@ -432,7 +438,7 @@ func (r *DockerRunner) runWithRecovery(ctx context.Context, req *agent.AgentRequ
 // extra_dirs) and the project's mounts, image, and gates are silently lost.
 func (r *DockerRunner) RunBash(ctx context.Context, script, channelID, dirPath, parentDirPath string) (string, error) {
 	containerID, ctrName, mcpConfigPath, keepMCP, err := r.createAndStartContainer(ctx, channelID, dirPath, "", parentDirPath, "",
-		ContainerTypeAgent,
+		ContainerTypeAgent, nil,
 		func(_ *config.Config, _ string) []string {
 			return []string{"/bin/sh", "-c", script}
 		},
@@ -501,7 +507,7 @@ func (r *DockerRunner) runOnce(ctx context.Context, req *agent.AgentRequest) (*a
 		req = &fresh
 	}
 	containerID, ctrName, mcpConfigPath, keepMCP, err := r.createAndStartContainer(ctx, req.ChannelID, req.DirPath, req.AuthorID, req.ParentDirPath, req.AgentID,
-		ContainerTypeAgent,
+		ContainerTypeAgent, req.OnActivity,
 		func(cfg *config.Config, mcpConfigPath string) []string {
 			return buildClaudeCmd(cfg, mcpConfigPath, req)
 		},
@@ -577,6 +583,7 @@ func (r *DockerRunner) createAndStartContainer(
 	ctx context.Context,
 	channelID, dirPath, authorID, parentDirPath, agentID string,
 	cType ContainerType,
+	onActivity func(activity, detail string),
 	buildCmd func(cfg *config.Config, mcpConfigPath string) []string,
 ) (containerID, containerName, mcpConfigPath string, keepMCPConfig bool, err error) {
 	workDir := r.resolveWorkDir(channelID, dirPath)
@@ -592,6 +599,10 @@ func (r *DockerRunner) createAndStartContainer(
 		return "", "", "", false, fmt.Errorf("loading project config: %w", err)
 	}
 	keepMCPConfig = cfg.KeepMCPConfigs
+
+	if err := r.awaitImage(ctx, cfg.ContainerImage, onActivity); err != nil {
+		return "", "", "", false, err
+	}
 
 	apiURL := agentAPIBase(cfg)
 
@@ -899,7 +910,7 @@ func (r *DockerRunner) waitForExit(ctx context.Context, containerID string) (int
 // not auto-removed — it persists until explicitly stopped.
 func (r *DockerRunner) CreateShellContainer(ctx context.Context, channelID, dirPath, parentDirPath string) (string, error) {
 	containerID, ctrName, _, _, err := r.createAndStartContainer(ctx, channelID, dirPath, "", parentDirPath, "",
-		ContainerTypeShell,
+		ContainerTypeShell, nil,
 		func(*config.Config, string) []string {
 			return []string{"sleep", "infinity"}
 		})
