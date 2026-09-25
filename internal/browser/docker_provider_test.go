@@ -1303,3 +1303,39 @@ func (s *ManagerSuite) TestChannelLockSameMutex() {
 	require.Same(s.T(), a1, a2)
 	require.NotSame(s.T(), a1, b)
 }
+
+// stubImageGate is a container.ImageGate reporting a build in progress, then
+// returning err.
+type stubImageGate struct{ err error }
+
+func (g stubImageGate) WaitBuilds(_ context.Context, onWait func()) error {
+	onWait()
+	return g.err
+}
+
+func (s *ManagerSuite) TestEnsureBrowserWaitsForImageBuild() {
+	ctx := context.Background()
+	s.mgr.SetImageGate(stubImageGate{})
+	s.api.On("ContainerList", ctx, mock.Anything).
+		Return([]containertypes.Summary{}, nil)
+	s.api.On("ContainerCreate", ctx, mock.Anything, mock.Anything, (*network.NetworkingConfig)(nil), (*ocispec.Platform)(nil), "loop-chrome-ch-1").
+		Return(containertypes.CreateResponse{ID: "chrome-ctr-1"}, nil)
+	s.api.On("ContainerStart", ctx, "chrome-ctr-1", containertypes.StartOptions{}).
+		Return(nil)
+	s.api.On("ContainerInspect", ctx, "chrome-ctr-1").
+		Return(inspectResponseWithPort("49152"), nil)
+
+	require.NoError(s.T(), s.mgr.EnsureBrowser(ctx, "ch-1", ""))
+	s.api.AssertExpectations(s.T())
+}
+
+func (s *ManagerSuite) TestEnsureBrowserImageBuildWaitInterrupted() {
+	ctx := context.Background()
+	s.mgr.SetImageGate(stubImageGate{err: context.Canceled})
+	s.api.On("ContainerList", ctx, mock.Anything).
+		Return([]containertypes.Summary{}, nil)
+
+	err := s.mgr.EnsureBrowser(ctx, "ch-1", "")
+	require.ErrorContains(s.T(), err, "waiting for the image build: context canceled")
+	s.api.AssertNotCalled(s.T(), "ContainerCreate", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything)
+}

@@ -380,6 +380,9 @@ export function AgentActivityIndicator({ activity }: { activity: AgentActivityDa
   } else if (activity.activity === "rate_limited") {
     icon = "&#9203;"; // hourglass
     label = activity.description ?? "Rate limited — retrying…";
+  } else if (activity.activity === "image_build") {
+    icon = "&#9203;"; // hourglass
+    label = activity.description ?? "Waiting for the agent image build…";
   } else if (activity.activity === "tool_progress") {
     icon = "&#9201;"; // stopwatch
     label = activity.description ?? "";
@@ -390,6 +393,8 @@ export function AgentActivityIndicator({ activity }: { activity: AgentActivityDa
     icon = "&#9203;"; // hourglass
     label = activity.description ? `API retry: ${activity.description}` : "";
   }
+  // Kinds without a label, such as image_ready (an image build wait is
+  // over), clear the indicator.
   if (!label) return null;
   if (label.length > 100) label = label.slice(0, 100) + "...";
   return (

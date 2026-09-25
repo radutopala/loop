@@ -45,6 +45,9 @@ rebuild from the UI/API — so they never linger on an old base:
 - Opt out per project with `"container_image_autobuild": false`.
 
 Running containers are unaffected; the next agent run picks up the new image.
+New containers wait while a build runs, the child cascade included (see
+[Container Creation](#container-creation)), so none starts from a project
+image the cascade is about to replace.
 
 ## Container Creation
 
@@ -52,12 +55,13 @@ The `createAndStartContainer` method orchestrates the full creation pipeline:
 
 1. **Resolve work directory** -- defaults to `~/.loop/{channelID}/work`, overridden by the channel's `dirPath` if set.
 2. **Load project config** -- merges `{workDir}/.loop/config.json` with the global config (see [Configuration: Project Config](configuration.md#project-config)).
-3. **Build environment variables** -- see [Environment Variables](#environment-variables).
-4. **Build mounts** -- see [Mount Processing](#mount-processing).
-5. **Write MCP config** -- see [MCP Config Generation](#mcp-config-generation).
-6. **Create container** via Docker API.
-7. **Copy files** into the container -- see [File Copying](#file-copying).
-8. **Start container**.
+3. **Wait for the image** -- while an image build is in progress (the agent image, then the [custom project images](#custom-project-images) rebuilt on it), creation waits for it to finish; the chat shows "Waiting for the agent image build to finish". Then the image's `loop.version` label is checked: an image built by an older Loop release than the running daemon is refused with an "out of date" error that asks for a rebuild, instead of starting a container whose in-image binaries may not understand the policy the daemon hands them (the Docker proxy exits on an unknown rule op). Images without the label, and non-release versions, are not compared.
+4. **Build environment variables** -- see [Environment Variables](#environment-variables).
+5. **Build mounts** -- see [Mount Processing](#mount-processing).
+6. **Write MCP config** -- see [MCP Config Generation](#mcp-config-generation).
+7. **Create container** via Docker API.
+8. **Copy files** into the container -- see [File Copying](#file-copying).
+9. **Start container**.
 
 All containers are labeled with:
 - `app=loop-agent` -- identifies all Loop-managed containers.
@@ -394,7 +398,7 @@ If a container is re-registered before the timer fires (e.g. restarted), the pen
 
 ## Chrome Sidecar Container
 
-When `browser_enabled` is `true` (default), a Chrome container is started lazily on first browser tool use. Chrome runs in a dedicated Docker container with a port mapping (`127.0.0.1:0 → 9222`) so the host API server can connect via CDP (Chrome DevTools Protocol).
+When `browser_enabled` is `true` (default), a Chrome container is started lazily on first browser tool use. Chrome runs in a dedicated Docker container with a port mapping (`127.0.0.1:0 → 9222`) so the host API server can connect via CDP (Chrome DevTools Protocol). Like agent containers, a new sidecar waits while an image build is in progress, so it isn't created from the Chrome image the build is about to replace; a running sidecar is reused as is.
 
 ### Architecture
 
