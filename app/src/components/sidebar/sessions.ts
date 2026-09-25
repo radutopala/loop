@@ -42,9 +42,9 @@ function listed(channel: Channel): boolean {
 }
 
 /**
- * The Active section: sessions waiting on the user (an approval, a question,
- * a plan, a ready review), then those with an agent running. A container
- * that's only idling doesn't count: nothing is happening in it.
+ * The sessions that top Recent: those waiting on the user (an approval, a
+ * question, a plan, a ready review), then those with an agent running. A
+ * container that's only idling doesn't count: nothing is happening in it.
  */
 export function activeSessions(channels: Channel[], isRunning: (id: string) => boolean, needsYou: (id: string) => boolean): Channel[] {
   const waiting: Channel[] = [];
