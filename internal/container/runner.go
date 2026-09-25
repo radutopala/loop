@@ -21,6 +21,10 @@ import (
 	"github.com/radutopala/loop/internal/types"
 )
 
+// nestedProxyDir is where the agent container mounts the anonymous volume
+// that loop-dockerproxy listens in for containers the agent starts.
+const nestedProxyDir = "/run/loop-dproxy"
+
 // ContainerConfig holds settings for creating a container.
 type ContainerConfig struct {
 	Image       string
@@ -36,6 +40,10 @@ type ContainerConfig struct {
 	Hostname    string // container hostname on the network
 	SecurityOpt []string
 	CapAdd      []string
+	// Volumes lists container paths that get an anonymous volume. The
+	// volume is removed with the container (ContainerRemove sets
+	// RemoveVolumes).
+	Volumes []string
 }
 
 // WaitResponse represents the result of waiting for a container to finish.
@@ -628,6 +636,7 @@ func (r *DockerRunner) createAndStartContainer(
 	// Write the per-container docker-proxy policy file. loop-dockerproxy
 	// reads it inside the container; the bind-mount below mounts it read-
 	// only under /etc/loop/proxy-policy.json.
+	var volumes []string
 	proxyPolicyHostPath, err := r.writeProxyPolicyFile(cfg, channelID, workDir, parentDirPath)
 	if err != nil {
 		return "", "", "", false, err
@@ -650,7 +659,13 @@ func (r *DockerRunner) createAndStartContainer(
 			"LOOP_DOCKERPROXY_ENABLED=1",
 			"LOOP_DOCKERPROXY_POLICY_FILE=/etc/loop/proxy-policy.json",
 			"LOOP_DOCKERPROXY_UPSTREAM=/var/run/docker.sock.host",
+			"LOOP_DOCKERPROXY_NESTED_DIR="+nestedProxyDir,
 		)
+		// The proxy also listens inside this anonymous volume so containers
+		// the agent starts with the docker socket mounted get the proxy, not
+		// the raw daemon: the daemon resolves bind sources on its own
+		// filesystem, where the proxy's tmpfs socket doesn't exist.
+		volumes = append(volumes, nestedProxyDir)
 	}
 
 	// Write the per-container seccomp-gate policy file. loop-syscallwrap
@@ -749,6 +764,7 @@ func (r *DockerRunner) createAndStartContainer(
 		Labels:      map[string]string{ChannelLabelKey: channelID, ContainerTypeKey: string(cType), InstanceLabelKey: r.instanceID},
 		SecurityOpt: securityOpt,
 		CapAdd:      capAdd,
+		Volumes:     volumes,
 	}
 
 	containerID, err = r.client.ContainerCreate(ctx, containerCfg, containerName)

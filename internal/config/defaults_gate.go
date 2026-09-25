@@ -262,7 +262,7 @@ var dangerousBindSourceRegexes = []string{
 	"^/proc(/|$)",
 	"^/sys(/|$)",
 	"^/dev(/|$)",
-	`^/var/run/docker\.sock$`,
+	`^(/var)?/run/docker\.sock$`,
 	"^/run/loop/",
 }
 

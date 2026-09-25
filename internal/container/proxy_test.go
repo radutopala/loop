@@ -344,6 +344,8 @@ func (s *ProxySuite) TestRunProxyEnabledAddsBindsAndEnvAndToken() {
 	require.Equal(s.T(), "1", findEnv(captured.Env, "LOOP_DOCKERPROXY_ENABLED"))
 	require.Equal(s.T(), "/etc/loop/proxy-policy.json", findEnv(captured.Env, "LOOP_DOCKERPROXY_POLICY_FILE"))
 	require.Equal(s.T(), "/var/run/docker.sock.host", findEnv(captured.Env, "LOOP_DOCKERPROXY_UPSTREAM"))
+	require.Equal(s.T(), "/run/loop-dproxy", findEnv(captured.Env, "LOOP_DOCKERPROXY_NESTED_DIR"))
+	require.Equal(s.T(), []string{"/run/loop-dproxy"}, captured.Volumes)
 	require.Equal(s.T(), "ch-1", findEnv(captured.Env, "LOOP_CHANNEL_ID"))
 	token := findEnv(captured.Env, "LOOP_GATE_TOKEN")
 	require.Len(s.T(), token, 64, "token should be 32 bytes hex-encoded")
@@ -384,6 +386,7 @@ func (s *ProxySuite) TestRunProxyDisabledNoBindsNoToken() {
 	require.False(s.T(), slices.ContainsFunc(captured.Env, func(e string) bool {
 		return strings.HasPrefix(e, "LOOP_GATE_TOKEN=")
 	}))
+	require.Empty(s.T(), captured.Volumes)
 }
 
 // TestRunProxyDefaultsHostSockWhenEmpty covers the "hostSock == """ branch

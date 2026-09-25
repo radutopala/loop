@@ -27,6 +27,7 @@ const (
 	envToken      = "LOOP_GATE_TOKEN"
 	envCID        = "LOOP_CONTAINER_ID"
 	envChannelID  = "LOOP_CHANNEL_ID"
+	envNestedDir  = "LOOP_DOCKERPROXY_NESTED_DIR"
 
 	defaultSocket   = "/var/run/docker.sock"
 	defaultUpstream = "/var/run/docker.sock.host"
@@ -57,6 +58,10 @@ type app struct {
 	// deny rule by symlinking a workspace path to the target. Tests can
 	// substitute a fake resolver to drive the deny-on-resolve-failure paths.
 	evalSymlinks SymlinkResolver
+
+	// lookupVolume names the volume the container cid mounts at dir, asking
+	// the daemon over upstream.
+	lookupVolume func(ctx context.Context, upstream, cid, dir string) (string, error)
 }
 
 // newApp wires production defaults.
@@ -71,6 +76,7 @@ func newApp() *app {
 		notifyContext: defaultNotifyContext,
 		newApprover:   defaultNewApprover,
 		evalSymlinks:  filepath.EvalSymlinks,
+		lookupVolume:  lookupNestedVolume,
 	}
 }
 
@@ -134,32 +140,38 @@ func (a *app) run(outW io.Writer) error {
 
 	approver := a.newApprover(apiURL, token)
 
+	ctx, stop := a.notifyContext(context.Background())
+	defer stop()
+
+	// The nested socket is best-effort: without it the proxy still serves
+	// the agent and rejects docker socket mounts (NestedVolume stays empty).
+	var nestedLn net.Listener
+	var nestedVolume string
+	if dir := a.getenv(envNestedDir); dir != "" {
+		nestedLn, nestedVolume, err = a.listenNested(ctx, upstream, cid, dir)
+		if err != nil {
+			logger.Warn("nested docker socket unavailable; socket mounts will be rejected", "error", err)
+		}
+	}
+
 	srv, err := NewServer(ServerConfig{
-		CID:        cid,
-		ChannelID:  channelID,
-		Policy:     policy,
-		Approver:   approver,
-		DockerSock: upstream,
+		CID:          cid,
+		ChannelID:    channelID,
+		Policy:       policy,
+		Approver:     approver,
+		DockerSock:   upstream,
+		NestedVolume: nestedVolume,
+		EvalSymlinks: a.evalSymlinks,
 	})
 	if err != nil {
+		closeListener(nestedLn)
 		return fmt.Errorf("build server: %w", err)
 	}
 
-	// Clean any stale socket from a previous run (e.g. a restart inside the
-	// same tmpfs). Ignore errors — bind will fail loudly if the path is busy.
-	_ = a.removeAll(socketPath)
-
-	ln, err := a.listenUnix(socketPath)
+	ln, err := a.listenSocket(socketPath)
 	if err != nil {
-		return fmt.Errorf("listen unix %s: %w", socketPath, err)
-	}
-	// 0o666 so the non-root agent user can dial the proxy without group
-	// membership plumbing. The socket sits on tmpfs inside a single-tenant
-	// container; the attack surface is the container itself, not filesystem
-	// perms. Defense-in-depth: the bearer-token endpoint authenticates.
-	if err := a.chmod(socketPath, 0o666); err != nil {
-		_ = ln.Close()
-		return fmt.Errorf("chmod %s: %w", socketPath, err)
+		closeListener(nestedLn)
+		return err
 	}
 
 	logger.Info("loop-dockerproxy started",
@@ -167,12 +179,58 @@ func (a *app) run(outW io.Writer) error {
 		"upstream", upstream,
 		"policy_file", policyFile,
 		"cid", cid,
+		"nested_volume", nestedVolume,
 	)
 
-	ctx, stop := a.notifyContext(context.Background())
-	defer stop()
-
+	if nestedLn != nil {
+		go func() {
+			if err := a.serve(ctx, nestedLn, srv); err != nil {
+				logger.Warn("nested docker socket stopped", "error", err)
+			}
+		}()
+	}
 	return a.serve(ctx, ln, srv)
+}
+
+// listenSocket replaces any stale socket at path (e.g. from a restart
+// inside the same tmpfs) and listens on it.
+func (a *app) listenSocket(path string) (net.Listener, error) {
+	// Ignore removal errors — bind will fail loudly if the path is busy.
+	_ = a.removeAll(path)
+	ln, err := a.listenUnix(path)
+	if err != nil {
+		return nil, fmt.Errorf("listen unix %s: %w", path, err)
+	}
+	// 0o666 so the non-root agent user (and the users of containers it
+	// starts) can dial the proxy without group membership plumbing. The
+	// attack surface is the container itself, not filesystem perms.
+	if err := a.chmod(path, 0o666); err != nil {
+		_ = ln.Close()
+		return nil, fmt.Errorf("chmod %s: %w", path, err)
+	}
+	return ln, nil
+}
+
+// listenNested listens on the nested socket in dir and names the volume
+// mounted there, which container creates mount in place of the docker
+// socket.
+func (a *app) listenNested(ctx context.Context, upstream, cid, dir string) (net.Listener, string, error) {
+	volume, err := a.lookupVolume(ctx, upstream, cid, dir)
+	if err != nil {
+		return nil, "", err
+	}
+	ln, err := a.listenSocket(filepath.Join(dir, nestedSocketName))
+	if err != nil {
+		return nil, "", err
+	}
+	return ln, volume, nil
+}
+
+// closeListener closes ln when set.
+func closeListener(ln net.Listener) {
+	if ln != nil {
+		_ = ln.Close()
+	}
 }
 
 // defaultListenUnix opens a SOCK_STREAM unix listener.

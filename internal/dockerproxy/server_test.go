@@ -471,10 +471,10 @@ func (s *ServerSuite) TestBodyRuleReadErrorReturns400() {
 	defer stop()
 	policy, err := CompilePolicy(types.DecisionAllow,
 		[]types.HTTPServiceRule{
-			{Methods: []string{"POST"}, Paths: []string{"^/containers/create$"}, Decision: types.DecisionAllow},
+			{Methods: []string{"POST"}, Paths: []string{"^/volumes/create$"}, Decision: types.DecisionAllow},
 		},
 		[]types.BodyRule{{
-			AppliesTo:    "POST ^/containers/create$",
+			AppliesTo:    "POST ^/volumes/create$",
 			ContentTypes: []string{"application/json"},
 			MaxBodyBytes: 1024,
 			JSONChecks:   []types.JSONCheck{{Path: "a", Op: "present"}},
@@ -484,7 +484,7 @@ func (s *ServerSuite) TestBodyRuleReadErrorReturns400() {
 	auditor := &capturingAuditor{}
 	srv := s.newServer(policy, &fakeApprover{}, sock, auditor)
 
-	req := httptest.NewRequest(http.MethodPost, "/containers/create", nil)
+	req := httptest.NewRequest(http.MethodPost, "/volumes/create", nil)
 	req.Body = &errReader{err: errors.New("boom")}
 	req.Header.Set("Content-Type", "application/json")
 	rr := httptest.NewRecorder()
@@ -543,17 +543,17 @@ func (s *ServerSuite) TestBodyRuleApprovePromptsAndForwards() {
 			ContentTypes: []string{"application/json"},
 			MaxBodyBytes: 8192,
 			JSONChecks: []types.JSONCheck{
-				{Path: "HostConfig.Binds[*]", Op: "source_path_in", Values: []string{`^/var/run/docker\.sock$`}},
+				{Path: "HostConfig.Binds[*]", Op: "source_path_in", Values: []string{`^/srv$`}},
 			},
 			Decision: types.DecisionApprove,
-			Message:  "container with docker.sock bind",
+			Message:  "container with /srv bind",
 		}})
 	require.NoError(s.T(), err)
 	ap := &fakeApprover{outcome: agentgate.Outcome{Decision: types.DecisionAllow, Actor: "user-7"}}
 	auditor := &capturingAuditor{}
 	srv := s.newServer(policy, ap, sock, auditor)
 
-	body := `{"Image":"alpine","HostConfig":{"Binds":["/var/run/docker.sock:/var/run/docker.sock"]}}`
+	body := `{"Image":"alpine","HostConfig":{"Binds":["/srv:/srv"]}}`
 	req := httptest.NewRequest(http.MethodPost, "/containers/create", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	rr := httptest.NewRecorder()
@@ -564,7 +564,7 @@ func (s *ServerSuite) TestBodyRuleApprovePromptsAndForwards() {
 	require.Len(s.T(), ap.calls, 1)
 	require.Equal(s.T(), "docker-body", ap.calls[0].Kind)
 	require.Equal(s.T(), "docker:POST:body:body[0]", ap.calls[0].CacheKey)
-	require.Equal(s.T(), "container with docker.sock bind", ap.calls[0].Message)
+	require.Equal(s.T(), "container with /srv bind", ap.calls[0].Message)
 	require.Equal(s.T(), "alpine", ap.calls[0].Details["image"])
 	snap := auditor.snapshot()
 	require.Len(s.T(), snap, 2)

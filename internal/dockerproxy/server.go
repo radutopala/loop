@@ -76,6 +76,13 @@ type ServerConfig struct {
 	// [defaultPeerSource] which walks /proc on Linux; nil disables attribution
 	// and every request becomes Source="chat".
 	PeerSource PeerSourceLookup
+	// NestedVolume names the volume holding the proxy's second socket.
+	// Docker socket mounts in container creates are rewritten to mount it;
+	// empty rejects them instead (see rewriteNestedSocket).
+	NestedVolume string
+	// EvalSymlinks resolves bind sources so a symlink to the docker socket
+	// is rewritten too. nil matches literal socket paths only.
+	EvalSymlinks SymlinkResolver
 }
 
 // NewServer constructs a Server. CID / ChannelID / Policy / Approver / DockerSock
@@ -157,6 +164,27 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	// HTTP rule match.
 	httpRes := s.policy.MatchHTTP(r.Method, canonicalPath)
+
+	// Docker socket mounts are rewritten to the nested proxy socket before
+	// the body rules see the request, so the rules judge what reaches the
+	// daemon.
+	if r.Method == http.MethodPost && canonicalPath == "/containers/create" {
+		if status, msg := s.rewriteNestedSocket(r); status != 0 {
+			s.audit(AuditEntry{
+				Ts:       start,
+				CID:      s.cfg.CID,
+				Channel:  s.cfg.ChannelID,
+				Method:   r.Method,
+				Path:     canonicalPath,
+				Decision: "deny",
+				RuleID:   "nested-socket",
+				Reason:   msg,
+				Latency:  s.cfg.Now().Sub(start),
+			})
+			http.Error(w, msg, status)
+			return
+		}
+	}
 
 	// Body-rule evaluation. A body-rule deny always wins (can't be user-overridden).
 	bodyResult, decodedBody, bodyErr := s.evaluateBody(r, canonicalPath)

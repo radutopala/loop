@@ -327,6 +327,21 @@ func (s *ClientSuite) TestContainerCreateWithLabels() {
 	s.api.AssertExpectations(s.T())
 }
 
+func (s *ClientSuite) TestContainerCreateWithVolumes() {
+	ctx := context.Background()
+	cfg := &ContainerConfig{Image: "img:latest", Volumes: []string{"/run/a", "/run/b"}}
+
+	s.api.On("ContainerCreate", ctx, mock.MatchedBy(func(c *containertypes.Config) bool {
+		return len(c.Volumes) == 2 && c.Volumes["/run/a"] == struct{}{} && c.Volumes["/run/b"] == struct{}{}
+	}), mock.Anything, (*network.NetworkingConfig)(nil), (*ocispec.Platform)(nil), "test").
+		Return(containertypes.CreateResponse{ID: "vol-123"}, nil)
+
+	id, err := s.client.ContainerCreate(ctx, cfg, "test")
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "vol-123", id)
+	s.api.AssertExpectations(s.T())
+}
+
 func (s *ClientSuite) TestContainerCreateWithNetwork() {
 	ctx := context.Background()
 	cfg := &ContainerConfig{

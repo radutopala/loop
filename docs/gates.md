@@ -108,6 +108,7 @@ Both layers feed into the same `agentgate.Manager` for `approve` decisions, so a
 | `internal/dockerproxy/app.go` | In-container docker-proxy binary — the body of the `loop dockerproxy` subcommand. Loads the policy JSON, builds an `httpapprover.Approver`, listens on `/var/run/docker.sock` (tmpfs), runs `dockerproxy.Server` until SIGTERM |
 | `internal/httpapprover/approver.go` | Shared HTTP-backed `Approver` used by both the in-container docker proxy and the seccomp-gate parent. POSTs `{kind, target, message, cache_key}` to `{API_URL}/api/gate/container-approval` with `Authorization: Bearer <LOOP_GATE_TOKEN>`; fail-closed on any transport or non-200 error |
 | `internal/container/image/entrypoint.sh` | Branches on `$LOOP_DOCKERPROXY_ENABLED=1` (starts `loop dockerproxy` as root before dropping privileges) and `$LOOP_GATE_ENABLED=1` (execs `loop syscallwrap -- "$@"` as root, which drops its child to `$AGENT_USER`). When neither is set, falls back to plain `gosu "$AGENT_USER" "$@"` |
+| `internal/dockerproxy/nested.go` | Rewrites docker socket mounts in container creates to the nested proxy socket; looks up the nested volume's name |
 | `internal/dockerproxy/server.go` | HTTP handler + reverse proxy to the upstream socket (`/var/run/docker.sock.host` in production); hijack on `POST /containers/*/attach` and `POST /exec/*/start`; `FlushInterval: 100ms` for streaming; strips API version prefix before rule match |
 | `internal/dockerproxy/policy.go` | `HTTPServiceRule` compile + `MatchHTTP` (first-match + default); `CheckBody` |
 | `internal/dockerproxy/bodyrule.go` | JSONPath-lite evaluator: `present`, `empty_array`, `equals`, `contains_any`, `starts_with_any`, `source_path_in` |
@@ -211,13 +212,13 @@ Body rules are evaluated independently of the HTTP rule match and support all th
 - `approve` — blocks the request and prompts the operator (same approval flow as an HTTP-rule approve), keyed on `docker:<METHOD>:body:<rule_id>` so "Allow for session" caches per body rule rather than per request path.
 - `allow` — passes through silently to the upstream daemon (still subject to the `HTTPServiceRule` decision falling through normally).
 
-Bodies larger than `MaxBodyBytes` (1 MiB default) skip body inspection and fall through to the `HTTPServiceRule` decision.
+Bodies larger than `MaxBodyBytes` (1 MiB default) skip body inspection and fall through to the `HTTPServiceRule` decision — except `POST /containers/create`, which is rejected with `413` above 1 MiB (see [Nested docker socket](#nested-docker-socket)).
 
 **`POST /containers/create`** — denies any of:
 
 | JSON path | Op | Values | What it blocks |
 |---|---|---|---|
-| `HostConfig.Binds[*]` | `source_path_in` | `^/$`, `^/etc(/\|$)`, `^/root`, `^/home`, `^/boot`, `^/usr`, `^/lib(64)?`, `^/proc`, `^/sys`, `^/dev`, `^/var/run/docker\.sock$`, `^/run/loop/` | Host bind-mount of sensitive paths (escape via file write) |
+| `HostConfig.Binds[*]` | `source_path_in` | `^/$`, `^/etc(/\|$)`, `^/root`, `^/home`, `^/boot`, `^/usr`, `^/lib(64)?`, `^/proc`, `^/sys`, `^/dev`, `^(/var)?/run/docker\.sock$`, `^/run/loop/` | Host bind-mount of sensitive paths (escape via file write) |
 | `HostConfig.Mounts[*].Source` | `source_path_in` | same set as above | Same, via the newer long-form `Mounts` API used by docker-compose v2 and `docker run --mount` |
 | `HostConfig.Privileged` | `equals` | `true` | Privileged container |
 | `HostConfig.PidMode` | `equals` | `host` | Host PID namespace (visibility into host processes) |
@@ -240,6 +241,27 @@ Bodies larger than `MaxBodyBytes` (1 MiB default) skip body inspection and fall 
 | `CapAdd[*]` | `contains_any` | `SYS_ADMIN`, `SYS_PTRACE`, `SYS_MODULE` |
 
 Together these body rules are the reason the HTTP layer can afford to default-allow: no amount of `docker run` or `docker create` can produce a privileged container, a host-namespace container, or a host-bind-mounted container.
+
+### Nested docker socket
+
+Containers the agent starts can have the docker socket mounted (`docker run -v /var/run/docker.sock:/var/run/docker.sock`, testcontainers, CI-style coverage runners). They get the proxy, not the daemon: the daemon resolves bind sources on its own filesystem, where `/var/run/docker.sock` is the real engine socket, so such a bind would hand the nested container unfiltered daemon access. Instead:
+
+1. The runner gives the agent container an anonymous volume at `/run/loop-dproxy` (`LOOP_DOCKERPROXY_NESTED_DIR`). The volume is removed with the container.
+2. At startup, `loop dockerproxy` inspects its own container over the upstream socket to learn the volume's name, and listens on a second socket, `/run/loop-dproxy/docker.sock`, served by the same policy and approver.
+3. Before the body rules run, `POST /containers/create` bodies are rewritten: every `HostConfig.Binds` entry and bind-type `HostConfig.Mounts` entry whose source is `/var/run/docker.sock` or `/run/docker.sock` (literally or through a symlink) becomes a volume mount of that volume with `VolumeOptions.Subpath: docker.sock`, keeping the target and read-only flag. Keys match case-insensitively, as the daemon's JSON decoding does.
+
+The rewrite fails closed:
+
+| Condition | Response |
+|---|---|
+| Nested socket unavailable (volume lookup or listen failed at startup) | `403`; plain container creates are unaffected |
+| Client pins Docker API < 1.45 (`Subpath` needs 1.45+) | `400` |
+| Keys that differ only in case (`HostConfig` and `hostconfig`) — the daemon keeps one depending on key order | `400` |
+| Body over 1 MiB | `413` |
+
+Every rejection is audited with rule id `nested-socket`.
+
+The nested socket lives as long as the agent container: a nested container that outlives it loses Docker access. `Subpath` pins the socket file, so a proxy restart inside the agent container also breaks sockets already mounted into running nested containers.
 
 ---
 
@@ -306,7 +328,7 @@ Set when `cfg.Gates.Agentgate.Enabled` is true (`cmd/loop/serve.go`):
 Per container (`internal/container/runner.go#createAndStartContainer`):
 
 1. Generate a 32-byte `crypto/rand` bearer token (`newGateToken`) — shared by the proxy and gate layers.
-2. `writeProxyPolicyFile` marshals `cfg.Gates.DockerProxy` to `{policyDir}/<channel>/proxy-policy.json` (0640). Bind-mount `hostSock:/var/run/docker.sock.host:ro` + `.../proxy-policy.json:/etc/loop/proxy-policy.json:ro`. Env: `LOOP_DOCKERPROXY_ENABLED=1`, `LOOP_DOCKERPROXY_POLICY_FILE=/etc/loop/proxy-policy.json`, `LOOP_DOCKERPROXY_UPSTREAM=/var/run/docker.sock.host`.
+2. `writeProxyPolicyFile` marshals `cfg.Gates.DockerProxy` to `{policyDir}/<channel>/proxy-policy.json` (0640). Bind-mount `hostSock:/var/run/docker.sock.host:ro` + `.../proxy-policy.json:/etc/loop/proxy-policy.json:ro`. Env: `LOOP_DOCKERPROXY_ENABLED=1`, `LOOP_DOCKERPROXY_POLICY_FILE=/etc/loop/proxy-policy.json`, `LOOP_DOCKERPROXY_UPSTREAM=/var/run/docker.sock.host`, `LOOP_DOCKERPROXY_NESTED_DIR=/run/loop-dproxy`, plus an anonymous volume at `/run/loop-dproxy`.
 3. `writeGatePolicyFile` marshals the gate rule subset (`DefaultDecision`, `PathRules`, `CommandRules`, `FileRules`) to `{policyDir}/<channel>/gate-policy.json` (0640). `FileRules` is the merged config list wrapped by `injectWorkspaceRule` (workspace allow, before the first Allow) and then `injectPolicySelfDenyRule` (`/etc/loop/**` deny, at the head — see [file-op rule 1](#file-ops-filerule-9-static-rules-first-match-wins-plus-two-injected-rules)). Bind-mount `.../gate-policy.json:/etc/loop/gate-policy.json:ro`. Env: `LOOP_GATE_ENABLED=1`, `LOOP_GATE_POLICY_FILE=/etc/loop/gate-policy.json`.
 4. Shared env on both layers: `LOOP_CHANNEL_ID=<channelID>`, `LOOP_GATE_TOKEN=<32-hex>`.
 5. After `ContainerCreate` returns a `containerID`, call `gateResolver.AddWithToken(containerID, token, mgr, channelID)` — the token starts authenticating HTTP calls as soon as the container is up.
@@ -315,7 +337,7 @@ Per container (`internal/container/runner.go#createAndStartContainer`):
 The in-container side (see `internal/container/image/entrypoint.sh`):
 
 1. When `LOOP_DOCKERPROXY_ENABLED=1` and `/usr/local/bin/loop` is executable, entrypoint forks `loop dockerproxy &` as root, then waits up to 2s for `/var/run/docker.sock` to appear. The proxy stamps `filepath.EvalSymlinks` onto every `source_path_in` body-rule check via `Policy.SetSymlinkResolver`, so an agent that creates `/workdir/link → /` then submits `docker run -v /workdir/link:/host` is matched against the resolved `/` rather than the literal source. Resolve failures fire deny rules (suspect path → block); allow/approve rules with `source_path_in` are not auto-fired on failure. Named-volume sources (the `<name>:<target>` short syntax in `HostConfig.Binds[*]`, where the source has no leading `/`) are not host paths, so the resolver is skipped and the deny does not fire — `docker run -v loop-cache:/cache` and compose v2 named volumes pass through cleanly.
-2. The existing docker-sock group logic adds `$AGENT_USER` to the GID that owns `/var/run/docker.sock` — whether that's the real host socket (legacy direct-mount) or the in-container proxy socket.
+2. The existing docker-sock group logic adds `$AGENT_USER` to the GID that owns `/var/run/docker.sock` — whether that's the real host socket (legacy direct-mount) or the in-container proxy socket. With `LOOP_DOCKERPROXY_NESTED_DIR` set, the proxy also listens on `<dir>/docker.sock` for containers the agent starts (see [Nested docker socket](#nested-docker-socket)).
 3. When `LOOP_GATE_ENABLED=1`, entrypoint `exec`s `/usr/local/bin/loop syscallwrap -- "$@"` **as root** (no `gosu` wrapper). Otherwise it falls back to `exec gosu "$AGENT_USER" "$@"`.
 4. `loop syscallwrap` parent (root): loads the gate policy from `LOOP_GATE_POLICY_FILE`, builds an `httpapprover.Approver` against `$API_URL` + `$LOOP_GATE_TOKEN`, creates a `socketpair(AF_UNIX, SOCK_STREAM, 0)`, re-execs `/proc/self/exe` with `LOOP_SYSCALLWRAP_MODE=child`, `ExtraFiles=[child-end]`, `SysProcAttr.Credential={uid, gid}` (looked up from `$HOST_USER`), and `SysProcAttr.Pdeathsig=SIGKILL`. Receives the SCM_RIGHTS handshake on the parent-end, acks, and runs `agentgate.Server` on the notify fd.
 5. `loop syscallwrap` child (agent user): `runtime.LockOSThread` → `prctl(PR_SET_PDEATHSIG, SIGKILL)` (belt-and-braces on top of the parent-set value) → install the seccomp filter with `SECCOMP_SET_MODE_FILTER | NEW_LISTENER | TSYNC` → send the notify fd + `$LOOP_CHANNEL_ID` over fd 3 via SCM_RIGHTS → read the 1-byte ack → `syscall.Exec` the target command (claude). The filter carries into claude and every descendant by kernel inheritance.
@@ -334,7 +356,7 @@ One twist: the exec'd shell is already running as the agent uid, not root. The p
 
 ## Project config merge — full rule-authoring surface
 
-Project `.loop/config.json` has the same rule-authoring capability as global — it can prepend rules with any decision (`allow` / `deny` / `approve`) so a project can punch a surgical hole in a baseline deny (e.g. allow `/var/run/docker.sock` as a bind source) without turning a whole layer off. Enabled flag and default decision stay narrow to preserve the global kill-switch:
+Project `.loop/config.json` has the same rule-authoring capability as global — it can prepend rules with any decision (`allow` / `deny` / `approve`) so a project can punch a surgical hole in a baseline deny (e.g. allow `/etc/ssl/certs` as a bind source) without turning a whole layer off. Enabled flag and default decision stay narrow to preserve the global kill-switch:
 
 | Field | Merge rule |
 |---|---|

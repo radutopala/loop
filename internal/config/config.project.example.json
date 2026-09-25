@@ -137,12 +137,13 @@
   //  //},
   //
   //  // Docker proxy override — project rules prepend to global.
-  //  // Example: punch a hole in the baseline binds-deny for a specific socket.
+  //  // Example: punch a hole in the baseline binds-deny for one host path.
+  //  // (The docker socket needs no rule: socket mounts get the proxy.)
   //  //"docker_proxy": {
   //  //  //"body_rules": [
   //  //  //  {
   //  //  //    "applies_to": "POST ^/containers/create$",
-  //  //  //    "json_checks": [ { "path": "HostConfig.Binds[*]", "op": "source_path_in", "values": ["^/var/run/docker\\.sock$"] } ],
+  //  //  //    "json_checks": [ { "path": "HostConfig.Binds[*]", "op": "source_path_in", "values": ["^/etc/ssl/certs$"] } ],
   //  //  //    "decision": "allow"
   //  //  //  }
   //  //  //],

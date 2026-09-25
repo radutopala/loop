@@ -136,6 +136,12 @@ func (c *Client) ContainerCreate(ctx context.Context, cfg *ContainerConfig, name
 		Cmd:          cfg.Cmd,
 		WorkingDir:   cfg.WorkingDir,
 	}
+	if len(cfg.Volumes) > 0 {
+		containerCfg.Volumes = make(map[string]struct{}, len(cfg.Volumes))
+		for _, v := range cfg.Volumes {
+			containerCfg.Volumes[v] = struct{}{}
+		}
+	}
 
 	// Init=true gives every container a tiny tini PID 1 that reaps orphaned
 	// grandchildren. Without it, processes whose parent dies before wait()ing
