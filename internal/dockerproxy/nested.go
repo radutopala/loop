@@ -70,7 +70,9 @@ func (s *Server) isDockerSocket(src string) bool {
 
 // rewriteNestedSocket replaces docker socket mounts in a POST
 // /containers/create body with a mount of the nested proxy socket, and keeps
-// the ReadOnlyDirs read-only under the body's binds (protectReadOnlyDirs). It
+// the ReadOnlyDirs read-only under the body's binds (protectReadOnlyDirs).
+// Docker Desktop /host_mnt sources under the agent's mounts are first mapped
+// to the paths the agent sees (unmapHostMnt). It
 // returns a non-zero status (with a message) when the request must be
 // rejected: socket mounts fail closed when the nested socket is unavailable,
 // so they never reach the daemon as raw binds. Bodies it can't read or
@@ -104,6 +106,7 @@ func (s *Server) rewriteNestedSocket(r *http.Request) (int, string) {
 	if hasFoldDuplicates(body, s.foldNames) {
 		return http.StatusBadRequest, errAmbiguousKeys.Error()
 	}
+	hostMnt := s.unmapHostMnt(body)
 	socket := rewriteSocketMounts(body, s.isDockerSocket, s.cfg.NestedVolume)
 	if socket && s.cfg.NestedVolume == "" {
 		return http.StatusForbidden, "docker socket mounts are unavailable: the nested proxy socket is not configured"
@@ -113,7 +116,7 @@ func (s *Server) rewriteNestedSocket(r *http.Request) (int, string) {
 			return http.StatusBadRequest, fmt.Sprintf("docker socket mounts need Docker API >= 1.%d", minSubpathAPIMinor)
 		}
 	}
-	if !s.protectReadOnlyDirs(body) && !socket {
+	if !s.protectReadOnlyDirs(body) && !socket && !hostMnt {
 		return 0, ""
 	}
 	out, _ := json.Marshal(body)

@@ -37,6 +37,10 @@ rules:
   pass keeps the workspace's `.loop` dirs
   (`LOOP_DOCKERPROXY_READONLY_DIRS`) read-only under any bind. Runs
   before the body rules.
+- `hostmnt.go` — Docker Desktop `/host_mnt/<path>` bind sources under
+  `LOOP_DOCKERPROXY_BIND_ROOTS` (or their host paths) are mapped back to
+  the agent's path first, so the rules and pinning see what the agent
+  sees. Other `/host_mnt` sources are left for the baseline deny.
 - `pin.go` — after the rules pass, binds under the agent's read-write
   directory mounts (`LOOP_DOCKERPROXY_BIND_ROOTS`) become mounts of a
   `loop-bind-*` named volume bound to that mount, with the rest of the

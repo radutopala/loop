@@ -266,6 +266,8 @@ Body rules are first-match per request, so the allowlist can't be an `allow` rul
 
 The checks resolve symlinks in the agent's view, which matches the daemon's for same-path mounts. A nested container writing to the workspace isn't subject to the agent's file-op rules. The race between this check and the daemon's mount is closed by pinning (below).
 
+On Docker Desktop the daemon reports bind sources as its VM sees them, under `/host_mnt`. Tools that look up the host path of their working directory by inspecting their own container, such as pre-commit's `docker_image` hooks (gitleaks, hadolint, shellcheck), then ask for binds like `/host_mnt/Users/<you>/project:/src`. That path doesn't exist in the agent container, so the checks couldn't resolve it and the `^/host_mnt` deny fired. Before the rules run, the proxy maps a `/host_mnt` source under one of the agent's read-write mounts (as mounted, or its host path with symlinks resolved) back to the path the agent sees. The allowlist, the read-only `.loop` overlays and pinning then treat it like the same bind written that way. Every other `/host_mnt` source still hits the deny.
+
 Together these body rules are the reason the HTTP layer can afford to default-allow: no amount of `docker run` or `docker create` can produce a privileged container, a host-namespace container, or a host-bind-mounted container.
 
 ### Nested docker socket
