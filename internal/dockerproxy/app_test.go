@@ -697,3 +697,20 @@ func (s *AppSuite) TestDirList() {
 	require.Nil(s.T(), dirList(""))
 	require.Equal(s.T(), []string{"/a/.loop", "/b/.loop"}, dirList("/a/.loop/::rel:/b/./.loop"))
 }
+
+func (s *AppSuite) TestPathMap() {
+	cases := []struct {
+		name string
+		in   string
+		want map[string]string
+	}{
+		{name: "empty", in: "", want: nil},
+		{name: "pairs cleaned", in: "/tmp/x=/private/tmp/x/:/a/./b=/c", want: map[string]string{"/tmp/x": "/private/tmp/x", "/a/b": "/c"}},
+		{name: "relative or missing halves dropped", in: "/a:rel=/b:/c=rel:/d=", want: nil},
+	}
+	for _, tc := range cases {
+		s.Run(tc.name, func() {
+			require.Equal(s.T(), tc.want, pathMap(tc.in))
+		})
+	}
+}

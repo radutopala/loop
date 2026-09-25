@@ -96,6 +96,11 @@ type ServerConfig struct {
 	// them are pinned to a volume so a symlink swapped in after the policy
 	// check can't redirect them (see pinBinds). Empty disables pinning.
 	BindRoots []string
+	// BindHostPaths maps a BindRoot to its path on the host with symlinks
+	// resolved, where that differs (macOS's /tmp is /private/tmp). Docker
+	// Desktop reports a volume's device resolved, so ensureBindVolume
+	// accepts this path too.
+	BindHostPaths map[string]string
 }
 
 // NewServer constructs a Server. CID / ChannelID / Policy / Approver / DockerSock

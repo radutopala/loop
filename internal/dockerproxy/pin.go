@@ -232,7 +232,7 @@ func (s *Server) ensureBindVolume(ctx context.Context, root string, subpath bool
 	if err := json.NewDecoder(resp.Body).Decode(&vol); err != nil {
 		return fmt.Errorf("creating bind volume for %s: %w", root, err)
 	}
-	if vol.Driver != "local" || !boundTo(vol.Options, root) {
+	if vol.Driver != "local" || !boundTo(vol.Options, root, s.cfg.BindHostPaths[root]) {
 		return fmt.Errorf("volume %s exists but isn't bound to %s; remove it", name, root)
 	}
 	if subpath {
@@ -250,11 +250,20 @@ func bindVolumeOptions(root string) map[string]string {
 	return map[string]string{"type": "none", "o": "bind", "device": root}
 }
 
-// boundTo reports whether a local volume's options bind it to root. Docker
-// Desktop reports the device as its VM sees the host, under /host_mnt.
-func boundTo(opts map[string]string, root string) bool {
-	return len(opts) == 3 && opts["type"] == "none" && opts["o"] == "bind" &&
-		(opts["device"] == root || opts["device"] == "/host_mnt"+root)
+// boundTo reports whether a local volume's options bind it to root, or to
+// hostPath, root's host path with symlinks resolved ("" when it's root).
+// Docker Desktop reports the device as its VM sees the host: resolved, and
+// under /host_mnt.
+func boundTo(opts map[string]string, root, hostPath string) bool {
+	if len(opts) != 3 || opts["type"] != "none" || opts["o"] != "bind" {
+		return false
+	}
+	for _, p := range []string{root, hostPath} {
+		if p != "" && (opts["device"] == p || opts["device"] == "/host_mnt"+p) {
+			return true
+		}
+	}
+	return false
 }
 
 // reservesBindVolume reports whether a POST /volumes/create request names a

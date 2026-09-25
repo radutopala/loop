@@ -31,6 +31,7 @@ const (
 	envNestedDir  = "LOOP_DOCKERPROXY_NESTED_DIR"
 	envReadOnly   = "LOOP_DOCKERPROXY_READONLY_DIRS"
 	envBindRoots  = "LOOP_DOCKERPROXY_BIND_ROOTS"
+	envBindHosts  = "LOOP_DOCKERPROXY_BIND_HOST_PATHS"
 
 	defaultSocket   = "/var/run/docker.sock"
 	defaultUpstream = "/var/run/docker.sock.host"
@@ -158,15 +159,16 @@ func (a *app) run(outW io.Writer) error {
 	}
 
 	srv, err := NewServer(ServerConfig{
-		CID:          cid,
-		ChannelID:    channelID,
-		Policy:       policy,
-		Approver:     approver,
-		DockerSock:   upstream,
-		NestedVolume: nestedVolume,
-		EvalSymlinks: a.evalSymlinks,
-		ReadOnlyDirs: dirList(a.getenv(envReadOnly)),
-		BindRoots:    dirList(a.getenv(envBindRoots)),
+		CID:           cid,
+		ChannelID:     channelID,
+		Policy:        policy,
+		Approver:      approver,
+		DockerSock:    upstream,
+		NestedVolume:  nestedVolume,
+		EvalSymlinks:  a.evalSymlinks,
+		ReadOnlyDirs:  dirList(a.getenv(envReadOnly)),
+		BindRoots:     dirList(a.getenv(envBindRoots)),
+		BindHostPaths: pathMap(a.getenv(envBindHosts)),
 	})
 	if err != nil {
 		closeListener(nestedLn)
@@ -207,6 +209,23 @@ func dirList(v string) []string {
 		}
 	}
 	return dirs
+}
+
+// pathMap parses a colon-separated list of root=hostPath pairs
+// (LOOP_DOCKERPROXY_BIND_HOST_PATHS), keeping pairs of absolute paths only.
+func pathMap(v string) map[string]string {
+	var m map[string]string
+	for pair := range strings.SplitSeq(v, ":") {
+		root, host, _ := strings.Cut(pair, "=")
+		if !strings.HasPrefix(root, "/") || !strings.HasPrefix(host, "/") {
+			continue
+		}
+		if m == nil {
+			m = map[string]string{}
+		}
+		m[filepath.Clean(root)] = filepath.Clean(host)
+	}
+	return m
 }
 
 // listenSocket replaces any stale socket at path (e.g. from a restart

@@ -1070,6 +1070,20 @@ func (r *DockerRunner) bindRoots(rw []string) []string {
 	return roots
 }
 
+// bindHostPaths returns root=path pairs (LOOP_DOCKERPROXY_BIND_HOST_PATHS)
+// for the roots whose host path differs once symlinks are resolved, e.g.
+// /tmp/x=/private/tmp/x on macOS. Docker Desktop reports a bind volume's
+// device that way, so the proxy needs it to recognise the volume it made.
+func (r *DockerRunner) bindHostPaths(roots []string) []string {
+	var pairs []string
+	for _, root := range roots {
+		if p, err := r.sys.EvalSymlinks(root); err == nil && p != root {
+			pairs = append(pairs, root+"="+p)
+		}
+	}
+	return pairs
+}
+
 // injectBindAllowlist confines the bind mounts of containers the agent
 // creates to the agent's own mounts (rw, and ro for read-only binds):
 //

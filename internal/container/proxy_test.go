@@ -198,6 +198,17 @@ func (s *ProxySuite) TestBindRoots() {
 	require.Nil(s.T(), r.bindRoots(nil))
 }
 
+func (s *ProxySuite) TestBindHostPaths() {
+	sys := new(testutil.MockSystem)
+	sys.On("EvalSymlinks", "/ws").Return("/ws", nil)
+	sys.On("EvalSymlinks", "/tmp/x").Return("/private/tmp/x", nil)
+	sys.On("EvalSymlinks", "/gone").Return("", os.ErrNotExist)
+	r := &DockerRunner{sys: sys}
+
+	require.Equal(s.T(), []string{"/tmp/x=/private/tmp/x"}, r.bindHostPaths([]string{"/ws", "/tmp/x", "/gone"}))
+	require.Nil(s.T(), r.bindHostPaths(nil))
+}
+
 func (s *ProxySuite) TestInjectBindAllowlistShape() {
 	in := []types.BodyRule{
 		{
@@ -420,6 +431,14 @@ func (s *ProxySuite) TestRunProxyEnabledAddsBindsAndEnvAndToken() {
 	cfg := s.proxyRunCfg()
 	s.installRunnerDefaults(cfg)
 	s.runner.SetDockerProxyDeps("/run/loop", "/var/run/docker.sock")
+	// Every root resolves elsewhere, as /tmp does on macOS.
+	sys := s.runner.sys.(*testutil.MockSystem)
+	for _, c := range slices.Clone(sys.ExpectedCalls) {
+		if c.Method == "EvalSymlinks" {
+			c.Unset()
+		}
+	}
+	sys.On("EvalSymlinks", mock.Anything).Return("/resolved", nil)
 
 	resolver := agentgate.NewMultiManagerResolver()
 	s.runner.SetGateDeps(resolver, &stubGateRouter{bot: stubGateBot{}}, types.RateLimits{})
@@ -448,6 +467,7 @@ func (s *ProxySuite) TestRunProxyEnabledAddsBindsAndEnvAndToken() {
 	require.Equal(s.T(), []string{"/run/loop-dproxy"}, captured.Volumes)
 	require.Equal(s.T(), filepath.Join(s.runner.resolveWorkDir("ch-1", ""), ".loop"), findEnv(captured.Env, "LOOP_DOCKERPROXY_READONLY_DIRS"))
 	require.Contains(s.T(), strings.Split(findEnv(captured.Env, "LOOP_DOCKERPROXY_BIND_ROOTS"), ":"), s.runner.resolveWorkDir("ch-1", ""))
+	require.Contains(s.T(), strings.Split(findEnv(captured.Env, "LOOP_DOCKERPROXY_BIND_HOST_PATHS"), ":"), s.runner.resolveWorkDir("ch-1", "")+"=/resolved")
 	require.Equal(s.T(), "ch-1", findEnv(captured.Env, "LOOP_CHANNEL_ID"))
 	token := findEnv(captured.Env, "LOOP_GATE_TOKEN")
 	require.Len(s.T(), token, 64, "token should be 32 bytes hex-encoded")
@@ -566,6 +586,7 @@ func (s *ProxySuite) TestRunProxyPolicyWriteErrorFailsRun() {
 	sys.On("Stat", mock.Anything).Return(nil, os.ErrNotExist)
 	sys.On("ExecCommandOutput", mock.Anything, mock.Anything).Return([]byte{}, nil)
 	sys.On("Readlink", mock.Anything).Return("", os.ErrNotExist)
+	sys.On("EvalSymlinks", mock.Anything).Return("", os.ErrNotExist)
 	sys.On("ReadFile", mock.Anything).Return(nil, os.ErrNotExist)
 	sys.On("Remove", mock.Anything).Return(nil)
 	s.runner.sys = sys
