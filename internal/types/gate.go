@@ -62,6 +62,9 @@ type JSONCheck struct {
 	Path   string   `json:"path"`
 	Op     string   `json:"op"`
 	Values []string `json:"values,omitempty"`
+	// Except lists path regexes a source_path_in check skips: a bind whose
+	// symlink-resolved source matches one doesn't fire the check.
+	Except []string `json:"except,omitempty"`
 }
 
 // RateLimits caps prompt volume per gate-enabled container.

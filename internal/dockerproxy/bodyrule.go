@@ -1,6 +1,8 @@
 package dockerproxy
 
 import (
+	"path"
+	"regexp"
 	"slices"
 	"strings"
 
@@ -86,54 +88,72 @@ func evalAtLeaf(c compiledJSONCheck, value any) bool {
 		})
 	case "source_path_in":
 		return stringMatch(value, func(s string) bool {
-			src := extractSourcePath(s)
-			if src == "" {
-				return false
-			}
-			// First, check the literal source string (covers the no-symlink
-			// case and the case where the agent submits a denied path
-			// outright).
-			for _, re := range c.valuesRe {
-				if re.MatchString(src) {
-					return true
-				}
-			}
-			// Docker's HostConfig.Binds[] overloads the "<source>:<target>[:mode]"
-			// string for named volumes — `myvolume:/target:rw` extracts to a
-			// source of `myvolume`, which is not a host path. Such strings
-			// can never match the deny regexes (all anchored absolute paths
-			// like `^/etc(/|$)`) and would predictably fail symlink resolution
-			// below, falsely firing the deny via the resolve-failure branch.
-			// Skip the symlink fallback for non-absolute sources.
-			if !strings.HasPrefix(src, "/") {
-				return false
-			}
-			if c.resolveSymlinks == nil {
-				return false
-			}
-			// Resolve and re-check. An agent that creates `/workdir/link → /`
-			// then submits `-v /workdir/link:/host` is the bypass we close
-			// here: the literal source doesn't match `^/$` but the resolved
-			// one does.
-			resolved, err := c.resolveSymlinks(src)
-			if err != nil {
-				// Path can't be resolved (broken chain, target missing,
-				// EACCES, etc.). Fire the rule only when it's a deny —
-				// otherwise an allow/approve rule would inadvertently
-				// green-light a suspect path. Deny rules are the typical
-				// shape for source_path_in.
-				return c.parentDecision == types.DecisionDeny
-			}
-			if resolved == src {
-				return false
-			}
-			for _, re := range c.valuesRe {
-				if re.MatchString(resolved) {
-					return true
-				}
-			}
-			return false
+			return c.sourcePathIn(extractSourcePath(s))
 		})
+	case "source_path_not_in":
+		return stringMatch(value, func(s string) bool {
+			return c.sourcePathNotIn(extractSourcePath(s))
+		})
+	}
+	return false
+}
+
+// sourcePathIn reports whether a bind source matches the check's regexes,
+// literally or once symlinks are resolved. An agent that creates
+// `/workdir/link → /` then submits `-v /workdir/link:/host` is the bypass the
+// resolution closes: the literal source doesn't match `^/$` but the resolved
+// one does. A resolved source matching an Except regex never fires.
+func (c compiledJSONCheck) sourcePathIn(src string) bool {
+	literal := matchAny(c.valuesRe, src)
+	// Docker's HostConfig.Binds[] overloads the "<source>:<target>[:mode]"
+	// string for named volumes — `myvolume:/target:rw` extracts to a source
+	// of `myvolume`, which is not a host path and would predictably fail
+	// symlink resolution, falsely firing a deny. Only the literal applies.
+	if !strings.HasPrefix(src, "/") || (literal && len(c.exceptRe) == 0) {
+		return literal
+	}
+	resolved := path.Clean(src)
+	if c.resolveSymlinks != nil {
+		r, err := c.resolveSymlinks(src)
+		if err != nil {
+			// Path can't be resolved (broken chain, target missing, EACCES,
+			// etc.). Fire a deny rule regardless — otherwise an allow/approve
+			// rule would inadvertently green-light a suspect path.
+			return literal || c.parentDecision == types.DecisionDeny
+		}
+		resolved = path.Clean(r)
+	}
+	if matchAny(c.exceptRe, resolved) {
+		return false
+	}
+	return literal || matchAny(c.valuesRe, resolved)
+}
+
+// sourcePathNotIn reports whether a host-path bind source lies outside the
+// check's regexes once symlinks are resolved. Named volumes never fire. A
+// source that can't be resolved fires unless the rule allows: it can't be
+// shown to be inside.
+func (c compiledJSONCheck) sourcePathNotIn(src string) bool {
+	if !strings.HasPrefix(src, "/") {
+		return false
+	}
+	resolved := path.Clean(src)
+	if c.resolveSymlinks != nil {
+		r, err := c.resolveSymlinks(src)
+		if err != nil {
+			return c.parentDecision != types.DecisionAllow
+		}
+		resolved = path.Clean(r)
+	}
+	return !matchAny(c.valuesRe, resolved)
+}
+
+// matchAny reports whether any of res matches s.
+func matchAny(res []*regexp.Regexp, s string) bool {
+	for _, re := range res {
+		if re.MatchString(s) {
+			return true
+		}
 	}
 	return false
 }

@@ -112,7 +112,7 @@ Both layers feed into the same `agentgate.Manager` for `approve` decisions, so a
 | `internal/dockerproxy/nested.go` | Rewrites docker socket mounts in container creates to the nested proxy socket; looks up the nested volume's name |
 | `internal/dockerproxy/server.go` | HTTP handler + reverse proxy to the upstream socket (`/var/run/docker.sock.host` in production); hijack on `POST /containers/*/attach` and `POST /exec/*/start`; `FlushInterval: 100ms` for streaming; strips API version prefix before rule match |
 | `internal/dockerproxy/policy.go` | `HTTPServiceRule` compile + `MatchHTTP` (first-match + default); `CheckBody` |
-| `internal/dockerproxy/bodyrule.go` | JSONPath-lite evaluator: `present`, `empty_array`, `equals`, `contains_any`, `starts_with_any`, `not_in`, `capability_not_in` (normalises names as the daemon does), `source_path_in`. Keys match case-insensitively |
+| `internal/dockerproxy/bodyrule.go` | JSONPath-lite evaluator: `present`, `empty_array`, `equals`, `contains_any`, `starts_with_any`, `not_in`, `capability_not_in` (normalises names as the daemon does), `source_path_in` (with an optional `except` list), `source_path_not_in`. Both source ops resolve symlinks and clean `..` first. Keys match case-insensitively |
 | `internal/orchestrator/gate_adapter.go` | Maps `agentgate.ApprovalRequest` to `bot.ApprovalPrompt`; same adapter for all three platforms |
 | `internal/api/gate_handler.go` | Three handlers: `GET /api/gate/approvals` (snapshot of every Manager's pending requests — used by the renderer on WS reconnect to reconcile its local map and the electron dock-bouncer), `POST /api/gate/approvals/{id}` (bot-click resolve — 204 / 400 / 404), and `POST /api/gate/container-approval` (in-container call-in — bearer-token auth → `ByToken` → `mgr.Request` → `{decision, actor, reason}`, 200 / 401 / 503) |
 | `internal/types/gate.go` | Shared rule types (`Decision`, `PathRule`, `CommandRule`, `FileRule`, `HTTPServiceRule`, `BodyRule`, `JSONCheck`, `RateLimits`, `AuditConfig`) — leaf package to avoid config↔agentgate cycles |
@@ -205,7 +205,7 @@ The default posture is `allow`. The body rules below are the real container-esca
 
 All other Docker API calls fall through to `allow`: `_ping`, `version`, `info`, container create / start / stop / kill / restart / pause / wait / attach, image create / build / push / pull / rm, volume / network CRUD, events, logs, inspect, stats, top, and so on.
 
-### Docker body (`BodyRule`, 5 rules — the container-escape guardrails)
+### Docker body (`BodyRule`, 5 static rules + 1 injected — the container-escape guardrails)
 
 Body rules are evaluated independently of the HTTP rule match and support all three decisions:
 
@@ -255,6 +255,15 @@ A JSON body larger than the matching rules' `MaxBodyBytes` (1 MiB default) is re
 |---|---|---|
 | `Privileged` | `equals` | `true` |
 | `CapAdd[*]` | `capability_not_in` | same list as create |
+
+**Bind allowlist (injected per container)** — `writeProxyPolicyFile` confines the binds of containers the agent creates to the agent's own mounts: the host paths it already has read-write at the same path (workspace, worktree parent, `extra_dirs`, the playground, same-path `mounts`). Read-only mounts, named volumes and the docker socket are left out. Two edits, both by `injectBindAllowlist`:
+
+- An approve rule is appended last: a host-path source in `HostConfig.Binds[*]` or `HostConfig.Mounts[*].Source` that resolves outside those paths (`source_path_not_in`) asks first — `/tmp`, a sibling project, your home folder. The deny list alone can't cover this on Docker Desktop, where the daemon resolves binds on the host's shared folders (`/Users`, `/Volumes`, `/private`, `/tmp`): `-v /Users/<you>:/h` hands the container your whole home directory.
+- In deny rules, a `source_path_in` value that would block one of those paths outright (`^/home(/|$)` for a workspace under `/home` on Linux) is split into its own check with the paths as `except`, so it stops firing for sources that resolve inside them. Narrower values — say a rule of yours for `^<workspace>/secrets` — keep firing.
+
+Body rules are first-match per request, so the allowlist can't be an `allow` rule: an earlier version prepended one for the workspace, and a single workspace bind then skipped every deny for the request's other fields (`--privileged -v $PWD:/w -v /:/host`).
+
+The checks resolve symlinks in the agent's view, which matches the daemon's for same-path mounts. They can't close the race where the agent swaps a checked directory for a symlink between the check and the daemon's mount, and a nested container writing to the workspace isn't subject to the agent's file-op rules.
 
 Together these body rules are the reason the HTTP layer can afford to default-allow: no amount of `docker run` or `docker create` can produce a privileged container, a host-namespace container, or a host-bind-mounted container.
 
@@ -344,7 +353,7 @@ Set when `cfg.Gates.Agentgate.Enabled` is true (`cmd/loop/serve.go`):
 Per container (`internal/container/runner.go#createAndStartContainer`):
 
 1. Generate a 32-byte `crypto/rand` bearer token (`newGateToken`) — shared by the proxy and gate layers.
-2. `writeProxyPolicyFile` marshals `cfg.Gates.DockerProxy` to `{policyDir}/<channel>/proxy-policy.json` (0640). Bind-mount `hostSock:/var/run/docker.sock.host:ro` + `.../proxy-policy.json:/etc/loop/proxy-policy.json:ro`. Env: `LOOP_DOCKERPROXY_ENABLED=1`, `LOOP_DOCKERPROXY_POLICY_FILE=/etc/loop/proxy-policy.json`, `LOOP_DOCKERPROXY_UPSTREAM=/var/run/docker.sock.host`, `LOOP_DOCKERPROXY_NESTED_DIR=/run/loop-dproxy`, plus an anonymous volume at `/run/loop-dproxy`.
+2. `writeProxyPolicyFile` marshals `cfg.Gates.DockerProxy`, with the bind allowlist (see Docker body rules) injected, to `{policyDir}/<channel>/proxy-policy.json` (0640). Bind-mount `hostSock:/var/run/docker.sock.host:ro` + `.../proxy-policy.json:/etc/loop/proxy-policy.json:ro`. Env: `LOOP_DOCKERPROXY_ENABLED=1`, `LOOP_DOCKERPROXY_POLICY_FILE=/etc/loop/proxy-policy.json`, `LOOP_DOCKERPROXY_UPSTREAM=/var/run/docker.sock.host`, `LOOP_DOCKERPROXY_NESTED_DIR=/run/loop-dproxy`, plus an anonymous volume at `/run/loop-dproxy`.
 3. `writeGatePolicyFile` marshals the gate rule subset (`DefaultDecision`, `PathRules`, `CommandRules`, `FileRules`) to `{policyDir}/<channel>/gate-policy.json` (0640). `FileRules` is the merged config list wrapped by `injectWorkspaceRule` (workspace allow, before the first Allow) and then `injectPolicySelfDenyRule` (`/etc/loop/**` deny, at the head — see [file-op rule 1](#file-ops-filerule-9-static-rules-first-match-wins-plus-two-injected-rules)). Bind-mount `.../gate-policy.json:/etc/loop/gate-policy.json:ro`. Env: `LOOP_GATE_ENABLED=1`, `LOOP_GATE_POLICY_FILE=/etc/loop/gate-policy.json`.
 4. Shared env on both layers: `LOOP_CHANNEL_ID=<channelID>`, `LOOP_GATE_TOKEN=<32-hex>`.
 5. After `ContainerCreate` returns a `containerID`, call `gateResolver.AddWithToken(containerID, token, mgr, channelID)` — the token starts authenticating HTTP calls as soon as the container is up.

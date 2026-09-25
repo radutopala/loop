@@ -914,10 +914,9 @@ type proxyPolicyJSON struct {
 // payload is derived from global config plus the channel's stable workDir,
 // so overwrites are idempotent.
 //
-// workDir/parentDirPath come from the per-channel mount setup — the workspace
-// bind-approval rule is injected here (not in the static defaults) because
-// the real workspace path is the host bind-mount path, not a fixed /work.
-func (r *DockerRunner) writeProxyPolicyFile(cfg *config.Config, channelID, workDir, parentDirPath string) (string, error) {
+// binds are the agent container's own mounts; the bind allowlist is injected
+// here (not in the static defaults) because it depends on them.
+func (r *DockerRunner) writeProxyPolicyFile(cfg *config.Config, channelID string, binds []string) (string, error) {
 	if !cfg.Gates.DockerProxy.Enabled {
 		return "", nil
 	}
@@ -931,7 +930,7 @@ func (r *DockerRunner) writeProxyPolicyFile(cfg *config.Config, channelID, workD
 	payload := proxyPolicyJSON{
 		DefaultDecision: cfg.Gates.DockerProxy.DefaultDecision,
 		HTTPRules:       cfg.Gates.DockerProxy.HTTPRules,
-		BodyRules:       injectWorkspaceBindRule(cfg.Gates.DockerProxy.BodyRules, workDir, parentDirPath),
+		BodyRules:       injectBindAllowlist(cfg.Gates.DockerProxy.BodyRules, agentMountDirs(binds)),
 	}
 	raw, _ := json.Marshal(payload)
 	path := filepath.Join(dir, "proxy-policy.json")
@@ -1031,52 +1030,96 @@ func (r *DockerRunner) ensureGateAuditDir(channelID, dirPath string) (string, er
 	return dir, nil
 }
 
-// injectWorkspaceBindRule prepends an Allow body rule that fires when the
-// agent submits a HostConfig.Binds[*] entry whose source is the channel's real
-// workspace path (workDir, optionally also parentDirPath). The rule must come
-// before the static deny on POST /containers/create so workspaces under
-// generically-denied prefixes (e.g. /home/<user>/projects on Linux) aren't
-// blanket-denied — any mount inside the project's own tree is the agent's
-// own dev-loop work and is allowed directly without a prompt.
+// agentMountDirs returns the host paths the agent already has read-write
+// at the same path inside its container: the workspace, the worktree parent,
+// extra dirs, the playground and same-path config mounts. A nested container
+// binding one of them gets no access the agent lacks. Read-only mounts,
+// named volumes and the docker socket are left out.
+func agentMountDirs(binds []string) []string {
+	var dirs []string
+	for _, b := range binds {
+		ms, err := parseMountSpec(b)
+		if err != nil || !strings.HasPrefix(ms.Host, "/") || ms.Host != ms.Container ||
+			slices.Contains(strings.Split(ms.Mode, ","), "ro") ||
+			ms.Host == "/var/run/docker.sock" || ms.Host == "/run/docker.sock" ||
+			slices.Contains(dirs, ms.Host) {
+			continue
+		}
+		dirs = append(dirs, ms.Host)
+	}
+	return dirs
+}
+
+// injectBindAllowlist confines the bind mounts of containers the agent
+// creates to the agent's own mounts (dirs):
 //
-// On macOS Docker Desktop, agent-submitted bind sources may carry a
-// /host_mnt prefix (the daemon's view of host paths through the Linux VM),
-// so each pattern is emitted in both bare and /host_mnt-prefixed form.
+//   - deny rules keep firing on their source_path_in values, except that a
+//     value matching one of dirs outright (`^/home(/|$)` against a workspace
+//     under /home on Linux) no longer fires for sources that resolve inside
+//     dirs — the value is split into its own check with an Except list, so
+//     narrower values (a user's `^<workspace>/secrets`) still fire;
+//   - an approve rule appended last asks for any host-path bind that
+//     resolves outside dirs. On Docker Desktop the daemon resolves binds on
+//     the host's shared folders, so without it `-v /Users/<me>:/h` would
+//     hand a container the whole home directory.
 //
-// Returns rules unchanged when workDir is empty (ad-hoc one-shot runs).
-func injectWorkspaceBindRule(rules []types.BodyRule, workDir, parentDirPath string) []types.BodyRule {
-	if workDir == "" {
-		return rules
+// Deny rules are matched per request, first match wins, so an allow rule
+// can't express "these binds are fine" without also skipping the denies for
+// the request's other fields.
+func injectBindAllowlist(rules []types.BodyRule, dirs []string) []types.BodyRule {
+	allowed := make([]string, len(dirs))
+	for i, d := range dirs {
+		allowed[i] = "^" + regexp.QuoteMeta(d) + "($|/)"
 	}
-	paths := []string{workDir}
-	if parentDirPath != "" && parentDirPath != workDir {
-		paths = append(paths, parentDirPath)
+	out := make([]types.BodyRule, 0, len(rules)+1)
+	for _, r := range rules {
+		if r.Decision == types.DecisionDeny {
+			r.JSONChecks = exemptAgentMounts(r.JSONChecks, dirs, allowed)
+		}
+		out = append(out, r)
 	}
-	values := make([]string, 0, len(paths)*2)
-	for _, p := range paths {
-		quoted := regexp.QuoteMeta(p)
-		values = append(values,
-			"^"+quoted+"($|/)",
-			"^/host_mnt"+quoted+"($|/)",
-		)
+	notIn := func(path string) types.JSONCheck {
+		return types.JSONCheck{Path: path, Op: "source_path_not_in", Values: allowed}
 	}
-	ws := types.BodyRule{
+	return append(out, types.BodyRule{
 		AppliesTo:    "POST ^/containers/create$",
 		ContentTypes: []string{"application/json"},
 		MaxBodyBytes: 1048576,
-		JSONChecks: []types.JSONCheck{
-			{
-				Path:   "HostConfig.Binds[*]",
-				Op:     "source_path_in",
-				Values: values,
-			},
-		},
-		Decision: types.DecisionAllow,
-		Message:  "workspace bind-mount fast-path",
+		JSONChecks:   []types.JSONCheck{notIn("HostConfig.Binds[*]"), notIn("HostConfig.Mounts[*].Source")},
+		Decision:     types.DecisionApprove,
+		Message:      "bind mount outside the agent's own mounts",
+	})
+}
+
+// exemptAgentMounts splits each source_path_in check into the values that
+// match one of dirs (which get allowed as Except) and the rest, which are
+// left as they were. Checks within a rule are ORed, so the split keeps the
+// rule's meaning for every other source.
+func exemptAgentMounts(checks []types.JSONCheck, dirs, allowed []string) []types.JSONCheck {
+	out := make([]types.JSONCheck, 0, len(checks))
+	for _, c := range checks {
+		var narrow, broad []string
+		for _, v := range c.Values {
+			if re, err := regexp.Compile(v); err == nil && slices.ContainsFunc(dirs, re.MatchString) {
+				broad = append(broad, v)
+			} else {
+				narrow = append(narrow, v)
+			}
+		}
+		if c.Op != "source_path_in" || len(broad) == 0 {
+			out = append(out, c)
+			continue
+		}
+		if len(narrow) > 0 {
+			n := c
+			n.Values = narrow
+			out = append(out, n)
+		}
+		b := c
+		b.Values = broad
+		b.Except = append(slices.Clone(c.Except), allowed...)
+		out = append(out, b)
 	}
-	out := make([]types.BodyRule, 0, len(rules)+1)
-	out = append(out, ws)
-	out = append(out, rules...)
 	return out
 }
 

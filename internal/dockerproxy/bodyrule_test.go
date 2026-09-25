@@ -273,3 +273,48 @@ func (s *BodyRuleSuite) TestEvalUnknownOpReturnsFalse() {
 	c := compiledJSONCheck{segments: []pathSegment{{name: "x"}}, op: "made-up"}
 	require.False(s.T(), c.match(map[string]any{"x": "anything"}))
 }
+
+// --- Except and source_path_not_in ---
+
+func (s *BodyRuleSuite) TestSourcePathExceptAndNotIn() {
+	resolve := func(p string) (string, error) {
+		switch p {
+		case "/missing":
+			return "", errors.New("no such file")
+		case "/ws/root":
+			return "/", nil
+		}
+		return p, nil
+	}
+	cases := []struct {
+		name     string
+		check    types.JSONCheck
+		decision types.Decision
+		resolve  SymlinkResolver
+		bind     string
+		want     bool
+	}{
+		{"except exempts resolved source", types.JSONCheck{Op: "source_path_in", Values: []string{`^/home(/|$)`}, Except: []string{`^/home/ws($|/)`}}, types.DecisionDeny, resolve, "/home/ws/a:/w", false},
+		{"except misses sibling", types.JSONCheck{Op: "source_path_in", Values: []string{`^/home(/|$)`}, Except: []string{`^/home/ws($|/)`}}, types.DecisionDeny, resolve, "/home/other:/w", true},
+		{"except checks the cleaned path", types.JSONCheck{Op: "source_path_in", Values: []string{`^/home(/|$)`}, Except: []string{`^/home/ws($|/)`}}, types.DecisionDeny, nil, "/home/ws/../x:/w", true},
+		{"except with resolve failure", types.JSONCheck{Op: "source_path_in", Values: []string{`^/home(/|$)`}, Except: []string{`^/home/ws($|/)`}}, types.DecisionApprove, resolve, "/missing:/w", false},
+		{"no resolver cleans literal", types.JSONCheck{Op: "source_path_in", Values: []string{`^/etc(/|$)`}}, types.DecisionDeny, nil, "/./etc:/e", true},
+		{"not_in inside", types.JSONCheck{Op: "source_path_not_in", Values: []string{`^/ws($|/)`}}, types.DecisionApprove, resolve, "/ws/a:/w", false},
+		{"not_in outside", types.JSONCheck{Op: "source_path_not_in", Values: []string{`^/ws($|/)`}}, types.DecisionApprove, resolve, "/srv:/w", true},
+		{"not_in link out", types.JSONCheck{Op: "source_path_not_in", Values: []string{`^/ws($|/)`}}, types.DecisionApprove, resolve, "/ws/root:/w", true},
+		{"not_in dotdot without resolver", types.JSONCheck{Op: "source_path_not_in", Values: []string{`^/ws($|/)`}}, types.DecisionApprove, nil, "/ws/..:/w", true},
+		{"not_in named volume", types.JSONCheck{Op: "source_path_not_in", Values: []string{`^/ws($|/)`}}, types.DecisionApprove, resolve, "vol:/w", false},
+		{"not_in empty allowlist", types.JSONCheck{Op: "source_path_not_in"}, types.DecisionApprove, resolve, "/ws:/w", true},
+		{"not_in unresolvable approve", types.JSONCheck{Op: "source_path_not_in", Values: []string{`^/ws($|/)`}}, types.DecisionApprove, resolve, "/missing:/w", true},
+		{"not_in unresolvable allow", types.JSONCheck{Op: "source_path_not_in", Values: []string{`^/ws($|/)`}}, types.DecisionAllow, resolve, "/missing:/w", false},
+	}
+	for _, tc := range cases {
+		s.Run(tc.name, func() {
+			tc.check.Path = "Binds[*]"
+			c := s.compileOne(tc.check)
+			c.parentDecision = tc.decision
+			c.resolveSymlinks = tc.resolve
+			require.Equal(s.T(), tc.want, c.match(map[string]any{"Binds": []any{tc.bind}}))
+		})
+	}
+}

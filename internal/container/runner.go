@@ -637,7 +637,7 @@ func (r *DockerRunner) createAndStartContainer(
 	// reads it inside the container; the bind-mount below mounts it read-
 	// only under /etc/loop/proxy-policy.json.
 	var volumes []string
-	proxyPolicyHostPath, err := r.writeProxyPolicyFile(cfg, channelID, workDir, parentDirPath)
+	proxyPolicyHostPath, err := r.writeProxyPolicyFile(cfg, channelID, binds)
 	if err != nil {
 		return "", "", "", false, err
 	}
