@@ -416,6 +416,7 @@ func (s *ProxySuite) TestRunProxyEnabledAddsBindsAndEnvAndToken() {
 	require.Equal(s.T(), "/run/loop-dproxy", findEnv(captured.Env, "LOOP_DOCKERPROXY_NESTED_DIR"))
 	require.Equal(s.T(), []string{"/run/loop-dproxy"}, captured.Volumes)
 	require.Equal(s.T(), filepath.Join(s.runner.resolveWorkDir("ch-1", ""), ".loop"), findEnv(captured.Env, "LOOP_DOCKERPROXY_READONLY_DIRS"))
+	require.Contains(s.T(), strings.Split(findEnv(captured.Env, "LOOP_DOCKERPROXY_BIND_ROOTS"), ":"), s.runner.resolveWorkDir("ch-1", ""))
 	require.Equal(s.T(), "ch-1", findEnv(captured.Env, "LOOP_CHANNEL_ID"))
 	token := findEnv(captured.Env, "LOOP_GATE_TOKEN")
 	require.Len(s.T(), token, 64, "token should be 32 bytes hex-encoded")

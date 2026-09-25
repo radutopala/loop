@@ -59,6 +59,8 @@ type Server struct {
 	cfg      ServerConfig
 	policy   *Policy
 	upstream *httputil.ReverseProxy
+	// client makes the proxy's own daemon calls (see ensureBindVolume).
+	client *http.Client
 	// foldNames are the lower-cased body keys the body rules and the
 	// nested-socket rewrite read (see fold.go).
 	foldNames map[string]bool
@@ -90,6 +92,10 @@ type ServerConfig struct {
 	// ReadOnlyDirs are host directories (cleaned, absolute) that containers
 	// the agent creates may only mount read-only (see protectReadOnlyDirs).
 	ReadOnlyDirs []string
+	// BindRoots are the agent's own mounts (cleaned, absolute). Binds under
+	// them are pinned to a volume so a symlink swapped in after the policy
+	// check can't redirect them (see pinBinds). Empty disables pinning.
+	BindRoots []string
 }
 
 // NewServer constructs a Server. CID / ChannelID / Policy / Approver / DockerSock
@@ -141,7 +147,9 @@ func NewServer(cfg ServerConfig) (*Server, error) {
 	maps.Copy(foldNames, cfg.Policy.foldNames)
 	addFoldNames(foldNames, nestedFoldNames...)
 	addFoldNames(foldNames, detailsFoldNames...)
-	return &Server{cfg: cfg, policy: cfg.Policy, upstream: rp, foldNames: foldNames}, nil
+	cfg.BindRoots = sortRoots(cfg.BindRoots)
+	client := &http.Client{Transport: transport, Timeout: 30 * time.Second}
+	return &Server{cfg: cfg, policy: cfg.Policy, upstream: rp, client: client, foldNames: foldNames}, nil
 }
 
 // apiVersionRe matches a Docker API version prefix at the start of the path
@@ -235,6 +243,24 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Volume creates may not claim the names of pinned-bind volumes.
+	if r.Method == http.MethodPost && canonicalPath == "/volumes/create" && reservesBindVolume(r) {
+		msg := "volume names starting with " + bindVolumePrefix + " are reserved for the docker proxy"
+		s.audit(AuditEntry{
+			Ts:       start,
+			CID:      s.cfg.CID,
+			Channel:  s.cfg.ChannelID,
+			Method:   r.Method,
+			Path:     canonicalPath,
+			Decision: "deny",
+			RuleID:   "volume-name",
+			Reason:   msg,
+			Latency:  s.cfg.Now().Sub(start),
+		})
+		http.Error(w, msg, http.StatusForbidden)
+		return
+	}
+
 	// A body-rule approve overrides the HTTP-rule decision: route through
 	// the user prompt with Kind="docker-body" and a body-rule-scoped cache
 	// key so "Allow for session" applies to the body shape, not just the URL.
@@ -291,6 +317,26 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				Decision: "allow",
 				Latency:  s.cfg.Now().Sub(start),
 			})
+		}
+	}
+
+	// Binds are pinned once the request is approved; the rules and the
+	// prompt judge the paths the agent asked for.
+	if r.Method == http.MethodPost && canonicalPath == "/containers/create" {
+		if status, msg := s.pinBinds(r); status != 0 {
+			s.audit(AuditEntry{
+				Ts:       start,
+				CID:      s.cfg.CID,
+				Channel:  s.cfg.ChannelID,
+				Method:   r.Method,
+				Path:     canonicalPath,
+				Decision: "deny",
+				RuleID:   "create-binds",
+				Reason:   msg,
+				Latency:  s.cfg.Now().Sub(start),
+			})
+			http.Error(w, msg, status)
+			return
 		}
 	}
 

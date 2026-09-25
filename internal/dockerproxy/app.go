@@ -30,6 +30,7 @@ const (
 	envChannelID  = "LOOP_CHANNEL_ID"
 	envNestedDir  = "LOOP_DOCKERPROXY_NESTED_DIR"
 	envReadOnly   = "LOOP_DOCKERPROXY_READONLY_DIRS"
+	envBindRoots  = "LOOP_DOCKERPROXY_BIND_ROOTS"
 
 	defaultSocket   = "/var/run/docker.sock"
 	defaultUpstream = "/var/run/docker.sock.host"
@@ -164,7 +165,8 @@ func (a *app) run(outW io.Writer) error {
 		DockerSock:   upstream,
 		NestedVolume: nestedVolume,
 		EvalSymlinks: a.evalSymlinks,
-		ReadOnlyDirs: readOnlyDirs(a.getenv(envReadOnly)),
+		ReadOnlyDirs: dirList(a.getenv(envReadOnly)),
+		BindRoots:    dirList(a.getenv(envBindRoots)),
 	})
 	if err != nil {
 		closeListener(nestedLn)
@@ -195,9 +197,9 @@ func (a *app) run(outW io.Writer) error {
 	return a.serve(ctx, ln, srv)
 }
 
-// readOnlyDirs parses the colon-separated LOOP_DOCKERPROXY_READONLY_DIRS
-// list, keeping absolute paths only.
-func readOnlyDirs(v string) []string {
+// dirList parses a colon-separated directory list (LOOP_DOCKERPROXY_READONLY_DIRS,
+// LOOP_DOCKERPROXY_BIND_ROOTS), keeping absolute paths only.
+func dirList(v string) []string {
 	var dirs []string
 	for d := range strings.SplitSeq(v, ":") {
 		if strings.HasPrefix(d, "/") {

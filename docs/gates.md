@@ -264,7 +264,7 @@ A JSON body larger than the matching rules' `MaxBodyBytes` (1 MiB default) is re
 
 Body rules are first-match per request, so the allowlist can't be an `allow` rule: an earlier version prepended one for the workspace, and a single workspace bind then skipped every deny for the request's other fields (`--privileged -v $PWD:/w -v /:/host`).
 
-The checks resolve symlinks in the agent's view, which matches the daemon's for same-path mounts. They can't close the race where the agent swaps a checked directory for a symlink between the check and the daemon's mount, and a nested container writing to the workspace isn't subject to the agent's file-op rules.
+The checks resolve symlinks in the agent's view, which matches the daemon's for same-path mounts. A nested container writing to the workspace isn't subject to the agent's file-op rules. The race between this check and the daemon's mount is closed by pinning (below).
 
 Together these body rules are the reason the HTTP layer can afford to default-allow: no amount of `docker run` or `docker create` can produce a privileged container, a host-namespace container, or a host-bind-mounted container.
 
@@ -295,6 +295,27 @@ Loop builds each agent container from the workspace's `.loop/config.json` (mount
 - a read-write bind inside one is made read-only.
 
 The runner creates the directories before the container starts, since only an existing directory can be mounted over.
+
+### Binds are pinned to the agent's mounts
+
+The body rules check a bind's source when the container is created, but the daemon mounts it when the container starts, following any symlink on the way. In between, the agent can swap a checked directory for a symlink — `docker create -v $PWD/src:/app`, then `mv src src.real && ln -s /Users/<you> src`, then `docker start` — and the container gets whatever the link points to. The gap is as long as the agent likes.
+
+So once a `POST /containers/create` is approved, the proxy rewrites its host-path binds (`HostConfig.Binds` and bind-type `HostConfig.Mounts`, including the read-only `.loop` overlays):
+
+- a source that resolves under one of the agent's mounts (the same paths as the bind allowlist, passed in as `LOOP_DOCKERPROXY_BIND_ROOTS`) becomes a mount of a named volume bound to that mount, with the rest of the path as `VolumeOptions.Subpath`. The daemon opens a subpath beneath the volume, one component at a time, when it mounts it, and mounts what it opened: a symlink leading out of the mount fails the start instead. The mounts themselves can't be swapped, since their parents aren't in the agent container; with nested mounts, the outermost one is used for the same reason. `NoCopy` is set, so an empty directory isn't filled with the image's files as a volume would be;
+- any other source was approved as the path it resolved to, and is forwarded as that path.
+
+The volumes are named `loop-bind-<hash of the path>` and labelled `app=loop-bind`. They hold no data — each only points at a host directory — and are reused by every container binding under the same path; the agent can't create volumes with that prefix. Leftovers are harmless, and `docker volume rm $(docker volume ls -q --filter label=app=loop-bind)` removes the ones not in use.
+
+Differences from a plain bind, and rejections (audited with rule id `create-binds`):
+
+| Condition | Response |
+|---|---|
+| Source doesn't exist (a plain `-v` would create it) or can't be resolved | `400` |
+| Client pins Docker API < 1.45 and a bind is below a mount's top | `400` |
+| Daemon older than API 1.45, or a `loop-bind-*` volume bound elsewhere | `502` |
+
+Bind options other than read-only (propagation, SELinux labels) are dropped.
 
 The nested socket lives as long as the agent container: a nested container that outlives it loses Docker access. `Subpath` pins the socket file, so a proxy restart inside the agent container also breaks sockets already mounted into running nested containers.
 
@@ -363,7 +384,7 @@ Set when `cfg.Gates.Agentgate.Enabled` is true (`cmd/loop/serve.go`):
 Per container (`internal/container/runner.go#createAndStartContainer`):
 
 1. Generate a 32-byte `crypto/rand` bearer token (`newGateToken`) — shared by the proxy and gate layers.
-2. `writeProxyPolicyFile` marshals `cfg.Gates.DockerProxy`, with the bind allowlist (see Docker body rules) injected, to `{policyDir}/<channel>/proxy-policy.json` (0640). Bind-mount `hostSock:/var/run/docker.sock.host:ro` + `.../proxy-policy.json:/etc/loop/proxy-policy.json:ro`. Env: `LOOP_DOCKERPROXY_ENABLED=1`, `LOOP_DOCKERPROXY_POLICY_FILE=/etc/loop/proxy-policy.json`, `LOOP_DOCKERPROXY_UPSTREAM=/var/run/docker.sock.host`, `LOOP_DOCKERPROXY_NESTED_DIR=/run/loop-dproxy`, `LOOP_DOCKERPROXY_READONLY_DIRS` (the workspace's `.loop` dirs, colon-separated), plus an anonymous volume at `/run/loop-dproxy`.
+2. `writeProxyPolicyFile` marshals `cfg.Gates.DockerProxy`, with the bind allowlist (see Docker body rules) injected, to `{policyDir}/<channel>/proxy-policy.json` (0640). Bind-mount `hostSock:/var/run/docker.sock.host:ro` + `.../proxy-policy.json:/etc/loop/proxy-policy.json:ro`. Env: `LOOP_DOCKERPROXY_ENABLED=1`, `LOOP_DOCKERPROXY_POLICY_FILE=/etc/loop/proxy-policy.json`, `LOOP_DOCKERPROXY_UPSTREAM=/var/run/docker.sock.host`, `LOOP_DOCKERPROXY_NESTED_DIR=/run/loop-dproxy`, `LOOP_DOCKERPROXY_READONLY_DIRS` (the workspace's `.loop` dirs, colon-separated), `LOOP_DOCKERPROXY_BIND_ROOTS` (the agent's read-write same-path mounts), plus an anonymous volume at `/run/loop-dproxy`.
 3. `writeGatePolicyFile` marshals the gate rule subset (`DefaultDecision`, `PathRules`, `CommandRules`, `FileRules`) to `{policyDir}/<channel>/gate-policy.json` (0640). `FileRules` is the merged config list wrapped by `injectWorkspaceRule` (workspace allow, before the first Allow) and then `injectPolicySelfDenyRule` (`/etc/loop/**` deny, at the head — see [file-op rule 1](#file-ops-filerule-9-static-rules-first-match-wins-plus-three-injected-rules)). Bind-mount `.../gate-policy.json:/etc/loop/gate-policy.json:ro`. Env: `LOOP_GATE_ENABLED=1`, `LOOP_GATE_POLICY_FILE=/etc/loop/gate-policy.json`.
 4. Shared env on both layers: `LOOP_CHANNEL_ID=<channelID>`, `LOOP_GATE_TOKEN=<32-hex>`.
 5. After `ContainerCreate` returns a `containerID`, call `gateResolver.AddWithToken(containerID, token, mgr, channelID)` — the token starts authenticating HTTP calls as soon as the container is up.

@@ -673,6 +673,12 @@ func (r *DockerRunner) createAndStartContainer(
 		if len(readOnly) > 0 {
 			env = append(env, "LOOP_DOCKERPROXY_READONLY_DIRS="+strings.Join(readOnly, ":"))
 		}
+		// Binds under the agent's own mounts are pinned to volumes bound to
+		// them, so a symlink swapped in after the policy check can't
+		// redirect a nested container's mount.
+		if roots := agentMountDirs(binds); len(roots) > 0 {
+			env = append(env, "LOOP_DOCKERPROXY_BIND_ROOTS="+strings.Join(roots, ":"))
+		}
 		// The proxy also listens inside this anonymous volume so containers
 		// the agent starts with the docker socket mounted get the proxy, not
 		// the raw daemon: the daemon resolves bind sources on its own
