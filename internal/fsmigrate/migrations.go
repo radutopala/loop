@@ -201,6 +201,14 @@ var migrations = []Migration{
 		Description: "refresh container/ files: Chrome sidecar graphics and D-Bus",
 		Apply:       refreshContainerFiles,
 	},
+	{
+		// With the docker proxy on, the agent entrypoint no longer adds the
+		// agent to the group owning /var/run/docker.sock. That socket is the
+		// proxy's, created by root, so the old entrypoint put the agent in
+		// the root group. Until this refresh lands an install keeps doing so.
+		Description: "refresh container/ files: agent stays out of the root group under the docker proxy",
+		Apply:       refreshContainerFiles,
+	},
 }
 
 // versionedContainerFiles are tracked by the daemon: each release ships a
