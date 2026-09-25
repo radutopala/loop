@@ -108,9 +108,11 @@ Both layers feed into the same `agentgate.Manager` for `approve` decisions, so a
 | `internal/dockerproxy/app.go` | In-container docker-proxy binary — the body of the `loop dockerproxy` subcommand. Loads the policy JSON, builds an `httpapprover.Approver`, listens on `/var/run/docker.sock` (tmpfs), runs `dockerproxy.Server` until SIGTERM |
 | `internal/httpapprover/approver.go` | Shared HTTP-backed `Approver` used by both the in-container docker proxy and the seccomp-gate parent. POSTs `{kind, target, message, cache_key}` to `{API_URL}/api/gate/container-approval` with `Authorization: Bearer <LOOP_GATE_TOKEN>`; fail-closed on any transport or non-200 error |
 | `internal/container/image/entrypoint.sh` | Branches on `$LOOP_DOCKERPROXY_ENABLED=1` (starts `loop dockerproxy` as root before dropping privileges) and `$LOOP_GATE_ENABLED=1` (execs `loop syscallwrap -- "$@"` as root, which drops its child to `$AGENT_USER`). When neither is set, falls back to plain `gosu "$AGENT_USER" "$@"` |
+| `internal/dockerproxy/fold.go` | Case-insensitive key lookup and the ambiguous-key check shared by body rules, approval details and the socket rewrite |
+| `internal/dockerproxy/nested.go` | Rewrites docker socket mounts in container creates to the nested proxy socket; looks up the nested volume's name |
 | `internal/dockerproxy/server.go` | HTTP handler + reverse proxy to the upstream socket (`/var/run/docker.sock.host` in production); hijack on `POST /containers/*/attach` and `POST /exec/*/start`; `FlushInterval: 100ms` for streaming; strips API version prefix before rule match |
 | `internal/dockerproxy/policy.go` | `HTTPServiceRule` compile + `MatchHTTP` (first-match + default); `CheckBody` |
-| `internal/dockerproxy/bodyrule.go` | JSONPath-lite evaluator: `present`, `empty_array`, `equals`, `contains_any`, `starts_with_any`, `source_path_in` |
+| `internal/dockerproxy/bodyrule.go` | JSONPath-lite evaluator: `present`, `empty_array`, `equals`, `contains_any`, `starts_with_any`, `not_in`, `capability_not_in` (normalises names as the daemon does), `source_path_in` (with an optional `except` list), `source_path_not_in` (with an optional `read_only_values` list, which counts as inside only for read-only binds; on a whole mount object it reads `Source` and `ReadOnly`). Both source ops resolve symlinks and clean `..` first. Keys match case-insensitively |
 | `internal/orchestrator/gate_adapter.go` | Maps `agentgate.ApprovalRequest` to `bot.ApprovalPrompt`; same adapter for all three platforms |
 | `internal/api/gate_handler.go` | Three handlers: `GET /api/gate/approvals` (snapshot of every Manager's pending requests — used by the renderer on WS reconnect to reconcile its local map and the electron dock-bouncer), `POST /api/gate/approvals/{id}` (bot-click resolve — 204 / 400 / 404), and `POST /api/gate/container-approval` (in-container call-in — bearer-token auth → `ByToken` → `mgr.Request` → `{decision, actor, reason}`, 200 / 401 / 503) |
 | `internal/types/gate.go` | Shared rule types (`Decision`, `PathRule`, `CommandRule`, `FileRule`, `HTTPServiceRule`, `BodyRule`, `JSONCheck`, `RateLimits`, `AuditConfig`) — leaf package to avoid config↔agentgate cycles |
@@ -171,13 +173,14 @@ Git write-side operations (`push`, `commit`, `reset --hard`, …) are intentiona
 
 The args regex runs against `strings.Join(argv[1:], " ")`, so `\s` covers the space before the next arg *and* embedded newlines in multi-line commit messages; the `$` alternation handles bare `git push` with no trailing args.
 
-### File ops (`FileRule`, 9 static rules, first-match-wins, plus two injected rules)
+### File ops (`FileRule`, 9 static rules, first-match-wins, plus three injected rules)
 
-Order matters: the pinned policy self-deny, then the static denies, then the injected workspace rule, then the tmp / system-read fast-paths.
+Order matters: the pinned policy self-deny, then the pinned project-config approve, then the static denies, then the injected workspace rule, then the tmp / system-read fast-paths.
 
 | # | Paths | Operations | Decision | Why |
 |---|---|---|---|---|
 | 1 | *(injected)* `/etc/loop/**` | write, create, delete, chmod, chown, link | `deny` | The gate's own policy file, pinned ahead of everything else by `injectPolicySelfDenyRule`. Rule 8 already covers `/etc/**`, but rules that arrive through config can be shadowed: both config layers *prepend* their rules, and the project layer is `{workDir}/.loop/config.json` — inside the workspace the agent may write. Injecting after the merge is the one position no config can precede. `link` is in the op list (unlike rule 8) because `linkat`/`symlinkat` match on the *new* path only: without it the agent could hardlink the policy into the blanket-allowed workspace and write through the second name. Reads stay allowed — seeing the active policy helps debug a denial |
+| 1a | *(injected)* `{workDir}/.loop`, `.loop/config.json`, `.loop/container`, `.loop/container/**`; same under `{parentDirPath}` | write, create, delete, chmod, chown, link | `approve` | Project config. Loop builds the next container from these (mounts, `copy_files`, gates, image), so an unreviewed write would outlast the session. Pinned after the merge by `injectProjectConfigRule`, like rule 1. The `.loop` directory itself is listed so it can't be swapped by rename; the cost is that GNU `mkdir -p .loop/<sub>` asks too, since `mkdirat` is checked before the kernel returns `EEXIST`. Containers the agent starts get the directories read-only (see [Project config stays read-only to nested containers](#project-config-stays-read-only-to-nested-containers)) |
 | 2 | `/proc/*/mem`, `/proc/kcore` | read | `deny` | Kernel / process-memory exfiltration. `/proc/*/environ` is intentionally NOT denied — Go test binaries, runtime probes, and tooling open it routinely (chronic noise) and the gate parent's env carries no exploitable secret (the notify fd is passed via SCM_RIGHTS, not authenticated by an env-readable token) |
 | 3 | `/etc/shadow`, `/etc/gshadow`, `/etc/sudoers`, `/etc/sudoers.d/**`, `/etc/ssh/ssh_host_*_key`, `.pub` variants | all ops | `deny` | Root credential files |
 | 4 | `**/.ssh/**`, `**/.aws/**`, `**/.gcp/**`, `**/.config/gcloud/**`, `**/.kube/**`, `**/.netrc`, `**/.pgpass` | read, write, create, delete, chmod | `deny` | User credential directories — apply to any path, including inside the workspace |
@@ -203,7 +206,7 @@ The default posture is `allow`. The body rules below are the real container-esca
 
 All other Docker API calls fall through to `allow`: `_ping`, `version`, `info`, container create / start / stop / kill / restart / pause / wait / attach, image create / build / push / pull / rm, volume / network CRUD, events, logs, inspect, stats, top, and so on.
 
-### Docker body (`BodyRule`, 2 rules — the container-escape guardrails)
+### Docker body (`BodyRule`, 5 static rules + 1 injected — the container-escape guardrails)
 
 Body rules are evaluated independently of the HTTP rule match and support all three decisions:
 
@@ -211,20 +214,26 @@ Body rules are evaluated independently of the HTTP rule match and support all th
 - `approve` — blocks the request and prompts the operator (same approval flow as an HTTP-rule approve), keyed on `docker:<METHOD>:body:<rule_id>` so "Allow for session" caches per body rule rather than per request path.
 - `allow` — passes through silently to the upstream daemon (still subject to the `HTTPServiceRule` decision falling through normally).
 
-Bodies larger than `MaxBodyBytes` (1 MiB default) skip body inspection and fall through to the `HTTPServiceRule` decision.
+JSON paths match keys case-insensitively, as the daemon's decoder does: it creates a privileged container from `{"hostconfig":{"privileged":true}}`, so an exact-case match would let that through. A body holding two keys that differ only in case — where a rule path, the approval summary or the socket rewrite reads that key — is rejected with `400`, since the daemon keeps one of them depending on key order. Free-form maps such as `Labels` may still hold `foo` and `FOO`.
+
+A JSON body larger than the matching rules' `MaxBodyBytes` (1 MiB default) is rejected with `413`: the rules can't inspect it, and padding (a big label) would otherwise carry any field past them. Other content types (build contexts) and endpoints without body rules are forwarded whole.
 
 **`POST /containers/create`** — denies any of:
 
 | JSON path | Op | Values | What it blocks |
 |---|---|---|---|
-| `HostConfig.Binds[*]` | `source_path_in` | `^/$`, `^/etc(/\|$)`, `^/root`, `^/home`, `^/boot`, `^/usr`, `^/lib(64)?`, `^/proc`, `^/sys`, `^/dev`, `^/var/run/docker\.sock$`, `^/run/loop/` | Host bind-mount of sensitive paths (escape via file write) |
+| `HostConfig.Binds[*]` | `source_path_in` | `^/$`, `^/etc(/\|$)`, `^/root`, `^/home`, `^/boot`, `^/usr`, `^/lib(64)?`, `^/proc`, `^/sys`, `^/dev`, `^(/var)?/run/docker\.sock$`, `^/run/loop/`, `^/host_mnt`, `^(/var)?/run/host-services` | Host bind-mount of sensitive paths (escape via file write). The last two are Docker Desktop VM paths: every shared host folder, and the VM's host-service sockets (the daemon's among them) |
 | `HostConfig.Mounts[*].Source` | `source_path_in` | same set as above | Same, via the newer long-form `Mounts` API used by docker-compose v2 and `docker run --mount` |
 | `HostConfig.Privileged` | `equals` | `true` | Privileged container |
 | `HostConfig.PidMode` | `equals` | `host` | Host PID namespace (visibility into host processes) |
 | `HostConfig.NetworkMode` | `equals` | `host` | Host network namespace |
 | `HostConfig.IpcMode` | `equals` | `host` | Host IPC namespace |
 | `HostConfig.UsernsMode` | `equals` | `host` | Disable user-namespace remapping |
-| `HostConfig.CapAdd[*]` | `contains_any` | `SYS_ADMIN`, `SYS_PTRACE`, `SYS_MODULE`, `DAC_READ_SEARCH`, `DAC_OVERRIDE`, `SYS_RAWIO`, `SYS_BOOT`, `NET_ADMIN` | Capability escalation — each is an independent escape path |
+| `HostConfig.CgroupnsMode` | `equals` | `host` | Host cgroup namespace |
+| `HostConfig.UTSMode` | `equals` | `host` | Host UTS namespace |
+| `HostConfig.CgroupParent` | `present` | — | Placing the container in an arbitrary cgroup |
+| `HostConfig.Runtime` | `not_in` | `""`, `runc`, `io.containerd.runc.v2` | Picking another runtime the daemon offers, which may isolate less |
+| `HostConfig.CapAdd[*]` | `capability_not_in` | Docker's default caps plus `SYS_NICE`, `IPC_LOCK` | Capability escalation. Names are normalised as the daemon does (`cap_sys_admin`, `Sys_Admin` → `SYS_ADMIN`), and `ALL` is outside the list |
 | `HostConfig.SecurityOpt[*]` | `contains_any` | `apparmor=unconfined`, `seccomp=unconfined`, `:unconfined` variants, `systempaths=unconfined` | Dropping the container sandbox |
 | `HostConfig.Devices[*]` | `present` | — | Device passthrough |
 | `HostConfig.DeviceCgroupRules[*]` | `present` | — | Cgroup device allowlist bypass |
@@ -232,14 +241,84 @@ Bodies larger than `MaxBodyBytes` (1 MiB default) skip body inspection and fall 
 | `HostConfig.MaskedPaths` | `empty_array` | — | Explicit `[]` un-masks kernel files (`/proc/kcore` etc.) |
 | `HostConfig.ReadonlyPaths` | `empty_array` | — | Explicit `[]` makes kernel paths writable |
 
+**`POST /containers/create`** — asks for approval when the container joins another container's PID or IPC namespace (`HostConfig.PidMode` / `HostConfig.IpcMode` starting with `container:`). Like `exec`, that reaches into the other container: as root with the same caps, the new container can read `/proc/<pid>/root` of the target's processes, and the proxy can't tell the agent's own containers from others. Sharing a network namespace (`NetworkMode: container:…`, compose `network_mode: service:…`) stays allowed.
+
+**Device-backed volumes** — ask for approval. A `local` volume with a `device` option mounts that path or disk from the daemon's side (`docker volume create --opt type=none --opt o=bind --opt device=/etc`), which the bind-source deny list never sees since named-volume sources aren't host paths. tmpfs and NFS volumes use the option too, so it's an approval rather than a deny; the prompt shows the options.
+
+| Endpoint | JSON path | Op |
+|---|---|---|
+| `POST /volumes/create` | `DriverOpts.device` | `present` |
+| `POST /containers/create` | `HostConfig.Mounts[*].VolumeOptions.DriverConfig.Options.device` | `present` |
+
 **`POST /containers/{id}/update`** — denies:
 
 | JSON path | Op | Values |
 |---|---|---|
 | `Privileged` | `equals` | `true` |
-| `CapAdd[*]` | `contains_any` | `SYS_ADMIN`, `SYS_PTRACE`, `SYS_MODULE` |
+| `CapAdd[*]` | `capability_not_in` | same list as create |
+
+**Bind allowlist (injected per container)** — `writeProxyPolicyFile` confines the binds of containers the agent creates to the agent's own mounts: the host paths it already has at the same path, read-write (workspace, worktree parent, `extra_dirs`, the playground, same-path `mounts`) or read-only (same-path `:ro` mounts such as `~/.gitconfig` or `~/.ssh`). Named volumes and the docker socket are left out. Two edits, both by `injectBindAllowlist`:
+
+- An approve rule is appended last: a host-path source in `HostConfig.Binds[*]` or `HostConfig.Mounts[*]` that resolves outside the read-write paths (`source_path_not_in`) asks first — `/tmp`, a sibling project, your home folder — unless the bind is read-only and inside a read-only path (`read_only_values`). So a dev container that mounts `~/.gitconfig:ro` doesn't ask, while a read-write bind of it does. The deny list alone can't cover this on Docker Desktop, where the daemon resolves binds on the host's shared folders (`/Users`, `/Volumes`, `/private`, `/tmp`): `-v /Users/<you>:/h` hands the container your whole home directory.
+- In deny rules, a `source_path_in` value that would block one of those paths outright (`^/home(/|$)` for a workspace under `/home` on Linux) is split into its own check with the paths (read-write and read-only) as `except`, so it stops firing for sources that resolve inside them. Narrower values — say a rule of yours for `^<workspace>/secrets` — keep firing.
+
+Body rules are first-match per request, so the allowlist can't be an `allow` rule: an earlier version prepended one for the workspace, and a single workspace bind then skipped every deny for the request's other fields (`--privileged -v $PWD:/w -v /:/host`).
+
+The checks resolve symlinks in the agent's view, which matches the daemon's for same-path mounts. A nested container writing to the workspace isn't subject to the agent's file-op rules. The race between this check and the daemon's mount is closed by pinning (below).
 
 Together these body rules are the reason the HTTP layer can afford to default-allow: no amount of `docker run` or `docker create` can produce a privileged container, a host-namespace container, or a host-bind-mounted container.
+
+### Nested docker socket
+
+Containers the agent starts can have the docker socket mounted (`docker run -v /var/run/docker.sock:/var/run/docker.sock`, testcontainers, CI-style coverage runners). They get the proxy, not the daemon: the daemon resolves bind sources on its own filesystem, where `/var/run/docker.sock` is the real engine socket, so such a bind would hand the nested container unfiltered daemon access. Instead:
+
+1. The runner gives the agent container an anonymous volume at `/run/loop-dproxy` (`LOOP_DOCKERPROXY_NESTED_DIR`). The volume is removed with the container.
+2. At startup, `loop dockerproxy` inspects its own container over the upstream socket to learn the volume's name, and listens on a second socket, `/run/loop-dproxy/docker.sock`, served by the same policy and approver.
+3. Before the body rules run, `POST /containers/create` bodies are rewritten: every `HostConfig.Binds` entry and bind-type `HostConfig.Mounts` entry whose source is `/var/run/docker.sock` or `/run/docker.sock` (literally or through a symlink) becomes a volume mount of that volume with `VolumeOptions.Subpath: docker.sock`, keeping the target and read-only flag. Keys match case-insensitively, like the body rules.
+
+The rewrite fails closed:
+
+| Condition | Response |
+|---|---|
+| Nested socket unavailable (volume lookup or listen failed at startup) | `403`; plain container creates are unaffected |
+| Client pins Docker API < 1.45 (`Subpath` needs 1.45+) | `400` |
+| Keys that differ only in case (`HostConfig` and `hostconfig`) — the daemon keeps one depending on key order | `400` |
+| Body over 1 MiB | `413` |
+
+Every rejection is audited with rule id `create-body`.
+
+### Project config stays read-only to nested containers
+
+Loop builds each agent container from the workspace's `.loop/config.json` (mounts, `copy_files`, `extra_dirs`, gates, `container_image`) and `.loop/container/Dockerfile`, and both sit in the workspace the agent can write. The agent itself needs an approval to change them ([file-op rule 1a](#file-ops-filerule-9-static-rules-first-match-wins-plus-three-injected-rules)), but the seccomp gate doesn't see into containers it starts, and the bind allowlist lets those bind the workspace read-write. So the same `POST /containers/create` rewrite keeps the `.loop` directories (the workspace's, and the worktree parent's) read-only there, passed in as `LOOP_DOCKERPROXY_READONLY_DIRS`:
+
+- a read-write bind that contains one gets a read-only bind of it on top — `-v $PWD:/app` also mounts `$PWD/.loop` at `/app/.loop` read-only, and being a mountpoint it can't be renamed away either;
+- a read-write bind inside one is made read-only.
+
+The runner creates the directories before the container starts, since only an existing directory can be mounted over.
+
+### Binds are pinned to the agent's mounts
+
+The body rules check a bind's source when the container is created, but the daemon mounts it when the container starts, following any symlink on the way. In between, the agent can swap a checked directory for a symlink — `docker create -v $PWD/src:/app`, then `mv src src.real && ln -s /Users/<you> src`, then `docker start` — and the container gets whatever the link points to. The gap is as long as the agent likes.
+
+So once a `POST /containers/create` is approved, the proxy rewrites its host-path binds (`HostConfig.Binds` and bind-type `HostConfig.Mounts`, including the read-only `.loop` overlays):
+
+- a source that resolves under one of the agent's read-write directory mounts (the read-write paths of the bind allowlist that are directories, passed in as `LOOP_DOCKERPROXY_BIND_ROOTS`) becomes a mount of a named volume bound to that mount, with the rest of the path as `VolumeOptions.Subpath`. The daemon opens a subpath beneath the volume, one component at a time, when it mounts it, and mounts what it opened: a symlink leading out of the mount fails the start instead. The mounts themselves can't be swapped, since their parents aren't in the agent container; with nested mounts, the outermost one is used for the same reason. `NoCopy` is set, so an empty directory isn't filled with the image's files as a volume would be;
+- any other source was approved as the path it resolved to, and is forwarded as that path. That includes the agent's read-only mounts, where the agent can't create a symlink, and its single-file mounts, which a volume can't be bound to (the start fails with "not a directory") and which, being mount points in the agent container, can't be replaced with a symlink (`EBUSY`).
+
+The volumes are named `loop-bind-<hash of the path>` and labelled `app=loop-bind`. They hold no data — each only points at a host directory — and are reused by every container binding under the same path; the agent can't create or mount volumes with that prefix. Each rewritten mount carries the volume's driver options and label, so a volume removed between the proxy creating it and the container being created is recreated as it was. Whenever loop removes a container it also removes the `loop-bind` volumes no container uses; the proxy recreates them on next use.
+
+Differences from a plain bind, and rejections (audited with rule id `create-binds`):
+
+| Condition | Response |
+|---|---|
+| Source doesn't exist (a plain `-v` would create it) or can't be resolved | `400` |
+| Client pins Docker API < 1.45 and a bind is below a mount's top | `400` |
+| Daemon older than API 1.45, or a `loop-bind-*` volume bound elsewhere | `502` |
+| A mount or bind of a `loop-bind-*` volume by name | `403` |
+
+Bind options other than read-only (propagation, SELinux labels) are dropped.
+
+The nested socket lives as long as the agent container: a nested container that outlives it loses Docker access. `Subpath` pins the socket file, so a proxy restart inside the agent container also breaks sockets already mounted into running nested containers.
 
 ---
 
@@ -306,8 +385,8 @@ Set when `cfg.Gates.Agentgate.Enabled` is true (`cmd/loop/serve.go`):
 Per container (`internal/container/runner.go#createAndStartContainer`):
 
 1. Generate a 32-byte `crypto/rand` bearer token (`newGateToken`) — shared by the proxy and gate layers.
-2. `writeProxyPolicyFile` marshals `cfg.Gates.DockerProxy` to `{policyDir}/<channel>/proxy-policy.json` (0640). Bind-mount `hostSock:/var/run/docker.sock.host:ro` + `.../proxy-policy.json:/etc/loop/proxy-policy.json:ro`. Env: `LOOP_DOCKERPROXY_ENABLED=1`, `LOOP_DOCKERPROXY_POLICY_FILE=/etc/loop/proxy-policy.json`, `LOOP_DOCKERPROXY_UPSTREAM=/var/run/docker.sock.host`.
-3. `writeGatePolicyFile` marshals the gate rule subset (`DefaultDecision`, `PathRules`, `CommandRules`, `FileRules`) to `{policyDir}/<channel>/gate-policy.json` (0640). `FileRules` is the merged config list wrapped by `injectWorkspaceRule` (workspace allow, before the first Allow) and then `injectPolicySelfDenyRule` (`/etc/loop/**` deny, at the head — see [file-op rule 1](#file-ops-filerule-9-static-rules-first-match-wins-plus-two-injected-rules)). Bind-mount `.../gate-policy.json:/etc/loop/gate-policy.json:ro`. Env: `LOOP_GATE_ENABLED=1`, `LOOP_GATE_POLICY_FILE=/etc/loop/gate-policy.json`.
+2. `writeProxyPolicyFile` marshals `cfg.Gates.DockerProxy`, with the bind allowlist (see Docker body rules) injected, to `{policyDir}/<channel>/proxy-policy.json` (0640). Bind-mount `hostSock:/var/run/docker.sock.host:ro` + `.../proxy-policy.json:/etc/loop/proxy-policy.json:ro`. Env: `LOOP_DOCKERPROXY_ENABLED=1`, `LOOP_DOCKERPROXY_POLICY_FILE=/etc/loop/proxy-policy.json`, `LOOP_DOCKERPROXY_UPSTREAM=/var/run/docker.sock.host`, `LOOP_DOCKERPROXY_NESTED_DIR=/run/loop-dproxy`, `LOOP_DOCKERPROXY_READONLY_DIRS` (the workspace's `.loop` dirs, colon-separated), `LOOP_DOCKERPROXY_BIND_ROOTS` (the agent's read-write same-path directory mounts), plus an anonymous volume at `/run/loop-dproxy`.
+3. `writeGatePolicyFile` marshals the gate rule subset (`DefaultDecision`, `PathRules`, `CommandRules`, `FileRules`) to `{policyDir}/<channel>/gate-policy.json` (0640). `FileRules` is the merged config list wrapped by `injectWorkspaceRule` (workspace allow, before the first Allow) and then `injectPolicySelfDenyRule` (`/etc/loop/**` deny, at the head — see [file-op rule 1](#file-ops-filerule-9-static-rules-first-match-wins-plus-three-injected-rules)). Bind-mount `.../gate-policy.json:/etc/loop/gate-policy.json:ro`. Env: `LOOP_GATE_ENABLED=1`, `LOOP_GATE_POLICY_FILE=/etc/loop/gate-policy.json`.
 4. Shared env on both layers: `LOOP_CHANNEL_ID=<channelID>`, `LOOP_GATE_TOKEN=<32-hex>`.
 5. After `ContainerCreate` returns a `containerID`, call `gateResolver.AddWithToken(containerID, token, mgr, channelID)` — the token starts authenticating HTTP calls as soon as the container is up.
 6. On container remove: `gateResolver.Remove(containerID)` — frees the token and Manager. Policy files under `{policyDir}/<channel>/` are left on disk (overwritten next spawn for the same channel — the payload is derived from global config + the channel's stable workDir, so overwrites are idempotent).
@@ -315,7 +394,7 @@ Per container (`internal/container/runner.go#createAndStartContainer`):
 The in-container side (see `internal/container/image/entrypoint.sh`):
 
 1. When `LOOP_DOCKERPROXY_ENABLED=1` and `/usr/local/bin/loop` is executable, entrypoint forks `loop dockerproxy &` as root, then waits up to 2s for `/var/run/docker.sock` to appear. The proxy stamps `filepath.EvalSymlinks` onto every `source_path_in` body-rule check via `Policy.SetSymlinkResolver`, so an agent that creates `/workdir/link → /` then submits `docker run -v /workdir/link:/host` is matched against the resolved `/` rather than the literal source. Resolve failures fire deny rules (suspect path → block); allow/approve rules with `source_path_in` are not auto-fired on failure. Named-volume sources (the `<name>:<target>` short syntax in `HostConfig.Binds[*]`, where the source has no leading `/`) are not host paths, so the resolver is skipped and the deny does not fire — `docker run -v loop-cache:/cache` and compose v2 named volumes pass through cleanly.
-2. The existing docker-sock group logic adds `$AGENT_USER` to the GID that owns `/var/run/docker.sock` — whether that's the real host socket (legacy direct-mount) or the in-container proxy socket.
+2. The proxy socket is `0666`, so the agent needs no group membership; the docker-sock group logic (adding `$AGENT_USER` to the GID that owns `/var/run/docker.sock`) runs only for a directly mounted socket when the proxy is off — the proxy's socket is root-owned, and joining its GID would put the agent in the root group. With `LOOP_DOCKERPROXY_NESTED_DIR` set, the proxy also listens on `<dir>/docker.sock` for containers the agent starts (see [Nested docker socket](#nested-docker-socket)).
 3. When `LOOP_GATE_ENABLED=1`, entrypoint `exec`s `/usr/local/bin/loop syscallwrap -- "$@"` **as root** (no `gosu` wrapper). Otherwise it falls back to `exec gosu "$AGENT_USER" "$@"`.
 4. `loop syscallwrap` parent (root): loads the gate policy from `LOOP_GATE_POLICY_FILE`, builds an `httpapprover.Approver` against `$API_URL` + `$LOOP_GATE_TOKEN`, creates a `socketpair(AF_UNIX, SOCK_STREAM, 0)`, re-execs `/proc/self/exe` with `LOOP_SYSCALLWRAP_MODE=child`, `ExtraFiles=[child-end]`, `SysProcAttr.Credential={uid, gid}` (looked up from `$HOST_USER`), and `SysProcAttr.Pdeathsig=SIGKILL`. Receives the SCM_RIGHTS handshake on the parent-end, acks, and runs `agentgate.Server` on the notify fd.
 5. `loop syscallwrap` child (agent user): `runtime.LockOSThread` → `prctl(PR_SET_PDEATHSIG, SIGKILL)` (belt-and-braces on top of the parent-set value) → install the seccomp filter with `SECCOMP_SET_MODE_FILTER | NEW_LISTENER | TSYNC` → send the notify fd + `$LOOP_CHANNEL_ID` over fd 3 via SCM_RIGHTS → read the 1-byte ack → `syscall.Exec` the target command (claude). The filter carries into claude and every descendant by kernel inheritance.
@@ -334,7 +413,7 @@ One twist: the exec'd shell is already running as the agent uid, not root. The p
 
 ## Project config merge — full rule-authoring surface
 
-Project `.loop/config.json` has the same rule-authoring capability as global — it can prepend rules with any decision (`allow` / `deny` / `approve`) so a project can punch a surgical hole in a baseline deny (e.g. allow `/var/run/docker.sock` as a bind source) without turning a whole layer off. Enabled flag and default decision stay narrow to preserve the global kill-switch:
+Project `.loop/config.json` has the same rule-authoring capability as global — it can prepend rules with any decision (`allow` / `deny` / `approve`) so a project can punch a surgical hole in a baseline deny (e.g. allow `/etc/ssl/certs` as a bind source) without turning a whole layer off. Enabled flag and default decision stay narrow to preserve the global kill-switch:
 
 | Field | Merge rule |
 |---|---|
@@ -349,6 +428,15 @@ Project `.loop/config.json` has the same rule-authoring capability as global —
 Trust model: project config lives in the same repo as the agent workspace and is authored by the same operator who authored global config — there is no anonymous-contributor surface to defend against at this layer. See [Configuration: Project Config](configuration.md#project-config) for the full merge table.
 
 ---
+
+## Docker Desktop host settings
+
+The proxy decides what the agent may *ask* the daemon for; Docker Desktop decides what the daemon can *reach*. Two settings narrow the latter, so a request that slips past a rule (or is approved by mistake) has less to hit:
+
+- **File sharing** (Settings → Resources → File sharing). The daemon resolves bind sources on its own side, and on macOS the default shares — `/Users`, `/Volumes`, `/private`, `/tmp`, `/var/folders` — make most of the host bindable. Trimming the list to the directories loop actually mounts (your project roots, `~/.loop`, and the host paths in `mounts`) turns a stray `-v /Users/<you>:/h` into a daemon error instead of a home-directory mount. Anything left out fails to mount for every container, not just agents, so keep whatever other tools need.
+- **Enhanced Container Isolation** (Docker Business; enforced through `admin-settings.json`). Containers run in a Linux user namespace, so root in a container — including one started with `--privileged` — is not root in the Docker Desktop VM, and ECI adds its own checks on sensitive mounts. It also blocks bind-mounting the Docker socket by default, which is how the agent container reaches the daemon through the proxy (`hostSock:/var/run/docker.sock.host`). The exception list is `enhancedContainerIsolation.dockerSocketMount.imageList` (with `allowDerivedImages` for images built on top of a listed one), but Docker Desktop validates entries against image digests it downloads from a registry. `loop-agent` is built locally and exists in no registry, so to use ECI with Docker access enabled, push the agent image (or a base it derives from) to a registry you control, reference it in `container_image`, and list that reference. See Docker's [ECI configuration](https://docs.docker.com/enterprise/security/hardened-desktop/enhanced-container-isolation/config/) for the exact matching rules.
+
+  Containers the agent starts get the proxy's nested socket, not the daemon's, so they need no entry. Loop's own test suite doesn't run under ECI; if the gate or proxy misbehaves there, turn ECI off to confirm it's the cause and open an issue.
 
 ## Known gaps
 

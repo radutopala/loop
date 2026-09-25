@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -17,6 +18,7 @@ import (
 	"github.com/radutopala/loop/internal/agent"
 	"github.com/radutopala/loop/internal/agentgate"
 	"github.com/radutopala/loop/internal/config"
+	"github.com/radutopala/loop/internal/dockerproxy"
 	"github.com/radutopala/loop/internal/testutil"
 	"github.com/radutopala/loop/internal/types"
 )
@@ -77,7 +79,7 @@ func (s *ProxySuite) TestPolicyDirReturnsStoredValue() {
 
 func (s *ProxySuite) TestWriteProxyPolicyFileDisabledReturnsEmpty() {
 	cfg := &config.Config{}
-	path, err := s.runner.writeProxyPolicyFile(cfg, "ch-1", "", "")
+	path, err := s.runner.writeProxyPolicyFile(cfg, "ch-1", nil)
 	require.NoError(s.T(), err)
 	require.Empty(s.T(), path)
 }
@@ -86,7 +88,7 @@ func (s *ProxySuite) TestWriteProxyPolicyFileNoPolicyDirReturnsEmpty() {
 	// Enabled but policyDir unset — tests exercising other code paths can
 	// skip the filesystem setup entirely.
 	cfg := &config.Config{Gates: config.GatesConfig{DockerProxy: config.DockerProxyConfig{Enabled: true}}}
-	path, err := s.runner.writeProxyPolicyFile(cfg, "ch-1", "", "")
+	path, err := s.runner.writeProxyPolicyFile(cfg, "ch-1", nil)
 	require.NoError(s.T(), err)
 	require.Empty(s.T(), path)
 }
@@ -100,7 +102,7 @@ func (s *ProxySuite) TestWriteProxyPolicyFileMkdirError() {
 	s.runner.policyDir = "/run/loop"
 	cfg := &config.Config{Gates: config.GatesConfig{DockerProxy: config.DockerProxyConfig{Enabled: true}}}
 
-	_, err := s.runner.writeProxyPolicyFile(cfg, "ch-1", "", "")
+	_, err := s.runner.writeProxyPolicyFile(cfg, "ch-1", nil)
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "creating policy dir")
 }
@@ -115,7 +117,7 @@ func (s *ProxySuite) TestWriteProxyPolicyFileWriteError() {
 	s.runner.policyDir = "/run/loop"
 	cfg := &config.Config{Gates: config.GatesConfig{DockerProxy: config.DockerProxyConfig{Enabled: true}}}
 
-	_, err := s.runner.writeProxyPolicyFile(cfg, "ch-1", "", "")
+	_, err := s.runner.writeProxyPolicyFile(cfg, "ch-1", nil)
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "writing proxy policy")
 }
@@ -151,7 +153,7 @@ func (s *ProxySuite) TestWriteProxyPolicyFileSerialisesConfig() {
 		},
 	}
 
-	path, err := s.runner.writeProxyPolicyFile(cfg, "ch-1", "", "")
+	path, err := s.runner.writeProxyPolicyFile(cfg, "ch-1", nil)
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), "/run/loop/ch-1/proxy-policy.json", path)
 
@@ -161,73 +163,171 @@ func (s *ProxySuite) TestWriteProxyPolicyFileSerialisesConfig() {
 	require.Equal(s.T(), cfg.Gates.DockerProxy.HTTPRules, got.HTTPRules)
 }
 
-// --- injectWorkspaceBindRule ---
+// --- bind allowlist ---
 
-func (s *ProxySuite) TestInjectWorkspaceBindRuleEmptyWorkDirReturnsRulesUnchanged() {
-	in := []types.BodyRule{{AppliesTo: "POST ^/x$", Decision: types.DecisionDeny}}
-	out := injectWorkspaceBindRule(in, "", "")
-	require.Equal(s.T(), in, out)
+func (s *ProxySuite) TestAgentMountDirs() {
+	rw, ro := agentMountDirs([]string{
+		"/Users/r/dev/loop:/Users/r/dev/loop",
+		"/Users/r/dev/loop:/Users/r/dev/loop", // duplicate
+		"/Users/r/.loop/playground:/Users/r/.loop/playground:rw",
+		"/Users/r/.loop/screenshots:/Users/r/.loop/screenshots:ro",
+		"/Users/r/.cache/go:/home/agent/.cache/go", // different target
+		"gomod:/go/pkg/mod",                        // named volume
+		"/var/run/docker.sock:/var/run/docker.sock",
+		"/run/docker.sock:/run/docker.sock",
+		"/srv/data:/srv/data:z,ro",
+		"/srv/data:/srv/data", // already read-only
+		"bogus",
+	})
+	require.Equal(s.T(), []string{"/Users/r/dev/loop", "/Users/r/.loop/playground"}, rw)
+	require.Equal(s.T(), []string{"/Users/r/.loop/screenshots", "/srv/data"}, ro)
 }
 
-func (s *ProxySuite) TestInjectWorkspaceBindRulePrependsAllowRuleWithBareAndHostMntForms() {
-	in := []types.BodyRule{{
-		AppliesTo: "POST ^/containers/create$",
-		Decision:  types.DecisionDeny,
-		Message:   "container-escape risk",
-	}}
-	out := injectWorkspaceBindRule(in, "/Users/r/dev/loop", "")
-	require.Len(s.T(), out, 2)
+func (s *ProxySuite) TestBindRoots() {
+	sys := new(testutil.MockSystem)
+	dir, err := os.Stat(s.T().TempDir())
+	require.NoError(s.T(), err)
+	file, err := os.Stat(os.Args[0])
+	require.NoError(s.T(), err)
+	sys.On("Stat", "/ws").Return(dir, nil)
+	sys.On("Stat", "/token").Return(file, nil)
+	sys.On("Stat", "/gone").Return(nil, os.ErrNotExist)
+	r := &DockerRunner{sys: sys}
 
-	// Allow rule must be first so it fires before the deny.
-	require.Equal(s.T(), types.DecisionAllow, out[0].Decision)
-	require.Equal(s.T(), "POST ^/containers/create$", out[0].AppliesTo)
-	require.Equal(s.T(), []string{"application/json"}, out[0].ContentTypes)
-	require.Equal(s.T(), int64(1048576), out[0].MaxBodyBytes)
-	require.Equal(s.T(), "workspace bind-mount fast-path", out[0].Message)
-	require.Len(s.T(), out[0].JSONChecks, 1)
-	require.Equal(s.T(), "HostConfig.Binds[*]", out[0].JSONChecks[0].Path)
-	require.Equal(s.T(), "source_path_in", out[0].JSONChecks[0].Op)
-	require.Equal(s.T(), []string{
-		`^/Users/r/dev/loop($|/)`,
-		`^/host_mnt/Users/r/dev/loop($|/)`,
-	}, out[0].JSONChecks[0].Values)
-
-	// Original deny rule preserved.
-	require.Equal(s.T(), in[0], out[1])
+	require.Equal(s.T(), []string{"/ws", "/gone"}, r.bindRoots([]string{"/ws", "/token", "/gone"}))
+	require.Nil(s.T(), r.bindRoots(nil))
 }
 
-func (s *ProxySuite) TestInjectWorkspaceBindRuleIncludesParentDirWhenDistinct() {
-	out := injectWorkspaceBindRule(nil, "/Users/r/dev/loop/sub", "/Users/r/dev/loop")
-	require.Len(s.T(), out, 1)
-	require.Equal(s.T(), []string{
-		`^/Users/r/dev/loop/sub($|/)`,
-		`^/host_mnt/Users/r/dev/loop/sub($|/)`,
-		`^/Users/r/dev/loop($|/)`,
-		`^/host_mnt/Users/r/dev/loop($|/)`,
-	}, out[0].JSONChecks[0].Values)
+func (s *ProxySuite) TestInjectBindAllowlistShape() {
+	in := []types.BodyRule{
+		{
+			AppliesTo: "POST ^/containers/create$",
+			JSONChecks: []types.JSONCheck{
+				{Path: "HostConfig.Binds[*]", Op: "source_path_in", Values: []string{"^/$", "^/home(/|$)", "^/home/r/proj/secrets", "(["}},
+				{Path: "HostConfig.Mounts[*].Source", Op: "source_path_in", Values: []string{"^/etc(/|$)"}},
+				{Path: "HostConfig.Privileged", Op: "equals", Values: []string{"true"}},
+				{Path: "HostConfig.Binds[*]", Op: "source_path_in", Values: []string{"^/home(/|$)"}, Except: []string{"^/home/shared"}},
+			},
+			Decision: types.DecisionDeny,
+		},
+		{
+			AppliesTo:  "POST ^/containers/create$",
+			JSONChecks: []types.JSONCheck{{Path: "HostConfig.Binds[*]", Op: "source_path_in", Values: []string{"^/home(/|$)"}}},
+			Decision:   types.DecisionApprove,
+		},
+	}
+	orig := slices.Clone(in[0].JSONChecks)
+
+	out := injectBindAllowlist(in, []string{"/home/r/proj", "/opt/x.y"}, []string{"/home/r/.gitconfig"})
+
+	allowed := []string{`^/home/r/proj($|/)`, `^/opt/x\.y($|/)`}
+	readOnly := []string{`^/home/r/\.gitconfig($|/)`}
+	exempt := append(slices.Clone(allowed), readOnly...)
+	require.Equal(s.T(), []types.JSONCheck{
+		{Path: "HostConfig.Binds[*]", Op: "source_path_in", Values: []string{"^/$", "^/home/r/proj/secrets", "(["}},
+		{Path: "HostConfig.Binds[*]", Op: "source_path_in", Values: []string{"^/home(/|$)"}, Except: exempt},
+		{Path: "HostConfig.Mounts[*].Source", Op: "source_path_in", Values: []string{"^/etc(/|$)"}},
+		{Path: "HostConfig.Privileged", Op: "equals", Values: []string{"true"}},
+		{Path: "HostConfig.Binds[*]", Op: "source_path_in", Values: []string{"^/home(/|$)"}, Except: append([]string{"^/home/shared"}, exempt...)},
+	}, out[0].JSONChecks)
+	require.Equal(s.T(), orig, in[0].JSONChecks, "input rules must not be mutated")
+	require.Equal(s.T(), in[1], out[1], "non-deny rules are untouched")
+
+	require.Len(s.T(), out, 3)
+	require.Equal(s.T(), types.BodyRule{
+		AppliesTo:    "POST ^/containers/create$",
+		ContentTypes: []string{"application/json"},
+		MaxBodyBytes: 1048576,
+		JSONChecks: []types.JSONCheck{
+			{Path: "HostConfig.Binds[*]", Op: "source_path_not_in", Values: allowed, ReadOnlyValues: readOnly},
+			{Path: "HostConfig.Mounts[*]", Op: "source_path_not_in", Values: allowed, ReadOnlyValues: readOnly},
+		},
+		Decision: types.DecisionApprove,
+		Message:  "bind mount outside the agent's own mounts",
+	}, out[2])
 }
 
-func (s *ProxySuite) TestInjectWorkspaceBindRuleSkipsParentWhenSameAsWorkDir() {
-	out := injectWorkspaceBindRule(nil, "/w", "/w")
-	require.Len(s.T(), out, 1)
-	require.Equal(s.T(), []string{
-		`^/w($|/)`,
-		`^/host_mnt/w($|/)`,
-	}, out[0].JSONChecks[0].Values)
+// TestBindAllowlistDecisions runs the default body rules, with the allowlist
+// injected, through the proxy's policy engine.
+func (s *ProxySuite) TestBindAllowlistDecisions() {
+	const ws = "/home/r/proj"
+	links := map[string]string{
+		ws + "/root":  "/",
+		ws + "/home":  "/home/r",
+		ws + "/inner": ws + "/sub",
+	}
+	resolve := func(p string) (string, error) {
+		if p == "/missing" {
+			return "", errors.New("no such file")
+		}
+		if t, ok := links[p]; ok {
+			return t, nil
+		}
+		return p, nil
+	}
+	rules := injectBindAllowlist(config.DefaultDockerProxyBodyRules(), []string{ws, "/opt/extra"}, []string{"/home/r/.gitconfig", "/Users/r/.ssh"})
+	policy, err := dockerproxy.CompilePolicy(types.DecisionAllow, nil, rules)
+	require.NoError(s.T(), err)
+	policy.SetSymlinkResolver(resolve)
+
+	binds := func(b ...string) map[string]any {
+		return map[string]any{"HostConfig": map[string]any{"Binds": toAny(b)}}
+	}
+	mount := func(typ, src string) map[string]any {
+		return map[string]any{"HostConfig": map[string]any{"Mounts": []any{map[string]any{"Type": typ, "Source": src, "Target": "/m"}}}}
+	}
+	roMount := func(src string) map[string]any {
+		return map[string]any{"HostConfig": map[string]any{"Mounts": []any{map[string]any{"Type": "bind", "Source": src, "Target": "/m", "readonly": true}}}}
+	}
+	cases := []struct {
+		name string
+		body map[string]any
+		want types.Decision // "" = no rule fired
+	}{
+		{"workspace", binds(ws + ":/w"), ""},
+		{"workspace subdir", binds(ws + "/sub:/w:ro"), ""},
+		{"extra dir", binds("/opt/extra:/e"), ""},
+		{"link inside workspace", binds(ws + "/inner:/w"), ""},
+		{"named volume", binds("cache:/c"), ""},
+		{"volume mount", mount("volume", "cache"), ""},
+		{"workspace plus privileged", map[string]any{"HostConfig": map[string]any{"Privileged": true, "Binds": []any{ws + ":/w"}}}, types.DecisionDeny},
+		{"workspace plus root", binds(ws+":/w", "/:/host"), types.DecisionDeny},
+		{"other home path", binds("/home/r/.ssh:/s"), types.DecisionDeny},
+		{"workspace dotdot", binds(ws + "/../.ssh:/s"), types.DecisionDeny},
+		{"link to root", binds(ws + "/root:/h"), types.DecisionDeny},
+		{"link to home", binds(ws + "/home:/h"), types.DecisionDeny},
+		{"unresolvable", binds("/missing:/m"), types.DecisionDeny},
+		{"host folder", binds("/Users/r:/h"), types.DecisionApprove},
+		{"tmp", binds("/tmp/data:/d"), types.DecisionApprove},
+		{"bind mount outside", mount("bind", "/srv"), types.DecisionApprove},
+		{"sibling prefix", binds("/opt/extra2:/e"), types.DecisionApprove},
+		{"read-only mount, ro bind", binds("/home/r/.gitconfig:/root/.gitconfig:ro"), ""},
+		{"read-only mount, ro with options", binds("/Users/r/.ssh/config:/s:z,ro"), ""},
+		{"read-only mount, ro --mount", roMount("/Users/r/.ssh"), ""},
+		{"read-only mount, rw bind", binds("/home/r/.gitconfig:/root/.gitconfig"), types.DecisionApprove},
+		{"read-only mount, rw --mount", mount("bind", "/Users/r/.ssh"), types.DecisionApprove},
+		{"read-only mount, explicit rw", binds("/Users/r/.ssh:/s:rw"), types.DecisionApprove},
+		{"desktop host share", binds("/host_mnt/Users/r:/h:ro"), types.DecisionDeny},
+		{"desktop host services", mount("bind", "/run/host-services/docker.proxy.sock"), types.DecisionDeny},
+		{"desktop host services via /var", binds("/var/run/host-services/ssh-auth.sock:/s"), types.DecisionDeny},
+	}
+	for _, tc := range cases {
+		s.Run(tc.name, func() {
+			got := policy.CheckBody("POST", "/containers/create", "application/json", tc.body)
+			require.Equal(s.T(), tc.want, got.Decision, "%+v", got)
+		})
+	}
 }
 
-func (s *ProxySuite) TestInjectWorkspaceBindRuleQuotesRegexMetacharsInPath() {
-	// A workspace path with a literal dot must be matched literally, not as
-	// the regex-any wildcard.
-	out := injectWorkspaceBindRule(nil, "/Users/r/dev/foo.bar", "")
-	require.Len(s.T(), out, 1)
-	require.Equal(s.T(), []string{
-		`^/Users/r/dev/foo\.bar($|/)`,
-		`^/host_mnt/Users/r/dev/foo\.bar($|/)`,
-	}, out[0].JSONChecks[0].Values)
+func toAny(ss []string) []any {
+	out := make([]any, len(ss))
+	for i, v := range ss {
+		out[i] = v
+	}
+	return out
 }
 
-func (s *ProxySuite) TestWriteProxyPolicyFilePrependsWorkspaceAllowRule() {
+func (s *ProxySuite) TestWriteProxyPolicyFileInjectsBindAllowlist() {
 	sys := newDefaultMockSystem()
 	var captured []byte
 	sys.ExpectedCalls = nil
@@ -251,15 +351,15 @@ func (s *ProxySuite) TestWriteProxyPolicyFilePrependsWorkspaceAllowRule() {
 		},
 	}
 
-	_, err := s.runner.writeProxyPolicyFile(cfg, "ch-1", "/Users/r/dev/loop", "")
+	_, err := s.runner.writeProxyPolicyFile(cfg, "ch-1", []string{"/Users/r/dev/loop:/Users/r/dev/loop"})
 	require.NoError(s.T(), err)
 
 	var got proxyPolicyJSON
 	require.NoError(s.T(), json.Unmarshal(captured, &got))
 	require.Len(s.T(), got.BodyRules, 2)
-	require.Equal(s.T(), types.DecisionAllow, got.BodyRules[0].Decision)
-	require.Equal(s.T(), "workspace bind-mount fast-path", got.BodyRules[0].Message)
-	require.Equal(s.T(), types.DecisionDeny, got.BodyRules[1].Decision)
+	require.Equal(s.T(), types.DecisionDeny, got.BodyRules[0].Decision)
+	require.Equal(s.T(), types.DecisionApprove, got.BodyRules[1].Decision)
+	require.Equal(s.T(), []string{`^/Users/r/dev/loop($|/)`}, got.BodyRules[1].JSONChecks[0].Values)
 }
 
 // --- End-to-end: Run() with proxy enabled ---
@@ -344,6 +444,10 @@ func (s *ProxySuite) TestRunProxyEnabledAddsBindsAndEnvAndToken() {
 	require.Equal(s.T(), "1", findEnv(captured.Env, "LOOP_DOCKERPROXY_ENABLED"))
 	require.Equal(s.T(), "/etc/loop/proxy-policy.json", findEnv(captured.Env, "LOOP_DOCKERPROXY_POLICY_FILE"))
 	require.Equal(s.T(), "/var/run/docker.sock.host", findEnv(captured.Env, "LOOP_DOCKERPROXY_UPSTREAM"))
+	require.Equal(s.T(), "/run/loop-dproxy", findEnv(captured.Env, "LOOP_DOCKERPROXY_NESTED_DIR"))
+	require.Equal(s.T(), []string{"/run/loop-dproxy"}, captured.Volumes)
+	require.Equal(s.T(), filepath.Join(s.runner.resolveWorkDir("ch-1", ""), ".loop"), findEnv(captured.Env, "LOOP_DOCKERPROXY_READONLY_DIRS"))
+	require.Contains(s.T(), strings.Split(findEnv(captured.Env, "LOOP_DOCKERPROXY_BIND_ROOTS"), ":"), s.runner.resolveWorkDir("ch-1", ""))
 	require.Equal(s.T(), "ch-1", findEnv(captured.Env, "LOOP_CHANNEL_ID"))
 	token := findEnv(captured.Env, "LOOP_GATE_TOKEN")
 	require.Len(s.T(), token, 64, "token should be 32 bytes hex-encoded")
@@ -355,6 +459,22 @@ func (s *ProxySuite) TestRunProxyEnabledAddsBindsAndEnvAndToken() {
 	require.Equal(s.T(), "cid-real", gotCid)
 	require.NotNil(s.T(), mgr)
 	require.Equal(s.T(), "ch-1", gotChannel)
+}
+
+func (s *ProxySuite) TestRunProxyReadOnlyDirMkdirFails() {
+	cfg := s.proxyRunCfg()
+	s.installRunnerDefaults(cfg)
+	s.runner.SetDockerProxyDeps("/run/loop", "/var/run/docker.sock")
+	sys := s.runner.sys.(*testutil.MockSystem)
+	// First registered match wins, so the failing MkdirAll goes ahead of
+	// the catch-all default.
+	defaults := sys.ExpectedCalls
+	sys.ExpectedCalls = nil
+	sys.On("MkdirAll", mock.MatchedBy(func(p string) bool { return strings.HasSuffix(p, "/.loop") }), mock.Anything).Return(errors.New("read-only file system"))
+	sys.ExpectedCalls = append(sys.ExpectedCalls, defaults...)
+
+	_, err := s.runner.Run(context.Background(), &agent.AgentRequest{ChannelID: "ch-1"})
+	require.ErrorContains(s.T(), err, "read-only file system")
 }
 
 func (s *ProxySuite) TestRunProxyDisabledNoBindsNoToken() {
@@ -384,6 +504,7 @@ func (s *ProxySuite) TestRunProxyDisabledNoBindsNoToken() {
 	require.False(s.T(), slices.ContainsFunc(captured.Env, func(e string) bool {
 		return strings.HasPrefix(e, "LOOP_GATE_TOKEN=")
 	}))
+	require.Empty(s.T(), captured.Volumes)
 }
 
 // TestRunProxyDefaultsHostSockWhenEmpty covers the "hostSock == """ branch

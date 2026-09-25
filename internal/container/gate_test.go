@@ -357,10 +357,40 @@ func (s *GateSuite) TestWriteGatePolicyFilePinsSelfDenyFirst() {
 	require.NoError(s.T(), json.Unmarshal(captured, &got))
 	require.Equal(s.T(), []string{"/etc/loop/**"}, got.FileRules[0].Paths)
 	require.Equal(s.T(), types.DecisionDeny, got.FileRules[0].Decision, "self-deny wins over a config allow on the same path")
-	// The config allow is the list's first Allow, so the workspace rule lands
-	// ahead of it — both still behind the pinned deny.
-	require.Equal(s.T(), "workspace fast-path", got.FileRules[1].Message)
-	require.Equal(s.T(), types.DecisionAllow, got.FileRules[2].Decision)
+	// Then the pinned project-config approve. The config allow is the list's
+	// first Allow, so the workspace rule lands ahead of it.
+	require.Equal(s.T(), types.DecisionApprove, got.FileRules[1].Decision)
+	require.Equal(s.T(), "/host/work/.loop/config.json", got.FileRules[1].Paths[1])
+	require.Equal(s.T(), "workspace fast-path", got.FileRules[2].Message)
+	require.Equal(s.T(), types.DecisionAllow, got.FileRules[3].Decision)
+}
+
+func (s *GateSuite) TestInjectProjectConfigRule() {
+	in := []types.FileRule{{Paths: []string{"/w/**"}, Decision: types.DecisionAllow}}
+	require.Equal(s.T(), in, injectProjectConfigRule(in, "", ""))
+
+	cases := []struct {
+		name            string
+		workDir, parent string
+		want            []string
+	}{
+		{"workspace", "/w", "", []string{"/w/.loop", "/w/.loop/config.json", "/w/.loop/container", "/w/.loop/container/**"}},
+		{"parent same as workDir", "/w", "/w", []string{"/w/.loop", "/w/.loop/config.json", "/w/.loop/container", "/w/.loop/container/**"}},
+		{"worktree", "/p/wt", "/p", []string{
+			"/p/wt/.loop", "/p/wt/.loop/config.json", "/p/wt/.loop/container", "/p/wt/.loop/container/**",
+			"/p/.loop", "/p/.loop/config.json", "/p/.loop/container", "/p/.loop/container/**",
+		}},
+	}
+	for _, tc := range cases {
+		s.Run(tc.name, func() {
+			out := injectProjectConfigRule(in, tc.workDir, tc.parent)
+			require.Len(s.T(), out, 2)
+			require.Equal(s.T(), tc.want, out[0].Paths)
+			require.Equal(s.T(), []string{"write", "create", "delete", "chmod", "chown", "link"}, out[0].Operations)
+			require.Equal(s.T(), types.DecisionApprove, out[0].Decision)
+			require.Equal(s.T(), in[0], out[1])
+		})
+	}
 }
 
 // --- injectWorkspaceRmRfRule ---

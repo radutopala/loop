@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"net"
 	"net/http"
 	"net/http/httputil"
@@ -58,6 +59,11 @@ type Server struct {
 	cfg      ServerConfig
 	policy   *Policy
 	upstream *httputil.ReverseProxy
+	// client makes the proxy's own daemon calls (see ensureBindVolume).
+	client *http.Client
+	// foldNames are the lower-cased body keys the body rules and the
+	// nested-socket rewrite read (see fold.go).
+	foldNames map[string]bool
 }
 
 // ServerConfig groups the dependencies a Server needs. All fields are required
@@ -76,6 +82,20 @@ type ServerConfig struct {
 	// [defaultPeerSource] which walks /proc on Linux; nil disables attribution
 	// and every request becomes Source="chat".
 	PeerSource PeerSourceLookup
+	// NestedVolume names the volume holding the proxy's second socket.
+	// Docker socket mounts in container creates are rewritten to mount it;
+	// empty rejects them instead (see rewriteNestedSocket).
+	NestedVolume string
+	// EvalSymlinks resolves bind sources so a symlink to the docker socket
+	// is rewritten too. nil matches literal socket paths only.
+	EvalSymlinks SymlinkResolver
+	// ReadOnlyDirs are host directories (cleaned, absolute) that containers
+	// the agent creates may only mount read-only (see protectReadOnlyDirs).
+	ReadOnlyDirs []string
+	// BindRoots are the agent's own mounts (cleaned, absolute). Binds under
+	// them are pinned to a volume so a symlink swapped in after the policy
+	// check can't redirect them (see pinBinds). Empty disables pinning.
+	BindRoots []string
 }
 
 // NewServer constructs a Server. CID / ChannelID / Policy / Approver / DockerSock
@@ -123,7 +143,13 @@ func NewServer(cfg ServerConfig) (*Server, error) {
 		Transport:     transport,
 		FlushInterval: 100 * time.Millisecond,
 	}
-	return &Server{cfg: cfg, policy: cfg.Policy, upstream: rp}, nil
+	foldNames := map[string]bool{}
+	maps.Copy(foldNames, cfg.Policy.foldNames)
+	addFoldNames(foldNames, nestedFoldNames...)
+	addFoldNames(foldNames, detailsFoldNames...)
+	cfg.BindRoots = sortRoots(cfg.BindRoots)
+	client := &http.Client{Transport: transport, Timeout: 30 * time.Second}
+	return &Server{cfg: cfg, policy: cfg.Policy, upstream: rp, client: client, foldNames: foldNames}, nil
 }
 
 // apiVersionRe matches a Docker API version prefix at the start of the path
@@ -158,9 +184,34 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// HTTP rule match.
 	httpRes := s.policy.MatchHTTP(r.Method, canonicalPath)
 
+	// Docker socket mounts are rewritten to the nested proxy socket before
+	// the body rules see the request, so the rules judge what reaches the
+	// daemon.
+	if r.Method == http.MethodPost && canonicalPath == "/containers/create" {
+		if status, msg := s.rewriteNestedSocket(r); status != 0 {
+			s.audit(AuditEntry{
+				Ts:       start,
+				CID:      s.cfg.CID,
+				Channel:  s.cfg.ChannelID,
+				Method:   r.Method,
+				Path:     canonicalPath,
+				Decision: "deny",
+				RuleID:   "create-body",
+				Reason:   msg,
+				Latency:  s.cfg.Now().Sub(start),
+			})
+			http.Error(w, msg, status)
+			return
+		}
+	}
+
 	// Body-rule evaluation. A body-rule deny always wins (can't be user-overridden).
 	bodyResult, decodedBody, bodyErr := s.evaluateBody(r, canonicalPath)
 	if bodyErr != nil {
+		status, msg := http.StatusBadRequest, "invalid request body"
+		if errors.Is(bodyErr, errBodyTooLarge) {
+			status, msg = http.StatusRequestEntityTooLarge, bodyErr.Error()
+		}
 		s.audit(AuditEntry{
 			Ts:       start,
 			CID:      s.cfg.CID,
@@ -172,7 +223,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			Reason:   bodyErr.Error(),
 			Latency:  s.cfg.Now().Sub(start),
 		})
-		http.Error(w, "invalid request body", http.StatusBadRequest)
+		http.Error(w, msg, status)
 		return
 	}
 	if bodyResult.Fired && bodyResult.Decision == types.DecisionDeny {
@@ -189,6 +240,24 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			Latency:    s.cfg.Now().Sub(start),
 		})
 		http.Error(w, bodyResult.Message, http.StatusForbidden)
+		return
+	}
+
+	// Volume creates may not claim the names of pinned-bind volumes.
+	if r.Method == http.MethodPost && canonicalPath == "/volumes/create" && reservesBindVolume(r) {
+		msg := reservedVolumeMsg
+		s.audit(AuditEntry{
+			Ts:       start,
+			CID:      s.cfg.CID,
+			Channel:  s.cfg.ChannelID,
+			Method:   r.Method,
+			Path:     canonicalPath,
+			Decision: "deny",
+			RuleID:   "volume-name",
+			Reason:   msg,
+			Latency:  s.cfg.Now().Sub(start),
+		})
+		http.Error(w, msg, http.StatusForbidden)
 		return
 	}
 
@@ -248,6 +317,26 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				Decision: "allow",
 				Latency:  s.cfg.Now().Sub(start),
 			})
+		}
+	}
+
+	// Binds are pinned once the request is approved; the rules and the
+	// prompt judge the paths the agent asked for.
+	if r.Method == http.MethodPost && canonicalPath == "/containers/create" {
+		if status, msg := s.pinBinds(r); status != 0 {
+			s.audit(AuditEntry{
+				Ts:       start,
+				CID:      s.cfg.CID,
+				Channel:  s.cfg.ChannelID,
+				Method:   r.Method,
+				Path:     canonicalPath,
+				Decision: "deny",
+				RuleID:   "create-binds",
+				Reason:   msg,
+				Latency:  s.cfg.Now().Sub(start),
+			})
+			http.Error(w, msg, status)
+			return
 		}
 	}
 
@@ -341,7 +430,8 @@ func (s *Server) evaluateBody(r *http.Request, canonicalPath string) (BodyCheckR
 	if r.Body == nil || r.Body == http.NoBody {
 		return BodyCheckResult{}, nil, nil
 	}
-	cap := s.policy.MaxBodyBytes(r.Method, canonicalPath)
+	ruleCap := s.policy.MaxBodyBytes(r.Method, canonicalPath)
+	cap := ruleCap
 	if cap == 0 {
 		cap = detailsBodyCap(r.Method, canonicalPath)
 	}
@@ -354,6 +444,13 @@ func (s *Server) evaluateBody(r *http.Request, canonicalPath string) (BodyCheckR
 		return BodyCheckResult{}, nil, fmt.Errorf("read body: %w", err)
 	}
 	if int64(len(buf)) > cap {
+		// A JSON body the rules can't inspect must not reach the daemon:
+		// padding (a big label, say) would otherwise slip any field past
+		// them. Other bodies (build contexts) aren't what the rules read.
+		if ruleCap > 0 && normalizeContentType(r.Header.Get("Content-Type")) == "application/json" {
+			_ = r.Body.Close()
+			return BodyCheckResult{}, nil, errBodyTooLarge
+		}
 		// Drain remaining bytes, re-attach the full original for forwarding.
 		rest, _ := io.ReadAll(r.Body)
 		_ = r.Body.Close()
@@ -377,6 +474,9 @@ func (s *Server) evaluateBody(r *http.Request, canonicalPath string) (BodyCheckR
 	var decoded any
 	if err := json.Unmarshal(buf, &decoded); err != nil {
 		return BodyCheckResult{}, nil, fmt.Errorf("parse body: %w", err)
+	}
+	if hasFoldDuplicates(decoded, s.foldNames) {
+		return BodyCheckResult{}, nil, errAmbiguousKeys
 	}
 	return s.policy.CheckBody(r.Method, canonicalPath, r.Header.Get("Content-Type"), decoded), decoded, nil
 }
@@ -432,4 +532,7 @@ func (s *Server) audit(e AuditEntry) {
 
 // errHijackNotSupported is returned when the underlying ResponseWriter doesn't
 // implement http.Hijacker (e.g. http/2, which the unix-socket listener never sees).
+// errBodyTooLarge rejects JSON bodies over the body rules' MaxBodyBytes.
+var errBodyTooLarge = errors.New("request body too large for policy inspection")
+
 var errHijackNotSupported = errors.New("dockerproxy: hijack not supported")

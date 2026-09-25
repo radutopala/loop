@@ -273,3 +273,83 @@ func (s *BodyRuleSuite) TestEvalUnknownOpReturnsFalse() {
 	c := compiledJSONCheck{segments: []pathSegment{{name: "x"}}, op: "made-up"}
 	require.False(s.T(), c.match(map[string]any{"x": "anything"}))
 }
+
+// --- Except and source_path_not_in ---
+
+func (s *BodyRuleSuite) TestSourcePathExceptAndNotIn() {
+	resolve := func(p string) (string, error) {
+		switch p {
+		case "/missing":
+			return "", errors.New("no such file")
+		case "/ws/root":
+			return "/", nil
+		}
+		return p, nil
+	}
+	cases := []struct {
+		name     string
+		check    types.JSONCheck
+		decision types.Decision
+		resolve  SymlinkResolver
+		bind     string
+		want     bool
+	}{
+		{"except exempts resolved source", types.JSONCheck{Op: "source_path_in", Values: []string{`^/home(/|$)`}, Except: []string{`^/home/ws($|/)`}}, types.DecisionDeny, resolve, "/home/ws/a:/w", false},
+		{"except misses sibling", types.JSONCheck{Op: "source_path_in", Values: []string{`^/home(/|$)`}, Except: []string{`^/home/ws($|/)`}}, types.DecisionDeny, resolve, "/home/other:/w", true},
+		{"except checks the cleaned path", types.JSONCheck{Op: "source_path_in", Values: []string{`^/home(/|$)`}, Except: []string{`^/home/ws($|/)`}}, types.DecisionDeny, nil, "/home/ws/../x:/w", true},
+		{"except with resolve failure", types.JSONCheck{Op: "source_path_in", Values: []string{`^/home(/|$)`}, Except: []string{`^/home/ws($|/)`}}, types.DecisionApprove, resolve, "/missing:/w", false},
+		{"no resolver cleans literal", types.JSONCheck{Op: "source_path_in", Values: []string{`^/etc(/|$)`}}, types.DecisionDeny, nil, "/./etc:/e", true},
+		{"not_in inside", types.JSONCheck{Op: "source_path_not_in", Values: []string{`^/ws($|/)`}}, types.DecisionApprove, resolve, "/ws/a:/w", false},
+		{"not_in outside", types.JSONCheck{Op: "source_path_not_in", Values: []string{`^/ws($|/)`}}, types.DecisionApprove, resolve, "/srv:/w", true},
+		{"not_in link out", types.JSONCheck{Op: "source_path_not_in", Values: []string{`^/ws($|/)`}}, types.DecisionApprove, resolve, "/ws/root:/w", true},
+		{"not_in dotdot without resolver", types.JSONCheck{Op: "source_path_not_in", Values: []string{`^/ws($|/)`}}, types.DecisionApprove, nil, "/ws/..:/w", true},
+		{"not_in named volume", types.JSONCheck{Op: "source_path_not_in", Values: []string{`^/ws($|/)`}}, types.DecisionApprove, resolve, "vol:/w", false},
+		{"not_in empty allowlist", types.JSONCheck{Op: "source_path_not_in"}, types.DecisionApprove, resolve, "/ws:/w", true},
+		{"not_in unresolvable approve", types.JSONCheck{Op: "source_path_not_in", Values: []string{`^/ws($|/)`}}, types.DecisionApprove, resolve, "/missing:/w", true},
+		{"not_in unresolvable allow", types.JSONCheck{Op: "source_path_not_in", Values: []string{`^/ws($|/)`}}, types.DecisionAllow, resolve, "/missing:/w", false},
+		{"read-only value, ro bind", types.JSONCheck{Op: "source_path_not_in", Values: []string{`^/ws($|/)`}, ReadOnlyValues: []string{`^/cfg($|/)`}}, types.DecisionApprove, resolve, "/cfg/a:/c:ro", false},
+		{"read-only value, ro among options", types.JSONCheck{Op: "source_path_not_in", Values: []string{`^/ws($|/)`}, ReadOnlyValues: []string{`^/cfg($|/)`}}, types.DecisionApprove, resolve, "/cfg:/c:z,ro", false},
+		{"read-only value, rw bind", types.JSONCheck{Op: "source_path_not_in", Values: []string{`^/ws($|/)`}, ReadOnlyValues: []string{`^/cfg($|/)`}}, types.DecisionApprove, resolve, "/cfg:/c", true},
+		{"read-only value, explicit rw", types.JSONCheck{Op: "source_path_not_in", Values: []string{`^/ws($|/)`}, ReadOnlyValues: []string{`^/cfg($|/)`}}, types.DecisionApprove, resolve, "/cfg:/c:rw", true},
+		{"read-only value, ro-like option", types.JSONCheck{Op: "source_path_not_in", Values: []string{`^/ws($|/)`}, ReadOnlyValues: []string{`^/cfg($|/)`}}, types.DecisionApprove, resolve, "/cfg:/c:rom", true},
+		{"read-only value, rw value still inside", types.JSONCheck{Op: "source_path_not_in", Values: []string{`^/ws($|/)`}, ReadOnlyValues: []string{`^/cfg($|/)`}}, types.DecisionApprove, resolve, "/ws:/w", false},
+		{"read-only value, ro outside both", types.JSONCheck{Op: "source_path_not_in", Values: []string{`^/ws($|/)`}, ReadOnlyValues: []string{`^/cfg($|/)`}}, types.DecisionApprove, resolve, "/srv:/s:ro", true},
+	}
+	for _, tc := range cases {
+		s.Run(tc.name, func() {
+			tc.check.Path = "Binds[*]"
+			c := s.compileOne(tc.check)
+			c.parentDecision = tc.decision
+			c.resolveSymlinks = tc.resolve
+			require.Equal(s.T(), tc.want, c.match(map[string]any{"Binds": []any{tc.bind}}))
+		})
+	}
+}
+
+// Mount objects (a HostConfig.Mounts[*] path) carry the source and the
+// read-only flag side by side.
+func (s *BodyRuleSuite) TestSourcePathMountObjects() {
+	notIn := s.compileOne(types.JSONCheck{Path: "Mounts[*]", Op: "source_path_not_in", Values: []string{`^/ws($|/)`}, ReadOnlyValues: []string{`^/cfg($|/)`}})
+	in := s.compileOne(types.JSONCheck{Path: "Mounts[*]", Op: "source_path_in", Values: []string{`^/etc(/|$)`}})
+	cases := []struct {
+		name      string
+		mount     map[string]any
+		notIn, in bool
+	}{
+		{"rw inside", map[string]any{"Type": "bind", "Source": "/ws/a"}, false, false},
+		{"read-only mount, ro", map[string]any{"Type": "bind", "Source": "/cfg", "ReadOnly": true}, false, false},
+		{"read-only mount, key case", map[string]any{"type": "bind", "source": "/cfg", "readonly": true}, false, false},
+		{"read-only mount, rw", map[string]any{"Type": "bind", "Source": "/cfg", "ReadOnly": false}, true, false},
+		{"read-only flag not a bool", map[string]any{"Type": "bind", "Source": "/cfg", "ReadOnly": "true"}, true, false},
+		{"outside", map[string]any{"Type": "bind", "Source": "/etc/x", "ReadOnly": true}, true, true},
+		{"named volume", map[string]any{"Type": "volume", "Source": "cache"}, false, false},
+		{"no source", map[string]any{"Type": "tmpfs"}, false, false},
+	}
+	for _, tc := range cases {
+		s.Run(tc.name, func() {
+			body := map[string]any{"Mounts": []any{tc.mount}}
+			require.Equal(s.T(), tc.notIn, notIn.match(body))
+			require.Equal(s.T(), tc.in, in.match(body))
+		})
+	}
+}

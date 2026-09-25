@@ -324,7 +324,7 @@ func (s *SchemaSuite) TestGatesNestedObject() {
 	require.NotNil(s.T(), jsonChecks.Items)
 	require.Equal(s.T(), "object", jsonChecks.Items.Type)
 	require.Contains(s.T(), jsonChecks.Items.Properties, "path")
-	require.Equal(s.T(), []any{"source_path_in", "equals", "contains_any", "starts_with_any", "present", "empty_array"}, jsonChecks.Items.Properties["op"].Enum)
+	require.Equal(s.T(), []any{"source_path_in", "source_path_not_in", "equals", "contains_any", "starts_with_any", "not_in", "capability_not_in", "present", "empty_array"}, jsonChecks.Items.Properties["op"].Enum)
 	require.Equal(s.T(), "array", jsonChecks.Items.Properties["values"].Type)
 	require.Equal(s.T(), "string", jsonChecks.Items.Properties["values"].Items.Type)
 }

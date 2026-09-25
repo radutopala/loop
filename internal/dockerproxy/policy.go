@@ -19,6 +19,9 @@ type Policy struct {
 	defaultDecision types.Decision
 	httpRules       []compiledHTTPRule
 	bodyRules       []compiledBodyRule
+	// foldNames holds the lower-cased field names the body rules' paths
+	// read. Bodies must not hold case variants of them (see fold.go).
+	foldNames map[string]bool
 }
 
 type compiledHTTPRule struct {
@@ -45,8 +48,12 @@ type compiledJSONCheck struct {
 	op       string
 	values   []string
 	valuesRe []*regexp.Regexp
+	exceptRe []*regexp.Regexp
+	// readOnlyRe are the ReadOnlyValues of a source_path_not_in check.
+	readOnlyRe []*regexp.Regexp
 	// resolveSymlinks, when non-nil, is applied to source paths before regex
-	// match in the source_path_in op. Stamped per-check by SetSymlinkResolver.
+	// match in the source_path_in and source_path_not_in ops. Stamped
+	// per-check by SetSymlinkResolver.
 	resolveSymlinks SymlinkResolver
 	// parentDecision is the enclosing body rule's decision (copied at compile
 	// time). Used by source_path_in: resolve-failure fires the rule only when
@@ -94,7 +101,7 @@ func CompilePolicy(
 	httpRules []types.HTTPServiceRule,
 	bodyRules []types.BodyRule,
 ) (*Policy, error) {
-	p := &Policy{defaultDecision: normalizeDefault(defaultDecision)}
+	p := &Policy{defaultDecision: normalizeDefault(defaultDecision), foldNames: map[string]bool{}}
 
 	for i, r := range httpRules {
 		if err := validateDecision(r.Decision); err != nil {
@@ -139,6 +146,11 @@ func CompilePolicy(
 				return nil, fmt.Errorf("body_rules[%d].json_checks[%d]: %w", i, j, err)
 			}
 			compiled.parentDecision = r.Decision
+			for _, seg := range compiled.segments {
+				if !seg.wildcard {
+					addFoldNames(p.foldNames, seg.name)
+				}
+			}
 			cr.checks = append(cr.checks, compiled)
 		}
 		p.bodyRules = append(p.bodyRules, cr)
@@ -147,8 +159,8 @@ func CompilePolicy(
 	return p, nil
 }
 
-// SetSymlinkResolver wires a symlink resolver into every source_path_in check
-// of every body rule. Source paths are resolved (via r) before the regex match
+// SetSymlinkResolver wires a symlink resolver into every source_path_in and
+// source_path_not_in check of every body rule. Source paths are resolved (via r) before the regex match
 // so an agent that submits a Bind whose source side is a symlink to a denied
 // path cannot bypass the rule. Pass nil to disable resolution (the original
 // behaviour — match the literal source string).
@@ -159,7 +171,7 @@ func CompilePolicy(
 func (p *Policy) SetSymlinkResolver(r SymlinkResolver) {
 	for i := range p.bodyRules {
 		for j := range p.bodyRules[i].checks {
-			if p.bodyRules[i].checks[j].op == "source_path_in" {
+			if op := p.bodyRules[i].checks[j].op; op == "source_path_in" || op == "source_path_not_in" {
 				p.bodyRules[i].checks[j].resolveSymlinks = r
 			}
 		}
@@ -290,15 +302,24 @@ func compileJSONCheck(c types.JSONCheck) (compiledJSONCheck, error) {
 	}
 	compiled := compiledJSONCheck{segments: segments, op: c.Op, values: append([]string(nil), c.Values...)}
 	switch c.Op {
-	case "source_path_in":
-		for j, v := range c.Values {
-			re, err := regexp.Compile(v)
-			if err != nil {
-				return compiledJSONCheck{}, fmt.Errorf("values[%d] regex: %w", j, err)
-			}
-			compiled.valuesRe = append(compiled.valuesRe, re)
+	case "source_path_in", "source_path_not_in":
+		if compiled.valuesRe, err = compileRegexes("values", c.Values); err != nil {
+			return compiledJSONCheck{}, err
 		}
-	case "equals", "contains_any", "starts_with_any":
+		if compiled.exceptRe, err = compileRegexes("except", c.Except); err != nil {
+			return compiledJSONCheck{}, err
+		}
+		if compiled.readOnlyRe, err = compileRegexes("read_only_values", c.ReadOnlyValues); err != nil {
+			return compiledJSONCheck{}, err
+		}
+	case "capability_not_in":
+		if len(c.Values) == 0 {
+			return compiledJSONCheck{}, fmt.Errorf("op %q requires at least one value", c.Op)
+		}
+		for j, v := range c.Values {
+			compiled.values[j] = normalizeCapability(v)
+		}
+	case "equals", "contains_any", "starts_with_any", "not_in":
 		// Values is a simple string set; no pre-compilation needed.
 		if len(c.Values) == 0 {
 			return compiledJSONCheck{}, fmt.Errorf("op %q requires at least one value", c.Op)
@@ -308,7 +329,26 @@ func compileJSONCheck(c types.JSONCheck) (compiledJSONCheck, error) {
 	default:
 		return compiledJSONCheck{}, fmt.Errorf("unknown op %q", c.Op)
 	}
+	if len(c.Except) > 0 && c.Op != "source_path_in" {
+		return compiledJSONCheck{}, fmt.Errorf("except is only valid with op source_path_in, not %q", c.Op)
+	}
+	if len(c.ReadOnlyValues) > 0 && c.Op != "source_path_not_in" {
+		return compiledJSONCheck{}, fmt.Errorf("read_only_values is only valid with op source_path_not_in, not %q", c.Op)
+	}
 	return compiled, nil
+}
+
+// compileRegexes compiles the regexes of a check's values or except list.
+func compileRegexes(field string, values []string) ([]*regexp.Regexp, error) {
+	var out []*regexp.Regexp
+	for j, v := range values {
+		re, err := regexp.Compile(v)
+		if err != nil {
+			return nil, fmt.Errorf("%s[%d] regex: %w", field, j, err)
+		}
+		out = append(out, re)
+	}
+	return out, nil
 }
 
 // parseJSONPath accepts "a.b.c", "a.b[*]", "a[*].b", "a.b[*].c.d".

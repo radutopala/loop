@@ -14,6 +14,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
@@ -441,6 +442,7 @@ func (s *AppSuite) TestNewAppWiresAllFields() {
 	require.NotNil(s.T(), a.notifyContext)
 	require.NotNil(s.T(), a.newApprover)
 	require.NotNil(s.T(), a.evalSymlinks)
+	require.NotNil(s.T(), a.lookupVolume)
 }
 
 // TestRunStampsEvalSymlinksOnPolicy proves the SymlinkResolver wired on the
@@ -505,4 +507,193 @@ func (s *AppSuite) TestDefaultNotifyContextReturnsUsableContext() {
 	defer stop()
 	require.NotNil(s.T(), ctx)
 	require.NoError(s.T(), ctx.Err())
+}
+
+// nestedApp stubs an app for a run with the nested socket enabled. Each
+// listenUnix call gets its own stubListener, recorded by path; serve
+// records the handler per listener and returns nestedServeErr for the
+// nested one.
+type nestedApp struct {
+	*app
+	mu        sync.Mutex
+	listeners map[string]*stubListener
+	handlers  map[string]http.Handler
+	served    chan string
+}
+
+func (s *AppSuite) nestedApp(env map[string]string, lookup func() (string, error), listenErr map[string]error, nestedServeErr error) *nestedApp {
+	a, _, _ := s.baseApp(env, s.minimalPolicyJSON())
+	n := &nestedApp{
+		app:       a,
+		listeners: map[string]*stubListener{},
+		handlers:  map[string]http.Handler{},
+		served:    make(chan string, 2),
+	}
+	a.chmod = func(_ string, mode os.FileMode) error {
+		require.Equal(s.T(), os.FileMode(0o666), mode)
+		return nil
+	}
+	a.evalSymlinks = noSymlinks
+	a.lookupVolume = func(_ context.Context, upstream, cid, dir string) (string, error) {
+		require.Equal(s.T(), env[envUpstream], upstream)
+		require.Equal(s.T(), env[envCID], cid)
+		require.Equal(s.T(), env[envNestedDir], dir)
+		return lookup()
+	}
+	a.listenUnix = func(path string) (net.Listener, error) {
+		if err := listenErr[path]; err != nil {
+			return nil, err
+		}
+		ln := newStubListener()
+		n.mu.Lock()
+		n.listeners[path] = ln
+		n.mu.Unlock()
+		return ln, nil
+	}
+	a.serve = func(ctx context.Context, ln net.Listener, h http.Handler) error {
+		n.mu.Lock()
+		var path string
+		for p, l := range n.listeners {
+			if l == ln {
+				path = p
+			}
+		}
+		n.handlers[path] = h
+		n.mu.Unlock()
+		n.served <- path
+		if path == "/run/loop-dproxy/docker.sock" {
+			return nestedServeErr
+		}
+		// Wait for the nested serve so the test sees both.
+		<-ctx.Done()
+		return nil
+	}
+	return n
+}
+
+func (s *AppSuite) nestedEnv() map[string]string {
+	env := s.minimalEnv()
+	env[envNestedDir] = "/run/loop-dproxy"
+	return env
+}
+
+func (s *AppSuite) TestRunServesNestedSocket() {
+	for _, tc := range []struct {
+		name     string
+		serveErr error
+		wantLog  string
+	}{
+		{name: "clean", wantLog: "nested_volume=vol-1"},
+		{name: "nested serve fails", serveErr: errors.New("accept broke"), wantLog: "nested docker socket stopped"},
+	} {
+		s.Run(tc.name, func() {
+			n := s.nestedApp(s.nestedEnv(), func() (string, error) { return "vol-1", nil }, nil, tc.serveErr)
+			ctx, cancel := context.WithCancel(context.Background())
+			n.notifyContext = func(context.Context) (context.Context, context.CancelFunc) { return ctx, cancel }
+			var out syncBuffer
+			done := make(chan error, 1)
+			go func() { done <- n.run(&out) }()
+			got := map[string]bool{<-n.served: true, <-n.served: true}
+			require.Equal(s.T(), map[string]bool{"/var/run/docker.sock": true, "/run/loop-dproxy/docker.sock": true}, got)
+			require.Eventually(s.T(), func() bool { return strings.Contains(out.String(), tc.wantLog) }, time.Second, 5*time.Millisecond)
+			cancel()
+			require.NoError(s.T(), <-done)
+
+			n.mu.Lock()
+			defer n.mu.Unlock()
+			srv := n.handlers["/run/loop-dproxy/docker.sock"].(*Server)
+			require.Same(s.T(), srv, n.handlers["/var/run/docker.sock"])
+			require.Equal(s.T(), "vol-1", srv.cfg.NestedVolume)
+			require.NotNil(s.T(), srv.cfg.EvalSymlinks)
+		})
+	}
+}
+
+func (s *AppSuite) TestRunNestedUnavailableStillServes() {
+	for _, tc := range []struct {
+		name      string
+		lookup    func() (string, error)
+		listenErr map[string]error
+		wantLog   string
+	}{
+		{
+			name:    "lookup fails",
+			lookup:  func() (string, error) { return "", errors.New("no such container") },
+			wantLog: "no such container",
+		},
+		{
+			name:      "nested listen fails",
+			lookup:    func() (string, error) { return "vol-1", nil },
+			listenErr: map[string]error{"/run/loop-dproxy/docker.sock": errors.New("read-only fs")},
+			wantLog:   "read-only fs",
+		},
+	} {
+		s.Run(tc.name, func() {
+			n := s.nestedApp(s.nestedEnv(), tc.lookup, tc.listenErr, nil)
+			n.notifyContext = func(parent context.Context) (context.Context, context.CancelFunc) {
+				ctx, cancel := context.WithCancel(parent)
+				cancel()
+				return ctx, func() {}
+			}
+			var out bytes.Buffer
+			require.NoError(s.T(), n.run(&out))
+			require.Contains(s.T(), out.String(), "socket mounts will be rejected")
+			require.Contains(s.T(), out.String(), tc.wantLog)
+			require.Equal(s.T(), "/var/run/docker.sock", <-n.served)
+			require.Len(s.T(), n.served, 0)
+			require.Empty(s.T(), n.handlers["/var/run/docker.sock"].(*Server).cfg.NestedVolume)
+		})
+	}
+}
+
+// When setup fails after the nested socket is up, run closes it.
+func (s *AppSuite) TestRunClosesNestedListenerOnError() {
+	for _, tc := range []struct {
+		name    string
+		env     func(map[string]string)
+		listen  map[string]error
+		wantErr string
+	}{
+		{name: "build server", env: func(e map[string]string) { e[envCID] = "" }, wantErr: "build server:"},
+		{name: "main listen", listen: map[string]error{"/var/run/docker.sock": errors.New("busy")}, wantErr: "busy"},
+	} {
+		s.Run(tc.name, func() {
+			env := s.nestedEnv()
+			if tc.env != nil {
+				tc.env(env)
+			}
+			n := s.nestedApp(env, func() (string, error) { return "vol-1", nil }, tc.listen, nil)
+			err := n.run(io.Discard)
+			require.ErrorContains(s.T(), err, tc.wantErr)
+			select {
+			case <-n.listeners["/run/loop-dproxy/docker.sock"].closed:
+			default:
+				s.T().Fatal("nested listener not closed")
+			}
+		})
+	}
+}
+
+// syncBuffer is a bytes.Buffer safe for the concurrent writes of two serve
+// goroutines' loggers.
+type syncBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *syncBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *syncBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
+}
+
+func (s *AppSuite) TestDirList() {
+	require.Nil(s.T(), dirList(""))
+	require.Equal(s.T(), []string{"/a/.loop", "/b/.loop"}, dirList("/a/.loop/::rel:/b/./.loop"))
 }

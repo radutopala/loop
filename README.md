@@ -382,8 +382,8 @@ On startup, `loop serve` keeps the versioned container files (`Dockerfile`, `ent
 | `memory` | `{}` | Semantic memory search configuration (see below) |
 | `quality` | `{}` | Architectural quality engine: `max_files`, `exclude_paths`, per-rule overrides (see [docs/quality.md](docs/quality.md)) |
 | `permissions` | `{}` | RBAC permissions: owners and members (see below) |
-| `gates.agentgate` | `{enabled: true, default_decision: "allow", ...baseline rules}` | Seccomp security gate for agent containers. Enabled by default; ships with a baseline of 2 path / 2 command / 8 file rules (see [Configuration: Security Gate](docs/configuration.md#security-gate)) |
-| `gates.docker_proxy` | mirrors `gates.agentgate.enabled` | In-container Docker HTTP proxy. Agents talk to `/var/run/docker.sock` (tmpfs, owned by `loop dockerproxy`); that process reverse-proxies to the real daemon socket at `/var/run/docker.sock.host`. Ships with 15 method/path rules and 2 JSON body-inspection rules. Body rules support `deny` (hard 403, no prompt), `approve` (block + user prompt) and `allow` (silent pass-through) — same decision set as the HTTP rules |
+| `gates.agentgate` | `{enabled: true, default_decision: "allow", ...baseline rules}` | Seccomp security gate for agent containers. Enabled by default; ships with a baseline of 2 path / 2 command / 9 file rules (see [Configuration: Security Gate](docs/configuration.md#security-gate)) |
+| `gates.docker_proxy` | mirrors `gates.agentgate.enabled` | In-container Docker HTTP proxy. Agents talk to `/var/run/docker.sock` (tmpfs, owned by `loop dockerproxy`); that process reverse-proxies to the real daemon socket at `/var/run/docker.sock.host`. Containers the agent starts with the docker socket mounted get a second proxy socket, not the daemon's, and their bind mounts are confined to (and pinned under) the agent's own mounts. Ships with 3 method/path rules and 5 JSON body-inspection rules (see [Gates: Default policy](docs/gates.md#default-policy)). Body rules support `deny` (hard 403, no prompt), `approve` (block + user prompt) and `allow` (silent pass-through) — same decision set as the HTTP rules |
 | `gates.rate_limits` | `{pending: 30, per_minute: 60, total: 500}` | Shared approval rate limits across both gate layers |
 | `gates.audit` | `{retention_days: 30, verbose: false}` | Shared audit-log retention and verbosity for approval decisions. `verbose: false` (default) drops silent policy-allow and cache-hit allow entries so the trail focuses on every deny plus every user-clicked decision; set `verbose: true` when debugging rules or exporting a full trace |
 | `playground_share` | `{enabled: false}` | Public [playground](docs/playground.md#public-sharing) sharing over a cloudflared quick tunnel. Off by default; when enabled, a playground can be exposed at a unique `trycloudflare.com/p/<token>` URL (main API never exposed) |
@@ -482,7 +482,7 @@ The `mounts` array mounts host directories into all agent containers. Format: `"
 - Paths starting with `~/` are expanded to the user's home directory
 - Non-existent paths are silently skipped
 - Docker named volumes are supported (e.g. `"loop-cache:~/.cache"`) — Docker manages them automatically
-- The Docker socket's GID is auto-detected and added to the container process
+- With the Docker proxy off, the Docker socket's GID is auto-detected and added to the container process; with it on (the default), the agent reaches Docker through the proxy's socket and needs no group
 - Project directories (`workDir`) and MCP logs (`mcpDir`) are always mounted automatically at their actual paths
 
 ### Copied Files
@@ -525,8 +525,8 @@ Project config overrides specific global settings. Only these fields are allowed
 | `browser.enabled` | **Overrides** global value when set |
 | `browser.chrome_image` | **Overrides** global value when set |
 | `browser.host_cdp_port` | **Overrides** global value when set |
-| `gates.agentgate` | **Narrow merge** — project may disable the gate (not re-enable); rules prepend to global; rules with `decision: "allow"` are rejected at load time; `default_decision` is ignored |
-| `gates.docker_proxy` | Same narrow merge as `gates.agentgate`; rules prepend; `allow` rejected; `default_decision` ignored |
+| `gates.agentgate` | **Narrow merge** — project may disable the gate (not re-enable); rules prepend to global and may use any decision; `default_decision` is ignored |
+| `gates.docker_proxy` | Same narrow merge as `gates.agentgate`; rules prepend and may use any decision; `default_decision` ignored |
 | `gates.rate_limits` / `gates.audit` | Ignored at project scope — configured globally only |
 
 **Worktree threads** inherit their parent project's config unless the worktree directory has its own `.loop/config.json`. This means you only need to configure mounts, MCP servers, and model once in the parent project — all worktree threads will use the same settings automatically.

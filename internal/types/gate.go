@@ -55,11 +55,20 @@ type BodyRule struct {
 
 // JSONCheck is a single field-level assertion within a BodyRule.
 // Op is one of: "source_path_in", "equals", "contains_any", "starts_with_any",
-// "present", "empty_array".
+// "not_in", "capability_not_in", "present", "empty_array". "not_in" matches a
+// value outside Values; "capability_not_in" does the same after normalising
+// capability names the way the daemon does (case, optional CAP_ prefix).
 type JSONCheck struct {
 	Path   string   `json:"path"`
 	Op     string   `json:"op"`
 	Values []string `json:"values,omitempty"`
+	// Except lists path regexes a source_path_in check skips: a bind whose
+	// symlink-resolved source matches one doesn't fire the check.
+	Except []string `json:"except,omitempty"`
+	// ReadOnlyValues lists path regexes a source_path_not_in check counts
+	// as inside only for read-only binds: a read-write bind whose resolved
+	// source matches one (and none of Values) still fires.
+	ReadOnlyValues []string `json:"read_only_values,omitempty"`
 }
 
 // RateLimits caps prompt volume per gate-enabled container.

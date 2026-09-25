@@ -929,9 +929,11 @@ func buildSchema() *ConfigSchema {
 											Items: &SchemaProperty{
 												Type: "object",
 												Properties: map[string]*SchemaProperty{
-													"path":   {Type: "string", Title: "Path", Description: "JSON path (e.g. \"HostConfig.Binds[*]\")"},
-													"op":     {Type: "string", Title: "Op", Enum: []any{"source_path_in", "equals", "contains_any", "starts_with_any", "present", "empty_array"}},
-													"values": {Type: "array", Title: "Values", Items: &SchemaProperty{Type: "string"}},
+													"path":             {Type: "string", Title: "Path", Description: "JSON path (e.g. \"HostConfig.Binds[*]\")"},
+													"op":               {Type: "string", Title: "Op", Enum: []any{"source_path_in", "source_path_not_in", "equals", "contains_any", "starts_with_any", "not_in", "capability_not_in", "present", "empty_array"}},
+													"values":           {Type: "array", Title: "Values", Items: &SchemaProperty{Type: "string"}},
+													"except":           {Type: "array", Title: "Except", Description: "source_path_in only: path regexes whose resolved sources don't fire the check", Items: &SchemaProperty{Type: "string"}},
+													"read_only_values": {Type: "array", Title: "Read-only values", Description: "source_path_not_in only: path regexes that count as inside for read-only binds", Items: &SchemaProperty{Type: "string"}},
 												},
 											},
 										},

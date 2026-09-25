@@ -87,11 +87,10 @@ if [ "$LOOP_DOCKERPROXY_ENABLED" = "1" ] && [ -x /usr/local/bin/loop ]; then
     fi
 fi
 
-# Grant user access to the Docker socket if mounted. Whether it's the real
-# host socket (legacy / Linux direct-mount) or the in-container proxy socket
-# created above, this block adds the agent to the owning GID so the agent
-# can dial it.
-if [ -S /var/run/docker.sock ]; then
+# Grant user access to a directly mounted Docker socket by adding the agent
+# to its owning GID. Skipped when the proxy runs: its socket is 0666 and
+# owned by root, so the lookup would add the agent to the root group.
+if [ "$LOOP_DOCKERPROXY_ENABLED" != "1" ] && [ -S /var/run/docker.sock ]; then
     SOCK_GID=$(stat -c '%g' /var/run/docker.sock)
     GROUP_NAME=$(awk -F: -v gid="$SOCK_GID" '$3 == gid {print $1; exit}' /etc/group)
     if [ -z "$GROUP_NAME" ]; then

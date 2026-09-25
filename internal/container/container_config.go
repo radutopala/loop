@@ -914,10 +914,9 @@ type proxyPolicyJSON struct {
 // payload is derived from global config plus the channel's stable workDir,
 // so overwrites are idempotent.
 //
-// workDir/parentDirPath come from the per-channel mount setup — the workspace
-// bind-approval rule is injected here (not in the static defaults) because
-// the real workspace path is the host bind-mount path, not a fixed /work.
-func (r *DockerRunner) writeProxyPolicyFile(cfg *config.Config, channelID, workDir, parentDirPath string) (string, error) {
+// binds are the agent container's own mounts; the bind allowlist is injected
+// here (not in the static defaults) because it depends on them.
+func (r *DockerRunner) writeProxyPolicyFile(cfg *config.Config, channelID string, binds []string) (string, error) {
 	if !cfg.Gates.DockerProxy.Enabled {
 		return "", nil
 	}
@@ -928,10 +927,11 @@ func (r *DockerRunner) writeProxyPolicyFile(cfg *config.Config, channelID, workD
 	if err := r.sys.MkdirAll(dir, 0o750); err != nil {
 		return "", fmt.Errorf("creating policy dir: %w", err)
 	}
+	rw, ro := agentMountDirs(binds)
 	payload := proxyPolicyJSON{
 		DefaultDecision: cfg.Gates.DockerProxy.DefaultDecision,
 		HTTPRules:       cfg.Gates.DockerProxy.HTTPRules,
-		BodyRules:       injectWorkspaceBindRule(cfg.Gates.DockerProxy.BodyRules, workDir, parentDirPath),
+		BodyRules:       injectBindAllowlist(cfg.Gates.DockerProxy.BodyRules, rw, ro),
 	}
 	raw, _ := json.Marshal(payload)
 	path := filepath.Join(dir, "proxy-policy.json")
@@ -980,7 +980,7 @@ func (r *DockerRunner) writeGatePolicyFile(cfg *config.Config, channelID, workDi
 		DefaultDecision: cfg.Gates.Agentgate.DefaultDecision,
 		PathRules:       cfg.Gates.Agentgate.PathRules,
 		CommandRules:    injectWorkspaceRmRfRule(cfg.Gates.Agentgate.CommandRules, workDir, parentDirPath),
-		FileRules:       injectPolicySelfDenyRule(injectWorkspaceRule(cfg.Gates.Agentgate.FileRules, workDir, parentDirPath)),
+		FileRules:       injectPolicySelfDenyRule(injectProjectConfigRule(injectWorkspaceRule(cfg.Gates.Agentgate.FileRules, workDir, parentDirPath), workDir, parentDirPath)),
 	}
 	raw, _ := json.Marshal(payload)
 	path := filepath.Join(dir, "gate-policy.json")
@@ -1031,52 +1031,124 @@ func (r *DockerRunner) ensureGateAuditDir(channelID, dirPath string) (string, er
 	return dir, nil
 }
 
-// injectWorkspaceBindRule prepends an Allow body rule that fires when the
-// agent submits a HostConfig.Binds[*] entry whose source is the channel's real
-// workspace path (workDir, optionally also parentDirPath). The rule must come
-// before the static deny on POST /containers/create so workspaces under
-// generically-denied prefixes (e.g. /home/<user>/projects on Linux) aren't
-// blanket-denied — any mount inside the project's own tree is the agent's
-// own dev-loop work and is allowed directly without a prompt.
+// agentMountDirs returns the host paths the agent already has at the same
+// path inside its container, read-write (the workspace, the worktree parent,
+// extra dirs, the playground and same-path config mounts) and read-only
+// (~/.gitconfig, ~/.ssh and the like). A nested container binding one of
+// them the same way gets no access the agent lacks. Named volumes and the
+// docker socket are left out.
+func agentMountDirs(binds []string) (rw, ro []string) {
+	for _, b := range binds {
+		ms, err := parseMountSpec(b)
+		if err != nil || !strings.HasPrefix(ms.Host, "/") || ms.Host != ms.Container ||
+			ms.Host == "/var/run/docker.sock" || ms.Host == "/run/docker.sock" ||
+			slices.Contains(rw, ms.Host) || slices.Contains(ro, ms.Host) {
+			continue
+		}
+		if slices.Contains(strings.Split(ms.Mode, ","), "ro") {
+			ro = append(ro, ms.Host)
+		} else {
+			rw = append(rw, ms.Host)
+		}
+	}
+	return rw, ro
+}
+
+// bindRoots returns the directories among rw, the mounts the docker proxy
+// pins binds to (LOOP_DOCKERPROXY_BIND_ROOTS). A volume can't be bound to
+// a file ("not a directory" at start), and a file needs no pinning: it's a
+// mount point in the agent container, so the agent can't replace it with a
+// symlink (EBUSY). Paths that can't be stat'ed are kept.
+func (r *DockerRunner) bindRoots(rw []string) []string {
+	var roots []string
+	for _, d := range rw {
+		if fi, err := r.sys.Stat(d); err == nil && !fi.IsDir() {
+			continue
+		}
+		roots = append(roots, d)
+	}
+	return roots
+}
+
+// injectBindAllowlist confines the bind mounts of containers the agent
+// creates to the agent's own mounts (rw, and ro for read-only binds):
 //
-// On macOS Docker Desktop, agent-submitted bind sources may carry a
-// /host_mnt prefix (the daemon's view of host paths through the Linux VM),
-// so each pattern is emitted in both bare and /host_mnt-prefixed form.
+//   - deny rules keep firing on their source_path_in values, except that a
+//     value matching one of the mounts outright (`^/home(/|$)` against a
+//     workspace under /home on Linux) no longer fires for sources that
+//     resolve inside them — the value is split into its own check with an
+//     Except list, so narrower values (a user's `^<workspace>/secrets`)
+//     still fire;
+//   - an approve rule appended last asks for any host-path bind that
+//     resolves outside the rw mounts, unless it is a read-only bind inside
+//     the ro ones. On Docker Desktop the daemon resolves binds on the
+//     host's shared folders, so without it `-v /Users/<me>:/h` would hand a
+//     container the whole home directory.
 //
-// Returns rules unchanged when workDir is empty (ad-hoc one-shot runs).
-func injectWorkspaceBindRule(rules []types.BodyRule, workDir, parentDirPath string) []types.BodyRule {
-	if workDir == "" {
-		return rules
+// Deny rules are matched per request, first match wins, so an allow rule
+// can't express "these binds are fine" without also skipping the denies for
+// the request's other fields.
+func injectBindAllowlist(rules []types.BodyRule, rw, ro []string) []types.BodyRule {
+	patterns := func(dirs []string) []string {
+		var out []string
+		for _, d := range dirs {
+			out = append(out, "^"+regexp.QuoteMeta(d)+"($|/)")
+		}
+		return out
 	}
-	paths := []string{workDir}
-	if parentDirPath != "" && parentDirPath != workDir {
-		paths = append(paths, parentDirPath)
+	allowed, readOnly := patterns(rw), patterns(ro)
+	dirs := append(slices.Clone(rw), ro...)
+	exempt := append(slices.Clone(allowed), readOnly...)
+	out := make([]types.BodyRule, 0, len(rules)+1)
+	for _, r := range rules {
+		if r.Decision == types.DecisionDeny {
+			r.JSONChecks = exemptAgentMounts(r.JSONChecks, dirs, exempt)
+		}
+		out = append(out, r)
 	}
-	values := make([]string, 0, len(paths)*2)
-	for _, p := range paths {
-		quoted := regexp.QuoteMeta(p)
-		values = append(values,
-			"^"+quoted+"($|/)",
-			"^/host_mnt"+quoted+"($|/)",
-		)
+	notIn := func(path string) types.JSONCheck {
+		return types.JSONCheck{Path: path, Op: "source_path_not_in", Values: allowed, ReadOnlyValues: readOnly}
 	}
-	ws := types.BodyRule{
+	return append(out, types.BodyRule{
 		AppliesTo:    "POST ^/containers/create$",
 		ContentTypes: []string{"application/json"},
 		MaxBodyBytes: 1048576,
-		JSONChecks: []types.JSONCheck{
-			{
-				Path:   "HostConfig.Binds[*]",
-				Op:     "source_path_in",
-				Values: values,
-			},
-		},
-		Decision: types.DecisionAllow,
-		Message:  "workspace bind-mount fast-path",
+		// Whole mounts, so the check sees ReadOnly next to Source.
+		JSONChecks: []types.JSONCheck{notIn("HostConfig.Binds[*]"), notIn("HostConfig.Mounts[*]")},
+		Decision:   types.DecisionApprove,
+		Message:    "bind mount outside the agent's own mounts",
+	})
+}
+
+// exemptAgentMounts splits each source_path_in check into the values that
+// match one of dirs (which get allowed as Except) and the rest, which are
+// left as they were. Checks within a rule are ORed, so the split keeps the
+// rule's meaning for every other source.
+func exemptAgentMounts(checks []types.JSONCheck, dirs, allowed []string) []types.JSONCheck {
+	out := make([]types.JSONCheck, 0, len(checks))
+	for _, c := range checks {
+		var narrow, broad []string
+		for _, v := range c.Values {
+			if re, err := regexp.Compile(v); err == nil && slices.ContainsFunc(dirs, re.MatchString) {
+				broad = append(broad, v)
+			} else {
+				narrow = append(narrow, v)
+			}
+		}
+		if c.Op != "source_path_in" || len(broad) == 0 {
+			out = append(out, c)
+			continue
+		}
+		if len(narrow) > 0 {
+			n := c
+			n.Values = narrow
+			out = append(out, n)
+		}
+		b := c
+		b.Values = broad
+		b.Except = append(slices.Clone(c.Except), allowed...)
+		out = append(out, b)
 	}
-	out := make([]types.BodyRule, 0, len(rules)+1)
-	out = append(out, ws)
-	out = append(out, rules...)
 	return out
 }
 
@@ -1149,6 +1221,45 @@ func injectWorkspaceRule(rules []types.FileRule, workDir, parentDirPath string) 
 // gatePolicyMountDir is where runner.go bind-mounts the gate and docker-proxy
 // policy files (read-only) inside the agent container.
 const gatePolicyMountDir = "/etc/loop"
+
+// projectConfigDirs returns the .loop directories loop builds the channel's
+// containers from: the project config in each, and the child image's
+// Dockerfile under container/. Worktree threads also read the parent's.
+func projectConfigDirs(workDir, parentDirPath string) []string {
+	if workDir == "" {
+		return nil
+	}
+	dirs := []string{filepath.Join(workDir, ".loop")}
+	if parentDirPath != "" && parentDirPath != workDir {
+		dirs = append(dirs, filepath.Join(parentDirPath, ".loop"))
+	}
+	return dirs
+}
+
+// injectProjectConfigRule prepends an approve rule for changes to the
+// project config and the child image's Dockerfile. Both sit in the workspace
+// the agent may otherwise write freely, and the next container is built from
+// them: mounts, copy_files, extra_dirs, gates, container_image. The .loop
+// directory itself is covered too, so it can't be swapped for another by
+// rename. Prepended after the merge like injectPolicySelfDenyRule, so no
+// config layer — the project's included — can precede it.
+func injectProjectConfigRule(rules []types.FileRule, workDir, parentDirPath string) []types.FileRule {
+	dirs := projectConfigDirs(workDir, parentDirPath)
+	if len(dirs) == 0 {
+		return rules
+	}
+	var paths []string
+	for _, d := range dirs {
+		paths = append(paths, d, d+"/config.json", d+"/container", d+"/container/**")
+	}
+	rule := types.FileRule{
+		Paths:      paths,
+		Operations: []string{"write", "create", "delete", "chmod", "chown", "link"},
+		Decision:   types.DecisionApprove,
+		Message:    "project config: loop builds the next container from .loop/config.json and .loop/container/",
+	}
+	return append([]types.FileRule{rule}, rules...)
+}
 
 // injectPolicySelfDenyRule pins a Deny on the gate's own policy directory at
 // the head of the file rules, so the gate cannot be talked out of protecting

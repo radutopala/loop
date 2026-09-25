@@ -17,6 +17,7 @@ import (
 	"github.com/docker/docker/api/types/filters"
 	"github.com/docker/docker/api/types/image"
 	"github.com/docker/docker/api/types/network"
+	"github.com/docker/docker/api/types/volume"
 	"github.com/docker/docker/pkg/stdcopy"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 	"github.com/stretchr/testify/mock"
@@ -48,6 +49,16 @@ func (m *mockDockerAPI) ContainerWait(ctx context.Context, container string, con
 
 func (m *mockDockerAPI) ContainerRemove(ctx context.Context, container string, options containertypes.RemoveOptions) error {
 	args := m.Called(ctx, container, options)
+	return args.Error(0)
+}
+
+func (m *mockDockerAPI) VolumeList(ctx context.Context, options volume.ListOptions) (volume.ListResponse, error) {
+	args := m.Called(ctx, options)
+	return args.Get(0).(volume.ListResponse), args.Error(1)
+}
+
+func (m *mockDockerAPI) VolumeRemove(ctx context.Context, volumeID string, force bool) error {
+	args := m.Called(ctx, volumeID, force)
 	return args.Error(0)
 }
 
@@ -324,6 +335,21 @@ func (s *ClientSuite) TestContainerCreateWithLabels() {
 	id, err := s.client.ContainerCreate(ctx, cfg, "test")
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), "labeled-123", id)
+	s.api.AssertExpectations(s.T())
+}
+
+func (s *ClientSuite) TestContainerCreateWithVolumes() {
+	ctx := context.Background()
+	cfg := &ContainerConfig{Image: "img:latest", Volumes: []string{"/run/a", "/run/b"}}
+
+	s.api.On("ContainerCreate", ctx, mock.MatchedBy(func(c *containertypes.Config) bool {
+		return len(c.Volumes) == 2 && c.Volumes["/run/a"] == struct{}{} && c.Volumes["/run/b"] == struct{}{}
+	}), mock.Anything, (*network.NetworkingConfig)(nil), (*ocispec.Platform)(nil), "test").
+		Return(containertypes.CreateResponse{ID: "vol-123"}, nil)
+
+	id, err := s.client.ContainerCreate(ctx, cfg, "test")
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "vol-123", id)
 	s.api.AssertExpectations(s.T())
 }
 
@@ -619,12 +645,36 @@ func (s *ClientSuite) TestContainerStopError() {
 
 func (s *ClientSuite) TestContainerRemove() {
 	ctx := context.Background()
+	unused := volume.ListOptions{Filters: filters.NewArgs(
+		filters.Arg("label", "app=loop-bind"),
+		filters.Arg("dangling", "true"),
+	)}
+	cases := []struct {
+		name    string
+		listErr error
+		volumes []string
+	}{
+		{name: "prunes unused bind volumes", volumes: []string{"loop-bind-a", "loop-bind-b"}},
+		{name: "none to prune"},
+		{name: "list fails", listErr: errors.New("list failed")},
+	}
+	for _, tc := range cases {
+		s.Run(tc.name, func() {
+			s.SetupTest()
+			s.api.On("ContainerRemove", ctx, "cid-1", containertypes.RemoveOptions{Force: true, RemoveVolumes: true}).Return(nil)
+			var vols []*volume.Volume
+			for _, n := range tc.volumes {
+				vols = append(vols, &volume.Volume{Name: n})
+				// A volume a container started using meanwhile is refused;
+				// removal carries on.
+				s.api.On("VolumeRemove", ctx, n, false).Return(errors.New("volume is in use"))
+			}
+			s.api.On("VolumeList", ctx, unused).Return(volume.ListResponse{Volumes: vols}, tc.listErr)
 
-	s.api.On("ContainerRemove", ctx, "cid-1", containertypes.RemoveOptions{Force: true, RemoveVolumes: true}).Return(nil)
-
-	err := s.client.ContainerRemove(ctx, "cid-1")
-	require.NoError(s.T(), err)
-	s.api.AssertExpectations(s.T())
+			require.NoError(s.T(), s.client.ContainerRemove(ctx, "cid-1"))
+			s.api.AssertExpectations(s.T())
+		})
+	}
 }
 
 func (s *ClientSuite) TestContainerRemoveError() {

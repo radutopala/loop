@@ -20,10 +20,12 @@ import (
 	"github.com/docker/docker/api/types/filters"
 	"github.com/docker/docker/api/types/image"
 	"github.com/docker/docker/api/types/network"
+	"github.com/docker/docker/api/types/volume"
 	"github.com/docker/docker/client"
 	"github.com/docker/docker/pkg/stdcopy"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 
+	"github.com/radutopala/loop/internal/dockerproxy"
 	"github.com/radutopala/loop/internal/osutil"
 )
 
@@ -45,6 +47,8 @@ type dockerAPI interface {
 	CopyToContainer(ctx context.Context, containerID, dstPath string, content io.Reader, options containertypes.CopyToContainerOptions) error
 	NetworkCreate(ctx context.Context, name string, options network.CreateOptions) (network.CreateResponse, error)
 	NetworkRemove(ctx context.Context, networkID string) error
+	VolumeList(ctx context.Context, options volume.ListOptions) (volume.ListResponse, error)
+	VolumeRemove(ctx context.Context, volumeID string, force bool) error
 	BuildCachePrune(ctx context.Context, opts build.CachePruneOptions) (*build.CachePruneReport, error)
 	ImagesPrune(ctx context.Context, pruneFilters filters.Args) (image.PruneReport, error)
 	Events(ctx context.Context, options events.ListOptions) (<-chan events.Message, <-chan error)
@@ -135,6 +139,12 @@ func (c *Client) ContainerCreate(ctx context.Context, cfg *ContainerConfig, name
 		Env:          cfg.Env,
 		Cmd:          cfg.Cmd,
 		WorkingDir:   cfg.WorkingDir,
+	}
+	if len(cfg.Volumes) > 0 {
+		containerCfg.Volumes = make(map[string]struct{}, len(cfg.Volumes))
+		for _, v := range cfg.Volumes {
+			containerCfg.Volumes[v] = struct{}{}
+		}
 	}
 
 	// Init=true gives every container a tiny tini PID 1 that reaps orphaned
@@ -335,8 +345,34 @@ func (c *Client) ContainerWait(ctx context.Context, containerID string) (<-chan 
 // touched — Docker's RemoveVolumes only drops volumes the container itself
 // owned implicitly. Without this flag every agent container leaks ~5
 // anonymous volumes that accumulate until the disk fills up.
+//
+// It then drops the docker proxy's pinned-bind volumes no container uses
+// any more (pruneBindVolumes).
 func (c *Client) ContainerRemove(ctx context.Context, containerID string) error {
-	return c.api.ContainerRemove(ctx, containerID, containertypes.RemoveOptions{Force: true, RemoveVolumes: true})
+	if err := c.api.ContainerRemove(ctx, containerID, containertypes.RemoveOptions{Force: true, RemoveVolumes: true}); err != nil {
+		return err
+	}
+	c.pruneBindVolumes(ctx)
+	return nil
+}
+
+// pruneBindVolumes removes the named volumes the docker proxy binds nested
+// containers' mounts through (label app=dockerproxy.BindVolumeLabel) that
+// no container references. Each only points at a host directory, and the
+// proxy recreates it on next use. Best effort: one a container starts
+// using in the meantime is refused by the daemon, and that's fine.
+func (c *Client) pruneBindVolumes(ctx context.Context) {
+	f := filters.NewArgs(
+		filters.Arg("label", "app="+dockerproxy.BindVolumeLabel),
+		filters.Arg("dangling", "true"),
+	)
+	resp, err := c.api.VolumeList(ctx, volume.ListOptions{Filters: f})
+	if err != nil {
+		return
+	}
+	for _, v := range resp.Volumes {
+		_ = c.api.VolumeRemove(ctx, v.Name, false)
+	}
 }
 
 // ContainerStop stops the specified container with a 10-second grace period

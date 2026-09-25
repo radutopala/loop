@@ -71,7 +71,7 @@ The desktop app polls `GET /api/health` for ~15 seconds after launching the daem
 The seccomp gate (`gates.agentgate`) is **enabled by default** and runs inside every agent container. Most operations are allowed silently; credential-adjacent writes and container-escape shapes either deny or prompt.
 
 - **A prompt is waiting somewhere you're not looking.** Approval cards render in the chat for chat-initiated work, and as an overlay on the specific terminal pane for terminal-initiated work. The blocked syscall waits until you resolve the card — an agent that seems "stuck" often has a pending approval on another surface. The Audit panel lists recent gate decisions.
-- **A legitimate operation keeps getting blocked.** Decisions come from first-match-wins rules; the fall-through is `gates.agentgate.default_decision` (`"allow"` by default). Add a project-level rule for the specific path/command rather than loosening globals — note project rules can only tighten policy (project `decision: "allow"` rules are rejected at load time).
+- **A legitimate operation keeps getting blocked.** Decisions come from first-match-wins rules; the fall-through is `gates.agentgate.default_decision` (`"allow"` by default). Add a project-level rule for the specific path/command rather than loosening globals — project rules are prepended, so a narrow `allow` there wins over a broader global rule.
 - **Kill switch.** Set `gates.agentgate.enabled: false` globally (or per-project to disable for one project; a project cannot re-enable a globally disabled gate). Disabling the gate also disables the Docker proxy. Containers created before a config change keep their old policy — recreate them to pick up new rules.
 
 ## Docker proxy blocks an agent's Docker command
@@ -79,7 +79,22 @@ The seccomp gate (`gates.agentgate`) is **enabled by default** and runs inside e
 When the gate is enabled, agents talk to a filtered Docker socket (`loop dockerproxy`), not the real daemon. Denied calls return `403` inside the container; `approve`-rule matches block until you resolve the approval card.
 
 - Check the Audit panel to see which rule matched.
-- Add or adjust `gates.docker_proxy.http_rules` for the method/path being blocked; like the gate, project-level rules can only tighten policy, and `gates.docker_proxy.enabled` can be turned off per-project but not re-enabled past a global off.
+- Add or adjust `gates.docker_proxy.http_rules` or `body_rules` for what's being blocked. Project rules are prepended and may use any decision; `gates.docker_proxy.enabled` can be turned off per-project but not re-enabled past a global off.
+
+Messages you may see from `docker` (or a library) inside the agent, and what to do:
+
+| Message | Cause | Fix |
+|---|---|---|
+| `bind source <path>: … (sources are checked before the container is created, so they must exist)` (400) | The proxy resolves every bind source before the create, so `-v ./dir:/x` no longer creates a missing `dir` | Create the directory first (`mkdir -p dir`) |
+| `binds under the agent's mounts need Docker API >= 1.45` or `docker socket mounts need Docker API >= 1.45` (400) | The client pins an older API (`DOCKER_API_VERSION`, an old SDK); pinned binds and the nested socket use `VolumeOptions.Subpath` | Unset the pin or raise it to 1.45+ |
+| `container-escape risk: bind-mount or flag rejected` (403) | A baseline deny matched: a system-path bind, `--privileged`, a host namespace, a `--cap-add` outside the allowlist, a non-runc runtime, … | Check the Audit panel for the field; see [Gates: Default policy](gates.md#default-policy). Add a project `body_rules` allow only if you accept the risk |
+| Approval card: `bind mount outside the agent's own mounts` | A host path the agent doesn't mount read-write (or a read-write bind of one it mounts read-only), e.g. `/tmp`, a sibling project | Approve it, or bind a path inside the workspace instead |
+| `ambiguous request body: keys differ only in case` (400) | The body has e.g. both `HostConfig` and `hostconfig` | Fix the client; the daemon would keep one of them depending on key order |
+| `container create body too large` (413) | Create bodies over 1 MiB can't be inspected | Move large env/labels into files |
+| `volume names starting with loop-bind- are reserved for the docker proxy` (403) | A request mounts or creates a `loop-bind-*` volume by name | Use a different volume name |
+| `docker socket mounts are unavailable: the nested proxy socket is not configured` (403) | The proxy couldn't set up its second socket at startup | Recreate the agent container; creates without a socket mount still work |
+
+Docker Desktop's volume list shows `loop-bind-<hash>` volumes: those back pinned binds of containers the agent started (see [Binds are pinned to the agent's mounts](gates.md#binds-are-pinned-to-the-agents-mounts)). Loop removes the unused ones whenever it removes a container; `docker volume prune -a --filter label=app=loop-bind` removes them by hand (`-a`, since they are named volumes).
 
 ## Agent fails with "No conversation found with session ID"
 

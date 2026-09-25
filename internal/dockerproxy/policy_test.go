@@ -432,3 +432,37 @@ func (s *PolicySuite) TestCompileRejectsDoubleDot() {
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "empty field")
 }
+
+func (s *PolicySuite) TestCompileSourcePathErrors() {
+	cases := []struct {
+		name  string
+		check types.JSONCheck
+		want  string
+	}{
+		{"bad value regex", types.JSONCheck{Path: "a", Op: "source_path_not_in", Values: []string{"("}}, "values[0] regex"},
+		{"bad except regex", types.JSONCheck{Path: "a", Op: "source_path_in", Values: []string{"^/"}, Except: []string{"("}}, "except[0] regex"},
+		{"except on another op", types.JSONCheck{Path: "a", Op: "source_path_not_in", Except: []string{"^/"}}, "except is only valid"},
+		{"bad read-only regex", types.JSONCheck{Path: "a", Op: "source_path_not_in", ReadOnlyValues: []string{"("}}, "read_only_values[0] regex"},
+		{"read-only values on another op", types.JSONCheck{Path: "a", Op: "source_path_in", ReadOnlyValues: []string{"^/"}}, "read_only_values is only valid"},
+	}
+	for _, tc := range cases {
+		s.Run(tc.name, func() {
+			_, err := CompilePolicy(types.DecisionAllow, nil, []types.BodyRule{{
+				AppliesTo: "POST ^/$", JSONChecks: []types.JSONCheck{tc.check}, Decision: types.DecisionDeny,
+			}})
+			require.ErrorContains(s.T(), err, tc.want)
+		})
+	}
+}
+
+func (s *PolicySuite) TestSetSymlinkResolverStampsNotIn() {
+	p, err := CompilePolicy(types.DecisionAllow, nil, []types.BodyRule{{
+		AppliesTo:  "POST ^/containers/create$",
+		JSONChecks: []types.JSONCheck{{Path: "Binds[*]", Op: "source_path_not_in", Values: []string{`^/ws($|/)`}}},
+		Decision:   types.DecisionApprove,
+	}})
+	require.NoError(s.T(), err)
+	p.SetSymlinkResolver(func(string) (string, error) { return "/ws/x", nil })
+	got := p.CheckBody("POST", "/containers/create", "", map[string]any{"Binds": []any{"/link:/w"}})
+	require.False(s.T(), got.Fired)
+}
