@@ -60,6 +60,8 @@ type channelResponse struct {
 	ReviewEnabled    bool   `json:"review_enabled"`
 	ModelOverride    string `json:"model_override,omitempty"`
 	EffortOverride   string `json:"effort_override,omitempty"`
+	// TaskID is the scheduled task whose thread this is, for a task's thread.
+	TaskID int64 `json:"task_id,omitempty"`
 	// LastActivityAt is when the channel's newest message was written; the
 	// sidebar's Recent section sorts by it. Absent for a channel with none.
 	LastActivityAt *time.Time `json:"last_activity_at,omitempty"`
@@ -234,6 +236,7 @@ func (s *Server) handleSearchChannels(w http.ResponseWriter, r *http.Request) {
 			ReviewEnabled:    reviewEnabled,
 			ModelOverride:    ch.ModelOverride,
 			EffortOverride:   ch.EffortOverride,
+			TaskID:           ch.TaskID,
 			LastActivityAt:   lastActivity,
 		})
 	}

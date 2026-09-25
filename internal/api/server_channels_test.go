@@ -920,6 +920,25 @@ func (s *ServerSuite) TestSearchChannelsAgentOverrides() {
 	require.NotContains(s.T(), resp[1], "effort_override")
 }
 
+// TestSearchChannelsTaskID checks a task's thread lists the task that created
+// it, and other channels leave the field out.
+func (s *ServerSuite) TestSearchChannelsTaskID() {
+	channels := []*db.Channel{
+		{ChannelID: "task-thread", ParentID: "p", Platform: types.PlatformLocal, TaskID: 7},
+		{ChannelID: "user-thread", ParentID: "p", Platform: types.PlatformLocal},
+	}
+	s.store.On("ListChannels", mock.Anything).Return(channels, nil)
+	s.store.On("ChannelActivity", mock.Anything).Return(map[string]time.Time{}, nil)
+
+	rec := s.testRequest("GET", "/api/channels", "")
+	require.Equal(s.T(), http.StatusOK, rec.Code)
+	var resp []map[string]any
+	require.NoError(s.T(), json.NewDecoder(rec.Body).Decode(&resp))
+	require.Len(s.T(), resp, 2)
+	require.InDelta(s.T(), 7, resp[0]["task_id"], 0)
+	require.NotContains(s.T(), resp[1], "task_id")
+}
+
 // TestSearchChannelsGitDetails checks a worktree thread lists its commit's
 // subject and how far it is from its base branch, computed inline when the
 // poller hasn't covered its dir.

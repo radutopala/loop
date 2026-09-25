@@ -84,6 +84,8 @@ function NewMenu({ onNewProject, onOpenDirectory, onClose }: { onNewProject: () 
 interface SidebarHeaderProps {
   searchQuery: string;
   onSearchQueryChange: (query: string) => void;
+  hideTasks: boolean;
+  onToggleHideTasks: () => void;
   selectMode: boolean;
   selectedCount: number;
   onBatchDelete: () => void;
@@ -104,6 +106,8 @@ interface SidebarHeaderProps {
 export function SidebarHeader({
   searchQuery,
   onSearchQueryChange,
+  hideTasks,
+  onToggleHideTasks,
   selectMode,
   selectedCount,
   onBatchDelete,
@@ -267,8 +271,8 @@ export function SidebarHeader({
           onClose={() => setNewMenuOpen(false)}
         />
       )}
-      <div style={{ padding: "6px 12px 4px", flexShrink: 0 }}>
-        <div style={{ position: "relative" }}>
+      <div style={{ padding: "6px 12px 4px", flexShrink: 0, display: "flex", alignItems: "center", gap: 4 }}>
+        <div style={{ position: "relative", flex: 1, minWidth: 0 }}>
           <svg
             width="13"
             height="13"
@@ -303,6 +307,28 @@ export function SidebarHeader({
             }}
           />
         </div>
+        <button
+          data-testid="sidebar-hide-tasks"
+          onClick={onToggleHideTasks}
+          aria-pressed={hideTasks}
+          title={hideTasks ? "Show task threads" : "Hide task threads"}
+          style={{
+            ...sidebarBtnStyle,
+            flexShrink: 0,
+            padding: 4,
+            borderRadius: 4,
+            display: "flex",
+            alignItems: "center",
+            color: hideTasks ? colors.active : colors.textDim,
+            background: hideTasks ? colors.hoverBg : "none",
+          }}
+        >
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <circle cx="12" cy="12" r="10" />
+            <polyline points="12 6 12 12 16 14" />
+            {hideTasks && <line x1="4" y1="4" x2="20" y2="20" />}
+          </svg>
+        </button>
       </div>
       {creatingChannel && (
         <div style={{ padding: "4px 12px 8px" }}>

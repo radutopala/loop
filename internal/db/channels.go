@@ -18,8 +18,8 @@ func (s *SQLiteStore) UpsertChannel(ctx context.Context, ch *Channel) error {
 		permStr = string(data)
 	}
 	_, err := s.db.ExecContext(ctx,
-		`INSERT INTO channels (channel_id, guild_id, name, dir_path, parent_id, platform, session_id, permissions, active, worktree, base_branch, locked, updated_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		`INSERT INTO channels (channel_id, guild_id, name, dir_path, parent_id, platform, session_id, permissions, active, worktree, base_branch, locked, task_id, updated_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		 ON CONFLICT(channel_id) DO UPDATE SET
 		   guild_id = excluded.guild_id,
 		   name = excluded.name,
@@ -31,15 +31,16 @@ func (s *SQLiteStore) UpsertChannel(ctx context.Context, ch *Channel) error {
 		   active = excluded.active,
 		   worktree = excluded.worktree,
 		   base_branch = CASE WHEN excluded.base_branch != '' THEN excluded.base_branch ELSE channels.base_branch END,
+		   task_id = CASE WHEN excluded.task_id != 0 THEN excluded.task_id ELSE channels.task_id END,
 		   updated_at = excluded.updated_at`,
-		ch.ChannelID, ch.GuildID, ch.Name, ch.DirPath, ch.ParentID, ch.Platform, ch.SessionID, permStr, boolToInt(ch.Active), boolToInt(ch.Worktree), ch.BaseBranch, boolToInt(ch.Locked), s.nowFunc(),
+		ch.ChannelID, ch.GuildID, ch.Name, ch.DirPath, ch.ParentID, ch.Platform, ch.SessionID, permStr, boolToInt(ch.Active), boolToInt(ch.Worktree), ch.BaseBranch, boolToInt(ch.Locked), ch.TaskID, s.nowFunc(),
 	)
 	return err
 }
 
 func (s *SQLiteStore) GetChannel(ctx context.Context, channelID string) (*Channel, error) {
 	row := s.db.QueryRowContext(ctx,
-		`SELECT id, channel_id, guild_id, name, dir_path, parent_id, platform, active, session_id, permissions, worktree, base_branch, locked, model_override, effort_override, fork_pending, created_at, updated_at FROM channels WHERE channel_id = ?`,
+		`SELECT id, channel_id, guild_id, name, dir_path, parent_id, platform, active, session_id, permissions, worktree, base_branch, locked, model_override, effort_override, fork_pending, task_id, created_at, updated_at FROM channels WHERE channel_id = ?`,
 		channelID,
 	)
 	ch, err := scanChannel(row)
@@ -51,7 +52,7 @@ func (s *SQLiteStore) GetChannel(ctx context.Context, channelID string) (*Channe
 
 func (s *SQLiteStore) GetChannelByDirPath(ctx context.Context, dirPath string, platform types.Platform) (*Channel, error) {
 	row := s.db.QueryRowContext(ctx,
-		`SELECT id, channel_id, guild_id, name, dir_path, parent_id, platform, active, session_id, permissions, worktree, base_branch, locked, model_override, effort_override, fork_pending, created_at, updated_at
+		`SELECT id, channel_id, guild_id, name, dir_path, parent_id, platform, active, session_id, permissions, worktree, base_branch, locked, model_override, effort_override, fork_pending, task_id, created_at, updated_at
 		 FROM channels WHERE dir_path = ? AND platform = ? AND parent_id = ''`,
 		dirPath, platform,
 	)
@@ -64,7 +65,7 @@ func (s *SQLiteStore) GetChannelByDirPath(ctx context.Context, dirPath string, p
 
 func (s *SQLiteStore) GetChannelsByDirPath(ctx context.Context, dirPath string) ([]*Channel, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, channel_id, guild_id, name, dir_path, parent_id, platform, active, session_id, permissions, worktree, base_branch, locked, model_override, effort_override, fork_pending, created_at, updated_at
+		`SELECT id, channel_id, guild_id, name, dir_path, parent_id, platform, active, session_id, permissions, worktree, base_branch, locked, model_override, effort_override, fork_pending, task_id, created_at, updated_at
 		 FROM channels WHERE dir_path = ? AND parent_id = ''`,
 		dirPath,
 	)
@@ -242,7 +243,7 @@ func (s *SQLiteStore) ChannelActivity(ctx context.Context) (map[string]time.Time
 
 func (s *SQLiteStore) ListChannels(ctx context.Context) ([]*Channel, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, channel_id, guild_id, name, dir_path, parent_id, platform, active, session_id, permissions, worktree, base_branch, locked, model_override, effort_override, fork_pending, created_at, updated_at
+		`SELECT id, channel_id, guild_id, name, dir_path, parent_id, platform, active, session_id, permissions, worktree, base_branch, locked, model_override, effort_override, fork_pending, task_id, created_at, updated_at
 		 FROM channels ORDER BY name ASC`)
 	if err != nil {
 		return nil, err

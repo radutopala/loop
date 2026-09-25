@@ -13,9 +13,9 @@ The sidebar is a vertical column on the left side of the app with the following 
 
 1. **Drag region** (38px) -- macOS window dragging area with a collapse button at the top-right
 2. **Header bar** -- "CHANNELS" label with Select and "+ new" buttons
-3. **Search box** -- filter channels and threads
+3. **Search box** -- filter channels and threads, with the task-thread toggle beside it
 4. **New channel input** -- inline text field (shown when creating)
-5. **Active** / **Recent** -- sessions from anywhere in the tree (see [Active & Recent Sessions](#active--recent-sessions))
+5. **Recent** -- sessions from anywhere in the tree, active ones first (see [Recent Sessions](#recent-sessions))
 6. **All** -- the DM channel, pinned at top, then the project channels as a sortable list with collapsible threads
 7. **Spacer** -- pushes footer to bottom
 8. **Footer** -- update button, settings, README
@@ -58,27 +58,26 @@ Channel order is stored in `localStorage` under the key `loop-channel-order` as 
 
 ---
 
-## Active & Recent Sessions
+## Recent Sessions
 
-Above the tree, two sections list sessions (channels and threads alike) wherever they sit in it, so a running agent or one waiting on you is visible without expanding its parents.
+Above the tree, the Recent section lists sessions (channels and threads alike) wherever they sit in it, so a running agent or one waiting on you is visible without expanding its parents.
 
 | Section | Holds | Order |
 |---------|-------|-------|
-| **Active** | Sessions waiting on you (an approval, a question, a plan, a ready review), then those with an agent running. A container that's only idling doesn't count. | Waiting first, then running |
-| **Recent** | The rest with activity in the last 24 hours | Newest first |
+| **Recent** | Sessions with activity in the last 24 hours, including the active ones: those waiting on you (an approval, a question, a plan, a ready review) or with an agent running. A container that's only idling doesn't count as active. | Newest first; an active session counts as active now, so the active ones come first |
 | **All** | The channel tree, unchanged | As described in [Channel Ordering](#channel-ordering) |
 
-Activity is the time of the channel's newest message (`last_activity_at` from [`GET /api/channels`](api.md#get-apichannels)). A session that just left Active counts as active at that moment, so it moves straight into Recent before the next channel refresh.
+Activity is the time of the channel's newest message (`last_activity_at` from [`GET /api/channels`](api.md#get-apichannels)). A session that just stopped being active keeps that moment as its activity, so it doesn't drop down the list before the next channel refresh brings its newest message's time.
 
 Each row shows:
 - a warning dot when it waits on you, or a spinner while its agent runs;
 - its name (task threads lose their marker prefix), in bold when unread, and below it the names of its parents, e.g. `loop-dc6a › updates`;
 - its uncommitted diff (`+N -N`), the unread dot and its status pills;
-- in Recent, how long ago it was active (`now`, `12m`, `3h`, `2d`), unless a pill is shown.
+- how long ago it was active (`now`, `12m`, `3h`, `2d`), unless it's active now or a pill is shown.
 
 Clicking a row opens the session; right-clicking opens the same context menu as the tree, and hovering shows the row's details popup.
 
-Recent shows 5 rows, with a "show N more" toggle for the rest. Each section header collapses its section; the state is stored in `localStorage` under `loop-sidebar-sections`. An empty section isn't shown, and when both Active and Recent are empty the All header isn't either. The search box filters Active and Recent by name or parent names, and both are hidden in selection mode.
+Recent shows 10 rows, or every active session if there are more. Each "show 10 more" adds up to ten rows, and "show less" goes back to the first ten. The Recent and All headers collapse their sections; the state is stored in `localStorage` under `loop-sidebar-sections`. An empty Recent isn't shown, and then neither is the All header. The search box filters Recent by name or parent names, and it's hidden in selection mode.
 
 ---
 
@@ -99,6 +98,10 @@ The search box sits below the header and provides real-time case-insensitive fil
 - Search icon (magnifying glass) positioned inside the input field (left-aligned)
 - Input: full width, `colors.bg` background, 12px font, 4px border-radius
 - Placeholder: "Search..."
+
+### Hiding task threads
+
+The clock button beside the search box hides task threads from Recent and All; click it again to show them. A task thread is one a scheduled task created for its output (the rows with the clock icon): the backend records the task's id on the thread when it creates it, and `/api/channels` returns it as `task_id`, so a renamed task thread is still hidden, while a channel or thread that only hosts tasks is not. Threads created before the id was recorded get it from their ``task #N (`schedule`) <prompt>`` name when the database is migrated. A hidden thread's sub-threads are hidden in the tree with it. A task thread that's running or waiting on you stays visible. The choice is stored in `localStorage` under `loop-sidebar-hide-tasks`.
 
 ---
 

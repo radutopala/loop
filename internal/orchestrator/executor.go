@@ -365,6 +365,7 @@ func (e *TaskExecutor) ExecuteTask(ctx context.Context, task *db.ScheduledTask) 
 					Permissions: channel.Permissions,
 					Active:      true,
 					Worktree:    worktreeCreated,
+					TaskID:      task.ID,
 				}
 				if task.Type != db.TaskTypeOnce {
 					_ = e.store.LinkTaskThread(ctx, threadChannel, task.ID, threadID)

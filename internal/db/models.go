@@ -31,9 +31,13 @@ type Channel struct {
 	// ForkPending marks a fork-created thread whose session id is borrowed
 	// from its source thread; the first message must --fork-session. Cleared
 	// on the next session id update.
-	ForkPending bool      `json:"fork_pending"`
-	CreatedAt   time.Time `json:"created_at"`
-	UpdatedAt   time.Time `json:"updated_at"`
+	ForkPending bool `json:"fork_pending"`
+	// TaskID is the scheduled task whose thread this is; 0 for any other
+	// channel or thread. Set when a task creates its thread and kept when the
+	// thread is renamed or the task deleted.
+	TaskID    int64     `json:"task_id"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
 }
 
 // StaleRunningMessage describes a (channel_id, msg_id) pair returned by

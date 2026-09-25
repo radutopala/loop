@@ -118,7 +118,7 @@ func (s *TaskExecutorSuite) TestExecuteBashTaskOnceDoesNotLinkThread() {
 	s.store.On("GetChannel", mock.Anything, "ch1").Return(localChannel("/work"), nil)
 	s.bot.On("CreateSimpleThread", mock.Anything, "ch1", mock.Anything, "").Return("th-once", nil)
 	s.store.On("UpsertChannel", mock.Anything, mock.MatchedBy(func(ch *db.Channel) bool {
-		return ch.ChannelID == "th-once"
+		return ch.ChannelID == "th-once" && ch.TaskID == 10
 	})).Return(nil)
 	s.store.On("GetChannel", mock.Anything, "th-once").Return(&db.Channel{ID: 9, ChannelID: "th-once"}, nil).Maybe()
 	br.On("RunBash", mock.Anything, "true", "ch1", "/work", "").Return("", nil)

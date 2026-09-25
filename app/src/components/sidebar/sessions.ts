@@ -1,15 +1,21 @@
 import type { Channel } from "../../types";
 
-// The sidebar's Active and Recent sections list sessions (channels and
-// threads alike) above the channel tree, so a running agent or one waiting
-// on the user is visible however deep it sits in the tree.
+// The sidebar's Recent section lists sessions (channels and threads alike)
+// above the channel tree, newest first, so a running agent or one waiting on
+// the user is visible however deep it sits in the tree: an active session
+// counts as active now, so it tops the list.
 
 /** How far back Recent looks. */
 export const RECENT_WINDOW_MS = 24 * 60 * 60 * 1000;
-/** Recent rows shown before "show more". */
-export const RECENT_LIMIT = 5;
+/** Recent rows shown at first, and added by each "show more". */
+export const RECENT_LIMIT = 10;
 
 const TASK_PREFIX = /^(\[ephemeral] )?(🧵 |⏱ )?/;
+
+/** Whether a thread is one a scheduled task created for its output. */
+export function isTaskThread(channel: Channel): boolean {
+  return !!channel.task_id;
+}
 
 /** A session's name as the sidebar shows it: task threads lose their marker prefix. */
 export function sessionName(channel: Channel): string {
@@ -52,12 +58,11 @@ export function activeSessions(channels: Channel[], isRunning: (id: string) => b
 }
 
 /**
- * The Recent section: sessions active within the window, newest first,
- * leaving out those already in Active.
+ * The Recent section: sessions active within the window, newest first.
  */
-export function recentSessions(channels: Channel[], exclude: Set<string>, lastActivity: (channel: Channel) => number | undefined, now: number, windowMs = RECENT_WINDOW_MS): Channel[] {
+export function recentSessions(channels: Channel[], lastActivity: (channel: Channel) => number | undefined, now: number, windowMs = RECENT_WINDOW_MS): Channel[] {
   return channels
-    .filter((c) => listed(c) && !exclude.has(c.id))
+    .filter(listed)
     .map((c) => ({ c, at: lastActivity(c) ?? 0 }))
     .filter(({ at }) => at > 0 && now - at <= windowMs)
     .sort((a, b) => b.at - a.at)

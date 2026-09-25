@@ -70,7 +70,7 @@ func (s *TaskExecutorSuite) TestStreamingThreadBroadcastsToThread() {
 	s.store.On("GetChannel", mock.Anything, mock.Anything).Return(&db.Channel{ID: 5, ChannelID: "ch20"}, nil)
 	s.store.On("GetScheduledTask", s.ctx, int64(20)).Return(&db.ScheduledTask{ID: 20, Type: db.TaskTypeCron}, nil)
 	s.store.On("LinkTaskThread", s.ctx, mock.MatchedBy(func(ch *db.Channel) bool {
-		return ch.ChannelID == "thread-20" && ch.ParentID == "ch20"
+		return ch.ChannelID == "thread-20" && ch.ParentID == "ch20" && ch.TaskID == 20
 	}), int64(20), "thread-20").Return(nil)
 
 	// Thread creation succeeds
