@@ -76,6 +76,14 @@ func evalAtLeaf(c compiledJSONCheck, value any) bool {
 			}
 			return false
 		})
+	case "not_in":
+		return stringMatch(value, func(s string) bool {
+			return !slices.Contains(c.values, s)
+		})
+	case "capability_not_in":
+		return stringMatch(value, func(s string) bool {
+			return !slices.Contains(c.values, normalizeCapability(s))
+		})
 	case "source_path_in":
 		return stringMatch(value, func(s string) bool {
 			src := extractSourcePath(s)
@@ -151,6 +159,14 @@ func stringMatch(value any, pred func(string) bool) bool {
 		}
 	}
 	return false
+}
+
+// normalizeCapability maps a capability name to the form the daemon grants
+// it under: case-insensitive, with an optional CAP_ prefix, so "cap_sys_admin"
+// and "Sys_Admin" both mean SYS_ADMIN. "ALL" stays "ALL".
+func normalizeCapability(s string) string {
+	s = strings.ToUpper(strings.TrimSpace(s))
+	return strings.TrimPrefix(s, "CAP_")
 }
 
 // extractSourcePath pulls the source side out of a Docker "Bind" string,

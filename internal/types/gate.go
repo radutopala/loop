@@ -55,7 +55,9 @@ type BodyRule struct {
 
 // JSONCheck is a single field-level assertion within a BodyRule.
 // Op is one of: "source_path_in", "equals", "contains_any", "starts_with_any",
-// "present", "empty_array".
+// "not_in", "capability_not_in", "present", "empty_array". "not_in" matches a
+// value outside Values; "capability_not_in" does the same after normalising
+// capability names the way the daemon does (case, optional CAP_ prefix).
 type JSONCheck struct {
 	Path   string   `json:"path"`
 	Op     string   `json:"op"`

@@ -112,7 +112,7 @@ Both layers feed into the same `agentgate.Manager` for `approve` decisions, so a
 | `internal/dockerproxy/nested.go` | Rewrites docker socket mounts in container creates to the nested proxy socket; looks up the nested volume's name |
 | `internal/dockerproxy/server.go` | HTTP handler + reverse proxy to the upstream socket (`/var/run/docker.sock.host` in production); hijack on `POST /containers/*/attach` and `POST /exec/*/start`; `FlushInterval: 100ms` for streaming; strips API version prefix before rule match |
 | `internal/dockerproxy/policy.go` | `HTTPServiceRule` compile + `MatchHTTP` (first-match + default); `CheckBody` |
-| `internal/dockerproxy/bodyrule.go` | JSONPath-lite evaluator: `present`, `empty_array`, `equals`, `contains_any`, `starts_with_any`, `source_path_in` |
+| `internal/dockerproxy/bodyrule.go` | JSONPath-lite evaluator: `present`, `empty_array`, `equals`, `contains_any`, `starts_with_any`, `not_in`, `capability_not_in` (normalises names as the daemon does), `source_path_in`. Keys match case-insensitively |
 | `internal/orchestrator/gate_adapter.go` | Maps `agentgate.ApprovalRequest` to `bot.ApprovalPrompt`; same adapter for all three platforms |
 | `internal/api/gate_handler.go` | Three handlers: `GET /api/gate/approvals` (snapshot of every Manager's pending requests — used by the renderer on WS reconnect to reconcile its local map and the electron dock-bouncer), `POST /api/gate/approvals/{id}` (bot-click resolve — 204 / 400 / 404), and `POST /api/gate/container-approval` (in-container call-in — bearer-token auth → `ByToken` → `mgr.Request` → `{decision, actor, reason}`, 200 / 401 / 503) |
 | `internal/types/gate.go` | Shared rule types (`Decision`, `PathRule`, `CommandRule`, `FileRule`, `HTTPServiceRule`, `BodyRule`, `JSONCheck`, `RateLimits`, `AuditConfig`) — leaf package to avoid config↔agentgate cycles |
@@ -205,7 +205,7 @@ The default posture is `allow`. The body rules below are the real container-esca
 
 All other Docker API calls fall through to `allow`: `_ping`, `version`, `info`, container create / start / stop / kill / restart / pause / wait / attach, image create / build / push / pull / rm, volume / network CRUD, events, logs, inspect, stats, top, and so on.
 
-### Docker body (`BodyRule`, 2 rules — the container-escape guardrails)
+### Docker body (`BodyRule`, 3 rules — the container-escape guardrails)
 
 Body rules are evaluated independently of the HTTP rule match and support all three decisions:
 
@@ -228,7 +228,11 @@ Bodies larger than `MaxBodyBytes` (1 MiB default) skip body inspection and fall 
 | `HostConfig.NetworkMode` | `equals` | `host` | Host network namespace |
 | `HostConfig.IpcMode` | `equals` | `host` | Host IPC namespace |
 | `HostConfig.UsernsMode` | `equals` | `host` | Disable user-namespace remapping |
-| `HostConfig.CapAdd[*]` | `contains_any` | `SYS_ADMIN`, `SYS_PTRACE`, `SYS_MODULE`, `DAC_READ_SEARCH`, `DAC_OVERRIDE`, `SYS_RAWIO`, `SYS_BOOT`, `NET_ADMIN` | Capability escalation — each is an independent escape path |
+| `HostConfig.CgroupnsMode` | `equals` | `host` | Host cgroup namespace |
+| `HostConfig.UTSMode` | `equals` | `host` | Host UTS namespace |
+| `HostConfig.CgroupParent` | `present` | — | Placing the container in an arbitrary cgroup |
+| `HostConfig.Runtime` | `not_in` | `""`, `runc`, `io.containerd.runc.v2` | Picking another runtime the daemon offers, which may isolate less |
+| `HostConfig.CapAdd[*]` | `capability_not_in` | Docker's default caps plus `SYS_NICE`, `IPC_LOCK` | Capability escalation. Names are normalised as the daemon does (`cap_sys_admin`, `Sys_Admin` → `SYS_ADMIN`), and `ALL` is outside the list |
 | `HostConfig.SecurityOpt[*]` | `contains_any` | `apparmor=unconfined`, `seccomp=unconfined`, `:unconfined` variants, `systempaths=unconfined` | Dropping the container sandbox |
 | `HostConfig.Devices[*]` | `present` | — | Device passthrough |
 | `HostConfig.DeviceCgroupRules[*]` | `present` | — | Cgroup device allowlist bypass |
@@ -236,12 +240,14 @@ Bodies larger than `MaxBodyBytes` (1 MiB default) skip body inspection and fall 
 | `HostConfig.MaskedPaths` | `empty_array` | — | Explicit `[]` un-masks kernel files (`/proc/kcore` etc.) |
 | `HostConfig.ReadonlyPaths` | `empty_array` | — | Explicit `[]` makes kernel paths writable |
 
+**`POST /containers/create`** — asks for approval when the container joins another container's PID or IPC namespace (`HostConfig.PidMode` / `HostConfig.IpcMode` starting with `container:`). Like `exec`, that reaches into the other container: as root with the same caps, the new container can read `/proc/<pid>/root` of the target's processes, and the proxy can't tell the agent's own containers from others. Sharing a network namespace (`NetworkMode: container:…`, compose `network_mode: service:…`) stays allowed.
+
 **`POST /containers/{id}/update`** — denies:
 
 | JSON path | Op | Values |
 |---|---|---|
 | `Privileged` | `equals` | `true` |
-| `CapAdd[*]` | `contains_any` | `SYS_ADMIN`, `SYS_PTRACE`, `SYS_MODULE` |
+| `CapAdd[*]` | `capability_not_in` | same list as create |
 
 Together these body rules are the reason the HTTP layer can afford to default-allow: no amount of `docker run` or `docker create` can produce a privileged container, a host-namespace container, or a host-bind-mounted container.
 

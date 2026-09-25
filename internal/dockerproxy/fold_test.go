@@ -1,6 +1,7 @@
 package dockerproxy
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -132,4 +133,56 @@ func (s *FoldSuite) TestFoldHelpers() {
 	v, ok := foldGet(m, "flag")
 	require.True(s.T(), ok)
 	require.Equal(s.T(), true, v)
+}
+
+// The default create and update rules, as the daemon would read the body.
+func (s *FoldSuite) TestDefaultRulesCapsNamespacesRuntime() {
+	cases := []struct {
+		name     string
+		path     string
+		body     string
+		decision types.Decision
+	}{
+		{name: "cap lowercase with prefix", path: "/containers/create", body: `{"HostConfig":{"CapAdd":["cap_sys_admin"]}}`, decision: types.DecisionDeny},
+		{name: "cap mixed case", path: "/containers/create", body: `{"HostConfig":{"CapAdd":["Sys_Ptrace"]}}`, decision: types.DecisionDeny},
+		{name: "cap all", path: "/containers/create", body: `{"HostConfig":{"CapAdd":["ALL"]}}`, decision: types.DecisionDeny},
+		{name: "cap net admin", path: "/containers/create", body: `{"HostConfig":{"CapAdd":["NET_ADMIN"]}}`, decision: types.DecisionDeny},
+		{name: "allowed caps", path: "/containers/create", body: `{"HostConfig":{"CapAdd":["CAP_IPC_LOCK","sys_nice","CHOWN"]}}`},
+		{name: "cgroupns host", path: "/containers/create", body: `{"HostConfig":{"CgroupnsMode":"host"}}`, decision: types.DecisionDeny},
+		{name: "cgroupns private", path: "/containers/create", body: `{"HostConfig":{"CgroupnsMode":"private"}}`},
+		{name: "uts host", path: "/containers/create", body: `{"HostConfig":{"UTSMode":"host"}}`, decision: types.DecisionDeny},
+		{name: "cgroup parent", path: "/containers/create", body: `{"HostConfig":{"CgroupParent":"/"}}`, decision: types.DecisionDeny},
+		{name: "other runtime", path: "/containers/create", body: `{"HostConfig":{"Runtime":"runsc-debug"}}`, decision: types.DecisionDeny},
+		{name: "stock runtime", path: "/containers/create", body: `{"HostConfig":{"Runtime":"runc"}}`},
+		{name: "empty runtime", path: "/containers/create", body: `{"HostConfig":{"Runtime":""}}`},
+		{name: "pid of another container", path: "/containers/create", body: `{"HostConfig":{"PidMode":"container:loop-x"}}`, decision: types.DecisionApprove},
+		{name: "ipc of another container", path: "/containers/create", body: `{"HostConfig":{"IpcMode":"container:loop-x"}}`, decision: types.DecisionApprove},
+		{name: "network of another container", path: "/containers/create", body: `{"HostConfig":{"NetworkMode":"container:loop-x"}}`},
+		{name: "update cap", path: "/containers/abc/update", body: `{"CapAdd":["cap_sys_module"]}`, decision: types.DecisionDeny},
+		{name: "update allowed cap", path: "/containers/abc/update", body: `{"CapAdd":["KILL"]}`},
+	}
+	policy, err := CompilePolicy(types.DecisionAllow, config.DefaultDockerProxyHTTPRules(), config.DefaultDockerProxyBodyRules())
+	require.NoError(s.T(), err)
+	for _, tc := range cases {
+		s.Run(tc.name, func() {
+			var body any
+			require.NoError(s.T(), json.Unmarshal([]byte(tc.body), &body))
+			res := policy.CheckBody(http.MethodPost, tc.path, "application/json", body)
+			if tc.decision == "" {
+				require.False(s.T(), res.Fired, "rule %s fired", res.RuleID)
+				return
+			}
+			require.True(s.T(), res.Fired)
+			require.Equal(s.T(), tc.decision, res.Decision)
+		})
+	}
+}
+
+func (s *FoldSuite) TestCapabilityNotInRequiresValues() {
+	_, err := CompilePolicy(types.DecisionAllow, nil, []types.BodyRule{{
+		AppliesTo:  "POST ^/x$",
+		JSONChecks: []types.JSONCheck{{Path: "CapAdd[*]", Op: "capability_not_in"}},
+		Decision:   types.DecisionDeny,
+	}})
+	require.ErrorContains(s.T(), err, `op "capability_not_in" requires at least one value`)
 }

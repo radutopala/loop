@@ -930,7 +930,7 @@ func buildSchema() *ConfigSchema {
 												Type: "object",
 												Properties: map[string]*SchemaProperty{
 													"path":   {Type: "string", Title: "Path", Description: "JSON path (e.g. \"HostConfig.Binds[*]\")"},
-													"op":     {Type: "string", Title: "Op", Enum: []any{"source_path_in", "equals", "contains_any", "starts_with_any", "present", "empty_array"}},
+													"op":     {Type: "string", Title: "Op", Enum: []any{"source_path_in", "equals", "contains_any", "starts_with_any", "not_in", "capability_not_in", "present", "empty_array"}},
 													"values": {Type: "array", Title: "Values", Items: &SchemaProperty{Type: "string"}},
 												},
 											},

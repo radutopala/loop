@@ -266,6 +266,17 @@ var dangerousBindSourceRegexes = []string{
 	"^/run/loop/",
 }
 
+// allowedCapAdds lists the capabilities a container the agent creates may
+// add: Docker's default set (adding one is a no-op) plus SYS_NICE and
+// IPC_LOCK, which databases and search engines ask for. Everything else —
+// including ALL — is an escape path or close to one. The proxy normalises
+// names as the daemon does, so "cap_sys_admin" is SYS_ADMIN.
+var allowedCapAdds = []string{
+	"CHOWN", "DAC_OVERRIDE", "FSETID", "FOWNER", "MKNOD", "NET_RAW", "SETGID",
+	"SETUID", "SETFCAP", "SETPCAP", "NET_BIND_SERVICE", "SYS_CHROOT", "KILL",
+	"AUDIT_WRITE", "SYS_NICE", "IPC_LOCK",
+}
+
 // DefaultDockerProxyBodyRules returns the baseline container-escape defense body rules.
 func DefaultDockerProxyBodyRules() []types.BodyRule {
 	return []types.BodyRule{
@@ -293,13 +304,13 @@ func DefaultDockerProxyBodyRules() []types.BodyRule {
 				{Path: "HostConfig.NetworkMode", Op: "equals", Values: []string{"host"}},
 				{Path: "HostConfig.IpcMode", Op: "equals", Values: []string{"host"}},
 				{Path: "HostConfig.UsernsMode", Op: "equals", Values: []string{"host"}},
-				{
-					Path: "HostConfig.CapAdd[*]", Op: "contains_any",
-					Values: []string{
-						"SYS_ADMIN", "SYS_PTRACE", "SYS_MODULE", "DAC_READ_SEARCH",
-						"DAC_OVERRIDE", "SYS_RAWIO", "SYS_BOOT", "NET_ADMIN",
-					},
-				},
+				{Path: "HostConfig.CgroupnsMode", Op: "equals", Values: []string{"host"}},
+				{Path: "HostConfig.UTSMode", Op: "equals", Values: []string{"host"}},
+				{Path: "HostConfig.CgroupParent", Op: "present"},
+				// Only the stock runtime: another one the daemon offers (e.g. a
+				// plain runc next to a hardened default) could drop isolation.
+				{Path: "HostConfig.Runtime", Op: "not_in", Values: []string{"", "runc", "io.containerd.runc.v2"}},
+				{Path: "HostConfig.CapAdd[*]", Op: "capability_not_in", Values: append([]string(nil), allowedCapAdds...)},
 				{
 					Path: "HostConfig.SecurityOpt[*]", Op: "contains_any",
 					Values: []string{
@@ -318,12 +329,27 @@ func DefaultDockerProxyBodyRules() []types.BodyRule {
 			Message:  "container-escape risk: bind-mount or flag rejected (see loop gate policy)",
 		},
 		{
+			// Joining another container's PID or IPC namespace reaches into
+			// it the way exec does: as root with the same caps, the new
+			// container can read /proc/<pid>/root of the target's processes.
+			// The proxy can't tell the agent's own containers from others.
+			AppliesTo:    "POST ^/containers/create$",
+			ContentTypes: []string{"application/json"},
+			MaxBodyBytes: 1048576,
+			JSONChecks: []types.JSONCheck{
+				{Path: "HostConfig.PidMode", Op: "starts_with_any", Values: []string{"container:"}},
+				{Path: "HostConfig.IpcMode", Op: "starts_with_any", Values: []string{"container:"}},
+			},
+			Decision: types.DecisionApprove,
+			Message:  "container joins another container's PID/IPC namespace",
+		},
+		{
 			AppliesTo:    "POST ^/containers/[^/]+/update$",
 			ContentTypes: []string{"application/json"},
 			MaxBodyBytes: 1048576,
 			JSONChecks: []types.JSONCheck{
 				{Path: "Privileged", Op: "equals", Values: []string{"true"}},
-				{Path: "CapAdd[*]", Op: "contains_any", Values: []string{"SYS_ADMIN", "SYS_PTRACE", "SYS_MODULE"}},
+				{Path: "CapAdd[*]", Op: "capability_not_in", Values: append([]string(nil), allowedCapAdds...)},
 			},
 			Decision: types.DecisionDeny,
 			Message:  "container update would escalate capabilities",

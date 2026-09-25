@@ -306,7 +306,14 @@ func compileJSONCheck(c types.JSONCheck) (compiledJSONCheck, error) {
 			}
 			compiled.valuesRe = append(compiled.valuesRe, re)
 		}
-	case "equals", "contains_any", "starts_with_any":
+	case "capability_not_in":
+		if len(c.Values) == 0 {
+			return compiledJSONCheck{}, fmt.Errorf("op %q requires at least one value", c.Op)
+		}
+		for j, v := range c.Values {
+			compiled.values[j] = normalizeCapability(v)
+		}
+	case "equals", "contains_any", "starts_with_any", "not_in":
 		// Values is a simple string set; no pre-compilation needed.
 		if len(c.Values) == 0 {
 			return compiledJSONCheck{}, fmt.Errorf("op %q requires at least one value", c.Op)
