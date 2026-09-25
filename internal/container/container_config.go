@@ -979,7 +979,7 @@ func (r *DockerRunner) writeGatePolicyFile(cfg *config.Config, channelID, workDi
 		DefaultDecision: cfg.Gates.Agentgate.DefaultDecision,
 		PathRules:       cfg.Gates.Agentgate.PathRules,
 		CommandRules:    injectWorkspaceRmRfRule(cfg.Gates.Agentgate.CommandRules, workDir, parentDirPath),
-		FileRules:       injectPolicySelfDenyRule(injectWorkspaceRule(cfg.Gates.Agentgate.FileRules, workDir, parentDirPath)),
+		FileRules:       injectPolicySelfDenyRule(injectProjectConfigRule(injectWorkspaceRule(cfg.Gates.Agentgate.FileRules, workDir, parentDirPath), workDir, parentDirPath)),
 	}
 	raw, _ := json.Marshal(payload)
 	path := filepath.Join(dir, "gate-policy.json")
@@ -1192,6 +1192,45 @@ func injectWorkspaceRule(rules []types.FileRule, workDir, parentDirPath string) 
 // gatePolicyMountDir is where runner.go bind-mounts the gate and docker-proxy
 // policy files (read-only) inside the agent container.
 const gatePolicyMountDir = "/etc/loop"
+
+// projectConfigDirs returns the .loop directories loop builds the channel's
+// containers from: the project config in each, and the child image's
+// Dockerfile under container/. Worktree threads also read the parent's.
+func projectConfigDirs(workDir, parentDirPath string) []string {
+	if workDir == "" {
+		return nil
+	}
+	dirs := []string{filepath.Join(workDir, ".loop")}
+	if parentDirPath != "" && parentDirPath != workDir {
+		dirs = append(dirs, filepath.Join(parentDirPath, ".loop"))
+	}
+	return dirs
+}
+
+// injectProjectConfigRule prepends an approve rule for changes to the
+// project config and the child image's Dockerfile. Both sit in the workspace
+// the agent may otherwise write freely, and the next container is built from
+// them: mounts, copy_files, extra_dirs, gates, container_image. The .loop
+// directory itself is covered too, so it can't be swapped for another by
+// rename. Prepended after the merge like injectPolicySelfDenyRule, so no
+// config layer — the project's included — can precede it.
+func injectProjectConfigRule(rules []types.FileRule, workDir, parentDirPath string) []types.FileRule {
+	dirs := projectConfigDirs(workDir, parentDirPath)
+	if len(dirs) == 0 {
+		return rules
+	}
+	var paths []string
+	for _, d := range dirs {
+		paths = append(paths, d, d+"/config.json", d+"/container", d+"/container/**")
+	}
+	rule := types.FileRule{
+		Paths:      paths,
+		Operations: []string{"write", "create", "delete", "chmod", "chown", "link"},
+		Decision:   types.DecisionApprove,
+		Message:    "project config: loop builds the next container from .loop/config.json and .loop/container/",
+	}
+	return append([]types.FileRule{rule}, rules...)
+}
 
 // injectPolicySelfDenyRule pins a Deny on the gate's own policy directory at
 // the head of the file rules, so the gate cannot be talked out of protecting

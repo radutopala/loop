@@ -352,3 +352,120 @@ func (s *NestedSuite) TestLookupNestedVolumeDialError() {
 	_, err := lookupNestedVolume(ctx, shortSockPath(s.T(), "missing.sock"), "cid", "/d")
 	require.ErrorContains(s.T(), err, "inspect cid:")
 }
+
+func roBind(src, target string) map[string]any {
+	return map[string]any{"Type": "bind", "Source": src, "Target": target, "ReadOnly": true}
+}
+
+func (s *NestedSuite) TestProtectReadOnlyDirs() {
+	const loop = "/ws/.loop"
+	resolve := func(p string) (string, error) {
+		if p == "/missing" {
+			return "", errors.New("no such file")
+		}
+		if rest, ok := strings.CutPrefix(p, "/ws/link"); ok {
+			return loop + rest, nil
+		}
+		return p, nil
+	}
+	cases := []struct {
+		name     string
+		dirs     []string
+		resolve  SymlinkResolver
+		host     map[string]any
+		wantHost map[string]any
+		changed  bool
+	}{
+		{
+			name:     "workspace bind gets an overlay",
+			host:     map[string]any{"Binds": []any{"/ws:/app", "cache:/c", "bogus"}},
+			wantHost: map[string]any{"Binds": []any{"/ws:/app", "cache:/c", "bogus"}, "Mounts": []any{roBind(loop, "/app/.loop")}},
+			changed:  true,
+		},
+		{
+			name:     "parent bind with rw option",
+			host:     map[string]any{"Binds": []any{"/:/host:rw"}, "Mounts": []any{}},
+			wantHost: map[string]any{"Binds": []any{"/:/host:rw"}, "Mounts": []any{roBind(loop, "/host/ws/.loop")}},
+			changed:  true,
+		},
+		{
+			name:     "read-only binds are left alone",
+			host:     map[string]any{"Binds": []any{"/ws:/app:ro", loop + ":/l:ro,z"}, "Mounts": []any{roBind("/ws", "/w")}},
+			wantHost: map[string]any{"Binds": []any{"/ws:/app:ro", loop + ":/l:ro,z"}, "Mounts": []any{roBind("/ws", "/w")}},
+		},
+		{
+			name:     "bind of the dir itself becomes read-only",
+			host:     map[string]any{"Binds": []any{loop + ":/l:rw,z", "/ws/link/container:/c"}},
+			wantHost: map[string]any{"Binds": []any{loop + ":/l:ro,z", "/ws/link/container:/c:ro"}},
+			changed:  true,
+		},
+		{
+			name: "long-form mounts, lowercase keys",
+			host: map[string]any{"mounts": []any{
+				map[string]any{"type": "bind", "source": "/ws", "target": "/w"},
+				map[string]any{"type": "bind", "source": loop, "target": "/l", "readonly": false},
+				map[string]any{"Type": "bind", "Source": "/ws/.loop/x", "Target": "/x"},
+				map[string]any{"Type": "volume", "Source": "cache", "Target": "/c"},
+				"junk",
+			}},
+			wantHost: map[string]any{"mounts": []any{
+				map[string]any{"type": "bind", "source": "/ws", "target": "/w"},
+				map[string]any{"type": "bind", "source": loop, "target": "/l", "readonly": true},
+				map[string]any{"Type": "bind", "Source": "/ws/.loop/x", "Target": "/x", "ReadOnly": true},
+				map[string]any{"Type": "volume", "Source": "cache", "Target": "/c"},
+				"junk",
+				roBind(loop, "/w/.loop"),
+			}},
+			changed: true,
+		},
+		{
+			name:     "sibling and unresolvable sources",
+			host:     map[string]any{"Binds": []any{"/ws2:/a", "/missing:/m", "named:/n"}},
+			wantHost: map[string]any{"Binds": []any{"/ws2:/a", "/missing:/m", "named:/n"}},
+		},
+		{
+			name:     "no resolver cleans the source",
+			resolve:  func(string) (string, error) { panic("unused") },
+			host:     map[string]any{"Binds": []any{"/ws/./:/app"}},
+			wantHost: map[string]any{"Binds": []any{"/ws/./:/app"}, "Mounts": []any{roBind(loop, "/app/.loop")}},
+			changed:  true,
+		},
+		{
+			name:     "no dirs",
+			dirs:     []string{},
+			host:     map[string]any{"Binds": []any{"/ws:/app"}},
+			wantHost: map[string]any{"Binds": []any{"/ws:/app"}},
+		},
+	}
+	for _, tc := range cases {
+		s.Run(tc.name, func() {
+			dirs := tc.dirs
+			if dirs == nil {
+				dirs = []string{loop}
+			}
+			var r SymlinkResolver = resolve
+			if tc.resolve != nil {
+				r = nil
+			}
+			srv := &Server{cfg: ServerConfig{ReadOnlyDirs: dirs, EvalSymlinks: r}}
+			body := map[string]any{"HostConfig": tc.host}
+			require.Equal(s.T(), tc.changed, srv.protectReadOnlyDirs(body))
+			require.Equal(s.T(), tc.wantHost, body["HostConfig"])
+		})
+	}
+
+	srv := &Server{cfg: ServerConfig{ReadOnlyDirs: []string{loop}}}
+	require.False(s.T(), srv.protectReadOnlyDirs(map[string]any{"Image": "alpine"}))
+}
+
+func (s *NestedSuite) TestServeHTTPForwardsReadOnlyOverlay() {
+	srv, _, forwarded := s.nestedServer("vol-1", noSymlinks)
+	srv.cfg.ReadOnlyDirs = []string{"/work/.loop"}
+	req := httptest.NewRequest(http.MethodPost, "/v1.41/containers/create", strings.NewReader(`{"HostConfig":{"Binds":["/work:/work"]}}`))
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	srv.ServeHTTP(rr, req)
+
+	require.Equal(s.T(), http.StatusCreated, rr.Code, rr.Body.String())
+	require.JSONEq(s.T(), `{"HostConfig":{"Binds":["/work:/work"],"Mounts":[{"Type":"bind","Source":"/work/.loop","Target":"/work/.loop","ReadOnly":true}]}}`, string(forwarded()))
+}

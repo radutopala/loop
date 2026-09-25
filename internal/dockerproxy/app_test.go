@@ -692,3 +692,8 @@ func (b *syncBuffer) String() string {
 	defer b.mu.Unlock()
 	return b.buf.String()
 }
+
+func (s *AppSuite) TestReadOnlyDirs() {
+	require.Nil(s.T(), readOnlyDirs(""))
+	require.Equal(s.T(), []string{"/a/.loop", "/b/.loop"}, readOnlyDirs("/a/.loop/::rel:/b/./.loop"))
+}

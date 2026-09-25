@@ -173,13 +173,14 @@ Git write-side operations (`push`, `commit`, `reset --hard`, …) are intentiona
 
 The args regex runs against `strings.Join(argv[1:], " ")`, so `\s` covers the space before the next arg *and* embedded newlines in multi-line commit messages; the `$` alternation handles bare `git push` with no trailing args.
 
-### File ops (`FileRule`, 9 static rules, first-match-wins, plus two injected rules)
+### File ops (`FileRule`, 9 static rules, first-match-wins, plus three injected rules)
 
-Order matters: the pinned policy self-deny, then the static denies, then the injected workspace rule, then the tmp / system-read fast-paths.
+Order matters: the pinned policy self-deny, then the pinned project-config approve, then the static denies, then the injected workspace rule, then the tmp / system-read fast-paths.
 
 | # | Paths | Operations | Decision | Why |
 |---|---|---|---|---|
 | 1 | *(injected)* `/etc/loop/**` | write, create, delete, chmod, chown, link | `deny` | The gate's own policy file, pinned ahead of everything else by `injectPolicySelfDenyRule`. Rule 8 already covers `/etc/**`, but rules that arrive through config can be shadowed: both config layers *prepend* their rules, and the project layer is `{workDir}/.loop/config.json` — inside the workspace the agent may write. Injecting after the merge is the one position no config can precede. `link` is in the op list (unlike rule 8) because `linkat`/`symlinkat` match on the *new* path only: without it the agent could hardlink the policy into the blanket-allowed workspace and write through the second name. Reads stay allowed — seeing the active policy helps debug a denial |
+| 1a | *(injected)* `{workDir}/.loop`, `.loop/config.json`, `.loop/container`, `.loop/container/**`; same under `{parentDirPath}` | write, create, delete, chmod, chown, link | `approve` | Project config. Loop builds the next container from these (mounts, `copy_files`, gates, image), so an unreviewed write would outlast the session. Pinned after the merge by `injectProjectConfigRule`, like rule 1. The `.loop` directory itself is listed so it can't be swapped by rename; the cost is that GNU `mkdir -p .loop/<sub>` asks too, since `mkdirat` is checked before the kernel returns `EEXIST`. Containers the agent starts get the directories read-only (see [Project config stays read-only to nested containers](#project-config-stays-read-only-to-nested-containers)) |
 | 2 | `/proc/*/mem`, `/proc/kcore` | read | `deny` | Kernel / process-memory exfiltration. `/proc/*/environ` is intentionally NOT denied — Go test binaries, runtime probes, and tooling open it routinely (chronic noise) and the gate parent's env carries no exploitable secret (the notify fd is passed via SCM_RIGHTS, not authenticated by an env-readable token) |
 | 3 | `/etc/shadow`, `/etc/gshadow`, `/etc/sudoers`, `/etc/sudoers.d/**`, `/etc/ssh/ssh_host_*_key`, `.pub` variants | all ops | `deny` | Root credential files |
 | 4 | `**/.ssh/**`, `**/.aws/**`, `**/.gcp/**`, `**/.config/gcloud/**`, `**/.kube/**`, `**/.netrc`, `**/.pgpass` | read, write, create, delete, chmod | `deny` | User credential directories — apply to any path, including inside the workspace |
@@ -286,6 +287,15 @@ The rewrite fails closed:
 
 Every rejection is audited with rule id `create-body`.
 
+### Project config stays read-only to nested containers
+
+Loop builds each agent container from the workspace's `.loop/config.json` (mounts, `copy_files`, `extra_dirs`, gates, `container_image`) and `.loop/container/Dockerfile`, and both sit in the workspace the agent can write. The agent itself needs an approval to change them ([file-op rule 1a](#file-ops-filerule-9-static-rules-first-match-wins-plus-three-injected-rules)), but the seccomp gate doesn't see into containers it starts, and the bind allowlist lets those bind the workspace read-write. So the same `POST /containers/create` rewrite keeps the `.loop` directories (the workspace's, and the worktree parent's) read-only there, passed in as `LOOP_DOCKERPROXY_READONLY_DIRS`:
+
+- a read-write bind that contains one gets a read-only bind of it on top — `-v $PWD:/app` also mounts `$PWD/.loop` at `/app/.loop` read-only, and being a mountpoint it can't be renamed away either;
+- a read-write bind inside one is made read-only.
+
+The runner creates the directories before the container starts, since only an existing directory can be mounted over.
+
 The nested socket lives as long as the agent container: a nested container that outlives it loses Docker access. `Subpath` pins the socket file, so a proxy restart inside the agent container also breaks sockets already mounted into running nested containers.
 
 ---
@@ -353,8 +363,8 @@ Set when `cfg.Gates.Agentgate.Enabled` is true (`cmd/loop/serve.go`):
 Per container (`internal/container/runner.go#createAndStartContainer`):
 
 1. Generate a 32-byte `crypto/rand` bearer token (`newGateToken`) — shared by the proxy and gate layers.
-2. `writeProxyPolicyFile` marshals `cfg.Gates.DockerProxy`, with the bind allowlist (see Docker body rules) injected, to `{policyDir}/<channel>/proxy-policy.json` (0640). Bind-mount `hostSock:/var/run/docker.sock.host:ro` + `.../proxy-policy.json:/etc/loop/proxy-policy.json:ro`. Env: `LOOP_DOCKERPROXY_ENABLED=1`, `LOOP_DOCKERPROXY_POLICY_FILE=/etc/loop/proxy-policy.json`, `LOOP_DOCKERPROXY_UPSTREAM=/var/run/docker.sock.host`, `LOOP_DOCKERPROXY_NESTED_DIR=/run/loop-dproxy`, plus an anonymous volume at `/run/loop-dproxy`.
-3. `writeGatePolicyFile` marshals the gate rule subset (`DefaultDecision`, `PathRules`, `CommandRules`, `FileRules`) to `{policyDir}/<channel>/gate-policy.json` (0640). `FileRules` is the merged config list wrapped by `injectWorkspaceRule` (workspace allow, before the first Allow) and then `injectPolicySelfDenyRule` (`/etc/loop/**` deny, at the head — see [file-op rule 1](#file-ops-filerule-9-static-rules-first-match-wins-plus-two-injected-rules)). Bind-mount `.../gate-policy.json:/etc/loop/gate-policy.json:ro`. Env: `LOOP_GATE_ENABLED=1`, `LOOP_GATE_POLICY_FILE=/etc/loop/gate-policy.json`.
+2. `writeProxyPolicyFile` marshals `cfg.Gates.DockerProxy`, with the bind allowlist (see Docker body rules) injected, to `{policyDir}/<channel>/proxy-policy.json` (0640). Bind-mount `hostSock:/var/run/docker.sock.host:ro` + `.../proxy-policy.json:/etc/loop/proxy-policy.json:ro`. Env: `LOOP_DOCKERPROXY_ENABLED=1`, `LOOP_DOCKERPROXY_POLICY_FILE=/etc/loop/proxy-policy.json`, `LOOP_DOCKERPROXY_UPSTREAM=/var/run/docker.sock.host`, `LOOP_DOCKERPROXY_NESTED_DIR=/run/loop-dproxy`, `LOOP_DOCKERPROXY_READONLY_DIRS` (the workspace's `.loop` dirs, colon-separated), plus an anonymous volume at `/run/loop-dproxy`.
+3. `writeGatePolicyFile` marshals the gate rule subset (`DefaultDecision`, `PathRules`, `CommandRules`, `FileRules`) to `{policyDir}/<channel>/gate-policy.json` (0640). `FileRules` is the merged config list wrapped by `injectWorkspaceRule` (workspace allow, before the first Allow) and then `injectPolicySelfDenyRule` (`/etc/loop/**` deny, at the head — see [file-op rule 1](#file-ops-filerule-9-static-rules-first-match-wins-plus-three-injected-rules)). Bind-mount `.../gate-policy.json:/etc/loop/gate-policy.json:ro`. Env: `LOOP_GATE_ENABLED=1`, `LOOP_GATE_POLICY_FILE=/etc/loop/gate-policy.json`.
 4. Shared env on both layers: `LOOP_CHANNEL_ID=<channelID>`, `LOOP_GATE_TOKEN=<32-hex>`.
 5. After `ContainerCreate` returns a `containerID`, call `gateResolver.AddWithToken(containerID, token, mgr, channelID)` — the token starts authenticating HTTP calls as soon as the container is up.
 6. On container remove: `gateResolver.Remove(containerID)` — frees the token and Manager. Policy files under `{policyDir}/<channel>/` are left on disk (overwritten next spawn for the same channel — the payload is derived from global config + the channel's stable workDir, so overwrites are idempotent).

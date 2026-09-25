@@ -69,7 +69,8 @@ func (s *Server) isDockerSocket(src string) bool {
 }
 
 // rewriteNestedSocket replaces docker socket mounts in a POST
-// /containers/create body with a mount of the nested proxy socket. It
+// /containers/create body with a mount of the nested proxy socket, and keeps
+// the ReadOnlyDirs read-only under the body's binds (protectReadOnlyDirs). It
 // returns a non-zero status (with a message) when the request must be
 // rejected: socket mounts fail closed when the nested socket is unavailable,
 // so they never reach the daemon as raw binds. Bodies it can't read or
@@ -103,16 +104,17 @@ func (s *Server) rewriteNestedSocket(r *http.Request) (int, string) {
 	if hasFoldDuplicates(body, s.foldNames) {
 		return http.StatusBadRequest, errAmbiguousKeys.Error()
 	}
-	if !rewriteSocketMounts(body, s.isDockerSocket, s.cfg.NestedVolume) {
-		return 0, ""
-	}
-	if s.cfg.NestedVolume == "" {
+	socket := rewriteSocketMounts(body, s.isDockerSocket, s.cfg.NestedVolume)
+	if socket && s.cfg.NestedVolume == "" {
 		return http.StatusForbidden, "docker socket mounts are unavailable: the nested proxy socket is not configured"
 	}
-	if m := apiVersionMinorRe.FindStringSubmatch(r.URL.Path); m != nil {
+	if m := apiVersionMinorRe.FindStringSubmatch(r.URL.Path); socket && m != nil {
 		if minor, _ := strconv.Atoi(m[1]); minor < minSubpathAPIMinor {
 			return http.StatusBadRequest, fmt.Sprintf("docker socket mounts need Docker API >= 1.%d", minSubpathAPIMinor)
 		}
+	}
+	if !s.protectReadOnlyDirs(body) && !socket {
+		return 0, ""
 	}
 	out, _ := json.Marshal(body)
 	restore(out)
@@ -167,6 +169,118 @@ func rewriteSocketMounts(body map[string]any, isSocket func(string) bool, volume
 		hc[mountsKey] = mounts
 	}
 	return changed
+}
+
+// protectReadOnlyDirs keeps s.cfg.ReadOnlyDirs read-only in the container
+// being created: a read-write bind that contains one gets a read-only bind
+// of it on top, and a read-write bind inside one becomes read-only. Nested
+// containers aren't subject to the agent's file-op rules, so without this a
+// workspace bind could rewrite the project config the next agent container
+// is built from. Sources are compared after symlink resolution; ones that
+// don't resolve are left to the body rules. Reports whether the body
+// changed.
+func (s *Server) protectReadOnlyDirs(body map[string]any) bool {
+	if len(s.cfg.ReadOnlyDirs) == 0 {
+		return false
+	}
+	hcv, _ := foldGet(body, "HostConfig")
+	hc, _ := hcv.(map[string]any)
+	if hc == nil {
+		return false
+	}
+	resolve := func(src string) (string, bool) {
+		if !strings.HasPrefix(src, "/") {
+			return "", false
+		}
+		if s.cfg.EvalSymlinks == nil {
+			return path.Clean(src), true
+		}
+		r, err := s.cfg.EvalSymlinks(src)
+		return path.Clean(r), err == nil
+	}
+	// covers returns the read-only mounts a read-write bind of src at target
+	// needs, and whether the bind itself lies inside a read-only dir.
+	covers := func(src, target string) (overlays []any, inside bool) {
+		resolved, ok := resolve(src)
+		if !ok {
+			return nil, false
+		}
+		for _, dir := range s.cfg.ReadOnlyDirs {
+			switch {
+			case resolved == dir || strings.HasPrefix(resolved, dir+"/"):
+				return nil, true
+			case strings.HasPrefix(dir, resolved+"/") || resolved == "/":
+				overlays = append(overlays, map[string]any{
+					"Type":     "bind",
+					"Source":   dir,
+					"Target":   path.Join(target, strings.TrimPrefix(dir, resolved)),
+					"ReadOnly": true,
+				})
+			}
+		}
+		return overlays, false
+	}
+
+	changed := false
+	var extra []any
+	mountsKey, hasMounts := foldKey(hc, "Mounts")
+	mounts, _ := hc[mountsKey].([]any)
+	for _, m := range mounts {
+		mm, ok := m.(map[string]any)
+		if !ok || foldString(mm, "Type") != "bind" {
+			continue
+		}
+		if ro, _ := foldGet(mm, "ReadOnly"); ro == true {
+			continue
+		}
+		overlays, inside := covers(foldString(mm, "Source"), foldString(mm, "Target"))
+		if inside {
+			key, ok := foldKey(mm, "ReadOnly")
+			if !ok {
+				key = "ReadOnly"
+			}
+			mm[key] = true
+			changed = true
+		}
+		extra = append(extra, overlays...)
+	}
+	if bindsKey, ok := foldKey(hc, "Binds"); ok {
+		binds, _ := hc[bindsKey].([]any)
+		for i, b := range binds {
+			str, _ := b.(string)
+			src, rest, found := strings.Cut(str, ":")
+			target, opts, _ := strings.Cut(rest, ":")
+			if !found || hasMountOption(opts, "ro") {
+				continue
+			}
+			overlays, inside := covers(src, target)
+			if inside {
+				binds[i] = src + ":" + target + ":" + readOnlyOptions(opts)
+				changed = true
+			}
+			extra = append(extra, overlays...)
+		}
+	}
+	if len(extra) > 0 {
+		if !hasMounts {
+			mountsKey = "Mounts"
+		}
+		hc[mountsKey] = append(mounts, extra...)
+		changed = true
+	}
+	return changed
+}
+
+// readOnlyOptions turns a bind's option list read-only: "rw" is dropped and
+// "ro" added, other options (z, Z, propagation) are kept.
+func readOnlyOptions(opts string) string {
+	out := []string{"ro"}
+	for o := range strings.SplitSeq(opts, ",") {
+		if o != "" && o != "rw" {
+			out = append(out, o)
+		}
+	}
+	return strings.Join(out, ",")
 }
 
 // socketMount is a HostConfig.Mounts entry that mounts the proxy socket from

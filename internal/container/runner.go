@@ -661,6 +661,18 @@ func (r *DockerRunner) createAndStartContainer(
 			"LOOP_DOCKERPROXY_UPSTREAM=/var/run/docker.sock.host",
 			"LOOP_DOCKERPROXY_NESTED_DIR="+nestedProxyDir,
 		)
+		// Containers the agent creates get the project's .loop directories
+		// read-only (the gate's file rules don't reach them). They must exist
+		// to be mounted over.
+		readOnly := projectConfigDirs(workDir, parentDirPath)
+		for _, d := range readOnly {
+			if err := r.sys.MkdirAll(d, 0o755); err != nil {
+				return "", "", "", false, fmt.Errorf("creating %s: %w", d, err)
+			}
+		}
+		if len(readOnly) > 0 {
+			env = append(env, "LOOP_DOCKERPROXY_READONLY_DIRS="+strings.Join(readOnly, ":"))
+		}
 		// The proxy also listens inside this anonymous volume so containers
 		// the agent starts with the docker socket mounted get the proxy, not
 		// the raw daemon: the daemon resolves bind sources on its own

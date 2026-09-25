@@ -87,6 +87,9 @@ type ServerConfig struct {
 	// EvalSymlinks resolves bind sources so a symlink to the docker socket
 	// is rewritten too. nil matches literal socket paths only.
 	EvalSymlinks SymlinkResolver
+	// ReadOnlyDirs are host directories (cleaned, absolute) that containers
+	// the agent creates may only mount read-only (see protectReadOnlyDirs).
+	ReadOnlyDirs []string
 }
 
 // NewServer constructs a Server. CID / ChannelID / Policy / Approver / DockerSock

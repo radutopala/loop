@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -414,6 +415,7 @@ func (s *ProxySuite) TestRunProxyEnabledAddsBindsAndEnvAndToken() {
 	require.Equal(s.T(), "/var/run/docker.sock.host", findEnv(captured.Env, "LOOP_DOCKERPROXY_UPSTREAM"))
 	require.Equal(s.T(), "/run/loop-dproxy", findEnv(captured.Env, "LOOP_DOCKERPROXY_NESTED_DIR"))
 	require.Equal(s.T(), []string{"/run/loop-dproxy"}, captured.Volumes)
+	require.Equal(s.T(), filepath.Join(s.runner.resolveWorkDir("ch-1", ""), ".loop"), findEnv(captured.Env, "LOOP_DOCKERPROXY_READONLY_DIRS"))
 	require.Equal(s.T(), "ch-1", findEnv(captured.Env, "LOOP_CHANNEL_ID"))
 	token := findEnv(captured.Env, "LOOP_GATE_TOKEN")
 	require.Len(s.T(), token, 64, "token should be 32 bytes hex-encoded")
@@ -425,6 +427,22 @@ func (s *ProxySuite) TestRunProxyEnabledAddsBindsAndEnvAndToken() {
 	require.Equal(s.T(), "cid-real", gotCid)
 	require.NotNil(s.T(), mgr)
 	require.Equal(s.T(), "ch-1", gotChannel)
+}
+
+func (s *ProxySuite) TestRunProxyReadOnlyDirMkdirFails() {
+	cfg := s.proxyRunCfg()
+	s.installRunnerDefaults(cfg)
+	s.runner.SetDockerProxyDeps("/run/loop", "/var/run/docker.sock")
+	sys := s.runner.sys.(*testutil.MockSystem)
+	// First registered match wins, so the failing MkdirAll goes ahead of
+	// the catch-all default.
+	defaults := sys.ExpectedCalls
+	sys.ExpectedCalls = nil
+	sys.On("MkdirAll", mock.MatchedBy(func(p string) bool { return strings.HasSuffix(p, "/.loop") }), mock.Anything).Return(errors.New("read-only file system"))
+	sys.ExpectedCalls = append(sys.ExpectedCalls, defaults...)
+
+	_, err := s.runner.Run(context.Background(), &agent.AgentRequest{ChannelID: "ch-1"})
+	require.ErrorContains(s.T(), err, "read-only file system")
 }
 
 func (s *ProxySuite) TestRunProxyDisabledNoBindsNoToken() {

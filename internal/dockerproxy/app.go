@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
@@ -28,6 +29,7 @@ const (
 	envCID        = "LOOP_CONTAINER_ID"
 	envChannelID  = "LOOP_CHANNEL_ID"
 	envNestedDir  = "LOOP_DOCKERPROXY_NESTED_DIR"
+	envReadOnly   = "LOOP_DOCKERPROXY_READONLY_DIRS"
 
 	defaultSocket   = "/var/run/docker.sock"
 	defaultUpstream = "/var/run/docker.sock.host"
@@ -162,6 +164,7 @@ func (a *app) run(outW io.Writer) error {
 		DockerSock:   upstream,
 		NestedVolume: nestedVolume,
 		EvalSymlinks: a.evalSymlinks,
+		ReadOnlyDirs: readOnlyDirs(a.getenv(envReadOnly)),
 	})
 	if err != nil {
 		closeListener(nestedLn)
@@ -190,6 +193,18 @@ func (a *app) run(outW io.Writer) error {
 		}()
 	}
 	return a.serve(ctx, ln, srv)
+}
+
+// readOnlyDirs parses the colon-separated LOOP_DOCKERPROXY_READONLY_DIRS
+// list, keeping absolute paths only.
+func readOnlyDirs(v string) []string {
+	var dirs []string
+	for d := range strings.SplitSeq(v, ":") {
+		if strings.HasPrefix(d, "/") {
+			dirs = append(dirs, filepath.Clean(d))
+		}
+	}
+	return dirs
 }
 
 // listenSocket replaces any stale socket at path (e.g. from a restart
