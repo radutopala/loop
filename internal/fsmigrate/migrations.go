@@ -209,6 +209,15 @@ var migrations = []Migration{
 		Description: "refresh container/ files: agent stays out of the root group under the docker proxy",
 		Apply:       refreshContainerFiles,
 	},
+	{
+		// Pins npm 12 in the agent image in place of the npm 11 Node 24
+		// bundles. npm 12 blocks dependency install scripts unless the
+		// project's allowScripts policy allows them. Until this refresh lands
+		// an install keeps the old Dockerfile, so its next image rebuild
+		// still ships npm 11.
+		Description: "refresh container/ files: npm 12 in the agent image",
+		Apply:       refreshContainerFiles,
+	},
 }
 
 // versionedContainerFiles are tracked by the daemon: each release ships a
