@@ -27,10 +27,14 @@ RUN --mount=type=cache,target=/go/pkg/mod \
 
 FROM golang:1.27
 ENV GOTOOLCHAIN=auto
-# Node comes from nodesource (24.x LTS, npm bundled) instead of Debian's
+# Node comes from nodesource (24.x LTS) instead of Debian's
 # distro package — Debian ships Node 20, which is end-of-life. Keep the
 # version in sync with internal/container/image/Dockerfile,
 # scripts/test-runner.Dockerfile, and the CI node-version pins.
+#
+# npm is pinned on its own (Node 24 bundles npm 11). npm 12 blocks dependency
+# install scripts unless the project's package.json allowScripts policy
+# allows them, and refuses git and tarball-URL dependencies by default.
 #
 # The Docker CLI and its plugins come from Docker's own apt repository rather
 # than Debian's, which pins buildx at 0.13.1 and the CLI at 26.1.5. Without the
@@ -53,6 +57,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && apt-get update \
     && apt-get install -y --no-install-recommends \
         docker-ce-cli docker-buildx-plugin docker-compose-plugin nodejs \
+    && npm install -g npm@12.1.0 && npm cache clean --force \
     && printf '#!/bin/sh\nexec docker compose "$@"\n' > /usr/local/bin/docker-compose \
     && chmod 0755 /usr/local/bin/docker-compose \
     && rm -rf /var/lib/apt/lists/*

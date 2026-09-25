@@ -8,6 +8,8 @@ FROM golang:1.27.1
 # Debian's, which pins buildx at 0.13.1 and the CLI at 26.1.5 — matching the
 # agent images. Without the buildx plugin every `docker build` in a test falls
 # back to the deprecated classic builder, which cannot cross-build.
+#
+# Node 24 and npm 12.1.0 match the agent images (see internal/container/image/Dockerfile).
 RUN apt-get update -qq && \
     apt-get install -yqq --no-install-recommends \
         curl chromium ffmpeg fluidsynth fluid-soundfont-gm && \
@@ -20,6 +22,7 @@ RUN apt-get update -qq && \
     apt-get update -qq && \
     apt-get install -yqq --no-install-recommends \
         docker-ce-cli docker-buildx-plugin nodejs && \
+    npm install -g npm@12.1.0 && npm cache clean --force && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
