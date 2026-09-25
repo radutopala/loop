@@ -244,7 +244,7 @@ func (s *NestedSuite) TestServeHTTPRejects() {
 			require.Nil(s.T(), forwarded())
 			snap := auditor.snapshot()
 			require.Len(s.T(), snap, 1)
-			require.Equal(s.T(), "nested-socket", snap[0].RuleID)
+			require.Equal(s.T(), "create-body", snap[0].RuleID)
 			require.Equal(s.T(), "deny", snap[0].Decision)
 		})
 	}

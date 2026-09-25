@@ -19,6 +19,9 @@ type Policy struct {
 	defaultDecision types.Decision
 	httpRules       []compiledHTTPRule
 	bodyRules       []compiledBodyRule
+	// foldNames holds the lower-cased field names the body rules' paths
+	// read. Bodies must not hold case variants of them (see fold.go).
+	foldNames map[string]bool
 }
 
 type compiledHTTPRule struct {
@@ -94,7 +97,7 @@ func CompilePolicy(
 	httpRules []types.HTTPServiceRule,
 	bodyRules []types.BodyRule,
 ) (*Policy, error) {
-	p := &Policy{defaultDecision: normalizeDefault(defaultDecision)}
+	p := &Policy{defaultDecision: normalizeDefault(defaultDecision), foldNames: map[string]bool{}}
 
 	for i, r := range httpRules {
 		if err := validateDecision(r.Decision); err != nil {
@@ -139,6 +142,11 @@ func CompilePolicy(
 				return nil, fmt.Errorf("body_rules[%d].json_checks[%d]: %w", i, j, err)
 			}
 			compiled.parentDecision = r.Decision
+			for _, seg := range compiled.segments {
+				if !seg.wildcard {
+					addFoldNames(p.foldNames, seg.name)
+				}
+			}
 			cr.checks = append(cr.checks, compiled)
 		}
 		p.bodyRules = append(p.bodyRules, cr)

@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"net"
 	"net/http"
 	"net/http/httputil"
@@ -58,6 +59,9 @@ type Server struct {
 	cfg      ServerConfig
 	policy   *Policy
 	upstream *httputil.ReverseProxy
+	// foldNames are the lower-cased body keys the body rules and the
+	// nested-socket rewrite read (see fold.go).
+	foldNames map[string]bool
 }
 
 // ServerConfig groups the dependencies a Server needs. All fields are required
@@ -130,7 +134,11 @@ func NewServer(cfg ServerConfig) (*Server, error) {
 		Transport:     transport,
 		FlushInterval: 100 * time.Millisecond,
 	}
-	return &Server{cfg: cfg, policy: cfg.Policy, upstream: rp}, nil
+	foldNames := map[string]bool{}
+	maps.Copy(foldNames, cfg.Policy.foldNames)
+	addFoldNames(foldNames, nestedFoldNames...)
+	addFoldNames(foldNames, detailsFoldNames...)
+	return &Server{cfg: cfg, policy: cfg.Policy, upstream: rp, foldNames: foldNames}, nil
 }
 
 // apiVersionRe matches a Docker API version prefix at the start of the path
@@ -177,7 +185,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				Method:   r.Method,
 				Path:     canonicalPath,
 				Decision: "deny",
-				RuleID:   "nested-socket",
+				RuleID:   "create-body",
 				Reason:   msg,
 				Latency:  s.cfg.Now().Sub(start),
 			})
@@ -405,6 +413,9 @@ func (s *Server) evaluateBody(r *http.Request, canonicalPath string) (BodyCheckR
 	var decoded any
 	if err := json.Unmarshal(buf, &decoded); err != nil {
 		return BodyCheckResult{}, nil, fmt.Errorf("parse body: %w", err)
+	}
+	if hasFoldDuplicates(decoded, s.foldNames) {
+		return BodyCheckResult{}, nil, errAmbiguousKeys
 	}
 	return s.policy.CheckBody(r.Method, canonicalPath, r.Header.Get("Content-Type"), decoded), decoded, nil
 }

@@ -43,7 +43,8 @@ func walkPath(c compiledJSONCheck, value any, depth int) bool {
 	if !ok {
 		return false
 	}
-	next, exists := obj[seg.name]
+	// Case-insensitive, as the daemon decodes (see fold.go).
+	next, exists := foldGet(obj, seg.name)
 	if !exists {
 		return false
 	}

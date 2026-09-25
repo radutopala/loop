@@ -72,7 +72,8 @@ func detailsForContainerCreate(obj map[string]any) map[string]string {
 	if v := stringField(obj, "WorkingDir"); v != "" {
 		d["working_dir"] = truncate(v, 200)
 	}
-	host, ok := obj["HostConfig"].(map[string]any)
+	hv, _ := foldGet(obj, "HostConfig")
+	host, ok := hv.(map[string]any)
 	if ok {
 		if v := stringSliceField(host, "Binds"); v != "" {
 			d["binds"] = truncate(v, 400)
@@ -166,22 +167,32 @@ func detailsForVolumeCreate(obj map[string]any) map[string]string {
 	return d
 }
 
-// stringField returns the named string field, "" if missing or wrong type.
+// detailsFoldNames are the keys the approval details read. Bodies must not
+// hold case variants of them, or the prompt could show a value the daemon
+// doesn't use (see fold.go).
+var detailsFoldNames = []string{
+	"Image", "Cmd", "Entrypoint", "User", "WorkingDir", "HostConfig", "Binds",
+	"Privileged", "NetworkMode", "PidMode", "IpcMode", "UsernsMode", "CapAdd",
+	"Devices", "SecurityOpt", "AttachStdin", "Tty", "Name", "Driver",
+	"Internal", "Attachable",
+}
+
+// stringField returns the named string field (case-insensitive), "" if missing or wrong type.
 func stringField(obj map[string]any, key string) string {
-	v, _ := obj[key].(string)
-	return strings.TrimSpace(v)
+	return strings.TrimSpace(foldString(obj, key))
 }
 
 // boolField returns the named bool field, false on absence/wrong type.
 func boolField(obj map[string]any, key string) bool {
-	v, _ := obj[key].(bool)
-	return v
+	v, _ := foldGet(obj, key)
+	return v == true
 }
 
 // stringSliceField joins a JSON array of strings (or stringly values) with
 // ", "; returns "" if missing or empty.
 func stringSliceField(obj map[string]any, key string) string {
-	arr, ok := obj[key].([]any)
+	v, _ := foldGet(obj, key)
+	arr, ok := v.([]any)
 	if !ok || len(arr) == 0 {
 		return ""
 	}

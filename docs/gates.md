@@ -108,6 +108,7 @@ Both layers feed into the same `agentgate.Manager` for `approve` decisions, so a
 | `internal/dockerproxy/app.go` | In-container docker-proxy binary — the body of the `loop dockerproxy` subcommand. Loads the policy JSON, builds an `httpapprover.Approver`, listens on `/var/run/docker.sock` (tmpfs), runs `dockerproxy.Server` until SIGTERM |
 | `internal/httpapprover/approver.go` | Shared HTTP-backed `Approver` used by both the in-container docker proxy and the seccomp-gate parent. POSTs `{kind, target, message, cache_key}` to `{API_URL}/api/gate/container-approval` with `Authorization: Bearer <LOOP_GATE_TOKEN>`; fail-closed on any transport or non-200 error |
 | `internal/container/image/entrypoint.sh` | Branches on `$LOOP_DOCKERPROXY_ENABLED=1` (starts `loop dockerproxy` as root before dropping privileges) and `$LOOP_GATE_ENABLED=1` (execs `loop syscallwrap -- "$@"` as root, which drops its child to `$AGENT_USER`). When neither is set, falls back to plain `gosu "$AGENT_USER" "$@"` |
+| `internal/dockerproxy/fold.go` | Case-insensitive key lookup and the ambiguous-key check shared by body rules, approval details and the socket rewrite |
 | `internal/dockerproxy/nested.go` | Rewrites docker socket mounts in container creates to the nested proxy socket; looks up the nested volume's name |
 | `internal/dockerproxy/server.go` | HTTP handler + reverse proxy to the upstream socket (`/var/run/docker.sock.host` in production); hijack on `POST /containers/*/attach` and `POST /exec/*/start`; `FlushInterval: 100ms` for streaming; strips API version prefix before rule match |
 | `internal/dockerproxy/policy.go` | `HTTPServiceRule` compile + `MatchHTTP` (first-match + default); `CheckBody` |
@@ -212,6 +213,8 @@ Body rules are evaluated independently of the HTTP rule match and support all th
 - `approve` — blocks the request and prompts the operator (same approval flow as an HTTP-rule approve), keyed on `docker:<METHOD>:body:<rule_id>` so "Allow for session" caches per body rule rather than per request path.
 - `allow` — passes through silently to the upstream daemon (still subject to the `HTTPServiceRule` decision falling through normally).
 
+JSON paths match keys case-insensitively, as the daemon's decoder does: it creates a privileged container from `{"hostconfig":{"privileged":true}}`, so an exact-case match would let that through. A body holding two keys that differ only in case — where a rule path, the approval summary or the socket rewrite reads that key — is rejected with `400`, since the daemon keeps one of them depending on key order. Free-form maps such as `Labels` may still hold `foo` and `FOO`.
+
 Bodies larger than `MaxBodyBytes` (1 MiB default) skip body inspection and fall through to the `HTTPServiceRule` decision — except `POST /containers/create`, which is rejected with `413` above 1 MiB (see [Nested docker socket](#nested-docker-socket)).
 
 **`POST /containers/create`** — denies any of:
@@ -248,7 +251,7 @@ Containers the agent starts can have the docker socket mounted (`docker run -v /
 
 1. The runner gives the agent container an anonymous volume at `/run/loop-dproxy` (`LOOP_DOCKERPROXY_NESTED_DIR`). The volume is removed with the container.
 2. At startup, `loop dockerproxy` inspects its own container over the upstream socket to learn the volume's name, and listens on a second socket, `/run/loop-dproxy/docker.sock`, served by the same policy and approver.
-3. Before the body rules run, `POST /containers/create` bodies are rewritten: every `HostConfig.Binds` entry and bind-type `HostConfig.Mounts` entry whose source is `/var/run/docker.sock` or `/run/docker.sock` (literally or through a symlink) becomes a volume mount of that volume with `VolumeOptions.Subpath: docker.sock`, keeping the target and read-only flag. Keys match case-insensitively, as the daemon's JSON decoding does.
+3. Before the body rules run, `POST /containers/create` bodies are rewritten: every `HostConfig.Binds` entry and bind-type `HostConfig.Mounts` entry whose source is `/var/run/docker.sock` or `/run/docker.sock` (literally or through a symlink) becomes a volume mount of that volume with `VolumeOptions.Subpath: docker.sock`, keeping the target and read-only flag. Keys match case-insensitively, like the body rules.
 
 The rewrite fails closed:
 
@@ -259,7 +262,7 @@ The rewrite fails closed:
 | Keys that differ only in case (`HostConfig` and `hostconfig`) — the daemon keeps one depending on key order | `400` |
 | Body over 1 MiB | `413` |
 
-Every rejection is audited with rule id `nested-socket`.
+Every rejection is audited with rule id `create-body`.
 
 The nested socket lives as long as the agent container: a nested container that outlives it loses Docker access. `Subpath` pins the socket file, so a proxy restart inside the agent container also breaks sockets already mounted into running nested containers.
 

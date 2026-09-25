@@ -39,6 +39,10 @@ const (
 	minSubpathAPIMinor = 45
 )
 
+// nestedFoldNames are the keys rewriteSocketMounts reads; bodies must not
+// hold case variants of them.
+var nestedFoldNames = []string{"HostConfig", "Mounts", "Binds", "Type", "Source", "Target", "ReadOnly"}
+
 // daemonSocketPaths are the in-container paths of the docker socket. A bind
 // whose source is (or resolves to) one of them is a socket mount.
 var daemonSocketPaths = map[string]bool{
@@ -96,10 +100,8 @@ func (s *Server) rewriteNestedSocket(r *http.Request) (int, string) {
 	if err := dec.Decode(&body); err != nil {
 		return 0, ""
 	}
-	if hasFoldDuplicates(body) {
-		// The daemon keeps one of the variants; which one depends on key
-		// order, which the decoded map has lost.
-		return http.StatusBadRequest, "ambiguous request body: keys differ only in case"
+	if hasFoldDuplicates(body, s.foldNames) {
+		return http.StatusBadRequest, errAmbiguousKeys.Error()
 	}
 	if !rewriteSocketMounts(body, s.isDockerSocket, s.cfg.NestedVolume) {
 		return 0, ""
@@ -120,15 +122,16 @@ func (s *Server) rewriteNestedSocket(r *http.Request) (int, string) {
 // rewriteSocketMounts moves docker socket binds (HostConfig.Binds and
 // bind-type HostConfig.Mounts) to volume mounts of the proxy socket in
 // volume, keeping each mount's target and read-only flag. Keys match
-// case-insensitively, as the daemon's JSON decoding does; callers reject
-// bodies with case-variant duplicate keys first. Reports whether anything
+// case-insensitively, as the daemon's JSON decoding does (see fold.go).
+// Reports whether anything
 // was rewritten.
 func rewriteSocketMounts(body map[string]any, isSocket func(string) bool, volume string) bool {
-	hc, _ := body[foldKey(body, "HostConfig")].(map[string]any)
+	hcv, _ := foldGet(body, "HostConfig")
+	hc, _ := hcv.(map[string]any)
 	if hc == nil {
 		return false
 	}
-	mountsKey := foldKey(hc, "Mounts")
+	mountsKey, hasMounts := foldKey(hc, "Mounts")
 	mounts, _ := hc[mountsKey].([]any)
 	changed := false
 	for i, m := range mounts {
@@ -136,12 +139,13 @@ func rewriteSocketMounts(body map[string]any, isSocket func(string) bool, volume
 		if !ok || foldString(mm, "Type") != "bind" || !isSocket(foldString(mm, "Source")) {
 			continue
 		}
-		readOnly := mm[foldKey(mm, "ReadOnly")] == true
+		ro, _ := foldGet(mm, "ReadOnly")
+		readOnly := ro == true
 		mounts[i] = socketMount(volume, foldString(mm, "Target"), readOnly)
 		changed = true
 	}
-	bindsKey := foldKey(hc, "Binds")
-	if binds, ok := hc[bindsKey].([]any); ok {
+	if bindsKey, ok := foldKey(hc, "Binds"); ok {
+		binds, _ := hc[bindsKey].([]any)
 		kept := make([]any, 0, len(binds))
 		for _, b := range binds {
 			str, _ := b.(string)
@@ -157,53 +161,12 @@ func rewriteSocketMounts(body map[string]any, isSocket func(string) bool, volume
 		hc[bindsKey] = kept
 	}
 	if changed {
-		if mountsKey == "" {
+		if !hasMounts {
 			mountsKey = "Mounts"
 		}
 		hc[mountsKey] = mounts
 	}
 	return changed
-}
-
-// foldKey returns the key of m equal to key under case folding, or "" when
-// there is none.
-func foldKey(m map[string]any, key string) string {
-	for k := range m {
-		if strings.EqualFold(k, key) {
-			return k
-		}
-	}
-	return ""
-}
-
-// foldString returns the string under key (case-insensitive) in m, empty
-// when absent or not a string.
-func foldString(m map[string]any, key string) string {
-	v, _ := m[foldKey(m, key)].(string)
-	return v
-}
-
-// hasFoldDuplicates reports whether any object in v has two keys equal
-// under case folding.
-func hasFoldDuplicates(v any) bool {
-	switch t := v.(type) {
-	case map[string]any:
-		seen := make(map[string]bool, len(t))
-		for k, child := range t {
-			lk := strings.ToLower(k)
-			if seen[lk] || hasFoldDuplicates(child) {
-				return true
-			}
-			seen[lk] = true
-		}
-	case []any:
-		for _, child := range t {
-			if hasFoldDuplicates(child) {
-				return true
-			}
-		}
-	}
-	return false
 }
 
 // socketMount is a HostConfig.Mounts entry that mounts the proxy socket from
