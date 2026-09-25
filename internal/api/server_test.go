@@ -266,6 +266,7 @@ func (s *ServerSuite) SetupTest() {
 	s.mux.HandleFunc("POST /api/channels/{id}/queued/{msg_id}/steer", s.srv.handleSteerQueuedMessage)
 	s.mux.HandleFunc("GET /api/channels/{id}/timeline", s.srv.handleTimeline)
 	s.mux.HandleFunc("GET /api/messages/search", s.srv.handleSearchMessages)
+	s.mux.HandleFunc("GET /api/channels/{id}/messages/search", s.srv.handleSearchChannelMessages)
 	s.mux.HandleFunc("POST /api/commands", s.srv.handleCommand)
 	s.mux.HandleFunc("POST /api/memory/search", s.srv.handleMemorySearch)
 	s.mux.HandleFunc("POST /api/memory/index", s.srv.handleMemoryIndex)

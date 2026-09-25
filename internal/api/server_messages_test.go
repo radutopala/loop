@@ -677,6 +677,63 @@ func (s *ServerSuite) TestSearchMessagesNotConfigured() {
 	require.Equal(s.T(), http.StatusNotImplemented, rec.Code)
 }
 
+// --- SearchChannelMessages tests ---
+
+func (s *ServerSuite) TestSearchChannelMessages() {
+	tests := []struct {
+		name  string
+		url   string
+		q     string
+		limit int
+		ids   []int64
+		body  string
+	}{
+		{name: "matches", url: "/api/channels/ch-1/messages/search?q=hello", q: "hello", limit: 500, ids: []int64{12, 7}, body: `{"ids":[12,7]}`},
+		{name: "no matches, query trimmed", url: "/api/channels/ch-1/messages/search?q=%20nope%20", q: "nope", limit: 500, ids: nil, body: `{"ids":[]}`},
+		{name: "limit", url: "/api/channels/ch-1/messages/search?q=hello&limit=5", q: "hello", limit: 5, ids: []int64{12}, body: `{"ids":[12]}`},
+		{name: "limit cap", url: "/api/channels/ch-1/messages/search?q=hello&limit=5000", q: "hello", limit: 1000, ids: []int64{}, body: `{"ids":[]}`},
+	}
+	for _, tc := range tests {
+		s.Run(tc.name, func() {
+			s.SetupTest()
+			s.store.On("SearchChannelMessages", mock.Anything, "ch-1", tc.q, tc.limit).Return(tc.ids, nil)
+
+			rec := s.testRequest("GET", tc.url, "")
+			require.Equal(s.T(), http.StatusOK, rec.Code)
+			require.JSONEq(s.T(), tc.body, rec.Body.String())
+		})
+	}
+}
+
+func (s *ServerSuite) TestSearchChannelMessagesBadRequest() {
+	for _, url := range []string{
+		"/api/channels/ch-1/messages/search",
+		"/api/channels/ch-1/messages/search?q=%20",
+		"/api/channels/ch-1/messages/search?q=x&limit=abc",
+	} {
+		rec := s.testRequest("GET", url, "")
+		require.Equal(s.T(), http.StatusBadRequest, rec.Code, url)
+	}
+}
+
+func (s *ServerSuite) TestSearchChannelMessagesError() {
+	s.store.On("SearchChannelMessages", mock.Anything, "ch-1", "fail", 500).Return(nil, errors.New("db error"))
+
+	rec := s.testRequest("GET", "/api/channels/ch-1/messages/search?q=fail", "")
+	require.Equal(s.T(), http.StatusInternalServerError, rec.Code)
+}
+
+func (s *ServerSuite) TestSearchChannelMessagesNotConfigured() {
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	srv := NewServer(nil, nil, nil, nil, nil, logger)
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /api/channels/{id}/messages/search", srv.handleSearchChannelMessages)
+	req := httptest.NewRequest("GET", "/api/channels/ch-1/messages/search?q=hello", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	require.Equal(s.T(), http.StatusNotImplemented, rec.Code)
+}
+
 // --- ComposerHistory tests ---
 
 func (s *ServerSuite) TestComposerHistorySuccess() {

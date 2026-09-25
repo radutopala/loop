@@ -203,3 +203,43 @@ func seedChannel(t *testing.T, store *SQLiteStore, channelID string) int64 {
 	require.NoError(t, err)
 	return ch.ID
 }
+
+// TestSearchChannelMessagesMatchesLiterally runs the find-bar query against a
+// real SQLite: LIKE is case-insensitive, the wildcards in a query match only
+// themselves, other channels and non-message rows are left out, and the
+// newest match comes first.
+func (s *IntegrationSuite) TestSearchChannelMessagesMatchesLiterally() {
+	store, err := NewSQLiteStore(filepath.Join(s.T().TempDir(), "loop.db"))
+	require.NoError(s.T(), err)
+	defer store.Close()
+
+	ctx := context.Background()
+	chatID := seedChannel(s.T(), store, "ch1")
+	otherChatID := seedChannel(s.T(), store, "ch2")
+	ids := map[string]int64{}
+	insert := func(chat int64, channel, msgID, content string) {
+		m := &Message{ChatID: chat, ChannelID: channel, MsgID: msgID, Content: content, Kind: MessageKindMessage, CreatedAt: time.Now()}
+		require.NoError(s.T(), store.InsertMessage(ctx, m))
+		ids[msgID] = m.ID
+	}
+	insert(chatID, "ch1", "a", "Deploy at 50% off")
+	insert(chatID, "ch1", "b", "deploy at 50x off")
+	insert(chatID, "ch1", "c", "snake_case deploy")
+	insert(otherChatID, "ch2", "d", "deploy elsewhere")
+	require.NoError(s.T(), store.InsertAgentEvent(ctx, &Message{ChatID: chatID, ChannelID: "ch1", Content: "deploy tool call", Kind: MessageKindToolUse, CreatedAt: time.Now()}))
+
+	tests := []struct {
+		query string
+		want  []int64
+	}{
+		{query: "DEPLOY", want: []int64{ids["c"], ids["b"], ids["a"]}},
+		{query: "50%", want: []int64{ids["a"]}},
+		{query: "e_c", want: []int64{ids["c"]}},
+		{query: "nothing", want: nil},
+	}
+	for _, tc := range tests {
+		got, err := store.SearchChannelMessages(ctx, "ch1", tc.query, 10)
+		require.NoError(s.T(), err)
+		require.Equal(s.T(), tc.want, got, tc.query)
+	}
+}

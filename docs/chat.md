@@ -77,6 +77,18 @@ Each message shows its row id in the database, `#1234`, next to its time. A mess
 - A `loop://channel/...` link in a message opens inside the app rather than in the browser.
 - Following a link opens the channel, pages in older messages until the target is loaded, and scrolls it into view.
 
+### Find in Chat
+
+The magnifier at the top right of the chat, or <kbd>Cmd</kbd>/<kbd>Ctrl</kbd>+<kbd>F</kbd> while the chat has focus, opens a find bar above the messages:
+
+- It searches every message in the channel, including ones not loaded yet. The match is case-insensitive and literal: `%` and `_` match only themselves.
+- The count shows the current match and the total, as `N / M`, newest first. It shows `no matches` when nothing matches.
+- <kbd>Enter</kbd> or the up arrow steps to an older match. <kbd>Shift</kbd>+<kbd>Enter</kbd> or the down arrow steps to a newer one. Both ends wrap.
+- Each match is shown the way a message link shows its message: older messages are paged in until it's loaded, then it's scrolled into view and highlighted. Its `#id` label copies the link to it.
+- <kbd>Esc</kbd> or the close button closes the bar. Switching channels closes it too.
+
+Tool calls, tool output and thinking aren't searched, only messages. The [Cmd+K palette](settings.md) searches messages across all channels.
+
 ### Highlighted Messages
 
 When jumping to a message from search or a message link, the target message:

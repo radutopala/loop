@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { RootEntry } from "../../api/files";
 import type { ChatState } from "../../hooks/useChatState";
 import { useTheme } from "../../ThemeContext";
@@ -7,6 +7,7 @@ import { fonts } from "../../theme";
 import type { Message } from "../../types";
 import { LoopInfinityIcon } from "../LoopInfinityIcon";
 import { LoopLogo } from "../shared/LoopLogo";
+import { ChatFindBar } from "./ChatFindBar";
 import { ChatInput } from "./ChatInput";
 import type { ChatMessagesHandle } from "./ChatMessages";
 import { ChatMessages } from "./ChatMessages";
@@ -27,6 +28,31 @@ function buildStyles(colors: ColorPalette): Record<string, React.CSSProperties> 
       flex: 1,
       gap: 24,
       padding: 24,
+    },
+    messagesArea: {
+      display: "flex",
+      flexDirection: "column",
+      flex: 1,
+      minHeight: 0,
+      position: "relative",
+    },
+    // Top right, clear of the scrollbar.
+    findToggle: {
+      position: "absolute",
+      top: 8,
+      right: 16,
+      zIndex: 3,
+      display: "flex",
+      alignItems: "center",
+      justifyContent: "center",
+      width: 24,
+      height: 24,
+      padding: 0,
+      border: `1px solid ${colors.border}`,
+      borderRadius: 4,
+      background: colors.bg,
+      color: colors.textMuted,
+      cursor: "pointer",
     },
     inputBar: {
       display: "flex",
@@ -78,6 +104,41 @@ export function ChatView({ channelId, chatState, roots, scrollToMessageId, onScr
     messagesRef.current?.scrollToBottom();
   }, []);
 
+  // Find in chat. A match is shown through the same scroll-to-message path a
+  // message link takes; findTarget is cleared once it's in view, so new
+  // messages arriving afterwards don't pull the view back to it.
+  const [findOpen, setFindOpen] = useState(false);
+  const [findFocusKey, setFindFocusKey] = useState(0);
+  const [findTarget, setFindTarget] = useState<number | null>(null);
+  const [findTerm, setFindTerm] = useState("");
+  const jumpToMatch = useCallback((messageId: number, term: string) => {
+    setFindTarget(messageId);
+    setFindTerm(term);
+  }, []);
+  const openFind = useCallback(() => {
+    setFindOpen(true);
+    setFindFocusKey((k) => k + 1);
+  }, []);
+  const closeFind = useCallback(() => {
+    setFindOpen(false);
+    setFindTarget(null);
+    setFindTerm("");
+  }, []);
+  const handleScrollComplete = useCallback(() => {
+    if (findTarget !== null) setFindTarget(null);
+    else onScrollComplete?.();
+  }, [findTarget, onScrollComplete]);
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    if ((e.metaKey || e.ctrlKey) && e.key === "f") {
+      e.preventDefault();
+      openFind();
+    }
+  };
+
+  useEffect(() => {
+    closeFind();
+  }, [channelId, closeFind]);
+
   const isEmpty = items.length === 0 && liveTail.length === 0 && !loading;
 
   if (!channelId) {
@@ -121,8 +182,40 @@ export function ChatView({ channelId, chatState, roots, scrollToMessageId, onScr
   }
 
   return (
-    <div style={{ ...styles.container, zoom: fontSizes.chat / 13 }}>
-      <ChatMessages ref={messagesRef} channelId={channelId} chatState={chatState} scrollToMessageId={scrollToMessageId} onScrollComplete={onScrollComplete} onQuote={setQuotedMessage} />
+    <div style={{ ...styles.container, zoom: fontSizes.chat / 13 }} onKeyDown={handleKeyDown}>
+      {findOpen && <ChatFindBar channelId={channelId} focusKey={findFocusKey} onJump={jumpToMatch} onClose={closeFind} />}
+      <div style={styles.messagesArea}>
+        <ChatMessages
+          ref={messagesRef}
+          channelId={channelId}
+          chatState={chatState}
+          scrollToMessageId={findTarget ?? scrollToMessageId}
+          findTerm={findOpen ? findTerm : undefined}
+          onScrollComplete={handleScrollComplete}
+          onQuote={setQuotedMessage}
+        />
+        {!findOpen && (
+          <button
+            onClick={openFind}
+            title={`Find in chat (${navigator.platform.includes("Mac") ? "\u2318F" : "Ctrl+F"})`}
+            data-testid="chat-find-toggle"
+            style={styles.findToggle}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.color = colors.textLight;
+              e.currentTarget.style.borderColor = colors.textDim;
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.color = colors.textMuted;
+              e.currentTarget.style.borderColor = colors.border;
+            }}
+          >
+            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <circle cx="11" cy="11" r="7" />
+              <path d="M20 20L16 16" />
+            </svg>
+          </button>
+        )}
+      </div>
       <div style={styles.inputBar}>
         <ChatInput
           channelId={channelId}

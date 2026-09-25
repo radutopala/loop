@@ -190,6 +190,14 @@ func (m *MockStore) GetMessagesCursor(ctx context.Context, channelID string, cur
 	return args.Get(0).([]*db.Message), args.Error(1)
 }
 
+func (m *MockStore) SearchChannelMessages(ctx context.Context, channelID, query string, limit int) ([]int64, error) {
+	args := m.Called(ctx, channelID, query, limit)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]int64), args.Error(1)
+}
+
 func (m *MockStore) SearchMessages(ctx context.Context, query string, limit int) ([]*db.Message, error) {
 	args := m.Called(ctx, query, limit)
 	if args.Get(0) == nil {

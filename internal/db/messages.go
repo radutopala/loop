@@ -384,6 +384,30 @@ func (s *SQLiteStore) SearchMessages(ctx context.Context, query string, limit in
 	return scanMessages(rows)
 }
 
+// SearchChannelMessages returns the ids of the channel's messages whose
+// content contains query, newest first. The query is matched literally:
+// LIKE wildcards in it are escaped.
+func (s *SQLiteStore) SearchChannelMessages(ctx context.Context, channelID, query string, limit int) ([]int64, error) {
+	escaped := strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`).Replace(query)
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT id FROM messages WHERE channel_id = ? AND kind = 'message' AND content LIKE ? ESCAPE '\' ORDER BY id DESC LIMIT ?`,
+		channelID, "%"+escaped+"%", limit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var ids []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
+}
+
 func (s *SQLiteStore) GetMessagesAround(ctx context.Context, channelID string, messageID int64, limit int) ([]*Message, error) {
 	half := limit / 2
 	rows, err := s.db.QueryContext(ctx,

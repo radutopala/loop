@@ -399,3 +399,41 @@ func (s *Server) handleSearchMessages(w http.ResponseWriter, r *http.Request) {
 
 	writeHTTPJSON(w, http.StatusOK, results, s.logger)
 }
+
+const defaultChannelSearchLimit = 500
+const maxChannelSearchLimit = 1000
+
+// channelSearchResponse lists the ids of a channel's matching messages, newest
+// first. Ids are all the chat's find bar needs: it steps through them and
+// scrolls each into view, paging older messages in as it goes.
+type channelSearchResponse struct {
+	IDs []int64 `json:"ids"`
+}
+
+func (s *Server) handleSearchChannelMessages(w http.ResponseWriter, r *http.Request) {
+	if !requireConfigured(w, s.store, "message search not configured") {
+		return
+	}
+
+	q := strings.TrimSpace(r.URL.Query().Get("q"))
+	if q == "" {
+		http.Error(w, "q is required", http.StatusBadRequest)
+		return
+	}
+
+	limit, ok := parseQueryInt(w, r, "limit", defaultChannelSearchLimit, maxChannelSearchLimit)
+	if !ok {
+		return
+	}
+
+	ids, err := s.store.SearchChannelMessages(r.Context(), r.PathValue("id"), q, limit)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if ids == nil {
+		ids = []int64{}
+	}
+
+	writeHTTPJSON(w, http.StatusOK, channelSearchResponse{IDs: ids}, s.logger)
+}
