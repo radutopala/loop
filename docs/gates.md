@@ -407,6 +407,15 @@ Trust model: project config lives in the same repo as the agent workspace and is
 
 ---
 
+## Docker Desktop host settings
+
+The proxy decides what the agent may *ask* the daemon for; Docker Desktop decides what the daemon can *reach*. Two settings narrow the latter, so a request that slips past a rule (or is approved by mistake) has less to hit:
+
+- **File sharing** (Settings → Resources → File sharing). The daemon resolves bind sources on its own side, and on macOS the default shares — `/Users`, `/Volumes`, `/private`, `/tmp`, `/var/folders` — make most of the host bindable. Trimming the list to the directories loop actually mounts (your project roots, `~/.loop`, and the host paths in `mounts`) turns a stray `-v /Users/<you>:/h` into a daemon error instead of a home-directory mount. Anything left out fails to mount for every container, not just agents, so keep whatever other tools need.
+- **Enhanced Container Isolation** (Docker Business; enforced through `admin-settings.json`). Containers run in a Linux user namespace, so root in a container — including one started with `--privileged` — is not root in the Docker Desktop VM, and ECI adds its own checks on sensitive mounts. It also blocks bind-mounting the Docker socket by default, which is how the agent container reaches the daemon through the proxy (`hostSock:/var/run/docker.sock.host`). The exception list is `enhancedContainerIsolation.dockerSocketMount.imageList` (with `allowDerivedImages` for images built on top of a listed one), but Docker Desktop validates entries against image digests it downloads from a registry. `loop-agent` is built locally and exists in no registry, so to use ECI with Docker access enabled, push the agent image (or a base it derives from) to a registry you control, reference it in `container_image`, and list that reference. See Docker's [ECI configuration](https://docs.docker.com/enterprise/security/hardened-desktop/enhanced-container-isolation/config/) for the exact matching rules.
+
+  Containers the agent starts get the proxy's nested socket, not the daemon's, so they need no entry. Loop's own test suite doesn't run under ECI; if the gate or proxy misbehaves there, turn ECI off to confirm it's the cause and open an issue.
+
 ## Known gaps
 
 Gaps operators should know about — what's enforced vs what's aspirational:
