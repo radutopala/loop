@@ -88,6 +88,21 @@ func (c *Creator) Create(ctx context.Context, dirPath, branch, name, sessionID s
 	}, nil
 }
 
+// HeadRef returns what dir has checked out: its branch, or its short commit
+// hash when HEAD is detached. Either one works as the base of a new worktree.
+// A worktree's branch can't be derived from its directory name: agents
+// rename branches, and imported worktrees never had a worktree/<name> one.
+func (c *Creator) HeadRef(ctx context.Context, dir string) (string, error) {
+	if out, err := c.Run(ctx, dir, "git", "symbolic-ref", "--quiet", "--short", "HEAD"); err == nil {
+		return strings.TrimSpace(string(out)), nil
+	}
+	out, err := c.Run(ctx, dir, "git", "rev-parse", "--short", "HEAD")
+	if err != nil {
+		return "", fmt.Errorf("resolving HEAD of %s failed: %s", dir, strings.TrimSpace(string(out)))
+	}
+	return strings.TrimSpace(string(out)), nil
+}
+
 // Remove removes a git worktree directory and prunes stale worktree metadata.
 // parentDir is the main repository directory (not the worktree itself).
 // worktreePath is the absolute path of the worktree to remove.
@@ -133,21 +148,6 @@ func (c *Creator) Unlock(ctx context.Context, parentDir, worktreePath string) er
 			return nil
 		}
 		return fmt.Errorf("git worktree unlock failed: %s", msg)
-	}
-	return nil
-}
-
-// Move moves a git worktree directory and renames its branch.
-// parentDir is the main repository directory.
-// oldPath/newPath are absolute paths; oldBranch/newBranch are the full branch names.
-func (c *Creator) Move(ctx context.Context, parentDir, oldPath, newPath, oldBranch, newBranch string) error {
-	out, err := c.Run(ctx, parentDir, "git", "worktree", "move", oldPath, newPath)
-	if err != nil {
-		return fmt.Errorf("git worktree move failed: %s", strings.TrimSpace(string(out)))
-	}
-	out, err = c.Run(ctx, newPath, "git", "branch", "-m", oldBranch, newBranch)
-	if err != nil {
-		return fmt.Errorf("git branch -m failed: %s", strings.TrimSpace(string(out)))
 	}
 	return nil
 }

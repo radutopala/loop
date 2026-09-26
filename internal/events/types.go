@@ -268,7 +268,6 @@ type ChannelUpdatedData struct {
 	BaseAhead     int    `json:"base_ahead,omitempty"`
 	BaseBehind    int    `json:"base_behind,omitempty"`
 	Name          string `json:"name,omitempty"`
-	DirPath       string `json:"dir_path,omitempty"`
 }
 
 // TaskEventData is the payload for task.created and task.updated events.

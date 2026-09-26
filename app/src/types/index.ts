@@ -220,7 +220,6 @@ export interface ChannelUpdatedData {
   base_ahead?: number;
   base_behind?: number;
   name?: string;
-  dir_path?: string;
 }
 
 /** A channel's model/effort overrides after they change; empty clears one. */

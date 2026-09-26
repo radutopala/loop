@@ -6,8 +6,9 @@ import type { Channel } from "../../types";
 import type { PillKind } from "./pills";
 import { SIDEBAR_PILLS } from "./pills";
 import { RowInfoPopup } from "./RowInfoPopup";
+import { SessionKindIcon } from "./SessionKindIcon";
 import { StatusPill } from "./StatusPill";
-import { isTaskThread, sessionName } from "./sessions";
+import { sessionName } from "./sessions";
 
 /** Drag-to-reorder wiring for threads/worktrees under a common parent. */
 export interface ThreadReorder {
@@ -63,8 +64,6 @@ export function ThreadItem({
   const isUnread = unreadIdsRef?.current?.has(thread.id) ?? false;
   const activePills = SIDEBAR_PILLS.filter((p) => pillsRef?.current?.get(p.kind)?.has(thread.id));
   const hasAnyPill = activePills.length > 0;
-  const isEphemeral = thread.name.startsWith("[ephemeral] ");
-  const isTask = isTaskThread(thread);
   const displayName = sessionName(thread);
 
   return (
@@ -190,25 +189,7 @@ export function ThreadItem({
               </span>
             </span>
           )}
-          {thread.worktree && (
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke={colors.active} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
-              <circle cx="18" cy="18" r="3" />
-              <circle cx="6" cy="6" r="3" />
-              <path d="M6 21V9a9 9 0 0 0 9 9" />
-            </svg>
-          )}
-          {isTask && !isEphemeral && (
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke={colors.textDim} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
-              <circle cx="12" cy="12" r="10" />
-              <polyline points="12 6 12 12 16 14" />
-            </svg>
-          )}
-          {isEphemeral && (
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke={colors.textDim} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0, opacity: 0.6 }}>
-              <path d="M17.7 7.7A7.5 7.5 0 1 0 5 16.6" />
-              <path d="M8 22l-4-4 4-4" />
-            </svg>
-          )}
+          <SessionKindIcon channel={thread} />
           <span
             style={{
               overflow: "hidden",

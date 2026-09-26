@@ -9,7 +9,7 @@ import { ChannelList } from "./ChannelList";
 import type { PillKind } from "./pills";
 import { SIDEBAR_PILLS } from "./pills";
 import { RenameThreadDialog } from "./RenameThreadDialog";
-import { SectionHeader, type SectionKey, SessionSections } from "./SessionSections";
+import { type SectionKey, SectionTabs, SessionSections } from "./SessionSections";
 import { SidebarFooter } from "./SidebarFooter";
 import { SidebarHeader } from "./SidebarHeader";
 import { activeSessions, isTaskThread, recentSessions, sessionContext, sessionName } from "./sessions";
@@ -22,16 +22,22 @@ const ORDER_STORAGE_KEY = "loop-channel-order";
 // only (localStorage), mirroring the channel-order approach — the backend
 // returns threads alphabetically and stays the source of truth for membership.
 const THREAD_ORDER_STORAGE_KEY = "loop-thread-order";
-// Which of the Recent / All sections are collapsed.
-const SECTIONS_STORAGE_KEY = "loop-sidebar-sections";
+// Which sidebar tab is open: Recent or Tree.
+const TAB_STORAGE_KEY = "loop-sidebar-tab";
 
-// Whether task threads are hidden from the tree and Recent.
+// Whether task threads are hidden, per tab.
 const HIDE_TASKS_STORAGE_KEY = "loop-sidebar-hide-tasks";
 
-function loadSectionsCollapsed(): Record<SectionKey, boolean> {
-  // Picked out so a key from an older layout (Active) doesn't linger.
-  const { recent = false, all = false } = storageGetJSON<Partial<Record<SectionKey, boolean>>>(SECTIONS_STORAGE_KEY) ?? {};
-  return { recent, all };
+function loadHideTasks(): Record<SectionKey, boolean> {
+  const v = storageGetJSON<boolean | Partial<Record<SectionKey, boolean>>>(HIDE_TASKS_STORAGE_KEY);
+  // A plain boolean is from before the filter was per tab.
+  if (typeof v === "boolean") return { recent: v, tree: v };
+  return { recent: v?.recent === true, tree: v?.tree === true };
+}
+
+// Tree until a tab is picked.
+function loadTab(): SectionKey {
+  return storageGetJSON<SectionKey>(TAB_STORAGE_KEY) === "recent" ? "recent" : "tree";
 }
 
 function loadOrder(): string[] {
@@ -75,7 +81,7 @@ interface SidebarProps {
   onCreateThread: (parentId: string, name: string) => void;
   onCreateWorktree?: (channelId: string, branch: string) => void;
   onDeleteThread: (threadId: string) => void;
-  onRenameThread?: (threadId: string, newName: string, isWorktree: boolean) => void;
+  onRenameThread?: (threadId: string, newName: string) => void;
   onSetLocked?: (channelId: string, locked: boolean) => void;
   onDeleteBatch?: (ids: string[]) => void;
   onOpenDirectory?: (dirPath: string) => void;
@@ -158,17 +164,22 @@ export function Sidebar({
   const newChannelInputRef = useRef<HTMLInputElement>(null);
   const draggedIdRef = useRef<string | null>(null);
   const sidebarRef = useRef<HTMLDivElement>(null);
-  const [sectionsCollapsed, setSectionsCollapsed] = useState<Record<SectionKey, boolean>>(loadSectionsCollapsed);
-  const [hideTasks, setHideTasks] = useState(() => storageGetJSON<boolean>(HIDE_TASKS_STORAGE_KEY) === true);
+  const [tab, setTab] = useState<SectionKey>(loadTab);
+  const [hideTasks, setHideTasks] = useState(loadHideTasks);
   // When each session was last seen active. A run that just ended counts
   // as recent activity before the next channel refresh brings its newest
   // message's time.
   const seenActiveAtRef = useRef(new Map<string, number>());
 
-  const toggleSection = useCallback((section: SectionKey) => {
-    setSectionsCollapsed((prev) => {
+  const changeTab = useCallback((next: SectionKey) => {
+    setTab(next);
+    storageSetJSON(TAB_STORAGE_KEY, next);
+  }, []);
+
+  const toggleHideTasks = useCallback((section: SectionKey) => {
+    setHideTasks((prev) => {
       const next = { ...prev, [section]: !prev[section] };
-      storageSetJSON(SECTIONS_STORAGE_KEY, next);
+      storageSetJSON(HIDE_TASKS_STORAGE_KEY, next);
       return next;
     });
   }, []);
@@ -371,10 +382,10 @@ export function Sidebar({
   const isRunning = (id: string) => !!byId.get(id)?.agent_running || !!isRunningMapRef?.current?.has(id);
   const pillsFor = (id: string): PillKind[] => SIDEBAR_PILLS.filter((p) => pillsRef?.current?.get(p.kind)?.has(id)).map((p) => p.kind);
   // Hidden task threads take their sub-threads with them; one that's running
-  // or waiting on you stays.
-  const hidden = (c: Channel) => hideTasks && isTaskThread(c) && !isRunning(c.id) && pillsFor(c.id).length === 0;
+  // or waiting on you stays. Each tab has its own filter.
+  const hidden = (c: Channel, section: SectionKey) => hideTasks[section] && isTaskThread(c) && !isRunning(c.id) && pillsFor(c.id).length === 0;
   const threadsByParent = channels.reduce<Record<string, Channel[]>>((acc, c) => {
-    if (c.parent_id && !hidden(c)) {
+    if (c.parent_id && !hidden(c, "tree")) {
       (acc[c.parent_id] ??= []).push(c);
     }
     return acc;
@@ -434,8 +445,15 @@ export function Sidebar({
   const active = selectMode ? [] : activeSessions(channels, isRunning, (id) => pillsFor(id).length > 0).filter(matchesQuery);
   for (const c of active) seenActiveAtRef.current.set(c.id, now);
   const lastActivity = (c: Channel): number | undefined => Math.max(c.last_activity_at ?? 0, seenActiveAtRef.current.get(c.id) ?? 0) || undefined;
-  const recent = selectMode ? [] : recentSessions(channels, lastActivity, now).filter((c) => matchesQuery(c) && !hidden(c));
-  const hasSessions = recent.length > 0;
+  const allRecent = selectMode ? [] : recentSessions(channels, lastActivity, now);
+  const recent = allRecent.filter((c) => matchesQuery(c) && !hidden(c, "recent"));
+  // With nothing recent there's nothing to tab between, so only the tree
+  // shows. Judged before the search and task filters, so neither can take
+  // the tabs (and the way back) away. Select mode is about the tree's
+  // checkboxes, so it shows only the tree too.
+  const showTabs = allRecent.length > 0;
+  const openTab: SectionKey = showTabs ? tab : "tree";
+  const showTree = selectMode || openTab === "tree";
 
   if (collapsed) {
     return null;
@@ -503,13 +521,6 @@ export function Sidebar({
       <SidebarHeader
         searchQuery={searchQuery}
         onSearchQueryChange={setSearchQuery}
-        hideTasks={hideTasks}
-        onToggleHideTasks={() => {
-          setHideTasks((v) => {
-            storageSetJSON(HIDE_TASKS_STORAGE_KEY, !v);
-            return !v;
-          });
-        }}
         selectMode={selectMode}
         selectedCount={selected.size}
         onBatchDelete={handleBatchDelete}
@@ -544,22 +555,24 @@ export function Sidebar({
         newChannelInputRef={newChannelInputRef}
       />
       <div style={{ flex: 1, overflowY: "auto", overflowX: "hidden", minHeight: 0 }}>
-        <SessionSections
-          active={active}
-          recent={recent}
-          byId={byId}
-          selectedId={selectedId}
-          isRunning={isRunning}
-          pillsFor={pillsFor}
-          isUnread={isUnread}
-          lastActivity={lastActivity}
-          collapsed={sectionsCollapsed}
-          onToggle={toggleSection}
-          onSelect={onSelect}
-          onContextMenu={handleContextMenu}
-        />
-        {hasSessions && <SectionHeader section="all" label="All" collapsed={sectionsCollapsed.all} onToggle={() => toggleSection("all")} />}
-        {!(hasSessions && sectionsCollapsed.all) && (
+        {!selectMode && (
+          <SectionTabs tab={openTab} showTabs={showTabs} recentCount={recent.length} onChange={changeTab} hideTasks={hideTasks[openTab]} onToggleHideTasks={() => toggleHideTasks(openTab)} />
+        )}
+        {!showTree && (
+          <SessionSections
+            active={active}
+            recent={recent}
+            byId={byId}
+            selectedId={selectedId}
+            isRunning={isRunning}
+            pillsFor={pillsFor}
+            isUnread={isUnread}
+            lastActivity={lastActivity}
+            onSelect={onSelect}
+            onContextMenu={handleContextMenu}
+          />
+        )}
+        {showTree && (
           <ChannelList
             dmChannel={dmChannel}
             topLevel={topLevel}
@@ -617,7 +630,7 @@ export function Sidebar({
           isWorktree={!!renaming.worktree}
           onCancel={() => setRenaming(null)}
           onSubmit={(newName) => {
-            onRenameThread?.(renaming.id, newName, !!renaming.worktree);
+            onRenameThread?.(renaming.id, newName);
             setRenaming(null);
           }}
         />

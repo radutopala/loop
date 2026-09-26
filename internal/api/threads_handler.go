@@ -100,22 +100,27 @@ func (s *Server) handleDeleteThread(w http.ResponseWriter, r *http.Request) {
 }
 
 // importSessionMessages parses a Claude Code session JSONL file and inserts
-// user prompts and assistant text responses as messages in the thread.
+// user prompts and assistant text responses as messages in the thread. The
+// transcript is looked up under the parent channel's project dir.
 func (s *Server) importSessionMessages(ctx context.Context, parentChannelID, threadID, sessionID string) {
-	// Sanitise sessionID to prevent path traversal — only the base name is
-	// valid (no slashes, no ".." components).
-	sessionID = filepath.Base(sessionID)
-	if sessionID == "." || sessionID == ".." || sessionID == "" {
-		return
-	}
-
-	if s.store == nil || s.sys == nil {
+	if _, ok := cleanSessionID(sessionID); !ok || s.store == nil || s.sys == nil {
 		return
 	}
 
 	// Look up the parent channel to find the project dir.
 	parent, err := s.store.GetChannel(ctx, parentChannelID)
 	if err != nil || parent == nil || parent.DirPath == "" {
+		return
+	}
+	s.importSessionMessagesFrom(ctx, parent.DirPath, threadID, sessionID)
+}
+
+// importSessionMessagesFrom is importSessionMessages for a transcript under
+// projectDir, e.g. a worktree's, whose transcripts live apart from the
+// parent channel's.
+func (s *Server) importSessionMessagesFrom(ctx context.Context, projectDir, threadID, sessionID string) {
+	sessionID, ok := cleanSessionID(sessionID)
+	if !ok || s.store == nil || s.sys == nil {
 		return
 	}
 
@@ -130,7 +135,7 @@ func (s *Server) importSessionMessages(ctx context.Context, parentChannelID, thr
 	if err != nil {
 		return
 	}
-	encodedPath := osutil.EncodeClaudeProjectPath(parent.DirPath)
+	encodedPath := osutil.EncodeClaudeProjectPath(projectDir)
 	jsonlPath := filepath.Join(home, ".claude", "projects", encodedPath, sessionID+".jsonl")
 
 	f, err := s.sys.Open(jsonlPath)
@@ -214,6 +219,13 @@ func (s *Server) importSessionMessages(ctx context.Context, parentChannelID, thr
 	}
 }
 
+// cleanSessionID sanitises a session id to prevent path traversal: only the
+// base name is valid (no slashes, no ".." components).
+func cleanSessionID(id string) (string, bool) {
+	id = filepath.Base(id)
+	return id, id != "." && id != ".." && id != ""
+}
+
 type forkThreadResponse struct {
 	ThreadID     string `json:"thread_id"`
 	WorktreePath string `json:"worktree_path,omitempty"`
@@ -270,8 +282,11 @@ func (s *Server) handleForkThread(w http.ResponseWriter, r *http.Request) {
 }
 
 // forkWorktreeThread is the worktree-thread arm of handleForkThread: new
-// worktree branched from the SOURCE worktree's branch (its committed state),
-// new thread carrying the source's session.
+// worktree branched from what the SOURCE worktree has checked out (its
+// branch, or its commit when detached), new thread carrying the source's
+// session. The source's transcript lives under its own worktree's project
+// dir, not the parent channel's, so that's where it's copied and imported
+// from.
 func (s *Server) forkWorktreeThread(w http.ResponseWriter, r *http.Request, src *db.Channel) {
 	parent, err := s.store.GetChannel(r.Context(), src.ParentID)
 	if err != nil {
@@ -283,11 +298,15 @@ func (s *Server) forkWorktreeThread(w http.ResponseWriter, r *http.Request, src 
 		return
 	}
 
-	// The worktree branch convention is worktree/<dir basename> (see
-	// worktree.Creator.Create).
-	srcBranch := "worktree/" + filepath.Base(src.DirPath)
+	// Fork from whatever the source has checked out, not from
+	// worktree/<dir basename>: its branch is often renamed.
+	srcBranch, err := s.worktreeCreator.HeadRef(r.Context(), src.DirPath)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
 	name := "wt-" + randutil.HexID(4)
-	result, err := s.worktreeCreator.Create(r.Context(), parent.DirPath, srcBranch, name, src.SessionID)
+	result, err := s.worktreeCreator.Create(r.Context(), parent.DirPath, srcBranch, name, "")
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -306,24 +325,35 @@ func (s *Server) forkWorktreeThread(w http.ResponseWriter, r *http.Request, src 
 	ch.DirPath = result.WorktreePath
 	ch.Worktree = true
 	ch.BaseBranch = srcBranch
-	// A fork whose transcript never reached the worktree's project dir is
-	// not a fork — drop the inherited id so the thread starts clean rather
-	// than resuming a conversation that isn't on disk.
-	if src.SessionID != "" && !result.SessionStaged {
-		s.logger.Warn("fork session transcript unavailable; starting thread fresh",
-			"thread_id", newID, "session_id", src.SessionID)
-		ch.SessionID = ""
-	}
 	if err := s.store.UpsertChannel(r.Context(), ch); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	if src.SessionID != "" && result.SessionStaged {
+	staged := false
+	if src.SessionID != "" {
+		if err := s.copySessionFile(src.DirPath, result.WorktreePath, src.SessionID); err != nil {
+			s.logger.Warn("fork session transcript unavailable; starting thread fresh",
+				"thread_id", newID, "session_id", src.SessionID, "error", err)
+		} else {
+			staged = true
+		}
+	}
+	if staged {
 		if err := s.store.MarkSessionForkPending(r.Context(), newID, src.SessionID); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
-		s.importSessionMessages(r.Context(), src.ParentID, newID, src.SessionID)
+		s.importSessionMessagesFrom(r.Context(), src.DirPath, newID, src.SessionID)
+	} else {
+		// The new thread inherited the parent channel's session, which isn't
+		// this conversation and whose transcript isn't in the new worktree's
+		// project dir. Clear it so the fork starts clean rather than
+		// resuming it. UpsertChannel keeps a stored id over an empty one,
+		// so this takes an explicit update.
+		if err := s.store.UpdateSessionID(r.Context(), newID, ""); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
 	}
 	if s.eventsHub != nil {
 		s.eventsHub.BroadcastChannelCreated(src.ParentID, newID)

@@ -435,7 +435,7 @@ A channel's git state changed (branch switch, new commit, or diff size). Broadca
 
 Emitted by the in-process `BranchPoller` goroutine, which ticks every 5s (default), compares each channel's working directory against the previous tick, and broadcasts only when at least one field changed. The first tick after startup primes the cache without broadcasting; a channel first seen on a later tick (created since) is broadcast once, since its git state may have moved on since the sidebar fetched it.
 
-Also emitted by the rename endpoints ([`POST /api/channels/{id}/rename`](api.md#post-apichannelsidrename) and [`POST /api/worktrees/move`](api.md#post-apiworktreesmove)), which carry the new `name` and — for a worktree rename — `dir_path`, so the sidebar reflects the rename live.
+Also emitted by [`POST /api/channels/{id}/rename`](api.md#post-apichannelsidrename), carrying the new `name`, so the sidebar reflects the rename live.
 
 **Payload schema:**
 
@@ -462,7 +462,6 @@ Also emitted by the rename endpoints ([`POST /api/channels/{id}/rename`](api.md#
 | `sync_base`      | string | A worktree thread's base branch, when it still resolves |
 | `base_ahead` / `base_behind` | int | Commits the checkout is ahead of / behind `sync_base` |
 | `name`           | string | New display name (only on rename; omitted otherwise) |
-| `dir_path`       | string | New directory path (only on worktree rename; omitted otherwise) |
 
 ---
 

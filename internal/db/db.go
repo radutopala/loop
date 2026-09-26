@@ -25,7 +25,6 @@ type Store interface {
 	UpdateChannelPermissions(ctx context.Context, channelID string, perms types.Permissions) error
 	UpdateChannelLocked(ctx context.Context, channelID string, locked bool) error
 	UpdateChannelName(ctx context.Context, channelID, name string) error
-	UpdateChannelDirPath(ctx context.Context, channelID, dirPath string) error
 	DeleteChannel(ctx context.Context, channelID string) error
 	DeleteChannelsByParentID(ctx context.Context, parentID string) error
 	ListChannelIDsByParentID(ctx context.Context, parentID string) ([]string, error)
