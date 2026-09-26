@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Channel, ChannelUpdatedData } from "../types";
-import { applyChannelUpdate } from "./channelUpdate";
+import { applyChannelUpdate, replayChannelPatches } from "./channelUpdate";
 
 const channel: Channel = {
   id: "t1",
@@ -41,5 +41,29 @@ describe("applyChannelUpdate", () => {
 
   it("clears the description", () => {
     expect(applyChannelUpdate(channel, { ...gitOnly, description: "" }).description).toBe("");
+  });
+});
+
+describe("replayChannelPatches", () => {
+  const other = { ...channel, id: "t2", name: "other" } as Channel;
+  const ticket = (url: string) => (c: Channel) => ({ ...c, ticket_url: url });
+
+  it("applies patches newer than the fetch, in arrival order, to their channel only", () => {
+    const patches = [
+      { at: 5, id: "t1", apply: ticket("https://old.example/1") },
+      { at: 15, id: "t1", apply: ticket("https://new.example/1") },
+      { at: 20, id: "t1", apply: ticket("https://newest.example/1") },
+    ];
+    const got = replayChannelPatches([channel, other], patches, 10);
+    expect(got.channels[0]?.ticket_url).toBe("https://newest.example/1");
+    expect(got.channels[1]).toBe(other);
+    expect(got.pending.map((p) => p.at)).toEqual([15, 20]);
+  });
+
+  it("returns the fetched list untouched and drops patches the fetch already saw", () => {
+    const list = [channel];
+    const got = replayChannelPatches(list, [{ at: 5, id: "t1", apply: ticket("https://x.example/1") }], 10);
+    expect(got.channels).toBe(list);
+    expect(got.pending).toEqual([]);
   });
 });
