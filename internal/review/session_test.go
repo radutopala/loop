@@ -141,6 +141,23 @@ func (s *SessionSuite) TestUpdateForkStoresModeAndClearsIDUnlessCustom() {
 	}
 }
 
+func (s *SessionSuite) TestUpdateAgent() {
+	store := NewStore()
+	require.False(s.T(), store.UpdateAgent("nope", "m", "high"))
+
+	store.Put("ch1", &Session{Model: "old", Effort: "low"})
+	require.True(s.T(), store.UpdateAgent("ch1", "claude-opus-5-5", "max"))
+	got := store.Get("ch1")
+	require.Equal(s.T(), "claude-opus-5-5", got.Model)
+	require.Equal(s.T(), "max", got.Effort)
+	require.False(s.T(), got.UpdatedAt.IsZero())
+
+	require.True(s.T(), store.UpdateAgent("ch1", "", ""))
+	got = store.Get("ch1")
+	require.Empty(s.T(), got.Model)
+	require.Empty(s.T(), got.Effort)
+}
+
 func (s *SessionSuite) TestAppendRunSessionRejects() {
 	store := NewStore()
 	store.Put("ch1", &Session{})

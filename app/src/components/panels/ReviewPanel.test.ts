@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { ReviewComment, ReviewSession } from "../../api/review";
-import { buildAddressAllPrompt, buildAddressPrompt, buildDiscussDraft, WHY_QUESTION } from "./ReviewPanel";
+import { buildAddressAllPrompt, buildAddressPrompt, buildDiscussDraft, reviewEffortOptions, reviewModelOptions, WHY_QUESTION } from "./ReviewPanel";
 
 function comment(body: string, extra: Partial<ReviewComment> = {}): ReviewComment {
   return { id: "c1", path: "internal/api/x.go", line: 12, side: "RIGHT", body, pushed: false, ...extra };
@@ -194,5 +194,37 @@ describe("buildAddressAllPrompt", () => {
 
   it("carries the author when the finding has one", () => {
     expect(buildAddressAllPrompt([comment("leaks the lock", { author: "octocat" })])).toContain("### 1. `internal/api/x.go`:12 (RIGHT — added/new) — @octocat");
+  });
+});
+
+describe("reviewModelOptions", () => {
+  it("names the config default and lists the presets", () => {
+    const opts = reviewModelOptions("", "claude-opus-5-5");
+    expect(opts[0]).toEqual({ value: "", label: "Default (opus-5-5)" });
+    expect(opts[1]).toEqual({ value: "claude-opus-5-5", label: "opus-5-5" });
+  });
+
+  it.each([
+    ["no config default", "", "", "Default model", false],
+    ["keeps an id outside the presets", "claude-custom-1", "", "Default model", true],
+    ["preset not duplicated", "claude-sonnet-5", "", "Default model", false],
+  ])("%s", (_name, current, def, wantDefault, wantExtra) => {
+    const opts = reviewModelOptions(current, def);
+    expect(opts[0]?.label).toBe(wantDefault);
+    expect(opts.filter((o) => o.value === current && current !== "").length).toBe(current ? 1 : 0);
+    expect(opts.some((o) => o.value === "claude-custom-1")).toBe(wantExtra);
+  });
+});
+
+describe("reviewEffortOptions", () => {
+  it("marks high, xhigh and max as recommended", () => {
+    expect(reviewEffortOptions("").map((o) => o.label)).toEqual(["Default effort", "low", "medium", "high (recommended)", "xhigh (recommended)", "max (recommended)"]);
+  });
+
+  it.each([
+    ["medium", "Default (medium)"],
+    ["xhigh", "Default (xhigh)"],
+  ])("names the config default %s", (def, want) => {
+    expect(reviewEffortOptions(def)[0]?.label).toBe(want);
   });
 });

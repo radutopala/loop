@@ -93,6 +93,11 @@ type Session struct {
 	// to put per-run options.
 	ForkMode      ForkMode `json:"fork_mode,omitempty"`
 	ForkSessionID string   `json:"fork_session_id,omitempty"`
+	// Model / Effort are the user's model and reasoning-effort choice for
+	// the next run, kept on the session for the same reason as ForkMode.
+	// Empty inherits the config's claude_model / claude_effort.
+	Model  string `json:"model,omitempty"`
+	Effort string `json:"effort,omitempty"`
 	// RunSessionIDs are the Claude sessions the review runs for this
 	// session actually used, oldest first. Runs always fork, so each one
 	// mints a new id and the list grows by one per run. Kept so a chat
@@ -237,6 +242,22 @@ func (s *Store) UpdateFork(channelID string, mode ForkMode, sessionID string) bo
 	if mode == ForkCustom {
 		sess.ForkSessionID = sessionID
 	}
+	sess.UpdatedAt = time.Now()
+	return true
+}
+
+// UpdateAgent records the model and reasoning effort the next review run
+// uses; empty values fall back to the config. Returns false if no session
+// exists for channelID.
+func (s *Store) UpdateAgent(channelID, model, effort string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	sess, ok := s.sessions[channelID]
+	if !ok {
+		return false
+	}
+	sess.Model = model
+	sess.Effort = effort
 	sess.UpdatedAt = time.Now()
 	return true
 }

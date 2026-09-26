@@ -71,6 +71,21 @@ per-global / per-project / per-worktree the same way as `github.gh_user`.
 4. **Close** — closing the session deletes the in-memory session record
    and removes the worktree on disk. Pushed comments remain on GitHub.
 
+## Model and effort
+
+Two dropdowns next to the Run button pick the **model** and the
+**reasoning effort** the review agent runs with. **Default** follows the
+config's `claude_model` / `claude_effort` for the channel and names the
+value it resolves to. A reviewer that thinks longer finds more, so
+`high`, `xhigh` and `max` are marked **recommended**. Lower levels are fine
+for a quick pass but miss findings.
+
+The choice applies to review runs only; the chat's own model/effort
+override (the composer pill) is separate. Like the fork choice below, it is
+stored on the in-memory review session, survives the refresh every run
+starts with, and resets when the daemon restarts. See
+[`PUT /review/agent`](api.md).
+
 ## Forking the chat session
 
 By default a review run starts from a **fresh** Claude session: the

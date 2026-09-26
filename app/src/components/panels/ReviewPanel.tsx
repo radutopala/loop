@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { sendMessage } from "../../api/channels";
+import { fetchAgentConfig, sendMessage } from "../../api/channels";
 import {
   deleteReviewComment,
   deleteReviewSession,
@@ -13,6 +13,7 @@ import {
   type ReviewPR,
   type ReviewSession,
   type ReviewStatus,
+  setReviewAgent,
   setReviewFork,
   syncReviewSession,
 } from "../../api/review";
@@ -22,6 +23,7 @@ import { useTheme } from "../../ThemeContext";
 import { fonts } from "../../theme";
 import type { GateApprovalRequestedData, WSEvent } from "../../types";
 import { ApprovalCard } from "../chat/ApprovalCard";
+import { EFFORT_PRESETS, MODEL_PRESETS, shortModel } from "../chat/agentPresets";
 import { ContextMenu } from "../shared/ContextMenu";
 import { ReviewDiffView } from "./ReviewDiffView";
 import { ReviewRunDrawer } from "./ReviewRunDrawer";
@@ -152,6 +154,31 @@ function transcriptRefs(session?: ReviewSession | null): string[] {
 // The canned ask. It sits next to the builder rather than inside it so a test
 // can assert the exact wording that goes out, and so the difference between
 // Discuss and Why? stays one string rather than one code path each.
+/** Reasoning-effort levels worth running a review at; lower ones miss findings. */
+export const RECOMMENDED_REVIEW_EFFORTS = ["high", "xhigh", "max"];
+
+export interface SelectOption {
+  value: string;
+  label: string;
+}
+
+/**
+ * Model choices for a review run: the config default first (named, so the
+ * fallback is concrete), then the presets. A current id outside the presets
+ * — set from the CLI, or a preset since dropped — is kept as an option so the
+ * select can still show it.
+ */
+export function reviewModelOptions(current: string, defaultModel: string): SelectOption[] {
+  const ids = current && !MODEL_PRESETS.includes(current) ? [...MODEL_PRESETS, current] : MODEL_PRESETS;
+  return [{ value: "", label: defaultModel ? `Default (${shortModel(defaultModel)})` : "Default model" }, ...ids.map((m) => ({ value: m, label: shortModel(m) }))];
+}
+
+/** Effort choices for a review run, with the recommended levels marked. */
+export function reviewEffortOptions(defaultEffort: string): SelectOption[] {
+  const mark = (e: string) => (RECOMMENDED_REVIEW_EFFORTS.includes(e) ? `${e} (recommended)` : e);
+  return [{ value: "", label: defaultEffort ? `Default (${defaultEffort})` : "Default effort" }, ...EFFORT_PRESETS.map((e) => ({ value: e, label: mark(e) }))];
+}
+
 export const WHY_QUESTION = "Please explain why we need this.";
 
 export function buildDiscussDraft(c: ReviewComment, session?: ReviewSession | null, ask?: string): string {
@@ -292,6 +319,9 @@ export function ReviewPanel({ channelId, subscribeChatEvents, registerReviewView
   // adjacent input is still empty.
   const [forkModeDraft, setForkModeDraft] = useState<ReviewForkMode>("");
   const [forkDraft, setForkDraft] = useState("");
+  // The config's model/effort for this channel, so the "Default" choices
+  // name what they fall back to.
+  const [agentDefaults, setAgentDefaults] = useState({ model: "", effort: "" });
 
   const hasSession = session !== null && session.status !== "idle" && session.status !== "error";
 
@@ -313,6 +343,12 @@ export function ReviewPanel({ channelId, subscribeChatEvents, registerReviewView
     setError(null);
     setForkModeDraft("");
     setForkDraft("");
+    setAgentDefaults({ model: "", effort: "" });
+    fetchAgentConfig(channelId)
+      .then((cfg) => {
+        if (!cancelled) setAgentDefaults({ model: cfg.default_model, effort: cfg.default_effort });
+      })
+      .catch(() => {});
     (async () => {
       try {
         const resp = await getReviewSession(channelId);
@@ -733,6 +769,21 @@ export function ReviewPanel({ channelId, subscribeChatEvents, registerReviewView
     [channelId, session?.fork_session_id],
   );
 
+  // Same storage as the fork choice: the daemon keeps the model/effort on
+  // the review session and applies them to the next run.
+  const commitAgent = useCallback(
+    async (model: string, effort: string) => {
+      setError(null);
+      try {
+        const resp = await setReviewAgent(channelId, model, effort);
+        if (resp.present && resp.session) setSession(resp.session);
+      } catch (e) {
+        setError(e instanceof Error ? e.message : String(e));
+      }
+    },
+    [channelId],
+  );
+
   const onForkModeChange = useCallback(
     (m: ReviewForkMode) => {
       // "custom" needs an id before the daemon will accept it; hold the
@@ -1052,6 +1103,52 @@ export function ReviewPanel({ channelId, subscribeChatEvents, registerReviewView
                 textAlign: "right",
               }}
             />
+            <select
+              data-testid="review-model"
+              value={session?.model ?? ""}
+              onChange={(e) => void commitAgent(e.target.value, session?.effort ?? "")}
+              disabled={runDisabled}
+              aria-label="Model the review run uses"
+              title="Model the review run uses. Default follows the config's claude_model."
+              style={{
+                background: "transparent",
+                color: colors.text,
+                border: `1px solid ${colors.border}`,
+                borderRadius: 4,
+                padding: "3px 4px",
+                fontSize: 11,
+                fontFamily: fonts.sans,
+              }}
+            >
+              {reviewModelOptions(session?.model ?? "", agentDefaults.model).map((o) => (
+                <option key={o.value} value={o.value}>
+                  {o.label}
+                </option>
+              ))}
+            </select>
+            <select
+              data-testid="review-effort"
+              value={session?.effort ?? ""}
+              onChange={(e) => void commitAgent(session?.model ?? "", e.target.value)}
+              disabled={runDisabled}
+              aria-label="Reasoning effort the review run uses"
+              title="Reasoning effort the review run uses. high, xhigh or max are recommended for reviews; lower levels miss findings."
+              style={{
+                background: "transparent",
+                color: colors.text,
+                border: `1px solid ${colors.border}`,
+                borderRadius: 4,
+                padding: "3px 4px",
+                fontSize: 11,
+                fontFamily: fonts.sans,
+              }}
+            >
+              {reviewEffortOptions(agentDefaults.effort).map((o) => (
+                <option key={o.value} value={o.value}>
+                  {o.label}
+                </option>
+              ))}
+            </select>
             <select
               data-testid="review-fork-mode"
               value={forkModeDraft}

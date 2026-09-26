@@ -369,6 +369,34 @@ func (s *reviewService) handleReviewSetFork(w http.ResponseWriter, r *http.Reque
 	writeHTTPJSON(w, http.StatusOK, reviewSessionResponse{Present: true, Session: s.sessions.Get(channelID)}, s.deps.logger)
 }
 
+// handleReviewSetAgent records the model and reasoning effort the next
+// review run uses. Stored on the review session for the same reason as the
+// fork choice: the Run button reaches /review/run through a workflow. Empty
+// values inherit the config. Returns the updated session.
+func (s *reviewService) handleReviewSetAgent(w http.ResponseWriter, r *http.Request) {
+	if s.sessions == nil {
+		http.Error(w, "review service not configured", http.StatusNotImplemented)
+		return
+	}
+	channelID := r.PathValue("id")
+	var body agentConfigRequest
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		http.Error(w, "invalid JSON body", http.StatusBadRequest)
+		return
+	}
+	model := strings.TrimSpace(body.Model)
+	effort := strings.TrimSpace(body.Effort)
+	if _, ok := validEfforts[effort]; !ok {
+		http.Error(w, "invalid effort: must be one of low, medium, high, xhigh, max (or empty)", http.StatusBadRequest)
+		return
+	}
+	if !s.sessions.UpdateAgent(channelID, model, effort) {
+		http.Error(w, "no review session for channel", http.StatusNotFound)
+		return
+	}
+	writeHTTPJSON(w, http.StatusOK, reviewSessionResponse{Present: true, Session: s.sessions.Get(channelID)}, s.deps.logger)
+}
+
 // handleReviewSessions returns a (channel_id, status) summary for every
 // live session. Used at FE startup to seed the sidebar's `rev` pill set
 // so the indicator survives a renderer reload — review.status WS events
@@ -787,7 +815,17 @@ func (s *reviewService) handleReviewRun(w http.ResponseWriter, r *http.Request) 
 	s.sessions.UpdateStatus(channelID, review.StatusReviewing, "")
 	s.broadcastReviewStatus(channelID, review.StatusReviewing, "")
 
-	go s.runReviewAsync(runCtx, channelID, worktreePath, parentDirPath, sysPrompt, subagentPrompt, fullPrompt, forkSessionID)
+	go s.runReviewAsync(runCtx, review.RunRequest{
+		ChannelID:            channelID,
+		DirPath:              worktreePath,
+		ParentDirPath:        parentDirPath,
+		SystemPrompt:         sysPrompt,
+		SubagentSystemPrompt: subagentPrompt,
+		Prompt:               fullPrompt,
+		ForkSessionID:        forkSessionID,
+		Model:                sess.Model,
+		Effort:               sess.Effort,
+	})
 	writeHTTPJSON(w, http.StatusAccepted, map[string]string{"status": "started"}, s.deps.logger)
 }
 

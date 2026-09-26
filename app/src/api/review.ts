@@ -45,6 +45,10 @@ export interface ReviewSession {
   error?: string;
   fork_mode?: ReviewForkMode;
   fork_session_id?: string;
+  // Model / reasoning effort the next review run uses; unset inherits the
+  // config's claude_model / claude_effort.
+  model?: string;
+  effort?: string;
   // Claude sessions the review runs used, oldest first — one per run, and
   // the directory their transcripts live in (keyed by the run's CWD, i.e.
   // the PR worktree, so it is not derivable from the channel).
@@ -148,6 +152,21 @@ export async function setReviewFork(channelId: string, mode: ReviewForkMode, ses
     body: JSON.stringify({ mode, session_id: sessionId ?? "" }),
   });
   if (!res.ok) throw new Error((await res.text()) || `Failed to set fork mode: ${res.statusText}`);
+  return normalizeSession(await res.json());
+}
+
+/**
+ * Record the model and reasoning effort the next review run uses (empty
+ * inherits the config). Stored on the review session for the same reason as
+ * the fork choice. Returns the updated session.
+ */
+export async function setReviewAgent(channelId: string, model: string, effort: string): Promise<ReviewSessionResponse> {
+  const res = await fetch(`${getApiUrl()}/api/channels/${channelId}/review/agent`, {
+    method: "PUT",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ model, effort }),
+  });
+  if (!res.ok) throw new Error((await res.text()) || `Failed to set review model: ${res.statusText}`);
   return normalizeSession(await res.json());
 }
 

@@ -66,7 +66,7 @@ type GitHubReview interface {
 // held as an interface so tests can drive the handler without a real
 // agent container.
 type ReviewRunner interface {
-	Run(ctx context.Context, channelID, dirPath, parentDirPath, systemPrompt, subagentSystemPrompt, prompt, forkSessionID string, onComment func(*review.Comment)) (*agent.AgentResponse, error)
+	Run(ctx context.Context, req review.RunRequest) (*agent.AgentResponse, error)
 }
 
 // refreshReviewSession fast-forwards the worktree to the PR's current
@@ -113,10 +113,13 @@ func (s *reviewService) refreshReviewSession(ctx context.Context, channelID, dir
 		RawDiff:      raw,
 		Comments:     merged,
 		Status:       review.StatusReady,
-		// Put replaces the whole session, so the user's fork choice has to
-		// be carried across — Run refreshes right before it reads it.
+		// Put replaces the whole session, so the user's fork and agent
+		// choices have to be carried across — Run refreshes right before it
+		// reads them.
 		ForkMode:      sess.ForkMode,
 		ForkSessionID: sess.ForkSessionID,
+		Model:         sess.Model,
+		Effort:        sess.Effort,
 		RunSessionIDs: sess.RunSessionIDs,
 		TranscriptDir: sess.TranscriptDir,
 	})
@@ -225,7 +228,8 @@ func (s *reviewService) pushOneComment(ctx context.Context, channelID string, se
 // message instead of staying at status=reviewing forever. Without this
 // gate, a hung container would leak the goroutine and any CLI/FE poller
 // would keep hitting status=reviewing until its own deadline fired.
-func (s *reviewService) runReviewAsync(runCtx context.Context, channelID, worktreePath, parentDirPath, systemPrompt, subagentSystemPrompt, prompt, forkSessionID string) {
+func (s *reviewService) runReviewAsync(runCtx context.Context, req review.RunRequest) {
+	channelID, worktreePath, parentDirPath := req.ChannelID, req.DirPath, req.ParentDirPath
 	defer s.unregisterReviewRun(channelID)
 	ctx := runCtx
 	if s.runTimeout > 0 {
@@ -237,10 +241,10 @@ func (s *reviewService) runReviewAsync(runCtx context.Context, channelID, worktr
 	// during the run rather than all at once at the end. ingestComment is
 	// safe to call concurrently and dedups by stable comment id, so a
 	// finding that also arrives over MCP lands once.
-	onComment := func(c *review.Comment) {
+	req.OnComment = func(c *review.Comment) {
 		s.ingestComment(channelID, worktreePath, parentDirPath, c)
 	}
-	resp, err := s.runner.Run(ctx, channelID, worktreePath, parentDirPath, systemPrompt, subagentSystemPrompt, prompt, forkSessionID, onComment)
+	resp, err := s.runner.Run(ctx, req)
 	// Record the session even when the run failed: a timed-out run has
 	// usually already reported findings, and its transcript is exactly
 	// what someone asking "why was this flagged?" needs to read.

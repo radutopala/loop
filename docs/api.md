@@ -1834,6 +1834,21 @@ Response: `{"present": true, "session": { ... }}` — the updated session.
 `session_id`. `404` if the channel has no review session. `501` if the
 review service is not configured.
 
+### `PUT /api/channels/{id}/review/agent`
+
+Choose the model and reasoning effort the *next* review run uses. Body:
+`{"model": "", "effort": ""}`. `model` is any Claude model id, passed to
+the CLI verbatim; `effort` is one of `low`, `medium`, `high`, `xhigh`,
+`max`. Empty inherits the config's `claude_model` / `claude_effort`.
+Values are trimmed. Stored on the in-memory review session like the fork
+choice, and reported back as the session's `model` / `effort`.
+
+Response: `{"present": true, "session": { ... }}` — the updated session.
+
+**Errors:** `400` on invalid JSON or an unknown `effort`. `404` if the
+channel has no review session. `501` if the review service is not
+configured.
+
 ### `POST /api/channels/{id}/review/comments/{cid}/push`
 
 Push one comment to the PR via `gh api /repos/{owner}/{repo}/pulls/{N}/comments`. Flips `pushed=true` on the in-memory session on success.
