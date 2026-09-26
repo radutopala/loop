@@ -140,6 +140,9 @@ func (s *ServerSuite) TestAgentConfigGetNilLoaderFallbacks() {
 	// With no injected loaders the handler falls back to the real config
 	// loaders; temp dirs have no .loop/config.json so the merge degrades
 	// gracefully either way — we only assert the endpoint stays healthy.
+	// HOME points at an empty temp dir so the real global load fails the
+	// same way on every machine instead of reading the host's config.
+	s.T().Setenv("HOME", s.T().TempDir())
 	dir := s.T().TempDir()
 	parent := s.T().TempDir()
 	s.store.On("GetChannel", mock.Anything, "wt-1").Return(&db.Channel{
@@ -149,10 +152,14 @@ func (s *ServerSuite) TestAgentConfigGetNilLoaderFallbacks() {
 		ChannelID: "ch-1", DirPath: parent,
 	}, nil)
 	s.srv.configs.load = nil
+	require.Equal(s.T(), http.StatusOK, s.agentConfigGet("wt-1").Code)
+
+	// A stubbed global load gets past the early return, so the nil
+	// worktree and project loaders fall back to the real ones.
+	s.srv.configs.load = func() (*config.Config, error) { return &config.Config{}, nil }
 	s.srv.configs.loadWorktree = nil
 	require.Equal(s.T(), http.StatusOK, s.agentConfigGet("wt-1").Code)
 
-	// Non-worktree channel exercises the nil loadProjectConfig fallback.
 	s.store.On("GetChannel", mock.Anything, "ch-2").Return(&db.Channel{
 		ChannelID: "ch-2", DirPath: dir,
 	}, nil)
