@@ -26,7 +26,7 @@ func TestRunnerSuite(t *testing.T) { suite.Run(t, new(RunnerSuite)) }
 
 func (s *RunnerSuite) TestRunNoAgentConfigured() {
 	r := &Runner{}
-	_, err := r.Run(context.Background(), "ch", "/dir", "/parent", "sys", "subsys", "p", "", nil)
+	_, err := r.Run(context.Background(), RunRequest{ChannelID: "ch", DirPath: "/dir", ParentDirPath: "/parent", SystemPrompt: "sys", SubagentSystemPrompt: "subsys", Prompt: "p"})
 	require.ErrorContains(s.T(), err, "agent not configured")
 }
 
@@ -34,7 +34,7 @@ func (s *RunnerSuite) TestRunAgentErrorPropagates() {
 	a := new(mockAgentRunner)
 	a.On("Run", mock.Anything, mock.Anything).Return(nil, errors.New("boom"))
 	r := &Runner{Agent: a}
-	_, err := r.Run(context.Background(), "ch", "/dir", "/parent", "sys", "subsys", "p", "", nil)
+	_, err := r.Run(context.Background(), RunRequest{ChannelID: "ch", DirPath: "/dir", ParentDirPath: "/parent", SystemPrompt: "sys", SubagentSystemPrompt: "subsys", Prompt: "p"})
 	require.ErrorContains(s.T(), err, "boom")
 }
 
@@ -45,11 +45,12 @@ func (s *RunnerSuite) TestRunBuildsRequest() {
 	a.On("Run", mock.Anything, mock.MatchedBy(func(req *agent.AgentRequest) bool {
 		return req.ChannelID == "ch" && req.DirPath == "/wt" && req.ParentDirPath == "/repo" &&
 			req.SystemPrompt == "sys" && req.SubagentSystemPrompt == "subsys" &&
-			req.Prompt == "p" && req.ReviewMode && req.OnToolUseRaw == nil
+			req.Prompt == "p" && req.ReviewMode && req.OnToolUseRaw == nil &&
+			req.Model == "claude-opus-5-5" && req.Effort == "xhigh"
 	})).Return(&agent.AgentResponse{Response: "done"}, nil)
 
 	r := &Runner{Agent: a}
-	resp, err := r.Run(context.Background(), "ch", "/wt", "/repo", "sys", "subsys", "p", "", nil)
+	resp, err := r.Run(context.Background(), RunRequest{ChannelID: "ch", DirPath: "/wt", ParentDirPath: "/repo", SystemPrompt: "sys", SubagentSystemPrompt: "subsys", Prompt: "p", Model: "claude-opus-5-5", Effort: "xhigh"})
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), "done", resp.Response)
 	a.AssertExpectations(s.T())
@@ -75,7 +76,7 @@ func (s *RunnerSuite) TestRunForkSession() {
 			})).Return(&agent.AgentResponse{}, nil)
 
 			r := &Runner{Agent: a}
-			_, err := r.Run(context.Background(), "ch", "/wt", "/repo", "sys", "subsys", "p", tc.forkID, nil)
+			_, err := r.Run(context.Background(), RunRequest{ChannelID: "ch", DirPath: "/wt", ForkSessionID: tc.forkID})
 			require.NoError(s.T(), err)
 			a.AssertExpectations(s.T())
 		})
@@ -124,9 +125,9 @@ func (s *RunnerSuite) TestRunForwardsReportFindings() {
 
 			var got []string
 			r := &Runner{Agent: a}
-			_, err := r.Run(context.Background(), "ch", "/wt", "/repo", "sys", "subsys", "p", "", func(c *Comment) {
+			_, err := r.Run(context.Background(), RunRequest{ChannelID: "ch", DirPath: "/wt", OnComment: func(c *Comment) {
 				got = append(got, c.Body)
-			})
+			}})
 			require.NoError(s.T(), err)
 			require.Equal(s.T(), tc.want, got)
 		})

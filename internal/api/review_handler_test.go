@@ -345,6 +345,7 @@ func (s *ReviewHandlerSuite) TestLoadHappyPath() {
 	require.Equal(s.T(), "/repo/.worktrees/pr-7", resp.Session.WorktreePath)
 	require.Equal(s.T(), 7, resp.Session.PR.Number)
 	require.Empty(s.T(), resp.Session.Comments)
+	require.Equal(s.T(), review.ForkCurrent, resp.Session.ForkMode)
 }
 
 func (s *ReviewHandlerSuite) TestLoadSeedsGitHubComments() {
@@ -1327,6 +1328,8 @@ type mockReviewRunner struct {
 	lastSubSys string
 	lastUser   string
 	lastFork   string
+	lastModel  string
+	lastEffort string
 	runFn      func() (*agent.AgentResponse, error)
 	// runWithCtxFn, when set, takes precedence over runFn so tests can
 	// observe ctx cancellation (used by the runReviewAsync timeout test).
@@ -1337,15 +1340,18 @@ type mockReviewRunner struct {
 	done     chan struct{} // closed after Run returns
 }
 
-func (m *mockReviewRunner) Run(ctx context.Context, _, dirPath, parentDirPath, systemPrompt, subagentSystemPrompt, prompt, forkSessionID string, onComment func(*review.Comment)) (*agent.AgentResponse, error) {
+func (m *mockReviewRunner) Run(ctx context.Context, req review.RunRequest) (*agent.AgentResponse, error) {
 	m.mu.Lock()
 	m.calls++
-	m.lastDir = dirPath
-	m.lastParent = parentDirPath
-	m.lastSys = systemPrompt
-	m.lastSubSys = subagentSystemPrompt
-	m.lastUser = prompt
-	m.lastFork = forkSessionID
+	m.lastDir = req.DirPath
+	m.lastParent = req.ParentDirPath
+	m.lastSys = req.SystemPrompt
+	m.lastSubSys = req.SubagentSystemPrompt
+	m.lastUser = req.Prompt
+	m.lastFork = req.ForkSessionID
+	m.lastModel = req.Model
+	m.lastEffort = req.Effort
+	onComment := req.OnComment
 	ctxFn := m.runWithCtxFn
 	fn := m.runFn
 	done := m.done
@@ -1702,6 +1708,92 @@ func (s *ReviewHandlerSuite) TestRunForksCurrentChatSession() {
 	sys.AssertCalled(s.T(), "WriteFile", dst, []byte("transcript"), os.FileMode(0o644))
 }
 
+// ---- model / effort option ----
+
+func (s *ReviewHandlerSuite) putAgent(body string) *httptest.ResponseRecorder {
+	return s.doRaw("PUT", "/api/channels/ch1/review/agent", []byte(body))
+}
+
+func (s *ReviewHandlerSuite) TestSetAgentReviewStoreNotConfigured() {
+	srv := newServerForReviewTests(s.T())
+	mux := srv.buildMux()
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, httptest.NewRequest("PUT", "/api/channels/ch1/review/agent", nil))
+	require.Equal(s.T(), http.StatusNotImplemented, w.Code)
+}
+
+func (s *ReviewHandlerSuite) TestSetAgentErrors() {
+	tests := []struct {
+		name     string
+		session  bool
+		body     string
+		wantCode int
+		wantBody string
+	}{
+		{name: "bad json", session: true, body: "{", wantCode: http.StatusBadRequest, wantBody: "invalid JSON body"},
+		{name: "bad effort", session: true, body: `{"effort":"extreme"}`, wantCode: http.StatusBadRequest, wantBody: "invalid effort"},
+		{name: "no session", body: `{"effort":"high"}`, wantCode: http.StatusNotFound, wantBody: "no review session"},
+	}
+	for _, tc := range tests {
+		s.Run(tc.name, func() {
+			s.rs.Delete("ch1")
+			if tc.session {
+				s.rs.Put("ch1", &review.Session{})
+			}
+			w := s.putAgent(tc.body)
+			require.Equal(s.T(), tc.wantCode, w.Code)
+			require.Contains(s.T(), w.Body.String(), tc.wantBody)
+		})
+	}
+}
+
+// The updated session comes back trimmed on the response, and empty values
+// clear the choice back to the config default.
+func (s *ReviewHandlerSuite) TestSetAgentStoresChoiceAndEchoesSession() {
+	tests := []struct {
+		name       string
+		body       string
+		wantModel  string
+		wantEffort string
+	}{
+		{name: "set trims", body: `{"model":" claude-opus-5-5 ","effort":" xhigh "}`, wantModel: "claude-opus-5-5", wantEffort: "xhigh"},
+		{name: "effort only", body: `{"effort":"max"}`, wantEffort: "max"},
+		{name: "clear", body: `{"model":"","effort":""}`},
+	}
+	for _, tc := range tests {
+		s.Run(tc.name, func() {
+			s.rs.Put("ch1", &review.Session{Model: "old", Effort: "low"})
+			w := s.putAgent(tc.body)
+			require.Equal(s.T(), http.StatusOK, w.Code)
+
+			var got reviewSessionResponse
+			require.NoError(s.T(), json.Unmarshal(w.Body.Bytes(), &got))
+			require.True(s.T(), got.Present)
+			require.Equal(s.T(), tc.wantModel, got.Session.Model)
+			require.Equal(s.T(), tc.wantEffort, got.Session.Effort)
+			require.Equal(s.T(), tc.wantEffort, s.rs.Get("ch1").Effort)
+		})
+	}
+}
+
+// The model/effort choice survives the refresh that precedes every run and
+// reaches the agent request.
+func (s *ReviewHandlerSuite) TestRunUsesAgentChoice() {
+	s.wireReadySession()
+	require.True(s.T(), s.rs.UpdateAgent("ch1", "claude-opus-5-5", "xhigh"))
+
+	runner := &mockReviewRunner{done: make(chan struct{})}
+	s.srv.review.setAgent(runner, "sys", "p")
+
+	w := httptest.NewRecorder()
+	s.mux.ServeHTTP(w, httptest.NewRequest("POST", "/api/channels/ch1/review/run", nil))
+	require.Equal(s.T(), http.StatusAccepted, w.Code)
+	<-runner.done
+	require.Equal(s.T(), "claude-opus-5-5", runner.lastModel)
+	require.Equal(s.T(), "xhigh", runner.lastEffort)
+	require.Equal(s.T(), "xhigh", s.rs.Get("ch1").Effort)
+}
+
 func (s *ReviewHandlerSuite) TestRunForksCustomSession() {
 	s.wireReadySession()
 	require.True(s.T(), s.rs.UpdateFork("ch1", review.ForkCustom, "manual-id"))
@@ -1723,6 +1815,21 @@ func (s *ReviewHandlerSuite) TestRunForksCustomSession() {
 	require.Equal(s.T(), "manual-id", runner.lastFork)
 }
 
+// Forking the chat is the default, so a channel with no chat session yet
+// runs fresh instead of failing.
+func (s *ReviewHandlerSuite) TestRunForkCurrentWithoutChatRunsFresh() {
+	s.wireReadySession()
+	require.True(s.T(), s.rs.UpdateFork("ch1", review.ForkCurrent, ""))
+	runner := &mockReviewRunner{done: make(chan struct{})}
+	s.srv.review.setAgent(runner, "sys", "p")
+
+	w := httptest.NewRecorder()
+	s.mux.ServeHTTP(w, httptest.NewRequest("POST", "/api/channels/ch1/review/run", nil))
+	require.Equal(s.T(), http.StatusAccepted, w.Code)
+	<-runner.done
+	require.Empty(s.T(), runner.lastFork)
+}
+
 // A fork that can't be resolved or staged fails the Run outright rather
 // than leaving the session stuck in Reviewing.
 func (s *ReviewHandlerSuite) TestRunForkFailuresReject() {
@@ -1731,13 +1838,6 @@ func (s *ReviewHandlerSuite) TestRunForkFailuresReject() {
 		setup   func()
 		wantMsg string
 	}{
-		{
-			name: "channel has no chat session yet",
-			setup: func() {
-				require.True(s.T(), s.rs.UpdateFork("ch1", review.ForkCurrent, ""))
-			},
-			wantMsg: "no chat session to fork yet",
-		},
 		{
 			name: "custom id cleared out from under us",
 			setup: func() {

@@ -48,6 +48,9 @@ rules:
   create and start can't redirect them. An existing volume must be bound
   to the mount, or to its resolved host path
   (`LOOP_DOCKERPROXY_BIND_HOST_PATHS`), which Docker Desktop reports.
+- `inspect.go` — container inspect responses report those volume mounts
+  as the binds the agent asked for (the mount joined with the subpath),
+  so a script comparing a mount's source with `$PWD` finds its container.
 
 Both use `Subpath`, so a request they rewrite needs Docker API 1.45+. See
 [docs/gates.md](../../docs/gates.md#nested-docker-socket) for the

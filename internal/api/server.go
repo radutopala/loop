@@ -412,6 +412,8 @@ func (s *Server) registerGitRoutes(mux *http.ServeMux) {
 }
 
 // registerReviewRoutes registers the PR-review session routes.
+//
+//nolint:dupl // route registrars are intentionally parallel lists
 func (s *Server) registerReviewRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/review/sessions", s.review.handleReviewSessions)
 	mux.HandleFunc("POST /api/channels/{id}/review/load", s.review.handleReviewLoad)
@@ -421,6 +423,7 @@ func (s *Server) registerReviewRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("DELETE /api/channels/{id}/review", s.review.handleReviewDelete)
 	mux.HandleFunc("POST /api/channels/{id}/review/run", s.review.handleReviewRun)
 	mux.HandleFunc("PUT /api/channels/{id}/review/fork", s.review.handleReviewSetFork)
+	mux.HandleFunc("PUT /api/channels/{id}/review/agent", s.review.handleReviewSetAgent)
 	mux.HandleFunc("POST /api/channels/{id}/review/comments/{cid}/push", s.review.handleReviewPushComment)
 	mux.HandleFunc("DELETE /api/channels/{id}/review/comments/{cid}", s.review.handleReviewDeleteComment)
 	mux.HandleFunc("POST /api/channels/{id}/review/push-all", s.review.handleReviewPushAll)
@@ -500,6 +503,8 @@ func (s *Server) registerWorkflowRoutes(mux *http.ServeMux) {
 }
 
 // registerQualityRoutes registers the quality engine routes.
+//
+//nolint:dupl // route registrars are intentionally parallel lists
 func (s *Server) registerQualityRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/channels/{id}/quality/scan", s.quality.handleQualityScan)
 	mux.HandleFunc("DELETE /api/channels/{id}/quality/scan", s.quality.handleQualityScanCancel)

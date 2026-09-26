@@ -320,6 +320,8 @@ Differences from a plain bind, and rejections (audited with rule id `create-bind
 
 Bind options other than read-only (propagation, SELinux labels) are dropped.
 
+`docker inspect` (`GET /containers/{id}/json`) reports a pinned mount as the bind the agent asked for: `Mounts[].Source` is the mount's path joined with its subpath (the path the agent sees, e.g. its `$PWD`), not the volume's `/var/lib/docker/volumes/loop-bind-<hash>/_data`, and `HostConfig.Mounts` lists it as a bind. A script that checks whether a running container already mounts the current directory then finds it, instead of recreating the container on every call. Other endpoints, such as `docker ps` (`GET /containers/json`), still show the `loop-bind-*` volume. Comparing a mount's source with `$PWD` stays fragile anyway (symlinks, Docker Desktop's `/host_mnt`), so a label on the container naming its directory is the sturdier check.
+
 The nested socket lives as long as the agent container: a nested container that outlives it loses Docker access. `Subpath` pins the socket file, so a proxy restart inside the agent container also breaks sockets already mounted into running nested containers.
 
 ---

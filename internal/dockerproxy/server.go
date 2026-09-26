@@ -154,7 +154,9 @@ func NewServer(cfg ServerConfig) (*Server, error) {
 	addFoldNames(foldNames, detailsFoldNames...)
 	cfg.BindRoots = sortRoots(cfg.BindRoots)
 	client := &http.Client{Transport: transport, Timeout: 30 * time.Second}
-	return &Server{cfg: cfg, policy: cfg.Policy, upstream: rp, client: client, foldNames: foldNames}, nil
+	s := &Server{cfg: cfg, policy: cfg.Policy, upstream: rp, client: client, foldNames: foldNames}
+	rp.ModifyResponse = s.modifyResponse
+	return s, nil
 }
 
 // apiVersionRe matches a Docker API version prefix at the start of the path

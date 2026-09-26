@@ -71,21 +71,35 @@ per-global / per-project / per-worktree the same way as `github.gh_user`.
 4. **Close** — closing the session deletes the in-memory session record
    and removes the worktree on disk. Pushed comments remain on GitHub.
 
+## Model and effort
+
+Two dropdowns next to the Run button pick the **model** and the
+**reasoning effort** the review agent runs with. **Default** follows the
+config's `claude_model` / `claude_effort` for the channel and names the
+value it resolves to. A reviewer that thinks longer finds more, so
+`high`, `xhigh` and `max` are marked **recommended**. Lower levels are fine
+for a quick pass but miss findings.
+
+The choice applies to review runs only; the chat's own model/effort
+override (the composer pill) is separate. Like the fork choice below, it is
+stored on the in-memory review session, survives the refresh every run
+starts with, and resets when the daemon restarts. See
+[`PUT /review/agent`](api.md).
+
 ## Forking the chat session
 
-By default a review run starts from a **fresh** Claude session: the
-reviewer sees the diff and the prompt, nothing else. That is usually what
-you want — a reviewer with no memory of how the code was written has no
-sunk cost in it.
+By default a review run **forks the chat session**: the reviewer starts
+from a copy of the channel's conversation, so it knows the design
+discussion and the constraints the diff can't show. The dropdown next to the
+Run button changes that:
 
-When the chat's context *is* the point (a long design discussion, a
-constraint the diff can't show), the dropdown next to the Run button
-switches the run to fork it:
-
-- **Fresh session** — the default, described above.
-- **Fork chat session** — forks whatever session the channel's chat is on
-  at the moment the run starts. Resolved per run, not when you pick it,
-  so a session that rolls over (compaction, its own fork) is picked up.
+- **Fork chat session** — the default. Forks whatever session the channel's
+  chat is on at the moment the run starts. Resolved per run, not when you
+  pick it, so a session that rolls over (compaction, its own fork) is
+  picked up. If the channel has no chat session yet, the run starts fresh.
+- **Fresh session** — the reviewer sees the diff and the prompt, nothing
+  else. A reviewer with no memory of how the code was written has no sunk
+  cost in it.
 - **Fork session id…** — forks the id typed into the adjacent input.
   Useful for replaying a review against an older conversation.
 
@@ -97,14 +111,14 @@ Mechanically, the daemon copies the source session's transcript from the
 channel's Claude project dir into the worktree's before launching, because
 Claude Code keys session files by CWD and the review runs rooted in the PR
 worktree. The agent is then started with `--resume <id> --fork-session`.
-If the fork can't be resolved or staged — no chat session yet, an id with
-no transcript on disk — the Run fails up front with a `400` rather than
-leaving the session stuck in `reviewing`.
+If the fork can't be resolved or staged — an id with no transcript on
+disk, say — the Run fails up front with a `400` rather than leaving the
+session stuck in `reviewing`.
 
-The choice is stored on the in-memory review session (it resets when the
-daemon restarts) rather than on the run request, because the Run button
-dispatches a workflow whose `loop review run` step has nowhere to carry
-per-run options. See [`PUT /review/fork`](api.md).
+The choice is stored on the in-memory review session (loading a PR resets
+it to the default, and so does a daemon restart) rather than on the run
+request, because the Run button dispatches a workflow whose
+`loop review run` step has nowhere to carry per-run options. See [`PUT /review/fork`](api.md).
 
 ## Handing a finding to the agent
 
@@ -200,6 +214,12 @@ twenty comments spread over four files is painful to scroll by hand:
   comments last. Jumping to a comment in a collapsed file expands that file
   first and moves the file rail's highlight with it. The widget only appears
   once the session has at least one anchored comment.
+- **new | all** (the pair at the left of the floating widget) picks what
+  the floating prev/next walks. **new**, the default, is only the findings
+  this review session's runs reported, so a PR with a long GitHub thread
+  history doesn't bury them. **all** adds the comments synced from GitHub
+  on Load and Sync. The choice is remembered across sessions. It only
+  narrows the navigator; every comment stays rendered in the diff.
 
 The floating counter re-measures on scroll and reports whichever comment sits
 nearest the viewport's midpoint, so it stays honest when the user scrolls by

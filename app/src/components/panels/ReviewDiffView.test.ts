@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { ReviewComment } from "../../api/review";
 import { parseUnifiedDiff } from "./DiffViewer";
-import { type FileSummary, orderedComments } from "./ReviewDiffView";
+import { type CommentAnchor, type FileSummary, navigableAnchors, orderedComments, unlandedTarget } from "./ReviewDiffView";
 
 const DIFF = `diff --git a/a.go b/a.go
 index 111..222 100644
@@ -89,13 +89,51 @@ describe("orderedComments", () => {
   it("carries the file index so navigation can expand the right section", () => {
     const { summaries, byFile, orphans } = summarize(DIFF, [comment("a1", "a.go", 2), comment("b1", "b.go", 2), comment("orphan", "gone.go", 1)]);
     expect(orderedComments(summaries, byFile, orphans)).toEqual([
-      { id: "a1", path: "a.go", fileIdx: 0 },
-      { id: "b1", path: "b.go", fileIdx: 1 },
-      { id: "orphan", path: "gone.go", fileIdx: -1 },
+      { id: "a1", path: "a.go", fileIdx: 0, github: false },
+      { id: "b1", path: "b.go", fileIdx: 1, github: false },
+      { id: "orphan", path: "gone.go", fileIdx: -1, github: false },
     ]);
   });
 
   it("returns nothing when there are no comments", () => {
     expect(ids(DIFF, [])).toEqual([]);
+  });
+});
+
+describe("navigableAnchors", () => {
+  it("flags GitHub-synced comments on the anchor", () => {
+    const { summaries, byFile, orphans } = summarize(DIFF, [comment("mine", "a.go", 2), comment("gh", "b.go", 2, { source: "github" }), comment("gh-orphan", "gone.go", 1, { source: "github" })]);
+    expect(orderedComments(summaries, byFile, orphans).map((a) => a.github)).toEqual([false, true, true]);
+  });
+
+  const anchors: CommentAnchor[] = [
+    { id: "mine", path: "a.go", fileIdx: 0, github: false },
+    { id: "gh", path: "b.go", fileIdx: 1, github: true },
+  ];
+
+  it.each([
+    ["all", ["mine", "gh"]],
+    ["new", ["mine"]],
+  ] as const)("scope %s", (scope, want) => {
+    expect(navigableAnchors(anchors, scope).map((a) => a.id)).toEqual(want);
+  });
+});
+
+describe("unlandedTarget", () => {
+  const view = { top: 100, bottom: 500 };
+  const box = (top: number) => ({ top, bottom: top + 40 });
+
+  it.each([
+    // The bug: at the top of the diff the first comment is on screen, and
+    // next must land on it rather than skip to the second.
+    ["next lands on the first comment on screen", 1, [box(120), box(300)], 0],
+    ["next skips comments scrolled above the view", 1, [box(0), box(300)], 1],
+    ["next ignores collapsed comments", 1, [null, box(300)], 1],
+    ["next falls back when all are above", 1, [box(0), box(20)], 9],
+    ["prev lands on the last comment on screen", -1, [box(120), box(300), box(700)], 1],
+    ["prev skips comments below the view", -1, [box(120), box(600)], 0],
+    ["prev falls back when all are below", -1, [box(600), null], 9],
+  ] as const)("%s", (_name, dir, rects, want) => {
+    expect(unlandedTarget(dir, [...rects], view, 9)).toBe(want);
   });
 });
