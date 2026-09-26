@@ -345,6 +345,7 @@ func (s *ReviewHandlerSuite) TestLoadHappyPath() {
 	require.Equal(s.T(), "/repo/.worktrees/pr-7", resp.Session.WorktreePath)
 	require.Equal(s.T(), 7, resp.Session.PR.Number)
 	require.Empty(s.T(), resp.Session.Comments)
+	require.Equal(s.T(), review.ForkCurrent, resp.Session.ForkMode)
 }
 
 func (s *ReviewHandlerSuite) TestLoadSeedsGitHubComments() {
@@ -1814,6 +1815,21 @@ func (s *ReviewHandlerSuite) TestRunForksCustomSession() {
 	require.Equal(s.T(), "manual-id", runner.lastFork)
 }
 
+// Forking the chat is the default, so a channel with no chat session yet
+// runs fresh instead of failing.
+func (s *ReviewHandlerSuite) TestRunForkCurrentWithoutChatRunsFresh() {
+	s.wireReadySession()
+	require.True(s.T(), s.rs.UpdateFork("ch1", review.ForkCurrent, ""))
+	runner := &mockReviewRunner{done: make(chan struct{})}
+	s.srv.review.setAgent(runner, "sys", "p")
+
+	w := httptest.NewRecorder()
+	s.mux.ServeHTTP(w, httptest.NewRequest("POST", "/api/channels/ch1/review/run", nil))
+	require.Equal(s.T(), http.StatusAccepted, w.Code)
+	<-runner.done
+	require.Empty(s.T(), runner.lastFork)
+}
+
 // A fork that can't be resolved or staged fails the Run outright rather
 // than leaving the session stuck in Reviewing.
 func (s *ReviewHandlerSuite) TestRunForkFailuresReject() {
@@ -1822,13 +1838,6 @@ func (s *ReviewHandlerSuite) TestRunForkFailuresReject() {
 		setup   func()
 		wantMsg string
 	}{
-		{
-			name: "channel has no chat session yet",
-			setup: func() {
-				require.True(s.T(), s.rs.UpdateFork("ch1", review.ForkCurrent, ""))
-			},
-			wantMsg: "no chat session to fork yet",
-		},
 		{
 			name: "custom id cleared out from under us",
 			setup: func() {

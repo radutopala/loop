@@ -638,7 +638,13 @@ export function ReviewPanel({ channelId, subscribeChatEvents, registerReviewView
       setLoadingPR(pr.number);
       try {
         const resp = await loadReviewPR(channelId, pr.number);
-        if (resp.present && resp.session) setSession(resp.session);
+        if (resp.present && resp.session) {
+          setSession(resp.session);
+          // A load starts a new session with the daemon's default fork
+          // choice; seed the control from it like the initial fetch does.
+          setForkModeDraft(resp.session.fork_mode ?? "");
+          setForkDraft(resp.session.fork_session_id ?? "");
+        }
       } catch (e) {
         setError(e instanceof Error ? e.message : String(e));
       } finally {
@@ -1166,8 +1172,8 @@ export function ReviewPanel({ channelId, subscribeChatEvents, registerReviewView
                 fontFamily: fonts.sans,
               }}
             >
-              <option value="">Fresh session</option>
               <option value="current">Fork chat session</option>
+              <option value="">Fresh session</option>
               <option value="custom">Fork session id...</option>
             </select>
             {forkModeDraft === "custom" && (

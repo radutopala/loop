@@ -189,6 +189,10 @@ func (s *reviewService) handleReviewLoad(w http.ResponseWriter, r *http.Request)
 		RawDiff:      string(diff),
 		Comments:     ghComments,
 		Status:       review.StatusReady,
+		// Reviews start from the chat's context by default: the conversation
+		// that produced the change is usually what the reviewer is missing.
+		// With no chat yet, the run falls back to a fresh session.
+		ForkMode: review.ForkCurrent,
 	}
 	s.sessions.Put(channelID, sess)
 	writeHTTPJSON(w, http.StatusOK, reviewSessionResponse{Present: true, Session: s.sessions.Get(channelID)}, s.deps.logger)

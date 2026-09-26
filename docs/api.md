@@ -1815,8 +1815,8 @@ Choose which Claude session the *next* review run forks from. Body:
 
 | `mode` | Behaviour |
 |---|---|
-| `""` | Fresh session — the default; the reviewer sees only the diff. |
-| `"current"` | Fork whatever session the channel's chat is on when the run starts. |
+| `""` | Fresh session; the reviewer sees only the diff. |
+| `"current"` | Fork whatever session the channel's chat is on when the run starts — the default for a newly loaded PR. With no chat session yet, the run starts fresh. |
 | `"custom"` | Fork `session_id`. |
 
 It is always a fork, never a resume — review turns never land in the chat

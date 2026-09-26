@@ -451,8 +451,10 @@ func (s *reviewService) prepareForkSession(ctx context.Context, sess *review.Ses
 			return "", errors.New("cannot fork the chat session: channel not found")
 		}
 		sessionID = ch.SessionID
+		// Nothing to inherit yet: forking an empty conversation is a fresh
+		// session, and it's the default mode, so don't fail the run over it.
 		if sessionID == "" {
-			return "", errors.New("channel has no chat session to fork yet — send a message first, or enter a session id")
+			return "", nil
 		}
 	case review.ForkCustom:
 		sessionID = sess.ForkSessionID
