@@ -110,7 +110,7 @@ export function useChatStateStore({ channels, channelsFetchedAt, selectedId, onA
   const [unreadCount, setUnreadCount] = useState(0);
   const [, setPillTick] = useState(0);
   // Bumped when a channel starts or stops running, so the sidebar's running
-  // dots and Active section follow isRunningMap, a ref.
+  // dots and Recent section follow isRunningMap, a ref.
   const [, setRunTick] = useState(0);
 
   // pillSet returns the (lazily created) channel-id set for a pill kind.

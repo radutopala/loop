@@ -43,6 +43,7 @@ interface ChannelAPIResponse {
   model_override?: string;
   effort_override?: string;
   last_activity_at?: string;
+  task_id?: number;
 }
 
 export async function fetchChannels(): Promise<Channel[]> {
@@ -77,6 +78,7 @@ export async function fetchChannels(): Promise<Channel[]> {
     model_override: c.model_override,
     effort_override: c.effort_override,
     last_activity_at: c.last_activity_at ? Date.parse(c.last_activity_at) : undefined,
+    task_id: c.task_id,
   }));
 }
 

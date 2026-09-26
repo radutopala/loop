@@ -8,7 +8,7 @@ import { RowInfoPopup } from "./RowInfoPopup";
 import { StatusPill } from "./StatusPill";
 import { RECENT_LIMIT, relativeTime, sessionContext, sessionName } from "./sessions";
 
-export type SectionKey = "active" | "recent" | "all";
+export type SectionKey = "recent" | "all";
 
 interface SectionHeaderProps {
   section: SectionKey;
@@ -159,13 +159,15 @@ interface SessionSectionsProps {
 }
 
 /**
- * SessionSections renders the Active and Recent sections above the channel
- * tree. Each hides itself when empty; Recent shows RECENT_LIMIT rows until
- * "show more" is clicked.
+ * SessionSections renders the Recent section above the channel tree, newest
+ * first, which puts the active sessions (also in recent) on top. It hides
+ * itself when empty, and shows RECENT_LIMIT rows, or all the active ones if
+ * there are more; each "show more" adds another RECENT_LIMIT.
  */
 export function SessionSections({ active, recent, byId, selectedId, isRunning, pillsFor, isUnread, lastActivity, collapsed, onToggle, onSelect, onContextMenu }: SessionSectionsProps) {
   const { colors } = useTheme();
-  const [showAllRecent, setShowAllRecent] = useState(false);
+  // How many times "show more" was clicked.
+  const [pages, setPages] = useState(0);
   // Re-render every minute so the Recent ages stay current.
   const [now, setNow] = useState(Date.now);
   useEffect(() => {
@@ -188,40 +190,43 @@ export function SessionSections({ active, recent, byId, selectedId, isRunning, p
     />
   );
 
-  const shownRecent = showAllRecent ? recent : recent.slice(0, RECENT_LIMIT);
+  const activeIds = new Set(active.map((c) => c.id));
+  const limit = Math.max(RECENT_LIMIT, active.length);
+  const shownRecent = recent.slice(0, limit + pages * RECENT_LIMIT);
+  const hidden = recent.length - shownRecent.length;
+  const moreStyle: React.CSSProperties = {
+    padding: "2px 8px",
+    border: "none",
+    background: "transparent",
+    color: colors.textDisabled,
+    fontSize: 11,
+    cursor: "pointer",
+  };
   return (
     <>
-      {active.length > 0 && (
-        <div data-testid="sidebar-active">
-          <SectionHeader section="active" label="Active" count={active.length} collapsed={collapsed.active} onToggle={() => onToggle("active")} />
-          {!collapsed.active && active.map((c) => row(c))}
-        </div>
-      )}
       {recent.length > 0 && (
         <div data-testid="sidebar-recent">
           <SectionHeader section="recent" label="Recent" count={recent.length} collapsed={collapsed.recent} onToggle={() => onToggle("recent")} />
           {!collapsed.recent && (
             <>
               {shownRecent.map((c) => {
-                const at = lastActivity(c);
+                // An active session's age would only say "now".
+                const at = activeIds.has(c.id) ? undefined : lastActivity(c);
                 return row(c, at ? relativeTime(Math.max(0, now - at)) : undefined);
               })}
-              {recent.length > RECENT_LIMIT && (
-                <button
-                  data-testid="sidebar-recent-more"
-                  onClick={() => setShowAllRecent((v) => !v)}
-                  style={{
-                    margin: "0 8px",
-                    padding: "2px 8px 2px 24px",
-                    border: "none",
-                    background: "transparent",
-                    color: colors.textDisabled,
-                    fontSize: 11,
-                    cursor: "pointer",
-                  }}
-                >
-                  {showAllRecent ? "show less" : `show ${recent.length - RECENT_LIMIT} more`}
-                </button>
+              {(hidden > 0 || pages > 0) && (
+                <div style={{ display: "flex", margin: "0 8px", paddingLeft: 16 }}>
+                  {hidden > 0 && (
+                    <button data-testid="sidebar-recent-more" onClick={() => setPages((n) => n + 1)} style={moreStyle}>
+                      show {Math.min(RECENT_LIMIT, hidden)} more
+                    </button>
+                  )}
+                  {pages > 0 && (
+                    <button data-testid="sidebar-recent-less" onClick={() => setPages(0)} style={moreStyle}>
+                      show less
+                    </button>
+                  )}
+                </div>
               )}
             </>
           )}

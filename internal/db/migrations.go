@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
+	"strconv"
 	"time"
 )
 
@@ -364,6 +366,11 @@ var migrations = []migration{
 	// current behaviour. Set only via the delayed queue_message path. Appended
 	// last so it never renumbers existing migrations.
 	sqlMigration(`ALTER TABLE messages ADD COLUMN not_before INTEGER NOT NULL DEFAULT 0`),
+	// task_id links a task's thread to its scheduled task, so the sidebar can
+	// tell task threads apart without going by their name. The backfill reads
+	// it from the name the executor has always given them.
+	sqlMigration(`ALTER TABLE channels ADD COLUMN task_id INTEGER NOT NULL DEFAULT 0`),
+	funcMigration(backfillChannelTaskIDs),
 }
 
 // migrateScheduledTasksAddManualType rebuilds scheduled_tasks to widen the
@@ -576,4 +583,43 @@ func makeBackfillDirPath(userHomeDir func() (string, error)) func(context.Contex
 
 		return nil
 	}
+}
+
+// taskThreadName matches the name the executor gives a task's thread,
+// "task #N (`schedule`) <prompt>", with the markers it may carry: ⏱ on chat
+// platforms (🧵 before it, 💨 once ephemeral) and "[ephemeral] " on local.
+var taskThreadName = regexp.MustCompile(`^(\[ephemeral\] )?(🧵 |⏱ |💨 )?task #(\d+) \(`)
+
+// backfillChannelTaskIDs sets task_id on the task threads created before it
+// was stored, from their names.
+func backfillChannelTaskIDs(ctx context.Context, sqlDB *sql.DB) error {
+	rows, err := sqlDB.QueryContext(ctx, `SELECT channel_id, name FROM channels WHERE parent_id != '' AND task_id = 0 AND name LIKE '%task #%'`)
+	if err != nil {
+		return fmt.Errorf("listing threads: %w", err)
+	}
+	ids := map[string]int64{}
+	for rows.Next() {
+		var channelID, name string
+		if err := rows.Scan(&channelID, &name); err != nil {
+			rows.Close()
+			return fmt.Errorf("scanning thread: %w", err)
+		}
+		m := taskThreadName.FindStringSubmatch(name)
+		if m == nil {
+			continue
+		}
+		if id, err := strconv.ParseInt(m[3], 10, 64); err == nil { // \d+ only fails to parse on overflow
+			ids[channelID] = id
+		}
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("listing threads: %w", err)
+	}
+	for channelID, taskID := range ids {
+		if _, err := sqlDB.ExecContext(ctx, `UPDATE channels SET task_id = ? WHERE channel_id = ?`, taskID, channelID); err != nil {
+			return fmt.Errorf("setting task_id on %s: %w", channelID, err)
+		}
+	}
+	return nil
 }

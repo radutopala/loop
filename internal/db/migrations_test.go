@@ -84,6 +84,9 @@ func (s *MigrationsSuite) TestRunMigrationsAllNew() {
 				mock.ExpectExec(`idx_scheduled_tasks_channel_thread`).WillReturnResult(sqlmock.NewResult(0, 0))
 				mock.ExpectExec(`idx_scheduled_tasks_due`).WillReturnResult(sqlmock.NewResult(0, 0))
 				mock.ExpectExec(`PRAGMA foreign_keys=ON`).WillReturnResult(sqlmock.NewResult(0, 0))
+			case strings.Contains(name, "backfillChannelTaskIDs"):
+				mock.ExpectQuery(`SELECT channel_id, name FROM channels`).
+					WillReturnRows(sqlmock.NewRows([]string{"channel_id", "name"}))
 			default:
 				s.T().Fatalf("unhandled func migration %d (%s) in TestRunMigrationsAllNew", i, name)
 			}
@@ -451,6 +454,94 @@ func (s *MigrationsSuite) TestMigrateBackfillDirPathHomeDirError() {
 	err = migrate(context.Background(), sqlDB)
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "getting home dir")
+}
+
+func (s *MigrationsSuite) TestBackfillChannelTaskIDsOnRealDB() {
+	sqlDB, err := sql.Open("sqlite", ":memory:")
+	require.NoError(s.T(), err)
+	defer sqlDB.Close()
+	require.NoError(s.T(), RunMigrations(context.Background(), sqlDB))
+
+	channels := []struct {
+		id, name, parent string
+		want             int64
+	}{
+		{"t-local", "task #7 (`*/5 * * * *`) check news", "p", 7},
+		{"t-chat", "⏱ task #8 (`1h`) ping", "p", 8},
+		{"t-legacy", "🧵 task #9 (`manual`) deploy", "p", 9},
+		{"t-ephemeral-local", "[ephemeral] task #10 (`30m`) x", "p", 10},
+		{"t-ephemeral-chat", "💨 task #11 (`30m`) x", "p", 11},
+		{"t-renamed", "about task #12 (`1h`) x", "p", 0},
+		{"t-user", "fix the task #13 bug", "p", 0},
+		{"t-overflow", "task #99999999999999999999 (`1h`) x", "p", 0},
+		{"top-level", "task #14 (`1h`) x", "", 0},
+	}
+	for _, c := range channels {
+		_, err := sqlDB.Exec(`INSERT INTO channels (channel_id, guild_id, name, parent_id) VALUES (?, '', ?, ?)`, c.id, c.name, c.parent)
+		require.NoError(s.T(), err)
+	}
+
+	require.NoError(s.T(), backfillChannelTaskIDs(context.Background(), sqlDB))
+
+	for _, c := range channels {
+		var got int64
+		require.NoError(s.T(), sqlDB.QueryRow(`SELECT task_id FROM channels WHERE channel_id = ?`, c.id).Scan(&got))
+		require.Equal(s.T(), c.want, got, c.id)
+	}
+}
+
+func (s *MigrationsSuite) TestBackfillChannelTaskIDsErrors() {
+	cases := []struct {
+		name    string
+		setup   func(sqlmock.Sqlmock)
+		wantErr string
+	}{
+		{
+			name: "query error",
+			setup: func(m sqlmock.Sqlmock) {
+				m.ExpectQuery(`SELECT channel_id, name FROM channels`).WillReturnError(sql.ErrConnDone)
+			},
+			wantErr: "listing threads",
+		},
+		{
+			name: "scan error",
+			setup: func(m sqlmock.Sqlmock) {
+				m.ExpectQuery(`SELECT channel_id, name FROM channels`).
+					WillReturnRows(sqlmock.NewRows([]string{"channel_id", "name"}).AddRow("t1", nil))
+			},
+			wantErr: "scanning thread",
+		},
+		{
+			name: "rows error",
+			setup: func(m sqlmock.Sqlmock) {
+				m.ExpectQuery(`SELECT channel_id, name FROM channels`).
+					WillReturnRows(sqlmock.NewRows([]string{"channel_id", "name"}).
+						AddRow("t1", "task #1 (`1h`) x").RowError(0, sql.ErrConnDone))
+			},
+			wantErr: "listing threads",
+		},
+		{
+			name: "update error",
+			setup: func(m sqlmock.Sqlmock) {
+				m.ExpectQuery(`SELECT channel_id, name FROM channels`).
+					WillReturnRows(sqlmock.NewRows([]string{"channel_id", "name"}).AddRow("t1", "task #1 (`1h`) x"))
+				m.ExpectExec(`UPDATE channels SET task_id`).WithArgs(int64(1), "t1").WillReturnError(sql.ErrConnDone)
+			},
+			wantErr: "setting task_id on t1",
+		},
+	}
+	for _, tc := range cases {
+		s.Run(tc.name, func() {
+			db, mock, err := sqlmock.New()
+			require.NoError(s.T(), err)
+			defer db.Close()
+			tc.setup(mock)
+
+			err = backfillChannelTaskIDs(context.Background(), db)
+			require.ErrorContains(s.T(), err, tc.wantErr)
+			require.NoError(s.T(), mock.ExpectationsWereMet())
+		})
+	}
 }
 
 func (s *MigrationsSuite) TestMigrationHasFuncEntry() {

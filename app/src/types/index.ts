@@ -37,6 +37,8 @@ export interface Channel {
   effort_override?: string;
   /** When the channel's newest message was written (ms since the epoch); unset when it has none. */
   last_activity_at?: number;
+  /** For a thread a scheduled task created for its output: that task's id. */
+  task_id?: number;
 }
 
 export interface Message {

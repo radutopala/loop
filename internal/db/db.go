@@ -252,7 +252,7 @@ func scanChannelFrom(scanner rowScanner) (*Channel, error) {
 	var active, worktree, locked, forkPending int
 	var permJSON string
 	if err := scanner.Scan(&ch.ID, &ch.ChannelID, &ch.GuildID, &ch.Name, &ch.DirPath,
-		&ch.ParentID, &ch.Platform, &active, &ch.SessionID, &permJSON, &worktree, &ch.BaseBranch, &locked, &ch.ModelOverride, &ch.EffortOverride, &forkPending, &ch.CreatedAt, &ch.UpdatedAt); err != nil {
+		&ch.ParentID, &ch.Platform, &active, &ch.SessionID, &permJSON, &worktree, &ch.BaseBranch, &locked, &ch.ModelOverride, &ch.EffortOverride, &forkPending, &ch.TaskID, &ch.CreatedAt, &ch.UpdatedAt); err != nil {
 		return nil, err
 	}
 	ch.Active = active == 1

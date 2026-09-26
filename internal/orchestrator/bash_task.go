@@ -130,6 +130,7 @@ func (e *TaskExecutor) createBashTaskThread(ctx context.Context, task *db.Schedu
 			Permissions: channel.Permissions,
 			Active:      true,
 			Worktree:    worktreeCreated,
+			TaskID:      task.ID,
 		}
 		if task.Type != db.TaskTypeOnce {
 			_ = e.store.LinkTaskThread(ctx, threadChannel, task.ID, threadID)

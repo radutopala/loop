@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Channel } from "../../types";
-import { activeSessions, RECENT_WINDOW_MS, recentSessions, relativeTime, sessionContext, sessionName } from "./sessions";
+import { activeSessions, isTaskThread, RECENT_WINDOW_MS, recentSessions, relativeTime, sessionContext, sessionName } from "./sessions";
 
 function ch(id: string, over: Partial<Channel> = {}): Channel {
   return {
@@ -22,6 +22,17 @@ function ch(id: string, over: Partial<Channel> = {}): Channel {
     ...over,
   };
 }
+
+describe("isTaskThread", () => {
+  it.each([
+    { desc: "a task's thread", over: { task_id: 3 }, want: true },
+    { desc: "a renamed task's thread", over: { task_id: 3, name: "renamed" }, want: true },
+    { desc: "a thread named like a task's", over: { name: "task #3 (`1m`) check" }, want: false },
+    { desc: "a thread with task_id 0", over: { task_id: 0 }, want: false },
+  ])("$desc is $want", ({ over, want }) => {
+    expect(isTaskThread(ch("t", { name: "t", parent_id: "p", ...over }))).toBe(want);
+  });
+});
 
 describe("sessionName", () => {
   it.each([
@@ -73,13 +84,13 @@ describe("recentSessions", () => {
   const at: Record<string, number | undefined> = { old: now - RECENT_WINDOW_MS - 1, a: now - 5_000, b: now - 60_000, active: now, never: undefined };
   const channels = Object.keys(at).map((id) => ch(id));
 
-  it("keeps the window's sessions, newest first, leaving out the excluded", () => {
-    const got = recentSessions(channels, new Set(["active"]), (c) => at[c.id], now).map((c) => c.id);
-    expect(got).toEqual(["a", "b"]);
+  it("keeps the window's sessions, newest first", () => {
+    const got = recentSessions(channels, (c) => at[c.id], now).map((c) => c.id);
+    expect(got).toEqual(["active", "a", "b"]);
   });
 
   it("honours a custom window", () => {
-    const got = recentSessions(channels, new Set(), (c) => at[c.id], now, 10_000).map((c) => c.id);
+    const got = recentSessions(channels, (c) => at[c.id], now, 10_000).map((c) => c.id);
     expect(got).toEqual(["active", "a"]);
   });
 });
