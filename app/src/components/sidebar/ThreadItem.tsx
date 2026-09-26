@@ -6,9 +6,9 @@ import type { Channel } from "../../types";
 import type { PillKind } from "./pills";
 import { SIDEBAR_PILLS } from "./pills";
 import { RowInfoPopup } from "./RowInfoPopup";
+import { SessionKindIcon } from "./SessionKindIcon";
 import { StatusPill } from "./StatusPill";
 import { sessionName } from "./sessions";
-import { ThreadKindIcon } from "./ThreadKindIcon";
 
 /** Drag-to-reorder wiring for threads/worktrees under a common parent. */
 export interface ThreadReorder {
@@ -189,7 +189,7 @@ export function ThreadItem({
               </span>
             </span>
           )}
-          <ThreadKindIcon channel={thread} />
+          <SessionKindIcon channel={thread} />
           <span
             style={{
               overflow: "hidden",

@@ -71,7 +71,7 @@ The Recent tab lists sessions (channels and threads alike) wherever they sit in 
 Activity is the time of the channel's newest message (`last_activity_at` from [`GET /api/channels`](api.md#get-apichannels)). A session that just stopped being active keeps that moment as its activity, so it doesn't drop down the list before the next channel refresh brings its newest message's time.
 
 Each row shows:
-- a warning dot when it waits on you, or a spinner while its agent runs, and under it the same kind icon as in the tree: a branch for a worktree thread, a clock for a task thread, a return arrow for an ephemeral one;
+- a warning dot when it waits on you, or a spinner while its agent runs, and under it the same kind icon as in the tree: # for a channel, a branch for a worktree thread, a clock for a task thread, a return arrow for an ephemeral one, and a speech bubble for any other thread (the tree marks those by indent instead);
 - its name (task threads lose their marker prefix), in bold when unread, and below it the names of its parents, e.g. `loop-dc6a › updates`;
 - its uncommitted diff (`+N -N`), the unread dot and its status pills;
 - how long ago it was active (`now`, `12m`, `30h`; hours up to 48, so the whole Recent window reads in hours), unless it's active now or a pill is shown.

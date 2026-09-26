@@ -285,6 +285,7 @@ func registerFrontendSteps(ctx *godog.ScenarioContext, tc *TestContext) {
 	ctx.Step(`^I inject an ask_user event with question "([^"]*)" and options "([^"]*)"$`, tc.injectAskUserEvent)
 	ctx.Step(`^I inject an agent\.status running event$`, tc.injectAgentStatusRunning)
 	ctx.Step(`^I inject an agent\.status running event for the worktree thread$`, tc.injectAgentStatusRunningForWorktree)
+	ctx.Step(`^I inject an agent\.status running event for the last created thread$`, tc.injectAgentStatusRunningForLastThread)
 	ctx.Step(`^I inject a gate\.approval_requested event with req_id "([^"]*)", source "([^"]*)", and target "([^"]*)"$`, tc.injectGateApprovalRequested)
 	ctx.Step(`^I inject a gate\.approval_resolved event with req_id "([^"]*)"$`, tc.injectGateApprovalResolved)
 	ctx.Step(`^I inject a gate\.approval_requested event with req_id "([^"]*)", target "([^"]*)", expiring in "(\d+)ms"$`, tc.injectGateApprovalRequestedExpiring)
@@ -2527,6 +2528,15 @@ func (tc *TestContext) injectAgentStatusRunningForWorktree() error {
 		return fmt.Errorf("no worktree thread set up")
 	}
 	return tc.injectAgentStatusRunningFor(tc.WorktreeThreadID)
+}
+
+// injectAgentStatusRunningForLastThread marks the thread most recently
+// created through the API as running.
+func (tc *TestContext) injectAgentStatusRunningForLastThread() error {
+	if len(tc.CreatedThreadIDs) == 0 {
+		return fmt.Errorf("no thread created; use 'I create a thread' step first")
+	}
+	return tc.injectAgentStatusRunningFor(tc.CreatedThreadIDs[len(tc.CreatedThreadIDs)-1])
 }
 
 func (tc *TestContext) injectAgentStatusRunningFor(channelID string) error {

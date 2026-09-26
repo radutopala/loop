@@ -22,6 +22,7 @@ Feature: Recent sessions in the sidebar
     When I click on "[data-testid='sidebar-tab-recent']"
     Then I wait for "[data-testid='sidebar-recent']" to be visible
     And the element "[data-testid='sidebar-recent']" should contain text "bdd-sessions"
+    And the element "[data-testid='sidebar-recent'] [data-testid='sidebar-session-row'] [data-testid='session-kind-channel']" should be visible
 
     # Waiting on an approval: it stays in Recent and shows the gate pill.
     When I inject a gate.approval_requested event with req_id "bdd-sessions-gate", source "chat", and target "/tmp/bdd-sessions.txt"
@@ -58,10 +59,26 @@ Feature: Recent sessions in the sidebar
     And I set up a worktree "recent-wt" on branch "main" under the current channel via API
     And I open the app in a browser
     And I wait for text "recent-wt" to appear
-    Then the element "[data-testid='thread-kind-worktree']" should be visible
+    Then the element "[data-testid='session-kind-worktree']" should be visible
 
     When I inject an agent.status running event for the worktree thread
     Then I wait for "[data-testid='sidebar-tab-recent']" to be visible
     When I click on "[data-testid='sidebar-tab-recent']"
     Then I wait for "[data-testid='sidebar-recent']" to be visible
-    And the element "[data-testid='sidebar-recent'] [data-testid='sidebar-session-row'] [data-testid='thread-kind-worktree']" should be visible
+    And the element "[data-testid='sidebar-recent'] [data-testid='sidebar-session-row'] [data-testid='session-kind-worktree']" should be visible
+
+  Scenario: A plain thread in Recent has a thread icon
+    Given I set up a test channel via API for git repo "bdd-sessions-thread"
+    And I create a thread "recent-plain" under the current channel via API
+    And I open the app in a browser
+    And I wait for text "recent-plain" to appear
+
+    When I inject an agent.status running event for the last created thread
+    Then I wait for "[data-testid='sidebar-tab-recent']" to be visible
+    When I click on "[data-testid='sidebar-tab-recent']"
+    Then I wait for "[data-testid='sidebar-recent']" to be visible
+    And the element "[data-testid='sidebar-recent'] [data-testid='sidebar-session-row'] [data-testid='session-kind-thread']" should be visible
+    And the element "[data-testid='sidebar-tab-recent-count']" should contain text "1"
+    # The tree marks threads by indent, not an icon.
+    When I click on "[data-testid='sidebar-tab-tree']"
+    Then the element "[data-testid='session-kind-thread']" should not exist

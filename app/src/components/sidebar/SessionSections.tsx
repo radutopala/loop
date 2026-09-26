@@ -5,9 +5,9 @@ import type { Channel } from "../../types";
 import type { PillKind } from "./pills";
 import { SIDEBAR_PILLS } from "./pills";
 import { RowInfoPopup } from "./RowInfoPopup";
+import { SessionKindIcon } from "./SessionKindIcon";
 import { StatusPill } from "./StatusPill";
 import { relativeTime, sessionContext, sessionName } from "./sessions";
-import { ThreadKindIcon } from "./ThreadKindIcon";
 
 export type SectionKey = "recent" | "tree";
 
@@ -70,6 +70,7 @@ export function SectionTabs({ tab, showTabs, recentCount, onChange, hideTasks, o
                 data-testid={`sidebar-tab-${t.key}`}
                 onClick={() => onChange(t.key)}
                 style={{
+                  position: "relative",
                   flex: 1,
                   display: "flex",
                   alignItems: "center",
@@ -86,7 +87,12 @@ export function SectionTabs({ tab, showTabs, recentCount, onChange, hideTasks, o
                 }}
               >
                 {t.label}
-                {t.count !== undefined && <span style={{ fontWeight: 400, color: colors.textDisabled }}>{t.count}</span>}
+                {/* Pinned to the right edge so the label doesn't shift as the count gains a digit. */}
+                {t.count !== undefined && (
+                  <span data-testid={`sidebar-tab-${t.key}-count`} style={{ position: "absolute", right: 8, fontWeight: 400, color: colors.textDisabled, fontVariantNumeric: "tabular-nums" }}>
+                    {t.count}
+                  </span>
+                )}
               </button>
             );
           })}
@@ -153,7 +159,10 @@ function SessionRow({ channel, context, selected, unread, running, pills, traili
           alignItems: "center",
           gap: 6,
           width: "100%",
-          padding: "4px 8px",
+          // As tall as a row with its parents line, so channels (which
+          // have none) match threads.
+          minHeight: 42,
+          padding: "6px 8px",
           border: "none",
           borderRadius: 6,
           background: selected ? colors.selectedBg : hovered ? colors.hoverBg : "transparent",
@@ -179,7 +188,7 @@ function SessionRow({ channel, context, selected, unread, running, pills, traili
               }}
             />
           ) : null}
-          <ThreadKindIcon channel={channel} />
+          <SessionKindIcon channel={channel} showPlainThread />
         </span>
         <span style={{ display: "flex", flexDirection: "column", minWidth: 0, flex: 1 }}>
           <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontWeight: unread ? 600 : undefined }}>{sessionName(channel)}</span>

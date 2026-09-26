@@ -3,19 +3,42 @@ import type { Channel } from "../../types";
 import { isTaskThread } from "./sessions";
 
 /**
- * The icons that set a thread apart in the sidebar: a branch for a worktree
- * thread, a clock for a task thread, a return arrow for an ephemeral one.
- * Renders nothing for a plain thread or a channel.
+ * The icons that set a session apart in the sidebar: # for a channel, a
+ * branch for a worktree thread, a clock for a task thread, a return arrow for
+ * an ephemeral one. A plain thread gets a speech bubble only with
+ * showPlainThread: the tree marks threads by indent instead, Recent can't.
  */
-export function ThreadKindIcon({ channel }: { channel: Channel }) {
+export function SessionKindIcon({ channel, showPlainThread = false }: { channel: Channel; showPlainThread?: boolean }) {
   const { colors } = useTheme();
   const isEphemeral = channel.name.startsWith("[ephemeral] ");
   const isTask = isTaskThread(channel);
+  const isPlainThread = !!channel.parent_id && !channel.worktree && !isTask && !isEphemeral;
   return (
     <>
+      {showPlainThread && isPlainThread && (
+        <svg
+          data-testid="session-kind-thread"
+          width="12"
+          height="12"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke={colors.textDim}
+          strokeWidth="2"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          style={{ flexShrink: 0 }}
+        >
+          <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+        </svg>
+      )}
+      {!channel.parent_id && (
+        <span data-testid="session-kind-channel" style={{ color: colors.textDim, flexShrink: 0, fontSize: 13, lineHeight: 1 }}>
+          #
+        </span>
+      )}
       {channel.worktree && (
         <svg
-          data-testid="thread-kind-worktree"
+          data-testid="session-kind-worktree"
           width="12"
           height="12"
           viewBox="0 0 24 24"
@@ -33,7 +56,7 @@ export function ThreadKindIcon({ channel }: { channel: Channel }) {
       )}
       {isTask && !isEphemeral && (
         <svg
-          data-testid="thread-kind-task"
+          data-testid="session-kind-task"
           width="12"
           height="12"
           viewBox="0 0 24 24"
@@ -50,7 +73,7 @@ export function ThreadKindIcon({ channel }: { channel: Channel }) {
       )}
       {isEphemeral && (
         <svg
-          data-testid="thread-kind-ephemeral"
+          data-testid="session-kind-ephemeral"
           width="12"
           height="12"
           viewBox="0 0 24 24"
