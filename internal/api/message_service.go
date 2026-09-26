@@ -31,6 +31,7 @@ type ChannelLister interface {
 	UpdateChannelLocked(ctx context.Context, channelID string, locked bool) error
 	UpdateChannelName(ctx context.Context, channelID, name string) error
 	UpdateChannelDescription(ctx context.Context, channelID, description string) error
+	UpdateChannelTicketURL(ctx context.Context, channelID, ticketURL string) error
 	DeleteChannel(ctx context.Context, channelID string) error
 	DeleteChannelsByParentID(ctx context.Context, parentID string) error
 	ListDistinctMemoryFilePaths(ctx context.Context, dirPath string) ([]db.MemoryFileInfo, error)

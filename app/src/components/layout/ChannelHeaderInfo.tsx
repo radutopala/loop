@@ -4,6 +4,8 @@ import type { ColorPalette } from "../../theme";
 import { fonts } from "../../theme";
 import type { Channel } from "../../types";
 import { logErr } from "../../utils/log";
+import { openExternalUrl } from "../../utils/openExternal";
+import { ticketKey } from "../../utils/ticketUrl";
 
 interface ChannelHeaderInfoProps {
   channel: Channel;
@@ -17,6 +19,7 @@ export function ChannelHeaderInfo({ channel, colors, hideBranch }: ChannelHeader
   const dirPath = channel.dir_path || "";
   const branch = channel.branch || "";
   const commit = channel.commit || "";
+  const ticketURL = channel.ticket_url?.trim() || "";
 
   // For a worktree thread, flag when it still sits at its base branch's commit
   // (i.e. no commits made yet). Compare the worktree HEAD (channel.commit) to
@@ -87,6 +90,34 @@ export function ChannelHeaderInfo({ channel, colors, hideBranch }: ChannelHeader
           {channel.id}
         </span>
       </span>
+      {ticketURL && (
+        <>
+          <span style={{ color: colors.border, flexShrink: 0, margin: "0 8px 0 12px" }}>|</span>
+          <span
+            data-testid="header-ticket"
+            role="link"
+            onClick={() => openExternalUrl(ticketURL)}
+            title={`Ticket: ${ticketURL}\nClick to open`}
+            style={{
+              fontSize: 11,
+              color: colors.active,
+              fontFamily: fonts.mono,
+              flexShrink: 0,
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 4,
+              cursor: "pointer",
+              WebkitAppRegion: "no-drag",
+            }}
+          >
+            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-label="Ticket">
+              <path d="M2 9a3 3 0 0 0 0 6v2a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-2a3 3 0 0 0 0-6V7a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2z" />
+              <path d="M13 5v2M13 17v2M13 11v2" />
+            </svg>
+            {ticketKey(ticketURL)}
+          </span>
+        </>
+      )}
       <>
         <span style={{ color: colors.border, flexShrink: 0, margin: "0 8px 0 12px" }}>|</span>
         <span style={{ fontSize: 11, color: colors.textDim, fontFamily: fonts.mono, flexShrink: 0, display: "inline-flex", alignItems: "center", gap: 4 }}>

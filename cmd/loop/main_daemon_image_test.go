@@ -220,7 +220,11 @@ func (s *MainSuite) TestEnsureImageBuildsWhenMissing() {
 }
 
 func (s *MainSuite) TestEnsureImageWithBroadcastSuccess() {
-	s.app.ensureImage = func(_ context.Context, _ container.DockerClient, _ *config.Config, _ func(string)) error {
+	var mgr *container.ImageLifecycleManager
+	var phase container.ImageBuildStatus
+	s.app.ensureImage = func(_ context.Context, _ container.DockerClient, _ *config.Config, setPhase func(string)) error {
+		setPhase("building")
+		phase = mgr.Status()
 		return nil
 	}
 	hub := api.NewEventsHub(slog.New(slog.NewTextHandler(io.Discard, nil)))
@@ -232,9 +236,10 @@ func (s *MainSuite) TestEnsureImageWithBroadcastSuccess() {
 	// The update checker's startup pass reads the installed version off the
 	// image labels before the cancelled context stops it.
 	dc.On("ImageInspectLabels", mock.Anything, "").Return(map[string]string(nil), errors.New("no such image")).Maybe()
-	mgr := container.NewImageLifecycleManager(dc, hub, s.app.sys, nil, "", "", "", dc.LatestClaudeVersion)
+	mgr = container.NewImageLifecycleManager(dc, hub, s.app.sys, nil, "", "", "", dc.LatestClaudeVersion)
 
 	s.app.ensureImageWithBroadcast(ctx, dc, testConfig(), hub, mgr, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	require.Equal(s.T(), container.ImageBuildStatus{State: "building", Phase: "building"}, phase)
 }
 
 func (s *MainSuite) TestEnsureImageWithBroadcastError() {

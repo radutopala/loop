@@ -365,6 +365,20 @@ func (s *RunnerSuite) TestRunCopyFilesFails() {
 	s.client.AssertExpectations(s.T())
 }
 
+func (s *RunnerSuite) TestRunWriteDockerCLIConfigFails() {
+	ctx := context.Background()
+	s.cfg.HTTPProxy = "http://proxy.example:3128"
+	req := &agent.AgentRequest{ChannelID: "ch-1"}
+
+	s.client.On("ContainerCreate", ctx, mock.AnythingOfType("*container.ContainerConfig"), "loop-ch-1-aabbcc").Return("container-123", nil)
+	s.client.On("CopyToContainer", ctx, "container-123", "/", mock.Anything).Return(errors.New("no such directory"))
+
+	resp, err := s.runner.Run(ctx, req)
+	require.Nil(s.T(), resp)
+	require.ErrorContains(s.T(), err, "writing docker cli config: no such directory")
+	s.client.AssertNotCalled(s.T(), "ContainerStart", mock.Anything, mock.Anything)
+}
+
 func (s *RunnerSuite) TestCopyFilesReadError() {
 	ctx := context.Background()
 

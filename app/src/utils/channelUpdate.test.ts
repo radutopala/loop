@@ -30,6 +30,15 @@ describe("applyChannelUpdate", () => {
     expect(got).toMatchObject({ description: "reviews PRs", name: "thread", branch: "feat/x", commit: "abc1234" });
   });
 
+  it("sets a ticket URL without clearing the git state or description", () => {
+    const got = applyChannelUpdate(channel, { ...gitOnly, ticket_url: "https://x.com/T-1" });
+    expect(got).toMatchObject({ ticket_url: "https://x.com/T-1", description: "fixes login", branch: "feat/x", commit: "abc1234" });
+  });
+
+  it("clears the ticket URL", () => {
+    expect(applyChannelUpdate({ ...channel, ticket_url: "https://x.com/T-1" }, { ...gitOnly, ticket_url: "" }).ticket_url).toBe("");
+  });
+
   it("clears the description", () => {
     expect(applyChannelUpdate(channel, { ...gitOnly, description: "" }).description).toBe("");
   });

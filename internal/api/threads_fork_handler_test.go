@@ -17,6 +17,7 @@ import (
 )
 
 func (s *ServerSuite) TestForkThread_Plain() {
+	s.srv.SetEventsHub(NewEventsHub(s.srv.logger))
 	s.store.On("GetChannel", mock.Anything, "t1").Return(&db.Channel{
 		ChannelID: "t1", ParentID: "ch1", Name: "research", SessionID: "sess-1",
 	}, nil)
@@ -80,6 +81,7 @@ func (s *ServerSuite) TestForkThread_Worktree() {
 	out, err := cmd.CombinedOutput()
 	require.NoError(s.T(), err, string(out))
 	s.srv.sys = s.sys
+	s.srv.SetEventsHub(NewEventsHub(s.srv.logger))
 	s.sys.On("Open", mock.Anything).Return(nil, os.ErrNotExist).Maybe()
 
 	s.store.On("GetChannel", mock.Anything, "wt1").Return(&db.Channel{
@@ -280,6 +282,29 @@ func (s *ServerSuite) TestForkThread_WorktreeThreadRowErrors() {
 	s.store.On("UpdateSessionID", mock.Anything, "wtR2", "").Return(errors.New("db")).Once()
 	rec = s.testRequest("POST", "/api/threads/wtR/fork", "")
 	require.Equal(s.T(), http.StatusInternalServerError, rec.Code)
+}
+
+func (s *ServerSuite) TestForkThread_WorktreeMarkForkPendingError() {
+	dir := initGitRepo(s.T())
+	cmd := exec.Command("git", "worktree", "add", "-b", "worktree/mark-wt", dir+"/.worktrees/mark-wt")
+	cmd.Dir = dir
+	out, err := cmd.CombinedOutput()
+	require.NoError(s.T(), err, string(out))
+	s.srv.sys = s.sys
+
+	s.store.On("GetChannel", mock.Anything, "wt1").Return(&db.Channel{
+		ChannelID: "wt1", ParentID: "ch1", Name: "src", Worktree: true,
+		DirPath: dir + "/.worktrees/mark-wt", SessionID: "sess-1",
+	}, nil)
+	s.store.On("GetChannel", mock.Anything, "ch1").Return(&db.Channel{ChannelID: "ch1", DirPath: dir}, nil)
+	s.threads.On("CreateThread", mock.Anything, "ch1", mock.Anything, "", "").Return("wt2", nil)
+	s.store.On("GetChannel", mock.Anything, "wt2").Return(&db.Channel{ChannelID: "wt2", ParentID: "ch1"}, nil)
+	s.store.On("UpsertChannel", mock.Anything, mock.Anything).Return(nil)
+	s.store.On("MarkSessionForkPending", mock.Anything, "wt2", "sess-1").Return(errors.New("db"))
+
+	rec := s.testRequest("POST", "/api/threads/wt1/fork", "")
+	require.Equal(s.T(), http.StatusInternalServerError, rec.Code)
+	require.Contains(s.T(), rec.Body.String(), "db")
 }
 
 // TestForkThread_WorktreeSessionNotStaged: Claude Code prunes transcripts

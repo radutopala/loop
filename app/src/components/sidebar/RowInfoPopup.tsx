@@ -14,8 +14,8 @@ interface RowInfoPopupProps {
 }
 
 /**
- * RowInfoPopup shows a sidebar row's description, directory, git state and
- * agent settings beside it as soon as the pointer is on the row. A click, drag or scroll hides it until the
+ * RowInfoPopup shows a sidebar row's description, ticket, directory, git
+ * state and agent settings beside it as soon as the pointer is on the row. A click, drag or scroll hides it until the
  * pointer comes back.
  */
 export function RowInfoPopup({ channel, anchorRef, hovered }: RowInfoPopupProps) {
@@ -151,6 +151,12 @@ export function RowInfoPopup({ channel, anchorRef, hovered }: RowInfoPopupProps)
 
 /** Each line's icon, drawn like the sidebar's other stroke icons. */
 const ICONS: Record<RowInfoLine["key"], ReactNode> = {
+  ticket: (
+    <>
+      <path d="M2 9a3 3 0 0 0 0 6v2a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-2a3 3 0 0 0 0-6V7a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2z" />
+      <path d="M13 5v2M13 17v2M13 11v2" />
+    </>
+  ),
   path: <path d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.7-.9l-.8-1.2A2 2 0 0 0 7.9 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2z" />,
   branch: (
     <>

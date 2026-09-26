@@ -267,6 +267,35 @@ func (s *IntegrationSuite) TestSearchChannelMessagesMatchesLiterally() {
 	}
 }
 
+// A ticket URL survives the upserts that re-sync a channel (they never set
+// it), is returned by every read, and clears when set empty.
+func (s *IntegrationSuite) TestChannelTicketURLRoundTrip() {
+	store, err := NewSQLiteStore(filepath.Join(s.T().TempDir(), "loop.db"))
+	require.NoError(s.T(), err)
+	defer store.Close()
+	ctx := context.Background()
+	const url = "https://github.com/org/repo/issues/42"
+
+	ch := &Channel{ChannelID: "c1", Name: "channel", DirPath: "/tmp/c1", Active: true}
+	require.NoError(s.T(), store.UpsertChannel(ctx, ch))
+	require.NoError(s.T(), store.UpdateChannelTicketURL(ctx, "c1", url))
+	ch.Name = "renamed"
+	require.NoError(s.T(), store.UpsertChannel(ctx, ch))
+
+	got, err := store.GetChannel(ctx, "c1")
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), url, got.TicketURL)
+	all, err := store.ListChannels(ctx)
+	require.NoError(s.T(), err)
+	require.Len(s.T(), all, 1)
+	require.Equal(s.T(), url, all[0].TicketURL)
+
+	require.NoError(s.T(), store.UpdateChannelTicketURL(ctx, "c1", ""))
+	got, err = store.GetChannel(ctx, "c1")
+	require.NoError(s.T(), err)
+	require.Empty(s.T(), got.TicketURL)
+}
+
 // A description survives the upserts that re-sync a channel (they never set
 // it), is returned by every read, and clears when set empty.
 func (s *IntegrationSuite) TestChannelDescriptionRoundTrip() {

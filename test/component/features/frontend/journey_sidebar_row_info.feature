@@ -81,3 +81,63 @@ Feature: Sidebar Row Info
     Then the response status should be 200
     And the row info "description" should read "Main checkout of the repo"
     And the row info should show the channel's path and branch "main"
+
+  @row-ticket
+  Scenario: A channel's ticket URL shows in its row info and is edited and opened from the context menu
+    Given I set up a test channel via API for git repo "bdd-row-ticket"
+    And I open the app in a browser
+    And I wait for text "bdd-row-ticket" to appear
+    And I click on "bdd-row-ticket" in the sidebar
+
+    When I rest the pointer on "bdd-row-ticket" in the sidebar
+    Then the row info should not show "ticket"
+    And the element "[data-testid='header-ticket']" should not exist
+
+    # Only absolute http(s) URLs are taken.
+    When I send a POST request to "/api/channels/{channel_id}/ticket" with body:
+      """
+      {"ticket_url": "PROJ-123"}
+      """
+    Then the response status should be 400
+
+    # An agent links the ticket through the API; the open popup follows.
+    When I send a POST request to "/api/channels/{channel_id}/ticket" with body:
+      """
+      {"ticket_url": "https://example.atlassian.net/browse/PROJ-123"}
+      """
+    Then the response status should be 200
+    And the row info "ticket" should read "https://example.atlassian.net/browse/PROJ-123"
+    And the row info should show the channel's path and branch "main"
+    # The channel header shows it by its key, as a link.
+    And the element "[data-testid='header-ticket']" should contain text "PROJ-123"
+
+    When I right-click on "bdd-row-ticket" in the sidebar
+    Then the page should contain text "Open Ticket"
+
+    # The dialog opens with the current URL to edit.
+    When I click on "Edit Ticket" in the context menu
+    Then I wait for "[data-testid='ticket-dialog']" to be visible
+    And the field "[data-testid='ticket-input']" should hold "https://example.atlassian.net/browse/PROJ-123"
+
+    # What the API would reject can't be saved.
+    When I clear and type "PROJ-456" into "[data-testid='ticket-input']"
+    Then the element "[data-testid='ticket-error']" should contain text "Must be an absolute http(s) URL"
+    And the element "[data-testid='ticket-submit']:disabled" should be visible
+
+    When I clear and type "https://github.com/o/r/issues/7" into "[data-testid='ticket-input']"
+    And I click on "[data-testid='ticket-submit']"
+    Then I wait up to "2s" for "[data-testid='ticket-dialog']" to disappear
+    When I rest the pointer on "bdd-row-ticket" in the sidebar
+    Then the row info "ticket" should read "https://github.com/o/r/issues/7"
+    And the element "[data-testid='header-ticket']" should contain text "o/r#7"
+
+    # Saving it empty clears it.
+    When I right-click on "bdd-row-ticket" in the sidebar
+    And I click on "Edit Ticket" in the context menu
+    Then I wait for "[data-testid='ticket-dialog']" to be visible
+    When I clear and type "" into "[data-testid='ticket-input']"
+    And I click on "[data-testid='ticket-submit']"
+    Then I wait up to "2s" for "[data-testid='ticket-dialog']" to disappear
+    When I rest the pointer on "bdd-row-ticket" in the sidebar
+    Then the row info should not show "ticket"
+    And the element "[data-testid='header-ticket']" should not exist

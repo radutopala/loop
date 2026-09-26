@@ -38,9 +38,12 @@ type Channel struct {
 	TaskID int64 `json:"task_id"`
 	// Description says what a thread is for, in a line or two. Set from the
 	// sidebar or by the thread's agent; empty when there's none.
-	Description string    `json:"description"`
-	CreatedAt   time.Time `json:"created_at"`
-	UpdatedAt   time.Time `json:"updated_at"`
+	Description string `json:"description"`
+	// TicketURL links the channel or thread to its ticket in Jira, GitHub
+	// or any other tracker; empty when there's none.
+	TicketURL string    `json:"ticket_url"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
 }
 
 // StaleRunningMessage describes a (channel_id, msg_id) pair returned by

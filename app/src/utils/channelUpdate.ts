@@ -2,16 +2,17 @@ import type { Channel, ChannelUpdatedData } from "../types";
 
 /**
  * Applies a channel.updated event to a channel. The branch poller's events
- * carry the git state; a rename or a description change carries only its name
- * or description (the git fields come through empty), so those leave the git
+ * carry the git state; a rename, a description or a ticket change carries only
+ * its name, description or ticket URL (the git fields come through empty), so those leave the git
  * state as it was — the poller only sends again when it changes.
  */
 export function applyChannelUpdate(c: Channel, d: ChannelUpdatedData): Channel {
-  if (d.name !== undefined || d.description !== undefined) {
+  if (d.name !== undefined || d.description !== undefined || d.ticket_url !== undefined) {
     return {
       ...c,
       ...(d.name !== undefined ? { name: d.name } : {}),
       ...(d.description !== undefined ? { description: d.description } : {}),
+      ...(d.ticket_url !== undefined ? { ticket_url: d.ticket_url } : {}),
     };
   }
   return {

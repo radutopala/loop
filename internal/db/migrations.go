@@ -373,6 +373,8 @@ var migrations = []migration{
 	funcMigration(backfillChannelTaskIDs),
 	// description says what a thread is for; the sidebar shows it on hover.
 	sqlMigration(`ALTER TABLE channels ADD COLUMN description TEXT NOT NULL DEFAULT ''`),
+	// ticket_url links a channel or thread to its ticket (Jira, GitHub, …).
+	sqlMigration(`ALTER TABLE channels ADD COLUMN ticket_url TEXT NOT NULL DEFAULT ''`),
 }
 
 // migrateScheduledTasksAddManualType rebuilds scheduled_tasks to widen the
