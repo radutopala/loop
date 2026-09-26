@@ -45,6 +45,7 @@ interface ChannelAPIResponse {
   last_activity_at?: string;
   task_id?: number;
   description?: string;
+  ticket_url?: string;
 }
 
 export async function fetchChannels(): Promise<Channel[]> {
@@ -81,6 +82,7 @@ export async function fetchChannels(): Promise<Channel[]> {
     last_activity_at: c.last_activity_at ? Date.parse(c.last_activity_at) : undefined,
     task_id: c.task_id,
     description: c.description,
+    ticket_url: c.ticket_url,
   }));
 }
 
@@ -152,6 +154,16 @@ export async function setChannelDescription(channelId: string, description: stri
     body: JSON.stringify({ description }),
   });
   if (!res.ok) throw new Error(`Failed to set description: ${await errorText(res)}`);
+}
+
+/** Link a channel or thread to its ticket; an empty URL clears it. */
+export async function setChannelTicketURL(channelId: string, ticketURL: string): Promise<void> {
+  const res = await fetch(`${getApiUrl()}/api/channels/${channelId}/ticket`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ ticket_url: ticketURL }),
+  });
+  if (!res.ok) throw new Error(`Failed to set ticket: ${await errorText(res)}`);
 }
 
 export async function deleteChannel(channelId: string): Promise<void> {

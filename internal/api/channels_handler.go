@@ -64,6 +64,8 @@ type channelResponse struct {
 	TaskID int64 `json:"task_id,omitempty"`
 	// Description says what a thread is for; absent when it has none.
 	Description string `json:"description,omitempty"`
+	// TicketURL links the channel or thread to its ticket; absent when unset.
+	TicketURL string `json:"ticket_url,omitempty"`
 	// LastActivityAt is when the channel's newest message was written; the
 	// sidebar's Recent section sorts by it. Absent for a channel with none.
 	LastActivityAt *time.Time `json:"last_activity_at,omitempty"`
@@ -240,6 +242,7 @@ func (s *Server) handleSearchChannels(w http.ResponseWriter, r *http.Request) {
 			EffortOverride:   ch.EffortOverride,
 			TaskID:           ch.TaskID,
 			Description:      ch.Description,
+			TicketURL:        ch.TicketURL,
 			LastActivityAt:   lastActivity,
 		})
 	}

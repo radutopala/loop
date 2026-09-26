@@ -55,10 +55,10 @@ func TestAskUserQuestionUnmarshalMatchesToolSchema(t *testing.T) {
 	}
 }
 
-// A description change must reach the sidebar even when it clears the
-// description, and git updates (no description) must not carry one.
+// A description or ticket change must reach the sidebar even when it clears
+// it, and git updates must carry neither.
 func TestChannelUpdatedDescriptionJSON(t *testing.T) {
-	empty, set := "", "fixes login"
+	empty, set, ticket := "", "fixes login", "https://x.com/T-1"
 	cases := []struct {
 		name string
 		data ChannelUpdatedData
@@ -68,6 +68,9 @@ func TestChannelUpdatedDescriptionJSON(t *testing.T) {
 		{name: "set", data: ChannelUpdatedData{ChannelID: "t1", Description: &set}, want: `"description":"fixes login"`, has: true},
 		{name: "cleared", data: ChannelUpdatedData{ChannelID: "t1", Description: &empty}, want: `"description":""`, has: true},
 		{name: "git update", data: ChannelUpdatedData{ChannelID: "t1", Branch: "main"}, want: `"description"`, has: false},
+		{name: "ticket set", data: ChannelUpdatedData{ChannelID: "t1", TicketURL: &ticket}, want: `"ticket_url":"https://x.com/T-1"`, has: true},
+		{name: "ticket cleared", data: ChannelUpdatedData{ChannelID: "t1", TicketURL: &empty}, want: `"ticket_url":""`, has: true},
+		{name: "git update has no ticket", data: ChannelUpdatedData{ChannelID: "t1", Branch: "main"}, want: `"ticket_url"`, has: false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

@@ -25,6 +25,14 @@ describe("rowInfoLines", () => {
     ["nothing for a channel without a dir or git", {}, []],
     ["the path", { dir_path: "/p" }, [{ key: "path", value: "/p" }]],
     [
+      "the ticket before the path",
+      { dir_path: "/p", ticket_url: "https://example.atlassian.net/browse/PROJ-1" },
+      [
+        { key: "ticket", value: "https://example.atlassian.net/browse/PROJ-1" },
+        { key: "path", value: "/p" },
+      ],
+    ],
+    [
       "the path before the branch",
       { dir_path: "/p", branch: "main" },
       [

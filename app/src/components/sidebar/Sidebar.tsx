@@ -2,6 +2,7 @@ import { useCallback, useRef, useState } from "react";
 import { forkThread } from "../../api/channels";
 import { useTheme } from "../../ThemeContext";
 import type { Channel, ImageBuildStatusData, ImageUpdateAvailableData, UpdateStatus } from "../../types";
+import { openExternalUrl } from "../../utils/openExternal";
 import { storageGetJSON, storageSetJSON } from "../../utils/storage";
 import type { MenuItem } from "../shared/ContextMenu";
 import { ContextMenu } from "../shared/ContextMenu";
@@ -14,6 +15,7 @@ import { type SectionKey, SectionTabs, SessionSections } from "./SessionSections
 import { SidebarFooter } from "./SidebarFooter";
 import { SidebarHeader } from "./SidebarHeader";
 import { activeSessions, isTaskThread, recentSessions, sessionContext, sessionName } from "./sessions";
+import { TicketDialog } from "./TicketDialog";
 
 const MIN_WIDTH = 180;
 const MAX_WIDTH_PERCENT = 0.25;
@@ -85,6 +87,7 @@ interface SidebarProps {
   onRenameThread?: (threadId: string, newName: string) => void;
   /** Sets what a thread is for; empty clears it. */
   onSetDescription?: (threadId: string, description: string) => void;
+  onSetTicketURL?: (channelId: string, ticketURL: string) => void;
   onSetLocked?: (channelId: string, locked: boolean) => void;
   onDeleteBatch?: (ids: string[]) => void;
   onOpenDirectory?: (dirPath: string) => void;
@@ -126,6 +129,7 @@ export function Sidebar({
   onDeleteThread,
   onRenameThread,
   onSetDescription,
+  onSetTicketURL,
   onSetLocked,
   onDeleteBatch,
   onOpenDirectory,
@@ -156,6 +160,7 @@ export function Sidebar({
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
   const [renaming, setRenaming] = useState<Channel | null>(null);
   const [describing, setDescribing] = useState<Channel | null>(null);
+  const [ticketing, setTicketing] = useState<Channel | null>(null);
   const [channelOrder, setChannelOrder] = useState<string[]>(loadOrder);
   const [dragOverId, setDragOverId] = useState<string | null>(null);
   const [threadOrder, setThreadOrder] = useState<Record<string, string[]>>(loadThreadOrder);
@@ -311,6 +316,11 @@ export function Sidebar({
           onClick: () => navigator.clipboard.writeText(channel.id),
         },
       ];
+      // The popup can't be clicked through, so its ticket opens from here.
+      const ticketURL = channel.ticket_url?.trim();
+      if (ticketURL) {
+        items.push({ label: "Open Ticket", onClick: () => openExternalUrl(ticketURL) });
+      }
       // Fork is offered for threads (incl. worktree threads) only — it mirrors
       // the row's +fork action. It is non-destructive to the source (creates a
       // sibling on a forked session), so it stays available even when locked.
@@ -340,6 +350,13 @@ export function Sidebar({
           onClick: () => setDescribing(channel),
         });
       }
+      // Any row but the DM can be linked to a ticket, locked or not.
+      if (!isDm && onSetTicketURL) {
+        items.push({
+          label: "Edit Ticket",
+          onClick: () => setTicketing(channel),
+        });
+      }
       if (!isDm && onSetLocked) {
         items.push({
           label: channel.locked ? "Unlock" : "Lock",
@@ -360,7 +377,7 @@ export function Sidebar({
       }
       setContextMenu({ x: e.clientX, y: e.clientY, items });
     },
-    [onDeleteThread, onRenameThread, onSetDescription, onSetLocked, onSelect],
+    [onDeleteThread, onRenameThread, onSetDescription, onSetTicketURL, onSetLocked, onSelect],
   );
 
   const handleMouseDown = useCallback(
@@ -656,6 +673,18 @@ export function Sidebar({
           onSubmit={(description) => {
             onSetDescription?.(describing.id, description);
             setDescribing(null);
+          }}
+        />
+      )}
+
+      {ticketing && (
+        <TicketDialog
+          currentTicketURL={ticketing.ticket_url ?? ""}
+          name={ticketing.name}
+          onCancel={() => setTicketing(null)}
+          onSubmit={(ticketURL) => {
+            onSetTicketURL?.(ticketing.id, ticketURL);
+            setTicketing(null);
           }}
         />
       )}

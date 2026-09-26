@@ -83,6 +83,7 @@ List all channels with optional filtering. Enriches each channel with container 
 - `model_override` / `effort_override` are the model and effort picked for the channel (see [`PATCH /api/channels/{id}/agent-config`](#patch-apichannelsidagent-config)). Omitted when it inherits the config's.
 - `last_activity_at` is when the channel's newest message was written. Omitted when it has none, or when the lookup fails (the list is still returned). The sidebar's Recent section sorts by it.
 - `description` is what the channel or thread is for, set via [`POST /api/channels/{id}/description`](#post-apichannelsiddescription). Omitted when empty.
+- `ticket_url` is the URL of the channel or thread's ticket, set via [`POST /api/channels/{id}/ticket`](#post-apichannelsidticket). Omitted when unset.
 - `task_id` is set on a thread a scheduled task created for its output: the id of that task. Omitted on every other channel and thread, including ones that host tasks. The sidebar's hide-task-threads toggle filters on it.
 - `locked` is true when the channel/thread is guarded against accidental deletion (toggle via [`PATCH /api/channels/{id}/lock`](#patch-apichannelsidlock)). `DELETE /api/channels/{id}` and `DELETE /api/threads/{id}` return `409 Conflict` while a row is locked.
 
@@ -272,6 +273,35 @@ Set a channel, thread or worktree thread's description, shown in the sidebar's r
 **Behavior notes:** Allowed on locked rows. Broadcasts a `channel.updated` event carrying only the new `description`, so other clients refresh their sidebar live.
 
 **Errors:** `400` if the body isn't valid JSON or the description is longer than 500 characters. `404` if channel not found. `501` if not configured.
+
+---
+### `POST /api/channels/{id}/ticket`
+
+Link a channel, thread or worktree thread to its ticket in any tracker (Jira, GitHub, Linear, …), shown in the sidebar's row info popup. An empty `ticket_url` clears it.
+
+**Path Parameters:**
+
+| Param | Type   | Description |
+|-------|--------|-------------|
+| `id`  | string | Channel or thread ID |
+
+**Request:**
+```json
+{"ticket_url": "https://example.atlassian.net/browse/PROJ-123"}
+```
+
+| Field        | Type   | Required | Description |
+|--------------|--------|----------|-------------|
+| `ticket_url` | string | no       | The ticket's URL, trimmed: absolute, `http` or `https`, with a host, at most 2048 characters. Empty or missing clears it. |
+
+**Response:** `200 OK`
+```json
+{"channel_id": "abc123", "ticket_url": "https://example.atlassian.net/browse/PROJ-123"}
+```
+
+**Behavior notes:** Allowed on locked rows. Broadcasts a `channel.updated` event carrying only the new `ticket_url`, so other clients refresh their sidebar live.
+
+**Errors:** `400` if the body isn't valid JSON, or the URL isn't an absolute http(s) URL or is longer than 2048 characters. `404` if channel not found. `501` if not configured.
 
 ---
 

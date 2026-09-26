@@ -184,6 +184,8 @@ Right-clicking a channel opens a context menu with:
 |------|--------|
 | **Copy Link** | Copies `loop://channel/<id>` to clipboard |
 | **Copy Channel ID** | Copies the raw channel ID |
+| **Open Ticket** | Opens the channel's [ticket URL](#ticket-url) in the browser (only when one is set; threads too) |
+| **Edit Ticket** | Sets, changes or clears the channel's [ticket URL](#ticket-url) (not shown for DM; threads too) |
 | **Delete Channel** | Deletes the channel (not shown for DM) |
 
 The "Delete Channel" item has `danger: true` styling (red text) and a separator above it.
@@ -195,6 +197,7 @@ Hovering a channel, thread or worktree thread shows a popup beside the row (`Row
 | Line | Shows |
 |------|-------|
 | **description** | What the thread is for, above the other lines, as written (line breaks kept). Set from the [context menu](#thread-description) or by the agent's `set_thread_description` MCP tool. Left out when empty. |
+| **ticket** | The URL of the row's [ticket](#ticket-url), e.g. a Jira issue. Left out when there's none. |
 | **path** | The row's directory. For a worktree thread, that's the worktree's checkout. |
 | **branch** | The checked-out branch, e.g. `main`, picked out in the theme's accent color. A worktree thread adds the branch it was cut from, e.g. `worktree/fix (from main)`. A detached checkout shows `detached`. |
 | **commit** | The short commit hash and its subject line. |
@@ -262,6 +265,14 @@ Renaming changes only the display name, for threads and worktree threads alike: 
 Right-click a thread or worktree thread and pick **Edit Description** to open the description dialog (`DescriptionDialog`), prefilled with the current description when there is one. Enter saves, Shift+Enter starts a new line, Escape cancels; saving it empty clears it. It's capped at 500 characters. Unlike renaming, it's offered on locked threads too, since it changes nothing on disk; it isn't offered for channels or the DM.
 
 The description shows at the top of the [row info](#row-info) popup. It's stored on the channel row (`POST /api/channels/{id}/description`), and a change is broadcast as a [`channel.updated`](events.md#channelupdated) event carrying only the description, so every open window picks it up, including an open popup. Agents set it with the `set_thread_description` [MCP tool](mcpserver.md), which defaults to their own thread.
+
+### Ticket URL
+
+A channel, thread or worktree thread can be linked to its ticket: the URL of a Jira issue, a GitHub issue or PR, or any other tracker's page. Agents set it with the `set_ticket_url` [MCP tool](mcpserver.md), which defaults to their own channel or thread; it's stored on the channel row (`POST /api/channels/{id}/ticket`, absolute http(s) URLs only, empty clears).
+
+It shows as the first line of the [row info](#row-info) popup and follows changes live, like the description. The popup can't be clicked, so the row's context menu gets an **Open Ticket** item while one is set, which opens it in the browser. The workspace header shows it too, after the channel or thread id, by its key (`ChannelHeaderInfo`, `ticketKey`): the issue key when the URL carries one (`PROJ-123`, Jira's `?selectedIssue=` included, Linear and the like), `owner/repo#7` for a GitHub issue or PR, `project!5` / `project#3` for a GitLab merge request or issue, otherwise the URL's last path segment. Clicking it opens the ticket; hovering shows the full URL.
+
+Right-click any row but the DM and pick **Edit Ticket** to open the ticket dialog (`TicketDialog`), prefilled with the current URL when there is one. Enter saves, Escape cancels; saving it empty clears it. It checks the URL as you type with the same rules as the API, so a URL the API would reject (a bare `PROJ-123`, a non-http(s) scheme) shows why and can't be saved. It's offered on locked rows too, since it changes nothing on disk.
 
 ### Delete Thread
 

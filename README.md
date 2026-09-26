@@ -1146,6 +1146,7 @@ In headless/Linux environments where Electron can't launch, `LOOP_NO_ELECTRON=1 
 | `create_worktree_thread` | Create a thread backed by a fresh git worktree; `branch` is the base to fork from (a new `worktree/<name>` branch is checked out off it); optional `message` triggers a runner immediately |
 | `rename_thread` | Rename a thread, worktree thread or channel's display name (sessions, directory and branch preserved) |
 | `set_thread_description` | Set what a thread or worktree thread is for, shown when hovering it in the sidebar (defaults to the current thread; empty clears) |
+| `set_ticket_url` | Link a channel, thread or worktree thread to its ticket's URL (Jira, GitHub, …), shown when hovering it in the sidebar (defaults to the current one; empty clears) |
 | `delete_thread` | Delete a thread by ID (cleans up worktree and branch if applicable) |
 | `search_channels` | Search for channels and threads by name |
 | `send_message` | Send a message to a channel or thread (`channel_id` optional — defaults to the current channel) |

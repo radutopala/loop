@@ -921,12 +921,12 @@ func (s *ServerSuite) TestSearchChannelsAgentOverrides() {
 }
 
 // TestSearchChannelsTaskID checks a task's thread lists the task that created
-// it and a thread its description, and channels without either leave the
-// field out.
+// it and a thread its description and ticket URL, and channels without them
+// leave the fields out.
 func (s *ServerSuite) TestSearchChannelsTaskID() {
 	channels := []*db.Channel{
 		{ChannelID: "task-thread", ParentID: "p", Platform: types.PlatformLocal, TaskID: 7},
-		{ChannelID: "user-thread", ParentID: "p", Platform: types.PlatformLocal, Description: "fixes login"},
+		{ChannelID: "user-thread", ParentID: "p", Platform: types.PlatformLocal, Description: "fixes login", TicketURL: "https://example.atlassian.net/browse/PROJ-1"},
 	}
 	s.store.On("ListChannels", mock.Anything).Return(channels, nil)
 	s.store.On("ChannelActivity", mock.Anything).Return(map[string]time.Time{}, nil)
@@ -940,6 +940,8 @@ func (s *ServerSuite) TestSearchChannelsTaskID() {
 	require.NotContains(s.T(), resp[1], "task_id")
 	require.Equal(s.T(), "fixes login", resp[1]["description"])
 	require.NotContains(s.T(), resp[0], "description")
+	require.Equal(s.T(), "https://example.atlassian.net/browse/PROJ-1", resp[1]["ticket_url"])
+	require.NotContains(s.T(), resp[0], "ticket_url")
 }
 
 // TestSearchChannelsGitDetails checks a worktree thread lists its commit's

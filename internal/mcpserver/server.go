@@ -158,6 +158,11 @@ func New(channelID, apiURL, authorID string, httpClient HTTPClient, logger *slog
 	}, s.handleSetThreadDescription)
 
 	mcp.AddTool(s.mcpServer, &mcp.Tool{
+		Name:        "set_ticket_url",
+		Description: "Link a channel, thread or worktree thread to its ticket: the URL of a Jira issue, GitHub issue or PR, Linear issue or any other tracker's page for the work. Shown when hovering it in the desktop app's sidebar. channel_id is optional — omit it to link the channel or thread this agent is running in. Must be an absolute http(s) URL; an empty ticket_url clears it.",
+	}, s.handleSetTicketURL)
+
+	mcp.AddTool(s.mcpServer, &mcp.Tool{
 		Name:        "search_channels",
 		Description: "Search for channels and threads. Returns channel IDs, names, directory paths, and active status. Use the query parameter to filter by name.",
 	}, s.handleSearchChannels)

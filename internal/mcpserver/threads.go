@@ -209,3 +209,31 @@ func (s *Server) handleSetThreadDescription(_ context.Context, _ *mcp.CallToolRe
 	}
 	return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: text}}}, nil, nil
 }
+
+type setTicketURLInput struct {
+	ChannelID string `json:"channel_id,omitempty" jsonschema:"The ID of the channel or thread to link; defaults to the current one"`
+	TicketURL string `json:"ticket_url" jsonschema:"The ticket's absolute http(s) URL (Jira, GitHub, Linear, …); empty clears it"`
+}
+
+func (s *Server) handleSetTicketURL(_ context.Context, _ *mcp.CallToolRequest, input setTicketURLInput) (*mcp.CallToolResult, any, error) {
+	channelID := input.ChannelID
+	if channelID == "" {
+		channelID = s.channelID
+	}
+	s.logger.Info("mcp tool call", "tool", "set_ticket_url", "channel_id", channelID)
+
+	if channelID == "" {
+		return errorResult("channel_id is required"), nil, nil
+	}
+
+	data, _ := json.Marshal(map[string]string{"ticket_url": input.TicketURL})
+	if errResult, err := doAPICallNoBody(s, "POST", fmt.Sprintf("%s/api/channels/%s/ticket", s.apiURL, channelID), http.StatusOK, data); errResult != nil || err != nil {
+		return errResult, nil, err
+	}
+
+	text := fmt.Sprintf("Ticket of %s set to %s.", channelID, strings.TrimSpace(input.TicketURL))
+	if strings.TrimSpace(input.TicketURL) == "" {
+		text = fmt.Sprintf("Ticket of %s cleared.", channelID)
+	}
+	return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: text}}}, nil, nil
+}

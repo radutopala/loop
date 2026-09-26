@@ -17,6 +17,7 @@ import {
   renameChannel,
   setChannelDescription,
   setChannelLocked,
+  setChannelTicketURL,
 } from "./api/loopApi";
 import horizontalLogo from "./assets/logo-horizontal.svg";
 import { WorkspaceLayout, type WorkspaceLayoutRef } from "./components/layout/WorkspaceLayout";
@@ -581,6 +582,18 @@ function AppInner() {
     }
   }, []);
 
+  const handleSetTicketURL = useCallback(async (id: string, ticketURL: string) => {
+    setError(null);
+    try {
+      // The channel.updated event brings the new ticket URL to every row.
+      await setChannelTicketURL(id, ticketURL);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Failed to set ticket";
+      setError(message);
+      console.error("set ticket failed:", err);
+    }
+  }, []);
+
   const handleSetLocked = useCallback(
     async (id: string, locked: boolean) => {
       setError(null);
@@ -668,6 +681,7 @@ function AppInner() {
         onDeleteThread={handleDelete}
         onRenameThread={handleRename}
         onSetDescription={handleSetDescription}
+        onSetTicketURL={handleSetTicketURL}
         onSetLocked={handleSetLocked}
         onDeleteBatch={handleDeleteBatch}
         onOpenSettings={() => togglePanel("settings")}

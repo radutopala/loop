@@ -41,6 +41,8 @@ export interface Channel {
   task_id?: number;
   /** What the thread is for, in a line or two; unset when it has none. */
   description?: string;
+  /** The URL of the channel or thread's ticket (Jira, GitHub, …); unset when it has none. */
+  ticket_url?: string;
 }
 
 export interface Message {
@@ -224,12 +226,13 @@ export interface ChannelUpdatedData {
   base_ahead?: number;
   base_behind?: number;
   /**
-   * Set by a rename or a description change, which carry nothing else: the
-   * git fields are then empty and must be left alone. An empty description
-   * clears it.
+   * Set by a rename, a description or a ticket change, which carry nothing
+   * else: the git fields are then empty and must be left alone. An empty
+   * description or ticket_url clears it.
    */
   name?: string;
   description?: string;
+  ticket_url?: string;
 }
 
 /** A channel's model/effort overrides after they change; empty clears one. */
