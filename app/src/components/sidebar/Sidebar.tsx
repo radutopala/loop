@@ -336,7 +336,7 @@ export function Sidebar({
       // Description too, but also while locked: it changes nothing on disk.
       if (isThread && !isDm && onSetDescription) {
         items.push({
-          label: channel.description ? "Edit Description" : "Add Description",
+          label: "Edit Description",
           onClick: () => setDescribing(channel),
         });
       }

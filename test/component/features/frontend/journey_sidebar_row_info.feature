@@ -51,7 +51,7 @@ Feature: Sidebar Row Info
     Then the row info should not show "description"
 
     When I right-click on "desc-wt" in the sidebar
-    And I click on "Add Description" in the context menu
+    And I click on "Edit Description" in the context menu
     Then I wait for "[data-testid='description-dialog']" to be visible
     When I clear and type "Fixes the login redirect" into "[data-testid='description-input']"
     And I click on "[data-testid='description-submit']"
@@ -62,10 +62,11 @@ Feature: Sidebar Row Info
     # Setting it keeps the git lines the popup already had.
     And the row info should show the worktree's path and branch "worktree/desc-wt"
 
-    # Once set, the menu offers to edit it; saving it empty clears it.
+    # The dialog opens with the current description to edit; saving it empty clears it.
     When I right-click on "desc-wt" in the sidebar
     And I click on "Edit Description" in the context menu
     Then I wait for "[data-testid='description-dialog']" to be visible
+    And the field "[data-testid='description-input']" should hold "Fixes the login redirect"
     When I clear and type "" into "[data-testid='description-input']"
     And I click on "[data-testid='description-submit']"
     And I rest the pointer on "desc-wt" in the sidebar

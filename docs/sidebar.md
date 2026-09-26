@@ -259,7 +259,7 @@ Renaming changes only the display name, for threads and worktree threads alike: 
 
 ### Thread Description
 
-Right-click a thread or worktree thread and pick **Add Description** (**Edit Description** once it has one) to open the description dialog (`DescriptionDialog`). Enter saves, Shift+Enter starts a new line, Escape cancels; saving it empty clears it. It's capped at 500 characters. Unlike renaming, it's offered on locked threads too, since it changes nothing on disk; it isn't offered for channels or the DM.
+Right-click a thread or worktree thread and pick **Edit Description** to open the description dialog (`DescriptionDialog`), prefilled with the current description when there is one. Enter saves, Shift+Enter starts a new line, Escape cancels; saving it empty clears it. It's capped at 500 characters. Unlike renaming, it's offered on locked threads too, since it changes nothing on disk; it isn't offered for channels or the DM.
 
 The description shows at the top of the [row info](#row-info) popup. It's stored on the channel row (`POST /api/channels/{id}/description`), and a change is broadcast as a [`channel.updated`](events.md#channelupdated) event carrying only the description, so every open window picks it up, including an open popup. Agents set it with the `set_thread_description` [MCP tool](mcpserver.md), which defaults to their own thread.
 
