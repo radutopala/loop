@@ -40,7 +40,7 @@ func (s *SQLiteStore) UpsertChannel(ctx context.Context, ch *Channel) error {
 
 func (s *SQLiteStore) GetChannel(ctx context.Context, channelID string) (*Channel, error) {
 	row := s.db.QueryRowContext(ctx,
-		`SELECT id, channel_id, guild_id, name, dir_path, parent_id, platform, active, session_id, permissions, worktree, base_branch, locked, model_override, effort_override, fork_pending, task_id, created_at, updated_at FROM channels WHERE channel_id = ?`,
+		`SELECT id, channel_id, guild_id, name, dir_path, parent_id, platform, active, session_id, permissions, worktree, base_branch, locked, model_override, effort_override, fork_pending, task_id, description, created_at, updated_at FROM channels WHERE channel_id = ?`,
 		channelID,
 	)
 	ch, err := scanChannel(row)
@@ -52,7 +52,7 @@ func (s *SQLiteStore) GetChannel(ctx context.Context, channelID string) (*Channe
 
 func (s *SQLiteStore) GetChannelByDirPath(ctx context.Context, dirPath string, platform types.Platform) (*Channel, error) {
 	row := s.db.QueryRowContext(ctx,
-		`SELECT id, channel_id, guild_id, name, dir_path, parent_id, platform, active, session_id, permissions, worktree, base_branch, locked, model_override, effort_override, fork_pending, task_id, created_at, updated_at
+		`SELECT id, channel_id, guild_id, name, dir_path, parent_id, platform, active, session_id, permissions, worktree, base_branch, locked, model_override, effort_override, fork_pending, task_id, description, created_at, updated_at
 		 FROM channels WHERE dir_path = ? AND platform = ? AND parent_id = ''`,
 		dirPath, platform,
 	)
@@ -65,7 +65,7 @@ func (s *SQLiteStore) GetChannelByDirPath(ctx context.Context, dirPath string, p
 
 func (s *SQLiteStore) GetChannelsByDirPath(ctx context.Context, dirPath string) ([]*Channel, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, channel_id, guild_id, name, dir_path, parent_id, platform, active, session_id, permissions, worktree, base_branch, locked, model_override, effort_override, fork_pending, task_id, created_at, updated_at
+		`SELECT id, channel_id, guild_id, name, dir_path, parent_id, platform, active, session_id, permissions, worktree, base_branch, locked, model_override, effort_override, fork_pending, task_id, description, created_at, updated_at
 		 FROM channels WHERE dir_path = ? AND parent_id = ''`,
 		dirPath,
 	)
@@ -152,6 +152,15 @@ func (s *SQLiteStore) UpdateChannelName(ctx context.Context, channelID, name str
 	return err
 }
 
+// UpdateChannelDescription sets a channel's description; empty clears it.
+func (s *SQLiteStore) UpdateChannelDescription(ctx context.Context, channelID, description string) error {
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE channels SET description = ?, updated_at = ? WHERE channel_id = ?`,
+		description, s.nowFunc(), channelID,
+	)
+	return err
+}
+
 func (s *SQLiteStore) DeleteChannel(ctx context.Context, channelID string) error {
 	return s.withTx(ctx, func(tx *sql.Tx) error {
 		if _, err := tx.ExecContext(ctx, `DELETE FROM messages WHERE channel_id = ?`, channelID); err != nil {
@@ -234,7 +243,7 @@ func (s *SQLiteStore) ChannelActivity(ctx context.Context) (map[string]time.Time
 
 func (s *SQLiteStore) ListChannels(ctx context.Context) ([]*Channel, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, channel_id, guild_id, name, dir_path, parent_id, platform, active, session_id, permissions, worktree, base_branch, locked, model_override, effort_override, fork_pending, task_id, created_at, updated_at
+		`SELECT id, channel_id, guild_id, name, dir_path, parent_id, platform, active, session_id, permissions, worktree, base_branch, locked, model_override, effort_override, fork_pending, task_id, description, created_at, updated_at
 		 FROM channels ORDER BY name ASC`)
 	if err != nil {
 		return nil, err

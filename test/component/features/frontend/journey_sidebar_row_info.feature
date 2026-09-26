@@ -39,3 +39,45 @@ Feature: Sidebar Row Info
 
     When I move the pointer off the sidebar
     Then I wait up to "2s" for "[data-testid='sidebar-row-info']" to disappear
+
+  @row-description
+  Scenario: A thread's description shows in its row info and is set from the context menu
+    Given I set up a test channel via API for git repo "bdd-row-desc"
+    And I set up a worktree "desc-wt" on branch "main" under the current channel via API
+    And I open the app in a browser
+    And I wait for text "desc-wt" to appear
+
+    When I rest the pointer on "desc-wt" in the sidebar
+    Then the row info should not show "description"
+
+    When I right-click on "desc-wt" in the sidebar
+    And I click on "Edit Description" in the context menu
+    Then I wait for "[data-testid='description-dialog']" to be visible
+    When I clear and type "Fixes the login redirect" into "[data-testid='description-input']"
+    And I click on "[data-testid='description-submit']"
+    Then I wait up to "2s" for "[data-testid='description-dialog']" to disappear
+
+    When I rest the pointer on "desc-wt" in the sidebar
+    Then the row info "description" should read "Fixes the login redirect"
+    # Setting it keeps the git lines the popup already had.
+    And the row info should show the worktree's path and branch "worktree/desc-wt"
+
+    # The dialog opens with the current description to edit; saving it empty clears it.
+    When I right-click on "desc-wt" in the sidebar
+    And I click on "Edit Description" in the context menu
+    Then I wait for "[data-testid='description-dialog']" to be visible
+    And the field "[data-testid='description-input']" should hold "Fixes the login redirect"
+    When I clear and type "" into "[data-testid='description-input']"
+    And I click on "[data-testid='description-submit']"
+    And I rest the pointer on "desc-wt" in the sidebar
+    Then the row info should not show "description"
+
+    # An agent sets it through the API; the open popup follows.
+    When I rest the pointer on "bdd-row-desc" in the sidebar
+    And I send a POST request to "/api/channels/{channel_id}/description" with body:
+      """
+      {"description": "Main checkout of the repo"}
+      """
+    Then the response status should be 200
+    And the row info "description" should read "Main checkout of the repo"
+    And the row info should show the channel's path and branch "main"

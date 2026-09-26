@@ -136,7 +136,7 @@ Errors or stops still mark the trigger row processed (via `markTriggerProcessed`
 
 ## Per-channel Drain Serialization
 
-The `channelLocks` `sync.Map` holds a `*sync.Mutex` per channel. `drainChannel` `Lock`s on entry and `Unlock`s when the loop drains the channel empty, so within a single channel only one agent run executes at a time. Across channels the drains are independent: a long agent run on channel A does not block channel B's `HandleMessage` from claiming and processing its own rows. The drain holds the in-memory lock only for the lifetime of the loop, not the row — once a row is released, the next `HandleMessage` call (or `ResumeChannel` from startup) can claim it.
+The `channelLocks` `sync.Map` holds a `*sync.Mutex` per channel. The `TaskExecutor` shares it, so a scheduled task and the chat queue of the thread it writes to never run at once (see [Scheduled Task Execution](#scheduled-task-execution)). `drainChannel` `Lock`s on entry and `Unlock`s when the loop drains the channel empty, so within a single channel only one agent run executes at a time. Across channels the drains are independent: a long agent run on channel A does not block channel B's `HandleMessage` from claiming and processing its own rows. The drain holds the in-memory lock only for the lifetime of the loop, not the row — once a row is released, the next `HandleMessage` call (or `ResumeChannel` from startup) can claim it.
 
 There is no notify channel and no idle processor goroutine: each `HandleMessage` and `ResumeChannel` call attempts to drain on its own goroutine, the mutex collapses concurrent attempts into a single drain, and any rows inserted during a drain (e.g. a priority-bumped interrupt while an earlier row is running) are picked up by the same loop on its next iteration.
 
@@ -299,7 +299,7 @@ MCP config cleanup is best-effort; failures are logged as warnings.
 
 The `TaskExecutor` handles scheduled task runs. It follows a similar pattern to message processing but with key differences:
 
-1. **No drain queue** -- Tasks bypass `drainChannel` entirely and call `runner.Run` directly. They do not go through `ClaimNextPending` and do not contend with chat messages for the per-channel mutex.
+1. **No drain queue, same lock** -- Tasks bypass `drainChannel` and `ClaimNextPending` and call `runner.Run` directly, but they hold the per-channel mutex of the thread they write to (shared through `SetChannelLocks`). A task resuming its thread waits for a chat run already draining it, and reads the thread's session only once it holds the lock, so it resumes where that run left off. A message sent to the thread while the task runs, by you or by the task's own `queue_message`, is queued and runs after the task, instead of starting a second run on the same session. A first run takes the lock of the thread it creates as soon as it's created. The parent channel's lock is never taken, so chat in the channel is unaffected.
 2. **Thread creation** -- On the first streaming turn, a thread is created for the task output with the name prefix `task #N (schedule)`. The prompt is truncated to 100 characters for the thread name.
 3. **Ephemeral detection** -- If `AutoDeleteSec > 0`, the agent is instructed via system prompt that responses starting with `[EPHEMERAL]` indicate nothing meaningful to report. Ephemeral threads are renamed with a different emoji and auto-deleted after the configured delay.
 4. **Permission user invites** -- All owner and member users from the channel's permissions are invited to the task thread.

@@ -30,6 +30,7 @@ type ChannelLister interface {
 	UpdateChannelAgentOverrides(ctx context.Context, channelID, model, effort string) error
 	UpdateChannelLocked(ctx context.Context, channelID string, locked bool) error
 	UpdateChannelName(ctx context.Context, channelID, name string) error
+	UpdateChannelDescription(ctx context.Context, channelID, description string) error
 	DeleteChannel(ctx context.Context, channelID string) error
 	DeleteChannelsByParentID(ctx context.Context, parentID string) error
 	ListDistinctMemoryFilePaths(ctx context.Context, dirPath string) ([]db.MemoryFileInfo, error)

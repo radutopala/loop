@@ -782,6 +782,7 @@ func (a *app) serve() error {
 	orch.SetEventBroadcaster(eventsHub)
 	orch.SetWorkflowEngine(wfEngine)
 	executor.SetActiveRuns(orch.ActiveRunsMap())
+	executor.SetChannelLocks(orch.ChannelLocksMap())
 	apiSrv.SetIncomingMessageHandler(chatBot)
 	apiSrv.SetRunCanceller(orch)
 	apiSrv.SetPlanResolver(orch)

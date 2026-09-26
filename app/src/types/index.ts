@@ -39,6 +39,8 @@ export interface Channel {
   last_activity_at?: number;
   /** For a thread a scheduled task created for its output: that task's id. */
   task_id?: number;
+  /** What the thread is for, in a line or two; unset when it has none. */
+  description?: string;
 }
 
 export interface Message {
@@ -61,6 +63,8 @@ export interface Message {
   // message runs. Missing/0 = immediate. While in the future the UI shows a
   // live countdown until it fires.
   not_before?: number;
+  // Set by /api/channels/{id}/queued on the row a chat run has claimed.
+  is_running?: boolean;
   created_at: string;
 }
 
@@ -219,7 +223,13 @@ export interface ChannelUpdatedData {
   sync_base?: string;
   base_ahead?: number;
   base_behind?: number;
+  /**
+   * Set by a rename or a description change, which carry nothing else: the
+   * git fields are then empty and must be left alone. An empty description
+   * clears it.
+   */
   name?: string;
+  description?: string;
 }
 
 /** A channel's model/effort overrides after they change; empty clears one. */

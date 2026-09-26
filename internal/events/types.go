@@ -267,7 +267,12 @@ type ChannelUpdatedData struct {
 	SyncBase      string `json:"sync_base,omitempty"`
 	BaseAhead     int    `json:"base_ahead,omitempty"`
 	BaseBehind    int    `json:"base_behind,omitempty"`
-	Name          string `json:"name,omitempty"`
+	// Name and Description are set by a rename or a description change,
+	// which carry nothing else: the git fields above are then zero and must
+	// not be applied. The branch poller never sets either.
+	Name string `json:"name,omitempty"`
+	// Description is a pointer so clearing one (empty) still goes out.
+	Description *string `json:"description,omitempty"`
 }
 
 // TaskEventData is the payload for task.created and task.updated events.

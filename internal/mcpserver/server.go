@@ -153,6 +153,11 @@ func New(channelID, apiURL, authorID string, httpClient HTTPClient, logger *slog
 	}, s.handleRenameThread)
 
 	mcp.AddTool(s.mcpServer, &mcp.Tool{
+		Name:        "set_thread_description",
+		Description: "Set a thread or worktree thread's description: a line or two on what it's for, shown when hovering it in the desktop app's sidebar. thread_id is optional — omit it to describe the thread this agent is running in. An empty description clears it. At most 500 characters.",
+	}, s.handleSetThreadDescription)
+
+	mcp.AddTool(s.mcpServer, &mcp.Tool{
 		Name:        "search_channels",
 		Description: "Search for channels and threads. Returns channel IDs, names, directory paths, and active status. Use the query parameter to filter by name.",
 	}, s.handleSearchChannels)

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"path/filepath"
+	"strings"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
@@ -179,4 +180,32 @@ func (s *Server) handleRenameThread(_ context.Context, _ *mcp.CallToolRequest, i
 			&mcp.TextContent{Text: fmt.Sprintf("Thread %s renamed to %q successfully.", input.ThreadID, input.Name)},
 		},
 	}, nil, nil
+}
+
+type setThreadDescriptionInput struct {
+	ThreadID    string `json:"thread_id,omitempty" jsonschema:"The ID of the thread to describe; defaults to the current thread"`
+	Description string `json:"description" jsonschema:"What the thread is for, in a line or two; empty clears it"`
+}
+
+func (s *Server) handleSetThreadDescription(_ context.Context, _ *mcp.CallToolRequest, input setThreadDescriptionInput) (*mcp.CallToolResult, any, error) {
+	threadID := input.ThreadID
+	if threadID == "" {
+		threadID = s.channelID
+	}
+	s.logger.Info("mcp tool call", "tool", "set_thread_description", "thread_id", threadID)
+
+	if threadID == "" {
+		return errorResult("thread_id is required"), nil, nil
+	}
+
+	data, _ := json.Marshal(map[string]string{"description": input.Description})
+	if errResult, err := doAPICallNoBody(s, "POST", fmt.Sprintf("%s/api/channels/%s/description", s.apiURL, threadID), http.StatusOK, data); errResult != nil || err != nil {
+		return errResult, nil, err
+	}
+
+	text := fmt.Sprintf("Description of thread %s set.", threadID)
+	if strings.TrimSpace(input.Description) == "" {
+		text = fmt.Sprintf("Description of thread %s cleared.", threadID)
+	}
+	return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: text}}}, nil, nil
 }

@@ -14,8 +14,8 @@ interface RowInfoPopupProps {
 }
 
 /**
- * RowInfoPopup shows a sidebar row's directory, git state and agent settings
- * beside it as soon as the pointer is on the row. A click, drag or scroll hides it until the
+ * RowInfoPopup shows a sidebar row's description, directory, git state and
+ * agent settings beside it as soon as the pointer is on the row. A click, drag or scroll hides it until the
  * pointer comes back.
  */
 export function RowInfoPopup({ channel, anchorRef, hovered }: RowInfoPopupProps) {
@@ -24,7 +24,8 @@ export function RowInfoPopup({ channel, anchorRef, hovered }: RowInfoPopupProps)
   const [pos, setPos] = useState<{ top: number; left: number; rowMid: number } | null>(null);
   const popupRef = useRef<HTMLDivElement>(null);
   const lines = rowInfoLines(channel);
-  const hasInfo = lines.length > 0;
+  const description = channel.description?.trim();
+  const hasInfo = lines.length > 0 || !!description;
 
   // A layout effect, so the popup shows in the same frame as the row's
   // hover background.
@@ -111,6 +112,20 @@ export function RowInfoPopup({ channel, anchorRef, hovered }: RowInfoPopupProps)
           transform: "rotate(45deg)",
         }}
       />
+      {description && (
+        <div
+          data-testid="sidebar-row-info-description"
+          style={{
+            gridColumn: "1 / -1",
+            color: colors.textLight,
+            whiteSpace: "pre-wrap",
+            overflowWrap: "anywhere",
+            ...(lines.length > 0 ? { paddingBottom: 6, marginBottom: 4, borderBottom: border } : {}),
+          }}
+        >
+          {description}
+        </div>
+      )}
       {lines.map((line) => (
         <Fragment key={line.key}>
           <span style={{ ...label, ...(line.key === "branch" ? { color: colors.active } : {}), display: "inline-flex", alignItems: "center", gap: 5 }}>

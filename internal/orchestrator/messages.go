@@ -152,8 +152,7 @@ func (o *Orchestrator) drainAsync(channelID string, incoming *bot.IncomingMessag
 // message (e.g. startup resume). When non-nil, its bot-side fields are
 // merged into the claimed row in processClaimedMessage if msg_ids match.
 func (o *Orchestrator) drainChannel(ctx context.Context, channelID string, incoming *bot.IncomingMessage) {
-	lockVal, _ := o.channelLocks.LoadOrStore(channelID, &sync.Mutex{})
-	lock := lockVal.(*sync.Mutex)
+	lock := channelLock(&o.channelLocks, channelID)
 	lock.Lock()
 	defer lock.Unlock()
 

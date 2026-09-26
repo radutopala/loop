@@ -35,9 +35,12 @@ type Channel struct {
 	// TaskID is the scheduled task whose thread this is; 0 for any other
 	// channel or thread. Set when a task creates its thread and kept when the
 	// thread is renamed or the task deleted.
-	TaskID    int64     `json:"task_id"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
+	TaskID int64 `json:"task_id"`
+	// Description says what a thread is for, in a line or two. Set from the
+	// sidebar or by the thread's agent; empty when there's none.
+	Description string    `json:"description"`
+	CreatedAt   time.Time `json:"created_at"`
+	UpdatedAt   time.Time `json:"updated_at"`
 }
 
 // StaleRunningMessage describes a (channel_id, msg_id) pair returned by

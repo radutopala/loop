@@ -180,14 +180,17 @@ const defaultMessageLimit = 50
 const maxMessageLimit = 200
 
 type messageResponse struct {
-	ID           int64     `json:"id"`
-	ChannelID    string    `json:"channel_id"`
-	MsgID        string    `json:"msg_id"`
-	AuthorID     string    `json:"author_id"`
-	AuthorName   string    `json:"author_name"`
-	Content      string    `json:"content"`
-	IsBot        bool      `json:"is_bot"`
-	IsProcessed  bool      `json:"is_processed"`
+	ID          int64  `json:"id"`
+	ChannelID   string `json:"channel_id"`
+	MsgID       string `json:"msg_id"`
+	AuthorID    string `json:"author_id"`
+	AuthorName  string `json:"author_name"`
+	Content     string `json:"content"`
+	IsBot       bool   `json:"is_bot"`
+	IsProcessed bool   `json:"is_processed"`
+	// IsRunning is set on the queued row a chat run has claimed; the FE uses
+	// it to tell that row from ones still waiting (e.g. behind a task run).
+	IsRunning    bool      `json:"is_running,omitempty"`
 	Priority     int       `json:"priority,omitempty"`
 	TriggerMsgID string    `json:"trigger_msg_id,omitempty"`
 	CreatedAt    time.Time `json:"created_at"`
@@ -212,6 +215,7 @@ func toMessageResponse(m *db.Message) messageResponse {
 		Content:      m.Content,
 		IsBot:        m.IsBot,
 		IsProcessed:  m.IsProcessed,
+		IsRunning:    m.IsRunning,
 		Priority:     m.Priority,
 		TriggerMsgID: m.TriggerMsgID,
 		CreatedAt:    m.CreatedAt,

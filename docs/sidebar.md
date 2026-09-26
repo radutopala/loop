@@ -194,6 +194,7 @@ Hovering a channel, thread or worktree thread shows a popup beside the row (`Row
 
 | Line | Shows |
 |------|-------|
+| **description** | What the thread is for, above the other lines, as written (line breaks kept). Set from the [context menu](#thread-description) or by the agent's `set_thread_description` MCP tool. Left out when empty. |
 | **path** | The row's directory. For a worktree thread, that's the worktree's checkout. |
 | **branch** | The checked-out branch, e.g. `main`, picked out in the theme's accent color. A worktree thread adds the branch it was cut from, e.g. `worktree/fix (from main)`. A detached checkout shows `detached`. |
 | **commit** | The short commit hash and its subject line. |
@@ -255,6 +256,12 @@ Clicking "+ thread" on a channel reveals an inline input (`NewThreadInput`) belo
 Right-click a thread and pick **Rename Thread** (**Rename Worktree** for a worktree thread) to open the rename dialog. It isn't offered for the DM or a locked thread.
 
 Renaming changes only the display name, for threads and worktree threads alike: the directory, git branch and Claude sessions stay as they are (`POST /api/channels/{id}/rename`).
+
+### Thread Description
+
+Right-click a thread or worktree thread and pick **Edit Description** to open the description dialog (`DescriptionDialog`), prefilled with the current description when there is one. Enter saves, Shift+Enter starts a new line, Escape cancels; saving it empty clears it. It's capped at 500 characters. Unlike renaming, it's offered on locked threads too, since it changes nothing on disk; it isn't offered for channels or the DM.
+
+The description shows at the top of the [row info](#row-info) popup. It's stored on the channel row (`POST /api/channels/{id}/description`), and a change is broadcast as a [`channel.updated`](events.md#channelupdated) event carrying only the description, so every open window picks it up, including an open popup. Agents set it with the `set_thread_description` [MCP tool](mcpserver.md), which defaults to their own thread.
 
 ### Delete Thread
 

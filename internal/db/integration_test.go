@@ -266,3 +266,31 @@ func (s *IntegrationSuite) TestSearchChannelMessagesMatchesLiterally() {
 		require.Equal(s.T(), tc.want, got, tc.query)
 	}
 }
+
+// A description survives the upserts that re-sync a channel (they never set
+// it), is returned by every read, and clears when set empty.
+func (s *IntegrationSuite) TestChannelDescriptionRoundTrip() {
+	store, err := NewSQLiteStore(filepath.Join(s.T().TempDir(), "loop.db"))
+	require.NoError(s.T(), err)
+	defer store.Close()
+	ctx := context.Background()
+
+	ch := &Channel{ChannelID: "t1", Name: "thread", DirPath: "/tmp/t1", ParentID: "c1", Active: true}
+	require.NoError(s.T(), store.UpsertChannel(ctx, ch))
+	require.NoError(s.T(), store.UpdateChannelDescription(ctx, "t1", "fixes the login flow"))
+	ch.Name = "renamed"
+	require.NoError(s.T(), store.UpsertChannel(ctx, ch))
+
+	got, err := store.GetChannel(ctx, "t1")
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "fixes the login flow", got.Description)
+	all, err := store.ListChannels(ctx)
+	require.NoError(s.T(), err)
+	require.Len(s.T(), all, 1)
+	require.Equal(s.T(), "fixes the login flow", all[0].Description)
+
+	require.NoError(s.T(), store.UpdateChannelDescription(ctx, "t1", ""))
+	got, err = store.GetChannel(ctx, "t1")
+	require.NoError(s.T(), err)
+	require.Empty(s.T(), got.Description)
+}
