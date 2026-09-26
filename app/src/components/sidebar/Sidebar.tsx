@@ -6,6 +6,7 @@ import { storageGetJSON, storageSetJSON } from "../../utils/storage";
 import type { MenuItem } from "../shared/ContextMenu";
 import { ContextMenu } from "../shared/ContextMenu";
 import { ChannelList } from "./ChannelList";
+import { DescriptionDialog } from "./DescriptionDialog";
 import type { PillKind } from "./pills";
 import { SIDEBAR_PILLS } from "./pills";
 import { RenameThreadDialog } from "./RenameThreadDialog";
@@ -82,6 +83,8 @@ interface SidebarProps {
   onCreateWorktree?: (channelId: string, branch: string) => void;
   onDeleteThread: (threadId: string) => void;
   onRenameThread?: (threadId: string, newName: string) => void;
+  /** Sets what a thread is for; empty clears it. */
+  onSetDescription?: (threadId: string, description: string) => void;
   onSetLocked?: (channelId: string, locked: boolean) => void;
   onDeleteBatch?: (ids: string[]) => void;
   onOpenDirectory?: (dirPath: string) => void;
@@ -122,6 +125,7 @@ export function Sidebar({
   onCreateWorktree,
   onDeleteThread,
   onRenameThread,
+  onSetDescription,
   onSetLocked,
   onDeleteBatch,
   onOpenDirectory,
@@ -151,6 +155,7 @@ export function Sidebar({
   const [resizing, setResizing] = useState(false);
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
   const [renaming, setRenaming] = useState<Channel | null>(null);
+  const [describing, setDescribing] = useState<Channel | null>(null);
   const [channelOrder, setChannelOrder] = useState<string[]>(loadOrder);
   const [dragOverId, setDragOverId] = useState<string | null>(null);
   const [threadOrder, setThreadOrder] = useState<Record<string, string[]>>(loadThreadOrder);
@@ -328,6 +333,13 @@ export function Sidebar({
           onClick: () => setRenaming(channel),
         });
       }
+      // Description too, but also while locked: it changes nothing on disk.
+      if (isThread && !isDm && onSetDescription) {
+        items.push({
+          label: channel.description ? "Edit Description" : "Add Description",
+          onClick: () => setDescribing(channel),
+        });
+      }
       if (!isDm && onSetLocked) {
         items.push({
           label: channel.locked ? "Unlock" : "Lock",
@@ -348,7 +360,7 @@ export function Sidebar({
       }
       setContextMenu({ x: e.clientX, y: e.clientY, items });
     },
-    [onDeleteThread, onRenameThread, onSetLocked, onSelect],
+    [onDeleteThread, onRenameThread, onSetDescription, onSetLocked, onSelect],
   );
 
   const handleMouseDown = useCallback(
@@ -632,6 +644,18 @@ export function Sidebar({
           onSubmit={(newName) => {
             onRenameThread?.(renaming.id, newName);
             setRenaming(null);
+          }}
+        />
+      )}
+
+      {describing && (
+        <DescriptionDialog
+          currentDescription={describing.description ?? ""}
+          name={describing.name}
+          onCancel={() => setDescribing(null)}
+          onSubmit={(description) => {
+            onSetDescription?.(describing.id, description);
+            setDescribing(null);
           }}
         />
       )}

@@ -371,6 +371,8 @@ var migrations = []migration{
 	// it from the name the executor has always given them.
 	sqlMigration(`ALTER TABLE channels ADD COLUMN task_id INTEGER NOT NULL DEFAULT 0`),
 	funcMigration(backfillChannelTaskIDs),
+	// description says what a thread is for; the sidebar shows it on hover.
+	sqlMigration(`ALTER TABLE channels ADD COLUMN description TEXT NOT NULL DEFAULT ''`),
 }
 
 // migrateScheduledTasksAddManualType rebuilds scheduled_tasks to widen the

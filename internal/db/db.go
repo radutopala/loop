@@ -25,6 +25,7 @@ type Store interface {
 	UpdateChannelPermissions(ctx context.Context, channelID string, perms types.Permissions) error
 	UpdateChannelLocked(ctx context.Context, channelID string, locked bool) error
 	UpdateChannelName(ctx context.Context, channelID, name string) error
+	UpdateChannelDescription(ctx context.Context, channelID, description string) error
 	DeleteChannel(ctx context.Context, channelID string) error
 	DeleteChannelsByParentID(ctx context.Context, parentID string) error
 	ListChannelIDsByParentID(ctx context.Context, parentID string) ([]string, error)
@@ -251,7 +252,7 @@ func scanChannelFrom(scanner rowScanner) (*Channel, error) {
 	var active, worktree, locked, forkPending int
 	var permJSON string
 	if err := scanner.Scan(&ch.ID, &ch.ChannelID, &ch.GuildID, &ch.Name, &ch.DirPath,
-		&ch.ParentID, &ch.Platform, &active, &ch.SessionID, &permJSON, &worktree, &ch.BaseBranch, &locked, &ch.ModelOverride, &ch.EffortOverride, &forkPending, &ch.TaskID, &ch.CreatedAt, &ch.UpdatedAt); err != nil {
+		&ch.ParentID, &ch.Platform, &active, &ch.SessionID, &permJSON, &worktree, &ch.BaseBranch, &locked, &ch.ModelOverride, &ch.EffortOverride, &forkPending, &ch.TaskID, &ch.Description, &ch.CreatedAt, &ch.UpdatedAt); err != nil {
 		return nil, err
 	}
 	ch.Active = active == 1

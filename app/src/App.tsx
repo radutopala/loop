@@ -15,6 +15,7 @@ import {
   initApiUrl,
   rebuildImage,
   renameChannel,
+  setChannelDescription,
   setChannelLocked,
 } from "./api/loopApi";
 import horizontalLogo from "./assets/logo-horizontal.svg";
@@ -33,6 +34,7 @@ import { type ActiveChatState, useChatStateStore } from "./hooks/useChatStateSto
 import { DEFAULT_FONT_SIZES, ThemeProvider, useTheme } from "./ThemeContext";
 import { fonts } from "./theme";
 import type { Channel, ChannelAgentConfigData, ChannelUpdatedData, ImageBuildStatusData, ImageUpdateAvailableData, UpdateStatus, WSEvent } from "./types";
+import { applyChannelUpdate } from "./utils/channelUpdate";
 import { logErr } from "./utils/log";
 import { parseChannelTarget } from "./utils/messageLinks";
 import { storageGet, storageRemove, storageSet } from "./utils/storage";
@@ -274,27 +276,7 @@ function AppInner() {
       }
       if (event.type === "channel.updated") {
         const d = event.data as ChannelUpdatedData;
-        setChannels((prev) =>
-          prev.map((c) =>
-            c.id === d.channel_id
-              ? {
-                  ...c,
-                  branch: d.branch,
-                  commit: d.commit,
-                  diff_additions: d.diff_additions,
-                  diff_deletions: d.diff_deletions,
-                  subject: d.subject,
-                  upstream: d.upstream,
-                  ahead: d.ahead,
-                  behind: d.behind,
-                  sync_base: d.sync_base,
-                  base_ahead: d.base_ahead,
-                  base_behind: d.base_behind,
-                  ...(d.name !== undefined ? { name: d.name } : {}),
-                }
-              : c,
-          ),
-        );
+        setChannels((prev) => prev.map((c) => (c.id === d.channel_id ? applyChannelUpdate(c, d) : c)));
         return;
       }
       if (event.type === "channel.agent_config") {
@@ -587,6 +569,18 @@ function AppInner() {
     [loadChannels],
   );
 
+  const handleSetDescription = useCallback(async (id: string, description: string) => {
+    setError(null);
+    try {
+      // The channel.updated event brings the new description to every row.
+      await setChannelDescription(id, description);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Failed to set description";
+      setError(message);
+      console.error("set description failed:", err);
+    }
+  }, []);
+
   const handleSetLocked = useCallback(
     async (id: string, locked: boolean) => {
       setError(null);
@@ -673,6 +667,7 @@ function AppInner() {
         onCreateWorktree={handleCreateWorktree}
         onDeleteThread={handleDelete}
         onRenameThread={handleRename}
+        onSetDescription={handleSetDescription}
         onSetLocked={handleSetLocked}
         onDeleteBatch={handleDeleteBatch}
         onOpenSettings={() => togglePanel("settings")}

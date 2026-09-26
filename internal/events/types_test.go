@@ -54,3 +54,30 @@ func TestAskUserQuestionUnmarshalMatchesToolSchema(t *testing.T) {
 		})
 	}
 }
+
+// A description change must reach the sidebar even when it clears the
+// description, and git updates (no description) must not carry one.
+func TestChannelUpdatedDescriptionJSON(t *testing.T) {
+	empty, set := "", "fixes login"
+	cases := []struct {
+		name string
+		data ChannelUpdatedData
+		want string
+		has  bool
+	}{
+		{name: "set", data: ChannelUpdatedData{ChannelID: "t1", Description: &set}, want: `"description":"fixes login"`, has: true},
+		{name: "cleared", data: ChannelUpdatedData{ChannelID: "t1", Description: &empty}, want: `"description":""`, has: true},
+		{name: "git update", data: ChannelUpdatedData{ChannelID: "t1", Branch: "main"}, want: `"description"`, has: false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			b, err := json.Marshal(tc.data)
+			require.NoError(t, err)
+			if tc.has {
+				require.Contains(t, string(b), tc.want)
+			} else {
+				require.NotContains(t, string(b), tc.want)
+			}
+		})
+	}
+}

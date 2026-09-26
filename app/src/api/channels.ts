@@ -44,6 +44,7 @@ interface ChannelAPIResponse {
   effort_override?: string;
   last_activity_at?: string;
   task_id?: number;
+  description?: string;
 }
 
 export async function fetchChannels(): Promise<Channel[]> {
@@ -79,6 +80,7 @@ export async function fetchChannels(): Promise<Channel[]> {
     effort_override: c.effort_override,
     last_activity_at: c.last_activity_at ? Date.parse(c.last_activity_at) : undefined,
     task_id: c.task_id,
+    description: c.description,
   }));
 }
 
@@ -140,6 +142,16 @@ export async function renameChannel(channelId: string, name: string): Promise<vo
     body: JSON.stringify({ name }),
   });
   if (!res.ok) throw new Error(`Failed to rename thread: ${await errorText(res)}`);
+}
+
+/** Set what a thread is for; an empty description clears it. */
+export async function setChannelDescription(channelId: string, description: string): Promise<void> {
+  const res = await fetch(`${getApiUrl()}/api/channels/${channelId}/description`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ description }),
+  });
+  if (!res.ok) throw new Error(`Failed to set description: ${await errorText(res)}`);
 }
 
 export async function deleteChannel(channelId: string): Promise<void> {

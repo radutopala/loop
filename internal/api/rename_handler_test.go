@@ -3,6 +3,7 @@ package api
 import (
 	"errors"
 	"net/http"
+	"strings"
 
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
@@ -72,4 +73,94 @@ func (s *ServerSuite) TestRenameChannel_NoEventsHub() {
 	// No eventsHub set — should not panic.
 	rec := s.testRequest("POST", "/api/channels/ch1/rename", `{"name":"new-name"}`)
 	require.Equal(s.T(), http.StatusOK, rec.Code)
+}
+
+// ── handleSetChannelDescription ──
+
+func (s *ServerSuite) TestSetChannelDescription() {
+	long := strings.Repeat("é", maxDescriptionLen+1)
+	tests := []struct {
+		name     string
+		id       string
+		body     string
+		setup    func()
+		withHub  bool
+		wantCode int
+		wantBody string
+	}{
+		{
+			name: "sets it, trimmed",
+			id:   "t1", body: `{"description":"  fixes the login flow \n"}`,
+			setup: func() {
+				s.store.On("GetChannel", mock.Anything, "t1").Return(&db.Channel{ChannelID: "t1"}, nil)
+				s.store.On("UpdateChannelDescription", mock.Anything, "t1", "fixes the login flow").Return(nil)
+			},
+			withHub:  true,
+			wantCode: http.StatusOK, wantBody: `"description":"fixes the login flow"`,
+		},
+		{
+			name: "empty clears it, no hub",
+			id:   "t1", body: `{"description":""}`,
+			setup: func() {
+				s.store.On("GetChannel", mock.Anything, "t1").Return(&db.Channel{ChannelID: "t1"}, nil)
+				s.store.On("UpdateChannelDescription", mock.Anything, "t1", "").Return(nil)
+			},
+			wantCode: http.StatusOK, wantBody: `"description":""`,
+		},
+		{
+			name: "exactly the limit is fine",
+			id:   "t1", body: `{"description":"` + long[:len(long)-len("é")] + `"}`,
+			setup: func() {
+				s.store.On("GetChannel", mock.Anything, "t1").Return(&db.Channel{ChannelID: "t1"}, nil)
+				s.store.On("UpdateChannelDescription", mock.Anything, "t1", mock.Anything).Return(nil)
+			},
+			wantCode: http.StatusOK,
+		},
+		{name: "too long", id: "t1", body: `{"description":"` + long + `"}`, wantCode: http.StatusBadRequest, wantBody: "longer than 500 characters"},
+		{name: "bad json", id: "t1", body: `{bad}`, wantCode: http.StatusBadRequest},
+		{
+			name: "lookup error", id: "t1", body: `{"description":"x"}`,
+			setup:    func() { s.store.On("GetChannel", mock.Anything, "t1").Return(nil, errors.New("db error")) },
+			wantCode: http.StatusInternalServerError,
+		},
+		{
+			name: "not found", id: "gone", body: `{"description":"x"}`,
+			setup:    func() { s.store.On("GetChannel", mock.Anything, "gone").Return(nil, nil) },
+			wantCode: http.StatusNotFound,
+		},
+		{
+			name: "update error", id: "t1", body: `{"description":"x"}`,
+			setup: func() {
+				s.store.On("GetChannel", mock.Anything, "t1").Return(&db.Channel{ChannelID: "t1"}, nil)
+				s.store.On("UpdateChannelDescription", mock.Anything, "t1", "x").Return(errors.New("db error"))
+			},
+			wantCode: http.StatusInternalServerError,
+		},
+	}
+	for _, tt := range tests {
+		s.Run(tt.name, func() {
+			s.SetupTest()
+			if tt.setup != nil {
+				tt.setup()
+			}
+			if tt.withHub {
+				s.srv.eventsHub = NewEventsHub(testLogger())
+			}
+			rec := s.testRequest("POST", "/api/channels/"+tt.id+"/description", tt.body)
+			require.Equal(s.T(), tt.wantCode, rec.Code, rec.Body.String())
+			require.Contains(s.T(), rec.Body.String(), tt.wantBody)
+			s.store.AssertExpectations(s.T())
+		})
+	}
+}
+
+func (s *ServerSuite) TestSetChannelDescription_NotConfigured() {
+	srv := nilServer()
+	mux := http.NewServeMux()
+	mux.HandleFunc("POST /api/channels/{id}/description", srv.handleSetChannelDescription)
+
+	req, _ := http.NewRequest("POST", "/api/channels/t1/description", nil)
+	rec := newRecorder()
+	mux.ServeHTTP(rec, req)
+	require.Equal(s.T(), http.StatusNotImplemented, rec.Code)
 }

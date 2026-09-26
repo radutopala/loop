@@ -65,6 +65,11 @@ func (m *MockStore) UpdateChannelLocked(ctx context.Context, channelID string, l
 	return m.Called(ctx, channelID, locked).Error(0)
 }
 
+func (m *MockStore) UpdateChannelDescription(ctx context.Context, channelID, description string) error {
+	args := m.Called(ctx, channelID, description)
+	return args.Error(0)
+}
+
 func (m *MockStore) UpdateChannelName(ctx context.Context, channelID, name string) error {
 	return m.Called(ctx, channelID, name).Error(0)
 }

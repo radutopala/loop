@@ -82,6 +82,7 @@ List all channels with optional filtering. Enriches each channel with container 
 - `root_dir_path` is set on rows inside a worktree chain — the worktree thread itself, a thread under it (e.g. a scheduled task's), or a worktree cut from another worktree — and holds the `dir_path` of the non-worktree checkout the chain was cut from. Omitted everywhere else. The Kanban panel uses it for its Local/Root board switch.
 - `model_override` / `effort_override` are the model and effort picked for the channel (see [`PATCH /api/channels/{id}/agent-config`](#patch-apichannelsidagent-config)). Omitted when it inherits the config's.
 - `last_activity_at` is when the channel's newest message was written. Omitted when it has none, or when the lookup fails (the list is still returned). The sidebar's Recent section sorts by it.
+- `description` is what the channel or thread is for, set via [`POST /api/channels/{id}/description`](#post-apichannelsiddescription). Omitted when empty.
 - `task_id` is set on a thread a scheduled task created for its output: the id of that task. Omitted on every other channel and thread, including ones that host tasks. The sidebar's hide-task-threads toggle filters on it.
 - `locked` is true when the channel/thread is guarded against accidental deletion (toggle via [`PATCH /api/channels/{id}/lock`](#patch-apichannelsidlock)). `DELETE /api/channels/{id}` and `DELETE /api/threads/{id}` return `409 Conflict` while a row is locked.
 
@@ -242,6 +243,35 @@ Rename a channel, thread or worktree thread's display name. Only the name change
 **Behavior notes:** Broadcasts a `channel.updated` event carrying the new `name` so other clients refresh their sidebar live.
 
 **Errors:** `400` if `name` is empty. `404` if channel not found.
+
+---
+### `POST /api/channels/{id}/description`
+
+Set a channel, thread or worktree thread's description, shown in the sidebar's row info popup. An empty description clears it.
+
+**Path Parameters:**
+
+| Param | Type   | Description |
+|-------|--------|-------------|
+| `id`  | string | Channel or thread ID |
+
+**Request:**
+```json
+{"description": "Fixes the login redirect"}
+```
+
+| Field         | Type   | Required | Description |
+|---------------|--------|----------|-------------|
+| `description` | string | no       | The description, trimmed; at most 500 characters. Empty or missing clears it. |
+
+**Response:** `200 OK`
+```json
+{"channel_id": "abc123", "description": "Fixes the login redirect"}
+```
+
+**Behavior notes:** Allowed on locked rows. Broadcasts a `channel.updated` event carrying only the new `description`, so other clients refresh their sidebar live.
+
+**Errors:** `400` if the body isn't valid JSON or the description is longer than 500 characters. `404` if channel not found. `501` if not configured.
 
 ---
 

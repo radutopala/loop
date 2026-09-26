@@ -39,6 +39,8 @@ export interface Channel {
   last_activity_at?: number;
   /** For a thread a scheduled task created for its output: that task's id. */
   task_id?: number;
+  /** What the thread is for, in a line or two; unset when it has none. */
+  description?: string;
 }
 
 export interface Message {
@@ -219,7 +221,13 @@ export interface ChannelUpdatedData {
   sync_base?: string;
   base_ahead?: number;
   base_behind?: number;
+  /**
+   * Set by a rename or a description change, which carry nothing else: the
+   * git fields are then empty and must be left alone. An empty description
+   * clears it.
+   */
   name?: string;
+  description?: string;
 }
 
 /** A channel's model/effort overrides after they change; empty clears one. */
