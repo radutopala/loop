@@ -56,9 +56,11 @@ export async function fetchFiles(channelId: string, path: string, root?: number)
   return data.entries;
 }
 
-export async function fetchFileContent(channelId: string, path: string, root?: number): Promise<{ content: string; binary: boolean }> {
+/** `ref` reads the file as it was in that commit instead of from disk. */
+export async function fetchFileContent(channelId: string, path: string, root?: number, ref?: string): Promise<{ content: string; binary: boolean }> {
   const params = new URLSearchParams({ path });
   if (root !== undefined && root > 0) params.set("root", String(root));
+  if (ref) params.set("ref", ref);
   const res = await fetch(`${getApiUrl()}/api/channels/${channelId}/file?${params}`);
   if (!res.ok) throw new Error(`Failed to fetch file: ${res.statusText}`);
   if (res.headers.get("X-File-Binary") === "true") {

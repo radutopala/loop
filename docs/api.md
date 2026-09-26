@@ -1183,7 +1183,7 @@ Read a file's contents.
 - Maximum file size is **5 MB** (5,242,880 bytes). Larger files return `413`. Videos and PDFs are exempt: they're streamed, never buffered whole.
 - Path validation rejects absolute paths, `..` traversal, and symlink escapes.
 
-**Errors:** `400` if path is invalid. `404` if file not found. `413` if file too large.
+**Errors:** `400` if path or `ref` is invalid. `404` if file not found (at `ref`, when given). `413` if file too large.
 
 ---
 
@@ -1221,6 +1221,7 @@ Delete a file or directory.
 |--------|--------|----------|-------------|
 | `path` | string | yes      | Relative path to the file or directory |
 | `root` | int    | no       | Root directory index (0 = primary, 1+ = extra directories) |
+| `ref`  | string | no       | A commit hash (4–64 hex digits). Reads the file as it was in that commit (`git show <ref>:./<path>`) instead of from disk. |
 
 **Response (200):**
 ```json
@@ -1233,6 +1234,7 @@ Delete a file or directory.
 
 ---
 
+- With `ref`, the file only has to exist in that commit — it may since have been deleted — so only the lexical checks apply; the response is text or `X-File-Binary`, never the image/video/PDF branches. The path is resolved relative to the channel's directory, as on disk.
 ### `GET /api/channels/{id}/raw/{root}/{path...}`
 
 Serve a file's raw bytes by path. The editor's HTML preview uses this as the `<base href>` of the rendered page, so relative stylesheets, scripts and images resolve against the file's directory. The root index is a path segment rather than a query parameter because relative URL resolution drops the query string.
@@ -1447,6 +1449,7 @@ Get git diff information for a channel's working directory. Includes both tracke
 
 Look up the open GitHub pull request whose head branch matches the channel's current branch. Shells out to `gh pr view` against the channel's working directory.
 
+| `commit` | string | A commit hash (4–64 hex digits). Switches to single-commit mode: the changes that commit introduced. Takes precedence over `source`/`target`. |
 **Response (200, PR found):**
 ```json
 {
@@ -1483,6 +1486,7 @@ Look up the open GitHub pull request whose head branch matches the channel's cur
 
 List local git branches and worktrees for a channel's directory.
 
+- Single-commit mode (`?commit=<sha>`): runs `git show --diff-merges=first-parent`, so a merge commit is diffed against its first parent and a root commit against the empty tree. The response has the branch-to-branch shape. Anything other than a hex hash returns `400`; a hash that doesn't resolve to a commit returns `404`.
 **Query Parameters:**
 
 | Param  | Type | Default | Description |

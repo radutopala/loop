@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { fetchRoots, type RootEntry } from "../../api/files";
-import type { DiffResponse, PRInfo } from "../../api/loopApi";
+import type { CommitEntry, DiffResponse, PRInfo } from "../../api/loopApi";
 import { fetchBranches, fetchCommits, fetchDiff, fetchPR } from "../../api/loopApi";
 import { useEventStream } from "../../hooks/useEventStream";
 import { useTheme } from "../../ThemeContext";
@@ -12,6 +12,7 @@ import { storageGet, storageSet } from "../../utils/storage";
 import type { FileLinkOpenDetail } from "../chat/FileLink";
 import { ContextMenu } from "../shared/ContextMenu";
 import { BranchesPanel } from "./BranchesPanel";
+import { CommitDiffView } from "./CommitDiffView";
 import { CommitHistory } from "./CommitHistory";
 import type { ParsedFile } from "./DiffViewer";
 import { DiffViewer, fileKey, parseUnifiedDiff } from "./DiffViewer";
@@ -106,9 +107,11 @@ export function GitPanel({
   const [sourceBranch, setSourceBranch] = useState<string>("");
   const [targetBranch, setTargetBranch] = useState<string>("");
   const [commitBranch, setCommitBranch] = useState<string>("");
-  const [commits, setCommits] = useState<import("../../api/loopApi").CommitEntry[]>([]);
+  const [commits, setCommits] = useState<CommitEntry[]>([]);
   const [commitsLoading, setCommitsLoading] = useState(false);
   const [commitsHasMore, setCommitsHasMore] = useState(true);
+  // The commit whose diff replaces the list; null shows the list.
+  const [selectedCommit, setSelectedCommit] = useState<CommitEntry | null>(null);
   const COMMITS_PAGE = 50;
   const prevDiffRef = useRef<string>("");
   const [diffVersion, setDiffVersion] = useState(0);
@@ -221,6 +224,12 @@ export function GitPanel({
         .catch(logErr("fetching branch info"));
     }
   }, [gitMode, channelId, pr?.base_ref, rootIndex]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // An open commit belongs to the list it was picked from; leaving that list
+  // (another branch, root, channel or tab) closes it.
+  useEffect(() => {
+    setSelectedCommit(null);
+  }, [channelId, commitBranch, rootIndex, gitMode]);
 
   // Load first page of commits when branch changes. Re-runs on rootIndex so
   // switching workspace roots refetches commits for the new dir.
@@ -457,7 +466,13 @@ export function GitPanel({
           <button style={modeTabStyle(gitMode === "branches")} onClick={() => setGitMode("branches")}>
             Branches Diff
           </button>
-          <button style={modeTabStyle(gitMode === "commits")} onClick={() => setGitMode("commits")}>
+          <button
+            style={modeTabStyle(gitMode === "commits")}
+            onClick={() => {
+              setGitMode("commits");
+              setSelectedCommit(null);
+            }}
+          >
             Commits
           </button>
           {hasBranch && (
@@ -552,10 +567,22 @@ export function GitPanel({
       onExpandAll={expandAll}
       onCollapseAll={collapseAll}
       onFileContextMenu={handleFileContextMenu}
+      rootIndex={rootIndex}
     />
   );
 
-  const commitsContent = <CommitHistory commits={commits} commitsLoading={commitsLoading} onLoadMore={loadMoreCommits} />;
+  // The list stays mounted under an open commit so going back keeps its
+  // scroll position and loaded pages.
+  const commitsContent = (
+    <>
+      {selectedCommit && channelId && (
+        <CommitDiffView channelId={channelId} commit={selectedCommit} rootIndex={rootIndex} onBack={() => setSelectedCommit(null)} onFileContextMenu={handleFileContextMenu} />
+      )}
+      <div style={{ flex: 1, minHeight: 0, flexDirection: "column", display: selectedCommit ? "none" : "flex" }}>
+        <CommitHistory commits={commits} commitsLoading={commitsLoading} onLoadMore={loadMoreCommits} onSelect={setSelectedCommit} />
+      </div>
+    </>
+  );
 
   const worktreesContent = channelId ? (
     <WorktreesPanel channelId={channelId} isWorktree={isWorktree ?? false} hasBranch={hasBranch ?? false} onImportWorktree={onImportWorktree} onSelectThread={onSelectThread} />
@@ -784,7 +811,13 @@ export function GitPanel({
                 <button style={modeTabStyle(gitMode === "branches")} onClick={() => setGitMode("branches")}>
                   Branches Diff
                 </button>
-                <button style={modeTabStyle(gitMode === "commits")} onClick={() => setGitMode("commits")}>
+                <button
+                  style={modeTabStyle(gitMode === "commits")}
+                  onClick={() => {
+                    setGitMode("commits");
+                    setSelectedCommit(null);
+                  }}
+                >
                   Commits
                 </button>
                 {hasBranch && (
@@ -815,7 +848,13 @@ export function GitPanel({
                 <button style={modeTabStyle(gitMode === "branches")} onClick={() => setGitMode("branches")}>
                   Branches Diff
                 </button>
-                <button style={modeTabStyle(gitMode === "commits")} onClick={() => setGitMode("commits")}>
+                <button
+                  style={modeTabStyle(gitMode === "commits")}
+                  onClick={() => {
+                    setGitMode("commits");
+                    setSelectedCommit(null);
+                  }}
+                >
                   Commits
                 </button>
                 {hasBranch && (

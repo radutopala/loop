@@ -1,6 +1,7 @@
 package api
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -9,6 +10,7 @@ import (
 	"mime"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -17,9 +19,10 @@ import (
 	"github.com/radutopala/loop/internal/config"
 )
 
-// validateFilePath validates a relative path against a root directory.
-// Returns the cleaned absolute path or an error.
-func (s *Server) validateFilePath(rootDir, relativePath string) (string, error) {
+// cleanRelPath applies the lexical checks shared by every workspace path: it
+// must be non-empty, relative, free of NUL bytes, and must not climb out of
+// the root. It returns the cleaned path.
+func cleanRelPath(relativePath string) (string, error) {
 	if relativePath == "" {
 		return "", fmt.Errorf("path is required")
 	}
@@ -34,12 +37,21 @@ func (s *Server) validateFilePath(rootDir, relativePath string) (string, error) 
 		return "", fmt.Errorf("path contains invalid characters")
 	}
 
-	// Clean and join.
 	cleaned := filepath.Clean(relativePath)
 
 	// Reject paths that try to escape.
 	if cleaned == ".." || strings.HasPrefix(cleaned, ".."+string(filepath.Separator)) {
 		return "", fmt.Errorf("path traversal not allowed")
+	}
+	return cleaned, nil
+}
+
+// validateFilePath validates a relative path against a root directory.
+// Returns the cleaned absolute path or an error.
+func (s *Server) validateFilePath(rootDir, relativePath string) (string, error) {
+	cleaned, err := cleanRelPath(relativePath)
+	if err != nil {
+		return "", err
 	}
 
 	absPath := filepath.Join(rootDir, cleaned)
@@ -484,6 +496,15 @@ func (s *Server) handleReadFile(w http.ResponseWriter, r *http.Request) {
 	}
 
 	relPath := r.URL.Query().Get("path")
+
+	// ?ref=<sha> reads the file as it was in that commit (the git panel's
+	// commit diff expands context from it). The file may no longer exist on
+	// disk, so only the lexical checks apply; git resolves it in the tree.
+	if ref := r.URL.Query().Get("ref"); ref != "" {
+		s.readFileAtCommit(w, r, dirPath, relPath, ref)
+		return
+	}
+
 	absPath, err := s.validateFilePath(dirPath, relPath)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
@@ -544,22 +565,50 @@ func (s *Server) handleReadFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Binary detection: check first 512 bytes for null bytes.
-	checkLen := len(data)
-	if checkLen > 512 {
-		checkLen = 512
-	}
-	for i := 0; i < checkLen; i++ {
-		if data[i] == 0 {
-			w.Header().Set("X-File-Binary", "true")
-			w.Header().Set("Content-Length", fmt.Sprintf("%d", info.Size()))
-			w.WriteHeader(http.StatusOK)
-			return
-		}
+	writeTextOrBinary(w, data)
+}
+
+// writeTextOrBinary sends data as text, or — when its first 512 bytes hold a
+// NUL — only flags it binary via X-File-Binary with an empty body.
+func writeTextOrBinary(w http.ResponseWriter, data []byte) {
+	if bytes.IndexByte(data[:min(len(data), 512)], 0) >= 0 {
+		w.Header().Set("X-File-Binary", "true")
+		w.Header().Set("Content-Length", fmt.Sprintf("%d", len(data)))
+		w.WriteHeader(http.StatusOK)
+		return
 	}
 
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	w.Write(data) //nolint:errcheck
+}
+
+// readFileAtCommit serves relPath as it was in commit ref. The path is
+// resolved against dirPath (the "./" prefix makes git read it relative to the
+// working directory rather than the repo root), so a channel rooted in a repo
+// subdirectory addresses the same files it does on disk.
+func (s *Server) readFileAtCommit(w http.ResponseWriter, r *http.Request, dirPath, relPath, ref string) {
+	if !validCommitHash.MatchString(ref) {
+		http.Error(w, "invalid commit hash", http.StatusBadRequest)
+		return
+	}
+	cleaned, err := cleanRelPath(relPath)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	cmd := exec.CommandContext(r.Context(), "git", "show", ref+":./"+filepath.ToSlash(cleaned))
+	cmd.Dir = dirPath
+	data, err := cmd.Output()
+	if err != nil {
+		http.Error(w, "file not found at commit", http.StatusNotFound)
+		return
+	}
+	if len(data) > maxFileSize {
+		http.Error(w, "file too large", http.StatusRequestEntityTooLarge)
+		return
+	}
+	writeTextOrBinary(w, data)
 }
 
 // handleRawFile serves a workspace file by path:
@@ -717,6 +766,7 @@ func (s *Server) handleDeleteFile(w http.ResponseWriter, r *http.Request) {
 	}
 
 	relPath := r.URL.Query().Get("path")
+
 	absPath, err := s.validateFilePath(dirPath, relPath)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)

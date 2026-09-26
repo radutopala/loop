@@ -53,6 +53,7 @@ func registerBackendSteps(ctx *godog.ScenarioContext, tc *TestContext) {
 	ctx.Step(`^I modify "([^"]*)" without staging$`, tc.modifyWithoutStaging)
 	ctx.Step(`^I create a (\d+)-page PDF "([^"]*)" reading "([^"]*)" in the repo$`, tc.createPDF)
 	ctx.Step(`^I create a file "([^"]*)" in the repo with:$`, tc.createRepoFile)
+	ctx.Step(`^I commit all changes in the repo with message "([^"]*)"$`, tc.commitAllInRepo)
 
 	// Ticket setup steps
 	ctx.Step(`^I create a ticket "([^"]*)" with type "([^"]*)" via API$`, tc.createTicketViaAPI)
@@ -701,6 +702,23 @@ func (tc *TestContext) createRepoFile(name string, body *godog.DocString) error 
 		return fmt.Errorf("creating dirs for %s: %w", name, err)
 	}
 	return os.WriteFile(fpath, []byte(body.Content), 0o644)
+}
+
+// commitAllInRepo stages everything in the channel's repo and commits it.
+// The message may carry "\n" escapes so a scenario can give it a body.
+func (tc *TestContext) commitAllInRepo(msg string) error {
+	if tc.ChannelDir == "" {
+		return fmt.Errorf("no channel dir set; use 'I set up a test channel via API for git repo' step first")
+	}
+	for _, args := range [][]string{
+		{"-C", tc.ChannelDir, "add", "-A"},
+		{"-C", tc.ChannelDir, "commit", "-m", strings.ReplaceAll(msg, `\n`, "\n")},
+	} {
+		if out, err := exec.Command("git", args...).CombinedOutput(); err != nil {
+			return fmt.Errorf("git %v: %s: %w", args, out, err)
+		}
+	}
+	return nil
 }
 
 // createPDF writes a minimal PDF with `pages` pages into the channel's repo,
