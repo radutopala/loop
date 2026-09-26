@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { ReviewComment } from "../../api/review";
 import { parseUnifiedDiff } from "./DiffViewer";
-import { type FileSummary, orderedComments } from "./ReviewDiffView";
+import { type CommentAnchor, type FileSummary, navigableAnchors, orderedComments } from "./ReviewDiffView";
 
 const DIFF = `diff --git a/a.go b/a.go
 index 111..222 100644
@@ -89,13 +89,32 @@ describe("orderedComments", () => {
   it("carries the file index so navigation can expand the right section", () => {
     const { summaries, byFile, orphans } = summarize(DIFF, [comment("a1", "a.go", 2), comment("b1", "b.go", 2), comment("orphan", "gone.go", 1)]);
     expect(orderedComments(summaries, byFile, orphans)).toEqual([
-      { id: "a1", path: "a.go", fileIdx: 0 },
-      { id: "b1", path: "b.go", fileIdx: 1 },
-      { id: "orphan", path: "gone.go", fileIdx: -1 },
+      { id: "a1", path: "a.go", fileIdx: 0, github: false },
+      { id: "b1", path: "b.go", fileIdx: 1, github: false },
+      { id: "orphan", path: "gone.go", fileIdx: -1, github: false },
     ]);
   });
 
   it("returns nothing when there are no comments", () => {
     expect(ids(DIFF, [])).toEqual([]);
+  });
+});
+
+describe("navigableAnchors", () => {
+  it("flags GitHub-synced comments on the anchor", () => {
+    const { summaries, byFile, orphans } = summarize(DIFF, [comment("mine", "a.go", 2), comment("gh", "b.go", 2, { source: "github" }), comment("gh-orphan", "gone.go", 1, { source: "github" })]);
+    expect(orderedComments(summaries, byFile, orphans).map((a) => a.github)).toEqual([false, true, true]);
+  });
+
+  const anchors: CommentAnchor[] = [
+    { id: "mine", path: "a.go", fileIdx: 0, github: false },
+    { id: "gh", path: "b.go", fileIdx: 1, github: true },
+  ];
+
+  it.each([
+    ["all", ["mine", "gh"]],
+    ["new", ["mine"]],
+  ] as const)("scope %s", (scope, want) => {
+    expect(navigableAnchors(anchors, scope).map((a) => a.id)).toEqual(want);
   });
 });

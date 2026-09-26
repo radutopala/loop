@@ -215,6 +215,12 @@ twenty comments spread over four files is painful to scroll by hand:
   comments last. Jumping to a comment in a collapsed file expands that file
   first and moves the file rail's highlight with it. The widget only appears
   once the session has at least one anchored comment.
+- **new | all** (the pair at the left of the floating widget) picks what
+  the floating prev/next walks. **new**, the default, is only the findings
+  this review session's runs reported, so a PR with a long GitHub thread
+  history doesn't bury them. **all** adds the comments synced from GitHub
+  on Load and Sync. The choice is remembered across sessions. It only
+  narrows the navigator; every comment stays rendered in the diff.
 
 The floating counter re-measures on scroll and reports whichever comment sits
 nearest the viewport's midpoint, so it stays honest when the user scrolls by

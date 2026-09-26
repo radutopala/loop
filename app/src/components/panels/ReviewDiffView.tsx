@@ -70,6 +70,23 @@ export interface CommentAnchor {
   path: string;
   /** Index into `summaries`, or -1 for an orphan. Drives the file rail. */
   fileIdx: number;
+  /** Synced from GitHub rather than found by this session's review runs. */
+  github: boolean;
+}
+
+/** Which comments the floating navigator walks: this session's findings, or everything incl. GitHub-synced ones. */
+export type CommentNavScope = "new" | "all";
+
+const COMMENT_NAV_SCOPE_KEY = "loop-review-comment-nav-scope";
+
+function readCommentNavScope(): CommentNavScope {
+  if (typeof window === "undefined") return "new";
+  return window.localStorage.getItem(COMMENT_NAV_SCOPE_KEY) === "all" ? "all" : "new";
+}
+
+/** The anchors the navigator steps through for scope; "new" drops GitHub-synced comments. */
+export function navigableAnchors(anchors: CommentAnchor[], scope: CommentNavScope): CommentAnchor[] {
+  return scope === "new" ? anchors.filter((a) => !a.github) : anchors;
 }
 
 // Comments in the order they appear on screen: files top-to-bottom, within a
@@ -103,9 +120,9 @@ export function orderedComments(summaries: FileSummary[], byFile: Map<string, Re
       .map((c, i) => ({ c, i, at: pos.get(commentLineSide(c) === "LEFT" ? `L:${c.line}` : `R:${c.line}`) }))
       .filter((e): e is { c: ReviewComment; i: number; at: number } => e.at !== undefined)
       .sort((a, b) => a.at - b.at || a.i - b.i);
-    for (const { c } of sorted) out.push({ id: c.id, path: sum.path, fileIdx });
+    for (const { c } of sorted) out.push({ id: c.id, path: sum.path, fileIdx, github: c.source === "github" });
   });
-  for (const c of orphans) out.push({ id: c.id, path: c.path, fileIdx: -1 });
+  for (const c of orphans) out.push({ id: c.id, path: c.path, fileIdx: -1, github: c.source === "github" });
   return out;
 }
 
@@ -229,7 +246,13 @@ export function ReviewDiffView({ channelId, rawDiff, comments, worktreePath, onP
   // The toolbar's prev/next steps file-to-file, which is too coarse once a
   // file carries several comments. This walks individual comments instead,
   // and floats over the scroll so it stays reachable at any depth.
-  const anchors = useMemo(() => orderedComments(summaries, byFile, orphans), [summaries, byFile, orphans]);
+  const allAnchors = useMemo(() => orderedComments(summaries, byFile, orphans), [summaries, byFile, orphans]);
+  const [navScope, setNavScope] = useState<CommentNavScope>(readCommentNavScope);
+  const anchors = useMemo(() => navigableAnchors(allAnchors, navScope), [allAnchors, navScope]);
+  const changeNavScope = useCallback((next: CommentNavScope) => {
+    window.localStorage.setItem(COMMENT_NAV_SCOPE_KEY, next);
+    setNavScope(next);
+  }, []);
   const commentRefs = useRef<Map<string, HTMLDivElement>>(new Map());
   const scrollRef = useRef<HTMLDivElement>(null);
   const [activeComment, setActiveComment] = useState(0);
@@ -265,6 +288,12 @@ export function ReviewDiffView({ channelId, rawDiff, comments, worktreePath, onP
     // than snapping the counter to 1.
     if (best >= 0) setActiveComment(best);
   }, [anchors]);
+
+  // Re-measure when the walked list changes (scope toggle, comments landing)
+  // so the counter indexes the new list, not the old one.
+  useEffect(() => {
+    syncActiveComment();
+  }, [syncActiveComment]);
 
   const onScroll = useCallback(() => {
     if (syncRafRef.current) return;
@@ -557,8 +586,16 @@ export function ReviewDiffView({ channelId, rawDiff, comments, worktreePath, onP
           />
         )}
       </div>
-      {anchors.length > 0 && (
-        <CommentNavigator colors={colors} index={commentIdx} total={anchors.length} onPrev={() => navigateToComment(commentIdx - 1)} onNext={() => navigateToComment(commentIdx + 1)} />
+      {allAnchors.length > 0 && (
+        <CommentNavigator
+          colors={colors}
+          index={commentIdx}
+          total={anchors.length}
+          scope={navScope}
+          onScopeChange={changeNavScope}
+          onPrev={() => navigateToComment(commentIdx - 1)}
+          onNext={() => navigateToComment(commentIdx + 1)}
+        />
       )}
       {fileContextMenu && (
         <ContextMenu
@@ -595,8 +632,31 @@ function firstFileWithComments(summaries: FileSummary[]): number {
 // Floating prev/next over the diff scroll. Stepping a comment at a time is
 // what a reviewer actually wants once a file carries several of them — the
 // toolbar's pair only moves file-to-file. Pinned bottom-right so it clears
-// the inline comment cards, which are indented from the left gutter.
-function CommentNavigator({ colors, index, total, onPrev, onNext }: { colors: ColorPalette; index: number; total: number; onPrev: () => void; onNext: () => void }) {
+// the inline comment cards, which are indented from the left gutter. The
+// new/all pair picks whether it walks only this session's findings or also
+// the comments synced from GitHub.
+const SCOPES: { value: CommentNavScope; title: string }[] = [
+  { value: "new", title: "Step through the new findings from this review session" },
+  { value: "all", title: "Step through all comments, incl. those synced from GitHub" },
+];
+
+function CommentNavigator({
+  colors,
+  index,
+  total,
+  scope,
+  onScopeChange,
+  onPrev,
+  onNext,
+}: {
+  colors: ColorPalette;
+  index: number;
+  total: number;
+  scope: CommentNavScope;
+  onScopeChange: (scope: CommentNavScope) => void;
+  onPrev: () => void;
+  onNext: () => void;
+}) {
   const canPrev = index > 0;
   const canNext = index < total - 1;
   const btn = (enabled: boolean): React.CSSProperties => ({
@@ -632,13 +692,36 @@ function CommentNavigator({ colors, index, total, onPrev, onNext }: { colors: Co
         zIndex: 5,
       }}
     >
+      <div role="group" aria-label="Comments to step through" style={{ display: "flex", gap: 1 }}>
+        {SCOPES.map(({ value, title }) => (
+          <button
+            key={value}
+            data-testid={`review-comment-nav-scope-${value}`}
+            onClick={() => onScopeChange(value)}
+            aria-pressed={scope === value}
+            title={title}
+            style={{
+              border: "none",
+              borderRadius: 9,
+              padding: "2px 7px",
+              fontSize: 10,
+              fontFamily: fonts.sans,
+              cursor: "pointer",
+              color: scope === value ? colors.active : colors.textDim,
+              background: scope === value ? colors.hoverBg : "transparent",
+            }}
+          >
+            {value}
+          </button>
+        ))}
+      </div>
       <button data-testid="review-comment-nav-prev" style={btn(canPrev)} disabled={!canPrev} onClick={onPrev} title="Previous comment" aria-label="Previous comment">
         <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
           <path d="M2.5 6.5L5 3.5L7.5 6.5" />
         </svg>
       </button>
       <span style={{ fontFamily: fonts.mono, fontSize: 11, color: colors.textDim, minWidth: 52, textAlign: "center", userSelect: "none" }} title={`Comment ${index + 1} of ${total}`}>
-        {index + 1} / {total}
+        {total === 0 ? 0 : index + 1} / {total}
       </span>
       <button data-testid="review-comment-nav-next" style={btn(canNext)} disabled={!canNext} onClick={onNext} title="Next comment" aria-label="Next comment">
         <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
