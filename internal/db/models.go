@@ -127,6 +127,10 @@ type Message struct {
 	// not run this row. 0 (the common case) means eligible immediately. Set via
 	// the delayed queue_message path to schedule a follow-up turn for later.
 	NotBefore int64 `json:"not_before,omitempty"`
+	// EditHoldUntil is a unix-seconds lease taken while the user edits this
+	// queued row. Until it passes (or is released) the claim won't start the
+	// row, and — to keep queue order — won't start anything queued behind it.
+	EditHoldUntil int64 `json:"edit_hold_until,omitempty"`
 }
 
 // ScheduledTask represents a task scheduled for execution.

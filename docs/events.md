@@ -187,6 +187,26 @@ A queued user message was removed from the channel's message queue via `DELETE /
 
 ---
 
+### `message.updated`
+
+A queued user message's text was edited via `PUT /api/channels/{id}/queued/{msg_id}` before it started. Emitted only when the edit was applied.
+
+**Payload schema:**
+
+```json
+{
+  "msg_id": "ask-1a2b3c4d5e6f7a8b",
+  "content": "the edited prompt"
+}
+```
+
+| Field     | Type   | Description |
+|-----------|--------|-------------|
+| `msg_id`  | string | Message ID of the edited message |
+| `content` | string | The new message text |
+
+---
+
 ### `agent.status`
 
 Agent lifecycle status change (running, completed, errored).
@@ -869,6 +889,7 @@ Emitted on every review session status transition (`idle → loading → ready �
 | `BroadcastMessageStreaming` | `message.streaming` | `MessageStreamingData` | Channel |
 | `BroadcastMessagesProcessed` | `messages.processed` | `MessagesProcessedData` | Channel |
 | `BroadcastMessageDeleted` | `message.deleted` | `MessageDeletedData` | Channel |
+| `BroadcastMessageUpdated` | `message.updated` | `MessageUpdatedData` | Channel |
 | `BroadcastAgentStatus` | `agent.status` | `AgentStatusEventData` | Channel (global when `ThreadID` is set) |
 | `BroadcastToolUse` | `tool.use` | `ToolUseEventData` | Channel |
 | `BroadcastAgentThinking` | `agent.thinking` | `AgentThinkingEventData` | Channel |

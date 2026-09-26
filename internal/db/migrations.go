@@ -375,6 +375,9 @@ var migrations = []migration{
 	sqlMigration(`ALTER TABLE channels ADD COLUMN description TEXT NOT NULL DEFAULT ''`),
 	// ticket_url links a channel or thread to its ticket (Jira, GitHub, …).
 	sqlMigration(`ALTER TABLE channels ADD COLUMN ticket_url TEXT NOT NULL DEFAULT ''`),
+	// edit_hold_until is a unix-seconds lease the desktop app takes while the
+	// user edits a queued message; the claim won't start a held row.
+	sqlMigration(`ALTER TABLE messages ADD COLUMN edit_hold_until INTEGER NOT NULL DEFAULT 0`),
 }
 
 // migrateScheduledTasksAddManualType rebuilds scheduled_tasks to widen the

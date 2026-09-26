@@ -651,7 +651,7 @@ List messages for a channel. Supports two modes: **cursor-based pagination** (de
 
 ### `GET /api/channels/{id}/queued`
 
-Return the canonical queue of unprocessed user messages for a channel — every row with `kind = 'message'`, `is_bot = 0`, `is_processed = 0`, ordered by `priority DESC, id ASC` (the exact order the orchestrator drains in). The chat UI calls this on channel mount and after every event that could change the queue (`message.created`, `message.deleted`, `messages.processed`, `agent.status`) so the "queued"/"processing" labels and the queued-messages popup stay correct even when older pages of chat history are not loaded in the renderer.
+Return the canonical queue of unprocessed user messages for a channel — every row with `kind = 'message'`, `is_bot = 0`, `is_processed = 0`, ordered by `priority DESC, id ASC` (the exact order the orchestrator drains in). The chat UI calls this on channel mount and after every event that could change the queue (`message.created`, `message.deleted`, `message.updated`, `messages.processed`, `agent.status`) so the "queued"/"processing" labels and the queued-messages popup stay correct even when older pages of chat history are not loaded in the renderer.
 
 **Path Parameters:**
 
@@ -690,7 +690,7 @@ Return the canonical queue of unprocessed user messages for a channel — every 
 }
 ```
 
-The in-flight message is **included** in the response, marked `"is_running": true` (omitted on the others). Clients use the [`agent.status`](events.md#agentstatus) event's `msg_id` to distinguish "processing" from "queued", and `is_running` until that event arrives. A scheduled task running in the thread claims no row, so every message sent meanwhile stays "queued" until it finishes. Higher `priority` values sort first; `priority` is omitted when zero. Rows queued with a delay carry `not_before` (unix seconds); the chat UI renders a live countdown chip until it elapses. `not_before` is omitted when zero (immediate).
+The in-flight message is **included** in the response, marked `"is_running": true` (omitted on the others). Clients use the [`agent.status`](events.md#agentstatus) event's `msg_id` to distinguish "processing" from "queued", and `is_running` until that event arrives. A scheduled task running in the thread claims no row, so every message sent meanwhile stays "queued" until it finishes. Higher `priority` values sort first; `priority` is omitted when zero. Rows queued with a delay carry `not_before` (unix seconds); the chat UI renders a live countdown chip until it elapses. `not_before` is omitted when zero (immediate). A row being edited in some window carries `edit_hold_until` (unix seconds) until the edit is saved, cancelled, or its lease lapses; it and everything behind it won't start meanwhile (see [`POST /api/channels/{id}/queued/{msg_id}/hold`](#post-apichannelsidqueuedmsg_idhold)).
 
 **Errors:** `501` if message listing is not configured. `500` on database error.
 
@@ -714,6 +714,57 @@ Promote one queued message to the front of the channel's queue and cancel the ac
 Ordering matters and is handled server-side: the row is promoted **before** the run is cancelled, or the dying run's drain loop could claim an older queued row in the window between the two. A row already claimed by a run (`is_running = 1`) is never promoted — the response is `404` and the active run is left alone. A row that was queued with a delay has its `not_before` pulled back to `1`: already in the past, so `ClaimNextPending` accepts it, but still non-zero so the delay poller keeps seeing it and wakes an otherwise idle channel.
 
 **Errors:** `404` if no matching queued row exists (already processed, already running, wrong channel, or never existed). `501` if the store is not configured. `500` on database error.
+
+---
+
+### `POST /api/channels/{id}/queued/{msg_id}/hold`
+
+Hold a queued user message so it can be edited: until the hold expires or is released, the drain won't start it — nor anything queued behind it, so queue order is kept (see [Edit holds](orchestrator.md#edit-holds)). Calling it again renews the hold; the chat app renews every 2 minutes while the edit is open.
+
+**Path Parameters:**
+
+| Param    | Type   | Description |
+|----------|--------|-------------|
+| `id`     | string | Channel or thread ID |
+| `msg_id` | string | `msg_id` of the queued row |
+
+**Request Body:** none.
+
+**Response (200):**
+```json
+{ "hold_until": 1790000000 }
+```
+
+`hold_until` is unix seconds, 5 minutes from now.
+
+**Errors:** `409` if the row is no longer waiting — it already started, finished, was deleted, or never existed (bot rows and non-message rows never match). `501` if the store is not configured. `500` on database error.
+
+---
+
+### `DELETE /api/channels/{id}/queued/{msg_id}/hold`
+
+Release an edit hold without changing the message — the cancel path. When a hold was actually cleared, the channel's drain is kicked so the row (and anything behind it) can start.
+
+**Response:** `204 No Content`, also when there was nothing to release.
+
+**Errors:** `501` if the store is not configured. `500` on database error.
+
+---
+
+### `PUT /api/channels/{id}/queued/{msg_id}`
+
+Replace a queued user message's content and clear its edit hold in one write, then kick the channel's drain. Broadcasts [`message.updated`](events.md#messageupdated) so other windows show the new text.
+
+**Request Body:**
+```json
+{ "content": "the edited prompt" }
+```
+
+**Response:** `204 No Content`.
+
+The write only matches a row that is still waiting (`is_running = 0 AND is_processed = 0`), and it serializes with the orchestrator's claim on SQLite's single writer. If a run claimed the row first — typically after the hold lapsed — the response is `409` and the edit is not applied; the run uses the original text.
+
+**Errors:** `400` on an invalid body or blank `content`. `409` if the row is no longer waiting. `501` if the store is not configured. `500` on database error.
 
 ---
 
@@ -1170,6 +1221,7 @@ Read a file's contents.
 |--------|--------|----------|-------------|
 | `path` | string | yes      | Relative path to the file |
 | `root` | int    | no       | Root directory index (0 = primary, 1+ = extra directories) |
+| `ref`  | string | no       | A commit hash (4–64 hex digits). Reads the file as it was in that commit (`git show <ref>:./<path>`) instead of from disk. |
 
 **Response (200):**
 - **Text files:** `Content-Type: text/plain; charset=utf-8` with file contents as body.
@@ -1182,6 +1234,7 @@ Read a file's contents.
 - Binary detection checks the first 512 bytes for null bytes.
 - Maximum file size is **5 MB** (5,242,880 bytes). Larger files return `413`. Videos and PDFs are exempt: they're streamed, never buffered whole.
 - Path validation rejects absolute paths, `..` traversal, and symlink escapes.
+- With `ref`, the file only has to exist in that commit — it may since have been deleted — so only the lexical checks apply; the response is text or `X-File-Binary`, never the image/video/PDF branches. The path is resolved relative to the channel's directory, as on disk.
 
 **Errors:** `400` if path or `ref` is invalid. `404` if file not found (at `ref`, when given). `413` if file too large.
 
@@ -1221,7 +1274,6 @@ Delete a file or directory.
 |--------|--------|----------|-------------|
 | `path` | string | yes      | Relative path to the file or directory |
 | `root` | int    | no       | Root directory index (0 = primary, 1+ = extra directories) |
-| `ref`  | string | no       | A commit hash (4–64 hex digits). Reads the file as it was in that commit (`git show <ref>:./<path>`) instead of from disk. |
 
 **Response (200):**
 ```json
@@ -1234,7 +1286,6 @@ Delete a file or directory.
 
 ---
 
-- With `ref`, the file only has to exist in that commit — it may since have been deleted — so only the lexical checks apply; the response is text or `X-File-Binary`, never the image/video/PDF branches. The path is resolved relative to the channel's directory, as on disk.
 ### `GET /api/channels/{id}/raw/{root}/{path...}`
 
 Serve a file's raw bytes by path. The editor's HTML preview uses this as the `<base href>` of the rendered page, so relative stylesheets, scripts and images resolve against the file's directory. The root index is a path segment rather than a query parameter because relative URL resolution drops the query string.
@@ -1398,6 +1449,7 @@ Get git diff information for a channel's working directory. Includes both tracke
 |----------|--------|-------------|
 | `source` | string | When provided with `target`, switches to branch-to-branch diff mode (`git diff source..target`). `status` is omitted in this mode. |
 | `target` | string | Branch / ref name for branch-to-branch diff mode. |
+| `commit` | string | A commit hash (4–64 hex digits). Switches to single-commit mode: the changes that commit introduced. Takes precedence over `source`/`target`. |
 | `root`   | int    | Root directory index (0 = primary `dir_path`, 1+ = extra directories from project config). Defaults to 0. |
 
 **Response (200) — uncommitted mode:**
@@ -1434,6 +1486,7 @@ Get git diff information for a channel's working directory. Includes both tracke
 - Uncommitted mode (default): runs `git diff --cached` (staged), `git diff` (unstaged), and `git ls-files --others --exclude-standard` (untracked). Conflicts are surfaced via `git diff --diff-filter=U`.
 - The frontend parses `staged_diff` / `unstaged_diff` / `untracked_diff` / `conflict_diff` independently so the per-bucket `status` tag survives partial staging (a path that appears in both staged and unstaged buckets would otherwise collide in a single parsed-by-path lookup).
 - Branch-to-branch mode (`?source=branchA&target=branchB`): a single `git diff` is returned in `diff`; the per-status fields and the `status` tag on each file are omitted.
+- Single-commit mode (`?commit=<sha>`): runs `git show --diff-merges=first-parent`, so a merge commit is diffed against its first parent and a root commit against the empty tree. The response has the branch-to-branch shape. Anything other than a hex hash returns `400`; a hash that doesn't resolve to a commit returns `404`.
 - Untracked files generate synthetic diff patches (all lines as additions). Binary detection checks the first 512 bytes for null bytes.
 - If the directory is not a git repo, returns an empty `files` array.
 - Files are sorted by (path, status priority) — `conflict` < `staged` < `unstaged` < `untracked`.
@@ -1449,7 +1502,6 @@ Get git diff information for a channel's working directory. Includes both tracke
 
 Look up the open GitHub pull request whose head branch matches the channel's current branch. Shells out to `gh pr view` against the channel's working directory.
 
-| `commit` | string | A commit hash (4–64 hex digits). Switches to single-commit mode: the changes that commit introduced. Takes precedence over `source`/`target`. |
 **Response (200, PR found):**
 ```json
 {
@@ -1486,7 +1538,6 @@ Look up the open GitHub pull request whose head branch matches the channel's cur
 
 List local git branches and worktrees for a channel's directory.
 
-- Single-commit mode (`?commit=<sha>`): runs `git show --diff-merges=first-parent`, so a merge commit is diffed against its first parent and a root commit against the empty tree. The response has the branch-to-branch shape. Anything other than a hex hash returns `400`; a hash that doesn't resolve to a commit returns `404`.
 **Query Parameters:**
 
 | Param  | Type | Default | Description |

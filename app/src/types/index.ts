@@ -67,6 +67,9 @@ export interface Message {
   not_before?: number;
   // Set by /api/channels/{id}/queued on the row a chat run has claimed.
   is_running?: boolean;
+  // Unix-seconds end of the edit hold while the user edits this queued row;
+  // until then neither it nor anything queued behind it starts.
+  edit_hold_until?: number;
   created_at: string;
 }
 
@@ -113,6 +116,11 @@ export interface MessageCreatedData {
   priority?: number;
   trigger_msg_id?: string;
   not_before?: number;
+}
+
+export interface MessageUpdatedData {
+  msg_id: string;
+  content: string;
 }
 
 export interface MessagesProcessedData {

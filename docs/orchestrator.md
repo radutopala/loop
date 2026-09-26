@@ -150,11 +150,22 @@ The [`queue_message`](mcpserver.md) MCP tool can hold a prompt back with `delay_
 
 Since the drain is purely event-driven (there is no idle processor goroutine — see [Per-channel Drain Serialization](#per-channel-drain-serialization)), nothing would ever re-attempt the claim once the delay elapses. The **delay poller** closes that gap:
 
-- `startDelayPoller` runs a `time.Ticker` at `DelayPollInterval` (1s). On each tick it calls `store.ChannelsWithDueDelayedMessages`, which returns the distinct channels that have a `kind='message'`, unprocessed, triggered, not-running row with `0 < not_before <= now`.
+- `startDelayPoller` runs a `time.Ticker` at `DelayPollInterval` (1s). On each tick it calls `store.ChannelsWithDueDelayedMessages`, which returns the distinct channels that have a `kind='message'`, unprocessed, triggered, not-running row with `0 < not_before <= now` — or with a lapsed [edit hold](#edit-holds) (`0 < edit_hold_until <= now`).
 - For each such channel it calls `drainAsync(channelID, nil)` — the same drain path as a fresh message, but reconstructed from the row alone. The now-due row is claimable, so it runs.
 - `Stop` closes `delayStop` (guarded by a `sync.Once`) to terminate the ticker goroutine. A non-positive `delayPollInterval` disables the poller (tests set it to `0`).
 
 Because eligibility lives entirely in the row's `not_before` column and the poller re-derives due channels from the DB, pending delays survive a **daemon restart**: after the resume sweep, the poller picks up any still-due rows on its next tick without special-casing restart recovery.
+
+## Edit holds
+
+The chat lets the user edit a queued message in place (see [Queued Messages Popup](chat.md#queued-messages-popup)). While the edit is open the row must not start, or the agent would run the old text. Opening the edit stamps `edit_hold_until` (unix seconds) on the row through `POST /api/channels/{id}/queued/{msg_id}/hold`, and `ClaimNextPending` treats a held row as a **barrier**: it picks the top eligible row by `(priority DESC, id ASC)` exactly as before, then claims it only if `edit_hold_until <= now`. A held top row therefore stops the whole channel queue rather than letting the row behind it jump ahead — queue order survives the edit. Rows ahead of the held one keep running.
+
+The hold, the save (`PUT …/queued/{msg_id}`, which writes the content and clears the hold in one statement), and the claim are all single `UPDATE`s on SQLite's one writer connection, and the hold and save only match rows that are still `is_running = 0 AND is_processed = 0`. So exactly one of "edit" and "claim" wins:
+
+- **Edit first** — the row is held; the drain passes over it until save or cancel clears the hold, and the API then kicks the drain via `ResumeChannel`.
+- **Claim first** — the hold or save matches no row and the API answers `409`. The app ends the edit, keeps the typed text in the composer, and suggests sending it as a new message.
+
+The hold is a lease (5 minutes, renewed by the app every 2 minutes), so an app that closes or sleeps mid-edit can't stall the channel for good. When it lapses nothing clears the column, but the claim now accepts the row, and the delay poller above also watches for lapsed holds so an idle channel wakes up and drains.
 
 ## Agent Request Preparation
 

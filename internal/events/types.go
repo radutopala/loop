@@ -96,6 +96,13 @@ type MessageDeletedData struct {
 	MsgID string `json:"msg_id"`
 }
 
+// MessageUpdatedData is the payload for message.updated events, sent when the
+// user edits a message that was still waiting in the queue.
+type MessageUpdatedData struct {
+	MsgID   string `json:"msg_id"`
+	Content string `json:"content"`
+}
+
 // MessageStreamingData is the payload for message.streaming events (partial bot response).
 type MessageStreamingData struct {
 	Content string `json:"content"`

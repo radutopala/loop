@@ -39,6 +39,9 @@ type ChannelLister interface {
 	RunningMessageID(ctx context.Context, channelID string) (string, error)
 	DeleteQueuedMessage(ctx context.Context, channelID, msgID string) (bool, error)
 	SteerQueuedMessage(ctx context.Context, channelID, msgID string) (bool, error)
+	HoldQueuedMessage(ctx context.Context, channelID, msgID string, until int64) (bool, error)
+	ReleaseQueuedHold(ctx context.Context, channelID, msgID string) (bool, error)
+	UpdateQueuedMessage(ctx context.Context, channelID, msgID, content string) (bool, error)
 	ReorderQueuedMessages(ctx context.Context, channelID string, orderedMsgIDs []string) error
 	MaxQueuedPriority(ctx context.Context, channelID string) (int, error)
 	ListTaskRunLogs(ctx context.Context, taskID int64, limit int) ([]*db.TaskRunLog, error)

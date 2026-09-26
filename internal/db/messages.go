@@ -56,15 +56,21 @@ func (s *SQLiteStore) MarkMessagesProcessed(ctx context.Context, ids []int64) er
 // is_triggered=1, is_running=0, kind='message', and not delayed into the future
 // (not_before = 0 or already reached). Order: priority DESC, id ASC.
 // Returns nil with no error when the channel has nothing to process.
+//
+// A row under an edit hold (edit_hold_until still in the future) is a barrier:
+// when it is next in line, nothing is claimed — rows behind it don't jump
+// ahead, so the queue order the user sees is the order things run in.
 func (s *SQLiteStore) ClaimNextPending(ctx context.Context, channelID string) (*Message, error) {
 	var msg *Message
 	err := s.withTx(ctx, func(tx *sql.Tx) error {
 		row := tx.QueryRowContext(ctx,
 			`SELECT `+messageColumns+` FROM messages
-			 WHERE channel_id = ? AND is_processed = 0 AND is_triggered = 1
-			   AND is_running = 0 AND kind = 'message'
-			   AND (not_before = 0 OR not_before <= strftime('%s','now'))
-			 ORDER BY priority DESC, id ASC LIMIT 1`,
+			 WHERE id = (SELECT id FROM messages
+			             WHERE channel_id = ? AND is_processed = 0 AND is_triggered = 1
+			               AND is_running = 0 AND kind = 'message'
+			               AND (not_before = 0 OR not_before <= strftime('%s','now'))
+			             ORDER BY priority DESC, id ASC LIMIT 1)
+			   AND edit_hold_until <= strftime('%s','now')`,
 			channelID,
 		)
 		m, err := scanMessageRow(row)
@@ -91,10 +97,14 @@ func (s *SQLiteStore) ClaimNextPending(ctx context.Context, channelID string) (*
 // passes — the orchestrator's delay poller calls this to find channels that
 // need a fresh drain. Rows that never carried a delay (not_before = 0) are
 // excluded so the poller only ever wakes channels that actually deferred work.
+//
+// An edit hold whose lease ran out (the app closed mid-edit) counts as due
+// too: the hold blocked the claim, and nothing else would restart the drain.
 func (s *SQLiteStore) ChannelsWithDueDelayedMessages(ctx context.Context) ([]string, error) {
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT DISTINCT channel_id FROM messages
-		 WHERE not_before > 0 AND not_before <= strftime('%s','now')
+		 WHERE ((not_before > 0 AND not_before <= strftime('%s','now'))
+		        OR (edit_hold_until > 0 AND edit_hold_until <= strftime('%s','now')))
 		   AND is_processed = 0 AND is_triggered = 1 AND is_running = 0
 		   AND kind = 'message'`,
 	)
@@ -257,6 +267,45 @@ func (s *SQLiteStore) SteerQueuedMessage(ctx context.Context, channelID, msgID s
 		   AND is_running = 0 AND kind = 'message'`,
 		channelID, channelID, msgID,
 	)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	return n > 0, nil
+}
+
+// queuedUserRow matches a waiting user message that no run has started yet —
+// the only rows an edit may touch.
+const queuedUserRow = `channel_id = ? AND msg_id = ? AND is_bot = 0 AND is_processed = 0 AND is_running = 0 AND kind = 'message'`
+
+// HoldQueuedMessage takes (or renews) an edit hold on a waiting user message
+// until the unix-seconds time until. Returns false when the row is no longer
+// waiting — a run already claimed it, it finished, or it never existed — so
+// the caller knows the edit came too late. The claim and this update both go
+// through the single writer, so exactly one of them wins.
+func (s *SQLiteStore) HoldQueuedMessage(ctx context.Context, channelID, msgID string, until int64) (bool, error) {
+	return s.execAffected(ctx, `UPDATE messages SET edit_hold_until = ? WHERE `+queuedUserRow, until, channelID, msgID)
+}
+
+// ReleaseQueuedHold drops the edit hold on a waiting user message, leaving
+// its content unchanged. Returns false when no waiting row matched.
+func (s *SQLiteStore) ReleaseQueuedHold(ctx context.Context, channelID, msgID string) (bool, error) {
+	return s.execAffected(ctx, `UPDATE messages SET edit_hold_until = 0 WHERE `+queuedUserRow, channelID, msgID)
+}
+
+// UpdateQueuedMessage replaces the content of a waiting user message and
+// drops its edit hold. Returns false when the row is no longer waiting, in
+// which case nothing was changed.
+func (s *SQLiteStore) UpdateQueuedMessage(ctx context.Context, channelID, msgID, content string) (bool, error) {
+	return s.execAffected(ctx, `UPDATE messages SET content = ?, edit_hold_until = 0 WHERE `+queuedUserRow, content, channelID, msgID)
+}
+
+// execAffected runs a write and reports whether it touched any row.
+func (s *SQLiteStore) execAffected(ctx context.Context, query string, args ...any) (bool, error) {
+	res, err := s.db.ExecContext(ctx, query, args...)
 	if err != nil {
 		return false, err
 	}

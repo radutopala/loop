@@ -121,6 +121,21 @@ func (m *MockStore) SteerQueuedMessage(ctx context.Context, channelID, msgID str
 	return args.Bool(0), args.Error(1)
 }
 
+func (m *MockStore) HoldQueuedMessage(ctx context.Context, channelID, msgID string, until int64) (bool, error) {
+	args := m.Called(ctx, channelID, msgID, until)
+	return args.Bool(0), args.Error(1)
+}
+
+func (m *MockStore) ReleaseQueuedHold(ctx context.Context, channelID, msgID string) (bool, error) {
+	args := m.Called(ctx, channelID, msgID)
+	return args.Bool(0), args.Error(1)
+}
+
+func (m *MockStore) UpdateQueuedMessage(ctx context.Context, channelID, msgID, content string) (bool, error) {
+	args := m.Called(ctx, channelID, msgID, content)
+	return args.Bool(0), args.Error(1)
+}
+
 func (m *MockStore) ClaimNextPending(ctx context.Context, channelID string) (*db.Message, error) {
 	args := m.Called(ctx, channelID)
 	if fn, ok := args.Get(0).(func(context.Context, string) *db.Message); ok {
