@@ -166,6 +166,19 @@ func (o *Orchestrator) ActiveRunsMap() *sync.Map {
 	return &o.activeRuns
 }
 
+// ChannelLocksMap returns the per-channel drain locks so the TaskExecutor can
+// hold a thread's lock for a task run: a message sent to the thread meanwhile
+// waits in the queue instead of starting a second run on the same session.
+func (o *Orchestrator) ChannelLocksMap() *sync.Map {
+	return &o.channelLocks
+}
+
+// channelLock returns the drain lock for channelID, creating it on first use.
+func channelLock(locks *sync.Map, channelID string) *sync.Mutex {
+	lockVal, _ := locks.LoadOrStore(channelID, &sync.Mutex{})
+	return lockVal.(*sync.Mutex)
+}
+
 // ActiveRunMessageID returns the msg_id of the message currently being
 // processed on the given channel, or empty string if no run is active.
 // Used by the API layer for interrupt diagnostics and by the FE to know

@@ -778,6 +778,11 @@ func (s *OrchestratorSuite) TestActiveChatChannelIDs() {
 	require.True(s.T(), ok2)
 }
 
+func (s *OrchestratorSuite) TestChannelLocksMapReturnsSharedMap() {
+	lock := channelLock(s.orch.ChannelLocksMap(), "ch1")
+	require.Same(s.T(), lock, channelLock(&s.orch.channelLocks, "ch1"))
+}
+
 func (s *OrchestratorSuite) TestActiveRunsMapReturnsSharedMap() {
 	m := s.orch.ActiveRunsMap()
 	require.NotNil(s.T(), m)

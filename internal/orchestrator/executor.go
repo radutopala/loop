@@ -35,6 +35,7 @@ type TaskExecutor struct {
 	worktreeCreator  *worktree.Creator
 	workflowEngine   workflow.Engine
 	activeRuns       *sync.Map // shared with Orchestrator for stop button support
+	channelLocks     *sync.Map // shared with Orchestrator: per-channel drain locks
 	tasks            *taskRegistry
 }
 
@@ -83,6 +84,48 @@ func (e *TaskExecutor) SetWorkflowEngine(we workflow.Engine) {
 // via the stop button. The map is shared with the Orchestrator.
 func (e *TaskExecutor) SetActiveRuns(m *sync.Map) {
 	e.activeRuns = m
+}
+
+// SetChannelLocks sets the Orchestrator's per-channel drain locks. A task run
+// holds its thread's lock, so chat messages sent to the thread queue behind
+// the run (and the run waits for a chat run already there) instead of two
+// agents resuming the same session at once.
+func (e *TaskExecutor) SetChannelLocks(m *sync.Map) {
+	e.channelLocks = m
+}
+
+// threadLocks holds the drain locks one task run has taken, each at most
+// once, so they can all be released when the run ends. The run may take a
+// lock from the stream callback, when it creates its thread.
+type threadLocks struct {
+	locks *sync.Map
+	mu    sync.Mutex
+	held  map[string]*sync.Mutex
+}
+
+// hold takes channelID's lock, blocking while a chat run holds it. A nil
+// lock map (not wired) or an empty id is a no-op.
+func (t *threadLocks) hold(channelID string) {
+	if t.locks == nil || channelID == "" {
+		return
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if _, ok := t.held[channelID]; ok {
+		return
+	}
+	lock := channelLock(t.locks, channelID)
+	lock.Lock()
+	t.held[channelID] = lock
+}
+
+func (t *threadLocks) releaseAll() {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	for id, lock := range t.held {
+		lock.Unlock()
+		delete(t.held, id)
+	}
 }
 
 // ExecuteTask runs an agent for the given scheduled task and sends the result to the chat platform.
@@ -192,6 +235,13 @@ func (e *TaskExecutor) ExecuteTask(ctx context.Context, task *db.ScheduledTask) 
 		return e.executeBashTask(ctx, task, dirPath, parentDirPath, channel, worktreeCreated)
 	}
 
+	// Hold the thread's drain lock for the whole run, taken before its session
+	// is read: waiting behind a chat run in the thread must not leave this run
+	// resuming the session that chat run has since moved on from.
+	locks := &threadLocks{locks: e.channelLocks, held: map[string]*sync.Mutex{}}
+	defer locks.releaseAll()
+	locks.hold(task.ThreadID)
+
 	// Determine which session to resume:
 	// - Recurring task with existing thread → resume the thread's own session
 	// - First run (no thread yet) → fork the parent channel's session for initial context
@@ -297,6 +347,9 @@ func (e *TaskExecutor) ExecuteTask(ctx context.Context, task *db.ScheduledTask) 
 	}
 	if task.ThreadID != "" {
 		threadID = task.ThreadID
+		// Normally already held; differs only when a concurrent run persisted
+		// a thread since this task was loaded.
+		locks.hold(threadID)
 	}
 	// hasExistingThread is true when the thread was created by a previous run
 	// on the local platform. For subsequent local runs, register the agent
@@ -351,6 +404,9 @@ func (e *TaskExecutor) ExecuteTask(ctx context.Context, task *db.ScheduledTask) 
 				return
 			}
 			threadID = id
+			// Free for a brand-new thread; held so messages sent to it while
+			// this run continues queue behind it.
+			locks.hold(threadID)
 			// Upsert thread channel inheriting from parent so botForChannel
 			// can resolve it for subsequent operations (rename, delete, etc.).
 			if channel != nil {
