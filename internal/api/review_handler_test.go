@@ -1968,6 +1968,7 @@ func (s *ReviewHandlerSuite) TestIngestCommentsSkipsInvalidAndDuplicates() {
 func (s *ReviewHandlerSuite) TestIngestCommentsLoopDirFallback() {
 	// Channel row has no dir_path: the parent dir falls back to the
 	// loopDir-derived workdir, same as handleReviewRun.
+	s.srv.loopDir = "/loop"
 	s.wireReadySession()
 	s.store.ExpectedCalls = nil
 	s.store.On("GetChannel", mock.Anything, "ch1").Return(&db.Channel{ChannelID: "ch1", DirPath: ""}, nil).Maybe()

@@ -251,6 +251,13 @@ func (s *PinSuite) TestPinBinds() {
 			wantMsg:    "isn't bound to /ws",
 		},
 		{
+			name:       "existing volume with other options",
+			body:       `{"HostConfig":{"Binds":["/ws/src:/app"]}}`,
+			up:         pinResponse{volBody: `{"Driver":"local","Options":{"type":"nfs","o":"addr=10.0.0.1","device":"/ws"}}`},
+			wantStatus: http.StatusBadGateway,
+			wantMsg:    "isn't bound to /ws",
+		},
+		{
 			name:       "volume response unreadable",
 			body:       `{"HostConfig":{"Binds":["/ws/src:/app"]}}`,
 			up:         pinResponse{volBody: `{`},

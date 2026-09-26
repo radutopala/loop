@@ -460,20 +460,47 @@ func (s *ApprovalSuite) TestBotSendErrorReturnsDeny() {
 	m.mu.Unlock()
 }
 
-func (s *ApprovalSuite) TestContextCancelReturnsDeny() {
-	bot := &fakeBot{}
-	m := s.newManager(bot, types.RateLimits{})
-	ctx, cancel := context.WithCancel(context.Background())
+func (s *ApprovalSuite) TestContextDoneReturnsDeny() {
+	tests := []struct {
+		name       string
+		ctx        func() (context.Context, context.CancelFunc)
+		cancel     bool
+		wantReason string
+	}{
+		{
+			name:       "cancelled",
+			ctx:        func() (context.Context, context.CancelFunc) { return context.WithCancel(context.Background()) },
+			cancel:     true,
+			wantReason: "cancelled",
+		},
+		{
+			name: "deadline exceeded",
+			ctx: func() (context.Context, context.CancelFunc) {
+				return context.WithTimeout(context.Background(), 20*time.Millisecond)
+			},
+			wantReason: "timeout",
+		},
+	}
+	for _, tc := range tests {
+		s.Run(tc.name, func() {
+			bot := &fakeBot{}
+			m := s.newManager(bot, types.RateLimits{})
+			ctx, cancel := tc.ctx()
+			defer cancel()
 
-	done := make(chan Outcome, 1)
-	go func() { done <- m.Request(ctx, "chan1", ApprovalRequest{}) }()
-	s.waitForPending(m, 1)
-	cancel()
+			done := make(chan Outcome, 1)
+			go func() { done <- m.Request(ctx, "chan1", ApprovalRequest{}) }()
+			if tc.cancel {
+				s.waitForPending(m, 1)
+				cancel()
+			}
 
-	out := <-done
-	require.Equal(s.T(), types.DecisionDeny, out.Decision)
-	require.Equal(s.T(), "cancelled", out.Reason)
-	require.Equal(s.T(), 1, bot.removeCnt) // still removes the prompt
+			out := <-done
+			require.Equal(s.T(), types.DecisionDeny, out.Decision)
+			require.Equal(s.T(), tc.wantReason, out.Reason)
+			require.Equal(s.T(), 1, bot.removeCnt) // still removes the prompt
+		})
+	}
 }
 
 // --- Shutdown ---
