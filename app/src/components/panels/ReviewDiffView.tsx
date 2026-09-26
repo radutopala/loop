@@ -84,6 +84,26 @@ function readCommentNavScope(): CommentNavScope {
   return window.localStorage.getItem(COMMENT_NAV_SCOPE_KEY) === "all" ? "all" : "new";
 }
 
+/**
+ * Where prev/next goes before the navigator has landed on a comment (first
+ * use, or after the user scrolled the landed one out of view): the first
+ * comment at or below the top of the view for next, the last at or above its
+ * bottom for prev — so nothing is skipped just because the counter already
+ * reads it. rects are the anchors' on-screen boxes, null when collapsed out
+ * of the DOM; fallback is used when none qualifies.
+ */
+export function unlandedTarget(dir: 1 | -1, rects: ({ top: number; bottom: number } | null)[], view: { top: number; bottom: number }, fallback: number): number {
+  if (dir === 1) {
+    const i = rects.findIndex((r) => r !== null && r.bottom > view.top);
+    return i >= 0 ? i : fallback;
+  }
+  for (let i = rects.length - 1; i >= 0; i--) {
+    const r = rects[i];
+    if (r && r.top < view.bottom) return i;
+  }
+  return fallback;
+}
+
 /** The anchors the navigator steps through for scope; "new" drops GitHub-synced comments. */
 export function navigableAnchors(anchors: CommentAnchor[], scope: CommentNavScope): CommentAnchor[] {
   return scope === "new" ? anchors.filter((a) => !a.github) : anchors;
@@ -256,6 +276,16 @@ export function ReviewDiffView({ channelId, rawDiff, comments, worktreePath, onP
   const commentRefs = useRef<Map<string, HTMLDivElement>>(new Map());
   const scrollRef = useRef<HTMLDivElement>(null);
   const [activeComment, setActiveComment] = useState(0);
+  const activeRef = useRef(0);
+  // Whether prev/next has actually brought a comment into view. Until it
+  // has, the counter only reports the nearest comment, and stepping from it
+  // would skip the one the user never saw. navigatingRef mutes that handler while a jump's smooth scroll
+  // is in flight, so the comments it passes don't steal the index.
+  const [landed, setLanded] = useState(false);
+  // Held by id, so a scope toggle or a finding streaming in above it can't
+  // shift the landing onto a different comment.
+  const landedRef = useRef<string | null>(null);
+  const navigatingRef = useRef(0);
   const syncRafRef = useRef(0);
 
   const registerCommentRef = useCallback((id: string, el: HTMLDivElement | null) => {
@@ -269,8 +299,21 @@ export function ReviewDiffView({ channelId, rawDiff, comments, worktreePath, onP
   // on exactly the index we asked for, with no observer/animation race.
   const syncActiveComment = useCallback(() => {
     const sc = scrollRef.current;
-    if (!sc) return;
+    if (!sc || navigatingRef.current) return;
     const r = sc.getBoundingClientRect();
+    if (landedRef.current !== null) {
+      // Stay on the landed comment while any of it is still on screen.
+      const id = landedRef.current;
+      const idx = anchors.findIndex((a) => a.id === id);
+      const er = commentRefs.current.get(id)?.getBoundingClientRect();
+      if (idx >= 0 && er && er.bottom > r.top && er.top < r.bottom) {
+        activeRef.current = idx;
+        setActiveComment(idx);
+        return;
+      }
+      landedRef.current = null;
+      setLanded(false);
+    }
     const mid = r.top + r.height / 2;
     let best = -1;
     let bestDist = Number.POSITIVE_INFINITY;
@@ -286,7 +329,10 @@ export function ReviewDiffView({ channelId, rawDiff, comments, worktreePath, onP
     });
     // Every comment collapsed out of the DOM: keep the last index rather
     // than snapping the counter to 1.
-    if (best >= 0) setActiveComment(best);
+    if (best >= 0) {
+      activeRef.current = best;
+      setActiveComment(best);
+    }
   }, [anchors]);
 
   // Re-measure when the walked list changes (scope toggle, comments landing)
@@ -306,6 +352,7 @@ export function ReviewDiffView({ channelId, rawDiff, comments, worktreePath, onP
   useEffect(() => {
     return () => {
       if (syncRafRef.current) cancelAnimationFrame(syncRafRef.current);
+      clearTimeout(navigatingRef.current);
     };
   }, []);
 
@@ -313,7 +360,16 @@ export function ReviewDiffView({ channelId, rawDiff, comments, worktreePath, onP
     (idx: number) => {
       const a = anchors[idx];
       if (!a) return;
+      activeRef.current = idx;
       setActiveComment(idx);
+      landedRef.current = a.id;
+      setLanded(true);
+      // Released on scrollend; the timeout covers a target already in place,
+      // where no scroll (and so no scrollend) happens.
+      clearTimeout(navigatingRef.current);
+      navigatingRef.current = window.setTimeout(() => {
+        navigatingRef.current = 0;
+      }, 1000);
       if (a.fileIdx >= 0) setFocusedIdx(a.fileIdx);
       setExpanded((prev) => {
         if (a.fileIdx < 0 || prev.has(a.path)) return prev;
@@ -323,10 +379,38 @@ export function ReviewDiffView({ channelId, rawDiff, comments, worktreePath, onP
       });
       // Deferred so a just-expanded file has mounted and registered its ref.
       requestAnimationFrame(() => {
-        commentRefs.current.get(a.id)?.scrollIntoView({ behavior: "smooth", block: "center" });
+        const el = commentRefs.current.get(a.id);
+        if (!el) return;
+        el.scrollIntoView({ behavior: "smooth", block: "center" });
+        // Flash the target so it's clear which comment the counter means.
+        el.animate?.([{ boxShadow: `0 0 0 2px ${colors.active}` }, { boxShadow: "0 0 0 2px transparent" }], { duration: 1200, easing: "ease-out" });
       });
     },
-    [anchors],
+    [anchors, colors.active],
+  );
+
+  const onScrollEnd = useCallback(() => {
+    if (!navigatingRef.current) return;
+    clearTimeout(navigatingRef.current);
+    navigatingRef.current = 0;
+  }, []);
+
+  // Before landing, step to the first comment at/after the view (next) or
+  // at/before it (prev) rather than off the nearest one.
+  const stepComment = useCallback(
+    (dir: 1 | -1) => {
+      const id = landedRef.current;
+      const at = id === null ? -1 : anchors.findIndex((a) => a.id === id);
+      if (at >= 0) {
+        navigateToComment(at + dir);
+        return;
+      }
+      const sc = scrollRef.current;
+      const view = sc ? sc.getBoundingClientRect() : { top: 0, bottom: 0 };
+      const rects = anchors.map((a) => commentRefs.current.get(a.id)?.getBoundingClientRect() ?? null);
+      navigateToComment(unlandedTarget(dir, rects, view, Math.min(activeRef.current, anchors.length - 1)));
+    },
+    [anchors, navigateToComment],
   );
 
   // ---- Find in diff ------------------------------------------------------
@@ -540,7 +624,7 @@ export function ReviewDiffView({ channelId, rawDiff, comments, worktreePath, onP
           onClose={closeSearch}
         />
       )}
-      <div ref={scrollRef} onScroll={onScroll} style={{ flex: 1, overflow: "auto", minHeight: 0 }}>
+      <div ref={scrollRef} onScroll={onScroll} onScrollEnd={onScrollEnd} style={{ flex: 1, overflow: "auto", minHeight: 0 }}>
         {summaries.map((sum, idx) => (
           <div
             key={sum.path}
@@ -591,10 +675,11 @@ export function ReviewDiffView({ channelId, rawDiff, comments, worktreePath, onP
           colors={colors}
           index={commentIdx}
           total={anchors.length}
+          landed={landed}
           scope={navScope}
           onScopeChange={changeNavScope}
-          onPrev={() => navigateToComment(commentIdx - 1)}
-          onNext={() => navigateToComment(commentIdx + 1)}
+          onPrev={() => stepComment(-1)}
+          onNext={() => stepComment(1)}
         />
       )}
       {fileContextMenu && (
@@ -644,6 +729,7 @@ function CommentNavigator({
   colors,
   index,
   total,
+  landed,
   scope,
   onScopeChange,
   onPrev,
@@ -652,13 +738,15 @@ function CommentNavigator({
   colors: ColorPalette;
   index: number;
   total: number;
+  landed: boolean;
   scope: CommentNavScope;
   onScopeChange: (scope: CommentNavScope) => void;
   onPrev: () => void;
   onNext: () => void;
 }) {
-  const canPrev = index > 0;
-  const canNext = index < total - 1;
+  // Before landing either button first brings a comment into view.
+  const canPrev = landed ? index > 0 : total > 0;
+  const canNext = landed ? index < total - 1 : total > 0;
   const btn = (enabled: boolean): React.CSSProperties => ({
     display: "flex",
     alignItems: "center",
