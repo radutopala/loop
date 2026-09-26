@@ -217,7 +217,7 @@ Toggle the locked flag on a channel or thread. Locking guards against accidental
 
 ### `POST /api/channels/{id}/rename`
 
-Rename a channel or thread's display name. Only the name changes — the directory path and Claude sessions are untouched.
+Rename a channel, thread or worktree thread's display name. Only the name changes — the directory path, git branch and Claude sessions are untouched.
 
 **Path Parameters:**
 
@@ -286,7 +286,7 @@ Create a new thread under a parent channel. If the channel ID points to a thread
 
 Forks a thread: creates a sibling thread that continues the source thread's conversation. The new thread copies the source's Claude session id (marked fork-pending) and imports its history for display; the orchestrator runs the fork's first message with `--fork-session`, so the two threads diverge instead of clobbering each other — the SOURCE thread keeps its session untouched.
 
-For **worktree threads**, the fork additionally creates a new git worktree branched from the source worktree's branch (its committed state — uncommitted changes stay behind), and the new thread's `base_branch` is set to the source's branch so its diff shows only the fork's own delta.
+For **worktree threads**, the fork additionally creates a new git worktree branched from whatever the source worktree has checked out: its current branch, whatever it's named, or its commit when HEAD is detached. It starts from the committed state; uncommitted changes stay behind. The new thread's `base_branch` is set to that branch (or commit) so its diff shows only the fork's own delta. The source's transcript is copied from the source worktree's own Claude project dir (a worktree thread's transcripts live there, not under the parent channel's) into the new worktree's, and its history is imported from there. When the source has no session, or its transcript is gone, the fork starts with no session rather than the parent channel's.
 
 **Response (201):**
 ```json
@@ -1533,39 +1533,6 @@ If `message` is provided, the bot posts it as a self-mention into the new thread
 - Copies the parent's Claude session file to the worktree's project dir (`~/.claude/projects/<encoded-path>/`) so `--resume --fork-session` works on the first message.
 - The thread's `DirPath` points to the worktree directory; `Worktree` flag is set to true.
 - Container mounts include the parent project directory so git worktree references resolve correctly.
-
-### `POST /api/worktrees/move`
-
-Rename a worktree thread. Renames the worktree directory and its `worktree/<name>` branch, relocates the Claude session store so sessions are preserved, and updates the thread's display name and `dir_path`.
-
-**Request:**
-```json
-{
-  "channel_id": "worktree-thread-id",
-  "new_name": "new-name"
-}
-```
-
-| Field        | Type   | Required | Description |
-|--------------|--------|----------|-------------|
-| `channel_id` | string | yes      | The worktree thread to rename |
-| `new_name`   | string | yes      | New worktree name (sanitized like a branch name) |
-
-**Response (200):**
-```json
-{
-  "channel_id": "worktree-thread-id",
-  "dir_path": "/project/.worktrees/new-name",
-  "name": "new-name"
-}
-```
-
-**Behavior notes:**
-- Runs `git worktree move` then `git branch -m worktree/<old> worktree/<new>`.
-- Relocates the Claude session store from `~/.claude/projects/<encoded-old-dir>/` to `<encoded-new-dir>/`, so the thread keeps its `session_id` and `--resume` continues to work after the rename. The git move is rolled back if relocation fails unexpectedly.
-- Broadcasts a `channel.updated` event carrying the new `name` and `dir_path`.
-
-**Errors:** `400` if `channel_id`/`new_name` is missing, `new_name` is invalid, or the channel is not a worktree thread. `404` if channel not found. `409` if the thread has an active run.
 
 ### `POST /api/worktrees/import`
 

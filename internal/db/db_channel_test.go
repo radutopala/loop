@@ -125,19 +125,6 @@ func (s *StoreSuite) TestUpdateChannelName() {
 	require.Error(s.T(), s.store.UpdateChannelName(context.Background(), "ch1", "another-name"))
 }
 
-func (s *StoreSuite) TestUpdateChannelDirPath() {
-	s.mock.ExpectExec(`UPDATE channels SET dir_path`).
-		WithArgs("/new/path", sqlmock.AnyArg(), "ch1").
-		WillReturnResult(sqlmock.NewResult(0, 1))
-	require.NoError(s.T(), s.store.UpdateChannelDirPath(context.Background(), "ch1", "/new/path"))
-	require.NoError(s.T(), s.mock.ExpectationsWereMet())
-
-	s.mock.ExpectExec(`UPDATE channels SET dir_path`).
-		WithArgs("/other/path", sqlmock.AnyArg(), "ch1").
-		WillReturnError(sql.ErrConnDone)
-	require.Error(s.T(), s.store.UpdateChannelDirPath(context.Background(), "ch1", "/other/path"))
-}
-
 func (s *StoreSuite) TestGetChannel() {
 	now := time.Now().UTC()
 	permJSON := `{"owners":{"users":["U1"],"roles":["admin"]},"members":{"users":[],"roles":[]}}`

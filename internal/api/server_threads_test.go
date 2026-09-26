@@ -273,6 +273,37 @@ func (s *ServerSuite) TestImportSessionMessagesDotDotSessionID() {
 	store.AssertNotCalled(s.T(), "GetChannel")
 }
 
+// TestImportSessionMessagesFromGuards: an unusable session id, store or sys
+// stops the import before any lookup.
+func (s *ServerSuite) TestImportSessionMessagesFromGuards() {
+	tests := []struct {
+		name      string
+		sessionID string
+		noStore   bool
+		noSys     bool
+	}{
+		{name: "dot-dot session id", sessionID: ".."},
+		{name: "empty session id", sessionID: ""},
+		{name: "no store", sessionID: "sess-1", noStore: true},
+		{name: "no sys", sessionID: "sess-1", noSys: true},
+	}
+	for _, tc := range tests {
+		s.Run(tc.name, func() {
+			store := new(MockChannelLister)
+			srv := NewServer(nil, nil, nil, store, nil, testLogger())
+			srv.sys = s.sys
+			if tc.noStore {
+				srv.store = nil
+			}
+			if tc.noSys {
+				srv.sys = nil
+			}
+			srv.importSessionMessagesFrom(context.Background(), "/proj/.worktrees/a", "thread-1", tc.sessionID)
+			store.AssertNotCalled(s.T(), "GetChannel")
+		})
+	}
+}
+
 func (s *ServerSuite) TestImportSessionMessagesNilStoreOrSys() {
 	// When store is nil, importSessionMessages returns early.
 	srv := NewServer(nil, nil, nil, nil, nil, testLogger())

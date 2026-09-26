@@ -4,7 +4,7 @@ import { useTheme } from "../../ThemeContext";
 interface RenameThreadDialogProps {
   /** Current display name, used to prefill the input. */
   currentName: string;
-  /** Worktree threads also move their dir + rename their git branch. */
+  /** Only changes the dialog title; renaming never touches the worktree dir or branch. */
   isWorktree: boolean;
   onCancel: () => void;
   onSubmit: (newName: string) => void;
@@ -49,12 +49,7 @@ export function RenameThreadDialog({ currentName, isWorktree, onCancel, onSubmit
         style={{ backgroundColor: colors.surface, borderRadius: 12, padding: "20px 24px", maxWidth: 420, width: "90%", boxShadow: "0 8px 32px rgba(0,0,0,0.3)" }}
         onClick={(e) => e.stopPropagation()}
       >
-        <div style={{ fontSize: 14, fontWeight: 600, color: colors.text, marginBottom: 4 }}>{isWorktree ? "Rename Worktree" : "Rename Thread"}</div>
-        {isWorktree && (
-          <div style={{ fontSize: 11, color: colors.textDim, marginBottom: 12 }}>
-            Also moves the worktree directory and renames its git branch to <code>worktree/{trimmed || "…"}</code>.
-          </div>
-        )}
+        <div style={{ fontSize: 14, fontWeight: 600, color: colors.text, marginBottom: 12 }}>{isWorktree ? "Rename Worktree" : "Rename Thread"}</div>
         <input
           ref={inputRef}
           data-testid="rename-thread-input"

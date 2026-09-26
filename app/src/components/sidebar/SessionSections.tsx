@@ -6,59 +6,116 @@ import type { PillKind } from "./pills";
 import { SIDEBAR_PILLS } from "./pills";
 import { RowInfoPopup } from "./RowInfoPopup";
 import { StatusPill } from "./StatusPill";
-import { RECENT_LIMIT, relativeTime, sessionContext, sessionName } from "./sessions";
+import { relativeTime, sessionContext, sessionName } from "./sessions";
+import { ThreadKindIcon } from "./ThreadKindIcon";
 
-export type SectionKey = "recent" | "all";
+export type SectionKey = "recent" | "tree";
 
-interface SectionHeaderProps {
-  section: SectionKey;
-  label: string;
-  count?: number;
-  collapsed: boolean;
-  onToggle: () => void;
+interface SectionTabsProps {
+  tab: SectionKey;
+  /** False when nothing is recent: only the task filter is shown, for Tree. */
+  showTabs: boolean;
+  recentCount: number;
+  onChange: (tab: SectionKey) => void;
+  /** Whether the open tab hides task threads. */
+  hideTasks: boolean;
+  onToggleHideTasks: () => void;
 }
 
-/** A collapsible section title: "▾ ACTIVE · 3". */
-export function SectionHeader({ section, label, count, collapsed, onToggle }: SectionHeaderProps) {
+/**
+ * Tabs switching the sidebar list between Recent sessions and the channel
+ * tree, with the open tab's task-thread filter beside them.
+ */
+export function SectionTabs({ tab, showTabs, recentCount, onChange, hideTasks, onToggleHideTasks }: SectionTabsProps) {
   const { colors } = useTheme();
+  const tabs: { key: SectionKey; label: string; count?: number }[] = [
+    { key: "recent", label: "Recent", count: recentCount },
+    { key: "tree", label: "Tree" },
+  ];
+  const tabLabel = tab === "recent" ? "Recent" : "Tree";
   return (
-    <button
-      data-testid={`sidebar-section-${section}`}
-      onClick={onToggle}
-      aria-expanded={!collapsed}
+    <div
       style={{
+        position: "sticky",
+        top: 0,
+        zIndex: 1,
         display: "flex",
         alignItems: "center",
+        justifyContent: "flex-end",
         gap: 4,
-        width: "100%",
-        padding: "8px 12px 4px",
-        border: "none",
-        background: "transparent",
-        cursor: "pointer",
-        fontSize: 10,
-        fontWeight: 700,
-        color: colors.textDim,
-        textTransform: "uppercase",
-        letterSpacing: 1,
-        textAlign: "left",
+        padding: "0 8px 4px",
+        backgroundColor: colors.sidebarNav,
       }}
     >
-      <svg
-        width="8"
-        height="8"
-        viewBox="0 0 10 10"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="1.5"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        style={{ transition: "transform 0.15s ease", transform: collapsed ? "rotate(-90deg)" : "rotate(0deg)" }}
+      {showTabs && (
+        <div
+          role="tablist"
+          data-testid="sidebar-tabs"
+          style={{
+            flex: 1,
+            display: "flex",
+            gap: 2,
+            padding: 2,
+            borderRadius: 7,
+            boxShadow: `inset 0 0 0 1px ${colors.border}`,
+          }}
+        >
+          {tabs.map((t) => {
+            const selected = t.key === tab;
+            return (
+              <button
+                key={t.key}
+                role="tab"
+                aria-selected={selected}
+                data-testid={`sidebar-tab-${t.key}`}
+                onClick={() => onChange(t.key)}
+                style={{
+                  flex: 1,
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  gap: 4,
+                  padding: "3px 8px",
+                  border: "none",
+                  borderRadius: 5,
+                  background: selected ? colors.selectedBg : "transparent",
+                  color: selected ? colors.textLight : colors.textDim,
+                  fontSize: 11,
+                  fontWeight: selected ? 600 : 500,
+                  cursor: "pointer",
+                }}
+              >
+                {t.label}
+                {t.count !== undefined && <span style={{ fontWeight: 400, color: colors.textDisabled }}>{t.count}</span>}
+              </button>
+            );
+          })}
+        </div>
+      )}
+      <button
+        data-testid="sidebar-hide-tasks"
+        onClick={onToggleHideTasks}
+        aria-pressed={hideTasks}
+        title={hideTasks ? `Show task threads in ${tabLabel}` : `Hide task threads in ${tabLabel}`}
+        style={{
+          flexShrink: 0,
+          display: "flex",
+          alignItems: "center",
+          padding: 4,
+          border: "none",
+          borderRadius: 4,
+          cursor: "pointer",
+          color: hideTasks ? colors.active : colors.textDim,
+          background: hideTasks ? colors.hoverBg : "none",
+        }}
       >
-        <path d="M2.5 3.5L5 6.5L7.5 3.5" />
-      </svg>
-      {label}
-      {count !== undefined && <span style={{ fontWeight: 400 }}>· {count}</span>}
-    </button>
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <circle cx="12" cy="12" r="10" />
+          <polyline points="12 6 12 12 16 14" />
+          {hideTasks && <line x1="4" y1="4" x2="20" y2="20" />}
+        </svg>
+      </button>
+    </div>
   );
 }
 
@@ -106,7 +163,8 @@ function SessionRow({ channel, context, selected, unread, running, pills, traili
           cursor: "pointer",
         }}
       >
-        <span style={{ width: 10, display: "flex", justifyContent: "center", flexShrink: 0 }}>
+        {/* Status on top, the thread's kind icon under it. */}
+        <span style={{ width: 12, display: "flex", flexDirection: "column", alignItems: "center", gap: 4, flexShrink: 0 }}>
           {waiting ? (
             <span style={{ width: 7, height: 7, borderRadius: "50%", backgroundColor: colors.warning }} />
           ) : running ? (
@@ -121,6 +179,7 @@ function SessionRow({ channel, context, selected, unread, running, pills, traili
               }}
             />
           ) : null}
+          <ThreadKindIcon channel={channel} />
         </span>
         <span style={{ display: "flex", flexDirection: "column", minWidth: 0, flex: 1 }}>
           <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontWeight: unread ? 600 : undefined }}>{sessionName(channel)}</span>
@@ -152,22 +211,16 @@ interface SessionSectionsProps {
   pillsFor: (id: string) => PillKind[];
   isUnread: (id: string) => boolean;
   lastActivity: (channel: Channel) => number | undefined;
-  collapsed: Record<SectionKey, boolean>;
-  onToggle: (section: SectionKey) => void;
   onSelect: (id: string) => void;
   onContextMenu: (e: React.MouseEvent, channel: Channel) => void;
 }
 
 /**
- * SessionSections renders the Recent section above the channel tree, newest
- * first, which puts the active sessions (also in recent) on top. It hides
- * itself when empty, and shows RECENT_LIMIT rows, or all the active ones if
- * there are more; each "show more" adds another RECENT_LIMIT.
+ * SessionSections renders the Recent tab's list: every session active in the
+ * last 48 hours, newest first, which puts the active sessions on top.
  */
-export function SessionSections({ active, recent, byId, selectedId, isRunning, pillsFor, isUnread, lastActivity, collapsed, onToggle, onSelect, onContextMenu }: SessionSectionsProps) {
+export function SessionSections({ active, recent, byId, selectedId, isRunning, pillsFor, isUnread, lastActivity, onSelect, onContextMenu }: SessionSectionsProps) {
   const { colors } = useTheme();
-  // How many times "show more" was clicked.
-  const [pages, setPages] = useState(0);
   // Re-render every minute so the Recent ages stay current.
   const [now, setNow] = useState(Date.now);
   useEffect(() => {
@@ -191,47 +244,20 @@ export function SessionSections({ active, recent, byId, selectedId, isRunning, p
   );
 
   const activeIds = new Set(active.map((c) => c.id));
-  const limit = Math.max(RECENT_LIMIT, active.length);
-  const shownRecent = recent.slice(0, limit + pages * RECENT_LIMIT);
-  const hidden = recent.length - shownRecent.length;
-  const moreStyle: React.CSSProperties = {
-    padding: "2px 8px",
-    border: "none",
-    background: "transparent",
-    color: colors.textDisabled,
-    fontSize: 11,
-    cursor: "pointer",
-  };
+  if (recent.length === 0) {
+    return (
+      <div data-testid="sidebar-recent-empty" style={{ padding: "8px 16px", fontSize: 11, color: colors.textDisabled }}>
+        No matching sessions
+      </div>
+    );
+  }
   return (
-    <>
-      {recent.length > 0 && (
-        <div data-testid="sidebar-recent">
-          <SectionHeader section="recent" label="Recent" count={recent.length} collapsed={collapsed.recent} onToggle={() => onToggle("recent")} />
-          {!collapsed.recent && (
-            <>
-              {shownRecent.map((c) => {
-                // An active session's age would only say "now".
-                const at = activeIds.has(c.id) ? undefined : lastActivity(c);
-                return row(c, at ? relativeTime(Math.max(0, now - at)) : undefined);
-              })}
-              {(hidden > 0 || pages > 0) && (
-                <div style={{ display: "flex", margin: "0 8px", paddingLeft: 16 }}>
-                  {hidden > 0 && (
-                    <button data-testid="sidebar-recent-more" onClick={() => setPages((n) => n + 1)} style={moreStyle}>
-                      show {Math.min(RECENT_LIMIT, hidden)} more
-                    </button>
-                  )}
-                  {pages > 0 && (
-                    <button data-testid="sidebar-recent-less" onClick={() => setPages(0)} style={moreStyle}>
-                      show less
-                    </button>
-                  )}
-                </div>
-              )}
-            </>
-          )}
-        </div>
-      )}
-    </>
+    <div data-testid="sidebar-recent">
+      {recent.map((c) => {
+        // An active session's age would only say "now".
+        const at = activeIds.has(c.id) ? undefined : lastActivity(c);
+        return row(c, at ? relativeTime(Math.max(0, now - at)) : undefined);
+      })}
+    </div>
   );
 }

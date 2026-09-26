@@ -13,7 +13,6 @@ import {
   getImageStatus,
   importWorktree,
   initApiUrl,
-  moveWorktree,
   rebuildImage,
   renameChannel,
   setChannelLocked,
@@ -292,7 +291,6 @@ function AppInner() {
                   base_ahead: d.base_ahead,
                   base_behind: d.base_behind,
                   ...(d.name !== undefined ? { name: d.name } : {}),
-                  ...(d.dir_path !== undefined ? { dir_path: d.dir_path } : {}),
                 }
               : c,
           ),
@@ -575,14 +573,10 @@ function AppInner() {
   );
 
   const handleRename = useCallback(
-    async (id: string, newName: string, isWorktree: boolean) => {
+    async (id: string, newName: string) => {
       setError(null);
       try {
-        if (isWorktree) {
-          await moveWorktree(id, newName);
-        } else {
-          await renameChannel(id, newName);
-        }
+        await renameChannel(id, newName);
         await loadChannels();
       } catch (err) {
         const message = err instanceof Error ? err.message : "Failed to rename";

@@ -284,6 +284,7 @@ func registerFrontendSteps(ctx *godog.ScenarioContext, tc *TestContext) {
 	ctx.Step(`^I inject an exit_plan event with plan "([^"]*)"$`, tc.injectExitPlanEvent)
 	ctx.Step(`^I inject an ask_user event with question "([^"]*)" and options "([^"]*)"$`, tc.injectAskUserEvent)
 	ctx.Step(`^I inject an agent\.status running event$`, tc.injectAgentStatusRunning)
+	ctx.Step(`^I inject an agent\.status running event for the worktree thread$`, tc.injectAgentStatusRunningForWorktree)
 	ctx.Step(`^I inject a gate\.approval_requested event with req_id "([^"]*)", source "([^"]*)", and target "([^"]*)"$`, tc.injectGateApprovalRequested)
 	ctx.Step(`^I inject a gate\.approval_resolved event with req_id "([^"]*)"$`, tc.injectGateApprovalResolved)
 	ctx.Step(`^I inject a gate\.approval_requested event with req_id "([^"]*)", target "([^"]*)", expiring in "(\d+)ms"$`, tc.injectGateApprovalRequestedExpiring)
@@ -2516,12 +2517,25 @@ func (tc *TestContext) injectAgentStatusRunning() error {
 	if tc.ChannelID == "" {
 		return fmt.Errorf("no channel_id set; use 'I set up a test channel via API' step first")
 	}
+	return tc.injectAgentStatusRunningFor(tc.ChannelID)
+}
+
+// injectAgentStatusRunningForWorktree marks the worktree thread set up by
+// the "I set up a worktree" step as running.
+func (tc *TestContext) injectAgentStatusRunningForWorktree() error {
+	if tc.WorktreeThreadID == "" {
+		return fmt.Errorf("no worktree thread set up")
+	}
+	return tc.injectAgentStatusRunningFor(tc.WorktreeThreadID)
+}
+
+func (tc *TestContext) injectAgentStatusRunningFor(channelID string) error {
 	if err := tc.ensureChromeTab(); err != nil {
 		return err
 	}
 	payload, err := json.Marshal(map[string]any{
 		"type":       "agent.status",
-		"channel_id": tc.ChannelID,
+		"channel_id": channelID,
 		"data": map[string]any{
 			"status": "running",
 			"run_id": "bdd-run-1",

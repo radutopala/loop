@@ -193,3 +193,24 @@ Feature: Worktrees Journey
     # Click Switch on "main" — header should update immediately
     When I click button "Switch" in the branches panel
     Then I wait up to "10s" for text "feature/switch-target *" to disappear
+
+  @rename-worktree
+  Scenario: Renaming a worktree thread changes only its name
+    Given I set up a test channel via API for git repo "bdd-wt-rename"
+    And I set up a worktree "rename-wt" on branch "main" under the current channel via API
+    And I open the app in a browser
+    And I wait for text "rename-wt" to appear
+
+    # Only the display name changes: the directory keeps its name.
+    When I right-click on "rename-wt" in the sidebar
+    And I click on "Rename Worktree" in the context menu
+    Then I wait for "[data-testid='rename-thread-dialog']" to be visible
+    When I clear and type "display-only" into "[data-testid='rename-thread-input']"
+    And I click on "[data-testid='rename-thread-submit']"
+    Then I wait for text "display-only" to appear
+    When I click on "bdd-wt-rename" in the sidebar
+    And I wait for "textarea" to be visible
+    And I add a "Git" panel
+    And I click button "Worktrees" in the git panel
+    Then the element "[data-testid='worktrees-panel']" should contain text "rename-wt"
+

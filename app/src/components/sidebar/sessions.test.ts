@@ -102,7 +102,10 @@ describe("relativeTime", () => {
     { ms: 60_000, want: "1m" },
     { ms: 59 * 60_000, want: "59m" },
     { ms: 3 * 3_600_000, want: "3h" },
-    { ms: 50 * 3_600_000, want: "2d" },
+    { ms: 30 * 3_600_000, want: "30h" },
+    { ms: 47 * 3_600_000, want: "47h" },
+    { ms: 48 * 3_600_000, want: "2d" },
+    { ms: 80 * 3_600_000, want: "3d" },
   ])("$ms ms is $want", ({ ms, want }) => {
     expect(relativeTime(ms)).toBe(want);
   });

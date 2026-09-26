@@ -69,10 +69,6 @@ func (m *MockStore) UpdateChannelName(ctx context.Context, channelID, name strin
 	return m.Called(ctx, channelID, name).Error(0)
 }
 
-func (m *MockStore) UpdateChannelDirPath(ctx context.Context, channelID, dirPath string) error {
-	return m.Called(ctx, channelID, dirPath).Error(0)
-}
-
 func (m *MockStore) UpsertPausedChannel(ctx context.Context, p *db.PausedChannel) error {
 	return m.Called(ctx, p).Error(0)
 }

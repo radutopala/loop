@@ -6,12 +6,14 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 
 	"github.com/radutopala/loop/internal/db"
+	"github.com/radutopala/loop/internal/osutil"
 )
 
 func (s *ServerSuite) TestForkThread_Plain() {
@@ -77,6 +79,8 @@ func (s *ServerSuite) TestForkThread_Worktree() {
 	cmd.Dir = dir
 	out, err := cmd.CombinedOutput()
 	require.NoError(s.T(), err, string(out))
+	s.srv.sys = s.sys
+	s.sys.On("Open", mock.Anything).Return(nil, os.ErrNotExist).Maybe()
 
 	s.store.On("GetChannel", mock.Anything, "wt1").Return(&db.Channel{
 		ChannelID: "wt1", ParentID: "ch1", Name: "src", Worktree: true,
@@ -108,6 +112,12 @@ func (s *ServerSuite) TestForkThread_Worktree() {
 	require.Equal(s.T(), "worktree/src-wt", ch.BaseBranch, "fork diffs against the source branch")
 	require.Equal(s.T(), resp.WorktreePath, ch.DirPath)
 	s.store.AssertCalled(s.T(), "MarkSessionForkPending", mock.Anything, "wt2", "sess-1")
+	s.store.AssertNotCalled(s.T(), "UpdateSessionID", mock.Anything, "wt2", mock.Anything)
+	// The source's transcript sits under its own worktree's project dir, not
+	// the parent channel's.
+	srcTranscript := filepath.Join("/home/testuser", ".claude", "projects", osutil.EncodeClaudeProjectPath(dir+"/.worktrees/src-wt"), "sess-1.jsonl")
+	s.sys.AssertCalled(s.T(), "ReadFile", srcTranscript)
+	s.sys.AssertCalled(s.T(), "Open", srcTranscript)
 }
 
 func (s *ServerSuite) TestForkThread_NotConfigured() {
@@ -147,10 +157,94 @@ func (s *ServerSuite) TestForkThread_WorktreeErrors() {
 	rec = s.testRequest("POST", "/api/threads/wtE/fork", "")
 	require.Equal(s.T(), http.StatusInternalServerError, rec.Code)
 
-	// Worktree creation failure (dir is not a git repo).
+	// The source's HEAD can't be resolved (its dir is gone).
 	s.store.On("GetChannel", mock.Anything, "pE").Return(&db.Channel{ChannelID: "pE", DirPath: s.T().TempDir()}, nil)
 	rec = s.testRequest("POST", "/api/threads/wtE/fork", "")
 	require.Equal(s.T(), http.StatusInternalServerError, rec.Code)
+	require.Contains(s.T(), rec.Body.String(), "resolving HEAD of /x/.worktrees/a failed")
+}
+
+func (s *ServerSuite) TestForkThread_WorktreeCreateError() {
+	dir := initGitRepo(s.T())
+	cmd := exec.Command("git", "worktree", "add", "-b", "worktree/cerr", dir+"/.worktrees/cerr")
+	cmd.Dir = dir
+	out, err := cmd.CombinedOutput()
+	require.NoError(s.T(), err, string(out))
+
+	s.store.On("GetChannel", mock.Anything, "wtC").Return(&db.Channel{
+		ChannelID: "wtC", ParentID: "pC", Worktree: true, DirPath: dir + "/.worktrees/cerr",
+	}, nil)
+	// The parent's dir isn't a git repo, so `git worktree add` fails.
+	s.store.On("GetChannel", mock.Anything, "pC").Return(&db.Channel{ChannelID: "pC", DirPath: s.T().TempDir()}, nil)
+	rec := s.testRequest("POST", "/api/threads/wtC/fork", "")
+	require.Equal(s.T(), http.StatusInternalServerError, rec.Code)
+	require.Contains(s.T(), rec.Body.String(), "git worktree add failed")
+}
+
+// TestForkThread_WorktreeCheckedOutRef: the source worktree's branch isn't
+// worktree/<dir name> once an agent renames it, and a worktree can sit on a
+// detached HEAD. The fork branches from what the source has checked out.
+func (s *ServerSuite) TestForkThread_WorktreeCheckedOutRef() {
+	tests := []struct {
+		name  string
+		setup [][]string // git commands run in the source worktree
+		want  func(dir string) string
+	}{
+		{
+			name:  "renamed branch",
+			setup: [][]string{{"branch", "-m", "feat/renamed"}},
+			want:  func(string) string { return "feat/renamed" },
+		},
+		{
+			name:  "detached HEAD",
+			setup: [][]string{{"checkout", "--detach"}},
+			want: func(dir string) string {
+				out, err := exec.Command("git", "-C", dir, "rev-parse", "--short", "HEAD").Output()
+				require.NoError(s.T(), err)
+				return strings.TrimSpace(string(out))
+			},
+		},
+	}
+	for _, tc := range tests {
+		s.Run(tc.name, func() {
+			s.SetupTest()
+			dir := initGitRepo(s.T())
+			src := dir + "/.worktrees/wt-src"
+			cmd := exec.Command("git", "worktree", "add", "-b", "worktree/wt-src", src)
+			cmd.Dir = dir
+			out, err := cmd.CombinedOutput()
+			require.NoError(s.T(), err, string(out))
+			for _, args := range tc.setup {
+				out, err := exec.Command("git", append([]string{"-C", src}, args...)...).CombinedOutput()
+				require.NoError(s.T(), err, string(out))
+			}
+			want := tc.want(src)
+
+			s.store.On("GetChannel", mock.Anything, "wt1").Return(&db.Channel{
+				ChannelID: "wt1", ParentID: "ch1", Name: "src", Worktree: true, DirPath: src,
+			}, nil)
+			s.store.On("GetChannel", mock.Anything, "ch1").Return(&db.Channel{ChannelID: "ch1", DirPath: dir}, nil)
+			s.threads.On("CreateThread", mock.Anything, "ch1", mock.MatchedBy(func(name string) bool {
+				return strings.HasSuffix(name, "(fork of "+want+")")
+			}), "", "").Return("wt2", nil)
+			s.store.On("GetChannel", mock.Anything, "wt2").Return(&db.Channel{ChannelID: "wt2", ParentID: "ch1"}, nil)
+			upserted := make(chan *db.Channel, 1)
+			s.store.On("UpsertChannel", mock.Anything, mock.Anything).Run(func(args mock.Arguments) {
+				upserted <- args.Get(1).(*db.Channel)
+			}).Return(nil)
+			s.store.On("UpdateSessionID", mock.Anything, "wt2", "").Return(nil)
+
+			rec := s.testRequest("POST", "/api/threads/wt1/fork", "")
+			require.Equal(s.T(), http.StatusCreated, rec.Code, rec.Body.String())
+			ch := <-upserted
+			require.Equal(s.T(), want, ch.BaseBranch)
+			head, err := exec.Command("git", "-C", ch.DirPath, "rev-parse", "HEAD").Output()
+			require.NoError(s.T(), err)
+			srcHead, err := exec.Command("git", "-C", src, "rev-parse", "HEAD").Output()
+			require.NoError(s.T(), err)
+			require.Equal(s.T(), string(srcHead), string(head), "the fork starts at the source's commit")
+		})
+	}
 }
 
 func (s *ServerSuite) TestForkThread_WorktreeThreadRowErrors() {
@@ -180,6 +274,12 @@ func (s *ServerSuite) TestForkThread_WorktreeThreadRowErrors() {
 	s.store.On("UpsertChannel", mock.Anything, mock.Anything).Return(errors.New("db")).Once()
 	rec = s.testRequest("POST", "/api/threads/wtR/fork", "")
 	require.Equal(s.T(), http.StatusInternalServerError, rec.Code)
+
+	// Clearing the inherited session fails.
+	s.store.On("UpsertChannel", mock.Anything, mock.Anything).Return(nil)
+	s.store.On("UpdateSessionID", mock.Anything, "wtR2", "").Return(errors.New("db")).Once()
+	rec = s.testRequest("POST", "/api/threads/wtR/fork", "")
+	require.Equal(s.T(), http.StatusInternalServerError, rec.Code)
 }
 
 // TestForkThread_WorktreeSessionNotStaged: Claude Code prunes transcripts
@@ -194,6 +294,7 @@ func (s *ServerSuite) TestForkThread_WorktreeSessionNotStaged() {
 	require.NoError(s.T(), err, string(out))
 
 	// The transcript is gone from ~/.claude/projects, so the copy fails.
+	s.srv.sys = s.sys
 	s.sys.Override("ReadFile", mock.Anything).Return(nil, os.ErrNotExist)
 
 	s.store.On("GetChannel", mock.Anything, "wt1").Return(&db.Channel{
@@ -202,19 +303,15 @@ func (s *ServerSuite) TestForkThread_WorktreeSessionNotStaged() {
 	}, nil)
 	s.store.On("GetChannel", mock.Anything, "ch1").Return(&db.Channel{ChannelID: "ch1", DirPath: dir}, nil)
 	s.threads.On("CreateThread", mock.Anything, "ch1", mock.Anything, "", "").Return("wt2", nil)
-	s.store.On("GetChannel", mock.Anything, "wt2").Return(&db.Channel{ChannelID: "wt2", ParentID: "ch1", Active: true}, nil)
-	upserted := make(chan *db.Channel, 1)
-	s.store.On("UpsertChannel", mock.Anything, mock.Anything).Run(func(args mock.Arguments) {
-		select {
-		case upserted <- args.Get(1).(*db.Channel):
-		default:
-		}
-	}).Return(nil)
+	// The new thread row carries the session it inherited from the channel.
+	s.store.On("GetChannel", mock.Anything, "wt2").Return(&db.Channel{ChannelID: "wt2", ParentID: "ch1", Active: true, SessionID: "sess-channel"}, nil)
+	s.store.On("UpsertChannel", mock.Anything, mock.Anything).Return(nil)
+	s.store.On("UpdateSessionID", mock.Anything, "wt2", "").Return(nil)
 
 	rec := s.testRequest("POST", "/api/threads/wt1/fork", "")
 	require.Equal(s.T(), http.StatusCreated, rec.Code, rec.Body.String())
 
-	ch := <-upserted
-	require.Empty(s.T(), ch.SessionID)
+	// Upserting an empty id keeps the stored one, so it's cleared explicitly.
+	s.store.AssertCalled(s.T(), "UpdateSessionID", mock.Anything, "wt2", "")
 	s.store.AssertNotCalled(s.T(), "MarkSessionForkPending", mock.Anything, "wt2", mock.Anything)
 }

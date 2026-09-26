@@ -209,6 +209,65 @@ func (s *CreatorSuite) TestCreateSessionCopyMkdirDstError() {
 	require.NotNil(s.T(), result)
 }
 
+func (s *CreatorSuite) TestHeadRef() {
+	tests := []struct {
+		name    string
+		results map[string]struct { // keyed by git subcommand
+			out string
+			err error
+		}
+		want    string
+		wantErr string
+	}{
+		{
+			name: "branch",
+			results: map[string]struct {
+				out string
+				err error
+			}{"symbolic-ref": {out: "feat/renamed\n"}},
+			want: "feat/renamed",
+		},
+		{
+			name: "detached",
+			results: map[string]struct {
+				out string
+				err error
+			}{
+				"symbolic-ref": {err: fmt.Errorf("exit status 1")},
+				"rev-parse":    {out: "abc1234\n"},
+			},
+			want: "abc1234",
+		},
+		{
+			name: "not a repo",
+			results: map[string]struct {
+				out string
+				err error
+			}{
+				"symbolic-ref": {err: fmt.Errorf("exit status 128")},
+				"rev-parse":    {out: "fatal: not a git repository\n", err: fmt.Errorf("exit status 128")},
+			},
+			wantErr: "resolving HEAD of /proj/.worktrees/wt-abc failed: fatal: not a git repository",
+		},
+	}
+	for _, tc := range tests {
+		s.Run(tc.name, func() {
+			s.creator.Run = func(_ context.Context, dir, name string, args ...string) ([]byte, error) {
+				require.Equal(s.T(), "/proj/.worktrees/wt-abc", dir)
+				r := tc.results[args[0]]
+				return []byte(r.out), r.err
+			}
+			got, err := s.creator.HeadRef(context.Background(), "/proj/.worktrees/wt-abc")
+			if tc.wantErr != "" {
+				require.EqualError(s.T(), err, tc.wantErr)
+				return
+			}
+			require.NoError(s.T(), err)
+			require.Equal(s.T(), tc.want, got)
+		})
+	}
+}
+
 func (s *CreatorSuite) TestRemoveSuccess() {
 	err := s.creator.Remove(context.Background(), "/proj", "/proj/.worktrees/wt-abc")
 
@@ -305,42 +364,4 @@ func (s *CreatorSuite) TestRemovePruneError() {
 
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "prune failed")
-}
-
-func (s *CreatorSuite) TestMoveSuccess() {
-	err := s.creator.Move(context.Background(), "/proj", "/proj/.worktrees/wt-old", "/proj/.worktrees/wt-new", "worktree/wt-old", "worktree/wt-new")
-
-	require.NoError(s.T(), err)
-	require.Len(s.T(), s.runArgs, 2)
-	require.Equal(s.T(), []string{"/proj", "git", "worktree", "move", "/proj/.worktrees/wt-old", "/proj/.worktrees/wt-new"}, s.runArgs[0])
-	require.Equal(s.T(), []string{"/proj/.worktrees/wt-new", "git", "branch", "-m", "worktree/wt-old", "worktree/wt-new"}, s.runArgs[1])
-}
-
-func (s *CreatorSuite) TestMoveWorktreeFail() {
-	s.runErr = fmt.Errorf("exit status 1")
-	s.runOut = []byte("fatal: not a worktree path")
-
-	err := s.creator.Move(context.Background(), "/proj", "/proj/.worktrees/wt-old", "/proj/.worktrees/wt-new", "worktree/wt-old", "worktree/wt-new")
-
-	require.Error(s.T(), err)
-	require.Contains(s.T(), err.Error(), "git worktree move failed")
-	require.Contains(s.T(), err.Error(), "fatal: not a worktree path")
-}
-
-func (s *CreatorSuite) TestMoveBranchRenameFail() {
-	callCount := 0
-	s.creator.Run = func(ctx context.Context, dir, name string, args ...string) ([]byte, error) {
-		s.runArgs = append(s.runArgs, append([]string{dir, name}, args...))
-		callCount++
-		if callCount == 2 {
-			return []byte("fatal: branch rename failed"), fmt.Errorf("exit status 1")
-		}
-		return nil, nil
-	}
-
-	err := s.creator.Move(context.Background(), "/proj", "/proj/.worktrees/wt-old", "/proj/.worktrees/wt-new", "worktree/wt-old", "worktree/wt-new")
-
-	require.Error(s.T(), err)
-	require.Contains(s.T(), err.Error(), "git branch -m failed")
-	require.Contains(s.T(), err.Error(), "fatal: branch rename failed")
 }

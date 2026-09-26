@@ -6,9 +6,7 @@ import type { Channel } from "../../types";
 // counts as active now, so it tops the list.
 
 /** How far back Recent looks. */
-export const RECENT_WINDOW_MS = 24 * 60 * 60 * 1000;
-/** Recent rows shown at first, and added by each "show more". */
-export const RECENT_LIMIT = 10;
+export const RECENT_WINDOW_MS = 48 * 60 * 60 * 1000;
 
 const TASK_PREFIX = /^(\[ephemeral] )?(🧵 |⏱ )?/;
 
@@ -69,12 +67,15 @@ export function recentSessions(channels: Channel[], lastActivity: (channel: Chan
     .map(({ c }) => c);
 }
 
-/** A compact age: "now", "5m", "3h", "2d". */
+/**
+ * A compact age: "now", "5m", "30h", "3d". Hours cover Recent's whole
+ * window, so its rows never collapse into the same "1d".
+ */
 export function relativeTime(ms: number): string {
   const min = Math.floor(Math.max(0, ms) / 60_000);
   if (min < 1) return "now";
   if (min < 60) return `${min}m`;
   const h = Math.floor(min / 60);
-  if (h < 24) return `${h}h`;
+  if (h < RECENT_WINDOW_MS / 3_600_000) return `${h}h`;
   return `${Math.floor(h / 24)}d`;
 }
