@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { RootEntry } from "../../api/files";
 import type { ChatState } from "../../hooks/useChatState";
+import { useQueuedEdit } from "../../hooks/useQueuedEdit";
 import { useTheme } from "../../ThemeContext";
 import type { ColorPalette } from "../../theme";
 import { fonts } from "../../theme";
@@ -99,6 +100,7 @@ export function ChatView({ channelId, chatState, roots, scrollToMessageId, onScr
   const messagesRef = useRef<ChatMessagesHandle>(null);
   const [quotedMessage, setQuotedMessage] = useState<Message | null>(null);
   const clearQuote = useCallback(() => setQuotedMessage(null), []);
+  const queuedEdit = useQueuedEdit(channelId, chatState.queuedMessages);
 
   const scrollToBottom = useCallback(() => {
     messagesRef.current?.scrollToBottom();
@@ -170,6 +172,10 @@ export function ChatView({ channelId, chatState, roots, scrollToMessageId, onScr
             pendingGateReqId={chatState.gateApprovals["chat"]?.req_id ?? null}
             hasPendingExitPlan={!!chatState.exitPlanRequest}
             hasPendingAskUser={!!chatState.askUserQuestions}
+            // Removing the only message mid-edit lands here; the notice
+            // still explains where the edit went.
+            editNotice={queuedEdit.notice}
+            onDismissEditNotice={queuedEdit.dismissNotice}
           />
         </div>
 
@@ -193,6 +199,8 @@ export function ChatView({ channelId, chatState, roots, scrollToMessageId, onScr
           findTerm={findOpen ? findTerm : undefined}
           onScrollComplete={handleScrollComplete}
           onQuote={setQuotedMessage}
+          onEditQueued={queuedEdit.start}
+          editingMsgId={queuedEdit.editing?.msg_id ?? null}
         />
         {!findOpen && (
           <button
@@ -222,6 +230,11 @@ export function ChatView({ channelId, chatState, roots, scrollToMessageId, onScr
           messages={messages}
           roots={roots}
           isRunning={isRunning}
+          editingQueued={queuedEdit.editing}
+          onSaveEdit={queuedEdit.save}
+          onCancelEdit={queuedEdit.cancel}
+          editNotice={queuedEdit.notice}
+          onDismissEditNotice={queuedEdit.dismissNotice}
           mode={chatState.mode}
           setMode={chatState.setMode}
           onDismissGate={dismissGate}

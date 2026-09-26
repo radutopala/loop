@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -53,6 +54,8 @@ func registerBackendSteps(ctx *godog.ScenarioContext, tc *TestContext) {
 	ctx.Step(`^I modify "([^"]*)" without staging$`, tc.modifyWithoutStaging)
 	ctx.Step(`^I create a (\d+)-page PDF "([^"]*)" reading "([^"]*)" in the repo$`, tc.createPDF)
 	ctx.Step(`^I create a file "([^"]*)" in the repo with:$`, tc.createRepoFile)
+	ctx.Step(`^I commit all changes in the repo with message "([^"]*)"$`, tc.commitAllInRepo)
+	ctx.Step(`^I remove every queued message via API$`, tc.removeQueuedViaAPI)
 
 	// Ticket setup steps
 	ctx.Step(`^I create a ticket "([^"]*)" with type "([^"]*)" via API$`, tc.createTicketViaAPI)
@@ -701,6 +704,51 @@ func (tc *TestContext) createRepoFile(name string, body *godog.DocString) error 
 		return fmt.Errorf("creating dirs for %s: %w", name, err)
 	}
 	return os.WriteFile(fpath, []byte(body.Content), 0o644)
+}
+
+// commitAllInRepo stages everything in the channel's repo and commits it.
+// The message may carry "\n" escapes so a scenario can give it a body.
+func (tc *TestContext) commitAllInRepo(msg string) error {
+	if tc.ChannelDir == "" {
+		return fmt.Errorf("no channel dir set; use 'I set up a test channel via API for git repo' step first")
+	}
+	for _, args := range [][]string{
+		{"-C", tc.ChannelDir, "add", "-A"},
+		{"-C", tc.ChannelDir, "commit", "-m", strings.ReplaceAll(msg, `\n`, "\n")},
+	} {
+		if out, err := exec.Command("git", args...).CombinedOutput(); err != nil {
+			return fmt.Errorf("git %v: %s: %w", args, out, err)
+		}
+	}
+	return nil
+}
+
+// removeQueuedViaAPI deletes each message waiting in the channel's queue, the
+// way another window's "Remove from queue" would.
+func (tc *TestContext) removeQueuedViaAPI() error {
+	if err := tc.doRequest(http.MethodGet, "/api/channels/{channel_id}/queued", ""); err != nil {
+		return err
+	}
+	var queued struct {
+		Messages []struct {
+			MsgID string `json:"msg_id"`
+		} `json:"messages"`
+	}
+	if err := json.Unmarshal(tc.LastBody, &queued); err != nil {
+		return fmt.Errorf("decoding queue: %w", err)
+	}
+	if len(queued.Messages) == 0 {
+		return fmt.Errorf("queue is empty")
+	}
+	for _, m := range queued.Messages {
+		if err := tc.doRequest(http.MethodDelete, "/api/messages/"+url.PathEscape(m.MsgID)+"?channel_id={channel_id}", ""); err != nil {
+			return err
+		}
+		if tc.LastStatus != http.StatusNoContent {
+			return fmt.Errorf("deleting %s: status %d: %s", m.MsgID, tc.LastStatus, tc.LastBody)
+		}
+	}
+	return nil
 }
 
 // createPDF writes a minimal PDF with `pages` pages into the channel's repo,

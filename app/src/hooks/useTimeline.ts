@@ -24,6 +24,7 @@ interface UseTimelineResult {
   // Mutators for chat-row events that already affected DB state.
   markProcessed: (msgIds: string[]) => void;
   removeMessage: (msgId: string) => void;
+  updateMessageContent: (msgId: string, content: string) => void;
   // Refetch the head of the timeline + drop the live tail (called on run completion).
   refetchHead: () => void;
 }
@@ -209,6 +210,20 @@ export function useTimeline(channelId: string | null): UseTimelineResult {
     setLiveTail(filter);
   }, []);
 
+  const updateMessageContent = useCallback((msgId: string, content: string) => {
+    const apply = (list: TimelineItem[]): TimelineItem[] => {
+      let changed = false;
+      const next = list.map((it) => {
+        if (it.kind !== "message" || it.data.msg_id !== msgId || it.data.content === content) return it;
+        changed = true;
+        return { ...it, data: { ...it.data, content } };
+      });
+      return changed ? next : list;
+    };
+    setItems(apply);
+    setLiveTail(apply);
+  }, []);
+
   const refetchHead = useCallback(() => {
     if (!channelId) return;
     // A long run can backfill hundreds of event rows past the first PAGE_SIZE.
@@ -290,6 +305,7 @@ export function useTimeline(channelId: string | null): UseTimelineResult {
     appendLiveCompacting,
     markProcessed,
     removeMessage,
+    updateMessageContent,
     refetchHead,
   };
 }

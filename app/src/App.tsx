@@ -35,7 +35,8 @@ import { type ActiveChatState, useChatStateStore } from "./hooks/useChatStateSto
 import { DEFAULT_FONT_SIZES, ThemeProvider, useTheme } from "./ThemeContext";
 import { fonts } from "./theme";
 import type { Channel, ChannelAgentConfigData, ChannelUpdatedData, ImageBuildStatusData, ImageUpdateAvailableData, UpdateStatus, WSEvent } from "./types";
-import { applyChannelUpdate } from "./utils/channelUpdate";
+import type { ChannelPatch } from "./utils/channelUpdate";
+import { applyChannelUpdate, replayChannelPatches } from "./utils/channelUpdate";
 import { logErr } from "./utils/log";
 import { parseChannelTarget } from "./utils/messageLinks";
 import { storageGet, storageRemove, storageSet } from "./utils/storage";
@@ -227,6 +228,15 @@ function AppInner() {
   }, []);
 
   const dmEnsuredRef = useRef(false);
+  // Live channel changes (channel.updated, channel.agent_config), kept until a
+  // fetch that started after them lands. A fetch in flight when one arrives —
+  // selecting a channel fires one — returns a snapshot without it, and would
+  // otherwise wipe it until the next poll.
+  const channelPatchesRef = useRef<ChannelPatch[]>([]);
+  const patchChannel = useCallback((id: string, apply: (c: Channel) => Channel) => {
+    channelPatchesRef.current.push({ at: performance.now(), id, apply });
+    setChannels((prev) => prev.map((c) => (c.id === id ? apply(c) : c)));
+  }, []);
 
   const loadChannels = useCallback(async () => {
     if (!ready) return;
@@ -249,7 +259,9 @@ function AppInner() {
       // A slower, older fetch must not overwrite a newer one's list.
       if (startedAt < channelsFetchedAtRef.current) return;
       channelsFetchedAtRef.current = startedAt;
-      setChannels(chs);
+      const replayed = replayChannelPatches(chs, channelPatchesRef.current, startedAt);
+      channelPatchesRef.current = replayed.pending;
+      setChannels(replayed.channels);
       setChannelsFetchedAt(startedAt);
     } catch {
       /* will retry on next poll */
@@ -277,12 +289,12 @@ function AppInner() {
       }
       if (event.type === "channel.updated") {
         const d = event.data as ChannelUpdatedData;
-        setChannels((prev) => prev.map((c) => (c.id === d.channel_id ? applyChannelUpdate(c, d) : c)));
+        patchChannel(d.channel_id, (c) => applyChannelUpdate(c, d));
         return;
       }
       if (event.type === "channel.agent_config") {
         const d = event.data as ChannelAgentConfigData;
-        setChannels((prev) => prev.map((c) => (c.id === event.channel_id ? { ...c, model_override: d.model_override, effort_override: d.effort_override } : c)));
+        patchChannel(event.channel_id, (c) => ({ ...c, model_override: d.model_override, effort_override: d.effort_override }));
         return;
       }
       if (event.type === "image.build_status") {
@@ -311,7 +323,7 @@ function AppInner() {
       if (debounceRef.current) clearTimeout(debounceRef.current);
       debounceRef.current = setTimeout(loadDiffStats, 1_000);
     },
-    [loadDiffStats, selectedId, loadChannels, refreshShareCount],
+    [loadDiffStats, selectedId, loadChannels, patchChannel, refreshShareCount],
   );
   useEffect(
     () => () => {

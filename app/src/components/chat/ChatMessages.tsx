@@ -18,6 +18,11 @@ export interface ChatMessagesProps {
   findTerm?: string;
   onScrollComplete?: () => void;
   onQuote?: (msg: Message) => void;
+  // Opens a queued message in the composer for editing; resolves false when
+  // the message already started.
+  onEditQueued?: (msg: Message) => Promise<boolean>;
+  // The queued message currently open in the composer, if any.
+  editingMsgId?: string | null;
 }
 
 export interface ChatMessagesHandle {
@@ -66,7 +71,10 @@ function revealMessage(container: HTMLElement, el: Element, term: string | undef
   return null;
 }
 
-export const ChatMessages = forwardRef<ChatMessagesHandle, ChatMessagesProps>(function ChatMessages({ channelId, chatState, scrollToMessageId, findTerm, onScrollComplete, onQuote }, ref) {
+export const ChatMessages = forwardRef<ChatMessagesHandle, ChatMessagesProps>(function ChatMessages(
+  { channelId, chatState, scrollToMessageId, findTerm, onScrollComplete, onQuote, onEditQueued, editingMsgId },
+  ref,
+) {
   const { colors } = useTheme();
   const styles = buildMessageStyles(colors);
   const {
@@ -476,7 +484,7 @@ export const ChatMessages = forwardRef<ChatMessagesHandle, ChatMessagesProps>(fu
         )}
       </div>
       {agentTasks && agentTasks.tasks.length > 0 && <TaskChecklist tasks={agentTasks.tasks} />}
-      {queuedMessages.length > 0 && <QueuedMessagesPopup messages={queuedMessages} channelId={channelId} isRunning={isRunning} />}
+      {queuedMessages.length > 0 && <QueuedMessagesPopup messages={queuedMessages} channelId={channelId} isRunning={isRunning} onEdit={onEditQueued} editingMsgId={editingMsgId} />}
     </ChannelContext.Provider>
   );
 });

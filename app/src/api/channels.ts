@@ -332,6 +332,40 @@ export async function steerQueuedMessage(channelId: string, msgId: string): Prom
   if (!res.ok) throw new Error(`Failed to steer queued message: ${res.statusText}`);
 }
 
+// holdQueuedMessage starts (or renews) an edit of a queued message: while the
+// hold lasts the backend won't start that message or anything queued behind
+// it. Resolves false when a run already started the message — too late to
+// edit.
+export async function holdQueuedMessage(channelId: string, msgId: string): Promise<boolean> {
+  const url = `${getApiUrl()}/api/channels/${encodeURIComponent(channelId)}/queued/${encodeURIComponent(msgId)}/hold`;
+  const res = await fetch(url, { method: "POST" });
+  if (res.status === 409) return false;
+  if (!res.ok) throw new Error(`Failed to hold queued message: ${res.statusText}`);
+  return true;
+}
+
+// releaseQueuedHold cancels an edit, leaving the queued message unchanged.
+export async function releaseQueuedHold(channelId: string, msgId: string): Promise<void> {
+  const url = `${getApiUrl()}/api/channels/${encodeURIComponent(channelId)}/queued/${encodeURIComponent(msgId)}/hold`;
+  const res = await fetch(url, { method: "DELETE" });
+  if (!res.ok) throw new Error(`Failed to release queued message: ${res.statusText}`);
+}
+
+// updateQueuedMessage saves an edit to a queued message and lets the queue
+// move again. Resolves false when a run already started the message, in which
+// case nothing was changed.
+export async function updateQueuedMessage(channelId: string, msgId: string, content: string): Promise<boolean> {
+  const url = `${getApiUrl()}/api/channels/${encodeURIComponent(channelId)}/queued/${encodeURIComponent(msgId)}`;
+  const res = await fetch(url, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ content }),
+  });
+  if (res.status === 409) return false;
+  if (!res.ok) throw new Error(`Failed to update queued message: ${res.statusText}`);
+  return true;
+}
+
 // reorderQueuedMessages persists a new order for the channel's queued messages
 // (first id = highest priority / runs next).
 export async function reorderQueuedMessages(channelId: string, orderedMsgIds: string[]): Promise<void> {

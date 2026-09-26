@@ -13,6 +13,7 @@ import type {
   MessageCreatedData,
   MessageStreamingData,
   MessagesProcessedData,
+  MessageUpdatedData,
   TimelineItem,
   ToolResultData,
   ToolUseData,
@@ -107,6 +108,7 @@ export function useChatState(channelId: string | null, initialRunningBot?: boole
     appendLiveCompacting,
     markProcessed,
     removeMessage,
+    updateMessageContent,
     refetchHead,
   } = useTimeline(channelId);
   const [streamingContent, setStreamingContent] = useState<string | null>(initialState?.streamingContent ?? null);
@@ -276,6 +278,12 @@ export function useChatState(channelId: string | null, initialRunningBot?: boole
         refreshQueue();
         return;
       }
+      if (event.type === "message.updated") {
+        const data = event.data as MessageUpdatedData;
+        updateMessageContent(data.msg_id, data.content);
+        refreshQueue();
+        return;
+      }
       if (event.type === "tool.use") {
         const data = event.data as ToolUseData;
         setToolActivity({ tool_name: data.tool_name, input: data.input });
@@ -439,7 +447,7 @@ export function useChatState(channelId: string | null, initialRunningBot?: boole
         return;
       }
     },
-    [appendLiveMessage, appendLiveThinking, appendLiveToolUse, appendLiveToolResult, appendLiveCompacting, markProcessed, removeMessage, refetchHead, refreshQueue],
+    [appendLiveMessage, appendLiveThinking, appendLiveToolUse, appendLiveToolResult, appendLiveCompacting, markProcessed, removeMessage, updateMessageContent, refetchHead, refreshQueue],
   );
 
   // Subscribe to chat events from the app-level store (single WS).

@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -108,6 +109,12 @@ func (s *Server) handleGitDiff(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	dirPath = resolvedDir
+
+	// Single-commit mode: ?commit=<sha> shows what that commit changed.
+	if commit := r.URL.Query().Get("commit"); commit != "" {
+		s.handleCommitDiff(w, r, dirPath, commit)
+		return
+	}
 
 	// Branch-to-branch diff mode: ?source=branchA&target=branchB
 	source := r.URL.Query().Get("source")
@@ -375,6 +382,55 @@ func (s *Server) handleBranchDiff(w http.ResponseWriter, r *http.Request, dirPat
 	writeHTTPJSON(w, http.StatusOK, diffResponse{
 		Files:          files,
 		Diff:           diffText,
+		TotalAdditions: totalAdd,
+		TotalDeletions: totalDel,
+	}, s.logger)
+}
+
+// validCommitHash matches an abbreviated or full commit id. The commits list
+// hands the frontend full hashes; anything else (refs, ranges, options) is
+// rejected so the value can't widen what git is asked to show.
+var validCommitHash = regexp.MustCompile(`^[0-9a-fA-F]{4,64}$`)
+
+// handleCommitDiff returns the changes a single commit introduced. Merge
+// commits are diffed against their first parent — the change the merge brought
+// into the branch — since the combined-diff format has no single old side for
+// the frontend to render. Root commits diff against the empty tree.
+func (s *Server) handleCommitDiff(w http.ResponseWriter, r *http.Request, dirPath, commit string) {
+	if !validCommitHash.MatchString(commit) {
+		http.Error(w, "invalid commit hash", http.StatusBadRequest)
+		return
+	}
+
+	showArgs := []string{"show", "--format=", "--diff-merges=first-parent", commit + "^{commit}", "--"}
+	numstatCmd := exec.CommandContext(r.Context(), "git", append([]string{"show", "--numstat", "-z"}, showArgs[1:]...)...)
+	numstatCmd.Dir = dirPath
+	numstatOut, err := numstatCmd.Output()
+	if err != nil {
+		msg := "git show failed"
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) {
+			msg += ": " + strings.TrimSpace(string(exitErr.Stderr))
+		}
+		http.Error(w, msg, http.StatusNotFound)
+		return
+	}
+
+	files := parseNumstat(string(numstatOut))
+
+	diffCmd := exec.CommandContext(r.Context(), "git", showArgs...)
+	diffCmd.Dir = dirPath
+	diffOut, _ := diffCmd.Output()
+
+	var totalAdd, totalDel int
+	for _, f := range files {
+		totalAdd += f.Additions
+		totalDel += f.Deletions
+	}
+
+	writeHTTPJSON(w, http.StatusOK, diffResponse{
+		Files:          files,
+		Diff:           string(diffOut),
 		TotalAdditions: totalAdd,
 		TotalDeletions: totalDel,
 	}, s.logger)

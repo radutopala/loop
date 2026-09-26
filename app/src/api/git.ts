@@ -143,3 +143,12 @@ export async function fetchDiff(channelId: string, source?: string, target?: str
   if (!res.ok) throw new Error(`Failed to fetch diff: ${res.statusText}`);
   return res.json();
 }
+
+/** The changes one commit introduced (a merge against its first parent). */
+export async function fetchCommitDiff(channelId: string, hash: string, rootIndex?: number): Promise<DiffResponse> {
+  const params = new URLSearchParams({ commit: hash });
+  if (rootIndex !== undefined && rootIndex > 0) params.set("root", String(rootIndex));
+  const res = await fetch(`${getApiUrl()}/api/channels/${channelId}/diff?${params}`);
+  if (!res.ok) throw new Error(`Failed to fetch commit diff: ${res.statusText}`);
+  return res.json();
+}

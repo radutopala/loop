@@ -71,6 +71,13 @@ type AskResolver interface {
 	AskedChannelMode(channelID string) string
 }
 
+// QueueResumer restarts a channel's drain. Editing a queued message holds the
+// queue at that row; ResumeChannel lets it move again once the edit is saved
+// or abandoned.
+type QueueResumer interface {
+	ResumeChannel(ctx context.Context, channelID string)
+}
+
 // serverSystem abstracts OS operations needed by Server.
 type serverSystem interface {
 	Stat(name string) (os.FileInfo, error)
@@ -129,6 +136,7 @@ type Server struct {
 	msgHandler              IncomingMessageHandler
 	runCanceller            RunCanceller
 	planResolver            PlanResolver
+	queueResumer            QueueResumer
 	askResolver             AskResolver
 	containerStats          ContainerStatsFetcher
 	interactionHandler      InteractionHandler
@@ -185,6 +193,12 @@ func (s *Server) SetRunCanceller(rc RunCanceller) {
 // /api/channels/{id}/plan/resolve.
 func (s *Server) SetPlanResolver(pr PlanResolver) {
 	s.planResolver = pr
+}
+
+// SetQueueResumer configures the drain kick used after a queued-message edit
+// ends (/api/channels/{id}/queued/{msg_id} and its /hold).
+func (s *Server) SetQueueResumer(qr QueueResumer) {
+	s.queueResumer = qr
 }
 
 // SetAskResolver configures the ask-pause resolver used by
@@ -370,6 +384,9 @@ func (s *Server) registerChannelRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/channels/{id}/queued", s.handleListQueuedMessages)
 	mux.HandleFunc("POST /api/channels/{id}/queued/reorder", s.handleReorderQueuedMessages)
 	mux.HandleFunc("POST /api/channels/{id}/queued/{msg_id}/steer", s.handleSteerQueuedMessage)
+	mux.HandleFunc("PUT /api/channels/{id}/queued/{msg_id}", s.handleUpdateQueuedMessage)
+	mux.HandleFunc("POST /api/channels/{id}/queued/{msg_id}/hold", s.handleHoldQueuedMessage)
+	mux.HandleFunc("DELETE /api/channels/{id}/queued/{msg_id}/hold", s.handleReleaseQueuedHold)
 	mux.HandleFunc("GET /api/messages/search", s.handleSearchMessages)
 	mux.HandleFunc("GET /api/channels/{id}/messages/search", s.handleSearchChannelMessages)
 	mux.HandleFunc("POST /api/channels/{id}/rename", s.handleRenameChannel)

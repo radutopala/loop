@@ -530,14 +530,17 @@ func (s *ChildSuite) TestDefaultParentConnRejectsTCPFD() {
 // TestDefaultParentConnHappyOnSocketpair exercises the happy path by placing
 // a real unix socketpair fd at fd 3.
 //
-// Skipped when running as a syscallwrap child: the outer gate parent owns
-// fd 3 and has already registered it with Go's net poller for its own
-// handshake socket. A dup2 over fd 3 here would disturb the live gate
-// connection, and even when it succeeds the poller's cached state against
-// the original fd makes net.FileConn return EINVAL. The path this test
-// covers runs fine in the intended host/CI environment.
+// Skipped when running as a syscallwrap child whose fd 3 is still the
+// handshake socket: the outer gate parent owns it and has already registered it with Go's net
+// poller for its own handshake socket. A dup2 over fd 3 here would disturb
+// the live gate connection, and even when it succeeds the poller's cached
+// state against the original fd makes net.FileConn return EINVAL.
+// Descendants inherit the mode env var but not the socket (fd 3 is then
+// whatever the Go runtime opened there), so the env var alone is not a
+// reason to skip.
 func (s *ChildSuite) TestDefaultParentConnHappyOnSocketpair() {
-	if os.Getenv(envMode) == modeChild {
+	var st unix.Stat_t
+	if os.Getenv(envMode) == modeChild && unix.Fstat(childHandshakeFD, &st) == nil && st.Mode&unix.S_IFMT == unix.S_IFSOCK {
 		s.T().Skip("fd 3 is owned by the outer syscallwrap parent")
 	}
 

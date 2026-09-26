@@ -156,8 +156,14 @@ coverage: ## Generate HTML coverage report
 _coverage-check-run:
 	go generate ./internal/readme/
 	go test -race -count=1 -timeout 90s -coverpkg=./... -coverprofile=coverage.out ./...
-	@go tool cover -func=coverage.out 2>/dev/null | grep total | awk '{print $$3}' | sed 's/%//' | \
-		awk '{if ($$1 < 100.0) {print "Coverage is " $$1 "%, required 100%"; exit 1} else {print "Coverage: " $$1 "%"}}'
+	@# Counted from the raw profile: `go tool cover -func` rounds its total to
+	@# one decimal, so a handful of uncovered statements would still print 100.0%.
+	@# With -coverpkg a block repeats once per test binary; it is covered if any hit it.
+	@awk 'NR > 1 { split($$0, f, " "); n[f[1]] = f[2]; if (f[3] > 0) hit[f[1]] = 1 } \
+		END { for (b in n) { total += n[b]; if (!(b in hit) && n[b] > 0) { miss += n[b]; print "uncovered: " b " (" n[b] " stmts)" | "sort" } } \
+		close("sort"); \
+		if (miss > 0) { printf "Coverage is %.4f%% (%d of %d statements uncovered), required 100%%\n", 100 * (total - miss) / total, miss, total; exit 1 } \
+		printf "Coverage: 100%% (%d statements)\n", total }' coverage.out
 
 coverage-check: ## Run tests and enforce 100% coverage (via Docker on host, directly in CI)
 	@if [ "$$CI" = "true" ] || [ -f /.dockerenv ]; then \

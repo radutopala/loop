@@ -301,9 +301,28 @@ interface DiffViewerProps {
   onExpandAll: () => void;
   onCollapseAll: () => void;
   onFileContextMenu: (e: React.MouseEvent, path: string) => void;
+  /** Workspace root the paths are relative to (0 = primary dir). */
+  rootIndex?: number;
+  /** Commit the diff belongs to; expanding context then reads the file from
+   * that commit rather than from the working tree. */
+  fileRef?: string;
 }
 
-export function DiffViewer({ channelId, files, parsedFiles, expandedFiles, loading, hasData, totalFiles, onToggleFile, onExpandAll, onCollapseAll, onFileContextMenu }: DiffViewerProps) {
+export function DiffViewer({
+  channelId,
+  files,
+  parsedFiles,
+  expandedFiles,
+  loading,
+  hasData,
+  totalFiles,
+  onToggleFile,
+  onExpandAll,
+  onCollapseAll,
+  onFileContextMenu,
+  rootIndex,
+  fileRef,
+}: DiffViewerProps) {
   const { colors } = useTheme();
   const fileContentCache = useRef<Map<string, string[]>>(new Map());
   const [expandedGaps, setExpandedGaps] = useState<Map<string, Map<string, { fromTop: number; fromBottom: number }>>>(new Map());
@@ -460,7 +479,7 @@ export function DiffViewer({ channelId, files, parsedFiles, expandedFiles, loadi
       if (cached) return cached;
       if (!channelId) return null;
       try {
-        const { content, binary } = await fetchFileContent(channelId, filePath);
+        const { content, binary } = await fetchFileContent(channelId, filePath, rootIndex, fileRef);
         if (binary) return null;
         const lines = content.split("\n");
         fileContentCache.current.set(filePath, lines);
@@ -469,7 +488,7 @@ export function DiffViewer({ channelId, files, parsedFiles, expandedFiles, loadi
         return null;
       }
     },
-    [channelId],
+    [channelId, rootIndex, fileRef],
   );
 
   const gapKey = (gap: ExpandableGap) => `${gap.startLine}-${gap.endLine}`;

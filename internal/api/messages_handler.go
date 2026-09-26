@@ -198,6 +198,10 @@ type messageResponse struct {
 	// to run; 0/omitted for immediate messages. The FE renders a live countdown
 	// from it while it is still in the future.
 	NotBefore int64 `json:"not_before,omitempty"`
+	// EditHoldUntil is set while the user edits this queued message: the
+	// unix-seconds end of the hold keeping it (and the queue behind it) from
+	// starting.
+	EditHoldUntil int64 `json:"edit_hold_until,omitempty"`
 }
 
 type messagesListResponse struct {
@@ -207,19 +211,20 @@ type messagesListResponse struct {
 
 func toMessageResponse(m *db.Message) messageResponse {
 	return messageResponse{
-		ID:           m.ID,
-		ChannelID:    m.ChannelID,
-		MsgID:        m.MsgID,
-		AuthorID:     m.AuthorID,
-		AuthorName:   m.AuthorName,
-		Content:      m.Content,
-		IsBot:        m.IsBot,
-		IsProcessed:  m.IsProcessed,
-		IsRunning:    m.IsRunning,
-		Priority:     m.Priority,
-		TriggerMsgID: m.TriggerMsgID,
-		CreatedAt:    m.CreatedAt,
-		NotBefore:    m.NotBefore,
+		ID:            m.ID,
+		ChannelID:     m.ChannelID,
+		MsgID:         m.MsgID,
+		AuthorID:      m.AuthorID,
+		AuthorName:    m.AuthorName,
+		Content:       m.Content,
+		IsBot:         m.IsBot,
+		IsProcessed:   m.IsProcessed,
+		IsRunning:     m.IsRunning,
+		Priority:      m.Priority,
+		TriggerMsgID:  m.TriggerMsgID,
+		CreatedAt:     m.CreatedAt,
+		NotBefore:     m.NotBefore,
+		EditHoldUntil: m.EditHoldUntil,
 	}
 }
 

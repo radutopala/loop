@@ -18,6 +18,7 @@ const (
 	EventMessageStreaming          = "message.streaming"
 	EventMessagesProcessed         = "messages.processed"
 	EventMessageDeleted            = "message.deleted"
+	EventMessageUpdated            = "message.updated"
 	EventAgentStatus               = "agent.status"
 	EventToolUse                   = "tool.use"
 	EventToolResult                = "tool.result"
@@ -190,6 +191,15 @@ func (h *EventsHub) BroadcastMessagesProcessed(channelID string, data events.Mes
 func (h *EventsHub) BroadcastMessageDeleted(channelID string, data events.MessageDeletedData) {
 	h.Broadcast(Event{
 		Type:      EventMessageDeleted,
+		ChannelID: channelID,
+		Data:      data,
+	})
+}
+
+// BroadcastMessageUpdated sends a message.updated event for a queued message whose content was edited.
+func (h *EventsHub) BroadcastMessageUpdated(channelID string, data events.MessageUpdatedData) {
+	h.Broadcast(Event{
+		Type:      EventMessageUpdated,
 		ChannelID: channelID,
 		Data:      data,
 	})

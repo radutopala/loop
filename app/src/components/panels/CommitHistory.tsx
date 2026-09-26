@@ -7,9 +7,11 @@ interface CommitHistoryProps {
   commits: CommitEntry[];
   commitsLoading: boolean;
   onLoadMore: () => void;
+  /** Opens the commit's diff. */
+  onSelect: (commit: CommitEntry) => void;
 }
 
-export function CommitHistory({ commits, commitsLoading, onLoadMore }: CommitHistoryProps) {
+export function CommitHistory({ commits, commitsLoading, onLoadMore, onSelect }: CommitHistoryProps) {
   const { colors } = useTheme();
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
 
@@ -42,16 +44,15 @@ export function CommitHistory({ commits, commitsLoading, onLoadMore }: CommitHis
         return (
           <div
             key={c.hash}
+            data-testid="commit-row"
             style={{
               padding: "6px 12px",
               borderBottom: `1px solid ${colors.border}`,
               fontSize: 12,
-              cursor: hasBody ? "pointer" : "default",
+              cursor: "pointer",
             }}
-            onClick={() => {
-              if (hasBody) toggle(c.hash);
-            }}
-            title={hasBody ? (isOpen ? "Collapse message" : "Expand full message") : undefined}
+            onClick={() => onSelect(c)}
+            title="Show changes"
             onMouseEnter={(e) => {
               e.currentTarget.style.background = colors.hoverBg;
             }}
@@ -62,7 +63,19 @@ export function CommitHistory({ commits, commitsLoading, onLoadMore }: CommitHis
             <div style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
               <span style={{ fontFamily: fonts.mono, fontSize: 11, color: colors.active, flexShrink: 0 }}>{c.short}</span>
               <span style={{ color: colors.textLight, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1 }}>{c.subject}</span>
-              {hasBody && <span style={{ color: colors.textDim, fontSize: 10, flexShrink: 0, fontFamily: fonts.mono }}>{isOpen ? "▾" : "▸"}</span>}
+              {hasBody && (
+                <span
+                  data-testid="commit-body-toggle"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    toggle(c.hash);
+                  }}
+                  title={isOpen ? "Collapse message" : "Expand full message"}
+                  style={{ color: colors.textDim, fontSize: 10, flexShrink: 0, fontFamily: fonts.mono, padding: "0 2px" }}
+                >
+                  {isOpen ? "▾" : "▸"}
+                </span>
+              )}
             </div>
             <div style={{ display: "flex", gap: 8, fontSize: 11, color: colors.textDim, marginTop: 2 }}>
               <span>{c.author}</span>

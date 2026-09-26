@@ -14,15 +14,24 @@ interface QueuedMessagesPopupProps {
   // idle the queue is already draining, so the row would just be reordering
   // itself. The button is hidden rather than disabled to keep the row quiet.
   isRunning?: boolean;
+  // Opens a row in the composer for editing; resolves false when the agent
+  // already started that message. Omitted = no edit button.
+  onEdit?: (msg: Message) => Promise<boolean>;
+  // The row currently open in the composer.
+  editingMsgId?: string | null;
 }
 
-export function QueuedMessagesPopup({ messages, channelId, isRunning }: QueuedMessagesPopupProps) {
+// How long a row says "already started" after an edit came too late.
+const STARTED_FLASH_MS = 2500;
+
+export function QueuedMessagesPopup({ messages, channelId, isRunning, onEdit, editingMsgId }: QueuedMessagesPopupProps) {
   const { colors } = useTheme();
   const [expanded, setExpanded] = useState(false);
   const [expandedRowIds, setExpandedRowIds] = useState<Set<string>>(new Set());
   const [deletingIds, setDeletingIds] = useState<Set<string>>(new Set());
   const [steeringIds, setSteeringIds] = useState<Set<string>>(new Set());
   const [copiedIds, setCopiedIds] = useState<Set<string>>(new Set());
+  const [startedIds, setStartedIds] = useState<Set<string>>(new Set());
   const [order, setOrder] = useState<string[] | null>(null);
   // The row the cursor is over while dragging, plus which edge the dragged item
   // would land on — drives the drop-line indicator and the insert position.
@@ -72,6 +81,26 @@ export function QueuedMessagesPopup({ messages, channelId, isRunning }: QueuedMe
       next.delete(msgId);
       return next;
     });
+  };
+
+  const handleEdit = async (msg: Message) => {
+    if (!onEdit) return;
+    let opened = false;
+    try {
+      opened = await onEdit(msg);
+    } catch (err) {
+      logErr("editing queued message")(err);
+      return;
+    }
+    if (opened) return;
+    setStartedIds((prev) => new Set(prev).add(msg.msg_id));
+    setTimeout(() => {
+      setStartedIds((prev) => {
+        const next = new Set(prev);
+        next.delete(msg.msg_id);
+        return next;
+      });
+    }, STARTED_FLASH_MS);
   };
 
   const handleDelete = async (msgId: string) => {
@@ -172,6 +201,7 @@ export function QueuedMessagesPopup({ messages, channelId, isRunning }: QueuedMe
         }}
       >
         <button
+          data-testid="queued-toggle"
           onClick={() => setExpanded((v) => !v)}
           style={{
             width: "100%",
@@ -197,6 +227,7 @@ export function QueuedMessagesPopup({ messages, channelId, isRunning }: QueuedMe
             {displayed.map((msg) => {
               const isRowExpanded = expandedRowIds.has(msg.msg_id);
               const isDeleting = deletingIds.has(msg.msg_id);
+              const isEditing = editingMsgId === msg.msg_id;
               return (
                 <div
                   key={msg.msg_id}
@@ -207,12 +238,15 @@ export function QueuedMessagesPopup({ messages, channelId, isRunning }: QueuedMe
                     setDropTarget((prev) => (prev && prev.id === msg.msg_id && prev.pos === pos ? prev : { id: msg.msg_id, pos }));
                   }}
                   onDrop={(e) => handleDrop(msg.msg_id, dropPosition(e))}
+                  data-testid="queued-row"
+                  data-editing={isEditing ? "true" : undefined}
                   style={{
                     display: "flex",
                     alignItems: "flex-start",
                     gap: 8,
                     padding: "6px 18px",
                     opacity: isDeleting ? 0.5 : 1,
+                    backgroundColor: isEditing ? colors.selectedBg : undefined,
                     boxShadow: dropTarget && dropTarget.id === msg.msg_id ? (dropTarget.pos === "before" ? `inset 0 2px 0 0 ${colors.active}` : `inset 0 -2px 0 0 ${colors.active}`) : undefined,
                   }}
                 >
@@ -262,7 +296,21 @@ export function QueuedMessagesPopup({ messages, channelId, isRunning }: QueuedMe
                     {msg.content}
                   </button>
                   {msg.not_before ? <DelayCountdown notBefore={msg.not_before} /> : null}
-                  {isRunning ? (
+                  {isEditing ? (
+                    <span
+                      data-testid="queued-editing"
+                      title="Open in the composer — it won't start until you save or cancel"
+                      style={{ flexShrink: 0, color: colors.active, fontSize: 11, lineHeight: "20px" }}
+                    >
+                      editing
+                    </span>
+                  ) : null}
+                  {startedIds.has(msg.msg_id) ? (
+                    <span data-testid="queued-edit-too-late" style={{ flexShrink: 0, color: colors.textMuted, fontSize: 11, lineHeight: "20px" }}>
+                      already started
+                    </span>
+                  ) : null}
+                  {isRunning && !isEditing ? (
                     <button
                       onClick={() => handleSteer(msg.msg_id)}
                       disabled={steeringIds.has(msg.msg_id) || isDeleting}
@@ -294,6 +342,39 @@ export function QueuedMessagesPopup({ messages, channelId, isRunning }: QueuedMe
                         <path d="M4 4v7a4 4 0 0 0 4 4h12" />
                       </svg>
                       Steer
+                    </button>
+                  ) : null}
+                  {onEdit && !isEditing ? (
+                    <button
+                      data-testid="queued-edit"
+                      onClick={() => handleEdit(msg)}
+                      disabled={isDeleting}
+                      title="Edit — it won't start while you edit"
+                      style={{
+                        flexShrink: 0,
+                        width: 20,
+                        height: 20,
+                        padding: 0,
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        background: "none",
+                        border: "none",
+                        color: colors.textDim,
+                        cursor: isDeleting ? "default" : "pointer",
+                        borderRadius: 4,
+                      }}
+                      onMouseEnter={(e) => {
+                        if (!isDeleting) e.currentTarget.style.color = colors.textLight;
+                      }}
+                      onMouseLeave={(e) => {
+                        e.currentTarget.style.color = colors.textDim;
+                      }}
+                    >
+                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M12 20h9" />
+                        <path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z" />
+                      </svg>
                     </button>
                   ) : null}
                   <button
@@ -333,8 +414,8 @@ export function QueuedMessagesPopup({ messages, channelId, isRunning }: QueuedMe
                   </button>
                   <button
                     onClick={() => handleDelete(msg.msg_id)}
-                    disabled={isDeleting}
-                    title="Remove from queue"
+                    disabled={isDeleting || isEditing}
+                    title={isEditing ? "Finish or cancel the edit first" : "Remove from queue"}
                     style={{
                       flexShrink: 0,
                       width: 20,
@@ -343,13 +424,13 @@ export function QueuedMessagesPopup({ messages, channelId, isRunning }: QueuedMe
                       background: "none",
                       border: "none",
                       color: colors.textDim,
-                      cursor: isDeleting ? "default" : "pointer",
+                      cursor: isDeleting || isEditing ? "default" : "pointer",
                       fontSize: 14,
                       lineHeight: 1,
                       borderRadius: 4,
                     }}
                     onMouseEnter={(e) => {
-                      if (!isDeleting) e.currentTarget.style.color = colors.dangerText;
+                      if (!isDeleting && !isEditing) e.currentTarget.style.color = colors.dangerText;
                     }}
                     onMouseLeave={(e) => {
                       e.currentTarget.style.color = colors.textDim;

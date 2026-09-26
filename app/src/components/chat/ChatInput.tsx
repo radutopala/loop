@@ -3,6 +3,7 @@ import { fetchComposerHistory, resolveAsk, resolvePlan } from "../../api/channel
 import { fetchShortcuts, type PromptShortcut } from "../../api/configApi";
 import { type FileSearchResult, type RootEntry, searchFiles } from "../../api/files";
 import { resolveGateApproval, sendCommand, sendMessage } from "../../api/loopApi";
+import type { QueuedEditSaveResult } from "../../hooks/useQueuedEdit";
 import { useTheme } from "../../ThemeContext";
 import type { ColorPalette } from "../../theme";
 import { fonts } from "../../theme";
@@ -237,6 +238,14 @@ export interface ChatInputProps {
   // park flag and inserts the user's text as a priority-bumped continuation.
   // Without this, the channel stays parked and queued messages never drain.
   hasPendingAskUser?: boolean;
+  // A queued message open for editing. While set, the composer holds its text
+  // and Enter saves it back into the queue instead of sending a new message.
+  editingQueued?: Message | null;
+  onSaveEdit?: (content: string) => Promise<QueuedEditSaveResult>;
+  onCancelEdit?: () => void;
+  // Shown above the composer when an edit ended because the message started.
+  editNotice?: string | null;
+  onDismissEditNotice?: () => void;
 }
 
 function buildQuotePrefix(msg: Message): string {
@@ -262,6 +271,11 @@ export function ChatInput({
   pendingGateReqId,
   hasPendingExitPlan,
   hasPendingAskUser,
+  editingQueued,
+  onSaveEdit,
+  onCancelEdit,
+  editNotice,
+  onDismissEditNotice,
 }: ChatInputProps) {
   const { colors } = useTheme();
   const styles = buildInputStyles(colors);
@@ -423,6 +437,37 @@ export function ChatInput({
     };
   }, []);
 
+  // Entering edit mode parks whatever the user was typing and loads the queued
+  // message; saving or cancelling puts the parked text back. The effect keys on
+  // the message id alone so a queue refresh mid-edit doesn't reload it over
+  // the user's changes.
+  const parkedTextRef = useRef("");
+  const editingMsgId = editingQueued?.msg_id;
+  useEffect(() => {
+    if (!editingMsgId || !editingQueued) return;
+    parkedTextRef.current = text;
+    setText(editingQueued.content);
+    requestAnimationFrame(() => {
+      const el = inputRef.current;
+      if (!el) return;
+      el.focus();
+      el.setSelectionRange(el.value.length, el.value.length);
+    });
+  }, [editingMsgId]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const restoreParkedText = useCallback(() => {
+    const val = parkedTextRef.current;
+    parkedTextRef.current = "";
+    setText(val);
+    if (val) draftText.set(channelId, val);
+    else draftText.delete(channelId);
+  }, [channelId]);
+
+  const cancelEdit = useCallback(() => {
+    restoreParkedText();
+    onCancelEdit?.();
+  }, [restoreParkedText, onCancelEdit]);
+
   // Focus textarea when a quote is set.
   useEffect(() => {
     if (quotedMessage) inputRef.current?.focus();
@@ -518,6 +563,15 @@ export function ChatInput({
       if (!trimmed || sending) return;
       setSending(true);
       try {
+        if (editingQueued && onSaveEdit) {
+          // Saved: the edit is in the queue, so bring back what was parked.
+          // Too late (the message started): keep the edited text so it can
+          // be sent as a new message.
+          if ((await onSaveEdit(trimmed)) === "saved") restoreParkedText();
+          else parkedTextRef.current = "";
+          return;
+        }
+        onDismissEditNotice?.();
         if (isLoopCommand(trimmed)) {
           const cmdText = trimmed.replace(/^\/loop\s*/, "");
           if (cmdText) {
@@ -542,7 +596,7 @@ export function ChatInput({
         requestAnimationFrame(() => inputRef.current?.focus());
       }
     },
-    [channelId, text, sending, isLoopCommand, quotedMessage, onClearQuote, onSent, deliver],
+    [channelId, text, sending, isLoopCommand, quotedMessage, onClearQuote, onSent, deliver, editingQueued, onSaveEdit, restoreParkedText, onDismissEditNotice],
   );
 
   const updateCommandDropdown = useCallback((val: string) => {
@@ -841,6 +895,11 @@ export function ChatInput({
         setShowMention(false);
         return;
       }
+      if (e.key === "Escape" && editingQueued) {
+        e.preventDefault();
+        cancelEdit();
+        return;
+      }
       // Message history navigation.
       if (e.key === "ArrowUp" && !showCommands && !showShortcuts && !showMention && !showFilePicker) {
         const el = inputRef.current;
@@ -917,12 +976,56 @@ export function ChatInput({
       filePickerResults,
       filePickerIdx,
       acceptFile,
+      editingQueued,
+      cancelEdit,
     ],
   );
 
+  const bannerStyle: React.CSSProperties = {
+    display: "flex",
+    alignItems: "center",
+    gap: 8,
+    width: "100%",
+    padding: "4px 0 8px",
+    borderBottom: `1px solid ${colors.border}`,
+    marginBottom: 8,
+    fontSize: 12,
+    color: colors.textMuted,
+    fontFamily: fonts.sans,
+  };
+  const bannerButtonStyle: React.CSSProperties = {
+    background: "none",
+    border: "none",
+    color: colors.textDim,
+    cursor: "pointer",
+    padding: "0 2px",
+    fontSize: 12,
+    flexShrink: 0,
+    fontFamily: fonts.sans,
+  };
+
   return (
     <div style={{ position: "relative", ...styles.inputWrapper, flexDirection: "column" }}>
-      {quotedMessage && (
+      {editingQueued && (
+        <div data-testid="queued-edit-banner" style={bannerStyle}>
+          <span style={{ flex: 1, color: colors.active }}>Editing a queued message — it won't start until you save or cancel</span>
+          <button data-testid="queued-edit-save" onClick={() => handleSend()} disabled={!text.trim() || sending} style={{ ...bannerButtonStyle, color: colors.textLight }} title="Save (Enter)">
+            Save
+          </button>
+          <button data-testid="queued-edit-cancel" onClick={cancelEdit} style={bannerButtonStyle} title="Cancel (Esc)">
+            Cancel
+          </button>
+        </div>
+      )}
+      {!editingQueued && editNotice && (
+        <div data-testid="queued-edit-notice" style={bannerStyle}>
+          <span style={{ flex: 1 }}>{editNotice}</span>
+          <button onClick={onDismissEditNotice} style={{ ...bannerButtonStyle, fontSize: 14, lineHeight: 1 }} title="Dismiss">
+            &times;
+          </button>
+        </div>
+      )}
+      {quotedMessage && !editingQueued && (
         <div
           style={{
             display: "flex",

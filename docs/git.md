@@ -19,7 +19,7 @@ The panel has five tabs:
 |-----|-------|
 | **Uncommitted Diff** | The working-tree diff — staged and unstaged changes, file by file |
 | **Branches Diff** | A diff between two selected branches ("Changes from" → "Land into") |
-| **Commits** | The commit log for the selected branch |
+| **Commits** | The commit log for the selected branch; click a commit to see its changes |
 | **Branches** | Local branches, with checkout |
 | **Worktrees** | Git worktrees for the repo (see [Sidebar — Worktree threads](sidebar.md#thread-item)) |
 
@@ -32,6 +32,16 @@ The panel keeps itself current without manual polling:
 - A manual **Refresh** button (circular-arrow icon) forces an immediate reload.
 
 Because the workdir is bind-mounted into the agent container, commits the agent makes (with the repo-local git identity) appear in **Commits** as soon as they land.
+
+## Viewing a commit
+
+**Component:** `app/src/components/panels/CommitDiffView.tsx`
+
+Clicking a row in **Commits** replaces the list with that commit's changes: its short hash, subject, author and time on top, and the files it touched below in the same diff viewer the diff tabs use, expanded. The ▸ next to a subject shows the full message in place without opening the commit — in the list and in the commit view alike.
+
+- A merge commit is shown against its first parent, i.e. what the merge brought into the branch. The first commit of a repo shows every file as added.
+- Expanding hidden context lines reads the file as it was in that commit, not the current working tree.
+- **← Commits**, or the **Commits** tab, goes back to the list with its scroll position kept. Switching branch, root, channel or tab closes the commit.
 
 ## Searching a diff
 

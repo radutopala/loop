@@ -30,3 +30,26 @@ export function applyChannelUpdate(c: Channel, d: ChannelUpdatedData): Channel {
     base_behind: d.base_behind,
   };
 }
+
+/** A live change to one channel, stamped with performance.now() on arrival. */
+export interface ChannelPatch {
+  at: number;
+  id: string;
+  apply: (c: Channel) => Channel;
+}
+
+/**
+ * Lays live channel patches over a fetched channel list. A fetch's snapshot
+ * predates every patch that arrived after the fetch started, so those are
+ * applied on top of it (in arrival order) instead of being lost until the
+ * next poll. The rest are already in the snapshot; only the newer ones are
+ * returned as still pending.
+ */
+export function replayChannelPatches(channels: Channel[], patches: ChannelPatch[], fetchStartedAt: number): { channels: Channel[]; pending: ChannelPatch[] } {
+  const pending = patches.filter((p) => p.at > fetchStartedAt);
+  if (pending.length === 0) return { channels, pending };
+  return {
+    channels: channels.map((c) => pending.reduce((acc, p) => (p.id === c.id ? p.apply(acc) : acc), c)),
+    pending,
+  };
+}

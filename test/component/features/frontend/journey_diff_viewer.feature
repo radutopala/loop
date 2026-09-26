@@ -69,3 +69,41 @@ Feature: Diff Viewer Journey
     # Enter opens the chosen file and dismisses the bar.
     When I press Enter
     Then the element "[data-testid='diff-search-input']" should not exist
+
+  @commit-diff
+  Scenario: Clicking a commit shows the changes it made
+    Given I set up a test channel via API for git repo "bdd-commit-diff"
+    And I create a file "src/app.txt" in the repo with:
+      """
+      committed line
+      """
+    And I commit all changes in the repo with message "add app\n\nWhy the app exists."
+    # A later worktree edit must not leak into the historical diff.
+    And I modify "src/app.txt" without staging
+    And I open the app in a browser
+    And I wait for text "bdd-commit-diff" to appear
+
+    When I click on "bdd-commit-diff" in the sidebar
+    And I wait for "textarea" to be visible
+    And I click "Commits" in the git panel
+    Then I wait for text "add app" to appear
+
+    # The chevron expands the message in place without opening the commit.
+    When I click on "[data-testid='commit-body-toggle']"
+    Then I wait for text "Why the app exists." to appear
+    And the element "[data-testid='commit-diff']" should not exist
+
+    # Clicking the row opens its diff: the file it added, as committed.
+    When I click on "[data-testid='commit-row']"
+    Then I wait for "[data-testid='commit-diff']" to be visible
+    And the element "[data-testid='commit-diff-subject']" should contain text "add app"
+    # The diff itself loads after the header renders.
+    And I wait for text "committed line" to appear
+    And the element "[data-testid='commit-diff']" should contain text "src/app.txt"
+    And the element "[data-testid='commit-diff']" should contain text "committed line"
+    And the page should not contain text "unstaged src/app.txt"
+
+    # Back returns to the list.
+    When I click on "[data-testid='commit-diff-back']"
+    Then I wait for "[data-testid='commit-row']" to be visible
+    And the element "[data-testid='commit-diff']" should not exist

@@ -194,6 +194,70 @@ func (s *IntegrationSuite) TestSteerQueuedMessageSkipsClaimedRow() {
 	require.False(s.T(), steered)
 }
 
+// TestEditHoldBlocksClaim checks the edit-hold contract against a real
+// SQLite: a held row stops the claim without letting rows behind it jump
+// ahead, an expired lease wakes the poller, and a row that already started
+// can't be held or edited.
+func (s *IntegrationSuite) TestEditHoldBlocksClaim() {
+	store, err := NewSQLiteStore(filepath.Join(s.T().TempDir(), "loop.db"))
+	require.NoError(s.T(), err)
+	defer store.Close()
+
+	ctx := context.Background()
+	chatID := seedChannel(s.T(), store, "ch1")
+	for _, id := range []string{"first", "second"} {
+		require.NoError(s.T(), store.InsertMessage(ctx, &Message{
+			ChatID: chatID, ChannelID: "ch1", MsgID: id, Content: id,
+			IsTriggered: true, Kind: MessageKindMessage, CreatedAt: time.Now(),
+		}))
+	}
+	future := time.Now().Add(time.Hour).Unix()
+
+	held, err := store.HoldQueuedMessage(ctx, "ch1", "first", future)
+	require.NoError(s.T(), err)
+	require.True(s.T(), held)
+
+	// "first" is next in line and held: nothing is claimed, not even "second".
+	claimed, err := store.ClaimNextPending(ctx, "ch1")
+	require.NoError(s.T(), err)
+	require.Nil(s.T(), claimed)
+
+	queued, err := store.ListQueuedUserMessages(ctx, "ch1")
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), future, queued[0].EditHoldUntil)
+
+	// Saving the edit replaces the content and lifts the hold.
+	saved, err := store.UpdateQueuedMessage(ctx, "ch1", "first", "first, edited")
+	require.NoError(s.T(), err)
+	require.True(s.T(), saved)
+	claimed, err = store.ClaimNextPending(ctx, "ch1")
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "first, edited", claimed.Content)
+	require.Zero(s.T(), claimed.EditHoldUntil)
+
+	// The claimed row is past editing.
+	for name, write := range map[string]func() (bool, error){
+		"hold":    func() (bool, error) { return store.HoldQueuedMessage(ctx, "ch1", "first", future) },
+		"release": func() (bool, error) { return store.ReleaseQueuedHold(ctx, "ch1", "first") },
+		"update":  func() (bool, error) { return store.UpdateQueuedMessage(ctx, "ch1", "first", "too late") },
+	} {
+		ok, err := write()
+		require.NoError(s.T(), err, name)
+		require.False(s.T(), ok, name)
+	}
+
+	// A lease that ran out no longer blocks, and the poller reports it.
+	held, err = store.HoldQueuedMessage(ctx, "ch1", "second", time.Now().Add(-time.Second).Unix())
+	require.NoError(s.T(), err)
+	require.True(s.T(), held)
+	due, err := store.ChannelsWithDueDelayedMessages(ctx)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), []string{"ch1"}, due)
+	claimed, err = store.ClaimNextPending(ctx, "ch1")
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "second", claimed.MsgID)
+}
+
 // seedChannel creates the channel row a message's chat_id foreign key points
 // at, returning the row id to use as ChatID.
 func seedChannel(t *testing.T, store *SQLiteStore, channelID string) int64 {
