@@ -660,7 +660,7 @@ Return the canonical queue of unprocessed user messages for a channel — every 
 }
 ```
 
-The in-flight message (the one with `is_running = 1` on the row) is **included** in the response — clients use the [`agent.status`](events.md#agentstatus) event's `msg_id` to distinguish "processing" from "queued". Higher `priority` values sort first; `priority` is omitted when zero. Rows queued with a delay carry `not_before` (unix seconds); the chat UI renders a live countdown chip until it elapses. `not_before` is omitted when zero (immediate).
+The in-flight message is **included** in the response, marked `"is_running": true` (omitted on the others). Clients use the [`agent.status`](events.md#agentstatus) event's `msg_id` to distinguish "processing" from "queued", and `is_running` until that event arrives. A scheduled task running in the thread claims no row, so every message sent meanwhile stays "queued" until it finishes. Higher `priority` values sort first; `priority` is omitted when zero. Rows queued with a delay carry `not_before` (unix seconds); the chat UI renders a live countdown chip until it elapses. `not_before` is omitted when zero (immediate).
 
 **Errors:** `501` if message listing is not configured. `500` on database error.
 

@@ -7,6 +7,7 @@ import { AgentActivityIndicator, AskUserQuestionCard, CompletionSummary, ExitPla
 import { locateMatch } from "./chatFind";
 import { buildMessageStyles, ChannelContext } from "./chatShared";
 import { orderTimelineItems } from "./orderTimelineItems";
+import { processingMsgIdOf } from "./processingMsg";
 import { QueuedMessagesPopup } from "./QueuedMessagesPopup";
 
 export interface ChatMessagesProps {
@@ -260,9 +261,8 @@ export const ChatMessages = forwardRef<ChatMessagesHandle, ChatMessagesProps>(fu
   //   - `backendQueue` is the GET /api/channels/{id}/queued response, already
   //     ordered by (priority DESC, id ASC). It includes the in-flight row so
   //     we filter it out for the "waiting behind" list.
-  // Fallback: during the brief startup window before the first agent.status
-  // event arrives, use the first backend-queued message as the processing one.
-  const effectiveProcessingMsgId = processingMsgId ?? (isRunning ? (backendQueue[0]?.msg_id ?? null) : null);
+  // Fallback: before the run's agent.status arrives, the row it claimed.
+  const effectiveProcessingMsgId = processingMsgIdOf(processingMsgId, isRunning, backendQueue);
   // Messages waiting behind the currently-processing one; deletable from the popup.
   const queuedMessages = backendQueue.filter((m) => m.msg_id !== effectiveProcessingMsgId);
 

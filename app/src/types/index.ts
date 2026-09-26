@@ -63,6 +63,8 @@ export interface Message {
   // message runs. Missing/0 = immediate. While in the future the UI shows a
   // live countdown until it fires.
   not_before?: number;
+  // Set by /api/channels/{id}/queued on the row a chat run has claimed.
+  is_running?: boolean;
   created_at: string;
 }
 

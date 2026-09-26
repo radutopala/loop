@@ -388,7 +388,7 @@ func (s *ServerSuite) TestSetIncomingMessageHandler() {
 func (s *ServerSuite) TestListQueuedMessagesSuccess() {
 	now := time.Now().UTC()
 	msgs := []*db.Message{
-		{ID: 12, ChannelID: "ch-1", MsgID: "m12", AuthorID: "u1", AuthorName: "alice", Content: "bumped", Priority: 1, CreatedAt: now},
+		{ID: 12, ChannelID: "ch-1", MsgID: "m12", AuthorID: "u1", AuthorName: "alice", Content: "bumped", Priority: 1, IsRunning: true, CreatedAt: now},
 		{ID: 10, ChannelID: "ch-1", MsgID: "m10", AuthorID: "u1", AuthorName: "alice", Content: "first", CreatedAt: now},
 	}
 	s.store.On("ListQueuedUserMessages", mock.Anything, "ch-1").Return(msgs, nil)
@@ -401,7 +401,9 @@ func (s *ServerSuite) TestListQueuedMessagesSuccess() {
 	require.Len(s.T(), resp.Messages, 2)
 	require.Equal(s.T(), "m12", resp.Messages[0].MsgID)
 	require.Equal(s.T(), 1, resp.Messages[0].Priority)
+	require.True(s.T(), resp.Messages[0].IsRunning)
 	require.Equal(s.T(), "m10", resp.Messages[1].MsgID)
+	require.False(s.T(), resp.Messages[1].IsRunning)
 }
 
 func (s *ServerSuite) TestListQueuedMessagesEmpty() {
