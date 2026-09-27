@@ -67,8 +67,10 @@ export function useLearn(
         setAvailable(st.available);
         setLearnValue(st.learn);
         setDefaultLearn(st.default_learn);
-        setLearnChannelId(st.learn_channel_id);
-        setRunning(st.running);
+        // A learn.started that arrived while this was in flight is newer:
+        // don't let the fetched state undo it.
+        setLearnChannelId((cur) => cur || st.learn_channel_id);
+        setRunning((cur) => cur || st.running);
         setLoaded(true);
       })
       .catch(logErr("fetching learn state"));
