@@ -156,6 +156,7 @@ func (o *Orchestrator) applyLearnRequest(ctx context.Context, req *agent.AgentRe
 	req.SystemPrompt = learn.SystemPrompt(learn.State{
 		ChannelName: parent.Name,
 		Description: parent.Description,
+		TicketURL:   parent.TicketURL,
 		Worktree:    parent.Worktree,
 		ProjectDir:  dir,
 		Config:      cfg,

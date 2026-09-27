@@ -235,7 +235,7 @@ func (s *OrchestratorSuite) TestPrepareAgentRequestLearnThread() {
 				return main, nil
 			}
 			parent := &db.Channel{
-				ChannelID: "ch1", Name: "api", Description: "the API", DirPath: "/project",
+				ChannelID: "ch1", Name: "api", Description: "the API", TicketURL: "https://tracker.example.com/T-1", DirPath: "/project",
 				SessionID: "sess-parent", ModelOverride: "sonnet", EffortOverride: "low",
 			}
 			s.store.On("GetRecentMessages", s.ctx, "learn-1", recentMessageLimit).Return([]*db.Message{}, nil)
@@ -260,6 +260,7 @@ func (s *OrchestratorSuite) TestPrepareAgentRequestLearnThread() {
 			require.Equal(s.T(), tc.wantEffort, req.Effort)
 			require.Contains(s.T(), req.SystemPrompt, `- Channel: "api"`)
 			require.Contains(s.T(), req.SystemPrompt, `- Description: "the API"`)
+			require.Contains(s.T(), req.SystemPrompt, "- Ticket URL: https://tracker.example.com/T-1")
 			require.Contains(s.T(), req.SystemPrompt, "`/project/.loop/config.json`")
 			require.Equal(s.T(), tc.wantTask, strings.Contains(req.SystemPrompt, "nightly deps"))
 		})

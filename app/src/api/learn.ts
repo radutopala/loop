@@ -32,7 +32,7 @@ export async function setLearn(channelId: string, learn: LearnState["learn"]): P
   }
 }
 
-export type LearnProposalKind = "prompt_shortcut" | "bash_shortcut" | "scheduled_task" | "gate_rule" | "mount" | "rename" | "description";
+export type LearnProposalKind = "prompt_shortcut" | "bash_shortcut" | "scheduled_task" | "gate_rule" | "mount" | "rename" | "description" | "ticket_url";
 
 export type LearnProposalStatus = "pending" | "applying" | "applied" | "dismissed" | "failed";
 

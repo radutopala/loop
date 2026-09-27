@@ -65,6 +65,11 @@ type Description struct {
 	Description string `json:"description"`
 }
 
+// TicketURL is a ticket_url proposal's payload.
+type TicketURL struct {
+	TicketURL string `json:"ticket_url"`
+}
+
 // Validate checks a proposal's kind, title and payload. It returns the
 // decoded payload (one of this package's payload types) and its canonical
 // JSON, which is what gets stored.
@@ -112,6 +117,9 @@ func Decode(kind string, payload json.RawMessage) (any, error) {
 	case db.LearnKindDescription:
 		p := &Description{}
 		v, check = p, func() error { return checkText("description", p.Description, MaxDescriptionLen, true) }
+	case db.LearnKindTicketURL:
+		p := &TicketURL{}
+		v, check = p, p.check
 	default:
 		return nil, fmt.Errorf("unknown kind %q (must be one of %s)", kind, strings.Join(Kinds, ", "))
 	}
@@ -169,6 +177,17 @@ func (t *ScheduledTask) check() error {
 	}
 	if t.AutoDeleteSec < 0 {
 		return errors.New("auto_delete_sec must not be negative")
+	}
+	return nil
+}
+
+func (t *TicketURL) check() error {
+	u, err := types.NormalizeTicketURL(t.TicketURL)
+	if err != nil {
+		return err
+	}
+	if u == "" {
+		return errors.New("ticket_url is required")
 	}
 	return nil
 }

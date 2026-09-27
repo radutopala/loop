@@ -228,6 +228,15 @@ func (s *Server) applyLearnProposal(ctx context.Context, p *db.LearnProposal) er
 			s.eventsHub.BroadcastChannelUpdated(events.ChannelUpdatedData{ChannelID: ch.ChannelID, Description: &description})
 		}
 		return nil
+	case *learn.TicketURL:
+		ticketURL := strings.TrimSpace(v.TicketURL)
+		if err := s.store.UpdateChannelTicketURL(ctx, ch.ChannelID, ticketURL); err != nil {
+			return err
+		}
+		if s.eventsHub != nil {
+			s.eventsHub.BroadcastChannelUpdated(events.ChannelUpdatedData{ChannelID: ch.ChannelID, TicketURL: &ticketURL})
+		}
+		return nil
 	case *learn.ScheduledTask:
 		task := &db.ScheduledTask{
 			ChannelID:     s.resolveTaskChannelID(ctx, ch.ChannelID),

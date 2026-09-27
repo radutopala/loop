@@ -574,6 +574,7 @@ The pass may only look and propose: it can't edit files or change Loop's config,
 | mount | Adds a bind mount to the project config. |
 | rename | Renames the channel or thread. |
 | description | Sets the channel or thread's description. |
+| ticket URL | Links the channel or thread to its ticket (only a URL the run actually named). |
 
 Config kinds are written to the project's `.loop/config.json` with your comments kept; see [Configuration: Where Apply writes](configuration.md#where-learn-proposals-are-written).
 

@@ -308,6 +308,7 @@ const (
 	LearnKindMount          = "mount"
 	LearnKindRename         = "rename"
 	LearnKindDescription    = "description"
+	LearnKindTicketURL      = "ticket_url"
 )
 
 // Statuses of a learn proposal. Applying is held while it's being applied,

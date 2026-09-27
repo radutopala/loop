@@ -990,7 +990,7 @@ List the proposals filed for the channel, newest first, in every status.
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `kind` | string | `prompt_shortcut`, `bash_shortcut`, `scheduled_task`, `gate_rule`, `mount`, `rename` or `description` |
+| `kind` | string | `prompt_shortcut`, `bash_shortcut`, `scheduled_task`, `gate_rule`, `mount`, `rename`, `description` or `ticket_url` |
 | `payload` | string | The kind's payload as a JSON string (see [`POST`](#post-apichannelsidlearnproposals)) |
 | `status` | string | `pending`, `applying`, `applied`, `dismissed` or `failed` |
 | `error` | string | Why the last apply failed; omitted when empty |
@@ -1030,6 +1030,7 @@ At most 5 proposals per call. Each needs a `kind`, a `title` (at most 200 charac
 | `mount` | `{"mount"}`, `host_path:container_path[:ro\|rw]`. |
 | `rename` | `{"name"}`, at most 100 characters. |
 | `description` | `{"description"}`, at most 500 characters. |
+| `ticket_url` | `{"ticket_url"}`, an absolute http(s) URL, at most 2048 characters. |
 
 The payload is stored in canonical JSON. Either every proposal is valid and all are stored, or none are.
 
@@ -1047,7 +1048,7 @@ Apply a `pending` or `failed` proposal. It moves to `applying` first, so a doubl
 
 **Response (200):** the proposal, with `status` `applied`, or `failed` and an `error`. A failed apply is recorded on the proposal, not returned as an HTTP error, so it can be retried.
 
-**Behavior notes:** Broadcasts a [`learn.proposal_updated`](events.md#learnproposal_updated) event. A rename or description also broadcasts `channel.updated`, a scheduled task `task.created`.
+**Behavior notes:** Broadcasts a [`learn.proposal_updated`](events.md#learnproposal_updated) event. A rename, description or ticket URL also broadcasts `channel.updated`, a scheduled task `task.created`.
 
 **Errors:** `400` if `{id}` isn't an integer. `404` if the proposal doesn't exist. `409` if it's already `applying`, `applied` or `dismissed` (`proposal is already applied`). `500` on a store error. `501` if the store is not configured.
 

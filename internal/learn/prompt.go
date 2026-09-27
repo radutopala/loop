@@ -29,6 +29,7 @@ var Kinds = []string{
 	db.LearnKindMount,
 	db.LearnKindRename,
 	db.LearnKindDescription,
+	db.LearnKindTicketURL,
 }
 
 // State is what already exists for the channel being learned from, so the
@@ -36,6 +37,7 @@ var Kinds = []string{
 type State struct {
 	ChannelName string
 	Description string
+	TicketURL   string
 	// Worktree says the channel is a worktree thread; its name is a display
 	// name only.
 	Worktree bool
@@ -63,6 +65,11 @@ func SystemPrompt(st State) string {
 		fmt.Fprintf(&b, "- Description: %q\n", st.Description)
 	} else {
 		b.WriteString("- Description: none\n")
+	}
+	if st.TicketURL != "" {
+		fmt.Fprintf(&b, "- Ticket URL: %s\n", st.TicketURL)
+	} else {
+		b.WriteString("- Ticket URL: none\n")
 	}
 	if st.ProjectDir != "" {
 		fmt.Fprintf(&b, "- Project config: `%s/.loop/config.json`\n", st.ProjectDir)

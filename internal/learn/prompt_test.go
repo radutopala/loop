@@ -23,7 +23,7 @@ func TestPromptSuite(t *testing.T) {
 // TestEveryKindDocumented makes sure each proposal kind has its own section
 // in the prompt, so adding a kind without teaching the agent fails here.
 func (s *PromptSuite) TestEveryKindDocumented() {
-	require.Len(s.T(), Kinds, 7)
+	require.Len(s.T(), Kinds, 8)
 	for _, kind := range Kinds {
 		require.Contains(s.T(), basePrompt, "\n### "+kind+"\n", kind)
 	}
@@ -51,6 +51,7 @@ func (s *PromptSuite) TestSystemPrompt() {
 			state: State{
 				ChannelName: "wt-login",
 				Description: "login bug",
+				TicketURL:   "https://tracker.example.com/T-1",
 				Worktree:    true,
 				ProjectDir:  "/project",
 				Config:      cfg,
@@ -61,6 +62,7 @@ func (s *PromptSuite) TestSystemPrompt() {
 			contains: []string{
 				`- Channel: "wt-login" (a worktree thread)`,
 				`- Description: "login bug"`,
+				"- Ticket URL: https://tracker.example.com/T-1\n",
 				"- Project config: `/project/.loop/config.json`",
 				`"name": "fix-tests"`,
 				`"command": "make lint"`,
@@ -79,6 +81,7 @@ func (s *PromptSuite) TestSystemPrompt() {
 			contains: []string{
 				`- Channel: "general"` + "\n",
 				"- Description: none",
+				"- Ticket URL: none",
 				"### Prompt shortcuts\n\nnone\n",
 				"### Mounts\n\nnone\n",
 			},

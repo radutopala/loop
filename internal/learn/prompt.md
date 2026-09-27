@@ -76,3 +76,11 @@ A new description for this channel or thread, shown in the sidebar. At most 500 
 ```json
 {"description": "Chasing the intermittent login timeout in CI; root cause is the shared test DB."}
 ```
+
+### ticket_url
+
+Links this channel or thread to its ticket (Jira, GitHub, Linear, …), shown in the header. An absolute http(s) URL. Only propose one the run actually named: the user pasted it, a commit or branch referenced it, or the agent opened it. Never guess a URL from a ticket key alone. Good when there's none yet or the run moved on to a different ticket.
+
+```json
+{"ticket_url": "https://tracker.example.com/browse/PROJ-123"}
+```

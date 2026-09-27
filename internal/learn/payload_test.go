@@ -69,6 +69,11 @@ func (s *PayloadSuite) TestValidate() {
 			payload: `{"description":"chasing the login bug"}`, want: &Description{Description: "chasing the login bug"},
 		},
 
+		{
+			name: "ticket url", kind: db.LearnKindTicketURL, title: "Link ticket",
+			payload: `{"ticket_url":"https://tracker.example.com/T-1"}`, want: &TicketURL{TicketURL: "https://tracker.example.com/T-1"},
+		},
+
 		{name: "no title", kind: db.LearnKindRename, title: "  ", payload: `{"name":"x"}`, wantErr: "title is required"},
 		{name: "long title", kind: db.LearnKindRename, title: long(201), payload: `{"name":"x"}`, wantErr: "title is longer than 200"},
 		{name: "unknown kind", kind: "wish", title: "t", payload: `{}`, wantErr: `unknown kind "wish"`},
@@ -89,6 +94,8 @@ func (s *PayloadSuite) TestValidate() {
 		{name: "long name", kind: db.LearnKindRename, title: "t", payload: `{"name":"` + long(101) + `"}`, wantErr: "name is longer than 100"},
 		{name: "empty description", kind: db.LearnKindDescription, title: "t", payload: `{"description":" "}`, wantErr: "description is required"},
 		{name: "long description", kind: db.LearnKindDescription, title: "t", payload: `{"description":"` + long(501) + `"}`, wantErr: "description is longer than 500"},
+		{name: "empty ticket url", kind: db.LearnKindTicketURL, title: "t", payload: `{"ticket_url":" "}`, wantErr: "ticket_url is required"},
+		{name: "bad ticket url", kind: db.LearnKindTicketURL, title: "t", payload: `{"ticket_url":"T-1"}`, wantErr: "absolute http(s) URL"},
 		{name: "gate rule", kind: db.LearnKindGateRule, title: "t", payload: `{"type":"socket","rule":{}}`, wantErr: `type "socket" must be`},
 	}
 	for _, tc := range tests {

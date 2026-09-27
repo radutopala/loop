@@ -95,6 +95,7 @@ describe("proposalDetail", () => {
     ["mount", { mount: "~/.aws:~/.aws:ro" }, "~/.aws:~/.aws:ro"],
     ["rename", { name: "login bug" }, "→ login bug"],
     ["description", { description: "chasing it" }, "chasing it"],
+    ["ticket_url", { ticket_url: "https://tracker.example.com/T-1" }, "https://tracker.example.com/T-1"],
     ["rename", { name: 7 }, "→ "],
   ] as const)("%s %j", (kind, payload, want) => {
     expect(proposalDetail(proposal({ kind, payload: JSON.stringify(payload) }))).toBe(want);

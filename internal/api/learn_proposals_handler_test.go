@@ -241,6 +241,25 @@ func (s *ServerSuite) TestApplyLearnProposalChannelKinds() {
 			wantErr: "locked",
 		},
 		{
+			name: "ticket url", kind: db.LearnKindTicketURL, payload: `{"ticket_url":" https://tracker.example.com/T-1 "}`, channel: &db.Channel{ChannelID: "ch-1"},
+			setup: func() {
+				s.store.On("UpdateChannelTicketURL", mock.Anything, "ch-1", "https://tracker.example.com/T-1").Return(nil)
+			},
+		},
+		{
+			name: "ticket url broadcast", kind: db.LearnKindTicketURL, payload: `{"ticket_url":"https://tracker.example.com/T-1"}`, channel: &db.Channel{ChannelID: "ch-1"}, hub: true,
+			setup: func() {
+				s.store.On("UpdateChannelTicketURL", mock.Anything, "ch-1", "https://tracker.example.com/T-1").Return(nil)
+			},
+		},
+		{
+			name: "ticket url error", kind: db.LearnKindTicketURL, payload: `{"ticket_url":"https://tracker.example.com/T-1"}`, channel: &db.Channel{ChannelID: "ch-1"},
+			setup: func() {
+				s.store.On("UpdateChannelTicketURL", mock.Anything, "ch-1", mock.Anything).Return(errors.New("locked"))
+			},
+			wantErr: "locked",
+		},
+		{
 			name: "task", kind: db.LearnKindScheduledTask, payload: `{"type":"cron","schedule":"0 9 * * *","prompt":"p"}`,
 			channel: &db.Channel{ChannelID: "ch-1"},
 			setup: func() {

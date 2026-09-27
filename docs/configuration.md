@@ -372,7 +372,7 @@ Applying a proposal of a config kind appends to the project config, `.loop/confi
 | `gate_rule` | `gates.agentgate.path_rules`, `command_rules` or `file_rules` | Picked by the rule's type (`path`, `command`, `file`). Project rules are prepended to the global ones, so they match first. |
 | `mount` | `mounts` | Fails if the merged config already has the exact mount. Project mounts replace the global ones, so when the project has no `mounts` list yet, or an empty one (which keeps the global mounts), the new list starts with the global mounts, then the new one. |
 
-`scheduled_task`, `rename` and `description` proposals don't touch config: they create an enabled task in the channel and update the channel's name or description, as `POST /api/tasks`, `/rename` and `/description` do.
+`scheduled_task`, `rename`, `description` and `ticket_url` proposals don't touch config: they create an enabled task in the channel and update the channel's name, description or ticket URL, as `POST /api/tasks`, `/rename`, `/description` and `/ticket` do.
 
 #### Workflows
 

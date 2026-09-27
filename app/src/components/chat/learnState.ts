@@ -23,6 +23,7 @@ const KIND_LABELS: Record<LearnProposalKind, string> = {
   mount: "mount",
   rename: "rename",
   description: "description",
+  ticket_url: "ticket",
 };
 
 export function learnKindLabel(kind: string): string {
@@ -84,6 +85,8 @@ export function proposalDetail(p: LearnProposal): string {
       return `→ ${str(v.name)}`;
     case "description":
       return str(v.description);
+    case "ticket_url":
+      return str(v.ticket_url);
   }
   return p.payload;
 }
