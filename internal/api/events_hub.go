@@ -9,6 +9,7 @@ import (
 	"github.com/gorilla/websocket"
 
 	"github.com/radutopala/loop/internal/container"
+	"github.com/radutopala/loop/internal/db"
 	"github.com/radutopala/loop/internal/events"
 )
 
@@ -34,6 +35,8 @@ const (
 	EventChannelLocked             = "channel.locked"
 	EventChannelAgentConfig        = "channel.agent_config"
 	EventChannelLearn              = "channel.learn"
+	EventLearnProposals            = "learn.proposals"
+	EventLearnProposalUpdated      = "learn.proposal_updated"
 	EventChannelUpdated            = "channel.updated"
 	EventAgentInstanceRegistered   = "agent_instance.registered"
 	EventAgentInstanceUnregistered = "agent_instance.unregistered"
@@ -312,6 +315,28 @@ func (h *EventsHub) BroadcastChannelLearn(channelID, learn string) {
 		Type:      EventChannelLearn,
 		ChannelID: channelID,
 		Data:      map[string]string{"learn": learn},
+		Global:    true,
+	})
+}
+
+// BroadcastLearnProposals sends a learn.proposals event when a learn pass
+// files proposals for channelID, so its Learn drawer lists them.
+func (h *EventsHub) BroadcastLearnProposals(channelID string, proposals []*db.LearnProposal) {
+	h.Broadcast(Event{
+		Type:      EventLearnProposals,
+		ChannelID: channelID,
+		Data:      map[string]any{"proposals": proposals},
+		Global:    true,
+	})
+}
+
+// BroadcastLearnProposalUpdated sends a learn.proposal_updated event when a
+// proposal is applied, fails or is dismissed.
+func (h *EventsHub) BroadcastLearnProposalUpdated(p *db.LearnProposal) {
+	h.Broadcast(Event{
+		Type:      EventLearnProposalUpdated,
+		ChannelID: p.ChannelID,
+		Data:      p,
 		Global:    true,
 	})
 }

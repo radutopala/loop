@@ -48,6 +48,7 @@ type ChannelLister interface {
 	ListAllScheduledTasks(ctx context.Context) ([]*db.ScheduledTask, error)
 	UpdateChannelLearnOverride(ctx context.Context, channelID, value string) error
 	GetLearnChannel(ctx context.Context, parentID string) (*db.Channel, error)
+	InsertLearnProposals(ctx context.Context, proposals []*db.LearnProposal) error
 	ListLearnProposals(ctx context.Context, channelID string) ([]*db.LearnProposal, error)
 	GetLearnProposal(ctx context.Context, id int64) (*db.LearnProposal, error)
 	ClaimLearnProposal(ctx context.Context, id int64) (bool, error)

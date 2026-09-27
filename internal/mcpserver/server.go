@@ -10,6 +10,8 @@ import (
 	"net/http"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+
+	"github.com/radutopala/loop/internal/learn"
 )
 
 // HTTPClient abstracts HTTP calls for testability.
@@ -298,6 +300,10 @@ func New(channelID, apiURL, authorID string, httpClient HTTPClient, logger *slog
 	}
 
 	s.registerReviewTools()
+
+	if s.agentID == learn.AgentID {
+		s.registerLearnTools()
+	}
 
 	// Register agent tools after mcpServer is created.
 	if s.agentID != "" {
