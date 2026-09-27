@@ -494,6 +494,8 @@ func (s *Server) registerPlaygroundRoutes(mux *http.ServeMux) {
 func (s *Server) registerAgentRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/channels/{id}/agent-config", s.handleGetAgentConfig)
 	mux.HandleFunc("PATCH /api/channels/{id}/agent-config", s.handleSetAgentConfig)
+	mux.HandleFunc("GET /api/channels/{id}/learn", s.handleGetLearn)
+	mux.HandleFunc("PUT /api/channels/{id}/learn", s.handleSetLearn)
 	mux.HandleFunc("POST /api/agents", s.handleRegisterAgent)
 	mux.HandleFunc("GET /api/agents", s.handleListAgents)
 	mux.HandleFunc("PATCH /api/agents/{id}", s.handleUpdateAgent)

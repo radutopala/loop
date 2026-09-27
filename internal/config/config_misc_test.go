@@ -506,6 +506,32 @@ func (s *ConfigSuite) TestPlaygroundShareDefaultsDisabled() {
 	require.False(s.T(), cfg.PlaygroundShare.Enabled)
 }
 
+func (s *ConfigSuite) TestLearnConfigLoad() {
+	tests := []struct {
+		name string
+		json string
+		want LearnConfig
+	}{
+		{name: "absent", json: ``, want: LearnConfig{MinTurns: DefaultLearnMinTurns}},
+		{name: "empty", json: `, "learn": {}`, want: LearnConfig{MinTurns: DefaultLearnMinTurns}},
+		{
+			name: "all fields",
+			json: `, "learn": {"enabled": true, "min_turns": 1, "model": "m", "effort": "low", "prompt": "p"}`,
+			want: LearnConfig{Enabled: true, MinTurns: 1, Model: "m", Effort: "low", Prompt: "p"},
+		},
+	}
+	for _, tc := range tests {
+		s.Run(tc.name, func() {
+			s.loader.readFile = func(_ string) ([]byte, error) {
+				return []byte(`{"platforms": ["discord"], "discord_token": "t", "discord_app_id": "a"` + tc.json + `}`), nil
+			}
+			cfg, err := s.loader.load()
+			require.NoError(s.T(), err)
+			require.Equal(s.T(), tc.want, cfg.Learn)
+		})
+	}
+}
+
 func (s *ConfigSuite) TestPromptShortcutResolveFromFile() {
 	s.loader.readFile = func(path string) ([]byte, error) {
 		if path == "/loop/shortcuts/review.md" {

@@ -340,6 +340,42 @@ func buildSchema() *ConfigSchema {
 				},
 			},
 
+			// ── Learn section (nested object) ──
+			"learn": {
+				Type:     "object",
+				XSection: "Learn",
+				Properties: map[string]*SchemaProperty{
+					"enabled": {
+						Type:        "boolean",
+						Title:       "Enabled",
+						Description: "Default for the composer's Learn switch: after a chat run, a hidden forked session proposes shortcuts, tasks, gate rules, mounts and thread names for you to apply. Each channel can override it.",
+						Default:     false,
+					},
+					"min_turns": {
+						Type:        "integer",
+						Title:       "Min Turns",
+						Description: "Skip runs with fewer turns than this",
+						Default:     3,
+					},
+					"model": {
+						Type:        "string",
+						Title:       "Model",
+						Description: "Model for the learn run; empty uses the channel's",
+					},
+					"effort": {
+						Type:        "string",
+						Title:       "Effort",
+						Description: "Effort for the learn run; empty uses the channel's",
+					},
+					"prompt": {
+						Type:        "string",
+						Title:       "Prompt",
+						Description: "Extra instructions added to the built-in learn prompt",
+						XWidget:     "textarea",
+					},
+				},
+			},
+
 			// ── Quality section (nested object) ──
 			"quality": {
 				Type:     "object",

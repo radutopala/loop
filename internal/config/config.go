@@ -67,6 +67,7 @@ type jsonConfig struct {
 	GitHub                                   *GitHubConfig              `json:"github"`
 	Review                                   *jsonReviewConfig          `json:"review"`
 	PlaygroundShare                          *jsonPlaygroundShareConfig `json:"playground_share"`
+	Learn                                    *jsonLearnConfig           `json:"learn"`
 }
 
 // jsonMemoryConfig is the JSON representation of the memory block.
@@ -441,6 +442,17 @@ func (l *Loader) parse() (*Config, error) {
 
 	if jc.PlaygroundShare != nil {
 		cfg.PlaygroundShare.Enabled = ptrDefault(jc.PlaygroundShare.Enabled, false)
+	}
+
+	cfg.Learn = LearnConfig{MinTurns: DefaultLearnMinTurns}
+	if jc.Learn != nil {
+		cfg.Learn = LearnConfig{
+			Enabled:  ptrDefault(jc.Learn.Enabled, false),
+			MinTurns: ptrDefault(jc.Learn.MinTurns, DefaultLearnMinTurns),
+			Model:    jc.Learn.Model,
+			Effort:   jc.Learn.Effort,
+			Prompt:   jc.Learn.Prompt,
+		}
 	}
 
 	// Memory config: enabled must be explicitly true.

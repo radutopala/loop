@@ -46,4 +46,10 @@ type ChannelLister interface {
 	MaxQueuedPriority(ctx context.Context, channelID string) (int, error)
 	ListTaskRunLogs(ctx context.Context, taskID int64, limit int) ([]*db.TaskRunLog, error)
 	ListAllScheduledTasks(ctx context.Context) ([]*db.ScheduledTask, error)
+	UpdateChannelLearnOverride(ctx context.Context, channelID, value string) error
+	GetLearnChannel(ctx context.Context, parentID string) (*db.Channel, error)
+	ListLearnProposals(ctx context.Context, channelID string) ([]*db.LearnProposal, error)
+	GetLearnProposal(ctx context.Context, id int64) (*db.LearnProposal, error)
+	ClaimLearnProposal(ctx context.Context, id int64) (bool, error)
+	SetLearnProposalStatus(ctx context.Context, id int64, status, errText string) error
 }

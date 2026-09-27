@@ -143,6 +143,16 @@ func (s *SchemaSuite) TestPlaygroundShareNestedObject() {
 	require.Equal(s.T(), false, enabled.Default)
 }
 
+func (s *SchemaSuite) TestLearnNestedObject() {
+	prop := GlobalConfigSchema().Properties["learn"]
+	require.NotNil(s.T(), prop)
+	require.Equal(s.T(), "Learn", prop.XSection)
+	for _, k := range []string{"enabled", "min_turns", "model", "effort", "prompt"} {
+		require.Contains(s.T(), prop.Properties, k)
+	}
+	require.Equal(s.T(), 3, prop.Properties["min_turns"].Default)
+}
+
 func (s *SchemaSuite) TestMemoryNestedObject() {
 	prop := GlobalConfigSchema().Properties["memory"]
 	require.NotNil(s.T(), prop)

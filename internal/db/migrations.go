@@ -378,6 +378,28 @@ var migrations = []migration{
 	// edit_hold_until is a unix-seconds lease the desktop app takes while the
 	// user edits a queued message; the claim won't start a held row.
 	sqlMigration(`ALTER TABLE messages ADD COLUMN edit_hold_until INTEGER NOT NULL DEFAULT 0`),
+	// learn_override turns a channel's end-of-run learn pass on or off ("on",
+	// "off"); empty inherits the config.
+	sqlMigration(`ALTER TABLE channels ADD COLUMN learn_override TEXT NOT NULL DEFAULT ''`),
+	// kind marks special channels; 'learn' is the hidden thread a channel's
+	// learn passes run in. Empty for every existing row.
+	sqlMigration(`ALTER TABLE channels ADD COLUMN kind TEXT NOT NULL DEFAULT ''`),
+	// learn_proposals holds what a learn pass suggests for a channel; nothing
+	// is applied until the user accepts it.
+	sqlMigration(`CREATE TABLE IF NOT EXISTS learn_proposals (
+		id               INTEGER PRIMARY KEY AUTOINCREMENT,
+		channel_id       TEXT NOT NULL,
+		learn_channel_id TEXT NOT NULL,
+		kind             TEXT NOT NULL,
+		title            TEXT NOT NULL DEFAULT '',
+		rationale        TEXT NOT NULL DEFAULT '',
+		payload          TEXT NOT NULL DEFAULT '',
+		status           TEXT NOT NULL DEFAULT 'pending',
+		error            TEXT NOT NULL DEFAULT '',
+		created_at       TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+		updated_at       TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+	)`),
+	sqlMigration(`CREATE INDEX IF NOT EXISTS idx_learn_proposals_channel ON learn_proposals(channel_id, id)`),
 }
 
 // migrateScheduledTasksAddManualType rebuilds scheduled_tasks to widen the

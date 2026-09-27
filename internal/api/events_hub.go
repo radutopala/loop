@@ -33,6 +33,7 @@ const (
 	EventChannelDeleted            = "channel.deleted"
 	EventChannelLocked             = "channel.locked"
 	EventChannelAgentConfig        = "channel.agent_config"
+	EventChannelLearn              = "channel.learn"
 	EventChannelUpdated            = "channel.updated"
 	EventAgentInstanceRegistered   = "agent_instance.registered"
 	EventAgentInstanceUnregistered = "agent_instance.unregistered"
@@ -300,6 +301,17 @@ func (h *EventsHub) BroadcastChannelAgentConfig(channelID, model, effort string)
 		Type:      EventChannelAgentConfig,
 		ChannelID: channelID,
 		Data:      map[string]string{"model_override": model, "effort_override": effort},
+		Global:    true,
+	})
+}
+
+// BroadcastChannelLearn sends a channel.learn event when a channel's learn
+// switch changes, so every window's composer shows it.
+func (h *EventsHub) BroadcastChannelLearn(channelID, learn string) {
+	h.Broadcast(Event{
+		Type:      EventChannelLearn,
+		ChannelID: channelID,
+		Data:      map[string]string{"learn": learn},
 		Global:    true,
 	})
 }

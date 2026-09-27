@@ -219,6 +219,34 @@ func (r *ReviewConfig) ResolvePrompt(loopDir string, readFile func(string) ([]by
 	return resolvePromptField("review", r.Prompt, r.PromptPath, filepath.Join(loopDir, "review"), readFile)
 }
 
+// LearnConfig configures the learn pass: after a chat run finishes, a hidden
+// forked session reviews the run and proposes Loop changes (shortcuts,
+// scheduled tasks, gate rules, mounts, thread name and description) that the
+// user applies one by one. Enabled is the default for the composer's Learn
+// switch, which each channel can override. MinTurns skips short runs. Model
+// and Effort, when set, replace the channel's for the learn run; Prompt, when
+// set, is added to the built-in learn instructions.
+type LearnConfig struct {
+	Enabled  bool   `json:"enabled"`
+	MinTurns int    `json:"min_turns"`
+	Model    string `json:"model"`
+	Effort   string `json:"effort"`
+	Prompt   string `json:"prompt"`
+}
+
+// DefaultLearnMinTurns is how many turns a run needs before it's learned from.
+const DefaultLearnMinTurns = 3
+
+// jsonLearnConfig is the JSON representation of LearnConfig; the pointers
+// tell "unset" (inherit the parent layer) from an explicit value.
+type jsonLearnConfig struct {
+	Enabled  *bool  `json:"enabled"`
+	MinTurns *int   `json:"min_turns"`
+	Model    string `json:"model"`
+	Effort   string `json:"effort"`
+	Prompt   string `json:"prompt"`
+}
+
 // PlaygroundShareConfig gates the public playground-share feature: when
 // Enabled is false (the default), the share endpoints and the
 // playground_share MCP tool reject requests, and the FE hides the Share
@@ -497,6 +525,7 @@ type Config struct {
 	GitHub                     GitHubConfig
 	Review                     ReviewConfig
 	PlaygroundShare            PlaygroundShareConfig
+	Learn                      LearnConfig
 }
 
 // GitHubConfig holds GitHub integration settings. GHUser names a `gh` CLI

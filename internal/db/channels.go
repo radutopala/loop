@@ -40,7 +40,7 @@ func (s *SQLiteStore) UpsertChannel(ctx context.Context, ch *Channel) error {
 
 func (s *SQLiteStore) GetChannel(ctx context.Context, channelID string) (*Channel, error) {
 	row := s.db.QueryRowContext(ctx,
-		`SELECT id, channel_id, guild_id, name, dir_path, parent_id, platform, active, session_id, permissions, worktree, base_branch, locked, model_override, effort_override, fork_pending, task_id, description, ticket_url, created_at, updated_at FROM channels WHERE channel_id = ?`,
+		`SELECT id, channel_id, guild_id, name, dir_path, parent_id, platform, active, session_id, permissions, worktree, base_branch, locked, model_override, effort_override, fork_pending, task_id, description, ticket_url, learn_override, kind, created_at, updated_at FROM channels WHERE channel_id = ?`,
 		channelID,
 	)
 	ch, err := scanChannel(row)
@@ -52,7 +52,7 @@ func (s *SQLiteStore) GetChannel(ctx context.Context, channelID string) (*Channe
 
 func (s *SQLiteStore) GetChannelByDirPath(ctx context.Context, dirPath string, platform types.Platform) (*Channel, error) {
 	row := s.db.QueryRowContext(ctx,
-		`SELECT id, channel_id, guild_id, name, dir_path, parent_id, platform, active, session_id, permissions, worktree, base_branch, locked, model_override, effort_override, fork_pending, task_id, description, ticket_url, created_at, updated_at
+		`SELECT id, channel_id, guild_id, name, dir_path, parent_id, platform, active, session_id, permissions, worktree, base_branch, locked, model_override, effort_override, fork_pending, task_id, description, ticket_url, learn_override, kind, created_at, updated_at
 		 FROM channels WHERE dir_path = ? AND platform = ? AND parent_id = ''`,
 		dirPath, platform,
 	)
@@ -65,7 +65,7 @@ func (s *SQLiteStore) GetChannelByDirPath(ctx context.Context, dirPath string, p
 
 func (s *SQLiteStore) GetChannelsByDirPath(ctx context.Context, dirPath string) ([]*Channel, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, channel_id, guild_id, name, dir_path, parent_id, platform, active, session_id, permissions, worktree, base_branch, locked, model_override, effort_override, fork_pending, task_id, description, ticket_url, created_at, updated_at
+		`SELECT id, channel_id, guild_id, name, dir_path, parent_id, platform, active, session_id, permissions, worktree, base_branch, locked, model_override, effort_override, fork_pending, task_id, description, ticket_url, learn_override, kind, created_at, updated_at
 		 FROM channels WHERE dir_path = ? AND parent_id = ''`,
 		dirPath,
 	)
@@ -180,6 +180,9 @@ func (s *SQLiteStore) DeleteChannel(ctx context.Context, channelID string) error
 		); err != nil {
 			return fmt.Errorf("deleting quality snapshots for channel: %w", err)
 		}
+		if err := deleteLearnChildren(ctx, tx, `?`, channelID); err != nil {
+			return err
+		}
 		if _, err := tx.ExecContext(ctx, `DELETE FROM channels WHERE channel_id = ?`, channelID); err != nil {
 			return err
 		}
@@ -189,6 +192,11 @@ func (s *SQLiteStore) DeleteChannel(ctx context.Context, channelID string) error
 
 func (s *SQLiteStore) DeleteChannelsByParentID(ctx context.Context, parentID string) error {
 	return s.withTx(ctx, func(tx *sql.Tx) error {
+		// The children's own learn threads go first, while the children
+		// still exist to find them by.
+		if err := deleteLearnChildren(ctx, tx, `SELECT channel_id FROM channels WHERE parent_id = ?`, parentID); err != nil {
+			return err
+		}
 		if _, err := tx.ExecContext(ctx,
 			`DELETE FROM messages WHERE channel_id IN (SELECT channel_id FROM channels WHERE parent_id = ?)`, parentID); err != nil {
 			return fmt.Errorf("deleting messages for child channels: %w", err)
@@ -203,6 +211,23 @@ func (s *SQLiteStore) DeleteChannelsByParentID(ctx context.Context, parentID str
 		}
 		return nil
 	})
+}
+
+// deleteLearnChildren deletes the learn threads under the channels parents
+// selects (a placeholder or a subquery taking arg), their messages, and the
+// learn proposals filed for those channels.
+func deleteLearnChildren(ctx context.Context, tx *sql.Tx, parents string, arg string) error {
+	learnIDs := `SELECT channel_id FROM channels WHERE kind = '` + ChannelKindLearn + `' AND parent_id IN (` + parents + `)`
+	if _, err := tx.ExecContext(ctx, `DELETE FROM messages WHERE channel_id IN (`+learnIDs+`)`, arg); err != nil {
+		return fmt.Errorf("deleting learn thread messages: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM learn_proposals WHERE channel_id IN (`+parents+`)`, arg); err != nil {
+		return fmt.Errorf("deleting learn proposals: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM channels WHERE kind = '`+ChannelKindLearn+`' AND parent_id IN (`+parents+`)`, arg); err != nil {
+		return fmt.Errorf("deleting learn threads: %w", err)
+	}
+	return nil
 }
 
 func (s *SQLiteStore) ListChannelIDsByParentID(ctx context.Context, parentID string) ([]string, error) {
@@ -252,7 +277,7 @@ func (s *SQLiteStore) ChannelActivity(ctx context.Context) (map[string]time.Time
 
 func (s *SQLiteStore) ListChannels(ctx context.Context) ([]*Channel, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, channel_id, guild_id, name, dir_path, parent_id, platform, active, session_id, permissions, worktree, base_branch, locked, model_override, effort_override, fork_pending, task_id, description, ticket_url, created_at, updated_at
+		`SELECT id, channel_id, guild_id, name, dir_path, parent_id, platform, active, session_id, permissions, worktree, base_branch, locked, model_override, effort_override, fork_pending, task_id, description, ticket_url, learn_override, kind, created_at, updated_at
 		 FROM channels ORDER BY name ASC`)
 	if err != nil {
 		return nil, err

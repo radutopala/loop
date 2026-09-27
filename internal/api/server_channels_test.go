@@ -762,6 +762,22 @@ func (s *ServerSuite) TestSearchChannelsAgentRunning() {
 	chatLister.AssertExpectations(s.T())
 }
 
+func (s *ServerSuite) TestSearchChannelsHidesLearnThreads() {
+	channels := []*db.Channel{
+		{ChannelID: "ch-1", Name: "chat", Platform: types.PlatformLocal, Active: true},
+		{ChannelID: "l-1", Name: "learn", ParentID: "ch-1", Platform: types.PlatformLocal, Active: true, Kind: db.ChannelKindLearn},
+	}
+	s.store.On("ListChannels", mock.Anything).Return(channels, nil)
+	s.store.On("ChannelActivity", mock.Anything).Return(map[string]time.Time{}, nil)
+
+	rec := s.testRequest("GET", "/api/channels", "")
+	require.Equal(s.T(), http.StatusOK, rec.Code)
+	var resp []channelResponse
+	require.NoError(s.T(), json.NewDecoder(rec.Body).Decode(&resp))
+	require.Len(s.T(), resp, 1)
+	require.Equal(s.T(), "ch-1", resp[0].ChannelID)
+}
+
 func (s *ServerSuite) TestSearchChannelsError() {
 	s.store.On("ListChannels", mock.Anything).Return(nil, errors.New("db error"))
 

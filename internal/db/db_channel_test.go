@@ -62,7 +62,7 @@ func (s *StoreSuite) TestUpsertChannel() {
 func (s *StoreSuite) TestGetChannelWithParentID() {
 	now := time.Now().UTC()
 	rows := newMockChannelRows().
-		AddRow(1, "thread1", "g1", "", "/project", "ch1", "", 1, "", "", 0, "", 0, "", "", 0, 0, "", "", now, now)
+		AddRow(1, "thread1", "g1", "", "/project", "ch1", "", 1, "", "", 0, "", 0, "", "", 0, 0, "", "", "", "", now, now)
 	s.mock.ExpectQuery(`SELECT .+ FROM channels WHERE channel_id`).
 		WithArgs("thread1").
 		WillReturnRows(rows)
@@ -189,7 +189,7 @@ func (s *StoreSuite) TestGetChannel() {
 	now := time.Now().UTC()
 	permJSON := `{"owners":{"users":["U1"],"roles":["admin"]},"members":{"users":[],"roles":[]}}`
 	rows := newMockChannelRows().
-		AddRow(1, "ch1", "g1", "test", "/home/user/project", "", "discord", 1, "sess-123", permJSON, 0, "", 0, "", "", 0, 0, "reviews PRs", "https://example.atlassian.net/browse/PROJ-1", now, now)
+		AddRow(1, "ch1", "g1", "test", "/home/user/project", "", "discord", 1, "sess-123", permJSON, 0, "", 0, "", "", 0, 0, "reviews PRs", "https://example.atlassian.net/browse/PROJ-1", "", "", now, now)
 	s.mock.ExpectQuery(`SELECT .+ FROM channels WHERE channel_id`).
 		WithArgs("ch1").
 		WillReturnRows(rows)
@@ -226,7 +226,7 @@ func (s *StoreSuite) TestGetChannelByDirPath() {
 	now := time.Now().UTC()
 	permJSON := `{"owners":{"users":["U1"],"roles":[]},"members":{"users":["U2"],"roles":[]}}`
 	rows := newMockChannelRows().
-		AddRow(1, "ch1", "g1", "loop", "/home/user/dev/loop", "", "discord", 1, "", permJSON, 0, "", 0, "", "", 0, 0, "", "", now, now)
+		AddRow(1, "ch1", "g1", "loop", "/home/user/dev/loop", "", "discord", 1, "", permJSON, 0, "", 0, "", "", 0, 0, "", "", "", "", now, now)
 	s.mock.ExpectQuery(`SELECT .+ FROM channels WHERE dir_path`).
 		WithArgs("/home/user/dev/loop", types.PlatformDiscord).
 		WillReturnRows(rows)
@@ -256,8 +256,8 @@ func (s *StoreSuite) TestGetChannelByDirPathNotFoundAndError() {
 func (s *StoreSuite) TestGetChannelsByDirPath() {
 	now := time.Now().UTC()
 	rows := newMockChannelRows().
-		AddRow(1, "ch1", "", "loop-local", "/home/user/dev/loop", "", "local", 1, "", "", 0, "", 0, "", "", 0, 0, "", "", now, now).
-		AddRow(2, "ch2", "g1", "loop-discord", "/home/user/dev/loop", "", "discord", 1, "", "", 0, "", 0, "", "", 0, 0, "", "", now, now)
+		AddRow(1, "ch1", "", "loop-local", "/home/user/dev/loop", "", "local", 1, "", "", 0, "", 0, "", "", 0, 0, "", "", "", "", now, now).
+		AddRow(2, "ch2", "g1", "loop-discord", "/home/user/dev/loop", "", "discord", 1, "", "", 0, "", 0, "", "", 0, 0, "", "", "", "", now, now)
 	s.mock.ExpectQuery(`SELECT .+ FROM channels WHERE dir_path`).
 		WithArgs("/home/user/dev/loop").
 		WillReturnRows(rows)
@@ -356,88 +356,79 @@ func (s *StoreSuite) TestUpdateChannelPermissions() {
 
 // --- DeleteChannel tests ---
 
-func (s *StoreSuite) TestDeleteChannel() {
-	s.mock.ExpectBegin()
-	s.mock.ExpectExec(`DELETE FROM messages WHERE channel_id`).
-		WithArgs("ch1").
-		WillReturnResult(sqlmock.NewResult(0, 5))
-	s.mock.ExpectExec(`DELETE FROM quality_snapshots WHERE channel_id`).
-		WithArgs("ch1").
-		WillReturnResult(sqlmock.NewResult(0, 2))
-	s.mock.ExpectExec(`DELETE FROM channels WHERE channel_id`).
-		WithArgs("ch1").
-		WillReturnResult(sqlmock.NewResult(0, 1))
-	s.mock.ExpectCommit()
+// deleteStep is one statement of a channel delete, for walking the
+// statements up to the one that fails.
+type deleteStep struct {
+	query  string
+	errMsg string
+}
 
-	err := s.store.DeleteChannel(context.Background(), "ch1")
-	require.NoError(s.T(), err)
+var deleteChannelSteps = []deleteStep{
+	{`DELETE FROM messages WHERE channel_id = \?`, "deleting messages for channel"},
+	{`DELETE FROM quality_snapshots WHERE channel_id = \?`, "deleting quality snapshots for channel"},
+	{`DELETE FROM messages WHERE channel_id IN \(SELECT channel_id FROM channels WHERE kind = 'learn' AND parent_id IN \(\?\)\)`, "deleting learn thread messages"},
+	{`DELETE FROM learn_proposals WHERE channel_id IN \(\?\)`, "deleting learn proposals"},
+	{`DELETE FROM channels WHERE kind = 'learn' AND parent_id IN \(\?\)`, "deleting learn threads"},
+	{`DELETE FROM channels WHERE channel_id = \?`, ""},
+}
+
+const childIDs = `SELECT channel_id FROM channels WHERE parent_id = \?`
+
+var deleteChildrenSteps = []deleteStep{
+	{`DELETE FROM messages WHERE channel_id IN \(SELECT channel_id FROM channels WHERE kind = 'learn' AND parent_id IN \(` + childIDs + `\)\)`, "deleting learn thread messages"},
+	{`DELETE FROM learn_proposals WHERE channel_id IN \(` + childIDs + `\)`, "deleting learn proposals"},
+	{`DELETE FROM channels WHERE kind = 'learn' AND parent_id IN \(` + childIDs + `\)`, "deleting learn threads"},
+	{`DELETE FROM messages WHERE channel_id IN \(` + childIDs + `\)`, "deleting messages for child channels"},
+	{`DELETE FROM quality_snapshots WHERE channel_id IN \(` + childIDs + `\)`, "deleting quality snapshots for child channels"},
+	{`DELETE FROM channels WHERE parent_id = \?`, ""},
+}
+
+// expectDeleteSteps expects steps in order; the one at failAt fails and the
+// transaction rolls back, or all succeed and it commits when failAt is -1.
+func (s *StoreSuite) expectDeleteSteps(steps []deleteStep, failAt int) {
+	s.mock.ExpectBegin()
+	for i, st := range steps {
+		exp := s.mock.ExpectExec(st.query).WithArgs("ch1")
+		if i == failAt {
+			exp.WillReturnError(sql.ErrConnDone)
+			s.mock.ExpectRollback()
+			return
+		}
+		exp.WillReturnResult(sqlmock.NewResult(0, 1))
+	}
+	s.mock.ExpectCommit()
+}
+
+func (s *StoreSuite) TestDeleteChannel() {
+	s.expectDeleteSteps(deleteChannelSteps, -1)
+	require.NoError(s.T(), s.store.DeleteChannel(context.Background(), "ch1"))
 	require.NoError(s.T(), s.mock.ExpectationsWereMet())
 }
 
 func (s *StoreSuite) TestDeleteChannelErrors() {
-	s.mock.ExpectBegin()
-	s.mock.ExpectExec(`DELETE FROM messages WHERE channel_id`).WithArgs("ch1").WillReturnError(sql.ErrConnDone)
-	s.mock.ExpectRollback()
-	err := s.store.DeleteChannel(context.Background(), "ch1")
-	require.Error(s.T(), err)
-	require.Contains(s.T(), err.Error(), "deleting messages for channel")
-
-	s.mock.ExpectBegin()
-	s.mock.ExpectExec(`DELETE FROM messages WHERE channel_id`).WithArgs("ch1").WillReturnResult(sqlmock.NewResult(0, 0))
-	s.mock.ExpectExec(`DELETE FROM quality_snapshots WHERE channel_id`).WithArgs("ch1").WillReturnError(sql.ErrConnDone)
-	err = s.store.DeleteChannel(context.Background(), "ch1")
-	require.Error(s.T(), err)
-	require.Contains(s.T(), err.Error(), "deleting quality snapshots for channel")
-
-	s.mock.ExpectBegin()
-	s.mock.ExpectExec(`DELETE FROM messages WHERE channel_id`).WithArgs("ch1").WillReturnResult(sqlmock.NewResult(0, 0))
-	s.mock.ExpectExec(`DELETE FROM quality_snapshots WHERE channel_id`).WithArgs("ch1").WillReturnResult(sqlmock.NewResult(0, 0))
-	s.mock.ExpectExec(`DELETE FROM channels WHERE channel_id`).WithArgs("ch1").WillReturnError(sql.ErrConnDone)
-	s.mock.ExpectRollback()
-	err = s.store.DeleteChannel(context.Background(), "ch1")
-	require.Error(s.T(), err)
+	for i, st := range deleteChannelSteps {
+		s.expectDeleteSteps(deleteChannelSteps, i)
+		err := s.store.DeleteChannel(context.Background(), "ch1")
+		require.Error(s.T(), err, st.query)
+		require.Contains(s.T(), err.Error(), st.errMsg)
+		require.NoError(s.T(), s.mock.ExpectationsWereMet())
+	}
 }
 
 func (s *StoreSuite) TestDeleteChannelsByParentID() {
-	s.mock.ExpectBegin()
-	s.mock.ExpectExec(`DELETE FROM messages WHERE channel_id IN`).
-		WithArgs("ch1").
-		WillReturnResult(sqlmock.NewResult(0, 10))
-	s.mock.ExpectExec(`DELETE FROM quality_snapshots WHERE channel_id IN`).
-		WithArgs("ch1").
-		WillReturnResult(sqlmock.NewResult(0, 4))
-	s.mock.ExpectExec(`DELETE FROM channels WHERE parent_id`).
-		WithArgs("ch1").
-		WillReturnResult(sqlmock.NewResult(0, 3))
-	s.mock.ExpectCommit()
-
-	err := s.store.DeleteChannelsByParentID(context.Background(), "ch1")
-	require.NoError(s.T(), err)
+	s.expectDeleteSteps(deleteChildrenSteps, -1)
+	require.NoError(s.T(), s.store.DeleteChannelsByParentID(context.Background(), "ch1"))
 	require.NoError(s.T(), s.mock.ExpectationsWereMet())
 }
 
 func (s *StoreSuite) TestDeleteChannelsByParentIDErrors() {
-	s.mock.ExpectBegin()
-	s.mock.ExpectExec(`DELETE FROM messages WHERE channel_id IN`).WithArgs("ch1").WillReturnError(sql.ErrConnDone)
-	s.mock.ExpectRollback()
-	err := s.store.DeleteChannelsByParentID(context.Background(), "ch1")
-	require.Error(s.T(), err)
-	require.Contains(s.T(), err.Error(), "deleting messages for child channels")
-
-	s.mock.ExpectBegin()
-	s.mock.ExpectExec(`DELETE FROM messages WHERE channel_id IN`).WithArgs("ch1").WillReturnResult(sqlmock.NewResult(0, 0))
-	s.mock.ExpectExec(`DELETE FROM quality_snapshots WHERE channel_id IN`).WithArgs("ch1").WillReturnError(sql.ErrConnDone)
-	err = s.store.DeleteChannelsByParentID(context.Background(), "ch1")
-	require.Error(s.T(), err)
-	require.Contains(s.T(), err.Error(), "deleting quality snapshots for child channels")
-
-	s.mock.ExpectBegin()
-	s.mock.ExpectExec(`DELETE FROM messages WHERE channel_id IN`).WithArgs("ch1").WillReturnResult(sqlmock.NewResult(0, 0))
-	s.mock.ExpectExec(`DELETE FROM quality_snapshots WHERE channel_id IN`).WithArgs("ch1").WillReturnResult(sqlmock.NewResult(0, 0))
-	s.mock.ExpectExec(`DELETE FROM channels WHERE parent_id`).WithArgs("ch1").WillReturnError(sql.ErrConnDone)
-	s.mock.ExpectRollback()
-	err = s.store.DeleteChannelsByParentID(context.Background(), "ch1")
-	require.Error(s.T(), err)
+	for i, st := range deleteChildrenSteps {
+		s.expectDeleteSteps(deleteChildrenSteps, i)
+		err := s.store.DeleteChannelsByParentID(context.Background(), "ch1")
+		require.Error(s.T(), err, st.query)
+		require.Contains(s.T(), err.Error(), st.errMsg)
+		require.NoError(s.T(), s.mock.ExpectationsWereMet())
+	}
 }
 
 func (s *StoreSuite) TestListChannelIDsByParentID() {
@@ -488,8 +479,8 @@ func (s *StoreSuite) TestListChannels() {
 	now := time.Now().UTC()
 	permJSON := `{"owners":{"users":["U1"],"roles":[]},"members":{"users":[],"roles":[]}}`
 	rows := newMockChannelRows().
-		AddRow(1, "ch1", "g1", "alpha", "/home/user/alpha", "", "discord", 1, "sess-1", permJSON, 0, "", 0, "", "", 0, 0, "", "", now, now).
-		AddRow(2, "ch2", "g1", "beta", "/home/user/beta", "ch1", "discord", 0, "sess-2", "", 0, "", 1, "", "", 0, 0, "", "", now, now)
+		AddRow(1, "ch1", "g1", "alpha", "/home/user/alpha", "", "discord", 1, "sess-1", permJSON, 0, "", 0, "", "", 0, 0, "", "", "", "", now, now).
+		AddRow(2, "ch2", "g1", "beta", "/home/user/beta", "ch1", "discord", 0, "sess-2", "", 0, "", 1, "", "", 0, 0, "", "", "", "", now, now)
 	s.mock.ExpectQuery(`SELECT .+ FROM channels ORDER BY name ASC`).
 		WillReturnRows(rows)
 
@@ -566,7 +557,7 @@ func (s *StoreSuite) TestListChannelsErrors() {
 	require.Nil(s.T(), channels)
 
 	s.mock.ExpectQuery(`SELECT .+ FROM channels ORDER BY name ASC`).WillReturnRows(
-		newMockChannelRows().AddRow("not-an-int", "ch1", "g1", "test", "/home/user/project", "", "", 1, "sess-1", "", 0, "", 0, "", "", 0, 0, "", "", time.Now().UTC(), time.Now().UTC()))
+		newMockChannelRows().AddRow("not-an-int", "ch1", "g1", "test", "/home/user/project", "", "", 1, "sess-1", "", 0, "", 0, "", "", 0, 0, "", "", "", "", time.Now().UTC(), time.Now().UTC()))
 	channels, err = s.store.ListChannels(context.Background())
 	require.Error(s.T(), err)
 	require.Nil(s.T(), channels)

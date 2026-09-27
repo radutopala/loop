@@ -12,6 +12,7 @@ import { firstClipboardImage, uploadPastedImage } from "../../utils/clipboardIma
 import { storageGetJSON, storageSetJSON } from "../../utils/storage";
 import { AgentConfigPill } from "./AgentConfigPill";
 import { composerHeight, composerMaxHeight } from "./composerHeight";
+import { LearnToggle } from "./LearnToggle";
 import { chooseSendRoute, normalizeSendMode, type SendMode } from "./sendRouting";
 
 // Draft text per channel — persisted to localStorage across app restarts.
@@ -1202,6 +1203,7 @@ export function ChatInput({
           </button>
         )}
         <div style={{ flex: 1 }} />
+        <LearnToggle channelId={channelId} />
         <AgentConfigPill channelId={channelId} />
         <div style={modeStyles.pill}>
           <button

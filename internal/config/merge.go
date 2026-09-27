@@ -54,6 +54,7 @@ type projectConfig struct {
 	GitHub                                   *GitHubConfig              `json:"github"`
 	Review                                   *jsonReviewConfig          `json:"review"`
 	PlaygroundShare                          *jsonPlaygroundShareConfig `json:"playground_share"`
+	Learn                                    *jsonLearnConfig           `json:"learn"`
 }
 
 // LoadProjectConfig loads project-specific config from {workDir}/.loop/config.json
@@ -545,6 +546,25 @@ func (l *Loader) loadProjectConfig(workDir string, mainConfig *Config) (*Config,
 	// PlaygroundShare: Enabled overrides global only when explicitly set.
 	if pc.PlaygroundShare != nil && pc.PlaygroundShare.Enabled != nil {
 		merged.PlaygroundShare.Enabled = *pc.PlaygroundShare.Enabled
+	}
+
+	// Learn: like Review, each field overrides only when set in the project.
+	if pc.Learn != nil {
+		if pc.Learn.Enabled != nil {
+			merged.Learn.Enabled = *pc.Learn.Enabled
+		}
+		if pc.Learn.MinTurns != nil {
+			merged.Learn.MinTurns = *pc.Learn.MinTurns
+		}
+		if pc.Learn.Model != "" {
+			merged.Learn.Model = pc.Learn.Model
+		}
+		if pc.Learn.Effort != "" {
+			merged.Learn.Effort = pc.Learn.Effort
+		}
+		if pc.Learn.Prompt != "" {
+			merged.Learn.Prompt = pc.Learn.Prompt
+		}
 	}
 
 	return &merged, nil

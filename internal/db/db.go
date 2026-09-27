@@ -92,6 +92,14 @@ type Store interface {
 	ListNodeRuns(ctx context.Context, runID string) ([]*NodeRun, error)
 	UpdateNodeHeartbeat(ctx context.Context, runID, nodeID string, iteration int) error
 	DeleteWorkflowRun(ctx context.Context, id string) error
+	UpdateChannelLearnOverride(ctx context.Context, channelID, value string) error
+	GetLearnChannel(ctx context.Context, parentID string) (*Channel, error)
+	InsertLearnChannel(ctx context.Context, ch *Channel) error
+	InsertLearnProposals(ctx context.Context, proposals []*LearnProposal) error
+	ListLearnProposals(ctx context.Context, channelID string) ([]*LearnProposal, error)
+	GetLearnProposal(ctx context.Context, id int64) (*LearnProposal, error)
+	ClaimLearnProposal(ctx context.Context, id int64) (bool, error)
+	SetLearnProposalStatus(ctx context.Context, id int64, status, errText string) error
 	Close() error
 }
 
@@ -256,7 +264,7 @@ func scanChannelFrom(scanner rowScanner) (*Channel, error) {
 	var active, worktree, locked, forkPending int
 	var permJSON string
 	if err := scanner.Scan(&ch.ID, &ch.ChannelID, &ch.GuildID, &ch.Name, &ch.DirPath,
-		&ch.ParentID, &ch.Platform, &active, &ch.SessionID, &permJSON, &worktree, &ch.BaseBranch, &locked, &ch.ModelOverride, &ch.EffortOverride, &forkPending, &ch.TaskID, &ch.Description, &ch.TicketURL, &ch.CreatedAt, &ch.UpdatedAt); err != nil {
+		&ch.ParentID, &ch.Platform, &active, &ch.SessionID, &permJSON, &worktree, &ch.BaseBranch, &locked, &ch.ModelOverride, &ch.EffortOverride, &forkPending, &ch.TaskID, &ch.Description, &ch.TicketURL, &ch.LearnOverride, &ch.Kind, &ch.CreatedAt, &ch.UpdatedAt); err != nil {
 		return nil, err
 	}
 	ch.Active = active == 1

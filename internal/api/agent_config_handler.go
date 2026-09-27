@@ -94,18 +94,28 @@ func (s *Server) handleSetAgentConfig(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// resolveClaudeDefaults mirrors resolveGHUser's three-layer merge (global →
-// project → worktree) for claude_model / claude_effort, so the UI can show
-// what "default" resolves to for this channel's dir. Returns the global
-// defaults on any config-load error.
+// resolveClaudeDefaults returns claude_model / claude_effort from the
+// channel dir's merged config, so the UI can show what "default" resolves to.
+// Both are empty on any config-load error.
 func (s *Server) resolveClaudeDefaults(workdir, parentDirPath string) (string, string) {
+	merged := s.mergedConfig(workdir, parentDirPath)
+	if merged == nil {
+		return "", ""
+	}
+	return merged.ClaudeModel, merged.ClaudeEffort
+}
+
+// mergedConfig mirrors resolveGHUser's three-layer merge (global → project →
+// worktree) for a channel's dir. A layer that fails to load is skipped; nil
+// means the global config itself failed.
+func (s *Server) mergedConfig(workdir, parentDirPath string) *config.Config {
 	loadConfig := s.configs.load
 	if loadConfig == nil {
 		loadConfig = config.Load
 	}
 	cfg, err := loadConfig()
 	if err != nil || cfg == nil {
-		return "", ""
+		return nil
 	}
 	merged := cfg
 	switch {
@@ -126,5 +136,5 @@ func (s *Server) resolveClaudeDefaults(workdir, parentDirPath string) (string, s
 			merged = pc
 		}
 	}
-	return merged.ClaudeModel, merged.ClaudeEffort
+	return merged
 }
