@@ -325,21 +325,21 @@ func (s *ServerSuite) TestApplyLearnProposalConfigKinds() {
 		{
 			name: "prompt shortcut", kind: db.LearnKindPromptShortcut, payload: `{"name":"fix","prompt":"fix it"}`,
 			initial: "{\n  // mine\n  \"prompt_shortcuts\": []\n}\n",
-			want:    "{\n  // mine\n  \"prompt_shortcuts\": [{\"name\":\"fix\",\"prompt\":\"fix it\"}]\n}\n",
+			want:    "{\n  // mine\n  \"prompt_shortcuts\": [\n    {\n      \"name\": \"fix\",\n      \"prompt\": \"fix it\"\n    }\n  ]\n}\n",
 		},
 		{name: "prompt shortcut exists", kind: db.LearnKindPromptShortcut, payload: `{"name":"review","prompt":"p"}`, wantErr: `prompt shortcut named "review" already exists`},
 		{
 			name: "bash shortcut", kind: db.LearnKindBashShortcut, payload: `{"name":"test","command":"make test"}`,
-			want: `{"bash_shortcuts":[{"name":"test","command":"make test"}]}` + "\n",
+			want: "{\n  \"bash_shortcuts\": [\n    {\n      \"name\": \"test\",\n      \"command\": \"make test\"\n    }\n  ]\n}\n",
 		},
 		{name: "bash shortcut exists", kind: db.LearnKindBashShortcut, payload: `{"name":"lint","command":"c"}`, wantErr: `bash shortcut named "lint" already exists`},
 		{
 			name: "gate rule", kind: db.LearnKindGateRule, payload: `{"type":"command","rule":{"commands":["git"],"decision":"approve"}}`,
-			want: `{"gates":{"agentgate":{"command_rules":[{"commands":["git"],"decision":"approve"}]}}}` + "\n",
+			want: "{\n  \"gates\": {\n    \"agentgate\": {\n      \"command_rules\": [\n        {\n          \"commands\": [\n            \"git\"\n          ],\n          \"decision\": \"approve\"\n        }\n      ]\n    }\n  }\n}\n",
 		},
 		{
 			name: "first mount keeps the global ones", kind: db.LearnKindMount, payload: `{"mount":"~/.aws:~/.aws:ro"}`,
-			want: `{"mounts":["~/.gitconfig:~/.gitconfig:ro","~/.aws:~/.aws:ro"]}` + "\n",
+			want: "{\n  \"mounts\": [\n    \"~/.gitconfig:~/.gitconfig:ro\",\n    \"~/.aws:~/.aws:ro\"\n  ]\n}\n",
 		},
 		{name: "mount exists", kind: db.LearnKindMount, payload: `{"mount":"~/.gitconfig:~/.gitconfig:ro"}`, wantErr: "already exists"},
 		{name: "broken config", kind: db.LearnKindMount, payload: `{"mount":"a:b"}`, initial: "{", wantErr: "parsing"},
@@ -403,6 +403,6 @@ func (s *ServerSuite) TestApplyLearnProposalConfigErrors() {
 		require.Equal(s.T(), db.LearnApplied, status, errText)
 		data, err := os.ReadFile(filepath.Join(dir, ".loop", "config.json"))
 		require.NoError(s.T(), err)
-		require.Equal(s.T(), `{"mounts":["a:b"]}`+"\n", string(data))
+		require.Equal(s.T(), "{\n  \"mounts\": [\n    \"a:b\"\n  ]\n}\n", string(data))
 	})
 }

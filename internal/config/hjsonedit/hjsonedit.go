@@ -26,7 +26,9 @@ type FS interface {
 // Append adds item to the end of the array at path (object keys from the
 // top level down) in the config file at configPath. A missing file, missing
 // objects along path and a missing array are all created; a new or empty
-// array starts with seed's elements, then item. The write is atomic.
+// array starts with seed's elements, then item. What's added is laid out one
+// value per line with the file's indentation, unless it lands in a container
+// written on one line. The write is atomic.
 func Append(fsys FS, configPath string, path []string, item any, seed []any) error {
 	if len(path) == 0 {
 		return errors.New("empty path")
@@ -46,10 +48,12 @@ func Append(fsys FS, configPath string, path []string, item any, seed []any) err
 	if err != nil {
 		return err
 	}
+	rootLines := multiline(&v)
 	ops, _ := json.Marshal([]any{op})
 	if err := v.Patch(ops); err != nil {
 		return fmt.Errorf("editing %s: %w", configPath, err)
 	}
+	indentAdded(&v, path, op, rootLines)
 	if err := fsys.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
 		return fmt.Errorf("creating %s: %w", filepath.Dir(configPath), err)
 	}
@@ -93,12 +97,156 @@ func appendOp(v *hujson.Value, path []string, item any, seed []any) (patchOp, er
 	return patchOp{Op: "add", Path: pointer(path) + "/-", Value: item}, nil
 }
 
-// findMember returns the named member's value in obj, or nil.
-func findMember(obj *hujson.Object, name string) *hujson.Value {
+// indentAdded lays out what op added to v. The container that received it
+// is the array at path for an append, the object holding the replaced array
+// for a replace, and the object the first missing key went into otherwise;
+// the added value is always its last child, except for a replace, where the
+// member stays in place. rootLines is whether the file's top level was one
+// member per line (or empty) before the edit.
+func indentAdded(v *hujson.Value, path []string, op patchOp, rootLines bool) {
+	unit := indentUnit(v)
+	switch {
+	case strings.HasSuffix(op.Path, "/-"):
+		arr := v.Find(pointer(path)).Value.(*hujson.Array)
+		placeLast(arr.Elements, &arr.AfterExtra, lineIndent(v, path), unit, rootLines, func(e *hujson.Value) *hujson.Value { return e })
+	case op.Op == "replace":
+		parent := path[:len(path)-1]
+		layout(v.Find(pointer(path)), lineIndent(v, parent)+unit, unit, multiline(v.Find(pointer(parent))))
+	default:
+		key := strings.Count(op.Path, "/") - 1
+		obj := v.Find(pointer(path[:key])).Value.(*hujson.Object)
+		placeLast(obj.Members, &obj.AfterExtra, lineIndent(v, path[:key]), unit, rootLines, func(m *hujson.ObjectMember) *hujson.Value { return &m.Name })
+	}
+}
+
+// placeLast puts the last of children on its own line, indented one unit
+// past indent (the container's line), and lays out its value, when the
+// container is written one child per line. A container that was empty
+// follows the file: rootLines says whether its top level is one member per
+// line. head returns the value whose leading whitespace starts a child: the
+// element itself, or an object member's name.
+func placeLast[T any](children []T, closing *hujson.Extra, indent, unit string, rootLines bool, head func(*T) *hujson.Value) {
+	last := &children[len(children)-1]
+	h := head(last)
+	lines := len(children) == 1 && rootLines
+	for i := range children[:len(children)-1] {
+		if strings.Contains(string(head(&children[i]).BeforeExtra), "\n") {
+			lines = true
+		}
+	}
+	if !lines {
+		return
+	}
+	child := indent + unit
+	before := string(h.BeforeExtra)
+	if i := strings.LastIndexByte(before, '\n'); i >= 0 {
+		before = before[:i]
+	}
+	h.BeforeExtra = hujson.Extra(before + "\n" + child)
+	if len(children) == 1 {
+		*closing = hujson.Extra("\n" + indent)
+	}
+	value := h
+	if m, ok := any(last).(*hujson.ObjectMember); ok {
+		m.Value.BeforeExtra = hujson.Extra(" ")
+		value = &m.Value
+	}
+	layout(value, child, unit, true)
+}
+
+// layout puts each value inside v on its own line, indented one unit per
+// level below indent, the line v starts on. It's for values Append just
+// made, which carry no comments to keep. A one-line layout is left alone.
+func layout(v *hujson.Value, indent, unit string, lines bool) {
+	if !lines {
+		return
+	}
+	switch c := v.Value.(type) {
+	case *hujson.Object:
+		if len(c.Members) == 0 {
+			return
+		}
+		for i := range c.Members {
+			m := &c.Members[i]
+			m.Name.BeforeExtra, m.Name.AfterExtra = hujson.Extra("\n"+indent+unit), nil
+			m.Value.BeforeExtra, m.Value.AfterExtra = hujson.Extra(" "), nil
+			layout(&m.Value, indent+unit, unit, true)
+		}
+		c.AfterExtra = hujson.Extra("\n" + indent)
+	case *hujson.Array:
+		if len(c.Elements) == 0 {
+			return
+		}
+		for i := range c.Elements {
+			e := &c.Elements[i]
+			e.BeforeExtra, e.AfterExtra = hujson.Extra("\n"+indent+unit), nil
+			layout(e, indent+unit, unit, true)
+		}
+		c.AfterExtra = hujson.Extra("\n" + indent)
+	}
+}
+
+// multiline reports whether v, an object, is written one member per line,
+// or is empty (which Append fills that way).
+func multiline(v *hujson.Value) bool {
+	obj := v.Value.(*hujson.Object)
+	if len(obj.Members) == 0 || strings.Contains(string(obj.AfterExtra), "\n") {
+		return true
+	}
+	for _, m := range obj.Members {
+		if strings.Contains(string(m.Name.BeforeExtra), "\n") {
+			return true
+		}
+	}
+	return false
+}
+
+// lineIndent returns the indentation of the line the value at path starts
+// on: the whitespace after the last newline before it (its member name's, in
+// an object), or its parent's when it shares the parent's line.
+func lineIndent(v *hujson.Value, path []string) string {
+	indent := ""
+	cur := v
+	for _, key := range path {
+		obj := cur.Value.(*hujson.Object)
+		i := memberIndex(obj, key)
+		before := string(obj.Members[i].Name.BeforeExtra)
+		if j := strings.LastIndexByte(before, '\n'); j >= 0 {
+			indent = before[j+1:]
+		}
+		cur = &obj.Members[i].Value
+	}
+	return indent
+}
+
+// indentUnit is the file's indentation step: the indentation of the first
+// top-level member on its own line, else two spaces.
+func indentUnit(v *hujson.Value) string {
+	if obj, ok := v.Value.(*hujson.Object); ok {
+		for _, m := range obj.Members {
+			before := string(m.Name.BeforeExtra)
+			if i := strings.LastIndexByte(before, '\n'); i >= 0 && i < len(before)-1 {
+				return before[i+1:]
+			}
+		}
+	}
+	return "  "
+}
+
+// memberIndex returns the index of the named member in obj, or -1.
+func memberIndex(obj *hujson.Object, name string) int {
 	for i := range obj.Members {
 		if lit, ok := obj.Members[i].Name.Value.(hujson.Literal); ok && lit.String() == name {
-			return &obj.Members[i].Value
+			return i
 		}
+	}
+	return -1
+}
+
+// findMember returns the named member's value in obj, or nil.
+func findMember(obj *hujson.Object, name string) *hujson.Value {
+	if i := memberIndex(obj, name); i >= 0 {
+		return &obj.Members[i].Value
 	}
 	return nil
 }
