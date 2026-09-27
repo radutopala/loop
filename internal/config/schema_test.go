@@ -151,6 +151,9 @@ func (s *SchemaSuite) TestLearnNestedObject() {
 		require.Contains(s.T(), prop.Properties, k)
 	}
 	require.Equal(s.T(), 3, prop.Properties["min_turns"].Default)
+	root := GlobalConfigSchema().Properties
+	require.Equal(s.T(), root["claude_model"].Enum, prop.Properties["model"].Enum)
+	require.Equal(s.T(), root["claude_effort"].Enum, prop.Properties["effort"].Enum)
 }
 
 func (s *SchemaSuite) TestMemoryNestedObject() {
