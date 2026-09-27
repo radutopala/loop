@@ -2,8 +2,9 @@
 Feature: Learn from runs
   The composer's Learn switch turns a channel's learn pass on or off and
   sticks to the channel. A learn pass runs in a hidden learn thread and files
-  proposals; the layouts bar's Learn badge says what it's doing and opens the
-  Learn drawer, where each proposal is applied or dismissed.
+  proposals; the chat's Learn badge, next to its find button, says what it's
+  doing and opens the Learn drawer, where each proposal is applied or
+  dismissed.
 
   Background:
     Given I set up a test channel via API for git repo "bdd-learn"
@@ -68,9 +69,9 @@ Feature: Learn from runs
       """
     Then the response status should be 201
     And I wait for text "2 proposals" to appear
-    # The layout tabs shrink before the bar overflows, so the badge at its
-    # right end stays on screen even with every default layout open.
-    And the element "[data-testid='learn-badge']" should fit inside the window
+    # The badge sits at the chat's top right, where its find button goes once
+    # the chat has messages.
+    And the element "[data-testid='chat-top-right'] [data-testid='learn-badge']" should fit inside the window
     # The drawer slides in from past the layout's right edge; nothing behind
     # it may scroll or shift meanwhile.
     When I open the Learn drawer and nothing behind it moves
@@ -107,6 +108,9 @@ Feature: Learn from runs
       """
     Then I wait for "[data-testid='learn-badge'][data-running='true']" to be visible
     And the element "[data-testid='learn-badge']" should contain text "learning…"
+    # Once the chat has messages, the badge sits right before its find button.
+    When I inject a user message with content "hello"
+    Then the element "[data-testid='learn-badge'] + [data-testid='chat-find-toggle']" should be visible
     When I click on "[data-testid='learn-badge']"
     Then I wait for text "reviewing the last run…" to appear
     When I inject a "agent.status" event for the learn thread with data:

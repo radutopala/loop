@@ -42,7 +42,7 @@ export function isOpenProposal(p: LearnProposal, now = Date.now()): boolean {
   return p.status === "applying" && now - Date.parse(p.updated_at) > LEARN_APPLY_STALE_MS;
 }
 
-// The Learn label in the layouts bar: what the learn pass is doing, else how
+// The Learn label next to the chat's find button: what the learn pass is doing, else how
 // many proposals wait, else null when there's nothing to show.
 export function learnBadgeLabel(running: boolean, open: number): string | null {
   if (running) return "learning…";

@@ -23,8 +23,16 @@ export interface LearnView {
   dismiss: (id: number) => Promise<void>;
 }
 
-/** The selected channel's LearnView, for the composer's Learn switch. */
+/** The selected channel's LearnView, for the chat's Learn switch and badge. */
 export const LearnContext = createContext<LearnView | null>(null);
+
+/** The Learn drawer over the layout: whether it's open, and its toggle. */
+export interface LearnDrawerControl {
+  open: boolean;
+  toggle: () => void;
+}
+
+export const LearnDrawerContext = createContext<LearnDrawerControl | null>(null);
 
 /**
  * Follows a channel's learn pass: its switch, its hidden learn thread,

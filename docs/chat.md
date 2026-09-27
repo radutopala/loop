@@ -585,11 +585,11 @@ Config kinds are written to the project's `.loop/config.json` with your comments
 
 ### Learn label
 
-The layouts bar shows a `learn` label for the selected channel: `learning…` while a pass runs, `N proposals` while proposals wait (pending or failed), both lit in the accent color. Once the channel has a learn thread and nothing waits, the label stays dim; a channel that never had a pass shows none. A click opens or closes the Learn drawer, which closes when you switch channels.
+The chat shows a `learn` label for the selected channel at its top right, next to the find button: `learning…` while a pass runs, `N proposals` while proposals wait (pending or failed), both lit in the accent color. Once the channel has a learn thread and nothing waits, the label stays dim; a channel that never had a pass shows none. A click opens or closes the Learn drawer, which closes when you switch channels.
 
 ### Learn drawer
 
-A full-height drawer (520px wide) slides over the right side of the layout:
+A full-height drawer (760px wide) slides over the right side of the layout:
 
 - **Proposals** on top, newest first. Each card shows its kind, title, a one-line gist of exactly what Apply writes, and the rationale the pass gave.
   - **Apply** applies it. If it fails, the error shows under the card and the button becomes **Retry**. A card's buttons are disabled while its apply or dismiss is in flight.
