@@ -68,6 +68,9 @@ Feature: Learn from runs
       """
     Then the response status should be 201
     And I wait for text "2 proposals" to appear
+    # The layout tabs shrink before the bar overflows, so the badge at its
+    # right end stays on screen even with every default layout open.
+    And the element "[data-testid='learn-badge']" should fit inside the window
     # The drawer slides in from past the layout's right edge; nothing behind
     # it may scroll or shift meanwhile.
     When I open the Learn drawer and nothing behind it moves

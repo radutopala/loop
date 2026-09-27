@@ -22,7 +22,9 @@ export function LearnBadge({ learn, open, onToggle }: { learn: LearnView; open: 
       style={{
         display: "flex",
         alignItems: "center",
+        flexShrink: 0,
         gap: 4,
+        whiteSpace: "nowrap",
         background: open ? colors.hoverBg : "none",
         border: `1px solid ${lit ? colors.active : colors.border}`,
         color: lit ? colors.active : colors.textDim,

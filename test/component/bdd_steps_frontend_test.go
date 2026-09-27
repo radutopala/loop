@@ -2063,12 +2063,6 @@ func (tc *TestContext) scrollChatMessagesToBottom() error {
 // main composer sits somewhere other than where it started. Either one is
 // the layout jumping behind the drawer.
 func (tc *TestContext) openLearnDrawerSteady() error {
-	// Wide enough that at least the badge's left edge shows past the layouts
-	// bar's overflow, so it can be clicked where it is.
-	if err := chromedp.Run(tc.chromeTab.ctx, chromedp.EmulateViewport(1400, 800)); err != nil {
-		return err
-	}
-	defer func() { _ = chromedp.Run(tc.chromeTab.ctx, emulation.ClearDeviceMetricsOverride()) }()
 	arm := `(() => {
 		const composer = document.querySelector('textarea');
 		if (!composer) return 'no composer';
@@ -2098,16 +2092,7 @@ func (tc *TestContext) openLearnDrawerSteady() error {
 	if armed != "ok" {
 		return fmt.Errorf("openLearnDrawerSteady: %s", armed)
 	}
-	// A real mouse click on the badge's left edge, where it shows even when the
-	// layouts bar overflows; chromedp's Click would scroll it into view first.
-	var at []float64
-	if err := chromedp.Run(tc.chromeTab.ctx, chromedp.Evaluate(`(() => {
-		const r = document.querySelector("[data-testid='learn-badge']").getBoundingClientRect();
-		return [r.left + 4, r.top + r.height / 2];
-	})()`, &at)); err != nil {
-		return err
-	}
-	if err := chromedp.Run(tc.chromeTab.ctx, chromedp.MouseClickXY(at[0], at[1])); err != nil {
+	if err := tc.clickOn("[data-testid='learn-badge']"); err != nil {
 		return err
 	}
 	var shifts []string

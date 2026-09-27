@@ -1191,7 +1191,7 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
               onReorder={handleReorderLayout}
             />
           ))}
-        <div style={{ position: "relative" }}>
+        <div style={{ position: "relative", flexShrink: 0 }}>
           <button
             onClick={() => setShowNewLayoutMenu((v) => !v)}
             title="New layout"
@@ -1293,6 +1293,7 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
             onClick={handleKillAgents}
             title="Stop all shells and container"
             style={{
+              flexShrink: 0,
               background: "none",
               border: `1px solid ${colors.error}`,
               color: colors.error,
@@ -1319,7 +1320,7 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
           </button>
         )}
         {(hasMissingDefaults || isDefaultLayout) && (
-          <div style={{ position: "relative" }}>
+          <div style={{ position: "relative", flexShrink: 0 }}>
             <button
               onClick={() => setShowLayoutMenu((v) => !v)}
               title="Layout options"
@@ -1591,6 +1592,9 @@ function LayoutTab({
       style={{
         ...buildTabButtonStyle(colors, active),
         flexShrink: 0,
+        // Inactive tabs give up width (their names ellipsized) before the
+        // bar overflows, so the controls at its right end stay on screen.
+        ...(!active && { flexShrink: 1, minWidth: 32 }),
         position: "relative",
         paddingLeft: canDelete && !editing ? 4 : 10,
         paddingRight: canDelete && !editing ? 10 : 10,
@@ -1675,8 +1679,8 @@ function LayoutTab({
             setEditValue(name);
             setEditing(true);
           }}
-          title="Double-click to rename"
-          style={{ flex: 1, textAlign: "center" }}
+          title={`${name} (double-click to rename)`}
+          style={{ flex: 1, minWidth: 0, textAlign: "center", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
         >
           {name}
         </span>
