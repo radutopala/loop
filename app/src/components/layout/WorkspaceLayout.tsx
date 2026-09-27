@@ -8,6 +8,7 @@ import type { ActiveChatState, ChatEventListener } from "../../hooks/useChatStat
 import { useContainerStats } from "../../hooks/useContainerStats";
 import { useEditorState } from "../../hooks/useEditorState";
 import { LearnContext, useLearn } from "../../hooks/useLearn";
+import { prefersReducedMotion, usePresence } from "../../hooks/usePresence";
 import type { LayoutType } from "../../layouts/persistence";
 import {
   clearLayout,
@@ -56,7 +57,7 @@ import { WorkflowsLayoutPanel } from "../panels/WorkflowsLayoutPanel";
 import { ChannelHeaderInfo } from "./ChannelHeaderInfo";
 import { HeaderBranchPicker } from "./HeaderBranchPicker";
 import { LearnBadge } from "./LearnBadge";
-import { LearnDrawer } from "./LearnDrawer";
+import { LEARN_DRAWER_SLIDE_MS, LearnDrawer } from "./LearnDrawer";
 
 type AgentState = "running" | "stopped" | "none";
 
@@ -335,6 +336,9 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
   const learn = useLearn(channelId, subscribeChatEvents, subscribeChannelEvents);
   const [learnOpen, setLearnOpen] = useState(false);
   useEffect(() => setLearnOpen(false), [channelId]);
+  // The drawer slides in and out; it stays mounted until it's slid out.
+  const learnSlideMs = prefersReducedMotion() ? 0 : LEARN_DRAWER_SLIDE_MS;
+  const learnDrawer = usePresence(learnOpen, learnSlideMs);
 
   // Editor + file-tree shared state. Hoisted here so both panels (rendered
   // independently inside the layout) stay in sync, and so tab/cursor state
@@ -1410,7 +1414,16 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
 
       {/* Layout content */}
       <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", minHeight: 0, position: "relative" }}>
-        {learnOpen && <LearnDrawer learn={learn} worktree={!!channel.worktree} subscribeChannelEvents={subscribeChannelEvents} onClose={() => setLearnOpen(false)} />}
+        {learnDrawer.mounted && (
+          <LearnDrawer
+            learn={learn}
+            shown={learnDrawer.shown}
+            slideMs={learnSlideMs}
+            worktree={!!channel.worktree}
+            subscribeChannelEvents={subscribeChannelEvents}
+            onClose={() => setLearnOpen(false)}
+          />
+        )}
         {layoutType === "canvas" ? (
           <CanvasLayout
             canvas={canvasState ?? { type: "canvas", viewport: { x: 0, y: 0, zoom: 1 }, tiles: [] }}

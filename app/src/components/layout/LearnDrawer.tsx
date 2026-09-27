@@ -11,8 +11,16 @@ import { isOpenProposal, learnKindLabel, proposalCaveat, proposalDetail } from "
 // Width of the drawer; it never covers more than the layout it slides over.
 const DRAWER_WIDTH = 520;
 
+// How long the drawer takes to slide in or out.
+export const LEARN_DRAWER_SLIDE_MS = 200;
+
 interface LearnDrawerProps {
   learn: LearnView;
+  /** False slides the drawer out past the right edge; the parent unmounts it
+   * once the slide ends. */
+  shown: boolean;
+  /** Slide duration in ms; 0 skips the animation. */
+  slideMs: number;
   /** The learning channel is a worktree thread (renames leave its branch). */
   worktree: boolean;
   subscribeChannelEvents?: (channelId: string, listener: ChatEventListener) => () => void;
@@ -24,7 +32,7 @@ interface LearnDrawerProps {
  * proposals to apply or dismiss on top, the hidden learn thread's chat below
  * (to watch the pass, or ask it for changes).
  */
-export function LearnDrawer({ learn, worktree, subscribeChannelEvents, onClose }: LearnDrawerProps) {
+export function LearnDrawer({ learn, shown, slideMs, worktree, subscribeChannelEvents, onClose }: LearnDrawerProps) {
   const { colors } = useTheme();
   const open = learn.proposals.filter(isOpenProposal);
   // Proposals with an apply or dismiss in flight; their buttons are disabled
@@ -70,7 +78,9 @@ export function LearnDrawer({ learn, worktree, subscribeChannelEvents, onClose }
         flexDirection: "column",
         background: colors.bg,
         borderLeft: `1px solid ${colors.border}`,
-        boxShadow: `-4px 0 12px ${colors.shadow}`,
+        boxShadow: shown ? `-4px 0 12px ${colors.shadow}` : "none",
+        transform: shown ? "translateX(0)" : "translateX(100%)",
+        transition: slideMs ? `transform ${slideMs}ms ${shown ? "ease-out" : "ease-in"}, box-shadow ${slideMs}ms` : "none",
       }}
     >
       <div
