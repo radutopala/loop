@@ -76,6 +76,8 @@ Feature: Learn from runs
     # it may scroll or shift meanwhile.
     When I open the Learn drawer and nothing behind it moves
     Then I wait for "[data-testid='learn-drawer']" to be visible
+    # Dressed like the layout's panes: an island, as islands are on by default.
+    And the element "[data-testid='learn-drawer'][data-island='true']" should be visible
     And I wait for text "Describe the thread" to appear
     And the page should contain text "Name the thread after its work"
     And the page should contain text "→ bdd-learn-renamed"

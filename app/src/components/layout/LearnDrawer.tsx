@@ -11,6 +11,9 @@ import { isOpenProposal, learnKindLabel, proposalCaveat, proposalDetail } from "
 // Width of the drawer; it never covers more than the layout it slides over.
 const DRAWER_WIDTH = 760;
 
+// Width of the line between split panes when islands are off (SplitPaneLayout).
+const DIVIDER_WIDTH = 4;
+
 // How long the drawer takes to slide in or out.
 export const LEARN_DRAWER_SLIDE_MS = 200;
 
@@ -63,9 +66,14 @@ export function LearnDrawer({ learn, shown, slideMs, worktree, subscribeChannelE
     setApplyingAll(false);
   }, [learn.proposals, busy, apply]);
 
+  // A temporary pane over the layout's right side, dressed like the layout's
+  // own: an island when islands are on, else a flat pane behind the same
+  // divider line the split panes have.
+  const islands = colors.islandRadius > 0;
   return (
     <div
       data-testid="learn-drawer"
+      data-island={islands ? "true" : "false"}
       style={{
         position: "absolute",
         top: 0,
@@ -73,39 +81,62 @@ export function LearnDrawer({ learn, shown, slideMs, worktree, subscribeChannelE
         bottom: 0,
         width: DRAWER_WIDTH,
         maxWidth: "100%",
+        boxSizing: "border-box",
         zIndex: 20,
         display: "flex",
         flexDirection: "column",
-        background: colors.bg,
-        borderLeft: `1px solid ${colors.border}`,
-        boxShadow: shown ? `-4px 0 12px ${colors.shadow}` : "none",
+        overflow: "hidden",
+        backgroundColor: colors.sidebar,
+        ...(islands
+          ? { borderRadius: colors.islandRadius, border: colors.islandBorder, boxShadow: shown ? colors.islandShadow : "none" }
+          : { borderLeft: `${DIVIDER_WIDTH}px solid ${colors.border}` }),
         transform: shown ? "translateX(0)" : "translateX(100%)",
         transition: slideMs ? `transform ${slideMs}ms ${shown ? "ease-out" : "ease-in"}, box-shadow ${slideMs}ms` : "none",
       }}
     >
+      {/* Header, like a pane's */}
       <div
         style={{
           display: "flex",
           alignItems: "center",
-          gap: 8,
-          padding: "6px 10px",
+          gap: 6,
+          padding: "2px 8px",
+          height: 22,
+          boxSizing: "border-box",
+          backgroundColor: colors.surface,
           borderBottom: `1px solid ${colors.border}`,
           fontFamily: fonts.sans,
-          fontSize: 12,
-          color: colors.textLight,
           flexShrink: 0,
         }}
       >
-        <span style={{ fontWeight: 600 }}>Learn</span>
-        <span style={{ color: colors.textDim, fontSize: 11 }}>{learn.running ? "reviewing the last run…" : "proposals from the last runs"}</span>
+        <span style={{ padding: "1px 4px", borderRadius: 3, fontSize: 10, fontWeight: 500, color: colors.textLight, backgroundColor: colors.panelLabelBg }}>Learn</span>
+        <span style={{ color: colors.textDim, fontSize: 10, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+          {learn.running ? "reviewing the last run…" : "proposals from the last runs"}
+        </span>
         <div style={{ flex: 1 }} />
         {open.some((p) => p.status === "pending") && (
           <button data-testid="learn-apply-all" onClick={applyAll} disabled={applyingAll} style={buttonStyle(colors.active)}>
             Apply all
           </button>
         )}
-        <button data-testid="learn-drawer-close" onClick={onClose} title="Close" style={{ ...buttonStyle(colors.textDim), border: "none", fontSize: 14 }}>
-          &times;
+        <button
+          data-testid="learn-drawer-close"
+          onClick={onClose}
+          title="Close"
+          style={{ background: "none", border: "none", color: colors.textDim, cursor: "pointer", padding: "0 2px", lineHeight: 1, display: "flex", alignItems: "center", borderRadius: 2 }}
+          onMouseEnter={(e) => {
+            e.currentTarget.style.backgroundColor = colors.hoverBg;
+            e.currentTarget.style.color = colors.textLight;
+          }}
+          onMouseLeave={(e) => {
+            e.currentTarget.style.backgroundColor = "transparent";
+            e.currentTarget.style.color = colors.textDim;
+          }}
+        >
+          <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+            <line x1="18" y1="6" x2="6" y2="18" />
+            <line x1="6" y1="6" x2="18" y2="18" />
+          </svg>
         </button>
       </div>
 

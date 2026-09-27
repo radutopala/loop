@@ -589,7 +589,7 @@ The chat shows a `learn` label for the selected channel at its top right, next t
 
 ### Learn drawer
 
-A full-height drawer (760px wide) slides over the right side of the layout:
+A full-height drawer (760px wide) slides over the right side of the layout, dressed like one of its panes: an island when islands are on, else a flat pane behind the same divider line as split panes. Its header matches a pane header:
 
 - **Proposals** on top, newest first. Each card shows its kind, title, a one-line gist of exactly what Apply writes, and the rationale the pass gave.
   - **Apply** applies it. If it fails, the error shows under the card and the button becomes **Retry**. A card's buttons are disabled while its apply or dismiss is in flight.
