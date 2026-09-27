@@ -101,6 +101,22 @@ func (s *HJSONEditSuite) TestAppend() {
 			want:    "{\n  // project\n  \"claude_model\": \"opus\",\"mounts\":[\"a:b\",\"c:d\"]\n}\n",
 		},
 		{
+			// An empty project list keeps the global one, so it's seeded too.
+			name:    "empty array starts with the seed",
+			initial: `{"mounts": []}`,
+			path:    []string{"mounts"},
+			item:    "c:d",
+			seed:    []any{"a:b"},
+			want:    `{"mounts": ["a:b","c:d"]}`,
+		},
+		{
+			name:    "empty array without a seed gets just the item",
+			initial: `{"mounts": []}`,
+			path:    []string{"mounts"},
+			item:    "c:d",
+			want:    `{"mounts": ["c:d"]}`,
+		},
+		{
 			name:    "creates missing nested objects",
 			initial: "{\"gates\": {\"audit\": {}}}",
 			path:    []string{"gates", "agentgate", "command_rules"},

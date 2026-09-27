@@ -285,6 +285,7 @@ func registerFrontendSteps(ctx *godog.ScenarioContext, tc *TestContext) {
 	ctx.Step(`^I inject an exit_plan event with plan "([^"]*)"$`, tc.injectExitPlanEvent)
 	ctx.Step(`^I inject an ask_user event with question "([^"]*)" and options "([^"]*)"$`, tc.injectAskUserEvent)
 	ctx.Step(`^I inject an agent\.status running event$`, tc.injectAgentStatusRunning)
+	ctx.Step(`^I inject a "([^"]*)" event for (the channel|the learn thread) with data:$`, tc.injectEventWithData)
 	ctx.Step(`^I inject an agent\.status running event for the worktree thread$`, tc.injectAgentStatusRunningForWorktree)
 	ctx.Step(`^I inject an agent\.status running event for the last created thread$`, tc.injectAgentStatusRunningForLastThread)
 	ctx.Step(`^I inject a gate\.approval_requested event with req_id "([^"]*)", source "([^"]*)", and target "([^"]*)"$`, tc.injectGateApprovalRequested)
@@ -2554,6 +2555,36 @@ func (tc *TestContext) injectAgentStatusRunningFor(channelID string) error {
 	})
 	if err != nil {
 		return fmt.Errorf("marshalling agent.status payload: %w", err)
+	}
+	return tc.dispatchTestEvents(payload)
+}
+
+// injectEventWithData fires a synthetic WS event of the given type into the
+// chat store, addressed to the current channel or its seeded learn thread.
+// The data doc string is the event's JSON data; {placeholders} such as
+// {learn_channel_id} are resolved first.
+func (tc *TestContext) injectEventWithData(eventType, target string, data *godog.DocString) error {
+	channelID := tc.ChannelID
+	if target == "the learn thread" {
+		channelID = tc.LearnChannelID
+	}
+	if channelID == "" {
+		return fmt.Errorf("no id for %s; set up the channel (and its learn thread) first", target)
+	}
+	if err := tc.ensureChromeTab(); err != nil {
+		return err
+	}
+	var d any
+	if err := json.Unmarshal([]byte(tc.resolvePlaceholders(data.Content)), &d); err != nil {
+		return fmt.Errorf("parsing %s event data: %w", eventType, err)
+	}
+	payload, err := json.Marshal(map[string]any{
+		"type":       eventType,
+		"channel_id": channelID,
+		"data":       d,
+	})
+	if err != nil {
+		return fmt.Errorf("marshalling %s payload: %w", eventType, err)
 	}
 	return tc.dispatchTestEvents(payload)
 }

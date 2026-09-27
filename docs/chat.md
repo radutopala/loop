@@ -543,6 +543,65 @@ A pill next to the Agent/Plan mode toggle lets any channel, thread, or worktree 
 
 ---
 
+## Learn from a run
+
+With Learn on, a finished chat run is reviewed by a **learn pass**: a hidden session forked from the run looks at what happened and proposes Loop changes that would make the next run faster, safer or less repetitive. Nothing is applied until you accept it.
+
+### Learn switch
+
+A `learn` switch (lightbulb) sits in the composer next to the model/effort pill. It shows the effective value: the channel's own setting when it has one, else the config default [`learn.enabled`](configuration.md#learn) for the channel's dir. A click stores the opposite value on the channel (`PUT /api/channels/{id}/learn`), so the channel keeps it whatever the config says later. It applies from the channel's next run. The change is broadcast as a [`channel.learn`](events.md#channellearn) event, but the composer doesn't listen for it yet: another window shows the new value once it reloads the channel. The hover title says whether the value comes from the config or the channel.
+
+### What triggers a pass
+
+A learn pass starts after a chat run **completes** in the channel, when all of these hold:
+
+- the channel isn't itself a learn thread, nor a thread a scheduled task created;
+- the run isn't parked on a plan or question card;
+- Learn is on for the channel;
+- the run took at least [`learn.min_turns`](configuration.md#learn) turns (default 3);
+- the run has a session to fork, and no learn pass is already running for the channel.
+
+Stopped or failed runs, and scheduled task runs, don't start one. See [Orchestrator: Learn pass](orchestrator.md#learn-pass) for how it runs.
+
+The pass may only look and propose: it can't edit files or change Loop's config, tasks or threads. It files at most 5 proposals, each one of:
+
+| Kind | What Apply does |
+|------|-----------------|
+| prompt shortcut | Adds a [prompt shortcut](#prompt-shortcuts) to the project config. |
+| bash shortcut | Adds a [bash shortcut](#bash-shortcuts) to the project config. |
+| scheduled task | Creates an enabled [scheduled task](scheduling.md) in the channel. |
+| gate rule | Adds an agentgate rule to the project config. |
+| mount | Adds a bind mount to the project config. |
+| rename | Renames the channel or thread. |
+| description | Sets the channel or thread's description. |
+
+Config kinds are written to the project's `.loop/config.json` with your comments kept; see [Configuration: Where Apply writes](configuration.md#where-learn-proposals-are-written).
+
+### Learn label
+
+The layouts bar shows a `learn` label for the selected channel: `learning…` while a pass runs, `N proposals` while proposals wait (pending or failed), both lit in the accent color. Once the channel has a learn thread and nothing waits, the label stays dim; a channel that never had a pass shows none. A click opens or closes the Learn drawer, which closes when you switch channels.
+
+### Learn drawer
+
+A full-height drawer (520px wide) slides over the right side of the layout:
+
+- **Proposals** on top, newest first. Each card shows its kind, title, a one-line gist of exactly what Apply writes, and the rationale the pass gave.
+  - **Apply** applies it. If it fails, the error shows under the card and the button becomes **Retry**.
+  - **Dismiss** drops it. Pending and failed proposals can be dismissed.
+  - Applied and dismissed cards stay in the list, dimmed, with their status.
+  - **Apply all** in the header applies every pending proposal one by one. Failed ones are left for a manual Retry.
+- **The learn thread's chat** below. Watch the pass as it works, or reply to it: ask why it proposed something or ask for changes, and it files revised proposals. The thread's composer has no Learn switch, since a learn thread doesn't learn from itself.
+
+Before the first pass, the drawer says so instead of showing a chat.
+
+**Worktree threads:** a rename proposal renames the thread only; its git branch and worktree folder keep their names. The drawer says so under the card.
+
+### Hidden thread
+
+Each channel has one learn thread, created on its first pass. It's left out of `GET /api/channels`, so it never shows in the sidebar, and it's deleted along with its channel. Each new pass forks the latest run's session again, so it doesn't carry over what you said in the learn thread before. Learn runs don't mark anything unread, post a desktop notification or bounce the dock (their `agent.status` events carry `trigger: "learn"`). Proposals show through the Learn label instead.
+
+---
+
 ## Auto-Scroll
 
 The chat view tracks whether the user is scrolled to the bottom.

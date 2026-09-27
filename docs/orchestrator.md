@@ -129,6 +129,7 @@ func (o *Orchestrator) processClaimedMessage(ctx, row, incoming) {
     resp, lastText, runID, err := executeAgentRun(ctx, msg, req, channel)
     if err != nil { markTriggerProcessed(msg, recent); return }
     deliverResponse(msg, resp, recent, lastText, runID)
+    maybeLearn(ctx, channel, msg, resp)                     // see Learn pass
 }
 ```
 
@@ -182,6 +183,8 @@ The hold is a lease (5 minutes, renewed by the app every 2 minutes), so an app t
 5. **Worktree parent** -- If the channel is a worktree thread (`Worktree: true`), look up the parent channel's `DirPath` and set `ParentDirPath` on the request. The runner uses this to mount the parent project directory so the container sees the main `.git` directory.
 
 6. **Plan mode** -- If the incoming message has `Mode: "plan"`, set `PlanMode: true` on the request. This appends a system prompt instructing the agent to call `EnterPlanMode` before doing anything else; the tool flips the session's permission context to `plan`, and Claude Code's per-turn attachment loop then injects the full plan-mode instructions (with a computed `planFilePath` and read-only restrictions) on subsequent turns.
+
+7. **Learn thread** -- If the channel is a hidden learn thread (`Kind: "learn"`), the request becomes a learn run (see [Learn pass](#learn-pass)).
 
 ## Agent Execution
 
@@ -273,6 +276,33 @@ For the Electron app, streaming events are broadcast via the `EventsHub`:
 2. **Update session** -- Store the new `SessionID` from the agent response.
 3. **Send response** -- Unless it duplicates the last streamed turn, send the response via `bot.SendMessage` with a reply-to reference. Also store the bot message in the database (stamped with `trigger_msg_id = msg.MessageID` so the FE can group the reply under its triggering user message) and broadcast via EventsHub.
 4. **Mark processed** -- Mark all recent messages as processed in the database. This prevents them from being included in future context windows unnecessarily.
+
+## Learn pass
+
+After `deliverResponse`, `processClaimedMessage` calls `maybeLearn`, which may queue a **learn pass**: a review of the run that just finished, in a hidden thread, that files proposals for the user to apply. Runs that errored or were stopped return before this, and scheduled tasks don't go through it. See [Chat: Learn from a run](chat.md#learn-from-a-run) for the UI and [Configuration: Learn](configuration.md#learn) for the config.
+
+1. **Config** -- Merge the `learn` config for the channel's root checkout: its own `DirPath`, or for a worktree chain the nearest non-worktree ancestor's. A project config that fails to load falls back to the global config.
+2. **Skip reasons** -- `learnSkipReason` returns the first that applies, logged at debug level:
+   - `learn thread` -- the channel is itself a learn thread;
+   - `task thread` -- the channel is a scheduled task's thread (`TaskID != 0`);
+   - `parked on a plan or question` -- the channel is parked on an ExitPlanMode or AskUserQuestion card;
+   - `learn off` -- the channel's `learn_override` is `off`, or empty and `learn.enabled` is false;
+   - `N turns, below min_turns M` -- the run took fewer than `learn.min_turns` turns.
+
+   Then `no session` when the response has no session id, and `learn pass already running` when the learn thread has an active run (checked in `activeRuns`). Only one pass runs per channel at a time; a skipped pass isn't queued for later.
+3. **Learn thread** -- `ensureLearnChannel` returns the channel's learn thread, creating it on first use: a local-platform thread with id `learn-<hex>`, name `learn: <channel name>`, the parent's `GuildID` and `DirPath`, `ParentID` set to the channel, and `Kind: "learn"`. Learn threads are left out of `GET /api/channels` and are deleted, with their messages and the channel's proposals, when the channel is deleted.
+4. **Fork** -- `MarkSessionForkPending` points the learn thread at the run's session with `fork_pending` set, so the pass runs with `--resume <session> --fork-session` and starts from the whole run. Every pass forks again from the latest run.
+5. **Announce** -- Broadcast a global [`learn.started`](events.md#learnstarted) event for the channel, carrying the learn thread's id.
+6. **Trigger** -- `HandleMessage` on the learn thread with author id `loop-learn` (name `loop`), `HasPrefix: true` and the local platform. The content is `The run in "<channel>" just finished. Review it and propose what Loop should learn from it.`, followed by the run's last prompt as a blockquote. The pass runs on the learn thread's own drain, so the channel's queue isn't held up by it.
+
+When `prepareAgentRequest` builds the learn thread's request, `applyLearnRequest` turns it into a learn run:
+
+- **Agent id** `learn`, which gives the run its own MCP config and registers the [`propose_learnings`](mcpserver.md#learn-tools-learn-agent-only) tool.
+- **Model / effort** -- `learn.model` / `learn.effort`, else the parent channel's overrides, else the config's.
+- **System prompt** -- the built-in learn instructions (each proposal kind and its payload, at most 5 proposals, propose never act), then the current state so it doesn't propose duplicates: the channel's name, description and whether it's a worktree thread, the project config path, the merged prompt and bash shortcuts, the channel's scheduled tasks, task templates, agentgate rules and mounts. `learn.prompt` is appended last.
+- **Tool denials** -- `LearnMode` adds, on top of `claude_batch_disallowed_tools`: `Edit`, `Write`, `NotebookEdit`, `AskUserQuestion`, `EnterPlanMode`, `ExitPlanMode`, and every Loop MCP tool that changes state (shortcuts, tasks, threads and channels, messages, workflows, playgrounds, chat components, `index_memory`, `quality_snapshot`). Read-only tools and Bash stay available.
+
+The learn run's `agent.status` events carry `trigger: "learn"` (`runTrigger` matches the `loop-learn` author), so the desktop app doesn't mark it unread, notify or bounce the dock. A message the user sends in the learn thread runs the same way (same agent id, prompt and denials) but with an empty trigger, and never starts a learn pass of its own.
 
 ## Thread Resolution
 

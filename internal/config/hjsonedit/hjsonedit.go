@@ -25,8 +25,8 @@ type FS interface {
 
 // Append adds item to the end of the array at path (object keys from the
 // top level down) in the config file at configPath. A missing file, missing
-// objects along path and a missing array are all created; a new array starts
-// with seed's elements, then item. The write is atomic.
+// objects along path and a missing array are all created; a new or empty
+// array starts with seed's elements, then item. The write is atomic.
 func Append(fsys FS, configPath string, path []string, item any, seed []any) error {
 	if len(path) == 0 {
 		return errors.New("empty path")
@@ -83,8 +83,12 @@ func appendOp(v *hujson.Value, path []string, item any, seed []any) (patchOp, er
 		}
 		cur = member
 	}
-	if _, ok := cur.Value.(*hujson.Array); !ok {
+	arr, ok := cur.Value.(*hujson.Array)
+	if !ok {
 		return patchOp{}, fmt.Errorf("%s is not an array", describe(path))
+	}
+	if len(arr.Elements) == 0 && len(seed) > 0 {
+		return patchOp{Op: "replace", Path: pointer(path), Value: append(append([]any{}, seed...), item)}, nil
 	}
 	return patchOp{Op: "add", Path: pointer(path) + "/-", Value: item}, nil
 }

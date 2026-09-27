@@ -502,18 +502,14 @@ func (m *MockStore) InsertLearnProposals(ctx context.Context, proposals []*db.Le
 
 func (m *MockStore) ListLearnProposals(ctx context.Context, channelID string) ([]*db.LearnProposal, error) {
 	args := m.Called(ctx, channelID)
-	if args.Get(0) == nil {
-		return nil, args.Error(1)
-	}
-	return args.Get(0).([]*db.LearnProposal), args.Error(1)
+	v, _ := args.Get(0).([]*db.LearnProposal)
+	return v, args.Error(1)
 }
 
 func (m *MockStore) GetLearnProposal(ctx context.Context, id int64) (*db.LearnProposal, error) {
 	args := m.Called(ctx, id)
-	if args.Get(0) == nil {
-		return nil, args.Error(1)
-	}
-	return args.Get(0).(*db.LearnProposal), args.Error(1)
+	v, _ := args.Get(0).(*db.LearnProposal)
+	return v, args.Error(1)
 }
 
 func (m *MockStore) ClaimLearnProposal(ctx context.Context, id int64) (bool, error) {

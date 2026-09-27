@@ -86,6 +86,7 @@ List all channels with optional filtering. Enriches each channel with container 
 - `ticket_url` is the URL of the channel or thread's ticket, set via [`POST /api/channels/{id}/ticket`](#post-apichannelsidticket). Omitted when unset.
 - `task_id` is set on a thread a scheduled task created for its output: the id of that task. Omitted on every other channel and thread, including ones that host tasks. The sidebar's hide-task-threads toggle filters on it.
 - `locked` is true when the channel/thread is guarded against accidental deletion (toggle via [`PATCH /api/channels/{id}/lock`](#patch-apichannelsidlock)). `DELETE /api/channels/{id}` and `DELETE /api/threads/{id}` return `409 Conflict` while a row is locked.
+- Hidden learn threads (`kind: "learn"`, see [Learn](#learn)) are left out of the list.
 
 **Errors:** `501` if channel listing is not configured.
 
@@ -910,6 +911,157 @@ Finds the channel's messages whose content contains `q`, case-insensitively. `%`
 ```
 
 **Errors:** `400` if `q` is empty or `limit` is invalid. `501` if message search is not configured.
+
+---
+
+## Learn
+
+A channel's learn switch, its hidden learn thread, and the proposals learn passes file. See [Chat: Learn from a run](chat.md#learn-from-a-run). The channel endpoints below return `404` when `{id}` is itself a learn thread.
+
+### `GET /api/channels/{id}/learn`
+
+Return the channel's learn switch, the config default it falls back to (global → project → worktree merge for the channel's dir), and its learn thread.
+
+**Response (200):**
+```json
+{
+  "learn": "on",
+  "default_learn": false,
+  "enabled": true,
+  "learn_channel_id": "learn-a1b2c3d4e5f6",
+  "running": false
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `learn` | string | The channel's setting: `"on"`, `"off"`, or empty to inherit `default_learn` |
+| `default_learn` | bool | `learn.enabled` from the merged config; `false` when the config fails to load |
+| `enabled` | bool | The effective switch |
+| `learn_channel_id` | string | The hidden learn thread; empty until the channel's first learn pass |
+| `running` | bool | A learn pass is running in the learn thread |
+
+**Errors:** `404` if the channel doesn't exist or is a learn thread. `500` on a store error. `501` if the store is not configured.
+
+---
+
+### `PUT /api/channels/{id}/learn`
+
+Set the channel's learn switch. It takes effect from the channel's next run.
+
+**Request:**
+```json
+{"learn": "off"}
+```
+
+`learn` must be `"on"`, `"off"`, or empty to inherit the config.
+
+**Response:** `204 No Content`.
+
+**Behavior notes:** Broadcasts a [`channel.learn`](events.md#channellearn) event.
+
+**Errors:** `400` if the body isn't valid JSON or `learn` is another value. `404` if the channel doesn't exist or is a learn thread. `501` if the store is not configured.
+
+---
+
+### `GET /api/channels/{id}/learn/proposals`
+
+List the proposals filed for the channel, newest first, in every status.
+
+**Response (200):**
+```json
+{
+  "proposals": [
+    {
+      "id": 12,
+      "channel_id": "abc123",
+      "learn_channel_id": "learn-a1b2c3d4e5f6",
+      "kind": "bash_shortcut",
+      "title": "Add a make lint bash shortcut",
+      "rationale": "make lint was typed three times in this run.",
+      "payload": "{\"name\":\"lint\",\"description\":\"Run the linter\",\"command\":\"make lint\"}",
+      "status": "pending",
+      "created_at": "2026-03-25T14:30:00Z",
+      "updated_at": "2026-03-25T14:30:00Z"
+    }
+  ]
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `kind` | string | `prompt_shortcut`, `bash_shortcut`, `scheduled_task`, `gate_rule`, `mount`, `rename` or `description` |
+| `payload` | string | The kind's payload as a JSON string (see [`POST`](#post-apichannelsidlearnproposals)) |
+| `status` | string | `pending`, `applying`, `applied`, `dismissed` or `failed` |
+| `error` | string | Why the last apply failed; omitted when empty |
+
+`proposals` is `[]` when there are none.
+
+**Errors:** `404` if the channel doesn't exist or is a learn thread. `500` on a store error. `501` if the store is not configured.
+
+---
+
+### `POST /api/channels/{id}/learn/proposals`
+
+File a learn pass's proposals. This is what the learn agent's [`propose_learnings`](mcpserver.md#learn-tools-learn-agent-only) MCP tool calls. Here `{id}` is the **learn thread**; the proposals are stored for the channel it learns from, as `pending`.
+
+**Request:**
+```json
+{
+  "proposals": [
+    {
+      "kind": "gate_rule",
+      "title": "Ask before git push",
+      "rationale": "The agent pushed without asking.",
+      "payload": {"type": "command", "rule": {"commands": ["git"], "args_patterns": ["^push( .*)?$"], "decision": "approve", "message": "git push"}}
+    }
+  ]
+}
+```
+
+At most 5 proposals per call. Each needs a `kind`, a `title` (at most 200 characters) and a `payload` object; `rationale` is optional (at most 1000 characters). Title and rationale are trimmed. Payloads by kind (unknown fields are rejected):
+
+| Kind | Payload |
+|------|---------|
+| `prompt_shortcut` | `{"name", "description"?, "prompt"}`. `name` at most 100 characters. |
+| `bash_shortcut` | `{"name", "description"?, "command"}`. `name` at most 100 characters. |
+| `scheduled_task` | `{"type", "schedule", "prompt"?, "bash_script"?, "auto_delete_sec"?}`. `type` is `cron`, `interval` or `once`; exactly one of `prompt` / `bash_script`; `auto_delete_sec` not negative. |
+| `gate_rule` | `{"type", "rule"}`. `type` is `path`, `command` or `file`; `rule` is an agentgate rule of that list, and must compile. |
+| `mount` | `{"mount"}`, `host_path:container_path[:ro\|rw]`. |
+| `rename` | `{"name"}`, at most 100 characters. |
+| `description` | `{"description"}`, at most 500 characters. |
+
+The payload is stored in canonical JSON. Either every proposal is valid and all are stored, or none are.
+
+**Response (201):** `{"proposals": [...]}`, the stored proposals as in the `GET` above.
+
+**Behavior notes:** Broadcasts a [`learn.proposals`](events.md#learnproposals) event for the learning channel.
+
+**Errors:** `400` if the body isn't valid JSON, `proposals` is empty or has more than 5 items, or a proposal is invalid (the message names it, e.g. `proposal 2: title is required`). `404` if `{id}` isn't a learn thread. `500` on a store error. `501` if the store is not configured.
+
+---
+
+### `POST /api/learn/proposals/{id}/apply`
+
+Apply a `pending` or `failed` proposal. It moves to `applying` first, so a double click can't apply it twice. See [Configuration: Where learn proposals are written](configuration.md#where-learn-proposals-are-written) for what each kind changes.
+
+**Response (200):** the proposal, with `status` `applied`, or `failed` and an `error`. A failed apply is recorded on the proposal, not returned as an HTTP error, so it can be retried.
+
+**Behavior notes:** Broadcasts a [`learn.proposal_updated`](events.md#learnproposal_updated) event. A rename or description also broadcasts `channel.updated`, a scheduled task `task.created`.
+
+**Errors:** `400` if `{id}` isn't an integer. `404` if the proposal doesn't exist. `409` if it's already `applying`, `applied` or `dismissed` (`proposal is already applied`). `500` on a store error. `501` if the store is not configured.
+
+---
+
+### `POST /api/learn/proposals/{id}/dismiss`
+
+Dismiss a `pending` or `failed` proposal.
+
+**Response (200):** the proposal, with `status: "dismissed"`.
+
+**Behavior notes:** Broadcasts a [`learn.proposal_updated`](events.md#learnproposal_updated) event.
+
+**Errors:** Same as apply.
 
 ---
 

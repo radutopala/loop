@@ -91,7 +91,7 @@
   // for you to apply one by one from the Learn drawer. "enabled" is the
   // default for the composer's Learn switch; each channel can override it.
   // model/effort (empty: the channel's) apply to the learn run only; prompt
-  // is added to the built-in learn instructions. See docs/chat.md#learn.
+  // is added to the built-in learn instructions. See docs/chat.md#learn-from-a-run.
   //"learn": {
   //  "enabled": false,
   //  "min_turns": 3,

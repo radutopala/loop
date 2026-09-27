@@ -184,7 +184,7 @@
   //  }
   //],
 
-  // Learn pass for this project (each field overrides global when set; see docs/chat.md#learn)
+  // Learn pass for this project (each field overrides global when set; see docs/chat.md#learn-from-a-run)
   //"learn": {
   //  "enabled": true,
   //  "min_turns": 5

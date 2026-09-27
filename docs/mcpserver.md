@@ -116,6 +116,16 @@ When `--agent-id` is set, the server also:
 - Sets instructions telling Claude how to use agent tools and respond to channel messages
 - Starts a push receiver goroutine (WebSocket to `/api/ws/agent-channel`) that forwards messages as `notifications/claude/channel` JSON-RPC notifications to stdout
 
+### Learn Tools (learn agent only)
+
+Registered only when `--agent-id` is `learn`, the id the orchestrator gives a [learn pass](orchestrator.md#learn-pass). Since the agent id is set, the agent tools above are registered too.
+
+| Tool | Description |
+|------|-------------|
+| `propose_learnings` | File the learn pass's proposals for the user to apply or dismiss in the Learn drawer; nothing is applied until they do. Takes `proposals`, at most 5 items of `{kind, title, rationale?, payload}`, where `kind` is `prompt_shortcut`, `bash_shortcut`, `scheduled_task`, `gate_rule`, `mount`, `rename` or `description`. Posts to [`POST /api/channels/{id}/learn/proposals`](api.md#post-apichannelsidlearnproposals) for the server's channel, which must be a learn thread; if any proposal is invalid none are stored and the error names the one to fix. |
+
+A learn run can't call the Loop tools that change state (shortcuts, tasks, threads, messages, workflows, playgrounds and so on): they're denied by the learn run's `--disallowedTools`, not left unregistered.
+
 ### Workflow Tools (always available)
 
 | Tool | Description |

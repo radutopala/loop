@@ -3,6 +3,8 @@
 package component
 
 import (
+	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -10,12 +12,16 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/cucumber/godog"
 	"github.com/gorilla/websocket"
+
+	"github.com/radutopala/loop/internal/db"
+	"github.com/radutopala/loop/internal/types"
 )
 
 func registerBackendSteps(ctx *godog.ScenarioContext, tc *TestContext) {
@@ -56,6 +62,7 @@ func registerBackendSteps(ctx *godog.ScenarioContext, tc *TestContext) {
 	ctx.Step(`^I create a file "([^"]*)" in the repo with:$`, tc.createRepoFile)
 	ctx.Step(`^I commit all changes in the repo with message "([^"]*)"$`, tc.commitAllInRepo)
 	ctx.Step(`^I remove every queued message via API$`, tc.removeQueuedViaAPI)
+	ctx.Step(`^the current channel has a learn thread$`, tc.seedLearnThread)
 
 	// Ticket setup steps
 	ctx.Step(`^I create a ticket "([^"]*)" with type "([^"]*)" via API$`, tc.createTicketViaAPI)
@@ -1140,5 +1147,38 @@ func (tc *TestContext) setupWorktreeTaskViaAPI(prompt, schedule string) error {
 			tc.CreatedTaskIDs = append(tc.CreatedTaskIDs, tc.TaskID)
 		}
 	}
+	return nil
+}
+
+// seedLearnThread gives the current channel its hidden learn thread, as the
+// daemon does before a channel's first learn pass. Nothing in the API creates
+// one (only a finished run with learn on does), so the row is written straight
+// into the daemon's database (LOOP_DB_PATH). With it in place, proposals can
+// be filed through the real POST /api/channels/{learn_channel_id}/learn/proposals.
+// Deleting the channel at cleanup removes the thread and its proposals.
+func (tc *TestContext) seedLearnThread() error {
+	if tc.ChannelID == "" {
+		return fmt.Errorf("no channel_id set; use 'I set up a test channel via API' step first")
+	}
+	dbPath := os.Getenv("LOOP_DB_PATH")
+	if dbPath == "" {
+		return fmt.Errorf("LOOP_DB_PATH is not set; scripts/test-component.sh exports the daemon's database path")
+	}
+	sqlDB, err := sql.Open("sqlite", "file:"+dbPath+"?_pragma=busy_timeout(5000)")
+	if err != nil {
+		return fmt.Errorf("opening daemon database: %w", err)
+	}
+	defer sqlDB.Close()
+	id := "learn-bdd-" + strconv.FormatInt(time.Now().UnixNano(), 36)
+	if err := db.NewSQLiteStoreFromDB(sqlDB).InsertLearnChannel(context.Background(), &db.Channel{
+		ChannelID: id,
+		Name:      "learn: " + tc.ChannelID,
+		DirPath:   tc.ChannelDir,
+		ParentID:  tc.ChannelID,
+		Platform:  types.PlatformLocal,
+	}); err != nil {
+		return fmt.Errorf("inserting learn thread: %w", err)
+	}
+	tc.LearnChannelID = id
 	return nil
 }

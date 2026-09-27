@@ -337,6 +337,43 @@ Gates the public playground-share feature — exposing a playground over the int
 
 When enabled, sharing a playground starts a cloudflared quick tunnel (anonymous — no Cloudflare account) that points at a **dedicated, playground-only listener**; the main API is never exposed. The `cloudflared` binary is downloaded lazily to `~/.loop/bin` on first use and verified against a pinned sha256. Each share gets a unique opaque URL (`https://<random>.trycloudflare.com/p/<token>`), idempotent per playground; revoking it (Unshare, or the global **Playground Shares** panel) returns `404` immediately. Multiple playgrounds share in parallel over one tunnel, which stops when the last share is removed. See [playground.md](playground.md#public-sharing).
 
+#### Learn
+
+Configures the learn pass: after a chat run, a hidden forked session reviews it and proposes shortcuts, scheduled tasks, gate rules, mounts and a thread name or description for you to apply from the Learn drawer (see [Chat: Learn from a run](chat.md#learn-from-a-run)).
+
+```jsonc
+"learn": {
+  "enabled": true,
+  "min_turns": 3,
+  "model": "",
+  "effort": "",
+  "prompt": "Also look for commands that needed an approval click."
+}
+```
+
+| Field | Type | Default | Description |
+|---|---|---|---|
+| `enabled` | `bool` | `false` | Default for the composer's Learn switch. A channel that has been switched on or off keeps its own setting. |
+| `min_turns` | `int` | `3` | Runs with fewer turns than this don't start a learn pass. |
+| `model` | `string` | `""` | Model for the learn run. Empty uses the channel's model override, else `claude_model`. |
+| `effort` | `string` | `""` | Effort for the learn run. Empty uses the channel's effort override, else `claude_effort`. |
+| `prompt` | `string` | `""` | Extra instructions appended to the built-in learn prompt under "Additional instructions". |
+
+Layered global → project like `review`: each field overrides only when set in the project config. The Learn switch in the composer and the [`GET /api/channels/{id}/learn`](api.md#get-apichannelsidlearn) default read the global → project → worktree merge for the channel's dir; the daemon deciding whether to run a pass (and with what model, effort and prompt) reads the config of the channel's root checkout. Also editable from **Settings → Learn**.
+
+##### Where learn proposals are written
+
+Applying a proposal of a config kind appends to the project config, `.loop/config.json` in the channel's directory. For a worktree thread, or a thread under one, that's the root checkout's `.loop/config.json`, not the worktree's. The file (and its `.loop` folder) is created when missing. The edit keeps the file's comments, key order and formatting, and the write is atomic.
+
+| Kind | Written to | Notes |
+|---|---|---|
+| `prompt_shortcut` | `prompt_shortcuts` | Fails if a prompt shortcut of that name already exists in the merged config. |
+| `bash_shortcut` | `bash_shortcuts` | Fails if a bash shortcut of that name already exists in the merged config. |
+| `gate_rule` | `gates.agentgate.path_rules`, `command_rules` or `file_rules` | Picked by the rule's type (`path`, `command`, `file`). Project rules are prepended to the global ones, so they match first. |
+| `mount` | `mounts` | Fails if the merged config already has the exact mount. Project mounts replace the global ones, so when the project has no `mounts` list yet, or an empty one (which keeps the global mounts), the new list starts with the global mounts, then the new one. |
+
+`scheduled_task`, `rename` and `description` proposals don't touch config: they create an enabled task in the channel and update the channel's name or description, as `POST /api/tasks`, `/rename` and `/description` do.
+
 #### Workflows
 
 ```jsonc
@@ -640,6 +677,7 @@ Not all global fields are available in project configs. The following fields can
 | `browser.cookie_import` | **Overrides** per key: `source` and `auto` when set, `domains` **replaces** the global list when present. |
 | `github.gh_user` | **Overrides** global value when set. |
 | `review.enabled` / `review.prompt` / `review.prompt_path` | Each field **overrides** the global value only when explicitly set (see [Review](#review)). |
+| `learn.enabled` / `learn.min_turns` / `learn.model` / `learn.effort` / `learn.prompt` | Each field **overrides** the global value only when set: `enabled` and `min_turns` when present, the strings when non-empty (see [Learn](#learn)). |
 | `gates.agentgate.enabled` | **Narrows only**: project may set `false` to disable the gate for this project; it **cannot** re-enable the gate when global `gates.agentgate.enabled` is `false`. Transitively disables `gates.docker_proxy.enabled` when the project turns the gate off. |
 | `gates.agentgate.path_rules` / `command_rules` / `file_rules` | **Prepended** to the merged global rules (first-match-wins applies project rules first). Any decision is accepted, so a project can loosen as well as tighten the policy. |
 | `gates.agentgate.default_decision` | **Ignored** — global wins unconditionally. |

@@ -238,6 +238,7 @@ Agent lifecycle status change (running, completed, errored).
 | `model`           | string | Model used for the run |
 | `trigger_content` | string | Content of the message that triggered the run (on `"running"` status) |
 | `msg_id`          | string | `msg_id` of the user message that triggered the run. Present on `running`, `completed`, and `error` for the same row. The frontend uses it to label the correct chat bubble as "processing" — needed because priority-bumped messages (deny-with-prompt interrupts) can be processed ahead of older queued rows, so the FE cannot infer it from array position. |
+| `trigger`         | string | What started the run: `"scheduled"` for a scheduled task, `"learn"` for a [learn pass](chat.md#learn-from-a-run), `"bot"` for a message the bot itself posted (an agent using `send_message` / `create_thread`), omitted for a user's message. The desktop app doesn't bounce the dock for `scheduled`, `bot` or `learn` runs, and a `learn` run doesn't mark its channel unread or post a notification. |
 | `thread_id`       | string | Thread ID for scheduled task runs. Present on all status events (`running`, `error`, `completed`) when the task has an existing thread. The frontend uses this to route state (store entry, `isRunningMap`) to the thread instead of the parent channel, so the parent doesn't show a running indicator for thread work and the thread view shows the stop button and streaming content. |
 
 ---
@@ -504,6 +505,68 @@ A channel's model/effort overrides changed via [`PATCH /api/channels/{id}/agent-
 |-------------------|--------|-------------|
 | `model_override`  | string | The channel's model, or empty when it inherits the config's |
 | `effort_override` | string | The channel's effort, or empty when it inherits the config's |
+
+---
+
+### `channel.learn`
+
+A channel's learn switch changed via [`PUT /api/channels/{id}/learn`](api.md#put-apichannelsidlearn). `channel_id` is that channel.
+
+**Payload schema:**
+
+```json
+{ "learn": "on" }
+```
+
+| Field   | Type   | Description |
+|---------|--------|-------------|
+| `learn` | string | `"on"`, `"off"`, or empty when the channel now inherits `learn.enabled` |
+
+**Scope:** Global.
+
+---
+
+### `learn.started`
+
+A [learn pass](chat.md#learn-from-a-run) started for a channel. `channel_id` is the channel being learned from. Global because the learn thread is hidden: no client is subscribed to it until it hears the thread's id. The desktop app then subscribes to the learn thread to follow the run's `agent.status`.
+
+**Payload schema:**
+
+```json
+{ "learn_channel_id": "learn-a1b2c3d4e5f6" }
+```
+
+| Field              | Type   | Description |
+|--------------------|--------|-------------|
+| `learn_channel_id` | string | The channel's hidden learn thread, where the pass runs |
+
+**Scope:** Global.
+
+---
+
+### `learn.proposals`
+
+A learn pass filed proposals (via [`POST /api/channels/{id}/learn/proposals`](api.md#post-apichannelsidlearnproposals)). `channel_id` is the channel being learned from.
+
+**Payload schema:**
+
+```json
+{ "proposals": [ { "id": 12, "kind": "bash_shortcut", "title": "Add a make lint bash shortcut", "status": "pending", "...": "..." } ] }
+```
+
+| Field       | Type  | Description |
+|-------------|-------|-------------|
+| `proposals` | array | The stored proposals, shaped as in [`GET /api/channels/{id}/learn/proposals`](api.md#get-apichannelsidlearnproposals) |
+
+**Scope:** Global.
+
+---
+
+### `learn.proposal_updated`
+
+A proposal was applied, failed to apply, or was dismissed. `channel_id` is the channel the proposal belongs to; `data` is the whole proposal with its new `status` (`applied`, `failed` with `error`, or `dismissed`), shaped as in [`GET /api/channels/{id}/learn/proposals`](api.md#get-apichannelsidlearnproposals).
+
+**Scope:** Global.
 
 ---
 
@@ -904,6 +967,10 @@ Emitted on every review session status transition (`idle → loading → ready �
 | `BroadcastChannelDeleted` | `channel.deleted` | `nil` | Channel |
 | `BroadcastChannelUpdated` | `channel.updated` | `ChannelUpdatedData` | Global |
 | `BroadcastChannelAgentConfig` | `channel.agent_config` | `map[string]string{"model_override", "effort_override"}` | Global |
+| `BroadcastChannelLearn` | `channel.learn` | `map[string]string{"learn"}` | Global |
+| `BroadcastLearnStarted` | `learn.started` | `map[string]string{"learn_channel_id"}` | Global |
+| `BroadcastLearnProposals` | `learn.proposals` | `map[string]any{"proposals": []*db.LearnProposal}` | Global |
+| `BroadcastLearnProposalUpdated` | `learn.proposal_updated` | `*db.LearnProposal` | Global |
 | `BroadcastAgentInstanceRegistered` | `agent_instance.registered` | `AgentInstanceEventData` | Channel |
 | `BroadcastAgentInstanceUnregistered` | `agent_instance.unregistered` | `AgentInstanceEventData` | Channel |
 | `BroadcastAgentInstanceMetadata` | `agent_instance.metadata` | `AgentInstanceEventData` | Channel |
@@ -969,6 +1036,7 @@ type Broadcaster interface {
     BroadcastWorkflowNodeCompleted(data WorkflowNodeEventData)
     BroadcastGateApprovalRequested(channelID string, data GateApprovalEventData)
     BroadcastGateApprovalResolved(channelID string, data GateApprovalResolvedData)
+    BroadcastLearnStarted(channelID, learnChannelID string)
 }
 ```
 

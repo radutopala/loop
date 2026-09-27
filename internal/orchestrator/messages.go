@@ -311,8 +311,6 @@ func (o *Orchestrator) processClaimedMessage(ctx context.Context, row *db.Messag
 	o.maybeLearn(ctx, channel, msg, resp)
 }
 
-// runFinishStatus carries the deferred agent.status broadcast info from
-// executeAgentRun back to processClaimedMessage, which fires it AFTER
 // runTrigger tags a run's agent.status events with what started it, so the
 // renderer can hold back the dock bounce and notifications for runs the user
 // didn't ask for: "learn" for a learn pass, "bot" when the bot itself
@@ -328,6 +326,8 @@ func (o *Orchestrator) runTrigger(authorID string) string {
 	return ""
 }
 
+// runFinishStatus carries the deferred agent.status broadcast info from
+// executeAgentRun back to processClaimedMessage, which fires it AFTER
 // markTriggerProcessed so the FE sees messages.processed before the
 // refetchHead triggered by the status event.
 type runFinishStatus struct {

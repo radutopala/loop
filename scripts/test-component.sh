@@ -277,6 +277,7 @@ TEST_RC=0
 LOOP_BASE_URL="http://localhost:8222" \
 LOOP_APP_URL="${LOOP_APP_URL:-http://localhost:5173}" \
 LOOP_PID="$LOOP_PID" \
+LOOP_DB_PATH="$LOOP_DIR/loop.db" \
 CHROME_CDP_URL="${CHROME_CDP_URL:-}" \
 GODOG_CONCURRENCY="${GODOG_CONCURRENCY:-1}" \
 go test -timeout "$TEST_TIMEOUT" -count=1 -v -tags=component ${TEST_FLAGS} ./test/component/... || TEST_RC=$?
