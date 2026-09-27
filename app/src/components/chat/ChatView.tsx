@@ -12,7 +12,6 @@ import { ChatFindBar } from "./ChatFindBar";
 import { ChatInput } from "./ChatInput";
 import type { ChatMessagesHandle } from "./ChatMessages";
 import { ChatMessages } from "./ChatMessages";
-import { LearnBadge } from "./LearnBadge";
 
 function buildStyles(colors: ColorPalette): Record<string, React.CSSProperties> {
   return {
@@ -38,17 +37,12 @@ function buildStyles(colors: ColorPalette): Record<string, React.CSSProperties> 
       minHeight: 0,
       position: "relative",
     },
-    // Top right, clear of the scrollbar: the Learn badge, then find.
-    topRight: {
+    // Top right, clear of the scrollbar.
+    findToggle: {
       position: "absolute",
       top: 8,
       right: 16,
       zIndex: 3,
-      display: "flex",
-      alignItems: "center",
-      gap: 4,
-    },
-    findToggle: {
       display: "flex",
       alignItems: "center",
       justifyContent: "center",
@@ -163,11 +157,8 @@ export function ChatView({ channelId, chatState, roots, scrollToMessageId, onScr
   if (isEmpty) {
     return (
       <div style={{ ...styles.container, zoom: fontSizes.chat / 13 }}>
-        <div style={{ ...styles.welcome, position: "relative" }}>
+        <div style={styles.welcome}>
           <WelcomeScreen />
-          <div data-testid="chat-top-right" style={styles.topRight}>
-            <LearnBadge channelId={channelId} />
-          </div>
         </div>
         <div style={styles.inputBar}>
           <ChatInput
@@ -214,30 +205,27 @@ export function ChatView({ channelId, chatState, roots, scrollToMessageId, onScr
           onEditQueued={queuedEdit.start}
           editingMsgId={queuedEdit.editing?.msg_id ?? null}
         />
-        <div data-testid="chat-top-right" style={styles.topRight}>
-          <LearnBadge channelId={channelId} />
-          {!findOpen && (
-            <button
-              onClick={openFind}
-              title={`Find in chat (${navigator.platform.includes("Mac") ? "\u2318F" : "Ctrl+F"})`}
-              data-testid="chat-find-toggle"
-              style={styles.findToggle}
-              onMouseEnter={(e) => {
-                e.currentTarget.style.color = colors.textLight;
-                e.currentTarget.style.borderColor = colors.textDim;
-              }}
-              onMouseLeave={(e) => {
-                e.currentTarget.style.color = colors.textMuted;
-                e.currentTarget.style.borderColor = colors.border;
-              }}
-            >
-              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <circle cx="11" cy="11" r="7" />
-                <path d="M20 20L16 16" />
-              </svg>
-            </button>
-          )}
-        </div>
+        {!findOpen && (
+          <button
+            onClick={openFind}
+            title={`Find in chat (${navigator.platform.includes("Mac") ? "\u2318F" : "Ctrl+F"})`}
+            data-testid="chat-find-toggle"
+            style={styles.findToggle}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.color = colors.textLight;
+              e.currentTarget.style.borderColor = colors.textDim;
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.color = colors.textMuted;
+              e.currentTarget.style.borderColor = colors.border;
+            }}
+          >
+            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <circle cx="11" cy="11" r="7" />
+              <path d="M20 20L16 16" />
+            </svg>
+          </button>
+        )}
       </div>
       <div style={styles.inputBar}>
         <ChatInput

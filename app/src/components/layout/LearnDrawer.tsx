@@ -8,18 +8,12 @@ import { fonts } from "../../theme";
 import { ChatView } from "../chat/ChatView";
 import { isOpenProposal, learnKindLabel, proposalCaveat, proposalDetail } from "../chat/learnState";
 
-// Width of the drawer; it never covers more than the layout it slides over.
-const DRAWER_WIDTH = 760;
-
-// Width of the line between split panes when islands are off (SplitPaneLayout).
-const DIVIDER_WIDTH = 4;
-
 // How long the drawer takes to slide in or out.
 export const LEARN_DRAWER_SLIDE_MS = 200;
 
 interface LearnDrawerProps {
   learn: LearnView;
-  /** False slides the drawer out past the right edge; the parent unmounts it
+  /** False slides the drawer back up out of the chat; the parent unmounts it
    * once the slide ends. */
   shown: boolean;
   /** Slide duration in ms; 0 skips the animation. */
@@ -31,7 +25,7 @@ interface LearnDrawerProps {
 }
 
 /**
- * The channel's learn pass, full height over the right of the layout: the
+ * The channel's learn pass, pulled down over a chat pane like a blind: the
  * proposals to apply or dismiss on top, the hidden learn thread's chat below
  * (to watch the pass, or ask it for changes).
  */
@@ -66,32 +60,19 @@ export function LearnDrawer({ learn, shown, slideMs, worktree, subscribeChannelE
     setApplyingAll(false);
   }, [learn.proposals, busy, apply]);
 
-  // A temporary pane over the layout's right side, dressed like the layout's
-  // own: an island when islands are on, else a flat pane behind the same
-  // divider line the split panes have.
-  const islands = colors.islandRadius > 0;
   return (
     <div
       data-testid="learn-drawer"
-      data-island={islands ? "true" : "false"}
       style={{
         position: "absolute",
-        top: 0,
-        right: 0,
-        bottom: 0,
-        width: DRAWER_WIDTH,
-        maxWidth: "100%",
-        boxSizing: "border-box",
+        inset: 0,
         zIndex: 20,
         display: "flex",
         flexDirection: "column",
         overflow: "hidden",
         backgroundColor: colors.sidebar,
-        ...(islands
-          ? { borderRadius: colors.islandRadius, border: colors.islandBorder, boxShadow: shown ? colors.islandShadow : "none" }
-          : { borderLeft: `${DIVIDER_WIDTH}px solid ${colors.border}` }),
-        transform: shown ? "translateX(0)" : "translateX(100%)",
-        transition: slideMs ? `transform ${slideMs}ms ${shown ? "ease-out" : "ease-in"}, box-shadow ${slideMs}ms` : "none",
+        transform: shown ? "translateY(0)" : "translateY(-100%)",
+        transition: slideMs ? `transform ${slideMs}ms ${shown ? "ease-out" : "ease-in"}` : "none",
       }}
     >
       {/* Header, like a pane's */}

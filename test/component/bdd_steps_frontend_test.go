@@ -261,6 +261,7 @@ func registerFrontendSteps(ctx *godog.ScenarioContext, tc *TestContext) {
 	ctx.Step(`^the layout tabs should be in order "([^"]*)"$`, tc.assertLayoutTabOrder)
 	ctx.Step(`^I scroll the chat messages to bottom$`, tc.scrollChatMessagesToBottom)
 	ctx.Step(`^I open the Learn drawer and nothing behind it moves$`, tc.openLearnDrawerSteady)
+	ctx.Step(`^the Learn drawer has slid down over the chat$`, tc.waitLearnDrawerSettled)
 	ctx.Step(`^I scroll the chat messages to top$`, tc.scrollChatMessagesToTop)
 	ctx.Step(`^I serve a chat history of (\d+) messages from the timeline$`, tc.serveChatHistory)
 	ctx.Step(`^I scroll the chat to the top and note the first message$`, tc.scrollChatToTopNotingFirst)
@@ -2058,27 +2059,45 @@ func (tc *TestContext) scrollChatMessagesToBottom() error {
 	return nil
 }
 
-// openLearnDrawerSteady clicks the Learn badge and watches the layout while
-// the drawer slides in: every element scrolled sideways, and every frame the
-// main composer sits somewhere other than where it started. Either one is
-// the layout jumping behind the drawer.
+// waitLearnDrawerSettled waits until the Learn drawer has slid all the way
+// down over its chat pane (clicks aimed at it mid-slide land behind it) and
+// checks nothing covers it there.
+func (tc *TestContext) waitLearnDrawerSettled() error {
+	js := `(() => {
+		const d = document.querySelector("[data-testid='learn-drawer']");
+		if (!d) return false;
+		const r = d.getBoundingClientRect();
+		const p = d.parentElement.getBoundingClientRect();
+		if (Math.abs(r.top - p.top) > 0.5 || Math.abs(r.bottom - p.bottom) > 0.5) return false;
+		return d.contains(document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2));
+	})()`
+	ctx, cancel := context.WithTimeout(tc.chromeTab.ctx, 5*time.Second)
+	defer cancel()
+	return chromedp.Run(ctx, chromedp.Poll(js, nil, chromedp.WithPollingInterval(50*time.Millisecond)))
+}
+
+// openLearnDrawerSteady clicks the Learn badge and watches the chat pane
+// while the drawer slides down over it: every scroll of the document or of an
+// element holding the main composer, and every frame the composer sits
+// somewhere other than where it started. Either one is the pane jumping
+// behind the drawer.
 func (tc *TestContext) openLearnDrawerSteady() error {
 	arm := `(() => {
 		const composer = document.querySelector('textarea');
 		if (!composer) return 'no composer';
-		const start = composer.getBoundingClientRect().left;
+		const start = composer.getBoundingClientRect();
 		const log = [];
 		window.__learnShift = log;
 		const onScroll = (e) => {
-			const t = e.target;
-			const left = t === document ? document.scrollingElement.scrollLeft : t.scrollLeft;
-			if (left) log.push('scrolled sideways by ' + left + 'px: ' + (t === document ? 'document' : t.outerHTML.slice(0, 120)));
+			const t = e.target === document ? document.scrollingElement : e.target;
+			if (!t.contains(composer)) return;
+			if (t.scrollLeft || t.scrollTop) log.push('scrolled by ' + t.scrollLeft + ',' + t.scrollTop + 'px: ' + (e.target === document ? 'document' : t.outerHTML.slice(0, 120)));
 		};
 		document.addEventListener('scroll', onScroll, true);
 		const until = performance.now() + 800;
 		const sample = () => {
-			const x = composer.getBoundingClientRect().left;
-			if (Math.abs(x - start) > 0.5) log.push('composer moved from ' + start + ' to ' + x);
+			const r = composer.getBoundingClientRect();
+			if (Math.abs(r.left - start.left) > 0.5 || Math.abs(r.top - start.top) > 0.5) log.push('composer moved from ' + start.left + ',' + start.top + ' to ' + r.left + ',' + r.top);
 			if (performance.now() < until) requestAnimationFrame(sample);
 			else document.removeEventListener('scroll', onScroll, true);
 		};

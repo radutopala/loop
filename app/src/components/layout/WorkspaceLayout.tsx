@@ -7,7 +7,7 @@ import { useChatState } from "../../hooks/useChatState";
 import type { ActiveChatState, ChatEventListener } from "../../hooks/useChatStateStore";
 import { useContainerStats } from "../../hooks/useContainerStats";
 import { useEditorState } from "../../hooks/useEditorState";
-import { LearnContext, LearnDrawerContext, useLearn } from "../../hooks/useLearn";
+import { LearnContext, useLearn } from "../../hooks/useLearn";
 import { prefersReducedMotion, usePresence } from "../../hooks/usePresence";
 import type { LayoutType } from "../../layouts/persistence";
 import {
@@ -38,6 +38,7 @@ import type { AgentOpenMode, LeafNode, PanelType, PaneNode } from "../../types/p
 import { ChatComponentFull, ComponentFocusContext, type ShownComponent } from "../chat/ChatComponent";
 import { ChatView } from "../chat/ChatView";
 import type { FileLinkOpenDetail } from "../chat/FileLink";
+import { LearnBadge } from "../chat/LearnBadge";
 import { AuditPanel } from "../panels/AuditPanel";
 import { BrowserPanel } from "../panels/BrowserPanel";
 import { makePathKey } from "../panels/EditorFileTree";
@@ -331,15 +332,27 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
     clearPlanPill,
   });
 
-  // The channel's learn pass, shown in the Learn drawer over the layout.
+  // The channel's learn pass, shown in the Learn drawer over a chat pane:
+  // the one whose header badge opened it (kept while it slides back up).
   const learn = useLearn(channelId, subscribeChatEvents, subscribeChannelEvents);
   const [learnOpen, setLearnOpen] = useState(false);
+  const [learnLeafId, setLearnLeafId] = useState<string | null>(null);
   useEffect(() => setLearnOpen(false), [channelId]);
   // The drawer slides in and out; it stays mounted until it's slid out.
   const learnSlideMs = prefersReducedMotion() ? 0 : LEARN_DRAWER_SLIDE_MS;
   const learnDrawer = usePresence(learnOpen, learnSlideMs);
-  // The chat's Learn badge opens and closes it.
-  const learnDrawerControl = useMemo(() => ({ open: learnOpen, toggle: () => setLearnOpen((v) => !v) }), [learnOpen]);
+  const toggleLearn = useCallback(
+    (leafId: string) => {
+      if (learnOpen && learnLeafId === leafId) {
+        setLearnOpen(false);
+        return;
+      }
+      setLearnLeafId(leafId);
+      setLearnOpen(true);
+    },
+    [learnOpen, learnLeafId],
+  );
+  const closeLearn = useCallback(() => setLearnOpen(false), []);
 
   // Editor + file-tree shared state. Hoisted here so both panels (rendered
   // independently inside the layout) stay in sync, and so tab/cursor state
@@ -857,17 +870,19 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
             <ComponentFocusContext.Provider value={(c) => openComponent(leaf.id, c)}>
               <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", minHeight: 0, position: "relative" }}>
                 <LearnContext.Provider value={learn}>
-                  <LearnDrawerContext.Provider value={learnDrawerControl}>
-                    <ChatView
-                      key={`layout-chat-${channelId}`}
-                      channelId={channelId}
-                      chatState={chatState}
-                      roots={editorState.roots}
-                      scrollToMessageId={scrollToMessageId}
-                      onScrollComplete={onScrollComplete}
-                    />
-                  </LearnDrawerContext.Provider>
+                  <ChatView
+                    key={`layout-chat-${channelId}`}
+                    channelId={channelId}
+                    chatState={chatState}
+                    roots={editorState.roots}
+                    scrollToMessageId={scrollToMessageId}
+                    onScrollComplete={onScrollComplete}
+                  />
                 </LearnContext.Provider>
+                {learn.channelId === channelId && <LearnBadge leafId={leaf.id} learn={learn} open={learnOpen && learnLeafId === leaf.id} onToggle={() => toggleLearn(leaf.id)} />}
+                {learnDrawer.mounted && learnLeafId === leaf.id && (
+                  <LearnDrawer learn={learn} shown={learnDrawer.shown} slideMs={learnSlideMs} worktree={!!channel.worktree} subscribeChannelEvents={subscribeChannelEvents} onClose={closeLearn} />
+                )}
                 {shownComponent?.leafId === leaf.id && <ChatComponentFull component={shownComponent.component} onClose={closeComponent} />}
               </div>
             </ComponentFocusContext.Provider>
@@ -1018,7 +1033,15 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
       shownComponent,
       closeComponent,
       learn,
-      learnDrawerControl,
+      learnOpen,
+      learnLeafId,
+      toggleLearn,
+      closeLearn,
+      learnDrawer.mounted,
+      learnDrawer.shown,
+      learnSlideMs,
+      channel.worktree,
+      subscribeChannelEvents,
     ],
   );
 
@@ -1418,16 +1441,6 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
 
       {/* Layout content */}
       <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", minHeight: 0, position: "relative" }}>
-        {learnDrawer.mounted && (
-          <LearnDrawer
-            learn={learn}
-            shown={learnDrawer.shown}
-            slideMs={learnSlideMs}
-            worktree={!!channel.worktree}
-            subscribeChannelEvents={subscribeChannelEvents}
-            onClose={() => setLearnOpen(false)}
-          />
-        )}
         {layoutType === "canvas" ? (
           <CanvasLayout
             canvas={canvasState ?? { type: "canvas", viewport: { x: 0, y: 0, zoom: 1 }, tiles: [] }}

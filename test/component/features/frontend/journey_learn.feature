@@ -2,9 +2,9 @@
 Feature: Learn from runs
   The composer's Learn switch turns a channel's learn pass on or off and
   sticks to the channel. A learn pass runs in a hidden learn thread and files
-  proposals; the chat's Learn badge, next to its find button, says what it's
-  doing and opens the Learn drawer, where each proposal is applied or
-  dismissed.
+  proposals; the Learn badge in the chat pane's header says what it's doing
+  and pulls the Learn drawer down over the chat, where each proposal is
+  applied or dismissed.
 
   Background:
     Given I set up a test channel via API for git repo "bdd-learn"
@@ -49,7 +49,8 @@ Feature: Learn from runs
       """
     Then the response status should be 201
     When I click on "[data-testid='learn-badge']"
-    Then I wait for text "https://example.atlassian.net/browse/PROJ-7" to appear
+    Then the Learn drawer has slid down over the chat
+    And I wait for text "https://example.atlassian.net/browse/PROJ-7" to appear
     And the page should contain text "ticket"
     When I click on "[data-testid='learn-apply']"
     Then I wait for "[data-testid='learn-proposal'][data-status='applied']" to be visible
@@ -69,15 +70,13 @@ Feature: Learn from runs
       """
     Then the response status should be 201
     And I wait for text "2 proposals" to appear
-    # The badge sits at the chat's top right, where its find button goes once
-    # the chat has messages.
-    And the element "[data-testid='chat-top-right'] [data-testid='learn-badge']" should fit inside the window
-    # The drawer slides in from past the layout's right edge; nothing behind
-    # it may scroll or shift meanwhile.
+    # The badge sits at the right of the chat pane's header.
+    And the element "[id^='pane-header-slot-'] [data-testid='learn-badge']" should fit inside the window
+    # The drawer slides down from above the chat, inside its pane; nothing
+    # behind it may scroll or shift meanwhile.
     When I open the Learn drawer and nothing behind it moves
-    Then I wait for "[data-testid='learn-drawer']" to be visible
-    # Dressed like the layout's panes: an island, as islands are on by default.
-    And the element "[data-testid='learn-drawer'][data-island='true']" should be visible
+    Then the Learn drawer has slid down over the chat
+    And the element "[data-testid='learn-drawer']" should fit inside the window
     And I wait for text "Describe the thread" to appear
     And the page should contain text "Name the thread after its work"
     And the page should contain text "→ bdd-learn-renamed"
@@ -97,7 +96,8 @@ Feature: Learn from runs
     Then I wait for "[data-testid='learn-badge']" to be visible
     And the element "[data-testid='learn-badge']" should contain text "learn"
     When I click on "[data-testid='learn-badge']"
-    Then I wait for "[data-testid='learn-proposal'][data-status='applied']" to be visible
+    Then the Learn drawer has slid down over the chat
+    And I wait for "[data-testid='learn-proposal'][data-status='applied']" to be visible
     And the element "[data-testid='learn-proposal'][data-status='dismissed']" should be visible
     When I click on "[data-testid='learn-drawer-close']"
     Then I wait up to "5s" for "[data-testid='learn-drawer']" to disappear
@@ -110,9 +110,6 @@ Feature: Learn from runs
       """
     Then I wait for "[data-testid='learn-badge'][data-running='true']" to be visible
     And the element "[data-testid='learn-badge']" should contain text "learning…"
-    # Once the chat has messages, the badge sits right before its find button.
-    When I inject a user message with content "hello"
-    Then the element "[data-testid='learn-badge'] + [data-testid='chat-find-toggle']" should be visible
     When I click on "[data-testid='learn-badge']"
     Then I wait for text "reviewing the last run…" to appear
     When I inject a "agent.status" event for the learn thread with data:
