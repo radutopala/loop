@@ -260,6 +260,7 @@ func registerFrontendSteps(ctx *godog.ScenarioContext, tc *TestContext) {
 	ctx.Step(`^I drag layout tab "([^"]*)" onto layout tab "([^"]*)"$`, tc.dragLayoutTab)
 	ctx.Step(`^the layout tabs should be in order "([^"]*)"$`, tc.assertLayoutTabOrder)
 	ctx.Step(`^I scroll the chat messages to bottom$`, tc.scrollChatMessagesToBottom)
+	ctx.Step(`^I open the Learn drawer and nothing behind it moves$`, tc.openLearnDrawerSteady)
 	ctx.Step(`^I scroll the chat messages to top$`, tc.scrollChatMessagesToTop)
 	ctx.Step(`^I serve a chat history of (\d+) messages from the timeline$`, tc.serveChatHistory)
 	ctx.Step(`^I scroll the chat to the top and note the first message$`, tc.scrollChatToTopNotingFirst)
@@ -2053,6 +2054,71 @@ func (tc *TestContext) scrollChatMessagesToBottom() error {
 	}
 	if result != "ok" {
 		return fmt.Errorf("scrollChatMessagesToBottom: %s", result)
+	}
+	return nil
+}
+
+// openLearnDrawerSteady clicks the Learn badge and watches the layout while
+// the drawer slides in: every element scrolled sideways, and every frame the
+// main composer sits somewhere other than where it started. Either one is
+// the layout jumping behind the drawer.
+func (tc *TestContext) openLearnDrawerSteady() error {
+	// Wide enough that at least the badge's left edge shows past the layouts
+	// bar's overflow, so it can be clicked where it is.
+	if err := chromedp.Run(tc.chromeTab.ctx, chromedp.EmulateViewport(1400, 800)); err != nil {
+		return err
+	}
+	defer func() { _ = chromedp.Run(tc.chromeTab.ctx, emulation.ClearDeviceMetricsOverride()) }()
+	arm := `(() => {
+		const composer = document.querySelector('textarea');
+		if (!composer) return 'no composer';
+		const start = composer.getBoundingClientRect().left;
+		const log = [];
+		window.__learnShift = log;
+		const onScroll = (e) => {
+			const t = e.target;
+			const left = t === document ? document.scrollingElement.scrollLeft : t.scrollLeft;
+			if (left) log.push('scrolled sideways by ' + left + 'px: ' + (t === document ? 'document' : t.outerHTML.slice(0, 120)));
+		};
+		document.addEventListener('scroll', onScroll, true);
+		const until = performance.now() + 800;
+		const sample = () => {
+			const x = composer.getBoundingClientRect().left;
+			if (Math.abs(x - start) > 0.5) log.push('composer moved from ' + start + ' to ' + x);
+			if (performance.now() < until) requestAnimationFrame(sample);
+			else document.removeEventListener('scroll', onScroll, true);
+		};
+		requestAnimationFrame(sample);
+		return 'ok';
+	})()`
+	var armed string
+	if err := chromedp.Run(tc.chromeTab.ctx, chromedp.Evaluate(arm, &armed)); err != nil {
+		return err
+	}
+	if armed != "ok" {
+		return fmt.Errorf("openLearnDrawerSteady: %s", armed)
+	}
+	// A real mouse click on the badge's left edge, where it shows even when the
+	// layouts bar overflows; chromedp's Click would scroll it into view first.
+	var at []float64
+	if err := chromedp.Run(tc.chromeTab.ctx, chromedp.Evaluate(`(() => {
+		const r = document.querySelector("[data-testid='learn-badge']").getBoundingClientRect();
+		return [r.left + 4, r.top + r.height / 2];
+	})()`, &at)); err != nil {
+		return err
+	}
+	if err := chromedp.Run(tc.chromeTab.ctx, chromedp.MouseClickXY(at[0], at[1])); err != nil {
+		return err
+	}
+	var shifts []string
+	if err := chromedp.Run(tc.chromeTab.ctx,
+		chromedp.Sleep(900*time.Millisecond),
+		chromedp.Evaluate(`window.__learnShift`, &shifts),
+	); err != nil {
+		return err
+	}
+	if len(shifts) > 0 {
+		return fmt.Errorf("the layout moved while the Learn drawer opened: %s", strings.Join(shifts, "; "))
 	}
 	return nil
 }

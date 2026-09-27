@@ -9,7 +9,7 @@ import { ChatView } from "../chat/ChatView";
 import { isOpenProposal, learnKindLabel, proposalCaveat, proposalDetail } from "../chat/learnState";
 
 // Width of the drawer; it never covers more than the layout it slides over.
-const DRAWER_WIDTH = 520;
+const DRAWER_WIDTH = 760;
 
 // How long the drawer takes to slide in or out.
 export const LEARN_DRAWER_SLIDE_MS = 200;

@@ -68,7 +68,9 @@ Feature: Learn from runs
       """
     Then the response status should be 201
     And I wait for text "2 proposals" to appear
-    When I click on "[data-testid='learn-badge']"
+    # The drawer slides in from past the layout's right edge; nothing behind
+    # it may scroll or shift meanwhile.
+    When I open the Learn drawer and nothing behind it moves
     Then I wait for "[data-testid='learn-drawer']" to be visible
     And I wait for text "Describe the thread" to appear
     And the page should contain text "Name the thread after its work"
