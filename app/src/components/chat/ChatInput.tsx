@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { fetchComposerHistory, resolveAsk, resolvePlan } from "../../api/channels";
 import { fetchShortcuts, type PromptShortcut } from "../../api/configApi";
 import { type FileSearchResult, type RootEntry, searchFiles } from "../../api/files";
@@ -11,6 +11,7 @@ import type { Message } from "../../types";
 import { firstClipboardImage, uploadPastedImage } from "../../utils/clipboardImage";
 import { storageGetJSON, storageSetJSON } from "../../utils/storage";
 import { AgentConfigPill } from "./AgentConfigPill";
+import { composerHeight, composerMaxHeight } from "./composerHeight";
 import { chooseSendRoute, normalizeSendMode, type SendMode } from "./sendRouting";
 
 // Draft text per channel — persisted to localStorage across app restarts.
@@ -46,7 +47,9 @@ function buildInputStyles(colors: ColorPalette): Record<string, React.CSSPropert
       padding: "14px 14px 14px 18px",
     },
     textarea: {
-      flex: 1,
+      // Sized by its own height (see the auto-grow effect): a flex basis in
+      // the column wrapper would override that height.
+      flex: "none",
       background: "transparent",
       border: "none",
       padding: "2px 0",
@@ -389,6 +392,21 @@ export function ChatInput({
     window.addEventListener("loop:chat-compose", onCompose);
     return () => window.removeEventListener("loop:chat-compose", onCompose);
   }, [channelId]);
+
+  // Grow the textarea with its text (new message or a queued one being
+  // edited), from three lines up to composerMaxHeight; past that it scrolls.
+  // Measured before paint so the box never flashes at the wrong size.
+  useLayoutEffect(() => {
+    const el = inputRef.current;
+    if (!el) return;
+    el.style.height = "auto";
+    const cs = getComputedStyle(el);
+    const lineHeight = parseFloat(cs.lineHeight) || parseFloat(cs.fontSize) * 1.4;
+    const padding = parseFloat(cs.paddingTop) + parseFloat(cs.paddingBottom);
+    const { height, scrolls } = composerHeight(el.scrollHeight, lineHeight, padding, 3, composerMaxHeight(window.innerHeight));
+    el.style.height = `${height}px`;
+    el.style.overflowY = scrolls ? "auto" : "hidden";
+  }, [text]);
 
   // Auto-focus textarea on mount; move cursor to end if restoring a draft.
   useEffect(() => {

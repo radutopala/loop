@@ -320,7 +320,7 @@ The input area (`ChatInput` component) sits at the bottom of the chat view.
 ### Layout
 
 - Container: `max-width: 768px`, rounded (16px border-radius), `colors.surface` background
-- Textarea: 3 rows, transparent background, 14px sans-serif font, no resize
+- Textarea: transparent background, 14px sans-serif font, no manual resize. It starts at 3 lines and grows with its text, up to 40% of the window (at most 360px), then scrolls. It shrinks back after a send. The same applies when a queued message is loaded for editing.
 - Mode toggle pill (left of send button)
 - Send/Stop button (right)
 

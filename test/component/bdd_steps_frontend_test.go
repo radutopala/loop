@@ -170,6 +170,7 @@ func registerFrontendSteps(ctx *godog.ScenarioContext, tc *TestContext) {
 	ctx.Step(`^the element "([^"]*)" should not be marked$`, tc.assertElementNotMarked)
 	ctx.Step(`^I wait for a frame message "([^"]*)"$`, tc.waitForFrameMessage)
 	ctx.Step(`^I wait for "([^"]*)" to be at least (\d+)px tall$`, tc.waitForElementHeight)
+	ctx.Step(`^I wait for "([^"]*)" to be at most (\d+)px tall$`, tc.waitForElementMaxHeight)
 	ctx.Step(`^I click the last "([^"]*)"$`, tc.clickLast)
 	ctx.Step(`^the element "([^"]*)" should fit inside the window$`, tc.assertElementInsideWindow)
 	ctx.Step(`^I click "([^"]*)" in the git panel$`, tc.clickInGitPanel)
@@ -2765,6 +2766,19 @@ func (tc *TestContext) waitForElementHeight(selector string, minPx int) error {
 		var h float64
 		_ = chromedp.Run(tc.chromeTab.ctx, chromedp.Evaluate(fmt.Sprintf(`document.querySelector(%q)?.getBoundingClientRect().height ?? -1`, selector), &h))
 		return fmt.Errorf("element %q is %.0fpx tall, want at least %dpx: %w", selector, h, minPx, err)
+	}
+	return nil
+}
+
+// waitForElementMaxHeight is waitForElementHeight's counterpart: it waits
+// until the element is no taller than maxPx (e.g. the composer shrinking back
+// after a send).
+func (tc *TestContext) waitForElementMaxHeight(selector string, maxPx int) error {
+	js := fmt.Sprintf(`(() => { const el = document.querySelector(%q); return !!el && el.getBoundingClientRect().height <= %d; })()`, selector, maxPx)
+	if err := chromedp.Run(tc.chromeTab.ctx, chromedp.Poll(js, nil, chromedp.WithPollingTimeout(15*time.Second))); err != nil {
+		var h float64
+		_ = chromedp.Run(tc.chromeTab.ctx, chromedp.Evaluate(fmt.Sprintf(`document.querySelector(%q)?.getBoundingClientRect().height ?? -1`, selector), &h))
+		return fmt.Errorf("element %q is %.0fpx tall, want at most %dpx: %w", selector, h, maxPx, err)
 	}
 	return nil
 }
