@@ -76,3 +76,20 @@ func (s *ModelsSuite) TestGetRoleNone() {
 	}
 	require.Equal(s.T(), types.Role(""), p.GetRole("U2", nil))
 }
+
+func (s *ModelsSuite) TestChannelLearnEnabled() {
+	tests := []struct {
+		override string
+		def      bool
+		want     bool
+	}{
+		{LearnOn, false, true},
+		{LearnOff, true, false},
+		{"", true, true},
+		{"", false, false},
+	}
+	for _, tc := range tests {
+		ch := &Channel{LearnOverride: tc.override}
+		require.Equal(s.T(), tc.want, ch.LearnEnabled(tc.def), "override %q default %v", tc.override, tc.def)
+	}
+}

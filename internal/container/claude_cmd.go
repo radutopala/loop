@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync/atomic"
 
@@ -103,6 +104,26 @@ func withoutTool(tools []string, name string) []string {
 	return out
 }
 
+// learnModeDisallowedTools are denied on top of the batch denials in a learn
+// run. A learn pass only reads the finished run and files proposals through
+// propose_learnings; the user applies them. So it may not edit files, change
+// Loop's config, tasks or threads, or talk to anyone.
+var learnModeDisallowedTools = []string{
+	"Edit", "Write", "NotebookEdit",
+	"AskUserQuestion", "EnterPlanMode", "ExitPlanMode",
+	"mcp__loop__prompt_shortcut", "mcp__loop__bash_shortcut",
+	"mcp__loop__schedule_task", "mcp__loop__edit_task", "mcp__loop__toggle_task", "mcp__loop__cancel_task",
+	"mcp__loop__rename_thread", "mcp__loop__set_thread_description", "mcp__loop__set_ticket_url",
+	"mcp__loop__send_message", "mcp__loop__queue_message", "mcp__loop__send_agent_message",
+	"mcp__loop__create_channel", "mcp__loop__create_thread", "mcp__loop__create_worktree_thread",
+	"mcp__loop__fork_thread", "mcp__loop__delete_thread",
+	"mcp__loop__save_workflow", "mcp__loop__delete_workflow", "mcp__loop__run_workflow",
+	"mcp__loop__cancel_workflow_run", "mcp__loop__delete_workflow_run",
+	"mcp__loop__resume_workflow_run", "mcp__loop__retry_workflow_run",
+	"mcp__loop__playground", "mcp__loop__playground_file", "mcp__loop__playground_share",
+	"mcp__loop__chat_component", "mcp__loop__index_memory", "mcp__loop__quality_snapshot",
+}
+
 // reviewModeSettings is the --settings payload for a review run. It carries
 // env, not container env vars, because Claude Code applies each settings
 // scope over process.env with a plain assign, in the fixed order
@@ -119,7 +140,7 @@ const reviewModeSettings = `{"env":{"CLAUDE_CODE_REPORT_FINDINGS":"1","CLAUDE_CO
 func buildClaudeCmd(cfg *config.Config, mcpConfigPath string, req *agent.AgentRequest) []string {
 	// Per-channel on-demand overrides beat the merged config's model/effort.
 	// Shallow-copy so the cached config is never mutated.
-	if req.Model != "" || req.Effort != "" || req.ReviewMode {
+	if req.Model != "" || req.Effort != "" || req.ReviewMode || req.LearnMode {
 		override := *cfg
 		if req.Model != "" {
 			override.ClaudeModel = req.Model
@@ -133,6 +154,11 @@ func buildClaudeCmd(cfg *config.Config, mcpConfigPath string, req *agent.AgentRe
 		// rather than fork. See agent.AgentRequest.ReviewMode.
 		if req.ReviewMode {
 			override.ClaudeBatchDisallowedTools = withoutTool(cfg.ClaudeBatchDisallowedTools, reportFindingsTool)
+		}
+		// A learn run proposes; it never changes anything itself. See
+		// learnModeDisallowedTools.
+		if req.LearnMode {
+			override.ClaudeBatchDisallowedTools = slices.Concat(override.ClaudeBatchDisallowedTools, learnModeDisallowedTools)
 		}
 		cfg = &override
 	}

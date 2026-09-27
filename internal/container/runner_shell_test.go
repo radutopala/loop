@@ -823,6 +823,27 @@ func (s *RunnerSuite) TestBuildClaudeCmdReviewMode() {
 	require.Less(s.T(), i, slices.Index(cmd, "--print"))
 }
 
+// TestBuildClaudeCmdLearnMode verifies a learn run adds its denials after the
+// batch ones and leaves the shared config untouched.
+func (s *RunnerSuite) TestBuildClaudeCmdLearnMode() {
+	disallowed := config.DefaultBatchDisallowedTools()
+	cfg := &config.Config{ClaudeBinPath: "claude", ClaudeBatchDisallowedTools: disallowed}
+	req := &agent.AgentRequest{
+		ChannelID: "ch-1",
+		Messages:  []agent.AgentMessage{{Role: "user", Content: "learn"}},
+		LearnMode: true,
+	}
+
+	cmd := buildClaudeCmd(cfg, "/work/.loop/mcp-ch-1.json", req)
+	i := slices.Index(cmd, "--disallowedTools")
+	require.NotEqual(s.T(), -1, i)
+	require.Equal(s.T(), strings.Join(slices.Concat(disallowed, learnModeDisallowedTools), ","), cmd[i+1])
+	require.Contains(s.T(), cmd[i+1], ",Edit,Write,")
+	require.Contains(s.T(), cmd[i+1], "mcp__loop__prompt_shortcut")
+	require.NotContains(s.T(), cmd, "--settings")
+	require.Equal(s.T(), config.DefaultBatchDisallowedTools(), cfg.ClaudeBatchDisallowedTools)
+}
+
 func (s *RunnerSuite) TestBuildClaudeCmdPermissionPromptTool() {
 	cfg := &config.Config{ClaudeBinPath: "claude"}
 	req := &agent.AgentRequest{

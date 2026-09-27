@@ -61,6 +61,18 @@ const (
 	LearnOff = "off"
 )
 
+// LearnEnabled is the channel's effective learn switch: its override when it
+// has one, else def, the config's learn.enabled.
+func (c *Channel) LearnEnabled(def bool) bool {
+	switch c.LearnOverride {
+	case LearnOn:
+		return true
+	case LearnOff:
+		return false
+	}
+	return def
+}
+
 // StaleRunningMessage describes a (channel_id, msg_id) pair returned by
 // ResetStaleRunningMessages so the caller can broadcast per-channel
 // messages.processed events for rows it cleaned up at startup.

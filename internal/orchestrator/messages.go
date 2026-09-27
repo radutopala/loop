@@ -312,6 +312,7 @@ func (o *Orchestrator) processClaimedMessage(ctx context.Context, row *db.Messag
 	}
 
 	o.deliverResponse(ctx, msg, resp, recent, lastStreamedText, runID)
+	o.maybeLearn(ctx, channel, msg, resp)
 }
 
 // runFinishStatus carries the deferred agent.status broadcast info from
@@ -378,6 +379,9 @@ func (o *Orchestrator) prepareAgentRequest(ctx context.Context, msg *bot.Incomin
 					// be fully resolved (lookup error mid-walk).
 					req.ParentDirPath = parent.DirPath
 				}
+			}
+			if channel.Kind == db.ChannelKindLearn {
+				o.applyLearnRequest(ctx, req, parent)
 			}
 		}
 	}

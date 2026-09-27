@@ -60,7 +60,7 @@ func (s *Server) handleGetLearn(w http.ResponseWriter, r *http.Request) {
 	resp := learnStateResponse{
 		Learn:        ch.LearnOverride,
 		DefaultLearn: def,
-		Enabled:      learnEnabled(ch.LearnOverride, def),
+		Enabled:      ch.LearnEnabled(def),
 	}
 	if l != nil {
 		resp.LearnChannelID = l.ChannelID
@@ -94,16 +94,4 @@ func (s *Server) handleSetLearn(w http.ResponseWriter, r *http.Request) {
 		s.eventsHub.BroadcastChannelLearn(ch.ChannelID, req.Learn)
 	}
 	w.WriteHeader(http.StatusNoContent)
-}
-
-// learnEnabled is the effective learn switch: the channel's override when it
-// has one, else the config default.
-func learnEnabled(override string, def bool) bool {
-	switch override {
-	case db.LearnOn:
-		return true
-	case db.LearnOff:
-		return false
-	}
-	return def
 }
