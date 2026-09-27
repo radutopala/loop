@@ -5,6 +5,7 @@ package db
 import (
 	"context"
 	"database/sql"
+	"time"
 )
 
 // UpdateChannelLearnOverride sets a channel's learn switch: LearnOn, LearnOff
@@ -103,13 +104,21 @@ func (s *SQLiteStore) GetLearnProposal(ctx context.Context, id int64) (*LearnPro
 	return p, err
 }
 
-// ClaimLearnProposal moves a pending or failed proposal to applying. It
-// reports false when the proposal is in any other state, so only one caller
-// ever applies it.
+// LearnApplyStale is how long a proposal may sit in applying before it can
+// be claimed again. An apply takes well under a second; one still applying
+// after this lost its outcome (the status save failed, or Loop stopped
+// mid-apply) and would otherwise be stuck there for good.
+const LearnApplyStale = time.Minute
+
+// ClaimLearnProposal moves a pending or failed proposal, or one stuck in
+// applying for over LearnApplyStale, to applying. It reports false when the
+// proposal is in any other state, so only one caller ever applies it.
 func (s *SQLiteStore) ClaimLearnProposal(ctx context.Context, id int64) (bool, error) {
+	now := s.nowFunc()
 	res, err := s.db.ExecContext(ctx,
-		`UPDATE learn_proposals SET status = ?, error = '', updated_at = ? WHERE id = ? AND status IN (?, ?)`,
-		LearnApplying, s.nowFunc(), id, LearnPending, LearnFailed,
+		`UPDATE learn_proposals SET status = ?, error = '', updated_at = ?
+		 WHERE id = ? AND (status IN (?, ?) OR (status = ? AND updated_at < ?))`,
+		LearnApplying, now, id, LearnPending, LearnFailed, LearnApplying, now.Add(-LearnApplyStale),
 	)
 	if err != nil {
 		return false, err

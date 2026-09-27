@@ -925,6 +925,7 @@ Return the channel's learn switch, the config default it falls back to (global â
 **Response (200):**
 ```json
 {
+  "available": true,
   "learn": "on",
   "default_learn": false,
   "enabled": true,
@@ -935,9 +936,10 @@ Return the channel's learn switch, the config default it falls back to (global â
 
 | Field | Type | Description |
 |-------|------|-------------|
+| `available` | bool | `false` for Slack and Discord channels, which never learn |
 | `learn` | string | The channel's setting: `"on"`, `"off"`, or empty to inherit `default_learn` |
 | `default_learn` | bool | `learn.enabled` from the merged config; `false` when the config fails to load |
-| `enabled` | bool | The effective switch |
+| `enabled` | bool | The effective switch; always `false` when not `available` |
 | `learn_channel_id` | string | The hidden learn thread; empty until the channel's first learn pass |
 | `running` | bool | A learn pass is running in the learn thread |
 
@@ -960,7 +962,7 @@ Set the channel's learn switch. It takes effect from the channel's next run.
 
 **Behavior notes:** Broadcasts a [`channel.learn`](events.md#channellearn) event.
 
-**Errors:** `400` if the body isn't valid JSON or `learn` is another value. `404` if the channel doesn't exist or is a learn thread. `501` if the store is not configured.
+**Errors:** `400` if the body isn't valid JSON, `learn` is another value, or the channel is a Slack or Discord one (`learn runs only in desktop app channels`). `404` if the channel doesn't exist or is a learn thread. `501` if the store is not configured.
 
 ---
 
@@ -1044,19 +1046,19 @@ The payload is stored in canonical JSON. Either every proposal is valid and all 
 
 ### `POST /api/learn/proposals/{id}/apply`
 
-Apply a `pending` or `failed` proposal. It moves to `applying` first, so a double click can't apply it twice. See [Configuration: Where learn proposals are written](configuration.md#where-learn-proposals-are-written) for what each kind changes.
+Apply a `pending` or `failed` proposal. It moves to `applying` first, so a double click can't apply it twice. One left in `applying` for over a minute (its outcome was lost: the status save failed, or Loop stopped mid-apply) can be applied or dismissed again. See [Configuration: Where learn proposals are written](configuration.md#where-learn-proposals-are-written) for what each kind changes.
 
 **Response (200):** the proposal, with `status` `applied`, or `failed` and an `error`. A failed apply is recorded on the proposal, not returned as an HTTP error, so it can be retried.
 
 **Behavior notes:** Broadcasts a [`learn.proposal_updated`](events.md#learnproposal_updated) event. A rename, description or ticket URL also broadcasts `channel.updated`, a scheduled task `task.created`.
 
-**Errors:** `400` if `{id}` isn't an integer. `404` if the proposal doesn't exist. `409` if it's already `applying`, `applied` or `dismissed` (`proposal is already applied`). `500` on a store error. `501` if the store is not configured.
+**Errors:** `400` if `{id}` isn't an integer. `404` if the proposal doesn't exist. `409` if it's already `applied` or `dismissed`, or has been `applying` for under a minute (`proposal is already applied`). `500` on a store error. `501` if the store is not configured.
 
 ---
 
 ### `POST /api/learn/proposals/{id}/dismiss`
 
-Dismiss a `pending` or `failed` proposal.
+Dismiss a `pending` or `failed` proposal, or one stuck in `applying` as above.
 
 **Response (200):** the proposal, with `status: "dismissed"`.
 

@@ -27,15 +27,33 @@ interface LearnDrawerProps {
 export function LearnDrawer({ learn, worktree, subscribeChannelEvents, onClose }: LearnDrawerProps) {
   const { colors } = useTheme();
   const open = learn.proposals.filter(isOpenProposal);
+  // Proposals with an apply or dismiss in flight; their buttons are disabled
+  // so a second click can't race the first.
+  const [busy, setBusy] = useState<ReadonlySet<number>>(new Set());
   const [applyingAll, setApplyingAll] = useState(false);
+
+  const settle = useCallback(async (id: number, action: (id: number) => Promise<void>) => {
+    setBusy((cur) => new Set(cur).add(id));
+    try {
+      await action(id);
+    } finally {
+      setBusy((cur) => {
+        const next = new Set(cur);
+        next.delete(id);
+        return next;
+      });
+    }
+  }, []);
+  const apply = useCallback((id: number) => settle(id, learn.apply), [settle, learn.apply]);
+  const dismiss = useCallback((id: number) => settle(id, learn.dismiss), [settle, learn.dismiss]);
 
   const applyAll = useCallback(async () => {
     setApplyingAll(true);
-    for (const p of learn.proposals.filter((x) => x.status === "pending")) {
-      await learn.apply(p.id);
+    for (const p of learn.proposals.filter((x) => x.status === "pending" && !busy.has(x.id))) {
+      await apply(p.id);
     }
     setApplyingAll(false);
-  }, [learn]);
+  }, [learn.proposals, busy, apply]);
 
   return (
     <div
@@ -84,7 +102,7 @@ export function LearnDrawer({ learn, worktree, subscribeChannelEvents, onClose }
       {learn.proposals.length > 0 && (
         <div style={{ maxHeight: "45%", overflowY: "auto", flexShrink: 0, borderBottom: `1px solid ${colors.border}` }}>
           {learn.proposals.map((p) => (
-            <ProposalCard key={p.id} proposal={p} worktree={worktree} onApply={learn.apply} onDismiss={learn.dismiss} />
+            <ProposalCard key={p.id} proposal={p} worktree={worktree} busy={busy.has(p.id)} onApply={apply} onDismiss={dismiss} />
           ))}
         </div>
       )}
@@ -116,7 +134,19 @@ function LearnThread({
   return <ChatView key={learnChannelId} channelId={learnChannelId} chatState={chatState} hideLearn />;
 }
 
-function ProposalCard({ proposal: p, worktree, onApply, onDismiss }: { proposal: LearnProposal; worktree: boolean; onApply: (id: number) => Promise<void>; onDismiss: (id: number) => Promise<void> }) {
+function ProposalCard({
+  proposal: p,
+  worktree,
+  busy,
+  onApply,
+  onDismiss,
+}: {
+  proposal: LearnProposal;
+  worktree: boolean;
+  busy: boolean;
+  onApply: (id: number) => Promise<void>;
+  onDismiss: (id: number) => Promise<void>;
+}) {
   const { colors } = useTheme();
   const caveat = proposalCaveat(p, worktree);
   const settled = p.status === "applied" || p.status === "dismissed";
@@ -138,10 +168,10 @@ function ProposalCard({ proposal: p, worktree, onApply, onDismiss }: { proposal:
         <span style={{ fontWeight: 600, flex: 1, minWidth: 0 }}>{p.title}</span>
         {isOpenProposal(p) ? (
           <>
-            <button data-testid="learn-apply" onClick={() => onApply(p.id)} style={buttonStyle(colors.active)}>
-              {p.status === "failed" ? "Retry" : "Apply"}
+            <button data-testid="learn-apply" onClick={() => onApply(p.id)} disabled={busy} style={buttonStyle(colors.active)}>
+              {p.status === "pending" ? "Apply" : "Retry"}
             </button>
-            <button data-testid="learn-dismiss" onClick={() => onDismiss(p.id)} style={buttonStyle(colors.textDim)}>
+            <button data-testid="learn-dismiss" onClick={() => onDismiss(p.id)} disabled={busy} style={buttonStyle(colors.textDim)}>
               Dismiss
             </button>
           </>

@@ -118,7 +118,7 @@ When `--agent-id` is set, the server also:
 
 ### Learn Tools (learn agent only)
 
-Registered only when `--agent-id` is `learn`, the id the orchestrator gives a [learn pass](orchestrator.md#learn-pass). Since the agent id is set, the agent tools above are registered too.
+Registered only when `--agent-id` is `learn`, the id the orchestrator gives a [learn pass](orchestrator.md#learn-pass). A learn pass works alone, so that id gets none of the agent tools above: no `list_agents`, `send_agent_message` or `update_agent_status`, no channel push, and it isn't registered in the agent registry.
 
 | Tool | Description |
 |------|-------------|

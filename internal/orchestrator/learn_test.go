@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"time"
 
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
@@ -19,6 +20,7 @@ import (
 
 func (s *OrchestratorSuite) TestLearnSkipReason() {
 	on := config.LearnConfig{Enabled: true, MinTurns: 3}
+	local := types.PlatformLocal
 	tests := []struct {
 		name   string
 		ch     *db.Channel
@@ -27,14 +29,15 @@ func (s *OrchestratorSuite) TestLearnSkipReason() {
 		parked bool
 		want   string
 	}{
-		{"learns", &db.Channel{}, 3, on, false, ""},
-		{"override on beats config off", &db.Channel{LearnOverride: db.LearnOn}, 5, config.LearnConfig{MinTurns: 3}, false, ""},
-		{"learn thread", &db.Channel{Kind: db.ChannelKindLearn}, 5, on, false, "learn thread"},
-		{"task thread", &db.Channel{TaskID: 7}, 5, on, false, "task thread"},
-		{"parked", &db.Channel{}, 5, on, true, "parked on a plan or question"},
-		{"override off", &db.Channel{LearnOverride: db.LearnOff}, 5, on, false, "learn off"},
-		{"config off", &db.Channel{}, 5, config.LearnConfig{MinTurns: 3}, false, "learn off"},
-		{"too short", &db.Channel{}, 2, on, false, "2 turns, below min_turns 3"},
+		{"learns", &db.Channel{Platform: local}, 3, on, false, ""},
+		{"override on beats config off", &db.Channel{Platform: local, LearnOverride: db.LearnOn}, 5, config.LearnConfig{MinTurns: 3}, false, ""},
+		{"learn thread", &db.Channel{Platform: local, Kind: db.ChannelKindLearn}, 5, on, false, "learn thread"},
+		{"slack channel", &db.Channel{Platform: types.PlatformSlack}, 5, on, false, "not a desktop channel"},
+		{"task thread", &db.Channel{Platform: local, TaskID: 7}, 5, on, false, "task thread"},
+		{"parked", &db.Channel{Platform: local}, 5, on, true, "parked on a plan or question"},
+		{"override off", &db.Channel{Platform: local, LearnOverride: db.LearnOff}, 5, on, false, "learn off"},
+		{"config off", &db.Channel{Platform: local}, 5, config.LearnConfig{MinTurns: 3}, false, "learn off"},
+		{"too short", &db.Channel{Platform: local}, 2, on, false, "2 turns, below min_turns 3"},
 	}
 	for _, tc := range tests {
 		s.Run(tc.name, func() {
@@ -89,20 +92,20 @@ func (s *OrchestratorSuite) TestMaybeLearnSkips() {
 		setup func()
 	}{
 		{"learn thread", &db.Channel{ChannelID: "learn-1", Kind: db.ChannelKindLearn}, learnOn, func() {}},
-		{"too short", &db.Channel{ChannelID: "ch1", DirPath: "/project"}, &agent.AgentResponse{SessionID: "sess-1", NumTurns: 1}, func() {}},
-		{"no session", &db.Channel{ChannelID: "ch1", DirPath: "/project"}, &agent.AgentResponse{NumTurns: 5}, func() {}},
-		{"lookup error", &db.Channel{ChannelID: "ch1", DirPath: "/project"}, learnOn, func() {
+		{"too short", &db.Channel{ChannelID: "ch1", DirPath: "/project", Platform: types.PlatformLocal}, &agent.AgentResponse{SessionID: "sess-1", NumTurns: 1}, func() {}},
+		{"no session", &db.Channel{ChannelID: "ch1", DirPath: "/project", Platform: types.PlatformLocal}, &agent.AgentResponse{NumTurns: 5}, func() {}},
+		{"lookup error", &db.Channel{ChannelID: "ch1", DirPath: "/project", Platform: types.PlatformLocal}, learnOn, func() {
 			s.store.On("GetLearnChannel", s.ctx, "ch1").Return(nil, errors.New("db down"))
 		}},
-		{"create error", &db.Channel{ChannelID: "ch1", DirPath: "/project"}, learnOn, func() {
+		{"create error", &db.Channel{ChannelID: "ch1", DirPath: "/project", Platform: types.PlatformLocal}, learnOn, func() {
 			s.store.On("GetLearnChannel", s.ctx, "ch1").Return(nil, nil)
 			s.store.On("InsertLearnChannel", s.ctx, mock.Anything).Return(errors.New("db down"))
 		}},
-		{"learn pass running", &db.Channel{ChannelID: "ch1", DirPath: "/project"}, learnOn, func() {
+		{"learn pass running", &db.Channel{ChannelID: "ch1", DirPath: "/project", Platform: types.PlatformLocal}, learnOn, func() {
 			s.store.On("GetLearnChannel", s.ctx, "ch1").Return(&db.Channel{ChannelID: "learn-1"}, nil)
 			s.orch.activeRuns.Store("learn-1", context.CancelFunc(func() {}))
 		}},
-		{"fork error", &db.Channel{ChannelID: "ch1", DirPath: "/project"}, learnOn, func() {
+		{"fork error", &db.Channel{ChannelID: "ch1", DirPath: "/project", Platform: types.PlatformLocal}, learnOn, func() {
 			s.store.On("GetLearnChannel", s.ctx, "ch1").Return(&db.Channel{ChannelID: "learn-1"}, nil)
 			s.store.On("MarkSessionForkPending", s.ctx, "learn-1", "sess-1").Return(errors.New("db down"))
 		}},
@@ -114,6 +117,9 @@ func (s *OrchestratorSuite) TestMaybeLearnSkips() {
 			tc.setup()
 			s.orch.maybeLearn(s.ctx, tc.ch, &bot.IncomingMessage{Content: "hi"}, tc.resp)
 			s.store.AssertExpectations(s.T())
+			// Only the busy thread keeps the run, to review it next.
+			_, held := s.orch.learnSlots["learn-1"]
+			require.Equal(s.T(), tc.name == "learn pass running", held)
 			s.store.AssertNotCalled(s.T(), "IsChannelActive", mock.Anything, mock.Anything)
 		})
 	}
@@ -131,7 +137,7 @@ func (s *OrchestratorSuite) TestMaybeLearnStarts() {
 	eb.On("BroadcastLearnStarted", "ch1", mock.Anything).Return()
 	s.orch.SetEventBroadcaster(eb)
 
-	ch := &db.Channel{ChannelID: "ch1", GuildID: "g1", Name: "api", DirPath: "/project"}
+	ch := &db.Channel{ChannelID: "ch1", GuildID: "g1", Name: "api", DirPath: "/project", Platform: types.PlatformLocal}
 	var created *db.Channel
 	s.store.On("GetLearnChannel", s.ctx, "ch1").Return(nil, nil)
 	s.store.On("InsertLearnChannel", s.ctx, mock.MatchedBy(func(l *db.Channel) bool {
@@ -171,6 +177,117 @@ func (s *OrchestratorSuite) TestMaybeLearnStarts() {
 		return d.Content == trigger.Content
 	}))
 	eb.AssertCalled(s.T(), "BroadcastLearnStarted", "ch1", created.ChannelID)
+}
+
+func (s *OrchestratorSuite) TestLearnQueue() {
+	p1 := &learnPass{parent: &db.Channel{ChannelID: "ch1", Name: "api"}, prompt: "one", sessionID: "sess-1"}
+	p2 := &learnPass{parent: p1.parent, prompt: "two", sessionID: "sess-2"}
+	p3 := &learnPass{parent: p1.parent, prompt: "three", sessionID: "sess-3"}
+
+	s.Run("later runs fold into the newest while a pass is queued", func() {
+		s.SetupTest()
+		require.False(s.T(), s.orch.queueLearn("learn-1", p1))
+		require.True(s.T(), s.orch.queueLearn("learn-1", p2))
+		require.True(s.T(), s.orch.queueLearn("learn-1", p3))
+		require.True(s.T(), s.orch.learnSlots["learn-1"].triggered)
+		require.Same(s.T(), p3, s.orch.learnSlots["learn-1"].next)
+	})
+
+	s.Run("a user's run in the learn thread holds the pass back", func() {
+		s.SetupTest()
+		s.orch.activeRuns.Store("learn-1", context.CancelFunc(func() {}))
+		require.True(s.T(), s.orch.queueLearn("learn-1", p1))
+		require.False(s.T(), s.orch.learnSlots["learn-1"].triggered)
+		require.Same(s.T(), p1, s.orch.learnSlots["learn-1"].next)
+	})
+
+	s.Run("a trigger that never ran is given up after learnTriggerLost", func() {
+		s.SetupTest()
+		now := s.orch.timeNow()
+		s.orch.learnSlots = map[string]*learnSlot{"learn-1": {triggered: true, triggeredAt: now.Add(-learnTriggerLost - time.Second)}}
+		require.False(s.T(), s.orch.queueLearn("learn-1", p1))
+		require.Nil(s.T(), s.orch.learnSlots["learn-1"].next)
+	})
+}
+
+func (s *OrchestratorSuite) TestLearnRunDone() {
+	pass := &learnPass{parent: &db.Channel{ChannelID: "ch1", Name: "api"}, prompt: "fix it", sessionID: "sess-2"}
+	tests := []struct {
+		name     string
+		slot     *learnSlot
+		authorID string
+		setup    func()
+		wantSlot *learnSlot
+	}{
+		{name: "not a learn thread", authorID: learnAuthorID},
+		{name: "pass done, nothing waiting", slot: &learnSlot{triggered: true}, authorID: learnAuthorID},
+		{
+			name:     "user run ends before the queued pass",
+			slot:     &learnSlot{triggered: true, next: pass},
+			authorID: "user-1",
+			wantSlot: &learnSlot{triggered: true, next: pass},
+		},
+		{
+			name:     "learn thread lookup fails",
+			slot:     &learnSlot{triggered: true, next: pass},
+			authorID: learnAuthorID,
+			setup: func() {
+				s.store.On("GetChannel", s.ctx, "learn-1").Return(nil, errors.New("db down"))
+			},
+		},
+		{
+			name:     "waiting pass fails to fork",
+			slot:     &learnSlot{next: pass},
+			authorID: "user-1",
+			setup: func() {
+				s.store.On("GetChannel", s.ctx, "learn-1").Return(&db.Channel{ChannelID: "learn-1"}, nil)
+				s.store.On("MarkSessionForkPending", s.ctx, "learn-1", "sess-2").Return(errors.New("db down"))
+			},
+		},
+	}
+	for _, tc := range tests {
+		s.Run(tc.name, func() {
+			s.SetupTest()
+			s.orch.learnSlots = map[string]*learnSlot{}
+			if tc.slot != nil {
+				s.orch.learnSlots["learn-1"] = tc.slot
+			}
+			if tc.setup != nil {
+				tc.setup()
+			}
+			s.orch.learnRunDone(s.ctx, "learn-1", tc.authorID)
+			s.store.AssertExpectations(s.T())
+			require.Equal(s.T(), tc.wantSlot, s.orch.learnSlots["learn-1"])
+		})
+	}
+}
+
+// TestLearnRunDoneStartsWaitingPass covers the pass queued behind a running
+// one: when that run ends, the waiting run's session is forked and its
+// trigger queued, and the thread stays claimed for it.
+func (s *OrchestratorSuite) TestLearnRunDoneStartsWaitingPass() {
+	s.orch.drainSpawn = func(func()) {}
+	eb := new(MockEventBroadcaster)
+	eb.On("BroadcastMessageCreated", mock.Anything, mock.Anything).Return()
+	eb.On("BroadcastLearnStarted", "ch1", "learn-1").Return()
+	s.orch.SetEventBroadcaster(eb)
+	pass := &learnPass{parent: &db.Channel{ChannelID: "ch1", Name: "api"}, prompt: "fix it", sessionID: "sess-2"}
+	s.orch.learnSlots = map[string]*learnSlot{"learn-1": {triggered: true, next: pass}}
+
+	s.store.On("GetChannel", s.ctx, "learn-1").Return(&db.Channel{ID: 9, ChannelID: "learn-1", Platform: types.PlatformLocal, Kind: db.ChannelKindLearn}, nil)
+	s.store.On("MarkSessionForkPending", s.ctx, "learn-1", "sess-2").Return(nil)
+	s.store.On("IsChannelActive", s.ctx, "learn-1").Return(true, nil)
+	s.store.On("InsertMessage", s.ctx, mock.MatchedBy(func(m *db.Message) bool {
+		return m.AuthorID == learnAuthorID && m.Content == learn.TriggerMessage("api", "fix it")
+	})).Return(nil)
+
+	s.orch.learnRunDone(s.ctx, "learn-1", learnAuthorID)
+
+	s.store.AssertExpectations(s.T())
+	eb.AssertCalled(s.T(), "BroadcastLearnStarted", "ch1", "learn-1")
+	slot := s.orch.learnSlots["learn-1"]
+	require.True(s.T(), slot.triggered)
+	require.Nil(s.T(), slot.next)
 }
 
 func (s *OrchestratorSuite) TestRunTrigger() {

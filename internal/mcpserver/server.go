@@ -10,8 +10,6 @@ import (
 	"net/http"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
-
-	"github.com/radutopala/loop/internal/learn"
 )
 
 // HTTPClient abstracts HTTP calls for testability.
@@ -28,6 +26,7 @@ type Server struct {
 	dirPath          string
 	memoryEnabled    bool
 	workflowsEnabled bool
+	learnTools       bool
 	mcpServer        *mcp.Server
 	httpClient       HTTPClient
 	logger           *slog.Logger
@@ -301,7 +300,7 @@ func New(channelID, apiURL, authorID string, httpClient HTTPClient, logger *slog
 
 	s.registerReviewTools()
 
-	if s.agentID == learn.AgentID {
+	if s.learnTools {
 		s.registerLearnTools()
 	}
 

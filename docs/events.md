@@ -510,7 +510,7 @@ A channel's model/effort overrides changed via [`PATCH /api/channels/{id}/agent-
 
 ### `channel.learn`
 
-A channel's learn switch changed via [`PUT /api/channels/{id}/learn`](api.md#put-apichannelsidlearn). `channel_id` is that channel.
+A channel's learn switch changed via [`PUT /api/channels/{id}/learn`](api.md#put-apichannelsidlearn). `channel_id` is that channel. Every window's composer updates its Learn switch from it.
 
 **Payload schema:**
 

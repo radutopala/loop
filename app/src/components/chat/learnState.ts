@@ -11,7 +11,7 @@ export function learnEffective(learn: "" | "on" | "off", defaultLearn: boolean):
 export function learnToggleTitle(learn: "" | "on" | "off", defaultLearn: boolean): string {
   const on = learnEffective(learn, defaultLearn);
   const source = learn === "" ? `config default (${defaultLearn ? "on" : "off"})` : "set for this channel";
-  const what = "After each run, a hidden forked session reviews it and proposes shortcuts, tasks, gate rules, mounts and a thread name for you to apply.";
+  const what = "After each run, a hidden forked session reviews it and proposes shortcuts, tasks, gate rules, mounts, a thread name, description or ticket link for you to apply.";
   return `Learn is ${on ? "on" : "off"} — ${source}.\n${what}\nClick to turn it ${on ? "off" : "on"}.`;
 }
 
@@ -30,10 +30,16 @@ export function learnKindLabel(kind: string): string {
   return KIND_LABELS[kind as LearnProposalKind] ?? kind;
 }
 
-// A proposal still waiting on the user: never settled, or failed and
-// retryable.
-export function isOpenProposal(p: LearnProposal): boolean {
-  return p.status === "pending" || p.status === "failed";
+// How long a proposal may sit in "applying" before the server lets it be
+// claimed again (db.LearnApplyStale): one still applying by then lost its
+// outcome.
+export const LEARN_APPLY_STALE_MS = 60_000;
+
+// A proposal still waiting on the user: never settled, failed and retryable,
+// or stuck applying past LEARN_APPLY_STALE_MS.
+export function isOpenProposal(p: LearnProposal, now = Date.now()): boolean {
+  if (p.status === "pending" || p.status === "failed") return true;
+  return p.status === "applying" && now - Date.parse(p.updated_at) > LEARN_APPLY_STALE_MS;
 }
 
 // The Learn label in the layouts bar: what the learn pass is doing, else how

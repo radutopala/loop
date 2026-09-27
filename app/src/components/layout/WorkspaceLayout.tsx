@@ -7,7 +7,7 @@ import { useChatState } from "../../hooks/useChatState";
 import type { ActiveChatState, ChatEventListener } from "../../hooks/useChatStateStore";
 import { useContainerStats } from "../../hooks/useContainerStats";
 import { useEditorState } from "../../hooks/useEditorState";
-import { useLearn } from "../../hooks/useLearn";
+import { LearnContext, useLearn } from "../../hooks/useLearn";
 import type { LayoutType } from "../../layouts/persistence";
 import {
   clearLayout,
@@ -851,14 +851,16 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
           return (
             <ComponentFocusContext.Provider value={(c) => openComponent(leaf.id, c)}>
               <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", minHeight: 0, position: "relative" }}>
-                <ChatView
-                  key={`layout-chat-${channelId}`}
-                  channelId={channelId}
-                  chatState={chatState}
-                  roots={editorState.roots}
-                  scrollToMessageId={scrollToMessageId}
-                  onScrollComplete={onScrollComplete}
-                />
+                <LearnContext.Provider value={learn}>
+                  <ChatView
+                    key={`layout-chat-${channelId}`}
+                    channelId={channelId}
+                    chatState={chatState}
+                    roots={editorState.roots}
+                    scrollToMessageId={scrollToMessageId}
+                    onScrollComplete={onScrollComplete}
+                  />
+                </LearnContext.Provider>
                 {shownComponent?.leafId === leaf.id && <ChatComponentFull component={shownComponent.component} onClose={closeComponent} />}
               </div>
             </ComponentFocusContext.Provider>
@@ -1008,6 +1010,7 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
       openComponent,
       shownComponent,
       closeComponent,
+      learn,
     ],
   );
 

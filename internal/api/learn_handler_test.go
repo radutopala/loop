@@ -12,6 +12,7 @@ import (
 
 	"github.com/radutopala/loop/internal/config"
 	"github.com/radutopala/loop/internal/db"
+	"github.com/radutopala/loop/internal/types"
 )
 
 func (s *ServerSuite) learnRequest(method, channelID, body string) *httptest.ResponseRecorder {
@@ -25,28 +26,37 @@ func (s *ServerSuite) TestLearnGet() {
 	tests := []struct {
 		name     string
 		override string
+		platform types.Platform
 		def      bool
 		learnCh  *db.Channel
 		running  bool
 		want     learnStateResponse
 	}{
-		{name: "inherits off", want: learnStateResponse{}},
-		{name: "inherits on", def: true, want: learnStateResponse{DefaultLearn: true, Enabled: true}},
-		{name: "override on", override: db.LearnOn, want: learnStateResponse{Learn: "on", Enabled: true}},
-		{name: "override off", override: db.LearnOff, def: true, want: learnStateResponse{Learn: "off", DefaultLearn: true}},
+		{name: "inherits off", want: learnStateResponse{Available: true}},
+		{name: "inherits on", def: true, want: learnStateResponse{Available: true, DefaultLearn: true, Enabled: true}},
+		{name: "override on", override: db.LearnOn, want: learnStateResponse{Available: true, Learn: "on", Enabled: true}},
+		{name: "override off", override: db.LearnOff, def: true, want: learnStateResponse{Available: true, Learn: "off", DefaultLearn: true}},
+		{
+			name: "slack channel never learns", override: db.LearnOn, platform: types.PlatformSlack,
+			want: learnStateResponse{Learn: "on"},
+		},
 		{
 			name: "learn thread idle", override: db.LearnOn, learnCh: &db.Channel{ChannelID: "l-1"},
-			want: learnStateResponse{Learn: "on", Enabled: true, LearnChannelID: "l-1"},
+			want: learnStateResponse{Available: true, Learn: "on", Enabled: true, LearnChannelID: "l-1"},
 		},
 		{
 			name: "learn thread running", override: db.LearnOn, learnCh: &db.Channel{ChannelID: "l-1"}, running: true,
-			want: learnStateResponse{Learn: "on", Enabled: true, LearnChannelID: "l-1", Running: true},
+			want: learnStateResponse{Available: true, Learn: "on", Enabled: true, LearnChannelID: "l-1", Running: true},
 		},
 	}
 	for _, tc := range tests {
 		s.Run(tc.name, func() {
 			s.SetupTest()
-			s.store.On("GetChannel", mock.Anything, "ch-1").Return(&db.Channel{ChannelID: "ch-1", DirPath: "/p", LearnOverride: tc.override}, nil)
+			platform := tc.platform
+			if platform == "" {
+				platform = types.PlatformLocal
+			}
+			s.store.On("GetChannel", mock.Anything, "ch-1").Return(&db.Channel{ChannelID: "ch-1", DirPath: "/p", LearnOverride: tc.override, Platform: platform}, nil)
 			s.store.On("GetLearnChannel", mock.Anything, "ch-1").Return(tc.learnCh, nil)
 			s.srv.configs.load = func() (*config.Config, error) { return &config.Config{}, nil }
 			s.srv.configs.loadProject = func(_ string, base *config.Config) (*config.Config, error) {
@@ -102,7 +112,7 @@ func (s *ServerSuite) TestLearnSet() {
 		s.Run(v, func() {
 			s.SetupTest()
 			s.srv.eventsHub = NewEventsHub(testLogger())
-			s.store.On("GetChannel", mock.Anything, "ch-1").Return(&db.Channel{ChannelID: "ch-1"}, nil)
+			s.store.On("GetChannel", mock.Anything, "ch-1").Return(&db.Channel{ChannelID: "ch-1", Platform: types.PlatformLocal}, nil)
 			s.store.On("UpdateChannelLearnOverride", mock.Anything, "ch-1", v).Return(nil)
 
 			w := s.learnRequest("PUT", "ch-1", `{"learn":"`+v+`"}`)
@@ -114,7 +124,8 @@ func (s *ServerSuite) TestLearnSet() {
 
 func (s *ServerSuite) TestLearnSetErrors() {
 	s.store.On("GetChannel", mock.Anything, "gone").Return(nil, nil)
-	s.store.On("GetChannel", mock.Anything, "ch-1").Return(&db.Channel{ChannelID: "ch-1"}, nil)
+	s.store.On("GetChannel", mock.Anything, "ch-1").Return(&db.Channel{ChannelID: "ch-1", Platform: types.PlatformLocal}, nil)
+	s.store.On("GetChannel", mock.Anything, "slack-1").Return(&db.Channel{ChannelID: "slack-1", Platform: types.PlatformSlack}, nil)
 	s.store.On("UpdateChannelLearnOverride", mock.Anything, "ch-1", "on").Return(os.ErrPermission)
 
 	w := s.learnRequest("PUT", "ch-1", `{"learn":"maybe"}`)
@@ -122,5 +133,8 @@ func (s *ServerSuite) TestLearnSetErrors() {
 	require.Contains(s.T(), w.Body.String(), "invalid learn")
 	require.Equal(s.T(), http.StatusBadRequest, s.learnRequest("PUT", "ch-1", `{`).Code)
 	require.Equal(s.T(), http.StatusNotFound, s.learnRequest("PUT", "gone", `{"learn":"on"}`).Code)
+	w = s.learnRequest("PUT", "slack-1", `{"learn":"on"}`)
+	require.Equal(s.T(), http.StatusBadRequest, w.Code)
+	require.Contains(s.T(), w.Body.String(), "desktop app channels")
 	require.Equal(s.T(), http.StatusInternalServerError, s.learnRequest("PUT", "ch-1", `{"learn":"on"}`).Code)
 }

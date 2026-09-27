@@ -249,6 +249,8 @@ func (o *Orchestrator) processClaimedMessage(ctx context.Context, row *db.Messag
 		Priority:   row.Priority,
 		Timestamp:  row.CreatedAt,
 	}
+	// A learn thread is free for its next pass once this run ends.
+	defer o.learnRunDone(ctx, msg.ChannelID, msg.AuthorID)
 	if incoming != nil && incoming.MessageID == row.MsgID {
 		msg.GuildID = incoming.GuildID
 		msg.Platform = incoming.Platform

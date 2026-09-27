@@ -28,6 +28,33 @@ Feature: Learn from runs
     When I click on "[data-testid='learn-toggle']"
     Then I wait for "[data-testid='learn-toggle'][data-on='false']" to be visible
 
+  Scenario: The Learn switch follows a change made in another window
+    Then I wait for "[data-testid='learn-toggle'][data-on='false']" to be visible
+    # Another window turning learn on sends channel.learn to every window.
+    When I inject a "channel.learn" event for the channel with data:
+      """
+      {"learn":"on"}
+      """
+    Then I wait for "[data-testid='learn-toggle'][data-on='true']" to be visible
+
+  Scenario: Applying a ticket proposal links the channel's ticket
+    Given the current channel has a learn thread
+    And the element "[data-testid='header-ticket']" should not exist
+    When I send a POST request to "/api/channels/{learn_channel_id}/learn/proposals" with body:
+      """
+      {"proposals":[
+        {"kind":"ticket_url","title":"Link the ticket","rationale":"The user pasted it.","payload":{"ticket_url":"https://example.atlassian.net/browse/PROJ-7"}}
+      ]}
+      """
+    Then the response status should be 201
+    When I click on "[data-testid='learn-badge']"
+    Then I wait for text "https://example.atlassian.net/browse/PROJ-7" to appear
+    And the page should contain text "ticket"
+    When I click on "[data-testid='learn-apply']"
+    Then I wait for "[data-testid='learn-proposal'][data-status='applied']" to be visible
+    And I wait for "[data-testid='header-ticket']" to be visible
+    And the element "[data-testid='header-ticket']" should contain text "PROJ-7"
+
   Scenario: Proposals filed by a learn pass are dismissed and applied from the drawer
     # The proposals go through the real API a learn pass files them with;
     # its learn.proposals event lights the badge in the open window.

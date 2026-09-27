@@ -549,17 +549,22 @@ With Learn on, a finished chat run is reviewed by a **learn pass**: a hidden ses
 
 ### Learn switch
 
-A `learn` switch (lightbulb) sits in the composer next to the model/effort pill. It shows the effective value: the channel's own setting when it has one, else the config default [`learn.enabled`](configuration.md#learn) for the channel's dir. A click stores the opposite value on the channel (`PUT /api/channels/{id}/learn`), so the channel keeps it whatever the config says later. It applies from the channel's next run. The change is broadcast as a [`channel.learn`](events.md#channellearn) event, but the composer doesn't listen for it yet: another window shows the new value once it reloads the channel. The hover title says whether the value comes from the config or the channel.
+A `learn` switch (lightbulb) sits in the composer next to the model/effort pill. It shows the effective value: the channel's own setting when it has one, else the config default [`learn.enabled`](configuration.md#learn) for the channel's dir. A click stores the opposite value on the channel (`PUT /api/channels/{id}/learn`), so the channel keeps it whatever the config says later. It applies from the channel's next run. The change is broadcast as a [`channel.learn`](events.md#channellearn) event, so every open window's composer follows it. The hover title says whether the value comes from the config or the channel.
+
+The switch only shows in desktop app channels. Slack and Discord channels never learn: their proposals could only be seen and applied here.
 
 ### What triggers a pass
 
 A learn pass starts after a chat run **completes** in the channel, when all of these hold:
 
+- the channel is a desktop app channel, not a Slack or Discord one;
 - the channel isn't itself a learn thread, nor a thread a scheduled task created;
 - the run isn't parked on a plan or question card;
 - Learn is on for the channel;
 - the run took at least [`learn.min_turns`](configuration.md#learn) turns (default 3);
-- the run has a session to fork, and no learn pass is already running for the channel.
+- the run has a session to fork.
+
+Only one pass runs per channel at a time. A run that finishes while a pass is running (or while you're talking to the learn thread) is reviewed once the thread is free. If several finish meanwhile, only the latest is reviewed: its session covers the ones before it.
 
 Stopped or failed runs, and scheduled task runs, don't start one. See [Orchestrator: Learn pass](orchestrator.md#learn-pass) for how it runs.
 
@@ -587,9 +592,10 @@ The layouts bar shows a `learn` label for the selected channel: `learning…` wh
 A full-height drawer (520px wide) slides over the right side of the layout:
 
 - **Proposals** on top, newest first. Each card shows its kind, title, a one-line gist of exactly what Apply writes, and the rationale the pass gave.
-  - **Apply** applies it. If it fails, the error shows under the card and the button becomes **Retry**.
+  - **Apply** applies it. If it fails, the error shows under the card and the button becomes **Retry**. A card's buttons are disabled while its apply or dismiss is in flight.
   - **Dismiss** drops it. Pending and failed proposals can be dismissed.
   - Applied and dismissed cards stay in the list, dimmed, with their status.
+  - A card stuck in `applying` for over a minute (its outcome was lost, say Loop stopped mid-apply) gets **Retry** and **Dismiss** back.
   - **Apply all** in the header applies every pending proposal one by one. Failed ones are left for a manual Retry.
 - **The learn thread's chat** below. Watch the pass as it works, or reply to it: ask why it proposed something or ask for changes, and it files revised proposals. The thread's composer has no Learn switch, since a learn thread doesn't learn from itself.
 

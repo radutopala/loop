@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { LearnProposal } from "../../api/learn";
-import { isOpenProposal, learnBadgeLabel, learnEffective, learnKindLabel, learnToggleTitle, mergeProposals, proposalCaveat, proposalDetail } from "./learnState";
+import { isOpenProposal, LEARN_APPLY_STALE_MS, learnBadgeLabel, learnEffective, learnKindLabel, learnToggleTitle, mergeProposals, proposalCaveat, proposalDetail } from "./learnState";
 
 describe("learnEffective", () => {
   it.each([
@@ -61,6 +61,13 @@ describe("isOpenProposal", () => {
     ["dismissed", false],
   ] as const)("%s → %j", (status, want) => {
     expect(isOpenProposal(proposal({ status }))).toBe(want);
+  });
+
+  it("reopens one stuck applying past the stale window", () => {
+    const p = proposal({ status: "applying", updated_at: "2026-09-27T10:00:00Z" });
+    const at = Date.parse(p.updated_at);
+    expect(isOpenProposal(p, at + LEARN_APPLY_STALE_MS)).toBe(false);
+    expect(isOpenProposal(p, at + LEARN_APPLY_STALE_MS + 1)).toBe(true);
   });
 });
 

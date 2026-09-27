@@ -4,14 +4,17 @@ import (
 	"net/http"
 
 	"github.com/radutopala/loop/internal/db"
+	"github.com/radutopala/loop/internal/types"
 )
 
 // learnStateResponse is a channel's learn switch and its hidden learn thread.
-// Learn is the channel's override ("on", "off", or empty to inherit
-// DefaultLearn from the merged config); Enabled is the effective value.
-// LearnChannelID is empty until the first learn pass creates the thread, and
-// Running says a learn pass is in progress there.
+// Available is false for Slack and Discord channels, which never learn (see
+// learnAvailable). Learn is the channel's override ("on", "off", or empty to
+// inherit DefaultLearn from the merged config); Enabled is the effective
+// value. LearnChannelID is empty until the first learn pass creates the
+// thread, and Running says a learn pass is in progress there.
 type learnStateResponse struct {
+	Available      bool   `json:"available"`
 	Learn          string `json:"learn"`
 	DefaultLearn   bool   `json:"default_learn"`
 	Enabled        bool   `json:"enabled"`
@@ -57,10 +60,12 @@ func (s *Server) handleGetLearn(w http.ResponseWriter, r *http.Request) {
 	if merged := s.mergedConfig(ch.DirPath, s.workspace.resolveParentDirPath(r.Context(), ch.ChannelID)); merged != nil {
 		def = merged.Learn.Enabled
 	}
+	available := learnAvailable(ch)
 	resp := learnStateResponse{
+		Available:    available,
 		Learn:        ch.LearnOverride,
 		DefaultLearn: def,
-		Enabled:      ch.LearnEnabled(def),
+		Enabled:      available && ch.LearnEnabled(def),
 	}
 	if l != nil {
 		resp.LearnChannelID = l.ChannelID
@@ -86,6 +91,10 @@ func (s *Server) handleSetLearn(w http.ResponseWriter, r *http.Request) {
 	if ch == nil {
 		return
 	}
+	if !learnAvailable(ch) {
+		http.Error(w, "learn runs only in desktop app channels", http.StatusBadRequest)
+		return
+	}
 	if err := s.store.UpdateChannelLearnOverride(r.Context(), ch.ChannelID, req.Learn); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -94,4 +103,10 @@ func (s *Server) handleSetLearn(w http.ResponseWriter, r *http.Request) {
 		s.eventsHub.BroadcastChannelLearn(ch.ChannelID, req.Learn)
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// learnAvailable says whether ch can learn: only desktop app channels do,
+// since their proposals can only be seen and applied in the desktop app.
+func learnAvailable(ch *db.Channel) bool {
+	return ch.Platform == types.PlatformLocal
 }

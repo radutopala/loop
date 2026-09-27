@@ -1,50 +1,24 @@
-import { useCallback, useEffect, useState } from "react";
-import { fetchLearnState, type LearnState, setLearn } from "../../api/learn";
+import { useContext } from "react";
+import { LearnContext } from "../../hooks/useLearn";
 import { useTheme } from "../../ThemeContext";
 import { fonts } from "../../theme";
-import { logErr } from "../../utils/log";
 import { learnEffective, learnToggleTitle } from "./learnState";
 
 /**
  * Composer switch for the channel's learn pass. It's sticky per channel: a
  * click stores on/off on the channel, which then applies from its next run.
+ * Its state is the layout's LearnView (see useLearn), so it follows changes
+ * made in other windows; Slack and Discord channels, which never learn,
+ * don't show it.
  */
 export function LearnToggle({ channelId }: { channelId: string }) {
   const { colors } = useTheme();
-  const [learn, setLearnValue] = useState<LearnState["learn"]>("");
-  const [defaultLearn, setDefaultLearn] = useState(false);
-  const [loaded, setLoaded] = useState(false);
-
-  useEffect(() => {
-    let cancelled = false;
-    setLoaded(false);
-    fetchLearnState(channelId)
-      .then((st) => {
-        if (cancelled) return;
-        setLearnValue(st.learn);
-        setDefaultLearn(st.default_learn);
-        setLoaded(true);
-      })
-      .catch(logErr("fetching learn state"));
-    return () => {
-      cancelled = true;
-    };
-  }, [channelId]);
-
+  const view = useContext(LearnContext);
+  if (!view || view.channelId !== channelId || !view.loaded || !view.available) return null;
+  const { learn, defaultLearn } = view;
   const on = learnEffective(learn, defaultLearn);
-  const toggle = useCallback(async () => {
-    const prev = learn;
-    const next = on ? "off" : "on";
-    setLearnValue(next);
-    try {
-      await setLearn(channelId, next);
-    } catch (e) {
-      setLearnValue(prev);
-      logErr("setting learn")(e);
-    }
-  }, [channelId, learn, on]);
+  const toggle = () => view.setLearn(on ? "off" : "on");
 
-  if (!loaded) return null;
   return (
     <button
       data-testid="learn-toggle"

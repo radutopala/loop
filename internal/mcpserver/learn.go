@@ -12,8 +12,17 @@ import (
 	"github.com/radutopala/loop/internal/learn"
 )
 
+// WithLearnTools makes this a learn pass's MCP server: it gets
+// propose_learnings, and none of the inter-agent tools or channel push (a
+// learn pass works alone, and other agents shouldn't see or message it).
+func WithLearnTools() MemoryOption {
+	return func(s *Server) {
+		s.learnTools = true
+	}
+}
+
 // registerLearnTools adds the tool a learn pass files its proposals with.
-// Only a learn pass's MCP server has it.
+// Only a learn pass's MCP server (see WithLearnTools) has it.
 func (s *Server) registerLearnTools() {
 	mcp.AddTool(s.mcpServer, &mcp.Tool{
 		Name:        "propose_learnings",

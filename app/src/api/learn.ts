@@ -1,11 +1,13 @@
 import { getApiUrl } from "./api";
 
 /**
- * A channel's learn switch and its hidden learn thread. `learn` is the
- * channel's own setting ("on", "off", or "" to inherit `default_learn` from
- * config); `enabled` is what applies.
+ * A channel's learn switch and its hidden learn thread. `available` is false
+ * for Slack and Discord channels, which never learn. `learn` is the channel's
+ * own setting ("on", "off", or "" to inherit `default_learn` from config);
+ * `enabled` is what applies.
  */
 export interface LearnState {
+  available: boolean;
   learn: "" | "on" | "off";
   default_learn: boolean;
   enabled: boolean;
