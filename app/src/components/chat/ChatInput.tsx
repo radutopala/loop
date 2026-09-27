@@ -214,6 +214,8 @@ const SEND_MODE_KEY = "loop-send-mode";
 
 export interface ChatInputProps {
   channelId: string;
+  /** Hide the Learn switch (in a learn thread's own composer). */
+  hideLearn?: boolean;
   messages: Message[];
   roots?: RootEntry[];
   isRunning?: boolean;
@@ -263,6 +265,7 @@ function buildQuotePrefix(msg: Message): string {
 
 export function ChatInput({
   channelId,
+  hideLearn,
   messages,
   roots,
   isRunning,
@@ -1203,7 +1206,7 @@ export function ChatInput({
           </button>
         )}
         <div style={{ flex: 1 }} />
-        <LearnToggle channelId={channelId} />
+        {!hideLearn && <LearnToggle channelId={channelId} />}
         <AgentConfigPill channelId={channelId} />
         <div style={modeStyles.pill}>
           <button

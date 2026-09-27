@@ -31,3 +31,47 @@ export async function setLearn(channelId: string, learn: LearnState["learn"]): P
     throw new Error(body || `Failed to set learn: ${res.statusText}`);
   }
 }
+
+export type LearnProposalKind = "prompt_shortcut" | "bash_shortcut" | "scheduled_task" | "gate_rule" | "mount" | "rename" | "description";
+
+export type LearnProposalStatus = "pending" | "applying" | "applied" | "dismissed" | "failed";
+
+/** One change a learn pass proposed. `payload` is the kind's JSON object. */
+export interface LearnProposal {
+  id: number;
+  channel_id: string;
+  learn_channel_id: string;
+  kind: LearnProposalKind;
+  title: string;
+  rationale: string;
+  payload: string;
+  status: LearnProposalStatus;
+  error?: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export async function fetchLearnProposals(channelId: string): Promise<LearnProposal[]> {
+  const res = await fetch(`${getApiUrl()}/api/channels/${channelId}/learn/proposals`);
+  if (!res.ok) throw new Error(`Failed to fetch learn proposals: ${res.statusText}`);
+  const body = (await res.json()) as { proposals: LearnProposal[] };
+  return body.proposals;
+}
+
+async function settleProposal(id: number, action: "apply" | "dismiss"): Promise<LearnProposal> {
+  const res = await fetch(`${getApiUrl()}/api/learn/proposals/${id}/${action}`, { method: "POST" });
+  if (!res.ok) {
+    const body = (await res.text().catch(() => "")).trim();
+    throw new Error(body || `Failed to ${action} proposal: ${res.statusText}`);
+  }
+  return res.json();
+}
+
+/** Apply a proposal. A failed apply comes back with status "failed" and its error, not as a throw. */
+export function applyLearnProposal(id: number): Promise<LearnProposal> {
+  return settleProposal(id, "apply");
+}
+
+export function dismissLearnProposal(id: number): Promise<LearnProposal> {
+  return settleProposal(id, "dismiss");
+}

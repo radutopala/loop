@@ -17,7 +17,7 @@ import type {
   ToolUseData,
   WSEvent,
 } from "../types";
-import { shouldForwardToChatListeners } from "./chatEventRouting";
+import { alertsOnRunEnd, bouncesOnRunEnd, shouldForwardToChatListeners, subscriptionChannels } from "./chatEventRouting";
 import { useWebSocketConnection } from "./useWebSocketConnection";
 
 /** Ephemeral per-channel state that survives channel switches. */
@@ -163,6 +163,11 @@ export function useChatStateStore({ channels, channelsFetchedAt, selectedId, onA
   // Chat event listeners registered by panels (useChatState, useEditorState, …)
   // for the selected channel. A Set so multiple subscribers can coexist.
   const chatListenersRef = useRef<Set<ChatEventListener>>(new Set());
+
+  // Listeners for channels other than the selected one, keyed by channel
+  // (see subscribeChannelEvents). Their channels stay in the WS subscription
+  // while any listener is registered.
+  const channelListenersRef = useRef(new Map<string, Set<ChatEventListener>>());
 
   // Keep a ref to selectedId so the WS message handler always sees the latest.
   const selectedIdRef = useRef(selectedId);
@@ -473,12 +478,8 @@ export function useChatStateStore({ channels, channelsFetchedAt, selectedId, onA
   // Compute subscription set: selectedId + all channels where isRunning.
   const subscribeChannels = useCallback(
     (send: (data: string) => void) => {
-      const set = new Set<string>();
-      if (selectedId) set.add(selectedId);
-      for (const [id] of isRunningMapRef.current) {
-        set.add(id);
-      }
-      send(JSON.stringify({ type: "subscribe", channels: [...set] }));
+      const channels = subscriptionChannels(selectedId, isRunningMapRef.current.keys(), channelListenersRef.current.keys());
+      send(JSON.stringify({ type: "subscribe", channels }));
     },
     [selectedId],
   );
@@ -627,22 +628,19 @@ export function useChatStateStore({ channels, channelsFetchedAt, selectedId, onA
 
         // Mark the task thread (or channel) as unread.
         const unreadTarget = data.thread_id || channelId;
-        if (unreadTarget !== selectedIdRef.current || document.hidden) {
+        const alerts = alertsOnRunEnd(data.trigger);
+        if (alerts && (unreadTarget !== selectedIdRef.current || document.hidden)) {
           unreadIdsRef.current.add(unreadTarget);
           setUnreadCount(unreadIdsRef.current.size);
         }
-        if (document.hidden || unreadTarget !== selectedIdRef.current) {
+        if (alerts && (document.hidden || unreadTarget !== selectedIdRef.current)) {
           const ch = channelsRef.current.find((c) => c.id === unreadTarget) ?? channelsRef.current.find((c) => c.id === channelId);
           const name = ch?.name || channelId;
           const body = data.status === "completed" ? `Completed in ${Math.round((data.duration_ms ?? 0) / 1000)}s` : `Error: ${data.error ?? "unknown"}`;
           new Notification(`Loop — ${name}`, { body });
         }
-        // Skip the dock bounce for non-user-driven runs — scheduled tasks
-        // fire frequently and aren't user-actionable, and "bot" runs are
-        // indirect chains (an agent re-entering via send_message /
-        // create_thread MCP tools, often as part of a scheduled task).
-        // Real user replies stay tagged as empty/user and still bounce.
-        if (data.trigger !== "scheduled" && data.trigger !== "bot") {
+        // Skip the dock bounce for runs the user didn't start.
+        if (bouncesOnRunEnd(data.trigger)) {
           window.loopAPI?.notifyTurnEnd?.();
         }
       }
@@ -679,6 +677,10 @@ export function useChatStateStore({ channels, channelsFetchedAt, selectedId, onA
     if (shouldForwardToChatListeners(wsEvent.type, stateTarget, selectedIdRef.current)) {
       for (const listener of chatListenersRef.current) listener(wsEvent);
     }
+    const channelListeners = stateTarget ? channelListenersRef.current.get(stateTarget) : undefined;
+    if (channelListeners) {
+      for (const listener of channelListeners) listener(wsEvent);
+    }
 
     // Forward selected channel + global events to App-level handler.
     // Sidebar events are always forwarded so every row refreshes regardless
@@ -694,12 +696,8 @@ export function useChatStateStore({ channels, channelsFetchedAt, selectedId, onA
     enabled: true,
     onOpen: useCallback(
       (ws: WebSocket) => {
-        const set = new Set<string>();
-        if (selectedIdRef.current) set.add(selectedIdRef.current);
-        for (const [id] of isRunningMapRef.current) {
-          set.add(id);
-        }
-        ws.send(JSON.stringify({ type: "subscribe", channels: [...set] }));
+        const channels = subscriptionChannels(selectedIdRef.current, isRunningMapRef.current.keys(), channelListenersRef.current.keys());
+        ws.send(JSON.stringify({ type: "subscribe", channels }));
         // After a (re)connect the renderer's in-memory gateApprovals and the
         // electron-main dock-bouncer set may both be stale: WS drops + page
         // reloads don't replay missed gate.approval_requested/_resolved
@@ -733,12 +731,7 @@ export function useChatStateStore({ channels, channelsFetchedAt, selectedId, onA
   const prevSubKeyRef = useRef("");
   useEffect(() => {
     const interval = setInterval(() => {
-      const ids = [selectedId ?? ""];
-      for (const [id] of isRunningMapRef.current) {
-        ids.push(id);
-      }
-      ids.sort();
-      const key = ids.join(",");
+      const key = subscriptionChannels(selectedId, isRunningMapRef.current.keys(), channelListenersRef.current.keys()).join(",");
       if (key !== prevSubKeyRef.current) {
         prevSubKeyRef.current = key;
         subscribeChannels(sendRef.current);
@@ -778,6 +771,32 @@ export function useChatStateStore({ channels, channelsFetchedAt, selectedId, onA
       chatListenersRef.current.delete(listener);
     };
   }, []);
+
+  /**
+   * Register a listener for one channel's events, whether or not it's
+   * selected, and keep that channel in the WS subscription meanwhile. For
+   * panels that follow a channel the sidebar never selects, like the Learn
+   * drawer's hidden learn thread. Returns an unsubscribe function.
+   */
+  const subscribeChannelEvents = useCallback(
+    (channelId: string, listener: ChatEventListener): (() => void) => {
+      const map = channelListenersRef.current;
+      let set = map.get(channelId);
+      if (!set) {
+        set = new Set();
+        map.set(channelId, set);
+        subscribeChannels(sendRef.current);
+      }
+      set.add(listener);
+      return () => {
+        const cur = map.get(channelId);
+        if (!cur) return;
+        cur.delete(listener);
+        if (cur.size === 0) map.delete(channelId);
+      };
+    },
+    [subscribeChannels],
+  );
 
   const markRead = useCallback((channelId: string) => {
     unreadIdsRef.current.delete(channelId);
@@ -833,7 +852,22 @@ export function useChatStateStore({ channels, channelsFetchedAt, selectedId, onA
     [setPillMembership],
   );
 
-  return { getState, saveState, removeState, isRunningMapRef, unreadIdsRef, pillsRef, unreadCount, markRead, markAllRead, registerReviewView, clearAskUserPill, clearPlanPill, subscribeChatEvents };
+  return {
+    getState,
+    saveState,
+    removeState,
+    isRunningMapRef,
+    unreadIdsRef,
+    pillsRef,
+    unreadCount,
+    markRead,
+    markAllRead,
+    registerReviewView,
+    clearAskUserPill,
+    clearPlanPill,
+    subscribeChatEvents,
+    subscribeChannelEvents,
+  };
 }
 
 // ── Helpers ──

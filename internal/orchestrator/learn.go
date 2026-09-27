@@ -13,8 +13,12 @@ import (
 	"github.com/radutopala/loop/internal/types"
 )
 
-// learnAuthorName authors the message that starts a learn pass.
-const learnAuthorName = "loop"
+// The author of the message that starts a learn pass. The id tags the
+// pass's agent.status events with the "learn" trigger (see runTrigger).
+const (
+	learnAuthorID   = "loop-learn"
+	learnAuthorName = "loop"
+)
 
 // learnProjectDir is the root checkout for ch: where its config is merged
 // from and where config proposals land. For a worktree chain that's the
@@ -94,9 +98,15 @@ func (o *Orchestrator) maybeLearn(ctx context.Context, ch *db.Channel, msg *bot.
 		return
 	}
 	o.logger.Info("learn: starting", "channel_id", ch.ChannelID, "learn_channel_id", l.ChannelID, "turns", resp.NumTurns)
+	// Tell ch's viewers first: the learn thread is hidden, so nobody is
+	// subscribed to it until they hear it exists.
+	if o.events != nil {
+		o.events.BroadcastLearnStarted(ch.ChannelID, l.ChannelID)
+	}
 	o.HandleMessage(ctx, &bot.IncomingMessage{
 		ChannelID:  l.ChannelID,
 		GuildID:    l.GuildID,
+		AuthorID:   learnAuthorID,
 		AuthorName: learnAuthorName,
 		Content:    learn.TriggerMessage(ch.Name, msg.Content),
 		HasPrefix:  true,

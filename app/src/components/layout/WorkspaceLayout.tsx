@@ -7,6 +7,7 @@ import { useChatState } from "../../hooks/useChatState";
 import type { ActiveChatState, ChatEventListener } from "../../hooks/useChatStateStore";
 import { useContainerStats } from "../../hooks/useContainerStats";
 import { useEditorState } from "../../hooks/useEditorState";
+import { useLearn } from "../../hooks/useLearn";
 import type { LayoutType } from "../../layouts/persistence";
 import {
   clearLayout,
@@ -54,6 +55,8 @@ import { getCloseForInstance, Terminal } from "../panels/Terminal";
 import { WorkflowsLayoutPanel } from "../panels/WorkflowsLayoutPanel";
 import { ChannelHeaderInfo } from "./ChannelHeaderInfo";
 import { HeaderBranchPicker } from "./HeaderBranchPicker";
+import { LearnBadge } from "./LearnBadge";
+import { LearnDrawer } from "./LearnDrawer";
 
 type AgentState = "running" | "stopped" | "none";
 
@@ -228,6 +231,8 @@ interface WorkspaceLayoutProps {
   onChatStateUnmount?: (channelId: string, state: ActiveChatState) => void;
   /** Subscribe to chat events from the store's single WebSocket. */
   subscribeChatEvents?: (listener: ChatEventListener) => () => void;
+  /** Subscribe to one channel's events whether or not it's selected. */
+  subscribeChannelEvents?: (channelId: string, listener: ChatEventListener) => () => void;
   /**
    * Register a channel as having its Review panel mounted. Drops the
    * pill immediately and blocks the WS / rehydrate path from relighting
@@ -266,6 +271,7 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
     initialChatState,
     onChatStateUnmount,
     subscribeChatEvents,
+    subscribeChannelEvents,
     registerReviewView,
     clearAskUserPill,
     clearPlanPill,
@@ -324,6 +330,11 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
     clearAskUserPill,
     clearPlanPill,
   });
+
+  // The channel's learn pass, shown in the Learn drawer over the layout.
+  const learn = useLearn(channelId, subscribeChatEvents, subscribeChannelEvents);
+  const [learnOpen, setLearnOpen] = useState(false);
+  useEffect(() => setLearnOpen(false), [channelId]);
 
   // Editor + file-tree shared state. Hoisted here so both panels (rendered
   // independently inside the layout) stay in sync, and so tab/cursor state
@@ -1269,6 +1280,7 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
           )}
         </div>
         <div style={{ flex: 1 }} />
+        <LearnBadge learn={learn} open={learnOpen} onToggle={() => setLearnOpen((v) => !v)} />
         {(agentState === "running" || channel.container_running) && (
           <button
             onClick={handleKillAgents}
@@ -1394,7 +1406,8 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
       </div>
 
       {/* Layout content */}
-      <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", minHeight: 0 }}>
+      <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", minHeight: 0, position: "relative" }}>
+        {learnOpen && <LearnDrawer learn={learn} worktree={!!channel.worktree} subscribeChannelEvents={subscribeChannelEvents} onClose={() => setLearnOpen(false)} />}
         {layoutType === "canvas" ? (
           <CanvasLayout
             canvas={canvasState ?? { type: "canvas", viewport: { x: 0, y: 0, zoom: 1 }, tiles: [] }}

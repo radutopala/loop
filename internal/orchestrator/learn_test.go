@@ -128,6 +128,7 @@ func (s *OrchestratorSuite) TestMaybeLearnStarts() {
 	s.orch.drainSpawn = func(func()) { drains++ }
 	eb := new(MockEventBroadcaster)
 	eb.On("BroadcastMessageCreated", mock.Anything, mock.Anything).Return()
+	eb.On("BroadcastLearnStarted", "ch1", mock.Anything).Return()
 	s.orch.SetEventBroadcaster(eb)
 
 	ch := &db.Channel{ChannelID: "ch1", GuildID: "g1", Name: "api", DirPath: "/project"}
@@ -161,6 +162,7 @@ func (s *OrchestratorSuite) TestMaybeLearnStarts() {
 	require.NotNil(s.T(), trigger)
 	require.Equal(s.T(), created.ChannelID, trigger.ChannelID)
 	require.True(s.T(), trigger.IsTriggered)
+	require.Equal(s.T(), learnAuthorID, trigger.AuthorID)
 	require.Equal(s.T(), learnAuthorName, trigger.AuthorName)
 	require.Equal(s.T(), learn.TriggerMessage("api", "fix the tests"), trigger.Content)
 	require.Equal(s.T(), 1, drains)
@@ -168,6 +170,27 @@ func (s *OrchestratorSuite) TestMaybeLearnStarts() {
 	eb.AssertCalled(s.T(), "BroadcastMessageCreated", created.ChannelID, mock.MatchedBy(func(d events.MessageEventData) bool {
 		return d.Content == trigger.Content
 	}))
+	eb.AssertCalled(s.T(), "BroadcastLearnStarted", "ch1", created.ChannelID)
+}
+
+func (s *OrchestratorSuite) TestRunTrigger() {
+	s.bot.ExpectedCalls = nil
+	s.bot.On("IsBotUser", "bot-1").Return(true)
+	s.bot.On("IsBotUser", mock.Anything).Return(false)
+	tests := []struct {
+		name     string
+		authorID string
+		want     string
+	}{
+		{name: "learn pass", authorID: learnAuthorID, want: "learn"},
+		{name: "bot", authorID: "bot-1", want: "bot"},
+		{name: "user", authorID: "user-1", want: ""},
+	}
+	for _, tc := range tests {
+		s.Run(tc.name, func() {
+			require.Equal(s.T(), tc.want, s.orch.runTrigger(tc.authorID))
+		})
+	}
 }
 
 // TestMaybeLearnWorktreeUsesRootConfig checks a worktree thread's learn

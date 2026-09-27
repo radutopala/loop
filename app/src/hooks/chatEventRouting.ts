@@ -21,3 +21,36 @@ export function shouldForwardToChatListeners(eventType: string, stateTarget: str
   if (eventType.startsWith("workflow.")) return true;
   return stateTarget !== "" && stateTarget === selectedId;
 }
+
+/**
+ * The channels the WS should be subscribed to: the selected one, every one
+ * with a run in flight, and every one a panel watches through
+ * `subscribeChannelEvents` (e.g. the Learn drawer's hidden learn thread,
+ * which is never selected). Sorted, so equal sets give equal keys.
+ */
+export function subscriptionChannels(selectedId: string | null | undefined, running: Iterable<string>, watched: Iterable<string>): string[] {
+  const set = new Set<string>();
+  if (selectedId) set.add(selectedId);
+  for (const id of running) set.add(id);
+  for (const id of watched) set.add(id);
+  return [...set].sort();
+}
+
+/**
+ * Whether a finished run should mark its channel unread and post a desktop
+ * notification. A learn pass runs in a hidden thread the user can't open
+ * from the sidebar; its proposals surface through the Learn badge instead.
+ */
+export function alertsOnRunEnd(trigger: string | undefined): boolean {
+  return trigger !== "learn";
+}
+
+/**
+ * Whether a finished run should bounce the dock. Only runs the user started
+ * do: scheduled tasks fire often, "bot" runs are indirect chains (an agent
+ * re-entering via the send_message / create_thread MCP tools) and learn
+ * passes are background reviews.
+ */
+export function bouncesOnRunEnd(trigger: string | undefined): boolean {
+  return trigger !== "scheduled" && trigger !== "bot" && trigger !== "learn";
+}

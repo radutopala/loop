@@ -30,6 +30,7 @@ type Broadcaster interface {
 	BroadcastReviewComment(channelID string, data ReviewCommentEventData)
 	BroadcastReviewStatus(channelID string, data ReviewStatusEventData)
 	BroadcastReviewDiff(channelID string, data ReviewDiffEventData)
+	BroadcastLearnStarted(channelID, learnChannelID string)
 }
 
 // ReviewCommentEventData is the payload for review.comment events. Sent
@@ -126,9 +127,10 @@ type AgentStatusEventData struct {
 	// completed, and error transitions for the same message.
 	MsgID string `json:"msg_id,omitempty"`
 	// Trigger identifies what kicked off the run — "scheduled" for runs
-	// driven by the task scheduler, empty for user-message runs. The
-	// renderer uses this to suppress the macOS dock bounce on scheduled
-	// completions (they happen often and aren't user-actionable).
+	// driven by the task scheduler, "learn" for a learn pass, "bot" for a
+	// bot-posted message, empty for user-message runs. The renderer uses
+	// this to suppress the macOS dock bounce on runs the user didn't start
+	// (they happen often and aren't user-actionable).
 	Trigger string `json:"trigger,omitempty"`
 }
 

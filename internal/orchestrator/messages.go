@@ -296,15 +296,11 @@ func (o *Orchestrator) processClaimedMessage(ctx context.Context, row *db.Messag
 		// with stale fetched rows.
 		o.markTriggerProcessed(ctx, msg, recent)
 		if finish != nil && o.events != nil {
-			trigger := ""
-			if o.bot.IsBotUser(msg.AuthorID) {
-				trigger = "bot"
-			}
 			o.events.BroadcastAgentStatus(msg.ChannelID, events.AgentStatusEventData{
 				Status:  finish.status,
 				RunID:   runID,
 				Error:   finish.errMsg,
-				Trigger: trigger,
+				Trigger: o.runTrigger(msg.AuthorID),
 				MsgID:   msg.MessageID,
 			})
 		}
@@ -317,6 +313,21 @@ func (o *Orchestrator) processClaimedMessage(ctx context.Context, row *db.Messag
 
 // runFinishStatus carries the deferred agent.status broadcast info from
 // executeAgentRun back to processClaimedMessage, which fires it AFTER
+// runTrigger tags a run's agent.status events with what started it, so the
+// renderer can hold back the dock bounce and notifications for runs the user
+// didn't ask for: "learn" for a learn pass, "bot" when the bot itself
+// re-entered HandleMessage (an agent posting via the send_message or
+// create_thread MCP tools), "" for a real user's message.
+func (o *Orchestrator) runTrigger(authorID string) string {
+	switch {
+	case authorID == learnAuthorID:
+		return "learn"
+	case o.bot.IsBotUser(authorID):
+		return "bot"
+	}
+	return ""
+}
+
 // markTriggerProcessed so the FE sees messages.processed before the
 // refetchHead triggered by the status event.
 type runFinishStatus struct {
@@ -416,14 +427,7 @@ func (o *Orchestrator) executeAgentRun(ctx context.Context, msg *bot.IncomingMes
 
 	runID := randutil.HexID(8)
 
-	// When the trigger comes from the bot itself (e.g. an agent posting via the
-	// send_message/create_thread MCP tools re-entering HandleMessage), tag the
-	// broadcasts so the renderer can suppress the dock bounce — these are
-	// indirect chains, not user-actionable like a real human reply.
-	trigger := ""
-	if o.bot.IsBotUser(msg.AuthorID) {
-		trigger = "bot"
-	}
+	trigger := o.runTrigger(msg.AuthorID)
 
 	// Register the cancel func so stop button clicks can cancel this run.
 	o.activeRuns.Store(msg.ChannelID, runCancel)
@@ -685,10 +689,6 @@ func (o *Orchestrator) deliverResponse(ctx context.Context, msg *bot.IncomingMes
 		})
 	}
 	if o.events != nil {
-		trigger := ""
-		if o.bot.IsBotUser(msg.AuthorID) {
-			trigger = "bot"
-		}
 		o.events.BroadcastAgentStatus(msg.ChannelID, events.AgentStatusEventData{
 			Status:     "completed",
 			RunID:      runID,
@@ -696,7 +696,7 @@ func (o *Orchestrator) deliverResponse(ctx context.Context, msg *bot.IncomingMes
 			NumTurns:   resp.NumTurns,
 			StopReason: resp.StopReason,
 			Model:      resp.Model,
-			Trigger:    trigger,
+			Trigger:    o.runTrigger(msg.AuthorID),
 			MsgID:      msg.MessageID,
 		})
 	}

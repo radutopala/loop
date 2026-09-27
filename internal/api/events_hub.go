@@ -35,6 +35,7 @@ const (
 	EventChannelLocked             = "channel.locked"
 	EventChannelAgentConfig        = "channel.agent_config"
 	EventChannelLearn              = "channel.learn"
+	EventLearnStarted              = "learn.started"
 	EventLearnProposals            = "learn.proposals"
 	EventLearnProposalUpdated      = "learn.proposal_updated"
 	EventChannelUpdated            = "channel.updated"
@@ -315,6 +316,18 @@ func (h *EventsHub) BroadcastChannelLearn(channelID, learn string) {
 		Type:      EventChannelLearn,
 		ChannelID: channelID,
 		Data:      map[string]string{"learn": learn},
+		Global:    true,
+	})
+}
+
+// BroadcastLearnStarted sends a learn.started event when a learn pass starts
+// for channelID. It's global: the learn thread is hidden, so its viewers only
+// subscribe to it once they're told its id.
+func (h *EventsHub) BroadcastLearnStarted(channelID, learnChannelID string) {
+	h.Broadcast(Event{
+		Type:      EventLearnStarted,
+		ChannelID: channelID,
+		Data:      map[string]string{"learn_channel_id": learnChannelID},
 		Global:    true,
 	})
 }

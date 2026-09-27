@@ -84,9 +84,11 @@ interface ChatViewProps {
   roots?: RootEntry[];
   scrollToMessageId?: number | null;
   onScrollComplete?: () => void;
+  /** Hide the composer's Learn switch: a learn thread doesn't learn from itself. */
+  hideLearn?: boolean;
 }
 
-export function ChatView({ channelId, chatState, roots, scrollToMessageId, onScrollComplete }: ChatViewProps) {
+export function ChatView({ channelId, chatState, roots, scrollToMessageId, onScrollComplete, hideLearn }: ChatViewProps) {
   const { colors, fontSizes } = useTheme();
   const styles = buildStyles(colors);
   const { items, liveTail, messages, loading, isRunning } = chatState;
@@ -161,6 +163,7 @@ export function ChatView({ channelId, chatState, roots, scrollToMessageId, onScr
         <div style={styles.inputBar}>
           <ChatInput
             channelId={channelId}
+            hideLearn={hideLearn}
             messages={messages}
             roots={roots}
             mode={chatState.mode}
@@ -227,6 +230,7 @@ export function ChatView({ channelId, chatState, roots, scrollToMessageId, onScr
       <div style={styles.inputBar}>
         <ChatInput
           channelId={channelId}
+          hideLearn={hideLearn}
           messages={messages}
           roots={roots}
           isRunning={isRunning}
