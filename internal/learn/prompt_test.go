@@ -1,6 +1,7 @@
 package learn
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -58,6 +59,12 @@ func (s *PromptSuite) TestSystemPrompt() {
 				Tasks: []*db.ScheduledTask{
 					{Type: db.TaskTypeCron, Schedule: "0 9 * * *", Prompt: "check deps", Enabled: true},
 				},
+				Proposals: []*db.LearnProposal{
+					{Kind: db.LearnKindBashShortcut, Title: "Add a vitest shortcut", Payload: `{"name":"vitest"}`, Status: db.LearnPending},
+					{Kind: db.LearnKindDescription, Title: "Describe the thread", Payload: "not json", Status: db.LearnFailed},
+					{Kind: db.LearnKindRename, Title: "Rename to wt-auth", Payload: `{"name":"wt-auth"}`, Status: db.LearnDismissed},
+					{Kind: db.LearnKindMount, Title: "Mount the cache", Payload: `{"mount":"~/.cache"}`, Status: db.LearnApplied},
+				},
 			},
 			contains: []string{
 				`- Channel: "wt-login" (a worktree thread)`,
@@ -73,7 +80,14 @@ func (s *PromptSuite) TestSystemPrompt() {
 				`"~/.ssh:~/.ssh:ro"`,
 				"### Agentgate path rules\n\nnone\n",
 				"## Additional instructions\n\nPrefer bash shortcuts.\n",
+				"### Proposals waiting for the user\n\n```json",
+				`"title": "Add a vitest shortcut"`,
+				`"name": "vitest"`,
+				`"payload": "not json"`,
+				"### Proposals the user dismissed\n\n```json",
+				`"title": "Rename to wt-auth"`,
 			},
+			excludes: []string{"Mount the cache"},
 		},
 		{
 			name:  "empty state",
@@ -84,6 +98,8 @@ func (s *PromptSuite) TestSystemPrompt() {
 				"- Ticket URL: none",
 				"### Prompt shortcuts\n\nnone\n",
 				"### Mounts\n\nnone\n",
+				"### Proposals waiting for the user\n\nnone\n",
+				"### Proposals the user dismissed\n\nnone\n",
 			},
 			excludes: []string{"(a worktree thread)", "- Project config", "## Additional instructions"},
 		},
@@ -100,6 +116,17 @@ func (s *PromptSuite) TestSystemPrompt() {
 			}
 		})
 	}
+}
+
+func (s *PromptSuite) TestDismissedCapped() {
+	var proposals []*db.LearnProposal
+	for i := range maxDismissed + 5 {
+		proposals = append(proposals, &db.LearnProposal{Kind: db.LearnKindRename, Title: fmt.Sprintf("dismissed-%02d", i), Payload: "{}", Status: db.LearnDismissed})
+	}
+	waiting, dismissed := proposalSummaries(proposals)
+	require.Empty(s.T(), waiting)
+	require.Len(s.T(), dismissed, maxDismissed)
+	require.Equal(s.T(), "dismissed-00", dismissed[0].Title)
 }
 
 func (s *PromptSuite) TestTriggerMessage() {

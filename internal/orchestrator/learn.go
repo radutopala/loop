@@ -256,6 +256,10 @@ func (o *Orchestrator) applyLearnRequest(ctx context.Context, req *agent.AgentRe
 	if err != nil {
 		o.logger.Warn("learn: listing tasks", "error", err, "channel_id", parent.ChannelID)
 	}
+	proposals, err := o.store.ListLearnProposals(ctx, parent.ChannelID)
+	if err != nil {
+		o.logger.Warn("learn: listing proposals", "error", err, "channel_id", parent.ChannelID)
+	}
 	req.AgentID = learn.AgentID
 	req.LearnMode = true
 	req.Model = firstNonEmpty(cfg.Learn.Model, parent.ModelOverride)
@@ -268,6 +272,7 @@ func (o *Orchestrator) applyLearnRequest(ctx context.Context, req *agent.AgentRe
 		ProjectDir:  dir,
 		Config:      cfg,
 		Tasks:       tasks,
+		Proposals:   proposals,
 	})
 }
 

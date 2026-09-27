@@ -48,7 +48,12 @@ type State struct {
 	Config *config.Config
 	// Tasks are the channel's scheduled tasks.
 	Tasks []*db.ScheduledTask
+	// Proposals are the channel's earlier proposals, newest first.
+	Proposals []*db.LearnProposal
 }
+
+// maxDismissed caps how many dismissed proposals the prompt lists.
+const maxDismissed = 20
 
 // SystemPrompt returns the learn agent's system prompt: the built-in
 // instructions, the current state, then the config's learn.prompt.
@@ -86,6 +91,9 @@ func SystemPrompt(st State) string {
 	writeSection(&b, "Agentgate file rules", cfg.Gates.Agentgate.FileRules)
 	writeSection(&b, "Agentgate path rules", cfg.Gates.Agentgate.PathRules)
 	writeSection(&b, "Mounts", cfg.Mounts)
+	waiting, dismissed := proposalSummaries(st.Proposals)
+	writeSection(&b, "Proposals waiting for the user", waiting)
+	writeSection(&b, "Proposals the user dismissed", dismissed)
 	if extra := strings.TrimSpace(cfg.Learn.Prompt); extra != "" {
 		b.WriteString("\n## Additional instructions\n\n")
 		b.WriteString(extra)
@@ -118,6 +126,36 @@ func taskSummaries(tasks []*db.ScheduledTask) []taskSummary {
 		})
 	}
 	return out
+}
+
+// proposalSummary is the part of an earlier proposal the learn agent needs to
+// spot a repeat.
+type proposalSummary struct {
+	Kind    string          `json:"kind"`
+	Title   string          `json:"title"`
+	Payload json.RawMessage `json:"payload"`
+}
+
+// proposalSummaries splits earlier proposals into those still waiting on the
+// user (pending, applying or failed) and the most recent dismissed ones.
+// Applied proposals show up in the state above already.
+func proposalSummaries(proposals []*db.LearnProposal) (waiting, dismissed []proposalSummary) {
+	for _, p := range proposals {
+		sum := proposalSummary{Kind: p.Kind, Title: p.Title, Payload: json.RawMessage(p.Payload)}
+		if !json.Valid(sum.Payload) {
+			sum.Payload, _ = json.Marshal(p.Payload)
+		}
+		switch p.Status {
+		case db.LearnApplied:
+		case db.LearnDismissed:
+			if len(dismissed) < maxDismissed {
+				dismissed = append(dismissed, sum)
+			}
+		default:
+			waiting = append(waiting, sum)
+		}
+	}
+	return waiting, dismissed
 }
 
 // writeSection writes a titled JSON dump of items, or "none" when empty.

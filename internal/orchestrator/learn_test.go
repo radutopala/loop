@@ -336,13 +336,15 @@ func (s *OrchestratorSuite) TestPrepareAgentRequestLearnThread() {
 		name       string
 		learnCfg   config.LearnConfig
 		tasksErr   error
+		propsErr   error
 		wantModel  string
 		wantEffort string
 		wantTask   bool
 	}{
-		{"learn model and effort", config.LearnConfig{Model: "opus", Effort: "high"}, nil, "opus", "high", true},
-		{"falls back to parent overrides", config.LearnConfig{}, nil, "sonnet", "low", true},
-		{"task listing error still runs", config.LearnConfig{}, errors.New("db down"), "sonnet", "low", false},
+		{"learn model and effort", config.LearnConfig{Model: "opus", Effort: "high"}, nil, nil, "opus", "high", true},
+		{"falls back to parent overrides", config.LearnConfig{}, nil, nil, "sonnet", "low", true},
+		{"task listing error still runs", config.LearnConfig{}, errors.New("db down"), nil, "sonnet", "low", false},
+		{"proposal listing error still runs", config.LearnConfig{}, nil, errors.New("db down"), "sonnet", "low", true},
 	}
 	for _, tc := range tests {
 		s.Run(tc.name, func() {
@@ -366,6 +368,11 @@ func (s *OrchestratorSuite) TestPrepareAgentRequestLearnThread() {
 				tasks = []*db.ScheduledTask{{Type: db.TaskTypeCron, Schedule: "0 9 * * *", Prompt: "nightly deps"}}
 			}
 			s.store.On("ListScheduledTasks", s.ctx, "ch1").Return(tasks, tc.tasksErr)
+			var proposals []*db.LearnProposal
+			if tc.propsErr == nil {
+				proposals = []*db.LearnProposal{{Kind: db.LearnKindBashShortcut, Title: "Add a vitest shortcut", Payload: "{}", Status: db.LearnPending}}
+			}
+			s.store.On("ListLearnProposals", s.ctx, "ch1").Return(proposals, tc.propsErr)
 
 			req, _, _, err := s.orch.prepareAgentRequest(s.ctx, &bot.IncomingMessage{ChannelID: "learn-1", AuthorName: learnAuthorName, Content: "review"})
 			require.NoError(s.T(), err)
@@ -380,6 +387,7 @@ func (s *OrchestratorSuite) TestPrepareAgentRequestLearnThread() {
 			require.Contains(s.T(), req.SystemPrompt, "- Ticket URL: https://tracker.example.com/T-1")
 			require.Contains(s.T(), req.SystemPrompt, "`/project/.loop/config.json`")
 			require.Equal(s.T(), tc.wantTask, strings.Contains(req.SystemPrompt, "nightly deps"))
+			require.Equal(s.T(), tc.propsErr == nil, strings.Contains(req.SystemPrompt, "Add a vitest shortcut"))
 		})
 	}
 }
