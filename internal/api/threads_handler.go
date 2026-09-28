@@ -89,9 +89,9 @@ func (s *Server) handleDeleteThread(w http.ResponseWriter, r *http.Request) {
 
 	// The thread's learn thread goes with it; note it while the thread still
 	// exists to find it by.
-	var learnIDs []string
+	var learns []*db.Channel
 	if s.store != nil {
-		learnIDs = s.learnThreadIDs(r.Context(), threadID)
+		learns = s.learnThreads(r.Context(), threadID)
 	}
 
 	if err := s.threads.DeleteThread(r.Context(), threadID); err != nil {
@@ -103,7 +103,7 @@ func (s *Server) handleDeleteThread(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	s.stopLearnThreads(r.Context(), learnIDs)
+	s.stopLearnThreads(r.Context(), learns)
 	w.WriteHeader(http.StatusNoContent)
 }
 

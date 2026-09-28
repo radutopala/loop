@@ -289,13 +289,14 @@ func (s *Server) handleDeleteChannel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// The learn threads go with the channel and its threads; note them
-	// while their parents still exist to find them by.
+	// The threads and learn threads go with the channel; note them, and
+	// the dirs holding their MCP configs, while they still exist.
 	threadIDs, err := s.store.ListChannelIDsByParentID(r.Context(), channelID)
 	if err != nil {
 		s.logger.Warn("channel cleanup: listing threads", "channel_id", channelID, "error", err)
 	}
-	learnIDs := s.learnThreadIDs(r.Context(), append([]string{channelID}, threadIDs...)...)
+	threads := s.lookupThreads(r.Context(), threadIDs)
+	learns := s.learnThreads(r.Context(), append([]string{channelID}, threadIDs...)...)
 
 	// Delete child threads first.
 	if err := s.store.DeleteChannelsByParentID(r.Context(), channelID); err != nil {
@@ -310,16 +311,35 @@ func (s *Server) handleDeleteChannel(w http.ResponseWriter, r *http.Request) {
 
 	// Clean up containers associated with this channel.
 	s.cleanupChannelContainers(r.Context(), channelID)
-	s.stopLearnThreads(r.Context(), learnIDs)
+	s.stopLearnThreads(r.Context(), learns)
+	s.removeMCPConfigs(ch, append(append([]*db.Channel{ch}, threads...), learns...))
 
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// learnThreadIDs returns the hidden learn threads of the given channels,
+// lookupThreads returns the threads with the given ids, which go with
+// their channel. A lookup error only loses a thread's MCP config to remove,
+// so it's logged, not returned.
+func (s *Server) lookupThreads(ctx context.Context, threadIDs []string) []*db.Channel {
+	var threads []*db.Channel
+	for _, id := range threadIDs {
+		t, err := s.store.GetChannel(ctx, id)
+		if err != nil {
+			s.logger.Warn("channel cleanup: looking up thread", "thread_id", id, "error", err)
+			continue
+		}
+		if t != nil {
+			threads = append(threads, t)
+		}
+	}
+	return threads
+}
+
+// learnThreads returns the hidden learn threads of the given channels,
 // which go when those are deleted. A lookup error only loses a learn thread
 // to stop, so it's logged, not returned.
-func (s *Server) learnThreadIDs(ctx context.Context, channelIDs ...string) []string {
-	var learnIDs []string
+func (s *Server) learnThreads(ctx context.Context, channelIDs ...string) []*db.Channel {
+	var learns []*db.Channel
 	for _, id := range channelIDs {
 		l, err := s.store.GetLearnChannel(ctx, id)
 		if err != nil {
@@ -327,20 +347,34 @@ func (s *Server) learnThreadIDs(ctx context.Context, channelIDs ...string) []str
 			continue
 		}
 		if l != nil {
-			learnIDs = append(learnIDs, l.ChannelID)
+			learns = append(learns, l)
 		}
 	}
-	return learnIDs
+	return learns
 }
 
 // stopLearnThreads cancels deleted learn threads' passes, running or
 // queued, and removes their containers.
-func (s *Server) stopLearnThreads(ctx context.Context, learnIDs []string) {
-	for _, id := range learnIDs {
+func (s *Server) stopLearnThreads(ctx context.Context, learns []*db.Channel) {
+	for _, l := range learns {
 		if s.runCanceller != nil {
-			s.runCanceller.StopLearn(id)
+			s.runCanceller.StopLearn(l.ChannelID)
 		}
-		s.removeAgentContainers(ctx, id)
+		s.removeAgentContainers(ctx, l.ChannelID)
+	}
+}
+
+// removeMCPConfigs removes deleted channels' MCP config files, unless
+// keep_mcp_configs is set for owner's project. A removal error is logged:
+// the channels are gone either way.
+func (s *Server) removeMCPConfigs(owner *db.Channel, chs []*db.Channel) {
+	if cfg := s.configs.merged(owner.DirPath, ""); cfg != nil && cfg.KeepMCPConfigs {
+		return
+	}
+	for _, c := range chs {
+		if err := s.removeMCPConfig(c.DirPath, c.ChannelID); err != nil {
+			s.logger.Warn("channel cleanup: removing MCP config", "channel_id", c.ChannelID, "error", err)
+		}
 	}
 }
 

@@ -448,6 +448,9 @@ func (s *ServerSuite) TestDeleteChannelStopsLearnThreads() {
 			s.SetupTest()
 			s.store.On("GetChannel", mock.Anything, "ch-1").Return(&db.Channel{ChannelID: "ch-1"}, nil)
 			s.store.On("ListChannelIDsByParentID", mock.Anything, "ch-1").Return(tc.threadIDs, tc.listErr)
+			for _, id := range tc.threadIDs {
+				s.store.On("GetChannel", mock.Anything, id).Return(&db.Channel{ChannelID: id, ParentID: "ch-1"}, nil)
+			}
 			for _, id := range append([]string{"ch-1"}, tc.threadIDs...) {
 				s.store.On("GetLearnChannel", mock.Anything, id).Return(tc.learnOf[id], tc.lookupErr[id])
 			}
@@ -1173,4 +1176,73 @@ func (s *ServerSuite) TestSearchChannelsDiffStats() {
 // git subprocess, empty branch.
 func (s *ServerSuite) TestGitBranchEmptyDir() {
 	require.Empty(s.T(), gitBranch(context.Background(), ""))
+}
+
+func (s *ServerSuite) TestDeleteChannelRemovesMCPConfigs() {
+	tests := []struct {
+		name       string
+		keep       bool
+		threadErr  error
+		thread     *db.Channel
+		removeErr  error
+		wantRemove [][2]string
+	}{
+		{
+			name:   "channel, threads and learn threads",
+			thread: &db.Channel{ChannelID: "t-1", ParentID: "ch-1", DirPath: "/wt"},
+			wantRemove: [][2]string{
+				{"/p", "ch-1"}, {"/wt", "t-1"}, {"/p", "learn-c"}, {"/wt", "learn-t"},
+			},
+		},
+		{
+			name:      "a failed removal is logged",
+			thread:    &db.Channel{ChannelID: "t-1", ParentID: "ch-1", DirPath: "/wt"},
+			removeErr: errors.New("permission denied"),
+			wantRemove: [][2]string{
+				{"/p", "ch-1"}, {"/wt", "t-1"}, {"/p", "learn-c"}, {"/wt", "learn-t"},
+			},
+		},
+		{
+			name:       "a thread lookup error skips the thread",
+			threadErr:  errors.New("db error"),
+			wantRemove: [][2]string{{"/p", "ch-1"}, {"/p", "learn-c"}, {"/wt", "learn-t"}},
+		},
+		{
+			name:       "a thread gone meanwhile is skipped",
+			wantRemove: [][2]string{{"/p", "ch-1"}, {"/p", "learn-c"}, {"/wt", "learn-t"}},
+		},
+		{
+			name:   "keep_mcp_configs keeps them",
+			keep:   true,
+			thread: &db.Channel{ChannelID: "t-1", ParentID: "ch-1", DirPath: "/wt"},
+		},
+	}
+	for _, tc := range tests {
+		s.Run(tc.name, func() {
+			s.SetupTest()
+			s.srv.configs.loadProject = func(dir string, base *config.Config) (*config.Config, error) {
+				require.Equal(s.T(), "/p", dir)
+				merged := *base
+				merged.KeepMCPConfigs = tc.keep
+				return &merged, nil
+			}
+			var removed [][2]string
+			s.srv.removeMCPConfig = func(dir, id string) error {
+				removed = append(removed, [2]string{dir, id})
+				return tc.removeErr
+			}
+			s.store.On("GetChannel", mock.Anything, "ch-1").Return(&db.Channel{ChannelID: "ch-1", DirPath: "/p"}, nil)
+			s.store.On("ListChannelIDsByParentID", mock.Anything, "ch-1").Return([]string{"t-1"}, nil)
+			s.store.On("GetChannel", mock.Anything, "t-1").Return(tc.thread, tc.threadErr)
+			s.store.On("GetLearnChannel", mock.Anything, "ch-1").Return(&db.Channel{ChannelID: "learn-c", DirPath: "/p"}, nil)
+			s.store.On("GetLearnChannel", mock.Anything, "t-1").Return(&db.Channel{ChannelID: "learn-t", DirPath: "/wt"}, nil)
+			s.store.On("DeleteChannelsByParentID", mock.Anything, "ch-1").Return(nil)
+			s.store.On("DeleteChannel", mock.Anything, "ch-1").Return(nil)
+
+			rec := s.testRequest("DELETE", "/api/channels/ch-1", "")
+
+			require.Equal(s.T(), http.StatusNoContent, rec.Code)
+			require.Equal(s.T(), tc.wantRemove, removed)
+		})
+	}
 }

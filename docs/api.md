@@ -185,7 +185,7 @@ Delete a channel and all its child threads.
 
 **Response:** `204 No Content`
 
-**Behavior notes:** Deletes child threads (channels with matching `parent_id`) before deleting the channel itself.
+**Behavior notes:** Deletes child threads (channels with matching `parent_id`) before deleting the channel itself. Removes the MCP config files of the channel, its threads and their hidden learn threads (`.loop/mcp-<id>.json`, and `.loop/mcp-<id>-learn.json` for a learn thread, each in its own dir), unless `keep_mcp_configs` is set for the channel's project. Cancels a learn pass still running or queued and removes the channel's containers.
 
 **Errors:** `404` if channel not found. `409` if the channel (or any of its threads) is locked. `501` if channel deletion is not configured.
 
@@ -370,7 +370,7 @@ Delete a thread.
 
 **Response:** `204 No Content`
 
-**Behavior notes:** Removes the thread's MCP config file, deletes from the chat platform (if a creator is configured), and removes from the database. If the thread has an associated git worktree, the worktree and its branch are cleaned up automatically.
+**Behavior notes:** Removes the MCP config files of the thread and its hidden learn thread (unless `keep_mcp_configs` is set), cancels the learn thread's pass, deletes from the chat platform (if a creator is configured), and removes from the database. If the thread has an associated git worktree, the worktree and its branch are cleaned up automatically.
 
 **Errors:** `409` if the thread is locked (toggle via [`PATCH /api/channels/{id}/lock`](#patch-apichannelsidlock)). `501` if thread deletion is not configured.
 

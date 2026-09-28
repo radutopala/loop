@@ -128,6 +128,7 @@ type Server struct {
 	scheduler               scheduler.Scheduler
 	channels                ChannelEnsurer
 	threads                 ThreadEnsurer
+	removeMCPConfig         func(dirPath, channelID string) error // removes a deleted channel's MCP config files
 	messages                MessageSender
 	memoryIndexer           MemoryIndexer
 	termManager             TerminalManager
@@ -327,10 +328,11 @@ func NewServer(sched scheduler.Scheduler, channels ChannelEnsurer, threads Threa
 			sys:       sys,
 			workspace: workspaceResolver{store: store},
 		},
-		scheduler: sched,
-		channels:  channels,
-		threads:   threads,
-		messages:  messages,
+		scheduler:       sched,
+		channels:        channels,
+		threads:         threads,
+		messages:        messages,
+		removeMCPConfig: bot.RemoveMCPConfig,
 		worktreeCreator: &worktree.Creator{
 			Sys: sys,
 			Run: worktree.ExecCommandRunner,
