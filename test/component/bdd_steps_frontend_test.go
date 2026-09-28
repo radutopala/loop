@@ -269,6 +269,10 @@ func registerFrontendSteps(ctx *godog.ScenarioContext, tc *TestContext) {
 	ctx.Step(`^the chat is still scrolled where I noted$`, tc.assertChatScrollKept)
 	ctx.Step(`^I drag the divider after the chat pane by (-?\d+)px$`, tc.dragChatPaneDivider)
 	ctx.Step(`^I tag the chat's composer$`, tc.tagChatComposer)
+	ctx.Step(`^the Learn dock sits right of the chat's tile, the same size$`, tc.waitLearnDockBesideChat)
+	ctx.Step(`^I note where the chat's tile is$`, tc.noteChatTile)
+	ctx.Step(`^I drag the Learn dock's header by (-?\d+)px, (-?\d+)px$`, tc.dragLearnDockHeader)
+	ctx.Step(`^the chat's tile moved by (-?\d+)px, (-?\d+)px$`, tc.assertChatTileMoved)
 	ctx.Step(`^the composer in "([^"]*)" is the one I tagged$`, tc.assertTaggedComposer)
 	ctx.Step(`^I scroll the chat messages to top$`, tc.scrollChatMessagesToTop)
 	ctx.Step(`^I serve a chat history of (\d+) messages from the timeline$`, tc.serveChatHistory)
@@ -2201,6 +2205,111 @@ func (tc *TestContext) assertChatScrollKept() error {
 	}
 	if result != "ok" {
 		return fmt.Errorf("the chat didn't keep its scroll: %s", result)
+	}
+	return nil
+}
+
+// chatTileJS finds the box of the canvas tile holding the chat, as a JS
+// expression: the first child of its [data-canvas-tile] wrapper, which has
+// no size of its own.
+const chatTileJS = `document.querySelector("[data-learn-chat-leaf]")?.closest("[data-canvas-tile]")?.firstElementChild`
+
+// waitLearnDockBesideChat waits until the Learn dock on a canvas sits just
+// right of the chat's tile, top-aligned and the same size, with the logo on
+// the seam between them.
+func (tc *TestContext) waitLearnDockBesideChat() error {
+	js := `(() => {
+		const tile = ` + chatTileJS + `;
+		const dock = document.querySelector("[data-testid='canvas-learn-dock']");
+		const logo = document.querySelector("[data-testid='canvas-learn-dock-logo']");
+		if (!tile || !dock || !logo) return 'missing: ' + [!tile && 'chat tile', !dock && 'dock', !logo && 'logo'].filter(Boolean).join(', ');
+		if (getComputedStyle(dock).opacity !== '1') return 'still fading in';
+		const t = tile.getBoundingClientRect(), d = dock.getBoundingClientRect(), l = logo.getBoundingClientRect();
+		const near = (a, b) => Math.abs(a - b) <= 1;
+		const gap = d.left - t.right;
+		if (!(gap > 0 && gap < 40)) return 'gap between tile and dock is ' + gap;
+		if (!near(d.top, t.top) || !near(d.width, t.width) || !near(d.height, t.height)) return 'tile ' + JSON.stringify(t) + ' vs dock ' + JSON.stringify(d);
+		const lx = l.left + l.width / 2, ly = l.top + l.height / 2;
+		if (!near(lx, (t.right + d.left) / 2) || !near(ly, t.top + t.height / 2)) return 'logo off the seam at ' + lx + ',' + ly;
+		return 'ok';
+	})()`
+	var result string
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		if err := chromedp.Run(tc.chromeTab.ctx, chromedp.Evaluate(js, &result)); err != nil {
+			return err
+		}
+		if result == "ok" {
+			return nil
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf("the Learn dock isn't beside the chat's tile: %s", result)
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+}
+
+// noteChatTile notes where the chat's tile is on screen, for
+// assertChatTileMoved.
+func (tc *TestContext) noteChatTile() error {
+	var ok bool
+	js := `(() => { const t = ` + chatTileJS + `; if (!t) return false; const r = t.getBoundingClientRect(); window.__chatTileAt = [r.left, r.top]; return true; })()`
+	if err := chromedp.Run(tc.chromeTab.ctx, chromedp.Evaluate(js, &ok)); err != nil {
+		return err
+	}
+	if !ok {
+		return fmt.Errorf("no chat tile on the canvas")
+	}
+	return nil
+}
+
+// dragLearnDockHeader drags the Learn dock by its header, from a point on
+// the header clear of its buttons, by dx, dy screen pixels.
+func (tc *TestContext) dragLearnDockHeader(dx, dy int) error {
+	var at []float64
+	js := `(() => {
+		const h = document.querySelector("[data-testid='canvas-learn-dock'] [data-learn-pane-header]");
+		if (!h) return [];
+		const r = h.getBoundingClientRect();
+		const y = r.top + r.height / 2;
+		for (let x = r.left + 4; x < r.right; x += 4) {
+			const el = document.elementFromPoint(x, y);
+			if (el && h.contains(el) && !el.closest('button')) return [x, y];
+		}
+		return [];
+	})()`
+	if err := chromedp.Run(tc.chromeTab.ctx, chromedp.Evaluate(js, &at)); err != nil {
+		return err
+	}
+	if len(at) != 2 {
+		return fmt.Errorf("no spot on the Learn dock's header to drag")
+	}
+	x, y := at[0], at[1]
+	fx, fy := float64(dx), float64(dy)
+	return chromedp.Run(tc.chromeTab.ctx,
+		chromedp.MouseEvent(input.MouseMoved, x, y),
+		chromedp.MouseEvent(input.MousePressed, x, y, chromedp.ButtonLeft),
+		chromedp.MouseEvent(input.MouseMoved, x+fx/2, y+fy/2, chromedp.ButtonLeft),
+		chromedp.MouseEvent(input.MouseMoved, x+fx, y+fy, chromedp.ButtonLeft),
+		chromedp.MouseEvent(input.MouseReleased, x+fx, y+fy, chromedp.ButtonLeft),
+	)
+}
+
+// assertChatTileMoved checks the chat's tile moved by dx, dy screen pixels
+// from where noteChatTile noted it.
+func (tc *TestContext) assertChatTileMoved(dx, dy int) error {
+	var result string
+	js := fmt.Sprintf(`(() => {
+		const t = `+chatTileJS+`, at = window.__chatTileAt;
+		if (!t || !at) return 'nothing noted';
+		const r = t.getBoundingClientRect(), mx = r.left - at[0], my = r.top - at[1];
+		return Math.abs(mx - %d) <= 1 && Math.abs(my - %d) <= 1 ? 'ok' : 'moved by ' + mx + ', ' + my;
+	})()`, dx, dy)
+	if err := chromedp.Run(tc.chromeTab.ctx, chromedp.Evaluate(js, &result)); err != nil {
+		return err
+	}
+	if result != "ok" {
+		return fmt.Errorf("the chat's tile didn't move by %d, %d: %s", dx, dy, result)
 	}
 	return nil
 }

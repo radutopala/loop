@@ -190,6 +190,7 @@ export function EmptyLayoutPicker({ onAdd, hiddenPanels }: { onAdd: (panel: Pane
         {entries.map(({ key, panel, label, description, openMode }) => (
           <button
             key={key}
+            data-testid={`empty-layout-add-${key}`}
             onClick={() => onAdd(panel, openMode ? { openMode } : undefined)}
             style={pickerBtnStyle}
             onMouseEnter={(e) => {

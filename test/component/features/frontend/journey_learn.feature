@@ -438,3 +438,36 @@ Feature: Learn from runs
     When I click on "[data-learn-thread] a[href='#']"
     Then I wait up to "5s" for "[data-testid='learn-split']" to disappear
     And I wait for text "learnthreadlinktarget" to appear
+
+  Scenario: On a canvas, the Learn pane docks beside the chat's tile and moves with it
+    Given the current channel has a learn thread
+    When I send a POST request to "/api/channels/{learn_channel_id}/learn/proposals" with body:
+      """
+      {"proposals":[{"kind":"description","title":"Describe the thread","payload":{"description":"Canvas dock"}}]}
+      """
+    Then the response status should be 201
+    And I wait for text "1 proposal" to appear
+    # A new canvas starts empty; its first tile is the chat.
+    When I click on "[title='New layout']"
+    And I click on "[data-testid='new-layout-canvas']"
+    And I click on "[data-testid='empty-layout-add-chat']"
+    Then I wait for "[data-canvas-tile] [data-learn-chat-leaf] textarea" to be visible
+    And I wait for "[data-canvas-tile] [data-testid='learn-badge']" to be visible
+    # The Learn pane docks to the right of the chat's tile, the same size,
+    # with the logo on the seam. The chat stays in its tile, not mounted
+    # again, and nothing goes over the layout.
+    When I tag the chat's composer
+    And I click on "[data-canvas-tile] [data-testid='learn-badge']"
+    Then I wait for "[data-testid='canvas-learn-dock'] [data-testid='learn-pane']" to be visible
+    And the Learn dock sits right of the chat's tile, the same size
+    And the element "[data-testid='learn-split']" should not exist
+    And the composer in "[data-canvas-tile] [data-learn-chat-leaf]" is the one I tagged
+    # Dragging the Learn pane's header moves the pair.
+    When I note where the chat's tile is
+    And I drag the Learn dock's header by -60px, 40px
+    Then the chat's tile moved by -60px, 40px
+    And the Learn dock sits right of the chat's tile, the same size
+    # The badge in the chat's tile closes the dock; the chat stays.
+    When I click on "[data-canvas-tile] [data-testid='learn-badge']"
+    Then I wait up to "5s" for "[data-testid='canvas-learn-dock']" to disappear
+    And the composer in "[data-canvas-tile] [data-learn-chat-leaf]" is the one I tagged

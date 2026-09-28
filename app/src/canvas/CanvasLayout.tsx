@@ -4,6 +4,7 @@ import type { ContainerStatsByType } from "../hooks/useContainerStats";
 import { EmptyLayoutPicker } from "../splitPane/AddPanelButton";
 import { useTheme } from "../ThemeContext";
 import { type AgentOpenMode, EXCLUSIVE_PANELS, type LeafNode, PANEL_OPTIONS, type PanelType, SINGLETON_PANELS } from "../types/panels";
+import { CanvasLearnDock, LEARN_DOCK_GAP } from "./CanvasLearnDock";
 import { CanvasTile } from "./CanvasTile";
 import type { CanvasNode, CanvasTile as CanvasTileType } from "./types";
 
@@ -18,15 +19,27 @@ interface CanvasLayoutProps {
   containerStats?: ContainerStatsByType;
   onCanvasChange: (canvas: CanvasNode) => void;
   hiddenPanels?: PanelType[];
+  /** The Learn view, docked to the chat's tile while it's up (see
+   * CanvasLearnDock). */
+  learnDock?: LearnDock;
+}
+
+export interface LearnDock {
+  shown: boolean;
+  ms: number;
+  running: boolean;
+  pane: React.ReactNode;
+  ref?: React.Ref<HTMLDivElement>;
 }
 
 /** Free-form canvas layout with draggable/resizable tiles, pan & zoom. */
-export function CanvasLayout({ canvas, renderLeaf, agentInfoMap, containerStats, onCanvasChange, hiddenPanels }: CanvasLayoutProps) {
+export function CanvasLayout({ canvas, renderLeaf, agentInfoMap, containerStats, onCanvasChange, hiddenPanels, learnDock }: CanvasLayoutProps) {
   const { colors } = useTheme();
   const [showAddMenu, setShowAddMenu] = useState<{ x: number; y: number } | null>(null);
   const [maximizedId, setMaximizedId] = useState<string | null>(null);
   const savedBoundsRef = useRef<{ x: number; y: number; width: number; height: number } | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
+  const addMenuRef = useRef<HTMLDivElement>(null);
   const isPanning = useRef(false);
 
   const vp = canvas.viewport;
@@ -212,17 +225,29 @@ export function CanvasLayout({ canvas, renderLeaf, agentInfoMap, containerStats,
     setShowAddMenu({ x: e.clientX - rect.left, y: e.clientY - rect.top });
   }, []);
 
-  // --- Pan: middle-click drag or space+left-click ---
-  const handleMouseDown = useCallback(
-    (e: React.MouseEvent) => {
-      // Middle-click pan.
+  // --- Zoom: Ctrl+scroll or pinch (non-passive to allow preventDefault) ---
+  const vpRef = useRef(vp);
+  vpRef.current = vp;
+  const setViewportRef = useRef(setViewport);
+  setViewportRef.current = setViewport;
+
+  // The mouse listeners below are DOM ones, not React's: the chat renders
+  // into its tile through a portal from outside the canvas, so React events
+  // from it never reach the canvas.
+
+  // --- Pan: middle-click drag ---
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    const onMouseDown = (e: MouseEvent) => {
       if (e.button !== 1) return;
       e.preventDefault();
       isPanning.current = true;
-      const startX = e.clientX - vp.x;
-      const startY = e.clientY - vp.y;
+      const start = vpRef.current;
+      const startX = e.clientX - start.x;
+      const startY = e.clientY - start.y;
       const onMouseMove = (ev: MouseEvent) => {
-        setViewport(ev.clientX - startX, ev.clientY - startY, vp.zoom);
+        setViewportRef.current(ev.clientX - startX, ev.clientY - startY, start.zoom);
       };
       const onMouseUp = () => {
         isPanning.current = false;
@@ -231,15 +256,38 @@ export function CanvasLayout({ canvas, renderLeaf, agentInfoMap, containerStats,
       };
       document.addEventListener("mousemove", onMouseMove);
       document.addEventListener("mouseup", onMouseUp);
-    },
-    [vp, setViewport],
-  );
+    };
+    el.addEventListener("mousedown", onMouseDown);
+    return () => el.removeEventListener("mousedown", onMouseDown);
+  }, []);
 
-  // --- Zoom: Ctrl+scroll or pinch (non-passive to allow preventDefault) ---
-  const vpRef = useRef(vp);
-  vpRef.current = vp;
-  const setViewportRef = useRef(setViewport);
-  setViewportRef.current = setViewport;
+  // A click anywhere else on the canvas closes its add menu.
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!showAddMenu || !el) return;
+    const onClick = (e: MouseEvent) => {
+      if (!addMenuRef.current?.contains(e.target as Node)) setShowAddMenu(null);
+    };
+    el.addEventListener("click", onClick);
+    return () => el.removeEventListener("click", onClick);
+  }, [showAddMenu]);
+
+  // Opening the Learn view brings the chat's tile and its dock into view,
+  // zooming out if they don't fit.
+  const chatTile = canvas.tiles.find((t) => t.panel === "chat");
+  const docked = !!learnDock && !!chatTile;
+  useEffect(() => {
+    const rect = containerRef.current?.getBoundingClientRect();
+    const chat = canvasRef.current.tiles.find((t) => t.panel === "chat");
+    if (!docked || !rect || !chat) return;
+    const v = vpRef.current;
+    const w = chat.width * 2 + LEARN_DOCK_GAP;
+    const left = chat.x * v.zoom + v.x;
+    const top = chat.y * v.zoom + v.y;
+    if (left >= 0 && top >= 0 && left + w * v.zoom <= rect.width && top + chat.height * v.zoom <= rect.height) return;
+    const zoom = Math.max(MIN_ZOOM, Math.min(v.zoom, (rect.width * 0.95) / w, (rect.height * 0.95) / chat.height));
+    setViewportRef.current((rect.width - w * zoom) / 2 - chat.x * zoom, (rect.height - chat.height * zoom) / 2 - chat.y * zoom, zoom);
+  }, [docked]);
 
   useEffect(() => {
     const el = containerRef.current;
@@ -282,8 +330,6 @@ export function CanvasLayout({ canvas, renderLeaf, agentInfoMap, containerStats,
     <div
       ref={containerRef}
       onDoubleClick={handleDoubleClick}
-      onMouseDown={handleMouseDown}
-      onClick={() => showAddMenu && setShowAddMenu(null)}
       style={{
         position: "relative",
         width: "100%",
@@ -333,11 +379,26 @@ export function CanvasLayout({ canvas, renderLeaf, agentInfoMap, containerStats,
             />
           </div>
         ))}
+        {learnDock && chatTile && (
+          <CanvasLearnDock
+            ref={learnDock.ref}
+            chat={chatTile}
+            zoom={vp.zoom}
+            shown={learnDock.shown}
+            ms={learnDock.ms}
+            running={learnDock.running}
+            pane={learnDock.pane}
+            onMove={handleMoveTile}
+            onResize={handleResizeTile}
+            onBringToFront={handleBringToFront}
+          />
+        )}
       </div>
 
       {/* Add tile menu */}
       {showAddMenu && (
         <div
+          ref={addMenuRef}
           style={{
             position: "absolute",
             left: showAddMenu.x,

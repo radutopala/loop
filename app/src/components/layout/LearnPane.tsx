@@ -36,8 +36,9 @@ export function LearnPane({ learn, worktree, roots, subscribeChannelEvents, getC
 
   return (
     <div ref={paneRef} data-testid="learn-pane" style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column", overflow: "hidden" }}>
-      {/* Header, like a pane's */}
+      {/* Header, like a pane's; docked on a canvas, it drags the pair. */}
       <div
+        data-learn-pane-header
         style={{
           display: "flex",
           alignItems: "center",

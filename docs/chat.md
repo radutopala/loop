@@ -593,6 +593,8 @@ The Learn view puts the chat and a Learn pane side by side, each half the width 
 
 The chat keeps its pane header with its container stats, but not the layout's split and close buttons. Close the view with the Learn label in that header, the Learn pane's ✕, or Escape (unless something else handles it first). Opening the view keeps focus in the chat, or puts it in the chat's composer when it was elsewhere (the layout under the view is inert); closing it with focus in the Learn pane puts focus back in the chat's composer.
 
+On a canvas layout, the Learn pane docks beside the chat's tile instead: to its right, the same size, joined to it by the Loop logo on the seam. The chat stays in its tile, and the rest of the canvas stays usable. The two go together: dragging the Learn pane's header moves the chat's tile, the dock's bottom-right corner resizes both, and a click in either brings both to the front. If the pair isn't fully in view when the dock opens, the canvas pans (and zooms out if needed) to show it. The Learn label in the chat's tile header opens and closes the dock; the Learn pane's ✕ and Escape close it too. The dock isn't a tile: it isn't saved with the canvas, and closing the chat's tile closes it.
+
 The Learn pane's header matches a pane header:
 
 - **Proposals** on top, newest first. Each card shows its kind, title, a one-line gist of exactly what Apply writes, and the rationale the pass gave. A gate rule's gist is the whole rule: its decision, what it matches (the commands and their argument patterns, the file paths and operations, or the socket path; `any command` or `any path` when it lists none) and the message the gate shows.
