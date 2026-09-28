@@ -1141,6 +1141,8 @@ func (s *OrchestratorSuite) TestHandleMessageInsertBotResponseErrors() {
 				s.bot.On("SendMessage", s.ctx, mock.Anything).Return(nil)
 				s.store.On("GetChannel", s.ctx, "ch1").Return(nil, errors.New("channel err")).Once()
 				s.store.On("MarkMessagesProcessed", s.ctx, []int64{}).Return(nil)
+				// The learn check's reload once the run is done.
+				s.store.On("GetChannel", s.ctx, "ch1").Return(&db.Channel{ID: 1, ChannelID: "ch1", Active: true}, nil).Once()
 			},
 		},
 		{

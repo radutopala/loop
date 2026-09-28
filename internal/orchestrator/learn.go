@@ -109,6 +109,15 @@ func (o *Orchestrator) maybeLearn(ctx context.Context, ch *db.Channel, msg *bot.
 	if ch.Kind == db.ChannelKindLearn {
 		return
 	}
+	// ch was loaded before the run. The channel may have been deleted
+	// since, and a learn thread made for it now would be an orphan; or its
+	// Learn switch flipped either way.
+	fresh, err := o.store.GetChannel(ctx, ch.ChannelID)
+	if err != nil || fresh == nil {
+		o.logger.Debug("learn: skipped", "channel_id", ch.ChannelID, "reason", "channel gone", "error", err)
+		return
+	}
+	ch = fresh
 	merged, _ := o.learnConfig(ctx, ch)
 	cfg := merged.Learn
 	parked := o.IsChannelPlanned(ch.ChannelID) || o.IsChannelAsked(ch.ChannelID)
@@ -120,19 +129,6 @@ func (o *Orchestrator) maybeLearn(ctx context.Context, ch *db.Channel, msg *bot.
 		o.logger.Debug("learn: skipped", "channel_id", ch.ChannelID, "reason", "no session")
 		return
 	}
-	// ch was loaded before the run. The channel may have been deleted
-	// since, and a learn thread made for it now would be an orphan; or its
-	// Learn switch turned off.
-	fresh, err := o.store.GetChannel(ctx, ch.ChannelID)
-	if err != nil || fresh == nil {
-		o.logger.Debug("learn: skipped", "channel_id", ch.ChannelID, "reason", "channel gone", "error", err)
-		return
-	}
-	if !fresh.LearnEnabled(cfg.Enabled) {
-		o.logger.Debug("learn: skipped", "channel_id", ch.ChannelID, "reason", "learn off")
-		return
-	}
-	ch = fresh
 	l, err := o.ensureLearnChannel(ctx, ch)
 	if errors.Is(err, db.ErrLearnParentGone) {
 		o.logger.Debug("learn: skipped", "channel_id", ch.ChannelID, "reason", "channel gone")

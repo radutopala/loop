@@ -118,6 +118,10 @@ func (s *OrchestratorSuite) TestMaybeLearnSkips() {
 		{"switched off during the run", &db.Channel{ChannelID: "ch1", DirPath: "/project", Platform: types.PlatformLocal}, learnOn, func() {
 			s.store.On("GetChannel", s.ctx, "ch1").Return(&db.Channel{ChannelID: "ch1", DirPath: "/project", Platform: types.PlatformLocal, LearnOverride: db.LearnOff}, nil)
 		}},
+		{"switched on during the run", &db.Channel{ChannelID: "ch1", DirPath: "/project", Platform: types.PlatformLocal, LearnOverride: db.LearnOff}, learnOn, func() {
+			s.store.On("GetChannel", s.ctx, "ch1").Return(&db.Channel{ChannelID: "ch1", DirPath: "/project", Platform: types.PlatformLocal, LearnOverride: db.LearnOn}, nil)
+			s.store.On("GetLearnChannel", s.ctx, "ch1").Return(nil, errors.New("db down"))
+		}},
 		{"lookup error", &db.Channel{ChannelID: "ch1", DirPath: "/project", Platform: types.PlatformLocal}, learnOn, func() {
 			s.store.On("GetLearnChannel", s.ctx, "ch1").Return(nil, errors.New("db down"))
 		}},
