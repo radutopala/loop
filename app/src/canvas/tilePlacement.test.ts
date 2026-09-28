@@ -22,14 +22,14 @@ describe("findNonOverlappingPosition", () => {
 
 describe("withPanelTile", () => {
   it("leaves a canvas that has the panel", () => {
-    const c = canvas([tile("e", "explain", 0, 0)]);
-    expect(withPanelTile(c, "explain", "chat", "explain-1")).toBe(c);
+    const c = canvas([tile("e", "editor", 0, 0)]);
+    expect(withPanelTile(c, "editor", "chat", "editor-1")).toBe(c);
   });
 
   it("puts the tile right of the anchor, on top", () => {
     const c = canvas([tile("chat", "chat", 100, 50, 500, 400, 3)]);
-    const got = withPanelTile(c, "explain", "chat", "explain-1");
-    expect(got.tiles[1]).toEqual({ id: "explain-1", panel: "explain", x: 620, y: 50, width: 600, height: 700, zIndex: 4 });
+    const got = withPanelTile(c, "editor", "chat", "editor-1");
+    expect(got.tiles[1]).toEqual({ id: "editor-1", panel: "editor", x: 620, y: 50, width: 900, height: 900, zIndex: 4 });
   });
 
   it("starts at the top left without an anchor", () => {

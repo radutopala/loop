@@ -981,6 +981,7 @@ List the proposals filed for the channel, newest first, in every status.
       "id": 12,
       "channel_id": "abc123",
       "learn_channel_id": "learn-a1b2c3d4e5f6",
+      "message_id": "loop-msg-17",
       "kind": "bash_shortcut",
       "title": "Add a make lint bash shortcut",
       "rationale": "make lint was typed three times in this run.",
@@ -995,6 +996,7 @@ List the proposals filed for the channel, newest first, in every status.
 
 | Field | Type | Description |
 |-------|------|-------------|
+| `message_id` | string | The turn (its last bot message's `msg_id`) whose learn pass filed it; omitted when unknown |
 | `kind` | string | `prompt_shortcut`, `bash_shortcut`, `scheduled_task`, `gate_rule`, `mount`, `rename`, `description` or `ticket_url` |
 | `payload` | string | The kind's payload as a JSON string (see [`POST`](#post-apichannelsidlearnproposals)) |
 | `status` | string | `pending`, `applying`, `applied`, `dismissed`, `failed` or `withdrawn` |
@@ -1050,13 +1052,68 @@ At most 5 proposals per call. Each needs a `kind`, a `title` (at most 200 charac
 | `description` | `{"description"}`, at most 500 characters. |
 | `ticket_url` | `{"ticket_url"}`, an absolute http(s) URL, at most 2048 characters. |
 
-The payload is stored in canonical JSON. The withdrawals and the inserts run in one transaction: either every proposal is valid and every withdrawal allowed, and all are stored, or nothing changes. A withdrawal takes the proposal the same way apply claims it (a conditional update on its status), so one the user is applying or dismissing at that moment can't be withdrawn, and one withdrawn first can't be applied.
+The payload is stored in canonical JSON. New proposals get the `message_id` of the learn thread's running pass, else its newest done one (a user's reply in the learn thread files against the turn that pass reviewed); none when it has neither. The withdrawals and the inserts run in one transaction: either every proposal is valid and every withdrawal allowed, and all are stored, or nothing changes. A withdrawal takes the proposal the same way apply claims it (a conditional update on its status), so one the user is applying or dismissing at that moment can't be withdrawn, and one withdrawn first can't be applied.
 
 **Response (201):** `{"proposals": [...], "withdrawn": [...]}`, the stored proposals and the withdrawn ones as in the `GET` above. `proposals` is `[]` for a withdraw-only call; `withdrawn` is omitted when none were.
 
 **Behavior notes:** Broadcasts a [`learn.proposals`](events.md#learnproposals) event for the learning channel.
 
 **Errors:** `400` if the body isn't valid JSON, both `proposals` and `withdraw` are empty (`proposals or withdraw is required`), `proposals` has more than 5 items or `withdraw` more than 20, a proposal is invalid (the message names it, e.g. `proposal 2: title is required`), a withdrawal has no reason (`withdraw 1: reason is required`), or a proposal is withdrawn twice in the call (`withdraw 2: proposal 7 is withdrawn twice`, also when a `replaces` repeats one). `404` if `{id}` isn't a learn thread. `409` if a proposal to withdraw isn't the channel's (`proposal 7 not found in this channel`) or isn't open (`proposal 7 is applied; only pending or failed proposals can be withdrawn`). `500` on a store error. `501` if the store is not configured.
+
+---
+
+### `GET /api/channels/{id}/learn/passes`
+
+List the channel's learn passes, newest first, in every status. Each reviews one turn, the one ending with bot message `message_id`.
+
+**Response (200):**
+```json
+{
+  "passes": [
+    {
+      "id": 5,
+      "channel_id": "abc123",
+      "message_id": "loop-msg-17",
+      "learn_channel_id": "learn-a1b2c3d4e5f6",
+      "status": "done",
+      "created_at": "2026-03-25T14:30:00Z",
+      "updated_at": "2026-03-25T14:31:10Z",
+      "message_row_id": 412
+    }
+  ]
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `message_id` | string | The reviewed turn's last bot message (`msg_id`) |
+| `learn_channel_id` | string | The channel's hidden learn thread, where the pass runs |
+| `status` | string | `queued`, `running`, `done`, `failed`, or `superseded` (a newer pass replaced it before it started; that one forks a newer session, which covers its turn too) |
+| `error` | string | Why the pass failed; omitted when empty |
+| `message_row_id` | int | The bot message's row id, for linking to it; omitted when the message is gone |
+
+`passes` is `[]` when there are none. A pass is recorded only when its turn has a bot reply. Passes left `queued` or `running` when Loop stopped are marked `failed` at the next start, unless their trigger still waits to run.
+
+**Behavior notes:** Each status change is broadcast as a [`learn.pass`](events.md#learnpass) event.
+
+**Errors:** `404` if the channel doesn't exist or is a learn thread. `500` on a store error. `501` if the store is not configured.
+
+---
+
+### `POST /api/channels/{id}/learn/passes`
+
+Start a learn pass over the turn that ended with bot message `message_id`, on demand. It runs whether or not the channel's Learn switch is on, and whatever the turn's length (`learn.min_turns`). A pass over the turn already `queued` or `running` is returned as it is; otherwise a new one is queued, also when the turn's earlier pass is `done`, `failed` or `superseded`.
+
+**Request:**
+```json
+{"message_id": "loop-msg-17"}
+```
+
+**Response (200):** the pass, shaped as in the list (without `message_row_id`).
+
+**Behavior notes:** A new pass creates the channel's hidden learn thread on first use and is broadcast as a [`learn.pass`](events.md#learnpass) event, as is each later status change. It forks the channel's current session, so it sees the turn even when later ones followed, and its trigger message quotes the turn's prompt and final reply. Like an automatic pass, it waits while the learn thread is busy and replaces the pass already waiting there, which becomes `superseded`.
+
+**Errors:** `400` if the body isn't valid JSON, `message_id` is missing, the channel isn't one learn passes run for (a Slack or Discord channel, or a task thread), or the message isn't a bot message of a turn in the channel. `404` if the channel doesn't exist, is hidden, or was deleted meanwhile. `409` if the channel has no session to fork yet. `500` on a store error. `501` if on-demand learn passes are not configured.
 
 ---
 

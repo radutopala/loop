@@ -39,6 +39,7 @@ const (
 	EventChannelExplain            = "channel.explain"
 	EventExplainUpdated            = "explain.updated"
 	EventLearnProposals            = "learn.proposals"
+	EventLearnPass                 = "learn.pass"
 	EventLearnProposalUpdated      = "learn.proposal_updated"
 	EventChannelUpdated            = "channel.updated"
 	EventAgentInstanceRegistered   = "agent_instance.registered"
@@ -354,6 +355,19 @@ func (h *EventsHub) BroadcastExplainUpdated(e *db.Explanation) {
 		Type:      EventExplainUpdated,
 		ChannelID: e.ChannelID,
 		Data:      e,
+		Global:    true,
+	})
+}
+
+// BroadcastLearnPass sends a learn.pass event when a learn pass is queued,
+// starts running, is done, fails or is superseded, so the chat shows it at
+// the end of the turn it reviews. It's global: the learn thread doing the
+// work is hidden.
+func (h *EventsHub) BroadcastLearnPass(p *db.LearnPass) {
+	h.Broadcast(Event{
+		Type:      EventLearnPass,
+		ChannelID: p.ChannelID,
+		Data:      p,
 		Global:    true,
 	})
 }

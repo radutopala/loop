@@ -6,6 +6,7 @@ package learn
 import (
 	_ "embed"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -16,6 +17,18 @@ import (
 // AgentID is the learn agent's MCP agent id. It gives the pass its own MCP
 // config file and is what unlocks the propose_learnings tool.
 const AgentID = "learn"
+
+// Errors an on-demand learn pass over a turn can't be started with.
+var (
+	// ErrNotATurn: the message isn't a bot message in the channel, so it
+	// doesn't end a turn there.
+	ErrNotATurn = errors.New("not a bot message in this channel")
+	// ErrNoSession: the channel has no session to fork yet.
+	ErrNoSession = errors.New("the channel has no session to learn from")
+	// ErrUnavailable: the channel isn't one a turn can be learned from on
+	// demand, a Slack or Discord channel, a task thread, or a hidden thread.
+	ErrUnavailable = errors.New("learn is not available in this channel")
+)
 
 //go:embed prompt.md
 var basePrompt string
@@ -205,6 +218,27 @@ func TriggerMessage(channelName, lastPrompt string) string {
 	return b.String()
 }
 
+// maxQuoted caps how much of a turn's prompt and reply TurnTriggerMessage
+// quotes; enough to find the turn in the session.
+const maxQuoted = 2000
+
+// TurnTriggerMessage is the message that starts a learn pass the user asked
+// for over one turn in channelName, the one prompt started and reply ended.
+// Its first line is TriggerMessage's, so IsTrigger knows it too; the rest
+// points the pass at that turn, which may not be the session's latest.
+func TurnTriggerMessage(channelName, prompt, reply string) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "%s%q%s", triggerLead, channelName, triggerTail)
+	b.WriteString("\n\nThe user asked for one turn of it to be reviewed; it may not be the latest turn in the session.")
+	if p := strings.TrimSpace(prompt); p != "" {
+		b.WriteString("\n\nThat turn's prompt was:\n\n")
+		b.WriteString(quote(truncate(p)))
+	}
+	b.WriteString("\n\nIts final reply was:\n\n")
+	b.WriteString(quote(truncate(strings.TrimSpace(reply))))
+	return b.String()
+}
+
 // dirHint starts the paragraph a worktree run's prompt is prefixed with.
 const dirHint = "IMPORTANT: Your working directory is "
 
@@ -221,6 +255,15 @@ func IsTrigger(prompt string) bool {
 		line = rest
 	}
 	return strings.HasPrefix(line, triggerLead+`"`) && strings.HasSuffix(line, `"`+triggerTail)
+}
+
+// truncate cuts text to maxQuoted runes, marking the cut.
+func truncate(text string) string {
+	r := []rune(text)
+	if len(r) <= maxQuoted {
+		return text
+	}
+	return string(r[:maxQuoted]) + " …"
 }
 
 // quote renders text as a markdown blockquote.

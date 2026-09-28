@@ -1,4 +1,4 @@
-/** The explanation's page with a question mark, in the composer's Explain switch, the bubbles' Explain action and the Explain pane. */
+/** The explanation's page with a question mark, in the composer's Explain switch, the turns' Explain action and the Explain pane. */
 export function ExplainIcon({ size }: { size: number }) {
   return (
     <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">

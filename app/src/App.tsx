@@ -193,18 +193,12 @@ function AppInner() {
   }, []);
 
   // Listen for Settings menu item from main process.
-  useEffect(() => {
-    if (window.loopAPI?.onOpenSettings) {
-      window.loopAPI.onOpenSettings(() => {
-        forceOpenSettings();
-      });
-    }
-  }, []);
+  useEffect(() => window.loopAPI?.onOpenSettings?.(() => forceOpenSettings()), []);
 
   // Auto-updater state.
   useEffect(() => {
     window.loopAPI?.getUpdateStatus?.().then(setUpdateStatus);
-    window.loopAPI?.onUpdateStatus?.((status) => setUpdateStatus(status));
+    return window.loopAPI?.onUpdateStatus?.((status) => setUpdateStatus(status));
   }, []);
 
   const handleDownloadUpdate = useCallback(async () => {
@@ -461,11 +455,7 @@ function AppInner() {
   }, [openChannelTarget]);
 
   // Handle deep link from protocol URL (loop://channel/<id>[/<message-id>]).
-  useEffect(() => {
-    if (window.loopAPI?.onNavigateChannel) {
-      window.loopAPI.onNavigateChannel(openChannelTarget);
-    }
-  }, [openChannelTarget]);
+  useEffect(() => window.loopAPI?.onNavigateChannel?.(openChannelTarget), [openChannelTarget]);
 
   const handleSelectMemoryFile = useCallback((filePath: string) => {
     setOpenMemoryFile(filePath);

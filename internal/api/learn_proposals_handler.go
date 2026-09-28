@@ -99,6 +99,18 @@ func (s *Server) handleCreateLearnProposals(w http.ResponseWriter, r *http.Reque
 		}
 		proposals = append(proposals, p)
 	}
+	// The proposals belong to the turn the running (else the last done)
+	// pass reviews.
+	pass, err := s.store.LatestLearnPass(r.Context(), l.ChannelID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if pass != nil {
+		for _, p := range proposals {
+			p.MessageID = pass.MessageID
+		}
+	}
 	withdrawn, err := s.store.FileLearnProposals(r.Context(), l.ParentID, proposals, withdraw)
 	var werr *db.LearnWithdrawError
 	if errors.As(err, &werr) {
@@ -181,6 +193,78 @@ func (s *Server) handleListLearnProposals(w http.ResponseWriter, r *http.Request
 		proposals = []*db.LearnProposal{}
 	}
 	writeHTTPJSON(w, http.StatusOK, learnProposalsResponse{Proposals: proposals}, s.logger)
+}
+
+type learnPassesResponse struct {
+	Passes []*db.LearnPass `json:"passes"`
+}
+
+// handleListLearnPasses returns a channel's learn passes, newest first.
+func (s *Server) handleListLearnPasses(w http.ResponseWriter, r *http.Request) {
+	ch := s.visibleChannelFor(w, r)
+	if ch == nil {
+		return
+	}
+	passes, err := s.store.ListLearnPasses(r.Context(), ch.ChannelID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	writeHTTPJSON(w, http.StatusOK, learnPassesResponse{Passes: append([]*db.LearnPass{}, passes...)}, s.logger)
+}
+
+// LearnTurner starts a learn pass over one chat turn on demand: it returns
+// the turn's pass already queued or running, or queues a new one (see
+// orchestrator.LearnTurn).
+type LearnTurner interface {
+	LearnTurn(ctx context.Context, ch *db.Channel, messageID string) (*db.LearnPass, error)
+}
+
+// SetLearnTurner configures what POST /api/channels/{id}/learn/passes
+// starts learn passes with.
+func (s *Server) SetLearnTurner(l LearnTurner) {
+	s.learnTurner = l
+}
+
+type learnTurnRequest struct {
+	MessageID string `json:"message_id"`
+}
+
+// handleLearnTurn starts a learn pass over the turn that ended with
+// message_id: it returns the turn's pass already queued or running, or
+// queues a new one.
+func (s *Server) handleLearnTurn(w http.ResponseWriter, r *http.Request) {
+	if !requireConfigured(w, s.learnTurner, "learn not configured") {
+		return
+	}
+	var req learnTurnRequest
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	if req.MessageID == "" {
+		http.Error(w, "message_id is required", http.StatusBadRequest)
+		return
+	}
+	ch := s.visibleChannelFor(w, r)
+	if ch == nil {
+		return
+	}
+	p, err := s.learnTurner.LearnTurn(r.Context(), ch, req.MessageID)
+	switch {
+	case errors.Is(err, learn.ErrUnavailable), errors.Is(err, learn.ErrNotATurn):
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	case errors.Is(err, learn.ErrNoSession):
+		http.Error(w, err.Error(), http.StatusConflict)
+		return
+	case errors.Is(err, db.ErrParentGone):
+		http.Error(w, "channel not found", http.StatusNotFound)
+		return
+	case err != nil:
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	writeHTTPJSON(w, http.StatusOK, p, s.logger)
 }
 
 // claimLearnProposal loads the proposal at the path's id and moves it to

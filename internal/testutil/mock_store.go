@@ -584,3 +584,42 @@ func (m *MockStore) FailInterruptedExplanations(ctx context.Context) (int64, err
 	args := m.Called(ctx)
 	return args.Get(0).(int64), args.Error(1)
 }
+
+func (m *MockStore) InsertLearnPass(ctx context.Context, p *db.LearnPass) (*db.LearnPass, error) {
+	args := m.Called(ctx, p)
+	v, _ := args.Get(0).(*db.LearnPass)
+	return v, args.Error(1)
+}
+
+func (m *MockStore) GetLearnPassByTrigger(ctx context.Context, learnChannelID, triggerMsgID string) (*db.LearnPass, error) {
+	args := m.Called(ctx, learnChannelID, triggerMsgID)
+	v, _ := args.Get(0).(*db.LearnPass)
+	return v, args.Error(1)
+}
+
+func (m *MockStore) UpdateLearnPass(ctx context.Context, id int64, status, errText string) error {
+	return m.Called(ctx, id, status, errText).Error(0)
+}
+
+func (m *MockStore) ListLearnPasses(ctx context.Context, channelID string) ([]*db.LearnPass, error) {
+	args := m.Called(ctx, channelID)
+	v, _ := args.Get(0).([]*db.LearnPass)
+	return v, args.Error(1)
+}
+
+func (m *MockStore) LatestLearnPass(ctx context.Context, learnChannelID string) (*db.LearnPass, error) {
+	args := m.Called(ctx, learnChannelID)
+	v, _ := args.Get(0).(*db.LearnPass)
+	return v, args.Error(1)
+}
+
+func (m *MockStore) ActiveLearnPass(ctx context.Context, channelID, messageID string) (*db.LearnPass, error) {
+	args := m.Called(ctx, channelID, messageID)
+	v, _ := args.Get(0).(*db.LearnPass)
+	return v, args.Error(1)
+}
+
+func (m *MockStore) FailInterruptedLearnPasses(ctx context.Context) (int64, error) {
+	args := m.Called(ctx)
+	return args.Get(0).(int64), args.Error(1)
+}

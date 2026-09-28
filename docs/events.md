@@ -559,8 +559,36 @@ A learn pass filed proposals, withdrew earlier ones, or both (via [`POST /api/ch
 
 | Field       | Type  | Description |
 |-------------|-------|-------------|
-| `proposals` | array | The stored proposals, shaped as in [`GET /api/channels/{id}/learn/proposals`](api.md#get-apichannelsidlearnproposals); `[]` when the pass only withdrew |
+| `proposals` | array | The stored proposals, shaped as in [`GET /api/channels/{id}/learn/proposals`](api.md#get-apichannelsidlearnproposals), each with the `message_id` of the turn its pass reviews; `[]` when the pass only withdrew |
 | `withdrawn` | array | The proposals it withdrew, same shape, with `status: "withdrawn"` and `withdrawn_reason`; omitted when none |
+
+**Scope:** Global.
+
+---
+
+### `learn.pass`
+
+A [learn pass](chat.md#learn-from-a-run), automatic or [asked for](api.md#post-apichannelsidlearnpasses), was queued, started, finished, failed or superseded. `channel_id` is the channel being learned from; `data` is the whole pass with its new `status`, shaped as in [`GET /api/channels/{id}/learn/passes`](api.md#get-apichannelsidlearnpasses). The desktop app shows it at the end of the turn it reviews (`message_id`). Global because the learn thread doing the work is hidden.
+
+**Payload schema:**
+
+```json
+{
+  "id": 5,
+  "channel_id": "abc123",
+  "message_id": "loop-msg-17",
+  "learn_channel_id": "learn-a1b2c3d4e5f6",
+  "status": "running",
+  "created_at": "2026-03-25T14:30:00Z",
+  "updated_at": "2026-03-25T14:30:02Z"
+}
+```
+
+| Field    | Type   | Description |
+|----------|--------|-------------|
+| `status` | string | `queued`, `running`, `done`, `failed` (with `error`), or `superseded`: a newer run's pass replaced it before it started, and covers its turn too |
+
+Only the list endpoint fills in `message_row_id`.
 
 **Scope:** Global.
 
@@ -1000,6 +1028,7 @@ Emitted on every review session status transition (`idle → loading → ready �
 | `BroadcastChannelLearn` | `channel.learn` | `map[string]string{"learn"}` | Global |
 | `BroadcastLearnStarted` | `learn.started` | `map[string]string{"learn_channel_id"}` | Global |
 | `BroadcastLearnProposals` | `learn.proposals` | `map[string]any{"proposals", "withdrawn"?}` of `[]*db.LearnProposal` | Global |
+| `BroadcastLearnPass` | `learn.pass` | `*db.LearnPass` | Global |
 | `BroadcastLearnProposalUpdated` | `learn.proposal_updated` | `*db.LearnProposal` | Global |
 | `BroadcastChannelExplain` | `channel.explain` | `map[string]string{"explain"}` | Global |
 | `BroadcastExplainUpdated` | `explain.updated` | `*db.Explanation` | Global |
@@ -1070,6 +1099,7 @@ type Broadcaster interface {
     BroadcastGateApprovalResolved(channelID string, data GateApprovalResolvedData)
     BroadcastLearnStarted(channelID, learnChannelID string)
     BroadcastExplainUpdated(e *db.Explanation)
+    BroadcastLearnPass(p *db.LearnPass)
 }
 ```
 

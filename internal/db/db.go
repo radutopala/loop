@@ -110,6 +110,13 @@ type Store interface {
 	UpdateExplanation(ctx context.Context, id int64, status, content, errText string) error
 	ListExplanations(ctx context.Context, channelID string) ([]*Explanation, error)
 	FailInterruptedExplanations(ctx context.Context) (int64, error)
+	InsertLearnPass(ctx context.Context, p *LearnPass) (*LearnPass, error)
+	GetLearnPassByTrigger(ctx context.Context, learnChannelID, triggerMsgID string) (*LearnPass, error)
+	UpdateLearnPass(ctx context.Context, id int64, status, errText string) error
+	ListLearnPasses(ctx context.Context, channelID string) ([]*LearnPass, error)
+	LatestLearnPass(ctx context.Context, learnChannelID string) (*LearnPass, error)
+	ActiveLearnPass(ctx context.Context, channelID, messageID string) (*LearnPass, error)
+	FailInterruptedLearnPasses(ctx context.Context) (int64, error)
 	Close() error
 }
 

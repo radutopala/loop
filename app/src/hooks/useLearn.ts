@@ -1,6 +1,28 @@
 import { createContext, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { applyLearnProposal, dismissLearnProposal, fetchLearnProposals, fetchLearnState, type LearnProposal, type LearnState, setLearn as putLearn } from "../api/learn";
-import { inBulk, isOpenProposal, type LearnBulk, learnPassRunning, learnProposalsEventItems, mergeProposals, newlyAppliedShortcut, nextStaleIn } from "../components/chat/learnState";
+import {
+  applyLearnProposal,
+  dismissLearnProposal,
+  fetchLearnPasses,
+  fetchLearnProposals,
+  fetchLearnState,
+  type LearnPass,
+  type LearnProposal,
+  type LearnState,
+  learnTurn as postLearnTurn,
+  setLearn as putLearn,
+} from "../api/learn";
+import {
+  inBulk,
+  isOpenProposal,
+  type LearnBulk,
+  learnPassesByMessage,
+  learnPassRunning,
+  learnProposalsEventItems,
+  mergeLearnPasses,
+  mergeProposals,
+  newlyAppliedShortcut,
+  nextStaleIn,
+} from "../components/chat/learnState";
 import type { AgentStatusData, WSEvent } from "../types";
 import { logErr } from "../utils/log";
 import type { ChatEventListener } from "./useChatStateStore";
@@ -36,6 +58,22 @@ export interface LearnView {
   dismissAll: () => Promise<void>;
   /** Bumped when an applied proposal added a prompt or bash shortcut. */
   shortcutsVersion: number;
+  /** The channel's learn passes, one per reviewed turn, newest first. */
+  passes: LearnPass[];
+  /** Each reviewed turn's newest pass, by the turn's last bot message. */
+  passByMessage: ReadonlyMap<string, LearnPass>;
+  /** The turn a turn's Learn action asked for, for the Learn pane to bring
+   * its proposals into view; seq tells a second ask for the same turn. */
+  focus: { messageId: string; seq: number } | null;
+  /** Shows a turn's proposals in the Learn view. */
+  show: (messageId: string) => void;
+  /** Learns from a turn (a pass of its own, whatever the Learn switch
+   * says), then shows it in the Learn view. */
+  learnTurn: (messageId: string) => Promise<void>;
+  /** Turns with a learnTurn request in flight. */
+  turnBusy: ReadonlySet<string>;
+  /** A learnTurn request that failed, by turn, until its next try. */
+  turnErrors: ReadonlyMap<string, string>;
 }
 
 // How long to wait before fetching again after a failure, doubling up to
@@ -127,6 +165,7 @@ export function useLearn(
   subscribeChatEvents?: (listener: ChatEventListener) => () => void,
   subscribeChannelEvents?: (channelId: string, listener: ChatEventListener) => () => void,
   wsOpens = 0,
+  onShow?: () => void,
 ): LearnView {
   const [loaded, setLoaded] = useState(false);
   const [available, setAvailable] = useState(false);
@@ -155,6 +194,10 @@ export function useLearn(
     };
   }, []);
   const [shortcutsVersion, setShortcutsVersion] = useState(0);
+  const [passes, setPasses] = useState<LearnPass[]>([]);
+  const mergePasses = useCallback((incoming: LearnPass[]) => setPasses((cur) => mergeLearnPasses(cur, incoming)), []);
+  const [focus, setFocus] = useState<LearnView["focus"]>(null);
+  const seqRef = useRef(0);
   // Folds proposals into the list; noteApplied: an applied shortcut among
   // them makes the pickers fetch theirs again.
   const merge = useCallback((incoming: LearnProposal[], noteApplied = true) => {
@@ -194,11 +237,13 @@ export function useLearn(
       "fetching learn proposals",
       (list) => merge(list, isReconnect),
     );
+    const cancelPasses = fetchWithRetry(() => fetchLearnPasses(channelId), "fetching learn passes", mergePasses);
     return () => {
       cancelState();
       cancelProposals();
+      cancelPasses();
     };
-  }, [channelId, wsOpens, merge]);
+  }, [channelId, wsOpens, merge, mergePasses]);
 
   useEffect(() => {
     if (!subscribeChatEvents) return;
@@ -218,10 +263,13 @@ export function useLearn(
         case "learn.proposal_updated":
           merge([event.data as LearnProposal]);
           break;
+        case "learn.pass":
+          mergePasses([event.data as LearnPass]);
+          break;
         default:
       }
     });
-  }, [channelId, subscribeChatEvents, merge]);
+  }, [channelId, subscribeChatEvents, merge, mergePasses]);
 
   useEffect(() => {
     if (!learnChannelId || !subscribeChannelEvents) return;
@@ -281,6 +329,39 @@ export function useLearn(
     [settle],
   );
   const applyAll = useCallback(() => bulkAll("apply"), [bulkAll]);
+
+  const show = useCallback(
+    (messageId: string) => {
+      seqRef.current += 1;
+      setFocus({ messageId, seq: seqRef.current });
+      onShow?.();
+    },
+    [onShow],
+  );
+  const passByMessage = useMemo(() => learnPassesByMessage(passes), [passes]);
+
+  const [turnBusy, setTurnBusy] = useState<ReadonlySet<string>>(new Set());
+  const [turnErrors, setTurnErrors] = useState<ReadonlyMap<string, string>>(new Map());
+  const learnTurn = useCallback(
+    async (messageId: string) => {
+      setTurnBusy((cur) => new Set(cur).add(messageId));
+      setTurnErrors((cur) => withoutTurn(cur, messageId));
+      show(messageId);
+      try {
+        mergePasses([await postLearnTurn(channelId, messageId)]);
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        setTurnErrors((cur) => new Map(cur).set(messageId, msg));
+      } finally {
+        setTurnBusy((cur) => {
+          const next = new Set(cur);
+          next.delete(messageId);
+          return next;
+        });
+      }
+    },
+    [channelId, mergePasses, show],
+  );
   const dismissAll = useCallback(() => bulkAll("dismiss"), [bulkAll]);
 
   // A proposal stuck applying opens again once it's stale: render again
@@ -315,9 +396,48 @@ export function useLearn(
       applyAll,
       dismissAll,
       shortcutsVersion,
+      passes,
+      passByMessage,
+      focus,
+      show,
+      learnTurn,
+      turnBusy,
+      turnErrors,
     }),
-    [loaded, available, learn, defaultLearn, setLearn, learnChannelId, running, proposals, open, busy, errors, bulk, apply, dismiss, applyAll, dismissAll, shortcutsVersion],
+    [
+      loaded,
+      available,
+      learn,
+      defaultLearn,
+      setLearn,
+      learnChannelId,
+      running,
+      proposals,
+      open,
+      busy,
+      errors,
+      bulk,
+      apply,
+      dismiss,
+      applyAll,
+      dismissAll,
+      shortcutsVersion,
+      passes,
+      passByMessage,
+      focus,
+      show,
+      learnTurn,
+      turnBusy,
+      turnErrors,
+    ],
   );
+}
+
+function withoutTurn(errors: ReadonlyMap<string, string>, messageId: string): ReadonlyMap<string, string> {
+  if (!errors.has(messageId)) return errors;
+  const next = new Map(errors);
+  next.delete(messageId);
+  return next;
 }
 
 function withError(errors: ReadonlyMap<number, string>, id: number, error: string | undefined): ReadonlyMap<number, string> {

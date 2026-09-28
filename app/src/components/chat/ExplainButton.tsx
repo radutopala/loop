@@ -6,9 +6,9 @@ import { ExplainIcon } from "./ExplainIcon";
 import { explainAction, explainActionLabel } from "./explainState";
 
 /**
- * The Explain action on the bot bubble that ends a turn: it explains the
- * turn, or, once explained (or while being explained), shows it in the
- * Explain pane. Re-explaining is the pane's.
+ * The Explain action at the end of a turn, below its last bot message: it
+ * explains the turn, or, once explained (or while being explained), shows it
+ * in the Explain view. Re-explaining is the Explain pane's.
  */
 export function ExplainButton({ messageId }: { messageId: string }) {
   const { colors } = useTheme();
@@ -24,7 +24,7 @@ export function ExplainButton({ messageId }: { messageId: string }) {
     ? `Explaining failed: ${error}\nClick to try again.`
     : action === "explain"
       ? "Explain this turn: a hidden forked session writes up what changed, the commands, decisions, risks and how to verify it."
-      : "Show the explanation in the Explain pane";
+      : "Show the explanation in the Explain view";
   const onClick = () => {
     if (action === "explain" || error) void view.explainTurn(messageId);
     else view.show(messageId);
@@ -42,16 +42,16 @@ export function ExplainButton({ messageId }: { messageId: string }) {
         display: "inline-flex",
         alignItems: "center",
         gap: 4,
-        marginLeft: 6,
-        padding: "0 6px",
-        height: 16,
+        padding: "0 8px",
+        height: 20,
+        marginTop: 6,
         background: "transparent",
         border: `1px solid ${color}`,
         borderRadius: 8,
         color,
         cursor: "pointer",
         fontFamily: fonts.mono,
-        fontSize: 10,
+        fontSize: 11,
         lineHeight: 1,
       }}
     >
@@ -61,7 +61,8 @@ export function ExplainButton({ messageId }: { messageId: string }) {
   );
 }
 
-function Spinner() {
+/** The turn actions' spinner, while their run is queued or running. */
+export function Spinner() {
   return (
     <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" aria-hidden="true">
       <path d="M12 3a9 9 0 1 0 9 9">

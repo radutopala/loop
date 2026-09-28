@@ -135,15 +135,26 @@ func (s *OrchestratorSuite) TestMaybeLearnSkips() {
 		}},
 		{"learn pass running", &db.Channel{ChannelID: "ch1", DirPath: "/project", Platform: types.PlatformLocal}, learnOn, func() {
 			s.store.On("GetHiddenThread", s.ctx, "ch1", db.ChannelKindLearn).Return(&db.Channel{ChannelID: "learn-1", Name: "learn: "}, nil)
+			s.store.On("LastBotMessage", s.ctx, "ch1", "u1").Return(nil, nil)
 			s.orch.activeRuns.Store("learn-1", context.CancelFunc(func() {}))
 		}},
 		{"fork error", &db.Channel{ChannelID: "ch1", DirPath: "/project", Platform: types.PlatformLocal}, learnOn, func() {
 			s.store.On("GetHiddenThread", s.ctx, "ch1", db.ChannelKindLearn).Return(&db.Channel{ChannelID: "learn-1", Name: "learn: "}, nil)
+			s.store.On("LastBotMessage", s.ctx, "ch1", "u1").Return(&db.Message{MsgID: "b1"}, nil)
+			s.store.On("InsertLearnPass", s.ctx, mock.Anything).Return(&db.LearnPass{ID: 4}, nil)
 			s.store.On("MarkSessionForkPending", s.ctx, "learn-1", "sess-1").Return(false, errors.New("db down"))
+			s.store.On("UpdateLearnPass", s.ctx, int64(4), db.LearnPassFailed, "db down").Return(nil)
 		}},
 		{"learn thread deleted meanwhile", &db.Channel{ChannelID: "ch1", DirPath: "/project", Platform: types.PlatformLocal}, learnOn, func() {
 			s.store.On("GetHiddenThread", s.ctx, "ch1", db.ChannelKindLearn).Return(&db.Channel{ChannelID: "learn-1", Name: "learn: "}, nil)
+			s.store.On("LastBotMessage", s.ctx, "ch1", "u1").Return(nil, errors.New("db down"))
 			s.store.On("MarkSessionForkPending", s.ctx, "learn-1", "sess-1").Return(false, nil)
+		}},
+		{"recording the pass fails", &db.Channel{ChannelID: "ch1", DirPath: "/project", Platform: types.PlatformLocal}, learnOn, func() {
+			s.store.On("GetHiddenThread", s.ctx, "ch1", db.ChannelKindLearn).Return(&db.Channel{ChannelID: "learn-1", Name: "learn: "}, nil)
+			s.store.On("LastBotMessage", s.ctx, "ch1", "u1").Return(&db.Message{MsgID: "b1"}, nil)
+			s.store.On("InsertLearnPass", s.ctx, mock.Anything).Return(nil, errors.New("db down"))
+			s.store.On("MarkSessionForkPending", s.ctx, "learn-1", "sess-1").Return(false, errors.New("db down"))
 		}},
 	}
 	for _, tc := range tests {
@@ -153,7 +164,7 @@ func (s *OrchestratorSuite) TestMaybeLearnSkips() {
 			tc.setup()
 			// Unless the case reloads it differently, ch is unchanged.
 			s.store.On("GetChannel", s.ctx, tc.ch.ChannelID).Return(tc.ch, nil).Maybe()
-			s.orch.maybeLearn(s.ctx, tc.ch, &bot.IncomingMessage{Content: "hi"}, tc.resp)
+			s.orch.maybeLearn(s.ctx, tc.ch, &bot.IncomingMessage{MessageID: "u1", Content: "hi"}, tc.resp)
 			s.store.AssertExpectations(s.T())
 			// Only the busy thread keeps the run, to review it next.
 			_, held := s.orch.learnSlots["learn-1"]
@@ -173,9 +184,17 @@ func (s *OrchestratorSuite) TestMaybeLearnStarts() {
 	eb := new(MockEventBroadcaster)
 	eb.On("BroadcastMessageCreated", mock.Anything, mock.Anything).Return()
 	eb.On("BroadcastLearnStarted", "ch1", mock.Anything).Return()
+	eb.On("BroadcastLearnPass", mock.Anything).Return()
 	s.orch.SetEventBroadcaster(eb)
 
 	ch := &db.Channel{ChannelID: "ch1", GuildID: "g1", Name: "api", DirPath: "/project", Platform: types.PlatformLocal}
+	s.store.On("LastBotMessage", s.ctx, "ch1", "u1").Return(&db.Message{MsgID: "b1"}, nil)
+	var recorded *db.LearnPass
+	row := &db.LearnPass{ID: 4, ChannelID: "ch1", MessageID: "b1", Status: db.LearnPassQueued}
+	s.store.On("InsertLearnPass", s.ctx, mock.MatchedBy(func(p *db.LearnPass) bool {
+		recorded = p
+		return true
+	})).Return(row, nil)
 	var created *db.Channel
 	s.store.On("GetHiddenThread", s.ctx, "ch1", db.ChannelKindLearn).Return(nil, nil)
 	s.store.On("InsertHiddenThread", s.ctx, mock.MatchedBy(func(l *db.Channel) bool {
@@ -194,7 +213,7 @@ func (s *OrchestratorSuite) TestMaybeLearnStarts() {
 		return !m.IsBot
 	})).Return(nil)
 
-	s.orch.maybeLearn(s.ctx, ch, &bot.IncomingMessage{Content: "fix the tests"}, &agent.AgentResponse{SessionID: "sess-1", NumTurns: 2})
+	s.orch.maybeLearn(s.ctx, ch, &bot.IncomingMessage{MessageID: "u1", Content: "fix the tests"}, &agent.AgentResponse{SessionID: "sess-1", NumTurns: 2})
 
 	require.NotNil(s.T(), created)
 	require.Equal(s.T(), "ch1", created.ParentID)
@@ -210,6 +229,9 @@ func (s *OrchestratorSuite) TestMaybeLearnStarts() {
 	require.Equal(s.T(), learnAuthorID, trigger.AuthorID)
 	require.Equal(s.T(), learnAuthorName, trigger.AuthorName)
 	require.Equal(s.T(), learn.TriggerMessage("api", "fix the tests"), trigger.Content)
+	require.Equal(s.T(), &db.LearnPass{ChannelID: "ch1", MessageID: "b1", LearnChannelID: created.ChannelID, TriggerMsgID: trigger.MsgID}, recorded)
+	require.NotEmpty(s.T(), trigger.MsgID)
+	eb.AssertCalled(s.T(), "BroadcastLearnPass", row)
 	require.Equal(s.T(), 1, drains)
 	s.store.AssertExpectations(s.T())
 	eb.AssertCalled(s.T(), "BroadcastMessageCreated", created.ChannelID, mock.MatchedBy(func(d events.MessageEventData) bool {
@@ -225,9 +247,15 @@ func (s *OrchestratorSuite) TestLearnQueue() {
 
 	s.Run("later runs fold into the newest while a pass is queued", func() {
 		s.SetupTest()
-		require.False(s.T(), s.orch.queueLearn("learn-1", p1))
-		require.True(s.T(), s.orch.queueLearn("learn-1", p2))
-		require.True(s.T(), s.orch.queueLearn("learn-1", p3))
+		queued, replaced := s.orch.queueLearn("learn-1", p1)
+		require.False(s.T(), queued)
+		require.Nil(s.T(), replaced)
+		queued, replaced = s.orch.queueLearn("learn-1", p2)
+		require.True(s.T(), queued)
+		require.Nil(s.T(), replaced)
+		queued, replaced = s.orch.queueLearn("learn-1", p3)
+		require.True(s.T(), queued)
+		require.Same(s.T(), p2, replaced)
 		require.True(s.T(), s.orch.learnSlots["learn-1"].triggered)
 		require.Same(s.T(), p3, s.orch.learnSlots["learn-1"].next)
 	})
@@ -235,7 +263,9 @@ func (s *OrchestratorSuite) TestLearnQueue() {
 	s.Run("a user's run in the learn thread holds the pass back", func() {
 		s.SetupTest()
 		s.orch.activeRuns.Store("learn-1", context.CancelFunc(func() {}))
-		require.True(s.T(), s.orch.queueLearn("learn-1", p1))
+		queued, replaced := s.orch.queueLearn("learn-1", p1)
+		require.True(s.T(), queued)
+		require.Nil(s.T(), replaced)
 		require.False(s.T(), s.orch.learnSlots["learn-1"].triggered)
 		require.Same(s.T(), p1, s.orch.learnSlots["learn-1"].next)
 	})
@@ -243,10 +273,94 @@ func (s *OrchestratorSuite) TestLearnQueue() {
 	s.Run("a trigger that never ran is given up after learnTriggerLost", func() {
 		s.SetupTest()
 		now := s.orch.timeNow()
-		s.orch.learnSlots = map[string]*learnSlot{"learn-1": {triggered: true, triggeredAt: now.Add(-learnTriggerLost - time.Second)}}
-		require.False(s.T(), s.orch.queueLearn("learn-1", p1))
+		s.orch.learnSlots = map[string]*learnSlot{"learn-1": {triggered: true, triggeredAt: now.Add(-learnTriggerLost - time.Second), next: p2}}
+		queued, replaced := s.orch.queueLearn("learn-1", p1)
+		require.False(s.T(), queued)
+		require.Same(s.T(), p2, replaced, "the pass waiting behind the lost one is replaced too")
 		require.Nil(s.T(), s.orch.learnSlots["learn-1"].next)
 	})
+}
+
+// TestMaybeLearnSupersedesWaitingPass covers a run finishing while a pass
+// waits for the busy learn thread: the new pass takes its place, and the
+// waiting one's row is marked superseded.
+func (s *OrchestratorSuite) TestMaybeLearnSupersedesWaitingPass() {
+	s.setupLearnOn()
+	eb := new(MockEventBroadcaster)
+	eb.On("BroadcastLearnPass", mock.Anything).Return()
+	s.orch.SetEventBroadcaster(eb)
+	waiting := &db.LearnPass{ID: 3, ChannelID: "ch1", MessageID: "b0", Status: db.LearnPassQueued}
+	s.orch.learnSlots = map[string]*learnSlot{"learn-1": {triggered: true, triggeredAt: s.orch.timeNow(), next: &learnPass{row: waiting}}}
+
+	ch := &db.Channel{ChannelID: "ch1", DirPath: "/project", Platform: types.PlatformLocal}
+	s.store.On("GetChannel", s.ctx, "ch1").Return(ch, nil)
+	s.store.On("GetHiddenThread", s.ctx, "ch1", db.ChannelKindLearn).Return(&db.Channel{ChannelID: "learn-1", Name: "learn: "}, nil)
+	s.store.On("LastBotMessage", s.ctx, "ch1", "u1").Return(&db.Message{MsgID: "b1"}, nil)
+	row := &db.LearnPass{ID: 4, ChannelID: "ch1", MessageID: "b1", Status: db.LearnPassQueued}
+	s.store.On("InsertLearnPass", s.ctx, mock.Anything).Return(row, nil)
+	s.store.On("UpdateLearnPass", s.ctx, int64(3), db.LearnPassSuperseded, "").Return(nil)
+
+	s.orch.maybeLearn(s.ctx, ch, &bot.IncomingMessage{MessageID: "u1"}, &agent.AgentResponse{SessionID: "sess-1", NumTurns: 5})
+
+	s.store.AssertExpectations(s.T())
+	require.Equal(s.T(), db.LearnPassSuperseded, waiting.Status)
+	eb.AssertCalled(s.T(), "BroadcastLearnPass", waiting)
+	eb.AssertCalled(s.T(), "BroadcastLearnPass", row)
+	next := s.orch.learnSlots["learn-1"].next
+	require.Same(s.T(), row, next.row)
+	require.Equal(s.T(), "b1", next.messageID)
+}
+
+// TestLearnPassRun covers a learn pass's bookkeeping: its row is marked
+// running when its run starts, then done or failed.
+func (s *OrchestratorSuite) TestLearnPassRun() {
+	msg := &bot.IncomingMessage{ChannelID: "learn-1", MessageID: "x1", AuthorID: learnAuthorID}
+	tests := []struct {
+		name        string
+		msg         *bot.IncomingMessage
+		lookup      *db.LearnPass
+		lookupErr   error
+		updateErr   error
+		runErr      error
+		wantUpdates [][2]string // status, error
+	}{
+		{name: "not a learn pass", msg: &bot.IncomingMessage{ChannelID: "learn-1", AuthorID: "radu"}},
+		{name: "pass not recorded", msg: msg},
+		{name: "lookup fails", msg: msg, lookupErr: errors.New("db down")},
+		{name: "done", msg: msg, lookup: &db.LearnPass{ID: 3},
+			wantUpdates: [][2]string{{db.LearnPassRunning, ""}, {db.LearnPassDone, ""}}},
+		{name: "run fails", msg: msg, lookup: &db.LearnPass{ID: 3}, runErr: errors.New("agent error: boom"),
+			wantUpdates: [][2]string{{db.LearnPassRunning, ""}, {db.LearnPassFailed, "agent error: boom"}}},
+		{name: "update fails", msg: msg, lookup: &db.LearnPass{ID: 3}, updateErr: errors.New("db down"),
+			wantUpdates: [][2]string{{db.LearnPassRunning, ""}, {db.LearnPassDone, ""}}},
+	}
+	for _, tc := range tests {
+		s.Run(tc.name, func() {
+			s.SetupTest()
+			eb := new(MockEventBroadcaster)
+			var broadcast []string
+			eb.On("BroadcastLearnPass", mock.Anything).Run(func(args mock.Arguments) {
+				broadcast = append(broadcast, args.Get(0).(*db.LearnPass).Status)
+			}).Return()
+			s.orch.SetEventBroadcaster(eb)
+			s.store.On("GetLearnPassByTrigger", s.ctx, "learn-1", "x1").Return(tc.lookup, tc.lookupErr)
+			var updates [][2]string
+			s.store.On("UpdateLearnPass", s.ctx, int64(3), mock.Anything, mock.Anything).Run(func(args mock.Arguments) {
+				updates = append(updates, [2]string{args.String(2), args.String(3)})
+			}).Return(tc.updateErr)
+
+			p := s.orch.learnPassStarted(s.ctx, tc.msg)
+			s.orch.learnPassDone(s.ctx, p, tc.runErr)
+
+			require.Equal(s.T(), tc.wantUpdates, updates)
+			if tc.updateErr != nil || tc.wantUpdates == nil {
+				require.Empty(s.T(), broadcast)
+				return
+			}
+			require.Equal(s.T(), []string{db.LearnPassRunning, tc.wantUpdates[1][0]}, broadcast)
+			require.Equal(s.T(), tc.wantUpdates[1][1], p.Error)
+		})
+	}
 }
 
 func (s *OrchestratorSuite) TestLearnRunDone() {
@@ -562,4 +676,189 @@ func (s *OrchestratorSuite) TestPrepareAgentRequestLearnThreadNoParent() {
 			require.Nil(s.T(), req)
 		})
 	}
+}
+
+// TestLearnTurnRefusesOrReturnsExisting covers what LearnTurn does before
+// it queues anything: refuses what it can't learn from, or returns the pass
+// over the turn already queued or running.
+func (s *OrchestratorSuite) TestLearnTurnRefusesOrReturnsExisting() {
+	ch := &db.Channel{ChannelID: "ch1", Name: "api", Platform: types.PlatformLocal, SessionID: "sess-1"}
+	reply := &db.Message{MsgID: "b1", IsBot: true, TriggerMsgID: "u1", Content: "Fixed the tests."}
+	existing := &db.LearnPass{ID: 7, ChannelID: "ch1", MessageID: "b1", Status: db.LearnPassRunning}
+	dbErr := errors.New("db down")
+	turn := func() {
+		s.store.On("GetChatMessage", s.ctx, "ch1", "b1").Return(reply, nil)
+	}
+	fresh := func() {
+		turn()
+		s.store.On("ActiveLearnPass", s.ctx, "ch1", "b1").Return(nil, nil)
+		s.store.On("GetChatMessage", s.ctx, "ch1", "u1").Return(nil, nil)
+	}
+	tests := []struct {
+		name    string
+		ch      *db.Channel
+		setup   func()
+		wantErr error
+		want    *db.LearnPass
+	}{
+		{name: "slack channel", ch: &db.Channel{ChannelID: "ch1", Platform: types.PlatformSlack, SessionID: "s"}, wantErr: learn.ErrUnavailable},
+		{name: "task thread", ch: &db.Channel{ChannelID: "ch1", Platform: types.PlatformLocal, TaskID: 3, SessionID: "s"}, wantErr: learn.ErrUnavailable},
+		{name: "learn thread", ch: &db.Channel{ChannelID: "ch1", Platform: types.PlatformLocal, Kind: db.ChannelKindLearn, SessionID: "s"}, wantErr: learn.ErrUnavailable},
+		{name: "message lookup fails", ch: ch, setup: func() {
+			s.store.On("GetChatMessage", s.ctx, "ch1", "b1").Return(nil, dbErr)
+		}, wantErr: dbErr},
+		{name: "no such message", ch: ch, setup: func() {
+			s.store.On("GetChatMessage", s.ctx, "ch1", "b1").Return(nil, nil)
+		}, wantErr: learn.ErrNotATurn},
+		{name: "a user message", ch: ch, setup: func() {
+			s.store.On("GetChatMessage", s.ctx, "ch1", "b1").Return(&db.Message{MsgID: "b1"}, nil)
+		}, wantErr: learn.ErrNotATurn},
+		{name: "a notice outside a turn", ch: ch, setup: func() {
+			s.store.On("GetChatMessage", s.ctx, "ch1", "b1").Return(&db.Message{MsgID: "b1", IsBot: true}, nil)
+		}, wantErr: learn.ErrNotATurn},
+		{name: "no session", ch: &db.Channel{ChannelID: "ch1", Platform: types.PlatformLocal}, setup: turn, wantErr: learn.ErrNoSession},
+		{name: "existing lookup fails", ch: ch, setup: func() {
+			turn()
+			s.store.On("ActiveLearnPass", s.ctx, "ch1", "b1").Return(nil, dbErr)
+		}, wantErr: dbErr},
+		{name: "already queued or running", ch: ch, setup: func() {
+			turn()
+			s.store.On("ActiveLearnPass", s.ctx, "ch1", "b1").Return(existing, nil)
+		}, want: existing},
+		{name: "learn thread fails", ch: ch, setup: func() {
+			fresh()
+			s.store.On("GetHiddenThread", s.ctx, "ch1", db.ChannelKindLearn).Return(nil, dbErr)
+		}, wantErr: dbErr},
+		{name: "channel deleted before its learn thread was made", ch: ch, setup: func() {
+			fresh()
+			s.store.On("GetHiddenThread", s.ctx, "ch1", db.ChannelKindLearn).Return(nil, nil)
+			s.store.On("InsertHiddenThread", s.ctx, mock.Anything).Return(db.ErrParentGone)
+		}, wantErr: db.ErrParentGone},
+		{name: "recording the pass fails", ch: ch, setup: func() {
+			fresh()
+			s.store.On("GetHiddenThread", s.ctx, "ch1", db.ChannelKindLearn).Return(&db.Channel{ChannelID: "learn-1", Name: "learn: api"}, nil)
+			s.store.On("InsertLearnPass", s.ctx, mock.Anything).Return(nil, dbErr)
+		}, wantErr: dbErr},
+	}
+	for _, tc := range tests {
+		s.Run(tc.name, func() {
+			s.SetupTest()
+			eb := new(MockEventBroadcaster)
+			s.orch.SetEventBroadcaster(eb)
+			if tc.setup != nil {
+				tc.setup()
+			}
+
+			p, err := s.orch.LearnTurn(s.ctx, tc.ch, "b1")
+
+			if tc.wantErr != nil {
+				require.ErrorIs(s.T(), err, tc.wantErr)
+				require.Nil(s.T(), p)
+			} else {
+				require.NoError(s.T(), err)
+				require.Same(s.T(), tc.want, p)
+			}
+			s.store.AssertExpectations(s.T())
+			eb.AssertNotCalled(s.T(), "BroadcastLearnPass", mock.Anything)
+			require.Empty(s.T(), s.orch.learnSlots)
+		})
+	}
+}
+
+// TestLearnTurnStarts covers a pass the user asked for with learning off:
+// it's recorded against the turn, forks the channel's current session and
+// is handed the turn's trigger message, which wakes the learn thread's
+// queue.
+func (s *OrchestratorSuite) TestLearnTurnStarts() {
+	s.orch.cfg.Store(&config.Config{})
+	var drains int
+	s.orch.drainSpawn = func(func()) { drains++ }
+	eb := new(MockEventBroadcaster)
+	eb.On("BroadcastMessageCreated", mock.Anything, mock.Anything).Return()
+	eb.On("BroadcastLearnStarted", "ch1", "learn-1").Return()
+	eb.On("BroadcastLearnPass", mock.Anything).Return()
+	s.orch.SetEventBroadcaster(eb)
+
+	ch := &db.Channel{ChannelID: "ch1", GuildID: "g1", Name: "api", Platform: types.PlatformLocal, SessionID: "sess-9", LearnOverride: db.LearnOff}
+	s.store.On("GetChatMessage", s.ctx, "ch1", "b1").Return(&db.Message{MsgID: "b1", IsBot: true, TriggerMsgID: "u1", Content: "Fixed the tests."}, nil)
+	s.store.On("GetChatMessage", s.ctx, "ch1", "u1").Return(&db.Message{Content: "fix the tests"}, nil)
+	s.store.On("ActiveLearnPass", s.ctx, "ch1", "b1").Return(nil, nil)
+	s.store.On("GetHiddenThread", s.ctx, "ch1", db.ChannelKindLearn).Return(&db.Channel{ChannelID: "learn-1", GuildID: "g1", Name: "learn: api", Kind: db.ChannelKindLearn}, nil)
+	var recorded *db.LearnPass
+	row := &db.LearnPass{ID: 4, ChannelID: "ch1", MessageID: "b1", LearnChannelID: "learn-1", Status: db.LearnPassQueued}
+	s.store.On("InsertLearnPass", s.ctx, mock.MatchedBy(func(p *db.LearnPass) bool {
+		recorded = p
+		return true
+	})).Return(row, nil)
+	s.store.On("MarkSessionForkPending", s.ctx, "learn-1", "sess-9").Return(true, nil)
+	s.store.On("IsChannelActive", s.ctx, "learn-1").Return(true, nil)
+	s.store.On("GetChannel", s.ctx, "learn-1").Return(&db.Channel{ID: 9, ChannelID: "learn-1", Platform: types.PlatformLocal, Kind: db.ChannelKindLearn}, nil)
+	var trigger *db.Message
+	s.store.On("InsertMessage", s.ctx, mock.MatchedBy(func(m *db.Message) bool {
+		trigger = m
+		return !m.IsBot
+	})).Return(nil)
+
+	p, err := s.orch.LearnTurn(s.ctx, ch, "b1")
+
+	require.NoError(s.T(), err)
+	require.Same(s.T(), row, p)
+	require.NotNil(s.T(), trigger)
+	require.Equal(s.T(), "learn-1", trigger.ChannelID)
+	require.Equal(s.T(), learnAuthorID, trigger.AuthorID)
+	require.Equal(s.T(), learn.TurnTriggerMessage("api", "fix the tests", "Fixed the tests."), trigger.Content)
+	require.True(s.T(), learn.IsTrigger(trigger.Content))
+	require.Equal(s.T(), &db.LearnPass{ChannelID: "ch1", MessageID: "b1", LearnChannelID: "learn-1", TriggerMsgID: trigger.MsgID}, recorded)
+	require.Equal(s.T(), 1, drains)
+	s.store.AssertExpectations(s.T())
+	eb.AssertCalled(s.T(), "BroadcastLearnPass", row)
+	eb.AssertCalled(s.T(), "BroadcastLearnStarted", "ch1", "learn-1")
+	require.True(s.T(), s.orch.learnSlots["learn-1"].triggered)
+}
+
+// TestLearnTurnQueuesBehindRunningPass covers a pass the user asked for
+// while the learn thread is busy: it waits its turn in place of the waiting
+// pass, which is marked superseded, and starts with the turn's trigger
+// message once the thread is free. The turn's prompt failing to load
+// leaves it out.
+func (s *OrchestratorSuite) TestLearnTurnQueuesBehindRunningPass() {
+	s.orch.drainSpawn = func(func()) {}
+	eb := new(MockEventBroadcaster)
+	eb.On("BroadcastLearnPass", mock.Anything).Return()
+	eb.On("BroadcastMessageCreated", mock.Anything, mock.Anything).Return()
+	eb.On("BroadcastLearnStarted", "ch1", "learn-1").Return()
+	s.orch.SetEventBroadcaster(eb)
+	waiting := &db.LearnPass{ID: 3, ChannelID: "ch1", MessageID: "b0", Status: db.LearnPassQueued}
+	s.orch.learnSlots = map[string]*learnSlot{"learn-1": {triggered: true, triggeredAt: s.orch.timeNow(), next: &learnPass{row: waiting}}}
+
+	ch := &db.Channel{ChannelID: "ch1", Name: "api", Platform: types.PlatformLocal, SessionID: "sess-9"}
+	s.store.On("GetChatMessage", s.ctx, "ch1", "b1").Return(&db.Message{MsgID: "b1", IsBot: true, TriggerMsgID: "u1", Content: "Done."}, nil)
+	s.store.On("GetChatMessage", s.ctx, "ch1", "u1").Return(nil, errors.New("db down"))
+	s.store.On("ActiveLearnPass", s.ctx, "ch1", "b1").Return(nil, nil)
+	s.store.On("GetHiddenThread", s.ctx, "ch1", db.ChannelKindLearn).Return(&db.Channel{ChannelID: "learn-1", Name: "learn: api"}, nil)
+	row := &db.LearnPass{ID: 4, ChannelID: "ch1", MessageID: "b1", Status: db.LearnPassQueued}
+	s.store.On("InsertLearnPass", s.ctx, mock.Anything).Return(row, nil)
+	s.store.On("UpdateLearnPass", s.ctx, int64(3), db.LearnPassSuperseded, "").Return(nil)
+
+	p, err := s.orch.LearnTurn(s.ctx, ch, "b1")
+
+	require.NoError(s.T(), err)
+	require.Same(s.T(), row, p)
+	require.Equal(s.T(), db.LearnPassSuperseded, waiting.Status)
+	eb.AssertCalled(s.T(), "BroadcastLearnPass", waiting)
+	eb.AssertCalled(s.T(), "BroadcastLearnPass", row)
+	next := s.orch.learnSlots["learn-1"].next
+	require.Same(s.T(), row, next.row)
+	s.store.AssertNotCalled(s.T(), "MarkSessionForkPending", mock.Anything, mock.Anything, mock.Anything)
+
+	s.store.On("GetChannel", s.ctx, "learn-1").Return(&db.Channel{ID: 9, ChannelID: "learn-1", Platform: types.PlatformLocal, Kind: db.ChannelKindLearn}, nil)
+	s.store.On("MarkSessionForkPending", s.ctx, "learn-1", "sess-9").Return(true, nil)
+	s.store.On("IsChannelActive", s.ctx, "learn-1").Return(true, nil)
+	s.store.On("InsertMessage", s.ctx, mock.MatchedBy(func(m *db.Message) bool {
+		return m.AuthorID == learnAuthorID && m.Content == learn.TurnTriggerMessage("api", "", "Done.")
+	})).Return(nil)
+
+	s.orch.learnRunDone(s.ctx, "learn-1", learnAuthorID)
+
+	s.store.AssertExpectations(s.T())
 }

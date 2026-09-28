@@ -68,6 +68,7 @@ func registerBackendSteps(ctx *godog.ScenarioContext, tc *TestContext) {
 	ctx.Step(`^the learn pass withdraws the proposal "([^"]*)" because "([^"]*)"$`, tc.withdrawLearnProposal)
 	ctx.Step(`^the current channel has a finished turn "([^"]*)" replying "([^"]*)"$`, tc.seedExplainTurn)
 	ctx.Step(`^the turn has an explanation:$`, tc.seedExplanation)
+	ctx.Step(`^the turn has a "([^"]*)" learn pass$`, tc.seedLearnPass)
 
 	// Ticket setup steps
 	ctx.Step(`^I create a ticket "([^"]*)" with type "([^"]*)" via API$`, tc.createTicketViaAPI)
@@ -1340,6 +1341,40 @@ func (tc *TestContext) seedExplanation(doc *godog.DocString) error {
 	}
 	if err := store.UpdateExplanation(ctx, e.ID, db.ExplainDone, doc.Content, ""); err != nil {
 		return fmt.Errorf("finishing explanation: %w", err)
+	}
+	return nil
+}
+
+// seedLearnPass records a learn pass over the seeded turn in the channel's
+// learn thread, with the given status, as maybeLearn and the pass's run
+// leave it. Proposals the learn thread files meanwhile (running or done)
+// belong to it. Nothing in the API writes one without running an agent, so
+// it goes straight into the daemon's database.
+func (tc *TestContext) seedLearnPass(status string) error {
+	if tc.ExplainMsgID == "" || tc.LearnChannelID == "" {
+		return fmt.Errorf("no turn or learn thread; use 'the current channel has a finished turn' and 'the current channel has a learn thread' first")
+	}
+	sqlDB, err := openDaemonDB()
+	if err != nil {
+		return err
+	}
+	defer sqlDB.Close()
+	store := db.NewSQLiteStoreFromDB(sqlDB)
+	ctx := context.Background()
+	p, err := store.InsertLearnPass(ctx, &db.LearnPass{
+		ChannelID:      tc.ChannelID,
+		MessageID:      tc.ExplainMsgID,
+		LearnChannelID: tc.LearnChannelID,
+		TriggerMsgID:   "learn-bdd-trigger-" + strconv.FormatInt(time.Now().UnixNano(), 36),
+	})
+	if err != nil {
+		return fmt.Errorf("inserting learn pass: %w", err)
+	}
+	if status == p.Status {
+		return nil
+	}
+	if err := store.UpdateLearnPass(ctx, p.ID, status, ""); err != nil {
+		return fmt.Errorf("setting learn pass status: %w", err)
 	}
 	return nil
 }

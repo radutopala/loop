@@ -174,6 +174,7 @@ func registerFrontendSteps(ctx *godog.ScenarioContext, tc *TestContext) {
 	ctx.Step(`^I wait for "([^"]*)" to be at most (\d+)px tall$`, tc.waitForElementMaxHeight)
 	ctx.Step(`^I click the last "([^"]*)"$`, tc.clickLast)
 	ctx.Step(`^the element "([^"]*)" should fit inside the window$`, tc.assertElementInsideWindow)
+	ctx.Step(`^the element "([^"]*)" should be below "([^"]*)"$`, tc.assertElementBelow)
 	ctx.Step(`^I click "([^"]*)" in the git panel$`, tc.clickInGitPanel)
 
 	// DOM interaction — text-based (scoped to a data-testid region)
@@ -3204,6 +3205,25 @@ func (tc *TestContext) assertElementInsideWindow(selector string) error {
 	}
 	if res != "ok" {
 		return fmt.Errorf("element %q: %s", selector, res)
+	}
+	return nil
+}
+
+// assertElementBelow checks the first element matching selector starts at or
+// below where the first one matching other ends.
+func (tc *TestContext) assertElementBelow(selector, other string) error {
+	js := fmt.Sprintf(`(() => {
+		const el = document.querySelector(%q), ref = document.querySelector(%q);
+		if (!el || !ref) return "not found: " + [!el && %q, !ref && %q].filter(Boolean).join(", ");
+		const a = el.getBoundingClientRect(), b = ref.getBoundingClientRect();
+		return a.top >= b.bottom - 1 ? "ok" : "top " + a.top + " above the other's bottom " + b.bottom;
+	})()`, selector, other, selector, other)
+	var res string
+	if err := chromedp.Run(tc.chromeTab.ctx, chromedp.Evaluate(js, &res)); err != nil {
+		return err
+	}
+	if res != "ok" {
+		return fmt.Errorf("element %q isn't below %q: %s", selector, other, res)
 	}
 	return nil
 }

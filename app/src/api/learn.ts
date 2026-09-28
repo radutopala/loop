@@ -50,8 +50,49 @@ export interface LearnProposal {
   status: LearnProposalStatus;
   error?: string;
   withdrawn_reason?: string;
+  /** The turn whose learn pass filed it: its last bot message's msg_id. */
+  message_id?: string;
   created_at: string;
   updated_at: string;
+}
+
+/** A learn pass over one chat turn, keyed by the turn's last bot message.
+ * "superseded": replaced before it started by the next turn's pass, which
+ * forks the newer session and so covers this turn too. */
+export interface LearnPass {
+  id: number;
+  channel_id: string;
+  message_id: string;
+  learn_channel_id: string;
+  status: "queued" | "running" | "done" | "failed" | "superseded";
+  error?: string;
+  created_at: string;
+  updated_at: string;
+  message_row_id?: number;
+}
+
+export async function fetchLearnPasses(channelId: string): Promise<LearnPass[]> {
+  const res = await fetch(`${getApiUrl()}/api/channels/${channelId}/learn/passes`);
+  if (!res.ok) throw new Error(`Failed to fetch learn passes: ${res.statusText}`);
+  const body = (await res.json()) as { passes: LearnPass[] };
+  return body.passes;
+}
+
+/**
+ * Learn from the turn that ended with messageId: its pass still queued or
+ * running comes back as it is, else a new one is queued.
+ */
+export async function learnTurn(channelId: string, messageId: string): Promise<LearnPass> {
+  const res = await fetch(`${getApiUrl()}/api/channels/${channelId}/learn/passes`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ message_id: messageId }),
+  });
+  if (!res.ok) {
+    const body = (await res.text().catch(() => "")).trim();
+    throw new Error(body || `Failed to learn from the turn: ${res.statusText}`);
+  }
+  return res.json();
 }
 
 export async function fetchLearnProposals(channelId: string): Promise<LearnProposal[]> {

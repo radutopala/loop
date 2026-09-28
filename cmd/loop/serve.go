@@ -791,6 +791,7 @@ func (a *app) serve() error {
 	apiSrv.SetIncomingMessageHandler(chatBot)
 	apiSrv.SetRunCanceller(orch)
 	apiSrv.SetExplainer(orch)
+	apiSrv.SetLearnTurner(orch)
 	apiSrv.SetPlanResolver(orch)
 	apiSrv.SetAskResolver(orch)
 	apiSrv.SetQueueResumer(orch)
@@ -850,6 +851,12 @@ func (a *app) serve() error {
 		logger.Error("failing interrupted explanations", "error", err)
 	} else if n > 0 {
 		logger.Warn("failed explanations interrupted by the prior daemon run", "count", n)
+	}
+	// Learn passes likewise.
+	if n, err := store.FailInterruptedLearnPasses(ctx); err != nil {
+		logger.Error("failing interrupted learn passes", "error", err)
+	} else if n > 0 {
+		logger.Warn("failed learn passes interrupted by the prior daemon run", "count", n)
 	}
 	if pending, err := store.ListPendingChannels(ctx); err != nil {
 		logger.Error("listing pending channels", "error", err)

@@ -9,7 +9,6 @@ export const DEFAULT_TILE_SIZES: Partial<Record<PanelType, { w: number; h: numbe
   memory: { w: 900, h: 900 },
   "docker-browser": { w: 700, h: 500 },
   "host-browser": { w: 700, h: 500 },
-  explain: { w: 600, h: 700 },
 };
 
 /** Find a position that doesn't overlap existing tiles. Tries the given position

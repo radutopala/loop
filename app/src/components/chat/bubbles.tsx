@@ -12,6 +12,7 @@ import { CopyButton } from "../shared/CopyButton";
 import { buildActivityStyle, buildMessageStyles, ChannelContext, FILE_PATH_TOOLS, renderInputWithLinks } from "./chatShared";
 import { DelayCountdown } from "./DelayCountdown";
 import { ExplainButton } from "./ExplainButton";
+import { LearnTurnButton } from "./LearnTurnButton";
 import { MarkdownContent } from "./markdown";
 import { formatMessageTimestamp } from "./timestamps";
 
@@ -209,12 +210,19 @@ export function MessageBubble({
             </svg>
             <span style={styles.time}>{time}</span>
             <MessageDbId id={message.id} channelId={message.channel_id} />
-            {turnEnd && <ExplainButton messageId={message.msg_id} />}
           </div>
         )}
         <div style={styles.content}>
           <MarkdownContent content={message.content} />
         </div>
+        {/* The turn's Explain and Learn actions, below its reply. They
+            carry the row's top margin, so it takes no room without them. */}
+        {turnEnd && !isUser && (
+          <div style={{ display: "flex", gap: 6 }}>
+            <ExplainButton messageId={message.msg_id} />
+            <LearnTurnButton messageId={message.msg_id} />
+          </div>
+        )}
         {isUser && (
           <div style={{ display: "flex", justifyContent: "flex-end", alignItems: "center", gap: 6, marginTop: 4 }}>
             {message.not_before ? <DelayCountdown notBefore={message.not_before} /> : null}

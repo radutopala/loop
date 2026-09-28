@@ -583,9 +583,15 @@ The pass may only look and propose: its built-in tools are only reading and sear
 
 Config kinds are written to the project's `.loop/config.json` with your comments kept; see [Configuration: Where Apply writes](configuration.md#where-learn-proposals-are-written).
 
+### Learn button
+
+Each pass reviews one turn: the turn whose run started it. That turn ends with a `Learn` button, next to its [Explain button](#explain-button) below its last bot message, that follows the pass: `Learn queued…` while it waits for the learn thread, `Learning…` while it runs, then `N proposals` (or `No proposals`) for what it filed, or `Learn failed` in red. It's lit in the accent color while the pass is queued or running, or any of its proposals waits on you (pending, failed, or stuck applying for over a minute). A click opens the Learn view on that turn: its proposals are scrolled into view and outlined for a few seconds.
+
+A turn no pass reviewed (Learn was off, or the run was too short) shows a dim `Learn` instead: a click learns from that turn, whatever the Learn switch says, and opens the Learn view on it. So does a turn whose pass a newer turn's replaced while it was still waiting (the newer pass forks the newer session, so it covers this turn too, but you can still ask for one of its own). The pass forks the channel's current session and is told which turn to review, so it needs the channel to have one. Once it's queued the button follows it as above. When the pass fails, or the request does (the error shows at the top of the Learn pane), the button says `Learn failed` in red and a click tries again.
+
 ### Learn label
 
-The chat pane shows a `learn` label for the selected channel at the right of its header: `learning…` while a pass runs (not while the learn thread answers you), `N proposals` while proposals wait on you (pending, failed, or stuck applying for over a minute), both lit in the accent color. Once the channel has a learn thread and nothing waits, the label stays dim; a channel that never had a pass shows none. A click opens the Learn view; switching channels or layout tabs, adding a layout tab, deleting the active one or resetting it closes it. So does anything that opens in the layout under it: a file link in the chat (the editor opens in the layout), a panel another view opens there, or a memory file opened from search.
+The chat pane shows a `learn` label for the selected channel at the right of its header, once the channel has a learn thread or proposals; a channel that never had a pass shows none. It only opens the view: what a pass is doing and what it found shows on its turn's [Learn button](#learn-button). A click opens the Learn view; switching channels or layout tabs, adding a layout tab, deleting the active one or resetting it closes it. So does anything that opens in the layout under it: a file link in the chat (the editor opens in the layout), a panel another view opens there, or a memory file opened from search.
 
 ### Learn view
 
@@ -601,7 +607,7 @@ The Learn pane's header matches a pane header:
   - **Apply** applies it. If it fails, the error shows under the card and the button becomes **Retry**. If the request itself fails (Loop can't be reached, say), that error shows under the card until the next try. A card's buttons are disabled while its apply or dismiss is in flight. Requests in flight and their errors outlive the view: close and reopen it and they're still there.
   - **Dismiss** drops it. Pending and failed proposals can be dismissed.
   - Applied and dismissed cards stay in the list, dimmed, with their status.
-  - **Withdrawn** cards too: a later pass may withdraw a pending or failed proposal its run shows is stale, or one a newer proposal replaces, and the card shows `withdrawn` and the pass's reason instead of its buttons. A withdrawn proposal doesn't count toward the label's `N proposals`. If a pass withdraws a card while your apply or dismiss is in flight, Loop refuses the request and `proposal is already withdrawn` shows under the card; if your request got there first, the withdrawal is refused instead, so a proposal being applied is never withdrawn.
+  - **Withdrawn** cards too: a later pass may withdraw a pending or failed proposal its run shows is stale, or one a newer proposal replaces, and the card shows `withdrawn` and the pass's reason instead of its buttons. A withdrawn proposal doesn't count as waiting on you. If a pass withdraws a card while your apply or dismiss is in flight, Loop refuses the request and `proposal is already withdrawn` shows under the card; if your request got there first, the withdrawal is refused instead, so a proposal being applied is never withdrawn.
   - A card stuck in `applying` for over a minute (its outcome was lost, say Loop stopped mid-apply) gets **Retry** and **Dismiss** back.
   - **Apply all** in the header applies every pending proposal one by one, skipping any applied, dismissed, withdrawn or in flight meanwhile. Failed ones are left for a manual Retry.
   - **Dismiss all** next to it dismisses every open proposal (pending, failed, or stuck applying) one by one, the same way, skipping withdrawn ones. It shows while any proposal is open; neither button can be pressed while either is going through the list. A request that fails shows under its card, as for a single Dismiss.
@@ -613,7 +619,7 @@ The Learn pane's header matches a pane header:
 
 ### Hidden thread
 
-Each channel has one learn thread, created on its first pass. It's left out of `GET /api/channels`, so it never shows in the sidebar, and it's deleted along with its channel or thread, which also cancels a pass still running or queued. It's named `learn: <channel>` and follows the channel's renames on the next pass. Each new pass forks the latest run's session again, so it doesn't carry over what you said in the learn thread before. Learn runs, a pass or a reply you asked the learn thread for, don't mark anything unread, post a desktop notification or bounce the dock (their `agent.status` events carry `trigger: "learn"` or `trigger: "learn-reply"`). Proposals show through the Learn label, and replies in the open Learn view, instead. Only a pass lights the label's `learning…`. If Loop's connection drops, the learn state and proposals are fetched again when it comes back, so a pass that ended or proposals filed meanwhile aren't missed.
+Each channel has one learn thread, created on its first pass. It's left out of `GET /api/channels`, so it never shows in the sidebar, and it's deleted along with its channel or thread, which also cancels a pass still running or queued. It's named `learn: <channel>` and follows the channel's renames on the next pass. Each new pass forks the latest run's session again, so it doesn't carry over what you said in the learn thread before. Learn runs, a pass or a reply you asked the learn thread for, don't mark anything unread, post a desktop notification or bounce the dock (their `agent.status` events carry `trigger: "learn"` or `trigger: "learn-reply"`). Proposals show on the turn's Learn button, and replies in the open Learn view, instead. If Loop's connection drops, the learn state, passes and proposals are fetched again when it comes back, so a pass that ended or proposals filed meanwhile aren't missed.
 
 ## Explain a turn
 
@@ -621,7 +627,7 @@ An **explanation** is a write-up of one chat turn for the engineer who has to re
 
 ### Explain button
 
-The last bot message of each finished turn gets an `Explain` button in its header (not while the turn is still running). A click queues an explanation and opens the Explain pane on it. Once there is one, the button shows its state (`Queued…`, `Explaining…`, `Explained` or `Explain failed`), and a click shows it in the Explain pane instead of explaining again. When the request itself fails, the button says `Explain failed` in red and a click tries again.
+Each finished turn ends with an `Explain` button, below its last bot message (not while the turn is still running). A click queues an explanation and opens the Explain view on it. Once there is one, the button shows its state (`Queued…`, `Explaining…`, `Explained` or `Explain failed`), and a click shows it in the Explain view instead of explaining again. When the request itself fails, the button says `Explain failed` in red and a click tries again.
 
 ### Explain switch
 
@@ -629,16 +635,18 @@ An `explain` switch sits in the composer next to the Learn switch. With it on, e
 
 The switch and the button only show in desktop app channels. Slack and Discord channels, task threads and hidden threads are never explained.
 
-### Explain pane
+### Explain view
 
-`Explain` in the add-panel menu adds the pane. The Explain button adds it beside the chat when the layout doesn't have it (on a canvas, as a tile beside the chat's). It lists the channel's explanations newest first, one card per turn:
+The Explain view is the [Learn view](#learn-view) with an Explain pane instead of the Learn pane: the chat and the Explain pane side by side over the layout, joined by the Loop logo on their seam, which animates while an explanation is queued or running. On a canvas layout, the Explain pane docks beside the chat's tile the same way. The Explain button opens it, and so does the `explain` label in the chat pane's header, just left of the Learn label, once the channel has explanations. Like the Learn label, it only opens the view: each explanation's state shows on its turn's Explain button. The label, the Explain pane's ✕ and Escape close the view, and so does whatever closes the Learn view. The Learn label swaps the Explain pane for the Learn pane, and the Explain label the other way round.
+
+The Explain pane's header says `Explain`, with `explaining a turn…` while one is queued or running. Below it, the channel's explanations, newest first, one card per turn:
 
 - its status, time, and the start of the turn's prompt and reply;
 - **Go to message**, which scrolls the chat to the turn's last message;
 - **Re-explain**, which explains the turn again and replaces the card's content (disabled while it's queued or running);
 - the write-up in markdown, whose file paths open in the editor, or the error when the run failed.
 
-The card a bubble's button asked for is scrolled into view and outlined for a few seconds. If Loop's connection drops, the explanations are fetched again when it comes back.
+The card a turn's button asked for is scrolled into view and outlined for a few seconds. If Loop's connection drops, the explanations are fetched again when it comes back.
 
 ### How it runs
 

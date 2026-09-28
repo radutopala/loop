@@ -271,11 +271,14 @@ func (o *Orchestrator) processClaimedMessage(ctx context.Context, row *db.Messag
 		msg.AuthorRoles = incoming.AuthorRoles
 	}
 
-	// An explanation's run marks it running here and done or failed below.
+	// An explanation's or learn pass's run marks it running here and done
+	// or failed below.
 	expl := o.explainRunStarted(ctx, msg)
+	pass := o.learnPassStarted(ctx, msg)
 	req, recent, channel, err := o.prepareAgentRequest(ctx, msg)
 	if err != nil {
 		o.explainRunDone(ctx, expl, "", err)
+		o.learnPassDone(ctx, pass, err)
 		return
 	}
 	trigger := o.runTrigger(channel, msg.AuthorID)
@@ -312,6 +315,7 @@ func (o *Orchestrator) processClaimedMessage(ctx context.Context, row *db.Messag
 		// with stale fetched rows.
 		o.markTriggerProcessed(ctx, msg, recent)
 		o.explainRunDone(ctx, expl, "", err)
+		o.learnPassDone(ctx, pass, err)
 		if finish != nil && o.events != nil {
 			o.events.BroadcastAgentStatus(msg.ChannelID, events.AgentStatusEventData{
 				Status:  finish.status,
@@ -326,6 +330,7 @@ func (o *Orchestrator) processClaimedMessage(ctx context.Context, row *db.Messag
 
 	o.deliverResponse(ctx, msg, resp, recent, lastStreamedText, runID, trigger)
 	o.explainRunDone(ctx, expl, resp.Response, nil)
+	o.learnPassDone(ctx, pass, nil)
 	o.maybeLearn(ctx, channel, msg, resp)
 	o.maybeExplain(ctx, channel, msg)
 }

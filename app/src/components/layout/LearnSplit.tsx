@@ -2,10 +2,15 @@ import { paneBoxStyle, SplitDivider } from "../../splitPane/SplitPaneLayout";
 import { useTheme } from "../../ThemeContext";
 import { LoopInfinityIcon } from "../LoopInfinityIcon";
 
+/** Which side view the chat is split with: the Learn pane or the Explain one. */
+export type SideView = "learn" | "explain";
+
+export const SIDE_VIEW_LABEL: Record<SideView, string> = { learn: "Learn view", explain: "Explain view" };
+
 // How long opening or closing the Learn view takes.
 export const LEARN_SPLIT_MS = 150;
 
-// The slot in the Learn view's chat header, for the Learn badge that closes it.
+// The slot in the Learn view's chat header, for the Learn and Explain badges that close it.
 export const LEARN_SPLIT_SLOT_ID = "learn-split";
 
 interface LearnSplitProps {
@@ -14,7 +19,10 @@ interface LearnSplitProps {
   shown: boolean;
   /** Animation length in ms; 0 skips it. */
   ms: number;
-  /** A learn pass is running: the logo between the panes animates. */
+  /** The pane beside the chat: Learn's, or Explain's (same view). */
+  view?: SideView;
+  /** A learn pass (or an explanation) is running: the logo between the
+   * panes animates. */
   running: boolean;
   chatHeader: React.ReactNode;
   chat: React.ReactNode;
@@ -30,7 +38,7 @@ interface LearnSplitProps {
  * doesn't animate: the chat moves into it as the view mounts and back out as
  * it unmounts. The Learn half and the logo fade in and out over the layout.
  */
-export function LearnSplit({ shown, ms, running, chatHeader, chat, learnPane, ref }: LearnSplitProps) {
+export function LearnSplit({ shown, ms, view = "learn", running, chatHeader, chat, learnPane, ref }: LearnSplitProps) {
   const { colors } = useTheme();
   const gap = colors.islandGap || 4;
   const pane: React.CSSProperties = {
@@ -45,7 +53,14 @@ export function LearnSplit({ shown, ms, running, chatHeader, chat, learnPane, re
   const fade: React.CSSProperties = { opacity: shown ? 1 : 0, transition: ms ? `opacity ${ms}ms ease` : "none" };
 
   return (
-    <div ref={ref} data-testid="learn-split" role="region" aria-label="Learn view" style={{ position: "absolute", inset: 0, zIndex: 20, overflow: "hidden", display: "flex" }}>
+    <div
+      ref={ref}
+      data-testid="learn-split"
+      data-view={view}
+      role="region"
+      aria-label={SIDE_VIEW_LABEL[view]}
+      style={{ position: "absolute", inset: 0, zIndex: 20, overflow: "hidden", display: "flex" }}
+    >
       {/* The chat's half, with the divider, doesn't fade: nothing under the
           chat may animate as it moves in, or the browser lifts the chat onto
           a layer of its own, painted afresh, and it flickers. Its background

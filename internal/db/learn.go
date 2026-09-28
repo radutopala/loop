@@ -54,9 +54,9 @@ func (s *SQLiteStore) FileLearnProposals(ctx context.Context, channelID string, 
 		}
 		for _, p := range proposals {
 			res, err := tx.ExecContext(ctx,
-				`INSERT INTO learn_proposals (channel_id, learn_channel_id, kind, title, rationale, payload, status, created_at, updated_at)
-				 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-				p.ChannelID, p.LearnChannelID, p.Kind, p.Title, p.Rationale, p.Payload, LearnPending, now, now,
+				`INSERT INTO learn_proposals (channel_id, learn_channel_id, message_id, kind, title, rationale, payload, status, created_at, updated_at)
+				 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+				p.ChannelID, p.LearnChannelID, p.MessageID, p.Kind, p.Title, p.Rationale, p.Payload, LearnPending, now, now,
 			)
 			if err != nil {
 				return err
@@ -105,7 +105,7 @@ func withdrawLearnProposal(ctx context.Context, tx *sql.Tx, channelID string, w 
 	))
 }
 
-const learnProposalColumns = `id, channel_id, learn_channel_id, kind, title, rationale, payload, status, error, withdrawn_reason, created_at, updated_at`
+const learnProposalColumns = `id, channel_id, learn_channel_id, message_id, kind, title, rationale, payload, status, error, withdrawn_reason, created_at, updated_at`
 
 // ListLearnProposals returns a channel's proposals, newest first.
 func (s *SQLiteStore) ListLearnProposals(ctx context.Context, channelID string) ([]*LearnProposal, error) {
@@ -174,7 +174,7 @@ func (s *SQLiteStore) SetLearnProposalStatus(ctx context.Context, id int64, stat
 
 func scanLearnProposal(scanner rowScanner) (*LearnProposal, error) {
 	p := &LearnProposal{}
-	if err := scanner.Scan(&p.ID, &p.ChannelID, &p.LearnChannelID, &p.Kind, &p.Title, &p.Rationale,
+	if err := scanner.Scan(&p.ID, &p.ChannelID, &p.LearnChannelID, &p.MessageID, &p.Kind, &p.Title, &p.Rationale,
 		&p.Payload, &p.Status, &p.Error, &p.WithdrawnReason, &p.CreatedAt, &p.UpdatedAt); err != nil {
 		return nil, err
 	}

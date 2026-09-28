@@ -380,14 +380,14 @@ declare global {
       getApiUrl: () => Promise<string>;
       showOpenDirectoryDialog?: () => Promise<string | null>;
       onboardLocal?: (dirPath: string) => Promise<{ ok: boolean; output?: string; error?: string }>;
-      onNavigateChannel: (callback: (channelId: string) => void) => void;
+      onNavigateChannel: (callback: (channelId: string) => void) => () => void;
       getDaemonInfo: () => Promise<DaemonInfo>;
       restartDaemon: () => Promise<DaemonInfo>;
-      onOpenSettings: (callback: () => void) => void;
+      onOpenSettings: (callback: () => void) => () => void;
       getUpdateStatus?: () => Promise<UpdateStatus>;
       downloadUpdate?: () => Promise<void>;
       installUpdate?: () => Promise<void>;
-      onUpdateStatus?: (callback: (status: UpdateStatus) => void) => void;
+      onUpdateStatus?: (callback: (status: UpdateStatus) => void) => () => void;
       notifyTurnEnd?: () => void;
       notifyApprovalNeeded?: (reqId?: string) => void;
       notifyApprovalResolved?: (reqId?: string) => void;
@@ -396,7 +396,7 @@ declare global {
        *  reality wins over any stale entries left over from a prior session. */
       reconcileApprovals?: (reqIds: string[]) => void;
       setTheme?: (name: string) => void;
-      onThemeChanged?: (callback: (name: string) => void) => void;
+      onThemeChanged?: (callback: (name: string) => void) => () => void;
       openExternal?: (url: string) => Promise<void>;
     };
   }

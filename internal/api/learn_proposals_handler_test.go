@@ -1,6 +1,7 @@
 package api
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -45,6 +46,8 @@ func (s *ServerSuite) TestCreateLearnProposals() {
 		noStore      bool
 		channel      *db.Channel
 		getErr       error
+		pass         *db.LearnPass
+		passErr      error
 		withdrawn    []*db.LearnProposal
 		insertErr    error
 		hub          bool
@@ -92,6 +95,11 @@ func (s *ServerSuite) TestCreateLearnProposals() {
 			body:    `{"proposals":[{"kind":"rename","title":"t","rationale":"` + strings.Repeat("r", 1001) + `","payload":{"name":"x"}}]}`,
 			channel: learnCh, wantCode: http.StatusBadRequest, wantBody: "rationale is longer than 1000",
 		},
+		{name: "pass lookup error", body: `{"proposals":[` + valid + `]}`, channel: learnCh, passErr: errors.New("db down"), wantCode: http.StatusInternalServerError},
+		{
+			name: "stored on the pass's turn", body: `{"proposals":[` + valid + `]}`, channel: learnCh,
+			pass: &db.LearnPass{ID: 7, MessageID: "b-1"}, wantCode: http.StatusCreated, wantFiled: true,
+		},
 		{name: "insert error", body: `{"proposals":[` + valid + `]}`, channel: learnCh, insertErr: errors.New("disk full"), wantCode: http.StatusInternalServerError},
 		{name: "stored", body: `{"proposals":[` + valid + `]}`, channel: learnCh, wantCode: http.StatusCreated, wantFiled: true},
 		{name: "stored and broadcast", body: `{"proposals":[` + valid + `]}`, channel: learnCh, hub: true, wantCode: http.StatusCreated, wantFiled: true},
@@ -118,6 +126,7 @@ func (s *ServerSuite) TestCreateLearnProposals() {
 				s.srv.eventsHub = NewEventsHub(testLogger())
 			}
 			s.store.On("GetChannel", mock.Anything, "l-1").Return(tc.channel, tc.getErr)
+			s.store.On("LatestLearnPass", mock.Anything, "l-1").Return(tc.pass, tc.passErr)
 			s.store.On("FileLearnProposals", mock.Anything, "ch-1", mock.Anything, mock.Anything).Return(tc.withdrawn, tc.insertErr)
 
 			w := s.serve("POST", "/api/channels/l-1/learn/proposals", tc.body)
@@ -135,6 +144,9 @@ func (s *ServerSuite) TestCreateLearnProposals() {
 					ChannelID: "ch-1", LearnChannelID: "l-1", Kind: db.LearnKindRename,
 					Title: "Rename it", Rationale: "it's about login", Payload: `{"name":"login"}`,
 				}}
+				if tc.pass != nil {
+					want[0].MessageID = tc.pass.MessageID
+				}
 			}
 			require.Equal(s.T(), want, resp.Proposals)
 			require.Len(s.T(), resp.Withdrawn, len(tc.withdrawn))
@@ -171,6 +183,112 @@ func (s *ServerSuite) TestListLearnProposals() {
 			var resp learnProposalsResponse
 			require.NoError(s.T(), json.Unmarshal(w.Body.Bytes(), &resp))
 			require.Equal(s.T(), tc.want, resp.Proposals)
+		})
+	}
+}
+
+func (s *ServerSuite) TestListLearnPasses() {
+	stored := []*db.LearnPass{{ID: 2, ChannelID: "ch-1", MessageID: "b-1", LearnChannelID: "l-1", Status: db.LearnPassDone, MessageRowID: 9}}
+	tests := []struct {
+		name     string
+		channel  *db.Channel
+		list     []*db.LearnPass
+		listErr  error
+		wantCode int
+		wantBody string
+	}{
+		{name: "missing channel", wantCode: http.StatusNotFound},
+		{name: "list error", channel: &db.Channel{ChannelID: "ch-1"}, listErr: errors.New("db down"), wantCode: http.StatusInternalServerError},
+		{name: "none", channel: &db.Channel{ChannelID: "ch-1"}, wantCode: http.StatusOK, wantBody: `{"passes":[]}`},
+		{
+			name: "some", channel: &db.Channel{ChannelID: "ch-1"}, list: stored, wantCode: http.StatusOK,
+			wantBody: `{"passes":[{"id":2,"channel_id":"ch-1","message_id":"b-1","learn_channel_id":"l-1","status":"done",` +
+				`"created_at":"0001-01-01T00:00:00Z","updated_at":"0001-01-01T00:00:00Z","message_row_id":9}]}`,
+		},
+	}
+	for _, tc := range tests {
+		s.Run(tc.name, func() {
+			s.SetupTest()
+			s.store.On("GetChannel", mock.Anything, "ch-1").Return(tc.channel, nil)
+			s.store.On("ListLearnPasses", mock.Anything, "ch-1").Return(tc.list, tc.listErr)
+
+			w := s.serve("GET", "/api/channels/ch-1/learn/passes", "")
+			require.Equal(s.T(), tc.wantCode, w.Code)
+			if tc.wantCode == http.StatusOK {
+				require.JSONEq(s.T(), tc.wantBody, w.Body.String())
+			}
+		})
+	}
+}
+
+type MockLearnTurner struct {
+	mock.Mock
+}
+
+func (m *MockLearnTurner) LearnTurn(ctx context.Context, ch *db.Channel, messageID string) (*db.LearnPass, error) {
+	args := m.Called(ctx, ch, messageID)
+	p, _ := args.Get(0).(*db.LearnPass)
+	return p, args.Error(1)
+}
+
+func (s *ServerSuite) TestLearnTurnNotConfigured() {
+	require.Equal(s.T(), http.StatusNotImplemented, s.serve("POST", "/api/channels/ch-1/learn/passes", `{"message_id":"b-1"}`).Code)
+}
+
+func (s *ServerSuite) TestLearnTurn() {
+	ch := &db.Channel{ChannelID: "ch-1", Platform: types.PlatformLocal}
+	tests := []struct {
+		name     string
+		body     string
+		channel  string
+		result   *db.LearnPass
+		err      error
+		wantCode int
+		wantBody string
+	}{
+		{name: "bad body", body: `{`, wantCode: http.StatusBadRequest},
+		{name: "missing message id", body: `{}`, wantCode: http.StatusBadRequest, wantBody: "message_id is required"},
+		{name: "channel gone", body: `{"message_id":"b-1"}`, channel: "gone", wantCode: http.StatusNotFound},
+		{
+			name: "queues", body: `{"message_id":"b-1"}`,
+			result:   &db.LearnPass{ID: 3, ChannelID: "ch-1", MessageID: "b-1", LearnChannelID: "l-1", Status: db.LearnPassQueued},
+			wantCode: http.StatusOK,
+			wantBody: `{"id":3,"channel_id":"ch-1","message_id":"b-1","learn_channel_id":"l-1","status":"queued",` +
+				`"created_at":"0001-01-01T00:00:00Z","updated_at":"0001-01-01T00:00:00Z"}`,
+		},
+		{
+			name: "already running", body: `{"message_id":"b-1"}`,
+			result:   &db.LearnPass{ID: 2, ChannelID: "ch-1", MessageID: "b-1", LearnChannelID: "l-1", Status: db.LearnPassRunning},
+			wantCode: http.StatusOK,
+			wantBody: `{"id":2,"channel_id":"ch-1","message_id":"b-1","learn_channel_id":"l-1","status":"running",` +
+				`"created_at":"0001-01-01T00:00:00Z","updated_at":"0001-01-01T00:00:00Z"}`,
+		},
+		{name: "unavailable", body: `{"message_id":"b-1"}`, err: learn.ErrUnavailable, wantCode: http.StatusBadRequest, wantBody: learn.ErrUnavailable.Error()},
+		{name: "not a turn", body: `{"message_id":"b-1"}`, err: learn.ErrNotATurn, wantCode: http.StatusBadRequest, wantBody: learn.ErrNotATurn.Error()},
+		{name: "no session", body: `{"message_id":"b-1"}`, err: learn.ErrNoSession, wantCode: http.StatusConflict, wantBody: learn.ErrNoSession.Error()},
+		{name: "parent gone", body: `{"message_id":"b-1"}`, err: fmt.Errorf("thread: %w", db.ErrParentGone), wantCode: http.StatusNotFound, wantBody: "channel not found"},
+		{name: "store error", body: `{"message_id":"b-1"}`, err: errors.New("disk full"), wantCode: http.StatusInternalServerError, wantBody: "disk full"},
+	}
+	for _, tc := range tests {
+		s.Run(tc.name, func() {
+			s.SetupTest()
+			turner := new(MockLearnTurner)
+			s.srv.SetLearnTurner(turner)
+			s.store.On("GetChannel", mock.Anything, "ch-1").Return(ch, nil).Maybe()
+			s.store.On("GetChannel", mock.Anything, "gone").Return(nil, nil).Maybe()
+			turner.On("LearnTurn", mock.Anything, ch, "b-1").Return(tc.result, tc.err).Maybe()
+
+			channel := cmp.Or(tc.channel, "ch-1")
+			w := s.serve("POST", "/api/channels/"+channel+"/learn/passes", tc.body)
+			require.Equal(s.T(), tc.wantCode, w.Code, w.Body.String())
+			if tc.wantCode == http.StatusOK {
+				require.JSONEq(s.T(), tc.wantBody, w.Body.String())
+			} else if tc.wantBody != "" {
+				require.Contains(s.T(), w.Body.String(), tc.wantBody)
+			}
+			if tc.result != nil || tc.err != nil {
+				turner.AssertExpectations(s.T())
+			}
 		})
 	}
 }

@@ -355,16 +355,48 @@ type LearnProposal struct {
 	ID             int64  `json:"id"`
 	ChannelID      string `json:"channel_id"`
 	LearnChannelID string `json:"learn_channel_id"`
-	Kind           string `json:"kind"`
-	Title          string `json:"title"`
-	Rationale      string `json:"rationale"`
-	Payload        string `json:"payload"`
-	Status         string `json:"status"`
-	Error          string `json:"error,omitempty"`
+	// MessageID is the turn (its last bot message) whose learn pass filed
+	// the proposal; empty when it isn't known.
+	MessageID string `json:"message_id,omitempty"`
+	Kind      string `json:"kind"`
+	Title     string `json:"title"`
+	Rationale string `json:"rationale"`
+	Payload   string `json:"payload"`
+	Status    string `json:"status"`
+	Error     string `json:"error,omitempty"`
 	// WithdrawnReason says why a learn pass withdrew the proposal.
 	WithdrawnReason string    `json:"withdrawn_reason,omitempty"`
 	CreatedAt       time.Time `json:"created_at"`
 	UpdatedAt       time.Time `json:"updated_at"`
+}
+
+// Statuses of a learn pass. A queued pass is superseded when a newer run's
+// pass replaces it before it starts: that one forks the newer session,
+// which covers this turn too.
+const (
+	LearnPassQueued     = "queued"
+	LearnPassRunning    = "running"
+	LearnPassDone       = "done"
+	LearnPassFailed     = "failed"
+	LearnPassSuperseded = "superseded"
+)
+
+// LearnPass is one learn pass over a turn in a channel, the turn whose last
+// bot message is MessageID. It runs in the channel's hidden learn thread,
+// started by the message TriggerMsgID there.
+type LearnPass struct {
+	ID             int64     `json:"id"`
+	ChannelID      string    `json:"channel_id"`
+	MessageID      string    `json:"message_id"`
+	LearnChannelID string    `json:"learn_channel_id"`
+	TriggerMsgID   string    `json:"-"`
+	Status         string    `json:"status"`
+	Error          string    `json:"error,omitempty"`
+	CreatedAt      time.Time `json:"created_at"`
+	UpdatedAt      time.Time `json:"updated_at"`
+	// MessageRowID is the reviewed turn's bot message row id, filled in by
+	// ListLearnPasses; zero when the message is gone.
+	MessageRowID int64 `json:"message_row_id,omitempty"`
 }
 
 // LearnWithdrawal is an open proposal a learn pass withdraws, and why.

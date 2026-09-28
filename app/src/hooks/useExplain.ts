@@ -26,9 +26,9 @@ export interface ExplainView {
   /** The explanation to bring into view in the Explain pane; seq changes on
    * each request, so asking for the same one again scrolls to it again. */
   focus: { messageId: string; seq: number } | null;
-  /** Explain a turn (force: again), then show it in the Explain pane. */
+  /** Explain a turn (force: again), then show it in the Explain view. */
   explainTurn: (messageId: string, force?: boolean) => Promise<void>;
-  /** Show a turn's explanation in the Explain pane. */
+  /** Show a turn's explanation in the Explain view. */
   show: (messageId: string) => void;
 }
 
@@ -36,21 +36,14 @@ export interface ExplainView {
 export const ExplainContext = createContext<ExplainView | null>(null);
 
 /**
- * Asks the channel's layout to show its Explain pane, adding it beside the
- * chat when it isn't in the layout (see WorkspaceLayout's loop:open-panel).
- */
-export function openExplainPane(channelId: string): void {
-  window.dispatchEvent(new CustomEvent("loop:open-panel", { detail: { channelId, panel: "explain", anchorPanel: "chat" } }));
-}
-
-/**
  * Follows a channel's explanations: its explain switch, the write-ups and
  * the explain requests in flight. The channel.explain and explain.updated
  * events are global and carry the explained channel's id, so they reach the
  * selected channel's listeners. Events missed while the WS was down are made
- * up for by fetching again on each reconnect (wsOpens).
+ * up for by fetching again on each reconnect (wsOpens). Showing an
+ * explanation calls onShow, which opens the Explain view beside the chat.
  */
-export function useExplain(channelId: string, subscribeChatEvents?: (listener: ChatEventListener) => () => void, wsOpens = 0): ExplainView {
+export function useExplain(channelId: string, subscribeChatEvents?: (listener: ChatEventListener) => () => void, wsOpens = 0, onShow?: () => void): ExplainView {
   const [loaded, setLoaded] = useState(false);
   const [available, setAvailable] = useState(false);
   const [explain, setExplainValue] = useState<ExplainState["explain"]>("");
@@ -108,9 +101,9 @@ export function useExplain(channelId: string, subscribeChatEvents?: (listener: C
     (messageId: string) => {
       seqRef.current += 1;
       setFocus({ messageId, seq: seqRef.current });
-      openExplainPane(channelId);
+      onShow?.();
     },
-    [channelId],
+    [onShow],
   );
 
   const run = useCallback(

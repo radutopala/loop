@@ -649,6 +649,17 @@ func (s *EventsHubSuite) TestBroadcastLearnEvents() {
 				"status": "done", "content": "ok", "created_at": "0001-01-01T00:00:00Z", "updated_at": "0001-01-01T00:00:00Z",
 			},
 		},
+		{
+			name: "learn pass",
+			broadcast: func(hub *EventsHub) {
+				hub.BroadcastLearnPass(&db.LearnPass{ID: 3, ChannelID: "ch-1", MessageID: "ask-1", LearnChannelID: "learn-1", TriggerMsgID: "x1", Status: db.LearnPassDone})
+			},
+			wantType: "learn.pass",
+			wantData: map[string]any{
+				"id": float64(3), "channel_id": "ch-1", "message_id": "ask-1", "learn_channel_id": "learn-1",
+				"status": "done", "created_at": "0001-01-01T00:00:00Z", "updated_at": "0001-01-01T00:00:00Z",
+			},
+		},
 	}
 	for _, tc := range tests {
 		s.Run(tc.name, func() {

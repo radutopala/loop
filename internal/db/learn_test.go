@@ -222,7 +222,7 @@ func (s *IntegrationSuite) TestLearnThreadsOfChildrenDeleted() {
 	require.Empty(s.T(), explanations)
 }
 
-var learnProposalCols = []string{"id", "channel_id", "learn_channel_id", "kind", "title", "rationale", "payload", "status", "error", "withdrawn_reason", "created_at", "updated_at"}
+var learnProposalCols = []string{"id", "channel_id", "learn_channel_id", "message_id", "kind", "title", "rationale", "payload", "status", "error", "withdrawn_reason", "created_at", "updated_at"}
 
 func (s *StoreSuite) TestLearnStoreErrors() {
 	ctx := context.Background()
@@ -298,7 +298,7 @@ func (s *StoreSuite) TestLearnStoreErrors() {
 	})
 	s.Run("list scan", func() {
 		s.mock.ExpectQuery(`FROM learn_proposals WHERE channel_id = \?`).
-			WillReturnRows(sqlmock.NewRows(learnProposalCols).AddRow("x", "", "", "", "", "", "", "", "", "", time.Now(), time.Now()))
+			WillReturnRows(sqlmock.NewRows(learnProposalCols).AddRow("x", "", "", "", "", "", "", "", "", "", "", time.Now(), time.Now()))
 		_, err := s.store.ListLearnProposals(ctx, "c1")
 		require.Error(s.T(), err)
 	})

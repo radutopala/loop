@@ -5,7 +5,7 @@ import { learnEffective } from "./learnState";
 export function explainToggleTitle(explain: "" | "on" | "off", defaultExplain: boolean): string {
   const on = learnEffective(explain, defaultExplain);
   const source = explain === "" ? `config default (${defaultExplain ? "on" : "off"})` : "set for this channel";
-  const what = "After each run, a hidden forked session explains the turn: what changed, the commands it ran, the decisions, risks and how to verify. The write-ups are in the Explain pane.";
+  const what = "After each run, a hidden forked session explains the turn: what changed, the commands it ran, the decisions, risks and how to verify. The write-ups are in the Explain view.";
   return `Explain is ${on ? "on" : "off"} — ${source}.\n${what}\nClick to turn it ${on ? "off" : "on"}.`;
 }
 

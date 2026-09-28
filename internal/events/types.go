@@ -36,6 +36,7 @@ type Broadcaster interface {
 	BroadcastReviewDiff(channelID string, data ReviewDiffEventData)
 	BroadcastLearnStarted(channelID, learnChannelID string)
 	BroadcastExplainUpdated(e *db.Explanation)
+	BroadcastLearnPass(p *db.LearnPass)
 }
 
 // ReviewCommentEventData is the payload for review.comment events. Sent

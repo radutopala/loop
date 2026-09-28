@@ -422,6 +422,25 @@ var migrations = []migration{
 	)`),
 	sqlMigration(`CREATE UNIQUE INDEX IF NOT EXISTS idx_explanations_message ON explanations(channel_id, message_id)`),
 	sqlMigration(`CREATE INDEX IF NOT EXISTS idx_explanations_trigger ON explanations(explain_channel_id, trigger_msg_id)`),
+	// learn_passes holds one row per learn pass, keyed to the turn it
+	// reviews by the turn's last bot message. trigger_msg_id is the message
+	// that started its run in the channel's learn thread.
+	sqlMigration(`CREATE TABLE IF NOT EXISTS learn_passes (
+		id               INTEGER PRIMARY KEY AUTOINCREMENT,
+		channel_id       TEXT NOT NULL,
+		message_id       TEXT NOT NULL,
+		learn_channel_id TEXT NOT NULL DEFAULT '',
+		trigger_msg_id   TEXT NOT NULL DEFAULT '',
+		status           TEXT NOT NULL DEFAULT 'queued',
+		error            TEXT NOT NULL DEFAULT '',
+		created_at       TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+		updated_at       TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+	)`),
+	sqlMigration(`CREATE INDEX IF NOT EXISTS idx_learn_passes_channel ON learn_passes(channel_id, id)`),
+	sqlMigration(`CREATE INDEX IF NOT EXISTS idx_learn_passes_trigger ON learn_passes(learn_channel_id, trigger_msg_id)`),
+	// message_id is the turn (its last bot message) whose learn pass filed
+	// a proposal; empty when it isn't known.
+	sqlMigration(`ALTER TABLE learn_proposals ADD COLUMN message_id TEXT NOT NULL DEFAULT ''`),
 }
 
 // migrateScheduledTasksAddManualType rebuilds scheduled_tasks to widen the

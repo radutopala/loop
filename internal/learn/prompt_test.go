@@ -161,6 +161,41 @@ func (s *PromptSuite) TestTriggerMessage() {
 	}
 }
 
+func (s *PromptSuite) TestTurnTriggerMessage() {
+	const lead = "The run in \"api\" just finished. Review it and propose what Loop should learn from it.\n\n" +
+		"The user asked for one turn of it to be reviewed; it may not be the latest turn in the session."
+	long := strings.Repeat("é", maxQuoted+10)
+	tests := []struct {
+		name   string
+		prompt string
+		reply  string
+		want   string
+	}{
+		{
+			name:   "prompt and reply",
+			prompt: " fix the tests\nthen lint ",
+			reply:  "Done.\nAll green.",
+			want:   lead + "\n\nThat turn's prompt was:\n\n> fix the tests\n> then lint\n\nIts final reply was:\n\n> Done.\n> All green.",
+		},
+		{
+			name:  "no prompt",
+			reply: "Done.",
+			want:  lead + "\n\nIts final reply was:\n\n> Done.",
+		},
+		{
+			name:   "long text cut",
+			prompt: long,
+			reply:  long,
+			want:   lead + "\n\nThat turn's prompt was:\n\n> " + strings.Repeat("é", maxQuoted) + " …\n\nIts final reply was:\n\n> " + strings.Repeat("é", maxQuoted) + " …",
+		},
+	}
+	for _, tc := range tests {
+		s.Run(tc.name, func() {
+			require.Equal(s.T(), tc.want, TurnTriggerMessage("api", tc.prompt, tc.reply))
+		})
+	}
+}
+
 func (s *PromptSuite) TestIsTrigger() {
 	tests := []struct {
 		name   string
@@ -171,6 +206,8 @@ func (s *PromptSuite) TestIsTrigger() {
 		{"behind the author prefix", "loop: " + TriggerMessage("a: b\nc", ""), true},
 		{"behind the worktree hint", dirHint + "/wt. Always use absolute paths.\n\nloop: " + TriggerMessage("wt", ""), true},
 		{"name with a colon, no prefix", TriggerMessage("a: b", ""), true},
+		{"a turn trigger", TurnTriggerMessage("api", "fix it", "done"), true},
+		{"a turn trigger behind the author prefix", "loop: " + TurnTriggerMessage("a: b", "", "done"), true},
 		{"a user prompt in a worktree", dirHint + "/wt.\n\nradu: fix it", false},
 		{"a user prompt", "radu: fix the tests", false},
 		{"quoting the lead only", "radu: The run in \"api\" was slow", false},

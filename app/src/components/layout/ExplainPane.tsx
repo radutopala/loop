@@ -14,17 +14,19 @@ import { formatMessageTimestamp } from "../chat/timestamps";
 const FOCUS_HIGHLIGHT_MS = 4000;
 
 /**
- * The channel's explanations, newest first: one card per explained turn,
- * with the start of its prompt and reply, a link back to the turn's last
- * message, the write-up, and Re-explain. The card a bubble's Explain action
- * asked for is brought into view and outlined.
+ * The channel's explanations, as a pane beside its chat in the Explain view
+ * (the Learn view's, see LearnSplit): one card per explained turn, newest
+ * first, with the start of its prompt and reply, a link back to the turn's
+ * last message, the write-up, and Re-explain. The card a turn's Explain
+ * action asked for is brought into view and outlined.
  */
-export function ExplainPanel({ channelId, explain }: { channelId: string; explain: ExplainView }) {
+export function ExplainPane({ channelId, explain, onClose }: { channelId: string; explain: ExplainView; onClose: () => void }) {
   const { colors } = useTheme();
   const listRef = useRef<HTMLDivElement>(null);
   const [highlighted, setHighlighted] = useState<string | null>(null);
   const { focus, explanations } = explain;
   const focusedShown = !!focus && explanations.some((e) => e.message_id === focus.messageId);
+  const running = explanations.some(explanationPending);
 
   // Once the asked-for card is in the list (a new one comes back from the
   // request), bring it into view.
@@ -39,12 +41,53 @@ export function ExplainPanel({ channelId, explain }: { channelId: string; explai
 
   return (
     <ChannelContext.Provider value={channelId}>
-      <div data-testid="explain-panel" style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column", overflow: "hidden", fontFamily: fonts.sans }}>
+      <div data-testid="explain-pane" style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column", overflow: "hidden", fontFamily: fonts.sans }}>
+        {/* Header, like the Learn pane's; docked on a canvas, it drags the pair. */}
+        <div
+          data-learn-pane-header
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 6,
+            padding: "2px 8px",
+            height: 22,
+            boxSizing: "border-box",
+            backgroundColor: colors.surface,
+            borderBottom: `1px solid ${colors.border}`,
+            flexShrink: 0,
+          }}
+        >
+          <span style={{ padding: "1px 4px", borderRadius: 3, fontSize: 10, fontWeight: 500, color: colors.textLight, backgroundColor: colors.panelLabelBg }}>Explain</span>
+          <span style={{ color: colors.textDim, fontSize: 10, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+            {running ? "explaining a turn…" : "write-ups of the chat's turns"}
+          </span>
+          <div style={{ flex: 1 }} />
+          <button
+            data-testid="explain-close"
+            aria-label="Close the Explain view"
+            onClick={onClose}
+            title="Close the Explain view"
+            style={{ background: "none", border: "none", color: colors.textDim, cursor: "pointer", padding: "0 2px", lineHeight: 1, display: "flex", alignItems: "center", borderRadius: 2 }}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.backgroundColor = colors.hoverBg;
+              e.currentTarget.style.color = colors.textLight;
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.backgroundColor = "transparent";
+              e.currentTarget.style.color = colors.textDim;
+            }}
+          >
+            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+              <line x1="18" y1="6" x2="6" y2="18" />
+              <line x1="6" y1="6" x2="18" y2="18" />
+            </svg>
+          </button>
+        </div>
         <style>{"@keyframes loop-explain-blink { 50% { outline-color: transparent; } }"}</style>
         <div ref={listRef} style={{ flex: 1, minHeight: 0, overflowY: "auto" }}>
           {explanations.length === 0 ? (
             <div data-testid="explain-empty" style={{ padding: 16, color: colors.textDim, fontSize: 12, lineHeight: 1.5 }}>
-              No explanations yet. Click Explain on the last message of a turn, or turn explain on in the composer to explain every turn.
+              No explanations yet. Click Explain at the end of a turn, or turn explain on in the composer to explain every turn.
             </div>
           ) : (
             explanations.map((e) => (

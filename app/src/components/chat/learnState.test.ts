@@ -1,16 +1,18 @@
 import { describe, expect, it } from "vitest";
-import type { LearnProposal } from "../../api/learn";
+import type { LearnPass, LearnProposal } from "../../api/learn";
 import {
   inBulk,
   isOpenProposal,
   isSettledProposal,
   LEARN_APPLY_STALE_MS,
-  learnBadgeLabel,
   learnEffective,
   learnKindLabel,
+  learnPassesByMessage,
   learnPassRunning,
   learnProposalsEventItems,
   learnToggleTitle,
+  learnTurnLabel,
+  mergeLearnPasses,
   mergeProposals,
   newlyAppliedShortcut,
   nextStaleIn,
@@ -57,14 +59,45 @@ function proposal(over: Partial<LearnProposal>): LearnProposal {
   };
 }
 
-describe("learnBadgeLabel", () => {
+function pass(over: Partial<LearnPass>): LearnPass {
+  return { id: 1, channel_id: "c", message_id: "m", learn_channel_id: "l", status: "done", created_at: "", updated_at: "", ...over };
+}
+
+describe("learnTurnLabel", () => {
   it.each([
-    [true, 3, "learning…"],
-    [false, 1, "1 proposal"],
-    [false, 2, "2 proposals"],
-    [false, 0, null],
-  ] as const)("running=%j open=%j → %j", (running, open, want) => {
-    expect(learnBadgeLabel(running, open)).toBe(want);
+    ["queued", 0, "Learn queued…"],
+    ["running", 2, "Learning…"],
+    ["failed", 0, "Learn failed"],
+    ["done", 0, "No proposals"],
+    ["done", 1, "1 proposal"],
+    ["done", 3, "3 proposals"],
+    ["superseded", 1, "Learn"],
+  ] as const)("%s with %j proposals → %j", (status, n, want) => {
+    expect(learnTurnLabel(pass({ status }), n)).toBe(want);
+  });
+
+  it("offers to learn from a turn without a pass", () => {
+    expect(learnTurnLabel(undefined, 0)).toBe("Learn");
+  });
+});
+
+describe("mergeLearnPasses", () => {
+  it("adds new passes and replaces updated ones, newest first", () => {
+    const got = mergeLearnPasses([pass({ id: 1, status: "running" }), pass({ id: 2, status: "queued" })], [pass({ id: 1, status: "done" }), pass({ id: 3 })]);
+    expect(got.map((p) => [p.id, p.status])).toEqual([
+      [3, "done"],
+      [2, "queued"],
+      [1, "done"],
+    ]);
+  });
+});
+
+describe("learnPassesByMessage", () => {
+  it("keeps each turn's newest pass", () => {
+    const got = learnPassesByMessage([pass({ id: 1, message_id: "a", status: "failed" }), pass({ id: 3, message_id: "a" }), pass({ id: 2, message_id: "b", status: "running" })]);
+    expect(got.get("a")?.id).toBe(3);
+    expect(got.get("b")?.status).toBe("running");
+    expect(got.size).toBe(2);
   });
 });
 

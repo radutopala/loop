@@ -88,8 +88,7 @@ export function ThemeProvider({
 
   // Listen for theme changes broadcast from other Electron windows.
   useEffect(() => {
-    if (!window.loopAPI?.onThemeChanged) return;
-    window.loopAPI.onThemeChanged((name: string) => {
+    return window.loopAPI?.onThemeChanged?.((name: string) => {
       if (allThemes[name]) {
         setThemeNameState(name);
         storageSet("loop-theme", name);

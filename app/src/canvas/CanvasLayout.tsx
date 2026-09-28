@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import type { SideView } from "../components/layout/LearnSplit";
 import type { AgentInfo } from "../hooks/useAgentRegistry";
 import type { ContainerStatsByType } from "../hooks/useContainerStats";
 import { EmptyLayoutPicker } from "../splitPane/AddPanelButton";
@@ -27,6 +28,7 @@ interface CanvasLayoutProps {
 
 export interface LearnDock {
   shown: boolean;
+  view?: SideView;
   ms: number;
   running: boolean;
   pane: React.ReactNode;
@@ -387,6 +389,7 @@ export function CanvasLayout({ canvas, renderLeaf, agentInfoMap, containerStats,
             zoom={vp.zoom}
             shown={learnDock.shown}
             ms={learnDock.ms}
+            view={learnDock.view}
             running={learnDock.running}
             pane={learnDock.pane}
             onMove={handleMoveTile}
@@ -496,7 +499,6 @@ const PANEL_COLORS: Record<PanelType, string> = {
   audit: "#ef4444",
   quality: "#22c55e",
   review: "#facc15",
-  explain: "#2dd4bf",
 };
 
 function CanvasMinimap({
