@@ -116,9 +116,8 @@ func withoutTool(tools []string, name string) []string {
 // covers those.
 var learnModeTools = []string{"Read", "Grep", "Glob", "TodoWrite", "ToolSearch"}
 
-// learnModeDisallowedTools are denied on top of the batch denials in a learn
-// run. The built-in ones repeat what learnModeTools already leaves out, as a
-// second line. The loop tools may not change Loop's config, tasks, threads,
+// learnModeDisallowedTools are the Loop MCP tools denied on top of the batch
+// denials in a learn run. They may not change Loop's config, tasks, threads,
 // workflows, playgrounds, quality snapshots, memory index or agent status,
 // or talk to anyone. The loop tools that only read (list_*, show_task,
 // get_*, search_*, the quality_* reports besides quality_scan, and
@@ -126,8 +125,6 @@ var learnModeTools = []string{"Read", "Grep", "Glob", "TodoWrite", "ToolSearch"}
 // the loop server alone (see buildMCPConfig) and --strict-mcp-config keeps
 // any other server out, so no other server's tools reach it either.
 var learnModeDisallowedTools = []string{
-	"Bash", "Edit", "Write", "NotebookEdit",
-	"AskUserQuestion", "EnterPlanMode", "ExitPlanMode",
 	"mcp__loop__prompt_shortcut", "mcp__loop__bash_shortcut",
 	"mcp__loop__schedule_task", "mcp__loop__edit_task", "mcp__loop__toggle_task", "mcp__loop__cancel_task",
 	"mcp__loop__rename_thread", "mcp__loop__set_thread_description", "mcp__loop__set_ticket_url",

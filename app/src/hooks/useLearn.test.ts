@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { LearnProposal } from "../api/learn";
-import { BulkRuns, fetchWithRetry, reconnected, settleProposal } from "./useLearn";
+import { fetchWithRetry, runBulk, settleProposal } from "./useLearn";
 
 function proposal(over: Partial<LearnProposal>): LearnProposal {
   return {
@@ -72,21 +72,6 @@ describe("fetchWithRetry", () => {
   });
 });
 
-describe("reconnected", () => {
-  it.each([
-    [0, 0, false],
-    // The first open: the fetches on mount cover it.
-    [0, 1, false],
-    [1, 1, false],
-    [1, 2, true],
-    [3, 4, true],
-    // Mounted after the first open, the next one is a reconnect.
-    [2, 3, true],
-  ])("%i → %i: %j", (prev, next, want) => {
-    expect(reconnected(prev, next)).toBe(want);
-  });
-});
-
 describe("settleProposal", () => {
   function harness() {
     let busy: ReadonlySet<number> = new Set([9]);
@@ -130,7 +115,7 @@ describe("settleProposal", () => {
   });
 });
 
-describe("BulkRuns", () => {
+describe("runBulk", () => {
   it("settles each proposal in scope one by one, skipping those busy or settled meanwhile", async () => {
     let list = [proposal({ id: 4 }), proposal({ id: 3 }), proposal({ id: 2, status: "failed" }), proposal({ id: 1 })];
     const busy = new Set([3]);
@@ -140,13 +125,13 @@ describe("BulkRuns", () => {
       // Proposal 1 is dismissed elsewhere while 4 is applying.
       list = list.map((p) => (p.id === id ? { ...p, status: "applied" as const } : p.id === 1 ? { ...p, status: "dismissed" as const } : p));
     };
-    const done = await new BulkRuns().run(
+    await runBulk(
       "apply",
       () => list,
       () => busy,
       settle,
+      () => false,
     );
-    expect(done).toBe(true);
     // 3 is in flight, 2 failed (Apply all leaves it to Retry), 1 was dismissed meanwhile.
     expect(settled).toEqual([4]);
   });
@@ -154,57 +139,32 @@ describe("BulkRuns", () => {
   it("dismiss takes every open proposal, failed ones too", async () => {
     const list = [proposal({ id: 2, status: "failed" }), proposal({ id: 1 }), proposal({ id: 0, status: "applied" })];
     const settled: number[] = [];
-    await new BulkRuns().run(
+    await runBulk(
       "dismiss",
       () => list,
       () => new Set(),
       async (id) => {
         settled.push(id);
       },
+      () => false,
     );
     expect(settled).toEqual([2, 1]);
   });
 
-  it("stops an older run once a newer one starts", async () => {
-    const runs = new BulkRuns();
-    const list = [proposal({ id: 3 }), proposal({ id: 2 }), proposal({ id: 1 })];
-    const first: number[] = [];
-    let release: () => void = () => {};
-    const older = runs.run(
-      "apply",
-      () => list,
-      () => new Set(),
-      (id) => {
-        first.push(id);
-        return new Promise<void>((r) => (release = r));
-      },
-    );
-    const newer = runs.run(
-      "dismiss",
-      () => list,
-      () => new Set(),
-      async () => {},
-    );
-    release();
-    expect(await older).toBe(false);
-    expect(await newer).toBe(true);
-    expect(first).toEqual([3]);
-  });
-
   it("stops once stopped (the hook unmounting)", async () => {
-    const runs = new BulkRuns();
     const list = [proposal({ id: 2 }), proposal({ id: 1 })];
     const settled: number[] = [];
-    const done = runs.run(
+    let stopped = false;
+    await runBulk(
       "apply",
       () => list,
       () => new Set(),
       async (id) => {
         settled.push(id);
-        runs.stop();
+        stopped = true;
       },
+      () => stopped,
     );
-    expect(await done).toBe(false);
     expect(settled).toEqual([2]);
   });
 });

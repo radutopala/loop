@@ -1,6 +1,7 @@
 package orchestrator
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -54,12 +55,11 @@ func (o *Orchestrator) learnConfig(ctx context.Context, ch *db.Channel) (*config
 // learnSkipReason says why a finished run in ch doesn't start a learn pass,
 // or "" when it should. Only a completed chat turn in a desktop channel
 // that's on, long enough and not parked on a plan or question card learns;
-// learn threads and task threads never do, and Slack or Discord channels
-// don't either, since their proposals can only be seen in the desktop app.
+// task threads never do (nor learn threads, which maybeLearn turns away
+// first), and Slack or Discord channels don't either, since their proposals
+// can only be seen in the desktop app.
 func learnSkipReason(ch *db.Channel, resp *agent.AgentResponse, cfg config.LearnConfig, parked bool) string {
 	switch {
-	case ch.Kind == db.ChannelKindLearn:
-		return "learn thread"
 	case ch.Platform != types.PlatformLocal:
 		return "not a desktop channel"
 	case ch.TaskID != 0:
@@ -156,9 +156,6 @@ func (o *Orchestrator) maybeLearn(ctx context.Context, ch *db.Channel, msg *bot.
 func (o *Orchestrator) queueLearn(id string, pass *learnPass) bool {
 	o.learnMu.Lock()
 	defer o.learnMu.Unlock()
-	if o.learnSlots == nil {
-		o.learnSlots = map[string]*learnSlot{}
-	}
 	slot := o.learnSlots[id]
 	_, running := o.activeRuns.Load(id)
 	if slot != nil && slot.triggered && !running && o.timeNow().Sub(slot.triggeredAt) > learnTriggerLost {
@@ -186,9 +183,6 @@ func (o *Orchestrator) learnRunStarted(channelID, authorID string) {
 	}
 	o.learnMu.Lock()
 	defer o.learnMu.Unlock()
-	if o.learnSlots == nil {
-		o.learnSlots = map[string]*learnSlot{}
-	}
 	slot := o.learnSlots[channelID]
 	if slot == nil {
 		slot = &learnSlot{triggered: true, triggeredAt: o.timeNow()}
@@ -350,8 +344,8 @@ func (o *Orchestrator) applyLearnRequest(ctx context.Context, req *agent.AgentRe
 	}
 	req.AgentID = learn.AgentID
 	req.LearnMode = true
-	req.Model = firstNonEmpty(cfg.Learn.Model, parent.ModelOverride)
-	req.Effort = firstNonEmpty(cfg.Learn.Effort, parent.EffortOverride)
+	req.Model = cmp.Or(cfg.Learn.Model, parent.ModelOverride)
+	req.Effort = cmp.Or(cfg.Learn.Effort, parent.EffortOverride)
 	req.SystemPrompt = learn.SystemPrompt(learn.State{
 		ChannelName: parent.Name,
 		Description: parent.Description,
@@ -362,11 +356,4 @@ func (o *Orchestrator) applyLearnRequest(ctx context.Context, req *agent.AgentRe
 		Tasks:       tasks,
 		Proposals:   proposals,
 	})
-}
-
-func firstNonEmpty(a, b string) string {
-	if a != "" {
-		return a
-	}
-	return b
 }

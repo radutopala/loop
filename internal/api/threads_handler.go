@@ -81,7 +81,8 @@ func (s *Server) handleCreateThread(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleDeleteThread(w http.ResponseWriter, r *http.Request) {
-	if !requireConfigured(w, s.threads, "thread deletion not configured") {
+	if !requireConfigured(w, s.threads, "thread deletion not configured") ||
+		!requireConfigured(w, s.store, "thread deletion not configured") {
 		return
 	}
 
@@ -101,10 +102,7 @@ func (s *Server) handleDeleteThread(w http.ResponseWriter, r *http.Request) {
 // its hidden learn thread, which goes with it. The learn thread is noted
 // first, while the thread still exists to find it by.
 func (s *Server) deleteThread(ctx context.Context, threadID string) error {
-	var learns []*db.Channel
-	if s.store != nil {
-		learns = s.learnThreads(ctx, threadID)
-	}
+	learns := s.learnThreads(ctx, threadID)
 	if err := s.threads.DeleteThread(ctx, threadID); err != nil {
 		return err
 	}

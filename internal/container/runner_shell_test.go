@@ -840,7 +840,6 @@ func (s *RunnerSuite) TestBuildClaudeCmdLearnMode() {
 	i := slices.Index(cmd, "--disallowedTools")
 	require.NotEqual(s.T(), -1, i)
 	require.Equal(s.T(), strings.Join(slices.Concat(disallowed, learnModeDisallowedTools), ","), cmd[i+1])
-	require.Contains(s.T(), cmd[i+1], ",Edit,Write,")
 	require.Contains(s.T(), cmd[i+1], "mcp__loop__prompt_shortcut")
 	// quality_scan writes a snapshot row; quality_snapshot only reads one.
 	require.Contains(s.T(), strings.Split(cmd[i+1], ","), "mcp__loop__quality_scan")

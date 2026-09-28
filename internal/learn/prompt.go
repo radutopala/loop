@@ -46,7 +46,7 @@ type State struct {
 	ProjectDir string
 	// Config is the channel's merged config, as its runs see it: global →
 	// ProjectDir → the worktree's for a worktree thread, global →
-	// ProjectDir otherwise.
+	// ProjectDir otherwise. It must not be nil.
 	Config *config.Config
 	// Tasks are the channel's scheduled tasks.
 	Tasks []*db.ScheduledTask
@@ -82,9 +82,6 @@ func SystemPrompt(st State) string {
 		fmt.Fprintf(&b, "- Project config: `%s/.loop/config.json`\n", st.ProjectDir)
 	}
 	cfg := st.Config
-	if cfg == nil {
-		cfg = &config.Config{}
-	}
 	writeSection(&b, "Prompt shortcuts", cfg.PromptShortcuts)
 	writeSection(&b, "Bash shortcuts", cfg.BashShortcuts)
 	writeSection(&b, "Scheduled tasks in this channel", taskSummaries(st.Tasks))
@@ -144,9 +141,6 @@ type proposalSummary struct {
 func proposalSummaries(proposals []*db.LearnProposal) (waiting, dismissed []proposalSummary) {
 	for _, p := range proposals {
 		sum := proposalSummary{Kind: p.Kind, Title: p.Title, Payload: json.RawMessage(p.Payload)}
-		if !json.Valid(sum.Payload) {
-			sum.Payload, _ = json.Marshal(p.Payload)
-		}
 		switch p.Status {
 		case db.LearnApplied:
 		case db.LearnDismissed:

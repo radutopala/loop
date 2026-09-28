@@ -163,7 +163,6 @@ func (s *MainSuite) TestServeFSMigrationProjectDirs() {
 				{DirPath: ""},
 				{DirPath: "/work/b"},
 				{DirPath: "/work/a"},
-				{DirPath: "/work/c", Kind: db.ChannelKindLearn},
 			},
 			expected: []string{"/work/a", "/work/b"},
 		},

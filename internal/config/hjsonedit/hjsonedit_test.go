@@ -124,13 +124,6 @@ func (s *HJSONEditSuite) TestAppend() {
 			want:    `{"gates": {"audit": {},"agentgate":{"command_rules":[{"commands":["git"],"decision":"approve"}]}}}`,
 		},
 		{
-			name:    "escapes pointer keys",
-			initial: "{}",
-			path:    []string{"a/b~c"},
-			item:    1,
-			want:    "{\n  \"a/b~c\": [\n    1\n  ]\n}",
-		},
-		{
 			name:    "appends an object laid out like its siblings",
 			initial: "{\n  \"bash_shortcuts\": [\n    {\n      \"name\": \"lint\"\n    }\n  ]\n}\n",
 			path:    []string{"bash_shortcuts"},
@@ -235,11 +228,11 @@ func (s *HJSONEditSuite) TestAppendErrors() {
 	}
 }
 
-// TestPatchError covers a patch hujson rejects: an item that can't be
-// marshaled never reaches the file.
-func (s *HJSONEditSuite) TestPatchError() {
+// TestMarshalError covers an item that can't be marshaled: it never
+// reaches the file.
+func (s *HJSONEditSuite) TestMarshalError() {
 	s.write("{}")
 	err := Append(osutil.RealSystem{}, s.path, []string{"mounts"}, func() {}, nil)
-	require.Error(s.T(), err)
+	require.ErrorContains(s.T(), err, "json: unsupported type")
 	require.Equal(s.T(), "{}", s.read())
 }

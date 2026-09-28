@@ -29,10 +29,12 @@ func (s *ServerSuite) TestLearnGet() {
 		platform types.Platform
 		def      bool
 		learnCh  *db.Channel
+		loadErr  error
 		running  bool
 		want     learnStateResponse
 	}{
 		{name: "inherits off", want: learnStateResponse{Available: true}},
+		{name: "config load error falls back to off", loadErr: os.ErrNotExist, want: learnStateResponse{Available: true}},
 		{name: "inherits on", def: true, want: learnStateResponse{Available: true, DefaultLearn: true, Enabled: true}},
 		{name: "override on", override: db.LearnOn, want: learnStateResponse{Available: true, Learn: "on", Enabled: true}},
 		{name: "override off", override: db.LearnOff, def: true, want: learnStateResponse{Available: true, Learn: "off", DefaultLearn: true}},
@@ -58,16 +60,21 @@ func (s *ServerSuite) TestLearnGet() {
 			}
 			s.store.On("GetChannel", mock.Anything, "ch-1").Return(&db.Channel{ChannelID: "ch-1", DirPath: "/p", LearnOverride: tc.override, Platform: platform}, nil)
 			s.store.On("GetLearnChannel", mock.Anything, "ch-1").Return(tc.learnCh, nil)
-			s.srv.configs.load = func() (*config.Config, error) { return &config.Config{}, nil }
+			s.srv.configs.load = func() (*config.Config, error) {
+				if tc.loadErr != nil {
+					return nil, tc.loadErr
+				}
+				return &config.Config{}, nil
+			}
 			s.srv.configs.loadProject = func(_ string, base *config.Config) (*config.Config, error) {
 				merged := *base
 				merged.Learn.Enabled = tc.def
 				return &merged, nil
 			}
 			if tc.learnCh != nil {
-				tracker := new(MockLearnPassTracker)
-				tracker.On("IsLearnPassRunning", "l-1").Return(tc.running)
-				s.srv.SetLearnPassTracker(tracker)
+				canceller := new(MockRunCanceller)
+				canceller.On("IsLearnPassRunning", "l-1").Return(tc.running)
+				s.srv.SetRunCanceller(canceller)
 			}
 
 			w := s.learnRequest("GET", "ch-1", "")
@@ -77,18 +84,6 @@ func (s *ServerSuite) TestLearnGet() {
 			require.Equal(s.T(), tc.want, resp)
 		})
 	}
-}
-
-func (s *ServerSuite) TestLearnGetConfigLoadError() {
-	s.store.On("GetChannel", mock.Anything, "ch-1").Return(&db.Channel{ChannelID: "ch-1"}, nil)
-	s.store.On("GetLearnChannel", mock.Anything, "ch-1").Return(nil, nil)
-	s.srv.configs.load = func() (*config.Config, error) { return nil, os.ErrNotExist }
-
-	w := s.learnRequest("GET", "ch-1", "")
-	require.Equal(s.T(), http.StatusOK, w.Code)
-	var resp learnStateResponse
-	require.NoError(s.T(), json.Unmarshal(w.Body.Bytes(), &resp))
-	require.False(s.T(), resp.DefaultLearn)
 }
 
 func (s *ServerSuite) TestLearnGetErrors() {

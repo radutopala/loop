@@ -190,7 +190,7 @@ function LearnThread({
   // to date meanwhile, the learn thread staying subscribed (see useLearn).
   const onUnmount = useCallback((state: ActiveChatState) => onChatStateUnmount?.(learnChannelId, state), [learnChannelId, onChatStateUnmount]);
   const chatState = useChatState(learnChannelId, running, { initialState: getChatState?.(learnChannelId), onUnmount, subscribeChatEvents: subscribe });
-  return <ChatView key={learnChannelId} channelId={learnChannelId} chatState={chatState} roots={roots} noAutoFocus />;
+  return <ChatView channelId={learnChannelId} chatState={chatState} roots={roots} noAutoFocus />;
 }
 
 function ProposalCard({

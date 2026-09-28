@@ -379,50 +379,48 @@ func (o *Orchestrator) prepareAgentRequest(ctx context.Context, msg *bot.Incomin
 	// own session while inheriting the parent's context.
 	inWorktree := channel.Worktree
 	var (
-		learnApplied bool
-		parentErr    error
+		parent    *db.Channel
+		parentErr error
 	)
 	if channel.ParentID != "" {
-		parent, err := o.store.GetChannel(ctx, channel.ParentID)
-		parentErr = err
-		if err == nil && parent != nil {
-			// ForkPending marks fork-created threads: their session id is
-			// borrowed from a SOURCE thread (not the parent), so the parent
-			// comparison alone would miss them — and a shared-count check
-			// would be symmetric, wrongly forking the source too.
-			if req.SessionID != "" && (channel.SessionID == parent.SessionID || channel.ForkPending) {
-				req.ForkSession = true
-			}
-			// Pass the root project checkout so the runner can mount it for
-			// worktree containers and apply the full config merge chain
-			// (global → root project → worktree). worktreeRootFor walks past
-			// nested worktrees (a worktree created from another worktree) and
-			// threads that share a worktree's dir_path without carrying the
-			// worktree flag (e.g. a scheduled task's thread) — otherwise the
-			// root's .loop/config.json (gates, model, MCP servers) is
-			// untracked in the worktree checkout and silently ignored.
-			if channel.Worktree || parent.Worktree {
-				inWorktree = true
-				if dir := worktreeRootFor(ctx, o.store, channel); dir != "" {
-					req.ParentDirPath = dir
-				} else if channel.Worktree && parent.DirPath != "" {
-					// Fallback to the immediate parent when the chain can't
-					// be fully resolved (lookup error mid-walk).
-					req.ParentDirPath = parent.DirPath
-				}
-			}
-			if channel.Kind == db.ChannelKindLearn {
-				o.applyLearnRequest(ctx, req, parent)
-				learnApplied = true
+		parent, parentErr = o.store.GetChannel(ctx, channel.ParentID)
+	}
+	if parent != nil {
+		// ForkPending marks fork-created threads: their session id is
+		// borrowed from a SOURCE thread (not the parent), so the parent
+		// comparison alone would miss them — and a shared-count check
+		// would be symmetric, wrongly forking the source too.
+		if req.SessionID != "" && (channel.SessionID == parent.SessionID || channel.ForkPending) {
+			req.ForkSession = true
+		}
+		// Pass the root project checkout so the runner can mount it for
+		// worktree containers and apply the full config merge chain
+		// (global → root project → worktree). worktreeRootFor walks past
+		// nested worktrees (a worktree created from another worktree) and
+		// threads that share a worktree's dir_path without carrying the
+		// worktree flag (e.g. a scheduled task's thread) — otherwise the
+		// root's .loop/config.json (gates, model, MCP servers) is
+		// untracked in the worktree checkout and silently ignored.
+		if channel.Worktree || parent.Worktree {
+			inWorktree = true
+			if dir := worktreeRootFor(ctx, o.store, channel); dir != "" {
+				req.ParentDirPath = dir
+			} else if channel.Worktree && parent.DirPath != "" {
+				// Fallback to the immediate parent when the chain can't
+				// be fully resolved (lookup error mid-walk).
+				req.ParentDirPath = parent.DirPath
 			}
 		}
 	}
 	// A learn thread only ever runs as a learn pass, read-only. Without
 	// its parent there's no pass to set up, and it must not run as a chat
 	// with the full tool set instead.
-	if channel.Kind == db.ChannelKindLearn && !learnApplied {
-		o.logger.Error("learn: loading the learn thread's parent", "error", parentErr, "channel_id", msg.ChannelID, "parent_id", channel.ParentID)
-		return nil, nil, nil, fmt.Errorf("learn thread %s: parent %q not found", msg.ChannelID, channel.ParentID)
+	if channel.Kind == db.ChannelKindLearn {
+		if parent == nil {
+			o.logger.Error("learn: loading the learn thread's parent", "error", parentErr, "channel_id", msg.ChannelID, "parent_id", channel.ParentID)
+			return nil, nil, nil, fmt.Errorf("learn thread %s: parent %q not found", msg.ChannelID, channel.ParentID)
+		}
+		o.applyLearnRequest(ctx, req, parent)
 	}
 
 	// When running in a worktree (directly or as a thread under one), tell the

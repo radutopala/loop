@@ -591,7 +591,7 @@ The chat pane shows a `learn` label for the selected channel at the right of its
 
 The Learn view puts the chat and a Learn pane side by side, each half the width and the full height of the layout, over the rest of the layout, which can't be clicked or tabbed into meanwhile. The layout tabs above stay usable. The Loop logo sits on the seam between them and animates while a learn pass runs (it holds still when the system asks for reduced motion). The chat moves over at once, as it is (draft, scroll and all), and the Learn pane fades in beside it; closing fades the Learn pane out and moves the chat back.
 
-The chat keeps its pane header with its container stats, but not the layout's split and close buttons. Close the view with the Learn label in that header, the Learn pane's ✕, or Escape (unless something else takes it first: a picker, the find bar, a menu, a dialog, Settings, a sidebar input such as the search box, or a shown component). Opening the view keeps focus in the chat, or puts it in the chat's composer when it was elsewhere (the layout under the view is inert); closing it with focus in the Learn pane puts focus back in the chat's composer.
+The chat keeps its pane header with its container stats, but not the layout's split and close buttons. Close the view with the Learn label in that header, the Learn pane's ✕, or Escape (unless something else handles it first). Opening the view keeps focus in the chat, or puts it in the chat's composer when it was elsewhere (the layout under the view is inert); closing it with focus in the Learn pane puts focus back in the chat's composer.
 
 The Learn pane's header matches a pane header:
 

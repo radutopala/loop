@@ -412,8 +412,7 @@ func projectDirs(ctx context.Context, store db.Store, logger *slog.Logger) []str
 	seen := make(map[string]bool, len(channels))
 	dirs := make([]string, 0, len(channels))
 	for _, ch := range channels {
-		// A learn thread shares its parent's dir, so it adds no checkout.
-		if ch.DirPath == "" || ch.Kind == db.ChannelKindLearn || seen[ch.DirPath] {
+		if ch.DirPath == "" || seen[ch.DirPath] {
 			continue
 		}
 		seen[ch.DirPath] = true
@@ -796,7 +795,6 @@ func (a *app) serve() error {
 	apiSrv.SetPendingPlansLister(orch)
 	apiSrv.SetInteractionHandler(orch)
 	apiSrv.SetActiveChatLister(orch)
-	apiSrv.SetLearnPassTracker(orch)
 
 	// Restore persisted ask/plan card parks BEFORE the API server begins
 	// serving, so GET /api/plans/pending and /api/asks/pending never hand a

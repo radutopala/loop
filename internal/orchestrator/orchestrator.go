@@ -127,6 +127,7 @@ func New(store db.Store, bot Bot, runner Runner, sched scheduler.Scheduler, logg
 		tasks:             newTaskRegistry(),
 		delayPollInterval: DelayPollInterval,
 		delayStop:         make(chan struct{}),
+		learnSlots:        map[string]*learnSlot{},
 	}
 	o.loadWorktreeProjectConfig = config.LoadWorktreeProjectConfig
 	o.cfg.Store(&cfg)

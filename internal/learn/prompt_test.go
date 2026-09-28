@@ -61,7 +61,7 @@ func (s *PromptSuite) TestSystemPrompt() {
 				},
 				Proposals: []*db.LearnProposal{
 					{Kind: db.LearnKindBashShortcut, Title: "Add a vitest shortcut", Payload: `{"name":"vitest"}`, Status: db.LearnPending},
-					{Kind: db.LearnKindDescription, Title: "Describe the thread", Payload: "not json", Status: db.LearnFailed},
+					{Kind: db.LearnKindDescription, Title: "Describe the thread", Payload: `{"description":"login bug"}`, Status: db.LearnFailed},
 					{Kind: db.LearnKindRename, Title: "Rename to wt-auth", Payload: `{"name":"wt-auth"}`, Status: db.LearnDismissed},
 					{Kind: db.LearnKindMount, Title: "Mount the cache", Payload: `{"mount":"~/.cache"}`, Status: db.LearnApplied},
 				},
@@ -83,7 +83,7 @@ func (s *PromptSuite) TestSystemPrompt() {
 				"### Proposals waiting for the user\n\n```json",
 				`"title": "Add a vitest shortcut"`,
 				`"name": "vitest"`,
-				`"payload": "not json"`,
+				`"description": "login bug"`,
 				"### Proposals the user dismissed\n\n```json",
 				`"title": "Rename to wt-auth"`,
 			},
@@ -91,7 +91,7 @@ func (s *PromptSuite) TestSystemPrompt() {
 		},
 		{
 			name:  "empty state",
-			state: State{ChannelName: "general"},
+			state: State{ChannelName: "general", Config: &config.Config{}},
 			contains: []string{
 				`- Channel: "general"` + "\n",
 				"- Description: none",

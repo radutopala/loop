@@ -49,8 +49,11 @@ func Append(fsys FS, configPath string, path []string, item any, seed []any) err
 		return err
 	}
 	rootLines := multiline(&v)
-	ops, _ := json.Marshal([]any{op})
-	if err := v.Patch(ops); err != nil {
+	ops, err := json.Marshal([]any{op})
+	if err == nil {
+		err = v.Patch(ops)
+	}
+	if err != nil {
 		return fmt.Errorf("editing %s: %w", configPath, err)
 	}
 	indentAdded(&v, path, op, rootLines)
@@ -97,12 +100,7 @@ func appendOp(v *hujson.Value, path []string, item any, seed []any) (patchOp, er
 	return patchOp{Op: "add", Path: pointer(path) + "/-", Value: item}, nil
 }
 
-// indentAdded lays out what op added to v. The container that received it
-// is the array at path for an append, the object holding the replaced array
-// for a replace, and the object the first missing key went into otherwise;
-// the added value is always its last child, except for a replace, where the
-// member stays in place. rootLines is whether the file's top level was one
-// member per line (or empty) before the edit.
+// indentAdded lays out what op added to v like the container it went into.
 func indentAdded(v *hujson.Value, path []string, op patchOp, rootLines bool) {
 	unit := indentUnit(v)
 	switch {
@@ -119,12 +117,7 @@ func indentAdded(v *hujson.Value, path []string, op patchOp, rootLines bool) {
 	}
 }
 
-// placeLast puts the last of children on its own line, indented one unit
-// past indent (the container's line), and lays out its value, when the
-// container is written one child per line. A container that was empty
-// follows the file: rootLines says whether its top level is one member per
-// line. head returns the value whose leading whitespace starts a child: the
-// element itself, or an object member's name.
+// placeLast puts the last child on its own line in a one-per-line container.
 func placeLast[T any](children []T, closing *hujson.Extra, indent, unit string, rootLines bool, head func(*T) *hujson.Value) {
 	last := &children[len(children)-1]
 	h := head(last)
@@ -251,14 +244,10 @@ func findMember(obj *hujson.Object, name string) *hujson.Value {
 	return nil
 }
 
-// pointer is the RFC 6901 JSON pointer for path.
+// pointer is the RFC 6901 JSON pointer for path ("" for the top level). The
+// keys are fixed config identifiers, so none needs escaping.
 func pointer(path []string) string {
-	var b strings.Builder
-	for _, key := range path {
-		b.WriteByte('/')
-		b.WriteString(strings.NewReplacer("~", "~0", "/", "~1").Replace(key))
-	}
-	return b.String()
+	return strings.Join(append([]string{""}, path...), "/")
 }
 
 // describe names path for an error message.

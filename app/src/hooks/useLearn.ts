@@ -6,7 +6,6 @@ import { logErr } from "../utils/log";
 import type { ChatEventListener } from "./useChatStateStore";
 
 export interface LearnView {
-  channelId: string;
   /** False until the channel's learn state has loaded. */
   loaded: boolean;
   /** False for Slack and Discord channels, which never learn. */
@@ -73,15 +72,6 @@ export function fetchWithRetry<T>(fetch: () => Promise<T>, what: string, onLoad:
 }
 
 /**
- * Whether a WS open is a reconnect, after which the events missed meanwhile
- * must be made up for: the opens count went from prev to next, and prev
- * wasn't 0 (the first open, which the fetches on mount cover).
- */
-export function reconnected(prev: number, next: number): boolean {
-  return next !== prev && prev !== 0;
-}
-
-/**
  * An apply or dismiss of one proposal: it's marked busy meanwhile (its
  * buttons disabled, so a second click can't race the first), its last
  * request error is cleared, and the settled proposal is handed on. A failed
@@ -112,25 +102,12 @@ export async function settleProposal(
 /**
  * Apply all and Dismiss all: one by one, each proposal still in the bulk's
  * scope when its turn comes (one applied, dismissed or in flight meanwhile
- * is left alone). A run stops once another starts or stop is called (the
- * hook unmounting).
+ * is left alone). It stops once stopped (the hook unmounting).
  */
-export class BulkRuns {
-  private latest = 0;
-
-  stop(): void {
-    this.latest++;
-  }
-
-  /** Resolves to whether the run went through the list, rather than stopping. */
-  async run(kind: LearnBulk, proposals: () => LearnProposal[], busy: () => ReadonlySet<number>, settle: (id: number) => Promise<void>): Promise<boolean> {
-    const run = ++this.latest;
-    for (const { id } of proposals().filter((p) => inBulk(kind, p))) {
-      if (this.latest !== run) return false;
-      const p = proposals().find((x) => x.id === id);
-      if (inBulk(kind, p) && !busy().has(id)) await settle(id);
-    }
-    return this.latest === run;
+export async function runBulk(kind: LearnBulk, proposals: () => LearnProposal[], busy: () => ReadonlySet<number>, settle: (id: number) => Promise<void>, stopped: () => boolean): Promise<void> {
+  for (const { id } of proposals().filter((p) => inBulk(kind, p))) {
+    if (stopped()) return;
+    if (!busy().has(id) && proposals().some((p) => p.id === id && inBulk(kind, p))) await settle(id);
   }
 }
 
@@ -168,10 +145,15 @@ export function useLearn(
   const busyRef = useRef(busy);
   const [errors, setErrors] = useState<ReadonlyMap<number, string>>(new Map());
   const [bulk, setBulk] = useState<LearnBulk | null>(null);
-  const [bulkRuns] = useState(() => new BulkRuns());
   // A bulk run left going would keep applying after the layout (keyed by
   // channel) unmounted.
-  useEffect(() => () => bulkRuns.stop(), [bulkRuns]);
+  const unmountedRef = useRef(false);
+  useEffect(() => {
+    unmountedRef.current = false;
+    return () => {
+      unmountedRef.current = true;
+    };
+  }, []);
   const [shortcutsVersion, setShortcutsVersion] = useState(0);
   // Folds proposals into the list; noteApplied: an applied shortcut among
   // them makes the pickers fetch theirs again.
@@ -182,7 +164,15 @@ export function useLearn(
     if (noteApplied && newlyAppliedShortcut(cur, incoming)) setShortcutsVersion((n) => n + 1);
   }, []);
 
+  // Fetched on mount, and again on each reconnect: the events missed while
+  // the WS was down are lost (a pass that ended would stay "learning…" and
+  // the proposals it filed would be missing), so what the server says then
+  // wins. The first open (from 0) isn't a reconnect.
+  const wsOpensRef = useRef(wsOpens);
   useEffect(() => {
+    const prev = wsOpensRef.current;
+    wsOpensRef.current = wsOpens;
+    const isReconnect = prev !== wsOpens && prev !== 0;
     // Until the state loads the Learn switch stays hidden, so a failed
     // fetch is tried again rather than hiding it for good.
     const cancelState = fetchWithRetry(
@@ -192,55 +182,23 @@ export function useLearn(
         setAvailable(st.available);
         setLearnValue(st.learn);
         setDefaultLearn(st.default_learn);
-        // A learn.started that arrived while this was in flight is newer:
-        // don't let the fetched state undo it.
-        setLearnChannelId((cur) => cur || st.learn_channel_id);
-        setRunning((cur) => cur || st.running);
+        // On mount, a learn.started that arrived while this was in flight is
+        // newer: don't let the fetched state undo it.
+        setLearnChannelId((cur) => (isReconnect ? st.learn_channel_id || cur : cur || st.learn_channel_id));
+        setRunning((cur) => (isReconnect ? st.running : cur || st.running));
         setLoaded(true);
       },
     );
     const cancelProposals = fetchWithRetry(
       () => fetchLearnProposals(channelId),
       "fetching learn proposals",
-      (list) => merge(list, false),
+      (list) => merge(list, isReconnect),
     );
     return () => {
       cancelState();
       cancelProposals();
     };
-  }, [channelId, merge]);
-
-  // After a reconnect, the events missed meanwhile are lost: a pass that
-  // ended would stay "learning…" and the proposals it filed would be
-  // missing. What the server says now wins. The first open isn't a
-  // reconnect: the fetches above cover it.
-  const wsOpensRef = useRef(wsOpens);
-  useEffect(() => {
-    const prev = wsOpensRef.current;
-    wsOpensRef.current = wsOpens;
-    if (!reconnected(prev, wsOpens)) return;
-    const cancelState = fetchWithRetry(
-      () => fetchLearnState(channelId),
-      "fetching learn state",
-      (st) => {
-        setAvailable(st.available);
-        setLearnValue(st.learn);
-        setDefaultLearn(st.default_learn);
-        setLearnChannelId((cur) => st.learn_channel_id || cur);
-        setRunning(st.running);
-        setLoaded(true);
-      },
-    );
-    const cancelProposals = fetchWithRetry(
-      () => fetchLearnProposals(channelId),
-      "fetching learn proposals",
-      (list) => merge(list),
-    );
-    return () => {
-      cancelState();
-      cancelProposals();
-    };
-  }, [wsOpens, channelId, merge]);
+  }, [channelId, wsOpens, merge]);
 
   useEffect(() => {
     if (!subscribeChatEvents) return;
@@ -306,23 +264,24 @@ export function useLearn(
   const apply = useCallback((id: number) => settle(id, applyLearnProposal), [settle]);
   const dismiss = useCallback((id: number) => settle(id, dismissLearnProposal), [settle]);
 
-  const runBulk = useCallback(
+  // Apply all and Dismiss all are disabled while either runs (see bulk).
+  const bulkAll = useCallback(
     async (kind: LearnBulk) => {
       setBulk(kind);
       const action = kind === "apply" ? applyLearnProposal : dismissLearnProposal;
-      const done = await bulkRuns.run(
+      await runBulk(
         kind,
         () => proposalsRef.current,
         () => busyRef.current,
         (id) => settle(id, action),
+        () => unmountedRef.current,
       );
-      // A newer run owns bulk now, or the hook is gone.
-      if (done) setBulk(null);
+      setBulk(null);
     },
-    [bulkRuns, settle],
+    [settle],
   );
-  const applyAll = useCallback(() => runBulk("apply"), [runBulk]);
-  const dismissAll = useCallback(() => runBulk("dismiss"), [runBulk]);
+  const applyAll = useCallback(() => bulkAll("apply"), [bulkAll]);
+  const dismissAll = useCallback(() => bulkAll("dismiss"), [bulkAll]);
 
   // A proposal stuck applying opens again once it's stale: render again
   // then, as nothing else may.
@@ -339,7 +298,6 @@ export function useLearn(
   // Memoized: the layout's chat pane re-renders when it changes.
   return useMemo(
     () => ({
-      channelId,
       loaded,
       available,
       learn,
@@ -358,7 +316,7 @@ export function useLearn(
       dismissAll,
       shortcutsVersion,
     }),
-    [channelId, loaded, available, learn, defaultLearn, setLearn, learnChannelId, running, proposals, open, busy, errors, bulk, apply, dismiss, applyAll, dismissAll, shortcutsVersion],
+    [loaded, available, learn, defaultLearn, setLearn, learnChannelId, running, proposals, open, busy, errors, bulk, apply, dismiss, applyAll, dismissAll, shortcutsVersion],
   );
 }
 

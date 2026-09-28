@@ -75,7 +75,7 @@ func (s *IntegrationSuite) TestLearnLifecycle() {
 	got, err = store.GetLearnProposal(ctx, ps[0].ID)
 	require.NoError(s.T(), err)
 	require.Empty(s.T(), got.Error, "the retry clears the error")
-	store.nowFunc = func() time.Time { return got.UpdatedAt.Add(LearnApplyStale + time.Second) }
+	store.nowFunc = func() time.Time { return got.UpdatedAt.Add(learnApplyStale + time.Second) }
 	claimed, err = store.ClaimLearnProposal(ctx, ps[0].ID)
 	require.NoError(s.T(), err)
 	require.True(s.T(), claimed, "one stuck in applying can be claimed again")

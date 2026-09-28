@@ -1,18 +1,6 @@
 package fsmigrate
 
-import (
-	"context"
-	"sync"
-)
-
-// restoreMu serializes Restore* invocations so the three sequential
-// load-modify-save cycles in RestoreBuiltinWorkflows (seed → patch verify →
-// patch deps) can't interleave with each other or with RestoreBuiltinShortcuts.
-// /api/builtins/restore is HTTP-driven and the user can double-click the
-// Settings button; without serialization the second call's hujson AST is
-// based on the pre-first-write snapshot and clobbers the first's mutations
-// on Pack+Write.
-var restoreMu sync.Mutex
+import "context"
 
 // RestoreBuiltinShortcuts re-seeds any missing built-in prompt shortcuts into
 // ~/.loop/config.json AND upgrades an unmodified "builtin code review" entry
@@ -22,8 +10,6 @@ var restoreMu sync.Mutex
 // two lists are disjoint, since a freshly-added entry already has the current
 // prompt and won't be patched.
 func RestoreBuiltinShortcuts(ctx context.Context, c *Ctx) (added []string, patched []string, err error) {
-	restoreMu.Lock()
-	defer restoreMu.Unlock()
 	added, err = seedBuiltinCodeReviewShortcut(ctx, c)
 	if err != nil {
 		return nil, nil, err
@@ -69,8 +55,6 @@ func RestoreBuiltinShortcuts(ctx context.Context, c *Ctx) (added []string, patch
 // seeds) is reported as "updated" rather than the misleading
 // "already present" implied by an empty `added`.
 func RestoreBuiltinWorkflows(ctx context.Context, c *Ctx) (added []string, patched []string, err error) {
-	restoreMu.Lock()
-	defer restoreMu.Unlock()
 	added, err = seedReviewLoopWorkflows(ctx, c)
 	if err != nil {
 		return nil, nil, err

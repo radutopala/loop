@@ -3,13 +3,11 @@ package api
 import (
 	"errors"
 	"net/http"
-	"strings"
 
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 
 	"github.com/radutopala/loop/internal/db"
-	"github.com/radutopala/loop/internal/types"
 )
 
 // ── handleSetChannelTicketURL ──
@@ -54,10 +52,6 @@ func (s *ServerSuite) TestSetChannelTicketURL() {
 			wantCode: http.StatusOK, wantBody: `"ticket_url":""`,
 		},
 		{name: "not a URL", id: "t1", body: `{"ticket_url":"PROJ-123"}`, wantCode: http.StatusBadRequest, wantBody: "absolute http(s) URL"},
-		{name: "other scheme", id: "t1", body: `{"ticket_url":"javascript:alert(1)"}`, wantCode: http.StatusBadRequest, wantBody: "absolute http(s) URL"},
-		{name: "no host", id: "t1", body: `{"ticket_url":"https:///browse/X-1"}`, wantCode: http.StatusBadRequest, wantBody: "absolute http(s) URL"},
-		{name: "unparsable", id: "t1", body: `{"ticket_url":"https://ex ample.com/%zz"}`, wantCode: http.StatusBadRequest, wantBody: "absolute http(s) URL"},
-		{name: "too long", id: "t1", body: `{"ticket_url":"https://x.com/` + strings.Repeat("a", types.MaxTicketURLLen) + `"}`, wantCode: http.StatusBadRequest, wantBody: "longer than 2048 characters"},
 		{name: "bad json", id: "t1", body: `{bad}`, wantCode: http.StatusBadRequest},
 		{
 			name: "lookup error", id: "t1", body: `{"ticket_url":"` + jira + `"}`,

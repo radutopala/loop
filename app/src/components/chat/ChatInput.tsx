@@ -414,12 +414,10 @@ export function ChatInput({
   }, [text]);
 
   // Auto-focus textarea on mount; move cursor to end if restoring a draft.
-  // preventScroll: the Learn view's composers mount over the layout, and
-  // scrolling one into view would shift the layout under them.
   useEffect(() => {
     const el = inputRef.current;
     if (el && !noAutoFocus) {
-      el.focus({ preventScroll: true });
+      el.focus();
       el.setSelectionRange(el.value.length, el.value.length);
     }
   }, []);
@@ -1214,7 +1212,7 @@ export function ChatInput({
           </button>
         )}
         <div style={{ flex: 1 }} />
-        <LearnToggle channelId={channelId} />
+        <LearnToggle />
         <AgentConfigPill channelId={channelId} />
         <div style={modeStyles.pill}>
           <button

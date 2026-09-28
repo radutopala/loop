@@ -1,6 +1,7 @@
 package config
 
 import (
+	"cmp"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -444,15 +445,13 @@ func (l *Loader) parse() (*Config, error) {
 		cfg.PlaygroundShare.Enabled = ptrDefault(jc.PlaygroundShare.Enabled, false)
 	}
 
-	cfg.Learn = LearnConfig{MinTurns: DefaultLearnMinTurns}
-	if jc.Learn != nil {
-		cfg.Learn = LearnConfig{
-			Enabled:  ptrDefault(jc.Learn.Enabled, false),
-			MinTurns: ptrDefault(jc.Learn.MinTurns, DefaultLearnMinTurns),
-			Model:    jc.Learn.Model,
-			Effort:   jc.Learn.Effort,
-			Prompt:   jc.Learn.Prompt,
-		}
+	learn := cmp.Or(jc.Learn, &jsonLearnConfig{})
+	cfg.Learn = LearnConfig{
+		Enabled:  ptrDefault(learn.Enabled, false),
+		MinTurns: ptrDefault(learn.MinTurns, DefaultLearnMinTurns),
+		Model:    learn.Model,
+		Effort:   learn.Effort,
+		Prompt:   learn.Prompt,
 	}
 
 	// Memory config: enabled must be explicitly true.

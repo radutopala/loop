@@ -3,6 +3,7 @@ import { createPortal } from "react-dom";
 import type { LearnView } from "../../hooks/useLearn";
 import { useTheme } from "../../ThemeContext";
 import { fonts } from "../../theme";
+import { LearnIcon } from "./LearnIcon";
 import { learnBadgeLabel } from "./learnState";
 
 interface LearnBadgeProps {
@@ -30,8 +31,9 @@ export function LearnBadge({ leafId, learn, open, onToggle }: LearnBadgeProps) {
   // frame without the badge.
   useLayoutEffect(() => {
     const find = () => document.getElementById(`pane-header-slot-${leafId}`);
-    setSlot(find());
-    if (find()) return;
+    const el = find();
+    setSlot(el);
+    if (el) return;
     // Slot may mount in the same frame; retry once after paint.
     const raf = requestAnimationFrame(() => setSlot(find()));
     return () => cancelAnimationFrame(raf);
@@ -66,11 +68,7 @@ export function LearnBadge({ leafId, learn, open, onToggle }: LearnBadgeProps) {
         borderRadius: 8,
       }}
     >
-      <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-        <path d="M9 18h6" />
-        <path d="M10 22h4" />
-        <path d="M12 2a7 7 0 0 0-4 12.7V17h8v-2.3A7 7 0 0 0 12 2z" />
-      </svg>
+      <LearnIcon size={9} />
       {label ?? "learn"}
     </button>,
     slot,

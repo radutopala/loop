@@ -12,9 +12,8 @@ import (
 	"github.com/radutopala/loop/internal/learn"
 )
 
-// WithLearnTools makes this a learn pass's MCP server: it gets
-// propose_learnings, and none of the inter-agent tools or channel push (a
-// learn pass works alone, and other agents shouldn't see or message it).
+// WithLearnTools makes this a learn pass's MCP server, with
+// propose_learnings.
 func WithLearnTools() MemoryOption {
 	return func(s *Server) {
 		s.learnTools = true
@@ -47,9 +46,7 @@ func (s *Server) handleProposeLearnings(_ context.Context, _ *mcp.CallToolReques
 	data, _ := json.Marshal(input)
 	apiURL := fmt.Sprintf("%s/api/channels/%s/learn/proposals", s.apiURL, url.PathEscape(s.channelID))
 	type proposalsResult struct {
-		Proposals []struct {
-			Title string `json:"title"`
-		} `json:"proposals"`
+		Proposals []json.RawMessage `json:"proposals"`
 	}
 	result, errResult, err := doAPICall[proposalsResult](s, "POST", apiURL, 201, data)
 	if errResult != nil || err != nil {

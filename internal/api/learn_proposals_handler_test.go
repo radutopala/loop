@@ -442,24 +442,6 @@ func (s *ServerSuite) TestApplyLearnProposalConfigErrors() {
 		require.Equal(s.T(), db.LearnFailed, status)
 		require.Equal(s.T(), "loading config failed", errText)
 	})
-	s.Run("global config gone before seeding", func() {
-		s.SetupTest()
-		dir := s.T().TempDir()
-		loads := 0
-		s.srv.configs.load = func() (*config.Config, error) {
-			loads++
-			if loads > 1 {
-				return nil, os.ErrPermission
-			}
-			return &config.Config{}, nil
-		}
-		s.store.On("GetChannel", mock.Anything, "ch-1").Return(&db.Channel{ChannelID: "ch-1", DirPath: dir}, nil)
-		status, errText := s.applyProposal(db.LearnKindMount, `{"mount":"a:b"}`)
-		require.Equal(s.T(), db.LearnApplied, status, errText)
-		data, err := os.ReadFile(filepath.Join(dir, ".loop", "config.json"))
-		require.NoError(s.T(), err)
-		require.Equal(s.T(), "{\n  \"mounts\": [\n    \"a:b\"\n  ]\n}\n", string(data))
-	})
 }
 
 // gatedReadSystem holds every read of path until release is closed,

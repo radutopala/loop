@@ -35,12 +35,6 @@ type ActiveChatLister interface {
 	ActiveChatChannelIDs() map[string]struct{}
 }
 
-// LearnPassTracker reports whether a learn pass (not a user's reply in the
-// learn thread) is running in a learn thread.
-type LearnPassTracker interface {
-	IsLearnPassRunning(learnChannelID string) bool
-}
-
 // IncomingMessageHandler processes a user message from the API, routing it
 // through the orchestrator so Claude can respond.
 type IncomingMessageHandler interface {
@@ -50,12 +44,13 @@ type IncomingMessageHandler interface {
 	HandleThreadCreated(ctx context.Context, threadID, authorID, message string)
 }
 
-// RunCanceller cancels agent runs. CancelActiveRun cancels a channel's
-// active run; StopLearn also forgets a hidden learn thread's queued pass,
-// for when the learn thread is deleted.
+// RunCanceller cancels agent runs and tracks learn passes. StopLearn also
+// forgets a deleted learn thread's queued pass; IsLearnPassRunning reports a
+// learn pass (not a user's reply) running in a learn thread.
 type RunCanceller interface {
 	CancelActiveRun(channelID string) bool
 	StopLearn(learnChannelID string)
+	IsLearnPassRunning(learnChannelID string) bool
 }
 
 // PlanResolver clears and resumes a channel parked on an ExitPlanMode card.
@@ -143,7 +138,6 @@ type Server struct {
 	cmdBuilder              InteractiveCmdBuilder
 	containerRegistry       ContainerManager
 	activeChatLister        ActiveChatLister
-	learnPassTracker        LearnPassTracker
 	branchPoller            *BranchPoller
 	msgHandler              IncomingMessageHandler
 	runCanceller            RunCanceller
@@ -257,12 +251,6 @@ func (s *Server) SetContainerRegistry(reg ContainerManager) {
 // SetActiveChatLister configures the active chat lister for the channel list endpoint.
 func (s *Server) SetActiveChatLister(lister ActiveChatLister) {
 	s.activeChatLister = lister
-}
-
-// SetLearnPassTracker configures what reports a running learn pass for the
-// learn state endpoint.
-func (s *Server) SetLearnPassTracker(t LearnPassTracker) {
-	s.learnPassTracker = t
 }
 
 // SetBranchPoller wires the branch poller whose per-dir git snapshots back

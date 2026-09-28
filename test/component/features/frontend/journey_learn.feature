@@ -38,34 +38,6 @@ Feature: Learn from runs
       """
     Then I wait for "[data-testid='learn-toggle'][data-on='true']" to be visible
 
-  Scenario: Applying a ticket proposal links the channel's ticket
-    Given the current channel has a learn thread
-    And the element "[data-testid='header-ticket']" should not exist
-    When I send a POST request to "/api/channels/{learn_channel_id}/learn/proposals" with body:
-      """
-      {"proposals":[
-        {"kind":"ticket_url","title":"Link the ticket","rationale":"The user pasted it.","payload":{"ticket_url":"https://example.atlassian.net/browse/PROJ-7"}}
-      ]}
-      """
-    Then the response status should be 201
-    When I tag the chat's composer
-    And I click on "[data-testid='learn-badge']"
-    Then the Learn view shows the chat and the Learn pane side by side
-    And I wait for text "https://example.atlassian.net/browse/PROJ-7" to appear
-    And the page should contain text "ticket"
-    When I click on "[data-testid='learn-apply']"
-    Then I wait for "[data-testid='learn-proposal'][data-status='applied']" to be visible
-    And I wait for "[data-testid='header-ticket']" to be visible
-    And the element "[data-testid='header-ticket']" should contain text "PROJ-7"
-    # The chat header has no layout controls: the badge closes the view.
-    And the element "[data-testid='learn-split-chat'] [title='Close pane']" should not exist
-    And the element "[data-testid='learn-split-chat'] [title='Add panel']" should not exist
-    When I click on "[data-testid='learn-split'] [data-testid='learn-badge']"
-    Then I wait up to "5s" for "[data-testid='learn-split']" to disappear
-    And I wait for "[data-learn-chat-leaf] textarea" to be visible
-    # The chat went back to its pane, still the same chat.
-    And the composer in "[data-learn-chat-leaf]" is the one I tagged
-
   Scenario: Proposals filed by a learn pass are dismissed and applied from the Learn view
     # The proposals go through the real API a learn pass files them with;
     # its learn.proposals event lights the badge in the open window.
@@ -187,10 +159,6 @@ Feature: Learn from runs
       {"status":"completed","run_id":"bdd-learn-run-2"}
       """
     Then I wait for "[data-testid='learn-badge'][data-running='false']" to be visible
-    # The Learn view's own chat header has the badge too; it closes the view.
-    When I click on "[data-testid='learn-split'] [data-testid='learn-badge']"
-    Then I wait up to "5s" for "[data-testid='learn-split']" to disappear
-    And I wait for "[id^='pane-header-slot-'] [data-testid='learn-badge']" to be visible
 
   Scenario: Escape and a layout tab switch close the Learn view, and focus stays in the chat
     Given the current channel has a learn thread
@@ -271,19 +239,22 @@ Feature: Learn from runs
       """
     Then I wait for "[title='Mark all as read']" to be visible
 
-  Scenario: Apply all applies every pending proposal
+  Scenario: Apply all applies every pending proposal, and a ticket proposal links the channel's ticket
     Given the current channel has a learn thread
+    And the element "[data-testid='header-ticket']" should not exist
     When I send a POST request to "/api/channels/{learn_channel_id}/learn/proposals" with body:
       """
       {"proposals":[
-        {"kind":"ticket_url","title":"Link the ticket","payload":{"ticket_url":"https://example.atlassian.net/browse/PROJ-8"}},
+        {"kind":"ticket_url","title":"Link the ticket","rationale":"The user pasted it.","payload":{"ticket_url":"https://example.atlassian.net/browse/PROJ-8"}},
         {"kind":"description","title":"Describe the thread","payload":{"description":"Learn journey playground"}}
       ]}
       """
     Then the response status should be 201
     And I wait for text "2 proposals" to appear
-    When I click on "[data-testid='learn-badge']"
+    When I tag the chat's composer
+    And I click on "[data-testid='learn-badge']"
     Then the Learn view shows the chat and the Learn pane side by side
+    And I wait for text "https://example.atlassian.net/browse/PROJ-8" to appear
     And the element "[data-testid='learn-dismiss-all']" should be visible
     When I click on "[data-testid='learn-apply-all']"
     Then I wait up to "5s" for "[data-testid='learn-proposal'][data-status='pending']" to disappear
@@ -294,6 +265,14 @@ Feature: Learn from runs
     And the element "[data-testid='learn-apply-all']" should not exist
     And the element "[data-testid='learn-dismiss-all']" should not exist
     And the element "[data-testid='learn-badge']" should contain text "learn"
+    # The chat header has no layout controls: the badge closes the view.
+    And the element "[data-testid='learn-split-chat'] [title='Close pane']" should not exist
+    And the element "[data-testid='learn-split-chat'] [title='Add panel']" should not exist
+    When I click on "[data-testid='learn-split'] [data-testid='learn-badge']"
+    Then I wait up to "5s" for "[data-testid='learn-split']" to disappear
+    And I wait for "[data-learn-chat-leaf] textarea" to be visible
+    # The chat went back to its pane, still the same chat.
+    And the composer in "[data-learn-chat-leaf]" is the one I tagged
 
   Scenario: Dismiss all dismisses every open proposal, and a failed request shows under its card
     Given the current channel has a learn thread

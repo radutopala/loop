@@ -16,9 +16,10 @@ import (
 
 // Limits on what a proposal may carry.
 const (
-	MaxTitleLen       = 200
-	MaxNameLen        = 100
-	MaxDescriptionLen = 500
+	maxTitleLen       = 200
+	maxRationaleLen   = 1000
+	maxNameLen        = 100
+	maxDescriptionLen = 500
 )
 
 // PromptShortcut is a prompt_shortcut proposal's payload.
@@ -71,23 +72,23 @@ type TicketURL struct {
 	TicketURL string `json:"ticket_url"`
 }
 
-// Validate checks a proposal's kind, title and payload. It returns the
-// payload's canonical JSON, which is what gets stored and what Decode reads
-// back when the proposal is applied.
-func Validate(kind, title string, payload json.RawMessage) (json.RawMessage, error) {
-	title = strings.TrimSpace(title)
-	if title == "" {
-		return nil, errors.New("title is required")
+// Validate checks a proposal's kind, title, rationale and payload. It
+// returns the trimmed title and rationale, and the payload's canonical JSON,
+// which is what gets stored and what Decode reads back when the proposal is
+// applied.
+func Validate(kind, title, rationale string, payload json.RawMessage) (string, string, json.RawMessage, error) {
+	if err := checkText("title", title, maxTitleLen, true); err != nil {
+		return "", "", nil, err
 	}
-	if utf8.RuneCountInString(title) > MaxTitleLen {
-		return nil, fmt.Errorf("title is longer than %d characters", MaxTitleLen)
+	if err := checkText("rationale", rationale, maxRationaleLen, false); err != nil {
+		return "", "", nil, err
 	}
 	decoded, err := Decode(kind, payload)
 	if err != nil {
-		return nil, err
+		return "", "", nil, err
 	}
 	canonical, _ := json.Marshal(decoded)
-	return canonical, nil
+	return strings.TrimSpace(title), strings.TrimSpace(rationale), canonical, nil
 }
 
 // Decode decodes and checks a stored or proposed payload of the given kind.
@@ -114,10 +115,10 @@ func Decode(kind string, payload json.RawMessage) (any, error) {
 		v, check = p, func() error { return checkMount(p.Mount) }
 	case db.LearnKindRename:
 		p := &Rename{}
-		v, check = p, func() error { return checkText("name", p.Name, MaxNameLen, true) }
+		v, check = p, func() error { return checkText("name", p.Name, maxNameLen, true) }
 	case db.LearnKindDescription:
 		p := &Description{}
-		v, check = p, func() error { return checkText("description", p.Description, MaxDescriptionLen, true) }
+		v, check = p, func() error { return checkText("description", p.Description, maxDescriptionLen, true) }
 	case db.LearnKindTicketURL:
 		p := &TicketURL{}
 		v, check = p, p.check
@@ -142,7 +143,7 @@ func decodeStrict(data json.RawMessage, v any) error {
 }
 
 func checkShortcut(name, body, bodyField string) error {
-	if err := checkText("name", name, MaxNameLen, true); err != nil {
+	if err := checkText("name", name, maxNameLen, true); err != nil {
 		return err
 	}
 	if strings.TrimSpace(body) == "" {
@@ -169,9 +170,6 @@ func (t *ScheduledTask) check() error {
 	case db.TaskTypeCron, db.TaskTypeInterval, db.TaskTypeOnce:
 	default:
 		return fmt.Errorf("type %q must be cron, interval or once", t.Type)
-	}
-	if strings.TrimSpace(t.Schedule) == "" {
-		return errors.New("schedule is required")
 	}
 	if err := scheduler.ValidateSchedule(db.TaskType(t.Type), t.Schedule); err != nil {
 		return err

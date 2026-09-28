@@ -242,6 +242,7 @@ func (s *SQLiteStore) withTx(ctx context.Context, fn func(tx *sql.Tx) error) err
 // Column lists for SELECT queries.
 const (
 	messageColumns = `id, chat_id, channel_id, msg_id, author_id, author_name, content, is_bot, is_processed, is_triggered, is_running, priority, mode, created_at, kind, chain_position, tool_use_id, tool_name, is_error, trigger_msg_id, not_before, edit_hold_until`
+	channelColumns = `id, channel_id, guild_id, name, dir_path, parent_id, platform, active, session_id, permissions, worktree, base_branch, locked, model_override, effort_override, fork_pending, task_id, description, ticket_url, learn_override, kind, created_at, updated_at`
 	taskColumns    = `id, channel_id, guild_id, schedule, type, prompt, enabled, next_run_at, created_at, updated_at, template_name, auto_delete_sec, thread_id, worktree, origin_branch, update_before_run, running, workflow_name, workflow_inputs, bash_script`
 )
 

@@ -85,7 +85,9 @@ func (a *app) runMCP(channelID, apiURL, dirPath, logPath, authorID, platform, ag
 	switch agentID {
 	case "":
 	case learn.AgentID:
-		// A learn pass files proposals and talks to no other agent.
+		// A learn pass files proposals, and gets none of the inter-agent
+		// tools or channel push: it works alone, and other agents shouldn't
+		// see or message it.
 		memOpts = append(memOpts, mcpserver.WithLearnTools())
 	default:
 		memOpts = append(memOpts, mcpserver.WithAgentTools(agentID))

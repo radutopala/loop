@@ -171,8 +171,8 @@ func summarizeToolInput(name string, raw json.RawMessage) string {
 		}
 		return tmpl
 	case "mcp__loop__propose_learnings":
-		// A proposal's payload may carry a "prompt" the fallback would pick;
-		// the titles say what's proposed.
+		// Its only top-level key is "proposals", which the fallback keys
+		// miss; the titles say what's proposed.
 		items, _ := m["proposals"].([]any)
 		titles := make([]string, 0, len(items))
 		for _, item := range items {

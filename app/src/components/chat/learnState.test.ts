@@ -118,11 +118,6 @@ describe("inBulk", () => {
     expect(inBulk("dismiss", p, at)).toBe(true);
     expect(inBulk("apply", p, at)).toBe(false);
   });
-
-  it("skips one no longer listed", () => {
-    expect(inBulk("apply", undefined)).toBe(false);
-    expect(inBulk("dismiss", undefined)).toBe(false);
-  });
 });
 
 describe("newlyAppliedShortcut", () => {

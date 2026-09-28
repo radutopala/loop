@@ -166,13 +166,8 @@ func readSessionSummary(sys interface {
 }
 
 // isLearnSession reports whether the session file head r starts with a
-// learn pass. Every pass forks the reviewed session into a new file in the
-// same project dir, and only the learn thread's newest one is on record
-// (its channel's session id). The file itself tells, though: Claude logs
-// the prompt a --print run starts with as the first enqueue
-// queue-operation, near the top, before the history a fork copies in; a
-// pass's is the learn trigger. The head alone is read, so a session that
-// merely quotes the trigger later on is never taken for one.
+// learn pass: its first enqueue queue-operation (the prompt a --print run
+// starts with, logged before any forked history) is the learn trigger.
 func isLearnSession(r io.Reader) bool {
 	sc := bufio.NewScanner(r)
 	sc.Buffer(make([]byte, 0, 4096), headReadSize)

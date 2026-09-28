@@ -31,7 +31,6 @@ func (s *OrchestratorSuite) TestLearnSkipReason() {
 	}{
 		{"learns", &db.Channel{Platform: local}, 3, on, false, ""},
 		{"override on beats config off", &db.Channel{Platform: local, LearnOverride: db.LearnOn}, 5, config.LearnConfig{MinTurns: 3}, false, ""},
-		{"learn thread", &db.Channel{Platform: local, Kind: db.ChannelKindLearn}, 5, on, false, "learn thread"},
 		{"slack channel", &db.Channel{Platform: types.PlatformSlack}, 5, on, false, "not a desktop channel"},
 		{"task thread", &db.Channel{Platform: local, TaskID: 7}, 5, on, false, "task thread"},
 		{"parked", &db.Channel{Platform: local}, 5, on, true, "parked on a plan or question"},

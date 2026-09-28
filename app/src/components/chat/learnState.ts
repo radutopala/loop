@@ -58,8 +58,7 @@ export function nextStaleIn(proposals: LearnProposal[], now = Date.now()): numbe
 // meanwhile is left alone.
 export type LearnBulk = "apply" | "dismiss";
 
-export function inBulk(bulk: LearnBulk, p: LearnProposal | undefined, now = Date.now()): boolean {
-  if (!p) return false;
+export function inBulk(bulk: LearnBulk, p: LearnProposal, now = Date.now()): boolean {
   return bulk === "apply" ? p.status === "pending" : isOpenProposal(p, now);
 }
 

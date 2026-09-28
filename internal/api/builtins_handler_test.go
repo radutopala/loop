@@ -7,7 +7,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"time"
 
 	"github.com/stretchr/testify/require"
 )
@@ -51,26 +50,15 @@ func (s *ServerSuite) TestHandleRestoreBuiltinsShortcutsSkipsWhenPresent() {
 func (s *ServerSuite) TestHandleRestoreBuiltinsWaitsForConfigLock() {
 	dir := s.writeLoopConfig(`{}`)
 	configPath := filepath.Join(dir, "config.json")
-	unlock := s.srv.configLocks.lock(configPath)
-
-	done := make(chan *httptest.ResponseRecorder)
-	go func() {
-		done <- s.testRequest(http.MethodPost, "/api/builtins/restore", `{"kind":"shortcuts"}`)
-	}()
-
-	select {
-	case <-done:
-		s.T().Fatal("restore ran while another edit held the config lock")
-	case <-time.After(50 * time.Millisecond):
-	}
-	data, err := os.ReadFile(configPath)
-	require.NoError(s.T(), err)
-	require.Equal(s.T(), `{}`, string(data))
-
-	unlock()
-	rec := <-done
+	rec := s.requestUnderConfigLock(configPath, func() *httptest.ResponseRecorder {
+		return s.testRequest(http.MethodPost, "/api/builtins/restore", `{"kind":"shortcuts"}`)
+	}, func() {
+		data, err := os.ReadFile(configPath)
+		require.NoError(s.T(), err)
+		require.Equal(s.T(), `{}`, string(data))
+	})
 	require.Equal(s.T(), http.StatusOK, rec.Code)
-	data, err = os.ReadFile(configPath)
+	data, err := os.ReadFile(configPath)
 	require.NoError(s.T(), err)
 	require.Contains(s.T(), string(data), "builtin code review")
 }

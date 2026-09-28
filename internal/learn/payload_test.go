@@ -26,13 +26,14 @@ func (s *PayloadSuite) TestValidate() {
 		name      string
 		kind      string
 		title     string
+		rationale string
 		payload   string
 		want      any
 		canonical string
 		wantErr   string
 	}{
 		{
-			name: "prompt shortcut", kind: db.LearnKindPromptShortcut, title: "Add fix-tests",
+			name: "prompt shortcut", kind: db.LearnKindPromptShortcut, title: " Add fix-tests ", rationale: " seen twice ",
 			payload:   `{"name":"fix-tests","prompt":"make test"}`,
 			want:      &PromptShortcut{Name: "fix-tests", Prompt: "make test"},
 			canonical: `{"name":"fix-tests","prompt":"make test"}`,
@@ -76,6 +77,7 @@ func (s *PayloadSuite) TestValidate() {
 
 		{name: "no title", kind: db.LearnKindRename, title: "  ", payload: `{"name":"x"}`, wantErr: "title is required"},
 		{name: "long title", kind: db.LearnKindRename, title: long(201), payload: `{"name":"x"}`, wantErr: "title is longer than 200"},
+		{name: "long rationale", kind: db.LearnKindRename, title: "t", rationale: long(1001), payload: `{"name":"x"}`, wantErr: "rationale is longer than 1000"},
 		{name: "unknown kind", kind: "wish", title: "t", payload: `{}`, wantErr: `unknown kind "wish"`},
 		{name: "bad json", kind: db.LearnKindRename, title: "t", payload: `{`, wantErr: "rename payload"},
 		{name: "unknown field", kind: db.LearnKindRename, title: "t", payload: `{"name":"x","command":"y"}`, wantErr: `unknown field "command"`},
@@ -83,7 +85,7 @@ func (s *PayloadSuite) TestValidate() {
 		{name: "shortcut without prompt", kind: db.LearnKindPromptShortcut, title: "t", payload: `{"name":"n"}`, wantErr: "prompt is required"},
 		{name: "bash without command", kind: db.LearnKindBashShortcut, title: "t", payload: `{"name":"n"}`, wantErr: "command is required"},
 		{name: "task type", kind: db.LearnKindScheduledTask, title: "t", payload: `{"type":"manual","schedule":"x","prompt":"p"}`, wantErr: `type "manual" must be`},
-		{name: "task schedule", kind: db.LearnKindScheduledTask, title: "t", payload: `{"type":"cron","prompt":"p"}`, wantErr: "schedule is required"},
+		{name: "task schedule", kind: db.LearnKindScheduledTask, title: "t", payload: `{"type":"cron","prompt":"p"}`, wantErr: `invalid task schedule: cron schedule ""`},
 		{name: "task bad cron", kind: db.LearnKindScheduledTask, title: "t", payload: `{"type":"cron","schedule":"every day","prompt":"p"}`, wantErr: `invalid task schedule: cron schedule "every day"`},
 		{name: "task bad interval", kind: db.LearnKindScheduledTask, title: "t", payload: `{"type":"interval","schedule":"daily","prompt":"p"}`, wantErr: `invalid task schedule: interval "daily"`},
 		{name: "task bad once", kind: db.LearnKindScheduledTask, title: "t", payload: `{"type":"once","schedule":"tomorrow","prompt":"p"}`, wantErr: `once schedule "tomorrow" must be RFC3339`},
@@ -103,12 +105,14 @@ func (s *PayloadSuite) TestValidate() {
 	}
 	for _, tc := range tests {
 		s.Run(tc.name, func() {
-			canonical, err := Validate(tc.kind, tc.title, json.RawMessage(tc.payload))
+			title, rationale, canonical, err := Validate(tc.kind, tc.title, tc.rationale, json.RawMessage(tc.payload))
 			if tc.wantErr != "" {
 				require.ErrorContains(s.T(), err, tc.wantErr)
 				return
 			}
 			require.NoError(s.T(), err)
+			require.Equal(s.T(), strings.TrimSpace(tc.title), title)
+			require.Equal(s.T(), strings.TrimSpace(tc.rationale), rationale)
 			// What's stored decodes back to the proposed payload.
 			got, err := Decode(tc.kind, canonical)
 			require.NoError(s.T(), err)

@@ -29,7 +29,7 @@ import {
 } from "../../layouts/persistence";
 import { EmptyLayoutPicker } from "../../splitPane/AddPanelButton";
 import { PaneLeafHeader } from "../../splitPane/PaneLeafHeader";
-import { SplitPaneLayout } from "../../splitPane/SplitPaneLayout";
+import { paneBoxStyle, SplitPaneLayout } from "../../splitPane/SplitPaneLayout";
 import { canAddPanel, collectLeaves, collectPanelTypes, findLeafById, hasAgentLeaf, leafCount, makeLeaf, moveLeaf, removeLeaf, splitLeaf, swapLeavesInTree, updateFlex } from "../../splitPane/treeOps";
 import type { DropPosition, SplitDirection } from "../../splitPane/types";
 import { useTheme } from "../../ThemeContext";
@@ -344,9 +344,7 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
     clearPlanPill,
   });
 
-  // The channel's learn pass, shown in the Learn view: its chat and Learn
-  // pane side by side over the layout. The chat moves into it from its pane
-  // (see chatHost) and back on close, without mounting again.
+  // The channel's learn pass, shown in the Learn view beside the chat (see chatHost).
   const learn = useLearn(channelId, subscribeChatEvents, subscribeChannelEvents, wsOpens);
   const { learnChannelId } = learn;
   const [learnOpen, setLearnOpen] = useState(false);
@@ -775,16 +773,16 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
   }, [channelId, handleEmptyAdd, handleSplitLeaf]);
 
   // Listen for "open this file in the editor" events dispatched by chat
-  // FileLink (the channel's chat, or its learn thread's in the Learn view,
-  // which shares the channel's roots) and by the review panel's per-file
-  // Open button. If no editor leaf exists yet, place one on the opposite
-  // horizontal side of an anchor leaf — chat if present, otherwise
-  // whichever leaf is first in the tree (e.g. the review panel). The anchor
-  // split keeps the new editor adjacent to the panel the user clicked from,
-  // and going through insertOppositeHorizontal (rather than handleSplitLeaf)
-  // deliberately skips the automatic file-tree sidecar that handleSplitLeaf
-  // would attach — opening a file should give the editor alone, not the
-  // editor + file tree combo.
+  // FileLink and by the review panel's per-file Open button. If no editor
+  // leaf exists yet, place one on the opposite horizontal side of an
+  // anchor leaf — chat if present, otherwise whichever leaf is first in
+  // the tree (e.g. the review panel). The anchor split keeps the new
+  // editor adjacent to the panel the user clicked from, and going through
+  // insertOppositeHorizontal (rather than handleSplitLeaf) deliberately
+  // skips the automatic file-tree sidecar that handleSplitLeaf would
+  // attach — opening a file should give the editor alone, not the editor
+  // + file tree combo.
+  // The learn thread's FileLinks in the Learn view count too (it shares the channel's roots).
   useEffect(() => {
     const handler = (ev: Event) => {
       const ce = ev as CustomEvent<FileLinkOpenDetail>;
@@ -893,11 +891,7 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
     return hidden.length > 0 ? hidden : undefined;
   }, [channel.review_enabled]);
 
-  // The channel's chat, in its layout pane or in the Learn view.
-  // The chat is mounted once, into chatHost, and shown by whichever ChatSlot
-  // holds that element: its layout pane's, or the Learn view's while that's
-  // open. Moving between them never mounts it again. It renders once a slot
-  // holds the host, so it never mounts detached.
+  // The chat is mounted once, into chatHost (see ChatSlot); it renders once a slot holds the host.
   const [chatHost] = useState(createChatHost);
   const [chatHostPlaced, setChatHostPlaced] = useState(false);
   const placeChatHost = useCallback(() => setChatHostPlaced(true), []);
@@ -938,7 +932,7 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
     if (!learnOpen) return;
     let timer: ReturnType<typeof setTimeout> | undefined;
     const onKey = (e: KeyboardEvent) => {
-      if (e.key !== "Escape" || shownComponent || hiddenRef.current) return;
+      if (e.key !== "Escape" || hiddenRef.current) return;
       // Whatever takes Escape marks it handled (preventDefault), but a
       // window listener added after this one (a menu opened in the view)
       // only sees it after this one does: look once the key is dispatched.
@@ -952,7 +946,7 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
       window.removeEventListener("keydown", onKey);
       clearTimeout(timer);
     };
-  }, [learnOpen, shownComponent, closeLearn]);
+  }, [learnOpen, closeLearn]);
   const chatLeafId = useMemo(
     () => (layoutType === "canvas" ? canvasState?.tiles.find((t) => t.panel === "chat")?.id : tree ? collectLeaves(tree).find((l) => l.panel === "chat")?.id : undefined),
     [layoutType, canvasState, tree],
@@ -1548,9 +1542,8 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
               overflow: "hidden",
               minHeight: 0,
               position: "relative",
-              pointerEvents: learnSplit.mounted ? "none" : undefined,
             }}
-            // Nor can it be reached from the keyboard.
+            // Nor can it be clicked or reached from the keyboard.
             inert={learnSplit.mounted}
           >
             {layoutType === "canvas" ? (
@@ -1579,10 +1572,7 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
                       overflow: "hidden",
                       minHeight: 0,
                       minWidth: 0,
-                      borderRadius: colors.islandRadius,
-                      boxShadow: colors.islandShadow,
-                      border: colors.islandBorder,
-                      backgroundColor: colors.sidebar,
+                      ...paneBoxStyle(colors),
                     }}
                   >
                     <PaneLeafHeader

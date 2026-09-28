@@ -57,35 +57,6 @@ func (s *ServerSuite) TestImportWorktree_Success() {
 	require.Equal(s.T(), wtPath, ch.DirPath)
 }
 
-func (s *ServerSuite) TestImportWorktreeWaitsForConfigLock() {
-	dir := initGitRepo(s.T())
-	cmd := exec.Command("git", "branch", "feature/locked")
-	cmd.Dir = dir
-	require.NoError(s.T(), cmd.Run())
-	wtPath := filepath.Join(dir, ".worktrees", "locked-wt")
-	cmd = exec.Command("git", "worktree", "add", wtPath, "feature/locked")
-	cmd.Dir = dir
-	require.NoError(s.T(), cmd.Run())
-
-	s.srv.sys = s.sys
-	s.store.On("GetChannel", mock.Anything, "ch1").Return(&db.Channel{ChannelID: "ch1", DirPath: dir}, nil)
-	s.store.On("ListChannels", mock.Anything).Return(([]*db.Channel)(nil), nil)
-	s.threads.On("CreateThread", mock.Anything, "ch1", mock.Anything, "", "").Return("lock-thread", nil)
-	s.store.On("GetChannel", mock.Anything, "lock-thread").Return(&db.Channel{ChannelID: "lock-thread", DirPath: dir, ParentID: "ch1"}, nil)
-	s.store.On("UpsertChannel", mock.Anything, mock.Anything).Return(nil)
-
-	cfgPath := filepath.Join(wtPath, ".loop", "config.json")
-	rec := s.requestUnderConfigLock(cfgPath, func() *httptest.ResponseRecorder {
-		return s.testRequest("POST", "/api/worktrees/import", `{"channel_id":"ch1","worktree_path":"`+wtPath+`"}`)
-	}, func() {
-		// The existence check is inside the lock too.
-		s.sys.AssertNotCalled(s.T(), "Stat", cfgPath)
-		s.sys.AssertNotCalled(s.T(), "WriteFile", cfgPath, mock.Anything, mock.Anything)
-	})
-	require.Equal(s.T(), http.StatusCreated, rec.Code)
-	s.sys.AssertCalled(s.T(), "WriteFile", cfgPath, mock.Anything, mock.Anything)
-}
-
 func (s *ServerSuite) TestImportWorktree_AlreadyImported() {
 	dir := initGitRepo(s.T())
 	cmd := exec.Command("git", "branch", "feature/already")

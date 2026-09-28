@@ -8,12 +8,9 @@ import (
 )
 
 // learnStateResponse is a channel's learn switch and its hidden learn thread.
-// Available is false for Slack and Discord channels and task threads, which
-// never learn (see learnUnavailable). Learn is the channel's override ("on", "off", or empty to
-// inherit DefaultLearn from the merged config); Enabled is the effective
-// value. LearnChannelID is empty until the first learn pass creates the
-// thread, and Running says a learn pass is in progress there (a user's
-// reply running in the thread doesn't count).
+// Learn is the override ("on", "off", or empty to inherit DefaultLearn);
+// Enabled is the effective value, never true when Available is false (see
+// learnUnavailable). Running is a learn pass, not a user's reply.
 type learnStateResponse struct {
 	Available      bool   `json:"available"`
 	Learn          string `json:"learn"`
@@ -70,8 +67,8 @@ func (s *Server) handleGetLearn(w http.ResponseWriter, r *http.Request) {
 	}
 	if l != nil {
 		resp.LearnChannelID = l.ChannelID
-		if s.learnPassTracker != nil {
-			resp.Running = s.learnPassTracker.IsLearnPassRunning(l.ChannelID)
+		if s.runCanceller != nil {
+			resp.Running = s.runCanceller.IsLearnPassRunning(l.ChannelID)
 		}
 	}
 	writeHTTPJSON(w, http.StatusOK, resp, s.logger)

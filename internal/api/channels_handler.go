@@ -290,13 +290,24 @@ func (s *Server) handleDeleteChannel(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// The threads and learn threads go with the channel; note them, and
-	// the dirs holding their MCP configs, while they still exist.
+	// the dirs holding their MCP configs, while they still exist. The
+	// channel's own learn thread is among its threads; the threads' learn
+	// threads are a level further down.
 	threadIDs, err := s.store.ListChannelIDsByParentID(r.Context(), channelID)
 	if err != nil {
 		s.logger.Warn("channel cleanup: listing threads", "channel_id", channelID, "error", err)
 	}
 	threads := s.lookupThreads(r.Context(), threadIDs)
-	learns := s.learnThreads(r.Context(), append([]string{channelID}, threadIDs...)...)
+	var learns []*db.Channel
+	var parentIDs []string
+	for _, t := range threads {
+		if t.Kind == db.ChannelKindLearn {
+			learns = append(learns, t)
+		} else {
+			parentIDs = append(parentIDs, t.ChannelID)
+		}
+	}
+	threadLearns := s.learnThreads(r.Context(), parentIDs...)
 
 	// Delete child threads first.
 	if err := s.store.DeleteChannelsByParentID(r.Context(), channelID); err != nil {
@@ -311,8 +322,8 @@ func (s *Server) handleDeleteChannel(w http.ResponseWriter, r *http.Request) {
 
 	// Clean up containers associated with this channel.
 	s.cleanupChannelContainers(r.Context(), channelID)
-	s.stopLearnThreads(r.Context(), learns)
-	s.removeMCPConfigs(ch, append(append([]*db.Channel{ch}, threads...), learns...))
+	s.stopLearnThreads(r.Context(), append(learns, threadLearns...))
+	s.removeMCPConfigs(ch, append(append([]*db.Channel{ch}, threads...), threadLearns...))
 
 	w.WriteHeader(http.StatusNoContent)
 }

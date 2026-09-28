@@ -365,7 +365,7 @@ func buildSchema() *ConfigSchema {
 						Type:        "integer",
 						Title:       "Min Turns",
 						Description: "Skip runs with fewer turns than this",
-						Default:     3,
+						Default:     DefaultLearnMinTurns,
 					},
 					"model": {
 						Type:        "string",

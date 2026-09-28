@@ -23,7 +23,7 @@ func (s *SQLiteStore) UpdateChannelLearnOverride(ctx context.Context, channelID,
 // it has none yet.
 func (s *SQLiteStore) GetLearnChannel(ctx context.Context, parentID string) (*Channel, error) {
 	row := s.db.QueryRowContext(ctx,
-		`SELECT id, channel_id, guild_id, name, dir_path, parent_id, platform, active, session_id, permissions, worktree, base_branch, locked, model_override, effort_override, fork_pending, task_id, description, ticket_url, learn_override, kind, created_at, updated_at
+		`SELECT `+channelColumns+`
 		 FROM channels WHERE parent_id = ? AND kind = ? ORDER BY id LIMIT 1`,
 		parentID, ChannelKindLearn,
 	)
@@ -122,21 +122,21 @@ func (s *SQLiteStore) GetLearnProposal(ctx context.Context, id int64) (*LearnPro
 	return p, err
 }
 
-// LearnApplyStale is how long a proposal may sit in applying before it can
+// learnApplyStale is how long a proposal may sit in applying before it can
 // be claimed again. An apply takes well under a second; one still applying
 // after this lost its outcome (the status save failed, or Loop stopped
 // mid-apply) and would otherwise be stuck there for good.
-const LearnApplyStale = time.Minute
+const learnApplyStale = time.Minute
 
 // ClaimLearnProposal moves a pending or failed proposal, or one stuck in
-// applying for over LearnApplyStale, to applying. It reports false when the
+// applying for over learnApplyStale, to applying. It reports false when the
 // proposal is in any other state, so only one caller ever applies it.
 func (s *SQLiteStore) ClaimLearnProposal(ctx context.Context, id int64) (bool, error) {
 	now := s.nowFunc()
 	res, err := s.db.ExecContext(ctx,
 		`UPDATE learn_proposals SET status = ?, error = '', updated_at = ?
 		 WHERE id = ? AND (status IN (?, ?) OR (status = ? AND updated_at < ?))`,
-		LearnApplying, now, id, LearnPending, LearnFailed, LearnApplying, now.Add(-LearnApplyStale),
+		LearnApplying, now, id, LearnPending, LearnFailed, LearnApplying, now.Add(-learnApplyStale),
 	)
 	if err != nil {
 		return false, err

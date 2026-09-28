@@ -10,7 +10,6 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
-	"unicode/utf8"
 
 	"github.com/radutopala/loop/internal/config"
 	"github.com/radutopala/loop/internal/config/hjsonedit"
@@ -20,11 +19,8 @@ import (
 	"github.com/radutopala/loop/internal/types"
 )
 
-// Limits on one propose_learnings call.
-const (
-	maxLearnProposals = 5
-	maxRationaleLen   = 1000
-)
+// maxLearnProposals limits one propose_learnings call.
+const maxLearnProposals = 5
 
 type learnProposalInput struct {
 	Kind      string          `json:"kind"`
@@ -92,11 +88,7 @@ func (s *Server) handleCreateLearnProposals(w http.ResponseWriter, r *http.Reque
 // newLearnProposal checks one proposed item and builds its row for the
 // channel learn thread l learns from.
 func newLearnProposal(l *db.Channel, in learnProposalInput) (*db.LearnProposal, error) {
-	rationale := strings.TrimSpace(in.Rationale)
-	if utf8.RuneCountInString(rationale) > maxRationaleLen {
-		return nil, fmt.Errorf("rationale is longer than %d characters", maxRationaleLen)
-	}
-	payload, err := learn.Validate(in.Kind, in.Title, in.Payload)
+	title, rationale, payload, err := learn.Validate(in.Kind, in.Title, in.Rationale, in.Payload)
 	if err != nil {
 		return nil, err
 	}
@@ -104,7 +96,7 @@ func newLearnProposal(l *db.Channel, in learnProposalInput) (*db.LearnProposal, 
 		ChannelID:      l.ParentID,
 		LearnChannelID: l.ChannelID,
 		Kind:           in.Kind,
-		Title:          strings.TrimSpace(in.Title),
+		Title:          title,
 		Rationale:      rationale,
 		Payload:        string(payload),
 	}, nil
@@ -278,7 +270,7 @@ func (s *Server) applyLearnConfig(ctx context.Context, ch *db.Channel, v any) er
 	}
 	configPath := filepath.Join(dir, ".loop", "config.json")
 	defer s.configLocks.lock(configPath)()
-	merged := s.configs.merged(ch.DirPath, s.workspace.resolveParentDirPath(ctx, ch.ChannelID))
+	merged, global := s.configs.mergedWithGlobal(ch.DirPath, s.workspace.resolveParentDirPath(ctx, ch.ChannelID))
 	if merged == nil {
 		return errors.New("loading config failed")
 	}
@@ -314,10 +306,8 @@ func (s *Server) applyLearnConfig(ctx context.Context, ch *db.Channel, v any) er
 		}
 		// Project mounts replace the global ones, so a project's first mount
 		// starts from the global list or the rest would silently go.
-		if global := s.configs.merged("", ""); global != nil {
-			for _, m := range global.Mounts {
-				seed = append(seed, m)
-			}
+		for _, m := range global.Mounts {
+			seed = append(seed, m)
 		}
 		path, item = []string{"mounts"}, v.Mount
 	}

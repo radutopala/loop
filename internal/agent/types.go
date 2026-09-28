@@ -46,8 +46,9 @@ type AgentRequest struct {
 	//     otherwise silently downgrades the run.
 	ReviewMode bool `json:"review_mode,omitempty"`
 	// LearnMode runs the request as a learn pass over a finished chat run:
-	// on top of the batch denials it denies file edits and every Loop tool
-	// that changes state, so the pass can only look and propose.
+	// its built-in tools are limited to the read-only --tools allowlist, and
+	// on top of the batch denials every Loop tool that changes state is
+	// denied, so the pass can only look and propose.
 	LearnMode bool `json:"learn_mode,omitempty"`
 	// OnTurn is called for each assistant turn's text content during streaming.
 	// When set, the runner follows container logs in real-time instead of waiting

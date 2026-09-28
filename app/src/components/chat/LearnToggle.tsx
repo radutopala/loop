@@ -2,6 +2,7 @@ import { useContext } from "react";
 import { LearnContext } from "../../hooks/useLearn";
 import { useTheme } from "../../ThemeContext";
 import { fonts } from "../../theme";
+import { LearnIcon } from "./LearnIcon";
 import { learnEffective, learnToggleTitle } from "./learnState";
 
 /**
@@ -9,13 +10,13 @@ import { learnEffective, learnToggleTitle } from "./learnState";
  * click stores on/off on the channel, which then applies from its next run.
  * Its state is the layout's LearnView (see useLearn), so it follows changes
  * made in other windows; Slack and Discord channels, which never learn,
- * don't show it, nor does a learn thread's own composer (it isn't the
- * view's channel: a learn thread doesn't learn from itself).
+ * don't show it, nor does a learn thread's own composer (it has no
+ * LearnView: a learn thread doesn't learn from itself).
  */
-export function LearnToggle({ channelId }: { channelId: string }) {
+export function LearnToggle() {
   const { colors } = useTheme();
   const view = useContext(LearnContext);
-  if (!view || view.channelId !== channelId || !view.loaded || !view.available) return null;
+  if (!view || !view.loaded || !view.available) return null;
   const { learn, defaultLearn } = view;
   const on = learnEffective(learn, defaultLearn);
   const toggle = () => view.setLearn(on ? "off" : "on");
@@ -44,11 +45,7 @@ export function LearnToggle({ channelId }: { channelId: string }) {
         fontSize: 10,
       }}
     >
-      <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-        <path d="M9 18h6" />
-        <path d="M10 22h4" />
-        <path d="M12 2a7 7 0 0 0-4 12.7V17h8v-2.3A7 7 0 0 0 12 2z" />
-      </svg>
+      <LearnIcon size={10} />
       learn
     </button>
   );
