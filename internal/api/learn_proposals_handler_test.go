@@ -184,6 +184,31 @@ func (s *ServerSuite) TestDismissLearnProposal() {
 	require.Empty(s.T(), got.Error)
 }
 
+// TestSettleLearnProposalOutlivesClient checks a claimed proposal is applied
+// and settled even when the client has gone away: its request context is
+// cancelled, but the store and the apply never see that.
+func (s *ServerSuite) TestSettleLearnProposalOutlivesClient() {
+	live := mock.MatchedBy(func(ctx context.Context) bool { return ctx.Err() == nil })
+	for _, action := range []string{"apply", "dismiss"} {
+		s.Run(action, func() {
+			s.SetupTest()
+			s.store.On("GetLearnProposal", live, int64(7)).Return(&db.LearnProposal{ID: 7, ChannelID: "ch-1", Kind: db.LearnKindRename, Payload: `{"name":"x"}`, Status: db.LearnPending}, nil)
+			s.store.On("ClaimLearnProposal", live, int64(7)).Return(true, nil)
+			s.store.On("GetChannel", live, "ch-1").Return(&db.Channel{ChannelID: "ch-1"}, nil).Maybe()
+			s.store.On("UpdateChannelName", live, "ch-1", "x").Return(nil).Maybe()
+			s.store.On("SetLearnProposalStatus", live, int64(7), mock.Anything, "").Return(nil)
+
+			ctx, cancel := context.WithCancel(context.Background())
+			cancel()
+			req := httptest.NewRequest("POST", "/api/learn/proposals/7/"+action, nil).WithContext(ctx)
+			w := httptest.NewRecorder()
+			s.mux.ServeHTTP(w, req)
+			require.Equal(s.T(), http.StatusOK, w.Code)
+			s.store.AssertExpectations(s.T())
+		})
+	}
+}
+
 // applyProposal runs the apply endpoint on a claimable proposal and returns
 // the status and error it was settled with.
 func (s *ServerSuite) applyProposal(kind, payload string) (string, string) {

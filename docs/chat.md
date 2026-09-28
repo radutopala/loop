@@ -568,7 +568,7 @@ Only one pass runs per channel at a time. A run that finishes while a pass is ru
 
 Stopped or failed runs, and scheduled task runs, don't start one. See [Orchestrator: Learn pass](orchestrator.md#learn-pass) for how it runs.
 
-The pass may only look and propose: it can't edit files, run shell commands or change Loop's config, tasks or threads, and it gets only Loop's MCP server (read-only tools), not your own servers or the browser. It files at most 5 proposals, each one of:
+The pass may only look and propose: its built-in tools are only reading and searching files (no editing, shell, web, subagents or worktrees), it can't change Loop's config, tasks or threads, and it gets only Loop's MCP server (read-only tools), not your own servers or the browser. It files at most 5 proposals, each one of:
 
 | Kind | What Apply does |
 |------|-----------------|
@@ -585,7 +585,7 @@ Config kinds are written to the project's `.loop/config.json` with your comments
 
 ### Learn label
 
-The chat pane shows a `learn` label for the selected channel at the right of its header: `learning…` while a pass runs (not while the learn thread answers you), `N proposals` while proposals wait (pending or failed), both lit in the accent color. Once the channel has a learn thread and nothing waits, the label stays dim; a channel that never had a pass shows none. A click opens the Learn view; switching channels or layout tabs, adding a layout tab, deleting the active one or resetting it closes it. So does anything that opens in the layout under it: a file link in the chat (the editor opens in the layout), a panel another view opens there, or a memory file opened from search.
+The chat pane shows a `learn` label for the selected channel at the right of its header: `learning…` while a pass runs (not while the learn thread answers you), `N proposals` while proposals wait on you (pending, failed, or stuck applying for over a minute), both lit in the accent color. Once the channel has a learn thread and nothing waits, the label stays dim; a channel that never had a pass shows none. A click opens the Learn view; switching channels or layout tabs, adding a layout tab, deleting the active one or resetting it closes it. So does anything that opens in the layout under it: a file link in the chat (the editor opens in the layout), a panel another view opens there, or a memory file opened from search.
 
 ### Learn view
 
@@ -595,7 +595,7 @@ The chat keeps its pane header with its container stats, but not the layout's sp
 
 The Learn pane's header matches a pane header:
 
-- **Proposals** on top, newest first. Each card shows its kind, title, a one-line gist of exactly what Apply writes, and the rationale the pass gave.
+- **Proposals** on top, newest first. Each card shows its kind, title, a one-line gist of exactly what Apply writes, and the rationale the pass gave. A gate rule's gist is the whole rule: its decision, what it matches (the commands and their argument patterns, the file paths and operations, or the socket path; `any command` or `any path` when it lists none) and the message the gate shows.
   - **Apply** applies it. If it fails, the error shows under the card and the button becomes **Retry**. If the request itself fails (Loop can't be reached, say), that error shows under the card until the next try. A card's buttons are disabled while its apply or dismiss is in flight. Requests in flight and their errors outlive the view: close and reopen it and they're still there.
   - **Dismiss** drops it. Pending and failed proposals can be dismissed.
   - Applied and dismissed cards stay in the list, dimmed, with their status.
@@ -603,7 +603,8 @@ The Learn pane's header matches a pane header:
   - **Apply all** in the header applies every pending proposal one by one, skipping any applied, dismissed or in flight meanwhile. Failed ones are left for a manual Retry.
   - **Dismiss all** next to it dismisses every open proposal (pending, failed, or stuck applying) one by one, the same way. It shows while any proposal is open; neither button can be pressed while either is going through the list. A request that fails shows under its card, as for a single Dismiss.
   - An applied prompt or bash shortcut shows at once in the composer's `#` picker and the terminal's shortcut menus.
-- **The learn thread's chat** below. Watch the pass as it works, or reply to it: ask why it proposed something or ask for changes, and it files revised proposals. The thread's composer has no Learn switch, since a learn thread doesn't learn from itself.
+  - When a card's buttons give way to its status, or Apply all and Dismiss all to an empty list, focus moves on to the next open card's Apply (or Retry), else to the pane's ✕.
+- **The learn thread's chat** below. Watch the pass as it works, or reply to it: ask why it proposed something or ask for changes, and it files revised proposals. The thread's composer has no Learn switch, since a learn thread doesn't learn from itself. A reply or pass running when you open the view shows as it is (its Stop button, streamed text and activity). File links in it open the editor in the layout, as in the chat, which closes the view.
 
 **Worktree threads:** a rename proposal renames the thread only; its git branch and worktree folder keep their names. The Learn pane says so under the card.
 

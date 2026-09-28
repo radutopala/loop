@@ -136,7 +136,11 @@ func (s *OrchestratorSuite) TestMaybeLearnSkips() {
 		}},
 		{"fork error", &db.Channel{ChannelID: "ch1", DirPath: "/project", Platform: types.PlatformLocal}, learnOn, func() {
 			s.store.On("GetLearnChannel", s.ctx, "ch1").Return(&db.Channel{ChannelID: "learn-1", Name: "learn: "}, nil)
-			s.store.On("MarkSessionForkPending", s.ctx, "learn-1", "sess-1").Return(errors.New("db down"))
+			s.store.On("MarkSessionForkPending", s.ctx, "learn-1", "sess-1").Return(false, errors.New("db down"))
+		}},
+		{"learn thread deleted meanwhile", &db.Channel{ChannelID: "ch1", DirPath: "/project", Platform: types.PlatformLocal}, learnOn, func() {
+			s.store.On("GetLearnChannel", s.ctx, "ch1").Return(&db.Channel{ChannelID: "learn-1", Name: "learn: "}, nil)
+			s.store.On("MarkSessionForkPending", s.ctx, "learn-1", "sess-1").Return(false, nil)
 		}},
 	}
 	for _, tc := range tests {
@@ -177,7 +181,7 @@ func (s *OrchestratorSuite) TestMaybeLearnStarts() {
 	})).Return(nil)
 	s.store.On("MarkSessionForkPending", s.ctx, mock.MatchedBy(func(id string) bool {
 		return strings.HasPrefix(id, "learn-")
-	}), "sess-1").Return(nil)
+	}), "sess-1").Return(true, nil)
 	s.store.On("IsChannelActive", s.ctx, mock.Anything).Return(true, nil)
 	s.store.On("GetChannel", s.ctx, "ch1").Return(ch, nil)
 	s.store.On("GetChannel", s.ctx, mock.Anything).Return(&db.Channel{ID: 9, Platform: types.PlatformLocal, Kind: db.ChannelKindLearn}, nil)
@@ -273,7 +277,7 @@ func (s *OrchestratorSuite) TestLearnRunDone() {
 			authorID: "user-1",
 			setup: func() {
 				s.store.On("GetChannel", s.ctx, "learn-1").Return(&db.Channel{ChannelID: "learn-1"}, nil)
-				s.store.On("MarkSessionForkPending", s.ctx, "learn-1", "sess-2").Return(errors.New("db down"))
+				s.store.On("MarkSessionForkPending", s.ctx, "learn-1", "sess-2").Return(false, errors.New("db down"))
 			},
 		},
 	}
@@ -294,6 +298,39 @@ func (s *OrchestratorSuite) TestLearnRunDone() {
 	}
 }
 
+// TestLearnPassRunning covers IsLearnPassRunning: only a pass's own run marks
+// its thread running, not a user's reply there or a pass still queued, and
+// the mark clears when the pass's run ends.
+func (s *OrchestratorSuite) TestLearnPassRunning() {
+	tests := []struct {
+		name     string
+		slot     *learnSlot
+		authorID string
+		want     bool
+	}{
+		{name: "no slot, user run", authorID: "user-1"},
+		{name: "queued pass, user run", slot: &learnSlot{triggered: true}, authorID: "user-1"},
+		{name: "queued pass starts", slot: &learnSlot{triggered: true}, authorID: learnAuthorID, want: true},
+		{name: "pass resumed after a restart", authorID: learnAuthorID, want: true},
+	}
+	for _, tc := range tests {
+		s.Run(tc.name, func() {
+			s.SetupTest()
+			if tc.slot != nil {
+				s.orch.learnSlots = map[string]*learnSlot{"learn-1": tc.slot}
+			}
+			require.False(s.T(), s.orch.IsLearnPassRunning("learn-1"))
+			s.orch.learnRunStarted("learn-1", tc.authorID)
+			require.Equal(s.T(), tc.want, s.orch.IsLearnPassRunning("learn-1"))
+			if tc.want {
+				require.True(s.T(), s.orch.learnSlots["learn-1"].triggered)
+			}
+			s.orch.learnRunDone(s.ctx, "learn-1", tc.authorID)
+			require.False(s.T(), s.orch.IsLearnPassRunning("learn-1"))
+		})
+	}
+}
+
 // TestLearnRunDoneStartsWaitingPass covers the pass queued behind a running
 // one: when that run ends, the waiting run's session is forked and its
 // trigger queued, and the thread stays claimed for it.
@@ -307,7 +344,7 @@ func (s *OrchestratorSuite) TestLearnRunDoneStartsWaitingPass() {
 	s.orch.learnSlots = map[string]*learnSlot{"learn-1": {triggered: true, next: pass}}
 
 	s.store.On("GetChannel", s.ctx, "learn-1").Return(&db.Channel{ID: 9, ChannelID: "learn-1", Platform: types.PlatformLocal, Kind: db.ChannelKindLearn}, nil)
-	s.store.On("MarkSessionForkPending", s.ctx, "learn-1", "sess-2").Return(nil)
+	s.store.On("MarkSessionForkPending", s.ctx, "learn-1", "sess-2").Return(true, nil)
 	s.store.On("IsChannelActive", s.ctx, "learn-1").Return(true, nil)
 	s.store.On("InsertMessage", s.ctx, mock.MatchedBy(func(m *db.Message) bool {
 		return m.AuthorID == learnAuthorID && m.Content == learn.TriggerMessage("api", "fix it")

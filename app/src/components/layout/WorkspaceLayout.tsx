@@ -232,8 +232,12 @@ interface WorkspaceLayoutProps {
   onSelectThread?: (threadId: string) => void;
   /** Restored chat state from the app-level store. */
   initialChatState?: ActiveChatState;
-  /** Called on unmount with latest chat state for store persistence. */
+  /** Called on unmount with latest chat state for store persistence (the
+   * channel's, or its learn thread's in the Learn view). */
   onChatStateUnmount?: (channelId: string, state: ActiveChatState) => void;
+  /** The app-level store's chat state for a channel, to restore the Learn
+   * view's learn thread (kept up to date while the view is closed). */
+  getChatState?: (channelId: string) => ActiveChatState | undefined;
   /** Subscribe to chat events from the store's single WebSocket. */
   subscribeChatEvents?: (listener: ChatEventListener) => () => void;
   /** Subscribe to one channel's events whether or not it's selected. */
@@ -277,6 +281,7 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
     onSelectThread,
     initialChatState,
     onChatStateUnmount,
+    getChatState,
     subscribeChatEvents,
     subscribeChannelEvents,
     wsOpens,
@@ -343,6 +348,7 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
   // pane side by side over the layout. The chat moves into it from its pane
   // (see chatHost) and back on close, without mounting again.
   const learn = useLearn(channelId, subscribeChatEvents, subscribeChannelEvents, wsOpens);
+  const { learnChannelId } = learn;
   const [learnOpen, setLearnOpen] = useState(false);
   // It stays mounted until its closing animation ends.
   const learnMs = prefersReducedMotion() ? 0 : LEARN_SPLIT_MS;
@@ -729,7 +735,23 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
       const panel = ce.detail.panel;
       const anchorPanel = ce.detail.anchorPanel;
       const current = treeRef.current;
-      if (current && collectLeaves(current).some((l) => l.panel === panel)) return;
+      const existing = current ? collectLeaves(current).find((l) => l.panel === panel) : undefined;
+      if (existing) {
+        // It may be in the layout yet hidden, minimized or under another
+        // pane maximized (the chat stays mounted there, parked): show it.
+        setMinimizedLeaves((prev) => {
+          if (!prev.has(existing.id)) return prev;
+          const next = new Set(prev);
+          next.delete(existing.id);
+          return next;
+        });
+        const maximized = maximizedLeafIdRef.current;
+        if (maximized && maximized !== existing.id) {
+          setMaximizedLeafId(null);
+          setShownComponent(null);
+        }
+        return;
+      }
       if (!current) {
         handleEmptyAdd(panel);
         return;
@@ -753,19 +775,20 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
   }, [channelId, handleEmptyAdd, handleSplitLeaf]);
 
   // Listen for "open this file in the editor" events dispatched by chat
-  // FileLink and by the review panel's per-file Open button. If no editor
-  // leaf exists yet, place one on the opposite horizontal side of an
-  // anchor leaf — chat if present, otherwise whichever leaf is first in
-  // the tree (e.g. the review panel). The anchor split keeps the new
-  // editor adjacent to the panel the user clicked from, and going through
-  // insertOppositeHorizontal (rather than handleSplitLeaf) deliberately
-  // skips the automatic file-tree sidecar that handleSplitLeaf would
-  // attach — opening a file should give the editor alone, not the editor
-  // + file tree combo.
+  // FileLink (the channel's chat, or its learn thread's in the Learn view,
+  // which shares the channel's roots) and by the review panel's per-file
+  // Open button. If no editor leaf exists yet, place one on the opposite
+  // horizontal side of an anchor leaf — chat if present, otherwise
+  // whichever leaf is first in the tree (e.g. the review panel). The anchor
+  // split keeps the new editor adjacent to the panel the user clicked from,
+  // and going through insertOppositeHorizontal (rather than handleSplitLeaf)
+  // deliberately skips the automatic file-tree sidecar that handleSplitLeaf
+  // would attach — opening a file should give the editor alone, not the
+  // editor + file tree combo.
   useEffect(() => {
     const handler = (ev: Event) => {
       const ce = ev as CustomEvent<FileLinkOpenDetail>;
-      if (!ce.detail || ce.detail.channelId !== channelId) return;
+      if (!ce.detail || (ce.detail.channelId !== channelId && (!learnChannelId || ce.detail.channelId !== learnChannelId))) return;
       // The editor is in the layout: the Learn view closes to show it.
       setLearnOpen(false);
       const { target, line } = ce.detail;
@@ -791,7 +814,7 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
     };
     window.addEventListener("loop:open-file", handler);
     return () => window.removeEventListener("loop:open-file", handler);
-  }, [channelId, editorState, handleEmptyAdd]);
+  }, [channelId, learnChannelId, editorState, handleEmptyAdd]);
 
   const handleKillAgents = useCallback(() => {
     // Close all agent and shell terminal sessions in the current tree.
@@ -1623,7 +1646,17 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
                   <LearnBadge leafId={LEARN_SPLIT_SLOT_ID} learn={learn} open onToggle={closeLearn} />
                 </>
               }
-              learnPane={<LearnPane learn={learn} worktree={!!channel.worktree} subscribeChannelEvents={subscribeChannelEvents} onClose={closeLearn} />}
+              learnPane={
+                <LearnPane
+                  learn={learn}
+                  worktree={!!channel.worktree}
+                  roots={editorState.roots}
+                  subscribeChannelEvents={subscribeChannelEvents}
+                  getChatState={getChatState}
+                  onChatStateUnmount={onChatStateUnmount}
+                  onClose={closeLearn}
+                />
+              }
             />
           )}
         </div>

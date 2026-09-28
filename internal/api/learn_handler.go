@@ -12,7 +12,8 @@ import (
 // never learn (see learnUnavailable). Learn is the channel's override ("on", "off", or empty to
 // inherit DefaultLearn from the merged config); Enabled is the effective
 // value. LearnChannelID is empty until the first learn pass creates the
-// thread, and Running says a learn pass is in progress there.
+// thread, and Running says a learn pass is in progress there (a user's
+// reply running in the thread doesn't count).
 type learnStateResponse struct {
 	Available      bool   `json:"available"`
 	Learn          string `json:"learn"`
@@ -69,8 +70,8 @@ func (s *Server) handleGetLearn(w http.ResponseWriter, r *http.Request) {
 	}
 	if l != nil {
 		resp.LearnChannelID = l.ChannelID
-		if s.activeChatLister != nil {
-			_, resp.Running = s.activeChatLister.ActiveChatChannelIDs()[l.ChannelID]
+		if s.learnPassTracker != nil {
+			resp.Running = s.learnPassTracker.IsLearnPassRunning(l.ChannelID)
 		}
 	}
 	writeHTTPJSON(w, http.StatusOK, resp, s.logger)

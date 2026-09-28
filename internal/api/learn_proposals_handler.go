@@ -129,7 +129,7 @@ func (s *Server) handleListLearnProposals(w http.ResponseWriter, r *http.Request
 
 // claimLearnProposal loads the proposal at the path's id and moves it to
 // applying, failing the request when it's missing or already settled.
-func (s *Server) claimLearnProposal(w http.ResponseWriter, r *http.Request) *db.LearnProposal {
+func (s *Server) claimLearnProposal(ctx context.Context, w http.ResponseWriter, r *http.Request) *db.LearnProposal {
 	if !requireConfigured(w, s.store, "channel listing not configured") {
 		return nil
 	}
@@ -137,7 +137,7 @@ func (s *Server) claimLearnProposal(w http.ResponseWriter, r *http.Request) *db.
 	if !ok {
 		return nil
 	}
-	p, err := s.store.GetLearnProposal(r.Context(), id)
+	p, err := s.store.GetLearnProposal(ctx, id)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return nil
@@ -146,7 +146,7 @@ func (s *Server) claimLearnProposal(w http.ResponseWriter, r *http.Request) *db.
 		http.Error(w, "proposal not found", http.StatusNotFound)
 		return nil
 	}
-	ok, err = s.store.ClaimLearnProposal(r.Context(), id)
+	ok, err = s.store.ClaimLearnProposal(ctx, id)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return nil
@@ -160,8 +160,8 @@ func (s *Server) claimLearnProposal(w http.ResponseWriter, r *http.Request) *db.
 
 // settleLearnProposal records a claimed proposal's outcome, tells every
 // window and returns it.
-func (s *Server) settleLearnProposal(w http.ResponseWriter, r *http.Request, p *db.LearnProposal, status, errText string) {
-	if err := s.store.SetLearnProposalStatus(r.Context(), p.ID, status, errText); err != nil {
+func (s *Server) settleLearnProposal(ctx context.Context, w http.ResponseWriter, p *db.LearnProposal, status, errText string) {
+	if err := s.store.SetLearnProposalStatus(ctx, p.ID, status, errText); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -174,26 +174,32 @@ func (s *Server) settleLearnProposal(w http.ResponseWriter, r *http.Request, p *
 
 // handleApplyLearnProposal applies a pending (or previously failed)
 // proposal. A failure is recorded on the proposal, not returned as an HTTP
-// error, so it can be shown beside it and retried.
+// error, so it can be shown beside it and retried. Once claimed, the
+// proposal is applied and settled even if the client goes away: a
+// cancelled apply would leave it applying until it goes stale and can be
+// claimed again, applying it twice.
 func (s *Server) handleApplyLearnProposal(w http.ResponseWriter, r *http.Request) {
-	p := s.claimLearnProposal(w, r)
+	ctx := context.WithoutCancel(r.Context())
+	p := s.claimLearnProposal(ctx, w, r)
 	if p == nil {
 		return
 	}
 	status, errText := db.LearnApplied, ""
-	if err := s.applyLearnProposal(r.Context(), p); err != nil {
+	if err := s.applyLearnProposal(ctx, p); err != nil {
 		status, errText = db.LearnFailed, err.Error()
 	}
-	s.settleLearnProposal(w, r, p, status, errText)
+	s.settleLearnProposal(ctx, w, p, status, errText)
 }
 
-// handleDismissLearnProposal drops a pending or failed proposal.
+// handleDismissLearnProposal drops a pending or failed proposal, settling
+// it like handleApplyLearnProposal even if the client goes away.
 func (s *Server) handleDismissLearnProposal(w http.ResponseWriter, r *http.Request) {
-	p := s.claimLearnProposal(w, r)
+	ctx := context.WithoutCancel(r.Context())
+	p := s.claimLearnProposal(ctx, w, r)
 	if p == nil {
 		return
 	}
-	s.settleLearnProposal(w, r, p, db.LearnDismissed, "")
+	s.settleLearnProposal(ctx, w, p, db.LearnDismissed, "")
 }
 
 // applyLearnProposal makes the change p describes. Config kinds are

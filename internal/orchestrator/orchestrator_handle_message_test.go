@@ -323,6 +323,28 @@ func (s *OrchestratorSuite) TestHandleMessageThreadInactiveParent() {
 	s.store.AssertNotCalled(s.T(), "GetChannel", mock.Anything, mock.Anything)
 }
 
+// TestHandleMessageLearnTriggerNeverAutoCreates covers a learn pass's trigger
+// whose learn thread was deleted after the pass claimed it: it's dropped and
+// the slot freed, rather than auto-creating a plain channel with the learn
+// thread's id where the pass would run unrestricted.
+func (s *OrchestratorSuite) TestHandleMessageLearnTriggerNeverAutoCreates() {
+	s.orch.learnSlots = map[string]*learnSlot{"learn-1": {triggered: true}}
+	s.store.On("IsChannelActive", s.ctx, "learn-1").Return(false, nil)
+	s.bot.On("GetChannelParentID", s.ctx, "learn-1").Return("", nil)
+
+	s.orch.HandleMessage(s.ctx, &bot.IncomingMessage{
+		ChannelID: "learn-1",
+		AuthorID:  learnAuthorID,
+		Content:   "review",
+		HasPrefix: true,
+		Platform:  types.PlatformLocal,
+	})
+
+	s.store.AssertNotCalled(s.T(), "UpsertChannel", mock.Anything, mock.Anything)
+	s.store.AssertNotCalled(s.T(), "GetChannel", mock.Anything, mock.Anything)
+	require.NotContains(s.T(), s.orch.learnSlots, "learn-1")
+}
+
 func (s *OrchestratorSuite) TestHandleMessageThreadResolutionErrors() {
 	tests := []struct {
 		name      string

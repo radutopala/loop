@@ -63,6 +63,7 @@ func registerBackendSteps(ctx *godog.ScenarioContext, tc *TestContext) {
 	ctx.Step(`^I commit all changes in the repo with message "([^"]*)"$`, tc.commitAllInRepo)
 	ctx.Step(`^I remove every queued message via API$`, tc.removeQueuedViaAPI)
 	ctx.Step(`^the current channel has a learn thread$`, tc.seedLearnThread)
+	ctx.Step(`^the learn thread has a bot message:$`, tc.seedLearnThreadMessage)
 
 	// Ticket setup steps
 	ctx.Step(`^I create a ticket "([^"]*)" with type "([^"]*)" via API$`, tc.createTicketViaAPI)
@@ -1160,13 +1161,9 @@ func (tc *TestContext) seedLearnThread() error {
 	if tc.ChannelID == "" {
 		return fmt.Errorf("no channel_id set; use 'I set up a test channel via API' step first")
 	}
-	dbPath := os.Getenv("LOOP_DB_PATH")
-	if dbPath == "" {
-		return fmt.Errorf("LOOP_DB_PATH is not set; scripts/test-component.sh exports the daemon's database path")
-	}
-	sqlDB, err := sql.Open("sqlite", "file:"+dbPath+"?_pragma=busy_timeout(5000)")
+	sqlDB, err := openDaemonDB()
 	if err != nil {
-		return fmt.Errorf("opening daemon database: %w", err)
+		return err
 	}
 	defer sqlDB.Close()
 	id := "learn-bdd-" + strconv.FormatInt(time.Now().UnixNano(), 36)
@@ -1181,4 +1178,45 @@ func (tc *TestContext) seedLearnThread() error {
 	}
 	tc.LearnChannelID = id
 	return nil
+}
+
+// seedLearnThreadMessage writes a processed bot message into the seeded
+// learn thread, as a pass's reply would leave there. It goes straight into
+// the daemon's database: posting one through the API would start a run.
+func (tc *TestContext) seedLearnThreadMessage(doc *godog.DocString) error {
+	if tc.LearnChannelID == "" {
+		return fmt.Errorf("no learn thread; use 'the current channel has a learn thread' first")
+	}
+	sqlDB, err := openDaemonDB()
+	if err != nil {
+		return err
+	}
+	defer sqlDB.Close()
+	if err := db.NewSQLiteStoreFromDB(sqlDB).InsertMessage(context.Background(), &db.Message{
+		ChannelID:   tc.LearnChannelID,
+		MsgID:       "learn-bdd-msg-" + strconv.FormatInt(time.Now().UnixNano(), 36),
+		AuthorID:    "bot",
+		AuthorName:  "bot",
+		Content:     doc.Content,
+		IsBot:       true,
+		IsProcessed: true,
+		CreatedAt:   time.Now().UTC(),
+	}); err != nil {
+		return fmt.Errorf("inserting learn thread message: %w", err)
+	}
+	return nil
+}
+
+// openDaemonDB opens the daemon's database (LOOP_DB_PATH) for rows no API
+// writes.
+func openDaemonDB() (*sql.DB, error) {
+	dbPath := os.Getenv("LOOP_DB_PATH")
+	if dbPath == "" {
+		return nil, fmt.Errorf("LOOP_DB_PATH is not set; scripts/test-component.sh exports the daemon's database path")
+	}
+	sqlDB, err := sql.Open("sqlite", "file:"+dbPath+"?_pragma=busy_timeout(5000)")
+	if err != nil {
+		return nil, fmt.Errorf("opening daemon database: %w", err)
+	}
+	return sqlDB, nil
 }

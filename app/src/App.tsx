@@ -756,6 +756,7 @@ function AppInner() {
             onSelectThread={handleSelect}
             initialChatState={selectedId ? getState(selectedId) : undefined}
             onChatStateUnmount={handleChatStateUnmount}
+            getChatState={getState}
             subscribeChatEvents={subscribeChatEvents}
             subscribeChannelEvents={subscribeChannelEvents}
             wsOpens={wsOpens}

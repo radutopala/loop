@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { LearnProposal } from "../../api/learn";
 import {
-  appliedShortcut,
   inBulk,
   isOpenProposal,
   LEARN_APPLY_STALE_MS,
@@ -11,6 +10,7 @@ import {
   learnPassRunning,
   learnToggleTitle,
   mergeProposals,
+  newlyAppliedShortcut,
   nextStaleIn,
   proposalCaveat,
   proposalDetail,
@@ -125,7 +125,7 @@ describe("inBulk", () => {
   });
 });
 
-describe("appliedShortcut", () => {
+describe("newlyAppliedShortcut", () => {
   it.each([
     ["prompt_shortcut", "applied", true],
     ["bash_shortcut", "applied", true],
@@ -133,7 +133,20 @@ describe("appliedShortcut", () => {
     ["bash_shortcut", "failed", false],
     ["gate_rule", "applied", false],
   ] as const)("%s %s → %j", (kind, status, want) => {
-    expect(appliedShortcut([proposal({ kind: "rename", status: "applied" }), proposal({ kind, status })])).toBe(want);
+    expect(newlyAppliedShortcut([], [proposal({ id: 1, kind: "rename", status: "applied" }), proposal({ id: 2, kind, status })])).toBe(want);
+  });
+
+  it("counts only a shortcut that wasn't applied in the current list", () => {
+    const pending = proposal({ id: 2, kind: "bash_shortcut", status: "pending" });
+    const applying = proposal({ id: 2, kind: "bash_shortcut", status: "applying" });
+    const applied = proposal({ id: 2, kind: "bash_shortcut", status: "applied" });
+    expect(newlyAppliedShortcut([pending], [applied])).toBe(true);
+    expect(newlyAppliedShortcut([applying], [applied])).toBe(true);
+    // A reconnect refetch brings back the ones applied before: nothing new.
+    expect(newlyAppliedShortcut([applied], [applied])).toBe(false);
+    expect(newlyAppliedShortcut([applied, proposal({ id: 3, kind: "rename", status: "applied" })], [applied, proposal({ id: 3, kind: "rename", status: "applied" })])).toBe(false);
+    // One applied among the old ones still counts.
+    expect(newlyAppliedShortcut([applied, proposal({ id: 4, kind: "prompt_shortcut" })], [applied, proposal({ id: 4, kind: "prompt_shortcut", status: "applied" })])).toBe(true);
   });
 });
 
@@ -177,8 +190,17 @@ describe("proposalDetail", () => {
     ["scheduled_task", { type: "cron", schedule: "0 9 * * *", prompt: "check deps" }, "cron 0 9 * * * → check deps"],
     ["scheduled_task", { type: "interval", schedule: "1h", bash_script: "curl x" }, "interval 1h → $ curl x"],
     ["gate_rule", { type: "command", rule: { commands: ["git", "gh"], decision: "approve" } }, "command rule: approve git, gh"],
+    [
+      "gate_rule",
+      { type: "command", rule: { commands: ["rm"], args_patterns: ["^-rf /tmp/", "^/tmp/"], decision: "allow", message: "scratch only" } },
+      "command rule: allow rm with args matching ^-rf /tmp/ | ^/tmp/ — “scratch only”",
+    ],
+    ["gate_rule", { type: "command", rule: { args_patterns: ["--force"], decision: "deny" } }, "command rule: deny any command with args matching --force"],
     ["gate_rule", { type: "path", rule: { pattern: "/run/x.sock", decision: "allow" } }, "path rule: allow /run/x.sock"],
-    ["gate_rule", { type: "file" }, "file rule:"],
+    ["gate_rule", { type: "file", rule: { paths: ["/etc/**"], operations: ["write", "unlink"], decision: "deny" } }, "file rule: deny /etc/** on write, unlink"],
+    ["gate_rule", { type: "file", rule: { decision: "approve" } }, "file rule: approve any path"],
+    ["gate_rule", { type: "file" }, "file rule: any path"],
+    ["gate_rule", { type: "http", rule: { methods: ["POST"], decision: "deny" } }, 'http rule: {"methods":["POST"],"decision":"deny"}'],
     ["mount", { mount: "~/.aws:~/.aws:ro" }, "~/.aws:~/.aws:ro"],
     ["rename", { name: "login bug" }, "→ login bug"],
     ["description", { description: "chasing it" }, "chasing it"],

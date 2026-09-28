@@ -179,6 +179,14 @@ func (m *MockTicketStore) AtomicClaim(id string) (*tk.Ticket, error) {
 	return nil, args.Error(1)
 }
 
+type MockLearnPassTracker struct {
+	mock.Mock
+}
+
+func (m *MockLearnPassTracker) IsLearnPassRunning(learnChannelID string) bool {
+	return m.Called(learnChannelID).Bool(0)
+}
+
 type MockRunCanceller struct {
 	mock.Mock
 }

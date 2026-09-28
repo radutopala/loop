@@ -219,12 +219,21 @@ func (g *GateRule) ConfigRule() (string, any, error) {
 	if err := decodeStrict(g.Rule, rule); err != nil {
 		return "", nil, fmt.Errorf("rule: %w", err)
 	}
+	// A rule without a subject matches every call of its kind, and project
+	// rules match before the global ones, so one would override all of
+	// global gating. A path rule's pattern is required by CompilePolicy.
 	switch r := rule.(type) {
 	case *types.PathRule:
 		paths = []types.PathRule{*r}
 	case *types.CommandRule:
+		if len(r.Commands) == 0 && len(r.ArgsPatterns) == 0 {
+			return "", nil, errors.New("rule: a command rule needs commands or args_patterns")
+		}
 		cmds = []types.CommandRule{*r}
 	case *types.FileRule:
+		if len(r.Paths) == 0 {
+			return "", nil, errors.New("rule: a file rule needs paths")
+		}
 		files = []types.FileRule{*r}
 	}
 	if _, err := agentgate.CompilePolicy(types.DecisionAllow, paths, cmds, files); err != nil {

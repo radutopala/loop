@@ -381,3 +381,81 @@ Feature: Learn from runs
     And I click on the button with text "Split"
     Then I wait up to "5s" for "[data-testid='learn-split']" to disappear
     And I wait for "[data-testid='layout-tab-Layout 1']" to be visible
+
+  Scenario: A gate rule card shows the whole rule it applies
+    Given the current channel has a learn thread
+    When I send a POST request to "/api/channels/{learn_channel_id}/learn/proposals" with body:
+      """
+      {"proposals":[
+        {"kind":"gate_rule","title":"Let rm clear scratch files","payload":{"type":"command","rule":{"commands":["rm"],"args_patterns":["^-rf /tmp/scratch"],"decision":"allow","message":"scratch only"}}}
+      ]}
+      """
+    Then the response status should be 201
+    And I wait for text "1 proposal" to appear
+    When I click on "[data-testid='learn-badge']"
+    Then the Learn view shows the chat and the Learn pane side by side
+    # Not just the decision: what the rule matches and what it says.
+    And I wait for text "command rule: allow rm with args matching ^-rf /tmp/scratch — “scratch only”" to appear
+
+  Scenario: Focus moves on to the next open card as cards settle
+    Given the current channel has a learn thread
+    When I send a POST request to "/api/channels/{learn_channel_id}/learn/proposals" with body:
+      """
+      {"proposals":[
+        {"kind":"rename","title":"Name the thread after its work","payload":{"name":"bdd-learn-renamed"}},
+        {"kind":"description","title":"Describe the thread","payload":{"description":"Learn journey playground"}},
+        {"kind":"ticket_url","title":"Link the ticket","payload":{"ticket_url":"https://example.atlassian.net/browse/PROJ-9"}}
+      ]}
+      """
+    Then the response status should be 201
+    And I wait for text "3 proposals" to appear
+    When I click on "[data-testid='learn-badge']"
+    Then the Learn view shows the chat and the Learn pane side by side
+    # Newest first: the ticket, the description, the rename. Dismissing the
+    # first moves focus to the next card's Apply, not to the page.
+    When I click on "[data-testid='learn-dismiss'][aria-label='Dismiss “Link the ticket”']"
+    Then I wait for "[data-testid='learn-proposal'][data-status='dismissed']" to be visible
+    And the focus is in "[data-testid='learn-apply'][aria-label='Apply “Describe the thread”']"
+    # The last card has none after it: focus goes to the nearest before.
+    When I click on "[data-testid='learn-dismiss'][aria-label='Dismiss “Name the thread after its work”']"
+    Then I wait for text "1 proposal" to appear
+    And the focus is in "[data-testid='learn-apply'][aria-label='Apply “Describe the thread”']"
+    # Dismiss all leaves nothing open, and its button goes: focus goes to
+    # the pane's close button.
+    When I click on "[data-testid='learn-dismiss-all']"
+    Then I wait up to "5s" for "[data-testid='learn-dismiss-all']" to disappear
+    And the focus is in "[data-testid='learn-close']"
+
+  Scenario: The learn thread's chat shows a reply that started while the view was closed, and opens its file links
+    Given the current channel has a learn thread
+    And I create a file "notes/learn-thread-target.md" in the repo with:
+      """
+      learnthreadlinktarget
+      """
+    When I inject a "learn.started" event for the channel with data:
+      """
+      {"learn_channel_id":"{learn_channel_id}"}
+      """
+    And I inject a "agent.status" event for the learn thread with data:
+      """
+      {"status":"completed","run_id":"bdd-learn-run"}
+      """
+    Then I wait for "[data-testid='learn-badge'][data-running='false']" to be visible
+    # The user's reply runs while the view is closed; opening it shows the
+    # run, not an idle composer.
+    Given the learn thread has a bot message:
+      """
+      See notes/learn-thread-target.md for what changed.
+      """
+    When I inject a "agent.status" event for the learn thread with data:
+      """
+      {"status":"running","run_id":"bdd-learn-reply","trigger":"learn-reply"}
+      """
+    And I click on "[data-testid='learn-badge']"
+    Then the Learn view shows the chat and the Learn pane side by side
+    And I wait for "[data-learn-thread] button[title='Stop']" to be visible
+    # A file link in the learn thread opens the parent's editor, and the
+    # view closes to show it.
+    When I click on "[data-learn-thread] a[href='#']"
+    Then I wait up to "5s" for "[data-testid='learn-split']" to disappear
+    And I wait for text "learnthreadlinktarget" to appear

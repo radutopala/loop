@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"net/http/httptest"
 	"os"
 
 	"github.com/stretchr/testify/mock"
@@ -595,6 +596,24 @@ func (s *ServerSuite) TestModifyWorkflowAddGlobal() {
 	wf := workflows[0].(map[string]any)
 	require.Equal(s.T(), "hello", wf["name"])
 	require.Equal(s.T(), "Say hello", wf["description"])
+}
+
+func (s *ServerSuite) TestModifyWorkflowWaitsForConfigLock() {
+	sys := new(testutil.MockSystem)
+	sys.On("UserHomeDir").Return("/home/testuser", nil)
+	sys.On("ReadFile", "/home/testuser/.loop/config.json").Return([]byte(`{}`), nil)
+	sys.On("WriteFile", "/home/testuser/.loop/config.json", mock.Anything, mock.Anything).Return(nil)
+	s.srv.sys = sys
+
+	rec := s.requestUnderConfigLock("/home/testuser/.loop/config.json", func() *httptest.ResponseRecorder {
+		return s.testRequest("POST", "/api/workflows", `{"action":"delete","name":"hello"}`)
+	}, func() {
+		// The read is inside the lock too, or it could miss the other edit.
+		sys.AssertNotCalled(s.T(), "ReadFile", mock.Anything)
+		sys.AssertNotCalled(s.T(), "WriteFile", mock.Anything, mock.Anything, mock.Anything)
+	})
+	require.Equal(s.T(), http.StatusNotFound, rec.Code)
+	sys.AssertCalled(s.T(), "ReadFile", "/home/testuser/.loop/config.json")
 }
 
 func (s *ServerSuite) TestModifyWorkflowAddDuplicate() {

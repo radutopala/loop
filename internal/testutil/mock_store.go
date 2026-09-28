@@ -53,8 +53,9 @@ func (m *MockStore) UpdateSessionID(ctx context.Context, channelID string, sessi
 	return m.Called(ctx, channelID, sessionID).Error(0)
 }
 
-func (m *MockStore) MarkSessionForkPending(ctx context.Context, channelID string, sessionID string) error {
-	return m.Called(ctx, channelID, sessionID).Error(0)
+func (m *MockStore) MarkSessionForkPending(ctx context.Context, channelID string, sessionID string) (bool, error) {
+	args := m.Called(ctx, channelID, sessionID)
+	return args.Bool(0), args.Error(1)
 }
 
 func (m *MockStore) UpdateChannelAgentOverrides(ctx context.Context, channelID, model, effort string) error {

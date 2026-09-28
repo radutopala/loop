@@ -63,10 +63,13 @@ export function inBulk(bulk: LearnBulk, p: LearnProposal | undefined, now = Date
   return bulk === "apply" ? p.status === "pending" : isOpenProposal(p, now);
 }
 
-// Whether a proposal applied among these added a prompt or bash shortcut,
-// so the pickers that list shortcuts should fetch them again.
-export function appliedShortcut(proposals: LearnProposal[]): boolean {
-  return proposals.some((p) => p.status === "applied" && (p.kind === "prompt_shortcut" || p.kind === "bash_shortcut"));
+// Whether incoming proposals newly applied a prompt or bash shortcut, one
+// the current list doesn't have as applied yet, so the pickers that list
+// shortcuts should fetch them again. A refetch that brings back shortcuts
+// applied long ago doesn't.
+export function newlyAppliedShortcut(current: LearnProposal[], incoming: LearnProposal[]): boolean {
+  const applied = new Set(current.filter((p) => p.status === "applied").map((p) => p.id));
+  return incoming.some((p) => p.status === "applied" && (p.kind === "prompt_shortcut" || p.kind === "bash_shortcut") && !applied.has(p.id));
 }
 
 // Whether a learn pass is running in the learn thread after one of its
@@ -116,11 +119,8 @@ export function proposalDetail(p: LearnProposal): string {
       const body = v.bash_script ? `$ ${str(v.bash_script)}` : str(v.prompt);
       return `${str(v.type)} ${str(v.schedule)} → ${body}`;
     }
-    case "gate_rule": {
-      const rule = (v.rule ?? {}) as Record<string, unknown>;
-      const subject = [rule.commands, rule.paths, rule.pattern].flat().filter((x): x is string => typeof x === "string");
-      return `${str(v.type)} rule: ${str(rule.decision)} ${subject.join(", ")}`.trim();
-    }
+    case "gate_rule":
+      return `${str(v.type)} rule: ${gateRuleDetail(str(v.type), (v.rule ?? {}) as Record<string, unknown>)}`.trim();
     case "mount":
       return str(v.mount);
     case "rename":
@@ -131,6 +131,38 @@ export function proposalDetail(p: LearnProposal): string {
       return str(v.ticket_url);
   }
   return p.payload;
+}
+
+function strs(v: unknown): string[] {
+  return Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : [];
+}
+
+// A gate rule in full, so Apply writes nothing the card didn't show: its
+// decision, what it matches (an empty list matches anything), and the
+// message the gate shows. A rule of a type this doesn't know shows as JSON.
+function gateRuleDetail(type: string, rule: Record<string, unknown>): string {
+  let subject: string;
+  switch (type) {
+    case "command": {
+      const commands = strs(rule.commands);
+      const args = strs(rule.args_patterns);
+      subject = `${commands.length ? commands.join(", ") : "any command"}${args.length ? ` with args matching ${args.join(" | ")}` : ""}`;
+      break;
+    }
+    case "file": {
+      const paths = strs(rule.paths);
+      const ops = strs(rule.operations);
+      subject = `${paths.length ? paths.join(", ") : "any path"}${ops.length ? ` on ${ops.join(", ")}` : ""}`;
+      break;
+    }
+    case "path":
+      subject = str(rule.pattern);
+      break;
+    default:
+      return JSON.stringify(rule);
+  }
+  const message = str(rule.message);
+  return [str(rule.decision), subject, message && `— “${message}”`].filter(Boolean).join(" ");
 }
 
 // Renaming a worktree thread renames the thread only; the branch and the

@@ -676,13 +676,17 @@ func (s *Server) handleImportWorktree(w http.ResponseWriter, r *http.Request) {
 		s.logger.Warn("creating worktree .loop dir", "error", err)
 	} else {
 		cfgPath := filepath.Join(wtLoopDir, "config.json")
-		// Only write if the config doesn't already exist (don't overwrite user edits).
+		// Only write if the config doesn't already exist (don't overwrite
+		// user edits), under the config lock so no other edit lands
+		// between the check and the write.
+		unlock := s.configLocks.lock(cfgPath)
 		if _, err := s.sys.Stat(cfgPath); errors.Is(err, fs.ErrNotExist) {
 			wtCfg := fmt.Sprintf("{\n  \"extra_dirs\": [\n    %q\n  ]\n}\n", parent.DirPath)
 			if err := s.sys.WriteFile(cfgPath, []byte(wtCfg), 0644); err != nil {
 				s.logger.Warn("writing worktree config", "error", err)
 			}
 		}
+		unlock()
 	}
 
 	// Copy session file so --resume --fork-session works in the worktree dir.

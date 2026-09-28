@@ -369,7 +369,7 @@ Applying a proposal of a config kind appends to the project config, `.loop/confi
 |---|---|---|
 | `prompt_shortcut` | `prompt_shortcuts` | Fails if a prompt shortcut of that name already exists in the merged config. |
 | `bash_shortcut` | `bash_shortcuts` | Fails if a bash shortcut of that name already exists in the merged config. |
-| `gate_rule` | `gates.agentgate.path_rules`, `command_rules` or `file_rules` | Picked by the rule's type (`path`, `command`, `file`). Project rules are prepended to the global ones, so they match first. A rule the merged config already has is left as it is, and the apply succeeds. |
+| `gate_rule` | `gates.agentgate.path_rules`, `command_rules` or `file_rules` | Picked by the rule's type (`path`, `command`, `file`). Project rules are prepended to the global ones, so they match first; that's why a proposed rule must name what it matches (`commands` or `args_patterns`, `paths`, `pattern`) and can't be a catch-all. A rule the merged config already has is left as it is, and the apply succeeds. |
 | `mount` | `mounts` | Fails if the merged config already has the exact mount (a relative host path is resolved against the project dir first, as project mounts are). Project mounts replace the global ones, so when the project has no `mounts` list yet, or an empty one (which keeps the global mounts), the new list starts with the global mounts, then the new one. |
 
 `scheduled_task`, `rename`, `description` and `ticket_url` proposals don't touch config: they create an enabled task in the channel and update the channel's name, description or ticket URL, as `POST /api/tasks`, `/rename`, `/description` and `/ticket` do.

@@ -801,6 +801,8 @@ func (s *RunnerSuite) TestBuildClaudeCmdReviewMode() {
 	require.NotContains(s.T(), got, "ReportFindings")
 	require.Contains(s.T(), got, "--disallowedTools ScheduleWakeup,CronCreate,CronDelete,CronList,Monitor")
 	require.Equal(s.T(), disallowed, cfg.ClaudeBatchDisallowedTools)
+	// Only a learn run narrows the built-in tools.
+	require.NotContains(s.T(), cmd, "--tools")
 
 	// --settings, not container env: settings scopes are assigned over
 	// process.env in the order userSettings → flagSettings, so a bind-mounted
@@ -845,6 +847,14 @@ func (s *RunnerSuite) TestBuildClaudeCmdLearnMode() {
 	require.NotContains(s.T(), strings.Split(cmd[i+1], ","), "mcp__loop__quality_snapshot")
 	require.NotContains(s.T(), cmd, "--settings")
 	require.Equal(s.T(), config.DefaultBatchDisallowedTools(), cfg.ClaudeBatchDisallowedTools)
+
+	// The built-in tools are an allowlist: only the read-only ones. The flag
+	// is variadic, so it must precede another flag rather than the prompt.
+	t := slices.Index(cmd, "--tools")
+	require.NotEqual(s.T(), -1, t)
+	require.Equal(s.T(), "Read,Grep,Glob,TodoWrite,ToolSearch", cmd[t+1])
+	require.True(s.T(), strings.HasPrefix(cmd[t+2], "--"))
+	require.Less(s.T(), t, slices.Index(cmd, "--print"))
 }
 
 func (s *RunnerSuite) TestBuildClaudeCmdPermissionPromptTool() {

@@ -104,16 +104,27 @@ func withoutTool(tools []string, name string) []string {
 	return out
 }
 
+// learnModeTools is the whole built-in tool set of a learn run, passed as
+// --tools. A learn pass only reads the finished run and the checkout and
+// files proposals through propose_learnings; the user applies them. So every
+// built-in tool that edits files, runs commands, reaches the network, spawns
+// subagents, switches worktrees, schedules or notifies anything (Bash, Edit,
+// Write, WebFetch, WebSearch, Agent, Skill, EnterWorktree, RemoteTrigger,
+// PushNotification, SendMessage, Cron*, ...) is left out, including ones a
+// later Claude Code release adds. ToolSearch stays so deferred MCP tools can
+// still be loaded. --tools doesn't reach MCP tools; learnModeDisallowedTools
+// covers those.
+var learnModeTools = []string{"Read", "Grep", "Glob", "TodoWrite", "ToolSearch"}
+
 // learnModeDisallowedTools are denied on top of the batch denials in a learn
-// run. A learn pass only reads the finished run and files proposals through
-// propose_learnings; the user applies them. So it may not edit files, run
-// commands, change Loop's config, tasks, threads, workflows, playgrounds,
-// quality snapshots, memory index or agent status, or talk to anyone. The
-// loop tools that only read (list_*, show_task, get_*, search_*, the
-// quality_* reports besides quality_scan, and quality_whatif, which only
-// simulates) stay allowed. Its MCP config holds the loop server alone (see
-// buildMCPConfig) and --strict-mcp-config keeps any other server out, so no
-// other server's tools reach it either.
+// run. The built-in ones repeat what learnModeTools already leaves out, as a
+// second line. The loop tools may not change Loop's config, tasks, threads,
+// workflows, playgrounds, quality snapshots, memory index or agent status,
+// or talk to anyone. The loop tools that only read (list_*, show_task,
+// get_*, search_*, the quality_* reports besides quality_scan, and
+// quality_whatif, which only simulates) stay allowed. Its MCP config holds
+// the loop server alone (see buildMCPConfig) and --strict-mcp-config keeps
+// any other server out, so no other server's tools reach it either.
 var learnModeDisallowedTools = []string{
 	"Bash", "Edit", "Write", "NotebookEdit",
 	"AskUserQuestion", "EnterPlanMode", "ExitPlanMode",
@@ -176,8 +187,10 @@ func buildClaudeCmd(cfg *config.Config, mcpConfigPath string, req *agent.AgentRe
 	// A learn run's --mcp-config has only the loop server; this makes Claude
 	// ignore every other MCP config too (~/.claude.json, the project's
 	// .mcp.json), so the user's own servers can't act for it.
+	// --tools is variadic like --disallowedTools (see below), so it's
+	// emitted before other flags.
 	if req.LearnMode {
-		cmd = append(cmd, "--strict-mcp-config")
+		cmd = append(cmd, "--strict-mcp-config", "--tools", strings.Join(learnModeTools, ","))
 	}
 	// Deny tools that only make sense in a persistent interactive harness.
 	// In one-shot `--print` mode the container exits at end of turn, so tools

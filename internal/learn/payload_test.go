@@ -141,6 +141,12 @@ func (s *PayloadSuite) TestGateRuleConfigRule() {
 			wantRule: &types.FileRule{Paths: []string{"**/.env"}, Operations: []string{"read"}, Decision: types.DecisionDeny},
 		},
 		{
+			name:     "command by args only",
+			payload:  `{"type":"command","rule":{"args_patterns":["--force"],"decision":"deny"}}`,
+			wantKey:  "command_rules",
+			wantRule: &types.CommandRule{ArgsPatterns: []string{"--force"}, Decision: types.DecisionDeny},
+		},
+		{
 			name:     "path",
 			payload:  `{"type":"path","rule":{"pattern":"/run/x.sock","decision":"allow"}}`,
 			wantKey:  "path_rules",
@@ -148,7 +154,9 @@ func (s *PayloadSuite) TestGateRuleConfigRule() {
 		},
 		{name: "bad decision", payload: `{"type":"command","rule":{"commands":["git"],"decision":"maybe"}}`, wantErr: "unknown decision"},
 		{name: "bad regex", payload: `{"type":"command","rule":{"args_patterns":["("],"decision":"deny"}}`, wantErr: "args_patterns"},
-		{name: "bad operation", payload: `{"type":"file","rule":{"operations":["fly"],"decision":"deny"}}`, wantErr: `unknown operation "fly"`},
+		{name: "bad operation", payload: `{"type":"file","rule":{"paths":["/x"],"operations":["fly"],"decision":"deny"}}`, wantErr: `unknown operation "fly"`},
+		{name: "command without subject", payload: `{"type":"command","rule":{"decision":"allow"}}`, wantErr: "needs commands or args_patterns"},
+		{name: "file without paths", payload: `{"type":"file","rule":{"operations":["write"],"decision":"allow"}}`, wantErr: "needs paths"},
 		{name: "path without pattern", payload: `{"type":"path","rule":{"decision":"deny"}}`, wantErr: "pattern is required"},
 		{name: "unknown rule field", payload: `{"type":"path","rule":{"pattern":"/x","decision":"deny","paths":[]}}`, wantErr: `unknown field "paths"`},
 	}

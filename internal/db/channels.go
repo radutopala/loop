@@ -92,13 +92,18 @@ func (s *SQLiteStore) IsChannelActive(ctx context.Context, channelID string) (bo
 // with the fork_pending flag: the id is borrowed from the SOURCE thread, so
 // the first message must run with --fork-session or it would write into the
 // source's conversation. The flag clears on the next UpdateSessionID (every
-// run updates the session id, and by then the fork has happened).
-func (s *SQLiteStore) MarkSessionForkPending(ctx context.Context, channelID string, sessionID string) error {
-	_, err := s.db.ExecContext(ctx,
+// run updates the session id, and by then the fork has happened). It
+// reports whether the thread still exists.
+func (s *SQLiteStore) MarkSessionForkPending(ctx context.Context, channelID string, sessionID string) (bool, error) {
+	res, err := s.db.ExecContext(ctx,
 		`UPDATE channels SET session_id = ?, fork_pending = 1, updated_at = ? WHERE channel_id = ?`,
 		sessionID, s.nowFunc(), channelID,
 	)
-	return err
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	return n > 0, err
 }
 
 func (s *SQLiteStore) UpdateSessionID(ctx context.Context, channelID string, sessionID string) error {

@@ -97,11 +97,16 @@ function topmostShown(scroller: Element): Element | null {
 }
 
 // Moves el out of slot into an off-screen spot of the same size, so nothing
-// about it (its scroll, above all) changes while it waits.
+// about it (its scroll, above all) changes while it waits. It may wait a
+// while (its pane minimized, or another one maximized): meanwhile the spot is
+// inert and hidden from assistive tech, so nothing focuses or types into a
+// chat that can't be seen (a composer filled by Discuss, say).
 function park(slot: HTMLElement, el: HTMLElement) {
   const { width, height } = slot.getBoundingClientRect();
   const spot = document.createElement("div");
   spot.setAttribute("data-chat-park", "");
+  spot.inert = true;
+  spot.setAttribute("aria-hidden", "true");
   spot.style.cssText = `position: fixed; left: -100000px; top: 0; width: ${width}px; height: ${height}px; display: flex; flex-direction: column`;
   document.body.appendChild(spot);
   moveInto(spot, el);

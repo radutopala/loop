@@ -27,6 +27,14 @@ func (o *Orchestrator) HandleMessage(ctx context.Context, msg *bot.IncomingMessa
 	}
 	if !active {
 		if !o.resolveThread(ctx, msg.ChannelID) {
+			if msg.AuthorID == learnAuthorID {
+				// A learn pass's trigger whose learn thread was deleted
+				// meanwhile. It must not bring the thread back as a plain
+				// channel, where the pass would run unrestricted.
+				o.logger.Debug("learn: dropping the trigger", "reason", "learn thread gone", "learn_channel_id", msg.ChannelID)
+				o.releaseLearn(msg.ChannelID)
+				return
+			}
 			if msg.IsDM || msg.IsBotMention || msg.HasPrefix || msg.IsReplyToBot {
 				name := o.resolveChannelName(ctx, msg.ChannelID, msg.IsDM)
 				dirPath := filepath.Join(o.currentConfig().LoopDir, msg.ChannelID, "work")
@@ -250,6 +258,7 @@ func (o *Orchestrator) processClaimedMessage(ctx context.Context, row *db.Messag
 		Timestamp:  row.CreatedAt,
 	}
 	// A learn thread is free for its next pass once this run ends.
+	o.learnRunStarted(msg.ChannelID, msg.AuthorID)
 	defer o.learnRunDone(ctx, msg.ChannelID, msg.AuthorID)
 	if incoming != nil && incoming.MessageID == row.MsgID {
 		msg.GuildID = incoming.GuildID

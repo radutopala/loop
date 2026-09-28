@@ -35,6 +35,12 @@ type ActiveChatLister interface {
 	ActiveChatChannelIDs() map[string]struct{}
 }
 
+// LearnPassTracker reports whether a learn pass (not a user's reply in the
+// learn thread) is running in a learn thread.
+type LearnPassTracker interface {
+	IsLearnPassRunning(learnChannelID string) bool
+}
+
 // IncomingMessageHandler processes a user message from the API, routing it
 // through the orchestrator so Claude can respond.
 type IncomingMessageHandler interface {
@@ -137,6 +143,7 @@ type Server struct {
 	cmdBuilder              InteractiveCmdBuilder
 	containerRegistry       ContainerManager
 	activeChatLister        ActiveChatLister
+	learnPassTracker        LearnPassTracker
 	branchPoller            *BranchPoller
 	msgHandler              IncomingMessageHandler
 	runCanceller            RunCanceller
@@ -250,6 +257,12 @@ func (s *Server) SetContainerRegistry(reg ContainerManager) {
 // SetActiveChatLister configures the active chat lister for the channel list endpoint.
 func (s *Server) SetActiveChatLister(lister ActiveChatLister) {
 	s.activeChatLister = lister
+}
+
+// SetLearnPassTracker configures what reports a running learn pass for the
+// learn state endpoint.
+func (s *Server) SetLearnPassTracker(t LearnPassTracker) {
+	s.learnPassTracker = t
 }
 
 // SetBranchPoller wires the branch poller whose per-dir git snapshots back

@@ -45,9 +45,9 @@ A task Loop runs on a schedule in this channel, each run in its own thread. Good
 
 An agentgate rule. The gate traps the agent container's syscalls and applies the first matching rule: `allow`, `deny`, or `approve` (block until the user clicks allow or deny). Good when the user approved the same prompt repeatedly (propose an `allow`), or the agent did something that should have needed a click (propose `approve` or `deny`). Project rules are prepended to the global ones, so they win. `type` picks the rule list:
 
-- `command`: `execve`, matched by basename glob in `commands` and argv regex in `args_patterns` (either empty = any).
-- `file`: file syscalls, matched by doublestar glob in `paths` and `operations` (any of `read`, `write`, `create`, `delete`, `stat`, `list`, `chmod`, `chown`, `link`; either empty = any).
-- `path`: unix-socket connects, matched by the absolute socket path in `pattern`.
+- `command`: `execve`, matched by basename glob in `commands` and argv regex in `args_patterns` (either empty = any, but not both).
+- `file`: file syscalls, matched by doublestar glob in `paths` (required) and `operations` (any of `read`, `write`, `create`, `delete`, `stat`, `list`, `chmod`, `chown`, `link`; empty = any).
+- `path`: unix-socket connects, matched by the absolute socket path in `pattern` (required).
 
 `message` is what the approval card shows. Keep rules narrow: a precise command and argument pattern, never a blanket `allow` on `*`.
 

@@ -83,11 +83,13 @@ type learnPass struct {
 }
 
 // learnSlot tracks one learn thread's passes. triggered is set from when a
-// pass's trigger is queued (at triggeredAt) until its run ends; next is the
-// latest run that finished meanwhile, reviewed once the thread is free. Runs
-// in between are folded into it: the fork of the newest session covers them.
+// pass's trigger is queued (at triggeredAt) until its run ends, running
+// from when that run starts; next is the latest run that finished
+// meanwhile, reviewed once the thread is free. Runs in between are folded
+// into it: the fork of the newest session covers them.
 type learnSlot struct {
 	triggered   bool
+	running     bool
 	triggeredAt time.Time
 	next        *learnPass
 }
@@ -175,6 +177,36 @@ func (o *Orchestrator) queueLearn(id string, pass *learnPass) bool {
 	return false
 }
 
+// learnRunStarted is called when any run in channelID starts. A learn
+// pass's run marks its slot running. A pass resumed after a restart has no
+// slot yet; it gets one, so the thread counts as busy until the run ends.
+func (o *Orchestrator) learnRunStarted(channelID, authorID string) {
+	if authorID != learnAuthorID {
+		return
+	}
+	o.learnMu.Lock()
+	defer o.learnMu.Unlock()
+	if o.learnSlots == nil {
+		o.learnSlots = map[string]*learnSlot{}
+	}
+	slot := o.learnSlots[channelID]
+	if slot == nil {
+		slot = &learnSlot{triggered: true, triggeredAt: o.timeNow()}
+		o.learnSlots[channelID] = slot
+	}
+	slot.running = true
+}
+
+// IsLearnPassRunning reports whether a learn pass is running in learn
+// thread id. A user's reply running there isn't a pass, nor is a pass still
+// waiting for its turn.
+func (o *Orchestrator) IsLearnPassRunning(id string) bool {
+	o.learnMu.Lock()
+	defer o.learnMu.Unlock()
+	slot := o.learnSlots[id]
+	return slot != nil && slot.running
+}
+
 // learnRunDone is called when any run in channelID ends. A learn thread that
 // has no pass of its own still queued is free again; the pass waiting for
 // it, if any, starts now.
@@ -186,7 +218,7 @@ func (o *Orchestrator) learnRunDone(ctx context.Context, channelID, authorID str
 		return
 	}
 	if authorID == learnAuthorID {
-		slot.triggered = false
+		slot.triggered, slot.running = false, false
 	}
 	next := slot.next
 	switch {
@@ -232,8 +264,15 @@ func (o *Orchestrator) StopLearn(id string) {
 // the trigger message there.
 func (o *Orchestrator) startLearn(ctx context.Context, l *db.Channel, pass *learnPass) {
 	ch := pass.parent
-	if err := o.store.MarkSessionForkPending(ctx, l.ChannelID, pass.sessionID); err != nil {
+	ok, err := o.store.MarkSessionForkPending(ctx, l.ChannelID, pass.sessionID)
+	if err != nil {
 		o.logger.Error("learn: forking session", "error", err, "channel_id", l.ChannelID)
+		o.releaseLearn(l.ChannelID)
+		return
+	}
+	if !ok {
+		// The learn thread was deleted with its channel since it was looked up.
+		o.logger.Debug("learn: dropping the pass", "reason", "learn thread gone", "learn_channel_id", l.ChannelID)
 		o.releaseLearn(l.ChannelID)
 		return
 	}

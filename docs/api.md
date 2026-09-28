@@ -944,7 +944,7 @@ Return the channel's learn switch, the config default it falls back to (global â
 | `default_learn` | bool | `learn.enabled` from the merged config; `false` when the config fails to load |
 | `enabled` | bool | The effective switch; always `false` when not `available` |
 | `learn_channel_id` | string | The hidden learn thread; empty until the channel's first learn pass |
-| `running` | bool | A learn pass is running in the learn thread |
+| `running` | bool | A learn pass is running in the learn thread. A pass still waiting for its turn, or your own reply running there, doesn't count. |
 
 **Errors:** `404` if the channel doesn't exist or is a learn thread. `500` on a store error. `501` if the store is not configured.
 
@@ -1031,7 +1031,7 @@ At most 5 proposals per call. Each needs a `kind`, a `title` (at most 200 charac
 | `prompt_shortcut` | `{"name", "description"?, "prompt"}`. `name` at most 100 characters. |
 | `bash_shortcut` | `{"name", "description"?, "command"}`. `name` at most 100 characters. |
 | `scheduled_task` | `{"type", "schedule", "prompt"?, "bash_script"?, "auto_delete_sec"?}`. `type` is `cron`, `interval` or `once`; exactly one of `prompt` / `bash_script`; `auto_delete_sec` not negative. |
-| `gate_rule` | `{"type", "rule"}`. `type` is `path`, `command` or `file`; `rule` is an agentgate rule of that list, and must compile. |
+| `gate_rule` | `{"type", "rule"}`. `type` is `path`, `command` or `file`; `rule` is an agentgate rule of that list, and must compile and name what it matches: a command rule needs `commands` or `args_patterns`, a file rule `paths`, a path rule `pattern`. A rule without one would match every call and, as project rules match first, override the global rules. |
 | `mount` | `{"mount"}`, `host_path:container_path[:ro\|rw]`. |
 | `rename` | `{"name"}`, at most 100 characters. |
 | `description` | `{"description"}`, at most 500 characters. |

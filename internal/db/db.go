@@ -20,7 +20,7 @@ type Store interface {
 	GetChannelsByDirPath(ctx context.Context, dirPath string) ([]*Channel, error)
 	IsChannelActive(ctx context.Context, channelID string) (bool, error)
 	UpdateSessionID(ctx context.Context, channelID string, sessionID string) error
-	MarkSessionForkPending(ctx context.Context, channelID string, sessionID string) error
+	MarkSessionForkPending(ctx context.Context, channelID string, sessionID string) (bool, error)
 	UpdateChannelAgentOverrides(ctx context.Context, channelID, model, effort string) error
 	UpdateChannelPermissions(ctx context.Context, channelID string, perms types.Permissions) error
 	UpdateChannelLocked(ctx context.Context, channelID string, locked bool) error

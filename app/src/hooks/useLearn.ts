@@ -1,6 +1,6 @@
 import { createContext, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { applyLearnProposal, dismissLearnProposal, fetchLearnProposals, fetchLearnState, type LearnProposal, type LearnState, setLearn as putLearn } from "../api/learn";
-import { appliedShortcut, inBulk, isOpenProposal, type LearnBulk, learnPassRunning, mergeProposals, nextStaleIn } from "../components/chat/learnState";
+import { inBulk, isOpenProposal, type LearnBulk, learnPassRunning, mergeProposals, newlyAppliedShortcut, nextStaleIn } from "../components/chat/learnState";
 import type { AgentStatusData, WSEvent } from "../types";
 import { logErr } from "../utils/log";
 import type { ChatEventListener } from "./useChatStateStore";
@@ -73,6 +73,68 @@ export function fetchWithRetry<T>(fetch: () => Promise<T>, what: string, onLoad:
 }
 
 /**
+ * Whether a WS open is a reconnect, after which the events missed meanwhile
+ * must be made up for: the opens count went from prev to next, and prev
+ * wasn't 0 (the first open, which the fetches on mount cover).
+ */
+export function reconnected(prev: number, next: number): boolean {
+  return next !== prev && prev !== 0;
+}
+
+/**
+ * An apply or dismiss of one proposal: it's marked busy meanwhile (its
+ * buttons disabled, so a second click can't race the first), its last
+ * request error is cleared, and the settled proposal is handed on. A failed
+ * request's error is kept for the proposal until its next try.
+ */
+export async function settleProposal(
+  id: number,
+  action: (id: number) => Promise<LearnProposal>,
+  ops: {
+    busy: { get: () => ReadonlySet<number>; set: (next: ReadonlySet<number>) => void };
+    setError: (id: number, error: string | undefined) => void;
+    settled: (p: LearnProposal) => void;
+  },
+): Promise<void> {
+  ops.busy.set(new Set(ops.busy.get()).add(id));
+  ops.setError(id, undefined);
+  try {
+    ops.settled(await action(id));
+  } catch (e) {
+    ops.setError(id, e instanceof Error ? e.message : String(e));
+  } finally {
+    const next = new Set(ops.busy.get());
+    next.delete(id);
+    ops.busy.set(next);
+  }
+}
+
+/**
+ * Apply all and Dismiss all: one by one, each proposal still in the bulk's
+ * scope when its turn comes (one applied, dismissed or in flight meanwhile
+ * is left alone). A run stops once another starts or stop is called (the
+ * hook unmounting).
+ */
+export class BulkRuns {
+  private latest = 0;
+
+  stop(): void {
+    this.latest++;
+  }
+
+  /** Resolves to whether the run went through the list, rather than stopping. */
+  async run(kind: LearnBulk, proposals: () => LearnProposal[], busy: () => ReadonlySet<number>, settle: (id: number) => Promise<void>): Promise<boolean> {
+    const run = ++this.latest;
+    for (const { id } of proposals().filter((p) => inBulk(kind, p))) {
+      if (this.latest !== run) return false;
+      const p = proposals().find((x) => x.id === id);
+      if (inBulk(kind, p) && !busy().has(id)) await settle(id);
+    }
+    return this.latest === run;
+  }
+}
+
+/**
  * Follows a channel's learn pass: its switch, its hidden learn thread,
  * whether a pass is running there, and the proposals it filed, with the
  * applies and dismisses in flight (kept here, not in the Learn pane, so they
@@ -96,30 +158,31 @@ export function useLearn(
   const [learnChannelId, setLearnChannelId] = useState("");
   const [running, setRunning] = useState(false);
   const [proposals, setProposals] = useState<LearnProposal[]>([]);
+  // The latest list, for Apply all and Dismiss all between one request and
+  // the next, and for telling a newly applied shortcut from one applied
+  // before (a refetch brings those back too).
   const proposalsRef = useRef(proposals);
-  proposalsRef.current = proposals;
   const [busy, setBusy] = useState<ReadonlySet<number>>(new Set());
   // Mirrors busy for Apply all and Dismiss all, which read it between one
   // request and the next.
   const busyRef = useRef(busy);
   const [errors, setErrors] = useState<ReadonlyMap<number, string>>(new Map());
   const [bulk, setBulk] = useState<LearnBulk | null>(null);
-  // Bumped per Apply all or Dismiss all, and on a channel switch: a bulk run
-  // stops once it's no longer the latest.
-  const bulkRunRef = useRef(0);
+  const [bulkRuns] = useState(() => new BulkRuns());
+  // A bulk run left going would keep applying after the layout (keyed by
+  // channel) unmounted.
+  useEffect(() => () => bulkRuns.stop(), [bulkRuns]);
   const [shortcutsVersion, setShortcutsVersion] = useState(0);
-  const noteApplied = useCallback((list: LearnProposal[]) => {
-    if (appliedShortcut(list)) setShortcutsVersion((n) => n + 1);
+  // Folds proposals into the list; noteApplied: an applied shortcut among
+  // them makes the pickers fetch theirs again.
+  const merge = useCallback((incoming: LearnProposal[], noteApplied = true) => {
+    const cur = proposalsRef.current;
+    proposalsRef.current = mergeProposals(cur, incoming);
+    setProposals(proposalsRef.current);
+    if (noteApplied && newlyAppliedShortcut(cur, incoming)) setShortcutsVersion((n) => n + 1);
   }, []);
 
   useEffect(() => {
-    setLoaded(false);
-    setLearnChannelId("");
-    setRunning(false);
-    setProposals([]);
-    setErrors(new Map());
-    bulkRunRef.current++;
-    setBulk(null);
     // Until the state loads the Learn switch stays hidden, so a failed
     // fetch is tried again rather than hiding it for good.
     const cancelState = fetchWithRetry(
@@ -139,13 +202,13 @@ export function useLearn(
     const cancelProposals = fetchWithRetry(
       () => fetchLearnProposals(channelId),
       "fetching learn proposals",
-      (list) => setProposals((cur) => mergeProposals(cur, list)),
+      (list) => merge(list, false),
     );
     return () => {
       cancelState();
       cancelProposals();
     };
-  }, [channelId]);
+  }, [channelId, merge]);
 
   // After a reconnect, the events missed meanwhile are lost: a pass that
   // ended would stay "learning…" and the proposals it filed would be
@@ -153,10 +216,9 @@ export function useLearn(
   // reconnect: the fetches above cover it.
   const wsOpensRef = useRef(wsOpens);
   useEffect(() => {
-    const first = wsOpensRef.current === 0;
-    if (wsOpens === wsOpensRef.current) return;
+    const prev = wsOpensRef.current;
     wsOpensRef.current = wsOpens;
-    if (first) return;
+    if (!reconnected(prev, wsOpens)) return;
     const cancelState = fetchWithRetry(
       () => fetchLearnState(channelId),
       "fetching learn state",
@@ -172,16 +234,13 @@ export function useLearn(
     const cancelProposals = fetchWithRetry(
       () => fetchLearnProposals(channelId),
       "fetching learn proposals",
-      (list) => {
-        setProposals((cur) => mergeProposals(cur, list));
-        noteApplied(list);
-      },
+      (list) => merge(list),
     );
     return () => {
       cancelState();
       cancelProposals();
     };
-  }, [wsOpens, channelId, noteApplied]);
+  }, [wsOpens, channelId, merge]);
 
   useEffect(() => {
     if (!subscribeChatEvents) return;
@@ -195,22 +254,16 @@ export function useLearn(
           setLearnChannelId((event.data as { learn_channel_id: string }).learn_channel_id);
           setRunning(true);
           break;
-        case "learn.proposals": {
-          const list = (event.data as { proposals: LearnProposal[] }).proposals;
-          setProposals((cur) => mergeProposals(cur, list));
-          noteApplied(list);
+        case "learn.proposals":
+          merge((event.data as { proposals: LearnProposal[] }).proposals);
           break;
-        }
-        case "learn.proposal_updated": {
-          const p = event.data as LearnProposal;
-          setProposals((cur) => mergeProposals(cur, [p]));
-          noteApplied([p]);
+        case "learn.proposal_updated":
+          merge([event.data as LearnProposal]);
           break;
-        }
         default:
       }
     });
-  }, [channelId, subscribeChatEvents, noteApplied]);
+  }, [channelId, subscribeChatEvents, merge]);
 
   useEffect(() => {
     if (!learnChannelId || !subscribeChannelEvents) return;
@@ -235,46 +288,38 @@ export function useLearn(
     [channelId, learn],
   );
 
-  // An apply or dismiss: the proposal's buttons are disabled meanwhile, so a
-  // second click can't race the first, and a failed request's error is kept
-  // for the proposal until its next try.
   const settle = useCallback(
-    async (id: number, action: (id: number) => Promise<LearnProposal>) => {
-      busyRef.current = new Set(busyRef.current).add(id);
-      setBusy(busyRef.current);
-      setErrors((cur) => withError(cur, id, undefined));
-      try {
-        const p = await action(id);
-        setProposals((cur) => mergeProposals(cur, [p]));
-        noteApplied([p]);
-      } catch (e) {
-        setErrors((cur) => withError(cur, id, e instanceof Error ? e.message : String(e)));
-      } finally {
-        const next = new Set(busyRef.current);
-        next.delete(id);
-        busyRef.current = next;
-        setBusy(next);
-      }
-    },
-    [noteApplied],
+    (id: number, action: (id: number) => Promise<LearnProposal>) =>
+      settleProposal(id, action, {
+        busy: {
+          get: () => busyRef.current,
+          set: (next) => {
+            busyRef.current = next;
+            setBusy(next);
+          },
+        },
+        setError: (id, error) => setErrors((cur) => withError(cur, id, error)),
+        settled: (p) => merge([p]),
+      }),
+    [merge],
   );
   const apply = useCallback((id: number) => settle(id, applyLearnProposal), [settle]);
   const dismiss = useCallback((id: number) => settle(id, dismissLearnProposal), [settle]);
 
-  // One by one, each still in the bulk's scope when its turn comes: one
-  // applied, dismissed or in flight meanwhile is left alone.
   const runBulk = useCallback(
     async (kind: LearnBulk) => {
-      const run = ++bulkRunRef.current;
       setBulk(kind);
-      for (const { id } of proposalsRef.current.filter((p) => inBulk(kind, p))) {
-        if (bulkRunRef.current !== run) return;
-        const p = proposalsRef.current.find((x) => x.id === id);
-        if (inBulk(kind, p) && !busyRef.current.has(id)) await settle(id, kind === "apply" ? applyLearnProposal : dismissLearnProposal);
-      }
-      if (bulkRunRef.current === run) setBulk(null);
+      const action = kind === "apply" ? applyLearnProposal : dismissLearnProposal;
+      const done = await bulkRuns.run(
+        kind,
+        () => proposalsRef.current,
+        () => busyRef.current,
+        (id) => settle(id, action),
+      );
+      // A newer run owns bulk now, or the hook is gone.
+      if (done) setBulk(null);
     },
-    [settle],
+    [bulkRuns, settle],
   );
   const applyAll = useCallback(() => runBulk("apply"), [runBulk]);
   const dismissAll = useCallback(() => runBulk("dismiss"), [runBulk]);

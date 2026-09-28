@@ -284,7 +284,7 @@ func (s *Server) handleForkThread(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if src.SessionID != "" {
-		if err := s.store.MarkSessionForkPending(r.Context(), newID, src.SessionID); err != nil {
+		if _, err := s.store.MarkSessionForkPending(r.Context(), newID, src.SessionID); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
@@ -354,7 +354,7 @@ func (s *Server) forkWorktreeThread(w http.ResponseWriter, r *http.Request, src 
 		}
 	}
 	if staged {
-		if err := s.store.MarkSessionForkPending(r.Context(), newID, src.SessionID); err != nil {
+		if _, err := s.store.MarkSessionForkPending(r.Context(), newID, src.SessionID); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}

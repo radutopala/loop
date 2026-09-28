@@ -64,10 +64,10 @@ func (s *ServerSuite) TestLearnGet() {
 				merged.Learn.Enabled = tc.def
 				return &merged, nil
 			}
-			if tc.running {
-				chatLister := new(MockActiveChatLister)
-				chatLister.On("ActiveChatChannelIDs").Return(map[string]struct{}{"l-1": {}})
-				s.srv.SetActiveChatLister(chatLister)
+			if tc.learnCh != nil {
+				tracker := new(MockLearnPassTracker)
+				tracker.On("IsLearnPassRunning", "l-1").Return(tc.running)
+				s.srv.SetLearnPassTracker(tracker)
 			}
 
 			w := s.learnRequest("GET", "ch-1", "")

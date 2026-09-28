@@ -796,6 +796,7 @@ func (a *app) serve() error {
 	apiSrv.SetPendingPlansLister(orch)
 	apiSrv.SetInteractionHandler(orch)
 	apiSrv.SetActiveChatLister(orch)
+	apiSrv.SetLearnPassTracker(orch)
 
 	// Restore persisted ask/plan card parks BEFORE the API server begins
 	// serving, so GET /api/plans/pending and /api/asks/pending never hand a
