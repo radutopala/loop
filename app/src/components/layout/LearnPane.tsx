@@ -8,16 +8,8 @@ import { fonts } from "../../theme";
 import { ChatView } from "../chat/ChatView";
 import { isOpenProposal, learnKindLabel, proposalCaveat, proposalDetail } from "../chat/learnState";
 
-// How long the drawer takes to slide in or out.
-export const LEARN_DRAWER_SLIDE_MS = 200;
-
-interface LearnDrawerProps {
+interface LearnPaneProps {
   learn: LearnView;
-  /** False slides the drawer back up out of the chat; the parent unmounts it
-   * once the slide ends. */
-  shown: boolean;
-  /** Slide duration in ms; 0 skips the animation. */
-  slideMs: number;
   /** The learning channel is a worktree thread (renames leave its branch). */
   worktree: boolean;
   subscribeChannelEvents?: (channelId: string, listener: ChatEventListener) => () => void;
@@ -25,11 +17,11 @@ interface LearnDrawerProps {
 }
 
 /**
- * The channel's learn pass, pulled down over a chat pane like a blind: the
+ * The channel's learn pass, as a pane beside its chat in the Learn view: the
  * proposals to apply or dismiss on top, the hidden learn thread's chat below
  * (to watch the pass, or ask it for changes).
  */
-export function LearnDrawer({ learn, shown, slideMs, worktree, subscribeChannelEvents, onClose }: LearnDrawerProps) {
+export function LearnPane({ learn, worktree, subscribeChannelEvents, onClose }: LearnPaneProps) {
   const { colors } = useTheme();
   const open = learn.proposals.filter(isOpenProposal);
   // Proposals with an apply or dismiss in flight; their buttons are disabled
@@ -61,20 +53,7 @@ export function LearnDrawer({ learn, shown, slideMs, worktree, subscribeChannelE
   }, [learn.proposals, busy, apply]);
 
   return (
-    <div
-      data-testid="learn-drawer"
-      style={{
-        position: "absolute",
-        inset: 0,
-        zIndex: 20,
-        display: "flex",
-        flexDirection: "column",
-        overflow: "hidden",
-        backgroundColor: colors.sidebar,
-        transform: shown ? "translateY(0)" : "translateY(-100%)",
-        transition: slideMs ? `transform ${slideMs}ms ${shown ? "ease-out" : "ease-in"}` : "none",
-      }}
-    >
+    <div data-testid="learn-pane" style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column", overflow: "hidden" }}>
       {/* Header, like a pane's */}
       <div
         style={{
@@ -101,9 +80,9 @@ export function LearnDrawer({ learn, shown, slideMs, worktree, subscribeChannelE
           </button>
         )}
         <button
-          data-testid="learn-drawer-close"
+          data-testid="learn-close"
           onClick={onClose}
-          title="Close"
+          title="Close the Learn view"
           style={{ background: "none", border: "none", color: colors.textDim, cursor: "pointer", padding: "0 2px", lineHeight: 1, display: "flex", alignItems: "center", borderRadius: 2 }}
           onMouseEnter={(e) => {
             e.currentTarget.style.backgroundColor = colors.hoverBg;

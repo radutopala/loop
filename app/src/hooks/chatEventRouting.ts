@@ -25,7 +25,7 @@ export function shouldForwardToChatListeners(eventType: string, stateTarget: str
 /**
  * The channels the WS should be subscribed to: the selected one, every one
  * with a run in flight, and every one a panel watches through
- * `subscribeChannelEvents` (e.g. the Learn drawer's hidden learn thread,
+ * `subscribeChannelEvents` (e.g. the Learn view's hidden learn thread,
  * which is never selected). Sorted, so equal sets give equal keys.
  */
 export function subscriptionChannels(selectedId: string | null | undefined, running: Iterable<string>, watched: Iterable<string>): string[] {

@@ -88,7 +88,7 @@
   // Learn: after a chat run of at least min_turns turns, a hidden forked
   // session reviews it and proposes Loop changes — prompt/bash shortcuts,
   // scheduled tasks, gate rules, mounts, the thread's name and description —
-  // for you to apply one by one from the Learn drawer. "enabled" is the
+  // for you to apply one by one from the Learn view. "enabled" is the
   // default for the composer's Learn switch; each channel can override it.
   // model/effort (empty: the channel's) apply to the learn run only; prompt
   // is added to the built-in learn instructions. See docs/chat.md#learn-from-a-run.

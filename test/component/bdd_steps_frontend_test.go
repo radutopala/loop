@@ -260,8 +260,14 @@ func registerFrontendSteps(ctx *godog.ScenarioContext, tc *TestContext) {
 	ctx.Step(`^I drag layout tab "([^"]*)" onto layout tab "([^"]*)"$`, tc.dragLayoutTab)
 	ctx.Step(`^the layout tabs should be in order "([^"]*)"$`, tc.assertLayoutTabOrder)
 	ctx.Step(`^I scroll the chat messages to bottom$`, tc.scrollChatMessagesToBottom)
-	ctx.Step(`^I open the Learn drawer and nothing behind it moves$`, tc.openLearnDrawerSteady)
-	ctx.Step(`^the Learn drawer has slid down over the chat$`, tc.waitLearnDrawerSettled)
+	ctx.Step(`^I open the Learn view and nothing behind it scrolls$`, tc.openLearnViewSteady)
+	ctx.Step(`^the Learn view shows the chat and the Learn pane side by side$`, tc.waitLearnViewSettled)
+	ctx.Step(`^I scroll the chat (halfway|to the bottom) and note where it is$`, tc.scrollChatAndNote)
+	ctx.Step(`^I click on "([^"]*)" watching the chat's scroll$`, tc.clickWatchingChatScroll)
+	ctx.Step(`^the chat is still scrolled where I noted$`, tc.assertChatScrollKept)
+	ctx.Step(`^I drag the divider after the chat pane by (-?\d+)px$`, tc.dragChatPaneDivider)
+	ctx.Step(`^I tag the chat's composer$`, tc.tagChatComposer)
+	ctx.Step(`^the composer in "([^"]*)" is the one I tagged$`, tc.assertTaggedComposer)
 	ctx.Step(`^I scroll the chat messages to top$`, tc.scrollChatMessagesToTop)
 	ctx.Step(`^I serve a chat history of (\d+) messages from the timeline$`, tc.serveChatHistory)
 	ctx.Step(`^I scroll the chat to the top and note the first message$`, tc.scrollChatToTopNotingFirst)
@@ -2059,49 +2065,91 @@ func (tc *TestContext) scrollChatMessagesToBottom() error {
 	return nil
 }
 
-// waitLearnDrawerSettled waits until the Learn drawer has slid all the way
-// down over its chat pane (clicks aimed at it mid-slide land behind it) and
-// checks nothing covers it there.
-func (tc *TestContext) waitLearnDrawerSettled() error {
+// dragChatPaneDivider drags the split divider on the chat pane's right by
+// dx pixels, resizing the chat pane.
+func (tc *TestContext) dragChatPaneDivider(dx int) error {
+	var at []float64
 	js := `(() => {
-		const d = document.querySelector("[data-testid='learn-drawer']");
-		if (!d) return false;
-		const r = d.getBoundingClientRect();
-		const p = d.parentElement.getBoundingClientRect();
-		if (Math.abs(r.top - p.top) > 0.5 || Math.abs(r.bottom - p.bottom) > 0.5) return false;
-		return d.contains(document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2));
+		const slot = document.querySelector("[data-learn-chat-leaf]");
+		if (!slot) return [];
+		let box = slot;
+		while (box && !(box.nextElementSibling && getComputedStyle(box.nextElementSibling).cursor === 'col-resize')) box = box.parentElement;
+		if (!box) return [];
+		const r = box.nextElementSibling.getBoundingClientRect();
+		return [r.left + r.width / 2, r.top + r.height / 2];
 	})()`
-	ctx, cancel := context.WithTimeout(tc.chromeTab.ctx, 5*time.Second)
-	defer cancel()
-	return chromedp.Run(ctx, chromedp.Poll(js, nil, chromedp.WithPollingInterval(50*time.Millisecond)))
+	if err := chromedp.Run(tc.chromeTab.ctx, chromedp.Evaluate(js, &at)); err != nil {
+		return err
+	}
+	if len(at) != 2 {
+		return fmt.Errorf("no divider on the chat pane's right")
+	}
+	x, y := at[0], at[1]
+	return chromedp.Run(tc.chromeTab.ctx,
+		chromedp.MouseEvent(input.MouseMoved, x, y),
+		chromedp.MouseEvent(input.MousePressed, x, y, chromedp.ButtonLeft),
+		chromedp.MouseEvent(input.MouseMoved, x+float64(dx)/2, y, chromedp.ButtonLeft),
+		chromedp.MouseEvent(input.MouseMoved, x+float64(dx), y, chromedp.ButtonLeft),
+		chromedp.MouseEvent(input.MouseReleased, x+float64(dx), y, chromedp.ButtonLeft),
+	)
 }
 
-// openLearnDrawerSteady clicks the Learn badge and watches the chat pane
-// while the drawer slides down over it: every scroll of the document or of an
-// element holding the main composer, and every frame the composer sits
-// somewhere other than where it started. Either one is the pane jumping
-// behind the drawer.
-func (tc *TestContext) openLearnDrawerSteady() error {
+// scrollChatAndNote scrolls the chat's messages halfway (away from both
+// ends: the chat pins itself to the bottom, and pages in more at the top) or
+// to the bottom, and notes the scroller and the message at its top for
+// assertChatScrollKept.
+func (tc *TestContext) scrollChatAndNote(where string) error {
+	js := fmt.Sprintf(`(() => {
+		const t = document.querySelector("[data-learn-chat-leaf] textarea");
+		if (!t) return 'no chat composer';
+		const bubble = t.closest("[data-learn-chat-leaf]").querySelector('[data-msg-uuid]');
+		if (!bubble) return 'no message bubble';
+		let el = bubble.parentElement;
+		while (el && getComputedStyle(el).overflowY !== 'auto') el = el.parentElement;
+		if (!el) return 'no scroll container';
+		if (el.scrollHeight - el.clientHeight < 3 * el.clientHeight) return 'too few messages to scroll';
+		const max = el.scrollHeight - el.clientHeight;
+		el.scrollTop = %q === 'halfway' ? Math.round(max / 2) : max;
+		el.dispatchEvent(new Event('scroll'));
+		// The message across the view's top edge: away from the bottom, the
+		// same one should be there however the messages wrap.
+		const edge = el.getBoundingClientRect().top;
+		const msg = Array.from(el.querySelectorAll('[data-msg-uuid]')).find((m) => m.getBoundingClientRect().bottom > edge);
+		window.__chatScroll = { el, msg, bottom: %q !== 'halfway' };
+		return 'ok';
+	})()`, where, where)
+	var result string
+	if err := chromedp.Run(tc.chromeTab.ctx, chromedp.Evaluate(js, &result)); err != nil {
+		return err
+	}
+	if result != "ok" {
+		return fmt.Errorf("scrollChatAndNote: %s", result)
+	}
+	return nil
+}
+
+// clickWatchingChatScroll clicks selector and, for every frame until the
+// click's effects (and any animation) are over, checks the scroller
+// scrollChatAndNote noted is where it was: a frame showing it elsewhere is a
+// visible jump, even if something scrolls it back after.
+func (tc *TestContext) clickWatchingChatScroll(selector string) error {
 	arm := `(() => {
-		const composer = document.querySelector('textarea');
-		if (!composer) return 'no composer';
-		const start = composer.getBoundingClientRect();
-		const log = [];
-		window.__learnShift = log;
-		const onScroll = (e) => {
-			const t = e.target === document ? document.scrollingElement : e.target;
-			if (!t.contains(composer)) return;
-			if (t.scrollLeft || t.scrollTop) log.push('scrolled by ' + t.scrollLeft + ',' + t.scrollTop + 'px: ' + (e.target === document ? 'document' : t.outerHTML.slice(0, 120)));
+		const s = window.__chatScroll;
+		if (!s) return 'nothing noted';
+		s.jumps = [];
+		// At the bottom it stays at the bottom, however the messages wrap;
+		// elsewhere, the same message stays across the view's top edge.
+		s.kept = () => {
+			if (s.bottom) return s.el.scrollHeight - s.el.scrollTop - s.el.clientHeight <= 1;
+			const edge = s.el.getBoundingClientRect().top, r = s.msg.getBoundingClientRect();
+			return r.top <= edge + 1 && r.bottom > edge;
 		};
-		document.addEventListener('scroll', onScroll, true);
-		const until = performance.now() + 800;
-		const sample = () => {
-			const r = composer.getBoundingClientRect();
-			if (Math.abs(r.left - start.left) > 0.5 || Math.abs(r.top - start.top) > 0.5) log.push('composer moved from ' + start.left + ',' + start.top + ' to ' + r.left + ',' + r.top);
-			if (performance.now() < until) requestAnimationFrame(sample);
-			else document.removeEventListener('scroll', onScroll, true);
+		const t0 = performance.now();
+		const tick = () => {
+			if (!s.kept()) s.jumps.push(Math.round(performance.now() - t0) + 'ms: ' + s.el.scrollTop + ' of ' + (s.el.scrollHeight - s.el.clientHeight));
+			if (performance.now() - t0 < 800) requestAnimationFrame(tick);
 		};
-		requestAnimationFrame(sample);
+		requestAnimationFrame(tick);
 		return 'ok';
 	})()`
 	var armed string
@@ -2109,7 +2157,107 @@ func (tc *TestContext) openLearnDrawerSteady() error {
 		return err
 	}
 	if armed != "ok" {
-		return fmt.Errorf("openLearnDrawerSteady: %s", armed)
+		return fmt.Errorf("clickWatchingChatScroll: %s", armed)
+	}
+	if err := tc.clickOn(selector); err != nil {
+		return err
+	}
+	return chromedp.Run(tc.chromeTab.ctx, chromedp.Sleep(900*time.Millisecond))
+}
+
+// assertChatScrollKept checks the scroller scrollChatAndNote noted is still
+// in the page, scrolled where it was, and that clickWatchingChatScroll saw
+// no frame with it anywhere else.
+func (tc *TestContext) assertChatScrollKept() error {
+	var result string
+	js := `(() => {
+		const s = window.__chatScroll;
+		if (!s) return 'nothing noted';
+		if (!s.el.isConnected) return 'the scroller left the page';
+		if (s.jumps && s.jumps.length) return 'frames showed it scrolled elsewhere: ' + s.jumps.slice(0, 5).join(', ');
+		return s.kept() ? 'ok' : 'scrolled to ' + s.el.scrollTop + ' of ' + (s.el.scrollHeight - s.el.clientHeight) + (s.bottom ? ', not the bottom' : ', away from the message noted at the top');
+	})()`
+	if err := chromedp.Run(tc.chromeTab.ctx, chromedp.Evaluate(js, &result)); err != nil {
+		return err
+	}
+	if result != "ok" {
+		return fmt.Errorf("the chat didn't keep its scroll: %s", result)
+	}
+	return nil
+}
+
+// tagChatComposer marks the chat's composer element, so a later step can
+// tell it's still the same element (the chat wasn't mounted again).
+func (tc *TestContext) tagChatComposer() error {
+	var ok bool
+	js := `(() => { const t = document.querySelector("[data-learn-chat-leaf] textarea"); if (!t) return false; t.__learnTag = true; return true; })()`
+	if err := chromedp.Run(tc.chromeTab.ctx, chromedp.Evaluate(js, &ok)); err != nil {
+		return err
+	}
+	if !ok {
+		return fmt.Errorf("no chat composer to tag")
+	}
+	return nil
+}
+
+// assertTaggedComposer checks the composer inside selector is the element
+// tagChatComposer marked.
+func (tc *TestContext) assertTaggedComposer(selector string) error {
+	var state string
+	js := fmt.Sprintf(`(() => { const t = document.querySelector(%q + " textarea"); return !t ? "missing" : t.__learnTag ? "tagged" : "new"; })()`, selector)
+	if err := chromedp.Run(tc.chromeTab.ctx, chromedp.Evaluate(js, &state)); err != nil {
+		return err
+	}
+	if state != "tagged" {
+		return fmt.Errorf("composer in %s is %s, not the tagged one (the chat was mounted again)", selector, state)
+	}
+	return nil
+}
+
+// waitLearnViewSettled waits until the Learn view is laid out: the chat
+// fills its left half and the Learn pane its right half, each full height,
+// with nothing covering them.
+func (tc *TestContext) waitLearnViewSettled() error {
+	js := `(() => {
+		const view = document.querySelector("[data-testid='learn-split']");
+		const chat = document.querySelector("[data-testid='learn-split-chat']");
+		const learn = document.querySelector("[data-testid='learn-pane']");
+		if (!view || !chat || !learn) return false;
+		const v = view.getBoundingClientRect(), c = chat.getBoundingClientRect(), l = learn.parentElement.getBoundingClientRect();
+		const near = (a, b) => Math.abs(a - b) <= 1;
+		if (!near(c.left, v.left) || !near(l.right, v.right) || !near(c.top, v.top) || !near(l.top, v.top)) return false;
+		if (!near(c.bottom, v.bottom) || !near(l.bottom, v.bottom) || !near(c.width, l.width) || c.right > l.left) return false;
+		const inside = (el, r) => el.contains(document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2));
+		return inside(chat, c) && inside(learn.parentElement, l);
+	})()`
+	ctx, cancel := context.WithTimeout(tc.chromeTab.ctx, 5*time.Second)
+	defer cancel()
+	return chromedp.Run(ctx, chromedp.Poll(js, nil, chromedp.WithPollingInterval(50*time.Millisecond)))
+}
+
+// openLearnViewSteady clicks the Learn badge and watches the layout while the
+// Learn view opens: nothing holding its panes (the document, the layout) may
+// scroll as their composers mount and focus, or the whole layout jumps.
+func (tc *TestContext) openLearnViewSteady() error {
+	arm := `(() => {
+		const log = [];
+		window.__learnShift = log;
+		const onScroll = (e) => {
+			const t = e.target === document ? document.scrollingElement : e.target;
+			const view = document.querySelector("[data-testid='learn-split']");
+			if (e.target !== document && !(view && t.contains(view))) return;
+			if (t.scrollLeft || t.scrollTop) log.push('scrolled by ' + t.scrollLeft + ',' + t.scrollTop + 'px: ' + (e.target === document ? 'document' : t.outerHTML.slice(0, 120)));
+		};
+		document.addEventListener('scroll', onScroll, true);
+		setTimeout(() => document.removeEventListener('scroll', onScroll, true), 800);
+		return 'ok';
+	})()`
+	var armed string
+	if err := chromedp.Run(tc.chromeTab.ctx, chromedp.Evaluate(arm, &armed)); err != nil {
+		return err
+	}
+	if armed != "ok" {
+		return fmt.Errorf("openLearnViewSteady: %s", armed)
 	}
 	if err := tc.clickOn("[data-testid='learn-badge']"); err != nil {
 		return err
@@ -2122,7 +2270,7 @@ func (tc *TestContext) openLearnDrawerSteady() error {
 		return err
 	}
 	if len(shifts) > 0 {
-		return fmt.Errorf("the layout moved while the Learn drawer opened: %s", strings.Join(shifts, "; "))
+		return fmt.Errorf("the layout scrolled while the Learn view opened: %s", strings.Join(shifts, "; "))
 	}
 	return nil
 }

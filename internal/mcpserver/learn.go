@@ -57,7 +57,7 @@ func (s *Server) handleProposeLearnings(_ context.Context, _ *mcp.CallToolReques
 	}
 	return &mcp.CallToolResult{
 		Content: []mcp.Content{
-			&mcp.TextContent{Text: fmt.Sprintf("Filed %d proposal(s); the user will accept or dismiss them in the Learn drawer.", len(result.Proposals))},
+			&mcp.TextContent{Text: fmt.Sprintf("Filed %d proposal(s); the user will accept or dismiss them in the Learn view.", len(result.Proposals))},
 		},
 	}, nil, nil
 }

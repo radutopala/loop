@@ -333,7 +333,7 @@ func (h *EventsHub) BroadcastLearnStarted(channelID, learnChannelID string) {
 }
 
 // BroadcastLearnProposals sends a learn.proposals event when a learn pass
-// files proposals for channelID, so its Learn drawer lists them.
+// files proposals for channelID, so its Learn view lists them.
 func (h *EventsHub) BroadcastLearnProposals(channelID string, proposals []*db.LearnProposal) {
 	h.Broadcast(Event{
 		Type:      EventLearnProposals,

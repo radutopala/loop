@@ -413,9 +413,8 @@ export function ChatInput({
   }, [text]);
 
   // Auto-focus textarea on mount; move cursor to end if restoring a draft.
-  // preventScroll: the Learn drawer's composer mounts above its chat pane,
-  // and scrolling it into view would shift the pane while the drawer slides
-  // down.
+  // preventScroll: the Learn view's composers mount over the layout, and
+  // scrolling one into view would shift the layout under them.
   useEffect(() => {
     const el = inputRef.current;
     if (el) {

@@ -122,7 +122,7 @@ Registered only when `--agent-id` is `learn`, the id the orchestrator gives a [l
 
 | Tool | Description |
 |------|-------------|
-| `propose_learnings` | File the learn pass's proposals for the user to apply or dismiss in the Learn drawer; nothing is applied until they do. Takes `proposals`, at most 5 items of `{kind, title, rationale?, payload}`, where `kind` is `prompt_shortcut`, `bash_shortcut`, `scheduled_task`, `gate_rule`, `mount`, `rename`, `description` or `ticket_url`. Posts to [`POST /api/channels/{id}/learn/proposals`](api.md#post-apichannelsidlearnproposals) for the server's channel, which must be a learn thread; if any proposal is invalid none are stored and the error names the one to fix. |
+| `propose_learnings` | File the learn pass's proposals for the user to apply or dismiss in the Learn view; nothing is applied until they do. Takes `proposals`, at most 5 items of `{kind, title, rationale?, payload}`, where `kind` is `prompt_shortcut`, `bash_shortcut`, `scheduled_task`, `gate_rule`, `mount`, `rename`, `description` or `ticket_url`. Posts to [`POST /api/channels/{id}/learn/proposals`](api.md#post-apichannelsidlearnproposals) for the server's channel, which must be a learn thread; if any proposal is invalid none are stored and the error names the one to fix. |
 
 A learn run can't call the Loop tools that change state (shortcuts, tasks, threads, messages, workflows, playgrounds and so on): they're denied by the learn run's `--disallowedTools`, not left unregistered.
 

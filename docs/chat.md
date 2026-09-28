@@ -585,11 +585,15 @@ Config kinds are written to the project's `.loop/config.json` with your comments
 
 ### Learn label
 
-The chat pane shows a `learn` label for the selected channel at the right of its header: `learning…` while a pass runs, `N proposals` while proposals wait (pending or failed), both lit in the accent color. Once the channel has a learn thread and nothing waits, the label stays dim; a channel that never had a pass shows none. A click opens or closes the Learn drawer over that pane's chat; switching channels closes it.
+The chat pane shows a `learn` label for the selected channel at the right of its header: `learning…` while a pass runs, `N proposals` while proposals wait (pending or failed), both lit in the accent color. Once the channel has a learn thread and nothing waits, the label stays dim; a channel that never had a pass shows none. A click opens the Learn view; switching channels closes it.
 
-### Learn drawer
+### Learn view
 
-The drawer slides down from the top of the chat pane and covers its chat, and slides back up when closed. The rest of the layout stays usable. Its header matches a pane header:
+The Learn view puts the chat and a Learn pane side by side, each half the width and the full height of the layout, and hides the rest of the layout. The Loop logo sits on the seam between them and animates while a learn pass runs. The chat moves over at once, as it is (draft, scroll and all), and the Learn pane fades in beside it; closing fades the Learn pane out and moves the chat back.
+
+The chat keeps its pane header with its container stats, but not the layout's split and close buttons. Close the view with the Learn label in that header or the Learn pane's ✕.
+
+The Learn pane's header matches a pane header:
 
 - **Proposals** on top, newest first. Each card shows its kind, title, a one-line gist of exactly what Apply writes, and the rationale the pass gave.
   - **Apply** applies it. If it fails, the error shows under the card and the button becomes **Retry**. A card's buttons are disabled while its apply or dismiss is in flight.
@@ -599,9 +603,9 @@ The drawer slides down from the top of the chat pane and covers its chat, and sl
   - **Apply all** in the header applies every pending proposal one by one. Failed ones are left for a manual Retry.
 - **The learn thread's chat** below. Watch the pass as it works, or reply to it: ask why it proposed something or ask for changes, and it files revised proposals. The thread's composer has no Learn switch, since a learn thread doesn't learn from itself.
 
-Before the first pass, the drawer says so instead of showing a chat.
+Before the first pass, the Learn pane says so instead of showing a chat.
 
-**Worktree threads:** a rename proposal renames the thread only; its git branch and worktree folder keep their names. The drawer says so under the card.
+**Worktree threads:** a rename proposal renames the thread only; its git branch and worktree folder keep their names. The Learn pane says so under the card.
 
 ### Hidden thread
 

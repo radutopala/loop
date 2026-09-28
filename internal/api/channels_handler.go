@@ -195,7 +195,7 @@ func (s *Server) handleSearchChannels(w http.ResponseWriter, r *http.Request) {
 		if platformFilter != "" && string(ch.Platform) != platformFilter {
 			continue
 		}
-		// Learn threads are hidden: the chat shows them in its Learn drawer.
+		// Learn threads are hidden: the chat shows them in its Learn view.
 		if ch.Kind == db.ChannelKindLearn {
 			continue
 		}

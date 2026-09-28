@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useLayoutEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import type { LearnView } from "../../hooks/useLearn";
 import { useTheme } from "../../ThemeContext";
@@ -9,7 +9,7 @@ interface LearnBadgeProps {
   /** Pane leaf id — the portal target is `pane-header-slot-${leafId}`. */
   leafId: string;
   learn: LearnView;
-  /** The Learn drawer is open over this pane's chat. */
+  /** This badge sits in the open Learn view. */
   open: boolean;
   onToggle: () => void;
 }
@@ -17,7 +17,8 @@ interface LearnBadgeProps {
 /**
  * The chat pane's Learn label, at the right of its header: lit while a learn
  * pass runs or proposals wait, dim once the channel has a learn thread to
- * look back at. A click opens or closes the Learn drawer over the chat.
+ * look back at. A click opens the Learn view; in the Learn view's own chat
+ * header, it closes it.
  * Portals into the pane header like PaneHeaderStatus, so it returns null
  * until the slot mounts.
  */
@@ -25,7 +26,9 @@ export function LearnBadge({ leafId, learn, open, onToggle }: LearnBadgeProps) {
   const { colors } = useTheme();
   const [slot, setSlot] = useState<HTMLElement | null>(null);
 
-  useEffect(() => {
+  // Before paint: a Learn view opening with its header must not paint a
+  // frame without the badge.
+  useLayoutEffect(() => {
     const find = () => document.getElementById(`pane-header-slot-${leafId}`);
     setSlot(find());
     if (find()) return;
@@ -42,7 +45,7 @@ export function LearnBadge({ leafId, learn, open, onToggle }: LearnBadgeProps) {
       data-testid="learn-badge"
       data-running={learn.running ? "true" : "false"}
       onClick={onToggle}
-      title={open ? "Hide the Learn drawer" : "Show the Learn drawer"}
+      title={open ? "Close the Learn view" : "Open the Learn view"}
       style={{
         display: "flex",
         alignItems: "center",

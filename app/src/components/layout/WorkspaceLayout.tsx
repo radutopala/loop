@@ -1,4 +1,5 @@
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { killAgentContainer } from "../../api/loopApi";
 import { CanvasLayout } from "../../canvas/CanvasLayout";
 import type { CanvasNode } from "../../canvas/types";
@@ -56,8 +57,10 @@ import { TasksPanel } from "../panels/TasksPanel";
 import { getCloseForInstance, Terminal } from "../panels/Terminal";
 import { WorkflowsLayoutPanel } from "../panels/WorkflowsLayoutPanel";
 import { ChannelHeaderInfo } from "./ChannelHeaderInfo";
+import { ChatSlot, createChatHost } from "./ChatSlot";
 import { HeaderBranchPicker } from "./HeaderBranchPicker";
-import { LEARN_DRAWER_SLIDE_MS, LearnDrawer } from "./LearnDrawer";
+import { LearnPane } from "./LearnPane";
+import { LEARN_SPLIT_MS, LEARN_SPLIT_SLOT_ID, LearnSplit } from "./LearnSplit";
 
 type AgentState = "running" | "stopped" | "none";
 
@@ -332,26 +335,16 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
     clearPlanPill,
   });
 
-  // The channel's learn pass, shown in the Learn drawer over a chat pane:
-  // the one whose header badge opened it (kept while it slides back up).
+  // The channel's learn pass, shown in the Learn view: its chat and Learn
+  // pane side by side over the layout. The chat moves into it from its pane
+  // (see chatHost) and back on close, without mounting again.
   const learn = useLearn(channelId, subscribeChatEvents, subscribeChannelEvents);
   const [learnOpen, setLearnOpen] = useState(false);
-  const [learnLeafId, setLearnLeafId] = useState<string | null>(null);
   useEffect(() => setLearnOpen(false), [channelId]);
-  // The drawer slides in and out; it stays mounted until it's slid out.
-  const learnSlideMs = prefersReducedMotion() ? 0 : LEARN_DRAWER_SLIDE_MS;
-  const learnDrawer = usePresence(learnOpen, learnSlideMs);
-  const toggleLearn = useCallback(
-    (leafId: string) => {
-      if (learnOpen && learnLeafId === leafId) {
-        setLearnOpen(false);
-        return;
-      }
-      setLearnLeafId(leafId);
-      setLearnOpen(true);
-    },
-    [learnOpen, learnLeafId],
-  );
+  // It stays mounted until its closing animation ends.
+  const learnMs = prefersReducedMotion() ? 0 : LEARN_SPLIT_MS;
+  const learnSplit = usePresence(learnOpen, learnMs);
+  const openLearn = useCallback(() => setLearnOpen(true), []);
   const closeLearn = useCallback(() => setLearnOpen(false), []);
 
   // Editor + file-tree shared state. Hoisted here so both panels (rendered
@@ -862,30 +855,50 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
     return hidden.length > 0 ? hidden : undefined;
   }, [channel.review_enabled]);
 
+  // The channel's chat, in its layout pane or in the Learn view.
+  // The chat is mounted once, into chatHost, and shown by whichever ChatSlot
+  // holds that element: its layout pane's, or the Learn view's while that's
+  // open. Moving between them never mounts it again. It renders once a slot
+  // holds the host, so it never mounts detached.
+  const [chatHost] = useState(createChatHost);
+  const [chatHostPlaced, setChatHostPlaced] = useState(false);
+  const placeChatHost = useCallback(() => setChatHostPlaced(true), []);
+  // Leaving, the slot holding the host parked it; nothing will take it now.
+  useEffect(
+    () => () => {
+      chatHost.closest("[data-chat-park]")?.remove();
+      chatHost.remove();
+    },
+    [chatHost],
+  );
+  const chatLeafId = useMemo(
+    () => (layoutType === "canvas" ? canvasState?.tiles.find((t) => t.panel === "chat")?.id : tree ? collectLeaves(tree).find((l) => l.panel === "chat")?.id : undefined),
+    [layoutType, canvasState, tree],
+  );
+
+  const renderChat = useCallback(
+    (leafId: string) => (
+      <ComponentFocusContext.Provider value={(c) => openComponent(leafId, c)}>
+        <LearnContext.Provider value={learn}>
+          <ChatView key={`layout-chat-${channelId}`} channelId={channelId} chatState={chatState} roots={editorState.roots} scrollToMessageId={scrollToMessageId} onScrollComplete={onScrollComplete} />
+        </LearnContext.Provider>
+        {shownComponent?.leafId === leafId && <ChatComponentFull component={shownComponent.component} onClose={closeComponent} />}
+      </ComponentFocusContext.Provider>
+    ),
+    [openComponent, learn, channelId, chatState, editorState.roots, scrollToMessageId, onScrollComplete, shownComponent, closeComponent],
+  );
+
   const renderLeaf = useCallback(
     (leaf: LeafNode): React.ReactNode => {
       switch (leaf.panel) {
         case "chat":
+          // While the Learn view is up (open or fading out) it holds the
+          // chat, and this pane stays empty.
           return (
-            <ComponentFocusContext.Provider value={(c) => openComponent(leaf.id, c)}>
-              <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", minHeight: 0, position: "relative" }}>
-                <LearnContext.Provider value={learn}>
-                  <ChatView
-                    key={`layout-chat-${channelId}`}
-                    channelId={channelId}
-                    chatState={chatState}
-                    roots={editorState.roots}
-                    scrollToMessageId={scrollToMessageId}
-                    onScrollComplete={onScrollComplete}
-                  />
-                </LearnContext.Provider>
-                {learn.channelId === channelId && <LearnBadge leafId={leaf.id} learn={learn} open={learnOpen && learnLeafId === leaf.id} onToggle={() => toggleLearn(leaf.id)} />}
-                {learnDrawer.mounted && learnLeafId === leaf.id && (
-                  <LearnDrawer learn={learn} shown={learnDrawer.shown} slideMs={learnSlideMs} worktree={!!channel.worktree} subscribeChannelEvents={subscribeChannelEvents} onClose={closeLearn} />
-                )}
-                {shownComponent?.leafId === leaf.id && <ChatComponentFull component={shownComponent.component} onClose={closeComponent} />}
-              </div>
-            </ComponentFocusContext.Provider>
+            <>
+              <ChatSlot host={chatHost} active={!learnSplit.mounted} onAttach={placeChatHost} leafId={leaf.id} />
+              {learn.channelId === channelId && <LearnBadge leafId={leaf.id} learn={learn} open={false} onToggle={openLearn} />}
+            </>
           );
         case "editor":
           return (
@@ -1033,15 +1046,10 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
       shownComponent,
       closeComponent,
       learn,
-      learnOpen,
-      learnLeafId,
-      toggleLearn,
-      closeLearn,
-      learnDrawer.mounted,
-      learnDrawer.shown,
-      learnSlideMs,
-      channel.worktree,
-      subscribeChannelEvents,
+      openLearn,
+      learnSplit.mounted,
+      chatHost,
+      placeChatHost,
     ],
   );
 
@@ -1441,82 +1449,115 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
 
       {/* Layout content */}
       <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", minHeight: 0, position: "relative" }}>
-        {layoutType === "canvas" ? (
-          <CanvasLayout
-            canvas={canvasState ?? { type: "canvas", viewport: { x: 0, y: 0, zoom: 1 }, tiles: [] }}
-            renderLeaf={renderLeaf}
-            agentInfoMap={agentInfoMap}
-            containerStats={containerStats}
-            onCanvasChange={(c) => {
-              setCanvasState(c);
-            }}
-            hiddenPanels={hiddenPanels}
-          />
-        ) : !tree ? (
-          <EmptyLayoutPicker onAdd={handleEmptyAdd} hiddenPanels={hiddenPanels} />
-        ) : maximizedLeafId && findLeafById(tree, maximizedLeafId) ? (
-          (() => {
-            const leaf = findLeafById(tree, maximizedLeafId)!;
-            const usedSingletons = collectPanelTypes(tree);
-            return (
-              <div
-                style={{
-                  flex: 1,
-                  display: "flex",
-                  flexDirection: "column",
-                  overflow: "hidden",
-                  minHeight: 0,
-                  minWidth: 0,
-                  borderRadius: colors.islandRadius,
-                  boxShadow: colors.islandShadow,
-                  border: colors.islandBorder,
-                  backgroundColor: colors.sidebar,
-                }}
-              >
-                <PaneLeafHeader
-                  leafId={leaf.id}
-                  panel={leaf.panel}
-                  usedSingletons={usedSingletons}
-                  hiddenPanels={hiddenPanels}
-                  agentInfo={leaf.panel === "docker-agent" ? agentInfoMap.get(leaf.id) : undefined}
-                  containerStats={containerStats}
-                  isMaximized
-                  onRemove={() => {
-                    setMaximizedLeafId(null);
-                    handleRemoveLeaf(leaf.id);
+        {/* The layout stays put under the Learn view while it's open. */}
+        <div
+          style={{
+            flex: 1,
+            display: "flex",
+            flexDirection: "column",
+            overflow: "hidden",
+            minHeight: 0,
+            position: "relative",
+            pointerEvents: learnSplit.mounted ? "none" : undefined,
+          }}
+        >
+          {layoutType === "canvas" ? (
+            <CanvasLayout
+              canvas={canvasState ?? { type: "canvas", viewport: { x: 0, y: 0, zoom: 1 }, tiles: [] }}
+              renderLeaf={renderLeaf}
+              agentInfoMap={agentInfoMap}
+              containerStats={containerStats}
+              onCanvasChange={(c) => {
+                setCanvasState(c);
+              }}
+              hiddenPanels={hiddenPanels}
+            />
+          ) : !tree ? (
+            <EmptyLayoutPicker onAdd={handleEmptyAdd} hiddenPanels={hiddenPanels} />
+          ) : maximizedLeafId && findLeafById(tree, maximizedLeafId) ? (
+            (() => {
+              const leaf = findLeafById(tree, maximizedLeafId)!;
+              const usedSingletons = collectPanelTypes(tree);
+              return (
+                <div
+                  style={{
+                    flex: 1,
+                    display: "flex",
+                    flexDirection: "column",
+                    overflow: "hidden",
+                    minHeight: 0,
+                    minWidth: 0,
+                    borderRadius: colors.islandRadius,
+                    boxShadow: colors.islandShadow,
+                    border: colors.islandBorder,
+                    backgroundColor: colors.sidebar,
                   }}
-                  onDrop={handleDrop}
-                  onSplitLeaf={handleSplitLeaf}
-                  onToggleMaximize={() => setMaximizedLeafId(null)}
-                />
-                <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", minHeight: 0 }}>{renderLeaf(leaf)}</div>
-              </div>
-            );
-          })()
-        ) : (
-          <SplitPaneLayout
-            tree={tree}
-            renderLeaf={renderLeaf}
-            agentInfoMap={agentInfoMap}
-            containerStats={containerStats}
-            minimizedLeaves={minimizedLeaves}
-            hiddenPanels={hiddenPanels}
-            onUpdateFlex={handleUpdateFlex}
-            onDrop={handleDrop}
-            onRemoveLeaf={handleRemoveLeaf}
-            onSplitLeaf={handleSplitLeaf}
-            onMaximize={(leafId) => setMaximizedLeafId(leafId)}
-            onToggleMinimize={(leafId) =>
-              setMinimizedLeaves((prev) => {
-                const next = new Set(prev);
-                if (next.has(leafId)) next.delete(leafId);
-                else next.add(leafId);
-                return next;
-              })
+                >
+                  <PaneLeafHeader
+                    leafId={leaf.id}
+                    panel={leaf.panel}
+                    usedSingletons={usedSingletons}
+                    hiddenPanels={hiddenPanels}
+                    agentInfo={leaf.panel === "docker-agent" ? agentInfoMap.get(leaf.id) : undefined}
+                    containerStats={containerStats}
+                    isMaximized
+                    onRemove={() => {
+                      setMaximizedLeafId(null);
+                      handleRemoveLeaf(leaf.id);
+                    }}
+                    onDrop={handleDrop}
+                    onSplitLeaf={handleSplitLeaf}
+                    onToggleMaximize={() => setMaximizedLeafId(null)}
+                  />
+                  <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", minHeight: 0 }}>{renderLeaf(leaf)}</div>
+                </div>
+              );
+            })()
+          ) : (
+            <SplitPaneLayout
+              tree={tree}
+              renderLeaf={renderLeaf}
+              agentInfoMap={agentInfoMap}
+              containerStats={containerStats}
+              minimizedLeaves={minimizedLeaves}
+              hiddenPanels={hiddenPanels}
+              onUpdateFlex={handleUpdateFlex}
+              onDrop={handleDrop}
+              onRemoveLeaf={handleRemoveLeaf}
+              onSplitLeaf={handleSplitLeaf}
+              onMaximize={(leafId) => setMaximizedLeafId(leafId)}
+              onToggleMinimize={(leafId) =>
+                setMinimizedLeaves((prev) => {
+                  const next = new Set(prev);
+                  if (next.has(leafId)) next.delete(leafId);
+                  else next.add(leafId);
+                  return next;
+                })
+              }
+            />
+          )}
+        </div>
+        {learnSplit.mounted && (
+          <LearnSplit
+            shown={learnSplit.shown}
+            ms={learnMs}
+            running={learn.running}
+            chatHeader={
+              // The chat's pane header, without the layout controls: this
+              // isn't a layout pane. The Learn badge in it closes the view.
+              <PaneLeafHeader leafId={LEARN_SPLIT_SLOT_ID} panel="chat" usedSingletons={new Set()} containerStats={containerStats} />
             }
+            chat={
+              <>
+                <ChatSlot host={chatHost} active onAttach={placeChatHost} />
+                <LearnBadge leafId={LEARN_SPLIT_SLOT_ID} learn={learn} open onToggle={closeLearn} />
+              </>
+            }
+            learnPane={<LearnPane learn={learn} worktree={!!channel.worktree} subscribeChannelEvents={subscribeChannelEvents} onClose={closeLearn} />}
           />
         )}
       </div>
+      {chatHostPlaced && chatLeafId && createPortal(renderChat(chatLeafId), chatHost)}
     </div>
   );
 });

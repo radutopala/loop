@@ -339,7 +339,7 @@ When enabled, sharing a playground starts a cloudflared quick tunnel (anonymous 
 
 #### Learn
 
-Configures the learn pass: after a chat run, a hidden forked session reviews it and proposes shortcuts, scheduled tasks, gate rules, mounts and a thread name or description for you to apply from the Learn drawer (see [Chat: Learn from a run](chat.md#learn-from-a-run)).
+Configures the learn pass: after a chat run, a hidden forked session reviews it and proposes shortcuts, scheduled tasks, gate rules, mounts and a thread name or description for you to apply from the Learn view (see [Chat: Learn from a run](chat.md#learn-from-a-run)).
 
 ```jsonc
 "learn": {
