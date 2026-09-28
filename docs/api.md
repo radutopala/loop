@@ -370,7 +370,7 @@ Delete a thread.
 
 **Response:** `204 No Content`
 
-**Behavior notes:** Removes the MCP config files of the thread and its hidden learn thread (unless `keep_mcp_configs` is set), cancels the learn thread's pass, deletes from the chat platform (if a creator is configured), and removes from the database. If the thread has an associated git worktree, the worktree and its branch are cleaned up automatically.
+**Behavior notes:** Deletes from the chat platform (if a creator is configured) and removes from the database, then cancels the hidden learn thread's pass and removes the MCP config files of the thread and its learn thread, unless `keep_mcp_configs` is set for the parent channel's project. If the thread has an associated git worktree, the worktree and its branch are cleaned up automatically.
 
 **Errors:** `409` if the thread is locked (toggle via [`PATCH /api/channels/{id}/lock`](#patch-apichannelsidlock)). `501` if thread deletion is not configured.
 

@@ -556,7 +556,7 @@ func (a *app) serve() error {
 		}
 	}
 	channelSvc := api.NewChannelService(store, channelCreators, cfg.LoopDir)
-	threadSvc := api.NewThreadService(store, chatBot, logger, cfg.KeepMCPConfigs)
+	threadSvc := api.NewThreadService(store, chatBot, logger)
 
 	containerReg := container.NewRegistry(nil)
 	containerReg.SetLogger(logger)

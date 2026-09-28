@@ -167,6 +167,7 @@ func (s *ServerSuite) TestCreateChannelError() {
 // --- DeleteThread tests ---
 
 func (s *ServerSuite) TestDeleteThreadSuccess() {
+	s.store.On("GetChannel", mock.Anything, "thread-1").Return((*db.Channel)(nil), nil)
 	s.store.On("GetLearnChannel", mock.Anything, "thread-1").Return((*db.Channel)(nil), nil)
 	s.threads.On("DeleteThread", mock.Anything, "thread-1").Return(nil)
 
@@ -177,6 +178,7 @@ func (s *ServerSuite) TestDeleteThreadSuccess() {
 }
 
 func (s *ServerSuite) TestDeleteThreadError() {
+	s.store.On("GetChannel", mock.Anything, "thread-1").Return((*db.Channel)(nil), nil)
 	s.store.On("GetLearnChannel", mock.Anything, "thread-1").Return(&db.Channel{ChannelID: "learn-1"}, nil)
 	s.threads.On("DeleteThread", mock.Anything, "thread-1").
 		Return(errors.New("delete failed"))
@@ -358,6 +360,7 @@ func (s *ServerSuite) TestDeleteChannelLockedReturnsConflict() {
 }
 
 func (s *ServerSuite) TestDeleteThreadLockedReturnsConflict() {
+	s.store.On("GetChannel", mock.Anything, "thread-locked").Return((*db.Channel)(nil), nil)
 	s.store.On("GetLearnChannel", mock.Anything, "thread-locked").Return((*db.Channel)(nil), nil)
 	s.threads.On("DeleteThread", mock.Anything, "thread-locked").Return(ErrChannelLocked)
 
@@ -368,6 +371,7 @@ func (s *ServerSuite) TestDeleteThreadLockedReturnsConflict() {
 }
 
 func (s *ServerSuite) TestDeleteThreadStopsLearnThread() {
+	s.store.On("GetChannel", mock.Anything, "thread-1").Return((*db.Channel)(nil), nil)
 	s.store.On("GetLearnChannel", mock.Anything, "thread-1").Return(&db.Channel{ChannelID: "learn-1"}, nil)
 	s.threads.On("DeleteThread", mock.Anything, "thread-1").Return(nil)
 	canceller := new(MockRunCanceller)
@@ -384,6 +388,90 @@ func (s *ServerSuite) TestDeleteThreadStopsLearnThread() {
 	require.Equal(s.T(), http.StatusNoContent, rec.Code)
 	canceller.AssertExpectations(s.T())
 	reg.AssertExpectations(s.T())
+}
+
+func (s *ServerSuite) TestDeleteThreadRemovesMCPConfigs() {
+	thread := &db.Channel{ChannelID: "t-1", ParentID: "ch-1", DirPath: "/wt"}
+	tests := []struct {
+		name      string
+		thread    *db.Channel
+		threadErr error
+		parent    *db.Channel
+		parentErr error
+		learn     *db.Channel
+		keepDir   string // the project dir whose config sets keep_mcp_configs
+		removeErr error
+		want      [][2]string
+	}{
+		{
+			name:   "thread and learn thread",
+			thread: thread,
+			parent: &db.Channel{ChannelID: "ch-1", DirPath: "/p"},
+			learn:  &db.Channel{ChannelID: "learn-1", DirPath: "/wt"},
+			want:   [][2]string{{"/wt", "t-1"}, {"/wt", "learn-1"}},
+		},
+		{
+			name:      "a failed removal is logged",
+			thread:    thread,
+			parent:    &db.Channel{ChannelID: "ch-1", DirPath: "/p"},
+			removeErr: errors.New("permission denied"),
+			want:      [][2]string{{"/wt", "t-1"}},
+		},
+		{
+			name:    "the parent's project keeps them",
+			thread:  thread,
+			parent:  &db.Channel{ChannelID: "ch-1", DirPath: "/p"},
+			learn:   &db.Channel{ChannelID: "learn-1", DirPath: "/wt"},
+			keepDir: "/p",
+		},
+		{
+			name:    "the worktree's config alone doesn't keep them",
+			thread:  thread,
+			parent:  &db.Channel{ChannelID: "ch-1", DirPath: "/p"},
+			keepDir: "/wt",
+			want:    [][2]string{{"/wt", "t-1"}},
+		},
+		{
+			name:      "a failed parent lookup falls back to the thread",
+			thread:    thread,
+			parentErr: errors.New("db error"),
+			keepDir:   "/wt",
+		},
+		{
+			name:    "a parent gone meanwhile falls back to the thread",
+			thread:  thread,
+			keepDir: "/wt",
+		},
+		{
+			name:      "a failed thread lookup skips removal",
+			threadErr: errors.New("db error"),
+			learn:     &db.Channel{ChannelID: "learn-1", DirPath: "/wt"},
+		},
+	}
+	for _, tc := range tests {
+		s.Run(tc.name, func() {
+			s.SetupTest()
+			s.srv.configs.loadProject = func(dir string, base *config.Config) (*config.Config, error) {
+				merged := *base
+				merged.KeepMCPConfigs = dir == tc.keepDir
+				return &merged, nil
+			}
+			var removed [][2]string
+			s.srv.removeMCPConfig = func(dir, id string) error {
+				removed = append(removed, [2]string{dir, id})
+				return tc.removeErr
+			}
+			s.store.On("GetChannel", mock.Anything, "t-1").Return(tc.thread, tc.threadErr)
+			s.store.On("GetChannel", mock.Anything, "ch-1").Return(tc.parent, tc.parentErr)
+			s.store.On("GetLearnChannel", mock.Anything, "t-1").Return(tc.learn, nil)
+			s.threads.On("DeleteThread", mock.Anything, "t-1").Return(nil)
+
+			rec := s.testRequest("DELETE", "/api/threads/t-1", "")
+
+			require.Equal(s.T(), http.StatusNoContent, rec.Code)
+			require.Equal(s.T(), tc.want, removed)
+		})
+	}
 }
 
 func (s *ServerSuite) TestSetChannelLockedSuccess() {

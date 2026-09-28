@@ -98,16 +98,35 @@ func (s *Server) handleDeleteThread(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// deleteThread deletes threadID through s.threads and stops the passes of
-// its hidden learn thread, which goes with it. The learn thread is noted
-// first, while the thread still exists to find it by.
+// deleteThread deletes threadID through s.threads, stops the passes of its
+// hidden learn thread, which goes with it, and removes both MCP configs
+// unless the parent channel's project keeps them. The thread and its learn
+// thread are noted first, while they still exist to find.
 func (s *Server) deleteThread(ctx context.Context, threadID string) error {
+	threads := s.lookupThreads(ctx, []string{threadID})
 	learns := s.learnThreads(ctx, threadID)
 	if err := s.threads.DeleteThread(ctx, threadID); err != nil {
 		return err
 	}
 	s.stopLearnThreads(ctx, learns)
+	if len(threads) == 1 {
+		s.removeMCPConfigs(s.threadOwner(ctx, threads[0]), append(threads, learns...))
+	}
 	return nil
+}
+
+// threadOwner returns the parent channel of thread, whose project config
+// decides keep_mcp_configs (a worktree thread's DirPath is the worktree, not
+// the project). A failed lookup falls back to the thread itself.
+func (s *Server) threadOwner(ctx context.Context, thread *db.Channel) *db.Channel {
+	parent, err := s.store.GetChannel(ctx, thread.ParentID)
+	if err != nil {
+		s.logger.Warn("thread cleanup: looking up parent channel", "thread_id", thread.ChannelID, "error", err)
+	}
+	if parent == nil {
+		return thread
+	}
+	return parent
 }
 
 // importSessionMessages parses a Claude Code session JSONL file and inserts

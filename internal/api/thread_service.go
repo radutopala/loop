@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"log/slog"
 
-	"github.com/radutopala/loop/internal/bot"
 	"github.com/radutopala/loop/internal/db"
 	"github.com/radutopala/loop/internal/randutil"
 )
@@ -33,19 +32,15 @@ type threadService struct {
 	creator          ThreadCreator
 	logger           *slog.Logger
 	generateThreadID func() string
-	removeMCPConfig  func(string, string) error
-	keepMCPConfigs   bool
 }
 
 // NewThreadService creates a new ThreadEnsurer.
-func NewThreadService(store db.Store, creator ThreadCreator, logger *slog.Logger, keepMCPConfigs bool) ThreadEnsurer {
+func NewThreadService(store db.Store, creator ThreadCreator, logger *slog.Logger) ThreadEnsurer {
 	return &threadService{
 		store:            store,
 		creator:          creator,
 		logger:           logger,
 		generateThreadID: func() string { return randutil.HexID(6) },
-		removeMCPConfig:  bot.RemoveMCPConfig,
-		keepMCPConfigs:   keepMCPConfigs,
 	}
 }
 
@@ -64,13 +59,6 @@ func (s *threadService) DeleteThread(ctx context.Context, threadID string) error
 		return ErrChannelLocked
 	}
 
-	if !s.keepMCPConfigs {
-		if err := s.removeMCPConfig(ch.DirPath, threadID); err != nil {
-			s.logger.Warn("removing MCP config for thread", "error", err, "thread_id", threadID)
-		}
-		s.removeLearnMCPConfig(ctx, threadID)
-	}
-
 	if s.creator != nil {
 		if err := s.creator.DeleteThread(ctx, threadID); err != nil {
 			return fmt.Errorf("deleting thread: %w", err)
@@ -82,22 +70,6 @@ func (s *threadService) DeleteThread(ctx context.Context, threadID string) error
 	}
 
 	return nil
-}
-
-// removeLearnMCPConfig removes the MCP config of threadID's hidden learn
-// thread, which goes with it.
-func (s *threadService) removeLearnMCPConfig(ctx context.Context, threadID string) {
-	l, err := s.store.GetLearnChannel(ctx, threadID)
-	if err != nil {
-		s.logger.Warn("looking up learn thread for MCP cleanup", "error", err, "thread_id", threadID)
-		return
-	}
-	if l == nil {
-		return
-	}
-	if err := s.removeMCPConfig(l.DirPath, l.ChannelID); err != nil {
-		s.logger.Warn("removing MCP config for learn thread", "error", err, "learn_channel_id", l.ChannelID)
-	}
 }
 
 func (s *threadService) CreateThread(ctx context.Context, channelID, name, authorID, message string) (string, error) {
