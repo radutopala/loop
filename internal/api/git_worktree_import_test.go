@@ -431,7 +431,7 @@ func (s *ServerSuite) TestRemoveWorktree_WithThread() {
 	s.threads.On("DeleteThread", mock.Anything, "wt-thread-1").Return(nil)
 	s.srv.eventsHub = NewEventsHub(testLogger())
 	// The thread's learn thread goes with it, like on DELETE /api/threads/{id}.
-	s.store.On("GetLearnChannel", mock.Anything, "wt-thread-1").Return(&db.Channel{ChannelID: "learn-1", DirPath: wtPath}, nil)
+	s.store.On("ListHiddenThreads", mock.Anything, "wt-thread-1").Return([]*db.Channel{{ChannelID: "learn-1", DirPath: wtPath, Kind: db.ChannelKindLearn}}, nil)
 	var removed [][2]string
 	s.srv.removeMCPConfig = func(dir, id string) error {
 		removed = append(removed, [2]string{dir, id})
@@ -464,7 +464,7 @@ func (s *ServerSuite) TestRemoveWorktree_DeleteThreadError() {
 		ChannelID: "ch1", DirPath: dir,
 	}, nil)
 	s.store.On("GetChannel", mock.Anything, "wt-1").Return(&db.Channel{ChannelID: "wt-1", ParentID: "ch1"}, nil)
-	s.store.On("GetLearnChannel", mock.Anything, "wt-1").Return(&db.Channel{ChannelID: "learn-1"}, nil)
+	s.store.On("ListHiddenThreads", mock.Anything, "wt-1").Return([]*db.Channel{{ChannelID: "learn-1"}}, nil)
 	s.threads.On("DeleteThread", mock.Anything, "wt-1").Return(errors.New("db error"))
 	canceller := new(MockRunCanceller)
 	s.srv.SetRunCanceller(canceller)

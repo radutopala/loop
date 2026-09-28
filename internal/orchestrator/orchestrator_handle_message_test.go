@@ -967,7 +967,7 @@ func (s *OrchestratorSuite) TestHandleMessageTriggeredErrors() {
 				s.store.On("GetRecentMessages", s.ctx, "ch1", 50).Return([]*db.Message{}, nil)
 				s.runner.On("Run", mock.Anything, mock.Anything).Return(nil, errors.New("runner err"))
 				s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *bot.OutgoingMessage) bool {
-					return out.Content == "Sorry, I encountered an error processing your request."
+					return out.Content == "⚠️ The run failed:\n```\nrunner err\n```"
 				})).Return(nil)
 			},
 			assertFn: func() { s.bot.AssertExpectations(s.T()) },
@@ -1015,7 +1015,7 @@ func (s *OrchestratorSuite) TestHandleMessageTriggeredErrors() {
 				}, nil)
 				s.runner.On("Run", mock.Anything, mock.Anything).Return(nil, errors.New("runner err"))
 				s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *bot.OutgoingMessage) bool {
-					return out.Content == "Sorry, I encountered an error processing your request."
+					return out.Content == "⚠️ The run failed:\n```\nrunner err\n```"
 				})).Return(nil)
 				// markTriggerProcessed marks the trigger only; the older queued
 				// triggered row (msg0) must survive for the drain to pick up.
@@ -1031,6 +1031,43 @@ func (s *OrchestratorSuite) TestHandleMessageTriggeredErrors() {
 			},
 		},
 		{
+			name: "docker disk full is posted and stored in the chat",
+			setupMock: func() {
+				eb := new(MockEventBroadcaster)
+				s.orch.SetEventBroadcaster(eb)
+				notice := "⚠️ " + agent.DiskFullNotice
+				s.store.On("IsChannelActive", s.ctx, "ch1").Return(true, nil)
+				s.store.On("GetChannel", s.ctx, "ch1").Return(&db.Channel{ID: 1, ChannelID: "ch1", Active: true}, nil)
+				s.store.On("InsertMessage", s.ctx, mock.Anything).Return(nil)
+				s.bot.On("SendTyping", mock.Anything, "ch1").Return(nil).Maybe()
+				s.store.On("GetRecentMessages", s.ctx, "ch1", 50).Return([]*db.Message{
+					{ID: 11, MsgID: "msg1", Content: "hello"},
+				}, nil)
+				s.runner.On("Run", mock.Anything, mock.Anything).Return(nil,
+					errors.New("creating container: Error response from daemon: mkdir /var/lib/docker/overlay2/x: no space left on device"))
+				s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *bot.OutgoingMessage) bool {
+					return out.Content == notice
+				})).Return(nil)
+				s.store.On("MarkMessagesProcessed", s.ctx, []int64{11}).Return(nil)
+				eb.On("BroadcastMessageCreated", "ch1", mock.MatchedBy(func(d events.MessageEventData) bool {
+					return d.IsBot && d.Content == notice
+				})).Return().Once()
+				eb.On("BroadcastMessageCreated", "ch1", mock.Anything).Return().Maybe() // the user's message
+				eb.On("BroadcastAgentStatus", "ch1", mock.Anything).Return().Maybe()
+				eb.On("BroadcastMessagesProcessed", "ch1", mock.Anything).Return()
+				s.T().Cleanup(func() { eb.AssertExpectations(s.T()) })
+			},
+			assertFn: func() {
+				s.bot.AssertExpectations(s.T())
+				s.store.AssertExpectations(s.T())
+				// The notice must be persisted, not only sent: the desktop
+				// app's bot drops sends, so the stored row is what it shows.
+				s.store.AssertCalled(s.T(), "InsertMessage", s.ctx, mock.MatchedBy(func(m *db.Message) bool {
+					return m.IsBot && m.Content == "⚠️ "+agent.DiskFullNotice && m.TriggerMsgID == "msg1"
+				}))
+			},
+		},
+		{
 			name: "runner error mark processed db error",
 			setupMock: func() {
 				s.setupTriggeredBase()
@@ -1039,7 +1076,7 @@ func (s *OrchestratorSuite) TestHandleMessageTriggeredErrors() {
 				}, nil)
 				s.runner.On("Run", mock.Anything, mock.Anything).Return(nil, errors.New("runner err"))
 				s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *bot.OutgoingMessage) bool {
-					return out.Content == "Sorry, I encountered an error processing your request."
+					return out.Content == "⚠️ The run failed:\n```\nrunner err\n```"
 				})).Return(nil)
 				s.store.On("MarkMessagesProcessed", s.ctx, []int64{11}).Return(errors.New("db err"))
 			},
@@ -1054,12 +1091,12 @@ func (s *OrchestratorSuite) TestHandleMessageTriggeredErrors() {
 				s.store.On("GetRecentMessages", s.ctx, "ch1", 50).Return([]*db.Message{}, nil)
 				s.runner.On("Run", mock.Anything, mock.Anything).Return(&agent.AgentResponse{Error: "agent broke"}, nil)
 				s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *bot.OutgoingMessage) bool {
-					return out.Content == "Agent error: agent broke"
+					return out.Content == "⚠️ The run failed:\n```\nagent broke\n```"
 				})).Return(nil)
 			},
 			assertFn: func() {
 				s.bot.AssertCalled(s.T(), "SendMessage", s.ctx, mock.MatchedBy(func(out *bot.OutgoingMessage) bool {
-					return out.Content == "Agent error: agent broke"
+					return out.Content == "⚠️ The run failed:\n```\nagent broke\n```"
 				}))
 			},
 		},
@@ -1141,8 +1178,8 @@ func (s *OrchestratorSuite) TestHandleMessageInsertBotResponseErrors() {
 				s.bot.On("SendMessage", s.ctx, mock.Anything).Return(nil)
 				s.store.On("GetChannel", s.ctx, "ch1").Return(nil, errors.New("channel err")).Once()
 				s.store.On("MarkMessagesProcessed", s.ctx, []int64{}).Return(nil)
-				// The learn check's reload once the run is done.
-				s.store.On("GetChannel", s.ctx, "ch1").Return(&db.Channel{ID: 1, ChannelID: "ch1", Active: true}, nil).Once()
+				// The learn and explain checks' reloads once the run is done.
+				s.store.On("GetChannel", s.ctx, "ch1").Return(&db.Channel{ID: 1, ChannelID: "ch1", Active: true}, nil).Twice()
 			},
 		},
 		{

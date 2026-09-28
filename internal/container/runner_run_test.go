@@ -508,6 +508,27 @@ func (s *RunnerSuite) TestRunOutputErrors() {
 			exitCode: 1,
 			wantErr:  "container exited with code 1",
 		},
+		{
+			name:     "non-zero exit surfaces stderr",
+			reader:   strings.NewReader(`{"type":"system","subtype":"init"}` + "\nError: ENOSPC: no space left on device, open '/home/agent/.claude/projects/x.jsonl'\n"),
+			exitCode: 1,
+			wantErr:  "container exited with code 1: parsing claude response: no result event found; last output:\nError: ENOSPC: no space left on device, open '/home/agent/.claude/projects/x.jsonl'",
+		},
+		{
+			name:     "killed",
+			reader:   bytes.NewReader([]byte("")),
+			exitCode: 137,
+			wantErr:  "container exited with code 137 (killed — out of memory or out of disk space)",
+		},
+		{
+			name:    "error result without result text",
+			reader:  strings.NewReader(`{"type":"result","subtype":"error_during_execution","session_id":"sess-err","is_error":true}`),
+			wantErr: "claude returned error: error_during_execution",
+			checkResp: func(t *testing.T, resp *agent.AgentResponse) {
+				require.NotNil(t, resp)
+				require.Equal(t, "error_during_execution", resp.Error)
+			},
+		},
 	}
 	for _, tt := range tests {
 		s.Run(tt.name, func() {

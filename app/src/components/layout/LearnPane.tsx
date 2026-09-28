@@ -7,7 +7,7 @@ import type { LearnView } from "../../hooks/useLearn";
 import { useTheme } from "../../ThemeContext";
 import { fonts } from "../../theme";
 import { ChatView } from "../chat/ChatView";
-import { learnKindLabel, proposalCaveat, proposalDetail } from "../chat/learnState";
+import { isSettledProposal, learnKindLabel, proposalCaveat, proposalDetail } from "../chat/learnState";
 
 interface LearnPaneProps {
   learn: LearnView;
@@ -215,7 +215,7 @@ function ProposalCard({
 }) {
   const { colors } = useTheme();
   const caveat = proposalCaveat(p, worktree);
-  const settled = p.status === "applied" || p.status === "dismissed";
+  const settled = isSettledProposal(p);
   return (
     <div
       data-testid="learn-proposal"
@@ -256,6 +256,11 @@ function ProposalCard({
       {p.rationale && <div style={{ fontSize: 11, color: colors.textDim, marginTop: 4 }}>{p.rationale}</div>}
       {caveat && <div style={{ fontSize: 11, color: colors.warning, marginTop: 4 }}>{caveat}</div>}
       {p.status === "failed" && p.error && <div style={{ fontSize: 11, color: colors.error, marginTop: 4 }}>{p.error}</div>}
+      {p.status === "withdrawn" && p.withdrawn_reason && (
+        <div data-testid="learn-withdrawn-reason" style={{ fontSize: 11, color: colors.textDim, marginTop: 4 }}>
+          Withdrawn by a later learn pass: {p.withdrawn_reason}
+        </div>
+      )}
       {error && (
         <div data-testid="learn-request-error" style={{ fontSize: 11, color: colors.error, marginTop: 4 }}>
           {error}

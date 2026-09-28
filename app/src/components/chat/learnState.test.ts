@@ -3,11 +3,13 @@ import type { LearnProposal } from "../../api/learn";
 import {
   inBulk,
   isOpenProposal,
+  isSettledProposal,
   LEARN_APPLY_STALE_MS,
   learnBadgeLabel,
   learnEffective,
   learnKindLabel,
   learnPassRunning,
+  learnProposalsEventItems,
   learnToggleTitle,
   mergeProposals,
   newlyAppliedShortcut,
@@ -73,6 +75,7 @@ describe("isOpenProposal", () => {
     ["applying", false],
     ["applied", false],
     ["dismissed", false],
+    ["withdrawn", false],
   ] as const)("%s → %j", (status, want) => {
     expect(isOpenProposal(proposal({ status }))).toBe(want);
   });
@@ -82,6 +85,35 @@ describe("isOpenProposal", () => {
     const at = Date.parse(p.updated_at);
     expect(isOpenProposal(p, at + LEARN_APPLY_STALE_MS)).toBe(false);
     expect(isOpenProposal(p, at + LEARN_APPLY_STALE_MS + 1)).toBe(true);
+  });
+});
+
+describe("isSettledProposal", () => {
+  it.each([
+    ["pending", false],
+    ["failed", false],
+    ["applying", false],
+    ["applied", true],
+    ["dismissed", true],
+    ["withdrawn", true],
+  ] as const)("%s → %j", (status, want) => {
+    expect(isSettledProposal(proposal({ status }))).toBe(want);
+  });
+});
+
+describe("learnProposalsEventItems", () => {
+  it("takes the filed proposals and the withdrawn ones", () => {
+    const filed = proposal({ id: 3 });
+    const withdrawn = proposal({ id: 1, status: "withdrawn", withdrawn_reason: "replaced by a newer proposal" });
+    expect(learnProposalsEventItems({ proposals: [filed], withdrawn: [withdrawn] })).toEqual([filed, withdrawn]);
+    expect(learnProposalsEventItems({ proposals: [], withdrawn: [withdrawn] })).toEqual([withdrawn]);
+    expect(learnProposalsEventItems({ proposals: [filed] })).toEqual([filed]);
+  });
+
+  it("merged in, a withdrawn card stops counting as open", () => {
+    const list = [proposal({ id: 2 }), proposal({ id: 1 })];
+    const got = mergeProposals(list, learnProposalsEventItems({ proposals: [proposal({ id: 3 })], withdrawn: [proposal({ id: 1, status: "withdrawn" })] }));
+    expect(got.filter((p) => isOpenProposal(p)).map((p) => p.id)).toEqual([3, 2]);
   });
 });
 
@@ -107,6 +139,7 @@ describe("inBulk", () => {
     ["applying", false, false],
     ["applied", false, false],
     ["dismissed", false, false],
+    ["withdrawn", false, false],
   ] as const)("%s → apply all %j, dismiss all %j", (status, apply, dismiss) => {
     const p = proposal({ status, updated_at: new Date(at).toISOString() });
     expect(inBulk("apply", p, at)).toBe(apply);

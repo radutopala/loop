@@ -6,6 +6,7 @@ import { ApprovalCard } from "./ApprovalCard";
 import { AgentActivityIndicator, AskUserQuestionCard, CompletionSummary, ExitPlanCard, MessageBubble, renderTimelineItem, StreamingBubble, TaskChecklist, ToolRunBlock, TriggerQuote } from "./bubbles";
 import { locateMatch } from "./chatFind";
 import { buildMessageStyles, ChannelContext } from "./chatShared";
+import { turnEndMsgIds } from "./explainState";
 import { orderTimelineItems } from "./orderTimelineItems";
 import { processingMsgIdOf } from "./processingMsg";
 import { QueuedMessagesPopup } from "./QueuedMessagesPopup";
@@ -284,6 +285,11 @@ export const ChatMessages = forwardRef<ChatMessagesHandle, ChatMessagesProps>(fu
   // "queued" label so it stays synced with the popup even when the locally
   // loaded message's is_processed field is stale.
   const queuedMsgIdSet = new Set(queuedMessages.map((m) => m.msg_id));
+  // The bot messages that end a finished turn carry its Explain action.
+  const turnEnds = turnEndMsgIds(
+    visibleAllItems.flatMap((it) => (it.kind === "message" ? [it.data] : [])),
+    isRunning ? effectiveProcessingMsgId : null,
+  );
 
   // Track the viewport status (above / visible / below) of every user
   // message in the chat. "visible" means the user can still read the
@@ -415,6 +421,7 @@ export const ChatMessages = forwardRef<ChatMessagesHandle, ChatMessagesProps>(fu
                     queuePosition={queuePositionByMsgId.get(msg.msg_id)}
                     highlighted={msg.id === highlightedMsgId}
                     onQuote={onQuote}
+                    turnEnd={turnEnds.has(msg.msg_id)}
                   />
                 );
               }

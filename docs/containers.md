@@ -45,9 +45,12 @@ rebuild from the UI/API — so they never linger on an old base:
 - Opt out per project with `"container_image_autobuild": false`.
 
 Running containers are unaffected; the next agent run picks up the new image.
-New containers wait while a build runs, the child cascade included (see
-[Container Creation](#container-creation)), so none starts from a project
-image the cascade is about to replace.
+A new container waits while its own image, or the base agent image, is being
+built (see [Container Creation](#container-creation)). The cascade marks the
+child images it will rebuild before the base build counts as finished, so
+none starts from a project image the cascade is about to replace, and each
+child is released as soon as its own rebuild is done. Another project's
+rebuild doesn't hold it.
 
 ## Container Creation
 
@@ -55,7 +58,7 @@ The `createAndStartContainer` method orchestrates the full creation pipeline:
 
 1. **Resolve work directory** -- defaults to `~/.loop/{channelID}/work`, overridden by the channel's `dirPath` if set.
 2. **Load project config** -- merges `{workDir}/.loop/config.json` with the global config (see [Configuration: Project Config](configuration.md#project-config)).
-3. **Wait for the image** -- while an image build is in progress (the agent image, then the [custom project images](#custom-project-images) rebuilt on it), creation waits for it to finish; the chat shows "Waiting for the agent image build to finish". Then the image's `loop.version` label is checked: an image built by an older Loop release than the running daemon is refused with an "out of date" error that asks for a rebuild, instead of starting a container whose in-image binaries may not understand the policy the daemon hands them (the Docker proxy exits on an unknown rule op). Images without the label, and non-release versions, are not compared.
+3. **Wait for the image** -- while the container's own image or the base agent image is being built (the base, then the [custom project images](#custom-project-images) rebuilt on it), creation waits for it to finish; the chat shows "Waiting for the `<image>` image build to finish", naming the image it waits for. Builds of other images -- another project's image, the Chrome sidecar image -- don't hold it. The Chrome image is built between the base and the project images (on a UI/API rebuild, and at startup when it is missing or out of date), so a run waiting for the base waits out that step too. Then the image's `loop.version` label is checked: an image built by an older Loop release than the running daemon is refused with an "out of date" error that asks for a rebuild, instead of starting a container whose in-image binaries may not understand the policy the daemon hands them (the Docker proxy exits on an unknown rule op). Images without the label, and non-release versions, are not compared.
 4. **Build environment variables** -- see [Environment Variables](#environment-variables).
 5. **Build mounts** -- see [Mount Processing](#mount-processing).
 6. **Write MCP config** -- see [MCP Config Generation](#mcp-config-generation).
@@ -318,6 +321,19 @@ When a container run fails with a "Prompt is too long" error and a session ID ex
 For other failures with an existing session:
 - The runner retries once, sending only the latest message as the prompt (not the full message history).
 - If the retry also fails, the original error is returned.
+- API limit errors and a full Docker disk are not retried: the second container would fail the same way.
+
+---
+
+## Run Failures
+
+The container's log stream merges stderr into stdout, and the runner parses it as Claude's stream-json. Lines that aren't JSON — stderr, whatever the entrypoint prints — are kept (the last 20 lines, up to 2000 bytes), so a run that fails says why:
+
+- **No result event** -- the error names the exit code and carries that output, e.g. `container exited with code 1: parsing claude response: no result event found; last output: …`. Exit code 137 means the process was killed, so it reads `killed — out of memory or out of disk space`.
+- **Error result without text** -- some error results (`error_during_execution`, `error_max_turns`) have no `result`; the error then shows the subtype, the result's `errors`, and the output tail instead of an empty `claude returned error:`.
+- **Docker out of disk space** -- the disk that fills is the Docker VM's, not the host's. Container create, file copies and the agent's own writes (its session files under `~/.claude`) then fail with `no space left on device` / `ENOSPC`, and the chat shows "Docker is out of disk space … then send again" with `docker builder prune -a` as the first thing to try.
+
+The chat shows every run error, see [Orchestrator: Agent Execution](orchestrator.md#agent-execution).
 
 ---
 
@@ -398,7 +414,7 @@ If a container is re-registered before the timer fires (e.g. restarted), the pen
 
 ## Chrome Sidecar Container
 
-When `browser_enabled` is `true` (default), a Chrome container is started lazily on first browser tool use. Chrome runs in a dedicated Docker container with a port mapping (`127.0.0.1:0 → 9222`) so the host API server can connect via CDP (Chrome DevTools Protocol). Like agent containers, a new sidecar waits while an image build is in progress, so it isn't created from the Chrome image the build is about to replace; a running sidecar is reused as is.
+When `browser_enabled` is `true` (default), a Chrome container is started lazily on first browser tool use. Chrome runs in a dedicated Docker container with a port mapping (`127.0.0.1:0 → 9222`) so the host API server can connect via CDP (Chrome DevTools Protocol). Like agent containers, a new sidecar waits while its Chrome image may be rebuilt -- from the start of a rebuild or of the startup image check until the Chrome image is done -- so it isn't created from the image the build is about to replace; project image builds don't hold it. A running sidecar is reused as is.
 
 ### Architecture
 

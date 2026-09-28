@@ -74,90 +74,122 @@ type ImageLifecycleManager struct {
 	imageName           string
 	loopVersion         string
 	latestClaudeVersion func() string
-	childRebuilder      func(context.Context) // optional child-image cascade; see SetChildRebuilder
+	childRebuilder      func(ctx context.Context, handoff func()) // optional child-image cascade; see SetChildRebuilder
 	sidecarRebuilder    func(context.Context) error
+	sidecarImage        string
 
-	// builds counts the image builds in progress, the child-image cascade
-	// included; idle is closed when it drops to zero. See WaitBuilds.
+	// builds counts the builds in progress per image, keyed by normalized
+	// ref; changed, when not nil, is closed when one of them ends. See
+	// WaitBuilds.
 	buildsMu sync.Mutex
-	builds   int
-	idle     chan struct{}
+	builds   map[string]int
+	changed  chan struct{}
 }
 
-// BeginBuild marks an image build as started, so containers created until
-// the matching EndBuild wait for it (see WaitBuilds). A build covers the
-// child-image cascade that follows it: the status says "completed" once the
-// base image is built, but project images FROM it are still being rebuilt,
-// and a container started meanwhile would run the old project image against
-// the new daemon.
-func (m *ImageLifecycleManager) BeginBuild() {
+// BeginBuild marks images as being built, so containers created on them
+// until end is called wait for it (see WaitBuilds). Call end whether the
+// build succeeded or not; only its first call counts.
+//
+// A base image build hands over to the child-image cascade that follows it
+// rather than ending on its own: the status says "completed" once the base
+// image is built, but project images FROM it are still to be rebuilt, and a
+// container started on one meanwhile would run the old project image against
+// the new daemon. So the cascade marks the project images it will rebuild
+// before the base build ends (see RebuildChildren).
+func (m *ImageLifecycleManager) BeginBuild(images ...string) (end func()) {
 	m.buildsMu.Lock()
 	defer m.buildsMu.Unlock()
-	if m.builds == 0 {
-		m.idle = make(chan struct{})
+	for _, image := range images {
+		m.builds[normalizeImageRef(image)]++
 	}
-	m.builds++
+	return sync.OnceFunc(func() {
+		m.buildsMu.Lock()
+		defer m.buildsMu.Unlock()
+		for _, image := range images {
+			ref := normalizeImageRef(image)
+			if m.builds[ref]--; m.builds[ref] == 0 {
+				delete(m.builds, ref)
+			}
+		}
+		if m.changed != nil {
+			close(m.changed)
+			m.changed = nil
+		}
+	})
 }
 
-// EndBuild marks a build started with BeginBuild as finished, whether it
-// succeeded or not.
-func (m *ImageLifecycleManager) EndBuild() {
-	m.buildsMu.Lock()
-	defer m.buildsMu.Unlock()
-	m.builds--
-	if m.builds == 0 {
-		close(m.idle)
-	}
-}
+// WaitBuilds returns once none of images is being built, or with ctx's error;
+// builds of other images don't hold it. onWait, when not nil, is called with
+// the image it waits for, again each time that changes (the base image's
+// build handing over to the project image's, say).
+func (m *ImageLifecycleManager) WaitBuilds(ctx context.Context, images []string, onWait func(image string)) error {
+	waitingFor := ""
+	for {
+		m.buildsMu.Lock()
+		building := ""
+		for _, image := range images {
+			if m.builds[normalizeImageRef(image)] > 0 {
+				building = image
+				break
+			}
+		}
+		if building == "" {
+			m.buildsMu.Unlock()
+			return nil
+		}
+		if m.changed == nil {
+			m.changed = make(chan struct{})
+		}
+		changed := m.changed
+		m.buildsMu.Unlock()
 
-// WaitBuilds returns once no image build is in progress, or with ctx's error.
-// onWait, when not nil, is called first if it has to wait.
-func (m *ImageLifecycleManager) WaitBuilds(ctx context.Context, onWait func()) error {
-	m.buildsMu.Lock()
-	idle, busy := m.idle, m.builds > 0
-	m.buildsMu.Unlock()
-	if !busy {
-		return nil
-	}
-	if onWait != nil {
-		onWait()
-	}
-	select {
-	case <-idle:
-		return nil
-	case <-ctx.Done():
-		return ctx.Err()
+		if building != waitingFor && onWait != nil {
+			onWait(building)
+		}
+		waitingFor = building
+		select {
+		case <-changed:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
 	}
 }
 
 // SetSidecarRebuilder wires the browser sidecar image build, run as part of
-// every API-driven rebuild.
+// every API-driven rebuild, and the image it builds.
 //
 // The daemon builds that image itself at startup, but only when it is missing,
 // so an install that edits the sidecar Dockerfile has no other way to act on
 // the edit: the rebuild action offers to rebuild "the image" and used to leave
 // the sidecar on whatever it was built with months ago.
-func (m *ImageLifecycleManager) SetSidecarRebuilder(fn func(context.Context) error) {
+func (m *ImageLifecycleManager) SetSidecarRebuilder(image string, fn func(context.Context) error) {
+	m.sidecarImage = image
 	m.sidecarRebuilder = fn
+}
+
+// SetChildRebuilder wires the child-image cascade, invoked after every
+// successful base-image build so project images FROM the base get rebuilt.
+// fn must call handoff once it has marked the images it will rebuild with
+// BeginBuild, and before it builds them.
+func (m *ImageLifecycleManager) SetChildRebuilder(fn func(ctx context.Context, handoff func())) {
+	m.childRebuilder = fn
+}
+
+// RebuildChildren runs the child-image cascade if one is wired, calling
+// handoff (the base build's end) once the project images it rebuilds are
+// marked as building, so a container can't start on one in between. Without
+// a cascade, handoff is called right away. Exposed so the daemon's startup
+// ensure-image path can trigger the same cascade the API-driven Rebuild uses.
+func (m *ImageLifecycleManager) RebuildChildren(ctx context.Context, handoff func()) {
+	if m.childRebuilder == nil {
+		handoff()
+		return
+	}
+	m.childRebuilder(ctx, handoff)
 }
 
 // SetContainerRegistry configures the registry so that containers removed
 // during image removal are also unregistered from the in-memory registry.
-// SetChildRebuilder wires the child-image cascade, invoked after every
-// successful base-image build so project images FROM the base get rebuilt.
-func (m *ImageLifecycleManager) SetChildRebuilder(fn func(context.Context)) {
-	m.childRebuilder = fn
-}
-
-// RebuildChildren runs the child-image cascade if one is wired. Exposed so
-// the daemon's startup ensure-image path can trigger the same cascade the
-// API-driven Rebuild uses.
-func (m *ImageLifecycleManager) RebuildChildren(ctx context.Context) {
-	if m.childRebuilder != nil {
-		m.childRebuilder(ctx)
-	}
-}
-
 func (m *ImageLifecycleManager) SetContainerRegistry(reg containerUnregisterer) {
 	m.registry = reg
 }
@@ -184,6 +216,7 @@ func NewImageLifecycleManager(
 		loopVersion:         loopVersion,
 		latestClaudeVersion: latestClaudeVersion,
 		status:              ImageBuildStatus{State: "idle"},
+		builds:              map[string]int{},
 	}
 	return m
 }
@@ -279,15 +312,20 @@ func (m *ImageLifecycleManager) Rebuild(ctx context.Context) error {
 	}
 	m.status = ImageBuildStatus{State: "building", Phase: "building", StartedAt: time.Now()}
 	m.mu.Unlock()
-	m.BeginBuild()
+	endBase := m.BeginBuild(m.imageName)
+	endSidecar := func() {}
+	if m.sidecarRebuilder != nil {
+		endSidecar = m.BeginBuild(m.sidecarImage)
+	}
 
 	m.broadcastStatus()
 
 	// Use a background context — the caller's request context will be
 	// canceled as soon as the 202 response is sent.
 	go func() {
-		defer m.EndBuild()
-		m.doRebuild(context.Background())
+		defer endBase()
+		defer endSidecar()
+		m.doRebuild(context.Background(), endBase, endSidecar)
 	}()
 	return nil
 }
@@ -320,14 +358,20 @@ func (m *ImageLifecycleManager) rebuildSidecar(ctx context.Context) error {
 	return m.sidecarRebuilder(ctx)
 }
 
-func (m *ImageLifecycleManager) doRebuild(ctx context.Context) {
+// doRebuild builds the agent image, then the sidecar image, then the child
+// images on the new base. endBase and endSidecar end the builds Rebuild
+// began: the sidecar's once it is built, the base's once the child cascade
+// has taken over from it (or on failure, by Rebuild).
+func (m *ImageLifecycleManager) doRebuild(ctx context.Context, endBase, endSidecar func()) {
 	// No need to remove — docker build with the same tag overwrites in place.
 	if err := m.client.ImageBuild(ctx, m.containerDir, m.imageName); err != nil {
 		m.failBuild(err, "image lifecycle: build failed")
 		return
 	}
 
-	if err := m.rebuildSidecar(ctx); err != nil {
+	err := m.rebuildSidecar(ctx)
+	endSidecar()
+	if err != nil {
 		m.failBuild(err, "image lifecycle: browser sidecar build failed")
 		return
 	}
@@ -359,7 +403,7 @@ func (m *ImageLifecycleManager) doRebuild(ctx context.Context) {
 	// checker, which is half an hour away: the build was very likely the
 	// answer to a pending update prompt.
 	m.checkAndBroadcast()
-	m.RebuildChildren(ctx)
+	m.RebuildChildren(ctx, endBase)
 }
 
 // CheckClaudeUpdate checks if a newer Claude Code version is available.

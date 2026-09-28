@@ -305,6 +305,33 @@ Feature: Learn from runs
     # Nothing was applied.
     And the element "[data-testid='learn-proposal'][data-status='applied']" should not exist
 
+  Scenario: A proposal a later pass withdraws stays listed, dimmed, with its reason
+    Given the current channel has a learn thread
+    When I send a POST request to "/api/channels/{learn_channel_id}/learn/proposals" with body:
+      """
+      {"proposals":[
+        {"kind":"rename","title":"Name the thread after its work","payload":{"name":"bdd-learn-renamed"}},
+        {"kind":"description","title":"Describe the thread","payload":{"description":"Learn journey playground"}}
+      ]}
+      """
+    Then the response status should be 201
+    And I wait for text "2 proposals" to appear
+    When I click on "[data-testid='learn-badge']"
+    Then the Learn view shows the chat and the Learn pane side by side
+    # A withdraw-only call: its learn.proposals event updates the open view.
+    When the learn pass withdraws the proposal "Name the thread after its work" because "The work moved on to the login timeout."
+    Then I wait for "[data-testid='learn-proposal'][data-status='withdrawn']" to be visible
+    And the element "[data-testid='learn-proposal'][data-status='withdrawn'] [data-testid='learn-withdrawn-reason']" should contain text "The work moved on to the login timeout."
+    And the element "[data-testid='learn-proposal'][data-status='withdrawn'] [data-testid='learn-apply']" should not exist
+    And the element "[data-testid='learn-proposal'][data-status='withdrawn'] [data-testid='learn-dismiss']" should not exist
+    And the element "[data-testid='learn-badge']" should contain text "1 proposal"
+    # Apply all goes through the open one only.
+    When I click on "[data-testid='learn-apply-all']"
+    Then I wait up to "5s" for "[data-testid='learn-proposal'][data-status='pending']" to disappear
+    And the element "[data-testid='learn-proposal'][data-status='applied']" should be visible
+    And the element "[data-testid='learn-proposal'][data-status='withdrawn']" should be visible
+    And the element "[data-testid='learn-apply-all']" should not exist
+
   Scenario: An applied shortcut proposal shows in the composer's # picker
     Given the current channel has a learn thread
     When I send a POST request to "/api/channels/{learn_channel_id}/learn/proposals" with body:

@@ -568,7 +568,7 @@ Only one pass runs per channel at a time. A run that finishes while a pass is ru
 
 Stopped or failed runs, and scheduled task runs, don't start one. See [Orchestrator: Learn pass](orchestrator.md#learn-pass) for how it runs.
 
-The pass may only look and propose: its built-in tools are only reading and searching files (no editing, shell, web, subagents or worktrees), it can't change Loop's config, tasks or threads, and it gets only Loop's MCP server (read-only tools), not your own servers or the browser. It files at most 5 proposals, each one of:
+The pass may only look and propose: its built-in tools are only reading and searching files (no editing, shell, web, subagents or worktrees), it can't change Loop's config, tasks or threads, and it gets only Loop's MCP server (read-only tools), not your own servers or the browser. It files at most 5 proposals per pass, and may withdraw earlier ones still waiting on you that the run shows are stale (see [Learn view](#learn-view)). Each proposal is one of:
 
 | Kind | What Apply does |
 |------|-----------------|
@@ -601,9 +601,10 @@ The Learn pane's header matches a pane header:
   - **Apply** applies it. If it fails, the error shows under the card and the button becomes **Retry**. If the request itself fails (Loop can't be reached, say), that error shows under the card until the next try. A card's buttons are disabled while its apply or dismiss is in flight. Requests in flight and their errors outlive the view: close and reopen it and they're still there.
   - **Dismiss** drops it. Pending and failed proposals can be dismissed.
   - Applied and dismissed cards stay in the list, dimmed, with their status.
+  - **Withdrawn** cards too: a later pass may withdraw a pending or failed proposal its run shows is stale, or one a newer proposal replaces, and the card shows `withdrawn` and the pass's reason instead of its buttons. A withdrawn proposal doesn't count toward the label's `N proposals`. If a pass withdraws a card while your apply or dismiss is in flight, Loop refuses the request and `proposal is already withdrawn` shows under the card; if your request got there first, the withdrawal is refused instead, so a proposal being applied is never withdrawn.
   - A card stuck in `applying` for over a minute (its outcome was lost, say Loop stopped mid-apply) gets **Retry** and **Dismiss** back.
-  - **Apply all** in the header applies every pending proposal one by one, skipping any applied, dismissed or in flight meanwhile. Failed ones are left for a manual Retry.
-  - **Dismiss all** next to it dismisses every open proposal (pending, failed, or stuck applying) one by one, the same way. It shows while any proposal is open; neither button can be pressed while either is going through the list. A request that fails shows under its card, as for a single Dismiss.
+  - **Apply all** in the header applies every pending proposal one by one, skipping any applied, dismissed, withdrawn or in flight meanwhile. Failed ones are left for a manual Retry.
+  - **Dismiss all** next to it dismisses every open proposal (pending, failed, or stuck applying) one by one, the same way, skipping withdrawn ones. It shows while any proposal is open; neither button can be pressed while either is going through the list. A request that fails shows under its card, as for a single Dismiss.
   - An applied prompt or bash shortcut shows at once in the composer's `#` picker and the terminal's shortcut menus.
   - When a card's buttons give way to its status, or Apply all and Dismiss all to an empty list, focus moves on to the next open card's Apply (or Retry), else to the pane's ✕.
 - **The learn thread's chat** below. Watch the pass as it works, or reply to it: ask why it proposed something or ask for changes, and it files revised proposals. The thread's composer has no Learn switch, since a learn thread doesn't learn from itself. A reply or pass running when you open the view shows as it is (its Stop button, streamed text and activity). File links in it open the editor in the layout, as in the chat, which closes the view.
@@ -613,6 +614,35 @@ The Learn pane's header matches a pane header:
 ### Hidden thread
 
 Each channel has one learn thread, created on its first pass. It's left out of `GET /api/channels`, so it never shows in the sidebar, and it's deleted along with its channel or thread, which also cancels a pass still running or queued. It's named `learn: <channel>` and follows the channel's renames on the next pass. Each new pass forks the latest run's session again, so it doesn't carry over what you said in the learn thread before. Learn runs, a pass or a reply you asked the learn thread for, don't mark anything unread, post a desktop notification or bounce the dock (their `agent.status` events carry `trigger: "learn"` or `trigger: "learn-reply"`). Proposals show through the Learn label, and replies in the open Learn view, instead. Only a pass lights the label's `learning…`. If Loop's connection drops, the learn state and proposals are fetched again when it comes back, so a pass that ended or proposals filed meanwhile aren't missed.
+
+## Explain a turn
+
+An **explanation** is a write-up of one chat turn for the engineer who has to review it. A hidden session forked from the channel's chat reads the turn and reports what was asked and done, each file changed, the commands that mattered and their results, the decisions made, risks and gaps, how to review it, and follow-ups. It says what's unknown or unverified rather than guessing.
+
+### Explain button
+
+The last bot message of each finished turn gets an `Explain` button in its header (not while the turn is still running). A click queues an explanation and opens the Explain pane on it. Once there is one, the button shows its state (`Queued…`, `Explaining…`, `Explained` or `Explain failed`), and a click shows it in the Explain pane instead of explaining again. When the request itself fails, the button says `Explain failed` in red and a click tries again.
+
+### Explain switch
+
+An `explain` switch sits in the composer next to the Learn switch. With it on, every turn that completes in the channel is explained on its own. It works like the Learn switch: it shows the effective value (the channel's own setting, else the config default [`explain.enabled`](configuration.md#explain)), a click stores the opposite on the channel (`PUT /api/channels/{id}/explain`), and the change is broadcast as a [`channel.explain`](events.md#channelexplain) event. Turns parked on a plan or question card, and channels with no session yet, aren't explained automatically.
+
+The switch and the button only show in desktop app channels. Slack and Discord channels, task threads and hidden threads are never explained.
+
+### Explain pane
+
+`Explain` in the add-panel menu adds the pane. The Explain button adds it beside the chat when the layout doesn't have it (on a canvas, as a tile beside the chat's). It lists the channel's explanations newest first, one card per turn:
+
+- its status, time, and the start of the turn's prompt and reply;
+- **Go to message**, which scrolls the chat to the turn's last message;
+- **Re-explain**, which explains the turn again and replaces the card's content (disabled while it's queued or running);
+- the write-up in markdown, whose file paths open in the editor, or the error when the run failed.
+
+The card a bubble's button asked for is scrolled into view and outlined for a few seconds. If Loop's connection drops, the explanations are fetched again when it comes back.
+
+### How it runs
+
+Each channel has one hidden explain thread, `explain: <channel>`, created on first use and deleted with the channel or thread. It's left out of the sidebar, message search and session import. Explanations queue on it, so one runs per channel at a time. Each run forks the channel's current session with the same read-only restrictions as a [learn pass](#learn-from-a-run): only reading and searching files, Loop's read-only MCP tools, no user MCP servers or browser. Explain runs don't mark anything unread, notify or bounce the dock (`trigger: "explain"`). The model, effort and extra instructions come from [`explain`](configuration.md#explain) in the config. An explanation still queued or running when Loop stops is marked failed at startup, unless its run is still waiting in the queue. See [Orchestrator: Explanations](orchestrator.md#explanations).
 
 ---
 

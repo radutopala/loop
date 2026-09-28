@@ -195,8 +195,9 @@ func (s *Server) handleSearchChannels(w http.ResponseWriter, r *http.Request) {
 		if platformFilter != "" && string(ch.Platform) != platformFilter {
 			continue
 		}
-		// Learn threads are hidden: the chat shows them in its Learn view.
-		if ch.Kind == db.ChannelKindLearn {
+		// Learn and explain threads are hidden: the chat shows them in its
+		// Learn and Explain views.
+		if db.IsHiddenKind(ch.Kind) {
 			continue
 		}
 		if query != "" && !containsFold(ch.Name, query) {
@@ -289,25 +290,25 @@ func (s *Server) handleDeleteChannel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// The threads and learn threads go with the channel; note them, and
-	// the dirs holding their MCP configs, while they still exist. The
-	// channel's own learn thread is among its threads; the threads' learn
-	// threads are a level further down.
+	// The threads and hidden (learn and explain) threads go with the
+	// channel; note them, and the dirs holding their MCP configs, while they
+	// still exist. The channel's own hidden threads are among its threads;
+	// the threads' hidden threads are a level further down.
 	threadIDs, err := s.store.ListChannelIDsByParentID(r.Context(), channelID)
 	if err != nil {
 		s.logger.Warn("channel cleanup: listing threads", "channel_id", channelID, "error", err)
 	}
 	threads := s.lookupThreads(r.Context(), threadIDs)
-	var learns []*db.Channel
+	var hidden []*db.Channel
 	var parentIDs []string
 	for _, t := range threads {
-		if t.Kind == db.ChannelKindLearn {
-			learns = append(learns, t)
+		if db.IsHiddenKind(t.Kind) {
+			hidden = append(hidden, t)
 		} else {
 			parentIDs = append(parentIDs, t.ChannelID)
 		}
 	}
-	threadLearns := s.learnThreads(r.Context(), parentIDs...)
+	threadHidden := s.hiddenThreads(r.Context(), parentIDs...)
 
 	// Delete child threads first.
 	if err := s.store.DeleteChannelsByParentID(r.Context(), channelID); err != nil {
@@ -322,8 +323,8 @@ func (s *Server) handleDeleteChannel(w http.ResponseWriter, r *http.Request) {
 
 	// Clean up containers associated with this channel.
 	s.cleanupChannelContainers(r.Context(), channelID)
-	s.stopLearnThreads(r.Context(), append(learns, threadLearns...))
-	s.removeMCPConfigs(ch, append(append([]*db.Channel{ch}, threads...), threadLearns...))
+	s.stopHiddenThreads(r.Context(), append(hidden, threadHidden...))
+	s.removeMCPConfigs(ch, append(append([]*db.Channel{ch}, threads...), threadHidden...))
 
 	w.WriteHeader(http.StatusNoContent)
 }
@@ -346,32 +347,35 @@ func (s *Server) lookupThreads(ctx context.Context, threadIDs []string) []*db.Ch
 	return threads
 }
 
-// learnThreads returns the hidden learn threads of the given channels,
-// which go when those are deleted. A lookup error only loses a learn thread
-// to stop, so it's logged, not returned.
-func (s *Server) learnThreads(ctx context.Context, channelIDs ...string) []*db.Channel {
-	var learns []*db.Channel
+// hiddenThreads returns the hidden (learn and explain) threads of the given
+// channels, which go when those are deleted. A lookup error only loses a
+// thread to stop, so it's logged, not returned.
+func (s *Server) hiddenThreads(ctx context.Context, channelIDs ...string) []*db.Channel {
+	var hidden []*db.Channel
 	for _, id := range channelIDs {
-		l, err := s.store.GetLearnChannel(ctx, id)
+		hs, err := s.store.ListHiddenThreads(ctx, id)
 		if err != nil {
-			s.logger.Warn("channel cleanup: looking up learn thread", "channel_id", id, "error", err)
+			s.logger.Warn("channel cleanup: looking up hidden threads", "channel_id", id, "error", err)
 			continue
 		}
-		if l != nil {
-			learns = append(learns, l)
-		}
+		hidden = append(hidden, hs...)
 	}
-	return learns
+	return hidden
 }
 
-// stopLearnThreads cancels deleted learn threads' passes, running or
-// queued, and removes their containers.
-func (s *Server) stopLearnThreads(ctx context.Context, learns []*db.Channel) {
-	for _, l := range learns {
+// stopHiddenThreads cancels deleted hidden threads' runs and removes their
+// containers. A learn thread's queued pass is forgotten too; an explain
+// thread's queued explanations are rows deleted with it.
+func (s *Server) stopHiddenThreads(ctx context.Context, hidden []*db.Channel) {
+	for _, h := range hidden {
 		if s.runCanceller != nil {
-			s.runCanceller.StopLearn(l.ChannelID)
+			if h.Kind == db.ChannelKindLearn {
+				s.runCanceller.StopLearn(h.ChannelID)
+			} else {
+				s.runCanceller.CancelActiveRun(h.ChannelID)
+			}
 		}
-		s.removeAgentContainers(ctx, l.ChannelID)
+		s.removeAgentContainers(ctx, h.ChannelID)
 	}
 }
 

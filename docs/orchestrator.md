@@ -130,6 +130,7 @@ func (o *Orchestrator) processClaimedMessage(ctx, row, incoming) {
     if err != nil { markTriggerProcessed(msg, recent); return }
     deliverResponse(msg, resp, recent, lastText, runID)
     maybeLearn(ctx, channel, msg, resp)                     // see Learn pass
+    maybeExplain(ctx, channel, msg)                         // see Explanations
 }
 ```
 
@@ -186,6 +187,8 @@ The hold is a lease (5 minutes, renewed by the app every 2 minutes), so an app t
 
 7. **Learn thread** -- If the channel is a hidden learn thread (`Kind: "learn"`), the request becomes a learn run (see [Learn pass](#learn-pass)).
 
+8. **Explain thread** -- If the channel is a hidden explain thread (`Kind: "explain"`), the request becomes an explain run (see [Explanations](#explanations)).
+
 ## Agent Execution
 
 `executeAgentRun` manages the container lifecycle:
@@ -202,8 +205,10 @@ The hold is a lease (5 minutes, renewed by the app every 2 minutes), so an app t
 6. **Run** -- Execute `runner.Run(ctx, req)`.
 7. **Error handling**:
    - Context cancelled (stop button) -- Send "Run stopped." message.
-   - Agent error -- Send error message to the channel.
+   - Agent error -- Post "⚠️ The run failed:" with the error in a code block. It is sent to the platform *and* stored as a bot message (like the session-limit notice), because the desktop app's bot sends nothing and the `agent.status` error only feeds its notifications — a sent-only message left a failed run silent in the app. When the error says Docker ran out of disk space (`no space left on device` / `ENOSPC`, from the Docker API or the agent's output), the message is instead: "Docker is out of disk space (no space left on device). Free space in Docker — e.g. `docker builder prune -a` and removing unused images/containers — then send again."
    - Both cases broadcast `agent.status: error` event with the same `run_id`.
+
+A run that ends without a result event still says why: the error names the container's exit code (137 as "killed — out of memory or out of disk space") and carries the last lines of its non-JSON output, which is where stderr lands. See [Run failures](containers.md#run-failures).
 
 ## Session Management
 
@@ -301,8 +306,8 @@ When `prepareAgentRequest` builds the learn thread's request, `applyLearnRequest
 
 - **Agent id** `learn`, which gives the run its own MCP config with the [`propose_learnings`](mcpserver.md#learn-tools-learn-agent-only) tool and none of the inter-agent tools.
 - **Model / effort** -- `learn.model` / `learn.effort`, else the parent channel's overrides, else the config's.
-- **System prompt** -- the built-in learn instructions (each proposal kind and its payload, at most 5 proposals, propose never act), then the current state so it doesn't propose duplicates: the channel's name, description, ticket URL and whether it's a worktree thread, the project config path, the merged prompt and bash shortcuts, the channel's scheduled tasks, task templates, agentgate rules and mounts, and the channel's earlier proposals: those still waiting on the user (pending, applying or failed) and the 20 most recently dismissed, so a later pass doesn't file them again. A dismissed rename, description or ticket URL only rules out that value: a later run pointing to a different one can propose it. `learn.prompt` is appended last.
-- **Tools** -- `LearnMode` passes `--tools Read,Grep,Glob,TodoWrite,ToolSearch`, the whole built-in tool set of the pass: no `Bash`, `Edit`, `Write`, `NotebookEdit`, `WebFetch`, `WebSearch`, `Agent`, `Skill`, `EnterWorktree`, `RemoteTrigger`, `PushNotification`, `SendMessage`, `Cron*` or any built-in a later Claude Code adds. `--tools` doesn't reach MCP tools, so it also adds, on top of `claude_batch_disallowed_tools`, `--disallowedTools` for every Loop MCP tool that changes state (shortcuts, tasks, threads and channels, messages, agent messages and `update_agent_status`, workflows, playgrounds, chat components, `index_memory`, `quality_scan`, which saves a snapshot, and `report_review_findings`). Loop's read-only MCP tools (`list_*`, `show_task`, `get_*`, `search_*`, the `quality_*` reports including `quality_snapshot`, and `quality_whatif`, which only simulates) stay available.
+- **System prompt** -- the built-in learn instructions (each proposal kind and its payload, at most 5 proposals, propose never act), then the current state so it doesn't propose duplicates: the channel's name, description, ticket URL and whether it's a worktree thread, the project config path, the merged prompt and bash shortcuts, the channel's scheduled tasks, task templates, agentgate rules and mounts, and the channel's earlier proposals: those still waiting on the user (pending, applying or failed, each with its id and status), the 20 most recently dismissed and the 20 most recently withdrawn (with the reason), so a later pass doesn't file them again. A dismissed or withdrawn rename, description or ticket URL only rules out that value: a later run pointing to a different one can propose it. The instructions also say when to withdraw a waiting proposal: when this run shows it's wrong or obsolete (a wrong shortcut command, a name the work has moved past, a mount no longer needed), or a new proposal supersedes it (`replaces`), but not just because the user hasn't acted on it yet, and never one applying. `learn.prompt` is appended last.
+- **Tools** -- `ReadOnly` passes `--tools Read,Grep,Glob,TodoWrite,ToolSearch`, the whole built-in tool set of the pass: no `Bash`, `Edit`, `Write`, `NotebookEdit`, `WebFetch`, `WebSearch`, `Agent`, `Skill`, `EnterWorktree`, `RemoteTrigger`, `PushNotification`, `SendMessage`, `Cron*` or any built-in a later Claude Code adds. `--tools` doesn't reach MCP tools, so it also adds, on top of `claude_batch_disallowed_tools`, `--disallowedTools` for every Loop MCP tool that changes state (shortcuts, tasks, threads and channels, messages, agent messages and `update_agent_status`, workflows, playgrounds, chat components, `index_memory`, `quality_scan`, which saves a snapshot, and `report_review_findings`). Loop's read-only MCP tools (`list_*`, `show_task`, `get_*`, `search_*`, the `quality_*` reports including `quality_snapshot`, and `quality_whatif`, which only simulates) stay available.
 - **MCP servers** -- the pass's MCP config (`.loop/mcp-<learn thread>-learn.json`) holds only the Loop server: no user MCP servers, no browser. `--strict-mcp-config` stops Claude from also loading the project's `.mcp.json` or user-level servers. The file goes with the learn thread when its parent is deleted.
 
 A learn thread only ever runs this way. When its parent can't be loaded (lookup error or gone), `prepareAgentRequest` fails the run rather than letting it run as a chat with the full tool set; the row is marked processed and the drain moves on.
@@ -310,6 +315,27 @@ A learn thread only ever runs this way. When its parent can't be loaded (lookup 
 The learn run's `agent.status` events carry `trigger: "learn"` (`runTrigger` matches the `loop-learn` author), so the desktop app doesn't mark it unread, notify or bounce the dock. A message the user sends in the learn thread runs the same way (same agent id, prompt and denials) but with `trigger: "learn-reply"`, and never starts a learn pass of its own.
 
 Each pass forks into a new session file in the channel's Claude project dir. `GET /api/channels/{id}/sessions` leaves them out (see [API](api.md#get-apichannelsidsessions)), and a terminal pane's crash relaunch resumes the pane's own session by id rather than `claude --continue`, which would pick the newest file, often a learn pass's.
+
+## Explanations
+
+An explanation is a write-up of one chat turn, run in the channel's hidden explain thread. See [Chat: Explain a turn](chat.md#explain-a-turn) for the UI and [Configuration: Explain](configuration.md#explain) for the config.
+
+`Explain(ctx, ch, messageID, force)` starts one, called by [`POST /api/channels/{id}/explanations`](api.md#post-apichannelsidexplanations) and by `maybeExplain`:
+
+1. **Checks** -- `explain.Unavailable` refuses Slack and Discord channels, task threads and hidden threads (`ErrUnavailable`). Without `force`, an existing explanation of the turn is returned as it is. The message must be a bot message of the channel with a `trigger_msg_id` (`ErrNotATurn`), and the channel must have a session (`ErrNoSession`).
+2. **Explain thread** -- `ensureHiddenThread` (shared with the learn pass) returns the channel's explain thread, creating it on first use: id `explain-<hex>`, name `explain: <channel>`, `Kind: "explain"`.
+3. **Queue** -- `QueueExplanation` upserts the `explanations` row for `(channel_id, message_id)` as `queued`, with a new trigger id. A row already queued or running is left alone and returned, unless it hasn't moved for an hour (its trigger was lost). A re-explain keeps the row's id and clears its content.
+4. **Trigger** -- For a newly queued row, broadcast [`explain.updated`](events.md#explainupdated) and `HandleMessage` on the explain thread with author id `loop-explain` and that trigger id. The content names the channel and quotes the turn's prompt and final reply. Runs on the explain thread take turns on its queue, so one explanation of a channel runs at a time and the channel's own queue isn't held up.
+
+When `prepareAgentRequest` builds the explain thread's request, `applyExplainRequest` turns it into an explain run: `SessionID` is the parent's current session with `ForkSession`, agent id `explain` (its own MCP config with only the Loop server), `ReadOnly` (the same tool set and denials as a learn pass), `explain.model` / `explain.effort` else the parent's overrides, and the built-in explain prompt with `explain.prompt` appended. An explain thread runs nothing else: a message from another author, or one whose parent is gone, fails the run.
+
+`processClaimedMessage` calls `explainRunStarted` before the run, which marks the row `running`, and `explainRunDone` after it: `done` with the final reply as `content`, or `failed` with the error (an empty reply counts as failed). Each change is broadcast as `explain.updated`. Explain runs carry `trigger: "explain"`, so they don't mark anything unread, notify or bounce the dock.
+
+**Automatic explanations** -- After a run completes, `maybeExplain` rereads the channel and explains the turn's last bot message (`LastBotMessage`) when `explainSkipReason` finds nothing against it: the channel is available, the run isn't parked on a plan or question card, the Explain switch is on (`explain_override`, else `explain.enabled`), and there's a session.
+
+**Startup** -- After `ResetStaleRunningMessages`, `FailInterruptedExplanations` marks `failed` every queued or running explanation whose trigger no longer waits unprocessed in its explain thread. Those still waiting run as the thread drains.
+
+Explain runs' session files are left out of `GET /api/channels/{id}/sessions`, like learn passes' (`explain.IsTrigger`).
 
 ## Thread Resolution
 

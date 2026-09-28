@@ -1304,18 +1304,23 @@ func (s *ManagerSuite) TestChannelLockSameMutex() {
 	require.NotSame(s.T(), a1, b)
 }
 
-// stubImageGate is a container.ImageGate reporting a build in progress, then
-// returning err.
-type stubImageGate struct{ err error }
+// stubImageGate is a container.ImageGate reporting a build of the first image
+// it is asked about in progress, then returning err. It records the images.
+type stubImageGate struct {
+	err    error
+	images []string
+}
 
-func (g stubImageGate) WaitBuilds(_ context.Context, onWait func()) error {
-	onWait()
+func (g *stubImageGate) WaitBuilds(_ context.Context, images []string, onWait func(string)) error {
+	g.images = images
+	onWait(images[0])
 	return g.err
 }
 
 func (s *ManagerSuite) TestEnsureBrowserWaitsForImageBuild() {
 	ctx := context.Background()
-	s.mgr.SetImageGate(stubImageGate{})
+	gate := &stubImageGate{}
+	s.mgr.SetImageGate(gate)
 	s.api.On("ContainerList", ctx, mock.Anything).
 		Return([]containertypes.Summary{}, nil)
 	s.api.On("ContainerCreate", ctx, mock.Anything, mock.Anything, (*network.NetworkingConfig)(nil), (*ocispec.Platform)(nil), "loop-chrome-ch-1").
@@ -1326,12 +1331,13 @@ func (s *ManagerSuite) TestEnsureBrowserWaitsForImageBuild() {
 		Return(inspectResponseWithPort("49152"), nil)
 
 	require.NoError(s.T(), s.mgr.EnsureBrowser(ctx, "ch-1", ""))
+	require.Equal(s.T(), []string{"loop-agent:latest"}, gate.images, "only the sidecar's own image should hold it")
 	s.api.AssertExpectations(s.T())
 }
 
 func (s *ManagerSuite) TestEnsureBrowserImageBuildWaitInterrupted() {
 	ctx := context.Background()
-	s.mgr.SetImageGate(stubImageGate{err: context.Canceled})
+	s.mgr.SetImageGate(&stubImageGate{err: context.Canceled})
 	s.api.On("ContainerList", ctx, mock.Anything).
 		Return([]containertypes.Summary{}, nil)
 

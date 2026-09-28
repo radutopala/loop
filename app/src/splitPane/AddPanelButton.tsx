@@ -130,6 +130,13 @@ const PANEL_ICONS: Record<PanelType, React.ReactNode> = {
       <path d="M14 18h4" />
     </svg>
   ),
+  explain: (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+      <path d="M9.5 11a2.5 2.5 0 1 1 3.5 2.3c-.6.3-1 .8-1 1.5" />
+      <path d="M12 18h.01" />
+    </svg>
+  ),
 };
 
 const PANEL_DESCRIPTIONS: Record<PanelType, string> = {
@@ -152,6 +159,7 @@ const PANEL_DESCRIPTIONS: Record<PanelType, string> = {
   audit: "Agent gate audit logs",
   quality: "Architectural quality signal",
   review: "Review a GitHub PR's diff",
+  explain: "Explanations of the chat's turns",
 };
 
 /** Centered picker for when layout is empty (no tree). */

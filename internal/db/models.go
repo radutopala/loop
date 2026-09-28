@@ -45,17 +45,32 @@ type Channel struct {
 	// LearnOverride turns the end-of-run learn pass on ("on") or off ("off")
 	// for this channel; empty inherits the config's learn.enabled.
 	LearnOverride string `json:"learn_override"`
-	// Kind is ChannelKindLearn for the hidden thread a channel's learn runs
-	// happen in; empty for every other channel and thread.
+	// ExplainOverride turns explaining each finished turn on ("on") or off
+	// ("off") for this channel; empty inherits the config's explain.enabled.
+	ExplainOverride string `json:"explain_override"`
+	// Kind is ChannelKindLearn or ChannelKindExplain for the hidden thread a
+	// channel's learn passes or explanations run in; empty for every other
+	// channel and thread.
 	Kind      string    `json:"kind"`
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
 }
 
-// ChannelKindLearn marks the hidden thread that runs a channel's learn passes.
-const ChannelKindLearn = "learn"
+// Kinds of hidden thread. ChannelKindLearn runs a channel's learn passes,
+// ChannelKindExplain its explanations.
+const (
+	ChannelKindLearn   = "learn"
+	ChannelKindExplain = "explain"
+)
 
-// Values of Channel.LearnOverride; empty inherits the config.
+// IsHiddenKind reports whether kind marks a hidden thread, one the user
+// never sees in the sidebar, search or session import.
+func IsHiddenKind(kind string) bool {
+	return kind == ChannelKindLearn || kind == ChannelKindExplain
+}
+
+// Values of Channel.LearnOverride and Channel.ExplainOverride; empty inherits
+// the config.
 const (
 	LearnOn  = "on"
 	LearnOff = "off"
@@ -64,7 +79,18 @@ const (
 // LearnEnabled is the channel's effective learn switch: its override when it
 // has one, else def, the config's learn.enabled.
 func (c *Channel) LearnEnabled(def bool) bool {
-	switch c.LearnOverride {
+	return overrideEnabled(c.LearnOverride, def)
+}
+
+// ExplainEnabled is the channel's effective explain switch: its override
+// when it has one, else def, the config's explain.enabled.
+func (c *Channel) ExplainEnabled(def bool) bool {
+	return overrideEnabled(c.ExplainOverride, def)
+}
+
+// overrideEnabled resolves an on/off/inherit switch against its default.
+func overrideEnabled(override string, def bool) bool {
+	switch override {
 	case LearnOn:
 		return true
 	case LearnOff:
@@ -313,26 +339,68 @@ const (
 
 // Statuses of a learn proposal. Applying is held while it's being applied,
 // so a double click can't apply it twice; a failed one can be retried.
+// Withdrawn is set by a later learn pass that found the proposal stale.
 const (
 	LearnPending   = "pending"
 	LearnApplying  = "applying"
 	LearnApplied   = "applied"
 	LearnDismissed = "dismissed"
 	LearnFailed    = "failed"
+	LearnWithdrawn = "withdrawn"
 )
 
 // LearnProposal is one change a learn pass suggests for a channel. Payload is
 // the kind's JSON body; nothing is applied until the user accepts it.
 type LearnProposal struct {
-	ID             int64     `json:"id"`
-	ChannelID      string    `json:"channel_id"`
-	LearnChannelID string    `json:"learn_channel_id"`
-	Kind           string    `json:"kind"`
-	Title          string    `json:"title"`
-	Rationale      string    `json:"rationale"`
-	Payload        string    `json:"payload"`
-	Status         string    `json:"status"`
-	Error          string    `json:"error,omitempty"`
-	CreatedAt      time.Time `json:"created_at"`
-	UpdatedAt      time.Time `json:"updated_at"`
+	ID             int64  `json:"id"`
+	ChannelID      string `json:"channel_id"`
+	LearnChannelID string `json:"learn_channel_id"`
+	Kind           string `json:"kind"`
+	Title          string `json:"title"`
+	Rationale      string `json:"rationale"`
+	Payload        string `json:"payload"`
+	Status         string `json:"status"`
+	Error          string `json:"error,omitempty"`
+	// WithdrawnReason says why a learn pass withdrew the proposal.
+	WithdrawnReason string    `json:"withdrawn_reason,omitempty"`
+	CreatedAt       time.Time `json:"created_at"`
+	UpdatedAt       time.Time `json:"updated_at"`
+}
+
+// LearnWithdrawal is an open proposal a learn pass withdraws, and why.
+type LearnWithdrawal struct {
+	ID     int64
+	Reason string
+}
+
+// Statuses of an explanation. Queued and running are held while its run is
+// pending, so a second click can't start it twice; done and failed ones can
+// be explained again.
+const (
+	ExplainQueued  = "queued"
+	ExplainRunning = "running"
+	ExplainDone    = "done"
+	ExplainFailed  = "failed"
+)
+
+// Explanation is the write-up of one turn in a channel, the turn whose last
+// bot message is MessageID. It's written by a run in the channel's hidden
+// explain thread, the one started by the message TriggerMsgID there.
+type Explanation struct {
+	ID               int64     `json:"id"`
+	ChannelID        string    `json:"channel_id"`
+	MessageID        string    `json:"message_id"`
+	ExplainChannelID string    `json:"explain_channel_id"`
+	TriggerMsgID     string    `json:"-"`
+	Status           string    `json:"status"`
+	Content          string    `json:"content"`
+	Error            string    `json:"error,omitempty"`
+	CreatedAt        time.Time `json:"created_at"`
+	UpdatedAt        time.Time `json:"updated_at"`
+	// The explained turn, filled in by ListExplanations: the bot message's
+	// row id (for linking to it) and the start of its prompt and reply.
+	// Zero or empty when the message is gone.
+	MessageRowID int64  `json:"message_row_id,omitempty"`
+	Prompt       string `json:"prompt,omitempty"`
+	Reply        string `json:"reply,omitempty"`
 }

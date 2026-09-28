@@ -124,6 +124,30 @@ func (s *PayloadSuite) TestValidate() {
 	}
 }
 
+func (s *PayloadSuite) TestValidateReason() {
+	tests := []struct {
+		name    string
+		reason  string
+		want    string
+		wantErr string
+	}{
+		{name: "trimmed", reason: "  the run showed it's wrong ", want: "the run showed it's wrong"},
+		{name: "empty", reason: " ", wantErr: "reason is required"},
+		{name: "long", reason: strings.Repeat("x", 301), wantErr: "reason is longer than 300"},
+	}
+	for _, tc := range tests {
+		s.Run(tc.name, func() {
+			got, err := ValidateReason(tc.reason)
+			if tc.wantErr != "" {
+				require.ErrorContains(s.T(), err, tc.wantErr)
+				return
+			}
+			require.NoError(s.T(), err)
+			require.Equal(s.T(), tc.want, got)
+		})
+	}
+}
+
 func (s *PayloadSuite) TestGateRuleConfigRule() {
 	tests := []struct {
 		name     string

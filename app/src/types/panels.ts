@@ -20,7 +20,8 @@ export type PanelType =
   | "workflows"
   | "audit"
   | "quality"
-  | "review";
+  | "review"
+  | "explain";
 export const SINGLETON_PANELS: PanelType[] = [
   "chat",
   "editor",
@@ -37,6 +38,7 @@ export const SINGLETON_PANELS: PanelType[] = [
   "audit",
   "quality",
   "review",
+  "explain",
 ];
 
 /** Panels that exclude each other -- if one is present, the others in the same group are blocked. */
@@ -63,6 +65,7 @@ export const PANEL_OPTIONS: { panel: PanelType; label: string }[] = [
   { panel: "audit", label: "Audit" },
   { panel: "quality", label: "Quality" },
   { panel: "review", label: "Review" },
+  { panel: "explain", label: "Explain" },
 ];
 
 /** Display labels for panel headers and tiles. */

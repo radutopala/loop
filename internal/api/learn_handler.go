@@ -24,9 +24,10 @@ type learnStateRequest struct {
 	Learn string `json:"learn"`
 }
 
-// learnChannelFor returns the channel at id, failing the request when it's
-// missing or is itself a learn thread (they don't learn from themselves).
-func (s *Server) learnChannelFor(w http.ResponseWriter, r *http.Request) *db.Channel {
+// visibleChannelFor returns the channel at id, failing the request when it's
+// missing or is itself a hidden learn or explain thread: those don't learn
+// or get explained, and have no switches of their own.
+func (s *Server) visibleChannelFor(w http.ResponseWriter, r *http.Request) *db.Channel {
 	if !requireConfigured(w, s.store, "channel listing not configured") {
 		return nil
 	}
@@ -35,7 +36,7 @@ func (s *Server) learnChannelFor(w http.ResponseWriter, r *http.Request) *db.Cha
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return nil
 	}
-	if ch == nil || ch.Kind == db.ChannelKindLearn {
+	if ch == nil || db.IsHiddenKind(ch.Kind) {
 		http.Error(w, "channel not found", http.StatusNotFound)
 		return nil
 	}
@@ -45,11 +46,11 @@ func (s *Server) learnChannelFor(w http.ResponseWriter, r *http.Request) *db.Cha
 // handleGetLearn returns the channel's learn switch, the config default it
 // falls back to, and its learn thread.
 func (s *Server) handleGetLearn(w http.ResponseWriter, r *http.Request) {
-	ch := s.learnChannelFor(w, r)
+	ch := s.visibleChannelFor(w, r)
 	if ch == nil {
 		return
 	}
-	l, err := s.store.GetLearnChannel(r.Context(), ch.ChannelID)
+	l, err := s.store.GetHiddenThread(r.Context(), ch.ChannelID, db.ChannelKindLearn)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -85,7 +86,7 @@ func (s *Server) handleSetLearn(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `invalid learn: must be "on", "off" or empty`, http.StatusBadRequest)
 		return
 	}
-	ch := s.learnChannelFor(w, r)
+	ch := s.visibleChannelFor(w, r)
 	if ch == nil {
 		return
 	}

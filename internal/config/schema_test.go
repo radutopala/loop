@@ -156,6 +156,19 @@ func (s *SchemaSuite) TestLearnNestedObject() {
 	require.Equal(s.T(), root["claude_effort"].Enum, prop.Properties["effort"].Enum)
 }
 
+func (s *SchemaSuite) TestExplainNestedObject() {
+	prop := GlobalConfigSchema().Properties["explain"]
+	require.NotNil(s.T(), prop)
+	require.Equal(s.T(), "Explain", prop.XSection)
+	for _, k := range []string{"enabled", "model", "effort", "prompt"} {
+		require.Contains(s.T(), prop.Properties, k)
+	}
+	require.Equal(s.T(), false, prop.Properties["enabled"].Default)
+	root := GlobalConfigSchema().Properties
+	require.Equal(s.T(), root["claude_model"].Enum, prop.Properties["model"].Enum)
+	require.Equal(s.T(), root["claude_effort"].Enum, prop.Properties["effort"].Enum)
+}
+
 func (s *SchemaSuite) TestMemoryNestedObject() {
 	prop := GlobalConfigSchema().Properties["memory"]
 	require.NotNil(s.T(), prop)

@@ -9,6 +9,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/spf13/cobra"
 
+	"github.com/radutopala/loop/internal/explain"
 	"github.com/radutopala/loop/internal/learn"
 	"github.com/radutopala/loop/internal/logging"
 	"github.com/radutopala/loop/internal/mcpserver"
@@ -89,6 +90,9 @@ func (a *app) runMCP(channelID, apiURL, dirPath, logPath, authorID, platform, ag
 		// tools or channel push: it works alone, and other agents shouldn't
 		// see or message it.
 		memOpts = append(memOpts, mcpserver.WithLearnTools())
+	case explain.AgentID:
+		// An explanation only reads: like a learn pass it works alone, and
+		// it has no tools of its own either.
 	default:
 		memOpts = append(memOpts, mcpserver.WithAgentTools(agentID))
 	}

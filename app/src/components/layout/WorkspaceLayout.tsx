@@ -2,6 +2,7 @@ import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRe
 import { createPortal } from "react-dom";
 import { killAgentContainer } from "../../api/loopApi";
 import { CanvasLayout } from "../../canvas/CanvasLayout";
+import { withPanelTile } from "../../canvas/tilePlacement";
 import type { CanvasNode } from "../../canvas/types";
 import { ShortcutsVersionContext } from "../../hooks/shortcutsVersion";
 import { useAgentRegistry } from "../../hooks/useAgentRegistry";
@@ -9,6 +10,7 @@ import { useChatState } from "../../hooks/useChatState";
 import type { ActiveChatState, ChatEventListener } from "../../hooks/useChatStateStore";
 import { useContainerStats } from "../../hooks/useContainerStats";
 import { useEditorState } from "../../hooks/useEditorState";
+import { ExplainContext, useExplain } from "../../hooks/useExplain";
 import { LearnContext, useLearn } from "../../hooks/useLearn";
 import { prefersReducedMotion, usePresence } from "../../hooks/usePresence";
 import type { LayoutType } from "../../layouts/persistence";
@@ -45,6 +47,7 @@ import { AuditPanel } from "../panels/AuditPanel";
 import { BrowserPanel } from "../panels/BrowserPanel";
 import { makePathKey } from "../panels/EditorFileTree";
 import { EditorPanel } from "../panels/EditorPanel";
+import { ExplainPanel } from "../panels/ExplainPanel";
 import { FileTreePanel } from "../panels/FileTreePanel";
 import { GitPanel } from "../panels/GitPanel";
 import { KanbanPanel } from "../panels/KanbanPanel";
@@ -307,6 +310,9 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
     const ch = ensureDefaultLayouts(channelId);
     return ch.types[ch.active] ?? "split";
   });
+  // For the loop:open-panel listener, which outlives layout switches.
+  const layoutTypeRef = useRef(layoutType);
+  layoutTypeRef.current = layoutType;
   const [tree, setTree] = useState<PaneNode | null>(() => {
     const ch = ensureDefaultLayouts(channelId);
     // Seed the id counter from EVERY split layout (not just the active one) so a
@@ -347,6 +353,9 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
   // The channel's learn pass, shown in the Learn view beside the chat (see chatHost).
   const learn = useLearn(channelId, subscribeChatEvents, subscribeChannelEvents, wsOpens);
   const { learnChannelId } = learn;
+  // The channel's explanations, shown in the Explain pane and on the turns'
+  // last bubbles.
+  const explain = useExplain(channelId, subscribeChatEvents, wsOpens);
   const [learnOpen, setLearnOpen] = useState(false);
   // It stays mounted until its closing animation ends.
   const learnMs = prefersReducedMotion() ? 0 : LEARN_SPLIT_MS;
@@ -737,6 +746,11 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
       setLearnOpen(false);
       const panel = ce.detail.panel;
       const anchorPanel = ce.detail.anchorPanel;
+      // On a canvas, a tile for it goes beside the anchor's, unless there's one.
+      if (layoutTypeRef.current === "canvas") {
+        setCanvasState((prev) => withPanelTile(prev ?? { type: "canvas", viewport: { x: 0, y: 0, zoom: 1 }, tiles: [] }, panel, anchorPanel, `${panel}-${Date.now()}`));
+        return;
+      }
       const current = treeRef.current;
       const existing = current ? collectLeaves(current).find((l) => l.panel === panel) : undefined;
       if (existing) {
@@ -890,11 +904,13 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
 
   const dirPath = channel.dir_path || "";
   const branch = channel.branch || "";
+  const explainUnavailable = explain.loaded && !explain.available;
   const hiddenPanels = useMemo<PanelType[] | undefined>(() => {
     const hidden: PanelType[] = [];
     if (!channel.review_enabled) hidden.push("review");
+    if (explainUnavailable) hidden.push("explain");
     return hidden.length > 0 ? hidden : undefined;
-  }, [channel.review_enabled]);
+  }, [channel.review_enabled, explainUnavailable]);
 
   // The chat is mounted once, into chatHost (see ChatSlot); it renders once a slot holds the host.
   const [chatHost] = useState(createChatHost);
@@ -974,12 +990,21 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
     (leafId: string) => (
       <ComponentFocusContext.Provider value={(c) => openComponent(leafId, c)}>
         <LearnContext.Provider value={learn}>
-          <ChatView key={`layout-chat-${channelId}`} channelId={channelId} chatState={chatState} roots={editorState.roots} scrollToMessageId={scrollToMessageId} onScrollComplete={onScrollComplete} />
+          <ExplainContext.Provider value={explain}>
+            <ChatView
+              key={`layout-chat-${channelId}`}
+              channelId={channelId}
+              chatState={chatState}
+              roots={editorState.roots}
+              scrollToMessageId={scrollToMessageId}
+              onScrollComplete={onScrollComplete}
+            />
+          </ExplainContext.Provider>
         </LearnContext.Provider>
         {shownComponent?.leafId === leafId && <ChatComponentFull component={shownComponent.component} onClose={closeComponent} />}
       </ComponentFocusContext.Provider>
     ),
-    [openComponent, learn, channelId, chatState, editorState.roots, scrollToMessageId, onScrollComplete, shownComponent, closeComponent],
+    [openComponent, learn, explain, channelId, chatState, editorState.roots, scrollToMessageId, onScrollComplete, shownComponent, closeComponent],
   );
 
   const renderLeaf = useCallback(
@@ -1117,12 +1142,15 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
               onClearGateApproval={(source) => chatState.clearGateApproval(source)}
             />
           );
+        case "explain":
+          return <ExplainPanel key={`layout-explain-${channelId}`} channelId={channelId} explain={explain} />;
         default:
           return null;
       }
     },
     [
       channelId,
+      explain,
       chatState,
       editorState,
       dirPath,

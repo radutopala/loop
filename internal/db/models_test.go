@@ -91,5 +91,13 @@ func (s *ModelsSuite) TestChannelLearnEnabled() {
 	for _, tc := range tests {
 		ch := &Channel{LearnOverride: tc.override}
 		require.Equal(s.T(), tc.want, ch.LearnEnabled(tc.def), "override %q default %v", tc.override, tc.def)
+		ch = &Channel{ExplainOverride: tc.override, LearnOverride: LearnOff}
+		require.Equal(s.T(), tc.want, ch.ExplainEnabled(tc.def), "explain override %q default %v", tc.override, tc.def)
 	}
+}
+
+func (s *ModelsSuite) TestIsHiddenKind() {
+	require.True(s.T(), IsHiddenKind(ChannelKindLearn))
+	require.True(s.T(), IsHiddenKind(ChannelKindExplain))
+	require.False(s.T(), IsHiddenKind(""))
 }

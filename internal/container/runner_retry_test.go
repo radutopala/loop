@@ -142,6 +142,26 @@ func (s *RunnerSuite) TestRunDoesNotBlindRetryWeeklyLimit() {
 	s.client.AssertExpectations(s.T())
 }
 
+func (s *RunnerSuite) TestRunDoesNotBlindRetryDiskFull() {
+	ctx := context.Background()
+	s.cfg.AgentRetry = config.AgentRetryConfig{MaxAttempts: 5, BackoffBase: time.Second, BackoffMax: time.Minute}
+	var sleeps int
+	s.runner.sleep = func(context.Context, time.Duration) error { sleeps++; return nil }
+	req := &agent.AgentRequest{
+		SessionID: "sess-1",
+		ChannelID: "ch-1",
+		Messages:  []agent.AgentMessage{{Role: "user", Content: "hi"}},
+	}
+	// A full Docker disk fails every container the same way: one create only.
+	s.client.On("ContainerCreate", ctx, mock.Anything, testContainerName).
+		Return("", fmt.Errorf("Error response from daemon: mkdir /var/lib/docker/overlay2/x: no space left on device")).Once()
+
+	_, err := s.runner.Run(ctx, req)
+	require.EqualError(s.T(), err, "creating container: Error response from daemon: mkdir /var/lib/docker/overlay2/x: no space left on device")
+	require.Equal(s.T(), 0, sleeps)
+	s.client.AssertExpectations(s.T())
+}
+
 func (s *RunnerSuite) TestRunRetryCancelledDuringBackoff() {
 	ctx := context.Background()
 	s.cfg.AgentRetry = config.AgentRetryConfig{MaxAttempts: 5, BackoffBase: time.Second, BackoffMax: time.Minute}

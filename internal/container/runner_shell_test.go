@@ -825,21 +825,21 @@ func (s *RunnerSuite) TestBuildClaudeCmdReviewMode() {
 	require.Less(s.T(), i, slices.Index(cmd, "--print"))
 }
 
-// TestBuildClaudeCmdLearnMode verifies a learn run adds its denials after the
+// TestBuildClaudeCmdReadOnly verifies a read-only run adds its denials after the
 // batch ones and leaves the shared config untouched.
-func (s *RunnerSuite) TestBuildClaudeCmdLearnMode() {
+func (s *RunnerSuite) TestBuildClaudeCmdReadOnly() {
 	disallowed := config.DefaultBatchDisallowedTools()
 	cfg := &config.Config{ClaudeBinPath: "claude", ClaudeBatchDisallowedTools: disallowed}
 	req := &agent.AgentRequest{
 		ChannelID: "ch-1",
 		Messages:  []agent.AgentMessage{{Role: "user", Content: "learn"}},
-		LearnMode: true,
+		ReadOnly:  true,
 	}
 
 	cmd := buildClaudeCmd(cfg, "/work/.loop/mcp-ch-1.json", req)
 	i := slices.Index(cmd, "--disallowedTools")
 	require.NotEqual(s.T(), -1, i)
-	require.Equal(s.T(), strings.Join(slices.Concat(disallowed, learnModeDisallowedTools), ","), cmd[i+1])
+	require.Equal(s.T(), strings.Join(slices.Concat(disallowed, readOnlyDisallowedTools), ","), cmd[i+1])
 	require.Contains(s.T(), cmd[i+1], "mcp__loop__prompt_shortcut")
 	// quality_scan writes a snapshot row; quality_snapshot only reads one.
 	require.Contains(s.T(), strings.Split(cmd[i+1], ","), "mcp__loop__quality_scan")

@@ -93,13 +93,23 @@ type Store interface {
 	UpdateNodeHeartbeat(ctx context.Context, runID, nodeID string, iteration int) error
 	DeleteWorkflowRun(ctx context.Context, id string) error
 	UpdateChannelLearnOverride(ctx context.Context, channelID, value string) error
-	GetLearnChannel(ctx context.Context, parentID string) (*Channel, error)
-	InsertLearnChannel(ctx context.Context, ch *Channel) error
-	InsertLearnProposals(ctx context.Context, proposals []*LearnProposal) error
+	GetHiddenThread(ctx context.Context, parentID, kind string) (*Channel, error)
+	ListHiddenThreads(ctx context.Context, parentID string) ([]*Channel, error)
+	InsertHiddenThread(ctx context.Context, ch *Channel) error
+	FileLearnProposals(ctx context.Context, channelID string, proposals []*LearnProposal, withdraw []LearnWithdrawal) ([]*LearnProposal, error)
 	ListLearnProposals(ctx context.Context, channelID string) ([]*LearnProposal, error)
 	GetLearnProposal(ctx context.Context, id int64) (*LearnProposal, error)
 	ClaimLearnProposal(ctx context.Context, id int64) (bool, error)
 	SetLearnProposalStatus(ctx context.Context, id int64, status, errText string) error
+	UpdateChannelExplainOverride(ctx context.Context, channelID, value string) error
+	GetChatMessage(ctx context.Context, channelID, msgID string) (*Message, error)
+	LastBotMessage(ctx context.Context, channelID, triggerMsgID string) (*Message, error)
+	QueueExplanation(ctx context.Context, e *Explanation) (*Explanation, bool, error)
+	GetExplanation(ctx context.Context, channelID, messageID string) (*Explanation, error)
+	GetExplanationByTrigger(ctx context.Context, explainChannelID, triggerMsgID string) (*Explanation, error)
+	UpdateExplanation(ctx context.Context, id int64, status, content, errText string) error
+	ListExplanations(ctx context.Context, channelID string) ([]*Explanation, error)
+	FailInterruptedExplanations(ctx context.Context) (int64, error)
 	Close() error
 }
 
@@ -242,7 +252,7 @@ func (s *SQLiteStore) withTx(ctx context.Context, fn func(tx *sql.Tx) error) err
 // Column lists for SELECT queries.
 const (
 	messageColumns = `id, chat_id, channel_id, msg_id, author_id, author_name, content, is_bot, is_processed, is_triggered, is_running, priority, mode, created_at, kind, chain_position, tool_use_id, tool_name, is_error, trigger_msg_id, not_before, edit_hold_until`
-	channelColumns = `id, channel_id, guild_id, name, dir_path, parent_id, platform, active, session_id, permissions, worktree, base_branch, locked, model_override, effort_override, fork_pending, task_id, description, ticket_url, learn_override, kind, created_at, updated_at`
+	channelColumns = `id, channel_id, guild_id, name, dir_path, parent_id, platform, active, session_id, permissions, worktree, base_branch, locked, model_override, effort_override, fork_pending, task_id, description, ticket_url, learn_override, explain_override, kind, created_at, updated_at`
 	taskColumns    = `id, channel_id, guild_id, schedule, type, prompt, enabled, next_run_at, created_at, updated_at, template_name, auto_delete_sec, thread_id, worktree, origin_branch, update_before_run, running, workflow_name, workflow_inputs, bash_script`
 )
 
@@ -265,7 +275,7 @@ func scanChannelFrom(scanner rowScanner) (*Channel, error) {
 	var active, worktree, locked, forkPending int
 	var permJSON string
 	if err := scanner.Scan(&ch.ID, &ch.ChannelID, &ch.GuildID, &ch.Name, &ch.DirPath,
-		&ch.ParentID, &ch.Platform, &active, &ch.SessionID, &permJSON, &worktree, &ch.BaseBranch, &locked, &ch.ModelOverride, &ch.EffortOverride, &forkPending, &ch.TaskID, &ch.Description, &ch.TicketURL, &ch.LearnOverride, &ch.Kind, &ch.CreatedAt, &ch.UpdatedAt); err != nil {
+		&ch.ParentID, &ch.Platform, &active, &ch.SessionID, &permJSON, &worktree, &ch.BaseBranch, &locked, &ch.ModelOverride, &ch.EffortOverride, &forkPending, &ch.TaskID, &ch.Description, &ch.TicketURL, &ch.LearnOverride, &ch.ExplainOverride, &ch.Kind, &ch.CreatedAt, &ch.UpdatedAt); err != nil {
 		return nil, err
 	}
 	ch.Active = active == 1

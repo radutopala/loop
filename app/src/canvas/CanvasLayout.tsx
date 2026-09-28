@@ -6,6 +6,7 @@ import { useTheme } from "../ThemeContext";
 import { type AgentOpenMode, EXCLUSIVE_PANELS, type LeafNode, PANEL_OPTIONS, type PanelType, SINGLETON_PANELS } from "../types/panels";
 import { CanvasLearnDock, LEARN_DOCK_GAP } from "./CanvasLearnDock";
 import { CanvasTile } from "./CanvasTile";
+import { DEFAULT_TILE_SIZES, findNonOverlappingPosition } from "./tilePlacement";
 import type { CanvasNode, CanvasTile as CanvasTileType } from "./types";
 
 const DOT_SPACING = 20;
@@ -495,6 +496,7 @@ const PANEL_COLORS: Record<PanelType, string> = {
   audit: "#ef4444",
   quality: "#22c55e",
   review: "#facc15",
+  explain: "#2dd4bf",
 };
 
 function CanvasMinimap({
@@ -707,29 +709,3 @@ function CanvasMinimap({
     </div>
   );
 }
-
-/** Find a position that doesn't overlap existing tiles. Tries the given position
- *  first, then shifts right, then wraps below. */
-function findNonOverlappingPosition(x: number, y: number, w: number, h: number, tiles: CanvasTileType[]): { x: number; y: number } {
-  const GAP = 20;
-  const overlaps = (px: number, py: number) => tiles.some((t) => px < t.x + t.width + GAP && px + w + GAP > t.x && py < t.y + t.height + GAP && py + h + GAP > t.y);
-
-  if (!overlaps(x, y)) return { x, y };
-
-  // Try placing to the right of the rightmost tile.
-  const maxRight = Math.max(...tiles.map((t) => t.x + t.width), 0);
-  const rightPos = { x: maxRight + GAP, y };
-  if (!overlaps(rightPos.x, rightPos.y)) return rightPos;
-
-  // Try below the bottommost tile.
-  const maxBottom = Math.max(...tiles.map((t) => t.y + t.height), 0);
-  return { x, y: maxBottom + GAP };
-}
-
-/** Default tile sizes per panel type. Editor and Memory get more space. */
-const DEFAULT_TILE_SIZES: Partial<Record<PanelType, { w: number; h: number }>> = {
-  editor: { w: 900, h: 900 },
-  memory: { w: 900, h: 900 },
-  "docker-browser": { w: 700, h: 500 },
-  "host-browser": { w: 700, h: 500 },
-};

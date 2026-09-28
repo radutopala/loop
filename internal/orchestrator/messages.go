@@ -27,11 +27,12 @@ func (o *Orchestrator) HandleMessage(ctx context.Context, msg *bot.IncomingMessa
 	}
 	if !active {
 		if !o.resolveThread(ctx, msg.ChannelID) {
-			if msg.AuthorID == learnAuthorID {
-				// A learn pass's trigger whose learn thread was deleted
-				// meanwhile. It must not bring the thread back as a plain
-				// channel, where the pass would run unrestricted.
-				o.logger.Debug("learn: dropping the trigger", "reason", "learn thread gone", "learn_channel_id", msg.ChannelID)
+			if msg.AuthorID == learnAuthorID || msg.AuthorID == explainAuthorID {
+				// A learn pass's or explanation's trigger whose hidden
+				// thread was deleted meanwhile. It must not bring the
+				// thread back as a plain channel, where the run would be
+				// unrestricted.
+				o.logger.Debug("dropping the trigger", "reason", "hidden thread gone", "channel_id", msg.ChannelID, "author_id", msg.AuthorID)
 				o.releaseLearn(msg.ChannelID)
 				return
 			}
@@ -270,8 +271,11 @@ func (o *Orchestrator) processClaimedMessage(ctx context.Context, row *db.Messag
 		msg.AuthorRoles = incoming.AuthorRoles
 	}
 
+	// An explanation's run marks it running here and done or failed below.
+	expl := o.explainRunStarted(ctx, msg)
 	req, recent, channel, err := o.prepareAgentRequest(ctx, msg)
 	if err != nil {
+		o.explainRunDone(ctx, expl, "", err)
 		return
 	}
 	trigger := o.runTrigger(channel, msg.AuthorID)
@@ -307,6 +311,7 @@ func (o *Orchestrator) processClaimedMessage(ctx context.Context, row *db.Messag
 		// is_processed=1 DB write and overwrite the locally-applied flip
 		// with stale fetched rows.
 		o.markTriggerProcessed(ctx, msg, recent)
+		o.explainRunDone(ctx, expl, "", err)
 		if finish != nil && o.events != nil {
 			o.events.BroadcastAgentStatus(msg.ChannelID, events.AgentStatusEventData{
 				Status:  finish.status,
@@ -320,12 +325,15 @@ func (o *Orchestrator) processClaimedMessage(ctx context.Context, row *db.Messag
 	}
 
 	o.deliverResponse(ctx, msg, resp, recent, lastStreamedText, runID, trigger)
+	o.explainRunDone(ctx, expl, resp.Response, nil)
 	o.maybeLearn(ctx, channel, msg, resp)
+	o.maybeExplain(ctx, channel, msg)
 }
 
 // runTrigger tags a run in ch's agent.status events with what started it,
 // so the renderer can hold back the dock bounce and notifications for runs
-// the user didn't ask for: "learn" for a learn pass, "bot" when the bot
+// the user didn't ask for: "learn" for a learn pass, "explain" for an
+// explanation, "bot" when the bot
 // itself re-entered HandleMessage (an agent posting via the send_message or
 // create_thread MCP tools), "learn-reply" for a user's message in a learn
 // thread, "" for a user's message anywhere else.
@@ -333,6 +341,8 @@ func (o *Orchestrator) runTrigger(ch *db.Channel, authorID string) string {
 	switch {
 	case authorID == learnAuthorID:
 		return "learn"
+	case authorID == explainAuthorID:
+		return "explain"
 	case o.bot.IsBotUser(authorID):
 		return "bot"
 	case ch != nil && ch.Kind == db.ChannelKindLearn:
@@ -421,6 +431,20 @@ func (o *Orchestrator) prepareAgentRequest(ctx context.Context, msg *bot.Incomin
 			return nil, nil, nil, fmt.Errorf("learn thread %s: parent %q not found", msg.ChannelID, channel.ParentID)
 		}
 		o.applyLearnRequest(ctx, req, parent)
+	}
+	// An explain thread only ever runs explanations, each a read-only fork
+	// of its parent's session; anything else must not run there.
+	if channel.Kind == db.ChannelKindExplain {
+		if msg.AuthorID != explainAuthorID {
+			return nil, nil, nil, errNotExplainRun(msg.ChannelID)
+		}
+		if parent == nil {
+			o.logger.Error("explain: loading the explain thread's parent", "error", parentErr, "channel_id", msg.ChannelID, "parent_id", channel.ParentID)
+			return nil, nil, nil, fmt.Errorf("explain thread %s: parent %q not found", msg.ChannelID, channel.ParentID)
+		}
+		if err := o.applyExplainRequest(ctx, req, parent); err != nil {
+			return nil, nil, nil, err
+		}
 	}
 
 	// When running in a worktree (directly or as a thread under one), tell the
@@ -635,25 +659,40 @@ func (o *Orchestrator) executeAgentRun(ctx context.Context, msg *bot.IncomingMes
 			storeBotMessage(ctx, o.store, o.events, msg.ChannelID, notice, msg.MessageID)
 			return nil, "", runID, &runFinishStatus{status: "completed"}, err
 		}
-		_ = o.bot.SendMessage(ctx, &bot.OutgoingMessage{
-			ChannelID:        msg.ChannelID,
-			Content:          "Sorry, I encountered an error processing your request.",
-			ReplyToMessageID: msg.MessageID,
-		})
+		o.postRunError(ctx, msg, err.Error())
 		return nil, "", runID, &runFinishStatus{status: "error", errMsg: err.Error()}, err
 	}
 
 	if resp.Error != "" {
 		o.logger.Error("agent returned error", "error", resp.Error, "channel_id", msg.ChannelID)
-		_ = o.bot.SendMessage(ctx, &bot.OutgoingMessage{
-			ChannelID:        msg.ChannelID,
-			Content:          fmt.Sprintf("Agent error: %s", resp.Error),
-			ReplyToMessageID: msg.MessageID,
-		})
+		o.postRunError(ctx, msg, resp.Error)
 		return nil, "", runID, &runFinishStatus{status: "error", errMsg: resp.Error}, fmt.Errorf("agent error: %s", resp.Error)
 	}
 
 	return resp, tracker.lastText, runID, nil, nil
+}
+
+// postRunError tells the chat why a run failed. It is stored as well as sent:
+// the desktop app's bot sends nothing, and the agent.status error event only
+// feeds notifications, so a sent-only message left a failed run silent there.
+func (o *Orchestrator) postRunError(ctx context.Context, msg *bot.IncomingMessage, errMsg string) {
+	notice := runErrorNotice(errMsg)
+	_ = o.bot.SendMessage(ctx, &bot.OutgoingMessage{
+		ChannelID:        msg.ChannelID,
+		Content:          notice,
+		ReplyToMessageID: msg.MessageID,
+	})
+	storeBotMessage(ctx, o.store, o.events, msg.ChannelID, notice, msg.MessageID)
+}
+
+// runErrorNotice is the chat message for a failed run: the disk-full advice
+// when Docker ran out of space, otherwise the error itself, fenced so the
+// output tail it can carry keeps its lines.
+func runErrorNotice(errMsg string) string {
+	if agent.IsDiskFull(errMsg) {
+		return "⚠️ " + agent.DiskFullNotice
+	}
+	return "⚠️ The run failed:\n```\n" + strings.ReplaceAll(errMsg, "```", "'''") + "\n```"
 }
 
 // deliverResponse sends the final response, records the bot message, and marks messages as processed.

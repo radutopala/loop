@@ -23,13 +23,13 @@ const (
 	learnAuthorName = "loop"
 )
 
-// learnConfig resolves ch's merged config the way its runs do: global →
+// resolvedConfig resolves ch's merged config the way its runs do: global →
 // root checkout → worktree for a worktree chain, global → ch's dir
 // otherwise. It returns the config and the root checkout, where config
 // proposals land: for a worktree chain the nearest non-worktree ancestor's
 // directory, else ch's own. It falls back to the global config when ch has
 // no dir or the project config fails to load.
-func (o *Orchestrator) learnConfig(ctx context.Context, ch *db.Channel) (*config.Config, string) {
+func (o *Orchestrator) resolvedConfig(ctx context.Context, ch *db.Channel) (*config.Config, string) {
 	cfg := o.currentConfig()
 	if ch.DirPath == "" {
 		return cfg, ""
@@ -46,7 +46,7 @@ func (o *Orchestrator) learnConfig(ctx context.Context, ch *db.Channel) (*config
 		merged, err = o.loadProjectConfig(root, cfg)
 	}
 	if err != nil {
-		o.logger.Warn("learn: loading project config", "error", err, "dir", ch.DirPath)
+		o.logger.Warn("loading project config", "error", err, "dir", ch.DirPath)
 		return cfg, root
 	}
 	return merged, root
@@ -118,7 +118,7 @@ func (o *Orchestrator) maybeLearn(ctx context.Context, ch *db.Channel, msg *bot.
 		return
 	}
 	ch = fresh
-	merged, _ := o.learnConfig(ctx, ch)
+	merged, _ := o.resolvedConfig(ctx, ch)
 	cfg := merged.Learn
 	parked := o.IsChannelPlanned(ch.ChannelID) || o.IsChannelAsked(ch.ChannelID)
 	if reason := learnSkipReason(ch, resp, cfg, parked); reason != "" {
@@ -129,8 +129,8 @@ func (o *Orchestrator) maybeLearn(ctx context.Context, ch *db.Channel, msg *bot.
 		o.logger.Debug("learn: skipped", "channel_id", ch.ChannelID, "reason", "no session")
 		return
 	}
-	l, err := o.ensureLearnChannel(ctx, ch)
-	if errors.Is(err, db.ErrLearnParentGone) {
+	l, err := o.ensureHiddenThread(ctx, ch, db.ChannelKindLearn)
+	if errors.Is(err, db.ErrParentGone) {
 		o.logger.Debug("learn: skipped", "channel_id", ch.ChannelID, "reason", "channel gone")
 		return
 	}
@@ -284,21 +284,21 @@ func (o *Orchestrator) startLearn(ctx context.Context, l *db.Channel, pass *lear
 	})
 }
 
-// ensureLearnChannel returns ch's hidden learn thread, creating it on first
-// use. It's a local thread under ch in ch's directory, so its runs see the
-// same checkout and can resume ch's sessions. An existing learn thread is
-// renamed to follow ch's name. It fails with db.ErrLearnParentGone when ch
-// was deleted before its learn thread could be made.
-func (o *Orchestrator) ensureLearnChannel(ctx context.Context, ch *db.Channel) (*db.Channel, error) {
-	name := "learn: " + ch.Name
-	l, err := o.store.GetLearnChannel(ctx, ch.ChannelID)
+// ensureHiddenThread returns ch's hidden thread of kind (learn or explain),
+// creating it on first use. It's a local thread under ch in ch's directory,
+// so its runs see the same checkout and can fork ch's sessions. An existing
+// one is renamed to follow ch's name. It fails with db.ErrParentGone when ch
+// was deleted before the thread could be made.
+func (o *Orchestrator) ensureHiddenThread(ctx context.Context, ch *db.Channel, kind string) (*db.Channel, error) {
+	name := kind + ": " + ch.Name
+	l, err := o.store.GetHiddenThread(ctx, ch.ChannelID, kind)
 	if err != nil {
 		return nil, err
 	}
 	if l != nil {
 		if l.Name != name {
 			if err := o.store.UpdateChannelName(ctx, l.ChannelID, name); err != nil {
-				o.logger.Warn("learn: renaming learn thread", "error", err, "learn_channel_id", l.ChannelID)
+				o.logger.Warn("renaming hidden thread", "error", err, "kind", kind, "channel_id", l.ChannelID)
 			} else {
 				l.Name = name
 			}
@@ -306,15 +306,15 @@ func (o *Orchestrator) ensureLearnChannel(ctx context.Context, ch *db.Channel) (
 		return l, nil
 	}
 	l = &db.Channel{
-		ChannelID: "learn-" + randutil.HexID(6),
+		ChannelID: kind + "-" + randutil.HexID(6),
 		GuildID:   ch.GuildID,
 		Name:      name,
 		DirPath:   ch.DirPath,
 		ParentID:  ch.ChannelID,
 		Platform:  types.PlatformLocal,
-		Kind:      db.ChannelKindLearn,
+		Kind:      kind,
 	}
-	if err := o.store.InsertLearnChannel(ctx, l); err != nil {
+	if err := o.store.InsertHiddenThread(ctx, l); err != nil {
 		return nil, err
 	}
 	return l, nil
@@ -325,7 +325,7 @@ func (o *Orchestrator) ensureLearnChannel(ctx context.Context, ch *db.Channel) (
 // teaches it Loop's proposal kinds and what parent's project already has. The
 // model and effort are learn.model / learn.effort, else parent's overrides.
 func (o *Orchestrator) applyLearnRequest(ctx context.Context, req *agent.AgentRequest, parent *db.Channel) {
-	cfg, dir := o.learnConfig(ctx, parent)
+	cfg, dir := o.resolvedConfig(ctx, parent)
 	// Tasks are listed where an applied scheduled_task proposal creates
 	// them (see resolveTaskChannelID), so the pass sees the ones it could
 	// duplicate.
@@ -339,7 +339,7 @@ func (o *Orchestrator) applyLearnRequest(ctx context.Context, req *agent.AgentRe
 		o.logger.Warn("learn: listing proposals", "error", err, "channel_id", parent.ChannelID)
 	}
 	req.AgentID = learn.AgentID
-	req.LearnMode = true
+	req.ReadOnly = true
 	req.Model = cmp.Or(cfg.Learn.Model, parent.ModelOverride)
 	req.Effort = cmp.Or(cfg.Learn.Effort, parent.EffortOverride)
 	req.SystemPrompt = learn.SystemPrompt(learn.State{

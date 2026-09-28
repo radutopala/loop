@@ -34,9 +34,11 @@ export async function setLearn(channelId: string, learn: LearnState["learn"]): P
 
 export type LearnProposalKind = "prompt_shortcut" | "bash_shortcut" | "scheduled_task" | "gate_rule" | "mount" | "rename" | "description" | "ticket_url";
 
-type LearnProposalStatus = "pending" | "applying" | "applied" | "dismissed" | "failed";
+type LearnProposalStatus = "pending" | "applying" | "applied" | "dismissed" | "failed" | "withdrawn";
 
-/** One change a learn pass proposed. `payload` is the kind's JSON object. */
+/** One change a learn pass proposed. `payload` is the kind's JSON object.
+ * A later pass that found it stale withdraws it, saying why in
+ * `withdrawn_reason`. */
 export interface LearnProposal {
   id: number;
   channel_id: string;
@@ -47,6 +49,7 @@ export interface LearnProposal {
   payload: string;
   status: LearnProposalStatus;
   error?: string;
+  withdrawn_reason?: string;
   created_at: string;
   updated_at: string;
 }

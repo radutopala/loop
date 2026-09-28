@@ -82,7 +82,7 @@ func (s *OrchestratorSuite) TestLearnConfig() {
 				require.Same(s.T(), global, main)
 				return worktree, tc.loadErr
 			}
-			got, root := s.orch.learnConfig(s.ctx, tc.ch)
+			got, root := s.orch.resolvedConfig(s.ctx, tc.ch)
 			require.Same(s.T(), tc.want, got)
 			require.Equal(s.T(), tc.wantRoot, root)
 		})
@@ -120,29 +120,29 @@ func (s *OrchestratorSuite) TestMaybeLearnSkips() {
 		}},
 		{"switched on during the run", &db.Channel{ChannelID: "ch1", DirPath: "/project", Platform: types.PlatformLocal, LearnOverride: db.LearnOff}, learnOn, func() {
 			s.store.On("GetChannel", s.ctx, "ch1").Return(&db.Channel{ChannelID: "ch1", DirPath: "/project", Platform: types.PlatformLocal, LearnOverride: db.LearnOn}, nil)
-			s.store.On("GetLearnChannel", s.ctx, "ch1").Return(nil, errors.New("db down"))
+			s.store.On("GetHiddenThread", s.ctx, "ch1", db.ChannelKindLearn).Return(nil, errors.New("db down"))
 		}},
 		{"lookup error", &db.Channel{ChannelID: "ch1", DirPath: "/project", Platform: types.PlatformLocal}, learnOn, func() {
-			s.store.On("GetLearnChannel", s.ctx, "ch1").Return(nil, errors.New("db down"))
+			s.store.On("GetHiddenThread", s.ctx, "ch1", db.ChannelKindLearn).Return(nil, errors.New("db down"))
 		}},
 		{"channel deleted before its learn thread was made", &db.Channel{ChannelID: "ch1", DirPath: "/project", Platform: types.PlatformLocal}, learnOn, func() {
-			s.store.On("GetLearnChannel", s.ctx, "ch1").Return(nil, nil)
-			s.store.On("InsertLearnChannel", s.ctx, mock.Anything).Return(db.ErrLearnParentGone)
+			s.store.On("GetHiddenThread", s.ctx, "ch1", db.ChannelKindLearn).Return(nil, nil)
+			s.store.On("InsertHiddenThread", s.ctx, mock.Anything).Return(db.ErrParentGone)
 		}},
 		{"create error", &db.Channel{ChannelID: "ch1", DirPath: "/project", Platform: types.PlatformLocal}, learnOn, func() {
-			s.store.On("GetLearnChannel", s.ctx, "ch1").Return(nil, nil)
-			s.store.On("InsertLearnChannel", s.ctx, mock.Anything).Return(errors.New("db down"))
+			s.store.On("GetHiddenThread", s.ctx, "ch1", db.ChannelKindLearn).Return(nil, nil)
+			s.store.On("InsertHiddenThread", s.ctx, mock.Anything).Return(errors.New("db down"))
 		}},
 		{"learn pass running", &db.Channel{ChannelID: "ch1", DirPath: "/project", Platform: types.PlatformLocal}, learnOn, func() {
-			s.store.On("GetLearnChannel", s.ctx, "ch1").Return(&db.Channel{ChannelID: "learn-1", Name: "learn: "}, nil)
+			s.store.On("GetHiddenThread", s.ctx, "ch1", db.ChannelKindLearn).Return(&db.Channel{ChannelID: "learn-1", Name: "learn: "}, nil)
 			s.orch.activeRuns.Store("learn-1", context.CancelFunc(func() {}))
 		}},
 		{"fork error", &db.Channel{ChannelID: "ch1", DirPath: "/project", Platform: types.PlatformLocal}, learnOn, func() {
-			s.store.On("GetLearnChannel", s.ctx, "ch1").Return(&db.Channel{ChannelID: "learn-1", Name: "learn: "}, nil)
+			s.store.On("GetHiddenThread", s.ctx, "ch1", db.ChannelKindLearn).Return(&db.Channel{ChannelID: "learn-1", Name: "learn: "}, nil)
 			s.store.On("MarkSessionForkPending", s.ctx, "learn-1", "sess-1").Return(false, errors.New("db down"))
 		}},
 		{"learn thread deleted meanwhile", &db.Channel{ChannelID: "ch1", DirPath: "/project", Platform: types.PlatformLocal}, learnOn, func() {
-			s.store.On("GetLearnChannel", s.ctx, "ch1").Return(&db.Channel{ChannelID: "learn-1", Name: "learn: "}, nil)
+			s.store.On("GetHiddenThread", s.ctx, "ch1", db.ChannelKindLearn).Return(&db.Channel{ChannelID: "learn-1", Name: "learn: "}, nil)
 			s.store.On("MarkSessionForkPending", s.ctx, "learn-1", "sess-1").Return(false, nil)
 		}},
 	}
@@ -177,8 +177,8 @@ func (s *OrchestratorSuite) TestMaybeLearnStarts() {
 
 	ch := &db.Channel{ChannelID: "ch1", GuildID: "g1", Name: "api", DirPath: "/project", Platform: types.PlatformLocal}
 	var created *db.Channel
-	s.store.On("GetLearnChannel", s.ctx, "ch1").Return(nil, nil)
-	s.store.On("InsertLearnChannel", s.ctx, mock.MatchedBy(func(l *db.Channel) bool {
+	s.store.On("GetHiddenThread", s.ctx, "ch1", db.ChannelKindLearn).Return(nil, nil)
+	s.store.On("InsertHiddenThread", s.ctx, mock.MatchedBy(func(l *db.Channel) bool {
 		created = l
 		return true
 	})).Return(nil)
@@ -398,11 +398,11 @@ func (s *OrchestratorSuite) TestEnsureLearnChannelRenames() {
 	for _, tc := range tests {
 		s.Run(tc.name, func() {
 			s.SetupTest()
-			s.store.On("GetLearnChannel", s.ctx, "ch1").Return(&db.Channel{ChannelID: "learn-1", Name: tc.current}, nil)
+			s.store.On("GetHiddenThread", s.ctx, "ch1", db.ChannelKindLearn).Return(&db.Channel{ChannelID: "learn-1", Name: tc.current}, nil)
 			if tc.wantCall {
 				s.store.On("UpdateChannelName", s.ctx, "learn-1", "learn: api v2").Return(tc.renameErr)
 			}
-			l, err := s.orch.ensureLearnChannel(s.ctx, ch)
+			l, err := s.orch.ensureHiddenThread(s.ctx, ch, db.ChannelKindLearn)
 			require.NoError(s.T(), err)
 			require.Equal(s.T(), "learn-1", l.ChannelID)
 			require.Equal(s.T(), tc.wantName, l.Name)
@@ -437,6 +437,7 @@ func (s *OrchestratorSuite) TestRunTrigger() {
 		want     string
 	}{
 		{name: "learn pass", ch: learnThread, authorID: learnAuthorID, want: "learn"},
+		{name: "explanation", ch: &db.Channel{ChannelID: "explain-1", Kind: db.ChannelKindExplain}, authorID: explainAuthorID, want: "explain"},
 		{name: "bot", ch: chat, authorID: "bot-1", want: "bot"},
 		{name: "user", ch: chat, authorID: "user-1", want: ""},
 		{name: "user in a learn thread", ch: learnThread, authorID: "user-1", want: "learn-reply"},
@@ -466,7 +467,7 @@ func (s *OrchestratorSuite) TestMaybeLearnWorktreeUsesRootConfig() {
 	s.orch.maybeLearn(s.ctx, wt, &bot.IncomingMessage{}, &agent.AgentResponse{SessionID: "sess-1", NumTurns: 9})
 
 	require.Equal(s.T(), []string{"/project/.worktrees/wt", "/project"}, loaded)
-	s.store.AssertNotCalled(s.T(), "GetLearnChannel", mock.Anything, mock.Anything)
+	s.store.AssertNotCalled(s.T(), "GetHiddenThread", mock.Anything, mock.Anything, mock.Anything)
 }
 
 // TestPrepareAgentRequestLearnThread checks a learn thread's run: it forks
@@ -520,7 +521,7 @@ func (s *OrchestratorSuite) TestPrepareAgentRequestLearnThread() {
 			require.True(s.T(), req.ForkSession)
 			require.Equal(s.T(), "sess-parent", req.SessionID)
 			require.Equal(s.T(), learn.AgentID, req.AgentID)
-			require.True(s.T(), req.LearnMode)
+			require.True(s.T(), req.ReadOnly)
 			require.Equal(s.T(), tc.wantModel, req.Model)
 			require.Equal(s.T(), tc.wantEffort, req.Effort)
 			require.Contains(s.T(), req.SystemPrompt, `- Channel: "api"`)

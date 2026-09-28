@@ -168,7 +168,7 @@ func (s *ServerSuite) TestCreateChannelError() {
 
 func (s *ServerSuite) TestDeleteThreadSuccess() {
 	s.store.On("GetChannel", mock.Anything, "thread-1").Return((*db.Channel)(nil), nil)
-	s.store.On("GetLearnChannel", mock.Anything, "thread-1").Return((*db.Channel)(nil), nil)
+	s.store.On("ListHiddenThreads", mock.Anything, "thread-1").Return([]*db.Channel(nil), nil)
 	s.threads.On("DeleteThread", mock.Anything, "thread-1").Return(nil)
 
 	rec := s.testRequest("DELETE", "/api/threads/thread-1", "")
@@ -179,7 +179,7 @@ func (s *ServerSuite) TestDeleteThreadSuccess() {
 
 func (s *ServerSuite) TestDeleteThreadError() {
 	s.store.On("GetChannel", mock.Anything, "thread-1").Return((*db.Channel)(nil), nil)
-	s.store.On("GetLearnChannel", mock.Anything, "thread-1").Return(&db.Channel{ChannelID: "learn-1"}, nil)
+	s.store.On("ListHiddenThreads", mock.Anything, "thread-1").Return([]*db.Channel{{ChannelID: "learn-1"}}, nil)
 	s.threads.On("DeleteThread", mock.Anything, "thread-1").
 		Return(errors.New("delete failed"))
 
@@ -207,7 +207,7 @@ func (s *ServerSuite) TestDeleteChannelSuccess() {
 	s.store.On("GetChannel", mock.Anything, "ch-1").
 		Return(&db.Channel{ChannelID: "ch-1", Name: "test"}, nil)
 	s.store.On("ListChannelIDsByParentID", mock.Anything, "ch-1").Return([]string(nil), nil)
-	s.store.On("GetLearnChannel", mock.Anything, "ch-1").Return((*db.Channel)(nil), nil)
+	s.store.On("ListHiddenThreads", mock.Anything, "ch-1").Return([]*db.Channel(nil), nil)
 	s.store.On("DeleteChannelsByParentID", mock.Anything, "ch-1").Return(nil)
 	s.store.On("DeleteChannel", mock.Anything, "ch-1").Return(nil)
 
@@ -222,7 +222,7 @@ func (s *ServerSuite) TestDeleteChannelCleansUpContainers() {
 	s.store.On("GetChannel", mock.Anything, "ch-1").
 		Return(&db.Channel{ChannelID: "ch-1", Name: "test"}, nil)
 	s.store.On("ListChannelIDsByParentID", mock.Anything, "ch-1").Return([]string(nil), nil)
-	s.store.On("GetLearnChannel", mock.Anything, "ch-1").Return((*db.Channel)(nil), nil)
+	s.store.On("ListHiddenThreads", mock.Anything, "ch-1").Return([]*db.Channel(nil), nil)
 	s.store.On("DeleteChannelsByParentID", mock.Anything, "ch-1").Return(nil)
 	s.store.On("DeleteChannel", mock.Anything, "ch-1").Return(nil)
 
@@ -260,7 +260,7 @@ func (s *ServerSuite) TestDeleteChannelContainerRemoveError() {
 	s.store.On("GetChannel", mock.Anything, "ch-1").
 		Return(&db.Channel{ChannelID: "ch-1", Name: "test"}, nil)
 	s.store.On("ListChannelIDsByParentID", mock.Anything, "ch-1").Return([]string(nil), nil)
-	s.store.On("GetLearnChannel", mock.Anything, "ch-1").Return((*db.Channel)(nil), nil)
+	s.store.On("ListHiddenThreads", mock.Anything, "ch-1").Return([]*db.Channel(nil), nil)
 	s.store.On("DeleteChannelsByParentID", mock.Anything, "ch-1").Return(nil)
 	s.store.On("DeleteChannel", mock.Anything, "ch-1").Return(nil)
 
@@ -285,7 +285,7 @@ func (s *ServerSuite) TestDeleteChannelChromeRemoveError() {
 	s.store.On("GetChannel", mock.Anything, "ch-1").
 		Return(&db.Channel{ChannelID: "ch-1", Name: "test"}, nil)
 	s.store.On("ListChannelIDsByParentID", mock.Anything, "ch-1").Return([]string(nil), nil)
-	s.store.On("GetLearnChannel", mock.Anything, "ch-1").Return((*db.Channel)(nil), nil)
+	s.store.On("ListHiddenThreads", mock.Anything, "ch-1").Return([]*db.Channel(nil), nil)
 	s.store.On("DeleteChannelsByParentID", mock.Anything, "ch-1").Return(nil)
 	s.store.On("DeleteChannel", mock.Anything, "ch-1").Return(nil)
 
@@ -333,7 +333,7 @@ func (s *ServerSuite) TestDeleteChannelChildrenError() {
 	s.store.On("GetChannel", mock.Anything, "ch-err").
 		Return(&db.Channel{ChannelID: "ch-err"}, nil)
 	s.store.On("ListChannelIDsByParentID", mock.Anything, "ch-err").Return([]string(nil), nil)
-	s.store.On("GetLearnChannel", mock.Anything, "ch-err").Return((*db.Channel)(nil), nil)
+	s.store.On("ListHiddenThreads", mock.Anything, "ch-err").Return([]*db.Channel(nil), nil)
 	s.store.On("DeleteChannelsByParentID", mock.Anything, "ch-err").
 		Return(errors.New("db error"))
 
@@ -361,7 +361,7 @@ func (s *ServerSuite) TestDeleteChannelLockedReturnsConflict() {
 
 func (s *ServerSuite) TestDeleteThreadLockedReturnsConflict() {
 	s.store.On("GetChannel", mock.Anything, "thread-locked").Return((*db.Channel)(nil), nil)
-	s.store.On("GetLearnChannel", mock.Anything, "thread-locked").Return((*db.Channel)(nil), nil)
+	s.store.On("ListHiddenThreads", mock.Anything, "thread-locked").Return([]*db.Channel(nil), nil)
 	s.threads.On("DeleteThread", mock.Anything, "thread-locked").Return(ErrChannelLocked)
 
 	rec := s.testRequest("DELETE", "/api/threads/thread-locked", "")
@@ -370,17 +370,26 @@ func (s *ServerSuite) TestDeleteThreadLockedReturnsConflict() {
 	s.threads.AssertExpectations(s.T())
 }
 
-func (s *ServerSuite) TestDeleteThreadStopsLearnThread() {
+// TestDeleteThreadStopsHiddenThreads covers a deleted thread's hidden
+// threads: the learn thread's pass is stopped, the explain thread's run
+// cancelled, and both lose their containers.
+func (s *ServerSuite) TestDeleteThreadStopsHiddenThreads() {
 	s.store.On("GetChannel", mock.Anything, "thread-1").Return((*db.Channel)(nil), nil)
-	s.store.On("GetLearnChannel", mock.Anything, "thread-1").Return(&db.Channel{ChannelID: "learn-1"}, nil)
+	s.store.On("ListHiddenThreads", mock.Anything, "thread-1").Return([]*db.Channel{
+		{ChannelID: "learn-1", Kind: db.ChannelKindLearn},
+		{ChannelID: "explain-1", Kind: db.ChannelKindExplain},
+	}, nil)
 	s.threads.On("DeleteThread", mock.Anything, "thread-1").Return(nil)
 	canceller := new(MockRunCanceller)
 	canceller.On("StopLearn", "learn-1").Return()
+	canceller.On("CancelActiveRun", "explain-1").Return(true)
 	s.srv.SetRunCanceller(canceller)
 	reg := &mockContainerManager{byChannel: []*container.ContainerInfo{
 		{ContainerID: "agent-l1", ChannelID: "learn-1", Type: container.ContainerTypeAgent},
+		{ContainerID: "agent-e1", ChannelID: "explain-1", Type: container.ContainerTypeAgent},
 	}}
 	reg.On("RemoveContainer", mock.Anything, "agent-l1").Return(nil)
+	reg.On("RemoveContainer", mock.Anything, "agent-e1").Return(nil)
 	s.srv.containerRegistry = reg
 
 	rec := s.testRequest("DELETE", "/api/threads/thread-1", "")
@@ -463,7 +472,11 @@ func (s *ServerSuite) TestDeleteThreadRemovesMCPConfigs() {
 			}
 			s.store.On("GetChannel", mock.Anything, "t-1").Return(tc.thread, tc.threadErr)
 			s.store.On("GetChannel", mock.Anything, "ch-1").Return(tc.parent, tc.parentErr)
-			s.store.On("GetLearnChannel", mock.Anything, "t-1").Return(tc.learn, nil)
+			var hidden []*db.Channel
+			if tc.learn != nil {
+				hidden = append(hidden, tc.learn)
+			}
+			s.store.On("ListHiddenThreads", mock.Anything, "t-1").Return(hidden, nil)
 			s.threads.On("DeleteThread", mock.Anything, "t-1").Return(nil)
 
 			rec := s.testRequest("DELETE", "/api/threads/t-1", "")
@@ -634,7 +647,7 @@ func (s *ServerSuite) TestDeleteChannelDeleteError() {
 	s.store.On("GetChannel", mock.Anything, "ch-err").
 		Return(&db.Channel{ChannelID: "ch-err"}, nil)
 	s.store.On("ListChannelIDsByParentID", mock.Anything, "ch-err").Return([]string(nil), nil)
-	s.store.On("GetLearnChannel", mock.Anything, "ch-err").Return((*db.Channel)(nil), nil)
+	s.store.On("ListHiddenThreads", mock.Anything, "ch-err").Return([]*db.Channel(nil), nil)
 	s.store.On("DeleteChannelsByParentID", mock.Anything, "ch-err").Return(nil)
 	s.store.On("DeleteChannel", mock.Anything, "ch-err").
 		Return(errors.New("db error"))
@@ -1263,7 +1276,7 @@ func (s *ServerSuite) TestDeleteChannelCleansUpThreads() {
 			s.store.On("ListChannelIDsByParentID", mock.Anything, "ch-1").Return(threadIDs, tc.listErr)
 			s.store.On("GetChannel", mock.Anything, "t-1").Return(tc.threads["t-1"], tc.threadErr)
 			s.store.On("GetChannel", mock.Anything, "learn-c").Return(tc.threads["learn-c"], nil)
-			s.store.On("GetLearnChannel", mock.Anything, "t-1").Return(&db.Channel{ChannelID: "learn-t", DirPath: "/wt"}, tc.learnErr)
+			s.store.On("ListHiddenThreads", mock.Anything, "t-1").Return([]*db.Channel{{ChannelID: "learn-t", DirPath: "/wt", Kind: db.ChannelKindLearn}}, tc.learnErr)
 			s.store.On("DeleteChannelsByParentID", mock.Anything, "ch-1").Return(nil)
 			s.store.On("DeleteChannel", mock.Anything, "ch-1").Return(nil)
 			canceller := new(MockRunCanceller)
@@ -1285,8 +1298,8 @@ func (s *ServerSuite) TestDeleteChannelCleansUpThreads() {
 			require.Equal(s.T(), http.StatusNoContent, rec.Code)
 			require.Equal(s.T(), tc.wantMCPFiles, removed)
 			canceller.AssertExpectations(s.T())
-			s.store.AssertNotCalled(s.T(), "GetLearnChannel", mock.Anything, "ch-1")
-			s.store.AssertNotCalled(s.T(), "GetLearnChannel", mock.Anything, "learn-c")
+			s.store.AssertNotCalled(s.T(), "ListHiddenThreads", mock.Anything, "ch-1")
+			s.store.AssertNotCalled(s.T(), "ListHiddenThreads", mock.Anything, "learn-c")
 			reg.AssertExpectations(s.T())
 		})
 	}

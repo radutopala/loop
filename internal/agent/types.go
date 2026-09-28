@@ -45,11 +45,12 @@ type AgentRequest struct {
 	//     setting it to e.g. "sonnet" (that mount is shared with the container)
 	//     otherwise silently downgrades the run.
 	ReviewMode bool `json:"review_mode,omitempty"`
-	// LearnMode runs the request as a learn pass over a finished chat run:
-	// its built-in tools are limited to the read-only --tools allowlist, and
-	// on top of the batch denials every Loop tool that changes state is
-	// denied, so the pass can only look and propose.
-	LearnMode bool `json:"learn_mode,omitempty"`
+	// ReadOnly runs the request as a learn pass or an explanation over a
+	// chat run: its built-in tools are limited to the read-only --tools
+	// allowlist, and on top of the batch denials every Loop tool that
+	// changes state is denied, so the run can only look (and a learn pass
+	// propose).
+	ReadOnly bool `json:"read_only,omitempty"`
 	// OnTurn is called for each assistant turn's text content during streaming.
 	// When set, the runner follows container logs in real-time instead of waiting
 	// for the container to exit. When nil, the runner uses the existing

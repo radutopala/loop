@@ -48,8 +48,11 @@ type ChannelLister interface {
 	ListTaskRunLogs(ctx context.Context, taskID int64, limit int) ([]*db.TaskRunLog, error)
 	ListAllScheduledTasks(ctx context.Context) ([]*db.ScheduledTask, error)
 	UpdateChannelLearnOverride(ctx context.Context, channelID, value string) error
-	GetLearnChannel(ctx context.Context, parentID string) (*db.Channel, error)
-	InsertLearnProposals(ctx context.Context, proposals []*db.LearnProposal) error
+	GetHiddenThread(ctx context.Context, parentID, kind string) (*db.Channel, error)
+	ListHiddenThreads(ctx context.Context, parentID string) ([]*db.Channel, error)
+	UpdateChannelExplainOverride(ctx context.Context, channelID, value string) error
+	ListExplanations(ctx context.Context, channelID string) ([]*db.Explanation, error)
+	FileLearnProposals(ctx context.Context, channelID string, proposals []*db.LearnProposal, withdraw []db.LearnWithdrawal) ([]*db.LearnProposal, error)
 	ListLearnProposals(ctx context.Context, channelID string) ([]*db.LearnProposal, error)
 	GetLearnProposal(ctx context.Context, id int64) (*db.LearnProposal, error)
 	ClaimLearnProposal(ctx context.Context, id int64) (bool, error)

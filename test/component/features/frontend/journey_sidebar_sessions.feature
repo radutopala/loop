@@ -82,3 +82,23 @@ Feature: Recent sessions in the sidebar
     # The tree marks threads by indent, not an icon.
     When I click on "[data-testid='sidebar-tab-tree']"
     Then the element "[data-testid='session-kind-thread']" should not exist
+
+  Scenario: The search box's clear button empties the search and keeps focus
+    Given I set up a test channel via API for git repo "bdd-sidebar-search"
+    And I open the app in a browser
+    And I wait for text "bdd-sidebar-search" to appear
+    # No text, no clear button.
+    Then the element "[data-testid='sidebar-search-clear']" should not exist
+
+    # A search that doesn't match hides the channel and shows the button.
+    When I type "zz-no-match" into "input[placeholder='Search...']"
+    Then I wait up to "5s" for text "bdd-sidebar-search" to disappear
+    And the element "[data-testid='sidebar-search-clear'][aria-label='Clear search']" should be visible
+
+    # Clearing is the same as deleting the text: the channel is back, the
+    # button is gone and the input still has focus.
+    When I click on "[data-testid='sidebar-search-clear']"
+    Then the field "input[placeholder='Search...']" should hold ""
+    And I wait for text "bdd-sidebar-search" to appear
+    And the element "[data-testid='sidebar-search-clear']" should not exist
+    And the focus is in "input[placeholder='Search...']"

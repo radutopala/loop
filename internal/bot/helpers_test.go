@@ -30,7 +30,7 @@ func (s *HelpersSuite) TestRemoveMCPConfig() {
 
 	err := removeMCPConfigWith(removeFn, "/work", "chan-1")
 	require.NoError(s.T(), err)
-	require.Equal(s.T(), []string{"/work/.loop/mcp-chan-1.json", "/work/.loop/mcp-chan-1-learn.json"}, removed)
+	require.Equal(s.T(), []string{"/work/.loop/mcp-chan-1.json", "/work/.loop/mcp-chan-1-learn.json", "/work/.loop/mcp-chan-1-explain.json"}, removed)
 }
 
 func (s *HelpersSuite) TestRemoveMCPConfigNotExist() {

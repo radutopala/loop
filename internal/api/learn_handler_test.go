@@ -59,7 +59,7 @@ func (s *ServerSuite) TestLearnGet() {
 				platform = types.PlatformLocal
 			}
 			s.store.On("GetChannel", mock.Anything, "ch-1").Return(&db.Channel{ChannelID: "ch-1", DirPath: "/p", LearnOverride: tc.override, Platform: platform}, nil)
-			s.store.On("GetLearnChannel", mock.Anything, "ch-1").Return(tc.learnCh, nil)
+			s.store.On("GetHiddenThread", mock.Anything, "ch-1", db.ChannelKindLearn).Return(tc.learnCh, nil)
 			s.srv.configs.load = func() (*config.Config, error) {
 				if tc.loadErr != nil {
 					return nil, tc.loadErr
@@ -91,7 +91,7 @@ func (s *ServerSuite) TestLearnGetErrors() {
 	s.store.On("GetChannel", mock.Anything, "gone").Return(nil, nil)
 	s.store.On("GetChannel", mock.Anything, "l-1").Return(&db.Channel{ChannelID: "l-1", Kind: db.ChannelKindLearn}, nil)
 	s.store.On("GetChannel", mock.Anything, "ch-1").Return(&db.Channel{ChannelID: "ch-1"}, nil)
-	s.store.On("GetLearnChannel", mock.Anything, "ch-1").Return(nil, os.ErrPermission)
+	s.store.On("GetHiddenThread", mock.Anything, "ch-1", db.ChannelKindLearn).Return(nil, os.ErrPermission)
 
 	require.Equal(s.T(), http.StatusInternalServerError, s.learnRequest("GET", "err", "").Code)
 	require.Equal(s.T(), http.StatusNotFound, s.learnRequest("GET", "gone", "").Code)

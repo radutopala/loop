@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/radutopala/loop/internal/explain"
 	"github.com/radutopala/loop/internal/learn"
 )
 
@@ -37,7 +38,8 @@ func FormatApprovalDetails(details map[string]string) string {
 }
 
 // RemoveMCPConfig removes the per-channel MCP config files for the given
-// channel: its own and the learn agent's, which a learn thread's runs write.
+// channel: its own and the learn and explain agents', which a learn or
+// explain thread's runs write.
 // It silently ignores os.ErrNotExist (a file may not exist if the agent never ran).
 func RemoveMCPConfig(dirPath, channelID string) error {
 	return removeMCPConfigWith(os.Remove, dirPath, channelID)
@@ -47,7 +49,11 @@ func removeMCPConfigWith(removeFn func(string) error, dirPath, channelID string)
 	if dirPath == "" {
 		return nil
 	}
-	for _, name := range []string{"mcp-" + channelID + ".json", "mcp-" + channelID + "-" + learn.AgentID + ".json"} {
+	for _, name := range []string{
+		"mcp-" + channelID + ".json",
+		"mcp-" + channelID + "-" + learn.AgentID + ".json",
+		"mcp-" + channelID + "-" + explain.AgentID + ".json",
+	} {
 		p := filepath.Join(dirPath, ".loop", name)
 		if err := removeFn(p); err != nil && !errors.Is(err, os.ErrNotExist) {
 			return fmt.Errorf("removing MCP config %s: %w", p, err)

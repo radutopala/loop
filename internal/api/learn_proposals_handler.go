@@ -19,39 +19,63 @@ import (
 	"github.com/radutopala/loop/internal/types"
 )
 
-// maxLearnProposals limits one propose_learnings call.
-const maxLearnProposals = 5
+// maxLearnProposals limits the proposals one propose_learnings call files,
+// maxLearnWithdrawals those it withdraws.
+const (
+	maxLearnProposals   = 5
+	maxLearnWithdrawals = 20
+)
 
 type learnProposalInput struct {
 	Kind      string          `json:"kind"`
 	Title     string          `json:"title"`
 	Rationale string          `json:"rationale"`
 	Payload   json.RawMessage `json:"payload"`
+	// Replaces withdraws this open proposal, which the new one supersedes.
+	Replaces int64 `json:"replaces"`
+}
+
+type learnWithdrawInput struct {
+	ID     int64  `json:"id"`
+	Reason string `json:"reason"`
 }
 
 type createLearnProposalsRequest struct {
 	Proposals []learnProposalInput `json:"proposals"`
+	Withdraw  []learnWithdrawInput `json:"withdraw"`
 }
 
 type learnProposalsResponse struct {
 	Proposals []*db.LearnProposal `json:"proposals"`
+	// Withdrawn are the proposals a propose call withdrew.
+	Withdrawn []*db.LearnProposal `json:"withdrawn,omitempty"`
 }
 
-// handleCreateLearnProposals files a learn pass's proposals. The id is the
-// hidden learn thread; the proposals belong to the channel it learns from.
-// Either every proposal is valid and they're all stored, or none are and the
-// error says which one to fix.
+// handleCreateLearnProposals files a learn pass's proposals and withdraws
+// the open ones it found stale. The id is the hidden learn thread; the
+// proposals belong to the channel it learns from. Either every item is valid
+// and it all goes through, or nothing does and the error says which item to
+// fix.
 func (s *Server) handleCreateLearnProposals(w http.ResponseWriter, r *http.Request) {
 	var req createLearnProposalsRequest
 	if !decodeJSON(w, r, &req) {
 		return
 	}
-	if len(req.Proposals) == 0 {
-		http.Error(w, "proposals is required", http.StatusBadRequest)
+	if len(req.Proposals) == 0 && len(req.Withdraw) == 0 {
+		http.Error(w, "proposals or withdraw is required", http.StatusBadRequest)
 		return
 	}
 	if len(req.Proposals) > maxLearnProposals {
 		http.Error(w, fmt.Sprintf("at most %d proposals per call", maxLearnProposals), http.StatusBadRequest)
+		return
+	}
+	if len(req.Withdraw) > maxLearnWithdrawals {
+		http.Error(w, fmt.Sprintf("at most %d withdrawals per call", maxLearnWithdrawals), http.StatusBadRequest)
+		return
+	}
+	withdraw, err := learnWithdrawals(req)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 	if !requireConfigured(w, s.store, "channel listing not configured") {
@@ -75,14 +99,54 @@ func (s *Server) handleCreateLearnProposals(w http.ResponseWriter, r *http.Reque
 		}
 		proposals = append(proposals, p)
 	}
-	if err := s.store.InsertLearnProposals(r.Context(), proposals); err != nil {
+	withdrawn, err := s.store.FileLearnProposals(r.Context(), l.ParentID, proposals, withdraw)
+	var werr *db.LearnWithdrawError
+	if errors.As(err, &werr) {
+		http.Error(w, werr.Error(), http.StatusConflict)
+		return
+	}
+	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 	if s.eventsHub != nil {
-		s.eventsHub.BroadcastLearnProposals(l.ParentID, proposals)
+		s.eventsHub.BroadcastLearnProposals(l.ParentID, proposals, withdrawn)
 	}
-	writeHTTPJSON(w, http.StatusCreated, learnProposalsResponse{Proposals: proposals}, s.logger)
+	writeHTTPJSON(w, http.StatusCreated, learnProposalsResponse{Proposals: proposals, Withdrawn: withdrawn}, s.logger)
+}
+
+// learnWithdrawals checks a propose call's withdrawals and gathers them with
+// the proposals its new ones replace. A proposal may be withdrawn once per
+// call.
+func learnWithdrawals(req createLearnProposalsRequest) ([]db.LearnWithdrawal, error) {
+	var out []db.LearnWithdrawal
+	seen := make(map[int64]bool)
+	add := func(id int64, reason string) error {
+		if seen[id] {
+			return fmt.Errorf("proposal %d is withdrawn twice", id)
+		}
+		seen[id] = true
+		out = append(out, db.LearnWithdrawal{ID: id, Reason: reason})
+		return nil
+	}
+	for i, in := range req.Withdraw {
+		reason, err := learn.ValidateReason(in.Reason)
+		if err == nil {
+			err = add(in.ID, reason)
+		}
+		if err != nil {
+			return nil, fmt.Errorf("withdraw %d: %w", i+1, err)
+		}
+	}
+	for i, in := range req.Proposals {
+		if in.Replaces == 0 {
+			continue
+		}
+		if err := add(in.Replaces, learn.ReplacedReason); err != nil {
+			return nil, fmt.Errorf("proposal %d: replaces: %w", i+1, err)
+		}
+	}
+	return out, nil
 }
 
 // newLearnProposal checks one proposed item and builds its row for the
@@ -104,7 +168,7 @@ func newLearnProposal(l *db.Channel, in learnProposalInput) (*db.LearnProposal, 
 
 // handleListLearnProposals returns a channel's proposals, newest first.
 func (s *Server) handleListLearnProposals(w http.ResponseWriter, r *http.Request) {
-	ch := s.learnChannelFor(w, r)
+	ch := s.visibleChannelFor(w, r)
 	if ch == nil {
 		return
 	}
@@ -144,6 +208,10 @@ func (s *Server) claimLearnProposal(ctx context.Context, w http.ResponseWriter, 
 		return nil
 	}
 	if !ok {
+		// Read it again: a learn pass may have withdrawn it since the lookup.
+		if cur, err := s.store.GetLearnProposal(ctx, id); err == nil && cur != nil {
+			p = cur
+		}
 		http.Error(w, "proposal is already "+p.Status, http.StatusConflict)
 		return nil
 	}

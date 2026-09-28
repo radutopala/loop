@@ -65,14 +65,17 @@ func (a *app) newServeCmd() *cobra.Command {
 func (a *app) ensureImageAsync(ctx context.Context, client container.DockerClient, cfg *config.Config, hub *api.EventsHub, mgr *container.ImageLifecycleManager, logger *slog.Logger) {
 	// Begun here rather than in the goroutine, so a run the daemon starts
 	// right after this returns already waits for the build.
-	mgr.BeginBuild()
-	go func() {
-		defer mgr.EndBuild()
-		a.ensureImageWithBroadcast(ctx, client, cfg, hub, mgr, logger)
-	}()
+	endAgent := mgr.BeginBuild(cfg.ContainerImage)
+	endChrome := mgr.BeginBuild(cfg.Browser.ChromeImage)
+	go a.ensureImageWithBroadcast(ctx, client, cfg, hub, mgr, logger, endAgent, endChrome)
 }
 
-func (a *app) ensureImageWithBroadcast(ctx context.Context, client container.DockerClient, cfg *config.Config, hub *api.EventsHub, mgr *container.ImageLifecycleManager, logger *slog.Logger) {
+// ensureImageWithBroadcast ensures the agent and Chrome images, then rebuilds
+// the project images on the agent image. endAgent and endChrome end the
+// builds ensureImageAsync began: the Chrome image's once it is ensured, the
+// agent image's once the project image cascade has taken over from it.
+func (a *app) ensureImageWithBroadcast(ctx context.Context, client container.DockerClient, cfg *config.Config, hub *api.EventsHub, mgr *container.ImageLifecycleManager, logger *slog.Logger, endAgent, endChrome func()) {
+	defer endAgent()
 	mgr.SetStatus(container.ImageBuildStatus{State: "building", Phase: "checking"})
 	hub.BroadcastImageBuildStatus(events.ImageBuildStatusData{State: "building", Phase: "checking"})
 	logger.Info("ensuring agent image", "image", cfg.ContainerImage)
@@ -80,14 +83,16 @@ func (a *app) ensureImageWithBroadcast(ctx context.Context, client container.Doc
 		mgr.SetStatus(container.ImageBuildStatus{State: "building", Phase: phase})
 		hub.BroadcastImageBuildStatus(events.ImageBuildStatusData{State: "building", Phase: phase})
 	}
-	if err := a.ensureImage(ctx, client, cfg, setPhase); err != nil {
+	err := a.ensureImage(ctx, client, cfg, setPhase)
+	endChrome()
+	if err != nil {
 		logger.Error("ensuring agent image failed", "error", err)
 		mgr.SetStatus(container.ImageBuildStatus{State: "failed", Error: err.Error()})
 		hub.BroadcastImageBuildStatus(events.ImageBuildStatusData{State: "failed", Error: err.Error()})
 	} else {
 		mgr.SetStatus(container.ImageBuildStatus{State: "completed"})
 		hub.BroadcastImageBuildStatus(events.ImageBuildStatusData{State: "completed"})
-		mgr.RebuildChildren(ctx)
+		mgr.RebuildChildren(ctx, endAgent)
 		logger.Info("agent image ready", "image", cfg.ContainerImage)
 	}
 	go mgr.RunUpdateChecker(ctx, 30*time.Minute)
@@ -742,7 +747,7 @@ func (a *app) serve() error {
 		dockerClient.LatestClaudeVersion,
 	)
 	lifecycleMgr.SetContainerRegistry(containerReg)
-	lifecycleMgr.SetSidecarRebuilder(chromeRebuilder{
+	lifecycleMgr.SetSidecarRebuilder(cfg.Browser.ChromeImage, chromeRebuilder{
 		app: a, client: dockerClient, containerDir: containerDir, image: cfg.Browser.ChromeImage,
 	}.rebuild)
 	apiSrv.SetImageManager(lifecycleMgr)
@@ -751,9 +756,9 @@ func (a *app) serve() error {
 	// .loop/container/Dockerfile FROM the agent image get rebuilt whenever
 	// the base image is (re)built, so they never linger on an old base.
 	childImages := container.NewChildImageManager(dockerClient, cfg.ContainerImage,
-		childProjectsLister(store, cfg, config.LoadProjectConfig), logger)
+		childProjectsLister(store, cfg, config.LoadProjectConfig), lifecycleMgr.BeginBuild, logger)
 	lifecycleMgr.SetChildRebuilder(childImages.RebuildStale)
-	runner.SetImageGate(lifecycleMgr, a.version)
+	runner.SetImageGate(lifecycleMgr, a.version, cfg.ContainerImage)
 	if chromeProvider != nil {
 		chromeProvider.SetImageGate(lifecycleMgr)
 	}
@@ -785,6 +790,7 @@ func (a *app) serve() error {
 	executor.SetChannelLocks(orch.ChannelLocksMap())
 	apiSrv.SetIncomingMessageHandler(chatBot)
 	apiSrv.SetRunCanceller(orch)
+	apiSrv.SetExplainer(orch)
 	apiSrv.SetPlanResolver(orch)
 	apiSrv.SetAskResolver(orch)
 	apiSrv.SetQueueResumer(orch)
@@ -837,6 +843,13 @@ func (a *app) serve() error {
 				eventsHub.BroadcastMessagesProcessed(ch, events.MessagesProcessedData{MsgIDs: ids})
 			}
 		}
+	}
+	// Explanations whose run the reset just dropped (or that were never
+	// queued) fail; those still queued resume with their explain thread.
+	if n, err := store.FailInterruptedExplanations(ctx); err != nil {
+		logger.Error("failing interrupted explanations", "error", err)
+	} else if n > 0 {
+		logger.Warn("failed explanations interrupted by the prior daemon run", "count", n)
 	}
 	if pending, err := store.ListPendingChannels(ctx); err != nil {
 		logger.Error("listing pending channels", "error", err)
@@ -1090,9 +1103,9 @@ func childProjectsLister(store channelLister, cfg *config.Config, loadProject fu
 		seenDirs := map[string]bool{}
 		var out []container.ChildProject
 		for _, ch := range chs {
-			// A learn thread shares its parent's dir without carrying the
+			// A hidden thread shares its parent's dir without carrying the
 			// worktree flag, so a worktree thread's would pass for a project.
-			if ch.DirPath == "" || ch.Worktree || ch.Kind == db.ChannelKindLearn || seenDirs[ch.DirPath] {
+			if ch.DirPath == "" || ch.Worktree || db.IsHiddenKind(ch.Kind) || seenDirs[ch.DirPath] {
 				continue
 			}
 			seenDirs[ch.DirPath] = true

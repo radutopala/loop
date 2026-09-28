@@ -62,7 +62,7 @@ func (s *StoreSuite) TestUpsertChannel() {
 func (s *StoreSuite) TestGetChannelWithParentID() {
 	now := time.Now().UTC()
 	rows := newMockChannelRows().
-		AddRow(1, "thread1", "g1", "", "/project", "ch1", "", 1, "", "", 0, "", 0, "", "", 0, 0, "", "", "", "", now, now)
+		AddRow(1, "thread1", "g1", "", "/project", "ch1", "", 1, "", "", 0, "", 0, "", "", 0, 0, "", "", "", "", "", now, now)
 	s.mock.ExpectQuery(`SELECT .+ FROM channels WHERE channel_id`).
 		WithArgs("thread1").
 		WillReturnRows(rows)
@@ -189,7 +189,7 @@ func (s *StoreSuite) TestGetChannel() {
 	now := time.Now().UTC()
 	permJSON := `{"owners":{"users":["U1"],"roles":["admin"]},"members":{"users":[],"roles":[]}}`
 	rows := newMockChannelRows().
-		AddRow(1, "ch1", "g1", "test", "/home/user/project", "", "discord", 1, "sess-123", permJSON, 0, "", 0, "", "", 0, 0, "reviews PRs", "https://example.atlassian.net/browse/PROJ-1", "", "", now, now)
+		AddRow(1, "ch1", "g1", "test", "/home/user/project", "", "discord", 1, "sess-123", permJSON, 0, "", 0, "", "", 0, 0, "reviews PRs", "https://example.atlassian.net/browse/PROJ-1", "", "", "", now, now)
 	s.mock.ExpectQuery(`SELECT .+ FROM channels WHERE channel_id`).
 		WithArgs("ch1").
 		WillReturnRows(rows)
@@ -226,7 +226,7 @@ func (s *StoreSuite) TestGetChannelByDirPath() {
 	now := time.Now().UTC()
 	permJSON := `{"owners":{"users":["U1"],"roles":[]},"members":{"users":["U2"],"roles":[]}}`
 	rows := newMockChannelRows().
-		AddRow(1, "ch1", "g1", "loop", "/home/user/dev/loop", "", "discord", 1, "", permJSON, 0, "", 0, "", "", 0, 0, "", "", "", "", now, now)
+		AddRow(1, "ch1", "g1", "loop", "/home/user/dev/loop", "", "discord", 1, "", permJSON, 0, "", 0, "", "", 0, 0, "", "", "", "", "", now, now)
 	s.mock.ExpectQuery(`SELECT .+ FROM channels WHERE dir_path`).
 		WithArgs("/home/user/dev/loop", types.PlatformDiscord).
 		WillReturnRows(rows)
@@ -256,8 +256,8 @@ func (s *StoreSuite) TestGetChannelByDirPathNotFoundAndError() {
 func (s *StoreSuite) TestGetChannelsByDirPath() {
 	now := time.Now().UTC()
 	rows := newMockChannelRows().
-		AddRow(1, "ch1", "", "loop-local", "/home/user/dev/loop", "", "local", 1, "", "", 0, "", 0, "", "", 0, 0, "", "", "", "", now, now).
-		AddRow(2, "ch2", "g1", "loop-discord", "/home/user/dev/loop", "", "discord", 1, "", "", 0, "", 0, "", "", 0, 0, "", "", "", "", now, now)
+		AddRow(1, "ch1", "", "loop-local", "/home/user/dev/loop", "", "local", 1, "", "", 0, "", 0, "", "", 0, 0, "", "", "", "", "", now, now).
+		AddRow(2, "ch2", "g1", "loop-discord", "/home/user/dev/loop", "", "discord", 1, "", "", 0, "", 0, "", "", 0, 0, "", "", "", "", "", now, now)
 	s.mock.ExpectQuery(`SELECT .+ FROM channels WHERE dir_path`).
 		WithArgs("/home/user/dev/loop").
 		WillReturnRows(rows)
@@ -383,20 +383,25 @@ type deleteStep struct {
 var deleteChannelSteps = []deleteStep{
 	{`DELETE FROM messages WHERE channel_id = \?`, "deleting messages for channel"},
 	{`DELETE FROM quality_snapshots WHERE channel_id = \?`, "deleting quality snapshots for channel"},
-	{`DELETE FROM messages WHERE channel_id IN \(SELECT channel_id FROM channels WHERE kind = 'learn' AND parent_id IN \(\?\)\)`, "deleting learn thread messages"},
-	{`DELETE FROM quality_snapshots WHERE channel_id IN \(SELECT channel_id FROM channels WHERE kind = 'learn' AND parent_id IN \(\?\)\)`, "deleting learn thread quality snapshots"},
+	{`DELETE FROM messages WHERE channel_id IN \(SELECT channel_id FROM channels WHERE kind IN \(` + hiddenKindsRe + `\) AND parent_id IN \(\?\)\)`, "deleting hidden thread messages"},
+	{`DELETE FROM quality_snapshots WHERE channel_id IN \(SELECT channel_id FROM channels WHERE kind IN \(` + hiddenKindsRe + `\) AND parent_id IN \(\?\)\)`, "deleting hidden thread quality snapshots"},
 	{`DELETE FROM learn_proposals WHERE channel_id IN \(\?\)`, "deleting learn proposals"},
-	{`DELETE FROM channels WHERE kind = 'learn' AND parent_id IN \(\?\)`, "deleting learn threads"},
+	{`DELETE FROM explanations WHERE channel_id IN \(\?\)`, "deleting explanations"},
+	{`DELETE FROM channels WHERE kind IN \(` + hiddenKindsRe + `\) AND parent_id IN \(\?\)`, "deleting hidden threads"},
 	{`DELETE FROM channels WHERE channel_id = \?`, ""},
 }
 
-const childIDs = `SELECT channel_id FROM channels WHERE parent_id = \?`
+const (
+	childIDs      = `SELECT channel_id FROM channels WHERE parent_id = \?`
+	hiddenKindsRe = `'learn', 'explain'`
+)
 
 var deleteChildrenSteps = []deleteStep{
-	{`DELETE FROM messages WHERE channel_id IN \(SELECT channel_id FROM channels WHERE kind = 'learn' AND parent_id IN \(` + childIDs + `\)\)`, "deleting learn thread messages"},
-	{`DELETE FROM quality_snapshots WHERE channel_id IN \(SELECT channel_id FROM channels WHERE kind = 'learn' AND parent_id IN \(` + childIDs + `\)\)`, "deleting learn thread quality snapshots"},
+	{`DELETE FROM messages WHERE channel_id IN \(SELECT channel_id FROM channels WHERE kind IN \(` + hiddenKindsRe + `\) AND parent_id IN \(` + childIDs + `\)\)`, "deleting hidden thread messages"},
+	{`DELETE FROM quality_snapshots WHERE channel_id IN \(SELECT channel_id FROM channels WHERE kind IN \(` + hiddenKindsRe + `\) AND parent_id IN \(` + childIDs + `\)\)`, "deleting hidden thread quality snapshots"},
 	{`DELETE FROM learn_proposals WHERE channel_id IN \(` + childIDs + `\)`, "deleting learn proposals"},
-	{`DELETE FROM channels WHERE kind = 'learn' AND parent_id IN \(` + childIDs + `\)`, "deleting learn threads"},
+	{`DELETE FROM explanations WHERE channel_id IN \(` + childIDs + `\)`, "deleting explanations"},
+	{`DELETE FROM channels WHERE kind IN \(` + hiddenKindsRe + `\) AND parent_id IN \(` + childIDs + `\)`, "deleting hidden threads"},
 	{`DELETE FROM messages WHERE channel_id IN \(` + childIDs + `\)`, "deleting messages for child channels"},
 	{`DELETE FROM quality_snapshots WHERE channel_id IN \(` + childIDs + `\)`, "deleting quality snapshots for child channels"},
 	{`DELETE FROM channels WHERE parent_id = \?`, ""},
@@ -498,8 +503,8 @@ func (s *StoreSuite) TestListChannels() {
 	now := time.Now().UTC()
 	permJSON := `{"owners":{"users":["U1"],"roles":[]},"members":{"users":[],"roles":[]}}`
 	rows := newMockChannelRows().
-		AddRow(1, "ch1", "g1", "alpha", "/home/user/alpha", "", "discord", 1, "sess-1", permJSON, 0, "", 0, "", "", 0, 0, "", "", "", "", now, now).
-		AddRow(2, "ch2", "g1", "beta", "/home/user/beta", "ch1", "discord", 0, "sess-2", "", 0, "", 1, "", "", 0, 0, "", "", "", "", now, now)
+		AddRow(1, "ch1", "g1", "alpha", "/home/user/alpha", "", "discord", 1, "sess-1", permJSON, 0, "", 0, "", "", 0, 0, "", "", "", "", "", now, now).
+		AddRow(2, "ch2", "g1", "beta", "/home/user/beta", "ch1", "discord", 0, "sess-2", "", 0, "", 1, "", "", 0, 0, "", "", "", "", "", now, now)
 	s.mock.ExpectQuery(`SELECT .+ FROM channels ORDER BY name ASC`).
 		WillReturnRows(rows)
 
@@ -576,7 +581,7 @@ func (s *StoreSuite) TestListChannelsErrors() {
 	require.Nil(s.T(), channels)
 
 	s.mock.ExpectQuery(`SELECT .+ FROM channels ORDER BY name ASC`).WillReturnRows(
-		newMockChannelRows().AddRow("not-an-int", "ch1", "g1", "test", "/home/user/project", "", "", 1, "sess-1", "", 0, "", 0, "", "", 0, 0, "", "", "", "", time.Now().UTC(), time.Now().UTC()))
+		newMockChannelRows().AddRow("not-an-int", "ch1", "g1", "test", "/home/user/project", "", "", 1, "sess-1", "", 0, "", 0, "", "", 0, 0, "", "", "", "", "", time.Now().UTC(), time.Now().UTC()))
 	channels, err = s.store.ListChannels(context.Background())
 	require.Error(s.T(), err)
 	require.Nil(s.T(), channels)

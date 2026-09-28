@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -30,23 +31,52 @@ func (s *ServerSuite) serve(method, path, body string) *httptest.ResponseRecorde
 func (s *ServerSuite) TestCreateLearnProposals() {
 	learnCh := &db.Channel{ChannelID: "l-1", ParentID: "ch-1", Kind: db.ChannelKindLearn}
 	valid := `{"kind":"rename","title":" Rename it ","rationale":" it's about login ","payload":{"name":"login"}}`
+	stale := &db.LearnProposal{ID: 3, ChannelID: "ch-1", Kind: db.LearnKindRename, Status: db.LearnWithdrawn, WithdrawnReason: "stale"}
+	withdraw := func(n int) string {
+		items := make([]string, n)
+		for i := range items {
+			items[i] = fmt.Sprintf(`{"id":%d,"reason":"stale"}`, i+1)
+		}
+		return `"withdraw":[` + strings.Join(items, ",") + `]`
+	}
 	tests := []struct {
-		name      string
-		body      string
-		noStore   bool
-		channel   *db.Channel
-		getErr    error
-		insertErr error
-		hub       bool
-		wantCode  int
-		wantBody  string
+		name         string
+		body         string
+		noStore      bool
+		channel      *db.Channel
+		getErr       error
+		withdrawn    []*db.LearnProposal
+		insertErr    error
+		hub          bool
+		wantCode     int
+		wantBody     string
+		wantWithdraw []db.LearnWithdrawal
+		wantFiled    bool
 	}{
 		{name: "bad json", body: `{`, wantCode: http.StatusBadRequest},
-		{name: "no proposals", body: `{"proposals":[]}`, wantCode: http.StatusBadRequest, wantBody: "proposals is required"},
+		{name: "nothing to do", body: `{"proposals":[],"withdraw":[]}`, wantCode: http.StatusBadRequest, wantBody: "proposals or withdraw is required"},
 		{
 			name:     "too many",
 			body:     `{"proposals":[` + strings.TrimSuffix(strings.Repeat(valid+",", 6), ",") + `]}`,
 			wantCode: http.StatusBadRequest, wantBody: "at most 5 proposals",
+		},
+		{name: "too many withdrawals", body: `{` + withdraw(21) + `}`, wantCode: http.StatusBadRequest, wantBody: "at most 20 withdrawals"},
+		{name: "no reason", body: `{"withdraw":[{"id":3,"reason":" "}]}`, wantCode: http.StatusBadRequest, wantBody: "withdraw 1: reason is required"},
+		{
+			name:     "withdrawn twice",
+			body:     `{"withdraw":[{"id":3,"reason":"a"},{"id":3,"reason":"b"}]}`,
+			wantCode: http.StatusBadRequest, wantBody: "withdraw 2: proposal 3 is withdrawn twice",
+		},
+		{
+			name:     "replaces one withdrawn",
+			body:     `{"proposals":[{"kind":"rename","title":"t","payload":{"name":"x"},"replaces":3}],"withdraw":[{"id":3,"reason":"a"}]}`,
+			wantCode: http.StatusBadRequest, wantBody: "proposal 1: replaces: proposal 3 is withdrawn twice",
+		},
+		{
+			name:    "not open",
+			body:    `{"withdraw":[{"id":3,"reason":"stale"}]}`,
+			channel: learnCh, insertErr: &db.LearnWithdrawError{ID: 3, Status: db.LearnApplying},
+			wantCode: http.StatusConflict, wantBody: "proposal 3 is applying; only pending or failed proposals can be withdrawn",
 		},
 		{name: "no store", body: `{"proposals":[` + valid + `]}`, noStore: true, wantCode: http.StatusNotImplemented},
 		{name: "lookup error", body: `{"proposals":[` + valid + `]}`, getErr: errors.New("db down"), wantCode: http.StatusInternalServerError},
@@ -63,8 +93,20 @@ func (s *ServerSuite) TestCreateLearnProposals() {
 			channel: learnCh, wantCode: http.StatusBadRequest, wantBody: "rationale is longer than 1000",
 		},
 		{name: "insert error", body: `{"proposals":[` + valid + `]}`, channel: learnCh, insertErr: errors.New("disk full"), wantCode: http.StatusInternalServerError},
-		{name: "stored", body: `{"proposals":[` + valid + `]}`, channel: learnCh, wantCode: http.StatusCreated},
-		{name: "stored and broadcast", body: `{"proposals":[` + valid + `]}`, channel: learnCh, hub: true, wantCode: http.StatusCreated},
+		{name: "stored", body: `{"proposals":[` + valid + `]}`, channel: learnCh, wantCode: http.StatusCreated, wantFiled: true},
+		{name: "stored and broadcast", body: `{"proposals":[` + valid + `]}`, channel: learnCh, hub: true, wantCode: http.StatusCreated, wantFiled: true},
+		{
+			name:    "withdraw only",
+			body:    `{"withdraw":[{"id":3,"reason":"  stale  "}]}`,
+			channel: learnCh, withdrawn: []*db.LearnProposal{stale}, hub: true, wantCode: http.StatusCreated,
+			wantWithdraw: []db.LearnWithdrawal{{ID: 3, Reason: "stale"}},
+		},
+		{
+			name:    "replaces and withdraws",
+			body:    `{"proposals":[` + strings.TrimSuffix(valid, "}") + `,"replaces":4}],"withdraw":[{"id":3,"reason":"stale"}]}`,
+			channel: learnCh, withdrawn: []*db.LearnProposal{stale}, wantCode: http.StatusCreated, wantFiled: true,
+			wantWithdraw: []db.LearnWithdrawal{{ID: 3, Reason: "stale"}, {ID: 4, Reason: learn.ReplacedReason}},
+		},
 	}
 	for _, tc := range tests {
 		s.Run(tc.name, func() {
@@ -76,7 +118,7 @@ func (s *ServerSuite) TestCreateLearnProposals() {
 				s.srv.eventsHub = NewEventsHub(testLogger())
 			}
 			s.store.On("GetChannel", mock.Anything, "l-1").Return(tc.channel, tc.getErr)
-			s.store.On("InsertLearnProposals", mock.Anything, mock.Anything).Return(tc.insertErr)
+			s.store.On("FileLearnProposals", mock.Anything, "ch-1", mock.Anything, mock.Anything).Return(tc.withdrawn, tc.insertErr)
 
 			w := s.serve("POST", "/api/channels/l-1/learn/proposals", tc.body)
 			require.Equal(s.T(), tc.wantCode, w.Code, w.Body.String())
@@ -84,12 +126,18 @@ func (s *ServerSuite) TestCreateLearnProposals() {
 			if tc.wantCode != http.StatusCreated {
 				return
 			}
+			s.store.AssertCalled(s.T(), "FileLearnProposals", mock.Anything, "ch-1", mock.Anything, tc.wantWithdraw)
 			var resp learnProposalsResponse
 			require.NoError(s.T(), json.Unmarshal(w.Body.Bytes(), &resp))
-			require.Equal(s.T(), []*db.LearnProposal{{
-				ChannelID: "ch-1", LearnChannelID: "l-1", Kind: db.LearnKindRename,
-				Title: "Rename it", Rationale: "it's about login", Payload: `{"name":"login"}`,
-			}}, resp.Proposals)
+			want := []*db.LearnProposal{}
+			if tc.wantFiled {
+				want = []*db.LearnProposal{{
+					ChannelID: "ch-1", LearnChannelID: "l-1", Kind: db.LearnKindRename,
+					Title: "Rename it", Rationale: "it's about login", Payload: `{"name":"login"}`,
+				}}
+			}
+			require.Equal(s.T(), want, resp.Proposals)
+			require.Len(s.T(), resp.Withdrawn, len(tc.withdrawn))
 		})
 	}
 }
@@ -130,16 +178,18 @@ func (s *ServerSuite) TestListLearnProposals() {
 func (s *ServerSuite) TestSettleLearnProposalErrors() {
 	pending := &db.LearnProposal{ID: 7, ChannelID: "ch-1", Kind: db.LearnKindRename, Payload: `{"name":"x"}`, Status: db.LearnPending}
 	tests := []struct {
-		name     string
-		path     string
-		noStore  bool
-		proposal *db.LearnProposal
-		getErr   error
-		claimed  bool
-		claimErr error
-		setErr   error
-		wantCode int
-		wantBody string
+		name      string
+		path      string
+		noStore   bool
+		proposal  *db.LearnProposal
+		getErr    error
+		reread    *db.LearnProposal
+		rereadErr error
+		claimed   bool
+		claimErr  error
+		setErr    error
+		wantCode  int
+		wantBody  string
 	}{
 		{name: "no store", path: "/api/learn/proposals/7/dismiss", noStore: true, wantCode: http.StatusNotImplemented},
 		{name: "bad id", path: "/api/learn/proposals/x/dismiss", wantCode: http.StatusBadRequest, wantBody: "invalid id"},
@@ -151,6 +201,16 @@ func (s *ServerSuite) TestSettleLearnProposalErrors() {
 			proposal: &db.LearnProposal{ID: 7, Status: db.LearnApplied},
 			wantCode: http.StatusConflict, wantBody: "proposal is already applied",
 		},
+		{
+			name: "withdrawn meanwhile", path: "/api/learn/proposals/7/dismiss",
+			proposal: pending, reread: &db.LearnProposal{ID: 7, Status: db.LearnWithdrawn},
+			wantCode: http.StatusConflict, wantBody: "proposal is already withdrawn",
+		},
+		{
+			name: "reread error", path: "/api/learn/proposals/7/apply",
+			proposal: pending, rereadErr: errors.New("db down"),
+			wantCode: http.StatusConflict, wantBody: "proposal is already pending",
+		},
 		{name: "status error", path: "/api/learn/proposals/7/dismiss", proposal: pending, claimed: true, setErr: errors.New("db down"), wantCode: http.StatusInternalServerError},
 	}
 	for _, tc := range tests {
@@ -159,7 +219,12 @@ func (s *ServerSuite) TestSettleLearnProposalErrors() {
 			if tc.noStore {
 				s.srv.store = nil
 			}
-			s.store.On("GetLearnProposal", mock.Anything, int64(7)).Return(tc.proposal, tc.getErr)
+			s.store.On("GetLearnProposal", mock.Anything, int64(7)).Return(tc.proposal, tc.getErr).Once()
+			if tc.reread != nil || tc.rereadErr != nil {
+				s.store.On("GetLearnProposal", mock.Anything, int64(7)).Return(tc.reread, tc.rereadErr).Once()
+			} else {
+				s.store.On("GetLearnProposal", mock.Anything, int64(7)).Return(tc.proposal, tc.getErr)
+			}
 			s.store.On("ClaimLearnProposal", mock.Anything, int64(7)).Return(tc.claimed, tc.claimErr)
 			s.store.On("SetLearnProposalStatus", mock.Anything, int64(7), mock.Anything, mock.Anything).Return(tc.setErr)
 

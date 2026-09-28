@@ -46,6 +46,11 @@ type ChildImageManager struct {
 	// to the channels store + config merge by the daemon.
 	listProjects func(ctx context.Context) ([]ChildProject, error)
 
+	// beginBuild marks an image as being built until the returned func is
+	// called, so containers wait for it. Wired to
+	// ImageLifecycleManager.BeginBuild by the daemon.
+	beginBuild func(images ...string) (end func())
+
 	// readFile is injectable for tests; nil → os.ReadFile.
 	readFile func(string) ([]byte, error)
 
@@ -53,12 +58,13 @@ type ChildImageManager struct {
 }
 
 // NewChildImageManager creates a manager for the given base image.
-func NewChildImageManager(client DockerClient, baseImage string, listProjects func(ctx context.Context) ([]ChildProject, error), logger *slog.Logger) *ChildImageManager {
+func NewChildImageManager(client DockerClient, baseImage string, listProjects func(ctx context.Context) ([]ChildProject, error), beginBuild func(images ...string) (end func()), logger *slog.Logger) *ChildImageManager {
 	return &ChildImageManager{
 		client:       client,
 		baseImage:    baseImage,
 		logger:       logger,
 		listProjects: listProjects,
+		beginBuild:   beginBuild,
 		readFile:     os.ReadFile,
 	}
 }
@@ -68,9 +74,17 @@ func NewChildImageManager(client DockerClient, baseImage string, listProjects fu
 // overrides container_image, autobuild is not disabled, a Dockerfile exists
 // at .loop/container/Dockerfile, and that Dockerfile has a stage FROM the
 // base image. Failures are logged per child and never abort the cascade.
-func (m *ChildImageManager) RebuildStale(ctx context.Context) {
+//
+// The stale children are all marked as building (see beginBuild) before
+// handoff is called and the first of them is built, and each stays marked
+// until its own build is done, so a container on a project image waits for
+// that image's rebuild and nothing else. handoff is called exactly once,
+// also when there is nothing to rebuild.
+func (m *ChildImageManager) RebuildStale(ctx context.Context, handoff func()) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	handoff = sync.OnceFunc(handoff)
+	defer handoff()
 
 	if m.baseImage == "" {
 		return
@@ -88,6 +102,11 @@ func (m *ChildImageManager) RebuildStale(ctx context.Context) {
 		return
 	}
 
+	type staleChild struct {
+		image, contextDir string
+		end               func()
+	}
+	var stale []staleChild
 	seen := map[string]bool{}
 	for _, p := range projects {
 		if p.Image == "" || p.Image == m.baseImage || !p.Autobuild || seen[p.Image] {
@@ -110,15 +129,24 @@ func (m *ChildImageManager) RebuildStale(ctx context.Context) {
 		if labels, err := m.client.ImageInspectLabels(ctx, p.Image); err == nil && labels != nil && labels[ParentIDLabel] == parentID {
 			continue // already built on the current base
 		}
+		stale = append(stale, staleChild{image: p.Image, contextDir: filepath.Dir(dockerfile)})
+	}
 
+	for i := range stale {
+		stale[i].end = m.beginBuild(stale[i].image)
+	}
+	handoff()
+
+	for _, c := range stale {
 		m.logger.Info("child images: rebuilding on new base",
-			"image", p.Image, "base", m.baseImage, "parent_id", parentID)
-		contextDir := filepath.Dir(dockerfile)
-		if err := m.client.ImageBuildFileLabels(ctx, contextDir, "Dockerfile", p.Image, map[string]string{ParentIDLabel: parentID}); err != nil {
-			m.logger.Error("child images: rebuild failed", "image", p.Image, "error", err)
+			"image", c.image, "base", m.baseImage, "parent_id", parentID)
+		err := m.client.ImageBuildFileLabels(ctx, c.contextDir, "Dockerfile", c.image, map[string]string{ParentIDLabel: parentID})
+		c.end()
+		if err != nil {
+			m.logger.Error("child images: rebuild failed", "image", c.image, "error", err)
 			continue
 		}
-		m.logger.Info("child images: rebuilt", "image", p.Image)
+		m.logger.Info("child images: rebuilt", "image", c.image)
 	}
 }
 
@@ -146,11 +174,13 @@ func dockerfileFromBase(content, base string) bool {
 // imageRefEquals compares two image references, treating a missing tag as
 // ":latest" on either side.
 func imageRefEquals(a, b string) bool {
-	norm := func(r string) string {
-		if !strings.Contains(r, ":") {
-			return r + ":latest"
-		}
-		return r
+	return normalizeImageRef(a) == normalizeImageRef(b)
+}
+
+// normalizeImageRef tags an untagged image reference ":latest".
+func normalizeImageRef(r string) string {
+	if !strings.Contains(r, ":") {
+		return r + ":latest"
 	}
-	return norm(a) == norm(b)
+	return r
 }

@@ -422,11 +422,11 @@ func (s *SQLiteStore) GetMessagesCursor(ctx context.Context, channelID string, c
 }
 
 // SearchMessages returns the messages whose content contains query, newest
-// first, across every channel but the hidden learn threads.
+// first, across every channel but the hidden learn and explain threads.
 func (s *SQLiteStore) SearchMessages(ctx context.Context, query string, limit int) ([]*Message, error) {
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT `+messageColumns+` FROM messages WHERE kind = 'message' AND content LIKE ?
-		 AND channel_id NOT IN (SELECT channel_id FROM channels WHERE kind = '`+ChannelKindLearn+`')
+		 AND channel_id NOT IN (SELECT channel_id FROM channels WHERE kind IN (`+hiddenKinds+`))
 		 ORDER BY created_at DESC LIMIT ?`,
 		"%"+query+"%", limit,
 	)

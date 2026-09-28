@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -15,6 +16,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/radutopala/loop/internal/db"
+	"github.com/radutopala/loop/internal/explain"
 	"github.com/radutopala/loop/internal/learn"
 	"github.com/radutopala/loop/internal/testutil"
 )
@@ -90,6 +92,11 @@ func (s *ServerSuite) TestSessionListSuccess() {
 	learnHead, err := json.Marshal(map[string]string{"type": "queue-operation", "operation": "enqueue", "content": "loop: " + learn.TriggerMessage("api", "")})
 	require.NoError(s.T(), err)
 	require.NoError(s.T(), os.WriteFile(filepath.Join(projectDir, "session-learn-old.jsonl"), append(learnHead, '\n'), 0644))
+	// Nor are explanations', likewise.
+	require.NoError(s.T(), os.WriteFile(filepath.Join(projectDir, "session-explain-now.jsonl"), []byte(userLine+"\n"), 0644))
+	explainHead, err := json.Marshal(map[string]string{"type": "queue-operation", "operation": "enqueue", "content": "loop: " + explain.TriggerMessage("api", "fix it", "Fixed.")})
+	require.NoError(s.T(), err)
+	require.NoError(s.T(), os.WriteFile(filepath.Join(projectDir, "session-explain-old.jsonl"), append(explainHead, '\n'), 0644))
 
 	// Also create a non-.jsonl file and a directory that should be skipped.
 	require.NoError(s.T(), os.WriteFile(filepath.Join(projectDir, "notes.txt"), []byte("hi"), 0644))
@@ -119,6 +126,7 @@ func (s *ServerSuite) TestSessionListSuccess() {
 	s.store.On("ListChannels", mock.Anything).Return([]*db.Channel{
 		{ChannelID: "thread-1", ParentID: "ch-1", SessionID: "session-bbb"},
 		{ChannelID: "learn-1", ParentID: "ch-1", SessionID: "session-learn-now", Kind: db.ChannelKindLearn},
+		{ChannelID: "explain-1", ParentID: "ch-1", SessionID: "session-explain-now", Kind: db.ChannelKindExplain},
 		// A pass about to fork session-aaa borrows its id meanwhile.
 		{ChannelID: "learn-2", ParentID: "thread-1", SessionID: "session-aaa", Kind: db.ChannelKindLearn, ForkPending: true},
 	}, nil).Maybe()
@@ -145,7 +153,7 @@ func (s *ServerSuite) TestSessionListSuccess() {
 	require.Empty(s.T(), resp.Sessions[0].LastMessage)                       // session-ccc (empty)
 
 	// Verify imported_session_ids — session-bbb is already a thread.
-	require.Equal(s.T(), []string{"session-bbb", "session-learn-now", "session-aaa"}, resp.ImportedSessionIDs)
+	require.Equal(s.T(), []string{"session-bbb", "session-learn-now", "session-explain-now", "session-aaa"}, resp.ImportedSessionIDs)
 }
 
 func (s *ServerSuite) TestFindLastMessage() {
@@ -194,7 +202,7 @@ func (s *ServerSuite) TestReadSessionSummaryFileNotFound() {
 	require.False(s.T(), isLearn)
 }
 
-func (s *ServerSuite) TestIsLearnSession() {
+func (s *ServerSuite) TestIsHiddenSession() {
 	trigger := func(op string) string {
 		line, _ := json.Marshal(map[string]string{"type": "queue-operation", "operation": op, "content": "loop: " + learn.TriggerMessage("api", "fix it")})
 		return string(line) + "\n"
@@ -206,6 +214,7 @@ func (s *ServerSuite) TestIsLearnSession() {
 		want bool
 	}{
 		{"learn pass fork", meta + trigger("enqueue") + `{"type":"user","message":{"role":"user","content":"radu: hi"}}` + "\n", true},
+		{"explanation fork", `{"type":"queue-operation","operation":"enqueue","content":` + strconv.Quote("loop: "+explain.TriggerMessage("api", "", "Done.")) + "}\n", true},
 		{"chat session", meta + `{"type":"queue-operation","operation":"enqueue","content":"radu: fix it"}` + "\n" + trigger("enqueue"), false},
 		{"dequeue skipped", trigger("dequeue"), false},
 		{"broken line skipped", `{"type":"queue-operation"` + "\n" + trigger("enqueue"), true},
@@ -214,7 +223,7 @@ func (s *ServerSuite) TestIsLearnSession() {
 	}
 	for _, tc := range tests {
 		s.Run(tc.name, func() {
-			require.Equal(s.T(), tc.want, isLearnSession(strings.NewReader(tc.head)))
+			require.Equal(s.T(), tc.want, isHiddenSession(strings.NewReader(tc.head)))
 		})
 	}
 }

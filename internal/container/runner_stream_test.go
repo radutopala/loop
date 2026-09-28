@@ -58,6 +58,7 @@ func TestParseStreamJSON(t *testing.T) {
 				Type:      "result",
 				Result:    "ok",
 				SessionID: "s3",
+				Output:    "some garbage",
 			},
 		},
 		{
@@ -69,6 +70,22 @@ func TestParseStreamJSON(t *testing.T) {
 			name:    "empty input",
 			input:   "",
 			wantErr: "no result event found",
+		},
+		{
+			name:    "no result event carries the output tail",
+			input:   "Error: ENOSPC: no space left on device, write\n" + `{"type":"assistant","message":"hi"}`,
+			wantErr: "parsing claude response: no result event found; last output:\nError: ENOSPC: no space left on device, write",
+		},
+		{
+			name:  "error result keeps subtype and errors",
+			input: `{"type":"result","subtype":"error_during_execution","is_error":true,"errors":["boom"],"session_id":"s5"}`,
+			wantResp: &claudeResponse{
+				Type:      "result",
+				Subtype:   "error_during_execution",
+				IsError:   true,
+				Errors:    []string{"boom"},
+				SessionID: "s5",
+			},
 		},
 		{
 			name:  "large intermediate line exceeding default scanner buffer",

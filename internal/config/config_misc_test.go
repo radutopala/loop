@@ -532,6 +532,32 @@ func (s *ConfigSuite) TestLearnConfigLoad() {
 	}
 }
 
+func (s *ConfigSuite) TestExplainConfigLoad() {
+	tests := []struct {
+		name string
+		json string
+		want ExplainConfig
+	}{
+		{name: "absent", json: ``, want: ExplainConfig{}},
+		{name: "empty", json: `, "explain": {}`, want: ExplainConfig{}},
+		{
+			name: "all fields",
+			json: `, "explain": {"enabled": true, "model": "m", "effort": "low", "prompt": "p"}`,
+			want: ExplainConfig{Enabled: true, Model: "m", Effort: "low", Prompt: "p"},
+		},
+	}
+	for _, tc := range tests {
+		s.Run(tc.name, func() {
+			s.loader.readFile = func(_ string) ([]byte, error) {
+				return []byte(`{"platforms": ["discord"], "discord_token": "t", "discord_app_id": "a"` + tc.json + `}`), nil
+			}
+			cfg, err := s.loader.load()
+			require.NoError(s.T(), err)
+			require.Equal(s.T(), tc.want, cfg.Explain)
+		})
+	}
+}
+
 func (s *ConfigSuite) TestPromptShortcutResolveFromFile() {
 	s.loader.readFile = func(path string) ([]byte, error) {
 		if path == "/loop/shortcuts/review.md" {

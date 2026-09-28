@@ -1,6 +1,6 @@
 import { createContext, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { applyLearnProposal, dismissLearnProposal, fetchLearnProposals, fetchLearnState, type LearnProposal, type LearnState, setLearn as putLearn } from "../api/learn";
-import { inBulk, isOpenProposal, type LearnBulk, learnPassRunning, mergeProposals, newlyAppliedShortcut, nextStaleIn } from "../components/chat/learnState";
+import { inBulk, isOpenProposal, type LearnBulk, learnPassRunning, learnProposalsEventItems, mergeProposals, newlyAppliedShortcut, nextStaleIn } from "../components/chat/learnState";
 import type { AgentStatusData, WSEvent } from "../types";
 import { logErr } from "../utils/log";
 import type { ChatEventListener } from "./useChatStateStore";
@@ -101,8 +101,8 @@ export async function settleProposal(
 
 /**
  * Apply all and Dismiss all: one by one, each proposal still in the bulk's
- * scope when its turn comes (one applied, dismissed or in flight meanwhile
- * is left alone). It stops once stopped (the hook unmounting).
+ * scope when its turn comes (one applied, dismissed, withdrawn or in flight
+ * meanwhile is left alone). It stops once stopped (the hook unmounting).
  */
 export async function runBulk(kind: LearnBulk, proposals: () => LearnProposal[], busy: () => ReadonlySet<number>, settle: (id: number) => Promise<void>, stopped: () => boolean): Promise<void> {
   for (const { id } of proposals().filter((p) => inBulk(kind, p))) {
@@ -213,7 +213,7 @@ export function useLearn(
           setRunning(true);
           break;
         case "learn.proposals":
-          merge((event.data as { proposals: LearnProposal[] }).proposals);
+          merge(learnProposalsEventItems(event.data as { proposals: LearnProposal[]; withdrawn?: LearnProposal[] }));
           break;
         case "learn.proposal_updated":
           merge([event.data as LearnProposal]);

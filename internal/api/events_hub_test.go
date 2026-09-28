@@ -13,8 +13,18 @@ import (
 	"github.com/stretchr/testify/suite"
 
 	"github.com/radutopala/loop/internal/container"
+	"github.com/radutopala/loop/internal/db"
 	"github.com/radutopala/loop/internal/events"
 )
+
+// asJSON is v as a decoded event's data holds it.
+func asJSON(t *testing.T, v any) any {
+	data, err := json.Marshal(v)
+	require.NoError(t, err)
+	var out any
+	require.NoError(t, json.Unmarshal(data, &out))
+	return out
+}
 
 type EventsHubSuite struct {
 	suite.Suite
@@ -588,6 +598,8 @@ func (s *EventsHubSuite) TestBroadcastChannelAgentConfig() {
 // client subscribed to other channels still gets them (nobody is subscribed
 // to a hidden learn thread yet).
 func (s *EventsHubSuite) TestBroadcastLearnEvents() {
+	filed := &db.LearnProposal{ID: 2, ChannelID: "ch-1", Kind: db.LearnKindRename, Status: db.LearnPending}
+	withdrawn := &db.LearnProposal{ID: 1, ChannelID: "ch-1", Kind: db.LearnKindRename, Status: db.LearnWithdrawn, WithdrawnReason: "stale"}
 	tests := []struct {
 		name      string
 		broadcast func(*EventsHub)
@@ -605,6 +617,37 @@ func (s *EventsHubSuite) TestBroadcastLearnEvents() {
 			broadcast: func(hub *EventsHub) { hub.BroadcastLearnStarted("ch-1", "learn-1") },
 			wantType:  "learn.started",
 			wantData:  map[string]any{"learn_channel_id": "learn-1"},
+		},
+		{
+			name:      "learn proposals",
+			broadcast: func(hub *EventsHub) { hub.BroadcastLearnProposals("ch-1", []*db.LearnProposal{filed}, nil) },
+			wantType:  "learn.proposals",
+			wantData:  map[string]any{"proposals": []any{asJSON(s.T(), filed)}},
+		},
+		{
+			name: "learn proposals with withdrawals",
+			broadcast: func(hub *EventsHub) {
+				hub.BroadcastLearnProposals("ch-1", []*db.LearnProposal{}, []*db.LearnProposal{withdrawn})
+			},
+			wantType: "learn.proposals",
+			wantData: map[string]any{"proposals": []any{}, "withdrawn": []any{asJSON(s.T(), withdrawn)}},
+		},
+		{
+			name:      "channel explain",
+			broadcast: func(hub *EventsHub) { hub.BroadcastChannelExplain("ch-1", "off") },
+			wantType:  "channel.explain",
+			wantData:  map[string]any{"explain": "off"},
+		},
+		{
+			name: "explain updated",
+			broadcast: func(hub *EventsHub) {
+				hub.BroadcastExplainUpdated(&db.Explanation{ID: 2, ChannelID: "ch-1", MessageID: "ask-1", ExplainChannelID: "explain-1", Status: db.ExplainDone, Content: "ok"})
+			},
+			wantType: "explain.updated",
+			wantData: map[string]any{
+				"id": float64(2), "channel_id": "ch-1", "message_id": "ask-1", "explain_channel_id": "explain-1",
+				"status": "done", "content": "ok", "created_at": "0001-01-01T00:00:00Z", "updated_at": "0001-01-01T00:00:00Z",
+			},
 		},
 	}
 	for _, tc := range tests {

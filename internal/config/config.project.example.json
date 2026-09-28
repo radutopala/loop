@@ -190,6 +190,12 @@
   //  "min_turns": 5
   //},
 
+  // Explanations for this project (each field overrides global when set; see docs/chat.md#explain-a-turn)
+  //"explain": {
+  //  "enabled": true,
+  //  "prompt": "Call out any change to the public API."
+  //},
+
   // Workflow concurrency limits for this project (overrides global values)
   // 0 means unlimited
   //"workflow_concurrency": {

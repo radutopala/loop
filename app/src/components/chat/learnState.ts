@@ -35,8 +35,14 @@ export function learnKindLabel(kind: string): string {
 // outcome.
 export const LEARN_APPLY_STALE_MS = 60_000;
 
+// A proposal done with: applied, dismissed, or withdrawn by a later learn
+// pass. Its card stays in the list, dimmed.
+export function isSettledProposal(p: LearnProposal): boolean {
+  return p.status === "applied" || p.status === "dismissed" || p.status === "withdrawn";
+}
+
 // A proposal still waiting on the user: never settled, failed and retryable,
-// or stuck applying past LEARN_APPLY_STALE_MS.
+// or stuck applying past LEARN_APPLY_STALE_MS. A withdrawn one isn't.
 export function isOpenProposal(p: LearnProposal, now = Date.now()): boolean {
   if (p.status === "pending" || p.status === "failed") return true;
   return p.status === "applying" && now - Date.parse(p.updated_at) > LEARN_APPLY_STALE_MS;
@@ -86,6 +92,13 @@ export function learnBadgeLabel(running: boolean, open: number): string | null {
   if (running) return "learning…";
   if (open > 0) return `${open} proposal${open === 1 ? "" : "s"}`;
   return null;
+}
+
+// The proposals a learn.proposals event carries: the ones the pass filed,
+// and the earlier ones it withdrew (a call that only withdraws files none),
+// to merge in one go.
+export function learnProposalsEventItems(data: { proposals: LearnProposal[]; withdrawn?: LearnProposal[] }): LearnProposal[] {
+  return [...data.proposals, ...(data.withdrawn ?? [])];
 }
 
 // mergeProposals folds incoming proposals (new or updated) into the list,

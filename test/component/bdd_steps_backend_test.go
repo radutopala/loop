@@ -29,6 +29,7 @@ func registerBackendSteps(ctx *godog.ScenarioContext, tc *TestContext) {
 	ctx.Step(`^I send a GET request to "([^"]*)"$`, tc.sendGET)
 	ctx.Step(`^I send a POST request to "([^"]*)" with body:$`, tc.sendPOST)
 	ctx.Step(`^I send a PATCH request to "([^"]*)" with body:$`, tc.sendPATCH)
+	ctx.Step(`^I send a PUT request to "([^"]*)" with body:$`, tc.sendPUT)
 	ctx.Step(`^I send a DELETE request to "([^"]*)" with body:$`, tc.sendDELETEWithBody)
 	ctx.Step(`^I send a DELETE request to "([^"]*)"$`, tc.sendDELETE)
 
@@ -64,6 +65,9 @@ func registerBackendSteps(ctx *godog.ScenarioContext, tc *TestContext) {
 	ctx.Step(`^I remove every queued message via API$`, tc.removeQueuedViaAPI)
 	ctx.Step(`^the current channel has a learn thread$`, tc.seedLearnThread)
 	ctx.Step(`^the learn thread has a bot message:$`, tc.seedLearnThreadMessage)
+	ctx.Step(`^the learn pass withdraws the proposal "([^"]*)" because "([^"]*)"$`, tc.withdrawLearnProposal)
+	ctx.Step(`^the current channel has a finished turn "([^"]*)" replying "([^"]*)"$`, tc.seedExplainTurn)
+	ctx.Step(`^the turn has an explanation:$`, tc.seedExplanation)
 
 	// Ticket setup steps
 	ctx.Step(`^I create a ticket "([^"]*)" with type "([^"]*)" via API$`, tc.createTicketViaAPI)
@@ -106,6 +110,10 @@ func (tc *TestContext) sendPOST(path string, body *godog.DocString) error {
 
 func (tc *TestContext) sendPATCH(path string, body *godog.DocString) error {
 	return tc.doRequest(http.MethodPatch, path, body.Content)
+}
+
+func (tc *TestContext) sendPUT(path string, body *godog.DocString) error {
+	return tc.doRequest(http.MethodPut, path, body.Content)
 }
 
 func (tc *TestContext) sendDELETEWithBody(path string, body *godog.DocString) error {
@@ -1167,12 +1175,13 @@ func (tc *TestContext) seedLearnThread() error {
 	}
 	defer sqlDB.Close()
 	id := "learn-bdd-" + strconv.FormatInt(time.Now().UnixNano(), 36)
-	if err := db.NewSQLiteStoreFromDB(sqlDB).InsertLearnChannel(context.Background(), &db.Channel{
+	if err := db.NewSQLiteStoreFromDB(sqlDB).InsertHiddenThread(context.Background(), &db.Channel{
 		ChannelID: id,
 		Name:      "learn: " + tc.ChannelID,
 		DirPath:   tc.ChannelDir,
 		ParentID:  tc.ChannelID,
 		Platform:  types.PlatformLocal,
+		Kind:      db.ChannelKindLearn,
 	}); err != nil {
 		return fmt.Errorf("inserting learn thread: %w", err)
 	}
@@ -1203,6 +1212,134 @@ func (tc *TestContext) seedLearnThreadMessage(doc *godog.DocString) error {
 		CreatedAt:   time.Now().UTC(),
 	}); err != nil {
 		return fmt.Errorf("inserting learn thread message: %w", err)
+	}
+	return nil
+}
+
+// withdrawLearnProposal withdraws the current channel's proposal with the
+// given title through the real POST /api/channels/{learn_channel_id}/learn/proposals,
+// as a learn pass does. The id is looked up by title, since the step that
+// filed it doesn't keep it.
+func (tc *TestContext) withdrawLearnProposal(title, reason string) error {
+	if tc.LearnChannelID == "" {
+		return fmt.Errorf("no learn thread; use 'the current channel has a learn thread' first")
+	}
+	if err := tc.doRequest("GET", "/api/channels/{channel_id}/learn/proposals", ""); err != nil {
+		return err
+	}
+	var list struct {
+		Proposals []db.LearnProposal `json:"proposals"`
+	}
+	if err := json.Unmarshal(tc.LastBody, &list); err != nil {
+		return fmt.Errorf("decoding proposals: %w (body: %s)", err, tc.LastBody)
+	}
+	var id int64
+	for _, p := range list.Proposals {
+		if p.Title == title {
+			id = p.ID
+		}
+	}
+	if id == 0 {
+		return fmt.Errorf("no proposal titled %q", title)
+	}
+	body, _ := json.Marshal(map[string]any{"withdraw": []map[string]any{{"id": id, "reason": reason}}})
+	if err := tc.doRequest("POST", "/api/channels/{learn_channel_id}/learn/proposals", string(body)); err != nil {
+		return err
+	}
+	if tc.LastStatus != http.StatusCreated {
+		return fmt.Errorf("withdrawing proposal %d: status %d: %s", id, tc.LastStatus, tc.LastBody)
+	}
+	return nil
+}
+
+// seedExplainTurn writes a finished turn into the current channel: the
+// user's prompt and the bot's reply to it, both processed, as a run leaves
+// them. The reply's msg_id is {explain_msg_id}. They go straight into the
+// daemon's database: posting a prompt through the API would start a run.
+func (tc *TestContext) seedExplainTurn(prompt, reply string) error {
+	if tc.ChannelID == "" {
+		return fmt.Errorf("no channel_id set; use 'I set up a test channel via API' step first")
+	}
+	sqlDB, err := openDaemonDB()
+	if err != nil {
+		return err
+	}
+	defer sqlDB.Close()
+	store := db.NewSQLiteStoreFromDB(sqlDB)
+	suffix := strconv.FormatInt(time.Now().UnixNano(), 36)
+	now := time.Now().UTC()
+	user := &db.Message{
+		ChannelID:   tc.ChannelID,
+		MsgID:       "explain-bdd-prompt-" + suffix,
+		AuthorID:    "user",
+		AuthorName:  "tester",
+		Content:     prompt,
+		IsProcessed: true,
+		CreatedAt:   now,
+	}
+	if err := store.InsertMessage(context.Background(), user); err != nil {
+		return fmt.Errorf("inserting the turn's prompt: %w", err)
+	}
+	bot := &db.Message{
+		ChannelID:    tc.ChannelID,
+		MsgID:        "explain-bdd-reply-" + suffix,
+		AuthorID:     "bot",
+		AuthorName:   "bot",
+		Content:      reply,
+		IsBot:        true,
+		IsProcessed:  true,
+		TriggerMsgID: user.MsgID,
+		CreatedAt:    now.Add(time.Second),
+	}
+	if err := store.InsertMessage(context.Background(), bot); err != nil {
+		return fmt.Errorf("inserting the turn's reply: %w", err)
+	}
+	tc.ExplainMsgID = bot.MsgID
+	return nil
+}
+
+// seedExplanation stores a done explanation of the seeded turn, with the doc
+// string as its content, in the channel's hidden explain thread
+// ({explain_channel_id}), as a finished explain run leaves it. Nothing in
+// the API writes one without running an agent, so it goes straight into the
+// daemon's database. Deleting the channel at cleanup removes both.
+func (tc *TestContext) seedExplanation(doc *godog.DocString) error {
+	if tc.ExplainMsgID == "" {
+		return fmt.Errorf("no turn; use 'the current channel has a finished turn' first")
+	}
+	sqlDB, err := openDaemonDB()
+	if err != nil {
+		return err
+	}
+	defer sqlDB.Close()
+	store := db.NewSQLiteStoreFromDB(sqlDB)
+	ctx := context.Background()
+	suffix := strconv.FormatInt(time.Now().UnixNano(), 36)
+	if tc.ExplainChannelID == "" {
+		id := "explain-bdd-" + suffix
+		if err := store.InsertHiddenThread(ctx, &db.Channel{
+			ChannelID: id,
+			Name:      "explain: " + tc.ChannelID,
+			DirPath:   tc.ChannelDir,
+			ParentID:  tc.ChannelID,
+			Platform:  types.PlatformLocal,
+			Kind:      db.ChannelKindExplain,
+		}); err != nil {
+			return fmt.Errorf("inserting explain thread: %w", err)
+		}
+		tc.ExplainChannelID = id
+	}
+	e, _, err := store.QueueExplanation(ctx, &db.Explanation{
+		ChannelID:        tc.ChannelID,
+		MessageID:        tc.ExplainMsgID,
+		ExplainChannelID: tc.ExplainChannelID,
+		TriggerMsgID:     "explain-bdd-trigger-" + suffix,
+	})
+	if err != nil {
+		return fmt.Errorf("queueing explanation: %w", err)
+	}
+	if err := store.UpdateExplanation(ctx, e.ID, db.ExplainDone, doc.Content, ""); err != nil {
+		return fmt.Errorf("finishing explanation: %w", err)
 	}
 	return nil
 }

@@ -54,8 +54,9 @@ type State struct {
 	Proposals []*db.LearnProposal
 }
 
-// maxDismissed caps how many dismissed proposals the prompt lists.
-const maxDismissed = 20
+// maxSettled caps how many dismissed proposals the prompt lists, and how
+// many withdrawn ones.
+const maxSettled = 20
 
 // SystemPrompt returns the learn agent's system prompt: the built-in
 // instructions, the current state, then the config's learn.prompt.
@@ -90,9 +91,10 @@ func SystemPrompt(st State) string {
 	writeSection(&b, "Agentgate file rules", cfg.Gates.Agentgate.FileRules)
 	writeSection(&b, "Agentgate path rules", cfg.Gates.Agentgate.PathRules)
 	writeSection(&b, "Mounts", cfg.Mounts)
-	waiting, dismissed := proposalSummaries(st.Proposals)
-	writeSection(&b, "Proposals waiting for the user", waiting)
-	writeSection(&b, "Proposals the user dismissed", dismissed)
+	sums := proposalSummaries(st.Proposals)
+	writeSection(&b, "Proposals waiting for the user", sums.waiting)
+	writeSection(&b, "Proposals the user dismissed", sums.dismissed)
+	writeSection(&b, "Proposals earlier passes withdrew", sums.withdrawn)
 	if extra := strings.TrimSpace(cfg.Learn.Prompt); extra != "" {
 		b.WriteString("\n## Additional instructions\n\n")
 		b.WriteString(extra)
@@ -128,30 +130,46 @@ func taskSummaries(tasks []*db.ScheduledTask) []taskSummary {
 }
 
 // proposalSummary is the part of an earlier proposal the learn agent needs to
-// spot a repeat.
+// spot a repeat. A waiting one carries its id and status, so the agent can
+// withdraw it; a withdrawn one, why it was.
 type proposalSummary struct {
+	ID      int64           `json:"id,omitempty"`
+	Status  string          `json:"status,omitempty"`
 	Kind    string          `json:"kind"`
 	Title   string          `json:"title"`
 	Payload json.RawMessage `json:"payload"`
+	Reason  string          `json:"withdrawn_reason,omitempty"`
+}
+
+// proposalSets are a channel's earlier proposals as the prompt lists them.
+type proposalSets struct {
+	waiting, dismissed, withdrawn []proposalSummary
 }
 
 // proposalSummaries splits earlier proposals into those still waiting on the
-// user (pending, applying or failed) and the most recent dismissed ones.
-// Applied proposals show up in the state above already.
-func proposalSummaries(proposals []*db.LearnProposal) (waiting, dismissed []proposalSummary) {
+// user (pending, applying or failed), and the most recent dismissed and
+// withdrawn ones. Applied proposals show up in the state above already.
+func proposalSummaries(proposals []*db.LearnProposal) proposalSets {
+	var sets proposalSets
 	for _, p := range proposals {
 		sum := proposalSummary{Kind: p.Kind, Title: p.Title, Payload: json.RawMessage(p.Payload)}
 		switch p.Status {
 		case db.LearnApplied:
 		case db.LearnDismissed:
-			if len(dismissed) < maxDismissed {
-				dismissed = append(dismissed, sum)
+			if len(sets.dismissed) < maxSettled {
+				sets.dismissed = append(sets.dismissed, sum)
+			}
+		case db.LearnWithdrawn:
+			if len(sets.withdrawn) < maxSettled {
+				sum.Reason = p.WithdrawnReason
+				sets.withdrawn = append(sets.withdrawn, sum)
 			}
 		default:
-			waiting = append(waiting, sum)
+			sum.ID, sum.Status = p.ID, p.Status
+			sets.waiting = append(sets.waiting, sum)
 		}
 	}
-	return waiting, dismissed
+	return sets
 }
 
 // writeSection writes a titled JSON dump of items, or "none" when empty.
@@ -187,10 +205,17 @@ func TriggerMessage(channelName, lastPrompt string) string {
 	return b.String()
 }
 
+// dirHint starts the paragraph a worktree run's prompt is prefixed with.
+const dirHint = "IMPORTANT: Your working directory is "
+
 // IsTrigger reports whether prompt is a TriggerMessage, bare or as the
-// agent got it, behind its author's "name: " prefix. %q keeps the channel
-// name on the first line, so that line alone tells.
+// agent got it: behind its author's "name: " prefix, and in a worktree
+// behind the working directory hint. %q keeps the channel name on the first
+// line, so that line alone tells.
 func IsTrigger(prompt string) bool {
+	if strings.HasPrefix(prompt, dirHint) {
+		_, prompt, _ = strings.Cut(prompt, "\n\n")
+	}
 	line, _, _ := strings.Cut(prompt, "\n")
 	if _, rest, ok := strings.Cut(line, ": "); ok && strings.HasPrefix(rest, triggerLead) {
 		line = rest

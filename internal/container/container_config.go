@@ -16,6 +16,7 @@ import (
 	"strings"
 
 	"github.com/radutopala/loop/internal/config"
+	"github.com/radutopala/loop/internal/explain"
 	"github.com/radutopala/loop/internal/learn"
 	"github.com/radutopala/loop/internal/types"
 )
@@ -170,9 +171,10 @@ func (r *DockerRunner) gitExcludesMount() string {
 // and any user-defined servers from the config. The built-in loop always
 // takes precedence over a user-defined server with the same name.
 func buildMCPConfig(channelID, apiURL, workDir, authorID, agentID string, memoryEnabled, browserEnabled bool, userServers map[string]config.MCPServerConfig) mcpConfig {
-	// A learn pass is read-only: it gets the built-in loop server alone, not
-	// the user's servers or the browser, whose tools can change things.
-	if agentID == learn.AgentID {
+	// A learn pass or an explanation is read-only: it gets the built-in loop
+	// server alone, not the user's servers or the browser, whose tools can
+	// change things.
+	if agentID == learn.AgentID || agentID == explain.AgentID {
 		userServers, browserEnabled = nil, false
 	}
 	servers := make(map[string]mcpServerEntry, len(userServers)+1)

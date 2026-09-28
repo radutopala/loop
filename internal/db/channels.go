@@ -185,7 +185,7 @@ func (s *SQLiteStore) DeleteChannel(ctx context.Context, channelID string) error
 		); err != nil {
 			return fmt.Errorf("deleting quality snapshots for channel: %w", err)
 		}
-		if err := deleteLearnChildren(ctx, tx, `?`, channelID); err != nil {
+		if err := deleteHiddenChildren(ctx, tx, `?`, channelID); err != nil {
 			return err
 		}
 		if _, err := tx.ExecContext(ctx, `DELETE FROM channels WHERE channel_id = ?`, channelID); err != nil {
@@ -197,9 +197,9 @@ func (s *SQLiteStore) DeleteChannel(ctx context.Context, channelID string) error
 
 func (s *SQLiteStore) DeleteChannelsByParentID(ctx context.Context, parentID string) error {
 	return s.withTx(ctx, func(tx *sql.Tx) error {
-		// The children's own learn threads go first, while the children
+		// The children's own hidden threads go first, while the children
 		// still exist to find them by.
-		if err := deleteLearnChildren(ctx, tx, `SELECT channel_id FROM channels WHERE parent_id = ?`, parentID); err != nil {
+		if err := deleteHiddenChildren(ctx, tx, `SELECT channel_id FROM channels WHERE parent_id = ?`, parentID); err != nil {
 			return err
 		}
 		if _, err := tx.ExecContext(ctx,
@@ -218,23 +218,30 @@ func (s *SQLiteStore) DeleteChannelsByParentID(ctx context.Context, parentID str
 	})
 }
 
-// deleteLearnChildren deletes the learn threads under the channels parents
-// selects (a placeholder or a subquery taking arg), their messages and
-// quality snapshots, as DeleteChannel does for any channel, and the learn
-// proposals filed for those channels.
-func deleteLearnChildren(ctx context.Context, tx *sql.Tx, parents string, arg string) error {
-	learnIDs := `SELECT channel_id FROM channels WHERE kind = '` + ChannelKindLearn + `' AND parent_id IN (` + parents + `)`
-	if _, err := tx.ExecContext(ctx, `DELETE FROM messages WHERE channel_id IN (`+learnIDs+`)`, arg); err != nil {
-		return fmt.Errorf("deleting learn thread messages: %w", err)
+// hiddenKinds lists the kinds of hidden thread, as an SQL IN list.
+const hiddenKinds = `'` + ChannelKindLearn + `', '` + ChannelKindExplain + `'`
+
+// deleteHiddenChildren deletes the hidden learn and explain threads under
+// the channels parents selects (a placeholder or a subquery taking arg),
+// their messages and quality snapshots, as DeleteChannel does for any
+// channel, and the learn proposals and explanations filed for those
+// channels.
+func deleteHiddenChildren(ctx context.Context, tx *sql.Tx, parents string, arg string) error {
+	hiddenIDs := `SELECT channel_id FROM channels WHERE kind IN (` + hiddenKinds + `) AND parent_id IN (` + parents + `)`
+	if _, err := tx.ExecContext(ctx, `DELETE FROM messages WHERE channel_id IN (`+hiddenIDs+`)`, arg); err != nil {
+		return fmt.Errorf("deleting hidden thread messages: %w", err)
 	}
-	if _, err := tx.ExecContext(ctx, `DELETE FROM quality_snapshots WHERE channel_id IN (`+learnIDs+`)`, arg); err != nil {
-		return fmt.Errorf("deleting learn thread quality snapshots: %w", err)
+	if _, err := tx.ExecContext(ctx, `DELETE FROM quality_snapshots WHERE channel_id IN (`+hiddenIDs+`)`, arg); err != nil {
+		return fmt.Errorf("deleting hidden thread quality snapshots: %w", err)
 	}
 	if _, err := tx.ExecContext(ctx, `DELETE FROM learn_proposals WHERE channel_id IN (`+parents+`)`, arg); err != nil {
 		return fmt.Errorf("deleting learn proposals: %w", err)
 	}
-	if _, err := tx.ExecContext(ctx, `DELETE FROM channels WHERE kind = '`+ChannelKindLearn+`' AND parent_id IN (`+parents+`)`, arg); err != nil {
-		return fmt.Errorf("deleting learn threads: %w", err)
+	if _, err := tx.ExecContext(ctx, `DELETE FROM explanations WHERE channel_id IN (`+parents+`)`, arg); err != nil {
+		return fmt.Errorf("deleting explanations: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM channels WHERE kind IN (`+hiddenKinds+`) AND parent_id IN (`+parents+`)`, arg); err != nil {
+		return fmt.Errorf("deleting hidden threads: %w", err)
 	}
 	return nil
 }

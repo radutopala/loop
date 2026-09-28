@@ -1,6 +1,10 @@
 package events
 
-import "time"
+import (
+	"time"
+
+	"github.com/radutopala/loop/internal/db"
+)
 
 // Broadcaster broadcasts events to connected clients.
 type Broadcaster interface {
@@ -31,6 +35,7 @@ type Broadcaster interface {
 	BroadcastReviewStatus(channelID string, data ReviewStatusEventData)
 	BroadcastReviewDiff(channelID string, data ReviewDiffEventData)
 	BroadcastLearnStarted(channelID, learnChannelID string)
+	BroadcastExplainUpdated(e *db.Explanation)
 }
 
 // ReviewCommentEventData is the payload for review.comment events. Sent

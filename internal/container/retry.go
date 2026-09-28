@@ -8,6 +8,8 @@ import (
 	"context"
 	"strings"
 	"time"
+
+	"github.com/radutopala/loop/internal/agent"
 )
 
 // nonRetryableMarkers are substrings that, when present, mean a retry will not
@@ -68,6 +70,11 @@ func isRetryableAgentError(err error) bool {
 		return false
 	}
 	msg := strings.ToLower(err.Error())
+	// A full Docker disk stays full; its error can carry the agent's output,
+	// which may happen to mention a retryable status.
+	if agent.IsDiskFull(msg) {
+		return false
+	}
 	for _, m := range nonRetryableMarkers {
 		if strings.Contains(msg, m) {
 			return false

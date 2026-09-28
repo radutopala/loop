@@ -137,11 +137,13 @@ type DockerRunner struct {
 	// POST /api/gate/container-approval).
 	hostDockerSock string // "" -> "/var/run/docker.sock"
 
-	// imageGate, when set, holds container creation while an image build
-	// runs; loopVersion is the daemon's version, which the image must not
-	// be older than (see awaitImage). Set via SetImageGate.
+	// imageGate, when set, holds container creation while the container's
+	// image or baseImage, the agent image project images are built FROM, is
+	// being built; loopVersion is the daemon's version, which the image must
+	// not be older than (see awaitImage). Set via SetImageGate.
 	imageGate   ImageGate
 	loopVersion string
+	baseImage   string
 
 	// Gate approval wiring (stage 2 of agentgate). When both fields below are
 	// set, the runner constructs a per-container agentgate.Manager, registers
@@ -419,8 +421,9 @@ func (r *DockerRunner) runWithRecovery(ctx context.Context, req *agent.AgentRequ
 	// may schedule a session-limit auto-continue). Blind-retrying any of them
 	// here just hits the same wall and burns a second container — the bug where
 	// a weekly-limit error appeared twice a minute apart. resp carries the
-	// failed run's SessionID so the caller can resume.
-	if isAPILimitError(err) {
+	// failed run's SessionID so the caller can resume. A full Docker disk
+	// fails the retry's container the same way.
+	if isAPILimitError(err) || agent.IsDiskFull(err.Error()) {
 		return resp, err
 	}
 	retryResp, retryErr := r.runOnce(ctx, &retryReq)
@@ -547,10 +550,11 @@ func (r *DockerRunner) runOnce(ctx context.Context, req *agent.AgentRequest) (*a
 	}
 
 	if claudeResp.IsError {
+		errText := claudeResp.errorText()
 		return &agent.AgentResponse{
 			SessionID: claudeResp.SessionID,
-			Error:     claudeResp.Result,
-		}, fmt.Errorf("claude returned error: %s", claudeResp.Result)
+			Error:     errText,
+		}, fmt.Errorf("claude returned error: %s", errText)
 	}
 
 	return &agent.AgentResponse{
@@ -853,12 +857,25 @@ func (r *DockerRunner) collectStreamingOutput(ctx context.Context, containerID s
 	}
 
 	if parseErr != nil {
-		if exitCode != 0 {
-			return nil, fmt.Errorf("container exited with code %d: %w", exitCode, parseErr)
-		}
-		return nil, parseErr
+		return nil, exitError(exitCode, parseErr)
 	}
 	return claudeResp, nil
+}
+
+// exitCodeKilled is the exit code of a container whose process got SIGKILL.
+const exitCodeKilled = 137
+
+// exitError adds a non-zero exit code to the error of a run that produced no
+// result. Nothing inside the container reports its own SIGKILL, so a 137
+// names the likely killers instead of leaving the bare code.
+func exitError(exitCode int64, parseErr error) error {
+	switch exitCode {
+	case 0:
+		return parseErr
+	case exitCodeKilled:
+		return fmt.Errorf("container exited with code %d (killed — out of memory or out of disk space): %w", exitCode, parseErr)
+	}
+	return fmt.Errorf("container exited with code %d: %w", exitCode, parseErr)
 }
 
 // collectBatchOutput waits for the container to exit, then reads all logs.
@@ -875,10 +892,7 @@ func (r *DockerRunner) collectBatchOutput(ctx context.Context, containerID strin
 
 	claudeResp, parseErr := scanStreamJSON(reader, streamCallbacks{})
 	if parseErr != nil {
-		if exitCode != 0 {
-			return nil, fmt.Errorf("container exited with code %d: %w", exitCode, parseErr)
-		}
-		return nil, parseErr
+		return nil, exitError(exitCode, parseErr)
 	}
 	return claudeResp, nil
 }

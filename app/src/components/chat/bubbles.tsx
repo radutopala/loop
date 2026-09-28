@@ -11,6 +11,7 @@ import { ContextMenu } from "../shared/ContextMenu";
 import { CopyButton } from "../shared/CopyButton";
 import { buildActivityStyle, buildMessageStyles, ChannelContext, FILE_PATH_TOOLS, renderInputWithLinks } from "./chatShared";
 import { DelayCountdown } from "./DelayCountdown";
+import { ExplainButton } from "./ExplainButton";
 import { MarkdownContent } from "./markdown";
 import { formatMessageTimestamp } from "./timestamps";
 
@@ -114,6 +115,7 @@ export function MessageBubble({
   queuePosition,
   highlighted,
   onQuote,
+  turnEnd,
 }: {
   message: Message;
   showProcessing?: boolean;
@@ -121,6 +123,8 @@ export function MessageBubble({
   queuePosition?: string;
   highlighted?: boolean;
   onQuote?: (msg: Message) => void;
+  /** The bot message ends its turn: it carries the turn's Explain action. */
+  turnEnd?: boolean;
 }) {
   const { colors } = useTheme();
   const styles = buildMessageStyles(colors);
@@ -205,6 +209,7 @@ export function MessageBubble({
             </svg>
             <span style={styles.time}>{time}</span>
             <MessageDbId id={message.id} channelId={message.channel_id} />
+            {turnEnd && <ExplainButton messageId={message.msg_id} />}
           </div>
         )}
         <div style={styles.content}>

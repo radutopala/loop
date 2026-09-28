@@ -141,6 +141,7 @@ type Server struct {
 	branchPoller            *BranchPoller
 	msgHandler              IncomingMessageHandler
 	runCanceller            RunCanceller
+	explainer               Explainer
 	planResolver            PlanResolver
 	queueResumer            QueueResumer
 	askResolver             AskResolver
@@ -503,6 +504,10 @@ func (s *Server) registerAgentRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("PATCH /api/channels/{id}/agent-config", s.handleSetAgentConfig)
 	mux.HandleFunc("GET /api/channels/{id}/learn", s.handleGetLearn)
 	mux.HandleFunc("PUT /api/channels/{id}/learn", s.handleSetLearn)
+	mux.HandleFunc("GET /api/channels/{id}/explain", s.handleGetExplain)
+	mux.HandleFunc("PUT /api/channels/{id}/explain", s.handleSetExplain)
+	mux.HandleFunc("GET /api/channels/{id}/explanations", s.handleListExplanations)
+	mux.HandleFunc("POST /api/channels/{id}/explanations", s.handleExplain)
 	mux.HandleFunc("GET /api/channels/{id}/learn/proposals", s.handleListLearnProposals)
 	mux.HandleFunc("POST /api/channels/{id}/learn/proposals", s.handleCreateLearnProposals)
 	mux.HandleFunc("POST /api/learn/proposals/{id}/apply", s.handleApplyLearnProposal)
