@@ -29,7 +29,9 @@ export function QueuedMessagesPopup({ messages, channelId, isRunning, onEdit, ed
   const [expanded, setExpanded] = useState(false);
   const [expandedRowIds, setExpandedRowIds] = useState<Set<string>>(new Set());
   const [deletingIds, setDeletingIds] = useState<Set<string>>(new Set());
-  const [steeringIds, setSteeringIds] = useState<Set<string>>(new Set());
+  // Rows steered (or being steered): their Steer button stays marked and
+  // disabled, as pressing it again would only stop the agent again.
+  const [steeredIds, setSteeredIds] = useState<Set<string>>(new Set());
   const [copiedIds, setCopiedIds] = useState<Set<string>>(new Set());
   const [startedIds, setStartedIds] = useState<Set<string>>(new Set());
   const [order, setOrder] = useState<string[] | null>(null);
@@ -67,20 +69,22 @@ export function QueuedMessagesPopup({ messages, channelId, isRunning, onEdit, ed
 
   // Steering stops the run and hands the agent this row next. The local order
   // is updated too: the backend has already re-prioritised it, and without this
-  // the row would keep its old position until the queue refetches.
+  // the row would keep its old position until the queue refetches. The row
+  // stays marked steered until the agent takes it out of the queue.
   const handleSteer = async (msgId: string) => {
-    setSteeringIds((prev) => new Set(prev).add(msgId));
+    setSteeredIds((prev) => new Set(prev).add(msgId));
     try {
       await steerQueuedMessage(channelId, msgId);
       setOrder([msgId, ...displayed.map((m) => m.msg_id).filter((id) => id !== msgId)]);
     } catch {
-      // Leave the row where it is — the queue is unchanged if the call failed.
+      // Leave the row where it is, and steerable again: the queue is
+      // unchanged if the call failed.
+      setSteeredIds((prev) => {
+        const next = new Set(prev);
+        next.delete(msgId);
+        return next;
+      });
     }
-    setSteeringIds((prev) => {
-      const next = new Set(prev);
-      next.delete(msgId);
-      return next;
-    });
   };
 
   const handleEdit = async (msg: Message) => {
@@ -228,6 +232,7 @@ export function QueuedMessagesPopup({ messages, channelId, isRunning, onEdit, ed
               const isRowExpanded = expandedRowIds.has(msg.msg_id);
               const isDeleting = deletingIds.has(msg.msg_id);
               const isEditing = editingMsgId === msg.msg_id;
+              const isSteered = steeredIds.has(msg.msg_id);
               return (
                 <div
                   key={msg.msg_id}
@@ -312,9 +317,11 @@ export function QueuedMessagesPopup({ messages, channelId, isRunning, onEdit, ed
                   ) : null}
                   {isRunning && !isEditing ? (
                     <button
+                      data-testid="queued-steer"
+                      data-steered={isSteered ? "true" : undefined}
                       onClick={() => handleSteer(msg.msg_id)}
-                      disabled={steeringIds.has(msg.msg_id) || isDeleting}
-                      title="Stop the agent and send this next"
+                      disabled={isSteered || isDeleting}
+                      title={isSteered ? "Steered: it goes next" : "Stop the agent and send this next"}
                       style={{
                         flexShrink: 0,
                         display: "flex",
@@ -324,24 +331,24 @@ export function QueuedMessagesPopup({ messages, channelId, isRunning, onEdit, ed
                         padding: "0 4px",
                         background: "none",
                         border: "none",
-                        color: colors.textDim,
-                        cursor: steeringIds.has(msg.msg_id) ? "default" : "pointer",
+                        color: isSteered ? colors.active : colors.textDim,
+                        cursor: isSteered ? "default" : "pointer",
                         fontFamily: fonts.mono,
                         fontSize: 11,
                         borderRadius: 4,
                       }}
                       onMouseEnter={(e) => {
-                        if (!steeringIds.has(msg.msg_id)) e.currentTarget.style.color = colors.textLight;
+                        if (!isSteered) e.currentTarget.style.color = colors.textLight;
                       }}
                       onMouseLeave={(e) => {
-                        e.currentTarget.style.color = colors.textDim;
+                        if (!isSteered) e.currentTarget.style.color = colors.textDim;
                       }}
                     >
                       <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                         <polyline points="15 10 20 15 15 20" />
                         <path d="M4 4v7a4 4 0 0 0 4 4h12" />
                       </svg>
-                      Steer
+                      {isSteered ? "Steered" : "Steer"}
                     </button>
                   ) : null}
                   {onEdit && !isEditing ? (
