@@ -106,10 +106,13 @@ func withoutTool(tools []string, name string) []string {
 
 // learnModeDisallowedTools are denied on top of the batch denials in a learn
 // run. A learn pass only reads the finished run and files proposals through
-// propose_learnings; the user applies them. So it may not edit files, change
-// Loop's config, tasks or threads, or talk to anyone.
+// propose_learnings; the user applies them. So it may not edit files, run
+// commands, change Loop's config, tasks or threads, or talk to anyone. Its
+// MCP config holds the loop server alone (see buildMCPConfig) and
+// --strict-mcp-config keeps any other server out, so no other server's
+// tools reach it either.
 var learnModeDisallowedTools = []string{
-	"Edit", "Write", "NotebookEdit",
+	"Bash", "Edit", "Write", "NotebookEdit",
 	"AskUserQuestion", "EnterPlanMode", "ExitPlanMode",
 	"mcp__loop__prompt_shortcut", "mcp__loop__bash_shortcut",
 	"mcp__loop__schedule_task", "mcp__loop__edit_task", "mcp__loop__toggle_task", "mcp__loop__cancel_task",
@@ -165,6 +168,12 @@ func buildClaudeCmd(cfg *config.Config, mcpConfigPath string, req *agent.AgentRe
 	cmd := buildBaseClaudeCmd(cfg, mcpConfigPath, req.SessionID, req.AgentID, req.ForkSession, false, cfg.ExtraDirs)
 	if req.ReviewMode {
 		cmd = append(cmd, "--settings", reviewModeSettings)
+	}
+	// A learn run's --mcp-config has only the loop server; this makes Claude
+	// ignore every other MCP config too (~/.claude.json, the project's
+	// .mcp.json), so the user's own servers can't act for it.
+	if req.LearnMode {
+		cmd = append(cmd, "--strict-mcp-config")
 	}
 	// Deny tools that only make sense in a persistent interactive harness.
 	// In one-shot `--print` mode the container exits at end of turn, so tools

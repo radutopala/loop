@@ -289,6 +289,14 @@ func (s *Server) handleDeleteChannel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// The learn threads go with the channel and its threads; note them
+	// while their parents still exist to find them by.
+	threadIDs, err := s.store.ListChannelIDsByParentID(r.Context(), channelID)
+	if err != nil {
+		s.logger.Warn("channel cleanup: listing threads", "channel_id", channelID, "error", err)
+	}
+	learnIDs := s.learnThreadIDs(r.Context(), append([]string{channelID}, threadIDs...)...)
+
 	// Delete child threads first.
 	if err := s.store.DeleteChannelsByParentID(r.Context(), channelID); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -302,27 +310,64 @@ func (s *Server) handleDeleteChannel(w http.ResponseWriter, r *http.Request) {
 
 	// Clean up containers associated with this channel.
 	s.cleanupChannelContainers(r.Context(), channelID)
+	s.stopLearnThreads(r.Context(), learnIDs)
 
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// learnThreadIDs returns the hidden learn threads of the given channels,
+// which go when those are deleted. A lookup error only loses a learn thread
+// to stop, so it's logged, not returned.
+func (s *Server) learnThreadIDs(ctx context.Context, channelIDs ...string) []string {
+	var learnIDs []string
+	for _, id := range channelIDs {
+		l, err := s.store.GetLearnChannel(ctx, id)
+		if err != nil {
+			s.logger.Warn("channel cleanup: looking up learn thread", "channel_id", id, "error", err)
+			continue
+		}
+		if l != nil {
+			learnIDs = append(learnIDs, l.ChannelID)
+		}
+	}
+	return learnIDs
+}
+
+// stopLearnThreads cancels deleted learn threads' passes, running or
+// queued, and removes their containers.
+func (s *Server) stopLearnThreads(ctx context.Context, learnIDs []string) {
+	for _, id := range learnIDs {
+		if s.runCanceller != nil {
+			s.runCanceller.StopLearn(id)
+		}
+		s.removeAgentContainers(ctx, id)
+	}
+}
+
+// removeAgentContainers removes a channel's agent and shell containers;
+// its Chrome container is left to the BrowserProvider.
+func (s *Server) removeAgentContainers(ctx context.Context, channelID string) {
+	if s.containerRegistry == nil {
+		return
+	}
+	for _, info := range s.containerRegistry.ListByChannel(channelID) {
+		if info.Type == container.ContainerTypeChrome {
+			continue // handled separately via BrowserProvider
+		}
+		if err := s.containerRegistry.RemoveContainer(ctx, info.ContainerID); err != nil {
+			s.logger.Warn("channel cleanup: container remove failed",
+				"channel_id", channelID,
+				"container_id", info.ContainerID,
+				"error", err,
+			)
+		}
+	}
 }
 
 // cleanupChannelContainers removes all containers (agent, shell, chrome)
 // associated with a channel. Called on channel deletion to prevent orphaned containers.
 func (s *Server) cleanupChannelContainers(ctx context.Context, channelID string) {
-	if s.containerRegistry != nil {
-		for _, info := range s.containerRegistry.ListByChannel(channelID) {
-			if info.Type == container.ContainerTypeChrome {
-				continue // handled separately via BrowserProvider
-			}
-			if err := s.containerRegistry.RemoveContainer(ctx, info.ContainerID); err != nil {
-				s.logger.Warn("channel cleanup: container remove failed",
-					"channel_id", channelID,
-					"container_id", info.ContainerID,
-					"error", err,
-				)
-			}
-		}
-	}
+	s.removeAgentContainers(ctx, channelID)
 	if s.browser.dockerProvider != nil {
 		containerID, _ := s.browser.dockerProvider.StopBrowser(ctx, channelID)
 		if containerID != "" && s.containerRegistry != nil {

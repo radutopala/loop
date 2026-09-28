@@ -99,6 +99,10 @@ type Orchestrator struct {
 	delayPollInterval time.Duration // how often the delay poller wakes; 0 disables it
 	delayStop         chan struct{} // closed by Stop to end the delay poller
 	delayStopOnce     sync.Once     // guards delayStop close
+
+	// loadWorktreeProjectConfig merges global → root project → worktree
+	// config for a worktree dir and its root checkout.
+	loadWorktreeProjectConfig func(worktreeDir, rootDir string, main *config.Config) (*config.Config, error)
 }
 
 // defaultRemoveMCPConfig delegates to bot.RemoveMCPConfig.
@@ -124,6 +128,7 @@ func New(store db.Store, bot Bot, runner Runner, sched scheduler.Scheduler, logg
 		delayPollInterval: DelayPollInterval,
 		delayStop:         make(chan struct{}),
 	}
+	o.loadWorktreeProjectConfig = config.LoadWorktreeProjectConfig
 	o.cfg.Store(&cfg)
 	o.drainSpawn = func(fn func()) { o.drainWG.Go(fn) }
 	return o

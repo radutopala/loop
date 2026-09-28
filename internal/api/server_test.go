@@ -188,6 +188,10 @@ func (m *MockRunCanceller) CancelActiveRun(channelID string) bool {
 	return args.Bool(0)
 }
 
+func (m *MockRunCanceller) StopLearn(learnChannelID string) {
+	m.Called(learnChannelID)
+}
+
 type ServerSuite struct {
 	suite.Suite
 	scheduler *testutil.MockScheduler

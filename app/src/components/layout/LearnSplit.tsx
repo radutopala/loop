@@ -19,6 +19,7 @@ interface LearnSplitProps {
   chatHeader: React.ReactNode;
   chat: React.ReactNode;
   learnPane: React.ReactNode;
+  ref?: React.Ref<HTMLDivElement>;
 }
 
 /**
@@ -29,7 +30,7 @@ interface LearnSplitProps {
  * doesn't animate: the chat moves into it as the view mounts and back out as
  * it unmounts. The Learn half and the logo fade in and out over the layout.
  */
-export function LearnSplit({ shown, ms, running, chatHeader, chat, learnPane }: LearnSplitProps) {
+export function LearnSplit({ shown, ms, running, chatHeader, chat, learnPane, ref }: LearnSplitProps) {
   const { colors } = useTheme();
   const gap = colors.islandGap || 4;
   const pane: React.CSSProperties = {
@@ -44,7 +45,7 @@ export function LearnSplit({ shown, ms, running, chatHeader, chat, learnPane }: 
   const fade: React.CSSProperties = { opacity: shown ? 1 : 0, transition: ms ? `opacity ${ms}ms ease` : "none" };
 
   return (
-    <div data-testid="learn-split" style={{ position: "absolute", inset: 0, zIndex: 20, overflow: "hidden", display: "flex" }}>
+    <div ref={ref} data-testid="learn-split" style={{ position: "absolute", inset: 0, zIndex: 20, overflow: "hidden", display: "flex" }}>
       {/* The chat's half, with the divider, doesn't fade: nothing under the
           chat may animate as it moves in, or the browser lifts the chat onto
           a layer of its own, painted afresh, and it flickers. Its background

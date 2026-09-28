@@ -47,29 +47,44 @@ func (s *OrchestratorSuite) TestLearnSkipReason() {
 	}
 }
 
-func (s *OrchestratorSuite) TestLearnConfigFor() {
+func (s *OrchestratorSuite) TestLearnConfig() {
 	global := &config.Config{Learn: config.LearnConfig{MinTurns: 3}}
 	project := &config.Config{Learn: config.LearnConfig{Enabled: true, MinTurns: 1}}
+	worktree := &config.Config{Learn: config.LearnConfig{Enabled: true, MinTurns: 2}}
+	plain := &db.Channel{ChannelID: "ch1", DirPath: "/project"}
+	wt := &db.Channel{ChannelID: "wt", ParentID: "root", Worktree: true, DirPath: "/project/.worktrees/wt"}
 	tests := []struct {
-		name    string
-		dir     string
-		loadErr error
-		want    *config.Config
+		name     string
+		ch       *db.Channel
+		loadErr  error
+		want     *config.Config
+		wantRoot string
 	}{
-		{"no dir uses global", "", nil, global},
-		{"project merged", "/project", nil, project},
-		{"load error falls back to global", "/project", errors.New("bad hjson"), global},
+		{"no dir uses global", &db.Channel{ChannelID: "ch1"}, nil, global, ""},
+		{"project merged", plain, nil, project, "/project"},
+		{"load error falls back to global", plain, errors.New("bad hjson"), global, "/project"},
+		{"worktree merges root then worktree", wt, nil, worktree, "/project"},
+		{"worktree load error falls back to global", wt, errors.New("bad hjson"), global, "/project"},
 	}
 	for _, tc := range tests {
 		s.Run(tc.name, func() {
 			s.SetupTest()
 			s.orch.cfg.Store(global)
+			s.store.On("GetChannel", s.ctx, "root").Return(&db.Channel{ChannelID: "root", DirPath: "/project"}, nil)
 			s.orch.loadProjectConfig = func(dir string, main *config.Config) (*config.Config, error) {
 				require.Equal(s.T(), "/project", dir)
 				require.Same(s.T(), global, main)
 				return project, tc.loadErr
 			}
-			require.Same(s.T(), tc.want, s.orch.learnConfigFor(tc.dir))
+			s.orch.loadWorktreeProjectConfig = func(wtDir, rootDir string, main *config.Config) (*config.Config, error) {
+				require.Equal(s.T(), "/project/.worktrees/wt", wtDir)
+				require.Equal(s.T(), "/project", rootDir)
+				require.Same(s.T(), global, main)
+				return worktree, tc.loadErr
+			}
+			got, root := s.orch.learnConfig(s.ctx, tc.ch)
+			require.Same(s.T(), tc.want, got)
+			require.Equal(s.T(), tc.wantRoot, root)
 		})
 	}
 }
@@ -102,11 +117,11 @@ func (s *OrchestratorSuite) TestMaybeLearnSkips() {
 			s.store.On("InsertLearnChannel", s.ctx, mock.Anything).Return(errors.New("db down"))
 		}},
 		{"learn pass running", &db.Channel{ChannelID: "ch1", DirPath: "/project", Platform: types.PlatformLocal}, learnOn, func() {
-			s.store.On("GetLearnChannel", s.ctx, "ch1").Return(&db.Channel{ChannelID: "learn-1"}, nil)
+			s.store.On("GetLearnChannel", s.ctx, "ch1").Return(&db.Channel{ChannelID: "learn-1", Name: "learn: "}, nil)
 			s.orch.activeRuns.Store("learn-1", context.CancelFunc(func() {}))
 		}},
 		{"fork error", &db.Channel{ChannelID: "ch1", DirPath: "/project", Platform: types.PlatformLocal}, learnOn, func() {
-			s.store.On("GetLearnChannel", s.ctx, "ch1").Return(&db.Channel{ChannelID: "learn-1"}, nil)
+			s.store.On("GetLearnChannel", s.ctx, "ch1").Return(&db.Channel{ChannelID: "learn-1", Name: "learn: "}, nil)
 			s.store.On("MarkSessionForkPending", s.ctx, "learn-1", "sess-1").Return(errors.New("db down"))
 		}},
 	}
@@ -290,6 +305,68 @@ func (s *OrchestratorSuite) TestLearnRunDoneStartsWaitingPass() {
 	require.Nil(s.T(), slot.next)
 }
 
+// TestApplyLearnRequestNestedThreadTasks checks a nested thread's pass sees
+// the tasks where an applied scheduled_task proposal would land: under the
+// thread's parent, not the thread itself.
+func (s *OrchestratorSuite) TestApplyLearnRequestNestedThreadTasks() {
+	s.orch.cfg.Store(&config.Config{})
+	parent := &db.Channel{ChannelID: "t2", ParentID: "t1", Name: "nested"}
+	s.store.On("GetChannel", s.ctx, "t2").Return(parent, nil)
+	s.store.On("GetChannel", s.ctx, "t1").Return(&db.Channel{ChannelID: "t1", ParentID: "ch1"}, nil)
+	s.store.On("ListScheduledTasks", s.ctx, "t1").Return([]*db.ScheduledTask{{Type: db.TaskTypeCron, Schedule: "0 9 * * *", Prompt: "nightly deps"}}, nil)
+	s.store.On("ListLearnProposals", s.ctx, "t2").Return([]*db.LearnProposal(nil), nil)
+
+	req := &agent.AgentRequest{}
+	s.orch.applyLearnRequest(s.ctx, req, parent)
+
+	require.Contains(s.T(), req.SystemPrompt, "nightly deps")
+	s.store.AssertExpectations(s.T())
+}
+
+// TestEnsureLearnChannelRenames checks an existing learn thread follows its
+// channel's name, and a failed rename still returns the thread.
+func (s *OrchestratorSuite) TestEnsureLearnChannelRenames() {
+	ch := &db.Channel{ChannelID: "ch1", Name: "api v2"}
+	tests := []struct {
+		name      string
+		current   string
+		renameErr error
+		wantName  string
+		wantCall  bool
+	}{
+		{"name unchanged", "learn: api v2", nil, "learn: api v2", false},
+		{"renamed", "learn: api", nil, "learn: api v2", true},
+		{"rename fails", "learn: api", errors.New("db down"), "learn: api", true},
+	}
+	for _, tc := range tests {
+		s.Run(tc.name, func() {
+			s.SetupTest()
+			s.store.On("GetLearnChannel", s.ctx, "ch1").Return(&db.Channel{ChannelID: "learn-1", Name: tc.current}, nil)
+			if tc.wantCall {
+				s.store.On("UpdateChannelName", s.ctx, "learn-1", "learn: api v2").Return(tc.renameErr)
+			}
+			l, err := s.orch.ensureLearnChannel(s.ctx, ch)
+			require.NoError(s.T(), err)
+			require.Equal(s.T(), "learn-1", l.ChannelID)
+			require.Equal(s.T(), tc.wantName, l.Name)
+			s.store.AssertExpectations(s.T())
+		})
+	}
+}
+
+// TestStopLearn checks a deleted learn thread's queued pass is dropped and
+// its running one cancelled.
+func (s *OrchestratorSuite) TestStopLearn() {
+	cancelled := false
+	s.orch.activeRuns.Store("learn-1", context.CancelFunc(func() { cancelled = true }))
+	s.orch.learnSlots = map[string]*learnSlot{"learn-1": {triggered: true, next: &learnPass{}}}
+
+	s.orch.StopLearn("learn-1")
+
+	require.True(s.T(), cancelled)
+	require.NotContains(s.T(), s.orch.learnSlots, "learn-1")
+}
+
 func (s *OrchestratorSuite) TestRunTrigger() {
 	s.bot.ExpectedCalls = nil
 	s.bot.On("IsBotUser", "bot-1").Return(true)
@@ -311,12 +388,12 @@ func (s *OrchestratorSuite) TestRunTrigger() {
 }
 
 // TestMaybeLearnWorktreeUsesRootConfig checks a worktree thread's learn
-// config comes from the root checkout, not the worktree.
+// config is merged like its runs': the root checkout's, then the worktree's.
 func (s *OrchestratorSuite) TestMaybeLearnWorktreeUsesRootConfig() {
 	s.orch.cfg.Store(&config.Config{})
 	var loaded []string
-	s.orch.loadProjectConfig = func(dir string, main *config.Config) (*config.Config, error) {
-		loaded = append(loaded, dir)
+	s.orch.loadWorktreeProjectConfig = func(wtDir, rootDir string, main *config.Config) (*config.Config, error) {
+		loaded = append(loaded, wtDir, rootDir)
 		return main, nil
 	}
 	s.store.On("GetChannel", s.ctx, "root").Return(&db.Channel{ChannelID: "root", DirPath: "/project"}, nil)
@@ -324,7 +401,7 @@ func (s *OrchestratorSuite) TestMaybeLearnWorktreeUsesRootConfig() {
 	wt := &db.Channel{ChannelID: "wt", ParentID: "root", Worktree: true, DirPath: "/project/.worktrees/wt"}
 	s.orch.maybeLearn(s.ctx, wt, &bot.IncomingMessage{}, &agent.AgentResponse{SessionID: "sess-1", NumTurns: 9})
 
-	require.Equal(s.T(), []string{"/project"}, loaded)
+	require.Equal(s.T(), []string{"/project/.worktrees/wt", "/project"}, loaded)
 	s.store.AssertNotCalled(s.T(), "GetLearnChannel", mock.Anything, mock.Anything)
 }
 

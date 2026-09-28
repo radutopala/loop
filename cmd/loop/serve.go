@@ -412,7 +412,8 @@ func projectDirs(ctx context.Context, store db.Store, logger *slog.Logger) []str
 	seen := make(map[string]bool, len(channels))
 	dirs := make([]string, 0, len(channels))
 	for _, ch := range channels {
-		if ch.DirPath == "" || seen[ch.DirPath] {
+		// A learn thread shares its parent's dir, so it adds no checkout.
+		if ch.DirPath == "" || ch.Kind == db.ChannelKindLearn || seen[ch.DirPath] {
 			continue
 		}
 		seen[ch.DirPath] = true
@@ -1090,7 +1091,9 @@ func childProjectsLister(store channelLister, cfg *config.Config, loadProject fu
 		seenDirs := map[string]bool{}
 		var out []container.ChildProject
 		for _, ch := range chs {
-			if ch.DirPath == "" || ch.Worktree || seenDirs[ch.DirPath] {
+			// A learn thread shares its parent's dir without carrying the
+			// worktree flag, so a worktree thread's would pass for a project.
+			if ch.DirPath == "" || ch.Worktree || ch.Kind == db.ChannelKindLearn || seenDirs[ch.DirPath] {
 				continue
 			}
 			seenDirs[ch.DirPath] = true

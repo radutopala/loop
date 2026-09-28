@@ -86,9 +86,12 @@ interface ChatViewProps {
   onScrollComplete?: () => void;
   /** Hide the composer's Learn switch: a learn thread doesn't learn from itself. */
   hideLearn?: boolean;
+  /** Don't take focus on mount: the Learn view's learn thread, beside a chat
+   * that has it. */
+  noAutoFocus?: boolean;
 }
 
-export function ChatView({ channelId, chatState, roots, scrollToMessageId, onScrollComplete, hideLearn }: ChatViewProps) {
+export function ChatView({ channelId, chatState, roots, scrollToMessageId, onScrollComplete, hideLearn, noAutoFocus }: ChatViewProps) {
   const { colors, fontSizes } = useTheme();
   const styles = buildStyles(colors);
   const { items, liveTail, messages, loading, isRunning } = chatState;
@@ -164,6 +167,7 @@ export function ChatView({ channelId, chatState, roots, scrollToMessageId, onScr
           <ChatInput
             channelId={channelId}
             hideLearn={hideLearn}
+            noAutoFocus={noAutoFocus}
             messages={messages}
             roots={roots}
             mode={chatState.mode}
@@ -231,6 +235,7 @@ export function ChatView({ channelId, chatState, roots, scrollToMessageId, onScr
         <ChatInput
           channelId={channelId}
           hideLearn={hideLearn}
+          noAutoFocus={noAutoFocus}
           messages={messages}
           roots={roots}
           isRunning={isRunning}

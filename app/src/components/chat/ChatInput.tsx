@@ -216,6 +216,8 @@ export interface ChatInputProps {
   channelId: string;
   /** Hide the Learn switch (in a learn thread's own composer). */
   hideLearn?: boolean;
+  /** Don't take focus on mount. */
+  noAutoFocus?: boolean;
   messages: Message[];
   roots?: RootEntry[];
   isRunning?: boolean;
@@ -266,6 +268,7 @@ function buildQuotePrefix(msg: Message): string {
 export function ChatInput({
   channelId,
   hideLearn,
+  noAutoFocus,
   messages,
   roots,
   isRunning,
@@ -417,7 +420,7 @@ export function ChatInput({
   // scrolling one into view would shift the layout under them.
   useEffect(() => {
     const el = inputRef.current;
-    if (el) {
+    if (el && !noAutoFocus) {
       el.focus({ preventScroll: true });
       el.setSelectionRange(el.value.length, el.value.length);
     }
@@ -859,6 +862,7 @@ export function ChatInput({
           return;
         }
         if (e.key === "Escape") {
+          e.preventDefault();
           setShowCommands(false);
           return;
         }
@@ -882,6 +886,7 @@ export function ChatInput({
           return;
         }
         if (e.key === "Escape") {
+          e.preventDefault();
           closeShortcutPicker();
           return;
         }
@@ -905,6 +910,7 @@ export function ChatInput({
           return;
         }
         if (e.key === "Escape") {
+          e.preventDefault();
           setShowFilePicker(false);
           return;
         }
@@ -916,6 +922,7 @@ export function ChatInput({
         return;
       }
       if (e.key === "Escape" && showMention) {
+        e.preventDefault();
         setShowMention(false);
         return;
       }

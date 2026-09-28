@@ -22,15 +22,15 @@ func TestHelpersSuite(t *testing.T) {
 // --- RemoveMCPConfig ---
 
 func (s *HelpersSuite) TestRemoveMCPConfig() {
-	var removedPath string
+	var removed []string
 	removeFn := func(name string) error {
-		removedPath = name
+		removed = append(removed, name)
 		return nil
 	}
 
 	err := removeMCPConfigWith(removeFn, "/work", "chan-1")
 	require.NoError(s.T(), err)
-	require.Equal(s.T(), "/work/.loop/mcp-chan-1.json", removedPath)
+	require.Equal(s.T(), []string{"/work/.loop/mcp-chan-1.json", "/work/.loop/mcp-chan-1-learn.json"}, removed)
 }
 
 func (s *HelpersSuite) TestRemoveMCPConfigNotExist() {

@@ -159,25 +159,11 @@ func (l *Loader) loadProjectConfig(workDir string, mainConfig *Config) (*Config,
 	if len(pc.Mounts) > 0 {
 		resolvedMounts := make([]string, 0, len(pc.Mounts))
 		for _, mount := range pc.Mounts {
-			parts := strings.Split(mount, ":")
-			if len(parts) < 2 {
-				return nil, fmt.Errorf("invalid mount format in project config: %s", mount)
+			resolved, err := ResolveMount(mount, workDir)
+			if err != nil {
+				return nil, err
 			}
-
-			hostPath := parts[0]
-			// Resolve relative paths relative to workDir, but skip named volumes
-			// (e.g. "loop-npmcache:~/.npm") which contain no path separators.
-			if !filepath.IsAbs(hostPath) && !strings.HasPrefix(hostPath, "~") && !IsNamedVolume(hostPath) {
-				hostPath = filepath.Join(workDir, hostPath)
-			}
-
-			// Reconstruct mount with resolved path
-			containerPath := parts[1]
-			mode := ""
-			if len(parts) > 2 {
-				mode = ":" + parts[2]
-			}
-			resolvedMounts = append(resolvedMounts, hostPath+":"+containerPath+mode)
+			resolvedMounts = append(resolvedMounts, resolved)
 		}
 
 		merged.Mounts = resolvedMounts
@@ -609,4 +595,21 @@ func mergeByName[T any](base, overlay []T, name func(T) string) []T {
 		out = append(out, it)
 	}
 	return out
+}
+
+// ResolveMount returns a project config mount with a relative host path
+// resolved against workDir, the project dir, as a project config's mounts
+// are merged. Absolute and ~ paths and named volumes (e.g.
+// "loop-npmcache:~/.npm", no path separators) are kept as they are.
+func ResolveMount(mount, workDir string) (string, error) {
+	parts := strings.Split(mount, ":")
+	if len(parts) < 2 {
+		return "", fmt.Errorf("invalid mount format in project config: %s", mount)
+	}
+	hostPath := parts[0]
+	if !filepath.IsAbs(hostPath) && !strings.HasPrefix(hostPath, "~") && !IsNamedVolume(hostPath) {
+		hostPath = filepath.Join(workDir, hostPath)
+	}
+	parts[0] = hostPath
+	return strings.Join(parts, ":"), nil
 }

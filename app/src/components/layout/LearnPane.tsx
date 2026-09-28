@@ -1,4 +1,4 @@
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { LearnProposal } from "../../api/learn";
 import { useChatState } from "../../hooks/useChatState";
 import type { ChatEventListener } from "../../hooks/useChatStateStore";
@@ -6,7 +6,7 @@ import type { LearnView } from "../../hooks/useLearn";
 import { useTheme } from "../../ThemeContext";
 import { fonts } from "../../theme";
 import { ChatView } from "../chat/ChatView";
-import { isOpenProposal, learnKindLabel, proposalCaveat, proposalDetail } from "../chat/learnState";
+import { isOpenProposal, LEARN_APPLY_STALE_MS, learnKindLabel, proposalCaveat, proposalDetail } from "../chat/learnState";
 
 interface LearnPaneProps {
   learn: LearnView;
@@ -25,32 +25,60 @@ export function LearnPane({ learn, worktree, subscribeChannelEvents, onClose }: 
   const { colors } = useTheme();
   const open = learn.proposals.filter(isOpenProposal);
   // Proposals with an apply or dismiss in flight; their buttons are disabled
-  // so a second click can't race the first.
+  // so a second click can't race the first. busyRef mirrors it for Apply
+  // all, which reads it between one apply and the next.
   const [busy, setBusy] = useState<ReadonlySet<number>>(new Set());
+  const busyRef = useRef(busy);
+  busyRef.current = busy;
+  const proposalsRef = useRef(learn.proposals);
+  proposalsRef.current = learn.proposals;
   const [applyingAll, setApplyingAll] = useState(false);
+  // A request that failed (the server never answered for the proposal), by
+  // proposal, until the next try.
+  const [errors, setErrors] = useState<ReadonlyMap<number, string>>(new Map());
 
   const settle = useCallback(async (id: number, action: (id: number) => Promise<void>) => {
-    setBusy((cur) => new Set(cur).add(id));
+    busyRef.current = new Set(busyRef.current).add(id);
+    setBusy(busyRef.current);
+    setErrors((cur) => withError(cur, id, undefined));
     try {
       await action(id);
+    } catch (e) {
+      setErrors((cur) => withError(cur, id, e instanceof Error ? e.message : String(e)));
     } finally {
-      setBusy((cur) => {
-        const next = new Set(cur);
-        next.delete(id);
-        return next;
-      });
+      const next = new Set(busyRef.current);
+      next.delete(id);
+      busyRef.current = next;
+      setBusy(next);
     }
   }, []);
   const apply = useCallback((id: number) => settle(id, learn.apply), [settle, learn.apply]);
   const dismiss = useCallback((id: number) => settle(id, learn.dismiss), [settle, learn.dismiss]);
 
+  // One by one, each still pending when its turn comes: one dismissed or
+  // applied meanwhile is left alone.
   const applyAll = useCallback(async () => {
     setApplyingAll(true);
-    for (const p of learn.proposals.filter((x) => x.status === "pending" && !busy.has(x.id))) {
-      await apply(p.id);
+    for (const { id } of learn.proposals.filter((x) => x.status === "pending")) {
+      const p = proposalsRef.current.find((x) => x.id === id);
+      if (p?.status === "pending" && !busyRef.current.has(id)) await apply(id);
     }
     setApplyingAll(false);
-  }, [learn.proposals, busy, apply]);
+  }, [learn.proposals, apply]);
+
+  // A proposal stuck applying gets its buttons back once it's stale: render
+  // again then, as nothing else may.
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    const now = Date.now();
+    const due = learn.proposals
+      .filter((p) => p.status === "applying")
+      .map((p) => Date.parse(p.updated_at) + LEARN_APPLY_STALE_MS - now)
+      .filter((ms) => ms >= 0);
+    if (due.length === 0) return;
+    const t = setTimeout(() => setTick((n) => n + 1), Math.min(...due) + 1);
+    return () => clearTimeout(t);
+  }, [learn.proposals]);
 
   return (
     <div data-testid="learn-pane" style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column", overflow: "hidden" }}>
@@ -103,7 +131,7 @@ export function LearnPane({ learn, worktree, subscribeChannelEvents, onClose }: 
       {learn.proposals.length > 0 && (
         <div style={{ maxHeight: "45%", overflowY: "auto", flexShrink: 0, borderBottom: `1px solid ${colors.border}` }}>
           {learn.proposals.map((p) => (
-            <ProposalCard key={p.id} proposal={p} worktree={worktree} busy={busy.has(p.id)} onApply={apply} onDismiss={dismiss} />
+            <ProposalCard key={p.id} proposal={p} worktree={worktree} busy={busy.has(p.id)} error={errors.get(p.id)} onApply={apply} onDismiss={dismiss} />
           ))}
         </div>
       )}
@@ -113,7 +141,7 @@ export function LearnPane({ learn, worktree, subscribeChannelEvents, onClose }: 
           <LearnThread learnChannelId={learn.learnChannelId} running={learn.running} subscribeChannelEvents={subscribeChannelEvents} />
         ) : (
           <div style={{ padding: 16, color: colors.textDim, fontFamily: fonts.sans, fontSize: 12 }}>
-            No learn pass yet. Turn on learn in the composer; after the next run, a hidden forked session reviews it here.
+            No learn pass yet. With learn on in the composer, a hidden forked session reviews the next run here.
           </div>
         )}
       </div>
@@ -132,19 +160,22 @@ function LearnThread({
 }) {
   const subscribe = useCallback((listener: ChatEventListener) => subscribeChannelEvents?.(learnChannelId, listener) ?? (() => {}), [learnChannelId, subscribeChannelEvents]);
   const chatState = useChatState(learnChannelId, running, { subscribeChatEvents: subscribe });
-  return <ChatView key={learnChannelId} channelId={learnChannelId} chatState={chatState} hideLearn />;
+  return <ChatView key={learnChannelId} channelId={learnChannelId} chatState={chatState} hideLearn noAutoFocus />;
 }
 
 function ProposalCard({
   proposal: p,
   worktree,
   busy,
+  error,
   onApply,
   onDismiss,
 }: {
   proposal: LearnProposal;
   worktree: boolean;
   busy: boolean;
+  /** The last apply or dismiss request failed, with this. */
+  error?: string;
   onApply: (id: number) => Promise<void>;
   onDismiss: (id: number) => Promise<void>;
 }) {
@@ -184,8 +215,21 @@ function ProposalCard({
       {p.rationale && <div style={{ fontSize: 11, color: colors.textDim, marginTop: 4 }}>{p.rationale}</div>}
       {caveat && <div style={{ fontSize: 11, color: colors.warning, marginTop: 4 }}>{caveat}</div>}
       {p.status === "failed" && p.error && <div style={{ fontSize: 11, color: colors.error, marginTop: 4 }}>{p.error}</div>}
+      {error && (
+        <div data-testid="learn-request-error" style={{ fontSize: 11, color: colors.error, marginTop: 4 }}>
+          {error}
+        </div>
+      )}
     </div>
   );
+}
+
+function withError(errors: ReadonlyMap<number, string>, id: number, error: string | undefined): ReadonlyMap<number, string> {
+  if (errors.get(id) === error) return errors;
+  const next = new Map(errors);
+  if (error === undefined) next.delete(id);
+  else next.set(id, error);
+  return next;
 }
 
 function buttonStyle(color: string): React.CSSProperties {

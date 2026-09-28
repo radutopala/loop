@@ -189,6 +189,7 @@ func (s *ThreadServiceSuite) TestCreateThreadFromThreadResolvedParentNotFound() 
 func (s *ThreadServiceSuite) TestDeleteThreadSuccess() {
 	s.store.On("GetChannel", s.ctx, "thread-1").
 		Return(&db.Channel{ChannelID: "thread-1", ParentID: "ch-1"}, nil)
+	s.store.On("GetLearnChannel", s.ctx, "thread-1").Return(nil, nil)
 	s.creator.On("DeleteThread", s.ctx, "thread-1").Return(nil)
 	s.store.On("DeleteChannel", s.ctx, "thread-1").Return(nil)
 
@@ -227,6 +228,7 @@ func (s *ThreadServiceSuite) TestDeleteThreadNotAThread() {
 func (s *ThreadServiceSuite) TestDeleteThreadDiscordError() {
 	s.store.On("GetChannel", s.ctx, "thread-1").
 		Return(&db.Channel{ChannelID: "thread-1", ParentID: "ch-1"}, nil)
+	s.store.On("GetLearnChannel", s.ctx, "thread-1").Return(nil, nil)
 	s.creator.On("DeleteThread", s.ctx, "thread-1").
 		Return(errors.New("discord error"))
 
@@ -249,6 +251,7 @@ func (s *ThreadServiceSuite) TestDeleteThreadLockedReturnsSentinel() {
 func (s *ThreadServiceSuite) TestDeleteThreadDBError() {
 	s.store.On("GetChannel", s.ctx, "thread-1").
 		Return(&db.Channel{ChannelID: "thread-1", ParentID: "ch-1"}, nil)
+	s.store.On("GetLearnChannel", s.ctx, "thread-1").Return(nil, nil)
 	s.creator.On("DeleteThread", s.ctx, "thread-1").Return(nil)
 	s.store.On("DeleteChannel", s.ctx, "thread-1").
 		Return(errors.New("db error"))
@@ -300,6 +303,7 @@ func (s *ThreadServiceSuite) TestDeleteThreadLocalPlatformNilCreator() {
 
 	s.store.On("GetChannel", s.ctx, "thread-1").
 		Return(&db.Channel{ChannelID: "thread-1", ParentID: "ch-1"}, nil)
+	s.store.On("GetLearnChannel", s.ctx, "thread-1").Return(nil, nil)
 	s.store.On("DeleteChannel", s.ctx, "thread-1").Return(nil)
 
 	err := svc.DeleteThread(s.ctx, "thread-1")
@@ -312,6 +316,7 @@ func (s *ThreadServiceSuite) TestDeleteThreadMCPConfigErrorLogsWarning() {
 
 	s.store.On("GetChannel", s.ctx, "thread-1").
 		Return(&db.Channel{ChannelID: "thread-1", ParentID: "ch-1", DirPath: "/work"}, nil)
+	s.store.On("GetLearnChannel", s.ctx, "thread-1").Return(nil, nil)
 	s.creator.On("DeleteThread", s.ctx, "thread-1").Return(nil)
 	s.store.On("DeleteChannel", s.ctx, "thread-1").Return(nil)
 
@@ -335,6 +340,51 @@ func (s *ThreadServiceSuite) TestDeleteThreadKeepMCPConfigsSkipsRemoval() {
 	err := s.svc.DeleteThread(s.ctx, "thread-1")
 	require.NoError(s.T(), err)
 	s.store.AssertExpectations(s.T())
+}
+
+func (s *ThreadServiceSuite) TestDeleteThreadRemovesLearnMCPConfig() {
+	tests := []struct {
+		name     string
+		learn    *db.Channel
+		learnErr error
+		rmErr    error
+		want     [][2]string
+	}{
+		{
+			name:  "learn thread",
+			learn: &db.Channel{ChannelID: "learn-1", DirPath: "/work"},
+			want:  [][2]string{{"/work", "thread-1"}, {"/work", "learn-1"}},
+		},
+		{
+			name:  "remove error is logged",
+			learn: &db.Channel{ChannelID: "learn-1", DirPath: "/work"},
+			rmErr: errors.New("rm error"),
+			want:  [][2]string{{"/work", "thread-1"}, {"/work", "learn-1"}},
+		},
+		{
+			name:     "lookup error is logged",
+			learnErr: errors.New("db error"),
+			want:     [][2]string{{"/work", "thread-1"}},
+		},
+	}
+	for _, tc := range tests {
+		s.Run(tc.name, func() {
+			s.SetupTest()
+			var removed [][2]string
+			s.threadSvc.removeMCPConfig = func(dir, id string) error {
+				removed = append(removed, [2]string{dir, id})
+				return tc.rmErr
+			}
+			s.store.On("GetChannel", s.ctx, "thread-1").
+				Return(&db.Channel{ChannelID: "thread-1", ParentID: "ch-1", DirPath: "/work"}, nil)
+			s.store.On("GetLearnChannel", s.ctx, "thread-1").Return(tc.learn, tc.learnErr)
+			s.creator.On("DeleteThread", s.ctx, "thread-1").Return(nil)
+			s.store.On("DeleteChannel", s.ctx, "thread-1").Return(nil)
+
+			require.NoError(s.T(), s.svc.DeleteThread(s.ctx, "thread-1"))
+			require.Equal(s.T(), tc.want, removed)
+		})
+	}
 }
 
 func TestGenerateThreadIDDefault(t *testing.T) {

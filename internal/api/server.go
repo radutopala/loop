@@ -44,9 +44,12 @@ type IncomingMessageHandler interface {
 	HandleThreadCreated(ctx context.Context, threadID, authorID, message string)
 }
 
-// RunCanceller cancels the active agent run for a channel.
+// RunCanceller cancels agent runs. CancelActiveRun cancels a channel's
+// active run; StopLearn also forgets a hidden learn thread's queued pass,
+// for when the learn thread is deleted.
 type RunCanceller interface {
 	CancelActiveRun(channelID string) bool
+	StopLearn(learnChannelID string)
 }
 
 // PlanResolver clears and resumes a channel parked on an ExitPlanMode card.

@@ -166,7 +166,77 @@ Feature: Learn from runs
     Then I wait for "[data-testid='learn-badge'][data-running='false']" to be visible
     And I wait for text "proposals from the last runs" to appear
     And the page should not contain text "learning…"
+    # A reply the user asked the learn thread for isn't a learn pass.
+    When I inject a "agent.status" event for the learn thread with data:
+      """
+      {"status":"running","run_id":"bdd-learn-reply","trigger":"chat"}
+      """
+    And I inject a "agent.status" event for the channel with data:
+      """
+      {"status":"completed","run_id":"bdd-nothing"}
+      """
+    Then the element "[data-testid='learn-badge'][data-running='false']" should be visible
+    And the page should not contain text "learning…"
+    When I inject a "agent.status" event for the learn thread with data:
+      """
+      {"status":"running","run_id":"bdd-learn-run-2","trigger":"learn"}
+      """
+    Then I wait for "[data-testid='learn-badge'][data-running='true']" to be visible
+    When I inject a "agent.status" event for the learn thread with data:
+      """
+      {"status":"completed","run_id":"bdd-learn-run-2"}
+      """
+    Then I wait for "[data-testid='learn-badge'][data-running='false']" to be visible
     # The Learn view's own chat header has the badge too; it closes the view.
     When I click on "[data-testid='learn-split'] [data-testid='learn-badge']"
     Then I wait up to "5s" for "[data-testid='learn-split']" to disappear
     And I wait for "[id^='pane-header-slot-'] [data-testid='learn-badge']" to be visible
+
+  Scenario: Escape and a layout tab switch close the Learn view, and focus stays in the chat
+    Given the current channel has a learn thread
+    When I inject a "learn.started" event for the channel with data:
+      """
+      {"learn_channel_id":"{learn_channel_id}"}
+      """
+    And I click on "[data-learn-chat-leaf] textarea"
+    And I click on "[data-testid='learn-badge']"
+    Then the Learn view shows the chat and the Learn pane side by side
+    # The learn thread's composer doesn't take the focus from the chat's.
+    And the focus is in "[data-testid='learn-split-chat'] textarea"
+    When I press Escape
+    Then I wait up to "5s" for "[data-testid='learn-split']" to disappear
+    And the focus is in "[data-learn-chat-leaf] textarea"
+    # Closing with focus in the Learn pane gives it back to the chat.
+    When I click on "[data-testid='learn-badge']"
+    Then the Learn view shows the chat and the Learn pane side by side
+    When I click on "[data-testid='learn-pane'] textarea"
+    And I click on "[data-testid='learn-close']"
+    Then I wait up to "5s" for "[data-testid='learn-split']" to disappear
+    And the focus is in "[data-learn-chat-leaf] textarea"
+    # Switching to a layout tab without a chat pane closes the view; the
+    # chat is back in its pane on the way back.
+    When I click on "[data-testid='learn-badge']"
+    Then the Learn view shows the chat and the Learn pane side by side
+    When I click on "[data-testid='layout-tab-Kanban']"
+    Then I wait up to "5s" for "[data-testid='learn-split']" to disappear
+    When I click on "[data-testid='layout-tab-Chat']"
+    Then I wait for "[data-learn-chat-leaf] textarea" to be visible
+
+  Scenario: The Learn view shows a failed request under its card, and a stuck apply comes back
+    Given the current channel has a learn thread
+    # A proposal the server doesn't know: applying it fails as a request.
+    When I inject a "learn.proposals" event for the channel with data:
+      """
+      {"proposals":[
+        {"id":999999,"channel_id":"{channel_id}","learn_channel_id":"{learn_channel_id}","kind":"description","title":"Unknown to the server","rationale":"","payload":"{\"description\":\"x\"}","status":"pending","created_at":"{now-5s}","updated_at":"{now-5s}"},
+        {"id":999998,"channel_id":"{channel_id}","learn_channel_id":"{learn_channel_id}","kind":"description","title":"Stuck applying","rationale":"","payload":"{\"description\":\"y\"}","status":"applying","created_at":"{now-58s}","updated_at":"{now-58s}"}
+      ]}
+      """
+    Then I wait for "[data-testid='learn-badge']" to be visible
+    When I click on "[data-testid='learn-badge']"
+    Then the Learn view shows the chat and the Learn pane side by side
+    When I click on "[data-testid='learn-apply']"
+    Then I wait for "[data-testid='learn-request-error']" to be visible
+    # The stuck one gets Retry and Dismiss back once it's a minute old,
+    # without anything else rendering the pane again.
+    And I wait up to "10s" for text "Retry" to appear

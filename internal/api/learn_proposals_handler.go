@@ -1,6 +1,7 @@
 package api
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -16,6 +17,7 @@ import (
 	"github.com/radutopala/loop/internal/db"
 	"github.com/radutopala/loop/internal/events"
 	"github.com/radutopala/loop/internal/learn"
+	"github.com/radutopala/loop/internal/types"
 )
 
 // Limits on one propose_learnings call.
@@ -287,9 +289,16 @@ func (s *Server) applyLearnConfig(ctx context.Context, ch *db.Channel, v any) er
 		path, item = []string{"bash_shortcuts"}, v
 	case *learn.GateRule:
 		key, rule, _ := v.ConfigRule() // Decode already checked it
+		if hasGateRule(merged.Gates.Agentgate, rule) {
+			return nil // already there: applying it again changes nothing
+		}
 		path, item = []string{"gates", "agentgate", key}, rule
 	case *learn.Mount:
-		if slices.Contains(merged.Mounts, v.Mount) {
+		// Merged project mounts have their relative host paths resolved
+		// against the project dir, so compare the proposal resolved the same
+		// way against the dir it's written to.
+		resolved, _ := config.ResolveMount(v.Mount, dir) // Decode already checked it
+		if slices.Contains(merged.Mounts, resolved) {
 			return fmt.Errorf("mount %q already exists", v.Mount)
 		}
 		// Project mounts replace the global ones, so a project's first mount
@@ -302,4 +311,28 @@ func (s *Server) applyLearnConfig(ctx context.Context, ch *db.Channel, v any) er
 		path, item = []string{"mounts"}, v.Mount
 	}
 	return hjsonedit.Append(s.sys, filepath.Join(dir, ".loop", "config.json"), path, item, seed)
+}
+
+// hasGateRule reports whether gate already has rule (a *types.PathRule,
+// *types.CommandRule or *types.FileRule, as learn.GateRule.ConfigRule
+// returns). Rules are compared by their JSON, so a list left out and an
+// empty one match.
+func hasGateRule(gate config.AgentgateConfig, rule any) bool {
+	switch r := rule.(type) {
+	case *types.PathRule:
+		return containsJSON(gate.PathRules, r)
+	case *types.CommandRule:
+		return containsJSON(gate.CommandRules, r)
+	default:
+		return containsJSON(gate.FileRules, rule)
+	}
+}
+
+// containsJSON reports whether any of items marshals to the same JSON as v.
+func containsJSON[T any](items []T, v any) bool {
+	want, _ := json.Marshal(v)
+	return slices.ContainsFunc(items, func(item T) bool {
+		got, _ := json.Marshal(item)
+		return bytes.Equal(got, want)
+	})
 }

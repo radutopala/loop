@@ -34,6 +34,7 @@ type ChannelLister interface {
 	UpdateChannelTicketURL(ctx context.Context, channelID, ticketURL string) error
 	DeleteChannel(ctx context.Context, channelID string) error
 	DeleteChannelsByParentID(ctx context.Context, parentID string) error
+	ListChannelIDsByParentID(ctx context.Context, parentID string) ([]string, error)
 	ListDistinctMemoryFilePaths(ctx context.Context, dirPath string) ([]db.MemoryFileInfo, error)
 	InsertMessage(ctx context.Context, msg *db.Message) error
 	RunningMessageID(ctx context.Context, channelID string) (string, error)

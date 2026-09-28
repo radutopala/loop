@@ -12,6 +12,7 @@ import (
 
 	"github.com/radutopala/loop/internal/agent"
 	"github.com/radutopala/loop/internal/config"
+	"github.com/radutopala/loop/internal/learn"
 )
 
 func (s *RunnerSuite) TestAddAuthEnv() {
@@ -323,6 +324,13 @@ func (s *RunnerSuite) TestBuildMCPConfigWithUserServers() {
 
 	ls := cfg.MCPServers["loop"]
 	require.Equal(s.T(), "/usr/local/bin/loop", ls.Command)
+}
+
+func (s *RunnerSuite) TestBuildMCPConfigLearnGetsLoopOnly() {
+	userServers := map[string]config.MCPServerConfig{"custom-tool": {Command: "/path/to/binary"}}
+	cfg := buildMCPConfig("ch-1", "http://host.docker.internal:8222", "/home/user/project", "", learn.AgentID, false, true, userServers)
+	require.Len(s.T(), cfg.MCPServers, 1)
+	require.Equal(s.T(), "/usr/local/bin/loop", cfg.MCPServers["loop"].Command)
 }
 
 func (s *RunnerSuite) TestBuildMCPConfigUserLoopPreserved() {

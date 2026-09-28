@@ -10,6 +10,7 @@ import (
 
 	"github.com/radutopala/loop/internal/agentgate"
 	"github.com/radutopala/loop/internal/db"
+	"github.com/radutopala/loop/internal/scheduler"
 	"github.com/radutopala/loop/internal/types"
 )
 
@@ -171,6 +172,9 @@ func (t *ScheduledTask) check() error {
 	}
 	if strings.TrimSpace(t.Schedule) == "" {
 		return errors.New("schedule is required")
+	}
+	if err := scheduler.ValidateSchedule(db.TaskType(t.Type), t.Schedule); err != nil {
+		return err
 	}
 	if (strings.TrimSpace(t.Prompt) == "") == (strings.TrimSpace(t.BashScript) == "") {
 		return errors.New("give exactly one of prompt or bash_script")

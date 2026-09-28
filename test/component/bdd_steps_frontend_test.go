@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -220,6 +221,7 @@ func registerFrontendSteps(ctx *godog.ScenarioContext, tc *TestContext) {
 	// Keyboard
 	ctx.Step(`^I press Enter$`, tc.pressEnter)
 	ctx.Step(`^I press Escape$`, tc.pressEscape)
+	ctx.Step(`^the focus is in "([^"]*)"$`, tc.assertFocusIn)
 	ctx.Step(`^I press Shift\+Enter$`, tc.pressShiftEnter)
 	ctx.Step(`^I clear the "([^"]*)" field$`, tc.clearField)
 
@@ -1297,6 +1299,23 @@ func (tc *TestContext) pressShiftEnter() error {
 
 func (tc *TestContext) pressEscape() error {
 	return chromedp.Run(tc.chromeTab.ctx, chromedp.KeyEvent("\x1b"))
+}
+
+// assertFocusIn checks the focused element matches selector.
+func (tc *TestContext) assertFocusIn(selector string) error {
+	var focused string
+	js := fmt.Sprintf(`(() => {
+		const el = document.activeElement;
+		if (el && el.matches(%q)) return '';
+		return el ? el.outerHTML.slice(0, 120) : 'nothing';
+	})()`, selector)
+	if err := chromedp.Run(tc.chromeTab.ctx, chromedp.Evaluate(js, &focused)); err != nil {
+		return err
+	}
+	if focused != "" {
+		return fmt.Errorf("focus isn't in %s but in %s", selector, focused)
+	}
+	return nil
 }
 
 // clearField selects a field's text and deletes it with a key press, so the
@@ -2781,6 +2800,8 @@ func (tc *TestContext) injectAgentStatusRunningFor(channelID string) error {
 // chat store, addressed to the current channel or its seeded learn thread.
 // The data doc string is the event's JSON data; {placeholders} such as
 // {learn_channel_id} are resolved first.
+var nowAgoPlaceholder = regexp.MustCompile(`\{now-(\d+)s\}`)
+
 func (tc *TestContext) injectEventWithData(eventType, target string, data *godog.DocString) error {
 	channelID := tc.ChannelID
 	if target == "the learn thread" {
@@ -2792,8 +2813,13 @@ func (tc *TestContext) injectEventWithData(eventType, target string, data *godog
 	if err := tc.ensureChromeTab(); err != nil {
 		return err
 	}
+	// {now-Ns}: the time N seconds ago, for data that says when it happened.
+	content := nowAgoPlaceholder.ReplaceAllStringFunc(data.Content, func(m string) string {
+		secs, _ := strconv.Atoi(nowAgoPlaceholder.FindStringSubmatch(m)[1])
+		return time.Now().Add(-time.Duration(secs) * time.Second).UTC().Format(time.RFC3339Nano)
+	})
 	var d any
-	if err := json.Unmarshal([]byte(tc.resolvePlaceholders(data.Content)), &d); err != nil {
+	if err := json.Unmarshal([]byte(tc.resolvePlaceholders(content)), &d); err != nil {
 		return fmt.Errorf("parsing %s event data: %w", eventType, err)
 	}
 	payload, err := json.Marshal(map[string]any{

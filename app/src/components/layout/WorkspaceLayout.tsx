@@ -340,12 +340,10 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
   // (see chatHost) and back on close, without mounting again.
   const learn = useLearn(channelId, subscribeChatEvents, subscribeChannelEvents);
   const [learnOpen, setLearnOpen] = useState(false);
-  useEffect(() => setLearnOpen(false), [channelId]);
   // It stays mounted until its closing animation ends.
   const learnMs = prefersReducedMotion() ? 0 : LEARN_SPLIT_MS;
   const learnSplit = usePresence(learnOpen, learnMs);
-  const openLearn = useCallback(() => setLearnOpen(true), []);
-  const closeLearn = useCallback(() => setLearnOpen(false), []);
+  const learnSplitRef = useRef<HTMLDivElement>(null);
 
   // Editor + file-tree shared state. Hoisted here so both panels (rendered
   // independently inside the layout) stay in sync, and so tab/cursor state
@@ -455,6 +453,8 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
       const lt = ch?.types[name] ?? DEFAULT_LAYOUT_TYPES[name] ?? "split";
       const t = ch?.layouts[name] ?? null;
       statusMapRef.current.clear();
+      // The Learn view holds the chat of the layout it opened over.
+      setLearnOpen(false);
       setActiveName(name);
       setLayoutType(lt);
       if (lt === "canvas") {
@@ -574,6 +574,7 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
         }
       }
       deleteLayout(channelId, name);
+      if (activeName === name) setLearnOpen(false);
       const remaining = layoutNames.filter((n) => n !== name);
       setLayoutNames(remaining);
       if (activeName === name && remaining.length > 0) {
@@ -810,6 +811,7 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
   }, [channelId]);
 
   const handleResetLayout = useCallback(() => {
+    setLearnOpen(false);
     // Close any running terminal sessions in the current tree
     const current = treeRef.current;
     if (current) {
@@ -871,10 +873,46 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
     },
     [chatHost],
   );
+
+  // Opening the Learn view makes the layout under it inert, so focus left
+  // there (on the chat pane's Learn badge, say) would drop to nowhere: it
+  // goes to the chat's composer, which moves into the view keeping it.
+  const openLearn = useCallback(() => {
+    const focused = document.activeElement;
+    if (!focused || !chatHost.contains(focused)) {
+      chatHost.querySelector<HTMLTextAreaElement>("textarea")?.focus({ preventScroll: true });
+    }
+    setLearnOpen(true);
+  }, [chatHost]);
+  // Closing the Learn view with focus in its Learn pane would leave focus
+  // nowhere once the pane goes: it goes back to the chat's composer, which
+  // stays. Escape closes it too, unless something in it (a picker, the find
+  // bar, a shown component) took the key first.
+  const closeLearn = useCallback(() => {
+    const focused = document.activeElement;
+    setLearnOpen(false);
+    if (focused && learnSplitRef.current?.contains(focused) && !chatHost.contains(focused)) {
+      chatHost.querySelector<HTMLTextAreaElement>("textarea")?.focus({ preventScroll: true });
+    }
+  }, [chatHost]);
+  useEffect(() => {
+    if (!learnOpen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && !e.defaultPrevented && !shownComponent) closeLearn();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [learnOpen, shownComponent, closeLearn]);
   const chatLeafId = useMemo(
     () => (layoutType === "canvas" ? canvasState?.tiles.find((t) => t.panel === "chat")?.id : tree ? collectLeaves(tree).find((l) => l.panel === "chat")?.id : undefined),
     [layoutType, canvasState, tree],
   );
+
+  // The Learn view keeps the chat while it fades out, even after a layout
+  // switch took its pane away.
+  const lastChatLeafIdRef = useRef(chatLeafId);
+  if (chatLeafId) lastChatLeafIdRef.current = chatLeafId;
+  const portalLeafId = chatLeafId ?? (learnSplit.mounted ? lastChatLeafIdRef.current : undefined);
 
   const renderChat = useCallback(
     (leafId: string) => (
@@ -897,7 +935,7 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
           return (
             <>
               <ChatSlot host={chatHost} active={!learnSplit.mounted} onAttach={placeChatHost} leafId={leaf.id} />
-              {learn.channelId === channelId && <LearnBadge leafId={leaf.id} learn={learn} open={false} onToggle={openLearn} />}
+              <LearnBadge leafId={leaf.id} learn={learn} open={false} onToggle={openLearn} />
             </>
           );
         case "editor":
@@ -1460,6 +1498,8 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
             position: "relative",
             pointerEvents: learnSplit.mounted ? "none" : undefined,
           }}
+          // Nor can it be reached from the keyboard.
+          inert={learnSplit.mounted}
         >
           {layoutType === "canvas" ? (
             <CanvasLayout
@@ -1539,6 +1579,7 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
         </div>
         {learnSplit.mounted && (
           <LearnSplit
+            ref={learnSplitRef}
             shown={learnSplit.shown}
             ms={learnMs}
             running={learn.running}
@@ -1557,7 +1598,7 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
           />
         )}
       </div>
-      {chatHostPlaced && chatLeafId && createPortal(renderChat(chatLeafId), chatHost)}
+      {chatHostPlaced && portalLeafId && createPortal(renderChat(portalLeafId), chatHost)}
     </div>
   );
 });

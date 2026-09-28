@@ -8,8 +8,8 @@ import (
 )
 
 // learnStateResponse is a channel's learn switch and its hidden learn thread.
-// Available is false for Slack and Discord channels, which never learn (see
-// learnAvailable). Learn is the channel's override ("on", "off", or empty to
+// Available is false for Slack and Discord channels and task threads, which
+// never learn (see learnUnavailable). Learn is the channel's override ("on", "off", or empty to
 // inherit DefaultLearn from the merged config); Enabled is the effective
 // value. LearnChannelID is empty until the first learn pass creates the
 // thread, and Running says a learn pass is in progress there.
@@ -60,7 +60,7 @@ func (s *Server) handleGetLearn(w http.ResponseWriter, r *http.Request) {
 	if merged := s.mergedConfig(ch.DirPath, s.workspace.resolveParentDirPath(r.Context(), ch.ChannelID)); merged != nil {
 		def = merged.Learn.Enabled
 	}
-	available := learnAvailable(ch)
+	available := learnUnavailable(ch) == ""
 	resp := learnStateResponse{
 		Available:    available,
 		Learn:        ch.LearnOverride,
@@ -91,8 +91,8 @@ func (s *Server) handleSetLearn(w http.ResponseWriter, r *http.Request) {
 	if ch == nil {
 		return
 	}
-	if !learnAvailable(ch) {
-		http.Error(w, "learn runs only in desktop app channels", http.StatusBadRequest)
+	if reason := learnUnavailable(ch); reason != "" {
+		http.Error(w, reason, http.StatusBadRequest)
 		return
 	}
 	if err := s.store.UpdateChannelLearnOverride(r.Context(), ch.ChannelID, req.Learn); err != nil {
@@ -105,8 +105,15 @@ func (s *Server) handleSetLearn(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// learnAvailable says whether ch can learn: only desktop app channels do,
-// since their proposals can only be seen and applied in the desktop app.
-func learnAvailable(ch *db.Channel) bool {
-	return ch.Platform == types.PlatformLocal
+// learnUnavailable says why ch can't learn, or "" when it can. Only desktop
+// app channels do, since their proposals can only be seen and applied in
+// the desktop app, and task threads never do: the daemon skips their runs.
+func learnUnavailable(ch *db.Channel) string {
+	switch {
+	case ch.Platform != types.PlatformLocal:
+		return "learn runs only in desktop app channels"
+	case ch.TaskID != 0:
+		return "learn doesn't run in task threads"
+	}
+	return ""
 }

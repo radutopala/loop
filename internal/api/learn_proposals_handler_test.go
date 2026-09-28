@@ -14,6 +14,7 @@ import (
 
 	"github.com/radutopala/loop/internal/config"
 	"github.com/radutopala/loop/internal/db"
+	"github.com/radutopala/loop/internal/types"
 )
 
 func (s *ServerSuite) serve(method, path, body string) *httptest.ResponseRecorder {
@@ -278,7 +279,7 @@ func (s *ServerSuite) TestApplyLearnProposalChannelKinds() {
 			},
 		},
 		{
-			name: "task error", kind: db.LearnKindScheduledTask, payload: `{"type":"cron","schedule":"bad","prompt":"p"}`,
+			name: "task error", kind: db.LearnKindScheduledTask, payload: `{"type":"cron","schedule":"0 9 * * *","prompt":"p"}`,
 			channel: &db.Channel{ChannelID: "ch-1"},
 			setup: func() {
 				s.scheduler.On("AddTask", mock.Anything, mock.Anything).Return(int64(0), errors.New("invalid cron"))
@@ -313,13 +314,18 @@ func (s *ServerSuite) TestApplyLearnProposalConfigKinds() {
 		PromptShortcuts: []config.PromptShortcut{{Name: "review"}},
 		BashShortcuts:   []config.BashShortcut{{Name: "lint"}},
 		Mounts:          []string{"~/.gitconfig:~/.gitconfig:ro"},
+		Gates: config.GatesConfig{Agentgate: config.AgentgateConfig{
+			PathRules:    []types.PathRule{{Pattern: "/etc/**", Decision: "deny"}},
+			CommandRules: []types.CommandRule{{Commands: []string{"rm"}, Decision: "approve"}},
+			FileRules:    []types.FileRule{{Paths: []string{"/secret/**"}, Decision: "deny"}},
+		}},
 	}
 	tests := []struct {
 		name    string
 		kind    string
 		payload string
 		initial string // "" = no project config
-		want    string
+		want    string // "" = no project config written
 		wantErr string
 	}{
 		{
@@ -337,6 +343,9 @@ func (s *ServerSuite) TestApplyLearnProposalConfigKinds() {
 			name: "gate rule", kind: db.LearnKindGateRule, payload: `{"type":"command","rule":{"commands":["git"],"decision":"approve"}}`,
 			want: "{\n  \"gates\": {\n    \"agentgate\": {\n      \"command_rules\": [\n        {\n          \"commands\": [\n            \"git\"\n          ],\n          \"decision\": \"approve\"\n        }\n      ]\n    }\n  }\n}\n",
 		},
+		{name: "path rule exists", kind: db.LearnKindGateRule, payload: `{"type":"path","rule":{"pattern":"/etc/**","decision":"deny"}}`},
+		{name: "command rule exists", kind: db.LearnKindGateRule, payload: `{"type":"command","rule":{"commands":["rm"],"decision":"approve"}}`},
+		{name: "file rule exists", kind: db.LearnKindGateRule, payload: `{"type":"file","rule":{"paths":["/secret/**"],"decision":"deny"}}`},
 		{
 			name: "first mount keeps the global ones", kind: db.LearnKindMount, payload: `{"mount":"~/.aws:~/.aws:ro"}`,
 			want: "{\n  \"mounts\": [\n    \"~/.gitconfig:~/.gitconfig:ro\",\n    \"~/.aws:~/.aws:ro\"\n  ]\n}\n",
@@ -364,11 +373,29 @@ func (s *ServerSuite) TestApplyLearnProposalConfigKinds() {
 				return
 			}
 			require.Equal(s.T(), db.LearnApplied, status, errText)
+			if tc.want == "" {
+				require.NoFileExists(s.T(), path)
+				return
+			}
 			data, err := os.ReadFile(path)
 			require.NoError(s.T(), err)
 			require.Equal(s.T(), tc.want, string(data))
 		})
 	}
+}
+
+func (s *ServerSuite) TestApplyLearnProposalRelativeMountExists() {
+	dir := s.T().TempDir()
+	// The merged project config has its relative mounts resolved against
+	// the project dir, so the proposal's relative mount must match that.
+	merged := &config.Config{Mounts: []string{filepath.Join(dir, "data") + ":/data"}}
+	s.srv.configs.load = func() (*config.Config, error) { return &config.Config{}, nil }
+	s.srv.configs.loadProject = func(string, *config.Config) (*config.Config, error) { return merged, nil }
+	s.store.On("GetChannel", mock.Anything, "ch-1").Return(&db.Channel{ChannelID: "ch-1", DirPath: dir}, nil)
+
+	status, errText := s.applyProposal(db.LearnKindMount, `{"mount":"./data:/data"}`)
+	require.Equal(s.T(), db.LearnFailed, status)
+	require.Contains(s.T(), errText, `mount "./data:/data" already exists`)
 }
 
 func (s *ServerSuite) TestApplyLearnProposalConfigErrors() {

@@ -776,7 +776,7 @@ export function useChatStateStore({ channels, channelsFetchedAt, selectedId, onA
    * Register a listener for one channel's events, whether or not it's
    * selected, and keep that channel in the WS subscription meanwhile. For
    * panels that follow a channel the sidebar never selects, like the Learn
-   * drawer's hidden learn thread. Returns an unsubscribe function.
+   * view's hidden learn thread. Returns an unsubscribe function.
    */
   const subscribeChannelEvents = useCallback(
     (channelId: string, listener: ChatEventListener): (() => void) => {

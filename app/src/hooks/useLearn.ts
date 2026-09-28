@@ -17,11 +17,19 @@ export interface LearnView {
   setLearn: (learn: LearnState["learn"]) => Promise<void>;
   /** The hidden learn thread, "" until the channel's first learn pass. */
   learnChannelId: string;
+  /** A learn pass is running (not a reply the user asked the learn thread for). */
   running: boolean;
   proposals: LearnProposal[];
+  /** Reject when the request fails; a proposal the server failed to apply
+   * resolves, with status "failed" and its error. */
   apply: (id: number) => Promise<void>;
   dismiss: (id: number) => Promise<void>;
 }
+
+// How long to wait before fetching the learn state again after a failure,
+// doubling up to the cap.
+const LEARN_STATE_RETRY_MS = 2_000;
+const LEARN_STATE_RETRY_MAX_MS = 30_000;
 
 /** The selected channel's LearnView, for the chat's Learn switch. */
 export const LearnContext = createContext<LearnView | null>(null);
@@ -53,19 +61,28 @@ export function useLearn(
     setLearnChannelId("");
     setRunning(false);
     setProposals([]);
-    fetchLearnState(channelId)
-      .then((st) => {
-        if (cancelled) return;
-        setAvailable(st.available);
-        setLearnValue(st.learn);
-        setDefaultLearn(st.default_learn);
-        // A learn.started that arrived while this was in flight is newer:
-        // don't let the fetched state undo it.
-        setLearnChannelId((cur) => cur || st.learn_channel_id);
-        setRunning((cur) => cur || st.running);
-        setLoaded(true);
-      })
-      .catch(logErr("fetching learn state"));
+    // Until the state loads the Learn switch stays hidden, so a failed
+    // fetch is tried again rather than hiding it for good.
+    let retry: ReturnType<typeof setTimeout> | undefined;
+    const load = (wait: number) => {
+      fetchLearnState(channelId)
+        .then((st) => {
+          if (cancelled) return;
+          setAvailable(st.available);
+          setLearnValue(st.learn);
+          setDefaultLearn(st.default_learn);
+          // A learn.started that arrived while this was in flight is newer:
+          // don't let the fetched state undo it.
+          setLearnChannelId((cur) => cur || st.learn_channel_id);
+          setRunning((cur) => cur || st.running);
+          setLoaded(true);
+        })
+        .catch((e) => {
+          logErr("fetching learn state")(e);
+          if (!cancelled) retry = setTimeout(() => load(Math.min(wait * 2, LEARN_STATE_RETRY_MAX_MS)), wait);
+        });
+    };
+    load(LEARN_STATE_RETRY_MS);
     fetchLearnProposals(channelId)
       .then((list) => {
         if (!cancelled) setProposals((cur) => mergeProposals(cur, list));
@@ -73,6 +90,7 @@ export function useLearn(
       .catch(logErr("fetching learn proposals"));
     return () => {
       cancelled = true;
+      clearTimeout(retry);
     };
   }, [channelId]);
 
@@ -102,7 +120,11 @@ export function useLearn(
   useEffect(() => {
     if (!learnChannelId || !subscribeChannelEvents) return;
     return subscribeChannelEvents(learnChannelId, (event: WSEvent) => {
-      if (event.type === "agent.status") setRunning((event.data as AgentStatusData).status === "running");
+      if (event.type !== "agent.status") return;
+      // A reply the user asked the learn thread for isn't a learn pass.
+      const data = event.data as AgentStatusData;
+      if (data.status !== "running") setRunning(false);
+      else if (data.trigger === "learn") setRunning(true);
     });
   }, [learnChannelId, subscribeChannelEvents]);
 
@@ -121,21 +143,13 @@ export function useLearn(
   );
 
   const apply = useCallback(async (id: number) => {
-    try {
-      const p = await applyLearnProposal(id);
-      setProposals((cur) => mergeProposals(cur, [p]));
-    } catch (e) {
-      logErr("applying learn proposal")(e);
-    }
+    const p = await applyLearnProposal(id);
+    setProposals((cur) => mergeProposals(cur, [p]));
   }, []);
 
   const dismiss = useCallback(async (id: number) => {
-    try {
-      const p = await dismissLearnProposal(id);
-      setProposals((cur) => mergeProposals(cur, [p]));
-    } catch (e) {
-      logErr("dismissing learn proposal")(e);
-    }
+    const p = await dismissLearnProposal(id);
+    setProposals((cur) => mergeProposals(cur, [p]));
   }, []);
 
   // Memoized: the layout's chat pane re-renders when it changes.

@@ -344,6 +344,13 @@ func parseOnceSchedule(schedule string) (time.Time, error) {
 	return t, nil
 }
 
+// ValidateSchedule checks schedule parses for taskType the way AddTask reads
+// it. The error wraps ErrInvalidSchedule.
+func ValidateSchedule(taskType db.TaskType, schedule string) error {
+	_, err := calculateNextRun(taskType, schedule, time.Time{})
+	return err
+}
+
 func calculateNextRun(taskType db.TaskType, schedule string, now time.Time) (time.Time, error) {
 	switch taskType {
 	case db.TaskTypeCron:

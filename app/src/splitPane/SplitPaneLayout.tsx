@@ -251,7 +251,7 @@ export function paneBoxStyle(colors: ColorPalette): React.CSSProperties {
 }
 
 /** The bar between two split panes; with onMouseDown, a handle to resize them. */
-export function SplitDivider({ vertical, onMouseDown, style }: { vertical: boolean; onMouseDown?: (e: React.MouseEvent) => void; style?: React.CSSProperties }) {
+export function SplitDivider({ vertical, onMouseDown }: { vertical: boolean; onMouseDown?: (e: React.MouseEvent) => void }) {
   const { colors } = useTheme();
   return (
     <div
@@ -262,7 +262,6 @@ export function SplitDivider({ vertical, onMouseDown, style }: { vertical: boole
         cursor: onMouseDown ? (vertical ? "row-resize" : "col-resize") : undefined,
         backgroundColor: colors.islandGap ? "transparent" : colors.border,
         position: "relative",
-        ...style,
       }}
     >
       {!colors.islandGap && onMouseDown && (

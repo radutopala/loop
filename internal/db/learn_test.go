@@ -37,6 +37,11 @@ func (s *IntegrationSuite) TestLearnLifecycle() {
 	require.Equal(s.T(), ChannelKindLearn, l.Kind)
 	require.True(s.T(), l.Active)
 	require.NoError(s.T(), store.InsertMessage(ctx, &Message{ChatID: chatID, ChannelID: "l1", MsgID: "m1", Content: "learn", Kind: MessageKindMessage, CreatedAt: time.Now()}))
+	require.NoError(s.T(), store.InsertMessage(ctx, &Message{ChatID: chatID, ChannelID: "c1", MsgID: "m0", Content: "learn in chat", Kind: MessageKindMessage, CreatedAt: time.Now()}))
+	found, err := store.SearchMessages(ctx, "learn", 10)
+	require.NoError(s.T(), err)
+	require.Len(s.T(), found, 1, "learn threads are left out of search")
+	require.Equal(s.T(), "c1", found[0].ChannelID)
 
 	ps := []*LearnProposal{
 		{ChannelID: "c1", LearnChannelID: "l1", Kind: LearnKindRename, Title: "rename", Payload: `{"name":"x"}`},

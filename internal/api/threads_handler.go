@@ -87,6 +87,13 @@ func (s *Server) handleDeleteThread(w http.ResponseWriter, r *http.Request) {
 
 	threadID := r.PathValue("id")
 
+	// The thread's learn thread goes with it; note it while the thread still
+	// exists to find it by.
+	var learnIDs []string
+	if s.store != nil {
+		learnIDs = s.learnThreadIDs(r.Context(), threadID)
+	}
+
 	if err := s.threads.DeleteThread(r.Context(), threadID); err != nil {
 		if errors.Is(err, ErrChannelLocked) {
 			http.Error(w, err.Error(), http.StatusConflict)
@@ -96,6 +103,7 @@ func (s *Server) handleDeleteThread(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	s.stopLearnThreads(r.Context(), learnIDs)
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -253,7 +261,9 @@ func (s *Server) handleForkThread(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	if src == nil || src.ParentID == "" {
+	// A hidden learn thread is as good as missing: forking it would surface
+	// its review session as a visible thread.
+	if src == nil || src.ParentID == "" || src.Kind == db.ChannelKindLearn {
 		http.Error(w, "thread not found", http.StatusBadRequest)
 		return
 	}

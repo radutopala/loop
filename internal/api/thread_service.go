@@ -68,6 +68,7 @@ func (s *threadService) DeleteThread(ctx context.Context, threadID string) error
 		if err := s.removeMCPConfig(ch.DirPath, threadID); err != nil {
 			s.logger.Warn("removing MCP config for thread", "error", err, "thread_id", threadID)
 		}
+		s.removeLearnMCPConfig(ctx, threadID)
 	}
 
 	if s.creator != nil {
@@ -81,6 +82,22 @@ func (s *threadService) DeleteThread(ctx context.Context, threadID string) error
 	}
 
 	return nil
+}
+
+// removeLearnMCPConfig removes the MCP config of threadID's hidden learn
+// thread, which goes with it.
+func (s *threadService) removeLearnMCPConfig(ctx context.Context, threadID string) {
+	l, err := s.store.GetLearnChannel(ctx, threadID)
+	if err != nil {
+		s.logger.Warn("looking up learn thread for MCP cleanup", "error", err, "thread_id", threadID)
+		return
+	}
+	if l == nil {
+		return
+	}
+	if err := s.removeMCPConfig(l.DirPath, l.ChannelID); err != nil {
+		s.logger.Warn("removing MCP config for learn thread", "error", err, "learn_channel_id", l.ChannelID)
+	}
 }
 
 func (s *threadService) CreateThread(ctx context.Context, channelID, name, authorID, message string) (string, error) {

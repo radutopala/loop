@@ -126,6 +126,7 @@ func (s *ServerSuite) TestLearnSetErrors() {
 	s.store.On("GetChannel", mock.Anything, "gone").Return(nil, nil)
 	s.store.On("GetChannel", mock.Anything, "ch-1").Return(&db.Channel{ChannelID: "ch-1", Platform: types.PlatformLocal}, nil)
 	s.store.On("GetChannel", mock.Anything, "slack-1").Return(&db.Channel{ChannelID: "slack-1", Platform: types.PlatformSlack}, nil)
+	s.store.On("GetChannel", mock.Anything, "task-1").Return(&db.Channel{ChannelID: "task-1", Platform: types.PlatformLocal, TaskID: 7}, nil)
 	s.store.On("UpdateChannelLearnOverride", mock.Anything, "ch-1", "on").Return(os.ErrPermission)
 
 	w := s.learnRequest("PUT", "ch-1", `{"learn":"maybe"}`)
@@ -136,5 +137,8 @@ func (s *ServerSuite) TestLearnSetErrors() {
 	w = s.learnRequest("PUT", "slack-1", `{"learn":"on"}`)
 	require.Equal(s.T(), http.StatusBadRequest, w.Code)
 	require.Contains(s.T(), w.Body.String(), "desktop app channels")
+	w = s.learnRequest("PUT", "task-1", `{"learn":"on"}`)
+	require.Equal(s.T(), http.StatusBadRequest, w.Code)
+	require.Contains(s.T(), w.Body.String(), "task threads")
 	require.Equal(s.T(), http.StatusInternalServerError, s.learnRequest("PUT", "ch-1", `{"learn":"on"}`).Code)
 }

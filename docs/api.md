@@ -354,7 +354,7 @@ For **worktree threads**, the fork additionally creates a new git worktree branc
 { "thread_id": "abc123", "worktree_path": "/path/to/.worktrees/wt-1a2b" }
 ```
 
-`worktree_path` is present only for worktree forks. **Errors:** `400` when the id is not a thread; `500` on git/store failures.
+`worktree_path` is present only for worktree forks. **Errors:** `400` when the id is not a thread or is a hidden learn thread (`thread not found`); `500` on git/store failures.
 
 ---
 
@@ -867,7 +867,7 @@ List the channel's interleaved timeline â€” chat messages plus persisted agent e
 
 ### `GET /api/messages/search`
 
-Full-text search across all messages using case-insensitive `LIKE %query%`.
+Full-text search across all messages using case-insensitive `LIKE %query%`. Messages in hidden learn threads are left out.
 
 **Query Parameters:**
 
@@ -936,7 +936,7 @@ Return the channel's learn switch, the config default it falls back to (global â
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `available` | bool | `false` for Slack and Discord channels, which never learn |
+| `available` | bool | `false` for Slack and Discord channels and scheduled tasks' threads, which never learn |
 | `learn` | string | The channel's setting: `"on"`, `"off"`, or empty to inherit `default_learn` |
 | `default_learn` | bool | `learn.enabled` from the merged config; `false` when the config fails to load |
 | `enabled` | bool | The effective switch; always `false` when not `available` |
@@ -962,7 +962,7 @@ Set the channel's learn switch. It takes effect from the channel's next run.
 
 **Behavior notes:** Broadcasts a [`channel.learn`](events.md#channellearn) event.
 
-**Errors:** `400` if the body isn't valid JSON, `learn` is another value, or the channel is a Slack or Discord one (`learn runs only in desktop app channels`). `404` if the channel doesn't exist or is a learn thread. `501` if the store is not configured.
+**Errors:** `400` if the body isn't valid JSON, `learn` is another value, or the channel is a Slack or Discord one (`learn runs only in desktop app channels`) or a scheduled task's thread (`learn doesn't run in task threads`). `404` if the channel doesn't exist or is a learn thread. `501` if the store is not configured.
 
 ---
 
