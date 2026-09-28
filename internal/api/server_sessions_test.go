@@ -15,6 +15,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/radutopala/loop/internal/db"
+	"github.com/radutopala/loop/internal/learn"
 	"github.com/radutopala/loop/internal/testutil"
 )
 
@@ -83,6 +84,13 @@ func (s *ServerSuite) TestSessionListSuccess() {
 	require.NoError(s.T(), os.Chtimes(f2, t2, t2))
 	require.NoError(s.T(), os.Chtimes(f3, t3, t3))
 
+	// Learn passes' sessions aren't listed: the learn thread's current one
+	// by its id, an older pass's by the trigger it started with.
+	require.NoError(s.T(), os.WriteFile(filepath.Join(projectDir, "session-learn-now.jsonl"), []byte(userLine+"\n"), 0644))
+	learnHead, err := json.Marshal(map[string]string{"type": "queue-operation", "operation": "enqueue", "content": "loop: " + learn.TriggerMessage("api", "")})
+	require.NoError(s.T(), err)
+	require.NoError(s.T(), os.WriteFile(filepath.Join(projectDir, "session-learn-old.jsonl"), append(learnHead, '\n'), 0644))
+
 	// Also create a non-.jsonl file and a directory that should be skipped.
 	require.NoError(s.T(), os.WriteFile(filepath.Join(projectDir, "notes.txt"), []byte("hi"), 0644))
 	require.NoError(s.T(), os.MkdirAll(filepath.Join(projectDir, "subdir"), 0755))
@@ -110,6 +118,9 @@ func (s *ServerSuite) TestSessionListSuccess() {
 	// Mock ListChannels for imported_session_ids — include a thread with a session.
 	s.store.On("ListChannels", mock.Anything).Return([]*db.Channel{
 		{ChannelID: "thread-1", ParentID: "ch-1", SessionID: "session-bbb"},
+		{ChannelID: "learn-1", ParentID: "ch-1", SessionID: "session-learn-now", Kind: db.ChannelKindLearn},
+		// A pass about to fork session-aaa borrows its id meanwhile.
+		{ChannelID: "learn-2", ParentID: "thread-1", SessionID: "session-aaa", Kind: db.ChannelKindLearn, ForkPending: true},
 	}, nil).Maybe()
 
 	req := httptest.NewRequest("GET", "/api/channels/ch-1/sessions", nil)
@@ -134,7 +145,7 @@ func (s *ServerSuite) TestSessionListSuccess() {
 	require.Empty(s.T(), resp.Sessions[0].LastMessage)                       // session-ccc (empty)
 
 	// Verify imported_session_ids — session-bbb is already a thread.
-	require.Equal(s.T(), []string{"session-bbb"}, resp.ImportedSessionIDs)
+	require.Equal(s.T(), []string{"session-bbb", "session-learn-now", "session-aaa"}, resp.ImportedSessionIDs)
 }
 
 func (s *ServerSuite) TestFindLastMessage() {
@@ -177,8 +188,35 @@ func (s *ServerSuite) TestFindLastMessage() {
 	require.Equal(s.T(), "fallback", findLastMessage([]byte(data)))
 }
 
-func (s *ServerSuite) TestReadLastMessageTextFileNotFound() {
-	require.Empty(s.T(), readLastMessageText(realSys{}, "/nonexistent/path.jsonl"))
+func (s *ServerSuite) TestReadSessionSummaryFileNotFound() {
+	lastMsg, isLearn := readSessionSummary(realSys{}, "/nonexistent/path.jsonl")
+	require.Empty(s.T(), lastMsg)
+	require.False(s.T(), isLearn)
+}
+
+func (s *ServerSuite) TestIsLearnSession() {
+	trigger := func(op string) string {
+		line, _ := json.Marshal(map[string]string{"type": "queue-operation", "operation": op, "content": "loop: " + learn.TriggerMessage("api", "fix it")})
+		return string(line) + "\n"
+	}
+	meta := `{"type":"ai-title","aiTitle":"t","sessionId":"s"}` + "\n"
+	tests := []struct {
+		name string
+		head string
+		want bool
+	}{
+		{"learn pass fork", meta + trigger("enqueue") + `{"type":"user","message":{"role":"user","content":"radu: hi"}}` + "\n", true},
+		{"chat session", meta + `{"type":"queue-operation","operation":"enqueue","content":"radu: fix it"}` + "\n" + trigger("enqueue"), false},
+		{"dequeue skipped", trigger("dequeue"), false},
+		{"broken line skipped", `{"type":"queue-operation"` + "\n" + trigger("enqueue"), true},
+		{"no enqueue", meta, false},
+		{"line past the head", strings.Repeat("x", headReadSize+1) + "\n" + trigger("enqueue"), false},
+	}
+	for _, tc := range tests {
+		s.Run(tc.name, func() {
+			require.Equal(s.T(), tc.want, isLearnSession(strings.NewReader(tc.head)))
+		})
+	}
 }
 
 func (s *ServerSuite) TestFindLastMessageFromReaderStatError() {
@@ -212,7 +250,7 @@ func (f *failReadReader) Stat() (os.FileInfo, error)     { return &mockFileInfo{
 func (f *failReadReader) Read([]byte) (int, error)       { return 0, errors.New("read err") }
 func (f *failReadReader) Seek(int64, int) (int64, error) { return 0, nil }
 
-// realSys delegates Open to os.Open for testing readLastMessageText.
+// realSys delegates Open to os.Open for testing readSessionSummary.
 type realSys struct{}
 
 func (realSys) Open(name string) (*os.File, error) { return os.Open(name) }
@@ -363,7 +401,7 @@ func (s *ServerSuite) TestSessionListWithRealJSONLFile() {
 	projectDir := filepath.Join(tmpDir, ".claude", "projects", "-Users-test-dev-myproject")
 	require.NoError(s.T(), os.MkdirAll(projectDir, 0o755))
 
-	// Write a real JSONL file so Open succeeds and readLastMessageText can parse it.
+	// Write a real JSONL file so Open succeeds and readSessionSummary can parse it.
 	jsonl := `{"type":"assistant","message":{"content":[{"type":"text","text":"Hello world"}]}}` + "\n"
 	require.NoError(s.T(), os.WriteFile(filepath.Join(projectDir, "sess-abc.jsonl"), []byte(jsonl), 0o644))
 

@@ -37,20 +37,31 @@ export function subscriptionChannels(selectedId: string | null | undefined, runn
 }
 
 /**
+ * Whether a run ran in a channel's hidden learn thread: a learn pass
+ * ("learn"), or a reply the user asked the thread for in the Learn view
+ * ("learn-reply").
+ */
+function isLearnTrigger(trigger: string | undefined): boolean {
+  return trigger === "learn" || trigger === "learn-reply";
+}
+
+/**
  * Whether a finished run should mark its channel unread and post a desktop
- * notification. A learn pass runs in a hidden thread the user can't open
- * from the sidebar; its proposals surface through the Learn badge instead.
+ * notification. The learn thread is hidden: the user can't open it from the
+ * sidebar, and a reply there shows in the open Learn view; a pass's
+ * proposals surface through the Learn badge instead.
  */
 export function alertsOnRunEnd(trigger: string | undefined): boolean {
-  return trigger !== "learn";
+  return !isLearnTrigger(trigger);
 }
 
 /**
  * Whether a finished run should bounce the dock. Only runs the user started
  * do: scheduled tasks fire often, "bot" runs are indirect chains (an agent
- * re-entering via the send_message / create_thread MCP tools) and learn
- * passes are background reviews.
+ * re-entering via the send_message / create_thread MCP tools), learn
+ * passes are background reviews and learn-thread replies answer in the
+ * Learn view the user is looking at.
  */
 export function bouncesOnRunEnd(trigger: string | undefined): boolean {
-  return trigger !== "scheduled" && trigger !== "bot" && trigger !== "learn";
+  return trigger !== "scheduled" && trigger !== "bot" && !isLearnTrigger(trigger);
 }

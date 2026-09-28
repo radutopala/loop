@@ -1,8 +1,9 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useCallback, useContext, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { fetchComposerHistory, resolveAsk, resolvePlan } from "../../api/channels";
 import { fetchShortcuts, type PromptShortcut } from "../../api/configApi";
 import { type FileSearchResult, type RootEntry, searchFiles } from "../../api/files";
 import { resolveGateApproval, sendCommand, sendMessage } from "../../api/loopApi";
+import { ShortcutsVersionContext } from "../../hooks/shortcutsVersion";
 import type { QueuedEditSaveResult } from "../../hooks/useQueuedEdit";
 import { useTheme } from "../../ThemeContext";
 import type { ColorPalette } from "../../theme";
@@ -214,8 +215,6 @@ const SEND_MODE_KEY = "loop-send-mode";
 
 export interface ChatInputProps {
   channelId: string;
-  /** Hide the Learn switch (in a learn thread's own composer). */
-  hideLearn?: boolean;
   /** Don't take focus on mount. */
   noAutoFocus?: boolean;
   messages: Message[];
@@ -267,7 +266,6 @@ function buildQuotePrefix(msg: Message): string {
 
 export function ChatInput({
   channelId,
-  hideLearn,
   noAutoFocus,
   messages,
   roots,
@@ -434,12 +432,13 @@ export function ChatInput({
     item?.scrollIntoView({ block: "nearest" });
   }, [cmdSelectedIdx, showCommands]);
 
-  // Fetch prompt shortcuts when channel changes.
+  // Fetch prompt shortcuts when the channel changes, or its shortcuts do.
+  const shortcutsVersion = useContext(ShortcutsVersionContext);
   useEffect(() => {
     fetchShortcuts(channelId)
       .then(setShortcuts)
       .catch(() => setShortcuts([]));
-  }, [channelId]);
+  }, [channelId, shortcutsVersion]);
 
   // Scroll selected shortcut item into view.
   useEffect(() => {
@@ -1215,7 +1214,7 @@ export function ChatInput({
           </button>
         )}
         <div style={{ flex: 1 }} />
-        {!hideLearn && <LearnToggle channelId={channelId} />}
+        <LearnToggle channelId={channelId} />
         <AgentConfigPill channelId={channelId} />
         <div style={modeStyles.pill}>
           <button

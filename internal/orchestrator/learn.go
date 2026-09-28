@@ -2,6 +2,7 @@ package orchestrator
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -117,7 +118,24 @@ func (o *Orchestrator) maybeLearn(ctx context.Context, ch *db.Channel, msg *bot.
 		o.logger.Debug("learn: skipped", "channel_id", ch.ChannelID, "reason", "no session")
 		return
 	}
+	// ch was loaded before the run. The channel may have been deleted
+	// since, and a learn thread made for it now would be an orphan; or its
+	// Learn switch turned off.
+	fresh, err := o.store.GetChannel(ctx, ch.ChannelID)
+	if err != nil || fresh == nil {
+		o.logger.Debug("learn: skipped", "channel_id", ch.ChannelID, "reason", "channel gone", "error", err)
+		return
+	}
+	if !fresh.LearnEnabled(cfg.Enabled) {
+		o.logger.Debug("learn: skipped", "channel_id", ch.ChannelID, "reason", "learn off")
+		return
+	}
+	ch = fresh
 	l, err := o.ensureLearnChannel(ctx, ch)
+	if errors.Is(err, db.ErrLearnParentGone) {
+		o.logger.Debug("learn: skipped", "channel_id", ch.ChannelID, "reason", "channel gone")
+		return
+	}
 	if err != nil {
 		o.logger.Error("learn: creating learn thread", "error", err, "channel_id", ch.ChannelID)
 		return
@@ -184,9 +202,11 @@ func (o *Orchestrator) learnRunDone(ctx context.Context, channelID, authorID str
 	if next == nil {
 		return
 	}
+	// The learn thread goes with its channel, so a missing one means the
+	// channel was deleted while the pass waited.
 	l, err := o.store.GetChannel(ctx, channelID)
 	if err != nil || l == nil {
-		o.logger.Error("learn: loading learn thread", "error", err, "learn_channel_id", channelID)
+		o.logger.Debug("learn: dropping the waiting pass", "reason", "learn thread gone", "error", err, "learn_channel_id", channelID)
 		o.releaseLearn(channelID)
 		return
 	}
@@ -238,7 +258,8 @@ func (o *Orchestrator) startLearn(ctx context.Context, l *db.Channel, pass *lear
 // ensureLearnChannel returns ch's hidden learn thread, creating it on first
 // use. It's a local thread under ch in ch's directory, so its runs see the
 // same checkout and can resume ch's sessions. An existing learn thread is
-// renamed to follow ch's name.
+// renamed to follow ch's name. It fails with db.ErrLearnParentGone when ch
+// was deleted before its learn thread could be made.
 func (o *Orchestrator) ensureLearnChannel(ctx context.Context, ch *db.Channel) (*db.Channel, error) {
 	name := "learn: " + ch.Name
 	l, err := o.store.GetLearnChannel(ctx, ch.ChannelID)

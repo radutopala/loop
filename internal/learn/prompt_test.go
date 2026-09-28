@@ -151,3 +151,23 @@ func (s *PromptSuite) TestTriggerMessage() {
 		})
 	}
 }
+
+func (s *PromptSuite) TestIsTrigger() {
+	tests := []struct {
+		name   string
+		prompt string
+		want   bool
+	}{
+		{"bare", TriggerMessage("api", "fix it"), true},
+		{"behind the author prefix", "loop: " + TriggerMessage("a: b\nc", ""), true},
+		{"name with a colon, no prefix", TriggerMessage("a: b", ""), true},
+		{"a user prompt", "radu: fix the tests", false},
+		{"quoting the lead only", "radu: The run in \"api\" was slow", false},
+		{"empty", "", false},
+	}
+	for _, tc := range tests {
+		s.Run(tc.name, func() {
+			require.Equal(s.T(), tc.want, IsTrigger(tc.prompt))
+		})
+	}
+}

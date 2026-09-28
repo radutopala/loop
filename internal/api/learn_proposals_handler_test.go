@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -8,12 +9,14 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 
 	"github.com/radutopala/loop/internal/config"
 	"github.com/radutopala/loop/internal/db"
+	"github.com/radutopala/loop/internal/learn"
 	"github.com/radutopala/loop/internal/types"
 )
 
@@ -432,4 +435,55 @@ func (s *ServerSuite) TestApplyLearnProposalConfigErrors() {
 		require.NoError(s.T(), err)
 		require.Equal(s.T(), "{\n  \"mounts\": [\n    \"a:b\"\n  ]\n}\n", string(data))
 	})
+}
+
+// gatedReadSystem holds every read of path until release is closed,
+// reporting each one on reads first.
+type gatedReadSystem struct {
+	serverSystem
+	path    string
+	reads   chan struct{}
+	release chan struct{}
+}
+
+func (g *gatedReadSystem) ReadFile(name string) ([]byte, error) {
+	if name == g.path {
+		g.reads <- struct{}{}
+		<-g.release
+	}
+	return g.serverSystem.ReadFile(name)
+}
+
+// TestApplyLearnConfigConcurrent applies two proposals to the same config
+// at once, as Apply all does: the second edit waits for the first to be
+// written, so both entries land.
+func (s *ServerSuite) TestApplyLearnConfigConcurrent() {
+	dir := s.T().TempDir()
+	path := filepath.Join(dir, ".loop", "config.json")
+	sys := &gatedReadSystem{serverSystem: s.srv.sys, path: path, reads: make(chan struct{}, 2), release: make(chan struct{})}
+	s.srv.sys = sys
+	s.srv.configs.loadProject = func(string, *config.Config) (*config.Config, error) { return &config.Config{}, nil }
+	s.store.On("GetChannel", mock.Anything, "ch-1").Return(&db.Channel{ChannelID: "ch-1", DirPath: dir}, nil)
+	ch := &db.Channel{ChannelID: "ch-1", DirPath: dir}
+
+	errs := make(chan error, 2)
+	apply := func(name string) {
+		errs <- s.srv.applyLearnConfig(context.Background(), ch, &learn.PromptShortcut{Name: name, Prompt: "p"})
+	}
+	go apply("one")
+	<-sys.reads
+	go apply("two")
+	select {
+	case <-sys.reads:
+		s.FailNow("the second edit read the config while the first held it")
+	case <-time.After(50 * time.Millisecond):
+	}
+	close(sys.release)
+	require.NoError(s.T(), <-errs)
+	require.NoError(s.T(), <-errs)
+
+	data, err := os.ReadFile(path)
+	require.NoError(s.T(), err)
+	require.Contains(s.T(), string(data), `"one"`)
+	require.Contains(s.T(), string(data), `"two"`)
 }

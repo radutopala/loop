@@ -45,7 +45,7 @@ export function LearnSplit({ shown, ms, running, chatHeader, chat, learnPane, re
   const fade: React.CSSProperties = { opacity: shown ? 1 : 0, transition: ms ? `opacity ${ms}ms ease` : "none" };
 
   return (
-    <div ref={ref} data-testid="learn-split" style={{ position: "absolute", inset: 0, zIndex: 20, overflow: "hidden", display: "flex" }}>
+    <div ref={ref} data-testid="learn-split" role="region" aria-label="Learn view" style={{ position: "absolute", inset: 0, zIndex: 20, overflow: "hidden", display: "flex" }}>
       {/* The chat's half, with the divider, doesn't fade: nothing under the
           chat may animate as it moves in, or the browser lifts the chat onto
           a layer of its own, painted afresh, and it flickers. Its background

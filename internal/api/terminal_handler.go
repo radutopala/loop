@@ -114,11 +114,13 @@ type wsStatusMessage struct {
 // InteractiveCmdBuilder builds the interactive Claude command for a terminal session.
 type InteractiveCmdBuilder interface {
 	BuildInteractiveCmd(channelID, dirPath, parentDirPath, sessionID, agentID string, forkSession bool) string
-	// BuildContinueCmd builds a `claude --continue` command that resumes the
-	// most recently modified session for the working directory, used to
-	// relaunch Claude after its process exits unexpectedly (e.g. OOM-killed)
-	// without needing to know its (possibly forked) session id.
-	BuildContinueCmd(channelID, dirPath, parentDirPath, agentID string) string
+	// BuildContinueCmd builds the command that relaunches Claude after its
+	// process exits unexpectedly (e.g. OOM-killed). It resumes sessionID when
+	// that is set and its transcript exists, and otherwise falls back to
+	// `claude --continue`, the most recently modified session for the working
+	// directory (used when the pane forked or started a session whose id Loop
+	// never learns).
+	BuildContinueCmd(channelID, dirPath, parentDirPath, sessionID, agentID string) string
 }
 
 // terminalWSConn manages a single WebSocket terminal connection.
@@ -160,15 +162,16 @@ type terminalWSConn struct {
 	autoAcceptRemaining int // remaining prompts to auto-accept (0 = disabled)
 
 	// relaunch scans terminal output for Claude's exit marker and, on an
-	// abnormal exit, resends the interactive Claude command (in --continue
-	// mode) so a Claude process that died unexpectedly (e.g. OOM-killed)
-	// comes back without the user having to notice and retype it.
+	// abnormal exit, resends the interactive Claude command (see
+	// BuildContinueCmd) so a Claude process that died unexpectedly (e.g.
+	// OOM-killed) comes back without the user having to notice and retype it.
 	relaunchMu        sync.Mutex
 	relaunchEnabled   bool // true only for panes that auto-boot Claude (not explicit cmd / sessions panel)
 	relaunchRemaining int  // remaining auto-relaunches for the current session (0 = disabled)
 	relaunchChannelID string
 	relaunchDirPath   string
 	relaunchParentDir string
+	relaunchSessionID string // the session the pane resumed, "" when it forked or started fresh
 	relaunchAgentID   string
 }
 
@@ -271,13 +274,14 @@ func (t *terminalWSConn) disableRelaunch() {
 
 // enableRelaunch records the state needed to relaunch Claude after an
 // abnormal exit and resets the per-session relaunch budget.
-func (t *terminalWSConn) enableRelaunch(channelID, dirPath, parentDirPath, agentID string) {
+func (t *terminalWSConn) enableRelaunch(channelID, dirPath, parentDirPath, sessionID, agentID string) {
 	t.relaunchMu.Lock()
 	t.relaunchEnabled = true
 	t.relaunchRemaining = maxClaudeRelaunches
 	t.relaunchChannelID = channelID
 	t.relaunchDirPath = dirPath
 	t.relaunchParentDir = parentDirPath
+	t.relaunchSessionID = sessionID
 	t.relaunchAgentID = agentID
 	t.relaunchMu.Unlock()
 }
@@ -396,7 +400,7 @@ var claudeExitMarkerRe = regexp.MustCompile(regexp.QuoteMeta(container.ClaudeExi
 
 // scanClaudeExit checks live terminal output for a Claude exit marker and, on
 // an abnormal (non-zero) exit with relaunch budget remaining, resends the
-// interactive Claude command in --continue mode so a process that died
+// interactive Claude command (see BuildContinueCmd) so a process that died
 // unexpectedly (e.g. OOM-killed) comes back automatically. An exit code of 0
 // means the user quit deliberately, so relaunching is disabled for the rest
 // of the session's lifetime.
@@ -426,7 +430,7 @@ func (t *terminalWSConn) scanClaudeExit(data []byte) {
 		return
 	}
 	t.relaunchRemaining--
-	channelID, dirPath, parentDirPath, agentID := t.relaunchChannelID, t.relaunchDirPath, t.relaunchParentDir, t.relaunchAgentID
+	channelID, dirPath, parentDirPath, sessionID, agentID := t.relaunchChannelID, t.relaunchDirPath, t.relaunchParentDir, t.relaunchSessionID, t.relaunchAgentID
 	t.relaunchMu.Unlock()
 
 	sid := t.sessionID
@@ -437,7 +441,7 @@ func (t *terminalWSConn) scanClaudeExit(data []byte) {
 		if t.getSessionID() != sid {
 			return // pane moved on (detached/stopped/closed) — don't relaunch into it
 		}
-		cmd := t.cmdBuilder.BuildContinueCmd(channelID, dirPath, parentDirPath, agentID)
+		cmd := t.cmdBuilder.BuildContinueCmd(channelID, dirPath, parentDirPath, sessionID, agentID)
 		if err := t.manager.SendInput(sid, []byte(cmd+"\n")); err != nil {
 			t.logger.Warn("terminal ws: claude relaunch send failed", "session_id", sid, "error", err)
 		}
@@ -685,8 +689,14 @@ func (t *terminalWSConn) handleCreate(ctx context.Context, msg wsControlMessage)
 		}
 		// Sessions-panel panes (stopOnClose) resume an explicit, fixed session
 		// the user picked — don't auto-relaunch those into a different one.
+		// A resumed session is relaunched by id; a fork's new id is never
+		// reported back, so that one falls back to --continue.
 		if !t.stopOnClose {
-			t.enableRelaunch(msg.ChannelID, dirPath, parentDirPath, msg.AgentID)
+			resumeID := claudeSessionID
+			if forkSession {
+				resumeID = ""
+			}
+			t.enableRelaunch(msg.ChannelID, dirPath, parentDirPath, resumeID, msg.AgentID)
 		}
 	}
 }

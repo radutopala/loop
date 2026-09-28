@@ -273,7 +273,10 @@ export function Settings({
   useEffect(() => {
     if (!open) return;
     const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "Escape") tryCloseRef.current();
+      if (e.key === "Escape") {
+        e.preventDefault();
+        tryCloseRef.current();
+      }
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);

@@ -742,7 +742,7 @@ func (s *Server) handleRemoveWorktree(w http.ResponseWriter, r *http.Request) {
 
 	// If this worktree was imported as a thread, delete the thread record too.
 	if body.ThreadID != "" && s.threads != nil {
-		if err := s.threads.DeleteThread(r.Context(), body.ThreadID); err != nil {
+		if err := s.deleteThread(r.Context(), body.ThreadID); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}

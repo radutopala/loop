@@ -461,11 +461,14 @@ List Claude Code session JSONL files for a channel's project directory.
       "last_modified": "2026-03-25T14:30:00Z",
       "last_message": "I've updated the configuration file..."
     }
-  ]
+  ],
+  "imported_session_ids": ["4482da1c-831c-..."]
 }
 ```
 
-Sessions are sorted by modification time (newest first). `last_message` is extracted from the last assistant or user message in the JSONL file (last 32KB reverse-scanned). `current_session_id` is the session currently associated with the channel.
+Sessions are sorted by modification time (newest first). `last_message` is extracted from the last assistant or user message in the JSONL file (last 32KB reverse-scanned). `current_session_id` is the session currently associated with the channel. `imported_session_ids` lists the session ids already held by a channel or thread.
+
+[Learn passes'](chat.md#learn-from-a-run) sessions aren't importable and are left out: every pass forks a new session file into the channel's project dir. A file is taken for one when its id is a learn thread's own session (not the reviewed run's, which a learn thread holds with `fork_pending` until its pass forks it), or when the first prompt it logs (the first `queue-operation` enqueue in its first 64KB, which Claude writes at the top of a `--print` session, before the history a fork copies in) is a learn pass's trigger message.
 
 ---
 
@@ -1050,7 +1053,7 @@ Apply a `pending` or `failed` proposal. It moves to `applying` first, so a doubl
 
 **Response (200):** the proposal, with `status` `applied`, or `failed` and an `error`. A failed apply is recorded on the proposal, not returned as an HTTP error, so it can be retried.
 
-**Behavior notes:** Broadcasts a [`learn.proposal_updated`](events.md#learnproposal_updated) event. A rename, description or ticket URL also broadcasts `channel.updated`, a scheduled task `task.created`.
+**Behavior notes:** Broadcasts a [`learn.proposal_updated`](events.md#learnproposal_updated) event. A rename, description or ticket URL also broadcasts `channel.updated`, a scheduled task `task.created`. Config-kind applies to the same `.loop/config.json` (e.g. several proposals applied at once) are serialized, from the duplicate check to the write, so none is lost or added twice.
 
 **Errors:** `400` if `{id}` isn't an integer. `404` if the proposal doesn't exist. `409` if it's already `applied` or `dismissed`, or has been `applying` for under a minute (`proposal is already applied`). `500` on a store error. `501` if the store is not configured.
 
@@ -1848,7 +1851,7 @@ Remove a git worktree from disk and optionally delete its associated thread.
 
 **Behavior notes:**
 - Runs `git worktree remove --force` on the worktree path, then `git worktree prune`.
-- If `thread_id` is provided, also deletes the thread record from the database and broadcasts a `channel.deleted` event.
+- If `thread_id` is provided, also deletes the thread record from the database and broadcasts a `channel.deleted` event. As with `DELETE /api/threads/{id}`, the thread's hidden learn thread goes with it and its queued and running passes are stopped.
 - If the git worktree removal fails (e.g. path already gone), returns `500`.
 
 **Errors:** `400` if `channel_id` or `worktree_path` is missing, or if the channel is not found.

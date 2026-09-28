@@ -349,6 +349,7 @@ function AppInner() {
     clearPlanPill,
     subscribeChatEvents,
     subscribeChannelEvents,
+    wsOpens,
   } = useChatStateStore({
     channels,
     channelsFetchedAt,
@@ -757,6 +758,7 @@ function AppInner() {
             onChatStateUnmount={handleChatStateUnmount}
             subscribeChatEvents={subscribeChatEvents}
             subscribeChannelEvents={subscribeChannelEvents}
+            wsOpens={wsOpens}
             registerReviewView={registerReviewView}
             clearAskUserPill={clearAskUserPill}
             clearPlanPill={clearPlanPill}

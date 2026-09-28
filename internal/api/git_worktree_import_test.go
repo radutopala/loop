@@ -427,12 +427,18 @@ func (s *ServerSuite) TestRemoveWorktree_WithThread() {
 	}, nil)
 	s.threads.On("DeleteThread", mock.Anything, "wt-thread-1").Return(nil)
 	s.srv.eventsHub = NewEventsHub(testLogger())
+	// The thread's learn thread goes with it, like on DELETE /api/threads/{id}.
+	s.store.On("GetLearnChannel", mock.Anything, "wt-thread-1").Return(&db.Channel{ChannelID: "learn-1"}, nil)
+	canceller := new(MockRunCanceller)
+	canceller.On("StopLearn", "learn-1").Return()
+	s.srv.SetRunCanceller(canceller)
 
 	body := fmt.Sprintf(`{"channel_id":"ch1","worktree_path":%q,"thread_id":"wt-thread-1"}`, wtPath)
 	rec := s.testRequest("DELETE", "/api/worktrees", body)
 	require.Equal(s.T(), http.StatusNoContent, rec.Code)
 	require.NoDirExists(s.T(), wtPath)
 	s.threads.AssertCalled(s.T(), "DeleteThread", mock.Anything, "wt-thread-1")
+	canceller.AssertExpectations(s.T())
 }
 
 func (s *ServerSuite) TestRemoveWorktree_DeleteThreadError() {
@@ -448,11 +454,15 @@ func (s *ServerSuite) TestRemoveWorktree_DeleteThreadError() {
 	s.store.On("GetChannel", mock.Anything, "ch1").Return(&db.Channel{
 		ChannelID: "ch1", DirPath: dir,
 	}, nil)
+	s.store.On("GetLearnChannel", mock.Anything, "wt-1").Return(&db.Channel{ChannelID: "learn-1"}, nil)
 	s.threads.On("DeleteThread", mock.Anything, "wt-1").Return(errors.New("db error"))
+	canceller := new(MockRunCanceller)
+	s.srv.SetRunCanceller(canceller)
 
 	body := fmt.Sprintf(`{"channel_id":"ch1","worktree_path":%q,"thread_id":"wt-1"}`, wtPath)
 	rec := s.testRequest("DELETE", "/api/worktrees", body)
 	require.Equal(s.T(), http.StatusInternalServerError, rec.Code)
+	canceller.AssertNotCalled(s.T(), "StopLearn", mock.Anything)
 }
 
 func (s *ServerSuite) TestRemoveWorktree_MissingFields() {

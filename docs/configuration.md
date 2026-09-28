@@ -359,11 +359,11 @@ Configures the learn pass: after a chat run, a hidden forked session reviews it 
 | `effort` | `string` | `""` | Effort for the learn run. Empty uses the channel's effort override, else `claude_effort`. |
 | `prompt` | `string` | `""` | Extra instructions appended to the built-in learn prompt under "Additional instructions". |
 
-Layered global → project like `review`: each field overrides only when set in the project config. The Learn switch in the composer and the [`GET /api/channels/{id}/learn`](api.md#get-apichannelsidlearn) default read the global → project → worktree merge for the channel's dir; the daemon deciding whether to run a pass (and with what model, effort and prompt) reads the config of the channel's root checkout. Also editable from **Settings → Learn**.
+Layered global → project like `review`: each field overrides only when set in the project config. The Learn switch in the composer and the [`GET /api/channels/{id}/learn`](api.md#get-apichannelsidlearn) default read the global → project → worktree merge for the channel's dir; the daemon deciding whether to run a pass (and with what model, effort and prompt) reads the same merge its runs use: global → root checkout → worktree for a worktree thread, global → the channel's dir otherwise. Also editable from **Settings → Learn**.
 
 ##### Where learn proposals are written
 
-Applying a proposal of a config kind appends to the project config, `.loop/config.json` in the channel's directory. For a worktree thread, or a thread under one, that's the root checkout's `.loop/config.json`, not the worktree's. The file (and its `.loop` folder) is created when missing. The edit keeps the file's comments, key order and formatting, and the write is atomic.
+Applying a proposal of a config kind appends to the project config, `.loop/config.json` in the channel's directory. For a worktree thread, or a thread under one, that's the root checkout's `.loop/config.json`, not the worktree's. The file (and its `.loop` folder) is created when missing. The edit keeps the file's comments, key order and formatting, and the write is atomic. Edits of one file are serialized, so proposals applied at once (Apply all) each land.
 
 | Kind | Written to | Notes |
 |---|---|---|

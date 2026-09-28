@@ -36,6 +36,8 @@ func (s *IntegrationSuite) TestLearnLifecycle() {
 	require.Equal(s.T(), "l1", l.ChannelID)
 	require.Equal(s.T(), ChannelKindLearn, l.Kind)
 	require.True(s.T(), l.Active)
+	_, err = store.db.ExecContext(ctx, `INSERT INTO quality_snapshots (channel_id, signal_value, geo_mean) VALUES ('l1', 1, 1)`)
+	require.NoError(s.T(), err)
 	require.NoError(s.T(), store.InsertMessage(ctx, &Message{ChatID: chatID, ChannelID: "l1", MsgID: "m1", Content: "learn", Kind: MessageKindMessage, CreatedAt: time.Now()}))
 	require.NoError(s.T(), store.InsertMessage(ctx, &Message{ChatID: chatID, ChannelID: "c1", MsgID: "m0", Content: "learn in chat", Kind: MessageKindMessage, CreatedAt: time.Now()}))
 	found, err := store.SearchMessages(ctx, "learn", 10)
@@ -92,6 +94,9 @@ func (s *IntegrationSuite) TestLearnLifecycle() {
 	msgs, err := store.GetRecentMessages(ctx, "l1", 10)
 	require.NoError(s.T(), err)
 	require.Empty(s.T(), msgs)
+	var snapshots int
+	require.NoError(s.T(), store.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM quality_snapshots WHERE channel_id = 'l1'`).Scan(&snapshots))
+	require.Zero(s.T(), snapshots)
 }
 
 // TestLearnThreadsOfChildrenDeleted checks that deleting a channel's threads
@@ -107,7 +112,8 @@ func (s *IntegrationSuite) TestLearnThreadsOfChildrenDeleted() {
 	require.NoError(s.T(), store.InsertLearnProposals(ctx, []*LearnProposal{{ChannelID: "t1", LearnChannelID: "l1", Kind: LearnKindDescription}}))
 
 	require.NoError(s.T(), store.DeleteChannelsByParentID(ctx, "c1"))
-	for _, id := range []string{"t1", "l1"} {
+	require.ErrorIs(s.T(), store.InsertLearnChannel(ctx, &Channel{ChannelID: "l2", ParentID: "t1"}), ErrLearnParentGone, "no learn thread under a deleted parent")
+	for _, id := range []string{"t1", "l1", "l2"} {
 		ch, err := store.GetChannel(ctx, id)
 		require.NoError(s.T(), err)
 		require.Nil(s.T(), ch, id)
@@ -127,6 +133,14 @@ func (s *StoreSuite) TestLearnStoreErrors() {
 		s.mock.ExpectQuery(`FROM channels WHERE parent_id = \? AND kind = \?`).WithArgs("c1", ChannelKindLearn).WillReturnError(boom)
 		_, err := s.store.GetLearnChannel(ctx, "c1")
 		require.ErrorIs(s.T(), err, boom)
+	})
+	s.Run("insert learn channel", func() {
+		s.mock.ExpectExec(`INSERT INTO channels`).WillReturnError(boom)
+		require.ErrorIs(s.T(), s.store.InsertLearnChannel(ctx, &Channel{}), boom)
+	})
+	s.Run("insert learn channel rows affected", func() {
+		s.mock.ExpectExec(`INSERT INTO channels`).WillReturnResult(sqlmock.NewErrorResult(boom))
+		require.ErrorIs(s.T(), s.store.InsertLearnChannel(ctx, &Channel{}), boom)
 	})
 	s.Run("insert proposal", func() {
 		s.mock.ExpectBegin()

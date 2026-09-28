@@ -107,24 +107,28 @@ func withoutTool(tools []string, name string) []string {
 // learnModeDisallowedTools are denied on top of the batch denials in a learn
 // run. A learn pass only reads the finished run and files proposals through
 // propose_learnings; the user applies them. So it may not edit files, run
-// commands, change Loop's config, tasks or threads, or talk to anyone. Its
-// MCP config holds the loop server alone (see buildMCPConfig) and
-// --strict-mcp-config keeps any other server out, so no other server's
-// tools reach it either.
+// commands, change Loop's config, tasks, threads, workflows, playgrounds,
+// quality snapshots, memory index or agent status, or talk to anyone. The
+// loop tools that only read (list_*, show_task, get_*, search_*, the
+// quality_* reports besides quality_scan, and quality_whatif, which only
+// simulates) stay allowed. Its MCP config holds the loop server alone (see
+// buildMCPConfig) and --strict-mcp-config keeps any other server out, so no
+// other server's tools reach it either.
 var learnModeDisallowedTools = []string{
 	"Bash", "Edit", "Write", "NotebookEdit",
 	"AskUserQuestion", "EnterPlanMode", "ExitPlanMode",
 	"mcp__loop__prompt_shortcut", "mcp__loop__bash_shortcut",
 	"mcp__loop__schedule_task", "mcp__loop__edit_task", "mcp__loop__toggle_task", "mcp__loop__cancel_task",
 	"mcp__loop__rename_thread", "mcp__loop__set_thread_description", "mcp__loop__set_ticket_url",
-	"mcp__loop__send_message", "mcp__loop__queue_message", "mcp__loop__send_agent_message",
+	"mcp__loop__send_message", "mcp__loop__queue_message", "mcp__loop__send_agent_message", "mcp__loop__update_agent_status",
 	"mcp__loop__create_channel", "mcp__loop__create_thread", "mcp__loop__create_worktree_thread",
 	"mcp__loop__fork_thread", "mcp__loop__delete_thread",
 	"mcp__loop__save_workflow", "mcp__loop__delete_workflow", "mcp__loop__run_workflow",
 	"mcp__loop__cancel_workflow_run", "mcp__loop__delete_workflow_run",
 	"mcp__loop__resume_workflow_run", "mcp__loop__retry_workflow_run",
 	"mcp__loop__playground", "mcp__loop__playground_file", "mcp__loop__playground_share",
-	"mcp__loop__chat_component", "mcp__loop__index_memory", "mcp__loop__quality_snapshot",
+	"mcp__loop__chat_component", "mcp__loop__index_memory", "mcp__loop__quality_scan",
+	"mcp__loop__report_review_findings",
 }
 
 // reviewModeSettings is the --settings payload for a review run. It carries
@@ -326,13 +330,19 @@ func (b *ClaudeCmdBuilder) BuildInteractiveCmd(channelID, dirPath, parentDirPath
 	return buildInteractiveClaudeCmd(cfg, channelID, workDir, sessionID, agentID, forkSession, false)
 }
 
-// BuildContinueCmd returns the interactive Claude shell command that resumes
-// the most recently modified session for the channel's working directory via
-// `claude --continue`, without needing to know its (possibly forked) session
-// id. Used to relaunch a terminal pane's Claude process after it exits
-// unexpectedly (e.g. OOM-killed).
-func (b *ClaudeCmdBuilder) BuildContinueCmd(channelID, dirPath, parentDirPath, agentID string) string {
+// BuildContinueCmd returns the interactive Claude shell command that
+// relaunches a terminal pane's Claude process after it exits unexpectedly
+// (e.g. OOM-killed). sessionID is the session the pane was running, when
+// Loop knows it: that one is resumed. Otherwise (the pane forked or started
+// a fresh session, whose id Loop never learns) or when its transcript is
+// gone, it falls back to `claude --continue`, the most recently modified
+// session for the working directory. That can be another one: every learn
+// pass forks a new session into the channel's directory.
+func (b *ClaudeCmdBuilder) BuildContinueCmd(channelID, dirPath, parentDirPath, sessionID, agentID string) string {
 	cfg, workDir := b.resolveCmdConfig(channelID, dirPath, parentDirPath, agentID)
+	if sessionID != "" && !b.transcriptMissing(workDir, sessionID) {
+		return buildInteractiveClaudeCmd(cfg, channelID, workDir, sessionID, agentID, false, false)
+	}
 	return buildInteractiveClaudeCmd(cfg, channelID, workDir, "", agentID, false, true)
 }
 

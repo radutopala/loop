@@ -3,7 +3,7 @@ import { createPortal } from "react-dom";
 import type { LearnView } from "../../hooks/useLearn";
 import { useTheme } from "../../ThemeContext";
 import { fonts } from "../../theme";
-import { isOpenProposal, learnBadgeLabel } from "./learnState";
+import { learnBadgeLabel } from "./learnState";
 
 interface LearnBadgeProps {
   /** Pane leaf id — the portal target is `pane-header-slot-${leafId}`. */
@@ -37,7 +37,7 @@ export function LearnBadge({ leafId, learn, open, onToggle }: LearnBadgeProps) {
     return () => cancelAnimationFrame(raf);
   }, [leafId]);
 
-  const label = learnBadgeLabel(learn.running, learn.proposals.filter(isOpenProposal).length);
+  const label = learnBadgeLabel(learn.running, learn.open.length);
   if (!slot || (!label && !learn.learnChannelId && !open)) return null;
   const lit = label !== null;
   return createPortal(
@@ -46,6 +46,7 @@ export function LearnBadge({ leafId, learn, open, onToggle }: LearnBadgeProps) {
       data-running={learn.running ? "true" : "false"}
       onClick={onToggle}
       title={open ? "Close the Learn view" : "Open the Learn view"}
+      aria-expanded={open}
       style={{
         display: "flex",
         alignItems: "center",

@@ -214,12 +214,16 @@ func (s *SQLiteStore) DeleteChannelsByParentID(ctx context.Context, parentID str
 }
 
 // deleteLearnChildren deletes the learn threads under the channels parents
-// selects (a placeholder or a subquery taking arg), their messages, and the
-// learn proposals filed for those channels.
+// selects (a placeholder or a subquery taking arg), their messages and
+// quality snapshots, as DeleteChannel does for any channel, and the learn
+// proposals filed for those channels.
 func deleteLearnChildren(ctx context.Context, tx *sql.Tx, parents string, arg string) error {
 	learnIDs := `SELECT channel_id FROM channels WHERE kind = '` + ChannelKindLearn + `' AND parent_id IN (` + parents + `)`
 	if _, err := tx.ExecContext(ctx, `DELETE FROM messages WHERE channel_id IN (`+learnIDs+`)`, arg); err != nil {
 		return fmt.Errorf("deleting learn thread messages: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM quality_snapshots WHERE channel_id IN (`+learnIDs+`)`, arg); err != nil {
+		return fmt.Errorf("deleting learn thread quality snapshots: %w", err)
 	}
 	if _, err := tx.ExecContext(ctx, `DELETE FROM learn_proposals WHERE channel_id IN (`+parents+`)`, arg); err != nil {
 		return fmt.Errorf("deleting learn proposals: %w", err)

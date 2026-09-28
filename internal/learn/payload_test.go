@@ -103,11 +103,14 @@ func (s *PayloadSuite) TestValidate() {
 	}
 	for _, tc := range tests {
 		s.Run(tc.name, func() {
-			got, canonical, err := Validate(tc.kind, tc.title, json.RawMessage(tc.payload))
+			canonical, err := Validate(tc.kind, tc.title, json.RawMessage(tc.payload))
 			if tc.wantErr != "" {
 				require.ErrorContains(s.T(), err, tc.wantErr)
 				return
 			}
+			require.NoError(s.T(), err)
+			// What's stored decodes back to the proposed payload.
+			got, err := Decode(tc.kind, canonical)
 			require.NoError(s.T(), err)
 			require.Equal(s.T(), tc.want, got)
 			if tc.canonical != "" {

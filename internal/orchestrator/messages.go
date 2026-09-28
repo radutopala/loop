@@ -265,6 +265,7 @@ func (o *Orchestrator) processClaimedMessage(ctx context.Context, row *db.Messag
 	if err != nil {
 		return
 	}
+	trigger := o.runTrigger(channel, msg.AuthorID)
 
 	// Send stop button (non-fatal if it fails)
 	stopMsgID, stopErr := o.bot.SendStopButton(ctx, msg.ChannelID, msg.ChannelID)
@@ -302,28 +303,31 @@ func (o *Orchestrator) processClaimedMessage(ctx context.Context, row *db.Messag
 				Status:  finish.status,
 				RunID:   runID,
 				Error:   finish.errMsg,
-				Trigger: o.runTrigger(msg.AuthorID),
+				Trigger: trigger,
 				MsgID:   msg.MessageID,
 			})
 		}
 		return
 	}
 
-	o.deliverResponse(ctx, msg, resp, recent, lastStreamedText, runID)
+	o.deliverResponse(ctx, msg, resp, recent, lastStreamedText, runID, trigger)
 	o.maybeLearn(ctx, channel, msg, resp)
 }
 
-// runTrigger tags a run's agent.status events with what started it, so the
-// renderer can hold back the dock bounce and notifications for runs the user
-// didn't ask for: "learn" for a learn pass, "bot" when the bot itself
-// re-entered HandleMessage (an agent posting via the send_message or
-// create_thread MCP tools), "" for a real user's message.
-func (o *Orchestrator) runTrigger(authorID string) string {
+// runTrigger tags a run in ch's agent.status events with what started it,
+// so the renderer can hold back the dock bounce and notifications for runs
+// the user didn't ask for: "learn" for a learn pass, "bot" when the bot
+// itself re-entered HandleMessage (an agent posting via the send_message or
+// create_thread MCP tools), "learn-reply" for a user's message in a learn
+// thread, "" for a user's message anywhere else.
+func (o *Orchestrator) runTrigger(ch *db.Channel, authorID string) string {
 	switch {
 	case authorID == learnAuthorID:
 		return "learn"
 	case o.bot.IsBotUser(authorID):
 		return "bot"
+	case ch != nil && ch.Kind == db.ChannelKindLearn:
+		return "learn-reply"
 	}
 	return ""
 }
@@ -365,8 +369,13 @@ func (o *Orchestrator) prepareAgentRequest(ctx context.Context, msg *bot.Incomin
 	// Fork the session on the first thread message so the thread gets its
 	// own session while inheriting the parent's context.
 	inWorktree := channel.Worktree
+	var (
+		learnApplied bool
+		parentErr    error
+	)
 	if channel.ParentID != "" {
 		parent, err := o.store.GetChannel(ctx, channel.ParentID)
+		parentErr = err
 		if err == nil && parent != nil {
 			// ForkPending marks fork-created threads: their session id is
 			// borrowed from a SOURCE thread (not the parent), so the parent
@@ -395,8 +404,16 @@ func (o *Orchestrator) prepareAgentRequest(ctx context.Context, msg *bot.Incomin
 			}
 			if channel.Kind == db.ChannelKindLearn {
 				o.applyLearnRequest(ctx, req, parent)
+				learnApplied = true
 			}
 		}
+	}
+	// A learn thread only ever runs as a learn pass, read-only. Without
+	// its parent there's no pass to set up, and it must not run as a chat
+	// with the full tool set instead.
+	if channel.Kind == db.ChannelKindLearn && !learnApplied {
+		o.logger.Error("learn: loading the learn thread's parent", "error", parentErr, "channel_id", msg.ChannelID, "parent_id", channel.ParentID)
+		return nil, nil, nil, fmt.Errorf("learn thread %s: parent %q not found", msg.ChannelID, channel.ParentID)
 	}
 
 	// When running in a worktree (directly or as a thread under one), tell the
@@ -429,7 +446,7 @@ func (o *Orchestrator) executeAgentRun(ctx context.Context, msg *bot.IncomingMes
 
 	runID := randutil.HexID(8)
 
-	trigger := o.runTrigger(msg.AuthorID)
+	trigger := o.runTrigger(channel, msg.AuthorID)
 
 	// Register the cancel func so stop button clicks can cancel this run.
 	o.activeRuns.Store(msg.ChannelID, runCancel)
@@ -633,7 +650,7 @@ func (o *Orchestrator) executeAgentRun(ctx context.Context, msg *bot.IncomingMes
 }
 
 // deliverResponse sends the final response, records the bot message, and marks messages as processed.
-func (o *Orchestrator) deliverResponse(ctx context.Context, msg *bot.IncomingMessage, resp *agent.AgentResponse, recent []*db.Message, lastStreamedText, runID string) {
+func (o *Orchestrator) deliverResponse(ctx context.Context, msg *bot.IncomingMessage, resp *agent.AgentResponse, recent []*db.Message, lastStreamedText, runID, trigger string) {
 	if err := o.store.UpdateSessionID(ctx, msg.ChannelID, resp.SessionID); err != nil {
 		o.logger.Error("updating session data", "error", err, "channel_id", msg.ChannelID)
 	}
@@ -698,7 +715,7 @@ func (o *Orchestrator) deliverResponse(ctx context.Context, msg *bot.IncomingMes
 			NumTurns:   resp.NumTurns,
 			StopReason: resp.StopReason,
 			Model:      resp.Model,
-			Trigger:    o.runTrigger(msg.AuthorID),
+			Trigger:    trigger,
 			MsgID:      msg.MessageID,
 		})
 	}

@@ -112,6 +112,10 @@ export function useChatStateStore({ channels, channelsFetchedAt, selectedId, onA
   // Bumped when a channel starts or stops running, so the sidebar's running
   // dots and Recent section follow isRunningMap, a ref.
   const [, setRunTick] = useState(0);
+  // Bumped on each WS open. A reconnect doesn't replay the events missed
+  // meanwhile, so panels holding state built from them (the Learn view's)
+  // fetch it again when this changes.
+  const [wsOpens, setWsOpens] = useState(0);
 
   // pillSet returns the (lazily created) channel-id set for a pill kind.
   const pillSet = useCallback((kind: PillKind): Set<string> => {
@@ -712,6 +716,7 @@ export function useChatStateStore({ channels, channelsFetchedAt, selectedId, onA
         void Promise.allSettled([rehydrateGateApprovals(), rehydrateReviewSessions(), rehydrateAskUser(), rehydrateExitPlan()]).then(() => {
           window.__loopWsRehydrated = true;
         });
+        setWsOpens((n) => n + 1);
       },
       // eslint-disable-next-line react-hooks/exhaustive-deps
       [],
@@ -867,6 +872,7 @@ export function useChatStateStore({ channels, channelsFetchedAt, selectedId, onA
     clearPlanPill,
     subscribeChatEvents,
     subscribeChannelEvents,
+    wsOpens,
   };
 }
 

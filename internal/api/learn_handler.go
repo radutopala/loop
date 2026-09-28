@@ -57,7 +57,7 @@ func (s *Server) handleGetLearn(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	def := false
-	if merged := s.mergedConfig(ch.DirPath, s.workspace.resolveParentDirPath(r.Context(), ch.ChannelID)); merged != nil {
+	if merged := s.configs.merged(ch.DirPath, s.workspace.resolveParentDirPath(r.Context(), ch.ChannelID)); merged != nil {
 		def = merged.Learn.Enabled
 	}
 	available := learnUnavailable(ch) == ""

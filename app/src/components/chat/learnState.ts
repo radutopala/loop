@@ -42,6 +42,42 @@ export function isOpenProposal(p: LearnProposal, now = Date.now()): boolean {
   return p.status === "applying" && now - Date.parse(p.updated_at) > LEARN_APPLY_STALE_MS;
 }
 
+// How long until the next proposal stuck applying goes stale (and so open
+// again), or null when none will.
+export function nextStaleIn(proposals: LearnProposal[], now = Date.now()): number | null {
+  const due = proposals
+    .filter((p) => p.status === "applying")
+    .map((p) => Date.parse(p.updated_at) + LEARN_APPLY_STALE_MS - now)
+    .filter((ms) => ms >= 0);
+  return due.length === 0 ? null : Math.min(...due);
+}
+
+// What Apply all and Dismiss all go through: Apply all applies the pending
+// proposals (failed ones are left for a manual Retry), Dismiss all dismisses
+// every open one. Each is checked again when its turn comes, so one settled
+// meanwhile is left alone.
+export type LearnBulk = "apply" | "dismiss";
+
+export function inBulk(bulk: LearnBulk, p: LearnProposal | undefined, now = Date.now()): boolean {
+  if (!p) return false;
+  return bulk === "apply" ? p.status === "pending" : isOpenProposal(p, now);
+}
+
+// Whether a proposal applied among these added a prompt or bash shortcut,
+// so the pickers that list shortcuts should fetch them again.
+export function appliedShortcut(proposals: LearnProposal[]): boolean {
+  return proposals.some((p) => p.status === "applied" && (p.kind === "prompt_shortcut" || p.kind === "bash_shortcut"));
+}
+
+// Whether a learn pass is running in the learn thread after one of its
+// agent.status events. Only a pass ("learn") starts it; a reply the user
+// asked the thread for ("learn-reply") doesn't, and any run's end stops it
+// (the thread runs one at a time).
+export function learnPassRunning(cur: boolean, status: string, trigger: string | undefined): boolean {
+  if (status !== "running") return false;
+  return trigger === "learn" ? true : cur;
+}
+
 // The Learn label in the chat pane's header: what the learn pass is doing, else how
 // many proposals wait, else null when there's nothing to show.
 export function learnBadgeLabel(running: boolean, open: number): string | null {

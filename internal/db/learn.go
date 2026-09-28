@@ -5,6 +5,7 @@ package db
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"time"
 )
 
@@ -33,16 +34,33 @@ func (s *SQLiteStore) GetLearnChannel(ctx context.Context, parentID string) (*Ch
 	return ch, err
 }
 
+// ErrLearnParentGone is returned by InsertLearnChannel when the learn
+// thread's parent no longer exists.
+var ErrLearnParentGone = errors.New("learn thread parent is gone")
+
 // InsertLearnChannel creates a hidden learn thread. Kind is always
-// ChannelKindLearn whatever ch says.
+// ChannelKindLearn whatever ch says. The insert and the check that its
+// parent still exists are one statement, so a parent deleted meanwhile
+// can't be left with an orphan learn thread; that's ErrLearnParentGone.
 func (s *SQLiteStore) InsertLearnChannel(ctx context.Context, ch *Channel) error {
 	now := s.nowFunc()
-	_, err := s.db.ExecContext(ctx,
+	res, err := s.db.ExecContext(ctx,
 		`INSERT INTO channels (channel_id, guild_id, name, dir_path, parent_id, platform, active, kind, created_at, updated_at)
-		 VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, ?)`,
-		ch.ChannelID, ch.GuildID, ch.Name, ch.DirPath, ch.ParentID, ch.Platform, ChannelKindLearn, now, now,
+		 SELECT ?, ?, ?, ?, ?, ?, 1, ?, ?, ?
+		 WHERE EXISTS (SELECT 1 FROM channels WHERE channel_id = ?)`,
+		ch.ChannelID, ch.GuildID, ch.Name, ch.DirPath, ch.ParentID, ch.Platform, ChannelKindLearn, now, now, ch.ParentID,
 	)
-	return err
+	if err != nil {
+		return err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return ErrLearnParentGone
+	}
+	return nil
 }
 
 // InsertLearnProposals stores a learn pass's proposals as pending, filling in

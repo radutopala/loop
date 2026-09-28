@@ -44,7 +44,9 @@ type State struct {
 	// ProjectDir is the root checkout whose .loop/config.json config
 	// proposals are written to.
 	ProjectDir string
-	// Config is the merged config for ProjectDir.
+	// Config is the channel's merged config, as its runs see it: global →
+	// ProjectDir → the worktree's for a worktree thread, global →
+	// ProjectDir otherwise.
 	Config *config.Config
 	// Tasks are the channel's scheduled tasks.
 	Tasks []*db.ScheduledTask
@@ -172,16 +174,34 @@ func writeSection[T any](b *strings.Builder, title string, items []T) {
 	b.WriteString("\n```\n")
 }
 
+// The first line of a trigger message is triggerLead, the quoted channel
+// name, then triggerTail.
+const (
+	triggerLead = "The run in "
+	triggerTail = " just finished. Review it and propose what Loop should learn from it."
+)
+
 // TriggerMessage is the message that starts a learn pass over the run that
 // just finished in channelName, whose last prompt was lastPrompt.
 func TriggerMessage(channelName, lastPrompt string) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "The run in %q just finished. Review it and propose what Loop should learn from it.", channelName)
+	fmt.Fprintf(&b, "%s%q%s", triggerLead, channelName, triggerTail)
 	if p := strings.TrimSpace(lastPrompt); p != "" {
 		b.WriteString("\n\nIts last prompt was:\n\n")
 		b.WriteString(quote(p))
 	}
 	return b.String()
+}
+
+// IsTrigger reports whether prompt is a TriggerMessage, bare or as the
+// agent got it, behind its author's "name: " prefix. %q keeps the channel
+// name on the first line, so that line alone tells.
+func IsTrigger(prompt string) bool {
+	line, _, _ := strings.Cut(prompt, "\n")
+	if _, rest, ok := strings.Cut(line, ": "); ok && strings.HasPrefix(rest, triggerLead) {
+		line = rest
+	}
+	return strings.HasPrefix(line, triggerLead+`"`) && strings.HasSuffix(line, `"`+triggerTail)
 }
 
 // quote renders text as a markdown blockquote.

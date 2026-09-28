@@ -3,6 +3,7 @@ import { createPortal } from "react-dom";
 import { killAgentContainer } from "../../api/loopApi";
 import { CanvasLayout } from "../../canvas/CanvasLayout";
 import type { CanvasNode } from "../../canvas/types";
+import { ShortcutsVersionContext } from "../../hooks/shortcutsVersion";
 import { useAgentRegistry } from "../../hooks/useAgentRegistry";
 import { useChatState } from "../../hooks/useChatState";
 import type { ActiveChatState, ChatEventListener } from "../../hooks/useChatStateStore";
@@ -237,6 +238,8 @@ interface WorkspaceLayoutProps {
   subscribeChatEvents?: (listener: ChatEventListener) => () => void;
   /** Subscribe to one channel's events whether or not it's selected. */
   subscribeChannelEvents?: (channelId: string, listener: ChatEventListener) => () => void;
+  /** Bumped on each WS (re)connect, for state to fetch again. */
+  wsOpens?: number;
   /**
    * Register a channel as having its Review panel mounted. Drops the
    * pill immediately and blocks the WS / rehydrate path from relighting
@@ -276,6 +279,7 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
     onChatStateUnmount,
     subscribeChatEvents,
     subscribeChannelEvents,
+    wsOpens,
     registerReviewView,
     clearAskUserPill,
     clearPlanPill,
@@ -338,7 +342,7 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
   // The channel's learn pass, shown in the Learn view: its chat and Learn
   // pane side by side over the layout. The chat moves into it from its pane
   // (see chatHost) and back on close, without mounting again.
-  const learn = useLearn(channelId, subscribeChatEvents, subscribeChannelEvents);
+  const learn = useLearn(channelId, subscribeChatEvents, subscribeChannelEvents, wsOpens);
   const [learnOpen, setLearnOpen] = useState(false);
   // It stays mounted until its closing animation ends.
   const learnMs = prefersReducedMotion() ? 0 : LEARN_SPLIT_MS;
@@ -500,8 +504,11 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
   }, [scrollToMessageId, tree, channelId, switchLayout]);
 
   // Auto-switch to a layout with a memory pane when openMemoryFile is set.
+  // The Learn view closes, or the file would open under it.
   useEffect(() => {
-    if (!openMemoryFile || !tree) return;
+    if (!openMemoryFile) return;
+    setLearnOpen(false);
+    if (!tree) return;
     if (collectLeaves(tree).some((l) => l.panel === "memory")) {
       // Memory pane exists, clear the prop after MemoryPanel consumes it.
       setTimeout(() => onOpenMemoryFileComplete?.(), 0);
@@ -528,6 +535,8 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
         name = lt === "canvas" ? `Canvas ${n}` : `Layout ${n}`;
       }
       setLayoutNames((prev) => [...prev, name]);
+      // The Learn view holds the chat of the layout it opened over.
+      setLearnOpen(false);
       setActiveName(name);
       setLayoutType(lt);
       if (lt === "canvas") {
@@ -715,6 +724,8 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
     const handler = (ev: Event) => {
       const ce = ev as CustomEvent<{ channelId: string; panel: PanelType; anchorPanel?: PanelType }>;
       if (!ce.detail || ce.detail.channelId !== channelId) return;
+      // The panel is in the layout: the Learn view closes to show it.
+      setLearnOpen(false);
       const panel = ce.detail.panel;
       const anchorPanel = ce.detail.anchorPanel;
       const current = treeRef.current;
@@ -755,6 +766,8 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
     const handler = (ev: Event) => {
       const ce = ev as CustomEvent<FileLinkOpenDetail>;
       if (!ce.detail || ce.detail.channelId !== channelId) return;
+      // The editor is in the layout: the Learn view closes to show it.
+      setLearnOpen(false);
       const { target, line } = ce.detail;
       const pathKey = makePathKey(target.rootIndex, target.relPath);
 
@@ -886,8 +899,9 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
   }, [chatHost]);
   // Closing the Learn view with focus in its Learn pane would leave focus
   // nowhere once the pane goes: it goes back to the chat's composer, which
-  // stays. Escape closes it too, unless something in it (a picker, the find
-  // bar, a shown component) took the key first.
+  // stays. Escape closes it too, unless something took the key first (a
+  // picker, the find bar, a menu, a sidebar input, a shown component) or the
+  // layout is hidden (under Settings, say).
   const closeLearn = useCallback(() => {
     const focused = document.activeElement;
     setLearnOpen(false);
@@ -895,13 +909,26 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
       chatHost.querySelector<HTMLTextAreaElement>("textarea")?.focus({ preventScroll: true });
     }
   }, [chatHost]);
+  const hiddenRef = useRef(false);
+  hiddenRef.current = style?.display === "none";
   useEffect(() => {
     if (!learnOpen) return;
+    let timer: ReturnType<typeof setTimeout> | undefined;
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape" && !e.defaultPrevented && !shownComponent) closeLearn();
+      if (e.key !== "Escape" || shownComponent || hiddenRef.current) return;
+      // Whatever takes Escape marks it handled (preventDefault), but a
+      // window listener added after this one (a menu opened in the view)
+      // only sees it after this one does: look once the key is dispatched.
+      clearTimeout(timer);
+      timer = setTimeout(() => {
+        if (!e.defaultPrevented) closeLearn();
+      });
     };
     window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      clearTimeout(timer);
+    };
   }, [learnOpen, shownComponent, closeLearn]);
   const chatLeafId = useMemo(
     () => (layoutType === "canvas" ? canvasState?.tiles.find((t) => t.panel === "chat")?.id : tree ? collectLeaves(tree).find((l) => l.panel === "chat")?.id : undefined),
@@ -1485,120 +1512,123 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
         )}
       </div>
 
-      {/* Layout content */}
-      <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", minHeight: 0, position: "relative" }}>
-        {/* The layout stays put under the Learn view while it's open. */}
-        <div
-          style={{
-            flex: 1,
-            display: "flex",
-            flexDirection: "column",
-            overflow: "hidden",
-            minHeight: 0,
-            position: "relative",
-            pointerEvents: learnSplit.mounted ? "none" : undefined,
-          }}
-          // Nor can it be reached from the keyboard.
-          inert={learnSplit.mounted}
-        >
-          {layoutType === "canvas" ? (
-            <CanvasLayout
-              canvas={canvasState ?? { type: "canvas", viewport: { x: 0, y: 0, zoom: 1 }, tiles: [] }}
-              renderLeaf={renderLeaf}
-              agentInfoMap={agentInfoMap}
-              containerStats={containerStats}
-              onCanvasChange={(c) => {
-                setCanvasState(c);
-              }}
-              hiddenPanels={hiddenPanels}
-            />
-          ) : !tree ? (
-            <EmptyLayoutPicker onAdd={handleEmptyAdd} hiddenPanels={hiddenPanels} />
-          ) : maximizedLeafId && findLeafById(tree, maximizedLeafId) ? (
-            (() => {
-              const leaf = findLeafById(tree, maximizedLeafId)!;
-              const usedSingletons = collectPanelTypes(tree);
-              return (
-                <div
-                  style={{
-                    flex: 1,
-                    display: "flex",
-                    flexDirection: "column",
-                    overflow: "hidden",
-                    minHeight: 0,
-                    minWidth: 0,
-                    borderRadius: colors.islandRadius,
-                    boxShadow: colors.islandShadow,
-                    border: colors.islandBorder,
-                    backgroundColor: colors.sidebar,
-                  }}
-                >
-                  <PaneLeafHeader
-                    leafId={leaf.id}
-                    panel={leaf.panel}
-                    usedSingletons={usedSingletons}
-                    hiddenPanels={hiddenPanels}
-                    agentInfo={leaf.panel === "docker-agent" ? agentInfoMap.get(leaf.id) : undefined}
-                    containerStats={containerStats}
-                    isMaximized
-                    onRemove={() => {
-                      setMaximizedLeafId(null);
-                      handleRemoveLeaf(leaf.id);
+      {/* Layout content. Its shortcut pickers (the composers', the
+          terminals') fetch again when a learn proposal adds a shortcut. */}
+      <ShortcutsVersionContext.Provider value={learn.shortcutsVersion}>
+        <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", minHeight: 0, position: "relative" }}>
+          {/* The layout stays put under the Learn view while it's open. */}
+          <div
+            style={{
+              flex: 1,
+              display: "flex",
+              flexDirection: "column",
+              overflow: "hidden",
+              minHeight: 0,
+              position: "relative",
+              pointerEvents: learnSplit.mounted ? "none" : undefined,
+            }}
+            // Nor can it be reached from the keyboard.
+            inert={learnSplit.mounted}
+          >
+            {layoutType === "canvas" ? (
+              <CanvasLayout
+                canvas={canvasState ?? { type: "canvas", viewport: { x: 0, y: 0, zoom: 1 }, tiles: [] }}
+                renderLeaf={renderLeaf}
+                agentInfoMap={agentInfoMap}
+                containerStats={containerStats}
+                onCanvasChange={(c) => {
+                  setCanvasState(c);
+                }}
+                hiddenPanels={hiddenPanels}
+              />
+            ) : !tree ? (
+              <EmptyLayoutPicker onAdd={handleEmptyAdd} hiddenPanels={hiddenPanels} />
+            ) : maximizedLeafId && findLeafById(tree, maximizedLeafId) ? (
+              (() => {
+                const leaf = findLeafById(tree, maximizedLeafId)!;
+                const usedSingletons = collectPanelTypes(tree);
+                return (
+                  <div
+                    style={{
+                      flex: 1,
+                      display: "flex",
+                      flexDirection: "column",
+                      overflow: "hidden",
+                      minHeight: 0,
+                      minWidth: 0,
+                      borderRadius: colors.islandRadius,
+                      boxShadow: colors.islandShadow,
+                      border: colors.islandBorder,
+                      backgroundColor: colors.sidebar,
                     }}
-                    onDrop={handleDrop}
-                    onSplitLeaf={handleSplitLeaf}
-                    onToggleMaximize={() => setMaximizedLeafId(null)}
-                  />
-                  <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", minHeight: 0 }}>{renderLeaf(leaf)}</div>
-                </div>
-              );
-            })()
-          ) : (
-            <SplitPaneLayout
-              tree={tree}
-              renderLeaf={renderLeaf}
-              agentInfoMap={agentInfoMap}
-              containerStats={containerStats}
-              minimizedLeaves={minimizedLeaves}
-              hiddenPanels={hiddenPanels}
-              onUpdateFlex={handleUpdateFlex}
-              onDrop={handleDrop}
-              onRemoveLeaf={handleRemoveLeaf}
-              onSplitLeaf={handleSplitLeaf}
-              onMaximize={(leafId) => setMaximizedLeafId(leafId)}
-              onToggleMinimize={(leafId) =>
-                setMinimizedLeaves((prev) => {
-                  const next = new Set(prev);
-                  if (next.has(leafId)) next.delete(leafId);
-                  else next.add(leafId);
-                  return next;
-                })
+                  >
+                    <PaneLeafHeader
+                      leafId={leaf.id}
+                      panel={leaf.panel}
+                      usedSingletons={usedSingletons}
+                      hiddenPanels={hiddenPanels}
+                      agentInfo={leaf.panel === "docker-agent" ? agentInfoMap.get(leaf.id) : undefined}
+                      containerStats={containerStats}
+                      isMaximized
+                      onRemove={() => {
+                        setMaximizedLeafId(null);
+                        handleRemoveLeaf(leaf.id);
+                      }}
+                      onDrop={handleDrop}
+                      onSplitLeaf={handleSplitLeaf}
+                      onToggleMaximize={() => setMaximizedLeafId(null)}
+                    />
+                    <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", minHeight: 0 }}>{renderLeaf(leaf)}</div>
+                  </div>
+                );
+              })()
+            ) : (
+              <SplitPaneLayout
+                tree={tree}
+                renderLeaf={renderLeaf}
+                agentInfoMap={agentInfoMap}
+                containerStats={containerStats}
+                minimizedLeaves={minimizedLeaves}
+                hiddenPanels={hiddenPanels}
+                onUpdateFlex={handleUpdateFlex}
+                onDrop={handleDrop}
+                onRemoveLeaf={handleRemoveLeaf}
+                onSplitLeaf={handleSplitLeaf}
+                onMaximize={(leafId) => setMaximizedLeafId(leafId)}
+                onToggleMinimize={(leafId) =>
+                  setMinimizedLeaves((prev) => {
+                    const next = new Set(prev);
+                    if (next.has(leafId)) next.delete(leafId);
+                    else next.add(leafId);
+                    return next;
+                  })
+                }
+              />
+            )}
+          </div>
+          {learnSplit.mounted && (
+            <LearnSplit
+              ref={learnSplitRef}
+              shown={learnSplit.shown}
+              ms={learnMs}
+              running={learn.running}
+              chatHeader={
+                // The chat's pane header, without the layout controls: this
+                // isn't a layout pane. The Learn badge in it closes the view.
+                <PaneLeafHeader leafId={LEARN_SPLIT_SLOT_ID} panel="chat" usedSingletons={new Set()} containerStats={containerStats} />
               }
+              chat={
+                <>
+                  <ChatSlot host={chatHost} active onAttach={placeChatHost} />
+                  <LearnBadge leafId={LEARN_SPLIT_SLOT_ID} learn={learn} open onToggle={closeLearn} />
+                </>
+              }
+              learnPane={<LearnPane learn={learn} worktree={!!channel.worktree} subscribeChannelEvents={subscribeChannelEvents} onClose={closeLearn} />}
             />
           )}
         </div>
-        {learnSplit.mounted && (
-          <LearnSplit
-            ref={learnSplitRef}
-            shown={learnSplit.shown}
-            ms={learnMs}
-            running={learn.running}
-            chatHeader={
-              // The chat's pane header, without the layout controls: this
-              // isn't a layout pane. The Learn badge in it closes the view.
-              <PaneLeafHeader leafId={LEARN_SPLIT_SLOT_ID} panel="chat" usedSingletons={new Set()} containerStats={containerStats} />
-            }
-            chat={
-              <>
-                <ChatSlot host={chatHost} active onAttach={placeChatHost} />
-                <LearnBadge leafId={LEARN_SPLIT_SLOT_ID} learn={learn} open onToggle={closeLearn} />
-              </>
-            }
-            learnPane={<LearnPane learn={learn} worktree={!!channel.worktree} subscribeChannelEvents={subscribeChannelEvents} onClose={closeLearn} />}
-          />
-        )}
-      </div>
-      {chatHostPlaced && portalLeafId && createPortal(renderChat(portalLeafId), chatHost)}
+        {chatHostPlaced && portalLeafId && createPortal(renderChat(portalLeafId), chatHost)}
+      </ShortcutsVersionContext.Provider>
     </div>
   );
 });
@@ -1753,6 +1783,7 @@ function LayoutTab({
           onKeyDown={(e) => {
             if (e.key === "Enter") commitRename();
             if (e.key === "Escape") {
+              e.preventDefault();
               setEditValue(name);
               setEditing(false);
             }

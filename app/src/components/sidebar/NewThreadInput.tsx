@@ -21,7 +21,10 @@ export function NewThreadInput({ onSubmit, onCancel }: NewThreadInputProps) {
             const trimmed = name.trim();
             if (trimmed) onSubmit(trimmed);
           }
-          if (e.key === "Escape") onCancel();
+          if (e.key === "Escape") {
+            e.preventDefault();
+            onCancel();
+          }
         }}
         onBlur={onCancel}
         placeholder="Thread name..."

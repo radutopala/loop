@@ -3,14 +3,12 @@ import { getApiUrl } from "./api";
 /**
  * A channel's learn switch and its hidden learn thread. `available` is false
  * for Slack and Discord channels, which never learn. `learn` is the channel's
- * own setting ("on", "off", or "" to inherit `default_learn` from config);
- * `enabled` is what applies.
+ * own setting ("on", "off", or "" to inherit `default_learn` from config).
  */
 export interface LearnState {
   available: boolean;
   learn: "" | "on" | "off";
   default_learn: boolean;
-  enabled: boolean;
   learn_channel_id: string;
   running: boolean;
 }
@@ -36,7 +34,7 @@ export async function setLearn(channelId: string, learn: LearnState["learn"]): P
 
 export type LearnProposalKind = "prompt_shortcut" | "bash_shortcut" | "scheduled_task" | "gate_rule" | "mount" | "rename" | "description" | "ticket_url";
 
-export type LearnProposalStatus = "pending" | "applying" | "applied" | "dismissed" | "failed";
+type LearnProposalStatus = "pending" | "applying" | "applied" | "dismissed" | "failed";
 
 /** One change a learn pass proposed. `payload` is the kind's JSON object. */
 export interface LearnProposal {

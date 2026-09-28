@@ -86,15 +86,7 @@ func (s *Server) handleDeleteThread(w http.ResponseWriter, r *http.Request) {
 	}
 
 	threadID := r.PathValue("id")
-
-	// The thread's learn thread goes with it; note it while the thread still
-	// exists to find it by.
-	var learns []*db.Channel
-	if s.store != nil {
-		learns = s.learnThreads(r.Context(), threadID)
-	}
-
-	if err := s.threads.DeleteThread(r.Context(), threadID); err != nil {
+	if err := s.deleteThread(r.Context(), threadID); err != nil {
 		if errors.Is(err, ErrChannelLocked) {
 			http.Error(w, err.Error(), http.StatusConflict)
 			return
@@ -102,9 +94,22 @@ func (s *Server) handleDeleteThread(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-
-	s.stopLearnThreads(r.Context(), learns)
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// deleteThread deletes threadID through s.threads and stops the passes of
+// its hidden learn thread, which goes with it. The learn thread is noted
+// first, while the thread still exists to find it by.
+func (s *Server) deleteThread(ctx context.Context, threadID string) error {
+	var learns []*db.Channel
+	if s.store != nil {
+		learns = s.learnThreads(ctx, threadID)
+	}
+	if err := s.threads.DeleteThread(ctx, threadID); err != nil {
+		return err
+	}
+	s.stopLearnThreads(ctx, learns)
+	return nil
 }
 
 // importSessionMessages parses a Claude Code session JSONL file and inserts

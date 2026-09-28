@@ -96,7 +96,7 @@ func newLearnProposal(l *db.Channel, in learnProposalInput) (*db.LearnProposal, 
 	if utf8.RuneCountInString(rationale) > maxRationaleLen {
 		return nil, fmt.Errorf("rationale is longer than %d characters", maxRationaleLen)
 	}
-	_, payload, err := learn.Validate(in.Kind, in.Title, in.Payload)
+	payload, err := learn.Validate(in.Kind, in.Title, in.Payload)
 	if err != nil {
 		return nil, err
 	}
@@ -262,11 +262,16 @@ func (s *Server) applyLearnProposal(ctx context.Context, p *db.LearnProposal) er
 }
 
 // applyLearnConfig appends a config-kind proposal to the project config.
+// The file stays locked from the duplicate check to the write, so proposals
+// applied at once (Apply all) neither drop each other's entries nor both
+// add the same one.
 func (s *Server) applyLearnConfig(ctx context.Context, ch *db.Channel, v any) error {
 	dir, err := s.resolveProjectConfigDirPath(ctx, ch.ChannelID)
 	if err != nil {
 		return err
 	}
+	configPath := filepath.Join(dir, ".loop", "config.json")
+	defer s.configLocks.lock(configPath)()
 	merged := s.configs.merged(ch.DirPath, s.workspace.resolveParentDirPath(ctx, ch.ChannelID))
 	if merged == nil {
 		return errors.New("loading config failed")
@@ -310,7 +315,7 @@ func (s *Server) applyLearnConfig(ctx context.Context, ch *db.Channel, v any) er
 		}
 		path, item = []string{"mounts"}, v.Mount
 	}
-	return hjsonedit.Append(s.sys, filepath.Join(dir, ".loop", "config.json"), path, item, seed)
+	return hjsonedit.Append(s.sys, configPath, path, item, seed)
 }
 
 // hasGateRule reports whether gate already has rule (a *types.PathRule,

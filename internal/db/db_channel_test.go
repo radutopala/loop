@@ -367,6 +367,7 @@ var deleteChannelSteps = []deleteStep{
 	{`DELETE FROM messages WHERE channel_id = \?`, "deleting messages for channel"},
 	{`DELETE FROM quality_snapshots WHERE channel_id = \?`, "deleting quality snapshots for channel"},
 	{`DELETE FROM messages WHERE channel_id IN \(SELECT channel_id FROM channels WHERE kind = 'learn' AND parent_id IN \(\?\)\)`, "deleting learn thread messages"},
+	{`DELETE FROM quality_snapshots WHERE channel_id IN \(SELECT channel_id FROM channels WHERE kind = 'learn' AND parent_id IN \(\?\)\)`, "deleting learn thread quality snapshots"},
 	{`DELETE FROM learn_proposals WHERE channel_id IN \(\?\)`, "deleting learn proposals"},
 	{`DELETE FROM channels WHERE kind = 'learn' AND parent_id IN \(\?\)`, "deleting learn threads"},
 	{`DELETE FROM channels WHERE channel_id = \?`, ""},
@@ -376,6 +377,7 @@ const childIDs = `SELECT channel_id FROM channels WHERE parent_id = \?`
 
 var deleteChildrenSteps = []deleteStep{
 	{`DELETE FROM messages WHERE channel_id IN \(SELECT channel_id FROM channels WHERE kind = 'learn' AND parent_id IN \(` + childIDs + `\)\)`, "deleting learn thread messages"},
+	{`DELETE FROM quality_snapshots WHERE channel_id IN \(SELECT channel_id FROM channels WHERE kind = 'learn' AND parent_id IN \(` + childIDs + `\)\)`, "deleting learn thread quality snapshots"},
 	{`DELETE FROM learn_proposals WHERE channel_id IN \(` + childIDs + `\)`, "deleting learn proposals"},
 	{`DELETE FROM channels WHERE kind = 'learn' AND parent_id IN \(` + childIDs + `\)`, "deleting learn threads"},
 	{`DELETE FROM messages WHERE channel_id IN \(` + childIDs + `\)`, "deleting messages for child channels"},

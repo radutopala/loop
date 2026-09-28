@@ -169,7 +169,7 @@ Feature: Learn from runs
     # A reply the user asked the learn thread for isn't a learn pass.
     When I inject a "agent.status" event for the learn thread with data:
       """
-      {"status":"running","run_id":"bdd-learn-reply","trigger":"chat"}
+      {"status":"running","run_id":"bdd-learn-reply","trigger":"learn-reply"}
       """
     And I inject a "agent.status" event for the channel with data:
       """
@@ -240,3 +240,144 @@ Feature: Learn from runs
     # The stuck one gets Retry and Dismiss back once it's a minute old,
     # without anything else rendering the pane again.
     And I wait up to "10s" for text "Retry" to appear
+
+  Scenario: A learn run, a pass or a reply, marks nothing unread
+    Given the current channel has a learn thread
+    When I inject a "agent.status" event for the learn thread with data:
+      """
+      {"status":"running","run_id":"bdd-learn-reply","trigger":"learn-reply"}
+      """
+    And I inject a "agent.status" event for the learn thread with data:
+      """
+      {"status":"completed","run_id":"bdd-learn-reply","trigger":"learn-reply"}
+      """
+    And I inject a "agent.status" event for the learn thread with data:
+      """
+      {"status":"completed","run_id":"bdd-learn-run","trigger":"learn"}
+      """
+    # Events are handled in order: once this one shows, those have been.
+    And I inject a "learn.proposals" event for the channel with data:
+      """
+      {"proposals":[
+        {"id":999999,"channel_id":"{channel_id}","learn_channel_id":"{learn_channel_id}","kind":"description","title":"Describe it","rationale":"","payload":"{\"description\":\"x\"}","status":"pending","created_at":"{now-5s}","updated_at":"{now-5s}"}
+      ]}
+      """
+    Then I wait for text "1 proposal" to appear
+    And the element "[title='Mark all as read']" should not exist
+    # Any other run there would.
+    When I inject a "agent.status" event for the learn thread with data:
+      """
+      {"status":"completed","run_id":"bdd-other-run","trigger":"chat"}
+      """
+    Then I wait for "[title='Mark all as read']" to be visible
+
+  Scenario: Apply all applies every pending proposal
+    Given the current channel has a learn thread
+    When I send a POST request to "/api/channels/{learn_channel_id}/learn/proposals" with body:
+      """
+      {"proposals":[
+        {"kind":"ticket_url","title":"Link the ticket","payload":{"ticket_url":"https://example.atlassian.net/browse/PROJ-8"}},
+        {"kind":"description","title":"Describe the thread","payload":{"description":"Learn journey playground"}}
+      ]}
+      """
+    Then the response status should be 201
+    And I wait for text "2 proposals" to appear
+    When I click on "[data-testid='learn-badge']"
+    Then the Learn view shows the chat and the Learn pane side by side
+    And the element "[data-testid='learn-dismiss-all']" should be visible
+    When I click on "[data-testid='learn-apply-all']"
+    Then I wait up to "5s" for "[data-testid='learn-proposal'][data-status='pending']" to disappear
+    And the element "[data-testid='learn-proposal'][data-status='applied']" should be visible
+    And I wait for "[data-testid='header-ticket']" to be visible
+    And the element "[data-testid='header-ticket']" should contain text "PROJ-8"
+    # Nothing's left open, so neither bulk button shows.
+    And the element "[data-testid='learn-apply-all']" should not exist
+    And the element "[data-testid='learn-dismiss-all']" should not exist
+    And the element "[data-testid='learn-badge']" should contain text "learn"
+
+  Scenario: Dismiss all dismisses every open proposal, and a failed request shows under its card
+    Given the current channel has a learn thread
+    When I send a POST request to "/api/channels/{learn_channel_id}/learn/proposals" with body:
+      """
+      {"proposals":[
+        {"kind":"rename","title":"Name the thread after its work","payload":{"name":"bdd-learn-renamed"}},
+        {"kind":"description","title":"Describe the thread","payload":{"description":"Learn journey playground"}}
+      ]}
+      """
+    Then the response status should be 201
+    # One the server doesn't know: dismissing it fails as a request.
+    When I inject a "learn.proposals" event for the channel with data:
+      """
+      {"proposals":[
+        {"id":999999,"channel_id":"{channel_id}","learn_channel_id":"{learn_channel_id}","kind":"description","title":"Unknown to the server","rationale":"","payload":"{\"description\":\"x\"}","status":"failed","error":"boom","created_at":"{now-5s}","updated_at":"{now-5s}"}
+      ]}
+      """
+    Then I wait for text "3 proposals" to appear
+    When I click on "[data-testid='learn-badge']"
+    Then the Learn view shows the chat and the Learn pane side by side
+    When I click on "[data-testid='learn-dismiss-all']"
+    Then I wait up to "5s" for "[data-testid='learn-proposal'][data-status='pending']" to disappear
+    And the element "[data-testid='learn-proposal'][data-status='dismissed']" should be visible
+    And I wait for "[data-testid='learn-proposal'][data-status='failed'] [data-testid='learn-request-error']" to be visible
+    And the element "[data-testid='learn-badge']" should contain text "1 proposal"
+    # Only the failed one is left: Apply all leaves it for a Retry.
+    And the element "[data-testid='learn-apply-all']" should not exist
+    And the element "[data-testid='learn-dismiss-all']" should be visible
+    # Nothing was applied.
+    And the element "[data-testid='learn-proposal'][data-status='applied']" should not exist
+
+  Scenario: An applied shortcut proposal shows in the composer's # picker
+    Given the current channel has a learn thread
+    When I send a POST request to "/api/channels/{learn_channel_id}/learn/proposals" with body:
+      """
+      {"proposals":[
+        {"kind":"prompt_shortcut","title":"Add a shortcut for the checks","payload":{"name":"bdd-learned-checks","prompt":"run the checks"}}
+      ]}
+      """
+    Then the response status should be 201
+    And I wait for text "1 proposal" to appear
+    When I click on "[data-testid='learn-badge']"
+    Then the Learn view shows the chat and the Learn pane side by side
+    When I click on "[data-testid='learn-apply']"
+    Then I wait for "[data-testid='learn-proposal'][data-status='applied']" to be visible
+    When I click on "[data-testid='learn-close']"
+    Then I wait up to "5s" for "[data-testid='learn-split']" to disappear
+    When I type "#bdd-learned" into "[data-learn-chat-leaf] textarea"
+    Then I wait for text "#bdd-learned-checks" to appear
+
+  Scenario: What opens in the layout closes the Learn view; Escape a sidebar input takes doesn't
+    Given the current channel has a learn thread
+    And I create a file "notes/learn-target.md" in the repo with:
+      """
+      learnlinktarget
+      """
+    When I inject a bot message with:
+      """
+      See notes/learn-target.md for the notes.
+      """
+    Then I wait for "[data-learn-chat-leaf] a[href='#']" to be visible
+    When I inject a "learn.started" event for the channel with data:
+      """
+      {"learn_channel_id":"{learn_channel_id}"}
+      """
+    Then I wait for "[data-testid='learn-badge']" to be visible
+    # Escape clearing the sidebar search is the search's, not the view's.
+    When I click on "[data-testid='learn-badge']"
+    Then the Learn view shows the chat and the Learn pane side by side
+    When I type "zz" into "input[placeholder='Search...']"
+    And I press Escape
+    And I wait "300ms"
+    Then the element "[data-testid='learn-split']" should be visible
+    # A file link in the chat opens the editor in the layout, so the view
+    # closes to show it.
+    When I click on "[data-testid='learn-split-chat'] a[href='#']"
+    Then I wait up to "5s" for "[data-testid='learn-split']" to disappear
+    And I wait for text "learnlinktarget" to appear
+    # Adding a layout tab closes it too: the view holds the chat of the
+    # layout it opened over.
+    When I click on "[data-testid='learn-badge']"
+    Then the Learn view shows the chat and the Learn pane side by side
+    When I click on "[title='New layout']"
+    And I click on the button with text "Split"
+    Then I wait up to "5s" for "[data-testid='learn-split']" to disappear
+    And I wait for "[data-testid='layout-tab-Layout 1']" to be visible

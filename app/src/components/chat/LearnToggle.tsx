@@ -9,7 +9,8 @@ import { learnEffective, learnToggleTitle } from "./learnState";
  * click stores on/off on the channel, which then applies from its next run.
  * Its state is the layout's LearnView (see useLearn), so it follows changes
  * made in other windows; Slack and Discord channels, which never learn,
- * don't show it.
+ * don't show it, nor does a learn thread's own composer (it isn't the
+ * view's channel: a learn thread doesn't learn from itself).
  */
 export function LearnToggle({ channelId }: { channelId: string }) {
   const { colors } = useTheme();

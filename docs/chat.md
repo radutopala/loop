@@ -585,29 +585,31 @@ Config kinds are written to the project's `.loop/config.json` with your comments
 
 ### Learn label
 
-The chat pane shows a `learn` label for the selected channel at the right of its header: `learning…` while a pass runs (not while the learn thread answers you), `N proposals` while proposals wait (pending or failed), both lit in the accent color. Once the channel has a learn thread and nothing waits, the label stays dim; a channel that never had a pass shows none. A click opens the Learn view; switching channels or layout tabs, deleting the layout tab or resetting it closes it.
+The chat pane shows a `learn` label for the selected channel at the right of its header: `learning…` while a pass runs (not while the learn thread answers you), `N proposals` while proposals wait (pending or failed), both lit in the accent color. Once the channel has a learn thread and nothing waits, the label stays dim; a channel that never had a pass shows none. A click opens the Learn view; switching channels or layout tabs, adding a layout tab, deleting the active one or resetting it closes it. So does anything that opens in the layout under it: a file link in the chat (the editor opens in the layout), a panel another view opens there, or a memory file opened from search.
 
 ### Learn view
 
-The Learn view puts the chat and a Learn pane side by side, each half the width and the full height of the layout, over the rest of the layout, which can't be clicked or tabbed into meanwhile. The layout tabs above stay usable. The Loop logo sits on the seam between them and animates while a learn pass runs. The chat moves over at once, as it is (draft, scroll and all), and the Learn pane fades in beside it; closing fades the Learn pane out and moves the chat back.
+The Learn view puts the chat and a Learn pane side by side, each half the width and the full height of the layout, over the rest of the layout, which can't be clicked or tabbed into meanwhile. The layout tabs above stay usable. The Loop logo sits on the seam between them and animates while a learn pass runs (it holds still when the system asks for reduced motion). The chat moves over at once, as it is (draft, scroll and all), and the Learn pane fades in beside it; closing fades the Learn pane out and moves the chat back.
 
-The chat keeps its pane header with its container stats, but not the layout's split and close buttons. Close the view with the Learn label in that header, the Learn pane's ✕, or Escape (unless a picker, the find bar or a shown component takes it first). Opening the view keeps focus in the chat, or puts it in the chat's composer when it was elsewhere (the layout under the view is inert); closing it with focus in the Learn pane puts focus back in the chat's composer.
+The chat keeps its pane header with its container stats, but not the layout's split and close buttons. Close the view with the Learn label in that header, the Learn pane's ✕, or Escape (unless something else takes it first: a picker, the find bar, a menu, a dialog, Settings, a sidebar input such as the search box, or a shown component). Opening the view keeps focus in the chat, or puts it in the chat's composer when it was elsewhere (the layout under the view is inert); closing it with focus in the Learn pane puts focus back in the chat's composer.
 
 The Learn pane's header matches a pane header:
 
 - **Proposals** on top, newest first. Each card shows its kind, title, a one-line gist of exactly what Apply writes, and the rationale the pass gave.
-  - **Apply** applies it. If it fails, the error shows under the card and the button becomes **Retry**. If the request itself fails (Loop can't be reached, say), that error shows under the card until the next try. A card's buttons are disabled while its apply or dismiss is in flight.
+  - **Apply** applies it. If it fails, the error shows under the card and the button becomes **Retry**. If the request itself fails (Loop can't be reached, say), that error shows under the card until the next try. A card's buttons are disabled while its apply or dismiss is in flight. Requests in flight and their errors outlive the view: close and reopen it and they're still there.
   - **Dismiss** drops it. Pending and failed proposals can be dismissed.
   - Applied and dismissed cards stay in the list, dimmed, with their status.
   - A card stuck in `applying` for over a minute (its outcome was lost, say Loop stopped mid-apply) gets **Retry** and **Dismiss** back.
-  - **Apply all** in the header applies every pending proposal one by one, skipping any applied or dismissed meanwhile. Failed ones are left for a manual Retry.
+  - **Apply all** in the header applies every pending proposal one by one, skipping any applied, dismissed or in flight meanwhile. Failed ones are left for a manual Retry.
+  - **Dismiss all** next to it dismisses every open proposal (pending, failed, or stuck applying) one by one, the same way. It shows while any proposal is open; neither button can be pressed while either is going through the list. A request that fails shows under its card, as for a single Dismiss.
+  - An applied prompt or bash shortcut shows at once in the composer's `#` picker and the terminal's shortcut menus.
 - **The learn thread's chat** below. Watch the pass as it works, or reply to it: ask why it proposed something or ask for changes, and it files revised proposals. The thread's composer has no Learn switch, since a learn thread doesn't learn from itself.
 
 **Worktree threads:** a rename proposal renames the thread only; its git branch and worktree folder keep their names. The Learn pane says so under the card.
 
 ### Hidden thread
 
-Each channel has one learn thread, created on its first pass. It's left out of `GET /api/channels`, so it never shows in the sidebar, and it's deleted along with its channel or thread, which also cancels a pass still running or queued. It's named `learn: <channel>` and follows the channel's renames on the next pass. Each new pass forks the latest run's session again, so it doesn't carry over what you said in the learn thread before. Learn runs don't mark anything unread, post a desktop notification or bounce the dock (their `agent.status` events carry `trigger: "learn"`). Proposals show through the Learn label instead.
+Each channel has one learn thread, created on its first pass. It's left out of `GET /api/channels`, so it never shows in the sidebar, and it's deleted along with its channel or thread, which also cancels a pass still running or queued. It's named `learn: <channel>` and follows the channel's renames on the next pass. Each new pass forks the latest run's session again, so it doesn't carry over what you said in the learn thread before. Learn runs, a pass or a reply you asked the learn thread for, don't mark anything unread, post a desktop notification or bounce the dock (their `agent.status` events carry `trigger: "learn"` or `trigger: "learn-reply"`). Proposals show through the Learn label, and replies in the open Learn view, instead. Only a pass lights the label's `learning…`. If Loop's connection drops, the learn state and proposals are fetched again when it comes back, so a pass that ended or proposals filed meanwhile aren't missed.
 
 ---
 

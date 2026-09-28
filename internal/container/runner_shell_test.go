@@ -840,6 +840,9 @@ func (s *RunnerSuite) TestBuildClaudeCmdLearnMode() {
 	require.Equal(s.T(), strings.Join(slices.Concat(disallowed, learnModeDisallowedTools), ","), cmd[i+1])
 	require.Contains(s.T(), cmd[i+1], ",Edit,Write,")
 	require.Contains(s.T(), cmd[i+1], "mcp__loop__prompt_shortcut")
+	// quality_scan writes a snapshot row; quality_snapshot only reads one.
+	require.Contains(s.T(), strings.Split(cmd[i+1], ","), "mcp__loop__quality_scan")
+	require.NotContains(s.T(), strings.Split(cmd[i+1], ","), "mcp__loop__quality_snapshot")
 	require.NotContains(s.T(), cmd, "--settings")
 	require.Equal(s.T(), config.DefaultBatchDisallowedTools(), cfg.ClaudeBatchDisallowedTools)
 }
@@ -970,21 +973,29 @@ func (s *RunnerSuite) TestClaudeCmdBuilder() {
 }
 
 func (s *RunnerSuite) TestClaudeCmdBuilderBuildContinueCmd() {
-	cfg := &config.Config{
-		ClaudeBinPath: "claude",
-		LoopDir:       "/home/user/.loop",
+	const prefix = "CLAUDE_CODE_NO_FLICKER=1 claude --mcp-config /projects/myapp/.loop/mcp-ch-1.json --dangerously-skip-permissions"
+	tests := []struct {
+		name       string
+		sessionID  string
+		transcript bool
+		want       string
+	}{
+		{name: "known session", sessionID: "sess-1", transcript: true, want: prefix + " --resume sess-1" + claudeExitTrailer},
+		{name: "known session without transcript", sessionID: "sess-1", want: prefix + " --continue" + claudeExitTrailer},
+		{name: "unknown session", transcript: true, want: prefix + " --continue" + claudeExitTrailer},
 	}
-	builder := NewClaudeCmdBuilder(cfg, nil)
-	got := builder.BuildContinueCmd("ch-1", "/projects/myapp", "", "")
-
-	// --continue is used, never --resume/--fork-session, regardless of any
-	// stored channel session id (BuildContinueCmd never looks one up).
-	require.Contains(s.T(), got, "--continue")
-	require.NotContains(s.T(), got, "--resume")
-	require.NotContains(s.T(), got, "--fork-session")
-
-	expectedMCP := "/projects/myapp/.loop/mcp-ch-1.json"
-	require.Equal(s.T(), "CLAUDE_CODE_NO_FLICKER=1 claude --mcp-config "+expectedMCP+" --dangerously-skip-permissions --continue"+claudeExitTrailer, got)
+	for _, tc := range tests {
+		s.Run(tc.name, func() {
+			builder := NewClaudeCmdBuilder(&config.Config{ClaudeBinPath: "claude", LoopDir: "/home/user/.loop"}, nil)
+			builder.transcriptMissing = func(workDir, sessionID string) bool {
+				require.Equal(s.T(), "/projects/myapp", workDir)
+				return !tc.transcript
+			}
+			got := builder.BuildContinueCmd("ch-1", "/projects/myapp", "", tc.sessionID, "")
+			require.Equal(s.T(), tc.want, got)
+			require.NotContains(s.T(), got, "--fork-session")
+		})
+	}
 }
 
 func (s *RunnerSuite) TestBuildBaseClaudeCmdContinueSessionIgnoresSessionID() {

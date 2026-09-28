@@ -53,6 +53,7 @@ func (s *OrchestratorSuite) TestLearnConfig() {
 	worktree := &config.Config{Learn: config.LearnConfig{Enabled: true, MinTurns: 2}}
 	plain := &db.Channel{ChannelID: "ch1", DirPath: "/project"}
 	wt := &db.Channel{ChannelID: "wt", ParentID: "root", Worktree: true, DirPath: "/project/.worktrees/wt"}
+	s.store.On("GetChannel", s.ctx, "wt").Return(wt, nil)
 	tests := []struct {
 		name     string
 		ch       *db.Channel
@@ -109,8 +110,21 @@ func (s *OrchestratorSuite) TestMaybeLearnSkips() {
 		{"learn thread", &db.Channel{ChannelID: "learn-1", Kind: db.ChannelKindLearn}, learnOn, func() {}},
 		{"too short", &db.Channel{ChannelID: "ch1", DirPath: "/project", Platform: types.PlatformLocal}, &agent.AgentResponse{SessionID: "sess-1", NumTurns: 1}, func() {}},
 		{"no session", &db.Channel{ChannelID: "ch1", DirPath: "/project", Platform: types.PlatformLocal}, &agent.AgentResponse{NumTurns: 5}, func() {}},
+		{"channel deleted during the run", &db.Channel{ChannelID: "ch1", DirPath: "/project", Platform: types.PlatformLocal}, learnOn, func() {
+			s.store.On("GetChannel", s.ctx, "ch1").Return(nil, nil)
+		}},
+		{"channel reload error", &db.Channel{ChannelID: "ch1", DirPath: "/project", Platform: types.PlatformLocal}, learnOn, func() {
+			s.store.On("GetChannel", s.ctx, "ch1").Return(nil, errors.New("db down"))
+		}},
+		{"switched off during the run", &db.Channel{ChannelID: "ch1", DirPath: "/project", Platform: types.PlatformLocal}, learnOn, func() {
+			s.store.On("GetChannel", s.ctx, "ch1").Return(&db.Channel{ChannelID: "ch1", DirPath: "/project", Platform: types.PlatformLocal, LearnOverride: db.LearnOff}, nil)
+		}},
 		{"lookup error", &db.Channel{ChannelID: "ch1", DirPath: "/project", Platform: types.PlatformLocal}, learnOn, func() {
 			s.store.On("GetLearnChannel", s.ctx, "ch1").Return(nil, errors.New("db down"))
+		}},
+		{"channel deleted before its learn thread was made", &db.Channel{ChannelID: "ch1", DirPath: "/project", Platform: types.PlatformLocal}, learnOn, func() {
+			s.store.On("GetLearnChannel", s.ctx, "ch1").Return(nil, nil)
+			s.store.On("InsertLearnChannel", s.ctx, mock.Anything).Return(db.ErrLearnParentGone)
 		}},
 		{"create error", &db.Channel{ChannelID: "ch1", DirPath: "/project", Platform: types.PlatformLocal}, learnOn, func() {
 			s.store.On("GetLearnChannel", s.ctx, "ch1").Return(nil, nil)
@@ -130,6 +144,8 @@ func (s *OrchestratorSuite) TestMaybeLearnSkips() {
 			s.SetupTest()
 			s.setupLearnOn()
 			tc.setup()
+			// Unless the case reloads it differently, ch is unchanged.
+			s.store.On("GetChannel", s.ctx, tc.ch.ChannelID).Return(tc.ch, nil).Maybe()
 			s.orch.maybeLearn(s.ctx, tc.ch, &bot.IncomingMessage{Content: "hi"}, tc.resp)
 			s.store.AssertExpectations(s.T())
 			// Only the busy thread keeps the run, to review it next.
@@ -163,6 +179,7 @@ func (s *OrchestratorSuite) TestMaybeLearnStarts() {
 		return strings.HasPrefix(id, "learn-")
 	}), "sess-1").Return(nil)
 	s.store.On("IsChannelActive", s.ctx, mock.Anything).Return(true, nil)
+	s.store.On("GetChannel", s.ctx, "ch1").Return(ch, nil)
 	s.store.On("GetChannel", s.ctx, mock.Anything).Return(&db.Channel{ID: 9, Platform: types.PlatformLocal, Kind: db.ChannelKindLearn}, nil)
 	var trigger *db.Message
 	s.store.On("InsertMessage", s.ctx, mock.MatchedBy(func(m *db.Message) bool {
@@ -371,18 +388,24 @@ func (s *OrchestratorSuite) TestRunTrigger() {
 	s.bot.ExpectedCalls = nil
 	s.bot.On("IsBotUser", "bot-1").Return(true)
 	s.bot.On("IsBotUser", mock.Anything).Return(false)
+	chat := &db.Channel{ChannelID: "ch1"}
+	learnThread := &db.Channel{ChannelID: "learn-1", Kind: db.ChannelKindLearn}
 	tests := []struct {
 		name     string
+		ch       *db.Channel
 		authorID string
 		want     string
 	}{
-		{name: "learn pass", authorID: learnAuthorID, want: "learn"},
-		{name: "bot", authorID: "bot-1", want: "bot"},
-		{name: "user", authorID: "user-1", want: ""},
+		{name: "learn pass", ch: learnThread, authorID: learnAuthorID, want: "learn"},
+		{name: "bot", ch: chat, authorID: "bot-1", want: "bot"},
+		{name: "user", ch: chat, authorID: "user-1", want: ""},
+		{name: "user in a learn thread", ch: learnThread, authorID: "user-1", want: "learn-reply"},
+		{name: "bot in a learn thread", ch: learnThread, authorID: "bot-1", want: "bot"},
+		{name: "no channel", authorID: "user-1", want: ""},
 	}
 	for _, tc := range tests {
 		s.Run(tc.name, func() {
-			require.Equal(s.T(), tc.want, s.orch.runTrigger(tc.authorID))
+			require.Equal(s.T(), tc.want, s.orch.runTrigger(tc.ch, tc.authorID))
 		})
 	}
 }
@@ -399,6 +422,7 @@ func (s *OrchestratorSuite) TestMaybeLearnWorktreeUsesRootConfig() {
 	s.store.On("GetChannel", s.ctx, "root").Return(&db.Channel{ChannelID: "root", DirPath: "/project"}, nil)
 
 	wt := &db.Channel{ChannelID: "wt", ParentID: "root", Worktree: true, DirPath: "/project/.worktrees/wt"}
+	s.store.On("GetChannel", s.ctx, "wt").Return(wt, nil)
 	s.orch.maybeLearn(s.ctx, wt, &bot.IncomingMessage{}, &agent.AgentResponse{SessionID: "sess-1", NumTurns: 9})
 
 	require.Equal(s.T(), []string{"/project/.worktrees/wt", "/project"}, loaded)
@@ -465,6 +489,36 @@ func (s *OrchestratorSuite) TestPrepareAgentRequestLearnThread() {
 			require.Contains(s.T(), req.SystemPrompt, "`/project/.loop/config.json`")
 			require.Equal(s.T(), tc.wantTask, strings.Contains(req.SystemPrompt, "nightly deps"))
 			require.Equal(s.T(), tc.propsErr == nil, strings.Contains(req.SystemPrompt, "Add a vitest shortcut"))
+		})
+	}
+}
+
+// TestPrepareAgentRequestLearnThreadNoParent checks a learn thread whose
+// parent can't be loaded doesn't run at all, rather than as a chat run with
+// the full tool set.
+func (s *OrchestratorSuite) TestPrepareAgentRequestLearnThreadNoParent() {
+	tests := []struct {
+		name  string
+		ch    *db.Channel
+		setup func()
+	}{
+		{"parent lookup error", &db.Channel{ChannelID: "learn-1", ParentID: "ch1", Kind: db.ChannelKindLearn}, func() {
+			s.store.On("GetChannel", s.ctx, "ch1").Return(nil, errors.New("db down"))
+		}},
+		{"parent gone", &db.Channel{ChannelID: "learn-1", ParentID: "ch1", Kind: db.ChannelKindLearn}, func() {
+			s.store.On("GetChannel", s.ctx, "ch1").Return(nil, nil)
+		}},
+		{"no parent", &db.Channel{ChannelID: "learn-1", Kind: db.ChannelKindLearn}, func() {}},
+	}
+	for _, tc := range tests {
+		s.Run(tc.name, func() {
+			s.SetupTest()
+			s.store.On("GetRecentMessages", s.ctx, "learn-1", recentMessageLimit).Return([]*db.Message{}, nil)
+			s.store.On("GetChannel", s.ctx, "learn-1").Return(tc.ch, nil)
+			tc.setup()
+			req, _, _, err := s.orch.prepareAgentRequest(s.ctx, &bot.IncomingMessage{ChannelID: "learn-1", AuthorName: "radu", Content: "why?"})
+			require.ErrorContains(s.T(), err, "learn thread learn-1")
+			require.Nil(s.T(), req)
 		})
 	}
 }

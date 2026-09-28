@@ -72,22 +72,22 @@ type TicketURL struct {
 }
 
 // Validate checks a proposal's kind, title and payload. It returns the
-// decoded payload (one of this package's payload types) and its canonical
-// JSON, which is what gets stored.
-func Validate(kind, title string, payload json.RawMessage) (any, json.RawMessage, error) {
+// payload's canonical JSON, which is what gets stored and what Decode reads
+// back when the proposal is applied.
+func Validate(kind, title string, payload json.RawMessage) (json.RawMessage, error) {
 	title = strings.TrimSpace(title)
 	if title == "" {
-		return nil, nil, errors.New("title is required")
+		return nil, errors.New("title is required")
 	}
 	if utf8.RuneCountInString(title) > MaxTitleLen {
-		return nil, nil, fmt.Errorf("title is longer than %d characters", MaxTitleLen)
+		return nil, fmt.Errorf("title is longer than %d characters", MaxTitleLen)
 	}
 	decoded, err := Decode(kind, payload)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 	canonical, _ := json.Marshal(decoded)
-	return decoded, canonical, nil
+	return canonical, nil
 }
 
 // Decode decodes and checks a stored or proposed payload of the given kind.

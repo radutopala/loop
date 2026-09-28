@@ -129,6 +129,7 @@ type Server struct {
 	channels                ChannelEnsurer
 	threads                 ThreadEnsurer
 	removeMCPConfig         func(dirPath, channelID string) error // removes a deleted channel's MCP config files
+	configLocks             configLocks                           // serializes edits of each config.json
 	messages                MessageSender
 	memoryIndexer           MemoryIndexer
 	termManager             TerminalManager
