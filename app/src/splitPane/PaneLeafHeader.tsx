@@ -53,9 +53,11 @@ interface PaneLeafHeaderProps {
    *  one backing this panel (chat → agent container, docker-agent panes →
    *  the shared shell container). */
   containerStats?: ContainerStatsByType;
-  onRemove: () => void;
-  onDrop: (dragId: string, dropId: string, position: DropPosition) => void;
-  onSplitLeaf: (leafId: string, panel: PanelType, direction: SplitDirection, meta?: { openMode?: AgentOpenMode }) => void;
+  /** Layout controls: without them the header is a plain title bar (no
+   *  close or split button, and it can't be dragged). */
+  onRemove?: () => void;
+  onDrop?: (dragId: string, dropId: string, position: DropPosition) => void;
+  onSplitLeaf?: (leafId: string, panel: PanelType, direction: SplitDirection, meta?: { openMode?: AgentOpenMode }) => void;
   onToggleMaximize?: () => void;
   onToggleMinimize?: () => void;
 }
@@ -115,7 +117,7 @@ export function PaneLeafHeader({
       e.preventDefault();
       const dragId = e.dataTransfer.getData(DRAG_MIME);
       if (dragId && dragId !== leafId) {
-        onDrop(dragId, leafId, "center");
+        onDrop?.(dragId, leafId, "center");
       }
       emitLayoutDragEnd();
     },
@@ -124,11 +126,11 @@ export function PaneLeafHeader({
 
   return (
     <div
-      draggable
-      onDragStart={handleDragStart}
-      onDragEnd={handleDragEnd}
-      onDragOver={handleDragOverHeader}
-      onDrop={handleDropOnHeader}
+      draggable={!!onDrop}
+      onDragStart={onDrop && handleDragStart}
+      onDragEnd={onDrop && handleDragEnd}
+      onDragOver={onDrop && handleDragOverHeader}
+      onDrop={onDrop && handleDropOnHeader}
       style={{
         display: "flex",
         alignItems: "center",
@@ -138,7 +140,7 @@ export function PaneLeafHeader({
         borderBottom: `1px solid ${colors.border}`,
         flexShrink: 0,
         height: 22,
-        cursor: "grab",
+        cursor: onDrop ? "grab" : "default",
       }}
     >
       <span
@@ -166,8 +168,8 @@ export function PaneLeafHeader({
         )}
         {label}
       </span>
-      <span style={{ width: 1, height: 10, backgroundColor: colors.border, flexShrink: 0, marginLeft: 2, marginRight: 2 }} />
-      <PaneSplitMenu leafId={leafId} usedSingletons={usedSingletons} onSplitLeaf={onSplitLeaf} hiddenPanels={hiddenPanels} />
+      {(onSplitLeaf || onRemove || onToggleMinimize || onToggleMaximize) && <span style={{ width: 1, height: 10, backgroundColor: colors.border, flexShrink: 0, marginLeft: 2, marginRight: 2 }} />}
+      {onSplitLeaf && <PaneSplitMenu leafId={leafId} usedSingletons={usedSingletons} onSplitLeaf={onSplitLeaf} hiddenPanels={hiddenPanels} />}
       {onToggleMinimize && (
         <button onClick={onToggleMinimize} title={isMinimized ? "Restore pane" : "Minimize pane"} style={btnStyle} onMouseEnter={hoverIn} onMouseLeave={hoverOut}>
           <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
@@ -194,12 +196,14 @@ export function PaneLeafHeader({
           )}
         </button>
       )}
-      <button onClick={onRemove} title="Close pane" style={btnStyle} onMouseEnter={hoverIn} onMouseLeave={hoverOut}>
-        <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-          <line x1="18" y1="6" x2="6" y2="18" />
-          <line x1="6" y1="6" x2="18" y2="18" />
-        </svg>
-      </button>
+      {onRemove && (
+        <button onClick={onRemove} title="Close pane" style={btnStyle} onMouseEnter={hoverIn} onMouseLeave={hoverOut}>
+          <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+            <line x1="18" y1="6" x2="6" y2="18" />
+            <line x1="6" y1="6" x2="18" y2="18" />
+          </svg>
+        </button>
+      )}
       <div style={{ flex: 1 }} />
       {statsEntry && (
         <span

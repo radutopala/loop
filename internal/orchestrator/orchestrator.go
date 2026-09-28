@@ -78,14 +78,16 @@ type Orchestrator struct {
 	scheduler         scheduler.Scheduler
 	events            events.Broadcaster
 	workflowEngine    WorkflowEngine
-	channelLocks      sync.Map       // map[channelID]*sync.Mutex — serialises per-channel drain loops
-	activeRuns        sync.Map       // map[channelID]context.CancelFunc
-	activeRunMsgIDs   sync.Map       // map[channelID]string — msg_id of the row currently running
-	plannedChannels   sync.Map       // map[channelID]events.ExitPlanModeEventData — channels parked on an ExitPlanMode card, value is the plan payload (for FE rehydration after a renderer reload / WS reconnect)
-	askedChannels     sync.Map       // map[channelID]events.AskUserQuestionEventData — channels parked on an AskUserQuestion card, value is the question payload (for FE rehydration after a renderer reload / WS reconnect)
-	askedModes        sync.Map       // map[channelID]string — composer mode of the run that raised the pending ask, so the answer continuation resumes in the same mode (e.g. plan)
-	drainWG           sync.WaitGroup // tracks in-flight drain goroutines so tests / shutdown can wait
-	drainSpawn        func(func())   // wraps fn into a tracked goroutine; tests swap for inline run
+	channelLocks      sync.Map              // map[channelID]*sync.Mutex — serialises per-channel drain loops
+	activeRuns        sync.Map              // map[channelID]context.CancelFunc
+	activeRunMsgIDs   sync.Map              // map[channelID]string — msg_id of the row currently running
+	plannedChannels   sync.Map              // map[channelID]events.ExitPlanModeEventData — channels parked on an ExitPlanMode card, value is the plan payload (for FE rehydration after a renderer reload / WS reconnect)
+	askedChannels     sync.Map              // map[channelID]events.AskUserQuestionEventData — channels parked on an AskUserQuestion card, value is the question payload (for FE rehydration after a renderer reload / WS reconnect)
+	askedModes        sync.Map              // map[channelID]string — composer mode of the run that raised the pending ask, so the answer continuation resumes in the same mode (e.g. plan)
+	learnMu           sync.Mutex            // guards learnSlots
+	learnSlots        map[string]*learnSlot // learn thread id → its pass in flight and the run waiting for it (see queueLearn)
+	drainWG           sync.WaitGroup        // tracks in-flight drain goroutines so tests / shutdown can wait
+	drainSpawn        func(func())          // wraps fn into a tracked goroutine; tests swap for inline run
 	logger            *slog.Logger
 	typingInterval    time.Duration
 	cfg               atomic.Pointer[config.Config]
@@ -97,6 +99,10 @@ type Orchestrator struct {
 	delayPollInterval time.Duration // how often the delay poller wakes; 0 disables it
 	delayStop         chan struct{} // closed by Stop to end the delay poller
 	delayStopOnce     sync.Once     // guards delayStop close
+
+	// loadWorktreeProjectConfig merges global → root project → worktree
+	// config for a worktree dir and its root checkout.
+	loadWorktreeProjectConfig func(worktreeDir, rootDir string, main *config.Config) (*config.Config, error)
 }
 
 // defaultRemoveMCPConfig delegates to bot.RemoveMCPConfig.
@@ -121,7 +127,9 @@ func New(store db.Store, bot Bot, runner Runner, sched scheduler.Scheduler, logg
 		tasks:             newTaskRegistry(),
 		delayPollInterval: DelayPollInterval,
 		delayStop:         make(chan struct{}),
+		learnSlots:        map[string]*learnSlot{},
 	}
+	o.loadWorktreeProjectConfig = config.LoadWorktreeProjectConfig
 	o.cfg.Store(&cfg)
 	o.drainSpawn = func(fn func()) { o.drainWG.Go(fn) }
 	return o

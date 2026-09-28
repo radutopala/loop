@@ -7,8 +7,8 @@ import { type LeafNode, PANEL_LABELS, PANEL_OPTIONS, type PanelType } from "../t
 import type { CanvasTile as CanvasTileType } from "./types";
 
 const HEADER_HEIGHT = 24;
-const MIN_WIDTH = 200;
-const MIN_HEIGHT = 120;
+export const MIN_WIDTH = 200;
+export const MIN_HEIGHT = 120;
 
 interface CanvasTileProps {
   tile: CanvasTileType;
@@ -63,6 +63,17 @@ export function CanvasTile({
     document.addEventListener("mousedown", handler);
     return () => document.removeEventListener("mousedown", handler);
   }, [showAddMenu]);
+
+  // A DOM listener, not React's: the chat renders into its tile through a
+  // portal from outside the canvas, so React events from it never reach the
+  // tile.
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    const onMouseDown = () => onBringToFront(tile.id);
+    el.addEventListener("mousedown", onMouseDown);
+    return () => el.removeEventListener("mousedown", onMouseDown);
+  }, [tile.id, onBringToFront]);
 
   const isAgent = tile.panel === "docker-agent";
   const label = isAgent ? agentInfo?.name || tile.id : PANEL_LABELS[tile.panel];
@@ -135,7 +146,6 @@ export function CanvasTile({
   return (
     <div
       ref={containerRef}
-      onMouseDown={() => onBringToFront(tile.id)}
       style={{
         position: "absolute",
         left: tile.x,

@@ -41,9 +41,36 @@ type Channel struct {
 	Description string `json:"description"`
 	// TicketURL links the channel or thread to its ticket in Jira, GitHub
 	// or any other tracker; empty when there's none.
-	TicketURL string    `json:"ticket_url"`
+	TicketURL string `json:"ticket_url"`
+	// LearnOverride turns the end-of-run learn pass on ("on") or off ("off")
+	// for this channel; empty inherits the config's learn.enabled.
+	LearnOverride string `json:"learn_override"`
+	// Kind is ChannelKindLearn for the hidden thread a channel's learn runs
+	// happen in; empty for every other channel and thread.
+	Kind      string    `json:"kind"`
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
+}
+
+// ChannelKindLearn marks the hidden thread that runs a channel's learn passes.
+const ChannelKindLearn = "learn"
+
+// Values of Channel.LearnOverride; empty inherits the config.
+const (
+	LearnOn  = "on"
+	LearnOff = "off"
+)
+
+// LearnEnabled is the channel's effective learn switch: its override when it
+// has one, else def, the config's learn.enabled.
+func (c *Channel) LearnEnabled(def bool) bool {
+	switch c.LearnOverride {
+	case LearnOn:
+		return true
+	case LearnOff:
+		return false
+	}
+	return def
 }
 
 // StaleRunningMessage describes a (channel_id, msg_id) pair returned by
@@ -270,4 +297,42 @@ type MemoryFile struct {
 	Dimensions  int       `json:"dimensions"`
 	DirPath     string    `json:"dir_path"`
 	UpdatedAt   time.Time `json:"updated_at"`
+}
+
+// Kinds of learn proposal.
+const (
+	LearnKindPromptShortcut = "prompt_shortcut"
+	LearnKindBashShortcut   = "bash_shortcut"
+	LearnKindScheduledTask  = "scheduled_task"
+	LearnKindGateRule       = "gate_rule"
+	LearnKindMount          = "mount"
+	LearnKindRename         = "rename"
+	LearnKindDescription    = "description"
+	LearnKindTicketURL      = "ticket_url"
+)
+
+// Statuses of a learn proposal. Applying is held while it's being applied,
+// so a double click can't apply it twice; a failed one can be retried.
+const (
+	LearnPending   = "pending"
+	LearnApplying  = "applying"
+	LearnApplied   = "applied"
+	LearnDismissed = "dismissed"
+	LearnFailed    = "failed"
+)
+
+// LearnProposal is one change a learn pass suggests for a channel. Payload is
+// the kind's JSON body; nothing is applied until the user accepts it.
+type LearnProposal struct {
+	ID             int64     `json:"id"`
+	ChannelID      string    `json:"channel_id"`
+	LearnChannelID string    `json:"learn_channel_id"`
+	Kind           string    `json:"kind"`
+	Title          string    `json:"title"`
+	Rationale      string    `json:"rationale"`
+	Payload        string    `json:"payload"`
+	Status         string    `json:"status"`
+	Error          string    `json:"error,omitempty"`
+	CreatedAt      time.Time `json:"created_at"`
+	UpdatedAt      time.Time `json:"updated_at"`
 }

@@ -40,7 +40,7 @@ func (s *SQLiteStore) UpsertChannel(ctx context.Context, ch *Channel) error {
 
 func (s *SQLiteStore) GetChannel(ctx context.Context, channelID string) (*Channel, error) {
 	row := s.db.QueryRowContext(ctx,
-		`SELECT id, channel_id, guild_id, name, dir_path, parent_id, platform, active, session_id, permissions, worktree, base_branch, locked, model_override, effort_override, fork_pending, task_id, description, ticket_url, created_at, updated_at FROM channels WHERE channel_id = ?`,
+		`SELECT `+channelColumns+` FROM channels WHERE channel_id = ?`,
 		channelID,
 	)
 	ch, err := scanChannel(row)
@@ -52,7 +52,7 @@ func (s *SQLiteStore) GetChannel(ctx context.Context, channelID string) (*Channe
 
 func (s *SQLiteStore) GetChannelByDirPath(ctx context.Context, dirPath string, platform types.Platform) (*Channel, error) {
 	row := s.db.QueryRowContext(ctx,
-		`SELECT id, channel_id, guild_id, name, dir_path, parent_id, platform, active, session_id, permissions, worktree, base_branch, locked, model_override, effort_override, fork_pending, task_id, description, ticket_url, created_at, updated_at
+		`SELECT `+channelColumns+`
 		 FROM channels WHERE dir_path = ? AND platform = ? AND parent_id = ''`,
 		dirPath, platform,
 	)
@@ -65,7 +65,7 @@ func (s *SQLiteStore) GetChannelByDirPath(ctx context.Context, dirPath string, p
 
 func (s *SQLiteStore) GetChannelsByDirPath(ctx context.Context, dirPath string) ([]*Channel, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, channel_id, guild_id, name, dir_path, parent_id, platform, active, session_id, permissions, worktree, base_branch, locked, model_override, effort_override, fork_pending, task_id, description, ticket_url, created_at, updated_at
+		`SELECT `+channelColumns+`
 		 FROM channels WHERE dir_path = ? AND parent_id = ''`,
 		dirPath,
 	)
@@ -92,13 +92,18 @@ func (s *SQLiteStore) IsChannelActive(ctx context.Context, channelID string) (bo
 // with the fork_pending flag: the id is borrowed from the SOURCE thread, so
 // the first message must run with --fork-session or it would write into the
 // source's conversation. The flag clears on the next UpdateSessionID (every
-// run updates the session id, and by then the fork has happened).
-func (s *SQLiteStore) MarkSessionForkPending(ctx context.Context, channelID string, sessionID string) error {
-	_, err := s.db.ExecContext(ctx,
+// run updates the session id, and by then the fork has happened). It
+// reports whether the thread still exists.
+func (s *SQLiteStore) MarkSessionForkPending(ctx context.Context, channelID string, sessionID string) (bool, error) {
+	res, err := s.db.ExecContext(ctx,
 		`UPDATE channels SET session_id = ?, fork_pending = 1, updated_at = ? WHERE channel_id = ?`,
 		sessionID, s.nowFunc(), channelID,
 	)
-	return err
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	return n > 0, err
 }
 
 func (s *SQLiteStore) UpdateSessionID(ctx context.Context, channelID string, sessionID string) error {
@@ -180,6 +185,9 @@ func (s *SQLiteStore) DeleteChannel(ctx context.Context, channelID string) error
 		); err != nil {
 			return fmt.Errorf("deleting quality snapshots for channel: %w", err)
 		}
+		if err := deleteLearnChildren(ctx, tx, `?`, channelID); err != nil {
+			return err
+		}
 		if _, err := tx.ExecContext(ctx, `DELETE FROM channels WHERE channel_id = ?`, channelID); err != nil {
 			return err
 		}
@@ -189,6 +197,11 @@ func (s *SQLiteStore) DeleteChannel(ctx context.Context, channelID string) error
 
 func (s *SQLiteStore) DeleteChannelsByParentID(ctx context.Context, parentID string) error {
 	return s.withTx(ctx, func(tx *sql.Tx) error {
+		// The children's own learn threads go first, while the children
+		// still exist to find them by.
+		if err := deleteLearnChildren(ctx, tx, `SELECT channel_id FROM channels WHERE parent_id = ?`, parentID); err != nil {
+			return err
+		}
 		if _, err := tx.ExecContext(ctx,
 			`DELETE FROM messages WHERE channel_id IN (SELECT channel_id FROM channels WHERE parent_id = ?)`, parentID); err != nil {
 			return fmt.Errorf("deleting messages for child channels: %w", err)
@@ -203,6 +216,27 @@ func (s *SQLiteStore) DeleteChannelsByParentID(ctx context.Context, parentID str
 		}
 		return nil
 	})
+}
+
+// deleteLearnChildren deletes the learn threads under the channels parents
+// selects (a placeholder or a subquery taking arg), their messages and
+// quality snapshots, as DeleteChannel does for any channel, and the learn
+// proposals filed for those channels.
+func deleteLearnChildren(ctx context.Context, tx *sql.Tx, parents string, arg string) error {
+	learnIDs := `SELECT channel_id FROM channels WHERE kind = '` + ChannelKindLearn + `' AND parent_id IN (` + parents + `)`
+	if _, err := tx.ExecContext(ctx, `DELETE FROM messages WHERE channel_id IN (`+learnIDs+`)`, arg); err != nil {
+		return fmt.Errorf("deleting learn thread messages: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM quality_snapshots WHERE channel_id IN (`+learnIDs+`)`, arg); err != nil {
+		return fmt.Errorf("deleting learn thread quality snapshots: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM learn_proposals WHERE channel_id IN (`+parents+`)`, arg); err != nil {
+		return fmt.Errorf("deleting learn proposals: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM channels WHERE kind = '`+ChannelKindLearn+`' AND parent_id IN (`+parents+`)`, arg); err != nil {
+		return fmt.Errorf("deleting learn threads: %w", err)
+	}
+	return nil
 }
 
 func (s *SQLiteStore) ListChannelIDsByParentID(ctx context.Context, parentID string) ([]string, error) {
@@ -252,7 +286,7 @@ func (s *SQLiteStore) ChannelActivity(ctx context.Context) (map[string]time.Time
 
 func (s *SQLiteStore) ListChannels(ctx context.Context) ([]*Channel, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, channel_id, guild_id, name, dir_path, parent_id, platform, active, session_id, permissions, worktree, base_branch, locked, model_override, effort_override, fork_pending, task_id, description, ticket_url, created_at, updated_at
+		`SELECT `+channelColumns+`
 		 FROM channels ORDER BY name ASC`)
 	if err != nil {
 		return nil, err

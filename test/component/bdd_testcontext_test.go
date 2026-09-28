@@ -39,6 +39,7 @@ type TestContext struct {
 	CreatedTaskIDs           []string
 	CreatedDirs              []string
 	WorktreeThreadID         string
+	LearnChannelID           string // hidden learn thread seeded under ChannelID
 	WorktreePath             string
 	CreatedShortcutNames     []string
 	CreatedBashShortcutNames []string
@@ -103,6 +104,7 @@ func (tc *TestContext) resolvePlaceholders(path string) string {
 	path = strings.ReplaceAll(path, "{task_id}", tc.TaskID)
 	path = strings.ReplaceAll(path, "{worktree_thread_id}", tc.WorktreeThreadID)
 	path = strings.ReplaceAll(path, "{worktree_path}", tc.WorktreePath)
+	path = strings.ReplaceAll(path, "{learn_channel_id}", tc.LearnChannelID)
 	return path
 }
 

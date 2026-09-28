@@ -188,6 +188,14 @@ func (m *MockRunCanceller) CancelActiveRun(channelID string) bool {
 	return args.Bool(0)
 }
 
+func (m *MockRunCanceller) StopLearn(learnChannelID string) {
+	m.Called(learnChannelID)
+}
+
+func (m *MockRunCanceller) IsLearnPassRunning(learnChannelID string) bool {
+	return m.Called(learnChannelID).Bool(0)
+}
+
 type ServerSuite struct {
 	suite.Suite
 	scheduler *testutil.MockScheduler
@@ -257,6 +265,12 @@ func (s *ServerSuite) SetupTest() {
 	s.mux.HandleFunc("GET /api/channels/{id}/sessions", s.srv.handleListSessions)
 	s.mux.HandleFunc("GET /api/channels/{id}/agent-config", s.srv.handleGetAgentConfig)
 	s.mux.HandleFunc("PATCH /api/channels/{id}/agent-config", s.srv.handleSetAgentConfig)
+	s.mux.HandleFunc("GET /api/channels/{id}/learn", s.srv.handleGetLearn)
+	s.mux.HandleFunc("PUT /api/channels/{id}/learn", s.srv.handleSetLearn)
+	s.mux.HandleFunc("GET /api/channels/{id}/learn/proposals", s.srv.handleListLearnProposals)
+	s.mux.HandleFunc("POST /api/channels/{id}/learn/proposals", s.srv.handleCreateLearnProposals)
+	s.mux.HandleFunc("POST /api/learn/proposals/{id}/apply", s.srv.handleApplyLearnProposal)
+	s.mux.HandleFunc("POST /api/learn/proposals/{id}/dismiss", s.srv.handleDismissLearnProposal)
 	s.mux.HandleFunc("GET /api/channels/{id}/audit", s.srv.handleListAuditFiles)
 	s.mux.HandleFunc("DELETE /api/channels/{id}/audit/{date}", s.srv.handleDeleteAuditFile)
 	s.mux.HandleFunc("GET /api/channels/{id}/messages", s.srv.handleListMessages)

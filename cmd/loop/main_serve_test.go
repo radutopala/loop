@@ -987,17 +987,18 @@ func (s *MainSuite) TestChildProjectsLister() {
 	st := new(mockChannelLister)
 	st.On("ListChannels", mock.Anything).Return([]*db.Channel{
 		{ChannelID: "c1", DirPath: "/proj"},
-		{ChannelID: "c2", DirPath: ""},                    // no dir → skipped
-		{ChannelID: "c3", DirPath: "/wt", Worktree: true}, // worktree → skipped
-		{ChannelID: "c4", DirPath: "/proj"},               // duplicate dir → skipped
-		{ChannelID: "c5", DirPath: "/broken"},             // config load error → skipped
-		{ChannelID: "c6", DirPath: "/nilcfg"},             // nil config → skipped
+		{ChannelID: "c2", DirPath: ""},                               // no dir → skipped
+		{ChannelID: "c3", DirPath: "/wt", Worktree: true},            // worktree → skipped
+		{ChannelID: "c4", DirPath: "/proj"},                          // duplicate dir → skipped
+		{ChannelID: "c5", DirPath: "/broken"},                        // config load error → skipped
+		{ChannelID: "c6", DirPath: "/nilcfg"},                        // nil config → skipped
+		{ChannelID: "l1", DirPath: "/wt", Kind: db.ChannelKindLearn}, // learn thread → skipped
 	}, nil)
 
 	base := &config.Config{ContainerImage: "loop-agent:latest", ContainerImageAutobuild: true}
 	load := func(dir string, cfg *config.Config) (*config.Config, error) {
 		switch dir {
-		case "/proj":
+		case "/proj", "/wt":
 			out := *cfg
 			out.ContainerImage = "proj-agent:latest"
 			out.ContainerImageAutobuild = false

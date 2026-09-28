@@ -1,8 +1,9 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useContext, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { fetchComposerHistory, resolveAsk, resolvePlan } from "../../api/channels";
 import { fetchShortcuts, type PromptShortcut } from "../../api/configApi";
 import { type FileSearchResult, type RootEntry, searchFiles } from "../../api/files";
 import { resolveGateApproval, sendCommand, sendMessage } from "../../api/loopApi";
+import { ShortcutsVersionContext } from "../../hooks/shortcutsVersion";
 import type { QueuedEditSaveResult } from "../../hooks/useQueuedEdit";
 import { useTheme } from "../../ThemeContext";
 import type { ColorPalette } from "../../theme";
@@ -11,6 +12,8 @@ import type { Message } from "../../types";
 import { firstClipboardImage, uploadPastedImage } from "../../utils/clipboardImage";
 import { storageGetJSON, storageSetJSON } from "../../utils/storage";
 import { AgentConfigPill } from "./AgentConfigPill";
+import { composerHeight, composerMaxHeight } from "./composerHeight";
+import { LearnToggle } from "./LearnToggle";
 import { chooseSendRoute, normalizeSendMode, type SendMode } from "./sendRouting";
 
 // Draft text per channel — persisted to localStorage across app restarts.
@@ -46,7 +49,9 @@ function buildInputStyles(colors: ColorPalette): Record<string, React.CSSPropert
       padding: "14px 14px 14px 18px",
     },
     textarea: {
-      flex: 1,
+      // Sized by its own height (see the auto-grow effect): a flex basis in
+      // the column wrapper would override that height.
+      flex: "none",
       background: "transparent",
       border: "none",
       padding: "2px 0",
@@ -210,6 +215,8 @@ const SEND_MODE_KEY = "loop-send-mode";
 
 export interface ChatInputProps {
   channelId: string;
+  /** Don't take focus on mount. */
+  noAutoFocus?: boolean;
   messages: Message[];
   roots?: RootEntry[];
   isRunning?: boolean;
@@ -259,6 +266,7 @@ function buildQuotePrefix(msg: Message): string {
 
 export function ChatInput({
   channelId,
+  noAutoFocus,
   messages,
   roots,
   isRunning,
@@ -390,10 +398,25 @@ export function ChatInput({
     return () => window.removeEventListener("loop:chat-compose", onCompose);
   }, [channelId]);
 
+  // Grow the textarea with its text (new message or a queued one being
+  // edited), from three lines up to composerMaxHeight; past that it scrolls.
+  // Measured before paint so the box never flashes at the wrong size.
+  useLayoutEffect(() => {
+    const el = inputRef.current;
+    if (!el) return;
+    el.style.height = "auto";
+    const cs = getComputedStyle(el);
+    const lineHeight = parseFloat(cs.lineHeight) || parseFloat(cs.fontSize) * 1.4;
+    const padding = parseFloat(cs.paddingTop) + parseFloat(cs.paddingBottom);
+    const { height, scrolls } = composerHeight(el.scrollHeight, lineHeight, padding, 3, composerMaxHeight(window.innerHeight));
+    el.style.height = `${height}px`;
+    el.style.overflowY = scrolls ? "auto" : "hidden";
+  }, [text]);
+
   // Auto-focus textarea on mount; move cursor to end if restoring a draft.
   useEffect(() => {
     const el = inputRef.current;
-    if (el) {
+    if (el && !noAutoFocus) {
       el.focus();
       el.setSelectionRange(el.value.length, el.value.length);
     }
@@ -407,12 +430,13 @@ export function ChatInput({
     item?.scrollIntoView({ block: "nearest" });
   }, [cmdSelectedIdx, showCommands]);
 
-  // Fetch prompt shortcuts when channel changes.
+  // Fetch prompt shortcuts when the channel changes, or its shortcuts do.
+  const shortcutsVersion = useContext(ShortcutsVersionContext);
   useEffect(() => {
     fetchShortcuts(channelId)
       .then(setShortcuts)
       .catch(() => setShortcuts([]));
-  }, [channelId]);
+  }, [channelId, shortcutsVersion]);
 
   // Scroll selected shortcut item into view.
   useEffect(() => {
@@ -835,6 +859,7 @@ export function ChatInput({
           return;
         }
         if (e.key === "Escape") {
+          e.preventDefault();
           setShowCommands(false);
           return;
         }
@@ -858,6 +883,7 @@ export function ChatInput({
           return;
         }
         if (e.key === "Escape") {
+          e.preventDefault();
           closeShortcutPicker();
           return;
         }
@@ -881,6 +907,7 @@ export function ChatInput({
           return;
         }
         if (e.key === "Escape") {
+          e.preventDefault();
           setShowFilePicker(false);
           return;
         }
@@ -892,6 +919,7 @@ export function ChatInput({
         return;
       }
       if (e.key === "Escape" && showMention) {
+        e.preventDefault();
         setShowMention(false);
         return;
       }
@@ -1184,6 +1212,7 @@ export function ChatInput({
           </button>
         )}
         <div style={{ flex: 1 }} />
+        <LearnToggle />
         <AgentConfigPill channelId={channelId} />
         <div style={modeStyles.pill}>
           <button

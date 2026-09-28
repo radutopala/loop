@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync/atomic"
 
@@ -103,6 +104,41 @@ func withoutTool(tools []string, name string) []string {
 	return out
 }
 
+// learnModeTools is the whole built-in tool set of a learn run, passed as
+// --tools. A learn pass only reads the finished run and the checkout and
+// files proposals through propose_learnings; the user applies them. So every
+// built-in tool that edits files, runs commands, reaches the network, spawns
+// subagents, switches worktrees, schedules or notifies anything (Bash, Edit,
+// Write, WebFetch, WebSearch, Agent, Skill, EnterWorktree, RemoteTrigger,
+// PushNotification, SendMessage, Cron*, ...) is left out, including ones a
+// later Claude Code release adds. ToolSearch stays so deferred MCP tools can
+// still be loaded. --tools doesn't reach MCP tools; learnModeDisallowedTools
+// covers those.
+var learnModeTools = []string{"Read", "Grep", "Glob", "TodoWrite", "ToolSearch"}
+
+// learnModeDisallowedTools are the Loop MCP tools denied on top of the batch
+// denials in a learn run. They may not change Loop's config, tasks, threads,
+// workflows, playgrounds, quality snapshots, memory index or agent status,
+// or talk to anyone. The loop tools that only read (list_*, show_task,
+// get_*, search_*, the quality_* reports besides quality_scan, and
+// quality_whatif, which only simulates) stay allowed. Its MCP config holds
+// the loop server alone (see buildMCPConfig) and --strict-mcp-config keeps
+// any other server out, so no other server's tools reach it either.
+var learnModeDisallowedTools = []string{
+	"mcp__loop__prompt_shortcut", "mcp__loop__bash_shortcut",
+	"mcp__loop__schedule_task", "mcp__loop__edit_task", "mcp__loop__toggle_task", "mcp__loop__cancel_task",
+	"mcp__loop__rename_thread", "mcp__loop__set_thread_description", "mcp__loop__set_ticket_url",
+	"mcp__loop__send_message", "mcp__loop__queue_message", "mcp__loop__send_agent_message", "mcp__loop__update_agent_status",
+	"mcp__loop__create_channel", "mcp__loop__create_thread", "mcp__loop__create_worktree_thread",
+	"mcp__loop__fork_thread", "mcp__loop__delete_thread",
+	"mcp__loop__save_workflow", "mcp__loop__delete_workflow", "mcp__loop__run_workflow",
+	"mcp__loop__cancel_workflow_run", "mcp__loop__delete_workflow_run",
+	"mcp__loop__resume_workflow_run", "mcp__loop__retry_workflow_run",
+	"mcp__loop__playground", "mcp__loop__playground_file", "mcp__loop__playground_share",
+	"mcp__loop__chat_component", "mcp__loop__index_memory", "mcp__loop__quality_scan",
+	"mcp__loop__report_review_findings",
+}
+
 // reviewModeSettings is the --settings payload for a review run. It carries
 // env, not container env vars, because Claude Code applies each settings
 // scope over process.env with a plain assign, in the fixed order
@@ -119,7 +155,7 @@ const reviewModeSettings = `{"env":{"CLAUDE_CODE_REPORT_FINDINGS":"1","CLAUDE_CO
 func buildClaudeCmd(cfg *config.Config, mcpConfigPath string, req *agent.AgentRequest) []string {
 	// Per-channel on-demand overrides beat the merged config's model/effort.
 	// Shallow-copy so the cached config is never mutated.
-	if req.Model != "" || req.Effort != "" || req.ReviewMode {
+	if req.Model != "" || req.Effort != "" || req.ReviewMode || req.LearnMode {
 		override := *cfg
 		if req.Model != "" {
 			override.ClaudeModel = req.Model
@@ -134,11 +170,24 @@ func buildClaudeCmd(cfg *config.Config, mcpConfigPath string, req *agent.AgentRe
 		if req.ReviewMode {
 			override.ClaudeBatchDisallowedTools = withoutTool(cfg.ClaudeBatchDisallowedTools, reportFindingsTool)
 		}
+		// A learn run proposes; it never changes anything itself. See
+		// learnModeDisallowedTools.
+		if req.LearnMode {
+			override.ClaudeBatchDisallowedTools = slices.Concat(override.ClaudeBatchDisallowedTools, learnModeDisallowedTools)
+		}
 		cfg = &override
 	}
 	cmd := buildBaseClaudeCmd(cfg, mcpConfigPath, req.SessionID, req.AgentID, req.ForkSession, false, cfg.ExtraDirs)
 	if req.ReviewMode {
 		cmd = append(cmd, "--settings", reviewModeSettings)
+	}
+	// A learn run's --mcp-config has only the loop server; this makes Claude
+	// ignore every other MCP config too (~/.claude.json, the project's
+	// .mcp.json), so the user's own servers can't act for it.
+	// --tools is variadic like --disallowedTools (see below), so it's
+	// emitted before other flags.
+	if req.LearnMode {
+		cmd = append(cmd, "--strict-mcp-config", "--tools", strings.Join(learnModeTools, ","))
 	}
 	// Deny tools that only make sense in a persistent interactive harness.
 	// In one-shot `--print` mode the container exits at end of turn, so tools
@@ -291,13 +340,19 @@ func (b *ClaudeCmdBuilder) BuildInteractiveCmd(channelID, dirPath, parentDirPath
 	return buildInteractiveClaudeCmd(cfg, channelID, workDir, sessionID, agentID, forkSession, false)
 }
 
-// BuildContinueCmd returns the interactive Claude shell command that resumes
-// the most recently modified session for the channel's working directory via
-// `claude --continue`, without needing to know its (possibly forked) session
-// id. Used to relaunch a terminal pane's Claude process after it exits
-// unexpectedly (e.g. OOM-killed).
-func (b *ClaudeCmdBuilder) BuildContinueCmd(channelID, dirPath, parentDirPath, agentID string) string {
+// BuildContinueCmd returns the interactive Claude shell command that
+// relaunches a terminal pane's Claude process after it exits unexpectedly
+// (e.g. OOM-killed). sessionID is the session the pane was running, when
+// Loop knows it: that one is resumed. Otherwise (the pane forked or started
+// a fresh session, whose id Loop never learns) or when its transcript is
+// gone, it falls back to `claude --continue`, the most recently modified
+// session for the working directory. That can be another one: every learn
+// pass forks a new session into the channel's directory.
+func (b *ClaudeCmdBuilder) BuildContinueCmd(channelID, dirPath, parentDirPath, sessionID, agentID string) string {
 	cfg, workDir := b.resolveCmdConfig(channelID, dirPath, parentDirPath, agentID)
+	if sessionID != "" && !b.transcriptMissing(workDir, sessionID) {
+		return buildInteractiveClaudeCmd(cfg, channelID, workDir, sessionID, agentID, false, false)
+	}
 	return buildInteractiveClaudeCmd(cfg, channelID, workDir, "", agentID, false, true)
 }
 

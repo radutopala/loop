@@ -3,8 +3,6 @@ package api
 import (
 	"net/http"
 	"strings"
-
-	"github.com/radutopala/loop/internal/config"
 )
 
 // validEfforts are the reasoning-effort levels accepted by the Claude CLI's
@@ -94,37 +92,13 @@ func (s *Server) handleSetAgentConfig(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// resolveClaudeDefaults mirrors resolveGHUser's three-layer merge (global →
-// project → worktree) for claude_model / claude_effort, so the UI can show
-// what "default" resolves to for this channel's dir. Returns the global
-// defaults on any config-load error.
+// resolveClaudeDefaults returns claude_model / claude_effort from the
+// channel dir's merged config, so the UI can show what "default" resolves to.
+// Both are empty on any config-load error.
 func (s *Server) resolveClaudeDefaults(workdir, parentDirPath string) (string, string) {
-	loadConfig := s.configs.load
-	if loadConfig == nil {
-		loadConfig = config.Load
-	}
-	cfg, err := loadConfig()
-	if err != nil || cfg == nil {
+	merged := s.configs.merged(workdir, parentDirPath)
+	if merged == nil {
 		return "", ""
-	}
-	merged := cfg
-	switch {
-	case workdir != "" && parentDirPath != "":
-		loadWorktree := s.configs.loadWorktree
-		if loadWorktree == nil {
-			loadWorktree = config.LoadWorktreeProjectConfig
-		}
-		if pc, perr := loadWorktree(workdir, parentDirPath, cfg); perr == nil && pc != nil {
-			merged = pc
-		}
-	case workdir != "":
-		loadProjectConfig := s.configs.loadProject
-		if loadProjectConfig == nil {
-			loadProjectConfig = config.LoadProjectConfig
-		}
-		if pc, perr := loadProjectConfig(workdir, cfg); perr == nil && pc != nil {
-			merged = pc
-		}
 	}
 	return merged.ClaudeModel, merged.ClaudeEffort
 }

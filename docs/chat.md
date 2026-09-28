@@ -320,7 +320,7 @@ The input area (`ChatInput` component) sits at the bottom of the chat view.
 ### Layout
 
 - Container: `max-width: 768px`, rounded (16px border-radius), `colors.surface` background
-- Textarea: 3 rows, transparent background, 14px sans-serif font, no resize
+- Textarea: transparent background, 14px sans-serif font, no manual resize. It starts at 3 lines and grows with its text, up to 40% of the window (at most 360px), then scrolls. It shrinks back after a send. The same applies when a queued message is loaded for editing.
 - Mode toggle pill (left of send button)
 - Send/Stop button (right)
 
@@ -543,6 +543,79 @@ A pill next to the Agent/Plan mode toggle lets any channel, thread, or worktree 
 
 ---
 
+## Learn from a run
+
+With Learn on, a finished chat run is reviewed by a **learn pass**: a hidden session forked from the run looks at what happened and proposes Loop changes that would make the next run faster, safer or less repetitive. Nothing is applied until you accept it.
+
+### Learn switch
+
+A `learn` switch (lightbulb) sits in the composer next to the model/effort pill. It shows the effective value: the channel's own setting when it has one, else the config default [`learn.enabled`](configuration.md#learn) for the channel's dir. A click stores the opposite value on the channel (`PUT /api/channels/{id}/learn`), so the channel keeps it whatever the config says later. It applies from the channel's next run. The change is broadcast as a [`channel.learn`](events.md#channellearn) event, so every open window's composer follows it. The hover title says whether the value comes from the config or the channel.
+
+The switch only shows in desktop app channels. Slack and Discord channels never learn: their proposals could only be seen and applied here.
+
+### What triggers a pass
+
+A learn pass starts after a chat run **completes** in the channel, when all of these hold:
+
+- the channel is a desktop app channel, not a Slack or Discord one;
+- the channel isn't itself a learn thread, nor a thread a scheduled task created;
+- the run isn't parked on a plan or question card;
+- Learn is on for the channel;
+- the run took at least [`learn.min_turns`](configuration.md#learn) turns (default 3);
+- the run has a session to fork.
+
+Only one pass runs per channel at a time. A run that finishes while a pass is running (or while you're talking to the learn thread) is reviewed once the thread is free. If several finish meanwhile, only the latest is reviewed: its session covers the ones before it.
+
+Stopped or failed runs, and scheduled task runs, don't start one. See [Orchestrator: Learn pass](orchestrator.md#learn-pass) for how it runs.
+
+The pass may only look and propose: its built-in tools are only reading and searching files (no editing, shell, web, subagents or worktrees), it can't change Loop's config, tasks or threads, and it gets only Loop's MCP server (read-only tools), not your own servers or the browser. It files at most 5 proposals, each one of:
+
+| Kind | What Apply does |
+|------|-----------------|
+| prompt shortcut | Adds a [prompt shortcut](#prompt-shortcuts) to the project config. |
+| bash shortcut | Adds a [bash shortcut](#bash-shortcuts) to the project config. |
+| scheduled task | Creates an enabled [scheduled task](scheduling.md) in the channel. |
+| gate rule | Adds an agentgate rule to the project config. |
+| mount | Adds a bind mount to the project config. |
+| rename | Renames the channel or thread. |
+| description | Sets the channel or thread's description. |
+| ticket URL | Links the channel or thread to its ticket (only a URL the run actually named). |
+
+Config kinds are written to the project's `.loop/config.json` with your comments kept; see [Configuration: Where Apply writes](configuration.md#where-learn-proposals-are-written).
+
+### Learn label
+
+The chat pane shows a `learn` label for the selected channel at the right of its header: `learning…` while a pass runs (not while the learn thread answers you), `N proposals` while proposals wait on you (pending, failed, or stuck applying for over a minute), both lit in the accent color. Once the channel has a learn thread and nothing waits, the label stays dim; a channel that never had a pass shows none. A click opens the Learn view; switching channels or layout tabs, adding a layout tab, deleting the active one or resetting it closes it. So does anything that opens in the layout under it: a file link in the chat (the editor opens in the layout), a panel another view opens there, or a memory file opened from search.
+
+### Learn view
+
+The Learn view puts the chat and a Learn pane side by side, each half the width and the full height of the layout, over the rest of the layout, which can't be clicked or tabbed into meanwhile. The layout tabs above stay usable. The Loop logo sits on the seam between them and animates while a learn pass runs (it holds still when the system asks for reduced motion). The chat moves over at once, as it is (draft, scroll and all), and the Learn pane fades in beside it; closing fades the Learn pane out and moves the chat back.
+
+The chat keeps its pane header with its container stats, but not the layout's split and close buttons. Close the view with the Learn label in that header, the Learn pane's ✕, or Escape (unless something else handles it first). Opening the view keeps focus in the chat, or puts it in the chat's composer when it was elsewhere (the layout under the view is inert); closing it with focus in the Learn pane puts focus back in the chat's composer.
+
+On a canvas layout, the Learn pane docks beside the chat's tile instead: to its right, the same size, joined to it by the Loop logo on the seam. The chat stays in its tile, and the rest of the canvas stays usable. The two go together: dragging the Learn pane's header moves the chat's tile, the dock's bottom-right corner resizes both, and a click in either brings both to the front. If the pair isn't fully in view when the dock opens, the canvas pans (and zooms out if needed) to show it. The Learn label in the chat's tile header opens and closes the dock; the Learn pane's ✕ and Escape close it too. The dock isn't a tile: it isn't saved with the canvas, and closing the chat's tile closes it.
+
+The Learn pane's header matches a pane header:
+
+- **Proposals** on top, newest first. Each card shows its kind, title, a one-line gist of exactly what Apply writes, and the rationale the pass gave. A gate rule's gist is the whole rule: its decision, what it matches (the commands and their argument patterns, the file paths and operations, or the socket path; `any command` or `any path` when it lists none) and the message the gate shows.
+  - **Apply** applies it. If it fails, the error shows under the card and the button becomes **Retry**. If the request itself fails (Loop can't be reached, say), that error shows under the card until the next try. A card's buttons are disabled while its apply or dismiss is in flight. Requests in flight and their errors outlive the view: close and reopen it and they're still there.
+  - **Dismiss** drops it. Pending and failed proposals can be dismissed.
+  - Applied and dismissed cards stay in the list, dimmed, with their status.
+  - A card stuck in `applying` for over a minute (its outcome was lost, say Loop stopped mid-apply) gets **Retry** and **Dismiss** back.
+  - **Apply all** in the header applies every pending proposal one by one, skipping any applied, dismissed or in flight meanwhile. Failed ones are left for a manual Retry.
+  - **Dismiss all** next to it dismisses every open proposal (pending, failed, or stuck applying) one by one, the same way. It shows while any proposal is open; neither button can be pressed while either is going through the list. A request that fails shows under its card, as for a single Dismiss.
+  - An applied prompt or bash shortcut shows at once in the composer's `#` picker and the terminal's shortcut menus.
+  - When a card's buttons give way to its status, or Apply all and Dismiss all to an empty list, focus moves on to the next open card's Apply (or Retry), else to the pane's ✕.
+- **The learn thread's chat** below. Watch the pass as it works, or reply to it: ask why it proposed something or ask for changes, and it files revised proposals. The thread's composer has no Learn switch, since a learn thread doesn't learn from itself. A reply or pass running when you open the view shows as it is (its Stop button, streamed text and activity). File links in it open the editor in the layout, as in the chat, which closes the view.
+
+**Worktree threads:** a rename proposal renames the thread only; its git branch and worktree folder keep their names. The Learn pane says so under the card.
+
+### Hidden thread
+
+Each channel has one learn thread, created on its first pass. It's left out of `GET /api/channels`, so it never shows in the sidebar, and it's deleted along with its channel or thread, which also cancels a pass still running or queued. It's named `learn: <channel>` and follows the channel's renames on the next pass. Each new pass forks the latest run's session again, so it doesn't carry over what you said in the learn thread before. Learn runs, a pass or a reply you asked the learn thread for, don't mark anything unread, post a desktop notification or bounce the dock (their `agent.status` events carry `trigger: "learn"` or `trigger: "learn-reply"`). Proposals show through the Learn label, and replies in the open Learn view, instead. Only a pass lights the label's `learning…`. If Loop's connection drops, the learn state and proposals are fetched again when it comes back, so a pass that ended or proposals filed meanwhile aren't missed.
+
+---
+
 ## Auto-Scroll
 
 The chat view tracks whether the user is scrolled to the bottom.
@@ -693,7 +766,7 @@ A `QueuedMessagesPopup` component (`src/components/chat/QueuedMessagesPopup.tsx`
 - **List source** — the rows shown come from `chatState.queuedMessages`, which is the [`GET /api/channels/{id}/queued`](api.md#get-apichannelsidqueued) response with the in-flight `processingMsgId` row filtered out. The list is independent of how many pages of chat history are loaded.
 - **Collapsible header** — shows `N queued` with a chevron. Click to expand the list.
 - **Row layout** — one line per message, truncated with ellipsis. Clicking a row toggles an inline expanded view (full content, pre-wrapped). A delayed row also shows a live [`⏱` countdown](#delay-countdown) between the content and the copy button.
-- **Steer button** — shown on each row only while a run is active, since with the channel idle the queue is already draining and steering would just be a reorder. It calls `POST /api/channels/{id}/queued/{msg_id}/steer` via the `steerQueuedMessage` API client, which promotes the row to the front of the queue and cancels the active run — the per-row equivalent of the composer's steer send mode. The row moves to the top of the local list immediately, since the backend has already re-prioritised it.
+- **Steer button** — shown on each row only while a run is active, since with the channel idle the queue is already draining and steering would just be a reorder. It calls `POST /api/channels/{id}/queued/{msg_id}/steer` via the `steerQueuedMessage` API client, which promotes the row to the front of the queue and cancels the active run — the per-row equivalent of the composer's steer send mode. The row moves to the top of the local list immediately, since the backend has already re-prioritised it, and the button turns into a highlighted, disabled `Steered` until the agent takes the row: pressing it again would only stop the agent again. If the call fails, the row stays where it was and can be steered again.
 - **Edit button** — a pencil on each row moves the message into the composer to edit it (see [Editing a queued message](#editing-a-queued-message)). The row shows `editing` while it's open; Steer is hidden and Delete disabled for that row until the edit ends.
 - **Delete button** — a `×` button on each row calls `DELETE /api/messages/{msg_id}?channel_id=...` via the `deleteQueuedMessage` API client. The row dims while the request is in flight; the server broadcasts a `message.deleted` WebSocket event, which both removes the row from the local timeline and re-fetches the queue. Deleting a queued row is safe even mid-run — `ClaimNextPending` only sees `is_running=0 AND is_processed=0` rows, so the deletion lands before the row can be claimed.
 - **Safety** — the row identified by `processingMsgId` (see [Processing State](#processing-state)) is filtered out of the popup, and the backend refuses to steer a claimed row, so neither path can re-prioritise the message the agent is already running. Use the existing stop button to cancel an in-flight run without queueing anything, or "Deny with prompt" on a gate card to steer with a new prompt that runs ahead of the queue without dropping queued rows.

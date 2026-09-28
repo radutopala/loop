@@ -84,9 +84,12 @@ interface ChatViewProps {
   roots?: RootEntry[];
   scrollToMessageId?: number | null;
   onScrollComplete?: () => void;
+  /** Don't take focus on mount: the Learn view's learn thread, beside a chat
+   * that has it. */
+  noAutoFocus?: boolean;
 }
 
-export function ChatView({ channelId, chatState, roots, scrollToMessageId, onScrollComplete }: ChatViewProps) {
+export function ChatView({ channelId, chatState, roots, scrollToMessageId, onScrollComplete, noAutoFocus }: ChatViewProps) {
   const { colors, fontSizes } = useTheme();
   const styles = buildStyles(colors);
   const { items, liveTail, messages, loading, isRunning } = chatState;
@@ -161,6 +164,7 @@ export function ChatView({ channelId, chatState, roots, scrollToMessageId, onScr
         <div style={styles.inputBar}>
           <ChatInput
             channelId={channelId}
+            noAutoFocus={noAutoFocus}
             messages={messages}
             roots={roots}
             mode={chatState.mode}
@@ -227,6 +231,7 @@ export function ChatView({ channelId, chatState, roots, scrollToMessageId, onScr
       <div style={styles.inputBar}>
         <ChatInput
           channelId={channelId}
+          noAutoFocus={noAutoFocus}
           messages={messages}
           roots={roots}
           isRunning={isRunning}

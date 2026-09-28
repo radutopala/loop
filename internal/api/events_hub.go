@@ -9,6 +9,7 @@ import (
 	"github.com/gorilla/websocket"
 
 	"github.com/radutopala/loop/internal/container"
+	"github.com/radutopala/loop/internal/db"
 	"github.com/radutopala/loop/internal/events"
 )
 
@@ -33,6 +34,10 @@ const (
 	EventChannelDeleted            = "channel.deleted"
 	EventChannelLocked             = "channel.locked"
 	EventChannelAgentConfig        = "channel.agent_config"
+	EventChannelLearn              = "channel.learn"
+	EventLearnStarted              = "learn.started"
+	EventLearnProposals            = "learn.proposals"
+	EventLearnProposalUpdated      = "learn.proposal_updated"
 	EventChannelUpdated            = "channel.updated"
 	EventAgentInstanceRegistered   = "agent_instance.registered"
 	EventAgentInstanceUnregistered = "agent_instance.unregistered"
@@ -300,6 +305,51 @@ func (h *EventsHub) BroadcastChannelAgentConfig(channelID, model, effort string)
 		Type:      EventChannelAgentConfig,
 		ChannelID: channelID,
 		Data:      map[string]string{"model_override": model, "effort_override": effort},
+		Global:    true,
+	})
+}
+
+// BroadcastChannelLearn sends a channel.learn event when a channel's learn
+// switch changes, so every window's composer shows it.
+func (h *EventsHub) BroadcastChannelLearn(channelID, learn string) {
+	h.Broadcast(Event{
+		Type:      EventChannelLearn,
+		ChannelID: channelID,
+		Data:      map[string]string{"learn": learn},
+		Global:    true,
+	})
+}
+
+// BroadcastLearnStarted sends a learn.started event when a learn pass starts
+// for channelID. It's global: the learn thread is hidden, so its viewers only
+// subscribe to it once they're told its id.
+func (h *EventsHub) BroadcastLearnStarted(channelID, learnChannelID string) {
+	h.Broadcast(Event{
+		Type:      EventLearnStarted,
+		ChannelID: channelID,
+		Data:      map[string]string{"learn_channel_id": learnChannelID},
+		Global:    true,
+	})
+}
+
+// BroadcastLearnProposals sends a learn.proposals event when a learn pass
+// files proposals for channelID, so its Learn view lists them.
+func (h *EventsHub) BroadcastLearnProposals(channelID string, proposals []*db.LearnProposal) {
+	h.Broadcast(Event{
+		Type:      EventLearnProposals,
+		ChannelID: channelID,
+		Data:      map[string]any{"proposals": proposals},
+		Global:    true,
+	})
+}
+
+// BroadcastLearnProposalUpdated sends a learn.proposal_updated event when a
+// proposal is applied, fails or is dismissed.
+func (h *EventsHub) BroadcastLearnProposalUpdated(p *db.LearnProposal) {
+	h.Broadcast(Event{
+		Type:      EventLearnProposalUpdated,
+		ChannelID: p.ChannelID,
+		Data:      p,
 		Global:    true,
 	})
 }

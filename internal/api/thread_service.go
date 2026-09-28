@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"log/slog"
 
-	"github.com/radutopala/loop/internal/bot"
 	"github.com/radutopala/loop/internal/db"
 	"github.com/radutopala/loop/internal/randutil"
 )
@@ -33,19 +32,15 @@ type threadService struct {
 	creator          ThreadCreator
 	logger           *slog.Logger
 	generateThreadID func() string
-	removeMCPConfig  func(string, string) error
-	keepMCPConfigs   bool
 }
 
 // NewThreadService creates a new ThreadEnsurer.
-func NewThreadService(store db.Store, creator ThreadCreator, logger *slog.Logger, keepMCPConfigs bool) ThreadEnsurer {
+func NewThreadService(store db.Store, creator ThreadCreator, logger *slog.Logger) ThreadEnsurer {
 	return &threadService{
 		store:            store,
 		creator:          creator,
 		logger:           logger,
 		generateThreadID: func() string { return randutil.HexID(6) },
-		removeMCPConfig:  bot.RemoveMCPConfig,
-		keepMCPConfigs:   keepMCPConfigs,
 	}
 }
 
@@ -62,12 +57,6 @@ func (s *threadService) DeleteThread(ctx context.Context, threadID string) error
 	}
 	if ch.Locked {
 		return ErrChannelLocked
-	}
-
-	if !s.keepMCPConfigs {
-		if err := s.removeMCPConfig(ch.DirPath, threadID); err != nil {
-			s.logger.Warn("removing MCP config for thread", "error", err, "thread_id", threadID)
-		}
 	}
 
 	if s.creator != nil {

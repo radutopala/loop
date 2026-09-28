@@ -129,6 +129,7 @@ func (o *Orchestrator) processClaimedMessage(ctx, row, incoming) {
     resp, lastText, runID, err := executeAgentRun(ctx, msg, req, channel)
     if err != nil { markTriggerProcessed(msg, recent); return }
     deliverResponse(msg, resp, recent, lastText, runID)
+    maybeLearn(ctx, channel, msg, resp)                     // see Learn pass
 }
 ```
 
@@ -182,6 +183,8 @@ The hold is a lease (5 minutes, renewed by the app every 2 minutes), so an app t
 5. **Worktree parent** -- If the channel is a worktree thread (`Worktree: true`), look up the parent channel's `DirPath` and set `ParentDirPath` on the request. The runner uses this to mount the parent project directory so the container sees the main `.git` directory.
 
 6. **Plan mode** -- If the incoming message has `Mode: "plan"`, set `PlanMode: true` on the request. This appends a system prompt instructing the agent to call `EnterPlanMode` before doing anything else; the tool flips the session's permission context to `plan`, and Claude Code's per-turn attachment loop then injects the full plan-mode instructions (with a computed `planFilePath` and read-only restrictions) on subsequent turns.
+
+7. **Learn thread** -- If the channel is a hidden learn thread (`Kind: "learn"`), the request becomes a learn run (see [Learn pass](#learn-pass)).
 
 ## Agent Execution
 
@@ -273,6 +276,40 @@ For the Electron app, streaming events are broadcast via the `EventsHub`:
 2. **Update session** -- Store the new `SessionID` from the agent response.
 3. **Send response** -- Unless it duplicates the last streamed turn, send the response via `bot.SendMessage` with a reply-to reference. Also store the bot message in the database (stamped with `trigger_msg_id = msg.MessageID` so the FE can group the reply under its triggering user message) and broadcast via EventsHub.
 4. **Mark processed** -- Mark all recent messages as processed in the database. This prevents them from being included in future context windows unnecessarily.
+
+## Learn pass
+
+After `deliverResponse`, `processClaimedMessage` calls `maybeLearn`, which may queue a **learn pass**: a review of the run that just finished, in a hidden thread, that files proposals for the user to apply. Runs that errored or were stopped return before this, and scheduled tasks don't go through it. See [Chat: Learn from a run](chat.md#learn-from-a-run) for the UI and [Configuration: Learn](configuration.md#learn) for the config.
+
+1. **Config** -- Merge the channel's config the way its runs do: global → root checkout → worktree for a worktree chain (the root checkout being the nearest non-worktree ancestor's `DirPath`), global → the channel's own `DirPath` otherwise. A project config that fails to load falls back to the global config. Config proposals still land in the root checkout's `.loop/config.json`.
+2. **Skip reasons** -- The channel was loaded before the run, so outside a learn thread it's read again first: `channel gone` when it was deleted meanwhile (or the lookup fails). The checks below use that fresh row, so a Learn switch turned on or off during the run applies to it. `learnSkipReason` returns the first that applies, logged at debug level:
+   - `learn thread` -- the channel is itself a learn thread;
+   - `not a desktop channel` -- the channel's platform isn't `local` (a Slack or Discord channel), whose proposals only the desktop app could show;
+   - `task thread` -- the channel is a scheduled task's thread (`TaskID != 0`);
+   - `parked on a plan or question` -- the channel is parked on an ExitPlanMode or AskUserQuestion card;
+   - `learn off` -- the channel's `learn_override` is `off`, or empty and `learn.enabled` is false;
+   - `N turns, below min_turns M` -- the run took fewer than `learn.min_turns` turns.
+
+   Then `no session` when the response has no session id.
+3. **Learn thread** -- `ensureLearnChannel` returns the channel's learn thread, creating it on first use: a local-platform thread with id `learn-<hex>`, name `learn: <channel name>`, the parent's `GuildID` and `DirPath`, `ParentID` set to the channel, and `Kind: "learn"`. `InsertLearnChannel` inserts it only while the parent still exists (one statement), so a channel deleted in between is skipped as `channel gone` instead of leaving an orphan learn thread. Learn threads are left out of `GET /api/channels` and are deleted, with their messages, quality snapshots and the channel's proposals, when the channel is deleted; `DELETE /api/threads/{id}` and `DELETE /api/worktrees` (with a `thread_id`) also stop the learn thread's queued and running passes.
+4. **Queue** -- `queueLearn` claims the learn thread in `learnSlots`. Only one pass runs per learn thread at a time: when its trigger is already queued or running, or the learn thread has any active run (the user talking to it), the finished run is kept as the slot's `next` and the pass waits (`learn: queued behind the running pass`). A later run replaces a waiting one, since a fork of the newest session covers both. `processClaimedMessage` calls `learnRunStarted` when a run starts, which marks the slot running for a learn trigger's run (what `GET /api/channels/{id}/learn` reports as `running`, via `IsLearnPassRunning`), and `learnRunDone` when any run ends: a learn trigger's run frees the slot, and once no trigger of its own is outstanding the waiting pass starts. A trigger whose run never ends within an hour (`HandleMessage` dropped it on a store error) is taken as lost, so the next pass isn't blocked until a restart.
+5. **Fork** -- `MarkSessionForkPending` points the learn thread at the run's session with `fork_pending` set, so the pass runs with `--resume <session> --fork-session` and starts from the whole run. Every pass forks again from the latest run. When the update finds no learn thread (deleted with its channel since it was looked up), the pass is dropped and the slot freed.
+6. **Announce** -- Broadcast a global [`learn.started`](events.md#learnstarted) event for the channel, carrying the learn thread's id.
+7. **Trigger** -- `HandleMessage` on the learn thread with author id `loop-learn` (name `loop`), `HasPrefix: true` and the local platform. The content is `The run in "<channel>" just finished. Review it and propose what Loop should learn from it.`, followed by the run's last prompt as a blockquote. The pass runs on the learn thread's own drain, so the channel's queue isn't held up by it. A `loop-learn` message for a channel that isn't active is dropped and its slot freed: it's never auto-created as a plain channel, where the pass would run without the learn restrictions.
+
+When `prepareAgentRequest` builds the learn thread's request, `applyLearnRequest` turns it into a learn run:
+
+- **Agent id** `learn`, which gives the run its own MCP config with the [`propose_learnings`](mcpserver.md#learn-tools-learn-agent-only) tool and none of the inter-agent tools.
+- **Model / effort** -- `learn.model` / `learn.effort`, else the parent channel's overrides, else the config's.
+- **System prompt** -- the built-in learn instructions (each proposal kind and its payload, at most 5 proposals, propose never act), then the current state so it doesn't propose duplicates: the channel's name, description, ticket URL and whether it's a worktree thread, the project config path, the merged prompt and bash shortcuts, the channel's scheduled tasks, task templates, agentgate rules and mounts, and the channel's earlier proposals: those still waiting on the user (pending, applying or failed) and the 20 most recently dismissed, so a later pass doesn't file them again. A dismissed rename, description or ticket URL only rules out that value: a later run pointing to a different one can propose it. `learn.prompt` is appended last.
+- **Tools** -- `LearnMode` passes `--tools Read,Grep,Glob,TodoWrite,ToolSearch`, the whole built-in tool set of the pass: no `Bash`, `Edit`, `Write`, `NotebookEdit`, `WebFetch`, `WebSearch`, `Agent`, `Skill`, `EnterWorktree`, `RemoteTrigger`, `PushNotification`, `SendMessage`, `Cron*` or any built-in a later Claude Code adds. `--tools` doesn't reach MCP tools, so it also adds, on top of `claude_batch_disallowed_tools`, `--disallowedTools` for every Loop MCP tool that changes state (shortcuts, tasks, threads and channels, messages, agent messages and `update_agent_status`, workflows, playgrounds, chat components, `index_memory`, `quality_scan`, which saves a snapshot, and `report_review_findings`). Loop's read-only MCP tools (`list_*`, `show_task`, `get_*`, `search_*`, the `quality_*` reports including `quality_snapshot`, and `quality_whatif`, which only simulates) stay available.
+- **MCP servers** -- the pass's MCP config (`.loop/mcp-<learn thread>-learn.json`) holds only the Loop server: no user MCP servers, no browser. `--strict-mcp-config` stops Claude from also loading the project's `.mcp.json` or user-level servers. The file goes with the learn thread when its parent is deleted.
+
+A learn thread only ever runs this way. When its parent can't be loaded (lookup error or gone), `prepareAgentRequest` fails the run rather than letting it run as a chat with the full tool set; the row is marked processed and the drain moves on.
+
+The learn run's `agent.status` events carry `trigger: "learn"` (`runTrigger` matches the `loop-learn` author), so the desktop app doesn't mark it unread, notify or bounce the dock. A message the user sends in the learn thread runs the same way (same agent id, prompt and denials) but with `trigger: "learn-reply"`, and never starts a learn pass of its own.
+
+Each pass forks into a new session file in the channel's Claude project dir. `GET /api/channels/{id}/sessions` leaves them out (see [API](api.md#get-apichannelsidsessions)), and a terminal pane's crash relaunch resumes the pane's own session by id rather than `claude --continue`, which would pick the newest file, often a learn pass's.
 
 ## Thread Resolution
 

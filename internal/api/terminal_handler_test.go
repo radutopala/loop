@@ -98,8 +98,8 @@ func (m *MockInteractiveCmdBuilder) BuildInteractiveCmd(channelID, dirPath, pare
 	return m.Called(channelID, dirPath, parentDirPath, sessionID, agentID, forkSession).String(0)
 }
 
-func (m *MockInteractiveCmdBuilder) BuildContinueCmd(channelID, dirPath, parentDirPath, agentID string) string {
-	return m.Called(channelID, dirPath, parentDirPath, agentID).String(0)
+func (m *MockInteractiveCmdBuilder) BuildContinueCmd(channelID, dirPath, parentDirPath, sessionID, agentID string) string {
+	return m.Called(channelID, dirPath, parentDirPath, sessionID, agentID).String(0)
 }
 
 type TerminalHandlerSuite struct {

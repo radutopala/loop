@@ -556,7 +556,7 @@ func (a *app) serve() error {
 		}
 	}
 	channelSvc := api.NewChannelService(store, channelCreators, cfg.LoopDir)
-	threadSvc := api.NewThreadService(store, chatBot, logger, cfg.KeepMCPConfigs)
+	threadSvc := api.NewThreadService(store, chatBot, logger)
 
 	containerReg := container.NewRegistry(nil)
 	containerReg.SetLogger(logger)
@@ -1090,7 +1090,9 @@ func childProjectsLister(store channelLister, cfg *config.Config, loadProject fu
 		seenDirs := map[string]bool{}
 		var out []container.ChildProject
 		for _, ch := range chs {
-			if ch.DirPath == "" || ch.Worktree || seenDirs[ch.DirPath] {
+			// A learn thread shares its parent's dir without carrying the
+			// worktree flag, so a worktree thread's would pass for a project.
+			if ch.DirPath == "" || ch.Worktree || ch.Kind == db.ChannelKindLearn || seenDirs[ch.DirPath] {
 				continue
 			}
 			seenDirs[ch.DirPath] = true

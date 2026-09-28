@@ -2,6 +2,7 @@ import { Fragment, useCallback, useRef } from "react";
 import type { AgentInfo } from "../hooks/useAgentRegistry";
 import type { ContainerStatsByType } from "../hooks/useContainerStats";
 import { useTheme } from "../ThemeContext";
+import type { ColorPalette } from "../theme";
 import type { PanelType } from "../types/panels";
 import { DropZoneOverlay } from "./DropZoneOverlay";
 import { PaneLeafHeader } from "./PaneLeafHeader";
@@ -166,10 +167,7 @@ function PaneTree({
           minHeight: 0,
           minWidth: 0,
           position: "relative",
-          borderRadius: colors.islandRadius,
-          boxShadow: colors.islandShadow,
-          border: colors.islandBorder,
-          backgroundColor: colors.sidebar,
+          ...paneBoxStyle(colors),
         }}
       >
         <PaneLeafHeader
@@ -222,34 +220,7 @@ function PaneTree({
     >
       {node.children.map((child, i) => (
         <Fragment key={child.type === "leaf" ? child.id : `split-${i}`}>
-          {i > 0 && (
-            <div
-              onMouseDown={(e) => handleDivider(e, i - 1, node.direction)}
-              style={{
-                [isVertical ? "height" : "width"]: colors.islandGap || 4,
-                flexShrink: 0,
-                cursor: isVertical ? "row-resize" : "col-resize",
-                backgroundColor: colors.islandGap ? "transparent" : colors.border,
-                position: "relative",
-              }}
-            >
-              {!colors.islandGap && (
-                <div
-                  style={{
-                    position: "absolute",
-                    left: "50%",
-                    top: "50%",
-                    transform: "translate(-50%, -50%)",
-                    [isVertical ? "width" : "height"]: 24,
-                    [isVertical ? "height" : "width"]: 2,
-                    borderRadius: 1,
-                    backgroundColor: colors.textDim,
-                    opacity: 0.5,
-                  }}
-                />
-              )}
-            </div>
-          )}
+          {i > 0 && <SplitDivider vertical={isVertical} onMouseDown={(e) => handleDivider(e, i - 1, node.direction)} />}
           <PaneTree
             node={child}
             path={[...path, i]}
@@ -270,6 +241,44 @@ function PaneTree({
           />
         </Fragment>
       ))}
+    </div>
+  );
+}
+
+/** A split pane's box: its island look, or a plain panel without islands. */
+export function paneBoxStyle(colors: ColorPalette): React.CSSProperties {
+  return { borderRadius: colors.islandRadius, boxShadow: colors.islandShadow, border: colors.islandBorder, backgroundColor: colors.sidebar };
+}
+
+/** The bar between two split panes; with onMouseDown, a handle to resize them. */
+export function SplitDivider({ vertical, onMouseDown }: { vertical: boolean; onMouseDown?: (e: React.MouseEvent) => void }) {
+  const { colors } = useTheme();
+  return (
+    <div
+      onMouseDown={onMouseDown}
+      style={{
+        [vertical ? "height" : "width"]: colors.islandGap || 4,
+        flexShrink: 0,
+        cursor: onMouseDown ? (vertical ? "row-resize" : "col-resize") : undefined,
+        backgroundColor: colors.islandGap ? "transparent" : colors.border,
+        position: "relative",
+      }}
+    >
+      {!colors.islandGap && onMouseDown && (
+        <div
+          style={{
+            position: "absolute",
+            left: "50%",
+            top: "50%",
+            transform: "translate(-50%, -50%)",
+            [vertical ? "width" : "height"]: 24,
+            [vertical ? "height" : "width"]: 2,
+            borderRadius: 1,
+            backgroundColor: colors.textDim,
+            opacity: 0.5,
+          }}
+        />
+      )}
     </div>
   );
 }

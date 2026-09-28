@@ -184,6 +184,12 @@
   //  }
   //],
 
+  // Learn pass for this project (each field overrides global when set; see docs/chat.md#learn-from-a-run)
+  //"learn": {
+  //  "enabled": true,
+  //  "min_turns": 5
+  //},
+
   // Workflow concurrency limits for this project (overrides global values)
   // 0 means unlimited
   //"workflow_concurrency": {

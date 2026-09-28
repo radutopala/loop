@@ -42,6 +42,16 @@ func GlobalConfigSchema() *ConfigSchema {
 	return globalSchema
 }
 
+// modelEnum lists the models offered by the settings form; "" means no override.
+func modelEnum() []any {
+	return []any{"", "claude-opus-5-5", "claude-opus-5", "claude-sonnet-5", "claude-fable-5-1", "claude-fable-5", "claude-opus-4-8"}
+}
+
+// effortEnum lists the --effort levels; "" leaves it unset.
+func effortEnum() []any {
+	return []any{"", "low", "medium", "high", "xhigh", "max"}
+}
+
 func buildSchema() *ConfigSchema {
 	return &ConfigSchema{
 		Type: "object",
@@ -51,7 +61,7 @@ func buildSchema() *ConfigSchema {
 				Type:        "string",
 				Title:       "Model",
 				Description: "Claude model override",
-				Enum:        []any{"", "claude-opus-5-5", "claude-opus-5", "claude-sonnet-5", "claude-fable-5-1", "claude-fable-5", "claude-opus-4-8"},
+				Enum:        modelEnum(),
 				Default:     "claude-sonnet-5",
 				XSection:    "Claude",
 				XOrder:      1,
@@ -60,7 +70,7 @@ func buildSchema() *ConfigSchema {
 				Type:        "string",
 				Title:       "Effort",
 				Description: "Reasoning-effort level passed to the Claude CLI as --effort. Empty leaves it unset (model default).",
-				Enum:        []any{"", "low", "medium", "high", "xhigh", "max"},
+				Enum:        effortEnum(),
 				Default:     "",
 				XSection:    "Claude",
 				XOrder:      2,
@@ -336,6 +346,44 @@ func buildSchema() *ConfigSchema {
 						Title:        "Prompt Path",
 						Description:  "Prompt file under {loopDir}/review/",
 						XPlaceholder: "prompt.md",
+					},
+				},
+			},
+
+			// ── Learn section (nested object) ──
+			"learn": {
+				Type:     "object",
+				XSection: "Learn",
+				Properties: map[string]*SchemaProperty{
+					"enabled": {
+						Type:        "boolean",
+						Title:       "Enabled",
+						Description: "Default for the composer's Learn switch: after a chat run, a hidden forked session proposes shortcuts, tasks, gate rules, mounts and thread names for you to apply. Each channel can override it.",
+						Default:     false,
+					},
+					"min_turns": {
+						Type:        "integer",
+						Title:       "Min Turns",
+						Description: "Skip runs with fewer turns than this",
+						Default:     DefaultLearnMinTurns,
+					},
+					"model": {
+						Type:        "string",
+						Title:       "Model",
+						Description: "Model for the learn run; empty uses the channel's",
+						Enum:        modelEnum(),
+					},
+					"effort": {
+						Type:        "string",
+						Title:       "Effort",
+						Description: "Effort for the learn run; empty uses the channel's",
+						Enum:        effortEnum(),
+					},
+					"prompt": {
+						Type:        "string",
+						Title:       "Prompt",
+						Description: "Extra instructions added to the built-in learn prompt",
+						XWidget:     "textarea",
 					},
 				},
 			},

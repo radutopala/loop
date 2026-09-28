@@ -170,6 +170,19 @@ func summarizeToolInput(name string, raw json.RawMessage) string {
 			return tmpl + ": " + title
 		}
 		return tmpl
+	case "mcp__loop__propose_learnings":
+		// Its only top-level key is "proposals", which the fallback keys
+		// miss; the titles say what's proposed.
+		items, _ := m["proposals"].([]any)
+		titles := make([]string, 0, len(items))
+		for _, item := range items {
+			if p, ok := item.(map[string]any); ok {
+				if title, _ := p["title"].(string); title != "" {
+					titles = append(titles, title)
+				}
+			}
+		}
+		return strings.Join(titles, "; ")
 	}
 	// For other tools, try common keys.
 	for _, key := range []string{"description", "query", "prompt", "path", "url"} {

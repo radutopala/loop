@@ -3,6 +3,8 @@
 package component
 
 import (
+	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -10,12 +12,16 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/cucumber/godog"
 	"github.com/gorilla/websocket"
+
+	"github.com/radutopala/loop/internal/db"
+	"github.com/radutopala/loop/internal/types"
 )
 
 func registerBackendSteps(ctx *godog.ScenarioContext, tc *TestContext) {
@@ -56,6 +62,8 @@ func registerBackendSteps(ctx *godog.ScenarioContext, tc *TestContext) {
 	ctx.Step(`^I create a file "([^"]*)" in the repo with:$`, tc.createRepoFile)
 	ctx.Step(`^I commit all changes in the repo with message "([^"]*)"$`, tc.commitAllInRepo)
 	ctx.Step(`^I remove every queued message via API$`, tc.removeQueuedViaAPI)
+	ctx.Step(`^the current channel has a learn thread$`, tc.seedLearnThread)
+	ctx.Step(`^the learn thread has a bot message:$`, tc.seedLearnThreadMessage)
 
 	// Ticket setup steps
 	ctx.Step(`^I create a ticket "([^"]*)" with type "([^"]*)" via API$`, tc.createTicketViaAPI)
@@ -1141,4 +1149,74 @@ func (tc *TestContext) setupWorktreeTaskViaAPI(prompt, schedule string) error {
 		}
 	}
 	return nil
+}
+
+// seedLearnThread gives the current channel its hidden learn thread, as the
+// daemon does before a channel's first learn pass. Nothing in the API creates
+// one (only a finished run with learn on does), so the row is written straight
+// into the daemon's database (LOOP_DB_PATH). With it in place, proposals can
+// be filed through the real POST /api/channels/{learn_channel_id}/learn/proposals.
+// Deleting the channel at cleanup removes the thread and its proposals.
+func (tc *TestContext) seedLearnThread() error {
+	if tc.ChannelID == "" {
+		return fmt.Errorf("no channel_id set; use 'I set up a test channel via API' step first")
+	}
+	sqlDB, err := openDaemonDB()
+	if err != nil {
+		return err
+	}
+	defer sqlDB.Close()
+	id := "learn-bdd-" + strconv.FormatInt(time.Now().UnixNano(), 36)
+	if err := db.NewSQLiteStoreFromDB(sqlDB).InsertLearnChannel(context.Background(), &db.Channel{
+		ChannelID: id,
+		Name:      "learn: " + tc.ChannelID,
+		DirPath:   tc.ChannelDir,
+		ParentID:  tc.ChannelID,
+		Platform:  types.PlatformLocal,
+	}); err != nil {
+		return fmt.Errorf("inserting learn thread: %w", err)
+	}
+	tc.LearnChannelID = id
+	return nil
+}
+
+// seedLearnThreadMessage writes a processed bot message into the seeded
+// learn thread, as a pass's reply would leave there. It goes straight into
+// the daemon's database: posting one through the API would start a run.
+func (tc *TestContext) seedLearnThreadMessage(doc *godog.DocString) error {
+	if tc.LearnChannelID == "" {
+		return fmt.Errorf("no learn thread; use 'the current channel has a learn thread' first")
+	}
+	sqlDB, err := openDaemonDB()
+	if err != nil {
+		return err
+	}
+	defer sqlDB.Close()
+	if err := db.NewSQLiteStoreFromDB(sqlDB).InsertMessage(context.Background(), &db.Message{
+		ChannelID:   tc.LearnChannelID,
+		MsgID:       "learn-bdd-msg-" + strconv.FormatInt(time.Now().UnixNano(), 36),
+		AuthorID:    "bot",
+		AuthorName:  "bot",
+		Content:     doc.Content,
+		IsBot:       true,
+		IsProcessed: true,
+		CreatedAt:   time.Now().UTC(),
+	}); err != nil {
+		return fmt.Errorf("inserting learn thread message: %w", err)
+	}
+	return nil
+}
+
+// openDaemonDB opens the daemon's database (LOOP_DB_PATH) for rows no API
+// writes.
+func openDaemonDB() (*sql.DB, error) {
+	dbPath := os.Getenv("LOOP_DB_PATH")
+	if dbPath == "" {
+		return nil, fmt.Errorf("LOOP_DB_PATH is not set; scripts/test-component.sh exports the daemon's database path")
+	}
+	sqlDB, err := sql.Open("sqlite", "file:"+dbPath+"?_pragma=busy_timeout(5000)")
+	if err != nil {
+		return nil, fmt.Errorf("opening daemon database: %w", err)
+	}
+	return sqlDB, nil
 }

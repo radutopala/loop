@@ -219,6 +219,8 @@ func TestSummarizeToolInput(t *testing.T) {
 		{"chat_component show", "mcp__loop__chat_component", `{"action":"show","template":"math","title":"Fracții","html":"<p>x</p>"}`, "math: Fracții"},
 		{"chat_component untitled", "mcp__loop__chat_component", `{"action":"show","template":"canvas","js":"draw()"}`, "canvas"},
 		{"chat_component templates", "mcp__loop__chat_component", `{"action":"templates"}`, "templates"},
+		{"propose_learnings", "mcp__loop__propose_learnings", `{"proposals":[{"title":"Add lint","payload":{"prompt":"p"}},{"kind":"mount"},"x"]}`, "Add lint"},
+		{"propose_learnings none", "mcp__loop__propose_learnings", `{"proposals":[]}`, ""},
 		{"TodoWrite raw", "TodoWrite", `{"todos":[{"content":"Do thing","status":"pending","activeForm":"Doing thing"}]}`, `{"todos":[{"content":"Do thing","status":"pending","activeForm":"Doing thing"}]}`},
 	}
 	for _, tc := range tests {

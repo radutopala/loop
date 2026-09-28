@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useCallback, useContext, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { type BashShortcut, fetchBashShortcuts, fetchShortcuts, type PromptShortcut } from "../../api/configApi";
+import { ShortcutsVersionContext } from "../../hooks/shortcutsVersion";
 import { useTheme } from "../../ThemeContext";
 import { fonts } from "../../theme";
 import type { TerminalTarget } from "../../types";
@@ -37,6 +38,7 @@ export function TerminalShortcuts({ channelId, leafId, onPick, target = "agent",
   const promptBtnRef = useRef<HTMLButtonElement>(null);
   const bashBtnRef = useRef<HTMLButtonElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
+  const shortcutsVersion = useContext(ShortcutsVersionContext);
 
   useEffect(() => {
     let cancelled = false;
@@ -60,7 +62,7 @@ export function TerminalShortcuts({ channelId, leafId, onPick, target = "agent",
     return () => {
       cancelled = true;
     };
-  }, [channelId, promptsEnabled]);
+  }, [channelId, promptsEnabled, shortcutsVersion]);
 
   useLayoutEffect(() => {
     if (openKind === null) return;

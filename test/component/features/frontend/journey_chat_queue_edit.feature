@@ -1,8 +1,9 @@
 @frontend @queue-edit
-Feature: Edit a queued chat message
+Feature: Edit and steer a queued chat message
   The pencil on a queued row moves the message into the composer; Enter saves
   it back in place, Escape leaves it untouched. While the edit is open the
-  message holds its place and can't start.
+  message holds its place and can't start. Steer, while the agent runs,
+  hands it the message next; pressed once, it stays marked and disabled.
 
   Background:
     Given I set up a test channel via API for git repo "bdd-queue-edit"
@@ -47,3 +48,11 @@ Feature: Edit a queued chat message
     Then I wait for "[data-testid='queued-edit-notice']" to be visible
     And the element "[data-testid='queued-edit-notice']" should contain text "left the queue"
     And the field "textarea" should hold "keep this draft"
+
+  Scenario: Steer, once pressed, stays marked and can't be pressed again
+    When I inject an agent.status running event
+    Then I wait for "[data-testid='queued-steer']" to be visible
+    And the element "[data-testid='queued-steer']" should contain text "Steer"
+    When I click on "[data-testid='queued-steer']"
+    Then I wait for "[data-testid='queued-steer'][data-steered='true']:disabled" to be visible
+    And the element "[data-testid='queued-steer']" should contain text "Steered"

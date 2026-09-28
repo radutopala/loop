@@ -1,6 +1,8 @@
 package api
 
 import (
+	"bufio"
+	"bytes"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -10,6 +12,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/radutopala/loop/internal/db"
+	"github.com/radutopala/loop/internal/learn"
 	"github.com/radutopala/loop/internal/osutil"
 )
 
@@ -70,6 +74,26 @@ func (s *Server) handleListSessions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Collect session IDs already associated with any channel or thread in
+	// the DB. A learn thread's session isn't importable, so it's left out of
+	// the list; not while fork_pending, though, when the id is the reviewed
+	// run's, borrowed until the pass forks it.
+	var importedIDs []string
+	learnSessions := map[string]bool{}
+	if allChannels, err := s.store.ListChannels(r.Context()); err == nil {
+		for _, c := range allChannels {
+			if c.SessionID != "" {
+				importedIDs = append(importedIDs, c.SessionID)
+			}
+			if c.SessionID != "" && c.Kind == db.ChannelKindLearn && !c.ForkPending {
+				learnSessions[c.SessionID] = true
+			}
+		}
+	}
+	if importedIDs == nil {
+		importedIDs = []string{}
+	}
+
 	var sessions []sessionEntry
 	for _, entry := range entries {
 		if entry.IsDir() {
@@ -84,7 +108,13 @@ func (s *Server) handleListSessions(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		sessionID := strings.TrimSuffix(name, ".jsonl")
-		lastMsg := readLastMessageText(s.sys, filepath.Join(projectDir, name))
+		if learnSessions[sessionID] {
+			continue
+		}
+		lastMsg, isLearn := readSessionSummary(s.sys, filepath.Join(projectDir, name))
+		if isLearn {
+			continue
+		}
 		sessions = append(sessions, sessionEntry{
 			SessionID:    sessionID,
 			LastModified: info.ModTime(),
@@ -101,19 +131,6 @@ func (s *Server) handleListSessions(w http.ResponseWriter, r *http.Request) {
 		sessions = []sessionEntry{}
 	}
 
-	// Collect session IDs already associated with any channel or thread in the DB.
-	var importedIDs []string
-	if allChannels, err := s.store.ListChannels(r.Context()); err == nil {
-		for _, c := range allChannels {
-			if c.SessionID != "" {
-				importedIDs = append(importedIDs, c.SessionID)
-			}
-		}
-	}
-	if importedIDs == nil {
-		importedIDs = []string{}
-	}
-
 	writeHTTPJSON(w, http.StatusOK, listSessionsResponse{
 		CurrentSessionID:   ch.SessionID,
 		Sessions:           sessions,
@@ -128,17 +145,48 @@ const tailReadSize = 32 * 1024
 // maxLastMessageLen is the maximum length of the last_message field.
 const maxLastMessageLen = 200
 
-// readLastMessageText reads the tail of a JSONL session file and returns
-// the text from the last assistant or user message, truncated to maxLastMessageLen.
-func readLastMessageText(sys interface {
+// headReadSize is the number of bytes read from the start of a session file
+// to find the prompt the session was started with.
+const headReadSize = 64 * 1024
+
+// readSessionSummary reads a JSONL session file's last message text (see
+// findLastMessageFromReader) and whether it's a learn pass's session.
+func readSessionSummary(sys interface {
 	Open(string) (*os.File, error)
-}, path string) string {
+}, path string) (string, bool) {
 	f, err := sys.Open(path)
 	if err != nil {
-		return ""
+		return "", false
 	}
 	defer f.Close()
-	return findLastMessageFromReader(f, tailReadSize)
+	if isLearnSession(io.NewSectionReader(f, 0, headReadSize)) {
+		return "", true
+	}
+	return findLastMessageFromReader(f, tailReadSize), false
+}
+
+// isLearnSession reports whether the session file head r starts with a
+// learn pass: its first enqueue queue-operation (the prompt a --print run
+// starts with, logged before any forked history) is the learn trigger.
+func isLearnSession(r io.Reader) bool {
+	sc := bufio.NewScanner(r)
+	sc.Buffer(make([]byte, 0, 4096), headReadSize)
+	for sc.Scan() {
+		line := sc.Bytes()
+		if !bytes.Contains(line, []byte(`"queue-operation"`)) {
+			continue
+		}
+		var op struct {
+			Type      string `json:"type"`
+			Operation string `json:"operation"`
+			Content   string `json:"content"`
+		}
+		if json.Unmarshal(line, &op) != nil || op.Type != "queue-operation" || op.Operation != "enqueue" {
+			continue
+		}
+		return learn.IsTrigger(op.Content)
+	}
+	return false
 }
 
 // statSeekReader is a reader that can stat (for size), seek, and read.

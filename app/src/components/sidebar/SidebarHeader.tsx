@@ -287,7 +287,10 @@ export function SidebarHeader({
             value={searchQuery}
             onChange={(e) => onSearchQueryChange(e.target.value)}
             onKeyDown={(e) => {
-              if (e.key === "Escape") onSearchQueryChange("");
+              if (e.key === "Escape") {
+                e.preventDefault();
+                onSearchQueryChange("");
+              }
             }}
             placeholder="Search..."
             style={{
@@ -314,6 +317,7 @@ export function SidebarHeader({
               if (e.key === "Enter" && newChannelName.trim()) {
                 onCreateChannel(newChannelName.trim());
               } else if (e.key === "Escape") {
+                e.preventDefault();
                 onCancelCreateChannel();
               }
             }}

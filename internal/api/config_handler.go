@@ -57,6 +57,9 @@ func (s *Server) handleSaveConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	path := filepath.Join(home, ".loop", "config.json")
+	// A whole-file write, but it must not land inside another edit's
+	// read-modify-write of the file, which would then overwrite it.
+	defer s.configLocks.lock(path)()
 	if err := s.sys.WriteFile(path, []byte(req.Content), 0644); err != nil {
 		http.Error(w, "failed to write config file", http.StatusInternalServerError)
 		return
@@ -103,6 +106,8 @@ func (s *Server) handleSaveProjectConfig(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	path := filepath.Join(loopDir, "config.json")
+	// See handleSaveConfig.
+	defer s.configLocks.lock(path)()
 	if err := s.sys.WriteFile(path, []byte(req.Content), 0644); err != nil {
 		http.Error(w, "failed to write config file", http.StatusInternalServerError)
 		return

@@ -1,4 +1,5 @@
 import { useEffect, useRef } from "react";
+import { prefersReducedMotion } from "../hooks/usePresence";
 
 export function LoopInfinityIcon({ color, animated, isDark = true }: { color?: string; animated?: boolean; isDark?: boolean }) {
   const pathRef = useRef<SVGPathElement>(null);
@@ -47,7 +48,7 @@ export function LoopInfinityIcon({ color, animated, isDark = true }: { color?: s
     let progress = 0;
     let prev = 0;
     const stops = grad.querySelectorAll("stop");
-    function frame(t: number) {
+    function draw(t: number) {
       const dt = prev ? (t - prev) / 1000 : 0;
       prev = t;
       progress = (progress + speed * dt) % 1;
@@ -64,6 +65,14 @@ export function LoopInfinityIcon({ color, animated, isDark = true }: { color?: s
       const headColor = colorAt((progress + shift) % 1);
       headEl.setAttribute("fill", rgb(headColor));
       headEl.setAttribute("opacity", String(Math.min(1, pulse + 0.2)));
+    }
+    // With less motion asked for, it's drawn once and holds still.
+    if (prefersReducedMotion()) {
+      draw(0);
+      return;
+    }
+    function frame(t: number) {
+      draw(t);
       rafRef.current = requestAnimationFrame(frame);
     }
     rafRef.current = requestAnimationFrame(frame);

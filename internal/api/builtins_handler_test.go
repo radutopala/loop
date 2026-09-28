@@ -47,6 +47,22 @@ func (s *ServerSuite) TestHandleRestoreBuiltinsShortcutsSkipsWhenPresent() {
 	require.Equal(s.T(), []string{"builtin code review"}, resp.Skipped)
 }
 
+func (s *ServerSuite) TestHandleRestoreBuiltinsWaitsForConfigLock() {
+	dir := s.writeLoopConfig(`{}`)
+	configPath := filepath.Join(dir, "config.json")
+	rec := s.requestUnderConfigLock(configPath, func() *httptest.ResponseRecorder {
+		return s.testRequest(http.MethodPost, "/api/builtins/restore", `{"kind":"shortcuts"}`)
+	}, func() {
+		data, err := os.ReadFile(configPath)
+		require.NoError(s.T(), err)
+		require.Equal(s.T(), `{}`, string(data))
+	})
+	require.Equal(s.T(), http.StatusOK, rec.Code)
+	data, err := os.ReadFile(configPath)
+	require.NoError(s.T(), err)
+	require.Contains(s.T(), string(data), "builtin code review")
+}
+
 func (s *ServerSuite) TestHandleRestoreBuiltinsWorkflowsAddsBoth() {
 	s.writeLoopConfig(`{}`)
 

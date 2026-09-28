@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"net/http/httptest"
 	"os"
 
 	"github.com/stretchr/testify/mock"
@@ -81,6 +82,21 @@ func (s *ServerSuite) TestSaveConfigSuccess() {
 	s.srv.sys = sys
 
 	rec := s.testRequest("PUT", "/api/config", `{"content":"{\"key\":\"val\"}"}`)
+	require.Equal(s.T(), http.StatusNoContent, rec.Code)
+	sys.AssertExpectations(s.T())
+}
+
+func (s *ServerSuite) TestSaveConfigWaitsForConfigLock() {
+	sys := new(testutil.MockSystem)
+	sys.On("UserHomeDir").Return("/home/test", nil)
+	sys.On("WriteFile", "/home/test/.loop/config.json", []byte(`{"key":"val"}`), os.FileMode(0644)).Return(nil)
+	s.srv.sys = sys
+
+	rec := s.requestUnderConfigLock("/home/test/.loop/config.json", func() *httptest.ResponseRecorder {
+		return s.testRequest("PUT", "/api/config", `{"content":"{\"key\":\"val\"}"}`)
+	}, func() {
+		sys.AssertNotCalled(s.T(), "WriteFile", mock.Anything, mock.Anything, mock.Anything)
+	})
 	require.Equal(s.T(), http.StatusNoContent, rec.Code)
 	sys.AssertExpectations(s.T())
 }
@@ -186,6 +202,22 @@ func (s *ServerSuite) TestSaveProjectConfigSuccess() {
 	s.srv.sys = sys
 
 	rec := s.testRequest("PUT", "/api/config/project?channel_id=ch-1", `{"content":"{\"claude_model\":\"opus\"}"}`)
+	require.Equal(s.T(), http.StatusNoContent, rec.Code)
+	sys.AssertExpectations(s.T())
+}
+
+func (s *ServerSuite) TestSaveProjectConfigWaitsForConfigLock() {
+	s.store.On("GetChannel", mock.Anything, "ch-1").Return(&db.Channel{ChannelID: "ch-1", DirPath: "/projects/myapp"}, nil)
+	sys := new(testutil.MockSystem)
+	sys.On("MkdirAll", "/projects/myapp/.loop", os.FileMode(0755)).Return(nil)
+	sys.On("WriteFile", "/projects/myapp/.loop/config.json", []byte(`{"claude_model":"opus"}`), os.FileMode(0644)).Return(nil)
+	s.srv.sys = sys
+
+	rec := s.requestUnderConfigLock("/projects/myapp/.loop/config.json", func() *httptest.ResponseRecorder {
+		return s.testRequest("PUT", "/api/config/project?channel_id=ch-1", `{"content":"{\"claude_model\":\"opus\"}"}`)
+	}, func() {
+		sys.AssertNotCalled(s.T(), "WriteFile", mock.Anything, mock.Anything, mock.Anything)
+	})
 	require.Equal(s.T(), http.StatusNoContent, rec.Code)
 	sys.AssertExpectations(s.T())
 }

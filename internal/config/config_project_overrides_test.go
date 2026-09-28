@@ -822,6 +822,23 @@ func (s *ConfigSuite) TestLoadProjectConfigOverrides() {
 			},
 		},
 		{
+			name:        "Learn/AllFieldsOverrideGlobal",
+			projectJSON: `{"learn": {"enabled": true, "min_turns": 1, "model": "m", "effort": "low", "prompt": "p"}}`,
+			mainCfg:     &Config{Learn: LearnConfig{MinTurns: 3, Model: "g"}},
+			assert: func(merged, main *Config) {
+				require.Equal(s.T(), LearnConfig{Enabled: true, MinTurns: 1, Model: "m", Effort: "low", Prompt: "p"}, merged.Learn)
+				require.Equal(s.T(), LearnConfig{MinTurns: 3, Model: "g"}, main.Learn)
+			},
+		},
+		{
+			name:        "Learn/UnsetKeepsGlobal",
+			projectJSON: `{"learn": {}}`,
+			mainCfg:     &Config{Learn: LearnConfig{Enabled: true, MinTurns: 5, Model: "g", Effort: "high", Prompt: "p"}},
+			assert: func(merged, _ *Config) {
+				require.Equal(s.T(), LearnConfig{Enabled: true, MinTurns: 5, Model: "g", Effort: "high", Prompt: "p"}, merged.Learn)
+			},
+		},
+		{
 			name:        "PlaygroundShare/EnableOverridesGlobal",
 			projectJSON: `{"playground_share": {"enabled": true}}`,
 			mainCfg:     &Config{PlaygroundShare: PlaygroundShareConfig{Enabled: false}},

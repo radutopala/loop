@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+
+	"github.com/radutopala/loop/internal/learn"
 )
 
 // FormatApprovalDetails renders a key/value summary as quoted markdown lines.
@@ -34,8 +36,9 @@ func FormatApprovalDetails(details map[string]string) string {
 	return sb.String()
 }
 
-// RemoveMCPConfig removes the per-channel MCP config file for the given channel.
-// It silently ignores os.ErrNotExist (the file may not exist if the agent never ran).
+// RemoveMCPConfig removes the per-channel MCP config files for the given
+// channel: its own and the learn agent's, which a learn thread's runs write.
+// It silently ignores os.ErrNotExist (a file may not exist if the agent never ran).
 func RemoveMCPConfig(dirPath, channelID string) error {
 	return removeMCPConfigWith(os.Remove, dirPath, channelID)
 }
@@ -44,9 +47,11 @@ func removeMCPConfigWith(removeFn func(string) error, dirPath, channelID string)
 	if dirPath == "" {
 		return nil
 	}
-	p := filepath.Join(dirPath, ".loop", "mcp-"+channelID+".json")
-	if err := removeFn(p); err != nil && !errors.Is(err, os.ErrNotExist) {
-		return fmt.Errorf("removing MCP config %s: %w", p, err)
+	for _, name := range []string{"mcp-" + channelID + ".json", "mcp-" + channelID + "-" + learn.AgentID + ".json"} {
+		p := filepath.Join(dirPath, ".loop", name)
+		if err := removeFn(p); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("removing MCP config %s: %w", p, err)
+		}
 	}
 	return nil
 }

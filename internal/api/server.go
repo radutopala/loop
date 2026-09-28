@@ -44,9 +44,13 @@ type IncomingMessageHandler interface {
 	HandleThreadCreated(ctx context.Context, threadID, authorID, message string)
 }
 
-// RunCanceller cancels the active agent run for a channel.
+// RunCanceller cancels agent runs and tracks learn passes. StopLearn also
+// forgets a deleted learn thread's queued pass; IsLearnPassRunning reports a
+// learn pass (not a user's reply) running in a learn thread.
 type RunCanceller interface {
 	CancelActiveRun(channelID string) bool
+	StopLearn(learnChannelID string)
+	IsLearnPassRunning(learnChannelID string) bool
 }
 
 // PlanResolver clears and resumes a channel parked on an ExitPlanMode card.
@@ -125,6 +129,8 @@ type Server struct {
 	scheduler               scheduler.Scheduler
 	channels                ChannelEnsurer
 	threads                 ThreadEnsurer
+	removeMCPConfig         func(dirPath, channelID string) error // removes a deleted channel's MCP config files
+	configLocks             configLocks                           // serializes edits of each config.json
 	messages                MessageSender
 	memoryIndexer           MemoryIndexer
 	termManager             TerminalManager
@@ -324,10 +330,11 @@ func NewServer(sched scheduler.Scheduler, channels ChannelEnsurer, threads Threa
 			sys:       sys,
 			workspace: workspaceResolver{store: store},
 		},
-		scheduler: sched,
-		channels:  channels,
-		threads:   threads,
-		messages:  messages,
+		scheduler:       sched,
+		channels:        channels,
+		threads:         threads,
+		messages:        messages,
+		removeMCPConfig: bot.RemoveMCPConfig,
 		worktreeCreator: &worktree.Creator{
 			Sys: sys,
 			Run: worktree.ExecCommandRunner,
@@ -494,6 +501,12 @@ func (s *Server) registerPlaygroundRoutes(mux *http.ServeMux) {
 func (s *Server) registerAgentRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/channels/{id}/agent-config", s.handleGetAgentConfig)
 	mux.HandleFunc("PATCH /api/channels/{id}/agent-config", s.handleSetAgentConfig)
+	mux.HandleFunc("GET /api/channels/{id}/learn", s.handleGetLearn)
+	mux.HandleFunc("PUT /api/channels/{id}/learn", s.handleSetLearn)
+	mux.HandleFunc("GET /api/channels/{id}/learn/proposals", s.handleListLearnProposals)
+	mux.HandleFunc("POST /api/channels/{id}/learn/proposals", s.handleCreateLearnProposals)
+	mux.HandleFunc("POST /api/learn/proposals/{id}/apply", s.handleApplyLearnProposal)
+	mux.HandleFunc("POST /api/learn/proposals/{id}/dismiss", s.handleDismissLearnProposal)
 	mux.HandleFunc("POST /api/agents", s.handleRegisterAgent)
 	mux.HandleFunc("GET /api/agents", s.handleListAgents)
 	mux.HandleFunc("PATCH /api/agents/{id}", s.handleUpdateAgent)

@@ -1,6 +1,7 @@
 package config
 
 import (
+	"cmp"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -67,6 +68,7 @@ type jsonConfig struct {
 	GitHub                                   *GitHubConfig              `json:"github"`
 	Review                                   *jsonReviewConfig          `json:"review"`
 	PlaygroundShare                          *jsonPlaygroundShareConfig `json:"playground_share"`
+	Learn                                    *jsonLearnConfig           `json:"learn"`
 }
 
 // jsonMemoryConfig is the JSON representation of the memory block.
@@ -441,6 +443,15 @@ func (l *Loader) parse() (*Config, error) {
 
 	if jc.PlaygroundShare != nil {
 		cfg.PlaygroundShare.Enabled = ptrDefault(jc.PlaygroundShare.Enabled, false)
+	}
+
+	learn := cmp.Or(jc.Learn, &jsonLearnConfig{})
+	cfg.Learn = LearnConfig{
+		Enabled:  ptrDefault(learn.Enabled, false),
+		MinTurns: ptrDefault(learn.MinTurns, DefaultLearnMinTurns),
+		Model:    learn.Model,
+		Effort:   learn.Effort,
+		Prompt:   learn.Prompt,
 	}
 
 	// Memory config: enabled must be explicitly true.

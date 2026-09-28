@@ -22,7 +22,7 @@ func (s *ServerSuite) TestForkThread_Plain() {
 		ChannelID: "t1", ParentID: "ch1", Name: "research", SessionID: "sess-1",
 	}, nil)
 	s.threads.On("CreateThread", mock.Anything, "ch1", "research (fork)", "", "").Return("t2", nil)
-	s.store.On("MarkSessionForkPending", mock.Anything, "t2", "sess-1").Return(nil)
+	s.store.On("MarkSessionForkPending", mock.Anything, "t2", "sess-1").Return(true, nil)
 	// importSessionMessages walks parent/thread lookups; missing session file
 	// on disk short-circuits it harmlessly.
 	s.store.On("GetChannel", mock.Anything, "ch1").Return(&db.Channel{ChannelID: "ch1", DirPath: "/proj"}, nil).Maybe()
@@ -93,7 +93,7 @@ func (s *ServerSuite) TestForkThread_Worktree() {
 		return strings.Contains(name, "fork of worktree/src-wt")
 	}), "", "").Return("wt2", nil)
 	s.store.On("GetChannel", mock.Anything, "wt2").Return(&db.Channel{ChannelID: "wt2", ParentID: "ch1", Active: true}, nil)
-	s.store.On("MarkSessionForkPending", mock.Anything, "wt2", "sess-1").Return(nil)
+	s.store.On("MarkSessionForkPending", mock.Anything, "wt2", "sess-1").Return(true, nil)
 	upserted := make(chan *db.Channel, 1)
 	s.store.On("UpsertChannel", mock.Anything, mock.Anything).Run(func(args mock.Arguments) {
 		select {
@@ -139,7 +139,7 @@ func (s *ServerSuite) TestForkThread_UpdateSessionError() {
 		ChannelID: "t1", ParentID: "ch1", Name: "n", SessionID: "sess-1",
 	}, nil)
 	s.threads.On("CreateThread", mock.Anything, "ch1", "n (fork)", "", "").Return("t2", nil)
-	s.store.On("MarkSessionForkPending", mock.Anything, "t2", "sess-1").Return(errors.New("db")).Once()
+	s.store.On("MarkSessionForkPending", mock.Anything, "t2", "sess-1").Return(false, errors.New("db")).Once()
 	rec := s.testRequest("POST", "/api/threads/t1/fork", "")
 	require.Equal(s.T(), http.StatusInternalServerError, rec.Code)
 }
@@ -300,7 +300,7 @@ func (s *ServerSuite) TestForkThread_WorktreeMarkForkPendingError() {
 	s.threads.On("CreateThread", mock.Anything, "ch1", mock.Anything, "", "").Return("wt2", nil)
 	s.store.On("GetChannel", mock.Anything, "wt2").Return(&db.Channel{ChannelID: "wt2", ParentID: "ch1"}, nil)
 	s.store.On("UpsertChannel", mock.Anything, mock.Anything).Return(nil)
-	s.store.On("MarkSessionForkPending", mock.Anything, "wt2", "sess-1").Return(errors.New("db"))
+	s.store.On("MarkSessionForkPending", mock.Anything, "wt2", "sess-1").Return(false, errors.New("db"))
 
 	rec := s.testRequest("POST", "/api/threads/wt1/fork", "")
 	require.Equal(s.T(), http.StatusInternalServerError, rec.Code)

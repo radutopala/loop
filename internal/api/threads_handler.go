@@ -81,13 +81,13 @@ func (s *Server) handleCreateThread(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleDeleteThread(w http.ResponseWriter, r *http.Request) {
-	if !requireConfigured(w, s.threads, "thread deletion not configured") {
+	if !requireConfigured(w, s.threads, "thread deletion not configured") ||
+		!requireConfigured(w, s.store, "thread deletion not configured") {
 		return
 	}
 
 	threadID := r.PathValue("id")
-
-	if err := s.threads.DeleteThread(r.Context(), threadID); err != nil {
+	if err := s.deleteThread(r.Context(), threadID); err != nil {
 		if errors.Is(err, ErrChannelLocked) {
 			http.Error(w, err.Error(), http.StatusConflict)
 			return
@@ -95,8 +95,38 @@ func (s *Server) handleDeleteThread(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// deleteThread deletes threadID through s.threads, stops the passes of its
+// hidden learn thread, which goes with it, and removes both MCP configs
+// unless the parent channel's project keeps them. The thread and its learn
+// thread are noted first, while they still exist to find.
+func (s *Server) deleteThread(ctx context.Context, threadID string) error {
+	threads := s.lookupThreads(ctx, []string{threadID})
+	learns := s.learnThreads(ctx, threadID)
+	if err := s.threads.DeleteThread(ctx, threadID); err != nil {
+		return err
+	}
+	s.stopLearnThreads(ctx, learns)
+	if len(threads) == 1 {
+		s.removeMCPConfigs(s.threadOwner(ctx, threads[0]), append(threads, learns...))
+	}
+	return nil
+}
+
+// threadOwner returns the parent channel of thread, whose project config
+// decides keep_mcp_configs (a worktree thread's DirPath is the worktree, not
+// the project). A failed lookup falls back to the thread itself.
+func (s *Server) threadOwner(ctx context.Context, thread *db.Channel) *db.Channel {
+	parent, err := s.store.GetChannel(ctx, thread.ParentID)
+	if err != nil {
+		s.logger.Warn("thread cleanup: looking up parent channel", "thread_id", thread.ChannelID, "error", err)
+	}
+	if parent == nil {
+		return thread
+	}
+	return parent
 }
 
 // importSessionMessages parses a Claude Code session JSONL file and inserts
@@ -253,7 +283,9 @@ func (s *Server) handleForkThread(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	if src == nil || src.ParentID == "" {
+	// A hidden learn thread is as good as missing: forking it would surface
+	// its review session as a visible thread.
+	if src == nil || src.ParentID == "" || src.Kind == db.ChannelKindLearn {
 		http.Error(w, "thread not found", http.StatusBadRequest)
 		return
 	}
@@ -269,7 +301,7 @@ func (s *Server) handleForkThread(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if src.SessionID != "" {
-		if err := s.store.MarkSessionForkPending(r.Context(), newID, src.SessionID); err != nil {
+		if _, err := s.store.MarkSessionForkPending(r.Context(), newID, src.SessionID); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
@@ -339,7 +371,7 @@ func (s *Server) forkWorktreeThread(w http.ResponseWriter, r *http.Request, src 
 		}
 	}
 	if staged {
-		if err := s.store.MarkSessionForkPending(r.Context(), newID, src.SessionID); err != nil {
+		if _, err := s.store.MarkSessionForkPending(r.Context(), newID, src.SessionID); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}

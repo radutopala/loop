@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -170,6 +171,7 @@ func registerFrontendSteps(ctx *godog.ScenarioContext, tc *TestContext) {
 	ctx.Step(`^the element "([^"]*)" should not be marked$`, tc.assertElementNotMarked)
 	ctx.Step(`^I wait for a frame message "([^"]*)"$`, tc.waitForFrameMessage)
 	ctx.Step(`^I wait for "([^"]*)" to be at least (\d+)px tall$`, tc.waitForElementHeight)
+	ctx.Step(`^I wait for "([^"]*)" to be at most (\d+)px tall$`, tc.waitForElementMaxHeight)
 	ctx.Step(`^I click the last "([^"]*)"$`, tc.clickLast)
 	ctx.Step(`^the element "([^"]*)" should fit inside the window$`, tc.assertElementInsideWindow)
 	ctx.Step(`^I click "([^"]*)" in the git panel$`, tc.clickInGitPanel)
@@ -219,6 +221,7 @@ func registerFrontendSteps(ctx *godog.ScenarioContext, tc *TestContext) {
 	// Keyboard
 	ctx.Step(`^I press Enter$`, tc.pressEnter)
 	ctx.Step(`^I press Escape$`, tc.pressEscape)
+	ctx.Step(`^the focus is in "([^"]*)"$`, tc.assertFocusIn)
 	ctx.Step(`^I press Shift\+Enter$`, tc.pressShiftEnter)
 	ctx.Step(`^I clear the "([^"]*)" field$`, tc.clearField)
 
@@ -259,6 +262,18 @@ func registerFrontendSteps(ctx *godog.ScenarioContext, tc *TestContext) {
 	ctx.Step(`^I drag layout tab "([^"]*)" onto layout tab "([^"]*)"$`, tc.dragLayoutTab)
 	ctx.Step(`^the layout tabs should be in order "([^"]*)"$`, tc.assertLayoutTabOrder)
 	ctx.Step(`^I scroll the chat messages to bottom$`, tc.scrollChatMessagesToBottom)
+	ctx.Step(`^I open the Learn view and nothing behind it scrolls$`, tc.openLearnViewSteady)
+	ctx.Step(`^the Learn view shows the chat and the Learn pane side by side$`, tc.waitLearnViewSettled)
+	ctx.Step(`^I scroll the chat (halfway|to the bottom) and note where it is$`, tc.scrollChatAndNote)
+	ctx.Step(`^I click on "([^"]*)" watching the chat's scroll$`, tc.clickWatchingChatScroll)
+	ctx.Step(`^the chat is still scrolled where I noted$`, tc.assertChatScrollKept)
+	ctx.Step(`^I drag the divider after the chat pane by (-?\d+)px$`, tc.dragChatPaneDivider)
+	ctx.Step(`^I tag the chat's composer$`, tc.tagChatComposer)
+	ctx.Step(`^the Learn dock sits right of the chat's tile, the same size$`, tc.waitLearnDockBesideChat)
+	ctx.Step(`^I note where the chat's tile is$`, tc.noteChatTile)
+	ctx.Step(`^I drag the Learn dock's header by (-?\d+)px, (-?\d+)px$`, tc.dragLearnDockHeader)
+	ctx.Step(`^the chat's tile moved by (-?\d+)px, (-?\d+)px$`, tc.assertChatTileMoved)
+	ctx.Step(`^the composer in "([^"]*)" is the one I tagged$`, tc.assertTaggedComposer)
 	ctx.Step(`^I scroll the chat messages to top$`, tc.scrollChatMessagesToTop)
 	ctx.Step(`^I serve a chat history of (\d+) messages from the timeline$`, tc.serveChatHistory)
 	ctx.Step(`^I scroll the chat to the top and note the first message$`, tc.scrollChatToTopNotingFirst)
@@ -284,6 +299,7 @@ func registerFrontendSteps(ctx *godog.ScenarioContext, tc *TestContext) {
 	ctx.Step(`^I inject an exit_plan event with plan "([^"]*)"$`, tc.injectExitPlanEvent)
 	ctx.Step(`^I inject an ask_user event with question "([^"]*)" and options "([^"]*)"$`, tc.injectAskUserEvent)
 	ctx.Step(`^I inject an agent\.status running event$`, tc.injectAgentStatusRunning)
+	ctx.Step(`^I inject a "([^"]*)" event for (the channel|the learn thread) with data:$`, tc.injectEventWithData)
 	ctx.Step(`^I inject an agent\.status running event for the worktree thread$`, tc.injectAgentStatusRunningForWorktree)
 	ctx.Step(`^I inject an agent\.status running event for the last created thread$`, tc.injectAgentStatusRunningForLastThread)
 	ctx.Step(`^I inject a gate\.approval_requested event with req_id "([^"]*)", source "([^"]*)", and target "([^"]*)"$`, tc.injectGateApprovalRequested)
@@ -1289,6 +1305,23 @@ func (tc *TestContext) pressEscape() error {
 	return chromedp.Run(tc.chromeTab.ctx, chromedp.KeyEvent("\x1b"))
 }
 
+// assertFocusIn checks the focused element matches selector.
+func (tc *TestContext) assertFocusIn(selector string) error {
+	var focused string
+	js := fmt.Sprintf(`(() => {
+		const el = document.activeElement;
+		if (el && el.matches(%q)) return '';
+		return el ? el.outerHTML.slice(0, 120) : 'nothing';
+	})()`, selector)
+	if err := chromedp.Run(tc.chromeTab.ctx, chromedp.Evaluate(js, &focused)); err != nil {
+		return err
+	}
+	if focused != "" {
+		return fmt.Errorf("focus isn't in %s but in %s", selector, focused)
+	}
+	return nil
+}
+
 // clearField selects a field's text and deletes it with a key press, so the
 // page sees the edit the way it would a user's.
 func (tc *TestContext) clearField(selector string) error {
@@ -2055,6 +2088,321 @@ func (tc *TestContext) scrollChatMessagesToBottom() error {
 	return nil
 }
 
+// dragChatPaneDivider drags the split divider on the chat pane's right by
+// dx pixels, resizing the chat pane.
+func (tc *TestContext) dragChatPaneDivider(dx int) error {
+	var at []float64
+	js := `(() => {
+		const slot = document.querySelector("[data-learn-chat-leaf]");
+		if (!slot) return [];
+		let box = slot;
+		while (box && !(box.nextElementSibling && getComputedStyle(box.nextElementSibling).cursor === 'col-resize')) box = box.parentElement;
+		if (!box) return [];
+		const r = box.nextElementSibling.getBoundingClientRect();
+		return [r.left + r.width / 2, r.top + r.height / 2];
+	})()`
+	if err := chromedp.Run(tc.chromeTab.ctx, chromedp.Evaluate(js, &at)); err != nil {
+		return err
+	}
+	if len(at) != 2 {
+		return fmt.Errorf("no divider on the chat pane's right")
+	}
+	x, y := at[0], at[1]
+	return chromedp.Run(tc.chromeTab.ctx,
+		chromedp.MouseEvent(input.MouseMoved, x, y),
+		chromedp.MouseEvent(input.MousePressed, x, y, chromedp.ButtonLeft),
+		chromedp.MouseEvent(input.MouseMoved, x+float64(dx)/2, y, chromedp.ButtonLeft),
+		chromedp.MouseEvent(input.MouseMoved, x+float64(dx), y, chromedp.ButtonLeft),
+		chromedp.MouseEvent(input.MouseReleased, x+float64(dx), y, chromedp.ButtonLeft),
+	)
+}
+
+// scrollChatAndNote scrolls the chat's messages halfway (away from both
+// ends: the chat pins itself to the bottom, and pages in more at the top) or
+// to the bottom, and notes the scroller and the message at its top for
+// assertChatScrollKept.
+func (tc *TestContext) scrollChatAndNote(where string) error {
+	js := fmt.Sprintf(`(() => {
+		const t = document.querySelector("[data-learn-chat-leaf] textarea");
+		if (!t) return 'no chat composer';
+		const bubble = t.closest("[data-learn-chat-leaf]").querySelector('[data-msg-uuid]');
+		if (!bubble) return 'no message bubble';
+		let el = bubble.parentElement;
+		while (el && getComputedStyle(el).overflowY !== 'auto') el = el.parentElement;
+		if (!el) return 'no scroll container';
+		if (el.scrollHeight - el.clientHeight < 3 * el.clientHeight) return 'too few messages to scroll';
+		const max = el.scrollHeight - el.clientHeight;
+		el.scrollTop = %q === 'halfway' ? Math.round(max / 2) : max;
+		el.dispatchEvent(new Event('scroll'));
+		// The message across the view's top edge: away from the bottom, the
+		// same one should be there however the messages wrap.
+		const edge = el.getBoundingClientRect().top;
+		const msg = Array.from(el.querySelectorAll('[data-msg-uuid]')).find((m) => m.getBoundingClientRect().bottom > edge);
+		window.__chatScroll = { el, msg, bottom: %q !== 'halfway' };
+		return 'ok';
+	})()`, where, where)
+	var result string
+	if err := chromedp.Run(tc.chromeTab.ctx, chromedp.Evaluate(js, &result)); err != nil {
+		return err
+	}
+	if result != "ok" {
+		return fmt.Errorf("scrollChatAndNote: %s", result)
+	}
+	return nil
+}
+
+// clickWatchingChatScroll clicks selector and, for every frame until the
+// click's effects (and any animation) are over, checks the scroller
+// scrollChatAndNote noted is where it was: a frame showing it elsewhere is a
+// visible jump, even if something scrolls it back after.
+func (tc *TestContext) clickWatchingChatScroll(selector string) error {
+	arm := `(() => {
+		const s = window.__chatScroll;
+		if (!s) return 'nothing noted';
+		s.jumps = [];
+		// At the bottom it stays at the bottom, however the messages wrap;
+		// elsewhere, the same message stays across the view's top edge.
+		s.kept = () => {
+			if (s.bottom) return s.el.scrollHeight - s.el.scrollTop - s.el.clientHeight <= 1;
+			const edge = s.el.getBoundingClientRect().top, r = s.msg.getBoundingClientRect();
+			return r.top <= edge + 1 && r.bottom > edge;
+		};
+		const t0 = performance.now();
+		const tick = () => {
+			if (!s.kept()) s.jumps.push(Math.round(performance.now() - t0) + 'ms: ' + s.el.scrollTop + ' of ' + (s.el.scrollHeight - s.el.clientHeight));
+			if (performance.now() - t0 < 800) requestAnimationFrame(tick);
+		};
+		requestAnimationFrame(tick);
+		return 'ok';
+	})()`
+	var armed string
+	if err := chromedp.Run(tc.chromeTab.ctx, chromedp.Evaluate(arm, &armed)); err != nil {
+		return err
+	}
+	if armed != "ok" {
+		return fmt.Errorf("clickWatchingChatScroll: %s", armed)
+	}
+	if err := tc.clickOn(selector); err != nil {
+		return err
+	}
+	return chromedp.Run(tc.chromeTab.ctx, chromedp.Sleep(900*time.Millisecond))
+}
+
+// assertChatScrollKept checks the scroller scrollChatAndNote noted is still
+// in the page, scrolled where it was, and that clickWatchingChatScroll saw
+// no frame with it anywhere else.
+func (tc *TestContext) assertChatScrollKept() error {
+	var result string
+	js := `(() => {
+		const s = window.__chatScroll;
+		if (!s) return 'nothing noted';
+		if (!s.el.isConnected) return 'the scroller left the page';
+		if (s.jumps && s.jumps.length) return 'frames showed it scrolled elsewhere: ' + s.jumps.slice(0, 5).join(', ');
+		return s.kept() ? 'ok' : 'scrolled to ' + s.el.scrollTop + ' of ' + (s.el.scrollHeight - s.el.clientHeight) + (s.bottom ? ', not the bottom' : ', away from the message noted at the top');
+	})()`
+	if err := chromedp.Run(tc.chromeTab.ctx, chromedp.Evaluate(js, &result)); err != nil {
+		return err
+	}
+	if result != "ok" {
+		return fmt.Errorf("the chat didn't keep its scroll: %s", result)
+	}
+	return nil
+}
+
+// chatTileJS finds the box of the canvas tile holding the chat, as a JS
+// expression: the first child of its [data-canvas-tile] wrapper, which has
+// no size of its own.
+const chatTileJS = `document.querySelector("[data-learn-chat-leaf]")?.closest("[data-canvas-tile]")?.firstElementChild`
+
+// waitLearnDockBesideChat waits until the Learn dock on a canvas sits just
+// right of the chat's tile, top-aligned and the same size, with the logo on
+// the seam between them.
+func (tc *TestContext) waitLearnDockBesideChat() error {
+	js := `(() => {
+		const tile = ` + chatTileJS + `;
+		const dock = document.querySelector("[data-testid='canvas-learn-dock']");
+		const logo = document.querySelector("[data-testid='canvas-learn-dock-logo']");
+		if (!tile || !dock || !logo) return 'missing: ' + [!tile && 'chat tile', !dock && 'dock', !logo && 'logo'].filter(Boolean).join(', ');
+		if (getComputedStyle(dock).opacity !== '1') return 'still fading in';
+		const t = tile.getBoundingClientRect(), d = dock.getBoundingClientRect(), l = logo.getBoundingClientRect();
+		const near = (a, b) => Math.abs(a - b) <= 1;
+		const gap = d.left - t.right;
+		if (!(gap > 0 && gap < 40)) return 'gap between tile and dock is ' + gap;
+		if (!near(d.top, t.top) || !near(d.width, t.width) || !near(d.height, t.height)) return 'tile ' + JSON.stringify(t) + ' vs dock ' + JSON.stringify(d);
+		const lx = l.left + l.width / 2, ly = l.top + l.height / 2;
+		if (!near(lx, (t.right + d.left) / 2) || !near(ly, t.top + t.height / 2)) return 'logo off the seam at ' + lx + ',' + ly;
+		return 'ok';
+	})()`
+	var result string
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		if err := chromedp.Run(tc.chromeTab.ctx, chromedp.Evaluate(js, &result)); err != nil {
+			return err
+		}
+		if result == "ok" {
+			return nil
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf("the Learn dock isn't beside the chat's tile: %s", result)
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+}
+
+// noteChatTile notes where the chat's tile is on screen, for
+// assertChatTileMoved.
+func (tc *TestContext) noteChatTile() error {
+	var ok bool
+	js := `(() => { const t = ` + chatTileJS + `; if (!t) return false; const r = t.getBoundingClientRect(); window.__chatTileAt = [r.left, r.top]; return true; })()`
+	if err := chromedp.Run(tc.chromeTab.ctx, chromedp.Evaluate(js, &ok)); err != nil {
+		return err
+	}
+	if !ok {
+		return fmt.Errorf("no chat tile on the canvas")
+	}
+	return nil
+}
+
+// dragLearnDockHeader drags the Learn dock by its header, from a point on
+// the header clear of its buttons, by dx, dy screen pixels.
+func (tc *TestContext) dragLearnDockHeader(dx, dy int) error {
+	var at []float64
+	js := `(() => {
+		const h = document.querySelector("[data-testid='canvas-learn-dock'] [data-learn-pane-header]");
+		if (!h) return [];
+		const r = h.getBoundingClientRect();
+		const y = r.top + r.height / 2;
+		for (let x = r.left + 4; x < r.right; x += 4) {
+			const el = document.elementFromPoint(x, y);
+			if (el && h.contains(el) && !el.closest('button')) return [x, y];
+		}
+		return [];
+	})()`
+	if err := chromedp.Run(tc.chromeTab.ctx, chromedp.Evaluate(js, &at)); err != nil {
+		return err
+	}
+	if len(at) != 2 {
+		return fmt.Errorf("no spot on the Learn dock's header to drag")
+	}
+	x, y := at[0], at[1]
+	fx, fy := float64(dx), float64(dy)
+	return chromedp.Run(tc.chromeTab.ctx,
+		chromedp.MouseEvent(input.MouseMoved, x, y),
+		chromedp.MouseEvent(input.MousePressed, x, y, chromedp.ButtonLeft),
+		chromedp.MouseEvent(input.MouseMoved, x+fx/2, y+fy/2, chromedp.ButtonLeft),
+		chromedp.MouseEvent(input.MouseMoved, x+fx, y+fy, chromedp.ButtonLeft),
+		chromedp.MouseEvent(input.MouseReleased, x+fx, y+fy, chromedp.ButtonLeft),
+	)
+}
+
+// assertChatTileMoved checks the chat's tile moved by dx, dy screen pixels
+// from where noteChatTile noted it.
+func (tc *TestContext) assertChatTileMoved(dx, dy int) error {
+	var result string
+	js := fmt.Sprintf(`(() => {
+		const t = `+chatTileJS+`, at = window.__chatTileAt;
+		if (!t || !at) return 'nothing noted';
+		const r = t.getBoundingClientRect(), mx = r.left - at[0], my = r.top - at[1];
+		return Math.abs(mx - %d) <= 1 && Math.abs(my - %d) <= 1 ? 'ok' : 'moved by ' + mx + ', ' + my;
+	})()`, dx, dy)
+	if err := chromedp.Run(tc.chromeTab.ctx, chromedp.Evaluate(js, &result)); err != nil {
+		return err
+	}
+	if result != "ok" {
+		return fmt.Errorf("the chat's tile didn't move by %d, %d: %s", dx, dy, result)
+	}
+	return nil
+}
+
+// tagChatComposer marks the chat's composer element, so a later step can
+// tell it's still the same element (the chat wasn't mounted again).
+func (tc *TestContext) tagChatComposer() error {
+	var ok bool
+	js := `(() => { const t = document.querySelector("[data-learn-chat-leaf] textarea"); if (!t) return false; t.__learnTag = true; return true; })()`
+	if err := chromedp.Run(tc.chromeTab.ctx, chromedp.Evaluate(js, &ok)); err != nil {
+		return err
+	}
+	if !ok {
+		return fmt.Errorf("no chat composer to tag")
+	}
+	return nil
+}
+
+// assertTaggedComposer checks the composer inside selector is the element
+// tagChatComposer marked.
+func (tc *TestContext) assertTaggedComposer(selector string) error {
+	var state string
+	js := fmt.Sprintf(`(() => { const t = document.querySelector(%q + " textarea"); return !t ? "missing" : t.__learnTag ? "tagged" : "new"; })()`, selector)
+	if err := chromedp.Run(tc.chromeTab.ctx, chromedp.Evaluate(js, &state)); err != nil {
+		return err
+	}
+	if state != "tagged" {
+		return fmt.Errorf("composer in %s is %s, not the tagged one (the chat was mounted again)", selector, state)
+	}
+	return nil
+}
+
+// waitLearnViewSettled waits until the Learn view is laid out: the chat
+// fills its left half and the Learn pane its right half, each full height,
+// with nothing covering them.
+func (tc *TestContext) waitLearnViewSettled() error {
+	js := `(() => {
+		const view = document.querySelector("[data-testid='learn-split']");
+		const chat = document.querySelector("[data-testid='learn-split-chat']");
+		const learn = document.querySelector("[data-testid='learn-pane']");
+		if (!view || !chat || !learn) return false;
+		const v = view.getBoundingClientRect(), c = chat.getBoundingClientRect(), l = learn.parentElement.getBoundingClientRect();
+		const near = (a, b) => Math.abs(a - b) <= 1;
+		if (!near(c.left, v.left) || !near(l.right, v.right) || !near(c.top, v.top) || !near(l.top, v.top)) return false;
+		if (!near(c.bottom, v.bottom) || !near(l.bottom, v.bottom) || !near(c.width, l.width) || c.right > l.left) return false;
+		const inside = (el, r) => el.contains(document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2));
+		return inside(chat, c) && inside(learn.parentElement, l);
+	})()`
+	ctx, cancel := context.WithTimeout(tc.chromeTab.ctx, 5*time.Second)
+	defer cancel()
+	return chromedp.Run(ctx, chromedp.Poll(js, nil, chromedp.WithPollingInterval(50*time.Millisecond)))
+}
+
+// openLearnViewSteady clicks the Learn badge and watches the layout while the
+// Learn view opens: nothing holding its panes (the document, the layout) may
+// scroll as their composers mount and focus, or the whole layout jumps.
+func (tc *TestContext) openLearnViewSteady() error {
+	arm := `(() => {
+		const log = [];
+		window.__learnShift = log;
+		const onScroll = (e) => {
+			const t = e.target === document ? document.scrollingElement : e.target;
+			const view = document.querySelector("[data-testid='learn-split']");
+			if (e.target !== document && !(view && t.contains(view))) return;
+			if (t.scrollLeft || t.scrollTop) log.push('scrolled by ' + t.scrollLeft + ',' + t.scrollTop + 'px: ' + (e.target === document ? 'document' : t.outerHTML.slice(0, 120)));
+		};
+		document.addEventListener('scroll', onScroll, true);
+		setTimeout(() => document.removeEventListener('scroll', onScroll, true), 800);
+		return 'ok';
+	})()`
+	var armed string
+	if err := chromedp.Run(tc.chromeTab.ctx, chromedp.Evaluate(arm, &armed)); err != nil {
+		return err
+	}
+	if armed != "ok" {
+		return fmt.Errorf("openLearnViewSteady: %s", armed)
+	}
+	if err := tc.clickOn("[data-testid='learn-badge']"); err != nil {
+		return err
+	}
+	var shifts []string
+	if err := chromedp.Run(tc.chromeTab.ctx,
+		chromedp.Sleep(900*time.Millisecond),
+		chromedp.Evaluate(`window.__learnShift`, &shifts),
+	); err != nil {
+		return err
+	}
+	if len(shifts) > 0 {
+		return fmt.Errorf("the layout scrolled while the Learn view opened: %s", strings.Join(shifts, "; "))
+	}
+	return nil
+}
+
 func (tc *TestContext) scrollChatMessagesToTop() error {
 	js := `(() => {
 		const bubble = document.querySelector('[data-msg-uuid]');
@@ -2557,6 +2905,43 @@ func (tc *TestContext) injectAgentStatusRunningFor(channelID string) error {
 	return tc.dispatchTestEvents(payload)
 }
 
+// injectEventWithData fires a synthetic WS event of the given type into the
+// chat store, addressed to the current channel or its seeded learn thread.
+// The data doc string is the event's JSON data; {placeholders} such as
+// {learn_channel_id} are resolved first.
+var nowAgoPlaceholder = regexp.MustCompile(`\{now-(\d+)s\}`)
+
+func (tc *TestContext) injectEventWithData(eventType, target string, data *godog.DocString) error {
+	channelID := tc.ChannelID
+	if target == "the learn thread" {
+		channelID = tc.LearnChannelID
+	}
+	if channelID == "" {
+		return fmt.Errorf("no id for %s; set up the channel (and its learn thread) first", target)
+	}
+	if err := tc.ensureChromeTab(); err != nil {
+		return err
+	}
+	// {now-Ns}: the time N seconds ago, for data that says when it happened.
+	content := nowAgoPlaceholder.ReplaceAllStringFunc(data.Content, func(m string) string {
+		secs, _ := strconv.Atoi(nowAgoPlaceholder.FindStringSubmatch(m)[1])
+		return time.Now().Add(-time.Duration(secs) * time.Second).UTC().Format(time.RFC3339Nano)
+	})
+	var d any
+	if err := json.Unmarshal([]byte(tc.resolvePlaceholders(content)), &d); err != nil {
+		return fmt.Errorf("parsing %s event data: %w", eventType, err)
+	}
+	payload, err := json.Marshal(map[string]any{
+		"type":       eventType,
+		"channel_id": channelID,
+		"data":       d,
+	})
+	if err != nil {
+		return fmt.Errorf("marshalling %s payload: %w", eventType, err)
+	}
+	return tc.dispatchTestEvents(payload)
+}
+
 // injectChannelID returns the channel to address synthetic gate events to:
 // the per-scenario API channel when set, else the shared sample-project
 // channel (the @docs walkthrough deliberately leaves tc.ChannelID unset so
@@ -2765,6 +3150,19 @@ func (tc *TestContext) waitForElementHeight(selector string, minPx int) error {
 		var h float64
 		_ = chromedp.Run(tc.chromeTab.ctx, chromedp.Evaluate(fmt.Sprintf(`document.querySelector(%q)?.getBoundingClientRect().height ?? -1`, selector), &h))
 		return fmt.Errorf("element %q is %.0fpx tall, want at least %dpx: %w", selector, h, minPx, err)
+	}
+	return nil
+}
+
+// waitForElementMaxHeight is waitForElementHeight's counterpart: it waits
+// until the element is no taller than maxPx (e.g. the composer shrinking back
+// after a send).
+func (tc *TestContext) waitForElementMaxHeight(selector string, maxPx int) error {
+	js := fmt.Sprintf(`(() => { const el = document.querySelector(%q); return !!el && el.getBoundingClientRect().height <= %d; })()`, selector, maxPx)
+	if err := chromedp.Run(tc.chromeTab.ctx, chromedp.Poll(js, nil, chromedp.WithPollingTimeout(15*time.Second))); err != nil {
+		var h float64
+		_ = chromedp.Run(tc.chromeTab.ctx, chromedp.Evaluate(fmt.Sprintf(`document.querySelector(%q)?.getBoundingClientRect().height ?? -1`, selector), &h))
+		return fmt.Errorf("element %q is %.0fpx tall, want at most %dpx: %w", selector, h, maxPx, err)
 	}
 	return nil
 }

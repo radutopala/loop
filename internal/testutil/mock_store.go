@@ -53,8 +53,9 @@ func (m *MockStore) UpdateSessionID(ctx context.Context, channelID string, sessi
 	return m.Called(ctx, channelID, sessionID).Error(0)
 }
 
-func (m *MockStore) MarkSessionForkPending(ctx context.Context, channelID string, sessionID string) error {
-	return m.Called(ctx, channelID, sessionID).Error(0)
+func (m *MockStore) MarkSessionForkPending(ctx context.Context, channelID string, sessionID string) (bool, error) {
+	args := m.Called(ctx, channelID, sessionID)
+	return args.Bool(0), args.Error(1)
 }
 
 func (m *MockStore) UpdateChannelAgentOverrides(ctx context.Context, channelID, model, effort string) error {
@@ -478,4 +479,45 @@ func (m *MockStore) GetTimeline(ctx context.Context, channelID string, cursorPos
 		return nil, args.Error(1)
 	}
 	return args.Get(0).([]*db.Message), args.Error(1)
+}
+
+func (m *MockStore) UpdateChannelLearnOverride(ctx context.Context, channelID, value string) error {
+	return m.Called(ctx, channelID, value).Error(0)
+}
+
+func (m *MockStore) GetLearnChannel(ctx context.Context, parentID string) (*db.Channel, error) {
+	args := m.Called(ctx, parentID)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*db.Channel), args.Error(1)
+}
+
+func (m *MockStore) InsertLearnChannel(ctx context.Context, ch *db.Channel) error {
+	return m.Called(ctx, ch).Error(0)
+}
+
+func (m *MockStore) InsertLearnProposals(ctx context.Context, proposals []*db.LearnProposal) error {
+	return m.Called(ctx, proposals).Error(0)
+}
+
+func (m *MockStore) ListLearnProposals(ctx context.Context, channelID string) ([]*db.LearnProposal, error) {
+	args := m.Called(ctx, channelID)
+	v, _ := args.Get(0).([]*db.LearnProposal)
+	return v, args.Error(1)
+}
+
+func (m *MockStore) GetLearnProposal(ctx context.Context, id int64) (*db.LearnProposal, error) {
+	args := m.Called(ctx, id)
+	v, _ := args.Get(0).(*db.LearnProposal)
+	return v, args.Error(1)
+}
+
+func (m *MockStore) ClaimLearnProposal(ctx context.Context, id int64) (bool, error) {
+	args := m.Called(ctx, id)
+	return args.Bool(0), args.Error(1)
+}
+
+func (m *MockStore) SetLearnProposalStatus(ctx context.Context, id int64, status, errText string) error {
+	return m.Called(ctx, id, status, errText).Error(0)
 }

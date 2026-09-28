@@ -9,6 +9,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/spf13/cobra"
 
+	"github.com/radutopala/loop/internal/learn"
 	"github.com/radutopala/loop/internal/logging"
 	"github.com/radutopala/loop/internal/mcpserver"
 )
@@ -81,7 +82,14 @@ func (a *app) runMCP(channelID, apiURL, dirPath, logPath, authorID, platform, ag
 	if memoryEnabled || (cfgErr == nil && cfg.Memory.Enabled) {
 		memOpts = append(memOpts, mcpserver.WithMemoryAPI(dirPath))
 	}
-	if agentID != "" {
+	switch agentID {
+	case "":
+	case learn.AgentID:
+		// A learn pass files proposals, and gets none of the inter-agent
+		// tools or channel push: it works alone, and other agents shouldn't
+		// see or message it.
+		memOpts = append(memOpts, mcpserver.WithLearnTools())
+	default:
 		memOpts = append(memOpts, mcpserver.WithAgentTools(agentID))
 	}
 	memOpts = append(memOpts, mcpserver.WithWorkflowAPI())

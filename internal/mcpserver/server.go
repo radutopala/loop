@@ -26,6 +26,7 @@ type Server struct {
 	dirPath          string
 	memoryEnabled    bool
 	workflowsEnabled bool
+	learnTools       bool
 	mcpServer        *mcp.Server
 	httpClient       HTTPClient
 	logger           *slog.Logger
@@ -298,6 +299,10 @@ func New(channelID, apiURL, authorID string, httpClient HTTPClient, logger *slog
 	}
 
 	s.registerReviewTools()
+
+	if s.learnTools {
+		s.registerLearnTools()
+	}
 
 	// Register agent tools after mcpServer is created.
 	if s.agentID != "" {

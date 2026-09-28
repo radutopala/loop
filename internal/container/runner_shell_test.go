@@ -801,6 +801,8 @@ func (s *RunnerSuite) TestBuildClaudeCmdReviewMode() {
 	require.NotContains(s.T(), got, "ReportFindings")
 	require.Contains(s.T(), got, "--disallowedTools ScheduleWakeup,CronCreate,CronDelete,CronList,Monitor")
 	require.Equal(s.T(), disallowed, cfg.ClaudeBatchDisallowedTools)
+	// Only a learn run narrows the built-in tools.
+	require.NotContains(s.T(), cmd, "--tools")
 
 	// --settings, not container env: settings scopes are assigned over
 	// process.env in the order userSettings → flagSettings, so a bind-mounted
@@ -821,6 +823,37 @@ func (s *RunnerSuite) TestBuildClaudeCmdReviewMode() {
 	// The flag must precede --print: --disallowedTools is variadic and would
 	// otherwise swallow it.
 	require.Less(s.T(), i, slices.Index(cmd, "--print"))
+}
+
+// TestBuildClaudeCmdLearnMode verifies a learn run adds its denials after the
+// batch ones and leaves the shared config untouched.
+func (s *RunnerSuite) TestBuildClaudeCmdLearnMode() {
+	disallowed := config.DefaultBatchDisallowedTools()
+	cfg := &config.Config{ClaudeBinPath: "claude", ClaudeBatchDisallowedTools: disallowed}
+	req := &agent.AgentRequest{
+		ChannelID: "ch-1",
+		Messages:  []agent.AgentMessage{{Role: "user", Content: "learn"}},
+		LearnMode: true,
+	}
+
+	cmd := buildClaudeCmd(cfg, "/work/.loop/mcp-ch-1.json", req)
+	i := slices.Index(cmd, "--disallowedTools")
+	require.NotEqual(s.T(), -1, i)
+	require.Equal(s.T(), strings.Join(slices.Concat(disallowed, learnModeDisallowedTools), ","), cmd[i+1])
+	require.Contains(s.T(), cmd[i+1], "mcp__loop__prompt_shortcut")
+	// quality_scan writes a snapshot row; quality_snapshot only reads one.
+	require.Contains(s.T(), strings.Split(cmd[i+1], ","), "mcp__loop__quality_scan")
+	require.NotContains(s.T(), strings.Split(cmd[i+1], ","), "mcp__loop__quality_snapshot")
+	require.NotContains(s.T(), cmd, "--settings")
+	require.Equal(s.T(), config.DefaultBatchDisallowedTools(), cfg.ClaudeBatchDisallowedTools)
+
+	// The built-in tools are an allowlist: only the read-only ones. The flag
+	// is variadic, so it must precede another flag rather than the prompt.
+	t := slices.Index(cmd, "--tools")
+	require.NotEqual(s.T(), -1, t)
+	require.Equal(s.T(), "Read,Grep,Glob,TodoWrite,ToolSearch", cmd[t+1])
+	require.True(s.T(), strings.HasPrefix(cmd[t+2], "--"))
+	require.Less(s.T(), t, slices.Index(cmd, "--print"))
 }
 
 func (s *RunnerSuite) TestBuildClaudeCmdPermissionPromptTool() {
@@ -949,21 +982,29 @@ func (s *RunnerSuite) TestClaudeCmdBuilder() {
 }
 
 func (s *RunnerSuite) TestClaudeCmdBuilderBuildContinueCmd() {
-	cfg := &config.Config{
-		ClaudeBinPath: "claude",
-		LoopDir:       "/home/user/.loop",
+	const prefix = "CLAUDE_CODE_NO_FLICKER=1 claude --mcp-config /projects/myapp/.loop/mcp-ch-1.json --dangerously-skip-permissions"
+	tests := []struct {
+		name       string
+		sessionID  string
+		transcript bool
+		want       string
+	}{
+		{name: "known session", sessionID: "sess-1", transcript: true, want: prefix + " --resume sess-1" + claudeExitTrailer},
+		{name: "known session without transcript", sessionID: "sess-1", want: prefix + " --continue" + claudeExitTrailer},
+		{name: "unknown session", transcript: true, want: prefix + " --continue" + claudeExitTrailer},
 	}
-	builder := NewClaudeCmdBuilder(cfg, nil)
-	got := builder.BuildContinueCmd("ch-1", "/projects/myapp", "", "")
-
-	// --continue is used, never --resume/--fork-session, regardless of any
-	// stored channel session id (BuildContinueCmd never looks one up).
-	require.Contains(s.T(), got, "--continue")
-	require.NotContains(s.T(), got, "--resume")
-	require.NotContains(s.T(), got, "--fork-session")
-
-	expectedMCP := "/projects/myapp/.loop/mcp-ch-1.json"
-	require.Equal(s.T(), "CLAUDE_CODE_NO_FLICKER=1 claude --mcp-config "+expectedMCP+" --dangerously-skip-permissions --continue"+claudeExitTrailer, got)
+	for _, tc := range tests {
+		s.Run(tc.name, func() {
+			builder := NewClaudeCmdBuilder(&config.Config{ClaudeBinPath: "claude", LoopDir: "/home/user/.loop"}, nil)
+			builder.transcriptMissing = func(workDir, sessionID string) bool {
+				require.Equal(s.T(), "/projects/myapp", workDir)
+				return !tc.transcript
+			}
+			got := builder.BuildContinueCmd("ch-1", "/projects/myapp", "", tc.sessionID, "")
+			require.Equal(s.T(), tc.want, got)
+			require.NotContains(s.T(), got, "--fork-session")
+		})
+	}
 }
 
 func (s *RunnerSuite) TestBuildBaseClaudeCmdContinueSessionIgnoresSessionID() {

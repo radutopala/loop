@@ -21,3 +21,47 @@ export function shouldForwardToChatListeners(eventType: string, stateTarget: str
   if (eventType.startsWith("workflow.")) return true;
   return stateTarget !== "" && stateTarget === selectedId;
 }
+
+/**
+ * The channels the WS should be subscribed to: the selected one, every one
+ * with a run in flight, and every one a panel watches through
+ * `subscribeChannelEvents` (e.g. the Learn view's hidden learn thread,
+ * which is never selected). Sorted, so equal sets give equal keys.
+ */
+export function subscriptionChannels(selectedId: string | null | undefined, running: Iterable<string>, watched: Iterable<string>): string[] {
+  const set = new Set<string>();
+  if (selectedId) set.add(selectedId);
+  for (const id of running) set.add(id);
+  for (const id of watched) set.add(id);
+  return [...set].sort();
+}
+
+/**
+ * Whether a run ran in a channel's hidden learn thread: a learn pass
+ * ("learn"), or a reply the user asked the thread for in the Learn view
+ * ("learn-reply").
+ */
+function isLearnTrigger(trigger: string | undefined): boolean {
+  return trigger === "learn" || trigger === "learn-reply";
+}
+
+/**
+ * Whether a finished run should mark its channel unread and post a desktop
+ * notification. The learn thread is hidden: the user can't open it from the
+ * sidebar, and a reply there shows in the open Learn view; a pass's
+ * proposals surface through the Learn badge instead.
+ */
+export function alertsOnRunEnd(trigger: string | undefined): boolean {
+  return !isLearnTrigger(trigger);
+}
+
+/**
+ * Whether a finished run should bounce the dock. Only runs the user started
+ * do: scheduled tasks fire often, "bot" runs are indirect chains (an agent
+ * re-entering via the send_message / create_thread MCP tools), learn
+ * passes are background reviews and learn-thread replies answer in the
+ * Learn view the user is looking at.
+ */
+export function bouncesOnRunEnd(trigger: string | undefined): boolean {
+  return trigger !== "scheduled" && trigger !== "bot" && !isLearnTrigger(trigger);
+}

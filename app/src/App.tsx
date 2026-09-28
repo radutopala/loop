@@ -335,13 +335,27 @@ function AppInner() {
   // Single app-level WS that subscribes to the selected channel + all running
   // channels. Replaces the previous dual-WS approach (one in App, one in
   // WorkspaceLayout). Chat state is persisted in the store across switches.
-  const { getState, saveState, isRunningMapRef, unreadIdsRef, pillsRef, unreadCount, markRead, markAllRead, registerReviewView, clearAskUserPill, clearPlanPill, subscribeChatEvents } =
-    useChatStateStore({
-      channels,
-      channelsFetchedAt,
-      selectedId,
-      onAppEvent,
-    });
+  const {
+    getState,
+    saveState,
+    isRunningMapRef,
+    unreadIdsRef,
+    pillsRef,
+    unreadCount,
+    markRead,
+    markAllRead,
+    registerReviewView,
+    clearAskUserPill,
+    clearPlanPill,
+    subscribeChatEvents,
+    subscribeChannelEvents,
+    wsOpens,
+  } = useChatStateStore({
+    channels,
+    channelsFetchedAt,
+    selectedId,
+    onAppEvent,
+  });
 
   const handleChatStateUnmount = useCallback((channelId: string, state: ActiveChatState) => saveState(channelId, state), [saveState]);
 
@@ -742,7 +756,10 @@ function AppInner() {
             onSelectThread={handleSelect}
             initialChatState={selectedId ? getState(selectedId) : undefined}
             onChatStateUnmount={handleChatStateUnmount}
+            getChatState={getState}
             subscribeChatEvents={subscribeChatEvents}
+            subscribeChannelEvents={subscribeChannelEvents}
+            wsOpens={wsOpens}
             registerReviewView={registerReviewView}
             clearAskUserPill={clearAskUserPill}
             clearPlanPill={clearPlanPill}

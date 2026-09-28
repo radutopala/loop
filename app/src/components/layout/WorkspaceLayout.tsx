@@ -1,12 +1,16 @@
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { killAgentContainer } from "../../api/loopApi";
 import { CanvasLayout } from "../../canvas/CanvasLayout";
 import type { CanvasNode } from "../../canvas/types";
+import { ShortcutsVersionContext } from "../../hooks/shortcutsVersion";
 import { useAgentRegistry } from "../../hooks/useAgentRegistry";
 import { useChatState } from "../../hooks/useChatState";
 import type { ActiveChatState, ChatEventListener } from "../../hooks/useChatStateStore";
 import { useContainerStats } from "../../hooks/useContainerStats";
 import { useEditorState } from "../../hooks/useEditorState";
+import { LearnContext, useLearn } from "../../hooks/useLearn";
+import { prefersReducedMotion, usePresence } from "../../hooks/usePresence";
 import type { LayoutType } from "../../layouts/persistence";
 import {
   clearLayout,
@@ -25,7 +29,7 @@ import {
 } from "../../layouts/persistence";
 import { EmptyLayoutPicker } from "../../splitPane/AddPanelButton";
 import { PaneLeafHeader } from "../../splitPane/PaneLeafHeader";
-import { SplitPaneLayout } from "../../splitPane/SplitPaneLayout";
+import { paneBoxStyle, SplitPaneLayout } from "../../splitPane/SplitPaneLayout";
 import { canAddPanel, collectLeaves, collectPanelTypes, findLeafById, hasAgentLeaf, leafCount, makeLeaf, moveLeaf, removeLeaf, splitLeaf, swapLeavesInTree, updateFlex } from "../../splitPane/treeOps";
 import type { DropPosition, SplitDirection } from "../../splitPane/types";
 import { useTheme } from "../../ThemeContext";
@@ -36,6 +40,7 @@ import type { AgentOpenMode, LeafNode, PanelType, PaneNode } from "../../types/p
 import { ChatComponentFull, ComponentFocusContext, type ShownComponent } from "../chat/ChatComponent";
 import { ChatView } from "../chat/ChatView";
 import type { FileLinkOpenDetail } from "../chat/FileLink";
+import { LearnBadge } from "../chat/LearnBadge";
 import { AuditPanel } from "../panels/AuditPanel";
 import { BrowserPanel } from "../panels/BrowserPanel";
 import { makePathKey } from "../panels/EditorFileTree";
@@ -53,7 +58,10 @@ import { TasksPanel } from "../panels/TasksPanel";
 import { getCloseForInstance, Terminal } from "../panels/Terminal";
 import { WorkflowsLayoutPanel } from "../panels/WorkflowsLayoutPanel";
 import { ChannelHeaderInfo } from "./ChannelHeaderInfo";
+import { ChatSlot, createChatHost } from "./ChatSlot";
 import { HeaderBranchPicker } from "./HeaderBranchPicker";
+import { LearnPane } from "./LearnPane";
+import { LEARN_SPLIT_MS, LEARN_SPLIT_SLOT_ID, LearnSplit } from "./LearnSplit";
 
 type AgentState = "running" | "stopped" | "none";
 
@@ -224,10 +232,18 @@ interface WorkspaceLayoutProps {
   onSelectThread?: (threadId: string) => void;
   /** Restored chat state from the app-level store. */
   initialChatState?: ActiveChatState;
-  /** Called on unmount with latest chat state for store persistence. */
+  /** Called on unmount with latest chat state for store persistence (the
+   * channel's, or its learn thread's in the Learn view). */
   onChatStateUnmount?: (channelId: string, state: ActiveChatState) => void;
+  /** The app-level store's chat state for a channel, to restore the Learn
+   * view's learn thread (kept up to date while the view is closed). */
+  getChatState?: (channelId: string) => ActiveChatState | undefined;
   /** Subscribe to chat events from the store's single WebSocket. */
   subscribeChatEvents?: (listener: ChatEventListener) => () => void;
+  /** Subscribe to one channel's events whether or not it's selected. */
+  subscribeChannelEvents?: (channelId: string, listener: ChatEventListener) => () => void;
+  /** Bumped on each WS (re)connect, for state to fetch again. */
+  wsOpens?: number;
   /**
    * Register a channel as having its Review panel mounted. Drops the
    * pill immediately and blocks the WS / rehydrate path from relighting
@@ -265,7 +281,10 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
     onSelectThread,
     initialChatState,
     onChatStateUnmount,
+    getChatState,
     subscribeChatEvents,
+    subscribeChannelEvents,
+    wsOpens,
     registerReviewView,
     clearAskUserPill,
     clearPlanPill,
@@ -324,6 +343,20 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
     clearAskUserPill,
     clearPlanPill,
   });
+
+  // The channel's learn pass, shown in the Learn view beside the chat (see chatHost).
+  const learn = useLearn(channelId, subscribeChatEvents, subscribeChannelEvents, wsOpens);
+  const { learnChannelId } = learn;
+  const [learnOpen, setLearnOpen] = useState(false);
+  // It stays mounted until its closing animation ends.
+  const learnMs = prefersReducedMotion() ? 0 : LEARN_SPLIT_MS;
+  const learnSplit = usePresence(learnOpen, learnMs);
+  const learnSplitRef = useRef<HTMLDivElement>(null);
+  // On a canvas the Learn view docks to the chat's tile instead of covering
+  // the layout. Set on opening, so a view closing over a layout switch goes
+  // the way it came.
+  const [learnDocked, setLearnDocked] = useState(false);
+  const learnOverlay = learnSplit.mounted && !learnDocked;
 
   // Editor + file-tree shared state. Hoisted here so both panels (rendered
   // independently inside the layout) stay in sync, and so tab/cursor state
@@ -433,6 +466,8 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
       const lt = ch?.types[name] ?? DEFAULT_LAYOUT_TYPES[name] ?? "split";
       const t = ch?.layouts[name] ?? null;
       statusMapRef.current.clear();
+      // The Learn view holds the chat of the layout it opened over.
+      setLearnOpen(false);
       setActiveName(name);
       setLayoutType(lt);
       if (lt === "canvas") {
@@ -478,8 +513,11 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
   }, [scrollToMessageId, tree, channelId, switchLayout]);
 
   // Auto-switch to a layout with a memory pane when openMemoryFile is set.
+  // The Learn view closes, or the file would open under it.
   useEffect(() => {
-    if (!openMemoryFile || !tree) return;
+    if (!openMemoryFile) return;
+    setLearnOpen(false);
+    if (!tree) return;
     if (collectLeaves(tree).some((l) => l.panel === "memory")) {
       // Memory pane exists, clear the prop after MemoryPanel consumes it.
       setTimeout(() => onOpenMemoryFileComplete?.(), 0);
@@ -506,6 +544,8 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
         name = lt === "canvas" ? `Canvas ${n}` : `Layout ${n}`;
       }
       setLayoutNames((prev) => [...prev, name]);
+      // The Learn view holds the chat of the layout it opened over.
+      setLearnOpen(false);
       setActiveName(name);
       setLayoutType(lt);
       if (lt === "canvas") {
@@ -552,6 +592,7 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
         }
       }
       deleteLayout(channelId, name);
+      if (activeName === name) setLearnOpen(false);
       const remaining = layoutNames.filter((n) => n !== name);
       setLayoutNames(remaining);
       if (activeName === name && remaining.length > 0) {
@@ -692,10 +733,28 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
     const handler = (ev: Event) => {
       const ce = ev as CustomEvent<{ channelId: string; panel: PanelType; anchorPanel?: PanelType }>;
       if (!ce.detail || ce.detail.channelId !== channelId) return;
+      // The panel is in the layout: the Learn view closes to show it.
+      setLearnOpen(false);
       const panel = ce.detail.panel;
       const anchorPanel = ce.detail.anchorPanel;
       const current = treeRef.current;
-      if (current && collectLeaves(current).some((l) => l.panel === panel)) return;
+      const existing = current ? collectLeaves(current).find((l) => l.panel === panel) : undefined;
+      if (existing) {
+        // It may be in the layout yet hidden, minimized or under another
+        // pane maximized (the chat stays mounted there, parked): show it.
+        setMinimizedLeaves((prev) => {
+          if (!prev.has(existing.id)) return prev;
+          const next = new Set(prev);
+          next.delete(existing.id);
+          return next;
+        });
+        const maximized = maximizedLeafIdRef.current;
+        if (maximized && maximized !== existing.id) {
+          setMaximizedLeafId(null);
+          setShownComponent(null);
+        }
+        return;
+      }
       if (!current) {
         handleEmptyAdd(panel);
         return;
@@ -728,10 +787,13 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
   // skips the automatic file-tree sidecar that handleSplitLeaf would
   // attach — opening a file should give the editor alone, not the editor
   // + file tree combo.
+  // The learn thread's FileLinks in the Learn view count too (it shares the channel's roots).
   useEffect(() => {
     const handler = (ev: Event) => {
       const ce = ev as CustomEvent<FileLinkOpenDetail>;
-      if (!ce.detail || ce.detail.channelId !== channelId) return;
+      if (!ce.detail || (ce.detail.channelId !== channelId && (!learnChannelId || ce.detail.channelId !== learnChannelId))) return;
+      // The editor is in the layout: the Learn view closes to show it.
+      setLearnOpen(false);
       const { target, line } = ce.detail;
       const pathKey = makePathKey(target.rootIndex, target.relPath);
 
@@ -755,7 +817,7 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
     };
     window.addEventListener("loop:open-file", handler);
     return () => window.removeEventListener("loop:open-file", handler);
-  }, [channelId, editorState, handleEmptyAdd]);
+  }, [channelId, learnChannelId, editorState, handleEmptyAdd]);
 
   const handleKillAgents = useCallback(() => {
     // Close all agent and shell terminal sessions in the current tree.
@@ -788,6 +850,7 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
   }, [channelId]);
 
   const handleResetLayout = useCallback(() => {
+    setLearnOpen(false);
     // Close any running terminal sessions in the current tree
     const current = treeRef.current;
     if (current) {
@@ -833,24 +896,104 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
     return hidden.length > 0 ? hidden : undefined;
   }, [channel.review_enabled]);
 
+  // The chat is mounted once, into chatHost (see ChatSlot); it renders once a slot holds the host.
+  const [chatHost] = useState(createChatHost);
+  const [chatHostPlaced, setChatHostPlaced] = useState(false);
+  const placeChatHost = useCallback(() => setChatHostPlaced(true), []);
+  // Leaving, the slot holding the host parked it; nothing will take it now.
+  useEffect(
+    () => () => {
+      chatHost.closest("[data-chat-park]")?.remove();
+      chatHost.remove();
+    },
+    [chatHost],
+  );
+
+  // Opening the Learn view makes the layout under it inert, so focus left
+  // there (on the chat pane's Learn badge, say) would drop to nowhere: it
+  // goes to the chat's composer, which moves into the view keeping it.
+  // Docked on a canvas, nothing goes inert and focus stays.
+  const openLearn = useCallback(() => {
+    const docked = layoutType === "canvas";
+    const focused = document.activeElement;
+    if (!docked && (!focused || !chatHost.contains(focused))) {
+      chatHost.querySelector<HTMLTextAreaElement>("textarea")?.focus({ preventScroll: true });
+    }
+    setLearnDocked(docked);
+    setLearnOpen(true);
+  }, [chatHost, layoutType]);
+  // Closing the Learn view with focus in its Learn pane would leave focus
+  // nowhere once the pane goes: it goes back to the chat's composer, which
+  // stays. Escape closes it too, unless something took the key first (a
+  // picker, the find bar, a menu, a sidebar input, a shown component) or the
+  // layout is hidden (under Settings, say).
+  const closeLearn = useCallback(() => {
+    const focused = document.activeElement;
+    setLearnOpen(false);
+    if (focused && learnSplitRef.current?.contains(focused) && !chatHost.contains(focused)) {
+      chatHost.querySelector<HTMLTextAreaElement>("textarea")?.focus({ preventScroll: true });
+    }
+  }, [chatHost]);
+  const hiddenRef = useRef(false);
+  hiddenRef.current = style?.display === "none";
+  useEffect(() => {
+    if (!learnOpen) return;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape" || hiddenRef.current) return;
+      // Whatever takes Escape marks it handled (preventDefault), but a
+      // window listener added after this one (a menu opened in the view)
+      // only sees it after this one does: look once the key is dispatched.
+      clearTimeout(timer);
+      timer = setTimeout(() => {
+        if (!e.defaultPrevented) closeLearn();
+      });
+    };
+    window.addEventListener("keydown", onKey);
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      clearTimeout(timer);
+    };
+  }, [learnOpen, closeLearn]);
+  const chatLeafId = useMemo(
+    () => (layoutType === "canvas" ? canvasState?.tiles.find((t) => t.panel === "chat")?.id : tree ? collectLeaves(tree).find((l) => l.panel === "chat")?.id : undefined),
+    [layoutType, canvasState, tree],
+  );
+
+  // The Learn view keeps the chat while it fades out, even after a layout
+  // switch took its pane away.
+  const lastChatLeafIdRef = useRef(chatLeafId);
+  if (chatLeafId) lastChatLeafIdRef.current = chatLeafId;
+  const portalLeafId = chatLeafId ?? (learnOverlay ? lastChatLeafIdRef.current : undefined);
+  // Docked, the view goes with the chat's tile when that's closed.
+  useEffect(() => {
+    if (learnDocked && !chatLeafId) setLearnOpen(false);
+  }, [learnDocked, chatLeafId]);
+
+  const renderChat = useCallback(
+    (leafId: string) => (
+      <ComponentFocusContext.Provider value={(c) => openComponent(leafId, c)}>
+        <LearnContext.Provider value={learn}>
+          <ChatView key={`layout-chat-${channelId}`} channelId={channelId} chatState={chatState} roots={editorState.roots} scrollToMessageId={scrollToMessageId} onScrollComplete={onScrollComplete} />
+        </LearnContext.Provider>
+        {shownComponent?.leafId === leafId && <ChatComponentFull component={shownComponent.component} onClose={closeComponent} />}
+      </ComponentFocusContext.Provider>
+    ),
+    [openComponent, learn, channelId, chatState, editorState.roots, scrollToMessageId, onScrollComplete, shownComponent, closeComponent],
+  );
+
   const renderLeaf = useCallback(
     (leaf: LeafNode): React.ReactNode => {
       switch (leaf.panel) {
         case "chat":
+          // While the Learn view is up over the layout (open or fading out)
+          // it holds the chat, and this pane stays empty. Docked on a canvas,
+          // the chat stays here, and the badge closes the view.
           return (
-            <ComponentFocusContext.Provider value={(c) => openComponent(leaf.id, c)}>
-              <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", minHeight: 0, position: "relative" }}>
-                <ChatView
-                  key={`layout-chat-${channelId}`}
-                  channelId={channelId}
-                  chatState={chatState}
-                  roots={editorState.roots}
-                  scrollToMessageId={scrollToMessageId}
-                  onScrollComplete={onScrollComplete}
-                />
-                {shownComponent?.leafId === leaf.id && <ChatComponentFull component={shownComponent.component} onClose={closeComponent} />}
-              </div>
-            </ComponentFocusContext.Provider>
+            <>
+              <ChatSlot host={chatHost} active={!learnOverlay} onAttach={placeChatHost} leafId={leaf.id} />
+              <LearnBadge leafId={leaf.id} learn={learn} open={learnDocked && learnOpen} onToggle={learnDocked && learnOpen ? closeLearn : openLearn} />
+            </>
           );
         case "editor":
           return (
@@ -997,7 +1140,27 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
       openComponent,
       shownComponent,
       closeComponent,
+      learn,
+      openLearn,
+      closeLearn,
+      learnOverlay,
+      learnDocked,
+      learnOpen,
+      chatHost,
+      placeChatHost,
     ],
+  );
+
+  const learnPane = (
+    <LearnPane
+      learn={learn}
+      worktree={!!channel.worktree}
+      roots={editorState.roots}
+      subscribeChannelEvents={subscribeChannelEvents}
+      getChatState={getChatState}
+      onChatStateUnmount={onChatStateUnmount}
+      onClose={closeLearn}
+    />
   );
 
   return (
@@ -1173,7 +1336,7 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
               onReorder={handleReorderLayout}
             />
           ))}
-        <div style={{ position: "relative" }}>
+        <div style={{ position: "relative", flexShrink: 0 }}>
           <button
             onClick={() => setShowNewLayoutMenu((v) => !v)}
             title="New layout"
@@ -1243,6 +1406,7 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
                 Split
               </button>
               <button
+                data-testid="new-layout-canvas"
                 onClick={() => addLayout("canvas")}
                 style={{
                   display: "block",
@@ -1274,6 +1438,7 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
             onClick={handleKillAgents}
             title="Stop all shells and container"
             style={{
+              flexShrink: 0,
               background: "none",
               border: `1px solid ${colors.error}`,
               color: colors.error,
@@ -1300,7 +1465,7 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
           </button>
         )}
         {(hasMissingDefaults || isDefaultLayout) && (
-          <div style={{ position: "relative" }}>
+          <div style={{ position: "relative", flexShrink: 0 }}>
             <button
               onClick={() => setShowLayoutMenu((v) => !v)}
               title="Layout options"
@@ -1393,84 +1558,120 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
         )}
       </div>
 
-      {/* Layout content */}
-      <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", minHeight: 0 }}>
-        {layoutType === "canvas" ? (
-          <CanvasLayout
-            canvas={canvasState ?? { type: "canvas", viewport: { x: 0, y: 0, zoom: 1 }, tiles: [] }}
-            renderLeaf={renderLeaf}
-            agentInfoMap={agentInfoMap}
-            containerStats={containerStats}
-            onCanvasChange={(c) => {
-              setCanvasState(c);
+      {/* Layout content. Its shortcut pickers (the composers', the
+          terminals') fetch again when a learn proposal adds a shortcut. */}
+      <ShortcutsVersionContext.Provider value={learn.shortcutsVersion}>
+        <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", minHeight: 0, position: "relative" }}>
+          {/* The layout stays put under the Learn view while it's open. */}
+          <div
+            style={{
+              flex: 1,
+              display: "flex",
+              flexDirection: "column",
+              overflow: "hidden",
+              minHeight: 0,
+              position: "relative",
             }}
-            hiddenPanels={hiddenPanels}
-          />
-        ) : !tree ? (
-          <EmptyLayoutPicker onAdd={handleEmptyAdd} hiddenPanels={hiddenPanels} />
-        ) : maximizedLeafId && findLeafById(tree, maximizedLeafId) ? (
-          (() => {
-            const leaf = findLeafById(tree, maximizedLeafId)!;
-            const usedSingletons = collectPanelTypes(tree);
-            return (
-              <div
-                style={{
-                  flex: 1,
-                  display: "flex",
-                  flexDirection: "column",
-                  overflow: "hidden",
-                  minHeight: 0,
-                  minWidth: 0,
-                  borderRadius: colors.islandRadius,
-                  boxShadow: colors.islandShadow,
-                  border: colors.islandBorder,
-                  backgroundColor: colors.sidebar,
+            // Nor can it be clicked or reached from the keyboard.
+            inert={learnOverlay}
+          >
+            {layoutType === "canvas" ? (
+              <CanvasLayout
+                canvas={canvasState ?? { type: "canvas", viewport: { x: 0, y: 0, zoom: 1 }, tiles: [] }}
+                renderLeaf={renderLeaf}
+                agentInfoMap={agentInfoMap}
+                containerStats={containerStats}
+                onCanvasChange={(c) => {
+                  setCanvasState(c);
                 }}
-              >
-                <PaneLeafHeader
-                  leafId={leaf.id}
-                  panel={leaf.panel}
-                  usedSingletons={usedSingletons}
-                  hiddenPanels={hiddenPanels}
-                  agentInfo={leaf.panel === "docker-agent" ? agentInfoMap.get(leaf.id) : undefined}
-                  containerStats={containerStats}
-                  isMaximized
-                  onRemove={() => {
-                    setMaximizedLeafId(null);
-                    handleRemoveLeaf(leaf.id);
-                  }}
-                  onDrop={handleDrop}
-                  onSplitLeaf={handleSplitLeaf}
-                  onToggleMaximize={() => setMaximizedLeafId(null)}
-                />
-                <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", minHeight: 0 }}>{renderLeaf(leaf)}</div>
-              </div>
-            );
-          })()
-        ) : (
-          <SplitPaneLayout
-            tree={tree}
-            renderLeaf={renderLeaf}
-            agentInfoMap={agentInfoMap}
-            containerStats={containerStats}
-            minimizedLeaves={minimizedLeaves}
-            hiddenPanels={hiddenPanels}
-            onUpdateFlex={handleUpdateFlex}
-            onDrop={handleDrop}
-            onRemoveLeaf={handleRemoveLeaf}
-            onSplitLeaf={handleSplitLeaf}
-            onMaximize={(leafId) => setMaximizedLeafId(leafId)}
-            onToggleMinimize={(leafId) =>
-              setMinimizedLeaves((prev) => {
-                const next = new Set(prev);
-                if (next.has(leafId)) next.delete(leafId);
-                else next.add(leafId);
-                return next;
-              })
-            }
-          />
-        )}
-      </div>
+                hiddenPanels={hiddenPanels}
+                learnDock={learnDocked && learnSplit.mounted ? { shown: learnSplit.shown, ms: learnMs, running: learn.running, pane: learnPane, ref: learnSplitRef } : undefined}
+              />
+            ) : !tree ? (
+              <EmptyLayoutPicker onAdd={handleEmptyAdd} hiddenPanels={hiddenPanels} />
+            ) : maximizedLeafId && findLeafById(tree, maximizedLeafId) ? (
+              (() => {
+                const leaf = findLeafById(tree, maximizedLeafId)!;
+                const usedSingletons = collectPanelTypes(tree);
+                return (
+                  <div
+                    style={{
+                      flex: 1,
+                      display: "flex",
+                      flexDirection: "column",
+                      overflow: "hidden",
+                      minHeight: 0,
+                      minWidth: 0,
+                      ...paneBoxStyle(colors),
+                    }}
+                  >
+                    <PaneLeafHeader
+                      leafId={leaf.id}
+                      panel={leaf.panel}
+                      usedSingletons={usedSingletons}
+                      hiddenPanels={hiddenPanels}
+                      agentInfo={leaf.panel === "docker-agent" ? agentInfoMap.get(leaf.id) : undefined}
+                      containerStats={containerStats}
+                      isMaximized
+                      onRemove={() => {
+                        setMaximizedLeafId(null);
+                        handleRemoveLeaf(leaf.id);
+                      }}
+                      onDrop={handleDrop}
+                      onSplitLeaf={handleSplitLeaf}
+                      onToggleMaximize={() => setMaximizedLeafId(null)}
+                    />
+                    <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", minHeight: 0 }}>{renderLeaf(leaf)}</div>
+                  </div>
+                );
+              })()
+            ) : (
+              <SplitPaneLayout
+                tree={tree}
+                renderLeaf={renderLeaf}
+                agentInfoMap={agentInfoMap}
+                containerStats={containerStats}
+                minimizedLeaves={minimizedLeaves}
+                hiddenPanels={hiddenPanels}
+                onUpdateFlex={handleUpdateFlex}
+                onDrop={handleDrop}
+                onRemoveLeaf={handleRemoveLeaf}
+                onSplitLeaf={handleSplitLeaf}
+                onMaximize={(leafId) => setMaximizedLeafId(leafId)}
+                onToggleMinimize={(leafId) =>
+                  setMinimizedLeaves((prev) => {
+                    const next = new Set(prev);
+                    if (next.has(leafId)) next.delete(leafId);
+                    else next.add(leafId);
+                    return next;
+                  })
+                }
+              />
+            )}
+          </div>
+          {learnOverlay && (
+            <LearnSplit
+              ref={learnSplitRef}
+              shown={learnSplit.shown}
+              ms={learnMs}
+              running={learn.running}
+              chatHeader={
+                // The chat's pane header, without the layout controls: this
+                // isn't a layout pane. The Learn badge in it closes the view.
+                <PaneLeafHeader leafId={LEARN_SPLIT_SLOT_ID} panel="chat" usedSingletons={new Set()} containerStats={containerStats} />
+              }
+              chat={
+                <>
+                  <ChatSlot host={chatHost} active onAttach={placeChatHost} />
+                  <LearnBadge leafId={LEARN_SPLIT_SLOT_ID} learn={learn} open onToggle={closeLearn} />
+                </>
+              }
+              learnPane={learnPane}
+            />
+          )}
+        </div>
+        {chatHostPlaced && portalLeafId && createPortal(renderChat(portalLeafId), chatHost)}
+      </ShortcutsVersionContext.Provider>
     </div>
   );
 });
@@ -1562,6 +1763,9 @@ function LayoutTab({
       style={{
         ...buildTabButtonStyle(colors, active),
         flexShrink: 0,
+        // Inactive tabs give up width (their names ellipsized) before the
+        // bar overflows, so the controls at its right end stay on screen.
+        ...(!active && { flexShrink: 1, minWidth: 32 }),
         position: "relative",
         paddingLeft: canDelete && !editing ? 4 : 10,
         paddingRight: canDelete && !editing ? 10 : 10,
@@ -1622,6 +1826,7 @@ function LayoutTab({
           onKeyDown={(e) => {
             if (e.key === "Enter") commitRename();
             if (e.key === "Escape") {
+              e.preventDefault();
               setEditValue(name);
               setEditing(false);
             }
@@ -1646,8 +1851,8 @@ function LayoutTab({
             setEditValue(name);
             setEditing(true);
           }}
-          title="Double-click to rename"
-          style={{ flex: 1, textAlign: "center" }}
+          title={`${name} (double-click to rename)`}
+          style={{ flex: 1, minWidth: 0, textAlign: "center", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
         >
           {name}
         </span>

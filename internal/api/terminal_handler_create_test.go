@@ -606,3 +606,94 @@ func (s *TerminalHandlerSuite) TestCreateSessionExplicitCmdSkipsInteractiveCmd()
 	builder.AssertNotCalled(s.T(), "BuildInteractiveCmd", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything)
 	s.terminal.AssertNotCalled(s.T(), "SendInput", mock.Anything, mock.Anything)
 }
+
+// TestCreateSessionRelaunchSession proves an auto-booted pane that resumed a
+// known session relaunches that same session after an abnormal exit, while a
+// forked pane (whose new session id Loop never learns) falls back to
+// --continue.
+func (s *TerminalHandlerSuite) TestCreateSessionRelaunchSession() {
+	tests := []struct {
+		name       string
+		channel    *db.Channel
+		parent     *db.Channel
+		fork       bool
+		wantResume string
+	}{
+		{
+			name:       "resumed session",
+			channel:    &db.Channel{ChannelID: "ch-1", SessionID: "sess-own"},
+			wantResume: "sess-own",
+		},
+		{
+			name:    "forked session",
+			channel: &db.Channel{ChannelID: "ch-1", ParentID: "ch-parent", SessionID: "sess-parent"},
+			parent:  &db.Channel{ChannelID: "ch-parent", SessionID: "sess-parent"},
+			fork:    true,
+		},
+	}
+	for _, tc := range tests {
+		s.Run(tc.name, func() {
+			s.terminal = new(MockTerminalManager)
+			s.srv.SetTerminalManager(s.terminal)
+			outCh := make(chan []byte, 1)
+			doneCh := make(chan struct{})
+			s.terminal.On("CreateSession", mock.Anything, "resolved-ctr", []string(nil)).
+				Return("sess-pane", (<-chan []byte)(outCh), []byte(nil), (<-chan struct{})(doneCh), nil)
+			inputSent := onSendInputCalled(s.terminal, "sess-pane", []byte("claude\n"))
+			relaunched := make(chan struct{}, 1)
+			s.terminal.On("SendInput", "sess-pane", []byte("claude --relaunch\n")).Return(nil).Run(func(mock.Arguments) {
+				select {
+				case relaunched <- struct{}{}:
+				default:
+				}
+			})
+			s.terminal.On("DetachSession", mock.Anything, mock.Anything).Return(nil).Maybe()
+
+			store := new(MockChannelLister)
+			store.On("GetChannel", mock.Anything, tc.channel.ChannelID).Return(tc.channel, nil)
+			if tc.parent != nil {
+				store.On("GetChannel", mock.Anything, tc.parent.ChannelID).Return(tc.parent, nil)
+			}
+			s.srv.store = store
+
+			finder := new(mockContainerManager)
+			finder.On("FindOrCreateShell", mock.Anything, tc.channel.ChannelID, mock.Anything, mock.Anything).Return("resolved-ctr", nil)
+			s.srv.containerRegistry = finder
+
+			builder := new(MockInteractiveCmdBuilder)
+			builder.On("BuildInteractiveCmd", tc.channel.ChannelID, "", "", tc.channel.SessionID, "", tc.fork).Return("claude")
+			builder.On("BuildContinueCmd", tc.channel.ChannelID, "", "", tc.wantResume, "").Return("claude --relaunch")
+			s.srv.SetInteractiveCmdBuilder(builder)
+
+			conn, ts := s.dialWS()
+			defer ts.Close()
+			defer conn.Close()
+
+			sendControl(s.T(), conn, wsControlMessage{Type: "create", ChannelID: tc.channel.ChannelID})
+			require.Equal(s.T(), "created", readStatusMsg(s.T(), conn).Type)
+			select {
+			case <-inputSent:
+			case <-time.After(time.Second):
+				s.T().Fatal("timed out waiting for SendInput")
+			}
+
+			// The relaunch is armed right after the command is sent, so keep
+			// feeding exit markers until one lands after it.
+			deadline := time.After(5 * time.Second)
+			for {
+				select {
+				case outCh <- []byte("__LOOP_CLAUDE_EXIT:137\n"):
+				default:
+				}
+				select {
+				case <-relaunched:
+					builder.AssertExpectations(s.T())
+					return
+				case <-deadline:
+					s.T().Fatal("timed out waiting for the relaunch")
+				case <-time.After(100 * time.Millisecond):
+				}
+			}
+		})
+	}
+}
