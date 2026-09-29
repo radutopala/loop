@@ -21,6 +21,7 @@ import (
 
 	"github.com/radutopala/loop/internal/bot"
 	"github.com/radutopala/loop/internal/config"
+	"github.com/radutopala/loop/internal/db"
 	"github.com/radutopala/loop/internal/memory"
 	"github.com/radutopala/loop/internal/testutil"
 )
@@ -188,12 +189,8 @@ func (m *MockRunCanceller) CancelActiveRun(channelID string) bool {
 	return args.Bool(0)
 }
 
-func (m *MockRunCanceller) StopLearn(learnChannelID string) {
-	m.Called(learnChannelID)
-}
-
-func (m *MockRunCanceller) IsLearnPassRunning(learnChannelID string) bool {
-	return m.Called(learnChannelID).Bool(0)
+func (m *MockRunCanceller) StopHiddenThread(h *db.Channel) {
+	m.Called(h.ChannelID)
 }
 
 type ServerSuite struct {
@@ -266,9 +263,15 @@ func (s *ServerSuite) SetupTest() {
 	s.mux.HandleFunc("GET /api/channels/{id}/agent-config", s.srv.handleGetAgentConfig)
 	s.mux.HandleFunc("PATCH /api/channels/{id}/agent-config", s.srv.handleSetAgentConfig)
 	s.mux.HandleFunc("GET /api/channels/{id}/learn", s.srv.handleGetLearn)
+	s.mux.HandleFunc("GET /api/channels/{id}/explain", s.srv.handleGetExplain)
+	s.mux.HandleFunc("PUT /api/channels/{id}/explain", s.srv.handleSetExplain)
+	s.mux.HandleFunc("GET /api/channels/{id}/explanations", s.srv.handleListExplanations)
+	s.mux.HandleFunc("POST /api/channels/{id}/explanations", s.srv.handleExplain)
 	s.mux.HandleFunc("PUT /api/channels/{id}/learn", s.srv.handleSetLearn)
 	s.mux.HandleFunc("GET /api/channels/{id}/learn/proposals", s.srv.handleListLearnProposals)
 	s.mux.HandleFunc("POST /api/channels/{id}/learn/proposals", s.srv.handleCreateLearnProposals)
+	s.mux.HandleFunc("GET /api/channels/{id}/learn/passes", s.srv.handleListLearnPasses)
+	s.mux.HandleFunc("POST /api/channels/{id}/learn/passes", s.srv.handleLearnTurn)
 	s.mux.HandleFunc("POST /api/learn/proposals/{id}/apply", s.srv.handleApplyLearnProposal)
 	s.mux.HandleFunc("POST /api/learn/proposals/{id}/dismiss", s.srv.handleDismissLearnProposal)
 	s.mux.HandleFunc("GET /api/channels/{id}/audit", s.srv.handleListAuditFiles)

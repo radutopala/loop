@@ -5,6 +5,8 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"slices"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -142,6 +144,26 @@ func (s *RunnerSuite) TestRunDoesNotBlindRetryWeeklyLimit() {
 	s.client.AssertExpectations(s.T())
 }
 
+func (s *RunnerSuite) TestRunDoesNotBlindRetryDiskFull() {
+	ctx := context.Background()
+	s.cfg.AgentRetry = config.AgentRetryConfig{MaxAttempts: 5, BackoffBase: time.Second, BackoffMax: time.Minute}
+	var sleeps int
+	s.runner.sleep = func(context.Context, time.Duration) error { sleeps++; return nil }
+	req := &agent.AgentRequest{
+		SessionID: "sess-1",
+		ChannelID: "ch-1",
+		Messages:  []agent.AgentMessage{{Role: "user", Content: "hi"}},
+	}
+	// A full Docker disk fails every container the same way: one create only.
+	s.client.On("ContainerCreate", ctx, mock.Anything, testContainerName).
+		Return("", fmt.Errorf("Error response from daemon: mkdir /var/lib/docker/overlay2/x: no space left on device")).Once()
+
+	_, err := s.runner.Run(ctx, req)
+	require.EqualError(s.T(), err, "creating container: Error response from daemon: mkdir /var/lib/docker/overlay2/x: no space left on device")
+	require.Equal(s.T(), 0, sleeps)
+	s.client.AssertExpectations(s.T())
+}
+
 func (s *RunnerSuite) TestRunRetryCancelledDuringBackoff() {
 	ctx := context.Background()
 	s.cfg.AgentRetry = config.AgentRetryConfig{MaxAttempts: 5, BackoffBase: time.Second, BackoffMax: time.Minute}
@@ -187,5 +209,33 @@ func (s *RunnerSuite) TestRunRetryDisabledByDefault() {
 	_, err := s.runner.Run(ctx, req)
 	require.Error(s.T(), err)
 	require.Equal(s.T(), 0, sleeps)
+	s.client.AssertExpectations(s.T())
+}
+
+// TestRunRetryResumesForkWithoutCut: a retried fork resumes the fork the
+// failed attempt made, which the resume point doesn't cut.
+func (s *RunnerSuite) TestRunRetryResumesForkWithoutCut() {
+	ctx := context.Background()
+	s.cfg.AgentRetry = config.AgentRetryConfig{MaxAttempts: 1, BackoffBase: time.Second, BackoffMax: time.Minute}
+	s.runner.sleep = func(context.Context, time.Duration) error { return nil }
+
+	req := &agent.AgentRequest{
+		SessionID:   "sess-parent",
+		ForkSession: true,
+		ResumeAt:    "uuid-turn",
+		ChannelID:   "ch-1",
+		Messages:    []agent.AgentMessage{{Role: "user", Content: "hi"}},
+	}
+	s.runStep(ctx, "container-fork", func(cfg *ContainerConfig) bool {
+		return slices.Contains(cfg.Cmd, "--resume-session-at=uuid-turn")
+	}, `{"type":"result","result":"overloaded_error","session_id":"sess-forked","is_error":true}`)
+	s.runStep(ctx, "container-retry", func(cfg *ContainerConfig) bool {
+		return slices.Contains(cfg.Cmd, "sess-forked") && !slices.Contains(cfg.Cmd, "--fork-session") &&
+			!slices.ContainsFunc(cfg.Cmd, func(a string) bool { return strings.HasPrefix(a, "--resume-session-at") })
+	}, `{"type":"result","result":"Done!","session_id":"sess-forked","is_error":false}`)
+
+	resp, err := s.runner.Run(ctx, req)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "Done!", resp.Response)
 	s.client.AssertExpectations(s.T())
 }

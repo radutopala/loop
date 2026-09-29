@@ -122,6 +122,7 @@ export function SidebarHeader({
 }: SidebarHeaderProps) {
   const { colors } = useTheme();
   const [newMenuOpen, setNewMenuOpen] = useState(false);
+  const searchInputRef = useRef<HTMLInputElement>(null);
 
   const sidebarBtnStyle: React.CSSProperties = {
     background: "none",
@@ -284,6 +285,7 @@ export function SidebarHeader({
             <line x1="21" y1="21" x2="16.65" y2="16.65" />
           </svg>
           <input
+            ref={searchInputRef}
             value={searchQuery}
             onChange={(e) => onSearchQueryChange(e.target.value)}
             onKeyDown={(e) => {
@@ -300,11 +302,53 @@ export function SidebarHeader({
               borderRadius: 4,
               color: colors.textLight,
               fontSize: 12,
-              padding: "4px 8px 4px 24px",
+              padding: "4px 24px 4px 24px",
               outline: "none",
               boxSizing: "border-box",
             }}
           />
+          {searchQuery && (
+            <button
+              data-testid="sidebar-search-clear"
+              aria-label="Clear search"
+              title="Clear search"
+              // Keep focus in the input so typing can go on after clearing.
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={() => {
+                onSearchQueryChange("");
+                searchInputRef.current?.focus();
+              }}
+              style={{
+                position: "absolute",
+                right: 3,
+                top: "50%",
+                transform: "translateY(-50%)",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                width: 18,
+                height: 18,
+                padding: 0,
+                background: "none",
+                border: "none",
+                borderRadius: 4,
+                color: colors.textDim,
+                cursor: "pointer",
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.backgroundColor = colors.hoverBg;
+                e.currentTarget.style.color = colors.textLight;
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.backgroundColor = "transparent";
+                e.currentTarget.style.color = colors.textDim;
+              }}
+            >
+              <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round">
+                <path d="M2 2L8 8M8 2L2 8" />
+              </svg>
+            </button>
+          )}
         </div>
       </div>
       {creatingChannel && (

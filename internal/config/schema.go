@@ -388,6 +388,38 @@ func buildSchema() *ConfigSchema {
 				},
 			},
 
+			// ── Explain section (nested object) ──
+			"explain": {
+				Type:     "object",
+				XSection: "Explain",
+				Properties: map[string]*SchemaProperty{
+					"enabled": {
+						Type:        "boolean",
+						Title:       "Enabled",
+						Description: "Default for the composer's Explain switch: after each chat turn, a hidden forked session writes up what changed, what ran, the decisions and risks, and how to review it. Each channel can override it; any turn can be explained on demand.",
+						Default:     false,
+					},
+					"model": {
+						Type:        "string",
+						Title:       "Model",
+						Description: "Model for the explain run; empty uses the channel's",
+						Enum:        modelEnum(),
+					},
+					"effort": {
+						Type:        "string",
+						Title:       "Effort",
+						Description: "Effort for the explain run; empty uses the channel's",
+						Enum:        effortEnum(),
+					},
+					"prompt": {
+						Type:        "string",
+						Title:       "Prompt",
+						Description: "Extra instructions added to the built-in explain prompt",
+						XWidget:     "textarea",
+					},
+				},
+			},
+
 			// ── Quality section (nested object) ──
 			"quality": {
 				Type:     "object",

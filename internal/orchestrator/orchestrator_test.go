@@ -266,6 +266,14 @@ func (m *MockEventBroadcaster) BroadcastReviewDiff(channelID string, data events
 	m.Called(channelID, data)
 }
 
+func (m *MockEventBroadcaster) BroadcastExplainUpdated(e *db.Explanation) {
+	m.Called(e)
+}
+
+func (m *MockEventBroadcaster) BroadcastLearnPass(p *db.LearnPass) {
+	m.Called(p)
+}
+
 func (m *MockEventBroadcaster) BroadcastLearnStarted(channelID, learnChannelID string) {
 	m.Called(channelID, learnChannelID)
 }

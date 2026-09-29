@@ -332,7 +332,7 @@ func (s *LifecycleSuite) TestDoRebuild_BuildFailure() {
 	s.client.On("ImageBuild", mock.Anything, s.containerDir, s.imageName).Return(errors.New("build exploded"))
 	s.broadcaster.On("BroadcastImageBuildStatus", mock.Anything).Return()
 
-	m.doRebuild(context.Background())
+	m.doRebuild(context.Background(), func() {}, func() {})
 
 	st := m.Status()
 	require.Equal(s.T(), "failed", st.State)
@@ -353,7 +353,7 @@ func (s *LifecycleSuite) TestDoRebuild_Success_WithLabels() {
 	s.sys.On("WriteFile", "/home/test/.loop/image-versions.json", mock.Anything, os.FileMode(0o644)).Return(nil)
 	s.broadcaster.On("BroadcastImageBuildStatus", mock.Anything).Return()
 
-	m.doRebuild(context.Background())
+	m.doRebuild(context.Background(), func() {}, func() {})
 
 	st := m.Status()
 	require.Equal(s.T(), "completed", st.State)
@@ -376,7 +376,7 @@ func (s *LifecycleSuite) TestDoRebuild_ClearsPendingUpdate() {
 	s.broadcaster.On("BroadcastImageBuildStatus", mock.Anything).Return()
 	s.broadcaster.On("BroadcastImageUpdateAvailable", mock.Anything).Return()
 
-	m.doRebuild(context.Background())
+	m.doRebuild(context.Background(), func() {}, func() {})
 
 	// The build answered the pending prompt, so the recheck runs immediately
 	// instead of leaving the banner up until the next half-hourly tick.
@@ -397,7 +397,7 @@ func (s *LifecycleSuite) TestDoRebuild_Success_LabelInspectFails() {
 	s.sys.On("WriteFile", "/home/test/.loop/image-versions.json", mock.Anything, os.FileMode(0o644)).Return(nil)
 	s.broadcaster.On("BroadcastImageBuildStatus", mock.Anything).Return()
 
-	m.doRebuild(context.Background())
+	m.doRebuild(context.Background(), func() {}, func() {})
 
 	st := m.Status()
 	require.Equal(s.T(), "completed", st.State)
@@ -418,7 +418,7 @@ func (s *LifecycleSuite) TestDoRebuild_Success_LabelInspectNilMap() {
 	s.sys.On("WriteFile", "/home/test/.loop/image-versions.json", mock.Anything, os.FileMode(0o644)).Return(nil)
 	s.broadcaster.On("BroadcastImageBuildStatus", mock.Anything).Return()
 
-	m.doRebuild(context.Background())
+	m.doRebuild(context.Background(), func() {}, func() {})
 
 	st := m.Status()
 	require.Equal(s.T(), "completed", st.State)
@@ -445,7 +445,7 @@ func (s *LifecycleSuite) TestDoRebuild_BroadcastStatusSequence() {
 		statusCalls = append(statusCalls, args.Get(0).(events.ImageBuildStatusData))
 	}).Return()
 
-	m.doRebuild(context.Background())
+	m.doRebuild(context.Background(), func() {}, func() {})
 
 	// Should broadcast "completed" after successful build.
 	require.Len(s.T(), statusCalls, 1)
@@ -465,7 +465,7 @@ func (s *LifecycleSuite) TestDoRebuild_BuildFailed_BroadcastStatusSequence() {
 		statusCalls = append(statusCalls, args.Get(0).(events.ImageBuildStatusData))
 	}).Return()
 
-	m.doRebuild(context.Background())
+	m.doRebuild(context.Background(), func() {}, func() {})
 
 	// Should broadcast "failed" after build error.
 	require.Len(s.T(), statusCalls, 1)
@@ -494,7 +494,7 @@ func (s *LifecycleSuite) TestDoRebuild_NilBroadcaster() {
 	s.sys.On("WriteFile", "/home/test/.loop/image-versions.json", mock.Anything, os.FileMode(0o644)).Return(nil)
 
 	// Should not panic with nil broadcaster.
-	m.doRebuild(context.Background())
+	m.doRebuild(context.Background(), func() {}, func() {})
 	require.Equal(s.T(), "completed", m.Status().State)
 }
 
@@ -783,17 +783,19 @@ func (s *LifecycleSuite) TestBroadcastStatus_WithBroadcaster() {
 	})
 }
 
-func (s *LifecycleSuite) TestRebuildChildrenNilRebuilderIsNoop() {
+func (s *LifecycleSuite) TestRebuildChildrenNilRebuilderHandsOff() {
 	m := s.newManager(nil)
-	m.RebuildChildren(context.Background())
+	handedOff := false
+	m.RebuildChildren(context.Background(), func() { handedOff = true })
+	require.True(s.T(), handedOff)
 }
 
 func (s *LifecycleSuite) TestRebuildChildrenInvokesWiredRebuilder() {
 	m := s.newManager(nil)
-	called := false
-	m.SetChildRebuilder(func(context.Context) { called = true })
-	m.RebuildChildren(context.Background())
-	require.True(s.T(), called)
+	handedOff := false
+	m.SetChildRebuilder(func(_ context.Context, handoff func()) { handoff() })
+	m.RebuildChildren(context.Background(), func() { handedOff = true })
+	require.True(s.T(), handedOff)
 }
 
 // --- sidecar rebuild ---
@@ -805,7 +807,7 @@ func (s *LifecycleSuite) TestDoRebuild_RebuildsSidecar() {
 	m.mu.Unlock()
 
 	var phaseDuringBuild string
-	m.SetSidecarRebuilder(func(context.Context) error {
+	m.SetSidecarRebuilder("loop-chrome:latest", func(context.Context) error {
 		phaseDuringBuild = m.Status().Phase
 		return nil
 	})
@@ -815,7 +817,7 @@ func (s *LifecycleSuite) TestDoRebuild_RebuildsSidecar() {
 	s.sys.On("WriteFile", "/home/test/.loop/image-versions.json", mock.Anything, os.FileMode(0o644)).Return(nil)
 	s.broadcaster.On("BroadcastImageBuildStatus", mock.Anything).Return()
 
-	m.doRebuild(context.Background())
+	m.doRebuild(context.Background(), func() {}, func() {})
 
 	require.Equal(s.T(), "browser", phaseDuringBuild, "the UI should be told the sidecar is what is building")
 	require.Equal(s.T(), "completed", m.Status().State)
@@ -826,12 +828,12 @@ func (s *LifecycleSuite) TestDoRebuild_SidecarFailureFailsTheBuild() {
 	m.mu.Lock()
 	m.status = ImageBuildStatus{State: "building", Phase: "building"}
 	m.mu.Unlock()
-	m.SetSidecarRebuilder(func(context.Context) error { return errors.New("no chromium for you") })
+	m.SetSidecarRebuilder("loop-chrome:latest", func(context.Context) error { return errors.New("no chromium for you") })
 
 	s.client.On("ImageBuild", mock.Anything, s.containerDir, s.imageName).Return(nil)
 	s.broadcaster.On("BroadcastImageBuildStatus", mock.Anything).Return()
 
-	m.doRebuild(context.Background())
+	m.doRebuild(context.Background(), func() {}, func() {})
 
 	st := m.Status()
 	require.Equal(s.T(), "failed", st.State)
@@ -860,7 +862,7 @@ func (s *LifecycleSuite) TestRebuildSidecar_KeepsStartedAt() {
 	m.mu.Lock()
 	m.status = ImageBuildStatus{State: "building", Phase: "building", StartedAt: started}
 	m.mu.Unlock()
-	m.SetSidecarRebuilder(func(context.Context) error { return nil })
+	m.SetSidecarRebuilder("loop-chrome:latest", func(context.Context) error { return nil })
 	s.broadcaster.On("BroadcastImageBuildStatus", mock.Anything).Return()
 
 	require.NoError(s.T(), m.rebuildSidecar(context.Background()))
@@ -869,53 +871,106 @@ func (s *LifecycleSuite) TestRebuildSidecar_KeepsStartedAt() {
 
 // --- build gate ---
 
-func (s *LifecycleSuite) TestWaitBuildsIdle() {
-	m := s.newManager(func() string { return "" })
-	called := false
-	require.NoError(s.T(), m.WaitBuilds(context.Background(), func() { called = true }))
-	require.False(s.T(), called)
+// waitBlocked reports whether WaitBuilds for images is still held after a
+// short wait.
+func (s *LifecycleSuite) waitBlocked(m *ImageLifecycleManager, images ...string) bool {
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+	return errors.Is(m.WaitBuilds(ctx, images, nil), context.DeadlineExceeded)
 }
 
-func (s *LifecycleSuite) TestWaitBuildsWaitsForEveryBuild() {
+func (s *LifecycleSuite) TestWaitBuildsIgnoresOtherImages() {
 	m := s.newManager(func() string { return "" })
-	m.BeginBuild()
-	m.BeginBuild()
+	end := m.BeginBuild("proj-a:latest")
+	defer end()
+	called := false
+	require.NoError(s.T(), m.WaitBuilds(context.Background(), []string{"proj-b:latest", "loop-agent:latest"}, func(string) { called = true }))
+	require.False(s.T(), called, "another project's build must not hold this one")
+}
 
-	waited := make(chan struct{})
+func (s *LifecycleSuite) TestWaitBuildsWaitsForItsImages() {
+	m := s.newManager(func() string { return "" })
+	// Two builds of the base, one of them by its untagged name.
+	endBase := m.BeginBuild("loop-agent:latest")
+	endBaseUntagged := m.BeginBuild("loop-agent")
+
+	waits := make(chan string, 4)
 	done := make(chan error, 1)
-	go func() { done <- m.WaitBuilds(context.Background(), func() { close(waited) }) }()
-	<-waited
+	go func() {
+		done <- m.WaitBuilds(context.Background(), []string{"proj:latest", "loop-agent:latest"}, func(image string) { waits <- image })
+	}()
+	require.Equal(s.T(), "loop-agent:latest", <-waits)
 
-	m.EndBuild()
+	// The cascade marks the project image, then the base builds end.
+	endProj := m.BeginBuild("proj")
+	endBase()
+	endBase() // only the first call counts
+	endBaseUntagged()
+	require.Equal(s.T(), "proj:latest", <-waits, "the notice should move on to the project image")
 	require.Never(s.T(), func() bool { return len(done) > 0 }, 50*time.Millisecond, 5*time.Millisecond)
-	m.EndBuild()
-	require.NoError(s.T(), <-done)
 
-	// Idle again: a later build gets a fresh gate.
-	m.BeginBuild()
+	endProj()
+	require.NoError(s.T(), <-done)
+	require.Empty(s.T(), waits)
+	require.NoError(s.T(), m.WaitBuilds(context.Background(), []string{"proj:latest"}, nil))
+}
+
+func (s *LifecycleSuite) TestWaitBuildsCanceled() {
+	m := s.newManager(func() string { return "" })
+	end := m.BeginBuild("loop-agent:latest")
+	defer end()
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	require.ErrorIs(s.T(), m.WaitBuilds(ctx, nil), context.Canceled)
-	m.EndBuild()
-	require.NoError(s.T(), m.WaitBuilds(context.Background(), nil))
+	require.ErrorIs(s.T(), m.WaitBuilds(ctx, []string{"loop-agent:latest"}, nil), context.Canceled)
 }
 
-func (s *LifecycleSuite) TestRebuildHoldsGateThroughChildren() {
+// A rebuild holds each image only as long as it is being rebuilt: the sidecar
+// image until its build is done, the base image until the child cascade has
+// marked the project images it rebuilds, each of those until its own build.
+func (s *LifecycleSuite) TestRebuildGatesEachImage() {
 	m := s.newManager(func() string { return "" })
-	s.client.On("ImageBuild", mock.Anything, s.containerDir, s.imageName).Return(nil)
+	baseBuilt := make(chan struct{})
+	s.client.On("ImageBuild", mock.Anything, s.containerDir, s.imageName).
+		Run(func(mock.Arguments) { <-baseBuilt }).Return(nil)
 	s.client.On("ImageInspectLabels", mock.Anything, s.imageName).Return(map[string]string{"loop.version": "1.0.0"}, nil)
 	s.broadcaster.On("BroadcastImageBuildStatus", mock.Anything).Return()
-	release := make(chan struct{})
-	m.SetChildRebuilder(func(context.Context) { <-release })
+	m.SetSidecarRebuilder("loop-chrome:latest", func(context.Context) error { return nil })
+	planned, childBuilt := make(chan struct{}), make(chan struct{})
+	m.SetChildRebuilder(func(_ context.Context, handoff func()) {
+		<-planned
+		end := m.BeginBuild("proj:latest")
+		handoff()
+		<-childBuilt
+		end()
+	})
 
 	require.NoError(s.T(), m.Rebuild(context.Background()))
 
-	// The base build completes, but the child cascade still holds the gate.
-	require.Eventually(s.T(), func() bool { return m.Status().State == "completed" }, 2*time.Second, 5*time.Millisecond)
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
-	defer cancel()
-	require.ErrorIs(s.T(), m.WaitBuilds(ctx, nil), context.DeadlineExceeded)
+	require.True(s.T(), s.waitBlocked(m, s.imageName))
+	require.True(s.T(), s.waitBlocked(m, "loop-chrome:latest"))
+	require.True(s.T(), s.waitBlocked(m, "proj:latest", s.imageName), "a project image waits for its base")
+	require.False(s.T(), s.waitBlocked(m, "other:latest"))
 
-	close(release)
-	require.NoError(s.T(), m.WaitBuilds(context.Background(), nil))
+	close(baseBuilt)
+	require.NoError(s.T(), m.WaitBuilds(context.Background(), []string{"loop-chrome:latest"}, nil))
+	require.True(s.T(), s.waitBlocked(m, s.imageName), "the base is held until the cascade takes over")
+
+	close(planned)
+	require.NoError(s.T(), m.WaitBuilds(context.Background(), []string{s.imageName}, nil))
+	require.True(s.T(), s.waitBlocked(m, "proj:latest", s.imageName))
+
+	close(childBuilt)
+	require.NoError(s.T(), m.WaitBuilds(context.Background(), []string{"proj:latest", s.imageName}, nil))
+}
+
+// A failed rebuild releases what it held.
+func (s *LifecycleSuite) TestRebuildFailureReleasesImages() {
+	m := s.newManager(func() string { return "" })
+	s.client.On("ImageBuild", mock.Anything, s.containerDir, s.imageName).Return(errors.New("boom"))
+	s.broadcaster.On("BroadcastImageBuildStatus", mock.Anything).Return()
+	m.SetSidecarRebuilder("loop-chrome:latest", func(context.Context) error { return nil })
+
+	require.NoError(s.T(), m.Rebuild(context.Background()))
+	require.NoError(s.T(), m.WaitBuilds(context.Background(), []string{s.imageName, "loop-chrome:latest"}, nil))
+	require.Equal(s.T(), "failed", m.Status().State)
 }

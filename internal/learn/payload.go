@@ -20,7 +20,21 @@ const (
 	maxRationaleLen   = 1000
 	maxNameLen        = 100
 	maxDescriptionLen = 500
+	maxReasonLen      = 300
 )
+
+// ReplacedReason is why a proposal is withdrawn when a newer one replaces
+// it.
+const ReplacedReason = "replaced by a newer proposal"
+
+// ValidateReason checks why a learn pass withdraws a proposal and returns it
+// trimmed.
+func ValidateReason(reason string) (string, error) {
+	if err := checkText("reason", reason, maxReasonLen, true); err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(reason), nil
+}
 
 // PromptShortcut is a prompt_shortcut proposal's payload.
 type PromptShortcut struct {

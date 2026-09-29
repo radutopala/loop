@@ -58,6 +58,7 @@ func TestIsRetryableAgentError(t *testing.T) {
 		{"usage limit reached", errors.New("Your usage limit reached. Limit resets at 5pm."), false},
 		{"reached your usage limit", errors.New("you have reached your usage limit"), false},
 		{"session limit (real Anthropic string)", errors.New("You've hit your session limit · resets 8:30pm (UTC)"), false},
+		{"disk full with a retryable status in the output", errors.New("container exited with code 1: no result event found; last output:\nENOSPC: no space left on device\nrequest failed with status 529"), false},
 		{"credit balance", errors.New("your credit balance is too low"), false},
 		{"auth", errors.New("authentication_error: invalid x-api-key"), false},
 		{"invalid request", errors.New("invalid_request_error: messages required"), false},

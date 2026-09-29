@@ -69,6 +69,7 @@ type jsonConfig struct {
 	Review                                   *jsonReviewConfig          `json:"review"`
 	PlaygroundShare                          *jsonPlaygroundShareConfig `json:"playground_share"`
 	Learn                                    *jsonLearnConfig           `json:"learn"`
+	Explain                                  *jsonExplainConfig         `json:"explain"`
 }
 
 // jsonMemoryConfig is the JSON representation of the memory block.
@@ -452,6 +453,13 @@ func (l *Loader) parse() (*Config, error) {
 		Model:    learn.Model,
 		Effort:   learn.Effort,
 		Prompt:   learn.Prompt,
+	}
+	explain := cmp.Or(jc.Explain, &jsonExplainConfig{})
+	cfg.Explain = ExplainConfig{
+		Enabled: ptrDefault(explain.Enabled, false),
+		Model:   explain.Model,
+		Effort:  explain.Effort,
+		Prompt:  explain.Prompt,
 	}
 
 	// Memory config: enabled must be explicitly true.

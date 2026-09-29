@@ -14,6 +14,7 @@ import (
 	"github.com/radutopala/loop/internal/agentregistry"
 	"github.com/radutopala/loop/internal/bot"
 	"github.com/radutopala/loop/internal/container"
+	"github.com/radutopala/loop/internal/db"
 	"github.com/radutopala/loop/internal/osutil"
 	"github.com/radutopala/loop/internal/scheduler"
 	"github.com/radutopala/loop/internal/worktree"
@@ -44,13 +45,12 @@ type IncomingMessageHandler interface {
 	HandleThreadCreated(ctx context.Context, threadID, authorID, message string)
 }
 
-// RunCanceller cancels agent runs and tracks learn passes. StopLearn also
-// forgets a deleted learn thread's queued pass; IsLearnPassRunning reports a
-// learn pass (not a user's reply) running in a learn thread.
+// RunCanceller cancels agent runs. StopHiddenThread cancels a deleted
+// hidden (learn or explain) thread's run and then deletes its forked
+// session.
 type RunCanceller interface {
 	CancelActiveRun(channelID string) bool
-	StopLearn(learnChannelID string)
-	IsLearnPassRunning(learnChannelID string) bool
+	StopHiddenThread(h *db.Channel)
 }
 
 // PlanResolver clears and resumes a channel parked on an ExitPlanMode card.
@@ -141,6 +141,8 @@ type Server struct {
 	branchPoller            *BranchPoller
 	msgHandler              IncomingMessageHandler
 	runCanceller            RunCanceller
+	explainer               Explainer
+	learnTurner             LearnTurner
 	planResolver            PlanResolver
 	queueResumer            QueueResumer
 	askResolver             AskResolver
@@ -503,8 +505,14 @@ func (s *Server) registerAgentRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("PATCH /api/channels/{id}/agent-config", s.handleSetAgentConfig)
 	mux.HandleFunc("GET /api/channels/{id}/learn", s.handleGetLearn)
 	mux.HandleFunc("PUT /api/channels/{id}/learn", s.handleSetLearn)
+	mux.HandleFunc("GET /api/channels/{id}/explain", s.handleGetExplain)
+	mux.HandleFunc("PUT /api/channels/{id}/explain", s.handleSetExplain)
+	mux.HandleFunc("GET /api/channels/{id}/explanations", s.handleListExplanations)
+	mux.HandleFunc("POST /api/channels/{id}/explanations", s.handleExplain)
 	mux.HandleFunc("GET /api/channels/{id}/learn/proposals", s.handleListLearnProposals)
 	mux.HandleFunc("POST /api/channels/{id}/learn/proposals", s.handleCreateLearnProposals)
+	mux.HandleFunc("GET /api/channels/{id}/learn/passes", s.handleListLearnPasses)
+	mux.HandleFunc("POST /api/channels/{id}/learn/passes", s.handleLearnTurn)
 	mux.HandleFunc("POST /api/learn/proposals/{id}/apply", s.handleApplyLearnProposal)
 	mux.HandleFunc("POST /api/learn/proposals/{id}/dismiss", s.handleDismissLearnProposal)
 	mux.HandleFunc("POST /api/agents", s.handleRegisterAgent)

@@ -11,23 +11,27 @@ import (
 	"github.com/radutopala/loop/internal/agent"
 )
 
-// fakeImageGate is an ImageGate that reports a build in progress when wait
-// is set, then returns err.
+// fakeImageGate is an ImageGate that reports builds of the images in
+// building in progress, in turn, then returns err. It records the images it
+// was asked to wait for.
 type fakeImageGate struct {
-	wait bool
-	err  error
+	building []string
+	err      error
+	images   []string
 }
 
-func (g fakeImageGate) WaitBuilds(_ context.Context, onWait func()) error {
-	if g.wait {
-		onWait()
+func (g *fakeImageGate) WaitBuilds(_ context.Context, images []string, onWait func(string)) error {
+	g.images = images
+	for _, image := range g.building {
+		onWait(image)
 	}
 	return g.err
 }
 
 func (s *RunnerSuite) TestRunWaitsForImageBuild() {
 	ctx := context.Background()
-	s.runner.SetImageGate(fakeImageGate{wait: true}, "2026.9.36")
+	gate := &fakeImageGate{building: []string{"loop-agent:base", "loop-agent:latest"}}
+	s.runner.SetImageGate(gate, "2026.9.36", "loop-agent:base")
 	s.client.On("ImageInspectLabels", ctx, "loop-agent:latest").Return(map[string]string{"loop.version": "2026.9.36"}, nil)
 	s.setupMockAttempts(ctx, `{"type":"result","result":"ok","session_id":"sess-1","is_error":false}`)
 
@@ -41,27 +45,32 @@ func (s *RunnerSuite) TestRunWaitsForImageBuild() {
 	})
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), "ok", resp.Response)
+	// The run waits for its own image and the base it is built FROM, and
+	// says which one it is waiting for.
+	require.Equal(s.T(), []string{"loop-agent:latest", "loop-agent:base"}, gate.images)
 	require.Equal(s.T(), [][2]string{
-		{"image_build", "Waiting for the agent image build to finish"},
+		{"image_build", "Waiting for the loop-agent:base image build to finish"},
+		{"image_build", "Waiting for the loop-agent:latest image build to finish"},
 		{"image_ready", ""},
-	}, activities[:2])
+	}, activities[:3])
 	s.client.AssertExpectations(s.T())
 }
 
 func (s *RunnerSuite) TestRunRefusesImage() {
 	tests := []struct {
 		name    string
-		gate    fakeImageGate
+		gate    *fakeImageGate
 		labels  map[string]string
 		wantErr string
 	}{
 		{
 			name:    "wait interrupted",
-			gate:    fakeImageGate{wait: true, err: context.Canceled},
-			wantErr: "waiting for the agent image build: context canceled",
+			gate:    &fakeImageGate{building: []string{"loop-agent:latest"}, err: context.Canceled},
+			wantErr: "waiting for the image build: context canceled",
 		},
 		{
 			name:    "built by an older loop",
+			gate:    &fakeImageGate{},
 			labels:  map[string]string{"loop.version": "2026.9.33"},
 			wantErr: "image loop-agent:latest is out of date: it was built by loop 2026.9.33, but loop 2026.9.36 is running",
 		},
@@ -70,7 +79,7 @@ func (s *RunnerSuite) TestRunRefusesImage() {
 		s.Run(tc.name, func() {
 			s.SetupTest()
 			ctx := context.Background()
-			s.runner.SetImageGate(tc.gate, "2026.9.36")
+			s.runner.SetImageGate(tc.gate, "2026.9.36", "loop-agent:latest")
 			if tc.labels != nil {
 				s.client.On("ImageInspectLabels", ctx, "loop-agent:latest").Return(tc.labels, nil)
 			}
@@ -98,7 +107,7 @@ func (s *RunnerSuite) TestRunAcceptsImage() {
 		s.Run(tc.name, func() {
 			s.SetupTest()
 			ctx := context.Background()
-			s.runner.SetImageGate(fakeImageGate{}, "2026.9.36")
+			s.runner.SetImageGate(&fakeImageGate{}, "2026.9.36", "loop-agent:latest")
 			s.client.On("ImageInspectLabels", ctx, "loop-agent:latest").Return(tc.labels, tc.err)
 			s.client.On("ContainerCreate", ctx, mock.AnythingOfType("*container.ContainerConfig"), testContainerName).
 				Return("", errors.New("docker create failed"))

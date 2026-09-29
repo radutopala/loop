@@ -839,6 +839,23 @@ func (s *ConfigSuite) TestLoadProjectConfigOverrides() {
 			},
 		},
 		{
+			name:        "Explain/AllFieldsOverrideGlobal",
+			projectJSON: `{"explain": {"enabled": true, "model": "m", "effort": "low", "prompt": "p"}}`,
+			mainCfg:     &Config{Explain: ExplainConfig{Model: "g"}},
+			assert: func(merged, main *Config) {
+				require.Equal(s.T(), ExplainConfig{Enabled: true, Model: "m", Effort: "low", Prompt: "p"}, merged.Explain)
+				require.Equal(s.T(), ExplainConfig{Model: "g"}, main.Explain)
+			},
+		},
+		{
+			name:        "Explain/UnsetKeepsGlobal",
+			projectJSON: `{"explain": {}}`,
+			mainCfg:     &Config{Explain: ExplainConfig{Enabled: true, Model: "g", Effort: "high", Prompt: "p"}},
+			assert: func(merged, _ *Config) {
+				require.Equal(s.T(), ExplainConfig{Enabled: true, Model: "g", Effort: "high", Prompt: "p"}, merged.Explain)
+			},
+		},
+		{
 			name:        "PlaygroundShare/EnableOverridesGlobal",
 			projectJSON: `{"playground_share": {"enabled": true}}`,
 			mainCfg:     &Config{PlaygroundShare: PlaygroundShareConfig{Enabled: false}},

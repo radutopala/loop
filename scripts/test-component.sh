@@ -69,6 +69,8 @@ fi
 # same files from the host.
 if [ -f /.dockerenv ] && [ -S /var/run/docker.sock ]; then
     TMPDIR=/tmp/loop-bdd-data
+    # The glob skips dotfiles on purpose: the Makefile stages the host config
+    # as .host-config.json here when run from inside a Loop agent container.
     rm -rf "$TMPDIR"/* 2>/dev/null || true
     mkdir -p "$TMPDIR"
 else
@@ -135,6 +137,12 @@ if [ -n "$LOOP_DOCS_CAPTURE" ]; then
             # write into the bind source (binds aren't auto-chowned like volumes).
             mkdir -p "$LOOP_HOME/.claude"
             chown 1000:1000 "$LOOP_HOME/.claude" 2>/dev/null || true
+            # Claude keeps its scratch files in $TMPDIR/claude-<uid>. With HOME
+            # under /tmp, copying ~/.claude.json into the agent recreates /tmp
+            # as root-owned 0755, so the default location fails with EACCES.
+            # Point TMPDIR at a world-writable dir inside the shared ~/.claude.
+            mkdir -p "$LOOP_HOME/.claude/tmp"
+            chmod 1777 "$LOOP_HOME/.claude/tmp"
             # Agent containers normally pull a RELEASED loop binary (see the agent
             # image Dockerfile). For docs capture we want the agent's mcp-browser
             # to run THIS build — so its browser actions route through the daemon
@@ -143,9 +151,18 @@ if [ -n "$LOOP_DOCS_CAPTURE" ]; then
             # freshly-built binary under the host-shared LOOP_HOME and bind-mount
             # it over /usr/local/bin/loop in each agent container.
             cp bin/loop "$LOOP_HOME/loop" && chmod 0755 "$LOOP_HOME/loop"
+            # agentgate needs seccomp=unconfined + CAP_SYS_PTRACE on each agent
+            # container. The docker proxy of a Loop agent container denies both
+            # as a container-escape risk, so a run started from inside one
+            # (the Makefile passes LOOP_BDD_AGENTGATE=0) goes without the gate.
+            AGENTGATE_ENABLED=true
+            if [ "$LOOP_BDD_AGENTGATE" = "0" ] || [ -n "$LOOP_DOCKERPROXY_ENABLED" ]; then
+                AGENTGATE_ENABLED=false
+                echo -e "${YELLOW}Docs capture: agentgate off (running under a Loop agent's docker proxy)${NC}"
+            fi
             DOCS_AUTH="\"claude_code_oauth_token\": \"$DOCS_TOKEN\",
-  \"envs\": { \"NODE_TLS_REJECT_UNAUTHORIZED\": \"0\", \"NODE_NO_WARNINGS\": \"1\", \"HOST_USER\": \"agent\", \"HOST_UID\": \"1000\", \"HOST_GID\": \"1000\" },
-  \"gates\": { \"agentgate\": { \"enabled\": true, \"command_rules\": [ { \"commands\": [\"git\"], \"args_patterns\": [\"commit\", \"push\"], \"decision\": \"approve\", \"message\": \"git commit/push (approval required)\" } ] } },
+  \"envs\": { \"NODE_TLS_REJECT_UNAUTHORIZED\": \"0\", \"NODE_NO_WARNINGS\": \"1\", \"HOST_USER\": \"agent\", \"HOST_UID\": \"1000\", \"HOST_GID\": \"1000\", \"TMPDIR\": \"$LOOP_HOME/.claude/tmp\" },
+  \"gates\": { \"agentgate\": { \"enabled\": $AGENTGATE_ENABLED, \"command_rules\": [ { \"commands\": [\"git\"], \"args_patterns\": [\"commit\", \"push\"], \"decision\": \"approve\", \"message\": \"git commit/push (approval required)\" } ] } },
   \"mounts\": [\"~/.claude:~/.claude\", \"$LOOP_HOME/loop:/usr/local/bin/loop\"],
   \"copy_files\": [\"~/.claude.json\"],"
             echo -e "${YELLOW}Docs capture: injecting Claude auth + non-root agent uid for live runs${NC}"

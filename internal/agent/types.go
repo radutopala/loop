@@ -7,8 +7,14 @@ import (
 
 // AgentRequest is the input sent to the agent runner.
 type AgentRequest struct {
-	SessionID    string         `json:"session_id"`
-	ForkSession  bool           `json:"fork_session,omitempty"`
+	SessionID   string `json:"session_id"`
+	ForkSession bool   `json:"fork_session,omitempty"`
+	// ResumeAt is the transcript uuid a forked batch run resumes SessionID
+	// at: the fork keeps the session's messages up to and including that
+	// entry and drops the rest (--resume-session-at). Only honoured with
+	// ForkSession; a learn pass or an explanation uses it to see a session
+	// that ends with the turn it reviews.
+	ResumeAt     string         `json:"resume_at,omitempty"`
 	Messages     []AgentMessage `json:"messages"`
 	SystemPrompt string         `json:"system_prompt"`
 	// SubagentSystemPrompt is appended to the system prompt of every
@@ -45,16 +51,18 @@ type AgentRequest struct {
 	//     setting it to e.g. "sonnet" (that mount is shared with the container)
 	//     otherwise silently downgrades the run.
 	ReviewMode bool `json:"review_mode,omitempty"`
-	// LearnMode runs the request as a learn pass over a finished chat run:
-	// its built-in tools are limited to the read-only --tools allowlist, and
-	// on top of the batch denials every Loop tool that changes state is
-	// denied, so the pass can only look and propose.
-	LearnMode bool `json:"learn_mode,omitempty"`
-	// OnTurn is called for each assistant turn's text content during streaming.
+	// ReadOnly runs the request as a learn pass or an explanation over a
+	// chat run: its built-in tools are limited to the read-only --tools
+	// allowlist, and on top of the batch denials every Loop tool that
+	// changes state is denied, so the run can only look (and a learn pass
+	// propose).
+	ReadOnly bool `json:"read_only,omitempty"`
+	// OnTurn is called for each assistant turn's text content during streaming,
+	// with where that text sits in the session's transcript (see TurnRef).
 	// When set, the runner follows container logs in real-time instead of waiting
 	// for the container to exit. When nil, the runner uses the existing
 	// wait-then-read behavior.
-	OnTurn func(text string) `json:"-"`
+	OnTurn func(text string, ref TurnRef) `json:"-"`
 	// OnToolUse is called for each tool invocation in an assistant turn.
 	// toolUseID is the per-block id from the assistant message; pairs with
 	// the toolUseID delivered by OnToolResult.
@@ -73,6 +81,17 @@ type AgentRequest struct {
 	// stream-json line. output is already truncated by the runner; isError
 	// reflects the upstream is_error flag.
 	OnToolResult func(toolUseID, output string, isError bool) `json:"-"`
+}
+
+// TurnRef locates an assistant text event in Claude Code's session
+// transcript: the session it was written to and its entry's uuid. A turn's
+// last text is the last entry of its chain, so resuming a fork at that uuid
+// (see AgentRequest.ResumeAt) gives the session as it was when the turn
+// ended. Both are empty when the event didn't carry them (a subagent's text,
+// or an older CLI).
+type TurnRef struct {
+	SessionID string
+	UUID      string
 }
 
 // AgentMessage represents a single message in the conversation context.

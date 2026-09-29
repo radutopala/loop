@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useRef } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { RootEntry } from "../../api/files";
 import type { LearnProposal } from "../../api/learn";
 import { useChatState } from "../../hooks/useChatState";
@@ -7,7 +7,7 @@ import type { LearnView } from "../../hooks/useLearn";
 import { useTheme } from "../../ThemeContext";
 import { fonts } from "../../theme";
 import { ChatView } from "../chat/ChatView";
-import { learnKindLabel, proposalCaveat, proposalDetail } from "../chat/learnState";
+import { isSettledProposal, learnKindLabel, proposalCaveat, proposalDetail } from "../chat/learnState";
 
 interface LearnPaneProps {
   learn: LearnView;
@@ -33,6 +33,7 @@ export function LearnPane({ learn, worktree, roots, subscribeChannelEvents, getC
   const { open, busy, errors, bulk } = learn;
   const paneRef = useRef<HTMLDivElement>(null);
   useKeepFocus(paneRef);
+  const highlighted = useFocusedTurn(paneRef, learn);
 
   return (
     <div ref={paneRef} data-testid="learn-pane" style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column", overflow: "hidden" }}>
@@ -91,15 +92,33 @@ export function LearnPane({ learn, worktree, roots, subscribeChannelEvents, getC
         </button>
       </div>
 
+      {/* A turn's Learn action whose request failed: why, for the turn it
+          asked for. */}
+      {learn.focus && learn.turnErrors.has(learn.focus.messageId) && (
+        <div data-testid="learn-turn-error" style={{ padding: "8px 10px", fontSize: 11, fontFamily: fonts.sans, color: colors.error, borderBottom: `1px solid ${colors.border}`, flexShrink: 0 }}>
+          {learn.turnErrors.get(learn.focus.messageId)}
+        </div>
+      )}
       {learn.proposals.length > 0 && (
-        <div style={{ maxHeight: "45%", overflowY: "auto", flexShrink: 0, borderBottom: `1px solid ${colors.border}` }}>
+        <div data-learn-proposals style={{ maxHeight: "45%", overflowY: "auto", flexShrink: 0, borderBottom: `1px solid ${colors.border}` }}>
           {learn.proposals.map((p) => (
-            <ProposalCard key={p.id} proposal={p} open={open.includes(p)} worktree={worktree} busy={busy.has(p.id)} error={errors.get(p.id)} onApply={learn.apply} onDismiss={learn.dismiss} />
+            <ProposalCard
+              key={p.id}
+              proposal={p}
+              open={open.includes(p)}
+              highlighted={!!p.message_id && p.message_id === highlighted}
+              worktree={worktree}
+              busy={busy.has(p.id)}
+              error={errors.get(p.id)}
+              onApply={learn.apply}
+              onDismiss={learn.dismiss}
+            />
           ))}
         </div>
       )}
 
       <div data-learn-thread style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
+        <style>{"@keyframes loop-learn-blink { 50% { outline-color: transparent; } }"}</style>
         {learn.learnChannelId ? (
           <LearnThread
             key={learn.learnChannelId}
@@ -170,6 +189,28 @@ function useKeepFocus(paneRef: React.RefObject<HTMLDivElement | null>) {
   });
 }
 
+// How long the cards a turn's Learn action asked for stay outlined.
+const FOCUS_HIGHLIGHT_MS = 4000;
+
+// The turn a turn's Learn action asked for (learn.focus): once its proposals
+// are in the list (a pass still running files them later), the first is
+// brought into view and all of them are outlined for a while. Returns the
+// outlined turn's message id.
+function useFocusedTurn(paneRef: React.RefObject<HTMLDivElement | null>, learn: LearnView): string | null {
+  const [highlighted, setHighlighted] = useState<string | null>(null);
+  const { focus, proposals } = learn;
+  const focusedShown = !!focus && proposals.some((p) => p.message_id === focus.messageId);
+  useEffect(() => {
+    if (!focus || !focusedShown) return;
+    const card = paneRef.current?.querySelector(`[data-learn-proposals] [data-message-id="${CSS.escape(focus.messageId)}"]`);
+    card?.scrollIntoView({ behavior: "smooth", block: "start" });
+    setHighlighted(focus.messageId);
+    const t = setTimeout(() => setHighlighted(null), FOCUS_HIGHLIGHT_MS);
+    return () => clearTimeout(t);
+  }, [paneRef, focus, focusedShown]);
+  return highlighted;
+}
+
 function LearnThread({
   learnChannelId,
   running,
@@ -197,6 +238,7 @@ function LearnThread({
 function ProposalCard({
   proposal: p,
   open,
+  highlighted,
   worktree,
   busy,
   error,
@@ -206,6 +248,8 @@ function ProposalCard({
   proposal: LearnProposal;
   /** Still waiting on the user (see LearnView.open). */
   open: boolean;
+  /** Asked for by its turn's Learn action: outlined for a while. */
+  highlighted: boolean;
   worktree: boolean;
   busy: boolean;
   /** The last apply or dismiss request failed, with this. */
@@ -215,14 +259,19 @@ function ProposalCard({
 }) {
   const { colors } = useTheme();
   const caveat = proposalCaveat(p, worktree);
-  const settled = p.status === "applied" || p.status === "dismissed";
+  const settled = isSettledProposal(p);
   return (
     <div
       data-testid="learn-proposal"
       data-proposal-id={p.id}
       data-status={p.status}
+      data-message-id={p.message_id}
+      data-highlighted={highlighted ? "true" : undefined}
       style={{
         padding: "8px 10px",
+        outline: highlighted ? `2px solid ${colors.active}` : "none",
+        outlineOffset: -2,
+        animation: highlighted ? "loop-learn-blink 0.5s ease-in-out 2" : undefined,
         borderBottom: `1px solid ${colors.border}`,
         fontFamily: fonts.sans,
         fontSize: 12,
@@ -256,6 +305,11 @@ function ProposalCard({
       {p.rationale && <div style={{ fontSize: 11, color: colors.textDim, marginTop: 4 }}>{p.rationale}</div>}
       {caveat && <div style={{ fontSize: 11, color: colors.warning, marginTop: 4 }}>{caveat}</div>}
       {p.status === "failed" && p.error && <div style={{ fontSize: 11, color: colors.error, marginTop: 4 }}>{p.error}</div>}
+      {p.status === "withdrawn" && p.withdrawn_reason && (
+        <div data-testid="learn-withdrawn-reason" style={{ fontSize: 11, color: colors.textDim, marginTop: 4 }}>
+          Withdrawn by a later learn pass: {p.withdrawn_reason}
+        </div>
+      )}
       {error && (
         <div data-testid="learn-request-error" style={{ fontSize: 11, color: colors.error, marginTop: 4 }}>
           {error}

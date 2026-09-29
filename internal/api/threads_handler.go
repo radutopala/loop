@@ -98,19 +98,19 @@ func (s *Server) handleDeleteThread(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// deleteThread deletes threadID through s.threads, stops the passes of its
-// hidden learn thread, which goes with it, and removes both MCP configs
-// unless the parent channel's project keeps them. The thread and its learn
-// thread are noted first, while they still exist to find.
+// deleteThread deletes threadID through s.threads, stops the runs of its
+// hidden learn and explain threads, which go with it, and removes their MCP
+// configs unless the parent channel's project keeps them. The thread and its
+// hidden threads are noted first, while they still exist to find.
 func (s *Server) deleteThread(ctx context.Context, threadID string) error {
 	threads := s.lookupThreads(ctx, []string{threadID})
-	learns := s.learnThreads(ctx, threadID)
+	hidden := s.hiddenThreads(ctx, threadID)
 	if err := s.threads.DeleteThread(ctx, threadID); err != nil {
 		return err
 	}
-	s.stopLearnThreads(ctx, learns)
+	s.stopHiddenThreads(ctx, hidden)
 	if len(threads) == 1 {
-		s.removeMCPConfigs(s.threadOwner(ctx, threads[0]), append(threads, learns...))
+		s.removeMCPConfigs(s.threadOwner(ctx, threads[0]), append(threads, hidden...))
 	}
 	return nil
 }
@@ -283,9 +283,9 @@ func (s *Server) handleForkThread(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	// A hidden learn thread is as good as missing: forking it would surface
-	// its review session as a visible thread.
-	if src == nil || src.ParentID == "" || src.Kind == db.ChannelKindLearn {
+	// A hidden learn or explain thread is as good as missing: forking it
+	// would surface its session as a visible thread.
+	if src == nil || src.ParentID == "" || db.IsHiddenKind(src.Kind) {
 		http.Error(w, "thread not found", http.StatusBadRequest)
 		return
 	}

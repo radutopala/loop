@@ -13,6 +13,7 @@ import { firstClipboardImage, uploadPastedImage } from "../../utils/clipboardIma
 import { storageGetJSON, storageSetJSON } from "../../utils/storage";
 import { AgentConfigPill } from "./AgentConfigPill";
 import { composerHeight, composerMaxHeight } from "./composerHeight";
+import { ExplainToggle } from "./ExplainToggle";
 import { LearnToggle } from "./LearnToggle";
 import { chooseSendRoute, normalizeSendMode, type SendMode } from "./sendRouting";
 
@@ -1213,6 +1214,7 @@ export function ChatInput({
         )}
         <div style={{ flex: 1 }} />
         <LearnToggle />
+        <ExplainToggle />
         <AgentConfigPill channelId={channelId} />
         <div style={modeStyles.pill}>
           <button

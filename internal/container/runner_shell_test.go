@@ -30,7 +30,7 @@ func (s *RunnerSuite) TestRunWithOnTurnStreaming() {
 	req := &agent.AgentRequest{
 		ChannelID: "ch-1",
 		Messages:  []agent.AgentMessage{{Role: "user", Content: "hello"}},
-		OnTurn: func(text string) {
+		OnTurn: func(text string, _ agent.TurnRef) {
 			streamedTurns = append(streamedTurns, text)
 		},
 	}
@@ -103,7 +103,7 @@ func (s *RunnerSuite) TestStreamCallbacksAny() {
 		want bool
 	}{
 		{"empty", streamCallbacks{}, false},
-		{"onTurn", streamCallbacks{onTurn: func(string) {}}, true},
+		{"onTurn", streamCallbacks{onTurn: func(string, agent.TurnRef) {}}, true},
 		{"onToolUse", streamCallbacks{onToolUse: func(_, _, _ string) {}}, true},
 		{"onToolUseRaw", streamCallbacks{onToolUseRaw: func(_, _, _ string) {}}, true},
 		{"onActivity", streamCallbacks{onActivity: func(_, _ string) {}}, true},
@@ -121,7 +121,7 @@ func (s *RunnerSuite) TestRunWithOnTurnFollowError() {
 	ctx := context.Background()
 	req := &agent.AgentRequest{
 		ChannelID: "ch-1",
-		OnTurn:    func(string) {},
+		OnTurn:    func(string, agent.TurnRef) {},
 	}
 
 	s.client.On("ContainerCreate", ctx, mock.AnythingOfType("*container.ContainerConfig"), testContainerName).Return(testContainerID, nil)
@@ -189,7 +189,7 @@ func (s *RunnerSuite) TestRunWithOnTurnErrors() {
 			ctx := context.Background()
 			req := &agent.AgentRequest{
 				ChannelID: "ch-1",
-				OnTurn:    func(string) {},
+				OnTurn:    func(string, agent.TurnRef) {},
 			}
 
 			waitCh := make(chan WaitResponse, 1)
@@ -223,7 +223,7 @@ func (s *RunnerSuite) TestRunWithOnTurnTimeout() {
 	ctx, cancel := context.WithCancel(context.Background())
 	req := &agent.AgentRequest{
 		ChannelID: "ch-1",
-		OnTurn:    func(string) {},
+		OnTurn:    func(string, agent.TurnRef) {},
 	}
 
 	// Create a reader that blocks until context is cancelled
@@ -653,7 +653,7 @@ func (s *RunnerSuite) TestBuildBaseClaudeCmdFlags() {
 
 	// Baseline: --dangerously-skip-permissions, no --permission-mode,
 	// no --dangerously-load-development-channels.
-	cmd := buildBaseClaudeCmd(cfg, "/work/.loop/mcp-ch-1.json", "", "", false, false, nil)
+	cmd := buildBaseClaudeCmd(cfg, "/work/.loop/mcp-ch-1.json", "", "", "", false, false, nil)
 	got := strings.Join(cmd, " ")
 	require.Contains(s.T(), got, "--dangerously-skip-permissions")
 	require.NotContains(s.T(), got, "--permission-mode")
@@ -661,18 +661,18 @@ func (s *RunnerSuite) TestBuildBaseClaudeCmdFlags() {
 
 	// With agent ID but default config: the development-channels flag is
 	// off until the opt-in is set.
-	cmd = buildBaseClaudeCmd(cfg, "/work/.loop/mcp-ch-1.json", "", "agent-0", false, false, nil)
+	cmd = buildBaseClaudeCmd(cfg, "/work/.loop/mcp-ch-1.json", "", "", "agent-0", false, false, nil)
 	got = strings.Join(cmd, " ")
 	require.NotContains(s.T(), got, "--dangerously-load-development-channels")
 
 	// With agent ID + opt-in config: --dangerously-load-development-channels server:loop is added.
 	cfg.ClaudeDangerouslyLoadDevelopmentChannels = true
-	cmd = buildBaseClaudeCmd(cfg, "/work/.loop/mcp-ch-1.json", "", "agent-0", false, false, nil)
+	cmd = buildBaseClaudeCmd(cfg, "/work/.loop/mcp-ch-1.json", "", "", "agent-0", false, false, nil)
 	got = strings.Join(cmd, " ")
 	require.Contains(s.T(), got, "--dangerously-load-development-channels server:loop")
 
 	// Opt-in alone (no agent ID) still omits the flag.
-	cmd = buildBaseClaudeCmd(cfg, "/work/.loop/mcp-ch-1.json", "", "", false, false, nil)
+	cmd = buildBaseClaudeCmd(cfg, "/work/.loop/mcp-ch-1.json", "", "", "", false, false, nil)
 	got = strings.Join(cmd, " ")
 	require.NotContains(s.T(), got, "--dangerously-load-development-channels")
 }
@@ -825,21 +825,21 @@ func (s *RunnerSuite) TestBuildClaudeCmdReviewMode() {
 	require.Less(s.T(), i, slices.Index(cmd, "--print"))
 }
 
-// TestBuildClaudeCmdLearnMode verifies a learn run adds its denials after the
+// TestBuildClaudeCmdReadOnly verifies a read-only run adds its denials after the
 // batch ones and leaves the shared config untouched.
-func (s *RunnerSuite) TestBuildClaudeCmdLearnMode() {
+func (s *RunnerSuite) TestBuildClaudeCmdReadOnly() {
 	disallowed := config.DefaultBatchDisallowedTools()
 	cfg := &config.Config{ClaudeBinPath: "claude", ClaudeBatchDisallowedTools: disallowed}
 	req := &agent.AgentRequest{
 		ChannelID: "ch-1",
 		Messages:  []agent.AgentMessage{{Role: "user", Content: "learn"}},
-		LearnMode: true,
+		ReadOnly:  true,
 	}
 
 	cmd := buildClaudeCmd(cfg, "/work/.loop/mcp-ch-1.json", req)
 	i := slices.Index(cmd, "--disallowedTools")
 	require.NotEqual(s.T(), -1, i)
-	require.Equal(s.T(), strings.Join(slices.Concat(disallowed, learnModeDisallowedTools), ","), cmd[i+1])
+	require.Equal(s.T(), strings.Join(slices.Concat(disallowed, readOnlyDisallowedTools), ","), cmd[i+1])
 	require.Contains(s.T(), cmd[i+1], "mcp__loop__prompt_shortcut")
 	// quality_scan writes a snapshot row; quality_snapshot only reads one.
 	require.Contains(s.T(), strings.Split(cmd[i+1], ","), "mcp__loop__quality_scan")
@@ -1010,11 +1010,32 @@ func (s *RunnerSuite) TestClaudeCmdBuilderBuildContinueCmd() {
 func (s *RunnerSuite) TestBuildBaseClaudeCmdContinueSessionIgnoresSessionID() {
 	cfg := &config.Config{ClaudeBinPath: "claude"}
 	// continueSession=true wins even when a sessionID is also supplied.
-	cmd := buildBaseClaudeCmd(cfg, "/work/.loop/mcp-ch-1.json", "sess-should-be-ignored", "", false, true, nil)
+	cmd := buildBaseClaudeCmd(cfg, "/work/.loop/mcp-ch-1.json", "sess-should-be-ignored", "", "", false, true, nil)
 	got := strings.Join(cmd, " ")
 	require.Contains(s.T(), got, "--continue")
 	require.NotContains(s.T(), got, "--resume")
 	require.NotContains(s.T(), got, "sess-should-be-ignored")
+}
+
+func (s *RunnerSuite) TestBuildBaseClaudeCmdResumeAt() {
+	cfg := &config.Config{ClaudeBinPath: "claude"}
+	const base = "claude --mcp-config /work/.loop/mcp-ch-1.json --dangerously-skip-permissions"
+	tests := []struct {
+		name    string
+		session string
+		fork    bool
+		want    string
+	}{
+		{name: "fork cut at the entry", session: "sess-1", fork: true, want: base + " --resume sess-1 --fork-session --resume-session-at=uuid-1"},
+		{name: "plain resume ignores it", session: "sess-1", want: base + " --resume sess-1"},
+		{name: "no session ignores it", fork: true, want: base},
+	}
+	for _, tc := range tests {
+		s.Run(tc.name, func() {
+			cmd := buildBaseClaudeCmd(cfg, "/work/.loop/mcp-ch-1.json", tc.session, "uuid-1", "", tc.fork, false, nil)
+			require.Equal(s.T(), tc.want, strings.Join(cmd, " "))
+		})
+	}
 }
 
 func (s *RunnerSuite) TestClaudeCmdBuilderProjectConfigModel() {

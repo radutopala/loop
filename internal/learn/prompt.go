@@ -6,6 +6,7 @@ package learn
 import (
 	_ "embed"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -16,6 +17,18 @@ import (
 // AgentID is the learn agent's MCP agent id. It gives the pass its own MCP
 // config file and is what unlocks the propose_learnings tool.
 const AgentID = "learn"
+
+// Errors an on-demand learn pass over a turn can't be started with.
+var (
+	// ErrNotATurn: the message isn't a bot message in the channel, so it
+	// doesn't end a turn there.
+	ErrNotATurn = errors.New("not a bot message in this channel")
+	// ErrNoSession: the channel has no session to fork yet.
+	ErrNoSession = errors.New("the channel has no session to learn from")
+	// ErrUnavailable: the channel isn't one a turn can be learned from on
+	// demand, a Slack or Discord channel, a task thread, or a hidden thread.
+	ErrUnavailable = errors.New("learn is not available in this channel")
+)
 
 //go:embed prompt.md
 var basePrompt string
@@ -54,8 +67,9 @@ type State struct {
 	Proposals []*db.LearnProposal
 }
 
-// maxDismissed caps how many dismissed proposals the prompt lists.
-const maxDismissed = 20
+// maxSettled caps how many dismissed proposals the prompt lists, and how
+// many withdrawn ones.
+const maxSettled = 20
 
 // SystemPrompt returns the learn agent's system prompt: the built-in
 // instructions, the current state, then the config's learn.prompt.
@@ -90,9 +104,10 @@ func SystemPrompt(st State) string {
 	writeSection(&b, "Agentgate file rules", cfg.Gates.Agentgate.FileRules)
 	writeSection(&b, "Agentgate path rules", cfg.Gates.Agentgate.PathRules)
 	writeSection(&b, "Mounts", cfg.Mounts)
-	waiting, dismissed := proposalSummaries(st.Proposals)
-	writeSection(&b, "Proposals waiting for the user", waiting)
-	writeSection(&b, "Proposals the user dismissed", dismissed)
+	sums := proposalSummaries(st.Proposals)
+	writeSection(&b, "Proposals waiting for the user", sums.waiting)
+	writeSection(&b, "Proposals the user dismissed", sums.dismissed)
+	writeSection(&b, "Proposals earlier passes withdrew", sums.withdrawn)
 	if extra := strings.TrimSpace(cfg.Learn.Prompt); extra != "" {
 		b.WriteString("\n## Additional instructions\n\n")
 		b.WriteString(extra)
@@ -128,30 +143,46 @@ func taskSummaries(tasks []*db.ScheduledTask) []taskSummary {
 }
 
 // proposalSummary is the part of an earlier proposal the learn agent needs to
-// spot a repeat.
+// spot a repeat. A waiting one carries its id and status, so the agent can
+// withdraw it; a withdrawn one, why it was.
 type proposalSummary struct {
+	ID      int64           `json:"id,omitempty"`
+	Status  string          `json:"status,omitempty"`
 	Kind    string          `json:"kind"`
 	Title   string          `json:"title"`
 	Payload json.RawMessage `json:"payload"`
+	Reason  string          `json:"withdrawn_reason,omitempty"`
+}
+
+// proposalSets are a channel's earlier proposals as the prompt lists them.
+type proposalSets struct {
+	waiting, dismissed, withdrawn []proposalSummary
 }
 
 // proposalSummaries splits earlier proposals into those still waiting on the
-// user (pending, applying or failed) and the most recent dismissed ones.
-// Applied proposals show up in the state above already.
-func proposalSummaries(proposals []*db.LearnProposal) (waiting, dismissed []proposalSummary) {
+// user (pending, applying or failed), and the most recent dismissed and
+// withdrawn ones. Applied proposals show up in the state above already.
+func proposalSummaries(proposals []*db.LearnProposal) proposalSets {
+	var sets proposalSets
 	for _, p := range proposals {
 		sum := proposalSummary{Kind: p.Kind, Title: p.Title, Payload: json.RawMessage(p.Payload)}
 		switch p.Status {
 		case db.LearnApplied:
 		case db.LearnDismissed:
-			if len(dismissed) < maxDismissed {
-				dismissed = append(dismissed, sum)
+			if len(sets.dismissed) < maxSettled {
+				sets.dismissed = append(sets.dismissed, sum)
+			}
+		case db.LearnWithdrawn:
+			if len(sets.withdrawn) < maxSettled {
+				sum.Reason = p.WithdrawnReason
+				sets.withdrawn = append(sets.withdrawn, sum)
 			}
 		default:
-			waiting = append(waiting, sum)
+			sum.ID, sum.Status = p.ID, p.Status
+			sets.waiting = append(sets.waiting, sum)
 		}
 	}
-	return waiting, dismissed
+	return sets
 }
 
 // writeSection writes a titled JSON dump of items, or "none" when empty.
@@ -187,15 +218,52 @@ func TriggerMessage(channelName, lastPrompt string) string {
 	return b.String()
 }
 
+// maxQuoted caps how much of a turn's prompt and reply TurnTriggerMessage
+// quotes; enough to find the turn in the session.
+const maxQuoted = 2000
+
+// TurnTriggerMessage is the message that starts a learn pass the user asked
+// for over one turn in channelName, the one prompt started and reply ended.
+// Its first line is TriggerMessage's, so IsTrigger knows it too; the rest
+// points the pass at that turn.
+func TurnTriggerMessage(channelName, prompt, reply string) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "%s%q%s", triggerLead, channelName, triggerTail)
+	b.WriteString("\n\nThe user asked for this turn to be reviewed.")
+	if p := strings.TrimSpace(prompt); p != "" {
+		b.WriteString("\n\nThat turn's prompt was:\n\n")
+		b.WriteString(quote(truncate(p)))
+	}
+	b.WriteString("\n\nIts final reply was:\n\n")
+	b.WriteString(quote(truncate(strings.TrimSpace(reply))))
+	return b.String()
+}
+
+// dirHint starts the paragraph a worktree run's prompt is prefixed with.
+const dirHint = "IMPORTANT: Your working directory is "
+
 // IsTrigger reports whether prompt is a TriggerMessage, bare or as the
-// agent got it, behind its author's "name: " prefix. %q keeps the channel
-// name on the first line, so that line alone tells.
+// agent got it: behind its author's "name: " prefix, and in a worktree
+// behind the working directory hint. %q keeps the channel name on the first
+// line, so that line alone tells.
 func IsTrigger(prompt string) bool {
+	if strings.HasPrefix(prompt, dirHint) {
+		_, prompt, _ = strings.Cut(prompt, "\n\n")
+	}
 	line, _, _ := strings.Cut(prompt, "\n")
 	if _, rest, ok := strings.Cut(line, ": "); ok && strings.HasPrefix(rest, triggerLead) {
 		line = rest
 	}
 	return strings.HasPrefix(line, triggerLead+`"`) && strings.HasSuffix(line, `"`+triggerTail)
+}
+
+// truncate cuts text to maxQuoted runes, marking the cut.
+func truncate(text string) string {
+	r := []rune(text)
+	if len(r) <= maxQuoted {
+		return text
+	}
+	return string(r[:maxQuoted]) + " …"
 }
 
 // quote renders text as a markdown blockquote.

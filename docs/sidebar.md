@@ -93,10 +93,12 @@ The search box sits below the header and provides real-time case-insensitive fil
 - When the parent matches, all its threads are shown
 - When only threads match, only those matching threads are shown under the parent
 - Press `Escape` to clear the search query
+- Or click the clear button (✕) at the input's right end; it shows only while there's text, and focus stays in the input
 
 ### UI
 
 - Search icon (magnifying glass) positioned inside the input field (left-aligned)
+- Clear button (✕, "Clear search") inside the input field (right-aligned), shown only when the query isn't empty
 - Input: full width, `colors.bg` background, 12px font, 4px border-radius
 - Placeholder: "Search..."
 

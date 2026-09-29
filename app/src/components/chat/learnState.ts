@@ -1,4 +1,4 @@
-import type { LearnProposal, LearnProposalKind } from "../../api/learn";
+import type { LearnPass, LearnProposal, LearnProposalKind } from "../../api/learn";
 
 // The Learn switch shows what applies: the channel's own setting when it has
 // one, the config default otherwise. A click stores the opposite explicitly,
@@ -35,8 +35,14 @@ export function learnKindLabel(kind: string): string {
 // outcome.
 export const LEARN_APPLY_STALE_MS = 60_000;
 
+// A proposal done with: applied, dismissed, or withdrawn by a later learn
+// pass. Its card stays in the list, dimmed.
+export function isSettledProposal(p: LearnProposal): boolean {
+  return p.status === "applied" || p.status === "dismissed" || p.status === "withdrawn";
+}
+
 // A proposal still waiting on the user: never settled, failed and retryable,
-// or stuck applying past LEARN_APPLY_STALE_MS.
+// or stuck applying past LEARN_APPLY_STALE_MS. A withdrawn one isn't.
 export function isOpenProposal(p: LearnProposal, now = Date.now()): boolean {
   if (p.status === "pending" || p.status === "failed") return true;
   return p.status === "applying" && now - Date.parse(p.updated_at) > LEARN_APPLY_STALE_MS;
@@ -82,10 +88,49 @@ export function learnPassRunning(cur: boolean, status: string, trigger: string |
 
 // The Learn label in the chat pane's header: what the learn pass is doing, else how
 // many proposals wait, else null when there's nothing to show.
-export function learnBadgeLabel(running: boolean, open: number): string | null {
-  if (running) return "learning…";
-  if (open > 0) return `${open} proposal${open === 1 ? "" : "s"}`;
-  return null;
+/**
+ * What a turn's Learn action says about the turn's learn pass: its state
+ * while it's queued or running, else how many proposals it filed. A turn
+ * without one, or whose old pass the next turn's superseded before it ran,
+ * offers to learn from it.
+ */
+export function learnTurnLabel(pass: LearnPass | undefined, proposals: number): string {
+  switch (pass?.status) {
+    case "queued":
+      return "Learn queued…";
+    case "running":
+      return "Learning…";
+    case "failed":
+      return "Learn failed";
+    case "done":
+      return proposals === 0 ? "No proposals" : `${proposals} proposal${proposals === 1 ? "" : "s"}`;
+    default:
+      return "Learn";
+  }
+}
+
+/** Folds incoming learn passes (new or updated) into the list, newest first. */
+export function mergeLearnPasses(list: LearnPass[], incoming: LearnPass[]): LearnPass[] {
+  const byId = new Map(list.map((p) => [p.id, p]));
+  for (const p of incoming) byId.set(p.id, p);
+  return [...byId.values()].sort((a, b) => b.id - a.id);
+}
+
+/** Each reviewed turn's newest learn pass, by the turn's last bot message. */
+export function learnPassesByMessage(passes: LearnPass[]): Map<string, LearnPass> {
+  const m = new Map<string, LearnPass>();
+  for (const p of passes) {
+    const cur = m.get(p.message_id);
+    if (!cur || p.id > cur.id) m.set(p.message_id, p);
+  }
+  return m;
+}
+
+// The proposals a learn.proposals event carries: the ones the pass filed,
+// and the earlier ones it withdrew (a call that only withdraws files none),
+// to merge in one go.
+export function learnProposalsEventItems(data: { proposals: LearnProposal[]; withdrawn?: LearnProposal[] }): LearnProposal[] {
+  return [...data.proposals, ...(data.withdrawn ?? [])];
 }
 
 // mergeProposals folds incoming proposals (new or updated) into the list,

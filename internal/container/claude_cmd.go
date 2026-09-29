@@ -48,8 +48,10 @@ func claudeTranscriptMissing(stat func(string) (os.FileInfo, error), homeDir fun
 // batch and interactive modes. When continueSession is true, sessionID is
 // ignored and `--continue` is emitted instead — used to relaunch a terminal
 // pane after its Claude process died without knowing which (possibly forked)
-// session id it was running.
-func buildBaseClaudeCmd(cfg *config.Config, mcpConfigPath, sessionID, agentID string, forkSession, continueSession bool, extraDirs []string) []string {
+// session id it was running. resumeAt cuts a fork at that transcript entry
+// (see agent.AgentRequest.ResumeAt); it only applies to a forked resume, and
+// only batch (print mode) runs pass it: the flag is print-mode only.
+func buildBaseClaudeCmd(cfg *config.Config, mcpConfigPath, sessionID, resumeAt, agentID string, forkSession, continueSession bool, extraDirs []string) []string {
 	cmd := []string{cfg.ClaudeBinPath, "--mcp-config", mcpConfigPath}
 	if cfg.ClaudeModel != "" {
 		cmd = append(cmd, "--model", cfg.ClaudeModel)
@@ -65,6 +67,9 @@ func buildBaseClaudeCmd(cfg *config.Config, mcpConfigPath, sessionID, agentID st
 		cmd = append(cmd, "--resume", sessionID)
 		if forkSession {
 			cmd = append(cmd, "--fork-session")
+			if resumeAt != "" {
+				cmd = append(cmd, "--resume-session-at="+resumeAt)
+			}
 		}
 	}
 	// Enable MCP Channels when agent tools are configured, so the agent
@@ -104,27 +109,28 @@ func withoutTool(tools []string, name string) []string {
 	return out
 }
 
-// learnModeTools is the whole built-in tool set of a learn run, passed as
-// --tools. A learn pass only reads the finished run and the checkout and
-// files proposals through propose_learnings; the user applies them. So every
+// readOnlyTools is the whole built-in tool set of a read-only run (a learn
+// pass or an explanation), passed as --tools. Such a run only reads the chat
+// and the checkout; a learn pass also files proposals through
+// propose_learnings, which the user applies. So every
 // built-in tool that edits files, runs commands, reaches the network, spawns
 // subagents, switches worktrees, schedules or notifies anything (Bash, Edit,
 // Write, WebFetch, WebSearch, Agent, Skill, EnterWorktree, RemoteTrigger,
 // PushNotification, SendMessage, Cron*, ...) is left out, including ones a
 // later Claude Code release adds. ToolSearch stays so deferred MCP tools can
-// still be loaded. --tools doesn't reach MCP tools; learnModeDisallowedTools
+// still be loaded. --tools doesn't reach MCP tools; readOnlyDisallowedTools
 // covers those.
-var learnModeTools = []string{"Read", "Grep", "Glob", "TodoWrite", "ToolSearch"}
+var readOnlyTools = []string{"Read", "Grep", "Glob", "TodoWrite", "ToolSearch"}
 
-// learnModeDisallowedTools are the Loop MCP tools denied on top of the batch
-// denials in a learn run. They may not change Loop's config, tasks, threads,
+// readOnlyDisallowedTools are the Loop MCP tools denied on top of the batch
+// denials in a read-only run. They may not change Loop's config, tasks, threads,
 // workflows, playgrounds, quality snapshots, memory index or agent status,
 // or talk to anyone. The loop tools that only read (list_*, show_task,
 // get_*, search_*, the quality_* reports besides quality_scan, and
 // quality_whatif, which only simulates) stay allowed. Its MCP config holds
 // the loop server alone (see buildMCPConfig) and --strict-mcp-config keeps
 // any other server out, so no other server's tools reach it either.
-var learnModeDisallowedTools = []string{
+var readOnlyDisallowedTools = []string{
 	"mcp__loop__prompt_shortcut", "mcp__loop__bash_shortcut",
 	"mcp__loop__schedule_task", "mcp__loop__edit_task", "mcp__loop__toggle_task", "mcp__loop__cancel_task",
 	"mcp__loop__rename_thread", "mcp__loop__set_thread_description", "mcp__loop__set_ticket_url",
@@ -155,7 +161,7 @@ const reviewModeSettings = `{"env":{"CLAUDE_CODE_REPORT_FINDINGS":"1","CLAUDE_CO
 func buildClaudeCmd(cfg *config.Config, mcpConfigPath string, req *agent.AgentRequest) []string {
 	// Per-channel on-demand overrides beat the merged config's model/effort.
 	// Shallow-copy so the cached config is never mutated.
-	if req.Model != "" || req.Effort != "" || req.ReviewMode || req.LearnMode {
+	if req.Model != "" || req.Effort != "" || req.ReviewMode || req.ReadOnly {
 		override := *cfg
 		if req.Model != "" {
 			override.ClaudeModel = req.Model
@@ -170,24 +176,24 @@ func buildClaudeCmd(cfg *config.Config, mcpConfigPath string, req *agent.AgentRe
 		if req.ReviewMode {
 			override.ClaudeBatchDisallowedTools = withoutTool(cfg.ClaudeBatchDisallowedTools, reportFindingsTool)
 		}
-		// A learn run proposes; it never changes anything itself. See
-		// learnModeDisallowedTools.
-		if req.LearnMode {
-			override.ClaudeBatchDisallowedTools = slices.Concat(override.ClaudeBatchDisallowedTools, learnModeDisallowedTools)
+		// A read-only run looks (and a learn run proposes); it never
+		// changes anything itself. See readOnlyDisallowedTools.
+		if req.ReadOnly {
+			override.ClaudeBatchDisallowedTools = slices.Concat(override.ClaudeBatchDisallowedTools, readOnlyDisallowedTools)
 		}
 		cfg = &override
 	}
-	cmd := buildBaseClaudeCmd(cfg, mcpConfigPath, req.SessionID, req.AgentID, req.ForkSession, false, cfg.ExtraDirs)
+	cmd := buildBaseClaudeCmd(cfg, mcpConfigPath, req.SessionID, req.ResumeAt, req.AgentID, req.ForkSession, false, cfg.ExtraDirs)
 	if req.ReviewMode {
 		cmd = append(cmd, "--settings", reviewModeSettings)
 	}
-	// A learn run's --mcp-config has only the loop server; this makes Claude
+	// A read-only run's --mcp-config has only the loop server; this makes Claude
 	// ignore every other MCP config too (~/.claude.json, the project's
 	// .mcp.json), so the user's own servers can't act for it.
 	// --tools is variadic like --disallowedTools (see below), so it's
 	// emitted before other flags.
-	if req.LearnMode {
-		cmd = append(cmd, "--strict-mcp-config", "--tools", strings.Join(learnModeTools, ","))
+	if req.ReadOnly {
+		cmd = append(cmd, "--strict-mcp-config", "--tools", strings.Join(readOnlyTools, ","))
 	}
 	// Deny tools that only make sense in a persistent interactive harness.
 	// In one-shot `--print` mode the container exits at end of turn, so tools
@@ -266,7 +272,7 @@ const claudeExitTrailer = `; __lec=$?; printf '\033[?1000l\033[?1002l\033[?1003l
 // user typing `claude` at the terminal would bypass the gate entirely.
 func buildInteractiveClaudeCmd(cfg *config.Config, channelID, workDir, sessionID, agentID string, forkSession, continueSession bool) string {
 	mcpConfigPath := mcpConfigPathForAgent(workDir, channelID, agentID)
-	cmd := buildBaseClaudeCmd(cfg, mcpConfigPath, sessionID, agentID, forkSession, continueSession, cfg.ExtraDirs)
+	cmd := buildBaseClaudeCmd(cfg, mcpConfigPath, sessionID, "", agentID, forkSession, continueSession, cfg.ExtraDirs)
 	if cfg.Gates.Agentgate.Enabled {
 		cmd = append([]string{"loop", "syscallwrap", "--"}, cmd...)
 	}

@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/radutopala/loop/internal/db"
+	"github.com/radutopala/loop/internal/explain"
 	"github.com/radutopala/loop/internal/learn"
 	"github.com/radutopala/loop/internal/osutil"
 )
@@ -75,18 +76,19 @@ func (s *Server) handleListSessions(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Collect session IDs already associated with any channel or thread in
-	// the DB. A learn thread's session isn't importable, so it's left out of
-	// the list; not while fork_pending, though, when the id is the reviewed
-	// run's, borrowed until the pass forks it.
+	// the DB. A learn or explain thread's session isn't importable, so it's
+	// left out of the list; not while fork_pending, though, which learn
+	// threads from before passes forked at their turn may still have: the
+	// id is then the reviewed run's, borrowed until a run forks it.
 	var importedIDs []string
-	learnSessions := map[string]bool{}
+	hiddenSessions := map[string]bool{}
 	if allChannels, err := s.store.ListChannels(r.Context()); err == nil {
 		for _, c := range allChannels {
 			if c.SessionID != "" {
 				importedIDs = append(importedIDs, c.SessionID)
 			}
-			if c.SessionID != "" && c.Kind == db.ChannelKindLearn && !c.ForkPending {
-				learnSessions[c.SessionID] = true
+			if c.SessionID != "" && db.IsHiddenKind(c.Kind) && !c.ForkPending {
+				hiddenSessions[c.SessionID] = true
 			}
 		}
 	}
@@ -108,11 +110,11 @@ func (s *Server) handleListSessions(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		sessionID := strings.TrimSuffix(name, ".jsonl")
-		if learnSessions[sessionID] {
+		if hiddenSessions[sessionID] {
 			continue
 		}
-		lastMsg, isLearn := readSessionSummary(s.sys, filepath.Join(projectDir, name))
-		if isLearn {
+		lastMsg, hidden := readSessionSummary(s.sys, filepath.Join(projectDir, name))
+		if hidden {
 			continue
 		}
 		sessions = append(sessions, sessionEntry{
@@ -150,7 +152,8 @@ const maxLastMessageLen = 200
 const headReadSize = 64 * 1024
 
 // readSessionSummary reads a JSONL session file's last message text (see
-// findLastMessageFromReader) and whether it's a learn pass's session.
+// findLastMessageFromReader) and whether it's a learn pass's or an
+// explanation's session.
 func readSessionSummary(sys interface {
 	Open(string) (*os.File, error)
 }, path string) (string, bool) {
@@ -159,16 +162,17 @@ func readSessionSummary(sys interface {
 		return "", false
 	}
 	defer f.Close()
-	if isLearnSession(io.NewSectionReader(f, 0, headReadSize)) {
+	if isHiddenSession(io.NewSectionReader(f, 0, headReadSize)) {
 		return "", true
 	}
 	return findLastMessageFromReader(f, tailReadSize), false
 }
 
-// isLearnSession reports whether the session file head r starts with a
-// learn pass: its first enqueue queue-operation (the prompt a --print run
-// starts with, logged before any forked history) is the learn trigger.
-func isLearnSession(r io.Reader) bool {
+// isHiddenSession reports whether the session file head r starts with a
+// learn pass or an explanation: its first enqueue queue-operation (the
+// prompt a --print run starts with, logged before any forked history) is
+// the learn or explain trigger.
+func isHiddenSession(r io.Reader) bool {
 	sc := bufio.NewScanner(r)
 	sc.Buffer(make([]byte, 0, 4096), headReadSize)
 	for sc.Scan() {
@@ -184,7 +188,7 @@ func isLearnSession(r io.Reader) bool {
 		if json.Unmarshal(line, &op) != nil || op.Type != "queue-operation" || op.Operation != "enqueue" {
 			continue
 		}
-		return learn.IsTrigger(op.Content)
+		return learn.IsTrigger(op.Content) || explain.IsTrigger(op.Content)
 	}
 	return false
 }

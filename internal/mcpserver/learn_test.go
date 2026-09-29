@@ -48,6 +48,52 @@ func (s *LearnToolSuite) TestProposeLearnings() {
 	}}, body)
 }
 
+func (s *LearnToolSuite) TestProposeLearningsWithdraw() {
+	tests := []struct {
+		name     string
+		args     map[string]any
+		response string
+		want     proposeLearningsInput
+		wantText string
+	}{
+		{
+			name:     "withdraw only",
+			args:     map[string]any{"withdraw": []map[string]any{{"id": 3, "reason": "stale"}}},
+			response: `{"proposals":[],"withdrawn":[{"id":3}]}`,
+			want:     proposeLearningsInput{Withdraw: []learnWithdrawInput{{ID: 3, Reason: "stale"}}},
+			wantText: "Withdrew 1 proposal(s).",
+		},
+		{
+			name: "replace and withdraw",
+			args: map[string]any{
+				"proposals": []map[string]any{{"kind": "rename", "title": "a", "payload": map[string]any{"name": "x"}, "replaces": 4}},
+				"withdraw":  []map[string]any{{"id": 3, "reason": "stale"}},
+			},
+			response: `{"proposals":[{"title":"a"}],"withdrawn":[{"id":3},{"id":4}]}`,
+			want: proposeLearningsInput{
+				Proposals: []learnProposalInput{{Kind: "rename", Title: "a", Payload: map[string]any{"name": "x"}, Replaces: 4}},
+				Withdraw:  []learnWithdrawInput{{ID: 3, Reason: "stale"}},
+			},
+			wantText: "Filed 1 proposal(s); the user will accept or dismiss them in the Learn view. Withdrew 2 proposal(s).",
+		},
+	}
+	for _, tc := range tests {
+		s.Run(tc.name, func() {
+			var gotBody []byte
+			s.httpClient.doFunc = func(req *http.Request) (*http.Response, error) {
+				gotBody, _ = io.ReadAll(req.Body)
+				return jsonResponse(201, tc.response), nil
+			}
+			text, isError := s.callTool("propose_learnings", tc.args)
+			require.False(s.T(), isError, text)
+			require.Equal(s.T(), tc.wantText, text)
+			var body proposeLearningsInput
+			require.NoError(s.T(), json.Unmarshal(gotBody, &body))
+			require.Equal(s.T(), tc.want, body)
+		})
+	}
+}
+
 func (s *LearnToolSuite) TestProposeLearningsErrors() {
 	s.runToolErrorCases(toolErrorSpec{
 		tool: "propose_learnings",

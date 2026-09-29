@@ -8,19 +8,25 @@ import (
 )
 
 // ImageGate is the part of ImageLifecycleManager the runner uses to hold
-// container creation while an image build runs.
+// container creation while a build of an image it depends on runs.
 type ImageGate interface {
-	WaitBuilds(ctx context.Context, onWait func()) error
+	WaitBuilds(ctx context.Context, images []string, onWait func(image string)) error
 }
 
-// SetImageGate makes container creation wait out image builds and refuse
+// SetImageGate makes container creation wait out builds of its image and of
+// baseImage, the agent image project images are built FROM, and refuse
 // images built by an older loop than loopVersion, the daemon's own.
-func (r *DockerRunner) SetImageGate(gate ImageGate, loopVersion string) {
+func (r *DockerRunner) SetImageGate(gate ImageGate, loopVersion, baseImage string) {
 	r.imageGate = gate
 	r.loopVersion = loopVersion
+	r.baseImage = baseImage
 }
 
-// awaitImage waits for any image build in progress, then checks that image
+// awaitImage waits for a build of image, or of the base agent image, in
+// progress; a rebuilt base is followed by rebuilds of the project images on
+// it, which the lifecycle manager marks before the base build ends, so a
+// project image is never used between the two. Builds of other images (another
+// project's, the Chrome sidecar's) don't hold it. It then checks that image
 // wasn't built by an older loop than the daemon. The daemon hands the
 // container policy the image's own loop binary enforces (the docker proxy's,
 // for one), so an older image can fail to start on a policy it can't read;
@@ -35,12 +41,12 @@ func (r *DockerRunner) awaitImage(ctx context.Context, image string, onActivity 
 		onActivity = func(string, string) {}
 	}
 	waited := false
-	err := r.imageGate.WaitBuilds(ctx, func() {
+	err := r.imageGate.WaitBuilds(ctx, []string{image, r.baseImage}, func(building string) {
 		waited = true
-		onActivity("image_build", "Waiting for the agent image build to finish")
+		onActivity("image_build", fmt.Sprintf("Waiting for the %s image build to finish", building))
 	})
 	if err != nil {
-		return fmt.Errorf("waiting for the agent image build: %w", err)
+		return fmt.Errorf("waiting for the image build: %w", err)
 	}
 	if waited {
 		// Replaces the waiting notice, which would otherwise stay up until

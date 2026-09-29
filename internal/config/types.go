@@ -247,6 +247,29 @@ type jsonLearnConfig struct {
 	Prompt   string `json:"prompt"`
 }
 
+// ExplainConfig configures explanations: a hidden forked session writes up
+// one chat turn (what changed, commands and results, decisions, risks, how
+// to review) for the engineer. Enabled is the default for the composer's
+// Explain switch, which explains every finished turn and which each channel
+// can override; any turn can be explained on demand either way. Model and
+// Effort, when set, replace the channel's for the explain run; Prompt, when
+// set, is added to the built-in explain instructions.
+type ExplainConfig struct {
+	Enabled bool   `json:"enabled"`
+	Model   string `json:"model"`
+	Effort  string `json:"effort"`
+	Prompt  string `json:"prompt"`
+}
+
+// jsonExplainConfig is the JSON representation of ExplainConfig; the
+// pointer tells "unset" (inherit the parent layer) from an explicit value.
+type jsonExplainConfig struct {
+	Enabled *bool  `json:"enabled"`
+	Model   string `json:"model"`
+	Effort  string `json:"effort"`
+	Prompt  string `json:"prompt"`
+}
+
 // PlaygroundShareConfig gates the public playground-share feature: when
 // Enabled is false (the default), the share endpoints and the
 // playground_share MCP tool reject requests, and the FE hides the Share
@@ -526,6 +549,7 @@ type Config struct {
 	Review                     ReviewConfig
 	PlaygroundShare            PlaygroundShareConfig
 	Learn                      LearnConfig
+	Explain                    ExplainConfig
 }
 
 // GitHubConfig holds GitHub integration settings. GHUser names a `gh` CLI

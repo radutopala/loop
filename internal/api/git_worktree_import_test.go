@@ -431,14 +431,14 @@ func (s *ServerSuite) TestRemoveWorktree_WithThread() {
 	s.threads.On("DeleteThread", mock.Anything, "wt-thread-1").Return(nil)
 	s.srv.eventsHub = NewEventsHub(testLogger())
 	// The thread's learn thread goes with it, like on DELETE /api/threads/{id}.
-	s.store.On("GetLearnChannel", mock.Anything, "wt-thread-1").Return(&db.Channel{ChannelID: "learn-1", DirPath: wtPath}, nil)
+	s.store.On("ListHiddenThreads", mock.Anything, "wt-thread-1").Return([]*db.Channel{{ChannelID: "learn-1", DirPath: wtPath, Kind: db.ChannelKindLearn}}, nil)
 	var removed [][2]string
 	s.srv.removeMCPConfig = func(dir, id string) error {
 		removed = append(removed, [2]string{dir, id})
 		return nil
 	}
 	canceller := new(MockRunCanceller)
-	canceller.On("StopLearn", "learn-1").Return()
+	canceller.On("StopHiddenThread", "learn-1").Return()
 	s.srv.SetRunCanceller(canceller)
 
 	body := fmt.Sprintf(`{"channel_id":"ch1","worktree_path":%q,"thread_id":"wt-thread-1"}`, wtPath)
@@ -464,7 +464,7 @@ func (s *ServerSuite) TestRemoveWorktree_DeleteThreadError() {
 		ChannelID: "ch1", DirPath: dir,
 	}, nil)
 	s.store.On("GetChannel", mock.Anything, "wt-1").Return(&db.Channel{ChannelID: "wt-1", ParentID: "ch1"}, nil)
-	s.store.On("GetLearnChannel", mock.Anything, "wt-1").Return(&db.Channel{ChannelID: "learn-1"}, nil)
+	s.store.On("ListHiddenThreads", mock.Anything, "wt-1").Return([]*db.Channel{{ChannelID: "learn-1"}}, nil)
 	s.threads.On("DeleteThread", mock.Anything, "wt-1").Return(errors.New("db error"))
 	canceller := new(MockRunCanceller)
 	s.srv.SetRunCanceller(canceller)
@@ -472,7 +472,7 @@ func (s *ServerSuite) TestRemoveWorktree_DeleteThreadError() {
 	body := fmt.Sprintf(`{"channel_id":"ch1","worktree_path":%q,"thread_id":"wt-1"}`, wtPath)
 	rec := s.testRequest("DELETE", "/api/worktrees", body)
 	require.Equal(s.T(), http.StatusInternalServerError, rec.Code)
-	canceller.AssertNotCalled(s.T(), "StopLearn", mock.Anything)
+	canceller.AssertNotCalled(s.T(), "StopHiddenThread", mock.Anything)
 }
 
 func (s *ServerSuite) TestRemoveWorktree_MissingFields() {

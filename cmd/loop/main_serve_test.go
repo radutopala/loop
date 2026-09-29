@@ -374,7 +374,9 @@ func (s *MainSuite) TestServeResumesPendingMessages() {
 	// expectations that match BEFORE the SetupTest .Maybe (which won't run
 	// because the new ones consume the call). We tag .Once() to make this
 	// crystal clear in the suite output.
-	m.store.ExpectedCalls = filterMockCalls(m.store.ExpectedCalls, "ResetStaleRunningMessages", "ListPendingChannels")
+	m.store.ExpectedCalls = filterMockCalls(m.store.ExpectedCalls, "ResetStaleRunningMessages", "ListPendingChannels", "FailInterruptedExplanations", "FailInterruptedLearnPasses")
+	m.store.On("FailInterruptedExplanations", mock.Anything).Return(int64(2), nil).Once()
+	m.store.On("FailInterruptedLearnPasses", mock.Anything).Return(int64(1), nil).Once()
 	m.store.On("ResetStaleRunningMessages", mock.Anything).Return([]db.StaleRunningMessage{
 		{ChannelID: "ch-1", MsgID: "msg-a"},
 		{ChannelID: "ch-1", MsgID: "msg-b"},
@@ -400,17 +402,22 @@ func (s *MainSuite) TestServeResumesPendingMessages() {
 		s.T().Fatal("serve() did not return in time")
 	}
 	m.store.AssertCalled(s.T(), "ResetStaleRunningMessages", mock.Anything)
+	m.store.AssertCalled(s.T(), "FailInterruptedExplanations", mock.Anything)
+	m.store.AssertCalled(s.T(), "FailInterruptedLearnPasses", mock.Anything)
 	m.store.AssertCalled(s.T(), "ListPendingChannels", mock.Anything)
 }
 
-// TestServeStartupRecoveryErrors covers the error branches: both
-// ResetStaleRunningMessages and ListPendingChannels return errors which serve()
-// logs and continues past.
+// TestServeStartupRecoveryErrors covers the error branches:
+// ResetStaleRunningMessages, FailInterruptedExplanations,
+// FailInterruptedLearnPasses and ListPendingChannels return errors which
+// serve() logs and continues past.
 func (s *MainSuite) TestServeStartupRecoveryErrors() {
 	m := s.setupServeMocks()
 	m.setupHappyBot()
-	m.store.ExpectedCalls = filterMockCalls(m.store.ExpectedCalls, "ResetStaleRunningMessages", "ListPendingChannels")
+	m.store.ExpectedCalls = filterMockCalls(m.store.ExpectedCalls, "ResetStaleRunningMessages", "ListPendingChannels", "FailInterruptedExplanations", "FailInterruptedLearnPasses")
 	m.store.On("ResetStaleRunningMessages", mock.Anything).Return(nil, errors.New("db gone")).Once()
+	m.store.On("FailInterruptedExplanations", mock.Anything).Return(int64(0), errors.New("db gone")).Once()
+	m.store.On("FailInterruptedLearnPasses", mock.Anything).Return(int64(0), errors.New("db gone")).Once()
 	m.store.On("ListPendingChannels", mock.Anything).Return(nil, errors.New("read failed")).Once()
 
 	errCh := make(chan error, 1)

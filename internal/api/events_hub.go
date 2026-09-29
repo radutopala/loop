@@ -36,7 +36,10 @@ const (
 	EventChannelAgentConfig        = "channel.agent_config"
 	EventChannelLearn              = "channel.learn"
 	EventLearnStarted              = "learn.started"
+	EventChannelExplain            = "channel.explain"
+	EventExplainUpdated            = "explain.updated"
 	EventLearnProposals            = "learn.proposals"
+	EventLearnPass                 = "learn.pass"
 	EventLearnProposalUpdated      = "learn.proposal_updated"
 	EventChannelUpdated            = "channel.updated"
 	EventAgentInstanceRegistered   = "agent_instance.registered"
@@ -332,19 +335,62 @@ func (h *EventsHub) BroadcastLearnStarted(channelID, learnChannelID string) {
 	})
 }
 
+// BroadcastChannelExplain sends a channel.explain event when a channel's
+// explain switch changes, so every window's composer shows it.
+func (h *EventsHub) BroadcastChannelExplain(channelID, explain string) {
+	h.Broadcast(Event{
+		Type:      EventChannelExplain,
+		ChannelID: channelID,
+		Data:      map[string]string{"explain": explain},
+		Global:    true,
+	})
+}
+
+// BroadcastExplainUpdated sends an explain.updated event when an
+// explanation is queued, starts running, is done or fails, so the chat's
+// Explain pane and buttons follow it. It's global: the explain thread doing
+// the work is hidden.
+func (h *EventsHub) BroadcastExplainUpdated(e *db.Explanation) {
+	h.Broadcast(Event{
+		Type:      EventExplainUpdated,
+		ChannelID: e.ChannelID,
+		Data:      e,
+		Global:    true,
+	})
+}
+
+// BroadcastLearnPass sends a learn.pass event when a learn pass is queued,
+// starts running, is done or fails, so the chat shows it at
+// the end of the turn it reviews. It's global: the learn thread doing the
+// work is hidden.
+func (h *EventsHub) BroadcastLearnPass(p *db.LearnPass) {
+	h.Broadcast(Event{
+		Type:      EventLearnPass,
+		ChannelID: p.ChannelID,
+		Data:      p,
+		Global:    true,
+	})
+}
+
 // BroadcastLearnProposals sends a learn.proposals event when a learn pass
-// files proposals for channelID, so its Learn view lists them.
-func (h *EventsHub) BroadcastLearnProposals(channelID string, proposals []*db.LearnProposal) {
+// files proposals for channelID or withdraws earlier ones, so its Learn view
+// updates both at once. withdrawn is left out when empty.
+func (h *EventsHub) BroadcastLearnProposals(channelID string, proposals, withdrawn []*db.LearnProposal) {
+	data := map[string]any{"proposals": proposals}
+	if len(withdrawn) > 0 {
+		data["withdrawn"] = withdrawn
+	}
 	h.Broadcast(Event{
 		Type:      EventLearnProposals,
 		ChannelID: channelID,
-		Data:      map[string]any{"proposals": proposals},
+		Data:      data,
 		Global:    true,
 	})
 }
 
 // BroadcastLearnProposalUpdated sends a learn.proposal_updated event when a
-// proposal is applied, fails or is dismissed.
+// proposal is applied, fails or is dismissed. A learn pass's withdrawals
+// come with its learn.proposals instead.
 func (h *EventsHub) BroadcastLearnProposalUpdated(p *db.LearnProposal) {
 	h.Broadcast(Event{
 		Type:      EventLearnProposalUpdated,

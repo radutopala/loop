@@ -58,6 +58,11 @@ func (m *MockStore) MarkSessionForkPending(ctx context.Context, channelID string
 	return args.Bool(0), args.Error(1)
 }
 
+func (m *MockStore) SessionInUse(ctx context.Context, sessionID, exceptChannelID string) (bool, error) {
+	args := m.Called(ctx, sessionID, exceptChannelID)
+	return args.Bool(0), args.Error(1)
+}
+
 func (m *MockStore) UpdateChannelAgentOverrides(ctx context.Context, channelID, model, effort string) error {
 	return m.Called(ctx, channelID, model, effort).Error(0)
 }
@@ -485,20 +490,27 @@ func (m *MockStore) UpdateChannelLearnOverride(ctx context.Context, channelID, v
 	return m.Called(ctx, channelID, value).Error(0)
 }
 
-func (m *MockStore) GetLearnChannel(ctx context.Context, parentID string) (*db.Channel, error) {
-	args := m.Called(ctx, parentID)
+func (m *MockStore) GetHiddenThread(ctx context.Context, parentID, kind string) (*db.Channel, error) {
+	args := m.Called(ctx, parentID, kind)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
 	}
 	return args.Get(0).(*db.Channel), args.Error(1)
 }
 
-func (m *MockStore) InsertLearnChannel(ctx context.Context, ch *db.Channel) error {
+func (m *MockStore) ListHiddenThreads(ctx context.Context, parentID string) ([]*db.Channel, error) {
+	args := m.Called(ctx, parentID)
+	return args.Get(0).([]*db.Channel), args.Error(1)
+}
+
+func (m *MockStore) InsertHiddenThread(ctx context.Context, ch *db.Channel) error {
 	return m.Called(ctx, ch).Error(0)
 }
 
-func (m *MockStore) InsertLearnProposals(ctx context.Context, proposals []*db.LearnProposal) error {
-	return m.Called(ctx, proposals).Error(0)
+func (m *MockStore) FileLearnProposals(ctx context.Context, channelID string, proposals []*db.LearnProposal, withdraw []db.LearnWithdrawal) ([]*db.LearnProposal, error) {
+	args := m.Called(ctx, channelID, proposals, withdraw)
+	v, _ := args.Get(0).([]*db.LearnProposal)
+	return v, args.Error(1)
 }
 
 func (m *MockStore) ListLearnProposals(ctx context.Context, channelID string) ([]*db.LearnProposal, error) {
@@ -520,4 +532,104 @@ func (m *MockStore) ClaimLearnProposal(ctx context.Context, id int64) (bool, err
 
 func (m *MockStore) SetLearnProposalStatus(ctx context.Context, id int64, status, errText string) error {
 	return m.Called(ctx, id, status, errText).Error(0)
+}
+
+func (m *MockStore) UpdateChannelExplainOverride(ctx context.Context, channelID, value string) error {
+	return m.Called(ctx, channelID, value).Error(0)
+}
+
+func (m *MockStore) GetChatMessage(ctx context.Context, channelID, msgID string) (*db.Message, error) {
+	args := m.Called(ctx, channelID, msgID)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*db.Message), args.Error(1)
+}
+
+func (m *MockStore) LastBotMessage(ctx context.Context, channelID, triggerMsgID string) (*db.Message, error) {
+	args := m.Called(ctx, channelID, triggerMsgID)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*db.Message), args.Error(1)
+}
+
+func (m *MockStore) QueueExplanation(ctx context.Context, e *db.Explanation) (*db.Explanation, bool, error) {
+	args := m.Called(ctx, e)
+	if args.Get(0) == nil {
+		return nil, args.Bool(1), args.Error(2)
+	}
+	return args.Get(0).(*db.Explanation), args.Bool(1), args.Error(2)
+}
+
+func (m *MockStore) GetExplanation(ctx context.Context, channelID, messageID string) (*db.Explanation, error) {
+	args := m.Called(ctx, channelID, messageID)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*db.Explanation), args.Error(1)
+}
+
+func (m *MockStore) GetExplanationByTrigger(ctx context.Context, explainChannelID, triggerMsgID string) (*db.Explanation, error) {
+	args := m.Called(ctx, explainChannelID, triggerMsgID)
+	e, _ := args.Get(0).(*db.Explanation)
+	return e, args.Error(1)
+}
+
+func (m *MockStore) UpdateExplanation(ctx context.Context, id int64, status, content, errText string) error {
+	return m.Called(ctx, id, status, content, errText).Error(0)
+}
+
+func (m *MockStore) ListExplanations(ctx context.Context, channelID string) ([]*db.Explanation, error) {
+	args := m.Called(ctx, channelID)
+	return args.Get(0).([]*db.Explanation), args.Error(1)
+}
+
+func (m *MockStore) FailInterruptedExplanations(ctx context.Context) (int64, error) {
+	args := m.Called(ctx)
+	return args.Get(0).(int64), args.Error(1)
+}
+
+func (m *MockStore) InsertLearnPass(ctx context.Context, p *db.LearnPass) (*db.LearnPass, error) {
+	args := m.Called(ctx, p)
+	v, _ := args.Get(0).(*db.LearnPass)
+	return v, args.Error(1)
+}
+
+func (m *MockStore) GetLearnPassByTrigger(ctx context.Context, learnChannelID, triggerMsgID string) (*db.LearnPass, error) {
+	args := m.Called(ctx, learnChannelID, triggerMsgID)
+	v, _ := args.Get(0).(*db.LearnPass)
+	return v, args.Error(1)
+}
+
+func (m *MockStore) UpdateLearnPass(ctx context.Context, id int64, status, errText string) error {
+	return m.Called(ctx, id, status, errText).Error(0)
+}
+
+func (m *MockStore) ListLearnPasses(ctx context.Context, channelID string) ([]*db.LearnPass, error) {
+	args := m.Called(ctx, channelID)
+	v, _ := args.Get(0).([]*db.LearnPass)
+	return v, args.Error(1)
+}
+
+func (m *MockStore) LatestLearnPass(ctx context.Context, learnChannelID string) (*db.LearnPass, error) {
+	args := m.Called(ctx, learnChannelID)
+	v, _ := args.Get(0).(*db.LearnPass)
+	return v, args.Error(1)
+}
+
+func (m *MockStore) ActiveLearnPass(ctx context.Context, channelID, messageID string) (*db.LearnPass, error) {
+	args := m.Called(ctx, channelID, messageID)
+	v, _ := args.Get(0).(*db.LearnPass)
+	return v, args.Error(1)
+}
+
+func (m *MockStore) LearnPassRunning(ctx context.Context, learnChannelID string) (bool, error) {
+	args := m.Called(ctx, learnChannelID)
+	return args.Bool(0), args.Error(1)
+}
+
+func (m *MockStore) FailInterruptedLearnPasses(ctx context.Context) (int64, error) {
+	args := m.Called(ctx)
+	return args.Get(0).(int64), args.Error(1)
 }

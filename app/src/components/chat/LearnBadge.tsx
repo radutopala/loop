@@ -4,7 +4,6 @@ import type { LearnView } from "../../hooks/useLearn";
 import { useTheme } from "../../ThemeContext";
 import { fonts } from "../../theme";
 import { LearnIcon } from "./LearnIcon";
-import { learnBadgeLabel } from "./learnState";
 
 interface LearnBadgeProps {
   /** Pane leaf id — the portal target is `pane-header-slot-${leafId}`. */
@@ -16,36 +15,21 @@ interface LearnBadgeProps {
 }
 
 /**
- * The chat pane's Learn label, at the right of its header: lit while a learn
- * pass runs or proposals wait, dim once the channel has a learn thread to
- * look back at. A click opens the Learn view; in the Learn view's own chat
- * header, it closes it.
+ * The chat pane's Learn label, at the right of its header, once the channel
+ * has a learn thread or proposals to look back at. It only opens the Learn view (in the
+ * view's own chat header, it closes it): what a pass is doing, and what it
+ * found, shows at the end of the turn it reviewed (LearnTurnButton).
  * Portals into the pane header like PaneHeaderStatus, so it returns null
  * until the slot mounts.
  */
 export function LearnBadge({ leafId, learn, open, onToggle }: LearnBadgeProps) {
   const { colors } = useTheme();
-  const [slot, setSlot] = useState<HTMLElement | null>(null);
-
-  // Before paint: a Learn view opening with its header must not paint a
-  // frame without the badge.
-  useLayoutEffect(() => {
-    const find = () => document.getElementById(`pane-header-slot-${leafId}`);
-    const el = find();
-    setSlot(el);
-    if (el) return;
-    // Slot may mount in the same frame; retry once after paint.
-    const raf = requestAnimationFrame(() => setSlot(find()));
-    return () => cancelAnimationFrame(raf);
-  }, [leafId]);
-
-  const label = learnBadgeLabel(learn.running, learn.open.length);
-  if (!slot || (!label && !learn.learnChannelId && !open)) return null;
-  const lit = label !== null;
+  const slot = usePaneHeaderSlot(leafId);
+  // Proposals mean a learn thread, even one the window hasn't heard of.
+  if (!slot || (!learn.learnChannelId && learn.proposals.length === 0 && !open)) return null;
   return createPortal(
     <button
       data-testid="learn-badge"
-      data-running={learn.running ? "true" : "false"}
       onClick={onToggle}
       title={open ? "Close the Learn view" : "Open the Learn view"}
       aria-expanded={open}
@@ -57,9 +41,11 @@ export function LearnBadge({ leafId, learn, open, onToggle }: LearnBadgeProps) {
         height: 16,
         boxSizing: "border-box",
         whiteSpace: "nowrap",
+        // Last in the header, after the Explain label.
+        order: 2,
         background: open ? colors.hoverBg : "transparent",
-        border: `1px solid ${lit ? colors.active : colors.border}`,
-        color: lit ? colors.active : colors.textDim,
+        border: `1px solid ${colors.border}`,
+        color: colors.textDim,
         cursor: "pointer",
         padding: "0 6px",
         fontSize: 10,
@@ -69,8 +55,26 @@ export function LearnBadge({ leafId, learn, open, onToggle }: LearnBadgeProps) {
       }}
     >
       <LearnIcon size={9} />
-      {label ?? "learn"}
+      learn
     </button>,
     slot,
   );
+}
+
+/**
+ * The pane header's slot for leafId, found before paint: a view opening
+ * with its header must not paint a frame without its labels.
+ */
+export function usePaneHeaderSlot(leafId: string): HTMLElement | null {
+  const [slot, setSlot] = useState<HTMLElement | null>(null);
+  useLayoutEffect(() => {
+    const find = () => document.getElementById(`pane-header-slot-${leafId}`);
+    const el = find();
+    setSlot(el);
+    if (el) return;
+    // Slot may mount in the same frame; retry once after paint.
+    const raf = requestAnimationFrame(() => setSlot(find()));
+    return () => cancelAnimationFrame(raf);
+  }, [leafId]);
+  return slot;
 }

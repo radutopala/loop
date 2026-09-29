@@ -36,9 +36,9 @@ func (s *TaskExecutorSuite) TestStreamingCreatesThread() {
 			return false
 		}
 		// Simulate streaming: first turn creates thread, empty skipped, second goes to thread
-		req.OnTurn("Intermediate")
-		req.OnTurn("") // empty text should be skipped
-		req.OnTurn("Final answer")
+		req.OnTurn("Intermediate", agent.TurnRef{})
+		req.OnTurn("", agent.TurnRef{}) // empty text should be skipped
+		req.OnTurn("Final answer", agent.TurnRef{})
 		return true
 	})).Return(&agent.AgentResponse{
 		Response:  "Final answer", // Same as last OnTurn — final send skipped
@@ -89,7 +89,7 @@ func (s *TaskExecutorSuite) TestStreamingLocalPlatformPersistsThreadID() {
 		if req.OnTurn == nil {
 			return false
 		}
-		req.OnTurn("Result")
+		req.OnTurn("Result", agent.TurnRef{})
 		return true
 	})).Return(&agent.AgentResponse{Response: "Result", SessionID: "s1"}, nil)
 	s.store.On("UpdateSessionID", s.ctx, "local-thread-1", "s1").Return(nil)
@@ -129,7 +129,7 @@ func (s *TaskExecutorSuite) TestStreamingLocalPlatformReusesThreadID() {
 		if req.SessionID != "thread-session" || req.ForkSession != false {
 			return false
 		}
-		req.OnTurn("Update")
+		req.OnTurn("Update", agent.TurnRef{})
 		return true
 	})).Return(&agent.AgentResponse{Response: "Update", SessionID: "s2"}, nil)
 	s.store.On("UpdateSessionID", s.ctx, "existing-thread", "s2").Return(nil)
@@ -180,7 +180,7 @@ func (s *TaskExecutorSuite) TestStreamingDanglingThreadCreatesReplacement() {
 		if req.OnTurn == nil {
 			return false
 		}
-		req.OnTurn("Update")
+		req.OnTurn("Update", agent.TurnRef{})
 		return true
 	})).Return(&agent.AgentResponse{Response: "Update", SessionID: "s2"}, nil)
 	s.store.On("UpdateSessionID", s.ctx, "new-thread", "s2").Return(nil)
@@ -219,7 +219,7 @@ func (s *TaskExecutorSuite) TestStreamingDiscordReusesThread() {
 		if req.SessionID != "old-thread-session" || req.ForkSession != false {
 			return false
 		}
-		req.OnTurn("Discord result")
+		req.OnTurn("Discord result", agent.TurnRef{})
 		return true
 	})).Return(&agent.AgentResponse{Response: "Discord result", SessionID: "s3"}, nil)
 	s.store.On("UpdateSessionID", s.ctx, "old-discord-thread", "s3").Return(nil)
@@ -256,7 +256,7 @@ func (s *TaskExecutorSuite) TestStreamingFinalSentWhenDifferent() {
 		if req.OnTurn == nil {
 			return false
 		}
-		req.OnTurn("Intermediate")
+		req.OnTurn("Intermediate", agent.TurnRef{})
 		return true
 	})).Return(&agent.AgentResponse{
 		Response:  "Different final",
@@ -300,8 +300,8 @@ func (s *TaskExecutorSuite) TestStreamingThreadCreationFailsFallsBack() {
 		if req.OnTurn == nil {
 			return false
 		}
-		req.OnTurn("Turn 1")
-		req.OnTurn("Turn 2")
+		req.OnTurn("Turn 1", agent.TurnRef{})
+		req.OnTurn("Turn 2", agent.TurnRef{})
 		return true
 	})).Return(&agent.AgentResponse{
 		Response:  "Turn 2", // same as last OnTurn
@@ -348,8 +348,8 @@ func (s *TaskExecutorSuite) TestStreamingSendMessageErrorIsLogged() {
 		if req.OnTurn == nil {
 			return false
 		}
-		req.OnTurn("Turn 1") // goes through CreateSimpleThread fallback
-		req.OnTurn("Turn 2") // goes through else branch (SendMessage) which fails
+		req.OnTurn("Turn 1", agent.TurnRef{}) // goes through CreateSimpleThread fallback
+		req.OnTurn("Turn 2", agent.TurnRef{}) // goes through else branch (SendMessage) which fails
 		return true
 	})).Return(&agent.AgentResponse{
 		Response:  "Turn 2",
@@ -396,7 +396,7 @@ func (s *TaskExecutorSuite) TestStreamingSingleTurnNoFinalDuplicate() {
 		if req.OnTurn == nil {
 			return false
 		}
-		req.OnTurn("Only turn")
+		req.OnTurn("Only turn", agent.TurnRef{})
 		return true
 	})).Return(&agent.AgentResponse{
 		Response:  "Only turn", // Same as OnTurn — final skipped
@@ -475,7 +475,7 @@ func (s *TaskExecutorSuite) TestStreamingLocalFirstRunInjectsPromptBeforeReply()
 		if req.OnTurn == nil {
 			return false
 		}
-		req.OnTurn("Here is the summary.")
+		req.OnTurn("Here is the summary.", agent.TurnRef{})
 		return true
 	})).Return(&agent.AgentResponse{Response: "Here is the summary.", SessionID: "s"}, nil)
 
@@ -514,7 +514,7 @@ func (s *TaskExecutorSuite) TestStreamingManualTaskThreadNameUsesManualLabel() {
 		if req.OnTurn == nil {
 			return false
 		}
-		req.OnTurn("hi")
+		req.OnTurn("hi", agent.TurnRef{})
 		return true
 	})).Return(&agent.AgentResponse{Response: "hi", SessionID: "s"}, nil)
 

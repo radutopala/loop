@@ -400,6 +400,54 @@ var migrations = []migration{
 		updated_at       TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 	)`),
 	sqlMigration(`CREATE INDEX IF NOT EXISTS idx_learn_proposals_channel ON learn_proposals(channel_id, id)`),
+	// withdrawn_reason says why a later learn pass withdrew a proposal.
+	sqlMigration(`ALTER TABLE learn_proposals ADD COLUMN withdrawn_reason TEXT NOT NULL DEFAULT ''`),
+	// explain_override turns explaining each finished turn on or off ("on",
+	// "off"); empty inherits the config.
+	sqlMigration(`ALTER TABLE channels ADD COLUMN explain_override TEXT NOT NULL DEFAULT ''`),
+	// explanations holds one write-up per explained turn, keyed by the
+	// turn's last bot message. trigger_msg_id is the message that started
+	// its run in the channel's explain thread.
+	sqlMigration(`CREATE TABLE IF NOT EXISTS explanations (
+		id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+		channel_id         TEXT NOT NULL,
+		message_id         TEXT NOT NULL,
+		explain_channel_id TEXT NOT NULL DEFAULT '',
+		trigger_msg_id     TEXT NOT NULL DEFAULT '',
+		status             TEXT NOT NULL DEFAULT 'queued',
+		content            TEXT NOT NULL DEFAULT '',
+		error              TEXT NOT NULL DEFAULT '',
+		created_at         TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+		updated_at         TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+	)`),
+	sqlMigration(`CREATE UNIQUE INDEX IF NOT EXISTS idx_explanations_message ON explanations(channel_id, message_id)`),
+	sqlMigration(`CREATE INDEX IF NOT EXISTS idx_explanations_trigger ON explanations(explain_channel_id, trigger_msg_id)`),
+	// learn_passes holds one row per learn pass, keyed to the turn it
+	// reviews by the turn's last bot message. trigger_msg_id is the message
+	// that started its run in the channel's learn thread.
+	sqlMigration(`CREATE TABLE IF NOT EXISTS learn_passes (
+		id               INTEGER PRIMARY KEY AUTOINCREMENT,
+		channel_id       TEXT NOT NULL,
+		message_id       TEXT NOT NULL,
+		learn_channel_id TEXT NOT NULL DEFAULT '',
+		trigger_msg_id   TEXT NOT NULL DEFAULT '',
+		status           TEXT NOT NULL DEFAULT 'queued',
+		error            TEXT NOT NULL DEFAULT '',
+		created_at       TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+		updated_at       TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+	)`),
+	sqlMigration(`CREATE INDEX IF NOT EXISTS idx_learn_passes_channel ON learn_passes(channel_id, id)`),
+	sqlMigration(`CREATE INDEX IF NOT EXISTS idx_learn_passes_trigger ON learn_passes(learn_channel_id, trigger_msg_id)`),
+	// message_id is the turn (its last bot message) whose learn pass filed
+	// a proposal; empty when it isn't known.
+	sqlMigration(`ALTER TABLE learn_proposals ADD COLUMN message_id TEXT NOT NULL DEFAULT ''`),
+	// session_id and transcript_uuid locate a bot text turn in Claude
+	// Code's transcript: the session it was written to and its entry's
+	// uuid. A turn's last bot message holds where the turn ended, which a
+	// learn pass or an explanation forks the session at. Empty on other
+	// rows and on turns stored before these were recorded.
+	sqlMigration(`ALTER TABLE messages ADD COLUMN session_id TEXT NOT NULL DEFAULT ''`),
+	sqlMigration(`ALTER TABLE messages ADD COLUMN transcript_uuid TEXT NOT NULL DEFAULT ''`),
 }
 
 // migrateScheduledTasksAddManualType rebuilds scheduled_tasks to widen the

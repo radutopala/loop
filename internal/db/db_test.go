@@ -35,7 +35,7 @@ func (s *StoreSuite) TearDownTest() {
 }
 
 func newMockChannelRows() *sqlmock.Rows {
-	return sqlmock.NewRows([]string{"id", "channel_id", "guild_id", "name", "dir_path", "parent_id", "platform", "active", "session_id", "permissions", "worktree", "base_branch", "locked", "model_override", "effort_override", "fork_pending", "task_id", "description", "ticket_url", "learn_override", "kind", "created_at", "updated_at"})
+	return sqlmock.NewRows([]string{"id", "channel_id", "guild_id", "name", "dir_path", "parent_id", "platform", "active", "session_id", "permissions", "worktree", "base_branch", "locked", "model_override", "effort_override", "fork_pending", "task_id", "description", "ticket_url", "learn_override", "explain_override", "kind", "created_at", "updated_at"})
 }
 
 func newMockTaskRows() *sqlmock.Rows {
@@ -43,14 +43,14 @@ func newMockTaskRows() *sqlmock.Rows {
 }
 
 func newMockMessageRows() *sqlmock.Rows {
-	return sqlmock.NewRows([]string{"id", "chat_id", "channel_id", "msg_id", "author_id", "author_name", "content", "is_bot", "is_processed", "is_triggered", "is_running", "priority", "mode", "created_at", "kind", "chain_position", "tool_use_id", "tool_name", "is_error", "trigger_msg_id", "not_before", "edit_hold_until"})
+	return sqlmock.NewRows([]string{"id", "chat_id", "channel_id", "msg_id", "author_id", "author_name", "content", "is_bot", "is_processed", "is_triggered", "is_running", "priority", "mode", "created_at", "kind", "chain_position", "tool_use_id", "tool_name", "is_error", "trigger_msg_id", "not_before", "edit_hold_until", "session_id", "transcript_uuid"})
 }
 
 // addMessageRow appends a chat-row with default empty values for the
 // timeline + processor columns, matching the pre-feature shape used
 // across most existing tests.
 func addMessageRow(rows *sqlmock.Rows, id, chatID int64, channelID, msgID, authorID, authorName, content string, isBot, isProcessed int, createdAt time.Time) *sqlmock.Rows {
-	return rows.AddRow(id, chatID, channelID, msgID, authorID, authorName, content, isBot, isProcessed, 0, 0, 0, "", createdAt, "message", int64(0), "", "", 0, "", int64(0), int64(0))
+	return rows.AddRow(id, chatID, channelID, msgID, authorID, authorName, content, isBot, isProcessed, 0, 0, 0, "", createdAt, "message", int64(0), "", "", 0, "", int64(0), int64(0), "", "")
 }
 
 func newMockMemoryRows() *sqlmock.Rows {

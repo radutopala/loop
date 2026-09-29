@@ -9,6 +9,9 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"unicode/utf8"
+
+	"github.com/radutopala/loop/internal/agent"
 )
 
 // claudeResponse represents a stream-json event from claude --output-format stream-json.
@@ -21,7 +24,33 @@ type claudeResponse struct {
 	DurationMs int    `json:"duration_ms"`
 	NumTurns   int    `json:"num_turns"`
 	StopReason string `json:"stop_reason"`
-	Model      string `json:"-"` // set by scanStreamJSON from assistant events
+	// Subtype and Errors describe an error result that has no Result text
+	// (e.g. "error_during_execution").
+	Subtype string   `json:"subtype"`
+	Errors  []string `json:"errors"`
+	Model   string   `json:"-"` // set by scanStreamJSON from assistant events
+	Output  string   `json:"-"` // set by scanStreamJSON: the non-JSON output tail
+}
+
+// errorText is what an error result says went wrong. Result is empty for
+// some error subtypes, and a blank "claude returned error: " would hide why
+// the run failed.
+func (r *claudeResponse) errorText() string {
+	if r.Result != "" {
+		return r.Result
+	}
+	parts := []string{}
+	if r.Subtype != "" {
+		parts = append(parts, r.Subtype)
+	}
+	parts = append(parts, r.Errors...)
+	if r.Output != "" {
+		parts = append(parts, "last output:\n"+r.Output)
+	}
+	if len(parts) == 0 {
+		return "no error details"
+	}
+	return strings.Join(parts, "; ")
 }
 
 // assistantContentBlock is a single content block within an assistant message.
@@ -39,8 +68,14 @@ type assistantContentBlock struct {
 // assistantMessage represents an "assistant" event from Claude's stream-json output.
 // Each assistant turn contains a message with content blocks.
 type assistantMessage struct {
-	Type    string `json:"type"`
-	Message struct {
+	Type string `json:"type"`
+	// UUID is the event's transcript entry uuid and SessionID the session
+	// it was written to; ParentToolUseID is set on a subagent's events,
+	// which live in the subagent's own transcript.
+	UUID            string `json:"uuid"`
+	SessionID       string `json:"session_id"`
+	ParentToolUseID string `json:"parent_tool_use_id"`
+	Message         struct {
 		Model   string                  `json:"model"`
 		Content []assistantContentBlock `json:"content"`
 	} `json:"message"`
@@ -72,6 +107,15 @@ func (m *assistantMessage) extractText() string {
 		}
 	}
 	return strings.Join(texts, "\n")
+}
+
+// turnRef returns where the event sits in the session's transcript, or a
+// zero TurnRef for a subagent's event, which isn't in the main chain.
+func (m *assistantMessage) turnRef() agent.TurnRef {
+	if m.ParentToolUseID != "" {
+		return agent.TurnRef{}
+	}
+	return agent.TurnRef{SessionID: m.SessionID, UUID: m.UUID}
 }
 
 // extractThinking joins all thinking content blocks from an assistant message.
@@ -198,7 +242,7 @@ func summarizeToolInput(name string, raw json.RawMessage) string {
 
 // streamCallbacks holds optional callbacks for scanStreamJSON.
 type streamCallbacks struct {
-	onTurn    func(string)
+	onTurn    func(string, agent.TurnRef)
 	onToolUse func(toolUseID, name, input string)
 	// onToolUseRaw sees the same tool_use blocks as onToolUse but with the
 	// input JSON verbatim rather than summarized, for callers that decode it.
@@ -336,13 +380,59 @@ func readLineOrSkip(br *bufio.Reader) ([]byte, error) {
 	}
 }
 
+// outputTailLines and outputTailMaxBytes bound the non-JSON output kept for
+// the error of a run that ends without a result event.
+const (
+	outputTailLines    = 20
+	outputTailMaxBytes = 2000
+)
+
+// outputTail keeps the last lines of the container's non-JSON output. The
+// log stream carries stderr merged with stdout, so this is where the reason
+// a run died shows up — Claude Code's own crash, an ENOSPC from the
+// entrypoint — when there is no result event to explain it.
+type outputTail struct {
+	lines []string
+}
+
+// add keeps line, dropping the oldest once outputTailLines are held.
+func (t *outputTail) add(line string) {
+	t.lines = append(t.lines, line)
+	if len(t.lines) > outputTailLines {
+		t.lines = t.lines[1:]
+	}
+}
+
+// String joins the kept lines, trimmed from the front to outputTailMaxBytes.
+func (t *outputTail) String() string {
+	s := strings.Join(t.lines, "\n")
+	if len(s) > outputTailMaxBytes {
+		cut := len(s) - outputTailMaxBytes
+		for cut < len(s) && !utf8.RuneStart(s[cut]) { // don't split a character
+			cut++
+		}
+		s = "…" + s[cut:]
+	}
+	return s
+}
+
+// withTail appends the kept output to err, when there is any.
+func withTail(err error, tail *outputTail) error {
+	if len(tail.lines) == 0 {
+		return err
+	}
+	return fmt.Errorf("%w; last output:\n%s", err, tail)
+}
+
 // scanStreamJSON scans newline-delimited JSON events from Claude's stream-json output.
 // It dispatches "assistant" text to onTurn, tool_use blocks to onToolUse,
 // model/system events to onActivity, and returns the final "result" event.
+// Without one, the error carries the tail of the non-JSON output.
 func scanStreamJSON(r io.Reader, cb streamCallbacks) (*claudeResponse, error) {
 	br := bufio.NewReaderSize(r, scannerBufInit)
 	var result *claudeResponse
 	var lastModel string
+	var tail outputTail
 	for {
 		// Peek at the first bytes to detect the event type without reading
 		// the entire line. Tool results (screenshots) can be several MB —
@@ -352,7 +442,7 @@ func scanStreamJSON(r io.Reader, cb streamCallbacks) (*claudeResponse, error) {
 			if err == io.EOF {
 				break
 			}
-			return result, fmt.Errorf("reading container output: %w", err)
+			return result, withTail(fmt.Errorf("reading container output: %w", err), &tail)
 		}
 		if len(line) == 0 {
 			continue
@@ -362,7 +452,8 @@ func scanStreamJSON(r io.Reader, cb streamCallbacks) (*claudeResponse, error) {
 			Type string `json:"type"`
 		}
 		if err := json.Unmarshal(line, &typeCheck); err != nil {
-			continue // skip non-JSON lines (e.g. ANSI noise)
+			tail.add(string(line)) // stderr, or ANSI noise
+			continue
 		}
 
 		switch typeCheck.Type {
@@ -379,7 +470,7 @@ func scanStreamJSON(r io.Reader, cb streamCallbacks) (*claudeResponse, error) {
 			}
 			if cb.onTurn != nil {
 				if text := msg.extractText(); text != "" {
-					cb.onTurn(text)
+					cb.onTurn(text, msg.turnRef())
 				}
 			}
 			if cb.onThinking != nil {
@@ -473,10 +564,11 @@ func scanStreamJSON(r io.Reader, cb streamCallbacks) (*claudeResponse, error) {
 		}
 	}
 	if result == nil {
-		return nil, fmt.Errorf("parsing claude response: no result event found")
+		return nil, withTail(errors.New("parsing claude response: no result event found"), &tail)
 	}
 	if lastModel != "" {
 		result.Model = lastModel
 	}
+	result.Output = tail.String()
 	return result, nil
 }

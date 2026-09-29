@@ -1,4 +1,5 @@
 import { LoopInfinityIcon } from "../components/LoopInfinityIcon";
+import { SIDE_VIEW_LABEL, type SideView } from "../components/layout/LearnSplit";
 import { useTheme } from "../ThemeContext";
 import { MIN_HEIGHT, MIN_WIDTH } from "./CanvasTile";
 import type { CanvasTile as CanvasTileType } from "./types";
@@ -15,7 +16,10 @@ interface CanvasLearnDockProps {
   shown: boolean;
   /** Animation length in ms; 0 skips it. */
   ms: number;
-  /** A learn pass is running: the logo on the seam animates. */
+  /** The docked pane: Learn's, or Explain's. */
+  view?: SideView;
+  /** A learn pass (or an explanation) is running: the logo on the seam
+   * animates. */
   running: boolean;
   pane: React.ReactNode;
   onMove: (id: string, dx: number, dy: number) => void;
@@ -32,7 +36,7 @@ interface CanvasLearnDockProps {
  * The dock isn't a tile of the canvas: it isn't saved with it, and goes when
  * the view closes.
  */
-export function CanvasLearnDock({ chat, zoom, shown, ms, running, pane, onMove, onResize, onBringToFront, ref }: CanvasLearnDockProps) {
+export function CanvasLearnDock({ chat, zoom, shown, ms, view = "learn", running, pane, onMove, onResize, onBringToFront, ref }: CanvasLearnDockProps) {
   const { colors } = useTheme();
   const fade: React.CSSProperties = { opacity: shown ? 1 : 0, transition: ms ? `opacity ${ms}ms ease` : "none" };
 
@@ -66,8 +70,9 @@ export function CanvasLearnDock({ chat, zoom, shown, ms, running, pane, onMove, 
         ref={ref}
         data-canvas-tile
         data-testid="canvas-learn-dock"
+        data-view={view}
         role="region"
-        aria-label="Learn view"
+        aria-label={SIDE_VIEW_LABEL[view]}
         onMouseDown={handleMouseDown}
         style={{
           position: "absolute",

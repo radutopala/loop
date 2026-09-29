@@ -11,6 +11,8 @@ import { ContextMenu } from "../shared/ContextMenu";
 import { CopyButton } from "../shared/CopyButton";
 import { buildActivityStyle, buildMessageStyles, ChannelContext, FILE_PATH_TOOLS, renderInputWithLinks } from "./chatShared";
 import { DelayCountdown } from "./DelayCountdown";
+import { ExplainButton } from "./ExplainButton";
+import { LearnTurnButton } from "./LearnTurnButton";
 import { MarkdownContent } from "./markdown";
 import { formatMessageTimestamp } from "./timestamps";
 
@@ -114,6 +116,7 @@ export function MessageBubble({
   queuePosition,
   highlighted,
   onQuote,
+  turnEnd,
 }: {
   message: Message;
   showProcessing?: boolean;
@@ -121,6 +124,8 @@ export function MessageBubble({
   queuePosition?: string;
   highlighted?: boolean;
   onQuote?: (msg: Message) => void;
+  /** The bot message ends its turn: it carries the turn's Explain action. */
+  turnEnd?: boolean;
 }) {
   const { colors } = useTheme();
   const styles = buildMessageStyles(colors);
@@ -210,6 +215,14 @@ export function MessageBubble({
         <div style={styles.content}>
           <MarkdownContent content={message.content} />
         </div>
+        {/* The turn's Explain and Learn actions, below its reply. They
+            carry the row's top margin, so it takes no room without them. */}
+        {turnEnd && !isUser && (
+          <div style={{ display: "flex", gap: 6 }}>
+            <ExplainButton messageId={message.msg_id} />
+            <LearnTurnButton messageId={message.msg_id} />
+          </div>
+        )}
         {isUser && (
           <div style={{ display: "flex", justifyContent: "flex-end", alignItems: "center", gap: 6, marginTop: 4 }}>
             {message.not_before ? <DelayCountdown notBefore={message.not_before} /> : null}

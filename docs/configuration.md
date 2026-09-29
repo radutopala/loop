@@ -374,6 +374,28 @@ Applying a proposal of a config kind appends to the project config, `.loop/confi
 
 `scheduled_task`, `rename`, `description` and `ticket_url` proposals don't touch config: they create an enabled task in the channel and update the channel's name, description or ticket URL, as `POST /api/tasks`, `/rename`, `/description` and `/ticket` do.
 
+#### Explain
+
+Configures explanations: a hidden forked session writes up a chat turn (what changed, commands and results, decisions, risks, how to review it) for the Explain pane (see [Chat: Explain a turn](chat.md#explain-a-turn)). Any turn can be explained from its Explain button whatever `enabled` says.
+
+```jsonc
+"explain": {
+  "enabled": false,
+  "model": "",
+  "effort": "",
+  "prompt": "Call out any change to the public API."
+}
+```
+
+| Field | Type | Default | Description |
+|---|---|---|---|
+| `enabled` | `bool` | `false` | Default for the composer's Explain switch, which explains every completed turn. A channel that has been switched on or off keeps its own setting. |
+| `model` | `string` | `""` | Model for the explain run. Empty uses the channel's model override, else `claude_model`. |
+| `effort` | `string` | `""` | Effort for the explain run. Empty uses the channel's effort override, else `claude_effort`. |
+| `prompt` | `string` | `""` | Extra instructions appended to the built-in explain prompt under "Additional instructions". |
+
+Layered global → project like `learn`, and resolved for a channel the same way. Also editable from **Settings → Explain**.
+
 #### Workflows
 
 ```jsonc
@@ -678,6 +700,7 @@ Not all global fields are available in project configs. The following fields can
 | `github.gh_user` | **Overrides** global value when set. |
 | `review.enabled` / `review.prompt` / `review.prompt_path` | Each field **overrides** the global value only when explicitly set (see [Review](#review)). |
 | `learn.enabled` / `learn.min_turns` / `learn.model` / `learn.effort` / `learn.prompt` | Each field **overrides** the global value only when set: `enabled` and `min_turns` when present, the strings when non-empty (see [Learn](#learn)). |
+| `explain.enabled` / `explain.model` / `explain.effort` / `explain.prompt` | Each field **overrides** the global value only when set: `enabled` when present, the strings when non-empty (see [Explain](#explain)). |
 | `gates.agentgate.enabled` | **Narrows only**: project may set `false` to disable the gate for this project; it **cannot** re-enable the gate when global `gates.agentgate.enabled` is `false`. Transitively disables `gates.docker_proxy.enabled` when the project turns the gate off. |
 | `gates.agentgate.path_rules` / `command_rules` / `file_rules` | **Prepended** to the merged global rules (first-match-wins applies project rules first). Any decision is accepted, so a project can loosen as well as tighten the policy. |
 | `gates.agentgate.default_decision` | **Ignored** — global wins unconditionally. |

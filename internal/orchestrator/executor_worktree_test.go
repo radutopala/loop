@@ -739,7 +739,7 @@ func (s *TaskExecutorSuite) TestWorktreeFirstRunInjectsPromptIntoWorktreeThread(
 		if req.OnTurn == nil || !strings.Contains(req.DirPath, ".worktrees/task-10-") {
 			return false
 		}
-		req.OnTurn("working on it")
+		req.OnTurn("working on it", agent.TurnRef{})
 		return true
 	})).Return(&agent.AgentResponse{Response: "working on it", SessionID: "s2"}, nil)
 

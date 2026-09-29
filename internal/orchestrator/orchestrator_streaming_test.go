@@ -68,9 +68,9 @@ func (s *OrchestratorSuite) TestHandleMessageStreamingSkipsDuplicate() {
 		if req.OnTurn == nil {
 			return false
 		}
-		req.OnTurn("Let me check...")
-		req.OnTurn("") // empty text should be skipped
-		req.OnTurn("Here is the answer.")
+		req.OnTurn("Let me check...", agent.TurnRef{})
+		req.OnTurn("", agent.TurnRef{}) // empty text should be skipped
+		req.OnTurn("Here is the answer.", agent.TurnRef{})
 		return true
 	})).Return(&agent.AgentResponse{
 		Response:  "Here is the answer.", // Same as last OnTurn — final skipped
@@ -116,7 +116,7 @@ func (s *OrchestratorSuite) TestHandleMessageStreamingSendsFinalWhenDifferent() 
 		if req.OnTurn == nil {
 			return false
 		}
-		req.OnTurn("Intermediate turn")
+		req.OnTurn("Intermediate turn", agent.TurnRef{})
 		return true
 	})).Return(&agent.AgentResponse{
 		Response:  "Final different response",
@@ -161,7 +161,7 @@ func (s *OrchestratorSuite) TestHandleMessageStreamingSendErrorIsLogged() {
 		if req.OnTurn == nil {
 			return false
 		}
-		req.OnTurn("Streamed turn")
+		req.OnTurn("Streamed turn", agent.TurnRef{})
 		return true
 	})).Return(&agent.AgentResponse{
 		Response:  "Streamed turn",
@@ -208,7 +208,7 @@ func (s *OrchestratorSuite) TestHandleMessageStreamingBroadcastsViaEvents() {
 		if req.OnTurn == nil {
 			return false
 		}
-		req.OnTurn("partial response")
+		req.OnTurn("partial response", agent.TurnRef{})
 		return true
 	})).Return(&agent.AgentResponse{
 		Response:  "final response",
@@ -259,7 +259,7 @@ func (s *OrchestratorSuite) TestHandleMessageStreamingOnToolUseBroadcasts() {
 			return false
 		}
 		req.OnToolUse("toolu_b", "Bash", "go test ./...")
-		req.OnTurn("done")
+		req.OnTurn("done", agent.TurnRef{})
 		return true
 	})).Return(&agent.AgentResponse{
 		Response:  "done",
@@ -587,7 +587,7 @@ func (s *OrchestratorSuite) TestHandleMessageStreamingTaskCreate() {
 		}
 		req.OnToolUse("toolu_t", "TaskCreate", taskInput)
 		req.OnToolResult("toolu_t", "Task #1 created successfully: Fix bug", false)
-		req.OnTurn("done")
+		req.OnTurn("done", agent.TurnRef{})
 		return true
 	})).Return(&agent.AgentResponse{Response: "done", SessionID: "sess-task"}, nil)
 
@@ -639,7 +639,7 @@ func (s *OrchestratorSuite) TestHandleMessageStreamingTaskUpdate() {
 			return false
 		}
 		req.OnToolUse("toolu_u", "TaskUpdate", updateInput)
-		req.OnTurn("done")
+		req.OnTurn("done", agent.TurnRef{})
 		return true
 	})).Return(&agent.AgentResponse{Response: "done", SessionID: "sess-upd"}, nil)
 
@@ -687,7 +687,7 @@ func (s *OrchestratorSuite) TestHandleMessageStreamingOnActivityBroadcasts() {
 		}
 		req.OnActivity("model", "claude-opus-4-6")
 		req.OnActivity("subagent_started", "Deep analysis")
-		req.OnTurn("done")
+		req.OnTurn("done", agent.TurnRef{})
 		return true
 	})).Return(&agent.AgentResponse{
 		Response:   "done",
@@ -757,7 +757,7 @@ func (s *OrchestratorSuite) TestHandleMessageStreamingOnCompactingPersistsRow() 
 			return false
 		}
 		req.OnActivity("compacting", "")
-		req.OnTurn("done")
+		req.OnTurn("done", agent.TurnRef{})
 		return true
 	})).Return(&agent.AgentResponse{
 		Response:  "done",
@@ -813,7 +813,7 @@ func (s *OrchestratorSuite) TestHandleMessageStreamingOnThinkingAndToolResultBro
 		req.OnThinking("planning a step")
 		req.OnToolResult("toolu_q", "ok-output", false)
 		req.OnToolResult("toolu_e", "boom", true)
-		req.OnTurn("done")
+		req.OnTurn("done", agent.TurnRef{})
 		return true
 	})).Return(&agent.AgentResponse{
 		Response:   "done",

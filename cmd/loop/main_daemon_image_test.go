@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 
 	"github.com/stretchr/testify/mock"
@@ -238,8 +239,14 @@ func (s *MainSuite) TestEnsureImageWithBroadcastSuccess() {
 	dc.On("ImageInspectLabels", mock.Anything, "").Return(map[string]string(nil), errors.New("no such image")).Maybe()
 	mgr = container.NewImageLifecycleManager(dc, hub, s.app.sys, nil, "", "", "", dc.LatestClaudeVersion)
 
-	s.app.ensureImageWithBroadcast(ctx, dc, testConfig(), hub, mgr, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	// Idempotent, like the ends BeginBuild returns.
+	var ended []string
+	s.app.ensureImageWithBroadcast(ctx, dc, testConfig(), hub, mgr, slog.New(slog.NewTextHandler(io.Discard, nil)),
+		sync.OnceFunc(func() { ended = append(ended, "agent") }), sync.OnceFunc(func() { ended = append(ended, "chrome") }))
 	require.Equal(s.T(), container.ImageBuildStatus{State: "building", Phase: "building"}, phase)
+	// The agent image's build ends once the project image cascade (none
+	// here) has taken over, after the Chrome image's.
+	require.Equal(s.T(), []string{"chrome", "agent"}, ended)
 }
 
 func (s *MainSuite) TestEnsureImageWithBroadcastError() {
@@ -257,7 +264,10 @@ func (s *MainSuite) TestEnsureImageWithBroadcastError() {
 	dc.On("ImageInspectLabels", mock.Anything, "").Return(map[string]string(nil), errors.New("no such image")).Maybe()
 	mgr := container.NewImageLifecycleManager(dc, hub, s.app.sys, nil, "", "", "", dc.LatestClaudeVersion)
 
-	s.app.ensureImageWithBroadcast(ctx, dc, testConfig(), hub, mgr, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	var ended []string
+	s.app.ensureImageWithBroadcast(ctx, dc, testConfig(), hub, mgr, slog.New(slog.NewTextHandler(io.Discard, nil)),
+		sync.OnceFunc(func() { ended = append(ended, "agent") }), sync.OnceFunc(func() { ended = append(ended, "chrome") }))
+	require.Equal(s.T(), []string{"chrome", "agent"}, ended, "a failed ensure must release both images")
 }
 
 func (s *MainSuite) TestEnsureImageListError() {

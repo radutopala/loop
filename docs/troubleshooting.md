@@ -96,6 +96,21 @@ Messages you may see from `docker` (or a library) inside the agent, and what to 
 
 Docker Desktop's volume list shows `loop-bind-<hash>` volumes: those back pinned binds of containers the agent started (see [Binds are pinned to the agent's mounts](gates.md#binds-are-pinned-to-the-agents-mounts)). Loop removes the unused ones whenever it removes a container; `docker volume prune -a --filter label=app=loop-bind` removes them by hand (`-a`, since they are named volumes).
 
+## Run fails with "Docker is out of disk space"
+
+The disk that fills is the Docker VM's (Docker Desktop's virtual disk), not
+the host's, so freeing host space doesn't help. Container create, file copies
+and the agent's own writes fail with `no space left on device`, and the chat
+shows the notice instead of a reply. Free space inside Docker, then send the
+message again:
+
+- `docker builder prune -a` -- the build cache is usually the largest share.
+- `docker image prune -a` and `docker container prune` -- unused images and
+  stopped containers.
+- `docker system df` shows what is using the space.
+
+See [Run Failures](containers.md#run-failures) for how other run errors show.
+
 ## Agent fails with "No conversation found with session ID"
 
 Claude Code prunes transcripts under `~/.claude/projects` after

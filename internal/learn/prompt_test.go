@@ -60,10 +60,11 @@ func (s *PromptSuite) TestSystemPrompt() {
 					{Type: db.TaskTypeCron, Schedule: "0 9 * * *", Prompt: "check deps", Enabled: true},
 				},
 				Proposals: []*db.LearnProposal{
-					{Kind: db.LearnKindBashShortcut, Title: "Add a vitest shortcut", Payload: `{"name":"vitest"}`, Status: db.LearnPending},
-					{Kind: db.LearnKindDescription, Title: "Describe the thread", Payload: `{"description":"login bug"}`, Status: db.LearnFailed},
-					{Kind: db.LearnKindRename, Title: "Rename to wt-auth", Payload: `{"name":"wt-auth"}`, Status: db.LearnDismissed},
-					{Kind: db.LearnKindMount, Title: "Mount the cache", Payload: `{"mount":"~/.cache"}`, Status: db.LearnApplied},
+					{ID: 14, Kind: db.LearnKindBashShortcut, Title: "Add a vitest shortcut", Payload: `{"name":"vitest"}`, Status: db.LearnPending},
+					{ID: 13, Kind: db.LearnKindDescription, Title: "Describe the thread", Payload: `{"description":"login bug"}`, Status: db.LearnFailed},
+					{ID: 12, Kind: db.LearnKindRename, Title: "Rename to wt-auth", Payload: `{"name":"wt-auth"}`, Status: db.LearnDismissed},
+					{ID: 11, Kind: db.LearnKindMount, Title: "Mount the cache", Payload: `{"mount":"~/.cache"}`, Status: db.LearnApplied},
+					{ID: 10, Kind: db.LearnKindRename, Title: "Rename to wt-login-fix", Payload: `{"name":"wt-login-fix"}`, Status: db.LearnWithdrawn, WithdrawnReason: "replaced by a newer proposal"},
 				},
 			},
 			contains: []string{
@@ -81,13 +82,15 @@ func (s *PromptSuite) TestSystemPrompt() {
 				"### Agentgate path rules\n\nnone\n",
 				"## Additional instructions\n\nPrefer bash shortcuts.\n",
 				"### Proposals waiting for the user\n\n```json",
-				`"title": "Add a vitest shortcut"`,
+				"\"id\": 14,\n    \"status\": \"pending\",\n    \"kind\": \"bash_shortcut\",\n    \"title\": \"Add a vitest shortcut\"",
 				`"name": "vitest"`,
+				"\"id\": 13,\n    \"status\": \"failed\"",
 				`"description": "login bug"`,
-				"### Proposals the user dismissed\n\n```json",
-				`"title": "Rename to wt-auth"`,
+				"### Proposals the user dismissed\n\n```json\n[\n  {\n    \"kind\": \"rename\",\n    \"title\": \"Rename to wt-auth\"",
+				"### Proposals earlier passes withdrew\n\n```json\n[\n  {\n    \"kind\": \"rename\",\n    \"title\": \"Rename to wt-login-fix\"",
+				`"withdrawn_reason": "replaced by a newer proposal"`,
 			},
-			excludes: []string{"Mount the cache"},
+			excludes: []string{"Mount the cache", `"id": 12`, `"id": 10`},
 		},
 		{
 			name:  "empty state",
@@ -100,6 +103,7 @@ func (s *PromptSuite) TestSystemPrompt() {
 				"### Mounts\n\nnone\n",
 				"### Proposals waiting for the user\n\nnone\n",
 				"### Proposals the user dismissed\n\nnone\n",
+				"### Proposals earlier passes withdrew\n\nnone\n",
 			},
 			excludes: []string{"(a worktree thread)", "- Project config", "## Additional instructions"},
 		},
@@ -118,15 +122,20 @@ func (s *PromptSuite) TestSystemPrompt() {
 	}
 }
 
-func (s *PromptSuite) TestDismissedCapped() {
+func (s *PromptSuite) TestSettledCapped() {
 	var proposals []*db.LearnProposal
-	for i := range maxDismissed + 5 {
-		proposals = append(proposals, &db.LearnProposal{Kind: db.LearnKindRename, Title: fmt.Sprintf("dismissed-%02d", i), Payload: "{}", Status: db.LearnDismissed})
+	for i := range maxSettled + 5 {
+		proposals = append(proposals,
+			&db.LearnProposal{Kind: db.LearnKindRename, Title: fmt.Sprintf("dismissed-%02d", i), Payload: "{}", Status: db.LearnDismissed},
+			&db.LearnProposal{Kind: db.LearnKindRename, Title: fmt.Sprintf("withdrawn-%02d", i), Payload: "{}", Status: db.LearnWithdrawn},
+		)
 	}
-	waiting, dismissed := proposalSummaries(proposals)
-	require.Empty(s.T(), waiting)
-	require.Len(s.T(), dismissed, maxDismissed)
-	require.Equal(s.T(), "dismissed-00", dismissed[0].Title)
+	sets := proposalSummaries(proposals)
+	require.Empty(s.T(), sets.waiting)
+	require.Len(s.T(), sets.dismissed, maxSettled)
+	require.Equal(s.T(), "dismissed-00", sets.dismissed[0].Title)
+	require.Len(s.T(), sets.withdrawn, maxSettled)
+	require.Equal(s.T(), "withdrawn-00", sets.withdrawn[0].Title)
 }
 
 func (s *PromptSuite) TestTriggerMessage() {
@@ -152,6 +161,41 @@ func (s *PromptSuite) TestTriggerMessage() {
 	}
 }
 
+func (s *PromptSuite) TestTurnTriggerMessage() {
+	const lead = "The run in \"api\" just finished. Review it and propose what Loop should learn from it.\n\n" +
+		"The user asked for this turn to be reviewed."
+	long := strings.Repeat("é", maxQuoted+10)
+	tests := []struct {
+		name   string
+		prompt string
+		reply  string
+		want   string
+	}{
+		{
+			name:   "prompt and reply",
+			prompt: " fix the tests\nthen lint ",
+			reply:  "Done.\nAll green.",
+			want:   lead + "\n\nThat turn's prompt was:\n\n> fix the tests\n> then lint\n\nIts final reply was:\n\n> Done.\n> All green.",
+		},
+		{
+			name:  "no prompt",
+			reply: "Done.",
+			want:  lead + "\n\nIts final reply was:\n\n> Done.",
+		},
+		{
+			name:   "long text cut",
+			prompt: long,
+			reply:  long,
+			want:   lead + "\n\nThat turn's prompt was:\n\n> " + strings.Repeat("é", maxQuoted) + " …\n\nIts final reply was:\n\n> " + strings.Repeat("é", maxQuoted) + " …",
+		},
+	}
+	for _, tc := range tests {
+		s.Run(tc.name, func() {
+			require.Equal(s.T(), tc.want, TurnTriggerMessage("api", tc.prompt, tc.reply))
+		})
+	}
+}
+
 func (s *PromptSuite) TestIsTrigger() {
 	tests := []struct {
 		name   string
@@ -160,7 +204,11 @@ func (s *PromptSuite) TestIsTrigger() {
 	}{
 		{"bare", TriggerMessage("api", "fix it"), true},
 		{"behind the author prefix", "loop: " + TriggerMessage("a: b\nc", ""), true},
+		{"behind the worktree hint", dirHint + "/wt. Always use absolute paths.\n\nloop: " + TriggerMessage("wt", ""), true},
 		{"name with a colon, no prefix", TriggerMessage("a: b", ""), true},
+		{"a turn trigger", TurnTriggerMessage("api", "fix it", "done"), true},
+		{"a turn trigger behind the author prefix", "loop: " + TurnTriggerMessage("a: b", "", "done"), true},
+		{"a user prompt in a worktree", dirHint + "/wt.\n\nradu: fix it", false},
 		{"a user prompt", "radu: fix the tests", false},
 		{"quoting the lead only", "radu: The run in \"api\" was slow", false},
 		{"empty", "", false},

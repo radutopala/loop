@@ -54,6 +54,16 @@ Feature: Recent sessions in the sidebar
     When I click on "[data-testid='sidebar-recent'] [data-testid='sidebar-session-row']"
     Then I wait for "textarea" to be visible
 
+  Scenario: The tree's lines scroll behind the Recent/Tree tabs
+    Given I set up a test channel via API for git repo "bdd-sessions-lines"
+    And I create a thread "lines-thread" under the current channel via API
+    And I open the app in a browser
+    And I wait for text "lines-thread" to appear
+    When I inject an agent.status running event
+    Then I wait for "[data-testid='sidebar-tab-tree']" to be visible
+    When I click on "[data-testid='sidebar-tab-tree']"
+    Then the sidebar's tab bar covers a thread's tree line scrolled under it
+
   Scenario: A worktree thread in Recent has the tree's worktree icon
     Given I set up a test channel via API for git repo "bdd-sessions-wt"
     And I set up a worktree "recent-wt" on branch "main" under the current channel via API
@@ -82,3 +92,23 @@ Feature: Recent sessions in the sidebar
     # The tree marks threads by indent, not an icon.
     When I click on "[data-testid='sidebar-tab-tree']"
     Then the element "[data-testid='session-kind-thread']" should not exist
+
+  Scenario: The search box's clear button empties the search and keeps focus
+    Given I set up a test channel via API for git repo "bdd-sidebar-search"
+    And I open the app in a browser
+    And I wait for text "bdd-sidebar-search" to appear
+    # No text, no clear button.
+    Then the element "[data-testid='sidebar-search-clear']" should not exist
+
+    # A search that doesn't match hides the channel and shows the button.
+    When I type "zz-no-match" into "input[placeholder='Search...']"
+    Then I wait up to "5s" for text "bdd-sidebar-search" to disappear
+    And the element "[data-testid='sidebar-search-clear'][aria-label='Clear search']" should be visible
+
+    # Clearing is the same as deleting the text: the channel is back, the
+    # button is gone and the input still has focus.
+    When I click on "[data-testid='sidebar-search-clear']"
+    Then the field "input[placeholder='Search...']" should hold ""
+    And I wait for text "bdd-sidebar-search" to appear
+    And the element "[data-testid='sidebar-search-clear']" should not exist
+    And the focus is in "input[placeholder='Search...']"

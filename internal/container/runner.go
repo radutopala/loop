@@ -137,11 +137,13 @@ type DockerRunner struct {
 	// POST /api/gate/container-approval).
 	hostDockerSock string // "" -> "/var/run/docker.sock"
 
-	// imageGate, when set, holds container creation while an image build
-	// runs; loopVersion is the daemon's version, which the image must not
-	// be older than (see awaitImage). Set via SetImageGate.
+	// imageGate, when set, holds container creation while the container's
+	// image or baseImage, the agent image project images are built FROM, is
+	// being built; loopVersion is the daemon's version, which the image must
+	// not be older than (see awaitImage). Set via SetImageGate.
 	imageGate   ImageGate
 	loopVersion string
+	baseImage   string
 
 	// Gate approval wiring (stage 2 of agentgate). When both fields below are
 	// set, the runner constructs a per-container agentgate.Manager, registers
@@ -344,6 +346,10 @@ func (r *DockerRunner) containerName(channelID, dirPath string) string {
 	return "loop-" + sanitized + "-" + hex.EncodeToString(b)
 }
 
+// unknownResumePoint is how Claude Code fails a --resume-session-at whose
+// uuid isn't in the session.
+const unknownResumePoint = "No message found with message.uuid"
+
 // Run executes an agent request in a Docker container, retrying on transient
 // API errors (rate limiting, overload, transient 5xx) with bounded exponential
 // backoff. Terminal errors (usage/quota, auth, billing) are surfaced
@@ -373,6 +379,7 @@ func (r *DockerRunner) Run(ctx context.Context, req *agent.AgentRequest) (*agent
 		if resp != nil && resp.SessionID != "" {
 			retryReq.SessionID = resp.SessionID
 			retryReq.ForkSession = false
+			retryReq.ResumeAt = ""
 		}
 		resp, err = r.runWithRecovery(ctx, &retryReq)
 	}
@@ -381,9 +388,20 @@ func (r *DockerRunner) Run(ctx context.Context, req *agent.AgentRequest) (*agent
 
 // runWithRecovery executes an agent request and, on failure with a live
 // session, retries with --resume — compacting first when the session is too
-// long. This is the per-attempt unit the backoff loop in Run calls.
+// long. This is the per-attempt unit the backoff loop in Run calls. A fork
+// cut at a transcript entry the session doesn't have (ResumeAt) runs again
+// once as a fork of the whole session.
 func (r *DockerRunner) runWithRecovery(ctx context.Context, req *agent.AgentRequest) (*agent.AgentResponse, error) {
 	resp, err := r.runOnce(ctx, req)
+	if err != nil && req.ResumeAt != "" && strings.Contains(err.Error(), unknownResumePoint) {
+		if r.logger != nil {
+			r.logger.Warn("resume point not in the session; forking the whole session",
+				"channel_id", req.ChannelID, "session_id", req.SessionID, "resume_at", req.ResumeAt)
+		}
+		live := *req
+		live.ResumeAt = ""
+		return r.runWithRecovery(ctx, &live)
+	}
 	if err == nil || req.SessionID == "" {
 		return resp, err
 	}
@@ -403,6 +421,7 @@ func (r *DockerRunner) runWithRecovery(ctx context.Context, req *agent.AgentRequ
 		retryReq := *req
 		retryReq.SessionID = compactResp.SessionID
 		retryReq.ForkSession = false
+		retryReq.ResumeAt = ""
 		if retryReq.Prompt == "" && len(retryReq.Messages) > 0 {
 			retryReq.Prompt = retryReq.Messages[len(retryReq.Messages)-1].Content
 		}
@@ -419,8 +438,9 @@ func (r *DockerRunner) runWithRecovery(ctx context.Context, req *agent.AgentRequ
 	// may schedule a session-limit auto-continue). Blind-retrying any of them
 	// here just hits the same wall and burns a second container — the bug where
 	// a weekly-limit error appeared twice a minute apart. resp carries the
-	// failed run's SessionID so the caller can resume.
-	if isAPILimitError(err) {
+	// failed run's SessionID so the caller can resume. A full Docker disk
+	// fails the retry's container the same way.
+	if isAPILimitError(err) || agent.IsDiskFull(err.Error()) {
 		return resp, err
 	}
 	retryResp, retryErr := r.runOnce(ctx, &retryReq)
@@ -504,6 +524,7 @@ func (r *DockerRunner) runOnce(ctx context.Context, req *agent.AgentRequest) (*a
 		fresh := *req
 		fresh.SessionID = ""
 		fresh.ForkSession = false
+		fresh.ResumeAt = ""
 		req = &fresh
 	}
 	containerID, ctrName, mcpConfigPath, keepMCP, err := r.createAndStartContainer(ctx, req.ChannelID, req.DirPath, req.AuthorID, req.ParentDirPath, req.AgentID,
@@ -547,10 +568,11 @@ func (r *DockerRunner) runOnce(ctx context.Context, req *agent.AgentRequest) (*a
 	}
 
 	if claudeResp.IsError {
+		errText := claudeResp.errorText()
 		return &agent.AgentResponse{
 			SessionID: claudeResp.SessionID,
-			Error:     claudeResp.Result,
-		}, fmt.Errorf("claude returned error: %s", claudeResp.Result)
+			Error:     errText,
+		}, fmt.Errorf("claude returned error: %s", errText)
 	}
 
 	return &agent.AgentResponse{
@@ -759,6 +781,14 @@ func (r *DockerRunner) createAndStartContainer(
 	if err := r.sys.MkdirAll(workDir, 0o755); err != nil {
 		return "", "", "", false, fmt.Errorf("creating work dir: %w", err)
 	}
+	// Docker creates a missing bind source on its own, but the docker proxy
+	// of a Loop agent container rejects one, so a daemon run from inside an
+	// agent could never start its agents.
+	for _, d := range []string{screenshotDir, playgroundDir} {
+		if err := r.sys.MkdirAll(d, 0o755); err != nil {
+			return "", "", "", false, fmt.Errorf("creating %s: %w", d, err)
+		}
+	}
 
 	// Initialize git in auto-created work directories so the agent can use version control.
 	if dirPath == "" {
@@ -853,12 +883,25 @@ func (r *DockerRunner) collectStreamingOutput(ctx context.Context, containerID s
 	}
 
 	if parseErr != nil {
-		if exitCode != 0 {
-			return nil, fmt.Errorf("container exited with code %d: %w", exitCode, parseErr)
-		}
-		return nil, parseErr
+		return nil, exitError(exitCode, parseErr)
 	}
 	return claudeResp, nil
+}
+
+// exitCodeKilled is the exit code of a container whose process got SIGKILL.
+const exitCodeKilled = 137
+
+// exitError adds a non-zero exit code to the error of a run that produced no
+// result. Nothing inside the container reports its own SIGKILL, so a 137
+// names the likely killers instead of leaving the bare code.
+func exitError(exitCode int64, parseErr error) error {
+	switch exitCode {
+	case 0:
+		return parseErr
+	case exitCodeKilled:
+		return fmt.Errorf("container exited with code %d (killed — out of memory or out of disk space): %w", exitCode, parseErr)
+	}
+	return fmt.Errorf("container exited with code %d: %w", exitCode, parseErr)
 }
 
 // collectBatchOutput waits for the container to exit, then reads all logs.
@@ -875,10 +918,7 @@ func (r *DockerRunner) collectBatchOutput(ctx context.Context, containerID strin
 
 	claudeResp, parseErr := scanStreamJSON(reader, streamCallbacks{})
 	if parseErr != nil {
-		if exitCode != 0 {
-			return nil, fmt.Errorf("container exited with code %d: %w", exitCode, parseErr)
-		}
-		return nil, parseErr
+		return nil, exitError(exitCode, parseErr)
 	}
 	return claudeResp, nil
 }

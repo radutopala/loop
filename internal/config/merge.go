@@ -55,6 +55,7 @@ type projectConfig struct {
 	Review                                   *jsonReviewConfig          `json:"review"`
 	PlaygroundShare                          *jsonPlaygroundShareConfig `json:"playground_share"`
 	Learn                                    *jsonLearnConfig           `json:"learn"`
+	Explain                                  *jsonExplainConfig         `json:"explain"`
 }
 
 // LoadProjectConfig loads project-specific config from {workDir}/.loop/config.json
@@ -550,6 +551,22 @@ func (l *Loader) loadProjectConfig(workDir string, mainConfig *Config) (*Config,
 		}
 		if pc.Learn.Prompt != "" {
 			merged.Learn.Prompt = pc.Learn.Prompt
+		}
+	}
+
+	// Explain: like Learn, each field overrides only when set in the project.
+	if pc.Explain != nil {
+		if pc.Explain.Enabled != nil {
+			merged.Explain.Enabled = *pc.Explain.Enabled
+		}
+		if pc.Explain.Model != "" {
+			merged.Explain.Model = pc.Explain.Model
+		}
+		if pc.Explain.Effort != "" {
+			merged.Explain.Effort = pc.Explain.Effort
+		}
+		if pc.Explain.Prompt != "" {
+			merged.Explain.Prompt = pc.Explain.Prompt
 		}
 	}
 

@@ -238,7 +238,7 @@ Agent lifecycle status change (running, completed, errored).
 | `model`           | string | Model used for the run |
 | `trigger_content` | string | Content of the message that triggered the run (on `"running"` status) |
 | `msg_id`          | string | `msg_id` of the user message that triggered the run. Present on `running`, `completed`, and `error` for the same row. The frontend uses it to label the correct chat bubble as "processing" — needed because priority-bumped messages (deny-with-prompt interrupts) can be processed ahead of older queued rows, so the FE cannot infer it from array position. |
-| `trigger`         | string | What started the run: `"scheduled"` for a scheduled task, `"learn"` for a [learn pass](chat.md#learn-from-a-run), `"learn-reply"` for a message the user sent in a learn thread, `"bot"` for a message the bot itself posted (an agent using `send_message` / `create_thread`), omitted for a user's message anywhere else. The desktop app doesn't bounce the dock for `scheduled`, `bot` or `learn` runs, and a `learn` run doesn't mark its channel unread or post a notification. |
+| `trigger`         | string | What started the run: `"scheduled"` for a scheduled task, `"learn"` for a [learn pass](chat.md#learn-from-a-run), `"learn-reply"` for a message the user sent in a learn thread, `"explain"` for an [explanation](chat.md#explain-a-turn), `"bot"` for a message the bot itself posted (an agent using `send_message` / `create_thread`), omitted for a user's message anywhere else. The desktop app doesn't bounce the dock for `scheduled`, `bot`, `learn` or `explain` runs, and a `learn` or `explain` run doesn't mark its channel unread or post a notification. |
 | `thread_id`       | string | Thread ID for scheduled task runs. Present on all status events (`running`, `error`, `completed`) when the task has an existing thread. The frontend uses this to route state (store entry, `isRunningMap`) to the thread instead of the parent channel, so the parent doesn't show a running indicator for thread work and the thread view shows the stop button and streaming content. |
 
 ---
@@ -546,17 +546,49 @@ A [learn pass](chat.md#learn-from-a-run) started for a channel. `channel_id` is 
 
 ### `learn.proposals`
 
-A learn pass filed proposals (via [`POST /api/channels/{id}/learn/proposals`](api.md#post-apichannelsidlearnproposals)). `channel_id` is the channel being learned from.
+A learn pass filed proposals, withdrew earlier ones, or both (via [`POST /api/channels/{id}/learn/proposals`](api.md#post-apichannelsidlearnproposals)). `channel_id` is the channel being learned from. Every window merges both lists into its Learn view by id, so a withdrawn card updates in place.
 
 **Payload schema:**
 
 ```json
-{ "proposals": [ { "id": 12, "kind": "bash_shortcut", "title": "Add a make lint bash shortcut", "status": "pending", "...": "..." } ] }
+{
+  "proposals": [ { "id": 12, "kind": "bash_shortcut", "title": "Add a make lint bash shortcut", "status": "pending", "...": "..." } ],
+  "withdrawn": [ { "id": 9, "status": "withdrawn", "withdrawn_reason": "replaced by a newer proposal", "...": "..." } ]
+}
 ```
 
 | Field       | Type  | Description |
 |-------------|-------|-------------|
-| `proposals` | array | The stored proposals, shaped as in [`GET /api/channels/{id}/learn/proposals`](api.md#get-apichannelsidlearnproposals) |
+| `proposals` | array | The stored proposals, shaped as in [`GET /api/channels/{id}/learn/proposals`](api.md#get-apichannelsidlearnproposals), each with the `message_id` of the turn its pass reviews; `[]` when the pass only withdrew |
+| `withdrawn` | array | The proposals it withdrew, same shape, with `status: "withdrawn"` and `withdrawn_reason`; omitted when none |
+
+**Scope:** Global.
+
+---
+
+### `learn.pass`
+
+A [learn pass](chat.md#learn-from-a-run), automatic or [asked for](api.md#post-apichannelsidlearnpasses), was queued, started, finished or failed. `channel_id` is the channel being learned from; `data` is the whole pass with its new `status`, shaped as in [`GET /api/channels/{id}/learn/passes`](api.md#get-apichannelsidlearnpasses). The desktop app shows it at the end of the turn it reviews (`message_id`). Global because the learn thread doing the work is hidden.
+
+**Payload schema:**
+
+```json
+{
+  "id": 5,
+  "channel_id": "abc123",
+  "message_id": "loop-msg-17",
+  "learn_channel_id": "learn-a1b2c3d4e5f6",
+  "status": "running",
+  "created_at": "2026-03-25T14:30:00Z",
+  "updated_at": "2026-03-25T14:30:02Z"
+}
+```
+
+| Field    | Type   | Description |
+|----------|--------|-------------|
+| `status` | string | `queued`, `running`, `done` or `failed` (with `error`). Loop no longer sends `superseded`; only passes from before passes queued one after another have it, in the list endpoint. |
+
+Only the list endpoint fills in `message_row_id`.
 
 **Scope:** Global.
 
@@ -565,6 +597,32 @@ A learn pass filed proposals (via [`POST /api/channels/{id}/learn/proposals`](ap
 ### `learn.proposal_updated`
 
 A proposal was applied, failed to apply, or was dismissed. `channel_id` is the channel the proposal belongs to; `data` is the whole proposal with its new `status` (`applied`, `failed` with `error`, or `dismissed`), shaped as in [`GET /api/channels/{id}/learn/proposals`](api.md#get-apichannelsidlearnproposals).
+
+**Scope:** Global.
+
+---
+
+### `channel.explain`
+
+A channel's explain switch changed via [`PUT /api/channels/{id}/explain`](api.md#put-apichannelsidexplain). `channel_id` is that channel. Every window's composer updates its Explain switch from it.
+
+**Payload schema:**
+
+```json
+{ "explain": "on" }
+```
+
+| Field     | Type   | Description |
+|-----------|--------|-------------|
+| `explain` | string | `"on"`, `"off"`, or empty when the channel now inherits `explain.enabled` |
+
+**Scope:** Global.
+
+---
+
+### `explain.updated`
+
+An [explanation](chat.md#explain-a-turn) was queued, started, finished or failed. `channel_id` is the explained channel; `data` is the whole explanation with its new `status` (`queued`, `running`, `done` with `content`, or `failed` with `error`), shaped as in [`GET /api/channels/{id}/explanations`](api.md#get-apichannelsidexplanations). Only the event of a newly queued one carries `message_row_id`, `prompt` and `reply`; the desktop app keeps them from earlier. Global because the explain thread doing the work is hidden.
 
 **Scope:** Global.
 
@@ -969,8 +1027,11 @@ Emitted on every review session status transition (`idle → loading → ready �
 | `BroadcastChannelAgentConfig` | `channel.agent_config` | `map[string]string{"model_override", "effort_override"}` | Global |
 | `BroadcastChannelLearn` | `channel.learn` | `map[string]string{"learn"}` | Global |
 | `BroadcastLearnStarted` | `learn.started` | `map[string]string{"learn_channel_id"}` | Global |
-| `BroadcastLearnProposals` | `learn.proposals` | `map[string]any{"proposals": []*db.LearnProposal}` | Global |
+| `BroadcastLearnProposals` | `learn.proposals` | `map[string]any{"proposals", "withdrawn"?}` of `[]*db.LearnProposal` | Global |
+| `BroadcastLearnPass` | `learn.pass` | `*db.LearnPass` | Global |
 | `BroadcastLearnProposalUpdated` | `learn.proposal_updated` | `*db.LearnProposal` | Global |
+| `BroadcastChannelExplain` | `channel.explain` | `map[string]string{"explain"}` | Global |
+| `BroadcastExplainUpdated` | `explain.updated` | `*db.Explanation` | Global |
 | `BroadcastAgentInstanceRegistered` | `agent_instance.registered` | `AgentInstanceEventData` | Channel |
 | `BroadcastAgentInstanceUnregistered` | `agent_instance.unregistered` | `AgentInstanceEventData` | Channel |
 | `BroadcastAgentInstanceMetadata` | `agent_instance.metadata` | `AgentInstanceEventData` | Channel |
@@ -1037,6 +1098,8 @@ type Broadcaster interface {
     BroadcastGateApprovalRequested(channelID string, data GateApprovalEventData)
     BroadcastGateApprovalResolved(channelID string, data GateApprovalResolvedData)
     BroadcastLearnStarted(channelID, learnChannelID string)
+    BroadcastExplainUpdated(e *db.Explanation)
+    BroadcastLearnPass(p *db.LearnPass)
 }
 ```
 
