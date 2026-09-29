@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState } from "react";
+import { marked } from "marked";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { Explanation } from "../../api/explain";
 import type { ExplainView } from "../../hooks/useExplain";
 import { useTheme } from "../../ThemeContext";
@@ -7,8 +8,8 @@ import { inAppHref, messageLink } from "../../utils/messageLinks";
 import { ChannelContext } from "../chat/chatShared";
 import { ExplainIcon } from "../chat/ExplainIcon";
 import { explanationPending, snippetLine } from "../chat/explainState";
-import { MarkdownContent } from "../chat/markdown";
 import { formatMessageTimestamp } from "../chat/timestamps";
+import { buildMarkdownStyles } from "../panels/FilePanel";
 
 // How long the card a bubble's Explain action opened stays outlined.
 const FOCUS_HIGHLIGHT_MS = 4000;
@@ -134,6 +135,11 @@ function ExplanationCard({
   const prompt = snippetLine(e.prompt);
   const reply = snippetLine(e.reply);
   const statusColor = e.status === "failed" ? colors.error : pending ? colors.warning : colors.textDim;
+  const hasContent = e.status === "done" && !!e.content;
+  const [view, setView] = useState<"preview" | "source">("preview");
+  // Rendered like the editor's markdown preview: the chat's renderer has no
+  // headings or lists, which write-ups are made of.
+  const html = useMemo(() => (hasContent ? (marked.parse(e.content, { async: false }) as string) : ""), [hasContent, e.content]);
 
   return (
     <div
@@ -160,6 +166,31 @@ function ExplanationCard({
           {e.status === "running" ? "explaining…" : e.status}
         </span>
         <div style={{ flex: 1 }} />
+        {hasContent && (
+          <div style={{ display: "flex", flexShrink: 0, border: `1px solid ${colors.border}`, borderRadius: 4, overflow: "hidden" }}>
+            {(["preview", "source"] as const).map((mode) => (
+              <button
+                key={mode}
+                data-testid={`explanation-mode-${mode}`}
+                aria-pressed={view === mode}
+                onClick={() => setView(mode)}
+                title={mode === "preview" ? "Rendered markdown" : "Original markdown"}
+                style={{
+                  fontSize: 10,
+                  color: view === mode ? colors.active : colors.textDim,
+                  background: view === mode ? `${colors.active}18` : "none",
+                  border: "none",
+                  borderRight: mode === "preview" ? `1px solid ${colors.border}` : undefined,
+                  cursor: "pointer",
+                  padding: "2px 6px",
+                  lineHeight: 1,
+                }}
+              >
+                {mode === "preview" ? "Preview" : "Source"}
+              </button>
+            ))}
+          </div>
+        )}
         {href && (
           <a data-testid="explanation-goto" href={href} title="Show the turn's last message in the chat" style={{ fontSize: 11, color: colors.active, textDecoration: "none" }}>
             Go to message
@@ -211,11 +242,36 @@ function ExplanationCard({
           {e.status === "running" ? "A forked session is writing up this turn…" : "Queued behind the channel's other explanations…"}
         </div>
       )}
-      {e.status === "done" && e.content && (
-        <div data-testid="explanation-content" style={{ marginTop: 6 }}>
-          <MarkdownContent content={e.content} />
-        </div>
-      )}
+      {hasContent &&
+        (view === "source" ? (
+          <pre
+            data-testid="explanation-source"
+            style={{
+              marginTop: 6,
+              marginBottom: 0,
+              padding: 8,
+              borderRadius: 4,
+              background: colors.codeBlockBg,
+              fontFamily: fonts.mono,
+              fontSize: 11,
+              whiteSpace: "pre-wrap",
+              wordBreak: "break-word",
+              userSelect: "text",
+            }}
+          >
+            {e.content}
+          </pre>
+        ) : (
+          <>
+            <div
+              data-testid="explanation-content"
+              className="readme-content"
+              dangerouslySetInnerHTML={{ __html: html }}
+              style={{ marginTop: 6, fontFamily: fonts.sans, color: colors.text, lineHeight: 1.6 }}
+            />
+            <style>{buildMarkdownStyles(colors)}</style>
+          </>
+        ))}
     </div>
   );
 }

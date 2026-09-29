@@ -61,7 +61,7 @@ describe("mergeExplanations", () => {
 describe("explainAction", () => {
   it.each([
     [undefined, "explain", "Explain", false],
-    [expl(1, "a", { status: "queued" }), "pending", "Queued…", true],
+    [expl(1, "a", { status: "queued" }), "pending", "Explain queued…", true],
     [expl(1, "a", { status: "running" }), "pending", "Explaining…", true],
     [expl(1, "a", { status: "done" }), "open", "Explained", false],
     [expl(1, "a", { status: "failed" }), "open", "Explain failed", false],

@@ -48,7 +48,7 @@ Feature: Explain a turn
       {"id":424242,"channel_id":"{channel_id}","message_id":"{explain_msg_id}","explain_channel_id":"explain-bdd","status":"queued","content":"","created_at":"{now-5s}","updated_at":"{now-5s}","prompt":"add a lint target","reply":"Added a lint target."}
       """
     Then I wait for "[data-testid='explain-turn'][data-state='pending']" to be visible
-    And the element "[data-testid='explain-turn']" should contain text "Queued…"
+    And the element "[data-testid='explain-turn']" should contain text "Explain queued…"
     # The label only opens the view: the state is the button's.
     And I wait for "[data-testid='explain-badge']" to be visible
     And the element "[data-testid='explain-badge']" should contain text "explain"
@@ -105,6 +105,17 @@ Feature: Explain a turn
     And the element "[data-testid='explanation-prompt']" should contain text "add a lint target"
     And the element "[data-testid='explanation-goto']" should be visible
     And the element "[data-testid='explain-pane']" should contain text "write-ups of the chat's turns"
+    # Rendered by default; Source shows the original markdown.
+    And the element "[data-testid='explanation-mode-preview'][aria-pressed='true']" should be visible
+    And the element "[data-testid='explanation-source']" should not exist
+    When I click on "[data-testid='explanation-mode-source']"
+    Then I wait for "[data-testid='explanation-source']" to be visible
+    And the element "[data-testid='explanation-source']" should contain text "Added a `lint` target"
+    And the element "[data-testid='explanation-content']" should not exist
+    When I click on "[data-testid='explanation-mode-preview']"
+    Then I wait for "[data-testid='explanation-content']" to be visible
+    And the element "[data-testid='explanation-content'] h3" should contain text "Summary"
+    And the element "[data-testid='explanation-content'] code" should contain text "lint"
     # Escape closes it, like the Learn view.
     When I press Escape
     Then I wait up to "5s" for "[data-testid='learn-split']" to disappear

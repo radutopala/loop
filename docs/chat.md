@@ -627,7 +627,7 @@ An **explanation** is a write-up of one chat turn for the engineer who has to re
 
 ### Explain button
 
-Each finished turn ends with an `Explain` button, below its last bot message (not while the turn is still running). A click queues an explanation and opens the Explain view on it. Once there is one, the button shows its state (`Queued…`, `Explaining…`, `Explained` or `Explain failed`), and a click shows it in the Explain view instead of explaining again. When the request itself fails, the button says `Explain failed` in red and a click tries again.
+Each finished turn ends with an `Explain` button, below its last bot message (not while the turn is still running). A click queues an explanation and opens the Explain view on it. Once there is one, the button shows its state (`Explain queued…`, `Explaining…`, `Explained` or `Explain failed`), and a click shows it in the Explain view instead of explaining again. When the request itself fails, the button says `Explain failed` in red and a click tries again.
 
 ### Explain switch
 
@@ -644,7 +644,7 @@ The Explain pane's header says `Explain`, with `explaining a turn…` while one 
 - its status, time, and the start of the turn's prompt and reply;
 - **Go to message**, which scrolls the chat to the turn's last message;
 - **Re-explain**, which explains the turn again and replaces the card's content (disabled while it's queued or running);
-- the write-up in markdown, whose file paths open in the editor, or the error when the run failed.
+- the write-up, or the error when the run failed. A `Preview | Source` toggle in the card's header switches between the write-up rendered like the editor's markdown preview (the default) and its original markdown.
 
 The card a turn's button asked for is scrolled into view and outlined for a few seconds. If Loop's connection drops, the explanations are fetched again when it comes back.
 

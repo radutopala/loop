@@ -50,7 +50,7 @@ export function explainActionLabel(action: ExplainAction, e: Explanation | undef
     case "explain":
       return "Explain";
     case "pending":
-      return e?.status === "running" ? "Explaining…" : "Queued…";
+      return e?.status === "running" ? "Explaining…" : "Explain queued…";
     case "open":
       return e?.status === "failed" ? "Explain failed" : "Explained";
   }
