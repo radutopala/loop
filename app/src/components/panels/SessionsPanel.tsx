@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { SessionEntry } from "../../api/loopApi";
-import { createThread, fetchSessions } from "../../api/loopApi";
+import { createThread, fetchSessions, setSession } from "../../api/loopApi";
 import { useTheme } from "../../ThemeContext";
 import { Terminal } from "./Terminal";
 
@@ -29,6 +29,7 @@ export function SessionsPanel({ channelId, onStatusChange }: SessionsPanelProps)
   const [startingNew, setStartingNew] = useState(false);
   const [newSessionKey, setNewSessionKey] = useState("");
   const [listWidth, setListWidth] = useState(380);
+  const [resumeNote, setResumeNote] = useState<{ text: string; error: boolean } | null>(null);
   const draggingRef = useRef(false);
 
   const loadSessions = useCallback(async () => {
@@ -57,6 +58,25 @@ export function SessionsPanel({ channelId, onStatusChange }: SessionsPanelProps)
     [channelId, onStatusChange],
   );
 
+  const handleResume = useCallback(
+    async (e: React.MouseEvent, sid: string) => {
+      e.stopPropagation();
+      try {
+        const { deferred } = await setSession(channelId, sid);
+        if (deferred) {
+          setResumeNote({ text: `Switches to ${sid.slice(0, 8)} when the current run ends.`, error: false });
+          return;
+        }
+        setResumeNote(null);
+        setCurrentSessionId(sid);
+        onStatusChange?.();
+      } catch (err) {
+        setResumeNote({ text: err instanceof Error ? err.message : String(err), error: true });
+      }
+    },
+    [channelId, onStatusChange],
+  );
+
   const filtered = filter ? sessions.filter((s) => s.session_id.includes(filter) || (s.last_message && s.last_message.toLowerCase().includes(filter.toLowerCase()))) : sessions;
 
   const importedSessions = filtered.filter((s) => importedIds.has(s.session_id));
@@ -77,6 +97,18 @@ export function SessionsPanel({ channelId, onStatusChange }: SessionsPanelProps)
     window.addEventListener("mousemove", onMove);
     window.addEventListener("mouseup", onUp);
   }, []);
+
+  const rowButtonStyle: React.CSSProperties = {
+    background: "none",
+    border: `1px solid ${colors.border}`,
+    borderRadius: 3,
+    color: colors.textDim,
+    cursor: "pointer",
+    padding: "1px 4px",
+    fontSize: 11,
+    flexShrink: 0,
+    lineHeight: 1,
+  };
 
   const renderSessionRow = (s: SessionEntry, showImport: boolean) => {
     const isCurrent = s.session_id === currentSessionId;
@@ -125,21 +157,23 @@ export function SessionsPanel({ channelId, onStatusChange }: SessionsPanelProps)
             <button
               onClick={(e) => handleImport(e, s.session_id)}
               title="Import as thread"
-              style={{
-                background: "none",
-                border: `1px solid ${colors.border}`,
-                borderRadius: 3,
-                color: colors.textDim,
-                cursor: "pointer",
-                padding: "1px 4px",
-                fontSize: 11,
-                flexShrink: 0,
-                lineHeight: 1,
-              }}
+              style={rowButtonStyle}
               onMouseEnter={(e) => (e.currentTarget.style.color = colors.text)}
               onMouseLeave={(e) => (e.currentTarget.style.color = colors.textDim)}
             >
               + import as thread
+            </button>
+          )}
+          {!isCurrent && (
+            <button
+              data-testid="session-resume-here"
+              onClick={(e) => handleResume(e, s.session_id)}
+              title="Make this the channel's session: its next message resumes this conversation"
+              style={rowButtonStyle}
+              onMouseEnter={(e) => (e.currentTarget.style.color = colors.text)}
+              onMouseLeave={(e) => (e.currentTarget.style.color = colors.textDim)}
+            >
+              resume here
             </button>
           )}
         </div>
@@ -235,6 +269,11 @@ export function SessionsPanel({ channelId, onStatusChange }: SessionsPanelProps)
             + New
           </button>
         </div>
+        {resumeNote && (
+          <div data-testid="session-resume-note" style={{ padding: "4px 8px", fontSize: 11, color: resumeNote.error ? colors.error : colors.textDim, borderBottom: `1px solid ${colors.border}` }}>
+            {resumeNote.text}
+          </div>
+        )}
         <div style={{ flex: 1, overflowY: "auto" }}>
           {availableSessions.length > 0 && (
             <>

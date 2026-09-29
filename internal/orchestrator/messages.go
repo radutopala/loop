@@ -268,6 +268,11 @@ func (o *Orchestrator) processClaimedMessage(ctx context.Context, row *db.Messag
 		msg.AuthorRoles = incoming.AuthorRoles
 	}
 
+	// Before the run reads the session it resumes, so a switch meanwhile is
+	// deferred to after the run saves its own.
+	o.sessionRunStarted(msg.ChannelID)
+	defer o.sessionRunDone(ctx, msg.ChannelID)
+
 	// An explanation's or learn pass's run marks it running here and done
 	// or failed below.
 	expl := o.explainRunStarted(ctx, msg)

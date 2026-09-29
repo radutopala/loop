@@ -189,6 +189,16 @@ func New(channelID, apiURL, authorID string, httpClient HTTPClient, logger *slog
 	}, s.handleDeleteQueuedMessage)
 
 	mcp.AddTool(s.mcpServer, &mcp.Tool{
+		Name:        "list_sessions",
+		Description: "List the Claude Code sessions in a channel's project dir, newest first, as the Sessions panel does: each one's session_id, when it was last written (UTC) and the start of its last message. The channel's current session is marked *, and one a thread already holds [thread].",
+	}, s.handleListSessions)
+
+	mcp.AddTool(s.mcpServer, &mcp.Tool{
+		Name:        "resume_session",
+		Description: "Make another of the project's sessions (from list_sessions) the channel's, like the Sessions panel's resume here, so its next message resumes that conversation. The chat's messages are left as they are. Switching the channel this agent is running in takes effect when the current run ends, since the run saves its own session then. A session a thread also holds is forked on the next run rather than shared.",
+	}, s.handleResumeSession)
+
+	mcp.AddTool(s.mcpServer, &mcp.Tool{
 		Name:        "get_readme",
 		Description: "Get the Loop README documentation. Returns the full project README with setup instructions, configuration, commands, and architecture details.",
 	}, s.handleGetReadme)

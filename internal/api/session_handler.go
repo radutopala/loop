@@ -140,6 +140,59 @@ func (s *Server) handleListSessions(w http.ResponseWriter, r *http.Request) {
 	}, s.logger)
 }
 
+type setSessionRequest struct {
+	SessionID string `json:"session_id"`
+}
+
+type setSessionResponse struct {
+	Deferred bool `json:"deferred"`
+}
+
+// handleSetSession switches the channel to another of its project's Claude
+// sessions, so its next run resumes that conversation. While a run is in
+// progress the switch waits for its end, since the run saves its own session
+// id when it ends; the response says whether it waits. The chat's messages
+// stay as they are: the switch only changes what the agent remembers.
+func (s *Server) handleSetSession(w http.ResponseWriter, r *http.Request) {
+	if s.sessionSwitcher == nil {
+		http.Error(w, "session switching not configured", http.StatusNotImplemented)
+		return
+	}
+	var req setSessionRequest
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	sessionID, ok := cleanSessionID(req.SessionID)
+	if !ok || sessionID != req.SessionID {
+		http.Error(w, "invalid session_id", http.StatusBadRequest)
+		return
+	}
+	ch := s.visibleChannelFor(w, r)
+	if ch == nil {
+		return
+	}
+	if ch.DirPath == "" {
+		http.Error(w, "channel has no project directory", http.StatusBadRequest)
+		return
+	}
+	home, err := s.sys.UserHomeDir()
+	if err != nil {
+		http.Error(w, "failed to determine home directory", http.StatusInternalServerError)
+		return
+	}
+	path := filepath.Join(home, ".claude", "projects", osutil.EncodeClaudeProjectPath(ch.DirPath), sessionID+".jsonl")
+	if _, err := s.sys.Stat(path); err != nil {
+		http.Error(w, "session not found", http.StatusNotFound)
+		return
+	}
+	deferred, err := s.sessionSwitcher.SwitchSession(r.Context(), ch.ChannelID, sessionID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	writeHTTPJSON(w, http.StatusOK, setSessionResponse{Deferred: deferred}, s.logger)
+}
+
 // tailReadSize is the number of bytes to read from the end of a session file
 // when extracting the last assistant message.
 const tailReadSize = 32 * 1024

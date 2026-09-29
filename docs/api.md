@@ -476,6 +476,33 @@ Sessions are sorted by modification time (newest first). `last_message` is extra
 
 ---
 
+### `PUT /api/channels/{id}/session`
+
+Switch the channel to another of its project's Claude sessions, so its next run resumes that conversation. The Sessions panel's **resume here** button and the `resume_session` MCP tool call it.
+
+**Request:**
+
+```json
+{ "session_id": "4482da1c-831c-..." }
+```
+
+- The session must be a transcript in the channel's project dir, as listed by [`GET /api/channels/{id}/sessions`](#get-apichannelsidsessions).
+- The chat's messages are left as they are.
+- A session another channel or thread also holds is stored with `fork_pending`, so the next run starts with `--fork-session` instead of writing into the other's conversation.
+- While a chat run is in progress in the channel, the switch is held (in memory) and applied when the run ends, after the run saves its own session id.
+
+**Response:**
+
+```json
+{ "deferred": false }
+```
+
+`deferred` is true when the switch waits for the run in progress.
+
+**Errors:** `400` for a missing or malformed `session_id`, or a channel with no project dir. `404` if the channel or the session isn't found. `500` on database error. `501` if session switching is not configured.
+
+---
+
 ### `GET /api/channels/{id}/agent-config`
 
 Return the channel's per-channel model/effort overrides plus the effective config defaults they fall back to (global → project → worktree merge for the channel's dir), so a UI can label "default" concretely.
