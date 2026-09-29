@@ -48,6 +48,21 @@ GODOG_TAGS ?= ~@docs && ~@journey
 # `docker logs -f loop-bdd`. Ctrl-C still stops them. /tmp/loop-bdd-data is
 # emptied rather than removed, as it's a mount point inside agent containers.
 
+# Docs capture and bdd-serve hand the runner container your ~/.loop/config.json
+# for its Claude token. Inside a Loop agent container the docker proxy won't
+# bind ~/.loop (read-only, outside the bind roots), so stage just the token
+# under the shared data dir instead. A dotfile survives the script's wipe of
+# the data dir. The proxy also denies agentgate's seccomp/ptrace flags, so
+# turn the gate off for those runs.
+ifdef LOOP_DOCKERPROXY_ENABLED
+BDD_HOST_CONFIG := /tmp/loop-bdd-data/.host-config.json
+BDD_STAGE_CONFIG = mkdir -p /tmp/loop-bdd-data && ( umask 077; tok=$$(sed -nE 's/.*claude_code_oauth_token[^:]*:[[:space:]]*"([^"]+)".*/\1/p' "$(HOME)/.loop/config.json" | head -1); printf '{ "claude_code_oauth_token": "%s" }\n' "$$tok" > $(BDD_HOST_CONFIG) )
+BDD_CONFIG_ARGS = -e LOOP_DOCS_HOST_CONFIG=$(BDD_HOST_CONFIG) -e LOOP_BDD_AGENTGATE=0
+else
+BDD_STAGE_CONFIG = true
+BDD_CONFIG_ARGS = -v "$(HOME)/.loop/config.json:/host-loop-config.json:ro" -e LOOP_DOCS_HOST_CONFIG=/host-loop-config.json
+endif
+
 test-component-bdd: ## Run BDD component tests (via Docker on host, natively in CI)
 	@if { [ "$$CI" = "true" ] || ([ -f /.dockerenv ] && [ "$$(id -u)" = "0" ] && command -v apt-get >/dev/null 2>&1); } && [ -z "$(LOOP_DOCS_CAPTURE)" ]; then \
 		GODOG_TAGS="$(GODOG_TAGS)" LOOP_DOCS_CAPTURE="$(LOOP_DOCS_CAPTURE)" $(if $(LOOP_DOCS_CAPTURE),LOOP_DOCS_HOST_CONFIG="$(HOME)/.loop/config.json") TEST_RUN=$${TEST_RUN:-"TestBDDBackendFeatures|TestBDDFrontendFeatures"} bash scripts/test-component.sh; \
@@ -55,13 +70,15 @@ test-component-bdd: ## Run BDD component tests (via Docker on host, natively in 
 		docker rm -f loop-bdd 2>/dev/null; \
 		docker ps -aq --filter "name=loop-bdd-" | xargs -r docker rm -f 2>/dev/null; \
 		mkdir -p /tmp/loop-bdd-data && find /tmp/loop-bdd-data -mindepth 1 -delete; \
+		$(if $(LOOP_DOCS_CAPTURE),$(BDD_STAGE_CONFIG);) \
 		docker run -d --name loop-bdd -v "$$(pwd)":/app -w /app \
 			-v /var/run/docker.sock:/var/run/docker.sock \
 			-v /tmp/loop-bdd-data:/tmp/loop-bdd-data \
 			-v loop-gomod:/go/pkg/mod -v loop-gocache:/root/.cache/go-build \
+			-v loop-bdd-node-modules:/app/app/node_modules \
 			-e TEST_RUN="$${TEST_RUN:-TestBDDBackendFeatures|TestBDDFrontendFeatures}" \
 			$(if $(GODOG_TAGS),-e GODOG_TAGS="$(GODOG_TAGS)") \
-			$(if $(LOOP_DOCS_CAPTURE),-e LOOP_DOCS_CAPTURE="$(LOOP_DOCS_CAPTURE)" -v "$(HOME)/.loop/config.json:/host-loop-config.json:ro" -e LOOP_DOCS_HOST_CONFIG=/host-loop-config.json) \
+			$(if $(LOOP_DOCS_CAPTURE),-e LOOP_DOCS_CAPTURE="$(LOOP_DOCS_CAPTURE)" $(BDD_CONFIG_ARGS)) \
 			$(if $(GODOG_CONCURRENCY),-e GODOG_CONCURRENCY="$(GODOG_CONCURRENCY)") \
 			ghcr.io/radutopala/loop/test-runner:latest bash scripts/test-component.sh >/dev/null || exit $$?; \
 		trap 'docker stop loop-bdd >/dev/null' INT; \
@@ -72,13 +89,15 @@ test-component-bdd: ## Run BDD component tests (via Docker on host, natively in 
 bdd-serve: ## Build + run the daemon and UI inside Docker as a STANDING instance (no tests), with live agents, for manual / MCP-browser testing. Prints the bridge URL to connect to. Stop with: docker rm -f loop-dev
 	@docker rm -f loop-dev 2>/dev/null || true; \
 	mkdir -p /tmp/loop-bdd-data && find /tmp/loop-bdd-data -mindepth 1 -delete; \
+	$(BDD_STAGE_CONFIG); \
 	echo "Building + starting loop in Docker (container: loop-dev)..."; \
 	docker run -d --name loop-dev -v "$$(pwd)":/app -w /app \
 		-v /var/run/docker.sock:/var/run/docker.sock \
 		-v /tmp/loop-bdd-data:/tmp/loop-bdd-data \
 		-v loop-gomod:/go/pkg/mod -v loop-gocache:/root/.cache/go-build \
-		-v "$(HOME)/.loop/config.json:/host-loop-config.json:ro" \
-		-e LOOP_SERVE_ONLY=1 -e LOOP_DOCS_CAPTURE=1 -e LOOP_DOCS_HOST_CONFIG=/host-loop-config.json \
+		-v loop-bdd-node-modules:/app/app/node_modules \
+		$(BDD_CONFIG_ARGS) \
+		-e LOOP_SERVE_ONLY=1 -e LOOP_DOCS_CAPTURE=1 \
 		ghcr.io/radutopala/loop/test-runner:latest bash scripts/test-component.sh >/dev/null; \
 	for i in $$(seq 1 90); do \
 		ip=$$(docker inspect loop-dev --format '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' 2>/dev/null); \
@@ -113,6 +132,7 @@ test-component-perf: ## Run API performance tests (via Docker on host, natively 
 	else \
 		docker run --rm -v "$$(pwd)":/app -w /app \
 			-v loop-gomod:/go/pkg/mod -v loop-gocache:/root/.cache/go-build \
+			-v loop-bdd-node-modules:/app/app/node_modules \
 			-e TEST_RUN=TestAPIPerfTestSuite \
 			ghcr.io/radutopala/loop/test-runner:latest bash scripts/test-component.sh; \
 	fi
@@ -144,6 +164,7 @@ lint-app: ## Run biome (with auto-fix) + tsc typecheck on the app
 	fi
 	docker run --rm --name loop-lint-biome \
 		-v "$$(pwd)/app":/app -w /app \
+		-v loop-lint-node-modules:/app/node_modules \
 		-v loop-npmcache:/root/.npm \
 		node:24-alpine sh -c "npm install && npm run format && npm run typecheck"
 

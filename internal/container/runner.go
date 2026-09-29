@@ -781,6 +781,14 @@ func (r *DockerRunner) createAndStartContainer(
 	if err := r.sys.MkdirAll(workDir, 0o755); err != nil {
 		return "", "", "", false, fmt.Errorf("creating work dir: %w", err)
 	}
+	// Docker creates a missing bind source on its own, but the docker proxy
+	// of a Loop agent container rejects one, so a daemon run from inside an
+	// agent could never start its agents.
+	for _, d := range []string{screenshotDir, playgroundDir} {
+		if err := r.sys.MkdirAll(d, 0o755); err != nil {
+			return "", "", "", false, fmt.Errorf("creating %s: %w", d, err)
+		}
+	}
 
 	// Initialize git in auto-created work directories so the agent can use version control.
 	if dirPath == "" {

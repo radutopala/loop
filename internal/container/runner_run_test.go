@@ -914,9 +914,19 @@ func (s *RunnerSuite) TestRunMkdirAllError() {
 	require.Contains(s.T(), err.Error(), "creating work dir")
 }
 
+func (s *RunnerSuite) TestRunMkdirAllBindSourceError() {
+	s.sys.Override("MkdirAll", mock.MatchedBy(func(p string) bool { return strings.HasSuffix(p, "/playground") }), mock.Anything).Return(errors.New("eacces"))
+	s.sys.On("MkdirAll", mock.Anything, mock.Anything).Return(nil)
+
+	resp, err := s.runner.Run(context.Background(), &agent.AgentRequest{ChannelID: "ch-1"})
+	require.Nil(s.T(), resp)
+	require.ErrorContains(s.T(), err, "/playground: eacces")
+}
+
 func (s *RunnerSuite) TestRunMkdirAllMCPSubdirError() {
-	// workDir mkdir succeeds, but .loop subdir fails inside writeMCPConfig.
-	s.sys.Override("MkdirAll", mock.Anything, mock.Anything).Return(nil).Once()
+	// workDir, screenshots and playground mkdirs succeed, but .loop subdir
+	// fails inside writeMCPConfig.
+	s.sys.Override("MkdirAll", mock.Anything, mock.Anything).Return(nil).Times(3)
 	s.sys.On("MkdirAll", mock.Anything, mock.Anything).Return(errors.New("mkdir subdir fail"))
 
 	ctx := context.Background()
