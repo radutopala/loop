@@ -259,9 +259,9 @@ func (r *BotRouter) HandleIncomingMessageWithPriority(ctx context.Context, chann
 	}
 }
 
-func (r *BotRouter) HandleIncomingMessageDelayed(ctx context.Context, channelID, authorID, content, mode string, notBefore int64) {
+func (r *BotRouter) HandleIncomingMessageDelayed(ctx context.Context, channelID, authorID, msgID, content, mode string, notBefore int64) {
 	if b := r.botForChannel(ctx, channelID); b != nil {
-		b.HandleIncomingMessageDelayed(ctx, channelID, authorID, content, mode, notBefore)
+		b.HandleIncomingMessageDelayed(ctx, channelID, authorID, msgID, content, mode, notBefore)
 	}
 }
 

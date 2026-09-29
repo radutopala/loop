@@ -175,8 +175,18 @@ func New(channelID, apiURL, authorID string, httpClient HTTPClient, logger *slog
 
 	mcp.AddTool(s.mcpServer, &mcp.Tool{
 		Name:        "queue_message",
-		Description: "Queue a follow-up prompt for yourself in the current channel/thread/worktree. The prompt is enqueued as a new turn behind any currently-running or already-queued work and appears in the chat's queued-messages list. Set interrupt=true to cancel the active run and jump the queue so it runs next. Set delay_seconds to defer the prompt by that many seconds (the chat UI shows a live countdown until it runs); a delay takes precedence over interrupt. Use this to chain your own follow-up tasks — optionally on a timer — without discovering your channel ID.",
+		Description: "Queue a follow-up prompt for yourself in the current channel/thread/worktree. The prompt is enqueued as a new turn behind any currently-running or already-queued work and appears in the chat's queued-messages list. Set interrupt=true to cancel the active run and jump the queue so it runs next. Set delay_seconds to defer the prompt by that many seconds (the chat UI shows a live countdown until it runs); a delay takes precedence over interrupt. Use this to chain your own follow-up tasks — optionally on a timer — without discovering your channel ID. A delayed prompt's result includes its msg_id, for delete_queued_message.",
 	}, s.handleQueueMessage)
+
+	mcp.AddTool(s.mcpServer, &mcp.Tool{
+		Name:        "list_queued_messages",
+		Description: "List the messages waiting in the current channel/thread/worktree's queue: each one's msg_id, whether it's running, queued or delayed (and until when, in UTC), and the start of its text.",
+	}, s.handleListQueuedMessages)
+
+	mcp.AddTool(s.mcpServer, &mcp.Tool{
+		Name:        "delete_queued_message",
+		Description: "Remove a message waiting in the current channel/thread/worktree's queue by msg_id, e.g. a delayed follow-up you queued with queue_message that's no longer needed. The running message can't be removed.",
+	}, s.handleDeleteQueuedMessage)
 
 	mcp.AddTool(s.mcpServer, &mcp.Tool{
 		Name:        "get_readme",

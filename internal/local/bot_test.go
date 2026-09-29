@@ -553,10 +553,11 @@ func (s *BotSuite) TestHandleIncomingMessageDelayed() {
 	})
 
 	notBefore := time.Now().Add(30 * time.Second).Unix()
-	s.bot.HandleIncomingMessageDelayed(context.Background(), "ch-1", "user-1", "later", "", notBefore)
+	s.bot.HandleIncomingMessageDelayed(context.Background(), "ch-1", "user-1", "ask-1", "later", "", notBefore)
 
 	require.NotNil(s.T(), received)
 	require.Equal(s.T(), "later", received.Content)
+	require.Equal(s.T(), "ask-1", received.MessageID)
 	require.Equal(s.T(), notBefore, received.NotBefore)
 	require.Zero(s.T(), received.Priority)
 }

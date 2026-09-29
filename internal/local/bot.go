@@ -278,26 +278,28 @@ func (b *Bot) OnChannelJoin(handler func(ctx context.Context, channelID string, 
 // HandleIncomingMessage implements api.IncomingMessageHandler. It parses mentions
 // and command prefixes, then routes the message through the orchestrator.
 func (b *Bot) HandleIncomingMessage(ctx context.Context, channelID, authorID, content, mode string) {
-	b.handleIncoming(ctx, channelID, authorID, content, mode, 0, 0)
+	b.handleIncoming(ctx, channelID, authorID, "", content, mode, 0, 0)
 }
 
 // HandleIncomingMessageWithPriority is like HandleIncomingMessage but attaches a
 // priority to the IncomingMessage so the orchestrator can write it onto the DB
 // row. Used by the API interrupt path to bump a new message above queued ones.
 func (b *Bot) HandleIncomingMessageWithPriority(ctx context.Context, channelID, authorID, content, mode string, priority int) {
-	b.handleIncoming(ctx, channelID, authorID, content, mode, priority, 0)
+	b.handleIncoming(ctx, channelID, authorID, "", content, mode, priority, 0)
 }
 
 // HandleIncomingMessageDelayed is like HandleIncomingMessage but attaches a
 // not-before unix timestamp so the orchestrator persists a deferred row that the
-// drain skips until the delay elapses. Used by the delayed queue_message path.
-func (b *Bot) HandleIncomingMessageDelayed(ctx context.Context, channelID, authorID, content, mode string, notBefore int64) {
-	b.handleIncoming(ctx, channelID, authorID, content, mode, 0, notBefore)
+// drain skips until the delay elapses. Used by the delayed queue_message path,
+// which picks msgID so it can hand it back to the agent.
+func (b *Bot) HandleIncomingMessageDelayed(ctx context.Context, channelID, authorID, msgID, content, mode string, notBefore int64) {
+	b.handleIncoming(ctx, channelID, authorID, msgID, content, mode, 0, notBefore)
 }
 
 // handleIncoming parses mentions/prefixes and routes the message through the
-// orchestrator, carrying the optional priority and not-before delay.
-func (b *Bot) handleIncoming(ctx context.Context, channelID, authorID, content, mode string, priority int, notBefore int64) {
+// orchestrator, carrying the optional message id, priority and not-before
+// delay. An empty msgID has the orchestrator generate one.
+func (b *Bot) handleIncoming(ctx context.Context, channelID, authorID, msgID, content, mode string, priority int, notBefore int64) {
 	if authorID == "" {
 		authorID = DefaultAuthorID
 	}
@@ -315,6 +317,7 @@ func (b *Bot) handleIncoming(ctx context.Context, channelID, authorID, content, 
 	if b.messageHandler != nil {
 		b.messageHandler(ctx, &bot.IncomingMessage{
 			ChannelID:    channelID,
+			MessageID:    msgID,
 			AuthorID:     authorID,
 			AuthorName:   authorID,
 			Content:      content,

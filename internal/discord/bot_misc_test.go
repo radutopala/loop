@@ -407,5 +407,5 @@ func (s *BotSuite) TestHandleIncomingMessageWithPriorityNoop() {
 }
 
 func (s *BotSuite) TestHandleIncomingMessageDelayedNoop() {
-	s.bot.HandleIncomingMessageDelayed(context.Background(), "", "", "", "", 0)
+	s.bot.HandleIncomingMessageDelayed(context.Background(), "", "", "", "", "", 0)
 }
