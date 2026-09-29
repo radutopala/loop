@@ -66,7 +66,7 @@ export function getSections(schema: ConfigSchema | null, isGlobal: boolean): str
 // Schema-driven field generation
 // ---------------------------------------------------------------------------
 
-function schemaToFields(schema: ConfigSchema, isGlobal: boolean): FieldDef[] {
+export function schemaToFields(schema: ConfigSchema, isGlobal: boolean): FieldDef[] {
   const fields: FieldDef[] = [];
 
   function processProperties(props: Record<string, SchemaProperty>, prefix: string, parentSection?: string, parentTitle?: string, parentAutoSave?: boolean) {
@@ -77,8 +77,9 @@ function schemaToFields(schema: ConfigSchema, isGlobal: boolean): FieldDef[] {
       const section = prop["x-section"] ?? parentSection ?? "General";
       const autoSave = prop["x-auto-save"] ?? parentAutoSave;
 
-      // Skip global-only fields in project config
+      // Skip global-only fields in project config, and project-only ones in global
       if (!isGlobal && prop["x-global-only"]) continue;
+      if (isGlobal && prop["x-project-only"]) continue;
 
       // Recurse into nested objects that have properties (but not additionalProperties — those are key-value maps)
       if (prop.type === "object" && prop.properties && !prop.additionalProperties) {

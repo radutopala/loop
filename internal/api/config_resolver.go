@@ -24,20 +24,13 @@ type configResolver struct {
 // layer errors fall back to the outer layer (a broken inner config should
 // not hide the global one).
 func (c *configResolver) merged(workdir, parentDirPath string) *config.Config {
-	merged, _ := c.mergedWithGlobal(workdir, parentDirPath)
-	return merged
-}
-
-// mergedWithGlobal is merged, also returning the global config the layers
-// sit on; both are nil on a global-load error.
-func (c *configResolver) mergedWithGlobal(workdir, parentDirPath string) (merged, global *config.Config) {
 	load := c.load
 	if load == nil {
 		load = config.Load
 	}
 	cfg, err := load()
 	if err != nil || cfg == nil {
-		return nil, nil
+		return nil
 	}
 	switch {
 	case workdir != "" && parentDirPath != "":
@@ -46,7 +39,7 @@ func (c *configResolver) mergedWithGlobal(workdir, parentDirPath string) (merged
 			loadWorktree = config.LoadWorktreeProjectConfig
 		}
 		if pc, perr := loadWorktree(workdir, parentDirPath, cfg); perr == nil && pc != nil {
-			return pc, cfg
+			return pc
 		}
 	case workdir != "":
 		loadProject := c.loadProject
@@ -54,10 +47,10 @@ func (c *configResolver) mergedWithGlobal(workdir, parentDirPath string) (merged
 			loadProject = config.LoadProjectConfig
 		}
 		if pc, perr := loadProject(workdir, cfg); perr == nil && pc != nil {
-			return pc, cfg
+			return pc
 		}
 	}
-	return cfg, cfg
+	return cfg
 }
 
 // ghUser returns the gh CLI user for the channel's workdir, or "" (use gh's

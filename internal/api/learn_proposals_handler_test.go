@@ -558,8 +558,9 @@ func (s *ServerSuite) TestApplyLearnProposalConfigKinds() {
 		{name: "command rule exists", kind: db.LearnKindGateRule, payload: `{"type":"command","rule":{"commands":["rm"],"decision":"approve"}}`},
 		{name: "file rule exists", kind: db.LearnKindGateRule, payload: `{"type":"file","rule":{"paths":["/secret/**"],"decision":"deny"}}`},
 		{
-			name: "first mount keeps the global ones", kind: db.LearnKindMount, payload: `{"mount":"~/.aws:~/.aws:ro"}`,
-			want: "{\n  \"mounts\": [\n    \"~/.gitconfig:~/.gitconfig:ro\",\n    \"~/.aws:~/.aws:ro\"\n  ]\n}\n",
+			// Project mounts add to the global ones, so the first starts the list alone.
+			name: "first mount", kind: db.LearnKindMount, payload: `{"mount":"~/.aws:~/.aws:ro"}`,
+			want: "{\n  \"mounts\": [\n    \"~/.aws:~/.aws:ro\"\n  ]\n}\n",
 		},
 		{name: "mount exists", kind: db.LearnKindMount, payload: `{"mount":"~/.gitconfig:~/.gitconfig:ro"}`, wantErr: "already exists"},
 		{name: "broken config", kind: db.LearnKindMount, payload: `{"mount":"a:b"}`, initial: "{", wantErr: "parsing"},

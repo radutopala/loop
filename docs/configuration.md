@@ -370,7 +370,7 @@ Applying a proposal of a config kind appends to the project config, `.loop/confi
 | `prompt_shortcut` | `prompt_shortcuts` | Fails if a prompt shortcut of that name already exists in the merged config. |
 | `bash_shortcut` | `bash_shortcuts` | Fails if a bash shortcut of that name already exists in the merged config. |
 | `gate_rule` | `gates.agentgate.path_rules`, `command_rules` or `file_rules` | Picked by the rule's type (`path`, `command`, `file`). Project rules are prepended to the global ones, so they match first; that's why a proposed rule must name what it matches (`commands` or `args_patterns`, `paths`, `pattern`) and can't be a catch-all. A rule the merged config already has is left as it is, and the apply succeeds. |
-| `mount` | `mounts` | Fails if the merged config already has the exact mount (a relative host path is resolved against the project dir first, as project mounts are). Project mounts replace the global ones, so when the project has no `mounts` list yet, or an empty one (which keeps the global mounts), the new list starts with the global mounts, then the new one. |
+| `mount` | `mounts` | Fails if the merged config already has the exact mount (a relative host path is resolved against the project dir first, as project mounts are). Project mounts are added to the global ones, so only the new mount is written. |
 
 `scheduled_task`, `rename`, `description` and `ticket_url` proposals don't touch config: they create an enabled task in the channel and update the channel's name, description or ticket URL, as `POST /api/tasks`, `/rename`, `/description` and `/ticket` do.
 
@@ -663,7 +663,8 @@ Not all global fields are available in project configs. The following fields can
 
 | Field | Merge Behavior |
 |---|---|
-| `mounts` | **Replaces** global mounts entirely. Relative host paths are resolved relative to `workDir`. |
+| `mounts` | **Added** to the global mounts. A project mount at the same container path as a global one replaces it (a trailing `/` is ignored). Relative host paths are resolved relative to `workDir`. |
+| `inherit_mounts` | Project only, default `true`. Set `false` to make the project's `mounts` **replace** the global list instead of adding to it; with no `mounts` the project then gets none. |
 | `copy_files` | **Replaces** global `copy_files` entirely when set. |
 | `extra_dirs` | **Replaces** global value when set. In **worktree** configs the parent project's `extra_dirs` are **unioned** with the worktree's (deduped, parent first), so a worktree inherits the same extra roots as its parent channel. |
 | `http_proxy`, `https_proxy` | **Override** the global value when set. Two proxy URLs cannot be combined, so a project behind its own proxy replaces the global one outright. |
@@ -713,9 +714,9 @@ Not all global fields are available in project configs. The following fields can
 
 The merge follows these principles:
 
-- **Replace**: The project value completely replaces the global value (mounts, copy_files, permissions).
+- **Replace**: The project value completely replaces the global value (copy_files, permissions).
 - **Merge**: Both global and project values are combined, with project taking precedence on conflicts (MCP servers, envs, task templates, workflows).
-- **Append**: Project values are added to the global list (memory paths, no_proxy).
+- **Append**: Project values are added to the global list (memory paths, no_proxy, and mounts, where one at the same container path replaces the global one).
 - **Override**: A single scalar value replaces the global one (claude_model, container_image, etc.).
 - **Narrow merge**: Security-sensitive fields under `gates` (`agentgate`, `docker_proxy`) have a locked-down merge: project rules prepend (any decision, so a project can punch a surgical hole), a project can disable a layer but not re-enable a globally disabled one, and `default_decision` / `rate_limits` / `audit` are ignored.
 - **Absent = inherit**: If a field is not set in the project config, the global value is used unchanged.
@@ -993,12 +994,14 @@ The merge follows these principles:
   // Extra env vars (merged with global; project overrides by key)
   //"envs": {},
 
-  // Project mounts (replaces global mounts; relative paths resolved to project dir)
+  // Project mounts (added to the global mounts; one at the same container
+  // path replaces the global one; relative paths resolved to project dir)
   //"mounts": [
-  //  "~/.claude:~/.claude",
-  //  "~/.gitconfig:~/.gitconfig:ro",
-  //  "~/.ssh:~/.ssh:ro"
+  //  "~/dev/shared-lib:~/dev/shared-lib:ro",
+  //  "./fixtures:/fixtures:ro"
   //],
+  // Make the mounts above replace the global list instead
+  //"inherit_mounts": false,
 
   // Proxy for this project (replaces the global one when set)
   //"http_proxy": "http://127.0.0.1:3128",

@@ -422,14 +422,13 @@ func (s *Server) applyLearnConfig(ctx context.Context, ch *db.Channel, v any) er
 	}
 	configPath := filepath.Join(dir, ".loop", "config.json")
 	defer s.configLocks.lock(configPath)()
-	merged, global := s.configs.mergedWithGlobal(ch.DirPath, s.workspace.resolveParentDirPath(ctx, ch.ChannelID))
+	merged := s.configs.merged(ch.DirPath, s.workspace.resolveParentDirPath(ctx, ch.ChannelID))
 	if merged == nil {
 		return errors.New("loading config failed")
 	}
 	var (
 		path []string
 		item any
-		seed []any
 	)
 	switch v := v.(type) {
 	case *learn.PromptShortcut:
@@ -456,14 +455,9 @@ func (s *Server) applyLearnConfig(ctx context.Context, ch *db.Channel, v any) er
 		if slices.Contains(merged.Mounts, resolved) {
 			return fmt.Errorf("mount %q already exists", v.Mount)
 		}
-		// Project mounts replace the global ones, so a project's first mount
-		// starts from the global list or the rest would silently go.
-		for _, m := range global.Mounts {
-			seed = append(seed, m)
-		}
 		path, item = []string{"mounts"}, v.Mount
 	}
-	return hjsonedit.Append(s.sys, configPath, path, item, seed)
+	return hjsonedit.Append(s.sys, configPath, path, item)
 }
 
 // hasGateRule reports whether gate already has rule (a *types.PathRule,

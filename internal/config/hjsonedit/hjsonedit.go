@@ -25,11 +25,10 @@ type FS interface {
 
 // Append adds item to the end of the array at path (object keys from the
 // top level down) in the config file at configPath. A missing file, missing
-// objects along path and a missing array are all created; a new or empty
-// array starts with seed's elements, then item. What's added is laid out one
+// objects along path and a missing array are all created. What's added is laid out one
 // value per line with the file's indentation, unless it lands in a container
 // written on one line. The write is atomic.
-func Append(fsys FS, configPath string, path []string, item any, seed []any) error {
+func Append(fsys FS, configPath string, path []string, item any) error {
 	if len(path) == 0 {
 		return errors.New("empty path")
 	}
@@ -44,7 +43,7 @@ func Append(fsys FS, configPath string, path []string, item any, seed []any) err
 	if err != nil {
 		return fmt.Errorf("parsing %s: %w", configPath, err)
 	}
-	op, err := appendOp(&v, path, item, seed)
+	op, err := appendOp(&v, path, item)
 	if err != nil {
 		return err
 	}
@@ -73,7 +72,7 @@ type patchOp struct {
 // appendOp returns the patch that appends item at path in v: "add" at the
 // array's end when it exists, else "add" of the first missing key with the
 // rest of path built around the new array.
-func appendOp(v *hujson.Value, path []string, item any, seed []any) (patchOp, error) {
+func appendOp(v *hujson.Value, path []string, item any) (patchOp, error) {
 	cur := v
 	for i, key := range path {
 		obj, ok := cur.Value.(*hujson.Object)
@@ -82,7 +81,7 @@ func appendOp(v *hujson.Value, path []string, item any, seed []any) (patchOp, er
 		}
 		member := findMember(obj, key)
 		if member == nil {
-			var value any = append(append([]any{}, seed...), item)
+			var value any = []any{item}
 			for j := len(path) - 1; j > i; j-- {
 				value = map[string]any{path[j]: value}
 			}
@@ -90,12 +89,8 @@ func appendOp(v *hujson.Value, path []string, item any, seed []any) (patchOp, er
 		}
 		cur = member
 	}
-	arr, ok := cur.Value.(*hujson.Array)
-	if !ok {
+	if _, ok := cur.Value.(*hujson.Array); !ok {
 		return patchOp{}, fmt.Errorf("%s is not an array", describe(path))
-	}
-	if len(arr.Elements) == 0 && len(seed) > 0 {
-		return patchOp{Op: "replace", Path: pointer(path), Value: append(append([]any{}, seed...), item)}, nil
 	}
 	return patchOp{Op: "add", Path: pointer(path) + "/-", Value: item}, nil
 }
@@ -107,9 +102,6 @@ func indentAdded(v *hujson.Value, path []string, op patchOp, rootLines bool) {
 	case strings.HasSuffix(op.Path, "/-"):
 		arr := v.Find(pointer(path)).Value.(*hujson.Array)
 		placeLast(arr.Elements, &arr.AfterExtra, lineIndent(v, path), unit, rootLines, func(e *hujson.Value) *hujson.Value { return e })
-	case op.Op == "replace":
-		parent := path[:len(path)-1]
-		layout(v.Find(pointer(path)), lineIndent(v, parent)+unit, unit, multiline(v.Find(pointer(parent))))
 	default:
 		key := strings.Count(op.Path, "/") - 1
 		obj := v.Find(pointer(path[:key])).Value.(*hujson.Object)
@@ -144,16 +136,13 @@ func placeLast[T any](children []T, closing *hujson.Extra, indent, unit string, 
 		m.Value.BeforeExtra = hujson.Extra(" ")
 		value = &m.Value
 	}
-	layout(value, child, unit, true)
+	layout(value, child, unit)
 }
 
 // layout puts each value inside v on its own line, indented one unit per
 // level below indent, the line v starts on. It's for values Append just
-// made, which carry no comments to keep. A one-line layout is left alone.
-func layout(v *hujson.Value, indent, unit string, lines bool) {
-	if !lines {
-		return
-	}
+// made, which carry no comments to keep.
+func layout(v *hujson.Value, indent, unit string) {
 	switch c := v.Value.(type) {
 	case *hujson.Object:
 		if len(c.Members) == 0 {
@@ -163,7 +152,7 @@ func layout(v *hujson.Value, indent, unit string, lines bool) {
 			m := &c.Members[i]
 			m.Name.BeforeExtra, m.Name.AfterExtra = hujson.Extra("\n"+indent+unit), nil
 			m.Value.BeforeExtra, m.Value.AfterExtra = hujson.Extra(" "), nil
-			layout(&m.Value, indent+unit, unit, true)
+			layout(&m.Value, indent+unit, unit)
 		}
 		c.AfterExtra = hujson.Extra("\n" + indent)
 	case *hujson.Array:
@@ -173,7 +162,7 @@ func layout(v *hujson.Value, indent, unit string, lines bool) {
 		for i := range c.Elements {
 			e := &c.Elements[i]
 			e.BeforeExtra, e.AfterExtra = hujson.Extra("\n"+indent+unit), nil
-			layout(e, indent+unit, unit, true)
+			layout(e, indent+unit, unit)
 		}
 		c.AfterExtra = hujson.Extra("\n" + indent)
 	}

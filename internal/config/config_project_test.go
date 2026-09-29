@@ -68,35 +68,69 @@ func (s *ConfigSuite) TestLoadProjectConfigInvalidJSONTypes() {
 	require.Contains(s.T(), err.Error(), "parsing project config file")
 }
 
-func (s *ConfigSuite) TestLoadProjectConfigMountsOnly() {
-	s.loader.readFile = func(path string) ([]byte, error) {
-		if path == "/project/.loop/config.json" {
-			return []byte(`{
-				"mounts": [
-					"./data:/app/data",
-					"./logs:/app/logs:ro"
-				]
-			}`), nil
-		}
-		return nil, errors.New("unexpected path")
+func (s *ConfigSuite) TestLoadProjectConfigMounts() {
+	global := []string{"~/.gitconfig:~/.gitconfig:ro", "~/.tools/:~/.tools/", "loop-cache:~/.cache"}
+	tests := []struct {
+		name    string
+		project string
+		want    []string
+	}{
+		{
+			name:    "project mounts are added to the global ones",
+			project: `{"mounts": ["./data:/app/data", "./logs:/app/logs:ro"]}`,
+			want: []string{
+				"~/.gitconfig:~/.gitconfig:ro", "~/.tools/:~/.tools/", "loop-cache:~/.cache",
+				"/project/data:/app/data", "/project/logs:/app/logs:ro",
+			},
+		},
+		{
+			name:    "a project mount replaces the global one at the same container path",
+			project: `{"mounts": ["~/other-tools:~/.tools:ro", "./data:/app/data"]}`,
+			want: []string{
+				"~/.gitconfig:~/.gitconfig:ro", "~/other-tools:~/.tools:ro", "loop-cache:~/.cache",
+				"/project/data:/app/data",
+			},
+		},
+		{
+			name:    "inherit_mounts true keeps the global mounts",
+			project: `{"inherit_mounts": true, "mounts": ["./data:/app/data"]}`,
+			want: []string{
+				"~/.gitconfig:~/.gitconfig:ro", "~/.tools/:~/.tools/", "loop-cache:~/.cache",
+				"/project/data:/app/data",
+			},
+		},
+		{
+			name:    "inherit_mounts false replaces the global mounts",
+			project: `{"inherit_mounts": false, "mounts": ["./data:/app/data"]}`,
+			want:    []string{"/project/data:/app/data"},
+		},
+		{
+			name:    "inherit_mounts false without mounts drops them all",
+			project: `{"inherit_mounts": false}`,
+			want:    []string{},
+		},
 	}
+	for _, tc := range tests {
+		s.Run(tc.name, func() {
+			s.loader.readFile = func(path string) ([]byte, error) {
+				if path == "/project/.loop/config.json" {
+					return []byte(tc.project), nil
+				}
+				return nil, errors.New("unexpected path")
+			}
+			mainCfg := &Config{
+				Mounts:     global,
+				MCPServers: map[string]MCPServerConfig{"main-srv": {Command: "/bin/main"}},
+			}
 
-	mainCfg := &Config{
-		Mounts:     []string{"~/.gitconfig:~/.gitconfig:ro"},
-		MCPServers: map[string]MCPServerConfig{"main-srv": {Command: "/bin/main"}},
+			merged, err := s.loader.loadProjectConfig("/project", mainCfg)
+			require.NoError(s.T(), err)
+			require.Equal(s.T(), tc.want, merged.Mounts)
+			// The global config is never mutated.
+			require.Equal(s.T(), []string{"~/.gitconfig:~/.gitconfig:ro", "~/.tools/:~/.tools/", "loop-cache:~/.cache"}, mainCfg.Mounts)
+			require.Len(s.T(), merged.MCPServers, 1)
+		})
 	}
-
-	merged, err := s.loader.loadProjectConfig("/project", mainCfg)
-	require.NoError(s.T(), err)
-
-	// Check mounts: project replaces global mounts
-	require.Len(s.T(), merged.Mounts, 2)
-	require.Equal(s.T(), "/project/data:/app/data", merged.Mounts[0])
-	require.Equal(s.T(), "/project/logs:/app/logs:ro", merged.Mounts[1])
-
-	// MCP servers unchanged
-	require.Len(s.T(), merged.MCPServers, 1)
-	require.Equal(s.T(), "/bin/main", merged.MCPServers["main-srv"].Command)
 }
 
 func (s *ConfigSuite) TestLoadProjectConfigMCPServersOnly() {
@@ -160,9 +194,8 @@ func (s *ConfigSuite) TestLoadProjectConfigBothMountsAndMCP() {
 	merged, err := s.loader.loadProjectConfig("/project", mainCfg)
 	require.NoError(s.T(), err)
 
-	// Check mounts: project replaces global
-	require.Len(s.T(), merged.Mounts, 1)
-	require.Equal(s.T(), "/project/data:/app/data", merged.Mounts[0])
+	// Check mounts: project mounts are added to the global ones
+	require.Equal(s.T(), []string{"~/.gitconfig:~/.gitconfig:ro", "/project/data:/app/data"}, merged.Mounts)
 
 	// Check MCP servers
 	require.Len(s.T(), merged.MCPServers, 2)

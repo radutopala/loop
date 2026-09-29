@@ -14,6 +14,7 @@ type SchemaProperty struct {
 	AdditionalProperties *SchemaProperty            `json:"additionalProperties,omitempty"`
 	XSection             string                     `json:"x-section,omitempty"`
 	XGlobalOnly          bool                       `json:"x-global-only,omitempty"`
+	XProjectOnly         bool                       `json:"x-project-only,omitempty"`
 	XSecret              bool                       `json:"x-secret,omitempty"`
 	XOrder               int                        `json:"x-order,omitempty"`
 	XStep                float64                    `json:"x-step,omitempty"`
@@ -525,13 +526,22 @@ func buildSchema() *ConfigSchema {
 				XSection:    "Workspace",
 				XOrder:      2,
 			},
+			"inherit_mounts": {
+				Type:         "boolean",
+				Title:        "Inherit Global Mounts",
+				Description:  "Add this project's mounts to the global ones (a mount at the same container path replaces the global one). Turn off to make them replace the global list instead.",
+				Default:      true,
+				XSection:     "Workspace",
+				XOrder:       3,
+				XProjectOnly: true,
+			},
 			"copy_files": {
 				Type:        "array",
 				Title:       "Copy Files",
 				Description: "Files copied into containers",
 				Items:       &SchemaProperty{Type: "string"},
 				XSection:    "Workspace",
-				XOrder:      3,
+				XOrder:      4,
 			},
 
 			// ── Platforms section ──

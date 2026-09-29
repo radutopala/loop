@@ -62,7 +62,7 @@ An agentgate rule. The gate traps the agent container's syscalls and applies the
 
 ### mount
 
-A bind mount added to the channel's agent container, `host_path:container_path[:ro]`. `~` is the host home directory on either side; a relative host path is resolved against the project directory; a bare name is a Docker named volume. Good when the agent needed something from the host it couldn't reach: a credentials directory, a sibling checkout, a cache. Prefer `:ro` unless the agent has to write. A project's `mounts` list *replaces* the global one, so applying this keeps the current mounts and adds yours.
+A bind mount added to the channel's agent container, `host_path:container_path[:ro]`. `~` is the host home directory on either side; a relative host path is resolved against the project directory; a bare name is a Docker named volume. Good when the agent needed something from the host it couldn't reach: a credentials directory, a sibling checkout, a cache. Prefer `:ro` unless the agent has to write. A project's `mounts` are added to the global ones, so applying this keeps the current mounts and adds yours.
 
 ```json
 {"mount": "~/.aws:~/.aws:ro"}

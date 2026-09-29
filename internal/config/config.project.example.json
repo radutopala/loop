@@ -88,21 +88,18 @@
   // Extra environment variables for this project's containers (merged with global; project takes precedence)
   //"envs": {},
 
-  // Mounts for this project's containers (replaces global mounts when set)
+  // Mounts for this project's containers, added to the global mounts. A mount
+  // at the same container path as a global one replaces it; set
+  // "inherit_mounts": false to replace the global list instead.
   // Format: "host_path:container_path" or "host_path:container_path:ro"
   // Relative paths are resolved relative to the project directory
   //"mounts": [
-  //  "~/.claude:~/.claude",
-  //  "~/.gitconfig:~/.gitconfig:ro",
-  //  "~/.ssh:~/.ssh:ro",
-  //  "~/.aws:~/.aws",
-  //  "/var/run/docker.sock:/var/run/docker.sock",
-  //  // Named volumes for caches — persisted across container runs by Docker
-  //  "loop-npmcache:~/.npm",
-  //  "loop-uvcache:~/.local/share/uv",
-  //  "loop-cache:~/.cache",
-  //  "loop-gocache:/go"
+  //  "~/dev/shared-lib:~/dev/shared-lib:ro",
+  //  "./fixtures:/fixtures:ro",
+  //  // Named volume for this project's cache — persisted across runs by Docker
+  //  "myproject-cache:~/.cache/myproject"
   //],
+  //"inherit_mounts": false,
 
   // Proxy for this project's containers (replaces the global one when set —
   // two proxy URLs cannot be combined).

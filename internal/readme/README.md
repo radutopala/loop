@@ -504,7 +504,7 @@ Project config overrides specific global settings. Only these fields are allowed
 
 | Field | Merge behavior |
 |---|---|
-| `mounts` | **Replaces** global mounts entirely |
+| `mounts` | **Added** to global mounts; same container path overrides (`inherit_mounts: false` replaces) |
 | `copy_files` | **Replaces** global copy_files entirely |
 | `http_proxy`, `https_proxy` | **Override** the global value when set |
 | `no_proxy` | **Appended** to the global list |
