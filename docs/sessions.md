@@ -19,6 +19,8 @@ Sessions are read from `GET /api/channels/{id}/sessions`, which scans the Claude
 
 Selecting a session resumes that conversation — the next message continues from where it left off (`claude --resume <session-id>`), so context, file state, and history carry over. A filter box narrows the list, and **+ New** starts a fresh session instead of resuming.
 
+The channel's own session, the one its chat runs resume, is marked `*`. **resume here** on any other row makes that session the channel's, so its next message continues that conversation instead (`PUT /api/channels/{id}/session`). The chat's messages stay as they are; only what the agent remembers changes. While a run is in progress the switch waits for it to end, since the run saves its own session id then; the panel says so, and the `*` moves after a refresh once the run is done. A pending switch is held in memory, so a daemon restart before the run ends drops it. A session a thread also holds (one imported as a thread) is forked on the channel's next run rather than shared, so the two conversations don't write into each other. Agents can do the same with the [`list_sessions` and `resume_session`](mcpserver.md) MCP tools.
+
 The empty state ("No sessions found") simply means no agent has run in the channel yet.
 
 ## Pruned transcripts

@@ -134,7 +134,7 @@ var readOnlyDisallowedTools = []string{
 	"mcp__loop__prompt_shortcut", "mcp__loop__bash_shortcut",
 	"mcp__loop__schedule_task", "mcp__loop__edit_task", "mcp__loop__toggle_task", "mcp__loop__cancel_task",
 	"mcp__loop__rename_thread", "mcp__loop__set_thread_description", "mcp__loop__set_ticket_url",
-	"mcp__loop__send_message", "mcp__loop__queue_message", "mcp__loop__delete_queued_message", "mcp__loop__send_agent_message", "mcp__loop__update_agent_status",
+	"mcp__loop__send_message", "mcp__loop__queue_message", "mcp__loop__delete_queued_message", "mcp__loop__resume_session", "mcp__loop__send_agent_message", "mcp__loop__update_agent_status",
 	"mcp__loop__create_channel", "mcp__loop__create_thread", "mcp__loop__create_worktree_thread",
 	"mcp__loop__fork_thread", "mcp__loop__delete_thread",
 	"mcp__loop__save_workflow", "mcp__loop__delete_workflow", "mcp__loop__run_workflow",

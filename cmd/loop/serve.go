@@ -793,6 +793,7 @@ func (a *app) serve() error {
 	apiSrv.SetExplainer(orch)
 	apiSrv.SetLearnTurner(orch)
 	apiSrv.SetPlanResolver(orch)
+	apiSrv.SetSessionSwitcher(orch)
 	apiSrv.SetAskResolver(orch)
 	apiSrv.SetQueueResumer(orch)
 	if statsClient, ok := dockerClient.(api.ContainerStatsFetcher); ok {

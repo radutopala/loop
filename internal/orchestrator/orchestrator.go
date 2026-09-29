@@ -95,6 +95,7 @@ type Orchestrator struct {
 	removeMCPConfig   func(string, string) error
 	timeNow           func() time.Time // injectable clock (session-limit reset math, tests)
 	sessionFiles      sessionFiles     // deletes hidden threads' forked sessions (see dropFork)
+	sessions          sessionSwitches  // session switches deferred to a run's end
 	tasks             *taskRegistry
 	delayPollInterval time.Duration // how often the delay poller wakes; 0 disables it
 	delayStop         chan struct{} // closed by Stop to end the delay poller

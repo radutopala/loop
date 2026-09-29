@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"io/fs"
@@ -18,6 +19,7 @@ import (
 	"github.com/radutopala/loop/internal/db"
 	"github.com/radutopala/loop/internal/explain"
 	"github.com/radutopala/loop/internal/learn"
+	"github.com/radutopala/loop/internal/osutil"
 	"github.com/radutopala/loop/internal/testutil"
 )
 
@@ -470,4 +472,81 @@ func (s *ServerSuite) TestSessionListEmptyDir() {
 	require.NoError(s.T(), json.Unmarshal(w.Body.Bytes(), &resp))
 	require.Equal(s.T(), "", resp.CurrentSessionID)
 	require.Empty(s.T(), resp.Sessions)
+}
+
+// --- SetSession tests ---
+
+type MockSessionSwitcher struct{ mock.Mock }
+
+func (m *MockSessionSwitcher) SwitchSession(ctx context.Context, channelID, sessionID string) (bool, error) {
+	args := m.Called(ctx, channelID, sessionID)
+	return args.Bool(0), args.Error(1)
+}
+
+func (s *ServerSuite) TestSetSession() {
+	sessionPath := filepath.Join("/home/testuser", ".claude", "projects", osutil.EncodeClaudeProjectPath("/work/proj"), "sess-2.jsonl")
+	channel := &db.Channel{ChannelID: "ch-1", DirPath: "/work/proj", SessionID: "sess-1"}
+
+	tests := []struct {
+		name       string
+		body       string
+		noSwitcher bool
+		channel    *db.Channel
+		homeErr    error
+		statErr    error
+		deferred   bool
+		switchErr  error
+		wantCode   int
+		wantBody   string
+		wantSwitch bool
+	}{
+		{name: "switches", channel: channel, wantCode: http.StatusOK, wantBody: `{"deferred":false}`, wantSwitch: true},
+		{name: "deferred to the run's end", channel: channel, deferred: true, wantCode: http.StatusOK, wantBody: `{"deferred":true}`, wantSwitch: true},
+		{name: "switch fails", channel: channel, switchErr: errors.New("db"), wantCode: http.StatusInternalServerError, wantSwitch: true},
+		{name: "not configured", noSwitcher: true, wantCode: http.StatusNotImplemented},
+		{name: "bad json", body: "{", wantCode: http.StatusBadRequest},
+		{name: "empty id", body: `{"session_id":""}`, wantCode: http.StatusBadRequest},
+		{name: "path id", body: `{"session_id":"../sess-2"}`, wantCode: http.StatusBadRequest},
+		{name: "channel not found", wantCode: http.StatusNotFound},
+		{name: "no project dir", channel: &db.Channel{ChannelID: "ch-1"}, wantCode: http.StatusBadRequest},
+		{name: "home dir fails", channel: channel, homeErr: errors.New("no home"), wantCode: http.StatusInternalServerError},
+		{name: "unknown session", channel: channel, statErr: os.ErrNotExist, wantCode: http.StatusNotFound},
+	}
+	for _, tc := range tests {
+		s.Run(tc.name, func() {
+			s.SetupTest()
+			switcher := new(MockSessionSwitcher)
+			switcher.On("SwitchSession", mock.Anything, "ch-1", "sess-2").Return(tc.deferred, tc.switchErr).Maybe()
+			if !tc.noSwitcher {
+				s.srv.SetSessionSwitcher(switcher)
+			}
+			sys := new(testutil.MockSystem)
+			s.srv.sys = sys
+			sys.On("UserHomeDir").Return("/home/testuser", tc.homeErr).Maybe()
+			if tc.statErr != nil {
+				sys.On("Stat", sessionPath).Return(nil, tc.statErr).Maybe()
+			} else {
+				sys.On("Stat", sessionPath).Return(&mockFileInfo{name: "sess-2.jsonl"}, nil).Maybe()
+			}
+			s.store.On("GetChannel", mock.Anything, "ch-1").Return(tc.channel, nil).Maybe()
+
+			body := tc.body
+			if body == "" {
+				body = `{"session_id":"sess-2"}`
+			}
+			req := httptest.NewRequest("PUT", "/api/channels/ch-1/session", strings.NewReader(body))
+			w := httptest.NewRecorder()
+			s.mux.ServeHTTP(w, req)
+
+			require.Equal(s.T(), tc.wantCode, w.Code, w.Body.String())
+			if tc.wantBody != "" {
+				require.JSONEq(s.T(), tc.wantBody, w.Body.String())
+			}
+			if tc.wantSwitch {
+				switcher.AssertCalled(s.T(), "SwitchSession", mock.Anything, "ch-1", "sess-2")
+			} else {
+				switcher.AssertNotCalled(s.T(), "SwitchSession", mock.Anything, mock.Anything, mock.Anything)
+			}
+		})
+	}
 }

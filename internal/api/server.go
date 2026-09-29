@@ -53,6 +53,12 @@ type RunCanceller interface {
 	StopHiddenThread(h *db.Channel)
 }
 
+// SessionSwitcher switches a channel's Claude session, deferring the switch
+// to the end of a run in progress; deferred reports whether it did.
+type SessionSwitcher interface {
+	SwitchSession(ctx context.Context, channelID, sessionID string) (deferred bool, err error)
+}
+
 // PlanResolver clears and resumes a channel parked on an ExitPlanMode card.
 // ClearPlannedChannel removes the pause flag set by the orchestrator when the
 // agent emitted ExitPlanMode; ResumeChannel kicks the drain so any queued
@@ -144,6 +150,7 @@ type Server struct {
 	explainer               Explainer
 	learnTurner             LearnTurner
 	planResolver            PlanResolver
+	sessionSwitcher         SessionSwitcher
 	queueResumer            QueueResumer
 	askResolver             AskResolver
 	containerStats          ContainerStatsFetcher
@@ -195,6 +202,12 @@ func (s *Server) EventsHub() *EventsHub {
 // SetRunCanceller configures the run canceller for interrupt-mode sends.
 func (s *Server) SetRunCanceller(rc RunCanceller) {
 	s.runCanceller = rc
+}
+
+// SetSessionSwitcher configures the session switch behind
+// PUT /api/channels/{id}/session.
+func (s *Server) SetSessionSwitcher(ss SessionSwitcher) {
+	s.sessionSwitcher = ss
 }
 
 // SetPlanResolver configures the plan-pause resolver used by
@@ -388,6 +401,7 @@ func (s *Server) registerChannelRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/asks/pending", s.handleListPendingAsks)
 	mux.HandleFunc("GET /api/plans/pending", s.handleListPendingPlans)
 	mux.HandleFunc("GET /api/channels/{id}/sessions", s.handleListSessions)
+	mux.HandleFunc("PUT /api/channels/{id}/session", s.handleSetSession)
 	mux.HandleFunc("GET /api/channels/{id}/messages", s.handleListMessages)
 	mux.HandleFunc("GET /api/channels/{id}/composer-history", s.handleComposerHistory)
 	mux.HandleFunc("GET /api/channels/{id}/queued", s.handleListQueuedMessages)
