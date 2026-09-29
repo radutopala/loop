@@ -461,7 +461,7 @@ func (b *SlackBot) HandleIncomingMessageWithPriority(_ context.Context, _, _, _,
 
 // HandleIncomingMessageDelayed is a no-op on Slack — chat platforms don't drive
 // the API delayed queue_message path.
-func (b *SlackBot) HandleIncomingMessageDelayed(_ context.Context, _, _, _, _ string, _ int64) {
+func (b *SlackBot) HandleIncomingMessageDelayed(_ context.Context, _, _, _, _, _ string, _ int64) {
 }
 
 // HandleThreadCreated posts the initial message (with a bot mention) to the

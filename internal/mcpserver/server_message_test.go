@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"strings"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/stretchr/testify/require"
@@ -106,12 +107,23 @@ func (s *MCPServerSuite) TestQueueMessageDelayed() {
 		require.Contains(s.T(), string(body), `"delay_seconds":30`)
 		// A delay overrides interrupt — it is forced false on the wire.
 		require.Contains(s.T(), string(body), `"interrupt":false`)
-		return noContentResponse(http.StatusNoContent), nil
+		return jsonResponse(http.StatusOK, `{"msg_id":"ask-1"}`), nil
 	}
 
 	text, isError := s.callTool("queue_message", map[string]any{"content": "later", "delay_seconds": 30, "interrupt": true})
 	require.False(s.T(), isError)
 	require.Contains(s.T(), text, "30s delay")
+	require.Contains(s.T(), text, "msg_id: ask-1")
+}
+
+func (s *MCPServerSuite) TestQueueMessageDelayedErrors() {
+	s.runToolErrorCases(toolErrorSpec{
+		tool:         "queue_message",
+		args:         map[string]any{"content": "later", "delay_seconds": 30},
+		apiStatus:    http.StatusInternalServerError,
+		apiBody:      "queue failed",
+		decodeStatus: http.StatusOK,
+	})
 }
 
 func (s *MCPServerSuite) TestQueueMessageNegativeDelay() {
@@ -143,6 +155,122 @@ func (s *MCPServerSuite) TestQueueMessageErrors() {
 		apiStatus: http.StatusInternalServerError,
 		apiBody:   "queue failed",
 	})
+}
+
+// --- list_queued_messages / delete_queued_message ---
+
+func (s *MCPServerSuite) TestListQueuedMessages() {
+	long := strings.Repeat("x", 130)
+	tests := []struct {
+		name string
+		body string
+		want []string
+	}{
+		{
+			name: "empty",
+			body: `{"messages":[]}`,
+			want: []string{"No queued messages"},
+		},
+		{
+			name: "running, delayed and queued",
+			body: `{"messages":[` +
+				`{"msg_id":"m1","content":"check the PR","is_running":true},` +
+				`{"msg_id":"m2","content":"tag\nthe release","not_before":1790000000},` +
+				`{"msg_id":"m3","content":"` + long + `"}]}`,
+			want: []string{
+				"3 queued message(s)",
+				"- m1 [running] check the PR",
+				"- m2 [delayed until 2026-09-21T14:13:20Z] tag the release",
+				"- m3 [queued] " + strings.Repeat("x", 120) + "…",
+			},
+		},
+	}
+	for _, tt := range tests {
+		s.Run(tt.name, func() {
+			s.httpClient.doFunc = func(req *http.Request) (*http.Response, error) {
+				require.Equal(s.T(), "GET", req.Method)
+				require.Equal(s.T(), "/api/channels/test-channel/queued", req.URL.Path)
+				return jsonResponse(http.StatusOK, tt.body), nil
+			}
+			text, isError := s.callTool("list_queued_messages", map[string]any{})
+			require.False(s.T(), isError)
+			for _, w := range tt.want {
+				require.Contains(s.T(), text, w)
+			}
+		})
+	}
+}
+
+func (s *MCPServerSuite) TestListQueuedMessagesErrors() {
+	s.runToolErrorCases(toolErrorSpec{
+		tool:         "list_queued_messages",
+		args:         map[string]any{},
+		apiStatus:    http.StatusInternalServerError,
+		apiBody:      "list failed",
+		decodeStatus: http.StatusOK,
+	})
+}
+
+func (s *MCPServerSuite) TestDeleteQueuedMessage() {
+	const queue = `{"messages":[{"msg_id":"m1","content":"now","is_running":true},{"msg_id":"m2","content":"later","not_before":1790000000}]}`
+	tests := []struct {
+		name       string
+		msgID      string
+		deleteCode int
+		wantDelete bool
+		wantError  bool
+		wantText   string
+	}{
+		{name: "removes a waiting message", msgID: "m2", deleteCode: http.StatusNoContent, wantDelete: true, wantText: "Removed queued message m2."},
+		{name: "refuses the running message", msgID: "m1", wantError: true, wantText: "m1 is already running"},
+		{name: "unknown id", msgID: "gone", wantError: true, wantText: "no queued message gone"},
+		{name: "delete fails", msgID: "m2", deleteCode: http.StatusNotFound, wantDelete: true, wantError: true, wantText: "API error (status 404)"},
+		{name: "msg_id required", msgID: "", wantError: true, wantText: "msg_id is required"},
+	}
+	for _, tt := range tests {
+		s.Run(tt.name, func() {
+			deleted := false
+			s.httpClient.doFunc = func(req *http.Request) (*http.Response, error) {
+				if req.Method == "GET" {
+					return jsonResponse(http.StatusOK, queue), nil
+				}
+				require.Equal(s.T(), "DELETE", req.Method)
+				require.Equal(s.T(), "/api/messages/"+tt.msgID, req.URL.Path)
+				require.Equal(s.T(), "test-channel", req.URL.Query().Get("channel_id"))
+				deleted = true
+				return jsonResponse(tt.deleteCode, "not found or not deletable"), nil
+			}
+			text, isError := s.callTool("delete_queued_message", map[string]any{"msg_id": tt.msgID})
+			require.Equal(s.T(), tt.wantError, isError)
+			require.Contains(s.T(), text, tt.wantText)
+			require.Equal(s.T(), tt.wantDelete, deleted)
+		})
+	}
+}
+
+func (s *MCPServerSuite) TestDeleteQueuedMessageListErrors() {
+	s.runToolErrorCases(toolErrorSpec{
+		tool:         "delete_queued_message",
+		args:         map[string]any{"msg_id": "m2"},
+		apiStatus:    http.StatusInternalServerError,
+		apiBody:      "list failed",
+		decodeStatus: http.StatusOK,
+	})
+}
+
+// TestQueuedMessagesNoChannel covers the channel-scoped guard: an agent with
+// no channel of its own has no queue to list or remove from.
+func (s *MCPServerSuite) TestQueuedMessagesNoChannel() {
+	srv := New("", "http://localhost:8222", "", s.httpClient, nil)
+	res, _, err := srv.handleListQueuedMessages(context.Background(), nil, listQueuedMessagesInput{})
+	require.NoError(s.T(), err)
+	require.True(s.T(), res.IsError)
+	require.Contains(s.T(), res.Content[0].(*mcp.TextContent).Text, "channel-scoped")
+
+	res, _, err = srv.handleDeleteQueuedMessage(context.Background(), nil, deleteQueuedMessageInput{MsgID: "m1"})
+	require.NoError(s.T(), err)
+	require.True(s.T(), res.IsError)
+	require.Contains(s.T(), res.Content[0].(*mcp.TextContent).Text, "channel-scoped")
 }
 
 // --- get_readme ---

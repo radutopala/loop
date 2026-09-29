@@ -113,8 +113,8 @@ func (m *MockIncomingMessageHandler) HandleIncomingMessageWithPriority(ctx conte
 	m.Called(ctx, channelID, authorID, content, mode, priority)
 }
 
-func (m *MockIncomingMessageHandler) HandleIncomingMessageDelayed(ctx context.Context, channelID, authorID, content, mode string, notBefore int64) {
-	m.Called(ctx, channelID, authorID, content, mode, notBefore)
+func (m *MockIncomingMessageHandler) HandleIncomingMessageDelayed(ctx context.Context, channelID, authorID, msgID, content, mode string, notBefore int64) {
+	m.Called(ctx, channelID, authorID, msgID, content, mode, notBefore)
 }
 
 func (m *MockIncomingMessageHandler) HandleThreadCreated(ctx context.Context, threadID, authorID, message string) {

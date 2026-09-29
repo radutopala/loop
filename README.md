@@ -1150,7 +1150,9 @@ In headless/Linux environments where Electron can't launch, `LOOP_NO_ELECTRON=1 
 | `delete_thread` | Delete a thread by ID (cleans up worktree and branch if applicable) |
 | `search_channels` | Search for channels and threads by name |
 | `send_message` | Send a message to a channel or thread (`channel_id` optional — defaults to the current channel) |
-| `queue_message` | Queue a follow-up prompt for yourself in the current channel/thread/worktree; `interrupt=true` cancels the active run and jumps the queue |
+| `queue_message` | Queue a follow-up prompt for yourself in the current channel/thread/worktree; `interrupt=true` cancels the active run and jumps the queue; `delay_seconds` holds it back and returns its `msg_id` |
+| `list_queued_messages` | List the messages waiting in the current channel's queue: `msg_id`, running/queued/delayed, and the start of each |
+| `delete_queued_message` | Remove a waiting message from the current channel's queue by `msg_id` (not the running one) |
 | `search_memory` | Semantic search across memory files (ranked by similarity) |
 | `index_memory` | Force re-index all memory files |
 | `quality_scan` | Trigger an architectural-quality scan for the current channel (status hint returns immediately; report ships via the `quality.scanned` event) |

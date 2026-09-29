@@ -225,17 +225,24 @@ func (s *ServerSuite) TestSendMessageDelayed() {
 
 	called := make(chan struct{}, 1)
 	before := time.Now().Add(30 * time.Second).Unix()
-	handler.On("HandleIncomingMessageDelayed", mock.Anything, "ch-1", "", "later", "",
+	var msgID string
+	handler.On("HandleIncomingMessageDelayed", mock.Anything, "ch-1", "",
+		mock.MatchedBy(func(id string) bool { return strings.HasPrefix(id, "ask-") }), "later", "",
 		mock.MatchedBy(func(notBefore int64) bool {
 			after := time.Now().Add(30 * time.Second).Unix()
 			return notBefore >= before && notBefore <= after
 		})).
-		Run(func(_ mock.Arguments) { called <- struct{}{} }).Return()
+		Run(func(args mock.Arguments) {
+			msgID = args.String(3)
+			called <- struct{}{}
+		}).Return()
 
 	// delay_seconds takes precedence over interrupt: the run is never cancelled.
 	rec := s.testRequest("POST", "/api/messages", `{"channel_id":"ch-1","content":"later","delay_seconds":30,"interrupt":true}`)
 
-	require.Equal(s.T(), http.StatusNoContent, rec.Code)
+	require.Equal(s.T(), http.StatusOK, rec.Code)
+	// The id handed to the orchestrator is the one returned to the caller.
+	require.JSONEq(s.T(), `{"msg_id":"`+msgID+`"}`, rec.Body.String())
 
 	select {
 	case <-called:

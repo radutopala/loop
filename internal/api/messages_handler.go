@@ -10,6 +10,7 @@ import (
 
 	"github.com/radutopala/loop/internal/db"
 	"github.com/radutopala/loop/internal/events"
+	"github.com/radutopala/loop/internal/randutil"
 )
 
 type sendMessageRequest struct {
@@ -22,6 +23,12 @@ type sendMessageRequest struct {
 	// delay takes precedence over Interrupt (a deferred message can't also jump
 	// the queue). Set only via the delayed queue_message MCP path.
 	DelaySeconds int `json:"delay_seconds,omitempty"`
+}
+
+// queuedMessageResponse answers a delayed send with the queued message's id,
+// which the agent can later pass to delete_queued_message.
+type queuedMessageResponse struct {
+	MsgID string `json:"msg_id"`
 }
 
 func (s *Server) handleSendMessage(w http.ResponseWriter, r *http.Request) {
@@ -46,11 +53,13 @@ func (s *Server) handleSendMessage(w http.ResponseWriter, r *http.Request) {
 	if s.msgHandler != nil {
 		// Delayed mode: persist a deferred row the drain skips until the delay
 		// elapses. Checked before interrupt — a scheduled follow-up can't also
-		// jump the active run.
+		// jump the active run. Its id is picked here so the agent that queued
+		// it can remove it before it runs.
 		if req.DelaySeconds > 0 {
 			notBefore := time.Now().Add(time.Duration(req.DelaySeconds) * time.Second).Unix()
-			s.msgHandler.HandleIncomingMessageDelayed(context.Background(), req.ChannelID, "", req.Content, req.Mode, notBefore)
-			w.WriteHeader(http.StatusNoContent)
+			msgID := "ask-" + randutil.HexID(16)
+			s.msgHandler.HandleIncomingMessageDelayed(context.Background(), req.ChannelID, "", msgID, req.Content, req.Mode, notBefore)
+			writeHTTPJSON(w, http.StatusOK, queuedMessageResponse{MsgID: msgID}, s.logger)
 			return
 		}
 		// Interrupt mode: ORDER MATTERS. The new (priority-bumped) row must be
