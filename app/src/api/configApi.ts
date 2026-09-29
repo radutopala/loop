@@ -18,6 +18,7 @@ export interface SchemaProperty {
   additionalProperties?: SchemaProperty;
   "x-section"?: string;
   "x-global-only"?: boolean;
+  "x-project-only"?: boolean;
   "x-secret"?: boolean;
   "x-order"?: number;
   "x-step"?: number;

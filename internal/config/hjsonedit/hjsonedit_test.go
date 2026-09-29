@@ -76,7 +76,6 @@ func (s *HJSONEditSuite) TestAppend() {
 		initial string // "" = no file
 		path    []string
 		item    any
-		seed    []any
 		want    string
 	}{
 		{
@@ -93,24 +92,14 @@ func (s *HJSONEditSuite) TestAppend() {
 			want:    "{\n  // my mounts\n  \"mounts\": [\n    \"a:b\", // first\n    \"c:d\"\n  ],\n}\n",
 		},
 		{
-			name:    "new array starts with the seed",
+			name:    "new array after existing keys",
 			initial: "{\n  // project\n  \"claude_model\": \"opus\"\n}\n",
 			path:    []string{"mounts"},
 			item:    "c:d",
-			seed:    []any{"a:b"},
-			want:    "{\n  // project\n  \"claude_model\": \"opus\",\n  \"mounts\": [\n    \"a:b\",\n    \"c:d\"\n  ]\n}\n",
+			want:    "{\n  // project\n  \"claude_model\": \"opus\",\n  \"mounts\": [\n    \"c:d\"\n  ]\n}\n",
 		},
 		{
-			// An empty project list keeps the global one, so it's seeded too.
-			name:    "empty array starts with the seed",
-			initial: `{"mounts": []}`,
-			path:    []string{"mounts"},
-			item:    "c:d",
-			seed:    []any{"a:b"},
-			want:    `{"mounts": ["a:b","c:d"]}`,
-		},
-		{
-			name:    "empty array without a seed gets just the item",
+			name:    "empty array gets just the item",
 			initial: `{"mounts": []}`,
 			path:    []string{"mounts"},
 			item:    "c:d",
@@ -149,16 +138,14 @@ func (s *HJSONEditSuite) TestAppend() {
 			initial: "{\n  \"mounts\": []\n}\n",
 			path:    []string{"mounts"},
 			item:    "c:d",
-			seed:    []any{"a:b"},
-			want:    "{\n  \"mounts\": [\n    \"a:b\",\n    \"c:d\"\n  ]\n}\n",
+			want:    "{\n  \"mounts\": [\n    \"c:d\"\n  ]\n}\n",
 		},
 		{
 			name:    "an empty array after a member on its own line",
 			initial: "{\n  \"mounts\": []}",
 			path:    []string{"mounts"},
 			item:    "c:d",
-			seed:    []any{"a:b"},
-			want:    "{\n  \"mounts\": [\n    \"a:b\",\n    \"c:d\"\n  ]}",
+			want:    "{\n  \"mounts\": [\n    \"c:d\"\n  ]}",
 		},
 		{
 			name:    "an empty object in a laid-out file gets the member on its own line",
@@ -188,7 +175,7 @@ func (s *HJSONEditSuite) TestAppend() {
 			if tc.initial != "" {
 				s.write(tc.initial)
 			}
-			require.NoError(s.T(), Append(osutil.RealSystem{}, s.path, tc.path, tc.item, tc.seed))
+			require.NoError(s.T(), Append(osutil.RealSystem{}, s.path, tc.path, tc.item))
 			require.Equal(s.T(), tc.want, s.read())
 			_, err := os.Stat(s.path + ".tmp")
 			require.True(s.T(), os.IsNotExist(err))
@@ -219,7 +206,7 @@ func (s *HJSONEditSuite) TestAppendErrors() {
 		s.Run(tc.name, func() {
 			s.SetupTest()
 			s.write(tc.initial)
-			err := Append(tc.fs, s.path, tc.path, "x", nil)
+			err := Append(tc.fs, s.path, tc.path, "x")
 			require.ErrorContains(s.T(), err, tc.wantErr)
 			require.Equal(s.T(), tc.initial, s.read())
 			_, statErr := os.Stat(s.path + ".tmp")
@@ -232,7 +219,7 @@ func (s *HJSONEditSuite) TestAppendErrors() {
 // reaches the file.
 func (s *HJSONEditSuite) TestMarshalError() {
 	s.write("{}")
-	err := Append(osutil.RealSystem{}, s.path, []string{"mounts"}, func() {}, nil)
+	err := Append(osutil.RealSystem{}, s.path, []string{"mounts"}, func() {})
 	require.ErrorContains(s.T(), err, "json: unsupported type")
 	require.Equal(s.T(), "{}", s.read())
 }

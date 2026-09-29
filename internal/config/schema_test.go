@@ -208,6 +208,15 @@ func (s *SchemaSuite) TestGlobalOnlyFields() {
 	}
 }
 
+func (s *SchemaSuite) TestInheritMountsIsProjectOnly() {
+	prop := GlobalConfigSchema().Properties["inherit_mounts"]
+	require.NotNil(s.T(), prop)
+	require.True(s.T(), prop.XProjectOnly)
+	require.False(s.T(), prop.XGlobalOnly)
+	require.Equal(s.T(), "boolean", prop.Type)
+	require.Equal(s.T(), true, prop.Default)
+}
+
 func (s *SchemaSuite) TestNonGlobalOnlyFields() {
 	schema := GlobalConfigSchema()
 	// These fields should NOT have x-global-only set.

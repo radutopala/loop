@@ -20,6 +20,7 @@ import (
 // projectConfig is the structure for project-specific .loop/config.json files.
 type projectConfig struct {
 	Mounts                                   []string                   `json:"mounts"`
+	InheritMounts                            *bool                      `json:"inherit_mounts"`
 	HTTPProxy                                string                     `json:"http_proxy"`
 	HTTPSProxy                               string                     `json:"https_proxy"`
 	NoProxy                                  []string                   `json:"no_proxy"`
@@ -63,10 +64,12 @@ type projectConfig struct {
 // are loaded from the project config for security reasons.
 //
 // Merge behavior:
-// - Mounts: Project mounts replace global mounts entirely
-// - HTTPProxy/HTTPSProxy: Project value replaces the global one when set
-// - NoProxy: Project entries are appended to the global ones
-// - MCP Servers: Merged with project servers taking precedence over main config
+//   - Mounts: Project mounts are added to the global ones, a project mount
+//     replacing a global one at the same container path; inherit_mounts: false
+//     makes them replace the global list instead
+//   - HTTPProxy/HTTPSProxy: Project value replaces the global one when set
+//   - NoProxy: Project entries are appended to the global ones
+//   - MCP Servers: Merged with project servers taking precedence over main config
 //
 // Relative paths in project mounts are resolved relative to workDir.
 // If the project config file doesn't exist, returns the main config unchanged.
@@ -155,19 +158,21 @@ func (l *Loader) loadProjectConfig(workDir string, mainConfig *Config) (*Config,
 	// Create a copy of main config to avoid mutating it
 	merged := *mainConfig
 
-	// Merge mounts: project mounts replace global mounts entirely.
-	// Resolve relative paths relative to workDir.
-	if len(pc.Mounts) > 0 {
-		resolvedMounts := make([]string, 0, len(pc.Mounts))
-		for _, mount := range pc.Mounts {
-			resolved, err := ResolveMount(mount, workDir)
-			if err != nil {
-				return nil, err
-			}
-			resolvedMounts = append(resolvedMounts, resolved)
+	// Merge mounts: project mounts are added to the global ones, unless the
+	// project opts out with inherit_mounts: false. Resolve relative paths
+	// relative to workDir.
+	resolvedMounts := make([]string, 0, len(pc.Mounts))
+	for _, mount := range pc.Mounts {
+		resolved, err := ResolveMount(mount, workDir)
+		if err != nil {
+			return nil, err
 		}
-
+		resolvedMounts = append(resolvedMounts, resolved)
+	}
+	if pc.InheritMounts != nil && !*pc.InheritMounts {
 		merged.Mounts = resolvedMounts
+	} else {
+		merged.Mounts = mergeByName(mainConfig.Mounts, resolvedMounts, mountTarget)
 	}
 
 	// A project behind its own proxy overrides the global one outright —
@@ -612,6 +617,15 @@ func mergeByName[T any](base, overlay []T, name func(T) string) []T {
 		out = append(out, it)
 	}
 	return out
+}
+
+// mountTarget returns a mount's container path, without a trailing slash,
+// so "~/.tools/" and "~/.tools" count as the same target. Merged by
+// it, a project mount replaces the global mount at the same path.
+func mountTarget(mount string) string {
+	_, rest, _ := strings.Cut(mount, ":")
+	target, _, _ := strings.Cut(rest, ":")
+	return strings.TrimSuffix(target, "/")
 }
 
 // ResolveMount returns a project config mount with a relative host path
