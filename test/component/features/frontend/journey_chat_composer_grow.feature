@@ -19,6 +19,20 @@ Feature: The chat composer grows with its text
     Then the field "textarea" should hold ""
     And I wait for "textarea" to be at most 90px tall
 
+  # The channel is empty, so the first message flips the chat out of its empty
+  # state. The message's own event can land before the send request returns;
+  # holding the request back makes that order certain. The composer must not
+  # be swapped for a new one there, or the new one brings the sent text back.
+  Scenario: The first message clears the composer even when its event lands first
+    Given I delay requests matching "*/api/messages" by "2s"
+    When I type "first message" into "textarea"
+    And I mark the element "textarea"
+    And I press Enter
+    And I inject a user message with content "first message"
+    Then I wait for text "first message" to appear
+    And the field "textarea" should hold ""
+    And I wait for "textarea[data-bdd-mark='1']" to be visible
+
   Scenario: Editing a long queued message opens the composer tall
     When I send a POST request to "/api/messages" with body:
       """

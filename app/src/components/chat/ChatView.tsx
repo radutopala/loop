@@ -154,90 +154,68 @@ export function ChatView({ channelId, chatState, roots, scrollToMessageId, onScr
     );
   }
 
-  // Empty state: centered welcome + full-width input at bottom
-  if (isEmpty) {
-    return (
-      <div style={{ ...styles.container, zoom: fontSizes.chat / 13 }}>
+  // One tree for both states, with the composer at the same position in each:
+  // a channel's first message flips it out of the empty state, often before
+  // the send request returns (the message event arrives first). A composer
+  // per state would remount there, and the new one would restore the draft
+  // the old one had not cleared yet — leaving the sent text in the box.
+  return (
+    <div style={{ ...styles.container, zoom: fontSizes.chat / 13 }} onKeyDown={isEmpty ? undefined : handleKeyDown}>
+      {isEmpty ? (
         <div style={styles.welcome}>
           <WelcomeScreen />
         </div>
-        <div style={styles.inputBar}>
-          <ChatInput
-            channelId={channelId}
-            noAutoFocus={noAutoFocus}
-            messages={messages}
-            roots={roots}
-            mode={chatState.mode}
-            setMode={chatState.setMode}
-            onDismissGate={dismissGate}
-            onSent={scrollToBottom}
-            quotedMessage={quotedMessage}
-            onClearQuote={clearQuote}
-            pendingGateReqId={chatState.gateApprovals["chat"]?.req_id ?? null}
-            hasPendingExitPlan={!!chatState.exitPlanRequest}
-            hasPendingAskUser={!!chatState.askUserQuestions}
-            // Removing the only message mid-edit lands here; the notice
-            // still explains where the edit went.
-            editNotice={queuedEdit.notice}
-            onDismissEditNotice={queuedEdit.dismissNotice}
-          />
-        </div>
-
-        <div style={styles.isolationLabel}>
-          <LoopInfinityIcon color={colors.textDim} isDark={colors.isDark} />
-          Running non-interactively in an isolated Docker container
-        </div>
-      </div>
-    );
-  }
-
-  return (
-    <div style={{ ...styles.container, zoom: fontSizes.chat / 13 }} onKeyDown={handleKeyDown}>
-      {findOpen && <ChatFindBar channelId={channelId} focusKey={findFocusKey} onJump={jumpToMatch} onClose={closeFind} />}
-      <div style={styles.messagesArea}>
-        <ChatMessages
-          ref={messagesRef}
-          channelId={channelId}
-          chatState={chatState}
-          scrollToMessageId={findTarget ?? scrollToMessageId}
-          findTerm={findOpen ? findTerm : undefined}
-          onScrollComplete={handleScrollComplete}
-          onQuote={setQuotedMessage}
-          onEditQueued={queuedEdit.start}
-          editingMsgId={queuedEdit.editing?.msg_id ?? null}
-        />
-        {!findOpen && (
-          <button
-            onClick={openFind}
-            title={`Find in chat (${navigator.platform.includes("Mac") ? "\u2318F" : "Ctrl+F"})`}
-            data-testid="chat-find-toggle"
-            style={styles.findToggle}
-            onMouseEnter={(e) => {
-              e.currentTarget.style.color = colors.textLight;
-              e.currentTarget.style.borderColor = colors.textDim;
-            }}
-            onMouseLeave={(e) => {
-              e.currentTarget.style.color = colors.textMuted;
-              e.currentTarget.style.borderColor = colors.border;
-            }}
-          >
-            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <circle cx="11" cy="11" r="7" />
-              <path d="M20 20L16 16" />
-            </svg>
-          </button>
-        )}
-      </div>
+      ) : (
+        <>
+          {findOpen && <ChatFindBar channelId={channelId} focusKey={findFocusKey} onJump={jumpToMatch} onClose={closeFind} />}
+          <div style={styles.messagesArea}>
+            <ChatMessages
+              ref={messagesRef}
+              channelId={channelId}
+              chatState={chatState}
+              scrollToMessageId={findTarget ?? scrollToMessageId}
+              findTerm={findOpen ? findTerm : undefined}
+              onScrollComplete={handleScrollComplete}
+              onQuote={setQuotedMessage}
+              onEditQueued={queuedEdit.start}
+              editingMsgId={queuedEdit.editing?.msg_id ?? null}
+            />
+            {!findOpen && (
+              <button
+                onClick={openFind}
+                title={`Find in chat (${navigator.platform.includes("Mac") ? "\u2318F" : "Ctrl+F"})`}
+                data-testid="chat-find-toggle"
+                style={styles.findToggle}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.color = colors.textLight;
+                  e.currentTarget.style.borderColor = colors.textDim;
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.color = colors.textMuted;
+                  e.currentTarget.style.borderColor = colors.border;
+                }}
+              >
+                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <circle cx="11" cy="11" r="7" />
+                  <path d="M20 20L16 16" />
+                </svg>
+              </button>
+            )}
+          </div>
+        </>
+      )}
       <div style={styles.inputBar}>
         <ChatInput
           channelId={channelId}
           noAutoFocus={noAutoFocus}
           messages={messages}
           roots={roots}
-          isRunning={isRunning}
-          editingQueued={queuedEdit.editing}
-          onSaveEdit={queuedEdit.save}
-          onCancelEdit={queuedEdit.cancel}
+          isRunning={isEmpty ? undefined : isRunning}
+          // Removing the only message mid-edit lands in the empty state; the
+          // edit is gone but the notice still explains where it went.
+          editingQueued={isEmpty ? undefined : queuedEdit.editing}
+          onSaveEdit={isEmpty ? undefined : queuedEdit.save}
+          onCancelEdit={isEmpty ? undefined : queuedEdit.cancel}
           editNotice={queuedEdit.notice}
           onDismissEditNotice={queuedEdit.dismissNotice}
           mode={chatState.mode}
@@ -252,7 +230,7 @@ export function ChatView({ channelId, chatState, roots, scrollToMessageId, onScr
         />
       </div>
       <div style={styles.isolationLabel}>
-        <LoopInfinityIcon color={isRunning ? undefined : colors.textDim} animated={isRunning} isDark={colors.isDark} />
+        <LoopInfinityIcon color={isRunning && !isEmpty ? undefined : colors.textDim} animated={isRunning && !isEmpty} isDark={colors.isDark} />
         Running non-interactively in an isolated Docker container
       </div>
     </div>
