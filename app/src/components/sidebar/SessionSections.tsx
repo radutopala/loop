@@ -38,7 +38,9 @@ export function SectionTabs({ tab, showTabs, recentCount, onChange, hideTasks, o
       style={{
         position: "sticky",
         top: 0,
-        zIndex: 1,
+        // Above the tree's connector lines (zIndex 1 in ThreadItem), which
+        // come later in the DOM and would otherwise paint over the bar.
+        zIndex: 2,
         display: "flex",
         alignItems: "center",
         justifyContent: "flex-end",

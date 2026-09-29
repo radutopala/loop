@@ -272,6 +272,7 @@ func registerFrontendSteps(ctx *godog.ScenarioContext, tc *TestContext) {
 	ctx.Step(`^I tag the chat's composer$`, tc.tagChatComposer)
 	ctx.Step(`^the Learn dock sits right of the chat's tile, the same size$`, tc.waitLearnDockBesideChat)
 	ctx.Step(`^I note where the chat's tile is$`, tc.noteChatTile)
+	ctx.Step(`^the sidebar's tab bar covers a thread's tree line scrolled under it$`, tc.assertTabBarCoversTreeLine)
 	ctx.Step(`^I drag the Learn dock's header by (-?\d+)px, (-?\d+)px$`, tc.dragLearnDockHeader)
 	ctx.Step(`^the chat's tile moved by (-?\d+)px, (-?\d+)px$`, tc.assertChatTileMoved)
 	ctx.Step(`^the composer in "([^"]*)" is the one I tagged$`, tc.assertTaggedComposer)
@@ -2260,6 +2261,44 @@ func (tc *TestContext) noteChatTile() error {
 	}
 	if !ok {
 		return fmt.Errorf("no chat tile on the canvas")
+	}
+	return nil
+}
+
+// assertTabBarCoversTreeLine scrolls the sidebar until a thread row's tree
+// connector passes under the sticky Recent/Tree bar, then checks the bar is
+// what's on top at a point on the connector's vertical line. The sidebar
+// gets bottom padding first so a short tree still scrolls.
+func (tc *TestContext) assertTabBarCoversTreeLine() error {
+	var got string
+	js := `(() => {
+		const tabs = document.querySelector("[data-testid='sidebar-tabs']");
+		const row = document.querySelector("[data-testid='sidebar-thread-row']");
+		if (!tabs || !row) return "no tabs or thread row";
+		let bar = tabs;
+		while (bar && getComputedStyle(bar).position !== "sticky") bar = bar.parentElement;
+		const line = row.parentElement.querySelector("svg");
+		if (!bar || !line) return "no sticky bar or tree line";
+		let scroller = bar.parentElement;
+		while (scroller && getComputedStyle(scroller).overflowY !== "auto") scroller = scroller.parentElement;
+		if (!scroller) return "no scroller";
+		scroller.style.paddingBottom = "2000px";
+		const b = bar.getBoundingClientRect();
+		const mid = b.top + b.height / 2;
+		// Put the connector's top just above the bar's middle, so the point
+		// checked is on the vertical line every thread row draws.
+		scroller.scrollTop += line.getBoundingClientRect().top - (mid - 2);
+		const l = line.getBoundingClientRect();
+		if (l.top > mid || l.bottom < mid) return "tree line didn't scroll under the bar";
+		const el = document.elementFromPoint(l.left + 1, mid);
+		if (!el) return "nothing at the point";
+		return bar.contains(el) ? "" : "on top: " + (el.tagName + " " + (el.getAttribute("data-testid") || "")).trim();
+	})()`
+	if err := chromedp.Run(tc.chromeTab.ctx, chromedp.Evaluate(js, &got)); err != nil {
+		return err
+	}
+	if got != "" {
+		return fmt.Errorf("the tab bar doesn't cover the tree line: %s", got)
 	}
 	return nil
 }

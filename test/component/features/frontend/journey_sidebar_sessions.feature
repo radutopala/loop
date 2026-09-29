@@ -54,6 +54,16 @@ Feature: Recent sessions in the sidebar
     When I click on "[data-testid='sidebar-recent'] [data-testid='sidebar-session-row']"
     Then I wait for "textarea" to be visible
 
+  Scenario: The tree's lines scroll behind the Recent/Tree tabs
+    Given I set up a test channel via API for git repo "bdd-sessions-lines"
+    And I create a thread "lines-thread" under the current channel via API
+    And I open the app in a browser
+    And I wait for text "lines-thread" to appear
+    When I inject an agent.status running event
+    Then I wait for "[data-testid='sidebar-tab-tree']" to be visible
+    When I click on "[data-testid='sidebar-tab-tree']"
+    Then the sidebar's tab bar covers a thread's tree line scrolled under it
+
   Scenario: A worktree thread in Recent has the tree's worktree icon
     Given I set up a test channel via API for git repo "bdd-sessions-wt"
     And I set up a worktree "recent-wt" on branch "main" under the current channel via API
