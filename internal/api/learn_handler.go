@@ -68,9 +68,11 @@ func (s *Server) handleGetLearn(w http.ResponseWriter, r *http.Request) {
 	}
 	if l != nil {
 		resp.LearnChannelID = l.ChannelID
-		if s.runCanceller != nil {
-			resp.Running = s.runCanceller.IsLearnPassRunning(l.ChannelID)
+		running, err := s.store.LearnPassRunning(r.Context(), l.ChannelID)
+		if err != nil {
+			s.logger.Warn("learn: checking for a running pass", "error", err, "channel_id", l.ChannelID)
 		}
+		resp.Running = running
 	}
 	writeHTTPJSON(w, http.StatusOK, resp, s.logger)
 }

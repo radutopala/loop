@@ -48,8 +48,10 @@ func claudeTranscriptMissing(stat func(string) (os.FileInfo, error), homeDir fun
 // batch and interactive modes. When continueSession is true, sessionID is
 // ignored and `--continue` is emitted instead — used to relaunch a terminal
 // pane after its Claude process died without knowing which (possibly forked)
-// session id it was running.
-func buildBaseClaudeCmd(cfg *config.Config, mcpConfigPath, sessionID, agentID string, forkSession, continueSession bool, extraDirs []string) []string {
+// session id it was running. resumeAt cuts a fork at that transcript entry
+// (see agent.AgentRequest.ResumeAt); it only applies to a forked resume, and
+// only batch (print mode) runs pass it: the flag is print-mode only.
+func buildBaseClaudeCmd(cfg *config.Config, mcpConfigPath, sessionID, resumeAt, agentID string, forkSession, continueSession bool, extraDirs []string) []string {
 	cmd := []string{cfg.ClaudeBinPath, "--mcp-config", mcpConfigPath}
 	if cfg.ClaudeModel != "" {
 		cmd = append(cmd, "--model", cfg.ClaudeModel)
@@ -65,6 +67,9 @@ func buildBaseClaudeCmd(cfg *config.Config, mcpConfigPath, sessionID, agentID st
 		cmd = append(cmd, "--resume", sessionID)
 		if forkSession {
 			cmd = append(cmd, "--fork-session")
+			if resumeAt != "" {
+				cmd = append(cmd, "--resume-session-at="+resumeAt)
+			}
 		}
 	}
 	// Enable MCP Channels when agent tools are configured, so the agent
@@ -178,7 +183,7 @@ func buildClaudeCmd(cfg *config.Config, mcpConfigPath string, req *agent.AgentRe
 		}
 		cfg = &override
 	}
-	cmd := buildBaseClaudeCmd(cfg, mcpConfigPath, req.SessionID, req.AgentID, req.ForkSession, false, cfg.ExtraDirs)
+	cmd := buildBaseClaudeCmd(cfg, mcpConfigPath, req.SessionID, req.ResumeAt, req.AgentID, req.ForkSession, false, cfg.ExtraDirs)
 	if req.ReviewMode {
 		cmd = append(cmd, "--settings", reviewModeSettings)
 	}
@@ -267,7 +272,7 @@ const claudeExitTrailer = `; __lec=$?; printf '\033[?1000l\033[?1002l\033[?1003l
 // user typing `claude` at the terminal would bypass the gate entirely.
 func buildInteractiveClaudeCmd(cfg *config.Config, channelID, workDir, sessionID, agentID string, forkSession, continueSession bool) string {
 	mcpConfigPath := mcpConfigPathForAgent(workDir, channelID, agentID)
-	cmd := buildBaseClaudeCmd(cfg, mcpConfigPath, sessionID, agentID, forkSession, continueSession, cfg.ExtraDirs)
+	cmd := buildBaseClaudeCmd(cfg, mcpConfigPath, sessionID, "", agentID, forkSession, continueSession, cfg.ExtraDirs)
 	if cfg.Gates.Agentgate.Enabled {
 		cmd = append([]string{"loop", "syscallwrap", "--"}, cmd...)
 	}

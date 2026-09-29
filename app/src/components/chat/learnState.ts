@@ -91,7 +91,7 @@ export function learnPassRunning(cur: boolean, status: string, trigger: string |
 /**
  * What a turn's Learn action says about the turn's learn pass: its state
  * while it's queued or running, else how many proposals it filed. A turn
- * without one, or whose pass the next turn's superseded before it ran,
+ * without one, or whose old pass the next turn's superseded before it ran,
  * offers to learn from it.
  */
 export function learnTurnLabel(pass: LearnPass | undefined, proposals: number): string {

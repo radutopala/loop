@@ -184,6 +184,11 @@ type Message struct {
 	// queued row. Until it passes (or is released) the claim won't start the
 	// row, and — to keep queue order — won't start anything queued behind it.
 	EditHoldUntil int64 `json:"edit_hold_until,omitempty"`
+	// SessionID and TranscriptUUID locate a bot text turn in Claude Code's
+	// session transcript (see agent.TurnRef): a turn's last bot message
+	// holds where the turn ended. Empty on other rows and older turns.
+	SessionID      string `json:"-"`
+	TranscriptUUID string `json:"-"`
 }
 
 // ScheduledTask represents a task scheduled for execution.
@@ -370,9 +375,9 @@ type LearnProposal struct {
 	UpdatedAt       time.Time `json:"updated_at"`
 }
 
-// Statuses of a learn pass. A queued pass is superseded when a newer run's
-// pass replaces it before it starts: that one forks the newer session,
-// which covers this turn too.
+// Statuses of a learn pass. Passes queue in their learn thread and each
+// runs in turn; superseded is only found on passes from before they did,
+// when a newer run's pass replaced one still waiting.
 const (
 	LearnPassQueued     = "queued"
 	LearnPassRunning    = "running"

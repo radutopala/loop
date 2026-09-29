@@ -97,7 +97,7 @@ func (s *TaskExecutorSuite) TestTaskRunHoldsLockOfThreadItCreates() {
 	s.runner.On("Run", mock.Anything, mock.Anything).Run(func(args mock.Arguments) {
 		req := args.Get(1).(*agent.AgentRequest)
 		require.True(s.T(), threadLockFree(locks, "new-thread"))
-		req.OnTurn("first turn")
+		req.OnTurn("first turn", agent.TurnRef{})
 		heldAfterCreate = !threadLockFree(locks, "new-thread")
 	}).Return(&agent.AgentResponse{Response: "final", SessionID: "s-new"}, nil)
 

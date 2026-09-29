@@ -360,7 +360,7 @@ func (h *EventsHub) BroadcastExplainUpdated(e *db.Explanation) {
 }
 
 // BroadcastLearnPass sends a learn.pass event when a learn pass is queued,
-// starts running, is done, fails or is superseded, so the chat shows it at
+// starts running, is done or fails, so the chat shows it at
 // the end of the turn it reviews. It's global: the learn thread doing the
 // work is hidden.
 func (h *EventsHub) BroadcastLearnPass(p *db.LearnPass) {

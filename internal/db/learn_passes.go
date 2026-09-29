@@ -62,6 +62,18 @@ func (s *SQLiteStore) ActiveLearnPass(ctx context.Context, channelID, messageID 
 	)
 }
 
+// LearnPassRunning reports whether a pass is running in learn thread
+// learnChannelID. A user's reply running there isn't a pass, nor is a pass
+// still queued.
+func (s *SQLiteStore) LearnPassRunning(ctx context.Context, learnChannelID string) (bool, error) {
+	var n int
+	err := s.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM learn_passes WHERE learn_channel_id = ? AND status = ?`,
+		learnChannelID, LearnPassRunning,
+	).Scan(&n)
+	return n > 0, err
+}
+
 func (s *SQLiteStore) queryLearnPass(ctx context.Context, query string, args ...any) (*LearnPass, error) {
 	p := &LearnPass{}
 	err := s.db.QueryRowContext(ctx, query, args...).Scan(&p.ID, &p.ChannelID, &p.MessageID, &p.LearnChannelID,

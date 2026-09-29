@@ -363,17 +363,13 @@ func (s *Server) hiddenThreads(ctx context.Context, channelIDs ...string) []*db.
 	return hidden
 }
 
-// stopHiddenThreads cancels deleted hidden threads' runs and removes their
-// containers. A learn thread's queued pass is forgotten too; an explain
-// thread's queued explanations are rows deleted with it.
+// stopHiddenThreads cancels deleted hidden threads' runs, deletes their
+// forked sessions and removes their containers. Their queued passes and
+// explanations are rows deleted with them.
 func (s *Server) stopHiddenThreads(ctx context.Context, hidden []*db.Channel) {
 	for _, h := range hidden {
 		if s.runCanceller != nil {
-			if h.Kind == db.ChannelKindLearn {
-				s.runCanceller.StopLearn(h.ChannelID)
-			} else {
-				s.runCanceller.CancelActiveRun(h.ChannelID)
-			}
+			s.runCanceller.StopHiddenThread(h)
 		}
 		s.removeAgentContainers(ctx, h.ChannelID)
 	}

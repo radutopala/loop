@@ -185,7 +185,7 @@ Delete a channel and all its child threads.
 
 **Response:** `204 No Content`
 
-**Behavior notes:** Deletes child threads (channels with matching `parent_id`) before deleting the channel itself. Removes the MCP config files of the channel, its threads and their hidden learn and explain threads (`.loop/mcp-<id>.json`, and `.loop/mcp-<id>-learn.json` / `.loop/mcp-<id>-explain.json` for a hidden thread, each in its own dir), unless `keep_mcp_configs` is set for the channel's project. Cancels a learn pass or explanation still running or queued and removes the channel's containers.
+**Behavior notes:** Deletes child threads (channels with matching `parent_id`) before deleting the channel itself. Removes the MCP config files of the channel, its threads and their hidden learn and explain threads (`.loop/mcp-<id>.json`, and `.loop/mcp-<id>-learn.json` / `.loop/mcp-<id>-explain.json` for a hidden thread, each in its own dir), unless `keep_mcp_configs` is set for the channel's project. Cancels a learn pass or explanation still running or queued, deletes the hidden threads' forked session files, and removes the channel's containers.
 
 **Errors:** `404` if channel not found. `409` if the channel (or any of its threads) is locked. `501` if channel deletion is not configured.
 
@@ -370,7 +370,7 @@ Delete a thread.
 
 **Response:** `204 No Content`
 
-**Behavior notes:** Deletes from the chat platform (if a creator is configured) and removes from the database, then cancels the runs of its hidden learn and explain threads and removes the MCP config files of the thread and those threads, unless `keep_mcp_configs` is set for the parent channel's project. If the thread has an associated git worktree, the worktree and its branch are cleaned up automatically.
+**Behavior notes:** Deletes from the chat platform (if a creator is configured) and removes from the database, then cancels the runs of its hidden learn and explain threads, deletes their forked session files and removes the MCP config files of the thread and those threads, unless `keep_mcp_configs` is set for the parent channel's project. If the thread has an associated git worktree, the worktree and its branch are cleaned up automatically.
 
 **Errors:** `409` if the thread is locked (toggle via [`PATCH /api/channels/{id}/lock`](#patch-apichannelsidlock)). `501` if thread deletion is not configured.
 
@@ -1088,7 +1088,7 @@ List the channel's learn passes, newest first, in every status. Each reviews one
 |-------|------|-------------|
 | `message_id` | string | The reviewed turn's last bot message (`msg_id`) |
 | `learn_channel_id` | string | The channel's hidden learn thread, where the pass runs |
-| `status` | string | `queued`, `running`, `done`, `failed`, or `superseded` (a newer pass replaced it before it started; that one forks a newer session, which covers its turn too) |
+| `status` | string | `queued`, `running`, `done` or `failed`. Passes from before passes queued one after another may also be `superseded`: a newer pass replaced it before it started. |
 | `error` | string | Why the pass failed; omitted when empty |
 | `message_row_id` | int | The bot message's row id, for linking to it; omitted when the message is gone |
 
@@ -1102,7 +1102,7 @@ List the channel's learn passes, newest first, in every status. Each reviews one
 
 ### `POST /api/channels/{id}/learn/passes`
 
-Start a learn pass over the turn that ended with bot message `message_id`, on demand. It runs whether or not the channel's Learn switch is on, and whatever the turn's length (`learn.min_turns`). A pass over the turn already `queued` or `running` is returned as it is; otherwise a new one is queued, also when the turn's earlier pass is `done`, `failed` or `superseded`.
+Start a learn pass over the turn that ended with bot message `message_id`, on demand. It runs whether or not the channel's Learn switch is on, and whatever the turn's length (`learn.min_turns`). A pass over the turn already `queued` or `running` is returned as it is; otherwise a new one is queued, also when the turn's earlier pass is `done` or `failed` (or `superseded`, on an old row).
 
 **Request:**
 ```json
@@ -1111,9 +1111,9 @@ Start a learn pass over the turn that ended with bot message `message_id`, on de
 
 **Response (200):** the pass, shaped as in the list (without `message_row_id`).
 
-**Behavior notes:** A new pass creates the channel's hidden learn thread on first use and is broadcast as a [`learn.pass`](events.md#learnpass) event, as is each later status change. It forks the channel's current session, so it sees the turn even when later ones followed, and its trigger message quotes the turn's prompt and final reply. Like an automatic pass, it waits while the learn thread is busy and replaces the pass already waiting there, which becomes `superseded`.
+**Behavior notes:** A new pass creates the channel's hidden learn thread on first use and is broadcast as a [`learn.pass`](events.md#learnpass) event, as is each later status change. It forks the session where the turn ended, so it sees the turn as it was even when later ones followed (a turn from before Loop recorded where turns end forks the channel's current session instead), and its trigger message quotes the turn's prompt and final reply. Like an automatic pass, it queues behind the passes already in the learn thread and runs after them; nothing is replaced.
 
-**Errors:** `400` if the body isn't valid JSON, `message_id` is missing, the channel isn't one learn passes run for (a Slack or Discord channel, or a task thread), or the message isn't a bot message of a turn in the channel. `404` if the channel doesn't exist, is hidden, or was deleted meanwhile. `409` if the channel has no session to fork yet. `500` on a store error. `501` if on-demand learn passes are not configured.
+**Errors:** `400` if the body isn't valid JSON, `message_id` is missing, the channel isn't one learn passes run for (a Slack or Discord channel, or a task thread), or the message isn't a bot message of a turn in the channel. `404` if the channel doesn't exist, is hidden, or was deleted meanwhile. `409` if neither the turn nor the channel has a session to fork. `500` on a store error. `501` if on-demand learn passes are not configured.
 
 ---
 
@@ -2020,7 +2020,7 @@ Remove a git worktree from disk and optionally delete its associated thread.
 
 **Behavior notes:**
 - Runs `git worktree remove --force` on the worktree path, then `git worktree prune`.
-- If `thread_id` is provided, also deletes the thread record from the database and broadcasts a `channel.deleted` event. As with `DELETE /api/threads/{id}`, the thread's hidden learn thread goes with it and its queued and running passes are stopped.
+- If `thread_id` is provided, also deletes the thread record from the database and broadcasts a `channel.deleted` event. As with `DELETE /api/threads/{id}`, the thread's hidden learn and explain threads go with it: their running pass or explanation is cancelled, the queued ones are dropped, and their forked session files are deleted.
 - If the git worktree removal fails (e.g. path already gone), returns `500`.
 
 **Errors:** `400` if `channel_id` or `worktree_path` is missing, or if the channel is not found.

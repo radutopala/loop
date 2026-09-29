@@ -367,7 +367,7 @@ func (e *TaskExecutor) ExecuteTask(ctx context.Context, task *db.ScheduledTask) 
 		// creation in the streamTracker below.
 		storeUserTaskPrompt(ctx, e.store, e.events, threadID, task.Prompt)
 	}
-	tracker := newStreamTracker(func(text string) {
+	tracker := newStreamTracker(func(text string, ref agent.TurnRef) {
 		if threadID == "" && !threadFailed {
 			// First turn — create a thread for the task output
 			taskPrefix := ""
@@ -400,7 +400,7 @@ func (e *TaskExecutor) ExecuteTask(ctx context.Context, task *db.ScheduledTask) 
 					ChannelID: task.ChannelID,
 					Content:   text,
 				})
-				storeBotMessage(ctx, e.store, e.events, task.ChannelID, text, "")
+				storeBotTurn(ctx, e.store, e.events, task.ChannelID, text, "", ref)
 				return
 			}
 			threadID = id
@@ -446,7 +446,7 @@ func (e *TaskExecutor) ExecuteTask(ctx context.Context, task *db.ScheduledTask) 
 				// Both insert into the DB and broadcast, replacing the message
 				// CreateSimpleThread would otherwise have stored.
 				storeUserTaskPrompt(ctx, e.store, e.events, threadID, task.Prompt)
-				storeBotMessage(ctx, e.store, e.events, threadID, prefix+text, "")
+				storeBotTurn(ctx, e.store, e.events, threadID, prefix+text, "", ref)
 			} else if e.events != nil {
 				// Other platforms: CreateSimpleThread already stored+delivered
 				// the first turn; just broadcast so any local watchers see it.
@@ -469,14 +469,14 @@ func (e *TaskExecutor) ExecuteTask(ctx context.Context, task *db.ScheduledTask) 
 			}); err != nil {
 				e.logger.Error("streaming send failed", "error", err, "channel_id", targetID)
 			}
-			storeBotMessage(ctx, e.store, e.events, targetID, text, "")
+			storeBotTurn(ctx, e.store, e.events, targetID, text, "", ref)
 		}
 	})
-	req.OnTurn = func(text string) {
+	req.OnTurn = func(text string, ref agent.TurnRef) {
 		// Strip [EPHEMERAL] before the tracker records it, so IsDuplicate
 		// correctly matches the final (also stripped) response.
 		text = strings.TrimSpace(strings.ReplaceAll(text, "[EPHEMERAL]", ""))
-		tracker.OnTurn(text)
+		tracker.OnTurn(text, ref)
 	}
 	if e.events != nil {
 		req.OnToolUse = func(toolUseID, name, input string) {

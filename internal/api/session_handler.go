@@ -77,8 +77,9 @@ func (s *Server) handleListSessions(w http.ResponseWriter, r *http.Request) {
 
 	// Collect session IDs already associated with any channel or thread in
 	// the DB. A learn or explain thread's session isn't importable, so it's
-	// left out of the list; not while fork_pending, though, when a learn
-	// thread's id is the reviewed run's, borrowed until the pass forks it.
+	// left out of the list; not while fork_pending, though, which learn
+	// threads from before passes forked at their turn may still have: the
+	// id is then the reviewed run's, borrowed until a run forks it.
 	var importedIDs []string
 	hiddenSessions := map[string]bool{}
 	if allChannels, err := s.store.ListChannels(r.Context()); err == nil {

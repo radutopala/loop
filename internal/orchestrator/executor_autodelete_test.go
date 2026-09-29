@@ -38,7 +38,7 @@ func (s *TaskExecutorSuite) TestAutoDeleteTimerFires() {
 		if req.OnTurn == nil {
 			return false
 		}
-		req.OnTurn("[EPHEMERAL] Nothing to report")
+		req.OnTurn("[EPHEMERAL] Nothing to report", agent.TurnRef{})
 		return true
 	})).Return(&agent.AgentResponse{
 		Response:  "[EPHEMERAL] Nothing to report",
@@ -103,7 +103,7 @@ func (s *TaskExecutorSuite) TestAutoDeleteEphemeralLocalPlatform() {
 		if req.OnTurn == nil {
 			return false
 		}
-		req.OnTurn("[EPHEMERAL] Nothing new")
+		req.OnTurn("[EPHEMERAL] Nothing new", agent.TurnRef{})
 		return true
 	})).Return(&agent.AgentResponse{Response: "[EPHEMERAL] Nothing new", SessionID: "s-eph"}, nil)
 
@@ -166,7 +166,7 @@ func (s *TaskExecutorSuite) TestAutoDeleteEphemeralVariants() {
 				if req.OnTurn == nil {
 					return false
 				}
-				req.OnTurn(tc.response)
+				req.OnTurn(tc.response, agent.TurnRef{})
 				return true
 			})).Return(&agent.AgentResponse{
 				Response: tc.response, SessionID: "sess",
@@ -212,7 +212,7 @@ func (s *TaskExecutorSuite) TestAutoDeleteNonEphemeralNoRename() {
 		if req.OnTurn == nil {
 			return false
 		}
-		req.OnTurn("Important result")
+		req.OnTurn("Important result", agent.TurnRef{})
 		return true
 	})).Return(&agent.AgentResponse{
 		Response: "Important result", SessionID: "sess",
@@ -285,7 +285,7 @@ func (s *TaskExecutorSuite) TestAutoDeleteSkipped() {
 
 			s.runner.On("Run", mock.Anything, mock.MatchedBy(func(req *agent.AgentRequest) bool {
 				if tc.callOnTurn {
-					req.OnTurn(tc.response)
+					req.OnTurn(tc.response, agent.TurnRef{})
 				}
 				return true
 			})).Return(&agent.AgentResponse{

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/radutopala/loop/internal/agent"
 	"github.com/radutopala/loop/internal/db"
 	"github.com/radutopala/loop/internal/events"
 )
@@ -14,21 +15,29 @@ import (
 // triggerMsgID is the msg_id of the user message that triggered the run that
 // produced this bot reply; pass "" for bot rows that aren't run-emitted.
 func storeBotMessage(ctx context.Context, store db.Store, broadcaster events.Broadcaster, channelID, content, triggerMsgID string) {
+	storeBotTurn(ctx, store, broadcaster, channelID, content, triggerMsgID, agent.TurnRef{})
+}
+
+// storeBotTurn is storeBotMessage for a streamed text turn: the row also
+// records ref, where the text sits in the session's transcript.
+func storeBotTurn(ctx context.Context, store db.Store, broadcaster events.Broadcaster, channelID, content, triggerMsgID string, ref agent.TurnRef) {
 	msgID := generateMessageID()
 	var rowID int64
 	if store != nil {
 		ch, err := store.GetChannel(ctx, channelID)
 		if err == nil && ch != nil {
 			row := &db.Message{
-				ChatID:       ch.ID,
-				ChannelID:    channelID,
-				MsgID:        msgID,
-				AuthorName:   "agent",
-				Content:      content,
-				IsBot:        true,
-				IsProcessed:  true,
-				TriggerMsgID: triggerMsgID,
-				CreatedAt:    time.Now().UTC(),
+				ChatID:         ch.ID,
+				ChannelID:      channelID,
+				MsgID:          msgID,
+				AuthorName:     "agent",
+				Content:        content,
+				IsBot:          true,
+				IsProcessed:    true,
+				TriggerMsgID:   triggerMsgID,
+				CreatedAt:      time.Now().UTC(),
+				SessionID:      ref.SessionID,
+				TranscriptUUID: ref.UUID,
 			}
 			_ = store.InsertMessage(ctx, row)
 			rowID = row.ID

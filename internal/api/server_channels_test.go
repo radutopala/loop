@@ -371,8 +371,8 @@ func (s *ServerSuite) TestDeleteThreadLockedReturnsConflict() {
 }
 
 // TestDeleteThreadStopsHiddenThreads covers a deleted thread's hidden
-// threads: the learn thread's pass is stopped, the explain thread's run
-// cancelled, and both lose their containers.
+// threads: both are stopped (their runs cancelled and forks deleted) and
+// lose their containers.
 func (s *ServerSuite) TestDeleteThreadStopsHiddenThreads() {
 	s.store.On("GetChannel", mock.Anything, "thread-1").Return((*db.Channel)(nil), nil)
 	s.store.On("ListHiddenThreads", mock.Anything, "thread-1").Return([]*db.Channel{
@@ -381,8 +381,8 @@ func (s *ServerSuite) TestDeleteThreadStopsHiddenThreads() {
 	}, nil)
 	s.threads.On("DeleteThread", mock.Anything, "thread-1").Return(nil)
 	canceller := new(MockRunCanceller)
-	canceller.On("StopLearn", "learn-1").Return()
-	canceller.On("CancelActiveRun", "explain-1").Return(true)
+	canceller.On("StopHiddenThread", "learn-1").Return()
+	canceller.On("StopHiddenThread", "explain-1").Return()
 	s.srv.SetRunCanceller(canceller)
 	reg := &mockContainerManager{byChannel: []*container.ContainerInfo{
 		{ContainerID: "agent-l1", ChannelID: "learn-1", Type: container.ContainerTypeAgent},
@@ -1282,7 +1282,7 @@ func (s *ServerSuite) TestDeleteChannelCleansUpThreads() {
 			canceller := new(MockRunCanceller)
 			if !tc.noCanceller {
 				for _, id := range tc.wantStops {
-					canceller.On("StopLearn", id).Return()
+					canceller.On("StopHiddenThread", id).Return()
 				}
 				s.srv.SetRunCanceller(canceller)
 			}

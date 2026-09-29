@@ -83,7 +83,7 @@ func (s *TaskExecutorSuite) TestStreamingThreadBroadcastsToThread() {
 		if req.OnTurn == nil {
 			return false
 		}
-		req.OnTurn("Turn 1")
+		req.OnTurn("Turn 1", agent.TurnRef{})
 		return true
 	})).Return(&agent.AgentResponse{
 		Response: "Final", SessionID: "s20",
@@ -150,7 +150,7 @@ func (s *TaskExecutorSuite) TestStreamingOnToolUseBroadcasts() {
 			return false
 		}
 		// OnToolUse should broadcast to thread once created
-		req.OnTurn("Turn 1") // creates thread
+		req.OnTurn("Turn 1", agent.TurnRef{}) // creates thread
 		req.OnToolUse("toolu_a", "Read", "/tmp/foo.go")
 		return true
 	})).Return(&agent.AgentResponse{
@@ -194,7 +194,7 @@ func (s *TaskExecutorSuite) TestStreamingOnToolUseAskUserQuestion() {
 		if req.OnToolUse == nil {
 			return false
 		}
-		req.OnTurn("Turn 1")
+		req.OnTurn("Turn 1", agent.TurnRef{})
 		req.OnToolUse("toolu_q", "AskUserQuestion", askInput)
 		return true
 	})).Return(&agent.AgentResponse{Response: "Turn 1", SessionID: "sess-ask"}, nil)
@@ -235,7 +235,7 @@ func (s *TaskExecutorSuite) TestStreamingOnToolUseExitPlanMode() {
 		if req.OnToolUse == nil {
 			return false
 		}
-		req.OnTurn("Turn 1")
+		req.OnTurn("Turn 1", agent.TurnRef{})
 		req.OnToolUse("toolu_p", "ExitPlanMode", exitInput)
 		return true
 	})).Return(&agent.AgentResponse{Response: "Turn 1", SessionID: "sess-exit"}, nil)
@@ -276,7 +276,7 @@ func (s *TaskExecutorSuite) TestStreamingOnToolUseTaskCreate() {
 		if req.OnToolUse == nil || req.OnToolResult == nil {
 			return false
 		}
-		req.OnTurn("Turn 1")
+		req.OnTurn("Turn 1", agent.TurnRef{})
 		req.OnToolUse("toolu_t", "TaskCreate", taskInput)
 		req.OnToolResult("toolu_t", "Task #1 created successfully: Fix bug", false)
 		return true
@@ -325,7 +325,7 @@ func (s *TaskExecutorSuite) TestStreamingOnToolUseTaskUpdate() {
 		if req.OnToolUse == nil {
 			return false
 		}
-		req.OnTurn("Turn 1")
+		req.OnTurn("Turn 1", agent.TurnRef{})
 		req.OnToolUse("toolu_u", "TaskUpdate", updateInput)
 		return true
 	})).Return(&agent.AgentResponse{Response: "Turn 1", SessionID: "sess-upd"}, nil)
@@ -367,7 +367,7 @@ func (s *TaskExecutorSuite) TestStreamingOnToolUseBroadcastsBeforeThread() {
 		}
 		// OnToolUse fires BEFORE any OnTurn — threadID is empty, uses task.ChannelID
 		req.OnToolUse("toolu_b", "Bash", "ls")
-		req.OnTurn("Turn 1")
+		req.OnTurn("Turn 1", agent.TurnRef{})
 		return true
 	})).Return(&agent.AgentResponse{
 		Response: "Turn 1", SessionID: "sess-tu2",
@@ -411,7 +411,7 @@ func (s *TaskExecutorSuite) TestStreamingOnActivityBroadcasts() {
 			return false
 		}
 		req.OnActivity("model", "claude-opus-4-6")
-		req.OnTurn("Turn 1")
+		req.OnTurn("Turn 1", agent.TurnRef{})
 		req.OnActivity("subagent_started", "Sub task")
 		return true
 	})).Return(&agent.AgentResponse{
@@ -479,7 +479,7 @@ func (s *TaskExecutorSuite) TestStreamingOnCompactingPersistsRow() {
 		// Non-compacting activity must NOT trigger storeAgentEvent (verified
 		// by InsertAgentEvent expecting only one call total).
 		req.OnActivity("model", "claude-opus-4-6")
-		req.OnTurn("Turn 1")
+		req.OnTurn("Turn 1", agent.TurnRef{})
 		return true
 	})).Return(&agent.AgentResponse{
 		Response: "Turn 1", SessionID: "sess-cmp",
@@ -529,7 +529,7 @@ func (s *TaskExecutorSuite) TestStreamingOnThinkingAndToolResultBroadcasts() {
 		// Pre-thread fires use task.ChannelID
 		req.OnThinking("pre-thread plan")
 		req.OnToolResult("toolu_x", "pre-out", false)
-		req.OnTurn("Turn 1")
+		req.OnTurn("Turn 1", agent.TurnRef{})
 		// Post-thread fires use threadID
 		req.OnThinking("post-thread plan")
 		req.OnToolResult("toolu_y", "post-out", true)
@@ -594,7 +594,7 @@ func (s *TaskExecutorSuite) TestStreamingResolvesThreadChatID() {
 		if req.OnTurn == nil || req.OnToolUse == nil {
 			return false
 		}
-		req.OnTurn("Turn 1")
+		req.OnTurn("Turn 1", agent.TurnRef{})
 		req.OnToolUse("toolu_r", "Read", "/x")
 		// Second tool call exercises the cached path (threadChatIDResolved=true).
 		req.OnToolUse("toolu_s", "Read", "/y")
@@ -648,7 +648,7 @@ func (s *TaskExecutorSuite) TestStreamingOnceTaskUpsertsChannel() {
 		if req.OnTurn == nil {
 			return false
 		}
-		req.OnTurn("Done")
+		req.OnTurn("Done", agent.TurnRef{})
 		return true
 	})).Return(&agent.AgentResponse{Response: "Done", SessionID: "s72"}, nil)
 	s.store.On("UpdateSessionID", s.ctx, "thread-72", "s72").Return(nil)
@@ -692,7 +692,7 @@ func (s *TaskExecutorSuite) TestStreamingInvitesPermissionUsersToThread() {
 		if req.OnTurn == nil {
 			return false
 		}
-		req.OnTurn("Turn 1")
+		req.OnTurn("Turn 1", agent.TurnRef{})
 		return true
 	})).Return(&agent.AgentResponse{
 		Response: "Turn 1", SessionID: "s21",
@@ -737,7 +737,7 @@ func (s *TaskExecutorSuite) TestStreamingInviteErrorsAreLogged() {
 		if req.OnTurn == nil {
 			return false
 		}
-		req.OnTurn("Turn 1")
+		req.OnTurn("Turn 1", agent.TurnRef{})
 		return true
 	})).Return(&agent.AgentResponse{
 		Response: "Turn 1", SessionID: "s22",

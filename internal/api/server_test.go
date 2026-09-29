@@ -21,6 +21,7 @@ import (
 
 	"github.com/radutopala/loop/internal/bot"
 	"github.com/radutopala/loop/internal/config"
+	"github.com/radutopala/loop/internal/db"
 	"github.com/radutopala/loop/internal/memory"
 	"github.com/radutopala/loop/internal/testutil"
 )
@@ -188,12 +189,8 @@ func (m *MockRunCanceller) CancelActiveRun(channelID string) bool {
 	return args.Bool(0)
 }
 
-func (m *MockRunCanceller) StopLearn(learnChannelID string) {
-	m.Called(learnChannelID)
-}
-
-func (m *MockRunCanceller) IsLearnPassRunning(learnChannelID string) bool {
-	return m.Called(learnChannelID).Bool(0)
+func (m *MockRunCanceller) StopHiddenThread(h *db.Channel) {
+	m.Called(h.ChannelID)
 }
 
 type ServerSuite struct {

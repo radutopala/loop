@@ -39,9 +39,10 @@ type TestContext struct {
 	CreatedTaskIDs           []string
 	CreatedDirs              []string
 	WorktreeThreadID         string
-	LearnChannelID           string // hidden learn thread seeded under ChannelID
-	ExplainMsgID             string // last bot message of a turn seeded in ChannelID
-	ExplainChannelID         string // hidden explain thread seeded under ChannelID
+	LearnChannelID           string   // hidden learn thread seeded under ChannelID
+	ExplainMsgID             string   // last bot message of a turn seeded in ChannelID
+	TurnMsgIDs               []string // last bot message of each turn seeded in ChannelID, in order
+	ExplainChannelID         string   // hidden explain thread seeded under ChannelID
 	WorktreePath             string
 	CreatedShortcutNames     []string
 	CreatedBashShortcutNames []string
@@ -108,6 +109,9 @@ func (tc *TestContext) resolvePlaceholders(path string) string {
 	path = strings.ReplaceAll(path, "{worktree_path}", tc.WorktreePath)
 	path = strings.ReplaceAll(path, "{learn_channel_id}", tc.LearnChannelID)
 	path = strings.ReplaceAll(path, "{explain_msg_id}", tc.ExplainMsgID)
+	for i, id := range tc.TurnMsgIDs {
+		path = strings.ReplaceAll(path, fmt.Sprintf("{turn_%d_msg_id}", i+1), id)
+	}
 	path = strings.ReplaceAll(path, "{explain_channel_id}", tc.ExplainChannelID)
 	return path
 }

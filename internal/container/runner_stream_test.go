@@ -10,6 +10,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/radutopala/loop/internal/agent"
 	"github.com/radutopala/loop/internal/config"
 )
 
@@ -482,7 +483,7 @@ func TestParseStreamingJSON(t *testing.T) {
 {"type":"result","result":"Here is the answer.","session_id":"sess-1","is_error":false}
 `
 		var turns []string
-		onTurn := func(text string) {
+		onTurn := func(text string, _ agent.TurnRef) {
 			turns = append(turns, text)
 		}
 
@@ -498,7 +499,7 @@ func TestParseStreamingJSON(t *testing.T) {
 	t.Run("no result event", func(t *testing.T) {
 		input := `{"type":"assistant","message":{"content":[{"type":"text","text":"Hello"}]}}
 `
-		resp, err := scanStreamJSON(strings.NewReader(input), streamCallbacks{onTurn: func(string) {}})
+		resp, err := scanStreamJSON(strings.NewReader(input), streamCallbacks{onTurn: func(string, agent.TurnRef) {}})
 		require.Error(t, err)
 		require.Nil(t, resp)
 		require.Contains(t, err.Error(), "no result event found")
@@ -509,7 +510,7 @@ func TestParseStreamingJSON(t *testing.T) {
 {"type":"result","result":"Done.","session_id":"sess-2","is_error":false}
 `
 		var turns []string
-		resp, err := scanStreamJSON(strings.NewReader(input), streamCallbacks{onTurn: func(text string) {
+		resp, err := scanStreamJSON(strings.NewReader(input), streamCallbacks{onTurn: func(text string, _ agent.TurnRef) {
 			turns = append(turns, text)
 		}})
 		require.NoError(t, err)
@@ -522,7 +523,7 @@ func TestParseStreamingJSON(t *testing.T) {
 		input := `not json at all
 {"type":"result","result":"OK","session_id":"sess-3","is_error":false}
 `
-		resp, err := scanStreamJSON(strings.NewReader(input), streamCallbacks{onTurn: func(string) {}})
+		resp, err := scanStreamJSON(strings.NewReader(input), streamCallbacks{onTurn: func(string, agent.TurnRef) {}})
 		require.NoError(t, err)
 		require.Equal(t, "OK", resp.Result)
 	})
@@ -532,7 +533,7 @@ func TestParseStreamingJSON(t *testing.T) {
 
 {"type":"result","result":"OK","session_id":"sess-4","is_error":false}
 `
-		resp, err := scanStreamJSON(strings.NewReader(input), streamCallbacks{onTurn: func(string) {}})
+		resp, err := scanStreamJSON(strings.NewReader(input), streamCallbacks{onTurn: func(string, agent.TurnRef) {}})
 		require.NoError(t, err)
 		require.Equal(t, "OK", resp.Result)
 	})
@@ -542,7 +543,7 @@ func TestParseStreamingJSON(t *testing.T) {
 {"type":"result","result":"OK","session_id":"sess-5","is_error":false}
 `
 		var turns []string
-		resp, err := scanStreamJSON(strings.NewReader(input), streamCallbacks{onTurn: func(text string) {
+		resp, err := scanStreamJSON(strings.NewReader(input), streamCallbacks{onTurn: func(text string, _ agent.TurnRef) {
 			turns = append(turns, text)
 		}})
 		require.NoError(t, err)
@@ -554,7 +555,7 @@ func TestParseStreamingJSON(t *testing.T) {
 		input := `{"type":"result","result":123}
 {"type":"result","result":"OK","session_id":"sess-6","is_error":false}
 `
-		resp, err := scanStreamJSON(strings.NewReader(input), streamCallbacks{onTurn: func(string) {}})
+		resp, err := scanStreamJSON(strings.NewReader(input), streamCallbacks{onTurn: func(string, agent.TurnRef) {}})
 		require.NoError(t, err)
 		require.Equal(t, "OK", resp.Result)
 	})
@@ -562,7 +563,7 @@ func TestParseStreamingJSON(t *testing.T) {
 	t.Run("error result", func(t *testing.T) {
 		input := `{"type":"result","result":"something broke","session_id":"sess-err","is_error":true}
 `
-		resp, err := scanStreamJSON(strings.NewReader(input), streamCallbacks{onTurn: func(string) {}})
+		resp, err := scanStreamJSON(strings.NewReader(input), streamCallbacks{onTurn: func(string, agent.TurnRef) {}})
 		require.NoError(t, err)
 		require.True(t, resp.IsError)
 		require.Equal(t, "something broke", resp.Result)
@@ -578,7 +579,7 @@ func TestScanStreamJSONSkipsUserEvents(t *testing.T) {
 `
 	var turns []string
 	cb := streamCallbacks{
-		onTurn: func(text string) { turns = append(turns, text) },
+		onTurn: func(text string, _ agent.TurnRef) { turns = append(turns, text) },
 	}
 	resp, err := scanStreamJSON(strings.NewReader(input), cb)
 	require.NoError(t, err)
@@ -689,7 +690,7 @@ func TestScanStreamJSONUserEventWithNewline(t *testing.T) {
 `
 	var turns []string
 	cb := streamCallbacks{
-		onTurn: func(text string) { turns = append(turns, text) },
+		onTurn: func(text string, _ agent.TurnRef) { turns = append(turns, text) },
 	}
 	resp, err := scanStreamJSON(strings.NewReader(input), cb)
 	require.NoError(t, err)
@@ -798,7 +799,7 @@ func TestScanStreamJSONOnThinking(t *testing.T) {
 `
 	var turns, thinks []string
 	cb := streamCallbacks{
-		onTurn:     func(text string) { turns = append(turns, text) },
+		onTurn:     func(text string, _ agent.TurnRef) { turns = append(turns, text) },
 		onThinking: func(text string) { thinks = append(thinks, text) },
 	}
 	resp, err := scanStreamJSON(strings.NewReader(input), cb)
@@ -940,11 +941,43 @@ func TestScanStreamJSONInterleavedTextThinkingToolUse(t *testing.T) {
 `
 	var calls []string
 	cb := streamCallbacks{
-		onTurn:     func(t string) { calls = append(calls, "text:"+t) },
+		onTurn:     func(t string, _ agent.TurnRef) { calls = append(calls, "text:"+t) },
 		onThinking: func(t string) { calls = append(calls, "think:"+t) },
 		onToolUse:  func(id, name, _ string) { calls = append(calls, "tool:"+id+":"+name) },
 	}
 	_, err := scanStreamJSON(strings.NewReader(input), cb)
 	require.NoError(t, err)
 	require.Equal(t, []string{"think:plan", "tool:toolu_1:Read", "text:done"}, calls)
+}
+
+func TestScanStreamJSONTurnRef(t *testing.T) {
+	tests := []struct {
+		name  string
+		event string
+		want  agent.TurnRef
+	}{
+		{
+			name:  "main chain text",
+			event: `{"type":"assistant","uuid":"u-1","session_id":"s-1","parent_tool_use_id":null,"message":{"content":[{"type":"text","text":"hi"}]}}`,
+			want:  agent.TurnRef{SessionID: "s-1", UUID: "u-1"},
+		},
+		{
+			name:  "subagent text",
+			event: `{"type":"assistant","uuid":"u-2","session_id":"s-1","parent_tool_use_id":"toolu_1","message":{"content":[{"type":"text","text":"hi"}]}}`,
+		},
+		{
+			name:  "older CLI without ids",
+			event: `{"type":"assistant","message":{"content":[{"type":"text","text":"hi"}]}}`,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			var refs []agent.TurnRef
+			_, err := scanStreamJSON(strings.NewReader(tc.event+"\n"+`{"type":"result","result":"hi","session_id":"s-1"}`), streamCallbacks{onTurn: func(_ string, ref agent.TurnRef) {
+				refs = append(refs, ref)
+			}})
+			require.NoError(t, err)
+			require.Equal(t, []agent.TurnRef{tc.want}, refs)
+		})
+	}
 }

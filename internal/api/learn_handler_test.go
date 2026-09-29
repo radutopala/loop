@@ -24,14 +24,15 @@ func (s *ServerSuite) learnRequest(method, channelID, body string) *httptest.Res
 
 func (s *ServerSuite) TestLearnGet() {
 	tests := []struct {
-		name     string
-		override string
-		platform types.Platform
-		def      bool
-		learnCh  *db.Channel
-		loadErr  error
-		running  bool
-		want     learnStateResponse
+		name       string
+		override   string
+		platform   types.Platform
+		def        bool
+		learnCh    *db.Channel
+		loadErr    error
+		running    bool
+		runningErr error
+		want       learnStateResponse
 	}{
 		{name: "inherits off", want: learnStateResponse{Available: true}},
 		{name: "config load error falls back to off", loadErr: os.ErrNotExist, want: learnStateResponse{Available: true}},
@@ -49,6 +50,10 @@ func (s *ServerSuite) TestLearnGet() {
 		{
 			name: "learn thread running", override: db.LearnOn, learnCh: &db.Channel{ChannelID: "l-1"}, running: true,
 			want: learnStateResponse{Available: true, Learn: "on", Enabled: true, LearnChannelID: "l-1", Running: true},
+		},
+		{
+			name: "running check fails", override: db.LearnOn, learnCh: &db.Channel{ChannelID: "l-1"}, runningErr: os.ErrPermission,
+			want: learnStateResponse{Available: true, Learn: "on", Enabled: true, LearnChannelID: "l-1"},
 		},
 	}
 	for _, tc := range tests {
@@ -72,9 +77,7 @@ func (s *ServerSuite) TestLearnGet() {
 				return &merged, nil
 			}
 			if tc.learnCh != nil {
-				canceller := new(MockRunCanceller)
-				canceller.On("IsLearnPassRunning", "l-1").Return(tc.running)
-				s.srv.SetRunCanceller(canceller)
+				s.store.On("LearnPassRunning", mock.Anything, "l-1").Return(tc.running, tc.runningErr)
 			}
 
 			w := s.learnRequest("GET", "ch-1", "")

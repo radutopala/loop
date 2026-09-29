@@ -225,11 +225,11 @@ const maxQuoted = 2000
 // TurnTriggerMessage is the message that starts a learn pass the user asked
 // for over one turn in channelName, the one prompt started and reply ended.
 // Its first line is TriggerMessage's, so IsTrigger knows it too; the rest
-// points the pass at that turn, which may not be the session's latest.
+// points the pass at that turn.
 func TurnTriggerMessage(channelName, prompt, reply string) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "%s%q%s", triggerLead, channelName, triggerTail)
-	b.WriteString("\n\nThe user asked for one turn of it to be reviewed; it may not be the latest turn in the session.")
+	b.WriteString("\n\nThe user asked for this turn to be reviewed.")
 	if p := strings.TrimSpace(prompt); p != "" {
 		b.WriteString("\n\nThat turn's prompt was:\n\n")
 		b.WriteString(quote(truncate(p)))

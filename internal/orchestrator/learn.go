@@ -5,7 +5,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"time"
 
 	"github.com/radutopala/loop/internal/agent"
 	"github.com/radutopala/loop/internal/bot"
@@ -75,45 +74,25 @@ func learnSkipReason(ch *db.Channel, resp *agent.AgentResponse, cfg config.Learn
 	return ""
 }
 
-// learnPass is a finished run a learn pass reviews: the channel it ran in,
-// the prompt that started it, the session to fork, the turn's last bot
-// message and the id of the trigger message that starts the pass. content
-// is the trigger message's text when it isn't learn.TriggerMessage's over
-// prompt, as for a pass the user asked for (see LearnTurn). row is the pass
-// as recorded, nil when it isn't.
+// learnPass is a turn a learn pass reviews: the channel it ran in, the
+// prompt that started it, the turn's last bot message and the id of the
+// trigger message that starts the pass. content is the trigger message's
+// text when it isn't learn.TriggerMessage's over prompt, as for a pass the
+// user asked for (see LearnTurn). row is the pass as recorded, nil when it
+// isn't.
 type learnPass struct {
 	parent    *db.Channel
 	prompt    string
-	sessionID string
 	messageID string
 	triggerID string
 	content   string
 	row       *db.LearnPass
 }
 
-// learnSlot tracks one learn thread's passes. triggered is set from when a
-// pass's trigger is queued (at triggeredAt) until its run ends, running
-// from when that run starts; next is the latest run that finished
-// meanwhile, reviewed once the thread is free. Runs in between are folded
-// into it: the fork of the newest session covers them.
-type learnSlot struct {
-	triggered   bool
-	running     bool
-	triggeredAt time.Time
-	next        *learnPass
-}
-
-// learnTriggerLost is how long a queued trigger may go without its run
-// ending before queueLearn takes it as dropped (HandleMessage gave up on it)
-// and lets the next pass start, so one lost trigger can't stop the channel
-// learning until a restart.
-const learnTriggerLost = time.Hour
-
-// maybeLearn starts a learn pass over the run that just finished in ch, when
+// maybeLearn queues a learn pass over the run that just finished in ch, when
 // it should (see learnSkipReason): it creates ch's learn thread on first use
-// and starts the pass there, or queues it while the thread is busy. The
-// pass runs on the learn thread's own drain, so ch's queue is never held up
-// by it.
+// and queues the pass there. The pass runs on the learn thread's own drain,
+// in turn with its other passes, so ch's queue is never held up by it.
 func (o *Orchestrator) maybeLearn(ctx context.Context, ch *db.Channel, msg *bot.IncomingMessage, resp *agent.AgentResponse) {
 	if ch.Kind == db.ChannelKindLearn {
 		return
@@ -147,16 +126,17 @@ func (o *Orchestrator) maybeLearn(ctx context.Context, ch *db.Channel, msg *bot.
 		o.logger.Error("learn: creating learn thread", "error", err, "channel_id", ch.ChannelID)
 		return
 	}
-	pass := &learnPass{parent: ch, prompt: msg.Content, sessionID: resp.SessionID, triggerID: generateMessageID()}
+	pass := &learnPass{parent: ch, prompt: msg.Content, triggerID: generateMessageID()}
 	o.recordLearnPass(ctx, l, msg, pass)
-	o.runLearnPass(ctx, l, pass)
+	o.startLearn(ctx, l, pass)
 }
 
-// LearnTurn starts a learn pass the user asked for over the turn in ch that
+// LearnTurn queues a learn pass the user asked for over the turn in ch that
 // ended with bot message messageID, in ch's learn thread, created on first
-// use. It runs whether or not ch's Learn switch is on. The pass forks ch's
-// current session, so it sees the turn even when later ones followed. A
-// pass over the turn already queued or running is returned as it is.
+// use. It runs whether or not ch's Learn switch is on. The pass forks the
+// session where the turn ended, so it sees the turn as it was, not the ones
+// that followed. A pass over the turn already queued or running is returned
+// as it is.
 func (o *Orchestrator) LearnTurn(ctx context.Context, ch *db.Channel, messageID string) (*db.LearnPass, error) {
 	if explain.Unavailable(ch) != "" {
 		return nil, learn.ErrUnavailable
@@ -168,7 +148,7 @@ func (o *Orchestrator) LearnTurn(ctx context.Context, ch *db.Channel, messageID 
 	if reply == nil || !reply.IsBot || reply.TriggerMsgID == "" {
 		return nil, learn.ErrNotATurn
 	}
-	if ch.SessionID == "" {
+	if !canForkTurn(ch, reply) {
 		return nil, learn.ErrNoSession
 	}
 	p, err := o.store.ActiveLearnPass(ctx, ch.ChannelID, messageID)
@@ -189,7 +169,6 @@ func (o *Orchestrator) LearnTurn(ctx context.Context, ch *db.Channel, messageID 
 	pass := &learnPass{
 		parent:    ch,
 		prompt:    prompt,
-		sessionID: ch.SessionID,
 		messageID: messageID,
 		triggerID: generateMessageID(),
 		content:   learn.TurnTriggerMessage(ch.Name, prompt, reply.Content),
@@ -198,28 +177,14 @@ func (o *Orchestrator) LearnTurn(ctx context.Context, ch *db.Channel, messageID 
 		return nil, err
 	}
 	o.logger.Info("learn: pass asked for", "channel_id", ch.ChannelID, "learn_channel_id", l.ChannelID, "message_id", messageID)
-	o.runLearnPass(ctx, l, pass)
-	return pass.row, nil
-}
-
-// runLearnPass starts pass in learn thread l, or keeps it as the one to run
-// next while the thread is busy; the waiting pass it replaces is marked
-// superseded.
-func (o *Orchestrator) runLearnPass(ctx context.Context, l *db.Channel, pass *learnPass) {
-	queued, replaced := o.queueLearn(l.ChannelID, pass)
-	if replaced != nil {
-		o.setLearnPass(ctx, replaced.row, db.LearnPassSuperseded, "")
-	}
-	if queued {
-		o.logger.Info("learn: queued behind the running pass", "channel_id", pass.parent.ChannelID, "learn_channel_id", l.ChannelID)
-		return
-	}
 	o.startLearn(ctx, l, pass)
+	return pass.row, nil
 }
 
 // recordLearnPass records pass as queued in learn thread l, against the
 // turn msg started in pass's channel, and tells the chat. A turn with no
-// reply isn't recorded; its pass still runs.
+// reply isn't recorded; its pass still runs, over a fork of the channel's
+// whole session at the time it starts.
 func (o *Orchestrator) recordLearnPass(ctx context.Context, l *db.Channel, msg *bot.IncomingMessage, pass *learnPass) {
 	ch := pass.parent
 	reply, err := o.store.LastBotMessage(ctx, ch.ChannelID, msg.MessageID)
@@ -250,133 +215,12 @@ func (o *Orchestrator) insertLearnPass(ctx context.Context, l *db.Channel, pass 
 	return nil
 }
 
-// queueLearn claims learn thread id for pass and reports false, or, when the
-// thread is busy (a pass is queued or running there, or the user is talking
-// to it), keeps pass as the one to run next and reports true. It returns the
-// waiting pass that pass replaces, if any: pass forks a newer session, which
-// covers that one's turn too.
-func (o *Orchestrator) queueLearn(id string, pass *learnPass) (queued bool, replaced *learnPass) {
-	o.learnMu.Lock()
-	defer o.learnMu.Unlock()
-	slot := o.learnSlots[id]
-	if slot != nil {
-		replaced = slot.next
-	}
-	_, running := o.activeRuns.Load(id)
-	if slot != nil && slot.triggered && !running && o.timeNow().Sub(slot.triggeredAt) > learnTriggerLost {
-		o.logger.Warn("learn: trigger never ran, starting the next pass", "learn_channel_id", id)
-		slot = nil
-	}
-	if slot != nil || running {
-		if slot == nil {
-			slot = &learnSlot{}
-			o.learnSlots[id] = slot
-		}
-		slot.next = pass
-		return true, replaced
-	}
-	o.learnSlots[id] = &learnSlot{triggered: true, triggeredAt: o.timeNow()}
-	return false, replaced
-}
-
-// learnRunStarted is called when any run in channelID starts. A learn
-// pass's run marks its slot running. A pass resumed after a restart has no
-// slot yet; it gets one, so the thread counts as busy until the run ends.
-func (o *Orchestrator) learnRunStarted(channelID, authorID string) {
-	if authorID != learnAuthorID {
-		return
-	}
-	o.learnMu.Lock()
-	defer o.learnMu.Unlock()
-	slot := o.learnSlots[channelID]
-	if slot == nil {
-		slot = &learnSlot{triggered: true, triggeredAt: o.timeNow()}
-		o.learnSlots[channelID] = slot
-	}
-	slot.running = true
-}
-
-// IsLearnPassRunning reports whether a learn pass is running in learn
-// thread id. A user's reply running there isn't a pass, nor is a pass still
-// waiting for its turn.
-func (o *Orchestrator) IsLearnPassRunning(id string) bool {
-	o.learnMu.Lock()
-	defer o.learnMu.Unlock()
-	slot := o.learnSlots[id]
-	return slot != nil && slot.running
-}
-
-// learnRunDone is called when any run in channelID ends. A learn thread that
-// has no pass of its own still queued is free again; the pass waiting for
-// it, if any, starts now.
-func (o *Orchestrator) learnRunDone(ctx context.Context, channelID, authorID string) {
-	o.learnMu.Lock()
-	slot := o.learnSlots[channelID]
-	if slot == nil {
-		o.learnMu.Unlock()
-		return
-	}
-	if authorID == learnAuthorID {
-		slot.triggered, slot.running = false, false
-	}
-	next := slot.next
-	switch {
-	case slot.triggered:
-		// A user's run ended; the queued pass still has to run.
-		next = nil
-	case next == nil:
-		delete(o.learnSlots, channelID)
-	default:
-		slot.next, slot.triggered, slot.triggeredAt = nil, true, o.timeNow()
-	}
-	o.learnMu.Unlock()
-	if next == nil {
-		return
-	}
-	// The learn thread goes with its channel, so a missing one means the
-	// channel was deleted while the pass waited.
-	l, err := o.store.GetChannel(ctx, channelID)
-	if err != nil || l == nil {
-		o.logger.Debug("learn: dropping the waiting pass", "reason", "learn thread gone", "error", err, "learn_channel_id", channelID)
-		o.releaseLearn(channelID)
-		return
-	}
-	o.startLearn(ctx, l, next)
-}
-
-// releaseLearn frees learn thread id when its pass never got queued.
-func (o *Orchestrator) releaseLearn(id string) {
-	o.learnMu.Lock()
-	defer o.learnMu.Unlock()
-	delete(o.learnSlots, id)
-}
-
-// StopLearn forgets learn thread id's queued pass and cancels its running
-// one, for when the learn thread is deleted with its channel. The slot goes
-// first, so the cancelled run's learnRunDone finds nothing left to start.
-func (o *Orchestrator) StopLearn(id string) {
-	o.releaseLearn(id)
-	o.CancelActiveRun(id)
-}
-
-// startLearn points learn thread l at a fork of pass's session and queues
-// the trigger message there.
+// startLearn queues pass's trigger message in learn thread l. It waits
+// there behind the thread's earlier passes and the user's replies; its run
+// forks the reviewed turn's session (see applyLearnRequest).
 func (o *Orchestrator) startLearn(ctx context.Context, l *db.Channel, pass *learnPass) {
 	ch := pass.parent
-	ok, err := o.store.MarkSessionForkPending(ctx, l.ChannelID, pass.sessionID)
-	if err != nil {
-		o.logger.Error("learn: forking session", "error", err, "channel_id", l.ChannelID)
-		o.releaseLearn(l.ChannelID)
-		o.setLearnPass(ctx, pass.row, db.LearnPassFailed, err.Error())
-		return
-	}
-	if !ok {
-		// The learn thread was deleted with its channel since it was looked up.
-		o.logger.Debug("learn: dropping the pass", "reason", "learn thread gone", "learn_channel_id", l.ChannelID)
-		o.releaseLearn(l.ChannelID)
-		return
-	}
-	o.logger.Info("learn: starting", "channel_id", ch.ChannelID, "learn_channel_id", l.ChannelID)
+	o.logger.Info("learn: queued", "channel_id", ch.ChannelID, "learn_channel_id", l.ChannelID)
 	// Tell ch's viewers first: the learn thread is hidden, so nobody is
 	// subscribed to it until they hear it exists.
 	if o.events != nil {
@@ -478,10 +322,16 @@ func (o *Orchestrator) ensureHiddenThread(ctx context.Context, ch *db.Channel, k
 }
 
 // applyLearnRequest turns req, built for learn thread l under parent, into a
-// learn pass: its own agent id and tool denials, and a system prompt that
-// teaches it Loop's proposal kinds and what parent's project already has. The
-// model and effort are learn.model / learn.effort, else parent's overrides.
-func (o *Orchestrator) applyLearnRequest(ctx context.Context, req *agent.AgentRequest, parent *db.Channel) {
+// learn pass or a user's reply to one: its own agent id and tool denials,
+// and a system prompt that teaches it Loop's proposal kinds and what
+// parent's project already has. The model and effort are learn.model /
+// learn.effort, else parent's overrides. A pass (passTrigger) forks the
+// session of the turn that ended with bot message turnID (see forkAtTurn);
+// a reply resumes the learn thread's own session, the latest pass's fork.
+func (o *Orchestrator) applyLearnRequest(ctx context.Context, req *agent.AgentRequest, parent *db.Channel, passTrigger bool, turnID string) error {
+	if passTrigger && !o.forkAtTurn(ctx, req, parent, turnID) {
+		return learn.ErrNoSession
+	}
 	cfg, dir := o.resolvedConfig(ctx, parent)
 	// Tasks are listed where an applied scheduled_task proposal creates
 	// them (see resolveTaskChannelID), so the pass sees the ones it could
@@ -509,4 +359,34 @@ func (o *Orchestrator) applyLearnRequest(ctx context.Context, req *agent.AgentRe
 		Tasks:       tasks,
 		Proposals:   proposals,
 	})
+	return nil
+}
+
+// canForkTurn reports whether the turn in ch that ended with bot message
+// reply has a session to fork: its own, recorded on reply, else ch's.
+func canForkTurn(ch *db.Channel, reply *db.Message) bool {
+	return (reply.SessionID != "" && reply.TranscriptUUID != "") || ch.SessionID != ""
+}
+
+// forkAtTurn points req at a fork of the turn in parent that ended with bot
+// message turnID, cut where the turn ended, so a review sees the turn as it
+// was and not the turns after it. A turn whose reply doesn't record where it
+// ended (stored before Loop recorded it, or with no turn at all, turnID "")
+// gets a fork of parent's whole current session instead. It reports false
+// when there's no session to fork.
+func (o *Orchestrator) forkAtTurn(ctx context.Context, req *agent.AgentRequest, parent *db.Channel, turnID string) bool {
+	req.ForkSession = true
+	req.ResumeAt = ""
+	if turnID != "" {
+		reply, err := o.store.GetChatMessage(ctx, parent.ChannelID, turnID)
+		if err != nil {
+			o.logger.Warn("loading the reviewed turn", "error", err, "channel_id", parent.ChannelID, "message_id", turnID)
+		}
+		if reply != nil && reply.SessionID != "" && reply.TranscriptUUID != "" {
+			req.SessionID, req.ResumeAt = reply.SessionID, reply.TranscriptUUID
+			return true
+		}
+	}
+	req.SessionID = parent.SessionID
+	return parent.SessionID != ""
 }

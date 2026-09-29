@@ -57,8 +57,8 @@ export interface LearnProposal {
 }
 
 /** A learn pass over one chat turn, keyed by the turn's last bot message.
- * "superseded": replaced before it started by the next turn's pass, which
- * forks the newer session and so covers this turn too. */
+ * "superseded" is only found on passes from before they queued one after
+ * another: the next turn's pass replaced it before it started. */
 export interface LearnPass {
   id: number;
   channel_id: string;

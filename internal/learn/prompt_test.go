@@ -163,7 +163,7 @@ func (s *PromptSuite) TestTriggerMessage() {
 
 func (s *PromptSuite) TestTurnTriggerMessage() {
 	const lead = "The run in \"api\" just finished. Review it and propose what Loop should learn from it.\n\n" +
-		"The user asked for one turn of it to be reviewed; it may not be the latest turn in the session."
+		"The user asked for this turn to be reviewed."
 	long := strings.Repeat("é", maxQuoted+10)
 	tests := []struct {
 		name   string

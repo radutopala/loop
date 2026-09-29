@@ -23,7 +23,8 @@ const explainAuthorID = "loop-explain"
 // Explain explains the turn in ch that ended with bot message messageID: it
 // returns the turn's explanation when there is one and force is false, and
 // otherwise queues a new one in ch's hidden explain thread, created on first
-// use. The run forks ch's session, so it sees the whole turn. Runs in the
+// use. The run forks the session where the turn ended, so it sees the whole
+// turn and not the ones that followed. Runs in the
 // explain thread take turns on its queue, so one explanation of ch runs at
 // a time. An explanation already queued or running is returned as it is.
 func (o *Orchestrator) Explain(ctx context.Context, ch *db.Channel, messageID string, force bool) (*db.Explanation, error) {
@@ -43,7 +44,7 @@ func (o *Orchestrator) Explain(ctx context.Context, ch *db.Channel, messageID st
 	if reply == nil || !reply.IsBot || reply.TriggerMsgID == "" {
 		return nil, explain.ErrNotATurn
 	}
-	if ch.SessionID == "" {
+	if !canForkTurn(ch, reply) {
 		return nil, explain.ErrNoSession
 	}
 	var prompt string
@@ -136,16 +137,15 @@ func (o *Orchestrator) maybeExplain(ctx context.Context, ch *db.Channel, msg *bo
 }
 
 // applyExplainRequest turns req, built for an explain thread under parent,
-// into an explain run: a read-only fork of parent's current session, with
-// its own agent id and the explain system prompt. The model and effort are
-// explain.model / explain.effort, else parent's overrides.
-func (o *Orchestrator) applyExplainRequest(ctx context.Context, req *agent.AgentRequest, parent *db.Channel) error {
-	if parent.SessionID == "" {
+// into an explain run: a read-only fork of the session of the turn that
+// ended with bot message turnID (see forkAtTurn), with its own agent id and
+// the explain system prompt. The model and effort are explain.model /
+// explain.effort, else parent's overrides.
+func (o *Orchestrator) applyExplainRequest(ctx context.Context, req *agent.AgentRequest, parent *db.Channel, turnID string) error {
+	if !o.forkAtTurn(ctx, req, parent, turnID) {
 		return explain.ErrNoSession
 	}
 	cfg, _ := o.resolvedConfig(ctx, parent)
-	req.SessionID = parent.SessionID
-	req.ForkSession = true
 	req.AgentID = explain.AgentID
 	req.ReadOnly = true
 	req.Model = cmp.Or(cfg.Explain.Model, parent.ModelOverride)

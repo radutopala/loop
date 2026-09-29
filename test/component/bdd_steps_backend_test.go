@@ -67,6 +67,8 @@ func registerBackendSteps(ctx *godog.ScenarioContext, tc *TestContext) {
 	ctx.Step(`^the learn thread has a bot message:$`, tc.seedLearnThreadMessage)
 	ctx.Step(`^the learn pass withdraws the proposal "([^"]*)" because "([^"]*)"$`, tc.withdrawLearnProposal)
 	ctx.Step(`^the current channel has a finished turn "([^"]*)" replying "([^"]*)"$`, tc.seedExplainTurn)
+	ctx.Step(`^the current channel has a finished turn "([^"]*)" replying "([^"]*)" in session "([^"]*)"$`, tc.seedTurnInSession)
+	ctx.Step(`^the current channel's learn passes review turns (\d+) and (\d+), and none is superseded$`, tc.assertLearnPassesPerTurn)
 	ctx.Step(`^the turn has an explanation:$`, tc.seedExplanation)
 	ctx.Step(`^the turn has a "([^"]*)" learn pass$`, tc.seedLearnPass)
 
@@ -150,7 +152,7 @@ func (tc *TestContext) assertJSONField(field, expected string) error {
 		return fmt.Errorf("JSON field %q not found in response: %s", field, string(tc.LastBody))
 	}
 	actual := fmt.Sprintf("%v", val)
-	if actual != expected {
+	if expected = tc.resolvePlaceholders(expected); actual != expected {
 		return fmt.Errorf("JSON field %q: expected %q, got %q", field, expected, actual)
 	}
 	return nil
@@ -1258,6 +1260,19 @@ func (tc *TestContext) withdrawLearnProposal(title, reason string) error {
 // them. The reply's msg_id is {explain_msg_id}. They go straight into the
 // daemon's database: posting a prompt through the API would start a run.
 func (tc *TestContext) seedExplainTurn(prompt, reply string) error {
+	return tc.seedTurn(prompt, reply, "")
+}
+
+// seedTurnInSession seeds a finished turn as seedExplainTurn does, but with
+// the reply's place in agent session sessionID recorded, as a run leaves it:
+// a learn pass or explanation over it forks that session cut at the reply.
+// The turn's msg_id is also {turn_N_msg_id}, N counting the scenario's
+// turns from 1.
+func (tc *TestContext) seedTurnInSession(prompt, reply, sessionID string) error {
+	return tc.seedTurn(prompt, reply, sessionID)
+}
+
+func (tc *TestContext) seedTurn(prompt, reply, sessionID string) error {
 	if tc.ChannelID == "" {
 		return fmt.Errorf("no channel_id set; use 'I set up a test channel via API' step first")
 	}
@@ -1292,10 +1307,47 @@ func (tc *TestContext) seedExplainTurn(prompt, reply string) error {
 		TriggerMsgID: user.MsgID,
 		CreatedAt:    now.Add(time.Second),
 	}
+	if sessionID != "" {
+		bot.SessionID = sessionID
+		bot.TranscriptUUID = "bdd-uuid-" + suffix
+	}
 	if err := store.InsertMessage(context.Background(), bot); err != nil {
 		return fmt.Errorf("inserting the turn's reply: %w", err)
 	}
 	tc.ExplainMsgID = bot.MsgID
+	tc.TurnMsgIDs = append(tc.TurnMsgIDs, bot.MsgID)
+	return nil
+}
+
+// assertLearnPassesPerTurn lists the current channel's learn passes and
+// checks the seeded turns a and b (counted from 1) each have exactly one,
+// and that no pass was superseded: passes queue in the learn thread and
+// each runs in turn, whatever state the run then ends in.
+func (tc *TestContext) assertLearnPassesPerTurn(a, b int) error {
+	if err := tc.doRequest("GET", "/api/channels/{channel_id}/learn/passes", ""); err != nil {
+		return err
+	}
+	var res struct {
+		Passes []db.LearnPass `json:"passes"`
+	}
+	if err := json.Unmarshal(tc.LastBody, &res); err != nil {
+		return fmt.Errorf("decoding learn passes: %w: %s", err, tc.LastBody)
+	}
+	perTurn := map[string]int{}
+	for _, p := range res.Passes {
+		if p.Status == db.LearnPassSuperseded {
+			return fmt.Errorf("learn pass %d over %s was superseded: %s", p.ID, p.MessageID, tc.LastBody)
+		}
+		perTurn[p.MessageID]++
+	}
+	for _, n := range []int{a, b} {
+		if n < 1 || n > len(tc.TurnMsgIDs) {
+			return fmt.Errorf("no turn %d; the scenario seeded %d", n, len(tc.TurnMsgIDs))
+		}
+		if got := perTurn[tc.TurnMsgIDs[n-1]]; got != 1 {
+			return fmt.Errorf("turn %d has %d learn passes, want 1: %s", n, got, tc.LastBody)
+		}
+	}
 	return nil
 }
 

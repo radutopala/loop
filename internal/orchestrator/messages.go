@@ -1,6 +1,7 @@
 package orchestrator
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -33,7 +34,6 @@ func (o *Orchestrator) HandleMessage(ctx context.Context, msg *bot.IncomingMessa
 				// thread back as a plain channel, where the run would be
 				// unrestricted.
 				o.logger.Debug("dropping the trigger", "reason", "hidden thread gone", "channel_id", msg.ChannelID, "author_id", msg.AuthorID)
-				o.releaseLearn(msg.ChannelID)
 				return
 			}
 			if msg.IsDM || msg.IsBotMention || msg.HasPrefix || msg.IsReplyToBot {
@@ -258,9 +258,6 @@ func (o *Orchestrator) processClaimedMessage(ctx context.Context, row *db.Messag
 		Priority:   row.Priority,
 		Timestamp:  row.CreatedAt,
 	}
-	// A learn thread is free for its next pass once this run ends.
-	o.learnRunStarted(msg.ChannelID, msg.AuthorID)
-	defer o.learnRunDone(ctx, msg.ChannelID, msg.AuthorID)
 	if incoming != nil && incoming.MessageID == row.MsgID {
 		msg.GuildID = incoming.GuildID
 		msg.Platform = incoming.Platform
@@ -275,7 +272,7 @@ func (o *Orchestrator) processClaimedMessage(ctx context.Context, row *db.Messag
 	// or failed below.
 	expl := o.explainRunStarted(ctx, msg)
 	pass := o.learnPassStarted(ctx, msg)
-	req, recent, channel, err := o.prepareAgentRequest(ctx, msg)
+	req, recent, channel, err := o.prepareAgentRequest(ctx, msg, reviewedTurn(expl, pass))
 	if err != nil {
 		o.explainRunDone(ctx, expl, "", err)
 		o.learnPassDone(ctx, pass, err)
@@ -316,7 +313,8 @@ func (o *Orchestrator) processClaimedMessage(ctx context.Context, row *db.Messag
 		o.markTriggerProcessed(ctx, msg, recent)
 		o.explainRunDone(ctx, expl, "", err)
 		o.learnPassDone(ctx, pass, err)
-		if finish != nil && o.events != nil {
+		o.afterHiddenRun(ctx, channel, req, finish.sessionID, false)
+		if o.events != nil {
 			o.events.BroadcastAgentStatus(msg.ChannelID, events.AgentStatusEventData{
 				Status:  finish.status,
 				RunID:   runID,
@@ -331,6 +329,7 @@ func (o *Orchestrator) processClaimedMessage(ctx context.Context, row *db.Messag
 	o.deliverResponse(ctx, msg, resp, recent, lastStreamedText, runID, trigger)
 	o.explainRunDone(ctx, expl, resp.Response, nil)
 	o.learnPassDone(ctx, pass, nil)
+	o.afterHiddenRun(ctx, channel, req, resp.SessionID, true)
 	o.maybeLearn(ctx, channel, msg, resp)
 	o.maybeExplain(ctx, channel, msg)
 }
@@ -363,10 +362,28 @@ func (o *Orchestrator) runTrigger(ch *db.Channel, authorID string) string {
 type runFinishStatus struct {
 	status string
 	errMsg string
+	// sessionID is the session the failed run was in, when known, so a
+	// hidden thread's fork that was never stored can be deleted.
+	sessionID string
+}
+
+// reviewedTurn returns the bot message id of the turn an explain run (e) or
+// a learn pass (p) reviews, or "" when msg's run is neither or its pass
+// isn't recorded.
+func reviewedTurn(e *db.Explanation, p *db.LearnPass) string {
+	switch {
+	case e != nil:
+		return e.MessageID
+	case p != nil:
+		return p.MessageID
+	}
+	return ""
 }
 
 // prepareAgentRequest fetches recent messages and channel data, then builds an AgentRequest.
-func (o *Orchestrator) prepareAgentRequest(ctx context.Context, msg *bot.IncomingMessage) (*agent.AgentRequest, []*db.Message, *db.Channel, error) {
+// turnID is the bot message id of the turn an explain run or learn pass
+// reviews, "" for any other run.
+func (o *Orchestrator) prepareAgentRequest(ctx context.Context, msg *bot.IncomingMessage, turnID string) (*agent.AgentRequest, []*db.Message, *db.Channel, error) {
 	recent, err := o.store.GetRecentMessages(ctx, msg.ChannelID, recentMessageLimit)
 	if err != nil {
 		o.logger.Error("getting recent messages", "error", err, "channel_id", msg.ChannelID)
@@ -427,15 +444,17 @@ func (o *Orchestrator) prepareAgentRequest(ctx context.Context, msg *bot.Incomin
 			}
 		}
 	}
-	// A learn thread only ever runs as a learn pass, read-only. Without
-	// its parent there's no pass to set up, and it must not run as a chat
-	// with the full tool set instead.
+	// A learn thread only ever runs read-only, as a learn pass or a user's
+	// reply to one. Without its parent there's nothing to set up, and it
+	// must not run as a chat with the full tool set instead.
 	if channel.Kind == db.ChannelKindLearn {
 		if parent == nil {
 			o.logger.Error("learn: loading the learn thread's parent", "error", parentErr, "channel_id", msg.ChannelID, "parent_id", channel.ParentID)
 			return nil, nil, nil, fmt.Errorf("learn thread %s: parent %q not found", msg.ChannelID, channel.ParentID)
 		}
-		o.applyLearnRequest(ctx, req, parent)
+		if err := o.applyLearnRequest(ctx, req, parent, msg.AuthorID == learnAuthorID, turnID); err != nil {
+			return nil, nil, nil, err
+		}
 	}
 	// An explain thread only ever runs explanations, each a read-only fork
 	// of its parent's session; anything else must not run there.
@@ -447,7 +466,7 @@ func (o *Orchestrator) prepareAgentRequest(ctx context.Context, msg *bot.Incomin
 			o.logger.Error("explain: loading the explain thread's parent", "error", parentErr, "channel_id", msg.ChannelID, "parent_id", channel.ParentID)
 			return nil, nil, nil, fmt.Errorf("explain thread %s: parent %q not found", msg.ChannelID, channel.ParentID)
 		}
-		if err := o.applyExplainRequest(ctx, req, parent); err != nil {
+		if err := o.applyExplainRequest(ctx, req, parent, turnID); err != nil {
 			return nil, nil, nil, err
 		}
 	}
@@ -514,7 +533,13 @@ func (o *Orchestrator) executeAgentRun(ctx context.Context, msg *bot.IncomingMes
 	// after resume (re-asking the same question).
 	var gateToolUses sync.Map // map[toolUseID]struct{}
 
-	tracker := newStreamTracker(func(text string) {
+	// The session the run is in, as its streamed turns report it; a failed
+	// run returns no response to tell.
+	var ranSession string
+	tracker := newStreamTracker(func(text string, ref agent.TurnRef) {
+		if ref.SessionID != "" {
+			ranSession = ref.SessionID
+		}
 		if err := o.bot.SendMessage(ctx, &bot.OutgoingMessage{
 			ChannelID:        msg.ChannelID,
 			Content:          text,
@@ -522,7 +547,7 @@ func (o *Orchestrator) executeAgentRun(ctx context.Context, msg *bot.IncomingMes
 		}); err != nil {
 			o.logger.Error("streaming send failed", "error", err, "channel_id", msg.ChannelID)
 		}
-		storeBotMessage(ctx, o.store, o.events, msg.ChannelID, text, msg.MessageID)
+		storeBotTurn(ctx, o.store, o.events, msg.ChannelID, text, msg.MessageID, ref)
 	})
 	req.OnTurn = tracker.OnTurn
 	if o.events != nil {
@@ -639,11 +664,11 @@ func (o *Orchestrator) executeAgentRun(ctx context.Context, msg *bot.IncomingMes
 	if err != nil {
 		if selfInitiatedPlan.Load() {
 			o.logger.Info("run stopped for self-initiated plan mode", "channel_id", msg.ChannelID)
-			return nil, "", runID, &runFinishStatus{status: "completed"}, err
+			return nil, "", runID, &runFinishStatus{status: "completed", sessionID: ranSession}, err
 		}
 		if selfInitiatedAsk.Load() {
 			o.logger.Info("run stopped for AskUserQuestion", "channel_id", msg.ChannelID)
-			return nil, "", runID, &runFinishStatus{status: "completed"}, err
+			return nil, "", runID, &runFinishStatus{status: "completed", sessionID: ranSession}, err
 		}
 		if runCtx.Err() == context.Canceled {
 			o.logger.Info("run stopped by user", "channel_id", msg.ChannelID)
@@ -652,7 +677,7 @@ func (o *Orchestrator) executeAgentRun(ctx context.Context, msg *bot.IncomingMes
 				Content:          "Run stopped.",
 				ReplyToMessageID: msg.MessageID,
 			})
-			return nil, "", runID, &runFinishStatus{status: "error", errMsg: err.Error()}, err
+			return nil, "", runID, &runFinishStatus{status: "error", errMsg: err.Error(), sessionID: ranSession}, err
 		}
 		o.logger.Error("running agent", "error", err, "channel_id", msg.ChannelID)
 		if notice, scheduled := o.maybeScheduleSessionLimitRetry(ctx, msg, err.Error()); scheduled {
@@ -662,16 +687,16 @@ func (o *Orchestrator) executeAgentRun(ctx context.Context, msg *bot.IncomingMes
 				ReplyToMessageID: msg.MessageID,
 			})
 			storeBotMessage(ctx, o.store, o.events, msg.ChannelID, notice, msg.MessageID)
-			return nil, "", runID, &runFinishStatus{status: "completed"}, err
+			return nil, "", runID, &runFinishStatus{status: "completed", sessionID: ranSession}, err
 		}
 		o.postRunError(ctx, msg, err.Error())
-		return nil, "", runID, &runFinishStatus{status: "error", errMsg: err.Error()}, err
+		return nil, "", runID, &runFinishStatus{status: "error", errMsg: err.Error(), sessionID: ranSession}, err
 	}
 
 	if resp.Error != "" {
 		o.logger.Error("agent returned error", "error", resp.Error, "channel_id", msg.ChannelID)
 		o.postRunError(ctx, msg, resp.Error)
-		return nil, "", runID, &runFinishStatus{status: "error", errMsg: resp.Error}, fmt.Errorf("agent error: %s", resp.Error)
+		return nil, "", runID, &runFinishStatus{status: "error", errMsg: resp.Error, sessionID: cmp.Or(resp.SessionID, ranSession)}, fmt.Errorf("agent error: %s", resp.Error)
 	}
 
 	return resp, tracker.lastText, runID, nil, nil

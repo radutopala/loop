@@ -317,6 +317,38 @@ func (s *StoreSuite) TestUpdateSessionID() {
 	require.Error(s.T(), s.store.UpdateSessionID(context.Background(), "ch1", "new-sess"))
 }
 
+func (s *StoreSuite) TestSessionInUse() {
+	tests := []struct {
+		name    string
+		count   int
+		err     error
+		want    bool
+		wantErr bool
+	}{
+		{name: "in use", count: 1, want: true},
+		{name: "not in use", count: 0},
+		{name: "error", err: sql.ErrConnDone, wantErr: true},
+	}
+	for _, tc := range tests {
+		s.Run(tc.name, func() {
+			q := s.mock.ExpectQuery(`SELECT COUNT\(\*\) FROM channels WHERE session_id = \? AND channel_id != \?`).WithArgs("sess-1", "l1")
+			if tc.err != nil {
+				q.WillReturnError(tc.err)
+			} else {
+				q.WillReturnRows(sqlmock.NewRows([]string{"n"}).AddRow(tc.count))
+			}
+			got, err := s.store.SessionInUse(context.Background(), "sess-1", "l1")
+			if tc.wantErr {
+				require.Error(s.T(), err)
+				return
+			}
+			require.NoError(s.T(), err)
+			require.Equal(s.T(), tc.want, got)
+		})
+	}
+	require.NoError(s.T(), s.mock.ExpectationsWereMet())
+}
+
 func (s *StoreSuite) TestMarkSessionForkPending() {
 	s.mock.ExpectExec(`UPDATE channels SET session_id = \?, fork_pending = 1`).
 		WithArgs("sess-1", sqlmock.AnyArg(), "t2").

@@ -14,6 +14,7 @@ import (
 	"github.com/radutopala/loop/internal/agentregistry"
 	"github.com/radutopala/loop/internal/bot"
 	"github.com/radutopala/loop/internal/container"
+	"github.com/radutopala/loop/internal/db"
 	"github.com/radutopala/loop/internal/osutil"
 	"github.com/radutopala/loop/internal/scheduler"
 	"github.com/radutopala/loop/internal/worktree"
@@ -44,13 +45,12 @@ type IncomingMessageHandler interface {
 	HandleThreadCreated(ctx context.Context, threadID, authorID, message string)
 }
 
-// RunCanceller cancels agent runs and tracks learn passes. StopLearn also
-// forgets a deleted learn thread's queued pass; IsLearnPassRunning reports a
-// learn pass (not a user's reply) running in a learn thread.
+// RunCanceller cancels agent runs. StopHiddenThread cancels a deleted
+// hidden (learn or explain) thread's run and then deletes its forked
+// session.
 type RunCanceller interface {
 	CancelActiveRun(channelID string) bool
-	StopLearn(learnChannelID string)
-	IsLearnPassRunning(learnChannelID string) bool
+	StopHiddenThread(h *db.Channel)
 }
 
 // PlanResolver clears and resumes a channel parked on an ExitPlanMode card.

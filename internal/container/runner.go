@@ -346,6 +346,10 @@ func (r *DockerRunner) containerName(channelID, dirPath string) string {
 	return "loop-" + sanitized + "-" + hex.EncodeToString(b)
 }
 
+// unknownResumePoint is how Claude Code fails a --resume-session-at whose
+// uuid isn't in the session.
+const unknownResumePoint = "No message found with message.uuid"
+
 // Run executes an agent request in a Docker container, retrying on transient
 // API errors (rate limiting, overload, transient 5xx) with bounded exponential
 // backoff. Terminal errors (usage/quota, auth, billing) are surfaced
@@ -375,6 +379,7 @@ func (r *DockerRunner) Run(ctx context.Context, req *agent.AgentRequest) (*agent
 		if resp != nil && resp.SessionID != "" {
 			retryReq.SessionID = resp.SessionID
 			retryReq.ForkSession = false
+			retryReq.ResumeAt = ""
 		}
 		resp, err = r.runWithRecovery(ctx, &retryReq)
 	}
@@ -383,9 +388,20 @@ func (r *DockerRunner) Run(ctx context.Context, req *agent.AgentRequest) (*agent
 
 // runWithRecovery executes an agent request and, on failure with a live
 // session, retries with --resume — compacting first when the session is too
-// long. This is the per-attempt unit the backoff loop in Run calls.
+// long. This is the per-attempt unit the backoff loop in Run calls. A fork
+// cut at a transcript entry the session doesn't have (ResumeAt) runs again
+// once as a fork of the whole session.
 func (r *DockerRunner) runWithRecovery(ctx context.Context, req *agent.AgentRequest) (*agent.AgentResponse, error) {
 	resp, err := r.runOnce(ctx, req)
+	if err != nil && req.ResumeAt != "" && strings.Contains(err.Error(), unknownResumePoint) {
+		if r.logger != nil {
+			r.logger.Warn("resume point not in the session; forking the whole session",
+				"channel_id", req.ChannelID, "session_id", req.SessionID, "resume_at", req.ResumeAt)
+		}
+		live := *req
+		live.ResumeAt = ""
+		return r.runWithRecovery(ctx, &live)
+	}
 	if err == nil || req.SessionID == "" {
 		return resp, err
 	}
@@ -405,6 +421,7 @@ func (r *DockerRunner) runWithRecovery(ctx context.Context, req *agent.AgentRequ
 		retryReq := *req
 		retryReq.SessionID = compactResp.SessionID
 		retryReq.ForkSession = false
+		retryReq.ResumeAt = ""
 		if retryReq.Prompt == "" && len(retryReq.Messages) > 0 {
 			retryReq.Prompt = retryReq.Messages[len(retryReq.Messages)-1].Content
 		}
@@ -507,6 +524,7 @@ func (r *DockerRunner) runOnce(ctx context.Context, req *agent.AgentRequest) (*a
 		fresh := *req
 		fresh.SessionID = ""
 		fresh.ForkSession = false
+		fresh.ResumeAt = ""
 		req = &fresh
 	}
 	containerID, ctrName, mcpConfigPath, keepMCP, err := r.createAndStartContainer(ctx, req.ChannelID, req.DirPath, req.AuthorID, req.ParentDirPath, req.AgentID,

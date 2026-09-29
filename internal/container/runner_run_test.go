@@ -945,12 +945,14 @@ func (s *RunnerSuite) TestRunDropsResumeWhenTranscriptMissing() {
 	req := &agent.AgentRequest{
 		SessionID:   "sess-pruned",
 		ForkSession: true,
+		ResumeAt:    "uuid-turn",
 		Messages:    []agent.AgentMessage{{Role: "user", Content: "hello"}},
 		ChannelID:   "ch-1",
 	}
 
 	s.setupMockRun(ctx, mock.MatchedBy(func(cfg *ContainerConfig) bool {
-		return !slices.Contains(cfg.Cmd, "--resume") && !slices.Contains(cfg.Cmd, "--fork-session")
+		return !slices.Contains(cfg.Cmd, "--resume") && !slices.Contains(cfg.Cmd, "--fork-session") &&
+			!slices.Contains(cfg.Cmd, "--resume-session-at=uuid-turn")
 	}), testContainerName, `{"type":"result","result":"Fresh!","session_id":"sess-new","is_error":false}`)
 
 	resp, err := s.runner.Run(ctx, req)
@@ -986,5 +988,100 @@ func (s *RunnerSuite) TestRunDropsResumeWithoutLogger() {
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), "sess-new", resp.SessionID)
 
+	s.client.AssertExpectations(s.T())
+}
+
+// runStep mocks one container run of a multi-run test: created when match
+// holds for its config, it prints output.
+func (s *RunnerSuite) runStep(ctx context.Context, id string, match func(*ContainerConfig) bool, output string) {
+	waitCh := make(chan WaitResponse, 1)
+	waitCh <- WaitResponse{StatusCode: 0}
+	errCh := make(chan error, 1)
+	s.client.On("ContainerCreate", ctx, mock.MatchedBy(match), testContainerName).Return(id, nil).Once()
+	s.client.On("ContainerLogs", ctx, id).Return(bytes.NewReader([]byte(output)), nil)
+	s.client.On("ContainerStart", ctx, id).Return(nil)
+	s.client.On("ContainerWait", ctx, id).Return((<-chan WaitResponse)(waitCh), (<-chan error)(errCh))
+}
+
+func (s *RunnerSuite) TestRunForkSessionAtTurn() {
+	ctx := context.Background()
+	req := &agent.AgentRequest{
+		SessionID:   "sess-parent",
+		ForkSession: true,
+		ResumeAt:    "uuid-turn",
+		Messages:    []agent.AgentMessage{{Role: "user", Content: "hello"}},
+		ChannelID:   "ch-1",
+	}
+
+	s.setupMockRun(ctx, mock.MatchedBy(func(cfg *ContainerConfig) bool {
+		return slices.Contains(cfg.Cmd, "--fork-session") && slices.Contains(cfg.Cmd, "--resume-session-at=uuid-turn")
+	}), testContainerName, `{"type":"result","result":"Forked!","session_id":"sess-forked","is_error":false}`)
+
+	resp, err := s.runner.Run(ctx, req)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "sess-forked", resp.SessionID)
+	s.client.AssertExpectations(s.T())
+}
+
+// TestRunForkAtUnknownTurnForksWholeSession: a resume point the session
+// doesn't have makes claude fail; the run is tried once more as a fork of
+// the whole session.
+func (s *RunnerSuite) TestRunForkAtUnknownTurnForksWholeSession() {
+	var buf bytes.Buffer
+	s.runner.SetLogger(slog.New(slog.NewTextHandler(&buf, nil)))
+	ctx := context.Background()
+	req := &agent.AgentRequest{
+		SessionID:   "sess-parent",
+		ForkSession: true,
+		ResumeAt:    "uuid-gone",
+		Messages:    []agent.AgentMessage{{Role: "user", Content: "hello"}},
+		ChannelID:   "ch-1",
+	}
+
+	s.runStep(ctx, "container-cut", func(cfg *ContainerConfig) bool {
+		return slices.Contains(cfg.Cmd, "--resume-session-at=uuid-gone")
+	}, `{"type":"result","subtype":"error_during_execution","is_error":true,"errors":["No message found with message.uuid of: uuid-gone"]}`)
+	s.runStep(ctx, "container-whole", func(cfg *ContainerConfig) bool {
+		return slices.Contains(cfg.Cmd, "--fork-session") && slices.Contains(cfg.Cmd, "sess-parent") &&
+			!slices.ContainsFunc(cfg.Cmd, func(a string) bool { return strings.HasPrefix(a, "--resume-session-at") })
+	}, `{"type":"result","result":"Forked!","session_id":"sess-forked","is_error":false}`)
+
+	resp, err := s.runner.Run(ctx, req)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "Forked!", resp.Response)
+	require.Equal(s.T(), "sess-forked", resp.SessionID)
+	require.Contains(s.T(), buf.String(), "resume point not in the session")
+	require.Equal(s.T(), "uuid-gone", req.ResumeAt)
+	s.client.AssertExpectations(s.T())
+}
+
+// TestRunForkAtTurnCompactDropsResumeAt: the compacted session isn't the
+// one the resume point belongs to, so the retry resumes it without a cut.
+func (s *RunnerSuite) TestRunForkAtTurnCompactDropsResumeAt() {
+	ctx := context.Background()
+	req := &agent.AgentRequest{
+		SessionID:   "sess-parent",
+		ForkSession: true,
+		ResumeAt:    "uuid-turn",
+		Messages:    []agent.AgentMessage{{Role: "user", Content: "hello"}},
+		ChannelID:   "ch-1",
+	}
+	noCut := func(cfg *ContainerConfig) bool {
+		return !slices.ContainsFunc(cfg.Cmd, func(a string) bool { return strings.HasPrefix(a, "--resume-session-at") })
+	}
+
+	s.runStep(ctx, "container-fork", func(cfg *ContainerConfig) bool {
+		return slices.Contains(cfg.Cmd, "--resume-session-at=uuid-turn")
+	}, `{"type":"result","result":"Prompt is too long","session_id":"sess-forked","is_error":true}`)
+	s.runStep(ctx, "container-compact", func(cfg *ContainerConfig) bool {
+		return slices.Contains(cfg.Cmd, "/compact") && noCut(cfg)
+	}, `{"type":"result","result":"Conversation compacted","session_id":"sess-compacted","is_error":false}`)
+	s.runStep(ctx, "container-retry", func(cfg *ContainerConfig) bool {
+		return slices.Contains(cfg.Cmd, "sess-compacted") && !slices.Contains(cfg.Cmd, "/compact") && noCut(cfg)
+	}, `{"type":"result","result":"Done","session_id":"sess-final","is_error":false}`)
+
+	resp, err := s.runner.Run(ctx, req)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "sess-final", resp.SessionID)
 	s.client.AssertExpectations(s.T())
 }

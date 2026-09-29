@@ -568,7 +568,7 @@ A learn pass filed proposals, withdrew earlier ones, or both (via [`POST /api/ch
 
 ### `learn.pass`
 
-A [learn pass](chat.md#learn-from-a-run), automatic or [asked for](api.md#post-apichannelsidlearnpasses), was queued, started, finished, failed or superseded. `channel_id` is the channel being learned from; `data` is the whole pass with its new `status`, shaped as in [`GET /api/channels/{id}/learn/passes`](api.md#get-apichannelsidlearnpasses). The desktop app shows it at the end of the turn it reviews (`message_id`). Global because the learn thread doing the work is hidden.
+A [learn pass](chat.md#learn-from-a-run), automatic or [asked for](api.md#post-apichannelsidlearnpasses), was queued, started, finished or failed. `channel_id` is the channel being learned from; `data` is the whole pass with its new `status`, shaped as in [`GET /api/channels/{id}/learn/passes`](api.md#get-apichannelsidlearnpasses). The desktop app shows it at the end of the turn it reviews (`message_id`). Global because the learn thread doing the work is hidden.
 
 **Payload schema:**
 
@@ -586,7 +586,7 @@ A [learn pass](chat.md#learn-from-a-run), automatic or [asked for](api.md#post-a
 
 | Field    | Type   | Description |
 |----------|--------|-------------|
-| `status` | string | `queued`, `running`, `done`, `failed` (with `error`), or `superseded`: a newer run's pass replaced it before it started, and covers its turn too |
+| `status` | string | `queued`, `running`, `done` or `failed` (with `error`). Loop no longer sends `superseded`; only passes from before passes queued one after another have it, in the list endpoint. |
 
 Only the list endpoint fills in `message_row_id`.
 

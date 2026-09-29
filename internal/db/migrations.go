@@ -441,6 +441,13 @@ var migrations = []migration{
 	// message_id is the turn (its last bot message) whose learn pass filed
 	// a proposal; empty when it isn't known.
 	sqlMigration(`ALTER TABLE learn_proposals ADD COLUMN message_id TEXT NOT NULL DEFAULT ''`),
+	// session_id and transcript_uuid locate a bot text turn in Claude
+	// Code's transcript: the session it was written to and its entry's
+	// uuid. A turn's last bot message holds where the turn ended, which a
+	// learn pass or an explanation forks the session at. Empty on other
+	// rows and on turns stored before these were recorded.
+	sqlMigration(`ALTER TABLE messages ADD COLUMN session_id TEXT NOT NULL DEFAULT ''`),
+	sqlMigration(`ALTER TABLE messages ADD COLUMN transcript_uuid TEXT NOT NULL DEFAULT ''`),
 }
 
 // migrateScheduledTasksAddManualType rebuilds scheduled_tasks to widen the

@@ -1,6 +1,7 @@
 package orchestrator
 
 import (
+	"cmp"
 	"errors"
 	"strings"
 
@@ -90,6 +91,13 @@ func (s *OrchestratorSuite) TestExplain() {
 		{name: "no session", ch: &db.Channel{ChannelID: "ch1", Platform: types.PlatformLocal}, force: true, setup: func() {
 			s.store.On("GetChatMessage", s.ctx, "ch1", "b1").Return(reply, nil)
 		}, wantErr: explain.ErrNoSession},
+		{name: "no session but the turn's own", ch: &db.Channel{ChannelID: "ch1", Name: "api", Platform: types.PlatformLocal}, force: true, setup: func() {
+			s.store.On("GetChatMessage", s.ctx, "ch1", "b1").Return(&db.Message{ID: 42, MsgID: "b1", IsBot: true, TriggerMsgID: "u1", Content: "Fixed the tests.",
+				SessionID: "sess-0", TranscriptUUID: "uuid-1"}, nil)
+			s.store.On("GetChatMessage", s.ctx, "ch1", "u1").Return(&db.Message{Content: "fix the tests"}, nil)
+			s.store.On("GetHiddenThread", s.ctx, "ch1", db.ChannelKindExplain).Return(thread, nil)
+			s.store.On("QueueExplanation", s.ctx, mock.Anything).Return(&db.Explanation{ID: 8, ChannelID: "ch1", MessageID: "b1", Status: db.ExplainQueued}, true, nil)
+		}, wantID: 8, wantTrigger: explain.TriggerMessage("api", "fix the tests", "Fixed the tests.")},
 		{name: "explain thread fails", ch: ch, force: true, setup: func() {
 			s.store.On("GetChatMessage", s.ctx, "ch1", "b1").Return(reply, nil)
 			s.store.On("GetChatMessage", s.ctx, "ch1", "u1").Return(nil, nil)
@@ -245,7 +253,8 @@ func (s *OrchestratorSuite) TestMaybeExplain() {
 }
 
 // TestPrepareAgentRequestExplainThread checks an explain thread's run: it
-// forks the parent's current session read-only as the explain agent, and
+// forks read-only as the explain agent, cut where the explained turn ended
+// when its reply records that, else the parent's whole current session; and
 // nothing else runs there.
 func (s *OrchestratorSuite) TestPrepareAgentRequestExplainThread() {
 	thread := &db.Channel{ChannelID: "explain-1", ParentID: "ch1", DirPath: "/project", Kind: db.ChannelKindExplain, SessionID: "sess-old"}
@@ -257,10 +266,22 @@ func (s *OrchestratorSuite) TestPrepareAgentRequestExplainThread() {
 		parent     *db.Channel
 		parentErr  error
 		cfg        config.ExplainConfig
+		turn       *db.Message
+		turnErr    error
 		wantErr    string
 		wantModel  string
 		wantEffort string
+		wantSess   string
+		wantAt     string
 	}{
+		{name: "forks at the turn", thread: thread, authorID: explainAuthorID, parent: parent, wantModel: "sonnet", wantEffort: "low",
+			turn: &db.Message{MsgID: "b1", SessionID: "sess-turn", TranscriptUUID: "uuid-1"}, wantSess: "sess-turn", wantAt: "uuid-1"},
+		{name: "turn without a ref forks the whole session", thread: thread, authorID: explainAuthorID, parent: parent, wantModel: "sonnet", wantEffort: "low",
+			turn: &db.Message{MsgID: "b1", SessionID: "sess-turn"}},
+		{name: "turn lookup fails", thread: thread, authorID: explainAuthorID, parent: parent, wantModel: "sonnet", wantEffort: "low",
+			turnErr: errors.New("db down")},
+		{name: "turn's own session without the parent's", thread: thread, authorID: explainAuthorID, parent: &db.Channel{ChannelID: "ch1"},
+			turn: &db.Message{MsgID: "b1", SessionID: "sess-turn", TranscriptUUID: "uuid-1"}, wantSess: "sess-turn", wantAt: "uuid-1"},
 		{name: "explain model, effort and prompt", thread: thread, authorID: explainAuthorID, parent: parent,
 			cfg: config.ExplainConfig{Model: "opus", Effort: "high", Prompt: "Mention the API."}, wantModel: "opus", wantEffort: "high"},
 		{name: "falls back to the parent's overrides", thread: thread, authorID: explainAuthorID, parent: parent, wantModel: "sonnet", wantEffort: "low"},
@@ -279,8 +300,9 @@ func (s *OrchestratorSuite) TestPrepareAgentRequestExplainThread() {
 			s.store.On("GetRecentMessages", s.ctx, "explain-1", recentMessageLimit).Return([]*db.Message{}, nil)
 			s.store.On("GetChannel", s.ctx, "explain-1").Return(tc.thread, nil)
 			s.store.On("GetChannel", s.ctx, "ch1").Return(tc.parent, tc.parentErr)
+			s.store.On("GetChatMessage", s.ctx, "ch1", "b1").Return(tc.turn, tc.turnErr)
 
-			req, _, _, err := s.orch.prepareAgentRequest(s.ctx, &bot.IncomingMessage{ChannelID: "explain-1", AuthorID: tc.authorID, AuthorName: "loop", Content: "explain"})
+			req, _, _, err := s.orch.prepareAgentRequest(s.ctx, &bot.IncomingMessage{ChannelID: "explain-1", AuthorID: tc.authorID, AuthorName: "loop", Content: "explain"}, "b1")
 
 			if tc.wantErr != "" {
 				require.EqualError(s.T(), err, tc.wantErr)
@@ -289,7 +311,8 @@ func (s *OrchestratorSuite) TestPrepareAgentRequestExplainThread() {
 			}
 			require.NoError(s.T(), err)
 			require.True(s.T(), req.ForkSession)
-			require.Equal(s.T(), "sess-parent", req.SessionID)
+			require.Equal(s.T(), cmp.Or(tc.wantSess, "sess-parent"), req.SessionID)
+			require.Equal(s.T(), tc.wantAt, req.ResumeAt)
 			require.Equal(s.T(), explain.AgentID, req.AgentID)
 			require.True(s.T(), req.ReadOnly)
 			require.Equal(s.T(), tc.wantModel, req.Model)

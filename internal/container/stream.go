@@ -10,6 +10,8 @@ import (
 	"io"
 	"strings"
 	"unicode/utf8"
+
+	"github.com/radutopala/loop/internal/agent"
 )
 
 // claudeResponse represents a stream-json event from claude --output-format stream-json.
@@ -66,8 +68,14 @@ type assistantContentBlock struct {
 // assistantMessage represents an "assistant" event from Claude's stream-json output.
 // Each assistant turn contains a message with content blocks.
 type assistantMessage struct {
-	Type    string `json:"type"`
-	Message struct {
+	Type string `json:"type"`
+	// UUID is the event's transcript entry uuid and SessionID the session
+	// it was written to; ParentToolUseID is set on a subagent's events,
+	// which live in the subagent's own transcript.
+	UUID            string `json:"uuid"`
+	SessionID       string `json:"session_id"`
+	ParentToolUseID string `json:"parent_tool_use_id"`
+	Message         struct {
 		Model   string                  `json:"model"`
 		Content []assistantContentBlock `json:"content"`
 	} `json:"message"`
@@ -99,6 +107,15 @@ func (m *assistantMessage) extractText() string {
 		}
 	}
 	return strings.Join(texts, "\n")
+}
+
+// turnRef returns where the event sits in the session's transcript, or a
+// zero TurnRef for a subagent's event, which isn't in the main chain.
+func (m *assistantMessage) turnRef() agent.TurnRef {
+	if m.ParentToolUseID != "" {
+		return agent.TurnRef{}
+	}
+	return agent.TurnRef{SessionID: m.SessionID, UUID: m.UUID}
 }
 
 // extractThinking joins all thinking content blocks from an assistant message.
@@ -225,7 +242,7 @@ func summarizeToolInput(name string, raw json.RawMessage) string {
 
 // streamCallbacks holds optional callbacks for scanStreamJSON.
 type streamCallbacks struct {
-	onTurn    func(string)
+	onTurn    func(string, agent.TurnRef)
 	onToolUse func(toolUseID, name, input string)
 	// onToolUseRaw sees the same tool_use blocks as onToolUse but with the
 	// input JSON verbatim rather than summarized, for callers that decode it.
@@ -453,7 +470,7 @@ func scanStreamJSON(r io.Reader, cb streamCallbacks) (*claudeResponse, error) {
 			}
 			if cb.onTurn != nil {
 				if text := msg.extractText(); text != "" {
-					cb.onTurn(text)
+					cb.onTurn(text, msg.turnRef())
 				}
 			}
 			if cb.onThinking != nil {

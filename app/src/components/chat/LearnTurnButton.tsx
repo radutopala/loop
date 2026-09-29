@@ -8,8 +8,8 @@ import { isOpenProposal, learnTurnLabel } from "./learnState";
 
 /**
  * The turn's Learn action, at the end of the turn beside its Explain one.
- * A turn without a learn pass (Learn off, or its pass superseded by the
- * next turn's before it ran) offers one: a click learns from it, whatever
+ * A turn without a learn pass (Learn off, or, on an old pass, superseded
+ * by the next turn's before it ran) offers one: a click learns from it, whatever
  * the Learn switch says. Otherwise it follows the pass: queued, running,
  * failed (a click tries again), or how many proposals it filed, lit while
  * any still waits on the user. A click shows the turn's proposals in the

@@ -106,6 +106,17 @@ func (s *SQLiteStore) MarkSessionForkPending(ctx context.Context, channelID stri
 	return n > 0, err
 }
 
+// SessionInUse reports whether a channel other than exceptChannelID has
+// sessionID as its session.
+func (s *SQLiteStore) SessionInUse(ctx context.Context, sessionID, exceptChannelID string) (bool, error) {
+	var n int
+	err := s.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM channels WHERE session_id = ? AND channel_id != ?`,
+		sessionID, exceptChannelID,
+	).Scan(&n)
+	return n > 0, err
+}
+
 func (s *SQLiteStore) UpdateSessionID(ctx context.Context, channelID string, sessionID string) error {
 	_, err := s.db.ExecContext(ctx,
 		`UPDATE channels SET session_id = ?, fork_pending = 0, updated_at = ? WHERE channel_id = ?`,

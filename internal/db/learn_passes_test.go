@@ -55,8 +55,18 @@ func (s *IntegrationSuite) TestLearnPassLifecycle() {
 	require.NoError(s.T(), err)
 	require.Nil(s.T(), none, "no pass over the turn")
 
+	running, err := store.LearnPassRunning(ctx, "l1")
+	require.NoError(s.T(), err)
+	require.False(s.T(), running, "queued passes aren't running")
+
 	require.NoError(s.T(), store.UpdateLearnPass(ctx, first.ID, LearnPassRunning, ""))
 	require.NoError(s.T(), store.UpdateLearnPass(ctx, second.ID, LearnPassDone, ""))
+	running, err = store.LearnPassRunning(ctx, "l1")
+	require.NoError(s.T(), err)
+	require.True(s.T(), running)
+	running, err = store.LearnPassRunning(ctx, "l2")
+	require.NoError(s.T(), err)
+	require.False(s.T(), running, "another learn thread's")
 	latest, err = store.LatestLearnPass(ctx, "l1")
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), first.ID, latest.ID, "the running pass wins over a newer done one")
@@ -171,10 +181,40 @@ func (s *StoreSuite) TestLearnPassStoreErrors() {
 		_, err := s.store.ListLearnPasses(ctx, "c1")
 		require.Error(s.T(), err)
 	})
+	s.Run("running", func() {
+		s.mock.ExpectQuery(`FROM learn_passes WHERE learn_channel_id = \? AND status = \?`).WillReturnError(boom)
+		_, err := s.store.LearnPassRunning(ctx, "l1")
+		require.ErrorIs(s.T(), err, boom)
+	})
 	s.Run("fail interrupted", func() {
 		s.mock.ExpectExec(`UPDATE learn_passes SET status = \?, error = \?`).WillReturnError(boom)
 		_, err := s.store.FailInterruptedLearnPasses(ctx)
 		require.ErrorIs(s.T(), err, boom)
 	})
 	require.NoError(s.T(), s.mock.ExpectationsWereMet())
+}
+
+// TestMessageTurnRef checks against a real SQLite that a bot turn's place in
+// the session's transcript is stored and read back, and that another
+// channel pointing at a session keeps it in use.
+func (s *IntegrationSuite) TestMessageTurnRef() {
+	store, err := NewSQLiteStore(filepath.Join(s.T().TempDir(), "loop.db"))
+	require.NoError(s.T(), err)
+	defer store.Close()
+	ctx := context.Background()
+	chatID := seedChannel(s.T(), store, "c1")
+	require.NoError(s.T(), store.InsertMessage(ctx, &Message{ChatID: chatID, ChannelID: "c1", MsgID: "b1", IsBot: true, TriggerMsgID: "u1",
+		Kind: MessageKindMessage, CreatedAt: time.Now(), SessionID: "sess-1", TranscriptUUID: "uuid-1"}))
+	got, err := store.GetChatMessage(ctx, "c1", "b1")
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "sess-1", got.SessionID)
+	require.Equal(s.T(), "uuid-1", got.TranscriptUUID)
+
+	require.NoError(s.T(), store.UpdateSessionID(ctx, "c1", "sess-1"))
+	inUse, err := store.SessionInUse(ctx, "sess-1", "l1")
+	require.NoError(s.T(), err)
+	require.True(s.T(), inUse)
+	inUse, err = store.SessionInUse(ctx, "sess-1", "c1")
+	require.NoError(s.T(), err)
+	require.False(s.T(), inUse, "the channel itself doesn't count")
 }

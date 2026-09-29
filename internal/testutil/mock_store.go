@@ -58,6 +58,11 @@ func (m *MockStore) MarkSessionForkPending(ctx context.Context, channelID string
 	return args.Bool(0), args.Error(1)
 }
 
+func (m *MockStore) SessionInUse(ctx context.Context, sessionID, exceptChannelID string) (bool, error) {
+	args := m.Called(ctx, sessionID, exceptChannelID)
+	return args.Bool(0), args.Error(1)
+}
+
 func (m *MockStore) UpdateChannelAgentOverrides(ctx context.Context, channelID, model, effort string) error {
 	return m.Called(ctx, channelID, model, effort).Error(0)
 }
@@ -617,6 +622,11 @@ func (m *MockStore) ActiveLearnPass(ctx context.Context, channelID, messageID st
 	args := m.Called(ctx, channelID, messageID)
 	v, _ := args.Get(0).(*db.LearnPass)
 	return v, args.Error(1)
+}
+
+func (m *MockStore) LearnPassRunning(ctx context.Context, learnChannelID string) (bool, error) {
+	args := m.Called(ctx, learnChannelID)
+	return args.Bool(0), args.Error(1)
 }
 
 func (m *MockStore) FailInterruptedLearnPasses(ctx context.Context) (int64, error) {

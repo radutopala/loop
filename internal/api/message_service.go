@@ -59,4 +59,5 @@ type ChannelLister interface {
 	SetLearnProposalStatus(ctx context.Context, id int64, status, errText string) error
 	ListLearnPasses(ctx context.Context, channelID string) ([]*db.LearnPass, error)
 	LatestLearnPass(ctx context.Context, learnChannelID string) (*db.LearnPass, error)
+	LearnPassRunning(ctx context.Context, learnChannelID string) (bool, error)
 }
