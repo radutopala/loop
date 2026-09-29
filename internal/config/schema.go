@@ -44,7 +44,7 @@ func GlobalConfigSchema() *ConfigSchema {
 
 // modelEnum lists the models offered by the settings form; "" means no override.
 func modelEnum() []any {
-	return []any{"", "claude-opus-5-5", "claude-opus-5", "claude-sonnet-5", "claude-fable-5-1", "claude-fable-5", "claude-opus-4-8"}
+	return []any{"", "claude-opus-5-5", "claude-opus-5", "claude-sonnet-5-5", "claude-sonnet-5", "claude-fable-5-1", "claude-fable-5", "claude-opus-4-8"}
 }
 
 // effortEnum lists the --effort levels; "" leaves it unset.
