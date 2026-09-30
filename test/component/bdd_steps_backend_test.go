@@ -42,6 +42,7 @@ func registerBackendSteps(ctx *godog.ScenarioContext, tc *TestContext) {
 
 	// Entity steps
 	ctx.Step(`^a channel exists for directory "([^"]*)"$`, tc.ensureChannel)
+	ctx.Step(`^the directory "([^"]*)" exists$`, tc.ensureChannelDir)
 	ctx.Step(`^I create a task with prompt "([^"]*)" and schedule "([^"]*)"$`, tc.createTask)
 	ctx.Step(`^the task list should contain the created task$`, tc.assertTaskInList)
 
@@ -175,7 +176,24 @@ func (tc *TestContext) assertJSONFieldNotEmpty(field string) error {
 
 // --- Entity steps ---
 
+// ensureChannelDir creates dirPath when it's missing, since the daemon only
+// binds a channel to an existing directory. A dir created here is removed
+// with the scenario's other temp dirs; one that already existed is left.
+func (tc *TestContext) ensureChannelDir(dirPath string) error {
+	if _, err := os.Stat(dirPath); err == nil {
+		return nil
+	}
+	if err := os.MkdirAll(dirPath, 0o755); err != nil {
+		return fmt.Errorf("creating channel dir: %w", err)
+	}
+	tc.CreatedDirs = append(tc.CreatedDirs, dirPath)
+	return nil
+}
+
 func (tc *TestContext) ensureChannel(dirPath string) error {
+	if err := tc.ensureChannelDir(dirPath); err != nil {
+		return err
+	}
 	body := fmt.Sprintf(`{"dir_path": %q, "platform": "local"}`, dirPath)
 	if err := tc.doRequest(http.MethodPost, "/api/channels", body); err != nil {
 		return err
@@ -232,6 +250,9 @@ func (tc *TestContext) assertTaskInList() error {
 // --- Hybrid API setup steps ---
 
 func (tc *TestContext) setupChannelViaAPI(dirPath string) error {
+	if err := tc.ensureChannelDir(dirPath); err != nil {
+		return err
+	}
 	body := fmt.Sprintf(`{"dir_path": %q, "platform": "local"}`, dirPath)
 	if err := tc.doRequest(http.MethodPost, "/api/channels", body); err != nil {
 		return err
@@ -339,7 +360,7 @@ func (tc *TestContext) setupChannelViaAPIForGitRepo(name string) error {
 }
 
 // addExtraWorkspaceRootViaAPI gives the current channel a second workspace root
-// by writing a project .loop/config.json with an extra_dirs entry. The extra
+// by saving a project config with an extra_dirs entry through the API. The extra
 // dir uses a stable "bdd-extra-root-" prefix so scenarios can assert it appears
 // as an option in the root selector. fetchRoots reads the config live, so no
 // channel re-creation is needed.
@@ -353,13 +374,44 @@ func (tc *TestContext) addExtraWorkspaceRootViaAPI() error {
 	}
 	tc.CreatedDirs = append(tc.CreatedDirs, extra)
 
-	loopDir := filepath.Join(tc.ChannelDir, ".loop")
-	if err := os.MkdirAll(loopDir, 0o755); err != nil {
-		return fmt.Errorf("creating .loop dir: %w", err)
+	// Save it as the owner does: extra_dirs only apply once trusted, and a
+	// config written straight to disk is what an agent could have planted.
+	cfg, err := json.Marshal(map[string][]string{"extra_dirs": {extra}})
+	if err != nil {
+		return err
 	}
-	cfg := `{"extra_dirs":["` + extra + `"]}`
-	if err := os.WriteFile(filepath.Join(loopDir, "config.json"), []byte(cfg), 0o644); err != nil {
-		return fmt.Errorf("writing project config: %w", err)
+	body, err := json.Marshal(map[string]string{"content": string(cfg)})
+	if err != nil {
+		return err
+	}
+	if err := tc.doRequest(http.MethodPut, "/api/config/project?channel_id="+tc.ChannelID, string(body)); err != nil {
+		return err
+	}
+	if tc.LastStatus != http.StatusNoContent {
+		return fmt.Errorf("saving project config: status %d, body: %s", tc.LastStatus, tc.LastBody)
+	}
+	return nil
+}
+
+// trustProjectConfig trusts the project config of channelID as it is now,
+// through the owner's review endpoints.
+func (tc *TestContext) trustProjectConfig(channelID string) error {
+	if err := tc.doRequest(http.MethodGet, "/api/config/project/trust?channel_id="+channelID, ""); err != nil {
+		return err
+	}
+	hash, _ := tc.LastJSON["hash"].(string)
+	if tc.LastStatus != http.StatusOK || hash == "" {
+		return fmt.Errorf("reading project trust: status %d, body: %s", tc.LastStatus, tc.LastBody)
+	}
+	body, err := json.Marshal(map[string]string{"hash": hash})
+	if err != nil {
+		return err
+	}
+	if err := tc.doRequest(http.MethodPost, "/api/config/project/trust?channel_id="+channelID, string(body)); err != nil {
+		return err
+	}
+	if tc.LastStatus != http.StatusNoContent {
+		return fmt.Errorf("trusting project config: status %d, body: %s", tc.LastStatus, tc.LastBody)
 	}
 	return nil
 }
@@ -566,6 +618,13 @@ export function searchNotes(query: string): Note[] {
 	id, _ := tc.LastJSON["channel_id"].(string)
 	sampleProject.channelID = id
 	sampleProject.dir = dir
+
+	// The sample's project config was written to disk, so its memory paths
+	// wait for the owner's trust like any file an agent could have written.
+	// Trust it as the owner would after reviewing it.
+	if err := tc.trustProjectConfig(id); err != nil {
+		return err
+	}
 
 	// Seed Kanban tickets and a scheduled task so those panels show real content
 	// in the docs walkthrough (best-effort; the channel works without them).

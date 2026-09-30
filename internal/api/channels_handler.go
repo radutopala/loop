@@ -582,7 +582,8 @@ func (s *Server) validateChannelDirPath(dirPath string) (string, error) {
 	for _, p := range s.protectedDirs {
 		protected := filepath.Clean(p)
 		if pathWithin(protected, cleaned) || pathWithin(s.realOrClean(protected), realDir) {
-			return "", fmt.Errorf("dir_path %q contains a protected directory (%s)", cleaned, protected)
+			return "", fmt.Errorf("%s can't be a project folder: it contains %s, where Loop keeps its API token and runtime state, "+
+				"and a project folder is mounted into agent containers. Pick a folder inside it instead", cleaned, protected)
 		}
 	}
 	return cleaned, nil

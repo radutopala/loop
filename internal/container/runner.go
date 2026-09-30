@@ -868,7 +868,7 @@ func (r *DockerRunner) createAndStartContainer(
 			return containerID, containerName, mcpConfigPath, keepMCPConfig, fmt.Errorf("issuing api token: %w", err)
 		}
 	}
-	if err := r.writeRunTokens(ctx, containerID, gateToken, apiToken); err != nil {
+	if err := r.writeRunTokens(ctx, containerID, env, gateToken, apiToken); err != nil {
 		return containerID, containerName, mcpConfigPath, keepMCPConfig, fmt.Errorf("writing tokens: %w", err)
 	}
 

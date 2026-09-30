@@ -1689,9 +1689,11 @@ Write content to a file.
 {"ok": true}
 ```
 
-**Behavior notes:** Preserves original file permissions if the file already exists; defaults to `0644` for new files.
+**Behavior notes:**
+- Preserves original file permissions if the file already exists; defaults to `0644` for new files.
+- A symlink whose target resolves inside the root is followed: the write lands on the target and the link stays. A link that resolves outside the root, or points at nothing, is refused rather than written through.
 
-**Errors:** `400` if path is invalid. `413` if content exceeds 5 MB.
+**Errors:** `400` if path is invalid, a symlink leaves the root, or a symlink is dangling. `413` if content exceeds 5 MB.
 
 ---
 

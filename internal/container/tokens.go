@@ -5,6 +5,8 @@ import (
 	"bytes"
 	"context"
 	"path"
+	"strconv"
+	"strings"
 
 	"github.com/radutopala/loop/internal/httpapprover"
 )
@@ -36,11 +38,13 @@ type runToken struct {
 // writeRunTokens copies the container's tokens in as files rather than env
 // vars, which the agent process and `docker inspect` would both see. The gate
 // token is root's (the in-container dockerproxy and syscallwrap parent read
-// it); the API token is the agent's. Empty values are skipped.
-func (r *DockerRunner) writeRunTokens(ctx context.Context, containerID, gateToken, apiToken string) error {
+// it); the API token is the agent's, owned by the IDs the entrypoint gives
+// the agent user (see agentIDs). Empty values are skipped.
+func (r *DockerRunner) writeRunTokens(ctx context.Context, containerID string, env []string, gateToken, apiToken string) error {
+	uid, gid := r.agentIDs(env)
 	tokens := []runToken{
 		{path: httpapprover.GateTokenFile, value: gateToken},
-		{path: APITokenFile, value: apiToken, uid: r.sys.Getuid(), gid: r.sys.Getgid()},
+		{path: APITokenFile, value: apiToken, uid: uid, gid: gid},
 	}
 	var buf bytes.Buffer
 	tw := tar.NewWriter(&buf)
@@ -73,4 +77,27 @@ func (r *DockerRunner) writeRunTokens(ctx context.Context, containerID, gateToke
 	}
 	_ = tw.Close()
 	return r.client.CopyToContainer(ctx, containerID, "/", &buf)
+}
+
+// agentIDs returns the uid and gid the entrypoint creates the agent user
+// with: the HOST_UID/HOST_GID the container starts with. Config envs are
+// appended after the daemon's own values and Docker keeps the last of a
+// duplicated key, so the last numeric value wins here too. A missing or
+// non-numeric value falls back to the daemon's own ID.
+func (r *DockerRunner) agentIDs(env []string) (uid, gid int) {
+	uid, gid = r.sys.Getuid(), r.sys.Getgid()
+	for _, kv := range env {
+		key, value, _ := strings.Cut(kv, "=")
+		n, err := strconv.Atoi(value)
+		if err != nil || n < 0 {
+			continue
+		}
+		switch key {
+		case "HOST_UID":
+			uid = n
+		case "HOST_GID":
+			gid = n
+		}
+	}
+	return uid, gid
 }

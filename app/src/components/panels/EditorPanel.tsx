@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { buildRawFileBase } from "../../api/files";
+import { useContentCapsEpoch } from "../../hooks/useContentCapsEpoch";
 import type { EditorStateApi } from "../../hooks/useEditorState";
 import { useTheme } from "../../ThemeContext";
 import { fonts } from "../../theme";
@@ -8,14 +9,22 @@ import { FileIcon, parsePathKey } from "./EditorFileTree";
 import { FilePanel } from "./FilePanel";
 
 // useHtmlBaseURL resolves the <base href> of an HTML preview: a content link
-// to the file's directory, minted asynchronously.
-function useHtmlBaseURL(file: { channelId: string; path: string; root: number } | null): string | null {
+// to the file's directory, minted asynchronously. It resolves again whenever
+// the previewed content changes or every link is forgotten, so a preview
+// rendered after its link expired (or the daemon restarted) gets a live one;
+// the cached link comes back unchanged while it's still valid.
+function useHtmlBaseURL(file: { channelId: string; path: string; root: number } | null, content: string): string | null {
   const [url, setUrl] = useState<string | null>(null);
+  const capsEpoch = useContentCapsEpoch();
   const channelId = file?.channelId;
   const path = file?.path;
   const root = file?.root;
+  // Another file starts without a base; the same file keeps its current one
+  // while a fresh one resolves.
   useEffect(() => {
     setUrl(null);
+  }, [channelId, path, root]);
+  useEffect(() => {
     if (channelId === undefined || path === undefined) return;
     let cancelled = false;
     buildRawFileBase(channelId, path, root)
@@ -26,7 +35,7 @@ function useHtmlBaseURL(file: { channelId: string; path: string; root: number } 
     return () => {
       cancelled = true;
     };
-  }, [channelId, path, root]);
+  }, [channelId, path, root, content, capsEpoch]);
   return url;
 }
 
@@ -83,7 +92,7 @@ export function EditorPanel({ dirPath, branch, editorState, embedded, ...panelPr
   // Markdown opens split, HTML opens rendered; each type remembers its own mode.
   const previewMode = isHtml ? htmlMode : mdMode;
   const setPreviewMode = isHtml ? setHtmlMode : setMdMode;
-  const htmlBaseURL = useHtmlBaseURL(isHtml && selected ? { channelId: panelProps.channelId, path: selected.relativePath, root: selected.rootIndex } : null);
+  const htmlBaseURL = useHtmlBaseURL(isHtml && selected ? { channelId: panelProps.channelId, path: selected.relativePath, root: selected.rootIndex } : null, previewHtml);
   const hasMultipleRoots = roots.length > 1;
 
   const handlePreviewUpdate = useCallback((html: string) => {
@@ -273,6 +282,7 @@ export function EditorPanel({ dirPath, branch, editorState, embedded, ...panelPr
           previewHtml={previewHtml}
           htmlBaseURL={htmlBaseURL}
           imageURL={imageURL}
+          onMediaError={editorState.retryMedia}
           gitChanges={gitChanges}
         />
       </div>

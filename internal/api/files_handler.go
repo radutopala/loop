@@ -752,14 +752,17 @@ func (s *Server) handleWriteFile(w http.ResponseWriter, r *http.Request) {
 	}
 
 	relPath := r.URL.Query().Get("path")
-	absPath, err := s.validateEntryPath(dirPath, relPath)
+	// A symlink whose target resolves inside the root is followed, so the
+	// write lands on the real file; one resolving outside is refused here.
+	absPath, err := s.validateFilePath(dirPath, relPath)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 
-	// Refuse to write through a symlink — including a dangling one, whose
-	// target WriteFile would otherwise create wherever it points.
+	// A symlink left at this point is dangling (or was swapped in after the
+	// check): refuse it, since WriteFile would create its target wherever
+	// it points.
 	perm := os.FileMode(0644)
 	if info, err := s.sys.Lstat(absPath); err == nil {
 		if info.Mode()&os.ModeSymlink != 0 {

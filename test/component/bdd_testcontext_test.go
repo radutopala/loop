@@ -26,6 +26,10 @@ type TestContext struct {
 	LastStatus   int
 	LastJSON     map[string]any
 
+	// ContentLinkBase is the base_url of the content link a scenario minted
+	// last; later fetches under it replace the last response.
+	ContentLinkBase string
+
 	// LinkedMessageID is the message a scenario last opened a link to.
 	LinkedMessageID int64
 

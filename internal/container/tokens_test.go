@@ -128,20 +128,52 @@ func (s *TokensSuite) TestWriteRunTokens() {
 			s.SetupTest()
 			ctx := context.Background()
 			s.client.On("CopyToContainer", ctx, "cid", "/", mock.Anything).Return(nil).Once()
-			s.Require().NoError(s.runner.writeRunTokens(ctx, "cid", tt.gate, tt.api))
+			s.Require().NoError(s.runner.writeRunTokens(ctx, "cid", nil, tt.gate, tt.api))
 			s.Require().Equal(tt.want, copiedFiles(s.T(), s.client))
 		})
 	}
 }
 
+func (s *TokensSuite) TestWriteRunTokensOwnerFollowsEnv() {
+	ctx := context.Background()
+	s.client.On("CopyToContainer", ctx, "cid", "/", mock.Anything).Return(nil).Once()
+	env := []string{"HOST_UID=1001", "HOST_GID=1002", "HOST_UID=501", "HOST_GID=20"}
+	s.Require().NoError(s.runner.writeRunTokens(ctx, "cid", env, "", "a-tok"))
+	got := copiedFiles(s.T(), s.client)["run/loop/api-token"]
+	s.Require().Equal(501, got.uid)
+	s.Require().Equal(20, got.gid)
+}
+
+func (s *TokensSuite) TestAgentIDs() {
+	tests := []struct {
+		name     string
+		env      []string
+		uid, gid int
+	}{
+		{"no env falls back to daemon", nil, 1001, 1002},
+		{"daemon values", []string{"HOST_UID=1001", "HOST_GID=1002"}, 1001, 1002},
+		{"last override wins", []string{"HOST_UID=1001", "HOST_GID=1002", "HOST_UID=0", "HOST_GID=0", "HOST_UID=777"}, 777, 0},
+		{"non-numeric ignored", []string{"HOST_UID=abc", "HOST_GID="}, 1001, 1002},
+		{"negative ignored", []string{"HOST_UID=-1", "HOST_GID=-5"}, 1001, 1002},
+		{"other keys ignored", []string{"PATH=/bin", "UID=5", "noequals"}, 1001, 1002},
+	}
+	for _, tt := range tests {
+		s.Run(tt.name, func() {
+			uid, gid := s.runner.agentIDs(tt.env)
+			s.Require().Equal(tt.uid, uid)
+			s.Require().Equal(tt.gid, gid)
+		})
+	}
+}
+
 func (s *TokensSuite) TestWriteRunTokensNothingToWrite() {
-	s.Require().NoError(s.runner.writeRunTokens(context.Background(), "cid", "", ""))
+	s.Require().NoError(s.runner.writeRunTokens(context.Background(), "cid", nil, "", ""))
 	s.client.AssertNotCalled(s.T(), "CopyToContainer", mock.Anything, mock.Anything, mock.Anything, mock.Anything)
 }
 
 func (s *TokensSuite) TestWriteRunTokensCopyError() {
 	s.client.On("CopyToContainer", mock.Anything, "cid", "/", mock.Anything).Return(errors.New("boom"))
-	s.Require().EqualError(s.runner.writeRunTokens(context.Background(), "cid", "g", ""), "boom")
+	s.Require().EqualError(s.runner.writeRunTokens(context.Background(), "cid", nil, "g", ""), "boom")
 }
 
 func (s *TokensSuite) TestContainerRemoveRevokes() {

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { contentCapBase, fetchPlayground, fetchPlaygroundItems, fetchPlaygroundShareStatus, type PlaygroundItem, sharePlayground, unsharePlayground } from "../../api/loopApi";
+import { useContentCapsEpoch } from "../../hooks/useContentCapsEpoch";
 import { useEventStream } from "../../hooks/useEventStream";
 import { useTheme } from "../../ThemeContext";
 import type { WSEvent } from "../../types";
@@ -71,7 +72,9 @@ export function PlaygroundPanel({ channelId, instanceId = "default" }: Playgroun
     [storageKey],
   );
 
-  // The iframe loads through a content link (it can't send the API token).
+  // The iframe loads through a content link (it can't send the API token),
+  // resolved again once the links are forgotten (a daemon restart).
+  const capsEpoch = useContentCapsEpoch();
   const [iframeSrc, setIframeSrc] = useState("about:blank");
   useEffect(() => {
     if (!activeItem) {
@@ -89,7 +92,7 @@ export function PlaygroundPanel({ channelId, instanceId = "default" }: Playgroun
     return () => {
       cancelled = true;
     };
-  }, [channelId, activeItem, activeScope, iframeVersion]);
+  }, [channelId, activeItem, activeScope, iframeVersion, capsEpoch]);
 
   // Load items list on mount.
   useEffect(() => {

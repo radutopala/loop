@@ -94,11 +94,11 @@ func (s *ServerSuite) TestEnsureChannelInvalidDirPath() {
 		{"relative", "relative/dir", "must be an absolute path"},
 		{"missing", filepath.Join(parent, "nope"), "is not an existing directory"},
 		{"file", file, "is not a directory"},
-		{"equals protected", state, "contains a protected directory"},
-		{"ancestor of protected", project, "contains a protected directory"},
-		{"root", "/", "contains a protected directory"},
-		{"symlinked ancestor", alias, "contains a protected directory"},
-		{"dotdot to ancestor", filepath.Join(state, "..", ".."), "contains a protected directory"},
+		{"equals protected", state, "can't be a project folder: it contains "},
+		{"ancestor of protected", project, "can't be a project folder: it contains "},
+		{"root", "/", "can't be a project folder: it contains "},
+		{"symlinked ancestor", alias, "can't be a project folder: it contains "},
+		{"dotdot to ancestor", filepath.Join(state, "..", ".."), "can't be a project folder: it contains "},
 	}
 	for _, tc := range tests {
 		for _, endpoint := range []string{"/api/channels", "/api/channels/ensure-all"} {

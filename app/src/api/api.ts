@@ -164,9 +164,37 @@ export async function contentCapBase(scope: ContentCapScope): Promise<string> {
   return (await p).base;
 }
 
-/** Forget every content link, e.g. after the daemon restarted with a new key. */
+/** Forget the content link of one scope, e.g. after a load through it failed
+ *  because it expired. The next contentCapBase call mints a fresh one. */
+export function forgetContentCap(scope: ContentCapScope): void {
+  caps.delete(capKey(scope));
+}
+
+// Bumped by clearContentCaps so views holding a link (an iframe src, a
+// <base href>, an <img> src) can resolve it again.
+let capsEpoch = 0;
+const capsListeners = new Set<() => void>();
+
+/** Counter bumped each time every content link is forgotten. */
+export function contentCapsEpoch(): number {
+  return capsEpoch;
+}
+
+/** Calls listener whenever every content link is forgotten; returns the
+ *  unsubscribe function. */
+export function subscribeContentCaps(listener: () => void): () => void {
+  capsListeners.add(listener);
+  return () => {
+    capsListeners.delete(listener);
+  };
+}
+
+/** Forget every content link, e.g. after the daemon restarted with a new key,
+ *  and tell the views holding one to resolve it again. */
 export function clearContentCaps(): void {
   caps.clear();
+  capsEpoch++;
+  for (const l of capsListeners) l();
 }
 
 /** A URL path under a content link: each segment encoded, slashes kept. */

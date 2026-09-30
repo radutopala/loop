@@ -144,6 +144,9 @@ interface CodeEditorProps {
   htmlBaseURL?: string | null;
   /** When set, render the file as an image via this URL instead of the text editor. */
   imageURL?: string | null;
+  // Called when the <img>/<video> failed to load imageURL (e.g. its content
+  // link expired), so the owner can mint a fresh one.
+  onMediaError?: () => void;
   /** VCS change markers for the open file (added/modified/deleted lines vs git HEAD). */
   gitChanges?: GitLineChanges | null;
 }
@@ -166,6 +169,7 @@ export const CodeEditor = forwardRef<CodeEditorHandle, CodeEditorProps>(function
     previewHtml,
     htmlBaseURL,
     imageURL,
+    onMediaError,
     gitChanges,
   },
   ref,
@@ -434,9 +438,9 @@ export const CodeEditor = forwardRef<CodeEditorHandle, CodeEditorProps>(function
           }}
         >
           {isVideoPath(selectedRelPath || "") ? (
-            <video src={imageURL} controls style={{ maxWidth: "100%", maxHeight: "100%" }} />
+            <video src={imageURL} controls onError={onMediaError} style={{ maxWidth: "100%", maxHeight: "100%" }} />
           ) : (
-            <img src={imageURL} alt="" style={{ maxWidth: "100%", maxHeight: "100%", objectFit: "contain" }} />
+            <img src={imageURL} alt="" onError={onMediaError} style={{ maxWidth: "100%", maxHeight: "100%", objectFit: "contain" }} />
           )}
         </div>
       )}

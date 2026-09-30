@@ -31,8 +31,9 @@ var hardenedConfig = [][2]string{
 }
 
 // hardenedEnv is set on every invocation, replacing any inherited value.
+// System config stays on: it takes root to write, so it's the host's, and on
+// macOS it's where git keeps the keychain credential helper.
 var hardenedEnv = []string{
-	"GIT_CONFIG_NOSYSTEM=1",
 	"GIT_TERMINAL_PROMPT=0",
 	"GIT_OPTIONAL_LOCKS=0",
 	"GIT_PAGER=cat",
@@ -50,29 +51,19 @@ func Command(ctx context.Context, dir string, args ...string) *exec.Cmd {
 }
 
 // Environ returns os.Environ() hardened for git processes run in dir: the
-// config in hardenedConfig plus an emptied clean/smudge/process command for
-// every filter driver dir's repo config touches, delivered through
-// GIT_CONFIG_COUNT so it also reaches git processes spawned by other tools
-// (gh). An empty filter command is a no-op, which disarms a repo-defined
-// filter without having to know which paths .gitattributes routes through it.
+// config in hardenedConfig plus overrides disarming every command the repo's
+// own config names (see repoOverrides), delivered through GIT_CONFIG_COUNT so
+// it also reaches git processes spawned by other tools (gh).
 func Environ(ctx context.Context, dir string) []string {
-	return buildEnviron(os.Environ(), filterDrivers(ctx, dir))
+	return buildEnviron(os.Environ(), repoOverrides(readConfig(ctx, dir)))
 }
 
 // buildEnviron strips inherited variables that would override or smuggle in
-// git config and appends the hardened set, neutralizing each named filter.
-func buildEnviron(environ, filters []string) []string {
+// git config and appends the hardened set, then overrides.
+func buildEnviron(environ []string, overrides [][2]string) []string {
 	env := slices.DeleteFunc(slices.Clone(environ), inheritedGitOverride)
 	env = append(env, hardenedEnv...)
-	cfg := slices.Clone(hardenedConfig)
-	for _, name := range filters {
-		cfg = append(cfg,
-			[2]string{"filter." + name + ".clean", ""},
-			[2]string{"filter." + name + ".smudge", ""},
-			[2]string{"filter." + name + ".process", ""},
-			[2]string{"filter." + name + ".required", "false"},
-		)
-	}
+	cfg := append(slices.Clone(hardenedConfig), overrides...)
 	env = append(env, "GIT_CONFIG_COUNT="+strconv.Itoa(len(cfg)))
 	for i, kv := range cfg {
 		env = append(env,
@@ -91,48 +82,136 @@ func inheritedGitOverride(kv string) bool {
 	name, _, _ := strings.Cut(kv, "=")
 	switch name {
 	case "GIT_CONFIG_COUNT", "GIT_CONFIG_PARAMETERS", "GIT_EXTERNAL_DIFF", "GIT_EXEC_PATH",
-		"GIT_CONFIG_NOSYSTEM", "GIT_TERMINAL_PROMPT", "GIT_OPTIONAL_LOCKS", "GIT_PAGER":
+		"GIT_TERMINAL_PROMPT", "GIT_OPTIONAL_LOCKS", "GIT_PAGER":
 		return true
 	}
 	return strings.HasPrefix(name, "GIT_CONFIG_KEY_") || strings.HasPrefix(name, "GIT_CONFIG_VALUE_")
 }
 
-// filterDrivers lists the filter driver names the repo at dir touches in its
-// own config (local or worktree scope, includes followed). Drivers set up
-// only in the user's global config — git-lfs, typically — are the host's own
-// and keep working; a repo that so much as sets one key of a driver gets the
-// whole driver disarmed. `git config` only reads config files — it runs no
+// configEntry is one key of the config git reads in a repo.
+type configEntry struct {
+	scope, key, value string
+}
+
+// fromHost reports whether the entry comes from the host's own config (global
+// or system) rather than the repo's (local, worktree, or a file either
+// includes).
+func (e configEntry) fromHost() bool {
+	return e.scope == "global" || e.scope == "system"
+}
+
+// commandKeys matches the config keys that name a program git runs and that
+// repoOverrides disarms. git lowercases section and key names but keeps the
+// subsection (a remote name, a credential URL) as written.
+const commandKeys = `^(filter\..+|credential\.(.+\.)?helper|core\.sshcommand|core\.gitproxy|remote\..+\.(uploadpack|receivepack))$`
+
+// readConfig lists the entries of dir's config matching commandKeys, in the
+// order git reads them. `git config` only reads config files — it runs no
 // hooks, filters or fsmonitor — so it is safe to ask before hardening. A
-// non-repo dir, or one without filters, yields none.
-func filterDrivers(ctx context.Context, dir string) []string {
-	cmd := exec.CommandContext(ctx, "git", "config", "--null", "--show-scope", "--name-only", "--get-regexp", `^filter\.`)
+// non-repo dir, or one without such keys, yields none.
+func readConfig(ctx context.Context, dir string) []configEntry {
+	cmd := exec.CommandContext(ctx, "git", "config", "--null", "--show-scope", "--get-regexp", commandKeys)
 	cmd.Dir = dir
 	cmd.Env = buildEnviron(os.Environ(), nil)
 	out, err := cmd.Output()
 	if err != nil {
 		return nil
 	}
-	return parseFilterNames(string(out))
+	return parseConfig(string(out))
 }
 
-// parseFilterNames extracts the unique driver names from `--show-scope
-// --name-only --null` output — NUL-terminated scope, key pairs — skipping
-// keys from the host's own (global, system) config. The name is everything
-// between the first and last dot of `filter.<name>.<key>`, so names
-// containing dots survive intact.
-func parseFilterNames(out string) []string {
-	var names []string
+// parseConfig splits `--null --show-scope` output: NUL-terminated scope, then
+// NUL-terminated "key\nvalue" (a key set without a value has no newline).
+func parseConfig(out string) []configEntry {
+	var entries []configEntry
 	fields := strings.Split(out, "\x00")
 	for i := 0; i+1 < len(fields); i += 2 {
-		scope, key := fields[i], fields[i+1]
-		rest, ok := strings.CutPrefix(key, "filter.")
-		dot := strings.LastIndexByte(rest, '.')
-		if scope == "global" || scope == "system" || !ok || dot <= 0 {
-			continue
-		}
-		if name := rest[:dot]; !slices.Contains(names, name) {
-			names = append(names, name)
+		key, value, _ := strings.Cut(fields[i+1], "\n")
+		entries = append(entries, configEntry{scope: fields[i], key: key, value: value})
+	}
+	return entries
+}
+
+// repoOverrides returns command-scope config that disarms every program the
+// repo's own config names, keeping what the host's config sets:
+//   - A filter driver the repo touches gets empty commands, a no-op, so it's
+//     disarmed without knowing which paths .gitattributes routes through it.
+//     Drivers only the host sets up (git-lfs, typically) keep working.
+//   - Credential helpers form one list across credential.helper and
+//     credential.<url>.helper, and an empty value clears it. If the repo adds
+//     any, every helper key is cleared, then the host's helpers are added back
+//     in the order git read them.
+//   - core.sshCommand takes the last value, so the host's (or plain ssh) goes
+//     last.
+//   - core.gitProxy, remote.<name>.uploadpack and receivepack take the first
+//     value, which command scope can't outrank. So a repo that sets one loses
+//     the one transport that runs it here: git:// for the proxy, local paths
+//     for upload-pack and receive-pack (over ssh those run on the server).
+func repoOverrides(entries []configEntry) [][2]string {
+	var filters, cfg [][2]string
+	var helperKeys []string
+	var hostHelpers [][2]string
+	repoHelper := false
+	hostSSH := "ssh"
+	for _, e := range entries {
+		switch {
+		case strings.HasPrefix(e.key, "filter."):
+			rest := strings.TrimPrefix(e.key, "filter.")
+			dot := strings.LastIndexByte(rest, '.')
+			if e.fromHost() || dot <= 0 {
+				continue
+			}
+			name := rest[:dot]
+			if !slices.Contains(filters, [2]string{"filter." + name + ".clean", ""}) {
+				filters = append(filters,
+					[2]string{"filter." + name + ".clean", ""},
+					[2]string{"filter." + name + ".smudge", ""},
+					[2]string{"filter." + name + ".process", ""},
+					[2]string{"filter." + name + ".required", "false"},
+				)
+			}
+		case strings.HasPrefix(e.key, "credential."):
+			if !slices.Contains(helperKeys, e.key) {
+				helperKeys = append(helperKeys, e.key)
+			}
+			if e.fromHost() {
+				hostHelpers = append(hostHelpers, [2]string{e.key, e.value})
+			} else {
+				repoHelper = true
+			}
+		case e.key == "core.sshcommand":
+			if e.fromHost() {
+				hostSSH = e.value
+			}
 		}
 	}
-	return names
+	cfg = append(cfg, filters...)
+	if repoHelper {
+		for _, k := range helperKeys {
+			cfg = append(cfg, [2]string{k, ""})
+		}
+		cfg = append(cfg, hostHelpers...)
+	}
+	for _, e := range entries {
+		if e.fromHost() {
+			continue
+		}
+		switch {
+		case e.key == "core.sshcommand":
+			cfg = appendOnce(cfg, [2]string{"core.sshCommand", hostSSH})
+		case e.key == "core.gitproxy":
+			cfg = appendOnce(cfg, [2]string{"protocol.git.allow", "never"})
+		case strings.HasPrefix(e.key, "remote."):
+			cfg = appendOnce(cfg, [2]string{"protocol.file.allow", "never"})
+		}
+	}
+	return cfg
+}
+
+// appendOnce appends kv to cfg unless it's already there.
+func appendOnce(cfg [][2]string, kv [2]string) [][2]string {
+	if slices.Contains(cfg, kv) {
+		return cfg
+	}
+	return append(cfg, kv)
 }

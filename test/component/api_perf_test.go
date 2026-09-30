@@ -564,6 +564,8 @@ func (s *APIPerfTestSuite) assertPerformanceCriteria(report *PerfReport) {
 
 // ensureChannel creates or retrieves a channel for the given dir path.
 func (s *APIPerfTestSuite) ensureChannel(dirPath string) string {
+	// The daemon only binds a channel to an existing directory.
+	s.Require().NoError(os.MkdirAll(dirPath, 0o755))
 	body := toJSON(map[string]string{"dir_path": dirPath, "platform": "local"})
 	resp, err := s.client.Post(s.cfg.BaseURL+"/api/channels", "application/json", bytes.NewReader(body))
 	s.Require().NoError(err)

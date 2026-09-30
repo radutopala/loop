@@ -215,6 +215,32 @@ describe("contentCapBase", () => {
     clock.mockRestore();
   });
 
+  it("forgets one scope's link and leaves the others", async () => {
+    const { api, fetchMock } = await setup();
+    const raw = { kind: "raw", channelId: "ch", root: 0 } as const;
+    const pg = { kind: "playground", name: "demo" } as const;
+    await expect(api.contentCapBase(raw)).resolves.toBe("http://api/c/cap1/");
+    await expect(api.contentCapBase(pg)).resolves.toBe("http://api/c/cap2/");
+    api.forgetContentCap(raw);
+    await expect(api.contentCapBase(raw)).resolves.toBe("http://api/c/cap3/");
+    await expect(api.contentCapBase(pg)).resolves.toBe("http://api/c/cap2/");
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
+
+  it("bumps the epoch and tells subscribers on a clear", async () => {
+    const { api } = await setup();
+    const listener = vi.fn();
+    const unsubscribe = api.subscribeContentCaps(listener);
+    const before = api.contentCapsEpoch();
+    api.clearContentCaps();
+    expect(api.contentCapsEpoch()).toBe(before + 1);
+    expect(listener).toHaveBeenCalledTimes(1);
+    unsubscribe();
+    api.clearContentCaps();
+    expect(api.contentCapsEpoch()).toBe(before + 2);
+    expect(listener).toHaveBeenCalledTimes(1);
+  });
+
   it("fails, and tries again on the next ask", async () => {
     const { api, fetchMock } = await setup(500);
     const scope = { kind: "playground", name: "demo" } as const;

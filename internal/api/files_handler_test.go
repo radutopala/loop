@@ -983,37 +983,79 @@ func (s *ServerSuite) TestWriteFile_Success() {
 	require.Equal(s.T(), "new content", string(data))
 }
 
-func (s *ServerSuite) TestWriteFile_RefusesSymlinks() {
+func (s *ServerSuite) TestWriteFile_Symlinks() {
 	tests := []struct {
-		name   string
-		target func(root, outside string) string
+		name    string
+		target  func(root, outside string) string
+		code    int
+		errText string
+		want    string
 	}{
-		{"dangling symlink to outside", func(_, outside string) string { return filepath.Join(outside, "created.txt") }},
-		{"symlink to existing file inside root", func(root, _ string) string {
-			p := filepath.Join(root, "real.txt")
-			require.NoError(s.T(), os.WriteFile(p, []byte("keep"), 0644))
-			return p
-		}},
+		{
+			name:    "dangling symlink to outside",
+			target:  func(_, outside string) string { return filepath.Join(outside, "created.txt") },
+			code:    http.StatusBadRequest,
+			errText: "refusing to write through a symlink",
+		},
+		{
+			name:    "dangling symlink inside root",
+			target:  func(root, _ string) string { return filepath.Join(root, "missing.txt") },
+			code:    http.StatusBadRequest,
+			errText: "refusing to write through a symlink",
+		},
+		{
+			name: "symlink to existing file outside root",
+			target: func(_, outside string) string {
+				p := filepath.Join(outside, "real.txt")
+				require.NoError(s.T(), os.WriteFile(p, []byte("keep"), 0644))
+				return p
+			},
+			code:    http.StatusBadRequest,
+			errText: "path traversal not allowed",
+			want:    "keep",
+		},
+		{
+			name: "symlink to existing file inside root",
+			target: func(root, _ string) string {
+				p := filepath.Join(root, "real.txt")
+				require.NoError(s.T(), os.WriteFile(p, []byte("keep"), 0600))
+				return p
+			},
+			code: http.StatusOK,
+			want: "edited",
+		},
 	}
 	for _, tc := range tests {
 		s.Run(tc.name, func() {
 			tmpDir := s.T().TempDir()
 			outside := s.T().TempDir()
 			target := tc.target(tmpDir, outside)
-			require.NoError(s.T(), os.Symlink(target, filepath.Join(tmpDir, "link.txt")))
+			link := filepath.Join(tmpDir, "link.txt")
+			require.NoError(s.T(), os.Symlink(target, link))
 
 			s.store.On("GetChannel", mock.Anything, "ch-1").
 				Return(&db.Channel{ChannelID: "ch-1", DirPath: tmpDir}, nil).Once()
 
-			rec := s.testRequest("PUT", "/api/channels/ch-1/file?path=link.txt", "pwned")
-			require.Equal(s.T(), http.StatusBadRequest, rec.Code)
-			require.Contains(s.T(), rec.Body.String(), "refusing to write through a symlink")
+			rec := s.testRequest("PUT", "/api/channels/ch-1/file?path=link.txt", "edited")
+			require.Equal(s.T(), tc.code, rec.Code)
+			require.Contains(s.T(), rec.Body.String(), tc.errText)
+
+			// The link itself is never replaced by a regular file.
+			info, err := os.Lstat(link)
+			require.NoError(s.T(), err)
+			require.NotZero(s.T(), info.Mode()&os.ModeSymlink)
 
 			data, err := os.ReadFile(target)
-			if err == nil {
-				require.Equal(s.T(), "keep", string(data))
-			} else {
+			if tc.want == "" {
 				require.True(s.T(), os.IsNotExist(err))
+				return
+			}
+			require.NoError(s.T(), err)
+			require.Equal(s.T(), tc.want, string(data))
+			if tc.code == http.StatusOK {
+				tInfo, err := os.Stat(target)
+				require.NoError(s.T(), err)
+				require.Equal(s.T(), os.FileMode(0600), tInfo.Mode().Perm())
 			}
 		})
 	}

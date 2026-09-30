@@ -88,14 +88,17 @@ func (tc *TestContext) assertWSSubprotocol(path string) error {
 	return nil
 }
 
-// fetchUnderContentLink GETs rel under the base_url of the last
-// POST /api/content-caps response, with no token.
+// fetchUnderContentLink GETs rel under the base_url of the latest
+// POST /api/content-caps response, with no token. The link is remembered, as
+// a fetch under it becomes the last response.
 func (tc *TestContext) fetchUnderContentLink(rel string) error {
-	base, _ := tc.LastJSON["base_url"].(string)
-	if base == "" {
-		return fmt.Errorf("the last response has no base_url: %s", tc.LastBody)
+	if base, _ := tc.LastJSON["base_url"].(string); base != "" {
+		tc.ContentLinkBase = base
 	}
-	return tc.sendRaw(base+rel, "")
+	if tc.ContentLinkBase == "" {
+		return fmt.Errorf("no content link minted yet; last response: %s", tc.LastBody)
+	}
+	return tc.sendRaw(tc.ContentLinkBase+rel, "")
 }
 
 func (tc *TestContext) createRepoSymlink(name, target string) error {

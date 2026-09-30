@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -27,6 +28,7 @@ func (s *GitUtilSuite) SetupTest() {
 	// Keep the machine's own git config out of the picture: a global
 	// credential helper or hooksPath would blur what the repo planted.
 	s.T().Setenv("GIT_CONFIG_GLOBAL", os.DevNull)
+	s.T().Setenv("GIT_CONFIG_SYSTEM", os.DevNull)
 }
 
 // git runs plain, unhardened git — the way the repo was attacked before.
@@ -306,11 +308,22 @@ func (s *GitUtilSuite) TestCommandSetsDirAndArgs() {
 	cmd := Command(context.Background(), "/some/dir", "status", "-z")
 	require.Equal(s.T(), "/some/dir", cmd.Dir)
 	require.Equal(s.T(), []string{"git", "status", "-z"}, cmd.Args)
-	require.Contains(s.T(), cmd.Env, "GIT_CONFIG_NOSYSTEM=1")
+	require.NotContains(s.T(), cmd.Env, "GIT_CONFIG_NOSYSTEM=1", "system config is the host's")
 }
 
-func (s *GitUtilSuite) TestFilterDriversNonRepo() {
-	require.Empty(s.T(), filterDrivers(context.Background(), s.T().TempDir()))
+// filterNames lists the filter drivers repoOverrides disarms in repo.
+func filterNames(repo string) []string {
+	var names []string
+	for _, kv := range repoOverrides(readConfig(context.Background(), repo)) {
+		if name, ok := strings.CutSuffix(strings.TrimPrefix(kv[0], "filter."), ".clean"); ok && strings.HasPrefix(kv[0], "filter.") {
+			names = append(names, name)
+		}
+	}
+	return names
+}
+
+func (s *GitUtilSuite) TestReadConfigNonRepo() {
+	require.Empty(s.T(), readConfig(context.Background(), s.T().TempDir()))
 }
 
 func (s *GitUtilSuite) TestFilterDriversFollowsIncludes() {
@@ -318,7 +331,7 @@ func (s *GitUtilSuite) TestFilterDriversFollowsIncludes() {
 	inc := filepath.Join(filepath.Dir(repo), "extra.gitconfig")
 	require.NoError(s.T(), os.WriteFile(inc, []byte("[filter \"a.b c\"]\n\tclean = x\n"), 0o644))
 	s.git(repo, "config", "include.path", inc)
-	require.Equal(s.T(), []string{"evil", "a.b c"}, filterDrivers(context.Background(), repo))
+	require.Equal(s.T(), []string{"evil", "a.b c"}, filterNames(repo))
 }
 
 // TestGlobalFilterDriversKeepWorking covers git-lfs style drivers the user
@@ -332,7 +345,7 @@ func (s *GitUtilSuite) TestGlobalFilterDriversKeepWorking() {
 	require.NoError(s.T(), os.WriteFile(global, []byte(cfg), 0o644))
 	s.T().Setenv("GIT_CONFIG_GLOBAL", global)
 	s.git(repo, "config", "filter.lfs.smudge", "cat")
-	require.Equal(s.T(), []string{"evil", "lfs"}, filterDrivers(context.Background(), repo))
+	require.Equal(s.T(), []string{"evil", "lfs"}, filterNames(repo))
 
 	attrs := "*.bin filter=evil diff=evil\n*.host filter=host\n*.lfs filter=lfs\n"
 	require.NoError(s.T(), os.WriteFile(filepath.Join(repo, ".gitattributes"), []byte(attrs), 0o644))
@@ -342,6 +355,104 @@ func (s *GitUtilSuite) TestGlobalFilterDriversKeepWorking() {
 	out, err := Command(context.Background(), repo, "add", "x.host", "x.lfs").CombinedOutput()
 	require.NoError(s.T(), err, string(out))
 	require.Equal(s.T(), []string{"host"}, s.markers(markerDir))
+}
+
+// TestCredentialHelpers fetches from a remote that demands authentication.
+// Helpers the repo adds, generic or for the remote's URL, never run; the
+// host's system and global helpers still do, in git's order.
+func (s *GitUtilSuite) TestCredentialHelpers() {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("WWW-Authenticate", `Basic realm="test"`)
+		w.WriteHeader(http.StatusUnauthorized)
+	}))
+	defer srv.Close()
+	// A helper appends its name to a log, so the order it ran in shows.
+	helper := func(markerDir, name string) string {
+		return "!echo " + name + " >> '" + filepath.Join(markerDir, "helpers") + "'; true"
+	}
+	plant := func() (string, string) {
+		repo, markerDir := s.plantedRepo()
+		root := filepath.Dir(repo)
+		system := filepath.Join(root, "system.gitconfig")
+		global := filepath.Join(root, "global.gitconfig")
+		require.NoError(s.T(), os.WriteFile(system, fmt.Appendf(nil, "[credential]\n\thelper = %q\n", helper(markerDir, "system")), 0o644))
+		require.NoError(s.T(), os.WriteFile(global, fmt.Appendf(nil, "[credential %q]\n\thelper = %q\n", srv.URL, helper(markerDir, "global")), 0o644))
+		s.T().Setenv("GIT_CONFIG_SYSTEM", system)
+		s.T().Setenv("GIT_CONFIG_GLOBAL", global)
+		s.git(repo, "remote", "add", "origin", srv.URL+"/repo.git")
+		s.git(repo, "config", "credential.helper", helper(markerDir, "repo"))
+		s.git(repo, "config", "credential."+srv.URL+".helper", helper(markerDir, "repo-url"))
+		return repo, markerDir
+	}
+	helpersRun := func(markerDir string) string {
+		data, _ := os.ReadFile(filepath.Join(markerDir, "helpers"))
+		return string(data)
+	}
+
+	repo, markerDir := plant()
+	plain := exec.Command("git", "fetch", "-q", "origin")
+	plain.Dir = repo
+	plain.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
+	_ = plain.Run()
+	require.Contains(s.T(), helpersRun(markerDir), "repo")
+
+	repo, markerDir = plant()
+	require.Error(s.T(), Command(context.Background(), repo, "fetch", "-q", "origin").Run())
+	require.Equal(s.T(), "system\nglobal\n", helpersRun(markerDir))
+}
+
+// TestRepoTransportCommandsNeverRun plants the other keys that name a program
+// git runs to reach a remote: the ssh command, the remote's upload-pack, and
+// the git:// proxy.
+func (s *GitUtilSuite) TestRepoTransportCommandsNeverRun() {
+	cases := []struct {
+		name  string
+		plant func(repo, touch string)
+	}{
+		{
+			name: "core.sshCommand",
+			plant: func(repo, touch string) {
+				s.git(repo, "remote", "add", "origin", "ssh://127.0.0.1:1/repo.git")
+				s.git(repo, "config", "core.sshCommand", touch+"; false")
+			},
+		},
+		{
+			name: "remote uploadpack",
+			plant: func(repo, touch string) {
+				upstream := filepath.Join(filepath.Dir(repo), "upstream")
+				s.git(filepath.Dir(repo), "clone", "-q", "--bare", repo, upstream)
+				s.git(repo, "remote", "add", "origin", upstream)
+				s.git(repo, "config", "remote.origin.uploadpack", touch+"; git-upload-pack")
+			},
+		},
+		{
+			name: "core.gitProxy",
+			plant: func(repo, touch string) {
+				script := filepath.Join(filepath.Dir(repo), "proxy.sh")
+				require.NoError(s.T(), os.WriteFile(script, []byte("#!/bin/sh\n"+touch+"\n"), 0o755))
+				s.git(repo, "remote", "add", "origin", "git://127.0.0.1:1/repo.git")
+				s.git(repo, "config", "core.gitProxy", script)
+			},
+		},
+	}
+	for _, tc := range cases {
+		s.Run(tc.name, func() {
+			plant := func() (string, string) {
+				repo, markerDir := s.plantedRepo()
+				tc.plant(repo, "touch '"+filepath.Join(markerDir, "transport")+"'")
+				return repo, markerDir
+			}
+			repo, markerDir := plant()
+			plain := exec.Command("git", "fetch", "-q", "origin")
+			plain.Dir = repo
+			_ = plain.Run()
+			require.Contains(s.T(), s.markers(markerDir), "transport")
+
+			repo, markerDir = plant()
+			require.Error(s.T(), Command(context.Background(), repo, "fetch", "-q", "origin").Run())
+			require.Empty(s.T(), s.markers(markerDir))
+		})
+	}
 }
 
 func (s *GitUtilSuite) TestBuildEnviron() {
@@ -354,39 +465,136 @@ func (s *GitUtilSuite) TestBuildEnviron() {
 		"GIT_CONFIG_KEY_0=core.fsmonitor",
 		"GIT_CONFIG_VALUE_0=evil",
 		"GIT_PAGER=less",
+		"GIT_CONFIG_NOSYSTEM=1",
 		"GIT_AUTHOR_NAME=kept",
-	}, []string{"lfs"})
+	}, [][2]string{{"filter.lfs.required", "false"}})
 
-	require.Equal(s.T(), []string{"PATH=/bin", "GIT_AUTHOR_NAME=kept"}, env[:2])
-	require.Equal(s.T(), hardenedEnv, env[2:2+len(hardenedEnv)])
-	cfg := env[2+len(hardenedEnv):]
-	n := len(hardenedConfig) + 4
+	require.Equal(s.T(), []string{"PATH=/bin", "GIT_CONFIG_NOSYSTEM=1", "GIT_AUTHOR_NAME=kept"}, env[:3])
+	require.Equal(s.T(), hardenedEnv, env[3:3+len(hardenedEnv)])
+	cfg := env[3+len(hardenedEnv):]
+	n := len(hardenedConfig) + 1
 	require.Equal(s.T(), fmt.Sprintf("GIT_CONFIG_COUNT=%d", n), cfg[0])
 	require.Len(s.T(), cfg, 1+2*n)
 	require.Contains(s.T(), cfg, "GIT_CONFIG_KEY_0=core.fsmonitor")
 	require.Contains(s.T(), cfg, "GIT_CONFIG_VALUE_0=false")
-	last := len(hardenedConfig) + 3
-	require.Contains(s.T(), cfg, fmt.Sprintf("GIT_CONFIG_KEY_%d=filter.lfs.required", last))
-	require.Contains(s.T(), cfg, fmt.Sprintf("GIT_CONFIG_VALUE_%d=false", last))
+	require.Contains(s.T(), cfg, fmt.Sprintf("GIT_CONFIG_KEY_%d=filter.lfs.required", n-1))
+	require.Contains(s.T(), cfg, fmt.Sprintf("GIT_CONFIG_VALUE_%d=false", n-1))
 }
 
-func (s *GitUtilSuite) TestParseFilterNames() {
+func (s *GitUtilSuite) TestParseConfig() {
 	cases := []struct {
 		name string
 		in   string
-		want []string
+		want []configEntry
 	}{
 		{name: "empty", in: "", want: nil},
-		{name: "dedup", in: "local\x00filter.lfs.clean\x00local\x00filter.lfs.smudge\x00worktree\x00filter.x.process\x00", want: []string{"lfs", "x"}},
-		{name: "host scopes skipped", in: "system\x00filter.a.clean\x00global\x00filter.b.clean\x00local\x00filter.b.smudge\x00", want: []string{"b"}},
-		{name: "dotted name", in: "local\x00filter.a.b.clean\x00", want: []string{"a.b"}},
-		{name: "no subsection", in: "local\x00filter.clean\x00", want: nil},
-		{name: "empty subsection", in: "local\x00filter..clean\x00", want: nil},
-		{name: "other section", in: "local\x00diff.x.command\x00", want: nil},
+		{
+			name: "entries",
+			in:   "system\x00credential.helper\nosxkeychain\x00local\x00filter.x.required\x00local\x00core.sshcommand\nssh -i a\nb\x00",
+			want: []configEntry{
+				{scope: "system", key: "credential.helper", value: "osxkeychain"},
+				{scope: "local", key: "filter.x.required"},
+				{scope: "local", key: "core.sshcommand", value: "ssh -i a\nb"},
+			},
+		},
 	}
 	for _, tc := range cases {
 		s.Run(tc.name, func() {
-			require.Equal(s.T(), tc.want, parseFilterNames(tc.in))
+			require.Equal(s.T(), tc.want, parseConfig(tc.in))
+		})
+	}
+}
+
+func (s *GitUtilSuite) TestRepoOverrides() {
+	filter := func(name string) [][2]string {
+		return [][2]string{
+			{"filter." + name + ".clean", ""},
+			{"filter." + name + ".smudge", ""},
+			{"filter." + name + ".process", ""},
+			{"filter." + name + ".required", "false"},
+		}
+	}
+	cases := []struct {
+		name string
+		in   []configEntry
+		want [][2]string
+	}{
+		{name: "empty", in: nil, want: nil},
+		{
+			name: "filters: deduped, host ones and malformed keys skipped",
+			in: []configEntry{
+				{scope: "local", key: "filter.lfs.clean"},
+				{scope: "worktree", key: "filter.lfs.smudge"},
+				{scope: "system", key: "filter.a.clean"},
+				{scope: "global", key: "filter.b.clean"},
+				{scope: "local", key: "filter.a.b.process"},
+				{scope: "local", key: "filter.clean"},
+				{scope: "local", key: "filter..clean"},
+			},
+			want: append(filter("lfs"), filter("a.b")...),
+		},
+		{
+			name: "host helpers alone are left as they are",
+			in: []configEntry{
+				{scope: "system", key: "credential.helper", value: "osxkeychain"},
+				{scope: "global", key: "credential.https://h.helper", value: "gh"},
+			},
+			want: nil,
+		},
+		{
+			name: "a repo helper clears every helper key, then the host's come back in order",
+			in: []configEntry{
+				{scope: "system", key: "credential.helper", value: "osxkeychain"},
+				{scope: "global", key: "credential.https://h.helper", value: "gh"},
+				{scope: "local", key: "credential.https://evil.helper", value: "!evil"},
+				{scope: "global", key: "credential.helper", value: "store"},
+			},
+			want: [][2]string{
+				{"credential.helper", ""},
+				{"credential.https://h.helper", ""},
+				{"credential.https://evil.helper", ""},
+				{"credential.helper", "osxkeychain"},
+				{"credential.https://h.helper", "gh"},
+				{"credential.helper", "store"},
+			},
+		},
+		{
+			name: "repo transport commands",
+			in: []configEntry{
+				{scope: "local", key: "core.sshcommand", value: "evil"},
+				{scope: "local", key: "core.sshcommand", value: "evil2"},
+				{scope: "local", key: "core.gitproxy", value: "evil"},
+				{scope: "local", key: "core.gitproxy", value: "evil for x"},
+				{scope: "local", key: "remote.origin.uploadpack", value: "evil"},
+				{scope: "local", key: "remote.Up.Stream.receivepack", value: "evil"},
+			},
+			want: [][2]string{
+				{"core.sshCommand", "ssh"},
+				{"protocol.git.allow", "never"},
+				{"protocol.file.allow", "never"},
+			},
+		},
+		{
+			name: "the host's ssh command wins over the repo's",
+			in: []configEntry{
+				{scope: "global", key: "core.sshcommand", value: "ssh -F host"},
+				{scope: "local", key: "core.sshcommand", value: "evil"},
+			},
+			want: [][2]string{{"core.sshCommand", "ssh -F host"}},
+		},
+		{
+			name: "host transport commands are left as they are",
+			in: []configEntry{
+				{scope: "global", key: "core.sshcommand", value: "ssh -F host"},
+				{scope: "system", key: "core.gitproxy", value: "proxy"},
+				{scope: "global", key: "remote.origin.uploadpack", value: "up"},
+			},
+			want: nil,
+		},
+	}
+	for _, tc := range cases {
+		s.Run(tc.name, func() {
+			require.Equal(s.T(), tc.want, repoOverrides(tc.in))
 		})
 	}
 }
