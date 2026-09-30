@@ -525,8 +525,8 @@ Project config overrides specific global settings. Only these fields are allowed
 | `browser.enabled` | **Overrides** global value when set |
 | `browser.chrome_image` | **Overrides** global value when set |
 | `browser.host_cdp_port` | **Overrides** global value when set |
-| `gates.agentgate` | **Narrow merge** — project may disable the gate (not re-enable); rules prepend to global and may use any decision; `default_decision` is ignored |
-| `gates.docker_proxy` | Same narrow merge as `gates.agentgate`; rules prepend and may use any decision; `default_decision` ignored |
+| `gates.agentgate` | **Narrow merge**, applied once trusted: rules may use any decision and go after the global denies, before the other global rules, so they can't loosen a global deny; `enabled` and `default_decision` are ignored |
+| `gates.docker_proxy` | Same narrow merge as `gates.agentgate` |
 | `gates.rate_limits` / `gates.audit` | Ignored at project scope — configured globally only |
 
 **Worktree threads** inherit their parent project's config unless the worktree directory has its own `.loop/config.json`. This means you only need to configure mounts, MCP servers, and model once in the parent project — all worktree threads will use the same settings automatically.

@@ -369,7 +369,7 @@ Applying a proposal of a config kind appends to the project config, `.loop/confi
 |---|---|---|
 | `prompt_shortcut` | `prompt_shortcuts` | Fails if a prompt shortcut of that name already exists in the merged config. |
 | `bash_shortcut` | `bash_shortcuts` | Fails if a bash shortcut of that name already exists in the merged config. |
-| `gate_rule` | `gates.agentgate.path_rules`, `command_rules` or `file_rules` | Picked by the rule's type (`path`, `command`, `file`). Project rules are prepended to the global ones, so they match first; that's why a proposed rule must name what it matches (`commands` or `args_patterns`, `paths`, `pattern`) and can't be a catch-all. A rule the merged config already has is left as it is, and the apply succeeds. |
+| `gate_rule` | `gates.agentgate.path_rules`, `command_rules` or `file_rules` | Picked by the rule's type (`path`, `command`, `file`). Project rules match before every global rule except the denies; that's why a proposed rule must name what it matches (`commands` or `args_patterns`, `paths`, `pattern`) and can't be a catch-all. A rule the merged config already has is left as it is, and the apply succeeds. |
 | `mount` | `mounts` | Fails if the merged config already has the exact mount (a relative host path is resolved against the project dir first, as project mounts are). Project mounts are added to the global ones, so only the new mount is written. |
 
 `scheduled_task`, `rename`, `description` and `ticket_url` proposals don't touch config: they create an enabled task in the channel and update the channel's name, description or ticket URL, as `POST /api/tasks`, `/rename`, `/description` and `/ticket` do.
@@ -1086,12 +1086,12 @@ Trusted versions are kept in `loop/project-trust.json` under your OS user config
   //  "max_concurrent_nodes": 10
   //},
 
-  // Security gates override for this project only. Can disable (not re-enable);
-  // rules prepend to global (first-match-wins) and may use any decision
-  // (allow/deny/approve).
+  // Security gate rules for this project, applied once you trust the config.
+  // Rules may use any decision (allow/deny/approve) and go after the global
+  // denies, before the other global rules (first-match-wins). "enabled" and
+  // "default_decision" are ignored: the global config decides.
   //"gates": {
   //  //"agentgate": {
-  //  //  "enabled": false,
   //  //  //"command_rules": [ { "commands": ["npm"], "args_patterns": ["^publish"], "decision": "deny" } ],
   //  //  //"file_rules":    [ { "paths": ["./secret-vault/**"], "operations": ["read"], "decision": "deny" } ]
   //  //},
