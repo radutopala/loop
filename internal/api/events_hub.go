@@ -74,6 +74,7 @@ const (
 	EventReviewComment             = "review.comment"
 	EventReviewStatus              = "review.status"
 	EventReviewDiff                = "review.diff"
+	EventReviewCommentRemoved      = "review.comment_removed"
 )
 
 // Event represents a server-sent event to WebSocket clients.
@@ -255,6 +256,17 @@ func (h *EventsHub) BroadcastReviewDiff(channelID string, data events.ReviewDiff
 		Type:      EventReviewDiff,
 		ChannelID: channelID,
 		Data:      data,
+	})
+}
+
+// BroadcastReviewCommentRemoved sends a review.comment_removed event when a
+// comment leaves the session: deleted from the panel, or dropped as a
+// duplicate by the dedup pass. The FE drops the comment with that id.
+func (h *EventsHub) BroadcastReviewCommentRemoved(channelID, commentID string) {
+	h.Broadcast(Event{
+		Type:      EventReviewCommentRemoved,
+		ChannelID: channelID,
+		Data:      map[string]string{"id": commentID},
 	})
 }
 

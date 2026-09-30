@@ -1129,3 +1129,112 @@ func (c *errThenCancelDuringBackoffClient) Do(_ *http.Request) (*http.Response, 
 // --- compile-time sanity: stubHTTPClient satisfies the interface ---
 
 var _ reviewHTTPClient = (*stubHTTPClient)(nil)
+
+// --- dedupReview ---
+
+func (s *MainSuite) TestDedupReview() {
+	cases := []struct {
+		name    string
+		handler http.HandlerFunc
+		client  reviewHTTPClient
+		apiURL  string
+		out     io.Writer
+		want    string
+		wantErr string
+	}{
+		{
+			name: "prints the result",
+			handler: func(w http.ResponseWriter, r *http.Request) {
+				require.Equal(s.T(), http.MethodPost, r.Method)
+				require.Equal(s.T(), "/api/channels/ch1/review/dedup", r.URL.Path)
+				_, _ = io.WriteString(w, "{\"removed\":[\"b\"],\"checked\":3}\n")
+			},
+			want: "{\"removed\":[\"b\"],\"checked\":3}\n",
+		},
+		{
+			name: "non-200 is an error",
+			handler: func(w http.ResponseWriter, _ *http.Request) {
+				http.Error(w, "a review run is in progress", http.StatusConflict)
+			},
+			wantErr: "unexpected status 409: a review run is in progress",
+		},
+		{
+			name: "slow daemon times out",
+			handler: func(_ http.ResponseWriter, r *http.Request) {
+				<-r.Context().Done()
+			},
+			wantErr: "timed out after 50ms waiting for review dedup",
+		},
+		{name: "transport error", client: &stubHTTPClient{err: errors.New("network down")}, apiURL: "http://example.invalid", wantErr: "network down"},
+		{name: "bad url", client: http.DefaultClient, apiURL: "http://\x7f", wantErr: "building POST request"},
+		{
+			name:    "write error",
+			handler: func(w http.ResponseWriter, _ *http.Request) { _, _ = io.WriteString(w, "{}") },
+			out:     &brokenWriter{},
+			wantErr: "broken pipe",
+		},
+	}
+	for _, tc := range cases {
+		s.Run(tc.name, func() {
+			apiURL, client := tc.apiURL, tc.client
+			if tc.handler != nil {
+				ts := httptest.NewServer(tc.handler)
+				defer ts.Close()
+				apiURL, client = ts.URL, http.DefaultClient
+			}
+			s.app.reviewClient = client
+			var buf bytes.Buffer
+			out := tc.out
+			if out == nil {
+				out = &buf
+			}
+			err := s.app.dedupReview(context.Background(), out, apiURL, "ch1", 50*time.Millisecond)
+			if tc.wantErr != "" {
+				require.ErrorContains(s.T(), err, tc.wantErr)
+				return
+			}
+			require.NoError(s.T(), err)
+			require.Equal(s.T(), tc.want, buf.String())
+		})
+	}
+}
+
+func (s *MainSuite) TestNewReviewDedupCmd() {
+	var hit atomic.Bool
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.Equal(s.T(), "/api/channels/env-ch/review/dedup", r.URL.Path)
+		hit.Store(true)
+		_, _ = io.WriteString(w, `{"removed":[],"checked":0}`)
+	}))
+	defer ts.Close()
+	s.app.reviewClient = http.DefaultClient
+
+	cases := []struct {
+		name    string
+		args    []string
+		env     string
+		wantErr string
+	}{
+		{name: "invalid timeout", args: []string{"dedup", "--channel-id", "ch1", "--timeout", "nope"}, wantErr: "invalid --timeout"},
+		{name: "channel id required", args: []string{"dedup"}, wantErr: "channel-id"},
+		{name: "channel id from env", args: []string{"dedup", "--api-url", ts.URL}, env: "env-ch"},
+	}
+	for _, tc := range cases {
+		s.Run(tc.name, func() {
+			s.T().Setenv("CHANNEL_ID", tc.env)
+			cmd := s.app.newReviewCmd()
+			cmd.SetArgs(tc.args)
+			var out bytes.Buffer
+			cmd.SetOut(&out)
+			cmd.SetErr(new(bytes.Buffer))
+			err := cmd.Execute()
+			if tc.wantErr != "" {
+				require.ErrorContains(s.T(), err, tc.wantErr)
+				return
+			}
+			require.NoError(s.T(), err)
+			require.True(s.T(), hit.Load())
+			require.Equal(s.T(), "{\"removed\":[],\"checked\":0}\n", out.String())
+		})
+	}
+}

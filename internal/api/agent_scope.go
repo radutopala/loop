@@ -81,6 +81,7 @@ var agentRoutes = []string{
 	"POST /api/channels/{id}/review/load",
 	"GET /api/channels/{id}/review",
 	"POST /api/channels/{id}/review/run",
+	"POST /api/channels/{id}/review/dedup",
 
 	"POST /api/channels/{id}/quality/scan",
 	"GET /api/channels/{id}/quality/snapshot",

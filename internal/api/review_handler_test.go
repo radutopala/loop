@@ -206,6 +206,9 @@ func (s *ReviewHandlerSuite) TestReviewEnabledGate403s() {
 			s.rs.Put("ch1", readySession())
 			s.rs.AddComment("ch1", &review.Comment{ID: "a", Path: "x.go", Line: 1, Body: "b", Side: "RIGHT"})
 		}},
+		{"dedup", "POST", "/api/channels/ch1/review/dedup", nil, func() {
+			s.rs.Put("ch1", readySession())
+		}},
 		{"delete-comment", "DELETE", "/api/channels/ch1/review/comments/a", nil, func() {
 			s.rs.Put("ch1", readySession())
 			s.rs.AddComment("ch1", &review.Comment{ID: "a", Path: "x.go", Line: 1, Body: "b", GitHubID: 99})
@@ -707,6 +710,51 @@ func (s *ReviewHandlerSuite) TestSyncHappyPath() {
 	require.Equal(s.T(), "agent", resp.Session.Comments[0].Source)
 	require.Equal(s.T(), "gh-42", resp.Session.Comments[1].ID)
 	require.Equal(s.T(), "github", resp.Session.Comments[1].Source)
+}
+
+func (s *ReviewHandlerSuite) TestMergeReviewComments() {
+	pushed := &review.Comment{ID: "a", Path: "x.go", Line: 1, Body: "agent", Source: "agent", Pushed: true, GitHubID: 42}
+	tests := []struct {
+		name       string
+		current    []*review.Comment
+		fromGitHub []*review.Comment
+		wantIDs    []string
+	}{
+		{
+			name:       "stale github comments are replaced",
+			current:    []*review.Comment{nil, {ID: "a", Source: "agent"}, {ID: "gh-1", Source: "github", GitHubID: 1}},
+			fromGitHub: []*review.Comment{{ID: "gh-2", Source: "github", GitHubID: 2}},
+			wantIDs:    []string{"a", "gh-2"},
+		},
+		{
+			name:       "a pushed agent comment shows once",
+			current:    []*review.Comment{pushed},
+			fromGitHub: []*review.Comment{{ID: "gh-42", Source: "github", GitHubID: 42, URL: "u", Outdated: true, Resolved: true}, {ID: "gh-7", Source: "github", GitHubID: 7}},
+			wantIDs:    []string{"a", "gh-7"},
+		},
+		{
+			name:       "an unpushed agent comment matches nothing",
+			current:    []*review.Comment{{ID: "b", Source: "agent"}},
+			fromGitHub: []*review.Comment{{ID: "gh-0", Source: "github"}},
+			wantIDs:    []string{"b", "gh-0"},
+		},
+	}
+	for _, tc := range tests {
+		s.Run(tc.name, func() {
+			merged := mergeReviewComments(tc.current, tc.fromGitHub)
+			ids := make([]string, 0, len(merged))
+			for _, c := range merged {
+				ids = append(ids, c.ID)
+			}
+			require.Equal(s.T(), tc.wantIDs, ids)
+		})
+	}
+
+	merged := mergeReviewComments([]*review.Comment{pushed}, []*review.Comment{{GitHubID: 42, URL: "u", Outdated: true, Resolved: true}})
+	require.Equal(s.T(), "u", merged[0].URL)
+	require.True(s.T(), merged[0].Outdated)
+	require.True(s.T(), merged[0].Resolved)
+	require.Empty(s.T(), pushed.URL, "the session's comment is copied, not changed")
 }
 
 // ---- get ----
@@ -1330,6 +1378,7 @@ type mockReviewRunner struct {
 	lastFork   string
 	lastModel  string
 	lastEffort string
+	lastRO     bool
 	runFn      func() (*agent.AgentResponse, error)
 	// runWithCtxFn, when set, takes precedence over runFn so tests can
 	// observe ctx cancellation (used by the runReviewAsync timeout test).
@@ -1351,6 +1400,7 @@ func (m *mockReviewRunner) Run(ctx context.Context, req review.RunRequest) (*age
 	m.lastFork = req.ForkSessionID
 	m.lastModel = req.Model
 	m.lastEffort = req.Effort
+	m.lastRO = req.ReadOnly
 	onComment := req.OnComment
 	ctxFn := m.runWithCtxFn
 	fn := m.runFn

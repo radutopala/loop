@@ -51,6 +51,10 @@ type RunRequest struct {
 	// this run; empty inherits the config.
 	Model  string
 	Effort string
+	// ReadOnly runs a pass that only reads, like the final dedup pass: the
+	// agent gets the read-only tool set (agent.AgentRequest.ReadOnly) instead
+	// of a code-review run's.
+	ReadOnly bool
 	// OnComment, when set, receives each finding the agent reports through
 	// the built-in ReportFindings tool, in the order reported; it runs on the
 	// stream-reading goroutine, so it must not block for long.
@@ -71,7 +75,8 @@ func (r *Runner) Run(ctx context.Context, rr RunRequest) (*agent.AgentResponse, 
 		// is where the findings are actually derived.
 		SubagentSystemPrompt: rr.SubagentSystemPrompt,
 		Prompt:               rr.Prompt,
-		ReviewMode:           true,
+		ReviewMode:           !rr.ReadOnly,
+		ReadOnly:             rr.ReadOnly,
 		SessionID:            rr.ForkSessionID,
 		ForkSession:          rr.ForkSessionID != "",
 		Model:                rr.Model,

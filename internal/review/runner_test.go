@@ -46,13 +46,26 @@ func (s *RunnerSuite) TestRunBuildsRequest() {
 		return req.ChannelID == "ch" && req.DirPath == "/wt" && req.ParentDirPath == "/repo" &&
 			req.SystemPrompt == "sys" && req.SubagentSystemPrompt == "subsys" &&
 			req.Prompt == "p" && req.ReviewMode && req.OnToolUseRaw == nil &&
-			req.Model == "claude-opus-5-5" && req.Effort == "xhigh"
+			req.Model == "claude-opus-5-5" && req.Effort == "xhigh" && !req.ReadOnly
 	})).Return(&agent.AgentResponse{Response: "done"}, nil)
 
 	r := &Runner{Agent: a}
 	resp, err := r.Run(context.Background(), RunRequest{ChannelID: "ch", DirPath: "/wt", ParentDirPath: "/repo", SystemPrompt: "sys", SubagentSystemPrompt: "subsys", Prompt: "p", Model: "claude-opus-5-5", Effort: "xhigh"})
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), "done", resp.Response)
+	a.AssertExpectations(s.T())
+}
+
+// A read-only pass swaps the code-review mode for the read-only tool set.
+func (s *RunnerSuite) TestRunReadOnly() {
+	a := new(mockAgentRunner)
+	a.On("Run", mock.Anything, mock.MatchedBy(func(req *agent.AgentRequest) bool {
+		return req.ReadOnly && !req.ReviewMode
+	})).Return(&agent.AgentResponse{}, nil)
+
+	r := &Runner{Agent: a}
+	_, err := r.Run(context.Background(), RunRequest{ChannelID: "ch", DirPath: "/wt", Prompt: "p", ReadOnly: true})
+	require.NoError(s.T(), err)
 	a.AssertExpectations(s.T())
 }
 

@@ -50,7 +50,7 @@ func (a *app) newReviewCmd() *cobra.Command {
 		Use:   "review",
 		Short: "Drive review-panel runs from the CLI",
 	}
-	cmd.AddCommand(a.newReviewRunCmd())
+	cmd.AddCommand(a.newReviewRunCmd(), a.newReviewDedupCmd())
 	return cmd
 }
 
@@ -109,6 +109,61 @@ func (a *app) newReviewRunCmd() *cobra.Command {
 	cmd.Flags().StringVar(&timeoutStr, "timeout", "60m", "Maximum time to wait when --wait is set (Go duration)")
 
 	return cmd
+}
+
+func (a *app) newReviewDedupCmd() *cobra.Command {
+	var channelID, apiURL, timeoutStr string
+
+	cmd := &cobra.Command{
+		Use:   "dedup",
+		Short: "Delete the review agent's duplicate findings from the channel's review session, on GitHub too when pushed, and print what was removed as JSON.",
+		RunE: func(c *cobra.Command, _ []string) error {
+			timeout, err := time.ParseDuration(timeoutStr)
+			if err != nil {
+				return fmt.Errorf("invalid --timeout: %w", err)
+			}
+			channelID = resolveReviewChannelID(channelID, os.Getenv("CHANNEL_ID"))
+			if channelID == "" {
+				return fmt.Errorf("channel-id is required (pass --channel-id or set $CHANNEL_ID)")
+			}
+			return a.dedupReview(c.Context(), c.OutOrStdout(), resolveReviewAPIURL(apiURL, os.Getenv("API_URL")), channelID, timeout)
+		},
+	}
+
+	cmd.Flags().StringVar(&channelID, "channel-id", "", "Channel ID whose review session to dedup (default $CHANNEL_ID)")
+	cmd.Flags().StringVar(&apiURL, "api-url", "", "Loop API base URL (default $API_URL or http://localhost:8222)")
+	// Same reasoning as run's --timeout: sit above the daemon's own
+	// review-run ceiling, which also bounds the dedup pass.
+	cmd.Flags().StringVar(&timeoutStr, "timeout", "60m", "Maximum time to wait for the pass (Go duration)")
+
+	return cmd
+}
+
+// dedupReview runs the daemon's final dedup pass over the channel's review
+// session and prints its JSON result. The daemon answers once the pass is
+// done, so this is one POST.
+func (a *app) dedupReview(ctx context.Context, stdout io.Writer, apiURL, channelID string, timeout time.Duration) error {
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	url := fmt.Sprintf("%s/api/channels/%s/review/dedup", apiURL, channelID)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, nil)
+	if err != nil {
+		return fmt.Errorf("building POST request: %w", err)
+	}
+	resp, err := a.reviewHTTPClient().Do(req)
+	if err != nil {
+		if errors.Is(err, context.DeadlineExceeded) {
+			return fmt.Errorf("timed out after %s waiting for review dedup", timeout)
+		}
+		return fmt.Errorf("POST %s: %w", url, err)
+	}
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("POST %s: unexpected status %d: %s", url, resp.StatusCode, strings.TrimSpace(string(body)))
+	}
+	_, err = fmt.Fprintln(stdout, strings.TrimSpace(string(body)))
+	return err
 }
 
 // resolveReviewAPIURL applies precedence: --api-url flag > $API_URL env >

@@ -181,6 +181,13 @@ export function reviewEffortOptions(defaultEffort: string): SelectOption[] {
 
 export const WHY_QUESTION = "Please explain why we need this.";
 
+// withoutComment drops comment id from the session, for a
+// `review.comment_removed` event.
+export function withoutComment(session: ReviewSession | null, id: string): ReviewSession | null {
+  if (!session) return session;
+  return { ...session, comments: session.comments.filter((c) => c.id !== id) };
+}
+
 export function buildDiscussDraft(c: ReviewComment, session?: ReviewSession | null, ask?: string): string {
   const lines = [`> ${c.path}:${c.line}`];
   for (const ln of c.body.split("\n")) lines.push(ln ? `> ${ln}` : ">");
@@ -567,7 +574,10 @@ export function ReviewPanel({ channelId, subscribeChatEvents, registerReviewView
           setLoopChip("running iter 1");
           break;
         case "workflow.node_started":
-          if (d.node_id) {
+          if (d.node_id === "dedup") {
+            // review-loop's final pass runs after the loop, not in an iteration.
+            setLoopChip("deduping comments");
+          } else if (d.node_id) {
             const iter = typeof d.iteration === "number" ? d.iteration + 1 : 1;
             setLoopChip(`${d.node_id} — iter ${iter}`);
           }
@@ -616,6 +626,11 @@ export function ReviewPanel({ channelId, subscribeChatEvents, registerReviewView
           if (prev.comments.some((x) => x.id === c.id)) return prev;
           return { ...prev, comments: [...prev.comments, c] };
         });
+      } else if (event.type === "review.comment_removed") {
+        // Deleted here or in another window, or dropped as a duplicate by
+        // the review loop's final dedup pass.
+        const { id } = event.data as { id: string };
+        setSession((prev) => withoutComment(prev, id));
       } else if (event.type === "review.status") {
         const d = event.data as { status: ReviewStatus; error?: string };
         setSession((prev) => (prev ? { ...prev, status: d.status, error: d.error ?? "" } : prev));

@@ -969,6 +969,24 @@ Emitted once per finding the review agent reports during a run, via either the b
 
 ---
 
+### `review.comment_removed`
+
+Emitted when a comment leaves the review session, either because it was deleted (`DELETE /review/comments/{cid}`) or because the dedup pass dropped it as a duplicate (`POST /review/dedup`). The FE removes it from the panel.
+
+**Payload schema:**
+
+```json
+{ "id": "rev-7f2a" }
+```
+
+| Field | Type   | Description |
+|-------|--------|-------------|
+| `id`  | string | Id of the removed comment |
+
+**Scope:** Channel.
+
+---
+
 ### `review.status`
 
 Emitted on every review session status transition (`idle → loading → ready → reviewing → ready|error`). The FE swaps affordances based on this; no polling needed.

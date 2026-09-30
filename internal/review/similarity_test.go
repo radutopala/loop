@@ -80,22 +80,26 @@ func (s *SimilaritySuite) TestBigramsAreASet() {
 	require.Empty(s.T(), bigrams(normalizeWords("single")))
 }
 
-func (s *SimilaritySuite) TestSameAnchor() {
-	base := &Comment{Path: "a.go", Line: 12, Side: "RIGHT"}
+func (s *SimilaritySuite) TestNearbyAnchor() {
+	base := &Comment{Path: "a.go", Line: 100, Side: "RIGHT"}
 	cases := []struct {
 		name  string
 		other *Comment
 		want  bool
 	}{
-		{"identical", &Comment{Path: "a.go", Line: 12, Side: "RIGHT"}, true},
-		{"empty side means RIGHT", &Comment{Path: "a.go", Line: 12}, true},
-		{"other side", &Comment{Path: "a.go", Line: 12, Side: "LEFT"}, false},
-		{"other line", &Comment{Path: "a.go", Line: 13, Side: "RIGHT"}, false},
-		{"other file", &Comment{Path: "b.go", Line: 12, Side: "RIGHT"}, false},
+		{"identical", &Comment{Path: "a.go", Line: 100, Side: "RIGHT"}, true},
+		{"empty side means RIGHT", &Comment{Path: "a.go", Line: 100}, true},
+		{"other side", &Comment{Path: "a.go", Line: 100, Side: "LEFT"}, false},
+		{"a few lines below", &Comment{Path: "a.go", Line: 106, Side: "RIGHT"}, true},
+		{"window edge above", &Comment{Path: "a.go", Line: 80, Side: "RIGHT"}, true},
+		{"window edge below", &Comment{Path: "a.go", Line: 120, Side: "RIGHT"}, true},
+		{"past the window", &Comment{Path: "a.go", Line: 121, Side: "RIGHT"}, false},
+		{"other file", &Comment{Path: "b.go", Line: 100, Side: "RIGHT"}, false},
 	}
 	for _, tc := range cases {
 		s.Run(tc.name, func() {
-			require.Equal(s.T(), tc.want, sameAnchor(base, tc.other))
+			require.Equal(s.T(), tc.want, nearbyAnchor(base, tc.other))
+			require.Equal(s.T(), tc.want, nearbyAnchor(tc.other, base))
 		})
 	}
 }

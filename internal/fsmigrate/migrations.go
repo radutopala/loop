@@ -235,6 +235,12 @@ var migrations = []Migration{
 		Description: "trust existing project configs",
 		Apply:       adoptProjectConfigs,
 	},
+	{
+		// An unmodified review-loop gets the final dedup pass after its
+		// loop, which folds the findings later rounds reported again.
+		Description: "patch review-loop with a final dedup node",
+		Apply:       patchReviewLoopDedupNode,
+	},
 }
 
 // adoptProjectConfigs trusts the project config of every project checkout
@@ -1029,12 +1035,120 @@ func builtinLoopDef(name, description, inputDesc string, body []any) map[string]
 // same comment-id set as the previous iteration. With max_iterations=1 the
 // behavior matches today's single-shot Review button.
 func builtinReviewLoopDef() map[string]any {
-	return builtinLoopDef(
+	def := builtinLoopDef(
 		seededReviewLoopName,
 		"Run review N times in a row, deduping comments across iterations.",
 		"Number of review passes (1-10).",
 		[]any{reviewBashBodyChild()},
 	)
+	def["nodes"] = append(def["nodes"].([]any), reviewDedupNode())
+	return def
+}
+
+// reviewDedupNode is the review-loop's last node: once the loop is done,
+// `loop review dedup` has a model fold the findings that later rounds
+// reported again, on another line or in other words. A single pass has
+// nothing to fold across rounds, so it's skipped when max_iterations is 1.
+func reviewDedupNode() map[string]any {
+	return map[string]any{
+		"id":         "dedup",
+		"type":       "bash",
+		"when":       reviewDedupWhenExpr,
+		"script":     reviewDedupScript,
+		"depends_on": []any{"loop"},
+	}
+}
+
+const (
+	reviewDedupScript   = "loop review dedup"
+	reviewDedupWhenExpr = `{{ ne .Inputs.max_iterations "1" }}`
+)
+
+// patchReviewLoopDedupNode appends reviewDedupNode to the review-loop
+// workflow when that workflow is still as seeded: one loop node whose body
+// is the single review child running reviewRunScript. Any other shape is
+// the user's and is left alone, as is a missing config or workflow.
+func patchReviewLoopDedupNode(ctx context.Context, c *Ctx) error {
+	_, err := patchReviewLoopDedupNodeReport(ctx, c)
+	return err
+}
+
+// patchReviewLoopDedupNodeReport is the (bool, error) variant used by
+// RestoreBuiltinWorkflows. The bool is true iff the patcher wrote to disk.
+// The node is added via v.Patch (RFC 6902) so the user's surrounding
+// comments and key ordering survive.
+func patchReviewLoopDedupNodeReport(_ context.Context, c *Ctx) (bool, error) {
+	v, configPath, err := loadConfigHJSON(c)
+	if err != nil || v == nil {
+		return false, err
+	}
+	rootObj, ok := v.Value.(*hujson.Object)
+	if !ok {
+		return false, fmt.Errorf("parsing %s: expected JSON object at top level", configPath)
+	}
+	wfsArr, ok := arrayValue(findObjectMember(rootObj, "workflows"))
+	if !ok {
+		return false, nil
+	}
+	var ops []jsonPatchOp
+	for i := range wfsArr.Elements {
+		wfObj, ok := wfsArr.Elements[i].Value.(*hujson.Object)
+		if !ok {
+			continue
+		}
+		if name, _ := memberString(wfObj, "name"); name != seededReviewLoopName {
+			continue
+		}
+		if seededReviewLoopShape(wfObj) {
+			ops = append(ops, jsonPatchOp{
+				Op:    "add",
+				Path:  fmt.Sprintf("/workflows/%d/nodes/-", i),
+				Value: reviewDedupNode(),
+			})
+		}
+	}
+	if len(ops) == 0 {
+		return false, nil
+	}
+	// The ops hold only fixed strings, so marshaling cannot fail, and the
+	// pointers were just walked in the AST, so the patch applies.
+	patch, _ := json.Marshal(ops)
+	_ = v.Patch(patch)
+	if err := atomicWriteConfig(c.Sys, configPath, v.Pack(), 0644); err != nil {
+		return false, fmt.Errorf("writing %s: %w", configPath, err)
+	}
+	return true, nil
+}
+
+// seededReviewLoopShape reports whether wfObj's nodes are the seeded
+// review-loop's before the dedup node: a single loop node whose body is the
+// single review child running reviewRunScript.
+func seededReviewLoopShape(wfObj *hujson.Object) bool {
+	nodesArr, ok := arrayValue(findObjectMember(wfObj, "nodes"))
+	if !ok || len(nodesArr.Elements) != 1 {
+		return false
+	}
+	loopObj, ok := nodesArr.Elements[0].Value.(*hujson.Object)
+	if !ok {
+		return false
+	}
+	if id, _ := memberString(loopObj, "id"); id != "loop" {
+		return false
+	}
+	if t, _ := memberString(loopObj, "type"); t != "loop" {
+		return false
+	}
+	bodyArr, ok := arrayValue(findObjectMember(loopObj, "body"))
+	if !ok || len(bodyArr.Elements) != 1 {
+		return false
+	}
+	childObj, ok := bodyArr.Elements[0].Value.(*hujson.Object)
+	if !ok {
+		return false
+	}
+	id, _ := memberString(childObj, "id")
+	script, _ := memberString(childObj, "script")
+	return id == "review" && script == reviewRunScript
 }
 
 // builtinReviewFixLoopDef defines the review → fix → verify loop. Same stop

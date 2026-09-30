@@ -92,14 +92,7 @@ func (s *reviewService) refreshReviewSession(ctx context.Context, channelID, dir
 	}
 	ghComments := s.fetchExistingReviewComments(ctx, dirPath, ghUser, prNum)
 
-	var merged []*review.Comment
-	for _, c := range sess.Comments {
-		if c == nil || c.Source == "github" {
-			continue
-		}
-		merged = append(merged, c)
-	}
-	merged = append(merged, ghComments...)
+	merged := mergeReviewComments(sess.Comments, ghComments)
 
 	diff, err := s.worktree.Diff(ctx, dirPath, sess.WorktreePath, sess.PR.BaseRef, merged)
 	if err != nil {
@@ -129,6 +122,40 @@ func (s *reviewService) refreshReviewSession(ctx context.Context, channelID, dir
 		}
 	}
 	return s.sessions.Get(channelID), nil
+}
+
+// mergeReviewComments keeps the session's agent comments and replaces its
+// github ones with the fresh snapshot. A pushed agent comment comes back
+// from GitHub as a github comment with the same GitHub id; the agent copy
+// stays, since it carries the finding's id the review loop compares, and
+// takes GitHub's url, outdated and resolved state, so the comment shows
+// once.
+func mergeReviewComments(current, fromGitHub []*review.Comment) []*review.Comment {
+	fresh := make(map[int64]*review.Comment, len(fromGitHub))
+	for _, c := range fromGitHub {
+		fresh[c.GitHubID] = c
+	}
+	var merged []*review.Comment
+	for _, c := range current {
+		if c == nil || c.Source == "github" {
+			continue
+		}
+		if gh, ok := fresh[c.GitHubID]; ok && c.GitHubID > 0 {
+			// A copy: the old session's comment may still be read
+			// through the store until Put swaps the session.
+			cc := *c
+			cc.URL, cc.Outdated, cc.Resolved = gh.URL, gh.Outdated, gh.Resolved
+			c = &cc
+			delete(fresh, c.GitHubID)
+		}
+		merged = append(merged, c)
+	}
+	for _, c := range fromGitHub {
+		if _, ok := fresh[c.GitHubID]; ok {
+			merged = append(merged, c)
+		}
+	}
+	return merged
 }
 
 // fetchExistingReviewComments pulls inline review comments already filed
