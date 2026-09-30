@@ -91,6 +91,28 @@ func (s *MiddlewareSuite) TestDecisions() {
 	}
 }
 
+func (s *MiddlewareSuite) TestCarriesOwnerToken() {
+	cases := []struct {
+		name string
+		url  string
+		want bool
+	}{
+		{"owner link", "http://127.0.0.1:8222/#loop_token=owner-tok", true},
+		{"escaped owner link", "http://127.0.0.1:8222/#loop_token=owner%2Dtok", true},
+		{"another daemon's token", "http://localhost:5173/#loop_token=other-tok", false},
+		{"agent token", "http://localhost:5173/#loop_token=agent-tok", false},
+		{"token in the query", "http://localhost:5173/?loop_token=owner-tok", false},
+		{"other fragment", "http://localhost:5173/#ch1", false},
+		{"no fragment", "https://example.com/", false},
+		{"unparsable", "http://[::1/#loop_token=owner-tok", false},
+	}
+	for _, tc := range cases {
+		s.Run(tc.name, func() {
+			require.Equal(s.T(), tc.want, s.auth.CarriesOwnerToken(tc.url))
+		})
+	}
+}
+
 func (s *MiddlewareSuite) TestRotateOwner() {
 	s.auth.SetOwnerToken("new")
 	require.Equal(s.T(), 401, s.serve("GET", "/api/config", map[string]string{"Authorization": "Bearer owner-tok"}))

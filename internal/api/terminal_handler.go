@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
-	"errors"
 	"log/slog"
 	"net/http"
 	"os"
@@ -706,23 +705,27 @@ func (t *terminalWSConn) handleAttach(msg wsControlMessage) {
 	}
 	t.detachCurrent()
 
-	// Attach through the manager the client names. Clients that don't say
-	// get the agent manager first, then the host manager.
-	var output <-chan []byte
-	var history []byte
-	var done <-chan struct{}
-	err := errors.New("no terminal manager for target " + msg.Target)
-	target := "agent"
-
-	if t.manager != nil && msg.Target != "host" {
-		output, history, done, err = t.manager.AttachSession(msg.SessionID)
+	// Attach only through the manager the client names, agent by default as
+	// on create: a session ID never reaches a host shell unless the client
+	// asks for one.
+	target := msg.Target
+	if target == "" {
+		target = "agent"
 	}
-	if err != nil && t.hostManager != nil && msg.Target != "agent" {
-		output, history, done, err = t.hostManager.AttachSession(msg.SessionID)
-		if err == nil {
-			target = "host"
-		}
+	mgr := t.manager
+	switch target {
+	case "agent":
+	case "host":
+		mgr = t.hostManager
+	default:
+		t.sendError("unknown target "+target, wsErrCodeInvalidInput)
+		return
 	}
+	if mgr == nil {
+		t.sendError("no terminal manager for target "+target, wsErrCodeSessionFailed)
+		return
+	}
+	output, history, done, err := mgr.AttachSession(msg.SessionID)
 	if err != nil {
 		t.sendError(err.Error(), wsErrCodeSessionFailed)
 		return

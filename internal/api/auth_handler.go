@@ -54,6 +54,12 @@ func newAuthenticator(owner string, agents apiauth.AgentLookup) *apiauth.Authent
 	return apiauth.NewAuthenticator(owner, agents, apiauth.NewRouteSet(agentRoutes...), apiauth.NewRouteSet(publicRoutes...))
 }
 
+// carriesOwnerToken reports whether rawURL is a signed-in UI link for this
+// daemon. It reads s.auth when asked, so a rotation is seen.
+func (s *Server) carriesOwnerToken(rawURL string) bool {
+	return s.auth != nil && s.auth.CarriesOwnerToken(rawURL)
+}
+
 // handleRotateToken replaces the owner token. Clients that held the old one
 // get a 401 and read the new one from the token file.
 func (s *Server) handleRotateToken(w http.ResponseWriter, _ *http.Request) {

@@ -105,11 +105,11 @@ Re-attach to an existing session. Provides ring buffer history replay.
 |--------------|--------|----------|-------------|
 | `type`       | string | yes      | Must be `"attach"` |
 | `session_id` | string | yes      | Session ID to attach to |
-| `target`     | string | no       | `"agent"` or `"host"`: the manager that owns the session |
+| `target`     | string | no       | `"agent"` (default) or `"host"`: the manager that owns the session |
 
 **Behavior:**
 - Detaches any currently attached session first.
-- With a `target`, attaches only through that manager. Without one, tries the agent manager first, then the host manager.
+- Attaches only through the `target` manager, the agent one if `target` is empty. A host session needs `"target": "host"`; any other value is an `invalid_input` error.
 - On success, replays the ring buffer contents as binary output before streaming live output.
 
 ---

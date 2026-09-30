@@ -375,6 +375,7 @@ func NewServer(sched scheduler.Scheduler, channels ChannelEnsurer, threads Threa
 	s.playground = newPlaygroundService(&s.serverDeps)
 	s.quality = newQualityService(&s.serverDeps)
 	s.browser = newBrowserService(&s.serverDeps)
+	s.browser.carriesOwnerToken = s.carriesOwnerToken
 	for _, opt := range opts {
 		opt(s)
 	}

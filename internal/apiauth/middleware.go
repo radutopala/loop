@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/subtle"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 )
@@ -49,6 +50,22 @@ func (a *Authenticator) isOwner(tok string) bool {
 	owner := a.owner
 	a.mu.RUnlock()
 	return owner != "" && subtle.ConstantTimeCompare([]byte(tok), []byte(owner)) == 1
+}
+
+// LinkTokenPrefix starts the URL fragment of a signed-in UI link,
+// #loop_token=<token>; the UI takes the rest of the fragment as the token.
+const LinkTokenPrefix = "loop_token="
+
+// CarriesOwnerToken reports whether rawURL is a signed-in UI link for this
+// daemon: its fragment passes the owner token. A page opened from such a link
+// keeps the token where scripts in the page can read it.
+func (a *Authenticator) CarriesOwnerToken(rawURL string) bool {
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return false
+	}
+	tok, ok := strings.CutPrefix(u.Fragment, LinkTokenPrefix)
+	return ok && a.isOwner(tok)
 }
 
 // Wrap authenticates every request before next sees it, and puts the

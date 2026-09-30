@@ -55,6 +55,7 @@ Frontend (Electron)
 - CDP endpoint: `ws://127.0.0.1:{port}/devtools/browser/{guid}`
 - Only agent-created tabs shown (user's personal tabs hidden)
 - Mode persisted per channel in localStorage
+- The agent can reach every tab in that Chrome, hidden ones included, and every site you're signed in to. Don't keep a Loop web UI tab open there: its owner token gives a shell on your machine. See [Security Model](security.md#the-desktop-app).
 
 ### Mode Switching
 - Frontend pill toggle sends `POST /api/browser/mode`

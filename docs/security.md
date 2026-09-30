@@ -50,6 +50,7 @@ The project `.loop/config.json` is in the workspace, so an agent can edit it. It
 - Chat, memory, notes and file previews render markdown through a sanitizer: no scripts, event handlers or `javascript:` links.
 - The app window only navigates to the app itself. Other `http(s)` links open in your browser; every other scheme is refused.
 - The agent's browser (CDP) only navigates to `http`, `https` and `about:blank`.
+- The Browser panel won't open a signed-in Loop link (`#loop_token=` with this daemon's owner token), since the agent can read the token from the page. Links to other Loop daemons, such as a test one, still open. In Host mode the agent drives your own Chrome, where Loop can't see what you open, so don't keep a Loop web UI tab there.
 
 ## Out of scope
 
