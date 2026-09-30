@@ -7,6 +7,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -630,4 +631,107 @@ func (s *OSGuardFSSuite) TestInstallUnlinkErrorIsIgnored() {
 	s.Require().NoError(s.fs.Install(snap, false))
 	s.Require().Equal([]string{"config.lock"}, unlinked)
 	s.Require().FileExists(src)
+}
+
+type ProcProcessSuite struct {
+	suite.Suite
+	root string
+	proc *ProcProcess
+}
+
+func TestProcProcessSuite(t *testing.T) {
+	suite.Run(t, new(ProcProcessSuite))
+}
+
+func (s *ProcProcessSuite) SetupTest() {
+	s.root = s.T().TempDir()
+	s.proc = &ProcProcess{Root: s.root}
+}
+
+// stat has comm with a space and a ")" in it; starttime (field 22) is 777.
+const procStat = "42 (git (x) y) S 1 42 42 0 -1 4194560 100 0 0 0 1 2 0 0 20 0 1 0 777 1000 10\n"
+
+func (s *ProcProcessSuite) fake(pid string, files map[string]string, exe string) {
+	dir := filepath.Join(s.root, pid)
+	s.Require().NoError(os.MkdirAll(dir, 0o755))
+	for name, content := range files {
+		s.Require().NoError(os.WriteFile(filepath.Join(dir, name), []byte(content), 0o644))
+	}
+	if exe != "" {
+		s.Require().NoError(os.Symlink(exe, filepath.Join(dir, "exe")))
+	}
+}
+
+func (s *ProcProcessSuite) TestNewProcProcess() {
+	s.Require().Equal("/proc", NewProcProcess().Root)
+}
+
+func (s *ProcProcessSuite) TestLookup() {
+	s.fake("42", map[string]string{
+		"stat":    procStat,
+		"cmdline": "git\x00worktree\x00add\x00../wt\x00",
+	}, "/usr/bin/git")
+	got, err := s.proc.Lookup(42)
+	s.Require().NoError(err)
+	s.Require().Equal(ProcessInfo{
+		Exe: "/usr/bin/git", Cmdline: []string{"git", "worktree", "add", "../wt"}, StartTime: 777,
+	}, got)
+}
+
+func (s *ProcProcessSuite) TestLookupSelf() {
+	got, err := NewProcProcess().Lookup(os.Getpid())
+	s.Require().NoError(err)
+	exe, err := os.Executable()
+	s.Require().NoError(err)
+	s.Require().Equal(exe, got.Exe)
+	s.Require().Equal(os.Args, got.Cmdline)
+	s.Require().NotZero(got.StartTime)
+}
+
+func (s *ProcProcessSuite) TestLookupFailures() {
+	cases := []struct {
+		name  string
+		files map[string]string
+		exe   string
+	}{
+		{"no process", nil, ""},
+		{"malformed stat", map[string]string{"stat": "42 git S 1"}, "/usr/bin/git"},
+		{"no exe", map[string]string{"stat": procStat}, ""},
+		{"no cmdline", map[string]string{"stat": procStat}, "/usr/bin/git"},
+	}
+	for i, c := range cases {
+		s.Run(c.name, func() {
+			pid := 100 + i
+			if c.files != nil {
+				s.fake(strconv.Itoa(pid), c.files, c.exe)
+			}
+			_, err := s.proc.Lookup(pid)
+			s.Require().Error(err)
+		})
+	}
+}
+
+func (s *ProcProcessSuite) TestProcStartTime() {
+	cases := []struct {
+		name    string
+		stat    string
+		want    uint64
+		wantErr bool
+	}{
+		{"ok", procStat, 777, false},
+		{"no comm", "42 git S 1", 0, true},
+		{"too few fields", "42 (git) S 1 2 3", 0, true},
+		{"not a number", strings.Replace(procStat, " 777 ", " x ", 1), 0, true},
+	}
+	for _, c := range cases {
+		s.Run(c.name, func() {
+			got, err := procStartTime([]byte(c.stat))
+			if c.wantErr {
+				s.Require().Error(err)
+				return
+			}
+			s.Require().NoError(err)
+			s.Require().Equal(c.want, got)
+		})
+	}
 }

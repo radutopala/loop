@@ -11,6 +11,8 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
+	"strings"
 
 	"golang.org/x/sys/unix"
 )
@@ -247,3 +249,55 @@ func (f *OSGuardFS) removeSource(snap *GuardSnapshot) {
 	}
 	_ = f.Unlinkat(srcDir, name, 0)
 }
+
+// ProcProcess is the production ProcessLookup, reading /proc under Root.
+// The gate shares the tracee's pid namespace, so trap pids resolve there.
+type ProcProcess struct {
+	Root string
+}
+
+// NewProcProcess returns a ProcProcess reading /proc.
+func NewProcProcess() *ProcProcess {
+	return &ProcProcess{Root: "/proc"}
+}
+
+// Lookup implements ProcessLookup.
+func (p *ProcProcess) Lookup(pid int) (ProcessInfo, error) {
+	dir := filepath.Join(p.Root, strconv.Itoa(pid))
+	stat, err := os.ReadFile(filepath.Join(dir, "stat"))
+	if err != nil {
+		return ProcessInfo{}, err
+	}
+	start, err := procStartTime(stat)
+	if err != nil {
+		return ProcessInfo{}, err
+	}
+	exe, err := os.Readlink(filepath.Join(dir, "exe"))
+	if err != nil {
+		return ProcessInfo{}, err
+	}
+	raw, err := os.ReadFile(filepath.Join(dir, "cmdline"))
+	if err != nil {
+		return ProcessInfo{}, err
+	}
+	cmdline := strings.Split(strings.TrimSuffix(string(raw), "\x00"), "\x00")
+	return ProcessInfo{Exe: exe, Cmdline: cmdline, StartTime: start}, nil
+}
+
+// procStartTime reads field 22 (starttime) of /proc/<pid>/stat. The comm
+// field before it is parenthesised and may hold spaces and parentheses, so
+// fields count from the last ")".
+func procStartTime(stat []byte) (uint64, error) {
+	i := bytes.LastIndexByte(stat, ')')
+	if i < 0 {
+		return 0, errProcStat
+	}
+	fields := strings.Fields(string(stat[i+1:]))
+	// fields[0] is field 3 (state); starttime is field 22.
+	if len(fields) < 20 {
+		return 0, errProcStat
+	}
+	return strconv.ParseUint(fields[19], 10, 64)
+}
+
+var errProcStat = errors.New("agentgate: malformed /proc/<pid>/stat")

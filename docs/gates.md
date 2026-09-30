@@ -208,9 +208,11 @@ A repo's config and hooks make git run programs: `core.fsmonitor`, `core.sshComm
 
 Components match case-insensitively, with Unicode folding, because the host filesystem behind a mount often is case-insensitive.
 
-**Writes the gate can't read are refused.** An `open` that creates or writes, `truncate`, `link`, `symlink` and `mknod` on a guarded path get `EPERM`, with no approval card: the card couldn't show what would be written. So does a hardlink *from* a guarded file, which would give the agent a second, unguarded name to write through. Reads, deletes, `chmod`, `chown` and `mkdir` go on to the file rules as usual.
+**Writes the gate can't read are refused**, git dir pointers aside (below). An `open` that creates or writes, `truncate`, `link`, `symlink` and `mknod` on a guarded path get `EPERM`, with no approval card: the card couldn't show what would be written. So does a hardlink *from* a guarded file, which would give the agent a second, unguarded name to write through. Reads, deletes, `chmod`, `chown` and `mkdir` go on to the file rules as usual. Hook installers (`pre-commit install`, `git lfs install`) write hooks this way, so they fail in the container; run them on the host.
 
-**Renames show the content.** Git never writes these files in place. It writes `config.lock` and renames it over `config`, so a rename onto a guarded path is where the content appears. The gate:
+**Pointers ask with the command line.** `git worktree add`, submodule checkouts and `git init --separate-git-dir` write the `.git` file and `commondir` with a plain `open`, not through a lock file. Once the file rules allow such a write (a deny rule on the path still wins), it asks instead of being refused. The card can't show the content, since the gate never sees the bytes: it shows the path and the writing process, its executable and its command line (arguments with anything but letters, digits and `_@%+=:,./-` are quoted, escapes and invisible characters included, and the line is capped at 1 KiB). Allow only a git command you expect. The decision covers that one process (pid and start time), so `git worktree add`, which writes both files, asks once; a submodule checkout runs two processes and asks twice. `mknod`, `link` and `symlink` of a pointer stay refused.
+
+**Renames show the content.** Git writes config and hooks through a lock file: `config.lock`, renamed over `config`. So a rename onto a guarded path is where the content appears. The gate:
 
 1. refuses `RENAME_EXCHANGE` (either side guarded) and `RENAME_WHITEOUT`;
 2. reads the source as the agent's uid and gid (not as root), refusing it if it isn't a regular file, is over 32 KiB, or isn't plain text. Plain text means valid UTF-8 with no control characters but tab and newline, and no invisible format characters such as bidi overrides that could make the card show something other than what git reads;
@@ -221,12 +223,13 @@ Because the gate writes the file itself, the agent can't swap the content betwee
 
 **Whole trees can't be moved in.** A rename into a `.git` dir onto a path that isn't guarded itself (a ref, the index, an object) goes on to the file rules as usual, if its source is a regular file. A directory or symlink source is refused, and so is `RENAME_EXCHANGE` with either side inside a `.git` dir. Otherwise the agent could build a git dir elsewhere, with its own hooks and config, and move it in whole as `.git/modules/<name>` or `.git/worktrees/<name>`. Git itself doesn't move directories in there, except `git submodule absorbgitdirs`, which fails in the container.
 
-**Keys installed without asking**, which is what `git init`, `clone`, `remote add`, `fetch`, `branch --set-upstream-to`, `push -u` and `git config user.*` write:
+**Keys installed without asking**, which is what `git init`, `clone`, `remote add`, `fetch`, `branch --set-upstream-to`, `push -u`, `sparse-checkout`, `worktree` and `git config user.*` write:
 
 | Section | Keys |
 |---|---|
-| `core` | `repositoryformatversion`, `filemode`, `bare`, `logallrefupdates`, `ignorecase`, `precomposeunicode`, `symlinks` |
-| `extensions` | `objectformat` |
+| `core` | `repositoryformatversion`, `filemode`, `bare`, `logallrefupdates`, `ignorecase`, `precomposeunicode`, `symlinks`, `sparsecheckout`, `sparsecheckoutcone`; `worktree` only in a submodule's git dir (see below) |
+| `index` | `sparse` |
+| `extensions` | `objectformat`, `worktreeconfig` |
 | `user` | `name`, `email` |
 | `remote "<name>"` | `url`, `pushurl` (only `https`, `http`, `ssh`, `git` URLs and `user@host:path`; local paths, `file://` and `<helper>::` URLs ask), `fetch` |
 | `branch "<name>"` | `remote`, `merge` |
@@ -235,6 +238,8 @@ Because the gate writes the file itself, the agent can't swap the content betwee
 | `push` | `default`, `autosetupremote` |
 | `pull` | `rebase` |
 
+A submodule checkout sets `core.worktree` in `.git/modules/<name>/config` to the submodule's checkout, relative to that dir. It goes through when the value is relative and lands under the same guard root, outside every `.git` dir; it only moves the files git works on. Anywhere else, or with any other value, it asks.
+
 Both the old and the new file must parse under a strict subset of git's syntax: `[section]` or `[section "sub"]` headers on their own line, and `key = value` lines whose value has no quotes, backslashes, `;` or `#`. A file outside it, for example one with a continuation line or an escape, always asks, so the guard can never read a file differently from git. Removed entries don't count against a change, since removing one never makes git run anything.
 
 The card's cache key includes a hash of the content: **Allow for session** covers the same bytes landing on the same path again, not any later write there. Discord and Slack show the diff as a code block, or tell you to review it in the desktop app when it doesn't fit in a message.
@@ -242,7 +247,8 @@ The card's cache key includes a hash of the content: **Allow for session** cover
 **What the guard doesn't cover:**
 
 - `fchmod` on an already-open descriptor. A hook installed through the guard keeps the source's mode; making a non-executable hook executable later goes through `chmod(2)`, which the file rules see, but `fchmod(2)` on an open fd isn't trapped.
-- Bare repos and git dirs not named `.git` (`git clone --bare x.git`, `--separate-git-dir`).
+- Bare repos and git dirs not named `.git` (`git clone --bare x.git`, the target of `--separate-git-dir`).
+- The content of a pointer written in place: the card shows which process writes it, not what it writes.
 - A `core.hooksPath` that points into the worktree (husky, lefthook). Setting it asks, but the hook files it points at are ordinary workspace files.
 - The multi-threaded path race below: a sibling thread can change a path between the gate's read and the kernel's. The gate's own install isn't affected, since it opens its target directories with `RESOLVE_NO_SYMLINKS` and writes only bytes it already read.
 

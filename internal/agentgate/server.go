@@ -213,8 +213,12 @@ func (s *Server) dispatchFile(ctx context.Context, trap Trap, tracee Tracee) Tra
 	if err != nil {
 		return denyResp(trap.ID, syscall.EPERM)
 	}
+	pointer := false
 	if spec.SecondaryOp == "" && s.Guard.Protects(path) && !AllowsInPlace(spec, op) {
-		return s.Guard.Refuse(trap.ID, trap.PID, s.ChannelID, op, path)
+		if !s.Guard.AsksInPlace(spec, op, path) {
+			return s.Guard.Refuse(trap.ID, trap.PID, s.ChannelID, op, path)
+		}
+		pointer = true
 	}
 	if spec.LinkSource && s.Guard != nil {
 		src, err := s.linkSourcePaths(spec, trap, tracee)
@@ -236,6 +240,11 @@ func (s *Server) dispatchFile(ctx context.Context, trap Trap, tracee Tracee) Tra
 	})
 	if out.Decision != types.DecisionAllow {
 		return decisionResp(trap.ID, out.Decision)
+	}
+	// A .git file or commondir written in place asks once the file rules
+	// allow it, so a deny rule on the path still wins.
+	if pointer {
+		return s.Guard.Pointer(ctx, trap.ID, trap.PID, s.ChannelID, op, path)
 	}
 
 	// Two-path syscalls (renameat2) must pass both the old and new path.

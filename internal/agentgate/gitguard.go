@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -36,6 +37,11 @@ import (
 // git init, clone, remote add, branch -u and user.* write) goes through
 // silently. Anything else — a hook, a config key outside that set, a .git
 // pointer — asks with the diff on the card.
+//
+// The pointers are the exception to "refused in place": git worktree add,
+// submodule checkouts and init --separate-git-dir write a .git file and
+// commondir with a plain open(2). Those ask instead, with the process's
+// executable and command line on the card — the gate can't see the bytes.
 
 // maxGuardedFileSize caps what the guard reads and shows on a card. Real
 // configs and hooks are a few KB; a bigger file is refused rather than
@@ -99,8 +105,23 @@ type GitGuard struct {
 	Approver   Approver
 	Auditor    Auditor
 	PeerSource PeerSourceLookup
-	Now        func() time.Time
+	// Process describes the process behind an in-place pointer write for
+	// its card. Without it such writes are refused.
+	Process ProcessLookup
+	Now     func() time.Time
 }
+
+// ProcessInfo is what a pointer card shows about the writing process, plus
+// its start time, which with the pid names one process for the approval
+// cache (pids are reused).
+type ProcessInfo struct {
+	Exe       string
+	Cmdline   []string
+	StartTime uint64
+}
+
+// ProcessLookup describes a process by pid.
+type ProcessLookup func(pid int) (ProcessInfo, error)
 
 // GuardRename is one rename onto (or, with RENAME_EXCHANGE, from) a guarded
 // path. Src/Dst are resolved absolute paths.
@@ -139,6 +160,92 @@ func AllowsInPlace(spec SyscallSpec, op string) bool {
 func (g *GitGuard) Refuse(trapID uint64, pid int, channelID, op, path string) TrapResponse {
 	g.audit(pid, channelID, op+" "+path, string(types.DecisionDeny), "", nil)
 	return denyResp(trapID, syscall.EPERM)
+}
+
+// AsksInPlace reports whether an in-place op on path, refused by
+// AllowsInPlace, asks instead: creating or writing a .git file or
+// commondir through open(2), creat(2) or truncate(2). Git writes these
+// directly, not through a lock file. mknod and links stay refused — git
+// never makes a pointer that way.
+func (g *GitGuard) AsksInPlace(spec SyscallSpec, op, path string) bool {
+	if op != OpCreate && op != OpWrite {
+		return false
+	}
+	if spec.Name == syscallMknodat || spec.Name == syscallMknod {
+		return false
+	}
+	switch g.classify(path) {
+	case gitEntry, gitPointer:
+		return true
+	default:
+		return false
+	}
+}
+
+// Pointer asks about an in-place create or write of a git dir pointer (see
+// AsksInPlace), after the file rules allowed it. The card shows the path
+// and the process — its executable and command line — but not the content,
+// which the gate never sees. The decision is cached for that one process,
+// so git worktree add, which writes the new checkout's .git file and
+// commondir, asks once.
+func (g *GitGuard) Pointer(ctx context.Context, trapID uint64, pid int, channelID, op, path string) TrapResponse {
+	if g.Approver == nil || g.Process == nil {
+		return g.Refuse(trapID, pid, channelID, op, path)
+	}
+	proc, err := g.Process(pid)
+	if err != nil {
+		return g.Refuse(trapID, pid, channelID, op, path)
+	}
+	target := op + " " + path
+	out := g.Approver.Request(ctx, channelID, ApprovalRequest{
+		Kind:     "file",
+		Target:   target,
+		Source:   sourceForPID(pid, g.PeerSource),
+		Message:  "git dir pointer write — the content isn't visible; allow only a git command you expect",
+		CacheKey: "file:git-pointer:" + strconv.Itoa(pid) + ":" + strconv.FormatUint(proc.StartTime, 10),
+		Details: map[string]string{
+			"executable": proc.Exe,
+			"command":    formatCommand(proc.Cmdline),
+		},
+		OnPrompt: func() {
+			g.write(AuditEntry{Ts: g.now(), Channel: channelID, PID: pid, Kind: "file", Target: target, RuleID: gitGuardRuleID, Event: "request"})
+		},
+	})
+	g.audit(pid, channelID, target, string(out.Decision), out.Actor, nil)
+	if out.Decision != types.DecisionAllow {
+		return denyResp(trapID, syscall.EPERM)
+	}
+	return allowResp(trapID)
+}
+
+// maxCardCommand caps the command line on a pointer card; chat messages
+// are short.
+const maxCardCommand = 1024
+
+// plainArgRe matches an argument shown as-is on a card. Anything else is
+// Go-quoted, so spaces, newlines, escapes and invisible characters in argv
+// can't make the command read as something it isn't.
+var plainArgRe = regexp.MustCompile(`^[A-Za-z0-9_@%+=:,./-]+$`)
+
+func formatCommand(args []string) string {
+	parts := make([]string, len(args))
+	for i, a := range args {
+		if plainArgRe.MatchString(a) {
+			parts[i] = a
+		} else {
+			parts[i] = strconv.Quote(a)
+		}
+	}
+	cmd := strings.Join(parts, " ")
+	if len(cmd) > maxCardCommand {
+		// Cut on a rune boundary: Quote keeps printable non-ASCII.
+		n := maxCardCommand
+		for !utf8.RuneStart(cmd[n]) {
+			n--
+		}
+		cmd = cmd[:n] + " …"
+	}
+	return cmd
 }
 
 // InsideGitDir reports whether path lies below a .git dir under a root.
@@ -292,7 +399,7 @@ func (g *GitGuard) Rename(ctx context.Context, r GuardRename) TrapResponse {
 	}
 
 	kind := g.classify(r.Dst)
-	if kind == gitConfig && safeGitConfigChange(snap.Old, snap.Data) {
+	if kind == gitConfig && safeGitConfigChange(snap.Old, snap.Data, g.submoduleWorktree(r.Dst)) {
 		g.audit(r.PID, r.ChannelID, target, string(types.DecisionAllow), "", map[string]string{"reason": "safe-keys"})
 		return g.install(r, target, snap)
 	}
@@ -467,8 +574,10 @@ func parseGitConfigStrict(b []byte) ([]gitConfigEntry, bool) {
 // them makes git run a program. "*" stands for any subsection; "" for none.
 var safeGitConfigKeys = map[string]map[string]bool{
 	"core": {"repositoryformatversion": true, "filemode": true, "bare": true, "logallrefupdates": true,
-		"ignorecase": true, "precomposeunicode": true, "symlinks": true},
-	"extensions": {"objectformat": true},
+		"ignorecase": true, "precomposeunicode": true, "symlinks": true,
+		"sparsecheckout": true, "sparsecheckoutcone": true},
+	"index":      {"sparse": true},
+	"extensions": {"objectformat": true, "worktreeconfig": true},
 	"user":       {"name": true, "email": true},
 	"remote.*":   {"url": true, "pushurl": true, "fetch": true},
 	"branch.*":   {"remote": true, "merge": true},
@@ -485,10 +594,13 @@ var safeGitConfigKeys = map[string]map[string]bool{
 // and transport helpers (ext::, fd::, <helper>::) ask instead.
 var safeGitURLRe = regexp.MustCompile(`^(?:(?:https?|ssh|git)://[A-Za-z0-9][^\s]*|[A-Za-z0-9][A-Za-z0-9._-]*@[A-Za-z0-9][A-Za-z0-9.-]*:[^\s]+)$`)
 
-func safeGitConfigEntry(e gitConfigEntry) bool {
+func safeGitConfigEntry(e gitConfigEntry, worktreeOK func(string) bool) bool {
 	section := e.section
 	if e.sub != "" {
 		section += ".*"
+	}
+	if section == "core" && e.key == "worktree" {
+		return worktreeOK != nil && worktreeOK(e.value)
 	}
 	if !safeGitConfigKeys[section][e.key] {
 		return false
@@ -500,10 +612,11 @@ func safeGitConfigEntry(e gitConfigEntry) bool {
 }
 
 // safeGitConfigChange reports whether turning old into new only adds or
-// changes entries from safeGitConfigKeys. Removing an entry never makes git
-// run anything, so removals don't count. Either file outside the strict
-// subset means "not safe".
-func safeGitConfigChange(old, new []byte) bool {
+// changes entries from safeGitConfigKeys, or a core.worktree that
+// worktreeOK accepts (nil: none). Removing an entry never makes git run
+// anything, so removals don't count. Either file outside the strict subset
+// means "not safe".
+func safeGitConfigChange(old, new []byte, worktreeOK func(string) bool) bool {
 	before, ok := parseGitConfigStrict(old)
 	if !ok {
 		return false
@@ -521,9 +634,46 @@ func safeGitConfigChange(old, new []byte) bool {
 			have[e]--
 			continue
 		}
-		if !safeGitConfigEntry(e) {
+		if !safeGitConfigEntry(e, worktreeOK) {
 			return false
 		}
 	}
 	return true
+}
+
+// submoduleWorktree returns the core.worktree check for a submodule's git
+// dir config (.git/modules/<name>/config), where git sets it to the
+// submodule's checkout, relative to that dir. A relative value that stays
+// under a root and out of every .git dir only moves the files git works
+// on; it runs nothing. Elsewhere it returns nil, and core.worktree asks.
+func (g *GitGuard) submoduleWorktree(dst string) func(string) bool {
+	rel, ok := g.rel(dst)
+	if !ok {
+		return nil
+	}
+	comps := strings.Split(rel, "/")
+	if !strings.EqualFold(comps[len(comps)-1], "config") {
+		return nil
+	}
+	inModules := false
+	for i := 0; i+1 < len(comps)-1; i++ {
+		if strings.EqualFold(comps[i], ".git") && strings.EqualFold(comps[i+1], "modules") {
+			inModules = true
+			break
+		}
+	}
+	if !inModules {
+		return nil
+	}
+	dir := filepath.Dir(dst)
+	return func(value string) bool {
+		if value == "" || filepath.IsAbs(value) {
+			return false
+		}
+		target := filepath.Join(dir, value)
+		if _, ok := g.rel(target); !ok {
+			return false
+		}
+		return !g.InsideGitDir(target) && g.classify(target) == gitNone
+	}
 }

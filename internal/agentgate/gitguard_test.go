@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"strings"
 	"syscall"
 	"testing"
 	"time"
@@ -189,6 +190,133 @@ func (s *GitGuardSuite) TestAllowsInPlace() {
 	for _, c := range cases {
 		s.Run(c.name, func() {
 			s.Require().Equal(c.want, AllowsInPlace(c.spec, c.op))
+		})
+	}
+}
+
+func (s *GitGuardSuite) TestAsksInPlace() {
+	openat := SyscallSpec{Name: syscallOpenat}
+	cases := []struct {
+		name string
+		spec SyscallSpec
+		op   string
+		path string
+		want bool
+	}{
+		{"create .git file", openat, OpCreate, "/work/wt/.git", true},
+		{"write .git file", SyscallSpec{Name: syscallTruncate}, OpWrite, "/work/wt/.git", true},
+		{"creat commondir", SyscallSpec{Name: syscallCreat}, OpCreate, "/work/.git/worktrees/wt/commondir", true},
+		{"mknodat .git", SyscallSpec{Name: syscallMknodat}, OpCreate, "/work/wt/.git", false},
+		{"mknod commondir", SyscallSpec{Name: syscallMknod}, OpCreate, "/work/.git/worktrees/wt/commondir", false},
+		{"link .git", openat, OpLink, "/work/wt/.git", false},
+		{"create config", openat, OpCreate, "/work/.git/config", false},
+		{"write hook", openat, OpWrite, "/work/.git/hooks/pre-commit", false},
+		{"outside the roots", openat, OpCreate, "/tmp/wt/.git", false},
+	}
+	for _, c := range cases {
+		s.Run(c.name, func() {
+			s.Require().Equal(c.want, s.guard.AsksInPlace(c.spec, c.op, c.path))
+		})
+	}
+}
+
+func (s *GitGuardSuite) processInfo(err error) (*[]int, ProcessLookup) {
+	var asked []int
+	return &asked, func(pid int) (ProcessInfo, error) {
+		asked = append(asked, pid)
+		if err != nil {
+			return ProcessInfo{}, err
+		}
+		return ProcessInfo{
+			Exe:       "/usr/lib/git-core/git",
+			Cmdline:   []string{"git", "worktree", "add", "../wt name", "-b", "x"},
+			StartTime: 12345,
+		}, nil
+	}
+}
+
+func (s *GitGuardSuite) TestPointerRefusesWithoutApproverOrProcess() {
+	_, lookup := s.processInfo(nil)
+	cases := []struct {
+		name  string
+		guard *GitGuard
+	}{
+		{"no approver", &GitGuard{Roots: []string{"/work"}, Process: lookup, Auditor: s.auditor}},
+		{"no process lookup", &GitGuard{Roots: []string{"/work"}, Approver: s.approver, Auditor: s.auditor}},
+	}
+	for _, c := range cases {
+		s.Run(c.name, func() {
+			got := c.guard.Pointer(context.Background(), 7, 42, "ch-1", OpCreate, "/work/wt/.git")
+			s.requireDenied(got, syscall.EPERM)
+		})
+	}
+	s.Require().Empty(s.approver.got.Kind)
+}
+
+func (s *GitGuardSuite) TestPointerRefusesWhenLookupFails() {
+	_, s.guard.Process = s.processInfo(errors.New("gone"))
+	got := s.guard.Pointer(context.Background(), 7, 42, "ch-1", OpCreate, "/work/wt/.git")
+	s.requireDenied(got, syscall.EPERM)
+	s.Require().Empty(s.approver.got.Kind)
+	s.Require().Equal(string(types.DecisionDeny), s.auditor.entries[0].Decision)
+}
+
+func (s *GitGuardSuite) TestPointerAsksWithTheCommand() {
+	var asked *[]int
+	asked, s.guard.Process = s.processInfo(nil)
+	s.guard.PeerSource = func(int) string { return "terminal:leaf-1" }
+
+	got := s.guard.Pointer(context.Background(), 7, 42, "ch-1", OpCreate, "/work/wt/.git")
+	s.Require().Equal(TrapResponse{ID: 7, Allow: true}, got)
+	s.Require().Equal([]int{42}, *asked)
+
+	req := s.approver.got
+	s.Require().Equal("file", req.Kind)
+	s.Require().Equal("create /work/wt/.git", req.Target)
+	s.Require().Equal("terminal:leaf-1", req.Source)
+	s.Require().Equal("git dir pointer write — the content isn't visible; allow only a git command you expect", req.Message)
+	s.Require().Equal("file:git-pointer:42:12345", req.CacheKey)
+	s.Require().Equal(map[string]string{
+		"executable": "/usr/lib/git-core/git",
+		"command":    `git worktree add "../wt name" -b x`,
+	}, req.Details)
+	s.Require().Equal([]AuditEntry{
+		{Ts: s.now, Channel: "ch-1", PID: 42, Kind: "file", Target: "create /work/wt/.git", RuleID: gitGuardRuleID, Event: "request"},
+		{Ts: s.now, Channel: "ch-1", PID: 42, Kind: "file", Target: "create /work/wt/.git", RuleID: gitGuardRuleID, Decision: string(types.DecisionAllow), PromptedWho: "user-1"},
+	}, s.auditor.entries)
+}
+
+func (s *GitGuardSuite) TestPointerDenied() {
+	_, s.guard.Process = s.processInfo(nil)
+	s.approver.out = Outcome{Decision: types.DecisionDeny, Actor: "user-1"}
+	got := s.guard.Pointer(context.Background(), 7, 42, "ch-1", OpWrite, "/work/.git/worktrees/wt/commondir")
+	s.requireDenied(got, syscall.EPERM)
+	last := s.auditor.entries[len(s.auditor.entries)-1]
+	s.Require().Equal(string(types.DecisionDeny), last.Decision)
+	s.Require().Equal("write /work/.git/worktrees/wt/commondir", last.Target)
+}
+
+func (s *GitGuardSuite) TestFormatCommand() {
+	long := strings.Repeat("a", maxCardCommand+10)
+	cases := []struct {
+		name string
+		args []string
+		want string
+	}{
+		{"empty", nil, ""},
+		{"plain", []string{"git", "-C", "/work/x", "worktree", "add", "../wt", "-b", "feat/x"}, "git -C /work/x worktree add ../wt -b feat/x"},
+		{"space", []string{"git", "commit", "-m", "a b"}, `git commit -m "a b"`},
+		{"empty arg", []string{"git", ""}, `git ""`},
+		{"newline", []string{"git", "a\nb"}, `git "a\nb"`},
+		{"escape sequence", []string{"git", "\x1b[2Jx"}, `git "\x1b[2Jx"`},
+		{"bidi override", []string{"git", "\u202eevil"}, `git "\u202eevil"`},
+		{"shell metachars", []string{"sh", "-c", "x;y"}, `sh -c "x;y"`},
+		{"capped", []string{long}, long[:maxCardCommand] + " …"},
+		{"capped on a rune boundary", []string{strings.Repeat("a", maxCardCommand-3), "é"}, strings.Repeat("a", maxCardCommand-3) + ` "` + " …"},
+	}
+	for _, c := range cases {
+		s.Run(c.name, func() {
+			s.Require().Equal(c.want, formatCommand(c.args))
 		})
 	}
 }
@@ -598,12 +726,90 @@ func (s *GitGuardSuite) TestSafeGitConfigEntry() {
 		{"leading dash", gitConfigEntry{section: "remote", sub: "origin", key: "url", value: "-oProxyCommand=evil"}, false},
 		{"scp-like host with leading dash", gitConfigEntry{section: "remote", sub: "origin", key: "url", value: "git@-oProxyCommand=x:r"}, false},
 		{"empty url", gitConfigEntry{section: "remote", sub: "origin", key: "url"}, false},
+		{"core.sparseCheckout", gitConfigEntry{section: "core", key: "sparsecheckout", value: "true"}, true},
+		{"core.sparseCheckoutCone", gitConfigEntry{section: "core", key: "sparsecheckoutcone", value: "true"}, true},
+		{"index.sparse", gitConfigEntry{section: "index", key: "sparse", value: "false"}, true},
+		{"extensions.worktreeConfig", gitConfigEntry{section: "extensions", key: "worktreeconfig", value: "true"}, true},
 	}
 	for _, c := range cases {
 		s.Run(c.name, func() {
-			s.Require().Equal(c.want, safeGitConfigEntry(c.e))
+			s.Require().Equal(c.want, safeGitConfigEntry(c.e, nil))
 		})
 	}
+}
+
+func (s *GitGuardSuite) TestSafeGitConfigEntryWorktree() {
+	e := gitConfigEntry{section: "core", key: "worktree", value: "../../../sm"}
+	var asked []string
+	check := func(ok bool) func(string) bool {
+		return func(v string) bool {
+			asked = append(asked, v)
+			return ok
+		}
+	}
+	s.Require().False(safeGitConfigEntry(e, nil))
+	s.Require().True(safeGitConfigEntry(e, check(true)))
+	s.Require().False(safeGitConfigEntry(e, check(false)))
+	s.Require().Equal([]string{"../../../sm", "../../../sm"}, asked)
+	// With a subsection it's not core.worktree.
+	s.Require().False(safeGitConfigEntry(gitConfigEntry{section: "core", sub: "x", key: "worktree", value: "a"}, check(true)))
+}
+
+func (s *GitGuardSuite) TestSubmoduleWorktree() {
+	cases := []struct {
+		name  string
+		dst   string
+		value string
+		want  bool
+		isNil bool
+	}{
+		{"repo config", "/work/.git/config", "", false, true},
+		{"worktree config", "/work/.git/modules/sm/config.worktree", "", false, true},
+		{"outside the roots", "/elsewhere/.git/modules/sm/config", "", false, true},
+		{"modules is the leaf's dir name only", "/work/modules/config", "", false, true},
+		{"submodule checkout", "/work/.git/modules/sm/config", "../../../sm", true, false},
+		{"nested submodule", "/work/.git/modules/a/modules/b/config", "../../../../../a/b", true, false},
+		{"upper-case components", "/work/.GIT/Modules/sm/CONFIG", "../../../sm", true, false},
+		{"the root itself", "/work/.git/modules/sm/config", "../../..", true, false},
+		{"empty value", "/work/.git/modules/sm/config", "", false, false},
+		{"absolute value", "/work/.git/modules/sm/config", "/work/sm", false, false},
+		{"escapes the root", "/work/.git/modules/sm/config", "../../../../etc", false, false},
+		{"into the git dir", "/work/.git/modules/sm/config", "../../hooks", false, false},
+		{"a .git entry", "/work/.git/modules/sm/config", "../../../sm/.git", false, false},
+		{"into a nested git dir", "/work/.git/modules/sm/config", "../../../sm/.git/x", false, false},
+	}
+	for _, c := range cases {
+		s.Run(c.name, func() {
+			check := s.guard.submoduleWorktree(c.dst)
+			if c.isNil {
+				s.Require().Nil(check)
+				return
+			}
+			s.Require().NotNil(check)
+			s.Require().Equal(c.want, check(c.value))
+		})
+	}
+}
+
+func (s *GitGuardSuite) TestRenameInstallsSubmoduleWorktreeSilently() {
+	s.fs.snap = &GuardSnapshot{
+		Dst:  "/work/.git/modules/sm/config",
+		Data: []byte(gitInitConfig + "\tworktree = ../../../sm\n"),
+	}
+	got := s.guard.Rename(context.Background(), s.rename("/work/.git/modules/sm/config.lock", "/work/.git/modules/sm/config", 0))
+	s.requirePerformed(got)
+	s.Require().Equal(1, s.fs.installs)
+	s.Require().Empty(s.approver.got.Kind)
+}
+
+func (s *GitGuardSuite) TestRenameAsksForRepoWorktree() {
+	s.fs.snap = &GuardSnapshot{
+		Dst:  "/work/.git/config",
+		Data: []byte(gitInitConfig + "\tworktree = ../sm\n"),
+	}
+	got := s.guard.Rename(context.Background(), s.rename("/work/.git/config.lock", "/work/.git/config", 0))
+	s.requirePerformed(got)
+	s.Require().Equal("git config change — review the diff", s.approver.got.Message)
 }
 
 func (s *GitGuardSuite) TestSafeGitConfigChange() {
@@ -637,10 +843,13 @@ func (s *GitGuardSuite) TestSafeGitConfigChange() {
 		{"dotted subsection form", gitInitConfig, "[remote.origin]\n\turl = https://h/r\n", false},
 		{"CRLF file", "", "[core]\r\n\tbare = false\r\n", false},
 		{"unparseable old file", "[core] x = y\n", gitInitConfig, false},
+		{"git sparse-checkout init", gitInitConfig, gitInitConfig + "\tsparseCheckout = true\n\tsparseCheckoutCone = true\n[index]\n\tsparse = false\n", true},
+		{"git worktree config", gitInitConfig, "[core]\n\trepositoryformatversion = 1\n[extensions]\n\tworktreeConfig = true\n", true},
+		{"core.worktree", gitInitConfig, gitInitConfig + "\tworktree = ../x\n", false},
 	}
 	for _, c := range cases {
 		s.Run(c.name, func() {
-			s.Require().Equal(c.want, safeGitConfigChange([]byte(c.old), []byte(c.new)))
+			s.Require().Equal(c.want, safeGitConfigChange([]byte(c.old), []byte(c.new), nil))
 		})
 	}
 }

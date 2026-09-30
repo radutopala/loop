@@ -882,6 +882,55 @@ func (s *ServerSuite) TestDispatchGuardRefusesInPlaceWrites() {
 	}
 }
 
+// git worktree add and submodule checkouts write a .git file and commondir
+// in place; those ask with the process's command line, after the file
+// rules. mknod of a pointer stays refused.
+func (s *ServerSuite) TestDispatchGuardAsksForInPlacePointers() {
+	lookup := func(int) (ProcessInfo, error) {
+		return ProcessInfo{Exe: "/usr/bin/git", Cmdline: []string{"git", "worktree", "add", "../wt"}, StartTime: 5}, nil
+	}
+	cases := []struct {
+		name     string
+		syscall  string
+		args     [6]uint64
+		path     string
+		rules    []types.FileRule
+		decision types.Decision
+		want     TrapResponse
+		asked    string
+	}{
+		{"create a .git file", syscallOpenat, [6]uint64{atFdcwd, 0x100, oCreat | oWRONLY}, "/work/wt/.git", nil,
+			types.DecisionAllow, TrapResponse{ID: 61, Allow: true}, "create /work/wt/.git"},
+		{"create commondir", syscallOpenat, [6]uint64{atFdcwd, 0x100, oCreat | oWRONLY}, "/work/.git/worktrees/wt/commondir", nil,
+			types.DecisionAllow, TrapResponse{ID: 61, Allow: true}, "create /work/.git/worktrees/wt/commondir"},
+		{"denied on the card", syscallOpenat, [6]uint64{atFdcwd, 0x100, oWRONLY}, "/work/wt/.git", nil,
+			types.DecisionDeny, TrapResponse{ID: 61, ErrorNum: int32(syscall.EPERM)}, "write /work/wt/.git"},
+		{"a deny rule wins", syscallOpenat, [6]uint64{atFdcwd, 0x100, oCreat | oWRONLY}, "/work/wt/.git",
+			[]types.FileRule{{Paths: []string{"/work/wt/.git"}, Operations: []string{OpCreate}, Decision: types.DecisionDeny}},
+			types.DecisionAllow, TrapResponse{ID: 61, ErrorNum: int32(syscall.EPERM)}, ""},
+		{"mknodat a .git file", syscallMknodat, [6]uint64{atFdcwd, 0x100, 0, 0}, "/work/wt/.git", nil,
+			types.DecisionAllow, TrapResponse{ID: 61, ErrorNum: int32(syscall.EPERM)}, ""},
+	}
+	for _, c := range cases {
+		s.Run(c.name, func() {
+			tr := &FakeTracee{Strings: map[uintptr]string{0x100: c.path}}
+			fs, auditor := &fakeGuardFS{}, &collectAuditor{}
+			approver := &stubApprover{out: Outcome{Decision: c.decision, Actor: "u"}}
+			srv := s.guardedServer(tr, fs, auditor)
+			srv.Guard.Approver, srv.Guard.Process = approver, lookup
+			if c.rules != nil {
+				srv.File = NewFileHandler(s.mustPolicy(types.DecisionAllow, nil, nil, c.rules), nil, 8)
+			}
+			got := srv.Dispatch(context.Background(), Trap{ID: 61, PID: 9, Syscall: c.syscall, Args: c.args})
+			s.Require().Equal(c.want, got)
+			s.Require().Equal(c.asked, approver.got.Target)
+			if c.asked != "" {
+				s.Require().Equal("git worktree add ../wt", approver.got.Details["command"])
+			}
+		})
+	}
+}
+
 // A hardlink gives a guarded file a second, unguarded name the agent could
 // write in place, so the link's existing path is checked too — both with
 // and without following a final symlink.

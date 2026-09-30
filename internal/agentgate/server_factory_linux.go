@@ -42,6 +42,7 @@ func NewServer(policy *Policy, approver Approver, auditor Auditor, peerSource Pe
 			Approver:   approver,
 			Auditor:    auditor,
 			PeerSource: peerSource,
+			Process:    NewProcProcess().Lookup,
 		}
 	}
 	return &Server{
