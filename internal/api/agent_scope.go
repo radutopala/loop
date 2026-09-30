@@ -186,7 +186,12 @@ func (s *Server) agentRefusal(r *http.Request, pattern string) string {
 		// handler would use them, so they're checked either way.
 		_ = json.NewDecoder(bytes.NewReader(body)).Decode(&refs)
 	}
-	channels = append(channels, refs.ChannelID, refs.LearnChannelID, refs.ThreadID)
+	channels = append(channels, refs.LearnChannelID, refs.ThreadID)
+	// Agents post to any channel, the way they did before API tokens: the
+	// user asks one agent to hand work or news to another project's.
+	if pattern != "POST /api/messages" {
+		channels = append(channels, refs.ChannelID)
+	}
 	dirs = append(dirs, refs.DirPath)
 
 	for _, ch := range channels {

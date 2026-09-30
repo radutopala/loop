@@ -26,7 +26,7 @@ Every API request carries a token (see [Authentication](api.md#authentication)).
 - The **owner token** sits in the OS user config dir, outside `~/.loop`, and that directory is never mounted into a container or accepted as a channel dir.
 - The same goes for `~/.loop/run`, which holds each container's gate policies and audit logs. A mount that contains either directory is skipped if it's writable. If it's read-only, it's kept and the directory inside it is covered with an empty read-only tmpfs, so `~/.loop:~/.loop:ro` still works. Containers an agent starts can't mount either directory or any folder above it.
 - **Agent tokens** are issued per container, written to `/run/loop/api-token` readable by the agent user only, kept out of the container's environment and `docker inspect`, and revoked with the container.
-- An agent token works only on the routes in-container clients call, and only for its own project's channels and dirs. Config, terminals (host shells included), gates, images and token rotation are owner-only.
+- An agent token works only on the routes in-container clients call, and only for its own project's channels and dirs. Posting a message (`send_message`) is the exception: it may target any channel. Config, terminals (host shells included), gates, images and token rotation are owner-only.
 - URLs the browser loads directly (playground iframes, image and PDF previews, HTML preview `<base href>`) use short-lived signed content links rather than the token. Playground pages are served sandboxed, with an opaque origin.
 
 ### Gate tokens and approvals

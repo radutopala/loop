@@ -104,6 +104,7 @@ func (s *AgentScopeSuite) TestGuard() {
 		{name: "owner-only route", tok: "agent", method: "PUT", target: "/api/config", want: 403},
 		{name: "rotate the owner token", tok: "agent", method: "POST", target: "/api/auth/rotate", want: 403},
 		{name: "trust a project config", tok: "agent", method: "POST", target: "/api/config/project/trust?channel_id=ch1", want: 403},
+		{name: "preview a learn proposal", tok: "agent", method: "GET", target: "/api/learn/proposals/1/preview", want: 403},
 
 		{name: "own channel", tok: "agent", method: "GET", target: "/api/channels/ch1/queued", want: 200},
 		{name: "same project channel", tok: "agent", method: "GET", target: "/api/channels/ch2/queued", want: 200},
@@ -132,7 +133,8 @@ func (s *AgentScopeSuite) TestGuard() {
 		{name: "dir with no agent dir or project", tok: "orphan", method: "GET", target: "/api/channels?dir_path=/proj", want: 403},
 
 		{name: "body own channel", tok: "agent", method: "POST", target: "/api/messages", body: `{"channel_id":"ch1","text":"hi"}`, want: 200},
-		{name: "body other channel", tok: "agent", method: "POST", target: "/api/messages", body: `{"channel_id":"ch3"}`, want: 403},
+		{name: "post to another project's channel", tok: "agent", method: "POST", target: "/api/messages", body: `{"channel_id":"ch3"}`, want: 200},
+		{name: "body other channel elsewhere", tok: "agent", method: "POST", target: "/api/threads", body: `{"channel_id":"ch3"}`, want: 403},
 		{name: "body thread", tok: "agent", method: "POST", target: "/api/threads", body: `{"channel_id":"ch1","thread_id":"ch3"}`, want: 403},
 		{name: "body learn channel", tok: "agent", method: "POST", target: "/api/channels/ch1/learn/proposals", body: `{"learn_channel_id":"ch3"}`, want: 403},
 		{name: "body dir", tok: "agent", method: "POST", target: "/api/memory/search", body: `{"dir_path":"/etc"}`, want: 403},
