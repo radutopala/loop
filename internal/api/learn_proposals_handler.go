@@ -17,6 +17,7 @@ import (
 	"github.com/radutopala/loop/internal/events"
 	"github.com/radutopala/loop/internal/learn"
 	"github.com/radutopala/loop/internal/types"
+	"github.com/radutopala/loop/internal/unidiff"
 )
 
 // maxLearnProposals limits the proposals one propose_learnings call files,
@@ -346,20 +347,29 @@ func (s *Server) handleDismissLearnProposal(w http.ResponseWriter, r *http.Reque
 	s.settleLearnProposal(ctx, w, p, db.LearnDismissed, "")
 }
 
+// learnProposalTarget decodes p's payload and loads the channel it changes.
+func (s *Server) learnProposalTarget(ctx context.Context, p *db.LearnProposal) (any, *db.Channel, error) {
+	v, err := learn.Decode(p.Kind, json.RawMessage(p.Payload))
+	if err != nil {
+		return nil, nil, err
+	}
+	ch, err := s.store.GetChannel(ctx, p.ChannelID)
+	if err != nil {
+		return nil, nil, err
+	}
+	if ch == nil {
+		return nil, nil, errors.New("channel not found")
+	}
+	return v, ch, nil
+}
+
 // applyLearnProposal makes the change p describes. Config kinds are
 // appended to the project's .loop/config.json (the root checkout's, for
 // worktree threads), keeping the user's comments.
 func (s *Server) applyLearnProposal(ctx context.Context, p *db.LearnProposal) error {
-	v, err := learn.Decode(p.Kind, json.RawMessage(p.Payload))
+	v, ch, err := s.learnProposalTarget(ctx, p)
 	if err != nil {
 		return err
-	}
-	ch, err := s.store.GetChannel(ctx, p.ChannelID)
-	if err != nil {
-		return err
-	}
-	if ch == nil {
-		return errors.New("channel not found")
 	}
 	switch v := v.(type) {
 	case *learn.Rename:
@@ -408,23 +418,37 @@ func (s *Server) applyLearnProposal(ctx context.Context, p *db.LearnProposal) er
 		}
 		return nil
 	}
-	return s.applyLearnConfig(ctx, ch, v)
+	_, _, _, err = s.editLearnConfig(ctx, ch, v, true)
+	return err
 }
 
-// applyLearnConfig appends a config-kind proposal to the project config.
-// The file stays locked from the duplicate check to the write, so proposals
-// applied at once (Apply all) neither drop each other's entries nor both
-// add the same one.
-func (s *Server) applyLearnConfig(ctx context.Context, ch *db.Channel, v any) error {
+// isLearnConfigKind reports whether v, a decoded proposal payload, is one
+// editLearnConfig appends to the project config.
+func isLearnConfigKind(v any) bool {
+	switch v.(type) {
+	case *learn.PromptShortcut, *learn.BashShortcut, *learn.GateRule, *learn.Mount:
+		return true
+	}
+	return false
+}
+
+// editLearnConfig appends a config-kind proposal to the project config at
+// configPath, returning the file before (nil when missing) and after. With
+// write false it only works out the edit, for the preview: apply and
+// preview make the same checks and the same change. before and after are
+// both nil when the change is already there. The file stays locked from
+// the duplicate check to the write, so proposals applied at once (Apply
+// all) neither drop each other's entries nor both add the same one.
+func (s *Server) editLearnConfig(ctx context.Context, ch *db.Channel, v any, write bool) (configPath string, before, after []byte, err error) {
 	dir, err := s.resolveProjectConfigDirPath(ctx, ch.ChannelID)
 	if err != nil {
-		return err
+		return "", nil, nil, err
 	}
-	configPath := filepath.Join(dir, ".loop", "config.json")
+	configPath = filepath.Join(dir, ".loop", "config.json")
 	defer s.configLocks.lock(configPath)()
 	merged := s.configs.merged(ch.DirPath, s.workspace.resolveParentDirPath(ctx, ch.ChannelID))
 	if merged == nil {
-		return errors.New("loading config failed")
+		return configPath, nil, nil, errors.New("loading config failed")
 	}
 	var (
 		path []string
@@ -433,18 +457,18 @@ func (s *Server) applyLearnConfig(ctx context.Context, ch *db.Channel, v any) er
 	switch v := v.(type) {
 	case *learn.PromptShortcut:
 		if slices.ContainsFunc(merged.PromptShortcuts, func(sc config.PromptShortcut) bool { return sc.Name == v.Name }) {
-			return fmt.Errorf("a prompt shortcut named %q already exists", v.Name)
+			return configPath, nil, nil, fmt.Errorf("a prompt shortcut named %q already exists", v.Name)
 		}
 		path, item = []string{"prompt_shortcuts"}, v
 	case *learn.BashShortcut:
 		if slices.ContainsFunc(merged.BashShortcuts, func(sc config.BashShortcut) bool { return sc.Name == v.Name }) {
-			return fmt.Errorf("a bash shortcut named %q already exists", v.Name)
+			return configPath, nil, nil, fmt.Errorf("a bash shortcut named %q already exists", v.Name)
 		}
 		path, item = []string{"bash_shortcuts"}, v
 	case *learn.GateRule:
 		key, rule, _ := v.ConfigRule() // Decode already checked it
 		if hasGateRule(merged.Gates.Agentgate, rule) {
-			return nil // already there: applying it again changes nothing
+			return configPath, nil, nil, nil // already there: applying it again changes nothing
 		}
 		path, item = []string{"gates", "agentgate", key}, rule
 	case *learn.Mount:
@@ -453,19 +477,82 @@ func (s *Server) applyLearnConfig(ctx context.Context, ch *db.Channel, v any) er
 		// way against the dir it's written to.
 		resolved, _ := config.ResolveMount(v.Mount, dir) // Decode already checked it
 		if slices.Contains(merged.Mounts, resolved) {
-			return fmt.Errorf("mount %q already exists", v.Mount)
+			return configPath, nil, nil, fmt.Errorf("mount %q already exists", v.Mount)
 		}
 		path, item = []string{"mounts"}, v.Mount
 	}
-	before, after, err := hjsonedit.AppendData(s.sys, configPath, path, item)
-	if err != nil {
-		return err
+	edit := hjsonedit.Appended
+	if write {
+		edit = hjsonedit.AppendData
 	}
-	if s.projectTrust != nil {
+	before, after, err = edit(s.sys, configPath, path, item)
+	if err != nil {
+		return configPath, nil, nil, err
+	}
+	if write && s.projectTrust != nil {
 		// The owner reviewed the proposal and applied it.
 		s.keepProjectTrust(dir, before, after)
 	}
-	return nil
+	return configPath, before, after, nil
+}
+
+// learnPreviewResponse is the edit applying a proposal would make: the
+// config file it changes and a unified diff of the change ("" when it's
+// already there). Error is why applying it would fail. All are empty for
+// kinds that edit no file.
+type learnPreviewResponse struct {
+	Path  string `json:"path,omitempty"`
+	Diff  string `json:"diff,omitempty"`
+	Error string `json:"error,omitempty"`
+}
+
+// handlePreviewLearnProposal shows what applying a proposal would change in
+// the project config, without changing it: the same edit apply makes.
+func (s *Server) handlePreviewLearnProposal(w http.ResponseWriter, r *http.Request) {
+	if !requireConfigured(w, s.store, "channel listing not configured") {
+		return
+	}
+	id, ok := parsePathInt64(w, r, "id")
+	if !ok {
+		return
+	}
+	p, err := s.store.GetLearnProposal(r.Context(), id)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if p == nil {
+		http.Error(w, "proposal not found", http.StatusNotFound)
+		return
+	}
+	var resp learnPreviewResponse
+	v, ch, err := s.learnProposalTarget(r.Context(), p)
+	switch {
+	case err != nil:
+		resp.Error = err.Error()
+	case isLearnConfigKind(v):
+		path, before, after, err := s.editLearnConfig(r.Context(), ch, v, false)
+		resp.Path = path
+		if err != nil {
+			resp.Error = err.Error()
+		} else {
+			resp.Diff = learnConfigDiff(path, before, after)
+		}
+	}
+	writeHTTPJSON(w, http.StatusOK, resp, s.logger)
+}
+
+// learnConfigDiff renders a config edit as a unified diff, from /dev/null
+// for a file it creates. An edit that changes nothing has none.
+func learnConfigDiff(path string, before, after []byte) string {
+	if after == nil {
+		return ""
+	}
+	from := path
+	if before == nil {
+		from = "/dev/null"
+	}
+	return unidiff.Diff(from, path, string(before), string(after))
 }
 
 // hasGateRule reports whether gate already has rule (a *types.PathRule,

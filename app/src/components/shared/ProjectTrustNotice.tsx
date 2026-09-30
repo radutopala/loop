@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useState } from "react";
 import { fetchProjectTrust, ProjectTrustChangedError, type ProjectTrustStatus, trustProjectConfig } from "../../api/configApi";
 import type { ColorPalette } from "../../theme";
-import { fonts } from "../../theme";
 import { logErr } from "../../utils/log";
+import { UnifiedDiff } from "./UnifiedDiff";
 
 // ProjectTrustNotice shows when the project config's host-reaching fields
 // (mounts, extra dirs, gates, envs…) changed since the owner last trusted
@@ -56,20 +56,6 @@ export function ProjectTrustNotice({
     }
   };
 
-  const pre: React.CSSProperties = {
-    margin: 0,
-    padding: 8,
-    maxHeight: 220,
-    overflow: "auto",
-    fontFamily: fonts.mono,
-    fontSize: 11,
-    backgroundColor: colors.codeBg,
-    border: `1px solid ${colors.border}`,
-    borderRadius: 4,
-    color: colors.text,
-    whiteSpace: "pre",
-  };
-
   return (
     <div
       data-testid="project-trust-notice"
@@ -88,20 +74,8 @@ export function ProjectTrustNotice({
         Mounts, extra dirs, gates, envs and the other fields that reach your machine changed since you last trusted this project, possibly by an agent.{" "}
         {status.approved ? "Loop uses the last trusted version until you trust this one." : "None of them apply until you trust them."}
       </div>
-      <div style={{ display: "grid", gridTemplateColumns: status.approved ? "1fr 1fr" : "1fr", gap: 8, marginBottom: 8 }}>
-        {status.approved && (
-          <div>
-            <div style={{ color: colors.textDim, marginBottom: 2 }}>Last trusted</div>
-            <pre style={pre}>{status.approved}</pre>
-          </div>
-        )}
-        <div>
-          <div style={{ color: colors.textDim, marginBottom: 2 }}>Now</div>
-          <pre data-testid="project-trust-current" style={pre}>
-            {status.current}
-          </pre>
-        </div>
-      </div>
+      {/* Last trusted → now; from /dev/null when nothing was trusted yet. */}
+      <UnifiedDiff diff={status.diff} testId="project-trust-diff" style={{ fontSize: 11, margin: "0 0 8px", maxHeight: 260 }} />
       <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
         <button
           type="button"

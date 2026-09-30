@@ -1233,6 +1233,30 @@ Apply a `pending` or `failed` proposal. It moves to `applying` first, so a doubl
 
 ---
 
+### `GET /api/learn/proposals/{id}/preview`
+
+What applying a proposal would change in the project config, without changing it. The server works out the same edit apply makes, with the same duplicate checks, against the file as it is now. Owner-only.
+
+**Response (200):**
+```json
+{
+  "path": "/home/user/project/.loop/config.json",
+  "diff": "--- /home/user/project/.loop/config.json\n+++ /home/user/project/.loop/config.json\n@@ -1,3 +1,6 @@\n {\n-  \"envs\": {}\n+  \"envs\": {},\n+  \"mounts\": [\n+    \"~/.aws:~/.aws:ro\"\n+  ]\n }\n"
+}
+```
+
+| Field | Description |
+|---|---|
+| `path` | The `.loop/config.json` the proposal edits (see [Where learn proposals are written](configuration.md#where-learn-proposals-are-written)) |
+| `diff` | The edit as a unified diff, from `/dev/null` when the file would be created. Omitted when the change is already there (a gate rule the config has) |
+| `error` | Why applying it would fail (a shortcut or mount that already exists, a config that doesn't parse), as apply would record it |
+
+All fields are omitted for kinds that edit no file (`scheduled_task`, `rename`, `description`, `ticket_url`).
+
+**Errors:** `400` if `{id}` isn't an integer. `404` if the proposal doesn't exist. `500` on a store error. `501` if the store is not configured.
+
+---
+
 ### `POST /api/learn/proposals/{id}/dismiss`
 
 Dismiss a `pending` or `failed` proposal, or one stuck in `applying` as above.
@@ -3041,6 +3065,7 @@ Whether the project config's host-reaching fields apply as written (see [Configu
   "trusted": false,
   "current": "{\n  \"mounts\": [\n    \"~/data:/data\"\n  ]\n}",
   "approved": "{}",
+  "diff": "--- .loop/config.json (last trusted)\n+++ .loop/config.json (now)\n@@ -1 +1,5 @@\n-{}\n+{\n+  \"mounts\": [\n+    \"~/data:/data\"\n+  ]\n+}\n",
   "hash": "4f1c…"
 }
 ```
@@ -3050,6 +3075,7 @@ Whether the project config's host-reaching fields apply as written (see [Configu
 | `trusted` | The fields apply as written |
 | `current` | The fields as the file has them now, as indented JSON |
 | `approved` | The version last trusted, which applies while `trusted` is false; `""` if never trusted |
+| `diff` | `approved` → `current` as a unified diff, from `/dev/null` if never trusted; `""` while `trusted` |
 | `hash` | Identifies `current`; pass it to `POST` to trust exactly this version |
 
 **Errors:** `400` if `channel_id` is missing or the channel isn't found. `500` if the project config doesn't parse. `501` if trust isn't configured.

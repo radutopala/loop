@@ -546,6 +546,7 @@ func (s *Server) registerAgentRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/channels/{id}/learn/passes", s.handleLearnTurn)
 	mux.HandleFunc("POST /api/learn/proposals/{id}/apply", s.handleApplyLearnProposal)
 	mux.HandleFunc("POST /api/learn/proposals/{id}/dismiss", s.handleDismissLearnProposal)
+	mux.HandleFunc("GET /api/learn/proposals/{id}/preview", s.handlePreviewLearnProposal)
 	mux.HandleFunc("POST /api/agents", s.handleRegisterAgent)
 	mux.HandleFunc("GET /api/agents", s.handleListAgents)
 	mux.HandleFunc("PATCH /api/agents/{id}", s.handleUpdateAgent)

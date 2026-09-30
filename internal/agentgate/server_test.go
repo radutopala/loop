@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"strings"
 	"sync"
 	"syscall"
 	"testing"
@@ -926,6 +927,73 @@ func (s *ServerSuite) TestDispatchGuardAsksForInPlacePointers() {
 			s.Require().Equal(c.asked, approver.got.Target)
 			if c.asked != "" {
 				s.Require().Equal("git worktree add ../wt", approver.got.Details["command"])
+			}
+		})
+	}
+}
+
+// A rename onto a path an approve rule covers asks with a diff through the
+// rename review; the source's check folds into that card unless a rule
+// denies it. Git paths, and renames the review can't show, go the usual way.
+func (s *ServerSuite) TestDispatchRenameReview() {
+	const tmp, cfg = "/work/.loop/config.json.tmp.1.ab", "/work/.loop/config.json"
+	approveCfg := types.FileRule{Paths: []string{"/work/.loop/config.json", "/work/.loop/keep"}, Operations: []string{OpCreate, OpDelete}, Decision: types.DecisionApprove, Message: "project config"}
+	cases := []struct {
+		name     string
+		src, dst string
+		rules    []types.FileRule
+		noReview bool
+		snap     *GuardSnapshot
+		strErr   bool
+		want     TrapResponse
+		card     string // CacheKey prefix of the card asked, "" for none
+		reviewed bool
+	}{
+		{"reviewed", tmp, cfg, []types.FileRule{approveCfg}, false, &GuardSnapshot{Data: []byte("{}\n")},
+			false, TrapResponse{ID: 62, Performed: true}, "file:review:" + cfg + ":", true},
+		{"source approve folds in", "/work/.loop/keep", cfg, []types.FileRule{approveCfg}, false, &GuardSnapshot{Data: []byte("{}\n")},
+			false, TrapResponse{ID: 62, Performed: true}, "file:review:" + cfg + ":", true},
+		{"target not under an approve rule", tmp, "/work/other", []types.FileRule{approveCfg}, false, nil,
+			false, TrapResponse{ID: 62, Allow: true}, "", false},
+		{"source denied", tmp, cfg, []types.FileRule{{Paths: []string{tmp}, Operations: []string{OpDelete}, Decision: types.DecisionDeny}, approveCfg}, false, nil,
+			false, TrapResponse{ID: 62, ErrorNum: int32(syscall.EPERM)}, "", false},
+		{"no review", tmp, cfg, []types.FileRule{approveCfg}, true, nil,
+			false, TrapResponse{ID: 62, Allow: true}, "file:create:" + cfg, false},
+		{"content can't be shown", tmp, cfg, []types.FileRule{approveCfg}, false, &GuardSnapshot{Data: []byte{0}},
+			false, TrapResponse{ID: 62, Allow: true}, "file:create:" + cfg, false},
+		{"into a git dir", "/work/x", "/work/.git/refs/heads/x", []types.FileRule{{Paths: []string{"/work/.git/**"}, Operations: []string{OpCreate}, Decision: types.DecisionApprove}}, false, nil,
+			false, TrapResponse{ID: 62, Allow: true}, "file:create:/work/.git/refs/heads/x", false},
+		{"out of a git dir", "/work/.git/x", "/work/y", []types.FileRule{{Paths: []string{"/work/y"}, Operations: []string{OpCreate}, Decision: types.DecisionApprove}}, false, nil,
+			false, TrapResponse{ID: 62, Allow: true}, "file:create:/work/y", false},
+		{"onto a guarded git path", "/work/x", "/work/.git/config", []types.FileRule{{Paths: []string{"/work/.git/config"}, Operations: []string{OpCreate}, Decision: types.DecisionApprove}}, false, &GuardSnapshot{Data: []byte("[core]\n\tbare = false\n")},
+			false, TrapResponse{ID: 62, Performed: true}, "file:create:/work/.git/config", false},
+		{"unreadable target", tmp, cfg, []types.FileRule{approveCfg}, false, nil,
+			true, TrapResponse{ID: 62, ErrorNum: int32(syscall.EPERM)}, "", false},
+	}
+	for _, c := range cases {
+		s.Run(c.name, func() {
+			strs := map[uintptr]string{0x100: c.src, 0x200: c.dst}
+			if c.strErr {
+				delete(strs, 0x200)
+			}
+			tr := &FakeTracee{Strings: strs, UID: 501, GID: 20}
+			fs, auditor := &fakeGuardFS{snap: c.snap, regular: map[string]bool{c.src: true}}, &collectAuditor{}
+			approver := &stubApprover{out: Outcome{Decision: types.DecisionAllow, Actor: "u"}}
+			srv := s.guardedServer(tr, fs, auditor)
+			srv.File = NewFileHandler(s.mustPolicy(types.DecisionAllow, nil, nil, c.rules), approver, 8)
+			if !c.noReview {
+				srv.Review = &RenameReview{FS: fs, Approver: approver, Auditor: auditor}
+			}
+			got := srv.Dispatch(context.Background(), Trap{ID: 62, PID: 9, Syscall: syscallRenameat2, Args: [6]uint64{atFdcwd, 0x100, atFdcwd, 0x200, 0}})
+			s.Require().Equal(c.want, got)
+			if c.card == "" {
+				s.Require().Empty(approver.got.CacheKey)
+			} else {
+				s.Require().True(strings.HasPrefix(approver.got.CacheKey, c.card), approver.got.CacheKey)
+			}
+			if c.reviewed {
+				s.Require().Equal(c.src, approver.got.Details["source"])
+				s.Require().Equal(1, fs.installs)
 			}
 		})
 	}

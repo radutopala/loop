@@ -4,8 +4,8 @@ import { resolveGateApproval, sendCommand, sendMessage } from "../../api/loopApi
 import { useTheme } from "../../ThemeContext";
 import { fonts } from "../../theme";
 import type { GateApprovalRequestedData } from "../../types";
-import { classifyDiffLines } from "../../utils/diffLines";
 import { ContextMenu, type MenuItem } from "../shared/ContextMenu";
+import { UnifiedDiff } from "../shared/UnifiedDiff";
 
 export function ApprovalCard({
   data,
@@ -228,36 +228,7 @@ export function ApprovalCard({
           ))}
         </div>
       )}
-      {diff && (
-        <pre
-          data-testid="approval-diff"
-          style={{
-            fontSize: 12,
-            fontFamily: fonts.mono,
-            margin: "0 0 10px",
-            padding: "6px 0",
-            borderRadius: 6,
-            backgroundColor: colors.codeBlockBg,
-            color: colors.textDim,
-            maxHeight: 320,
-            overflow: "auto",
-          }}
-        >
-          {classifyDiffLines(diff).map((line, i) => (
-            <div
-              key={i}
-              style={{
-                padding: "0 10px",
-                whiteSpace: "pre",
-                color: line.kind === "add" ? colors.diffAddText : line.kind === "del" ? colors.diffDelText : line.kind === "context" ? colors.text : colors.textDim,
-                backgroundColor: line.kind === "add" ? colors.diffAddBg : line.kind === "del" ? colors.diffDelBg : line.kind === "hunk" ? colors.diffHunkBg : undefined,
-              }}
-            >
-              {line.text || " "}
-            </div>
-          ))}
-        </pre>
-      )}
+      {diff && <UnifiedDiff diff={diff} testId="approval-diff" />}
       {expired ? (
         <div data-testid="approval-expired" style={{ fontSize: 12, fontFamily: fonts.mono, color: colors.textDim, fontStyle: "italic" }}>
           Expired — the request timed out and was denied.

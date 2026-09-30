@@ -15,6 +15,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/radutopala/loop/internal/unidiff"
 	"github.com/tailscale/hujson"
 )
 
@@ -124,6 +125,9 @@ type TrustStatus struct {
 	// Approved is the version the owner last trusted, as indented JSON, or
 	// "" when they never did. It's what applies while Trusted is false.
 	Approved string `json:"approved"`
+	// Diff is the change from Approved to Current as a unified diff, from
+	// /dev/null when nothing was ever trusted, or "" while Trusted.
+	Diff string `json:"diff"`
 	// Hash identifies Current; trusting it takes this back, so what the
 	// owner looked at is what gets trusted.
 	Hash string `json:"hash"`
@@ -300,7 +304,20 @@ func (s *TrustStore) Status(dir string) (TrustStatus, error) {
 	if ok {
 		st.Approved = indentJSON(approved.canonical())
 	}
+	if !st.Trusted {
+		st.Diff = trustDiff(st.Approved, st.Current, ok)
+	}
 	return st, nil
+}
+
+// trustDiff renders what changed since the owner last trusted the project
+// config as a unified diff, from /dev/null when they never did.
+func trustDiff(approved, current string, ok bool) string {
+	from := ".loop/config.json (last trusted)"
+	if !ok {
+		from, approved = "/dev/null", ""
+	}
+	return unidiff.Diff(from, ".loop/config.json (now)", approved, current)
 }
 
 // Trust records the project config in dir as trusted. hash is the Hash of

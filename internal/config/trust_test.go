@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -79,6 +80,9 @@ func (s *TrustSuite) TestTrustFlow() {
 	require.False(s.T(), st.Trusted)
 	require.Empty(s.T(), st.Approved)
 	require.Contains(s.T(), st.Current, `"/a:/a"`)
+	require.True(s.T(), strings.HasPrefix(st.Diff, "--- /dev/null\n+++ .loop/config.json (now)\n@@ -0,0 +1,"), st.Diff)
+	require.Contains(s.T(), st.Diff, "\n+    \"/a:/a\"\n")
+	require.NotContains(s.T(), st.Diff, "\n-")
 
 	require.ErrorIs(s.T(), s.store.Trust("/proj", "stale"), ErrTrustChanged)
 	require.NotContains(s.T(), s.files, trustPath)
@@ -88,6 +92,7 @@ func (s *TrustSuite) TestTrustFlow() {
 	require.NoError(s.T(), err)
 	require.True(s.T(), st2.Trusted)
 	require.Equal(s.T(), st.Current, st2.Approved)
+	require.Empty(s.T(), st2.Diff)
 	require.Contains(s.T(), string(s.files[trustPath]), `"trusted_at": "2026-09-30T00:00:00Z"`)
 
 	// Formatting, comments and key order don't matter.
@@ -104,6 +109,7 @@ func (s *TrustSuite) TestTrustFlow() {
 	require.False(s.T(), st4.Trusted)
 	require.Equal(s.T(), st.Current, st4.Approved)
 	require.NotEqual(s.T(), st.Hash, st4.Hash)
+	require.Equal(s.T(), "--- .loop/config.json (last trusted)\n+++ .loop/config.json (now)\n@@ -1,6 +1,7 @@\n {\n   \"mounts\": [\n-    \"/a:/a\"\n+    \"/a:/a\",\n+    \"/:/host\"\n   ],\n   \"envs\": {\n     \"A\": 1,\n", st4.Diff)
 }
 
 func (s *TrustSuite) TestMergeUsesTrustedFields() {

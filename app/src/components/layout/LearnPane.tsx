@@ -1,13 +1,15 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { RootEntry } from "../../api/files";
-import type { LearnProposal } from "../../api/learn";
+import { fetchLearnProposalPreview, type LearnProposal, type LearnProposalPreview } from "../../api/learn";
 import { useChatState } from "../../hooks/useChatState";
 import type { ActiveChatState, ChatEventListener } from "../../hooks/useChatStateStore";
 import type { LearnView } from "../../hooks/useLearn";
 import { useTheme } from "../../ThemeContext";
 import { fonts } from "../../theme";
+import { logErr } from "../../utils/log";
 import { ChatView } from "../chat/ChatView";
-import { isSettledProposal, learnKindLabel, proposalCaveat, proposalDetail } from "../chat/learnState";
+import { configPreviewRevision, editsProjectConfig, isSettledProposal, learnKindLabel, proposalCaveat, proposalDetail } from "../chat/learnState";
+import { UnifiedDiff } from "../shared/UnifiedDiff";
 
 interface LearnPaneProps {
   learn: LearnView;
@@ -34,6 +36,7 @@ export function LearnPane({ learn, worktree, roots, subscribeChannelEvents, getC
   const paneRef = useRef<HTMLDivElement>(null);
   useKeepFocus(paneRef);
   const highlighted = useFocusedTurn(paneRef, learn);
+  const previewRevision = configPreviewRevision(learn.proposals);
 
   return (
     <div ref={paneRef} data-testid="learn-pane" style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column", overflow: "hidden" }}>
@@ -108,6 +111,7 @@ export function LearnPane({ learn, worktree, roots, subscribeChannelEvents, getC
               open={open.includes(p)}
               highlighted={!!p.message_id && p.message_id === highlighted}
               worktree={worktree}
+              previewRevision={previewRevision}
               busy={busy.has(p.id)}
               error={errors.get(p.id)}
               onApply={learn.apply}
@@ -240,6 +244,7 @@ function ProposalCard({
   open,
   highlighted,
   worktree,
+  previewRevision,
   busy,
   error,
   onApply,
@@ -251,6 +256,8 @@ function ProposalCard({
   /** Asked for by its turn's Learn action: outlined for a while. */
   highlighted: boolean;
   worktree: boolean;
+  /** See configPreviewRevision: a change re-fetches the config preview. */
+  previewRevision: string;
   busy: boolean;
   /** The last apply or dismiss request failed, with this. */
   error?: string;
@@ -304,6 +311,7 @@ function ProposalCard({
       <div style={{ fontFamily: fonts.mono, fontSize: 11, color: colors.textDim, marginTop: 4, whiteSpace: "pre-wrap", wordBreak: "break-word" }}>{proposalDetail(p)}</div>
       {p.rationale && <div style={{ fontSize: 11, color: colors.textDim, marginTop: 4 }}>{p.rationale}</div>}
       {caveat && <div style={{ fontSize: 11, color: colors.warning, marginTop: 4 }}>{caveat}</div>}
+      {open && editsProjectConfig(p.kind) && <ConfigPreview id={p.id} status={p.status} revision={previewRevision} />}
       {p.status === "failed" && p.error && <div style={{ fontSize: 11, color: colors.error, marginTop: 4 }}>{p.error}</div>}
       {p.status === "withdrawn" && p.withdrawn_reason && (
         <div data-testid="learn-withdrawn-reason" style={{ fontSize: 11, color: colors.textDim, marginTop: 4 }}>
@@ -317,6 +325,46 @@ function ProposalCard({
       )}
     </div>
   );
+}
+
+// ConfigPreview shows the edit applying a config-kind proposal would make to
+// the project config, worked out by the server the way apply makes it. It's
+// fetched again when the proposal's status changes (a failed apply) or
+// another proposal edited the config.
+function ConfigPreview({ id, status, revision }: { id: number; status: string; revision: string }) {
+  const { colors } = useTheme();
+  const [preview, setPreview] = useState<LearnProposalPreview | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    fetchLearnProposalPreview(id)
+      .then((p) => {
+        if (!cancelled) setPreview(p);
+      })
+      .catch((e) => {
+        if (!cancelled) setPreview(null);
+        logErr("previewing learn proposal")(e);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [id, status, revision]);
+  if (!preview) return null;
+  if (preview.error) {
+    return (
+      <div data-testid="learn-preview-error" style={{ fontSize: 11, color: colors.warning, marginTop: 4 }}>
+        Applying would fail: {preview.error}
+      </div>
+    );
+  }
+  if (!preview.path) return null;
+  if (!preview.diff) {
+    return (
+      <div data-testid="learn-preview-unchanged" style={{ fontSize: 11, color: colors.textDim, marginTop: 4 }}>
+        Already in {preview.path}; applying changes nothing.
+      </div>
+    );
+  }
+  return <UnifiedDiff diff={preview.diff} testId="learn-preview-diff" style={{ fontSize: 11, margin: "6px 0 0", maxHeight: 200 }} />;
 }
 
 function buttonStyle(color: string): React.CSSProperties {

@@ -605,6 +605,7 @@ On a canvas layout, the Learn pane docks beside the chat's tile instead: to its 
 The Learn pane's header matches a pane header:
 
 - **Proposals** on top, newest first. Each card shows its kind, title, a one-line gist of exactly what Apply writes, and the rationale the pass gave. A gate rule's gist is the whole rule: its decision, what it matches (the commands and their argument patterns, the file paths and operations, or the socket path; `any command` or `any path` when it lists none) and the message the gate shows.
+  - Open cards of the kinds that edit the project config (prompt and bash shortcuts, gate rules, mounts) show the edit Apply would make as a diff of that `.loop/config.json`, worked out as apply does it (see [`GET /api/learn/proposals/{id}/preview`](api.md#get-apilearnproposalsidpreview)). It's worked out again after another proposal edits the config. If the change is already there the card says so, and if applying would fail (a shortcut of that name exists, say) it shows why.
   - **Apply** applies it. If it fails, the error shows under the card and the button becomes **Retry**. If the request itself fails (Loop can't be reached, say), that error shows under the card until the next try. A card's buttons are disabled while its apply or dismiss is in flight. Requests in flight and their errors outlive the view: close and reopen it and they're still there.
   - **Dismiss** drops it. Pending and failed proposals can be dismissed.
   - Applied and dismissed cards stay in the list, dimmed, with their status.

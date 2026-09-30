@@ -628,6 +628,110 @@ func (s *ServerSuite) TestApplyLearnProposalConfigErrors() {
 	})
 }
 
+// TestPreviewLearnProposal shows the edit apply would make as a diff, and
+// leaves the config file as it was.
+func (s *ServerSuite) TestPreviewLearnProposal() {
+	global := &config.Config{PromptShortcuts: []config.PromptShortcut{{Name: "review"}}, Gates: config.GatesConfig{Agentgate: config.AgentgateConfig{
+		CommandRules: []types.CommandRule{{Commands: []string{"rm"}, Decision: "approve"}},
+	}}}
+	tests := []struct {
+		name     string
+		kind     string
+		payload  string
+		initial  string // "" = no project config
+		channel  *db.Channel
+		wantDiff string
+		wantErr  string
+		wantPath bool
+	}{
+		{
+			name: "edit", kind: db.LearnKindMount, payload: `{"mount":"~/.aws:~/.aws:ro"}`,
+			initial:  "{\n  // mine\n  \"envs\": {}\n}\n",
+			wantDiff: "--- PATH\n+++ PATH\n@@ -1,4 +1,7 @@\n {\n   // mine\n-  \"envs\": {}\n+  \"envs\": {},\n+  \"mounts\": [\n+    \"~/.aws:~/.aws:ro\"\n+  ]\n }\n",
+			wantPath: true,
+		},
+		{
+			name: "new file", kind: db.LearnKindBashShortcut, payload: `{"name":"test","command":"make test"}`,
+			wantDiff: "--- /dev/null\n+++ PATH\n@@ -0,0 +1,8 @@\n+{\n+  \"bash_shortcuts\": [\n+    {\n+      \"name\": \"test\",\n+      \"command\": \"make test\"\n+    }\n+  ]\n+}\n",
+			wantPath: true,
+		},
+		{name: "already there", kind: db.LearnKindGateRule, payload: `{"type":"command","rule":{"commands":["rm"],"decision":"approve"}}`, wantPath: true},
+		{name: "apply would fail", kind: db.LearnKindPromptShortcut, payload: `{"name":"review","prompt":"p"}`, wantErr: `prompt shortcut named "review" already exists`, wantPath: true},
+		{name: "no file edit", kind: db.LearnKindRename, payload: `{"name":"x"}`},
+		{name: "bad payload", kind: db.LearnKindMount, payload: `{`, wantErr: "payload"},
+		{name: "channel gone", kind: db.LearnKindMount, payload: `{"mount":"a:b"}`, channel: &db.Channel{}, wantErr: "channel not found"},
+	}
+	for _, tc := range tests {
+		s.Run(tc.name, func() {
+			s.SetupTest()
+			dir := s.T().TempDir()
+			path := filepath.Join(dir, ".loop", "config.json")
+			if tc.initial != "" {
+				require.NoError(s.T(), os.MkdirAll(filepath.Dir(path), 0o755))
+				require.NoError(s.T(), os.WriteFile(path, []byte(tc.initial), 0o644))
+			}
+			s.srv.configs.load = func() (*config.Config, error) { return global, nil }
+			s.srv.configs.loadProject = func(string, *config.Config) (*config.Config, error) { return global, nil }
+			ch := &db.Channel{ChannelID: "ch-1", DirPath: dir}
+			if tc.channel != nil {
+				ch = nil
+			}
+			s.store.On("GetChannel", mock.Anything, "ch-1").Return(ch, nil)
+			s.store.On("GetLearnProposal", mock.Anything, int64(7)).Return(&db.LearnProposal{ID: 7, ChannelID: "ch-1", Kind: tc.kind, Payload: tc.payload, Status: db.LearnPending}, nil)
+
+			w := s.serve("GET", "/api/learn/proposals/7/preview", "")
+			require.Equal(s.T(), http.StatusOK, w.Code, w.Body.String())
+			var got learnPreviewResponse
+			require.NoError(s.T(), json.Unmarshal(w.Body.Bytes(), &got))
+			wantPath := ""
+			if tc.wantPath {
+				wantPath = path
+			}
+			require.Equal(s.T(), wantPath, got.Path)
+			require.Equal(s.T(), strings.ReplaceAll(tc.wantDiff, "PATH", path), got.Diff)
+			if tc.wantErr == "" {
+				require.Empty(s.T(), got.Error)
+			} else {
+				require.Contains(s.T(), got.Error, tc.wantErr)
+			}
+			if tc.initial == "" {
+				require.NoFileExists(s.T(), path, "the preview writes nothing")
+			} else {
+				data, err := os.ReadFile(path)
+				require.NoError(s.T(), err)
+				require.Equal(s.T(), tc.initial, string(data), "the preview writes nothing")
+			}
+		})
+	}
+}
+
+func (s *ServerSuite) TestPreviewLearnProposalErrors() {
+	tests := []struct {
+		name     string
+		path     string
+		noStore  bool
+		proposal *db.LearnProposal
+		getErr   error
+		wantCode int
+	}{
+		{name: "no store", path: "/api/learn/proposals/7/preview", noStore: true, wantCode: http.StatusNotImplemented},
+		{name: "bad id", path: "/api/learn/proposals/x/preview", wantCode: http.StatusBadRequest},
+		{name: "lookup error", path: "/api/learn/proposals/7/preview", getErr: errors.New("db down"), wantCode: http.StatusInternalServerError},
+		{name: "missing", path: "/api/learn/proposals/7/preview", wantCode: http.StatusNotFound},
+	}
+	for _, tc := range tests {
+		s.Run(tc.name, func() {
+			s.SetupTest()
+			if tc.noStore {
+				s.srv.store = nil
+			}
+			s.store.On("GetLearnProposal", mock.Anything, int64(7)).Return(tc.proposal, tc.getErr)
+			w := s.serve("GET", tc.path, "")
+			require.Equal(s.T(), tc.wantCode, w.Code)
+		})
+	}
+}
+
 // gatedReadSystem holds every read of path until release is closed,
 // reporting each one on reads first.
 type gatedReadSystem struct {
@@ -659,7 +763,8 @@ func (s *ServerSuite) TestApplyLearnConfigConcurrent() {
 
 	errs := make(chan error, 2)
 	apply := func(name string) {
-		errs <- s.srv.applyLearnConfig(context.Background(), ch, &learn.PromptShortcut{Name: name, Prompt: "p"})
+		_, _, _, err := s.srv.editLearnConfig(context.Background(), ch, &learn.PromptShortcut{Name: name, Prompt: "p"}, true)
+		errs <- err
 	}
 	go apply("one")
 	<-sys.reads

@@ -62,6 +62,7 @@ type Server struct {
 	File      *FileHandler
 	Connect   *ConnectHandler
 	Guard     *GitGuard
+	Review    *RenameReview
 	ChannelID string
 }
 
@@ -213,6 +214,11 @@ func (s *Server) dispatchFile(ctx context.Context, trap Trap, tracee Tracee) Tra
 	if err != nil {
 		return denyResp(trap.ID, syscall.EPERM)
 	}
+	if spec.SecondaryOp != "" {
+		if resp, ok := s.reviewRename(ctx, spec, trap, tracee, op, path); ok {
+			return resp
+		}
+	}
 	pointer := false
 	if spec.SecondaryOp == "" && s.Guard.Protects(path) && !AllowsInPlace(spec, op) {
 		if !s.Guard.AsksInPlace(spec, op, path) {
@@ -289,6 +295,41 @@ func (s *Server) dispatchFile(ctx context.Context, trap Trap, tracee Tracee) Tra
 		return decisionResp(trap.ID, secOut.Decision)
 	}
 	return allowResp(trap.ID)
+}
+
+// reviewRename hands a rename onto a path an approve rule covers to the
+// rename review, which asks with a diff instead of the rule's path-only
+// card. The source's own check folds into that card (it names the source),
+// unless a rule denies it. Git paths stay with the git guard. ok=false: the
+// rename goes through the file rules as usual.
+func (s *Server) reviewRename(ctx context.Context, spec SyscallSpec, trap Trap, tracee Tracee, op, src string) (TrapResponse, bool) {
+	if s.Review == nil {
+		return TrapResponse{}, false
+	}
+	dst, err := s.resolveSecondaryPath(spec, trap, tracee)
+	if err != nil {
+		return TrapResponse{}, false
+	}
+	rule := s.File.Policy.MatchFile(spec.SecondaryOp, dst)
+	if rule.Decision != types.DecisionApprove ||
+		s.Guard.Protects(dst) || s.Guard.Protects(src) || s.Guard.InsideGitDir(dst) || s.Guard.InsideGitDir(src) ||
+		s.File.Policy.MatchFile(op, src).Decision == types.DecisionDeny {
+		return TrapResponse{}, false
+	}
+	var flags uint64
+	if spec.FlagsArgIdx >= 0 {
+		flags = trap.Args[spec.FlagsArgIdx]
+	}
+	return s.Review.Rename(ctx, GuardRename{
+		TrapID:    trap.ID,
+		PID:       trap.PID,
+		ChannelID: s.ChannelID,
+		Syscall:   trap.Syscall,
+		Src:       src,
+		Dst:       dst,
+		Flags:     flags,
+		Tracee:    tracee,
+	}, rule)
 }
 
 // resolveFilePath reads the primary path, resolves relative paths against

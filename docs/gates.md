@@ -194,6 +194,16 @@ Order matters: the pinned policy self-deny, then the pinned project-config appro
 
 Anything that doesn't match falls through to `gates.agentgate.default_decision` (`"allow"` by default).
 
+#### Approve rules show the diff of a rename
+
+Claude Code's Edit and Write tools, `sed -i` and most editors write a temp file next to the target (`config.json.tmp.<pid>.<hex>`) and rename it over the target. When an `approve` file rule covers a rename's target (rule 1a for `.loop/config.json` among them, and any `approve` rule of yours), the gate reads the new content and asks with a unified diff of the current file against it, plus the rename's source. On allow it writes the exact bytes it showed, as the agent's uid and gid, and removes the source while it still holds them, the way the [git guard](#git-guard) installs a config change; the agent's call returns as if its own rename succeeded. The source's check is part of that card, so a rename whose source an `approve` rule also covers asks once; a rule that denies the source still wins.
+
+**Allow for session** covers the same bytes landing on the same path again, not later writes there.
+
+The card is the rule's usual one, with the path and the rule's message only, when the gate can't show the content: the source isn't a regular file (a directory or a symlink), either file is over 32 KiB or isn't plain text (see the git guard), or the rename is a `RENAME_EXCHANGE` or `RENAME_WHITEOUT`. A write in place (`echo > .loop/config.json`) has no content for the gate to read either. Renames onto git paths stay with the git guard.
+
+Editing a file under `.loop/container/` asks twice: rule 1a covers the whole directory, so creating the temp file there asks too, with the path only.
+
 ### Git guard
 
 A repo's config and hooks make git run programs: `core.fsmonitor`, `core.sshCommand`, filter drivers, aliases, a `pre-commit` hook. In a repo on a host mount, those run the next time *you* use git there, outside the container. So the gate guards the files git reads them from, under every writable host bind (`git_guard_roots` in the gate policy, from `gitGuardRoots`). Read-only binds, named volumes and scratch repos in the container (`/tmp`) don't reach your git and aren't guarded. No rule, from any config layer, can allow past the guard; a deny rule on a guarded path still wins, since a rename reaches the guard only once the file rules allow it.

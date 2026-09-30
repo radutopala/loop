@@ -36,6 +36,23 @@ func Append(fsys FS, configPath string, path []string, item any) error {
 // AppendData is Append, and returns the file content it read (nil for a
 // missing file) and the content it wrote.
 func AppendData(fsys FS, configPath string, path []string, item any) (before, after []byte, err error) {
+	before, after, err = Appended(fsys, configPath, path, item)
+	if err != nil {
+		return nil, nil, err
+	}
+	if err := fsys.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
+		return nil, nil, fmt.Errorf("creating %s: %w", filepath.Dir(configPath), err)
+	}
+	if err := atomicWrite(fsys, configPath, after); err != nil {
+		return nil, nil, err
+	}
+	return before, after, nil
+}
+
+// Appended is AppendData without the write: the file content it reads (nil
+// for a missing file) and the content Append would write, for showing the
+// edit before making it.
+func Appended(fsys FS, configPath string, path []string, item any) (before, after []byte, err error) {
 	if len(path) == 0 {
 		return nil, nil, errors.New("empty path")
 	}
@@ -64,14 +81,7 @@ func AppendData(fsys FS, configPath string, path []string, item any) (before, af
 		return nil, nil, fmt.Errorf("editing %s: %w", configPath, err)
 	}
 	indentAdded(&v, path, op, rootLines)
-	if err := fsys.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
-		return nil, nil, fmt.Errorf("creating %s: %w", filepath.Dir(configPath), err)
-	}
-	after = v.Pack()
-	if err := atomicWrite(fsys, configPath, after); err != nil {
-		return nil, nil, err
-	}
-	return before, after, nil
+	return before, v.Pack(), nil
 }
 
 // patchOp is one RFC 6902 operation.

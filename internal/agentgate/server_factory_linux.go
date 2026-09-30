@@ -45,6 +45,12 @@ func NewServer(policy *Policy, approver Approver, auditor Auditor, peerSource Pe
 			Process:    NewProcProcess().Lookup,
 		}
 	}
+	review := &RenameReview{
+		FS:         NewOSGuardFS(),
+		Approver:   approver,
+		Auditor:    auditor,
+		PeerSource: peerSource,
+	}
 	return &Server{
 		Transport: NewNotifyTransport(notifyFD),
 		Factory:   NewProcTraceeFactory(),
@@ -52,6 +58,7 @@ func NewServer(policy *Policy, approver Approver, auditor Auditor, peerSource Pe
 		Connect:   conn,
 		File:      file,
 		Guard:     guard,
+		Review:    review,
 		ChannelID: channelID,
 	}
 }

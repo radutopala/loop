@@ -15,9 +15,8 @@ import (
 	"unicode"
 	"unicode/utf8"
 
-	"github.com/pmezard/go-difflib/difflib"
-
 	"github.com/radutopala/loop/internal/types"
+	"github.com/radutopala/loop/internal/unidiff"
 )
 
 // The git guard protects the files that make git run code: a repo's config
@@ -494,13 +493,7 @@ func gitGuardDiff(snap *GuardSnapshot) string {
 	if !snap.OldExists {
 		from = "/dev/null"
 	}
-	diff, _ := difflib.GetUnifiedDiffString(difflib.UnifiedDiff{
-		A:        difflib.SplitLines(string(snap.Old)),
-		B:        difflib.SplitLines(string(snap.Data)),
-		FromFile: from,
-		ToFile:   snap.Dst,
-		Context:  3,
-	})
+	diff := unidiff.Diff(from, snap.Dst, string(snap.Old), string(snap.Data))
 	if diff == "" {
 		return "(no change)"
 	}

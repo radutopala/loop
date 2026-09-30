@@ -276,6 +276,7 @@ func (s *ServerSuite) SetupTest() {
 	s.mux.HandleFunc("POST /api/channels/{id}/learn/passes", s.srv.handleLearnTurn)
 	s.mux.HandleFunc("POST /api/learn/proposals/{id}/apply", s.srv.handleApplyLearnProposal)
 	s.mux.HandleFunc("POST /api/learn/proposals/{id}/dismiss", s.srv.handleDismissLearnProposal)
+	s.mux.HandleFunc("GET /api/learn/proposals/{id}/preview", s.srv.handlePreviewLearnProposal)
 	s.mux.HandleFunc("GET /api/channels/{id}/audit", s.srv.handleListAuditFiles)
 	s.mux.HandleFunc("DELETE /api/channels/{id}/audit/{date}", s.srv.handleDeleteAuditFile)
 	s.mux.HandleFunc("GET /api/channels/{id}/messages", s.srv.handleListMessages)

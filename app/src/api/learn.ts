@@ -111,6 +111,21 @@ async function settleProposal(id: number, action: "apply" | "dismiss"): Promise<
   return res.json();
 }
 
+/** What applying a config-kind proposal would change: the project config
+ * file and a unified diff of the edit ("" when it's already there), or why
+ * applying it would fail. All are absent for kinds that edit no file. */
+export interface LearnProposalPreview {
+  path?: string;
+  diff?: string;
+  error?: string;
+}
+
+export async function fetchLearnProposalPreview(id: number): Promise<LearnProposalPreview> {
+  const res = await apiFetch(`${getApiUrl()}/api/learn/proposals/${id}/preview`);
+  if (!res.ok) throw new Error(`Failed to preview proposal: ${res.statusText}`);
+  return res.json();
+}
+
 /** Apply a proposal. A failed apply comes back with status "failed" and its error, not as a throw. */
 export function applyLearnProposal(id: number): Promise<LearnProposal> {
   return settleProposal(id, "apply");

@@ -77,3 +77,18 @@ func TestNewServerGitGuardOnlyWithRoots(t *testing.T) {
 	require.Equal(t, "terminal:leaf-X", srv.Guard.PeerSource(1))
 	require.True(t, srv.Guard.Protects("/work/.git/config"))
 }
+
+// TestNewServerRenameReview: the rename review exists with or without git
+// guard roots and shares the server's approver, auditor and peer lookup.
+func TestNewServerRenameReview(t *testing.T) {
+	policy, err := CompilePolicy(types.DecisionAllow, nil, nil, nil)
+	require.NoError(t, err)
+	approver := &stubApprover{}
+	auditor := &collectAuditor{}
+	srv := NewServer(policy, approver, auditor, func(int) string { return "chat" }, "ch-1", -1)
+	require.NotNil(t, srv.Review)
+	require.IsType(t, &OSGuardFS{}, srv.Review.FS)
+	require.Same(t, approver, srv.Review.Approver)
+	require.Same(t, auditor, srv.Review.Auditor)
+	require.Equal(t, "chat", srv.Review.PeerSource(1))
+}

@@ -107,6 +107,8 @@ export interface ProjectTrustStatus {
   current: string;
   /** The version last trusted, which applies while untrusted; "" if never. */
   approved: string;
+  /** `approved` → `current` as a unified diff (from /dev/null if never trusted); "" while trusted. */
+  diff: string;
   /** Identifies `current`; pass it back to trust exactly what was shown. */
   hash: string;
 }

@@ -624,12 +624,12 @@ func (s *GitGuardSuite) TestGitGuardDiff() {
 			snap: GuardSnapshot{Dst: "/work/.git/hooks/h", Data: []byte("a\n")},
 			// difflib.SplitLines always appends a final "\n" element, hence
 			// the trailing blank context line.
-			want: "--- /dev/null\n+++ /work/.git/hooks/h\n@@ -1 +1,2 @@\n+a\n \n",
+			want: "--- /dev/null\n+++ /work/.git/hooks/h\n@@ -0,0 +1 @@\n+a\n",
 		},
 		{
 			name: "existing file diffs against its current content",
 			snap: GuardSnapshot{Dst: "/work/.git/config", Old: []byte("a\n"), Data: []byte("b\n"), OldExists: true},
-			want: "--- /work/.git/config (current)\n+++ /work/.git/config\n@@ -1,2 +1,2 @@\n-a\n+b\n \n",
+			want: "--- /work/.git/config (current)\n+++ /work/.git/config\n@@ -1 +1 @@\n-a\n+b\n",
 		},
 		{
 			name: "identical content",

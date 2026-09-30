@@ -17,7 +17,7 @@ afterEach(() => {
 
 describe("fetchProjectTrust", () => {
   it("returns the channel's trust status", async () => {
-    const status = { trusted: false, current: '{"mounts": []}', approved: "", hash: "h1" };
+    const status = { trusted: false, current: '{"mounts": []}', approved: "", diff: "--- /dev/null\n+++ .loop/config.json (now)\n", hash: "h1" };
     fetchMock.mockResolvedValue(new Response(JSON.stringify(status)));
     await expect(fetchProjectTrust("ch 1")).resolves.toEqual(status);
     expect(fetchMock.mock.calls[0]![0]).toBe("http://localhost:8222/api/config/project/trust?channel_id=ch+1");
