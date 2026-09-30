@@ -29,6 +29,7 @@ type Server struct {
 	learnTools       bool
 	mcpServer        *mcp.Server
 	httpClient       HTTPClient
+	apiToken         func() string
 	logger           *slog.Logger
 	channelTransport *channelTransport // non-nil when agent tools enabled
 }
@@ -49,6 +50,14 @@ func WithMemoryAPI(dirPath string) MemoryOption {
 func WithWorkflowAPI() MemoryOption {
 	return func(s *Server) {
 		s.workflowsEnabled = true
+	}
+}
+
+// WithAPIToken sets where the channel push WebSocket gets the API token it
+// sends. HTTP calls send it through the HTTPClient passed to New.
+func WithAPIToken(token func() string) MemoryOption {
+	return func(s *Server) {
+		s.apiToken = token
 	}
 }
 
@@ -341,6 +350,7 @@ func (s *Server) Run(ctx context.Context, transport mcp.Transport) error {
 	// so channel notifications share the stdout mutex with MCP responses.
 	if s.channelTransport != nil {
 		s.channelTransport.inner = transport
+		s.channelTransport.apiToken = s.apiToken
 		pushCtx, cancel := context.WithCancel(ctx)
 		defer cancel()
 		startPushReceiver(pushCtx, s.apiURL, s.channelID, s.agentID, s.channelTransport, s.logger)

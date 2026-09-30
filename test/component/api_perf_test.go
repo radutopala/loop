@@ -484,7 +484,7 @@ func TestAPIPerfTestSuite(t *testing.T) {
 
 func (s *APIPerfTestSuite) SetupSuite() {
 	s.cfg = configFromEnv()
-	s.client = &http.Client{Timeout: 10 * time.Second}
+	s.client = newAPIClient()
 
 	// Verify service is up.
 	resp, err := s.client.Get(s.cfg.BaseURL + "/api/health")

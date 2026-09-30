@@ -150,6 +150,18 @@ func (s *CDPSuite) TestNewTabSuccess() {
 	require.Equal(s.T(), "new-target", id)
 }
 
+func (s *CDPSuite) TestNewTabRejectsScheme() {
+	called := false
+	s.client.createTabFunc = func(_ context.Context, _ string) (target.ID, error) {
+		called = true
+		return "t", nil
+	}
+	_, err := s.client.NewTab(context.Background(), "javascript:alert(1)")
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "not allowed")
+	require.False(s.T(), called)
+}
+
 func (s *CDPSuite) TestNewTabError() {
 	s.client.createTabFunc = func(_ context.Context, _ string) (target.ID, error) {
 		return "", errors.New("fail")

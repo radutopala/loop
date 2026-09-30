@@ -119,13 +119,23 @@ func (s *playgroundService) handlePlaygroundUpdate(w http.ResponseWriter, r *htt
 	}
 
 	if content.HTML != "" {
-		if err := os.WriteFile(filepath.Join(pgDir, "index.html"), []byte(content.HTML), 0o644); err != nil {
+		indexPath, err := s.playgroundFile(pgDir, "index.html")
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		if err := os.WriteFile(indexPath, []byte(content.HTML), 0o644); err != nil {
 			http.Error(w, "writing index.html: "+err.Error(), http.StatusInternalServerError)
 			return
 		}
 	}
 	if readme := buildReadme(content.Title, content.Description); readme != "" {
-		if err := os.WriteFile(filepath.Join(pgDir, "README.md"), []byte(readme), 0o644); err != nil {
+		readmePath, err := s.playgroundFile(pgDir, "README.md")
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		if err := os.WriteFile(readmePath, []byte(readme), 0o644); err != nil {
 			http.Error(w, "writing README.md: "+err.Error(), http.StatusInternalServerError)
 			return
 		}
@@ -151,8 +161,8 @@ func (s *playgroundService) handlePlaygroundGet(w http.ResponseWriter, r *http.R
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	html, _ := os.ReadFile(filepath.Join(pgDir, "index.html"))
-	readme, _ := os.ReadFile(filepath.Join(pgDir, "README.md"))
+	html, _ := s.readPlaygroundFile(pgDir, "index.html")
+	readme, _ := s.readPlaygroundFile(pgDir, "README.md")
 
 	if len(html) == 0 {
 		http.Error(w, "no playground content", http.StatusNotFound)
@@ -244,9 +254,9 @@ const consoleBridgeScript = `<script>
 // relative assets (style.css, script.js, ES module imports) should resolve
 // against. Shared by the local serve routes and the public /p/{token} route so
 // the served output is byte-identical regardless of entry point.
-func renderPlaygroundIndex(w http.ResponseWriter, pgDir, baseHref string) {
-	rawHTML, _ := os.ReadFile(filepath.Join(pgDir, "index.html"))
-	importMap, _ := os.ReadFile(filepath.Join(pgDir, "importmap.json"))
+func (s *playgroundService) renderPlaygroundIndex(w http.ResponseWriter, pgDir, baseHref string) {
+	rawHTML, _ := s.readPlaygroundFile(pgDir, "index.html")
+	importMap, _ := s.readPlaygroundFile(pgDir, "importmap.json")
 
 	var importMapBlock string
 	if len(importMap) > 0 {
@@ -280,8 +290,8 @@ func renderPlaygroundIndex(w http.ResponseWriter, pgDir, baseHref string) {
 // guarding against path traversal and setting the content type by extension.
 // Shared by the local serve-file routes and the public /p/{token}/{path...}
 // route.
-func servePlaygroundFile(w http.ResponseWriter, pgDir, relPath string) {
-	fullPath, err := validatePlaygroundPath(pgDir, relPath)
+func (s *playgroundService) servePlaygroundFile(w http.ResponseWriter, pgDir, relPath string) {
+	fullPath, err := s.playgroundFile(pgDir, relPath)
 	if err != nil {
 		http.Error(w, "file not found", http.StatusNotFound)
 		return
@@ -318,7 +328,7 @@ func (s *playgroundService) handlePlaygroundServe(w http.ResponseWriter, r *http
 		channelID := r.URL.Query().Get("channel_id")
 		baseURL = fmt.Sprintf("/api/playground/serve-project/%s/%s/", channelID, name)
 	}
-	renderPlaygroundIndex(w, pgDir, baseURL)
+	s.renderPlaygroundIndex(w, pgDir, baseURL)
 }
 
 // handlePlaygroundServeFile serves individual files from a playground directory.
@@ -330,7 +340,7 @@ func (s *playgroundService) handlePlaygroundServeFile(w http.ResponseWriter, r *
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	servePlaygroundFile(w, pgDir, r.PathValue("path"))
+	s.servePlaygroundFile(w, pgDir, r.PathValue("path"))
 }
 
 // handlePlaygroundServeProject serves the composed HTML page for a project-scoped playground.
@@ -344,7 +354,7 @@ func (s *playgroundService) handlePlaygroundServeProject(w http.ResponseWriter, 
 	}
 	channelID := r.PathValue("channel_id")
 	baseURL := fmt.Sprintf("/api/playground/serve-project/%s/%s/", channelID, name)
-	renderPlaygroundIndex(w, pgDir, baseURL)
+	s.renderPlaygroundIndex(w, pgDir, baseURL)
 }
 
 // handlePlaygroundServeProjectFile serves files from a project-scoped playground.
@@ -355,7 +365,7 @@ func (s *playgroundService) handlePlaygroundServeProjectFile(w http.ResponseWrit
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	servePlaygroundFile(w, pgDir, r.PathValue("path"))
+	s.servePlaygroundFile(w, pgDir, r.PathValue("path"))
 }
 
 // handlePlaygroundDelete handles DELETE /api/playground?name=...&scope=...&channel_id=... — removes an entire playground.
@@ -395,7 +405,7 @@ func (s *playgroundService) handlePlaygroundFileWrite(w http.ResponseWriter, r *
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	fullPath, err := validatePlaygroundPath(pgDir, r.URL.Query().Get("path"))
+	fullPath, err := s.playgroundFile(pgDir, r.URL.Query().Get("path"))
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
@@ -438,7 +448,7 @@ func (s *playgroundService) handlePlaygroundFileRead(w http.ResponseWriter, r *h
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	fullPath, err := validatePlaygroundPath(pgDir, r.URL.Query().Get("path"))
+	fullPath, err := s.playgroundFile(pgDir, r.URL.Query().Get("path"))
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
@@ -461,7 +471,7 @@ func (s *playgroundService) handlePlaygroundFileDelete(w http.ResponseWriter, r 
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	fullPath, err := validatePlaygroundPath(pgDir, r.URL.Query().Get("path"))
+	fullPath, err := s.playgroundFile(pgDir, r.URL.Query().Get("path"))
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return

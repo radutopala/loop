@@ -219,6 +219,8 @@ export interface WorkspaceLayoutRef {
 interface WorkspaceLayoutProps {
   channelId: string;
   channel: Channel;
+  /** Open Settings on the project config waiting for trust. */
+  onReviewProjectTrust?: () => void;
   sidebarOpen: boolean;
   onToggleSidebar: () => void;
   onOpenPalette: () => void;
@@ -268,6 +270,7 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
   {
     channelId,
     channel,
+    onReviewProjectTrust,
     sidebarOpen,
     onToggleSidebar,
     onOpenPalette,
@@ -1016,13 +1019,15 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
               roots={editorState.roots}
               scrollToMessageId={scrollToMessageId}
               onScrollComplete={onScrollComplete}
+              trustPending={!!channel.trust_pending}
+              onReviewTrust={onReviewProjectTrust}
             />
           </ExplainContext.Provider>
         </LearnContext.Provider>
         {shownComponent?.leafId === leafId && <ChatComponentFull component={shownComponent.component} onClose={closeComponent} />}
       </ComponentFocusContext.Provider>
     ),
-    [openComponent, learn, explain, channelId, chatState, editorState.roots, scrollToMessageId, onScrollComplete, shownComponent, closeComponent],
+    [openComponent, learn, explain, channelId, chatState, editorState.roots, scrollToMessageId, onScrollComplete, channel.trust_pending, onReviewProjectTrust, shownComponent, closeComponent],
   );
 
   const renderLeaf = useCallback(

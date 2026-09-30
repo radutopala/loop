@@ -448,6 +448,16 @@ var migrations = []migration{
 	// rows and on turns stored before these were recorded.
 	sqlMigration(`ALTER TABLE messages ADD COLUMN session_id TEXT NOT NULL DEFAULT ''`),
 	sqlMigration(`ALTER TABLE messages ADD COLUMN transcript_uuid TEXT NOT NULL DEFAULT ''`),
+	// api_tokens holds the hashes of the API tokens issued to agent
+	// containers, so a daemon restart doesn't lock out running containers.
+	sqlMigration(`CREATE TABLE IF NOT EXISTS api_tokens (
+		token_hash   TEXT PRIMARY KEY,
+		container_id TEXT NOT NULL,
+		channel_id   TEXT NOT NULL,
+		dir_path     TEXT NOT NULL DEFAULT '',
+		created_at   DATETIME NOT NULL
+	)`),
+	sqlMigration(`CREATE INDEX IF NOT EXISTS idx_api_tokens_container ON api_tokens(container_id)`),
 }
 
 // migrateScheduledTasksAddManualType rebuilds scheduled_tasks to widen the

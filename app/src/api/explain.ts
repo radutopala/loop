@@ -1,4 +1,4 @@
-import { getApiUrl } from "./api";
+import { apiFetch, getApiUrl } from "./api";
 
 /**
  * A channel's explain switch. `available` is false for Slack and Discord
@@ -41,14 +41,14 @@ async function failure(res: Response, what: string): Promise<Error> {
 }
 
 export async function fetchExplainState(channelId: string): Promise<ExplainState> {
-  const res = await fetch(`${getApiUrl()}/api/channels/${channelId}/explain`);
+  const res = await apiFetch(`${getApiUrl()}/api/channels/${channelId}/explain`);
   if (!res.ok) throw new Error(`Failed to fetch explain state: ${res.statusText}`);
   return res.json();
 }
 
 /** Turn explaining each turn on or off; "" goes back to the config default. */
 export async function setExplain(channelId: string, explain: ExplainState["explain"]): Promise<void> {
-  const res = await fetch(`${getApiUrl()}/api/channels/${channelId}/explain`, {
+  const res = await apiFetch(`${getApiUrl()}/api/channels/${channelId}/explain`, {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ explain }),
@@ -58,7 +58,7 @@ export async function setExplain(channelId: string, explain: ExplainState["expla
 
 /** The channel's explanations, newest first. */
 export async function fetchExplanations(channelId: string): Promise<Explanation[]> {
-  const res = await fetch(`${getApiUrl()}/api/channels/${channelId}/explanations`);
+  const res = await apiFetch(`${getApiUrl()}/api/channels/${channelId}/explanations`);
   if (!res.ok) throw new Error(`Failed to fetch explanations: ${res.statusText}`);
   return res.json();
 }
@@ -69,7 +69,7 @@ export async function fetchExplanations(channelId: string): Promise<Explanation[
  * set.
  */
 export async function explainTurn(channelId: string, messageId: string, force = false): Promise<Explanation> {
-  const res = await fetch(`${getApiUrl()}/api/channels/${channelId}/explanations`, {
+  const res = await apiFetch(`${getApiUrl()}/api/channels/${channelId}/explanations`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ message_id: messageId, force }),

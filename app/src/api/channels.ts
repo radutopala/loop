@@ -1,9 +1,9 @@
 import type { AskUserQuestionData, Channel, ExitPlanModeData, Message, TimelineResponse } from "../types";
-import { getApiUrl, getWsUrl } from "./api";
+import { apiFetch, getApiUrl, getWsUrl, wsProtocols } from "./api";
 
 /** Open a one-shot WebSocket to send a kill message for a channel's agent container. */
 export function killAgentContainer(channelId: string): void {
-  const ws = new WebSocket(`${getWsUrl()}/api/ws/terminal`);
+  const ws = new WebSocket(`${getWsUrl()}/api/ws/terminal`, wsProtocols());
   ws.onopen = () => {
     ws.send(JSON.stringify({ type: "kill", channel_id: channelId }));
   };
@@ -46,10 +46,11 @@ interface ChannelAPIResponse {
   task_id?: number;
   description?: string;
   ticket_url?: string;
+  trust_pending?: boolean;
 }
 
 export async function fetchChannels(): Promise<Channel[]> {
-  const res = await fetch(`${getApiUrl()}/api/channels?platform=local`);
+  const res = await apiFetch(`${getApiUrl()}/api/channels?platform=local`);
   if (!res.ok) throw new Error(`Failed to fetch channels: ${res.statusText}`);
   const data: ChannelAPIResponse[] = await res.json();
   return data.map((c) => ({
@@ -83,6 +84,7 @@ export async function fetchChannels(): Promise<Channel[]> {
     task_id: c.task_id,
     description: c.description,
     ticket_url: c.ticket_url,
+    trust_pending: c.trust_pending,
   }));
 }
 
@@ -93,7 +95,7 @@ export async function createThread(channelId: string, name: string, sessionId?: 
     author_id: "desktop",
   };
   if (sessionId) body.session_id = sessionId;
-  const res = await fetch(`${getApiUrl()}/api/threads`, {
+  const res = await apiFetch(`${getApiUrl()}/api/threads`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
@@ -104,7 +106,7 @@ export async function createThread(channelId: string, name: string, sessionId?: 
 }
 
 export async function deleteThread(threadId: string): Promise<void> {
-  const res = await fetch(`${getApiUrl()}/api/threads/${threadId}`, {
+  const res = await apiFetch(`${getApiUrl()}/api/threads/${threadId}`, {
     method: "DELETE",
   });
   if (!res.ok) throw new Error(`Failed to delete thread: ${res.statusText}`);
@@ -113,7 +115,7 @@ export async function deleteThread(threadId: string): Promise<void> {
 export async function removeWorktree(channelId: string, worktreePath: string, threadId?: string): Promise<void> {
   const body: Record<string, string> = { channel_id: channelId, worktree_path: worktreePath };
   if (threadId) body.thread_id = threadId;
-  const res = await fetch(`${getApiUrl()}/api/worktrees`, {
+  const res = await apiFetch(`${getApiUrl()}/api/worktrees`, {
     method: "DELETE",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
@@ -122,7 +124,7 @@ export async function removeWorktree(channelId: string, worktreePath: string, th
 }
 
 export async function setWorktreeLocked(channelId: string, worktreePath: string, locked: boolean): Promise<void> {
-  const res = await fetch(`${getApiUrl()}/api/worktrees/lock`, {
+  const res = await apiFetch(`${getApiUrl()}/api/worktrees/lock`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ channel_id: channelId, worktree_path: worktreePath, locked }),
@@ -138,7 +140,7 @@ async function errorText(res: Response): Promise<string> {
 
 /** Rename a thread/channel's display name (no side effects on disk). */
 export async function renameChannel(channelId: string, name: string): Promise<void> {
-  const res = await fetch(`${getApiUrl()}/api/channels/${channelId}/rename`, {
+  const res = await apiFetch(`${getApiUrl()}/api/channels/${channelId}/rename`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ name }),
@@ -148,7 +150,7 @@ export async function renameChannel(channelId: string, name: string): Promise<vo
 
 /** Set what a thread is for; an empty description clears it. */
 export async function setChannelDescription(channelId: string, description: string): Promise<void> {
-  const res = await fetch(`${getApiUrl()}/api/channels/${channelId}/description`, {
+  const res = await apiFetch(`${getApiUrl()}/api/channels/${channelId}/description`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ description }),
@@ -158,7 +160,7 @@ export async function setChannelDescription(channelId: string, description: stri
 
 /** Link a channel or thread to its ticket; an empty URL clears it. */
 export async function setChannelTicketURL(channelId: string, ticketURL: string): Promise<void> {
-  const res = await fetch(`${getApiUrl()}/api/channels/${channelId}/ticket`, {
+  const res = await apiFetch(`${getApiUrl()}/api/channels/${channelId}/ticket`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ ticket_url: ticketURL }),
@@ -167,14 +169,14 @@ export async function setChannelTicketURL(channelId: string, ticketURL: string):
 }
 
 export async function deleteChannel(channelId: string): Promise<void> {
-  const res = await fetch(`${getApiUrl()}/api/channels/${channelId}`, {
+  const res = await apiFetch(`${getApiUrl()}/api/channels/${channelId}`, {
     method: "DELETE",
   });
   if (!res.ok) throw new Error(`Failed to delete channel: ${res.statusText}`);
 }
 
 export async function setChannelLocked(channelId: string, locked: boolean): Promise<void> {
-  const res = await fetch(`${getApiUrl()}/api/channels/${channelId}/lock`, {
+  const res = await apiFetch(`${getApiUrl()}/api/channels/${channelId}/lock`, {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ locked }),
@@ -188,7 +190,7 @@ export async function resolvePlan(channelId: string, action: PlanResolveAction, 
   const body: Record<string, string> = { action };
   if (prompt) body.prompt = prompt;
   if (mode) body.mode = mode;
-  const res = await fetch(`${getApiUrl()}/api/channels/${channelId}/plan/resolve`, {
+  const res = await apiFetch(`${getApiUrl()}/api/channels/${channelId}/plan/resolve`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
@@ -204,7 +206,7 @@ export async function resolveAsk(channelId: string, action: AskResolveAction, an
   const body: Record<string, string> = { action };
   if (answer) body.answer = answer;
   if (mode) body.mode = mode;
-  const res = await fetch(`${getApiUrl()}/api/channels/${channelId}/ask/resolve`, {
+  const res = await apiFetch(`${getApiUrl()}/api/channels/${channelId}/ask/resolve`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
@@ -225,7 +227,7 @@ export interface PendingAsk {
  * backend keeps blocking the channel's drain.
  */
 export async function listPendingAsks(): Promise<PendingAsk[]> {
-  const res = await fetch(`${getApiUrl()}/api/asks/pending`);
+  const res = await apiFetch(`${getApiUrl()}/api/asks/pending`);
   if (!res.ok) throw new Error(`Failed to list pending asks: ${res.statusText}`);
   const body = (await res.json()) as { asks?: PendingAsk[] };
   return Array.isArray(body.asks) ? body.asks : [];
@@ -244,14 +246,14 @@ export interface PendingPlan {
  * backend keeps blocking the channel's drain.
  */
 export async function listPendingPlans(): Promise<PendingPlan[]> {
-  const res = await fetch(`${getApiUrl()}/api/plans/pending`);
+  const res = await apiFetch(`${getApiUrl()}/api/plans/pending`);
   if (!res.ok) throw new Error(`Failed to list pending plans: ${res.statusText}`);
   const body = (await res.json()) as { plans?: PendingPlan[] };
   return Array.isArray(body.plans) ? body.plans : [];
 }
 
 export async function ensureChannel(dirPath: string): Promise<Channel> {
-  const res = await fetch(`${getApiUrl()}/api/channels`, {
+  const res = await apiFetch(`${getApiUrl()}/api/channels`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ dir_path: dirPath, platform: "local" }),
@@ -279,7 +281,7 @@ export async function ensureChannel(dirPath: string): Promise<Channel> {
 }
 
 export async function createChannel(name: string, platform = "local"): Promise<string> {
-  const res = await fetch(`${getApiUrl()}/api/channels/create`, {
+  const res = await apiFetch(`${getApiUrl()}/api/channels/create`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ name, platform }),
@@ -296,7 +298,7 @@ export async function sendMessage(channelId: string, content: string, mode?: "ag
   const body: Record<string, string | boolean> = { channel_id: channelId, content };
   if (mode && mode !== "agent") body.mode = mode;
   if (steer) body.interrupt = true;
-  const res = await fetch(`${getApiUrl()}/api/messages`, {
+  const res = await apiFetch(`${getApiUrl()}/api/messages`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
@@ -305,7 +307,7 @@ export async function sendMessage(channelId: string, content: string, mode?: "ag
 }
 
 export async function pasteImage(channelId: string, base64Data: string, mediaType: string): Promise<string> {
-  const res = await fetch(`${getApiUrl()}/api/channels/${encodeURIComponent(channelId)}/paste-image`, {
+  const res = await apiFetch(`${getApiUrl()}/api/channels/${encodeURIComponent(channelId)}/paste-image`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ data: base64Data, media_type: mediaType }),
@@ -317,7 +319,7 @@ export async function pasteImage(channelId: string, base64Data: string, mediaTyp
 
 export async function deleteQueuedMessage(channelId: string, msgId: string): Promise<void> {
   const url = `${getApiUrl()}/api/messages/${encodeURIComponent(msgId)}?channel_id=${encodeURIComponent(channelId)}`;
-  const res = await fetch(url, { method: "DELETE" });
+  const res = await apiFetch(url, { method: "DELETE" });
   if (!res.ok) throw new Error(`Failed to delete queued message: ${res.statusText}`);
 }
 
@@ -328,7 +330,7 @@ export async function deleteQueuedMessage(channelId: string, msgId: string): Pro
 // turn, so the work so far is redirected rather than thrown away.
 export async function steerQueuedMessage(channelId: string, msgId: string): Promise<void> {
   const url = `${getApiUrl()}/api/channels/${encodeURIComponent(channelId)}/queued/${encodeURIComponent(msgId)}/steer`;
-  const res = await fetch(url, { method: "POST" });
+  const res = await apiFetch(url, { method: "POST" });
   if (!res.ok) throw new Error(`Failed to steer queued message: ${res.statusText}`);
 }
 
@@ -338,7 +340,7 @@ export async function steerQueuedMessage(channelId: string, msgId: string): Prom
 // edit.
 export async function holdQueuedMessage(channelId: string, msgId: string): Promise<boolean> {
   const url = `${getApiUrl()}/api/channels/${encodeURIComponent(channelId)}/queued/${encodeURIComponent(msgId)}/hold`;
-  const res = await fetch(url, { method: "POST" });
+  const res = await apiFetch(url, { method: "POST" });
   if (res.status === 409) return false;
   if (!res.ok) throw new Error(`Failed to hold queued message: ${res.statusText}`);
   return true;
@@ -347,7 +349,7 @@ export async function holdQueuedMessage(channelId: string, msgId: string): Promi
 // releaseQueuedHold cancels an edit, leaving the queued message unchanged.
 export async function releaseQueuedHold(channelId: string, msgId: string): Promise<void> {
   const url = `${getApiUrl()}/api/channels/${encodeURIComponent(channelId)}/queued/${encodeURIComponent(msgId)}/hold`;
-  const res = await fetch(url, { method: "DELETE" });
+  const res = await apiFetch(url, { method: "DELETE" });
   if (!res.ok) throw new Error(`Failed to release queued message: ${res.statusText}`);
 }
 
@@ -356,7 +358,7 @@ export async function releaseQueuedHold(channelId: string, msgId: string): Promi
 // case nothing was changed.
 export async function updateQueuedMessage(channelId: string, msgId: string, content: string): Promise<boolean> {
   const url = `${getApiUrl()}/api/channels/${encodeURIComponent(channelId)}/queued/${encodeURIComponent(msgId)}`;
-  const res = await fetch(url, {
+  const res = await apiFetch(url, {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ content }),
@@ -370,7 +372,7 @@ export async function updateQueuedMessage(channelId: string, msgId: string, cont
 // (first id = highest priority / runs next).
 export async function reorderQueuedMessages(channelId: string, orderedMsgIds: string[]): Promise<void> {
   const url = `${getApiUrl()}/api/channels/${encodeURIComponent(channelId)}/queued/reorder`;
-  const res = await fetch(url, {
+  const res = await apiFetch(url, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ order: orderedMsgIds }),
@@ -379,7 +381,7 @@ export async function reorderQueuedMessages(channelId: string, orderedMsgIds: st
 }
 
 export async function sendCommand(channelId: string, command: string): Promise<void> {
-  const res = await fetch(`${getApiUrl()}/api/commands`, {
+  const res = await apiFetch(`${getApiUrl()}/api/commands`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ channel_id: channelId, command }),
@@ -390,7 +392,7 @@ export async function sendCommand(channelId: string, command: string): Promise<v
 export async function createWorktreeThread(channelId: string, branch: string, name?: string): Promise<{ threadId: string; worktreePath: string }> {
   const body: Record<string, string> = { channel_id: channelId, branch };
   if (name) body.name = name;
-  const res = await fetch(`${getApiUrl()}/api/worktrees`, {
+  const res = await apiFetch(`${getApiUrl()}/api/worktrees`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
@@ -401,7 +403,7 @@ export async function createWorktreeThread(channelId: string, branch: string, na
 }
 
 export async function importWorktree(channelId: string, worktreePath: string): Promise<{ threadId: string; worktreePath: string }> {
-  const res = await fetch(`${getApiUrl()}/api/worktrees/import`, {
+  const res = await apiFetch(`${getApiUrl()}/api/worktrees/import`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ channel_id: channelId, worktree_path: worktreePath }),
@@ -421,7 +423,7 @@ export async function fetchMessages(channelId: string, opts?: { limit?: number; 
   if (opts?.limit) params.set("limit", String(opts.limit));
   if (opts?.around) params.set("around", String(opts.around));
   else if (opts?.cursor) params.set("cursor", String(opts.cursor));
-  const res = await fetch(`${getApiUrl()}/api/channels/${channelId}/messages?${params}`);
+  const res = await apiFetch(`${getApiUrl()}/api/channels/${channelId}/messages?${params}`);
   if (!res.ok) throw new Error(`Failed to fetch messages: ${res.statusText}`);
   return res.json();
 }
@@ -433,7 +435,7 @@ export async function fetchMessages(channelId: string, opts?: { limit?: number; 
  * correct even when older pages are out of view.
  */
 export async function fetchQueuedMessages(channelId: string): Promise<Message[]> {
-  const res = await fetch(`${getApiUrl()}/api/channels/${channelId}/queued`);
+  const res = await apiFetch(`${getApiUrl()}/api/channels/${channelId}/queued`);
   if (!res.ok) throw new Error(`Failed to fetch queued messages: ${res.statusText}`);
   const data: { messages: Message[] } = await res.json();
   return data.messages ?? [];
@@ -444,13 +446,13 @@ export async function fetchTimeline(channelId: string, opts?: { limit?: number; 
   if (opts?.limit) params.set("limit", String(opts.limit));
   if (opts?.cursorPosition !== undefined) params.set("cursor_position", String(opts.cursorPosition));
   if (opts?.cursorId !== undefined) params.set("cursor_id", String(opts.cursorId));
-  const res = await fetch(`${getApiUrl()}/api/channels/${channelId}/timeline?${params}`);
+  const res = await apiFetch(`${getApiUrl()}/api/channels/${channelId}/timeline?${params}`);
   if (!res.ok) throw new Error(`Failed to fetch timeline: ${res.statusText}`);
   return res.json();
 }
 
 export async function fetchReadme(): Promise<string> {
-  const res = await fetch(`${getApiUrl()}/api/readme`);
+  const res = await apiFetch(`${getApiUrl()}/api/readme`);
   if (!res.ok) throw new Error(`Failed to fetch README: ${res.statusText}`);
   return res.text();
 }
@@ -460,7 +462,7 @@ export async function fetchReadme(): Promise<string> {
  * chronological (oldest first) — independent of timeline pagination.
  */
 export async function fetchComposerHistory(channelId: string, limit = 100): Promise<string[]> {
-  const res = await fetch(`${getApiUrl()}/api/channels/${channelId}/composer-history?limit=${limit}`);
+  const res = await apiFetch(`${getApiUrl()}/api/channels/${channelId}/composer-history?limit=${limit}`);
   if (!res.ok) throw new Error(`Failed to fetch composer history: ${res.statusText}`);
   const data = await res.json();
   return data.messages ?? [];
@@ -475,7 +477,7 @@ export interface AgentConfig {
 }
 
 export async function fetchAgentConfig(channelId: string): Promise<AgentConfig> {
-  const res = await fetch(`${getApiUrl()}/api/channels/${channelId}/agent-config`);
+  const res = await apiFetch(`${getApiUrl()}/api/channels/${channelId}/agent-config`);
   if (!res.ok) throw new Error(`Failed to fetch agent config: ${res.statusText}`);
   return res.json();
 }
@@ -485,7 +487,7 @@ export async function fetchAgentConfig(channelId: string): Promise<AgentConfig> 
  * inherit from config). Takes effect on the channel's next agent run.
  */
 export async function updateAgentConfig(channelId: string, model: string, effort: string): Promise<void> {
-  const res = await fetch(`${getApiUrl()}/api/channels/${channelId}/agent-config`, {
+  const res = await apiFetch(`${getApiUrl()}/api/channels/${channelId}/agent-config`, {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ model, effort }),
@@ -507,7 +509,7 @@ export interface ContainerStatsEntry {
 
 /** Fetches CPU/memory usage for the channel's running containers. */
 export async function fetchContainerStats(channelId: string): Promise<ContainerStatsEntry[]> {
-  const res = await fetch(`${getApiUrl()}/api/channels/${encodeURIComponent(channelId)}/container-stats`);
+  const res = await apiFetch(`${getApiUrl()}/api/channels/${encodeURIComponent(channelId)}/container-stats`);
   if (!res.ok) throw new Error(`Failed to fetch container stats: ${res.statusText}`);
   return res.json();
 }
@@ -518,7 +520,7 @@ export async function fetchContainerStats(channelId: string): Promise<ContainerS
  * source's branch). Returns the new thread id.
  */
 export async function forkThread(threadId: string): Promise<string> {
-  const res = await fetch(`${getApiUrl()}/api/threads/${encodeURIComponent(threadId)}/fork`, { method: "POST" });
+  const res = await apiFetch(`${getApiUrl()}/api/threads/${encodeURIComponent(threadId)}/fork`, { method: "POST" });
   if (!res.ok) throw new Error(`Failed to fork thread: ${(await res.text()) || res.statusText}`);
   const data = await res.json();
   return data.thread_id;

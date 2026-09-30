@@ -436,6 +436,12 @@ func (s *EvolutionSuite) TestParseGitLogEmptyInputReturnsEmptySlice() {
 	require.Empty(s.T(), commits)
 }
 
+func (s *EvolutionSuite) TestDefaultRunnerHardensGit() {
+	out, err := defaultRunner(context.Background(), s.T().TempDir(), "git", "config", "--get", "core.hooksPath")
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "/dev/null\n", string(out))
+}
+
 func (s *EvolutionSuite) TestDefaultRunnerExecutesCommand() {
 	out, err := defaultRunner(context.Background(), "/", "true")
 	require.NoError(s.T(), err)

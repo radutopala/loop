@@ -171,7 +171,7 @@ func (s *PRSuite) TestDiffRequiresInputs() {
 func (s *PRSuite) TestDiffHappyPath() {
 	rr := &recordingRunner{
 		response: map[string]callResponse{
-			"git diff origin/main...HEAD": {out: []byte("diff --git a/x b/x\n")},
+			"git diff --no-ext-diff --no-textconv origin/main...HEAD": {out: []byte("diff --git a/x b/x\n")},
 		},
 	}
 	g := &GitPR{Run: rr.run}
@@ -182,7 +182,7 @@ func (s *PRSuite) TestDiffHappyPath() {
 	require.Equal(s.T(), "/repo", rr.calls[0].dir)
 	require.Equal(s.T(), []string{"fetch", "origin", "main"}, rr.calls[0].args)
 	require.Equal(s.T(), "/repo/.worktrees/pr-1", rr.calls[1].dir)
-	require.Equal(s.T(), []string{"diff", "origin/main...HEAD"}, rr.calls[1].args)
+	require.Equal(s.T(), []string{"diff", "--no-ext-diff", "--no-textconv", "origin/main...HEAD"}, rr.calls[1].args)
 }
 
 func (s *PRSuite) TestDiffFetchError() {
@@ -199,7 +199,7 @@ func (s *PRSuite) TestDiffFetchError() {
 func (s *PRSuite) TestDiffDiffError() {
 	rr := &recordingRunner{
 		response: map[string]callResponse{
-			"git diff origin/main...HEAD": {out: []byte("bad object"), err: errors.New("exit 128")},
+			"git diff --no-ext-diff --no-textconv origin/main...HEAD": {out: []byte("bad object"), err: errors.New("exit 128")},
 		},
 	}
 	g := &GitPR{Run: rr.run}
@@ -213,10 +213,10 @@ func (s *PRSuite) TestDiffDiffError() {
 func (s *PRSuite) TestDiffWidensContextForFarComments() {
 	rr := &recordingRunner{
 		response: map[string]callResponse{
-			"git diff -U0 origin/main...HEAD": {
+			"git diff --no-ext-diff --no-textconv -U0 origin/main...HEAD": {
 				out: []byte("diff --git a/foo.go b/foo.go\n@@ -10,1 +10,1 @@\n-old\n+new\n"),
 			},
-			"git diff -U92 origin/main...HEAD": {out: []byte("widened diff")},
+			"git diff --no-ext-diff --no-textconv -U92 origin/main...HEAD": {out: []byte("widened diff")},
 		},
 	}
 	g := &GitPR{Run: rr.run}
@@ -227,18 +227,18 @@ func (s *PRSuite) TestDiffWidensContextForFarComments() {
 	require.Equal(s.T(), "widened diff", string(out))
 	// fetch + -U0 probe + final widened diff
 	require.Len(s.T(), rr.calls, 3)
-	require.Equal(s.T(), []string{"diff", "-U0", "origin/main...HEAD"}, rr.calls[1].args)
-	require.Equal(s.T(), []string{"diff", "-U92", "origin/main...HEAD"}, rr.calls[2].args)
+	require.Equal(s.T(), []string{"diff", "--no-ext-diff", "--no-textconv", "-U0", "origin/main...HEAD"}, rr.calls[1].args)
+	require.Equal(s.T(), []string{"diff", "--no-ext-diff", "--no-textconv", "-U92", "origin/main...HEAD"}, rr.calls[2].args)
 }
 
 // Comments within default unified context don't trigger a -U widen.
 func (s *PRSuite) TestDiffSkipsWidenWhenDefaultCovers() {
 	rr := &recordingRunner{
 		response: map[string]callResponse{
-			"git diff -U0 origin/main...HEAD": {
+			"git diff --no-ext-diff --no-textconv -U0 origin/main...HEAD": {
 				out: []byte("diff --git a/foo.go b/foo.go\n@@ -10,1 +10,1 @@\n-old\n+new\n"),
 			},
-			"git diff origin/main...HEAD": {out: []byte("default diff")},
+			"git diff --no-ext-diff --no-textconv origin/main...HEAD": {out: []byte("default diff")},
 		},
 	}
 	g := &GitPR{Run: rr.run}
@@ -247,7 +247,7 @@ func (s *PRSuite) TestDiffSkipsWidenWhenDefaultCovers() {
 	})
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), "default diff", string(out))
-	require.Equal(s.T(), []string{"diff", "origin/main...HEAD"}, rr.calls[2].args)
+	require.Equal(s.T(), []string{"diff", "--no-ext-diff", "--no-textconv", "origin/main...HEAD"}, rr.calls[2].args)
 }
 
 // Comments on files that aren't in the diff (orphan-by-path) don't
@@ -255,10 +255,10 @@ func (s *PRSuite) TestDiffSkipsWidenWhenDefaultCovers() {
 func (s *PRSuite) TestDiffIgnoresCommentsOnUnchangedFiles() {
 	rr := &recordingRunner{
 		response: map[string]callResponse{
-			"git diff -U0 origin/main...HEAD": {
+			"git diff --no-ext-diff --no-textconv -U0 origin/main...HEAD": {
 				out: []byte("diff --git a/foo.go b/foo.go\n@@ -10,1 +10,1 @@\n-old\n+new\n"),
 			},
-			"git diff origin/main...HEAD": {out: []byte("default diff")},
+			"git diff --no-ext-diff --no-textconv origin/main...HEAD": {out: []byte("default diff")},
 		},
 	}
 	g := &GitPR{Run: rr.run}
@@ -266,17 +266,17 @@ func (s *PRSuite) TestDiffIgnoresCommentsOnUnchangedFiles() {
 		{Path: "unrelated.go", Line: 999, Side: "RIGHT"},
 	})
 	require.NoError(s.T(), err)
-	require.Equal(s.T(), []string{"diff", "origin/main...HEAD"}, rr.calls[2].args)
+	require.Equal(s.T(), []string{"diff", "--no-ext-diff", "--no-textconv", "origin/main...HEAD"}, rr.calls[2].args)
 }
 
 // LEFT-side comments anchor to the old-file range from the @@ header.
 func (s *PRSuite) TestDiffWidensForLeftSideComment() {
 	rr := &recordingRunner{
 		response: map[string]callResponse{
-			"git diff -U0 origin/main...HEAD": {
+			"git diff --no-ext-diff --no-textconv -U0 origin/main...HEAD": {
 				out: []byte("diff --git a/foo.go b/foo.go\n@@ -50,2 +50,1 @@\n-a\n-b\n+merged\n"),
 			},
-			"git diff -U29 origin/main...HEAD": {out: []byte("widened")},
+			"git diff --no-ext-diff --no-textconv -U29 origin/main...HEAD": {out: []byte("widened")},
 		},
 	}
 	g := &GitPR{Run: rr.run}
@@ -291,7 +291,7 @@ func (s *PRSuite) TestDiffWidensForLeftSideComment() {
 func (s *PRSuite) TestDiffSkinnyPassError() {
 	rr := &recordingRunner{
 		response: map[string]callResponse{
-			"git diff -U0 origin/main...HEAD": {out: []byte("u0 boom"), err: errors.New("exit 1")},
+			"git diff --no-ext-diff --no-textconv -U0 origin/main...HEAD": {out: []byte("u0 boom"), err: errors.New("exit 1")},
 		},
 	}
 	g := &GitPR{Run: rr.run}

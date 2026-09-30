@@ -12,6 +12,8 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+
+	"github.com/radutopala/loop/internal/gitutil"
 )
 
 type diffFileEntry struct {
@@ -134,8 +136,7 @@ func (s *Server) handleGitDiff(w http.ResponseWriter, r *http.Request) {
 
 	// Staged changes: index vs HEAD. May fail in a brand-new repo with no
 	// commits — treat that as "no staged entries" rather than erroring.
-	stagedCmd := exec.CommandContext(r.Context(), "git", "diff", "--cached", "--numstat", "-z")
-	stagedCmd.Dir = dirPath
+	stagedCmd := gitutil.Command(r.Context(), dirPath, "diff", "--no-ext-diff", "--no-textconv", "--cached", "--numstat", "-z")
 	stagedNumstatOut, stagedErr := stagedCmd.Output()
 	var stagedFiles []diffFileEntry
 	var stagedDiffText string
@@ -143,15 +144,13 @@ func (s *Server) handleGitDiff(w http.ResponseWriter, r *http.Request) {
 		stagedFiles = filterOutPaths(parseNumstat(string(stagedNumstatOut)), conflictPaths)
 		stampStatus(stagedFiles, statusStaged)
 
-		stagedDiffCmd := exec.CommandContext(r.Context(), "git", "diff", "--cached")
-		stagedDiffCmd.Dir = dirPath
+		stagedDiffCmd := gitutil.Command(r.Context(), dirPath, "diff", "--no-ext-diff", "--no-textconv", "--cached")
 		stagedDiffOut, _ := stagedDiffCmd.Output()
 		stagedDiffText = string(stagedDiffOut)
 	}
 
 	// Unstaged changes: worktree vs index.
-	numstatCmd := exec.CommandContext(r.Context(), "git", "diff", "--numstat", "-z")
-	numstatCmd.Dir = dirPath
+	numstatCmd := gitutil.Command(r.Context(), dirPath, "diff", "--no-ext-diff", "--no-textconv", "--numstat", "-z")
 	numstatOut, err := numstatCmd.Output()
 	if err != nil {
 		// Not a git repo or git not available — return empty diff.
@@ -162,8 +161,7 @@ func (s *Server) handleGitDiff(w http.ResponseWriter, r *http.Request) {
 	unstagedFiles := filterOutPaths(parseNumstat(string(numstatOut)), conflictPaths)
 	stampStatus(unstagedFiles, statusUnstaged)
 
-	diffCmd := exec.CommandContext(r.Context(), "git", "diff")
-	diffCmd.Dir = dirPath
+	diffCmd := gitutil.Command(r.Context(), dirPath, "diff", "--no-ext-diff", "--no-textconv")
 	diffOut, _ := diffCmd.Output()
 	unstagedDiffText := string(diffOut)
 
@@ -188,8 +186,7 @@ func (s *Server) handleGitDiff(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Include untracked files.
-	untrackedCmd := exec.CommandContext(r.Context(), "git", "ls-files", "--others", "--exclude-standard")
-	untrackedCmd.Dir = dirPath
+	untrackedCmd := gitutil.Command(r.Context(), dirPath, "ls-files", "--others", "--exclude-standard")
 	if untrackedOut, err := untrackedCmd.Output(); err == nil {
 		for _, uf := range splitLines(string(untrackedOut)) {
 			entry, patch := buildUntrackedEntry(dirPath, uf)
@@ -233,8 +230,7 @@ func (s *Server) handleGitDiff(w http.ResponseWriter, r *http.Request) {
 // unmerged entries are those with a status code in {DD,AU,UD,UA,DU,AA,UU}.
 // Returns an empty slice for non-repo dirs or clean trees.
 func listUnmergedPaths(ctx context.Context, dir string) []string {
-	cmd := exec.CommandContext(ctx, "git", "status", "--porcelain=v1", "-z")
-	cmd.Dir = dir
+	cmd := gitutil.Command(ctx, dir, "status", "--porcelain=v1", "-z")
 	out, err := cmd.Output()
 	if err != nil {
 		return nil
@@ -349,8 +345,7 @@ func (s *Server) handleBranchDiff(w http.ResponseWriter, r *http.Request, dirPat
 
 	rangeSpec := source + "..." + target
 
-	numstatCmd := exec.CommandContext(r.Context(), "git", "diff", "--numstat", "-z", rangeSpec)
-	numstatCmd.Dir = dirPath
+	numstatCmd := gitutil.Command(r.Context(), dirPath, "diff", "--no-ext-diff", "--no-textconv", "--numstat", "-z", rangeSpec)
 	numstatOut, err := numstatCmd.Output()
 	if err != nil {
 		msg := "git diff failed"
@@ -364,8 +359,7 @@ func (s *Server) handleBranchDiff(w http.ResponseWriter, r *http.Request, dirPat
 
 	files := parseNumstat(string(numstatOut))
 
-	diffCmd := exec.CommandContext(r.Context(), "git", "diff", rangeSpec)
-	diffCmd.Dir = dirPath
+	diffCmd := gitutil.Command(r.Context(), dirPath, "diff", "--no-ext-diff", "--no-textconv", rangeSpec)
 	diffOut, _ := diffCmd.Output()
 	diffText := string(diffOut)
 
@@ -402,9 +396,8 @@ func (s *Server) handleCommitDiff(w http.ResponseWriter, r *http.Request, dirPat
 		return
 	}
 
-	showArgs := []string{"show", "--format=", "--diff-merges=first-parent", commit + "^{commit}", "--"}
-	numstatCmd := exec.CommandContext(r.Context(), "git", append([]string{"show", "--numstat", "-z"}, showArgs[1:]...)...)
-	numstatCmd.Dir = dirPath
+	showArgs := []string{"show", "--no-ext-diff", "--no-textconv", "--format=", "--diff-merges=first-parent", commit + "^{commit}", "--"}
+	numstatCmd := gitutil.Command(r.Context(), dirPath, append([]string{"show", "--numstat", "-z"}, showArgs[1:]...)...)
 	numstatOut, err := numstatCmd.Output()
 	if err != nil {
 		msg := "git show failed"
@@ -418,8 +411,7 @@ func (s *Server) handleCommitDiff(w http.ResponseWriter, r *http.Request, dirPat
 
 	files := parseNumstat(string(numstatOut))
 
-	diffCmd := exec.CommandContext(r.Context(), "git", showArgs...)
-	diffCmd.Dir = dirPath
+	diffCmd := gitutil.Command(r.Context(), dirPath, showArgs...)
 	diffOut, _ := diffCmd.Output()
 
 	var totalAdd, totalDel int
@@ -455,8 +447,7 @@ func resolveBranchRef(ctx context.Context, dir, ref string) string {
 }
 
 func refResolves(ctx context.Context, dir, ref string) bool {
-	cmd := exec.CommandContext(ctx, "git", "rev-parse", "--verify", "--quiet", ref+"^{commit}")
-	cmd.Dir = dir
+	cmd := gitutil.Command(ctx, dir, "rev-parse", "--verify", "--quiet", ref+"^{commit}")
 	return cmd.Run() == nil
 }
 

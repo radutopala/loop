@@ -261,28 +261,39 @@ func (s *GateSuite) TestInjectWorkspaceRuleInsertsBeforeFirstAllow() {
 	}
 	out := injectWorkspaceRule(in, "/host/work", "")
 
-	require.Len(s.T(), out, 4)
+	require.Len(s.T(), out, 5)
 	require.Equal(s.T(), types.DecisionDeny, out[0].Decision)
 	require.Equal(s.T(), types.DecisionApprove, out[1].Decision)
-	require.Equal(s.T(), types.DecisionAllow, out[2].Decision, "workspace allow inserted before tmp fast-path")
-	require.Equal(s.T(), "workspace fast-path", out[2].Message)
-	require.Equal(s.T(), []string{"/host/work/**"}, out[2].Paths)
-	require.Equal(s.T(), "tmp fast-path", out[3].Message)
+	require.Equal(s.T(), types.FileRule{
+		Paths:      []string{"/host/work/**/.git/config", "/host/work/**/.git/hooks/**"},
+		Operations: []string{"write", "create"},
+		Decision:   types.DecisionApprove,
+		Message:    "git config or hook write in the workspace",
+	}, out[2], "git approve sits right ahead of the workspace allow")
+	require.Equal(s.T(), types.DecisionAllow, out[3].Decision, "workspace allow inserted before tmp fast-path")
+	require.Equal(s.T(), "workspace fast-path", out[3].Message)
+	require.Equal(s.T(), []string{"/host/work/**"}, out[3].Paths)
+	require.Equal(s.T(), "tmp fast-path", out[4].Message)
 }
 
 func (s *GateSuite) TestInjectWorkspaceRuleIncludesParentDirPath() {
 	in := []types.FileRule{{Paths: []string{"/tmp/**"}, Decision: types.DecisionAllow}}
 	out := injectWorkspaceRule(in, "/host/repo/.worktrees/wt-1", "/host/repo")
 
-	require.Len(s.T(), out, 2)
-	require.Equal(s.T(), []string{"/host/repo/.worktrees/wt-1/**", "/host/repo/**"}, out[0].Paths)
+	require.Len(s.T(), out, 3)
+	require.Equal(s.T(), []string{
+		"/host/repo/.worktrees/wt-1/**/.git/config", "/host/repo/.worktrees/wt-1/**/.git/hooks/**",
+		"/host/repo/**/.git/config", "/host/repo/**/.git/hooks/**",
+	}, out[0].Paths)
+	require.Equal(s.T(), []string{"/host/repo/.worktrees/wt-1/**", "/host/repo/**"}, out[1].Paths)
 }
 
 func (s *GateSuite) TestInjectWorkspaceRuleSkipsParentWhenEqual() {
 	in := []types.FileRule{{Paths: []string{"/tmp/**"}, Decision: types.DecisionAllow}}
 	out := injectWorkspaceRule(in, "/host/repo", "/host/repo")
 
-	require.Equal(s.T(), []string{"/host/repo/**"}, out[0].Paths, "parent path deduped when equal to workDir")
+	require.Equal(s.T(), []string{"/host/repo/**/.git/config", "/host/repo/**/.git/hooks/**"}, out[0].Paths)
+	require.Equal(s.T(), []string{"/host/repo/**"}, out[1].Paths, "parent path deduped when equal to workDir")
 }
 
 func (s *GateSuite) TestInjectWorkspaceRuleAppendsWhenNoAllow() {
@@ -291,9 +302,10 @@ func (s *GateSuite) TestInjectWorkspaceRuleAppendsWhenNoAllow() {
 	}
 	out := injectWorkspaceRule(in, "/host/work", "")
 
-	require.Len(s.T(), out, 2)
+	require.Len(s.T(), out, 3)
 	require.Equal(s.T(), types.DecisionDeny, out[0].Decision)
-	require.Equal(s.T(), types.DecisionAllow, out[1].Decision, "appended at end when no existing Allow")
+	require.Equal(s.T(), types.DecisionApprove, out[1].Decision)
+	require.Equal(s.T(), types.DecisionAllow, out[2].Decision, "appended at end when no existing Allow")
 }
 
 // --- injectPolicySelfDenyRule ---
@@ -358,11 +370,12 @@ func (s *GateSuite) TestWriteGatePolicyFilePinsSelfDenyFirst() {
 	require.Equal(s.T(), []string{"/etc/loop/**"}, got.FileRules[0].Paths)
 	require.Equal(s.T(), types.DecisionDeny, got.FileRules[0].Decision, "self-deny wins over a config allow on the same path")
 	// Then the pinned project-config approve. The config allow is the list's
-	// first Allow, so the workspace rule lands ahead of it.
+	// first Allow, so the workspace git approve and allow land ahead of it.
 	require.Equal(s.T(), types.DecisionApprove, got.FileRules[1].Decision)
 	require.Equal(s.T(), "/host/work/.loop/config.json", got.FileRules[1].Paths[1])
-	require.Equal(s.T(), "workspace fast-path", got.FileRules[2].Message)
-	require.Equal(s.T(), types.DecisionAllow, got.FileRules[3].Decision)
+	require.Equal(s.T(), "git config or hook write in the workspace", got.FileRules[2].Message)
+	require.Equal(s.T(), "workspace fast-path", got.FileRules[3].Message)
+	require.Equal(s.T(), types.DecisionAllow, got.FileRules[4].Decision)
 }
 
 func (s *GateSuite) TestInjectProjectConfigRule() {
@@ -489,6 +502,7 @@ func (s *GateSuite) expectRunCompletes(ctx context.Context, cid string) {
 	waitCh := make(chan WaitResponse, 1)
 	waitCh <- WaitResponse{StatusCode: 0}
 	errCh := make(chan error, 1)
+	s.client.On("CopyToContainer", ctx, cid, "/", mock.Anything).Maybe().Return(nil)
 	s.client.On("ContainerStart", ctx, cid).Return(nil)
 	s.client.On("ContainerWait", ctx, cid).Return((<-chan WaitResponse)(waitCh), (<-chan error)(errCh))
 	s.client.On("ContainerLogs", ctx, cid).Return(
@@ -526,7 +540,8 @@ func (s *GateSuite) TestRunGateEnabledWritesPolicyFileAndBindsIt() {
 	require.Equal(s.T(), "1", findEnv(captured.Env, "LOOP_GATE_ENABLED"))
 	require.Equal(s.T(), "/etc/loop/gate-policy.json", findEnv(captured.Env, "LOOP_GATE_POLICY_FILE"))
 	require.Equal(s.T(), "ch-1", findEnv(captured.Env, "LOOP_CHANNEL_ID"))
-	token := findEnv(captured.Env, "LOOP_GATE_TOKEN")
+	require.Empty(s.T(), findEnv(captured.Env, "LOOP_GATE_TOKEN"), "the token travels as a file, not env")
+	token := copiedFiles(s.T(), s.client)["run/loop/gate-token"].data
 	require.Len(s.T(), token, 64)
 	require.Equal(s.T(), "loop-ch-1-bbbbbb", findEnv(captured.Env, "LOOP_CONTAINER_ID"))
 

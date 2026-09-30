@@ -23,6 +23,7 @@ End-to-end walkthrough — a guided tour of every panel, recorded in one continu
 - [**Agent**](agent.md) — Agent request/response types, session management, streaming callbacks
 - [**Multi-Agent**](multi-agent.md) — Multiple Claude Code agents in one channel, MCP discovery, inter-agent messaging
 - [**Containers**](containers.md) — Docker container lifecycle, container registry with status tracking, environment, mounts, MCP config, scheduled removal
+- [**Security Model**](security.md) — Owner vs agent, API tokens, content links, gate tokens, host-side file and git hardening, project config trust
 - [**Security Gate**](gates.md) — Seccomp filter + Docker HTTP proxy for agent containers, default policy, approval UI, project-merge semantics
 - [**MCP Server**](mcpserver.md) — MCP tools for task scheduling, communication, and memory search
 - [**Browser**](browser.md) — Chrome sidecar containers, CDP client, screencast, input dispatch, tabs

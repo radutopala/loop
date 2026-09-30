@@ -288,6 +288,45 @@ func (s *ConfigSuite) TestResolvePromptFileReadError() {
 	require.Contains(s.T(), err.Error(), "reading prompt file")
 }
 
+func (s *ConfigSuite) TestResolvePromptPathEscapesBaseDir() {
+	tests := []struct {
+		name       string
+		promptPath string
+	}{
+		{"parent traversal", "../config.json"},
+		{"deep traversal", "a/../../../etc/passwd"},
+		{"sibling prefix", "../templates-evil/x.md"},
+		{"base dir itself", "."},
+	}
+	for _, tc := range tests {
+		s.Run(tc.name, func() {
+			read := false
+			readFile := func(_ string) ([]byte, error) {
+				read = true
+				return []byte("x"), nil
+			}
+			tmpl := &TaskTemplate{Name: "test", PromptPath: tc.promptPath}
+			_, err := tmpl.ResolvePrompt("/loop", readFile)
+			require.Error(s.T(), err)
+			require.Contains(s.T(), err.Error(), "escapes")
+			require.False(s.T(), read)
+		})
+	}
+}
+
+func (s *ConfigSuite) TestResolvePromptPathNestedInsideBaseDir() {
+	readFile := func(path string) ([]byte, error) {
+		if path == "/loop/templates/sub/daily.md" {
+			return []byte("nested"), nil
+		}
+		return nil, os.ErrNotExist
+	}
+	tmpl := &TaskTemplate{Name: "test", PromptPath: "sub/../sub/daily.md"}
+	prompt, err := tmpl.ResolvePrompt("/loop", readFile)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "nested", prompt)
+}
+
 func (s *ConfigSuite) TestLoadProjectConfigTemplatesWithPromptPath() {
 	s.setupProjectReadFile(`{
 		"task_templates": [

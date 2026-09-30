@@ -472,6 +472,25 @@ func (s *MainSuite) TestOnboardLocalWithOwnerID() {
 	require.Contains(s.T(), content, `"permissions": {`)
 	require.Contains(s.T(), content, `"U99887766"`)
 	require.NotContains(s.T(), content, `//  "owners"`)
+
+	st, err := config.NewTrustStoreIn(s.app.userConfigDir).Status(tmpDir)
+	require.NoError(s.T(), err)
+	require.True(s.T(), st.Trusted, "the permissions onboarding wrote apply")
+}
+
+func (s *MainSuite) TestOnboardLocalTrustFailureWarns() {
+	tmpDir := s.T().TempDir()
+	sys := newPassthroughMock()
+	s.app.sys = sys
+	sys.Override("Getwd").Return(tmpDir, nil)
+	s.app.ensureAllChannelsFn = func(_, _ string) ([]ensureResult, error) {
+		return []ensureResult{{Platform: "local", ChannelID: "ch-test", Created: true}}, nil
+	}
+	s.app.userConfigDir = func() (string, error) { return "", errors.New("no config dir") }
+
+	// Onboarding still succeeds; the project config waits for review.
+	require.NoError(s.T(), s.app.onboardLocal("http://localhost:8222", "U99887766", ""))
+	require.FileExists(s.T(), filepath.Join(tmpDir, ".loop", "config.json"))
 }
 
 func (s *MainSuite) TestOnboardLocalCmdWithOwnerIDFlag() {

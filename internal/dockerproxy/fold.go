@@ -1,6 +1,8 @@
 package dockerproxy
 
 import (
+	"bytes"
+	"encoding/json"
 	"errors"
 	"strings"
 )
@@ -13,6 +15,10 @@ import (
 // the decoded map has lost.
 
 var errAmbiguousKeys = errors.New("ambiguous request body: keys differ only in case")
+
+// errDuplicateKeys rejects a body naming one key twice in an object (see
+// hasDuplicateKeys).
+var errDuplicateKeys = errors.New("ambiguous request body: duplicate keys")
 
 // foldKey returns the key of m equal to key under case folding.
 func foldKey(m map[string]any, key string) (string, bool) {
@@ -70,5 +76,50 @@ func hasFoldDuplicates(v any, names map[string]bool) bool {
 func addFoldNames(set map[string]bool, names ...string) {
 	for _, n := range names {
 		set[strings.ToLower(n)] = true
+	}
+}
+
+// jsonFrame is one open object or array of a token scan.
+type jsonFrame struct {
+	keys    map[string]bool // nil for an array
+	wantKey bool
+}
+
+// hasDuplicateKeys reports whether any object in the JSON document buf holds
+// the same key twice. The decoded map keeps only the last copy, as the daemon
+// does today; rejecting the body keeps a rule from ever judging one copy
+// while the daemon acts on the other. buf must already have parsed; a token
+// error ends the scan with false.
+func hasDuplicateKeys(buf []byte) bool {
+	dec := json.NewDecoder(bytes.NewReader(buf))
+	var stack []*jsonFrame
+	for {
+		tok, err := dec.Token()
+		if err != nil {
+			return false
+		}
+		if d, ok := tok.(json.Delim); ok && (d == '}' || d == ']') {
+			stack = stack[:len(stack)-1]
+			continue
+		}
+		if len(stack) > 0 && stack[len(stack)-1].keys != nil {
+			top := stack[len(stack)-1]
+			if top.wantKey {
+				k, _ := tok.(string)
+				if top.keys[k] {
+					return true
+				}
+				top.keys[k] = true
+				top.wantKey = false
+				continue
+			}
+			top.wantKey = true
+		}
+		switch tok {
+		case json.Delim('{'):
+			stack = append(stack, &jsonFrame{keys: map[string]bool{}, wantKey: true})
+		case json.Delim('['):
+			stack = append(stack, &jsonFrame{})
+		}
 	}
 }

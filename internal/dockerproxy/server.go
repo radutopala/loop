@@ -13,6 +13,7 @@ import (
 	"net/http/httputil"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/radutopala/loop/internal/agentgate"
@@ -64,6 +65,10 @@ type Server struct {
 	// foldNames are the lower-cased body keys the body rules and the
 	// nested-socket rewrite read (see fold.go).
 	foldNames map[string]bool
+	// owned holds the IDs and names of the containers created through this
+	// proxy (see recordCreated).
+	ownedMu sync.Mutex
+	owned   map[string]bool
 }
 
 // ServerConfig groups the dependencies a Server needs. All fields are required
@@ -101,6 +106,12 @@ type ServerConfig struct {
 	// Desktop reports a volume's device resolved, so ensureBindVolume
 	// accepts this path too.
 	BindHostPaths map[string]string
+	// CheckOwnership has the proxy ask the daemon about the objects a
+	// request names: the container a per-container request acts on, which
+	// must not be another channel's (see otherChannelContainer), and the
+	// volumes a create mounts by name (see approveDeviceVolumes). Only tests
+	// whose fake daemon can't answer those lookups leave it off.
+	CheckOwnership bool
 }
 
 // NewServer constructs a Server. CID / ChannelID / Policy / Approver / DockerSock
@@ -154,7 +165,7 @@ func NewServer(cfg ServerConfig) (*Server, error) {
 	addFoldNames(foldNames, detailsFoldNames...)
 	cfg.BindRoots = sortRoots(cfg.BindRoots)
 	client := &http.Client{Transport: transport, Timeout: 30 * time.Second}
-	s := &Server{cfg: cfg, policy: cfg.Policy, upstream: rp, client: client, foldNames: foldNames}
+	s := &Server{cfg: cfg, policy: cfg.Policy, upstream: rp, client: client, foldNames: foldNames, owned: map[string]bool{}}
 	rp.ModifyResponse = s.modifyResponse
 	return s, nil
 }
@@ -189,7 +200,29 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	canonicalPath := stripAPIVersionPrefix(r.URL.Path)
 
 	// HTTP rule match.
-	httpRes := s.policy.MatchHTTP(r.Method, canonicalPath)
+	httpRes := s.ownedAttach(s.policy.MatchHTTP(r.Method, canonicalPath), canonicalPath)
+
+	// Another channel's agent container is off-limits, whatever the rules.
+	// One this agent created is its own, whatever its label says: a loop
+	// daemon run inside the agent labels its containers with its own
+	// channels.
+	if id := targetContainer(r.Method, canonicalPath, r.URL.Query()); id != "" && s.cfg.CheckOwnership && !s.ownsContainer(id) {
+		if msg := s.otherChannelContainer(r.Context(), id); msg != "" {
+			s.audit(AuditEntry{
+				Ts:       start,
+				CID:      s.cfg.CID,
+				Channel:  s.cfg.ChannelID,
+				Method:   r.Method,
+				Path:     canonicalPath,
+				Decision: "deny",
+				RuleID:   "other-channel",
+				Reason:   msg,
+				Latency:  s.cfg.Now().Sub(start),
+			})
+			http.Error(w, msg, http.StatusForbidden)
+			return
+		}
+	}
 
 	// Docker socket mounts are rewritten to the nested proxy socket before
 	// the body rules see the request, so the rules judge what reaches the
@@ -325,6 +358,12 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				Latency:  s.cfg.Now().Sub(start),
 			})
 		}
+	}
+
+	// A volume mounted by name can be bound to a host path just like a
+	// bind: ask when it is, as the body rules do for inline driver options.
+	if r.Method == http.MethodPost && canonicalPath == "/containers/create" && s.cfg.CheckOwnership && !s.approveDeviceVolumes(w, r, start, canonicalPath, httpRes.RuleID, decodedBody) {
+		return
 	}
 
 	// Binds are pinned once the request is approved; the rules and the
@@ -482,21 +521,34 @@ func (s *Server) evaluateBody(r *http.Request, canonicalPath string) (BodyCheckR
 	if err := json.Unmarshal(buf, &decoded); err != nil {
 		return BodyCheckResult{}, nil, fmt.Errorf("parse body: %w", err)
 	}
+	if hasDuplicateKeys(buf) {
+		return BodyCheckResult{}, nil, errDuplicateKeys
+	}
 	if hasFoldDuplicates(decoded, s.foldNames) {
 		return BodyCheckResult{}, nil, errAmbiguousKeys
 	}
 	return s.policy.CheckBody(r.Method, canonicalPath, r.Header.Get("Content-Type"), decoded), decoded, nil
 }
 
-// normalizeCachePath collapses dynamic URL segments (container IDs, image IDs,
-// exec IDs) so a "session" approval covers every instance of the same action.
-// e.g. /containers/abc123/exec → /containers/*/exec
+// normalizeCachePath collapses dynamic URL segments (image IDs, exec IDs) so
+// a "session" approval covers every instance of the same action, e.g.
+// /exec/abc123…/start → /exec/*/start. The container a per-container path
+// names is kept: "allow exec for the session" into the agent's own build
+// container must not also cover the user's database container.
 var (
 	dynamicSegmentMidRe = regexp.MustCompile(`/[0-9a-f]{12,}/`)
 	dynamicSegmentEndRe = regexp.MustCompile(`/[0-9a-f]{12,}$`)
 )
 
 func normalizeCachePath(path string) string {
+	if m := containerPathRe.FindStringSubmatch(path); m != nil && m[2] != "" {
+		return "/containers/" + m[1] + collapseDynamicSegments(m[2])
+	}
+	return collapseDynamicSegments(path)
+}
+
+// collapseDynamicSegments replaces every hex segment of 12+ characters with *.
+func collapseDynamicSegments(path string) string {
 	// Apply mid-path substitution repeatedly to handle adjacent hex segments.
 	for {
 		replaced := dynamicSegmentMidRe.ReplaceAllString(path, "/*/")

@@ -91,7 +91,7 @@ func evalAtLeaf(c compiledJSONCheck, value any) bool {
 			return c.sourcePathIn(foldString(m, "Source"))
 		}
 		return stringMatch(value, func(s string) bool {
-			return c.sourcePathIn(extractSourcePath(s))
+			return c.sourcePathIn(c.sourceOf(s))
 		})
 	case "source_path_not_in":
 		if m, ok := value.(map[string]any); ok {
@@ -99,10 +99,50 @@ func evalAtLeaf(c compiledJSONCheck, value any) bool {
 			return c.sourcePathNotIn(foldString(m, "Source"), ro == true)
 		}
 		return stringMatch(value, func(s string) bool {
-			return c.sourcePathNotIn(extractSourcePath(s), bindReadOnly(s))
+			return c.sourcePathNotIn(c.sourceOf(s), c.isBindString() && bindReadOnly(s))
+		})
+	case "path_in":
+		if m, ok := value.(map[string]any); ok {
+			return c.pathIn(foldString(m, "Source"))
+		}
+		return stringMatch(value, func(s string) bool {
+			return c.pathIn(c.sourceOf(s))
 		})
 	}
 	return false
+}
+
+// isBindString reports whether the check reads "source:target[:mode]" bind
+// strings: its path ends in a wildcard (HostConfig.Binds[*]). Any other
+// string leaf, such as a long-form mount's Source or a volume's device
+// option, is a bare path that may itself contain ':'.
+func (c compiledJSONCheck) isBindString() bool {
+	return len(c.segments) > 0 && c.segments[len(c.segments)-1].wildcard
+}
+
+// sourceOf returns the host path a string leaf names: the source side of a
+// bind string, or the whole trimmed value otherwise.
+func (c compiledJSONCheck) sourceOf(s string) string {
+	if c.isBindString() {
+		return extractSourcePath(s)
+	}
+	return strings.TrimSpace(s)
+}
+
+// pathIn reports whether a path matches the check's regexes, literally,
+// cleaned, or once symlinks are resolved. Unlike sourcePathIn it never fires
+// on a path it can't resolve: it guards specific dirs, and a path outside the
+// agent's mounts (which is what fails to resolve) isn't one of them by
+// itself. The broad deny rules already refuse those.
+func (c compiledJSONCheck) pathIn(src string) bool {
+	if matchAny(c.valuesRe, src) || matchAny(c.valuesRe, path.Clean(src)) {
+		return true
+	}
+	if c.resolveSymlinks == nil || !strings.HasPrefix(src, "/") {
+		return false
+	}
+	r, err := c.resolveSymlinks(src)
+	return err == nil && matchAny(c.valuesRe, path.Clean(r))
 }
 
 // sourcePathIn reports whether a bind source matches the check's regexes,

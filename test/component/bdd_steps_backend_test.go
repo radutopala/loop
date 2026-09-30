@@ -20,6 +20,7 @@ import (
 	"github.com/cucumber/godog"
 	"github.com/gorilla/websocket"
 
+	"github.com/radutopala/loop/internal/apiauth"
 	"github.com/radutopala/loop/internal/db"
 	"github.com/radutopala/loop/internal/types"
 )
@@ -948,7 +949,7 @@ func (tc *TestContext) createTicketViaAPI(title, ticketType string) error {
 
 func (tc *TestContext) connectEventsWS() error {
 	wsURL := strings.Replace(tc.BaseURL, "http://", "ws://", 1) + "/api/ws?channels=bdd-test"
-	conn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
+	conn, _, err := websocket.DefaultDialer.Dial(wsURL, apiauth.AuthHeader(apiToken()))
 	if err != nil {
 		return fmt.Errorf("connecting to WebSocket: %w", err)
 	}

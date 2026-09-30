@@ -457,7 +457,15 @@ func (s *Server) applyLearnConfig(ctx context.Context, ch *db.Channel, v any) er
 		}
 		path, item = []string{"mounts"}, v.Mount
 	}
-	return hjsonedit.Append(s.sys, configPath, path, item)
+	before, after, err := hjsonedit.AppendData(s.sys, configPath, path, item)
+	if err != nil {
+		return err
+	}
+	if s.projectTrust != nil {
+		// The owner reviewed the proposal and applied it.
+		s.keepProjectTrust(dir, before, after)
+	}
+	return nil
 }
 
 // hasGateRule reports whether gate already has rule (a *types.PathRule,

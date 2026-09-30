@@ -1,10 +1,10 @@
-import { marked } from "marked";
 import { type ReactNode, useCallback, useEffect, useMemo, useState } from "react";
 import { fetchReadme } from "../../api/loopApi";
 import { useTheme } from "../../ThemeContext";
 import type { ColorPalette } from "../../theme";
 import { fonts } from "../../theme";
 import type { Channel } from "../../types";
+import { renderMarkdownSafe } from "../../utils/markdownSafe";
 import { storageGet, storageSet } from "../../utils/storage";
 import { ChannelHeaderInfo } from "../layout/ChannelHeaderInfo";
 
@@ -312,7 +312,7 @@ export function MarkdownFilePanel({ dirPath, branch, channel, ...props }: Markdo
 
   const html = useMemo(() => {
     if (!content) return "";
-    return marked.parse(content, { async: false }) as string;
+    return renderMarkdownSafe(content);
   }, [content]);
 
   return (

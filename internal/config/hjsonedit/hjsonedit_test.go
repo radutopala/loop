@@ -223,3 +223,17 @@ func (s *HJSONEditSuite) TestMarshalError() {
 	require.ErrorContains(s.T(), err, "json: unsupported type")
 	require.Equal(s.T(), "{}", s.read())
 }
+
+func (s *HJSONEditSuite) TestAppendData() {
+	before, after, err := AppendData(osutil.RealSystem{}, s.path, []string{"mounts"}, "/a:/a")
+	require.NoError(s.T(), err)
+	require.Nil(s.T(), before, "no file before")
+	require.Equal(s.T(), s.read(), string(after))
+
+	before, after, err = AppendData(osutil.RealSystem{}, s.path, []string{"mounts"}, "/b:/b")
+	require.NoError(s.T(), err)
+	require.Contains(s.T(), string(before), "/a:/a")
+	require.NotContains(s.T(), string(before), "/b:/b")
+	require.Equal(s.T(), s.read(), string(after))
+	require.Contains(s.T(), string(after), "/b:/b")
+}

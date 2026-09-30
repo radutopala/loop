@@ -747,7 +747,8 @@ func (s *ServerSuite) TestStripAPIVersionPrefix() {
 }
 
 func (s *ServerSuite) TestNormalizeCachePath() {
-	require.Equal(s.T(), "/containers/*/exec", normalizeCachePath("/containers/abc123def456/exec"))
+	require.Equal(s.T(), "/containers/abc123def456/exec", normalizeCachePath("/containers/abc123def456/exec"))
+	require.Equal(s.T(), "/containers/abc123def456/attach/*", normalizeCachePath("/containers/abc123def456/attach/fedcba987654"))
 	require.Equal(s.T(), "/containers/*", normalizeCachePath("/containers/abc123def456"))
 	require.Equal(s.T(), "/exec/*/start", normalizeCachePath("/exec/fedcba987654/start"))
 	require.Equal(s.T(), "/containers/json", normalizeCachePath("/containers/json"))

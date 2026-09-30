@@ -131,6 +131,26 @@ export function useEditorState(channelId: string, options?: UseEditorStateOption
   // Counter bumped on agent refresh of the active image tab; appended as `?t=`
   // to the URL so the browser re-fetches instead of serving the cached image.
   const imageVersionRef = useRef(0);
+  // Content links are minted asynchronously; a newer show/clear wins over a
+  // link still being minted for an earlier tab.
+  const mediaReqRef = useRef(0);
+  const showMedia = useCallback(
+    (rp: string, ri: number) => {
+      const req = ++mediaReqRef.current;
+      buildFileUrl(channelId, rp, ri, imageVersionRef.current)
+        .then((url) => {
+          if (mediaReqRef.current === req) setImageURL(url);
+        })
+        .catch(() => {
+          if (mediaReqRef.current === req) setImageURL(null);
+        });
+    },
+    [channelId],
+  );
+  const clearMedia = useCallback(() => {
+    mediaReqRef.current++;
+    setImageURL(null);
+  }, []);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [gitChanges, setGitChanges] = useState<GitLineChanges>(emptyGitLineChanges);
@@ -212,7 +232,7 @@ export function useEditorState(channelId: string, options?: UseEditorStateOption
     if (!selectedPath) return;
     const { rootIndex: ri, relativePath: rp } = parsePathKey(selectedPath);
     if (isMediaPath(rp)) {
-      setImageURL(buildFileUrl(channelId, rp, ri, imageVersionRef.current));
+      showMedia(rp, ri);
       setFileContent(null);
       setIsBinary(false);
       return;
@@ -331,12 +351,12 @@ export function useEditorState(channelId: string, options?: UseEditorStateOption
       setIsBinary(false);
       const { rootIndex: ri, relativePath: rp } = parsePathKey(pathKey);
       if (isMediaPath(rp)) {
-        setImageURL(buildFileUrl(channelId, rp, ri, imageVersionRef.current));
+        showMedia(rp, ri);
         setFileContent(null);
         setLoading(false);
         return;
       }
-      setImageURL(null);
+      clearMedia();
       const cached = dirtyContentRef.current.get(pathKey);
       if (cached !== undefined) {
         setFileContent(cached);
@@ -462,7 +482,7 @@ export function useEditorState(channelId: string, options?: UseEditorStateOption
             setSelectedPath(null);
             setFileContent(null);
             setIsBinary(false);
-            setImageURL(null);
+            clearMedia();
             setError(null);
           }
         }
@@ -489,7 +509,7 @@ export function useEditorState(channelId: string, options?: UseEditorStateOption
       const { rootIndex: ri, relativePath: rp } = parsePathKey(pathKey);
       if (isMediaPath(rp)) {
         imageVersionRef.current++;
-        setImageURL(buildFileUrl(channelId, rp, ri, imageVersionRef.current));
+        showMedia(rp, ri);
         return;
       }
       try {
@@ -569,7 +589,7 @@ export function useEditorState(channelId: string, options?: UseEditorStateOption
                 setSelectedPath(null);
                 setFileContent(null);
                 setIsBinary(false);
-                setImageURL(null);
+                clearMedia();
                 setError(null);
               }
             }
@@ -627,7 +647,7 @@ export function useEditorState(channelId: string, options?: UseEditorStateOption
                 setSelectedPath(null);
                 setFileContent(null);
                 setIsBinary(false);
-                setImageURL(null);
+                clearMedia();
                 setError(null);
               }
             }
@@ -682,7 +702,7 @@ export function useEditorState(channelId: string, options?: UseEditorStateOption
       const { rootIndex: ri, relativePath: rp } = parsePathKey(pathKey);
       if (isMediaPath(rp)) {
         imageVersionRef.current++;
-        setImageURL(buildFileUrl(channelId, rp, ri, imageVersionRef.current));
+        showMedia(rp, ri);
         return;
       }
       fetchFileContent(channelId, rp, ri)
@@ -722,7 +742,7 @@ export function useEditorState(channelId: string, options?: UseEditorStateOption
       if (isMediaPath(rp)) {
         if (pathKey === selectedPathRef.current) {
           imageVersionRef.current++;
-          setImageURL(buildFileUrl(channelId, rp, ri, imageVersionRef.current));
+          showMedia(rp, ri);
         }
         return;
       }

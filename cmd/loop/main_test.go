@@ -434,6 +434,9 @@ func TestMainSuite(t *testing.T) {
 func (s *MainSuite) SetupTest() {
 	s.app = newApp()
 	s.app.loadProjectMemoryPaths = func(_ string) []string { return nil }
+	// serve writes the owner API token under the user config dir.
+	cfgDir := s.T().TempDir()
+	s.app.userConfigDir = func() (string, error) { return cfgDir, nil }
 	// Shrink the review-poll cadences so polling-loop tests don't burn
 	// real seconds waiting between retries. Production values are tuned
 	// for a daemon that takes seconds to recover; tests use ms.
@@ -570,18 +573,20 @@ func (s *MainSuite) TestNewRootCmd() {
 	require.True(s.T(), cmd.HasSubCommands())
 
 	want := map[string]bool{
-		"serve":          false,
-		"mcp":            false,
-		"daemon:start":   false,
-		"daemon:stop":    false,
-		"daemon:restart": false,
-		"daemon:status":  false,
-		"onboard:global": false,
-		"onboard:local":  false,
-		"version":        false,
-		"readme":         false,
-		"update":         false,
-		"mcp-browser":    false,
+		"serve":            false,
+		"mcp":              false,
+		"daemon:start":     false,
+		"daemon:stop":      false,
+		"daemon:restart":   false,
+		"daemon:status":    false,
+		"onboard:global":   false,
+		"onboard:local":    false,
+		"version":          false,
+		"readme":           false,
+		"update":           false,
+		"mcp-browser":      false,
+		"api:rotate-token": false,
+		"app:url":          false,
 	}
 	for _, sub := range cmd.Commands() {
 		if _, ok := want[sub.Use]; ok {

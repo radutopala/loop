@@ -9,6 +9,7 @@ import type { Channel, DaemonInfo, ImageBuildStatusData, ImageStatusResponse, Im
 import { logErr } from "../../utils/log";
 import { ChannelHeaderInfo } from "../layout/ChannelHeaderInfo";
 import { ConfigForm, type ConfigFormHandle, getSections } from "./ConfigForm";
+import { ProjectTrustNotice } from "./ProjectTrustNotice";
 
 // formatBytes renders a byte count as a compact human-readable size.
 export function formatBytes(n: number): string {
@@ -47,6 +48,10 @@ interface SettingsProps {
   imageUpdateAvailable?: ImageUpdateAvailableData | null;
   onRebuildImage?: () => void;
   onConfigDirtyChange?: (dirty: boolean) => void;
+  /** The section to open on; Desktop when unset. */
+  initialSection?: string | null;
+  /** Called after the owner trusts the project config. */
+  onProjectTrusted?: () => void;
 }
 
 export function Settings({
@@ -62,6 +67,8 @@ export function Settings({
   imageUpdateAvailable,
   onRebuildImage,
   onConfigDirtyChange,
+  initialSection,
+  onProjectTrusted,
 }: SettingsProps) {
   const { colors, setThemeName, setFontSizes, setIslands } = useTheme();
   const [daemonInfo, setDaemonInfo] = useState<DaemonInfo | null>(null);
@@ -76,7 +83,7 @@ export function Settings({
   const configDirty = globalDirty || projectDirty;
   const [showDirtyModal, setShowDirtyModal] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [activeSection, setActiveSection] = useState("Desktop");
+  const [activeSection, setActiveSection] = useState(initialSection ?? "Desktop");
   // Scope per-kind so an in-flight "Restore Workflows" can't bleed into the
   // Shortcuts bar (or vice versa) when the user switches tabs mid-flight.
   // A single shared `restoring`/`restoreMsg` would render the Shortcuts bar
@@ -459,6 +466,10 @@ export function Settings({
                     visibleSection={activeSection}
                   />
                 </>
+              )}
+
+              {(activeSection === "__project_json__" || activeSection.startsWith("__proj_")) && projectConfig && channelId && (
+                <ProjectTrustNotice channelId={channelId} colors={colors} refreshKey={projectConfig} onTrusted={onProjectTrusted} />
               )}
 
               {activeSection === "__project_json__" && projectConfig && (

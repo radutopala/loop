@@ -2,7 +2,7 @@ import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { app, BrowserWindow, dialog, ipcMain, Menu, shell } from "electron";
 import { autoUpdater } from "electron-updater";
 
@@ -14,6 +14,27 @@ app.setName("Loop");
 
 function loopDir(): string {
   return path.join(os.homedir(), ".loop");
+}
+
+/** The owner API token file the daemon writes (Go's os.UserConfigDir()/loop,
+ *  which is Electron's appData on every platform). */
+function apiTokenPath(): string {
+  return path.join(app.getPath("appData"), "loop", "api-token");
+}
+
+/** Read the owner API token fresh, so a rotation is picked up. "" before the
+ *  daemon has written it. */
+function readApiToken(): string {
+  try {
+    return fs.readFileSync(apiTokenPath(), "utf-8").trim();
+  } catch {
+    return "";
+  }
+}
+
+function authHeaders(): Record<string, string> {
+  const tok = readApiToken();
+  return tok ? { Authorization: `Bearer ${tok}` } : {};
 }
 
 function loopConfigPath(): string {
@@ -291,6 +312,34 @@ if (process.platform === "darwin") {
 
 const VITE_DEV_SERVER_URL = process.env.VITE_DEV_SERVER_URL;
 
+// The packaged app's page, and the URL the window may show: the dev server
+// in dev, the file URL of that page otherwise.
+const appEntryFile = path.join(__dirname, "../dist/index.html");
+const appEntryURL = VITE_DEV_SERVER_URL || pathToFileURL(appEntryFile).href;
+
+/** Whether url is an http(s) or mailto URL, the only kinds handed to the OS. */
+function isExternalURL(url: string): boolean {
+  try {
+    const { protocol } = new URL(url);
+    return protocol === "http:" || protocol === "https:" || protocol === "mailto:";
+  } catch {
+    return false;
+  }
+}
+
+/** Whether url is the app's own page: the entry URL, whatever its hash (the app routes by hash). */
+function isAppEntryURL(url: string, entryURL: string): boolean {
+  try {
+    const target = new URL(url);
+    const entry = new URL(entryURL);
+    target.hash = "";
+    entry.hash = "";
+    return target.href === entry.href;
+  } catch {
+    return false;
+  }
+}
+
 function parseChannelId(url: string): string {
   // URL format: loop://channel/<channel-id>
   try {
@@ -334,7 +383,7 @@ function createWindow(hash?: string): BrowserWindow {
   if (VITE_DEV_SERVER_URL) {
     win.loadURL(`${VITE_DEV_SERVER_URL}${fragment}`);
   } else {
-    win.loadFile(path.join(__dirname, "../dist/index.html"), {
+    win.loadFile(appEntryFile, {
       hash: hash || undefined,
     });
   }
@@ -347,38 +396,23 @@ function createWindow(hash?: string): BrowserWindow {
     }
   });
 
-  // Open external links (http/https) in the native browser instead of Electron.
-  // Also deny `about:blank` popups so that any caller doing `window.open()` with
-  // no URL (e.g. the noopener trick) does not spawn an in-app Loop window.
+  // No in-app popups: external links (http/https/mailto) go to the OS,
+  // and everything else (about:blank, file:, custom schemes, …) is denied.
   win.webContents.setWindowOpenHandler(({ url }) => {
-    if (url.startsWith("http://") || url.startsWith("https://")) {
-      shell.openExternal(url);
-      return { action: "deny" };
-    }
-    if (url === "" || url === "about:blank") {
-      return { action: "deny" };
-    }
-    return { action: "allow" };
+    if (isExternalURL(url)) shell.openExternal(url);
+    return { action: "deny" };
   });
 
-  // In-window navigation guard: plain `<a href="https://…">` clicks (e.g. from
-  // the README rendered via dangerouslySetInnerHTML) would otherwise replace
-  // the React app with the external page, with no way back. Redirect them to
-  // the OS browser. Navigations to our own app origin (dev server or file://
-  // dist) are allowed so reload, hash, and same-origin link cases still work.
+  // In-window navigation guard: the window only ever shows the app itself.
+  // Plain `<a href="https://…">` clicks (e.g. from the README rendered via
+  // dangerouslySetInnerHTML) would otherwise replace the React app with the
+  // external page, with no way back, so they go to the OS browser. Any other
+  // navigation away from the app entry (file:, custom schemes, other dev
+  // server paths, …) is blocked. Hash changes are in-page and never get here.
   win.webContents.on("will-navigate", (event, url) => {
-    const currentURL = win.webContents.getURL();
-    try {
-      const target = new URL(url);
-      const current = currentURL ? new URL(currentURL) : null;
-      if (current && target.origin === current.origin) return;
-      if (target.protocol === "http:" || target.protocol === "https:") {
-        event.preventDefault();
-        shell.openExternal(url);
-      }
-    } catch {
-      // Not a parseable URL — let Electron handle it normally.
-    }
+    if (isAppEntryURL(url, appEntryURL)) return;
+    event.preventDefault();
+    if (isExternalURL(url)) shell.openExternal(url);
   });
 
   return win;
@@ -429,6 +463,37 @@ app.on("second-instance", (_event, argv) => {
     win.focus();
   }
 });
+
+/** What `loop api:rotate-token` does, from the menu: the daemon writes a new
+ *  owner token and switches to it. The app and the CLI read it again on their
+ *  next 401; browser tabs opened with a `#loop_token=` link need a new link. */
+async function rotateApiToken() {
+  const win = getFocusedOrLastWindow();
+  const opts: Electron.MessageBoxOptions = {
+    type: "warning",
+    message: "Rotate the API token?",
+    detail: "The daemon switches to a new token at once. The desktop app and the CLI pick it up on their own; browser tabs opened with a loop_token link need a new one from `loop app:url`.",
+    buttons: ["Rotate", "Cancel"],
+    defaultId: 1,
+    cancelId: 1,
+  };
+  const { response } = win ? await dialog.showMessageBox(win, opts) : await dialog.showMessageBox(opts);
+  if (response !== 0) return;
+  try {
+    const res = await fetch(`${resolveApiUrl()}/api/auth/rotate`, { method: "POST", headers: authHeaders(), signal: AbortSignal.timeout(10_000) });
+    if (res.status !== 204) throw new Error(`${res.status} ${res.statusText}: ${(await res.text()).trim()}`);
+  } catch (err) {
+    const running = await isDaemonRunning();
+    dialog.showMessageBox({
+      type: "error",
+      message: "Couldn't rotate the API token",
+      detail: running ? String(err) : "The daemon isn't running. Start it, or run `loop api:rotate-token`.",
+      buttons: ["OK"],
+    });
+    return;
+  }
+  dialog.showMessageBox({ message: "API token rotated", buttons: ["OK"] });
+}
 
 function buildMenu() {
   const isMac = process.platform === "darwin";
@@ -516,7 +581,6 @@ function buildMenu() {
       submenu: [
         { role: "reload" },
         { role: "forceReload" },
-        { role: "toggleDevTools" },
         { type: "separator" },
         { role: "resetZoom" },
         { role: "zoomIn" },
@@ -524,6 +588,10 @@ function buildMenu() {
         { type: "separator" },
         { role: "togglefullscreen" },
       ],
+    },
+    {
+      label: "Developer",
+      submenu: [{ role: "toggleDevTools" }, { type: "separator" }, { label: "Rotate API Token…", click: () => void rotateApiToken() }],
     },
     {
       role: "windowMenu",
@@ -786,7 +854,7 @@ ipcMain.handle("install-update", async () => {
     const url = resolveApiUrl();
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 30_000);
-    await fetch(`${url}/api/image`, { method: "DELETE", signal: controller.signal });
+    await fetch(`${url}/api/image`, { method: "DELETE", headers: authHeaders(), signal: controller.signal });
     clearTimeout(timeout);
   } catch {
     // Best-effort — image will be stale but functional
@@ -831,6 +899,8 @@ ipcMain.handle("onboard-local", async (_event, dirPath: string) => {
 ipcMain.handle("get-api-url", () => {
   return resolveApiUrl();
 });
+
+ipcMain.handle("get-api-token", () => readApiToken());
 
 ipcMain.handle("get-daemon-info", async () => {
   return {

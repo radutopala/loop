@@ -273,6 +273,20 @@ func (s *ServerSuite) TestResolveGHUserNoLoaders() {
 	require.Equal(s.T(), "", c.ghUser("/tmp", ""))
 }
 
+// TestConfigResolverDefaultLoaders: unset loaders fall back to the config
+// package's, which return the base config when there's no project file.
+func (s *ServerSuite) TestConfigResolverDefaultLoaders() {
+	c := configResolver{}
+	dir := s.T().TempDir()
+	base := &config.Config{ClaudeModel: "base"}
+	cfg, err := c.projectLoader()(dir, base)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "base", cfg.ClaudeModel)
+	cfg, err = c.worktreeLoader()(dir, "", base)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "base", cfg.ClaudeModel)
+}
+
 func (s *ServerSuite) TestResolveGHUserLoadConfigError() {
 	c := configResolver{
 		load: func() (*config.Config, error) { return nil, errors.New("boom") },

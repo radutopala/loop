@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"net/http"
 	"os"
@@ -514,20 +515,17 @@ func (t *terminalWSConn) handleCreateHost(ctx context.Context, msg wsControlMess
 	// Multi-root workspaces: open the shell in the selected extra root.
 	dirPath = t.resolveRootDir(ctx, msg.ChannelID, msg.RootIndex, dirPath)
 
-	if len(msg.Cmd) > maxCmdArgs {
-		t.sendError("cmd exceeds maximum arguments", wsErrCodeInvalidInput)
+	// A host session is always the user's login shell. The UI never asks
+	// for anything else, and a caller-chosen argv would be host command
+	// execution in one message.
+	if len(msg.Cmd) > 0 {
+		t.sendError("host sessions don't take a cmd", wsErrCodeInvalidInput)
 		return
-	}
-	for _, arg := range msg.Cmd {
-		if arg == "" {
-			t.sendError("cmd contains empty argument", wsErrCodeInvalidInput)
-			return
-		}
 	}
 
 	t.detachCurrent()
 
-	sid, output, history, done, err := t.hostManager.CreateSession(ctx, dirPath, msg.Cmd)
+	sid, output, history, done, err := t.hostManager.CreateSession(ctx, dirPath, nil)
 	if err != nil {
 		t.sendError(err.Error(), wsErrCodeSessionFailed)
 		return
@@ -708,17 +706,18 @@ func (t *terminalWSConn) handleAttach(msg wsControlMessage) {
 	}
 	t.detachCurrent()
 
-	// Try agent manager first, then host manager.
+	// Attach through the manager the client names. Clients that don't say
+	// get the agent manager first, then the host manager.
 	var output <-chan []byte
 	var history []byte
 	var done <-chan struct{}
-	var err error
+	err := errors.New("no terminal manager for target " + msg.Target)
 	target := "agent"
 
-	if t.manager != nil {
+	if t.manager != nil && msg.Target != "host" {
 		output, history, done, err = t.manager.AttachSession(msg.SessionID)
 	}
-	if (t.manager == nil || err != nil) && t.hostManager != nil {
+	if err != nil && t.hostManager != nil && msg.Target != "agent" {
 		output, history, done, err = t.hostManager.AttachSession(msg.SessionID)
 		if err == nil {
 			target = "host"

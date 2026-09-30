@@ -159,8 +159,8 @@ func CompilePolicy(
 	return p, nil
 }
 
-// SetSymlinkResolver wires a symlink resolver into every source_path_in and
-// source_path_not_in check of every body rule. Source paths are resolved (via r) before the regex match
+// SetSymlinkResolver wires a symlink resolver into every source_path_in,
+// source_path_not_in and path_in check of every body rule. Source paths are resolved (via r) before the regex match
 // so an agent that submits a Bind whose source side is a symlink to a denied
 // path cannot bypass the rule. Pass nil to disable resolution (the original
 // behaviour — match the literal source string).
@@ -171,7 +171,7 @@ func CompilePolicy(
 func (p *Policy) SetSymlinkResolver(r SymlinkResolver) {
 	for i := range p.bodyRules {
 		for j := range p.bodyRules[i].checks {
-			if op := p.bodyRules[i].checks[j].op; op == "source_path_in" || op == "source_path_not_in" {
+			if op := p.bodyRules[i].checks[j].op; op == "source_path_in" || op == "source_path_not_in" || op == "path_in" {
 				p.bodyRules[i].checks[j].resolveSymlinks = r
 			}
 		}
@@ -302,7 +302,7 @@ func compileJSONCheck(c types.JSONCheck) (compiledJSONCheck, error) {
 	}
 	compiled := compiledJSONCheck{segments: segments, op: c.Op, values: append([]string(nil), c.Values...)}
 	switch c.Op {
-	case "source_path_in", "source_path_not_in":
+	case "source_path_in", "source_path_not_in", "path_in":
 		if compiled.valuesRe, err = compileRegexes("values", c.Values); err != nil {
 			return compiledJSONCheck{}, err
 		}

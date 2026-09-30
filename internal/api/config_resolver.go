@@ -34,23 +34,33 @@ func (c *configResolver) merged(workdir, parentDirPath string) *config.Config {
 	}
 	switch {
 	case workdir != "" && parentDirPath != "":
-		loadWorktree := c.loadWorktree
-		if loadWorktree == nil {
-			loadWorktree = config.LoadWorktreeProjectConfig
-		}
-		if pc, perr := loadWorktree(workdir, parentDirPath, cfg); perr == nil && pc != nil {
+		if pc, perr := c.worktreeLoader()(workdir, parentDirPath, cfg); perr == nil && pc != nil {
 			return pc
 		}
 	case workdir != "":
-		loadProject := c.loadProject
-		if loadProject == nil {
-			loadProject = config.LoadProjectConfig
-		}
-		if pc, perr := loadProject(workdir, cfg); perr == nil && pc != nil {
+		if pc, perr := c.projectLoader()(workdir, cfg); perr == nil && pc != nil {
 			return pc
 		}
 	}
 	return cfg
+}
+
+// projectLoader returns the project config loader, defaulting to the config
+// package's.
+func (c *configResolver) projectLoader() func(string, *config.Config) (*config.Config, error) {
+	if c.loadProject == nil {
+		return config.LoadProjectConfig
+	}
+	return c.loadProject
+}
+
+// worktreeLoader returns the worktree config loader, defaulting to the config
+// package's.
+func (c *configResolver) worktreeLoader() func(string, string, *config.Config) (*config.Config, error) {
+	if c.loadWorktree == nil {
+		return config.LoadWorktreeProjectConfig
+	}
+	return c.loadWorktree
 }
 
 // ghUser returns the gh CLI user for the channel's workdir, or "" (use gh's

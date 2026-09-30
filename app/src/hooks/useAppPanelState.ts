@@ -10,6 +10,8 @@ export interface AppPanelState {
   workflowsOpen: boolean;
   sharesOpen: boolean;
   settingsDirPath: string | null;
+  /** The Settings section to open on; null for its default. */
+  settingsSection: string | null;
   configDirty: boolean;
   pendingSelectId: string | null;
 
@@ -25,6 +27,8 @@ export interface AppPanelState {
    * the same dir path, close it instead (toggle behavior).
    */
   openConfig: (dirPath: string) => void;
+  /** Open settings on a project's config, where its trust notice is. */
+  openProjectTrust: (dirPath: string) => void;
   /**
    * Toggle settings without closing other panels first (keyboard shortcut
    * behavior: only close others when opening, not when closing).
@@ -49,6 +53,7 @@ export function useAppPanelState(): AppPanelState {
   const [workflowsOpen, setWorkflowsOpen] = useState(false);
   const [sharesOpen, setSharesOpen] = useState(false);
   const [settingsDirPath, setSettingsDirPath] = useState<string | null>(null);
+  const [settingsSection, setSettingsSection] = useState<string | null>(null);
   const [configDirty, setConfigDirty] = useState(false);
   const [pendingSelectId, setPendingSelectId] = useState<string | null>(null);
 
@@ -61,6 +66,7 @@ export function useAppPanelState(): AppPanelState {
     setSharesOpen(panel === "shares" ? (v) => !v : false);
     if (panel === "settings") {
       setSettingsDirPath(null);
+      setSettingsSection(null);
     }
   }, []);
 
@@ -72,6 +78,7 @@ export function useAppPanelState(): AppPanelState {
     setSharesOpen(false);
     setSettingsOpen((v) => !v);
     setSettingsDirPath(dirPath ?? null);
+    setSettingsSection(null);
   }, []);
 
   const openConfig = useCallback(
@@ -86,9 +93,21 @@ export function useAppPanelState(): AppPanelState {
         setSettingsDirPath(dirPath);
         return true;
       });
+      setSettingsSection(null);
     },
     [settingsDirPath],
   );
+
+  const openProjectTrust = useCallback((dirPath: string) => {
+    setReadmeOpen(false);
+    setContainersOpen(false);
+    setTasksOpen(false);
+    setWorkflowsOpen(false);
+    setSharesOpen(false);
+    setSettingsOpen(true);
+    setSettingsDirPath(dirPath);
+    setSettingsSection("__project_json__");
+  }, []);
 
   const toggleSettingsKeyboard = useCallback(() => {
     setSettingsOpen((v) => {
@@ -102,6 +121,7 @@ export function useAppPanelState(): AppPanelState {
       return !v;
     });
     setSettingsDirPath(null);
+    setSettingsSection(null);
   }, []);
 
   const forceOpenSettings = useCallback(() => {
@@ -112,6 +132,7 @@ export function useAppPanelState(): AppPanelState {
     setSharesOpen(false);
     setSettingsOpen(true);
     setSettingsDirPath(null);
+    setSettingsSection(null);
   }, []);
 
   const closePanel = useCallback((panel: PanelName) => {
@@ -155,6 +176,7 @@ export function useAppPanelState(): AppPanelState {
     workflowsOpen,
     sharesOpen,
     settingsDirPath,
+    settingsSection,
     configDirty,
     pendingSelectId,
     setConfigDirty,
@@ -162,6 +184,7 @@ export function useAppPanelState(): AppPanelState {
     togglePanel,
     openSettings,
     openConfig,
+    openProjectTrust,
     toggleSettingsKeyboard,
     forceOpenSettings,
     closePanel,

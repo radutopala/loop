@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { getWsUrl } from "../api/loopApi";
+import { clearContentCaps, getWsUrl, refreshApiToken, wsProtocols } from "../api/loopApi";
 
 const DEFAULT_RECONNECT_DELAY_MS = 3_000;
 
@@ -32,7 +32,7 @@ export function useWebSocketConnection({ path, enabled, onOpen, onMessage, recon
   onMessageRef.current = onMessage;
 
   const connect = useCallback(() => {
-    const ws = new WebSocket(`${getWsUrl()}${path}`);
+    const ws = new WebSocket(`${getWsUrl()}${path}`, wsProtocols());
     ws.binaryType = "arraybuffer";
     wsRef.current = ws;
 
@@ -48,6 +48,10 @@ export function useWebSocketConnection({ path, enabled, onOpen, onMessage, recon
     ws.onclose = () => {
       setConnected(false);
       wsRef.current = null;
+      // The daemon may have restarted (new content-link key) or the token
+      // rotated: forget the links and read the token again before retrying.
+      clearContentCaps();
+      void refreshApiToken().catch(() => {});
       reconnectTimer.current = setTimeout(connect, reconnectDelay);
     };
 

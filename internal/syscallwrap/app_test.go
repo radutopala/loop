@@ -14,6 +14,8 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
 	"golang.org/x/sys/unix"
+
+	"github.com/radutopala/loop/internal/httpapprover"
 )
 
 type AppSuite struct {
@@ -170,6 +172,7 @@ func (s *AppSuite) TestNewAppWiresDefaults() {
 	s.Require().NotNil(a.exec)
 	// Parent mode
 	s.Require().NotNil(a.readFile)
+	s.Require().Equal(httpapprover.GateTokenFile, a.tokenFile)
 	s.Require().NotNil(a.lookupUser)
 	s.Require().NotNil(a.socketpair)
 	s.Require().NotNil(a.startChild)

@@ -119,12 +119,12 @@ type fakeParentDeps struct {
 
 	readFileFn  func(string) ([]byte, error)
 	readFileErr error
+	// token is what the gate token file holds; "" means the file is missing.
+	token string
 
 	lookupUserErr error
 	lookupUID     int
 	lookupGID     int
-
-	getuidFn func() int
 
 	socketpairErr error
 	socketpairFn  func() (int, int, error)
@@ -183,6 +183,9 @@ func newFakeParentDeps(t *testing.T) *fakeParentDeps {
 	}
 }
 
+// testGateTokenFile stands in for httpapprover.GateTokenFile.
+const testGateTokenFile = "/test/gate-token"
+
 // validPolicyJSON is a minimal well-formed policy CompilePolicy accepts.
 const validPolicyJSON = `{"default_decision":"allow","path_rules":[],"command_rules":[],"file_rules":[]}`
 
@@ -191,7 +194,7 @@ const validPolicyJSON = `{"default_decision":"allow","path_rules":[],"command_ru
 func (f *fakeParentDeps) defaultEnv() {
 	f.env[envPolicyFile] = "/etc/loop/gate-policy.json"
 	f.env[envAPIURL] = "http://host.docker.internal:3007"
-	f.env[envToken] = "abcd"
+	f.token = "abcd"
 	f.env[envHostUser] = "root"
 }
 
@@ -203,6 +206,12 @@ func (f *fakeParentDeps) wire() *app {
 		environ:  func() []string { return f.environ },
 
 		readFile: func(p string) ([]byte, error) {
+			if p == testGateTokenFile {
+				if f.token == "" {
+					return nil, os.ErrNotExist
+				}
+				return []byte(f.token), nil
+			}
 			if f.readFileFn != nil {
 				return f.readFileFn(p)
 			}
@@ -211,17 +220,12 @@ func (f *fakeParentDeps) wire() *app {
 			}
 			return []byte(validPolicyJSON), nil
 		},
+		tokenFile: testGateTokenFile,
 		lookupUser: func(name string) (int, int, error) {
 			if f.lookupUserErr != nil {
 				return 0, 0, f.lookupUserErr
 			}
 			return f.lookupUID, f.lookupGID, nil
-		},
-		getuid: func() int {
-			if f.getuidFn != nil {
-				return f.getuidFn()
-			}
-			return 0
 		},
 		socketpair: func() (int, int, error) {
 			if f.socketpairFn != nil {
@@ -339,14 +343,14 @@ func (s *ParentSuite) TestRunParentMissingToken() {
 	f.env[envAPIURL] = "http://x"
 	err := f.wire().runParent()
 	s.Require().Error(err)
-	s.Require().Contains(err.Error(), envToken)
+	s.Require().Contains(err.Error(), testGateTokenFile)
 }
 
 func (s *ParentSuite) TestRunParentMissingHostUser() {
 	f := newFakeParentDeps(s.T())
 	f.env[envPolicyFile] = "/p"
 	f.env[envAPIURL] = "http://x"
-	f.env[envToken] = "t"
+	f.token = "t"
 	err := f.wire().runParent()
 	s.Require().Error(err)
 	s.Require().Contains(err.Error(), envHostUser)
@@ -610,42 +614,23 @@ func (s *ParentSuite) TestRunParentStartChildReceivesAgentCredAndChildEnv() {
 	// re-execed /proc/self/exe re-enters cobra which dispatches to the
 	// syscallwrap subcommand in child mode.
 	s.Require().Equal(f.selfArgv, f.startedArgv)
-	// Approver wiring uses API_URL + LOOP_GATE_TOKEN exactly.
+	// Approver wiring uses API_URL + the gate token file exactly.
 	s.Require().Equal("http://host.docker.internal:3007", f.approverAPI)
 	s.Require().Equal("abcd", f.approverToken)
 }
 
-// TestRunParentTerminalExecModeSkipsCredentialDrop covers the terminal-exec
-// branch: when getuid() == lookupUser.uid, runParent feeds (-1, -1) to
-// startChild so defaultStartChild omits the Credential — a non-root caller
-// can't setuid and would otherwise EPERM.
-func (s *ParentSuite) TestRunParentTerminalExecModeSkipsCredentialDrop() {
+// TestRunParentDropsToAgentUID: the child always gets the agent's uid/gid
+// from HOST_USER, which startChild installs as its Credential.
+func (s *ParentSuite) TestRunParentDropsToAgentUID() {
 	f := newFakeParentDeps(s.T())
 	f.defaultEnv()
 	f.lookupUID = 1001
-	f.lookupGID = 1001
-	f.getuidFn = func() int { return 1001 } // already agent-uid
-	f.gateServerReturned = &stubServer{}
-
-	s.Require().NoError(f.wire().runParent())
-	s.Require().Equal(-1, f.startedUID)
-	s.Require().Equal(-1, f.startedGID)
-}
-
-// TestRunParentRootCallerKeepsCredentialDrop is the counterpart: when
-// getuid() != lookupUser.uid (the normal entrypoint.sh-as-root → drop-to-agent
-// flow), uid/gid are propagated unchanged.
-func (s *ParentSuite) TestRunParentRootCallerKeepsCredentialDrop() {
-	f := newFakeParentDeps(s.T())
-	f.defaultEnv()
-	f.lookupUID = 1001
-	f.lookupGID = 1001
-	f.getuidFn = func() int { return 0 } // running as root
+	f.lookupGID = 1002
 	f.gateServerReturned = &stubServer{}
 
 	s.Require().NoError(f.wire().runParent())
 	s.Require().Equal(1001, f.startedUID)
-	s.Require().Equal(1001, f.startedGID)
+	s.Require().Equal(1002, f.startedGID)
 }
 
 // --- childProcessEnv (unit) ---
@@ -667,6 +652,11 @@ func (s *ParentSuite) TestChildProcessEnvStripsExistingMode() {
 		}
 	}
 	s.Require().Equal(1, count)
+}
+
+func (s *ParentSuite) TestChildProcessEnvStripsGateToken() {
+	got := childProcessEnv([]string{"A=1", envLegacyToken + "=secret", "LOOP_GATE_TOKENS=x"})
+	s.Require().Equal([]string{"A=1", "LOOP_GATE_TOKENS=x", envMode + "=" + modeChild}, got)
 }
 
 func (s *ParentSuite) TestChildProcessEnvEmptyInput() {
@@ -934,22 +924,8 @@ func (s *ParentSuite) TestChildSysProcAttrSetsCredentialForValidUIDGID() {
 	s.Require().Equal(uint32(1001), sys.Credential.Gid)
 }
 
-// TestChildSysProcAttrOmitsCredentialForSentinel: terminal-exec mode passes
-// (-1, -1) which must produce a bare SysProcAttr — os.StartProcess then
-// inherits the caller's uid/gid instead of attempting a setuid that would
-// EPERM when we're already non-root.
-func (s *ParentSuite) TestChildSysProcAttrOmitsCredentialForSentinel() {
-	s.Require().Nil(childSysProcAttr(-1, -1).Credential)
-}
-
-func (s *ParentSuite) TestChildSysProcAttrOmitsCredentialWhenEitherNegative() {
-	s.Require().Nil(childSysProcAttr(-1, 1001).Credential)
-	s.Require().Nil(childSysProcAttr(1001, -1).Credential)
-}
-
-// TestChildSysProcAttrRootToRoot: uid=0 is a valid value (non-negative) —
-// a root→root invocation still gets a Credential, even though it's a no-op
-// in practice.
+// TestChildSysProcAttrRootToRoot: uid=0 still gets a Credential, even though
+// it's a no-op in practice.
 func (s *ParentSuite) TestChildSysProcAttrRootToRoot() {
 	sys := childSysProcAttr(0, 0)
 	s.Require().NotNil(sys.Credential)

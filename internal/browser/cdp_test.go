@@ -198,6 +198,49 @@ func (s *CDPSuite) TestNavigateError() {
 	require.Error(s.T(), err)
 }
 
+func (s *CDPSuite) TestCheckNavigableURL() {
+	tests := []struct {
+		url     string
+		wantErr bool
+	}{
+		{"https://example.com", false},
+		{"http://localhost:8080/path?q=1", false},
+		{"HTTPS://example.com", false},
+		{"about:blank", false},
+		{"about:config", true},
+		{"file:///etc/passwd", true},
+		{"javascript:alert(1)", true},
+		{"data:text/html,<p>x</p>", true},
+		{"chrome://settings", true},
+		{"https://", true},
+		{"example.com", true},
+		{"", true},
+		{"http://[::1", true},
+	}
+	for _, tc := range tests {
+		s.Run(tc.url, func() {
+			err := checkNavigableURL(tc.url)
+			if tc.wantErr {
+				require.Error(s.T(), err)
+				return
+			}
+			require.NoError(s.T(), err)
+		})
+	}
+}
+
+func (s *CDPSuite) TestNavigateRejectsScheme() {
+	called := false
+	s.setRunFn(func(_ context.Context, _ ...chromedp.Action) error {
+		called = true
+		return nil
+	})
+	err := s.client.Navigate(context.Background(), "file:///etc/passwd")
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "not allowed")
+	require.False(s.T(), called)
+}
+
 // --- Reload ---
 
 func (s *CDPSuite) TestReloadSuccess() {

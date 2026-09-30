@@ -13,6 +13,11 @@ export default defineConfig({
     port: 5173,
     allowedHosts: ["host.docker.internal"],
     proxy: {
+      // Content links (iframes, images, <base href>) the UI can't add a token to.
+      "/c/": {
+        target: apiTarget,
+        changeOrigin: true,
+      },
       "/api": {
         target: apiTarget,
         changeOrigin: true,

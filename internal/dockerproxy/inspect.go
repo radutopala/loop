@@ -28,6 +28,17 @@ var containerInspectRe = regexp.MustCompile(`^/containers/[^/]+/json$`)
 
 // modifyResponse is the upstream proxy's ModifyResponse hook.
 func (s *Server) modifyResponse(resp *http.Response) error {
+	if resp.StatusCode == http.StatusCreated && resp.Request.Method == http.MethodPost &&
+		stripAPIVersionPrefix(resp.Request.URL.Path) == "/containers/create" {
+		buf, err := io.ReadAll(resp.Body)
+		_ = resp.Body.Close()
+		if err != nil {
+			return err
+		}
+		s.recordCreated(resp, buf)
+		resp.Body = io.NopCloser(bytes.NewReader(buf))
+		return nil
+	}
 	if len(s.cfg.BindRoots) == 0 || resp.StatusCode != http.StatusOK || resp.Request.Method != http.MethodGet ||
 		!containerInspectRe.MatchString(stripAPIVersionPrefix(resp.Request.URL.Path)) ||
 		normalizeContentType(resp.Header.Get("Content-Type")) != "application/json" {

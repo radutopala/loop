@@ -1,6 +1,12 @@
-import { describe, expect, it } from "vitest";
-import { buildRawFileBase } from "../../api/files";
+import { describe, expect, it, vi } from "vitest";
+import type { ContentCapScope } from "../../api/api";
+import { buildFileUrl, buildRawFileBase } from "../../api/files";
 import { withBaseHref } from "./htmlPreview";
+
+vi.mock("../../api/api", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../api/api")>()),
+  contentCapBase: async (scope: ContentCapScope) => (scope.kind === "raw" ? `http://api/c/raw:${scope.channelId}:${scope.root}/` : "http://api/c/pg/"),
+}));
 
 const BASE = "http://localhost:8222/api/channels/ch/raw/0/site/";
 
@@ -41,15 +47,22 @@ describe("withBaseHref", () => {
 });
 
 describe("buildRawFileBase", () => {
-  it("points at the file's directory on the raw endpoint", () => {
-    expect(buildRawFileBase("ch-1", "site/pages/index.html", 1)).toMatch(/\/api\/channels\/ch-1\/raw\/1\/site\/pages\/$/);
+  it("points at the file's directory under the root's content link", async () => {
+    await expect(buildRawFileBase("ch-1", "site/pages/index.html", 1)).resolves.toBe("http://api/c/raw:ch-1:1/site/pages/");
   });
 
-  it("uses root 0 and the root dir for top-level files", () => {
-    expect(buildRawFileBase("ch-1", "index.html")).toMatch(/\/api\/channels\/ch-1\/raw\/0\/$/);
+  it("uses root 0 and the link itself for top-level files", async () => {
+    await expect(buildRawFileBase("ch-1", "index.html")).resolves.toBe("http://api/c/raw:ch-1:0/");
   });
 
-  it("encodes path segments", () => {
-    expect(buildRawFileBase("ch-1", "my docs/#1/a.html")).toMatch(/\/raw\/0\/my%20docs\/%231\/$/);
+  it("encodes path segments", async () => {
+    await expect(buildRawFileBase("ch-1", "my docs/#1/a.html")).resolves.toBe("http://api/c/raw:ch-1:0/my%20docs/%231/");
+  });
+});
+
+describe("buildFileUrl", () => {
+  it("appends the encoded path and the cache buster", async () => {
+    await expect(buildFileUrl("ch-1", "img/a b.png", 2, 7)).resolves.toBe("http://api/c/raw:ch-1:2/img/a%20b.png?t=7");
+    await expect(buildFileUrl("ch-1", "a.png")).resolves.toBe("http://api/c/raw:ch-1:0/a.png");
   });
 });

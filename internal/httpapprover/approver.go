@@ -12,10 +12,12 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/radutopala/loop/internal/agentgate"
@@ -24,6 +26,26 @@ import (
 
 // EndpointPath is the fixed server-side path the approver POSTs to.
 const EndpointPath = "/api/gate/container-approval"
+
+// GateTokenFile is where the runner copies the per-container bearer token
+// before the container starts: owned by root, mode 0400, so only the
+// in-container proxy and gate parent (both root) can read it — not the agent,
+// and not `docker inspect`, which an env var would leak to.
+const GateTokenFile = "/run/loop/gate-token"
+
+// ReadToken reads a bearer token from path, trimming surrounding whitespace.
+// A missing or empty file is an error: the callers fail closed without one.
+func ReadToken(readFile func(string) ([]byte, error), path string) (string, error) {
+	raw, err := readFile(path)
+	if err != nil {
+		return "", fmt.Errorf("read token %s: %w", path, err)
+	}
+	token := strings.TrimSpace(string(raw))
+	if token == "" {
+		return "", errors.New("token file " + path + " is empty")
+	}
+	return token, nil
+}
 
 // RequestBody is the JSON shape the container sends.
 type RequestBody struct {

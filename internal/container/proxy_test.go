@@ -409,6 +409,7 @@ func (s *ProxySuite) expectRunCompletes(ctx context.Context, cid string) {
 	waitCh := make(chan WaitResponse, 1)
 	waitCh <- WaitResponse{StatusCode: 0}
 	errCh := make(chan error, 1)
+	s.client.On("CopyToContainer", ctx, cid, "/", mock.Anything).Maybe().Return(nil)
 	s.client.On("ContainerStart", ctx, cid).Return(nil)
 	s.client.On("ContainerWait", ctx, cid).Return((<-chan WaitResponse)(waitCh), (<-chan error)(errCh))
 	s.client.On("ContainerLogs", ctx, cid).Return(
@@ -469,7 +470,8 @@ func (s *ProxySuite) TestRunProxyEnabledAddsBindsAndEnvAndToken() {
 	require.Contains(s.T(), strings.Split(findEnv(captured.Env, "LOOP_DOCKERPROXY_BIND_ROOTS"), ":"), s.runner.resolveWorkDir("ch-1", ""))
 	require.Contains(s.T(), strings.Split(findEnv(captured.Env, "LOOP_DOCKERPROXY_BIND_HOST_PATHS"), ":"), s.runner.resolveWorkDir("ch-1", "")+"=/resolved")
 	require.Equal(s.T(), "ch-1", findEnv(captured.Env, "LOOP_CHANNEL_ID"))
-	token := findEnv(captured.Env, "LOOP_GATE_TOKEN")
+	require.Empty(s.T(), findEnv(captured.Env, "LOOP_GATE_TOKEN"), "the token travels as a file, not env")
+	token := copiedFiles(s.T(), s.client)["run/loop/gate-token"].data
 	require.Len(s.T(), token, 64, "token should be 32 bytes hex-encoded")
 	require.Equal(s.T(), "loop-ch-1-aaaaaa", findEnv(captured.Env, "LOOP_CONTAINER_ID"),
 		"loop-dockerproxy NewServer rejects empty CID; runner must stamp the container name")

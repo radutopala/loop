@@ -1,4 +1,4 @@
-import { getApiUrl } from "./api";
+import { apiFetch, getApiUrl } from "./api";
 
 export interface QualityMetric {
   name: string;
@@ -181,39 +181,39 @@ export interface QualityClonesResponse {
 const base = (channelId: string) => `${getApiUrl()}/api/channels/${encodeURIComponent(channelId)}/quality`;
 
 export async function triggerQualityScan(channelId: string): Promise<QualityScanResponse> {
-  const res = await fetch(`${base(channelId)}/scan`, { method: "POST" });
+  const res = await apiFetch(`${base(channelId)}/scan`, { method: "POST" });
   if (!res.ok) throw new Error(`Failed to trigger scan: ${res.statusText}`);
   return (await res.json()) as QualityScanResponse;
 }
 
 export async function fetchQualitySnapshot(channelId: string): Promise<QualitySnapshot | null> {
-  const res = await fetch(`${base(channelId)}/snapshot`);
+  const res = await apiFetch(`${base(channelId)}/snapshot`);
   if (res.status === 404) return null;
   if (!res.ok) throw new Error(`Failed to fetch snapshot: ${res.statusText}`);
   return (await res.json()) as QualitySnapshot;
 }
 
 export async function fetchQualityCycles(channelId: string): Promise<QualityCyclesResponse> {
-  const res = await fetch(`${base(channelId)}/cycles`);
+  const res = await apiFetch(`${base(channelId)}/cycles`);
   if (!res.ok) throw new Error(await readErr(res, "cycles"));
   return (await res.json()) as QualityCyclesResponse;
 }
 
 export async function fetchQualityRules(channelId: string): Promise<QualityRules> {
-  const res = await fetch(`${base(channelId)}/rules`);
+  const res = await apiFetch(`${base(channelId)}/rules`);
   if (!res.ok) throw new Error(await readErr(res, "rules"));
   return (await res.json()) as QualityRules;
 }
 
 export async function fetchQualityEvolution(channelId: string): Promise<QualityEvolutionResponse | null> {
-  const res = await fetch(`${base(channelId)}/evolution`);
+  const res = await apiFetch(`${base(channelId)}/evolution`);
   if (res.status === 404) return null;
   if (!res.ok) throw new Error(await readErr(res, "evolution"));
   return (await res.json()) as QualityEvolutionResponse;
 }
 
 export async function fetchQualityC4(channelId: string): Promise<QualityC4Response> {
-  const res = await fetch(`${base(channelId)}/c4`);
+  const res = await apiFetch(`${base(channelId)}/c4`);
   if (!res.ok) throw new Error(await readErr(res, "c4"));
   return (await res.json()) as QualityC4Response;
 }
@@ -223,7 +223,7 @@ export async function fetchQualityComplexity(channelId: string, opts: { limit?: 
   if (opts.limit !== undefined) q.set("limit", String(opts.limit));
   if (opts.offset !== undefined) q.set("offset", String(opts.offset));
   const url = `${base(channelId)}/complexity${q.toString() ? `?${q}` : ""}`;
-  const res = await fetch(url);
+  const res = await apiFetch(url);
   if (!res.ok) throw new Error(await readErr(res, "complexity"));
   return (await res.json()) as QualityComplexityResponse;
 }
@@ -233,13 +233,13 @@ export async function fetchQualityClones(channelId: string, opts: { limit?: numb
   if (opts.limit !== undefined) q.set("limit", String(opts.limit));
   if (opts.offset !== undefined) q.set("offset", String(opts.offset));
   const url = `${base(channelId)}/clones${q.toString() ? `?${q}` : ""}`;
-  const res = await fetch(url);
+  const res = await apiFetch(url);
   if (!res.ok) throw new Error(await readErr(res, "clones"));
   return (await res.json()) as QualityClonesResponse;
 }
 
 export async function simulateQualityWhatif(channelId: string, mutations: QualityMutation[]): Promise<QualityWhatifResponse> {
-  const res = await fetch(`${base(channelId)}/whatif`, {
+  const res = await apiFetch(`${base(channelId)}/whatif`, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ mutations }),

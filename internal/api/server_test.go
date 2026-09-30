@@ -216,7 +216,7 @@ func (s *ServerSuite) SetupTest() {
 	s.store = new(MockChannelLister)
 	s.messages = new(MockMessageSender)
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	s.srv = NewServer(s.scheduler, s.channels, s.threads, s.store, s.messages, logger)
+	s.srv = untrustedProjectLoads(NewServer(s.scheduler, s.channels, s.threads, s.store, s.messages, logger))
 	// Hermetic global config: allDirPaths seeds its merge from loadConfig;
 	// without this the suite would read the developer's real ~/.loop/config.json.
 	s.srv.configs.load = func() (*config.Config, error) { return &config.Config{}, nil }
@@ -226,6 +226,7 @@ func (s *ServerSuite) SetupTest() {
 	s.sys.On("ReadFile", mock.Anything).Return(nil, nil)
 	s.sys.On("WriteFile", mock.Anything, mock.Anything, mock.Anything).Return(nil)
 	s.sys.On("Stat", mock.Anything).Return(nil, os.ErrNotExist)
+	s.sys.On("Lstat", mock.Anything).Return(nil, os.ErrNotExist)
 	s.sys.On("Remove", mock.Anything).Return(nil)
 	s.sys.On("MkdirAll", mock.Anything, mock.Anything).Return(nil)
 	s.sys.On("UserHomeDir").Return("/home/testuser", nil)
@@ -407,7 +408,17 @@ func testLogger() *slog.Logger {
 
 // nilServer creates a server with nil dependencies for testing not-implemented paths.
 func nilServer() *Server {
-	return NewServer(nil, nil, nil, nil, nil, testLogger())
+	return untrustedProjectLoads(NewServer(nil, nil, nil, nil, nil, testLogger()))
+}
+
+// untrustedProjectLoads makes srv load project configs as written, without
+// the owner's real trust store, so tests don't depend on what the machine
+// running them has trusted.
+func untrustedProjectLoads(srv *Server) *Server {
+	loader := config.NewProjectLoader(nil)
+	srv.configs.loadProject = loader.LoadProject
+	srv.configs.loadWorktree = loader.LoadWorktreeProject
+	return srv
 }
 
 func (s *ServerSuite) TestNewServer() {

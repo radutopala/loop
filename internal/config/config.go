@@ -210,12 +210,16 @@ type jsonPermissionsConfig struct {
 type Loader struct {
 	userHomeDir func() (string, error)
 	readFile    func(string) ([]byte, error)
+	// trust gates the project config fields that need the owner's trust;
+	// nil applies them as written.
+	trust *TrustStore
 }
 
 func newLoader() *Loader {
 	return &Loader{
 		userHomeDir: os.UserHomeDir,
 		readFile:    os.ReadFile,
+		trust:       NewTrustStore(),
 	}
 }
 

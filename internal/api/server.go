@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/radutopala/loop/internal/agentregistry"
+	"github.com/radutopala/loop/internal/apiauth"
 	"github.com/radutopala/loop/internal/bot"
 	"github.com/radutopala/loop/internal/container"
 	"github.com/radutopala/loop/internal/db"
@@ -91,6 +92,7 @@ type QueueResumer interface {
 // serverSystem abstracts OS operations needed by Server.
 type serverSystem interface {
 	Stat(name string) (os.FileInfo, error)
+	Lstat(name string) (os.FileInfo, error)
 	ReadFile(name string) ([]byte, error)
 	WriteFile(name string, data []byte, perm os.FileMode) error
 	ReadDir(name string) ([]fs.DirEntry, error)
@@ -134,6 +136,7 @@ type Server struct {
 
 	scheduler               scheduler.Scheduler
 	channels                ChannelEnsurer
+	protectedDirs           []string // dirs a channel's dir_path may not equal or contain (see SetProtectedDirs)
 	threads                 ThreadEnsurer
 	removeMCPConfig         func(dirPath, channelID string) error // removes a deleted channel's MCP config files
 	configLocks             configLocks                           // serializes edits of each config.json
@@ -179,6 +182,12 @@ type Server struct {
 	playground *playgroundService // playground + public-share domain: playground CRUD/serving, share store, tunnel
 
 	browser *browserService // browser domain: docker/host providers, CDP manager lifecycle, capture state
+
+	auth              *apiauth.Authenticator // owner/agent token checks; nil until WithAuth, and Start then refuses every token
+	rotateOwnerToken  func() (string, error) // writes a new owner token and returns it
+	caps              *apiauth.Signer        // signs /c/{cap}/ content links
+	workflowBashLocal bool                   // workflow bash nodes run on the host (workflow_bash_local)
+	projectTrust      ProjectTrust           // owner-approved project configs; nil skips trust bookkeeping
 }
 
 // AuditDirResolver maps a channel ID to the host directory that backs the
@@ -187,6 +196,13 @@ type Server struct {
 // (no audit dir yet). Typically satisfied by *container.DockerRunner.
 type AuditDirResolver interface {
 	AuditDir(channelID string) string
+}
+
+// SetProtectedDirs configures directories that a channel's dir_path may not
+// equal or be an ancestor of (e.g. the daemon's own state dir), so creating a
+// channel can't hand an agent a mount over them.
+func (s *Server) SetProtectedDirs(dirs []string) {
+	s.protectedDirs = dirs
 }
 
 // SetEventsHub configures the events hub for the /api/ws endpoint.
@@ -600,11 +616,16 @@ func (s *Server) registerSystemRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("PUT /api/config", s.handleSaveConfig)
 	mux.HandleFunc("GET /api/config/project", s.handleGetProjectConfig)
 	mux.HandleFunc("PUT /api/config/project", s.handleSaveProjectConfig)
+	mux.HandleFunc("GET /api/config/project/trust", s.handleGetProjectTrust)
+	mux.HandleFunc("POST /api/config/project/trust", s.handleTrustProjectConfig)
 	mux.HandleFunc("GET /api/gate/approvals", s.handleListGateApprovals)
 	mux.HandleFunc("POST /api/gate/approvals/{id}", s.handleResolveGateApproval)
 	mux.HandleFunc("POST /api/gate/container-approval", s.handleContainerApproval)
 	mux.HandleFunc("POST /api/builtins/restore", s.handleRestoreBuiltins)
 	mux.HandleFunc("GET /api/health", handleHealth)
+	mux.HandleFunc("POST /api/auth/rotate", s.handleRotateToken)
+	mux.HandleFunc("POST /api/content-caps", s.handleCreateContentCap)
+	mux.HandleFunc("GET /c/{cap}/{path...}", s.handleContentCap)
 	mux.HandleFunc("GET /api/ws/terminal", s.handleTerminalWS)
 	mux.HandleFunc("GET /api/ws/browser", s.browser.handleBrowserWS)
 	mux.HandleFunc("GET /api/ws", s.handleEventsWS)
@@ -614,9 +635,12 @@ func (s *Server) registerSystemRoutes(mux *http.ServeMux) {
 func (s *Server) Start(addr string) error {
 	mux := s.buildMux()
 
+	if s.auth == nil {
+		s.auth = newAuthenticator("", nil)
+	}
 	s.server = &http.Server{
 		Addr:    addr,
-		Handler: corsMiddleware(mux),
+		Handler: corsMiddleware(s.auth.Wrap(s.agentGuard(mux))),
 	}
 
 	ln, err := net.Listen("tcp", addr)
@@ -646,7 +670,7 @@ func corsMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
 		if r.Method == http.MethodOptions {
 			w.WriteHeader(http.StatusNoContent)
 			return

@@ -9,6 +9,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/radutopala/loop/internal/gitutil"
 )
 
 // commandRunner wraps the bit of os/exec we need so tests can replace
@@ -29,6 +31,10 @@ func NewExecReader() *ExecReader {
 }
 
 func defaultRunner(ctx context.Context, dir, name string, args ...string) ([]byte, error) {
+	if name == "git" {
+		// The analysed repo may be agent-writable; see gitutil.
+		return gitutil.Command(ctx, dir, args...).Output()
+	}
 	cmd := exec.CommandContext(ctx, name, args...)
 	cmd.Dir = dir
 	return cmd.Output()

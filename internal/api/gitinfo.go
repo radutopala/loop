@@ -8,8 +8,9 @@ package api
 import (
 	"context"
 	"fmt"
-	"os/exec"
 	"strings"
+
+	"github.com/radutopala/loop/internal/gitutil"
 )
 
 // collectGitState gathers the sidebar git state for dir in three subprocesses:
@@ -53,15 +54,16 @@ func statusState(ctx context.Context, dir string) gitState {
 
 	// --untracked-files=all lists files inside untracked directories
 	// individually (parity with `ls-files --others`); -z avoids path quoting.
-	cmd := exec.CommandContext(ctx, "git", "status", "--porcelain=v2", "--branch", "--untracked-files=all", "-z")
-	cmd.Dir = dir
+	cmd := gitutil.Command(ctx, dir, "status", "--porcelain=v2", "--branch", "--untracked-files=all", "-z")
 	out, err := cmd.Output()
 	if err != nil {
 		// `git status` reads the worktree, so it fails in situations that
 		// leave the repo perfectly identifiable. The one seen in practice is
 		// a repo whose .gitattributes routes paths through git-lfs: the
-		// repo-local filter.lfs.required makes a missing git-lfs binary a
-		// fatal "external filter failed" rather than a warning. Returning the
+		// filter.lfs.required from the user's global config makes a missing
+		// git-lfs binary a fatal "external filter failed" rather than a
+		// warning (drivers the repo configures itself are disarmed by
+		// gitutil, so only host-installed ones can fail). Returning the
 		// zero value there blanks the channel header and hides the branch
 		// picker for a repo git can still describe perfectly well, so fall
 		// back to the ref lookups, which never touch the worktree. Diff
@@ -72,11 +74,10 @@ func statusState(ctx context.Context, dir string) gitState {
 
 	// Tracked line counts: staged (index vs HEAD) then unstaged (worktree vs index).
 	for _, args := range [][]string{
-		{"diff", "--cached", "--shortstat"},
-		{"diff", "--shortstat"},
+		{"diff", "--no-ext-diff", "--no-textconv", "--cached", "--shortstat"},
+		{"diff", "--no-ext-diff", "--no-textconv", "--shortstat"},
 	} {
-		cmd := exec.CommandContext(ctx, "git", args...)
-		cmd.Dir = dir
+		cmd := gitutil.Command(ctx, dir, args...)
 		if out, err := cmd.Output(); err == nil {
 			add, del := parseShortstat(string(out))
 			st.DiffAdditions += add
@@ -121,8 +122,7 @@ func aheadBehind(ctx context.Context, dir, base string) (ahead, behind int, ok b
 // gitOutput runs a git command in dir and returns its trimmed stdout. ok is
 // false when the command fails or produces no output.
 func gitOutput(ctx context.Context, dir string, args ...string) (string, bool) {
-	cmd := exec.CommandContext(ctx, "git", args...)
-	cmd.Dir = dir
+	cmd := gitutil.Command(ctx, dir, args...)
 	out, err := cmd.Output()
 	if err != nil {
 		return "", false

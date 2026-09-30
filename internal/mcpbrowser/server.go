@@ -18,6 +18,7 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
+	"github.com/radutopala/loop/internal/apiauth"
 	"github.com/radutopala/loop/internal/browser"
 )
 
@@ -51,7 +52,10 @@ func New(apiURL, channelID string, logger *slog.Logger) *Server {
 		logger:    logger,
 	}
 
-	s.httpClient = &http.Client{Timeout: 2 * time.Minute}
+	s.httpClient = &http.Client{
+		Timeout:   2 * time.Minute,
+		Transport: &apiauth.Transport{Token: apiauth.NewClientTokenSource().Token},
+	}
 	s.dispatch = s.callAPIAction
 
 	s.mcpServer = mcp.NewServer(&mcp.Implementation{

@@ -21,6 +21,7 @@ import (
 
 	"github.com/radutopala/loop/internal/agentgate"
 	"github.com/radutopala/loop/internal/config"
+	"github.com/radutopala/loop/internal/httpapprover"
 	"github.com/radutopala/loop/internal/types"
 )
 
@@ -88,6 +89,9 @@ func (l *stubListener) Close() error {
 
 func (l *stubListener) Addr() net.Addr { return l.addr }
 
+// testTokenFile stands in for httpapprover.GateTokenFile.
+const testTokenFile = "/test/gate-token"
+
 // baseApp returns an app with all deps stubbed to safe defaults for a run
 // that reaches serve() without touching the filesystem or network.
 func (s *AppSuite) baseApp(env map[string]string, policy []byte) (*app, *stubListener, *int) {
@@ -96,9 +100,13 @@ func (s *AppSuite) baseApp(env map[string]string, policy []byte) (*app, *stubLis
 	return &app{
 		getenv: func(k string) string { return env[k] },
 		readFile: func(path string) ([]byte, error) {
+			if path == testTokenFile {
+				return []byte("tok-1\n"), nil
+			}
 			require.Equal(s.T(), env[envPolicyFile], path)
 			return policy, nil
 		},
+		tokenFile:  testTokenFile,
 		removeAll:  func(_ string) error { return nil },
 		listenUnix: func(_ string) (net.Listener, error) { return ln, nil },
 		chmod: func(path string, mode os.FileMode) error {
@@ -115,7 +123,7 @@ func (s *AppSuite) baseApp(env map[string]string, policy []byte) (*app, *stubLis
 		notifyContext: context.WithCancel,
 		newApprover: func(apiURL, token string) Approver {
 			require.Equal(s.T(), env[envAPIURL], apiURL)
-			require.Equal(s.T(), env[envToken], token)
+			require.Equal(s.T(), "tok-1", token)
 			return &stubApprover{outcome: agentgate.Outcome{Decision: types.DecisionAllow}}
 		},
 	}, ln, &chmodCalls
@@ -127,7 +135,6 @@ func (s *AppSuite) minimalEnv() map[string]string {
 		envPolicyFile: filepath.Join(s.tempDir, "proxy-policy.json"),
 		envUpstream:   "/var/run/docker.sock.host",
 		envAPIURL:     "http://host.docker.internal:8080",
-		envToken:      "tok-1",
 		envCID:        "cid-1",
 		envChannelID:  "ch-1",
 	}
@@ -173,12 +180,14 @@ func (s *AppSuite) TestRunMissingAPIURLError() {
 }
 
 func (s *AppSuite) TestRunMissingTokenError() {
-	env := s.minimalEnv()
-	env[envToken] = ""
-	a, _, _ := s.baseApp(env, s.minimalPolicyJSON())
+	a, _, _ := s.baseApp(s.minimalEnv(), s.minimalPolicyJSON())
+	a.readFile = func(path string) ([]byte, error) {
+		require.Equal(s.T(), testTokenFile, path)
+		return nil, errors.New("no such file")
+	}
 	err := a.run(io.Discard)
 	require.Error(s.T(), err)
-	require.Contains(s.T(), err.Error(), envToken)
+	require.Contains(s.T(), err.Error(), testTokenFile)
 }
 
 func (s *AppSuite) TestRunDefaultSocketAndUpstreamApplied() {
@@ -214,7 +223,10 @@ func (s *AppSuite) TestRunDefaultSocketAndUpstreamApplied() {
 
 func (s *AppSuite) TestRunPolicyReadError() {
 	a, _, _ := s.baseApp(s.minimalEnv(), nil)
-	a.readFile = func(_ string) ([]byte, error) {
+	a.readFile = func(path string) ([]byte, error) {
+		if path == testTokenFile {
+			return []byte("tok-1"), nil
+		}
 		return nil, errors.New("boom")
 	}
 	err := a.run(io.Discard)
@@ -435,6 +447,7 @@ func (s *AppSuite) TestNewAppWiresAllFields() {
 	a := newApp()
 	require.NotNil(s.T(), a.getenv)
 	require.NotNil(s.T(), a.readFile)
+	require.Equal(s.T(), httpapprover.GateTokenFile, a.tokenFile)
 	require.NotNil(s.T(), a.removeAll)
 	require.NotNil(s.T(), a.listenUnix)
 	require.NotNil(s.T(), a.chmod)

@@ -651,9 +651,12 @@ func (r *DockerRunner) writeMCPConfig(workDir, channelID, apiURL, authorID, agen
 
 // buildContainerMounts processes config mounts and adds the workDir bind.
 // If parentDirPath is set and workDir is inside it (worktree), also mounts
-// the parent so the container sees the main .git directory.
-// Returns the bind strings and any named-volume container paths that need chown.
-func (r *DockerRunner) buildContainerMounts(mounts []string, workDir, parentDirPath string, extraDirs []string) (binds, chownPaths []string) {
+// the parent so the container sees the main .git directory. Binds exposing a
+// protected dir are dropped, or masked when read-only ancestors (see
+// dropProtectedBinds).
+// Returns the bind strings, the container paths to cover with an empty
+// read-only tmpfs, and any named-volume container paths that need chown.
+func (r *DockerRunner) buildContainerMounts(mounts []string, workDir, parentDirPath string, extraDirs []string) (binds, masks, chownPaths []string) {
 	for _, mount := range mounts {
 		if ms, err := parseMountSpec(mount); err == nil && config.IsNamedVolume(ms.Host) {
 			expanded, _ := r.expandPath(ms.Container)
@@ -714,7 +717,8 @@ func (r *DockerRunner) buildContainerMounts(mounts []string, workDir, parentDirP
 		binds = append(binds, expanded+":"+expanded)
 	}
 
-	return binds, chownPaths
+	binds, masks = r.dropProtectedBinds(binds)
+	return binds, masks, chownPaths
 }
 
 // filterMountedCopyFiles removes entries from copyFiles whose expanded paths
@@ -939,7 +943,7 @@ func (r *DockerRunner) writeProxyPolicyFile(cfg *config.Config, channelID string
 	payload := proxyPolicyJSON{
 		DefaultDecision: cfg.Gates.DockerProxy.DefaultDecision,
 		HTTPRules:       cfg.Gates.DockerProxy.HTTPRules,
-		BodyRules:       injectBindAllowlist(cfg.Gates.DockerProxy.BodyRules, rw, ro),
+		BodyRules:       append(r.protectedDirBodyRules(), injectBindAllowlist(cfg.Gates.DockerProxy.BodyRules, rw, ro)...),
 	}
 	raw, _ := json.Marshal(payload)
 	path := filepath.Join(dir, "proxy-policy.json")
@@ -1216,9 +1220,25 @@ func injectWorkspaceRule(rules []types.FileRule, workDir, parentDirPath string) 
 	if workDir == "" {
 		return rules
 	}
-	paths := []string{workDir + "/**"}
+	roots := []string{workDir}
 	if parentDirPath != "" && parentDirPath != workDir {
-		paths = append(paths, parentDirPath+"/**")
+		roots = append(roots, parentDirPath)
+	}
+	var paths, gitPaths []string
+	for _, root := range roots {
+		paths = append(paths, root+"/**")
+		gitPaths = append(gitPaths, root+"/**/.git/config", root+"/**/.git/hooks/**")
+	}
+	// A repo's config and hooks run code the next time anyone uses git
+	// there, and the workspace is the host's: the user's own git would run
+	// a planted core.fsmonitor, core.sshCommand or pre-commit hook. Ask
+	// before the agent writes one. Scratch repos elsewhere (/tmp) don't
+	// reach the host, so they don't ask.
+	git := types.FileRule{
+		Paths:      gitPaths,
+		Operations: []string{"write", "create"},
+		Decision:   types.DecisionApprove,
+		Message:    "git config or hook write in the workspace",
 	}
 	ws := types.FileRule{
 		Paths:      paths,
@@ -1233,9 +1253,9 @@ func injectWorkspaceRule(rules []types.FileRule, workDir, parentDirPath string) 
 			break
 		}
 	}
-	out := make([]types.FileRule, 0, len(rules)+1)
+	out := make([]types.FileRule, 0, len(rules)+2)
 	out = append(out, rules[:insertAt]...)
-	out = append(out, ws)
+	out = append(out, git, ws)
 	out = append(out, rules[insertAt:]...)
 	return out
 }

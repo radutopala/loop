@@ -109,14 +109,15 @@ func (g *GitPR) Diff(ctx context.Context, parentDir, worktreePath, baseRef strin
 
 	needed := 0
 	if len(comments) > 0 {
-		skinny, err := g.Run(ctx, worktreePath, "git", "diff", "-U0", baseSpec)
+		skinny, err := g.Run(ctx, worktreePath, "git", "diff", "--no-ext-diff", "--no-textconv", "-U0", baseSpec)
 		if err != nil {
 			return nil, fmt.Errorf("git diff -U0: %s", strings.TrimSpace(string(skinny)))
 		}
 		needed = computeContextNeeded(skinny, comments)
 	}
 
-	args := []string{"diff"}
+	// No external diff or textconv: both are named by the PR's .gitattributes.
+	args := []string{"diff", "--no-ext-diff", "--no-textconv"}
 	if needed > defaultUnifiedContext {
 		args = append(args, fmt.Sprintf("-U%d", needed))
 	}

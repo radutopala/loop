@@ -18,8 +18,8 @@ func (s *StoreSuite) TestInitDBSuccess() {
 	require.NoError(s.T(), err)
 	defer db.Close()
 
-	mock.ExpectExec(`PRAGMA journal_mode=WAL`).WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectExec(`PRAGMA busy_timeout=5000`).WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectExec(`PRAGMA journal_mode=WAL`).WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectExec(`PRAGMA foreign_keys=ON`).WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectExec(`PRAGMA synchronous=NORMAL`).WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectExec(`PRAGMA cache_size=-32768`).WillReturnResult(sqlmock.NewResult(0, 0))
@@ -41,34 +41,34 @@ func (s *StoreSuite) TestInitDBErrors() {
 		setup   func(sqlmock.Sqlmock)
 		wantMsg string
 	}{
-		{"WAL error", func(m sqlmock.Sqlmock) {
-			m.ExpectExec(`PRAGMA journal_mode=WAL`).WillReturnError(sql.ErrConnDone)
-		}, "enabling WAL mode"},
 		{"busy timeout error", func(m sqlmock.Sqlmock) {
-			m.ExpectExec(`PRAGMA journal_mode=WAL`).WillReturnResult(ok)
 			m.ExpectExec(`PRAGMA busy_timeout=5000`).WillReturnError(sql.ErrConnDone)
 		}, "setting busy timeout"},
-		{"foreign keys error", func(m sqlmock.Sqlmock) {
-			m.ExpectExec(`PRAGMA journal_mode=WAL`).WillReturnResult(ok)
+		{"WAL error", func(m sqlmock.Sqlmock) {
 			m.ExpectExec(`PRAGMA busy_timeout=5000`).WillReturnResult(ok)
+			m.ExpectExec(`PRAGMA journal_mode=WAL`).WillReturnError(sql.ErrConnDone)
+		}, "enabling WAL mode"},
+		{"foreign keys error", func(m sqlmock.Sqlmock) {
+			m.ExpectExec(`PRAGMA busy_timeout=5000`).WillReturnResult(ok)
+			m.ExpectExec(`PRAGMA journal_mode=WAL`).WillReturnResult(ok)
 			m.ExpectExec(`PRAGMA foreign_keys=ON`).WillReturnError(sql.ErrConnDone)
 		}, "enabling foreign keys"},
 		{"synchronous error", func(m sqlmock.Sqlmock) {
-			m.ExpectExec(`PRAGMA journal_mode=WAL`).WillReturnResult(ok)
 			m.ExpectExec(`PRAGMA busy_timeout=5000`).WillReturnResult(ok)
+			m.ExpectExec(`PRAGMA journal_mode=WAL`).WillReturnResult(ok)
 			m.ExpectExec(`PRAGMA foreign_keys=ON`).WillReturnResult(ok)
 			m.ExpectExec(`PRAGMA synchronous=NORMAL`).WillReturnError(sql.ErrConnDone)
 		}, "setting synchronous mode"},
 		{"cache size error", func(m sqlmock.Sqlmock) {
-			m.ExpectExec(`PRAGMA journal_mode=WAL`).WillReturnResult(ok)
 			m.ExpectExec(`PRAGMA busy_timeout=5000`).WillReturnResult(ok)
+			m.ExpectExec(`PRAGMA journal_mode=WAL`).WillReturnResult(ok)
 			m.ExpectExec(`PRAGMA foreign_keys=ON`).WillReturnResult(ok)
 			m.ExpectExec(`PRAGMA synchronous=NORMAL`).WillReturnResult(ok)
 			m.ExpectExec(`PRAGMA cache_size=-32768`).WillReturnError(sql.ErrConnDone)
 		}, "setting cache size"},
 		{"migrations error", func(m sqlmock.Sqlmock) {
-			m.ExpectExec(`PRAGMA journal_mode=WAL`).WillReturnResult(ok)
 			m.ExpectExec(`PRAGMA busy_timeout=5000`).WillReturnResult(ok)
+			m.ExpectExec(`PRAGMA journal_mode=WAL`).WillReturnResult(ok)
 			m.ExpectExec(`PRAGMA foreign_keys=ON`).WillReturnResult(ok)
 			m.ExpectExec(`PRAGMA synchronous=NORMAL`).WillReturnResult(ok)
 			m.ExpectExec(`PRAGMA cache_size=-32768`).WillReturnResult(ok)

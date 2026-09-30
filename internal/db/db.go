@@ -202,12 +202,15 @@ func (s *SQLiteStore) WriterDB() *sql.DB { return s.writer }
 
 // initDB configures pragmas and runs migrations on an open database connection.
 func initDB(sqlDB *sql.DB) error {
-	if _, err := sqlDB.Exec("PRAGMA journal_mode=WAL"); err != nil {
-		return fmt.Errorf("enabling WAL mode: %w", err)
-	}
-
+	// busy_timeout goes first so every later statement, the WAL switch
+	// included, waits out a lock another connection still holds instead of
+	// failing with SQLITE_BUSY.
 	if _, err := sqlDB.Exec("PRAGMA busy_timeout=5000"); err != nil {
 		return fmt.Errorf("setting busy timeout: %w", err)
+	}
+
+	if _, err := sqlDB.Exec("PRAGMA journal_mode=WAL"); err != nil {
+		return fmt.Errorf("enabling WAL mode: %w", err)
 	}
 
 	if _, err := sqlDB.Exec("PRAGMA foreign_keys=ON"); err != nil {

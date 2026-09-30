@@ -25,7 +25,6 @@ const (
 	envPolicyFile = "LOOP_DOCKERPROXY_POLICY_FILE"
 	envUpstream   = "LOOP_DOCKERPROXY_UPSTREAM"
 	envAPIURL     = "API_URL"
-	envToken      = "LOOP_GATE_TOKEN"
 	envCID        = "LOOP_CONTAINER_ID"
 	envChannelID  = "LOOP_CHANNEL_ID"
 	envNestedDir  = "LOOP_DOCKERPROXY_NESTED_DIR"
@@ -40,8 +39,11 @@ const (
 // app bundles injectable dependencies so runMain is unit-testable without
 // touching the filesystem, the network, or signals.
 type app struct {
-	getenv     func(string) string
-	readFile   func(path string) ([]byte, error)
+	getenv   func(string) string
+	readFile func(path string) ([]byte, error)
+	// tokenFile holds the per-container bearer token (root-only, see
+	// httpapprover.GateTokenFile). A field so tests can point it elsewhere.
+	tokenFile  string
 	removeAll  func(path string) error
 	listenUnix func(path string) (net.Listener, error)
 	chmod      func(path string, mode os.FileMode) error
@@ -73,6 +75,7 @@ func newApp() *app {
 	return &app{
 		getenv:        os.Getenv,
 		readFile:      os.ReadFile,
+		tokenFile:     httpapprover.GateTokenFile,
 		removeAll:     os.Remove,
 		listenUnix:    defaultListenUnix,
 		chmod:         os.Chmod,
@@ -121,9 +124,9 @@ func (a *app) run(outW io.Writer) error {
 	if apiURL == "" {
 		return errors.New(envAPIURL + " is required")
 	}
-	token := a.getenv(envToken)
-	if token == "" {
-		return errors.New(envToken + " is required")
+	token, err := httpapprover.ReadToken(a.readFile, a.tokenFile)
+	if err != nil {
+		return err
 	}
 	cid := a.getenv(envCID)
 	channelID := a.getenv(envChannelID)
@@ -159,16 +162,17 @@ func (a *app) run(outW io.Writer) error {
 	}
 
 	srv, err := NewServer(ServerConfig{
-		CID:           cid,
-		ChannelID:     channelID,
-		Policy:        policy,
-		Approver:      approver,
-		DockerSock:    upstream,
-		NestedVolume:  nestedVolume,
-		EvalSymlinks:  a.evalSymlinks,
-		ReadOnlyDirs:  dirList(a.getenv(envReadOnly)),
-		BindRoots:     dirList(a.getenv(envBindRoots)),
-		BindHostPaths: pathMap(a.getenv(envBindHosts)),
+		CID:            cid,
+		ChannelID:      channelID,
+		Policy:         policy,
+		Approver:       approver,
+		DockerSock:     upstream,
+		NestedVolume:   nestedVolume,
+		EvalSymlinks:   a.evalSymlinks,
+		ReadOnlyDirs:   dirList(a.getenv(envReadOnly)),
+		BindRoots:      dirList(a.getenv(envBindRoots)),
+		BindHostPaths:  pathMap(a.getenv(envBindHosts)),
+		CheckOwnership: true,
 	})
 	if err != nil {
 		closeListener(nestedLn)

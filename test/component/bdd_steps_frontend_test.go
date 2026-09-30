@@ -394,7 +394,9 @@ func (tc *TestContext) openAppInBrowser() error {
 	if err := tc.ensureChromeTab(); err != nil {
 		return err
 	}
-	actions := []chromedp.Action{chromedp.Navigate(tc.AppURL)}
+	// The UI in a plain browser tab takes the owner token from the URL
+	// fragment, as a `loop app:url` link hands it over.
+	actions := []chromedp.Action{chromedp.Navigate(tc.AppURL + "#loop_token=" + apiToken())}
 	// Viewport size + device scale factor. Docs-capture renders larger and at
 	// 2x DPI so screenshots/GIFs are crisp and panels aren't cramped; normal
 	// runs use the launch size (1280x800 @ 1x).
@@ -999,9 +1001,9 @@ func (tc *TestContext) triggerRunNowForVisibleTask() error {
 		const match = panel.innerText.match(/Task #(\d+)/);
 		if (!match) return 'no Task #N in panel';
 		const taskId = match[1];
-		const resp = await fetch(%q + '/api/tasks/' + taskId + '/run', { method: 'POST' });
+		const resp = await fetch(%q + '/api/tasks/' + taskId + '/run', { method: 'POST', headers: { Authorization: 'Bearer ' + %q } });
 		return 'taskId=' + taskId + ' status=' + resp.status;
-	})()`, tc.BaseURL)
+	})()`, tc.BaseURL, apiToken())
 	var result string
 	if err := chromedp.Run(tc.chromeTab.ctx,
 		chromedp.Evaluate(js, &result, func(ep *runtime.EvaluateParams) *runtime.EvaluateParams {

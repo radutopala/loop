@@ -620,7 +620,7 @@ func (s *RunnerSuite) TestBuildContainerMountsExtraDirs() {
 	workDir := "/home/user/project"
 	extraDirs := []string{"/home/user/lib", "/home/user/common"}
 
-	binds, _ := s.runner.buildContainerMounts(nil, workDir, "", extraDirs)
+	binds, _, _ := s.runner.buildContainerMounts(nil, workDir, "", extraDirs)
 
 	require.Contains(s.T(), binds, workDir+":"+workDir)
 	require.Contains(s.T(), binds, "/home/user/lib:/home/user/lib")
@@ -631,7 +631,7 @@ func (s *RunnerSuite) TestBuildContainerMountsExtraDirSameAsWorkDir() {
 	workDir := "/home/user/project"
 	extraDirs := []string{"/home/user/project", "/home/user/lib"}
 
-	binds, _ := s.runner.buildContainerMounts(nil, workDir, "", extraDirs)
+	binds, _, _ := s.runner.buildContainerMounts(nil, workDir, "", extraDirs)
 
 	// workDir should appear only once (from the default bind), the duplicate should be skipped.
 	count := 0
@@ -649,7 +649,7 @@ func (s *RunnerSuite) TestBuildContainerMountsExtraDirUnderParent() {
 	parentDirPath := "/projects/myapp"
 	extraDirs := []string{"/projects/myapp/subdir", "/external/lib"}
 
-	binds, _ := s.runner.buildContainerMounts(nil, workDir, parentDirPath, extraDirs)
+	binds, _, _ := s.runner.buildContainerMounts(nil, workDir, parentDirPath, extraDirs)
 
 	// Parent dir is mounted (worktree case).
 	require.Contains(s.T(), binds, parentDirPath+":"+parentDirPath)
@@ -667,7 +667,7 @@ func (s *RunnerSuite) TestBuildContainerMountsExternalWorktree() {
 	parentDirPath := "/Users/user/dev/myapp"
 	extraDirs := []string{"/Users/user/dev/myapp"}
 
-	binds, _ := s.runner.buildContainerMounts(nil, workDir, parentDirPath, extraDirs)
+	binds, _, _ := s.runner.buildContainerMounts(nil, workDir, parentDirPath, extraDirs)
 
 	// Both workDir and parentDirPath should be mounted.
 	require.Contains(s.T(), binds, workDir+":"+workDir)
@@ -689,7 +689,7 @@ func (s *RunnerSuite) TestBuildContainerMountsParentEqualsWorkDir() {
 	workDir := "/Users/user/dev/loop"
 	parentDirPath := workDir
 
-	binds, _ := s.runner.buildContainerMounts(nil, workDir, parentDirPath, nil)
+	binds, _, _ := s.runner.buildContainerMounts(nil, workDir, parentDirPath, nil)
 
 	count := 0
 	for _, b := range binds {
@@ -704,7 +704,7 @@ func (s *RunnerSuite) TestBuildContainerMountsExtraDirTildeExpansion() {
 	workDir := "/home/user/project"
 	extraDirs := []string{"~/lib", "/absolute/path"}
 
-	binds, _ := s.runner.buildContainerMounts(nil, workDir, "", extraDirs)
+	binds, _, _ := s.runner.buildContainerMounts(nil, workDir, "", extraDirs)
 
 	// ~ should be expanded to the home directory.
 	require.Contains(s.T(), binds, "/home/testuser/lib:/home/testuser/lib")
@@ -717,7 +717,7 @@ func (s *RunnerSuite) TestBuildContainerMountsExtraDirExpandError() {
 	workDir := "/home/user/project"
 	extraDirs := []string{"~/broken", "/absolute/path"}
 
-	binds, _ := s.runner.buildContainerMounts(nil, workDir, "", extraDirs)
+	binds, _, _ := s.runner.buildContainerMounts(nil, workDir, "", extraDirs)
 
 	// ~/broken should be skipped because expandPath fails, /absolute/path should still appear.
 	require.Contains(s.T(), binds, "/absolute/path:/absolute/path")

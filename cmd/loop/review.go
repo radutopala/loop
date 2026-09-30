@@ -456,5 +456,5 @@ func (a *app) reviewHTTPClient() reviewHTTPClient {
 	if a.reviewClient != nil {
 		return a.reviewClient
 	}
-	return http.DefaultClient
+	return a.apiClient
 }

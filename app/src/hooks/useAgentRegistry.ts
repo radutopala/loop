@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { getApiUrl } from "../api/api";
+import { apiFetch, getApiUrl } from "../api/api";
 import type { WSEvent } from "../types";
 import { logErr } from "../utils/log";
 import { useEventStream } from "./useEventStream";
@@ -38,7 +38,7 @@ export function useAgentRegistry(channelId: string | null): UseAgentRegistryResu
   useEffect(() => {
     if (!channelId) return;
     let cancelled = false;
-    fetch(`${getApiUrl()}/api/agents?channel_id=${encodeURIComponent(channelId)}`)
+    apiFetch(`${getApiUrl()}/api/agents?channel_id=${encodeURIComponent(channelId)}`)
       .then((r) => (r.ok ? r.json() : []))
       .then((list: AgentInfo[]) => {
         if (cancelled || !Array.isArray(list)) return;

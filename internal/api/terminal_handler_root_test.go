@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
@@ -139,6 +140,8 @@ func (s *TerminalHandlerSuite) TestCreateDockerShellCdIntoRoot() {
 		require.Equal(s.T(), "cd "+shellSingleQuote(extra)+"\n", string(got))
 	case <-doneCh:
 		s.T().Fatal("session ended before cd input")
+	case <-time.After(5 * time.Second):
+		s.T().Fatal("no cd input")
 	}
 	close(doneCh)
 }
@@ -180,6 +183,8 @@ func (s *TerminalHandlerSuite) TestCreateDockerShellCdInputError() {
 	case <-cdCalled:
 	case <-doneCh:
 		s.T().Fatal("session ended before cd input")
+	case <-time.After(5 * time.Second):
+		s.T().Fatal("no cd input")
 	}
 	close(doneCh)
 }

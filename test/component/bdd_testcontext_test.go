@@ -9,7 +9,6 @@ import (
 	"net/http"
 	"os"
 	"strings"
-	"time"
 
 	"github.com/gorilla/websocket"
 )
@@ -60,7 +59,7 @@ func NewTestContext() *TestContext {
 	return &TestContext{
 		BaseURL:    getEnvOrDefault("LOOP_BASE_URL", "http://localhost:8222"),
 		AppURL:     getEnvOrDefault("LOOP_APP_URL", "http://localhost:5173"),
-		HTTPClient: &http.Client{Timeout: 10 * time.Second},
+		HTTPClient: newAPIClient(),
 	}
 }
 

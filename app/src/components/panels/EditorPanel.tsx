@@ -1,4 +1,4 @@
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { buildRawFileBase } from "../../api/files";
 import type { EditorStateApi } from "../../hooks/useEditorState";
 import { useTheme } from "../../ThemeContext";
@@ -6,6 +6,29 @@ import { fonts } from "../../theme";
 import { CodeEditor, isHtmlFile, isMarkdownFile } from "./CodeEditor";
 import { FileIcon, parsePathKey } from "./EditorFileTree";
 import { FilePanel } from "./FilePanel";
+
+// useHtmlBaseURL resolves the <base href> of an HTML preview: a content link
+// to the file's directory, minted asynchronously.
+function useHtmlBaseURL(file: { channelId: string; path: string; root: number } | null): string | null {
+  const [url, setUrl] = useState<string | null>(null);
+  const channelId = file?.channelId;
+  const path = file?.path;
+  const root = file?.root;
+  useEffect(() => {
+    setUrl(null);
+    if (channelId === undefined || path === undefined) return;
+    let cancelled = false;
+    buildRawFileBase(channelId, path, root)
+      .then((u) => {
+        if (!cancelled) setUrl(u);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [channelId, path, root]);
+  return url;
+}
 
 interface EditorPanelProps {
   channelId: string;
@@ -60,7 +83,7 @@ export function EditorPanel({ dirPath, branch, editorState, embedded, ...panelPr
   // Markdown opens split, HTML opens rendered; each type remembers its own mode.
   const previewMode = isHtml ? htmlMode : mdMode;
   const setPreviewMode = isHtml ? setHtmlMode : setMdMode;
-  const htmlBaseURL = isHtml && selected ? buildRawFileBase(panelProps.channelId, selected.relativePath, selected.rootIndex) : null;
+  const htmlBaseURL = useHtmlBaseURL(isHtml && selected ? { channelId: panelProps.channelId, path: selected.relativePath, root: selected.rootIndex } : null);
   const hasMultipleRoots = roots.length > 1;
 
   const handlePreviewUpdate = useCallback((html: string) => {

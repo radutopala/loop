@@ -187,8 +187,9 @@ func NewManager(bots BotRouter, limits types.RateLimits) *Manager {
 // Request prompts the user (or returns a cached / rate-limited result).
 // Outcome.Decision is always Allow or Deny — never Approve.
 func (m *Manager) Request(ctx context.Context, channelID string, req ApprovalRequest) Outcome {
-	if req.CacheKey != "" {
-		if out, ok := m.lookupCached(req.CacheKey); ok {
+	cacheKey := scopedCacheKey(req.Kind, req.CacheKey)
+	if cacheKey != "" {
+		if out, ok := m.lookupCached(cacheKey); ok {
 			return out
 		}
 	}
@@ -239,7 +240,7 @@ func (m *Manager) Request(ctx context.Context, channelID string, req ApprovalReq
 	select {
 	case r := <-entry.ch:
 		_ = bot.RemoveApproval(ctx, channelID, msgID)
-		return m.applyResolution(req.CacheKey, r)
+		return m.applyResolution(cacheKey, r)
 	case <-ctx.Done():
 		// RemoveApproval broadcasts gate.approval_resolved so the FE
 		// retracts the card; use a fresh context since ours is done.
@@ -352,6 +353,17 @@ func (m *Manager) checkLimits() (Outcome, bool) {
 		m.recent = append(m.recent, m.now())
 	}
 	return Outcome{}, true
+}
+
+// scopedCacheKey namespaces a request's CacheKey by its Kind, so a decision
+// remembered for one kind of trap (a file path, say) never answers another
+// (a docker request whose key happens to spell the same string). An empty
+// key stays empty: the request isn't cacheable.
+func scopedCacheKey(kind, key string) string {
+	if key == "" {
+		return ""
+	}
+	return kind + "\x00" + key
 }
 
 // lookupCached resolves a CacheKey against the session cache first, then the

@@ -87,9 +87,12 @@ interface ChatViewProps {
   /** Don't take focus on mount: the Learn view's learn thread, beside a chat
    * that has it. */
   noAutoFocus?: boolean;
+  /** The project config waits for trust: the composer says so, with a way to review it. */
+  trustPending?: boolean;
+  onReviewTrust?: () => void;
 }
 
-export function ChatView({ channelId, chatState, roots, scrollToMessageId, onScrollComplete, noAutoFocus }: ChatViewProps) {
+export function ChatView({ channelId, chatState, roots, scrollToMessageId, onScrollComplete, noAutoFocus, trustPending, onReviewTrust }: ChatViewProps) {
   const { colors, fontSizes } = useTheme();
   const styles = buildStyles(colors);
   const { items, liveTail, messages, loading, isRunning } = chatState;
@@ -227,6 +230,8 @@ export function ChatView({ channelId, chatState, roots, scrollToMessageId, onScr
           pendingGateReqId={chatState.gateApprovals["chat"]?.req_id ?? null}
           hasPendingExitPlan={!!chatState.exitPlanRequest}
           hasPendingAskUser={!!chatState.askUserQuestions}
+          trustPending={trustPending}
+          onReviewTrust={onReviewTrust}
         />
       </div>
       <div style={styles.isolationLabel}>

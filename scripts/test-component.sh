@@ -68,7 +68,7 @@ fi
 # fixed path so sibling containers spawned via the socket can bind-mount the
 # same files from the host.
 if [ -f /.dockerenv ] && [ -S /var/run/docker.sock ]; then
-    TMPDIR=/tmp/loop-bdd-data
+    TMPDIR="${LOOP_BDD_DATA:-/tmp/loop-bdd-data}"
     # The glob skips dotfiles on purpose: the Makefile stages the host config
     # as .host-config.json here when run from inside a Loop agent container.
     rm -rf "$TMPDIR"/* 2>/dev/null || true
@@ -116,6 +116,16 @@ if [ -n "$LOOP_DOCS_CAPTURE" ]; then
     # here — otherwise the Docker Agent terminal execs as root and Claude
     # refuses --dangerously-skip-permissions.
     export HOST_UID=1000 HOST_GID=1000
+    # agentgate needs seccomp=unconfined + CAP_SYS_PTRACE on each agent
+    # container. The docker proxy of a Loop agent container denies both as a
+    # container-escape risk, so a run started from inside one (the Makefile
+    # passes LOOP_BDD_AGENTGATE=0) goes without the gate, token or not.
+    AGENTGATE_ENABLED=true
+    if [ "$LOOP_BDD_AGENTGATE" = "0" ] || [ -n "$LOOP_DOCKERPROXY_ENABLED" ]; then
+        AGENTGATE_ENABLED=false
+        DOCS_AUTH='"gates": { "agentgate": { "enabled": false } },'
+        echo -e "${YELLOW}Docs capture: agentgate off (running under a Loop agent's docker proxy)${NC}"
+    fi
     if [ -n "$LOOP_DOCS_HOST_CONFIG" ] && [ -f "$LOOP_DOCS_HOST_CONFIG" ]; then
         # The config is HJSON (comments, unquoted keys, trailing commas), so a
         # strict JSON parser (jq/python) can't be relied on — extract the token
@@ -151,15 +161,6 @@ if [ -n "$LOOP_DOCS_CAPTURE" ]; then
             # freshly-built binary under the host-shared LOOP_HOME and bind-mount
             # it over /usr/local/bin/loop in each agent container.
             cp bin/loop "$LOOP_HOME/loop" && chmod 0755 "$LOOP_HOME/loop"
-            # agentgate needs seccomp=unconfined + CAP_SYS_PTRACE on each agent
-            # container. The docker proxy of a Loop agent container denies both
-            # as a container-escape risk, so a run started from inside one
-            # (the Makefile passes LOOP_BDD_AGENTGATE=0) goes without the gate.
-            AGENTGATE_ENABLED=true
-            if [ "$LOOP_BDD_AGENTGATE" = "0" ] || [ -n "$LOOP_DOCKERPROXY_ENABLED" ]; then
-                AGENTGATE_ENABLED=false
-                echo -e "${YELLOW}Docs capture: agentgate off (running under a Loop agent's docker proxy)${NC}"
-            fi
             DOCS_AUTH="\"claude_code_oauth_token\": \"$DOCS_TOKEN\",
   \"envs\": { \"NODE_TLS_REJECT_UNAUTHORIZED\": \"0\", \"NODE_NO_WARNINGS\": \"1\", \"HOST_USER\": \"agent\", \"HOST_UID\": \"1000\", \"HOST_GID\": \"1000\", \"TMPDIR\": \"$LOOP_HOME/.claude/tmp\" },
   \"gates\": { \"agentgate\": { \"enabled\": $AGENTGATE_ENABLED, \"command_rules\": [ { \"commands\": [\"git\"], \"args_patterns\": [\"commit\", \"push\"], \"decision\": \"approve\", \"message\": \"git commit/push (approval required)\" } ] } },
@@ -201,7 +202,10 @@ EOF
 
 echo -e "${YELLOW}Starting loop (HOME=$LOOP_HOME)...${NC}"
 LOOP_STDERR="$LOOP_DIR/serve-stderr.log"
-HOME="$LOOP_HOME" bin/loop serve 2>"$LOOP_STDERR" &
+# The daemon writes its owner API token under the user config dir; pin that
+# dir so the tests (and the browser, via #loop_token=) can read the token.
+export LOOP_API_TOKEN_FILE="$LOOP_HOME/.config/loop/api-token"
+HOME="$LOOP_HOME" XDG_CONFIG_HOME="$LOOP_HOME/.config" bin/loop serve 2>"$LOOP_STDERR" &
 LOOP_PID=$!
 echo "loop started with PID: $LOOP_PID"
 
@@ -250,7 +254,7 @@ fi
 if [ -n "$LOOP_SERVE_ONLY" ]; then
     echo -e "${GREEN}=== loop is serving (serve-only mode) ===${NC}"
     echo -e "${GREEN}Connect a browser to:${NC}"
-    echo -e "  ${YELLOW}UI:${NC}  http://${SERVE_IP:-localhost}:5173"
+    echo -e "  ${YELLOW}UI:${NC}  http://${SERVE_IP:-localhost}:5173/#loop_token=$(cat "$LOOP_API_TOKEN_FILE")"
     echo -e "  ${YELLOW}API:${NC} http://${SERVE_IP:-localhost}:8222"
     echo -e "${GREEN}Blocking until the container is stopped (docker rm -f loop-dev).${NC}"
     wait "$LOOP_PID"
@@ -295,6 +299,7 @@ LOOP_BASE_URL="http://localhost:8222" \
 LOOP_APP_URL="${LOOP_APP_URL:-http://localhost:5173}" \
 LOOP_PID="$LOOP_PID" \
 LOOP_DB_PATH="$LOOP_DIR/loop.db" \
+LOOP_API_TOKEN_FILE="$LOOP_API_TOKEN_FILE" \
 CHROME_CDP_URL="${CHROME_CDP_URL:-}" \
 GODOG_CONCURRENCY="${GODOG_CONCURRENCY:-1}" \
 go test -timeout "$TEST_TIMEOUT" -count=1 -v -tags=component ${TEST_FLAGS} ./test/component/... || TEST_RC=$?

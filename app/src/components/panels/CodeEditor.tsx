@@ -12,11 +12,11 @@ import { bracketMatching, foldGutter, foldKeymap } from "@codemirror/language";
 import { openSearchPanel, search, searchKeymap } from "@codemirror/search";
 import { Compartment, EditorSelection, EditorState } from "@codemirror/state";
 import { drawSelection, EditorView, highlightActiveLine, highlightActiveLineGutter, keymap, lineNumbers } from "@codemirror/view";
-import { marked } from "marked";
 import { forwardRef, lazy, Suspense, useCallback, useEffect, useImperativeHandle, useMemo, useRef } from "react";
 import { isPdfPath, isVideoPath } from "../../api/files";
 import { useTheme } from "../../ThemeContext";
 import { fonts } from "../../theme";
+import { renderMarkdownSafe } from "../../utils/markdownSafe";
 import { ContextMenu, type MenuItem } from "../shared/ContextMenu";
 import { emptyGitLineChanges, type GitLineChanges, gitChangeGutterExtension, setGitLineChanges } from "./editorGitGutter";
 import { GitChangeOverview } from "./editorGitOverview";
@@ -77,7 +77,7 @@ export function isHtmlFile(path: string): boolean {
 
 /** Preview payload for a file: rendered markdown, raw HTML source, or "" when the file has no preview. */
 export function previewSource(path: string, content: string): string {
-  if (isMarkdownFile(path)) return marked.parse(content, { async: false }) as string;
+  if (isMarkdownFile(path)) return renderMarkdownSafe(content);
   if (isHtmlFile(path)) return content;
   return "";
 }
