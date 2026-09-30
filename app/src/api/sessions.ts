@@ -1,4 +1,4 @@
-import { getApiUrl } from "./api";
+import { apiFetch, getApiUrl } from "./api";
 
 export interface SessionEntry {
   session_id: string;
@@ -13,7 +13,7 @@ export interface SessionsResponse {
 }
 
 export async function fetchSessions(channelId: string): Promise<SessionsResponse> {
-  const res = await fetch(`${getApiUrl()}/api/channels/${channelId}/sessions`);
+  const res = await apiFetch(`${getApiUrl()}/api/channels/${channelId}/sessions`);
   if (!res.ok) throw new Error(`Failed to fetch sessions: ${res.statusText}`);
   return res.json();
 }
@@ -22,7 +22,7 @@ export async function fetchSessions(channelId: string): Promise<SessionsResponse
 // next run resumes that conversation. While a run is in progress the switch
 // waits for it to end, and deferred is true.
 export async function setSession(channelId: string, sessionId: string): Promise<{ deferred: boolean }> {
-  const res = await fetch(`${getApiUrl()}/api/channels/${channelId}/session`, {
+  const res = await apiFetch(`${getApiUrl()}/api/channels/${channelId}/session`, {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ session_id: sessionId }),

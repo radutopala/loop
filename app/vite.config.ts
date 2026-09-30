@@ -43,6 +43,11 @@ export default defineConfig({
   server: {
     allowedHosts: ["host.docker.internal"],
     proxy: {
+      // Content links (iframes, images, <base href>) the UI can't add a token to.
+      "/c/": {
+        target: process.env.LOOP_API_URL || "http://localhost:8222",
+        changeOrigin: true,
+      },
       "/api": {
         target: process.env.LOOP_API_URL || "http://localhost:8222",
         changeOrigin: true,

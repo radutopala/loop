@@ -7,12 +7,12 @@ import (
 	"fmt"
 	"io/fs"
 	"net/http"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
 
+	"github.com/radutopala/loop/internal/gitutil"
 	"github.com/radutopala/loop/internal/osutil"
 	"github.com/radutopala/loop/internal/randutil"
 )
@@ -67,8 +67,7 @@ func (s *Server) handleListBranches(w http.ResponseWriter, r *http.Request) {
 	dirPath = resolvedDir
 
 	// List local branches.
-	branchCmd := exec.CommandContext(r.Context(), "git", "branch", "--format=%(refname:short)")
-	branchCmd.Dir = dirPath
+	branchCmd := gitutil.Command(r.Context(), dirPath, "branch", "--format=%(refname:short)")
 	branchOut, err := branchCmd.Output()
 	if err != nil {
 		http.Error(w, "failed to list branches", http.StatusInternalServerError)
@@ -87,8 +86,7 @@ func (s *Server) handleListBranches(w http.ResponseWriter, r *http.Request) {
 	current := gitBranch(r.Context(), dirPath)
 
 	// List worktrees.
-	wtCmd := exec.CommandContext(r.Context(), "git", "worktree", "list", "--porcelain")
-	wtCmd.Dir = dirPath
+	wtCmd := gitutil.Command(r.Context(), dirPath, "worktree", "list", "--porcelain")
 	wtOut, _ := wtCmd.Output() // ignore error — worktrees may not exist
 
 	worktrees := parseWorktrees(string(wtOut), dirPath)
@@ -246,8 +244,7 @@ func (s *Server) handleListCommits(w http.ResponseWriter, r *http.Request) {
 		args = append(args, safe)
 	}
 
-	cmd := exec.CommandContext(r.Context(), "git", args...)
-	cmd.Dir = dirPath
+	cmd := gitutil.Command(r.Context(), dirPath, args...)
 	out, err := cmd.Output()
 	if err != nil {
 		// Empty repos (no commits yet) cause git log to fail — return empty list.
@@ -326,8 +323,7 @@ func (s *Server) handleSwitchBranch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	cmd := exec.CommandContext(r.Context(), "git", "checkout", branch)
-	cmd.Dir = dirPath
+	cmd := gitutil.Command(r.Context(), dirPath, "checkout", branch)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		http.Error(w, "git checkout failed: "+strings.TrimSpace(string(out)), http.StatusInternalServerError)
 		return
@@ -383,8 +379,7 @@ func (s *Server) handleCreateBranch(w http.ResponseWriter, r *http.Request) {
 		args = append(args, from)
 	}
 
-	cmd := exec.CommandContext(r.Context(), "git", args...)
-	cmd.Dir = dirPath
+	cmd := gitutil.Command(r.Context(), dirPath, args...)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		http.Error(w, "git checkout -b failed: "+strings.TrimSpace(string(out)), http.StatusInternalServerError)
 		return
@@ -432,8 +427,7 @@ func (s *Server) handleDeleteBranch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	cmd := exec.CommandContext(r.Context(), "git", "branch", "-D", branch)
-	cmd.Dir = dirPath
+	cmd := gitutil.Command(r.Context(), dirPath, "branch", "-D", branch)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		http.Error(w, "git branch -D failed: "+strings.TrimSpace(string(out)), http.StatusInternalServerError)
 		return
@@ -609,8 +603,7 @@ func (s *Server) handleImportWorktree(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Validate that the path is an actual git worktree by checking git worktree list.
-	wtCmd := exec.CommandContext(r.Context(), "git", "worktree", "list", "--porcelain")
-	wtCmd.Dir = parent.DirPath
+	wtCmd := gitutil.Command(r.Context(), parent.DirPath, "worktree", "list", "--porcelain")
 	wtOut, err := wtCmd.Output()
 	if err != nil {
 		http.Error(w, "failed to list worktrees", http.StatusInternalServerError)

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"os"
 	"path/filepath"
 	"sync"
 )
@@ -49,7 +50,80 @@ type TunnelManager interface {
 // and returns a safe directory path under the playground base directory.
 func (s *playgroundService) validatePlaygroundDir(name string) (string, error) {
 	baseDir := filepath.Join(s.deps.loopDir, "playground")
-	return validatePlaygroundDirIn(baseDir, name)
+	return s.playgroundDirIn(baseDir, name)
+}
+
+// playgroundDirIn validates name under baseDir and returns the playground's
+// symlink-resolved directory, refusing one whose real location is not inside
+// the real base (e.g. a playground dir that is a symlink out of the base).
+func (s *playgroundService) playgroundDirIn(baseDir, name string) (string, error) {
+	pgDir, err := validatePlaygroundDirIn(baseDir, name)
+	if err != nil {
+		return "", err
+	}
+	return s.realPathIn(baseDir, pgDir)
+}
+
+// playgroundFile validates relPath within pgDir (an already resolved
+// playground dir) and returns its symlink-resolved path, refusing one whose
+// real location is not inside pgDir.
+func (s *playgroundService) playgroundFile(pgDir, relPath string) (string, error) {
+	fullPath, err := validatePlaygroundPath(pgDir, relPath)
+	if err != nil {
+		return "", err
+	}
+	return s.realPathIn(pgDir, fullPath)
+}
+
+// readPlaygroundFile reads relPath from pgDir after resolving it with
+// playgroundFile.
+func (s *playgroundService) readPlaygroundFile(pgDir, relPath string) ([]byte, error) {
+	p, err := s.playgroundFile(pgDir, relPath)
+	if err != nil {
+		return nil, err
+	}
+	return os.ReadFile(p)
+}
+
+// realPathIn resolves both paths and requires p's real location to lie
+// strictly inside base's real location.
+func (s *playgroundService) realPathIn(base, p string) (string, error) {
+	realBase, err := s.realPath(base)
+	if err != nil {
+		return "", err
+	}
+	realP, err := s.realPath(p)
+	if err != nil {
+		return "", err
+	}
+	if realP == realBase || !pathWithin(realP, realBase) {
+		return "", fmt.Errorf("path traversal not allowed")
+	}
+	return realP, nil
+}
+
+// realPath resolves symlinks in p. Trailing components that do not exist yet
+// are re-joined verbatim onto the deepest existing (resolved) ancestor, so a
+// path a handler is about to create still resolves. A component that exists
+// but cannot be resolved — a dangling symlink — is refused: writing through it
+// would create its target wherever it points.
+func (s *playgroundService) realPath(p string) (string, error) {
+	cur, tail := filepath.Clean(p), ""
+	for {
+		real, err := s.deps.sys.EvalSymlinks(cur)
+		if err == nil {
+			return filepath.Join(real, tail), nil
+		}
+		if _, lerr := s.deps.sys.Lstat(cur); lerr == nil {
+			return "", fmt.Errorf("path traversal not allowed")
+		}
+		parent := filepath.Dir(cur)
+		if parent == cur {
+			return "", fmt.Errorf("path not found")
+		}
+		tail = filepath.Join(filepath.Base(cur), tail)
+		cur = parent
+	}
 }
 
 // resolvePlaygroundDir resolves the playground directory based on scope.
@@ -66,7 +140,7 @@ func (s *playgroundService) resolvePlaygroundDir(r *http.Request, name string) (
 			return "", err
 		}
 		baseDir := filepath.Join(dirPath, ".loop", "playground")
-		return validatePlaygroundDirIn(baseDir, name)
+		return s.playgroundDirIn(baseDir, name)
 	}
 	return s.validatePlaygroundDir(name)
 }
@@ -116,7 +190,7 @@ func (s *playgroundService) resolveProjectPlaygroundDir(r *http.Request) (string
 		return "", err
 	}
 	baseDir := filepath.Join(dirPath, ".loop", "playground")
-	return validatePlaygroundDirIn(baseDir, name)
+	return s.playgroundDirIn(baseDir, name)
 }
 
 // playgroundShareEnabled reports whether the public-share feature is turned on

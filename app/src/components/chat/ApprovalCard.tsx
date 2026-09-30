@@ -5,6 +5,7 @@ import { useTheme } from "../../ThemeContext";
 import { fonts } from "../../theme";
 import type { GateApprovalRequestedData } from "../../types";
 import { ContextMenu, type MenuItem } from "../shared/ContextMenu";
+import { UnifiedDiff } from "../shared/UnifiedDiff";
 
 export function ApprovalCard({
   data,
@@ -186,6 +187,12 @@ export function ApprovalCard({
   ];
 
   const label = data.kind ? data.kind.toUpperCase() : "APPROVAL";
+  // A "diff" detail is the content the gate will install (see the git
+  // guard): render it as a diff, not a key: value line.
+  const diff = data.details?.diff;
+  const detailKeys = Object.keys(data.details ?? {})
+    .filter((k) => k !== "diff")
+    .sort();
 
   return (
     <div
@@ -202,7 +209,7 @@ export function ApprovalCard({
       <div style={{ fontSize: 11, fontWeight: 700, color: colors.warning, textTransform: "uppercase", letterSpacing: 1, marginBottom: 8 }}>Gate · {label}</div>
       <div style={{ fontSize: 13, color: colors.text, marginBottom: 4, fontFamily: fonts.mono, wordBreak: "break-word" }}>{data.target}</div>
       {data.message && <div style={{ fontSize: 12, color: colors.textDim, marginBottom: 10 }}>{data.message}</div>}
-      {data.details && Object.keys(data.details).length > 0 && (
+      {detailKeys.length > 0 && (
         <div
           style={{
             fontSize: 12,
@@ -214,15 +221,14 @@ export function ApprovalCard({
             color: colors.textDim,
           }}
         >
-          {Object.keys(data.details)
-            .sort()
-            .map((k) => (
-              <div key={k} style={{ wordBreak: "break-word" }}>
-                <span style={{ color: colors.text }}>{k}</span>: {data.details![k]}
-              </div>
-            ))}
+          {detailKeys.map((k) => (
+            <div key={k} style={{ wordBreak: "break-word" }}>
+              <span style={{ color: colors.text }}>{k}</span>: {data.details![k]}
+            </div>
+          ))}
         </div>
       )}
+      {diff && <UnifiedDiff diff={diff} testId="approval-diff" />}
       {expired ? (
         <div data-testid="approval-expired" style={{ fontSize: 12, fontFamily: fonts.mono, color: colors.textDim, fontStyle: "italic" }}>
           Expired — the request timed out and was denied.

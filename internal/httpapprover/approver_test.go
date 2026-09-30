@@ -3,12 +3,14 @@ package httpapprover
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
 
 	"github.com/radutopala/loop/internal/agentgate"
@@ -233,4 +235,32 @@ func (s *ApproverSuite) TestSatisfiesBothApproverInterfaces() {
 	a := New("http://x", "tok", &http.Client{}, nil)
 	_ = a
 	_ = io.Discard
+}
+
+func (s *ApproverSuite) TestReadToken() {
+	cases := []struct {
+		name    string
+		raw     string
+		readErr error
+		want    string
+		wantErr string
+	}{
+		{name: "trims whitespace", raw: " tok-1\n", want: "tok-1"},
+		{name: "read error", readErr: errors.New("boom"), wantErr: "boom"},
+		{name: "empty file", raw: "\n", wantErr: "is empty"},
+	}
+	for _, tc := range cases {
+		s.Run(tc.name, func() {
+			got, err := ReadToken(func(path string) ([]byte, error) {
+				require.Equal(s.T(), GateTokenFile, path)
+				return []byte(tc.raw), tc.readErr
+			}, GateTokenFile)
+			if tc.wantErr != "" {
+				require.ErrorContains(s.T(), err, tc.wantErr)
+				return
+			}
+			require.NoError(s.T(), err)
+			require.Equal(s.T(), tc.want, got)
+		})
+	}
 }

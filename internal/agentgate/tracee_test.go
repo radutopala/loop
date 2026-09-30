@@ -133,6 +133,22 @@ func (s *FakeTraceeSuite) TestEvalSymlinksRemapsKnownTargets() {
 	s.Require().Equal("/etc/shadow", got)
 }
 
+// --- Creds ---
+
+func (s *FakeTraceeSuite) TestCredsReturnsIDs() {
+	uid, gid, err := (&FakeTracee{UID: 501, GID: 20}).Creds()
+	s.Require().NoError(err)
+	s.Require().Equal(501, uid)
+	s.Require().Equal(20, gid)
+}
+
+func (s *FakeTraceeSuite) TestCredsInjectedError() {
+	uid, gid, err := (&FakeTracee{UID: 501, GID: 20, CredsErr: ErrTraceeGone}).Creds()
+	s.Require().ErrorIs(err, ErrTraceeGone)
+	s.Require().Zero(uid)
+	s.Require().Zero(gid)
+}
+
 // --- Constants sanity ---
 
 func (s *FakeTraceeSuite) TestConstants() {

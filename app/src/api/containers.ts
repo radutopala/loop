@@ -1,4 +1,4 @@
-import { getApiUrl } from "./api";
+import { apiFetch, getApiUrl } from "./api";
 
 export interface ContainerInfo {
   container_id: string;
@@ -12,7 +12,7 @@ export interface ContainerInfo {
 }
 
 export async function fetchContainers(): Promise<ContainerInfo[]> {
-  const res = await fetch(`${getApiUrl()}/api/containers`);
+  const res = await apiFetch(`${getApiUrl()}/api/containers`);
   if (!res.ok) throw new Error(`Failed to fetch containers: ${res.statusText}`);
   return res.json();
 }

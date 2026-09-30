@@ -7,7 +7,8 @@ Loop exposes a lightweight HTTP API for managing channels, threads, messages, ta
 
 ## General
 
-- **CORS:** All responses include `Access-Control-Allow-Origin: *`, `Access-Control-Allow-Methods: GET, POST, PUT, PATCH, DELETE, OPTIONS`, and `Access-Control-Allow-Headers: Content-Type`. Preflight `OPTIONS` requests return `204 No Content`.
+- **Authentication:** Every route except the few listed under [Authentication](#authentication) needs a token. See that section.
+- **CORS:** All responses include `Access-Control-Allow-Origin: *`, `Access-Control-Allow-Methods: GET, POST, PUT, PATCH, DELETE, OPTIONS`, and `Access-Control-Allow-Headers: Content-Type, Authorization`. Preflight `OPTIONS` requests return `204 No Content`. CORS grants nothing on its own: without a token a page on another origin only gets 401s.
 - **Content-Type:** JSON endpoints return `application/json`. File-reading endpoints return `text/plain; charset=utf-8`.
 - **Error responses:** Plain text body with the appropriate HTTP status code.
 
@@ -16,11 +17,82 @@ Loop exposes a lightweight HTTP API for managing channels, threads, messages, ta
 | Code | Meaning |
 |------|---------|
 | 400  | Bad request -- missing/invalid parameters or request body |
+| 401  | Missing or invalid API token |
+| 403  | The token is valid but may not make this request (an agent token on an owner-only route, or naming another project) |
 | 404  | Resource not found |
 | 413  | Request entity too large (file operations) |
 | 500  | Internal server error |
 | 501  | Feature not configured (service dependency is nil) |
 | 503  | Service unavailable (commands not configured) |
+
+---
+
+## Authentication
+
+Every API caller is either the **owner** or an **agent**. Nothing is trusted for where it comes from: no cookies, no origin checks, and `localhost` gets no pass.
+
+### Tokens
+
+| Caller | Token | Where it lives |
+|---|---|---|
+| Owner: the desktop app, the `loop` CLI, host tools | Owner token, 32 random bytes in hex | `api-token` in Loop's directory under the OS user config dir (`~/Library/Application Support/loop/` on macOS, `~/.config/loop/` on Linux). Dir `0700`, file `0600`. `loop serve` creates it on first start |
+| Agent: the clients inside one agent container (the MCP server, mcp-browser, `loop review`, the agent-channel WebSocket) | Agent token, issued per container | `/run/loop/api-token` in the container, readable by the agent user only. Never in the container's environment, so `docker inspect` doesn't show it. Revoked when the container goes |
+
+The owner token's directory is never a channel dir and never mounted into a container, whatever the config says.
+
+Send the token as a header:
+
+```
+Authorization: Bearer <token>
+```
+
+Browsers can't set headers on a WebSocket, so WebSocket clients send it as a subprotocol instead: `Sec-WebSocket-Protocol: loop, loop.token.<token>`. The server answers with `loop`.
+
+**Rotating.** `loop api:rotate-token`, **Developer → Rotate API Token…** in the desktop app, or `POST /api/auth/rotate` with the owner token writes a new owner token and the daemon switches to it at once. The CLI reads the file on every request and the desktop app reads it again on its next 401, so both carry on without a restart. A browser tab opened with `loop app:url` needs a fresh URL. Agent tokens are unaffected.
+
+**Browser mode.** A UI running in a plain browser tab, without the desktop app's preload, has no file to read. `loop app:url` prints the UI's URL with the token in the fragment (`#loop_token=...`); the UI moves it to the tab's `sessionStorage` and drops it from the address bar. Fragments aren't sent to the server, but anyone with the URL has full access, so treat it as a secret.
+
+### Agent scope
+
+An agent token works only on the routes in-container clients call (the table is `agentRoutes` in `internal/api/agent_scope.go`): messages, threads, tasks, shortcuts, memory, playground, workflows, learn proposals, review, quality, the browser action and the agent-channel WebSocket. Every other route answers 403, among them config, terminals, gates, images, token rotation and content links.
+
+On the routes it may call, an agent is held to its own project. Every channel, thread, task, workflow run and `dir_path` a request names, in the path, the query or the JSON body, must be the agent's own channel or dir, or share its project root (after symlinks). A request that names anything else gets 403. The exception is `POST /api/messages` (the `send_message` tool): its `channel_id` may be any channel, so one agent can hand work or news to another project's channel. Agents may also only change `project` bash shortcuts, and can't start workflows while `workflow_bash_local` runs workflow bash on the host.
+
+### Public routes
+
+| Route | Why |
+|---|---|
+| `GET /api/health` | Liveness checks before a token is at hand |
+| `POST /api/gate/container-approval` | Checks its own per-container gate token, which only root processes in the container can read |
+| `GET /c/{cap}/{path...}` | Content links, below |
+
+### `POST /api/auth/rotate`
+
+Owner only. Writes a new owner token and switches to it. Returns `204 No Content`.
+
+### `POST /api/content-caps`
+
+Owner only. Iframes, images, video and `<base href>` can't send an `Authorization` header, so the UI loads them through a short-lived signed link instead. Returns a base URL that serves one channel root's files or one playground.
+
+**Request body:**
+
+| Field | Type | Description |
+|---|---|---|
+| `kind` | string | `raw` (a channel root's files) or `playground` |
+| `channel_id` | string | `raw`: the channel (required). `playground`: set for a project playground, empty for a global one |
+| `root` | int | `raw`: the channel root index |
+| `name` | string | `playground`: its name (required) |
+
+**Response (200):**
+```json
+{"base_url": "/c/<cap>/", "expires_in_sec": 3600}
+```
+
+The link is signed with a key that lives only in the running daemon, so links stop working when it restarts. The UI mints a new one well before expiry.
+
+### `GET /c/{cap}/{path...}`
+
+Serves `path` under what the link names, like `GET /api/channels/{id}/raw/{root}/{path...}` and the playground routes do, with the same path checks: a path that leaves the root, symlinks included, gets 400. A bad or expired link gets `403 link expired or invalid`. Playground pages are sent with `Content-Security-Policy: sandbox allow-scripts allow-forms allow-modals allow-popups allow-downloads`, which gives them an opaque origin: agent-written JavaScript can't read the UI's storage even when both are served from the same origin.
 
 ---
 
@@ -84,6 +156,7 @@ List all channels with optional filtering. Enriches each channel with container 
 - `last_activity_at` is when the channel's newest message was written. Omitted when it has none, or when the lookup fails (the list is still returned). The sidebar's Recent section sorts by it.
 - `description` is what the channel or thread is for, set via [`POST /api/channels/{id}/description`](#post-apichannelsiddescription). Omitted when empty.
 - `ticket_url` is the URL of the channel or thread's ticket, set via [`POST /api/channels/{id}/ticket`](#post-apichannelsidticket). Omitted when unset.
+- `trust_pending` is `true` when the project config's host-reaching fields changed since you last trusted them, so they don't apply yet (see [`GET /api/config/project/trust`](#get-apiconfigprojecttrust)). For a worktree chain it's the root checkout's config. Omitted otherwise, and when the config can't be read.
 - `task_id` is set on a thread a scheduled task created for its output: the id of that task. Omitted on every other channel and thread, including ones that host tasks. The sidebar's hide-task-threads toggle filters on it.
 - `locked` is true when the channel/thread is guarded against accidental deletion (toggle via [`PATCH /api/channels/{id}/lock`](#patch-apichannelsidlock)). `DELETE /api/channels/{id}` and `DELETE /api/threads/{id}` return `409 Conflict` while a row is locked.
 - Hidden learn and explain threads (`kind: "learn"` or `"explain"`, see [Learn](#learn) and [Explain](#explain)) are left out of the list.
@@ -1160,6 +1233,30 @@ Apply a `pending` or `failed` proposal. It moves to `applying` first, so a doubl
 
 ---
 
+### `GET /api/learn/proposals/{id}/preview`
+
+What applying a proposal would change in the project config, without changing it. The server works out the same edit apply makes, with the same duplicate checks, against the file as it is now. Owner-only.
+
+**Response (200):**
+```json
+{
+  "path": "/home/user/project/.loop/config.json",
+  "diff": "--- /home/user/project/.loop/config.json\n+++ /home/user/project/.loop/config.json\n@@ -1,3 +1,6 @@\n {\n-  \"envs\": {}\n+  \"envs\": {},\n+  \"mounts\": [\n+    \"~/.aws:~/.aws:ro\"\n+  ]\n }\n"
+}
+```
+
+| Field | Description |
+|---|---|
+| `path` | The `.loop/config.json` the proposal edits (see [Where learn proposals are written](configuration.md#where-learn-proposals-are-written)) |
+| `diff` | The edit as a unified diff, from `/dev/null` when the file would be created. Omitted when the change is already there (a gate rule the config has) |
+| `error` | Why applying it would fail (a shortcut or mount that already exists, a config that doesn't parse), as apply would record it |
+
+All fields are omitted for kinds that edit no file (`scheduled_task`, `rename`, `description`, `ticket_url`).
+
+**Errors:** `400` if `{id}` isn't an integer. `404` if the proposal doesn't exist. `500` on a store error. `501` if the store is not configured.
+
+---
+
 ### `POST /api/learn/proposals/{id}/dismiss`
 
 Dismiss a `pending` or `failed` proposal, or one stuck in `applying` as above.
@@ -1616,9 +1713,11 @@ Write content to a file.
 {"ok": true}
 ```
 
-**Behavior notes:** Preserves original file permissions if the file already exists; defaults to `0644` for new files.
+**Behavior notes:**
+- Preserves original file permissions if the file already exists; defaults to `0644` for new files.
+- A symlink whose target resolves inside the root is followed: the write lands on the target and the link stays. A link that resolves outside the root, or points at nothing, is refused rather than written through.
 
-**Errors:** `400` if path is invalid. `413` if content exceeds 5 MB.
+**Errors:** `400` if path is invalid, a symlink leaves the root, or a symlink is dangling. `413` if content exceeds 5 MB.
 
 ---
 
@@ -2927,7 +3026,7 @@ Add, update, or delete a bash shortcut in the global or project config file.
 
 ### `PUT /api/config/project`
 
-Save project config for a channel.
+Save project config for a channel. Owner-only.
 
 **Query Parameters:**
 
@@ -2938,18 +3037,65 @@ Save project config for a channel.
 **Request:**
 ```json
 {
-  "raw": "{\n  \"claude_model\": \"claude-opus-4-6\"\n}"
+  "content": "{\n  \"claude_model\": \"claude-opus-4-6\"\n}"
 }
 ```
 
+**Response:** `204 No Content`
+
+Creates the `.loop/` directory and config file if they don't exist. A project config that was trusted stays trusted (see [`GET /api/config/project/trust`](#get-apiconfigprojecttrust)).
+
+**Errors:** `400` if `channel_id` is missing, the channel isn't found, or the HJSON is invalid.
+
+---
+
+### `GET /api/config/project/trust`
+
+Whether the project config's host-reaching fields apply as written (see [Configuration: Project Config Trust](configuration.md#project-config-trust)). Owner-only.
+
+**Query Parameters:**
+
+| Param        | Type   | Required | Description |
+|--------------|--------|----------|-------------|
+| `channel_id` | string | yes      | Channel ID; worktree channels use their root project's config |
+
 **Response (200):**
 ```json
-{"ok": true}
+{
+  "trusted": false,
+  "current": "{\n  \"mounts\": [\n    \"~/data:/data\"\n  ]\n}",
+  "approved": "{}",
+  "diff": "--- .loop/config.json (last trusted)\n+++ .loop/config.json (now)\n@@ -1 +1,5 @@\n-{}\n+{\n+  \"mounts\": [\n+    \"~/data:/data\"\n+  ]\n+}\n",
+  "hash": "4f1c…"
+}
 ```
 
-Creates the `.loop/` directory and config file if they don't exist.
+| Field | Description |
+|---|---|
+| `trusted` | The fields apply as written |
+| `current` | The fields as the file has them now, as indented JSON |
+| `approved` | The version last trusted, which applies while `trusted` is false; `""` if never trusted |
+| `diff` | `approved` → `current` as a unified diff, from `/dev/null` if never trusted; `""` while `trusted` |
+| `hash` | Identifies `current`; pass it to `POST` to trust exactly this version |
 
-**Errors:** `400` if `channel_id` is missing or HJSON is invalid. `404` if channel not found.
+**Errors:** `400` if `channel_id` is missing or the channel isn't found. `500` if the project config doesn't parse. `501` if trust isn't configured.
+
+---
+
+### `POST /api/config/project/trust`
+
+Trust the project config as reviewed. Owner-only.
+
+**Query Parameters:** `channel_id` as above.
+
+**Request:**
+```json
+{"hash": "4f1c…"}
+```
+
+**Response:** `204 No Content`
+
+**Errors:** `400` if `channel_id` or `hash` is missing. `409` if the config changed since the status with that `hash`: fetch the status again. `501` if trust isn't configured.
 
 ---
 
@@ -3352,7 +3498,7 @@ Inbound call from the in-container docker proxy (`loop dockerproxy`) or seccomp-
 
 | Header | Value |
 |---|---|
-| `Authorization` | `Bearer <LOOP_GATE_TOKEN>` — the 32-byte-hex bearer the runner minted for this container. Compared in constant time |
+| `Authorization` | `Bearer <gate token>` — the 32-byte-hex bearer the runner minted for this container, read from `/run/loop/gate-token` (root-only) inside it. Compared in constant time |
 | `Content-Type` | `application/json` |
 
 **Request Body:**

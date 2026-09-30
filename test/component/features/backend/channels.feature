@@ -3,6 +3,7 @@ Feature: Channel management
   Channels represent project directories that Loop manages.
 
   Scenario: Create a channel for a directory
+    Given the directory "/tmp/bdd-test-channel" exists
     When I send a POST request to "/api/channels" with body:
       """
       {"dir_path": "/tmp/bdd-test-channel", "platform": "local"}

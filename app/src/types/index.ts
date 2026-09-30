@@ -43,6 +43,8 @@ export interface Channel {
   description?: string;
   /** The URL of the channel or thread's ticket (Jira, GitHub, …); unset when it has none. */
   ticket_url?: string;
+  /** The project config's host-reaching fields wait for the owner's trust (for a worktree chain, the root checkout's config). */
+  trust_pending?: boolean;
 }
 
 export interface Message {
@@ -291,6 +293,8 @@ export interface CreateMessage {
 export interface AttachMessage {
   type: "attach";
   session_id: string;
+  /** The manager the session lives in; the server attaches only there. */
+  target?: "agent" | "host";
 }
 
 export interface InputMessage {
@@ -378,6 +382,7 @@ declare global {
     __loopWsRehydrated?: boolean;
     loopAPI: {
       getApiUrl: () => Promise<string>;
+      getApiToken?: () => Promise<string>;
       showOpenDirectoryDialog?: () => Promise<string | null>;
       onboardLocal?: (dirPath: string) => Promise<{ ok: boolean; output?: string; error?: string }>;
       onNavigateChannel: (callback: (channelId: string) => void) => () => void;

@@ -839,6 +839,19 @@ export function useChatStateStore({ channels, channelsFetchedAt, selectedId, onA
     [setPillMembership],
   );
 
+  // syncPill sets a pill kind's channels to exactly ids, for pills that come
+  // from the channel list rather than from events.
+  const syncPill = useCallback(
+    (kind: PillKind, ids: ReadonlySet<string>) => {
+      const set = pillSet(kind);
+      if (set.size === ids.size && [...ids].every((id) => set.has(id))) return;
+      set.clear();
+      for (const id of ids) set.add(id);
+      setPillTick((v) => v + 1);
+    },
+    [pillSet],
+  );
+
   // Mark a channel as "currently being viewed in a Review panel".
   // Drops the pill immediately AND prevents the WS event handler /
   // rehydrate path from relighting it for the lifetime of the
@@ -870,6 +883,7 @@ export function useChatStateStore({ channels, channelsFetchedAt, selectedId, onA
     registerReviewView,
     clearAskUserPill,
     clearPlanPill,
+    syncPill,
     subscribeChatEvents,
     subscribeChannelEvents,
     wsOpens,

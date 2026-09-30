@@ -568,7 +568,7 @@ func (s *ServerSuite) TestPlaygroundDeleteRemoveError() {
 	require.NoError(s.T(), err)
 	s.sys.Override("Stat", mock.Anything).Return(info, nil)
 	s.sys.Override("RemoveAll", mock.Anything).Return(fmt.Errorf("injected remove error"))
-	s.srv.sys = s.sys
+	s.srv.sys = &realOpenSys{s.sys}
 
 	rec := s.testRequest("DELETE", "/api/playground?name=locked", "")
 	require.Equal(s.T(), http.StatusInternalServerError, rec.Code)
@@ -1256,4 +1256,145 @@ func (s *ServerSuite) TestProjectPlaygroundDirNoDirPathNoLoopDir() {
 	s.store.On("GetChannel", mock.Anything, "ch1").Return(&db.Channel{ChannelID: "ch1"}, nil).Once()
 	_, err := s.srv.playground.projectPlaygroundDir(context.Background(), "ch1")
 	require.Error(s.T(), err)
+}
+
+// --- symlink containment ---
+
+func (s *ServerSuite) TestPlaygroundRealPath() {
+	dir := s.T().TempDir()
+	realDir, err := filepath.EvalSymlinks(dir)
+	require.NoError(s.T(), err)
+	require.NoError(s.T(), os.Symlink(filepath.Join(dir, "missing"), filepath.Join(dir, "dangling")))
+
+	got, err := s.srv.playground.realPath(filepath.Join(dir, "a", "b", "c.txt"))
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), filepath.Join(realDir, "a", "b", "c.txt"), got)
+
+	_, err = s.srv.playground.realPath(filepath.Join(dir, "dangling"))
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "path traversal not allowed")
+
+	_, err = s.srv.playground.realPath(filepath.Join(dir, "dangling", "x.txt"))
+	require.Error(s.T(), err)
+}
+
+func (s *ServerSuite) TestPlaygroundRealPathUnresolvable() {
+	s.sys.Override("EvalSymlinks", mock.Anything).Return("", errors.New("injected eval error"))
+	s.srv.sys = s.sys
+
+	_, err := s.srv.playground.realPath("/a/b")
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "path not found")
+}
+
+func (s *ServerSuite) TestPlaygroundRealPathIn() {
+	base := s.T().TempDir()
+	outside := s.T().TempDir()
+	require.NoError(s.T(), os.Symlink(outside, filepath.Join(base, "escape")))
+	require.NoError(s.T(), os.Symlink(filepath.Join(base, "missing"), filepath.Join(base, "dangling")))
+
+	tests := []struct {
+		name    string
+		base    string
+		path    string
+		wantErr bool
+	}{
+		{"inside", base, filepath.Join(base, "x"), false},
+		{"base itself", base, base, true},
+		{"symlink out of base", base, filepath.Join(base, "escape", "x"), true},
+		{"dangling path", base, filepath.Join(base, "dangling"), true},
+		{"dangling base", filepath.Join(base, "dangling"), filepath.Join(base, "dangling", "x"), true},
+	}
+	for _, tc := range tests {
+		s.Run(tc.name, func() {
+			_, err := s.srv.playground.realPathIn(tc.base, tc.path)
+			if tc.wantErr {
+				require.Error(s.T(), err)
+				return
+			}
+			require.NoError(s.T(), err)
+		})
+	}
+}
+
+func (s *ServerSuite) TestPlaygroundDirSymlinkedOutsideRefused() {
+	dir := s.setPlaygroundDir()
+	outside := s.T().TempDir()
+	require.NoError(s.T(), os.WriteFile(filepath.Join(outside, "index.html"), []byte("secret"), 0o644))
+	require.NoError(s.T(), os.MkdirAll(filepath.Join(dir, "playground"), 0o755))
+	require.NoError(s.T(), os.Symlink(outside, filepath.Join(dir, "playground", "evil")))
+
+	for _, path := range []string{
+		"/api/playground?name=evil",
+		"/api/playground/serve/evil",
+		"/api/playground/serve/evil/index.html",
+		"/api/playground/file?name=evil&path=index.html",
+	} {
+		rec := s.testRequest("GET", path, "")
+		require.Equal(s.T(), http.StatusBadRequest, rec.Code, path)
+		require.NotContains(s.T(), rec.Body.String(), "secret", path)
+	}
+}
+
+func (s *ServerSuite) TestPlaygroundFileSymlinkOutsideRefused() {
+	dir := s.setPlaygroundDir()
+	outside := s.T().TempDir()
+	require.NoError(s.T(), os.WriteFile(filepath.Join(outside, "secret.txt"), []byte("secret"), 0o644))
+	pgDir := filepath.Join(dir, "playground", "demo")
+	require.NoError(s.T(), os.MkdirAll(pgDir, 0o755))
+	require.NoError(s.T(), os.Symlink(filepath.Join(outside, "secret.txt"), filepath.Join(pgDir, "leak.txt")))
+	require.NoError(s.T(), os.Symlink(outside, filepath.Join(pgDir, "out")))
+
+	rec := s.testRequest("GET", "/api/playground/file?name=demo&path=leak.txt", "")
+	require.Equal(s.T(), http.StatusBadRequest, rec.Code)
+
+	rec = s.testRequest("GET", "/api/playground/serve/demo/leak.txt", "")
+	require.Equal(s.T(), http.StatusNotFound, rec.Code)
+	require.NotContains(s.T(), rec.Body.String(), "secret")
+
+	rec = s.testRequest("PUT", "/api/playground/file?name=demo&path=out/new.txt", "x")
+	require.Equal(s.T(), http.StatusBadRequest, rec.Code)
+	_, err := os.Stat(filepath.Join(outside, "new.txt"))
+	require.True(s.T(), os.IsNotExist(err))
+
+	rec = s.testRequest("DELETE", "/api/playground/file?name=demo&path=leak.txt", "")
+	require.Equal(s.T(), http.StatusBadRequest, rec.Code)
+	_, err = os.Stat(filepath.Join(outside, "secret.txt"))
+	require.NoError(s.T(), err)
+}
+
+func (s *ServerSuite) TestPlaygroundUpdateDanglingSymlinkRefused() {
+	tests := []struct {
+		name string
+		link string
+		body string
+	}{
+		{"index.html", "index.html", `{"html":"<p>x</p>"}`},
+		{"README.md", "README.md", `{"title":"t"}`},
+	}
+	for _, tc := range tests {
+		s.Run(tc.name, func() {
+			dir := s.setPlaygroundDir()
+			outside := s.T().TempDir()
+			pgDir := filepath.Join(dir, "playground", "demo")
+			require.NoError(s.T(), os.MkdirAll(pgDir, 0o755))
+			target := filepath.Join(outside, "created")
+			require.NoError(s.T(), os.Symlink(target, filepath.Join(pgDir, tc.link)))
+
+			rec := s.testRequest("PUT", "/api/playground?name=demo", tc.body)
+			require.Equal(s.T(), http.StatusBadRequest, rec.Code)
+			_, err := os.Stat(target)
+			require.True(s.T(), os.IsNotExist(err))
+		})
+	}
+}
+
+func (s *ServerSuite) TestPlaygroundGetDanglingIndexNotServed() {
+	dir := s.setPlaygroundDir()
+	pgDir := filepath.Join(dir, "playground", "demo")
+	require.NoError(s.T(), os.MkdirAll(pgDir, 0o755))
+	require.NoError(s.T(), os.Symlink(filepath.Join(s.T().TempDir(), "missing"), filepath.Join(pgDir, "index.html")))
+
+	rec := s.testRequest("GET", "/api/playground?name=demo", "")
+	require.Equal(s.T(), http.StatusNotFound, rec.Code)
 }

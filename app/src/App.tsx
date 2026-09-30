@@ -29,6 +29,7 @@ import { WorkflowsGlobalPanel, type WorkflowsGlobalPanelHandle } from "./compone
 import { CommandPalette } from "./components/shared/CommandPalette";
 import { LoopLogo } from "./components/shared/LoopLogo";
 import { Settings } from "./components/shared/Settings";
+import { trustPillIds } from "./components/sidebar/pills";
 import { Sidebar } from "./components/sidebar/Sidebar";
 import { useAppPanelState } from "./hooks/useAppPanelState";
 import { type ActiveChatState, useChatStateStore } from "./hooks/useChatStateStore";
@@ -46,8 +47,14 @@ const LAST_CHANNEL_KEY = "loop-last-channel";
 function getHashChannelId(): string | null {
   const target = parseChannelTarget(window.location.hash);
   if (target) return target.channelId;
-  // Restore last selected channel (Electron loses hash on restart).
-  return storageGet(LAST_CHANNEL_KEY);
+  // Restore last selected channel (Electron loses hash on restart), unless
+  // it isn't one (an older build could save a token fragment there).
+  const last = storageGet(LAST_CHANNEL_KEY);
+  if (last && !parseChannelTarget(last)) {
+    storageRemove(LAST_CHANNEL_KEY);
+    return null;
+  }
+  return last;
 }
 
 // A message link opened as the app's URL (#<channel-id>/<message-id>).
@@ -97,12 +104,14 @@ function AppInner() {
     workflowsOpen,
     sharesOpen,
     settingsDirPath,
+    settingsSection,
     configDirty,
     pendingSelectId,
     setConfigDirty,
     setPendingSelectId,
     togglePanel,
     openConfig,
+    openProjectTrust,
     toggleSettingsKeyboard,
     forceOpenSettings,
     closePanel,
@@ -341,6 +350,7 @@ function AppInner() {
     registerReviewView,
     clearAskUserPill,
     clearPlanPill,
+    syncPill,
     subscribeChatEvents,
     subscribeChannelEvents,
     wsOpens,
@@ -650,8 +660,17 @@ function AppInner() {
     [channels, loadChannels, selectedId],
   );
 
+  useEffect(() => {
+    syncPill("trust", trustPillIds(channels));
+  }, [channels, syncPill]);
+
   const selectedChannel = channels.find((c) => c.id === selectedId);
   const selectedDirPath = selectedChannel?.dir_path || "";
+  // Settings → Project trusts a worktree chain's root checkout.
+  const trustDirPath = selectedChannel ? selectedChannel.root_dir_path || selectedChannel.dir_path : "";
+  const reviewProjectTrust = useCallback(() => {
+    if (trustDirPath) openProjectTrust(trustDirPath);
+  }, [trustDirPath, openProjectTrust]);
   const selectedBranch = selectedChannel?.branch || "";
 
   // Derive channel ID/object for Settings when opened from a channel's config button.
@@ -728,6 +747,7 @@ function AppInner() {
             key={`layout-${selectedId}-${mountKey}`}
             channelId={selectedId}
             channel={selectedChannel}
+            onReviewProjectTrust={reviewProjectTrust}
             sidebarOpen={sidebarOpen}
             style={readmeOpen || settingsOpen || containersOpen || tasksOpen || workflowsOpen || sharesOpen ? { display: "none" } : undefined}
             onToggleSidebar={() => setSidebarOpen((v) => !v)}
@@ -781,6 +801,8 @@ function AppInner() {
               imageUpdateAvailable={imageUpdateAvailable}
               onRebuildImage={handleRebuildImage}
               onConfigDirtyChange={setConfigDirty}
+              initialSection={settingsSection}
+              onProjectTrusted={loadChannels}
             />
           )}
           {containersOpen && (
@@ -837,6 +859,8 @@ function AppInner() {
               imageUpdateAvailable={imageUpdateAvailable}
               onRebuildImage={handleRebuildImage}
               onConfigDirtyChange={setConfigDirty}
+              initialSection={settingsSection}
+              onProjectTrusted={loadChannels}
             />
           ) : containersOpen ? (
             <ContainersPanel

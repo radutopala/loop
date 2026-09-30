@@ -394,7 +394,13 @@ func (tc *TestContext) openAppInBrowser() error {
 	if err := tc.ensureChromeTab(); err != nil {
 		return err
 	}
-	actions := []chromedp.Action{chromedp.Navigate(tc.AppURL)}
+	// The UI in a plain browser tab takes the owner token from the URL
+	// fragment, as a `loop app:url` link hands it over.
+	// Leave the page first: once the UI has dropped the fragment, the tab sits
+	// on the bare app URL, and navigating from there to a URL that differs
+	// only in its fragment wouldn't load the app again.
+	tokenURL := tc.AppURL + "#loop_token=" + apiToken()
+	actions := []chromedp.Action{chromedp.Navigate("about:blank"), chromedp.Navigate(tokenURL)}
 	// Viewport size + device scale factor. Docs-capture renders larger and at
 	// 2x DPI so screenshots/GIFs are crisp and panels aren't cramped; normal
 	// runs use the launch size (1280x800 @ 1x).
@@ -422,9 +428,14 @@ func (tc *TestContext) openAppInBrowser() error {
 			}),
 		)
 		if chromeManager.remote {
+			// Clearing storage drops the token the UI moved out of the
+			// fragment, and the UI has since dropped the fragment from the URL,
+			// so a reload would come back signed out. Load the token link
+			// again instead, via about:blank as above.
 			actions = append(actions,
 				chromedp.Evaluate(`localStorage.clear(); sessionStorage.clear()`, nil),
-				chromedp.Reload(),
+				chromedp.Navigate("about:blank"),
+				chromedp.Navigate(tokenURL),
 			)
 		}
 	}
@@ -999,9 +1010,9 @@ func (tc *TestContext) triggerRunNowForVisibleTask() error {
 		const match = panel.innerText.match(/Task #(\d+)/);
 		if (!match) return 'no Task #N in panel';
 		const taskId = match[1];
-		const resp = await fetch(%q + '/api/tasks/' + taskId + '/run', { method: 'POST' });
+		const resp = await fetch(%q + '/api/tasks/' + taskId + '/run', { method: 'POST', headers: { Authorization: 'Bearer ' + %q } });
 		return 'taskId=' + taskId + ' status=' + resp.status;
-	})()`, tc.BaseURL)
+	})()`, tc.BaseURL, apiToken())
 	var result string
 	if err := chromedp.Run(tc.chromeTab.ctx,
 		chromedp.Evaluate(js, &result, func(ep *runtime.EvaluateParams) *runtime.EvaluateParams {
@@ -2621,7 +2632,10 @@ func (tc *TestContext) openAppAtLatestMessageLink() error {
 		return err
 	}
 	tc.LinkedMessageID = ids[len(ids)-1]
-	if err := tc.ensureChromeTab(); err != nil {
+	// Sign the tab in first: the message link's fragment can't also carry
+	// the token, and the token the UI keeps in sessionStorage outlives the
+	// navigation below.
+	if err := tc.openAppInBrowser(); err != nil {
 		return err
 	}
 	return chromedp.Run(tc.chromeTab.ctx,

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net/http"
 	"os"
 	"sync"
 	"time"
@@ -13,6 +14,8 @@ import (
 	"github.com/gorilla/websocket"
 	"github.com/modelcontextprotocol/go-sdk/jsonrpc"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+
+	"github.com/radutopala/loop/internal/apiauth"
 )
 
 // channelTransport wraps StdioTransport with a mutex-protected writer
@@ -23,6 +26,7 @@ type channelTransport struct {
 	writer         io.Writer
 	dialBackoff    time.Duration
 	reconnectDelay time.Duration
+	apiToken       func() string // nil sends no token
 }
 
 // newChannelTransport creates a transport that shares a mutex between
@@ -112,7 +116,11 @@ func startPushReceiver(ctx context.Context, apiURL, channelID, agentID string, t
 	go func() {
 		for {
 			logger.Info("channel push: connecting", "url", wsURL)
-			conn, _, err := websocket.DefaultDialer.DialContext(ctx, wsURL, nil)
+			var hdr http.Header
+			if transport.apiToken != nil {
+				hdr = apiauth.AuthHeader(transport.apiToken())
+			}
+			conn, _, err := websocket.DefaultDialer.DialContext(ctx, wsURL, hdr)
 			if err != nil {
 				if ctx.Err() != nil {
 					return

@@ -4,6 +4,9 @@ package agentgate
 
 import (
 	"errors"
+	"os"
+	"path/filepath"
+	"strconv"
 	"testing"
 	"unsafe"
 
@@ -56,7 +59,9 @@ func (s *ProcTraceeSuite) TestNewProcTraceeWiresDefaults() {
 	s.Require().Equal(42, t.PID)
 	s.Require().NotNil(t.ReadMem)
 	s.Require().NotNil(t.Readlink)
-	s.Require().NotNil(t.EvalSymlinksFn)
+	s.Require().NotNil(t.Lstat)
+	s.Require().NotNil(t.ReadlinkPath)
+	s.Require().NotNil(t.ReadFile)
 }
 
 // --- ReadString ---
@@ -356,16 +361,255 @@ func (s *ProcTraceeSuite) TestResolveDirfdWrapsUnknownErrors() {
 
 // --- EvalSymlinks ---
 
-func (s *ProcTraceeSuite) TestEvalSymlinksDelegatesToFn() {
-	called := ""
-	t := &ProcTracee{EvalSymlinksFn: func(p string) (string, error) {
-		called = p
-		return "/resolved", nil
-	}}
-	got, err := t.EvalSymlinks("/input")
+// fakeLinkFS is an in-memory tree for EvalSymlinks' walk: links maps a
+// symlink to its target, dirs/files list the plain entries. Anything else
+// is ENOENT.
+type fakeLinkFS struct {
+	links   map[string]string
+	plain   map[string]bool
+	status  string
+	lstats  []string
+	lstatFn func(string) error
+	readErr error
+}
+
+type fakeFileInfo struct {
+	os.FileInfo
+	mode os.FileMode
+}
+
+func (f fakeFileInfo) Mode() os.FileMode { return f.mode }
+
+func (f *fakeLinkFS) lstat(p string) (os.FileInfo, error) {
+	f.lstats = append(f.lstats, p)
+	if f.lstatFn != nil {
+		if err := f.lstatFn(p); err != nil {
+			return nil, err
+		}
+	}
+	if _, ok := f.links[p]; ok {
+		return fakeFileInfo{mode: os.ModeSymlink | 0o777}, nil
+	}
+	if f.plain[p] {
+		return fakeFileInfo{mode: 0o644}, nil
+	}
+	return nil, &os.PathError{Op: "lstat", Path: p, Err: unix.ENOENT}
+}
+
+func (f *fakeLinkFS) readlink(p string) (string, error) {
+	if f.readErr != nil {
+		return "", f.readErr
+	}
+	return f.links[p], nil
+}
+
+func (f *fakeLinkFS) readFile(p string) ([]byte, error) {
+	if f.status == "" {
+		return nil, &os.PathError{Op: "open", Path: p, Err: unix.ENOENT}
+	}
+	return []byte(f.status), nil
+}
+
+func (f *fakeLinkFS) tracee(pid int) *ProcTracee {
+	return &ProcTracee{PID: pid, Lstat: f.lstat, ReadlinkPath: f.readlink, ReadFile: f.readFile}
+}
+
+func plainSet(paths ...string) map[string]bool {
+	out := map[string]bool{}
+	for _, p := range paths {
+		out[p] = true
+	}
+	return out
+}
+
+func (s *ProcTraceeSuite) TestEvalSymlinksWalk() {
+	cases := []struct {
+		name  string
+		links map[string]string
+		plain []string
+		in    string
+		want  string
+	}{
+		{"plain path", nil, []string{"/work", "/work/a"}, "/work/a", "/work/a"},
+		{"root", nil, nil, "/", "/"},
+		{"dot, dotdot and double slashes", nil, []string{"/work", "/work/a", "/work/b"}, "//work/./a/../b/", "/work/b"},
+		{"dotdot above root", nil, []string{"/work"}, "/../work", "/work"},
+		{"relative link", map[string]string{"/work/l": "a"}, []string{"/work", "/work/a", "/work/a/x"}, "/work/l/x", "/work/a/x"},
+		{"absolute link", map[string]string{"/work/l": "/etc"}, []string{"/work", "/etc", "/etc/x"}, "/work/l/x", "/etc/x"},
+		{"link with dotdot", map[string]string{"/work/sub/l": "../a"}, []string{"/work", "/work/sub", "/work/a"}, "/work/sub/l", "/work/a"},
+		{"chained links", map[string]string{"/a": "/b", "/b": "c", "/c": "/work"}, []string{"/work", "/work/f"}, "/a/f", "/work/f"},
+	}
+	for _, c := range cases {
+		s.Run(c.name, func() {
+			fs := &fakeLinkFS{links: c.links, plain: plainSet(c.plain...)}
+			got, err := fs.tracee(1).EvalSymlinks(c.in)
+			s.Require().NoError(err)
+			s.Require().Equal(c.want, got)
+		})
+	}
+}
+
+func (s *ProcTraceeSuite) TestEvalSymlinksPinsProcSelfToTracee() {
+	// The tracee (thread 78 of process 77) reopens its fd 5 via /dev/fd/5.
+	// /dev/fd links to /proc/self/fd; walked in the gate, /proc/self would
+	// be the gate. It must become /proc/77, whose fd 5 is the tracee's.
+	fs := &fakeLinkFS{
+		links: map[string]string{
+			"/dev/fd":                "/proc/self/fd",
+			"/proc/77/fd/5":          "/work/.git/config",
+			"/proc/77/task/78/fd/3":  "/work/.git/hooks/pre-commit",
+			"/proc/77/task/78/fd/4":  "/proc/self/fd/5",
+			"/proc/thread-self-link": "/proc/thread-self",
+		},
+		plain: plainSet("/dev", "/proc", "/proc/77", "/proc/77/fd", "/proc/77/task", "/proc/77/task/78", "/proc/77/task/78/fd",
+			"/work", "/work/.git", "/work/.git/config", "/work/.git/hooks", "/work/.git/hooks/pre-commit"),
+		status: "Name:\tgit\nTgid:\t77\nPid:\t78\n",
+	}
+	cases := []struct {
+		in, want string
+	}{
+		{"/dev/fd/5", "/work/.git/config"},
+		{"/proc/self/fd/5", "/work/.git/config"},
+		{"/proc/thread-self/fd/3", "/work/.git/hooks/pre-commit"},
+		{"/proc/thread-self-link/fd/3", "/work/.git/hooks/pre-commit"},
+		{"/proc/thread-self/fd/4", "/work/.git/config"},
+	}
+	for _, c := range cases {
+		got, err := fs.tracee(78).EvalSymlinks(c.in)
+		s.Require().NoError(err, c.in)
+		s.Require().Equal(c.want, got, c.in)
+	}
+	s.Require().NotContains(fs.lstats, "/proc/self")
+	s.Require().NotContains(fs.lstats, "/proc/thread-self")
+}
+
+func (s *ProcTraceeSuite) TestEvalSymlinksErrors() {
+	sentinel := errors.New("boom")
+	cases := []struct {
+		name string
+		fs   *fakeLinkFS
+		in   string
+		want error
+	}{
+		{"missing component", &fakeLinkFS{plain: plainSet("/work")}, "/work/nope/x", unix.ENOENT},
+		{"lstat error", &fakeLinkFS{lstatFn: func(string) error { return sentinel }}, "/work", sentinel},
+		{"readlink error", &fakeLinkFS{links: map[string]string{"/l": "/x"}, readErr: sentinel}, "/l", sentinel},
+		{"symlink loop", &fakeLinkFS{links: map[string]string{"/a": "/b", "/b": "/a"}}, "/a", unix.ELOOP},
+		{"self loop", &fakeLinkFS{links: map[string]string{"/a": "a"}}, "/a/x", unix.ELOOP},
+		{"tracee gone while pinning /proc/self", &fakeLinkFS{plain: plainSet("/proc")}, "/proc/self/fd/1", ErrTraceeGone},
+	}
+	for _, c := range cases {
+		s.Run(c.name, func() {
+			_, err := c.fs.tracee(1).EvalSymlinks(c.in)
+			s.Require().ErrorIs(err, c.want)
+		})
+	}
+}
+
+func (s *ProcTraceeSuite) TestEvalSymlinksHopLimit() {
+	// A chain of exactly maxSymlinkHops links resolves; one more is ELOOP.
+	chain := func(n int) *fakeLinkFS {
+		fs := &fakeLinkFS{links: map[string]string{}, plain: plainSet("/end")}
+		for i := range n {
+			next := "/end"
+			if i+1 < n {
+				next = "/l" + strconv.Itoa(i+1)
+			}
+			fs.links["/l"+strconv.Itoa(i)] = next
+		}
+		return fs
+	}
+	got, err := chain(maxSymlinkHops).tracee(1).EvalSymlinks("/l0")
 	s.Require().NoError(err)
-	s.Require().Equal("/resolved", got)
-	s.Require().Equal("/input", called)
+	s.Require().Equal("/end", got)
+	_, err = chain(maxSymlinkHops + 1).tracee(1).EvalSymlinks("/l0")
+	s.Require().ErrorIs(err, unix.ELOOP)
+}
+
+func (s *ProcTraceeSuite) TestEvalSymlinksRejectsRelativePath() {
+	_, err := (&fakeLinkFS{}).tracee(1).EvalSymlinks("rel/path")
+	s.Require().ErrorContains(err, "not absolute")
+}
+
+func (s *ProcTraceeSuite) TestEvalSymlinksNoTgid() {
+	fs := &fakeLinkFS{plain: plainSet("/proc"), status: "Name:\tx\n"}
+	_, err := fs.tracee(9).EvalSymlinks("/proc/self/fd/1")
+	s.Require().ErrorContains(err, "no Tgid in /proc/9/status")
+}
+
+func (s *ProcTraceeSuite) TestEvalSymlinksRealProcessFd() {
+	// Resolve our own fd through /proc/self/fd/N the way the gate would for
+	// a tracee: the walk pins /proc/self to /proc/<pid> and follows the
+	// magic link to the file.
+	dir, err := filepath.EvalSymlinks(s.T().TempDir())
+	s.Require().NoError(err)
+	path := filepath.Join(dir, "target")
+	f, err := os.Create(path)
+	s.Require().NoError(err)
+	defer f.Close()
+
+	tr := NewProcTracee(os.Getpid())
+	got, err := tr.EvalSymlinks("/proc/self/fd/" + strconv.Itoa(int(f.Fd())))
+	s.Require().NoError(err)
+	s.Require().Equal(path, got)
+}
+
+// --- Creds / status ---
+
+func (s *ProcTraceeSuite) TestCredsParsesFsIDs() {
+	var gotPath string
+	t := &ProcTracee{PID: 55, ReadFile: func(p string) ([]byte, error) {
+		gotPath = p
+		return []byte("Name:\tgit\nUid:\t1000\t1001\t1002\t1003\nGid:\t20\t21\t22\t23\nGroups:\t\n"), nil
+	}}
+	uid, gid, err := t.Creds()
+	s.Require().NoError(err)
+	s.Require().Equal(1003, uid)
+	s.Require().Equal(23, gid)
+	s.Require().Equal("/proc/55/status", gotPath)
+}
+
+func (s *ProcTraceeSuite) TestCredsErrors() {
+	sentinel := errors.New("read boom")
+	cases := []struct {
+		name    string
+		status  string
+		readErr error
+		want    error
+		msg     string
+	}{
+		{name: "process gone (ESRCH)", readErr: unix.ESRCH, want: ErrTraceeGone},
+		{name: "process gone (ENOENT)", readErr: &os.PathError{Op: "open", Err: unix.ENOENT}, want: ErrTraceeGone},
+		{name: "other read error", readErr: sentinel, want: sentinel},
+		{name: "no Uid line", status: "Gid:\t1\t1\t1\t1\n", msg: "malformed Uid line"},
+		{name: "short Uid line", status: "Uid:\t1\t1\t1\n", msg: "malformed Uid line"},
+		{name: "bad Gid line", status: "Uid:\t1\t1\t1\t1\nGid:\t1\n", msg: "malformed Gid line"},
+		{name: "non-numeric uid", status: "Uid:\t1\t1\t1\tx\nGid:\t1\t1\t1\t1\n", msg: "invalid syntax"},
+		{name: "non-numeric gid", status: "Uid:\t1\t1\t1\t1\nGid:\t1\t1\t1\tx\n", msg: "invalid syntax"},
+	}
+	for _, c := range cases {
+		s.Run(c.name, func() {
+			t := &ProcTracee{PID: 1, ReadFile: func(string) ([]byte, error) {
+				if c.readErr != nil {
+					return nil, c.readErr
+				}
+				return []byte(c.status), nil
+			}}
+			_, _, err := t.Creds()
+			if c.want != nil {
+				s.Require().ErrorIs(err, c.want)
+			} else {
+				s.Require().ErrorContains(err, c.msg)
+			}
+		})
+	}
+}
+
+func (s *ProcTraceeSuite) TestCredsRealProcess() {
+	uid, gid, err := NewProcTracee(os.Getpid()).Creds()
+	s.Require().NoError(err)
+	s.Require().Equal(os.Getuid(), uid)
+	s.Require().Equal(os.Getgid(), gid)
 }
 
 // --- bytesToPtrLE ---

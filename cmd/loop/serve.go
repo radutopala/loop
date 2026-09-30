@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"io"
 	"log/slog"
@@ -17,7 +16,6 @@ import (
 	"database/sql"
 
 	"github.com/spf13/cobra"
-	"github.com/tailscale/hujson"
 
 	"github.com/radutopala/loop/internal/agentgate"
 	"github.com/radutopala/loop/internal/agentregistry"
@@ -370,25 +368,11 @@ func resolveRelativePath(dirPath, p string) string {
 	return filepath.Join(dirPath, p)
 }
 
+// defaultLoadProjectMemoryPaths returns the project's memory paths, once
+// the owner trusts them: the daemon indexes them, and agents can search
+// what it indexed.
 func (a *app) defaultLoadProjectMemoryPaths(dirPath string) []string {
-	data, err := a.sys.ReadFile(filepath.Join(dirPath, ".loop", "config.json"))
-	if err != nil {
-		return nil
-	}
-	standardJSON, err := hujson.Standardize(data)
-	if err != nil {
-		return nil
-	}
-	var pc struct {
-		Memory *struct {
-			Paths []string `json:"paths"`
-		} `json:"memory"`
-	}
-	_ = json.Unmarshal(standardJSON, &pc)
-	if pc.Memory != nil {
-		return pc.Memory.Paths
-	}
-	return nil
+	return config.NewTrustStoreIn(a.userConfigDir).MemoryPaths(dirPath)
 }
 
 func (a *app) memoryDir(dirPath string) (string, error) {
@@ -457,10 +441,11 @@ func (a *app) serve() error {
 	if w, ok := store.(interface{ WriterDB() *sql.DB }); ok {
 		if writer := w.WriterDB(); writer != nil {
 			if err := a.fsMigrateRun(context.Background(), writer, &fsmigrate.Ctx{
-				Sys:         a.sys,
-				LoopDir:     cfg.LoopDir,
-				Version:     a.version,
-				ProjectDirs: projectDirs(context.Background(), store, logger),
+				Sys:                a.sys,
+				LoopDir:            cfg.LoopDir,
+				Version:            a.version,
+				ProjectDirs:        projectDirs(context.Background(), store, logger),
+				AdoptProjectConfig: config.NewTrustStoreIn(a.userConfigDir).Adopt,
 			}); err != nil {
 				return fmt.Errorf("running fs migrations: %w", err)
 			}
@@ -537,6 +522,7 @@ func (a *app) serve() error {
 		runner.SetGateDeps(gateResolver, &orchestrator.GateBotRouter{Bot: chatBot}, cfg.Gates.RateLimits)
 	}
 	runner.SetDockerProxyDeps(policyDir, "")
+	runner.SetProtectedDirs(container.DefaultProtectedDirs(policyDir, a.userConfigDir))
 
 	// Compile the shared seccomp policy once per daemon. The compiled form
 	// stays on the host for sanity checking at startup; the runner writes
@@ -572,12 +558,31 @@ func (a *app) serve() error {
 	containerReg.SetShellCreator(runner)
 	runner.SetContainerRegistry(containerReg)
 
+	// Agent API tokens are kept for every container still around; when
+	// docker can't be listed, none are dropped.
+	infos, listErr := dockerClient.ListContainerInfos(ctx)
+	alive := func(string) bool { return true }
+	if listErr == nil {
+		known := make(map[string]bool, len(infos))
+		for _, info := range infos {
+			known[info.ContainerID] = true
+		}
+		alive = func(id string) bool { return known[id] }
+	}
+	auth, err := a.newAPIAuth(ctx, store, alive, logger)
+	if err != nil {
+		return err
+	}
+	// Before the restore below: removing a restored container revokes its
+	// token through the issuer.
+	runner.SetTokenIssuer(agentTokens{agents: auth.agents, logger: logger})
+
 	// Restore registry from running Docker containers (survives daemon restarts).
 	// Skip running containers owned by a different daemon instance — they are
 	// actively managed by another daemon sharing the same Docker socket.
 	// Stopped containers from any instance are restored (orphaned after crash/restart).
-	if infos, restoreErr := dockerClient.ListContainerInfos(ctx); restoreErr != nil {
-		logger.Warn("failed to restore container registry", "error", restoreErr)
+	if listErr != nil {
+		logger.Warn("failed to restore container registry", "error", listErr)
 	} else if len(infos) > 0 {
 		instanceID := runner.InstanceID()
 		var ownInfos []*container.ContainerInfo
@@ -616,6 +621,9 @@ func (a *app) serve() error {
 		// flips the session to status=error first and the CLI surfaces the
 		// daemon's "timed out" message instead of its own generic wrapper.
 		api.WithReviewRunTimeout(50 * time.Minute),
+		api.WithAuth(auth.deps),
+		api.WithWorkflowBashLocal(cfg.WorkflowBashLocal),
+		api.WithProjectTrust(config.NewTrustStoreIn(a.userConfigDir)),
 	}
 
 	// Quality engine: parser + graph cache + SQL-backed snapshot store. The
@@ -673,6 +681,7 @@ func (a *app) serve() error {
 
 	apiSrv := a.newAPIServer(sched, channelSvc, threadSvc, store, chatBot, logger, serverOpts...)
 	apiSrv.SetLoopDir(cfg.LoopDir)
+	apiSrv.SetProtectedDirs([]string{auth.tokenDir, policyDir})
 	if qEngine != nil {
 		qEngine.SetProgress(apiSrv.EmitQualityProgress)
 	}

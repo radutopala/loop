@@ -38,6 +38,9 @@ type Ctx struct {
 	// keep current. Empty when the caller has no channel list to offer, which
 	// leaves a migration with just ~/.loop to work on.
 	ProjectDirs []string
+	// AdoptProjectConfig trusts the project config in a dir that has no
+	// trusted version yet. Nil skips the migration that uses it.
+	AdoptProjectConfig func(dir string) error
 }
 
 // Migration is a single filesystem migration step.

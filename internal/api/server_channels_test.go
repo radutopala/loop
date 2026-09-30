@@ -26,10 +26,11 @@ import (
 // --- EnsureChannel tests ---
 
 func (s *ServerSuite) TestEnsureChannelSuccess() {
-	s.channels.On("EnsureChannel", mock.Anything, "/home/user/dev/loop", "").
+	dir := s.T().TempDir()
+	s.channels.On("EnsureChannel", mock.Anything, dir, "").
 		Return("ch-123", nil)
 
-	rec := s.testRequest("POST", "/api/channels", `{"dir_path":"/home/user/dev/loop"}`)
+	rec := s.testRequest("POST", "/api/channels", `{"dir_path":"`+dir+`/"}`)
 
 	require.Equal(s.T(), http.StatusOK, rec.Code)
 
@@ -40,10 +41,11 @@ func (s *ServerSuite) TestEnsureChannelSuccess() {
 }
 
 func (s *ServerSuite) TestEnsureChannelWithPlatform() {
-	s.channels.On("EnsureChannel", mock.Anything, "/home/user/dev/loop", "discord").
+	dir := s.T().TempDir()
+	s.channels.On("EnsureChannel", mock.Anything, dir, "discord").
 		Return("ch-discord-1", nil)
 
-	rec := s.testRequest("POST", "/api/channels", `{"dir_path":"/home/user/dev/loop","platform":"discord"}`)
+	rec := s.testRequest("POST", "/api/channels", `{"dir_path":"`+dir+`","platform":"discord"}`)
 
 	require.Equal(s.T(), http.StatusOK, rec.Code)
 
@@ -59,25 +61,88 @@ func (s *ServerSuite) TestEnsureChannelMissingDirPath() {
 }
 
 func (s *ServerSuite) TestEnsureChannelError() {
-	s.channels.On("EnsureChannel", mock.Anything, "/path", "").
+	dir := s.T().TempDir()
+	s.channels.On("EnsureChannel", mock.Anything, dir, "").
 		Return("", errors.New("ensure failed"))
 
-	rec := s.testRequest("POST", "/api/channels", `{"dir_path":"/path"}`)
+	rec := s.testRequest("POST", "/api/channels", `{"dir_path":"`+dir+`"}`)
 
 	require.Equal(s.T(), http.StatusInternalServerError, rec.Code)
+	s.channels.AssertExpectations(s.T())
+}
+
+// --- dir_path validation ---
+
+func (s *ServerSuite) TestEnsureChannelInvalidDirPath() {
+	parent := s.T().TempDir()
+	project := filepath.Join(parent, "project")
+	state := filepath.Join(project, "state")
+	require.NoError(s.T(), os.MkdirAll(state, 0o755))
+	file := filepath.Join(parent, "file.txt")
+	require.NoError(s.T(), os.WriteFile(file, []byte("x"), 0o644))
+	// A symlink to the project's parent: lexically unrelated to the protected
+	// dir, but it resolves to an ancestor of it.
+	alias := filepath.Join(s.T().TempDir(), "alias")
+	require.NoError(s.T(), os.Symlink(parent, alias))
+	s.srv.SetProtectedDirs([]string{filepath.Join(parent, "missing-protected"), state + "/"})
+
+	tests := []struct {
+		name    string
+		dirPath string
+		wantMsg string
+	}{
+		{"relative", "relative/dir", "must be an absolute path"},
+		{"missing", filepath.Join(parent, "nope"), "is not an existing directory"},
+		{"file", file, "is not a directory"},
+		{"equals protected", state, "can't be a project folder: it contains "},
+		{"ancestor of protected", project, "can't be a project folder: it contains "},
+		{"root", "/", "can't be a project folder: it contains "},
+		{"symlinked ancestor", alias, "can't be a project folder: it contains "},
+		{"dotdot to ancestor", filepath.Join(state, "..", ".."), "can't be a project folder: it contains "},
+	}
+	for _, tc := range tests {
+		for _, endpoint := range []string{"/api/channels", "/api/channels/ensure-all"} {
+			s.Run(tc.name+" "+endpoint, func() {
+				body, err := json.Marshal(map[string]string{"dir_path": tc.dirPath})
+				require.NoError(s.T(), err)
+				rec := s.testRequest("POST", endpoint, string(body))
+				require.Equal(s.T(), http.StatusBadRequest, rec.Code)
+				require.Contains(s.T(), rec.Body.String(), tc.wantMsg)
+			})
+		}
+	}
+	s.channels.AssertNotCalled(s.T(), "EnsureChannel", mock.Anything, mock.Anything, mock.Anything)
+	s.channels.AssertNotCalled(s.T(), "EnsureChannelAllPlatforms", mock.Anything, mock.Anything)
+}
+
+func (s *ServerSuite) TestEnsureChannelBesideProtectedDirAllowed() {
+	parent := s.T().TempDir()
+	state := filepath.Join(parent, "state")
+	sibling := filepath.Join(parent, "state-sibling")
+	require.NoError(s.T(), os.MkdirAll(state, 0o755))
+	require.NoError(s.T(), os.MkdirAll(filepath.Join(state, "inner"), 0o755))
+	require.NoError(s.T(), os.MkdirAll(sibling, 0o755))
+	s.srv.SetProtectedDirs([]string{state})
+
+	for _, dir := range []string{sibling, filepath.Join(state, "inner")} {
+		s.channels.On("EnsureChannel", mock.Anything, dir, "").Return("ch-1", nil).Once()
+		rec := s.testRequest("POST", "/api/channels", `{"dir_path":"`+dir+`"}`)
+		require.Equal(s.T(), http.StatusOK, rec.Code, dir)
+	}
 	s.channels.AssertExpectations(s.T())
 }
 
 // --- EnsureAllChannels tests ---
 
 func (s *ServerSuite) TestEnsureAllChannelsSuccess() {
-	s.channels.On("EnsureChannelAllPlatforms", mock.Anything, "/home/user/dev/loop").
+	dir := s.T().TempDir()
+	s.channels.On("EnsureChannelAllPlatforms", mock.Anything, dir).
 		Return([]EnsureResult{
 			{Platform: "local", ChannelID: "ch-local", Created: true},
 			{Platform: "discord", ChannelID: "ch-discord", Created: false},
 		}, nil)
 
-	rec := s.testRequest("POST", "/api/channels/ensure-all", `{"dir_path":"/home/user/dev/loop"}`)
+	rec := s.testRequest("POST", "/api/channels/ensure-all", `{"dir_path":"`+dir+`"}`)
 	require.Equal(s.T(), http.StatusOK, rec.Code)
 
 	var resp []EnsureResult
@@ -97,10 +162,11 @@ func (s *ServerSuite) TestEnsureAllChannelsBadJSON() {
 }
 
 func (s *ServerSuite) TestEnsureAllChannelsError() {
-	s.channels.On("EnsureChannelAllPlatforms", mock.Anything, "/path").
+	dir := s.T().TempDir()
+	s.channels.On("EnsureChannelAllPlatforms", mock.Anything, dir).
 		Return(nil, errors.New("ensure failed"))
 
-	rec := s.testRequest("POST", "/api/channels/ensure-all", `{"dir_path":"/path"}`)
+	rec := s.testRequest("POST", "/api/channels/ensure-all", `{"dir_path":"`+dir+`"}`)
 	require.Equal(s.T(), http.StatusInternalServerError, rec.Code)
 	s.channels.AssertExpectations(s.T())
 }
@@ -725,6 +791,37 @@ func (s *ServerSuite) TestSearchChannelsLastActivity() {
 			s.store.AssertExpectations(s.T())
 		})
 	}
+}
+
+// TestSearchChannelsTrustPending: each row reports whether the project
+// config Settings → Project trusts for it waits for trust. That's a worktree
+// chain's root checkout, and each dir is checked once.
+func (s *ServerSuite) TestSearchChannelsTrustPending() {
+	s.store.On("ListChannels", mock.Anything).Return([]*db.Channel{
+		{ChannelID: "ch-1", Name: "proj", DirPath: "/proj", Platform: types.PlatformLocal},
+		{ChannelID: "ch-2", Name: "thread", DirPath: "/proj", ParentID: "ch-1", Platform: types.PlatformLocal},
+		{ChannelID: "ch-3", Name: "wt", DirPath: "/wt", ParentID: "ch-1", Worktree: true, Platform: types.PlatformLocal},
+		{ChannelID: "ch-4", Name: "ok", DirPath: "/ok", Platform: types.PlatformLocal},
+		{ChannelID: "ch-5", Name: "bad", DirPath: "/bad", Platform: types.PlatformLocal},
+	}, nil)
+	s.store.On("ChannelActivity", mock.Anything).Return(map[string]time.Time{}, nil)
+	trust := new(mockProjectTrust)
+	trust.On("Status", "/proj").Return(config.TrustStatus{Trusted: false}, nil).Once()
+	trust.On("Status", "/ok").Return(config.TrustStatus{Trusted: true}, nil).Once()
+	trust.On("Status", "/bad").Return(config.TrustStatus{}, errors.New("parsing project config file")).Once()
+	s.srv.projectTrust = trust
+
+	rec := s.testRequest("GET", "/api/channels", "")
+
+	require.Equal(s.T(), http.StatusOK, rec.Code)
+	var resp []channelResponse
+	require.NoError(s.T(), json.NewDecoder(rec.Body).Decode(&resp))
+	got := make(map[string]bool, len(resp))
+	for _, ch := range resp {
+		got[ch.ChannelID] = ch.TrustPending
+	}
+	require.Equal(s.T(), map[string]bool{"ch-1": true, "ch-2": true, "ch-3": true, "ch-4": false, "ch-5": false}, got)
+	trust.AssertExpectations(s.T())
 }
 
 // TestSearchChannelsUsesBranchPollerSnapshot verifies the handler serves the

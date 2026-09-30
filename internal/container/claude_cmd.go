@@ -264,18 +264,13 @@ const claudeExitTrailer = `; __lec=$?; printf '\033[?1000l\033[?1002l\033[?1003l
 // buildInteractiveClaudeCmd assembles the Claude CLI shell command for interactive
 // terminal sessions (no --print, --verbose, --output-format flags).
 //
-// When the seccomp gate is enabled, the command is wrapped in
-// `loop syscallwrap --` so the interactive claude runs under the same filter
-// the agent-mode (stream) path gets via entrypoint.sh. docker-exec'ing into the
-// running shell container does NOT inherit the shell's seccomp state (setns(2)
-// is per-namespace, but seccomp is per-process), so without this wrapper a
-// user typing `claude` at the terminal would bypass the gate entirely.
+// It is typed into a terminal shell, which with the seccomp gate enabled
+// already runs under `loop syscallwrap` (see terminal.interactiveExecScript),
+// so the command needs no wrapper of its own: the shell's filter carries over
+// to claude.
 func buildInteractiveClaudeCmd(cfg *config.Config, channelID, workDir, sessionID, agentID string, forkSession, continueSession bool) string {
 	mcpConfigPath := mcpConfigPathForAgent(workDir, channelID, agentID)
 	cmd := buildBaseClaudeCmd(cfg, mcpConfigPath, sessionID, "", agentID, forkSession, continueSession, cfg.ExtraDirs)
-	if cfg.Gates.Agentgate.Enabled {
-		cmd = append([]string{"loop", "syscallwrap", "--"}, cmd...)
-	}
 	return "CLAUDE_CODE_NO_FLICKER=1 " + strings.Join(cmd, " ") + claudeExitTrailer
 }
 

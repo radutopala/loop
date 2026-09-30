@@ -1,4 +1,4 @@
-import { getApiUrl } from "./api";
+import { apiFetch, getApiUrl } from "./api";
 
 export interface ScheduledTask {
   id: number;
@@ -34,13 +34,13 @@ export interface TaskRunLog {
 }
 
 export async function fetchTasks(channelId: string): Promise<ScheduledTask[]> {
-  const res = await fetch(`${getApiUrl()}/api/tasks?channel_id=${encodeURIComponent(channelId)}`);
+  const res = await apiFetch(`${getApiUrl()}/api/tasks?channel_id=${encodeURIComponent(channelId)}`);
   if (!res.ok) throw new Error(`Failed to fetch tasks: ${res.statusText}`);
   return res.json();
 }
 
 export async function fetchAllTasks(): Promise<ScheduledTask[]> {
-  const res = await fetch(`${getApiUrl()}/api/tasks?platform=local`);
+  const res = await apiFetch(`${getApiUrl()}/api/tasks?platform=local`);
   if (!res.ok) throw new Error(`Failed to fetch tasks: ${res.statusText}`);
   return res.json();
 }
@@ -59,7 +59,7 @@ export async function createTask(data: {
   workflow_inputs?: string;
   bash_script?: string;
 }): Promise<{ id: number }> {
-  const res = await fetch(`${getApiUrl()}/api/tasks`, {
+  const res = await apiFetch(`${getApiUrl()}/api/tasks`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(data),
@@ -84,7 +84,7 @@ export async function updateTask(
     bash_script?: string;
   },
 ): Promise<void> {
-  const res = await fetch(`${getApiUrl()}/api/tasks/${taskId}`, {
+  const res = await apiFetch(`${getApiUrl()}/api/tasks/${taskId}`, {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(data),
@@ -93,18 +93,18 @@ export async function updateTask(
 }
 
 export async function deleteTask(taskId: number): Promise<void> {
-  const res = await fetch(`${getApiUrl()}/api/tasks/${taskId}`, { method: "DELETE" });
+  const res = await apiFetch(`${getApiUrl()}/api/tasks/${taskId}`, { method: "DELETE" });
   if (!res.ok) throw new Error(`Failed to delete task: ${res.statusText}`);
 }
 
 export async function fetchTaskRuns(taskId: number): Promise<TaskRunLog[]> {
-  const res = await fetch(`${getApiUrl()}/api/tasks/${taskId}/runs`);
+  const res = await apiFetch(`${getApiUrl()}/api/tasks/${taskId}/runs`);
   if (!res.ok) throw new Error(`Failed to fetch task runs: ${res.statusText}`);
   return (await res.json()) ?? [];
 }
 
 export async function runTaskNow(taskId: number): Promise<void> {
-  const res = await fetch(`${getApiUrl()}/api/tasks/${taskId}/run`, { method: "POST" });
+  const res = await apiFetch(`${getApiUrl()}/api/tasks/${taskId}/run`, { method: "POST" });
   if (res.status === 409) throw new Error("Task is already running");
   if (!res.ok) throw new Error(`Failed to run task: ${res.statusText}`);
 }

@@ -3,11 +3,11 @@ import { defaultKeymap, history, historyKeymap } from "@codemirror/commands";
 import { markdown } from "@codemirror/lang-markdown";
 import { Compartment, EditorState } from "@codemirror/state";
 import { drawSelection, EditorView, highlightActiveLine, highlightActiveLineGutter, keymap, lineNumbers } from "@codemirror/view";
-import { marked } from "marked";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createDir, fetchFileContent, saveFileContent } from "../../api/loopApi";
 import { useTheme } from "../../ThemeContext";
 import { fonts } from "../../theme";
+import { renderMarkdownSafe } from "../../utils/markdownSafe";
 import { buildEditorTheme } from "./editorTheme";
 import { buildMarkdownStyles } from "./FilePanel";
 
@@ -38,7 +38,7 @@ export function NotesPanel({ channelId }: NotesPanelProps) {
     if (previewTimerRef.current) clearTimeout(previewTimerRef.current);
     previewTimerRef.current = setTimeout(() => {
       previewTimerRef.current = null;
-      setPreviewHtml(marked.parse(doc, { async: false }) as string);
+      setPreviewHtml(renderMarkdownSafe(doc));
     }, PREVIEW_DEBOUNCE_MS);
   }, []);
 
@@ -87,7 +87,7 @@ export function NotesPanel({ channelId }: NotesPanelProps) {
       .then((initialContent) => {
         if (cancelled || !editorRef.current) return;
 
-        setPreviewHtml(marked.parse(initialContent, { async: false }) as string);
+        setPreviewHtml(renderMarkdownSafe(initialContent));
 
         const view = new EditorView({
           state: EditorState.create({

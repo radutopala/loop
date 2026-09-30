@@ -353,3 +353,56 @@ func (s *BodyRuleSuite) TestSourcePathMountObjects() {
 		})
 	}
 }
+
+// --- path_in ---
+
+func (s *BodyRuleSuite) TestOpPathIn() {
+	resolve := func(p string) (string, error) {
+		switch p {
+		case "/work/link":
+			return "/secret/dir", nil
+		case "/work/broken":
+			return "", errors.New("no such file")
+		}
+		return p, nil
+	}
+	c := s.compileOne(types.JSONCheck{Path: "Binds[*]", Op: "path_in", Values: []string{`^/secret(/|$)`}})
+	c.parentDecision = types.DecisionDeny
+	c.resolveSymlinks = resolve
+	m := s.compileOne(types.JSONCheck{Path: "Mounts[*]", Op: "path_in", Values: []string{`^/secret(/|$)`}})
+	m.resolveSymlinks = resolve
+	d := s.compileOne(types.JSONCheck{Path: "Opts.device", Op: "path_in", Values: []string{`^/secret(/|$)`}})
+
+	cases := []struct {
+		name  string
+		check compiledJSONCheck
+		body  map[string]any
+		want  bool
+	}{
+		{"bind literal", c, map[string]any{"Binds": []any{"/secret:/x:ro"}}, true},
+		{"bind uncleaned", c, map[string]any{"Binds": []any{"/tmp/../secret/a:/x"}}, true},
+		{"bind symlink", c, map[string]any{"Binds": []any{"/work/link:/x"}}, true},
+		{"bind outside", c, map[string]any{"Binds": []any{"/work/app:/x"}}, false},
+		{"resolve failure never fires", c, map[string]any{"Binds": []any{"/work/broken:/x"}}, false},
+		{"named volume", c, map[string]any{"Binds": []any{"secret:/x"}}, false},
+		{"mount source", m, map[string]any{"Mounts": []any{map[string]any{"source": "/work/link", "Target": "/x"}}}, true},
+		{"mount source outside", m, map[string]any{"Mounts": []any{map[string]any{"Source": "/work/app", "Target": "/x"}}}, false},
+		{"device with colon", d, map[string]any{"Opts": map[string]any{"device": "/secret/a:b"}}, true},
+		{"device no resolver", d, map[string]any{"Opts": map[string]any{"device": "/work/link"}}, false},
+	}
+	for _, tc := range cases {
+		s.Run(tc.name, func() {
+			require.Equal(s.T(), tc.want, tc.check.match(tc.body))
+		})
+	}
+}
+
+// A long-form mount's Source is a whole path: a ':' in it doesn't cut it.
+func (s *BodyRuleSuite) TestSourcePathMountSourceWithColon() {
+	in := s.compileOne(types.JSONCheck{Path: "Mounts[*].Source", Op: "source_path_in", Values: []string{`^/etc(/|$)`}})
+	require.True(s.T(), in.match(map[string]any{"Mounts": []any{map[string]any{"Source": "/etc/a:b"}}}))
+	notIn := s.compileOne(types.JSONCheck{Path: "Mounts[*].Source", Op: "source_path_not_in", Values: []string{`^/work(/|$)`}})
+	require.True(s.T(), notIn.match(map[string]any{"Mounts": []any{map[string]any{"Source": "/work:/etc"}}}),
+		"/work:/etc is not under /work")
+	require.False(s.T(), notIn.match(map[string]any{"Mounts": []any{map[string]any{"Source": "/work/a:b"}}}))
+}

@@ -10,13 +10,13 @@ import (
 	"mime"
 	"net/http"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
 
 	"github.com/radutopala/loop/internal/config"
+	"github.com/radutopala/loop/internal/gitutil"
 )
 
 // cleanRelPath applies the lexical checks shared by every workspace path: it
@@ -47,7 +47,9 @@ func cleanRelPath(relativePath string) (string, error) {
 }
 
 // validateFilePath validates a relative path against a root directory.
-// Returns the cleaned absolute path or an error.
+// Returns the symlink-resolved absolute path (so the I/O that follows acts on
+// the checked location, not on a link that could be re-pointed), or — for a
+// path that does not exist yet — the resolved parent joined with the base name.
 func (s *Server) validateFilePath(rootDir, relativePath string) (string, error) {
 	cleaned, err := cleanRelPath(relativePath)
 	if err != nil {
@@ -62,29 +64,57 @@ func (s *Server) validateFilePath(rootDir, relativePath string) (string, error) 
 		return "", fmt.Errorf("invalid root directory: %w", err)
 	}
 
-	// Ensure realRoot has a trailing separator so "/projects/foo" doesn't
-	// match "/projects/foobar".
-	rootPrefix := realRoot + string(filepath.Separator)
-
 	realPath, err := s.sys.EvalSymlinks(absPath)
 	if err != nil {
 		// File might not exist yet (for write). Check the parent.
-		parentDir := filepath.Dir(absPath)
-		realParent, err2 := s.sys.EvalSymlinks(parentDir)
-		if err2 != nil {
-			return "", fmt.Errorf("path not found")
-		}
-		if realParent != realRoot && !strings.HasPrefix(realParent, rootPrefix) {
-			return "", fmt.Errorf("path traversal not allowed")
-		}
-		return absPath, nil
+		return s.resolveEntryIn(realRoot, absPath)
 	}
 
-	if realPath != realRoot && !strings.HasPrefix(realPath, rootPrefix) {
+	if !pathWithin(realPath, realRoot) {
 		return "", fmt.Errorf("path traversal not allowed")
 	}
 
-	return absPath, nil
+	return realPath, nil
+}
+
+// validateEntryPath resolves every component of relativePath except the last
+// one and requires the resolved parent to sit inside the resolved root. The
+// returned path names the entry itself, so an Lstat/Remove on it acts on a
+// symlink rather than on whatever the link points at. The root itself is not
+// a valid entry (its parent lies outside the root).
+func (s *Server) validateEntryPath(rootDir, relativePath string) (string, error) {
+	cleaned, err := cleanRelPath(relativePath)
+	if err != nil {
+		return "", err
+	}
+	realRoot, err := s.sys.EvalSymlinks(rootDir)
+	if err != nil {
+		return "", fmt.Errorf("invalid root directory: %w", err)
+	}
+	return s.resolveEntryIn(realRoot, filepath.Join(rootDir, cleaned))
+}
+
+// resolveEntryIn resolves absPath's parent via EvalSymlinks, requires it to be
+// realRoot or inside it, and returns the resolved parent joined with the base.
+func (s *Server) resolveEntryIn(realRoot, absPath string) (string, error) {
+	realParent, err := s.sys.EvalSymlinks(filepath.Dir(absPath))
+	if err != nil {
+		return "", fmt.Errorf("path not found")
+	}
+	if !pathWithin(realParent, realRoot) {
+		return "", fmt.Errorf("path traversal not allowed")
+	}
+	return filepath.Join(realParent, filepath.Base(absPath)), nil
+}
+
+// pathWithin reports whether path is root or lies beneath it, comparing whole
+// path components so "/projects/foo" does not contain "/projects/foobar".
+// Both arguments must already be clean absolute paths.
+func pathWithin(path, root string) bool {
+	if path == root {
+		return true
+	}
+	return strings.HasPrefix(path, strings.TrimSuffix(root, string(filepath.Separator))+string(filepath.Separator))
 }
 
 // allDirPaths returns the primary dir_path followed by any extra_dirs from
@@ -117,9 +147,9 @@ func (s *Server) allDirPaths(ctx context.Context, channelID string) ([]string, e
 	// the plain project-config load.
 	var cfg *config.Config
 	if parentDirPath != "" {
-		cfg, err = config.LoadWorktreeProjectConfig(dirPath, parentDirPath, base)
+		cfg, err = s.configs.worktreeLoader()(dirPath, parentDirPath, base)
 	} else {
-		cfg, err = config.LoadProjectConfig(dirPath, base)
+		cfg, err = s.configs.projectLoader()(dirPath, base)
 	}
 	if err == nil && len(cfg.ExtraDirs) > 0 {
 		for _, p := range cfg.ExtraDirs {
@@ -597,8 +627,7 @@ func (s *Server) readFileAtCommit(w http.ResponseWriter, r *http.Request, dirPat
 		return
 	}
 
-	cmd := exec.CommandContext(r.Context(), "git", "show", ref+":./"+filepath.ToSlash(cleaned))
-	cmd.Dir = dirPath
+	cmd := gitutil.Command(r.Context(), dirPath, "show", "--no-textconv", ref+":./"+filepath.ToSlash(cleaned))
 	data, err := cmd.Output()
 	if err != nil {
 		http.Error(w, "file not found at commit", http.StatusNotFound)
@@ -723,10 +752,25 @@ func (s *Server) handleWriteFile(w http.ResponseWriter, r *http.Request) {
 	}
 
 	relPath := r.URL.Query().Get("path")
+	// A symlink whose target resolves inside the root is followed, so the
+	// write lands on the real file; one resolving outside is refused here.
 	absPath, err := s.validateFilePath(dirPath, relPath)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
+	}
+
+	// A symlink left at this point is dangling (or was swapped in after the
+	// check): refuse it, since WriteFile would create its target wherever
+	// it points.
+	perm := os.FileMode(0644)
+	if info, err := s.sys.Lstat(absPath); err == nil {
+		if info.Mode()&os.ModeSymlink != 0 {
+			http.Error(w, "refusing to write through a symlink", http.StatusBadRequest)
+			return
+		}
+		// Preserve original file permissions if the file exists.
+		perm = info.Mode().Perm()
 	}
 
 	body, err := io.ReadAll(io.LimitReader(r.Body, maxFileSize+1))
@@ -737,12 +781,6 @@ func (s *Server) handleWriteFile(w http.ResponseWriter, r *http.Request) {
 	if len(body) > maxFileSize {
 		http.Error(w, "file too large", http.StatusRequestEntityTooLarge)
 		return
-	}
-
-	// Preserve original file permissions if the file exists.
-	perm := os.FileMode(0644)
-	if info, err := s.sys.Stat(absPath); err == nil {
-		perm = info.Mode().Perm()
 	}
 
 	if err := s.sys.WriteFile(absPath, body, perm); err != nil {
@@ -767,13 +805,14 @@ func (s *Server) handleDeleteFile(w http.ResponseWriter, r *http.Request) {
 
 	relPath := r.URL.Query().Get("path")
 
-	absPath, err := s.validateFilePath(dirPath, relPath)
+	// The entry itself (not a symlink's target) is what gets removed.
+	absPath, err := s.validateEntryPath(dirPath, relPath)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 
-	info, err := s.sys.Stat(absPath)
+	info, err := s.sys.Lstat(absPath)
 	if err != nil {
 		if os.IsNotExist(err) {
 			http.Error(w, "not found", http.StatusNotFound)

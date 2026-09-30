@@ -1,7 +1,20 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { fetchGlobalConfig } from "../api/configApi";
 import { fetchDiff } from "../api/git";
-import { buildFileUrl, createDir, deleteFile, type FileEntry, fetchFileContent, fetchFiles, fetchRoots, isMediaPath, type RootEntry, saveFileContent, updateExtraDirs } from "../api/loopApi";
+import {
+  buildFileUrl,
+  createDir,
+  deleteFile,
+  type FileEntry,
+  fetchFileContent,
+  fetchFiles,
+  fetchRoots,
+  forgetContentCap,
+  isMediaPath,
+  type RootEntry,
+  saveFileContent,
+  updateExtraDirs,
+} from "../api/loopApi";
 import type { CodeEditorHandle } from "../components/panels/CodeEditor";
 import { makePathKey, parsePathKey } from "../components/panels/EditorFileTree";
 import { emptyGitLineChanges, type GitLineChanges, gitLineChangesForFile } from "../components/panels/editorGitGutter";
@@ -10,6 +23,7 @@ import { logErr } from "../utils/log";
 import { storageGetJSON, storageSetJSON } from "../utils/storage";
 import { matchAbsPathToKey } from "./editorPaths";
 import type { ChatEventListener } from "./useChatStateStore";
+import { useContentCapsEpoch } from "./useContentCapsEpoch";
 
 const EDITOR_TABS_KEY = "loop-editor-tabs";
 
@@ -61,6 +75,9 @@ export interface EditorStateApi {
   // generic binary tabs. Includes a cache-busting query param so agent edits
   // reload the displayed bytes.
   imageURL: string | null;
+  // Called when the media element failed to load imageURL: the content link
+  // may have expired, so it is minted again once per shown file.
+  retryMedia: () => void;
   loading: boolean;
   error: string | null;
 
@@ -131,6 +148,47 @@ export function useEditorState(channelId: string, options?: UseEditorStateOption
   // Counter bumped on agent refresh of the active image tab; appended as `?t=`
   // to the URL so the browser re-fetches instead of serving the cached image.
   const imageVersionRef = useRef(0);
+  // Content links are minted asynchronously; a newer show/clear wins over a
+  // link still being minted for an earlier tab.
+  const mediaReqRef = useRef(0);
+  // The media file on show, so a fresh content link can be resolved for it.
+  const mediaShownRef = useRef<{ rp: string; ri: number; retried: boolean } | null>(null);
+  const showMedia = useCallback(
+    (rp: string, ri: number) => {
+      const req = ++mediaReqRef.current;
+      mediaShownRef.current = { rp, ri, retried: false };
+      buildFileUrl(channelId, rp, ri, imageVersionRef.current)
+        .then((url) => {
+          if (mediaReqRef.current === req) setImageURL(url);
+        })
+        .catch(() => {
+          if (mediaReqRef.current === req) setImageURL(null);
+        });
+    },
+    [channelId],
+  );
+  const clearMedia = useCallback(() => {
+    mediaReqRef.current++;
+    mediaShownRef.current = null;
+    setImageURL(null);
+  }, []);
+  const retryMedia = useCallback(() => {
+    const shown = mediaShownRef.current;
+    if (!shown || shown.retried) return;
+    forgetContentCap({ kind: "raw", channelId, root: shown.ri });
+    showMedia(shown.rp, shown.ri);
+    if (mediaShownRef.current) mediaShownRef.current.retried = true;
+  }, [channelId, showMedia]);
+  // Every content link was forgotten (the daemon restarted): resolve the
+  // shown file's again.
+  const capsEpoch = useContentCapsEpoch();
+  const capsEpochRef = useRef(capsEpoch);
+  useEffect(() => {
+    if (capsEpochRef.current === capsEpoch) return;
+    capsEpochRef.current = capsEpoch;
+    const shown = mediaShownRef.current;
+    if (shown) showMedia(shown.rp, shown.ri);
+  }, [capsEpoch, showMedia]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [gitChanges, setGitChanges] = useState<GitLineChanges>(emptyGitLineChanges);
@@ -212,7 +270,7 @@ export function useEditorState(channelId: string, options?: UseEditorStateOption
     if (!selectedPath) return;
     const { rootIndex: ri, relativePath: rp } = parsePathKey(selectedPath);
     if (isMediaPath(rp)) {
-      setImageURL(buildFileUrl(channelId, rp, ri, imageVersionRef.current));
+      showMedia(rp, ri);
       setFileContent(null);
       setIsBinary(false);
       return;
@@ -331,12 +389,12 @@ export function useEditorState(channelId: string, options?: UseEditorStateOption
       setIsBinary(false);
       const { rootIndex: ri, relativePath: rp } = parsePathKey(pathKey);
       if (isMediaPath(rp)) {
-        setImageURL(buildFileUrl(channelId, rp, ri, imageVersionRef.current));
+        showMedia(rp, ri);
         setFileContent(null);
         setLoading(false);
         return;
       }
-      setImageURL(null);
+      clearMedia();
       const cached = dirtyContentRef.current.get(pathKey);
       if (cached !== undefined) {
         setFileContent(cached);
@@ -462,7 +520,7 @@ export function useEditorState(channelId: string, options?: UseEditorStateOption
             setSelectedPath(null);
             setFileContent(null);
             setIsBinary(false);
-            setImageURL(null);
+            clearMedia();
             setError(null);
           }
         }
@@ -489,7 +547,7 @@ export function useEditorState(channelId: string, options?: UseEditorStateOption
       const { rootIndex: ri, relativePath: rp } = parsePathKey(pathKey);
       if (isMediaPath(rp)) {
         imageVersionRef.current++;
-        setImageURL(buildFileUrl(channelId, rp, ri, imageVersionRef.current));
+        showMedia(rp, ri);
         return;
       }
       try {
@@ -569,7 +627,7 @@ export function useEditorState(channelId: string, options?: UseEditorStateOption
                 setSelectedPath(null);
                 setFileContent(null);
                 setIsBinary(false);
-                setImageURL(null);
+                clearMedia();
                 setError(null);
               }
             }
@@ -627,7 +685,7 @@ export function useEditorState(channelId: string, options?: UseEditorStateOption
                 setSelectedPath(null);
                 setFileContent(null);
                 setIsBinary(false);
-                setImageURL(null);
+                clearMedia();
                 setError(null);
               }
             }
@@ -682,7 +740,7 @@ export function useEditorState(channelId: string, options?: UseEditorStateOption
       const { rootIndex: ri, relativePath: rp } = parsePathKey(pathKey);
       if (isMediaPath(rp)) {
         imageVersionRef.current++;
-        setImageURL(buildFileUrl(channelId, rp, ri, imageVersionRef.current));
+        showMedia(rp, ri);
         return;
       }
       fetchFileContent(channelId, rp, ri)
@@ -722,7 +780,7 @@ export function useEditorState(channelId: string, options?: UseEditorStateOption
       if (isMediaPath(rp)) {
         if (pathKey === selectedPathRef.current) {
           imageVersionRef.current++;
-          setImageURL(buildFileUrl(channelId, rp, ri, imageVersionRef.current));
+          showMedia(rp, ri);
         }
         return;
       }
@@ -850,6 +908,7 @@ export function useEditorState(channelId: string, options?: UseEditorStateOption
     isBinary,
     binarySize,
     imageURL,
+    retryMedia,
     loading,
     error,
     gitChanges,

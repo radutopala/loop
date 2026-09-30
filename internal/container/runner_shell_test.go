@@ -627,25 +627,16 @@ func (s *RunnerSuite) TestBuildInteractiveClaudeCmdDevChannelsWithoutAgentID() {
 	require.NotContains(s.T(), got, "--dangerously-load-development-channels")
 }
 
-// TestBuildInteractiveClaudeCmdGateEnabled proves the gate-on branch prepends
-// `loop syscallwrap --` so an interactive claude launched from a docker-exec
-// shell runs under the same seccomp filter the stream-mode path installs via
-// entrypoint.sh.
-func (s *RunnerSuite) TestBuildInteractiveClaudeCmdGateEnabled() {
-	cfg := &config.Config{ClaudeBinPath: "claude"}
-	cfg.Gates.Agentgate.Enabled = true
-	got := BuildInteractiveClaudeCmd(cfg, "ch-1", "/work", "", "", false)
-	require.Equal(s.T(), "CLAUDE_CODE_NO_FLICKER=1 loop syscallwrap -- claude --mcp-config /work/.loop/mcp-ch-1.json --dangerously-skip-permissions"+claudeExitTrailer, got)
-}
-
-// TestBuildInteractiveClaudeCmdGateDisabled confirms the baseline (no prefix)
-// when the gate is explicitly off.
-func (s *RunnerSuite) TestBuildInteractiveClaudeCmdGateDisabled() {
-	cfg := &config.Config{ClaudeBinPath: "claude"}
-	cfg.Gates.Agentgate.Enabled = false
-	got := BuildInteractiveClaudeCmd(cfg, "ch-1", "/work", "", "", false)
-	require.NotContains(s.T(), got, "loop syscallwrap")
-	require.Equal(s.T(), "CLAUDE_CODE_NO_FLICKER=1 claude --mcp-config /work/.loop/mcp-ch-1.json --dangerously-skip-permissions"+claudeExitTrailer, got)
+// TestBuildInteractiveClaudeCmdNoGateWrapper: the command never wraps itself
+// in `loop syscallwrap`. The terminal shell it's typed into is already gated,
+// and a nested wrapper running as the agent couldn't read the gate token.
+func (s *RunnerSuite) TestBuildInteractiveClaudeCmdNoGateWrapper() {
+	for _, enabled := range []bool{true, false} {
+		cfg := &config.Config{ClaudeBinPath: "claude"}
+		cfg.Gates.Agentgate.Enabled = enabled
+		got := BuildInteractiveClaudeCmd(cfg, "ch-1", "/work", "", "", false)
+		require.Equal(s.T(), "CLAUDE_CODE_NO_FLICKER=1 claude --mcp-config /work/.loop/mcp-ch-1.json --dangerously-skip-permissions"+claudeExitTrailer, got)
+	}
 }
 
 func (s *RunnerSuite) TestBuildBaseClaudeCmdFlags() {

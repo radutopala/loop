@@ -56,3 +56,39 @@ func TestNewServerNilAuditorDefaultsToNop(t *testing.T) {
 	require.Nil(t, srv.Connect.PeerSource)
 	require.Nil(t, srv.File.PeerSource)
 }
+
+// TestNewServerGitGuardOnlyWithRoots: the guard exists only when the policy
+// names roots, and then shares the server's approver, auditor and peer
+// lookup.
+func TestNewServerGitGuardOnlyWithRoots(t *testing.T) {
+	policy, err := CompilePolicy(types.DecisionAllow, nil, nil, nil)
+	require.NoError(t, err)
+	srv := NewServer(policy, &stubApprover{}, NopAuditor{}, nil, "ch-1", -1)
+	require.Nil(t, srv.Guard)
+
+	approver := &stubApprover{}
+	peer := func(int) string { return "terminal:leaf-X" }
+	srv = NewServer(policy.WithGitGuardRoots([]string{"/work"}), approver, NopAuditor{}, peer, "ch-1", -1)
+	require.NotNil(t, srv.Guard)
+	require.Equal(t, []string{"/work"}, srv.Guard.Roots)
+	require.IsType(t, &OSGuardFS{}, srv.Guard.FS)
+	require.Same(t, approver, srv.Guard.Approver)
+	require.Equal(t, NopAuditor{}, srv.Guard.Auditor)
+	require.Equal(t, "terminal:leaf-X", srv.Guard.PeerSource(1))
+	require.True(t, srv.Guard.Protects("/work/.git/config"))
+}
+
+// TestNewServerRenameReview: the rename review exists with or without git
+// guard roots and shares the server's approver, auditor and peer lookup.
+func TestNewServerRenameReview(t *testing.T) {
+	policy, err := CompilePolicy(types.DecisionAllow, nil, nil, nil)
+	require.NoError(t, err)
+	approver := &stubApprover{}
+	auditor := &collectAuditor{}
+	srv := NewServer(policy, approver, auditor, func(int) string { return "chat" }, "ch-1", -1)
+	require.NotNil(t, srv.Review)
+	require.IsType(t, &OSGuardFS{}, srv.Review.FS)
+	require.Same(t, approver, srv.Review.Approver)
+	require.Same(t, auditor, srv.Review.Auditor)
+	require.Equal(t, "chat", srv.Review.PeerSource(1))
+}

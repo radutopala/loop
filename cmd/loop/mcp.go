@@ -3,12 +3,12 @@ package main
 import (
 	"context"
 	"fmt"
-	"net/http"
 	"os"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/spf13/cobra"
 
+	"github.com/radutopala/loop/internal/apiauth"
 	"github.com/radutopala/loop/internal/explain"
 	"github.com/radutopala/loop/internal/learn"
 	"github.com/radutopala/loop/internal/logging"
@@ -96,9 +96,9 @@ func (a *app) runMCP(channelID, apiURL, dirPath, logPath, authorID, platform, ag
 	default:
 		memOpts = append(memOpts, mcpserver.WithAgentTools(agentID))
 	}
-	memOpts = append(memOpts, mcpserver.WithWorkflowAPI())
+	memOpts = append(memOpts, mcpserver.WithWorkflowAPI(), mcpserver.WithAPIToken(apiauth.NewClientTokenSource().Token))
 
-	srv := a.newMCPServer(channelID, apiURL, authorID, http.DefaultClient, logger, memOpts...)
+	srv := a.newMCPServer(channelID, apiURL, authorID, a.apiClient, logger, memOpts...)
 	srv.RegisterAgent()
 	runErr := srv.Run(context.Background(), &mcp.StdioTransport{})
 	srv.UnregisterAgent()

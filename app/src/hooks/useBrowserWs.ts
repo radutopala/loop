@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { browserAction, getWsUrl } from "../api/loopApi";
+import { browserAction, getWsUrl, wsProtocols } from "../api/loopApi";
 
 interface BrowserWSMessage {
   type: string;
@@ -85,7 +85,7 @@ export function useBrowserWs({ channelId, onFrame, onPageInfo, onError, onStarte
       if (stopped) return;
 
       const wsUrl = `${getWsUrl()}/api/ws/browser`;
-      const ws = new WebSocket(wsUrl);
+      const ws = new WebSocket(wsUrl, wsProtocols());
       wsRef.current = ws;
 
       ws.onopen = () => {

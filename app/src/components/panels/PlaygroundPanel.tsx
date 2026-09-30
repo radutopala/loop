@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { fetchPlayground, fetchPlaygroundItems, fetchPlaygroundShareStatus, getApiUrl, type PlaygroundItem, sharePlayground, unsharePlayground } from "../../api/loopApi";
+import { contentCapBase, fetchPlayground, fetchPlaygroundItems, fetchPlaygroundShareStatus, type PlaygroundItem, sharePlayground, unsharePlayground } from "../../api/loopApi";
+import { useContentCapsEpoch } from "../../hooks/useContentCapsEpoch";
 import { useEventStream } from "../../hooks/useEventStream";
 import { useTheme } from "../../ThemeContext";
 import type { WSEvent } from "../../types";
@@ -70,6 +71,28 @@ export function PlaygroundPanel({ channelId, instanceId = "default" }: Playgroun
     },
     [storageKey],
   );
+
+  // The iframe loads through a content link (it can't send the API token),
+  // resolved again once the links are forgotten (a daemon restart).
+  const capsEpoch = useContentCapsEpoch();
+  const [iframeSrc, setIframeSrc] = useState("about:blank");
+  useEffect(() => {
+    if (!activeItem) {
+      setIframeSrc("about:blank");
+      return;
+    }
+    let cancelled = false;
+    contentCapBase(activeScope === "project" ? { kind: "playground", channelId, name: activeItem } : { kind: "playground", name: activeItem })
+      .then((base) => {
+        if (!cancelled) setIframeSrc(`${base}?v=${iframeVersion}`);
+      })
+      .catch((err) => {
+        if (!cancelled) setError(String(err));
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [channelId, activeItem, activeScope, iframeVersion, capsEpoch]);
 
   // Load items list on mount.
   useEffect(() => {
@@ -308,12 +331,8 @@ export function PlaygroundPanel({ channelId, instanceId = "default" }: Playgroun
       {/* Sandbox iframe — served from the backend so relative imports work */}
       <iframe
         ref={iframeRef}
-        src={
-          activeScope === "project"
-            ? `${getApiUrl()}/api/playground/serve-project/${encodeURIComponent(channelId)}/${encodeURIComponent(activeItem)}?v=${iframeVersion}`
-            : `${getApiUrl()}/api/playground/serve/${encodeURIComponent(activeItem)}?v=${iframeVersion}`
-        }
-        sandbox="allow-scripts allow-same-origin allow-forms"
+        src={iframeSrc}
+        sandbox="allow-scripts allow-forms"
         style={{ flex: 1, border: "none", width: "100%" }}
         onMouseEnter={() => {
           // Blur any focused element (e.g. chat textarea) so keyboard events reach the iframe.

@@ -651,9 +651,12 @@ func (r *DockerRunner) writeMCPConfig(workDir, channelID, apiURL, authorID, agen
 
 // buildContainerMounts processes config mounts and adds the workDir bind.
 // If parentDirPath is set and workDir is inside it (worktree), also mounts
-// the parent so the container sees the main .git directory.
-// Returns the bind strings and any named-volume container paths that need chown.
-func (r *DockerRunner) buildContainerMounts(mounts []string, workDir, parentDirPath string, extraDirs []string) (binds, chownPaths []string) {
+// the parent so the container sees the main .git directory. Binds exposing a
+// protected dir are dropped, or masked when read-only ancestors (see
+// dropProtectedBinds).
+// Returns the bind strings, the container paths to cover with an empty
+// read-only tmpfs, and any named-volume container paths that need chown.
+func (r *DockerRunner) buildContainerMounts(mounts []string, workDir, parentDirPath string, extraDirs []string) (binds, masks, chownPaths []string) {
 	for _, mount := range mounts {
 		if ms, err := parseMountSpec(mount); err == nil && config.IsNamedVolume(ms.Host) {
 			expanded, _ := r.expandPath(ms.Container)
@@ -714,7 +717,8 @@ func (r *DockerRunner) buildContainerMounts(mounts []string, workDir, parentDirP
 		binds = append(binds, expanded+":"+expanded)
 	}
 
-	return binds, chownPaths
+	binds, masks = r.dropProtectedBinds(binds)
+	return binds, masks, chownPaths
 }
 
 // filterMountedCopyFiles removes entries from copyFiles whose expanded paths
@@ -939,7 +943,7 @@ func (r *DockerRunner) writeProxyPolicyFile(cfg *config.Config, channelID string
 	payload := proxyPolicyJSON{
 		DefaultDecision: cfg.Gates.DockerProxy.DefaultDecision,
 		HTTPRules:       cfg.Gates.DockerProxy.HTTPRules,
-		BodyRules:       injectBindAllowlist(cfg.Gates.DockerProxy.BodyRules, rw, ro),
+		BodyRules:       append(r.protectedDirBodyRules(), injectBindAllowlist(cfg.Gates.DockerProxy.BodyRules, rw, ro)...),
 	}
 	raw, _ := json.Marshal(payload)
 	path := filepath.Join(dir, "proxy-policy.json")
@@ -958,6 +962,7 @@ type gatePolicyJSON struct {
 	PathRules       []types.PathRule    `json:"path_rules"`
 	CommandRules    []types.CommandRule `json:"command_rules"`
 	FileRules       []types.FileRule    `json:"file_rules"`
+	GitGuardRoots   []string            `json:"git_guard_roots,omitempty"`
 }
 
 // writeGatePolicyFile serialises the subset of cfg.Gates.Agentgate that the
@@ -973,7 +978,7 @@ type gatePolicyJSON struct {
 // workDir/parentDirPath come from the per-channel mount setup — the workspace
 // allow rule is injected here (not in the static defaults) because the real
 // workspace path is the host bind-mount path, not a fixed /work.
-func (r *DockerRunner) writeGatePolicyFile(cfg *config.Config, channelID, workDir, parentDirPath string) (string, error) {
+func (r *DockerRunner) writeGatePolicyFile(cfg *config.Config, channelID, workDir, parentDirPath string, binds []string) (string, error) {
 	if !cfg.Gates.Agentgate.Enabled {
 		return "", nil
 	}
@@ -989,6 +994,7 @@ func (r *DockerRunner) writeGatePolicyFile(cfg *config.Config, channelID, workDi
 		PathRules:       cfg.Gates.Agentgate.PathRules,
 		CommandRules:    injectWorkspaceRmRfRule(cfg.Gates.Agentgate.CommandRules, workDir, parentDirPath),
 		FileRules:       injectPolicySelfDenyRule(injectProjectConfigRule(injectWorkspaceRule(cfg.Gates.Agentgate.FileRules, workDir, parentDirPath), workDir, parentDirPath)),
+		GitGuardRoots:   gitGuardRoots(binds),
 	}
 	raw, _ := json.Marshal(payload)
 	path := filepath.Join(dir, "gate-policy.json")
@@ -1212,13 +1218,19 @@ func injectWorkspaceRmRfRule(rules []types.CommandRule, workDir, parentDirPath s
 // rules list at the first position following any Deny/Approve rules. This
 // keeps generic denies (**/.ssh/**, etc.) and Approve markers (approve-me*)
 // matching first, while granting blanket access to the real workspace path.
+// Git config and hooks in the workspace aren't rules here: the gate's git
+// guard covers them under every writable host mount (see gitGuardRoots).
 func injectWorkspaceRule(rules []types.FileRule, workDir, parentDirPath string) []types.FileRule {
 	if workDir == "" {
 		return rules
 	}
-	paths := []string{workDir + "/**"}
+	roots := []string{workDir}
 	if parentDirPath != "" && parentDirPath != workDir {
-		paths = append(paths, parentDirPath+"/**")
+		roots = append(roots, parentDirPath)
+	}
+	var paths []string
+	for _, root := range roots {
+		paths = append(paths, root+"/**")
 	}
 	ws := types.FileRule{
 		Paths:      paths,
@@ -1238,6 +1250,24 @@ func injectWorkspaceRule(rules []types.FileRule, workDir, parentDirPath string) 
 	out = append(out, ws)
 	out = append(out, rules[insertAt:]...)
 	return out
+}
+
+// gitGuardRoots returns the container paths of the writable host binds.
+// A repo's config and hooks there run code the next time anyone uses git
+// on the host (core.fsmonitor, core.sshCommand, a pre-commit hook), so the
+// gate's git guard covers them. Read-only binds and named volumes don't
+// reach the host's git, and scratch repos in the container (/tmp) don't
+// either.
+func gitGuardRoots(binds []string) []string {
+	var roots []string
+	for _, b := range binds {
+		ms, err := parseMountSpec(b)
+		if err != nil || config.IsNamedVolume(ms.Host) || slices.Contains(strings.Split(ms.Mode, ","), "ro") {
+			continue
+		}
+		roots = append(roots, ms.Container)
+	}
+	return roots
 }
 
 // gatePolicyMountDir is where runner.go bind-mounts the gate and docker-proxy

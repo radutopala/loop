@@ -1,9 +1,9 @@
-import { marked } from "marked";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { Explanation } from "../../api/explain";
 import type { ExplainView } from "../../hooks/useExplain";
 import { useTheme } from "../../ThemeContext";
 import { fonts } from "../../theme";
+import { renderMarkdownSafe } from "../../utils/markdownSafe";
 import { inAppHref, messageLink } from "../../utils/messageLinks";
 import { ChannelContext } from "../chat/chatShared";
 import { ExplainIcon } from "../chat/ExplainIcon";
@@ -139,7 +139,7 @@ function ExplanationCard({
   const [view, setView] = useState<"preview" | "source">("preview");
   // Rendered like the editor's markdown preview: the chat's renderer has no
   // headings or lists, which write-ups are made of.
-  const html = useMemo(() => (hasContent ? (marked.parse(e.content, { async: false }) as string) : ""), [hasContent, e.content]);
+  const html = useMemo(() => (hasContent ? renderMarkdownSafe(e.content) : ""), [hasContent, e.content]);
 
   return (
     <div

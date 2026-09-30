@@ -48,11 +48,40 @@ func (s *NotifyTransportSuite) TestSyscallNameKnownSyscalls() {
 		{int32(unix.SYS_FCHMODAT), syscallFchmodat},
 		{int32(unix.SYS_FCHOWNAT), syscallFchownat},
 		{int32(unix.SYS_MKDIRAT), syscallMkdirat},
+		{int32(unix.SYS_RENAMEAT), syscallRenameat},
+		{int32(unix.SYS_FCHMODAT2), syscallFchmodat2},
+		{int32(unix.SYS_MKNODAT), syscallMknodat},
+		{int32(unix.SYS_TRUNCATE), syscallTruncate},
 	}
 	for _, c := range cases {
 		got, ok := syscallName(c.nr)
 		s.Require().True(ok, "nr %d should map", c.nr)
 		s.Require().Equal(c.want, got)
+	}
+	// Per-arch extras (x86_64's legacy path syscalls) map as listed.
+	for nr, want := range archSyscallNames {
+		got, ok := syscallName(nr)
+		s.Require().True(ok, "arch nr %d should map", nr)
+		s.Require().Equal(want, got)
+		s.Require().True(IsFileSyscall(got), "%s must be in syscallTable", got)
+	}
+}
+
+func (s *NotifyTransportSuite) TestMergeSyscallNames() {
+	cases := []struct {
+		name         string
+		common, arch map[int32]string
+		want         map[int32]string
+	}{
+		{"both empty", nil, nil, map[int32]string{}},
+		{"common only", map[int32]string{1: "a"}, map[int32]string{}, map[int32]string{1: "a"}},
+		{"arch adds", map[int32]string{1: "a"}, map[int32]string{2: "b"}, map[int32]string{1: "a", 2: "b"}},
+		{"arch overrides", map[int32]string{1: "a"}, map[int32]string{1: "z"}, map[int32]string{1: "z"}},
+	}
+	for _, c := range cases {
+		s.Run(c.name, func() {
+			s.Require().Equal(c.want, mergeSyscallNames(c.common, c.arch))
+		})
 	}
 }
 
@@ -230,6 +259,16 @@ func (s *NotifyTransportSuite) TestSendAllowSetsContinueFlag() {
 	s.Require().Equal(int32(0), captured.Error)
 }
 
+func (s *NotifyTransportSuite) TestSendPerformedReturnsSuccessWithoutContinue() {
+	fn, captured, _ := sendCapture(0)
+	nt := &NotifyTransport{FD: 7, IoctlFn: fn}
+
+	// Performed wins even if Allow/ErrorNum are set by mistake.
+	err := nt.Send(context.Background(), TrapResponse{ID: 13, Performed: true, Allow: true, ErrorNum: int32(unix.EACCES)})
+	s.Require().NoError(err)
+	s.Require().Equal(seccompNotifResp{ID: 13}, *captured)
+}
+
 func (s *NotifyTransportSuite) TestSendDenyDefaultsToEPERM() {
 	fn, captured, _ := sendCapture(0)
 	nt := &NotifyTransport{FD: 7, IoctlFn: fn}
@@ -367,5 +406,7 @@ func (s *NotifyTransportSuite) TestProcTraceeFactoryReturnsProcTracee() {
 	s.Require().Equal(1234, pt.PID)
 	s.Require().NotNil(pt.ReadMem)
 	s.Require().NotNil(pt.Readlink)
-	s.Require().NotNil(pt.EvalSymlinksFn)
+	s.Require().NotNil(pt.Lstat)
+	s.Require().NotNil(pt.ReadlinkPath)
+	s.Require().NotNil(pt.ReadFile)
 }

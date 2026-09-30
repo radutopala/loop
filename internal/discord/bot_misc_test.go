@@ -221,6 +221,21 @@ func (s *BotSuite) TestSendApprovalRendersDetailsAsQuotedLines() {
 	s.session.AssertExpectations(s.T())
 }
 
+func (s *BotSuite) TestSendApprovalRendersDiffBlock() {
+	s.session.On("ChannelMessageSendComplex", "ch1", mock.MatchedBy(func(data *discordgo.MessageSend) bool {
+		return strings.HasSuffix(data.Content, "\n```diff\n+[core]\n+\tfsmonitor = <x>\n```") &&
+			!strings.Contains(data.Content, "`diff`:")
+	}), mock.Anything).Return(&discordgo.Message{ID: "m4"}, nil)
+
+	_, err := s.bot.SendApproval(context.Background(), "ch1", bot.ApprovalPrompt{
+		ID:      "req-g",
+		Target:  "write /w/.git/config",
+		Details: map[string]string{"diff": "+[core]\n+\tfsmonitor = <x>\n"},
+	})
+	require.NoError(s.T(), err)
+	s.session.AssertExpectations(s.T())
+}
+
 func (s *BotSuite) TestSendApprovalError() {
 	s.session.On("ChannelMessageSendComplex", "ch1", mock.Anything, mock.Anything).Return(nil, errors.New("send failed"))
 

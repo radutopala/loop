@@ -86,10 +86,7 @@ func (s *Server) resolveShortcutContext(w http.ResponseWriter, r *http.Request) 
 		return nil, nil, nil, nil, false
 	}
 
-	loadProjectConfig := s.configs.loadProject
-	if loadProjectConfig == nil {
-		loadProjectConfig = config.LoadProjectConfig
-	}
+	loadProjectConfig := s.configs.projectLoader()
 
 	var dirPath string
 	var projectOnly *config.Config
@@ -378,9 +375,15 @@ func (s *Server) modifyShortcutEntry(w http.ResponseWriter, r *http.Request, req
 		http.Error(w, "failed to serialize config", http.StatusInternalServerError)
 		return
 	}
-	if err := s.sys.WriteFile(configPath, append(out, '\n'), 0644); err != nil {
+	out = append(out, '\n')
+	if err := s.sys.WriteFile(configPath, out, 0644); err != nil {
 		http.Error(w, "failed to write config file", http.StatusInternalServerError)
 		return
+	}
+	// An agent's shortcut change waits for the owner, like any other agent
+	// edit of the project config.
+	if req.Scope == "project" && s.projectTrust != nil && !isAgentRequest(r) {
+		s.keepProjectTrust(filepath.Dir(filepath.Dir(configPath)), configData, out)
 	}
 	w.WriteHeader(http.StatusNoContent)
 }

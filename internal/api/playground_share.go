@@ -233,7 +233,19 @@ func (s *playgroundService) handleSharedPlaygroundServe(w http.ResponseWriter, r
 		http.Error(w, "not found", http.StatusNotFound)
 		return
 	}
-	renderPlaygroundIndex(w, e.AbsDir, "/p/"+e.Token+"/")
+	if !s.shareDirIntact(e) {
+		http.Error(w, "not found", http.StatusNotFound)
+		return
+	}
+	s.renderPlaygroundIndex(w, e.AbsDir, "/p/"+e.Token+"/")
+}
+
+// shareDirIntact reports whether a shared playground's dir still resolves to
+// itself. AbsDir was symlink-resolved when shared, so a mismatch means a
+// component was swapped for a symlink since then.
+func (s *playgroundService) shareDirIntact(e shareEntry) bool {
+	real, err := s.realPath(e.AbsDir)
+	return err == nil && real == e.AbsDir
 }
 
 // handleSharedPlaygroundServeFile serves a shared playground's asset by token.
@@ -243,5 +255,9 @@ func (s *playgroundService) handleSharedPlaygroundServeFile(w http.ResponseWrite
 		http.Error(w, "not found", http.StatusNotFound)
 		return
 	}
-	servePlaygroundFile(w, e.AbsDir, r.PathValue("path"))
+	if !s.shareDirIntact(e) {
+		http.Error(w, "not found", http.StatusNotFound)
+		return
+	}
+	s.servePlaygroundFile(w, e.AbsDir, r.PathValue("path"))
 }

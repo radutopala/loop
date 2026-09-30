@@ -157,7 +157,13 @@ func (s *FoldSuite) TestDefaultRulesCapsNamespacesRuntime() {
 		{name: "empty runtime", path: "/containers/create", body: `{"HostConfig":{"Runtime":""}}`},
 		{name: "pid of another container", path: "/containers/create", body: `{"HostConfig":{"PidMode":"container:loop-x"}}`, decision: types.DecisionApprove},
 		{name: "ipc of another container", path: "/containers/create", body: `{"HostConfig":{"IpcMode":"container:loop-x"}}`, decision: types.DecisionApprove},
-		{name: "network of another container", path: "/containers/create", body: `{"HostConfig":{"NetworkMode":"container:loop-x"}}`},
+		{name: "network of another container", path: "/containers/create", body: `{"HostConfig":{"NetworkMode":"container:loop-x"}}`, decision: types.DecisionApprove},
+		{name: "uts of another container", path: "/containers/create", body: `{"HostConfig":{"UTSMode":"container:loop-x"}}`, decision: types.DecisionApprove},
+		{name: "network by name", path: "/containers/create", body: `{"HostConfig":{"NetworkMode":"my-net"}}`},
+		{name: "masked paths emptied", path: "/containers/create", body: `{"HostConfig":{"MaskedPaths":[]}}`, decision: types.DecisionDeny},
+		{name: "masked paths shortened", path: "/containers/create", body: `{"HostConfig":{"MaskedPaths":["/proc/acpi"]}}`, decision: types.DecisionDeny},
+		{name: "readonly paths shortened", path: "/containers/create", body: `{"HostConfig":{"ReadonlyPaths":["/proc/bus"]}}`, decision: types.DecisionDeny},
+		{name: "masked paths null", path: "/containers/create", body: `{"HostConfig":{"MaskedPaths":null}}`},
 		{name: "inline bind-style volume", path: "/containers/create", body: `{"HostConfig":{"Mounts":[{"Type":"volume","Source":"v","Target":"/x","VolumeOptions":{"DriverConfig":{"Name":"local","Options":{"type":"none","o":"bind","device":"/etc"}}}}]}}`, decision: types.DecisionApprove},
 		{name: "plain named volume", path: "/containers/create", body: `{"HostConfig":{"Mounts":[{"Type":"volume","Source":"v","Target":"/x"}]}}`},
 		{name: "bind-style volume create", path: "/volumes/create", body: `{"Name":"v","DriverOpts":{"type":"none","o":"bind","device":"/etc"}}`, decision: types.DecisionApprove},
@@ -216,6 +222,53 @@ func (s *FoldSuite) TestVolumeDetails() {
 			var body any
 			require.NoError(s.T(), json.Unmarshal([]byte(tc.body), &body))
 			require.Equal(s.T(), tc.want, extractApprovalDetails(http.MethodPost, tc.path, body))
+		})
+	}
+}
+
+// A body naming one key twice is refused: rules judge the copy the decoded
+// map kept, which need not be the one the daemon acts on.
+func (s *FoldSuite) TestDuplicateKeysRejected() {
+	sock, stop := upstreamUnix(s.T(), http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusCreated)
+	}))
+	defer stop()
+	policy, err := CompilePolicy(types.DecisionAllow, config.DefaultDockerProxyHTTPRules(), config.DefaultDockerProxyBodyRules())
+	require.NoError(s.T(), err)
+	auditor := &capturingAuditor{}
+	srv, err := NewServer(ServerConfig{CID: "cid-1", Policy: policy, Approver: &fakeApprover{}, DockerSock: sock, Auditor: auditor})
+	require.NoError(s.T(), err)
+
+	body := `{"Image":"a","HostConfig":{"Privileged":true,"Privileged":false}}`
+	req := httptest.NewRequest(http.MethodPost, "/containers/create", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	srv.ServeHTTP(rr, req)
+
+	require.Equal(s.T(), http.StatusBadRequest, rr.Code, rr.Body.String())
+	snap := auditor.snapshot()
+	require.Len(s.T(), snap, 1)
+	require.Equal(s.T(), errDuplicateKeys.Error(), snap[0].Reason)
+}
+
+func (s *FoldSuite) TestHasDuplicateKeys() {
+	cases := []struct {
+		name string
+		buf  string
+		want bool
+	}{
+		{name: "none", buf: `{"a":1,"b":{"a":2},"c":[{"a":3},{"a":4}]}`, want: false},
+		{name: "top level", buf: `{"a":1,"a":2}`, want: true},
+		{name: "nested", buf: `{"a":{"b":1,"b":2}}`, want: true},
+		{name: "inside array", buf: `[1,{"x":[],"x":{}}]`, want: true},
+		{name: "after nested value", buf: `{"a":{"b":[1,2]},"a":3}`, want: true},
+		{name: "case variants are different keys", buf: `{"a":1,"A":2}`, want: false},
+		{name: "scalar", buf: `"x"`, want: false},
+		{name: "invalid", buf: `{"a":`, want: false},
+	}
+	for _, tc := range cases {
+		s.Run(tc.name, func() {
+			require.Equal(s.T(), tc.want, hasDuplicateKeys([]byte(tc.buf)))
 		})
 	}
 }

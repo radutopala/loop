@@ -634,10 +634,30 @@ func (c *CDPClient) Close() {
 	c.allocCancel()
 }
 
-// Navigate navigates to the given URL.
-func (c *CDPClient) Navigate(ctx context.Context, url string) error {
+// checkNavigableURL allows only http(s) URLs with a host, and about:blank.
+// Every other scheme (file:, javascript:, data:, chrome:, ...) is refused so a
+// navigation can't read local files or run script in a privileged page.
+func checkNavigableURL(rawURL string) error {
+	if rawURL == "about:blank" {
+		return nil
+	}
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return fmt.Errorf("invalid URL %q: %w", rawURL, err)
+	}
+	if (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+		return fmt.Errorf("URL %q not allowed: only http, https and about:blank are supported", rawURL)
+	}
+	return nil
+}
+
+// Navigate navigates to the given URL (http, https or about:blank only).
+func (c *CDPClient) Navigate(ctx context.Context, rawURL string) error {
+	if err := checkNavigableURL(rawURL); err != nil {
+		return err
+	}
 	return runBoundedFor(ctx, c.navigationDeadline(), func() error {
-		return c.runFn(c.ctx, chromedp.Navigate(url))
+		return c.runFn(c.ctx, chromedp.Navigate(rawURL))
 	})
 }
 
@@ -1588,9 +1608,12 @@ func (c *CDPClient) readStream(ctx context.Context, handle cdpio.StreamHandle) (
 	return nil, fmt.Errorf("icon stream did not end within %d chunks", maxFaviconChunks)
 }
 
-// NewTab opens a new tab with the given URL.
-func (c *CDPClient) NewTab(ctx context.Context, url string) (string, error) {
-	tCtx, err := c.createTabFunc(c.ctx, url)
+// NewTab opens a new tab with the given URL (http, https or about:blank only).
+func (c *CDPClient) NewTab(ctx context.Context, rawURL string) (string, error) {
+	if err := checkNavigableURL(rawURL); err != nil {
+		return "", err
+	}
+	tCtx, err := c.createTabFunc(c.ctx, rawURL)
 	if err != nil {
 		return "", fmt.Errorf("creating new tab: %w", err)
 	}

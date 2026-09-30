@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/radutopala/loop/internal/types"
@@ -172,6 +173,9 @@ func resolvePromptField(name, prompt, promptPath, baseDir string, readFile func(
 		return prompt, nil
 	}
 	path := filepath.Join(baseDir, promptPath)
+	if !strings.HasPrefix(path, filepath.Clean(baseDir)+string(filepath.Separator)) {
+		return "", fmt.Errorf("%q: prompt path %q escapes %s", name, promptPath, baseDir)
+	}
 	data, err := readFile(path)
 	if err != nil {
 		return "", fmt.Errorf("reading prompt file for %q: %w", name, err)

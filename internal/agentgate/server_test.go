@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"strings"
 	"sync"
 	"syscall"
 	"testing"
@@ -489,17 +490,9 @@ func (s *ServerSuite) TestDispatchFileOpenat2ReadBytesFails() {
 }
 
 func (s *ServerSuite) TestDispatchFileUnknownSyscallDenies() {
-	// Drive the "SyscallByName missed" branch inside dispatchFile. The outer
-	// Dispatch switch only lists real file syscalls, so we go straight to
-	// dispatchFile with a crafted spec-miss name. Since dispatchFile is
-	// unexported, we exercise it via a file-handler present + BPF-mismatch
-	// scenario by calling Dispatch with a real case name but temporarily
-	// clearing the table; the simpler path: poke Dispatch with a file-ish
-	// name that is not in the switch — handled by the outer default branch
-	// already covered by TestDispatchUnknownSyscallDeniesEPERM. We instead
-	// test via a known file syscall after removing File handler, which hits
-	// the nil-handler branch already. Combine coverage by directly calling
-	// the private dispatchFile on a crafted server.
+	// Dispatch only routes names from syscallTable here; called directly
+	// with anything else, dispatchFile works off a zero spec and fails
+	// closed on the unreadable path.
 	srv := s.newServer(&FakeTracee{}, nil, NewFileHandler(s.mustPolicy(types.DecisionAllow, nil, nil, nil), nil, 8), nil)
 	got := srv.dispatchFile(context.Background(), Trap{ID: 37, Syscall: "not-a-real-syscall"}, &FakeTracee{})
 	s.Require().False(got.Allow)
@@ -787,6 +780,22 @@ func (s *ServerSuite) TestDispatchFileCoversOtherSyscalls() {
 		{syscall: syscallFchmodat, args: [6]uint64{atFdcwd, 0x100, 0, 0, 0}, path: 0x100},
 		{syscall: syscallFchownat, args: [6]uint64{atFdcwd, 0x100, 0, 0, 0}, path: 0x100},
 		{syscall: syscallMkdirat, args: [6]uint64{atFdcwd, 0x100, 0, 0, 0}, path: 0x100},
+		{syscall: syscallRenameat, args: [6]uint64{atFdcwd, 0x100, atFdcwd, 0x100}, path: 0x100},
+		{syscall: syscallMknodat, args: [6]uint64{atFdcwd, 0x100, 0, 0}, path: 0x100},
+		{syscall: syscallTruncate, args: [6]uint64{0x100, 0}, path: 0x100},
+		{syscall: syscallFchmodat2, args: [6]uint64{atFdcwd, 0x100, 0, 0}, path: 0x100},
+		{syscall: syscallOpen, args: [6]uint64{0x100, oWRONLY, 0}, path: 0x100},
+		{syscall: syscallCreat, args: [6]uint64{0x100, 0o644}, path: 0x100},
+		{syscall: syscallRename, args: [6]uint64{0x100, 0x100}, path: 0x100},
+		{syscall: syscallMkdir, args: [6]uint64{0x100, 0o755}, path: 0x100},
+		{syscall: syscallRmdir, args: [6]uint64{0x100}, path: 0x100},
+		{syscall: syscallLink, args: [6]uint64{0x200, 0x100}, path: 0x100},
+		{syscall: syscallUnlink, args: [6]uint64{0x100}, path: 0x100},
+		{syscall: syscallSymlink, args: [6]uint64{0x200, 0x100}, path: 0x100},
+		{syscall: syscallChmod, args: [6]uint64{0x100, 0o644}, path: 0x100},
+		{syscall: syscallChown, args: [6]uint64{0x100, 0, 0}, path: 0x100},
+		{syscall: syscallLchown, args: [6]uint64{0x100, 0, 0}, path: 0x100},
+		{syscall: syscallMknod, args: [6]uint64{0x100, 0, 0}, path: 0x100},
 	}
 	for _, tc := range cases {
 		tr := &FakeTracee{Strings: map[uintptr]string{tc.path: "/work/x"}}
@@ -794,6 +803,428 @@ func (s *ServerSuite) TestDispatchFileCoversOtherSyscalls() {
 		got := srv.Dispatch(context.Background(), Trap{ID: 50, Syscall: tc.syscall, Args: tc.args})
 		s.Require().Truef(got.Allow, "%s should allow under default-allow policy", tc.syscall)
 	}
+}
+
+func (s *ServerSuite) TestDispatchFileLegacySyscallsResolveAgainstCwd() {
+	// The legacy syscalls have no dirfd: a relative path joins the cwd
+	// (AT_FDCWD), for the primary and the secondary path alike.
+	tr := &FakeTracee{
+		Strings: map[uintptr]string{0x100: "old", 0x200: "new"},
+		Dirfds:  map[int32]string{AtFDCWD: "/etc"},
+	}
+	policy := s.mustPolicy(types.DecisionAllow, nil, nil, []types.FileRule{
+		{Paths: []string{"/etc/new"}, Operations: []string{OpCreate}, Decision: types.DecisionDeny},
+	})
+	srv := s.newServer(tr, nil, NewFileHandler(policy, nil, 8), nil)
+	got := srv.Dispatch(context.Background(), Trap{ID: 51, Syscall: syscallRename, Args: [6]uint64{0x100, 0x200}})
+	s.Require().False(got.Allow, "rename's relative newpath must resolve to /etc/new")
+	got = srv.Dispatch(context.Background(), Trap{ID: 52, Syscall: syscallUnlink, Args: [6]uint64{0x100}})
+	s.Require().True(got.Allow)
+}
+
+func (s *ServerSuite) TestDirfdArg() {
+	trap := Trap{Args: [6]uint64{7, atFdcwd}}
+	s.Require().Equal(int32(7), dirfdArg(trap, 0))
+	s.Require().Equal(AtFDCWD, dirfdArg(trap, 1))
+	s.Require().Equal(AtFDCWD, dirfdArg(trap, -1))
+}
+
+func (s *ServerSuite) TestPerformedResp() {
+	s.Require().Equal(TrapResponse{ID: 5, Performed: true}, performedResp(5))
+}
+
+// --- Dispatch: git guard ---
+
+// guardedServer wires a default-allow file handler plus a git guard over
+// /work backed by fs.
+func (s *ServerSuite) guardedServer(tr Tracee, fs *fakeGuardFS, auditor *collectAuditor) *Server {
+	return &Server{
+		Factory:   func(_ int) Tracee { return tr },
+		File:      NewFileHandler(s.mustPolicy(types.DecisionAllow, nil, nil, nil), nil, 8),
+		Guard:     &GitGuard{Roots: []string{"/work"}, FS: fs, Auditor: auditor},
+		ChannelID: "chan-A",
+	}
+}
+
+func (s *ServerSuite) TestDispatchGuardRefusesInPlaceWrites() {
+	cases := []struct {
+		name    string
+		syscall string
+		args    [6]uint64
+		path    string
+		target  string
+	}{
+		{"openat write", syscallOpenat, [6]uint64{atFdcwd, 0x100, oWRONLY}, "/work/.git/config", "write /work/.git/config"},
+		{"openat create", syscallOpenat, [6]uint64{atFdcwd, 0x100, oCreat | oWRONLY}, "/work/.git/hooks/pre-commit", "create /work/.git/hooks/pre-commit"},
+		{"open append", syscallOpen, [6]uint64{0x100, oAppend | oWRONLY}, "/work/.git/config", "write /work/.git/config"},
+		{"creat", syscallCreat, [6]uint64{0x100, 0o755}, "/work/.git/hooks/post-checkout", "create /work/.git/hooks/post-checkout"},
+		{"truncate relative to cwd", syscallTruncate, [6]uint64{0x100, 0}, "config", "write /work/.git/config"},
+		{"mknodat", syscallMknodat, [6]uint64{atFdcwd, 0x100, 0, 0}, "/work/.git/hooks/x", "create /work/.git/hooks/x"},
+		{"linkat onto a hook", syscallLinkat, [6]uint64{atFdcwd, 0x200, atFdcwd, 0x100, 0}, "/work/.git/hooks/pre-push", "link /work/.git/hooks/pre-push"},
+		{"symlink as .git", syscallSymlink, [6]uint64{0x200, 0x100}, "/work/sub/.git", "link /work/sub/.git"},
+		{"symlink via a case-folded name", syscallSymlinkat, [6]uint64{0x200, atFdcwd, 0x100}, "/work/.GIT/Hooks/pre-commit", "link /work/.GIT/Hooks/pre-commit"},
+	}
+	for _, c := range cases {
+		s.Run(c.name, func() {
+			tr := &FakeTracee{
+				Strings: map[uintptr]string{0x100: c.path, 0x200: "/tmp/evil"},
+				Dirfds:  map[int32]string{AtFDCWD: "/work/.git"},
+			}
+			fs, auditor := &fakeGuardFS{}, &collectAuditor{}
+			got := s.guardedServer(tr, fs, auditor).Dispatch(context.Background(), Trap{ID: 60, PID: 9, Syscall: c.syscall, Args: c.args})
+			s.Require().Equal(TrapResponse{ID: 60, ErrorNum: int32(syscall.EPERM)}, got)
+			s.Require().Len(auditor.entries, 1)
+			s.Require().Equal(c.target, auditor.entries[0].Target)
+			s.Require().Equal(gitGuardRuleID, auditor.entries[0].RuleID)
+			s.Require().Equal("chan-A", auditor.entries[0].Channel)
+			s.Require().Equal(9, auditor.entries[0].PID)
+			s.Require().Zero(fs.snapshots)
+		})
+	}
+}
+
+// git worktree add and submodule checkouts write a .git file and commondir
+// in place; those ask with the process's command line, after the file
+// rules. mknod of a pointer stays refused.
+func (s *ServerSuite) TestDispatchGuardAsksForInPlacePointers() {
+	lookup := func(int) (ProcessInfo, error) {
+		return ProcessInfo{Exe: "/usr/bin/git", Cmdline: []string{"git", "worktree", "add", "../wt"}, StartTime: 5}, nil
+	}
+	cases := []struct {
+		name     string
+		syscall  string
+		args     [6]uint64
+		path     string
+		rules    []types.FileRule
+		decision types.Decision
+		want     TrapResponse
+		asked    string
+	}{
+		{"create a .git file", syscallOpenat, [6]uint64{atFdcwd, 0x100, oCreat | oWRONLY}, "/work/wt/.git", nil,
+			types.DecisionAllow, TrapResponse{ID: 61, Allow: true}, "create /work/wt/.git"},
+		{"create commondir", syscallOpenat, [6]uint64{atFdcwd, 0x100, oCreat | oWRONLY}, "/work/.git/worktrees/wt/commondir", nil,
+			types.DecisionAllow, TrapResponse{ID: 61, Allow: true}, "create /work/.git/worktrees/wt/commondir"},
+		{"denied on the card", syscallOpenat, [6]uint64{atFdcwd, 0x100, oWRONLY}, "/work/wt/.git", nil,
+			types.DecisionDeny, TrapResponse{ID: 61, ErrorNum: int32(syscall.EPERM)}, "write /work/wt/.git"},
+		{"a deny rule wins", syscallOpenat, [6]uint64{atFdcwd, 0x100, oCreat | oWRONLY}, "/work/wt/.git",
+			[]types.FileRule{{Paths: []string{"/work/wt/.git"}, Operations: []string{OpCreate}, Decision: types.DecisionDeny}},
+			types.DecisionAllow, TrapResponse{ID: 61, ErrorNum: int32(syscall.EPERM)}, ""},
+		{"mknodat a .git file", syscallMknodat, [6]uint64{atFdcwd, 0x100, 0, 0}, "/work/wt/.git", nil,
+			types.DecisionAllow, TrapResponse{ID: 61, ErrorNum: int32(syscall.EPERM)}, ""},
+	}
+	for _, c := range cases {
+		s.Run(c.name, func() {
+			tr := &FakeTracee{Strings: map[uintptr]string{0x100: c.path}}
+			fs, auditor := &fakeGuardFS{}, &collectAuditor{}
+			approver := &stubApprover{out: Outcome{Decision: c.decision, Actor: "u"}}
+			srv := s.guardedServer(tr, fs, auditor)
+			srv.Guard.Approver, srv.Guard.Process = approver, lookup
+			if c.rules != nil {
+				srv.File = NewFileHandler(s.mustPolicy(types.DecisionAllow, nil, nil, c.rules), nil, 8)
+			}
+			got := srv.Dispatch(context.Background(), Trap{ID: 61, PID: 9, Syscall: c.syscall, Args: c.args})
+			s.Require().Equal(c.want, got)
+			s.Require().Equal(c.asked, approver.got.Target)
+			if c.asked != "" {
+				s.Require().Equal("git worktree add ../wt", approver.got.Details["command"])
+			}
+		})
+	}
+}
+
+// A rename onto a path an approve rule covers asks with a diff through the
+// rename review; the source's check folds into that card unless a rule
+// denies it. Git paths, and renames the review can't show, go the usual way.
+func (s *ServerSuite) TestDispatchRenameReview() {
+	const tmp, cfg = "/work/.loop/config.json.tmp.1.ab", "/work/.loop/config.json"
+	approveCfg := types.FileRule{Paths: []string{"/work/.loop/config.json", "/work/.loop/keep"}, Operations: []string{OpCreate, OpDelete}, Decision: types.DecisionApprove, Message: "project config"}
+	cases := []struct {
+		name     string
+		src, dst string
+		rules    []types.FileRule
+		noReview bool
+		snap     *GuardSnapshot
+		strErr   bool
+		want     TrapResponse
+		card     string // CacheKey prefix of the card asked, "" for none
+		reviewed bool
+	}{
+		{"reviewed", tmp, cfg, []types.FileRule{approveCfg}, false, &GuardSnapshot{Data: []byte("{}\n")},
+			false, TrapResponse{ID: 62, Performed: true}, "file:review:" + cfg + ":", true},
+		{"source approve folds in", "/work/.loop/keep", cfg, []types.FileRule{approveCfg}, false, &GuardSnapshot{Data: []byte("{}\n")},
+			false, TrapResponse{ID: 62, Performed: true}, "file:review:" + cfg + ":", true},
+		{"target not under an approve rule", tmp, "/work/other", []types.FileRule{approveCfg}, false, nil,
+			false, TrapResponse{ID: 62, Allow: true}, "", false},
+		{"source denied", tmp, cfg, []types.FileRule{{Paths: []string{tmp}, Operations: []string{OpDelete}, Decision: types.DecisionDeny}, approveCfg}, false, nil,
+			false, TrapResponse{ID: 62, ErrorNum: int32(syscall.EPERM)}, "", false},
+		{"no review", tmp, cfg, []types.FileRule{approveCfg}, true, nil,
+			false, TrapResponse{ID: 62, Allow: true}, "file:create:" + cfg, false},
+		{"content can't be shown", tmp, cfg, []types.FileRule{approveCfg}, false, &GuardSnapshot{Data: []byte{0}},
+			false, TrapResponse{ID: 62, Allow: true}, "file:create:" + cfg, false},
+		{"into a git dir", "/work/x", "/work/.git/refs/heads/x", []types.FileRule{{Paths: []string{"/work/.git/**"}, Operations: []string{OpCreate}, Decision: types.DecisionApprove}}, false, nil,
+			false, TrapResponse{ID: 62, Allow: true}, "file:create:/work/.git/refs/heads/x", false},
+		{"out of a git dir", "/work/.git/x", "/work/y", []types.FileRule{{Paths: []string{"/work/y"}, Operations: []string{OpCreate}, Decision: types.DecisionApprove}}, false, nil,
+			false, TrapResponse{ID: 62, Allow: true}, "file:create:/work/y", false},
+		{"onto a guarded git path", "/work/x", "/work/.git/config", []types.FileRule{{Paths: []string{"/work/.git/config"}, Operations: []string{OpCreate}, Decision: types.DecisionApprove}}, false, &GuardSnapshot{Data: []byte("[core]\n\tbare = false\n")},
+			false, TrapResponse{ID: 62, Performed: true}, "file:create:/work/.git/config", false},
+		{"unreadable target", tmp, cfg, []types.FileRule{approveCfg}, false, nil,
+			true, TrapResponse{ID: 62, ErrorNum: int32(syscall.EPERM)}, "", false},
+	}
+	for _, c := range cases {
+		s.Run(c.name, func() {
+			strs := map[uintptr]string{0x100: c.src, 0x200: c.dst}
+			if c.strErr {
+				delete(strs, 0x200)
+			}
+			tr := &FakeTracee{Strings: strs, UID: 501, GID: 20}
+			fs, auditor := &fakeGuardFS{snap: c.snap, regular: map[string]bool{c.src: true}}, &collectAuditor{}
+			approver := &stubApprover{out: Outcome{Decision: types.DecisionAllow, Actor: "u"}}
+			srv := s.guardedServer(tr, fs, auditor)
+			srv.File = NewFileHandler(s.mustPolicy(types.DecisionAllow, nil, nil, c.rules), approver, 8)
+			if !c.noReview {
+				srv.Review = &RenameReview{FS: fs, Approver: approver, Auditor: auditor}
+			}
+			got := srv.Dispatch(context.Background(), Trap{ID: 62, PID: 9, Syscall: syscallRenameat2, Args: [6]uint64{atFdcwd, 0x100, atFdcwd, 0x200, 0}})
+			s.Require().Equal(c.want, got)
+			if c.card == "" {
+				s.Require().Empty(approver.got.CacheKey)
+			} else {
+				s.Require().True(strings.HasPrefix(approver.got.CacheKey, c.card), approver.got.CacheKey)
+			}
+			if c.reviewed {
+				s.Require().Equal(c.src, approver.got.Details["source"])
+				s.Require().Equal(1, fs.installs)
+			}
+		})
+	}
+}
+
+// A hardlink gives a guarded file a second, unguarded name the agent could
+// write in place, so the link's existing path is checked too — both with
+// and without following a final symlink.
+func (s *ServerSuite) TestDispatchGuardLinkSource() {
+	cases := []struct {
+		name     string
+		syscall  string
+		args     [6]uint64
+		strings  map[uintptr]string
+		symlinks map[string]string
+		want     TrapResponse
+		target   string
+	}{
+		{"linkat out of config", syscallLinkat, [6]uint64{atFdcwd, 0x100, atFdcwd, 0x200, 0},
+			map[uintptr]string{0x100: "/work/.git/config", 0x200: "/work/x"}, nil,
+			TrapResponse{ID: 64, ErrorNum: int32(syscall.EPERM)}, "link /work/.git/config"},
+		{"linkat relative to olddirfd", syscallLinkat, [6]uint64{7, 0x100, atFdcwd, 0x200, 0},
+			map[uintptr]string{0x100: "pre-commit", 0x200: "/work/x"}, nil,
+			TrapResponse{ID: 64, ErrorNum: int32(syscall.EPERM)}, "link /work/.git/hooks/pre-commit"},
+		{"legacy link out of a hook", syscallLink, [6]uint64{0x100, 0x200},
+			map[uintptr]string{0x100: "/work/.git/hooks/pre-push", 0x200: "/work/x"}, nil,
+			TrapResponse{ID: 64, ErrorNum: int32(syscall.EPERM)}, "link /work/.git/hooks/pre-push"},
+		{"through a symlink (AT_SYMLINK_FOLLOW)", syscallLinkat, [6]uint64{atFdcwd, 0x100, atFdcwd, 0x200, 0x400},
+			map[uintptr]string{0x100: "/work/cfg", 0x200: "/work/x"}, map[string]string{"/work/cfg": "/work/.git/config"},
+			TrapResponse{ID: 64, ErrorNum: int32(syscall.EPERM)}, "link /work/.git/config"},
+		{"unguarded source", syscallLinkat, [6]uint64{atFdcwd, 0x100, atFdcwd, 0x200, 0},
+			map[uintptr]string{0x100: "/work/a", 0x200: "/work/b"}, nil,
+			TrapResponse{ID: 64, Allow: true}, ""},
+		{"unreadable source", syscallLinkat, [6]uint64{atFdcwd, 0x100, atFdcwd, 0x200, 0},
+			map[uintptr]string{0x200: "/work/b"}, nil,
+			TrapResponse{ID: 64, ErrorNum: int32(syscall.EPERM)}, ""},
+		{"source dirfd gone", syscallLinkat, [6]uint64{9, 0x100, atFdcwd, 0x200, 0},
+			map[uintptr]string{0x100: "rel", 0x200: "/work/b"}, nil,
+			TrapResponse{ID: 64, ErrorNum: int32(syscall.EPERM)}, ""},
+	}
+	for _, c := range cases {
+		s.Run(c.name, func() {
+			tr := &FakeTracee{
+				Strings:  c.strings,
+				Dirfds:   map[int32]string{AtFDCWD: "/work", 7: "/work/.git/hooks"},
+				Symlinks: c.symlinks,
+			}
+			fs, auditor := &fakeGuardFS{}, &collectAuditor{}
+			got := s.guardedServer(tr, fs, auditor).Dispatch(context.Background(), Trap{ID: 64, Syscall: c.syscall, Args: c.args})
+			s.Require().Equal(c.want, got)
+			if c.target == "" {
+				s.Require().Empty(auditor.entries)
+				return
+			}
+			s.Require().Len(auditor.entries, 1)
+			s.Require().Equal(c.target, auditor.entries[0].Target)
+		})
+	}
+}
+
+// The file rules see a guarded rename's target first: a deny rule on the
+// path wins over the guard, which then never reads or installs anything.
+func (s *ServerSuite) TestDispatchGuardRenameHonoursFileRules() {
+	tr := &FakeTracee{Strings: map[uintptr]string{0x100: "/work/.git/config.lock", 0x200: "/work/.git/config"}}
+	fs, auditor := &fakeGuardFS{regular: map[string]bool{"/work/.git/config.lock": true}}, &collectAuditor{}
+	srv := s.guardedServer(tr, fs, auditor)
+	srv.File = NewFileHandler(s.mustPolicy(types.DecisionAllow, nil, nil, []types.FileRule{{
+		Paths: []string{"/work/.git/config"}, Operations: []string{OpCreate}, Decision: types.DecisionDeny,
+	}}), nil, 8)
+	got := srv.Dispatch(context.Background(), Trap{ID: 65, Syscall: syscallRenameat2, Args: [6]uint64{atFdcwd, 0x100, atFdcwd, 0x200, 0}})
+	s.Require().Equal(TrapResponse{ID: 65, ErrorNum: int32(syscall.EPERM)}, got)
+	s.Require().Zero(fs.snapshots)
+	s.Require().Zero(fs.installs)
+}
+
+func (s *ServerSuite) TestDispatchGuardLetsSafeInPlaceOpsThrough() {
+	cases := []struct {
+		name    string
+		syscall string
+		args    [6]uint64
+		path    string
+	}{
+		{"read config", syscallOpenat, [6]uint64{atFdcwd, 0x100, oRDONLY}, "/work/.git/config"},
+		{"mkdir hooks", syscallMkdirat, [6]uint64{atFdcwd, 0x100, 0o755}, "/work/.git/hooks"},
+		{"legacy mkdir .git", syscallMkdir, [6]uint64{0x100, 0o755}, "/work/sub/.git"},
+		{"delete a hook", syscallUnlinkat, [6]uint64{atFdcwd, 0x100, 0}, "/work/.git/hooks/pre-commit"},
+		{"chmod a hook", syscallFchmodat2, [6]uint64{atFdcwd, 0x100, 0o755, 0}, "/work/.git/hooks/pre-commit"},
+		{"write a sample hook", syscallOpenat, [6]uint64{atFdcwd, 0x100, oCreat | oWRONLY}, "/work/.git/hooks/pre-commit.sample"},
+		{"write outside the roots", syscallOpenat, [6]uint64{atFdcwd, 0x100, oWRONLY}, "/tmp/scratch/.git/config"},
+	}
+	for _, c := range cases {
+		s.Run(c.name, func() {
+			tr := &FakeTracee{Strings: map[uintptr]string{0x100: c.path}}
+			auditor := &collectAuditor{}
+			got := s.guardedServer(tr, &fakeGuardFS{}, auditor).Dispatch(context.Background(), Trap{ID: 61, Syscall: c.syscall, Args: c.args})
+			s.Require().True(got.Allow)
+			s.Require().Empty(auditor.entries)
+		})
+	}
+}
+
+func (s *ServerSuite) TestDispatchGuardPerformsRenameOntoGuardedPath() {
+	cases := []struct {
+		name      string
+		syscall   string
+		args      [6]uint64
+		noReplace bool
+	}{
+		{"renameat2", syscallRenameat2, [6]uint64{atFdcwd, 0x100, atFdcwd, 0x200, 0}, false},
+		{"renameat2 noreplace", syscallRenameat2, [6]uint64{atFdcwd, 0x100, atFdcwd, 0x200, renameNoReplace}, true},
+		{"renameat", syscallRenameat, [6]uint64{atFdcwd, 0x100, atFdcwd, 0x200}, false},
+		{"legacy rename", syscallRename, [6]uint64{0x100, 0x200}, false},
+	}
+	for _, c := range cases {
+		s.Run(c.name, func() {
+			tr := &FakeTracee{
+				Strings: map[uintptr]string{0x100: "config.lock", 0x200: "config"},
+				Dirfds:  map[int32]string{AtFDCWD: "/work/.git"},
+				UID:     501, GID: 20,
+			}
+			fs := &fakeGuardFS{
+				snap:    &GuardSnapshot{Dst: "/work/.git/config", Data: []byte(gitInitConfig)},
+				regular: map[string]bool{"/work/.git/config.lock": true},
+			}
+			got := s.guardedServer(tr, fs, &collectAuditor{}).Dispatch(context.Background(), Trap{ID: 62, Syscall: c.syscall, Args: c.args})
+			s.Require().Equal(TrapResponse{ID: 62, Performed: true}, got)
+			s.Require().Equal("/work/.git/config.lock", fs.gotSrc)
+			s.Require().Equal("/work/.git/config", fs.gotDst)
+			s.Require().Equal(501, fs.gotUID)
+			s.Require().Equal(20, fs.gotGID)
+			s.Require().Equal(1, fs.installs)
+			s.Require().Equal(c.noReplace, fs.gotNoReplace)
+		})
+	}
+}
+
+func (s *ServerSuite) TestDispatchGuardExchangeWithGuardedSourceIsRefused() {
+	tr := &FakeTracee{Strings: map[uintptr]string{0x100: "/work/.git/config", 0x200: "/work/evil"}}
+	fs, auditor := &fakeGuardFS{}, &collectAuditor{}
+	got := s.guardedServer(tr, fs, auditor).Dispatch(context.Background(), Trap{
+		ID: 63, Syscall: syscallRenameat2,
+		Args: [6]uint64{atFdcwd, 0x100, atFdcwd, 0x200, renameExchange},
+	})
+	s.Require().Equal(TrapResponse{ID: 63, ErrorNum: int32(syscall.EPERM)}, got)
+	s.Require().Zero(fs.snapshots)
+	s.Require().Equal("write /work/evil", auditor.entries[0].Target)
+}
+
+func (s *ServerSuite) TestDispatchGuardUnguardedRenamesUsePolicy() {
+	cases := []struct {
+		name  string
+		src   string
+		dst   string
+		flags uint64
+	}{
+		{"plain rename", "/work/a", "/work/b", 0},
+		{"exchange between unguarded paths", "/work/a", "/work/b", renameExchange},
+		{"moving a guarded file away", "/work/.git/hooks/pre-commit", "/work/b", 0},
+	}
+	for _, c := range cases {
+		s.Run(c.name, func() {
+			tr := &FakeTracee{Strings: map[uintptr]string{0x100: c.src, 0x200: c.dst}}
+			fs := &fakeGuardFS{}
+			got := s.guardedServer(tr, fs, &collectAuditor{}).Dispatch(context.Background(), Trap{
+				ID: 64, Syscall: syscallRenameat2,
+				Args: [6]uint64{atFdcwd, 0x100, atFdcwd, 0x200, c.flags},
+			})
+			s.Require().True(got.Allow)
+			s.Require().Zero(fs.snapshots)
+		})
+	}
+}
+
+func (s *ServerSuite) TestDispatchGuardTreeRenames() {
+	cases := []struct {
+		name     string
+		src, dst string
+		flags    uint64
+		regular  bool
+		policy   []types.FileRule
+		want     TrapResponse
+	}{
+		{
+			name: "directory onto a submodule git dir is refused",
+			src:  "/w/staging", dst: "/w/.git/modules/foo",
+			want: TrapResponse{ID: 67, ErrorNum: int32(syscall.EPERM)},
+		},
+		{
+			name: "file onto a ref goes to policy (allow)",
+			src:  "/w/.git/refs/heads/main.lock", dst: "/w/.git/refs/heads/main", regular: true,
+			want: TrapResponse{ID: 67, Allow: true},
+		},
+		{
+			name: "file onto a ref goes to policy (deny)",
+			src:  "/w/.git/refs/heads/main.lock", dst: "/w/.git/refs/heads/main", regular: true,
+			policy: []types.FileRule{{Paths: []string{"/w/.git/refs/**"}, Operations: []string{OpCreate}, Decision: types.DecisionDeny}},
+			want:   TrapResponse{ID: 67, ErrorNum: int32(syscall.EPERM)},
+		},
+		{
+			name: "exchange of a git dir entry is refused",
+			src:  "/w/.git/modules/foo", dst: "/w/elsewhere", flags: renameExchange,
+			want: TrapResponse{ID: 67, ErrorNum: int32(syscall.EPERM)},
+		},
+	}
+	for _, c := range cases {
+		s.Run(c.name, func() {
+			tr := &FakeTracee{Strings: map[uintptr]string{0x100: c.src, 0x200: c.dst}}
+			fs, auditor := &fakeGuardFS{regular: map[string]bool{c.src: c.regular}}, &collectAuditor{}
+			srv := &Server{
+				Factory:   func(_ int) Tracee { return tr },
+				File:      NewFileHandler(s.mustPolicy(types.DecisionAllow, nil, nil, c.policy), nil, 8),
+				Guard:     &GitGuard{Roots: []string{"/w"}, FS: fs, Auditor: auditor},
+				ChannelID: "chan-A",
+			}
+			got := srv.Dispatch(context.Background(), Trap{
+				ID: 67, Syscall: syscallRenameat2,
+				Args: [6]uint64{atFdcwd, 0x100, atFdcwd, 0x200, c.flags},
+			})
+			s.Require().Equal(c.want, got)
+			s.Require().Zero(fs.snapshots, "tree renames never snapshot")
+		})
+	}
+}
+
+func (s *ServerSuite) TestDispatchWithoutGuardIgnoresGitPaths() {
+	tr := &FakeTracee{Strings: map[uintptr]string{0x100: "/work/.git/config.lock", 0x200: "/work/.git/config"}}
+	srv := s.newServer(tr, nil, NewFileHandler(s.mustPolicy(types.DecisionAllow, nil, nil, nil), nil, 8), nil)
+	got := srv.Dispatch(context.Background(), Trap{ID: 65, Syscall: syscallOpenat, Args: [6]uint64{atFdcwd, 0x200, oWRONLY}})
+	s.Require().True(got.Allow)
+	got = srv.Dispatch(context.Background(), Trap{ID: 66, Syscall: syscallRenameat2, Args: [6]uint64{atFdcwd, 0x100, atFdcwd, 0x200, 0}})
+	s.Require().True(got.Allow)
 }
 
 // --- Run loop ---

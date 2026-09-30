@@ -272,20 +272,13 @@ func (s *TerminalHandlerSuite) TestHostSessionStopSkipsContainerRemove() {
 	close(doneCh)
 }
 
-func (s *TerminalHandlerSuite) TestAttachHostSession() {
-	// When attaching, should try agent manager first, then host manager.
+func (s *TerminalHandlerSuite) TestAttachWithoutTargetSkipsHostManager() {
+	// A client that doesn't name a target attaches to agent sessions only;
+	// a host session ID alone never reaches a host shell.
 	hostMgr := new(MockTerminalManager)
 	s.srv.SetHostTerminalManager(hostMgr)
-
-	outCh := make(chan []byte, 1)
-	doneCh := make(chan struct{})
-	// Agent manager fails.
 	s.terminal.On("AttachSession", "host-sess-8").
 		Return(nil, nil, nil, errors.New("session not found"))
-	// Host manager succeeds.
-	hostMgr.On("AttachSession", "host-sess-8").
-		Return((<-chan []byte)(outCh), []byte("host output"), (<-chan struct{})(doneCh), nil)
-	hostMgr.On("DetachSession", mock.Anything, mock.Anything).Return(nil).Maybe()
 
 	conn, ts := s.dialWS()
 	defer ts.Close()
@@ -294,26 +287,15 @@ func (s *TerminalHandlerSuite) TestAttachHostSession() {
 	sendControl(s.T(), conn, wsControlMessage{Type: "attach", SessionID: "host-sess-8"})
 
 	msg := readStatusMsg(s.T(), conn)
-	require.Equal(s.T(), "attached", msg.Type)
-	require.Equal(s.T(), "host-sess-8", msg.SessionID)
-
-	data := readBinaryMsg(s.T(), conn)
-	require.Equal(s.T(), []byte("host output"), data)
-
-	close(doneCh)
+	require.Equal(s.T(), "error", msg.Type)
+	require.Contains(s.T(), msg.Message, "session not found")
+	hostMgr.AssertNotCalled(s.T(), "AttachSession", mock.Anything)
 }
 
-func (s *TerminalHandlerSuite) TestAttachWithNilAgentManager() {
-	// When agent manager is nil, should use host manager directly.
+func (s *TerminalHandlerSuite) TestAttachWithoutTargetNilAgentManager() {
 	s.srv.termManager = nil
 	hostMgr := new(MockTerminalManager)
 	s.srv.SetHostTerminalManager(hostMgr)
-
-	outCh := make(chan []byte, 1)
-	doneCh := make(chan struct{})
-	hostMgr.On("AttachSession", "host-sess-9").
-		Return((<-chan []byte)(outCh), []byte(nil), (<-chan struct{})(doneCh), nil)
-	hostMgr.On("DetachSession", mock.Anything, mock.Anything).Return(nil).Maybe()
 
 	conn, ts := s.dialWS()
 	defer ts.Close()
@@ -322,11 +304,25 @@ func (s *TerminalHandlerSuite) TestAttachWithNilAgentManager() {
 	sendControl(s.T(), conn, wsControlMessage{Type: "attach", SessionID: "host-sess-9"})
 
 	msg := readStatusMsg(s.T(), conn)
-	require.Equal(s.T(), "attached", msg.Type)
-	close(doneCh)
+	require.Equal(s.T(), "error", msg.Type)
+	require.Contains(s.T(), msg.Message, "no terminal manager for target agent")
+	hostMgr.AssertNotCalled(s.T(), "AttachSession", mock.Anything)
 }
 
-func (s *TerminalHandlerSuite) TestCreateHostSessionEmptyCmdArg() {
+func (s *TerminalHandlerSuite) TestAttachUnknownTarget() {
+	conn, ts := s.dialWS()
+	defer ts.Close()
+	defer conn.Close()
+
+	sendControl(s.T(), conn, wsControlMessage{Type: "attach", SessionID: "sess", Target: "both"})
+
+	msg := readStatusMsg(s.T(), conn)
+	require.Equal(s.T(), "error", msg.Type)
+	require.Contains(s.T(), msg.Message, "unknown target both")
+	s.terminal.AssertNotCalled(s.T(), "AttachSession", mock.Anything)
+}
+
+func (s *TerminalHandlerSuite) TestCreateHostSessionRejectsCmd() {
 	hostMgr := new(MockTerminalManager)
 	s.srv.SetHostTerminalManager(hostMgr)
 
@@ -334,31 +330,61 @@ func (s *TerminalHandlerSuite) TestCreateHostSessionEmptyCmdArg() {
 	defer ts.Close()
 	defer conn.Close()
 
-	sendControl(s.T(), conn, wsControlMessage{Type: "create", ChannelID: "ch-1", Target: "host", Cmd: []string{"/bin/sh", ""}})
+	sendControl(s.T(), conn, wsControlMessage{Type: "create", ChannelID: "ch-1", Target: "host", Cmd: []string{"/bin/sh", "-c", "true"}})
 
 	msg := readStatusMsg(s.T(), conn)
 	require.Equal(s.T(), "error", msg.Type)
-	require.Contains(s.T(), msg.Message, "cmd contains empty argument")
+	require.Contains(s.T(), msg.Message, "host sessions don't take a cmd")
+	hostMgr.AssertNotCalled(s.T(), "CreateSession", mock.Anything, mock.Anything, mock.Anything)
 }
 
-func (s *TerminalHandlerSuite) TestCreateHostSessionTooManyCmdArgs() {
+func (s *TerminalHandlerSuite) TestAttachHonorsTarget() {
 	hostMgr := new(MockTerminalManager)
+	hostMgr.On("DetachSession", mock.Anything, mock.Anything).Return(nil).Maybe()
 	s.srv.SetHostTerminalManager(hostMgr)
 
-	args := make([]string, maxCmdArgs+1)
-	for i := range args {
-		args[i] = "arg"
-	}
+	s.Run("host target skips the agent manager", func() {
+		outCh := make(chan []byte, 1)
+		doneCh := make(chan struct{})
+		defer close(doneCh)
+		hostMgr.On("AttachSession", "host-sess").
+			Return((<-chan []byte)(outCh), []byte(nil), (<-chan struct{})(doneCh), nil).Once()
 
-	conn, ts := s.dialWS()
-	defer ts.Close()
-	defer conn.Close()
+		conn, ts := s.dialWS()
+		defer ts.Close()
+		defer conn.Close()
+		sendControl(s.T(), conn, wsControlMessage{Type: "attach", SessionID: "host-sess", Target: "host"})
 
-	sendControl(s.T(), conn, wsControlMessage{Type: "create", ChannelID: "ch-1", Target: "host", Cmd: args})
+		require.Equal(s.T(), "attached", readStatusMsg(s.T(), conn).Type)
+		s.terminal.AssertNotCalled(s.T(), "AttachSession", "host-sess")
+	})
 
-	msg := readStatusMsg(s.T(), conn)
-	require.Equal(s.T(), "error", msg.Type)
-	require.Contains(s.T(), msg.Message, "cmd exceeds maximum arguments")
+	s.Run("agent target doesn't fall back to the host manager", func() {
+		s.terminal.On("AttachSession", "agent-sess").
+			Return((<-chan []byte)(nil), []byte(nil), (<-chan struct{})(nil), errors.New("session not found")).Once()
+
+		conn, ts := s.dialWS()
+		defer ts.Close()
+		defer conn.Close()
+		sendControl(s.T(), conn, wsControlMessage{Type: "attach", SessionID: "agent-sess", Target: "agent"})
+
+		msg := readStatusMsg(s.T(), conn)
+		require.Equal(s.T(), "error", msg.Type)
+		require.Contains(s.T(), msg.Message, "session not found")
+		hostMgr.AssertNotCalled(s.T(), "AttachSession", "agent-sess")
+	})
+
+	s.Run("no manager for the target", func() {
+		s.srv.termManager = nil
+		conn, ts := s.dialWS()
+		defer ts.Close()
+		defer conn.Close()
+		sendControl(s.T(), conn, wsControlMessage{Type: "attach", SessionID: "x", Target: "agent"})
+
+		msg := readStatusMsg(s.T(), conn)
+		require.Equal(s.T(), "error", msg.Type)
+		require.Contains(s.T(), msg.Message, "no terminal manager for target agent")
+	})
 }
 
 func (s *TerminalHandlerSuite) TestCreateHostSessionInitialResizeError() {

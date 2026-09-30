@@ -78,7 +78,13 @@ export function useSessionPersistence(
     (ws: WebSocket) => {
       if (sessionIdRef.current) {
         ws.send(
-          JSON.stringify({ type: "attach", session_id: sessionIdRef.current, ...(channelId ? { channel_id: channelId } : {}), ...(target === "agent" && instanceId ? { agent_id: instanceId } : {}) }),
+          JSON.stringify({
+            type: "attach",
+            session_id: sessionIdRef.current,
+            target,
+            ...(channelId ? { channel_id: channelId } : {}),
+            ...(target === "agent" && instanceId ? { agent_id: instanceId } : {}),
+          }),
         );
       } else if (channelId && !killedRef.current) {
         const size = getTerminalSizeRef?.current?.();

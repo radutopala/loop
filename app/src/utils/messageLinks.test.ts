@@ -19,7 +19,7 @@ describe("parseChannelTarget", () => {
     expect(parseChannelTarget(target)).toEqual(want);
   });
 
-  it.each(["", "#", "/382433", "4bc8a7f4/abc", "4bc8a7f4/-1", "4bc8a7f4/1.5", "4bc8a7f4/1/2"])("rejects %s", (target) => {
+  it.each(["", "#", "/382433", "4bc8a7f4/abc", "4bc8a7f4/-1", "4bc8a7f4/1.5", "4bc8a7f4/1/2", "#loop_token=abc"])("rejects %s", (target) => {
     expect(parseChannelTarget(target)).toBeNull();
   });
 });

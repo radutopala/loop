@@ -5,6 +5,7 @@ package agentgate
 import (
 	"errors"
 	"runtime"
+	"slices"
 	"testing"
 
 	"github.com/stretchr/testify/suite"
@@ -43,18 +44,31 @@ func (s *BPFSuite) TestAuditArchForUnsupported() {
 
 func (s *BPFSuite) TestTrapSyscallsContainsExpectedNumbers() {
 	trap := TrapSyscalls()
-	s.Require().Contains(trap, uint32(unix.SYS_CONNECT))
-	s.Require().Contains(trap, uint32(unix.SYS_EXECVE))
-	s.Require().Contains(trap, uint32(unix.SYS_EXECVEAT))
-	s.Require().Contains(trap, uint32(unix.SYS_OPENAT))
-	s.Require().Contains(trap, uint32(unix.SYS_OPENAT2))
-	s.Require().Contains(trap, uint32(unix.SYS_RENAMEAT2))
-	s.Require().Contains(trap, uint32(unix.SYS_UNLINKAT))
-	s.Require().Contains(trap, uint32(unix.SYS_LINKAT))
-	s.Require().Contains(trap, uint32(unix.SYS_SYMLINKAT))
-	s.Require().Contains(trap, uint32(unix.SYS_FCHMODAT))
-	s.Require().Contains(trap, uint32(unix.SYS_FCHOWNAT))
-	s.Require().Contains(trap, uint32(unix.SYS_MKDIRAT))
+	for _, nr := range []int{
+		unix.SYS_CONNECT, unix.SYS_EXECVE, unix.SYS_EXECVEAT,
+		unix.SYS_OPENAT, unix.SYS_OPENAT2, unix.SYS_RENAMEAT2, unix.SYS_RENAMEAT,
+		unix.SYS_UNLINKAT, unix.SYS_LINKAT, unix.SYS_SYMLINKAT,
+		unix.SYS_FCHMODAT, unix.SYS_FCHMODAT2, unix.SYS_FCHOWNAT,
+		unix.SYS_MKDIRAT, unix.SYS_MKNODAT, unix.SYS_TRUNCATE,
+	} {
+		s.Require().Contains(trap, uint32(nr))
+	}
+	// The per-arch legacy syscalls (x86_64 only) are trapped too.
+	for nr := range archSyscallNames {
+		s.Require().Contains(trap, uint32(nr))
+	}
+}
+
+func (s *BPFSuite) TestTrapSyscallsMatchesDispatcherNames() {
+	trap := TrapSyscalls()
+	s.Require().Len(trap, len(syscallNameByNR))
+	s.Require().True(slices.IsSorted(trap))
+	for _, nr := range trap {
+		name, ok := syscallName(int32(nr))
+		s.Require().True(ok, "trapped nr %d has no name", nr)
+		s.Require().True(IsFileSyscall(name) || name == "execve" || name == "execveat" || name == "connect",
+			"trapped %s must have a dispatcher", name)
+	}
 }
 
 func (s *BPFSuite) TestDenySyscallsCoversIoUringFamily() {

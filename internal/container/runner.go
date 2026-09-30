@@ -44,6 +44,9 @@ type ContainerConfig struct {
 	// volume is removed with the container (ContainerRemove sets
 	// RemoveVolumes).
 	Volumes []string
+	// Masks lists container paths covered by an empty read-only tmpfs,
+	// hiding what a bind exposes there.
+	Masks []string
 }
 
 // WaitResponse represents the result of waiting for a container to finish.
@@ -170,6 +173,16 @@ type DockerRunner struct {
 	// file writes (tests that don't need the files can skip the filesystem
 	// setup).
 	policyDir string
+
+	// tokenIssuer mints each container's API token (see writeRunTokens).
+	// Nil skips it.
+	tokenIssuer TokenIssuer
+
+	// protectedDirs are host dirs no agent container may reach: they hold
+	// the daemon's owner token and per-container policy files. The runner
+	// won't mount them, anything under them or any ancestor, and the docker
+	// proxy denies nested containers binding them. Set via SetProtectedDirs.
+	protectedDirs []string
 }
 
 // NewDockerRunner creates a new DockerRunner with the given Docker client and config.
@@ -255,7 +268,8 @@ func (r *DockerRunner) SetGatePolicy(policy *agentgate.Policy, policyDir string)
 }
 
 // ContainerRemove deregisters the per-container agentgate.Manager (freeing the
-// bearer token on the resolver so stale requests get 401) and delegates to the
+// bearer token on the resolver so stale requests get 401), revokes the
+// container's API token, and delegates to the
 // underlying DockerClient. Implements the containerRemover interface consumed
 // by the ContainerRegistry so scheduled-remove paths clean up the same way as
 // synchronous removal. Policy files under {policyDir}/<channel>/ are intentionally
@@ -264,6 +278,9 @@ func (r *DockerRunner) SetGatePolicy(policy *agentgate.Policy, policyDir string)
 func (r *DockerRunner) ContainerRemove(ctx context.Context, containerID string) error {
 	if r.gateResolver != nil {
 		r.gateResolver.Remove(containerID)
+	}
+	if r.tokenIssuer != nil {
+		r.tokenIssuer.Revoke(containerID)
 	}
 	return r.client.ContainerRemove(ctx, containerID)
 }
@@ -633,7 +650,7 @@ func (r *DockerRunner) createAndStartContainer(
 		return "", "", "", false, err
 	}
 
-	binds, chownPaths := r.buildContainerMounts(cfg.Mounts, workDir, parentDirPath, cfg.ExtraDirs)
+	binds, masks, chownPaths := r.buildContainerMounts(cfg.Mounts, workDir, parentDirPath, cfg.ExtraDirs)
 	copyFilesList := withClaudeConfig(cfg.CopyFiles)
 	for _, f := range r.filterMountedCopyFiles(copyFilesList, binds) {
 		if expanded, err := r.expandPath(f); err == nil {
@@ -653,7 +670,8 @@ func (r *DockerRunner) createAndStartContainer(
 
 	// Per-container bearer token authenticates HTTP callbacks from the
 	// in-container docker proxy + seccomp-gate parent into loop-server.
-	// Generated once per spawn; shared by both layers via env var.
+	// Generated once per spawn; shared by both layers via a root-only file
+	// (see writeRunTokens).
 	gateToken, err := r.newGateToken()
 	if err != nil {
 		return "", "", "", false, fmt.Errorf("generating gate token: %w", err)
@@ -728,7 +746,7 @@ func (r *DockerRunner) createAndStartContainer(
 	// Write the per-container seccomp-gate policy file. loop-syscallwrap
 	// parent reads it inside the container; mounted read-only at
 	// /etc/loop/gate-policy.json.
-	gatePolicyHostPath, err := r.writeGatePolicyFile(cfg, channelID, workDir, parentDirPath)
+	gatePolicyHostPath, err := r.writeGatePolicyFile(cfg, channelID, workDir, parentDirPath, binds)
 	if err != nil {
 		return "", "", "", false, err
 	}
@@ -759,7 +777,9 @@ func (r *DockerRunner) createAndStartContainer(
 	}
 
 	// Both the proxy and the gate authenticate HTTP callbacks with the same
-	// per-container bearer token. The channel id is how loop-server knows
+	// per-container bearer token, copied in as a file before start rather
+	// than set here, where the agent could read it. The channel id is how
+	// loop-server knows
 	// which chat surface to prompt when a trap fires. LOOP_CONTAINER_ID is
 	// required by loop-dockerproxy's Server constructor — the docker daemon
 	// only hands us the real cid after ContainerCreate, but the container
@@ -768,9 +788,10 @@ func (r *DockerRunner) createAndStartContainer(
 	if proxyPolicyHostPath != "" || gatePolicyHostPath != "" {
 		env = append(env,
 			"LOOP_CHANNEL_ID="+channelID,
-			"LOOP_GATE_TOKEN="+gateToken,
 			"LOOP_CONTAINER_ID="+containerName,
 		)
+	} else {
+		gateToken = ""
 	}
 
 	if len(chownPaths) > 0 {
@@ -830,6 +851,7 @@ func (r *DockerRunner) createAndStartContainer(
 		SecurityOpt: securityOpt,
 		CapAdd:      capAdd,
 		Volumes:     volumes,
+		Masks:       masks,
 	}
 
 	containerID, err = r.client.ContainerCreate(ctx, containerCfg, containerName)
@@ -838,6 +860,16 @@ func (r *DockerRunner) createAndStartContainer(
 	}
 	if gateMgr != nil && r.gateResolver != nil {
 		r.gateResolver.AddWithToken(containerID, gateToken, gateMgr, channelID)
+	}
+
+	var apiToken string
+	if r.tokenIssuer != nil {
+		if apiToken, err = r.tokenIssuer.Issue(containerID, channelID, dirPath); err != nil {
+			return containerID, containerName, mcpConfigPath, keepMCPConfig, fmt.Errorf("issuing api token: %w", err)
+		}
+	}
+	if err := r.writeRunTokens(ctx, containerID, env, gateToken, apiToken); err != nil {
+		return containerID, containerName, mcpConfigPath, keepMCPConfig, fmt.Errorf("writing tokens: %w", err)
 	}
 
 	if err := r.copyFiles(ctx, containerID, r.filterMountedCopyFiles(copyFilesList, binds), workDir); err != nil {
@@ -982,7 +1014,7 @@ func (r *DockerRunner) Cleanup(ctx context.Context) error {
 				lastErr = fmt.Errorf("removing container %s: %w", id, err)
 			}
 		} else {
-			if err := r.client.ContainerRemove(ctx, id); err != nil {
+			if err := r.ContainerRemove(ctx, id); err != nil {
 				lastErr = fmt.Errorf("removing container %s: %w", id, err)
 			}
 		}

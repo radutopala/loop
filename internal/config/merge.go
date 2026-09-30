@@ -3,7 +3,6 @@
 package config
 
 import (
-	"encoding/json"
 	"fmt"
 	"maps"
 	"os"
@@ -11,8 +10,6 @@ import (
 	"slices"
 	"strings"
 	"time"
-
-	"github.com/tailscale/hujson"
 
 	"github.com/radutopala/loop/internal/types"
 )
@@ -85,6 +82,25 @@ func LoadWorktreeProjectConfig(worktreeDir, parentDir string, mainConfig *Config
 	return newLoader().loadWorktreeProjectConfig(worktreeDir, parentDir, mainConfig)
 }
 
+// NewProjectLoader returns a Loader whose project config loads gate the
+// trusted fields with trust; a nil trust applies them as written.
+func NewProjectLoader(trust *TrustStore) *Loader {
+	l := newLoader()
+	l.trust = trust
+	return l
+}
+
+// LoadProject is LoadProjectConfig with this loader's trust store.
+func (l *Loader) LoadProject(workDir string, mainConfig *Config) (*Config, error) {
+	return l.loadProjectConfig(workDir, mainConfig)
+}
+
+// LoadWorktreeProject is LoadWorktreeProjectConfig with this loader's trust
+// store.
+func (l *Loader) LoadWorktreeProject(worktreeDir, parentDir string, mainConfig *Config) (*Config, error) {
+	return l.loadWorktreeProjectConfig(worktreeDir, parentDir, mainConfig)
+}
+
 func (l *Loader) loadWorktreeProjectConfig(worktreeDir, parentDir string, mainConfig *Config) (*Config, error) {
 	// Always apply parent project config first (global → parent).
 	parentMerged := mainConfig
@@ -96,7 +112,7 @@ func (l *Loader) loadWorktreeProjectConfig(worktreeDir, parentDir string, mainCo
 		}
 	}
 	// Then layer worktree-specific overrides on top (global → parent → worktree).
-	_, err := l.readFile(filepath.Join(worktreeDir, ".loop", "config.json"))
+	data, err := l.readFile(filepath.Join(worktreeDir, ".loop", "config.json"))
 	if os.IsNotExist(err) {
 		return parentMerged, nil
 	}
@@ -110,7 +126,45 @@ func (l *Loader) loadWorktreeProjectConfig(worktreeDir, parentDir string, mainCo
 	// worktree container mounts the same extra dirs as the parent channel
 	// (plus the parent dir for --add-dir access), not just the parent dir.
 	worktreeMerged.ExtraDirs = unionExtraDirs(parentMerged.ExtraDirs, worktreeMerged.ExtraDirs)
+	// The seeded parent dir is the project the worktree belongs to, so it
+	// needs no trust: worktree configs seeded before trust existed, or
+	// rewritten by an agent, keep it.
+	if parentDir != "" && seedsParentDir(data, parentDir) {
+		worktreeMerged.ExtraDirs = unionExtraDirs(worktreeMerged.ExtraDirs, []string{parentDir})
+	}
 	return worktreeMerged, nil
+}
+
+// seedsParentDir reports whether the worktree config data lists parentDir
+// in extra_dirs.
+func seedsParentDir(data []byte, parentDir string) bool {
+	pc, err := parseProjectConfig(data)
+	if err != nil {
+		return false
+	}
+	return slices.ContainsFunc(pc.ExtraDirs, func(d string) bool { return filepath.Clean(d) == filepath.Clean(parentDir) })
+}
+
+// layerRules puts project rules under the global deny rules and over the
+// rest of the global rules, keeping each group's order. With no project
+// rules the global list is returned as is.
+func layerRules[T any](global, project []T, decision func(T) types.Decision) []T {
+	if len(project) == 0 {
+		return global
+	}
+	out := make([]T, 0, len(global)+len(project))
+	for _, r := range global {
+		if decision(r) == types.DecisionDeny {
+			out = append(out, r)
+		}
+	}
+	out = append(out, project...)
+	for _, r := range global {
+		if decision(r) != types.DecisionDeny {
+			out = append(out, r)
+		}
+	}
+	return out
 }
 
 // unionExtraDirs returns the union of two extra_dirs slices, preserving order
@@ -145,14 +199,14 @@ func (l *Loader) loadProjectConfig(workDir string, mainConfig *Config) (*Config,
 		return nil, fmt.Errorf("reading project config file: %w", err)
 	}
 
-	standardJSON, err := hujson.Standardize(data)
+	pc, err := parseProjectConfig(data)
 	if err != nil {
-		return nil, fmt.Errorf("parsing project config file: %w", err)
+		return nil, err
 	}
-
-	var pc projectConfig
-	if err := json.Unmarshal(standardJSON, &pc); err != nil {
-		return nil, fmt.Errorf("parsing project config file: %w", err)
+	// Until the owner trusts them, the fields that reach past the container
+	// keep their last trusted values.
+	if l.trust != nil {
+		l.trust.resolve(workDir, pc).apply(pc)
 	}
 
 	// Create a copy of main config to avoid mutating it
@@ -386,42 +440,26 @@ func (l *Loader) loadProjectConfig(workDir string, mainConfig *Config) (*Config,
 		}
 	}
 
-	// Gates: project config has the same rule-authoring surface as global —
-	// it can prepend rules with any decision (allow/deny/approve) so projects
-	// can punch surgical holes (e.g. allow a specific bind-mount) without
-	// turning a whole layer off.
-	//   - Enabled: project can disable, but cannot re-enable if global is off (kill-switch).
+	// Gates: a project adds rules with any decision (allow/deny/approve), so
+	// it can punch surgical holes (e.g. allow a specific bind-mount) without
+	// turning a whole layer off. The global config stays the baseline:
+	//   - Enabled: ignored. A project can't turn a gate off (the project
+	//     config is in the agent's workspace), nor on when global is off.
 	//   - DefaultDecision: ignored (global wins).
-	//   - Rules: prepended; first-match-wins so project rules apply before global.
+	//   - Rules: the global deny rules come first, then the project rules,
+	//     then the rest of the global rules. First match wins, so project
+	//     rules apply before the global allows and approves, never before a
+	//     global deny.
 	//   - RateLimits / Audit: ignored (they live at the Gates umbrella; global wins).
 	if pc.Gates != nil {
 		if ag := pc.Gates.Agentgate; ag != nil {
-			if ag.Enabled != nil && !*ag.Enabled && merged.Gates.Agentgate.Enabled {
-				merged.Gates.Agentgate.Enabled = false
-				// Transitive disable: docker proxy only runs when agentgate is on.
-				merged.Gates.DockerProxy.Enabled = false
-			}
-			if len(ag.PathRules) > 0 {
-				merged.Gates.Agentgate.PathRules = append(append([]types.PathRule{}, ag.PathRules...), merged.Gates.Agentgate.PathRules...)
-			}
-			if len(ag.CommandRules) > 0 {
-				merged.Gates.Agentgate.CommandRules = append(append([]types.CommandRule{}, ag.CommandRules...), merged.Gates.Agentgate.CommandRules...)
-			}
-			if len(ag.FileRules) > 0 {
-				merged.Gates.Agentgate.FileRules = append(append([]types.FileRule{}, ag.FileRules...), merged.Gates.Agentgate.FileRules...)
-			}
+			merged.Gates.Agentgate.PathRules = layerRules(merged.Gates.Agentgate.PathRules, ag.PathRules, func(r types.PathRule) types.Decision { return r.Decision })
+			merged.Gates.Agentgate.CommandRules = layerRules(merged.Gates.Agentgate.CommandRules, ag.CommandRules, func(r types.CommandRule) types.Decision { return r.Decision })
+			merged.Gates.Agentgate.FileRules = layerRules(merged.Gates.Agentgate.FileRules, ag.FileRules, func(r types.FileRule) types.Decision { return r.Decision })
 		}
-
 		if dp := pc.Gates.DockerProxy; dp != nil {
-			if dp.Enabled != nil && !*dp.Enabled && merged.Gates.DockerProxy.Enabled {
-				merged.Gates.DockerProxy.Enabled = false
-			}
-			if len(dp.HTTPRules) > 0 {
-				merged.Gates.DockerProxy.HTTPRules = append(append([]types.HTTPServiceRule{}, dp.HTTPRules...), merged.Gates.DockerProxy.HTTPRules...)
-			}
-			if len(dp.BodyRules) > 0 {
-				merged.Gates.DockerProxy.BodyRules = append(append([]types.BodyRule{}, dp.BodyRules...), merged.Gates.DockerProxy.BodyRules...)
-			}
+			merged.Gates.DockerProxy.HTTPRules = layerRules(merged.Gates.DockerProxy.HTTPRules, dp.HTTPRules, func(r types.HTTPServiceRule) types.Decision { return r.Decision })
+			merged.Gates.DockerProxy.BodyRules = layerRules(merged.Gates.DockerProxy.BodyRules, dp.BodyRules, func(r types.BodyRule) types.Decision { return r.Decision })
 		}
 	}
 

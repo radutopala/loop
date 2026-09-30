@@ -192,9 +192,10 @@ func (s *GitInfoSuite) TestParseStatusV2() {
 }
 
 // TestCollectGitStateFilterFailure covers the git-lfs case: a repo whose
-// .gitattributes routes a tracked path through a filter whose binary is not on
-// PATH, with filter.<name>.required set. `git status` exits non-zero there, but
-// the branch and commit are still resolvable — the header and branch picker
+// .gitattributes routes a tracked path through a filter — installed in the
+// user's global config, like git-lfs — whose binary is not on PATH, with
+// filter.<name>.required set. `git status` exits non-zero there, but the
+// branch and commit are still resolvable — the header and branch picker
 // depend on getting them.
 func (s *GitInfoSuite) TestCollectGitStateFilterFailure() {
 	dir := initGitRepo(s.T())
@@ -204,8 +205,10 @@ func (s *GitInfoSuite) TestCollectGitStateFilterFailure() {
 	s.git(dir, "commit", "-m", "bin")
 
 	require.NoError(s.T(), os.WriteFile(filepath.Join(dir, ".gitattributes"), []byte("*.bin filter=brokenlfs\n"), 0o644))
-	s.git(dir, "config", "filter.brokenlfs.clean", "loop-test-missing-filter-binary")
-	s.git(dir, "config", "filter.brokenlfs.required", "true")
+	global := filepath.Join(s.T().TempDir(), "gitconfig")
+	cfg := "[filter \"brokenlfs\"]\n\tclean = loop-test-missing-filter-binary\n\trequired = true\n"
+	require.NoError(s.T(), os.WriteFile(global, []byte(cfg), 0o644))
+	s.T().Setenv("GIT_CONFIG_GLOBAL", global)
 	// Invalidate the index stat cache so status must run the clean filter.
 	future := time.Now().Add(2 * time.Second)
 	require.NoError(s.T(), os.Chtimes(bin, future, future))

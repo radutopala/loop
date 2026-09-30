@@ -1,4 +1,4 @@
-import { getApiUrl } from "./api";
+import { apiFetch, contentCapBase, encodePathSegments, getApiUrl } from "./api";
 
 // ── Roots (multi-directory) ──
 
@@ -9,7 +9,7 @@ export interface RootEntry {
 }
 
 export async function fetchRoots(channelId: string): Promise<RootEntry[]> {
-  const resp = await fetch(`${getApiUrl()}/api/channels/${channelId}/roots`);
+  const resp = await apiFetch(`${getApiUrl()}/api/channels/${channelId}/roots`);
   if (!resp.ok) throw new Error(await resp.text());
   const data: { roots: RootEntry[] } = await resp.json();
   return data.roots;
@@ -50,7 +50,7 @@ export interface FileEntry {
 export async function fetchFiles(channelId: string, path: string, root?: number): Promise<FileEntry[]> {
   const params = new URLSearchParams({ path });
   if (root !== undefined && root > 0) params.set("root", String(root));
-  const res = await fetch(`${getApiUrl()}/api/channels/${channelId}/files?${params}`);
+  const res = await apiFetch(`${getApiUrl()}/api/channels/${channelId}/files?${params}`);
   if (!res.ok) throw new Error(`Failed to fetch files: ${res.statusText}`);
   const data: { entries: FileEntry[] } = await res.json();
   return data.entries;
@@ -61,7 +61,7 @@ export async function fetchFileContent(channelId: string, path: string, root?: n
   const params = new URLSearchParams({ path });
   if (root !== undefined && root > 0) params.set("root", String(root));
   if (ref) params.set("ref", ref);
-  const res = await fetch(`${getApiUrl()}/api/channels/${channelId}/file?${params}`);
+  const res = await apiFetch(`${getApiUrl()}/api/channels/${channelId}/file?${params}`);
   if (!res.ok) throw new Error(`Failed to fetch file: ${res.statusText}`);
   if (res.headers.get("X-File-Binary") === "true") {
     return { content: "", binary: true };
@@ -101,21 +101,19 @@ export function isMediaPath(path: string): boolean {
   return isImagePath(path) || isVideoPath(path) || isPdfPath(path);
 }
 
-// buildFileUrl returns the absolute /api URL for the file-read endpoint, with
-// the `path` (and optional `root`) query parameters set. Used as <img src> for
-// image tabs in the editor, where the browser does its own fetch instead of
-// routing through fetchFileContent.
-export function buildFileUrl(channelId: string, path: string, root?: number, cacheBust?: number): string {
-  const params = new URLSearchParams({ path });
-  if (root !== undefined && root > 0) params.set("root", String(root));
-  if (cacheBust !== undefined) params.set("t", String(cacheBust));
-  return `${getApiUrl()}/api/channels/${channelId}/file?${params}`;
+// buildFileUrl returns a content-link URL for a workspace file. Used as
+// <img>/<video> src and the PDF viewer's URL in the editor, where the browser
+// does its own fetch and can't send the API token.
+export async function buildFileUrl(channelId: string, path: string, root?: number, cacheBust?: number): Promise<string> {
+  const base = await contentCapBase({ kind: "raw", channelId, root: root ?? 0 });
+  const query = cacheBust !== undefined ? `?t=${cacheBust}` : "";
+  return `${base}${encodePathSegments(path)}${query}`;
 }
 
 export async function saveFileContent(channelId: string, path: string, content: string, root?: number): Promise<void> {
   const params = new URLSearchParams({ path });
   if (root !== undefined && root > 0) params.set("root", String(root));
-  const res = await fetch(`${getApiUrl()}/api/channels/${channelId}/file?${params}`, {
+  const res = await apiFetch(`${getApiUrl()}/api/channels/${channelId}/file?${params}`, {
     method: "PUT",
     body: content,
   });
@@ -125,7 +123,7 @@ export async function saveFileContent(channelId: string, path: string, content: 
 export async function deleteFile(channelId: string, path: string, root?: number): Promise<void> {
   const params = new URLSearchParams({ path });
   if (root !== undefined && root > 0) params.set("root", String(root));
-  const res = await fetch(`${getApiUrl()}/api/channels/${channelId}/file?${params}`, {
+  const res = await apiFetch(`${getApiUrl()}/api/channels/${channelId}/file?${params}`, {
     method: "DELETE",
   });
   if (!res.ok) throw new Error(`Failed to delete: ${res.statusText}`);
@@ -134,7 +132,7 @@ export async function deleteFile(channelId: string, path: string, root?: number)
 export async function createDir(channelId: string, path: string, root?: number): Promise<void> {
   const params = new URLSearchParams({ path });
   if (root !== undefined && root > 0) params.set("root", String(root));
-  const res = await fetch(`${getApiUrl()}/api/channels/${channelId}/dir?${params}`, {
+  const res = await apiFetch(`${getApiUrl()}/api/channels/${channelId}/dir?${params}`, {
     method: "POST",
   });
   if (!res.ok) throw new Error(`Failed to create directory: ${res.statusText}`);
@@ -151,7 +149,7 @@ export interface FileExistsResult {
 
 export async function checkFilesExist(channelId: string, paths: string[]): Promise<FileExistsResult[]> {
   if (paths.length === 0) return [];
-  const res = await fetch(`${getApiUrl()}/api/channels/${channelId}/files/exists`, {
+  const res = await apiFetch(`${getApiUrl()}/api/channels/${channelId}/files/exists`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ paths }),
@@ -171,18 +169,18 @@ export interface FileSearchResult {
 
 export async function searchFiles(channelId: string, q: string, limit = 30): Promise<FileSearchResult[]> {
   const params = new URLSearchParams({ q, limit: String(limit) });
-  const res = await fetch(`${getApiUrl()}/api/channels/${channelId}/files/search?${params}`);
+  const res = await apiFetch(`${getApiUrl()}/api/channels/${channelId}/files/search?${params}`);
   if (!res.ok) return [];
   const data: { results: FileSearchResult[] } = await res.json();
   return data.results ?? [];
 }
 
-// buildRawFileBase returns the directory URL of `path` on the path-based raw
-// file endpoint (GET /api/channels/{id}/raw/{root}/{path...}), with a trailing
-// slash. The editor's HTML preview uses it as <base href> so the page's
-// relative URLs (style.css, img/logo.png) load from the workspace.
-export function buildRawFileBase(channelId: string, path: string, root?: number): string {
-  const dir = path.split("/").slice(0, -1);
-  const segments = [String(root ?? 0), ...dir].map(encodeURIComponent).join("/");
-  return `${getApiUrl()}/api/channels/${encodeURIComponent(channelId)}/raw/${segments}/`;
+// buildRawFileBase returns the content-link URL of the directory holding
+// `path`, with a trailing slash. The editor's HTML preview uses it as
+// <base href> so the page's relative URLs (style.css, img/logo.png) load
+// from the workspace.
+export async function buildRawFileBase(channelId: string, path: string, root?: number): Promise<string> {
+  const dir = path.split("/").slice(0, -1).join("/");
+  const base = await contentCapBase({ kind: "raw", channelId, root: root ?? 0 });
+  return dir ? `${base}${encodePathSegments(dir)}/` : base;
 }

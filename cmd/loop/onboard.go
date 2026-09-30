@@ -317,6 +317,10 @@ func (a *app) onboardLocal(apiURL, ownerID, platform string) error {
 			return fmt.Errorf("writing project config: %w", err)
 		}
 		fmt.Printf("Created project config at %s\n", projectConfigPath)
+		// You wrote it, so its permissions apply without a review.
+		if err := config.NewTrustStoreIn(a.userConfigDir).Keep(dir, nil, projectData); err != nil {
+			fmt.Printf("Warning: could not trust the project config: %v\n", err)
+		}
 	}
 
 	// Create templates directory for project-level prompt_path templates

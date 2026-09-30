@@ -353,6 +353,21 @@ func (s *ClientSuite) TestContainerCreateWithVolumes() {
 	s.api.AssertExpectations(s.T())
 }
 
+func (s *ClientSuite) TestContainerCreateWithMasks() {
+	ctx := context.Background()
+	cfg := &ContainerConfig{Image: "img:latest", Masks: []string{"/h/.loop/run", "/h/cfg/loop"}}
+
+	s.api.On("ContainerCreate", ctx, mock.Anything, mock.MatchedBy(func(hc *containertypes.HostConfig) bool {
+		return len(hc.Tmpfs) == 2 && hc.Tmpfs["/h/.loop/run"] == "ro" && hc.Tmpfs["/h/cfg/loop"] == "ro"
+	}), (*network.NetworkingConfig)(nil), (*ocispec.Platform)(nil), "test").
+		Return(containertypes.CreateResponse{ID: "mask-123"}, nil)
+
+	id, err := s.client.ContainerCreate(ctx, cfg, "test")
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "mask-123", id)
+	s.api.AssertExpectations(s.T())
+}
+
 func (s *ClientSuite) TestContainerCreateWithNetwork() {
 	ctx := context.Background()
 	cfg := &ContainerConfig{

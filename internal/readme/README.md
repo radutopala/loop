@@ -525,8 +525,8 @@ Project config overrides specific global settings. Only these fields are allowed
 | `browser.enabled` | **Overrides** global value when set |
 | `browser.chrome_image` | **Overrides** global value when set |
 | `browser.host_cdp_port` | **Overrides** global value when set |
-| `gates.agentgate` | **Narrow merge** — project may disable the gate (not re-enable); rules prepend to global and may use any decision; `default_decision` is ignored |
-| `gates.docker_proxy` | Same narrow merge as `gates.agentgate`; rules prepend and may use any decision; `default_decision` ignored |
+| `gates.agentgate` | **Narrow merge**, applied once trusted: rules may use any decision and go after the global denies, before the other global rules, so they can't loosen a global deny; `enabled` and `default_decision` are ignored |
+| `gates.docker_proxy` | Same narrow merge as `gates.agentgate` |
 | `gates.rate_limits` / `gates.audit` | Ignored at project scope — configured globally only |
 
 **Worktree threads** inherit their parent project's config unless the worktree directory has its own `.loop/config.json`. This means you only need to configure mounts, MCP servers, and model once in the parent project — all worktree threads will use the same settings automatically.
@@ -1117,7 +1117,7 @@ In headless/Linux environments where Electron can't launch, `LOOP_NO_ELECTRON=1 
 | `POST` | `/api/workflows/runs/{id}/retry` | Retry a completed/failed workflow run (creates a new run) |
 | `GET` | `/api/gate/approvals` | Snapshot of every in-flight gate approval across all live containers; the renderer hits this on every WebSocket reconnect to reconcile its UI card map and the electron dock-bouncer against the source of truth |
 | `POST` | `/api/gate/approvals/{id}` | Resolve a pending security-gate approval (body: `{"decision": "once"\|"session"\|"deny", "author_id"?: "..."}`) |
-| `POST` | `/api/gate/container-approval` | In-container callback (used by `loop dockerproxy` and `loop syscallwrap`) — authenticated via per-container `Authorization: Bearer <LOOP_GATE_TOKEN>`; blocks until the user clicks in chat |
+| `POST` | `/api/gate/container-approval` | In-container callback (used by `loop dockerproxy` and `loop syscallwrap`) — authenticated via per-container `Authorization: Bearer <gate token>` (read from `/run/loop/gate-token`); blocks until the user clicks in chat |
 | `GET` | `/api/channels/{id}/audit` | List agent-gate audit files for a channel (paginated, newest-first) |
 | `DELETE` | `/api/channels/{id}/audit/{date}` | Delete one audit file |
 | `GET` | `/api/shortcuts` | List resolved prompt shortcuts (optional `channel_id` for project merge) |

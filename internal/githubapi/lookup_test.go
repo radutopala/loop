@@ -226,6 +226,16 @@ func (s *GithubAPISuite) TestExecRunnerCapturesStderr() {
 	require.Contains(s.T(), err.Error(), "boom")
 }
 
+func (s *GithubAPISuite) TestExecRunnerHardensNestedGit() {
+	// Stand in for gh with a shell that asks git what it sees, plus the
+	// caller's env override on top.
+	r := NewExecRunner("/bin/sh")
+	out, err := r.Run(context.Background(), s.T().TempDir(), []string{"FOO=bar"},
+		"-c", `git config --get core.hooksPath && echo "$FOO"`)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "/dev/null\nbar\n", string(out))
+}
+
 func (s *GithubAPISuite) TestNewClientReal() {
 	c := NewClient()
 	require.NotNil(s.T(), c)

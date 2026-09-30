@@ -166,6 +166,12 @@ func (c *Client) ContainerCreate(ctx context.Context, cfg *ContainerConfig, name
 		CapAdd:      cfg.CapAdd,
 		Init:        &initTrue,
 	}
+	if len(cfg.Masks) > 0 {
+		hostCfg.Tmpfs = make(map[string]string, len(cfg.Masks))
+		for _, p := range cfg.Masks {
+			hostCfg.Tmpfs[p] = "ro"
+		}
+	}
 
 	var netCfg *network.NetworkingConfig
 	if cfg.NetworkName != "" {

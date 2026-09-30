@@ -363,13 +363,13 @@ Layered global → project like `review`: each field overrides only when set in 
 
 ##### Where learn proposals are written
 
-Applying a proposal of a config kind appends to the project config, `.loop/config.json` in the channel's directory. For a worktree thread, or a thread under one, that's the root checkout's `.loop/config.json`, not the worktree's. The file (and its `.loop` folder) is created when missing. The edit keeps the file's comments, key order and formatting, and the write is atomic. Edits of one file are serialized, so proposals applied at once (Apply all) each land.
+Applying a proposal of a config kind appends to the project config, `.loop/config.json` in the channel's directory. For a worktree thread, or a thread under one, that's the root checkout's `.loop/config.json`, not the worktree's. The file (and its `.loop` folder) is created when missing. The edit keeps the file's comments, key order and formatting, and the write is atomic. Edits of one file are serialized, so proposals applied at once (Apply all) each land. Before you apply one, its card in the Learn pane shows the edit as a diff of the file.
 
 | Kind | Written to | Notes |
 |---|---|---|
 | `prompt_shortcut` | `prompt_shortcuts` | Fails if a prompt shortcut of that name already exists in the merged config. |
 | `bash_shortcut` | `bash_shortcuts` | Fails if a bash shortcut of that name already exists in the merged config. |
-| `gate_rule` | `gates.agentgate.path_rules`, `command_rules` or `file_rules` | Picked by the rule's type (`path`, `command`, `file`). Project rules are prepended to the global ones, so they match first; that's why a proposed rule must name what it matches (`commands` or `args_patterns`, `paths`, `pattern`) and can't be a catch-all. A rule the merged config already has is left as it is, and the apply succeeds. |
+| `gate_rule` | `gates.agentgate.path_rules`, `command_rules` or `file_rules` | Picked by the rule's type (`path`, `command`, `file`). Project rules match before every global rule except the denies; that's why a proposed rule must name what it matches (`commands` or `args_patterns`, `paths`, `pattern`) and can't be a catch-all. A rule the merged config already has is left as it is, and the apply succeeds. |
 | `mount` | `mounts` | Fails if the merged config already has the exact mount (a relative host path is resolved against the project dir first, as project mounts are). Project mounts are added to the global ones, so only the new mount is written. |
 
 `scheduled_task`, `rename`, `description` and `ticket_url` proposals don't touch config: they create an enabled task in the channel and update the channel's name, description or ticket URL, as `POST /api/tasks`, `/rename`, `/description` and `/ticket` do.
@@ -702,11 +702,11 @@ Not all global fields are available in project configs. The following fields can
 | `review.enabled` / `review.prompt` / `review.prompt_path` | Each field **overrides** the global value only when explicitly set (see [Review](#review)). |
 | `learn.enabled` / `learn.min_turns` / `learn.model` / `learn.effort` / `learn.prompt` | Each field **overrides** the global value only when set: `enabled` and `min_turns` when present, the strings when non-empty (see [Learn](#learn)). |
 | `explain.enabled` / `explain.model` / `explain.effort` / `explain.prompt` | Each field **overrides** the global value only when set: `enabled` when present, the strings when non-empty (see [Explain](#explain)). |
-| `gates.agentgate.enabled` | **Narrows only**: project may set `false` to disable the gate for this project; it **cannot** re-enable the gate when global `gates.agentgate.enabled` is `false`. Transitively disables `gates.docker_proxy.enabled` when the project turns the gate off. |
-| `gates.agentgate.path_rules` / `command_rules` / `file_rules` | **Prepended** to the merged global rules (first-match-wins applies project rules first). Any decision is accepted, so a project can loosen as well as tighten the policy. |
+| `gates.agentgate.enabled` | **Ignored**: the global setting decides, so a project can neither switch the gate off nor on. |
+| `gates.agentgate.path_rules` / `command_rules` / `file_rules` | **Layered**: the global `deny` rules first, then the project rules, then the rest of the global rules (first-match-wins). A project can loosen a global `approve` or `allow`, never a global `deny`. |
 | `gates.agentgate.default_decision` | **Ignored** — global wins unconditionally. |
-| `gates.docker_proxy.enabled` | Same narrow rule as `gates.agentgate.enabled`: project can disable (not re-enable). |
-| `gates.docker_proxy.http_rules` / `body_rules` | **Prepended** to the merged global rules; any decision is accepted. |
+| `gates.docker_proxy.enabled` | **Ignored**, like `gates.agentgate.enabled`. |
+| `gates.docker_proxy.http_rules` / `body_rules` | **Layered** like the agentgate rules: global denies first. |
 | `gates.docker_proxy.default_decision` | **Ignored** — global wins. |
 | `gates.rate_limits` / `gates.audit` | **Ignored** — global wins unconditionally. |
 
@@ -718,8 +718,29 @@ The merge follows these principles:
 - **Merge**: Both global and project values are combined, with project taking precedence on conflicts (MCP servers, envs, task templates, workflows).
 - **Append**: Project values are added to the global list (memory paths, no_proxy, and mounts, where one at the same container path replaces the global one).
 - **Override**: A single scalar value replaces the global one (claude_model, container_image, etc.).
-- **Narrow merge**: Security-sensitive fields under `gates` (`agentgate`, `docker_proxy`) have a locked-down merge: project rules prepend (any decision, so a project can punch a surgical hole), a project can disable a layer but not re-enable a globally disabled one, and `default_decision` / `rate_limits` / `audit` are ignored.
+- **Narrow merge**: Security-sensitive fields under `gates` (`agentgate`, `docker_proxy`) have a locked-down merge: project rules go after the global denies and before the other global rules, `enabled` is the global setting's, and `default_decision` / `rate_limits` / `audit` are ignored.
 - **Absent = inherit**: If a field is not set in the project config, the global value is used unchanged.
+
+### Project Config Trust
+
+The project config lives in the workspace, so an agent can edit it. The fields that reach past the agent's container wait for you to trust them, like `direnv allow`:
+
+- `mounts`, `inherit_mounts`, `extra_dirs`, `copy_files`, `envs`
+- `permissions`, `gates`, `bash_shortcuts`
+- `browser.mode`, `browser.host_cdp_port`, `browser.extensions`, `browser.cookie_import`
+- `memory.paths`
+
+Everything else (model, image, prompt shortcuts, MCP servers and so on) only shapes the agent's own container and applies as written.
+
+When those fields differ from the version you last trusted, Loop keeps using that version: none of the fields apply for a project you never trusted, and a project whose config sets none of them needs no trust. The project's row in the sidebar shows a `trust` pill, and its chats show a banner above the composer whose **Review** button opens **Settings → Project**. There, a *Project config changed* notice shows what changed as a diff from the last trusted version to the current one (from nothing, for a project you never trusted), with a **Trust this config** button. If the file changes again while you review it, trusting fails and the notice shows the new version.
+
+Your own edits stay trusted. Saving the project config in Settings, adding a project shortcut, applying a learn proposal and `loop onboard:local` all keep a trusted project trusted. An edit you make to a project that's waiting for review leaves it waiting, so it can't approve what an agent changed elsewhere in the file. Edits in a text editor count like an agent's: trust them in Settings afterwards.
+
+Projects you set up before Loop asked for trust keep working: the upgrade trusts the config of every project with a channel as it is at that moment, once. A project that already has a trusted version keeps it.
+
+A worktree's own `.loop/config.json` follows the same rule, except for the parent project dir Loop seeds into its `extra_dirs`, which always applies.
+
+Trusted versions are kept in `loop/project-trust.json` under your OS user config dir (`~/Library/Application Support` on macOS, `~/.config` on Linux), next to the API token, where containers can't reach them. The API routes are [`GET` and `POST /api/config/project/trust`](api.md#get-apiconfigprojecttrust).
 
 ---
 
@@ -1065,12 +1086,12 @@ The merge follows these principles:
   //  "max_concurrent_nodes": 10
   //},
 
-  // Security gates override for this project only. Can disable (not re-enable);
-  // rules prepend to global (first-match-wins) and may use any decision
-  // (allow/deny/approve).
+  // Security gate rules for this project, applied once you trust the config.
+  // Rules may use any decision (allow/deny/approve) and go after the global
+  // denies, before the other global rules (first-match-wins). "enabled" and
+  // "default_decision" are ignored: the global config decides.
   //"gates": {
   //  //"agentgate": {
-  //  //  "enabled": false,
   //  //  //"command_rules": [ { "commands": ["npm"], "args_patterns": ["^publish"], "decision": "deny" } ],
   //  //  //"file_rules":    [ { "paths": ["./secret-vault/**"], "operations": ["read"], "decision": "deny" } ]
   //  //},

@@ -1,4 +1,4 @@
-import { getApiUrl } from "./api";
+import { apiFetch, getApiUrl } from "./api";
 
 /**
  * A channel's learn switch and its hidden learn thread. `available` is false
@@ -14,14 +14,14 @@ export interface LearnState {
 }
 
 export async function fetchLearnState(channelId: string): Promise<LearnState> {
-  const res = await fetch(`${getApiUrl()}/api/channels/${channelId}/learn`);
+  const res = await apiFetch(`${getApiUrl()}/api/channels/${channelId}/learn`);
   if (!res.ok) throw new Error(`Failed to fetch learn state: ${res.statusText}`);
   return res.json();
 }
 
 /** Turn the channel's learn pass on or off; "" goes back to the config default. */
 export async function setLearn(channelId: string, learn: LearnState["learn"]): Promise<void> {
-  const res = await fetch(`${getApiUrl()}/api/channels/${channelId}/learn`, {
+  const res = await apiFetch(`${getApiUrl()}/api/channels/${channelId}/learn`, {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ learn }),
@@ -72,7 +72,7 @@ export interface LearnPass {
 }
 
 export async function fetchLearnPasses(channelId: string): Promise<LearnPass[]> {
-  const res = await fetch(`${getApiUrl()}/api/channels/${channelId}/learn/passes`);
+  const res = await apiFetch(`${getApiUrl()}/api/channels/${channelId}/learn/passes`);
   if (!res.ok) throw new Error(`Failed to fetch learn passes: ${res.statusText}`);
   const body = (await res.json()) as { passes: LearnPass[] };
   return body.passes;
@@ -83,7 +83,7 @@ export async function fetchLearnPasses(channelId: string): Promise<LearnPass[]> 
  * running comes back as it is, else a new one is queued.
  */
 export async function learnTurn(channelId: string, messageId: string): Promise<LearnPass> {
-  const res = await fetch(`${getApiUrl()}/api/channels/${channelId}/learn/passes`, {
+  const res = await apiFetch(`${getApiUrl()}/api/channels/${channelId}/learn/passes`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ message_id: messageId }),
@@ -96,18 +96,33 @@ export async function learnTurn(channelId: string, messageId: string): Promise<L
 }
 
 export async function fetchLearnProposals(channelId: string): Promise<LearnProposal[]> {
-  const res = await fetch(`${getApiUrl()}/api/channels/${channelId}/learn/proposals`);
+  const res = await apiFetch(`${getApiUrl()}/api/channels/${channelId}/learn/proposals`);
   if (!res.ok) throw new Error(`Failed to fetch learn proposals: ${res.statusText}`);
   const body = (await res.json()) as { proposals: LearnProposal[] };
   return body.proposals;
 }
 
 async function settleProposal(id: number, action: "apply" | "dismiss"): Promise<LearnProposal> {
-  const res = await fetch(`${getApiUrl()}/api/learn/proposals/${id}/${action}`, { method: "POST" });
+  const res = await apiFetch(`${getApiUrl()}/api/learn/proposals/${id}/${action}`, { method: "POST" });
   if (!res.ok) {
     const body = (await res.text().catch(() => "")).trim();
     throw new Error(body || `Failed to ${action} proposal: ${res.statusText}`);
   }
+  return res.json();
+}
+
+/** What applying a config-kind proposal would change: the project config
+ * file and a unified diff of the edit ("" when it's already there), or why
+ * applying it would fail. All are absent for kinds that edit no file. */
+export interface LearnProposalPreview {
+  path?: string;
+  diff?: string;
+  error?: string;
+}
+
+export async function fetchLearnProposalPreview(id: number): Promise<LearnProposalPreview> {
+  const res = await apiFetch(`${getApiUrl()}/api/learn/proposals/${id}/preview`);
+  if (!res.ok) throw new Error(`Failed to preview proposal: ${res.statusText}`);
   return res.json();
 }
 

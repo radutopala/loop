@@ -30,6 +30,23 @@ export function learnKindLabel(kind: string): string {
   return KIND_LABELS[kind as LearnProposalKind] ?? kind;
 }
 
+// The kinds whose apply appends to the project's .loop/config.json: their
+// cards preview the edit as a diff before it's applied.
+const CONFIG_KINDS: ReadonlySet<string> = new Set<LearnProposalKind>(["prompt_shortcut", "bash_shortcut", "gate_rule", "mount"]);
+
+export function editsProjectConfig(kind: string): boolean {
+  return CONFIG_KINDS.has(kind);
+}
+
+// Changes whenever a config-kind proposal is applied, so the open cards'
+// previews are worked out again against the edited file.
+export function configPreviewRevision(proposals: LearnProposal[]): string {
+  return proposals
+    .filter((p) => p.status === "applied" && editsProjectConfig(p.kind))
+    .map((p) => p.id)
+    .join(",");
+}
+
 // How long a proposal may sit in "applying" before the server lets it be
 // claimed again (db.LearnApplyStale): one still applying by then lost its
 // outcome.

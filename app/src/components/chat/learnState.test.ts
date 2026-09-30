@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import type { LearnPass, LearnProposal } from "../../api/learn";
 import {
+  configPreviewRevision,
+  editsProjectConfig,
   inBulk,
   isOpenProposal,
   isSettledProposal,
@@ -282,5 +284,31 @@ describe("proposalCaveat", () => {
     expect(proposalCaveat(proposal({ kind: "rename" }), true)).toMatch(/branch and worktree folder/);
     expect(proposalCaveat(proposal({ kind: "rename" }), false)).toBeNull();
     expect(proposalCaveat(proposal({ kind: "mount" }), true)).toBeNull();
+  });
+});
+
+describe("editsProjectConfig", () => {
+  it.each([
+    ["prompt_shortcut", true],
+    ["bash_shortcut", true],
+    ["gate_rule", true],
+    ["mount", true],
+    ["scheduled_task", false],
+    ["rename", false],
+    ["description", false],
+    ["ticket_url", false],
+    ["unknown", false],
+  ])("%s → %j", (kind, want) => {
+    expect(editsProjectConfig(kind)).toBe(want);
+  });
+});
+
+describe("configPreviewRevision", () => {
+  const p = (id: number, kind: LearnProposal["kind"], status: LearnProposal["status"]) => ({ id, kind, status }) as LearnProposal;
+  it("lists the applied config-kind proposals", () => {
+    expect(configPreviewRevision([p(1, "mount", "applied"), p(2, "rename", "applied"), p(3, "gate_rule", "pending"), p(4, "bash_shortcut", "applied")])).toBe("1,4");
+  });
+  it("is empty with none applied", () => {
+    expect(configPreviewRevision([p(1, "mount", "pending")])).toBe("");
   });
 });

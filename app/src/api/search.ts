@@ -1,4 +1,4 @@
-import { getApiUrl } from "./api";
+import { apiFetch, getApiUrl } from "./api";
 
 export interface SearchMessageResult {
   id: number;
@@ -12,7 +12,7 @@ export interface SearchMessageResult {
 export async function searchMessages(query: string, limit?: number): Promise<SearchMessageResult[]> {
   const params = new URLSearchParams({ q: query });
   if (limit) params.set("limit", String(limit));
-  const res = await fetch(`${getApiUrl()}/api/messages/search?${params}`);
+  const res = await apiFetch(`${getApiUrl()}/api/messages/search?${params}`);
   if (!res.ok) throw new Error(`Failed to search messages: ${res.statusText}`);
   return res.json();
 }
@@ -21,7 +21,7 @@ export async function searchMessages(query: string, limit?: number): Promise<Sea
 // query, newest first — what the chat's find bar steps through.
 export async function searchChannelMessages(channelId: string, query: string, signal?: AbortSignal): Promise<number[]> {
   const params = new URLSearchParams({ q: query });
-  const res = await fetch(`${getApiUrl()}/api/channels/${encodeURIComponent(channelId)}/messages/search?${params}`, { signal });
+  const res = await apiFetch(`${getApiUrl()}/api/channels/${encodeURIComponent(channelId)}/messages/search?${params}`, { signal });
   if (!res.ok) throw new Error(`Failed to search messages: ${res.statusText}`);
   const body: { ids: number[] } = await res.json();
   return body.ids;

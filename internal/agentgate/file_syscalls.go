@@ -23,6 +23,26 @@ const (
 	syscallFchmodat  = "fchmodat"
 	syscallFchownat  = "fchownat"
 	syscallMkdirat   = "mkdirat"
+	syscallRenameat  = "renameat"
+	syscallMknodat   = "mknodat"
+	syscallTruncate  = "truncate"
+	syscallFchmodat2 = "fchmodat2"
+
+	// Legacy path syscalls. x86_64 still exposes them (glibc's rename() and
+	// many static binaries call them directly); arm64 never had them. They
+	// take no dirfd: a relative path resolves against the cwd.
+	syscallOpen    = "open"
+	syscallCreat   = "creat"
+	syscallRename  = "rename"
+	syscallMkdir   = "mkdir"
+	syscallRmdir   = "rmdir"
+	syscallLink    = "link"
+	syscallUnlink  = "unlink"
+	syscallSymlink = "symlink"
+	syscallChmod   = "chmod"
+	syscallChown   = "chown"
+	syscallLchown  = "lchown"
+	syscallMknod   = "mknod"
 )
 
 // openat(2) flag bits. Mirrors include/uapi/asm-generic/fcntl.h. We redefine
@@ -40,6 +60,13 @@ const (
 // unlinkat(2) flag: remove directory (equivalent to rmdir).
 const atRemoveDir uint64 = 0x200
 
+// renameat2(2) flags. Mirrors include/uapi/linux/fs.h.
+const (
+	renameNoReplace uint64 = 0x1
+	renameExchange  uint64 = 0x2
+	renameWhiteout  uint64 = 0x4
+)
+
 // SyscallSpec describes one trapped file-op syscall's argv layout.
 //
 // For syscalls that reference two paths (renameat2, linkat), only the primary
@@ -49,11 +76,23 @@ type SyscallSpec struct {
 	Name           string
 	PrimaryOp      string // op for the primary path
 	PathArgIdx     int    // argv index of the (primary) path string
-	DirfdArgIdx    int    // argv index of the dirfd; -1 if none
+	DirfdArgIdx    int    // argv index of the dirfd; -1 = none, resolve against the cwd
 	FlagsArgIdx    int    // argv index of the flags word; -1 if none
 	SecondaryOp    string // non-empty for two-path syscalls (renameat2 → delete+create)
 	SecondPathIdx  int    // argv index of the secondary path; -1 if none
-	SecondDirfdIdx int    // argv index of the secondary dirfd; -1 if none
+	SecondDirfdIdx int    // argv index of the secondary dirfd; -1 = none, resolve against the cwd
+
+	// LinkSource: the syscall gives an existing file a new name (link,
+	// linkat); LinkSrcIdx/LinkSrcDirfdIdx locate the existing path. Rules
+	// match the new path, but the git guard also checks the old one: a
+	// second name for a guarded file could be written in place.
+	LinkSource      bool
+	LinkSrcIdx      int
+	LinkSrcDirfdIdx int // -1 = none, resolve against the cwd
+
+	// Mkdir: the syscall creates an empty directory. The git guard lets
+	// these through on its paths — an empty .git or hooks dir runs nothing.
+	Mkdir bool
 
 	// NoFollowLeaf: the kernel operates on the directory entry (the link
 	// itself), not the symlink target. Resolver must dereference parent
@@ -103,6 +142,7 @@ var syscallTable = map[string]SyscallSpec{
 		Name: syscallLinkat, PrimaryOp: OpLink,
 		PathArgIdx: 3, DirfdArgIdx: 2, FlagsArgIdx: 4,
 		SecondPathIdx: -1, SecondDirfdIdx: -1,
+		LinkSource: true, LinkSrcIdx: 1, LinkSrcDirfdIdx: 0,
 	},
 	// symlinkat(target, newdirfd, linkpath) — policy matches linkpath.
 	syscallSymlinkat: {
@@ -127,7 +167,119 @@ var syscallTable = map[string]SyscallSpec{
 		Name: syscallMkdirat, PrimaryOp: OpCreate,
 		PathArgIdx: 1, DirfdArgIdx: 0, FlagsArgIdx: -1,
 		SecondPathIdx: -1, SecondDirfdIdx: -1,
+		Mkdir: true,
 	},
+	// renameat(olddirfd, oldpath, newdirfd, newpath) — renameat2 without flags.
+	// aarch64 glibc's rename() lands here.
+	syscallRenameat: {
+		Name: syscallRenameat, PrimaryOp: OpDelete,
+		PathArgIdx: 1, DirfdArgIdx: 0, FlagsArgIdx: -1,
+		SecondaryOp: OpCreate, SecondPathIdx: 3, SecondDirfdIdx: 2,
+		NoFollowLeaf: true,
+	},
+	// mknodat(dirfd, path, mode, dev) — creates a file (regular, fifo, node).
+	syscallMknodat: {
+		Name: syscallMknodat, PrimaryOp: OpCreate,
+		PathArgIdx: 1, DirfdArgIdx: 0, FlagsArgIdx: -1,
+		SecondPathIdx: -1, SecondDirfdIdx: -1,
+	},
+	// truncate(path, length) — changes the file's content.
+	syscallTruncate: {
+		Name: syscallTruncate, PrimaryOp: OpWrite,
+		PathArgIdx: 0, DirfdArgIdx: -1, FlagsArgIdx: -1,
+		SecondPathIdx: -1, SecondDirfdIdx: -1,
+	},
+	// fchmodat2(dirfd, path, mode, flags)
+	syscallFchmodat2: {
+		Name: syscallFchmodat2, PrimaryOp: OpChmod,
+		PathArgIdx: 1, DirfdArgIdx: 0, FlagsArgIdx: 3,
+		SecondPathIdx: -1, SecondDirfdIdx: -1,
+	},
+	// open(path, flags, mode) — op depends on flags, like openat.
+	syscallOpen: {
+		Name: syscallOpen, PrimaryOp: "",
+		PathArgIdx: 0, DirfdArgIdx: -1, FlagsArgIdx: 1,
+		SecondPathIdx: -1, SecondDirfdIdx: -1,
+	},
+	// creat(path, mode) — open(path, O_CREAT|O_WRONLY|O_TRUNC).
+	syscallCreat: {
+		Name: syscallCreat, PrimaryOp: OpCreate,
+		PathArgIdx: 0, DirfdArgIdx: -1, FlagsArgIdx: -1,
+		SecondPathIdx: -1, SecondDirfdIdx: -1,
+	},
+	// rename(oldpath, newpath) — x86_64 glibc's rename() lands here.
+	syscallRename: {
+		Name: syscallRename, PrimaryOp: OpDelete,
+		PathArgIdx: 0, DirfdArgIdx: -1, FlagsArgIdx: -1,
+		SecondaryOp: OpCreate, SecondPathIdx: 1, SecondDirfdIdx: -1,
+		NoFollowLeaf: true,
+	},
+	// mkdir(path, mode)
+	syscallMkdir: {
+		Name: syscallMkdir, PrimaryOp: OpCreate,
+		PathArgIdx: 0, DirfdArgIdx: -1, FlagsArgIdx: -1,
+		SecondPathIdx: -1, SecondDirfdIdx: -1,
+		Mkdir: true,
+	},
+	// rmdir(path)
+	syscallRmdir: {
+		Name: syscallRmdir, PrimaryOp: OpDelete,
+		PathArgIdx: 0, DirfdArgIdx: -1, FlagsArgIdx: -1,
+		SecondPathIdx: -1, SecondDirfdIdx: -1,
+		NoFollowLeaf: true,
+	},
+	// link(oldpath, newpath) — policy matches newpath.
+	syscallLink: {
+		Name: syscallLink, PrimaryOp: OpLink,
+		PathArgIdx: 1, DirfdArgIdx: -1, FlagsArgIdx: -1,
+		SecondPathIdx: -1, SecondDirfdIdx: -1,
+		LinkSource: true, LinkSrcIdx: 0, LinkSrcDirfdIdx: -1,
+	},
+	// unlink(path)
+	syscallUnlink: {
+		Name: syscallUnlink, PrimaryOp: OpDelete,
+		PathArgIdx: 0, DirfdArgIdx: -1, FlagsArgIdx: -1,
+		SecondPathIdx: -1, SecondDirfdIdx: -1,
+		NoFollowLeaf: true,
+	},
+	// symlink(target, linkpath) — policy matches linkpath.
+	syscallSymlink: {
+		Name: syscallSymlink, PrimaryOp: OpLink,
+		PathArgIdx: 1, DirfdArgIdx: -1, FlagsArgIdx: -1,
+		SecondPathIdx: -1, SecondDirfdIdx: -1,
+	},
+	// chmod(path, mode)
+	syscallChmod: {
+		Name: syscallChmod, PrimaryOp: OpChmod,
+		PathArgIdx: 0, DirfdArgIdx: -1, FlagsArgIdx: -1,
+		SecondPathIdx: -1, SecondDirfdIdx: -1,
+	},
+	// chown(path, uid, gid)
+	syscallChown: {
+		Name: syscallChown, PrimaryOp: OpChown,
+		PathArgIdx: 0, DirfdArgIdx: -1, FlagsArgIdx: -1,
+		SecondPathIdx: -1, SecondDirfdIdx: -1,
+	},
+	// lchown(path, uid, gid) — acts on the link itself.
+	syscallLchown: {
+		Name: syscallLchown, PrimaryOp: OpChown,
+		PathArgIdx: 0, DirfdArgIdx: -1, FlagsArgIdx: -1,
+		SecondPathIdx: -1, SecondDirfdIdx: -1,
+		NoFollowLeaf: true,
+	},
+	// mknod(path, mode, dev)
+	syscallMknod: {
+		Name: syscallMknod, PrimaryOp: OpCreate,
+		PathArgIdx: 0, DirfdArgIdx: -1, FlagsArgIdx: -1,
+		SecondPathIdx: -1, SecondDirfdIdx: -1,
+	},
+}
+
+// IsFileSyscall reports whether name is a file-op syscall the dispatcher
+// classifies through syscallTable.
+func IsFileSyscall(name string) bool {
+	_, ok := syscallTable[name]
+	return ok
 }
 
 // SyscallByName looks up a spec by canonical syscall name; ok=false when

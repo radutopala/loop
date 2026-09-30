@@ -81,8 +81,8 @@ func (s *DockerSuite) TestExecCreate() {
 	c := &DockerExecClient{api: api, execUser: func() string { return "1000:1000" }}
 
 	expectedOpts := containertypes.ExecOptions{
-		User:         "1000:1000",
-		Cmd:          waitForExecUser([]string{"/bin/sh"}),
+		User:         "0:0",
+		Cmd:          wrapInteractiveExec("1000:1000", []string{"/bin/sh"}),
 		Tty:          true,
 		AttachStdin:  true,
 		AttachStdout: true,
@@ -104,8 +104,8 @@ func (s *DockerSuite) TestExecCreateDefaultCmd() {
 	c := &DockerExecClient{api: api, execUser: func() string { return "1000:1000" }}
 
 	expectedOpts := containertypes.ExecOptions{
-		User:         "1000:1000",
-		Cmd:          waitForExecUser([]string{"/bin/sh"}),
+		User:         "0:0",
+		Cmd:          wrapInteractiveExec("1000:1000", []string{"/bin/sh"}),
 		Tty:          true,
 		AttachStdin:  true,
 		AttachStdout: true,
@@ -379,23 +379,38 @@ func (s *DockerSuite) TestExecCreateNoTTY() {
 	api.AssertExpectations(s.T())
 }
 
-// TestWaitForExecUser pins the wrapper shape: the requested command is handed
-// to the preamble as positional arguments, so no argument needs quoting.
-func (s *DockerSuite) TestWaitForExecUser() {
+// TestWrapInteractiveExec pins the wrapper shape: the user and the requested
+// command are handed to the script as positional arguments, so no argument
+// needs quoting.
+func (s *DockerSuite) TestWrapInteractiveExec() {
 	require.Equal(s.T(),
-		[]string{"/bin/sh", "-c", execUserWaitScript, "sh", "/bin/bash", "-c", "echo hi"},
-		waitForExecUser([]string{"/bin/bash", "-c", "echo hi"}))
+		[]string{"/bin/sh", "-c", interactiveExecScript, "sh", "1:2", "/bin/bash", "-c", "echo hi"},
+		wrapInteractiveExec("1:2", []string{"/bin/bash", "-c", "echo hi"}))
 }
 
-// TestExecUserWaitScriptRunsCommand runs the real preamble under a real
+// ungatedCommand builds cmd with only PATH in its env, so a test run inside a
+// gated container doesn't hand the command to the gate.
+func ungatedCommand(cmd []string) *exec.Cmd {
+	c := exec.Command(cmd[0], cmd[1:]...)
+	c.Env = []string{"PATH=" + os.Getenv("PATH")}
+	return c
+}
+
+// selfExecUser is this process's own "<uid>:<gid>", which the script runs
+// the command as without switching users.
+func selfExecUser() string {
+	return formatExecUser(os.Getuid(), os.Getgid())
+}
+
+// TestExecUserWaitScriptRunsCommand runs the real script under a real
 // /bin/sh: the trailing exec must pass every argument through untouched,
 // including ones containing spaces.
 func (s *DockerSuite) TestExecUserWaitScriptRunsCommand() {
 	if _, err := os.Stat("/bin/sh"); err != nil {
 		s.T().Skip("no /bin/sh on this platform")
 	}
-	wrapped := waitForExecUser([]string{"/bin/sh", "-c", `printf '%s|' "$@"`, "sh", "a b", "c"})
-	out, err := exec.Command(wrapped[0], wrapped[1:]...).Output()
+	wrapped := wrapInteractiveExec(selfExecUser(), []string{"/bin/sh", "-c", `printf '%s|' "$@"`, "sh", "a b", "c"})
+	out, err := ungatedCommand(wrapped).Output()
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), "a b|c|", string(out))
 }
@@ -407,9 +422,9 @@ func (s *DockerSuite) TestExecUserWaitScriptPreservesExitStatus() {
 	if _, err := os.Stat("/bin/sh"); err != nil {
 		s.T().Skip("no /bin/sh on this platform")
 	}
-	wrapped := waitForExecUser([]string{"/bin/sh", "-c", "exit 7"})
+	wrapped := wrapInteractiveExec(selfExecUser(), []string{"/bin/sh", "-c", "exit 7"})
 	var exitErr *exec.ExitError
-	err := exec.Command(wrapped[0], wrapped[1:]...).Run()
+	err := ungatedCommand(wrapped).Run()
 	require.ErrorAs(s.T(), err, &exitErr)
 	require.Equal(s.T(), 7, exitErr.ExitCode())
 }

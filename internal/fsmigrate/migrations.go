@@ -218,6 +218,37 @@ var migrations = []Migration{
 		Description: "refresh container/ files: npm 12 in the agent image",
 		Apply:       refreshContainerFiles,
 	},
+	{
+		// Drops the agent bashrc's `claude` alias to `loop syscallwrap`.
+		// Terminal shells now run under the gate themselves, and a nested
+		// wrapper there, running as the agent, can't read the gate token.
+		// Until this refresh lands an install's gated terminals keep the
+		// alias, so their claude fails to start.
+		Description: "refresh container/ files: no syscallwrap alias in the agent bashrc",
+		Apply:       refreshContainerFiles,
+	},
+	{
+		// Mounts, extra dirs, gates, envs and the other project config
+		// fields that reach the host now apply only once the owner trusts
+		// them. Projects set up before that keep working as they did: their
+		// configs as they are at the upgrade are trusted.
+		Description: "trust existing project configs",
+		Apply:       adoptProjectConfigs,
+	},
+}
+
+// adoptProjectConfigs trusts the project config of every project checkout
+// Loop has a channel for, where none is trusted yet.
+func adoptProjectConfigs(_ context.Context, c *Ctx) error {
+	if c.AdoptProjectConfig == nil {
+		return nil
+	}
+	for _, dir := range c.ProjectDirs {
+		if err := c.AdoptProjectConfig(dir); err != nil {
+			return fmt.Errorf("trusting the project config of %s: %w", dir, err)
+		}
+	}
+	return nil
 }
 
 // versionedContainerFiles are tracked by the daemon: each release ships a

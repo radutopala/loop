@@ -19,7 +19,7 @@ func (a *app) newImageRebuildCmd() *cobra.Command {
 			apiURL := a.resolveAPIURL()
 
 			fmt.Println("Starting image rebuild...")
-			resp, err := http.Post(apiURL+"/api/image/rebuild", "application/json", nil)
+			resp, err := a.apiClient.Post(apiURL+"/api/image/rebuild", "application/json", nil)
 			if err != nil {
 				return fmt.Errorf("calling rebuild API: %w", err)
 			}
@@ -123,7 +123,7 @@ func (a *app) resolveAPIURL() string {
 }
 
 func (a *app) fetchImageStatus(apiURL string) (*imageStatusJSON, error) {
-	resp, err := http.Get(apiURL + "/api/image/status")
+	resp, err := a.apiClient.Get(apiURL + "/api/image/status")
 	if err != nil {
 		return nil, fmt.Errorf("calling image status API: %w", err)
 	}

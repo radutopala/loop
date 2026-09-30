@@ -18,10 +18,11 @@ export function messageLink(channelId: string, messageId: number): string {
   return `${PREFIX}${channelId}/${messageId}`;
 }
 
-/** Parses "<channel-id>" or "<channel-id>/<message-id>" from a URL hash or a deep link. */
+/** Parses "<channel-id>" or "<channel-id>/<message-id>" from a URL hash or a deep link.
+ *  A "key=value" fragment, such as the web UI's `#loop_token=…`, is no channel. */
 export function parseChannelTarget(target: string): ChannelTarget | null {
   const [channelId, messagePart, ...rest] = target.replace(/^#/, "").split("/");
-  if (!channelId || rest.length > 0) return null;
+  if (!channelId || channelId.includes("=") || rest.length > 0) return null;
   if (messagePart === undefined || messagePart === "") return { channelId, messageId: null };
   if (!/^\d+$/.test(messagePart)) return null;
   const messageId = Number(messagePart);

@@ -32,6 +32,13 @@ func (RealSystem) Stat(name string) (os.FileInfo, error) {
 	}
 	return os.Stat(clean)
 }
+func (RealSystem) Lstat(name string) (os.FileInfo, error) {
+	clean, err := safePath(name)
+	if err != nil {
+		return nil, err
+	}
+	return os.Lstat(clean)
+}
 func (RealSystem) ReadFile(name string) ([]byte, error) {
 	clean, err := safePath(name)
 	if err != nil {

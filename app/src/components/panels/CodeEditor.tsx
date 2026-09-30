@@ -12,11 +12,11 @@ import { bracketMatching, foldGutter, foldKeymap } from "@codemirror/language";
 import { openSearchPanel, search, searchKeymap } from "@codemirror/search";
 import { Compartment, EditorSelection, EditorState } from "@codemirror/state";
 import { drawSelection, EditorView, highlightActiveLine, highlightActiveLineGutter, keymap, lineNumbers } from "@codemirror/view";
-import { marked } from "marked";
 import { forwardRef, lazy, Suspense, useCallback, useEffect, useImperativeHandle, useMemo, useRef } from "react";
 import { isPdfPath, isVideoPath } from "../../api/files";
 import { useTheme } from "../../ThemeContext";
 import { fonts } from "../../theme";
+import { renderMarkdownSafe } from "../../utils/markdownSafe";
 import { ContextMenu, type MenuItem } from "../shared/ContextMenu";
 import { emptyGitLineChanges, type GitLineChanges, gitChangeGutterExtension, setGitLineChanges } from "./editorGitGutter";
 import { GitChangeOverview } from "./editorGitOverview";
@@ -77,7 +77,7 @@ export function isHtmlFile(path: string): boolean {
 
 /** Preview payload for a file: rendered markdown, raw HTML source, or "" when the file has no preview. */
 export function previewSource(path: string, content: string): string {
-  if (isMarkdownFile(path)) return marked.parse(content, { async: false }) as string;
+  if (isMarkdownFile(path)) return renderMarkdownSafe(content);
   if (isHtmlFile(path)) return content;
   return "";
 }
@@ -144,6 +144,9 @@ interface CodeEditorProps {
   htmlBaseURL?: string | null;
   /** When set, render the file as an image via this URL instead of the text editor. */
   imageURL?: string | null;
+  // Called when the <img>/<video> failed to load imageURL (e.g. its content
+  // link expired), so the owner can mint a fresh one.
+  onMediaError?: () => void;
   /** VCS change markers for the open file (added/modified/deleted lines vs git HEAD). */
   gitChanges?: GitLineChanges | null;
 }
@@ -166,6 +169,7 @@ export const CodeEditor = forwardRef<CodeEditorHandle, CodeEditorProps>(function
     previewHtml,
     htmlBaseURL,
     imageURL,
+    onMediaError,
     gitChanges,
   },
   ref,
@@ -434,9 +438,9 @@ export const CodeEditor = forwardRef<CodeEditorHandle, CodeEditorProps>(function
           }}
         >
           {isVideoPath(selectedRelPath || "") ? (
-            <video src={imageURL} controls style={{ maxWidth: "100%", maxHeight: "100%" }} />
+            <video src={imageURL} controls onError={onMediaError} style={{ maxWidth: "100%", maxHeight: "100%" }} />
           ) : (
-            <img src={imageURL} alt="" style={{ maxWidth: "100%", maxHeight: "100%", objectFit: "contain" }} />
+            <img src={imageURL} alt="" onError={onMediaError} style={{ maxWidth: "100%", maxHeight: "100%", objectFit: "contain" }} />
           )}
         </div>
       )}

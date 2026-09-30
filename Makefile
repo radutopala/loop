@@ -45,18 +45,29 @@ GODOG_TAGS ?= ~@docs && ~@journey
 
 # The Docker run is detached and followed with `docker logs -f`, so the tests
 # outlive a killed client (an agent session that ends mid-run): reattach with
-# `docker logs -f loop-bdd`. Ctrl-C still stops them. /tmp/loop-bdd-data is
-# emptied rather than removed, as it's a mount point inside agent containers.
+# `docker logs -f loop-bdd`. Ctrl-C still stops them. The data dir is emptied
+# rather than removed, as it can be a mount point inside agent containers.
+
+# BDD_DATA is the runner's data dir. Containers the runner starts bind files
+# from it by host path, so it's mounted at the same path. Inside a Loop agent
+# container, it goes under the repo's .worktrees/: the repo is mounted at its
+# host path, so the dir exists on the host without anyone creating it there,
+# and binds under it need no approval. On the host, /tmp is fine.
+ifdef LOOP_DOCKERPROXY_ENABLED
+BDD_DATA ?= $(CURDIR)/.worktrees/bdd-data
+else
+BDD_DATA ?= /tmp/loop-bdd-data
+endif
 
 # Docs capture and bdd-serve hand the runner container your ~/.loop/config.json
-# for its Claude token. Inside a Loop agent container the docker proxy won't
-# bind ~/.loop (read-only, outside the bind roots), so stage just the token
-# under the shared data dir instead. A dotfile survives the script's wipe of
+# for its Claude token. Inside a Loop agent container ~/.loop is mounted
+# read-only if at all, so stage just the token under the data dir instead,
+# where the runner can reach it. A dotfile survives the script's wipe of
 # the data dir. The proxy also denies agentgate's seccomp/ptrace flags, so
 # turn the gate off for those runs.
 ifdef LOOP_DOCKERPROXY_ENABLED
-BDD_HOST_CONFIG := /tmp/loop-bdd-data/.host-config.json
-BDD_STAGE_CONFIG = mkdir -p /tmp/loop-bdd-data && ( umask 077; tok=$$(sed -nE 's/.*claude_code_oauth_token[^:]*:[[:space:]]*"([^"]+)".*/\1/p' "$(HOME)/.loop/config.json" | head -1); printf '{ "claude_code_oauth_token": "%s" }\n' "$$tok" > $(BDD_HOST_CONFIG) )
+BDD_HOST_CONFIG := $(BDD_DATA)/.host-config.json
+BDD_STAGE_CONFIG = mkdir -p $(BDD_DATA) && ( umask 077; tok=$$(sed -nE 's/.*claude_code_oauth_token[^:]*:[[:space:]]*"([^"]+)".*/\1/p' "$(HOME)/.loop/config.json" | head -1); printf '{ "claude_code_oauth_token": "%s" }\n' "$$tok" > $(BDD_HOST_CONFIG) )
 BDD_CONFIG_ARGS = -e LOOP_DOCS_HOST_CONFIG=$(BDD_HOST_CONFIG) -e LOOP_BDD_AGENTGATE=0
 else
 BDD_STAGE_CONFIG = true
@@ -69,11 +80,11 @@ test-component-bdd: ## Run BDD component tests (via Docker on host, natively in 
 	else \
 		docker rm -f loop-bdd 2>/dev/null; \
 		docker ps -aq --filter "name=loop-bdd-" | xargs -r docker rm -f 2>/dev/null; \
-		mkdir -p /tmp/loop-bdd-data && find /tmp/loop-bdd-data -mindepth 1 -delete; \
+		mkdir -p $(BDD_DATA) && find $(BDD_DATA) -mindepth 1 -delete; \
 		$(if $(LOOP_DOCS_CAPTURE),$(BDD_STAGE_CONFIG);) \
 		docker run -d --name loop-bdd -v "$$(pwd)":/app -w /app \
 			-v /var/run/docker.sock:/var/run/docker.sock \
-			-v /tmp/loop-bdd-data:/tmp/loop-bdd-data \
+			-v $(BDD_DATA):$(BDD_DATA) -e LOOP_BDD_DATA=$(BDD_DATA) \
 			-v loop-gomod:/go/pkg/mod -v loop-gocache:/root/.cache/go-build \
 			-v loop-bdd-node-modules:/app/app/node_modules \
 			-e TEST_RUN="$${TEST_RUN:-TestBDDBackendFeatures|TestBDDFrontendFeatures}" \
@@ -86,14 +97,14 @@ test-component-bdd: ## Run BDD component tests (via Docker on host, natively in 
 		rc=$$(docker wait loop-bdd); docker ps -aq --filter "name=loop-bdd-" | xargs -r docker rm -f 2>/dev/null || true; exit $$rc; \
 	fi
 
-bdd-serve: ## Build + run the daemon and UI inside Docker as a STANDING instance (no tests), with live agents, for manual / MCP-browser testing. Prints the bridge URL to connect to. Stop with: docker rm -f loop-dev
+bdd-serve: ## Build + run the daemon and UI inside Docker as a STANDING instance (no tests), with live agents, for manual / MCP-browser testing. Prints the bridge URL to connect to, signed in with the test daemon's token. Stop with: docker rm -f loop-dev
 	@docker rm -f loop-dev 2>/dev/null || true; \
-	mkdir -p /tmp/loop-bdd-data && find /tmp/loop-bdd-data -mindepth 1 -delete; \
+	mkdir -p $(BDD_DATA) && find $(BDD_DATA) -mindepth 1 -delete; \
 	$(BDD_STAGE_CONFIG); \
 	echo "Building + starting loop in Docker (container: loop-dev)..."; \
 	docker run -d --name loop-dev -v "$$(pwd)":/app -w /app \
 		-v /var/run/docker.sock:/var/run/docker.sock \
-		-v /tmp/loop-bdd-data:/tmp/loop-bdd-data \
+		-v $(BDD_DATA):$(BDD_DATA) -e LOOP_BDD_DATA=$(BDD_DATA) \
 		-v loop-gomod:/go/pkg/mod -v loop-gocache:/root/.cache/go-build \
 		-v loop-bdd-node-modules:/app/app/node_modules \
 		$(BDD_CONFIG_ARGS) \
@@ -102,8 +113,9 @@ bdd-serve: ## Build + run the daemon and UI inside Docker as a STANDING instance
 	for i in $$(seq 1 90); do \
 		ip=$$(docker inspect loop-dev --format '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' 2>/dev/null); \
 		if [ -n "$$ip" ] && docker exec loop-dev curl -sf http://localhost:8222/api/health >/dev/null 2>&1; then \
+			tok=$$(docker exec loop-dev cat $(BDD_DATA)/.config/loop/api-token 2>/dev/null); \
 			echo ""; echo "loop-dev is up — connect a browser (e.g. MCP) to:"; \
-			echo "   UI:  http://$$ip:5173"; \
+			echo "   UI:  http://$$ip:5173/#loop_token=$$tok"; \
 			echo "   API: http://$$ip:8222"; \
 			echo "Logs: docker logs -f loop-dev    Stop: docker rm -f loop-dev"; \
 			exit 0; \

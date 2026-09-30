@@ -3,6 +3,7 @@ package slack
 import (
 	"context"
 	"errors"
+	"strings"
 	"sync"
 	"time"
 
@@ -164,6 +165,25 @@ func (s *BotSuite) TestSendApprovalRendersDetailsInHeader() {
 	section, _ := approvalBlocks(prompt)
 	require.Contains(s.T(), section.Text.Text, "> `image`: alpine:3.20")
 	require.Contains(s.T(), section.Text.Text, "> `privileged`: true")
+}
+
+func (s *BotSuite) TestApprovalBlocksRendersEscapedDiff() {
+	section, _ := approvalBlocks(bot.ApprovalPrompt{
+		ID:      "req-g",
+		Target:  "write /w/.git/hooks/pre-commit",
+		Details: map[string]string{"diff": "+curl <https://x|docs> && rm a > b\n"},
+	})
+	require.True(s.T(), strings.HasSuffix(section.Text.Text,
+		"\n```diff\n+curl &lt;https://x|docs&gt; &amp;&amp; rm a &gt; b\n```"), section.Text.Text)
+}
+
+func (s *BotSuite) TestApprovalBlocksLongDiffPointsToDesktop() {
+	section, _ := approvalBlocks(bot.ApprovalPrompt{
+		ID:      "req-g",
+		Target:  "write /w/.git/hooks/pre-commit",
+		Details: map[string]string{"diff": strings.Repeat("+echo hi\n", 400)},
+	})
+	require.True(s.T(), strings.HasSuffix(section.Text.Text, bot.ApprovalDiffUnavailable))
 }
 
 func (s *BotSuite) TestSendApprovalError() {

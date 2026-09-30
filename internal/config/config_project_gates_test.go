@@ -27,47 +27,43 @@ func gateMainCfg() *Config {
 	}
 }
 
-func (s *ConfigSuite) TestProjectAgentgateDisables() {
-	s.setupProjectReadFile(`{"gates": {"agentgate": {"enabled": false}}}`)
-
-	merged, err := s.loader.loadProjectConfig("/project", gateMainCfg())
-	require.NoError(s.T(), err)
-	require.False(s.T(), merged.Gates.Agentgate.Enabled)
-	require.False(s.T(), merged.Gates.DockerProxy.Enabled, "docker proxy should transitively disable")
-}
-
-func (s *ConfigSuite) TestProjectAgentgateCannotReenable() {
-	main := gateMainCfg()
-	main.Gates.Agentgate.Enabled = false
-	main.Gates.DockerProxy.Enabled = false
-	s.setupProjectReadFile(`{"gates": {"agentgate": {"enabled": true}}}`)
-
-	merged, err := s.loader.loadProjectConfig("/project", main)
-	require.NoError(s.T(), err)
-	require.False(s.T(), merged.Gates.Agentgate.Enabled,
-		"project cannot re-enable a globally-disabled agentgate (kill-switch)")
-}
-
-func (s *ConfigSuite) TestProjectAgentgateRulesPrepend() {
-	s.setupProjectReadFile(`{
-		"gates": {
-			"agentgate": {
-				"command_rules": [
-					{ "commands": ["npm"], "args_patterns": ["^publish"], "decision": "deny", "message": "no publish" }
-				]
-			}
+// countDeny returns how many of rules deny: a project rule lands right
+// after them.
+func countDeny[T any](rules []T, decision func(T) types.Decision) int {
+	n := 0
+	for _, r := range rules {
+		if decision(r) == types.DecisionDeny {
+			n++
 		}
-	}`)
+	}
+	return n
+}
 
-	main := gateMainCfg()
-	globalCount := len(main.Gates.Agentgate.CommandRules)
+func (s *ConfigSuite) TestProjectCannotToggleGates() {
+	tests := []struct {
+		name          string
+		json          string
+		globalOn      bool
+		wantAgentgate bool
+		wantProxy     bool
+	}{
+		{"agentgate off", `{"gates": {"agentgate": {"enabled": false}}}`, true, true, true},
+		{"docker proxy off", `{"gates": {"docker_proxy": {"enabled": false}}}`, true, true, true},
+		{"agentgate on", `{"gates": {"agentgate": {"enabled": true}, "docker_proxy": {"enabled": true}}}`, false, false, false},
+	}
+	for _, tc := range tests {
+		s.Run(tc.name, func() {
+			main := gateMainCfg()
+			main.Gates.Agentgate.Enabled = tc.globalOn
+			main.Gates.DockerProxy.Enabled = tc.globalOn
+			s.setupProjectReadFile(tc.json)
 
-	merged, err := s.loader.loadProjectConfig("/project", main)
-	require.NoError(s.T(), err)
-	require.Len(s.T(), merged.Gates.Agentgate.CommandRules, globalCount+1)
-	require.Equal(s.T(), []string{"npm"}, merged.Gates.Agentgate.CommandRules[0].Commands,
-		"project rules must be prepended so first-match-wins applies to them first")
-	require.Equal(s.T(), types.DecisionDeny, merged.Gates.Agentgate.CommandRules[0].Decision)
+			merged, err := s.loader.loadProjectConfig("/project", main)
+			require.NoError(s.T(), err)
+			require.Equal(s.T(), tc.wantAgentgate, merged.Gates.Agentgate.Enabled)
+			require.Equal(s.T(), tc.wantProxy, merged.Gates.DockerProxy.Enabled)
+		})
+	}
 }
 
 func (s *ConfigSuite) TestProjectAgentgateDefaultDecisionIgnored() {
@@ -91,42 +87,92 @@ func (s *ConfigSuite) TestProjectGatesRateLimitsIgnored() {
 	require.Equal(s.T(), 500, merged.Gates.RateLimits.Total)
 }
 
-func (s *ConfigSuite) TestProjectGatesAllowRulePrepends() {
+func (s *ConfigSuite) TestProjectGateRulesFollowGlobalDenies() {
+	decPath := func(r types.PathRule) types.Decision { return r.Decision }
+	decCmd := func(r types.CommandRule) types.Decision { return r.Decision }
+	decFile := func(r types.FileRule) types.Decision { return r.Decision }
+	decHTTP := func(r types.HTTPServiceRule) types.Decision { return r.Decision }
+	decBody := func(r types.BodyRule) types.Decision { return r.Decision }
+
+	// check asserts the merged list is the global denies, then the one
+	// project rule, then the rest of the global rules, and returns the
+	// project rule's index.
+	type checkFn func(main, merged *Config) int
 	tests := []struct {
 		name  string
 		json  string
-		check func(*Config)
+		check checkFn
 	}{
 		{
-			name: "command rule",
-			json: `{"gates": {"agentgate": {"command_rules": [{"commands":["rm"], "args_patterns":[".*"], "decision":"allow"}]}}}`,
-			check: func(c *Config) {
-				require.Equal(s.T(), types.DecisionAllow, c.Gates.Agentgate.CommandRules[0].Decision)
-				require.Equal(s.T(), []string{"rm"}, c.Gates.Agentgate.CommandRules[0].Commands)
+			name: "command rule deny",
+			json: `{"gates": {"agentgate": {"command_rules": [{"commands": ["npm"], "args_patterns": ["^publish"], "decision": "deny"}]}}}`,
+			check: func(main, merged *Config) int {
+				g, m := main.Gates.Agentgate.CommandRules, merged.Gates.Agentgate.CommandRules
+				i := countDeny(g, decCmd)
+				require.Len(s.T(), m, len(g)+1)
+				require.Equal(s.T(), []string{"npm"}, m[i].Commands)
+				return i
 			},
 		},
 		{
-			name: "file rule",
-			json: `{"gates": {"agentgate": {"file_rules": [{"paths":["/etc/**"], "operations":["write"], "decision":"allow"}]}}}`,
-			check: func(c *Config) {
-				require.Equal(s.T(), types.DecisionAllow, c.Gates.Agentgate.FileRules[0].Decision)
-				require.Equal(s.T(), []string{"/etc/**"}, c.Gates.Agentgate.FileRules[0].Paths)
+			name: "command rule approve",
+			json: `{"gates": {"agentgate": {"command_rules": [{"commands": ["git"], "args_patterns": ["^commit(\\s|$)"], "decision": "approve"}]}}}`,
+			check: func(main, merged *Config) int {
+				g, m := main.Gates.Agentgate.CommandRules, merged.Gates.Agentgate.CommandRules
+				i := countDeny(g, decCmd)
+				require.Equal(s.T(), types.DecisionApprove, m[i].Decision)
+				require.Equal(s.T(), []string{`^commit(\s|$)`}, m[i].ArgsPatterns)
+				return i
+			},
+		},
+		{
+			name: "file rule allow can't beat a global deny",
+			json: `{"gates": {"agentgate": {"file_rules": [{"paths": ["/etc/**"], "operations": ["write"], "decision": "allow"}]}}}`,
+			check: func(main, merged *Config) int {
+				g, m := main.Gates.Agentgate.FileRules, merged.Gates.Agentgate.FileRules
+				i := countDeny(g, decFile)
+				require.Positive(s.T(), i)
+				require.Equal(s.T(), []string{"/etc/**"}, m[i].Paths)
+				require.Equal(s.T(), types.DecisionAllow, m[i].Decision)
+				for _, r := range m[:i] {
+					require.Equal(s.T(), types.DecisionDeny, r.Decision)
+				}
+				require.Equal(s.T(), "tmp fast-path", m[i+1].Message, "global allows follow the project rule")
+				return i
 			},
 		},
 		{
 			name: "path rule",
-			json: `{"gates": {"agentgate": {"path_rules": [{"pattern":"/var/run/docker.sock", "decision":"allow"}]}}}`,
-			check: func(c *Config) {
-				require.Equal(s.T(), types.DecisionAllow, c.Gates.Agentgate.PathRules[0].Decision)
-				require.Equal(s.T(), "/var/run/docker.sock", c.Gates.Agentgate.PathRules[0].Pattern)
+			json: `{"gates": {"agentgate": {"path_rules": [{"pattern": "/var/run/docker.sock", "decision": "allow"}]}}}`,
+			check: func(main, merged *Config) int {
+				g, m := main.Gates.Agentgate.PathRules, merged.Gates.Agentgate.PathRules
+				i := countDeny(g, decPath)
+				require.Len(s.T(), m, len(g)+1)
+				require.Equal(s.T(), "/var/run/docker.sock", m[i].Pattern)
+				return i
 			},
 		},
 		{
 			name: "docker proxy http rule",
-			json: `{"gates": {"docker_proxy": {"http_rules": [{"methods":["POST"], "paths":["^/x$"], "decision":"allow"}]}}}`,
-			check: func(c *Config) {
-				require.Equal(s.T(), types.DecisionAllow, c.Gates.DockerProxy.HTTPRules[0].Decision)
-				require.Equal(s.T(), []string{"POST"}, c.Gates.DockerProxy.HTTPRules[0].Methods)
+			json: `{"gates": {"docker_proxy": {"http_rules": [{"methods": ["POST"], "paths": ["^/x$"], "decision": "allow"}]}}}`,
+			check: func(main, merged *Config) int {
+				g, m := main.Gates.DockerProxy.HTTPRules, merged.Gates.DockerProxy.HTTPRules
+				i := countDeny(g, decHTTP)
+				require.Len(s.T(), m, len(g)+1)
+				require.Equal(s.T(), []string{"^/x$"}, m[i].Paths)
+				return i
+			},
+		},
+		{
+			name: "docker proxy body rule",
+			json: `{"gates": {"docker_proxy": {"body_rules": [{"applies_to": "POST ^/containers/create$", "json_checks": [{"path": "Image", "op": "equals", "values": ["evil"]}], "decision": "allow"}]}}}`,
+			check: func(main, merged *Config) int {
+				g, m := main.Gates.DockerProxy.BodyRules, merged.Gates.DockerProxy.BodyRules
+				i := countDeny(g, decBody)
+				require.Len(s.T(), m, len(g)+1)
+				require.Equal(s.T(), "POST ^/containers/create$", m[i].AppliesTo)
+				require.Equal(s.T(), types.DecisionAllow, m[i].Decision)
+				return i
 			},
 		},
 	}
@@ -134,153 +180,29 @@ func (s *ConfigSuite) TestProjectGatesAllowRulePrepends() {
 	for _, tc := range tests {
 		s.Run(tc.name, func() {
 			s.setupProjectReadFile(tc.json)
-			merged, err := s.loader.loadProjectConfig("/project", gateMainCfg())
+			main := gateMainCfg()
+			merged, err := s.loader.loadProjectConfig("/project", main)
 			require.NoError(s.T(), err)
-			tc.check(merged)
+			tc.check(main, merged)
 		})
 	}
 }
 
-func (s *ConfigSuite) TestProjectDockerProxyRulesPrepend() {
-	s.setupProjectReadFile(`{
-		"gates": {
-			"docker_proxy": {
-				"http_rules": [
-					{ "methods": ["POST"], "paths": ["^/custom$"], "decision": "deny" }
-				]
-			}
-		}
-	}`)
+func (s *ConfigSuite) TestLayerRules() {
+	dec := func(r types.FileRule) types.Decision { return r.Decision }
+	rule := func(msg string, d types.Decision) types.FileRule { return types.FileRule{Message: msg, Decision: d} }
+	global := []types.FileRule{
+		rule("g-allow", types.DecisionAllow),
+		rule("g-deny-1", types.DecisionDeny),
+		rule("g-approve", types.DecisionApprove),
+		rule("g-deny-2", types.DecisionDeny),
+	}
+	require.Equal(s.T(), global, layerRules(global, nil, dec), "no project rules keeps the global order")
 
-	main := gateMainCfg()
-	globalCount := len(main.Gates.DockerProxy.HTTPRules)
-
-	merged, err := s.loader.loadProjectConfig("/project", main)
-	require.NoError(s.T(), err)
-	require.Len(s.T(), merged.Gates.DockerProxy.HTTPRules, globalCount+1)
-	require.Equal(s.T(), []string{"POST"}, merged.Gates.DockerProxy.HTTPRules[0].Methods)
-	require.Equal(s.T(), types.DecisionDeny, merged.Gates.DockerProxy.HTTPRules[0].Decision)
-}
-
-func (s *ConfigSuite) TestProjectAgentgatePathRulesPrepend() {
-	s.setupProjectReadFile(`{
-		"gates": {
-			"agentgate": {
-				"path_rules": [
-					{ "pattern": "/custom/socket", "decision": "deny", "message": "internal" }
-				]
-			}
-		}
-	}`)
-
-	main := gateMainCfg()
-	globalCount := len(main.Gates.Agentgate.PathRules)
-
-	merged, err := s.loader.loadProjectConfig("/project", main)
-	require.NoError(s.T(), err)
-	require.Len(s.T(), merged.Gates.Agentgate.PathRules, globalCount+1)
-	require.Equal(s.T(), "/custom/socket", merged.Gates.Agentgate.PathRules[0].Pattern)
-	require.Equal(s.T(), types.DecisionDeny, merged.Gates.Agentgate.PathRules[0].Decision)
-}
-
-func (s *ConfigSuite) TestProjectAgentgateFileRulesPrepend() {
-	s.setupProjectReadFile(`{
-		"gates": {
-			"agentgate": {
-				"file_rules": [
-					{ "paths": ["./secret-vault/**"], "operations": ["read"], "decision": "deny" }
-				]
-			}
-		}
-	}`)
-
-	main := gateMainCfg()
-	globalCount := len(main.Gates.Agentgate.FileRules)
-
-	merged, err := s.loader.loadProjectConfig("/project", main)
-	require.NoError(s.T(), err)
-	require.Len(s.T(), merged.Gates.Agentgate.FileRules, globalCount+1)
-	require.Equal(s.T(), []string{"./secret-vault/**"}, merged.Gates.Agentgate.FileRules[0].Paths)
-	require.Equal(s.T(), types.DecisionDeny, merged.Gates.Agentgate.FileRules[0].Decision)
-}
-
-func (s *ConfigSuite) TestProjectDockerProxyDisables() {
-	s.setupProjectReadFile(`{"gates": {"docker_proxy": {"enabled": false}}}`)
-
-	merged, err := s.loader.loadProjectConfig("/project", gateMainCfg())
-	require.NoError(s.T(), err)
-	require.True(s.T(), merged.Gates.Agentgate.Enabled, "agentgate should stay enabled")
-	require.False(s.T(), merged.Gates.DockerProxy.Enabled)
-}
-
-func (s *ConfigSuite) TestProjectDockerProxyBodyRulesPrepend() {
-	s.setupProjectReadFile(`{
-		"gates": {
-			"docker_proxy": {
-				"body_rules": [
-					{
-						"applies_to": "POST ^/containers/create$",
-						"json_checks": [ {"path": "Image", "op": "equals", "values": ["evil"]} ],
-						"decision": "deny"
-					}
-				]
-			}
-		}
-	}`)
-
-	main := gateMainCfg()
-	globalCount := len(main.Gates.DockerProxy.BodyRules)
-
-	merged, err := s.loader.loadProjectConfig("/project", main)
-	require.NoError(s.T(), err)
-	require.Len(s.T(), merged.Gates.DockerProxy.BodyRules, globalCount+1)
-	require.Equal(s.T(), "POST ^/containers/create$", merged.Gates.DockerProxy.BodyRules[0].AppliesTo)
-	require.Equal(s.T(), types.DecisionDeny, merged.Gates.DockerProxy.BodyRules[0].Decision)
-}
-
-func (s *ConfigSuite) TestProjectDockerProxyBodyRuleAllowPrepends() {
-	s.setupProjectReadFile(`{
-		"gates": {
-			"docker_proxy": {
-				"body_rules": [
-					{
-						"applies_to": "POST ^/containers/create$",
-						"json_checks": [ {"path": "HostConfig.Binds[*]", "op": "source_path_in", "values": ["^/var/run/docker\\.sock$"]} ],
-						"decision": "allow"
-					}
-				]
-			}
-		}
-	}`)
-
-	main := gateMainCfg()
-	globalCount := len(main.Gates.DockerProxy.BodyRules)
-
-	merged, err := s.loader.loadProjectConfig("/project", main)
-	require.NoError(s.T(), err)
-	require.Len(s.T(), merged.Gates.DockerProxy.BodyRules, globalCount+1)
-	require.Equal(s.T(), types.DecisionAllow, merged.Gates.DockerProxy.BodyRules[0].Decision)
-	require.Equal(s.T(), "POST ^/containers/create$", merged.Gates.DockerProxy.BodyRules[0].AppliesTo)
-}
-
-func (s *ConfigSuite) TestProjectAgentgateCommandRuleApprovePrepends() {
-	s.setupProjectReadFile(`{
-		"gates": {
-			"agentgate": {
-				"command_rules": [
-					{ "commands": ["git"], "args_patterns": ["^commit(\\s|$)"], "decision": "approve", "message": "git commit (approval required)" }
-				]
-			}
-		}
-	}`)
-
-	main := gateMainCfg()
-	globalCount := len(main.Gates.Agentgate.CommandRules)
-
-	merged, err := s.loader.loadProjectConfig("/project", main)
-	require.NoError(s.T(), err)
-	require.Len(s.T(), merged.Gates.Agentgate.CommandRules, globalCount+1)
-	require.Equal(s.T(), types.DecisionApprove, merged.Gates.Agentgate.CommandRules[0].Decision)
-	require.Equal(s.T(), []string{"git"}, merged.Gates.Agentgate.CommandRules[0].Commands)
-	require.Equal(s.T(), []string{`^commit(\s|$)`}, merged.Gates.Agentgate.CommandRules[0].ArgsPatterns)
+	got := layerRules(global, []types.FileRule{rule("p-allow", types.DecisionAllow), rule("p-deny", types.DecisionDeny)}, dec)
+	var msgs []string
+	for _, r := range got {
+		msgs = append(msgs, r.Message)
+	}
+	require.Equal(s.T(), []string{"g-deny-1", "g-deny-2", "p-allow", "p-deny", "g-allow", "g-approve"}, msgs)
 }

@@ -8,11 +8,17 @@ import (
 	"strconv"
 
 	"github.com/gorilla/websocket"
+
+	"github.com/radutopala/loop/internal/apiauth"
 )
 
-// wsUpgrader is the shared WebSocket upgrader for all WS endpoints.
+// wsUpgrader is the shared WebSocket upgrader for all WS endpoints. Any
+// origin may connect: a WebSocket only gets past the auth middleware with a
+// token, which a page from another origin doesn't have. The UI sends its
+// token as a subprotocol, and the upgrader answers with apiauth.WSProtocol.
 var wsUpgrader = websocket.Upgrader{
-	CheckOrigin: func(_ *http.Request) bool { return true },
+	CheckOrigin:  func(_ *http.Request) bool { return true },
+	Subprotocols: []string{apiauth.WSProtocol},
 }
 
 // decodeJSON reads the request body into dst. On failure it writes a 400 response

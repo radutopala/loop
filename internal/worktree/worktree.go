@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/radutopala/loop/internal/gitutil"
 	"github.com/radutopala/loop/internal/osutil"
 )
 
@@ -39,8 +40,12 @@ type CreateResult struct {
 	SessionStaged bool
 }
 
-// ExecCommandRunner is a CommandRunner that uses exec.CommandContext.
+// ExecCommandRunner is a CommandRunner that uses exec.CommandContext. git
+// runs through gitutil, since the repos it touches are agent-writable.
 func ExecCommandRunner(ctx context.Context, dir, name string, args ...string) ([]byte, error) {
+	if name == "git" {
+		return gitutil.Command(ctx, dir, args...).CombinedOutput()
+	}
 	cmd := exec.CommandContext(ctx, name, args...)
 	cmd.Dir = dir
 	return cmd.CombinedOutput()

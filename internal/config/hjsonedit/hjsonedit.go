@@ -29,23 +29,48 @@ type FS interface {
 // value per line with the file's indentation, unless it lands in a container
 // written on one line. The write is atomic.
 func Append(fsys FS, configPath string, path []string, item any) error {
-	if len(path) == 0 {
-		return errors.New("empty path")
+	_, _, err := AppendData(fsys, configPath, path, item)
+	return err
+}
+
+// AppendData is Append, and returns the file content it read (nil for a
+// missing file) and the content it wrote.
+func AppendData(fsys FS, configPath string, path []string, item any) (before, after []byte, err error) {
+	before, after, err = Appended(fsys, configPath, path, item)
+	if err != nil {
+		return nil, nil, err
 	}
-	data, err := fsys.ReadFile(configPath)
+	if err := fsys.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
+		return nil, nil, fmt.Errorf("creating %s: %w", filepath.Dir(configPath), err)
+	}
+	if err := atomicWrite(fsys, configPath, after); err != nil {
+		return nil, nil, err
+	}
+	return before, after, nil
+}
+
+// Appended is AppendData without the write: the file content it reads (nil
+// for a missing file) and the content Append would write, for showing the
+// edit before making it.
+func Appended(fsys FS, configPath string, path []string, item any) (before, after []byte, err error) {
+	if len(path) == 0 {
+		return nil, nil, errors.New("empty path")
+	}
+	before, err = fsys.ReadFile(configPath)
+	data := before
 	if err != nil {
 		if !errors.Is(err, os.ErrNotExist) {
-			return fmt.Errorf("reading %s: %w", configPath, err)
+			return nil, nil, fmt.Errorf("reading %s: %w", configPath, err)
 		}
-		data = []byte("{}\n")
+		before, data = nil, []byte("{}\n")
 	}
 	v, err := hujson.Parse(data)
 	if err != nil {
-		return fmt.Errorf("parsing %s: %w", configPath, err)
+		return nil, nil, fmt.Errorf("parsing %s: %w", configPath, err)
 	}
 	op, err := appendOp(&v, path, item)
 	if err != nil {
-		return err
+		return nil, nil, err
 	}
 	rootLines := multiline(&v)
 	ops, err := json.Marshal([]any{op})
@@ -53,13 +78,10 @@ func Append(fsys FS, configPath string, path []string, item any) error {
 		err = v.Patch(ops)
 	}
 	if err != nil {
-		return fmt.Errorf("editing %s: %w", configPath, err)
+		return nil, nil, fmt.Errorf("editing %s: %w", configPath, err)
 	}
 	indentAdded(&v, path, op, rootLines)
-	if err := fsys.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
-		return fmt.Errorf("creating %s: %w", filepath.Dir(configPath), err)
-	}
-	return atomicWrite(fsys, configPath, v.Pack())
+	return before, v.Pack(), nil
 }
 
 // patchOp is one RFC 6902 operation.

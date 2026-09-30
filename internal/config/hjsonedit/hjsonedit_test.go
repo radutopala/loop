@@ -223,3 +223,33 @@ func (s *HJSONEditSuite) TestMarshalError() {
 	require.ErrorContains(s.T(), err, "json: unsupported type")
 	require.Equal(s.T(), "{}", s.read())
 }
+
+func (s *HJSONEditSuite) TestAppendData() {
+	before, after, err := AppendData(osutil.RealSystem{}, s.path, []string{"mounts"}, "/a:/a")
+	require.NoError(s.T(), err)
+	require.Nil(s.T(), before, "no file before")
+	require.Equal(s.T(), s.read(), string(after))
+
+	before, after, err = AppendData(osutil.RealSystem{}, s.path, []string{"mounts"}, "/b:/b")
+	require.NoError(s.T(), err)
+	require.Contains(s.T(), string(before), "/a:/a")
+	require.NotContains(s.T(), string(before), "/b:/b")
+	require.Equal(s.T(), s.read(), string(after))
+	require.Contains(s.T(), string(after), "/b:/b")
+}
+
+func (s *HJSONEditSuite) TestAppendedWritesNothing() {
+	before, after, err := Appended(osutil.RealSystem{}, s.path, []string{"mounts"}, "/a:/a")
+	require.NoError(s.T(), err)
+	require.Nil(s.T(), before, "no file before")
+	require.Contains(s.T(), string(after), "/a:/a")
+	require.NoFileExists(s.T(), s.path)
+
+	require.NoError(s.T(), Append(osutil.RealSystem{}, s.path, []string{"mounts"}, "/a:/a"))
+	written := s.read()
+	before, after, err = Appended(osutil.RealSystem{}, s.path, []string{"mounts"}, "/b:/b")
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), written, string(before))
+	require.Contains(s.T(), string(after), "/b:/b")
+	require.Equal(s.T(), written, s.read(), "the file is left as it was")
+}

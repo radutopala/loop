@@ -2,13 +2,15 @@ package api
 
 import (
 	"context"
+	"fmt"
 	"net/http"
-	"os/exec"
+	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/radutopala/loop/internal/container"
 	"github.com/radutopala/loop/internal/db"
+	"github.com/radutopala/loop/internal/gitutil"
 )
 
 const channelsNotConfiguredMsg = "channel creation not configured (discord_guild_id not set or Slack not configured)"
@@ -69,6 +71,9 @@ type channelResponse struct {
 	// LastActivityAt is when the channel's newest message was written; the
 	// sidebar's Recent section sorts by it. Absent for a channel with none.
 	LastActivityAt *time.Time `json:"last_activity_at,omitempty"`
+	// TrustPending is set when the channel's project config has fields
+	// waiting for the owner's trust: they don't apply until then.
+	TrustPending bool `json:"trust_pending,omitempty"`
 }
 
 func (s *Server) handleEnsureChannel(w http.ResponseWriter, r *http.Request) {
@@ -81,12 +86,13 @@ func (s *Server) handleEnsureChannel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if req.DirPath == "" {
-		http.Error(w, "dir_path is required", http.StatusBadRequest)
+	dirPath, err := s.validateChannelDirPath(req.DirPath)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 
-	channelID, err := s.channels.EnsureChannel(r.Context(), req.DirPath, req.Platform)
+	channelID, err := s.channels.EnsureChannel(r.Context(), dirPath, req.Platform)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -190,6 +196,18 @@ func (s *Server) handleSearchChannels(w http.ResponseWriter, r *http.Request) {
 		return st
 	}
 
+	// Trust is per project dir, the one Settings → Project trusts: a
+	// worktree chain's root checkout, else the channel's own dir.
+	trustPending := make(map[string]bool)
+	trustPendingFor := func(dir string) bool {
+		pending, ok := trustPending[dir]
+		if !ok {
+			pending = s.projectTrustPending(dir)
+			trustPending[dir] = pending
+		}
+		return pending
+	}
+
 	resp := make([]channelResponse, 0, len(channels))
 	for _, ch := range channels {
 		if platformFilter != "" && string(ch.Platform) != platformFilter {
@@ -218,6 +236,11 @@ func (s *Server) handleSearchChannels(w http.ResponseWriter, r *http.Request) {
 		if at, ok := activity[ch.ChannelID]; ok {
 			lastActivity = &at
 		}
+		rootDirPath := db.WorktreeRootDirPath(r.Context(), byID, ch)
+		trustDir := dirPath
+		if rootDirPath != "" {
+			trustDir = rootDirPath
+		}
 		resp = append(resp, channelResponse{
 			ChannelID:        ch.ChannelID,
 			Name:             ch.Name,
@@ -238,7 +261,7 @@ func (s *Server) handleSearchChannels(w http.ResponseWriter, r *http.Request) {
 			BaseBehind:       git.BaseBehind,
 			Worktree:         ch.Worktree,
 			BaseBranch:       ch.BaseBranch,
-			RootDirPath:      db.WorktreeRootDirPath(r.Context(), byID, ch),
+			RootDirPath:      rootDirPath,
 			Locked:           ch.Locked,
 			DiffAdditions:    git.DiffAdditions,
 			DiffDeletions:    git.DiffDeletions,
@@ -249,6 +272,7 @@ func (s *Server) handleSearchChannels(w http.ResponseWriter, r *http.Request) {
 			Description:      ch.Description,
 			TicketURL:        ch.TicketURL,
 			LastActivityAt:   lastActivity,
+			TrustPending:     trustPendingFor(trustDir),
 		})
 	}
 
@@ -260,8 +284,7 @@ func gitBranch(ctx context.Context, dir string) string {
 	if dir == "" {
 		return ""
 	}
-	cmd := exec.CommandContext(ctx, "git", "rev-parse", "--abbrev-ref", "HEAD")
-	cmd.Dir = dir
+	cmd := gitutil.Command(ctx, dir, "rev-parse", "--abbrev-ref", "HEAD")
 	out, err := cmd.Output()
 	if err != nil {
 		return ""
@@ -521,18 +544,58 @@ func (s *Server) handleEnsureAllChannels(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	if req.DirPath == "" {
-		http.Error(w, "dir_path is required", http.StatusBadRequest)
+	dirPath, err := s.validateChannelDirPath(req.DirPath)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 
-	results, err := s.channels.EnsureChannelAllPlatforms(r.Context(), req.DirPath)
+	results, err := s.channels.EnsureChannelAllPlatforms(r.Context(), dirPath)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
 	writeHTTPJSON(w, http.StatusOK, results, s.logger)
+}
+
+// validateChannelDirPath checks a dir_path a channel is about to be bound to:
+// it must be an absolute path to an existing directory, and must not equal or
+// contain any protected directory — compared both lexically and with symlinks
+// resolved, so a link can't smuggle one in. Returns the cleaned path.
+func (s *Server) validateChannelDirPath(dirPath string) (string, error) {
+	if dirPath == "" {
+		return "", fmt.Errorf("dir_path is required")
+	}
+	if !filepath.IsAbs(dirPath) {
+		return "", fmt.Errorf("dir_path must be an absolute path")
+	}
+	cleaned := filepath.Clean(dirPath)
+	info, err := s.sys.Stat(cleaned)
+	if err != nil {
+		return "", fmt.Errorf("dir_path %q is not an existing directory", cleaned)
+	}
+	if !info.IsDir() {
+		return "", fmt.Errorf("dir_path %q is not a directory", cleaned)
+	}
+	realDir := s.realOrClean(cleaned)
+	for _, p := range s.protectedDirs {
+		protected := filepath.Clean(p)
+		if pathWithin(protected, cleaned) || pathWithin(s.realOrClean(protected), realDir) {
+			return "", fmt.Errorf("%s can't be a project folder: it contains %s, where Loop keeps its API token and runtime state, "+
+				"and a project folder is mounted into agent containers. Pick a folder inside it instead", cleaned, protected)
+		}
+	}
+	return cleaned, nil
+}
+
+// realOrClean returns p with symlinks resolved, or p itself when it can't be
+// resolved (e.g. it doesn't exist).
+func (s *Server) realOrClean(p string) string {
+	if real, err := s.sys.EvalSymlinks(p); err == nil {
+		return real
+	}
+	return p
 }
 
 func containsFold(s, substr string) bool {

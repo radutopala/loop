@@ -37,9 +37,9 @@ func (s *MainSuite) TestReviewHTTPClientUsesInjected() {
 	require.Same(s.T(), stub, s.app.reviewHTTPClient())
 }
 
-func (s *MainSuite) TestReviewHTTPClientFallsBackToDefault() {
+func (s *MainSuite) TestReviewHTTPClientFallsBackToAPIClient() {
 	s.app.reviewClient = nil
-	require.Same(s.T(), http.DefaultClient, s.app.reviewHTTPClient())
+	require.Same(s.T(), s.app.apiClient, s.app.reviewHTTPClient())
 }
 
 // --- runReview (no --wait) ---

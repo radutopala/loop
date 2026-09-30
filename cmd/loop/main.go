@@ -26,6 +26,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/radutopala/loop/internal/api"
+	"github.com/radutopala/loop/internal/apiauth"
 	"github.com/radutopala/loop/internal/browser"
 	"github.com/radutopala/loop/internal/config"
 	"github.com/radutopala/loop/internal/container"
@@ -137,6 +138,9 @@ type app struct {
 	newBrowserProvider     func(config.BrowserConfig, *slog.Logger) (api.BrowserProvider, error)
 	discoverWSEndpoint     func() (string, error)
 	openLogFile            func(string) (*os.File, error)
+	userConfigDir          func() (string, error)
+	apiClient              *http.Client // sends this machine's API token
+	newSigner              func() (*apiauth.Signer, error)
 
 	// Update dependencies
 	httpGet            func(string) (*http.Response, error)
@@ -223,8 +227,11 @@ func newApp() *app {
 		newSystem:    func() daemon.System { return daemon.RealSystem{} },
 
 		// Serve dependencies
-		newAPIServer: api.NewServer,
-		newMCPServer: mcpserver.New,
+		newAPIServer:  api.NewServer,
+		userConfigDir: os.UserConfigDir,
+		apiClient:     apiauth.NewHTTPClient(),
+		newSigner:     apiauth.NewSigner,
+		newMCPServer:  mcpserver.New,
 		newDockerClient: func() (container.DockerClient, error) {
 			return container.NewClient()
 		},
@@ -334,6 +341,8 @@ func (a *app) newRootCmd() *cobra.Command {
 	root.AddCommand(a.newDockerproxyCmd())
 	root.AddCommand(a.newQualityCmd())
 	root.AddCommand(a.newReviewCmd())
+	root.AddCommand(a.newAPIRotateTokenCmd())
+	root.AddCommand(a.newAppURLCmd())
 	root.SetHelpTemplate(helpTemplate)
 	return root
 }
@@ -412,7 +421,7 @@ type ensureResult struct {
 
 func (a *app) ensureChannel(apiURL, dirPath, platform string) (string, error) {
 	body := fmt.Sprintf(`{"dir_path":%q,"platform":%q}`, dirPath, platform)
-	resp, err := http.Post(apiURL+"/api/channels", "application/json", strings.NewReader(body))
+	resp, err := a.apiClient.Post(apiURL+"/api/channels", "application/json", strings.NewReader(body))
 	if err != nil {
 		return "", fmt.Errorf("calling ensure channel API: %w", err)
 	}
@@ -434,7 +443,7 @@ func (a *app) ensureChannel(apiURL, dirPath, platform string) (string, error) {
 
 func (a *app) ensureAllChannels(apiURL, dirPath string) ([]ensureResult, error) {
 	body := fmt.Sprintf(`{"dir_path":%q}`, dirPath)
-	resp, err := http.Post(apiURL+"/api/channels/ensure-all", "application/json", strings.NewReader(body))
+	resp, err := a.apiClient.Post(apiURL+"/api/channels/ensure-all", "application/json", strings.NewReader(body))
 	if err != nil {
 		return nil, fmt.Errorf("calling ensure-all channels API: %w", err)
 	}

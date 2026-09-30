@@ -1,4 +1,4 @@
-import { getApiUrl } from "./api";
+import { apiFetch, getApiUrl } from "./api";
 
 export interface ReviewPR {
   number: number;
@@ -92,27 +92,27 @@ export interface ReviewSessionSummary {
  * the renderer was closed would never re-light its indicator.
  */
 export async function listReviewSessions(): Promise<ReviewSessionSummary[]> {
-  const res = await fetch(`${getApiUrl()}/api/review/sessions`);
+  const res = await apiFetch(`${getApiUrl()}/api/review/sessions`);
   if (!res.ok) throw new Error(`Failed to list review sessions: ${res.statusText}`);
   const body = (await res.json()) as { sessions?: ReviewSessionSummary[] };
   return Array.isArray(body.sessions) ? body.sessions : [];
 }
 
 export async function listReviewPRs(channelId: string): Promise<ReviewPR[]> {
-  const res = await fetch(`${getApiUrl()}/api/channels/${channelId}/review/prs`);
+  const res = await apiFetch(`${getApiUrl()}/api/channels/${channelId}/review/prs`);
   if (!res.ok) throw new Error((await res.text()) || `Failed to list PRs: ${res.statusText}`);
   const body = (await res.json()) as { prs?: ReviewPR[] };
   return Array.isArray(body.prs) ? body.prs : [];
 }
 
 export async function getReviewSession(channelId: string): Promise<ReviewSessionResponse> {
-  const res = await fetch(`${getApiUrl()}/api/channels/${channelId}/review`);
+  const res = await apiFetch(`${getApiUrl()}/api/channels/${channelId}/review`);
   if (!res.ok) throw new Error(`Failed to fetch review session: ${res.statusText}`);
   return normalizeSession(await res.json());
 }
 
 export async function loadReviewPR(channelId: string, prNumber: number): Promise<ReviewSessionResponse> {
-  const res = await fetch(`${getApiUrl()}/api/channels/${channelId}/review/load`, {
+  const res = await apiFetch(`${getApiUrl()}/api/channels/${channelId}/review/load`, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ pr_number: prNumber }),
@@ -122,18 +122,18 @@ export async function loadReviewPR(channelId: string, prNumber: number): Promise
 }
 
 export async function syncReviewSession(channelId: string): Promise<ReviewSessionResponse> {
-  const res = await fetch(`${getApiUrl()}/api/channels/${channelId}/review/sync`, { method: "POST" });
+  const res = await apiFetch(`${getApiUrl()}/api/channels/${channelId}/review/sync`, { method: "POST" });
   if (!res.ok) throw new Error((await res.text()) || `Failed to sync review: ${res.statusText}`);
   return normalizeSession(await res.json());
 }
 
 export async function deleteReviewSession(channelId: string): Promise<void> {
-  const res = await fetch(`${getApiUrl()}/api/channels/${channelId}/review`, { method: "DELETE" });
+  const res = await apiFetch(`${getApiUrl()}/api/channels/${channelId}/review`, { method: "DELETE" });
   if (!res.ok && res.status !== 404) throw new Error(`Failed to close review: ${res.statusText}`);
 }
 
 export async function runReview(channelId: string): Promise<{ status: string }> {
-  const res = await fetch(`${getApiUrl()}/api/channels/${channelId}/review/run`, { method: "POST" });
+  const res = await apiFetch(`${getApiUrl()}/api/channels/${channelId}/review/run`, { method: "POST" });
   if (!res.ok) throw new Error((await res.text()) || `Failed to start review: ${res.statusText}`);
   return res.json();
 }
@@ -146,7 +146,7 @@ export async function runReview(channelId: string): Promise<{ status: string }> 
  * session so the caller can render the new state without a follow-up GET.
  */
 export async function setReviewFork(channelId: string, mode: ReviewForkMode, sessionId?: string): Promise<ReviewSessionResponse> {
-  const res = await fetch(`${getApiUrl()}/api/channels/${channelId}/review/fork`, {
+  const res = await apiFetch(`${getApiUrl()}/api/channels/${channelId}/review/fork`, {
     method: "PUT",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ mode, session_id: sessionId ?? "" }),
@@ -161,7 +161,7 @@ export async function setReviewFork(channelId: string, mode: ReviewForkMode, ses
  * the fork choice. Returns the updated session.
  */
 export async function setReviewAgent(channelId: string, model: string, effort: string): Promise<ReviewSessionResponse> {
-  const res = await fetch(`${getApiUrl()}/api/channels/${channelId}/review/agent`, {
+  const res = await apiFetch(`${getApiUrl()}/api/channels/${channelId}/review/agent`, {
     method: "PUT",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ model, effort }),
@@ -171,17 +171,17 @@ export async function setReviewAgent(channelId: string, model: string, effort: s
 }
 
 export async function pushReviewComment(channelId: string, commentId: string): Promise<void> {
-  const res = await fetch(`${getApiUrl()}/api/channels/${channelId}/review/comments/${encodeURIComponent(commentId)}/push`, { method: "POST" });
+  const res = await apiFetch(`${getApiUrl()}/api/channels/${channelId}/review/comments/${encodeURIComponent(commentId)}/push`, { method: "POST" });
   if (!res.ok) throw new Error((await res.text()) || `Failed to push comment: ${res.statusText}`);
 }
 
 export async function deleteReviewComment(channelId: string, commentId: string): Promise<void> {
-  const res = await fetch(`${getApiUrl()}/api/channels/${channelId}/review/comments/${encodeURIComponent(commentId)}`, { method: "DELETE" });
+  const res = await apiFetch(`${getApiUrl()}/api/channels/${channelId}/review/comments/${encodeURIComponent(commentId)}`, { method: "DELETE" });
   if (!res.ok) throw new Error((await res.text()) || `Failed to delete comment: ${res.statusText}`);
 }
 
 export async function pushAllReviewComments(channelId: string): Promise<PushAllResult> {
-  const res = await fetch(`${getApiUrl()}/api/channels/${channelId}/review/push-all`, { method: "POST" });
+  const res = await apiFetch(`${getApiUrl()}/api/channels/${channelId}/review/push-all`, { method: "POST" });
   if (!res.ok) throw new Error((await res.text()) || `Failed to push comments: ${res.statusText}`);
   return res.json();
 }

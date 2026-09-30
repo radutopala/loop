@@ -120,6 +120,41 @@ func (s *ChannelSuite) TestStartPushReceiver() {
 	require.Equal(s.T(), "notifications/claude/channel", req.Method)
 }
 
+func (s *ChannelSuite) TestStartPushReceiverSendsAPIToken() {
+	got := make(chan string, 1)
+	upgrader := websocket.Upgrader{}
+	wsSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		select {
+		case got <- r.Header.Get("Authorization"):
+		default:
+		}
+		conn, err := upgrader.Upgrade(w, r, nil)
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+		time.Sleep(100 * time.Millisecond)
+	}))
+	defer wsSrv.Close()
+
+	transport := newChannelTransport()
+	transport.writer = &syncBuffer{}
+	srv := New("ch-1", "http"+strings.TrimPrefix(wsSrv.URL, "http"), "", nil, nil,
+		WithAgentTools("agent-0"), WithAPIToken(func() string { return "tok" }))
+	srv.channelTransport = transport
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	serverSide, _ := mcp.NewInMemoryTransports()
+	go func() { _ = srv.Run(ctx, serverSide) }()
+
+	select {
+	case h := <-got:
+		require.Equal(s.T(), "Bearer tok", h)
+	case <-time.After(5 * time.Second):
+		s.T().Fatal("no push connection")
+	}
+}
+
 func (s *ChannelSuite) TestStartPushReceiverReconnects() {
 	// Server that accepts connections, sends a message on the second connect.
 	var connectCount int32

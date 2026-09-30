@@ -72,7 +72,15 @@ type browserService struct {
 	containerRegistry ContainerManager // mirrored from Server.SetContainerRegistry
 	keepAlive         time.Duration    // delay before removing idle browser containers
 	screenshotDir     string           // if set, write screenshots to this dir instead of base64
+
+	// carriesOwnerToken reports whether a URL is a signed-in UI link for this
+	// daemon (see apiauth.Authenticator.CarriesOwnerToken). Agents read and
+	// script the pages of this browser, so such a link isn't opened here.
+	carriesOwnerToken func(rawURL string) bool
 }
+
+// errOwnerLink explains why a signed-in UI link isn't opened.
+const errOwnerLink = "this link carries Loop's owner token, and an agent can read it from the page; open Loop in your own browser instead"
 
 // newBrowserService creates the browser domain with its state maps ready.
 // Providers, keep-alive, and screenshot dir arrive later via the WithBrowser*
@@ -417,6 +425,9 @@ func (s *browserService) dispatchBrowserAction(req browserActionRequest, cdpCl b
 	switch req.Action {
 	case "navigate":
 		url := paramStr(params, "url")
+		if s.carriesOwnerToken(url) {
+			return browserActionResponse{Error: errOwnerLink}
+		}
 		if err := cdpCl.Navigate(bg, url); err != nil {
 			return browserActionResponse{Error: fmt.Sprintf("navigate failed: %v", err)}
 		}
@@ -613,6 +624,9 @@ func (s *browserService) dispatchBrowserAction(req browserActionRequest, cdpCl b
 		url := paramStr(params, "url")
 		if url == "" {
 			url = "about:blank"
+		}
+		if s.carriesOwnerToken(url) {
+			return browserActionResponse{Error: errOwnerLink}
 		}
 		targetID, err := cdpCl.NewTab(bg, url)
 		if err != nil {

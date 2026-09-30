@@ -113,7 +113,7 @@ func (s *ApprovalSuite) waitForPending(m *Manager, n int) string {
 func (s *ApprovalSuite) TestCacheHitSkipsPrompt() {
 	bot := &fakeBot{}
 	m := s.newManager(bot, types.RateLimits{})
-	m.cache["k1"] = types.DecisionAllow
+	m.cache["\x00k1"] = types.DecisionAllow
 
 	var promptFired bool
 	out := m.Request(context.Background(), "chan1", ApprovalRequest{
@@ -125,6 +125,32 @@ func (s *ApprovalSuite) TestCacheHitSkipsPrompt() {
 	require.Equal(s.T(), "cache-hit", out.Reason)
 	require.Equal(s.T(), 0, bot.sendCount)
 	require.False(s.T(), promptFired, "OnPrompt must not fire when cache short-circuits")
+}
+
+func (s *ApprovalSuite) TestCacheKeysAreScopedByKind() {
+	bot := &fakeBot{}
+	m := s.newManager(bot, types.RateLimits{})
+
+	outCh := s.request(m, ApprovalRequest{Kind: "file", CacheKey: "/x"})
+	reqID := s.waitForPending(m, 1)
+	require.NoError(s.T(), m.Resolve(reqID, DecisionSession, "u"))
+	require.Equal(s.T(), types.DecisionAllow, (<-outCh).Decision)
+
+	// Same key, same kind: served from the session cache.
+	out := m.Request(context.Background(), "chan1", ApprovalRequest{Kind: "file", CacheKey: "/x"})
+	require.True(s.T(), out.FromCache)
+
+	// Same key, another kind: prompts afresh.
+	outCh = s.request(m, ApprovalRequest{Kind: "docker", CacheKey: "/x"})
+	reqID = s.waitForPending(m, 1)
+	require.NoError(s.T(), m.Resolve(reqID, DecisionDeny, "u"))
+	require.Equal(s.T(), types.DecisionDeny, (<-outCh).Decision)
+	require.Equal(s.T(), 2, bot.sendCount)
+
+	m.mu.Lock()
+	_, scoped := m.cache["file\x00/x"]
+	m.mu.Unlock()
+	require.True(s.T(), scoped)
 }
 
 func (s *ApprovalSuite) TestOnPromptFiresOnceOnRealPrompt() {
@@ -188,7 +214,7 @@ func (s *ApprovalSuite) TestResolveOnceAllowNotCached() {
 	require.Equal(s.T(), types.DecisionAllow, out.Decision)
 	require.Equal(s.T(), "u", out.Actor)
 	m.mu.Lock()
-	_, cached := m.cache["k"]
+	_, cached := m.cache["\x00k"]
 	m.mu.Unlock()
 	require.False(s.T(), cached)
 	require.Equal(s.T(), 1, bot.removeCnt)
@@ -204,7 +230,7 @@ func (s *ApprovalSuite) TestResolveSessionAllowCached() {
 	<-outCh
 
 	m.mu.Lock()
-	d, ok := m.cache["k"]
+	d, ok := m.cache["\x00k"]
 	m.mu.Unlock()
 	require.True(s.T(), ok)
 	require.Equal(s.T(), types.DecisionAllow, d)
@@ -221,7 +247,7 @@ func (s *ApprovalSuite) TestResolveDeny() {
 
 	require.Equal(s.T(), types.DecisionDeny, out.Decision)
 	m.mu.Lock()
-	_, cached := m.cache["k"]
+	_, cached := m.cache["\x00k"]
 	m.mu.Unlock()
 	require.False(s.T(), cached)
 }
@@ -236,7 +262,7 @@ func (s *ApprovalSuite) TestResolveDenySessionCached() {
 	<-outCh
 
 	m.mu.Lock()
-	d, ok := m.cache["k"]
+	d, ok := m.cache["\x00k"]
 	m.mu.Unlock()
 	require.True(s.T(), ok)
 	require.Equal(s.T(), types.DecisionDeny, d)
@@ -306,7 +332,7 @@ func (s *ApprovalSuite) TestOnceDecisionCollapsesRepeatBurst() {
 
 	// Once-scope must still stay out of the session cache.
 	m.mu.Lock()
-	_, cached := m.cache["execve:git:push origin"]
+	_, cached := m.cache["\x00execve:git:push origin"]
 	m.mu.Unlock()
 	require.False(s.T(), cached)
 }
@@ -361,8 +387,8 @@ func (s *ApprovalSuite) TestSessionDecisionSupersedesBurstMemo() {
 	<-secondCh
 
 	m.mu.Lock()
-	_, stillMemoed := m.burst["k"]
-	cached := m.cache["k"]
+	_, stillMemoed := m.burst["\x00k"]
+	cached := m.cache["\x00k"]
 	m.mu.Unlock()
 	require.False(s.T(), stillMemoed, "session scope must drop the stale once-memo")
 	require.Equal(s.T(), types.DecisionAllow, cached)
@@ -402,7 +428,7 @@ func (s *ApprovalSuite) TestBurstMemoSweepsExpiredKeys() {
 	m.mu.Lock()
 	_, stale := m.burst["stale"]
 	_, fresh := m.burst["fresh"]
-	_, added := m.burst["k"]
+	_, added := m.burst["\x00k"]
 	m.mu.Unlock()
 	require.False(s.T(), stale, "writing a memo sweeps expired ones")
 	require.True(s.T(), fresh)

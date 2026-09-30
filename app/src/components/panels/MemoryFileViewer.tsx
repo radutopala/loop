@@ -5,10 +5,10 @@ import { bracketMatching, foldGutter, foldKeymap } from "@codemirror/language";
 import { search, searchKeymap } from "@codemirror/search";
 import { Compartment, EditorState } from "@codemirror/state";
 import { drawSelection, EditorView, highlightActiveLine, highlightActiveLineGutter, keymap, lineNumbers } from "@codemirror/view";
-import { marked } from "marked";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useTheme } from "../../ThemeContext";
 import { fonts } from "../../theme";
+import { renderMarkdownSafe } from "../../utils/markdownSafe";
 import { buildEditorTheme } from "./editorTheme";
 import { buildMarkdownStyles } from "./FilePanel";
 import { MemoryFileIcon } from "./MemoryFileList";
@@ -57,7 +57,7 @@ export function MemoryFileViewer({
     if (previewTimerRef.current) clearTimeout(previewTimerRef.current);
     previewTimerRef.current = setTimeout(() => {
       previewTimerRef.current = null;
-      setPreviewHtml(marked.parse(doc, { async: false }) as string);
+      setPreviewHtml(renderMarkdownSafe(doc));
     }, 300);
   }, []);
 
@@ -108,7 +108,7 @@ export function MemoryFileViewer({
     });
 
     viewRef.current = view;
-    setPreviewHtml(marked.parse(fileContent, { async: false }) as string);
+    setPreviewHtml(renderMarkdownSafe(fileContent));
 
     // Sync editor scroll -> preview.
     const scroller = editorRef.current;

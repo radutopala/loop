@@ -254,6 +254,10 @@ export interface ChatInputProps {
   // Shown above the composer when an edit ended because the message started.
   editNotice?: string | null;
   onDismissEditNotice?: () => void;
+  // The project config's host-reaching fields wait for the owner's trust;
+  // shown above the composer until trusted, since they don't apply till then.
+  trustPending?: boolean;
+  onReviewTrust?: () => void;
 }
 
 function buildQuotePrefix(msg: Message): string {
@@ -283,6 +287,8 @@ export function ChatInput({
   editingQueued,
   onSaveEdit,
   onCancelEdit,
+  trustPending,
+  onReviewTrust,
   editNotice,
   onDismissEditNotice,
 }: ChatInputProps) {
@@ -1044,6 +1050,16 @@ export function ChatInput({
           <button data-testid="queued-edit-cancel" onClick={cancelEdit} style={bannerButtonStyle} title="Cancel (Esc)">
             Cancel
           </button>
+        </div>
+      )}
+      {trustPending && (
+        <div data-testid="project-trust-banner" style={bannerStyle}>
+          <span style={{ flex: 1, color: colors.warning }}>Project config changed: its new mounts, extra dirs, gates and envs don't apply until you trust them</span>
+          {onReviewTrust && (
+            <button data-testid="project-trust-review" onClick={onReviewTrust} style={{ ...bannerButtonStyle, color: colors.textLight }} title="Review in Settings → Project">
+              Review
+            </button>
+          )}
         </div>
       )}
       {!editingQueued && editNotice && (

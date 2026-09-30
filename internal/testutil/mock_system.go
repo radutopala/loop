@@ -22,6 +22,12 @@ func (m *MockSystem) Stat(name string) (os.FileInfo, error) {
 	return args.Get(0).(os.FileInfo), args.Error(1)
 }
 
+func (m *MockSystem) Lstat(name string) (os.FileInfo, error) {
+	args := m.Called(name)
+	info, _ := args.Get(0).(os.FileInfo)
+	return info, args.Error(1)
+}
+
 func (m *MockSystem) ReadFile(name string) ([]byte, error) {
 	args := m.Called(name)
 	if args.Get(0) == nil {

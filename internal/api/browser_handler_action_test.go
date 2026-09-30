@@ -263,6 +263,47 @@ func (s *BrowserHandlerSuite) TestBrowserActionNewTab() {
 	require.Contains(s.T(), resp.Result, "new-target")
 }
 
+func (s *BrowserHandlerSuite) TestBrowserActionRefusesOwnerLink() {
+	s.srv.auth = newAuthenticator("owner-tok", nil)
+	cases := []struct {
+		name    string
+		action  string
+		url     string
+		refused bool
+	}{
+		{"navigate to a signed-in link", "navigate", "http://127.0.0.1:8222/#loop_token=owner-tok", true},
+		{"new tab on a signed-in link", "new_tab", "http://127.0.0.1:8222/#loop_token=owner-tok", true},
+		{"another daemon's link", "navigate", "http://localhost:5173/#loop_token=test-tok", false},
+		{"new tab on another daemon's link", "new_tab", "http://localhost:5173/#loop_token=test-tok", false},
+	}
+	for _, tc := range cases {
+		s.Run(tc.name, func() {
+			mockCDP := new(mockCDPSession)
+			s.setupActionMocks(mockCDP)
+			mockCDP.On("Navigate", mock.Anything, tc.url).Return(nil).Maybe()
+			mockCDP.On("GetPageInfo", mock.Anything).Return(&browser.PageInfo{URL: tc.url}, nil).Maybe()
+			mockCDP.On("NewTab", mock.Anything, tc.url).Return("new-target", nil).Maybe()
+
+			w := s.postBrowserAction(browserActionRequest{
+				ChannelID: "ch-1",
+				Action:    tc.action,
+				Params:    map[string]any{"url": tc.url},
+			})
+
+			require.Equal(s.T(), http.StatusOK, w.Code)
+			var resp browserActionResponse
+			require.NoError(s.T(), json.Unmarshal(w.Body.Bytes(), &resp))
+			if tc.refused {
+				require.Contains(s.T(), resp.Error, "owner token")
+				mockCDP.AssertNotCalled(s.T(), "Navigate", mock.Anything, mock.Anything)
+				mockCDP.AssertNotCalled(s.T(), "NewTab", mock.Anything, mock.Anything)
+				return
+			}
+			require.Empty(s.T(), resp.Error)
+		})
+	}
+}
+
 func (s *BrowserHandlerSuite) TestBrowserActionCloseTab() {
 	mockCDP := new(mockCDPSession)
 	s.setupActionMocks(mockCDP)

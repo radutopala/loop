@@ -211,6 +211,15 @@ func (b *SlackBot) RemoveStopButton(_ context.Context, channelID, messageID stri
 	return nil
 }
 
+// slackMaxSectionText is Slack's limit on a section block's text.
+const slackMaxSectionText = 3000
+
+// escapeMrkdwn escapes the three characters Slack parses as markup even in
+// a code block (links, mentions): the escaped forms display as themselves.
+func escapeMrkdwn(s string) string {
+	return strings.NewReplacer("&", "&amp;", "<", "&lt;", ">", "&gt;").Replace(s)
+}
+
 // SendApproval renders a three-button action block (Allow once / Allow for
 // session / Deny) and returns the message timestamp. The button ActionIDs
 // follow "gate:<promptID>:<decision>" so handleInteractive can dispatch
@@ -227,6 +236,7 @@ func approvalBlocks(prompt bot.ApprovalPrompt) (*goslack.SectionBlock, *goslack.
 	if details := bot.FormatApprovalDetails(prompt.Details); details != "" {
 		header += "\n" + details
 	}
+	header = bot.AppendApprovalDiff(header, prompt.Details, slackMaxSectionText, escapeMrkdwn)
 	headerBlock := goslack.NewSectionBlock(
 		goslack.NewTextBlockObject("mrkdwn", header, false, false),
 		nil, nil,

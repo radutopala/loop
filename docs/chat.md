@@ -283,6 +283,7 @@ When the agent container hits a gate rule with `decision: approve`, the backend 
 - **Target:** the full target string (socket path, command line, or `METHOD /path`) in a monospace style.
 - **Message:** the matching rule's `message` field, shown as a second-line caption when non-empty.
 - **Details:** for `DOCKER-HTTP` prompts on `/containers/create`, `/containers/{id}/exec`, `/networks/create`, and `/volumes/create`, the proxy extracts the security-relevant body fields (e.g. `cmd`, `user`, `privileged`, `binds`) and the card renders them as a sorted `key: value` list under the target. See [Gates: Body details surfaced in the prompt](gates.md#body-details-surfaced-in-the-prompt) for the full key set per endpoint.
+- **Diff:** for `FILE` prompts from the [git guard](gates.md#git-guard), the `diff` detail is the change the gate will write to a git config file or hook. The card shows it as a scrollable unified diff with added and removed lines coloured, rather than in the `key: value` list.
 - **Buttons:** three monospace controls, left-to-right:
   - `Allow once` — primary accent, lets this one syscall through.
   - `Allow for session` — secondary outline, caches the allow for the container's lifetime.
@@ -604,6 +605,7 @@ On a canvas layout, the Learn pane docks beside the chat's tile instead: to its 
 The Learn pane's header matches a pane header:
 
 - **Proposals** on top, newest first. Each card shows its kind, title, a one-line gist of exactly what Apply writes, and the rationale the pass gave. A gate rule's gist is the whole rule: its decision, what it matches (the commands and their argument patterns, the file paths and operations, or the socket path; `any command` or `any path` when it lists none) and the message the gate shows.
+  - Open cards of the kinds that edit the project config (prompt and bash shortcuts, gate rules, mounts) show the edit Apply would make as a diff of that `.loop/config.json`, worked out as apply does it (see [`GET /api/learn/proposals/{id}/preview`](api.md#get-apilearnproposalsidpreview)). It's worked out again after another proposal edits the config. If the change is already there the card says so, and if applying would fail (a shortcut of that name exists, say) it shows why.
   - **Apply** applies it. If it fails, the error shows under the card and the button becomes **Retry**. If the request itself fails (Loop can't be reached, say), that error shows under the card until the next try. A card's buttons are disabled while its apply or dismiss is in flight. Requests in flight and their errors outlive the view: close and reopen it and they're still there.
   - **Dismiss** drops it. Pending and failed proposals can be dismissed.
   - Applied and dismissed cards stay in the list, dimmed, with their status.

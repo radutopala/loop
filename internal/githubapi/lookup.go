@@ -19,6 +19,8 @@ import (
 	"fmt"
 	"os/exec"
 	"strings"
+
+	"github.com/radutopala/loop/internal/gitutil"
 )
 
 // PRInfo is the subset of pull request fields the UI needs.
@@ -59,9 +61,9 @@ func NewExecRunner(bin string) Runner { return execRunner{bin: bin} }
 func (e execRunner) Run(ctx context.Context, workdir string, env []string, args ...string) ([]byte, error) {
 	cmd := exec.CommandContext(ctx, e.bin, args...)
 	cmd.Dir = workdir
-	if len(env) > 0 {
-		cmd.Env = append(cmd.Environ(), env...)
-	}
+	// gh runs git in workdir, an agent-writable repo; the hardened env
+	// carries gitutil's config into those git processes.
+	cmd.Env = append(gitutil.Environ(ctx, workdir), env...)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr

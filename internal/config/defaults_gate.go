@@ -193,7 +193,9 @@ func DefaultGateFileRules() []types.FileRule {
 		{
 			// The workspace allow (workDir/**, parentDirPath/**) is injected at
 			// policy-serialization time by writeGatePolicyFile — it's dynamic
-			// per container. This rule only covers the OS tmp dirs.
+			// per container, and so is the approve rule for git config and
+			// hooks in the workspace that goes with it. This rule only covers
+			// the OS tmp dirs.
 			Paths:      []string{"/tmp/**", "/var/tmp/**"},
 			Operations: []string{"read", "write", "create", "delete", "stat", "list", "chmod", "chown", "link"},
 			Decision:   types.DecisionAllow,
@@ -229,10 +231,12 @@ func DefaultGateFileRules() []types.FileRule {
 // This list only enumerates the exceptions to the default:
 //
 //   - Approve: lateral-movement ops the proxy can't tell apart by path —
-//     exec/attach-start into an arbitrary container, and docker cp across
-//     containers. The agent owns the containers it creates, but the proxy
-//     has no way to distinguish "my lint container" from "user's local prod
-//     postgres" given only a container id.
+//     exec/attach into an arbitrary container, docker cp across containers,
+//     and export/commit, which copy a container's whole filesystem out. The
+//     agent owns the containers it creates, but the proxy has no way to
+//     distinguish "my lint container" from "user's local prod postgres"
+//     given only a container id. (It does exempt attach to containers created
+//     through it, which `docker run` and `compose up` need.)
 //
 //   - Deny: swarm / nodes / secrets / configs / plugins APIs — these are
 //     off-limits surfaces with no legitimate dev-loop use.
@@ -240,6 +244,9 @@ func DefaultDockerProxyHTTPRules() []types.HTTPServiceRule {
 	return []types.HTTPServiceRule{
 		{Methods: []string{"POST"}, Paths: []string{"^/containers/[^/]+/exec$", "^/exec/[^/]+/start$"}, Decision: types.DecisionApprove, Message: "exec into container"},
 		{Methods: []string{"PUT", "GET", "HEAD"}, Paths: []string{"^/containers/[^/]+/archive$"}, Decision: types.DecisionApprove, Message: "docker cp into/out of container"},
+		{Methods: []string{"POST", "GET"}, Paths: []string{"^/containers/[^/]+/attach$", "^/containers/[^/]+/attach/ws$"}, Decision: types.DecisionApprove, Message: "attach to container"},
+		{Methods: []string{"GET"}, Paths: []string{"^/containers/[^/]+/export$"}, Decision: types.DecisionApprove, Message: "export container filesystem"},
+		{Methods: []string{"POST"}, Paths: []string{"^/commit$"}, Decision: types.DecisionApprove, Message: "commit container to image"},
 		{Methods: []string{"*"}, Paths: []string{"^/swarm/", "^/nodes/", "^/secrets/", "^/configs/", "^/plugins/"}, Decision: types.DecisionDeny, Message: "swarm/secrets/plugins API off-limits"},
 	}
 }
@@ -326,8 +333,13 @@ func DefaultDockerProxyBodyRules() []types.BodyRule {
 				{Path: "HostConfig.Devices[*]", Op: "present"},
 				{Path: "HostConfig.DeviceCgroupRules[*]", Op: "present"},
 				{Path: "HostConfig.VolumesFrom[*]", Op: "present"},
+				// Any explicit list replaces the daemon's defaults: `[]`
+				// un-masks /proc/kcore and friends, and a short list drops
+				// the rest just the same.
 				{Path: "HostConfig.MaskedPaths", Op: "empty_array"},
 				{Path: "HostConfig.ReadonlyPaths", Op: "empty_array"},
+				{Path: "HostConfig.MaskedPaths", Op: "present"},
+				{Path: "HostConfig.ReadonlyPaths", Op: "present"},
 			},
 			Decision: types.DecisionDeny,
 			Message:  "container-escape risk: bind-mount or flag rejected (see loop gate policy)",
@@ -336,16 +348,20 @@ func DefaultDockerProxyBodyRules() []types.BodyRule {
 			// Joining another container's PID or IPC namespace reaches into
 			// it the way exec does: as root with the same caps, the new
 			// container can read /proc/<pid>/root of the target's processes.
-			// The proxy can't tell the agent's own containers from others.
+			// Its network or UTS namespace hands over its localhost-only
+			// services and its identity. The proxy can't tell the agent's
+			// own containers from others.
 			AppliesTo:    "POST ^/containers/create$",
 			ContentTypes: []string{"application/json"},
 			MaxBodyBytes: 1048576,
 			JSONChecks: []types.JSONCheck{
 				{Path: "HostConfig.PidMode", Op: "starts_with_any", Values: []string{"container:"}},
 				{Path: "HostConfig.IpcMode", Op: "starts_with_any", Values: []string{"container:"}},
+				{Path: "HostConfig.NetworkMode", Op: "starts_with_any", Values: []string{"container:"}},
+				{Path: "HostConfig.UTSMode", Op: "starts_with_any", Values: []string{"container:"}},
 			},
 			Decision: types.DecisionApprove,
-			Message:  "container joins another container's PID/IPC namespace",
+			Message:  "container joins another container's PID/IPC/network/UTS namespace",
 		},
 		{
 			// A local volume with a device option mounts that path (or disk)

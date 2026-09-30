@@ -86,55 +86,73 @@ func execUserFromEnv(uid, gid string) string {
 	return formatExecUser(ui, gi)
 }
 
+// rootExecUser is the user interactive execs are created as, before
+// interactiveExecScript drops them.
+const rootExecUser = "0:0"
+
 // formatExecUser is the pure helper behind defaultExecUser, split out so the
 // Windows uid/gid==-1 fallback can be exercised on POSIX hosts where
 // os.Getuid/os.Getgid never return negative values.
 func formatExecUser(uid, gid int) string {
 	if uid < 0 || gid < 0 {
-		return "0:0"
+		return rootExecUser
 	}
 	return fmt.Sprintf("%d:%d", uid, gid)
 }
 
-// execUserWaitScript is the preamble an interactive exec runs before handing
-// off to the requested command. The image entrypoint creates the container
-// user with useradd, which lands a few tens of milliseconds after Docker
-// reports the container started — but the terminal opens its exec as soon as
-// ContainerStart returns, so a shell can start before /etc/passwd has an entry
-// for its uid. Numeric exec IDs (see defaultExecUser) sail past runc's own
-// lookup, so instead of failing the exec succeeds and bash, which resolves its
-// user name once at startup, renders "I have no name!@<host>" for the whole
-// session.
+// interactiveExecScript is how every interactive exec starts: as root, with
+// the user it should run as ("<uid>:<gid>", see defaultExecUser) as $1 and
+// the requested command after it.
 //
-// The loop waits ~2s for the entry to appear and then runs the command
-// regardless: a uid that genuinely has no entry (a custom image ignoring
-// HOST_UID) ends up exactly where it is today rather than losing its shell.
-// getent is skipped when the image lacks it so nothing spins for images
-// without libc tooling.
-const execUserWaitScript = `if command -v getent >/dev/null 2>&1; then i=0; while [ "$i" -lt 100 ] && ! getent passwd "$(id -u)" >/dev/null 2>&1; do i=$((i+1)); sleep 0.02; done; fi; exec "$@"`
+// It starts as root so that, in a container with the seccomp gate on, it can
+// hand the command to `loop syscallwrap`, whose root parent reads the gate
+// token (root-only, so the agent can't) and drops the command to the agent
+// user. Without the gate it drops straight to the user with gosu (in the
+// agent image) or setpriv, and runs the command as is when it already is
+// that user or has neither tool.
+//
+// First it waits for the user's /etc/passwd entry. The image entrypoint
+// creates the container user with useradd, which lands a few tens of
+// milliseconds after Docker reports the container started — but the terminal
+// opens its exec as soon as ContainerStart returns, so a shell can start
+// before /etc/passwd has an entry for its uid, and bash, which resolves its
+// user name once at startup, renders "I have no name!@<host>" for the whole
+// session. The loop waits ~2s and then runs the command regardless: a uid
+// that genuinely has no entry (a custom image ignoring HOST_UID) ends up
+// exactly where it would otherwise. getent is skipped when the image lacks
+// it so nothing spins for images without libc tooling.
+const interactiveExecScript = `u="$1"; shift
+if command -v getent >/dev/null 2>&1; then i=0; while [ "$i" -lt 100 ] && ! getent passwd "${u%%:*}" >/dev/null 2>&1; do i=$((i+1)); sleep 0.02; done; fi
+if [ "$LOOP_GATE_ENABLED" = "1" ] && [ -x /usr/local/bin/loop ]; then exec /usr/local/bin/loop syscallwrap -- "$@"; fi
+if [ "$(id -u)" = "${u%%:*}" ]; then exec "$@"; fi
+if command -v gosu >/dev/null 2>&1; then exec gosu "$u" "$@"; fi
+if command -v setpriv >/dev/null 2>&1; then exec setpriv --reuid="${u%%:*}" --regid="${u#*:}" --clear-groups "$@"; fi
+exec "$@"`
 
-// waitForExecUser wraps cmd in execUserWaitScript. The command is passed as
-// positional arguments rather than interpolated into the script so no argument
-// needs quoting, and the final exec replaces the wrapper, leaving the process
-// tree (and the PID the shell writes to its pid file) unchanged.
-func waitForExecUser(cmd []string) []string {
-	return append([]string{"/bin/sh", "-c", execUserWaitScript, "sh"}, cmd...)
+// wrapInteractiveExec wraps cmd in interactiveExecScript. The command is
+// passed as positional arguments rather than interpolated into the script so
+// no argument needs quoting, and the script's exec replaces the wrapper,
+// leaving the process tree (and the PID the shell writes to its pid file)
+// unchanged.
+func wrapInteractiveExec(user string, cmd []string) []string {
+	return append([]string{"/bin/sh", "-c", interactiveExecScript, "sh", user}, cmd...)
 }
 
 // DefaultShellCmd returns a /bin/bash command that writes its PID to pidFile
 // for reliable process group cleanup inside the container. Bash is started
-// with an explicit --rcfile so image-baked aliases (e.g. `claude` →
-// `loop syscallwrap -- claude`) load even when the user's own ~/.bashrc
-// overrides the default; the rcfile itself sources ~/.bashrc first.
+// with an explicit --rcfile so image-baked settings load even when the user's
+// own ~/.bashrc overrides the default; the rcfile itself sources ~/.bashrc
+// first.
 func (c *DockerExecClient) DefaultShellCmd(pidFile string) []string {
 	return []string{"/bin/bash", "-c", fmt.Sprintf("echo $$ > %s; exec /bin/bash --rcfile /etc/loop/bashrc -i", pidFile)}
 }
 
 // ExecCreate creates a new exec process in the container with the
-// given command and TTY setting. The exec runs as the host UID:GID (matching
-// the container's non-root agent user created by the entrypoint). Numeric
-// IDs avoid a name lookup in /etc/passwd, which would race against the
-// entrypoint's useradd.
+// given command and TTY setting. The command runs as the host UID:GID
+// (matching the container's non-root agent user created by the entrypoint):
+// non-TTY execs are created as that user, interactive ones as root and
+// dropped to it (see interactiveExecScript). Numeric IDs avoid a name lookup
+// in /etc/passwd, which would race against the entrypoint's useradd.
 // If cmd is empty, defaults to /bin/sh.
 func (c *DockerExecClient) ExecCreate(ctx context.Context, containerID string, cmd []string, tty bool) (string, error) {
 	return c.ExecCreateWithEnv(ctx, containerID, cmd, nil, tty)
@@ -148,14 +166,16 @@ func (c *DockerExecClient) ExecCreateWithEnv(ctx context.Context, containerID st
 	if len(cmd) == 0 {
 		cmd = []string{"/bin/sh"}
 	}
-	// Only interactive execs need the wait: they are the ones running a shell
-	// that prints a prompt. Non-TTY execs (e.g. the session kill helper) do no
-	// name lookup, so they skip the extra layer.
+	// Only interactive execs are shells a user (or an interactive claude)
+	// works in, so only they go through the gate. Non-TTY execs (e.g. the
+	// session kill helper) run as the user directly and skip the extra layer.
+	user := c.execUser()
 	if tty {
-		cmd = waitForExecUser(cmd)
+		cmd = wrapInteractiveExec(user, cmd)
+		user = rootExecUser
 	}
 	resp, err := c.api.ContainerExecCreate(ctx, containerID, containertypes.ExecOptions{
-		User:         c.execUser(),
+		User:         user,
 		Cmd:          cmd,
 		Env:          env,
 		Tty:          tty,

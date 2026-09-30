@@ -10,6 +10,7 @@ function subscribe(channel, handler) {
 
 contextBridge.exposeInMainWorld("loopAPI", {
   getApiUrl: () => ipcRenderer.invoke("get-api-url"),
+  getApiToken: () => ipcRenderer.invoke("get-api-token"),
   onNavigateChannel: (callback) => subscribe("navigate-channel", (_event, channelId) => callback(channelId)),
   showOpenDirectoryDialog: () => ipcRenderer.invoke("show-open-directory-dialog"),
   onboardLocal: (dirPath) => ipcRenderer.invoke("onboard-local", dirPath),

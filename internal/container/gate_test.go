@@ -72,14 +72,14 @@ func (s *GateSuite) TestSetGatePolicyNilClearsPolicy() {
 // --- writeGatePolicyFile ---
 
 func (s *GateSuite) TestWriteGatePolicyFileDisabledReturnsEmpty() {
-	path, err := s.runner.writeGatePolicyFile(&config.Config{}, "ch-1", "", "")
+	path, err := s.runner.writeGatePolicyFile(&config.Config{}, "ch-1", "", "", nil)
 	require.NoError(s.T(), err)
 	require.Empty(s.T(), path)
 }
 
 func (s *GateSuite) TestWriteGatePolicyFileNoPolicyDirReturnsEmpty() {
 	cfg := &config.Config{Gates: config.GatesConfig{Agentgate: config.AgentgateConfig{Enabled: true}}}
-	path, err := s.runner.writeGatePolicyFile(cfg, "ch-1", "", "")
+	path, err := s.runner.writeGatePolicyFile(cfg, "ch-1", "", "", nil)
 	require.NoError(s.T(), err)
 	require.Empty(s.T(), path)
 }
@@ -93,7 +93,7 @@ func (s *GateSuite) TestWriteGatePolicyFileMkdirError() {
 	s.runner.policyDir = "/run/loop"
 	cfg := &config.Config{Gates: config.GatesConfig{Agentgate: config.AgentgateConfig{Enabled: true}}}
 
-	_, err := s.runner.writeGatePolicyFile(cfg, "ch-1", "", "")
+	_, err := s.runner.writeGatePolicyFile(cfg, "ch-1", "", "", nil)
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "creating policy dir")
 }
@@ -108,7 +108,7 @@ func (s *GateSuite) TestWriteGatePolicyFileWriteError() {
 	s.runner.policyDir = "/run/loop"
 	cfg := &config.Config{Gates: config.GatesConfig{Agentgate: config.AgentgateConfig{Enabled: true}}}
 
-	_, err := s.runner.writeGatePolicyFile(cfg, "ch-1", "", "")
+	_, err := s.runner.writeGatePolicyFile(cfg, "ch-1", "", "", nil)
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "writing gate policy")
 }
@@ -137,7 +137,7 @@ func (s *GateSuite) TestWriteGatePolicyFileSerialisesSubset() {
 		},
 	}
 
-	path, err := s.runner.writeGatePolicyFile(cfg, "ch-1", "", "")
+	path, err := s.runner.writeGatePolicyFile(cfg, "ch-1", "", "", nil)
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), "/run/loop/ch-1/gate-policy.json", path)
 
@@ -296,6 +296,53 @@ func (s *GateSuite) TestInjectWorkspaceRuleAppendsWhenNoAllow() {
 	require.Equal(s.T(), types.DecisionAllow, out[1].Decision, "appended at end when no existing Allow")
 }
 
+// --- gitGuardRoots ---
+
+func (s *GateSuite) TestGitGuardRoots() {
+	cases := []struct {
+		name  string
+		binds []string
+		want  []string
+	}{
+		{"none", nil, nil},
+		{"rw bind", []string{"/host/work:/host/work"}, []string{"/host/work"}},
+		{"explicit rw", []string{"/host/a:/a:rw"}, []string{"/a"}},
+		{"ro skipped", []string{"/host/a:/a:ro"}, nil},
+		{"ro with selinux label skipped", []string{"/host/a:/a:ro,z"}, nil},
+		{"rw with selinux label kept", []string{"/host/a:/a:z"}, []string{"/a"}},
+		{"named volume skipped", []string{"gomod:/go/pkg/mod"}, nil},
+		{"malformed skipped", []string{"nocolon"}, nil},
+		{"mixed keeps order", []string{"/h/w:/w", "/h/r:/r:ro", "/h/x:/x"}, []string{"/w", "/x"}},
+	}
+	for _, tc := range cases {
+		s.Run(tc.name, func() {
+			require.Equal(s.T(), tc.want, gitGuardRoots(tc.binds))
+		})
+	}
+}
+
+func (s *GateSuite) TestWriteGatePolicyFileCarriesGitGuardRoots() {
+	sys := newDefaultMockSystem()
+	var captured []byte
+	sys.ExpectedCalls = nil
+	sys.On("MkdirAll", mock.Anything, mock.Anything).Return(nil)
+	sys.On("WriteFile", mock.Anything, mock.Anything, mock.Anything).
+		Run(func(args mock.Arguments) { captured = append([]byte(nil), args.Get(1).([]byte)...) }).
+		Return(nil)
+
+	s.runner.sys = sys
+	s.runner.policyDir = "/run/loop"
+	cfg := &config.Config{Gates: config.GatesConfig{Agentgate: config.AgentgateConfig{Enabled: true}}}
+
+	_, err := s.runner.writeGatePolicyFile(cfg, "ch-1", "/host/work", "",
+		[]string{"/host/work:/host/work", "/host/ref:/ref:ro", "cache:/cache"})
+	require.NoError(s.T(), err)
+
+	var got gatePolicyJSON
+	require.NoError(s.T(), json.Unmarshal(captured, &got))
+	require.Equal(s.T(), []string{"/host/work"}, got.GitGuardRoots)
+}
+
 // --- injectPolicySelfDenyRule ---
 
 func (s *GateSuite) TestInjectPolicySelfDenyRuleShape() {
@@ -350,7 +397,7 @@ func (s *GateSuite) TestWriteGatePolicyFilePinsSelfDenyFirst() {
 		},
 	}
 
-	_, err := s.runner.writeGatePolicyFile(cfg, "ch-1", "/host/work", "")
+	_, err := s.runner.writeGatePolicyFile(cfg, "ch-1", "/host/work", "", nil)
 	require.NoError(s.T(), err)
 
 	var got gatePolicyJSON
@@ -358,11 +405,12 @@ func (s *GateSuite) TestWriteGatePolicyFilePinsSelfDenyFirst() {
 	require.Equal(s.T(), []string{"/etc/loop/**"}, got.FileRules[0].Paths)
 	require.Equal(s.T(), types.DecisionDeny, got.FileRules[0].Decision, "self-deny wins over a config allow on the same path")
 	// Then the pinned project-config approve. The config allow is the list's
-	// first Allow, so the workspace rule lands ahead of it.
+	// first Allow, so the workspace allow lands ahead of it.
 	require.Equal(s.T(), types.DecisionApprove, got.FileRules[1].Decision)
 	require.Equal(s.T(), "/host/work/.loop/config.json", got.FileRules[1].Paths[1])
 	require.Equal(s.T(), "workspace fast-path", got.FileRules[2].Message)
 	require.Equal(s.T(), types.DecisionAllow, got.FileRules[3].Decision)
+	require.Empty(s.T(), got.GitGuardRoots, "no binds, no guard roots")
 }
 
 func (s *GateSuite) TestInjectProjectConfigRule() {
@@ -489,6 +537,7 @@ func (s *GateSuite) expectRunCompletes(ctx context.Context, cid string) {
 	waitCh := make(chan WaitResponse, 1)
 	waitCh <- WaitResponse{StatusCode: 0}
 	errCh := make(chan error, 1)
+	s.client.On("CopyToContainer", ctx, cid, "/", mock.Anything).Maybe().Return(nil)
 	s.client.On("ContainerStart", ctx, cid).Return(nil)
 	s.client.On("ContainerWait", ctx, cid).Return((<-chan WaitResponse)(waitCh), (<-chan error)(errCh))
 	s.client.On("ContainerLogs", ctx, cid).Return(
@@ -526,7 +575,8 @@ func (s *GateSuite) TestRunGateEnabledWritesPolicyFileAndBindsIt() {
 	require.Equal(s.T(), "1", findEnv(captured.Env, "LOOP_GATE_ENABLED"))
 	require.Equal(s.T(), "/etc/loop/gate-policy.json", findEnv(captured.Env, "LOOP_GATE_POLICY_FILE"))
 	require.Equal(s.T(), "ch-1", findEnv(captured.Env, "LOOP_CHANNEL_ID"))
-	token := findEnv(captured.Env, "LOOP_GATE_TOKEN")
+	require.Empty(s.T(), findEnv(captured.Env, "LOOP_GATE_TOKEN"), "the token travels as a file, not env")
+	token := copiedFiles(s.T(), s.client)["run/loop/gate-token"].data
 	require.Len(s.T(), token, 64)
 	require.Equal(s.T(), "loop-ch-1-bbbbbb", findEnv(captured.Env, "LOOP_CONTAINER_ID"))
 

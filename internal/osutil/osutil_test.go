@@ -30,6 +30,20 @@ func (s *RealSystemSuite) TestStat() {
 	require.True(s.T(), info.IsDir())
 }
 
+func (s *RealSystemSuite) TestLstat() {
+	link := filepath.Join(s.dir, "link")
+	require.NoError(s.T(), os.Symlink(filepath.Join(s.dir, "missing"), link))
+	info, err := s.sys.Lstat(link)
+	require.NoError(s.T(), err)
+	require.NotZero(s.T(), info.Mode()&os.ModeSymlink)
+}
+
+func (s *RealSystemSuite) TestLstatTraversal() {
+	_, err := s.sys.Lstat("../passwd")
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "disallowed traversal")
+}
+
 func (s *RealSystemSuite) TestReadFileWriteFile() {
 	p := filepath.Join(s.dir, "test.txt")
 	require.NoError(s.T(), s.sys.WriteFile(p, []byte("hello"), 0o644))

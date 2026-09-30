@@ -1,4 +1,4 @@
-import { getApiUrl } from "./api";
+import { apiFetch, getApiUrl } from "./api";
 
 async function throwIfNotOk(res: Response, action: string): Promise<void> {
   if (!res.ok) {
@@ -41,13 +41,13 @@ export async function fetchTickets(dir: string, filters?: { status?: string; ass
   if (filters?.type) params.set("type", filters.type);
   if (filters?.sort) params.set("sort", filters.sort);
   if (filters?.reverse) params.set("reverse", "true");
-  const res = await fetch(`${getApiUrl()}/api/tickets?${params}`);
+  const res = await apiFetch(`${getApiUrl()}/api/tickets?${params}`);
   await throwIfNotOk(res, "Failed to fetch tickets");
   return res.json();
 }
 
 export async function fetchTicket(id: string, dir: string): Promise<Ticket> {
-  const res = await fetch(`${getApiUrl()}/api/tickets/${encodeURIComponent(id)}?dir=${encodeURIComponent(dir)}`);
+  const res = await apiFetch(`${getApiUrl()}/api/tickets/${encodeURIComponent(id)}?dir=${encodeURIComponent(dir)}`);
   await throwIfNotOk(res, "Failed to fetch ticket");
   return res.json();
 }
@@ -66,7 +66,7 @@ export async function createTicket(data: {
   design?: string;
   acceptance?: string;
 }): Promise<Ticket> {
-  const res = await fetch(`${getApiUrl()}/api/tickets`, {
+  const res = await apiFetch(`${getApiUrl()}/api/tickets`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(data),
@@ -76,7 +76,7 @@ export async function createTicket(data: {
 }
 
 export async function updateTicketStatus(id: string, status: string, dir: string): Promise<Ticket> {
-  const res = await fetch(`${getApiUrl()}/api/tickets/${encodeURIComponent(id)}`, {
+  const res = await apiFetch(`${getApiUrl()}/api/tickets/${encodeURIComponent(id)}`, {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ dir, status }),
@@ -103,7 +103,7 @@ export async function updateTicket(
     acceptance?: string;
   },
 ): Promise<Ticket> {
-  const res = await fetch(`${getApiUrl()}/api/tickets/${encodeURIComponent(id)}`, {
+  const res = await apiFetch(`${getApiUrl()}/api/tickets/${encodeURIComponent(id)}`, {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(data),
@@ -113,7 +113,7 @@ export async function updateTicket(
 }
 
 export async function addTicketNote(id: string, data: { dir: string; content: string }): Promise<Ticket> {
-  const res = await fetch(`${getApiUrl()}/api/tickets/${encodeURIComponent(id)}/notes`, {
+  const res = await apiFetch(`${getApiUrl()}/api/tickets/${encodeURIComponent(id)}/notes`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(data),
@@ -123,14 +123,14 @@ export async function addTicketNote(id: string, data: { dir: string; content: st
 }
 
 export async function deleteTicket(id: string, dir: string): Promise<void> {
-  const res = await fetch(`${getApiUrl()}/api/tickets/${encodeURIComponent(id)}?dir=${encodeURIComponent(dir)}`, {
+  const res = await apiFetch(`${getApiUrl()}/api/tickets/${encodeURIComponent(id)}?dir=${encodeURIComponent(dir)}`, {
     method: "DELETE",
   });
   await throwIfNotOk(res, "Failed to delete ticket");
 }
 
 export async function assignTicket(id: string, data: { dir: string; channel_id: string; branch?: string }): Promise<{ thread_id: string; worktree_path: string }> {
-  const res = await fetch(`${getApiUrl()}/api/tickets/${encodeURIComponent(id)}/assign`, {
+  const res = await apiFetch(`${getApiUrl()}/api/tickets/${encodeURIComponent(id)}/assign`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(data),

@@ -17,6 +17,8 @@ Terminals open as panels in any layout (see [Layouts](layouts.md)). Each pane is
 - **Docker Shell** — a plain `/bin/bash` inside the container, for running commands next to the agent.
 - **Host Shell** — a shell on your machine.
 
+The terminal WebSocket is owner-only: it needs the owner API token (see [Authentication](api.md#authentication)), and an agent container's token gets a 403. That's what keeps a host shell out of an agent's reach, since a host shell runs as you, outside any container.
+
 ### Image paste
 
 Paste an image into any terminal pane (⌘/Ctrl-V). Loop saves it under the workspace's `.loop/pastes/` directory and inserts the saved **absolute path** into the pane, so the in-pane Claude session (or shell) can read it. Same UX as the [chat input](chat.md#image-paste).
@@ -50,7 +52,7 @@ Create a new terminal session. Detaches any currently attached session first.
   "container_id": "abc123def",
   "channel_id": "chan_001",
   "cmd": ["/bin/bash", "-l"],
-  "target": "host",
+  "target": "agent",
   "rows": 24,
   "cols": 80,
   "open_mode": "fork"
@@ -62,7 +64,7 @@ Create a new terminal session. Detaches any currently attached session first.
 | `type`         | string   | yes      | Must be `"create"` |
 | `container_id` | string   | no       | Docker container ID (for agent target) |
 | `channel_id`   | string   | no       | Channel ID; used to resolve container via `ContainerFinder` |
-| `cmd`          | string[] | no       | Command to execute; defaults to `/bin/sh` (agent) or user's shell (host) |
+| `cmd`          | string[] | no       | Command to execute; defaults to `/bin/sh`. Agent target only: a host session with a `cmd` is rejected |
 | `target`       | string   | no       | `"host"` or `"agent"` (default) |
 | `rows`         | uint     | no       | Initial terminal rows; applied via resize after creation |
 | `cols`         | uint     | no       | Initial terminal columns |
@@ -84,6 +86,7 @@ Create a new terminal session. Detaches any currently attached session first.
 - Resolves the working directory from the channel's `dir_path`. Falls back to parent channel's `dir_path` for threads, then to `~/.loop/{channel_id}/work`, and finally to `$HOME`.
 - Default shell: `$SHELL` env var, then `/bin/zsh` if available, then `/bin/sh`. On Windows: `$COMSPEC`, then `powershell.exe`, then `cmd.exe`.
 - Default shell arguments: `-l` (login shell) on Unix; none on Windows.
+- Always the user's shell: a `cmd` is rejected with `invalid_input`.
 
 ---
 
@@ -102,10 +105,11 @@ Re-attach to an existing session. Provides ring buffer history replay.
 |--------------|--------|----------|-------------|
 | `type`       | string | yes      | Must be `"attach"` |
 | `session_id` | string | yes      | Session ID to attach to |
+| `target`     | string | no       | `"agent"` (default) or `"host"`: the manager that owns the session |
 
 **Behavior:**
 - Detaches any currently attached session first.
-- Tries the agent manager first; if that fails or is nil, tries the host manager.
+- Attaches only through the `target` manager, the agent one if `target` is empty. A host session needs `"target": "host"`; any other value is an `invalid_input` error.
 - On success, replays the ring buffer contents as binary output before streaming live output.
 
 ---

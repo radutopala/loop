@@ -1,5 +1,5 @@
 import type { GateApprovalRequestedData } from "../types";
-import { getApiUrl } from "./api";
+import { apiFetch, getApiUrl } from "./api";
 
 /**
  * `deny-session` caches the denial under the request's CacheKey for the
@@ -20,7 +20,7 @@ export interface PendingApproval extends GateApprovalRequestedData {
  * electron-main dock-bouncer so stale req_ids are dropped.
  */
 export async function listPendingApprovals(): Promise<PendingApproval[]> {
-  const res = await fetch(`${getApiUrl()}/api/gate/approvals`);
+  const res = await apiFetch(`${getApiUrl()}/api/gate/approvals`);
   if (!res.ok) {
     throw new Error(`Failed to list gate approvals: ${res.statusText}`);
   }
@@ -29,7 +29,7 @@ export async function listPendingApprovals(): Promise<PendingApproval[]> {
 }
 
 export async function resolveGateApproval(reqId: string, decision: GateDecision): Promise<void> {
-  const res = await fetch(`${getApiUrl()}/api/gate/approvals/${encodeURIComponent(reqId)}`, {
+  const res = await apiFetch(`${getApiUrl()}/api/gate/approvals/${encodeURIComponent(reqId)}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ decision }),

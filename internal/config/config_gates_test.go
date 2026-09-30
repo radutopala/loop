@@ -297,15 +297,15 @@ func (s *ConfigSuite) TestDefaultGatePathRulesDockerSockSilent() {
 
 // TestDefaultDockerProxyHTTPRulesMinimal guards the policy intent that the
 // baseline rules enumerate only the exceptions to DefaultDecision=Allow:
-// Approve for lateral-movement ops (exec, /exec/*/start, docker cp archive)
-// and Deny for off-limits APIs (swarm/nodes/secrets/configs/plugins). Normal
-// container lifecycle ops (create/start/stop/attach/wait/update/build/delete)
-// and read endpoints (/_ping, /containers/json, …) are handled by the default
-// Allow fall-through + body rules, so they must NOT appear as explicit rules
-// here.
+// Approve for lateral-movement ops (exec, /exec/*/start, docker cp archive,
+// attach, export, commit) and Deny for off-limits APIs
+// (swarm/nodes/secrets/configs/plugins). Normal container lifecycle ops
+// (create/start/stop/wait/update/build/delete) and read endpoints (/_ping,
+// /containers/json, …) are handled by the default Allow fall-through + body
+// rules, so they must NOT appear as explicit rules here.
 func (s *ConfigSuite) TestDefaultDockerProxyHTTPRulesMinimal() {
 	rules := DefaultDockerProxyHTTPRules()
-	s.Require().Len(rules, 3, "defaults must be minimal: exec Approve, archive Approve, swarm Deny")
+	s.Require().Len(rules, 6, "defaults must be minimal: exec, archive, attach, export, commit Approve, swarm Deny")
 
 	exec := rules[0]
 	s.Require().Equal(types.DecisionApprove, exec.Decision)
@@ -319,7 +319,16 @@ func (s *ConfigSuite) TestDefaultDockerProxyHTTPRulesMinimal() {
 	// HEAD as a preflight before GETing an archive.
 	s.Require().Contains(archive.Methods, "HEAD")
 
-	deny := rules[2]
+	for i, want := range [][]string{
+		{"^/containers/[^/]+/attach$", "^/containers/[^/]+/attach/ws$"},
+		{"^/containers/[^/]+/export$"},
+		{"^/commit$"},
+	} {
+		s.Require().Equal(types.DecisionApprove, rules[2+i].Decision)
+		s.Require().Equal(want, rules[2+i].Paths)
+	}
+
+	deny := rules[5]
 	s.Require().Equal(types.DecisionDeny, deny.Decision)
 	for _, want := range []string{"^/swarm/", "^/nodes/", "^/secrets/", "^/configs/", "^/plugins/"} {
 		s.Require().Contains(deny.Paths, want)

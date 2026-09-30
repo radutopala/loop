@@ -28,10 +28,14 @@ type Trap struct {
 //	Allow=true  → flags=SECCOMP_USER_NOTIF_FLAG_CONTINUE (kernel runs the
 //	              syscall normally; errno untouched).
 //	Allow=false → flags=0, error=-ErrorNum. ErrorNum=0 defaults to EPERM.
+//	Performed   → flags=0, val=0, error=0: the gate already carried out the
+//	              syscall's effect itself (the git guard's rename), so the
+//	              kernel skips it and the tracee sees success.
 type TrapResponse struct {
-	ID       uint64
-	Allow    bool
-	ErrorNum int32
+	ID        uint64
+	Allow     bool
+	ErrorNum  int32
+	Performed bool
 }
 
 // Transport abstracts seccomp-notify fd I/O. Linux wires this to ioctl
@@ -57,6 +61,8 @@ type Server struct {
 	Execve    *ExecveHandler
 	File      *FileHandler
 	Connect   *ConnectHandler
+	Guard     *GitGuard
+	Review    *RenameReview
 	ChannelID string
 }
 
@@ -103,15 +109,13 @@ func (s *Server) Dispatch(ctx context.Context, trap Trap) TrapResponse {
 		return s.dispatchExecve(ctx, trap, tracee)
 	case "connect":
 		return s.dispatchConnect(ctx, trap, tracee)
-	case syscallOpenat, syscallOpenat2, syscallRenameat2, syscallUnlinkat,
-		syscallLinkat, syscallSymlinkat, syscallFchmodat, syscallFchownat,
-		syscallMkdirat:
-		return s.dispatchFile(ctx, trap, tracee)
-	default:
-		// BPF filter + dispatcher must agree; an unknown syscall here is a
-		// bug. Fail closed.
-		return denyResp(trap.ID, syscall.EPERM)
 	}
+	if IsFileSyscall(trap.Syscall) {
+		return s.dispatchFile(ctx, trap, tracee)
+	}
+	// BPF filter + dispatcher must agree; an unknown syscall here is a
+	// bug. Fail closed.
+	return denyResp(trap.ID, syscall.EPERM)
 }
 
 // AtEmptyPath is the execveat(2) / openat2(2) flag meaning "treat dirfd as
@@ -204,14 +208,34 @@ func (s *Server) dispatchFile(ctx context.Context, trap Trap, tracee Tracee) Tra
 	if s.File == nil {
 		return denyResp(trap.ID, syscall.EPERM)
 	}
-	spec, ok := SyscallByName(trap.Syscall)
-	if !ok {
-		return denyResp(trap.ID, syscall.EPERM)
-	}
+	spec, _ := SyscallByName(trap.Syscall)
 
 	op, path, err := s.resolveFilePath(spec, trap, tracee)
 	if err != nil {
 		return denyResp(trap.ID, syscall.EPERM)
+	}
+	if spec.SecondaryOp != "" {
+		if resp, ok := s.reviewRename(ctx, spec, trap, tracee, op, path); ok {
+			return resp
+		}
+	}
+	pointer := false
+	if spec.SecondaryOp == "" && s.Guard.Protects(path) && !AllowsInPlace(spec, op) {
+		if !s.Guard.AsksInPlace(spec, op, path) {
+			return s.Guard.Refuse(trap.ID, trap.PID, s.ChannelID, op, path)
+		}
+		pointer = true
+	}
+	if spec.LinkSource && s.Guard != nil {
+		src, err := s.linkSourcePaths(spec, trap, tracee)
+		if err != nil {
+			return denyResp(trap.ID, syscall.EPERM)
+		}
+		for _, p := range src {
+			if s.Guard.Protects(p) {
+				return s.Guard.Refuse(trap.ID, trap.PID, s.ChannelID, OpLink, p)
+			}
+		}
 	}
 	out := s.File.Handle(ctx, FileRequest{
 		PID:       trap.PID,
@@ -223,12 +247,34 @@ func (s *Server) dispatchFile(ctx context.Context, trap Trap, tracee Tracee) Tra
 	if out.Decision != types.DecisionAllow {
 		return decisionResp(trap.ID, out.Decision)
 	}
+	// A .git file or commondir written in place asks once the file rules
+	// allow it, so a deny rule on the path still wins.
+	if pointer {
+		return s.Guard.Pointer(ctx, trap.ID, trap.PID, s.ChannelID, op, path)
+	}
 
 	// Two-path syscalls (renameat2) must pass both the old and new path.
 	if spec.SecondaryOp != "" {
 		secPath, err := s.resolveSecondaryPath(spec, trap, tracee)
 		if err != nil {
 			return denyResp(trap.ID, syscall.EPERM)
+		}
+		var flags uint64
+		if spec.FlagsArgIdx >= 0 {
+			flags = trap.Args[spec.FlagsArgIdx]
+		}
+		rename := GuardRename{
+			TrapID:    trap.ID,
+			PID:       trap.PID,
+			ChannelID: s.ChannelID,
+			Syscall:   trap.Syscall,
+			Src:       path,
+			Dst:       secPath,
+			Flags:     flags,
+			Tracee:    tracee,
+		}
+		if resp, refused := s.Guard.TreeRename(rename); refused {
+			return resp
 		}
 		secOut := s.File.Handle(ctx, FileRequest{
 			PID:       trap.PID,
@@ -237,9 +283,53 @@ func (s *Server) dispatchFile(ctx context.Context, trap Trap, tracee Tracee) Tra
 			Op:        spec.SecondaryOp,
 			Path:      secPath,
 		})
+		// A rename onto a guarded git path goes to the guard, which shows
+		// the content and does the rename itself — once the file rules
+		// allow it, so a deny rule on the path still wins. RENAME_EXCHANGE
+		// also moves the new path's file onto the old one, so a guarded
+		// old path counts too (the guard refuses exchanges).
+		if secOut.Decision == types.DecisionAllow &&
+			(s.Guard.Protects(secPath) || (flags&renameExchange != 0 && s.Guard.Protects(path))) {
+			return s.Guard.Rename(ctx, rename)
+		}
 		return decisionResp(trap.ID, secOut.Decision)
 	}
 	return allowResp(trap.ID)
+}
+
+// reviewRename hands a rename onto a path an approve rule covers to the
+// rename review, which asks with a diff instead of the rule's path-only
+// card. The source's own check folds into that card (it names the source),
+// unless a rule denies it. Git paths stay with the git guard. ok=false: the
+// rename goes through the file rules as usual.
+func (s *Server) reviewRename(ctx context.Context, spec SyscallSpec, trap Trap, tracee Tracee, op, src string) (TrapResponse, bool) {
+	if s.Review == nil {
+		return TrapResponse{}, false
+	}
+	dst, err := s.resolveSecondaryPath(spec, trap, tracee)
+	if err != nil {
+		return TrapResponse{}, false
+	}
+	rule := s.File.Policy.MatchFile(spec.SecondaryOp, dst)
+	if rule.Decision != types.DecisionApprove ||
+		s.Guard.Protects(dst) || s.Guard.Protects(src) || s.Guard.InsideGitDir(dst) || s.Guard.InsideGitDir(src) ||
+		s.File.Policy.MatchFile(op, src).Decision == types.DecisionDeny {
+		return TrapResponse{}, false
+	}
+	var flags uint64
+	if spec.FlagsArgIdx >= 0 {
+		flags = trap.Args[spec.FlagsArgIdx]
+	}
+	return s.Review.Rename(ctx, GuardRename{
+		TrapID:    trap.ID,
+		PID:       trap.PID,
+		ChannelID: s.ChannelID,
+		Syscall:   trap.Syscall,
+		Src:       src,
+		Dst:       dst,
+		Flags:     flags,
+		Tracee:    tracee,
+	}, rule)
 }
 
 // resolveFilePath reads the primary path, resolves relative paths against
@@ -267,11 +357,26 @@ func (s *Server) resolveFilePath(spec SyscallSpec, trap Trap, tracee Tracee) (st
 		}
 		op = ClassifyOpenatFlags(flags)
 	}
-	abs, err := absolutize(raw, int32(trap.Args[spec.DirfdArgIdx]), tracee)
+	abs, err := absolutize(raw, dirfdArg(trap, spec.DirfdArgIdx), tracee)
 	if err != nil {
 		return "", "", err
 	}
 	return op, resolveSymlinks(abs, spec.NoFollowLeaf, tracee), nil
+}
+
+// linkSourcePaths resolves a link's existing path both ways: linkat
+// follows a final symlink only with AT_SYMLINK_FOLLOW, and checking both
+// is simpler than tracking the flag.
+func (s *Server) linkSourcePaths(spec SyscallSpec, trap Trap, tracee Tracee) ([]string, error) {
+	raw, err := tracee.ReadString(uintptr(trap.Args[spec.LinkSrcIdx]))
+	if err != nil {
+		return nil, err
+	}
+	abs, err := absolutize(raw, dirfdArg(trap, spec.LinkSrcDirfdIdx), tracee)
+	if err != nil {
+		return nil, err
+	}
+	return []string{resolveSymlinks(abs, true, tracee), resolveSymlinks(abs, false, tracee)}, nil
 }
 
 func (s *Server) resolveSecondaryPath(spec SyscallSpec, trap Trap, tracee Tracee) (string, error) {
@@ -279,7 +384,7 @@ func (s *Server) resolveSecondaryPath(spec SyscallSpec, trap Trap, tracee Tracee
 	if err != nil {
 		return "", err
 	}
-	abs, err := absolutize(raw, int32(trap.Args[spec.SecondDirfdIdx]), tracee)
+	abs, err := absolutize(raw, dirfdArg(trap, spec.SecondDirfdIdx), tracee)
 	if err != nil {
 		return "", err
 	}
@@ -336,6 +441,16 @@ func (s *Server) readOpenatFlags(spec SyscallSpec, trap Trap, tracee Tracee) (ui
 	return v, nil
 }
 
+// dirfdArg returns the dirfd in argv slot idx, or AT_FDCWD for the legacy
+// syscalls that take none (idx -1): their relative paths resolve against
+// the cwd.
+func dirfdArg(trap Trap, idx int) int32 {
+	if idx < 0 {
+		return AtFDCWD
+	}
+	return int32(trap.Args[idx])
+}
+
 // absolutize turns a raw path into an absolute one by joining against the
 // dirfd's resolved path when relative. An empty path with AT_FDCWD or a
 // numeric dirfd is rare enough to treat as "use the dirfd directly".
@@ -357,6 +472,10 @@ func absolutize(path string, dirfd int32, tracee Tracee) (string, error) {
 
 func allowResp(id uint64) TrapResponse {
 	return TrapResponse{ID: id, Allow: true}
+}
+
+func performedResp(id uint64) TrapResponse {
+	return TrapResponse{ID: id, Performed: true}
 }
 
 func denyResp(id uint64, errno syscall.Errno) TrapResponse {

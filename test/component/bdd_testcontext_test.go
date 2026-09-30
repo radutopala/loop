@@ -9,7 +9,6 @@ import (
 	"net/http"
 	"os"
 	"strings"
-	"time"
 
 	"github.com/gorilla/websocket"
 )
@@ -26,6 +25,10 @@ type TestContext struct {
 	LastBody     []byte
 	LastStatus   int
 	LastJSON     map[string]any
+
+	// ContentLinkBase is the base_url of the content link a scenario minted
+	// last; later fetches under it replace the last response.
+	ContentLinkBase string
 
 	// LinkedMessageID is the message a scenario last opened a link to.
 	LinkedMessageID int64
@@ -60,7 +63,7 @@ func NewTestContext() *TestContext {
 	return &TestContext{
 		BaseURL:    getEnvOrDefault("LOOP_BASE_URL", "http://localhost:8222"),
 		AppURL:     getEnvOrDefault("LOOP_APP_URL", "http://localhost:5173"),
-		HTTPClient: &http.Client{Timeout: 10 * time.Second},
+		HTTPClient: newAPIClient(),
 	}
 }
 

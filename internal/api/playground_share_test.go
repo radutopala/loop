@@ -395,3 +395,32 @@ func (s *ServerSuite) TestNoStoreHeader() {
 	h.ServeHTTP(rec, req)
 	require.Equal(s.T(), "no-store", rec.Header().Get("Cache-Control"))
 }
+
+func (s *ServerSuite) TestSharedPlaygroundDirSwappedForSymlink() {
+	dir, _ := s.enableShare()
+	rec := s.testRequest("PUT", "/api/playground/share?name=demo", "")
+	var resp map[string]string
+	require.NoError(s.T(), json.Unmarshal(rec.Body.Bytes(), &resp))
+	token := resp["token"]
+
+	// Replace the shared dir with a symlink pointing outside the base.
+	outside := s.T().TempDir()
+	require.NoError(s.T(), os.WriteFile(filepath.Join(outside, "script.js"), []byte("secret"), 0o644))
+	pgDir := filepath.Join(dir, "playground", "demo")
+	require.NoError(s.T(), os.RemoveAll(pgDir))
+	require.NoError(s.T(), os.Symlink(outside, pgDir))
+
+	req := httptest.NewRequest("GET", "/p/"+token, nil)
+	req.SetPathValue("token", token)
+	rec2 := httptest.NewRecorder()
+	s.srv.playground.handleSharedPlaygroundServe(rec2, req)
+	require.Equal(s.T(), http.StatusNotFound, rec2.Code)
+
+	req = httptest.NewRequest("GET", "/p/"+token+"/script.js", nil)
+	req.SetPathValue("token", token)
+	req.SetPathValue("path", "script.js")
+	rec3 := httptest.NewRecorder()
+	s.srv.playground.handleSharedPlaygroundServeFile(rec3, req)
+	require.Equal(s.T(), http.StatusNotFound, rec3.Code)
+	require.NotContains(s.T(), rec3.Body.String(), "secret")
+}

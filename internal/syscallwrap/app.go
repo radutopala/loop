@@ -16,6 +16,7 @@ import (
 	"golang.org/x/sys/unix"
 
 	"github.com/radutopala/loop/internal/agentgate"
+	"github.com/radutopala/loop/internal/httpapprover"
 	"github.com/radutopala/loop/internal/procsource"
 )
 
@@ -33,8 +34,12 @@ const (
 	// (fail-closed: without a policy or approver we can't mediate safely).
 	envPolicyFile = "LOOP_GATE_POLICY_FILE"
 	envAPIURL     = "API_URL"
-	envToken      = "LOOP_GATE_TOKEN"
 	envHostUser   = "HOST_USER"
+
+	// envLegacyToken is where the gate token used to travel before it moved
+	// to a root-only file. Stripped from the child's env should a caller
+	// still set it, so the agent never sees a token either way.
+	envLegacyToken = "LOOP_GATE_TOKEN"
 
 	// Audit env vars. All optional — unset envAuditDir means NopAuditor
 	// (silent gate). envAuditDir is the (bind-mounted) directory to write
@@ -96,9 +101,11 @@ type app struct {
 	exec         func(argv0 string, argv []string, envv []string) error
 
 	// Parent mode
-	readFile      func(path string) ([]byte, error)
+	readFile func(path string) ([]byte, error)
+	// tokenFile holds the per-container bearer token (root-only, see
+	// httpapprover.GateTokenFile). A field so tests can point it elsewhere.
+	tokenFile     string
 	lookupUser    func(name string) (uid, gid int, err error)
-	getuid        func() int
 	socketpair    func() (parentFD, childFD int, err error)
 	startChild    func(argv []string, env []string, childEnd *os.File, uid, gid int) (*os.Process, error)
 	newApprover   func(apiURL, token string) agentgate.Approver
@@ -141,8 +148,8 @@ func newApp() *app {
 		lookPath:      exec.LookPath,
 		exec:          syscall.Exec,
 		readFile:      os.ReadFile,
+		tokenFile:     httpapprover.GateTokenFile,
 		lookupUser:    defaultLookupUser,
-		getuid:        os.Getuid,
 		socketpair:    defaultSocketpair,
 		startChild:    defaultStartChild,
 		newApprover:   defaultNewApprover,

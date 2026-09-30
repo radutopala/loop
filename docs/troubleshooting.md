@@ -71,15 +71,15 @@ The desktop app polls `GET /api/health` for ~15 seconds after launching the daem
 The seccomp gate (`gates.agentgate`) is **enabled by default** and runs inside every agent container. Most operations are allowed silently; credential-adjacent writes and container-escape shapes either deny or prompt.
 
 - **A prompt is waiting somewhere you're not looking.** Approval cards render in the chat for chat-initiated work, and as an overlay on the specific terminal pane for terminal-initiated work. The blocked syscall waits until you resolve the card — an agent that seems "stuck" often has a pending approval on another surface. The Audit panel lists recent gate decisions.
-- **A legitimate operation keeps getting blocked.** Decisions come from first-match-wins rules; the fall-through is `gates.agentgate.default_decision` (`"allow"` by default). Add a project-level rule for the specific path/command rather than loosening globals — project rules are prepended, so a narrow `allow` there wins over a broader global rule.
-- **Kill switch.** Set `gates.agentgate.enabled: false` globally (or per-project to disable for one project; a project cannot re-enable a globally disabled gate). Disabling the gate also disables the Docker proxy. Containers created before a config change keep their old policy — recreate them to pick up new rules.
+- **A legitimate operation keeps getting blocked.** Decisions come from first-match-wins rules; the fall-through is `gates.agentgate.default_decision` (`"allow"` by default). Add a project-level rule for the specific path/command rather than loosening globals: project rules come before the global approves and allows, so a narrow `allow` there wins over a broader global one. A global `deny` always wins; an exception to it belongs in the global config.
+- **Kill switch.** Set `gates.agentgate.enabled: false` in the global config. The project setting is ignored, so a project can neither switch the gate off nor back on. Disabling the gate also disables the Docker proxy. Containers created before a config change keep their old policy — recreate them to pick up new rules.
 
 ## Docker proxy blocks an agent's Docker command
 
 When the gate is enabled, agents talk to a filtered Docker socket (`loop dockerproxy`), not the real daemon. Denied calls return `403` inside the container; `approve`-rule matches block until you resolve the approval card.
 
 - Check the Audit panel to see which rule matched.
-- Add or adjust `gates.docker_proxy.http_rules` or `body_rules` for what's being blocked. Project rules are prepended and may use any decision; `gates.docker_proxy.enabled` can be turned off per-project but not re-enabled past a global off.
+- Add or adjust `gates.docker_proxy.http_rules` or `body_rules` for what's being blocked. Project rules may use any decision but come after the global denies; `gates.docker_proxy.enabled` is set globally only.
 
 Messages you may see from `docker` (or a library) inside the agent, and what to do:
 

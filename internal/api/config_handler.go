@@ -108,9 +108,13 @@ func (s *Server) handleSaveProjectConfig(w http.ResponseWriter, r *http.Request)
 	path := filepath.Join(loopDir, "config.json")
 	// See handleSaveConfig.
 	defer s.configLocks.lock(path)()
+	before, keep := s.readProjectConfigBefore(path)
 	if err := s.sys.WriteFile(path, []byte(req.Content), 0644); err != nil {
 		http.Error(w, "failed to write config file", http.StatusInternalServerError)
 		return
+	}
+	if keep {
+		s.keepProjectTrust(dirPath, before, []byte(req.Content))
 	}
 	w.WriteHeader(http.StatusNoContent)
 }

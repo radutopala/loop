@@ -12,6 +12,7 @@ import (
 	"os/signal"
 	"os/user"
 	"strconv"
+	"strings"
 	"syscall"
 
 	"golang.org/x/sys/unix"
@@ -29,14 +30,10 @@ import (
 // The parent stays as root (the uid entrypoint.sh invoked us as) so the
 // non-root child/claude cannot signal it — see docs/gates.md
 // "Parent-kill / orphan-fd attack" for the full rationale. The child is
-// dropped to the agent uid via os.ProcAttr.Sys.Credential.
-//
-// Terminal-exec mode: when this is launched from an already-agent-uid shell
-// (e.g. `docker exec` into the shell container and running
-// `loop syscallwrap -- claude`), the Credential drop is skipped — non-root
-// can't setuid anyway. pdeathsig still couples parent-death → child-death so
-// the notify fd can't outlive the agentgate server; the weaker-uid-separation
-// trade-off is documented in docs/gates.md.
+// dropped to the agent uid via os.ProcAttr.Sys.Credential. Terminal panes
+// get the same arrangement: their docker exec runs as root and wraps the
+// shell in `loop syscallwrap --`, so the parent can read the root-only
+// token file (see httpapprover.GateTokenFile) and drop the shell.
 func (a *app) runParent() error {
 	// parseArgs fail-fast: the child needs a valid target too; no point
 	// spawning only for the child to bounce on bad argv.
@@ -52,9 +49,9 @@ func (a *app) runParent() error {
 	if apiURL == "" {
 		return errors.New(envAPIURL + " is required")
 	}
-	token := a.getenv(envToken)
-	if token == "" {
-		return errors.New(envToken + " is required")
+	token, err := httpapprover.ReadToken(a.readFile, a.tokenFile)
+	if err != nil {
+		return err
 	}
 	hostUser := a.getenv(envHostUser)
 	if hostUser == "" {
@@ -72,13 +69,6 @@ func (a *app) runParent() error {
 	uid, gid, err := a.lookupUser(hostUser)
 	if err != nil {
 		return fmt.Errorf("lookup user %q: %w", hostUser, err)
-	}
-	// Terminal-exec mode: already agent-uid, skip the Credential drop.
-	// Sentinel (-1, -1) tells defaultStartChild to omit Credential so the
-	// fork inherits the current uid instead of attempting a setuid that
-	// would fail with EPERM from non-root.
-	if a.getuid() == uid {
-		uid, gid = -1, -1
 	}
 
 	parentFD, childFD, err := a.socketpair()
@@ -217,12 +207,12 @@ func (a *app) runParent() error {
 // childProcessEnv returns the env the child process should see: the current
 // environ with LOOP_SYSCALLWRAP_MODE=child appended (and any caller-provided
 // LOOP_SYSCALLWRAP_MODE stripped — we don't want a double-parent loop if a
-// wrapper passed it in).
+// wrapper passed it in). A LOOP_GATE_TOKEN is stripped too: the token is the
+// parent's, and the child becomes the agent.
 func childProcessEnv(env []string) []string {
 	out := make([]string, 0, len(env)+1)
-	prefix := envMode + "="
 	for _, e := range env {
-		if len(e) >= len(prefix) && e[:len(prefix)] == prefix {
+		if strings.HasPrefix(e, envMode+"=") || strings.HasPrefix(e, envLegacyToken+"=") {
 			continue
 		}
 		out = append(out, e)
@@ -247,7 +237,11 @@ func loadGatePolicy(readFile func(string) ([]byte, error), path string) (*agentg
 	if decision == "" {
 		decision = types.DecisionDeny
 	}
-	return agentgate.CompilePolicy(decision, cfg.PathRules, cfg.CommandRules, cfg.FileRules)
+	policy, err := agentgate.CompilePolicy(decision, cfg.PathRules, cfg.CommandRules, cfg.FileRules)
+	if err != nil {
+		return nil, err
+	}
+	return policy.WithGitGuardRoots(cfg.GitGuardRoots), nil
 }
 
 // gateConfigJSON mirrors the subset of internal/config.AgentgateConfig the gate
@@ -257,6 +251,7 @@ type gateConfigJSON struct {
 	PathRules       []types.PathRule    `json:"path_rules"`
 	CommandRules    []types.CommandRule `json:"command_rules"`
 	FileRules       []types.FileRule    `json:"file_rules"`
+	GitGuardRoots   []string            `json:"git_guard_roots"`
 }
 
 // defaultLookupUser resolves HOST_USER into the agent's numeric uid/gid.
@@ -299,9 +294,6 @@ func defaultSocketpair() (int, int, error) {
 // the child to the agent uid/gid via a SysProcAttr.Credential. PDEATHSIG is
 // set by the child itself post-install (defaultSetPdeathsig) — setting it
 // here would race the thread-lock.
-//
-// Sentinel uid < 0 or gid < 0 means "inherit current uid/gid" (terminal-exec
-// mode, where the caller is already agent-uid and can't setuid).
 func defaultStartChild(argv []string, env []string, childEnd *os.File, uid, gid int) (*os.Process, error) {
 	return os.StartProcess("/proc/self/exe", argv, &os.ProcAttr{
 		Env:   env,
@@ -311,17 +303,15 @@ func defaultStartChild(argv []string, env []string, childEnd *os.File, uid, gid 
 }
 
 // childSysProcAttr builds the SysProcAttr for the re-exec'd child. Factored
-// out so tests can assert the Credential-vs-no-Credential decision without
-// needing CAP_SETUID to actually call StartProcess.
+// out so tests can assert the Credential drop without needing CAP_SETUID to
+// actually call StartProcess.
 func childSysProcAttr(uid, gid int) *syscall.SysProcAttr {
-	sys := &syscall.SysProcAttr{}
-	if uid >= 0 && gid >= 0 {
-		sys.Credential = &syscall.Credential{
+	return &syscall.SysProcAttr{
+		Credential: &syscall.Credential{
 			Uid: uint32(uid),
 			Gid: uint32(gid),
-		}
+		},
 	}
-	return sys
 }
 
 // defaultWaitChild blocks until proc exits and returns the exit code. A

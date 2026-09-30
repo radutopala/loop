@@ -62,6 +62,12 @@ func TestExecCommandRunner(t *testing.T) {
 	require.Contains(t, string(out), "hello")
 }
 
+func TestExecCommandRunnerHardensGit(t *testing.T) {
+	out, err := ExecCommandRunner(context.Background(), t.TempDir(), "git", "config", "--get", "core.hooksPath")
+	require.NoError(t, err)
+	require.Equal(t, "/dev/null\n", string(out))
+}
+
 type CreatorSuite struct {
 	suite.Suite
 	sys     *mockSystem

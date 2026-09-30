@@ -28,6 +28,11 @@
       // worth the churn today.
       "a11y": "off",
       "style": {
+        // API calls must carry the token: use apiFetch (src/api/api.ts).
+        "noRestrictedGlobals": {
+          "level": "error",
+          "options": { "deniedGlobals": { "fetch": "Use apiFetch from src/api/api.ts: it sends the API token." } }
+        },
         "noNonNullAssertion": "off",
         "useTemplate": "off"
       },
@@ -54,5 +59,13 @@
         "noDangerouslySetInnerHtml": "off"
       }
     }
-  }
+  },
+  "overrides": [
+    {
+      // apiFetch itself, tests that stub fetch, and Electron's main process
+      // (which adds the token on its own).
+      "includes": ["src/api/api.ts", "src/**/*.test.ts", "electron/**"],
+      "linter": { "rules": { "style": { "noRestrictedGlobals": "off" } } }
+    }
+  ]
 }

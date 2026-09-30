@@ -1,4 +1,4 @@
-import { getApiUrl } from "./api";
+import { apiFetch, getApiUrl } from "./api";
 
 export type BuiltinKind = "workflows" | "shortcuts";
 
@@ -10,7 +10,7 @@ export interface RestoreBuiltinsResponse {
 }
 
 export async function restoreBuiltins(kind: BuiltinKind): Promise<RestoreBuiltinsResponse> {
-  const resp = await fetch(`${getApiUrl()}/api/builtins/restore`, {
+  const resp = await apiFetch(`${getApiUrl()}/api/builtins/restore`, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ kind }),
