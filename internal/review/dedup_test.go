@@ -37,24 +37,25 @@ func (s *DedupSuite) TestDedupCandidates() {
 		want     []string
 	}{
 		{name: "empty", comments: nil, want: []string{}},
+		{name: "a single comment", comments: []*Comment{agent("a", "x.go", 1)}, want: []string{}},
 		{
-			name:     "one comment per file",
-			comments: []*Comment{agent("a", "x.go", 1), agent("b", "y.go", 1)},
+			name:     "only github comments",
+			comments: []*Comment{gh("g1", "x.go", 1), gh("g2", "y.go", 5)},
 			want:     []string{},
 		},
 		{
-			name:     "only github comments in the file",
-			comments: []*Comment{gh("g1", "x.go", 1), gh("g2", "x.go", 5)},
-			want:     []string{},
+			name:     "one comment per file still pairs across files",
+			comments: []*Comment{agent("b", "y.go", 1), agent("a", "x.go", 1)},
+			want:     []string{"a", "b"},
 		},
 		{
-			name: "files with an agent comment and a second one, by file then line",
+			name: "every anchored comment, by file then line",
 			comments: []*Comment{
 				agent("b", "y.go", 9), nil, agent("a", "y.go", 3),
 				gh("g", "x.go", 40), agent("c", "x.go", 2),
-				agent("lone", "z.go", 1), {ID: "nopath", Line: 1}, {ID: "nopath2", Line: 2},
+				agent("lone", "z.go", 1), {ID: "nopath", Line: 1},
 			},
-			want: []string{"c", "g", "a", "b"},
+			want: []string{"c", "g", "a", "b", "lone"},
 		},
 		{
 			name:     "same line sorts by id",
@@ -76,7 +77,9 @@ func (s *DedupSuite) TestBuildDedupPrompt() {
 		{ID: "b2", Path: "y.go", Line: 1, Body: strings.Repeat("é", dedupBodyMax)},
 	}
 	got := BuildDedupPrompt(cands)
-	require.Contains(s.T(), got, `{"clusters":[{"keep":"<id>","drop":["<id>"]}]}`)
+	require.Contains(s.T(), got, `{"clusters":[{"keep":"<id>","drop":["<id>"],"reason":"...","note":"..."}],"related":[{"ids":["<id>","<id>"],"reason":"..."}],"moves":[{"id":"<id>","line":0}]}`)
+	require.Contains(s.T(), got, "a lone closing brace")
+	require.Contains(s.T(), got, "share a root cause")
 	require.Contains(s.T(), got, "\n## x.go\n- id=a1 [agent] L3 (RIGHT): Nil deref when the map is empty.\n- id=gh-9 [github] L7 (LEFT): same thing\n")
 	require.Contains(s.T(), got, "\n## y.go\n- id=b2 [agent] L1 (RIGHT): ")
 	require.Equal(s.T(), 1, strings.Count(got, "## x.go"))
@@ -101,7 +104,7 @@ func (s *DedupSuite) TestOneLine() {
 	}
 }
 
-func (s *DedupSuite) TestDedupDrops() {
+func (s *DedupSuite) TestParseDedupReply() {
 	cands := []*Comment{
 		{ID: "a", Path: "x.go", Line: 10, Source: "agent"},
 		{ID: "b", Path: "x.go", Line: 14, Source: "agent"},
@@ -113,44 +116,69 @@ func (s *DedupSuite) TestDedupDrops() {
 	cases := []struct {
 		name    string
 		reply   string
-		want    []string
+		want    DedupPlan
 		wantErr string
 	}{
-		{name: "no clusters", reply: `{"clusters":[]}`, want: nil},
+		{name: "nothing", reply: `{"clusters":[],"related":[]}`, want: DedupPlan{}},
 		{
-			name:  "prose and fences around the object",
-			reply: "Here you go:\n```json\n{\"clusters\":[{\"keep\":\"a\",\"drop\":[\"b\",\"c\"]}]}\n```",
-			want:  []string{"b", "c"},
+			name:  "prose and fences around the object; reason and note trimmed",
+			reply: "Here you go:\n```json\n{\"clusters\":[{\"keep\":\"a\",\"drop\":[\"b\",\"c\"],\"reason\":\" nil map \",\"note\":\" also on reload \"}]}\n```",
+			want:  DedupPlan{Clusters: []DedupCluster{{Keep: "a", Drop: []string{"b", "c"}, Reason: "nil map", Note: "also on reload"}}},
+		},
+		{
+			name:  "a cluster may span files",
+			reply: `{"clusters":[{"keep":"a","drop":["d"]}]}`,
+			want:  DedupPlan{Clusters: []DedupCluster{{Keep: "a", Drop: []string{"d"}}}},
 		},
 		{
 			name:  "github keeper drops agent copies",
 			reply: `{"clusters":[{"keep":"g","drop":["a"]}]}`,
-			want:  []string{"a"},
+			want:  DedupPlan{Clusters: []DedupCluster{{Keep: "g", Drop: []string{"a"}}}},
 		},
 		{
 			name:  "github comments are never dropped",
 			reply: `{"clusters":[{"keep":"a","drop":["g","b"]}]}`,
-			want:  []string{"b"},
+			want:  DedupPlan{Clusters: []DedupCluster{{Keep: "a", Drop: []string{"b"}}}},
 		},
 		{
 			name:  "unknown keeper ignores its group",
 			reply: `{"clusters":[{"keep":"zz","drop":["a"]}]}`,
-			want:  nil,
+			want:  DedupPlan{},
 		},
 		{
-			name:  "unknown, self and cross-file drops are ignored",
-			reply: `{"clusters":[{"keep":"a","drop":["zz","a","d"]},{"keep":"d","drop":["e"]}]}`,
-			want:  []string{"e"},
+			name:  "unknown and self drops are ignored, and a group left empty is left out",
+			reply: `{"clusters":[{"keep":"a","drop":["zz","a"]},{"keep":"d","drop":["e"]}]}`,
+			want:  DedupPlan{Clusters: []DedupCluster{{Keep: "d", Drop: []string{"e"}}}},
 		},
 		{
 			name:  "a keeper is never dropped, so chains can't delete every copy",
 			reply: `{"clusters":[{"keep":"a","drop":["b"]},{"keep":"b","drop":["a","c"]}]}`,
-			want:  []string{"c"},
+			want:  DedupPlan{Clusters: []DedupCluster{{Keep: "b", Drop: []string{"c"}}}},
 		},
 		{
-			name:  "a drop named twice is returned once",
-			reply: `{"clusters":[{"keep":"a","drop":["c","c"]},{"keep":"b","drop":["c"]}]}`,
-			want:  []string{"c"},
+			name:  "a drop named twice goes to its first group",
+			reply: `{"clusters":[{"keep":"a","drop":["c","c"]},{"keep":"b","drop":["c","d"]}]}`,
+			want:  DedupPlan{Clusters: []DedupCluster{{Keep: "a", Drop: []string{"c"}}, {Keep: "b", Drop: []string{"d"}}}},
+		},
+		{
+			name:  "related groups map drops to keepers and need two known ids",
+			reply: `{"clusters":[{"keep":"a","drop":["b"]}],"related":[{"ids":["b","d","zz","d"],"reason":" same read path "},{"ids":["a","b"]},{"ids":["zz","e"]}]}`,
+			want: DedupPlan{
+				Clusters: []DedupCluster{{Keep: "a", Drop: []string{"b"}}},
+				Related:  []DedupRelated{{IDs: []string{"a", "d"}, Reason: "same read path"}},
+			},
+		},
+		{
+			name: "moves only for kept agent comments, within reach, first one wins",
+			reply: `{"clusters":[{"keep":"a","drop":["b"]}],"moves":[` +
+				`{"id":"a","line":11},{"id":"a","line":12},` +
+				`{"id":"b","line":15},{"id":"g","line":12},{"id":"zz","line":3},` +
+				`{"id":"c","line":40},{"id":"c","line":0},{"id":"c","line":61},{"id":"c","line":60},` +
+				`{"id":"d","line":2}]}`,
+			want: DedupPlan{
+				Clusters: []DedupCluster{{Keep: "a", Drop: []string{"b"}}},
+				Moves:    []DedupMove{{ID: "a", Line: 11}, {ID: "c", Line: 60}, {ID: "d", Line: 2}},
+			},
 		},
 		{name: "no object", reply: "nothing to dedup", wantErr: "no JSON object"},
 		{name: "brace order reversed", reply: "} then {", wantErr: "no JSON object"},
@@ -158,7 +186,7 @@ func (s *DedupSuite) TestDedupDrops() {
 	}
 	for _, tc := range cases {
 		s.Run(tc.name, func() {
-			got, err := DedupDrops(tc.reply, cands)
+			got, err := ParseDedupReply(tc.reply, cands)
 			if tc.wantErr != "" {
 				require.ErrorContains(s.T(), err, tc.wantErr)
 				return
@@ -167,4 +195,8 @@ func (s *DedupSuite) TestDedupDrops() {
 			require.Equal(s.T(), tc.want, got)
 		})
 	}
+}
+
+func (s *DedupSuite) TestWithDedupNote() {
+	require.Equal(s.T(), "Nil map write.\n\nAlso flagged: panics on reload too.", WithDedupNote("Nil map write.", "panics on reload too."))
 }

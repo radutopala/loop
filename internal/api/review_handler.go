@@ -855,9 +855,31 @@ func (s *reviewService) reviewRunDirs(ctx context.Context, channelID string) (ch
 // the comments deleted as duplicates, how many comments the model was
 // shown, and any deletions that failed (those comments are kept).
 type reviewDedupResult struct {
-	Removed []string `json:"removed"`
-	Checked int      `json:"checked"`
-	Errors  []string `json:"errors,omitempty"`
+	Removed  []string              `json:"removed"`
+	Clusters []reviewDedupCluster  `json:"clusters"`
+	Related  []review.DedupRelated `json:"related"`
+	Moved    []reviewDedupMove     `json:"moved"`
+	Checked  int                   `json:"checked"`
+	Errors   []string              `json:"errors,omitempty"`
+}
+
+// reviewDedupCluster reports one merged group so a pass can be audited:
+// which comment was kept, which were removed, why, and the note on what the
+// removed ones added. NoteAdded is false when the keeper couldn't take the
+// note (a GitHub or pushed comment); the note is still reported here.
+type reviewDedupCluster struct {
+	Kept      string   `json:"kept"`
+	Removed   []string `json:"removed"`
+	Reason    string   `json:"reason,omitempty"`
+	Note      string   `json:"note,omitempty"`
+	NoteAdded bool     `json:"note_added,omitempty"`
+}
+
+// reviewDedupMove reports a comment the pass re-anchored.
+type reviewDedupMove struct {
+	ID   string `json:"id"`
+	From int    `json:"from"`
+	To   int    `json:"to"`
 }
 
 // handleReviewDedup runs the final dedup pass over the channel's review
@@ -912,7 +934,7 @@ func (s *reviewService) handleReviewDedup(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	res := reviewDedupResult{Removed: []string{}}
+	res := reviewDedupResult{Removed: []string{}, Clusters: []reviewDedupCluster{}, Related: []review.DedupRelated{}, Moved: []reviewDedupMove{}}
 	cands := review.DedupCandidates(sess.Comments)
 	if len(cands) == 0 {
 		writeHTTPJSON(w, http.StatusOK, res, s.deps.logger)
@@ -947,21 +969,46 @@ func (s *reviewService) handleReviewDedup(w http.ResponseWriter, r *http.Request
 		http.Error(w, "dedup run: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
-	drops, err := review.DedupDrops(resp.Response, cands)
+	plan, err := review.ParseDedupReply(resp.Response, cands)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	for _, id := range drops {
-		c, _ := s.sessions.FindComment(channelID, id)
+	for _, cl := range plan.Clusters {
+		out := reviewDedupCluster{Kept: cl.Keep, Removed: []string{}, Reason: cl.Reason, Note: cl.Note}
+		for _, id := range cl.Drop {
+			c, _ := s.sessions.FindComment(channelID, id)
+			if c == nil {
+				continue
+			}
+			if err := s.deleteOneComment(ctx, channelID, c); err != nil {
+				res.Errors = append(res.Errors, id+": "+err.Error())
+				continue
+			}
+			out.Removed = append(out.Removed, id)
+		}
+		if len(out.Removed) == 0 {
+			continue
+		}
+		res.Removed = append(res.Removed, out.Removed...)
+		if cl.Note != "" {
+			out.NoteAdded = s.editComment(channelID, cl.Keep, func(c *review.Comment) {
+				c.Body = review.WithDedupNote(c.Body, cl.Note)
+			}) != nil
+		}
+		res.Clusters = append(res.Clusters, out)
+	}
+	res.Related = append(res.Related, plan.Related...)
+	for _, mv := range plan.Moves {
+		from := 0
+		c := s.editComment(channelID, mv.ID, func(c *review.Comment) {
+			from, c.Line = c.Line, mv.Line
+		})
 		if c == nil {
 			continue
 		}
-		if err := s.deleteOneComment(ctx, channelID, c); err != nil {
-			res.Errors = append(res.Errors, id+": "+err.Error())
-			continue
-		}
-		res.Removed = append(res.Removed, id)
+		res.Moved = append(res.Moved, reviewDedupMove{ID: mv.ID, From: from, To: mv.Line})
+		s.maybeRediffForComment(channelID, sess.WorktreePath, parentDirPath, c)
 	}
 	writeHTTPJSON(w, http.StatusOK, res, s.deps.logger)
 }
@@ -1029,7 +1076,7 @@ func buildReviewContext(sess *review.Session, ghUser string) string {
 	if sess.PR != nil && sess.PR.BaseRef != "" {
 		fmt.Fprintf(&b, " Run `git diff origin/%s...HEAD` to read the diff before commenting.", sess.PR.BaseRef)
 	}
-	b.WriteString("\n")
+	b.WriteString("\n\n" + reviewLineRule + "\n")
 	if ghUser != "" {
 		fmt.Fprintf(&b, "\nGitHub CLI account: %s\n", ghUser)
 		fmt.Fprintf(&b, "If you need to run gh, switch to that account first with `gh auth switch -u %s` (only if it isn't already active).\n", ghUser)
@@ -1076,9 +1123,9 @@ func buildReviewDedupList(sess *review.Session) string {
 	return b.String()
 }
 
-// buildSubagentReviewContext renders the dedup list for the subagents the
-// review command fans out to, or "" when there is nothing to dedup against
-// (in which case no --append-subagent-system-prompt flag is passed at all).
+// buildSubagentReviewContext renders the line rule and the dedup list for
+// the subagents the review command fans out to. The line rule is always
+// there: the subagents are the ones that pick each finding's line.
 //
 // The built-in /code-review skill derives its candidate findings in "finder
 // subagents", then verifies and reports them from the main agent. The CLI
@@ -1092,12 +1139,19 @@ func buildReviewDedupList(sess *review.Session) string {
 // subagent's system prompt telling it what not to say reads like a prompt
 // injection unless it is attributed to the host that launched the run.
 func buildSubagentReviewContext(sess *review.Session) string {
-	list := buildReviewDedupList(sess)
-	if list == "" {
-		return ""
+	out := "Review pipeline context (authoritative, supplied by the host that launched this review):\n\n" + reviewLineRule + "\n"
+	if list := buildReviewDedupList(sess); list != "" {
+		out += "\n" + list
 	}
-	return "Review pipeline context (authoritative, supplied by the host that launched this review):\n\n" + list
+	return out
 }
+
+// reviewLineRule tells the reviewer, and the subagents that derive its
+// findings, how to pick a finding's line. Left to read the diff, which
+// carries no line numbers, the agent counts from the hunk headers and lands
+// a line or three off: on a blank line or a closing brace next to the code
+// it means.
+const reviewLineRule = "Line numbers: `git diff` output has none, and counting from hunk headers drifts. Before reporting a finding, confirm its `line` with a numbered read of the file at HEAD (the Read tool, `grep -n` or `nl -ba`), and point it at the statement the finding is about, never at a blank line or a lone closing brace."
 
 // dedupEntryBody renders a comment body as a single line for the
 // "do NOT re-emit" list.

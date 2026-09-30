@@ -388,6 +388,35 @@ func (s *Store) RemoveComment(channelID, commentID string) (*Comment, bool) {
 	return nil, true
 }
 
+// EditLocalComment applies edit to the comment with the matching ID, the
+// way the dedup pass folds a note into a kept comment or moves one to the
+// right line. Only a local agent comment is changed: a GitHub comment isn't
+// ours to edit, and a pushed one would drift from its copy on the PR. edit
+// gets a copy that then replaces the comment, since FindComment hands out
+// the pointer. Returns the updated comment, or nil when nothing changed.
+func (s *Store) EditLocalComment(channelID, commentID string, edit func(*Comment)) *Comment {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	sess, ok := s.sessions[channelID]
+	if !ok {
+		return nil
+	}
+	for i, c := range sess.Comments {
+		if c.ID != commentID {
+			continue
+		}
+		if !deletable(c) || c.Pushed {
+			return nil
+		}
+		updated := *c
+		edit(&updated)
+		sess.Comments[i] = &updated
+		sess.UpdatedAt = time.Now()
+		return &updated
+	}
+	return nil
+}
+
 // FindComment returns the comment with the matching ID (or nil) along
 // with the session it belongs to. Caller must not mutate either.
 func (s *Store) FindComment(channelID, commentID string) (*Comment, *Session) {

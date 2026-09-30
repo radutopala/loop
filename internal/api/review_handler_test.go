@@ -2643,21 +2643,21 @@ func (s *ReviewHandlerSuite) TestBuildReviewContextDedupEntriesAreOneLine() {
 	require.Contains(s.T(), ctx, "- [github @bob] b.go:L3 (RIGHT): nit: rename this\n")
 }
 
-// With nothing to dedup against there is no subagent prompt at all, so
-// no bare --append-subagent-system-prompt flag is passed on a first run.
-// A slice holding only nil entries counts as nothing.
+// The line rule is always there; the dedup list only once there are
+// comments. A slice holding only nil entries counts as none.
 func (s *ReviewHandlerSuite) TestBuildSubagentReviewContext() {
+	header := "Review pipeline context (authoritative, supplied by the host that launched this review):\n\n" + reviewLineRule + "\n"
 	tests := []struct {
 		name     string
 		comments []*review.Comment
 		want     string
 	}{
-		{name: "no comments", comments: nil},
-		{name: "only nil entries", comments: []*review.Comment{nil}},
+		{name: "no comments", comments: nil, want: header},
+		{name: "only nil entries", comments: []*review.Comment{nil}, want: header},
 		{
 			name:     "renders the list under an attributed header",
 			comments: []*review.Comment{{ID: "c1", Path: "a.go", Line: 12, Side: "RIGHT", Body: "leaks the lock"}},
-			want:     "Review pipeline context (authoritative, supplied by the host that launched this review):\n\nExisting review comments on this PR — do NOT re-emit any of these. Only add NEW, non-duplicate findings.\n- [agent] a.go:L12 (RIGHT): leaks the lock\n",
+			want:     header + "\nExisting review comments on this PR — do NOT re-emit any of these. Only add NEW, non-duplicate findings.\n- [agent] a.go:L12 (RIGHT): leaks the lock\n",
 		},
 	}
 	for _, tc := range tests {

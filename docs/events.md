@@ -987,6 +987,14 @@ Emitted when a comment leaves the review session, either because it was deleted 
 
 ---
 
+### `review.comment_updated`
+
+Emitted when a comment changes in place: the dedup pass (`POST /review/dedup`) appends what a kept comment's dropped duplicates added, or moves a finding to the line it is about. Same payload as `review.comment`; the FE swaps in the new body.
+
+**Scope:** Channel.
+
+---
+
 ### `review.status`
 
 Emitted on every review session status transition (`idle → loading → ready → reviewing → ready|error`). The FE swaps affordances based on this; no polling needed.

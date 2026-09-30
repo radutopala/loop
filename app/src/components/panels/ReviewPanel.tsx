@@ -188,6 +188,13 @@ export function withoutComment(session: ReviewSession | null, id: string): Revie
   return { ...session, comments: session.comments.filter((c) => c.id !== id) };
 }
 
+// withUpdatedComment swaps in the fields of a `review.comment_updated`
+// event, keeping the rest (pushed state, GitHub link) of the held comment.
+export function withUpdatedComment(session: ReviewSession | null, c: Partial<ReviewComment> & { id: string }): ReviewSession | null {
+  if (!session) return session;
+  return { ...session, comments: session.comments.map((x) => (x.id === c.id ? { ...x, ...c } : x)) };
+}
+
 export function buildDiscussDraft(c: ReviewComment, session?: ReviewSession | null, ask?: string): string {
   const lines = [`> ${c.path}:${c.line}`];
   for (const ln of c.body.split("\n")) lines.push(ln ? `> ${ln}` : ">");
@@ -626,6 +633,10 @@ export function ReviewPanel({ channelId, subscribeChatEvents, registerReviewView
           if (prev.comments.some((x) => x.id === c.id)) return prev;
           return { ...prev, comments: [...prev.comments, c] };
         });
+      } else if (event.type === "review.comment_updated") {
+        // The dedup pass appended what a kept comment's dropped duplicates added.
+        const c = event.data as ReviewComment;
+        setSession((prev) => withUpdatedComment(prev, c));
       } else if (event.type === "review.comment_removed") {
         // Deleted here or in another window, or dropped as a duplicate by
         // the review loop's final dedup pass.

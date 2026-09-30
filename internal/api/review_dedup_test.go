@@ -1,7 +1,6 @@
 package api
 
 import (
-	"encoding/json"
 	"errors"
 	"log/slog"
 	"net/http"
@@ -14,6 +13,7 @@ import (
 
 	"github.com/radutopala/loop/internal/agent"
 	"github.com/radutopala/loop/internal/db"
+	"github.com/radutopala/loop/internal/events"
 	"github.com/radutopala/loop/internal/githubapi"
 	"github.com/radutopala/loop/internal/review"
 )
@@ -25,8 +25,7 @@ func (s *ReviewHandlerSuite) postDedup() *httptest.ResponseRecorder {
 }
 
 // wireDedupSession is wireReadySession plus comments: three agent findings
-// on x.go (the last one pushed), and a lone one on y.go that has nothing
-// to fold into.
+// on x.go (the last one pushed), and one on y.go.
 func (s *ReviewHandlerSuite) wireDedupSession() {
 	s.wireReadySession()
 	for _, c := range []*review.Comment{
@@ -102,48 +101,69 @@ func (s *ReviewHandlerSuite) TestDedupNothingToDo() {
 
 	w := s.postDedup()
 	require.Equal(s.T(), http.StatusOK, w.Code)
-	require.JSONEq(s.T(), `{"removed":[],"checked":0}`, w.Body.String())
+	require.JSONEq(s.T(), `{"removed":[],"clusters":[],"related":[],"moved":[],"checked":0}`, w.Body.String())
 	require.Equal(s.T(), 0, runner.calls)
 	require.False(s.T(), s.srv.review.isReviewRunActive("ch1"))
 }
 
-// The model groups a, b and c; b goes, c's GitHub delete fails so it is
-// kept and reported, and a drop that vanished during the run is skipped.
+// The model merges b and y.go's d into a, which takes the note; f into the
+// pushed c, which can't; and p into a, whose GitHub delete fails so that
+// cluster isn't reported. e vanishes mid-run and is skipped. a moves a line
+// down; the pushed c can't be moved.
 func (s *ReviewHandlerSuite) TestDedupRemovesDuplicates() {
 	s.wireDedupSession()
-	s.rs.AddComment("ch1", &review.Comment{ID: "e", Path: "x.go", Line: 60, Body: "Deleted by the user mid-run.", Source: "agent"})
+	for _, c := range []*review.Comment{
+		{ID: "e", Path: "x.go", Line: 60, Body: "Deleted by the user mid-run.", Source: "agent"},
+		{ID: "f", Path: "x.go", Line: 70, Body: "Map missing make().", Source: "agent"},
+		{ID: "p", Path: "z.go", Line: 3, Body: "Pushed copy.", Source: "agent", GitHubID: 6, Pushed: true},
+	} {
+		require.True(s.T(), s.rs.AddComment("ch1", c))
+	}
 	s.rs.UpdateAgent("ch1", "claude-opus-5-5", "high")
 	s.srv.review.setRunTimeout(time.Minute)
 
 	hub := NewEventsHub(slog.Default())
 	var removed []string
+	var updated []events.ReviewCommentEventData
 	var hubMu sync.Mutex
 	hub.captureHook = func(e Event) {
-		if e.Type == EventReviewCommentRemoved {
-			hubMu.Lock()
+		hubMu.Lock()
+		defer hubMu.Unlock()
+		switch e.Type {
+		case EventReviewCommentRemoved:
 			removed = append(removed, e.Data.(map[string]string)["id"])
-			hubMu.Unlock()
+		case EventReviewCommentUpdated:
+			updated = append(updated, e.Data.(events.ReviewCommentEventData))
 		}
 	}
 	s.srv.SetEventsHub(hub)
 
+	reply := `{"clusters":[` +
+		`{"keep":"a","drop":["b","e","d"],"reason":"map never made","note":"y.go hits it too."},` +
+		`{"keep":"c","drop":["f"],"note":"extra"},` +
+		`{"keep":"a","drop":["p"]}],` +
+		`"related":[{"ids":["a","c"],"reason":"same map"}],` +
+		`"moves":[{"id":"a","line":11},{"id":"c","line":41}]}`
 	runner := &mockReviewRunner{runFn: func() (*agent.AgentResponse, error) {
 		require.Equal(s.T(), review.StatusReviewing, s.rs.Get("ch1").Status)
 		s.rs.RemoveComment("ch1", "e")
-		return &agent.AgentResponse{
-			SessionID: "sess-1",
-			Response:  "```json\n{\"clusters\":[{\"keep\":\"a\",\"drop\":[\"b\",\"c\",\"e\"]}]}\n```",
-		}, nil
+		return &agent.AgentResponse{SessionID: "sess-1", Response: "```json\n" + reply + "\n```"}, nil
 	}}
 	s.srv.review.setAgent(runner, "", "")
 
 	w := s.postDedup()
 	require.Equal(s.T(), http.StatusOK, w.Code)
-	var res reviewDedupResult
-	require.NoError(s.T(), json.Unmarshal(w.Body.Bytes(), &res))
-	require.Equal(s.T(), []string{"b"}, res.Removed)
-	require.Equal(s.T(), 4, res.Checked)
-	require.Equal(s.T(), []string{"c: slug skipped"}, res.Errors)
+	require.JSONEq(s.T(), `{
+		"removed":["b","d","f"],
+		"clusters":[
+			{"kept":"a","removed":["b","d"],"reason":"map never made","note":"y.go hits it too.","note_added":true},
+			{"kept":"c","removed":["f"],"note":"extra"}
+		],
+		"related":[{"ids":["a","c"],"reason":"same map"}],
+		"moved":[{"id":"a","from":10,"to":11}],
+		"checked":7,
+		"errors":["p: slug skipped"]
+	}`, w.Body.String())
 
 	require.True(s.T(), runner.lastRO)
 	require.Equal(s.T(), "/repo/.worktrees/pr-7", runner.lastDir)
@@ -151,7 +171,7 @@ func (s *ReviewHandlerSuite) TestDedupRemovesDuplicates() {
 	require.Equal(s.T(), "claude-opus-5-5", runner.lastModel)
 	require.Equal(s.T(), "high", runner.lastEffort)
 	require.Contains(s.T(), runner.lastUser, "- id=b [agent] L14 (RIGHT): Assigning into an uninitialised map crashes.")
-	require.NotContains(s.T(), runner.lastUser, "id=d ")
+	require.Contains(s.T(), runner.lastUser, "## y.go\n- id=d [agent] L1 (RIGHT): Unrelated.")
 
 	sess := s.rs.Get("ch1")
 	require.Equal(s.T(), review.StatusReady, sess.Status)
@@ -160,11 +180,34 @@ func (s *ReviewHandlerSuite) TestDedupRemovesDuplicates() {
 	for _, c := range sess.Comments {
 		left = append(left, c.ID)
 	}
-	require.Equal(s.T(), []string{"a", "c", "d"}, left)
+	require.Equal(s.T(), []string{"a", "c", "p"}, left)
+	keptA, _ := s.rs.FindComment("ch1", "a")
+	require.Equal(s.T(), "Nil map write panics on the first insert.\n\nAlso flagged: y.go hits it too.", keptA.Body)
+	require.Equal(s.T(), 11, keptA.Line)
+	keptC, _ := s.rs.FindComment("ch1", "c")
+	require.Equal(s.T(), "Map is never made before use here.", keptC.Body)
+	require.Equal(s.T(), 40, keptC.Line)
 	hubMu.Lock()
-	require.Equal(s.T(), []string{"b"}, removed)
+	require.Equal(s.T(), []string{"b", "d", "f"}, removed)
+	require.Equal(s.T(), []events.ReviewCommentEventData{
+		{ID: "a", Path: "x.go", Line: 10, Body: keptA.Body},
+		{ID: "a", Path: "x.go", Line: 11, Body: keptA.Body},
+	}, updated)
 	hubMu.Unlock()
 	require.False(s.T(), s.srv.review.isReviewRunActive("ch1"))
+}
+
+// Without a hub the note still lands on the comment.
+func (s *ReviewHandlerSuite) TestDedupNoteWithoutHub() {
+	s.wireDedupSession()
+	s.srv.review.setAgent(&mockReviewRunner{runFn: func() (*agent.AgentResponse, error) {
+		return &agent.AgentResponse{Response: `{"clusters":[{"keep":"a","drop":["b"],"note":"n"}]}`}, nil
+	}}, "", "")
+
+	w := s.postDedup()
+	require.Equal(s.T(), http.StatusOK, w.Code)
+	kept, _ := s.rs.FindComment("ch1", "a")
+	require.Equal(s.T(), "Nil map write panics on the first insert.\n\nAlso flagged: n", kept.Body)
 }
 
 func (s *ReviewHandlerSuite) TestDedupRunFailures() {

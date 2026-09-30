@@ -340,6 +340,25 @@ func (s *reviewService) ingestComment(channelID, worktreePath, parentDirPath str
 	return true
 }
 
+// editComment applies edit to a local agent comment and broadcasts the
+// result. nil when the comment is gone or isn't one the pass may edit.
+func (s *reviewService) editComment(channelID, commentID string, edit func(*review.Comment)) *review.Comment {
+	c := s.sessions.EditLocalComment(channelID, commentID, edit)
+	if c == nil {
+		return nil
+	}
+	if hub := s.deps.eventsHub; hub != nil {
+		hub.BroadcastReviewCommentUpdated(channelID, events.ReviewCommentEventData{
+			ID:   c.ID,
+			Path: c.Path,
+			Line: c.Line,
+			Side: c.Side,
+			Body: c.Body,
+		})
+	}
+	return c
+}
+
 // maybeRediffForComment re-runs git diff with widened unified context if
 // the just-emitted comment lands on a known file but outside every
 // existing hunk. Path-absent comments and comments already inside a

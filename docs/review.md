@@ -56,14 +56,25 @@ per-global / per-project / per-worktree the same way as `github.gh_user`.
    With `max_iterations` above 1, `review-loop` ends with a **dedup** node
    (`loop review dedup`, see [CLI](#cli)). Each round only reports; this
    last step does the cleanup. A later round often re-finds an issue on
-   another line or in other words, which the ingest-time pass (see
+   another line, in another file, or framed differently (a symptom rather
+   than its cause), which the ingest-time pass (see
    [Required output format](#required-output-format)) doesn't catch. The
-   dedup pass shows every file that has two or more comments to a
-   read-only model run (no Bash, no edits). The model groups the comments
-   that describe the same issue and keeps the best-anchored, clearest one.
-   The daemon then deletes the rest from the panel and, if they were
-   pushed, from the PR. It only ever deletes agent findings: comments
-   read from GitHub can be kept, but are never dropped. A single pass has
+   dedup pass shows every comment in the session to a read-only model run
+   (no Bash, no edits). The model groups them by root cause (same issue
+   means one change fixes both), keeps the most severe and specific
+   comment in each group, and says what the others add. The daemon deletes
+   the others from the panel and, if they were pushed, from the PR, and
+   appends that note to the kept comment as an `Also flagged:` paragraph.
+   The note is only added when the kept comment is an unpushed agent
+   finding; comments on GitHub are never edited. The pass only ever
+   deletes agent findings: comments read from GitHub can be kept, but are
+   never dropped. Findings about the same code path that still need
+   separate fixes are reported as related, and nothing is deleted for
+   them. The pass also re-checks where each surviving agent finding is
+   anchored, against the file read with line numbers, and moves an
+   unpushed one that sits a few lines off (on a blank line, a closing
+   brace or a neighbouring statement) to the statement it is about, within
+   20 lines. A single pass has
    nothing to fold, so the node is skipped when `max_iterations` is 1.
    The loop's stop condition doesn't change: it compares each round
    against the set the daemon has already deduplicated on the way in.
@@ -304,8 +315,20 @@ The emitted JSON shape is `{"status":"ready","no_comments":bool,"comments":[...]
 
 `loop review dedup` runs the dedup pass that `review-loop` ends with. It
 takes the same `--channel-id`, `--api-url` and `--timeout` flags, blocks
-until the pass is done, and prints the result:
-`{"removed":["<id>",...],"checked":N,"errors":["<id>: <msg>",...]}`.
+until the pass is done, and prints the result, which lists every merged
+group so a pass can be audited:
+
+```json
+{
+  "removed": ["<id>", "..."],
+  "clusters": [{"kept": "<id>", "removed": ["<id>"], "reason": "...", "note": "...", "note_added": true}],
+  "related": [{"ids": ["<id>", "<id>"], "reason": "..."}],
+  "moved": [{"id": "<id>", "from": 145, "to": 147}],
+  "checked": 11,
+  "errors": ["<id>: <msg>"]
+}
+```
+
 `checked` counts the comments shown to the model. A comment whose delete
 failed stays in the panel and is listed under `errors`. Neither case fails
 the command. A run already in flight on the channel makes it fail with a
@@ -353,6 +376,14 @@ intercepts that tool call on the agent's stream, so nothing has to round
 without one can't be anchored in the diff and is dropped, so the default
 system prompt requires it. `summary` and `failure_scenario` are joined
 into the comment body.
+
+The daemon doesn't check the line, so the PR context given to the
+reviewer and to its finder subagents asks for it to be confirmed with a
+numbered read of the file (the Read tool, `grep -n`, `nl -ba`) and pointed
+at the statement the finding is about. `git diff` output carries no line
+numbers, and an agent that counts from the hunk headers lands a line or
+three off, on a blank line or a closing brace. The multi-round loop's
+dedup pass re-checks anchors as a backstop.
 
 An override prompt that is *not* a slash command gets no system prompt
 from the daemon, so it must state its own contract. Either instruct the
