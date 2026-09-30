@@ -962,6 +962,7 @@ type gatePolicyJSON struct {
 	PathRules       []types.PathRule    `json:"path_rules"`
 	CommandRules    []types.CommandRule `json:"command_rules"`
 	FileRules       []types.FileRule    `json:"file_rules"`
+	GitGuardRoots   []string            `json:"git_guard_roots,omitempty"`
 }
 
 // writeGatePolicyFile serialises the subset of cfg.Gates.Agentgate that the
@@ -977,7 +978,7 @@ type gatePolicyJSON struct {
 // workDir/parentDirPath come from the per-channel mount setup — the workspace
 // allow rule is injected here (not in the static defaults) because the real
 // workspace path is the host bind-mount path, not a fixed /work.
-func (r *DockerRunner) writeGatePolicyFile(cfg *config.Config, channelID, workDir, parentDirPath string) (string, error) {
+func (r *DockerRunner) writeGatePolicyFile(cfg *config.Config, channelID, workDir, parentDirPath string, binds []string) (string, error) {
 	if !cfg.Gates.Agentgate.Enabled {
 		return "", nil
 	}
@@ -993,6 +994,7 @@ func (r *DockerRunner) writeGatePolicyFile(cfg *config.Config, channelID, workDi
 		PathRules:       cfg.Gates.Agentgate.PathRules,
 		CommandRules:    injectWorkspaceRmRfRule(cfg.Gates.Agentgate.CommandRules, workDir, parentDirPath),
 		FileRules:       injectPolicySelfDenyRule(injectProjectConfigRule(injectWorkspaceRule(cfg.Gates.Agentgate.FileRules, workDir, parentDirPath), workDir, parentDirPath)),
+		GitGuardRoots:   gitGuardRoots(binds),
 	}
 	raw, _ := json.Marshal(payload)
 	path := filepath.Join(dir, "gate-policy.json")
@@ -1216,6 +1218,8 @@ func injectWorkspaceRmRfRule(rules []types.CommandRule, workDir, parentDirPath s
 // rules list at the first position following any Deny/Approve rules. This
 // keeps generic denies (**/.ssh/**, etc.) and Approve markers (approve-me*)
 // matching first, while granting blanket access to the real workspace path.
+// Git config and hooks in the workspace aren't rules here: the gate's git
+// guard covers them under every writable host mount (see gitGuardRoots).
 func injectWorkspaceRule(rules []types.FileRule, workDir, parentDirPath string) []types.FileRule {
 	if workDir == "" {
 		return rules
@@ -1224,21 +1228,9 @@ func injectWorkspaceRule(rules []types.FileRule, workDir, parentDirPath string) 
 	if parentDirPath != "" && parentDirPath != workDir {
 		roots = append(roots, parentDirPath)
 	}
-	var paths, gitPaths []string
+	var paths []string
 	for _, root := range roots {
 		paths = append(paths, root+"/**")
-		gitPaths = append(gitPaths, root+"/**/.git/config", root+"/**/.git/hooks/**")
-	}
-	// A repo's config and hooks run code the next time anyone uses git
-	// there, and the workspace is the host's: the user's own git would run
-	// a planted core.fsmonitor, core.sshCommand or pre-commit hook. Ask
-	// before the agent writes one. Scratch repos elsewhere (/tmp) don't
-	// reach the host, so they don't ask.
-	git := types.FileRule{
-		Paths:      gitPaths,
-		Operations: []string{"write", "create"},
-		Decision:   types.DecisionApprove,
-		Message:    "git config or hook write in the workspace",
 	}
 	ws := types.FileRule{
 		Paths:      paths,
@@ -1253,11 +1245,29 @@ func injectWorkspaceRule(rules []types.FileRule, workDir, parentDirPath string) 
 			break
 		}
 	}
-	out := make([]types.FileRule, 0, len(rules)+2)
+	out := make([]types.FileRule, 0, len(rules)+1)
 	out = append(out, rules[:insertAt]...)
-	out = append(out, git, ws)
+	out = append(out, ws)
 	out = append(out, rules[insertAt:]...)
 	return out
+}
+
+// gitGuardRoots returns the container paths of the writable host binds.
+// A repo's config and hooks there run code the next time anyone uses git
+// on the host (core.fsmonitor, core.sshCommand, a pre-commit hook), so the
+// gate's git guard covers them. Read-only binds and named volumes don't
+// reach the host's git, and scratch repos in the container (/tmp) don't
+// either.
+func gitGuardRoots(binds []string) []string {
+	var roots []string
+	for _, b := range binds {
+		ms, err := parseMountSpec(b)
+		if err != nil || config.IsNamedVolume(ms.Host) || slices.Contains(strings.Split(ms.Mode, ","), "ro") {
+			continue
+		}
+		roots = append(roots, ms.Container)
+	}
+	return roots
 }
 
 // gatePolicyMountDir is where runner.go bind-mounts the gate and docker-proxy

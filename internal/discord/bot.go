@@ -266,6 +266,8 @@ func (b *DiscordBot) SendApproval(_ context.Context, channelID string, prompt bo
 	if details := bot.FormatApprovalDetails(prompt.Details); details != "" {
 		content += "\n" + details
 	}
+	// Nothing inside a code block is markup on Discord but the closing fence.
+	content = bot.AppendApprovalDiff(content, prompt.Details, maxMessageLen, func(s string) string { return s })
 	msg, err := b.session.ChannelMessageSendComplex(channelID, &discordgo.MessageSend{
 		Content: content,
 		Components: []discordgo.MessageComponent{

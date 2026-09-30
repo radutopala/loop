@@ -237,3 +237,20 @@ func (s *PolicySuite) TestMatchAnyDoublestarSkipsBadPattern() {
 	require.False(s.T(), matchAnyDoublestar("/x", []string{"[bad"}))
 	require.True(s.T(), matchAnyDoublestar("/x", nil))
 }
+
+// --- Git guard roots ---
+
+func (s *PolicySuite) TestGitGuardRootsDefaultEmpty() {
+	p, err := CompilePolicy(types.DecisionAllow, nil, nil, nil)
+	s.Require().NoError(err)
+	s.Require().Empty(p.GitGuardRoots())
+}
+
+func (s *PolicySuite) TestWithGitGuardRootsCopies() {
+	p, err := CompilePolicy(types.DecisionAllow, nil, nil, nil)
+	s.Require().NoError(err)
+	roots := []string{"/work", "/home/agent/repo"}
+	s.Require().Same(p, p.WithGitGuardRoots(roots))
+	roots[0] = "/mutated"
+	s.Require().Equal([]string{"/work", "/home/agent/repo"}, p.GitGuardRoots())
+}

@@ -40,7 +40,7 @@ The daemon reads and writes files in directories agents can write to, and runs `
 - File, raw-file, playground, shortcut and template paths resolve symlinks and must stay inside their root. A write through a symlink lands on its target only when that stays inside the root; dangling links are refused.
 - Host-side `git` runs with repo-configured executables switched off: fsmonitor, hooks, pagers, external diff, textconv, filter drivers, the `ext::` transport. `gh` gets the same settings.
 - Commands a repo's own `.git/config` names for fetching are switched off too, while yours keep working. Credential helpers from the repo are dropped and your global and system ones stay. A repo `core.sshCommand` is replaced by yours, or plain `ssh`. A repo `core.gitProxy` blocks the `git://` transport, and a repo `remote.<name>.uploadpack`/`receivepack` blocks local-path remotes, the only kind that runs those programs on your machine. Filter drivers you define globally keep working; only the repo's are switched off.
-- The gate asks before an agent writes `.git/config` or `.git/hooks/` in the workspace, since your own git would run what's planted there.
+- In repos on a host mount, the gate guards `.git/config`, hooks and git dir pointers, since your own git would run what's planted there. Git's own writes of ordinary keys (init, clone, remotes, upstreams, `user.*`) go through; anything else asks with a diff of the change, and the gate writes exactly what you approved. A write the gate can't show you is refused. See [Git guard](gates.md#git-guard).
 
 ### Project config
 

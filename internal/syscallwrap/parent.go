@@ -237,7 +237,11 @@ func loadGatePolicy(readFile func(string) ([]byte, error), path string) (*agentg
 	if decision == "" {
 		decision = types.DecisionDeny
 	}
-	return agentgate.CompilePolicy(decision, cfg.PathRules, cfg.CommandRules, cfg.FileRules)
+	policy, err := agentgate.CompilePolicy(decision, cfg.PathRules, cfg.CommandRules, cfg.FileRules)
+	if err != nil {
+		return nil, err
+	}
+	return policy.WithGitGuardRoots(cfg.GitGuardRoots), nil
 }
 
 // gateConfigJSON mirrors the subset of internal/config.AgentgateConfig the gate
@@ -247,6 +251,7 @@ type gateConfigJSON struct {
 	PathRules       []types.PathRule    `json:"path_rules"`
 	CommandRules    []types.CommandRule `json:"command_rules"`
 	FileRules       []types.FileRule    `json:"file_rules"`
+	GitGuardRoots   []string            `json:"git_guard_roots"`
 }
 
 // defaultLookupUser resolves HOST_USER into the agent's numeric uid/gid.

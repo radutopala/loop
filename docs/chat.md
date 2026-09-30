@@ -283,6 +283,7 @@ When the agent container hits a gate rule with `decision: approve`, the backend 
 - **Target:** the full target string (socket path, command line, or `METHOD /path`) in a monospace style.
 - **Message:** the matching rule's `message` field, shown as a second-line caption when non-empty.
 - **Details:** for `DOCKER-HTTP` prompts on `/containers/create`, `/containers/{id}/exec`, `/networks/create`, and `/volumes/create`, the proxy extracts the security-relevant body fields (e.g. `cmd`, `user`, `privileged`, `binds`) and the card renders them as a sorted `key: value` list under the target. See [Gates: Body details surfaced in the prompt](gates.md#body-details-surfaced-in-the-prompt) for the full key set per endpoint.
+- **Diff:** for `FILE` prompts from the [git guard](gates.md#git-guard), the `diff` detail is the change the gate will write to a git config file or hook. The card shows it as a scrollable unified diff with added and removed lines coloured, rather than in the `key: value` list.
 - **Buttons:** three monospace controls, left-to-right:
   - `Allow once` — primary accent, lets this one syscall through.
   - `Allow for session` — secondary outline, caches the allow for the container's lifetime.

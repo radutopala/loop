@@ -152,7 +152,7 @@ Seccomp catches `execve` / `execveat`; transparent wrappers (`env`, `sudo`, `nic
 
 Git write-side operations (`push`, `commit`, `reset --hard`, …) are intentionally not gated by default; add an approve rule if you want prompts.
 
-**Example — gate `git commit` and `git push`.** Drop this into `~/.loop/config.json` for a global rule that applies to every project, or into `{project}/.loop/config.json` for just one repo — the schema is identical and project rules are prepended to global (first-match-wins).
+**Example — gate `git commit` and `git push`.** Drop this into `~/.loop/config.json` for a global rule that applies to every project, or into `{project}/.loop/config.json` for just one repo — the schema is identical. Project rules go after the global `deny` rules and before the other global rules (first-match-wins), so a project can't loosen a global deny (see [Project config merge](#project-config-merge)).
 
 ```jsonc
 {
@@ -173,13 +173,13 @@ Git write-side operations (`push`, `commit`, `reset --hard`, …) are intentiona
 
 The args regex runs against `strings.Join(argv[1:], " ")`, so `\s` covers the space before the next arg *and* embedded newlines in multi-line commit messages; the `$` alternation handles bare `git push` with no trailing args.
 
-### File ops (`FileRule`, 9 static rules, first-match-wins, plus four injected rules)
+### File ops (`FileRule`, 9 static rules, first-match-wins, plus three injected rules)
 
 Order matters: the pinned policy self-deny, then the pinned project-config approve, then the static denies, then the injected workspace rule, then the tmp / system-read fast-paths.
 
 | # | Paths | Operations | Decision | Why |
 |---|---|---|---|---|
-| 1 | *(injected)* `/etc/loop/**` | write, create, delete, chmod, chown, link | `deny` | The gate's own policy file, pinned ahead of everything else by `injectPolicySelfDenyRule`. Rule 8 already covers `/etc/**`, but rules that arrive through config can be shadowed: both config layers *prepend* their rules, and the project layer is `{workDir}/.loop/config.json` — inside the workspace the agent may write. Injecting after the merge is the one position no config can precede. `link` is in the op list (unlike rule 8) because `linkat`/`symlinkat` match on the *new* path only: without it the agent could hardlink the policy into the blanket-allowed workspace and write through the second name. Reads stay allowed — seeing the active policy helps debug a denial |
+| 1 | *(injected)* `/etc/loop/**` | write, create, delete, chmod, chown, link | `deny` | The gate's own policy file, pinned ahead of everything else by `injectPolicySelfDenyRule`. Rule 8 already covers `/etc/**`, but rules that arrive through config can be shadowed: a non-empty global list replaces the baseline, project rules sit ahead of every global allow and approve, and the project layer is `{workDir}/.loop/config.json` — inside the workspace the agent may write. Injecting after the merge is the one position no config can precede. `link` is in the op list (unlike rule 8) because `linkat`/`symlinkat` match on the *new* path only: without it the agent could hardlink the policy into the blanket-allowed workspace and write through the second name. Reads stay allowed — seeing the active policy helps debug a denial |
 | 1a | *(injected)* `{workDir}/.loop`, `.loop/config.json`, `.loop/container`, `.loop/container/**`; same under `{parentDirPath}` | write, create, delete, chmod, chown, link | `approve` | Project config. Loop builds the next container from these (mounts, `copy_files`, gates, image), so an unreviewed write would outlast the session. Pinned after the merge by `injectProjectConfigRule`, like rule 1. The `.loop` directory itself is listed so it can't be swapped by rename; the cost is that GNU `mkdir -p .loop/<sub>` asks too, since `mkdirat` is checked before the kernel returns `EEXIST`. Containers the agent starts get the directories read-only (see [Project config stays read-only to nested containers](#project-config-stays-read-only-to-nested-containers)) |
 | 2 | `/proc/*/mem`, `/proc/kcore` | read | `deny` | Kernel / process-memory exfiltration. `/proc/*/environ` is intentionally NOT denied — Go test binaries, runtime probes, and tooling open it routinely (chronic noise) and the gate parent's env carries no exploitable secret (the notify fd is passed via SCM_RIGHTS, not authenticated by an env-readable token) |
 | 3 | `/etc/shadow`, `/etc/gshadow`, `/etc/sudoers`, `/etc/sudoers.d/**`, `/etc/ssh/ssh_host_*_key`, `.pub` variants | all ops | `deny` | Root credential files |
@@ -188,12 +188,63 @@ Order matters: the pinned policy self-deny, then the pinned project-config appro
 | 6 | `**/.claude/settings.json`, `settings.local.json` | write, create, delete, chmod | `deny` | Claude harness settings. The rule is narrow on purpose — `CLAUDE.md`, `mcp*.json`, `plugins/**`, and the rest of `~/.claude` are tree the agent legitimately writes (memory updates, per-project MCP configs, plugins state, ephemeral harness session/todos/snapshot dirs) |
 | 7 | `/root/.bashrc` (and `.bash_profile`, `.zshrc`, `.zprofile`, `.profile`, `.bash_login`, `.inputrc`); same set under `/home/*/` and `/Users/*/` | write, create, delete, chmod | `deny` | Shell rcfile write — persistence vector. Scoped to real home-dir layouts (root, Linux `/home/<user>`, macOS host-home bind-mount `/Users/<user>`) so test fixtures writing a `.bashrc` inside a t.TempDir() don't trip |
 | 8 | `/etc/**`, `/usr/**`, `/bin/**`, `/sbin/**`, `/lib/**`, `/lib64/**`, `/boot/**` | write, create, delete, chmod, chown | `deny` | System paths — writes would mutate the container image outside the workspace |
-| 8a | *(injected)* `{workDir}/**/.git/config`, `{workDir}/**/.git/hooks/**`; same under `{parentDirPath}` | write, create | `approve` | Git config and hooks run code the next time anyone runs git there, and the workspace is bind-mounted from the host, so the user's own git would run a planted `core.fsmonitor`, `core.sshCommand` or pre-commit hook. Inserted together with rule 9, right ahead of it. `git init`, `git clone` and `git push -u` in the workspace ask too; scratch repos under `/tmp` don't, since they never reach the host |
 | 9 | *(injected)* `{workDir}/**`, `{parentDirPath}/**` | all ops | `allow` | Workspace fast-path. Inserted per-container by `writeGatePolicyFile` using the real host bind-mount path for that channel / thread. Positioned after all Deny rules so cred-path denies still win inside the workspace |
 | 10 | `/tmp/**`, `/var/tmp/**` | all ops | `allow` | OS tmp fast-path |
 | 11 | `/proc/**`, `/sys/**`, `/dev/null`, `/dev/zero`, `/dev/urandom`, `/dev/random`, `/dev/tty`, `/dev/pts/**` | read, stat, list | `allow` | System reads fast-path — reads are silent, writes to these paths fall through to `default_decision` |
 
 Anything that doesn't match falls through to `gates.agentgate.default_decision` (`"allow"` by default).
+
+### Git guard
+
+A repo's config and hooks make git run programs: `core.fsmonitor`, `core.sshCommand`, filter drivers, aliases, a `pre-commit` hook. In a repo on a host mount, those run the next time *you* use git there, outside the container. So the gate guards the files git reads them from, under every writable host bind (`git_guard_roots` in the gate policy, from `gitGuardRoots`). Read-only binds, named volumes and scratch repos in the container (`/tmp`) don't reach your git and aren't guarded. No rule, from any config layer, can allow past the guard; a deny rule on a guarded path still wins, since a rename reaches the guard only once the file rules allow it.
+
+**Guarded paths**, at any depth under a root:
+
+- the `.git` entry itself (a git dir, or a `gitdir:` file pointing elsewhere);
+- `.git/config` and `.git/config.worktree`;
+- `.git/commondir`;
+- `.git/hooks` and everything under it, except the `*.sample` files;
+- the same inside submodule and linked-worktree git dirs (`.git/modules/…`, `.git/worktrees/…`).
+
+Components match case-insensitively, with Unicode folding, because the host filesystem behind a mount often is case-insensitive.
+
+**Writes the gate can't read are refused.** An `open` that creates or writes, `truncate`, `link`, `symlink` and `mknod` on a guarded path get `EPERM`, with no approval card: the card couldn't show what would be written. So does a hardlink *from* a guarded file, which would give the agent a second, unguarded name to write through. Reads, deletes, `chmod`, `chown` and `mkdir` go on to the file rules as usual.
+
+**Renames show the content.** Git never writes these files in place. It writes `config.lock` and renames it over `config`, so a rename onto a guarded path is where the content appears. The gate:
+
+1. refuses `RENAME_EXCHANGE` (either side guarded) and `RENAME_WHITEOUT`;
+2. reads the source as the agent's uid and gid (not as root), refusing it if it isn't a regular file, is over 32 KiB, or isn't plain text. Plain text means valid UTF-8 with no control characters but tab and newline, and no invisible format characters such as bidi overrides that could make the card show something other than what git reads;
+3. installs a config change silently when every entry it adds or changes is one of the keys below. Anything else shows an approval card with a unified diff of the current file against the new one;
+4. on allow, writes the exact bytes it read to a temp file next to the target and renames that into place, still as the agent's uid and gid. It then removes the rename's source, but only if that name still holds the bytes it read; a source rewritten after the decision stays. The check compares content, not inode numbers, because Docker Desktop's file sharing renumbers inodes between lookups. The agent's call returns as if its own rename succeeded.
+
+Because the gate writes the file itself, the agent can't swap the content between your click and the rename.
+
+**Whole trees can't be moved in.** A rename into a `.git` dir onto a path that isn't guarded itself (a ref, the index, an object) goes on to the file rules as usual, if its source is a regular file. A directory or symlink source is refused, and so is `RENAME_EXCHANGE` with either side inside a `.git` dir. Otherwise the agent could build a git dir elsewhere, with its own hooks and config, and move it in whole as `.git/modules/<name>` or `.git/worktrees/<name>`. Git itself doesn't move directories in there, except `git submodule absorbgitdirs`, which fails in the container.
+
+**Keys installed without asking**, which is what `git init`, `clone`, `remote add`, `fetch`, `branch --set-upstream-to`, `push -u` and `git config user.*` write:
+
+| Section | Keys |
+|---|---|
+| `core` | `repositoryformatversion`, `filemode`, `bare`, `logallrefupdates`, `ignorecase`, `precomposeunicode`, `symlinks` |
+| `extensions` | `objectformat` |
+| `user` | `name`, `email` |
+| `remote "<name>"` | `url`, `pushurl` (only `https`, `http`, `ssh`, `git` URLs and `user@host:path`; local paths, `file://` and `<helper>::` URLs ask), `fetch` |
+| `branch "<name>"` | `remote`, `merge` |
+| `submodule "<name>"` | `url` (same URL check), `active` |
+| `init` | `defaultbranch` |
+| `push` | `default`, `autosetupremote` |
+| `pull` | `rebase` |
+
+Both the old and the new file must parse under a strict subset of git's syntax: `[section]` or `[section "sub"]` headers on their own line, and `key = value` lines whose value has no quotes, backslashes, `;` or `#`. A file outside it, for example one with a continuation line or an escape, always asks, so the guard can never read a file differently from git. Removed entries don't count against a change, since removing one never makes git run anything.
+
+The card's cache key includes a hash of the content: **Allow for session** covers the same bytes landing on the same path again, not any later write there. Discord and Slack show the diff as a code block, or tell you to review it in the desktop app when it doesn't fit in a message.
+
+**What the guard doesn't cover:**
+
+- `fchmod` on an already-open descriptor. A hook installed through the guard keeps the source's mode; making a non-executable hook executable later goes through `chmod(2)`, which the file rules see, but `fchmod(2)` on an open fd isn't trapped.
+- Bare repos and git dirs not named `.git` (`git clone --bare x.git`, `--separate-git-dir`).
+- A `core.hooksPath` that points into the worktree (husky, lefthook). Setting it asks, but the hook files it points at are ordinary workspace files.
+- The multi-threaded path race below: a sibling thread can change a path between the gate's read and the kernel's. The gate's own install isn't affected, since it opens its target directories with `RESOLVE_NO_SYMLINKS` and writes only bytes it already read.
 
 ### Docker HTTP (`HTTPServiceRule`, 6 rules + default `allow`)
 
@@ -304,7 +355,7 @@ Every rejection is audited with rule id `create-body`.
 
 ### Project config stays read-only to nested containers
 
-Loop builds each agent container from the workspace's `.loop/config.json` (mounts, `copy_files`, `extra_dirs`, gates, `container_image`) and `.loop/container/Dockerfile`, and both sit in the workspace the agent can write. The agent itself needs an approval to change them ([file-op rule 1a](#file-ops-filerule-9-static-rules-first-match-wins-plus-four-injected-rules)), but the seccomp gate doesn't see into containers it starts, and the bind allowlist lets those bind the workspace read-write. So the same `POST /containers/create` rewrite keeps the `.loop` directories (the workspace's, and the worktree parent's) read-only there, passed in as `LOOP_DOCKERPROXY_READONLY_DIRS`:
+Loop builds each agent container from the workspace's `.loop/config.json` (mounts, `copy_files`, `extra_dirs`, gates, `container_image`) and `.loop/container/Dockerfile`, and both sit in the workspace the agent can write. The agent itself needs an approval to change them ([file-op rule 1a](#file-ops-filerule-9-static-rules-first-match-wins-plus-three-injected-rules)), but the seccomp gate doesn't see into containers it starts, and the bind allowlist lets those bind the workspace read-write. So the same `POST /containers/create` rewrite keeps the `.loop` directories (the workspace's, and the worktree parent's) read-only there, passed in as `LOOP_DOCKERPROXY_READONLY_DIRS`:
 
 - a read-write bind that contains one gets a read-only bind of it on top — `-v $PWD:/app` also mounts `$PWD/.loop` at `/app/.loop` read-only, and being a mountpoint it can't be renamed away either;
 - a read-write bind inside one is made read-only.
@@ -403,7 +454,7 @@ Per container (`internal/container/runner.go#createAndStartContainer`):
 
 1. Generate a 32-byte `crypto/rand` bearer token (`newGateToken`) — shared by the proxy and gate layers.
 2. `writeProxyPolicyFile` marshals `cfg.Gates.DockerProxy`, with the bind allowlist (see Docker body rules) injected, to `{policyDir}/<channel>/proxy-policy.json` (0640). Bind-mount `hostSock:/var/run/docker.sock.host:ro` + `.../proxy-policy.json:/etc/loop/proxy-policy.json:ro`. Env: `LOOP_DOCKERPROXY_ENABLED=1`, `LOOP_DOCKERPROXY_POLICY_FILE=/etc/loop/proxy-policy.json`, `LOOP_DOCKERPROXY_UPSTREAM=/var/run/docker.sock.host`, `LOOP_DOCKERPROXY_NESTED_DIR=/run/loop-dproxy`, `LOOP_DOCKERPROXY_READONLY_DIRS` (the workspace's `.loop` dirs, colon-separated), `LOOP_DOCKERPROXY_BIND_ROOTS` (the agent's read-write same-path directory mounts), `LOOP_DOCKERPROXY_BIND_HOST_PATHS` (`root=path` pairs for the roots whose host path resolves elsewhere), plus an anonymous volume at `/run/loop-dproxy`.
-3. `writeGatePolicyFile` marshals the gate rule subset (`DefaultDecision`, `PathRules`, `CommandRules`, `FileRules`) to `{policyDir}/<channel>/gate-policy.json` (0640). `FileRules` is the merged config list wrapped by `injectWorkspaceRule` (workspace git approve and workspace allow, before the first Allow) and then `injectPolicySelfDenyRule` (`/etc/loop/**` deny, at the head — see [file-op rule 1](#file-ops-filerule-9-static-rules-first-match-wins-plus-four-injected-rules)). Bind-mount `.../gate-policy.json:/etc/loop/gate-policy.json:ro`. Env: `LOOP_GATE_ENABLED=1`, `LOOP_GATE_POLICY_FILE=/etc/loop/gate-policy.json`.
+3. `writeGatePolicyFile` marshals the gate rule subset (`DefaultDecision`, `PathRules`, `CommandRules`, `FileRules`) to `{policyDir}/<channel>/gate-policy.json` (0640). `FileRules` is the merged config list wrapped by `injectWorkspaceRule` (workspace allow, before the first Allow) and then `injectPolicySelfDenyRule` (`/etc/loop/**` deny, at the head — see [file-op rule 1](#file-ops-filerule-9-static-rules-first-match-wins-plus-three-injected-rules)). `GitGuardRoots` lists the container paths of the writable host binds (see [Git guard](#git-guard)). Bind-mount `.../gate-policy.json:/etc/loop/gate-policy.json:ro`. Env: `LOOP_GATE_ENABLED=1`, `LOOP_GATE_POLICY_FILE=/etc/loop/gate-policy.json`.
 4. Shared env on both layers: `LOOP_CHANNEL_ID=<channelID>`. The gate token (32-hex) is copied in as `/run/loop/gate-token` (root, 0400) before the container starts, never set in the env.
 5. After `ContainerCreate` returns a `containerID`, call `gateResolver.AddWithToken(containerID, token, mgr, channelID)` — the token starts authenticating HTTP calls as soon as the container is up.
 6. On container remove: `gateResolver.Remove(containerID)` — frees the token and Manager. Policy files under `{policyDir}/<channel>/` are left on disk (overwritten next spawn for the same channel — the payload is derived from global config + the channel's stable workDir, so overwrites are idempotent).
@@ -430,7 +481,7 @@ The in-exec parent runs as root, like the stream-mode one: it reads the root-onl
 
 ## Project config merge
 
-A project `.loop/config.json` can add rules with any decision (`allow` / `deny` / `approve`), so a project can open a surgical hole in a global `approve` (e.g. allow `/etc/ssl/certs` as a bind source) without turning a whole layer off. The global denies and switches still hold:
+A project `.loop/config.json` can add rules with any decision (`allow` / `deny` / `approve`), so a project can open a surgical hole in a global `approve` without turning a whole layer off: for example, an `allow` body rule with `source_path_in` `^/opt/shared-fixtures(/|$)` binds that host dir without the "bind mount outside the agent's own mounts" prompt. The global denies and switches still hold: `/etc/ssl/certs` stays refused under the baseline `^/etc` deny, and a project can't switch a gate off. An exception to a deny belongs in the global config:
 
 | Field | Merge rule |
 |---|---|
@@ -473,7 +524,7 @@ Gaps operators should know about — what's enforced vs what's aspirational:
 These are deferred by design, not missing work:
 
 - **TCP/DNS egress** — `WebFetch` / `WebSearch` are not gated. Operator mitigation: Docker network with no internet route + HTTPS egress proxy with URL allowlist. eBPF `cgroup_connect` is the v2 plan.
-- **Multi-threaded argv / path TOCTOU** — a sibling thread can mutate argv/path between our `ProcessVMReadv` read and the kernel's re-dereference. Single-threaded callers (Claude's `Bash` tool per invocation) are unaffected; exploit requires the agent to write+compile+run a multi-threaded program.
+- **Multi-threaded argv / path TOCTOU** — a sibling thread can mutate argv/path between our `ProcessVMReadv` read and the kernel's re-dereference. The [git guard](#git-guard)'s path checks inherit this. Single-threaded callers (Claude's `Bash` tool per invocation) are unaffected; exploit requires the agent to write+compile+run a multi-threaded program.
 - **Policy hot-reload** — rule changes require a container restart (the policy JSON is read once when `loop syscallwrap` / `loop dockerproxy` starts).
 - **Docker daemon-level authorization plugin** — out of scope; the HTTP proxy is per-container.
 - **Podman / nerdctl / docker-over-TCP** — only unix-socket Docker is in scope.

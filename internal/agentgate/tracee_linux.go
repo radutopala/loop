@@ -5,8 +5,10 @@ package agentgate
 import (
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 
 	"golang.org/x/sys/unix"
 )
@@ -26,17 +28,25 @@ type ProcTracee struct {
 	// Defaults to unix.Readlinkat(unix.AT_FDCWD, …).
 	Readlink func(path string, buf []byte) (int, error)
 
-	// EvalSymlinksFn defaults to filepath.EvalSymlinks.
-	EvalSymlinksFn func(path string) (string, error)
+	// Lstat and ReadlinkPath back EvalSymlinks' walk. Default to os.Lstat
+	// and os.Readlink.
+	Lstat        func(path string) (os.FileInfo, error)
+	ReadlinkPath func(path string) (string, error)
+
+	// ReadFile reads /proc/<pid>/status for Creds and the thread group id.
+	// Defaults to os.ReadFile.
+	ReadFile func(path string) ([]byte, error)
 }
 
 // NewProcTracee returns a ProcTracee wired to the real syscalls.
 func NewProcTracee(pid int) *ProcTracee {
 	return &ProcTracee{
-		PID:            pid,
-		ReadMem:        unix.ProcessVMReadv,
-		Readlink:       readlinkDefault,
-		EvalSymlinksFn: filepath.EvalSymlinks,
+		PID:          pid,
+		ReadMem:      unix.ProcessVMReadv,
+		Readlink:     readlinkDefault,
+		Lstat:        os.Lstat,
+		ReadlinkPath: os.Readlink,
+		ReadFile:     os.ReadFile,
 	}
 }
 
@@ -178,7 +188,123 @@ func (t *ProcTracee) ResolveDirfd(dirfd int32) (string, error) {
 	return string(buf[:n]), nil
 }
 
-// EvalSymlinks delegates to filepath.EvalSymlinks (overridable for tests).
+// maxSymlinkHops matches filepath.EvalSymlinks. It must stay above the
+// kernel's own limit (40): a walk that gives up where the kernel wouldn't
+// falls back to the unresolved path, which the kernel then follows.
+const maxSymlinkHops = 255
+
+// EvalSymlinks resolves path the way the tracee's own lookup would.
+//
+// The walk runs in the gate's process, where /proc/self and
+// /proc/thread-self name the gate, not the tracee. Left alone, a tracee
+// reopening one of its fds through /proc/self/fd/N (or /dev/fd/N, which
+// links there) would be checked against whatever the gate's fd N is.
+// So each step pins those two names to the tracee — also when a symlink
+// leads to them — and the fd's magic link then resolves to the real file.
 func (t *ProcTracee) EvalSymlinks(path string) (string, error) {
-	return t.EvalSymlinksFn(path)
+	if !filepath.IsAbs(path) {
+		return "", fmt.Errorf("agentgate: EvalSymlinks: %q is not absolute", path)
+	}
+	resolved, rest, hops := "/", path, 0
+	for rest != "" {
+		var comp string
+		comp, rest, _ = strings.Cut(strings.TrimLeft(rest, "/"), "/")
+		switch comp {
+		case "", ".":
+			continue
+		case "..":
+			resolved = filepath.Dir(resolved)
+			continue
+		}
+		next, err := t.pinProcSelf(filepath.Join(resolved, comp))
+		if err != nil {
+			return "", err
+		}
+		fi, err := t.Lstat(next)
+		if err != nil {
+			return "", err
+		}
+		if fi.Mode()&os.ModeSymlink == 0 {
+			resolved = next
+			continue
+		}
+		if hops++; hops > maxSymlinkHops {
+			return "", unix.ELOOP
+		}
+		link, err := t.ReadlinkPath(next)
+		if err != nil {
+			return "", err
+		}
+		if filepath.IsAbs(link) {
+			resolved = "/"
+		}
+		rest = link + "/" + rest
+	}
+	return resolved, nil
+}
+
+// pinProcSelf maps /proc/self to /proc/<tgid> and /proc/thread-self to
+// /proc/<tgid>/task/<tid>. The trap's PID is the thread id; /proc/self is
+// the thread group, whose fd table a thread that unshared its own
+// (CLONE_FILES) doesn't use — so the tgid has to come from the status file.
+func (t *ProcTracee) pinProcSelf(p string) (string, error) {
+	if p != "/proc/self" && p != "/proc/thread-self" {
+		return p, nil
+	}
+	status, err := t.status()
+	if err != nil {
+		return "", err
+	}
+	tgid := status["Tgid"]
+	if len(tgid) == 0 {
+		return "", fmt.Errorf("agentgate: no Tgid in /proc/%d/status", t.PID)
+	}
+	if p == "/proc/self" {
+		return "/proc/" + tgid[0], nil
+	}
+	return "/proc/" + tgid[0] + "/task/" + strconv.Itoa(t.PID), nil
+}
+
+// Creds returns the tracee's fsuid and fsgid (the fourth field of the
+// Uid:/Gid: lines in /proc/<pid>/status).
+func (t *ProcTracee) Creds() (int, int, error) {
+	status, err := t.status()
+	if err != nil {
+		return 0, 0, err
+	}
+	uid, err := statusID(status, "Uid")
+	if err != nil {
+		return 0, 0, err
+	}
+	gid, err := statusID(status, "Gid")
+	if err != nil {
+		return 0, 0, err
+	}
+	return uid, gid, nil
+}
+
+func statusID(status map[string][]string, key string) (int, error) {
+	f := status[key]
+	if len(f) != 4 {
+		return 0, fmt.Errorf("agentgate: malformed %s line in /proc status", key)
+	}
+	return strconv.Atoi(f[3])
+}
+
+// status parses /proc/<pid>/status into key → whitespace-split fields.
+func (t *ProcTracee) status() (map[string][]string, error) {
+	raw, err := t.ReadFile("/proc/" + strconv.Itoa(t.PID) + "/status")
+	if err != nil {
+		if errors.Is(err, unix.ESRCH) || errors.Is(err, unix.ENOENT) {
+			return nil, ErrTraceeGone
+		}
+		return nil, err
+	}
+	out := map[string][]string{}
+	for _, line := range strings.Split(string(raw), "\n") {
+		if k, v, ok := strings.Cut(line, ":"); ok {
+			out[k] = strings.Fields(v)
+		}
+	}
+	return out, nil
 }

@@ -299,6 +299,22 @@ func (s *FileSuite) TestSyscallByNameKnownEntries() {
 		{syscallFchmodat, OpChmod, 1, 0, 3, "", -1, -1},
 		{syscallFchownat, OpChown, 1, 0, 4, "", -1, -1},
 		{syscallMkdirat, OpCreate, 1, 0, -1, "", -1, -1},
+		{syscallRenameat, OpDelete, 1, 0, -1, OpCreate, 3, 2},
+		{syscallMknodat, OpCreate, 1, 0, -1, "", -1, -1},
+		{syscallTruncate, OpWrite, 0, -1, -1, "", -1, -1},
+		{syscallFchmodat2, OpChmod, 1, 0, 3, "", -1, -1},
+		{syscallOpen, "", 0, -1, 1, "", -1, -1},
+		{syscallCreat, OpCreate, 0, -1, -1, "", -1, -1},
+		{syscallRename, OpDelete, 0, -1, -1, OpCreate, 1, -1},
+		{syscallMkdir, OpCreate, 0, -1, -1, "", -1, -1},
+		{syscallRmdir, OpDelete, 0, -1, -1, "", -1, -1},
+		{syscallLink, OpLink, 1, -1, -1, "", -1, -1},
+		{syscallUnlink, OpDelete, 0, -1, -1, "", -1, -1},
+		{syscallSymlink, OpLink, 1, -1, -1, "", -1, -1},
+		{syscallChmod, OpChmod, 0, -1, -1, "", -1, -1},
+		{syscallChown, OpChown, 0, -1, -1, "", -1, -1},
+		{syscallLchown, OpChown, 0, -1, -1, "", -1, -1},
+		{syscallMknod, OpCreate, 0, -1, -1, "", -1, -1},
 	}
 	for _, c := range cases {
 		spec, ok := SyscallByName(c.name)
@@ -312,6 +328,47 @@ func (s *FileSuite) TestSyscallByNameKnownEntries() {
 		s.Require().Equal(c.sPath, spec.SecondPathIdx, "SecondPathIdx for %s", c.name)
 		s.Require().Equal(c.sDfd, spec.SecondDirfdIdx, "SecondDirfdIdx for %s", c.name)
 	}
+}
+
+func (s *FileSuite) TestSyscallSpecFlags() {
+	cases := []struct {
+		name         string
+		mkdir        bool
+		noFollowLeaf bool
+	}{
+		{syscallMkdirat, true, false},
+		{syscallMkdir, true, false},
+		{syscallMknodat, false, false},
+		{syscallCreat, false, false},
+		{syscallRenameat, false, true},
+		{syscallRename, false, true},
+		{syscallRmdir, false, true},
+		{syscallUnlink, false, true},
+		{syscallLchown, false, true},
+		{syscallChown, false, false},
+		{syscallTruncate, false, false},
+	}
+	for _, c := range cases {
+		spec, ok := SyscallByName(c.name)
+		s.Require().True(ok)
+		s.Require().Equal(c.mkdir, spec.Mkdir, "Mkdir for %s", c.name)
+		s.Require().Equal(c.noFollowLeaf, spec.NoFollowLeaf, "NoFollowLeaf for %s", c.name)
+	}
+}
+
+func (s *FileSuite) TestIsFileSyscall() {
+	for name := range syscallTable {
+		s.Require().Truef(IsFileSyscall(name), "%s", name)
+	}
+	for _, name := range []string{"execve", "execveat", "connect", "ptrace", ""} {
+		s.Require().Falsef(IsFileSyscall(name), "%s", name)
+	}
+}
+
+func (s *FileSuite) TestRenameFlagsMirrorUAPI() {
+	s.Require().Equal(uint64(1), renameNoReplace)
+	s.Require().Equal(uint64(2), renameExchange)
+	s.Require().Equal(uint64(4), renameWhiteout)
 }
 
 func (s *FileSuite) TestSyscallByNameUnknown() {

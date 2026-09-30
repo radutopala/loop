@@ -5,6 +5,7 @@ package agentgate
 import (
 	"fmt"
 	"runtime"
+	"slices"
 	"unsafe"
 
 	"golang.org/x/sys/unix"
@@ -49,21 +50,16 @@ func auditArchFor(goarch string) (uint32, error) {
 
 // TrapSyscalls returns the syscall numbers the gate traps via
 // SECCOMP_RET_USER_NOTIF on the current GOARCH.
+//
+// Every number in syscallNameByNR is trapped, so the filter and the
+// dispatcher's name lookup can't drift apart. Sorted for a stable program.
 func TrapSyscalls() []uint32 {
-	return []uint32{
-		uint32(unix.SYS_CONNECT),
-		uint32(unix.SYS_EXECVE),
-		uint32(unix.SYS_EXECVEAT),
-		uint32(unix.SYS_OPENAT),
-		uint32(unix.SYS_OPENAT2),
-		uint32(unix.SYS_RENAMEAT2),
-		uint32(unix.SYS_UNLINKAT),
-		uint32(unix.SYS_LINKAT),
-		uint32(unix.SYS_SYMLINKAT),
-		uint32(unix.SYS_FCHMODAT),
-		uint32(unix.SYS_FCHOWNAT),
-		uint32(unix.SYS_MKDIRAT),
+	out := make([]uint32, 0, len(syscallNameByNR))
+	for nr := range syscallNameByNR {
+		out = append(out, uint32(nr))
 	}
+	slices.Sort(out)
+	return out
 }
 
 // DenySyscalls returns the syscall numbers the gate rejects at the BPF layer

@@ -22,6 +22,20 @@ type Policy struct {
 	pathRules []compiledPathRule
 	cmdRules  []compiledCommandRule
 	fileRules []compiledFileRule
+
+	gitGuardRoots []string
+}
+
+// WithGitGuardRoots sets the container paths under which the git guard
+// protects repo config and hooks (see GitGuard) and returns p.
+func (p *Policy) WithGitGuardRoots(roots []string) *Policy {
+	p.gitGuardRoots = append([]string(nil), roots...)
+	return p
+}
+
+// GitGuardRoots returns the roots set by WithGitGuardRoots.
+func (p *Policy) GitGuardRoots() []string {
+	return p.gitGuardRoots
 }
 
 type compiledPathRule struct {

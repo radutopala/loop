@@ -357,6 +357,37 @@ func (s *HelpersSuite) TestFormatApprovalDetailsStripsBackticks() {
 	require.Equal(s.T(), "> `cmd`: echo 'whoami'", got)
 }
 
+func (s *HelpersSuite) TestFormatApprovalDetailsSkipsDiff() {
+	require.Equal(s.T(), "", FormatApprovalDetails(map[string]string{ApprovalDiffKey: "+x"}))
+	require.Equal(s.T(), "> `a`: b", FormatApprovalDetails(map[string]string{"a": "b", ApprovalDiffKey: "+x"}))
+}
+
+// --- AppendApprovalDiff ---
+
+func (s *HelpersSuite) TestAppendApprovalDiff() {
+	upper := strings.ToUpper
+	same := func(v string) string { return v }
+	tests := []struct {
+		name    string
+		details map[string]string
+		maxLen  int
+		escape  func(string) string
+		want    string
+	}{
+		{"no diff", map[string]string{"a": "b"}, 100, same, "head"},
+		{"diff in a block, trailing newline trimmed", map[string]string{ApprovalDiffKey: "-a\n+b\n"}, 100, same, "head\n```diff\n-a\n+b\n```"},
+		{"escape applied", map[string]string{ApprovalDiffKey: "+b"}, 100, upper, "head\n```diff\n+B\n```"},
+		{"fence in diff", map[string]string{ApprovalDiffKey: "+```"}, 100, same, "head\n" + ApprovalDiffUnavailable},
+		{"too long", map[string]string{ApprovalDiffKey: strings.Repeat("+x\n", 40)}, 100, same, "head\n" + ApprovalDiffUnavailable},
+		{"exactly fits", map[string]string{ApprovalDiffKey: "+b"}, len("head\n```diff\n+b\n```"), same, "head\n```diff\n+b\n```"},
+	}
+	for _, tc := range tests {
+		s.Run(tc.name, func() {
+			require.Equal(s.T(), tc.want, AppendApprovalDiff("head", tc.details, tc.maxLen, tc.escape))
+		})
+	}
+}
+
 // --- FindCutPoint ---
 
 func (s *HelpersSuite) TestFindCutPoint() {

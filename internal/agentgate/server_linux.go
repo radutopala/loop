@@ -58,21 +58,36 @@ var (
 
 // syscallNameByNR maps the kernel's `seccomp_data.nr` to the canonical name
 // the portable dispatcher switches on. Keys are the GOARCH-specific unix.SYS_*
-// constants; restricted to the same set buildFilter() traps, so an unknown nr
-// arriving here is a sign BPF and the map have drifted.
-var syscallNameByNR = map[int32]string{
+// constants; TrapSyscalls() traps exactly this set. Per-arch extras (the
+// legacy path syscalls x86_64 still has) come from archSyscallNames.
+var syscallNameByNR = mergeSyscallNames(map[int32]string{
 	int32(unix.SYS_EXECVE):    "execve",
 	int32(unix.SYS_EXECVEAT):  "execveat",
 	int32(unix.SYS_CONNECT):   "connect",
 	int32(unix.SYS_OPENAT):    syscallOpenat,
 	int32(unix.SYS_OPENAT2):   syscallOpenat2,
 	int32(unix.SYS_RENAMEAT2): syscallRenameat2,
+	int32(unix.SYS_RENAMEAT):  syscallRenameat,
 	int32(unix.SYS_UNLINKAT):  syscallUnlinkat,
 	int32(unix.SYS_LINKAT):    syscallLinkat,
 	int32(unix.SYS_SYMLINKAT): syscallSymlinkat,
 	int32(unix.SYS_FCHMODAT):  syscallFchmodat,
+	int32(unix.SYS_FCHMODAT2): syscallFchmodat2,
 	int32(unix.SYS_FCHOWNAT):  syscallFchownat,
 	int32(unix.SYS_MKDIRAT):   syscallMkdirat,
+	int32(unix.SYS_MKNODAT):   syscallMknodat,
+	int32(unix.SYS_TRUNCATE):  syscallTruncate,
+}, archSyscallNames)
+
+func mergeSyscallNames(common, arch map[int32]string) map[int32]string {
+	out := make(map[int32]string, len(common)+len(arch))
+	for nr, name := range common {
+		out[nr] = name
+	}
+	for nr, name := range arch {
+		out[nr] = name
+	}
+	return out
 }
 
 // syscallName translates a kernel syscall nr into the canonical name used by
@@ -176,9 +191,13 @@ func (n *NotifyTransport) Recv(ctx context.Context) (Trap, error) {
 //     resolved by the tracee's exit.
 func (n *NotifyTransport) Send(ctx context.Context, resp TrapResponse) error {
 	r := seccompNotifResp{ID: resp.ID}
-	if resp.Allow {
+	switch {
+	case resp.Performed:
+		// Val=0, Error=0, no CONTINUE: the syscall returns 0 without the
+		// kernel running it — the gate already did the work.
+	case resp.Allow:
 		r.Flags = unix.SECCOMP_USER_NOTIF_FLAG_CONTINUE
-	} else {
+	default:
 		errnum := resp.ErrorNum
 		if errnum == 0 {
 			errnum = int32(unix.EPERM)

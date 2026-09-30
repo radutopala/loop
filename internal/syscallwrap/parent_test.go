@@ -697,6 +697,15 @@ func (s *ParentSuite) TestLoadGatePolicyDefaultsDecisionToDeny() {
 	s.Require().NotNil(p)
 }
 
+func (s *ParentSuite) TestLoadGatePolicyCarriesGitGuardRoots() {
+	read := func(string) ([]byte, error) {
+		return []byte(`{"default_decision":"allow","git_guard_roots":["/host/work","/ref"]}`), nil
+	}
+	p, err := loadGatePolicy(read, "/p")
+	s.Require().NoError(err)
+	s.Require().Equal([]string{"/host/work", "/ref"}, p.GitGuardRoots())
+}
+
 func (s *ParentSuite) TestLoadGatePolicyCompileError() {
 	// An invalid path-rule pattern (empty) makes CompilePolicy reject.
 	read := func(string) ([]byte, error) {

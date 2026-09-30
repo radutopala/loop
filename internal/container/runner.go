@@ -746,7 +746,7 @@ func (r *DockerRunner) createAndStartContainer(
 	// Write the per-container seccomp-gate policy file. loop-syscallwrap
 	// parent reads it inside the container; mounted read-only at
 	// /etc/loop/gate-policy.json.
-	gatePolicyHostPath, err := r.writeGatePolicyFile(cfg, channelID, workDir, parentDirPath)
+	gatePolicyHostPath, err := r.writeGatePolicyFile(cfg, channelID, workDir, parentDirPath, binds)
 	if err != nil {
 		return "", "", "", false, err
 	}

@@ -4,6 +4,7 @@ import { resolveGateApproval, sendCommand, sendMessage } from "../../api/loopApi
 import { useTheme } from "../../ThemeContext";
 import { fonts } from "../../theme";
 import type { GateApprovalRequestedData } from "../../types";
+import { classifyDiffLines } from "../../utils/diffLines";
 import { ContextMenu, type MenuItem } from "../shared/ContextMenu";
 
 export function ApprovalCard({
@@ -186,6 +187,12 @@ export function ApprovalCard({
   ];
 
   const label = data.kind ? data.kind.toUpperCase() : "APPROVAL";
+  // A "diff" detail is the content the gate will install (see the git
+  // guard): render it as a diff, not a key: value line.
+  const diff = data.details?.diff;
+  const detailKeys = Object.keys(data.details ?? {})
+    .filter((k) => k !== "diff")
+    .sort();
 
   return (
     <div
@@ -202,7 +209,7 @@ export function ApprovalCard({
       <div style={{ fontSize: 11, fontWeight: 700, color: colors.warning, textTransform: "uppercase", letterSpacing: 1, marginBottom: 8 }}>Gate · {label}</div>
       <div style={{ fontSize: 13, color: colors.text, marginBottom: 4, fontFamily: fonts.mono, wordBreak: "break-word" }}>{data.target}</div>
       {data.message && <div style={{ fontSize: 12, color: colors.textDim, marginBottom: 10 }}>{data.message}</div>}
-      {data.details && Object.keys(data.details).length > 0 && (
+      {detailKeys.length > 0 && (
         <div
           style={{
             fontSize: 12,
@@ -214,14 +221,42 @@ export function ApprovalCard({
             color: colors.textDim,
           }}
         >
-          {Object.keys(data.details)
-            .sort()
-            .map((k) => (
-              <div key={k} style={{ wordBreak: "break-word" }}>
-                <span style={{ color: colors.text }}>{k}</span>: {data.details![k]}
-              </div>
-            ))}
+          {detailKeys.map((k) => (
+            <div key={k} style={{ wordBreak: "break-word" }}>
+              <span style={{ color: colors.text }}>{k}</span>: {data.details![k]}
+            </div>
+          ))}
         </div>
+      )}
+      {diff && (
+        <pre
+          data-testid="approval-diff"
+          style={{
+            fontSize: 12,
+            fontFamily: fonts.mono,
+            margin: "0 0 10px",
+            padding: "6px 0",
+            borderRadius: 6,
+            backgroundColor: colors.codeBlockBg,
+            color: colors.textDim,
+            maxHeight: 320,
+            overflow: "auto",
+          }}
+        >
+          {classifyDiffLines(diff).map((line, i) => (
+            <div
+              key={i}
+              style={{
+                padding: "0 10px",
+                whiteSpace: "pre",
+                color: line.kind === "add" ? colors.diffAddText : line.kind === "del" ? colors.diffDelText : line.kind === "context" ? colors.text : colors.textDim,
+                backgroundColor: line.kind === "add" ? colors.diffAddBg : line.kind === "del" ? colors.diffDelBg : line.kind === "hunk" ? colors.diffHunkBg : undefined,
+              }}
+            >
+              {line.text || " "}
+            </div>
+          ))}
+        </pre>
       )}
       {expired ? (
         <div data-testid="approval-expired" style={{ fontSize: 12, fontFamily: fonts.mono, color: colors.textDim, fontStyle: "italic" }}>

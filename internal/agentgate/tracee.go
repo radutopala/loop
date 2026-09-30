@@ -36,6 +36,10 @@ type Tracee interface {
 	// EvalSymlinks returns the fully-dereferenced path. On error (broken
 	// symlink, permission, loop), returns (path, err) — the caller denies.
 	EvalSymlinks(path string) (string, error)
+
+	// Creds returns the tracee's filesystem uid and gid — the ids the
+	// kernel checks its file access against.
+	Creds() (uid, gid int, err error)
 }
 
 // ErrTraceeGone is returned by Tracee methods when the traced process has
@@ -66,6 +70,8 @@ type FakeTracee struct {
 	Symlinks     map[string]string    // evaluated-from → evaluated-to
 	StringErr    error                // if non-nil, ReadString returns this unconditionally
 	BytesErr     error                // if non-nil, ReadBytes returns this unconditionally
+	UID, GID     int                  // returned by Creds
+	CredsErr     error                // if non-nil, Creds returns this
 }
 
 // ReadString returns t.Strings[addr] or ErrTraceeGone when absent. Pre-empted
@@ -129,4 +135,12 @@ func (t *FakeTracee) EvalSymlinks(path string) (string, error) {
 		return p, nil
 	}
 	return path, nil
+}
+
+// Creds returns t.UID/t.GID, or CredsErr when set.
+func (t *FakeTracee) Creds() (int, int, error) {
+	if t.CredsErr != nil {
+		return 0, 0, t.CredsErr
+	}
+	return t.UID, t.GID, nil
 }

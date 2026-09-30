@@ -17,13 +17,17 @@ import (
 // callers can `if s := FormatApprovalDetails(...); s != ""` and concatenate
 // without trailing whitespace. Backticks are stripped from values defensively
 // (Discord and Slack both treat them as code-fence markers).
+//
+// The "diff" key is left out: AppendApprovalDiff renders it as a block.
 func FormatApprovalDetails(details map[string]string) string {
-	if len(details) == 0 {
-		return ""
-	}
 	keys := make([]string, 0, len(details))
 	for k := range details {
-		keys = append(keys, k)
+		if k != ApprovalDiffKey {
+			keys = append(keys, k)
+		}
+	}
+	if len(keys) == 0 {
+		return ""
 	}
 	sort.Strings(keys)
 	var sb strings.Builder
@@ -35,6 +39,31 @@ func FormatApprovalDetails(details map[string]string) string {
 		fmt.Fprintf(&sb, "> `%s`: %s", k, v)
 	}
 	return sb.String()
+}
+
+// ApprovalDiffKey is the approval detail holding a unified diff of content
+// the gate will write (the git guard's card).
+const ApprovalDiffKey = "diff"
+
+// ApprovalDiffUnavailable replaces a diff the platform can't show intact.
+const ApprovalDiffUnavailable = "_The change can't be shown here in full. Review it in the desktop app before allowing._"
+
+// AppendApprovalDiff appends details[ApprovalDiffKey] to content as a diff
+// code block, keeping the result within maxLen (the platform's message
+// limit). escape adapts the text to the platform's markup. The diff is
+// what the user approves, so it's shown verbatim or not at all: one that
+// would close the fence early, or doesn't fit, becomes
+// ApprovalDiffUnavailable.
+func AppendApprovalDiff(content string, details map[string]string, maxLen int, escape func(string) string) string {
+	diff, ok := details[ApprovalDiffKey]
+	if !ok {
+		return content
+	}
+	block := "```diff\n" + escape(strings.TrimRight(diff, "\n")) + "\n```"
+	if strings.Contains(diff, "```") || len(content)+1+len(block) > maxLen {
+		return content + "\n" + ApprovalDiffUnavailable
+	}
+	return content + "\n" + block
 }
 
 // RemoveMCPConfig removes the per-channel MCP config files for the given

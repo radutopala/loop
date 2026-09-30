@@ -34,12 +34,23 @@ func NewServer(policy *Policy, approver Approver, auditor Auditor, peerSource Pe
 	file := NewFileHandler(policy, approver, DefaultFileCacheSize)
 	file.Auditor = auditor
 	file.PeerSource = peerSource
+	var guard *GitGuard
+	if roots := policy.GitGuardRoots(); len(roots) > 0 {
+		guard = &GitGuard{
+			Roots:      roots,
+			FS:         NewOSGuardFS(),
+			Approver:   approver,
+			Auditor:    auditor,
+			PeerSource: peerSource,
+		}
+	}
 	return &Server{
 		Transport: NewNotifyTransport(notifyFD),
 		Factory:   NewProcTraceeFactory(),
 		Execve:    exec,
 		Connect:   conn,
 		File:      file,
+		Guard:     guard,
 		ChannelID: channelID,
 	}
 }
