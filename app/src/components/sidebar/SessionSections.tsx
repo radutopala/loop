@@ -20,13 +20,16 @@ interface SectionTabsProps {
   /** Whether the open tab hides task threads. */
   hideTasks: boolean;
   onToggleHideTasks: () => void;
+  /** Whether both tabs show only the rows with a lit pill. */
+  needsYouOnly: boolean;
+  onToggleNeedsYouOnly: () => void;
 }
 
 /**
  * Tabs switching the sidebar list between Recent sessions and the channel
  * tree, with the open tab's task-thread filter beside them.
  */
-export function SectionTabs({ tab, showTabs, recentCount, onChange, hideTasks, onToggleHideTasks }: SectionTabsProps) {
+export function SectionTabs({ tab, showTabs, recentCount, onChange, hideTasks, onToggleHideTasks, needsYouOnly, onToggleNeedsYouOnly }: SectionTabsProps) {
   const { colors } = useTheme();
   const tabs: { key: SectionKey; label: string; count?: number }[] = [
     { key: "recent", label: "Recent", count: recentCount },
@@ -100,6 +103,29 @@ export function SectionTabs({ tab, showTabs, recentCount, onChange, hideTasks, o
           })}
         </div>
       )}
+      <button
+        data-testid="sidebar-needs-you"
+        onClick={onToggleNeedsYouOnly}
+        aria-pressed={needsYouOnly}
+        title={needsYouOnly ? "Show all sessions" : `Show only sessions that need you (${SIDEBAR_PILLS.map((p) => p.label).join(", ")})`}
+        style={{
+          flexShrink: 0,
+          display: "flex",
+          alignItems: "center",
+          padding: 4,
+          border: "none",
+          borderRadius: 4,
+          cursor: "pointer",
+          color: needsYouOnly ? colors.warning : colors.textDim,
+          background: needsYouOnly ? colors.hoverBg : "none",
+        }}
+      >
+        {/* A bell: the rows that are calling for you. */}
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9" />
+          <path d="M10.3 21a1.94 1.94 0 0 0 3.4 0" />
+        </svg>
+      </button>
       <button
         data-testid="sidebar-hide-tasks"
         onClick={onToggleHideTasks}

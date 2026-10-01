@@ -15,7 +15,7 @@ The sidebar is a vertical column on the left side of the app with the following 
 2. **Header bar** -- "CHANNELS" label with Select and "+ new" buttons
 3. **Search box** -- filter channels and threads
 4. **New channel input** -- inline text field (shown when creating)
-5. **Tabs** -- Recent and Tree, with the open tab's task-thread toggle at the right; only the toggle when nothing is recent
+5. **Tabs** -- Recent and Tree, with the needs-you bell and the open tab's task-thread toggle at the right; only the two toggles when nothing is recent
 6. **Recent** tab -- sessions from anywhere in the tree, active ones first (see [Recent Sessions](#recent-sessions))
 7. **Tree** tab -- the DM channel, pinned at top, then the project channels as a sortable list with collapsible threads
 8. **Spacer** -- pushes footer to bottom
@@ -105,6 +105,10 @@ The search box sits below the header and provides real-time case-insensitive fil
 ### Hiding task threads
 
 The clock button at the right of the tabs hides task threads from the open tab; click it again to show them. Each tab has its own setting, so you can hide tasks in Recent and keep them in Tree. A task thread is one a scheduled task created for its output (the rows with the clock icon): the backend records the task's id on the thread when it creates it, and `/api/channels` returns it as `task_id`, so a renamed task thread is still hidden, while a channel or thread that only hosts tasks is not. Threads created before the id was recorded get it from their ``task #N (`schedule`) <prompt>`` name when the database is migrated. A hidden thread's sub-threads are hidden in the tree with it. A task thread that's running or waiting on you stays visible. The choices are stored in `localStorage` under `loop-sidebar-hide-tasks`, as `{"recent": …, "tree": …}`; a single setting saved before it became per tab applies to both.
+
+### Showing only what needs you
+
+The bell at the right of the tabs narrows both tabs to the sessions with a lit pill: `gate` (an approval), `ask` (a question), `plan` (a plan to approve), `rev` (a review session open), and `trust` (a project config to trust). The tree keeps the channels and threads that lead to a lit row, so it still reads as a tree, and drops their other threads; a lit row's own unlit threads go too. Recent keeps only the lit sessions. With nothing lit, the tree says *Nothing needs you right now*. A running agent doesn't count: it isn't waiting on you. The filter combines with the search and the task toggle, and steps aside in selection mode so every row can be picked. The choice is stored in `localStorage` under `loop-sidebar-needs-you`.
 
 ---
 
