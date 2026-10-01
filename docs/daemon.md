@@ -11,6 +11,7 @@ Cross-platform daemon/service management for the Loop bot process.
 |----------|----------------|--------------|-----------------|
 | macOS | launchd | `com.loop.agent` | `~/Library/LaunchAgents/com.loop.agent.plist` |
 | Linux | systemd (user) | `loop` | `~/.config/systemd/user/loop.service` |
+| Linux, no systemd user manager | detached process | — | `~/.loop/daemon.pid` |
 | Windows | Windows SCM | `Loop` | Windows registry (via `sc.exe`) |
 
 ## Functions
@@ -30,7 +31,7 @@ Installs and starts the daemon service:
 **Platform details:**
 
 - **macOS** — wraps binary with `/usr/bin/caffeinate -s` to prevent sleep. Uses `launchctl bootout` (cleanup) then `launchctl bootstrap` to load.
-- **Linux** — writes systemd user unit, enables linger (`loginctl enable-linger`) for persistence across logouts. No root required.
+- **Linux** — writes systemd user unit, enables linger (`loginctl enable-linger`) for persistence across logouts. No root required. When the systemd user manager doesn't answer (`systemctl --user show-environment` fails — containers, sandboxes such as firejail, WSL without systemd), it instead runs `loop serve` in its own session with output appended to the log file, and records its pid in `~/.loop/daemon.pid`. That daemon doesn't restart on crash or survive a reboot.
 - **Windows** — creates auto-start service via `sc.exe create`. Requires admin privileges.
 
 ### Stop
@@ -40,7 +41,7 @@ Installs and starts the daemon service:
 Uninstalls and stops the daemon:
 
 - **macOS** — `launchctl bootout`, removes plist
-- **Linux** — `systemctl --user disable --now`, removes unit file, disables linger
+- **Linux** — sends SIGTERM to the pid in `~/.loop/daemon.pid` (only if `/proc/<pid>/cmdline` is a `serve` process), waits up to 10s for it to exit and removes the pid file; then, if the systemd user manager answers, `systemctl --user disable --now`, removes unit file, disables linger
 - **Windows** — `sc.exe stop` then `sc.exe delete`
 
 Gracefully handles cases where service is already stopped or not installed.
@@ -50,7 +51,7 @@ Gracefully handles cases where service is already stopped or not installed.
 `Status(sys System) (string, error)`
 
 Returns one of:
-- `"running"` — installed and active
+- `"running"` — installed and active, or (Linux) the pid-file daemon is alive
 - `"stopped"` — installed but not running
 - `"not installed"` — no service config found
 
@@ -68,6 +69,11 @@ type System interface {
     GetUID() int
     EvalSymlinks(path string) (string, error)
     Getenv(key string) string
+    ReadPIDFile(name string) ([]byte, error)
+    ProcCmdline(pid int) ([]byte, error)
+    StartDetached(name string, args []string, logFile string) (int, error)
+    Terminate(pid int) error
+    Sleep(d time.Duration)
 }
 ```
 

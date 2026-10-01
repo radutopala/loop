@@ -10,9 +10,11 @@ import {
   fetchChannels,
   fetchDiff,
   fetchPlaygroundShares,
+  getApiUrl,
   getImageStatus,
   importWorktree,
   initApiUrl,
+  isDaemonHealthy,
   rebuildImage,
   renameChannel,
   setChannelDescription,
@@ -27,6 +29,7 @@ import { GlobalSharesPanel } from "./components/panels/GlobalSharesPanel";
 import { GlobalTasksPanel } from "./components/panels/GlobalTasksPanel";
 import { WorkflowsGlobalPanel, type WorkflowsGlobalPanelHandle } from "./components/panels/WorkflowsGlobalPanel";
 import { CommandPalette } from "./components/shared/CommandPalette";
+import { DaemonUnavailable } from "./components/shared/DaemonUnavailable";
 import { LoopLogo } from "./components/shared/LoopLogo";
 import { Settings } from "./components/shared/Settings";
 import { trustPillIds } from "./components/sidebar/pills";
@@ -64,13 +67,32 @@ function getHashMessageId(): number | null {
 
 export default function App() {
   const [desktop, setDesktop] = useState<Record<string, any> | null | undefined>(undefined);
+  // Set when startup loading fails, so the window explains why it's empty.
+  const [loadError, setLoadError] = useState<{ message: string; running: boolean } | null>(null);
+
+  const load = useCallback(
+    () =>
+      initApiUrl()
+        .then(() => fetchGlobalConfig())
+        .then((cfg) => {
+          setLoadError(null);
+          setDesktop(cfg.content?.desktop ?? null);
+        })
+        .catch(async (err) => setLoadError({ message: err instanceof Error ? err.message : String(err), running: await isDaemonHealthy() })),
+    [],
+  );
 
   useEffect(() => {
-    initApiUrl()
-      .then(() => fetchGlobalConfig())
-      .then((cfg) => setDesktop(cfg.content?.desktop ?? null))
-      .catch(() => setDesktop(null));
-  }, []);
+    load();
+  }, [load]);
+
+  if (loadError !== null) {
+    return (
+      <ThemeProvider>
+        <DaemonUnavailable apiUrl={getApiUrl()} error={loadError.message} running={loadError.running} onRetry={load} />
+      </ThemeProvider>
+    );
+  }
 
   // Wait for config to load before rendering so we don't flash wrong theme.
   if (desktop === undefined) return null;

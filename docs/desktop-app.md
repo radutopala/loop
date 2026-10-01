@@ -86,8 +86,10 @@ The Loop daemon is a Go HTTP server that the Electron app manages automatically.
 ### Startup Sequence
 
 1. **`ensureLoopConfig()`** -- If `~/.loop/config.json` does not exist, runs `loop onboard:global` to create it.
-2. **`ensureDaemon()`** -- Runs `loop daemon:restart` to install/restart the daemon as a system service (launchd on macOS, systemd on Linux).
+2. **`ensureDaemon()`** -- Runs `loop daemon:restart` to install/restart the daemon as a system service (launchd on macOS, systemd on Linux; a detached `loop serve` on Linux without a systemd user manager — see [Daemon](daemon.md)).
 3. **Health check** -- Polls `GET /api/health` every 500ms for up to 15 seconds waiting for the daemon to become healthy.
+
+If the first config load still fails, the window shows a "Loop daemon isn't running" screen (or "Couldn't load from the Loop daemon" when `/api/health` answers but the request is rejected) with the API URL, the error, and a **Start daemon** / **Restart daemon** button that runs `loop daemon:restart` and retries.
 
 ### Binary Resolution
 

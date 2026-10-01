@@ -79,7 +79,7 @@ AI agents powered by Claude, running in Docker containers. Use the **desktop app
 - [Docker Desktop](https://docs.docker.com/desktop/) (macOS / Windows) or [Docker Engine](https://docs.docker.com/engine/install/) (Linux)
 - An [Anthropic API key](https://console.anthropic.com/) (recommended) or Claude Code OAuth token
 
-> **Note:** `loop daemon:start/stop/status` use launchd on macOS, Windows services on Windows, and systemd user services on Linux (`~/.config/systemd/user/loop.service`).
+> **Note:** `loop daemon:start/stop/status` use launchd on macOS, Windows services on Windows, and systemd user services on Linux (`~/.config/systemd/user/loop.service`). On Linux without a systemd user manager (containers, sandboxes, WSL without systemd), they run `loop serve` as a detached process tracked by `~/.loop/daemon.pid` instead.
 
 ## Getting Started
 

@@ -7,15 +7,24 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
+	"time"
 )
 
 const (
 	serviceLabel = "loop"
 	unitName     = serviceLabel + ".service"
+
+	// stopPolls * stopPollInterval bounds how long Stop waits for a detached
+	// daemon to exit after SIGTERM.
+	stopPolls        = 100
+	stopPollInterval = 100 * time.Millisecond
 )
 
-// Start writes a systemd user unit file and enables the service.
+// Start writes a systemd user unit file and enables the service. Without a
+// reachable systemd user manager (containers, sandboxes, WSL without systemd)
+// it runs the daemon as a detached process tracked by a pid file instead.
 // logFile is the absolute path to the daemon log file.
 func Start(sys System, logFile string) error {
 	exe, err := sys.Executable()
@@ -30,6 +39,10 @@ func Start(sys System, logFile string) error {
 	home, err := sys.UserHomeDir()
 	if err != nil {
 		return fmt.Errorf("getting home directory: %w", err)
+	}
+
+	if !systemdUserAvailable(sys) {
+		return startDetached(sys, binPath, home, logFile)
 	}
 
 	unitDir := filepath.Join(home, ".config", "systemd", "user")
@@ -74,11 +87,19 @@ func Start(sys System, logFile string) error {
 	return nil
 }
 
-// Stop disables and stops the systemd user service and removes the unit file.
+// Stop stops a detached daemon if one is running, then disables and stops the
+// systemd user service and removes the unit file.
 func Stop(sys System) error {
 	home, err := sys.UserHomeDir()
 	if err != nil {
 		return fmt.Errorf("getting home directory: %w", err)
+	}
+
+	if err := stopDetached(sys, home); err != nil {
+		return err
+	}
+	if !systemdUserAvailable(sys) {
+		return nil
 	}
 
 	unitPath := filepath.Join(home, ".config", "systemd", "user", unitName)
@@ -112,6 +133,10 @@ func Status(sys System) (string, error) {
 		return "", fmt.Errorf("getting home directory: %w", err)
 	}
 
+	if _, ok := runningPID(sys, pidFilePath(home)); ok {
+		return "running", nil
+	}
+
 	unitPath := filepath.Join(home, ".config", "systemd", "user", unitName)
 	if _, err := sys.Stat(unitPath); err != nil {
 		if os.IsNotExist(err) {
@@ -126,6 +151,86 @@ func Status(sys System) (string, error) {
 	}
 
 	return "stopped", nil
+}
+
+// systemdUserAvailable reports whether the systemd user manager answers.
+func systemdUserAvailable(sys System) bool {
+	_, err := sys.RunCommand("systemctl", "--user", "show-environment")
+	return err == nil
+}
+
+func pidFilePath(home string) string {
+	return filepath.Join(home, ".loop", "daemon.pid")
+}
+
+// startDetached runs `binPath serve` in its own session and records its pid.
+func startDetached(sys System, binPath, home, logFile string) error {
+	pidPath := pidFilePath(home)
+	if _, ok := runningPID(sys, pidPath); ok {
+		return nil
+	}
+
+	if err := sys.MkdirAll(filepath.Dir(logFile), 0o755); err != nil {
+		return fmt.Errorf("creating log directory: %w", err)
+	}
+	if err := sys.MkdirAll(filepath.Dir(pidPath), 0o755); err != nil {
+		return fmt.Errorf("creating pid directory: %w", err)
+	}
+
+	pid, err := sys.StartDetached(binPath, []string{"serve"}, logFile)
+	if err != nil {
+		return fmt.Errorf("starting daemon: %w", err)
+	}
+	if err := sys.WriteFile(pidPath, []byte(strconv.Itoa(pid)+"\n"), 0o644); err != nil {
+		sys.Terminate(pid) //nolint:errcheck
+		return fmt.Errorf("writing pid file: %w", err)
+	}
+	return nil
+}
+
+// stopDetached terminates the daemon recorded in the pid file, waits for it
+// to exit and removes the pid file. It is a no-op without a live daemon.
+func stopDetached(sys System, home string) error {
+	pidPath := pidFilePath(home)
+	if pid, ok := runningPID(sys, pidPath); ok {
+		if err := sys.Terminate(pid); err != nil {
+			return fmt.Errorf("stopping daemon: %w", err)
+		}
+		for i := 0; isServeProcess(sys, pid); i++ {
+			if i == stopPolls {
+				return fmt.Errorf("daemon (pid %d) did not exit", pid)
+			}
+			sys.Sleep(stopPollInterval)
+		}
+	}
+	if err := sys.RemoveFile(pidPath); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("removing pid file: %w", err)
+	}
+	return nil
+}
+
+// runningPID returns the pid from pidPath and whether it is a live daemon.
+func runningPID(sys System, pidPath string) (int, bool) {
+	data, err := sys.ReadPIDFile(pidPath)
+	if err != nil {
+		return 0, false
+	}
+	pid, err := strconv.Atoi(strings.TrimSpace(string(data)))
+	if err != nil || pid <= 0 {
+		return 0, false
+	}
+	return pid, isServeProcess(sys, pid)
+}
+
+// isServeProcess reports whether pid is a running `<binary> serve`, so a pid
+// recycled by an unrelated process is never signalled.
+func isServeProcess(sys System, pid int) bool {
+	cmdline, err := sys.ProcCmdline(pid)
+	if err != nil {
+		return false
+	}
+	args := strings.Split(strings.TrimRight(string(cmdline), "\x00"), "\x00")
+	return len(args) >= 2 && args[1] == "serve"
 }
 
 func generateUnit(binaryPath, logFile string, extraEnv map[string]string) string {

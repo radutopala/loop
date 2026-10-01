@@ -31,6 +31,16 @@ export async function initApiUrl(): Promise<void> {
   await refreshApiToken();
 }
 
+/** Whether the daemon answers its unauthenticated health check. */
+export async function isDaemonHealthy(): Promise<boolean> {
+  try {
+    const res = await fetch(`${apiUrl}/api/health`, { signal: AbortSignal.timeout(2000) });
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
 export function getApiUrl(): string {
   return apiUrl;
 }

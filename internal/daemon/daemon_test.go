@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
@@ -65,6 +66,35 @@ func (m *mockSystem) EvalSymlinks(path string) (string, error) {
 
 func (m *mockSystem) Getenv(key string) string {
 	return m.Called(key).String(0)
+}
+
+func (m *mockSystem) ReadPIDFile(name string) ([]byte, error) {
+	args := m.Called(name)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]byte), args.Error(1)
+}
+
+func (m *mockSystem) ProcCmdline(pid int) ([]byte, error) {
+	args := m.Called(pid)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]byte), args.Error(1)
+}
+
+func (m *mockSystem) StartDetached(name string, args []string, logFile string) (int, error) {
+	callArgs := m.Called(name, args, logFile)
+	return callArgs.Int(0), callArgs.Error(1)
+}
+
+func (m *mockSystem) Terminate(pid int) error {
+	return m.Called(pid).Error(0)
+}
+
+func (m *mockSystem) Sleep(d time.Duration) {
+	m.Called(d)
 }
 
 // --- Test Suite ---
@@ -182,6 +212,21 @@ func (s *DaemonSuite) TestRealSystemGetenv() {
 	// PATH is always set
 	val := rs.Getenv("PATH")
 	require.NotEmpty(s.T(), val)
+}
+
+func (s *DaemonSuite) TestRealSystemReadPIDFile() {
+	rs := RealSystem{}
+	path := filepath.Join(s.T().TempDir(), "daemon.pid")
+	require.NoError(s.T(), os.WriteFile(path, []byte("42\n"), 0o644))
+	data, err := rs.ReadPIDFile(path)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "42\n", string(data))
+}
+
+func (s *DaemonSuite) TestRealSystemSleep() {
+	start := time.Now()
+	RealSystem{}.Sleep(time.Millisecond)
+	require.GreaterOrEqual(s.T(), time.Since(start), time.Millisecond)
 }
 
 // --- helpers ---
