@@ -786,7 +786,7 @@ function AppInner() {
             onCreateWorktree={handleCreateWorktree}
             onImportWorktree={handleImportWorktree}
             onSelectThread={handleSelect}
-            initialChatState={selectedId ? getState(selectedId) : undefined}
+            initialChatState={getState(selectedId)}
             onChatStateUnmount={handleChatStateUnmount}
             getChatState={getState}
             subscribeChatEvents={subscribeChatEvents}

@@ -18,11 +18,17 @@ export function messageLink(channelId: string, messageId: number): string {
   return `${PREFIX}${channelId}/${messageId}`;
 }
 
+// Channel ids are local hex ids, Discord snowflakes, Slack channel ids and
+// Slack threads ("<channel>:<ts>"). Anything else, such as "?" or a ".."
+// path segment, must not reach the API paths the id is interpolated into.
+const CHANNEL_ID = /^[A-Za-z0-9_.:-]+$/;
+const DOT_SEGMENT = /^\.+$/;
+
 /** Parses "<channel-id>" or "<channel-id>/<message-id>" from a URL hash or a deep link.
  *  A "key=value" fragment, such as the web UI's `#loop_token=…`, is no channel. */
 export function parseChannelTarget(target: string): ChannelTarget | null {
   const [channelId, messagePart, ...rest] = target.replace(/^#/, "").split("/");
-  if (!channelId || channelId.includes("=") || rest.length > 0) return null;
+  if (!channelId || !CHANNEL_ID.test(channelId) || DOT_SEGMENT.test(channelId) || rest.length > 0) return null;
   if (messagePart === undefined || messagePart === "") return { channelId, messageId: null };
   if (!/^\d+$/.test(messagePart)) return null;
   const messageId = Number(messagePart);

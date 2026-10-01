@@ -15,11 +15,33 @@ describe("parseChannelTarget", () => {
     ["4bc8a7f4/382433", { channelId: "4bc8a7f4", messageId: 382433 }],
     ["#4bc8a7f4/382433", { channelId: "4bc8a7f4", messageId: 382433 }],
     ["4bc8a7f4/0", { channelId: "4bc8a7f4", messageId: null }],
+    ["C0123ABCD", { channelId: "C0123ABCD", messageId: null }],
+    ["thread_ab-12", { channelId: "thread_ab-12", messageId: null }],
+    ["C0123ABCD:1700000000.123456/7", { channelId: "C0123ABCD:1700000000.123456", messageId: 7 }],
   ])("parses %s", (target, want) => {
     expect(parseChannelTarget(target)).toEqual(want);
   });
 
-  it.each(["", "#", "/382433", "4bc8a7f4/abc", "4bc8a7f4/-1", "4bc8a7f4/1.5", "4bc8a7f4/1/2", "#loop_token=abc"])("rejects %s", (target) => {
+  it.each([
+    "",
+    "#",
+    "/382433",
+    "4bc8a7f4/abc",
+    "4bc8a7f4/-1",
+    "4bc8a7f4/1.5",
+    "4bc8a7f4/1/2",
+    "#loop_token=abc",
+    ".",
+    "..",
+    "#..",
+    "...",
+    "../382433",
+    "%2e%2e",
+    "4bc8?x=1",
+    "4bc8#x",
+    "4bc8 a",
+    "4bc8\\x",
+  ])("rejects %s", (target) => {
     expect(parseChannelTarget(target)).toBeNull();
   });
 });
