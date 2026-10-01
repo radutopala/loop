@@ -10,6 +10,8 @@ import (
 
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
+
+	"github.com/radutopala/loop/internal/gitutil"
 )
 
 type GitInfoSuite struct {
@@ -228,7 +230,7 @@ func (s *GitInfoSuite) TestCollectGitStateFilterFailure() {
 // TestRefStateNonRepo keeps the fallback's non-repo behaviour identical to the
 // status path's.
 func (s *GitInfoSuite) TestRefStateNonRepo() {
-	require.Equal(s.T(), gitState{}, refState(context.Background(), s.T().TempDir()))
+	require.Equal(s.T(), gitState{}, refState(context.Background(), gitutil.Open(context.Background(), s.T().TempDir())))
 }
 
 // TestRefStateDetachedHead mirrors parseStatusV2, which reports "HEAD" for a
@@ -236,7 +238,7 @@ func (s *GitInfoSuite) TestRefStateNonRepo() {
 func (s *GitInfoSuite) TestRefStateDetachedHead() {
 	dir := initGitRepo(s.T())
 	s.git(dir, "checkout", "--detach")
-	st := refState(context.Background(), dir)
+	st := refState(context.Background(), gitutil.Open(context.Background(), dir))
 	require.Equal(s.T(), "HEAD", st.Branch)
 	require.Len(s.T(), st.Commit, 7)
 }
@@ -245,7 +247,7 @@ func (s *GitInfoSuite) TestRefStateDetachedHead() {
 // succeeds but prints nothing — a clean repo has no diff to name.
 func (s *GitInfoSuite) TestGitOutputEmptyOutput() {
 	dir := initGitRepo(s.T())
-	out, ok := gitOutput(context.Background(), dir, "diff", "--name-only")
+	out, ok := gitOutput(context.Background(), gitutil.Open(context.Background(), dir), "diff", "--name-only")
 	require.False(s.T(), ok)
 	require.Empty(s.T(), out)
 }

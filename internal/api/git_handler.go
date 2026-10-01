@@ -66,8 +66,11 @@ func (s *Server) handleListBranches(w http.ResponseWriter, r *http.Request) {
 	}
 	dirPath = resolvedDir
 
+	// One config read for the three git commands below.
+	repo := gitutil.Open(r.Context(), dirPath)
+
 	// List local branches.
-	branchCmd := gitutil.Command(r.Context(), dirPath, "branch", "--format=%(refname:short)")
+	branchCmd := repo.Command(r.Context(), "branch", "--format=%(refname:short)")
 	branchOut, err := branchCmd.Output()
 	if err != nil {
 		http.Error(w, "failed to list branches", http.StatusInternalServerError)
@@ -83,10 +86,10 @@ func (s *Server) handleListBranches(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Current branch.
-	current := gitBranch(r.Context(), dirPath)
+	current, _ := gitOutput(r.Context(), repo, "rev-parse", "--abbrev-ref", "HEAD")
 
 	// List worktrees.
-	wtCmd := gitutil.Command(r.Context(), dirPath, "worktree", "list", "--porcelain")
+	wtCmd := repo.Command(r.Context(), "worktree", "list", "--porcelain")
 	wtOut, _ := wtCmd.Output() // ignore error — worktrees may not exist
 
 	worktrees := parseWorktrees(string(wtOut), dirPath)

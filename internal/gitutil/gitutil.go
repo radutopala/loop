@@ -33,21 +33,53 @@ var hardenedConfig = [][2]string{
 // hardenedEnv is set on every invocation, replacing any inherited value.
 // System config stays on: it takes root to write, so it's the host's, and on
 // macOS it's where git keeps the keychain credential helper.
+//
+// GIT_OPTIONAL_LOCKS is stripped rather than set to 0: without the optional
+// lock, `git status` and `git diff --numstat` can't write refreshed stat data
+// back to the index. An agent container's git writes the index with its own
+// view of the bind mount's stat data, so the host would then re-hash every
+// tracked file on every call, the branch poller included.
 var hardenedEnv = []string{
 	"GIT_TERMINAL_PROMPT=0",
-	"GIT_OPTIONAL_LOCKS=0",
 	"GIT_PAGER=cat",
 }
 
-// Command returns a git command for args run in dir, carrying the hardened
-// environment from Environ. Diff-producing subcommands (diff, show, log -p)
-// must still pass --no-ext-diff --no-textconv: diff drivers are named by
-// .gitattributes, so they can't be neutralized by config up front.
-func Command(ctx context.Context, dir string, args ...string) *exec.Cmd {
+// Repo runs hardened git commands in one directory, reading the repo's config
+// once, at Open, instead of once per command. Use one for a burst of commands
+// that don't change the repo's config, such as one request or one poll; open
+// a new one after anything that might.
+type Repo struct {
+	dir string
+	env []string
+}
+
+// Open reads dir's config and returns a Repo for running git there.
+func Open(ctx context.Context, dir string) *Repo {
+	// Clipped so a caller appending to one command's Env never writes into
+	// the array another command shares.
+	return &Repo{dir: dir, env: slices.Clip(Environ(ctx, dir))}
+}
+
+// Dir returns the directory the Repo runs git in.
+func (r *Repo) Dir() string {
+	return r.dir
+}
+
+// Command returns a git command for args run in the Repo's dir, carrying the
+// hardened environment from Environ. Diff-producing subcommands (diff, show,
+// log -p) must still pass --no-ext-diff --no-textconv: diff drivers are named
+// by .gitattributes, so they can't be neutralized by config up front.
+func (r *Repo) Command(ctx context.Context, args ...string) *exec.Cmd {
 	cmd := exec.CommandContext(ctx, "git", args...)
-	cmd.Dir = dir
-	cmd.Env = Environ(ctx, dir)
+	cmd.Dir = r.dir
+	cmd.Env = r.env
 	return cmd
+}
+
+// Command returns a hardened git command for args run in dir, like
+// Open(ctx, dir).Command(ctx, args...).
+func Command(ctx context.Context, dir string, args ...string) *exec.Cmd {
+	return Open(ctx, dir).Command(ctx, args...)
 }
 
 // Environ returns os.Environ() hardened for git processes run in dir: the

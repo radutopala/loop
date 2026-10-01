@@ -32,17 +32,19 @@ func collectGitState(ctx context.Context, dir, base string, prev gitState) gitSt
 	if dir == "" {
 		return gitState{}
 	}
-	st := statusState(ctx, dir)
+	// One config read for every git command this poll runs.
+	repo := gitutil.Open(ctx, dir)
+	st := statusState(ctx, repo)
 	if st.Commit == "" {
 		return st
 	}
 	if prev.Commit == st.Commit {
 		st.Subject = prev.Subject
 	} else {
-		st.Subject, _ = gitOutput(ctx, dir, "log", "-1", "--format=%s")
+		st.Subject, _ = gitOutput(ctx, repo, "log", "-1", "--format=%s")
 	}
 	if base != "" {
-		if ahead, behind, ok := aheadBehind(ctx, dir, base); ok {
+		if ahead, behind, ok := aheadBehind(ctx, repo, base); ok {
 			st.SyncBase, st.BaseAhead, st.BaseBehind = base, ahead, behind
 		}
 	}
@@ -50,11 +52,11 @@ func collectGitState(ctx context.Context, dir, base string, prev gitState) gitSt
 }
 
 // statusState is collectGitState's branch, commit, upstream and diff part.
-func statusState(ctx context.Context, dir string) gitState {
+func statusState(ctx context.Context, repo *gitutil.Repo) gitState {
 
 	// --untracked-files=all lists files inside untracked directories
 	// individually (parity with `ls-files --others`); -z avoids path quoting.
-	cmd := gitutil.Command(ctx, dir, "status", "--porcelain=v2", "--branch", "--untracked-files=all", "-z")
+	cmd := repo.Command(ctx, "status", "--porcelain=v2", "--branch", "--untracked-files=all", "-z")
 	out, err := cmd.Output()
 	if err != nil {
 		// `git status` reads the worktree, so it fails in situations that
@@ -68,7 +70,7 @@ func statusState(ctx context.Context, dir string) gitState {
 		// picker for a repo git can still describe perfectly well, so fall
 		// back to the ref lookups, which never touch the worktree. Diff
 		// counts stay zero — that part genuinely could not be computed.
-		return refState(ctx, dir)
+		return refState(ctx, repo)
 	}
 	st, untracked := parseStatusV2(string(out))
 
@@ -77,7 +79,7 @@ func statusState(ctx context.Context, dir string) gitState {
 		{"diff", "--no-ext-diff", "--no-textconv", "--cached", "--shortstat"},
 		{"diff", "--no-ext-diff", "--no-textconv", "--shortstat"},
 	} {
-		cmd := gitutil.Command(ctx, dir, args...)
+		cmd := repo.Command(ctx, args...)
 		if out, err := cmd.Output(); err == nil {
 			add, del := parseShortstat(string(out))
 			st.DiffAdditions += add
@@ -87,7 +89,7 @@ func statusState(ctx context.Context, dir string) gitState {
 
 	// Untracked files count like the panel does (binary-aware).
 	for _, uf := range untracked {
-		if entry, _ := buildUntrackedEntry(dir, uf); entry != nil {
+		if entry, _ := buildUntrackedEntry(repo.Dir(), uf); entry != nil {
 			st.DiffAdditions += entry.Additions
 		}
 	}
@@ -98,20 +100,20 @@ func statusState(ctx context.Context, dir string) gitState {
 // refState resolves branch and short commit with plumbing that never reads the
 // worktree, so it survives the filter failures that take `git status` down. A
 // non-repo dir returns the zero value, matching the status path.
-func refState(ctx context.Context, dir string) gitState {
-	branch, ok := gitOutput(ctx, dir, "rev-parse", "--abbrev-ref", "HEAD")
+func refState(ctx context.Context, repo *gitutil.Repo) gitState {
+	branch, ok := gitOutput(ctx, repo, "rev-parse", "--abbrev-ref", "HEAD")
 	if !ok {
 		return gitState{}
 	}
 	// --short=7 matches the width parseStatusV2 slices off branch.oid.
-	commit, _ := gitOutput(ctx, dir, "rev-parse", "--short=7", "HEAD")
+	commit, _ := gitOutput(ctx, repo, "rev-parse", "--short=7", "HEAD")
 	return gitState{Branch: branch, Commit: commit}
 }
 
 // aheadBehind counts the commits HEAD has that base doesn't, and the other way
 // round. ok is false when base can't be resolved (e.g. it was deleted).
-func aheadBehind(ctx context.Context, dir, base string) (ahead, behind int, ok bool) {
-	out, ok := gitOutput(ctx, dir, "rev-list", "--left-right", "--count", base+"...HEAD")
+func aheadBehind(ctx context.Context, repo *gitutil.Repo, base string) (ahead, behind int, ok bool) {
+	out, ok := gitOutput(ctx, repo, "rev-list", "--left-right", "--count", base+"...HEAD")
 	if !ok {
 		return 0, 0, false
 	}
@@ -119,10 +121,10 @@ func aheadBehind(ctx context.Context, dir, base string) (ahead, behind int, ok b
 	return ahead, behind, true
 }
 
-// gitOutput runs a git command in dir and returns its trimmed stdout. ok is
+// gitOutput runs a git command in repo and returns its trimmed stdout. ok is
 // false when the command fails or produces no output.
-func gitOutput(ctx context.Context, dir string, args ...string) (string, bool) {
-	cmd := gitutil.Command(ctx, dir, args...)
+func gitOutput(ctx context.Context, repo *gitutil.Repo, args ...string) (string, bool) {
+	cmd := repo.Command(ctx, args...)
 	out, err := cmd.Output()
 	if err != nil {
 		return "", false

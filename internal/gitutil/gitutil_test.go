@@ -311,6 +311,55 @@ func (s *GitUtilSuite) TestCommandSetsDirAndArgs() {
 	require.NotContains(s.T(), cmd.Env, "GIT_CONFIG_NOSYSTEM=1", "system config is the host's")
 }
 
+// TestRepoSnapshotsConfig covers Open: every command a Repo makes shares the
+// environment read at Open, and appending to one command's Env leaves the
+// next command's alone.
+func (s *GitUtilSuite) TestRepoSnapshotsConfig() {
+	repo := s.T().TempDir()
+	s.git(repo, "init", "-q")
+	r := Open(context.Background(), repo)
+	require.Equal(s.T(), repo, r.Dir())
+	require.NotContains(s.T(), strings.Join(r.env, "\n"), "filter.planted")
+
+	// A filter added after Open isn't in the snapshot: callers open a new
+	// Repo after anything that may change the config.
+	s.git(repo, "config", "filter.planted.clean", "touch planted")
+	first := r.Command(context.Background(), "status")
+	require.Equal(s.T(), repo, first.Dir)
+	require.Equal(s.T(), r.env, first.Env)
+	require.Contains(s.T(), strings.Join(Command(context.Background(), repo, "status").Env, "\n"), "filter.planted.clean")
+
+	first.Env = append(first.Env, "EXTRA=1")
+	second := r.Command(context.Background(), "diff")
+	require.Equal(s.T(), []string{"git", "diff"}, second.Args)
+	require.Equal(s.T(), r.env, second.Env)
+	require.NotContains(s.T(), second.Env, "EXTRA=1")
+}
+
+// TestStatusRefreshesIndex guards the poller's cost: once a file's stat data
+// in the index is stale, hardened `git status` must write the refreshed index
+// back, or every later call re-hashes the file.
+func (s *GitUtilSuite) TestStatusRefreshesIndex() {
+	s.T().Setenv("GIT_OPTIONAL_LOCKS", "0")
+	repo := s.T().TempDir()
+	s.git(repo, "init", "-q")
+	require.NoError(s.T(), os.WriteFile(filepath.Join(repo, "a.txt"), []byte("a\n"), 0o644))
+	s.git(repo, "add", "a.txt")
+	s.git(repo, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "a")
+
+	// Same content, older mtime: the index entry no longer matches.
+	old := time.Now().Add(-time.Hour)
+	require.NoError(s.T(), os.Chtimes(filepath.Join(repo, "a.txt"), old, old))
+	index := filepath.Join(repo, ".git", "index")
+	before, err := os.ReadFile(index)
+	require.NoError(s.T(), err)
+
+	require.NoError(s.T(), Command(context.Background(), repo, "status", "--porcelain").Run())
+	after, err := os.ReadFile(index)
+	require.NoError(s.T(), err)
+	require.NotEqual(s.T(), before, after, "status should rewrite the index with the refreshed stat data")
+}
+
 // filterNames lists the filter drivers repoOverrides disarms in repo.
 func filterNames(repo string) []string {
 	var names []string
