@@ -182,9 +182,11 @@ export function PlaygroundPanel({ channelId, instanceId = "default" }: Playgroun
     ),
   });
 
-  // Listen for console messages from iframe via postMessage.
+  // Listen for console messages from the playground iframe via postMessage;
+  // messages from any other window are ignored.
   useEffect(() => {
     const onMessage = (e: MessageEvent) => {
+      if (e.source !== iframeRef.current?.contentWindow) return;
       if (e.data && e.data.type === "playground-console") {
         setConsoleMessages((prev) => [...prev.slice(-199), { level: e.data.level, message: e.data.message, time: Date.now() }]);
       }
