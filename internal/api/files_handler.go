@@ -626,10 +626,15 @@ func (s *Server) readFileAtCommit(w http.ResponseWriter, r *http.Request, dirPat
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
+	// cat-file reads one object name per line, so a newline would end this
+	// one and start another.
+	if strings.ContainsAny(cleaned, "\r\n") {
+		http.Error(w, "path contains invalid characters", http.StatusBadRequest)
+		return
+	}
 
-	cmd := gitutil.Command(r.Context(), dirPath, "show", "--no-textconv", ref+":./"+filepath.ToSlash(cleaned))
-	data, err := cmd.Output()
-	if err != nil {
+	data, ok := readBlob(r.Context(), dirPath, ref+":./"+filepath.ToSlash(cleaned))
+	if !ok {
 		http.Error(w, "file not found at commit", http.StatusNotFound)
 		return
 	}
@@ -638,6 +643,36 @@ func (s *Server) readFileAtCommit(w http.ResponseWriter, r *http.Request, dirPat
 		return
 	}
 	writeTextOrBinary(w, data)
+}
+
+// readBlob returns the contents of the blob spec names (`<rev>:<path>`), read
+// in dir with `git cat-file --batch`. The spec goes over stdin, so request data
+// never becomes a git argument; cat-file applies no textconv or filters. ok is
+// false when spec names nothing, or something other than a blob.
+func readBlob(ctx context.Context, dir, spec string) ([]byte, bool) {
+	cmd := gitutil.Command(ctx, dir, "cat-file", "--batch")
+	cmd.Stdin = strings.NewReader(spec + "\n")
+	out, err := cmd.Output()
+	if err != nil {
+		return nil, false
+	}
+	return parseBatchBlob(out)
+}
+
+// parseBatchBlob extracts the contents from one `git cat-file --batch`
+// record: "<oid> blob <size>\n<contents>\n". Any other record ("<spec>
+// missing", a tree, a truncated body) yields ok false.
+func parseBatchBlob(out []byte) ([]byte, bool) {
+	header, rest, _ := bytes.Cut(out, []byte("\n"))
+	fields := strings.Fields(string(header))
+	if len(fields) != 3 || fields[1] != "blob" {
+		return nil, false
+	}
+	size, err := strconv.Atoi(fields[2])
+	if err != nil || size < 0 || size > len(rest) {
+		return nil, false
+	}
+	return rest[:size], true
 }
 
 // handleRawFile serves a workspace file by path:
