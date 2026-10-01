@@ -111,10 +111,12 @@ func (s *Server) handleGitDiff(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	dirPath = resolvedDir
+	// One config read for every git command this request runs.
+	repo := gitutil.Open(r.Context(), dirPath)
 
 	// Single-commit mode: ?commit=<sha> shows what that commit changed.
 	if commit := r.URL.Query().Get("commit"); commit != "" {
-		s.handleCommitDiff(w, r, dirPath, commit)
+		s.handleCommitDiff(w, r, repo, commit)
 		return
 	}
 
@@ -122,7 +124,7 @@ func (s *Server) handleGitDiff(w http.ResponseWriter, r *http.Request) {
 	source := r.URL.Query().Get("source")
 	target := r.URL.Query().Get("target")
 	if source != "" && target != "" {
-		s.handleBranchDiff(w, r, dirPath, source, target)
+		s.handleBranchDiff(w, r, repo, source, target)
 		return
 	}
 
@@ -132,11 +134,11 @@ func (s *Server) handleGitDiff(w http.ResponseWriter, r *http.Request) {
 	// --cached), and the worktree diff uses `diff --cc` headers which the
 	// frontend parser doesn't recognize. Detect them up front so we can
 	// emit one entry per conflict with the worktree contents.
-	conflictPaths := listUnmergedPaths(r.Context(), dirPath)
+	conflictPaths := listUnmergedPaths(r.Context(), repo)
 
 	// Staged changes: index vs HEAD. May fail in a brand-new repo with no
 	// commits — treat that as "no staged entries" rather than erroring.
-	stagedCmd := gitutil.Command(r.Context(), dirPath, "diff", "--no-ext-diff", "--no-textconv", "--cached", "--numstat", "-z")
+	stagedCmd := repo.Command(r.Context(), "diff", "--no-ext-diff", "--no-textconv", "--cached", "--numstat", "-z")
 	stagedNumstatOut, stagedErr := stagedCmd.Output()
 	var stagedFiles []diffFileEntry
 	var stagedDiffText string
@@ -144,13 +146,13 @@ func (s *Server) handleGitDiff(w http.ResponseWriter, r *http.Request) {
 		stagedFiles = filterOutPaths(parseNumstat(string(stagedNumstatOut)), conflictPaths)
 		stampStatus(stagedFiles, statusStaged)
 
-		stagedDiffCmd := gitutil.Command(r.Context(), dirPath, "diff", "--no-ext-diff", "--no-textconv", "--cached")
+		stagedDiffCmd := repo.Command(r.Context(), "diff", "--no-ext-diff", "--no-textconv", "--cached")
 		stagedDiffOut, _ := stagedDiffCmd.Output()
 		stagedDiffText = string(stagedDiffOut)
 	}
 
 	// Unstaged changes: worktree vs index.
-	numstatCmd := gitutil.Command(r.Context(), dirPath, "diff", "--no-ext-diff", "--no-textconv", "--numstat", "-z")
+	numstatCmd := repo.Command(r.Context(), "diff", "--no-ext-diff", "--no-textconv", "--numstat", "-z")
 	numstatOut, err := numstatCmd.Output()
 	if err != nil {
 		// Not a git repo or git not available — return empty diff.
@@ -161,7 +163,7 @@ func (s *Server) handleGitDiff(w http.ResponseWriter, r *http.Request) {
 	unstagedFiles := filterOutPaths(parseNumstat(string(numstatOut)), conflictPaths)
 	stampStatus(unstagedFiles, statusUnstaged)
 
-	diffCmd := gitutil.Command(r.Context(), dirPath, "diff", "--no-ext-diff", "--no-textconv")
+	diffCmd := repo.Command(r.Context(), "diff", "--no-ext-diff", "--no-textconv")
 	diffOut, _ := diffCmd.Output()
 	unstagedDiffText := string(diffOut)
 
@@ -186,7 +188,7 @@ func (s *Server) handleGitDiff(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Include untracked files.
-	untrackedCmd := gitutil.Command(r.Context(), dirPath, "ls-files", "--others", "--exclude-standard")
+	untrackedCmd := repo.Command(r.Context(), "ls-files", "--others", "--exclude-standard")
 	if untrackedOut, err := untrackedCmd.Output(); err == nil {
 		for _, uf := range splitLines(string(untrackedOut)) {
 			entry, patch := buildUntrackedEntry(dirPath, uf)
@@ -229,8 +231,8 @@ func (s *Server) handleGitDiff(w http.ResponseWriter, r *http.Request) {
 // unmerged (merge/rebase conflict). Uses `git status --porcelain=v1 -z`:
 // unmerged entries are those with a status code in {DD,AU,UD,UA,DU,AA,UU}.
 // Returns an empty slice for non-repo dirs or clean trees.
-func listUnmergedPaths(ctx context.Context, dir string) []string {
-	cmd := gitutil.Command(ctx, dir, "status", "--porcelain=v1", "-z")
+func listUnmergedPaths(ctx context.Context, repo *gitutil.Repo) []string {
+	cmd := repo.Command(ctx, "status", "--porcelain=v1", "-z")
 	out, err := cmd.Output()
 	if err != nil {
 		return nil
@@ -324,7 +326,7 @@ func buildUntrackedEntry(dirPath, relPath string) (*diffFileEntry, string) {
 
 // handleBranchDiff computes a diff between two branch refs using the three-dot
 // merge-base syntax (source...target), showing what target has that source doesn't.
-func (s *Server) handleBranchDiff(w http.ResponseWriter, r *http.Request, dirPath, source, target string) {
+func (s *Server) handleBranchDiff(w http.ResponseWriter, r *http.Request, repo *gitutil.Repo, source, target string) {
 	source, ok := sanitizeBranch(source)
 	if !ok {
 		http.Error(w, "invalid source branch name", http.StatusBadRequest)
@@ -340,12 +342,12 @@ func (s *Server) handleBranchDiff(w http.ResponseWriter, r *http.Request, dirPat
 	// only exist as origin/<name> locally — fall back to that when the
 	// bare ref doesn't resolve, so the user doesn't need to manually pick
 	// "origin/<branch>" in the dropdown.
-	source = resolveBranchRef(r.Context(), dirPath, source)
-	target = resolveBranchRef(r.Context(), dirPath, target)
+	source = resolveBranchRef(r.Context(), repo, source)
+	target = resolveBranchRef(r.Context(), repo, target)
 
 	rangeSpec := source + "..." + target
 
-	numstatCmd := gitutil.Command(r.Context(), dirPath, "diff", "--no-ext-diff", "--no-textconv", "--numstat", "-z", rangeSpec)
+	numstatCmd := repo.Command(r.Context(), "diff", "--no-ext-diff", "--no-textconv", "--numstat", "-z", rangeSpec)
 	numstatOut, err := numstatCmd.Output()
 	if err != nil {
 		msg := "git diff failed"
@@ -359,7 +361,7 @@ func (s *Server) handleBranchDiff(w http.ResponseWriter, r *http.Request, dirPat
 
 	files := parseNumstat(string(numstatOut))
 
-	diffCmd := gitutil.Command(r.Context(), dirPath, "diff", "--no-ext-diff", "--no-textconv", rangeSpec)
+	diffCmd := repo.Command(r.Context(), "diff", "--no-ext-diff", "--no-textconv", rangeSpec)
 	diffOut, _ := diffCmd.Output()
 	diffText := string(diffOut)
 
@@ -390,14 +392,14 @@ var validCommitHash = regexp.MustCompile(`^[0-9a-fA-F]{4,64}$`)
 // commits are diffed against their first parent — the change the merge brought
 // into the branch — since the combined-diff format has no single old side for
 // the frontend to render. Root commits diff against the empty tree.
-func (s *Server) handleCommitDiff(w http.ResponseWriter, r *http.Request, dirPath, commit string) {
+func (s *Server) handleCommitDiff(w http.ResponseWriter, r *http.Request, repo *gitutil.Repo, commit string) {
 	if !validCommitHash.MatchString(commit) {
 		http.Error(w, "invalid commit hash", http.StatusBadRequest)
 		return
 	}
 
 	showArgs := []string{"show", "--no-ext-diff", "--no-textconv", "--format=", "--diff-merges=first-parent", commit + "^{commit}", "--"}
-	numstatCmd := gitutil.Command(r.Context(), dirPath, append([]string{"show", "--numstat", "-z"}, showArgs[1:]...)...)
+	numstatCmd := repo.Command(r.Context(), append([]string{"show", "--numstat", "-z"}, showArgs[1:]...)...)
 	numstatOut, err := numstatCmd.Output()
 	if err != nil {
 		msg := "git show failed"
@@ -411,7 +413,7 @@ func (s *Server) handleCommitDiff(w http.ResponseWriter, r *http.Request, dirPat
 
 	files := parseNumstat(string(numstatOut))
 
-	diffCmd := gitutil.Command(r.Context(), dirPath, showArgs...)
+	diffCmd := repo.Command(r.Context(), showArgs...)
 	diffOut, _ := diffCmd.Output()
 
 	var totalAdd, totalDel int
@@ -432,22 +434,22 @@ func (s *Server) handleCommitDiff(w http.ResponseWriter, r *http.Request, dirPat
 // the worktree, otherwise `origin/<ref>` if that resolves, otherwise the
 // original `ref` (so git itself produces the error). This handles stacked
 // PRs whose parent branch is only present as a remote-tracking ref.
-func resolveBranchRef(ctx context.Context, dir, ref string) string {
+func resolveBranchRef(ctx context.Context, repo *gitutil.Repo, ref string) string {
 	if ref == "" {
 		return ref
 	}
-	if refResolves(ctx, dir, ref) {
+	if refResolves(ctx, repo, ref) {
 		return ref
 	}
 	remote := "origin/" + ref
-	if refResolves(ctx, dir, remote) {
+	if refResolves(ctx, repo, remote) {
 		return remote
 	}
 	return ref
 }
 
-func refResolves(ctx context.Context, dir, ref string) bool {
-	cmd := gitutil.Command(ctx, dir, "rev-parse", "--verify", "--quiet", ref+"^{commit}")
+func refResolves(ctx context.Context, repo *gitutil.Repo, ref string) bool {
+	cmd := repo.Command(ctx, "rev-parse", "--verify", "--quiet", ref+"^{commit}")
 	return cmd.Run() == nil
 }
 

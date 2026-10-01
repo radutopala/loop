@@ -17,6 +17,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/radutopala/loop/internal/db"
+	"github.com/radutopala/loop/internal/gitutil"
 )
 
 func (s *ServerSuite) TestGitDiffGetChannelError() {
@@ -606,7 +607,7 @@ func (s *ServerSuite) TestGitDiffMergeConflictEmitsSingleConflictEntry() {
 }
 
 func TestListUnmergedPathsNonRepo(t *testing.T) {
-	require.Empty(t, listUnmergedPaths(context.Background(), t.TempDir()))
+	require.Empty(t, listUnmergedPaths(context.Background(), gitutil.Open(context.Background(), t.TempDir())))
 }
 
 func TestListUnmergedPathsCleanRepo(t *testing.T) {
@@ -619,7 +620,7 @@ func TestListUnmergedPathsCleanRepo(t *testing.T) {
 	gitRun(t, dir, "add", "x")
 	gitRun(t, dir, "commit", "-m", "init")
 
-	require.Empty(t, listUnmergedPaths(context.Background(), dir))
+	require.Empty(t, listUnmergedPaths(context.Background(), gitutil.Open(context.Background(), dir)))
 }
 
 func TestFilterOutPaths(t *testing.T) {
@@ -653,7 +654,7 @@ func TestFilterOutPaths(t *testing.T) {
 func TestResolveBranchRefEmpty(t *testing.T) {
 	// The handler validates branch names before calling resolveBranchRef, so
 	// this path is unreachable end-to-end — covered with a direct unit test.
-	require.Equal(t, "", resolveBranchRef(context.Background(), "/tmp", ""))
+	require.Equal(t, "", resolveBranchRef(context.Background(), gitutil.Open(context.Background(), "/tmp"), ""))
 }
 
 func (s *ServerSuite) TestGitDiffRootParamSelectsExtraDir() {
