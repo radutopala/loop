@@ -146,6 +146,9 @@ func (s *ServerSuite) TestReadFileAtCommit() {
 		{name: "ref name rejected", query: "path=sub/a.txt&ref=HEAD", code: http.StatusBadRequest, body: "invalid commit hash"},
 		{name: "traversal rejected", query: "path=../x&ref=" + first, code: http.StatusBadRequest, body: "path traversal not allowed"},
 		{name: "empty path", query: "path=&ref=" + first, code: http.StatusBadRequest, body: "path is required"},
+		{name: "directory", query: "path=sub&ref=" + first, code: http.StatusNotFound, body: "file not found at commit"},
+		{name: "newline rejected", query: "path=sub/a.txt%0A" + first + ":sub/bin.dat&ref=" + first, code: http.StatusBadRequest, body: "path contains invalid characters"},
+		{name: "option-like path stays a path", query: "path=--output=x&ref=" + first, code: http.StatusNotFound, body: "file not found at commit"},
 	}
 	for _, tc := range cases {
 		s.Run(tc.name, func() {
@@ -160,6 +163,41 @@ func (s *ServerSuite) TestReadFileAtCommit() {
 				return
 			}
 			require.Contains(s.T(), rec.Body.String(), tc.body)
+		})
+	}
+}
+
+func (s *ServerSuite) TestReadFileAtCommitNotARepo() {
+	s.store.On("GetChannel", mock.Anything, "ch-1").
+		Return(&db.Channel{ChannelID: "ch-1", DirPath: s.T().TempDir()}, nil)
+
+	rec := s.testRequest("GET", "/api/channels/ch-1/file?path=a.txt&ref=deadbeef", "")
+	require.Equal(s.T(), http.StatusNotFound, rec.Code)
+}
+
+func TestParseBatchBlob(t *testing.T) {
+	cases := []struct {
+		name string
+		out  string
+		want string
+		ok   bool
+	}{
+		{name: "blob", out: "abc blob 4\nold\n\n", want: "old\n", ok: true},
+		{name: "empty blob", out: "abc blob 0\n\n", want: "", ok: true},
+		{name: "missing", out: "abc:./x missing\n"},
+		{name: "tree", out: "abc tree 3\nxyz\n"},
+		{name: "bad size", out: "abc blob x\nold\n"},
+		{name: "negative size", out: "abc blob -1\nold\n"},
+		{name: "truncated", out: "abc blob 9\nold\n"},
+		{name: "empty", out: ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, ok := parseBatchBlob([]byte(tc.out))
+			require.Equal(t, tc.ok, ok)
+			if tc.ok {
+				require.Equal(t, tc.want, string(got))
+			}
 		})
 	}
 }
