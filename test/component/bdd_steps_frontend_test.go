@@ -235,6 +235,7 @@ func registerFrontendSteps(ctx *godog.ScenarioContext, tc *TestContext) {
 	ctx.Step(`^the element "([^"]*)" should be visible$`, tc.assertElementVisible)
 	ctx.Step(`^the element "([^"]*)" should not exist$`, tc.assertElementNotExist)
 	ctx.Step(`^the element "([^"]*)" should contain text "([^"]*)"$`, tc.assertElementContainsText)
+	ctx.Step(`^the element "([^"]*)" should not contain text "([^"]*)"$`, tc.assertElementNotContainsText)
 	ctx.Step(`^the field "([^"]*)" should hold "([^"]*)"$`, tc.assertFieldHolds)
 	ctx.Step(`^I wait for text "([^"]*)" to appear$`, tc.waitForTextToAppear)
 	ctx.Step(`^I wait for text "([^"]*)" to disappear$`, tc.waitForTextToDisappear)
@@ -305,6 +306,7 @@ func registerFrontendSteps(ctx *godog.ScenarioContext, tc *TestContext) {
 	ctx.Step(`^I inject an agent\.status running event for the worktree thread$`, tc.injectAgentStatusRunningForWorktree)
 	ctx.Step(`^I inject an agent\.status running event for the last created thread$`, tc.injectAgentStatusRunningForLastThread)
 	ctx.Step(`^I inject a gate\.approval_requested event with req_id "([^"]*)", source "([^"]*)", and target "([^"]*)"$`, tc.injectGateApprovalRequested)
+	ctx.Step(`^I inject a gate\.approval_requested event for the last created thread with req_id "([^"]*)" and target "([^"]*)"$`, tc.injectGateApprovalRequestedForLastThread)
 	ctx.Step(`^I inject a gate\.approval_resolved event with req_id "([^"]*)"$`, tc.injectGateApprovalResolved)
 	ctx.Step(`^I inject a gate\.approval_requested event with req_id "([^"]*)", target "([^"]*)", expiring in "(\d+)ms"$`, tc.injectGateApprovalRequestedExpiring)
 
@@ -673,6 +675,19 @@ func (tc *TestContext) assertElementContainsText(selector, expected string) erro
 	}
 	if !strings.Contains(text, expected) {
 		return fmt.Errorf("element %q text does not contain %q (got: %q)", selector, expected, text)
+	}
+	return nil
+}
+
+func (tc *TestContext) assertElementNotContainsText(selector, unexpected string) error {
+	var text string
+	if err := chromedp.Run(tc.chromeTab.ctx,
+		chromedp.Text(selector, &text, chromedp.ByQuery),
+	); err != nil {
+		return err
+	}
+	if strings.Contains(text, unexpected) {
+		return fmt.Errorf("element %q text contains %q (got: %q)", selector, unexpected, text)
 	}
 	return nil
 }
@@ -3019,6 +3034,20 @@ func (tc *TestContext) injectGateApprovalRequested(reqID, source, target string)
 	if channelID == "" {
 		return fmt.Errorf("no channel_id set; use 'I set up a test channel via API' step first")
 	}
+	return tc.injectGateApprovalRequestedFor(channelID, reqID, source, target)
+}
+
+// injectGateApprovalRequestedForLastThread fires a chat-sourced
+// gate.approval_requested event for the most recently created thread, so
+// its own row (not its channel's) is the one waiting on the user.
+func (tc *TestContext) injectGateApprovalRequestedForLastThread(reqID, target string) error {
+	if len(tc.CreatedThreadIDs) == 0 {
+		return fmt.Errorf("no thread created; use 'I create a thread' step first")
+	}
+	return tc.injectGateApprovalRequestedFor(tc.CreatedThreadIDs[len(tc.CreatedThreadIDs)-1], reqID, "chat", target)
+}
+
+func (tc *TestContext) injectGateApprovalRequestedFor(channelID, reqID, source, target string) error {
 	if err := tc.ensureChromeTab(); err != nil {
 		return err
 	}

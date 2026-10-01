@@ -6,6 +6,7 @@ import { openExternalUrl } from "../../utils/openExternal";
 import { storageGetJSON, storageSetJSON } from "../../utils/storage";
 import type { MenuItem } from "../shared/ContextMenu";
 import { ContextMenu } from "../shared/ContextMenu";
+import { pruneToLit } from "./attention";
 import { ChannelList } from "./ChannelList";
 import { DescriptionDialog } from "./DescriptionDialog";
 import type { PillKind } from "./pills";
@@ -30,6 +31,9 @@ const TAB_STORAGE_KEY = "loop-sidebar-tab";
 
 // Whether task threads are hidden, per tab.
 const HIDE_TASKS_STORAGE_KEY = "loop-sidebar-hide-tasks";
+
+// Whether the sidebar shows only the rows that need you (a lit pill).
+const NEEDS_YOU_STORAGE_KEY = "loop-sidebar-needs-you";
 
 function loadHideTasks(): Record<SectionKey, boolean> {
   const v = storageGetJSON<boolean | Partial<Record<SectionKey, boolean>>>(HIDE_TASKS_STORAGE_KEY);
@@ -176,6 +180,7 @@ export function Sidebar({
   const sidebarRef = useRef<HTMLDivElement>(null);
   const [tab, setTab] = useState<SectionKey>(loadTab);
   const [hideTasks, setHideTasks] = useState(loadHideTasks);
+  const [needsYouOnly, setNeedsYouOnly] = useState(() => storageGetJSON<boolean>(NEEDS_YOU_STORAGE_KEY) === true);
   // When each session was last seen active. A run that just ended counts
   // as recent activity before the next channel refresh brings its newest
   // message's time.
@@ -191,6 +196,13 @@ export function Sidebar({
       const next = { ...prev, [section]: !prev[section] };
       storageSetJSON(HIDE_TASKS_STORAGE_KEY, next);
       return next;
+    });
+  }, []);
+
+  const toggleNeedsYouOnly = useCallback(() => {
+    setNeedsYouOnly((prev) => {
+      storageSetJSON(NEEDS_YOU_STORAGE_KEY, !prev);
+      return !prev;
     });
   }, []);
 
@@ -413,12 +425,18 @@ export function Sidebar({
   // Hidden task threads take their sub-threads with them; one that's running
   // or waiting on you stays. Each tab has its own filter.
   const hidden = (c: Channel, section: SectionKey) => hideTasks[section] && isTaskThread(c) && !isRunning(c.id) && pillsFor(c.id).length === 0;
-  const threadsByParent = channels.reduce<Record<string, Channel[]>>((acc, c) => {
+  const lit = (id: string) => pillsFor(id).length > 0;
+  // Select mode is about picking rows to delete, so the needs-you filter
+  // steps aside for it rather than hiding rows you might want to pick.
+  const needsYou = needsYouOnly && !selectMode;
+  const allThreadsByParent = channels.reduce<Record<string, Channel[]>>((acc, c) => {
     if (c.parent_id && !hidden(c, "tree")) {
       (acc[c.parent_id] ??= []).push(c);
     }
     return acc;
   }, {});
+  const threadsByParent = needsYou ? pruneToLit(allThreadsByParent, lit) : allThreadsByParent;
+  const shownInTree = (c: Channel) => !needsYou || lit(c.id) || (threadsByParent[c.id]?.length ?? 0) > 0;
   // Apply the per-parent drag-reorder order; parents with no saved order keep
   // the backend's alphabetical order.
   for (const parentId of Object.keys(threadsByParent)) {
@@ -430,9 +448,10 @@ export function Sidebar({
   }
 
   // Separate DM channel (pinned at top) from regular channels.
-  const dmChannel = channels.find((c) => c.name === "dm" && !c.parent_id);
+  const dm = channels.find((c) => c.name === "dm" && !c.parent_id);
+  const dmChannel = dm && shownInTree(dm) ? dm : undefined;
   const allTopLevel = sortByOrder(
-    channels.filter((c) => !c.parent_id && (c.name || c.dir_path) && !(c.name === "dm" && !c.parent_id)),
+    channels.filter((c) => !c.parent_id && (c.name || c.dir_path) && !(c.name === "dm" && !c.parent_id) && shownInTree(c)),
     channelOrder,
   );
 
@@ -471,11 +490,11 @@ export function Sidebar({
   const isUnread = (id: string) => unreadIdsRef?.current?.has(id) ?? false;
   const matchesQuery = (c: Channel) => !query || sessionName(c).toLowerCase().includes(query) || sessionContext(c, byId).toLowerCase().includes(query);
   const now = Date.now();
-  const active = selectMode ? [] : activeSessions(channels, isRunning, (id) => pillsFor(id).length > 0).filter(matchesQuery);
+  const active = selectMode ? [] : activeSessions(channels, isRunning, lit).filter((c) => matchesQuery(c) && (!needsYou || lit(c.id)));
   for (const c of active) seenActiveAtRef.current.set(c.id, now);
   const lastActivity = (c: Channel): number | undefined => Math.max(c.last_activity_at ?? 0, seenActiveAtRef.current.get(c.id) ?? 0) || undefined;
   const allRecent = selectMode ? [] : recentSessions(channels, lastActivity, now);
-  const recent = allRecent.filter((c) => matchesQuery(c) && !hidden(c, "recent"));
+  const recent = allRecent.filter((c) => matchesQuery(c) && !hidden(c, "recent") && (!needsYou || lit(c.id)));
   // With nothing recent there's nothing to tab between, so only the tree
   // shows. Judged before the search and task filters, so neither can take
   // the tabs (and the way back) away. Select mode is about the tree's
@@ -585,7 +604,22 @@ export function Sidebar({
       />
       <div style={{ flex: 1, overflowY: "auto", overflowX: "hidden", minHeight: 0 }}>
         {!selectMode && (
-          <SectionTabs tab={openTab} showTabs={showTabs} recentCount={recent.length} onChange={changeTab} hideTasks={hideTasks[openTab]} onToggleHideTasks={() => toggleHideTasks(openTab)} />
+          <SectionTabs
+            tab={openTab}
+            showTabs={showTabs}
+            recentCount={recent.length}
+            onChange={changeTab}
+            hideTasks={hideTasks[openTab]}
+            onToggleHideTasks={() => toggleHideTasks(openTab)}
+            needsYouOnly={needsYouOnly}
+            onToggleNeedsYouOnly={toggleNeedsYouOnly}
+          />
+        )}
+        {/* Recent has its own empty line. */}
+        {needsYou && showTree && !dmChannel && topLevel.length === 0 && (
+          <div data-testid="sidebar-needs-you-empty" style={{ padding: "8px 16px", fontSize: 11, color: colors.textDisabled }}>
+            Nothing needs you right now
+          </div>
         )}
         {!showTree && (
           <SessionSections
