@@ -5,6 +5,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
+	"time"
 )
 
 // System abstracts OS operations for testability.
@@ -19,6 +21,15 @@ type System interface {
 	GetUID() int
 	EvalSymlinks(path string) (string, error)
 	Getenv(key string) string
+	ReadPIDFile(name string) ([]byte, error)
+	// ProcCmdline returns the NUL-separated command line of pid from /proc.
+	ProcCmdline(pid int) ([]byte, error)
+	// StartDetached starts name in its own session with stdout and stderr
+	// appended to logFile, and returns its pid without waiting for it.
+	StartDetached(name string, args []string, logFile string) (int, error)
+	// Terminate asks the process with the given pid to exit.
+	Terminate(pid int) error
+	Sleep(d time.Duration)
 }
 
 // RealSystem implements System with real OS calls.
@@ -38,6 +49,11 @@ func (RealSystem) Stat(name string) (os.FileInfo, error)    { return os.Stat(nam
 func (RealSystem) GetUID() int                              { return os.Getuid() }
 func (RealSystem) EvalSymlinks(path string) (string, error) { return filepath.EvalSymlinks(path) }
 func (RealSystem) Getenv(key string) string                 { return os.Getenv(key) }
+func (RealSystem) ReadPIDFile(name string) ([]byte, error)  { return os.ReadFile(name) }
+func (RealSystem) ProcCmdline(pid int) ([]byte, error) {
+	return os.ReadFile("/proc/" + strconv.Itoa(pid) + "/cmdline")
+}
+func (RealSystem) Sleep(d time.Duration) { time.Sleep(d) }
 
 // proxyKeys lists the environment variable names forwarded to the service unit.
 var proxyKeys = []string{"HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "http_proxy", "https_proxy", "no_proxy"}
