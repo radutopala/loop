@@ -2347,6 +2347,53 @@ status. `400` if the configured fork cannot be resolved or staged (no chat
 session yet, unknown session id, transcript missing on disk). `501` if the
 review agent is not wired.
 
+### `POST /api/channels/{id}/review/dedup`
+
+Fold duplicate findings. Every comment in the session, across files, goes
+to a read-only agent run (no Bash, no edits, strict MCP config) when there
+are at least two and one is the agent's. The model clusters them by root
+cause, including a cause and its symptom, or the same issue anchored in two
+files, and picks the most severe and specific one to keep. The daemon
+deletes the others the same way `DELETE /review/comments/{cid}` does, which
+includes removing them from the PR if they were pushed. Each deletion is
+broadcast as `review.comment_removed`. The model's note on what the dropped
+comments added is appended to the kept comment when that is an unpushed
+agent finding, and broadcast as `review.comment_updated`.
+Only agent findings are ever deleted: a GitHub comment can be the one kept,
+but is never dropped. The run is synchronous, and while it runs the session
+holds the channel's review-run slot and shows status `reviewing`. It is in
+the agent token scope, so the seeded `review-loop` can call it from its
+container through `loop review dedup`.
+
+Response:
+
+```json
+{
+  "removed": ["<id>"],
+  "clusters": [{"kept": "<id>", "removed": ["<id>"], "reason": "...", "note": "...", "note_added": true}],
+  "related": [{"ids": ["<id>", "<id>"], "reason": "..."}],
+  "moved": [{"id": "<id>", "from": 145, "to": 147}],
+  "checked": 11,
+  "errors": ["<id>: <msg>"]
+}
+```
+
+`clusters` lists each merged group with the ids actually removed; a group
+whose deletes all failed is left out. `note_added` is false when the kept
+comment is a GitHub or pushed one, which is never edited. `related` groups
+findings about the same code path that need separate fixes; nothing is
+deleted for them. `moved` lists the unpushed agent findings the model
+re-anchored to the statement they are about, at most 20 lines from where
+they were; each move is broadcast as `review.comment_updated`. `checked` is the number of comments shown to the model
+(`0` when there is nothing to fold, in which case no agent runs). `errors`
+lists the deletions that failed; those comments stay.
+
+**Errors:** `404` if no session. `409` if the session has no worktree, is
+not `ready`, or a review run is in flight. `400` if the channel has no
+`dir_path`. `403` if review is disabled for the project. `500` if the
+refresh from GitHub fails, the agent run fails, or its reply has no
+parseable JSON. `501` if the review service or agent is not wired.
+
 ### `PUT /api/channels/{id}/review/fork`
 
 Choose which Claude session the *next* review run forks from. Body:

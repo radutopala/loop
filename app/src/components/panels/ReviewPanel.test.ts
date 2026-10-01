@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { ReviewComment, ReviewSession } from "../../api/review";
-import { buildAddressAllPrompt, buildAddressPrompt, buildDiscussDraft, reviewEffortOptions, reviewModelOptions, WHY_QUESTION } from "./ReviewPanel";
+import { buildAddressAllPrompt, buildAddressPrompt, buildDiscussDraft, reviewEffortOptions, reviewModelOptions, WHY_QUESTION, withoutComment, withUpdatedComment } from "./ReviewPanel";
 
 function comment(body: string, extra: Partial<ReviewComment> = {}): ReviewComment {
   return { id: "c1", path: "internal/api/x.go", line: 12, side: "RIGHT", body, pushed: false, ...extra };
@@ -226,5 +226,34 @@ describe("reviewEffortOptions", () => {
     ["xhigh", "Default (xhigh)"],
   ])("names the config default %s", (def, want) => {
     expect(reviewEffortOptions(def)[0]?.label).toBe(want);
+  });
+});
+
+describe("withoutComment", () => {
+  it("drops only the named comment", () => {
+    const sess = session({ comments: [comment("a", { id: "a" }), comment("b", { id: "b" })] });
+    expect(withoutComment(sess, "a")?.comments.map((c) => c.id)).toEqual(["b"]);
+  });
+
+  it("leaves the session as it was for an unknown id", () => {
+    const sess = session({ comments: [comment("a", { id: "a" })] });
+    expect(withoutComment(sess, "zz")?.comments).toEqual(sess.comments);
+  });
+
+  it("keeps a missing session missing", () => {
+    expect(withoutComment(null, "a")).toBeNull();
+  });
+});
+
+describe("withUpdatedComment", () => {
+  it("swaps in the new body and keeps the rest", () => {
+    const sess = session({ comments: [comment("old", { id: "a", pushed: true }), comment("b", { id: "b" })] });
+    const got = withUpdatedComment(sess, { id: "a", body: "old\n\nAlso flagged: more" })?.comments;
+    expect(got?.[0]).toEqual(comment("old\n\nAlso flagged: more", { id: "a", pushed: true }));
+    expect(got?.[1]).toBe(sess.comments[1]);
+  });
+
+  it("keeps a missing session missing", () => {
+    expect(withUpdatedComment(null, { id: "a", body: "x" })).toBeNull();
   });
 });

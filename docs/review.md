@@ -38,10 +38,11 @@ per-global / per-project / per-worktree the same way as `github.gh_user`.
      `max_iterations` (set via the small numeric input next to the button,
      1–10, default `1`). Each iteration runs the same review prompt as the
      one-shot mode; comments stream live into the panel as they arrive.
-     The loop stops early when an iteration returns zero comments
-     **or** the same comment-id set as the previous iteration
-     (`SameAsPrev` gate — guards against the agent ignoring "do not
-     re-emit" instructions). The mode and max-iter value persist in
+     The loop stops early when the session has no comments **or** an
+     iteration leaves the session's comment-id set as it was
+     (`SameAsPrev` gate). A finding the daemon drops as a duplicate
+     (see [Required output format](#required-output-format)) doesn't change the
+     set, so a round that only re-finds known issues ends the loop. The mode and max-iter value persist in
      `localStorage` so they survive reloads.
 
    Both modes are backed by seeded workflows (`review-loop`,
@@ -50,7 +51,37 @@ per-global / per-project / per-worktree the same way as `github.gh_user`.
    commits any leftover changes via `git add -u` (tracked-only). Because
    these are real workflow runs, each node's input/output (and the `fix`
    prompt node's Claude session id) is inspectable in the Workflows panel —
-   see [Per-Node Run View](workflows.md#per-node-run-view). A chip
+   see [Per-Node Run View](workflows.md#per-node-run-view).
+
+   With `max_iterations` above 1, `review-loop` ends with a **dedup** node
+   (`loop review dedup`, see [CLI](#cli)). Each round only reports; this
+   last step does the cleanup. A later round often re-finds an issue on
+   another line, in another file, or framed differently (a symptom rather
+   than its cause), which the ingest-time pass (see
+   [Required output format](#required-output-format)) doesn't catch. The
+   dedup pass shows every comment in the session to a read-only model run
+   (no Bash, no edits). The model groups them by root cause (same issue
+   means one change fixes both), keeps the most severe and specific
+   comment in each group, and says what the others add. The daemon deletes
+   the others from the panel and, if they were pushed, from the PR, and
+   appends that note to the kept comment as an `Also flagged:` paragraph.
+   The note is only added when the kept comment is an unpushed agent
+   finding; comments on GitHub are never edited. The pass only ever
+   deletes agent findings: comments read from GitHub can be kept, but are
+   never dropped. Findings about the same code path that still need
+   separate fixes are reported as related, and nothing is deleted for
+   them. The pass also re-checks where each surviving agent finding is
+   anchored, against the file read with line numbers, and moves an
+   unpushed one that sits a few lines off (on a blank line, a closing
+   brace or a neighbouring statement) to the statement it is about, within
+   20 lines. A single pass has
+   nothing to fold, so the node is skipped when `max_iterations` is 1.
+   The loop's stop condition doesn't change: it compares each round
+   against the set the daemon has already deduplicated on the way in.
+   `review-fix-loop` has no dedup node, because its fix step addresses
+   the findings between rounds.
+
+   A chip
    in the panel header mirrors the workflow events
    (`workflow.node_started`, `workflow.run_completed`, …) so the
    operator can see `review iter 2/3 — running`, `fixing — iter 2/3`,
@@ -66,7 +97,10 @@ per-global / per-project / per-worktree the same way as `github.gh_user`.
    carries **Push all to GitHub (N)** (when at least one comment is
    unpushed). The backend uses `gh api ... /pulls/N/comments` against the
    captured head SHA so comments anchor to the right commit even if the PR
-   is force-pushed later. GitHub is not the only exit — see
+   is force-pushed later. A pushed comment stays one comment: when Sync or
+   a run reads the PR's comments back, GitHub's copy of it is folded into
+   the finding, which takes its link and outdated/resolved state. GitHub
+   is not the only exit — see
    [Handing a finding to the agent](#handing-a-finding-to-the-agent).
 4. **Close** — closing the session deletes the in-memory session record
    and removes the worktree on disk. Pushed comments remain on GitHub.
@@ -279,6 +313,27 @@ load. Any session-lookup failure falls back to loading.
 
 The emitted JSON shape is `{"status":"ready","no_comments":bool,"comments":[...]}` — the same payload used by the workflow body parser to populate `{{.Review.*}}` templates inside the seeded loops.
 
+`loop review dedup` runs the dedup pass that `review-loop` ends with. It
+takes the same `--channel-id`, `--api-url` and `--timeout` flags, blocks
+until the pass is done, and prints the result, which lists every merged
+group so a pass can be audited:
+
+```json
+{
+  "removed": ["<id>", "..."],
+  "clusters": [{"kept": "<id>", "removed": ["<id>"], "reason": "...", "note": "...", "note_added": true}],
+  "related": [{"ids": ["<id>", "<id>"], "reason": "..."}],
+  "moved": [{"id": "<id>", "from": 145, "to": 147}],
+  "checked": 11,
+  "errors": ["<id>: <msg>"]
+}
+```
+
+`checked` counts the comments shown to the model. A comment whose delete
+failed stays in the panel and is listed under `errors`. Neither case fails
+the command. A run already in flight on the channel makes it fail with a
+`409`.
+
 ## Status transitions
 
 Status is broadcast over the WebSocket as `review.status` events so
@@ -322,6 +377,14 @@ without one can't be anchored in the diff and is dropped, so the default
 system prompt requires it. `summary` and `failure_scenario` are joined
 into the comment body.
 
+The daemon doesn't check the line, so the PR context given to the
+reviewer and to its finder subagents asks for it to be confirmed with a
+numbered read of the file (the Read tool, `grep -n`, `nl -ba`) and pointed
+at the statement the finding is about. `git diff` output carries no line
+numbers, and an agent that counts from the hunk headers lands a line or
+three off, on a blank line or a closing brace. The multi-round loop's
+dedup pass re-checks anchors as a backstop.
+
 An override prompt that is *not* a slash command gets no system prompt
 from the daemon, so it must state its own contract. Either instruct the
 agent to call `ReportFindings` as above, or use the
@@ -343,17 +406,18 @@ passes, because a re-run does not repeat itself verbatim:
 
 1. **By id** — a stable content hash of path/line/body. Catches an agent
    retrying a report it already made.
-2. **By content** — a finding anchored to a line another finding already
-   occupies is dropped when the two bodies are near-identical: word-bigram
+2. **By content** — a finding within 20 lines of another finding on the
+   same file and side is dropped when the two bodies are near-identical: word-bigram
    Dice ≥ 0.7 after lowercasing and stripping punctuation. This is the
    case that matters across runs. Each review run re-derives its findings
    rather than copying the last run's text, so the same issue comes back
    reworded, hashes differently, and the "do NOT re-emit" list — prose in
    a system prompt — cannot reliably prevent it.
 
-The content pass is anchored to the line first: the same wording about a
-different line stays, so an issue that recurs in two places is still
-flagged twice. It runs only over **agent** findings; comments read back
+The content pass is anchored to the neighbourhood first, because a re-run
+often re-anchors a finding a few lines off. The same wording further than
+20 lines away stays, so an issue that recurs in two places is still
+flagged twice; within 20 lines it's flagged once. It runs only over **agent** findings; comments read back
 from GitHub are rebuilt wholesale on Sync and never pass through it.
 
 ## See also

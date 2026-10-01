@@ -257,8 +257,18 @@ func (s *SessionSuite) TestAddCommentKeepsDistinctFindingOnSameLine() {
 	require.Len(s.T(), store.Get("ch1").Comments, 2)
 }
 
-// The same wording about a different line is a different finding: the gate
-// is anchored so that a fix applied in two places still gets flagged twice.
+// A re-run re-anchors a finding a few lines off, as with a score overflow
+// reported on one line and again six lines further down.
+func (s *SessionSuite) TestAddCommentDropsRewordedFindingOnNearbyLine() {
+	store := NewStore()
+	store.Put("ch1", &Session{})
+	require.True(s.T(), store.AddComment("ch1", &Comment{ID: "a", Path: "a.go", Line: 356, Body: reportedOnce}))
+	require.False(s.T(), store.AddComment("ch1", &Comment{ID: "b", Path: "a.go", Line: 362, Body: reportedAgain}))
+	require.Len(s.T(), store.Get("ch1").Comments, 1)
+}
+
+// The same wording far from the first is a different finding: the gate is
+// anchored so that a fix needed in two places still gets flagged twice.
 func (s *SessionSuite) TestAddCommentKeepsSameWordingOnAnotherLine() {
 	store := NewStore()
 	store.Put("ch1", &Session{})
@@ -368,4 +378,49 @@ func (s *SessionSuite) TestFindCommentReturnsHit() {
 	require.NotNil(s.T(), c)
 	require.NotNil(s.T(), sess)
 	require.Equal(s.T(), "x", c.Path)
+}
+
+// Only a local agent comment is edited; the session gets an updated copy,
+// so a pointer handed out earlier keeps the old fields.
+func (s *SessionSuite) TestEditLocalComment() {
+	cases := []struct {
+		name    string
+		channel string
+		id      string
+		want    bool
+	}{
+		{name: "local agent comment", channel: "ch1", id: "local", want: true},
+		{name: "pushed comment", channel: "ch1", id: "pushed"},
+		{name: "github comment", channel: "ch1", id: "gh"},
+		{name: "unknown comment", channel: "ch1", id: "zz"},
+		{name: "no session", channel: "nope", id: "local"},
+	}
+	for _, tc := range cases {
+		s.Run(tc.name, func() {
+			store := NewStore()
+			store.Put("ch1", &Session{Comments: []*Comment{
+				{ID: "local", Line: 3, Body: "Leak.", Source: "agent"},
+				{ID: "pushed", Line: 3, Body: "Leak.", Source: "agent", Pushed: true},
+				{ID: "gh", Line: 3, Body: "Leak.", Source: "github"},
+			}})
+			before, _ := store.FindComment("ch1", tc.id)
+
+			got := store.EditLocalComment(tc.channel, tc.id, func(c *Comment) {
+				c.Line = 5
+				c.Body = WithDedupNote(c.Body, "on retry too.")
+			})
+			if !tc.want {
+				require.Nil(s.T(), got)
+				for _, c := range store.Get("ch1").Comments {
+					require.Equal(s.T(), 3, c.Line)
+				}
+				return
+			}
+			after, _ := store.FindComment("ch1", tc.id)
+			require.Equal(s.T(), got, after)
+			require.Equal(s.T(), 5, after.Line)
+			require.Equal(s.T(), "Leak.\n\nAlso flagged: on retry too.", after.Body)
+			require.Equal(s.T(), 3, before.Line)
+		})
+	}
 }

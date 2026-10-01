@@ -527,15 +527,7 @@ func (s *reviewService) handleReviewIngestComments(w http.ResponseWriter, r *htt
 	// Same parent-dir resolution as handleReviewRun: for a root channel
 	// the worktree-parent resolver returns "" and the channel's own dir
 	// (the main repo) is the diff workdir.
-	parentDirPath := s.deps.workspace.resolveParentDirPath(r.Context(), channelID)
-	if parentDirPath == "" && s.deps.store != nil {
-		if ch, err := s.deps.store.GetChannel(r.Context(), channelID); err == nil && ch != nil {
-			parentDirPath = ch.DirPath
-			if parentDirPath == "" && s.deps.loopDir != "" {
-				parentDirPath = filepath.Join(s.deps.loopDir, ch.ChannelID, "work")
-			}
-		}
-	}
+	_, parentDirPath := s.reviewRunDirs(r.Context(), channelID)
 	added, skipped := 0, 0
 	for _, raw := range body.Findings {
 		var f struct {
@@ -628,21 +620,46 @@ func (s *reviewService) handleReviewDeleteComment(w http.ResponseWriter, r *http
 		return
 	}
 
+	if err := s.deleteOneComment(r.Context(), channelID, c); err != nil {
+		var herr *reviewHTTPError
+		if errors.As(err, &herr) {
+			http.Error(w, herr.msg, herr.status)
+			return
+		}
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// reviewHTTPError is an error that carries the HTTP status to answer with.
+// Errors without one are answered with 500.
+type reviewHTTPError struct {
+	status int
+	msg    string
+}
+
+func (e *reviewHTTPError) Error() string { return e.msg }
+
+// deleteOneComment deletes c on GitHub when it has a GitHub-side copy, then
+// removes it from the session and tells the panel. On any failure the local
+// comment is kept, so the user (or the dedup pass) can retry: half-deleting,
+// gone locally but still on GitHub, would be confusing.
+func (s *reviewService) deleteOneComment(ctx context.Context, channelID string, c *review.Comment) error {
 	// Only call GitHub when there's actually a GH-side comment to delete.
 	// Agent comments that were never pushed have GitHubID==0 and live
 	// purely in the in-memory session; just drop them locally.
 	if c.GitHubID > 0 {
-		if !requireConfigured(w, s.client, "review service not configured") {
-			return
+		if s.client == nil {
+			return &reviewHTTPError{http.StatusNotImplemented, "review service not configured"}
 		}
-		ch, err := s.deps.store.GetChannel(r.Context(), channelID)
+		ch, err := s.deps.store.GetChannel(ctx, channelID)
 		if err != nil || ch == nil || ch.DirPath == "" {
-			http.Error(w, "channel has no dir_path", http.StatusInternalServerError)
-			return
+			return errors.New("channel has no dir_path")
 		}
-		parentDirPath := s.deps.workspace.resolveParentDirPath(r.Context(), channelID)
-		if !s.requireReviewEnabled(w, ch.DirPath, parentDirPath) {
-			return
+		parentDirPath := s.deps.workspace.resolveParentDirPath(ctx, channelID)
+		if !s.deps.configs.reviewEnabled(ch.DirPath, parentDirPath) {
+			return &reviewHTTPError{http.StatusForbidden, errReviewDisabled.Error()}
 		}
 		ghUser := s.deps.configs.ghUser(ch.DirPath, parentDirPath)
 		// GitHub-source comments are only deletable when their author
@@ -653,23 +670,23 @@ func (s *reviewService) handleReviewDeleteComment(w http.ResponseWriter, r *http
 		// they pass through.
 		if c.Source == "github" {
 			if ghUser == "" || c.Author == "" || c.Author != ghUser {
-				http.Error(w, "cannot delete a comment authored by another user on github", http.StatusForbidden)
-				return
+				return &reviewHTTPError{http.StatusForbidden, "cannot delete a comment authored by another user on github"}
 			}
 		}
-		slug, err := s.client.FetchRepoSlug(r.Context(), ch.DirPath, ghUser)
+		slug, err := s.client.FetchRepoSlug(ctx, ch.DirPath, ghUser)
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
+			return err
 		}
-		if err := s.client.DeletePRReviewComment(r.Context(), ch.DirPath, ghUser, *slug, c.GitHubID); err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
+		if err := s.client.DeletePRReviewComment(ctx, ch.DirPath, ghUser, *slug, c.GitHubID); err != nil {
+			return err
 		}
 	}
 
-	s.sessions.RemoveComment(channelID, commentID)
-	w.WriteHeader(http.StatusNoContent)
+	s.sessions.RemoveComment(channelID, c.ID)
+	if hub := s.deps.eventsHub; hub != nil {
+		hub.BroadcastReviewCommentRemoved(channelID, c.ID)
+	}
+	return nil
 }
 
 // handleReviewRun kicks off an agent review pass for the channel's
@@ -719,47 +736,21 @@ func (s *reviewService) handleReviewRun(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	// The PR worktree's `.git` is a pointer file referencing the *shared*
-	// gitdir, which only lives under the main repo. The container needs
-	// that mounted so the reference resolves inside the sandbox —
-	// otherwise the agent dies on startup and the run returns "no result
-	// event found". For a worktree-thread channel, the channel itself
-	// IS a worktree, so the shared gitdir lives under the *parent*
-	// channel's dir — resolveParentDirPath walks that chain. For a
-	// root channel, resolveParentDirPath returns "" and we fall back to
-	// the channel's own dir (which is the main repo).
-	parentDirPath := s.deps.workspace.resolveParentDirPath(r.Context(), channelID)
-	if parentDirPath == "" && s.deps.store != nil {
-		if ch, err := s.deps.store.GetChannel(r.Context(), channelID); err == nil && ch != nil {
-			parentDirPath = ch.DirPath
-			if parentDirPath == "" && s.deps.loopDir != "" {
-				parentDirPath = filepath.Join(s.deps.loopDir, ch.ChannelID, "work")
-			}
-		}
-	}
+	channelDirPath, parentDirPath := s.reviewRunDirs(r.Context(), channelID)
 
 	prompt := s.userPrompt
 	if prompt == "" {
 		prompt = defaultReviewPrompt
-	}
-	// Resolve the gh user once for the run so the agent knows which
-	// account to switch to before shelling out to gh. dirPath is the
-	// channel's own workdir (used for project-config layering), and
-	// parentDirPath provides the worktree-merge layer.
-	channelDirPath := ""
-	if s.deps.store != nil {
-		if ch, err := s.deps.store.GetChannel(r.Context(), channelID); err == nil && ch != nil {
-			channelDirPath = ch.DirPath
-			if channelDirPath == "" && s.deps.loopDir != "" {
-				channelDirPath = filepath.Join(s.deps.loopDir, ch.ChannelID, "work")
-			}
-		}
 	}
 	if !s.deps.configs.reviewEnabled(channelDirPath, parentDirPath) {
 		s.unregisterReviewRun(channelID)
 		http.Error(w, "review panel disabled for this project", http.StatusForbidden)
 		return
 	}
+	// Resolve the gh user once for the run so the agent knows which
+	// account to switch to before shelling out to gh. dirPath is the
+	// channel's own workdir (used for project-config layering), and
+	// parentDirPath provides the worktree-merge layer.
 	ghUser := s.deps.configs.ghUser(channelDirPath, parentDirPath)
 
 	// Refresh the worktree + GH comments + diff before the agent kicks
@@ -833,6 +824,195 @@ func (s *reviewService) handleReviewRun(w http.ResponseWriter, r *http.Request) 
 	writeHTTPJSON(w, http.StatusAccepted, map[string]string{"status": "started"}, s.deps.logger)
 }
 
+// reviewRunDirs returns the channel's own work dir and the dir a review
+// container mounts as its parent.
+//
+// The PR worktree's `.git` is a pointer file referencing the *shared*
+// gitdir, which only lives under the main repo. The container needs that
+// mounted so the reference resolves inside the sandbox — otherwise the
+// agent dies on startup and the run returns "no result event found". For
+// a worktree-thread channel, the channel itself IS a worktree, so the
+// shared gitdir lives under the *parent* channel's dir —
+// resolveParentDirPath walks that chain. For a root channel it returns ""
+// and the channel's own dir (the main repo) is the parent.
+func (s *reviewService) reviewRunDirs(ctx context.Context, channelID string) (channelDirPath, parentDirPath string) {
+	if s.deps.store != nil {
+		if ch, err := s.deps.store.GetChannel(ctx, channelID); err == nil && ch != nil {
+			channelDirPath = ch.DirPath
+			if channelDirPath == "" && s.deps.loopDir != "" {
+				channelDirPath = filepath.Join(s.deps.loopDir, ch.ChannelID, "work")
+			}
+		}
+	}
+	parentDirPath = s.deps.workspace.resolveParentDirPath(ctx, channelID)
+	if parentDirPath == "" {
+		parentDirPath = channelDirPath
+	}
+	return channelDirPath, parentDirPath
+}
+
+// reviewDedupResult is the response of POST .../review/dedup: the ids of
+// the comments deleted as duplicates, how many comments the model was
+// shown, and any deletions that failed (those comments are kept).
+type reviewDedupResult struct {
+	Removed  []string              `json:"removed"`
+	Clusters []reviewDedupCluster  `json:"clusters"`
+	Related  []review.DedupRelated `json:"related"`
+	Moved    []reviewDedupMove     `json:"moved"`
+	Checked  int                   `json:"checked"`
+	Errors   []string              `json:"errors,omitempty"`
+}
+
+// reviewDedupCluster reports one merged group so a pass can be audited:
+// which comment was kept, which were removed, why, and the note on what the
+// removed ones added. NoteAdded is false when the keeper couldn't take the
+// note (a GitHub or pushed comment); the note is still reported here.
+type reviewDedupCluster struct {
+	Kept      string   `json:"kept"`
+	Removed   []string `json:"removed"`
+	Reason    string   `json:"reason,omitempty"`
+	Note      string   `json:"note,omitempty"`
+	NoteAdded bool     `json:"note_added,omitempty"`
+}
+
+// reviewDedupMove reports a comment the pass re-anchored.
+type reviewDedupMove struct {
+	ID   string `json:"id"`
+	From int    `json:"from"`
+	To   int    `json:"to"`
+}
+
+// handleReviewDedup runs the final dedup pass over the channel's review
+// session, the last step of a multi-round review loop. It refreshes the
+// session (so the PR's GitHub comments are current), has a read-only agent
+// group the comments that report the same issue (review.BuildDedupPrompt),
+// and deletes every group's extra agent comments, on GitHub too when they
+// were pushed. GitHub comments are never deleted.
+//
+// It answers when the pass is done. It takes the channel's review-run slot,
+// so it can't overlap a review run: that answers 409. A session with no
+// file holding two comments, one of them the agent's, is answered at once
+// without running the agent.
+func (s *reviewService) handleReviewDedup(w http.ResponseWriter, r *http.Request) {
+	if s.sessions == nil || s.runner == nil {
+		http.Error(w, "review service not configured", http.StatusNotImplemented)
+		return
+	}
+	channelID := r.PathValue("id")
+	sess := s.sessions.Get(channelID)
+	if sess == nil {
+		http.Error(w, "no review session for channel", http.StatusNotFound)
+		return
+	}
+	if sess.WorktreePath == "" {
+		http.Error(w, "session has no worktree", http.StatusConflict)
+		return
+	}
+	ctx, cancel := context.WithCancel(r.Context())
+	defer cancel()
+	if !s.registerReviewRun(channelID, cancel) {
+		http.Error(w, "a review run is in progress", http.StatusConflict)
+		return
+	}
+	defer s.unregisterReviewRun(channelID)
+	if sess.Status != review.StatusReady {
+		http.Error(w, "session not ready (status="+string(sess.Status)+")", http.StatusConflict)
+		return
+	}
+	channelDirPath, parentDirPath := s.reviewRunDirs(ctx, channelID)
+	if !s.requireReviewEnabled(w, channelDirPath, parentDirPath) {
+		return
+	}
+	if channelDirPath == "" {
+		http.Error(w, "channel has no dir_path", http.StatusBadRequest)
+		return
+	}
+	ghUser := s.deps.configs.ghUser(channelDirPath, parentDirPath)
+	sess, err := s.refreshReviewSession(ctx, channelID, channelDirPath, ghUser, sess)
+	if err != nil {
+		respondReviewError(w, err)
+		return
+	}
+
+	res := reviewDedupResult{Removed: []string{}, Clusters: []reviewDedupCluster{}, Related: []review.DedupRelated{}, Moved: []reviewDedupMove{}}
+	cands := review.DedupCandidates(sess.Comments)
+	if len(cands) == 0 {
+		writeHTTPJSON(w, http.StatusOK, res, s.deps.logger)
+		return
+	}
+	res.Checked = len(cands)
+
+	s.sessions.UpdateStatus(channelID, review.StatusReviewing, "")
+	s.broadcastReviewStatus(channelID, review.StatusReviewing, "")
+	defer func() {
+		s.sessions.UpdateStatus(channelID, review.StatusReady, "")
+		s.broadcastReviewStatus(channelID, review.StatusReady, "")
+	}()
+	if s.runTimeout > 0 {
+		var cancelTimeout context.CancelFunc
+		ctx, cancelTimeout = context.WithTimeout(ctx, s.runTimeout)
+		defer cancelTimeout()
+	}
+	resp, err := s.runner.Run(ctx, review.RunRequest{
+		ChannelID:     channelID,
+		DirPath:       sess.WorktreePath,
+		ParentDirPath: parentDirPath,
+		Prompt:        review.BuildDedupPrompt(cands),
+		ReadOnly:      true,
+		Model:         sess.Model,
+		Effort:        sess.Effort,
+	})
+	if resp != nil {
+		s.sessions.AppendRunSession(channelID, resp.SessionID, s.transcriptDir(sess.WorktreePath))
+	}
+	if err != nil {
+		http.Error(w, "dedup run: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	plan, err := review.ParseDedupReply(resp.Response, cands)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	for _, cl := range plan.Clusters {
+		out := reviewDedupCluster{Kept: cl.Keep, Removed: []string{}, Reason: cl.Reason, Note: cl.Note}
+		for _, id := range cl.Drop {
+			c, _ := s.sessions.FindComment(channelID, id)
+			if c == nil {
+				continue
+			}
+			if err := s.deleteOneComment(ctx, channelID, c); err != nil {
+				res.Errors = append(res.Errors, id+": "+err.Error())
+				continue
+			}
+			out.Removed = append(out.Removed, id)
+		}
+		if len(out.Removed) == 0 {
+			continue
+		}
+		res.Removed = append(res.Removed, out.Removed...)
+		if cl.Note != "" {
+			out.NoteAdded = s.editComment(channelID, cl.Keep, func(c *review.Comment) {
+				c.Body = review.WithDedupNote(c.Body, cl.Note)
+			}) != nil
+		}
+		res.Clusters = append(res.Clusters, out)
+	}
+	res.Related = append(res.Related, plan.Related...)
+	for _, mv := range plan.Moves {
+		from := 0
+		c := s.editComment(channelID, mv.ID, func(c *review.Comment) {
+			from, c.Line = c.Line, mv.Line
+		})
+		if c == nil {
+			continue
+		}
+		res.Moved = append(res.Moved, reviewDedupMove{ID: mv.ID, From: from, To: mv.Line})
+		s.maybeRediffForComment(channelID, sess.WorktreePath, parentDirPath, c)
+	}
+	writeHTTPJSON(w, http.StatusOK, res, s.deps.logger)
+}
+
 // defaultReviewPrompt is the user-facing prompt sent to the review agent
 // when no override is configured. It is a bare slash command: the built-in
 // code-review skill ships with disable-model-invocation, so a Skill-tool
@@ -896,7 +1076,7 @@ func buildReviewContext(sess *review.Session, ghUser string) string {
 	if sess.PR != nil && sess.PR.BaseRef != "" {
 		fmt.Fprintf(&b, " Run `git diff origin/%s...HEAD` to read the diff before commenting.", sess.PR.BaseRef)
 	}
-	b.WriteString("\n")
+	b.WriteString("\n\n" + reviewLineRule + "\n")
 	if ghUser != "" {
 		fmt.Fprintf(&b, "\nGitHub CLI account: %s\n", ghUser)
 		fmt.Fprintf(&b, "If you need to run gh, switch to that account first with `gh auth switch -u %s` (only if it isn't already active).\n", ghUser)
@@ -943,9 +1123,9 @@ func buildReviewDedupList(sess *review.Session) string {
 	return b.String()
 }
 
-// buildSubagentReviewContext renders the dedup list for the subagents the
-// review command fans out to, or "" when there is nothing to dedup against
-// (in which case no --append-subagent-system-prompt flag is passed at all).
+// buildSubagentReviewContext renders the line rule and the dedup list for
+// the subagents the review command fans out to. The line rule is always
+// there: the subagents are the ones that pick each finding's line.
 //
 // The built-in /code-review skill derives its candidate findings in "finder
 // subagents", then verifies and reports them from the main agent. The CLI
@@ -959,12 +1139,19 @@ func buildReviewDedupList(sess *review.Session) string {
 // subagent's system prompt telling it what not to say reads like a prompt
 // injection unless it is attributed to the host that launched the run.
 func buildSubagentReviewContext(sess *review.Session) string {
-	list := buildReviewDedupList(sess)
-	if list == "" {
-		return ""
+	out := "Review pipeline context (authoritative, supplied by the host that launched this review):\n\n" + reviewLineRule + "\n"
+	if list := buildReviewDedupList(sess); list != "" {
+		out += "\n" + list
 	}
-	return "Review pipeline context (authoritative, supplied by the host that launched this review):\n\n" + list
+	return out
 }
+
+// reviewLineRule tells the reviewer, and the subagents that derive its
+// findings, how to pick a finding's line. Left to read the diff, which
+// carries no line numbers, the agent counts from the hunk headers and lands
+// a line or three off: on a blank line or a closing brace next to the code
+// it means.
+const reviewLineRule = "Line numbers: `git diff` output has none, and counting from hunk headers drifts. Before reporting a finding, confirm its `line` with a numbered read of the file at HEAD (the Read tool, `grep -n` or `nl -ba`), and point it at the statement the finding is about, never at a blank line or a lone closing brace."
 
 // dedupEntryBody renders a comment body as a single line for the
 // "do NOT re-emit" list.
