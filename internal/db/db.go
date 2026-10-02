@@ -70,6 +70,7 @@ type Store interface {
 	UpdateScheduledTaskThreadID(ctx context.Context, id int64, threadID string) error
 	LinkTaskThread(ctx context.Context, ch *Channel, taskID int64, threadID string) error
 	UpdateScheduledTaskOriginBranch(ctx context.Context, id int64, branch string) error
+	MoveScheduledTask(ctx context.Context, m TaskMove) error
 	ClaimScheduledTaskRunning(ctx context.Context, id int64) (bool, error)
 	ReleaseScheduledTaskRunning(ctx context.Context, id int64) error
 	ResetStaleRunningTasks(ctx context.Context) (int64, error)

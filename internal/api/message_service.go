@@ -50,6 +50,7 @@ type ChannelLister interface {
 	MaxQueuedPriority(ctx context.Context, channelID string) (int, error)
 	ListTaskRunLogs(ctx context.Context, taskID int64, limit int) ([]*db.TaskRunLog, error)
 	ListAllScheduledTasks(ctx context.Context) ([]*db.ScheduledTask, error)
+	MoveScheduledTask(ctx context.Context, m db.TaskMove) error
 	UpdateChannelLearnOverride(ctx context.Context, channelID, value string) error
 	GetHiddenThread(ctx context.Context, parentID, kind string) (*db.Channel, error)
 	ListHiddenThreads(ctx context.Context, parentID string) ([]*db.Channel, error)

@@ -9,6 +9,7 @@ import (
 	"github.com/radutopala/loop/internal/db"
 	"github.com/radutopala/loop/internal/events"
 	"github.com/radutopala/loop/internal/scheduler"
+	"github.com/radutopala/loop/internal/types"
 )
 
 // taskMutationStatus maps an AddTask/EditTask error to an HTTP status: 400 for
@@ -268,6 +269,131 @@ func (s *Server) handleUpdateTask(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.WriteHeader(http.StatusOK)
+}
+
+type moveTaskRequest struct {
+	ChannelID string `json:"channel_id"`
+}
+
+// handleMoveTask re-homes a task under another channel or thread of the
+// same project, keeping all of its settings. On the local platform its
+// thread moves along; other platforms own their threads, so the task starts
+// a fresh one on its next run. A thread that shares its parent's directory
+// (not the task's own worktree) follows the new parent's, taking its
+// session transcript along so the next run resumes it.
+func (s *Server) handleMoveTask(w http.ResponseWriter, r *http.Request) {
+	taskID, ok := parsePathInt64(w, r, "id")
+	if !ok {
+		return
+	}
+	var req moveTaskRequest
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	if req.ChannelID == "" {
+		http.Error(w, "channel_id is required", http.StatusBadRequest)
+		return
+	}
+
+	ctx := r.Context()
+	task, err := s.scheduler.GetTask(ctx, taskID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if task == nil {
+		http.Error(w, "task not found", http.StatusNotFound)
+		return
+	}
+	targetID := s.resolveTaskChannelID(ctx, req.ChannelID)
+	if targetID == task.ChannelID {
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+	if targetID == task.ThreadID {
+		http.Error(w, "a task can't move into its own thread", http.StatusBadRequest)
+		return
+	}
+	target, err := s.store.GetChannel(ctx, targetID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if target == nil {
+		http.Error(w, "channel not found", http.StatusNotFound)
+		return
+	}
+	from, err := s.store.GetChannel(ctx, task.ChannelID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if from == nil {
+		http.Error(w, "task channel not found", http.StatusNotFound)
+		return
+	}
+	// A task stays in its project: its worktree, origin branch, templates
+	// and workflows all belong to the source repo.
+	if rootChannelID(from) != rootChannelID(target) {
+		http.Error(w, "a task can't move to another project", http.StatusBadRequest)
+		return
+	}
+
+	move := db.TaskMove{TaskID: taskID, ChannelID: targetID, GuildID: target.GuildID}
+	if task.ThreadID != "" && target.Platform == types.PlatformLocal {
+		thread, err := s.store.GetChannel(ctx, task.ThreadID)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		if thread != nil {
+			move.ThreadID = thread.ChannelID
+			move.ThreadDirPath = s.movedThreadDir(thread, target)
+		}
+	}
+
+	if err := s.store.MoveScheduledTask(ctx, move); err != nil {
+		status := http.StatusInternalServerError
+		if errors.Is(err, db.ErrTaskRunning) {
+			status = http.StatusConflict
+		}
+		http.Error(w, err.Error(), status)
+		return
+	}
+
+	if s.eventsHub != nil {
+		s.eventsHub.BroadcastTaskUpdated(events.TaskEventData{TaskID: taskID, ChannelID: targetID})
+		if move.ThreadID != "" {
+			// Reloads the sidebar, which now lists the thread under target.
+			s.eventsHub.BroadcastChannelCreated(targetID, move.ThreadID)
+		}
+	}
+
+	w.WriteHeader(http.StatusOK)
+}
+
+// rootChannelID is the root channel of ch, a root channel or a depth-1
+// thread, the only levels a task belongs to.
+func rootChannelID(ch *db.Channel) string {
+	if ch.ParentID == "" {
+		return ch.ChannelID
+	}
+	return ch.ParentID
+}
+
+// movedThreadDir is the directory of a task's thread once it moves under
+// target: its own worktree stays, a shared directory becomes target's.
+func (s *Server) movedThreadDir(thread, target *db.Channel) string {
+	if thread.Worktree || thread.DirPath == target.DirPath {
+		return thread.DirPath
+	}
+	if thread.SessionID != "" {
+		if err := s.copySessionFile(thread.DirPath, target.DirPath, thread.SessionID); err != nil {
+			// The next run finds no transcript and starts a fresh session.
+			s.logger.Warn("moving task thread session", "thread_id", thread.ChannelID, "error", err)
+		}
+	}
+	return target.DirPath
 }
 
 func (s *Server) handleListTaskRuns(w http.ResponseWriter, r *http.Request) {

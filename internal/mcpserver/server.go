@@ -133,6 +133,11 @@ func New(channelID, apiURL, authorID string, httpClient HTTPClient, logger *slog
 	}, s.handleEditTask)
 
 	mcp.AddTool(s.mcpServer, &mcp.Tool{
+		Name:        "move_task",
+		Description: "Move a scheduled task to another thread, worktree thread or the root channel of the same project (e.g. from a worktree thread to the root channel, or back), keeping all its settings. Its thread moves along with it. Tasks can't move to another project.",
+	}, s.handleMoveTask)
+
+	mcp.AddTool(s.mcpServer, &mcp.Tool{
 		Name:        "create_channel",
 		Description: "Create a new channel. The channel will be registered and the bot will auto-join it.",
 	}, s.handleCreateChannel)

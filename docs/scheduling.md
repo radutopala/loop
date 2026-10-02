@@ -231,6 +231,10 @@ If thread creation fails, the executor falls back to sending messages directly t
 
 When an agent running inside a task thread (sub-thread) schedules or lists tasks, the API automatically resolves the channel up to the parent thread. This ensures tasks are always associated with the correct parent rather than being nested deeper.
 
+### Moving a Task
+
+A task can move to another thread or worktree thread of its project, or to its root channel, with the `move_task` MCP tool or `POST /api/tasks/{id}/move`, for example from a worktree thread to the root channel or back. Its settings, `worktree` and `origin_branch` included, don't change. On the local platform its thread moves under the new owner: a task worktree keeps its directory, while a thread sharing its parent's directory takes the new parent's and brings its session transcript along. On Discord and Slack the task starts a fresh thread on its next run. A running task can't be moved, and a task can't leave its project (its root channel's tree): re-create it in the other channel instead.
+
 ---
 
 ## Worktree Isolation

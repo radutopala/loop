@@ -1548,6 +1548,30 @@ Trigger an immediate execution of a task ("Run Now"). The task runs asynchronous
 
 ---
 
+### `POST /api/tasks/{id}/move`
+
+Move a task under another channel, thread or worktree thread of the same project, for example from a worktree thread to the root channel or back. The target must be under the same root channel as the task's current owner, since its worktree, origin branch, templates and workflows belong to that project's repo. Only the task's owner changes: its schedule, prompt, `worktree`, `origin_branch` and other settings stay as they are. A thread deeper than one level resolves to its depth-1 parent, as on create.
+
+On the local platform the task's thread moves along with it. A thread with its own worktree (a `worktree: true` task) keeps its directory. A thread that shares its parent's directory switches to the new parent's, and its session transcript is copied there so the next run resumes it. Other platforms own their threads, so the task starts a fresh thread on its next run.
+
+**Path Parameters:**
+
+| Param | Type  | Description |
+|-------|-------|-------------|
+| `id`  | int64 | Task ID |
+
+**Request Body:**
+
+```json
+{"channel_id": "wt-thread-1"}
+```
+
+**Response:** `200 OK` (empty body). Moving a task to the channel it's already under is a no-op.
+
+**Errors:** `400` if the ID or body is invalid, `channel_id` is missing, the target is the task's own thread, or the target is in another project. `404` if the task, the target channel or the task's current channel isn't found. `409 Conflict` if the task is running.
+
+---
+
 ### `GET /api/tasks/{id}/runs`
 
 List recent run logs for a task (up to 50, newest first).

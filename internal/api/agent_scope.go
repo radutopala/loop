@@ -46,6 +46,7 @@ var agentRoutes = []string{
 	"GET /api/tasks/{id}",
 	"PATCH /api/tasks/{id}",
 	"DELETE /api/tasks/{id}",
+	"POST /api/tasks/{id}/move",
 	"GET /api/shortcuts",
 	"POST /api/shortcuts",
 	"GET /api/bash-shortcuts",
