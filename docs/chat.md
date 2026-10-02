@@ -108,7 +108,7 @@ Messages are rendered through the `MarkdownContent` component, which uses a cust
 
 | Element | Syntax | Rendering |
 |---------|--------|-----------|
-| Fenced code block | ` ``` ` ... ` ``` ` | `<pre>` with `colors.surface` background, 8px border-radius, 13px monospace font. Closes on a line of only backticks at least as long as the opening fence. A closed `loop-component` fence is a [component](#components) |
+| Fenced code block | ` ``` ` ... ` ``` ` | `<pre>` with `colors.surface` background, 8px border-radius, 13px monospace font. Closes on a line of only backticks at least as long as the opening fence. A closed `loop-component` fence is a [component](#components). Hover shows two copy buttons in a gutter on its right: **Copy as text** copies the code as is; **Copy as code block** copies the fence (for markdown targets like Slack or GitHub) with a `<pre><code>` block alongside as rich text (for Teams, docs and mail) |
 | Language label | ` ```go ` | Shown above the code block in `colors.textDim`, 11px font |
 | Display math | `$$...$$` or `\[...\]`, on one line or spread over several | Centered [KaTeX](https://katex.org) formula, scrolls sideways when wider than the chat; hover shows a button that copies the LaTeX |
 | Table | GFM header row, separator row, body rows | `<table>`; a pipe escaped with a backslash is text in its cell, not a column break |

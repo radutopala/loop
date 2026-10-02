@@ -7,6 +7,7 @@ import { inAppHref } from "../../utils/messageLinks";
 import { CopyButton } from "../shared/CopyButton";
 import { ChatComponent } from "./ChatComponent";
 import { buildMessageStyles, ChannelContext } from "./chatShared";
+import { codeToFence, codeToHTML } from "./codeBlock";
 import { parseComponentInfo, readFence } from "./componentFence";
 import { FileLink } from "./FileLink";
 import { parseTableBlock, startsTable, type TableAlign, tableToHTML, tableToTSV } from "./markdownTable";
@@ -210,6 +211,31 @@ function MarkdownTable({
   );
 }
 
+/**
+ * A fenced code block with two hover-revealed copy buttons in a gutter on its
+ * right, as tables have:
+ *
+ *   - the text, as is, for pasting where it's used (a shell, a message box);
+ *   - a code block: the fence as text, for anywhere that speaks markdown, with
+ *     a <pre><code> block alongside as rich text, for targets that keep a
+ *     block's monospace only from HTML (Teams, docs, mail).
+ */
+function CodeBlock({ body, info, s }: { body: string; info: string; s: Record<string, React.CSSProperties> }) {
+  const [hovered, setHovered] = useState(false);
+  return (
+    // The right padding is the buttons' gutter, so they never cover the code;
+    // minHeight keeps the lower one off whatever follows a one-line block.
+    <div data-testid="code-block" style={{ position: "relative", paddingRight: 24, minHeight: 54 }} onMouseEnter={() => setHovered(true)} onMouseLeave={() => setHovered(false)}>
+      <CopyButton text={body} visible={hovered} title="Copy as text" style={{ position: "absolute", top: 8, right: 0 }} />
+      <CopyButton text={codeToFence(body, info)} html={codeToHTML(body, info)} icon={markupIcon} visible={hovered} title="Copy as code block" style={{ position: "absolute", top: 31, right: 0 }} />
+      <pre style={s.codeBlock}>
+        {info && <div style={s.codeLang}>{info}</div>}
+        <code>{body}</code>
+      </pre>
+    </div>
+  );
+}
+
 /** A display formula, centered, with a hover-revealed button that copies its LaTeX. */
 function MathDisplay({ tex, source }: { tex: string; source: string }) {
   const [hovered, setHovered] = useState(false);
@@ -245,12 +271,7 @@ function parseMarkdown(text: string, s: Record<string, React.CSSProperties>, cha
         nodes.push(<ChatComponent key={nodes.length} template={component.template} title={component.title} doc={fence.body} />);
         continue;
       }
-      nodes.push(
-        <pre key={nodes.length} style={s.codeBlock}>
-          {fence.info && <div style={s.codeLang}>{fence.info}</div>}
-          <code>{fence.body}</code>
-        </pre>,
-      );
+      nodes.push(<CodeBlock key={nodes.length} body={fence.body} info={fence.info} s={s} />);
       continue;
     }
 
