@@ -38,6 +38,17 @@ interface ThreadItemProps {
   pillsRef?: React.RefObject<Map<PillKind, Set<string>>>;
 }
 
+const connectorStyle: React.CSSProperties = {
+  position: "absolute",
+  // Line at 13px (+8px margin = 21px), under the centre of the channel chevron.
+  left: 12,
+  top: 0,
+  bottom: 0,
+  height: "100%",
+  overflow: "visible",
+  zIndex: 1,
+};
+
 export function ThreadItem({
   thread,
   subThreads,
@@ -68,23 +79,12 @@ export function ThreadItem({
 
   return (
     <div style={{ position: "relative", margin: "0 8px" }}>
-      {/* Tree connector line — positioned absolutely to span full row height */}
-      <svg
-        width="10"
-        height="100%"
-        style={{
-          position: "absolute",
-          left: 16,
-          top: 0,
-          bottom: 0,
-          height: "100%",
-          overflow: "visible",
-          zIndex: 1,
-        }}
-      >
-        <line x1="1" y1="0" x2="1" y2={isLast ? "50%" : "100%"} stroke={colors.textDisabled} strokeWidth="1.5" />
-        <line x1="1" y1="50%" x2="10" y2="50%" stroke={colors.textDisabled} strokeWidth="1.5" />
-      </svg>
+      {/* Tree connector line — spans this thread and its sub-threads so a non-last sibling's line reaches the next one */}
+      {!isLast && (
+        <svg width="10" height="100%" style={connectorStyle}>
+          <line x1="1" y1="0" x2="1" y2="100%" stroke={colors.textDisabled} strokeWidth="1.5" />
+        </svg>
+      )}
       <RowInfoPopup channel={thread} anchorRef={rowRef} hovered={hovered} />
       <div
         ref={rowRef}
@@ -92,6 +92,7 @@ export function ThreadItem({
         onMouseEnter={() => setHovered(true)}
         onMouseLeave={() => setHovered(false)}
         style={{
+          position: "relative",
           display: "flex",
           alignItems: "center",
           borderRadius: 6,
@@ -100,6 +101,53 @@ export function ThreadItem({
           boxShadow: reorder?.dragOverId === thread.id ? `inset 0 2px 0 ${colors.active}` : undefined,
         }}
       >
+        {/* Elbow — sized to the row alone so it stays centred on it when sub-threads are expanded */}
+        <svg width="14" height="100%" style={connectorStyle}>
+          {isLast && <line x1="1" y1="0" x2="1" y2="50%" stroke={colors.textDisabled} strokeWidth="1.5" />}
+          {/* With sub-threads the elbow stops short of the chevron below */}
+          <line x1="1" y1="50%" x2={hasChildren ? "4" : "14"} y2="50%" stroke={colors.textDisabled} strokeWidth="1.5" />
+        </svg>
+        {hasChildren && (
+          <>
+            {/* Chevron at the elbow's end, on the sub-threads' line (8px margin further in), so the icon stays aligned with its siblings */}
+            <span
+              onClick={(e) => {
+                e.stopPropagation();
+                setCollapsed((c) => !c);
+              }}
+              style={{
+                position: "absolute",
+                left: 14,
+                top: "50%",
+                width: 14,
+                height: 14,
+                transform: "translateY(-50%)",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                cursor: "pointer",
+                color: colors.textDim,
+                zIndex: 2,
+              }}
+            >
+              <svg
+                width="10"
+                height="10"
+                viewBox="0 0 10 10"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.5"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                style={{ transition: "transform 0.15s ease", transform: collapsed ? "rotate(-90deg)" : "rotate(0deg)" }}
+              >
+                <path d="M2.5 3.5L5 6.5L7.5 3.5" />
+              </svg>
+            </span>
+            {/* Drop from under the chevron to the sub-threads' line */}
+            {!collapsed && <span style={{ position: "absolute", left: 20.25, top: "calc(50% + 5px)", bottom: 0, width: 1.5, background: colors.textDisabled, zIndex: 1 }} />}
+          </>
+        )}
         <button
           draggable={!!reorder}
           onDragStart={
@@ -137,29 +185,6 @@ export function ThreadItem({
             cursor: "pointer",
           }}
         >
-          {hasChildren && (
-            <span
-              onClick={(e) => {
-                e.stopPropagation();
-                setCollapsed((c) => !c);
-              }}
-              style={{ display: "flex", alignItems: "center", flexShrink: 0, cursor: "pointer", marginRight: 2 }}
-            >
-              <svg
-                width="8"
-                height="8"
-                viewBox="0 0 10 10"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="1.5"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                style={{ transition: "transform 0.15s ease", transform: collapsed ? "rotate(-90deg)" : "rotate(0deg)" }}
-              >
-                <path d="M2.5 3.5L5 6.5L7.5 3.5" />
-              </svg>
-            </span>
-          )}
           {selectMode && (
             <span
               onClick={(e) => {

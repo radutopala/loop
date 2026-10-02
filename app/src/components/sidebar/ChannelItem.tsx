@@ -77,6 +77,7 @@ export function ChannelItem({
         ref={rowRef}
         data-testid="sidebar-channel-row"
         style={{
+          position: "relative",
           display: "flex",
           alignItems: "center",
           borderRadius: 6,
@@ -155,6 +156,8 @@ export function ChannelItem({
             >
               <path d="M2.5 3.5L5 6.5L7.5 3.5" />
             </svg>
+            {/* Drop from under the chevron to the threads' tree line (ThreadItem's connector, 13px into the row) */}
+            {!collapsed && <span style={{ position: "absolute", left: 12.25, top: "calc(50% + 5px)", bottom: 0, width: 1.5, background: colors.textDisabled, zIndex: 1 }} />}
           </button>
         ) : (
           <span style={{ width: 20, flexShrink: 0 }} />
