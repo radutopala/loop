@@ -3,6 +3,7 @@ package orchestrator
 import (
 	"errors"
 	"strings"
+	"time"
 
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
@@ -10,10 +11,14 @@ import (
 	"github.com/radutopala/loop/internal/agent"
 	"github.com/radutopala/loop/internal/bot"
 	"github.com/radutopala/loop/internal/db"
+	"github.com/radutopala/loop/internal/events"
 	"github.com/radutopala/loop/internal/types"
 )
 
-func (s *TaskExecutorSuite) TestStreamingCreatesThread() {
+// TestStreamingFirstRunCreatesThreadBeforeRun: a first run creates its thread
+// before the runner is invoked (with no initial message), so every streamed
+// turn — the first included, without a prefix — is a plain send to it.
+func (s *TaskExecutorSuite) TestStreamingFirstRunCreatesThreadBeforeRun() {
 	s.allowBotInserts()
 
 	task := &db.ScheduledTask{
@@ -26,28 +31,27 @@ func (s *TaskExecutorSuite) TestStreamingCreatesThread() {
 
 	s.store.On("GetChannel", mock.Anything, mock.Anything).Return(nil, nil)
 	s.store.On("GetScheduledTask", s.ctx, int64(9)).Return(&db.ScheduledTask{ID: 9, Type: db.TaskTypeCron}, nil)
-
-	// First OnTurn creates a thread with the first turn text
-	s.bot.On("CreateSimpleThread", s.ctx, "ch9", "⏱ task #9 (`0 * * * *`) stream task", "⏱ task #9 (`0 * * * *`) Intermediate").Return("thread-1", nil).Once()
-	s.store.On("UpdateScheduledTaskThreadID", s.ctx, int64(9), "thread-1").Return(nil)
+	s.bot.On("CreateSimpleThread", s.ctx, "ch9", "⏱ task #9 (`0 * * * *`) stream task", "").Return("thread-1", nil).Once()
+	s.store.On("UpdateScheduledTaskThreadID", s.ctx, int64(9), "thread-1").Return(nil).Once()
 
 	s.runner.On("Run", mock.Anything, mock.MatchedBy(func(req *agent.AgentRequest) bool {
-		if req.OnTurn == nil {
-			return false
-		}
-		// Simulate streaming: first turn creates thread, empty skipped, second goes to thread
+		return req.OnTurn != nil
+	})).Run(func(args mock.Arguments) {
+		s.bot.AssertNumberOfCalls(s.T(), "CreateSimpleThread", 1)
+		s.store.AssertNumberOfCalls(s.T(), "UpdateScheduledTaskThreadID", 1)
+		req := args.Get(1).(*agent.AgentRequest)
 		req.OnTurn("Intermediate", agent.TurnRef{})
 		req.OnTurn("", agent.TurnRef{}) // empty text should be skipped
 		req.OnTurn("Final answer", agent.TurnRef{})
-		return true
-	})).Return(&agent.AgentResponse{
+	}).Return(&agent.AgentResponse{
 		Response:  "Final answer", // Same as last OnTurn — final send skipped
 		SessionID: "sess-stream",
 	}, nil)
 
 	s.store.On("UpdateSessionID", s.ctx, "thread-1", "sess-stream").Return(nil)
-
-	// Second OnTurn sends to thread
+	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(msg *bot.OutgoingMessage) bool {
+		return msg.ChannelID == "thread-1" && msg.Content == "Intermediate"
+	})).Return(nil).Once()
 	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(msg *bot.OutgoingMessage) bool {
 		return msg.ChannelID == "thread-1" && msg.Content == "Final answer"
 	})).Return(nil).Once()
@@ -56,10 +60,8 @@ func (s *TaskExecutorSuite) TestStreamingCreatesThread() {
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), "Final answer", resp)
 
-	// 1 SendMessage call (second OnTurn to thread). Final skipped (duplicate).
-	// First OnTurn goes via CreateSimpleThread, not SendMessage.
-	s.bot.AssertNumberOfCalls(s.T(), "SendMessage", 1)
-	s.bot.AssertNumberOfCalls(s.T(), "CreateSimpleThread", 1)
+	// 2 SendMessage calls (both turns to the thread). Final skipped (duplicate).
+	s.bot.AssertNumberOfCalls(s.T(), "SendMessage", 2)
 	s.runner.AssertExpectations(s.T())
 	s.bot.AssertExpectations(s.T())
 }
@@ -75,12 +77,15 @@ func (s *TaskExecutorSuite) TestStreamingLocalPlatformPersistsThreadID() {
 	}
 
 	localChannel := &db.Channel{ChannelID: "ch-local", Platform: types.PlatformLocal, DirPath: "/work"}
-	s.allowBotInserts() // first-turn thread seeds the prompt + agent message
+	s.allowBotInserts() // the thread gets the prompt + agent message
 	s.store.On("GetChannel", mock.Anything, "ch-local").Return(localChannel, nil)
 	// Post-run JSONL ingest looks up the session-target channel for chat_id.
 	s.store.On("GetChannel", mock.Anything, "local-thread-1").Return(&db.Channel{ID: 9001, ChannelID: "local-thread-1"}, nil).Maybe()
 	s.store.On("GetScheduledTask", mock.Anything, mock.Anything).Return(nil, nil).Maybe()
-	s.bot.On("CreateSimpleThread", s.ctx, "ch-local", mock.Anything, mock.Anything).Return("local-thread-1", nil).Once()
+	s.bot.On("CreateSimpleThread", s.ctx, "ch-local", mock.Anything, "").Return("local-thread-1", nil).Once()
+	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(msg *bot.OutgoingMessage) bool {
+		return msg.ChannelID == "local-thread-1" && msg.Content == "Result"
+	})).Return(nil).Once()
 	s.store.On("LinkTaskThread", s.ctx, mock.MatchedBy(func(ch *db.Channel) bool {
 		return ch.ChannelID == "local-thread-1" && ch.ParentID == "ch-local"
 	}), int64(30), "local-thread-1").Return(nil).Once()
@@ -171,7 +176,10 @@ func (s *TaskExecutorSuite) TestStreamingDanglingThreadCreatesReplacement() {
 	s.allowBotInserts()
 
 	// Should create a new replacement thread.
-	s.bot.On("CreateSimpleThread", s.ctx, "ch-dangling", mock.Anything, mock.Anything).Return("new-thread", nil).Once()
+	s.bot.On("CreateSimpleThread", s.ctx, "ch-dangling", mock.Anything, "").Return("new-thread", nil).Once()
+	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(msg *bot.OutgoingMessage) bool {
+		return msg.ChannelID == "new-thread" && msg.Content == "Update"
+	})).Return(nil).Once()
 	s.store.On("LinkTaskThread", s.ctx, mock.MatchedBy(func(ch *db.Channel) bool {
 		return ch.ChannelID == "new-thread" && ch.ParentID == "ch-dangling"
 	}), int64(33), "new-thread").Return(nil).Once()
@@ -248,8 +256,7 @@ func (s *TaskExecutorSuite) TestStreamingFinalSentWhenDifferent() {
 	s.store.On("GetChannel", mock.Anything, mock.Anything).Return(nil, nil)
 	s.store.On("GetScheduledTask", s.ctx, int64(11)).Return(&db.ScheduledTask{ID: 11, Type: db.TaskTypeInterval}, nil)
 
-	// First OnTurn creates thread
-	s.bot.On("CreateSimpleThread", s.ctx, "ch11", "⏱ task #11 (`5m`) stream diff", "⏱ task #11 (`5m`) Intermediate").Return("thread-2", nil).Once()
+	s.bot.On("CreateSimpleThread", s.ctx, "ch11", "⏱ task #11 (`5m`) stream diff", "").Return("thread-2", nil).Once()
 	s.store.On("UpdateScheduledTaskThreadID", s.ctx, int64(11), "thread-2").Return(nil)
 
 	s.runner.On("Run", mock.Anything, mock.MatchedBy(func(req *agent.AgentRequest) bool {
@@ -265,7 +272,10 @@ func (s *TaskExecutorSuite) TestStreamingFinalSentWhenDifferent() {
 
 	s.store.On("UpdateSessionID", s.ctx, "thread-2", "sess-diff").Return(nil)
 
-	// Final response (different from last streamed) goes to thread
+	// The streamed turn and the final response (different from it) both go to the thread
+	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(msg *bot.OutgoingMessage) bool {
+		return msg.ChannelID == "thread-2" && msg.Content == "Intermediate"
+	})).Return(nil).Once()
 	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(msg *bot.OutgoingMessage) bool {
 		return msg.ChannelID == "thread-2" && msg.Content == "Different final"
 	})).Return(nil).Once()
@@ -274,13 +284,19 @@ func (s *TaskExecutorSuite) TestStreamingFinalSentWhenDifferent() {
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), "Different final", resp)
 
-	// 1 SendMessage (final to thread) + 1 CreateSimpleThread
-	s.bot.AssertNumberOfCalls(s.T(), "SendMessage", 1)
+	// 2 SendMessage (turn + final to thread) + 1 CreateSimpleThread
+	s.bot.AssertNumberOfCalls(s.T(), "SendMessage", 2)
 	s.bot.AssertNumberOfCalls(s.T(), "CreateSimpleThread", 1)
 	s.runner.AssertExpectations(s.T())
 }
 
+// TestStreamingThreadCreationFailsFallsBack: when the pre-run thread creation
+// fails, the run proceeds in the channel — turns, tool/thinking/result/activity
+// events (stamped with the parent's chat id), session and statuses all target
+// the channel.
 func (s *TaskExecutorSuite) TestStreamingThreadCreationFailsFallsBack() {
+	eb := new(MockEventBroadcaster)
+	s.executor.SetEventBroadcaster(eb)
 
 	task := &db.ScheduledTask{
 		ID:        12,
@@ -290,42 +306,66 @@ func (s *TaskExecutorSuite) TestStreamingThreadCreationFailsFallsBack() {
 		Schedule:  "0 * * * *",
 	}
 
-	s.store.On("GetChannel", s.ctx, "ch12").Return(nil, nil)
+	s.store.On("GetChannel", mock.Anything, "ch12").Return(&db.Channel{ID: 120, ChannelID: "ch12", Platform: types.PlatformLocal}, nil)
 	s.store.On("GetScheduledTask", s.ctx, int64(12)).Return(&db.ScheduledTask{ID: 12, Type: db.TaskTypeCron}, nil)
+	s.allowBotInserts()
 
 	// Thread creation fails
-	s.bot.On("CreateSimpleThread", s.ctx, "ch12", "⏱ task #12 (`0 * * * *`) fallback task", "⏱ task #12 (`0 * * * *`) Turn 1").Return("", errors.New("thread error")).Once()
+	s.bot.On("CreateSimpleThread", s.ctx, "ch12", "task #12 (`0 * * * *`) fallback task", "").Return("", errors.New("thread error")).Once()
+	for _, kind := range []db.MessageKind{db.MessageKindToolUse, db.MessageKindThinking, db.MessageKindToolResult, db.MessageKindCompacting} {
+		s.store.On("InsertAgentEvent", mock.Anything, mock.MatchedBy(func(m *db.Message) bool {
+			return m.ChannelID == "ch12" && m.ChatID == 120 && m.Kind == kind
+		})).Return(nil).Once()
+	}
 
 	s.runner.On("Run", mock.Anything, mock.MatchedBy(func(req *agent.AgentRequest) bool {
-		if req.OnTurn == nil {
-			return false
-		}
+		return req.ChannelID == "ch12" && req.OnTurn != nil
+	})).Run(func(args mock.Arguments) {
+		req := args.Get(1).(*agent.AgentRequest)
+		req.OnToolUse("toolu_f", "Read", "/x")
+		req.OnThinking("plan")
+		req.OnToolResult("toolu_f", "contents", false)
+		req.OnActivity("compacting", "")
 		req.OnTurn("Turn 1", agent.TurnRef{})
 		req.OnTurn("Turn 2", agent.TurnRef{})
-		return true
-	})).Return(&agent.AgentResponse{
+	}).Return(&agent.AgentResponse{
 		Response:  "Turn 2", // same as last OnTurn
 		SessionID: "sess-fb",
 	}, nil)
 
 	s.store.On("UpdateSessionID", s.ctx, "ch12", "sess-fb").Return(nil)
 
-	// Fallback: first turn goes to channel directly
+	// Both turns go to the channel
 	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(msg *bot.OutgoingMessage) bool {
 		return msg.ChannelID == "ch12" && msg.Content == "Turn 1"
 	})).Return(nil).Once()
-	// Second turn also goes to channel (threadID never set)
 	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(msg *bot.OutgoingMessage) bool {
 		return msg.ChannelID == "ch12" && msg.Content == "Turn 2"
 	})).Return(nil).Once()
+
+	// No thread: statuses go to the channel only, with no thread id; no prompt
+	// message is stored.
+	eb.On("BroadcastAgentStatus", "ch12", mock.MatchedBy(func(d events.AgentStatusEventData) bool {
+		return d.ThreadID == "" && (d.Status == "running" || d.Status == "completed")
+	})).Twice()
+	eb.On("BroadcastToolUse", "ch12", mock.Anything).Once()
+	eb.On("BroadcastAgentThinking", "ch12", events.AgentThinkingEventData{Text: "plan"}).Once()
+	eb.On("BroadcastToolResult", "ch12", events.ToolResultEventData{ToolUseID: "toolu_f", Output: "contents"}).Once()
+	eb.On("BroadcastAgentActivity", "ch12", events.AgentActivityEventData{Activity: "compacting"}).Once()
+	eb.On("BroadcastMessageCreated", "ch12", mock.MatchedBy(func(d events.MessageEventData) bool {
+		return d.IsBot
+	})).Twice()
 
 	resp, err := s.executor.ExecuteTask(s.ctx, task)
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), "Turn 2", resp)
 
-	// 2 SendMessage calls (both fallback to channel), final skipped (duplicate)
+	// 2 SendMessage calls (both to the channel), final skipped (duplicate)
 	s.bot.AssertNumberOfCalls(s.T(), "SendMessage", 2)
 	s.bot.AssertExpectations(s.T())
+	s.store.AssertExpectations(s.T())
+	eb.AssertExpectations(s.T())
+	eb.AssertNotCalled(s.T(), "BroadcastChannelCreated", mock.Anything, mock.Anything)
 }
 
 func (s *TaskExecutorSuite) TestStreamingSendMessageErrorIsLogged() {
@@ -340,31 +380,28 @@ func (s *TaskExecutorSuite) TestStreamingSendMessageErrorIsLogged() {
 
 	s.store.On("GetChannel", s.ctx, "ch14").Return(nil, nil)
 	s.store.On("GetScheduledTask", s.ctx, int64(14)).Return(&db.ScheduledTask{ID: 14, Type: db.TaskTypeCron}, nil)
-
-	// Thread creation fails → first turn falls back to channel, second turn hits else branch
-	s.bot.On("CreateSimpleThread", s.ctx, "ch14", mock.Anything, mock.Anything).Return("", errors.New("thread error")).Once()
+	s.expectTaskThread(task, "thread-14", false, nil)
 
 	s.runner.On("Run", mock.Anything, mock.MatchedBy(func(req *agent.AgentRequest) bool {
 		if req.OnTurn == nil {
 			return false
 		}
-		req.OnTurn("Turn 1", agent.TurnRef{}) // goes through CreateSimpleThread fallback
-		req.OnTurn("Turn 2", agent.TurnRef{}) // goes through else branch (SendMessage) which fails
+		req.OnTurn("Turn 1", agent.TurnRef{})
+		req.OnTurn("Turn 2", agent.TurnRef{}) // send fails
 		return true
 	})).Return(&agent.AgentResponse{
 		Response:  "Turn 2",
 		SessionID: "sess-senderr",
 	}, nil)
 
-	s.store.On("UpdateSessionID", s.ctx, "ch14", "sess-senderr").Return(nil)
+	s.store.On("UpdateSessionID", s.ctx, "thread-14", "sess-senderr").Return(nil)
 
-	// First SendMessage (fallback from thread creation failure) succeeds
 	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(msg *bot.OutgoingMessage) bool {
-		return msg.ChannelID == "ch14" && msg.Content == "Turn 1"
+		return msg.ChannelID == "thread-14" && msg.Content == "Turn 1"
 	})).Return(nil).Once()
-	// Second SendMessage (else branch) fails — error is logged, not fatal
+	// Second SendMessage fails — error is logged, not fatal
 	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(msg *bot.OutgoingMessage) bool {
-		return msg.ChannelID == "ch14" && msg.Content == "Turn 2"
+		return msg.ChannelID == "thread-14" && msg.Content == "Turn 2"
 	})).Return(errors.New("send failed")).Once()
 
 	resp, err := s.executor.ExecuteTask(s.ctx, task)
@@ -388,9 +425,10 @@ func (s *TaskExecutorSuite) TestStreamingSingleTurnNoFinalDuplicate() {
 	s.store.On("GetChannel", s.ctx, "ch13").Return(nil, nil)
 	s.store.On("GetScheduledTask", s.ctx, int64(13)).Return(&db.ScheduledTask{ID: 13, Type: db.TaskTypeCron}, nil)
 
-	// Thread created for single turn
-	s.bot.On("CreateSimpleThread", s.ctx, "ch13", "⏱ task #13 (`0 * * * *`) single turn task", "⏱ task #13 (`0 * * * *`) Only turn").Return("thread-3", nil).Once()
-	s.store.On("UpdateScheduledTaskThreadID", s.ctx, int64(13), "thread-3").Return(nil)
+	s.expectTaskThread(task, "thread-3", false, nil)
+	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(msg *bot.OutgoingMessage) bool {
+		return msg.ChannelID == "thread-3" && msg.Content == "Only turn"
+	})).Return(nil).Once()
 
 	s.runner.On("Run", mock.Anything, mock.MatchedBy(func(req *agent.AgentRequest) bool {
 		if req.OnTurn == nil {
@@ -409,8 +447,8 @@ func (s *TaskExecutorSuite) TestStreamingSingleTurnNoFinalDuplicate() {
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), "Only turn", resp)
 
-	// 0 SendMessage (final skipped, only turn went via CreateSimpleThread)
-	s.bot.AssertNumberOfCalls(s.T(), "SendMessage", 0)
+	// 1 SendMessage (the streamed turn); the final is skipped as a duplicate
+	s.bot.AssertNumberOfCalls(s.T(), "SendMessage", 1)
 	s.bot.AssertNumberOfCalls(s.T(), "CreateSimpleThread", 1)
 }
 
@@ -428,68 +466,93 @@ func (s *TaskExecutorSuite) TestEphemeralInstructionInSystemPrompt() {
 		s.Run(tc.name, func() {
 			s.SetupTest()
 			chID := "ch-prompt"
+			task := &db.ScheduledTask{
+				ID: 20, ChannelID: chID, Prompt: "check prompt",
+				Type: db.TaskTypeCron, Schedule: "0 * * * *", AutoDeleteSec: tc.delSec,
+			}
 			s.store.On("GetChannel", s.ctx, chID).Return(nil, nil)
 			s.store.On("GetScheduledTask", s.ctx, int64(20)).Return(&db.ScheduledTask{ID: 20, Type: db.TaskTypeCron}, nil)
+			s.expectTaskThread(task, "thread-prompt", false, nil)
 			s.runner.On("Run", mock.Anything, mock.MatchedBy(func(req *agent.AgentRequest) bool {
 				return strings.Contains(req.SystemPrompt, "[EPHEMERAL]") == tc.wantMarker
 			})).Return(&agent.AgentResponse{Response: "ok", SessionID: "sess"}, nil)
-			s.store.On("UpdateSessionID", s.ctx, chID, "sess").Return(nil)
+			s.store.On("UpdateSessionID", s.ctx, "thread-prompt", "sess").Return(nil)
 			s.bot.On("SendMessage", s.ctx, mock.Anything).Return(nil).Once()
+			// Auto-delete schedules the new thread's removal; keep it inert.
+			s.executor.timeAfterFunc = func(time.Duration, func()) *time.Timer { return time.NewTimer(0) }
 
-			_, err := s.executor.ExecuteTask(s.ctx, &db.ScheduledTask{
-				ID: 20, ChannelID: chID, Prompt: "check prompt",
-				Type: db.TaskTypeCron, Schedule: "0 * * * *", AutoDeleteSec: tc.delSec,
-			})
+			_, err := s.executor.ExecuteTask(s.ctx, task)
 			require.NoError(s.T(), err)
 			s.runner.AssertExpectations(s.T())
 		})
 	}
 }
 
-// TestStreamingLocalFirstRunInjectsPromptBeforeReply locks the feature: on a
-// local task's first run, the prompt is persisted as a user message
-// (IsBot=false, AuthorID="scheduled-task") in the freshly-created thread,
-// inserted ahead of the agent's first reply so the chat reads prompt →
-// response. CreateSimpleThread is called with an empty initial message so the
-// executor controls the ordering (prompt first, then the agent turn).
-func (s *TaskExecutorSuite) TestStreamingLocalFirstRunInjectsPromptBeforeReply() {
+// TestStreamingLocalFirstRunRunsInThread locks the feature: a local task's
+// first run lives in the thread it creates before the runner is invoked, just
+// like later runs — the run is registered under the thread, the prompt is
+// stored there as a user message (IsBot=false, AuthorID="scheduled-task")
+// ahead of the agent's reply, and statuses go to both thread and parent. The
+// reply carries no task prefix.
+func (s *TaskExecutorSuite) TestStreamingLocalFirstRunRunsInThread() {
+	eb := new(MockEventBroadcaster)
+	s.executor.SetEventBroadcaster(eb)
+
 	task := &db.ScheduledTask{
 		ID: 130, ChannelID: "ch-fr", Prompt: "summarise the notes",
 		Type: db.TaskTypeCron, Schedule: "0 9 * * *",
 	}
-	localChannel := &db.Channel{ID: 1, ChannelID: "ch-fr", Platform: types.PlatformLocal, DirPath: "/work"}
+	localChannel := &db.Channel{ID: 1, ChannelID: "ch-fr", Platform: types.PlatformLocal, DirPath: "/work", SessionID: "s-parent"}
 	s.store.On("GetChannel", mock.Anything, "ch-fr").Return(localChannel, nil)
-	s.store.On("GetChannel", mock.Anything, "thread-fr").Return(&db.Channel{ID: 77, ChannelID: "thread-fr"}, nil).Maybe()
 	s.store.On("GetScheduledTask", mock.Anything, mock.Anything).Return(nil, nil).Maybe()
-	// Empty initial message on local: the executor seeds the thread itself.
-	s.bot.On("CreateSimpleThread", s.ctx, "ch-fr", mock.Anything, "").Return("thread-fr", nil).Once()
-	s.store.On("LinkTaskThread", mock.Anything, mock.Anything, int64(130), "thread-fr").Return(nil).Maybe()
-	s.store.On("UpdateSessionID", mock.Anything, mock.Anything, mock.Anything).Return(nil).Maybe()
+	s.expectTaskThread(task, "thread-fr", true, &db.Channel{ID: 77, ChannelID: "thread-fr"})
+	s.store.On("UpdateSessionID", mock.Anything, "thread-fr", "s").Return(nil).Once()
+	s.bot.On("SendMessage", mock.Anything, mock.MatchedBy(func(msg *bot.OutgoingMessage) bool {
+		return msg.ChannelID == "thread-fr" && msg.Content == "Here is the summary."
+	})).Return(nil).Once()
 
 	var inserted []*db.Message
 	s.store.On("InsertMessage", mock.Anything, mock.Anything).Run(func(args mock.Arguments) {
 		inserted = append(inserted, args.Get(1).(*db.Message))
 	}).Return(nil)
 
-	s.runner.On("Run", mock.Anything, mock.MatchedBy(func(req *agent.AgentRequest) bool {
-		if req.OnTurn == nil {
-			return false
+	eb.On("BroadcastChannelCreated", "ch-fr", "thread-fr").Once()
+	eb.On("BroadcastMessageCreated", "thread-fr", mock.Anything).Twice()
+	for _, status := range []string{"running", "completed"} {
+		for _, target := range []string{"thread-fr", "ch-fr"} {
+			eb.On("BroadcastAgentStatus", target, mock.MatchedBy(func(d events.AgentStatusEventData) bool {
+				return d.Status == status && d.ThreadID == "thread-fr"
+			})).Once()
 		}
-		req.OnTurn("Here is the summary.", agent.TurnRef{})
-		return true
-	})).Return(&agent.AgentResponse{Response: "Here is the summary.", SessionID: "s"}, nil)
+	}
+
+	s.runner.On("Run", mock.Anything, mock.MatchedBy(func(req *agent.AgentRequest) bool {
+		// Forks the parent's session, but runs in the thread.
+		return req.ChannelID == "thread-fr" && req.SessionID == "s-parent" && req.ForkSession
+	})).Run(func(args mock.Arguments) {
+		// The thread exists and holds the prompt before the agent starts.
+		s.bot.AssertNumberOfCalls(s.T(), "CreateSimpleThread", 1)
+		require.Len(s.T(), inserted, 1)
+		args.Get(1).(*agent.AgentRequest).OnTurn("Here is the summary.", agent.TurnRef{})
+	}).Return(&agent.AgentResponse{Response: "Here is the summary.", SessionID: "s"}, nil)
 
 	_, err := s.executor.ExecuteTask(s.ctx, task)
 	require.NoError(s.T(), err)
 
 	// First thread insert is the prompt as a user message; the agent reply follows.
-	require.GreaterOrEqual(s.T(), len(inserted), 2)
+	require.Len(s.T(), inserted, 2)
 	require.False(s.T(), inserted[0].IsBot, "prompt must be a user message")
 	require.Equal(s.T(), "summarise the notes", inserted[0].Content)
 	require.Equal(s.T(), "scheduled-task", inserted[0].AuthorID)
 	require.Equal(s.T(), "thread-fr", inserted[0].ChannelID)
+	require.Equal(s.T(), int64(77), inserted[0].ChatID)
 	require.True(s.T(), inserted[0].IsProcessed, "prompt must be inert (out of the drain queue)")
 	require.True(s.T(), inserted[1].IsBot, "agent reply must be a bot message")
+	require.Equal(s.T(), "Here is the summary.", inserted[1].Content)
+	require.Equal(s.T(), "thread-fr", inserted[1].ChannelID)
+	s.bot.AssertExpectations(s.T())
+	s.store.AssertExpectations(s.T())
+	eb.AssertExpectations(s.T())
 }
 
 // TestStreamingManualTaskThreadNameUsesManualLabel guards the thread-name
@@ -508,6 +571,9 @@ func (s *TaskExecutorSuite) TestStreamingManualTaskThreadNameUsesManualLabel() {
 	s.bot.On("CreateSimpleThread", s.ctx, "ch-m", mock.MatchedBy(func(name string) bool {
 		return strings.Contains(name, "task #140 (`manual`)")
 	}), "").Return("thread-m", nil).Once()
+	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(msg *bot.OutgoingMessage) bool {
+		return msg.ChannelID == "thread-m" && msg.Content == "hi"
+	})).Return(nil).Once()
 	s.store.On("LinkTaskThread", mock.Anything, mock.Anything, int64(140), "thread-m").Return(nil).Maybe()
 	s.store.On("UpdateSessionID", mock.Anything, mock.Anything, mock.Anything).Return(nil).Maybe()
 	s.runner.On("Run", mock.Anything, mock.MatchedBy(func(req *agent.AgentRequest) bool {

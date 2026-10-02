@@ -31,8 +31,10 @@ func (s *TaskExecutorSuite) TestAutoDeleteTimerFires() {
 	s.store.On("GetChannel", s.ctx, "ch15").Return(nil, nil)
 	s.store.On("GetScheduledTask", s.ctx, int64(15)).Return(&db.ScheduledTask{ID: 15, Type: db.TaskTypeCron}, nil)
 	s.allowBotInserts()
-	s.bot.On("CreateSimpleThread", s.ctx, "ch15", mock.Anything, mock.Anything).Return("thread-auto-del", nil).Once()
-	s.store.On("UpdateScheduledTaskThreadID", s.ctx, int64(15), "thread-auto-del").Return(nil)
+	s.expectTaskThread(task, "thread-auto-del", false, nil)
+	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(msg *bot.OutgoingMessage) bool {
+		return msg.ChannelID == "thread-auto-del" && msg.Content == "Nothing to report"
+	})).Return(nil).Once()
 
 	s.runner.On("Run", mock.Anything, mock.MatchedBy(func(req *agent.AgentRequest) bool {
 		if req.OnTurn == nil {
@@ -48,7 +50,7 @@ func (s *TaskExecutorSuite) TestAutoDeleteTimerFires() {
 	s.store.On("UpdateSessionID", s.ctx, "thread-auto-del", "sess-auto-del").Return(nil)
 	// [EPHEMERAL] is stripped before tracker records lastText, so IsDuplicate
 	// returns true and no final SendMessage is needed.
-	// First turn broadcasts channel created + message to thread
+	// Thread creation broadcasts to the parent; the turn goes to the thread
 	eb.On("BroadcastChannelCreated", "ch15", "thread-auto-del").Once()
 	eb.On("BroadcastMessageCreated", "thread-auto-del", mock.Anything).Maybe()
 	s.bot.On("RenameThread", s.ctx, "thread-auto-del", "💨 task #15 (`0 * * * *`) auto-del task").Return(nil).Once()
@@ -97,7 +99,10 @@ func (s *TaskExecutorSuite) TestAutoDeleteEphemeralLocalPlatform() {
 	s.store.On("LinkTaskThread", s.ctx, mock.Anything, int64(40), "local-eph-thread").Return(nil)
 	s.allowBotInserts()
 
-	s.bot.On("CreateSimpleThread", s.ctx, "ch-local-eph", mock.Anything, mock.Anything).Return("local-eph-thread", nil).Once()
+	s.bot.On("CreateSimpleThread", s.ctx, "ch-local-eph", mock.Anything, "").Return("local-eph-thread", nil).Once()
+	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(msg *bot.OutgoingMessage) bool {
+		return msg.ChannelID == "local-eph-thread" && msg.Content == "Nothing new"
+	})).Return(nil).Once()
 
 	s.runner.On("Run", mock.Anything, mock.MatchedBy(func(req *agent.AgentRequest) bool {
 		if req.OnTurn == nil {
@@ -158,10 +163,16 @@ func (s *TaskExecutorSuite) TestAutoDeleteEphemeralVariants() {
 		s.Run(tc.name, func() {
 			s.SetupTest()
 
+			task := &db.ScheduledTask{
+				ID: 22, ChannelID: tc.channelID, Prompt: "task",
+				Type: db.TaskTypeCron, Schedule: "0 * * * *", AutoDeleteSec: tc.delSec,
+			}
 			s.store.On("GetChannel", s.ctx, tc.channelID).Return(nil, nil)
 			s.store.On("GetScheduledTask", s.ctx, int64(22)).Return(&db.ScheduledTask{ID: 22, Type: db.TaskTypeCron}, nil)
-			s.bot.On("CreateSimpleThread", s.ctx, tc.channelID, mock.Anything, mock.Anything).Return(tc.threadID, nil).Once()
-			s.store.On("UpdateScheduledTaskThreadID", s.ctx, int64(22), tc.threadID).Return(nil)
+			s.expectTaskThread(task, tc.threadID, false, nil)
+			s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(msg *bot.OutgoingMessage) bool {
+				return msg.ChannelID == tc.threadID && msg.Content == tc.wantResp
+			})).Return(nil).Once()
 			s.runner.On("Run", mock.Anything, mock.MatchedBy(func(req *agent.AgentRequest) bool {
 				if req.OnTurn == nil {
 					return false
@@ -182,10 +193,7 @@ func (s *TaskExecutorSuite) TestAutoDeleteEphemeralVariants() {
 				return time.NewTimer(0)
 			}
 
-			resp, err := s.executor.ExecuteTask(s.ctx, &db.ScheduledTask{
-				ID: 22, ChannelID: tc.channelID, Prompt: "task",
-				Type: db.TaskTypeCron, Schedule: "0 * * * *", AutoDeleteSec: tc.delSec,
-			})
+			resp, err := s.executor.ExecuteTask(s.ctx, task)
 			require.NoError(s.T(), err)
 			require.Equal(s.T(), tc.wantResp, resp)
 			require.Equal(s.T(), time.Duration(tc.delSec)*time.Second, capturedDelay)
@@ -203,8 +211,10 @@ func (s *TaskExecutorSuite) TestAutoDeleteNonEphemeralNoRename() {
 
 	s.store.On("GetChannel", s.ctx, "ch19").Return(nil, nil)
 	s.store.On("GetScheduledTask", s.ctx, int64(19)).Return(&db.ScheduledTask{ID: 19, Type: db.TaskTypeCron}, nil)
-	s.bot.On("CreateSimpleThread", s.ctx, "ch19", mock.Anything, mock.Anything).Return("thread-del", nil).Once()
-	s.store.On("UpdateScheduledTaskThreadID", s.ctx, int64(19), "thread-del").Return(nil)
+	s.expectTaskThread(task, "thread-del", false, nil)
+	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(msg *bot.OutgoingMessage) bool {
+		return msg.ChannelID == "thread-del" && msg.Content == "Important result"
+	})).Return(nil).Once()
 	s.store.On("UpdateSessionID", s.ctx, "thread-del", mock.Anything).Return(nil)
 	s.bot.On("DeleteThread", mock.Anything, "thread-del").Return(nil).Once()
 
@@ -254,13 +264,17 @@ func (s *TaskExecutorSuite) TestAutoDeleteSkipped() {
 			setupMocks: func() {
 				s.store.On("GetChannel", s.ctx, "ch16").Return(nil, nil)
 				s.store.On("GetScheduledTask", s.ctx, int64(16)).Return(&db.ScheduledTask{ID: 16, Type: db.TaskTypeCron}, nil)
-				s.bot.On("CreateSimpleThread", s.ctx, "ch16", mock.Anything, mock.Anything).Return("thread-no-del", nil).Once()
+				s.bot.On("CreateSimpleThread", s.ctx, "ch16", mock.Anything, "").Return("thread-no-del", nil).Once()
 				s.store.On("UpdateScheduledTaskThreadID", s.ctx, int64(16), "thread-no-del").Return(nil)
+				s.store.On("GetChannel", s.ctx, "thread-no-del").Return(nil, nil)
 				s.store.On("UpdateSessionID", s.ctx, "thread-no-del", mock.Anything).Return(nil)
+				s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(msg *bot.OutgoingMessage) bool {
+					return msg.ChannelID == "thread-no-del" && msg.Content == "Turn 1"
+				})).Return(nil).Once()
 			},
 		},
 		{
-			name:       "no thread created",
+			name:       "thread creation failed",
 			callOnTurn: false,
 			task: &db.ScheduledTask{
 				ID: 17, ChannelID: "ch17", Prompt: "no-thread task",
@@ -270,6 +284,7 @@ func (s *TaskExecutorSuite) TestAutoDeleteSkipped() {
 			setupMocks: func() {
 				s.store.On("GetChannel", s.ctx, "ch17").Return(nil, nil)
 				s.store.On("GetScheduledTask", s.ctx, int64(17)).Return(&db.ScheduledTask{ID: 17, Type: db.TaskTypeCron}, nil)
+				s.bot.On("CreateSimpleThread", s.ctx, "ch17", mock.Anything, "").Return("", errors.New("thread error")).Once()
 				s.store.On("UpdateSessionID", s.ctx, "ch17", mock.Anything).Return(nil)
 				s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(msg *bot.OutgoingMessage) bool {
 					return msg.ChannelID == "ch17" && msg.Content == "Result"

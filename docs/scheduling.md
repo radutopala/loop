@@ -183,7 +183,7 @@ schedule_task({
 - The script's output is posted to the thread as a bot message (fenced code block, truncated at ~3500 chars for chat); the task run log keeps the **full** output.
 - On failure, the error is posted along with any partial output, and the run log records `failed`.
 - `bash_script` is mutually exclusive with `prompt` and `workflow_name`; the create/edit API, the `schedule_task`/`edit_task` MCP tools, and the Tasks panels (per-channel and global, via the **Bash** mode with a monospace editor) all accept it.
-- **Threads:** bash tasks get the same thread behavior as prompt tasks — the first run creates a sub-thread (named ``task #N (`schedule`) <script>``), each run posts the script + output pair inside it, and recurring runs reuse the thread via the persisted `thread_id`. `once` tasks get a thread without the link; if thread creation fails, output falls back to the channel; a deleted thread is recreated on the next run.
+- **Threads:** bash tasks get the same thread behavior as prompt tasks — the first run creates a sub-thread before running the script (named ``task #N (`schedule`) <script>``), each run posts the script + output pair inside it, and recurring runs reuse the thread via the persisted `thread_id`. `once` tasks get a thread without the link; if thread creation fails, output falls back to the channel; a deleted thread is recreated on the next run.
 - **Worktrees:** `worktree: true` works exactly like prompt tasks — the first run creates `.worktrees/task-<id>-<hex>` from `origin_branch` (or the auto-detected branch, persisted), the thread is a worktree thread (its `DirPath` points at the worktree), and recurring runs execute the script inside that worktree.
 - Bash tasks never resume an agent session — there is no agent involved.
 
@@ -197,7 +197,7 @@ Task execution streams output to a thread.
 
 On the local platform (Electron app), recurring tasks (`cron`/`interval`) reuse the same thread across executions:
 
-1. **First execution**: A new thread is created and its ID is stored in the task's `thread_id` column.
+1. **First execution**: A new thread is created before the run starts and its ID is stored in the task's `thread_id` column.
 2. **Subsequent executions**: Messages are posted to the existing thread instead of creating a new one.
 3. **Once tasks**: Always create a fresh thread (no reuse).
 
@@ -218,10 +218,10 @@ Thread names differ by platform:
 
 ### Thread Lifecycle
 
-1. **First streaming turn**: A thread is created via `CreateSimpleThread` (no bot @mention to avoid re-triggering the agent).
-2. **Subsequent turns**: Messages are sent to the thread.
+1. **Before the first run**: A thread is created via `CreateSimpleThread` (no bot @mention to avoid re-triggering the agent), after the worktree for worktree tasks. The run then happens in it from the start: on the local platform the agent is registered under the thread, and the prompt, tool calls and replies all land there rather than in the parent channel.
+2. **Turns**: Messages are sent to the thread.
 3. **Final response**: Sent to the thread (or channel if thread creation failed). Duplicate detection prevents re-sending the last streamed turn.
-4. **Thread channel record**: A DB channel record is upserted for the thread, inheriting the parent channel's guild, directory, platform, session, and permissions. For worktree tasks, the thread's `dir_path` is set to the worktree path and `worktree = true`.
+4. **Thread channel record**: A DB channel record is upserted for the thread, inheriting the parent channel's guild, directory, platform, and permissions. It starts without a session: the first run forks the parent channel's session and stores the result on the thread. For worktree tasks, the thread's `dir_path` is set to the worktree path and `worktree = true`.
 5. **Permission users invited**: All RBAC owner and member users are invited to the thread.
 6. **UI notification**: A `channel_created` event is broadcast so the Electron app sidebar refreshes.
 

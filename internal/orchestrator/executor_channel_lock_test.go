@@ -78,32 +78,34 @@ func (s *TaskExecutorSuite) TestTaskRunWaitsForAndHoldsThreadLock() {
 	require.True(s.T(), threadLockFree(locks, "lock-thread"), "released after the run")
 }
 
-// The thread a first run creates is held from creation, so a message sent to
-// it while the run continues waits for the run.
+// The thread a first run creates before the runner starts is held for the
+// whole run, so a message sent to it meanwhile waits for the run.
 func (s *TaskExecutorSuite) TestTaskRunHoldsLockOfThreadItCreates() {
 	locks := &sync.Map{}
 	s.executor.SetChannelLocks(locks)
 
 	task := &db.ScheduledTask{ID: 81, ChannelID: "ch-new", Prompt: "go", Type: db.TaskTypeCron, Schedule: "0 * * * *"}
 	s.allowBotInserts()
-	s.store.On("GetChannel", mock.Anything, mock.Anything).Return(nil, nil)
+	s.store.On("GetChannel", mock.Anything, "ch-new").Return(nil, nil)
 	s.store.On("GetScheduledTask", mock.Anything, int64(81)).Return(&db.ScheduledTask{ID: 81, Type: db.TaskTypeCron}, nil)
-	s.bot.On("CreateSimpleThread", mock.Anything, "ch-new", mock.Anything, mock.Anything).Return("new-thread", nil)
-	s.store.On("UpdateScheduledTaskThreadID", mock.Anything, int64(81), "new-thread").Return(nil)
+	s.expectTaskThread(task, "new-thread", false, nil)
 	s.store.On("UpdateSessionID", mock.Anything, "new-thread", "s-new").Return(nil)
-	s.bot.On("SendMessage", mock.Anything, mock.Anything).Return(nil)
+	s.bot.On("SendMessage", mock.Anything, mock.MatchedBy(func(m *bot.OutgoingMessage) bool {
+		return m.ChannelID == "new-thread"
+	})).Return(nil)
 
-	heldAfterCreate := false
+	heldBeforeTurn, heldAfterTurn := false, false
 	s.runner.On("Run", mock.Anything, mock.Anything).Run(func(args mock.Arguments) {
 		req := args.Get(1).(*agent.AgentRequest)
-		require.True(s.T(), threadLockFree(locks, "new-thread"))
+		heldBeforeTurn = !threadLockFree(locks, "new-thread")
 		req.OnTurn("first turn", agent.TurnRef{})
-		heldAfterCreate = !threadLockFree(locks, "new-thread")
+		heldAfterTurn = !threadLockFree(locks, "new-thread")
 	}).Return(&agent.AgentResponse{Response: "final", SessionID: "s-new"}, nil)
 
 	_, err := s.executor.ExecuteTask(s.ctx, task)
 	require.NoError(s.T(), err)
-	require.True(s.T(), heldAfterCreate, "the new thread is held once created")
+	require.True(s.T(), heldBeforeTurn, "the new thread is held before the first turn")
+	require.True(s.T(), heldAfterTurn, "the new thread stays held after the first turn")
 	require.True(s.T(), threadLockFree(locks, "new-thread"), "released after the run")
 }
 

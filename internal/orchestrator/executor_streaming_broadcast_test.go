@@ -34,17 +34,19 @@ func (s *TaskExecutorSuite) TestFinalResponseBroadcasts() {
 
 	s.store.On("GetChannel", s.ctx, "ch1").Return(&db.Channel{ID: 5, ChannelID: "ch1"}, nil)
 	s.store.On("GetScheduledTask", s.ctx, int64(1)).Return(&db.ScheduledTask{ID: 1, Type: db.TaskTypeCron}, nil)
+	s.expectTaskThread(task, "thread-1", true, &db.Channel{ID: 6, ChannelID: "thread-1"})
 	s.runner.On("Run", mock.Anything, mock.Anything).Return(&agent.AgentResponse{
 		Response: "all good", SessionID: "s1",
 	}, nil)
-	s.store.On("UpdateSessionID", s.ctx, "ch1", "s1").Return(nil)
+	s.store.On("UpdateSessionID", s.ctx, "thread-1", "s1").Return(nil)
 	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(msg *bot.OutgoingMessage) bool {
-		return msg.ChannelID == "ch1" && msg.Content == "all good"
+		return msg.ChannelID == "thread-1" && msg.Content == "all good"
 	})).Return(nil)
 	s.store.On("InsertMessage", s.ctx, mock.MatchedBy(func(m *db.Message) bool {
-		return m.ChatID == 5 && m.Content == "all good" && m.IsBot
+		return m.ChatID == 6 && m.Content == "all good" && m.IsBot
 	})).Return(nil)
-	eb.On("BroadcastMessageCreated", "ch1", mock.MatchedBy(func(d events.MessageEventData) bool {
+	eb.On("BroadcastChannelCreated", "ch1", "thread-1").Once()
+	eb.On("BroadcastMessageCreated", "thread-1", mock.MatchedBy(func(d events.MessageEventData) bool {
 		return d.Content == "all good" && d.IsBot
 	}))
 
@@ -73,10 +75,10 @@ func (s *TaskExecutorSuite) TestStreamingThreadBroadcastsToThread() {
 		return ch.ChannelID == "thread-20" && ch.ParentID == "ch20" && ch.TaskID == 20
 	}), int64(20), "thread-20").Return(nil)
 
-	// Thread creation succeeds
+	// Thread creation succeeds, with no initial message
 	s.bot.On("CreateSimpleThread", s.ctx, "ch20",
 		"⏱ task #20 (`0 * * * *`) check",
-		"⏱ task #20 (`0 * * * *`) Turn 1",
+		"",
 	).Return("thread-20", nil).Once()
 
 	s.runner.On("Run", mock.Anything, mock.MatchedBy(func(req *agent.AgentRequest) bool {
@@ -90,7 +92,10 @@ func (s *TaskExecutorSuite) TestStreamingThreadBroadcastsToThread() {
 	}, nil)
 	s.store.On("UpdateSessionID", s.ctx, "thread-20", "s20").Return(nil)
 
-	// Final response goes to thread
+	// The streamed turn and the final response go to the thread
+	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(msg *bot.OutgoingMessage) bool {
+		return msg.ChannelID == "thread-20" && msg.Content == "Turn 1"
+	})).Return(nil).Once()
 	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(msg *bot.OutgoingMessage) bool {
 		return msg.ChannelID == "thread-20" && msg.Content == "Final"
 	})).Return(nil).Once()
@@ -100,9 +105,9 @@ func (s *TaskExecutorSuite) TestStreamingThreadBroadcastsToThread() {
 
 	// Channel created broadcast goes to parent
 	eb.On("BroadcastChannelCreated", "ch20", "thread-20").Once()
-	// First turn broadcast goes to THREAD, not parent channel
+	// First turn broadcast goes to THREAD, not parent channel, without a prefix
 	eb.On("BroadcastMessageCreated", "thread-20", mock.MatchedBy(func(d events.MessageEventData) bool {
-		return d.Content == "⏱ task #20 (`0 * * * *`) Turn 1" && d.IsBot
+		return d.Content == "Turn 1" && d.IsBot
 	})).Once()
 	// Final response broadcast goes to thread
 	eb.On("BroadcastMessageCreated", "thread-20", mock.MatchedBy(func(d events.MessageEventData) bool {
@@ -141,16 +146,21 @@ func (s *TaskExecutorSuite) TestStreamingOnToolUseBroadcasts() {
 	s.store.On("GetChannel", mock.Anything, "thread-25").Return(&db.Channel{ID: 250, ChannelID: "thread-25"}, nil).Maybe()
 	s.store.On("GetScheduledTask", s.ctx, int64(25)).Return(&db.ScheduledTask{ID: 25, Type: db.TaskTypeCron}, nil)
 
-	s.bot.On("CreateSimpleThread", s.ctx, "ch25", mock.Anything, mock.Anything).Return("thread-25", nil).Once()
+	s.bot.On("CreateSimpleThread", s.ctx, "ch25", mock.Anything, "").Return("thread-25", nil).Once()
 	s.store.On("UpdateScheduledTaskThreadID", s.ctx, int64(25), "thread-25").Return(nil)
-	s.store.On("InsertAgentEvent", mock.Anything, mock.Anything).Return(nil).Maybe()
+	s.store.On("InsertAgentEvent", mock.Anything, mock.MatchedBy(func(m *db.Message) bool {
+		return m.ChatID == 250 && m.ChannelID == "thread-25"
+	})).Return(nil).Once()
+	s.allowBotInserts()
+	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(msg *bot.OutgoingMessage) bool {
+		return msg.ChannelID == "thread-25" && msg.Content == "Turn 1"
+	})).Return(nil).Once()
 
 	s.runner.On("Run", mock.Anything, mock.MatchedBy(func(req *agent.AgentRequest) bool {
 		if req.OnToolUse == nil {
 			return false
 		}
-		// OnToolUse should broadcast to thread once created
-		req.OnTurn("Turn 1", agent.TurnRef{}) // creates thread
+		req.OnTurn("Turn 1", agent.TurnRef{})
 		req.OnToolUse("toolu_a", "Read", "/tmp/foo.go")
 		return true
 	})).Return(&agent.AgentResponse{
@@ -186,8 +196,11 @@ func (s *TaskExecutorSuite) TestStreamingOnToolUseAskUserQuestion() {
 	s.store.On("GetChannel", mock.Anything, "ch27").Return(nil, nil)
 	s.store.On("GetChannel", mock.Anything, "thread-27").Return(nil, nil).Maybe()
 	s.store.On("GetScheduledTask", s.ctx, int64(27)).Return(&db.ScheduledTask{ID: 27, Type: db.TaskTypeCron}, nil)
-	s.bot.On("CreateSimpleThread", s.ctx, "ch27", mock.Anything, mock.Anything).Return("thread-27", nil).Once()
+	s.bot.On("CreateSimpleThread", s.ctx, "ch27", mock.Anything, "").Return("thread-27", nil).Once()
 	s.store.On("UpdateScheduledTaskThreadID", s.ctx, int64(27), "thread-27").Return(nil)
+	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(msg *bot.OutgoingMessage) bool {
+		return msg.ChannelID == "thread-27" && msg.Content == "Turn 1"
+	})).Return(nil).Once()
 
 	askInput := `{"questions":[{"question":"What next?","header":"Task","options":[{"label":"A"}]}]}`
 	s.runner.On("Run", mock.Anything, mock.MatchedBy(func(req *agent.AgentRequest) bool {
@@ -227,8 +240,11 @@ func (s *TaskExecutorSuite) TestStreamingOnToolUseExitPlanMode() {
 	s.store.On("GetChannel", mock.Anything, "ch28").Return(nil, nil)
 	s.store.On("GetChannel", mock.Anything, "thread-28").Return(nil, nil).Maybe()
 	s.store.On("GetScheduledTask", s.ctx, int64(28)).Return(&db.ScheduledTask{ID: 28, Type: db.TaskTypeCron}, nil)
-	s.bot.On("CreateSimpleThread", s.ctx, "ch28", mock.Anything, mock.Anything).Return("thread-28", nil).Once()
+	s.bot.On("CreateSimpleThread", s.ctx, "ch28", mock.Anything, "").Return("thread-28", nil).Once()
 	s.store.On("UpdateScheduledTaskThreadID", s.ctx, int64(28), "thread-28").Return(nil)
+	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(msg *bot.OutgoingMessage) bool {
+		return msg.ChannelID == "thread-28" && msg.Content == "Turn 1"
+	})).Return(nil).Once()
 
 	exitInput := `{"plan":"# My Plan\nDo stuff","planFilePath":"/tmp/plan.md"}`
 	s.runner.On("Run", mock.Anything, mock.MatchedBy(func(req *agent.AgentRequest) bool {
@@ -268,8 +284,11 @@ func (s *TaskExecutorSuite) TestStreamingOnToolUseTaskCreate() {
 	s.store.On("GetChannel", mock.Anything, "ch29").Return(nil, nil)
 	s.store.On("GetChannel", mock.Anything, "thread-29").Return(nil, nil).Maybe()
 	s.store.On("GetScheduledTask", s.ctx, int64(29)).Return(&db.ScheduledTask{ID: 29, Type: db.TaskTypeCron}, nil)
-	s.bot.On("CreateSimpleThread", s.ctx, "ch29", mock.Anything, mock.Anything).Return("thread-29", nil).Once()
+	s.bot.On("CreateSimpleThread", s.ctx, "ch29", mock.Anything, "").Return("thread-29", nil).Once()
 	s.store.On("UpdateScheduledTaskThreadID", s.ctx, int64(29), "thread-29").Return(nil)
+	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(msg *bot.OutgoingMessage) bool {
+		return msg.ChannelID == "thread-29" && msg.Content == "Turn 1"
+	})).Return(nil).Once()
 
 	taskInput := `{"subject":"Fix bug","activeForm":"Fixing bug","description":""}`
 	s.runner.On("Run", mock.Anything, mock.MatchedBy(func(req *agent.AgentRequest) bool {
@@ -317,8 +336,11 @@ func (s *TaskExecutorSuite) TestStreamingOnToolUseTaskUpdate() {
 	s.store.On("GetChannel", mock.Anything, "ch30").Return(nil, nil)
 	s.store.On("GetChannel", mock.Anything, "thread-30").Return(nil, nil).Maybe()
 	s.store.On("GetScheduledTask", s.ctx, int64(30)).Return(&db.ScheduledTask{ID: 30, Type: db.TaskTypeCron}, nil)
-	s.bot.On("CreateSimpleThread", s.ctx, "ch30", mock.Anything, mock.Anything).Return("thread-30", nil).Once()
+	s.bot.On("CreateSimpleThread", s.ctx, "ch30", mock.Anything, "").Return("thread-30", nil).Once()
 	s.store.On("UpdateScheduledTaskThreadID", s.ctx, int64(30), "thread-30").Return(nil)
+	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(msg *bot.OutgoingMessage) bool {
+		return msg.ChannelID == "thread-30" && msg.Content == "Turn 1"
+	})).Return(nil).Once()
 
 	updateInput := `{"taskId":"1","status":"in_progress"}`
 	s.runner.On("Run", mock.Anything, mock.MatchedBy(func(req *agent.AgentRequest) bool {
@@ -345,7 +367,10 @@ func (s *TaskExecutorSuite) TestStreamingOnToolUseTaskUpdate() {
 	eb.AssertExpectations(s.T())
 }
 
-func (s *TaskExecutorSuite) TestStreamingOnToolUseBroadcastsBeforeThread() {
+// TestStreamingOnToolUseBeforeFirstTurnGoesToThread: the thread exists before
+// the run starts, so a tool call fired ahead of any text turn already targets
+// it — nothing is broadcast to the parent channel.
+func (s *TaskExecutorSuite) TestStreamingOnToolUseBeforeFirstTurnGoesToThread() {
 	eb := new(MockEventBroadcaster)
 	s.executor.SetEventBroadcaster(eb)
 	allowStatusBroadcasts(eb)
@@ -357,15 +382,16 @@ func (s *TaskExecutorSuite) TestStreamingOnToolUseBroadcastsBeforeThread() {
 
 	s.store.On("GetChannel", mock.Anything, "ch26").Return(nil, nil)
 	s.store.On("GetScheduledTask", s.ctx, int64(26)).Return(&db.ScheduledTask{ID: 26, Type: db.TaskTypeCron}, nil)
-
-	s.bot.On("CreateSimpleThread", s.ctx, "ch26", mock.Anything, mock.Anything).Return("thread-26", nil).Once()
-	s.store.On("UpdateScheduledTaskThreadID", s.ctx, int64(26), "thread-26").Return(nil)
+	s.expectTaskThread(task, "thread-26", false, nil)
+	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(msg *bot.OutgoingMessage) bool {
+		return msg.ChannelID == "thread-26" && msg.Content == "Turn 1"
+	})).Return(nil).Once()
 
 	s.runner.On("Run", mock.Anything, mock.MatchedBy(func(req *agent.AgentRequest) bool {
 		if req.OnToolUse == nil {
 			return false
 		}
-		// OnToolUse fires BEFORE any OnTurn — threadID is empty, uses task.ChannelID
+		// OnToolUse fires BEFORE any OnTurn
 		req.OnToolUse("toolu_b", "Bash", "ls")
 		req.OnTurn("Turn 1", agent.TurnRef{})
 		return true
@@ -376,9 +402,8 @@ func (s *TaskExecutorSuite) TestStreamingOnToolUseBroadcastsBeforeThread() {
 	s.store.On("UpdateSessionID", s.ctx, "thread-26", "sess-tu2").Return(nil)
 
 	eb.On("BroadcastChannelCreated", "ch26", "thread-26").Once()
-	eb.On("BroadcastMessageCreated", "thread-26", mock.Anything).Maybe()
-	// Before thread is created, tool use broadcasts to parent channel
-	eb.On("BroadcastToolUse", "ch26", mock.MatchedBy(func(d events.ToolUseEventData) bool {
+	eb.On("BroadcastMessageCreated", "thread-26", mock.Anything).Once()
+	eb.On("BroadcastToolUse", "thread-26", mock.MatchedBy(func(d events.ToolUseEventData) bool {
 		return d.ToolName == "Bash" && d.Input == "ls"
 	})).Once()
 
@@ -386,7 +411,7 @@ func (s *TaskExecutorSuite) TestStreamingOnToolUseBroadcastsBeforeThread() {
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), "Turn 1", resp)
 
-	eb.AssertCalled(s.T(), "BroadcastToolUse", "ch26", mock.Anything)
+	eb.AssertNotCalled(s.T(), "BroadcastToolUse", "ch26", mock.Anything)
 	eb.AssertExpectations(s.T())
 }
 
@@ -403,18 +428,17 @@ func (s *TaskExecutorSuite) TestStreamingOnActivityBroadcasts() {
 	s.store.On("GetChannel", mock.Anything, "ch27").Return(nil, nil)
 	s.store.On("GetScheduledTask", s.ctx, int64(27)).Return(&db.ScheduledTask{ID: 27, Type: db.TaskTypeCron}, nil)
 
-	s.bot.On("CreateSimpleThread", s.ctx, "ch27", mock.Anything, mock.Anything).Return("thread-27", nil).Once()
-	s.store.On("UpdateScheduledTaskThreadID", s.ctx, int64(27), "thread-27").Return(nil)
+	s.expectTaskThread(task, "thread-27", false, nil)
+	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(msg *bot.OutgoingMessage) bool {
+		return msg.ChannelID == "thread-27" && msg.Content == "Turn 1"
+	})).Return(nil).Once()
 
-	s.runner.On("Run", mock.Anything, mock.MatchedBy(func(req *agent.AgentRequest) bool {
-		if req.OnActivity == nil {
-			return false
-		}
+	s.runner.On("Run", mock.Anything, mock.Anything).Run(func(args mock.Arguments) {
+		req := args.Get(1).(*agent.AgentRequest)
 		req.OnActivity("model", "claude-opus-4-6")
 		req.OnTurn("Turn 1", agent.TurnRef{})
 		req.OnActivity("subagent_started", "Sub task")
-		return true
-	})).Return(&agent.AgentResponse{
+	}).Return(&agent.AgentResponse{
 		Response: "Turn 1", SessionID: "sess-act",
 	}, nil)
 
@@ -422,11 +446,11 @@ func (s *TaskExecutorSuite) TestStreamingOnActivityBroadcasts() {
 
 	eb.On("BroadcastChannelCreated", "ch27", "thread-27").Once()
 	eb.On("BroadcastMessageCreated", "thread-27", mock.Anything).Maybe()
-	// Model activity fires before thread (uses channel ID)
-	eb.On("BroadcastAgentActivity", "ch27", mock.MatchedBy(func(d events.AgentActivityEventData) bool {
+	// Model activity fires before the first turn, already in the thread
+	eb.On("BroadcastAgentActivity", "thread-27", mock.MatchedBy(func(d events.AgentActivityEventData) bool {
 		return d.Activity == "model" && d.Model == "claude-opus-4-6"
 	})).Once()
-	// Subagent activity fires after thread (uses thread ID)
+	// Subagent activity fires after the first turn
 	eb.On("BroadcastAgentActivity", "thread-27", mock.MatchedBy(func(d events.AgentActivityEventData) bool {
 		return d.Activity == "subagent_started" && d.Description == "Sub task"
 	})).Once()
@@ -456,25 +480,24 @@ func (s *TaskExecutorSuite) TestStreamingOnCompactingPersistsRow() {
 
 	parent := &db.Channel{ID: 300, ChannelID: "ch81", Platform: types.PlatformLocal, DirPath: "/work"}
 	s.store.On("GetChannel", mock.Anything, "ch81").Return(parent, nil)
-	s.store.On("GetChannel", mock.Anything, "thread-81").Return(nil, nil).Maybe()
-
-	s.bot.On("CreateSimpleThread", s.ctx, "ch81", mock.Anything, mock.Anything).Return("thread-81", nil).Once()
-	s.store.On("UpsertChannel", s.ctx, mock.MatchedBy(func(ch *db.Channel) bool {
-		return ch.ChannelID == "thread-81" && ch.ParentID == "ch81"
+	s.expectTaskThread(task, "thread-81", true, &db.Channel{ID: 301, ChannelID: "thread-81"})
+	s.allowBotInserts()
+	allowTaskPromptBroadcast(eb)
+	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(msg *bot.OutgoingMessage) bool {
+		return msg.ChannelID == "thread-81" && msg.Content == "Turn 1"
 	})).Return(nil).Once()
 
-	// Pre-thread compacting persists with chat_id=300 (the parent channel)
-	// and ChannelID="ch81" (the task's channel).
+	// Compacting persists with the thread's chat_id and ChannelID.
 	s.store.On("InsertAgentEvent", mock.Anything, mock.MatchedBy(func(m *db.Message) bool {
-		return m.ChannelID == "ch81" && m.ChatID == 300 && m.Kind == db.MessageKindCompacting
+		return m.ChannelID == "thread-81" && m.ChatID == 301 && m.Kind == db.MessageKindCompacting
 	})).Return(nil).Once()
 
 	s.runner.On("Run", mock.Anything, mock.MatchedBy(func(req *agent.AgentRequest) bool {
 		if req.OnActivity == nil {
 			return false
 		}
-		// Pre-thread compacting fires before OnTurn — exercises both the
-		// broadcast path and the storeAgentEvent path against parentChatID.
+		// Compacting fires before OnTurn — exercises both the broadcast path
+		// and the storeAgentEvent path against the thread's chat id.
 		req.OnActivity("compacting", "")
 		// Non-compacting activity must NOT trigger storeAgentEvent (verified
 		// by InsertAgentEvent expecting only one call total).
@@ -489,10 +512,10 @@ func (s *TaskExecutorSuite) TestStreamingOnCompactingPersistsRow() {
 
 	eb.On("BroadcastChannelCreated", "ch81", "thread-81").Once()
 	eb.On("BroadcastMessageCreated", "thread-81", mock.Anything).Maybe()
-	eb.On("BroadcastAgentActivity", "ch81", mock.MatchedBy(func(d events.AgentActivityEventData) bool {
+	eb.On("BroadcastAgentActivity", "thread-81", mock.MatchedBy(func(d events.AgentActivityEventData) bool {
 		return d.Activity == "compacting"
 	})).Once()
-	eb.On("BroadcastAgentActivity", "ch81", mock.MatchedBy(func(d events.AgentActivityEventData) bool {
+	eb.On("BroadcastAgentActivity", "thread-81", mock.MatchedBy(func(d events.AgentActivityEventData) bool {
 		return d.Activity == "model" && d.Model == "claude-opus-4-6"
 	})).Once()
 
@@ -519,19 +542,21 @@ func (s *TaskExecutorSuite) TestStreamingOnThinkingAndToolResultBroadcasts() {
 	s.store.On("GetChannel", mock.Anything, "thread-28").Return(nil, nil).Maybe()
 	s.store.On("GetScheduledTask", s.ctx, int64(28)).Return(&db.ScheduledTask{ID: 28, Type: db.TaskTypeCron}, nil)
 
-	s.bot.On("CreateSimpleThread", s.ctx, "ch28", mock.Anything, mock.Anything).Return("thread-28", nil).Once()
+	s.bot.On("CreateSimpleThread", s.ctx, "ch28", mock.Anything, "").Return("thread-28", nil).Once()
 	s.store.On("UpdateScheduledTaskThreadID", s.ctx, int64(28), "thread-28").Return(nil)
+	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(msg *bot.OutgoingMessage) bool {
+		return msg.ChannelID == "thread-28" && msg.Content == "Turn 1"
+	})).Return(nil).Once()
 
 	s.runner.On("Run", mock.Anything, mock.MatchedBy(func(req *agent.AgentRequest) bool {
 		if req.OnThinking == nil || req.OnToolResult == nil {
 			return false
 		}
-		// Pre-thread fires use task.ChannelID
-		req.OnThinking("pre-thread plan")
+		// Fires before and after the first turn both target the thread
+		req.OnThinking("pre-turn plan")
 		req.OnToolResult("toolu_x", "pre-out", false)
 		req.OnTurn("Turn 1", agent.TurnRef{})
-		// Post-thread fires use threadID
-		req.OnThinking("post-thread plan")
+		req.OnThinking("post-turn plan")
 		req.OnToolResult("toolu_y", "post-out", true)
 		return true
 	})).Return(&agent.AgentResponse{
@@ -542,9 +567,9 @@ func (s *TaskExecutorSuite) TestStreamingOnThinkingAndToolResultBroadcasts() {
 
 	eb.On("BroadcastChannelCreated", "ch28", "thread-28").Once()
 	eb.On("BroadcastMessageCreated", "thread-28", mock.Anything).Maybe()
-	eb.On("BroadcastAgentThinking", "ch28", events.AgentThinkingEventData{Text: "pre-thread plan"}).Once()
-	eb.On("BroadcastToolResult", "ch28", events.ToolResultEventData{ToolUseID: "toolu_x", Output: "pre-out"}).Once()
-	eb.On("BroadcastAgentThinking", "thread-28", events.AgentThinkingEventData{Text: "post-thread plan"}).Once()
+	eb.On("BroadcastAgentThinking", "thread-28", events.AgentThinkingEventData{Text: "pre-turn plan"}).Once()
+	eb.On("BroadcastToolResult", "thread-28", events.ToolResultEventData{ToolUseID: "toolu_x", Output: "pre-out"}).Once()
+	eb.On("BroadcastAgentThinking", "thread-28", events.AgentThinkingEventData{Text: "post-turn plan"}).Once()
 	eb.On("BroadcastToolResult", "thread-28", events.ToolResultEventData{ToolUseID: "toolu_y", Output: "post-out", IsError: true}).Once()
 
 	resp, err := s.executor.ExecuteTask(s.ctx, task)
@@ -573,14 +598,17 @@ func (s *TaskExecutorSuite) TestStreamingResolvesThreadChatID() {
 
 	parent := &db.Channel{ID: 100, ChannelID: "ch71", Platform: types.PlatformLocal}
 	threadCh := &db.Channel{ID: 999, ChannelID: "thread-71", ParentID: "ch71", Platform: types.PlatformLocal}
-	s.allowBotInserts() // first-turn thread seeds the prompt + agent message
+	s.allowBotInserts() // the thread gets the prompt + agent message
 	s.store.On("GetChannel", mock.Anything, "ch71").Return(parent, nil)
-	// Not .Once(): first-turn thread seeding (prompt + agent message) and the
-	// tool-event chat-id resolution each look the thread channel up.
+	// Not .Once(): storing the prompt and the agent's turn and the tool-event
+	// chat-id resolution each look the thread channel up.
 	s.store.On("GetChannel", mock.Anything, "thread-71").Return(threadCh, nil)
 	s.store.On("GetScheduledTask", s.ctx, int64(71)).Return(&db.ScheduledTask{ID: 71, Type: db.TaskTypeCron}, nil)
 
-	s.bot.On("CreateSimpleThread", s.ctx, "ch71", mock.Anything, mock.Anything).Return("thread-71", nil).Once()
+	s.bot.On("CreateSimpleThread", s.ctx, "ch71", mock.Anything, "").Return("thread-71", nil).Once()
+	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(msg *bot.OutgoingMessage) bool {
+		return msg.ChannelID == "thread-71" && msg.Content == "Turn 1"
+	})).Return(nil).Once()
 	s.store.On("LinkTaskThread", s.ctx, mock.MatchedBy(func(ch *db.Channel) bool {
 		return ch.ChannelID == "thread-71" && ch.ParentID == "ch71"
 	}), int64(71), "thread-71").Return(nil)
@@ -614,7 +642,7 @@ func (s *TaskExecutorSuite) TestStreamingResolvesThreadChatID() {
 	_, err := s.executor.ExecuteTask(s.ctx, task)
 	require.NoError(s.T(), err)
 	// Four GetChannel calls: ch71 (parent) once, then thread-71 three times —
-	// seeding the prompt user message, seeding the agent's first turn, and the
+	// storing the prompt user message, storing the agent's first turn, and the
 	// tool-event chat-id resolution. The resolution stays lazy + cached: it
 	// fires once for the FIRST tool call and the second reuses it (otherwise
 	// this would be five), which is the behavior this test guards.
@@ -638,7 +666,10 @@ func (s *TaskExecutorSuite) TestStreamingOnceTaskUpsertsChannel() {
 	s.store.On("GetChannel", mock.Anything, "ch72").Return(parent, nil)
 	s.store.On("GetChannel", mock.Anything, "thread-72").Return(nil, nil).Maybe()
 
-	s.bot.On("CreateSimpleThread", s.ctx, "ch72", mock.Anything, mock.Anything).Return("thread-72", nil).Once()
+	s.bot.On("CreateSimpleThread", s.ctx, "ch72", mock.Anything, "").Return("thread-72", nil).Once()
+	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(msg *bot.OutgoingMessage) bool {
+		return msg.ChannelID == "thread-72" && msg.Content == "Done"
+	})).Return(nil).Once()
 	// One-shot tasks must NOT call LinkTaskThread — they call UpsertChannel.
 	s.store.On("UpsertChannel", s.ctx, mock.MatchedBy(func(ch *db.Channel) bool {
 		return ch.ChannelID == "thread-72" && ch.ParentID == "ch72"
@@ -658,6 +689,8 @@ func (s *TaskExecutorSuite) TestStreamingOnceTaskUpsertsChannel() {
 
 	_, err := s.executor.ExecuteTask(s.ctx, task)
 	require.NoError(s.T(), err)
+	// The once-task's thread id is not written back onto the task.
+	require.Empty(s.T(), task.ThreadID)
 	s.store.AssertCalled(s.T(), "UpsertChannel", s.ctx, mock.Anything)
 	s.store.AssertNotCalled(s.T(), "LinkTaskThread", mock.Anything, mock.Anything, mock.Anything, mock.Anything)
 	s.store.AssertNotCalled(s.T(), "UpdateScheduledTaskThreadID", mock.Anything, mock.Anything, mock.Anything)
@@ -680,7 +713,11 @@ func (s *TaskExecutorSuite) TestStreamingInvitesPermissionUsersToThread() {
 	}, nil)
 	s.store.On("GetScheduledTask", s.ctx, int64(21)).Return(&db.ScheduledTask{ID: 21, Type: db.TaskTypeCron}, nil)
 
-	s.bot.On("CreateSimpleThread", s.ctx, "ch21", mock.Anything, mock.Anything).Return("thread-21", nil).Once()
+	s.bot.On("CreateSimpleThread", s.ctx, "ch21", mock.Anything, "").Return("thread-21", nil).Once()
+	s.store.On("GetChannel", mock.Anything, "thread-21").Return(nil, nil)
+	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(msg *bot.OutgoingMessage) bool {
+		return msg.ChannelID == "thread-21" && msg.Content == "Turn 1"
+	})).Return(nil).Once()
 	s.store.On("LinkTaskThread", s.ctx, mock.MatchedBy(func(ch *db.Channel) bool {
 		return ch.ChannelID == "thread-21" && ch.ParentID == "ch21"
 	}), int64(21), "thread-21").Return(nil)
@@ -726,7 +763,11 @@ func (s *TaskExecutorSuite) TestStreamingInviteErrorsAreLogged() {
 	}, nil)
 	s.store.On("GetScheduledTask", s.ctx, int64(22)).Return(&db.ScheduledTask{ID: 22, Type: db.TaskTypeCron}, nil)
 
-	s.bot.On("CreateSimpleThread", s.ctx, "ch22", mock.Anything, mock.Anything).Return("thread-22", nil).Once()
+	s.bot.On("CreateSimpleThread", s.ctx, "ch22", mock.Anything, "").Return("thread-22", nil).Once()
+	s.store.On("GetChannel", mock.Anything, "thread-22").Return(nil, nil)
+	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(msg *bot.OutgoingMessage) bool {
+		return msg.ChannelID == "thread-22" && msg.Content == "Turn 1"
+	})).Return(nil).Once()
 	s.store.On("LinkTaskThread", s.ctx, mock.MatchedBy(func(ch *db.Channel) bool {
 		return ch.ChannelID == "thread-22" && ch.ParentID == "ch22"
 	}), int64(22), "thread-22").Return(nil)

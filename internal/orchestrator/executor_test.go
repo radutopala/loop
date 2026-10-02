@@ -3,6 +3,7 @@ package orchestrator
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"strings"
@@ -68,6 +69,31 @@ func (s *TaskExecutorSuite) allowBotInserts() {
 	})).Return(nil).Maybe()
 }
 
+// expectTaskThread wires the thread a task's first run creates before the
+// runner is invoked: CreateSimpleThread in the task's channel (always with an
+// empty initial message) returning threadID, then persisting the thread —
+// LinkTaskThread (recurring) or UpsertChannel (once) when the parent channel
+// has a row, otherwise UpdateScheduledTaskThreadID (recurring only). The
+// thread row starts without a session. threadCh answers the thread's channel
+// lookups (stored messages, agent-event chat ids); nil when no row is needed.
+func (s *TaskExecutorSuite) expectTaskThread(task *db.ScheduledTask, threadID string, hasChannelRow bool, threadCh *db.Channel) {
+	s.bot.On("CreateSimpleThread", mock.Anything, task.ChannelID, mock.MatchedBy(func(name string) bool {
+		return strings.Contains(name, fmt.Sprintf("task #%d (", task.ID))
+	}), "").Return(threadID, nil).Once()
+	isThreadRow := func(ch *db.Channel) bool {
+		return ch.ChannelID == threadID && ch.ParentID == task.ChannelID && ch.TaskID == task.ID && ch.SessionID == ""
+	}
+	switch {
+	case hasChannelRow && task.Type == db.TaskTypeOnce:
+		s.store.On("UpsertChannel", mock.Anything, mock.MatchedBy(isThreadRow)).Return(nil).Once()
+	case hasChannelRow:
+		s.store.On("LinkTaskThread", mock.Anything, mock.MatchedBy(isThreadRow), task.ID, threadID).Return(nil).Once()
+	case task.Type != db.TaskTypeOnce:
+		s.store.On("UpdateScheduledTaskThreadID", mock.Anything, task.ID, threadID).Return(nil).Once()
+	}
+	s.store.On("GetChannel", mock.Anything, threadID).Return(threadCh, nil).Maybe()
+}
+
 func (s *TaskExecutorSuite) TestNew() {
 	require.NotNil(s.T(), s.executor)
 	require.NotNil(s.T(), s.executor.runner)
@@ -92,10 +118,13 @@ func (s *TaskExecutorSuite) TestHappyPathWithSession() {
 	}, nil)
 	s.store.On("GetScheduledTask", s.ctx, int64(1)).Return(&db.ScheduledTask{ID: 1, Type: db.TaskTypeCron}, nil)
 	s.allowBotInserts()
+	// The thread is created without a session; the run forks the channel's
+	// session and stores the result on the thread.
+	s.expectTaskThread(task, "thread-1", true, &db.Channel{ID: 2, ChannelID: "thread-1"})
 	s.runner.On("Run", mock.Anything, mock.MatchedBy(func(req *agent.AgentRequest) bool {
 		return req.SessionID == "existing-session" &&
 			req.ForkSession == true &&
-			req.ChannelID == "ch1" &&
+			req.ChannelID == "ch1" && // non-local: the run stays registered under the channel
 			req.DirPath == "/home/user/project" &&
 			len(req.Messages) == 1 &&
 			req.Messages[0].Role == "user" &&
@@ -104,9 +133,9 @@ func (s *TaskExecutorSuite) TestHappyPathWithSession() {
 		Response:  "done!",
 		SessionID: "new-session",
 	}, nil)
-	s.store.On("UpdateSessionID", s.ctx, "ch1", "new-session").Return(nil)
+	s.store.On("UpdateSessionID", s.ctx, "thread-1", "new-session").Return(nil)
 	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(msg *bot.OutgoingMessage) bool {
-		return msg.ChannelID == "ch1" && msg.Content == "done!"
+		return msg.ChannelID == "thread-1" && msg.Content == "done!"
 	})).Return(nil).Once()
 
 	resp, err := s.executor.ExecuteTask(s.ctx, task)
@@ -129,15 +158,16 @@ func (s *TaskExecutorSuite) TestHappyPathWithoutSession() {
 
 	s.store.On("GetChannel", s.ctx, "ch2").Return(nil, nil)
 	s.store.On("GetScheduledTask", s.ctx, int64(2)).Return(&db.ScheduledTask{ID: 2, Type: db.TaskTypeInterval}, nil)
+	s.expectTaskThread(task, "thread-2", false, nil)
 	s.runner.On("Run", mock.Anything, mock.MatchedBy(func(req *agent.AgentRequest) bool {
 		return req.SessionID == "" && req.ForkSession == false && req.ChannelID == "ch2" && req.DirPath == ""
 	})).Return(&agent.AgentResponse{
 		Response:  "hi!",
 		SessionID: "fresh-session",
 	}, nil)
-	s.store.On("UpdateSessionID", s.ctx, "ch2", "fresh-session").Return(nil)
+	s.store.On("UpdateSessionID", s.ctx, "thread-2", "fresh-session").Return(nil)
 	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(msg *bot.OutgoingMessage) bool {
-		return msg.ChannelID == "ch2" && msg.Content == "hi!"
+		return msg.ChannelID == "thread-2" && msg.Content == "hi!"
 	})).Return(nil).Once()
 
 	resp, err := s.executor.ExecuteTask(s.ctx, task)
@@ -157,6 +187,7 @@ func (s *TaskExecutorSuite) TestRunnerError() {
 	}
 
 	s.store.On("GetChannel", s.ctx, "ch3").Return(nil, nil)
+	s.expectTaskThread(task, "thread-3", false, nil)
 	s.runner.On("Run", mock.Anything, mock.Anything).Return(nil, errors.New("runner broke"))
 
 	resp, err := s.executor.ExecuteTask(s.ctx, task)
@@ -168,32 +199,51 @@ func (s *TaskExecutorSuite) TestRunnerError() {
 }
 
 func (s *TaskExecutorSuite) TestActiveRunsRegisteredDuringExecution() {
-	activeRuns := &sync.Map{}
-	s.executor.SetActiveRuns(activeRuns)
-
-	task := &db.ScheduledTask{
-		ID: 60, ChannelID: "ch-active", Prompt: "run", Type: db.TaskTypeCron, Schedule: "* * * * *",
+	tests := []struct {
+		name     string
+		platform types.Platform
+		wantKey  string
+		otherKey string
+	}{
+		// Local: the first run already lives in the thread it just created, so
+		// the thread view's stop button finds it.
+		{name: "local registers under the new thread", platform: types.PlatformLocal, wantKey: "thread-active", otherKey: "ch-active"},
+		{name: "other platforms register under the channel", platform: types.PlatformDiscord, wantKey: "ch-active", otherKey: "thread-active"},
 	}
-	s.store.On("GetChannel", s.ctx, "ch-active").Return(nil, nil)
-	s.store.On("GetScheduledTask", s.ctx, int64(60)).Return(&db.ScheduledTask{ID: 60, Type: db.TaskTypeCron}, nil)
-	s.store.On("UpdateSessionID", mock.Anything, mock.Anything, mock.Anything).Return(nil)
-	s.bot.On("SendMessage", mock.Anything, mock.Anything).Return(nil)
-	s.store.On("InsertMessage", mock.Anything, mock.Anything).Return(nil)
+	for _, tc := range tests {
+		s.Run(tc.name, func() {
+			s.SetupTest()
+			activeRuns := &sync.Map{}
+			s.executor.SetActiveRuns(activeRuns)
 
-	registered := false
-	s.runner.On("Run", mock.Anything, mock.Anything).Run(func(_ mock.Arguments) {
-		// During execution, activeRuns should have our channel registered.
-		_, ok := activeRuns.Load("ch-active")
-		registered = ok
-	}).Return(&agent.AgentResponse{Response: "ok", SessionID: "s1"}, nil)
+			task := &db.ScheduledTask{
+				ID: 60, ChannelID: "ch-active", Prompt: "run", Type: db.TaskTypeCron, Schedule: "* * * * *",
+			}
+			s.store.On("GetChannel", s.ctx, "ch-active").Return(&db.Channel{ID: 1, ChannelID: "ch-active", Platform: tc.platform}, nil)
+			s.store.On("GetScheduledTask", s.ctx, int64(60)).Return(&db.ScheduledTask{ID: 60, Type: db.TaskTypeCron}, nil)
+			s.expectTaskThread(task, "thread-active", true, &db.Channel{ID: 2, ChannelID: "thread-active"})
+			s.store.On("UpdateSessionID", mock.Anything, "thread-active", "s1").Return(nil)
+			s.bot.On("SendMessage", mock.Anything, mock.Anything).Return(nil)
+			s.store.On("InsertMessage", mock.Anything, mock.Anything).Return(nil)
 
-	_, err := s.executor.ExecuteTask(s.ctx, task)
-	require.NoError(s.T(), err)
-	require.True(s.T(), registered, "activeRuns should have been set during execution")
+			registered, other := false, false
+			s.runner.On("Run", mock.Anything, mock.MatchedBy(func(req *agent.AgentRequest) bool {
+				return req.ChannelID == tc.wantKey
+			})).Run(func(_ mock.Arguments) {
+				_, registered = activeRuns.Load(tc.wantKey)
+				_, other = activeRuns.Load(tc.otherKey)
+			}).Return(&agent.AgentResponse{Response: "ok", SessionID: "s1"}, nil)
 
-	// After execution, it should be cleaned up.
-	_, ok := activeRuns.Load("ch-active")
-	require.False(s.T(), ok, "activeRuns should be cleaned up after execution")
+			_, err := s.executor.ExecuteTask(s.ctx, task)
+			require.NoError(s.T(), err)
+			require.True(s.T(), registered, "activeRuns should have been set during execution")
+			require.False(s.T(), other)
+
+			// After execution, it should be cleaned up.
+			_, ok := activeRuns.Load(tc.wantKey)
+			require.False(s.T(), ok, "activeRuns should be cleaned up after execution")
+		})
+	}
 }
 
 func (s *TaskExecutorSuite) TestActiveRunsStopCancelsTaskRun() {
@@ -273,16 +323,19 @@ func (s *TaskExecutorSuite) TestOnceTaskWithThreadIDRunsInline() {
 func (s *TaskExecutorSuite) TestRunnerErrorBroadcastsStatus() {
 	eb := new(MockEventBroadcaster)
 	s.executor.SetEventBroadcaster(eb)
+	// Non-local: statuses go to the parent only, tagged with the new thread.
 	eb.On("BroadcastAgentStatus", "ch-err", mock.MatchedBy(func(d events.AgentStatusEventData) bool {
-		return d.Status == "running" && d.RunID != ""
+		return d.Status == "running" && d.RunID != "" && d.ThreadID == "thread-err"
 	})).Once()
 	eb.On("BroadcastAgentStatus", "ch-err", mock.MatchedBy(func(d events.AgentStatusEventData) bool {
-		return d.Status == "error" && strings.Contains(d.Error, "runner broke") && d.RunID != ""
+		return d.Status == "error" && strings.Contains(d.Error, "runner broke") && d.RunID != "" && d.ThreadID == "thread-err"
 	})).Once()
+	eb.On("BroadcastChannelCreated", "ch-err", "thread-err").Once()
 
 	task := &db.ScheduledTask{ID: 50, ChannelID: "ch-err", Prompt: "fail", Type: db.TaskTypeCron, Schedule: "0 * * * *"}
 	s.store.On("GetChannel", s.ctx, "ch-err").Return(nil, nil)
 	s.store.On("GetScheduledTask", s.ctx, int64(50)).Return(&db.ScheduledTask{ID: 50, Type: db.TaskTypeCron}, nil)
+	s.expectTaskThread(task, "thread-err", false, nil)
 	s.runner.On("Run", mock.Anything, mock.Anything).Return(nil, errors.New("runner broke"))
 
 	_, err := s.executor.ExecuteTask(s.ctx, task)
@@ -375,6 +428,7 @@ func (s *TaskExecutorSuite) TestAgentResponseError() {
 
 	s.store.On("GetChannel", s.ctx, "ch4").Return(nil, nil)
 	s.store.On("GetScheduledTask", s.ctx, int64(4)).Return(&db.ScheduledTask{ID: 4, Type: db.TaskTypeCron}, nil)
+	s.expectTaskThread(task, "thread-4", false, nil)
 	s.runner.On("Run", mock.Anything, mock.Anything).Return(&agent.AgentResponse{
 		Error: "agent broke",
 	}, nil)
@@ -425,18 +479,21 @@ func (s *TaskExecutorSuite) TestSoftErrorsStillSucceed() {
 		s.Run(tc.name, func() {
 			s.SetupTest()
 			tc.setupMocks()
+			task := &db.ScheduledTask{
+				ID: 5, ChannelID: tc.channelID, Prompt: "test",
+				Type: db.TaskTypeCron, Schedule: "0 * * * *",
+			}
+			threadID := "thread-" + tc.channelID
+			s.expectTaskThread(task, threadID, false, nil)
 			s.store.On("GetScheduledTask", s.ctx, int64(5)).Return(&db.ScheduledTask{ID: 5, Type: db.TaskTypeCron}, nil)
 			s.runner.On("Run", mock.Anything, mock.Anything).Return(&agent.AgentResponse{
 				Response: "ok", SessionID: "sess",
 			}, nil)
 			s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(msg *bot.OutgoingMessage) bool {
-				return msg.ChannelID == tc.channelID && msg.Content == "ok"
+				return msg.ChannelID == threadID && msg.Content == "ok"
 			})).Return(nil).Maybe()
 
-			resp, err := s.executor.ExecuteTask(s.ctx, &db.ScheduledTask{
-				ID: 5, ChannelID: tc.channelID, Prompt: "test",
-				Type: db.TaskTypeCron, Schedule: "0 * * * *",
-			})
+			resp, err := s.executor.ExecuteTask(s.ctx, task)
 			require.NoError(s.T(), err)
 			require.Equal(s.T(), "ok", resp)
 		})
