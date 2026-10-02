@@ -45,11 +45,9 @@ type AgentRequest struct {
 	//     stream-json (batch runs always are); otherwise it forks. A fork emits
 	//     nothing on the parent stream — the run looks hung for minutes — and
 	//     its findings never reach a tool call the parent can see.
-	//   - CLAUDE_CODE_SUBAGENT_MODEL=inherit, so any subagent that does get
-	//     spawned runs on this request's model. This key outranks every other
-	//     source of a subagent's model, so a host ~/.claude/settings.json
-	//     setting it to e.g. "sonnet" (that mount is shared with the container)
-	//     otherwise silently downgrades the run.
+	//   - CLAUDE_CODE_SUBAGENT_MODEL=inherit, which every run passes (see
+	//     runSettings), so any subagent that does get spawned runs on this
+	//     request's model rather than a host ~/.claude/settings.json value.
 	ReviewMode bool `json:"review_mode,omitempty"`
 	// ReadOnly runs the request as a learn pass or an explanation over a
 	// chat run: its built-in tools are limited to the read-only --tools
