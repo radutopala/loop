@@ -139,3 +139,24 @@ Feature: Chat Components Journey
     Then I wait for text "Half a component" to appear
     And the element "pre" should contain text "<p>still streaming</p>"
     And the element "[data-testid='chat-component']" should not exist
+
+  Scenario: A code block offers to copy its text or the block
+    Given I set up a test channel via API for git repo "bdd-chat-code-copy"
+    And I open the app in a browser
+    And I wait for text "bdd-chat-code-copy" to appear
+
+    When I click on "bdd-chat-code-copy" in the sidebar
+    And I wait for "textarea" to be visible
+    And I inject a bot message with:
+      """
+      Here's the message:
+
+      ```
+      echo hello from the block
+      ```
+      """
+    Then I wait for text "echo hello from the block" to appear
+    And the element "[data-testid='code-block'] pre" should contain text "echo hello from the block"
+    When I hover over the element with text "echo hello from the block"
+    Then the element "[data-testid='code-block'] button[aria-label='Copy as text']" should be visible
+    And the element "[data-testid='code-block'] button[aria-label='Copy as code block']" should be visible
