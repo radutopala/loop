@@ -241,6 +241,7 @@ func (s *ServerSuite) SetupTest() {
 	s.mux.HandleFunc("DELETE /api/messages/{id}", s.srv.handleDeleteQueuedMessage)
 	s.mux.HandleFunc("POST /api/threads", s.srv.handleCreateThread)
 	s.mux.HandleFunc("POST /api/threads/{id}/fork", s.srv.handleForkThread)
+	s.mux.HandleFunc("POST /api/channels/{id}/messages/{msgId}/fork", s.srv.handleForkAtMessage)
 	s.mux.HandleFunc("DELETE /api/threads/{id}", s.srv.handleDeleteThread)
 	s.mux.HandleFunc("DELETE /api/channels/{id}", s.srv.handleDeleteChannel)
 	s.mux.HandleFunc("PATCH /api/channels/{id}/lock", s.srv.handleSetChannelLocked)

@@ -8,14 +8,59 @@ import (
 	"github.com/radutopala/loop/internal/agent"
 	"github.com/radutopala/loop/internal/db"
 	"github.com/radutopala/loop/internal/osutil"
+	"github.com/radutopala/loop/internal/transcript"
 )
 
-// sessionFiles deletes a Claude Code session's files: its transcript
-// <id>.jsonl and the <id>/ directory beside it, under the project directory
-// Claude Code keeps for a working directory.
+// sessionFiles reads and deletes a Claude Code session's files: its
+// transcript <id>.jsonl and the <id>/ directory beside it, under the project
+// directory Claude Code keeps for a working directory.
 type sessionFiles struct {
 	userHomeDir func() (string, error)
+	readFile    func(string) ([]byte, error)
 	removeAll   func(string) error
+}
+
+// promptOf returns the uuid of the prompt that entry uuid answers, in the
+// transcript of session sessionID run in workDir.
+func (f sessionFiles) promptOf(workDir, sessionID, uuid string) (string, error) {
+	home, err := f.userHomeDir()
+	if err != nil {
+		return "", err
+	}
+	path, err := transcript.Path(home, workDir, sessionID)
+	if err != nil {
+		return "", err
+	}
+	data, err := f.readFile(path)
+	if err != nil {
+		return "", err
+	}
+	entries, _ := transcript.Parse(data)
+	prompt, ok := transcript.PromptOf(entries, uuid)
+	if !ok {
+		return "", errors.New("the prompt isn't in the transcript")
+	}
+	return prompt.UUID, nil
+}
+
+// recordPrompt records on user message msgID of channel ch where its prompt
+// sits in the transcript, for a fork at the message to start just before
+// it. Claude Code reports no uuid for a prompt, so it's found from reply,
+// the first reply to it that has one, once its run ended and the transcript
+// is complete. Hidden threads' messages aren't forked at. A failure is only
+// logged; a fork at the message then finds the prompt itself.
+func (o *Orchestrator) recordPrompt(ctx context.Context, ch *db.Channel, msgID string, reply agent.TurnRef) {
+	if ch == nil || ch.DirPath == "" || reply.SessionID == "" || reply.UUID == "" || db.IsHiddenKind(ch.Kind) {
+		return
+	}
+	uuid, err := o.sessionFiles.promptOf(ch.DirPath, reply.SessionID, reply.UUID)
+	if err != nil {
+		o.logger.Warn("locating the prompt in the transcript", "error", err, "channel_id", ch.ChannelID, "session_id", reply.SessionID)
+		return
+	}
+	if err := o.store.SetPromptTranscriptRef(ctx, ch.ChannelID, msgID, reply.SessionID, uuid); err != nil {
+		o.logger.Warn("recording the prompt's transcript entry", "error", err, "channel_id", ch.ChannelID)
+	}
 }
 
 // remove deletes session sessionID's files for working directory workDir.

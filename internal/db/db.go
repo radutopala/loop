@@ -21,6 +21,8 @@ type Store interface {
 	IsChannelActive(ctx context.Context, channelID string) (bool, error)
 	UpdateSessionID(ctx context.Context, channelID string, sessionID string) error
 	MarkSessionForkPending(ctx context.Context, channelID string, sessionID string) (bool, error)
+	MarkSessionForkPendingAt(ctx context.Context, channelID, sessionID, resumeAt string) (bool, error)
+	ForkResumeAt(ctx context.Context, channelID string) (string, error)
 	SessionInUse(ctx context.Context, sessionID, exceptChannelID string) (bool, error)
 	UpdateChannelAgentOverrides(ctx context.Context, channelID, model, effort string) error
 	UpdateChannelPermissions(ctx context.Context, channelID string, perms types.Permissions) error
@@ -105,6 +107,8 @@ type Store interface {
 	UpdateChannelExplainOverride(ctx context.Context, channelID, value string) error
 	GetChatMessage(ctx context.Context, channelID, msgID string) (*Message, error)
 	LastBotMessage(ctx context.Context, channelID, triggerMsgID string) (*Message, error)
+	FirstForkableReply(ctx context.Context, channelID, triggerMsgID string) (*Message, error)
+	SetPromptTranscriptRef(ctx context.Context, channelID, msgID, sessionID, uuid string) error
 	QueueExplanation(ctx context.Context, e *Explanation) (*Explanation, bool, error)
 	GetExplanation(ctx context.Context, channelID, messageID string) (*Explanation, error)
 	GetExplanationByTrigger(ctx context.Context, explainChannelID, triggerMsgID string) (*Explanation, error)
@@ -350,6 +354,7 @@ func scanMessageRow(scanner rowScanner) (*Message, error) {
 	msg.IsRunning = isRunning == 1
 	msg.IsError = isError == 1
 	msg.Kind = MessageKind(kind)
+	msg.Forkable = msg.Kind == MessageKindMessage && msg.SessionID != "" && msg.TranscriptUUID != ""
 	return msg, nil
 }
 

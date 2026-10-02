@@ -1376,35 +1376,52 @@ func (s *OrchestratorSuite) TestHandleMessageUserTriggerLeavesTriggerEmpty() {
 }
 
 // TestHandleMessageForkedThreadSharedSession covers threads created by the
-// fork endpoint: their session id comes from ANOTHER thread (not the
+// fork endpoints: their session id comes from ANOTHER thread (not the
 // parent), so the parent-equality check misses them. Any session held by
 // more than one row must fork on the first message, or the fork would write
-// into the source thread's conversation.
+// into the source thread's conversation. A fork at a message also cuts the
+// session at its stored resume point; failing to read it forks it whole.
 func (s *OrchestratorSuite) TestHandleMessageForkedThreadSharedSession() {
-	s.store.On("IsChannelActive", s.ctx, "t-fork").Return(true, nil)
-	s.store.On("GetChannel", s.ctx, "t-fork").Return(&db.Channel{
-		ID: 7, ChannelID: "t-fork", GuildID: "g1", ParentID: "ch1",
-		SessionID: "sess-src", ForkPending: true, Active: true,
-	}, nil)
-	s.store.On("InsertMessage", s.ctx, mock.Anything).Return(nil)
-	s.bot.On("SendTyping", mock.Anything, "t-fork").Return(nil).Maybe()
-	s.store.On("GetRecentMessages", s.ctx, "t-fork", 50).Return([]*db.Message{}, nil)
-	s.store.On("GetChannel", s.ctx, "ch1").Return(&db.Channel{
-		ID: 1, ChannelID: "ch1", SessionID: "sess-parent",
-	}, nil)
+	tests := []struct {
+		name       string
+		resumeAt   string
+		resumeErr  error
+		wantResume string
+	}{
+		{name: "whole session"},
+		{name: "cut at a message", resumeAt: "uuid-7", wantResume: "uuid-7"},
+		{name: "resume point unreadable", resumeErr: errors.New("db down")},
+	}
+	for _, tc := range tests {
+		s.Run(tc.name, func() {
+			s.SetupTest()
+			s.store.On("IsChannelActive", s.ctx, "t-fork").Return(true, nil)
+			s.store.On("GetChannel", s.ctx, "t-fork").Return(&db.Channel{
+				ID: 7, ChannelID: "t-fork", GuildID: "g1", ParentID: "ch1",
+				SessionID: "sess-src", ForkPending: true, Active: true,
+			}, nil)
+			s.store.On("ForkResumeAt", s.ctx, "t-fork").Return(tc.resumeAt, tc.resumeErr)
+			s.store.On("InsertMessage", s.ctx, mock.Anything).Return(nil)
+			s.bot.On("SendTyping", mock.Anything, "t-fork").Return(nil).Maybe()
+			s.store.On("GetRecentMessages", s.ctx, "t-fork", 50).Return([]*db.Message{}, nil)
+			s.store.On("GetChannel", s.ctx, "ch1").Return(&db.Channel{
+				ID: 1, ChannelID: "ch1", SessionID: "sess-parent",
+			}, nil)
 
-	s.runner.On("Run", mock.Anything, mock.MatchedBy(func(req *agent.AgentRequest) bool {
-		return req.SessionID == "sess-src" && req.ForkSession
-	})).Return(&agent.AgentResponse{Response: "forked", SessionID: "sess-new"}, nil)
-	s.store.On("UpdateSessionID", s.ctx, "t-fork", "sess-new").Return(nil)
-	s.bot.On("SendMessage", s.ctx, mock.Anything).Return(nil)
-	s.store.On("MarkMessagesProcessed", s.ctx, []int64{}).Return(nil)
+			s.runner.On("Run", mock.Anything, mock.MatchedBy(func(req *agent.AgentRequest) bool {
+				return req.SessionID == "sess-src" && req.ForkSession && req.ResumeAt == tc.wantResume
+			})).Return(&agent.AgentResponse{Response: "forked", SessionID: "sess-new"}, nil)
+			s.store.On("UpdateSessionID", s.ctx, "t-fork", "sess-new").Return(nil)
+			s.bot.On("SendMessage", s.ctx, mock.Anything).Return(nil)
+			s.store.On("MarkMessagesProcessed", s.ctx, []int64{}).Return(nil)
 
-	s.orch.HandleMessage(s.ctx, &bot.IncomingMessage{
-		ChannelID: "t-fork", GuildID: "g1", AuthorName: "user",
-		Content: "continue here", IsBotMention: true,
-	})
-	s.runner.AssertExpectations(s.T())
+			s.orch.HandleMessage(s.ctx, &bot.IncomingMessage{
+				ChannelID: "t-fork", GuildID: "g1", AuthorName: "user",
+				Content: "continue here", IsBotMention: true,
+			})
+			s.runner.AssertExpectations(s.T())
+		})
+	}
 }
 
 // TestHandleMessageOwnSessionResumesInPlace: a thread with its own session

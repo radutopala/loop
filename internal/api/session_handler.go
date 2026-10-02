@@ -16,6 +16,7 @@ import (
 	"github.com/radutopala/loop/internal/explain"
 	"github.com/radutopala/loop/internal/learn"
 	"github.com/radutopala/loop/internal/osutil"
+	"github.com/radutopala/loop/internal/transcript"
 )
 
 type sessionEntry struct {
@@ -162,7 +163,7 @@ func (s *Server) handleSetSession(w http.ResponseWriter, r *http.Request) {
 	if !decodeJSON(w, r, &req) {
 		return
 	}
-	sessionID, ok := cleanSessionID(req.SessionID)
+	sessionID, ok := transcript.CleanSessionID(req.SessionID)
 	if !ok || sessionID != req.SessionID {
 		http.Error(w, "invalid session_id", http.StatusBadRequest)
 		return

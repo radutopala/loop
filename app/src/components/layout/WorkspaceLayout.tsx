@@ -1021,13 +1021,28 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
               onScrollComplete={onScrollComplete}
               trustPending={!!channel.trust_pending}
               onReviewTrust={onReviewProjectTrust}
+              onSelectThread={onSelectThread}
             />
           </ExplainContext.Provider>
         </LearnContext.Provider>
         {shownComponent?.leafId === leafId && <ChatComponentFull component={shownComponent.component} onClose={closeComponent} />}
       </ComponentFocusContext.Provider>
     ),
-    [openComponent, learn, explain, channelId, chatState, editorState.roots, scrollToMessageId, onScrollComplete, channel.trust_pending, onReviewProjectTrust, shownComponent, closeComponent],
+    [
+      openComponent,
+      learn,
+      explain,
+      channelId,
+      chatState,
+      editorState.roots,
+      scrollToMessageId,
+      onScrollComplete,
+      channel.trust_pending,
+      onReviewProjectTrust,
+      onSelectThread,
+      shownComponent,
+      closeComponent,
+    ],
   );
 
   const renderLeaf = useCallback(

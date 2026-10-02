@@ -555,3 +555,25 @@ func (s *SQLiteStore) GetTimeline(ctx context.Context, channelID string, cursorP
 	defer rows.Close()
 	return scanMessages(rows)
 }
+
+// FirstForkableReply returns the first bot message of the turn
+// triggerMsgID started in a channel that records where it sits in the
+// transcript, or nil when it has none.
+func (s *SQLiteStore) FirstForkableReply(ctx context.Context, channelID, triggerMsgID string) (*Message, error) {
+	return s.queryMessage(ctx,
+		`SELECT `+messageColumns+` FROM messages
+		 WHERE channel_id = ? AND trigger_msg_id = ? AND is_bot = 1 AND kind = 'message'
+		   AND session_id != '' AND transcript_uuid != '' ORDER BY id ASC LIMIT 1`,
+		channelID, triggerMsgID,
+	)
+}
+
+// SetPromptTranscriptRef records where user message msgID's prompt sits in
+// the transcript of session sessionID.
+func (s *SQLiteStore) SetPromptTranscriptRef(ctx context.Context, channelID, msgID, sessionID, uuid string) error {
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE messages SET session_id = ?, transcript_uuid = ? WHERE channel_id = ? AND msg_id = ? AND is_bot = 0`,
+		sessionID, uuid, channelID, msgID,
+	)
+	return err
+}

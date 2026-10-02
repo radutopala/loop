@@ -2,17 +2,15 @@ package api
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
 	"path/filepath"
-	"strings"
 	"time"
 
 	"github.com/radutopala/loop/internal/db"
-	"github.com/radutopala/loop/internal/osutil"
 	"github.com/radutopala/loop/internal/randutil"
+	"github.com/radutopala/loop/internal/transcript"
 )
 
 type createThreadRequest struct {
@@ -133,7 +131,7 @@ func (s *Server) threadOwner(ctx context.Context, thread *db.Channel) *db.Channe
 // user prompts and assistant text responses as messages in the thread. The
 // transcript is looked up under the parent channel's project dir.
 func (s *Server) importSessionMessages(ctx context.Context, parentChannelID, threadID, sessionID string) {
-	if _, ok := cleanSessionID(sessionID); !ok || s.store == nil || s.sys == nil {
+	if _, ok := transcript.CleanSessionID(sessionID); !ok || s.store == nil || s.sys == nil {
 		return
 	}
 
@@ -149,8 +147,14 @@ func (s *Server) importSessionMessages(ctx context.Context, parentChannelID, thr
 // projectDir, e.g. a worktree's, whose transcripts live apart from the
 // parent channel's.
 func (s *Server) importSessionMessagesFrom(ctx context.Context, projectDir, threadID, sessionID string) {
-	sessionID, ok := cleanSessionID(sessionID)
-	if !ok || s.store == nil || s.sys == nil {
+	s.importSessionMessagesUntil(ctx, projectDir, threadID, sessionID, "")
+}
+
+// importSessionMessagesUntil is importSessionMessagesFrom for a fork cut at
+// transcript entry cut: it imports the transcript up to and including that
+// entry. "", or an entry the transcript doesn't have, imports all of it.
+func (s *Server) importSessionMessagesUntil(ctx context.Context, projectDir, threadID, sessionID, cut string) {
+	if _, ok := transcript.CleanSessionID(sessionID); !ok || s.store == nil || s.sys == nil {
 		return
 	}
 
@@ -160,47 +164,19 @@ func (s *Server) importSessionMessagesFrom(ctx context.Context, projectDir, thre
 		return
 	}
 
-	// Build the JSONL file path.
-	home, err := s.sys.UserHomeDir()
+	entries, lines, err := s.readTranscript(projectDir, sessionID)
 	if err != nil {
 		return
 	}
-	encodedPath := osutil.EncodeClaudeProjectPath(projectDir)
-	jsonlPath := filepath.Join(home, ".claude", "projects", encodedPath, sessionID+".jsonl")
-
-	f, err := s.sys.Open(jsonlPath)
-	if err != nil {
-		return
-	}
-	defer f.Close()
-
-	data, err := io.ReadAll(f)
-	if err != nil {
-		return
+	for i, e := range entries {
+		if cut != "" && e.UUID == cut {
+			entries = entries[:i+1]
+			break
+		}
 	}
 
-	// Parse and insert messages.
-	lines := strings.Split(string(data), "\n")
-	baseTime := time.Now().Add(-time.Duration(len(lines)) * time.Second) // sequential timestamps
-
-	for i, line := range lines {
-		line = strings.TrimSpace(line)
-		if line == "" {
-			continue
-		}
-
-		var entry struct {
-			Type      string `json:"type"`
-			Timestamp string `json:"timestamp"`
-			Message   struct {
-				Role    string          `json:"role"`
-				Content json.RawMessage `json:"content"`
-			} `json:"message"`
-		}
-		if json.Unmarshal([]byte(line), &entry) != nil {
-			continue
-		}
-
+	baseTime := time.Now().Add(-time.Duration(lines) * time.Second) // sequential timestamps
+	for _, entry := range entries {
 		var text string
 		var isBot bool
 		switch entry.Type {
@@ -209,7 +185,8 @@ func (s *Server) importSessionMessagesFrom(ctx context.Context, projectDir, thre
 			isBot = true
 		case "user":
 			// Only import prompts (plain string), not tool_result arrays.
-			if json.Unmarshal(entry.Message.Content, &text) != nil {
+			var ok bool
+			if text, ok = entry.Prompt(); !ok {
 				continue
 			}
 		default:
@@ -220,7 +197,7 @@ func (s *Server) importSessionMessagesFrom(ctx context.Context, projectDir, thre
 			continue
 		}
 
-		createdAt := baseTime.Add(time.Duration(i) * time.Second)
+		createdAt := baseTime.Add(time.Duration(entry.Line) * time.Second)
 		if entry.Timestamp != "" {
 			if t, err := time.Parse(time.RFC3339Nano, entry.Timestamp); err == nil {
 				createdAt = t
@@ -241,6 +218,9 @@ func (s *Server) importSessionMessagesFrom(ctx context.Context, projectDir, thre
 			IsBot:       isBot,
 			IsProcessed: true, // all imported messages are historical
 			CreatedAt:   createdAt,
+			// Where the message sits in the session, to fork at it.
+			SessionID:      sessionID,
+			TranscriptUUID: entry.UUID,
 		}
 		if err := s.store.InsertMessage(ctx, msg); err != nil {
 			s.logger.Warn("import session message failed", "error", err, "thread_id", threadID)
@@ -249,16 +229,49 @@ func (s *Server) importSessionMessagesFrom(ctx context.Context, projectDir, thre
 	}
 }
 
-// cleanSessionID sanitises a session id to prevent path traversal: only the
-// base name is valid (no slashes, no ".." components).
-func cleanSessionID(id string) (string, bool) {
-	id = filepath.Base(id)
-	return id, id != "." && id != ".." && id != ""
+// readTranscript parses session sessionID's transcript, kept under the
+// project dir Claude Code uses for projectDir. It returns the entries that
+// parse and the transcript's line count; lines that don't parse are skipped.
+func (s *Server) readTranscript(projectDir, sessionID string) ([]transcript.Entry, int, error) {
+	home, err := s.sys.UserHomeDir()
+	if err != nil {
+		return nil, 0, err
+	}
+	path, err := transcript.Path(home, projectDir, sessionID)
+	if err != nil {
+		return nil, 0, err
+	}
+	f, err := s.sys.Open(path)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer f.Close()
+
+	data, err := io.ReadAll(f)
+	if err != nil {
+		return nil, 0, err
+	}
+	entries, lines := transcript.Parse(data)
+	return entries, lines, nil
 }
 
 type forkThreadResponse struct {
 	ThreadID     string `json:"thread_id"`
 	WorktreePath string `json:"worktree_path,omitempty"`
+	// Prompt is the message a fork at a user message starts before, for
+	// the composer to offer again.
+	Prompt string `json:"prompt,omitempty"`
+}
+
+// forkPoint is where a fork picks up its source's conversation.
+type forkPoint struct {
+	// SessionID is the session the fork continues; "" starts it fresh.
+	SessionID string
+	// ResumeAt is the transcript entry the fork keeps the session up to;
+	// "" keeps all of it.
+	ResumeAt string
+	// Prompt is returned to the caller as forkThreadResponse.Prompt.
+	Prompt string
 }
 
 // handleForkThread creates a sibling of the given thread that continues its
@@ -291,7 +304,7 @@ func (s *Server) handleForkThread(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if src.Worktree {
-		s.forkWorktreeThread(w, r, src)
+		s.forkWorktreeThread(w, r, src, forkPoint{SessionID: src.SessionID})
 		return
 	}
 
@@ -313,13 +326,13 @@ func (s *Server) handleForkThread(w http.ResponseWriter, r *http.Request) {
 	writeHTTPJSON(w, http.StatusCreated, forkThreadResponse{ThreadID: newID}, s.logger)
 }
 
-// forkWorktreeThread is the worktree-thread arm of handleForkThread: new
-// worktree branched from what the SOURCE worktree has checked out (its
-// branch, or its commit when detached), new thread carrying the source's
-// session. The source's transcript lives under its own worktree's project
-// dir, not the parent channel's, so that's where it's copied and imported
-// from.
-func (s *Server) forkWorktreeThread(w http.ResponseWriter, r *http.Request, src *db.Channel) {
+// forkWorktreeThread is the worktree-thread arm of handleForkThread and
+// handleForkAtMessage: new worktree branched from what the SOURCE worktree
+// has checked out (its branch, or its commit when detached), new thread
+// continuing the source's conversation from at. The source's transcript
+// lives under its own worktree's project dir, not the parent channel's, so
+// that's where it's copied and imported from.
+func (s *Server) forkWorktreeThread(w http.ResponseWriter, r *http.Request, src *db.Channel, at forkPoint) {
 	parent, err := s.store.GetChannel(r.Context(), src.ParentID)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -362,20 +375,20 @@ func (s *Server) forkWorktreeThread(w http.ResponseWriter, r *http.Request, src 
 		return
 	}
 	staged := false
-	if src.SessionID != "" {
-		if err := s.copySessionFile(src.DirPath, result.WorktreePath, src.SessionID); err != nil {
+	if at.SessionID != "" {
+		if err := s.copySessionFile(src.DirPath, result.WorktreePath, at.SessionID); err != nil {
 			s.logger.Warn("fork session transcript unavailable; starting thread fresh",
-				"thread_id", newID, "session_id", src.SessionID, "error", err)
+				"thread_id", newID, "session_id", at.SessionID, "error", err)
 		} else {
 			staged = true
 		}
 	}
 	if staged {
-		if _, err := s.store.MarkSessionForkPending(r.Context(), newID, src.SessionID); err != nil {
+		if _, err := s.store.MarkSessionForkPendingAt(r.Context(), newID, at.SessionID, at.ResumeAt); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
-		s.importSessionMessagesFrom(r.Context(), src.DirPath, newID, src.SessionID)
+		s.importSessionMessagesUntil(r.Context(), src.DirPath, newID, at.SessionID, at.ResumeAt)
 	} else {
 		// The new thread inherited the parent channel's session, which isn't
 		// this conversation and whose transcript isn't in the new worktree's
@@ -393,5 +406,6 @@ func (s *Server) forkWorktreeThread(w http.ResponseWriter, r *http.Request, src 
 	writeHTTPJSON(w, http.StatusCreated, forkThreadResponse{
 		ThreadID:     newID,
 		WorktreePath: result.WorktreePath,
+		Prompt:       at.Prompt,
 	}, s.logger)
 }

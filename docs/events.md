@@ -148,6 +148,7 @@ A new message was posted to a channel (by a user or the bot).
 | `priority`      | int    | Queue priority (omitted when zero). Higher values run ahead of older queued rows; used by deny-with-prompt interrupts to insert ahead of B/C without deleting them. The FE renders the position as `1/N` in the queued chip. |
 | `trigger_msg_id`| string | For bot replies, the `msg_id` of the user message whose agent run produced this row. Omitted on user messages and pre-feature bot rows. The FE uses it to group the reply (and the run's intermediate `tool.use`/`agent.thinking` rows, which carry the same `trigger_msg_id` when persisted to the timeline) under the triggering user message — needed because priority-bumped runs can complete out of chronological order. |
 | `not_before`    | int64  | Unix-seconds timestamp before which a delayed message (queued via `queue_message` with `delay_seconds`) runs. Omitted when zero (immediate). Carried on the event so the FE bubble can render the live countdown on live insert, not only after a reload. |
+| `forkable`      | bool   | Set on a bot reply that records its place in the session's transcript, so the conversation can be [forked at it](api.md#post-apichannelsidmessagesmsgidfork). Omitted otherwise. |
 
 ---
 

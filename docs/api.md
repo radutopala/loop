@@ -431,6 +431,30 @@ For **worktree threads**, the fork additionally creates a new git worktree branc
 
 ---
 
+### `POST /api/channels/{id}/messages/{msgId}/fork`
+
+Forks a channel's or thread's conversation at one of its messages: like [`POST /api/threads/{id}/fork`](#post-apithreadsidfork), but the new thread's session is cut at that message. `msgId` is the message's `msg_id`. The fork of a top-level channel is a new thread under it, and the fork of a thread is a sibling thread.
+
+- **Agent reply:** the reply must record where it sits in its session's transcript; such messages carry `"forkable": true` in the message list, the timeline and `message.created` events. The new thread holds the reply's session with `fork_pending` and the reply's transcript uuid. Its first run resumes with `--fork-session --resume-session-at=<uuid>`, so it keeps the reply and drops everything after it. See [Orchestrator: Fork at a turn](orchestrator.md#fork-at-a-turn).
+- **User message:** Claude Code doesn't report a prompt's uuid, so Loop finds it when the message's run ends: it walks the transcript back through `parentUuid` from the run's first reply that records a uuid to the prompt, and records the prompt's uuid on the message. The fork cuts at the entry before the prompt. A message from before Loop recorded prompts is located the same way at fork time, from its first reply that records a uuid. When the prompt started its session, the new thread starts with no session. Either way, the response's `prompt` is the message's text, for the composer to offer again.
+
+The history up to the cut is imported into the new thread for display. Worktree threads also get a new worktree, as in the thread fork.
+
+**Response (201):**
+```json
+{ "thread_id": "abc123", "prompt": "the user message, for a fork at one" }
+```
+
+`worktree_path` is present for worktree forks, and `prompt` only for a fork at a user message.
+
+**Errors:**
+- `404`: the channel doesn't exist or is a hidden learn or explain thread, or it has no such message.
+- `409`: the message can't be forked at. This covers a reply with no transcript position, a user message with no such reply, and a transcript that is missing or doesn't contain the reply.
+- `500`: git or store failures.
+- `501`: not configured.
+
+---
+
 ### `DELETE /api/threads/{id}`
 
 Delete a thread.
@@ -747,6 +771,8 @@ List messages for a channel. Supports two modes: **cursor-based pagination** (de
 ```
 
 `trigger_msg_id` is the `msg_id` of the user message whose agent run produced this row. Empty (and omitted in JSON via `omitempty`) for user messages and pre-feature bot rows.
+
+`forkable` is `true` on a message that records its place in the session's transcript (an agent reply, a user message whose run has ended, or a message a fork or resume imported), so the conversation can be [forked at it](#post-apichannelsidmessagesmsgidfork). It is omitted otherwise.
 
 **Behavior notes:**
 - **Cursor mode:** Fetches `limit+1` messages to determine if more exist. If so, `next_cursor` is set to the last returned message's ID. Messages are ordered oldest-first.

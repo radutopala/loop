@@ -94,7 +94,7 @@ type Orchestrator struct {
 	loadProjectConfig func(string, *config.Config) (*config.Config, error)
 	removeMCPConfig   func(string, string) error
 	timeNow           func() time.Time // injectable clock (session-limit reset math, tests)
-	sessionFiles      sessionFiles     // deletes hidden threads' forked sessions (see dropFork)
+	sessionFiles      sessionFiles     // reads transcripts (see recordPrompt), deletes hidden threads' forked sessions (see dropFork)
 	sessions          sessionSwitches  // session switches deferred to a run's end
 	tasks             *taskRegistry
 	delayPollInterval time.Duration // how often the delay poller wakes; 0 disables it
@@ -128,7 +128,7 @@ func New(store db.Store, bot Bot, runner Runner, sched scheduler.Scheduler, logg
 		tasks:             newTaskRegistry(),
 		delayPollInterval: DelayPollInterval,
 		delayStop:         make(chan struct{}),
-		sessionFiles:      sessionFiles{userHomeDir: os.UserHomeDir, removeAll: os.RemoveAll},
+		sessionFiles:      sessionFiles{userHomeDir: os.UserHomeDir, readFile: os.ReadFile, removeAll: os.RemoveAll},
 	}
 	o.loadWorktreeProjectConfig = config.LoadWorktreeProjectConfig
 	o.cfg.Store(&cfg)

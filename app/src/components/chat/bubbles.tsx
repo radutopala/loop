@@ -12,6 +12,8 @@ import { CopyButton } from "../shared/CopyButton";
 import { buildActivityStyle, buildMessageStyles, ChannelContext, FILE_PATH_TOOLS, renderInputWithLinks } from "./chatShared";
 import { DelayCountdown } from "./DelayCountdown";
 import { ExplainButton } from "./ExplainButton";
+import { ForkMessageButton } from "./ForkMessageButton";
+import { canForkMessage } from "./forkMessage";
 import { LearnTurnButton } from "./LearnTurnButton";
 import { MarkdownContent } from "./markdown";
 import { formatMessageTimestamp } from "./timestamps";
@@ -117,6 +119,7 @@ export function MessageBubble({
   highlighted,
   onQuote,
   turnEnd,
+  onFork,
 }: {
   message: Message;
   showProcessing?: boolean;
@@ -126,6 +129,9 @@ export function MessageBubble({
   onQuote?: (msg: Message) => void;
   /** The bot message ends its turn: it carries the turn's Explain action. */
   turnEnd?: boolean;
+  /** Forks the conversation at the message into a new thread; unset where
+   * the chat offers no forking (the hidden Learn view's thread). */
+  onFork?: (msg: Message) => Promise<void>;
 }) {
   const { colors } = useTheme();
   const styles = buildMessageStyles(colors);
@@ -133,6 +139,10 @@ export function MessageBubble({
   const time = formatMessageTimestamp(message.created_at);
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; items: MenuItem[] } | null>(null);
   const [hovered, setHovered] = useState(false);
+  const forkButton =
+    onFork && canForkMessage(message, { queued: showQueued, processing: showProcessing }) ? (
+      <ForkMessageButton onFork={() => onFork(message)} visible={hovered} style={isUser ? { marginTop: 0 } : undefined} />
+    ) : null;
 
   const handleContextMenu = useCallback(
     (e: React.MouseEvent) => {
@@ -215,12 +225,14 @@ export function MessageBubble({
         <div style={styles.content}>
           <MarkdownContent content={message.content} />
         </div>
-        {/* The turn's Explain and Learn actions, below its reply. They
-            carry the row's top margin, so it takes no room without them. */}
-        {turnEnd && !isUser && (
+        {/* The turn's Explain and Learn actions, below its reply, and
+            +fork on any reply the conversation can fork at. They carry the
+            row's top margin, so it takes no room without them. */}
+        {(turnEnd || forkButton) && !isUser && (
           <div style={{ display: "flex", gap: 6 }}>
-            <ExplainButton messageId={message.msg_id} />
-            <LearnTurnButton messageId={message.msg_id} />
+            {turnEnd && <ExplainButton messageId={message.msg_id} />}
+            {turnEnd && <LearnTurnButton messageId={message.msg_id} />}
+            {forkButton}
           </div>
         )}
         {isUser && (
@@ -258,6 +270,7 @@ export function MessageBubble({
                 processing
               </span>
             )}
+            {forkButton}
             <MessageDbId id={message.id} channelId={message.channel_id} />
             <span style={styles.time}>{time}</span>
           </div>

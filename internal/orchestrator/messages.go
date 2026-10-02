@@ -430,6 +430,16 @@ func (o *Orchestrator) prepareAgentRequest(ctx context.Context, msg *bot.Incomin
 		if req.SessionID != "" && (channel.SessionID == parent.SessionID || channel.ForkPending) {
 			req.ForkSession = true
 		}
+		// A thread forked at a message cuts the session there: the first
+		// run keeps the transcript up to that entry and drops the rest.
+		// Learn and explain threads pick their own cut.
+		if req.ForkSession && channel.ForkPending && !db.IsHiddenKind(channel.Kind) {
+			if at, err := o.store.ForkResumeAt(ctx, channel.ChannelID); err != nil {
+				o.logger.Error("reading fork resume point", "error", err, "channel_id", channel.ChannelID)
+			} else {
+				req.ResumeAt = at
+			}
+		}
 		// Pass the root project checkout so the runner can mount it for
 		// worktree containers and apply the full config merge chain
 		// (global → root project → worktree). worktreeRootFor walks past
@@ -541,9 +551,15 @@ func (o *Orchestrator) executeAgentRun(ctx context.Context, msg *bot.IncomingMes
 	// The session the run is in, as its streamed turns report it; a failed
 	// run returns no response to tell.
 	var ranSession string
+	// The run's first reply that records its transcript entry: it leads
+	// back to the prompt, recorded once the run ends.
+	var firstReply agent.TurnRef
 	tracker := newStreamTracker(func(text string, ref agent.TurnRef) {
 		if ref.SessionID != "" {
 			ranSession = ref.SessionID
+		}
+		if firstReply.UUID == "" && ref.SessionID != "" {
+			firstReply = ref
 		}
 		if err := o.bot.SendMessage(ctx, &bot.OutgoingMessage{
 			ChannelID:        msg.ChannelID,
@@ -666,6 +682,7 @@ func (o *Orchestrator) executeAgentRun(ctx context.Context, msg *bot.IncomingMes
 	}
 
 	resp, err := o.runner.Run(runCtx, req)
+	o.recordPrompt(ctx, channel, msg.MessageID, firstReply)
 	if err != nil {
 		if selfInitiatedPlan.Load() {
 			o.logger.Info("run stopped for self-initiated plan mode", "channel_id", msg.ChannelID)

@@ -91,6 +91,8 @@ type MessageEventData struct {
 	// Carried so the FE bubble can render the live countdown on live insert (not
 	// just after a reload). Missing/0 = immediate.
 	NotBefore int64 `json:"not_before,omitempty"`
+	// Forkable is set on an agent reply the conversation can be forked at.
+	Forkable bool `json:"forkable,omitempty"`
 }
 
 // MessagesProcessedData is the payload for messages.processed events.

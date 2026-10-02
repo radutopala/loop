@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { forkAtMessage } from "../../api/channels";
 import type { RootEntry } from "../../api/files";
 import type { ChatState } from "../../hooks/useChatState";
 import { useQueuedEdit } from "../../hooks/useQueuedEdit";
@@ -12,6 +13,7 @@ import { ChatFindBar } from "./ChatFindBar";
 import { ChatInput } from "./ChatInput";
 import type { ChatMessagesHandle } from "./ChatMessages";
 import { ChatMessages } from "./ChatMessages";
+import { draftText } from "./chatDrafts";
 
 function buildStyles(colors: ColorPalette): Record<string, React.CSSProperties> {
   return {
@@ -90,9 +92,11 @@ interface ChatViewProps {
   /** The project config waits for trust: the composer says so, with a way to review it. */
   trustPending?: boolean;
   onReviewTrust?: () => void;
+  /** Opens a thread; chat bubbles offer +fork only when it's set. */
+  onSelectThread?: (threadId: string) => void;
 }
 
-export function ChatView({ channelId, chatState, roots, scrollToMessageId, onScrollComplete, noAutoFocus, trustPending, onReviewTrust }: ChatViewProps) {
+export function ChatView({ channelId, chatState, roots, scrollToMessageId, onScrollComplete, noAutoFocus, trustPending, onReviewTrust, onSelectThread }: ChatViewProps) {
   const { colors, fontSizes } = useTheme();
   const styles = buildStyles(colors);
   const { items, liveTail, messages, loading, isRunning } = chatState;
@@ -107,6 +111,19 @@ export function ChatView({ channelId, chatState, roots, scrollToMessageId, onScr
   const [quotedMessage, setQuotedMessage] = useState<Message | null>(null);
   const clearQuote = useCallback(() => setQuotedMessage(null), []);
   const queuedEdit = useQueuedEdit(channelId, chatState.queuedMessages);
+
+  // +fork on a bubble: the new thread opens, and for a user message its
+  // composer holds that message's text to edit and send. The draft is
+  // written first, so the thread's composer finds it when it mounts.
+  const forkAt = useCallback(
+    async (msg: Message) => {
+      if (!channelId || !onSelectThread) return;
+      const res = await forkAtMessage(channelId, msg.msg_id);
+      if (res.prompt) draftText.set(res.thread_id, res.prompt);
+      onSelectThread(res.thread_id);
+    },
+    [channelId, onSelectThread],
+  );
 
   const scrollToBottom = useCallback(() => {
     messagesRef.current?.scrollToBottom();
@@ -182,6 +199,7 @@ export function ChatView({ channelId, chatState, roots, scrollToMessageId, onScr
               onQuote={setQuotedMessage}
               onEditQueued={queuedEdit.start}
               editingMsgId={queuedEdit.editing?.msg_id ?? null}
+              onFork={onSelectThread ? forkAt : undefined}
             />
             {!findOpen && (
               <button

@@ -441,11 +441,12 @@ var migrations = []migration{
 	// message_id is the turn (its last bot message) whose learn pass filed
 	// a proposal; empty when it isn't known.
 	sqlMigration(`ALTER TABLE learn_proposals ADD COLUMN message_id TEXT NOT NULL DEFAULT ''`),
-	// session_id and transcript_uuid locate a bot text turn in Claude
+	// session_id and transcript_uuid locate a chat message in Claude
 	// Code's transcript: the session it was written to and its entry's
 	// uuid. A turn's last bot message holds where the turn ended, which a
-	// learn pass or an explanation forks the session at. Empty on other
-	// rows and on turns stored before these were recorded.
+	// learn pass or an explanation forks the session at; a user message
+	// holds its prompt's entry once its run ends, for a fork at it. Empty
+	// on other rows and on messages stored before these were recorded.
 	sqlMigration(`ALTER TABLE messages ADD COLUMN session_id TEXT NOT NULL DEFAULT ''`),
 	sqlMigration(`ALTER TABLE messages ADD COLUMN transcript_uuid TEXT NOT NULL DEFAULT ''`),
 	// api_tokens holds the hashes of the API tokens issued to agent
@@ -458,6 +459,11 @@ var migrations = []migration{
 		created_at   DATETIME NOT NULL
 	)`),
 	sqlMigration(`CREATE INDEX IF NOT EXISTS idx_api_tokens_container ON api_tokens(container_id)`),
+	// fork_resume_at is the transcript uuid a fork_pending thread's first
+	// run cuts its fork at (--resume-session-at), set when a thread is
+	// forked at a message; empty forks the whole session. It clears with
+	// fork_pending.
+	sqlMigration(`ALTER TABLE channels ADD COLUMN fork_resume_at TEXT NOT NULL DEFAULT ''`),
 }
 
 // migrateScheduledTasksAddManualType rebuilds scheduled_tasks to widen the

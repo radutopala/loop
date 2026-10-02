@@ -211,6 +211,8 @@ type messageResponse struct {
 	// unix-seconds end of the hold keeping it (and the queue behind it) from
 	// starting.
 	EditHoldUntil int64 `json:"edit_hold_until,omitempty"`
+	// Forkable is set on an agent reply the conversation can be forked at.
+	Forkable bool `json:"forkable,omitempty"`
 }
 
 type messagesListResponse struct {
@@ -234,6 +236,7 @@ func toMessageResponse(m *db.Message) messageResponse {
 		CreatedAt:     m.CreatedAt,
 		NotBefore:     m.NotBefore,
 		EditHoldUntil: m.EditHoldUntil,
+		Forkable:      m.Forkable,
 	}
 }
 
