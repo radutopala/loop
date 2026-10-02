@@ -290,8 +290,8 @@ func (e *TaskExecutor) ExecuteTask(ctx context.Context, task *db.ScheduledTask) 
 	}
 
 	// chatID resolution for storeAgentEvent: parent comes from the already-loaded
-	// `channel`; thread chatID is resolved lazily once the first OnTurn creates
-	// the thread, so the hot agent-event path doesn't issue a GetChannel per call.
+	// `channel`; thread chatID is resolved lazily on the first thread event, so
+	// the hot agent-event path doesn't issue a GetChannel per call.
 	parentChatID := int64(0)
 	if channel != nil {
 		parentChatID = channel.ID
@@ -313,7 +313,6 @@ func (e *TaskExecutor) ExecuteTask(ctx context.Context, task *db.ScheduledTask) 
 
 	var threadID string
 	var threadName string
-	var threadFailed bool
 	// pendingTaskCreates pairs OnToolUse with OnToolResult for TaskCreate so
 	// we can extract the harness-assigned id (only present in the result text)
 	// before broadcasting the cumulative task list.
@@ -347,130 +346,42 @@ func (e *TaskExecutor) ExecuteTask(ctx context.Context, task *db.ScheduledTask) 
 	}
 	if task.ThreadID != "" {
 		threadID = task.ThreadID
-		// Normally already held; differs only when a concurrent run persisted
-		// a thread since this task was loaded.
-		locks.hold(threadID)
+	} else {
+		// First run (or its thread was deleted): create the thread before the
+		// run, so the run lives in it from the start instead of in the
+		// channel. On failure the run falls back to the channel.
+		threadID, threadName = e.createTaskThread(ctx, task, task.Prompt, dirPath, channel, worktreeCreated)
 	}
-	// hasExistingThread is true when the thread was created by a previous run
-	// on the local platform. For subsequent local runs, register the agent
-	// under the thread so the stop button in the thread view targets the
-	// correct container. Discord/Slack are left unchanged — their threads
-	// use platform-native delivery and don't have a local stop button.
-	hasExistingThread := threadID != "" && isLocal
-	if hasExistingThread {
+	// Normally already held; differs when the thread was just created or a
+	// concurrent run persisted one since this task was loaded.
+	locks.hold(threadID)
+	// hasThread is true when the run has a thread on the local platform:
+	// register the agent under the thread so the stop button in the thread
+	// view targets the correct container. Discord/Slack are left unchanged —
+	// their threads use platform-native delivery and don't have a local stop
+	// button.
+	hasThread := threadID != "" && isLocal
+	if hasThread {
 		req.ChannelID = threadID
 		// Surface the prompt that kicked off this run as a user message in the
 		// thread, before the agent replies (inserted first → lower id → renders
 		// ahead of the response). Use the raw task.Prompt, not the
 		// UpdateBeforeRun-augmented `prompt`, so the git-rebase preamble stays
-		// out of the chat. First-run prompt injection happens at thread
-		// creation in the streamTracker below.
+		// out of the chat.
 		storeUserTaskPrompt(ctx, e.store, e.events, threadID, task.Prompt)
 	}
 	tracker := newStreamTracker(func(text string, ref agent.TurnRef) {
-		if threadID == "" && !threadFailed {
-			// First turn — create a thread for the task output
-			taskPrefix := ""
-			if !isLocal {
-				taskPrefix = "⏱ "
-			}
-			// Manual tasks have no schedule; label them "manual" so the thread
-			// name reads "task #N (`manual`)" instead of empty backticks.
-			scheduleLabel := task.Schedule
-			if task.Type == db.TaskTypeManual {
-				scheduleLabel = "manual"
-			}
-			prefix := fmt.Sprintf("%stask #%d (`%s`) ", taskPrefix, task.ID, scheduleLabel)
-			threadName = types.TruncateString(prefix+task.Prompt, 100)
-			// On local, seed the thread ourselves (prompt user message, then the
-			// agent's first turn) so the prompt renders ahead of the reply; pass
-			// an empty initial message so CreateSimpleThread doesn't store the
-			// agent turn first (which would take the lower id). Other platforms
-			// keep posting the first turn as the thread's native initial message.
-			initialMessage := prefix + text
-			if isLocal {
-				initialMessage = ""
-			}
-			id, err := e.bot.CreateSimpleThread(ctx, task.ChannelID, threadName, initialMessage)
-			if err != nil {
-				e.logger.Error("creating task thread", "error", err, "task_id", task.ID, "channel_id", task.ChannelID)
-				threadFailed = true
-				// Fallback: send to channel directly
-				_ = e.bot.SendMessage(ctx, &bot.OutgoingMessage{
-					ChannelID: task.ChannelID,
-					Content:   text,
-				})
-				storeBotTurn(ctx, e.store, e.events, task.ChannelID, text, "", ref)
-				return
-			}
-			threadID = id
-			// Free for a brand-new thread; held so messages sent to it while
-			// this run continues queue behind it.
-			locks.hold(threadID)
-			// Upsert thread channel inheriting from parent so botForChannel
-			// can resolve it for subsequent operations (rename, delete, etc.).
-			if channel != nil {
-				threadChannel := &db.Channel{
-					ChannelID:   threadID,
-					GuildID:     channel.GuildID,
-					Name:        threadName,
-					DirPath:     dirPath,
-					ParentID:    task.ChannelID,
-					Platform:    channel.Platform,
-					SessionID:   channel.SessionID,
-					Permissions: channel.Permissions,
-					Active:      true,
-					Worktree:    worktreeCreated,
-					TaskID:      task.ID,
-				}
-				if task.Type != db.TaskTypeOnce {
-					_ = e.store.LinkTaskThread(ctx, threadChannel, task.ID, threadID)
-				} else {
-					_ = e.store.UpsertChannel(ctx, threadChannel)
-				}
-				e.invitePermissionUsers(ctx, threadID, channel.Permissions)
-			} else if task.Type != db.TaskTypeOnce {
-				_ = e.store.UpdateScheduledTaskThreadID(ctx, task.ID, threadID)
-			}
-			if task.Type != db.TaskTypeOnce {
-				task.ThreadID = threadID
-			}
-			// Notify the UI that a new thread was created so the
-			// sidebar refreshes immediately.
-			if e.events != nil {
-				e.events.BroadcastChannelCreated(task.ChannelID, threadID)
-			}
-			if isLocal {
-				// Seed the thread: the prompt as a user message first (lower id
-				// → renders ahead of the reply), then the agent's first turn.
-				// Both insert into the DB and broadcast, replacing the message
-				// CreateSimpleThread would otherwise have stored.
-				storeUserTaskPrompt(ctx, e.store, e.events, threadID, task.Prompt)
-				storeBotTurn(ctx, e.store, e.events, threadID, prefix+text, "", ref)
-			} else if e.events != nil {
-				// Other platforms: CreateSimpleThread already stored+delivered
-				// the first turn; just broadcast so any local watchers see it.
-				e.events.BroadcastMessageCreated(threadID, events.MessageEventData{
-					MsgID:       generateMessageID(),
-					AuthorName:  "agent",
-					Content:     prefix + text,
-					IsBot:       true,
-					IsProcessed: true,
-				})
-			}
-		} else {
-			targetID := threadID
-			if targetID == "" {
-				targetID = task.ChannelID
-			}
-			if err := e.bot.SendMessage(ctx, &bot.OutgoingMessage{
-				ChannelID: targetID,
-				Content:   text,
-			}); err != nil {
-				e.logger.Error("streaming send failed", "error", err, "channel_id", targetID)
-			}
-			storeBotTurn(ctx, e.store, e.events, targetID, text, "", ref)
+		targetID := threadID
+		if targetID == "" {
+			targetID = task.ChannelID
 		}
+		if err := e.bot.SendMessage(ctx, &bot.OutgoingMessage{
+			ChannelID: targetID,
+			Content:   text,
+		}); err != nil {
+			e.logger.Error("streaming send failed", "error", err, "channel_id", targetID)
+		}
+		storeBotTurn(ctx, e.store, e.events, targetID, text, "", ref)
 	})
 	req.OnTurn = func(text string, ref agent.TurnRef) {
 		// Strip [EPHEMERAL] before the tracker records it, so IsDuplicate
@@ -577,10 +488,8 @@ func (e *TaskExecutor) ExecuteTask(ctx context.Context, task *db.ScheduledTask) 
 	defer runCancel()
 
 	// Register cancel func so the stop button can cancel this task run.
-	// Key is req.ChannelID (thread ID for subsequent local runs, parent
-	// channel ID for first runs). Two different tasks on the same parent
-	// channel both on their first run simultaneously would collide here,
-	// but this is an extremely rare edge case. Registered before the running
+	// Key is req.ChannelID (the thread ID for local runs with a thread, the
+	// parent channel ID otherwise). Registered before the running
 	// broadcast, so a channel list fetched after that event reports
 	// agent_running (the desktop app trusts such a fetch to clear Stop).
 	if e.activeRuns != nil {
@@ -588,13 +497,13 @@ func (e *TaskExecutor) ExecuteTask(ctx context.Context, task *db.ScheduledTask) 
 		defer e.activeRuns.Delete(req.ChannelID)
 	}
 
-	// Broadcast running status. For subsequent runs, broadcast to both the
+	// Broadcast running status. For local runs with a thread, broadcast to both the
 	// thread (for direct subscribers) and the parent (with thread_id set, for
 	// subscription bootstrap). The frontend routes the parent event to the
 	// thread's store via thread_id so the parent doesn't show running state.
 	if e.events != nil {
 		status := events.AgentStatusEventData{Status: "running", RunID: runID, ThreadID: threadID, Trigger: "scheduled"}
-		if hasExistingThread {
+		if hasThread {
 			e.events.BroadcastAgentStatus(threadID, status)
 		}
 		e.events.BroadcastAgentStatus(task.ChannelID, status)
@@ -604,7 +513,7 @@ func (e *TaskExecutor) ExecuteTask(ctx context.Context, task *db.ScheduledTask) 
 	if err != nil {
 		if e.events != nil {
 			errStatus := events.AgentStatusEventData{Status: "error", RunID: runID, Error: err.Error(), ThreadID: threadID, Trigger: "scheduled"}
-			if hasExistingThread {
+			if hasThread {
 				// Broadcast to thread directly so the thread view updates immediately.
 				e.events.BroadcastAgentStatus(threadID, errStatus)
 			}
@@ -616,7 +525,7 @@ func (e *TaskExecutor) ExecuteTask(ctx context.Context, task *db.ScheduledTask) 
 	if resp.Error != "" {
 		if e.events != nil {
 			errStatus := events.AgentStatusEventData{Status: "error", RunID: runID, Error: resp.Error, ThreadID: threadID, Trigger: "scheduled"}
-			if hasExistingThread {
+			if hasThread {
 				e.events.BroadcastAgentStatus(threadID, errStatus)
 			}
 			e.events.BroadcastAgentStatus(task.ChannelID, errStatus)
@@ -658,9 +567,9 @@ func (e *TaskExecutor) ExecuteTask(ctx context.Context, task *db.ScheduledTask) 
 		storeBotMessage(ctx, e.store, e.events, targetChannelID, resp.Response, "")
 	}
 
-	// Broadcast completed status. For subsequent runs, broadcast to both
-	// thread and parent (with thread_id set) so both views update immediately.
-	// For first runs, targetChannelID may be a newly-created thread or the channel.
+	// Broadcast completed status to both thread and parent (with thread_id
+	// set) so both views update immediately. targetChannelID is the channel
+	// itself only when the task has no thread.
 	if e.events != nil {
 		done := events.AgentStatusEventData{
 			Status:     "completed",
@@ -729,6 +638,65 @@ func (e *TaskExecutor) getCurrentBranch(ctx context.Context, dirPath string) (st
 		branch = strings.TrimSpace(string(out))
 	}
 	return branch, nil
+}
+
+// createTaskThread creates the task's sub-thread before its first run, named
+// after label (the prompt or bash script): channel upsert (with the worktree
+// flag and dirPath so a worktree thread renders as one), task linking for
+// recurring tasks, permission invites, and sidebar broadcast. The thread
+// starts without a session; the run forks the channel's and stores the
+// result on the thread. Returns "" on failure — the caller falls back to the
+// channel.
+func (e *TaskExecutor) createTaskThread(ctx context.Context, task *db.ScheduledTask, label, dirPath string, channel *db.Channel, worktreeCreated bool) (string, string) {
+	isLocal := channel != nil && channel.Platform == types.PlatformLocal
+	taskPrefix := ""
+	if !isLocal {
+		taskPrefix = "⏱ "
+	}
+	// Manual tasks have no schedule; label them "manual" so the thread name
+	// reads "task #N (`manual`)" instead of empty backticks.
+	scheduleLabel := task.Schedule
+	if task.Type == db.TaskTypeManual {
+		scheduleLabel = "manual"
+	}
+	prefix := fmt.Sprintf("%stask #%d (`%s`) ", taskPrefix, task.ID, scheduleLabel)
+	threadName := types.TruncateString(prefix+label, 100)
+
+	threadID, err := e.bot.CreateSimpleThread(ctx, task.ChannelID, threadName, "")
+	if err != nil {
+		e.logger.Error("creating task thread", "error", err, "task_id", task.ID, "channel_id", task.ChannelID)
+		return "", ""
+	}
+
+	if channel != nil {
+		threadChannel := &db.Channel{
+			ChannelID:   threadID,
+			GuildID:     channel.GuildID,
+			Name:        threadName,
+			DirPath:     dirPath,
+			ParentID:    task.ChannelID,
+			Platform:    channel.Platform,
+			Permissions: channel.Permissions,
+			Active:      true,
+			Worktree:    worktreeCreated,
+			TaskID:      task.ID,
+		}
+		if task.Type != db.TaskTypeOnce {
+			_ = e.store.LinkTaskThread(ctx, threadChannel, task.ID, threadID)
+		} else {
+			_ = e.store.UpsertChannel(ctx, threadChannel)
+		}
+		e.invitePermissionUsers(ctx, threadID, channel.Permissions)
+	} else if task.Type != db.TaskTypeOnce {
+		_ = e.store.UpdateScheduledTaskThreadID(ctx, task.ID, threadID)
+	}
+	if task.Type != db.TaskTypeOnce {
+		task.ThreadID = threadID
+	}
+	if e.events != nil {
+		e.events.BroadcastChannelCreated(task.ChannelID, threadID)
+	}
+	return threadID, threadName
 }
 
 // executeWorkflowTask starts a workflow run for a scheduled task that has

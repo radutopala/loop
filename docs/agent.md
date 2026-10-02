@@ -72,7 +72,7 @@ All callbacks are optional (nil-safe):
 |----------|---------|
 | `internal/container/runner.go` | Executes agent in Docker via `Runner.Run(*AgentRequest) → *AgentResponse` |
 | `internal/orchestrator/orchestrator.go` | Builds requests from message history, executes with streaming |
-| `internal/orchestrator/executor.go` | Executes scheduled tasks, creates threads on first turn |
+| `internal/orchestrator/executor.go` | Executes scheduled tasks, creates their threads before the first run |
 
 ## Related docs
 
