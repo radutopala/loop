@@ -93,7 +93,7 @@ func (s *ServerSuite) TestForkThread_Worktree() {
 		return strings.Contains(name, "fork of worktree/src-wt")
 	}), "", "").Return("wt2", nil)
 	s.store.On("GetChannel", mock.Anything, "wt2").Return(&db.Channel{ChannelID: "wt2", ParentID: "ch1", Active: true}, nil)
-	s.store.On("MarkSessionForkPending", mock.Anything, "wt2", "sess-1").Return(true, nil)
+	s.store.On("MarkSessionForkPendingAt", mock.Anything, "wt2", "sess-1", "").Return(true, nil)
 	upserted := make(chan *db.Channel, 1)
 	s.store.On("UpsertChannel", mock.Anything, mock.Anything).Run(func(args mock.Arguments) {
 		select {
@@ -113,7 +113,7 @@ func (s *ServerSuite) TestForkThread_Worktree() {
 	require.True(s.T(), ch.Worktree)
 	require.Equal(s.T(), "worktree/src-wt", ch.BaseBranch, "fork diffs against the source branch")
 	require.Equal(s.T(), resp.WorktreePath, ch.DirPath)
-	s.store.AssertCalled(s.T(), "MarkSessionForkPending", mock.Anything, "wt2", "sess-1")
+	s.store.AssertCalled(s.T(), "MarkSessionForkPendingAt", mock.Anything, "wt2", "sess-1", "")
 	s.store.AssertNotCalled(s.T(), "UpdateSessionID", mock.Anything, "wt2", mock.Anything)
 	// The source's transcript sits under its own worktree's project dir, not
 	// the parent channel's.
@@ -300,7 +300,7 @@ func (s *ServerSuite) TestForkThread_WorktreeMarkForkPendingError() {
 	s.threads.On("CreateThread", mock.Anything, "ch1", mock.Anything, "", "").Return("wt2", nil)
 	s.store.On("GetChannel", mock.Anything, "wt2").Return(&db.Channel{ChannelID: "wt2", ParentID: "ch1"}, nil)
 	s.store.On("UpsertChannel", mock.Anything, mock.Anything).Return(nil)
-	s.store.On("MarkSessionForkPending", mock.Anything, "wt2", "sess-1").Return(false, errors.New("db"))
+	s.store.On("MarkSessionForkPendingAt", mock.Anything, "wt2", "sess-1", "").Return(false, errors.New("db"))
 
 	rec := s.testRequest("POST", "/api/threads/wt1/fork", "")
 	require.Equal(s.T(), http.StatusInternalServerError, rec.Code)
@@ -338,5 +338,5 @@ func (s *ServerSuite) TestForkThread_WorktreeSessionNotStaged() {
 
 	// Upserting an empty id keeps the stored one, so it's cleared explicitly.
 	s.store.AssertCalled(s.T(), "UpdateSessionID", mock.Anything, "wt2", "")
-	s.store.AssertNotCalled(s.T(), "MarkSessionForkPending", mock.Anything, "wt2", mock.Anything)
+	s.store.AssertNotCalled(s.T(), "MarkSessionForkPendingAt", mock.Anything, "wt2", mock.Anything, mock.Anything)
 }

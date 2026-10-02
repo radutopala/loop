@@ -244,6 +244,7 @@ export function useChatState(channelId: string | null, initialRunningBot?: boole
           is_processed: data.is_processed,
           priority: data.priority,
           trigger_msg_id: data.trigger_msg_id,
+          forkable: data.forkable,
           not_before: data.not_before,
           created_at: new Date(event.timestamp).toISOString(),
         });

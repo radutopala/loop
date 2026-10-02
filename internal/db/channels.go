@@ -95,15 +95,34 @@ func (s *SQLiteStore) IsChannelActive(ctx context.Context, channelID string) (bo
 // run updates the session id, and by then the fork has happened). It
 // reports whether the thread still exists.
 func (s *SQLiteStore) MarkSessionForkPending(ctx context.Context, channelID string, sessionID string) (bool, error) {
+	return s.MarkSessionForkPendingAt(ctx, channelID, sessionID, "")
+}
+
+// MarkSessionForkPendingAt is MarkSessionForkPending for a fork cut at
+// transcript entry resumeAt: the first run keeps the session up to and
+// including that entry and drops the rest. "" forks the whole session.
+func (s *SQLiteStore) MarkSessionForkPendingAt(ctx context.Context, channelID, sessionID, resumeAt string) (bool, error) {
 	res, err := s.db.ExecContext(ctx,
-		`UPDATE channels SET session_id = ?, fork_pending = 1, updated_at = ? WHERE channel_id = ?`,
-		sessionID, s.nowFunc(), channelID,
+		`UPDATE channels SET session_id = ?, fork_pending = 1, fork_resume_at = ?, updated_at = ? WHERE channel_id = ?`,
+		sessionID, resumeAt, s.nowFunc(), channelID,
 	)
 	if err != nil {
 		return false, err
 	}
 	n, err := res.RowsAffected()
 	return n > 0, err
+}
+
+// ForkResumeAt returns the transcript uuid a fork_pending thread's first run
+// cuts its fork at, "" when it forks the whole session or the channel is
+// gone.
+func (s *SQLiteStore) ForkResumeAt(ctx context.Context, channelID string) (string, error) {
+	var uuid string
+	err := s.db.QueryRowContext(ctx, `SELECT fork_resume_at FROM channels WHERE channel_id = ?`, channelID).Scan(&uuid)
+	if err == sql.ErrNoRows {
+		return "", nil
+	}
+	return uuid, err
 }
 
 // SessionInUse reports whether a channel other than exceptChannelID has
@@ -119,7 +138,7 @@ func (s *SQLiteStore) SessionInUse(ctx context.Context, sessionID, exceptChannel
 
 func (s *SQLiteStore) UpdateSessionID(ctx context.Context, channelID string, sessionID string) error {
 	_, err := s.db.ExecContext(ctx,
-		`UPDATE channels SET session_id = ?, fork_pending = 0, updated_at = ? WHERE channel_id = ?`,
+		`UPDATE channels SET session_id = ?, fork_pending = 0, fork_resume_at = '', updated_at = ? WHERE channel_id = ?`,
 		sessionID, s.nowFunc(), channelID,
 	)
 	return err

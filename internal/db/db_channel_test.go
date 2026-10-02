@@ -350,29 +350,29 @@ func (s *StoreSuite) TestSessionInUse() {
 }
 
 func (s *StoreSuite) TestMarkSessionForkPending() {
-	s.mock.ExpectExec(`UPDATE channels SET session_id = \?, fork_pending = 1`).
-		WithArgs("sess-1", sqlmock.AnyArg(), "t2").
+	s.mock.ExpectExec(`UPDATE channels SET session_id = \?, fork_pending = 1, fork_resume_at = \?`).
+		WithArgs("sess-1", "", sqlmock.AnyArg(), "t2").
 		WillReturnResult(sqlmock.NewResult(0, 1))
 	ok, err := s.store.MarkSessionForkPending(context.Background(), "t2", "sess-1")
 	require.NoError(s.T(), err)
 	require.True(s.T(), ok)
 
 	// A thread deleted meanwhile updates nothing.
-	s.mock.ExpectExec(`UPDATE channels SET session_id = \?, fork_pending = 1`).
-		WithArgs("sess-1", sqlmock.AnyArg(), "t2").
+	s.mock.ExpectExec(`UPDATE channels SET session_id = \?, fork_pending = 1, fork_resume_at = \?`).
+		WithArgs("sess-1", "", sqlmock.AnyArg(), "t2").
 		WillReturnResult(sqlmock.NewResult(0, 0))
 	ok, err = s.store.MarkSessionForkPending(context.Background(), "t2", "sess-1")
 	require.NoError(s.T(), err)
 	require.False(s.T(), ok)
 
-	s.mock.ExpectExec(`UPDATE channels SET session_id = \?, fork_pending = 1`).
-		WithArgs("sess-1", sqlmock.AnyArg(), "t2").
+	s.mock.ExpectExec(`UPDATE channels SET session_id = \?, fork_pending = 1, fork_resume_at = \?`).
+		WithArgs("sess-1", "", sqlmock.AnyArg(), "t2").
 		WillReturnError(sql.ErrConnDone)
 	_, err = s.store.MarkSessionForkPending(context.Background(), "t2", "sess-1")
 	require.Error(s.T(), err)
 
-	s.mock.ExpectExec(`UPDATE channels SET session_id = \?, fork_pending = 1`).
-		WithArgs("sess-1", sqlmock.AnyArg(), "t2").
+	s.mock.ExpectExec(`UPDATE channels SET session_id = \?, fork_pending = 1, fork_resume_at = \?`).
+		WithArgs("sess-1", "", sqlmock.AnyArg(), "t2").
 		WillReturnResult(sqlmock.NewErrorResult(sql.ErrConnDone))
 	_, err = s.store.MarkSessionForkPending(context.Background(), "t2", "sess-1")
 	require.Error(s.T(), err)

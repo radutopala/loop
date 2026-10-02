@@ -251,3 +251,131 @@ func (s *OrchestratorSuite) TestReviewedTurn() {
 	require.Equal(s.T(), "b2", reviewedTurn(nil, &db.LearnPass{MessageID: "b2"}))
 	require.Empty(s.T(), reviewedTurn(nil, nil))
 }
+
+// promptTranscript is a session whose second prompt, u-2, is answered by
+// a-3 after an attachment.
+const promptTranscript = `{"type":"user","uuid":"u-1","parentUuid":null,"message":{"role":"user","content":"first"}}
+{"type":"assistant","uuid":"a-1","parentUuid":"u-1","message":{"content":[{"type":"text","text":"one"}]}}
+{"type":"user","uuid":"u-2","parentUuid":"a-1","message":{"role":"user","content":"second"}}
+{"type":"attachment","uuid":"x-1","parentUuid":"u-2"}
+{"type":"assistant","uuid":"a-3","parentUuid":"x-1","message":{"content":[{"type":"text","text":"two"}]}}`
+
+// readTranscripts points s.orch's transcript reads at promptTranscript and
+// returns the paths read.
+func (s *OrchestratorSuite) readTranscripts() *[]string {
+	var read []string
+	s.orch.sessionFiles = sessionFiles{
+		userHomeDir: func() (string, error) { return "/home/u", nil },
+		readFile: func(path string) ([]byte, error) {
+			read = append(read, path)
+			return []byte(promptTranscript), nil
+		},
+	}
+	return &read
+}
+
+func (s *OrchestratorSuite) TestSessionFilesPromptOf() {
+	tests := []struct {
+		name      string
+		homeErr   error
+		readErr   error
+		sessionID string
+		uuid      string
+		want      string
+		wantErr   string
+	}{
+		{name: "reply's prompt", sessionID: "sess-1", uuid: "a-3", want: "u-2"},
+		{name: "not in the transcript", sessionID: "sess-1", uuid: "a-9", wantErr: "isn't in the transcript"},
+		{name: "unreadable", sessionID: "sess-1", uuid: "a-3", readErr: errors.New("gone"), wantErr: "gone"},
+		{name: "invalid session", sessionID: "..", uuid: "a-3", wantErr: "invalid session id"},
+		{name: "no home", sessionID: "sess-1", uuid: "a-3", homeErr: errors.New("no home"), wantErr: "no home"},
+	}
+	for _, tc := range tests {
+		s.Run(tc.name, func() {
+			f := sessionFiles{
+				userHomeDir: func() (string, error) { return "/home/u", tc.homeErr },
+				readFile: func(path string) ([]byte, error) {
+					require.Equal(s.T(), "/home/u/.claude/projects/-project/sess-1.jsonl", path)
+					return []byte(promptTranscript), tc.readErr
+				},
+			}
+			got, err := f.promptOf("/project", tc.sessionID, tc.uuid)
+			if tc.wantErr != "" {
+				require.ErrorContains(s.T(), err, tc.wantErr)
+				return
+			}
+			require.NoError(s.T(), err)
+			require.Equal(s.T(), tc.want, got)
+		})
+	}
+}
+
+// TestRecordPrompt covers which runs record their prompt's transcript
+// entry, and that failing to is only logged.
+func (s *OrchestratorSuite) TestRecordPrompt() {
+	ch := &db.Channel{ChannelID: "ch1", DirPath: "/project"}
+	reply := agent.TurnRef{SessionID: "sess-1", UUID: "a-3"}
+	tests := []struct {
+		name     string
+		ch       *db.Channel
+		reply    agent.TurnRef
+		setErr   error
+		wantRead bool
+		wantSet  bool
+	}{
+		{name: "records", ch: ch, reply: reply, wantRead: true, wantSet: true},
+		{name: "store fails", ch: ch, reply: reply, setErr: errors.New("db down"), wantRead: true, wantSet: true},
+		{name: "prompt not found", ch: ch, reply: agent.TurnRef{SessionID: "sess-1", UUID: "a-9"}, wantRead: true},
+		{name: "no reply", ch: ch},
+		{name: "reply without a uuid", ch: ch, reply: agent.TurnRef{SessionID: "sess-1"}},
+		{name: "no channel", reply: reply},
+		{name: "no dir", ch: &db.Channel{ChannelID: "ch1"}, reply: reply},
+		{name: "hidden thread", ch: &db.Channel{ChannelID: "e1", DirPath: "/project", Kind: db.ChannelKindExplain}, reply: reply},
+	}
+	for _, tc := range tests {
+		s.Run(tc.name, func() {
+			s.SetupTest()
+			read := s.readTranscripts()
+			s.store.On("SetPromptTranscriptRef", s.ctx, "ch1", "m2", "sess-1", "u-2").Return(tc.setErr)
+
+			s.orch.recordPrompt(s.ctx, tc.ch, "m2", tc.reply)
+
+			require.Equal(s.T(), tc.wantRead, len(*read) > 0)
+			if tc.wantSet {
+				s.store.AssertCalled(s.T(), "SetPromptTranscriptRef", s.ctx, "ch1", "m2", "sess-1", "u-2")
+			} else {
+				s.store.AssertNotCalled(s.T(), "SetPromptTranscriptRef", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything)
+			}
+		})
+	}
+}
+
+// TestHandleMessageRecordsPrompt: once a run ends, the user message that
+// started it records its prompt's entry, found from the run's first reply
+// that has a uuid.
+func (s *OrchestratorSuite) TestHandleMessageRecordsPrompt() {
+	read := s.readTranscripts()
+	s.store.On("IsChannelActive", s.ctx, "ch1").Return(true, nil)
+	s.store.On("GetChannel", mock.Anything, "ch1").Return(&db.Channel{ID: 1, ChannelID: "ch1", DirPath: "/project", Active: true}, nil)
+	s.store.On("InsertMessage", s.ctx, mock.Anything).Return(nil)
+	s.bot.On("SendTyping", mock.Anything, "ch1").Return(nil).Maybe()
+	s.store.On("GetRecentMessages", s.ctx, "ch1", 50).Return([]*db.Message{}, nil)
+	s.runner.On("Run", mock.Anything, mock.Anything).Run(func(args mock.Arguments) {
+		req := args.Get(1).(*agent.AgentRequest)
+		req.OnTurn("starting", agent.TurnRef{SessionID: "sess-1"})
+		req.OnTurn("two", agent.TurnRef{SessionID: "sess-1", UUID: "a-3"})
+		req.OnTurn("more", agent.TurnRef{SessionID: "sess-1", UUID: "a-4"})
+	}).Return(&agent.AgentResponse{Response: "more", SessionID: "sess-1"}, nil)
+	s.store.On("UpdateSessionID", s.ctx, "ch1", "sess-1").Return(nil)
+	s.bot.On("SendMessage", mock.Anything, mock.Anything).Return(nil)
+	s.store.On("MarkMessagesProcessed", s.ctx, mock.Anything).Return(nil)
+	s.store.On("SetPromptTranscriptRef", mock.Anything, "ch1", "m2", "sess-1", "u-2").Return(nil)
+
+	s.orch.HandleMessage(s.ctx, &bot.IncomingMessage{
+		ChannelID: "ch1", MessageID: "m2", GuildID: "g1", AuthorName: "user",
+		Content: "second", IsBotMention: true,
+	})
+
+	s.store.AssertCalled(s.T(), "SetPromptTranscriptRef", mock.Anything, "ch1", "m2", "sess-1", "u-2")
+	require.Equal(s.T(), []string{"/home/u/.claude/projects/-project/sess-1.jsonl"}, *read)
+}

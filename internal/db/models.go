@@ -184,11 +184,15 @@ type Message struct {
 	// queued row. Until it passes (or is released) the claim won't start the
 	// row, and — to keep queue order — won't start anything queued behind it.
 	EditHoldUntil int64 `json:"edit_hold_until,omitempty"`
-	// SessionID and TranscriptUUID locate a bot text turn in Claude Code's
-	// session transcript (see agent.TurnRef): a turn's last bot message
-	// holds where the turn ended. Empty on other rows and older turns.
+	// SessionID and TranscriptUUID locate a chat message in Claude Code's
+	// session transcript: a bot text turn's entry (see agent.TurnRef), or a
+	// user message's prompt entry, recorded once its run ends. Empty on
+	// other rows and older messages.
 	SessionID      string `json:"-"`
 	TranscriptUUID string `json:"-"`
+	// Forkable reports that the conversation can be forked at this message:
+	// it records where it sits in the transcript.
+	Forkable bool `json:"forkable,omitempty"`
 }
 
 // ScheduledTask represents a task scheduled for execution.

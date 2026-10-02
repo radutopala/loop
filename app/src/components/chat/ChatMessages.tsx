@@ -24,6 +24,8 @@ export interface ChatMessagesProps {
   onEditQueued?: (msg: Message) => Promise<boolean>;
   // The queued message currently open in the composer, if any.
   editingMsgId?: string | null;
+  // Forks the conversation at a message into a new thread; unset hides +fork.
+  onFork?: (msg: Message) => Promise<void>;
 }
 
 export interface ChatMessagesHandle {
@@ -73,7 +75,7 @@ function revealMessage(container: HTMLElement, el: Element, term: string | undef
 }
 
 export const ChatMessages = forwardRef<ChatMessagesHandle, ChatMessagesProps>(function ChatMessages(
-  { channelId, chatState, scrollToMessageId, findTerm, onScrollComplete, onQuote, onEditQueued, editingMsgId },
+  { channelId, chatState, scrollToMessageId, findTerm, onScrollComplete, onQuote, onEditQueued, editingMsgId, onFork },
   ref,
 ) {
   const { colors } = useTheme();
@@ -422,6 +424,7 @@ export const ChatMessages = forwardRef<ChatMessagesHandle, ChatMessagesProps>(fu
                     highlighted={msg.id === highlightedMsgId}
                     onQuote={onQuote}
                     turnEnd={turnEnds.has(msg.msg_id)}
+                    onFork={onFork}
                   />
                 );
               }

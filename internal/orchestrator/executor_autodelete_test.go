@@ -368,6 +368,38 @@ func (s *TaskExecutorSuite) TestStoreBotMessageStampsTriggerMsgID() {
 	eb.AssertExpectations(s.T())
 }
 
+// A turn that records its place in the transcript is stored with it and
+// broadcast as forkable; one without a full ref isn't.
+func (s *TaskExecutorSuite) TestStoreBotTurnForkable() {
+	tests := []struct {
+		name string
+		ref  agent.TurnRef
+		want bool
+	}{
+		{name: "full ref", ref: agent.TurnRef{SessionID: "sess-1", UUID: "uuid-1"}, want: true},
+		{name: "no uuid", ref: agent.TurnRef{SessionID: "sess-1"}},
+		{name: "no ref"},
+	}
+	for _, tc := range tests {
+		s.Run(tc.name, func() {
+			s.SetupTest()
+			eb := new(MockEventBroadcaster)
+			s.store.On("GetChannel", s.ctx, "ch1").Return(&db.Channel{ID: 5, ChannelID: "ch1"}, nil)
+			s.store.On("InsertMessage", s.ctx, mock.MatchedBy(func(m *db.Message) bool {
+				return m.SessionID == tc.ref.SessionID && m.TranscriptUUID == tc.ref.UUID
+			})).Return(nil)
+			eb.On("BroadcastMessageCreated", "ch1", mock.MatchedBy(func(d events.MessageEventData) bool {
+				return d.Forkable == tc.want
+			}))
+
+			storeBotTurn(s.ctx, s.store, eb, "ch1", "reply", "user-abc", tc.ref)
+
+			s.store.AssertExpectations(s.T())
+			eb.AssertExpectations(s.T())
+		})
+	}
+}
+
 func (s *TaskExecutorSuite) TestStoreBotMessageGetChannelError() {
 	eb := new(MockEventBroadcaster)
 

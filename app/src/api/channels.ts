@@ -525,3 +525,21 @@ export async function forkThread(threadId: string): Promise<string> {
   const data = await res.json();
   return data.thread_id;
 }
+
+/** The thread a message fork created, and for a user message the prompt to prefill its composer with. */
+export interface ForkAtMessageResult {
+  thread_id: string;
+  prompt?: string;
+}
+
+/**
+ * Forks the channel's conversation at a message into a new thread. At a bot
+ * reply the thread's conversation ends with it; at a user message it ends
+ * just before it, and the message's text comes back as `prompt` for the user
+ * to edit and send. msgId is the message's msg_id.
+ */
+export async function forkAtMessage(channelId: string, msgId: string): Promise<ForkAtMessageResult> {
+  const res = await apiFetch(`${getApiUrl()}/api/channels/${encodeURIComponent(channelId)}/messages/${encodeURIComponent(msgId)}/fork`, { method: "POST" });
+  if (!res.ok) throw new Error((await res.text()) || res.statusText);
+  return res.json();
+}

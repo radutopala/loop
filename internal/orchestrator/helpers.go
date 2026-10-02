@@ -52,6 +52,7 @@ func storeBotTurn(ctx context.Context, store db.Store, broadcaster events.Broadc
 			IsBot:        true,
 			IsProcessed:  true,
 			TriggerMsgID: triggerMsgID,
+			Forkable:     ref.SessionID != "" && ref.UUID != "",
 		})
 	}
 }

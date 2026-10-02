@@ -409,6 +409,7 @@ func (s *Server) registerChannelRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("DELETE /api/messages/{id}", s.handleDeleteQueuedMessage)
 	mux.HandleFunc("POST /api/threads", s.handleCreateThread)
 	mux.HandleFunc("POST /api/threads/{id}/fork", s.handleForkThread)
+	mux.HandleFunc("POST /api/channels/{id}/messages/{msgId}/fork", s.handleForkAtMessage)
 	mux.HandleFunc("DELETE /api/threads/{id}", s.handleDeleteThread)
 	mux.HandleFunc("DELETE /api/channels/{id}", s.handleDeleteChannel)
 	mux.HandleFunc("PATCH /api/channels/{id}/lock", s.handleSetChannelLocked)

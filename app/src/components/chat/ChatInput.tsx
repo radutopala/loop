@@ -12,29 +12,11 @@ import type { Message } from "../../types";
 import { firstClipboardImage, uploadPastedImage } from "../../utils/clipboardImage";
 import { storageGetJSON, storageSetJSON } from "../../utils/storage";
 import { AgentConfigPill } from "./AgentConfigPill";
+import { draftText } from "./chatDrafts";
 import { composerHeight, composerMaxHeight } from "./composerHeight";
 import { ExplainToggle } from "./ExplainToggle";
 import { LearnToggle } from "./LearnToggle";
 import { chooseSendRoute, normalizeSendMode, type SendMode } from "./sendRouting";
-
-// Draft text per channel — persisted to localStorage across app restarts.
-const DRAFT_KEY = "loop-chat-drafts";
-const draftText = {
-  get(channelId: string): string | undefined {
-    const drafts = storageGetJSON<Record<string, string>>(DRAFT_KEY);
-    return drafts?.[channelId];
-  },
-  set(channelId: string, text: string) {
-    const drafts = storageGetJSON<Record<string, string>>(DRAFT_KEY) ?? {};
-    drafts[channelId] = text;
-    storageSetJSON(DRAFT_KEY, drafts);
-  },
-  delete(channelId: string) {
-    const drafts = storageGetJSON<Record<string, string>>(DRAFT_KEY) ?? {};
-    delete drafts[channelId];
-    storageSetJSON(DRAFT_KEY, drafts);
-  },
-};
 
 function buildInputStyles(colors: ColorPalette): Record<string, React.CSSProperties> {
   return {

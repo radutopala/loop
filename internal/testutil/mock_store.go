@@ -58,6 +58,16 @@ func (m *MockStore) MarkSessionForkPending(ctx context.Context, channelID string
 	return args.Bool(0), args.Error(1)
 }
 
+func (m *MockStore) MarkSessionForkPendingAt(ctx context.Context, channelID, sessionID, resumeAt string) (bool, error) {
+	args := m.Called(ctx, channelID, sessionID, resumeAt)
+	return args.Bool(0), args.Error(1)
+}
+
+func (m *MockStore) ForkResumeAt(ctx context.Context, channelID string) (string, error) {
+	args := m.Called(ctx, channelID)
+	return args.String(0), args.Error(1)
+}
+
 func (m *MockStore) SessionInUse(ctx context.Context, sessionID, exceptChannelID string) (bool, error) {
 	args := m.Called(ctx, sessionID, exceptChannelID)
 	return args.Bool(0), args.Error(1)
@@ -552,6 +562,16 @@ func (m *MockStore) LastBotMessage(ctx context.Context, channelID, triggerMsgID 
 		return nil, args.Error(1)
 	}
 	return args.Get(0).(*db.Message), args.Error(1)
+}
+
+func (m *MockStore) FirstForkableReply(ctx context.Context, channelID, triggerMsgID string) (*db.Message, error) {
+	args := m.Called(ctx, channelID, triggerMsgID)
+	msg, _ := args.Get(0).(*db.Message)
+	return msg, args.Error(1)
+}
+
+func (m *MockStore) SetPromptTranscriptRef(ctx context.Context, channelID, msgID, sessionID, uuid string) error {
+	return m.Called(ctx, channelID, msgID, sessionID, uuid).Error(0)
 }
 
 func (m *MockStore) QueueExplanation(ctx context.Context, e *db.Explanation) (*db.Explanation, bool, error) {

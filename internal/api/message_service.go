@@ -27,6 +27,9 @@ type ChannelLister interface {
 	GetTimeline(ctx context.Context, channelID string, cursorPosition, cursorID int64, limit int) ([]*db.Message, error)
 	UpdateSessionID(ctx context.Context, channelID string, sessionID string) error
 	MarkSessionForkPending(ctx context.Context, channelID string, sessionID string) (bool, error)
+	MarkSessionForkPendingAt(ctx context.Context, channelID, sessionID, resumeAt string) (bool, error)
+	GetChatMessage(ctx context.Context, channelID, msgID string) (*db.Message, error)
+	FirstForkableReply(ctx context.Context, channelID, triggerMsgID string) (*db.Message, error)
 	UpdateChannelAgentOverrides(ctx context.Context, channelID, model, effort string) error
 	UpdateChannelLocked(ctx context.Context, channelID string, locked bool) error
 	UpdateChannelName(ctx context.Context, channelID, name string) error

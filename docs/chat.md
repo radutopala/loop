@@ -77,6 +77,16 @@ Each message shows its row id in the database, `#1234`, next to its time. A mess
 - A `loop://channel/...` link in a message opens inside the app rather than in the browser.
 - Following a link opens the channel, pages in older messages until the target is loaded, and scrolls it into view.
 
+### Fork at a Message
+
+Hovering a message shows **+fork**, which forks the conversation at that message into a new thread and opens it. The source channel or thread keeps its conversation unchanged. A channel's fork becomes one of its threads, and a thread's fork becomes a sibling thread.
+
+- **At an agent reply:** the new thread's session keeps everything up to and including that reply, and its first run continues from there.
+- **At a user message:** the fork stops just before that message, and the message's text is put in the new thread's composer, so you can edit it and send it again. A message that started its session forks into a thread with no session.
+- **Worktree threads:** the fork also gets its own worktree, as with [forking a thread](api.md#post-apithreadsidfork). It starts from the source's current commit, not from the commit at the time of the message.
+
+Only replies that recorded their place in the session can be forked: replies streamed from a run, not a subagent's, and not replies stored before Loop recorded this. A user message can be forked once one of its replies has been recorded; messages a fork or resume imports into a thread keep their place too. If the message can't be forked, the button turns red and says `Fork failed`, with the reason in its tooltip. The fork button is in the chat view, not the Learn view.
+
 ### Find in Chat
 
 The magnifier at the top right of the chat, or <kbd>Cmd</kbd>/<kbd>Ctrl</kbd>+<kbd>F</kbd> while the chat has focus, opens a find bar above the messages:
