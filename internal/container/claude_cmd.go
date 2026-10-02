@@ -145,16 +145,21 @@ var readOnlyDisallowedTools = []string{
 	"mcp__loop__report_review_findings",
 }
 
-// reviewModeSettings is the --settings payload for a review run. It carries
-// env, not container env vars, because Claude Code applies each settings
-// scope over process.env with a plain assign, in the fixed order
-// userSettings → flagSettings → policySettings. A container-level env var is
-// therefore *lower* precedence than ~/.claude/settings.json, which Loop
-// bind-mounts from the host into every agent container: a host setting of
-// e.g. CLAUDE_CODE_SUBAGENT_MODEL=sonnet silently overwrote it. --settings is
-// the flagSettings scope, so it lands after the user's file and wins.
+// runSettings is the --settings payload for every Loop run, batch and
+// interactive. It carries env, not container env vars, because Claude Code
+// applies each settings scope over process.env with a plain assign, in the
+// fixed order userSettings → flagSettings → policySettings. A container-level
+// env var is therefore *lower* precedence than ~/.claude/settings.json, which
+// Loop bind-mounts from the host into every agent container: a host setting
+// of e.g. CLAUDE_CODE_SUBAGENT_MODEL=sonnet silently overwrote it. --settings
+// is the flagSettings scope, so it lands after the user's file and wins.
 //
-// Both keys are load-bearing; see agent.AgentRequest.ReviewMode.
+// CLAUDE_CODE_SUBAGENT_MODEL=inherit makes a subagent run on the session's
+// model unless the Agent call or the agent's definition names one.
+const runSettings = `{"env":{"CLAUDE_CODE_SUBAGENT_MODEL":"inherit"}}`
+
+// reviewModeSettings replaces runSettings in a review run. Both keys are
+// load-bearing; see agent.AgentRequest.ReviewMode.
 const reviewModeSettings = `{"env":{"CLAUDE_CODE_REPORT_FINDINGS":"1","CLAUDE_CODE_SUBAGENT_MODEL":"inherit"}}`
 
 // buildClaudeCmd assembles the Claude CLI command with all flags for batch mode.
@@ -184,9 +189,11 @@ func buildClaudeCmd(cfg *config.Config, mcpConfigPath string, req *agent.AgentRe
 		cfg = &override
 	}
 	cmd := buildBaseClaudeCmd(cfg, mcpConfigPath, req.SessionID, req.ResumeAt, req.AgentID, req.ForkSession, false, cfg.ExtraDirs)
+	settings := runSettings
 	if req.ReviewMode {
-		cmd = append(cmd, "--settings", reviewModeSettings)
+		settings = reviewModeSettings
 	}
+	cmd = append(cmd, "--settings", settings)
 	// A read-only run's --mcp-config has only the loop server; this makes Claude
 	// ignore every other MCP config too (~/.claude.json, the project's
 	// .mcp.json), so the user's own servers can't act for it.
@@ -271,6 +278,8 @@ const claudeExitTrailer = `; __lec=$?; printf '\033[?1000l\033[?1002l\033[?1003l
 func buildInteractiveClaudeCmd(cfg *config.Config, channelID, workDir, sessionID, agentID string, forkSession, continueSession bool) string {
 	mcpConfigPath := mcpConfigPathForAgent(workDir, channelID, agentID)
 	cmd := buildBaseClaudeCmd(cfg, mcpConfigPath, sessionID, "", agentID, forkSession, continueSession, cfg.ExtraDirs)
+	// Single-quoted for the shell: runSettings holds no single quote.
+	cmd = append(cmd, "--settings", "'"+runSettings+"'")
 	return "CLAUDE_CODE_NO_FLICKER=1 " + strings.Join(cmd, " ") + claudeExitTrailer
 }
 

@@ -550,6 +550,22 @@ func (s *RunnerSuite) TestCreateShellContainerProjectConfigError() {
 	require.Contains(s.T(), err.Error(), "loading project config")
 }
 
+// interactiveTail ends every interactive Claude command: the shell-quoted
+// runSettings, then the exit trailer.
+const interactiveTail = " --settings '" + runSettings + "'" + claudeExitTrailer
+
+// TestRunSettings verifies every Loop run pins subagents to the session's
+// model, and that the payload survives the interactive command's single
+// quotes.
+func (s *RunnerSuite) TestRunSettings() {
+	var settings struct {
+		Env map[string]string `json:"env"`
+	}
+	require.NoError(s.T(), json.Unmarshal([]byte(runSettings), &settings))
+	require.Equal(s.T(), map[string]string{"CLAUDE_CODE_SUBAGENT_MODEL": "inherit"}, settings.Env)
+	require.NotContains(s.T(), runSettings, "'")
+}
+
 func (s *RunnerSuite) TestBuildInteractiveClaudeCmd() {
 	tests := []struct {
 		name        string
@@ -600,7 +616,7 @@ func (s *RunnerSuite) TestBuildInteractiveClaudeCmd() {
 		s.Run(tc.name, func() {
 			cfg := &config.Config{ClaudeBinPath: tc.binPath, ClaudeModel: tc.model}
 			got := BuildInteractiveClaudeCmd(cfg, "ch-1", "/work", tc.sessionID, "", tc.forkSession)
-			require.Equal(s.T(), tc.expected+claudeExitTrailer, got)
+			require.Equal(s.T(), tc.expected+interactiveTail, got)
 		})
 	}
 }
@@ -610,13 +626,13 @@ func (s *RunnerSuite) TestBuildInteractiveClaudeCmdWithAgentID() {
 	// off until the opt-in config switch is set.
 	cfg := &config.Config{ClaudeBinPath: "claude"}
 	got := BuildInteractiveClaudeCmd(cfg, "ch-1", "/work", "", "agent-0", false)
-	require.Equal(s.T(), "CLAUDE_CODE_NO_FLICKER=1 claude --mcp-config /work/.loop/mcp-ch-1-agent-0.json --dangerously-skip-permissions"+claudeExitTrailer, got)
+	require.Equal(s.T(), "CLAUDE_CODE_NO_FLICKER=1 claude --mcp-config /work/.loop/mcp-ch-1-agent-0.json --dangerously-skip-permissions"+interactiveTail, got)
 }
 
 func (s *RunnerSuite) TestBuildInteractiveClaudeCmdWithAgentIDAndDevChannels() {
 	cfg := &config.Config{ClaudeBinPath: "claude", ClaudeDangerouslyLoadDevelopmentChannels: true}
 	got := BuildInteractiveClaudeCmd(cfg, "ch-1", "/work", "", "agent-0", false)
-	require.Equal(s.T(), "CLAUDE_CODE_NO_FLICKER=1 claude --mcp-config /work/.loop/mcp-ch-1-agent-0.json --dangerously-skip-permissions --dangerously-load-development-channels server:loop"+claudeExitTrailer, got)
+	require.Equal(s.T(), "CLAUDE_CODE_NO_FLICKER=1 claude --mcp-config /work/.loop/mcp-ch-1-agent-0.json --dangerously-skip-permissions --dangerously-load-development-channels server:loop"+interactiveTail, got)
 }
 
 func (s *RunnerSuite) TestBuildInteractiveClaudeCmdDevChannelsWithoutAgentID() {
@@ -635,7 +651,7 @@ func (s *RunnerSuite) TestBuildInteractiveClaudeCmdNoGateWrapper() {
 		cfg := &config.Config{ClaudeBinPath: "claude"}
 		cfg.Gates.Agentgate.Enabled = enabled
 		got := BuildInteractiveClaudeCmd(cfg, "ch-1", "/work", "", "", false)
-		require.Equal(s.T(), "CLAUDE_CODE_NO_FLICKER=1 claude --mcp-config /work/.loop/mcp-ch-1.json --dangerously-skip-permissions"+claudeExitTrailer, got)
+		require.Equal(s.T(), "CLAUDE_CODE_NO_FLICKER=1 claude --mcp-config /work/.loop/mcp-ch-1.json --dangerously-skip-permissions"+interactiveTail, got)
 	}
 }
 
@@ -784,7 +800,7 @@ func (s *RunnerSuite) TestBuildClaudeCmdReviewMode() {
 
 	got := strings.Join(buildClaudeCmd(cfg, "/work/.loop/mcp-ch-1.json", req), " ")
 	require.Contains(s.T(), got, "ReportFindings")
-	require.NotContains(s.T(), got, "--settings")
+	require.Contains(s.T(), got, "--settings "+runSettings+" ")
 
 	req.ReviewMode = true
 	cmd := buildClaudeCmd(cfg, "/work/.loop/mcp-ch-1.json", req)
@@ -835,7 +851,7 @@ func (s *RunnerSuite) TestBuildClaudeCmdReadOnly() {
 	// quality_scan writes a snapshot row; quality_snapshot only reads one.
 	require.Contains(s.T(), strings.Split(cmd[i+1], ","), "mcp__loop__quality_scan")
 	require.NotContains(s.T(), strings.Split(cmd[i+1], ","), "mcp__loop__quality_snapshot")
-	require.NotContains(s.T(), cmd, "--settings")
+	require.Equal(s.T(), runSettings, cmd[slices.Index(cmd, "--settings")+1])
 	require.Equal(s.T(), config.DefaultBatchDisallowedTools(), cfg.ClaudeBatchDisallowedTools)
 
 	// The built-in tools are an allowlist: only the read-only ones. The flag
@@ -967,7 +983,7 @@ func (s *RunnerSuite) TestClaudeCmdBuilder() {
 			builder.transcriptMissing = func(string, string) bool { return false }
 			got := builder.BuildInteractiveCmd(tc.channelID, tc.dirPath, "", tc.sessionID, "", tc.forkSession)
 			expectedMCP := tc.wantDir + "/.loop/mcp-" + tc.channelID + ".json"
-			require.Equal(s.T(), "CLAUDE_CODE_NO_FLICKER=1 claude --mcp-config "+expectedMCP+" --dangerously-skip-permissions"+tc.wantExtra+claudeExitTrailer, got)
+			require.Equal(s.T(), "CLAUDE_CODE_NO_FLICKER=1 claude --mcp-config "+expectedMCP+" --dangerously-skip-permissions"+tc.wantExtra+interactiveTail, got)
 		})
 	}
 }
@@ -980,9 +996,9 @@ func (s *RunnerSuite) TestClaudeCmdBuilderBuildContinueCmd() {
 		transcript bool
 		want       string
 	}{
-		{name: "known session", sessionID: "sess-1", transcript: true, want: prefix + " --resume sess-1" + claudeExitTrailer},
-		{name: "known session without transcript", sessionID: "sess-1", want: prefix + " --continue" + claudeExitTrailer},
-		{name: "unknown session", transcript: true, want: prefix + " --continue" + claudeExitTrailer},
+		{name: "known session", sessionID: "sess-1", transcript: true, want: prefix + " --resume sess-1" + interactiveTail},
+		{name: "known session without transcript", sessionID: "sess-1", want: prefix + " --continue" + interactiveTail},
+		{name: "unknown session", transcript: true, want: prefix + " --continue" + interactiveTail},
 	}
 	for _, tc := range tests {
 		s.Run(tc.name, func() {
@@ -1050,7 +1066,7 @@ func (s *RunnerSuite) TestClaudeCmdBuilderProjectConfigModel() {
 
 	// Project config's claude_model should override the global one.
 	expectedMCP := tmpDir + "/.loop/mcp-ch-1.json"
-	require.Equal(s.T(), "CLAUDE_CODE_NO_FLICKER=1 claude --mcp-config "+expectedMCP+" --model claude-opus-4-6 --dangerously-skip-permissions"+claudeExitTrailer, got)
+	require.Equal(s.T(), "CLAUDE_CODE_NO_FLICKER=1 claude --mcp-config "+expectedMCP+" --model claude-opus-4-6 --dangerously-skip-permissions"+interactiveTail, got)
 }
 
 func (s *RunnerSuite) TestClaudeCmdBuilderWritesAgentMCPConfig() {
@@ -1121,7 +1137,7 @@ func (s *RunnerSuite) TestClaudeCmdBuilderWorktreeProjectConfig() {
 	got := builder.BuildInteractiveCmd("ch-1", worktreeDir, parentDir, "", "", false)
 
 	expectedMCP := worktreeDir + "/.loop/mcp-ch-1.json"
-	require.Equal(s.T(), "CLAUDE_CODE_NO_FLICKER=1 claude --mcp-config "+expectedMCP+" --model claude-opus-4-6 --dangerously-skip-permissions"+claudeExitTrailer, got)
+	require.Equal(s.T(), "CLAUDE_CODE_NO_FLICKER=1 claude --mcp-config "+expectedMCP+" --model claude-opus-4-6 --dangerously-skip-permissions"+interactiveTail, got)
 }
 
 func (s *RunnerSuite) TestCreateShellContainerWithCopyFiles() {
