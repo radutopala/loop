@@ -50,6 +50,11 @@ type editTaskInput struct {
 	BashScript      *string `json:"bash_script,omitempty" jsonschema:"New shell script to run on schedule (empty string clears it)"`
 }
 
+type moveTaskInput struct {
+	TaskID    int64  `json:"task_id" jsonschema:"The ID of the task to move"`
+	ChannelID string `json:"channel_id,omitempty" jsonschema:"The thread, worktree thread or root channel of the same project to move the task under (default: the current channel)"`
+}
+
 type showTaskInput struct {
 	TaskID int64 `json:"task_id" jsonschema:"The ID of the task to show"`
 }
@@ -356,6 +361,26 @@ func (s *Server) handleToggleTask(_ context.Context, _ *mcp.CallToolRequest, inp
 	return &mcp.CallToolResult{
 		Content: []mcp.Content{
 			&mcp.TextContent{Text: fmt.Sprintf("Task %d %s.", input.TaskID, state)},
+		},
+	}, nil, nil
+}
+
+func (s *Server) handleMoveTask(_ context.Context, _ *mcp.CallToolRequest, input moveTaskInput) (*mcp.CallToolResult, any, error) {
+	s.logger.Info("mcp tool call", "tool", "move_task", "task_id", input.TaskID, "channel_id", input.ChannelID)
+
+	channelID := input.ChannelID
+	if channelID == "" {
+		channelID = s.channelID
+	}
+	data, _ := json.Marshal(map[string]string{"channel_id": channelID})
+
+	if errResult, err := doAPICallNoBody(s, "POST", fmt.Sprintf("%s/api/tasks/%d/move", s.apiURL, input.TaskID), http.StatusOK, data); errResult != nil || err != nil {
+		return errResult, nil, err
+	}
+
+	return &mcp.CallToolResult{
+		Content: []mcp.Content{
+			&mcp.TextContent{Text: fmt.Sprintf("Task %d moved to %s.", input.TaskID, channelID)},
 		},
 	}, nil, nil
 }

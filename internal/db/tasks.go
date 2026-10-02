@@ -5,8 +5,23 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"time"
 )
+
+// ErrTaskRunning is returned by MoveScheduledTask while the task is running.
+var ErrTaskRunning = errors.New("task is running")
+
+// TaskMove re-homes a scheduled task under ChannelID. A non-empty ThreadID
+// is the task's thread, moved along under ChannelID with ThreadDirPath; an
+// empty one leaves the task to create a fresh thread on its next run.
+type TaskMove struct {
+	TaskID        int64
+	ChannelID     string
+	GuildID       string
+	ThreadID      string
+	ThreadDirPath string
+}
 
 func (s *SQLiteStore) CreateScheduledTask(ctx context.Context, task *ScheduledTask) (int64, error) {
 	now := s.nowFunc()
@@ -100,6 +115,36 @@ func (s *SQLiteStore) UpdateScheduledTaskOriginBranch(ctx context.Context, id in
 		branch, s.nowFunc(), id,
 	)
 	return err
+}
+
+// MoveScheduledTask applies m atomically; the task's settings are untouched.
+// It returns ErrTaskRunning, changing nothing, when the task is mid-run.
+func (s *SQLiteStore) MoveScheduledTask(ctx context.Context, m TaskMove) error {
+	return s.withTx(ctx, func(tx *sql.Tx) error {
+		now := s.nowFunc()
+		result, err := tx.ExecContext(ctx,
+			`UPDATE scheduled_tasks SET channel_id = ?, guild_id = ?, thread_id = ?, updated_at = ? WHERE id = ? AND running = 0`,
+			m.ChannelID, m.GuildID, m.ThreadID, now, m.TaskID,
+		)
+		if err != nil {
+			return err
+		}
+		n, err := result.RowsAffected()
+		if err != nil {
+			return err
+		}
+		if n == 0 {
+			return ErrTaskRunning
+		}
+		if m.ThreadID == "" {
+			return nil
+		}
+		_, err = tx.ExecContext(ctx,
+			`UPDATE channels SET parent_id = ?, guild_id = ?, dir_path = ?, updated_at = ? WHERE channel_id = ?`,
+			m.ChannelID, m.GuildID, m.ThreadDirPath, now, m.ThreadID,
+		)
+		return err
+	})
 }
 
 func (s *SQLiteStore) ClaimScheduledTaskRunning(ctx context.Context, id int64) (bool, error) {

@@ -508,3 +508,107 @@ func (s *StoreSuite) TestListTaskRunLogsScanError() {
 	require.Error(s.T(), err)
 	require.Nil(s.T(), logs)
 }
+
+func (s *StoreSuite) TestMoveScheduledTask() {
+	withThread := TaskMove{TaskID: 7, ChannelID: "root", GuildID: "g1", ThreadID: "tt", ThreadDirPath: "/repo"}
+	noThread := TaskMove{TaskID: 7, ChannelID: "root", GuildID: "g1"}
+	expectTask := func() *sqlmock.ExpectedExec {
+		return s.mock.ExpectExec(`UPDATE scheduled_tasks SET channel_id = \?, guild_id = \?, thread_id = \?, updated_at = \? WHERE id = \? AND running = 0`).
+			WithArgs("root", "g1", sqlmock.AnyArg(), sqlmock.AnyArg(), int64(7))
+	}
+	expectThread := func() *sqlmock.ExpectedExec {
+		return s.mock.ExpectExec(`UPDATE channels SET parent_id = \?, guild_id = \?, dir_path = \?, updated_at = \? WHERE channel_id = \?`).
+			WithArgs("root", "g1", "/repo", sqlmock.AnyArg(), "tt")
+	}
+
+	tests := []struct {
+		name    string
+		move    TaskMove
+		expect  func()
+		wantErr error
+	}{
+		{
+			name: "with its thread",
+			move: withThread,
+			expect: func() {
+				s.mock.ExpectBegin()
+				expectTask().WillReturnResult(sqlmock.NewResult(0, 1))
+				expectThread().WillReturnResult(sqlmock.NewResult(0, 1))
+				s.mock.ExpectCommit()
+			},
+		},
+		{
+			name: "without a thread",
+			move: noThread,
+			expect: func() {
+				s.mock.ExpectBegin()
+				expectTask().WillReturnResult(sqlmock.NewResult(0, 1))
+				s.mock.ExpectCommit()
+			},
+		},
+		{
+			name: "running",
+			move: withThread,
+			expect: func() {
+				s.mock.ExpectBegin()
+				expectTask().WillReturnResult(sqlmock.NewResult(0, 0))
+				s.mock.ExpectRollback()
+			},
+			wantErr: ErrTaskRunning,
+		},
+		{
+			name: "task update error",
+			move: withThread,
+			expect: func() {
+				s.mock.ExpectBegin()
+				expectTask().WillReturnError(sql.ErrConnDone)
+				s.mock.ExpectRollback()
+			},
+			wantErr: sql.ErrConnDone,
+		},
+		{
+			name: "rows affected error",
+			move: withThread,
+			expect: func() {
+				s.mock.ExpectBegin()
+				expectTask().WillReturnResult(sqlmock.NewErrorResult(sql.ErrConnDone))
+				s.mock.ExpectRollback()
+			},
+			wantErr: sql.ErrConnDone,
+		},
+		{
+			name: "thread update error",
+			move: withThread,
+			expect: func() {
+				s.mock.ExpectBegin()
+				expectTask().WillReturnResult(sqlmock.NewResult(0, 1))
+				expectThread().WillReturnError(sql.ErrConnDone)
+				s.mock.ExpectRollback()
+			},
+			wantErr: sql.ErrConnDone,
+		},
+		{
+			name: "begin error",
+			move: withThread,
+			expect: func() {
+				s.mock.ExpectBegin().WillReturnError(sql.ErrConnDone)
+			},
+			wantErr: sql.ErrConnDone,
+		},
+	}
+	for _, tc := range tests {
+		s.Run(tc.name, func() {
+			s.SetupTest()
+			tc.expect()
+
+			err := s.store.MoveScheduledTask(context.Background(), tc.move)
+
+			if tc.wantErr != nil {
+				require.ErrorIs(s.T(), err, tc.wantErr)
+			} else {
+				require.NoError(s.T(), err)
+			}
+			require.NoError(s.T(), s.mock.ExpectationsWereMet())
+		})
+	}
+}

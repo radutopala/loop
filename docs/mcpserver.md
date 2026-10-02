@@ -40,6 +40,7 @@ Agent (Claude Code)  ←→  MCP Protocol (stdio)  ←→  loop mcp  ←→  HTT
 | `cancel_task` | Cancel a scheduled task by ID |
 | `toggle_task` | Enable or disable a task by ID |
 | `edit_task` | Edit a task's schedule, type, prompt, workflow, bash script, or auto_delete_sec |
+| `move_task` | Move a task to another thread, worktree thread or the root channel of its project (default: the current channel), keeping its settings; its thread moves too |
 
 #### Communication
 

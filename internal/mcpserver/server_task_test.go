@@ -14,7 +14,7 @@ import (
 func (s *MCPServerSuite) TestListTools() {
 	res, err := s.session.ListTools(s.ctx, nil)
 	require.NoError(s.T(), err)
-	require.Len(s.T(), res.Tools, 42) // 20 base + 3 playground + 2 shortcut + 1 chat_component + 12 quality + 1 rename + 1 description + 1 ticket + 1 review
+	require.Len(s.T(), res.Tools, 43) // 21 base + 3 playground + 2 shortcut + 1 chat_component + 12 quality + 1 rename + 1 description + 1 ticket + 1 review
 
 	names := make(map[string]bool)
 	for _, t := range res.Tools {
@@ -26,6 +26,7 @@ func (s *MCPServerSuite) TestListTools() {
 	require.True(s.T(), names["cancel_task"])
 	require.True(s.T(), names["toggle_task"])
 	require.True(s.T(), names["edit_task"])
+	require.True(s.T(), names["move_task"])
 	require.True(s.T(), names["create_channel"])
 	require.True(s.T(), names["create_thread"])
 	require.True(s.T(), names["create_worktree_thread"])
@@ -485,6 +486,43 @@ func (s *MCPServerSuite) TestCancelTaskErrors() {
 		args:      map[string]any{"task_id": float64(1)},
 		apiStatus: http.StatusInternalServerError,
 		apiBody:   "not found",
+	})
+}
+
+// --- move_task ---
+
+func (s *MCPServerSuite) TestMoveTask() {
+	tests := []struct {
+		name     string
+		args     map[string]any
+		wantBody string
+	}{
+		{name: "current channel", args: map[string]any{"task_id": float64(42)}, wantBody: `{"channel_id":"test-channel"}`},
+		{name: "another channel", args: map[string]any{"task_id": float64(42), "channel_id": "wt-1"}, wantBody: `{"channel_id":"wt-1"}`},
+	}
+	for _, tc := range tests {
+		s.Run(tc.name, func() {
+			s.httpClient.doFunc = func(req *http.Request) (*http.Response, error) {
+				require.Equal(s.T(), "POST", req.Method)
+				require.Equal(s.T(), "http://localhost:8222/api/tasks/42/move", req.URL.String())
+				body, _ := io.ReadAll(req.Body)
+				require.JSONEq(s.T(), tc.wantBody, string(body))
+				return noContentResponse(http.StatusOK), nil
+			}
+
+			text, isError := s.callTool("move_task", tc.args)
+			require.False(s.T(), isError)
+			require.Contains(s.T(), text, "Task 42 moved")
+		})
+	}
+}
+
+func (s *MCPServerSuite) TestMoveTaskErrors() {
+	s.runToolErrorCases(toolErrorSpec{
+		tool:      "move_task",
+		args:      map[string]any{"task_id": float64(1), "channel_id": "ch-2"},
+		apiStatus: http.StatusConflict,
+		apiBody:   "task is running",
 	})
 }
 

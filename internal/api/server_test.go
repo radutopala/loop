@@ -257,6 +257,7 @@ func (s *ServerSuite) SetupTest() {
 	s.mux.HandleFunc("PATCH /api/tasks/{id}", s.srv.handleUpdateTask)
 	s.mux.HandleFunc("GET /api/tasks/{id}/runs", s.srv.handleListTaskRuns)
 	s.mux.HandleFunc("POST /api/tasks/{id}/run", s.srv.handleRunTask)
+	s.mux.HandleFunc("POST /api/tasks/{id}/move", s.srv.handleMoveTask)
 	s.mux.HandleFunc("GET /api/shortcuts", s.srv.handleListShortcuts)
 	s.mux.HandleFunc("POST /api/shortcuts", s.srv.handleModifyShortcut)
 	s.mux.HandleFunc("GET /api/bash-shortcuts", s.srv.handleListBashShortcuts)

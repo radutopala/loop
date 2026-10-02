@@ -304,6 +304,10 @@ func (m *MockStore) UpdateScheduledTaskOriginBranch(ctx context.Context, id int6
 	return m.Called(ctx, id, branch).Error(0)
 }
 
+func (m *MockStore) MoveScheduledTask(ctx context.Context, mv db.TaskMove) error {
+	return m.Called(ctx, mv).Error(0)
+}
+
 func (m *MockStore) GetScheduledTask(ctx context.Context, id int64) (*db.ScheduledTask, error) {
 	args := m.Called(ctx, id)
 	if args.Get(0) == nil {

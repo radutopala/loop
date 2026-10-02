@@ -446,6 +446,7 @@ func (s *Server) registerTaskRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("PATCH /api/tasks/{id}", s.handleUpdateTask)
 	mux.HandleFunc("GET /api/tasks/{id}/runs", s.handleListTaskRuns)
 	mux.HandleFunc("POST /api/tasks/{id}/run", s.handleRunTask)
+	mux.HandleFunc("POST /api/tasks/{id}/move", s.handleMoveTask)
 	mux.HandleFunc("GET /api/shortcuts", s.handleListShortcuts)
 	mux.HandleFunc("POST /api/shortcuts", s.handleModifyShortcut)
 	mux.HandleFunc("GET /api/bash-shortcuts", s.handleListBashShortcuts)

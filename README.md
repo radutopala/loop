@@ -1060,6 +1060,7 @@ In headless/Linux environments where Electron can't launch, `LOOP_NO_ELECTRON=1 
 | `PATCH` | `/api/tasks/{id}` | Update a task (enabled, schedule, type, prompt) |
 | `DELETE` | `/api/tasks/{id}` | Delete a task |
 | `POST` | `/api/tasks/{id}/run` | Run a task immediately (409 if already running) |
+| `POST` | `/api/tasks/{id}/move` | Move a task (and its thread) to another thread or the root channel of its project, keeping its settings (409 if running) |
 | `GET` | `/api/tasks/{id}/runs` | List recent run logs for a task |
 | `GET` | `/api/channels?query=<term>` | Search channels and threads (optional query filter) |
 | `POST` | `/api/channels` | Ensure/create a channel for a directory |
@@ -1141,6 +1142,7 @@ In headless/Linux environments where Electron can't launch, `LOOP_NO_ELECTRON=1 
 | `cancel_task` | Cancel a scheduled task by ID |
 | `toggle_task` | Enable or disable a scheduled task by ID |
 | `edit_task` | Edit a task's schedule, type, and/or prompt |
+| `move_task` | Move a task to another thread, worktree thread or the root channel of its project, keeping its settings |
 | `create_channel` | Create a new channel by name |
 | `create_thread` | Create a new thread; optional `message` triggers a runner immediately |
 | `create_worktree_thread` | Create a thread backed by a fresh git worktree; `branch` is the base to fork from (a new `worktree/<name>` branch is checked out off it); optional `message` triggers a runner immediately |
