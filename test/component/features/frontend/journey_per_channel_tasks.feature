@@ -107,9 +107,12 @@ Feature: Per-Channel Tasks Journey
     And I wait for text "No runs yet" to disappear
     And the page should contain text "Run Now"
 
-    # Delete task
+    # Delete task. Its run created a task thread that stays in the sidebar,
+    # so only the tasks panel loses the prompt text.
     When I click on the button with text "Delete"
-    Then I wait for text "mega-updated-prompt" to disappear
+    Then I wait for text "1 task" to appear
+    And the element "[data-testid='tasks-panel']" should not contain text "mega-updated-prompt"
+    And the page should contain text "mega-updated-prompt"
     When I click on "mega-cron-task" in the tasks panel
     And I click on the button with text "Delete"
     Then I wait for text "mega-cron-task" to disappear
