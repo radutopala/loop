@@ -19,6 +19,10 @@ Feature: Learn from runs
     # channel that never learned has no badge.
     Then I wait for "[data-testid='learn-toggle'][data-on='false']" to be visible
     And the element "[data-testid='learn-badge']" should not exist
+    # The switch is an icon; resting on it says what it is and does.
+    When I rest the pointer on the element "[data-testid='learn-toggle']"
+    Then I wait for "[data-testid='hover-tip']" to be visible
+    And the element "[data-testid='hover-tip']" should contain text "Learn is off"
     When I click on "[data-testid='learn-toggle']"
     Then I wait for "[data-testid='learn-toggle'][data-on='true']" to be visible
     When I open the app in a browser

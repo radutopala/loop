@@ -19,6 +19,10 @@ Feature: Explain a turn
   Scenario: The Explain switch sticks to the channel and follows other windows
     # The test config sets no explain default, so the switch starts off.
     Then I wait for "[data-testid='explain-toggle'][data-on='false']" to be visible
+    # The switch is an icon; resting on it says what it is and does.
+    When I rest the pointer on the element "[data-testid='explain-toggle']"
+    Then I wait for "[data-testid='hover-tip']" to be visible
+    And the element "[data-testid='hover-tip']" should contain text "Explain is off"
     When I click on "[data-testid='explain-toggle']"
     Then I wait for "[data-testid='explain-toggle'][data-on='true']" to be visible
     When I open the app in a browser
