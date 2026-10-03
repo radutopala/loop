@@ -16,6 +16,7 @@ import { ContinueIcon } from "./ContinueIcon";
 import { draftText } from "./chatDrafts";
 import { composerHeight, composerMaxHeight } from "./composerHeight";
 import { ExplainToggle } from "./ExplainToggle";
+import { HoverTip } from "./HoverTip";
 import { LearnToggle } from "./LearnToggle";
 import { chooseSendRoute, normalizeSendMode, type SendMode } from "./sendRouting";
 
@@ -197,6 +198,7 @@ export type { SendMode } from "./sendRouting";
 
 const SEND_MODE_KEY = "loop-send-mode";
 const CONTINUE_PROMPT = "continue";
+const CONTINUE_TIP = 'Continue\nSends "continue" so the agent carries on where it stopped. Anything typed here stays in the composer.';
 
 export interface ChatInputProps {
   channelId: string;
@@ -1229,32 +1231,31 @@ export function ChatInput({
           </button>
         )}
         {showContinue && (
-          <button
-            data-testid="composer-continue"
-            style={{
-              height: 28,
-              display: "flex",
-              alignItems: "center",
-              gap: 4,
-              padding: "0 10px 0 7px",
-              background: "transparent",
-              border: `1px solid ${colors.border}`,
-              borderRadius: 8,
-              color: colors.textDim,
-              cursor: sending ? "default" : "pointer",
-              opacity: sending ? 0.4 : 1,
-              flexShrink: 0,
-              fontFamily: fonts.mono,
-              fontSize: 11,
-              fontWeight: 600,
-            }}
-            title='Send "continue"'
-            onClick={sendContinue}
-            disabled={sending}
-          >
-            <ContinueIcon size={13} />
-            Continue
-          </button>
+          <HoverTip text={CONTINUE_TIP}>
+            <button
+              data-testid="composer-continue"
+              aria-label="Continue"
+              style={{
+                width: 28,
+                height: 28,
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                padding: 0,
+                background: "transparent",
+                border: `1px solid ${colors.border}`,
+                borderRadius: 8,
+                color: colors.textDim,
+                cursor: sending ? "default" : "pointer",
+                opacity: sending ? 0.4 : 1,
+                flexShrink: 0,
+              }}
+              onClick={sendContinue}
+              disabled={sending}
+            >
+              <ContinueIcon size={14} />
+            </button>
+          </HoverTip>
         )}
         <div style={{ flex: 1 }} />
         <LearnToggle />
