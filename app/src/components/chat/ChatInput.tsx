@@ -12,6 +12,7 @@ import type { Message } from "../../types";
 import { firstClipboardImage, uploadPastedImage } from "../../utils/clipboardImage";
 import { storageGetJSON, storageSetJSON } from "../../utils/storage";
 import { AgentConfigPill } from "./AgentConfigPill";
+import { ContinueIcon } from "./ContinueIcon";
 import { draftText } from "./chatDrafts";
 import { composerHeight, composerMaxHeight } from "./composerHeight";
 import { ExplainToggle } from "./ExplainToggle";
@@ -1234,8 +1235,8 @@ export function ChatInput({
               height: 28,
               display: "flex",
               alignItems: "center",
-              gap: 6,
-              padding: "0 10px",
+              gap: 4,
+              padding: "0 10px 0 7px",
               background: "transparent",
               border: `1px solid ${colors.border}`,
               borderRadius: 8,
@@ -1251,9 +1252,7 @@ export function ChatInput({
             onClick={sendContinue}
             disabled={sending}
           >
-            <svg width="10" height="10" viewBox="0 0 10 10" fill="none">
-              <path d="M2 1.5L8 5L2 8.5Z" fill="currentColor" />
-            </svg>
+            <ContinueIcon size={13} />
             Continue
           </button>
         )}
