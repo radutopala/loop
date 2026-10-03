@@ -195,6 +195,7 @@ const LOOP_COMMANDS: CommandDef[] = [
 export type { SendMode } from "./sendRouting";
 
 const SEND_MODE_KEY = "loop-send-mode";
+const CONTINUE_PROMPT = "continue";
 
 export interface ChatInputProps {
   channelId: string;
@@ -714,6 +715,22 @@ export function ChatInput({
     [channelId, onSent, deliver],
   );
 
+  // One click to tell a stopped agent to carry on; whatever is typed in the
+  // composer stays there.
+  const sendContinue = useCallback(async () => {
+    setSending(true);
+    try {
+      await deliver(CONTINUE_PROMPT);
+      onSent?.();
+    } finally {
+      setSending(false);
+      requestAnimationFrame(() => inputRef.current?.focus());
+    }
+  }, [onSent, deliver]);
+  // Only when the agent has stopped with something to carry on from, and no
+  // parked card would take the word as its answer.
+  const showContinue = !effectiveIsRunning && messages.length > 0 && !editingQueued && !pendingGateReqId && !hasPendingAskUser && !hasPendingExitPlan;
+
   const handleChange = useCallback(
     (e: React.ChangeEvent<HTMLTextAreaElement>) => {
       const val = e.target.value;
@@ -1208,6 +1225,36 @@ export function ChatInput({
             onClick={showShortcuts ? closeShortcutPicker : openShortcutPicker}
           >
             #
+          </button>
+        )}
+        {showContinue && (
+          <button
+            data-testid="composer-continue"
+            style={{
+              height: 28,
+              display: "flex",
+              alignItems: "center",
+              gap: 6,
+              padding: "0 10px",
+              background: "transparent",
+              border: `1px solid ${colors.border}`,
+              borderRadius: 8,
+              color: colors.textDim,
+              cursor: sending ? "default" : "pointer",
+              opacity: sending ? 0.4 : 1,
+              flexShrink: 0,
+              fontFamily: fonts.mono,
+              fontSize: 11,
+              fontWeight: 600,
+            }}
+            title='Send "continue"'
+            onClick={sendContinue}
+            disabled={sending}
+          >
+            <svg width="10" height="10" viewBox="0 0 10 10" fill="none">
+              <path d="M2 1.5L8 5L2 8.5Z" fill="currentColor" />
+            </svg>
+            Continue
           </button>
         )}
         <div style={{ flex: 1 }} />
