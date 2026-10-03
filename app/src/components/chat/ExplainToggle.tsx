@@ -4,6 +4,7 @@ import { useTheme } from "../../ThemeContext";
 import { fonts } from "../../theme";
 import { ExplainIcon } from "./ExplainIcon";
 import { explainToggleTitle } from "./explainState";
+import { HoverTip } from "./HoverTip";
 import { learnEffective } from "./learnState";
 
 /**
@@ -21,31 +22,32 @@ export function ExplainToggle() {
   const toggle = () => view.setExplain(on ? "off" : "on");
 
   return (
-    <button
-      data-testid="explain-toggle"
-      data-on={on ? "true" : "false"}
-      aria-pressed={on}
-      onClick={toggle}
-      title={explainToggleTitle(explain, defaultExplain)}
-      style={{
-        display: "flex",
-        alignItems: "center",
-        gap: 4,
-        height: 24,
-        padding: "0 8px",
-        marginRight: 6,
-        flexShrink: 0,
-        background: "transparent",
-        border: `1px solid ${on ? colors.active : colors.border}`,
-        borderRadius: 12,
-        color: on ? colors.active : colors.textDim,
-        cursor: "pointer",
-        fontFamily: fonts.mono,
-        fontSize: 10,
-      }}
-    >
-      <ExplainIcon size={10} />
-      explain
-    </button>
+    <HoverTip text={explainToggleTitle(explain, defaultExplain)}>
+      <button
+        data-testid="explain-toggle"
+        aria-label="Explain"
+        data-on={on ? "true" : "false"}
+        aria-pressed={on}
+        onClick={toggle}
+        style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          width: 24,
+          height: 24,
+          padding: 0,
+          flexShrink: 0,
+          background: "transparent",
+          border: `1px solid ${on ? colors.active : colors.border}`,
+          borderRadius: 12,
+          color: on ? colors.active : colors.textDim,
+          cursor: "pointer",
+          fontFamily: fonts.mono,
+          fontSize: 10,
+        }}
+      >
+        <ExplainIcon size={12} />
+      </button>
+    </HoverTip>
   );
 }

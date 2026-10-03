@@ -12,9 +12,11 @@ import type { Message } from "../../types";
 import { firstClipboardImage, uploadPastedImage } from "../../utils/clipboardImage";
 import { storageGetJSON, storageSetJSON } from "../../utils/storage";
 import { AgentConfigPill } from "./AgentConfigPill";
+import { ContinueIcon } from "./ContinueIcon";
 import { draftText } from "./chatDrafts";
 import { composerHeight, composerMaxHeight } from "./composerHeight";
 import { ExplainToggle } from "./ExplainToggle";
+import { HoverTip } from "./HoverTip";
 import { LearnToggle } from "./LearnToggle";
 import { chooseSendRoute, normalizeSendMode, type SendMode } from "./sendRouting";
 
@@ -195,6 +197,8 @@ const LOOP_COMMANDS: CommandDef[] = [
 export type { SendMode } from "./sendRouting";
 
 const SEND_MODE_KEY = "loop-send-mode";
+const CONTINUE_PROMPT = "continue";
+const CONTINUE_TIP = 'Continue\nSends "continue" so the agent carries on where it stopped. Anything typed here stays in the composer.';
 
 export interface ChatInputProps {
   channelId: string;
@@ -714,6 +718,22 @@ export function ChatInput({
     [channelId, onSent, deliver],
   );
 
+  // One click to tell a stopped agent to carry on; whatever is typed in the
+  // composer stays there.
+  const sendContinue = useCallback(async () => {
+    setSending(true);
+    try {
+      await deliver(CONTINUE_PROMPT);
+      onSent?.();
+    } finally {
+      setSending(false);
+      requestAnimationFrame(() => inputRef.current?.focus());
+    }
+  }, [onSent, deliver]);
+  // Only when the agent has stopped with something to carry on from, and no
+  // parked card would take the word as its answer.
+  const showContinue = !effectiveIsRunning && messages.length > 0 && !editingQueued && !pendingGateReqId && !hasPendingAskUser && !hasPendingExitPlan;
+
   const handleChange = useCallback(
     (e: React.ChangeEvent<HTMLTextAreaElement>) => {
       const val = e.target.value;
@@ -1209,6 +1229,33 @@ export function ChatInput({
           >
             #
           </button>
+        )}
+        {showContinue && (
+          <HoverTip text={CONTINUE_TIP}>
+            <button
+              data-testid="composer-continue"
+              aria-label="Continue"
+              style={{
+                width: 28,
+                height: 28,
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                padding: 0,
+                background: "transparent",
+                border: `1px solid ${colors.border}`,
+                borderRadius: 8,
+                color: colors.textDim,
+                cursor: sending ? "default" : "pointer",
+                opacity: sending ? 0.4 : 1,
+                flexShrink: 0,
+              }}
+              onClick={sendContinue}
+              disabled={sending}
+            >
+              <ContinueIcon size={14} />
+            </button>
+          </HoverTip>
         )}
         <div style={{ flex: 1 }} />
         <LearnToggle />

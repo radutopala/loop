@@ -211,6 +211,7 @@ func registerFrontendSteps(ctx *godog.ScenarioContext, tc *TestContext) {
 	ctx.Step(`^I hover over the element with text "([^"]*)"$`, tc.hoverElementWithText)
 	ctx.Step(`^I hover over "([^"]*)" in the sidebar$`, tc.hoverInSidebar)
 	ctx.Step(`^I rest the pointer on "([^"]*)" in the sidebar$`, tc.restPointerInSidebar)
+	ctx.Step(`^I rest the pointer on the element "([^"]*)"$`, tc.restPointerOnElement)
 	ctx.Step(`^I move the pointer off the sidebar$`, tc.movePointerOffSidebar)
 	ctx.Step(`^the row info should show the (channel|worktree)'s path and branch "([^"]*)"$`, tc.assertRowInfo)
 	ctx.Step(`^the row info "(ticket|branch-detail|commit|commit-detail|sync|model|status|description)" should read "([^"]*)"$`, tc.assertRowInfoLine)
@@ -1143,6 +1144,22 @@ func (tc *TestContext) restPointerInSidebar(text string) error {
 	var at []float64
 	if err := chromedp.Run(tc.chromeTab.ctx, chromedp.Poll(js, &at, chromedp.WithPollingTimeout(10*time.Second))); err != nil {
 		return fmt.Errorf("sidebar row %q: %w", text, err)
+	}
+	return chromedp.Run(tc.chromeTab.ctx, chromedp.MouseEvent(input.MouseMoved, at[0], at[1]))
+}
+
+// restPointerOnElement moves the real mouse to the middle of the element the
+// CSS selector matches, so the page sees the pointer enter it.
+func (tc *TestContext) restPointerOnElement(selector string) error {
+	js := fmt.Sprintf(`(() => {
+		const el = document.querySelector(%q);
+		if (!el) return null;
+		const r = el.getBoundingClientRect();
+		return r.width > 0 ? [r.left + r.width / 2, r.top + r.height / 2] : null;
+	})()`, selector)
+	var at []float64
+	if err := chromedp.Run(tc.chromeTab.ctx, chromedp.Poll(js, &at, chromedp.WithPollingTimeout(10*time.Second))); err != nil {
+		return fmt.Errorf("element %q: %w", selector, err)
 	}
 	return chromedp.Run(tc.chromeTab.ctx, chromedp.MouseEvent(input.MouseMoved, at[0], at[1]))
 }

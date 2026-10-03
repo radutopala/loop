@@ -2,6 +2,7 @@ import { useContext } from "react";
 import { LearnContext } from "../../hooks/useLearn";
 import { useTheme } from "../../ThemeContext";
 import { fonts } from "../../theme";
+import { HoverTip } from "./HoverTip";
 import { LearnIcon } from "./LearnIcon";
 import { learnEffective, learnToggleTitle } from "./learnState";
 
@@ -22,31 +23,32 @@ export function LearnToggle() {
   const toggle = () => view.setLearn(on ? "off" : "on");
 
   return (
-    <button
-      data-testid="learn-toggle"
-      data-on={on ? "true" : "false"}
-      aria-pressed={on}
-      onClick={toggle}
-      title={learnToggleTitle(learn, defaultLearn)}
-      style={{
-        display: "flex",
-        alignItems: "center",
-        gap: 4,
-        height: 24,
-        padding: "0 8px",
-        marginRight: 6,
-        flexShrink: 0,
-        background: "transparent",
-        border: `1px solid ${on ? colors.active : colors.border}`,
-        borderRadius: 12,
-        color: on ? colors.active : colors.textDim,
-        cursor: "pointer",
-        fontFamily: fonts.mono,
-        fontSize: 10,
-      }}
-    >
-      <LearnIcon size={10} />
-      learn
-    </button>
+    <HoverTip text={learnToggleTitle(learn, defaultLearn)}>
+      <button
+        data-testid="learn-toggle"
+        aria-label="Learn"
+        data-on={on ? "true" : "false"}
+        aria-pressed={on}
+        onClick={toggle}
+        style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          width: 24,
+          height: 24,
+          padding: 0,
+          flexShrink: 0,
+          background: "transparent",
+          border: `1px solid ${on ? colors.active : colors.border}`,
+          borderRadius: 12,
+          color: on ? colors.active : colors.textDim,
+          cursor: "pointer",
+          fontFamily: fonts.mono,
+          fontSize: 10,
+        }}
+      >
+        <LearnIcon size={12} />
+      </button>
+    </HoverTip>
   );
 }
