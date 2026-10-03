@@ -1,6 +1,7 @@
 import { type ReactNode, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useTheme } from "../../ThemeContext";
+import { fonts } from "../../theme";
 
 const SHOW_DELAY_MS = 250;
 const WIDTH = 260;
@@ -57,6 +58,8 @@ export function HoverTip({ text, children }: { text: string; children: ReactNode
               borderRadius: 8,
               boxShadow: `0 4px 12px ${colors.shadow}`,
               color: colors.textDim,
+              // On the body it's outside the app root, which sets the font.
+              fontFamily: fonts.sans,
               fontSize: 11,
               lineHeight: 1.4,
               whiteSpace: "pre-line",
