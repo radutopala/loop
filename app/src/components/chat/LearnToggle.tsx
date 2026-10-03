@@ -24,6 +24,7 @@ export function LearnToggle() {
   return (
     <button
       data-testid="learn-toggle"
+      aria-label="Learn"
       data-on={on ? "true" : "false"}
       aria-pressed={on}
       onClick={toggle}
@@ -31,10 +32,10 @@ export function LearnToggle() {
       style={{
         display: "flex",
         alignItems: "center",
-        gap: 4,
+        justifyContent: "center",
+        width: 24,
         height: 24,
-        padding: "0 8px",
-        marginRight: 6,
+        padding: 0,
         flexShrink: 0,
         background: "transparent",
         border: `1px solid ${on ? colors.active : colors.border}`,
@@ -45,8 +46,7 @@ export function LearnToggle() {
         fontSize: 10,
       }}
     >
-      <LearnIcon size={10} />
-      learn
+      <LearnIcon size={12} />
     </button>
   );
 }

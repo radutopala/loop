@@ -23,6 +23,7 @@ export function ExplainToggle() {
   return (
     <button
       data-testid="explain-toggle"
+      aria-label="Explain"
       data-on={on ? "true" : "false"}
       aria-pressed={on}
       onClick={toggle}
@@ -30,10 +31,10 @@ export function ExplainToggle() {
       style={{
         display: "flex",
         alignItems: "center",
-        gap: 4,
+        justifyContent: "center",
+        width: 24,
         height: 24,
-        padding: "0 8px",
-        marginRight: 6,
+        padding: 0,
         flexShrink: 0,
         background: "transparent",
         border: `1px solid ${on ? colors.active : colors.border}`,
@@ -44,8 +45,7 @@ export function ExplainToggle() {
         fontSize: 10,
       }}
     >
-      <ExplainIcon size={10} />
-      explain
+      <ExplainIcon size={12} />
     </button>
   );
 }
