@@ -370,8 +370,8 @@ On startup, `loop serve` keeps the versioned container files (`Dockerfile`, `ent
 | `claude_bin_path` | `"claude"` | Path to Claude Code binary |
 | `mounts` | `[]` | Host directories to mount into containers |
 | `copy_files` | `["~/.claude.json"]` | Files copied (not mounted) into each container |
-| `proxies.http_proxy` | `""` | Proxy for `http://` traffic in containers and image builds. Empty inherits the daemon's own environment — which is fixed when the daemon starts, while this is re-read per run |
-| `proxies.https_proxy` | `""` | Proxy for `https://` traffic in containers and image builds. Empty inherits the daemon's own environment |
+| `proxies.http_proxy` | `""` | Proxy for `http://` traffic in containers, image builds and the daemon's own connections. Empty inherits the daemon's own environment — which is fixed when the daemon starts, while this is re-read per run |
+| `proxies.https_proxy` | `""` | Proxy for `https://` traffic in containers, image builds and the daemon's own connections. Empty inherits the daemon's own environment |
 | `proxies.no_proxy` | `[]` | Extra entries that bypass the proxy, added to Loop's own bypasses. Needed for containers reached by bare name (e.g. your own compose services) — no-proxy entries are matched against the hostname before DNS resolves it, so an IP range never covers a service name |
 | `mcp` | `{}` | MCP server configurations |
 | `task_templates` | `[]` | Reusable task templates |

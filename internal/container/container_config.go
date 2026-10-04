@@ -547,7 +547,7 @@ func (r *DockerRunner) warnProxyMissing(cfg *config.Config, proxyEnv []string) {
 		return
 	}
 	r.logger.Warn("creating container with no proxy: config sets proxies.no_proxy but neither config nor the daemon environment names a proxy",
-		"hint", "set proxies.http_proxy/https_proxy in config, or restart the daemon with the proxy exported")
+		"hint", "set proxies.http_proxy/https_proxy in config")
 }
 
 // ensureNoProxy ensures host.docker.internal (and any extra hosts) are in

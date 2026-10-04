@@ -55,9 +55,6 @@ func (RealSystem) ProcCmdline(pid int) ([]byte, error) {
 }
 func (RealSystem) Sleep(d time.Duration) { time.Sleep(d) }
 
-// proxyKeys lists the environment variable names forwarded to the service unit.
-var proxyKeys = []string{"HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "http_proxy", "https_proxy", "no_proxy"}
-
 func removeIfExists(sys System, path string) error {
 	err := sys.RemoveFile(path)
 	if err != nil && !os.IsNotExist(err) {

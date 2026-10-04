@@ -21,6 +21,7 @@ import (
 
 	"github.com/bwmarrin/discordgo"
 	dockerclient "github.com/docker/docker/client"
+	"github.com/gorilla/websocket"
 	goslack "github.com/slack-go/slack"
 	"github.com/slack-go/slack/socketmode"
 	"github.com/spf13/cobra"
@@ -115,6 +116,12 @@ type app struct {
 	newDiscordBot func(string, string, string, *slog.Logger) (orchestrator.Bot, error)
 	newSlackBot   func(string, string, *slog.Logger) (orchestrator.Bot, error)
 	newLocalBot   func(db.Store, *slog.Logger) orchestrator.Bot
+
+	// Outbound proxy: serve points both at the configured proxy. The chat
+	// platforms dial through them — HTTP via the default transport,
+	// websockets via the default dialer.
+	httpTransport *http.Transport
+	wsDialer      *websocket.Dialer
 
 	// Daemon
 	daemonStart  func(daemon.System, string) error
@@ -213,12 +220,14 @@ func newApp() *app {
 		discordgoNew: discordgo.New,
 		newSlackBot: func(botToken, appToken string, logger *slog.Logger) (orchestrator.Bot, error) {
 			sapi := goslack.New(botToken, goslack.OptionAppLevelToken(appToken))
-			smClient := socketmode.New(sapi)
+			smClient := socketmode.New(sapi, socketmode.OptionDialer(websocket.DefaultDialer))
 			return slackbot.NewBot(sapi, slackbot.NewSocketModeAdapter(smClient), logger), nil
 		},
 		newLocalBot: func(store db.Store, logger *slog.Logger) orchestrator.Bot {
 			return local.NewBot(store, logger)
 		},
+		httpTransport: http.DefaultTransport.(*http.Transport),
+		wsDialer:      websocket.DefaultDialer,
 
 		// Daemon
 		daemonStart:  daemon.Start,

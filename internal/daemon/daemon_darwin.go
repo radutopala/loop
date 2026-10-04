@@ -47,15 +47,10 @@ func Start(sys System, logFile string) error {
 		shell = "/bin/zsh"
 	}
 
-	extraEnv := make(map[string]string)
-	for _, key := range proxyKeys {
-		if v := sys.Getenv(key); v != "" {
-			extraEnv[key] = v
-		} else if v := shellGetenv(sys, shell, key); v != "" {
-			extraEnv[key] = v
-		}
-	}
-	extraEnv["SHELL"] = shell
+	// Proxy variables are deliberately not captured: they would pin the
+	// proxy the shell had at install time, and the daemon resolves its proxy
+	// from config per request instead.
+	extraEnv := map[string]string{"SHELL": shell}
 
 	plist := generatePlist(binPath, logFile, extraEnv)
 	if err := sys.WriteFile(plistPath, []byte(plist), 0o644); err != nil {
@@ -130,18 +125,6 @@ func Status(sys System) (string, error) {
 	}
 
 	return "stopped", nil
-}
-
-// shellGetenv reads an environment variable from the user's login shell.
-// This handles the case where the daemon is started by a Desktop app (not a
-// terminal), so shell-profile variables like HTTP_PROXY are not in the
-// process environment.
-func shellGetenv(sys System, shell, key string) string {
-	out, err := sys.RunCommand(shell, "-l", "-c", "printenv "+key)
-	if err != nil {
-		return ""
-	}
-	return strings.TrimSpace(string(out))
 }
 
 func generatePlist(binaryPath, logFile string, extraEnv map[string]string) string {

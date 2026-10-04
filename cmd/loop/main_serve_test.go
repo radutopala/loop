@@ -302,6 +302,10 @@ func (s *MainSuite) TestServeHappyPathShutdown() {
 
 	m.store.AssertExpectations(s.T())
 	m.bot.AssertExpectations(s.T())
+
+	// The daemon's own connections resolve their proxy from config.
+	require.NotNil(s.T(), s.app.httpTransport.Proxy)
+	require.NotNil(s.T(), s.app.wsDialer.Proxy)
 }
 
 // TestServeWiresOOMWatcherNotice exercises the OOM-watcher wiring in serve():

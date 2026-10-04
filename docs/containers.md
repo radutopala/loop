@@ -122,7 +122,7 @@ Both letter cases are set in the container from one resolved value, because tool
 
 #### Prefer config over the daemon environment
 
-The daemon's environment is fixed when `loop serve` starts. A daemon launched before the proxy was exported resolves no proxy, and since a container's environment is fixed the moment it is created, every container it creates is proxy-less for that container's whole life — a restart fixes the next container, never an existing one.
+The daemon's environment is fixed when `loop serve` starts, and the service `daemon:start` installs carries no proxy variables at all (see [Daemon — Proxy](daemon.md#proxy)). A daemon launched before the proxy was exported resolves no proxy, and since a container's environment is fixed the moment it is created, every container it creates is proxy-less for that container's whole life — a restart fixes the next container, never an existing one.
 
 Config is re-read on every run, so setting the proxy there makes it a property of the project rather than of how the daemon happened to be launched, and takes effect on the next agent turn with no `loop daemon:restart`:
 
