@@ -113,7 +113,7 @@ Exactly one of the following is set, with OAuth taking precedence:
 
 ### Proxy Forwarding
 
-A container's proxy comes from `http_proxy` and `https_proxy` in config, falling back per variable to the daemon's own environment. Whichever wins, localhost addresses are rewritten:
+A container's proxy comes from `proxies.http_proxy` and `proxies.https_proxy` in config, falling back per variable to the daemon's own environment. Whichever wins, localhost addresses are rewritten:
 
 - `://localhost:` and `://127.0.0.1:` become `://host.docker.internal:`
 - Bare port values like `:3128` become `http://host.docker.internal:3128`
@@ -129,14 +129,16 @@ Config is re-read on every run, so setting the proxy there makes it a property o
 ```json
 // ~/.loop/config.json, or .loop/config.json in the project
 {
-  "http_proxy": "http://127.0.0.1:3128",
-  "https_proxy": "http://127.0.0.1:3128"
+  "proxies": {
+    "http_proxy": "http://127.0.0.1:3128",
+    "https_proxy": "http://127.0.0.1:3128"
+  }
 }
 ```
 
-When neither config nor its environment names a proxy, the daemon says so at startup, and again whenever it creates a container for a project that sets `no_proxy` — a setting only worth having behind a proxy.
+When neither config nor its environment names a proxy, the daemon says so at startup, and again whenever it creates a container for a project that sets `proxies.no_proxy` — a setting only worth having behind a proxy.
 
-When a proxy is resolved, `NO_PROXY` and `no_proxy` are ensured to include `host.docker.internal`, `localhost`, `127.0.0.1`, `::1`, `172.16.0.0/12`, the channel's Chrome sidecar hostname, and everything listed in `no_proxy` — on top of whatever the daemon's own `NO_PROXY` carried, which is never discarded. The Loop API and the sidecar are reached directly; the CIDR covers every other container on a Docker bridge, which a proxy running on the Docker host has no route back into — proxying those would hang until the request timed out rather than failing fast.
+When a proxy is resolved, `NO_PROXY` and `no_proxy` are ensured to include `host.docker.internal`, `localhost`, `127.0.0.1`, `::1`, `172.16.0.0/12`, the channel's Chrome sidecar hostname, and everything listed in `proxies.no_proxy` — on top of whatever the daemon's own `NO_PROXY` carried, which is never discarded. The Loop API and the sidecar are reached directly; the CIDR covers every other container on a Docker bridge, which a proxy running on the Docker host has no route back into — proxying those would hang until the request timed out rather than failing fast.
 
 #### Image builds
 
@@ -150,7 +152,7 @@ This is why the Chrome sidecar is passed by hostname rather than relying on the 
 
 ```json
 // .loop/config.json in the project
-{ "no_proxy": ["my-service", "my-cache"] }
+{ "proxies": { "no_proxy": ["my-service", "my-cache"] } }
 ```
 
 Loop cannot discover these itself. The agent container is created before the project's stack exists and is not on the network compose later creates, so there is nothing to enumerate at that point. Project values are appended to the global list, and the same list is written into the Docker CLI config below, so containers the agent creates inherit it.

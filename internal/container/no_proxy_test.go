@@ -146,7 +146,7 @@ func (s *RunnerSuite) TestDockerCLIProxyConfigCarriesNoProxyEntries() {
 // End to end: a project naming its compose services in config has them in the
 // container's own NO_PROXY, in both letter cases, alongside the Chrome sidecar.
 func (s *RunnerSuite) TestRunNoProxyFromConfig() {
-	s.cfg.NoProxy = []string{"my-service", "my-cache"}
+	s.cfg.Proxies.NoProxy = []string{"my-service", "my-cache"}
 	s.applyMockDefaults()
 	s.sys.Override("Getenv", "USER").Return("testuser")
 	s.sys.On("Getenv", "HTTP_PROXY").Return("http://proxy:8080")

@@ -101,8 +101,8 @@ func (s *BrowserHandlerSuite) TestChannelBrowserConfig() {
 		merged.Browser.MemoryMB = 2048
 		// The sidecar is created from more than the browser block: a project
 		// behind its own proxy needs Chrome behind it too.
-		merged.HTTPProxy = "http://proj:3128"
-		merged.NoProxy = []string{"my-service"}
+		merged.Proxies.HTTPProxy = "http://proj:3128"
+		merged.Proxies.NoProxy = []string{"my-service"}
 		return &merged, nil
 	}
 	ctx := context.Background()

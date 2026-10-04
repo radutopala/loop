@@ -1058,7 +1058,7 @@ func (s *ClientSuite) TestProxyBuildArgs() {
 		{
 			name: "config proxy rewritten for the build container",
 			reload: func() (*config.Config, error) {
-				return &config.Config{HTTPProxy: "http://127.0.0.1:3128", HTTPSProxy: "http://127.0.0.1:3129"}, nil
+				return &config.Config{Proxies: config.ProxiesConfig{HTTPProxy: "http://127.0.0.1:3128", HTTPSProxy: "http://127.0.0.1:3129"}}, nil
 			},
 			want: []string{
 				"HTTP_PROXY=http://host.docker.internal:3128",

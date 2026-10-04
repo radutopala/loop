@@ -414,7 +414,7 @@ func logContainerProxy(logger *slog.Logger, cfg *config.Config, getenv func(stri
 	value, source := container.ProxySummary(container.ProxySettingsFromConfig(cfg), getenv)
 	if value == "" {
 		logger.Warn("no proxy for containers: neither config nor this daemon's environment names one",
-			"hint", "set http_proxy/https_proxy in ~/.loop/config.json, or restart the daemon with the proxy exported")
+			"hint", "set proxies.http_proxy/https_proxy in ~/.loop/config.json, or restart the daemon with the proxy exported")
 		return
 	}
 	logger.Info("container proxy", "url", value, "source", source)
