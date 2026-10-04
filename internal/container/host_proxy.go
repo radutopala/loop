@@ -21,7 +21,9 @@ import (
 // connection, so a proxy switched on or off in config applies to the next
 // connection without a restart. Unlike ProxyEnv, localhost is not rewritten:
 // the daemon runs on the host, where the proxy is reached as configured.
-// Requests to localhost itself are never proxied.
+// Requests to localhost itself are never proxied, nor are those to the Docker
+// bridge range: a daemon running in a container reaches its sidecars by
+// bridge address, which a proxy on the Docker host has no route back into.
 func HostProxyFunc(reload func() (*config.Config, error), getenv func(string) string) func(*http.Request) (*url.URL, error) {
 	return func(req *http.Request) (*url.URL, error) {
 		var proxies config.ProxiesConfig
@@ -43,21 +45,13 @@ func hostProxyConfig(proxies config.ProxiesConfig, getenv func(string) string) *
 		}
 		return getenv(lower)
 	}
-	noProxy := resolve("", "NO_PROXY", "no_proxy")
-	if len(proxies.NoProxy) > 0 {
-		noProxy = strings.Join(append(nonEmpty(noProxy), proxies.NoProxy...), ",")
+	noProxy := []string{dockerBridgeCIDR}
+	if v := resolve("", "NO_PROXY", "no_proxy"); v != "" {
+		noProxy = append(noProxy, v)
 	}
 	return &httpproxy.Config{
 		HTTPProxy:  resolve(proxies.HTTPProxy, "HTTP_PROXY", "http_proxy"),
 		HTTPSProxy: resolve(proxies.HTTPSProxy, "HTTPS_PROXY", "https_proxy"),
-		NoProxy:    noProxy,
+		NoProxy:    strings.Join(append(noProxy, proxies.NoProxy...), ","),
 	}
-}
-
-// nonEmpty returns s as a one-element slice, or nil when s is empty.
-func nonEmpty(s string) []string {
-	if s == "" {
-		return nil
-	}
-	return []string{s}
 }

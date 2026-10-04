@@ -442,6 +442,7 @@ func (s *MainSuite) SetupTest() {
 	// defaults out of it.
 	s.app.httpTransport = &http.Transport{}
 	s.app.wsDialer = &websocket.Dialer{}
+	s.app.slackDialer = &websocket.Dialer{}
 	// serve writes the owner API token under the user config dir.
 	cfgDir := s.T().TempDir()
 	s.app.userConfigDir = func() (string, error) { return cfgDir, nil }

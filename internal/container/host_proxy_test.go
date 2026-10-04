@@ -55,6 +55,11 @@ func (s *RunnerSuite) TestHostProxyFunc() {
 			target:  "http://localhost:11434",
 		},
 		{
+			name:    "docker bridge addresses are never proxied",
+			proxies: config.ProxiesConfig{HTTPProxy: "http://cfg:1"},
+			target:  "http://172.17.0.5:11434",
+		},
+		{
 			name:    "config no_proxy adds to the environment's",
 			proxies: config.ProxiesConfig{HTTPSProxy: "http://cfg:2", NoProxy: []string{"internal.example"}},
 			env:     map[string]string{"no_proxy": "corp.example"},

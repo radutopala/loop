@@ -439,6 +439,7 @@ func (a *app) serve() error {
 	hostProxy := container.HostProxyFunc(reloadConfig, os.Getenv)
 	a.httpTransport.Proxy = hostProxy
 	a.wsDialer.Proxy = hostProxy
+	a.slackDialer.Proxy = hostProxy
 
 	store, err := a.newSQLiteStore(cfg.DBPath)
 	if err != nil {
