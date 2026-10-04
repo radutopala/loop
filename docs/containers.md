@@ -138,6 +138,10 @@ When neither config nor its environment names a proxy, the daemon says so at sta
 
 When a proxy is resolved, `NO_PROXY` and `no_proxy` are ensured to include `host.docker.internal`, `localhost`, `127.0.0.1`, `::1`, `172.16.0.0/12`, the channel's Chrome sidecar hostname, and everything listed in `no_proxy` — on top of whatever the daemon's own `NO_PROXY` carried, which is never discarded. The Loop API and the sidecar are reached directly; the CIDR covers every other container on a Docker bridge, which a proxy running on the Docker host has no route back into — proxying those would hang until the request timed out rather than failing fast.
 
+#### Image builds
+
+Loop's image builds (the agent image, project images and the Chrome sidecar) resolve the same proxy from the global config and pass it to `docker build` as `--build-arg HTTP_PROXY=…`, both letter cases, with the same `NO_PROXY` list. Docker predefines these build args, so `RUN` steps get them with no `ARG` line in the Dockerfile. An explicit build arg wins over `proxies.default` in the host's `~/.docker/config.json`. With no proxy resolved, nothing is passed and that file still applies.
+
 #### The CIDR does not cover sibling containers reached by name
 
 `172.16.0.0/12` looks like it exempts every container on a bridge network, and it does not. Go's proxy matcher — `http.ProxyFromEnvironment`, and the same logic in most other runtimes — compares `NO_PROXY` entries against the **hostname in the URL, before DNS resolves it**. A request to `http://my-service:4566` is matched as the literal string `my-service`, which is never tested against an IP range. So it goes to the proxy, which has no route onto the Docker network, and comes back 502. The CIDR only helps when a bare IP is dialled.

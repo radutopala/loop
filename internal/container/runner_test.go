@@ -140,6 +140,8 @@ func (m *MockDockerClient) NetworkEnsure(ctx context.Context, name string) error
 
 func (m *MockDockerClient) SetLoopVersion(v string) {}
 
+func (m *MockDockerClient) SetConfigReloader(func() (*config.Config, error)) {}
+
 // MockContainerRegistry implements ContainerRegistry for testing.
 type MockContainerRegistry struct {
 	mock.Mock

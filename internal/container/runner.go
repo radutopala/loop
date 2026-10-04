@@ -83,6 +83,7 @@ type DockerClient interface {
 	CopyToContainer(ctx context.Context, containerID, dstPath string, content io.Reader) error
 	NetworkEnsure(ctx context.Context, name string) error
 	SetLoopVersion(v string)
+	SetConfigReloader(reload func() (*config.Config, error))
 	LatestClaudeVersion() string
 }
 

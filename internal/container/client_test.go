@@ -24,6 +24,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
 
+	"github.com/radutopala/loop/internal/config"
 	"github.com/radutopala/loop/internal/testutil"
 )
 
@@ -960,9 +961,11 @@ func (s *ClientSuite) TestImageBuildFileFreshError() {
 // rebuild re-tags the same cached Chromium layer and picks up no security fix.
 func (s *ClientSuite) TestBuildFileFreshArgs() {
 	args := buildFileFreshArgs("/ctx", "chrome.Dockerfile", "loop-chrome:latest",
-		map[string]string{"loop.version": "2.0.0", "loop.built_at": "2026-09-09T00:00:00Z"})
+		map[string]string{"loop.version": "2.0.0", "loop.built_at": "2026-09-09T00:00:00Z"},
+		[]string{"--build-arg", "HTTP_PROXY=http://proxy:3128"})
 	require.Equal(s.T(), []string{
-		"build", "--pull", "--no-cache",
+		"build", "--build-arg", "HTTP_PROXY=http://proxy:3128",
+		"--pull", "--no-cache",
 		"-f", "/ctx/chrome.Dockerfile",
 		"--label", "loop.built_at=2026-09-09T00:00:00Z",
 		"--label", "loop.version=2.0.0",
@@ -1032,4 +1035,76 @@ func (s *ClientSuite) TestContainerStatsErrors() {
 	s.api.On("ContainerStats", mock.Anything, "ctr-1", false).Return(statsBody("not json"), nil).Once()
 	_, err = s.client.ContainerStats(context.Background(), "ctr-1")
 	require.ErrorContains(s.T(), err, "decoding container stats")
+}
+
+func (s *ClientSuite) TestProxyBuildArgs() {
+	tests := []struct {
+		name   string
+		reload func() (*config.Config, error)
+		env    map[string]string
+		want   []string
+	}{
+		{
+			name: "no reloader",
+		},
+		{
+			name:   "reload error",
+			reload: func() (*config.Config, error) { return nil, errors.New("bad config") },
+		},
+		{
+			name:   "no proxy anywhere",
+			reload: func() (*config.Config, error) { return &config.Config{}, nil },
+		},
+		{
+			name: "config proxy rewritten for the build container",
+			reload: func() (*config.Config, error) {
+				return &config.Config{HTTPProxy: "http://127.0.0.1:3128", HTTPSProxy: "http://127.0.0.1:3129"}, nil
+			},
+			want: []string{
+				"HTTP_PROXY=http://host.docker.internal:3128",
+				"http_proxy=http://host.docker.internal:3128",
+				"HTTPS_PROXY=http://host.docker.internal:3129",
+				"https_proxy=http://host.docker.internal:3129",
+			},
+		},
+		{
+			name:   "daemon environment fallback",
+			reload: func() (*config.Config, error) { return &config.Config{}, nil },
+			env:    map[string]string{"https_proxy": "http://corp:8080"},
+			want: []string{
+				"HTTPS_PROXY=http://corp:8080",
+				"https_proxy=http://corp:8080",
+			},
+		},
+	}
+	for _, tc := range tests {
+		s.Run(tc.name, func() {
+			sys := new(testutil.MockSystem)
+			// Specific keys first: testify returns the first matching expectation.
+			for k, v := range tc.env {
+				sys.On("Getenv", k).Return(v)
+			}
+			sys.On("Getenv", mock.Anything).Return("")
+			s.client.sys = sys
+			s.client.SetConfigReloader(tc.reload)
+
+			args := s.client.proxyBuildArgs()
+
+			if tc.want == nil {
+				require.Empty(s.T(), args)
+				return
+			}
+			require.Zero(s.T(), len(args)%2)
+			var values []string
+			for i := 0; i < len(args); i += 2 {
+				require.Equal(s.T(), "--build-arg", args[i])
+				values = append(values, args[i+1])
+			}
+			for _, w := range tc.want {
+				require.Contains(s.T(), values, w)
+			}
+			// The bypass list rides along so build steps reach local hosts directly.
+			require.Contains(s.T(), strings.Join(values, " "), "NO_PROXY=")
+		})
+	}
 }

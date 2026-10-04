@@ -169,6 +169,8 @@ func (m *mockDockerClient) ImageInspectLabels(ctx context.Context, imageName str
 
 func (m *mockDockerClient) SetLoopVersion(v string) {}
 
+func (m *mockDockerClient) SetConfigReloader(func() (*config.Config, error)) {}
+
 func (m *mockDockerClient) LatestClaudeVersion() string {
 	args := m.Called()
 	return args.String(0)

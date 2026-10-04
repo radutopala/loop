@@ -25,6 +25,7 @@ import (
 	"github.com/docker/docker/pkg/stdcopy"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 
+	"github.com/radutopala/loop/internal/config"
 	"github.com/radutopala/loop/internal/dockerproxy"
 	"github.com/radutopala/loop/internal/osutil"
 )
@@ -64,6 +65,7 @@ func defaultDockerAPIFactory() (dockerAPI, error) {
 type clientSystem interface {
 	UserHomeDir() (string, error)
 	Stat(name string) (os.FileInfo, error)
+	Getenv(key string) string
 }
 
 // Client implements DockerClient by delegating to the Docker SDK.
@@ -80,6 +82,7 @@ type Client struct {
 	claudeVersionURL         string
 	latestClaudeVersion      func() string
 	loopVersion              string
+	reloadConfig             func() (*config.Config, error)
 }
 
 // NewClient creates a new Client backed by the Docker SDK.
@@ -112,6 +115,34 @@ func NewClientWith(apiFactory func() (dockerAPI, error)) (*Client, error) {
 // of @latest in `go install`.
 func (c *Client) SetLoopVersion(v string) {
 	c.loopVersion = v
+}
+
+// SetConfigReloader sets the hot-reload loader image builds read the proxy
+// from, so a proxy toggled in config reaches the next build without a daemon
+// restart.
+func (c *Client) SetConfigReloader(reload func() (*config.Config, error)) {
+	c.reloadConfig = reload
+}
+
+// proxyBuildArgs returns --build-arg flags carrying the proxy a container
+// would get, so RUN steps reach the network the same way agents do. The CLI
+// only stamps ~/.docker/config.json proxies into builds, never the config's
+// or its own environment, and an explicit --build-arg wins over that file.
+// Proxy build args are predefined by Docker, so Dockerfiles need no ARG line.
+// Returns nil when no proxy is configured or the config cannot be read.
+func (c *Client) proxyBuildArgs() []string {
+	if c.reloadConfig == nil {
+		return nil
+	}
+	cfg, err := c.reloadConfig()
+	if err != nil {
+		return nil
+	}
+	var args []string
+	for _, e := range ProxyEnv(ProxySettingsFromConfig(cfg), c.sys.Getenv) {
+		args = append(args, "--build-arg", e)
+	}
+	return args
 }
 
 // LatestClaudeVersion returns the latest available Claude Code version string.
@@ -490,7 +521,8 @@ func (c *Client) defaultLatestClaudeVersion() string {
 // reading" errors because the CLI uses BuildKit by default.
 func (c *Client) defaultDockerBuildCmd(ctx context.Context, contextDir, tag string) ([]byte, error) {
 	claudeVersion := "CLAUDE_VERSION=" + c.latestClaudeVersion()
-	args := []string{"build", "--build-arg", claudeVersion}
+	args := append([]string{"build"}, c.proxyBuildArgs()...)
+	args = append(args, "--build-arg", claudeVersion)
 	if c.loopVersion != "" && c.loopVersion != "dev" && !strings.Contains(c.loopVersion, "-g") && !strings.Contains(c.loopVersion, "-dirty") {
 		args = append(args, "--build-arg", "LOOP_VERSION="+c.loopVersion)
 	} else {
@@ -600,7 +632,8 @@ func (c *Client) PruneDanglingImages(ctx context.Context) (uint64, error) {
 }
 
 func (c *Client) defaultDockerBuildFileLabelsCmd(ctx context.Context, contextDir, dockerfile, tag string, labels map[string]string) ([]byte, error) {
-	args := []string{"build", "-f", filepath.Join(contextDir, dockerfile)}
+	args := append([]string{"build"}, c.proxyBuildArgs()...)
+	args = append(args, "-f", filepath.Join(contextDir, dockerfile))
 	for _, k := range slices.Sorted(maps.Keys(labels)) {
 		args = append(args, "--label", k+"="+labels[k])
 	}
@@ -620,13 +653,14 @@ func (c *Client) defaultDockerBuildFileLabelsCmd(ctx context.Context, contextDir
 // cascade uses that to build FROM a local-only loop-agent tag, where --pull
 // fails outright.
 func (c *Client) defaultDockerBuildFileFreshCmd(ctx context.Context, contextDir, dockerfile, tag string, labels map[string]string) ([]byte, error) {
-	return exec.CommandContext(ctx, "docker", buildFileFreshArgs(contextDir, dockerfile, tag, labels)...).CombinedOutput()
+	return exec.CommandContext(ctx, "docker", buildFileFreshArgs(contextDir, dockerfile, tag, labels, c.proxyBuildArgs())...).CombinedOutput()
 }
 
 // buildFileFreshArgs assembles the `docker build` argv for a fresh build. Split
 // out from the exec call so the flags can be asserted in a unit test.
-func buildFileFreshArgs(contextDir, dockerfile, tag string, labels map[string]string) []string {
-	args := []string{"build", "--pull", "--no-cache", "-f", filepath.Join(contextDir, dockerfile)}
+func buildFileFreshArgs(contextDir, dockerfile, tag string, labels map[string]string, proxyArgs []string) []string {
+	args := append([]string{"build"}, proxyArgs...)
+	args = append(args, "--pull", "--no-cache", "-f", filepath.Join(contextDir, dockerfile))
 	for _, k := range slices.Sorted(maps.Keys(labels)) {
 		args = append(args, "--label", k+"="+labels[k])
 	}
@@ -634,7 +668,8 @@ func buildFileFreshArgs(contextDir, dockerfile, tag string, labels map[string]st
 }
 
 func (c *Client) defaultDockerBuildFileCmd(ctx context.Context, contextDir, dockerfile, tag string) ([]byte, error) {
-	args := []string{"build", "-f", filepath.Join(contextDir, dockerfile), "-t", tag, contextDir}
+	args := append([]string{"build"}, c.proxyBuildArgs()...)
+	args = append(args, "-f", filepath.Join(contextDir, dockerfile), "-t", tag, contextDir)
 	return exec.CommandContext(ctx, "docker", args...).CombinedOutput()
 }
 

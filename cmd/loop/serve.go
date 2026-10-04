@@ -506,6 +506,7 @@ func (a *app) serve() error {
 	// config edit is still picked up immediately but unchanged files are
 	// parsed once instead of on every message/run/request.
 	reloadConfig := config.NewCachedReloader().Reload
+	dockerClient.SetConfigReloader(reloadConfig)
 	runner := container.NewDockerRunner(dockerClient, cfg, reloadConfig)
 	runner.SetLogger(logger)
 	// Per-container policy files live under ~/.loop/run/<cid>/ (not
