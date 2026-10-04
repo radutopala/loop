@@ -207,7 +207,7 @@ func (s *ServeSuite) TestLogContainerProxy() {
 	}{
 		{
 			name: "from config",
-			cfg:  &config.Config{HTTPProxy: "http://cfg:3128"},
+			cfg:  &config.Config{Proxies: config.ProxiesConfig{HTTPProxy: "http://cfg:3128"}},
 			want: `source=config`,
 		},
 		{

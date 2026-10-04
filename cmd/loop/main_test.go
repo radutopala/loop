@@ -7,6 +7,7 @@ import (
 	"io"
 	"io/fs"
 	"log/slog"
+	"net/http"
 	"os"
 	"path/filepath"
 	"runtime/debug"
@@ -14,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gorilla/websocket"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
@@ -168,6 +170,8 @@ func (m *mockDockerClient) ImageInspectLabels(ctx context.Context, imageName str
 }
 
 func (m *mockDockerClient) SetLoopVersion(v string) {}
+
+func (m *mockDockerClient) SetConfigReloader(func() (*config.Config, error)) {}
 
 func (m *mockDockerClient) LatestClaudeVersion() string {
 	args := m.Called()
@@ -434,6 +438,11 @@ func TestMainSuite(t *testing.T) {
 func (s *MainSuite) SetupTest() {
 	s.app = newApp()
 	s.app.loadProjectMemoryPaths = func(_ string) []string { return nil }
+	// serve points these at the configured proxy; keep the process-wide
+	// defaults out of it.
+	s.app.httpTransport = &http.Transport{}
+	s.app.wsDialer = &websocket.Dialer{}
+	s.app.slackDialer = &websocket.Dialer{}
 	// serve writes the owner API token under the user config dir.
 	cfgDir := s.T().TempDir()
 	s.app.userConfigDir = func() (string, error) { return cfgDir, nil }

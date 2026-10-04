@@ -41,7 +41,7 @@ func (s *SchemaSuite) TestTopLevelProperties() {
 		"claude_batch_disallowed_tools", "claude_retry",
 		"browser", "memory", "playground_share", "review",
 		"extra_dirs", "mounts", "copy_files",
-		"http_proxy", "https_proxy", "no_proxy",
+		"proxies",
 		"platforms",
 		"discord_token", "discord_app_id", "discord_guild_id",
 		"slack_bot_token", "slack_app_token",
@@ -227,12 +227,35 @@ func (s *SchemaSuite) TestNonGlobalOnlyFields() {
 		"container_memory_mb", "container_cpus",
 		"claude_batch_disallowed_tools", "claude_retry",
 		"browser", "memory", "review", "extra_dirs", "mounts", "copy_files", "envs",
+		"proxies",
 	}
 	for _, key := range nonGlobalKeys {
 		s.Run(key, func() {
 			prop := schema.Properties[key]
 			require.NotNil(s.T(), prop)
 			require.False(s.T(), prop.XGlobalOnly, "expected no x-global-only for %s", key)
+		})
+	}
+}
+
+func (s *SchemaSuite) TestProxiesProperties() {
+	prop := GlobalConfigSchema().Properties["proxies"]
+	require.NotNil(s.T(), prop)
+	require.Equal(s.T(), "object", prop.Type)
+
+	tests := []struct {
+		key      string
+		wantType string
+	}{
+		{key: "http_proxy", wantType: "string"},
+		{key: "https_proxy", wantType: "string"},
+		{key: "no_proxy", wantType: "array"},
+	}
+	for _, tt := range tests {
+		s.Run(tt.key, func() {
+			child := prop.Properties[tt.key]
+			require.NotNil(s.T(), child)
+			require.Equal(s.T(), tt.wantType, child.Type)
 		})
 	}
 }
@@ -371,8 +394,7 @@ func (s *SchemaSuite) TestSectionAssignment() {
 		"claude_code_oauth_token":   "Authentication",
 		"container_image":           "Container",
 		"container_image_autobuild": "Container",
-		"http_proxy":                "Container",
-		"no_proxy":                  "Container",
+		"proxies":                   "Proxies",
 		"claude_retry":              "Claude",
 		"api_advertise_url":         "API",
 		"review":                    "Review",

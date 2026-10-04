@@ -288,19 +288,9 @@ var proxyEnvKeys = []struct{ upper, lower string }{
 	{"NO_PROXY", "no_proxy"},
 }
 
-// ProxySettings is the configured proxy for a container. It comes from the
-// config layers (global → project → worktree), and a non-empty field wins over
-// the daemon's own environment. That precedence is the point: the daemon's
-// environment is frozen at launch, so a daemon started before the proxy was
-// exported would otherwise create proxy-less containers until it restarts,
-// while config is re-read on every run.
-type ProxySettings struct {
-	HTTPProxy  string
-	HTTPSProxy string
-	// NoProxy is additive: entries are added to the daemon's own NO_PROXY and
-	// to Loop's required bypasses, never substituted for them.
-	NoProxy []string
-}
+// ProxySettings is the configured proxy for a container: the config's proxies
+// block, resolved through the config layers (global → project → worktree).
+type ProxySettings = config.ProxiesConfig
 
 // ProxySettingsFromConfig reads the proxy a container configured by cfg runs
 // with.
@@ -308,12 +298,7 @@ func ProxySettingsFromConfig(cfg *config.Config) ProxySettings {
 	if cfg == nil {
 		return ProxySettings{}
 	}
-	return ProxySettings{
-		HTTPProxy:  cfg.HTTPProxy,
-		HTTPSProxy: cfg.HTTPSProxy,
-		NoProxy:    cfg.NoProxy,
-	}
-
+	return cfg.Proxies
 }
 
 // dockerBridgeCIDR covers the address space Docker hands out to the default
@@ -558,11 +543,11 @@ func (r *DockerRunner) addProxyEnv(env []string, cfg *config.Config, extraNoProx
 // until an outbound call fails minutes later, and the cause (a daemon launched
 // before the proxy was exported) is invisible from inside.
 func (r *DockerRunner) warnProxyMissing(cfg *config.Config, proxyEnv []string) {
-	if len(proxyEnv) > 0 || r.logger == nil || cfg == nil || len(cfg.NoProxy) == 0 {
+	if len(proxyEnv) > 0 || r.logger == nil || cfg == nil || len(cfg.Proxies.NoProxy) == 0 {
 		return
 	}
-	r.logger.Warn("creating container with no proxy: config sets no_proxy but neither config nor the daemon environment names a proxy",
-		"hint", "set http_proxy/https_proxy in config, or restart the daemon with the proxy exported")
+	r.logger.Warn("creating container with no proxy: config sets proxies.no_proxy but neither config nor the daemon environment names a proxy",
+		"hint", "set proxies.http_proxy/https_proxy in config")
 }
 
 // ensureNoProxy ensures host.docker.internal (and any extra hosts) are in

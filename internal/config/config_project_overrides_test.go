@@ -504,44 +504,44 @@ func (s *ConfigSuite) TestLoadProjectConfigOverrides() {
 			// Two proxy URLs cannot be combined, so the project's replaces the
 			// global one outright — unlike no_proxy, which appends.
 			name:        "Proxy/Override",
-			projectJSON: `{"http_proxy": "http://proj:3128", "https_proxy": "http://proj:3128"}`,
-			mainCfg: &Config{
+			projectJSON: `{"proxies": {"http_proxy": "http://proj:3128", "https_proxy": "http://proj:3128"}}`,
+			mainCfg: &Config{Proxies: ProxiesConfig{
 				HTTPProxy:  "http://global:3128",
 				HTTPSProxy: "http://global:3128",
-			},
+			}},
 			assert: func(merged, main *Config) {
-				require.Equal(s.T(), "http://proj:3128", merged.HTTPProxy)
-				require.Equal(s.T(), "http://proj:3128", merged.HTTPSProxy)
-				require.Equal(s.T(), "http://global:3128", main.HTTPProxy)
+				require.Equal(s.T(), "http://proj:3128", merged.Proxies.HTTPProxy)
+				require.Equal(s.T(), "http://proj:3128", merged.Proxies.HTTPSProxy)
+				require.Equal(s.T(), "http://global:3128", main.Proxies.HTTPProxy)
 			},
 		},
 		{
 			name:        "Proxy/NoOverride",
 			projectJSON: `{}`,
-			mainCfg: &Config{
+			mainCfg: &Config{Proxies: ProxiesConfig{
 				HTTPProxy:  "http://global:3128",
 				HTTPSProxy: "http://global:3128",
-			},
+			}},
 			assert: func(merged, _ *Config) {
-				require.Equal(s.T(), "http://global:3128", merged.HTTPProxy)
-				require.Equal(s.T(), "http://global:3128", merged.HTTPSProxy)
+				require.Equal(s.T(), "http://global:3128", merged.Proxies.HTTPProxy)
+				require.Equal(s.T(), "http://global:3128", merged.Proxies.HTTPSProxy)
 			},
 		},
 		{
 			name:        "NoProxy/Appended",
-			projectJSON: `{"no_proxy": ["my-service", "my-cache"]}`,
-			mainCfg:     &Config{NoProxy: []string{"artifacts.internal"}},
+			projectJSON: `{"proxies": {"no_proxy": ["my-service", "my-cache"]}}`,
+			mainCfg:     &Config{Proxies: ProxiesConfig{NoProxy: []string{"artifacts.internal"}}},
 			assert: func(merged, main *Config) {
-				require.Equal(s.T(), []string{"artifacts.internal", "my-service", "my-cache"}, merged.NoProxy)
-				require.Len(s.T(), main.NoProxy, 1)
+				require.Equal(s.T(), []string{"artifacts.internal", "my-service", "my-cache"}, merged.Proxies.NoProxy)
+				require.Len(s.T(), main.Proxies.NoProxy, 1)
 			},
 		},
 		{
 			name:        "NoProxy/NoOverride",
 			projectJSON: `{}`,
-			mainCfg:     &Config{NoProxy: []string{"artifacts.internal"}},
+			mainCfg:     &Config{Proxies: ProxiesConfig{NoProxy: []string{"artifacts.internal"}}},
 			assert: func(merged, _ *Config) {
-				require.Equal(s.T(), []string{"artifacts.internal"}, merged.NoProxy)
+				require.Equal(s.T(), []string{"artifacts.internal"}, merged.Proxies.NoProxy)
 			},
 		},
 		{

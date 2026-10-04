@@ -79,11 +79,11 @@ type System interface {
 
 Abstracts all OS operations for testability. `RealSystem` provides the production implementation.
 
-## Proxy Forwarding
+## Proxy
 
-The daemon automatically captures proxy environment variables from the current environment and injects them into the service config. This ensures the daemon process inherits proxy settings even when started by the OS service manager.
+`daemon:start` does not copy proxy variables into the service config. A captured value would pin whatever proxy the installing shell had, and if that proxy later stopped the daemon would keep dialling it, failing to reach the chat platforms at startup.
 
-Captured variables: `HTTP_PROXY`, `HTTPS_PROXY`, `NO_PROXY` (and lowercase variants).
+Set the proxy in config instead, under `proxies` (see [Configuration — Proxy](configuration.md#proxy)). The daemon's own connections (Discord, Slack and other outbound HTTP and websocket traffic) resolve it per connection, the same way containers and image builds do: config wins per variable, the daemon's environment fills the rest, and `proxies.no_proxy` adds to `NO_PROXY`. Localhost is never proxied. The config is re-read on every connection, so switching the proxy on or off needs no restart. A daemon run in the foreground with `loop serve` still picks up an exported proxy as a fallback.
 
 ## Related docs
 

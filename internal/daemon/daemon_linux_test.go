@@ -39,20 +39,20 @@ func (s *DaemonSuite) TestStartSuccess() {
 	sys.AssertExpectations(s.T())
 }
 
-func (s *DaemonSuite) TestStartWithProxyEnv() {
+func (s *DaemonSuite) TestStartIgnoresProxyEnv() {
 	sys := new(mockSystem)
 	withSystemd(sys)
 	sys.On("Executable").Return("/usr/local/bin/loop", nil)
 	sys.On("EvalSymlinks", "/usr/local/bin/loop").Return("/usr/local/bin/loop", nil)
 	sys.On("UserHomeDir").Return("/home/test", nil)
 	sys.On("MkdirAll", mock.Anything, mock.Anything).Return(nil)
-	sys.On("Getenv", "HTTP_PROXY").Return("http://127.0.0.1:3128")
-	sys.On("Getenv", "HTTPS_PROXY").Return("http://127.0.0.1:3128")
+	sys.On("Getenv", "HTTP_PROXY").Return("http://127.0.0.1:3128").Maybe()
+	sys.On("Getenv", "HTTPS_PROXY").Return("http://127.0.0.1:3128").Maybe()
 	sys.On("Getenv", mock.Anything).Return("")
+	// The shell's proxy must not be pinned into the unit: the daemon
+	// resolves its proxy from config per request.
 	sys.On("WriteFile", "/home/test/.config/systemd/user/loop.service", mock.MatchedBy(func(data []byte) bool {
-		s := string(data)
-		return strings.Contains(s, "Environment=HTTP_PROXY=http://127.0.0.1:3128") &&
-			strings.Contains(s, "Environment=HTTPS_PROXY=http://127.0.0.1:3128")
+		return !strings.Contains(strings.ToUpper(string(data)), "PROXY")
 	}), os.FileMode(0o644)).Return(nil)
 	sys.On("RunCommand", "systemctl", mock.Anything).Return([]byte(""), nil)
 	sys.On("RunCommand", "loginctl", mock.Anything).Return([]byte(""), nil)

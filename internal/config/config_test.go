@@ -132,7 +132,7 @@ func (s *ConfigSuite) TestLoadNoProxy() {
 		keys     string
 		expected []string
 	}{
-		{name: "set", keys: `"no_proxy": ["my-service", "my-cache"]`, expected: []string{"my-service", "my-cache"}},
+		{name: "set", keys: `"proxies": {"no_proxy": ["my-service", "my-cache"]}`, expected: []string{"my-service", "my-cache"}},
 		{name: "unset", keys: `"api_addr": ":9999"`, expected: nil},
 	}
 
@@ -144,7 +144,7 @@ func (s *ConfigSuite) TestLoadNoProxy() {
 
 			cfg, err := s.loader.load()
 			require.NoError(s.T(), err)
-			require.Equal(s.T(), tt.expected, cfg.NoProxy)
+			require.Equal(s.T(), tt.expected, cfg.Proxies.NoProxy)
 		})
 	}
 }

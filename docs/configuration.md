@@ -136,24 +136,30 @@ See [Containers: File Copying](containers.md#file-copying).
 #### Proxy
 
 ```jsonc
-"http_proxy": "http://127.0.0.1:3128",
-"https_proxy": "http://127.0.0.1:3128",
-"no_proxy": ["my-service", "my-cache", "*.internal"]
+"proxies": {
+  "http_proxy": "http://127.0.0.1:3128",
+  "https_proxy": "http://127.0.0.1:3128",
+  "no_proxy": ["my-service", "my-cache", "*.internal"]
+}
 ```
 
 | Field | Type | Default | Description |
 |---|---|---|---|
-| `http_proxy` | `string` | `""` | Proxy for `http://` traffic in containers. Empty inherits the daemon's own `HTTP_PROXY`/`http_proxy`. |
-| `https_proxy` | `string` | `""` | Proxy for `https://` traffic in containers. Empty inherits the daemon's own `HTTPS_PROXY`/`https_proxy`. |
-| `no_proxy` | `string[]` | `[]` | Entries added to the container's `NO_PROXY` (both letter cases) and to the `proxies.noProxy` Loop writes for the Docker CLI. Hostnames, suffixes or CIDRs. |
+| `proxies.http_proxy` | `string` | `""` | Proxy for `http://` traffic in containers, image builds and the daemon's own connections. Empty inherits the daemon's own `HTTP_PROXY`/`http_proxy`. |
+| `proxies.https_proxy` | `string` | `""` | Proxy for `https://` traffic in containers, image builds and the daemon's own connections. Empty inherits the daemon's own `HTTPS_PROXY`/`https_proxy`. |
+| `proxies.no_proxy` | `string[]` | `[]` | Entries added to the container's `NO_PROXY` (both letter cases) and to the `proxies.noProxy` Loop writes for the Docker CLI. Hostnames, suffixes or CIDRs. |
 
 Set per variable and resolved per container: config wins where it is set, the daemon's environment fills the rest. Localhost addresses are rewritten to `host.docker.internal` on the way in, so the value here is the one you would use on the host.
 
-Prefer `http_proxy`/`https_proxy` over exporting the variables for the daemon. The daemon's environment is fixed at `loop serve` start and a container's is fixed at create, so a daemon started before the proxy was exported creates proxy-less containers until it restarts — and the containers it already created stay broken. Config is re-read per run. See [Containers — Proxy Forwarding](containers.md#prefer-config-over-the-daemon-environment).
+The daemon's own connections to Discord, Slack and other services resolve the same settings per connection, so the proxy can be switched on or off in config with no restart. `daemon:start` does not copy the shell's proxy variables into the service, so config is the place to set it. See [Daemon — Proxy](daemon.md#proxy).
+
+Prefer `proxies.http_proxy`/`https_proxy` over exporting the variables for the daemon. The daemon's environment is fixed at `loop serve` start and a container's is fixed at create, so a daemon started before the proxy was exported creates proxy-less containers until it restarts — and the containers it already created stay broken. Config is re-read per run. See [Containers — Proxy Forwarding](containers.md#prefer-config-over-the-daemon-environment).
 
 `no_proxy` is additive rather than a replacement: Loop's own required bypasses and the daemon's own `NO_PROXY` are kept, and these entries are appended. It is only consulted when a proxy is configured. Name every container the agent reaches by hostname — `NO_PROXY` is matched against the hostname before DNS resolves it, so the default `172.16.0.0/12` entry covers a container dialled by IP but never one dialled as `http://my-service:8080`. See [Containers — Proxy Forwarding](containers.md#the-cidr-does-not-cover-sibling-containers-reached-by-name).
 
 `no_proxy_hosts`, the key v2026.9.16 and v2026.9.17 shipped, is renamed to `no_proxy` by a filesystem migration on the first daemon start after the upgrade — in the global config and in the `.loop/config.json` of every project Loop has a channel for. The rename happens on the parsed document, so entries, ordering and comments survive it; a config carrying both keys has the old entries appended to the new list.
+
+The three keys used to sit at the top level of the config. A later filesystem migration moves top-level `http_proxy`, `https_proxy` and `no_proxy` into the `proxies` block, in the same configs and keeping their comments. Where a `proxies` block already exists, its values win, keys it lacks are added, and the two `no_proxy` lists are joined.
 
 #### Custom Environment Variables
 
@@ -667,8 +673,8 @@ Not all global fields are available in project configs. The following fields can
 | `inherit_mounts` | Project only, default `true`. Set `false` to make the project's `mounts` **replace** the global list instead of adding to it; with no `mounts` the project then gets none. |
 | `copy_files` | **Replaces** global `copy_files` entirely when set. |
 | `extra_dirs` | **Replaces** global value when set. In **worktree** configs the parent project's `extra_dirs` are **unioned** with the worktree's (deduped, parent first), so a worktree inherits the same extra roots as its parent channel. |
-| `http_proxy`, `https_proxy` | **Override** the global value when set. Two proxy URLs cannot be combined, so a project behind its own proxy replaces the global one outright. |
-| `no_proxy` | **Appended** to the global list, so a project adds its own compose service names without losing the global ones. |
+| `proxies.http_proxy`, `proxies.https_proxy` | **Override** the global value when set. Two proxy URLs cannot be combined, so a project behind its own proxy replaces the global one outright. |
+| `proxies.no_proxy` | **Appended** to the global list, so a project adds its own compose service names without losing the global ones. |
 | `mcp.servers` | **Merged** with global servers. Project servers override global servers with the same name. |
 | `envs` | **Merged** with global envs. Project values override global values with the same key. |
 | `claude_model` | **Overrides** global value when set. |
@@ -716,7 +722,7 @@ The merge follows these principles:
 
 - **Replace**: The project value completely replaces the global value (copy_files, permissions).
 - **Merge**: Both global and project values are combined, with project taking precedence on conflicts (MCP servers, envs, task templates, workflows).
-- **Append**: Project values are added to the global list (memory paths, no_proxy, and mounts, where one at the same container path replaces the global one).
+- **Append**: Project values are added to the global list (memory paths, proxies.no_proxy, and mounts, where one at the same container path replaces the global one).
 - **Override**: A single scalar value replaces the global one (claude_model, container_image, etc.).
 - **Narrow merge**: Security-sensitive fields under `gates` (`agentgate`, `docker_proxy`) have a locked-down merge: project rules go after the global denies and before the other global rules, `enabled` is the global setting's, and `default_decision` / `rate_limits` / `audit` are ignored.
 - **Absent = inherit**: If a field is not set in the project config, the global value is used unchanged.
@@ -846,14 +852,17 @@ Trusted versions are kept in `loop/project-trust.json` under your OS user config
   // Files copied into containers (not mounted)
   "copy_files": ["~/.claude.json"],
 
-  // Proxy for containers (empty inherits the daemon's own environment, which
-  // is fixed when the daemon starts — these are re-read per run)
-  "http_proxy": "",
-  "https_proxy": "",
+  // Proxy for containers and image builds (empty inherits the daemon's own
+  // environment, which is fixed when the daemon starts — these are re-read
+  // per run)
+  "proxies": {
+    "http_proxy": "",
+    "https_proxy": "",
 
-  // Extra entries that bypass the proxy, added to loop's own bypasses. Name
-  // every host reached by name: a hostname never matches a CIDR
-  "no_proxy": [],
+    // Extra entries that bypass the proxy, added to loop's own bypasses. Name
+    // every host reached by name: a hostname never matches a CIDR
+    "no_proxy": []
+  },
 
   // Container mounts
   "mounts": [
@@ -1025,13 +1034,14 @@ Trusted versions are kept in `loop/project-trust.json` under your OS user config
   //"inherit_mounts": false,
 
   // Proxy for this project (replaces the global one when set)
-  //"http_proxy": "http://127.0.0.1:3128",
-  //"https_proxy": "http://127.0.0.1:3128",
-
-  // Extra no-proxy entries for this project (appended to the global list).
-  // Name the compose services the agent talks to: a sibling reached as
-  // http://my-service:8080 is matched by name, which no IP range covers.
-  //"no_proxy": ["my-service", "my-cache"],
+  //"proxies": {
+  //  "http_proxy": "http://127.0.0.1:3128",
+  //  "https_proxy": "http://127.0.0.1:3128",
+  //  // Extra no-proxy entries for this project (appended to the global list).
+  //  // Name the compose services the agent talks to: a sibling reached as
+  //  // http://my-service:8080 is matched by name, which no IP range covers.
+  //  "no_proxy": ["my-service", "my-cache"]
+  //},
 
   // Permissions override (replaces global permissions when set)
   //"permissions": {

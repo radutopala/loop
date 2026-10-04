@@ -241,6 +241,14 @@ var migrations = []Migration{
 		Description: "patch review-loop with a final dedup node",
 		Apply:       patchReviewLoopDedupNode,
 	},
+	{
+		// http_proxy, https_proxy and no_proxy now live in a proxies block.
+		// Config loading ignores keys it does not know, so an install that
+		// upgrades without this would quietly lose its proxy — a container
+		// request that hangs or is refused, not a config error.
+		Description: "move http_proxy, https_proxy and no_proxy into a proxies block in config.json",
+		Apply:       moveProxiesIntoBlock,
+	},
 }
 
 // adoptProjectConfigs trusts the project config of every project checkout
@@ -946,6 +954,135 @@ func renameNoProxyHostsAt(sys System, configPath string) error {
 		return fmt.Errorf("writing %s: %w", configPath, err)
 	}
 	return nil
+}
+
+// legacyProxyKeys are the top-level keys moveProxiesIntoBlock folds into the
+// proxies block.
+var legacyProxyKeys = []string{"http_proxy", "https_proxy", "no_proxy"}
+
+func moveProxiesIntoBlock(_ context.Context, c *Ctx) error {
+	for _, configPath := range configPaths(c) {
+		if err := moveProxiesIntoBlockAt(c.Sys, configPath); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// moveProxiesIntoBlockAt moves the legacy top-level proxy keys into a proxies
+// object, in file order and with their comments. A new block takes the place
+// of the first key moved. When the block already names a key, its value wins,
+// except no_proxy lists, which are joined as the old rename did. A proxies
+// member that is not an object is left alone, file untouched.
+func moveProxiesIntoBlockAt(sys System, configPath string) error {
+	v, err := loadHJSONAt(sys, configPath)
+	if err != nil || v == nil {
+		return err
+	}
+	rootObj, ok := v.Value.(*hujson.Object)
+	if !ok {
+		return fmt.Errorf("parsing %s: expected JSON object at top level", configPath)
+	}
+
+	first := slices.IndexFunc(rootObj.Members, func(m hujson.ObjectMember) bool {
+		return slices.ContainsFunc(legacyProxyKeys, func(k string) bool { return memberNamed(m, k) })
+	})
+	if first < 0 {
+		return nil
+	}
+	block := findObjectMember(rootObj, "proxies")
+	if block != nil {
+		if _, ok := block.Value.(*hujson.Object); !ok {
+			return nil
+		}
+	}
+
+	// The members' own whitespace sits one level too shallow once they move
+	// into the block, so each line is indented by the root's own indent.
+	indent := ""
+	before := string(rootObj.Members[first].Name.BeforeExtra)
+	if i := strings.LastIndex(before, "\n"); i >= 0 {
+		indent = before[i+1:]
+	}
+	var moved []hujson.ObjectMember
+	rootObj.Members = slices.DeleteFunc(rootObj.Members, func(m hujson.ObjectMember) bool {
+		if !slices.ContainsFunc(legacyProxyKeys, func(k string) bool { return memberNamed(m, k) }) {
+			return false
+		}
+		indentExtras(&m.Name, indent)
+		indentExtras(&m.Value, indent)
+		moved = append(moved, m)
+		return true
+	})
+
+	if block == nil {
+		last := &moved[len(moved)-1].Value
+		if strings.TrimSpace(string(last.AfterExtra)) == "" {
+			last.AfterExtra = nil // no trailing comma inside the new block
+		}
+		newBefore, closing := hujson.Extra(before), hujson.Extra(nil)
+		if strings.Contains(before, "\n") {
+			newBefore = hujson.Extra("\n" + indent)
+			closing = hujson.Extra("\n" + indent)
+		}
+		member := hujson.ObjectMember{
+			Name: hujson.Value{BeforeExtra: newBefore, Value: hujson.String("proxies")},
+			Value: hujson.Value{
+				BeforeExtra: hujson.Extra(" "),
+				Value:       &hujson.Object{Members: moved, AfterExtra: closing},
+			},
+		}
+		rootObj.Members = slices.Insert(rootObj.Members, first, member)
+	} else {
+		obj := block.Value.(*hujson.Object)
+		for _, m := range moved {
+			name := m.Name.Value.(hujson.Literal).String()
+			existing := findObjectMember(obj, name)
+			switch {
+			case existing == nil:
+				obj.Members = append(obj.Members, m)
+			case name == "no_proxy":
+				from, fromOK := arrayValue(&m.Value)
+				into, intoOK := arrayValue(existing)
+				if fromOK && intoOK {
+					into.Elements = append(into.Elements, from.Elements...)
+				}
+			}
+		}
+	}
+
+	if err := atomicWriteConfig(sys, configPath, v.Pack(), 0644); err != nil {
+		return fmt.Errorf("writing %s: %w", configPath, err)
+	}
+	return nil
+}
+
+// memberNamed reports whether m's name is the string literal name.
+func memberNamed(m hujson.ObjectMember, name string) bool {
+	lit, ok := m.Name.Value.(hujson.Literal)
+	return ok && lit.String() == name
+}
+
+// indentExtras adds indent after every line break in v's comments and
+// whitespace, and in those of its elements when v is an array (the proxy
+// keys hold strings and string lists). Nil extras stay nil: a nil AfterExtra
+// on a last member is what tells Pack not to emit a trailing comma.
+func indentExtras(v *hujson.Value, indent string) {
+	v.BeforeExtra = indentExtra(v.BeforeExtra, indent)
+	v.AfterExtra = indentExtra(v.AfterExtra, indent)
+	if arr, ok := v.Value.(*hujson.Array); ok {
+		for i := range arr.Elements {
+			indentExtras(&arr.Elements[i], indent)
+		}
+		arr.AfterExtra = indentExtra(arr.AfterExtra, indent)
+	}
+}
+
+func indentExtra(e hujson.Extra, indent string) hujson.Extra {
+	if e == nil {
+		return nil
+	}
+	return hujson.Extra(strings.ReplaceAll(string(e), "\n", "\n"+indent))
 }
 
 // objectMemberIndex returns the index of the named member, or -1.

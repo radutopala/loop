@@ -56,12 +56,10 @@ func Start(sys System, logFile string) error {
 		return fmt.Errorf("creating log directory: %w", err)
 	}
 
+	// Proxy variables are deliberately not captured: they would pin the
+	// proxy the shell had at install time, and the daemon resolves its proxy
+	// from config per request instead.
 	extraEnv := make(map[string]string)
-	for _, key := range proxyKeys {
-		if v := sys.Getenv(key); v != "" {
-			extraEnv[key] = v
-		}
-	}
 	if shell := sys.Getenv("SHELL"); shell != "" {
 		extraEnv["SHELL"] = shell
 	}

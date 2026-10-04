@@ -28,11 +28,11 @@ func (s *RunnerSuite) TestProxySettingsFromConfig() {
 		},
 		{
 			name: "values carried across",
-			cfg: &config.Config{
+			cfg: &config.Config{Proxies: config.ProxiesConfig{
 				HTTPProxy:  "http://cfg:3128",
 				HTTPSProxy: "http://cfg:3129",
 				NoProxy:    []string{"*.internal"},
-			},
+			}},
 			want: ProxySettings{
 				HTTPProxy:  "http://cfg:3128",
 				HTTPSProxy: "http://cfg:3129",
@@ -102,8 +102,8 @@ func (s *RunnerSuite) TestProxySummary() {
 // create proxy-less containers until someone restarted it. Config is re-read
 // per run, so it reaches the container regardless.
 func (s *RunnerSuite) TestRunProxyFromConfigWhenDaemonHasNone() {
-	s.cfg.HTTPProxy = "http://127.0.0.1:3128"
-	s.cfg.HTTPSProxy = "http://127.0.0.1:3128"
+	s.cfg.Proxies.HTTPProxy = "http://127.0.0.1:3128"
+	s.cfg.Proxies.HTTPSProxy = "http://127.0.0.1:3128"
 	s.applyMockDefaults()
 
 	ctx := context.Background()
@@ -138,13 +138,13 @@ func (s *RunnerSuite) TestWarnProxyMissing() {
 	}{
 		{
 			name:     "no proxy but no_proxy set",
-			cfg:      &config.Config{NoProxy: []string{"my-service"}},
+			cfg:      &config.Config{Proxies: config.ProxiesConfig{NoProxy: []string{"my-service"}}},
 			logger:   true,
 			wantWarn: true,
 		},
 		{
 			name:     "proxy present",
-			cfg:      &config.Config{NoProxy: []string{"my-service"}},
+			cfg:      &config.Config{Proxies: config.ProxiesConfig{NoProxy: []string{"my-service"}}},
 			proxyEnv: []string{"HTTP_PROXY=http://proxy:8080"},
 			logger:   true,
 		},
@@ -161,7 +161,7 @@ func (s *RunnerSuite) TestWarnProxyMissing() {
 		},
 		{
 			name: "no logger",
-			cfg:  &config.Config{NoProxy: []string{"my-service"}},
+			cfg:  &config.Config{Proxies: config.ProxiesConfig{NoProxy: []string{"my-service"}}},
 		},
 	}
 	for _, tc := range tests {

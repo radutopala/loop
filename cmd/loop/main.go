@@ -21,6 +21,7 @@ import (
 
 	"github.com/bwmarrin/discordgo"
 	dockerclient "github.com/docker/docker/client"
+	"github.com/gorilla/websocket"
 	goslack "github.com/slack-go/slack"
 	"github.com/slack-go/slack/socketmode"
 	"github.com/spf13/cobra"
@@ -116,6 +117,13 @@ type app struct {
 	newSlackBot   func(string, string, *slog.Logger) (orchestrator.Bot, error)
 	newLocalBot   func(db.Store, *slog.Logger) orchestrator.Bot
 
+	// Outbound proxy: serve points all three at the configured proxy. The
+	// chat platforms dial through them — HTTP via the default transport,
+	// Discord's websocket via the default dialer, Slack's via its own.
+	httpTransport *http.Transport
+	wsDialer      *websocket.Dialer
+	slackDialer   *websocket.Dialer
+
 	// Daemon
 	daemonStart  func(daemon.System, string) error
 	daemonStop   func(daemon.System) error
@@ -193,6 +201,12 @@ type app struct {
 }
 
 func newApp() *app {
+	// Slack's socket-mode defaults, kept so that only the proxy differs.
+	slackDialer := &websocket.Dialer{
+		Proxy:            http.ProxyFromEnvironment,
+		HandshakeTimeout: 45 * time.Second,
+		WriteBufferSize:  32 * 1024,
+	}
 	a := &app{
 		sys:                  osutil.RealSystem{},
 		templatesFS:          config.Templates,
@@ -213,12 +227,15 @@ func newApp() *app {
 		discordgoNew: discordgo.New,
 		newSlackBot: func(botToken, appToken string, logger *slog.Logger) (orchestrator.Bot, error) {
 			sapi := goslack.New(botToken, goslack.OptionAppLevelToken(appToken))
-			smClient := socketmode.New(sapi)
+			smClient := socketmode.New(sapi, socketmode.OptionDialer(slackDialer))
 			return slackbot.NewBot(sapi, slackbot.NewSocketModeAdapter(smClient), logger), nil
 		},
 		newLocalBot: func(store db.Store, logger *slog.Logger) orchestrator.Bot {
 			return local.NewBot(store, logger)
 		},
+		httpTransport: http.DefaultTransport.(*http.Transport),
+		wsDialer:      websocket.DefaultDialer,
+		slackDialer:   slackDialer,
 
 		// Daemon
 		daemonStart:  daemon.Start,

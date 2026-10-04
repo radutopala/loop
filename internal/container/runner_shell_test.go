@@ -367,7 +367,7 @@ func (s *RunnerSuite) TestRunCopyFilesFails() {
 
 func (s *RunnerSuite) TestRunWriteDockerCLIConfigFails() {
 	ctx := context.Background()
-	s.cfg.HTTPProxy = "http://proxy.example:3128"
+	s.cfg.Proxies.HTTPProxy = "http://proxy.example:3128"
 	req := &agent.AgentRequest{ChannelID: "ch-1"}
 
 	s.client.On("ContainerCreate", ctx, mock.AnythingOfType("*container.ContainerConfig"), "loop-ch-1-aabbcc").Return("container-123", nil)

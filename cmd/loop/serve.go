@@ -414,7 +414,7 @@ func logContainerProxy(logger *slog.Logger, cfg *config.Config, getenv func(stri
 	value, source := container.ProxySummary(container.ProxySettingsFromConfig(cfg), getenv)
 	if value == "" {
 		logger.Warn("no proxy for containers: neither config nor this daemon's environment names one",
-			"hint", "set http_proxy/https_proxy in ~/.loop/config.json, or restart the daemon with the proxy exported")
+			"hint", "set proxies.http_proxy/https_proxy in ~/.loop/config.json")
 		return
 	}
 	logger.Info("container proxy", "url", value, "source", source)
@@ -429,6 +429,17 @@ func (a *app) serve() error {
 	logger := logging.NewLogger(cfg.LogLevel, cfg.LogFormat)
 	logger.Info("starting loop", "db_path", cfg.DBPath)
 	logContainerProxy(logger, cfg, os.Getenv)
+
+	// One shared mtime-cached reloader backs every hot-reload consumer, so a
+	// config edit is still picked up immediately but unchanged files are
+	// parsed once instead of on every message/run/request.
+	reloadConfig := config.NewCachedReloader().Reload
+	// The daemon's own connections follow the configured proxy per request,
+	// like containers do, rather than whatever environment it was started in.
+	hostProxy := container.HostProxyFunc(reloadConfig, os.Getenv)
+	a.httpTransport.Proxy = hostProxy
+	a.wsDialer.Proxy = hostProxy
+	a.slackDialer.Proxy = hostProxy
 
 	store, err := a.newSQLiteStore(cfg.DBPath)
 	if err != nil {
@@ -502,10 +513,7 @@ func (a *app) serve() error {
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
 
-	// One shared mtime-cached reloader backs every hot-reload consumer, so a
-	// config edit is still picked up immediately but unchanged files are
-	// parsed once instead of on every message/run/request.
-	reloadConfig := config.NewCachedReloader().Reload
+	dockerClient.SetConfigReloader(reloadConfig)
 	runner := container.NewDockerRunner(dockerClient, cfg, reloadConfig)
 	runner.SetLogger(logger)
 	// Per-container policy files live under ~/.loop/run/<cid>/ (not

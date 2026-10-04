@@ -18,9 +18,7 @@ import (
 type projectConfig struct {
 	Mounts                                   []string                   `json:"mounts"`
 	InheritMounts                            *bool                      `json:"inherit_mounts"`
-	HTTPProxy                                string                     `json:"http_proxy"`
-	HTTPSProxy                               string                     `json:"https_proxy"`
-	NoProxy                                  []string                   `json:"no_proxy"`
+	Proxies                                  ProxiesConfig              `json:"proxies"`
 	CopyFiles                                []string                   `json:"copy_files"`
 	Envs                                     map[string]any             `json:"envs"`
 	MCP                                      *jsonMCPConfig             `json:"mcp"`
@@ -64,8 +62,8 @@ type projectConfig struct {
 //   - Mounts: Project mounts are added to the global ones, a project mount
 //     replacing a global one at the same container path; inherit_mounts: false
 //     makes them replace the global list instead
-//   - HTTPProxy/HTTPSProxy: Project value replaces the global one when set
-//   - NoProxy: Project entries are appended to the global ones
+//   - Proxies.HTTPProxy/HTTPSProxy: Project value replaces the global one when set
+//   - Proxies.NoProxy: Project entries are appended to the global ones
 //   - MCP Servers: Merged with project servers taking precedence over main config
 //
 // Relative paths in project mounts are resolved relative to workDir.
@@ -231,17 +229,17 @@ func (l *Loader) loadProjectConfig(workDir string, mainConfig *Config) (*Config,
 
 	// A project behind its own proxy overrides the global one outright —
 	// unlike NoProxy below, two proxy URLs cannot be combined.
-	if pc.HTTPProxy != "" {
-		merged.HTTPProxy = pc.HTTPProxy
+	if pc.Proxies.HTTPProxy != "" {
+		merged.Proxies.HTTPProxy = pc.Proxies.HTTPProxy
 	}
-	if pc.HTTPSProxy != "" {
-		merged.HTTPSProxy = pc.HTTPSProxy
+	if pc.Proxies.HTTPSProxy != "" {
+		merged.Proxies.HTTPSProxy = pc.Proxies.HTTPSProxy
 	}
 
 	// Appended, not replaced: a project declares the sibling names its own
 	// compose stack uses, on top of whatever the global config bypasses.
-	if len(pc.NoProxy) > 0 {
-		merged.NoProxy = append(merged.NoProxy, pc.NoProxy...)
+	if len(pc.Proxies.NoProxy) > 0 {
+		merged.Proxies.NoProxy = append(merged.Proxies.NoProxy, pc.Proxies.NoProxy...)
 	}
 
 	// CopyFiles: project replaces global when set.
