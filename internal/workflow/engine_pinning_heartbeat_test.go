@@ -649,3 +649,15 @@ func (s *EngineSuite) TestRecoverRunningRunSemaphoreFullFallsBack() {
 	// Clean up: drain semaphore.
 	<-de.runSem
 }
+
+// TestExecuteNodeCancelledReturnsEarly covers executeNode's cancelled-context
+// guard directly; the engine runs only reach it when a cancel lands between
+// scheduling a node and its goroutine starting. The engine has no store or
+// broadcaster and the scheduler is nil, so anything past the guard panics.
+func TestExecuteNodeCancelledReturnsEarly(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	e := &defaultEngine{}
+	require.NotPanics(t, func() { e.executeNode(ctx, nil, &config.NodeDef{ID: "n1"}) })
+}
