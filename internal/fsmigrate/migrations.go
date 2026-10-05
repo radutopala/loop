@@ -257,6 +257,13 @@ var migrations = []Migration{
 		Description: "refresh container/ files: AWS CLI v2 in the agent image",
 		Apply:       refreshContainerFiles,
 	},
+	{
+		// Copies AWS CLI v2 from the amazon/aws-cli image instead of
+		// downloading AWS's installer, whose transfer through a proxy could
+		// stall a rebuild indefinitely, and sets AWS_CA_BUNDLE in the image.
+		Description: "refresh container/ files: AWS CLI v2 from the amazon/aws-cli image",
+		Apply:       refreshContainerFiles,
+	},
 }
 
 // adoptProjectConfigs trusts the project config of every project checkout

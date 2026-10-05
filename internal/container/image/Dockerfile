@@ -52,11 +52,11 @@ RUN git config --system --add safe.directory '*'
 # works without further setup — and system scope survives the host
 # ~/.gitconfig being mounted over the container's global config.
 RUN pip install --break-system-packages --no-cache-dir pre-commit uv
-RUN curl -fsSL -o /tmp/awscliv2.zip "https://awscli.amazonaws.com/awscli-exe-linux-$(uname -m).zip" \
-    && unzip -q /tmp/awscliv2.zip -d /tmp \
-    && /tmp/aws/install \
-    && rm -rf /tmp/awscliv2.zip /tmp/aws \
+COPY --from=amazon/aws-cli:latest /usr/local/aws-cli /usr/local/aws-cli
+RUN ln -s /usr/local/aws-cli/v2/current/bin/aws /usr/local/bin/aws \
+    && ln -s /usr/local/aws-cli/v2/current/bin/aws_completer /usr/local/bin/aws_completer \
     && aws --version
+ENV AWS_CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt
 ENV USE_BUILTIN_RIPGREP=0
 ARG LOOP_VERSION=main
 RUN ARCH=$(uname -m | sed 's/aarch64/arm64/' | sed 's/x86_64/amd64/') && \

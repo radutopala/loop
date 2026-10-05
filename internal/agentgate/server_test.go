@@ -805,6 +805,32 @@ func (s *ServerSuite) TestDispatchFileCoversOtherSyscalls() {
 	}
 }
 
+// A rename within one directory checks the old name as a write, so an atomic
+// replace needs no delete; a rename across directories still checks it as a
+// delete.
+func (s *ServerSuite) TestDispatchRenameSourceOp() {
+	policy := s.mustPolicy(types.DecisionAllow, nil, nil, []types.FileRule{
+		{Paths: []string{"/d/**"}, Operations: []string{OpDelete}, Decision: types.DecisionDeny},
+	})
+	cases := []struct {
+		name     string
+		src, dst string
+		allow    bool
+	}{
+		{"same directory", "/d/c/x.tmp", "/d/c/x.json", true},
+		{"other directory", "/d/c/x.json", "/d/x.json", false},
+		{"out of the tree", "/d/c/x.json", "/e/x.json", false},
+	}
+	for _, c := range cases {
+		s.Run(c.name, func() {
+			tr := &FakeTracee{Strings: map[uintptr]string{0x100: c.src, 0x200: c.dst}}
+			srv := s.newServer(tr, nil, NewFileHandler(policy, nil, 8), nil)
+			got := srv.Dispatch(context.Background(), Trap{ID: 53, Syscall: syscallRenameat2, Args: [6]uint64{atFdcwd, 0x100, atFdcwd, 0x200, 0}})
+			s.Require().Equal(c.allow, got.Allow)
+		})
+	}
+}
+
 func (s *ServerSuite) TestDispatchFileLegacySyscallsResolveAgainstCwd() {
 	// The legacy syscalls have no dirfd: a relative path joins the cwd
 	// (AT_FDCWD), for the primary and the secondary path alike.
@@ -955,7 +981,7 @@ func (s *ServerSuite) TestDispatchRenameReview() {
 			false, TrapResponse{ID: 62, Performed: true}, "file:review:" + cfg + ":", true},
 		{"target not under an approve rule", tmp, "/work/other", []types.FileRule{approveCfg}, false, nil,
 			false, TrapResponse{ID: 62, Allow: true}, "", false},
-		{"source denied", tmp, cfg, []types.FileRule{{Paths: []string{tmp}, Operations: []string{OpDelete}, Decision: types.DecisionDeny}, approveCfg}, false, nil,
+		{"source denied", tmp, cfg, []types.FileRule{{Paths: []string{tmp}, Operations: []string{OpWrite}, Decision: types.DecisionDeny}, approveCfg}, false, nil,
 			false, TrapResponse{ID: 62, ErrorNum: int32(syscall.EPERM)}, "", false},
 		{"no review", tmp, cfg, []types.FileRule{approveCfg}, true, nil,
 			false, TrapResponse{ID: 62, Allow: true}, "file:create:" + cfg, false},

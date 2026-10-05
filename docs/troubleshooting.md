@@ -56,6 +56,8 @@ This occurs on corporate networks where a proxy or firewall (e.g. Palo Alto, Zsc
 
 3. **Retry** `loop serve`.
 
+The agent image sets `AWS_CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt`, because the AWS CLI checks TLS against its own CA list rather than the system store; with the CA added as above, `aws` stops failing with `CERTIFICATE_VERIFY_FAILED`. Set `envs.AWS_CA_BUNDLE` to point it elsewhere.
+
 > **Note:** When `loop serve` ships a new version of the embedded container files, your edited `~/.loop/container/Dockerfile` (and `chrome.Dockerfile`) is preserved as `Dockerfile.bkp` (and `chrome.Dockerfile.bkp`) before being overwritten. Diff the `.bkp` against the refreshed file to re-apply your local changes.
 
 ## Daemon not healthy after `daemon:start`

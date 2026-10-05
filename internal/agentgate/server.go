@@ -214,8 +214,14 @@ func (s *Server) dispatchFile(ctx context.Context, trap Trap, tracee Tracee) Tra
 	if err != nil {
 		return denyResp(trap.ID, syscall.EPERM)
 	}
+	var secPath string
 	if spec.SecondaryOp != "" {
-		if resp, ok := s.reviewRename(ctx, spec, trap, tracee, op, path); ok {
+		secPath, err = s.resolveSecondaryPath(spec, trap, tracee)
+		if err != nil {
+			return denyResp(trap.ID, syscall.EPERM)
+		}
+		op = renameSourceOp(spec, path, secPath)
+		if resp, ok := s.reviewRename(ctx, spec, trap, tracee, op, path, secPath); ok {
 			return resp
 		}
 	}
@@ -255,10 +261,6 @@ func (s *Server) dispatchFile(ctx context.Context, trap Trap, tracee Tracee) Tra
 
 	// Two-path syscalls (renameat2) must pass both the old and new path.
 	if spec.SecondaryOp != "" {
-		secPath, err := s.resolveSecondaryPath(spec, trap, tracee)
-		if err != nil {
-			return denyResp(trap.ID, syscall.EPERM)
-		}
 		var flags uint64
 		if spec.FlagsArgIdx >= 0 {
 			flags = trap.Args[spec.FlagsArgIdx]
@@ -297,17 +299,27 @@ func (s *Server) dispatchFile(ctx context.Context, trap Trap, tracee Tracee) Tra
 	return allowResp(trap.ID)
 }
 
+// renameSourceOp returns the op a rename's old path is checked as. A rename
+// within one directory is how tools replace a file atomically: they write a
+// temp file next to the target and rename it over the target. The temp file
+// was only written, so its name going away counts as a write, and a rule
+// that lets the agent write the directory covers the replace. A rename
+// across directories moves the file away, so its old name is deleted. The
+// new path is checked as a create either way.
+func renameSourceOp(spec SyscallSpec, src, dst string) string {
+	if filepath.Dir(src) == filepath.Dir(dst) {
+		return OpWrite
+	}
+	return spec.PrimaryOp
+}
+
 // reviewRename hands a rename onto a path an approve rule covers to the
 // rename review, which asks with a diff instead of the rule's path-only
 // card. The source's own check folds into that card (it names the source),
 // unless a rule denies it. Git paths stay with the git guard. ok=false: the
 // rename goes through the file rules as usual.
-func (s *Server) reviewRename(ctx context.Context, spec SyscallSpec, trap Trap, tracee Tracee, op, src string) (TrapResponse, bool) {
+func (s *Server) reviewRename(ctx context.Context, spec SyscallSpec, trap Trap, tracee Tracee, op, src, dst string) (TrapResponse, bool) {
 	if s.Review == nil {
-		return TrapResponse{}, false
-	}
-	dst, err := s.resolveSecondaryPath(spec, trap, tracee)
-	if err != nil {
 		return TrapResponse{}, false
 	}
 	rule := s.File.Policy.MatchFile(spec.SecondaryOp, dst)
