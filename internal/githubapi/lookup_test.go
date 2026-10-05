@@ -236,8 +236,24 @@ func (s *GithubAPISuite) TestExecRunnerHardensNestedGit() {
 	require.Equal(s.T(), "/dev/null\nbar\n", string(out))
 }
 
+func (s *GithubAPISuite) TestExecRunnerSetsProxyEnv() {
+	// The proxy variables land in gh's environment, and the caller's
+	// overrides still come after them.
+	r := execRunner{bin: "/bin/sh", proxyEnv: func() []string {
+		return []string{"HTTPS_PROXY=http://proxy:3128", "FOO=proxy"}
+	}}
+	out, err := r.Run(context.Background(), s.T().TempDir(), []string{"FOO=bar"},
+		"-c", `echo "$HTTPS_PROXY $FOO"`)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "http://proxy:3128 bar\n", string(out))
+}
+
 func (s *GithubAPISuite) TestNewClientReal() {
-	c := NewClient()
+	proxyEnv := func() []string { return []string{"HTTPS_PROXY=http://proxy:3128"} }
+	c := NewClient(proxyEnv)
 	require.NotNil(s.T(), c)
-	require.NotNil(s.T(), c.runner)
+	r, ok := c.runner.(execRunner)
+	require.True(s.T(), ok)
+	require.Equal(s.T(), "gh", r.bin)
+	require.Equal(s.T(), proxyEnv(), r.proxyEnv())
 }

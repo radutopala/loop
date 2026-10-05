@@ -55,3 +55,31 @@ func hostProxyConfig(proxies config.ProxiesConfig, getenv func(string) string) *
 		NoProxy:    strings.Join(append(noProxy, proxies.NoProxy...), ","),
 	}
 }
+
+// HostProxyEnv returns a function giving the proxy environment for the
+// daemon's own subprocesses that reach the network (gh, git fetch), resolved
+// like HostProxyFunc: config per variable, then getenv, re-read on every call.
+// Those tools read only the environment, and the daemon's own no longer names
+// a proxy. Each variable is set in both letter cases so it outranks whichever
+// spelling the daemon inherited; NO_PROXY adds localhost, which tools other
+// than Go's proxy matcher would otherwise send through the proxy.
+func HostProxyEnv(reload func() (*config.Config, error), getenv func(string) string) func() []string {
+	return func() []string {
+		var proxies config.ProxiesConfig
+		if cfg, err := reload(); err == nil {
+			proxies = ProxySettingsFromConfig(cfg)
+		}
+		hc := hostProxyConfig(proxies, getenv)
+		var env []string
+		for _, kv := range [][2]string{{"HTTP_PROXY", hc.HTTPProxy}, {"HTTPS_PROXY", hc.HTTPSProxy}} {
+			if kv[1] != "" {
+				env = append(env, kv[0]+"="+kv[1], strings.ToLower(kv[0])+"="+kv[1])
+			}
+		}
+		if env == nil {
+			return nil
+		}
+		noProxy := "localhost,127.0.0.1,::1," + hc.NoProxy
+		return append(env, "NO_PROXY="+noProxy, "no_proxy="+noProxy)
+	}
+}

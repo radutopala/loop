@@ -119,3 +119,72 @@ func (s *RunnerSuite) TestHostProxyFuncRereadsConfig() {
 	require.NoError(s.T(), err)
 	require.Nil(s.T(), got)
 }
+
+func (s *RunnerSuite) TestHostProxyEnv() {
+	const noProxy = "localhost,127.0.0.1,::1,172.16.0.0/12"
+	tests := []struct {
+		name      string
+		proxies   config.ProxiesConfig
+		reloadErr error
+		env       map[string]string
+		want      []string
+	}{
+		{
+			name: "no proxy anywhere sets nothing",
+		},
+		{
+			name:    "config proxies in both letter cases, localhost and bridge bypassed",
+			proxies: config.ProxiesConfig{HTTPProxy: "http://127.0.0.1:3128", HTTPSProxy: "http://127.0.0.1:3129"},
+			want: []string{
+				"HTTP_PROXY=http://127.0.0.1:3128", "http_proxy=http://127.0.0.1:3128",
+				"HTTPS_PROXY=http://127.0.0.1:3129", "https_proxy=http://127.0.0.1:3129",
+				"NO_PROXY=" + noProxy, "no_proxy=" + noProxy,
+			},
+		},
+		{
+			name:    "environment fills an unset variable and no_proxy adds up",
+			proxies: config.ProxiesConfig{HTTPSProxy: "http://cfg:2", NoProxy: []string{"internal.example"}},
+			env:     map[string]string{"http_proxy": "http://env:1", "NO_PROXY": "corp.example"},
+			want: []string{
+				"HTTP_PROXY=http://env:1", "http_proxy=http://env:1",
+				"HTTPS_PROXY=http://cfg:2", "https_proxy=http://cfg:2",
+				"NO_PROXY=" + noProxy + ",corp.example,internal.example",
+				"no_proxy=" + noProxy + ",corp.example,internal.example",
+			},
+		},
+		{
+			name:      "config that cannot be read falls back to the environment",
+			proxies:   config.ProxiesConfig{HTTPSProxy: "http://cfg:2"},
+			reloadErr: errors.New("bad config"),
+			env:       map[string]string{"HTTPS_PROXY": "http://env:2"},
+			want: []string{
+				"HTTPS_PROXY=http://env:2", "https_proxy=http://env:2",
+				"NO_PROXY=" + noProxy, "no_proxy=" + noProxy,
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		s.Run(tt.name, func() {
+			reload := func() (*config.Config, error) {
+				if tt.reloadErr != nil {
+					return nil, tt.reloadErr
+				}
+				return &config.Config{Proxies: tt.proxies}, nil
+			}
+			got := HostProxyEnv(reload, func(key string) string { return tt.env[key] })()
+			require.Equal(s.T(), tt.want, got)
+		})
+	}
+}
+
+func (s *RunnerSuite) TestHostProxyEnvRereadsConfig() {
+	proxies := config.ProxiesConfig{HTTPSProxy: "http://cfg:2"}
+	reload := func() (*config.Config, error) { return &config.Config{Proxies: proxies}, nil }
+	proxyEnv := HostProxyEnv(reload, func(string) string { return "" })
+	require.Contains(s.T(), proxyEnv(), "HTTPS_PROXY=http://cfg:2")
+
+	// Switching the proxy off in config applies to the next subprocess.
+	proxies = config.ProxiesConfig{}
+	require.Nil(s.T(), proxyEnv())
+}

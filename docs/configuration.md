@@ -151,7 +151,7 @@ See [Containers: File Copying](containers.md#file-copying).
 
 Set per variable and resolved per container: config wins where it is set, the daemon's environment fills the rest. Localhost addresses are rewritten to `host.docker.internal` on the way in, so the value here is the one you would use on the host.
 
-The daemon's own connections to Discord, Slack and other services resolve the same settings per connection, so the proxy can be switched on or off in config with no restart. `daemon:start` does not copy the shell's proxy variables into the service, so config is the place to set it. See [Daemon — Proxy](daemon.md#proxy).
+The daemon's own connections to Discord, Slack and other services, and the `gh` and `git fetch` calls it makes for pull request lookups and reviews, resolve the same settings per connection, so the proxy can be switched on or off in config with no restart. `daemon:start` does not copy the shell's proxy variables into the service, so config is the place to set it. See [Daemon — Proxy](daemon.md#proxy).
 
 Prefer `proxies.http_proxy`/`https_proxy` over exporting the variables for the daemon. The daemon's environment is fixed at `loop serve` start and a container's is fixed at create, so a daemon started before the proxy was exported creates proxy-less containers until it restarts — and the containers it already created stay broken. Config is re-read per run. See [Containers — Proxy Forwarding](containers.md#prefer-config-over-the-daemon-environment).
 
