@@ -249,6 +249,14 @@ var migrations = []Migration{
 		Description: "move http_proxy, https_proxy and no_proxy into a proxies block in config.json",
 		Apply:       moveProxiesIntoBlock,
 	},
+	{
+		// Swaps pip's awscli (v1, no [sso-session] or `aws sso login`) for
+		// AWS CLI v2 from AWS's installer. Until this refresh lands an
+		// install's next image rebuild still ships v1, so IAM Identity
+		// Center profiles can't authenticate in the container.
+		Description: "refresh container/ files: AWS CLI v2 in the agent image",
+		Apply:       refreshContainerFiles,
+	},
 }
 
 // adoptProjectConfigs trusts the project config of every project checkout

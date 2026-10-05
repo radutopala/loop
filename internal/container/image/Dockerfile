@@ -22,7 +22,7 @@ ENV GOTOOLCHAIN=auto
 # keeps `docker-compose ...` working for projects whose scripts still use it.
 RUN apt-get update && apt-get install -y --no-install-recommends \
         bash ca-certificates curl git git-lfs make patch \
-        gosu ripgrep openssh-client \
+        gosu ripgrep openssh-client unzip \
         python3 python3-pip python3-venv \
         gcc libc6-dev \
     && install -m 0755 -d /etc/apt/keyrings \
@@ -51,7 +51,12 @@ RUN git config --system --add safe.directory '*'
 # /etc/gitconfig, so a repo whose .gitattributes routes paths through lfs
 # works without further setup — and system scope survives the host
 # ~/.gitconfig being mounted over the container's global config.
-RUN pip install --break-system-packages --no-cache-dir pre-commit uv awscli
+RUN pip install --break-system-packages --no-cache-dir pre-commit uv
+RUN curl -fsSL -o /tmp/awscliv2.zip "https://awscli.amazonaws.com/awscli-exe-linux-$(uname -m).zip" \
+    && unzip -q /tmp/awscliv2.zip -d /tmp \
+    && /tmp/aws/install \
+    && rm -rf /tmp/awscliv2.zip /tmp/aws \
+    && aws --version
 ENV USE_BUILTIN_RIPGREP=0
 ARG LOOP_VERSION=main
 RUN ARCH=$(uname -m | sed 's/aarch64/arm64/' | sed 's/x86_64/amd64/') && \
