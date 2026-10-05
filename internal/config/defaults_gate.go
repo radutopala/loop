@@ -44,6 +44,9 @@ func DefaultGateCommandRules() []types.CommandRule {
 			ArgsPatterns: []string{".*-[a-zA-Z]*r[fF]?.* /.*"},
 			Decision:     types.DecisionDeny,
 			Message:      "rm -rf on absolute path",
+			// A guard against accidents rather than a boundary: a trusted
+			// project may allow its own absolute paths ahead of it.
+			Overridable: true,
 		},
 	}
 }
@@ -53,6 +56,12 @@ func DefaultGateCommandRules() []types.CommandRule {
 // is NOT in this list — it's injected per container by
 // container.writeGatePolicyFile, which places it right before the first Allow
 // so the denies above still fire inside the workspace.
+//
+// The credentials and registry-credentials denies are Overridable: a trusted
+// project config's rules come before them. The rest guard kernel memory, root
+// credentials, system paths, and files that run code on the host when the
+// home dir or ~/.claude is mounted (shell rcfiles, Claude settings), and stay
+// ahead of every project rule.
 func DefaultGateFileRules() []types.FileRule {
 	return []types.FileRule{
 		{
@@ -95,6 +104,10 @@ func DefaultGateFileRules() []types.FileRule {
 			Operations: []string{"read", "write", "create", "delete", "chmod"},
 			Decision:   types.DecisionDeny,
 			Message:    "credentials path blocked",
+			// A project whose tooling needs these (aws, kubectl, gcloud, ssh)
+			// allows them in its trusted config, without a global allow that
+			// would reach every project.
+			Overridable: true,
 		},
 		{
 			// ~/.docker/config.json and ~/.npmrc are credential files but tools
@@ -124,6 +137,8 @@ func DefaultGateFileRules() []types.FileRule {
 			Operations: []string{"write", "create", "delete", "chmod"},
 			Decision:   types.DecisionDeny,
 			Message:    "registry credentials file is read-only to the agent",
+			// `docker login` / `npm login` in a trusted project.
+			Overridable: true,
 		},
 		{
 			// Narrow-scope: protect claude *settings* only. The ~/.claude

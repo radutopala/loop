@@ -44,7 +44,7 @@ The daemon reads and writes files in directories agents can write to, and runs `
 
 ### Project config
 
-The project `.loop/config.json` is in the workspace, so an agent can edit it. Its security-sensitive fields (mounts, extra dirs, gates, envs, copied files, permissions, bash shortcuts, host browser access and memory paths) only take effect once you've trusted them; until then Loop uses the last version you trusted. The record of what you trusted sits next to the owner token, out of the agents' reach. The global gate baseline's denies always come before project rules, and a project can't switch off a gate the global config enables. See [Project config trust](configuration.md#project-config-trust).
+The project `.loop/config.json` is in the workspace, so an agent can edit it. Its security-sensitive fields (mounts, extra dirs, gates, envs, copied files, permissions, bash shortcuts, host browser access and memory paths) only take effect once you've trusted them; until then Loop uses the last version you trusted. The record of what you trusted sits next to the owner token, out of the agents' reach. The denies you write globally and Loop's pinned default denies always come before project rules (a trusted project may precede only the default credential-dir denies), and a project can't switch off a gate the global config enables. See [Project config trust](configuration.md#project-config-trust).
 
 ### The desktop app
 

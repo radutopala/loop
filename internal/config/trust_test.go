@@ -4,12 +4,15 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
+
+	"github.com/radutopala/loop/internal/types"
 )
 
 const trustPath = "/cfg/loop/project-trust.json"
@@ -426,4 +429,88 @@ func (s *TrustSuite) TestParseProjectConfigLeavesInput() {
 	_, err := parseProjectConfig(data)
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), orig, string(data))
+}
+
+// ruleIndex returns the index of the first file rule naming path with the
+// given decision, or -1.
+func ruleIndex(rules []types.FileRule, path string, decision types.Decision) int {
+	return slices.IndexFunc(rules, func(r types.FileRule) bool {
+		return r.Decision == decision && slices.Contains(r.Paths, path)
+	})
+}
+
+// TestTrustedProjectRulesPrecedeOverridableDenies: a trusted project's
+// allow for ~/.kube goes before the built-in credentials deny, never before
+// a deny that guards more, and the last approved rules of an edited config
+// go back under every global deny.
+func (s *TrustSuite) TestTrustedProjectRulesPrecedeOverridableDenies() {
+	const kube = "**/.kube/**"
+	main := gateMainCfg()
+	defaults := main.Gates.Agentgate.FileRules
+	creds := ruleIndex(defaults, kube, types.DecisionDeny)
+	require.True(s.T(), defaults[creds].Overridable)
+
+	s.project(`{"gates": {
+		"agentgate": {
+			"file_rules": [{"paths": ["**/.kube/**", "**/.aws/**"], "operations": ["read", "write", "create"], "decision": "allow"}],
+			"path_rules": [{"pattern": "/run/x.sock", "decision": "allow"}],
+			"command_rules": [{"commands": ["rm"], "args_patterns": ["^-rf /scratch/"], "decision": "allow"}]
+		},
+		"docker_proxy": {"http_rules": [{"methods": ["GET"], "paths": ["^/x$"], "decision": "allow"}]}
+	}}`)
+	merged, err := s.loader().loadProjectConfig("/proj", main)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), defaults, merged.Gates.Agentgate.FileRules, "never trusted: no project rules")
+
+	require.NoError(s.T(), s.store.Trust("/proj", ""))
+	merged, err = s.loader().loadProjectConfig("/proj", main)
+	require.NoError(s.T(), err)
+	rules := merged.Gates.Agentgate.FileRules
+	allow := ruleIndex(rules, kube, types.DecisionAllow)
+	require.Less(s.T(), allow, ruleIndex(rules, kube, types.DecisionDeny), "trusted: before the credentials deny")
+	for _, r := range rules[:allow] {
+		require.Equal(s.T(), types.DecisionDeny, r.Decision)
+		require.False(s.T(), r.Overridable, "only the denies that stay first come before it")
+	}
+	require.Less(s.T(), ruleIndex(rules, "/etc/shadow", types.DecisionDeny), allow, "root credentials stay first")
+	require.Equal(s.T(), "/var/run/docker.sock.host", merged.Gates.Agentgate.PathRules[0].Pattern, "no path deny is overridable")
+	cmds := merged.Gates.Agentgate.CommandRules
+	require.Less(s.T(),
+		slices.IndexFunc(cmds, func(r types.CommandRule) bool {
+			return r.Decision == types.DecisionAllow && slices.Contains(r.ArgsPatterns, "^-rf /scratch/")
+		}),
+		slices.IndexFunc(cmds, func(r types.CommandRule) bool { return r.Decision == types.DecisionDeny && r.Overridable }),
+		"trusted: before the rm -rf deny")
+	require.Equal(s.T(), countDeny(main.Gates.DockerProxy.HTTPRules, func(r types.HTTPServiceRule) types.Decision { return r.Decision }),
+		slices.IndexFunc(merged.Gates.DockerProxy.HTTPRules, func(r types.HTTPServiceRule) bool { return slices.Contains(r.Paths, "^/x$") }),
+		"no docker proxy deny is overridable")
+
+	// An agent edits the config: the approved rules stay in effect, but
+	// under every global deny until the owner trusts the change.
+	s.project(`{"gates": {"agentgate": {"file_rules": [{"paths": ["/etc/**"], "operations": ["write"], "decision": "allow"}]}}}`)
+	merged, err = s.loader().loadProjectConfig("/proj", main)
+	require.NoError(s.T(), err)
+	rules = merged.Gates.Agentgate.FileRules
+	allow = ruleIndex(rules, kube, types.DecisionAllow)
+	require.Equal(s.T(), countDeny(defaults, func(r types.FileRule) types.Decision { return r.Decision }), allow)
+	require.Greater(s.T(), allow, ruleIndex(rules, kube, types.DecisionDeny))
+	require.Equal(s.T(), -1, ruleIndex(rules, "/etc/**", types.DecisionAllow), "the unapproved change doesn't apply")
+}
+
+// TestTrustedWorktreeKeepsParentOverride: a worktree's own rules don't
+// push a trusted parent's allow back under the built-in deny it overrides.
+func (s *TrustSuite) TestTrustedWorktreeKeepsParentOverride() {
+	const kube = "**/.kube/**"
+	s.project(`{"gates": {"agentgate": {"file_rules": [{"paths": ["**/.kube/**"], "operations": ["read"], "decision": "allow"}]}}}`)
+	require.NoError(s.T(), s.store.Trust("/proj", ""))
+	const wt = "/proj/.worktrees/wt"
+	s.files[wt+"/.loop/config.json"] = []byte(`{"gates": {"agentgate": {"file_rules": [{"paths": ["/w/**"], "operations": ["read"], "decision": "deny"}]}}}`)
+	require.NoError(s.T(), s.store.Trust(wt, ""))
+
+	merged, err := s.loader().loadWorktreeProjectConfig(wt, "/proj", gateMainCfg())
+	require.NoError(s.T(), err)
+	rules := merged.Gates.Agentgate.FileRules
+	allow := ruleIndex(rules, kube, types.DecisionAllow)
+	require.Less(s.T(), ruleIndex(rules, "/w/**", types.DecisionDeny), allow)
+	require.Less(s.T(), allow, ruleIndex(rules, kube, types.DecisionDeny))
 }

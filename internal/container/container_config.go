@@ -1203,6 +1203,9 @@ func injectWorkspaceRmRfRule(rules []types.CommandRule, workDir, parentDirPath s
 // rules list at the first position following any Deny/Approve rules. This
 // keeps generic denies (**/.ssh/**, etc.) and Approve markers (approve-me*)
 // matching first, while granting blanket access to the real workspace path.
+// A trusted project's allows come before the overridable built-in denies
+// (see config.layerRules), so the search starts after the last of those:
+// the workspace allow never lets a credentials path in the workspace through.
 // Git config and hooks in the workspace aren't rules here: the gate's git
 // guard covers them under every writable host mount (see gitGuardRoots).
 func injectWorkspaceRule(rules []types.FileRule, workDir, parentDirPath string) []types.FileRule {
@@ -1223,9 +1226,15 @@ func injectWorkspaceRule(rules []types.FileRule, workDir, parentDirPath string) 
 		Decision:   types.DecisionAllow,
 		Message:    "workspace fast-path",
 	}
-	insertAt := len(rules)
+	start := 0
 	for i, r := range rules {
-		if r.Decision == types.DecisionAllow {
+		if r.Overridable {
+			start = i + 1
+		}
+	}
+	insertAt := len(rules)
+	for i := start; i < len(rules); i++ {
+		if rules[i].Decision == types.DecisionAllow {
 			insertAt = i
 			break
 		}

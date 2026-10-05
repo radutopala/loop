@@ -525,7 +525,7 @@ Project config overrides specific global settings. Only these fields are allowed
 | `browser.enabled` | **Overrides** global value when set |
 | `browser.chrome_image` | **Overrides** global value when set |
 | `browser.host_cdp_port` | **Overrides** global value when set |
-| `gates.agentgate` | **Narrow merge**, applied once trusted: rules may use any decision and go after the global denies, before the other global rules, so they can't loosen a global deny; `enabled` and `default_decision` are ignored |
+| `gates.agentgate` | **Narrow merge**, applied once trusted: rules may use any decision and go after your global denies and Loop's pinned default denies, before the other global rules; once trusted they also go before the overridable default denies (credential dirs such as `~/.aws`, `~/.kube`), so a project can allow those but never loosen a deny you wrote; `enabled` and `default_decision` are ignored |
 | `gates.docker_proxy` | Same narrow merge as `gates.agentgate` |
 | `gates.rate_limits` / `gates.audit` | Ignored at project scope — configured globally only |
 

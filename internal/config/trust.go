@@ -236,23 +236,23 @@ func (s *TrustStore) approved(dir string) (trustedFields, bool, error) {
 }
 
 // resolve returns the fields of pc that apply for the project in dir: pc's
-// own when they're trusted, else the last trusted ones, else none. A project
-// with nothing that needs trust is trusted as is. An unreadable trust file
-// trusts nothing.
-func (s *TrustStore) resolve(dir string, pc *projectConfig) trustedFields {
+// own when they're trusted, else the last trusted ones, else none, and
+// whether pc's own apply. A project with nothing that needs trust is trusted
+// as is. An unreadable trust file trusts nothing.
+func (s *TrustStore) resolve(dir string, pc *projectConfig) (trustedFields, bool) {
 	cur := trustedFieldsOf(pc)
 	canon := cur.canonical()
 	if string(canon) == "{}" {
-		return cur
+		return cur, true
 	}
 	approved, ok, err := s.approved(dir)
 	if err != nil || !ok {
-		return trustedFields{}
+		return trustedFields{}, false
 	}
 	if bytes.Equal(approved.canonical(), canon) {
-		return cur
+		return cur, true
 	}
-	return approved
+	return approved, false
 }
 
 // readProject returns the trusted fields of the project config in dir, as
@@ -279,8 +279,8 @@ func (s *TrustStore) MemoryPaths(dir string) []string {
 	if err != nil {
 		return nil
 	}
-	if m := s.resolve(dir, pc).Memory; m != nil {
-		return m.Paths
+	if f, _ := s.resolve(dir, pc); f.Memory != nil {
+		return f.Memory.Paths
 	}
 	return nil
 }
