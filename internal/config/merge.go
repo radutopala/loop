@@ -146,24 +146,39 @@ func seedsParentDir(data []byte, parentDir string) bool {
 // layerRules puts project rules under the global deny rules and over the
 // rest of the global rules, keeping each group's order. With no project
 // rules the global list is returned as is.
-func layerRules[T any](global, project []T, decision func(T) types.Decision) []T {
+//
+// A trusted project's rules also go above the built-in denies marked
+// overridable: the global denies that stay first are the ones the user wrote
+// and the built-in ones that guard more than credentials. The overridable
+// denies keep their place among the rest of the global rules, so a built-in
+// allow written ahead of one (rm under /tmp) still comes first. An untrusted
+// project's rules (the last approved version, while the file has changed
+// since) stay under every global deny.
+func layerRules[T any](global, project []T, decision func(T) types.Decision, overridable func(T) bool, trusted bool) []T {
 	if len(project) == 0 {
 		return global
 	}
+	first := func(r T) bool {
+		return decision(r) == types.DecisionDeny && (!trusted || !overridable(r))
+	}
 	out := make([]T, 0, len(global)+len(project))
 	for _, r := range global {
-		if decision(r) == types.DecisionDeny {
+		if first(r) {
 			out = append(out, r)
 		}
 	}
 	out = append(out, project...)
 	for _, r := range global {
-		if decision(r) != types.DecisionDeny {
+		if !first(r) {
 			out = append(out, r)
 		}
 	}
 	return out
 }
+
+// notOverridable is layerRules' overridable for the rule kinds whose
+// built-in denies all stay ahead of project rules.
+func notOverridable[T any](T) bool { return false }
 
 // unionExtraDirs returns the union of two extra_dirs slices, preserving order
 // (a entries first, then b entries not already present) and removing duplicates.
@@ -202,9 +217,13 @@ func (l *Loader) loadProjectConfig(workDir string, mainConfig *Config) (*Config,
 		return nil, err
 	}
 	// Until the owner trusts them, the fields that reach past the container
-	// keep their last trusted values.
+	// keep their last trusted values. Gate rules go above the overridable
+	// built-in denies only once the owner trusts the file as it is.
+	trusted := false
 	if l.trust != nil {
-		l.trust.resolve(workDir, pc).apply(pc)
+		var fields trustedFields
+		fields, trusted = l.trust.resolve(workDir, pc)
+		fields.apply(pc)
 	}
 
 	// Create a copy of main config to avoid mutating it
@@ -447,17 +466,24 @@ func (l *Loader) loadProjectConfig(workDir string, mainConfig *Config) (*Config,
 	//   - Rules: the global deny rules come first, then the project rules,
 	//     then the rest of the global rules. First match wins, so project
 	//     rules apply before the global allows and approves, never before a
-	//     global deny.
+	//     deny the user wrote globally. Once the owner trusts the project
+	//     config as it is, its rules also go before the built-in credential
+	//     denies (see layerRules); the hard pins the container adds after
+	//     the merge stay ahead of everything.
 	//   - RateLimits / Audit: ignored (they live at the Gates umbrella; global wins).
 	if pc.Gates != nil {
 		if ag := pc.Gates.Agentgate; ag != nil {
-			merged.Gates.Agentgate.PathRules = layerRules(merged.Gates.Agentgate.PathRules, ag.PathRules, func(r types.PathRule) types.Decision { return r.Decision })
-			merged.Gates.Agentgate.CommandRules = layerRules(merged.Gates.Agentgate.CommandRules, ag.CommandRules, func(r types.CommandRule) types.Decision { return r.Decision })
-			merged.Gates.Agentgate.FileRules = layerRules(merged.Gates.Agentgate.FileRules, ag.FileRules, func(r types.FileRule) types.Decision { return r.Decision })
+			// The one built-in path deny (the daemon's own socket) would bypass
+			// the docker proxy, so no path rule is overridable.
+			merged.Gates.Agentgate.PathRules = layerRules(merged.Gates.Agentgate.PathRules, ag.PathRules, func(r types.PathRule) types.Decision { return r.Decision }, notOverridable, trusted)
+			merged.Gates.Agentgate.CommandRules = layerRules(merged.Gates.Agentgate.CommandRules, ag.CommandRules, func(r types.CommandRule) types.Decision { return r.Decision }, func(r types.CommandRule) bool { return r.Overridable }, trusted)
+			merged.Gates.Agentgate.FileRules = layerRules(merged.Gates.Agentgate.FileRules, ag.FileRules, func(r types.FileRule) types.Decision { return r.Decision }, func(r types.FileRule) bool { return r.Overridable }, trusted)
 		}
+		// The built-in docker proxy denies each block a container escape or
+		// the swarm secrets API, so none is overridable.
 		if dp := pc.Gates.DockerProxy; dp != nil {
-			merged.Gates.DockerProxy.HTTPRules = layerRules(merged.Gates.DockerProxy.HTTPRules, dp.HTTPRules, func(r types.HTTPServiceRule) types.Decision { return r.Decision })
-			merged.Gates.DockerProxy.BodyRules = layerRules(merged.Gates.DockerProxy.BodyRules, dp.BodyRules, func(r types.BodyRule) types.Decision { return r.Decision })
+			merged.Gates.DockerProxy.HTTPRules = layerRules(merged.Gates.DockerProxy.HTTPRules, dp.HTTPRules, func(r types.HTTPServiceRule) types.Decision { return r.Decision }, notOverridable, trusted)
+			merged.Gates.DockerProxy.BodyRules = layerRules(merged.Gates.DockerProxy.BodyRules, dp.BodyRules, func(r types.BodyRule) types.Decision { return r.Decision }, notOverridable, trusted)
 		}
 	}
 

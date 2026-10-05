@@ -148,11 +148,11 @@ Seccomp catches `execve` / `execveat`; transparent wrappers (`env`, `sudo`, `nic
 | # | Command | Args regex | Decision | Why |
 |---|---|---|---|---|
 | 0 | *(injected)* `rm` | every positional arg must lie under `{workDir}` (or `{parentDirPath}`) — flag-only prefix `^(-[a-zA-Z]+\s+)*` followed by an alternation of workspace path prefixes | `allow` | Workspace fast-path. Inserted per-container by `injectWorkspaceRmRfRule` (`internal/container/runner.go:1583`). Agents routinely `rm -rf build/` or `rm -rf dist/` inside their own tree; without this carve-out rule #1 would block legitimate cleanup. The pattern is **all-args-or-nothing** — a mixed `rm -rf /workspace/build /etc/passwd` falls through to rule #1 and is denied. Omitted when `workDir` is empty (ad-hoc one-shot runs). |
-| 1 | `rm` | `-[a-zA-Z]*r[fF]?.* /.*` | `deny` | `rm -rf` on an absolute path outside the workspace — unconditional blast-radius block. The `/tmp/` allow is injected before this for the same reason as the workspace carve-out (test cleanup like `rm -rf /tmp/testgit`). |
+| 1 | `rm` | `-[a-zA-Z]*r[fF]?.* /.*` | `deny` | `rm -rf` on an absolute path outside the workspace — blast-radius block. **Overridable**: a trusted project's command rules go before it. The `/tmp/` allow is injected before this for the same reason as the workspace carve-out (test cleanup like `rm -rf /tmp/testgit`). |
 
 Git write-side operations (`push`, `commit`, `reset --hard`, …) are intentionally not gated by default; add an approve rule if you want prompts.
 
-**Example — gate `git commit` and `git push`.** Drop this into `~/.loop/config.json` for a global rule that applies to every project, or into `{project}/.loop/config.json` for just one repo — the schema is identical. Project rules go after the global `deny` rules and before the other global rules (first-match-wins), so a project can't loosen a global deny (see [Project config merge](#project-config-merge)).
+**Example — gate `git commit` and `git push`.** Drop this into `~/.loop/config.json` for a global rule that applies to every project, or into `{project}/.loop/config.json` for just one repo — the schema is identical. Project rules go after the global `deny` rules and before the other global rules (first-match-wins), so a project can't loosen a deny you wrote; once trusted, they also go before the overridable default denies (see [Project config merge](#project-config-merge)).
 
 ```jsonc
 {
@@ -183,12 +183,12 @@ Order matters: the pinned policy self-deny, then the pinned project-config appro
 | 1a | *(injected)* `{workDir}/.loop`, `.loop/config.json`, `.loop/container`, `.loop/container/**`; same under `{parentDirPath}` | write, create, delete, chmod, chown, link | `approve` | Project config. Loop builds the next container from these (mounts, `copy_files`, gates, image), so an unreviewed write would outlast the session. Pinned after the merge by `injectProjectConfigRule`, like rule 1. The `.loop` directory itself is listed so it can't be swapped by rename; the cost is that GNU `mkdir -p .loop/<sub>` asks too, since `mkdirat` is checked before the kernel returns `EEXIST`. Containers the agent starts get the directories read-only (see [Project config stays read-only to nested containers](#project-config-stays-read-only-to-nested-containers)) |
 | 2 | `/proc/*/mem`, `/proc/kcore` | read | `deny` | Kernel / process-memory exfiltration. `/proc/*/environ` is intentionally NOT denied — Go test binaries, runtime probes, and tooling open it routinely (chronic noise) and the gate parent's env carries no exploitable secret (the notify fd is passed via SCM_RIGHTS, not authenticated by an env-readable token) |
 | 3 | `/etc/shadow`, `/etc/gshadow`, `/etc/sudoers`, `/etc/sudoers.d/**`, `/etc/ssh/ssh_host_*_key`, `.pub` variants | all ops | `deny` | Root credential files |
-| 4 | `**/.ssh/**`, `**/.aws/**`, `**/.gcp/**`, `**/.config/gcloud/**`, `**/.kube/**`, `**/.netrc`, `**/.pgpass` | read, write, create, delete, chmod | `deny` | User credential directories — apply to any path, including inside the workspace |
-| 5 | `.docker/config.json` and `.npmrc` under `/root/`, `/home/*/`, `/Users/*/` | write, create, delete, chmod | `deny` | Registry/proxy credential files — reads stay allowed because the docker CLI and npm read them on every invocation (missing file would surface as a confusing EPERM warning). Scoped to real home-dir layouts rather than `**/`: a filename-anywhere glob caught nodeenv's bundled `.npmrc` template inside `~/.cache/pre-commit/`, breaking pre-commit hook installs |
+| 4 | `**/.ssh/**`, `**/.aws/**`, `**/.gcp/**`, `**/.config/gcloud/**`, `**/.kube/**`, `**/.netrc`, `**/.pgpass` | read, write, create, delete, chmod | `deny` | User credential directories — apply to any path, including inside the workspace. **Overridable**: a trusted project's rules go before it, so a project that runs `aws` or `kubectl` can allow `**/.aws/**` / `**/.kube/**` |
+| 5 | `.docker/config.json` and `.npmrc` under `/root/`, `/home/*/`, `/Users/*/` | write, create, delete, chmod | `deny` | **Overridable**, like rule 4. Registry/proxy credential files — reads stay allowed because the docker CLI and npm read them on every invocation (missing file would surface as a confusing EPERM warning). Scoped to real home-dir layouts rather than `**/`: a filename-anywhere glob caught nodeenv's bundled `.npmrc` template inside `~/.cache/pre-commit/`, breaking pre-commit hook installs |
 | 6 | `**/.claude/settings.json`, `settings.local.json` | write, create, delete, chmod | `deny` | Claude harness settings. The rule is narrow on purpose — `CLAUDE.md`, `mcp*.json`, `plugins/**`, and the rest of `~/.claude` are tree the agent legitimately writes (memory updates, per-project MCP configs, plugins state, ephemeral harness session/todos/snapshot dirs) |
 | 7 | `/root/.bashrc` (and `.bash_profile`, `.zshrc`, `.zprofile`, `.profile`, `.bash_login`, `.inputrc`); same set under `/home/*/` and `/Users/*/` | write, create, delete, chmod | `deny` | Shell rcfile write — persistence vector. Scoped to real home-dir layouts (root, Linux `/home/<user>`, macOS host-home bind-mount `/Users/<user>`) so test fixtures writing a `.bashrc` inside a t.TempDir() don't trip |
 | 8 | `/etc/**`, `/usr/**`, `/bin/**`, `/sbin/**`, `/lib/**`, `/lib64/**`, `/boot/**` | write, create, delete, chmod, chown | `deny` | System paths — writes would mutate the container image outside the workspace |
-| 9 | *(injected)* `{workDir}/**`, `{parentDirPath}/**` | all ops | `allow` | Workspace fast-path. Inserted per-container by `writeGatePolicyFile` using the real host bind-mount path for that channel / thread. Positioned after all Deny rules so cred-path denies still win inside the workspace |
+| 9 | *(injected)* `{workDir}/**`, `{parentDirPath}/**` | all ops | `allow` | Workspace fast-path. Inserted per-container by `writeGatePolicyFile` using the real host bind-mount path for that channel / thread. Positioned after all Deny rules (and after a trusted project's rules and the overridable denies behind them) so cred-path denies still win inside the workspace |
 | 10 | `/tmp/**`, `/var/tmp/**` | all ops | `allow` | OS tmp fast-path |
 | 11 | `/proc/**`, `/sys/**`, `/dev/null`, `/dev/zero`, `/dev/urandom`, `/dev/random`, `/dev/tty`, `/dev/pts/**` | read, stat, list | `allow` | System reads fast-path — reads are silent, writes to these paths fall through to `default_decision` |
 
@@ -497,15 +497,32 @@ The in-exec parent runs as root, like the stream-mode one: it reads the root-onl
 
 ## Project config merge
 
-A project `.loop/config.json` can add rules with any decision (`allow` / `deny` / `approve`), so a project can open a surgical hole in a global `approve` without turning a whole layer off: for example, an `allow` body rule with `source_path_in` `^/opt/shared-fixtures(/|$)` binds that host dir without the "bind mount outside the agent's own mounts" prompt. The global denies and switches still hold: `/etc/ssl/certs` stays refused under the baseline `^/etc` deny, and a project can't switch a gate off. An exception to a deny belongs in the global config:
+A project `.loop/config.json` can add rules with any decision (`allow` / `deny` / `approve`), so a project can open a surgical hole in a global `approve` without turning a whole layer off: for example, an `allow` body rule with `source_path_in` `^/opt/shared-fixtures(/|$)` binds that host dir without the "bind mount outside the agent's own mounts" prompt. The global denies and switches still hold: `/etc/ssl/certs` stays refused under the baseline `^/etc` deny, and a project can't switch a gate off. An exception to a deny belongs in the global config, with one exception: Loop's **overridable** default denies.
+
+Loop's defaults come in two kinds. The pinned ones guard the host and the gate itself: kernel memory, root credentials, system paths, shell rcfiles, Claude settings, the host docker socket and every docker proxy default. The overridable ones guard credentials a project may legitimately need: the credential dirs (file rule 4, e.g. `~/.aws`, `~/.kube`), registry credential writes (file rule 5) and `rm -rf` on an absolute path (exec rule 1). The order is:
+
+1. The injected rules (policy self-deny, project config approve, workspace `rm` allow).
+2. The `deny` rules you wrote in the global config, and the pinned default denies.
+3. The project rules.
+4. The overridable default denies, **only while the project config is trusted**. Untrusted, or changed since you trusted it, they stay in step 2 and the last trusted project rules can't precede them.
+5. The other global rules, the workspace allow among them.
+
+A deny you write yourself is never overridable, even a copy of a default one: when you set a global rule list it replaces the defaults, and every deny in it comes first. So a project that runs `aws` or `kubectl` with `~/.aws` / `~/.kube` mounted can allow them in its own config, without a global allow that would reach every project:
+
+```json
+{"gates": {"agentgate": {"file_rules": [
+  {"paths": ["**/.aws/**", "**/.kube/**"], "operations": ["read", "write", "create"], "decision": "allow"}
+]}}}
+```
+
 
 | Field | Merge rule |
 |---|---|
 | `gates.agentgate.enabled` | Ignored: the global setting decides, in both directions |
-| `gates.agentgate.path_rules` / `command_rules` / `file_rules` | Global `deny` rules, then project rules, then the other global rules (first-match-wins) |
+| `gates.agentgate.path_rules` / `command_rules` / `file_rules` | Global and pinned default `deny` rules, then project rules, then (when trusted) the overridable default denies, then the other global rules (first-match-wins) |
 | `gates.agentgate.default_decision` | Ignored — global wins |
 | `gates.docker_proxy.enabled` | Ignored, like `gates.agentgate.enabled` |
-| `gates.docker_proxy.http_rules` / `body_rules` | Global `deny` rules, then project rules, then the other global rules |
+| `gates.docker_proxy.http_rules` / `body_rules` | Global `deny` rules, then project rules, then the other global rules; no docker proxy default is overridable |
 | `gates.docker_proxy.default_decision` | Ignored — global wins |
 | `gates.rate_limits` / `gates.audit` | Ignored — global wins |
 

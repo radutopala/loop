@@ -709,10 +709,10 @@ Not all global fields are available in project configs. The following fields can
 | `learn.enabled` / `learn.min_turns` / `learn.model` / `learn.effort` / `learn.prompt` | Each field **overrides** the global value only when set: `enabled` and `min_turns` when present, the strings when non-empty (see [Learn](#learn)). |
 | `explain.enabled` / `explain.model` / `explain.effort` / `explain.prompt` | Each field **overrides** the global value only when set: `enabled` when present, the strings when non-empty (see [Explain](#explain)). |
 | `gates.agentgate.enabled` | **Ignored**: the global setting decides, so a project can neither switch the gate off nor on. |
-| `gates.agentgate.path_rules` / `command_rules` / `file_rules` | **Layered**: the global `deny` rules first, then the project rules, then the rest of the global rules (first-match-wins). A project can loosen a global `approve` or `allow`, never a global `deny`. |
+| `gates.agentgate.path_rules` / `command_rules` / `file_rules` | **Layered**: the global `deny` rules you wrote and Loop's pinned default denies first, then the project rules, then the rest of the global rules (first-match-wins). Once the project config is trusted, the overridable default denies (credential dirs such as `~/.aws` and `~/.kube`, registry credential writes, `rm -rf` on an absolute path) move after the project rules, so a trusted project can allow them; until it is trusted, or after it changes, they stay first. A project can loosen a global `approve` or `allow`, never a deny you wrote. |
 | `gates.agentgate.default_decision` | **Ignored** — global wins unconditionally. |
 | `gates.docker_proxy.enabled` | **Ignored**, like `gates.agentgate.enabled`. |
-| `gates.docker_proxy.http_rules` / `body_rules` | **Layered** like the agentgate rules: global denies first. |
+| `gates.docker_proxy.http_rules` / `body_rules` | **Layered**: global denies first, then the project rules, then the rest. None of the docker proxy defaults is overridable. |
 | `gates.docker_proxy.default_decision` | **Ignored** — global wins. |
 | `gates.rate_limits` / `gates.audit` | **Ignored** — global wins unconditionally. |
 
@@ -724,7 +724,7 @@ The merge follows these principles:
 - **Merge**: Both global and project values are combined, with project taking precedence on conflicts (MCP servers, envs, task templates, workflows).
 - **Append**: Project values are added to the global list (memory paths, proxies.no_proxy, and mounts, where one at the same container path replaces the global one).
 - **Override**: A single scalar value replaces the global one (claude_model, container_image, etc.).
-- **Narrow merge**: Security-sensitive fields under `gates` (`agentgate`, `docker_proxy`) have a locked-down merge: project rules go after the global denies and before the other global rules, `enabled` is the global setting's, and `default_decision` / `rate_limits` / `audit` are ignored.
+- **Narrow merge**: Security-sensitive fields under `gates` (`agentgate`, `docker_proxy`) have a locked-down merge: project rules go after the global denies (a trusted project's go before the overridable default denies) and before the other global rules, `enabled` is the global setting's, and `default_decision` / `rate_limits` / `audit` are ignored.
 - **Absent = inherit**: If a field is not set in the project config, the global value is used unchanged.
 
 ### Project Config Trust

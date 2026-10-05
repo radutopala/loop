@@ -153,6 +153,80 @@ func (s *GateSuite) TestWriteGatePolicyFileSerialisesSubset() {
 	require.Equal(s.T(), cfg.Gates.Agentgate.PathRules, got.PathRules)
 }
 
+// TestWriteGatePolicyFileTrustedProjectOverridesCredentialDenies runs a
+// project config through trust, the merge and the policy file into the
+// gate's own matcher: once trusted, its allow for ~/.kube and ~/.aws wins
+// over the built-in credentials deny, and nothing else moves.
+func (s *GateSuite) TestWriteGatePolicyFileTrustedProjectOverridesCredentialDenies() {
+	proj := s.T().TempDir()
+	require.NoError(s.T(), os.MkdirAll(proj+"/.loop", 0o755))
+	require.NoError(s.T(), os.WriteFile(proj+"/.loop/config.json", []byte(`{"gates": {"agentgate": {"file_rules": [
+		{"paths": ["**/.kube/**", "**/.aws/**"], "operations": ["read", "write", "create"], "decision": "allow"}
+	]}}}`), 0o644))
+	trustDir := s.T().TempDir()
+	trust := config.NewTrustStoreIn(func() (string, error) { return trustDir, nil })
+	loader := config.NewProjectLoader(trust)
+	global := &config.Config{Gates: config.GatesConfig{Agentgate: config.AgentgateConfig{
+		Enabled:         true,
+		DefaultDecision: types.DecisionAllow,
+		PathRules:       config.DefaultGatePathRules(),
+		CommandRules:    config.DefaultGateCommandRules(),
+		FileRules:       config.DefaultGateFileRules(),
+	}}}
+
+	// compile writes cfg's policy file and compiles what the gate would read.
+	compile := func(cfg *config.Config) *agentgate.Policy {
+		var captured []byte
+		sys := newDefaultMockSystem()
+		sys.ExpectedCalls = nil
+		sys.On("MkdirAll", mock.Anything, mock.Anything).Return(nil)
+		sys.On("WriteFile", mock.Anything, mock.Anything, mock.Anything).
+			Run(func(args mock.Arguments) { captured = append([]byte(nil), args.Get(1).([]byte)...) }).
+			Return(nil)
+		s.runner.sys = sys
+		s.runner.policyDir = "/run/loop"
+		_, err := s.runner.writeGatePolicyFile(cfg, "ch-1", proj, "", nil)
+		require.NoError(s.T(), err)
+		var got gatePolicyJSON
+		require.NoError(s.T(), json.Unmarshal(captured, &got))
+		p, err := agentgate.CompilePolicy(got.DefaultDecision, got.PathRules, got.CommandRules, got.FileRules)
+		require.NoError(s.T(), err)
+		return p
+	}
+
+	untrusted, err := loader.LoadProject(proj, global)
+	require.NoError(s.T(), err)
+	require.NoError(s.T(), trust.Trust(proj, ""))
+	trusted, err := loader.LoadProject(proj, global)
+	require.NoError(s.T(), err)
+	before, after := compile(untrusted), compile(trusted)
+
+	tests := []struct {
+		name   string
+		policy *agentgate.Policy
+		op     string
+		path   string
+		want   types.Decision
+	}{
+		{"untrusted: kube still denied", before, "read", "/home/agent/.kube/config", types.DecisionDeny},
+		{"trusted: kube read", after, "read", "/home/agent/.kube/config", types.DecisionAllow},
+		{"trusted: kube cache write", after, "create", "/home/agent/.kube/cache/discovery/x.json", types.DecisionAllow},
+		{"trusted: aws credentials", after, "read", "/home/agent/.aws/credentials", types.DecisionAllow},
+		{"trusted: an op the project didn't allow", after, "delete", "/home/agent/.kube/config", types.DecisionDeny},
+		{"trusted: other credentials stay denied", after, "read", "/home/agent/.ssh/id_ed25519", types.DecisionDeny},
+		{"trusted: credentials in the workspace stay denied", after, "read", proj + "/.ssh/id_ed25519", types.DecisionDeny},
+		{"trusted: root credentials stay denied", after, "read", "/etc/shadow", types.DecisionDeny},
+		{"trusted: the policy dir stays pinned", after, "write", "/etc/loop/gate-policy.json", types.DecisionDeny},
+		{"trusted: the project config still asks", after, "write", proj + "/.loop/config.json", types.DecisionApprove},
+		{"trusted: the workspace still allows", after, "write", proj + "/main.go", types.DecisionAllow},
+	}
+	for _, tt := range tests {
+		s.Run(tt.name, func() {
+			require.Equal(s.T(), tt.want, tt.policy.MatchFile(tt.op, tt.path).Decision)
+		})
+	}
+}
+
 // --- ensureGateAuditDir ---
 
 func (s *GateSuite) TestEnsureGateAuditDirNoPolicyDirReturnsEmpty() {
@@ -268,6 +342,20 @@ func (s *GateSuite) TestInjectWorkspaceRuleInsertsBeforeFirstAllow() {
 	require.Equal(s.T(), "workspace fast-path", out[2].Message)
 	require.Equal(s.T(), []string{"/host/work/**"}, out[2].Paths)
 	require.Equal(s.T(), "tmp fast-path", out[3].Message)
+}
+
+func (s *GateSuite) TestInjectWorkspaceRuleInsertsAfterOverridableDenies() {
+	in := []types.FileRule{
+		{Paths: []string{"/etc/shadow"}, Decision: types.DecisionDeny, Message: "pinned"},
+		{Paths: []string{"**/.kube/**"}, Decision: types.DecisionAllow, Message: "trusted project"},
+		{Paths: []string{"**/.ssh/**"}, Decision: types.DecisionDeny, Message: "creds", Overridable: true},
+		{Paths: []string{"/tmp/**"}, Decision: types.DecisionAllow, Message: "tmp fast-path"},
+	}
+	out := injectWorkspaceRule(in, "/host/work", "")
+
+	require.Equal(s.T(), []string{"pinned", "trusted project", "creds", "workspace fast-path", "tmp fast-path"},
+		[]string{out[0].Message, out[1].Message, out[2].Message, out[3].Message, out[4].Message},
+		"a project allow ahead of the overridable denies must not pull the workspace allow in front of them")
 }
 
 func (s *GateSuite) TestInjectWorkspaceRuleIncludesParentDirPath() {

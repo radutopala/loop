@@ -127,13 +127,19 @@
   // Project rules may use any decision (allow/deny/approve). They are placed
   // after the global deny rules and before every other global rule
   // (first-match-wins), so a project can tighten anything and loosen a global
-  // approve or allow, but never a global deny.
+  // approve or allow, but never a deny you wrote globally. Once trusted, they
+  // also go before Loop's overridable default denies (credential dirs such as
+  // ~/.aws and ~/.kube, registry credential writes, rm -rf on an absolute
+  // path); kernel memory, root credentials, system paths and the like stay
+  // pinned ahead of them.
   // Project config CANNOT: switch a gate on or off ("enabled" is ignored),
   //                       change default_decision, rate limits or audit settings.
   //"gates": {
   //  //"agentgate": {
   //  //  //"command_rules": [ { "commands": ["npm"], "args_patterns": ["^publish"], "decision": "deny" } ],
   //  //  //"file_rules":    [ { "paths": ["./secret-vault/**"], "operations": ["read"], "decision": "deny" } ]
+  //  //  // Let aws and kubectl use the mounted ~/.aws and ~/.kube:
+  //  //  //"file_rules":    [ { "paths": ["**/.aws/**", "**/.kube/**"], "operations": ["read", "write", "create"], "decision": "allow" } ]
   //  //},
   //
   //  // Docker proxy rules, layered the same way.

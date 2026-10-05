@@ -23,6 +23,10 @@ type CommandRule struct {
 	ArgsPatterns []string `json:"args_patterns,omitempty"`
 	Decision     Decision `json:"decision"`
 	Message      string   `json:"message,omitempty"`
+	// Overridable marks a built-in deny that a trusted project config's
+	// rules may precede. Only Loop's defaults set it; it's not part of the
+	// config format.
+	Overridable bool `json:"-"`
 }
 
 // FileRule matches openat(2) / renameat2(2) / unlinkat(2) / ... by resolved absolute path
@@ -32,6 +36,10 @@ type FileRule struct {
 	Operations []string `json:"operations,omitempty"`
 	Decision   Decision `json:"decision"`
 	Message    string   `json:"message,omitempty"`
+	// Overridable marks a built-in deny that a trusted project config's
+	// rules may precede. Only Loop's defaults set it; it's not part of the
+	// config format.
+	Overridable bool `json:"-"`
 }
 
 // HTTPServiceRule matches Docker HTTP requests by method (or "*") and path regex.

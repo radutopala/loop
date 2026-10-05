@@ -190,19 +190,61 @@ func (s *ConfigSuite) TestProjectGateRulesFollowGlobalDenies() {
 
 func (s *ConfigSuite) TestLayerRules() {
 	dec := func(r types.FileRule) types.Decision { return r.Decision }
+	over := func(r types.FileRule) bool { return r.Overridable }
 	rule := func(msg string, d types.Decision) types.FileRule { return types.FileRule{Message: msg, Decision: d} }
-	global := []types.FileRule{
-		rule("g-allow", types.DecisionAllow),
-		rule("g-deny-1", types.DecisionDeny),
-		rule("g-approve", types.DecisionApprove),
-		rule("g-deny-2", types.DecisionDeny),
+	builtin := func(msg string) types.FileRule {
+		return types.FileRule{Message: msg, Decision: types.DecisionDeny, Overridable: true}
 	}
-	require.Equal(s.T(), global, layerRules(global, nil, dec), "no project rules keeps the global order")
+	project := []types.FileRule{rule("p-allow", types.DecisionAllow), rule("p-deny", types.DecisionDeny)}
 
-	got := layerRules(global, []types.FileRule{rule("p-allow", types.DecisionAllow), rule("p-deny", types.DecisionDeny)}, dec)
-	var msgs []string
-	for _, r := range got {
-		msgs = append(msgs, r.Message)
+	tests := []struct {
+		name    string
+		global  []types.FileRule
+		project []types.FileRule
+		trusted bool
+		want    []string
+	}{
+		{
+			name:    "no project rules keeps the global order",
+			global:  []types.FileRule{rule("g-allow", types.DecisionAllow), builtin("b-deny"), rule("u-deny", types.DecisionDeny)},
+			trusted: true,
+			want:    []string{"g-allow", "b-deny", "u-deny"},
+		},
+		{
+			name:    "untrusted: under every global deny, user-written or built-in",
+			global:  []types.FileRule{rule("g-allow", types.DecisionAllow), rule("u-deny", types.DecisionDeny), rule("g-approve", types.DecisionApprove), builtin("b-deny")},
+			project: project,
+			want:    []string{"u-deny", "b-deny", "p-allow", "p-deny", "g-allow", "g-approve"},
+		},
+		{
+			name:    "trusted: over the built-in overridable denies, under the user's",
+			global:  []types.FileRule{rule("u-deny-1", types.DecisionDeny), builtin("b-deny"), rule("u-deny-2", types.DecisionDeny), rule("g-allow", types.DecisionAllow), rule("g-approve", types.DecisionApprove)},
+			project: project,
+			trusted: true,
+			want:    []string{"u-deny-1", "u-deny-2", "p-allow", "p-deny", "b-deny", "g-allow", "g-approve"},
+		},
+		{
+			name:    "trusted: an overridable deny keeps its place among the rest",
+			global:  []types.FileRule{rule("g-allow", types.DecisionAllow), builtin("b-deny"), rule("g-approve", types.DecisionApprove)},
+			project: project,
+			trusted: true,
+			want:    []string{"p-allow", "p-deny", "g-allow", "b-deny", "g-approve"},
+		},
+		{
+			name:    "trusted with only user-written denies is the untrusted order",
+			global:  []types.FileRule{rule("g-allow", types.DecisionAllow), rule("u-deny", types.DecisionDeny)},
+			project: project,
+			trusted: true,
+			want:    []string{"u-deny", "p-allow", "p-deny", "g-allow"},
+		},
 	}
-	require.Equal(s.T(), []string{"g-deny-1", "g-deny-2", "p-allow", "p-deny", "g-allow", "g-approve"}, msgs)
+	for _, tt := range tests {
+		s.Run(tt.name, func() {
+			var msgs []string
+			for _, r := range layerRules(tt.global, tt.project, dec, over, tt.trusted) {
+				msgs = append(msgs, r.Message)
+			}
+			require.Equal(s.T(), tt.want, msgs)
+		})
+	}
 }
