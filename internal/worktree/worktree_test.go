@@ -68,6 +68,27 @@ func TestExecCommandRunnerHardensGit(t *testing.T) {
 	require.Equal(t, "/dev/null\n", string(out))
 }
 
+func TestExecCommandRunnerWithEnv(t *testing.T) {
+	run := ExecCommandRunnerWithEnv(func() []string { return []string{"HTTPS_PROXY=http://proxy:3128"} })
+	tests := []struct {
+		name string
+		cmd  string
+		args []string
+		want string
+	}{
+		{name: "other commands keep the daemon's environment", cmd: "sh", args: []string{"-c", `echo "$HTTPS_PROXY ${PATH:+path}"`}, want: "http://proxy:3128 path\n"},
+		{name: "git stays hardened", cmd: "git", args: []string{"config", "--get", "core.hooksPath"}, want: "/dev/null\n"},
+		{name: "git gets the variables", cmd: "git", args: []string{"-c", `alias.proxy=!echo "$HTTPS_PROXY"`, "proxy"}, want: "http://proxy:3128\n"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			out, err := run(context.Background(), t.TempDir(), tt.cmd, tt.args...)
+			require.NoError(t, err)
+			require.Equal(t, tt.want, string(out))
+		})
+	}
+}
+
 type CreatorSuite struct {
 	suite.Suite
 	sys     *mockSystem

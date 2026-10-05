@@ -43,12 +43,30 @@ type CreateResult struct {
 // ExecCommandRunner is a CommandRunner that uses exec.CommandContext. git
 // runs through gitutil, since the repos it touches are agent-writable.
 func ExecCommandRunner(ctx context.Context, dir, name string, args ...string) ([]byte, error) {
+	return execCommand(ctx, dir, name, args...).CombinedOutput()
+}
+
+// ExecCommandRunnerWithEnv is ExecCommandRunner with extraEnv's variables
+// added to every command, read per call — the daemon's proxy for the
+// commands that fetch from a remote.
+func ExecCommandRunnerWithEnv(extraEnv func() []string) CommandRunner {
+	return func(ctx context.Context, dir, name string, args ...string) ([]byte, error) {
+		cmd := execCommand(ctx, dir, name, args...)
+		if cmd.Env == nil {
+			cmd.Env = os.Environ()
+		}
+		cmd.Env = append(cmd.Env, extraEnv()...)
+		return cmd.CombinedOutput()
+	}
+}
+
+func execCommand(ctx context.Context, dir, name string, args ...string) *exec.Cmd {
 	if name == "git" {
-		return gitutil.Command(ctx, dir, args...).CombinedOutput()
+		return gitutil.Command(ctx, dir, args...)
 	}
 	cmd := exec.CommandContext(ctx, name, args...)
 	cmd.Dir = dir
-	return cmd.CombinedOutput()
+	return cmd
 }
 
 // Creator creates git worktrees with config seeding and session copying.

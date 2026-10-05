@@ -51,6 +51,9 @@ type execRunner struct {
 	// construct execRunner with a different bin to exercise the exec path
 	// against a deterministic stand-in (e.g. /bin/false).
 	bin string
+	// proxyEnv, when set, gives the proxy variables for each call: gh reads
+	// its proxy only from the environment.
+	proxyEnv func() []string
 }
 
 // NewExecRunner returns a Runner that shells out to `bin`. Pass "gh" for
@@ -63,7 +66,11 @@ func (e execRunner) Run(ctx context.Context, workdir string, env []string, args 
 	cmd.Dir = workdir
 	// gh runs git in workdir, an agent-writable repo; the hardened env
 	// carries gitutil's config into those git processes.
-	cmd.Env = append(gitutil.Environ(ctx, workdir), env...)
+	cmd.Env = gitutil.Environ(ctx, workdir)
+	if e.proxyEnv != nil {
+		cmd.Env = append(cmd.Env, e.proxyEnv()...)
+	}
+	cmd.Env = append(cmd.Env, env...)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
@@ -89,8 +96,11 @@ type Client struct {
 	runner Runner
 }
 
-// NewClient builds a Client backed by the real gh binary.
-func NewClient() *Client { return &Client{runner: execRunner{bin: "gh"}} }
+// NewClient builds a Client backed by the real gh binary. proxyEnv, if
+// non-nil, is called per gh invocation for the proxy variables to set.
+func NewClient(proxyEnv func() []string) *Client {
+	return &Client{runner: execRunner{bin: "gh", proxyEnv: proxyEnv}}
+}
 
 // NewClientWithRunner builds a Client with an injected runner — for tests.
 func NewClientWithRunner(r Runner) *Client { return &Client{runner: r} }

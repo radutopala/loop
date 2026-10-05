@@ -440,6 +440,9 @@ func (a *app) serve() error {
 	a.httpTransport.Proxy = hostProxy
 	a.wsDialer.Proxy = hostProxy
 	a.slackDialer.Proxy = hostProxy
+	// gh and git read their proxy only from the environment, which no
+	// longer carries one, so the daemon's subprocesses get it per call too.
+	hostProxyEnv := container.HostProxyEnv(reloadConfig, os.Getenv)
 
 	store, err := a.newSQLiteStore(cfg.DBPath)
 	if err != nil {
@@ -613,7 +616,7 @@ func (a *app) serve() error {
 	// Stage-2 domain dependencies are constructed up front and injected at
 	// server construction via options — none of them need the server; only
 	// the engine's progress hook flows the other way and is wired after.
-	ghClient := githubapi.NewClient()
+	ghClient := githubapi.NewClient(hostProxyEnv)
 	reviewPrompt, reviewErr := cfg.Review.ResolvePrompt(cfg.LoopDir, os.ReadFile)
 	if reviewErr != nil {
 		logger.Warn("review prompt resolve failed, using built-in default", "error", reviewErr)
@@ -622,7 +625,7 @@ func (a *app) serve() error {
 	serverOpts := []api.Option{
 		api.WithGitHubLookup(ghClient),
 		api.WithTunnel(tunnel.NewManager(filepath.Join(cfg.LoopDir, "bin"), logger)),
-		api.WithReview(ghClient, review.NewStore(), &review.GitPR{Run: worktree.ExecCommandRunner}),
+		api.WithReview(ghClient, review.NewStore(), &review.GitPR{Run: review.CommandRunner(worktree.ExecCommandRunnerWithEnv(hostProxyEnv))}),
 		api.WithReviewAgent(&review.Runner{Agent: runner}, "", reviewPrompt),
 		// Ceiling for the daemon-side review goroutine. Picked below the
 		// CLI's `loop review run --timeout` default (60m) so the daemon
