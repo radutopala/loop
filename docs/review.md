@@ -288,7 +288,7 @@ already does for other agent runs.
 
 The host-side `loop review run` subcommand drives the same async
 endpoint from a shell or a workflow `bash` node. The agent container
-exports both `CHANNEL_ID` and `API_URL`, and the CLI falls back to them,
+exports both `LOOP_CHANNEL_ID` and `LOOP_API_URL`, and the CLI falls back to them,
 so the seeded review workflows' bash body is simply:
 
 ```sh
@@ -305,8 +305,8 @@ load. Any session-lookup failure falls back to loading.
 
 | Flag | Default | Description |
 |---|---|---|
-| `--channel-id` | `$CHANNEL_ID` | Channel whose review session to drive. Falls back to the container-injected `$CHANNEL_ID`; required only if neither is set. |
-| `--api-url` | `$API_URL` then `http://localhost:8222` | Daemon URL. The agent container already exports `$API_URL`. |
+| `--channel-id` | `$LOOP_CHANNEL_ID` | Channel whose review session to drive. Falls back to the container-injected `$LOOP_CHANNEL_ID`; required only if neither is set. |
+| `--api-url` | `$LOOP_API_URL` then `http://localhost:8222` | Daemon URL. The agent container already exports `$LOOP_API_URL`. |
 | `--pr` | (none) | PR number (`567`) or URL (`.../pull/567`) to **load** into the channel's review session (fetch PR + create its worktree) before running. Omitted → review whatever the channel already has loaded. |
 | `--wait` | `false` | Block until the session reaches a terminal status (`ready` or `error`) and emit the JSON envelope to stdout. Without `--wait`, the command exits 0 immediately after the `202`. |
 | `--timeout` | `60m` | Bound on the total `--wait` time. Enforced inside the HTTP client, not just between polls, so a hung response can't outlive the deadline. Transient transport errors (TCP reset, momentary daemon restart, proxy 502) back off and retry instead of failing the whole loop. Sits above the daemon-side review ceiling (50m) so the daemon flips first with a meaningful error rather than the CLI's generic timeout. |

@@ -70,7 +70,7 @@ func (s *ParseReviewSuite) TestEmptyStdoutDoesNotTerminateLoop() {
 	rc := &RunContext{}
 	parseReviewOutput("", rc)
 	// Prev was empty, but the parse miss is a real signal (daemon/CLI bug,
-	// $API_URL misconfig, future stdout pollution). Both gates stay false
+	// $LOOP_API_URL misconfig, future stdout pollution). Both gates stay false
 	// so `{{ or .Review.NoComments .Review.SameAsPrev }}` is false and the
 	// loop keeps iterating up to maxIter instead of completing as if the
 	// review had returned a clean result.

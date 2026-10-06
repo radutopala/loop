@@ -2,48 +2,48 @@
 set -e
 
 # Create container user matching host user (passed via env by runner).
-# HOST_UID/HOST_GID pin the agent to the host's numeric IDs so that
+# LOOP_HOST_UID/LOOP_HOST_GID pin the agent to the host's numeric IDs so that
 # `docker exec` from the host (which sends numeric UID:GID via runc to
 # avoid a /etc/passwd race against this useradd) lands on the same
 # /etc/passwd entry the entrypoint creates. Without the pin, useradd
 # auto-picks 1000 while a macOS host's UID is 501 — exec'd shells then
 # run as a UID with no name and bash falls back to "I have no name!".
-AGENT_USER="${HOST_USER:-agent}"
+AGENT_USER="${LOOP_HOST_USER:-agent}"
 AGENT_HOME="${HOME:-/home/$AGENT_USER}"
 mkdir -p "$AGENT_HOME"
 USERADD_ARGS="-M -d $AGENT_HOME -s /bin/bash"
-if [ -n "$HOST_GID" ]; then
-    if ! getent group "$HOST_GID" >/dev/null 2>&1; then
-        groupadd --gid "$HOST_GID" "$AGENT_USER" 2>/dev/null || true
+if [ -n "$LOOP_HOST_GID" ]; then
+    if ! getent group "$LOOP_HOST_GID" >/dev/null 2>&1; then
+        groupadd --gid "$LOOP_HOST_GID" "$AGENT_USER" 2>/dev/null || true
     fi
-    USERADD_ARGS="$USERADD_ARGS --gid $HOST_GID"
+    USERADD_ARGS="$USERADD_ARGS --gid $LOOP_HOST_GID"
 fi
-if [ -n "$HOST_UID" ]; then
-    USERADD_ARGS="$USERADD_ARGS --uid $HOST_UID --non-unique"
+if [ -n "$LOOP_HOST_UID" ]; then
+    USERADD_ARGS="$USERADD_ARGS --uid $LOOP_HOST_UID --non-unique"
 fi
 useradd $USERADD_ARGS "$AGENT_USER" 2>/dev/null || true
 
-# Use numeric IDs for chown. When $HOST_GID matches a stock Debian group
+# Use numeric IDs for chown. When $LOOP_HOST_GID matches a stock Debian group
 # (e.g. macOS gid 20 = dialout), the groupadd above is skipped, so no group
 # named $AGENT_USER exists — and "$AGENT_USER:$AGENT_USER" is then an
 # invalid spec that silently fails (2>/dev/null || true), leaving named
 # volumes owned by whatever uid wrote them previously (typically 1000).
-if [ -n "$HOST_UID" ] && [ -n "$HOST_GID" ]; then
-    CHOWN_OWNER="$HOST_UID:$HOST_GID"
+if [ -n "$LOOP_HOST_UID" ] && [ -n "$LOOP_HOST_GID" ]; then
+    CHOWN_OWNER="$LOOP_HOST_UID:$LOOP_HOST_GID"
 else
     CHOWN_OWNER="$AGENT_USER:$AGENT_USER"
 fi
 chown "$CHOWN_OWNER" "$AGENT_HOME" 2>/dev/null || true
 # The uid the chowns below should produce — used to skip already-owned
 # volumes without paying a recursive walk.
-WANT_UID="${HOST_UID:-$(id -u "$AGENT_USER" 2>/dev/null || echo 1000)}"
+WANT_UID="${LOOP_HOST_UID:-$(id -u "$AGENT_USER" 2>/dev/null || echo 1000)}"
 
 # Fix ownership of paths that need to be writable by the agent user
 # (named volumes created as root, files copied via CopyToContainer, etc.).
-# CHOWN_PATHS is set by the runner with colon-separated container paths.
-if [ -n "$CHOWN_PATHS" ]; then
+# LOOP_CHOWN_PATHS is set by the runner with colon-separated container paths.
+if [ -n "$LOOP_CHOWN_PATHS" ]; then
     IFS=:
-    for path in $CHOWN_PATHS; do
+    for path in $LOOP_CHOWN_PATHS; do
         if [ -d "$path" ]; then
             # Skip the recursive chown when the volume root is already
             # owned by the agent — after the first-ever container start

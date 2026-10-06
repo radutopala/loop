@@ -115,7 +115,7 @@ if [ -n "$LOOP_DOCS_CAPTURE" ]; then
     # derive their exec user from the loop PROCESS env, so export the same uid
     # here — otherwise the Docker Agent terminal execs as root and Claude
     # refuses --dangerously-skip-permissions.
-    export HOST_UID=1000 HOST_GID=1000
+    export LOOP_HOST_UID=1000 LOOP_HOST_GID=1000
     # agentgate needs seccomp=unconfined + CAP_SYS_PTRACE on each agent
     # container. The docker proxy of a Loop agent container denies both as a
     # container-escape risk, so a run started from inside one (the Makefile
@@ -162,7 +162,7 @@ if [ -n "$LOOP_DOCS_CAPTURE" ]; then
             # it over /usr/local/bin/loop in each agent container.
             cp bin/loop "$LOOP_HOME/loop" && chmod 0755 "$LOOP_HOME/loop"
             DOCS_AUTH="\"claude_code_oauth_token\": \"$DOCS_TOKEN\",
-  \"envs\": { \"NODE_TLS_REJECT_UNAUTHORIZED\": \"0\", \"NODE_NO_WARNINGS\": \"1\", \"HOST_USER\": \"agent\", \"HOST_UID\": \"1000\", \"HOST_GID\": \"1000\", \"TMPDIR\": \"$LOOP_HOME/.claude/tmp\" },
+  \"envs\": { \"NODE_TLS_REJECT_UNAUTHORIZED\": \"0\", \"NODE_NO_WARNINGS\": \"1\", \"LOOP_HOST_USER\": \"agent\", \"LOOP_HOST_UID\": \"1000\", \"LOOP_HOST_GID\": \"1000\", \"TMPDIR\": \"$LOOP_HOME/.claude/tmp\" },
   \"gates\": { \"agentgate\": { \"enabled\": $AGENTGATE_ENABLED, \"command_rules\": [ { \"commands\": [\"git\"], \"args_patterns\": [\"commit\", \"push\"], \"decision\": \"approve\", \"message\": \"git commit/push (approval required)\" } ] } },
   \"mounts\": [\"~/.claude:~/.claude\", \"$LOOP_HOME/loop:/usr/local/bin/loop\"],
   \"copy_files\": [\"~/.claude.json\"],"

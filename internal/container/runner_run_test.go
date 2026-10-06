@@ -39,9 +39,9 @@ func (s *RunnerSuite) TestRunHappyPath() {
 		hasResume := slices.Contains(cfg.Cmd, "--resume") && slices.Contains(cfg.Cmd, "sess-1")
 		hasBinds := slices.Contains(cfg.Binds, "/home/testuser/.loop/ch-1/work:/home/testuser/.loop/ch-1/work")
 		hasHome := slices.Contains(cfg.Env, "HOME=/home/testuser")
-		hasHostUser := slices.Contains(cfg.Env, "HOST_USER=testuser")
-		hasHostUID := slices.Contains(cfg.Env, "HOST_UID=1000")
-		hasHostGID := slices.Contains(cfg.Env, "HOST_GID=1000")
+		hasHostUser := slices.Contains(cfg.Env, "LOOP_HOST_USER=testuser")
+		hasHostUID := slices.Contains(cfg.Env, "LOOP_HOST_UID=1000")
+		hasHostGID := slices.Contains(cfg.Env, "LOOP_HOST_GID=1000")
 		hasTZ := slices.ContainsFunc(cfg.Env, func(e string) bool {
 			return len(e) > 3 && e[:3] == "TZ="
 		})

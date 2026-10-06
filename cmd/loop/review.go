@@ -67,13 +67,13 @@ func (a *app) newReviewRunCmd() *cobra.Command {
 				return fmt.Errorf("invalid --timeout: %w", err)
 			}
 			// Both values are injected into the agent container's environment
-			// (CHANNEL_ID / API_URL), so a workflow's bash node can just run
+			// (LOOP_CHANNEL_ID / LOOP_API_URL), so a workflow's bash node can just run
 			// `loop review run --wait` without threading them through templates.
-			channelID = resolveReviewChannelID(channelID, os.Getenv("CHANNEL_ID"))
+			channelID = resolveReviewChannelID(channelID, os.Getenv("LOOP_CHANNEL_ID"))
 			if channelID == "" {
-				return fmt.Errorf("channel-id is required (pass --channel-id or set $CHANNEL_ID)")
+				return fmt.Errorf("channel-id is required (pass --channel-id or set $LOOP_CHANNEL_ID)")
 			}
-			resolvedURL := resolveReviewAPIURL(apiURL, os.Getenv("API_URL"))
+			resolvedURL := resolveReviewAPIURL(apiURL, os.Getenv("LOOP_API_URL"))
 			// When a PR is given, load it into the channel's review session
 			// first (fetch PR + create its worktree), then review; otherwise
 			// review whatever the channel already has loaded. The load is
@@ -95,8 +95,8 @@ func (a *app) newReviewRunCmd() *cobra.Command {
 		},
 	}
 
-	cmd.Flags().StringVar(&channelID, "channel-id", "", "Channel ID to run review on (default $CHANNEL_ID)")
-	cmd.Flags().StringVar(&apiURL, "api-url", "", "Loop API base URL (default $API_URL or http://localhost:8222)")
+	cmd.Flags().StringVar(&channelID, "channel-id", "", "Channel ID to run review on (default $LOOP_CHANNEL_ID)")
+	cmd.Flags().StringVar(&apiURL, "api-url", "", "Loop API base URL (default $LOOP_API_URL or http://localhost:8222)")
 	cmd.Flags().StringVar(&pr, "pr", "", "PR number or URL to load and review first (default: the channel's already-loaded review)")
 	cmd.Flags().BoolVar(&wait, "wait", false, "Block until the daemon flips to a terminal status, then print JSON")
 	// 60m default chosen to sit above the daemon-side review ceiling
@@ -122,16 +122,16 @@ func (a *app) newReviewDedupCmd() *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("invalid --timeout: %w", err)
 			}
-			channelID = resolveReviewChannelID(channelID, os.Getenv("CHANNEL_ID"))
+			channelID = resolveReviewChannelID(channelID, os.Getenv("LOOP_CHANNEL_ID"))
 			if channelID == "" {
-				return fmt.Errorf("channel-id is required (pass --channel-id or set $CHANNEL_ID)")
+				return fmt.Errorf("channel-id is required (pass --channel-id or set $LOOP_CHANNEL_ID)")
 			}
-			return a.dedupReview(c.Context(), c.OutOrStdout(), resolveReviewAPIURL(apiURL, os.Getenv("API_URL")), channelID, timeout)
+			return a.dedupReview(c.Context(), c.OutOrStdout(), resolveReviewAPIURL(apiURL, os.Getenv("LOOP_API_URL")), channelID, timeout)
 		},
 	}
 
-	cmd.Flags().StringVar(&channelID, "channel-id", "", "Channel ID whose review session to dedup (default $CHANNEL_ID)")
-	cmd.Flags().StringVar(&apiURL, "api-url", "", "Loop API base URL (default $API_URL or http://localhost:8222)")
+	cmd.Flags().StringVar(&channelID, "channel-id", "", "Channel ID whose review session to dedup (default $LOOP_CHANNEL_ID)")
+	cmd.Flags().StringVar(&apiURL, "api-url", "", "Loop API base URL (default $LOOP_API_URL or http://localhost:8222)")
 	// Same reasoning as run's --timeout: sit above the daemon's own
 	// review-run ceiling, which also bounds the dedup pass.
 	cmd.Flags().StringVar(&timeoutStr, "timeout", "60m", "Maximum time to wait for the pass (Go duration)")
@@ -166,7 +166,7 @@ func (a *app) dedupReview(ctx context.Context, stdout io.Writer, apiURL, channel
 	return err
 }
 
-// resolveReviewAPIURL applies precedence: --api-url flag > $API_URL env >
+// resolveReviewAPIURL applies precedence: --api-url flag > $LOOP_API_URL env >
 // http://localhost:8222 default.
 func resolveReviewAPIURL(flag, env string) string {
 	if flag != "" {
@@ -178,7 +178,7 @@ func resolveReviewAPIURL(flag, env string) string {
 	return "http://localhost:8222"
 }
 
-// resolveReviewChannelID applies precedence: --channel-id flag > $CHANNEL_ID env.
+// resolveReviewChannelID applies precedence: --channel-id flag > $LOOP_CHANNEL_ID env.
 func resolveReviewChannelID(flag, env string) string {
 	if flag != "" {
 		return flag

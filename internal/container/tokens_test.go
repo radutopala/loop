@@ -137,7 +137,7 @@ func (s *TokensSuite) TestWriteRunTokens() {
 func (s *TokensSuite) TestWriteRunTokensOwnerFollowsEnv() {
 	ctx := context.Background()
 	s.client.On("CopyToContainer", ctx, "cid", "/", mock.Anything).Return(nil).Once()
-	env := []string{"HOST_UID=1001", "HOST_GID=1002", "HOST_UID=501", "HOST_GID=20"}
+	env := []string{"LOOP_HOST_UID=1001", "LOOP_HOST_GID=1002", "LOOP_HOST_UID=501", "LOOP_HOST_GID=20"}
 	s.Require().NoError(s.runner.writeRunTokens(ctx, "cid", env, "", "a-tok"))
 	got := copiedFiles(s.T(), s.client)["run/loop/api-token"]
 	s.Require().Equal(501, got.uid)
@@ -151,10 +151,10 @@ func (s *TokensSuite) TestAgentIDs() {
 		uid, gid int
 	}{
 		{"no env falls back to daemon", nil, 1001, 1002},
-		{"daemon values", []string{"HOST_UID=1001", "HOST_GID=1002"}, 1001, 1002},
-		{"last override wins", []string{"HOST_UID=1001", "HOST_GID=1002", "HOST_UID=0", "HOST_GID=0", "HOST_UID=777"}, 777, 0},
-		{"non-numeric ignored", []string{"HOST_UID=abc", "HOST_GID="}, 1001, 1002},
-		{"negative ignored", []string{"HOST_UID=-1", "HOST_GID=-5"}, 1001, 1002},
+		{"daemon values", []string{"LOOP_HOST_UID=1001", "LOOP_HOST_GID=1002"}, 1001, 1002},
+		{"last override wins", []string{"LOOP_HOST_UID=1001", "LOOP_HOST_GID=1002", "LOOP_HOST_UID=0", "LOOP_HOST_GID=0", "LOOP_HOST_UID=777"}, 777, 0},
+		{"non-numeric ignored", []string{"LOOP_HOST_UID=abc", "LOOP_HOST_GID="}, 1001, 1002},
+		{"negative ignored", []string{"LOOP_HOST_UID=-1", "LOOP_HOST_GID=-5"}, 1001, 1002},
 		{"other keys ignored", []string{"PATH=/bin", "UID=5", "noequals"}, 1001, 1002},
 	}
 	for _, tt := range tests {

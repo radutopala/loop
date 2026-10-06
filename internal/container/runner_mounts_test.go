@@ -293,7 +293,7 @@ func (s *RunnerSuite) TestRunNamedVolumesChownDirs() {
 	s.setupMockRun(ctx, mock.MatchedBy(func(cfg *ContainerConfig) bool {
 		hasChownDirs := false
 		for _, e := range cfg.Env {
-			if val, ok := strings.CutPrefix(e, "CHOWN_PATHS="); ok {
+			if val, ok := strings.CutPrefix(e, "LOOP_CHOWN_PATHS="); ok {
 				hasChownDirs = strings.Contains(val, "/go/pkg/mod") &&
 					strings.Contains(val, "/home/testuser/.npm")
 			}

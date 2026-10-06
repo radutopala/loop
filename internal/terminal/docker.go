@@ -50,13 +50,13 @@ func newDockerExecClientWith(apiFactory func() (dockerExecAPI, error)) (*DockerE
 
 // defaultExecUser returns the "<uid>:<gid>" a docker exec should run as.
 //
-// It prefers HOST_UID/HOST_GID from the environment, falling back to the
+// It prefers LOOP_HOST_UID/LOOP_HOST_GID from the environment, falling back to the
 // current process's own uid/gid. This matters when the loop daemon itself
 // runs as root (e.g. inside a container): agent containers run Claude as the
-// non-root agent user pinned to HOST_UID, and Claude refuses
+// non-root agent user pinned to LOOP_HOST_UID, and Claude refuses
 // --dangerously-skip-permissions under root — so the exec must follow the
 // same uid, not root. In the common case (daemon running as your own non-root
-// user, HOST_UID unset) it falls back to the process uid, which already
+// user, LOOP_HOST_UID unset) it falls back to the process uid, which already
 // matches the agent user, so behavior is unchanged.
 //
 // Numeric IDs bypass runc's /etc/passwd lookup at exec creation, which would
@@ -65,13 +65,13 @@ func newDockerExecClientWith(apiFactory func() (dockerExecAPI, error)) (*DockerE
 // On Windows, os.Getuid/os.Getgid return -1; Docker Desktop maps file
 // permissions transparently, so fall back to the container's root user.
 func defaultExecUser() string {
-	if u := execUserFromEnv(os.Getenv("HOST_UID"), os.Getenv("HOST_GID")); u != "" {
+	if u := execUserFromEnv(os.Getenv("LOOP_HOST_UID"), os.Getenv("LOOP_HOST_GID")); u != "" {
 		return u
 	}
 	return formatExecUser(os.Getuid(), os.Getgid())
 }
 
-// execUserFromEnv builds "<uid>:<gid>" from HOST_UID/HOST_GID values, returning
+// execUserFromEnv builds "<uid>:<gid>" from LOOP_HOST_UID/LOOP_HOST_GID values, returning
 // "" when either is empty or not a non-negative integer (so the caller falls
 // back to the process uid/gid).
 func execUserFromEnv(uid, gid string) string {
@@ -118,7 +118,7 @@ func formatExecUser(uid, gid int) string {
 // before /etc/passwd has an entry for its uid, and bash, which resolves its
 // user name once at startup, renders "I have no name!@<host>" for the whole
 // session. The loop waits ~2s and then runs the command regardless: a uid
-// that genuinely has no entry (a custom image ignoring HOST_UID) ends up
+// that genuinely has no entry (a custom image ignoring LOOP_HOST_UID) ends up
 // exactly where it would otherwise. getent is skipped when the image lacks
 // it so nothing spins for images without libc tooling.
 const interactiveExecScript = `u="$1"; shift

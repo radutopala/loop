@@ -264,6 +264,14 @@ var migrations = []Migration{
 		Description: "refresh container/ files: AWS CLI v2 from the amazon/aws-cli image",
 		Apply:       refreshContainerFiles,
 	},
+	{
+		// The runner now sets LOOP_HOST_UID/LOOP_HOST_GID/LOOP_HOST_USER and
+		// LOOP_CHOWN_PATHS in place of the unprefixed names. An install's
+		// old entrypoint.sh reads only the old names, so without this
+		// refresh its agent user would lose the host uid pinning.
+		Description: "refresh container/ files: LOOP_-prefixed container env",
+		Apply:       refreshContainerFiles,
+	},
 }
 
 // adoptProjectConfigs trusts the project config of every project checkout
@@ -1132,7 +1140,7 @@ func isNullLiteral(v *hujson.Value) bool {
 }
 
 // reviewRunScript is the current review-node bash: channel-id / api-url come
-// from the container's injected env (CHANNEL_ID / API_URL), and an optional
+// from the container's injected env (LOOP_CHANNEL_ID / LOOP_API_URL), and an optional
 // `pr` input reviews a specific PR (blank = the channel's already-loaded
 // review). reviewRunScriptOld is the pre-env form the patcher upgrades.
 const (

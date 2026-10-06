@@ -361,7 +361,7 @@ type reviewEnvelope struct {
 // `NoComments` and `SameAsPrev` false so the seeded loops' stop condition
 // `{{ or .Review.NoComments .Review.SameAsPrev }}` does NOT trip — an empty
 // stdout, a missing JSON envelope, or any other parse miss is a real signal
-// (CLI bug, $API_URL misconfig that returned an empty body, future stdout
+// (CLI bug, $LOOP_API_URL misconfig that returned an empty body, future stdout
 // pollution after the JSON line) that we want to surface as "keep trying
 // until maxIter" rather than silently treating as a clean review. The
 // expected shape is:

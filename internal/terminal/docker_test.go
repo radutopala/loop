@@ -164,14 +164,14 @@ func (s *DockerSuite) TestExecUserFromEnv() {
 }
 
 func (s *DockerSuite) TestDefaultExecUserHonorsHostEnv() {
-	s.T().Setenv("HOST_UID", "1000")
-	s.T().Setenv("HOST_GID", "2000")
+	s.T().Setenv("LOOP_HOST_UID", "1000")
+	s.T().Setenv("LOOP_HOST_GID", "2000")
 	require.Equal(s.T(), "1000:2000", defaultExecUser())
 }
 
 func (s *DockerSuite) TestDefaultExecUserFallsBackWhenEnvUnset() {
-	s.T().Setenv("HOST_UID", "")
-	s.T().Setenv("HOST_GID", "")
+	s.T().Setenv("LOOP_HOST_UID", "")
+	s.T().Setenv("LOOP_HOST_GID", "")
 	require.Regexp(s.T(), `^\d+:\d+$`, defaultExecUser())
 }
 
