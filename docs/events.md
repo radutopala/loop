@@ -210,7 +210,7 @@ A queued user message's text was edited via `PUT /api/channels/{id}/queued/{msg_
 
 ### `agent.status`
 
-Agent lifecycle status change (running, completed, errored).
+Agent lifecycle status change (running, completed, errored). Global: every client receives it whatever channels it subscribed to, so the sidebar shows a run that started outside the open channel (another agent's `send_message`, a chat platform, a scheduled task) as soon as it starts. The desktop app then subscribes to that channel for the run's remaining events.
 
 **Payload schema:**
 
@@ -1038,7 +1038,7 @@ Emitted on every review session status transition (`idle → loading → ready �
 | `BroadcastMessagesProcessed` | `messages.processed` | `MessagesProcessedData` | Channel |
 | `BroadcastMessageDeleted` | `message.deleted` | `MessageDeletedData` | Channel |
 | `BroadcastMessageUpdated` | `message.updated` | `MessageUpdatedData` | Channel |
-| `BroadcastAgentStatus` | `agent.status` | `AgentStatusEventData` | Channel (global when `ThreadID` is set) |
+| `BroadcastAgentStatus` | `agent.status` | `AgentStatusEventData` | Global |
 | `BroadcastToolUse` | `tool.use` | `ToolUseEventData` | Channel |
 | `BroadcastAgentThinking` | `agent.thinking` | `AgentThinkingEventData` | Channel |
 | `BroadcastToolResult` | `tool.result` | `ToolResultEventData` | Channel |
