@@ -549,7 +549,7 @@ A pill next to the Agent/Plan mode toggle lets any channel, thread, or worktree 
 
 - Collapsed, the pill always names what the next run will use — e.g. `opus-5 · high` — reading the channel override where one is set and the config defaults otherwise. An active override is marked by the accent color, not by the text. It falls back to `model` only before the config has loaded.
 - Clicking opens a popover with model presets (matching the config schema's options) plus a custom-id input, and the effort levels (`low` … `max`).
-- "Default" rows show the effective config value for the channel's dir (global → project → worktree merge) — e.g. `Default (claude-sonnet-5)` — or `Default (model default)` for effort when `claude_effort` isn't set (the CLI then uses the selected model's own default).
+- "Default" rows show the effective config value for the channel's dir (global → project → worktree merge) — e.g. `Default (claude-sonnet-5-5)` — or `Default (model default)` for effort when `claude_effort` isn't set (the CLI then uses the selected model's own default).
 - Selections apply immediately via `PATCH /api/channels/{id}/agent-config` and take effect on the channel's **next** agent run (chat and scheduled runs alike).
 
 ---

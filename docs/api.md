@@ -609,7 +609,7 @@ Return the channel's per-channel model/effort overrides plus the effective confi
 {
   "model": "claude-opus-4-8",
   "effort": "high",
-  "default_model": "claude-sonnet-5",
+  "default_model": "claude-sonnet-5-5",
   "default_effort": ""
 }
 ```

@@ -341,7 +341,7 @@ func (s *ConfigSuite) TestClaudeModelAbsent() {
 
 	cfg, err := s.loader.load()
 	require.NoError(s.T(), err)
-	require.Equal(s.T(), "claude-sonnet-5", cfg.ClaudeModel)
+	require.Equal(s.T(), "claude-sonnet-5-5", cfg.ClaudeModel)
 }
 
 func (s *ConfigSuite) TestClaudeBatchDisallowedToolsDefault() {
