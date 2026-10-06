@@ -78,7 +78,7 @@ func (s *ServerSuite) TestGetConfigHomeDirError() {
 func (s *ServerSuite) TestSaveConfigSuccess() {
 	sys := new(testutil.MockSystem)
 	sys.On("UserHomeDir").Return("/home/test", nil)
-	sys.On("WriteFile", "/home/test/.loop/config.json", []byte(`{"key":"val"}`), os.FileMode(0644)).Return(nil)
+	sys.On("WriteFile", "/home/test/.loop/config.json", []byte("{\n  \"key\": \"val\"\n}\n"), os.FileMode(0644)).Return(nil)
 	s.srv.sys = sys
 
 	rec := s.testRequest("PUT", "/api/config", `{"content":"{\"key\":\"val\"}"}`)
@@ -89,7 +89,7 @@ func (s *ServerSuite) TestSaveConfigSuccess() {
 func (s *ServerSuite) TestSaveConfigWaitsForConfigLock() {
 	sys := new(testutil.MockSystem)
 	sys.On("UserHomeDir").Return("/home/test", nil)
-	sys.On("WriteFile", "/home/test/.loop/config.json", []byte(`{"key":"val"}`), os.FileMode(0644)).Return(nil)
+	sys.On("WriteFile", "/home/test/.loop/config.json", []byte("{\n  \"key\": \"val\"\n}\n"), os.FileMode(0644)).Return(nil)
 	s.srv.sys = sys
 
 	rec := s.requestUnderConfigLock("/home/test/.loop/config.json", func() *httptest.ResponseRecorder {
@@ -111,6 +111,8 @@ func (s *ServerSuite) TestSaveConfigInvalidJSON() {
 	require.Contains(s.T(), rec.Body.String(), "content is not valid HJSON")
 }
 
+// The content is reformatted with two-space indents, comments and the
+// trailing comma kept.
 func (s *ServerSuite) TestSaveConfigAcceptsHJSON() {
 	sys := new(testutil.MockSystem)
 	sys.On("UserHomeDir").Return("/home/test", nil)
@@ -118,7 +120,7 @@ func (s *ServerSuite) TestSaveConfigAcceptsHJSON() {
 	sys.On("WriteFile", "/home/test/.loop/config.json", []byte(content), os.FileMode(0644)).Return(nil)
 	s.srv.sys = sys
 
-	rec := s.testRequest("PUT", "/api/config", `{"content":"{\n  \/\/ comment\n  \"key\": \"val\",\n}\n"}`)
+	rec := s.testRequest("PUT", "/api/config", `{"content":"{\n\t\/\/ comment\n\t\"key\":\"val\",\n}"}`)
 	require.Equal(s.T(), http.StatusNoContent, rec.Code)
 	sys.AssertExpectations(s.T())
 }
@@ -198,7 +200,7 @@ func (s *ServerSuite) TestSaveProjectConfigSuccess() {
 
 	sys := new(testutil.MockSystem)
 	sys.On("MkdirAll", "/projects/myapp/.loop", os.FileMode(0755)).Return(nil)
-	sys.On("WriteFile", "/projects/myapp/.loop/config.json", []byte(`{"claude_model":"opus"}`), os.FileMode(0644)).Return(nil)
+	sys.On("WriteFile", "/projects/myapp/.loop/config.json", []byte("{\n  \"claude_model\": \"opus\"\n}\n"), os.FileMode(0644)).Return(nil)
 	s.srv.sys = sys
 
 	rec := s.testRequest("PUT", "/api/config/project?channel_id=ch-1", `{"content":"{\"claude_model\":\"opus\"}"}`)
@@ -210,7 +212,7 @@ func (s *ServerSuite) TestSaveProjectConfigWaitsForConfigLock() {
 	s.store.On("GetChannel", mock.Anything, "ch-1").Return(&db.Channel{ChannelID: "ch-1", DirPath: "/projects/myapp"}, nil)
 	sys := new(testutil.MockSystem)
 	sys.On("MkdirAll", "/projects/myapp/.loop", os.FileMode(0755)).Return(nil)
-	sys.On("WriteFile", "/projects/myapp/.loop/config.json", []byte(`{"claude_model":"opus"}`), os.FileMode(0644)).Return(nil)
+	sys.On("WriteFile", "/projects/myapp/.loop/config.json", []byte("{\n  \"claude_model\": \"opus\"\n}\n"), os.FileMode(0644)).Return(nil)
 	s.srv.sys = sys
 
 	rec := s.requestUnderConfigLock("/projects/myapp/.loop/config.json", func() *httptest.ResponseRecorder {
@@ -242,6 +244,7 @@ func (s *ServerSuite) TestSaveProjectConfigInvalidJSON() {
 	require.Contains(s.T(), rec.Body.String(), "content is not valid HJSON")
 }
 
+// See TestSaveConfigAcceptsHJSON.
 func (s *ServerSuite) TestSaveProjectConfigAcceptsHJSON() {
 	s.store.On("GetChannel", mock.Anything, "ch-1").Return(&db.Channel{
 		ChannelID: "ch-1",
@@ -254,7 +257,7 @@ func (s *ServerSuite) TestSaveProjectConfigAcceptsHJSON() {
 	sys.On("WriteFile", "/projects/myapp/.loop/config.json", []byte(content), os.FileMode(0644)).Return(nil)
 	s.srv.sys = sys
 
-	rec := s.testRequest("PUT", "/api/config/project?channel_id=ch-1", `{"content":"{\n  \/\/ comment\n  \"claude_model\": \"opus\",\n}\n"}`)
+	rec := s.testRequest("PUT", "/api/config/project?channel_id=ch-1", `{"content":"{\n\t\/\/ comment\n\t\"claude_model\":\"opus\",\n}"}`)
 	require.Equal(s.T(), http.StatusNoContent, rec.Code)
 	sys.AssertExpectations(s.T())
 }
@@ -348,7 +351,7 @@ func (s *ServerSuite) TestSaveProjectConfigWorktreeUsesParentDir() {
 
 	sys := new(testutil.MockSystem)
 	sys.On("MkdirAll", "/projects/myapp/.loop", os.FileMode(0755)).Return(nil)
-	sys.On("WriteFile", "/projects/myapp/.loop/config.json", []byte(`{"claude_model":"opus"}`), os.FileMode(0644)).Return(nil)
+	sys.On("WriteFile", "/projects/myapp/.loop/config.json", []byte("{\n  \"claude_model\": \"opus\"\n}\n"), os.FileMode(0644)).Return(nil)
 	s.srv.sys = sys
 
 	rec := s.testRequest("PUT", "/api/config/project?channel_id=wt-1", `{"content":"{\"claude_model\":\"opus\"}"}`)

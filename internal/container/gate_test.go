@@ -153,16 +153,13 @@ func (s *GateSuite) TestWriteGatePolicyFileSerialisesSubset() {
 	require.Equal(s.T(), cfg.Gates.Agentgate.PathRules, got.PathRules)
 }
 
-// TestWriteGatePolicyFileTrustedProjectOverridesCredentialDenies runs a
-// project config through trust, the merge and the policy file into the
-// gate's own matcher: once trusted, its allow for ~/.kube and ~/.aws wins
-// over the built-in credentials deny, and nothing else moves.
-func (s *GateSuite) TestWriteGatePolicyFileTrustedProjectOverridesCredentialDenies() {
-	proj := s.T().TempDir()
+// projectPolicies writes a project config with fileRules (a JSON array),
+// then compiles the policy file the container would get for it over
+// Loop's defaults, before and after the owner trusts it.
+func (s *GateSuite) projectPolicies(fileRules string) (proj string, untrusted, trusted *agentgate.Policy) {
+	proj = s.T().TempDir()
 	require.NoError(s.T(), os.MkdirAll(proj+"/.loop", 0o755))
-	require.NoError(s.T(), os.WriteFile(proj+"/.loop/config.json", []byte(`{"gates": {"agentgate": {"file_rules": [
-		{"paths": ["**/.kube/**", "**/.aws/**"], "operations": ["read", "write", "create"], "decision": "allow"}
-	]}}}`), 0o644))
+	require.NoError(s.T(), os.WriteFile(proj+"/.loop/config.json", []byte(`{"gates": {"agentgate": {"file_rules": `+fileRules+`}}}`), 0o644))
 	trustDir := s.T().TempDir()
 	trust := config.NewTrustStoreIn(func() (string, error) { return trustDir, nil })
 	loader := config.NewProjectLoader(trust)
@@ -194,12 +191,104 @@ func (s *GateSuite) TestWriteGatePolicyFileTrustedProjectOverridesCredentialDeni
 		return p
 	}
 
-	untrusted, err := loader.LoadProject(proj, global)
+	cfg, err := loader.LoadProject(proj, global)
 	require.NoError(s.T(), err)
+	untrusted = compile(cfg)
 	require.NoError(s.T(), trust.Trust(proj, ""))
-	trusted, err := loader.LoadProject(proj, global)
+	cfg, err = loader.LoadProject(proj, global)
 	require.NoError(s.T(), err)
-	before, after := compile(untrusted), compile(trusted)
+	return proj, untrusted, compile(cfg)
+}
+
+// TestTrustedProjectAllowCoversAtomicReplace drives the gate the way the AWS
+// CLI and kubectl write their caches: create a temp file, rename it over the
+// cache file, unlink a leftover temp. A rename within one directory checks the
+// old name as a write, so an allow for write and create covers the replace;
+// unlinking the temp, or moving the file out of the directory, is a delete.
+func (s *GateSuite) TestTrustedProjectAllowCoversAtomicReplace() {
+	_, untrusted, trusted := s.projectPolicies(`[
+		{"paths": ["**/.kube/**", "**/.aws/**"], "operations": ["read", "write", "create"], "decision": "allow"}
+	]`)
+	_, _, readOnly := s.projectPolicies(`[
+		{"paths": ["**/.aws/**"], "operations": ["read"], "decision": "allow"}
+	]`)
+	// The rules docs/configuration.md suggests for aws and kubectl.
+	_, _, cleanup := s.projectPolicies(`[
+		{"paths": ["**/.aws/**", "**/.kube/**"], "operations": ["read", "write", "create"], "decision": "allow"},
+		{"paths": ["**/.aws/**/tmp*.tmp"], "operations": ["delete"], "decision": "allow"}
+	]`)
+
+	const (
+		tmpAddr = 0x100
+		dstAddr = 0x200
+		oCreat  = 0x40
+		oWronly = 0x1
+	)
+	fdcwd := int64(agentgate.AtFDCWD)
+	cwd := uint64(fdcwd)
+	// replace returns the gate's answers to each step of the pattern.
+	replace := func(policy *agentgate.Policy, renameSyscall, tmp, dst string) []bool {
+		tr := &agentgate.FakeTracee{Strings: map[uintptr]string{tmpAddr: tmp, dstAddr: dst}}
+		srv := &agentgate.Server{
+			Factory:   func(int) agentgate.Tracee { return tr },
+			File:      agentgate.NewFileHandler(policy, nil, 8),
+			ChannelID: "ch-1",
+		}
+		rename := agentgate.Trap{ID: 2, Syscall: renameSyscall, Args: [6]uint64{cwd, tmpAddr, cwd, dstAddr}}
+		if renameSyscall == "rename" {
+			rename.Args = [6]uint64{tmpAddr, dstAddr}
+		}
+		var got []bool
+		for _, trap := range []agentgate.Trap{
+			{ID: 1, Syscall: "openat", Args: [6]uint64{cwd, tmpAddr, oCreat | oWronly, 0o600}},
+			rename,
+			{ID: 3, Syscall: "unlinkat", Args: [6]uint64{cwd, tmpAddr, 0}},
+		} {
+			got = append(got, srv.Dispatch(context.Background(), trap).Allow)
+		}
+		return got
+	}
+
+	tests := []struct {
+		name           string
+		policy         *agentgate.Policy
+		syscall        string
+		dir            string
+		create, swap   bool
+		unlinkLeftover bool
+	}{
+		{"aws sso cache", trusted, "renameat2", "/home/agent/.aws/sso/cache", true, true, false},
+		{"aws cli cache, aarch64 rename", trusted, "renameat", "/home/agent/.aws/cli/cache", true, true, false},
+		{"aws cache under a HOME in /tmp", trusted, "renameat2", "/tmp/home/.aws/sso/cache", true, true, false},
+		{"kube cache, x86_64 rename", trusted, "rename", "/home/agent/.kube/cache/discovery", true, true, false},
+		{"untrusted", untrusted, "renameat2", "/home/agent/.aws/sso/cache", false, false, false},
+		{"a rule without write", readOnly, "renameat2", "/home/agent/.aws/sso/cache", false, false, false},
+		{"temp-file delete allowed", cleanup, "renameat2", "/home/agent/.aws/sso/cache", true, true, true},
+	}
+	for _, tt := range tests {
+		s.Run(tt.name, func() {
+			got := replace(tt.policy, tt.syscall, tt.dir+"/tmpab12.tmp", tt.dir+"/0123abcd.json")
+			require.Equal(s.T(), []bool{tt.create, tt.swap, tt.unlinkLeftover}, got, "create temp, rename over, unlink leftover")
+		})
+	}
+	s.Run("the temp-file delete rule allows no other delete", func() {
+		got := replace(cleanup, "renameat2", "/home/agent/.aws/credentials", "/home/agent/.aws/credentials.bak")
+		require.Equal(s.T(), []bool{true, true, false}, got)
+	})
+	s.Run("moving a cache file out of the directory is a delete", func() {
+		got := replace(trusted, "renameat2", "/home/agent/.aws/sso/cache/0123abcd.json", "/home/agent/.aws/0123abcd.json")
+		require.False(s.T(), got[1])
+	})
+}
+
+// TestWriteGatePolicyFileTrustedProjectOverridesCredentialDenies runs a
+// project config through trust, the merge and the policy file into the
+// gate's own matcher: once trusted, its allow for ~/.kube and ~/.aws wins
+// over the built-in credentials deny, and nothing else moves.
+func (s *GateSuite) TestWriteGatePolicyFileTrustedProjectOverridesCredentialDenies() {
+	proj, before, after := s.projectPolicies(`[
+		{"paths": ["**/.kube/**", "**/.aws/**"], "operations": ["read", "write", "create"], "decision": "allow"}
+	]`)
 
 	tests := []struct {
 		name   string
@@ -212,7 +301,7 @@ func (s *GateSuite) TestWriteGatePolicyFileTrustedProjectOverridesCredentialDeni
 		{"trusted: kube read", after, "read", "/home/agent/.kube/config", types.DecisionAllow},
 		{"trusted: kube cache write", after, "create", "/home/agent/.kube/cache/discovery/x.json", types.DecisionAllow},
 		{"trusted: aws credentials", after, "read", "/home/agent/.aws/credentials", types.DecisionAllow},
-		{"trusted: an op the project didn't allow", after, "delete", "/home/agent/.kube/config", types.DecisionDeny},
+		{"trusted: an op the project didn't allow", after, "chmod", "/home/agent/.kube/config", types.DecisionDeny},
 		{"trusted: other credentials stay denied", after, "read", "/home/agent/.ssh/id_ed25519", types.DecisionDeny},
 		{"trusted: credentials in the workspace stay denied", after, "read", proj + "/.ssh/id_ed25519", types.DecisionDeny},
 		{"trusted: root credentials stay denied", after, "read", "/etc/shadow", types.DecisionDeny},

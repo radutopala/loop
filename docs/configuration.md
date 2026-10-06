@@ -748,6 +748,28 @@ A worktree's own `.loop/config.json` follows the same rule, except for the paren
 
 Trusted versions are kept in `loop/project-trust.json` under your OS user config dir (`~/Library/Application Support` on macOS, `~/.config` on Linux), next to the API token, where containers can't reach them. The API routes are [`GET` and `POST /api/config/project/trust`](api.md#get-apiconfigprojecttrust).
 
+### Example: aws and kubectl
+
+Loop's default file rules deny the credential dirs `~/.aws` and `~/.kube`, even when you mount them. A project that runs `aws` or `kubectl` can allow them in its own `.loop/config.json`; the rules apply once you trust the config:
+
+```jsonc
+{
+  "mounts": ["~/.aws:~/.aws", "~/.kube:~/.kube"],
+  "gates": {
+    "agentgate": {
+      "file_rules": [
+        // Read the config and credentials, write the token caches.
+        {"paths": ["**/.aws/**", "**/.kube/**"], "operations": ["read", "write", "create"], "decision": "allow"},
+        // Clean up a cache temp file an interrupted write left behind.
+        {"paths": ["**/.aws/**/tmp*.tmp"], "operations": ["delete"], "decision": "allow"}
+      ]
+    }
+  }
+}
+```
+
+The AWS CLI saves a token in `~/.aws/sso/cache` or `~/.aws/cli/cache` by writing a temp file (`tmp<random>.tmp`) and renaming it over the cache file, and kubectl writes `~/.kube/cache` the same way. The gate checks a rename within one directory as a `write` of the temp file and a `create` of the cache file, so the first rule covers it. Deleting a file is a `delete`, which the second rule allows only for those temp files, so nothing else in `~/.aws` or `~/.kube` can be deleted. See [Project config merge](gates.md#project-config-merge) for where project rules go.
+
 ---
 
 ## Complete Example Config
@@ -1104,6 +1126,12 @@ Trusted versions are kept in `loop/project-trust.json` under your OS user config
   //  //"agentgate": {
   //  //  //"command_rules": [ { "commands": ["npm"], "args_patterns": ["^publish"], "decision": "deny" } ],
   //  //  //"file_rules":    [ { "paths": ["./secret-vault/**"], "operations": ["read"], "decision": "deny" } ]
+  //  //  // Let aws and kubectl use the mounted ~/.aws and ~/.kube, and clean up
+  //  //  // the cache temp files the AWS CLI renames into place:
+  //  //  //"file_rules":    [
+  //  //  //  { "paths": ["**/.aws/**", "**/.kube/**"], "operations": ["read", "write", "create"], "decision": "allow" },
+  //  //  //  { "paths": ["**/.aws/**/tmp*.tmp"], "operations": ["delete"], "decision": "allow" }
+  //  //  //]
   //  //},
   //
   //  //"docker_proxy": {
