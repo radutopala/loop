@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 
 	"github.com/radutopala/loop/internal/config"
+	"github.com/radutopala/loop/internal/config/hjsonedit"
 	"github.com/tailscale/hujson"
 )
 
@@ -40,13 +41,15 @@ func (s *Server) handleGetConfig(w http.ResponseWriter, _ *http.Request) {
 	writeHTTPJSON(w, http.StatusOK, resp, s.logger)
 }
 
-// handleSaveConfig writes JSON content to the global ~/.loop/config.json.
+// handleSaveConfig writes JSON content to the global ~/.loop/config.json,
+// reformatted with its comments kept.
 func (s *Server) handleSaveConfig(w http.ResponseWriter, r *http.Request) {
 	var req configSaveRequest
 	if !decodeJSON(w, r, &req) {
 		return
 	}
-	if _, err := hujson.Standardize([]byte(req.Content)); err != nil {
+	content, err := hjsonedit.Format([]byte(req.Content))
+	if err != nil {
 		http.Error(w, "content is not valid HJSON", http.StatusBadRequest)
 		return
 	}
@@ -60,7 +63,7 @@ func (s *Server) handleSaveConfig(w http.ResponseWriter, r *http.Request) {
 	// A whole-file write, but it must not land inside another edit's
 	// read-modify-write of the file, which would then overwrite it.
 	defer s.configLocks.lock(path)()
-	if err := s.sys.WriteFile(path, []byte(req.Content), 0644); err != nil {
+	if err := s.sys.WriteFile(path, content, 0644); err != nil {
 		http.Error(w, "failed to write config file", http.StatusInternalServerError)
 		return
 	}
@@ -82,7 +85,7 @@ func (s *Server) handleGetProjectConfig(w http.ResponseWriter, r *http.Request) 
 }
 
 // handleSaveProjectConfig writes JSON content to the project-level
-// .loop/config.json for the given channel.
+// .loop/config.json for the given channel, reformatted like the global one.
 func (s *Server) handleSaveProjectConfig(w http.ResponseWriter, r *http.Request) {
 	channelID := r.URL.Query().Get("channel_id")
 	dirPath, err := s.resolveProjectConfigDirPath(r.Context(), channelID)
@@ -95,7 +98,8 @@ func (s *Server) handleSaveProjectConfig(w http.ResponseWriter, r *http.Request)
 	if !decodeJSON(w, r, &req) {
 		return
 	}
-	if _, err := hujson.Standardize([]byte(req.Content)); err != nil {
+	content, err := hjsonedit.Format([]byte(req.Content))
+	if err != nil {
 		http.Error(w, "content is not valid HJSON", http.StatusBadRequest)
 		return
 	}
@@ -109,12 +113,12 @@ func (s *Server) handleSaveProjectConfig(w http.ResponseWriter, r *http.Request)
 	// See handleSaveConfig.
 	defer s.configLocks.lock(path)()
 	before, keep := s.readProjectConfigBefore(path)
-	if err := s.sys.WriteFile(path, []byte(req.Content), 0644); err != nil {
+	if err := s.sys.WriteFile(path, content, 0644); err != nil {
 		http.Error(w, "failed to write config file", http.StatusInternalServerError)
 		return
 	}
 	if keep {
-		s.keepProjectTrust(dirPath, before, []byte(req.Content))
+		s.keepProjectTrust(dirPath, before, content)
 	}
 	w.WriteHeader(http.StatusNoContent)
 }

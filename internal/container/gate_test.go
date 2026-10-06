@@ -212,6 +212,11 @@ func (s *GateSuite) TestTrustedProjectAllowCoversAtomicReplace() {
 	_, _, readOnly := s.projectPolicies(`[
 		{"paths": ["**/.aws/**"], "operations": ["read"], "decision": "allow"}
 	]`)
+	// The rules docs/configuration.md suggests for aws and kubectl.
+	_, _, cleanup := s.projectPolicies(`[
+		{"paths": ["**/.aws/**", "**/.kube/**"], "operations": ["read", "write", "create"], "decision": "allow"},
+		{"paths": ["**/.aws/**/tmp*.tmp"], "operations": ["delete"], "decision": "allow"}
+	]`)
 
 	const (
 		tmpAddr = 0x100
@@ -258,6 +263,7 @@ func (s *GateSuite) TestTrustedProjectAllowCoversAtomicReplace() {
 		{"kube cache, x86_64 rename", trusted, "rename", "/home/agent/.kube/cache/discovery", true, true, false},
 		{"untrusted", untrusted, "renameat2", "/home/agent/.aws/sso/cache", false, false, false},
 		{"a rule without write", readOnly, "renameat2", "/home/agent/.aws/sso/cache", false, false, false},
+		{"temp-file delete allowed", cleanup, "renameat2", "/home/agent/.aws/sso/cache", true, true, true},
 	}
 	for _, tt := range tests {
 		s.Run(tt.name, func() {
@@ -265,6 +271,10 @@ func (s *GateSuite) TestTrustedProjectAllowCoversAtomicReplace() {
 			require.Equal(s.T(), []bool{tt.create, tt.swap, tt.unlinkLeftover}, got, "create temp, rename over, unlink leftover")
 		})
 	}
+	s.Run("the temp-file delete rule allows no other delete", func() {
+		got := replace(cleanup, "renameat2", "/home/agent/.aws/credentials", "/home/agent/.aws/credentials.bak")
+		require.Equal(s.T(), []bool{true, true, false}, got)
+	})
 	s.Run("moving a cache file out of the directory is a delete", func() {
 		got := replace(trusted, "renameat2", "/home/agent/.aws/sso/cache/0123abcd.json", "/home/agent/.aws/0123abcd.json")
 		require.False(s.T(), got[1])

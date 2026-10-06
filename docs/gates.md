@@ -515,7 +515,7 @@ A deny you write yourself is never overridable, even a copy of a default one: wh
 ]}}}
 ```
 
-The AWS CLI and kubectl write their caches (`~/.aws/sso/cache`, `~/.aws/cli/cache`, `~/.kube/cache`) by creating a temp file and renaming it over the cache file, so a rule for them needs `write` and `create`. The gate checks a rename within one directory as a `write` of the old name and a `create` of the new one; a rename across directories checks the old name as a `delete`. Deleting a leftover temp file outright still needs `delete`.
+The AWS CLI and kubectl write their caches (`~/.aws/sso/cache`, `~/.aws/cli/cache`, `~/.kube/cache`) by creating a temp file and renaming it over the cache file, so a rule for them needs `write` and `create`. The gate checks a rename within one directory as a `write` of the old name and a `create` of the new one; a rename across directories checks the old name as a `delete`. Deleting a leftover temp file outright still needs `delete`; [Example: aws and kubectl](configuration.md#example-aws-and-kubectl) has a rule that allows it for the temp files only.
 
 
 | Field | Merge rule |
