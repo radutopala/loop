@@ -224,12 +224,12 @@ func (r *DockerRunner) buildContainerEnv(cfg *config.Config, channelID, apiURL s
 	}
 
 	env := []string{
-		"CHANNEL_ID=" + channelID,
-		"API_URL=" + apiURL,
+		"LOOP_CHANNEL_ID=" + channelID,
+		"LOOP_API_URL=" + apiURL,
 		"HOME=" + hostHome,
-		"HOST_USER=" + r.sys.Getenv("USER"),
-		fmt.Sprintf("HOST_UID=%d", r.sys.Getuid()),
-		fmt.Sprintf("HOST_GID=%d", r.sys.Getgid()),
+		"LOOP_HOST_USER=" + r.sys.Getenv("USER"),
+		fmt.Sprintf("LOOP_HOST_UID=%d", r.sys.Getuid()),
+		fmt.Sprintf("LOOP_HOST_GID=%d", r.sys.Getgid()),
 		"TZ=" + r.localTimezone(),
 		"PATH=" + hostHome + "/.local/bin:" + hostHome + "/bin:" + hostHome + "/go/bin:/usr/local/go/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
 		// Default Claude to the no-flicker (alternate-screen) renderer for any

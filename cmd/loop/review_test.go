@@ -697,7 +697,7 @@ func (s *MainSuite) TestNewReviewRunCmdInvalidTimeout() {
 }
 
 func (s *MainSuite) TestNewReviewRunCmdRequiresChannelID() {
-	s.T().Setenv("CHANNEL_ID", "") // isolate from the daemon-injected env
+	s.T().Setenv("LOOP_CHANNEL_ID", "") // isolate from the daemon-injected env
 	cmd := s.app.newReviewCmd()
 	cmd.SetArgs([]string{"run"})
 	cmd.SetOut(new(bytes.Buffer))
@@ -977,7 +977,7 @@ func (s *MainSuite) TestNewReviewRunCmdInvalidPR() {
 }
 
 func (s *MainSuite) TestNewReviewRunCmdChannelIDFromEnv() {
-	s.T().Setenv("CHANNEL_ID", "env-ch")
+	s.T().Setenv("LOOP_CHANNEL_ID", "env-ch")
 	var runHit atomic.Bool
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		require.Equal(s.T(), "/api/channels/env-ch/review/run", r.URL.Path)
@@ -988,7 +988,7 @@ func (s *MainSuite) TestNewReviewRunCmdChannelIDFromEnv() {
 
 	s.app.reviewClient = http.DefaultClient
 	cmd := s.app.newReviewCmd()
-	// No --channel-id — resolved from $CHANNEL_ID.
+	// No --channel-id — resolved from $LOOP_CHANNEL_ID.
 	cmd.SetArgs([]string{"run", "--api-url", ts.URL})
 	cmd.SetOut(new(bytes.Buffer))
 	cmd.SetErr(new(bytes.Buffer))
@@ -1221,7 +1221,7 @@ func (s *MainSuite) TestNewReviewDedupCmd() {
 	}
 	for _, tc := range cases {
 		s.Run(tc.name, func() {
-			s.T().Setenv("CHANNEL_ID", tc.env)
+			s.T().Setenv("LOOP_CHANNEL_ID", tc.env)
 			cmd := s.app.newReviewCmd()
 			cmd.SetArgs(tc.args)
 			var out bytes.Buffer

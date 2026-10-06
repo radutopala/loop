@@ -24,7 +24,7 @@ const (
 	envSocket     = "LOOP_DOCKERPROXY_SOCKET"
 	envPolicyFile = "LOOP_DOCKERPROXY_POLICY_FILE"
 	envUpstream   = "LOOP_DOCKERPROXY_UPSTREAM"
-	envAPIURL     = "API_URL"
+	envAPIURL     = "LOOP_API_URL"
 	envCID        = "LOOP_CONTAINER_ID"
 	envChannelID  = "LOOP_CHANNEL_ID"
 	envNestedDir  = "LOOP_DOCKERPROXY_NESTED_DIR"

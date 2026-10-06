@@ -254,7 +254,7 @@ type gateConfigJSON struct {
 	GitGuardRoots   []string            `json:"git_guard_roots"`
 }
 
-// defaultLookupUser resolves HOST_USER into the agent's numeric uid/gid.
+// defaultLookupUser resolves LOOP_HOST_USER into the agent's numeric uid/gid.
 // entrypoint.sh already creates this user before we're invoked, so the
 // lookup hits /etc/passwd.
 func defaultLookupUser(name string) (int, int, error) {

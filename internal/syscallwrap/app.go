@@ -33,8 +33,8 @@ const (
 	// Parent-only env vars. Missing values are a hard error in the parent
 	// (fail-closed: without a policy or approver we can't mediate safely).
 	envPolicyFile = "LOOP_GATE_POLICY_FILE"
-	envAPIURL     = "API_URL"
-	envHostUser   = "HOST_USER"
+	envAPIURL     = "LOOP_API_URL"
+	envHostUser   = "LOOP_HOST_USER"
 
 	// envLegacyToken is where the gate token used to travel before it moved
 	// to a root-only file. Stripped from the child's env should a caller

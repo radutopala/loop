@@ -84,14 +84,14 @@ The following environment variables are set on every container:
 
 | Variable | Value | Description |
 |---|---|---|
-| `CHANNEL_ID` | Channel ID | Identifies which channel this container serves |
-| `API_URL` | `http://host.docker.internal{api_addr}` | Loop API URL reachable from inside the container |
+| `LOOP_CHANNEL_ID` | Channel ID | Identifies which channel this container serves |
+| `LOOP_API_URL` | `http://host.docker.internal{api_addr}` | Loop API URL reachable from inside the container |
 | `HOME` | Host user's home directory | Container HOME matches host HOME for path consistency |
-| `HOST_USER` | `$USER` from host | The host username |
+| `LOOP_HOST_USER` | `$USER` from host | The host username |
+| `LOOP_HOST_UID`, `LOOP_HOST_GID` | Host uid/gid | The entrypoint creates the agent user with these numeric IDs so files it writes on bind mounts keep host ownership |
 | `TZ` | IANA timezone (e.g. `Europe/Bucharest`) | Detected from `$TZ`, `time.Now().Location()`, `/etc/timezone`, or `/etc/localtime` symlink; falls back to `UTC` |
 | `PATH` | `$HOME/.local/bin:$HOME/bin:$HOME/go/bin:/usr/local/go/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin` | Standard PATH with user-local bin and Go directories |
-| `CHOWN_PATHS` | Colon-separated paths | Named volume mount targets and copy-file targets that need ownership adjustment by the container entrypoint |
-| `LOOP_CHANNEL_ID` | Channel ID | Set when the security gate or docker proxy is enabled. Routed to the bot prompt via `MultiManagerResolver.ByToken` on every in-container approval call |
+| `LOOP_CHOWN_PATHS` | Colon-separated paths | Named volume mount targets and copy-file targets that need ownership adjustment by the container entrypoint |
 | `LOOP_GATE_ENABLED` | `1` | Set when the security gate is enabled. Entrypoint flips on this to `exec /usr/local/bin/loop syscallwrap -- "$@"` as root instead of plain `gosu "$AGENT_USER" "$@"` |
 | `LOOP_GATE_POLICY_FILE` | `/etc/loop/gate-policy.json` | Set when the security gate is enabled. Path inside the container to the gate's policy JSON (bind-mounted read-only from `{policyDir}/{CID}/gate-policy.json` on the host). Read by `loop syscallwrap` parent before installing the filter |
 | `LOOP_DOCKERPROXY_ENABLED` | `1` | Set when the Docker HTTP proxy is enabled. Entrypoint starts `loop dockerproxy &` as root before any privilege drop |
@@ -183,7 +183,7 @@ Mounts are specified in the config as `host_path:container_path[:mode]` strings.
 
 ### Processing Rules
 
-1. **Named volumes** (source has no slashes, doesn't start with `~` or `.`) are passed through to Docker without host path expansion or existence checks. The container path still gets `~` expansion. Named volume container paths are added to `CHOWN_PATHS`.
+1. **Named volumes** (source has no slashes, doesn't start with `~` or `.`) are passed through to Docker without host path expansion or existence checks. The container path still gets `~` expansion. Named volume container paths are added to `LOOP_CHOWN_PATHS`.
 
 2. **Host path mounts** have both host and container paths expanded (`~` to home directory). If the host path does not exist, the mount is silently skipped.
 
@@ -218,7 +218,7 @@ Before `ContainerCreate`, the runner calls `writeGatePolicyFile` which:
 
 1. Creates a host directory `{policyDir}/{containerID}/`. The serve command computes `policyDir` as `{cfg.LoopDir}/run` (typically `~/.loop/run`) and passes it into the runner via `SetGatePolicy` and `SetDockerProxyDeps`. The directory lives under the user's home rather than `/run/loop` because macOS `/run` is on the read-only system volume; the same path works on Linux so there's one code path for both OSes.
 2. Marshals the gate rule subset (`default_decision`, `path_rules`, `command_rules`, `file_rules`) to `{policyDir}/{containerID}/gate-policy.json` with mode `0640`. The on-disk wire format is snake_case throughout, matching `~/.loop/config.json`. Two rules are injected into `file_rules` after the config merge: the workspace allow, and — pinned at the head — a `deny` on `/etc/loop/**` so the policy file cannot be rewritten by a rule the agent authored in its own project config.
-3. Adds a bind-mount `{hostPolicyPath}:/etc/loop/gate-policy.json:ro` and sets `LOOP_GATE_ENABLED=1`, `LOOP_GATE_POLICY_FILE=/etc/loop/gate-policy.json`, and `LOOP_CHANNEL_ID={channelID}` on the container env. The per-container bearer token (32-byte hex) is not in the env: it's copied in before start as `/run/loop/gate-token`, root-owned and mode 0400, so only the in-container gate parent and docker proxy can read it. It is shared with the docker proxy layer when both are enabled.
+3. Adds a bind-mount `{hostPolicyPath}:/etc/loop/gate-policy.json:ro` and sets `LOOP_GATE_ENABLED=1`, and `LOOP_GATE_POLICY_FILE=/etc/loop/gate-policy.json` on the container env; the gate reports approvals against the always-set `LOOP_CHANNEL_ID`. The per-container bearer token (32-byte hex) is not in the env: it's copied in before start as `/run/loop/gate-token`, root-owned and mode 0400, so only the in-container gate parent and docker proxy can read it. It is shared with the docker proxy layer when both are enabled.
 
 The file is written before the container starts so the first in-container read always succeeds. On container removal, the runner calls `gateResolver.Remove(containerID)` which frees the Manager + token. Policy files are left on disk (overwritten next spawn with the same cid).
 
@@ -240,8 +240,8 @@ The `loop syscallwrap` parent process stays as uid 0 so the agent (running under
 `loop syscallwrap` parent (root):
 
 1. Loads the gate policy from `LOOP_GATE_POLICY_FILE`.
-2. Builds an `httpapprover.Approver` against `$API_URL` + the token in `/run/loop/gate-token` — approval clicks round-trip to loop-server over HTTP.
-3. Creates a `socketpair(AF_UNIX, SOCK_STREAM, 0)` and re-execs `/proc/self/exe` with `LOOP_SYSCALLWRAP_MODE=child`, `ExtraFiles=[child-end]`, `SysProcAttr.Credential={uid, gid}` (looked up from `$HOST_USER`), and `SysProcAttr.Pdeathsig=SIGKILL`.
+2. Builds an `httpapprover.Approver` against `$LOOP_API_URL` + the token in `/run/loop/gate-token` — approval clicks round-trip to loop-server over HTTP.
+3. Creates a `socketpair(AF_UNIX, SOCK_STREAM, 0)` and re-execs `/proc/self/exe` with `LOOP_SYSCALLWRAP_MODE=child`, `ExtraFiles=[child-end]`, `SysProcAttr.Credential={uid, gid}` (looked up from `$LOOP_HOST_USER`), and `SysProcAttr.Pdeathsig=SIGKILL`.
 4. Receives the handshake (channel id + notify fd via SCM_RIGHTS) on the parent-end of the socketpair, acks with a single `0x01` byte, and runs `agentgate.Server` against the notify fd until the child exits.
 
 `loop syscallwrap` child (agent user):
@@ -273,7 +273,7 @@ Each file is:
 
 Before copying, the list is filtered by `filterMountedCopyFiles`: any file whose expanded path matches a bind-mounted container path is removed. This prevents "device or resource busy" errors from attempting to `CopyToContainer` onto a bind-mounted path.
 
-File copy target paths are added to `CHOWN_PATHS` so the container entrypoint can fix ownership.
+File copy target paths are added to `LOOP_CHOWN_PATHS` so the container entrypoint can fix ownership.
 
 ---
 

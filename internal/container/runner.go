@@ -779,24 +779,21 @@ func (r *DockerRunner) createAndStartContainer(
 
 	// Both the proxy and the gate authenticate HTTP callbacks with the same
 	// per-container bearer token, copied in as a file before start rather
-	// than set here, where the agent could read it. The channel id is how
-	// loop-server knows
-	// which chat surface to prompt when a trap fires. LOOP_CONTAINER_ID is
-	// required by loop-dockerproxy's Server constructor — the docker daemon
-	// only hands us the real cid after ContainerCreate, but the container
-	// name is stable and unique so we use it as the CID the proxy stamps on
+	// than set here, where the agent could read it. They send
+	// LOOP_CHANNEL_ID (always set) so loop-server knows which chat surface
+	// to prompt when a trap fires. LOOP_CONTAINER_ID is required by
+	// loop-dockerproxy's Server constructor — the docker daemon only hands
+	// us the real cid after ContainerCreate, but the container name is
+	// stable and unique so we use it as the CID the proxy stamps on
 	// approval events.
 	if proxyPolicyHostPath != "" || gatePolicyHostPath != "" {
-		env = append(env,
-			"LOOP_CHANNEL_ID="+channelID,
-			"LOOP_CONTAINER_ID="+containerName,
-		)
+		env = append(env, "LOOP_CONTAINER_ID="+containerName)
 	} else {
 		gateToken = ""
 	}
 
 	if len(chownPaths) > 0 {
-		env = append(env, "CHOWN_PATHS="+strings.Join(chownPaths, ":"))
+		env = append(env, "LOOP_CHOWN_PATHS="+strings.Join(chownPaths, ":"))
 	}
 
 	// Ensure workDir exists on host (it's bind-mounted into the container).

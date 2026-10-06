@@ -614,13 +614,13 @@ func (s *ParentSuite) TestRunParentStartChildReceivesAgentCredAndChildEnv() {
 	// re-execed /proc/self/exe re-enters cobra which dispatches to the
 	// syscallwrap subcommand in child mode.
 	s.Require().Equal(f.selfArgv, f.startedArgv)
-	// Approver wiring uses API_URL + the gate token file exactly.
+	// Approver wiring uses LOOP_API_URL + the gate token file exactly.
 	s.Require().Equal("http://host.docker.internal:3007", f.approverAPI)
 	s.Require().Equal("abcd", f.approverToken)
 }
 
 // TestRunParentDropsToAgentUID: the child always gets the agent's uid/gid
-// from HOST_USER, which startChild installs as its Credential.
+// from LOOP_HOST_USER, which startChild installs as its Credential.
 func (s *ParentSuite) TestRunParentDropsToAgentUID() {
 	f := newFakeParentDeps(s.T())
 	f.defaultEnv()

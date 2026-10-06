@@ -94,18 +94,18 @@ func (s *LocalBashSuite) TestRunBashContextCancel() {
 
 func (s *LocalBashSuite) TestRunBashInjectsChannelAndAPIURL() {
 	r := &LocalBashRunner{SafeDir: s.T().TempDir(), APIURL: "http://localhost:9999"}
-	out, err := r.RunBash(context.Background(), `printf '%s|%s' "$CHANNEL_ID" "$API_URL"`, "ch-42", "", "")
+	out, err := r.RunBash(context.Background(), `printf '%s|%s' "$LOOP_CHANNEL_ID" "$LOOP_API_URL"`, "ch-42", "", "")
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), "ch-42|http://localhost:9999", out)
 }
 
 func (s *LocalBashSuite) TestRunBashEmptyAPIURLInheritsProcessEnv() {
-	// With no configured APIURL the runner leaves any inherited $API_URL
+	// With no configured APIURL the runner leaves any inherited $LOOP_API_URL
 	// alone (and a set APIURL, as the other test shows, appends after
 	// os.Environ so it wins).
-	s.T().Setenv("API_URL", "http://inherited:1")
+	s.T().Setenv("LOOP_API_URL", "http://inherited:1")
 	r := &LocalBashRunner{SafeDir: s.T().TempDir()}
-	out, err := r.RunBash(context.Background(), `printf '%s|%s' "$CHANNEL_ID" "$API_URL"`, "ch-1", "", "")
+	out, err := r.RunBash(context.Background(), `printf '%s|%s' "$LOOP_CHANNEL_ID" "$LOOP_API_URL"`, "ch-1", "", "")
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), "ch-1|http://inherited:1", out)
 }

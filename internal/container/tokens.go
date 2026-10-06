@@ -80,7 +80,7 @@ func (r *DockerRunner) writeRunTokens(ctx context.Context, containerID string, e
 }
 
 // agentIDs returns the uid and gid the entrypoint creates the agent user
-// with: the HOST_UID/HOST_GID the container starts with. Config envs are
+// with: the LOOP_HOST_UID/LOOP_HOST_GID the container starts with. Config envs are
 // appended after the daemon's own values and Docker keeps the last of a
 // duplicated key, so the last numeric value wins here too. A missing or
 // non-numeric value falls back to the daemon's own ID.
@@ -93,9 +93,9 @@ func (r *DockerRunner) agentIDs(env []string) (uid, gid int) {
 			continue
 		}
 		switch key {
-		case "HOST_UID":
+		case "LOOP_HOST_UID":
 			uid = n
-		case "HOST_GID":
+		case "LOOP_HOST_GID":
 			gid = n
 		}
 	}
