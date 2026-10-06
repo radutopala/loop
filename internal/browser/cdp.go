@@ -1620,9 +1620,12 @@ func (c *CDPClient) NewTab(ctx context.Context, rawURL string) (string, error) {
 	return string(tCtx), nil
 }
 
-// SwitchTab switches to a tab by its target ID.
+// SwitchTab brings a tab to the front in Chrome by its target ID. Unlike
+// SwitchTarget it leaves the client attached to its own target.
 func (c *CDPClient) SwitchTab(ctx context.Context, targetID string) error {
-	return c.activateFunc(c.ctx, target.ID(targetID))
+	return runBoundedFor(ctx, c.commandDeadline(), func() error {
+		return c.activateFunc(c.ctx, target.ID(targetID))
+	})
 }
 
 // CloseTab closes a tab by its target ID via CDP Page.close.

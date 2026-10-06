@@ -242,11 +242,24 @@ func (m *DockerProvider) SetContainerRegistry(reg container.ContainerRegistry) {
 	m.registry = reg
 }
 
+// backgroundThrottlingFlags keep Chrome running a tab's timers and rendering
+// at full speed while the tab is in the background.
+var backgroundThrottlingFlags = []string{
+	"--disable-background-timer-throttling",
+	"--disable-renderer-backgrounding",
+	"--disable-backgrounding-occluded-windows",
+}
+
 // chromeArgs returns CMD args for the chrome container. The entrypoint ends in
 // `exec chromium-browser ... "$@"`, so these are appended to Chrome's own flags
 // — which is how --user-data-dir gets set without rebuilding the image.
 func (m *DockerProvider) chromeArgs(cs ChannelSettings) []string {
 	args := []string{"--window-size=" + m.screen}
+	// Headless Chrome treats a tab nobody is looking at as backgrounded and
+	// throttles its timers and rendering, so a page that builds its content
+	// with script after loading stays a skeleton until something — a
+	// screenshot — forces a frame. The agent never looks at the tab either way.
+	args = append(args, backgroundThrottlingFlags...)
 	if cs.PersistProfile {
 		args = append(args, "--user-data-dir="+chromeProfileDir)
 	}

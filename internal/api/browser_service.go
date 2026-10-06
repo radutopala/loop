@@ -644,6 +644,12 @@ func (s *browserService) dispatchBrowserAction(req browserActionRequest, cdpCl b
 		if targetID == "" {
 			return browserActionResponse{Error: "target_id required"}
 		}
+		// Bring the tab to the front as well: Chrome throttles a tab that is
+		// in the background, so one switched to only in name would load and
+		// render slowly, or not at all, until something forced a frame.
+		if err := cdpCl.SwitchTab(bg, targetID); err != nil {
+			return browserActionResponse{Error: fmt.Sprintf("switch tab failed: %v", err)}
+		}
 		if cdpMgr := s.getActiveCDPManager(req.ChannelID); cdpMgr != nil {
 			cdpMgr.SwitchActive(targetID)
 			cdpMgr.NotifyTargetSwitch(targetID)

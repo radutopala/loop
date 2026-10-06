@@ -356,6 +356,7 @@ func (s *BrowserHandlerSuite) TestBrowserActionNewTabError() {
 func (s *BrowserHandlerSuite) TestBrowserActionSwitchTab() {
 	mockCDP := new(mockCDPSession)
 	s.setupActionMocks(mockCDP)
+	mockCDP.On("SwitchTab", mock.Anything, "t-switch").Return(nil).Once()
 
 	w := s.postBrowserAction(browserActionRequest{
 		ChannelID: "ch-1",
@@ -365,6 +366,22 @@ func (s *BrowserHandlerSuite) TestBrowserActionSwitchTab() {
 	var resp browserActionResponse
 	require.NoError(s.T(), json.Unmarshal(w.Body.Bytes(), &resp))
 	require.Contains(s.T(), resp.Result, "Switched to tab t-switch")
+	mockCDP.AssertCalled(s.T(), "SwitchTab", mock.Anything, "t-switch")
+}
+
+func (s *BrowserHandlerSuite) TestBrowserActionSwitchTabActivateError() {
+	mockCDP := new(mockCDPSession)
+	s.setupActionMocks(mockCDP)
+	mockCDP.On("SwitchTab", mock.Anything, "t-switch").Return(errors.New("activate fail")).Once()
+
+	w := s.postBrowserAction(browserActionRequest{
+		ChannelID: "ch-1",
+		Action:    "switch_tab",
+		Params:    map[string]any{"target_id": "t-switch"},
+	})
+	var resp browserActionResponse
+	require.NoError(s.T(), json.Unmarshal(w.Body.Bytes(), &resp))
+	require.Equal(s.T(), "switch tab failed: activate fail", resp.Error)
 }
 
 func (s *BrowserHandlerSuite) TestBrowserActionSwitchTabNoTargetID() {

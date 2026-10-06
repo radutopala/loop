@@ -376,6 +376,17 @@ Requires `chrome://inspect/#remote-debugging` enabled in Chrome.
 ### Available Tools
 `navigate`, `read_page`, `computer`, `form_input`, `screenshot`, `save_screenshot`, `go_back`, `go_forward`, `reload`, `evaluate`, `list_tabs`, `new_tab`, `switch_tab`, `close_tab`, `page_info`, `get_page_text`, `find`, `read_console_messages`, `read_network_requests`, `resize_window`
 
+### Waiting for a page
+Pages that build their content with script after loading can be read too early. `navigate`, `screenshot`, `save_screenshot` and `computer` take `wait_for_selector` and/or `wait_for_text`, with `wait_timeout_ms` (default 10000, max 60000). The tool polls the page every 250 ms through `evaluate_js` until it matches, and fails with a timeout error if it never does. `computer` waits after acting, except for `wait` and `screenshot`, which wait first; `computer` `wait` without either pauses for `duration` ms.
+
+### Tabs
+`list_tabs` numbers the tabs `[1]`, `[2]`, …; `switch_tab` and `close_tab` take that number as `index`, or the tab's `target_id`. `switch_tab` also brings the tab to the front in Chrome, since Chrome throttles a tab in the background.
+
+The Docker sidecar starts Chrome with `--disable-background-timer-throttling`, `--disable-renderer-backgrounding` and `--disable-backgrounding-occluded-windows`, so pages keep running their timers and rendering when nobody looks at them.
+
+### Daemon restarts
+The container's tools reach Chrome through the Loop daemon. While the daemon is down they fail with a message saying so; the daemon stops the sidecar when it exits, so after a restart the browser starts afresh on `about:blank` and the agent has to navigate again.
+
 ## Idle Monitoring
 
 `Server.RunBrowserIdleMonitor(ctx, timeout)` — single goroutine checks all CDPManagers. When a CDPManager has no connected panes and exceeds the timeout:

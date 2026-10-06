@@ -127,7 +127,7 @@ func (s *ManagerSuite) TestIsHostMode() {
 
 func (s *ManagerSuite) TestChromeArgs() {
 	args := s.mgr.chromeArgs(s.mgr.defaults)
-	require.Equal(s.T(), []string{"--window-size=1920,1080", "--disable-extensions", "about:blank"}, args)
+	require.Equal(s.T(), []string{"--window-size=1920,1080", "--disable-background-timer-throttling", "--disable-renderer-backgrounding", "--disable-backgrounding-occluded-windows", "--disable-extensions", "about:blank"}, args)
 }
 
 func (s *ManagerSuite) TestChromeArgsExtensions() {
@@ -138,19 +138,19 @@ func (s *ManagerSuite) TestChromeArgsExtensions() {
 	}{
 		{
 			name: "none configured disables extensions",
-			want: []string{"--window-size=1920,1080", "--disable-extensions", "about:blank"},
+			want: []string{"--window-size=1920,1080", "--disable-background-timer-throttling", "--disable-renderer-backgrounding", "--disable-backgrounding-occluded-windows", "--disable-extensions", "about:blank"},
 		},
 		{
 			name:       "one extension",
 			extensions: []string{"/host/ublock"},
-			want:       []string{"--window-size=1920,1080", "--load-extension=/extensions/0", "about:blank"},
+			want:       []string{"--window-size=1920,1080", "--disable-background-timer-throttling", "--disable-renderer-backgrounding", "--disable-backgrounding-occluded-windows", "--load-extension=/extensions/0", "about:blank"},
 		},
 		{
 			// Chrome takes a single comma-separated list, and the paths are
 			// positional so an extension keeps its generated ID across restarts.
 			name:       "several extensions keep config order",
 			extensions: []string{"/host/a", "/host/b", "/host/c"},
-			want:       []string{"--window-size=1920,1080", "--load-extension=/extensions/0,/extensions/1,/extensions/2", "about:blank"},
+			want:       []string{"--window-size=1920,1080", "--disable-background-timer-throttling", "--disable-renderer-backgrounding", "--disable-backgrounding-occluded-windows", "--load-extension=/extensions/0,/extensions/1,/extensions/2", "about:blank"},
 		},
 	}
 	for _, tt := range tests {
@@ -164,7 +164,7 @@ func (s *ManagerSuite) TestChromeArgsExtensions() {
 func (s *ManagerSuite) TestChromeArgsPersistProfile() {
 	mgr := NewDockerProvider(s.api, DockerProviderConfig{Image: "loop-agent:latest", Screen: "1920,1080", PersistProfile: true}, slog.Default())
 	require.Equal(s.T(),
-		[]string{"--window-size=1920,1080", "--user-data-dir=/profile", "--disable-extensions", "about:blank"},
+		[]string{"--window-size=1920,1080", "--disable-background-timer-throttling", "--disable-renderer-backgrounding", "--disable-backgrounding-occluded-windows", "--user-data-dir=/profile", "--disable-extensions", "about:blank"},
 		mgr.chromeArgs(mgr.defaults),
 	)
 }
