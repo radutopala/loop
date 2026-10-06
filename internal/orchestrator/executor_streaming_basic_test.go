@@ -474,7 +474,11 @@ func (s *TaskExecutorSuite) TestEphemeralInstructionInSystemPrompt() {
 			s.store.On("GetScheduledTask", s.ctx, int64(20)).Return(&db.ScheduledTask{ID: 20, Type: db.TaskTypeCron}, nil)
 			s.expectTaskThread(task, "thread-prompt", false, nil)
 			s.runner.On("Run", mock.Anything, mock.MatchedBy(func(req *agent.AgentRequest) bool {
-				return strings.Contains(req.SystemPrompt, "[EPHEMERAL]") == tc.wantMarker
+				return strings.Contains(req.SystemPrompt, "[EPHEMERAL]") == tc.wantMarker &&
+					// Posting to other channels stays open; only the task's own
+					// thread and parent are off limits.
+					strings.Contains(req.SystemPrompt, "You MAY use send_message with the channel_id of a different channel") &&
+					strings.Contains(req.SystemPrompt, "Do NOT use send_message to post into this task's thread or its parent channel")
 			})).Return(&agent.AgentResponse{Response: "ok", SessionID: "sess"}, nil)
 			s.store.On("UpdateSessionID", s.ctx, "thread-prompt", "sess").Return(nil)
 			s.bot.On("SendMessage", s.ctx, mock.Anything).Return(nil).Once()
