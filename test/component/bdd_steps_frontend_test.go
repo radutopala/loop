@@ -667,30 +667,57 @@ func (tc *TestContext) assertElementVisible(selector string) error {
 	)
 }
 
+// assertElementContainsText waits for the element to hold the text. The
+// element is found and read in one page evaluation, so a re-render that
+// replaces it between the two can't fail the read with "No node with given id
+// found", as chromedp.Text's query-then-read can.
 func (tc *TestContext) assertElementContainsText(selector, expected string) error {
-	var text string
-	if err := chromedp.Run(tc.chromeTab.ctx,
-		chromedp.Text(selector, &text, chromedp.ByQuery),
-	); err != nil {
-		return err
+	err := chromedp.Run(tc.chromeTab.ctx,
+		chromedp.Poll(fmt.Sprintf(`(document.querySelector(%q)?.innerText ?? "").includes(%q)`, selector, expected),
+			nil, chromedp.WithPollingTimeout(10*time.Second), chromedp.WithPollingInterval(100*time.Millisecond)),
+	)
+	if err == nil {
+		return nil
 	}
-	if !strings.Contains(text, expected) {
-		return fmt.Errorf("element %q text does not contain %q (got: %q)", selector, expected, text)
+	text, readErr := tc.elementText(selector)
+	if readErr != nil {
+		return fmt.Errorf("element %q text does not contain %q: %w", selector, expected, readErr)
 	}
-	return nil
+	return fmt.Errorf("element %q text does not contain %q (got: %q)", selector, expected, text)
 }
 
+// assertElementNotContainsText waits for the element, then checks its text
+// once, read the same way as assertElementContainsText.
 func (tc *TestContext) assertElementNotContainsText(selector, unexpected string) error {
-	var text string
 	if err := chromedp.Run(tc.chromeTab.ctx,
-		chromedp.Text(selector, &text, chromedp.ByQuery),
+		chromedp.Poll(fmt.Sprintf(`document.querySelector(%q) !== null`, selector),
+			nil, chromedp.WithPollingTimeout(10*time.Second), chromedp.WithPollingInterval(100*time.Millisecond)),
 	); err != nil {
+		return fmt.Errorf("waiting for element %q: %w", selector, err)
+	}
+	text, err := tc.elementText(selector)
+	if err != nil {
 		return err
 	}
 	if strings.Contains(text, unexpected) {
 		return fmt.Errorf("element %q text contains %q (got: %q)", selector, unexpected, text)
 	}
 	return nil
+}
+
+// elementText returns the innerText of the first element matching selector,
+// found and read in one page evaluation.
+func (tc *TestContext) elementText(selector string) (string, error) {
+	var text *string
+	if err := chromedp.Run(tc.chromeTab.ctx,
+		chromedp.Evaluate(fmt.Sprintf(`document.querySelector(%q)?.innerText ?? null`, selector), &text),
+	); err != nil {
+		return "", err
+	}
+	if text == nil {
+		return "", fmt.Errorf("no element matches %q", selector)
+	}
+	return *text, nil
 }
 
 // --- Text-based interaction steps ---
