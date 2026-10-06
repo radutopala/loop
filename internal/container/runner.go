@@ -777,20 +777,22 @@ func (r *DockerRunner) createAndStartContainer(
 		}
 	}
 
+	// LOOP_CHANNEL_ID names the chat this container works for. The proxy and
+	// the gate use it to know which chat surface to prompt when a trap fires,
+	// and MCP servers the agent runs inherit it. It is not a secret: the
+	// bearer token that authenticates with it is copied in as a file rather
+	// than set here.
+	env = append(env, "LOOP_CHANNEL_ID="+channelID)
+
 	// Both the proxy and the gate authenticate HTTP callbacks with the same
 	// per-container bearer token, copied in as a file before start rather
-	// than set here, where the agent could read it. The channel id is how
-	// loop-server knows
-	// which chat surface to prompt when a trap fires. LOOP_CONTAINER_ID is
+	// than set here, where the agent could read it. LOOP_CONTAINER_ID is
 	// required by loop-dockerproxy's Server constructor — the docker daemon
 	// only hands us the real cid after ContainerCreate, but the container
 	// name is stable and unique so we use it as the CID the proxy stamps on
 	// approval events.
 	if proxyPolicyHostPath != "" || gatePolicyHostPath != "" {
-		env = append(env,
-			"LOOP_CHANNEL_ID="+channelID,
-			"LOOP_CONTAINER_ID="+containerName,
-		)
+		env = append(env, "LOOP_CONTAINER_ID="+containerName)
 	} else {
 		gateToken = ""
 	}

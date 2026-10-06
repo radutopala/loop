@@ -527,6 +527,12 @@ func (s *ProxySuite) TestRunProxyDisabledNoBindsNoToken() {
 		return strings.HasPrefix(e, "LOOP_GATE_TOKEN=")
 	}))
 	require.Empty(s.T(), captured.Volumes)
+	// With neither the proxy nor the gate on, the container still learns its
+	// chat.
+	require.Equal(s.T(), "ch-1", findEnv(captured.Env, "LOOP_CHANNEL_ID"))
+	require.False(s.T(), slices.ContainsFunc(captured.Env, func(e string) bool {
+		return strings.HasPrefix(e, "LOOP_CONTAINER_ID=")
+	}))
 }
 
 // TestRunProxyDefaultsHostSockWhenEmpty covers the "hostSock == """ branch
