@@ -33,6 +33,9 @@ func (m *mockCDPSession) CloseBrowser(_ context.Context) error {
 
 func (m *mockCDPSession) TargetID() string                   { return m.Called().String(0) }
 func (m *mockCDPSession) SwitchTarget(targetID string) error { return m.Called(targetID).Error(0) }
+func (m *mockCDPSession) SwitchTab(ctx context.Context, targetID string) error {
+	return m.Called(ctx, targetID).Error(0)
+}
 func (m *mockCDPSession) ListTabs(ctx context.Context) ([]TabInfo, error) {
 	a := m.Called(ctx)
 	t, _ := a.Get(0).([]TabInfo)

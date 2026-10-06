@@ -207,7 +207,7 @@ func (s *ServerSuite) TestSwitchTabEmptyTargetID() {
 	})
 	res := callTool(s.T(), session, "switch_tab", map[string]any{"target_id": ""})
 	require.True(s.T(), res.IsError)
-	require.Contains(s.T(), getText(s.T(), res), "target_id is required")
+	require.Contains(s.T(), getText(s.T(), res), "index or target_id is required")
 }
 
 // ==================== close_tab ====================
@@ -239,7 +239,7 @@ func (s *ServerSuite) TestCloseTabEmptyTargetID() {
 	})
 	res := callTool(s.T(), session, "close_tab", map[string]any{"target_id": ""})
 	require.True(s.T(), res.IsError)
-	require.Contains(s.T(), getText(s.T(), res), "target_id is required")
+	require.Contains(s.T(), getText(s.T(), res), "index or target_id is required")
 }
 
 // ==================== page_info ====================

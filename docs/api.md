@@ -2682,7 +2682,7 @@ Unified endpoint for all browser operations. Used by both the `loop-browser` MCP
 | `evaluate_js` | `expression` | Evaluate JavaScript |
 | `list_tabs` | — | List all open tabs |
 | `new_tab` | `url` | Open a new tab |
-| `switch_tab` | `target_id` | Switch to a tab |
+| `switch_tab` | `target_id` | Make a tab the active one and bring it to the front |
 | `close_tab` | `target_id` | Close a tab |
 | `resize_window` | `width`, `height` | Resize viewport |
 | `scroll_into_view` | `backend_node_id` | Scroll element into view |

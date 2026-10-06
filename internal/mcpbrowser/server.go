@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -14,6 +15,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -39,6 +41,20 @@ type Server struct {
 	channelID  string
 	httpClient HTTPClient
 	dispatch   actionDispatcher // pluggable action handler
+	// sleep pauses for d or until ctx ends; tests swap it to skip real waits.
+	sleep func(ctx context.Context, d time.Duration) error
+}
+
+// sleepCtx pauses for d, returning early with ctx's error if it ends first.
+func sleepCtx(ctx context.Context, d time.Duration) error {
+	t := time.NewTimer(d)
+	defer t.Stop()
+	select {
+	case <-t.C:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }
 
 // New creates a new MCP browser server that proxies actions through the host API.
@@ -50,6 +66,7 @@ func New(apiURL, channelID string, logger *slog.Logger) *Server {
 		apiURL:    apiURL,
 		channelID: channelID,
 		logger:    logger,
+		sleep:     sleepCtx,
 	}
 
 	s.httpClient = &http.Client{
@@ -75,6 +92,7 @@ func NewDirect(cdpEndpoint string, logger *slog.Logger) *Server {
 	}
 	s := &Server{
 		logger: logger,
+		sleep:  sleepCtx,
 	}
 
 	s.dispatch = newCDPDispatcher(cdpEndpoint, logger)
@@ -109,6 +127,13 @@ func (s *Server) callAction(ctx context.Context, action string, params map[strin
 	return s.dispatch(ctx, action, params)
 }
 
+// daemonDownHint explains a refused connection to the host API: the Loop
+// daemon is down, most often because it is restarting, and it stops the browser
+// with it.
+const daemonDownHint = "the Loop daemon is not reachable, most likely restarting; " +
+	"retry in a few seconds, and navigate again once it is back — " +
+	"a restart starts the browser afresh on about:blank, so tabs and pages from before it are gone"
+
 // callAPIAction sends a browser action to the host API via HTTP.
 func (s *Server) callAPIAction(ctx context.Context, action string, params map[string]any) (*actionResponse, error) {
 	body := map[string]any{
@@ -128,6 +153,9 @@ func (s *Server) callAPIAction(ctx context.Context, action string, params map[st
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := s.httpClient.Do(req)
+	if errors.Is(err, syscall.ECONNREFUSED) {
+		return nil, fmt.Errorf("calling host API: %w (%s)", err, daemonDownHint)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("calling host API: %w", err)
 	}
@@ -150,6 +178,86 @@ func (s *Server) callAPIAction(ctx context.Context, action string, params map[st
 	return &result, nil
 }
 
+// waitSpec is what a tool can be told to wait for before it answers, so a
+// page that renders after it loads is read once its content is there rather
+// than as a skeleton.
+type waitSpec struct {
+	WaitForSelector string `json:"wait_for_selector,omitempty" jsonschema:"CSS selector to wait for until an element matches it"`
+	WaitForText     string `json:"wait_for_text,omitempty" jsonschema:"Text to wait for until the page shows it"`
+	WaitTimeoutMs   int    `json:"wait_timeout_ms,omitempty" jsonschema:"How long to wait for wait_for_selector and wait_for_text, in milliseconds (default 10000, max 60000)"`
+}
+
+const (
+	defaultWaitTimeout = 10 * time.Second
+	maxWaitTimeout     = 60 * time.Second
+	waitPollInterval   = 250 * time.Millisecond
+)
+
+// waitFor polls the page until it matches w, or fails once w's timeout is up.
+// It does nothing when w names neither a selector nor text. An evaluate that
+// fails mid-poll is treated as "not yet": a page that is still navigating
+// throws away the context the expression runs in.
+func (s *Server) waitFor(ctx context.Context, w waitSpec) error {
+	if w.WaitForSelector == "" && w.WaitForText == "" {
+		return nil
+	}
+	timeout := defaultWaitTimeout
+	if w.WaitTimeoutMs > 0 {
+		timeout = min(time.Duration(w.WaitTimeoutMs)*time.Millisecond, maxWaitTimeout)
+	}
+	expr := waitForJS(w)
+	var lastErr error
+	for waited := time.Duration(0); ; waited += waitPollInterval {
+		resp, err := s.callAction(ctx, "evaluate_js", map[string]any{"expression": expr})
+		if err == nil && resp.Result == "true" {
+			return nil
+		}
+		lastErr = err
+		if waited >= timeout {
+			break
+		}
+		if err := s.sleep(ctx, waitPollInterval); err != nil {
+			return err
+		}
+	}
+	msg := fmt.Sprintf("timed out after %s waiting for %s", timeout, describeWait(w))
+	if lastErr != nil {
+		msg += fmt.Sprintf(" (last check failed: %v)", lastErr)
+	}
+	return errors.New(msg)
+}
+
+// waitForJS is the check waitFor polls. It returns a string because
+// EvaluateJS decodes the result into one.
+func waitForJS(w waitSpec) string {
+	var conds []string
+	if w.WaitForSelector != "" {
+		conds = append(conds, fmt.Sprintf("document.querySelector(%s) !== null", jsString(w.WaitForSelector)))
+	}
+	if w.WaitForText != "" {
+		conds = append(conds, fmt.Sprintf(`(document.body?.innerText ?? "").includes(%s)`, jsString(w.WaitForText)))
+	}
+	return fmt.Sprintf(`(() => { try { return String(%s); } catch (e) { return "false"; } })()`, strings.Join(conds, " && "))
+}
+
+// jsString quotes v as a JavaScript string literal.
+func jsString(v string) string {
+	b, _ := json.Marshal(v) //nolint:errchkjson // a string always marshals
+	return string(b)
+}
+
+// describeWait names what w waits for, for messages.
+func describeWait(w waitSpec) string {
+	var parts []string
+	if w.WaitForSelector != "" {
+		parts = append(parts, fmt.Sprintf("selector %q", w.WaitForSelector))
+	}
+	if w.WaitForText != "" {
+		parts = append(parts, fmt.Sprintf("text %q", w.WaitForText))
+	}
+	return strings.Join(parts, " and ")
+}
+
 type computerInput struct {
 	Action   string  `json:"action" jsonschema:"The action to perform: click,right_click,double_click,triple_click,type,key,scroll,move,hover,screenshot,wait,left_click_drag"`
 	Ref      int     `json:"ref,omitempty" jsonschema:"Element ref number to interact with (from read_page)"`
@@ -159,22 +267,29 @@ type computerInput struct {
 	DeltaX   float64 `json:"delta_x,omitempty" jsonschema:"Horizontal scroll amount"`
 	DeltaY   float64 `json:"delta_y,omitempty" jsonschema:"Vertical scroll amount"`
 	Button   string  `json:"button,omitempty" jsonschema:"Mouse button: left,right,middle"`
-	Duration int     `json:"duration,omitempty" jsonschema:"Wait duration in milliseconds"`
+	Duration int     `json:"duration,omitempty" jsonschema:"For action wait without wait_for_selector or wait_for_text: how long to wait, in milliseconds (max 60000)"`
 	StartX   float64 `json:"start_x,omitempty" jsonschema:"Start X coordinate for left_click_drag"`
 	StartY   float64 `json:"start_y,omitempty" jsonschema:"Start Y coordinate for left_click_drag"`
+	waitSpec
 }
 
 type saveScreenshotInput struct {
 	Path string `json:"path" jsonschema:"Filesystem path to write the PNG screenshot to (e.g. /work/shot.png). Parent directories are created."`
+	waitSpec
+}
+
+type screenshotInput struct {
+	waitSpec
 }
 
 func (s *Server) registerTools() {
 	type navigateInput struct {
 		URL string `json:"url" jsonschema:"The URL to navigate to"`
+		waitSpec
 	}
 	mcp.AddTool(s.mcpServer, &mcp.Tool{
 		Name:        "navigate",
-		Description: "Navigate the browser to a URL. The browser keeps a persistent profile, so logins survive across sessions — if a page needs a sign-in or a CAPTCHA, call AskUserQuestion to ask the user to sign in via the Browser panel, then continue once they answer.",
+		Description: "Navigate the browser to a URL. The browser keeps a persistent profile, so logins survive across sessions — if a page needs a sign-in or a CAPTCHA, call AskUserQuestion to ask the user to sign in via the Browser panel, then continue once they answer. Pages that render their content after loading can be waited on with wait_for_selector or wait_for_text.",
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, input navigateInput) (*mcp.CallToolResult, any, error) {
 		if input.URL == "" {
 			return errorResult("url is required"), nil, nil
@@ -183,10 +298,14 @@ func (s *Server) registerTools() {
 		if err != nil {
 			return errorResult(fmt.Sprintf("navigate failed: %v", err)), nil, nil
 		}
+		msg := "Navigated to " + input.URL
 		if resp.PageInfo != nil {
-			return textResult(fmt.Sprintf("Navigated to %s — %s", resp.PageInfo.URL, resp.PageInfo.Title)), nil, nil
+			msg = fmt.Sprintf("Navigated to %s — %s", resp.PageInfo.URL, resp.PageInfo.Title)
 		}
-		return textResult("Navigated to " + input.URL), nil, nil
+		if err := s.waitFor(ctx, input.waitSpec); err != nil {
+			return errorResult(fmt.Sprintf("%s, but %v", msg, err)), nil, nil
+		}
+		return textResult(msg), nil, nil
 	})
 
 	mcp.AddTool(s.mcpServer, &mcp.Tool{
@@ -221,7 +340,7 @@ func (s *Server) registerTools() {
 
 	mcp.AddTool(s.mcpServer, &mcp.Tool{
 		Name:        "computer",
-		Description: "Perform computer actions: click, type, key, scroll, move, screenshot, wait, triple_click, double_click. Use ref from read_page for precise element targeting.",
+		Description: "Perform computer actions: click, type, key, scroll, move, screenshot, wait, triple_click, double_click. Use ref from read_page for precise element targeting. With wait_for_selector or wait_for_text, wait and screenshot first wait for the page to match, and the other actions wait after acting — e.g. for what a click loads.",
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, input computerInput) (*mcp.CallToolResult, any, error) {
 		return s.handleComputer(ctx, input)
 	})
@@ -251,8 +370,11 @@ func (s *Server) registerTools() {
 
 	mcp.AddTool(s.mcpServer, &mcp.Tool{
 		Name:        "screenshot",
-		Description: "Take a screenshot of the current page.",
-	}, func(ctx context.Context, _ *mcp.CallToolRequest, _ struct{}) (*mcp.CallToolResult, any, error) {
+		Description: "Take a screenshot of the current page, optionally once it shows wait_for_selector or wait_for_text.",
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input screenshotInput) (*mcp.CallToolResult, any, error) {
+		if err := s.waitFor(ctx, input.waitSpec); err != nil {
+			return errorResult(err.Error()), nil, nil
+		}
 		data, err := s.captureScreenshot(ctx)
 		if err != nil {
 			return errorResult(err.Error()), nil, nil
@@ -262,11 +384,14 @@ func (s *Server) registerTools() {
 
 	mcp.AddTool(s.mcpServer, &mcp.Tool{
 		Name:        "save_screenshot",
-		Description: "Take a screenshot of the current page and write it to a PNG file on disk at the given path (parent directories are created). Returns the saved path. Use this instead of `screenshot` when you want the image persisted to a file rather than returned inline.",
+		Description: "Take a screenshot of the current page and write it to a PNG file on disk at the given path (parent directories are created). Returns the saved path. Use this instead of `screenshot` when you want the image persisted to a file rather than returned inline. Takes the same wait_for_selector and wait_for_text as `screenshot`.",
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, input saveScreenshotInput) (*mcp.CallToolResult, any, error) {
 		path := strings.TrimSpace(input.Path)
 		if path == "" {
 			return errorResult("path is required"), nil, nil
+		}
+		if err := s.waitFor(ctx, input.waitSpec); err != nil {
+			return errorResult(err.Error()), nil, nil
 		}
 		data, err := s.captureScreenshot(ctx)
 		if err != nil {
@@ -332,7 +457,7 @@ func (s *Server) registerTools() {
 
 	mcp.AddTool(s.mcpServer, &mcp.Tool{
 		Name:        "list_tabs",
-		Description: "List all open browser tabs.",
+		Description: "List all open browser tabs: their number in brackets, title, URL and target ID, with * marking the active tab. switch_tab and close_tab take either the number (as index) or the target ID.",
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, _ struct{}) (*mcp.CallToolResult, any, error) {
 		resp, err := s.callAction(ctx, "list_tabs", nil)
 		if err != nil {
@@ -371,35 +496,39 @@ func (s *Server) registerTools() {
 	})
 
 	type switchTabInput struct {
-		TargetID string `json:"target_id" jsonschema:"Target ID of the tab to switch to (from list_tabs)"`
+		Index    int    `json:"index,omitempty" jsonschema:"Number of the tab to switch to, as list_tabs shows it in brackets (1 is the first tab)"`
+		TargetID string `json:"target_id,omitempty" jsonschema:"Target ID of the tab to switch to, as list_tabs shows it after id:. Used instead of index when both are given"`
 	}
 	mcp.AddTool(s.mcpServer, &mcp.Tool{
 		Name:        "switch_tab",
-		Description: "Switch to a browser tab by target ID.",
+		Description: "Make a browser tab the active one, which the other tools then act on, and bring it to the front. Pass index or target_id from list_tabs.",
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, input switchTabInput) (*mcp.CallToolResult, any, error) {
-		if input.TargetID == "" {
-			return errorResult("target_id is required"), nil, nil
-		}
-		if _, err := s.callAction(ctx, "switch_tab", map[string]any{"target_id": input.TargetID}); err != nil {
+		targetID, err := s.resolveTab(ctx, input.Index, input.TargetID)
+		if err != nil {
 			return errorResult(fmt.Sprintf("switch tab failed: %v", err)), nil, nil
 		}
-		return textResult("Switched to tab " + input.TargetID), nil, nil
+		if _, err := s.callAction(ctx, "switch_tab", map[string]any{"target_id": targetID}); err != nil {
+			return errorResult(fmt.Sprintf("switch tab failed: %v", err)), nil, nil
+		}
+		return textResult("Switched to tab " + targetID), nil, nil
 	})
 
 	type closeTabInput struct {
-		TargetID string `json:"target_id" jsonschema:"Target ID of the tab to close (from list_tabs)"`
+		Index    int    `json:"index,omitempty" jsonschema:"Number of the tab to close, as list_tabs shows it in brackets (1 is the first tab)"`
+		TargetID string `json:"target_id,omitempty" jsonschema:"Target ID of the tab to close, as list_tabs shows it after id:. Used instead of index when both are given"`
 	}
 	mcp.AddTool(s.mcpServer, &mcp.Tool{
 		Name:        "close_tab",
-		Description: "Close a browser tab by target ID.",
+		Description: "Close a browser tab. Pass index or target_id from list_tabs.",
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, input closeTabInput) (*mcp.CallToolResult, any, error) {
-		if input.TargetID == "" {
-			return errorResult("target_id is required"), nil, nil
-		}
-		if _, err := s.callAction(ctx, "close_tab", map[string]any{"target_id": input.TargetID}); err != nil {
+		targetID, err := s.resolveTab(ctx, input.Index, input.TargetID)
+		if err != nil {
 			return errorResult(fmt.Sprintf("close tab failed: %v", err)), nil, nil
 		}
-		return textResult("Closed tab " + input.TargetID), nil, nil
+		if _, err := s.callAction(ctx, "close_tab", map[string]any{"target_id": targetID}); err != nil {
+			return errorResult(fmt.Sprintf("close tab failed: %v", err)), nil, nil
+		}
+		return textResult("Closed tab " + targetID), nil, nil
 	})
 
 	mcp.AddTool(s.mcpServer, &mcp.Tool{
@@ -507,7 +636,63 @@ func (s *Server) registerTools() {
 	})
 }
 
+// resolveTab returns targetID, or else the target ID of the index-th tab
+// (1-based) that list_tabs shows.
+func (s *Server) resolveTab(ctx context.Context, index int, targetID string) (string, error) {
+	if targetID != "" {
+		return targetID, nil
+	}
+	if index == 0 {
+		return "", errors.New("index or target_id is required (see list_tabs)")
+	}
+	resp, err := s.callAction(ctx, "list_tabs", nil)
+	if err != nil {
+		return "", fmt.Errorf("listing tabs: %w", err)
+	}
+	if index < 1 || index > len(resp.Tabs) {
+		return "", fmt.Errorf("index %d out of range: %d tab(s) open", index, len(resp.Tabs))
+	}
+	return resp.Tabs[index-1].TargetID, nil
+}
+
+// handleComputer runs a computer action along with any wait it was given:
+// wait and screenshot wait for the page before answering, and the other actions
+// act first and then wait for what they bring up.
 func (s *Server) handleComputer(ctx context.Context, input computerInput) (*mcp.CallToolResult, any, error) {
+	switch input.Action {
+	case "wait":
+		if input.WaitForSelector != "" || input.WaitForText != "" {
+			if err := s.waitFor(ctx, input.waitSpec); err != nil {
+				return errorResult(err.Error()), nil, nil
+			}
+			return textResult("Page shows " + describeWait(input.waitSpec)), nil, nil
+		}
+		d := min(time.Duration(input.Duration)*time.Millisecond, maxWaitTimeout)
+		if d > 0 {
+			if err := s.sleep(ctx, d); err != nil {
+				return errorResult(fmt.Sprintf("wait failed: %v", err)), nil, nil
+			}
+		}
+		return textResult("Waited"), nil, nil
+	case "screenshot":
+		if err := s.waitFor(ctx, input.waitSpec); err != nil {
+			return errorResult(err.Error()), nil, nil
+		}
+		return s.runComputer(ctx, input)
+	}
+	res, out, err := s.runComputer(ctx, input)
+	if res.IsError {
+		return res, out, err
+	}
+	if waitErr := s.waitFor(ctx, input.waitSpec); waitErr != nil {
+		text := res.Content[0].(*mcp.TextContent).Text
+		return errorResult(fmt.Sprintf("%s, but %v", text, waitErr)), nil, nil
+	}
+	return res, out, err
+}
+
+// runComputer performs a computer action other than wait.
+func (s *Server) runComputer(ctx context.Context, input computerInput) (*mcp.CallToolResult, any, error) {
 	// Resolve coordinates from ref if provided.
 	x, y := input.X, input.Y
 	if input.Ref > 0 {
@@ -623,9 +808,6 @@ func (s *Server) handleComputer(ctx context.Context, input computerInput) (*mcp.
 			return errorResult(fmt.Sprintf("scroll_to failed: %v", err)), nil, nil
 		}
 		return textResult(fmt.Sprintf("Scrolled ref %d (%s: %s) into view", input.Ref, ref.Role, ref.Name)), nil, nil
-
-	case "wait":
-		return textResult("Waited"), nil, nil
 
 	default:
 		return errorResult(fmt.Sprintf("unknown action: %s", input.Action)), nil, nil

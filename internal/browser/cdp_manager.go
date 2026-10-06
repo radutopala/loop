@@ -65,6 +65,8 @@ type CDPManager struct {
 type CDPSession interface {
 	TargetID() string
 	SwitchTarget(targetID string) error
+	// SwitchTab brings a tab to the front without moving the session onto it.
+	SwitchTab(ctx context.Context, targetID string) error
 	ListTabs(ctx context.Context) ([]TabInfo, error)
 	// Favicons maps page target ID to the icon Chrome resolved for that tab.
 	Favicons() map[string]string

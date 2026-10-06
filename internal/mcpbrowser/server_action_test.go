@@ -2,6 +2,7 @@ package mcpbrowser
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -140,7 +141,22 @@ func (s *ServerSuite) TestCallActionNetworkError() {
 	_, err := srv.callAction(context.Background(), "navigate", nil)
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "calling host API")
+	require.Contains(s.T(), err.Error(), "the Loop daemon is not reachable")
+	require.Contains(s.T(), err.Error(), "about:blank")
 }
+
+func (s *ServerSuite) TestCallActionTransportErrorOtherThanRefused() {
+	srv := New("http://x", "test-ch", nil)
+	srv.httpClient = failingHTTPClient{err: errors.New("tls handshake timeout")}
+
+	_, err := srv.callAction(context.Background(), "navigate", nil)
+	require.EqualError(s.T(), err, "calling host API: tls handshake timeout")
+}
+
+// failingHTTPClient fails every request with err.
+type failingHTTPClient struct{ err error }
+
+func (c failingHTTPClient) Do(*http.Request) (*http.Response, error) { return nil, c.err }
 
 func (s *ServerSuite) TestCallActionInvalidURL() {
 	srv := New("://bad-url", "test-ch", nil)
