@@ -451,15 +451,18 @@ func (h *EventsHub) BroadcastAgentInstanceMetadata(channelID string, data events
 	})
 }
 
-// BroadcastAgentStatus sends an agent.status event.
-// When the event carries a ThreadID (scheduled task), it broadcasts to all
-// subscribers so the frontend receives it even if not subscribed to the channel.
+// BroadcastAgentStatus sends an agent.status event. It's global: a client
+// subscribes to the channel it shows plus the ones it knows are running, so
+// a run started anywhere else (another agent's send_message, a chat
+// platform, a scheduled task) would otherwise stay invisible to its sidebar
+// until the next channel-list refresh. Hearing "running" is what makes the
+// client subscribe to the run's channel for the rest of its events.
 func (h *EventsHub) BroadcastAgentStatus(channelID string, data events.AgentStatusEventData) {
 	h.Broadcast(Event{
 		Type:      EventAgentStatus,
 		ChannelID: channelID,
 		Data:      data,
-		Global:    data.ThreadID != "",
+		Global:    true,
 	})
 }
 

@@ -188,40 +188,48 @@ func (s *EventsHubSuite) TestBroadcastAgentStatus() {
 	require.Equal(s.T(), "ch-1", evt.ChannelID)
 }
 
-func (s *EventsHubSuite) TestBroadcastAgentStatusWithThreadIDBypassesFilter() {
-	hub := NewEventsHub(testLogger())
+func (s *EventsHubSuite) TestBroadcastAgentStatusBypassesFilter() {
+	tests := []struct {
+		name string
+		data events.AgentStatusEventData
+	}{
+		// A run another agent started with send_message carries no thread.
+		{"channel run", events.AgentStatusEventData{Status: "running", Trigger: "bot"}},
+		{"task thread run", events.AgentStatusEventData{Status: "completed", ThreadID: "task-thread-1"}},
+	}
+	for _, tc := range tests {
+		s.Run(tc.name, func() {
+			hub := NewEventsHub(testLogger())
 
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		conn, err := wsUpgrader.Upgrade(w, r, nil)
-		if err != nil {
-			return
-		}
-		// Subscribe to ch-other only — NOT the task's channel
-		hub.Register(conn, []string{"ch-other"})
-		holdUntilClientDisconnects(conn)
-	}))
-	defer srv.Close()
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				conn, err := wsUpgrader.Upgrade(w, r, nil)
+				if err != nil {
+					return
+				}
+				// Subscribe to ch-other only — NOT the run's channel
+				hub.Register(conn, []string{"ch-other"})
+				holdUntilClientDisconnects(conn)
+			}))
+			defer srv.Close()
 
-	wsURL := "ws" + strings.TrimPrefix(srv.URL, "http")
-	conn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
-	require.NoError(s.T(), err)
-	defer conn.Close()
+			wsURL := "ws" + strings.TrimPrefix(srv.URL, "http")
+			conn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
+			require.NoError(s.T(), err)
+			defer conn.Close()
 
-	time.Sleep(50 * time.Millisecond)
+			time.Sleep(50 * time.Millisecond)
 
-	// ThreadID set — should bypass channel filter and reach subscriber
-	hub.BroadcastAgentStatus("ch-task-parent", events.AgentStatusEventData{
-		Status:   "completed",
-		ThreadID: "task-thread-1",
-	})
+			hub.BroadcastAgentStatus("ch-run", tc.data)
 
-	_, msg, err := conn.ReadMessage()
-	require.NoError(s.T(), err)
+			_, msg, err := conn.ReadMessage()
+			require.NoError(s.T(), err)
 
-	var evt Event
-	require.NoError(s.T(), json.Unmarshal(msg, &evt))
-	require.Equal(s.T(), "agent.status", evt.Type)
-	require.Equal(s.T(), "ch-task-parent", evt.ChannelID)
+			var evt Event
+			require.NoError(s.T(), json.Unmarshal(msg, &evt))
+			require.Equal(s.T(), "agent.status", evt.Type)
+			require.Equal(s.T(), "ch-run", evt.ChannelID)
+		})
+	}
 }
 
 func (s *EventsHubSuite) TestBroadcastToolUse() {
