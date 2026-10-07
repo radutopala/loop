@@ -40,30 +40,49 @@ export function PaneRootSelect({ leafId, roots, value, onChange, testId, title }
   return createPortal(
     <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
       <span style={{ fontSize: 10, color: colors.textDim }}>root</span>
-      <select
-        value={value}
-        onChange={(e) => onChange(Number(e.target.value))}
-        title={title}
-        data-testid={testId}
-        style={{
-          background: colors.surface,
-          color: colors.textLight,
-          border: `1px solid ${colors.border}`,
-          borderRadius: 4,
-          fontSize: 10,
-          fontFamily: fonts.mono,
-          padding: "0 2px",
-          outline: "none",
-          maxWidth: 160,
-          cursor: "pointer",
-        }}
-      >
-        {roots.map((r) => (
-          <option key={r.index} value={r.index} title={r.path}>
-            {r.path}
-          </option>
-        ))}
-      </select>
+      {/* appearance:none plus our own chevron: with the native arrow, Chromium
+          on macOS draws it over the end of a clipped path. */}
+      <span style={{ position: "relative", display: "inline-flex", alignItems: "center" }}>
+        <select
+          value={value}
+          onChange={(e) => onChange(Number(e.target.value))}
+          title={title}
+          data-testid={testId}
+          style={{
+            background: colors.surface,
+            color: colors.textLight,
+            border: `1px solid ${colors.border}`,
+            borderRadius: 4,
+            fontSize: 10,
+            fontFamily: fonts.mono,
+            padding: "0 14px 0 3px",
+            outline: "none",
+            appearance: "none",
+            maxWidth: 160,
+            cursor: "pointer",
+          }}
+        >
+          {roots.map((r) => (
+            <option key={r.index} value={r.index} title={r.path}>
+              {r.path}
+            </option>
+          ))}
+        </select>
+        <svg
+          width="8"
+          height="8"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke={colors.textDim}
+          strokeWidth="3"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          aria-hidden="true"
+          style={{ position: "absolute", right: 4, pointerEvents: "none" }}
+        >
+          <polyline points="6,9 12,15 18,9" />
+        </svg>
+      </span>
     </span>,
     slot,
   );

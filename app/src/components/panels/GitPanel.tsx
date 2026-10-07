@@ -428,6 +428,8 @@ export function GitPanel({
     letterSpacing: 1,
     padding: "0 4px 2px",
     lineHeight: "20px",
+    whiteSpace: "nowrap",
+    flexShrink: 0,
   });
 
   // The file-count / +adds -dels counters next to the tabs. Mirrors the tabs'
@@ -438,6 +440,8 @@ export function GitPanel({
     fontSize: 10,
     lineHeight: "20px",
     paddingBottom: 4,
+    whiteSpace: "nowrap",
+    flexShrink: 0,
   };
 
   const gitToolbar = (
@@ -459,7 +463,9 @@ export function GitPanel({
           boxSizing: "border-box",
         }}
       >
-        <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
+        {/* Labels never wrap: a narrow pane scrolls the tabs sideways rather
+            than growing them past the fixed-height row into the pane header. */}
+        <span style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0, overflowX: "auto", scrollbarWidth: "none" }}>
           <button style={modeTabStyle(gitMode === "uncommitted")} onClick={() => setGitMode("uncommitted")}>
             Uncommitted Diff
           </button>

@@ -7,10 +7,15 @@ import { javascript } from "@codemirror/lang-javascript";
 import { json } from "@codemirror/lang-json";
 import { markdown } from "@codemirror/lang-markdown";
 import { python } from "@codemirror/lang-python";
+import { rust } from "@codemirror/lang-rust";
+import { sql } from "@codemirror/lang-sql";
 import { yaml } from "@codemirror/lang-yaml";
-import { bracketMatching, foldGutter, foldKeymap } from "@codemirror/language";
+import { bracketMatching, foldGutter, foldKeymap, StreamLanguage } from "@codemirror/language";
+import { dockerFile } from "@codemirror/legacy-modes/mode/dockerfile";
+import { shell } from "@codemirror/legacy-modes/mode/shell";
+import { toml } from "@codemirror/legacy-modes/mode/toml";
 import { openSearchPanel, search, searchKeymap } from "@codemirror/search";
-import { Compartment, EditorSelection, EditorState } from "@codemirror/state";
+import { Annotation, Compartment, EditorSelection, EditorState } from "@codemirror/state";
 import { drawSelection, EditorView, highlightActiveLine, highlightActiveLineGutter, keymap, lineNumbers } from "@codemirror/view";
 import { forwardRef, lazy, Suspense, useCallback, useEffect, useImperativeHandle, useMemo, useRef } from "react";
 import { isPdfPath, isVideoPath } from "../../api/files";
@@ -20,6 +25,7 @@ import { renderMarkdownSafe } from "../../utils/markdownSafe";
 import { ContextMenu, type MenuItem } from "../shared/ContextMenu";
 import { emptyGitLineChanges, type GitLineChanges, gitChangeGutterExtension, setGitLineChanges } from "./editorGitGutter";
 import { GitChangeOverview } from "./editorGitOverview";
+import { langIdFor } from "./editorLanguage";
 import { buildEditorTheme } from "./editorTheme";
 import { buildMarkdownStyles } from "./FilePanel";
 import { withBaseHref } from "./htmlPreview";
@@ -27,39 +33,43 @@ import { withBaseHref } from "./htmlPreview";
 // pdf.js is large; load the viewer (and pdf.js with it) on the first PDF tab.
 const PdfViewer = lazy(() => import("./PdfViewer"));
 
+// Marks a document change made by replaceContent, which isn't a user edit.
+const contentReplaced = Annotation.define<boolean>();
+
 // ── Helpers ──
 
 export function getLangExtension(filename: string) {
-  const ext = filename.split(".").pop()?.toLowerCase();
-  switch (ext) {
-    case "js":
-    case "jsx":
-    case "mjs":
-    case "cjs":
+  switch (langIdFor(filename)) {
+    case "javascript":
       return javascript();
-    case "ts":
+    case "typescript":
+      return javascript({ typescript: true });
     case "tsx":
-      return javascript({ typescript: true, jsx: ext.includes("x") });
+      return javascript({ typescript: true, jsx: true });
     case "go":
       return go();
-    case "py":
+    case "python":
       return python();
     case "json":
-    case "jsonl":
       return json();
-    case "md":
-    case "mdx":
+    case "markdown":
       return markdown();
     case "css":
-    case "scss":
       return css();
     case "html":
-    case "htm":
-    case "svg":
       return html();
     case "yaml":
-    case "yml":
       return yaml();
+    case "rust":
+      return rust();
+    case "sql":
+      return sql();
+    case "toml":
+      return StreamLanguage.define(toml);
+    case "shell":
+      return StreamLanguage.define(shell);
+    case "dockerfile":
+      return StreamLanguage.define(dockerFile);
     default:
       return null;
   }
@@ -93,7 +103,7 @@ export function formatSize(bytes: number): string {
 export interface CodeEditorHandle {
   /** Get the current document text. */
   getContent(): string | null;
-  /** Replace the entire document with new content. */
+  /** Replace the entire document with new content (not reported as an edit). */
   replaceContent(content: string): void;
   /** Append a trailing newline if missing. */
   appendNewlineIfMissing(): void;
@@ -223,7 +233,7 @@ export const CodeEditor = forwardRef<CodeEditorHandle, CodeEditorProps>(function
       if (!view) return;
       const current = view.state.doc.toString();
       if (content !== current) {
-        view.dispatch({ changes: { from: 0, to: current.length, insert: content } });
+        view.dispatch({ changes: { from: 0, to: current.length, insert: content }, annotations: contentReplaced.of(true) });
       }
     },
     appendNewlineIfMissing() {
@@ -299,7 +309,7 @@ export const CodeEditor = forwardRef<CodeEditorHandle, CodeEditorProps>(function
       keymap.of([...defaultKeymap, ...historyKeymap, ...foldKeymap, ...searchKeymap, indentWithTab]),
       EditorView.updateListener.of((update) => {
         if (update.docChanged) {
-          onDocChangedRef.current();
+          if (!update.transactions.some((tr) => tr.annotation(contentReplaced))) onDocChangedRef.current();
           const curRel = selectedRelPathRef.current;
           if (curRel && (isMarkdownFile(curRel) || isHtmlFile(curRel))) {
             if (previewTimerRef.current) clearTimeout(previewTimerRef.current);

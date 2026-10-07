@@ -116,6 +116,7 @@ func (tc *TestContext) resolvePlaceholders(path string) string {
 		path = strings.ReplaceAll(path, fmt.Sprintf("{turn_%d_msg_id}", i+1), id)
 	}
 	path = strings.ReplaceAll(path, "{explain_channel_id}", tc.ExplainChannelID)
+	path = strings.ReplaceAll(path, "{repo_path}", tc.ChannelDir)
 	return path
 }
 

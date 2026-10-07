@@ -151,3 +151,13 @@ export function hasAgentLeaf(node: PaneNode): boolean {
   if (node.type === "leaf") return node.panel === "docker-agent" || node.panel === "docker-shell";
   return node.children.some(hasAgentLeaf);
 }
+
+/**
+ * Each pane's share of its split as a whole percent, from the panes'
+ * effective flex values (0 for a minimized pane). All zeros when no pane
+ * has any flex.
+ */
+export function flexPercents(flexes: number[]): number[] {
+  const total = flexes.reduce((s, f) => s + f, 0);
+  return flexes.map((f) => (total > 0 ? Math.round((f / total) * 100) : 0));
+}

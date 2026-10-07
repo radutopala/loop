@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useState } from "react";
 import { buildRawFileBase } from "../../api/files";
+import { tabDescriptions } from "../../hooks/editorPaths";
 import { useContentCapsEpoch } from "../../hooks/useContentCapsEpoch";
 import type { EditorStateApi } from "../../hooks/useEditorState";
 import { useTheme } from "../../ThemeContext";
 import { fonts } from "../../theme";
+import { ContextMenu } from "../shared/ContextMenu";
 import { CodeEditor, isHtmlFile, isMarkdownFile } from "./CodeEditor";
 import { FileIcon, parsePathKey } from "./EditorFileTree";
 import { FilePanel } from "./FilePanel";
@@ -70,6 +72,8 @@ export function EditorPanel({ dirPath, branch, editorState, embedded, ...panelPr
     error,
     gitChanges,
     dirtyTabs,
+    agentEditedTabs,
+    clearAgentEdited,
     pendingRefresh,
     codeEditorRef,
     switchToTab,
@@ -84,6 +88,7 @@ export function EditorPanel({ dirPath, branch, editorState, embedded, ...panelPr
   const [htmlMode, setHtmlMode] = useState<PreviewMode>("preview");
   const [previewHtml, setPreviewHtml] = useState("");
   const [editorMenu, setEditorMenu] = useState<{ x: number; y: number } | null>(null);
+  const [tabMenu, setTabMenu] = useState<{ x: number; y: number; path: string } | null>(null);
 
   const selected = selectedPath ? parsePathKey(selectedPath) : null;
   const selectedRelPath = selected ? selected.relativePath : null;
@@ -108,6 +113,28 @@ export function EditorPanel({ dirPath, branch, editorState, embedded, ...panelPr
 
   const pendingForActive = selectedPath ? pendingRefresh.get(selectedPath) : undefined;
 
+  const absolutePath = (tab: string) => {
+    const { rootIndex, relativePath } = parsePathKey(tab);
+    return (roots.find((r) => r.index === rootIndex)?.path ?? dirPath) + "/" + relativePath;
+  };
+
+  const tabMenuItems = () => {
+    if (!tabMenu) return [];
+    const { relativePath } = parsePathKey(tabMenu.path);
+    return [
+      { label: "Copy relative path", onClick: () => void navigator.clipboard.writeText(relativePath) },
+      { label: "Copy absolute path", onClick: () => void navigator.clipboard.writeText(absolutePath(tabMenu.path)) },
+    ];
+  };
+
+  const descriptions = tabDescriptions(
+    openTabs.map((tab) => {
+      const { rootIndex, relativePath } = parsePathKey(tab);
+      return { key: tab, rootName: roots.find((r) => r.index === rootIndex)?.name ?? "", relativePath };
+    }),
+    hasMultipleRoots,
+  );
+
   return (
     <FilePanel title="Editor" dirPath={dirPath} branch={branch} noPadding embedded={embedded} dataTestId="editor-panel" {...panelProps}>
       <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", backgroundColor: colors.sidebar }}>
@@ -127,20 +154,28 @@ export function EditorPanel({ dirPath, branch, editorState, embedded, ...panelPr
                 const isDirty = dirtyTabs.has(tab);
                 const isPreview = tab === previewTab;
                 const hasPending = pendingRefresh.has(tab);
-                const { rootIndex: tabRoot, relativePath: tabRelPath } = parsePathKey(tab);
+                const agentEdited = agentEditedTabs.has(tab);
+                const tabRelPath = parsePathKey(tab).relativePath;
                 const fileName = tabRelPath.split("/").pop() || tabRelPath;
-                const tabRootEntry = roots.find((r) => r.index === tabRoot);
-                const tabLabel = hasMultipleRoots && tabRootEntry ? `${tabRootEntry.name}/${fileName}` : fileName;
+                const description = descriptions.get(tab);
+                const tabAbsPath = absolutePath(tab);
                 return (
                   <button
                     key={tab}
+                    data-testid="editor-tab"
+                    data-path={tabRelPath}
                     onClick={() => {
-                      if (!isActive) switchToTab(tab);
+                      if (isActive) clearAgentEdited(tab);
+                      else switchToTab(tab);
                     }}
                     onDoubleClick={() => {
                       if (isPreview) promoteFile(tab);
                     }}
-                    title={hasPending ? `${tabRelPath} — agent edited externally` : tabRelPath}
+                    onContextMenu={(e) => {
+                      e.preventDefault();
+                      setTabMenu({ x: e.clientX, y: e.clientY, path: tab });
+                    }}
+                    title={hasPending ? `${tabAbsPath} — agent edited externally` : agentEdited ? `${tabAbsPath} — edited by the agent` : tabAbsPath}
                     style={{
                       display: "flex",
                       alignItems: "center",
@@ -165,8 +200,15 @@ export function EditorPanel({ dirPath, branch, editorState, embedded, ...panelPr
                     }}
                   >
                     <FileIcon name={fileName} />
-                    <span style={{ fontStyle: isPreview || isDirty ? "italic" : undefined }}>{tabLabel}</span>
-                    {hasPending && <span title="Agent modified this file" style={{ width: 6, height: 6, borderRadius: "50%", backgroundColor: colors.active, display: "block" }} />}
+                    <span style={{ fontStyle: isPreview || isDirty ? "italic" : undefined }}>{fileName}</span>
+                    {description && <span style={{ color: colors.textDim, opacity: 0.7, fontSize: 10 }}>{description}</span>}
+                    {(hasPending || agentEdited) && (
+                      <span
+                        title="Agent modified this file"
+                        data-testid="editor-tab-agent-edited"
+                        style={{ width: 6, height: 6, borderRadius: "50%", backgroundColor: colors.active, display: "block" }}
+                      />
+                    )}
                     <span onClick={(e) => closeTab(tab, e)} style={{ marginLeft: 2, width: 8, height: 8, display: "flex", alignItems: "center", justifyContent: "center" }}>
                       {isDirty ? (
                         <span style={{ width: 6, height: 6, borderRadius: "50%", backgroundColor: colors.warning, display: "block" }} />
@@ -286,6 +328,7 @@ export function EditorPanel({ dirPath, branch, editorState, embedded, ...panelPr
           gitChanges={gitChanges}
         />
       </div>
+      {tabMenu && <ContextMenu x={tabMenu.x} y={tabMenu.y} items={tabMenuItems()} onClose={() => setTabMenu(null)} />}
     </FilePanel>
   );
 }
