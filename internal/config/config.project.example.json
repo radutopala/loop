@@ -14,6 +14,8 @@
   // Authentication override for this project (overrides global auth entirely)
   //"claude_code_oauth_token": "sk-ant-project-oauth-token",
   //"anthropic_api_key": "sk-ant-project-api-key",
+  // Gateway for this project's Claude API calls (needs trust)
+  //"anthropic_base_url": "https://llm-gateway.example.com",
 
   // Container overrides for this project
   //"container_image": "loop-agent:latest",

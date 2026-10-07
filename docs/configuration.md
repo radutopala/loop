@@ -38,6 +38,7 @@ Exactly one of these should be set. OAuth takes precedence if both are provided.
 |---|---|---|---|
 | `claude_code_oauth_token` | `string` | `""` | OAuth token from `claude setup-token`. Uses your Claude subscription. |
 | `anthropic_api_key` | `string` | `""` | Anthropic API key. Uses pay-per-token API pricing. |
+| `anthropic_base_url` | `string` | `""` | Send Claude's API calls to a gateway or proxy instead of Anthropic's API; passed to agents as `ANTHROPIC_BASE_URL`. A `localhost` or `127.0.0.1` URL is rewritten to `host.docker.internal`, so a gateway running on the host is reachable from the container. Settings → Authentication → API Base URL. |
 
 #### Claude & Agent
 
@@ -682,6 +683,7 @@ Not all global fields are available in project configs. The following fields can
 | `claude_batch_disallowed_tools` | **Overrides** global value when set (non-empty). |
 | `claude_code_oauth_token` | **Overrides** global auth entirely. Clears `anthropic_api_key`. |
 | `anthropic_api_key` | **Overrides** global auth entirely. Clears `claude_code_oauth_token`. |
+| `anthropic_base_url` | **Overrides** global value when set, once the project config is trusted. Leaves the auth fields alone. |
 | `container_image` | **Overrides** global value when set. |
 | `container_memory_mb` | **Overrides** global value when set. |
 | `container_cpus` | **Overrides** global value when set. |
@@ -733,6 +735,7 @@ The project config lives in the workspace, so an agent can edit it. The fields t
 
 - `mounts`, `inherit_mounts`, `extra_dirs`, `copy_files`, `envs`
 - `permissions`, `gates`, `bash_shortcuts`
+- `anthropic_base_url` (the global credentials are sent there)
 - `browser.mode`, `browser.host_cdp_port`, `browser.extensions`, `browser.cookie_import`
 - `memory.paths`
 
@@ -791,6 +794,8 @@ The AWS CLI saves a token in `~/.aws/sso/cache` or `~/.aws/cli/cache` by writing
   // Authentication (use one; OAuth takes precedence)
   //"claude_code_oauth_token": "sk-ant-your-oauth-token-here",
   //"anthropic_api_key": "sk-ant-your-api-key-here",
+  // Route Claude's API calls through a gateway or proxy (localhost = this machine)
+  //"anthropic_base_url": "https://llm-gateway.example.com",
 
   // Storage & logging
   //"db_path": "~/.loop/loop.db",
@@ -993,6 +998,8 @@ The AWS CLI saves a token in `~/.aws/sso/cache` or `~/.aws/cli/cache` by writing
   // Auth override (overrides global auth entirely)
   //"claude_code_oauth_token": "sk-ant-project-oauth-token",
   //"anthropic_api_key": "sk-ant-project-api-key",
+  // Gateway for this project's Claude API calls (needs trust)
+  //"anthropic_base_url": "https://llm-gateway.example.com",
 
   // Container overrides
   //"container_image": "loop-agent:latest",

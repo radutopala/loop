@@ -34,7 +34,7 @@ func (s *SchemaSuite) TestTopLevelProperties() {
 	expectedKeys := []string{
 		"claude_model", "claude_bin_path",
 		"claude_dangerously_load_development_channels",
-		"claude_code_oauth_token", "anthropic_api_key",
+		"claude_code_oauth_token", "anthropic_api_key", "anthropic_base_url",
 		"container_image", "container_memory_mb", "container_cpus",
 		"container_timeout_sec", "keep_mcp_configs",
 		"container_image_autobuild",

@@ -257,8 +257,12 @@ func (r *DockerRunner) buildContainerEnv(cfg *config.Config, channelID, apiURL s
 }
 
 // addAuthEnv appends authentication environment variables to env.
-// Prefers OAuth token over API key.
+// Prefers OAuth token over API key. A localhost base URL is rewritten to
+// host.docker.internal, so a gateway on the host is reachable.
 func addAuthEnv(env []string, cfg *config.Config) []string {
+	if cfg.AnthropicBaseURL != "" {
+		env = append(env, "ANTHROPIC_BASE_URL="+localhostToDockerHost(cfg.AnthropicBaseURL))
+	}
 	if cfg.ClaudeCodeOAuthToken != "" {
 		return append(env, "CLAUDE_CODE_OAUTH_TOKEN="+cfg.ClaudeCodeOAuthToken)
 	}

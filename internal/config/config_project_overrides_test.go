@@ -80,6 +80,24 @@ func (s *ConfigSuite) TestLoadProjectConfigOverrides() {
 			},
 		},
 		{
+			name:        "BaseURL/Override",
+			projectJSON: `{"anthropic_base_url": "https://project-gateway.example.com"}`,
+			mainCfg:     &Config{AnthropicBaseURL: "https://gateway.example.com", AnthropicAPIKey: "sk-ant-global-api-key"},
+			assert: func(merged, main *Config) {
+				require.Equal(s.T(), "https://project-gateway.example.com", merged.AnthropicBaseURL)
+				require.Equal(s.T(), "sk-ant-global-api-key", merged.AnthropicAPIKey, "the base URL leaves auth alone")
+				require.Equal(s.T(), "https://gateway.example.com", main.AnthropicBaseURL)
+			},
+		},
+		{
+			name:        "BaseURL/NoOverride",
+			projectJSON: `{}`,
+			mainCfg:     &Config{AnthropicBaseURL: "https://gateway.example.com"},
+			assert: func(merged, _ *Config) {
+				require.Equal(s.T(), "https://gateway.example.com", merged.AnthropicBaseURL)
+			},
+		},
+		{
 			name:        "ClaudeBinPath/Override",
 			projectJSON: `{"claude_bin_path": "/custom/bin/claude"}`,
 			mainCfg:     &Config{ClaudeBinPath: "claude"},

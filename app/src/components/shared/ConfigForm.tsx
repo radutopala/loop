@@ -259,6 +259,9 @@ const itemTagStyle = (colors: ColorPalette): React.CSSProperties => ({
 
 const rowBorder = (colors: ColorPalette): React.CSSProperties => ({ borderBottom: `1px solid ${colors.border}` });
 
+// Text-like inputs scale with the panel so URLs and paths stay readable.
+const wideInput: React.CSSProperties = { width: "40%", minWidth: 180, maxWidth: 480, flexShrink: 0 };
+
 // ---------------------------------------------------------------------------
 // ConfigForm
 // ---------------------------------------------------------------------------
@@ -285,13 +288,19 @@ export const ConfigForm = forwardRef<ConfigFormHandle, ConfigFormProps>(function
     onDirtyChange?.(v);
   };
 
+  // A refetch that returns the file unchanged (React StrictMode runs the
+  // loading effect twice in dev) must not wipe what the user is typing.
+  const loadedRawRef = useRef<string | undefined>(undefined);
   useEffect(() => {
     if (!config) {
+      loadedRawRef.current = undefined;
       setFormData({});
       setJsonDraft("{\n  \n}\n");
       setDirty(false);
       return;
     }
+    if (config.raw === loadedRawRef.current) return;
+    loadedRawRef.current = config.raw;
     const parsed = (config.content ?? {}) as ConfigData;
     setFormData(parsed);
     setJsonDraft(config.raw ?? JSON.stringify(parsed, null, 2) + "\n");
@@ -620,7 +629,7 @@ function TextFieldRow({ field, value, onChange, colors, inputStyle }: { field: F
   return (
     <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, padding: "8px 12px", ...rowBorder(colors) }}>
       <FieldLabel field={field} colors={colors} />
-      <input type="text" value={value} onChange={(e) => onChange(e.target.value)} placeholder={field.placeholder} style={{ ...inputStyle, width: 180, flexShrink: 0 }} />
+      <input type="text" value={value} onChange={(e) => onChange(e.target.value)} placeholder={field.placeholder} style={{ ...inputStyle, ...wideInput }} />
     </div>
   );
 }
@@ -634,8 +643,8 @@ function PasswordFieldRow({ field, value, onChange, colors, inputStyle }: { fiel
   return (
     <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, padding: "8px 12px", ...rowBorder(colors) }}>
       <FieldLabel field={field} colors={colors} />
-      <div style={{ display: "flex", alignItems: "center", gap: 4, flexShrink: 0 }}>
-        <input type={show ? "text" : "password"} value={value} onChange={(e) => onChange(e.target.value)} placeholder={field.placeholder} style={{ ...inputStyle, width: 160 }} />
+      <div style={{ display: "flex", alignItems: "center", gap: 4, ...wideInput }}>
+        <input type={show ? "text" : "password"} value={value} onChange={(e) => onChange(e.target.value)} placeholder={field.placeholder} style={{ ...inputStyle, flex: 1, minWidth: 0 }} />
         <button
           onClick={() => setShow(!show)}
           title={show ? "Hide" : "Show"}
@@ -722,7 +731,7 @@ function DropdownFieldRow({ field, value, onChange, colors, inputStyle }: { fiel
   return (
     <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, padding: "8px 12px", ...rowBorder(colors) }}>
       <FieldLabel field={field} colors={colors} />
-      <select value={value} onChange={(e) => onChange(e.target.value)} style={{ ...inputStyle, width: 180, flexShrink: 0, cursor: "pointer" }}>
+      <select value={value} onChange={(e) => onChange(e.target.value)} style={{ ...inputStyle, ...wideInput, cursor: "pointer" }}>
         {(field.options ?? []).map((o) => (
           <option key={o} value={o}>
             {o || "(default)"}

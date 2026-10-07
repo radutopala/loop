@@ -38,6 +38,8 @@ type trustedFields struct {
 	BashShortcuts []BashShortcut         `json:"bash_shortcuts,omitempty"`
 	Browser       *trustedBrowser        `json:"browser,omitempty"`
 	Memory        *trustedMemory         `json:"memory,omitempty"`
+	// AnthropicBaseURL is where the global credentials are sent.
+	AnthropicBaseURL string `json:"anthropic_base_url,omitempty"`
 }
 
 // trustedBrowser is the part of the browser block that reaches the host:
@@ -68,6 +70,7 @@ func trustedFieldsOf(pc *projectConfig) trustedFields {
 		Gates:         pc.Gates,
 		BashShortcuts: pc.BashShortcuts,
 	}
+	t.AnthropicBaseURL = pc.AnthropicBaseURL
 	if b := pc.Browser; b != nil && (b.Mode != "" || b.HostCDPPort != nil || b.Extensions != nil || b.CookieImport != nil) {
 		t.Browser = &trustedBrowser{Mode: b.Mode, HostCDPPort: b.HostCDPPort, Extensions: b.Extensions, CookieImport: b.CookieImport}
 	}
@@ -87,6 +90,7 @@ func (t trustedFields) apply(pc *projectConfig) {
 	pc.Permissions = t.Permissions
 	pc.Gates = t.Gates
 	pc.BashShortcuts = t.BashShortcuts
+	pc.AnthropicBaseURL = t.AnthropicBaseURL
 	if pc.Browser != nil || t.Browser != nil {
 		if pc.Browser == nil {
 			pc.Browser = &jsonBrowserConfig{}

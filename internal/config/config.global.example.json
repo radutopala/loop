@@ -22,6 +22,10 @@
   //
   // Option 2: Anthropic API key — uses pay-per-token API pricing
   //"anthropic_api_key": "sk-ant-your-api-key-here",
+  //
+  // Optional: route Claude's API calls through a gateway or proxy
+  // (localhost = this machine)
+  //"anthropic_base_url": "https://llm-gateway.example.com",
 
   //"db_path": "~/.loop/loop.db",
   //"log_file": "~/.loop/loop.log",

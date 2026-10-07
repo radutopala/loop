@@ -309,6 +309,21 @@ func (s *ConfigSuite) TestAnthropicAPIKeyLoaded() {
 	require.Empty(s.T(), cfg.ClaudeCodeOAuthToken)
 }
 
+func (s *ConfigSuite) TestAnthropicBaseURLLoaded() {
+	s.loader.readFile = func(_ string) ([]byte, error) {
+		return []byte(`{
+			"platforms": ["discord"],
+			"discord_token": "tok",
+			"discord_app_id": "app",
+			"anthropic_base_url": "https://gateway.example.com"
+		}`), nil
+	}
+
+	cfg, err := s.loader.load()
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "https://gateway.example.com", cfg.AnthropicBaseURL)
+}
+
 func (s *ConfigSuite) TestAnthropicAPIKeyAbsent() {
 	s.loader.readFile = func(_ string) ([]byte, error) {
 		return s.minimalJSON(), nil
