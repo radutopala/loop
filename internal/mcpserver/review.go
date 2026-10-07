@@ -14,19 +14,37 @@ import (
 // registerReviewTools adds the review-session tools. Registered
 // unconditionally: outside a review run the daemon answers 404 (no review
 // session for the channel) and the tool surfaces that as an error result.
+// Every one of them acts on the agent's own channel; the daemon holds the
+// ones that change comments to it too.
 func (s *Server) registerReviewTools() {
 	mcp.AddTool(s.mcpServer, &mcp.Tool{
 		Name:        "report_review_findings",
 		Description: "Report code-review findings for the current channel's PR review session. Each finding needs the repo-relative file path, the 1-based line number, and a body describing the bug, the concrete inputs/state that trigger it, and the wrong output or crash. Side is RIGHT for added/modified lines (default) or LEFT for lines removed from the base. Call once with the full list; duplicates are skipped server-side.",
 	}, s.handleReportReviewFindings)
 	mcp.AddTool(s.mcpServer, &mcp.Tool{
-		Name:        "get_review_findings",
-		Description: "Read a channel's PR review session, as shown in the Review panel: the PR, head SHA, status, and every comment with its id, file, line, side, whether it was pushed to GitHub, and its source (agent, or github with the author and GitHub comment id). Filter to unpushed agent comments or one file. The PR diff is not included.",
-	}, s.handleGetReviewFindings)
+		Name:        "get_review_comments",
+		Description: "Read this channel's PR review session, as shown in the Review panel: the PR, head SHA, status, and every comment with its id, file, line, side, whether it was pushed to GitHub, and its source (agent, or github with the author and GitHub comment id), then its body. Filter to unpushed agent comments or one file. The PR diff is not included.",
+	}, s.handleGetReviewComments)
 	mcp.AddTool(s.mcpServer, &mcp.Tool{
 		Name:        "dedup_review_findings",
-		Description: "Run the final dedup pass over a channel's review session: an agent drops agent comments that repeat another comment on the same file, re-anchors misplaced ones, and notes related ones. GitHub comments are never deleted; removed comments that were already pushed are deleted from the PR too. Takes minutes; fails while a review run is in progress.",
+		Description: "Run the final dedup pass over this channel's review session: an agent drops agent comments that repeat another comment, re-anchors misplaced ones, and notes related ones. GitHub comments are never deleted; removed comments that were already pushed are deleted from the PR too. Takes minutes; fails while a review run is in progress.",
 	}, s.handleDedupReviewFindings)
+	mcp.AddTool(s.mcpServer, &mcp.Tool{
+		Name:        "delete_review_comment",
+		Description: "Delete an agent comment from this channel's review session, by the id get_review_comments shows. A comment already pushed is deleted from the PR too. GitHub comments (source github) are refused.",
+	}, s.handleDeleteReviewComment)
+	mcp.AddTool(s.mcpServer, &mcp.Tool{
+		Name:        "update_review_comment",
+		Description: "Replace the body of an unpushed agent comment in this channel's review session, e.g. to fold in what a duplicate you are deleting adds. Pushed and GitHub comments can't be edited.",
+	}, s.handleUpdateReviewComment)
+	mcp.AddTool(s.mcpServer, &mcp.Tool{
+		Name:        "push_review_comment",
+		Description: "Post one agent comment from this channel's review session to the PR on GitHub, as the configured gh user. A comment already pushed is left as is.",
+	}, s.handlePushReviewComment)
+	mcp.AddTool(s.mcpServer, &mcp.Tool{
+		Name:        "push_all_review_comments",
+		Description: "Post every unpushed agent comment in this channel's review session to the PR on GitHub, as the configured gh user. Reports how many were pushed and which failed.",
+	}, s.handlePushAllReviewComments)
 }
 
 type reviewFindingInput struct {
@@ -61,13 +79,12 @@ func (s *Server) handleReportReviewFindings(_ context.Context, _ *mcp.CallToolRe
 	}, nil, nil
 }
 
-type getReviewFindingsInput struct {
-	ChannelID    string `json:"channel_id,omitempty" jsonschema:"The channel or thread whose review session to read. Optional — defaults to the current channel/thread this agent is running in."`
+type getReviewCommentsInput struct {
 	UnpushedOnly bool   `json:"unpushed_only,omitempty" jsonschema:"Only agent comments not yet pushed to GitHub"`
 	Path         string `json:"path,omitempty" jsonschema:"Only comments on this repo-relative file path"`
 }
 
-// reviewComment is the part of a review comment get_review_findings shows.
+// reviewComment is the part of a review comment get_review_comments shows.
 type reviewComment struct {
 	ID       string `json:"id"`
 	Path     string `json:"path"`
@@ -97,20 +114,20 @@ type reviewSession struct {
 	} `json:"session"`
 }
 
-// reviewChannel returns the channel a review tool acts on: the one asked
-// for, or the agent's own.
-func (s *Server) reviewChannel(channelID string) string {
-	if channelID == "" {
-		return s.channelID
-	}
-	return channelID
+// reviewURL is the API URL of the agent's own review session, plus suffix.
+func (s *Server) reviewURL(suffix string) string {
+	return fmt.Sprintf("%s/api/channels/%s/review%s", s.apiURL, url.PathEscape(s.channelID), suffix)
 }
 
-func (s *Server) handleGetReviewFindings(_ context.Context, _ *mcp.CallToolRequest, input getReviewFindingsInput) (*mcp.CallToolResult, any, error) {
-	channelID := s.reviewChannel(input.ChannelID)
-	s.logger.Info("mcp tool call", "tool", "get_review_findings", "channel_id", channelID)
+// reviewCommentURL is the API URL of one comment in that session, plus suffix.
+func (s *Server) reviewCommentURL(commentID, suffix string) string {
+	return s.reviewURL("/comments/" + url.PathEscape(commentID) + suffix)
+}
 
-	apiURL := fmt.Sprintf("%s/api/channels/%s/review?diff=false", s.apiURL, url.PathEscape(channelID))
+func (s *Server) handleGetReviewComments(_ context.Context, _ *mcp.CallToolRequest, input getReviewCommentsInput) (*mcp.CallToolResult, any, error) {
+	s.logger.Info("mcp tool call", "tool", "get_review_comments", "channel_id", s.channelID)
+
+	apiURL := s.reviewURL("?diff=false")
 	resp, errResult, err := doAPICall[reviewSession](s, "GET", apiURL, http.StatusOK, nil)
 	if errResult != nil || err != nil {
 		return errResult, nil, err
@@ -171,9 +188,7 @@ func reviewCommentState(c reviewComment) string {
 	return strings.Join(parts, ", ")
 }
 
-type dedupReviewFindingsInput struct {
-	ChannelID string `json:"channel_id,omitempty" jsonschema:"The channel or thread whose review session to dedup. Optional — defaults to the current channel/thread this agent is running in."`
-}
+type dedupReviewFindingsInput struct{}
 
 type reviewDedupResult struct {
 	Removed  []string `json:"removed"`
@@ -195,12 +210,10 @@ type reviewDedupResult struct {
 	Errors  []string `json:"errors"`
 }
 
-func (s *Server) handleDedupReviewFindings(_ context.Context, _ *mcp.CallToolRequest, input dedupReviewFindingsInput) (*mcp.CallToolResult, any, error) {
-	channelID := s.reviewChannel(input.ChannelID)
-	s.logger.Info("mcp tool call", "tool", "dedup_review_findings", "channel_id", channelID)
+func (s *Server) handleDedupReviewFindings(_ context.Context, _ *mcp.CallToolRequest, _ dedupReviewFindingsInput) (*mcp.CallToolResult, any, error) {
+	s.logger.Info("mcp tool call", "tool", "dedup_review_findings", "channel_id", s.channelID)
 
-	apiURL := fmt.Sprintf("%s/api/channels/%s/review/dedup", s.apiURL, url.PathEscape(channelID))
-	res, errResult, err := doAPICall[reviewDedupResult](s, "POST", apiURL, http.StatusOK, nil)
+	res, errResult, err := doAPICall[reviewDedupResult](s, "POST", s.reviewURL("/dedup"), http.StatusOK, nil)
 	if errResult != nil || err != nil {
 		return errResult, nil, err
 	}
@@ -219,6 +232,79 @@ func (s *Server) handleDedupReviewFindings(_ context.Context, _ *mcp.CallToolReq
 	for _, r := range res.Related {
 		fmt.Fprintf(&b, "- related %s: %s\n", strings.Join(r.IDs, ", "), r.Reason)
 	}
+	for _, e := range res.Errors {
+		fmt.Fprintf(&b, "- error: %s\n", e)
+	}
+	return textResult(b.String()), nil, nil
+}
+
+type reviewCommentIDInput struct {
+	CommentID string `json:"comment_id" jsonschema:"required,The comment id, as get_review_comments shows it"`
+}
+
+func (s *Server) handleDeleteReviewComment(_ context.Context, _ *mcp.CallToolRequest, input reviewCommentIDInput) (*mcp.CallToolResult, any, error) {
+	s.logger.Info("mcp tool call", "tool", "delete_review_comment", "channel_id", s.channelID, "comment_id", input.CommentID)
+	if input.CommentID == "" {
+		return errorResult("comment_id is required"), nil, nil
+	}
+	if errResult, err := doAPICallNoBody(s, "DELETE", s.reviewCommentURL(input.CommentID, ""), http.StatusNoContent, nil); errResult != nil || err != nil {
+		return errResult, nil, err
+	}
+	return textResult(fmt.Sprintf("Deleted review comment %s.", input.CommentID)), nil, nil
+}
+
+type updateReviewCommentInput struct {
+	CommentID string `json:"comment_id" jsonschema:"required,The comment id, as get_review_comments shows it"`
+	Body      string `json:"body" jsonschema:"required,The comment's new body, replacing the old one"`
+}
+
+func (s *Server) handleUpdateReviewComment(_ context.Context, _ *mcp.CallToolRequest, input updateReviewCommentInput) (*mcp.CallToolResult, any, error) {
+	s.logger.Info("mcp tool call", "tool", "update_review_comment", "channel_id", s.channelID, "comment_id", input.CommentID)
+	if input.CommentID == "" {
+		return errorResult("comment_id is required"), nil, nil
+	}
+	if strings.TrimSpace(input.Body) == "" {
+		return errorResult("body is required"), nil, nil
+	}
+	data, _ := json.Marshal(map[string]string{"body": input.Body})
+	c, errResult, err := doAPICall[reviewComment](s, "PATCH", s.reviewCommentURL(input.CommentID, ""), http.StatusOK, data)
+	if errResult != nil || err != nil {
+		return errResult, nil, err
+	}
+	return textResult(fmt.Sprintf("Updated review comment %s at %s:%d.", c.ID, c.Path, c.Line)), nil, nil
+}
+
+func (s *Server) handlePushReviewComment(_ context.Context, _ *mcp.CallToolRequest, input reviewCommentIDInput) (*mcp.CallToolResult, any, error) {
+	s.logger.Info("mcp tool call", "tool", "push_review_comment", "channel_id", s.channelID, "comment_id", input.CommentID)
+	if input.CommentID == "" {
+		return errorResult("comment_id is required"), nil, nil
+	}
+	type pushResult struct {
+		Already bool `json:"already"`
+	}
+	res, errResult, err := doAPICall[pushResult](s, "POST", s.reviewCommentURL(input.CommentID, "/push"), http.StatusOK, nil)
+	if errResult != nil || err != nil {
+		return errResult, nil, err
+	}
+	if res.Already {
+		return textResult(fmt.Sprintf("Review comment %s was already pushed.", input.CommentID)), nil, nil
+	}
+	return textResult(fmt.Sprintf("Pushed review comment %s to the PR.", input.CommentID)), nil, nil
+}
+
+func (s *Server) handlePushAllReviewComments(_ context.Context, _ *mcp.CallToolRequest, _ struct{}) (*mcp.CallToolResult, any, error) {
+	s.logger.Info("mcp tool call", "tool", "push_all_review_comments", "channel_id", s.channelID)
+	type pushAllResult struct {
+		Pushed int      `json:"pushed"`
+		Failed int      `json:"failed"`
+		Errors []string `json:"errors"`
+	}
+	res, errResult, err := doAPICall[pushAllResult](s, "POST", s.reviewURL("/push-all"), http.StatusOK, nil)
+	if errResult != nil || err != nil {
+		return errResult, nil, err
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "Pushed %d review comment(s) to the PR; %d failed.\n", res.Pushed, res.Failed)
 	for _, e := range res.Errors {
 		fmt.Fprintf(&b, "- error: %s\n", e)
 	}

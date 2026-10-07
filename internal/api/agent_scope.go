@@ -83,6 +83,10 @@ var agentRoutes = []string{
 	"GET /api/channels/{id}/review",
 	"POST /api/channels/{id}/review/run",
 	"POST /api/channels/{id}/review/dedup",
+	"DELETE /api/channels/{id}/review/comments/{cid}",
+	"PATCH /api/channels/{id}/review/comments/{cid}",
+	"POST /api/channels/{id}/review/comments/{cid}/push",
+	"POST /api/channels/{id}/review/push-all",
 
 	"POST /api/channels/{id}/quality/scan",
 	"GET /api/channels/{id}/quality/snapshot",
@@ -98,6 +102,16 @@ var agentRoutes = []string{
 	"GET /api/channels/{id}/quality/clones",
 
 	"POST /api/browser/action",
+}
+
+// ownChannelRoutes change a review session's comments, and through a push
+// or a delete the PR on GitHub, as the user. An agent may make them only for
+// its own channel, not for every channel in its project.
+var ownChannelRoutes = map[string]bool{
+	"DELETE /api/channels/{id}/review/comments/{cid}":    true,
+	"PATCH /api/channels/{id}/review/comments/{cid}":     true,
+	"POST /api/channels/{id}/review/comments/{cid}/push": true,
+	"POST /api/channels/{id}/review/push-all":            true,
 }
 
 // publicRoutes need no API token. The container-approval route checks its
@@ -152,6 +166,10 @@ func (s *Server) agentGuard(next http.Handler) http.Handler {
 func (s *Server) agentRefusal(r *http.Request, pattern string) string {
 	ctx := r.Context()
 	p, _ := apiauth.PrincipalFrom(ctx)
+
+	if ownChannelRoutes[pattern] && r.PathValue("id") != p.ChannelID {
+		return "agents can only change review comments in their own channel"
+	}
 
 	var channels, dirs []string
 	if id := r.PathValue("id"); id != "" {

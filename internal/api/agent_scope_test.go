@@ -145,6 +145,21 @@ func (s *AgentScopeSuite) TestGuard() {
 		{name: "project bash shortcut", tok: "agent", method: "POST", target: "/api/bash-shortcuts", body: `{"scope":"project","channel_id":"ch1"}`, want: 200},
 		{name: "global bash shortcut", tok: "agent", method: "POST", target: "/api/bash-shortcuts", body: `{"scope":"global"}`, want: 403, wantMsg: "project bash shortcuts"},
 		{name: "workflow run", tok: "agent", method: "POST", target: "/api/workflows/runs", body: `{"channel_id":"ch1"}`, want: 200},
+
+		// Changing review comments, on the PR too, is held to the agent's own
+		// channel: a channel in the same project isn't enough.
+		{name: "delete own review comment", tok: "agent", method: "DELETE", target: "/api/channels/ch1/review/comments/c1", want: 200},
+		{name: "edit own review comment", tok: "agent", method: "PATCH", target: "/api/channels/ch1/review/comments/c1", body: `{"body":"x"}`, want: 200},
+		{name: "push own review comment", tok: "agent", method: "POST", target: "/api/channels/ch1/review/comments/c1/push", want: 200},
+		{name: "push all own review comments", tok: "agent", method: "POST", target: "/api/channels/ch1/review/push-all", want: 200},
+		{name: "delete review comment in project channel", tok: "agent", method: "DELETE", target: "/api/channels/ch2/review/comments/c1", want: 403, wantMsg: "own channel"},
+		{name: "edit review comment in project channel", tok: "agent", method: "PATCH", target: "/api/channels/ch2/review/comments/c1", body: `{"body":"x"}`, want: 403, wantMsg: "own channel"},
+		{name: "push review comment in project channel", tok: "agent", method: "POST", target: "/api/channels/ch2/review/comments/c1/push", want: 403, wantMsg: "own channel"},
+		{name: "push all in project channel", tok: "agent", method: "POST", target: "/api/channels/ch2/review/push-all", want: 403, wantMsg: "own channel"},
+		{name: "push all in other project channel", tok: "agent", method: "POST", target: "/api/channels/ch3/review/push-all", want: 403, wantMsg: "own channel"},
+		{name: "owner pushes any channel's comments", tok: "owner", method: "POST", target: "/api/channels/ch3/review/push-all", want: 200},
+		// Reading and deduping keep the project-wide scope.
+		{name: "read review in project channel", tok: "agent", method: "GET", target: "/api/channels/ch2/review", want: 200},
 	}
 	for _, tc := range tests {
 		s.Run(tc.name, func() {

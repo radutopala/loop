@@ -334,10 +334,14 @@ failed stays in the panel and is listed under `errors`. Neither case fails
 the command. A run already in flight on the channel makes it fail with a
 `409`.
 
-Agents reach the same session through MCP tools: `get_review_findings`
-reads the PR and its comments (without the diff), optionally only the
-unpushed agent comments or one file, and `dedup_review_findings` runs the
-dedup pass. See [MCP server](mcpserver.md#review).
+Agents reach their own channel's session through MCP tools:
+`get_review_comments` reads the PR and its comments (without the diff),
+optionally only the unpushed agent comments or one file;
+`dedup_review_findings` runs the dedup pass; `delete_review_comment`,
+`update_review_comment`, `push_review_comment` and
+`push_all_review_comments` manage single comments. An agent can't delete a
+GitHub comment or act on another channel's session. See
+[MCP server](mcpserver.md#review).
 
 ## Status transitions
 

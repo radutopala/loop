@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"testing"
 
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
 )
@@ -69,7 +70,7 @@ const reviewSessionJSON = `{"present":true,"session":{
 		{"id":"c4","path":"a.go","line":7,"side":"RIGHT","body":"no source","pushed":false}
 	]}}`
 
-func (s *ReviewToolSuite) TestGetReviewFindings() {
+func (s *ReviewToolSuite) TestGetReviewComments() {
 	cases := []struct {
 		name        string
 		args        map[string]any
@@ -100,9 +101,9 @@ func (s *ReviewToolSuite) TestGetReviewFindings() {
 			notContains: []string{"[c2]", "[c3]"},
 		},
 		{
-			name:        "one file of another channel",
-			args:        map[string]any{"channel_id": "other", "path": "b.go"},
-			wantURL:     "http://localhost:8222/api/channels/other/review?diff=false",
+			name:        "one file",
+			args:        map[string]any{"path": "b.go"},
+			wantURL:     "http://localhost:8222/api/channels/test-channel/review?diff=false",
 			contains:    []string{"1 of 4 comment(s):", "[c2]"},
 			notContains: []string{"[c1]", "[c3]", "[c4]"},
 		},
@@ -114,7 +115,7 @@ func (s *ReviewToolSuite) TestGetReviewFindings() {
 				gotURL = req.URL.String()
 				return jsonResponse(200, reviewSessionJSON), nil
 			}
-			text, isError := s.callTool("get_review_findings", tc.args)
+			text, isError := s.callTool("get_review_comments", tc.args)
 			require.False(s.T(), isError)
 			require.Equal(s.T(), tc.wantURL, gotURL)
 			for _, want := range tc.contains {
@@ -127,27 +128,27 @@ func (s *ReviewToolSuite) TestGetReviewFindings() {
 	}
 }
 
-func (s *ReviewToolSuite) TestGetReviewFindingsNoPRAndError() {
+func (s *ReviewToolSuite) TestGetReviewCommentsNoPRAndError() {
 	s.httpClient.doFunc = func(*http.Request) (*http.Response, error) {
 		return jsonResponse(200, `{"present":true,"session":{"status":"error","error":"gh failed","comments":[]}}`), nil
 	}
-	text, isError := s.callTool("get_review_findings", map[string]any{})
+	text, isError := s.callTool("get_review_comments", map[string]any{})
 	require.False(s.T(), isError)
 	require.Equal(s.T(), "head_sha: \nstatus: error\nerror: gh failed\n\n0 of 0 comment(s):\n", text)
 }
 
-func (s *ReviewToolSuite) TestGetReviewFindingsNoSession() {
+func (s *ReviewToolSuite) TestGetReviewCommentsNoSession() {
 	s.httpClient.doFunc = func(*http.Request) (*http.Response, error) {
 		return jsonResponse(200, `{"present":false}`), nil
 	}
-	text, isError := s.callTool("get_review_findings", map[string]any{})
+	text, isError := s.callTool("get_review_comments", map[string]any{})
 	require.False(s.T(), isError)
 	require.Contains(s.T(), text, "No review session for this channel")
 }
 
-func (s *ReviewToolSuite) TestGetReviewFindingsErrors() {
+func (s *ReviewToolSuite) TestGetReviewCommentsErrors() {
 	s.runToolErrorCases(toolErrorSpec{
-		tool:         "get_review_findings",
+		tool:         "get_review_comments",
 		args:         map[string]any{},
 		apiStatus:    403,
 		apiBody:      `channel x is outside this agent's project`,
@@ -176,9 +177,9 @@ func (s *ReviewToolSuite) TestDedupReviewFindings() {
 		},
 		{
 			name:    "nothing to check",
-			args:    map[string]any{"channel_id": "other"},
+			args:    map[string]any{},
 			body:    `{"removed":[],"clusters":[],"related":[],"moved":[],"checked":0}`,
-			wantURL: "http://localhost:8222/api/channels/other/review/dedup",
+			wantURL: "http://localhost:8222/api/channels/test-channel/review/dedup",
 			want:    "Nothing to dedup: no file has an agent comment next to another comment.",
 		},
 	}
@@ -206,4 +207,139 @@ func (s *ReviewToolSuite) TestDedupReviewFindingsErrors() {
 		apiBody:      `a review run is in progress`,
 		decodeStatus: 200,
 	})
+}
+
+// The review tools act on the agent's own channel only: none takes a
+// channel_id, so naming another channel is refused before any API call.
+func (s *ReviewToolSuite) TestReviewToolsRefuseAnotherChannel() {
+	tools := map[string]map[string]any{
+		"get_review_comments":      {},
+		"dedup_review_findings":    {},
+		"delete_review_comment":    {"comment_id": "c1"},
+		"update_review_comment":    {"comment_id": "c1", "body": "b"},
+		"push_review_comment":      {"comment_id": "c1"},
+		"push_all_review_comments": {},
+	}
+	for tool, args := range tools {
+		s.Run(tool, func() {
+			called := false
+			s.httpClient.doFunc = func(*http.Request) (*http.Response, error) {
+				called = true
+				return jsonResponse(200, `{}`), nil
+			}
+			withChannel := map[string]any{"channel_id": "other"}
+			for k, v := range args {
+				withChannel[k] = v
+			}
+			res, err := s.session.CallTool(s.ctx, &mcp.CallToolParams{Name: tool, Arguments: withChannel})
+			if err == nil {
+				require.True(s.T(), res.IsError)
+			}
+			require.False(s.T(), called)
+		})
+	}
+}
+
+func (s *ReviewToolSuite) TestReviewCommentTools() {
+	cases := []struct {
+		name       string
+		tool       string
+		args       map[string]any
+		respStatus int
+		respBody   string
+		wantMethod string
+		wantURL    string
+		wantBody   string
+		want       string
+	}{
+		{
+			name: "delete", tool: "delete_review_comment", args: map[string]any{"comment_id": "c/1"},
+			respStatus: 204, wantMethod: "DELETE",
+			wantURL: "http://localhost:8222/api/channels/test-channel/review/comments/c%2F1",
+			want:    "Deleted review comment c/1.",
+		},
+		{
+			name: "update", tool: "update_review_comment", args: map[string]any{"comment_id": "c1", "body": "Nil map write.\n\nAlso flagged: reload."},
+			respStatus: 200, respBody: `{"id":"c1","path":"a.go","line":3,"body":"Nil map write.\n\nAlso flagged: reload."}`,
+			wantMethod: "PATCH", wantURL: "http://localhost:8222/api/channels/test-channel/review/comments/c1",
+			wantBody: `{"body":"Nil map write.\n\nAlso flagged: reload."}`,
+			want:     "Updated review comment c1 at a.go:3.",
+		},
+		{
+			name: "push", tool: "push_review_comment", args: map[string]any{"comment_id": "c1"},
+			respStatus: 200, respBody: `{"pushed":true}`,
+			wantMethod: "POST", wantURL: "http://localhost:8222/api/channels/test-channel/review/comments/c1/push",
+			want: "Pushed review comment c1 to the PR.",
+		},
+		{
+			name: "push already pushed", tool: "push_review_comment", args: map[string]any{"comment_id": "c1"},
+			respStatus: 200, respBody: `{"pushed":true,"already":true}`,
+			wantMethod: "POST", wantURL: "http://localhost:8222/api/channels/test-channel/review/comments/c1/push",
+			want: "Review comment c1 was already pushed.",
+		},
+		{
+			name: "push all", tool: "push_all_review_comments", args: map[string]any{},
+			respStatus: 200, respBody: `{"pushed":2,"failed":1,"errors":["c3: 422"]}`,
+			wantMethod: "POST", wantURL: "http://localhost:8222/api/channels/test-channel/review/push-all",
+			want: "Pushed 2 review comment(s) to the PR; 1 failed.\n- error: c3: 422\n",
+		},
+	}
+	for _, tc := range cases {
+		s.Run(tc.name, func() {
+			var gotMethod, gotURL, gotBody string
+			s.httpClient.doFunc = func(req *http.Request) (*http.Response, error) {
+				gotMethod, gotURL = req.Method, req.URL.String()
+				if req.Body != nil {
+					b, _ := io.ReadAll(req.Body)
+					gotBody = string(b)
+				}
+				if tc.respBody == "" {
+					return noContentResponse(tc.respStatus), nil
+				}
+				return jsonResponse(tc.respStatus, tc.respBody), nil
+			}
+			text, isError := s.callTool(tc.tool, tc.args)
+			require.False(s.T(), isError, text)
+			require.Equal(s.T(), tc.wantMethod, gotMethod)
+			require.Equal(s.T(), tc.wantURL, gotURL)
+			require.Equal(s.T(), tc.wantBody, gotBody)
+			require.Equal(s.T(), tc.want, text)
+		})
+	}
+}
+
+func (s *ReviewToolSuite) TestReviewCommentToolsNeedArgs() {
+	cases := []struct {
+		tool string
+		args map[string]any
+		want string
+	}{
+		{"delete_review_comment", map[string]any{"comment_id": ""}, "comment_id is required"},
+		{"update_review_comment", map[string]any{"comment_id": "", "body": "b"}, "comment_id is required"},
+		{"update_review_comment", map[string]any{"comment_id": "c1", "body": "  "}, "body is required"},
+		{"push_review_comment", map[string]any{"comment_id": ""}, "comment_id is required"},
+	}
+	for _, tc := range cases {
+		s.Run(tc.tool+" "+tc.want, func() {
+			s.httpClient.doFunc = func(*http.Request) (*http.Response, error) {
+				s.T().Fatal("no API call expected")
+				return nil, nil
+			}
+			text, isError := s.callTool(tc.tool, tc.args)
+			require.True(s.T(), isError)
+			require.Equal(s.T(), tc.want, text)
+		})
+	}
+}
+
+func (s *ReviewToolSuite) TestReviewCommentToolsErrors() {
+	specs := []toolErrorSpec{
+		{tool: "delete_review_comment", args: map[string]any{"comment_id": "gh-1"}, apiStatus: 403, apiBody: "agents can only delete agent comments"},
+		{tool: "update_review_comment", args: map[string]any{"comment_id": "c1", "body": "b"}, apiStatus: 409, apiBody: "only unpushed agent comments can be edited", decodeStatus: 200},
+		{tool: "push_review_comment", args: map[string]any{"comment_id": "c1"}, apiStatus: 404, apiBody: "comment not found", decodeStatus: 200},
+		{tool: "push_all_review_comments", args: map[string]any{}, apiStatus: 403, apiBody: "agents can only change review comments in their own channel", decodeStatus: 200},
+	}
+	for _, spec := range specs {
+		s.Run(spec.tool, func() { s.runToolErrorCases(spec) })
+	}
 }

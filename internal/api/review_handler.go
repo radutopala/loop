@@ -10,6 +10,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"github.com/radutopala/loop/internal/apiauth"
 	"github.com/radutopala/loop/internal/githubapi"
 	"github.com/radutopala/loop/internal/review"
 )
@@ -624,6 +625,12 @@ func (s *reviewService) handleReviewDeleteComment(w http.ResponseWriter, r *http
 		http.Error(w, "comment not found", http.StatusNotFound)
 		return
 	}
+	// A GitHub comment is someone's, the user's own included. The user may
+	// delete theirs from the panel; an agent may not delete any.
+	if c.Source == "github" && apiauth.IsAgent(r.Context()) {
+		http.Error(w, "agents can only delete agent comments", http.StatusForbidden)
+		return
+	}
 
 	if err := s.deleteOneComment(r.Context(), channelID, c); err != nil {
 		var herr *reviewHTTPError
@@ -635,6 +642,46 @@ func (s *reviewService) handleReviewDeleteComment(w http.ResponseWriter, r *http
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// handleReviewUpdateComment replaces a comment's body, as when folding what
+// a duplicate added into the comment kept. Only an unpushed agent comment
+// can change: a GitHub comment isn't ours, and a pushed one would drift
+// from its copy on the PR. Answers the updated comment and broadcasts it.
+func (s *reviewService) handleReviewUpdateComment(w http.ResponseWriter, r *http.Request) {
+	if s.sessions == nil {
+		http.Error(w, "review service not configured", http.StatusNotImplemented)
+		return
+	}
+	var body struct {
+		Body string `json:"body"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		http.Error(w, "invalid JSON body: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	text := strings.TrimSpace(body.Body)
+	if text == "" {
+		http.Error(w, "body is required", http.StatusBadRequest)
+		return
+	}
+	channelID := r.PathValue("id")
+	commentID := r.PathValue("cid")
+	c, sess := s.sessions.FindComment(channelID, commentID)
+	if sess == nil {
+		http.Error(w, "no review session for channel", http.StatusNotFound)
+		return
+	}
+	if c == nil {
+		http.Error(w, "comment not found", http.StatusNotFound)
+		return
+	}
+	updated := s.editComment(channelID, commentID, func(c *review.Comment) { c.Body = text })
+	if updated == nil {
+		http.Error(w, "only unpushed agent comments can be edited", http.StatusConflict)
+		return
+	}
+	writeHTTPJSON(w, http.StatusOK, updated, s.deps.logger)
 }
 
 // reviewHTTPError is an error that carries the HTTP status to answer with.

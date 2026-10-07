@@ -487,6 +487,7 @@ func (s *Server) registerReviewRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("PUT /api/channels/{id}/review/agent", s.review.handleReviewSetAgent)
 	mux.HandleFunc("POST /api/channels/{id}/review/comments/{cid}/push", s.review.handleReviewPushComment)
 	mux.HandleFunc("DELETE /api/channels/{id}/review/comments/{cid}", s.review.handleReviewDeleteComment)
+	mux.HandleFunc("PATCH /api/channels/{id}/review/comments/{cid}", s.review.handleReviewUpdateComment)
 	mux.HandleFunc("POST /api/channels/{id}/review/push-all", s.review.handleReviewPushAll)
 	mux.HandleFunc("POST /api/channels/{id}/review/comments", s.review.handleReviewIngestComments)
 }
@@ -513,6 +514,8 @@ func (s *Server) registerFileRoutes(mux *http.ServeMux) {
 }
 
 // registerPlaygroundRoutes registers the playground and public-share routes.
+//
+//nolint:dupl // route registrars are intentionally parallel lists
 func (s *Server) registerPlaygroundRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("PUT /api/playground", s.playground.handlePlaygroundUpdate)
 	mux.HandleFunc("GET /api/playground", s.playground.handlePlaygroundGet)

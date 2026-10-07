@@ -158,6 +158,8 @@ var readOnlyDisallowedTools = []string{
 	"mcp__loop__playground", "mcp__loop__playground_file", "mcp__loop__playground_share",
 	"mcp__loop__chat_component", "mcp__loop__index_memory", "mcp__loop__quality_scan",
 	"mcp__loop__report_review_findings", "mcp__loop__dedup_review_findings",
+	"mcp__loop__delete_review_comment", "mcp__loop__update_review_comment",
+	"mcp__loop__push_review_comment", "mcp__loop__push_all_review_comments",
 }
 
 // runSettings is the --settings payload for every Loop run, batch and
