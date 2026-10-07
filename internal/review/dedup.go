@@ -10,13 +10,15 @@ import (
 	"unicode/utf8"
 )
 
-// The final dedup pass. AddComment already drops a finding that repeats one
-// on a nearby line in similar words, but a later round can reword a finding
-// past that similarity threshold, anchor it further away or in another file,
-// or report a symptom of an issue another finding names the cause of. After a
-// multi-round review a model reads everything the session holds and groups
+// The dedup pass. AddComment drops only a finding reported twice verbatim
+// (an agent retry); a later round re-derives its findings, so it rewords
+// them, anchors them elsewhere, or reports a symptom of an issue another
+// finding names the cause of. Judging that takes a model, so after a
+// multi-round review one reads everything the session holds and groups
 // the comments by root cause; every group keeps one comment and the rest are
-// deleted (see ParseDedupReply).
+// deleted (see ParseDedupReply). A comment that bundles several issues, one
+// of which another comment covers, can't be dropped without losing the
+// rest, so the model may trim it to the part nothing else covers instead.
 
 // DedupCluster is one group of comments the model judged to report the same
 // issue: Keep stays, Drop is deleted. Reason says what they share; Note is
@@ -43,11 +45,22 @@ type DedupMove struct {
 	Line int    `json:"line"`
 }
 
+// DedupTrim rewrites a comment that bundles several issues to only the
+// ones nothing else covers: CoveredBy is the comment that already reports
+// the part cut out, Body the rewritten comment.
+type DedupTrim struct {
+	ID        string `json:"id"`
+	CoveredBy string `json:"covered_by"`
+	Body      string `json:"body"`
+	Reason    string `json:"reason,omitempty"`
+}
+
 // DedupPlan is the model's reply once checked against the candidates.
 type DedupPlan struct {
 	Clusters []DedupCluster
 	Related  []DedupRelated
 	Moves    []DedupMove
+	Trims    []DedupTrim
 }
 
 // dedupReply is the JSON object the model answers with.
@@ -55,6 +68,7 @@ type dedupReply struct {
 	Clusters []DedupCluster `json:"clusters"`
 	Related  []DedupRelated `json:"related"`
 	Moves    []DedupMove    `json:"moves"`
+	Trims    []DedupTrim    `json:"trims"`
 }
 
 // dedupBodyMax caps each comment body in the prompt. Enough to tell two
@@ -97,17 +111,19 @@ func BuildDedupPrompt(cands []*Comment) string {
 
 Rules:
 - Two comments are the same issue when they share a root cause, so that one change fixes both. That holds across files (say, where a value is built and where it is used), and when one comment describes the cause and the other a symptom or consequence of it. The same wording about separate places that each need their own fix is not the same issue.
+- If fixing the kept comment's root cause also resolves the other comment, the other is a duplicate, even when a narrower fix for it alone exists.
+- A comment can bundle several issues. It duplicates any comment that reports one of them. Prefer keeping the bundled comment and dropping the single-issue one into it. When the single-issue one should be kept instead (a [github] comment, or more severe or specific), keep it and list the bundled [agent] comment under "trims": "covered_by" is the comment that reports the shared issue, and "body" is the bundled comment rewritten to only the issues nothing else covers, in its own words. Never trim a comment down to nothing; drop it instead.
 - In each group, keep one comment. Keep a [github] comment if one covers the issue, since those are never removed. Otherwise keep the most severe and specific one: the one naming the worst concrete consequence, then the one anchored where the fix goes, then the clearer one.
 - "reason": one short sentence on what the group has in common.
 - "note": one or two sentences on what the dropped comments raise that the kept one does not, such as another consequence or another place the fix must cover. It is appended to the kept comment. Leave it empty when they add nothing.
 - Only [agent] comments may be dropped.
-- Comments about the same code path or behaviour that still need separate fixes are related, not duplicates: list them under "related" with a reason. Nothing is dropped for them.
+- Comments about the same code path or behaviour that still need separate fixes, where fixing either one leaves the other standing, are related, not duplicates: list them under "related" with a reason. Nothing is dropped for them.
 - The line numbers were often counted from diff hunks and can be a few lines off. For every [agent] comment you don't drop, read its file with line numbers (the Read tool shows them) and check that its line is the statement the finding is about. When it isn't, as when it sits on a blank line, a lone closing brace, or a neighbouring statement, list the right line in the same file under "moves".
 - You may read the files in your working directory. Do not change anything.
 
 Reply with only a JSON object, no other text:
-{"clusters":[{"keep":"<id>","drop":["<id>"],"reason":"...","note":"..."}],"related":[{"ids":["<id>","<id>"],"reason":"..."}],"moves":[{"id":"<id>","line":0}]}
-Leave out comments that have no duplicate, nothing related, and the right line. If there are none, reply {"clusters":[],"related":[],"moves":[]}.
+{"clusters":[{"keep":"<id>","drop":["<id>"],"reason":"...","note":"..."}],"trims":[{"id":"<id>","covered_by":"<id>","body":"...","reason":"..."}],"related":[{"ids":["<id>","<id>"],"reason":"..."}],"moves":[{"id":"<id>","line":0}]}
+Leave out comments that have no duplicate, nothing related, and the right line. If there are none, reply {"clusters":[],"trims":[],"related":[],"moves":[]}.
 
 Comments, by file:
 `)
@@ -148,8 +164,12 @@ func oneLine(body string, limit int) string {
 // standing for its keeper, and need two distinct ones. A move counts only
 // for a kept agent comment, to a positive line within nearbyLines of where
 // it was, since a correction is a nudge, not a new finding; the first move
-// named for an id wins. An error means the reply held no parseable JSON
-// object.
+// named for an id wins. A trim counts only for a kept agent comment, covered
+// by another known comment (a dropped one standing for its keeper), to a
+// non-empty body shorter than the one it replaces; a comment is trimmed
+// once, and a trimmed comment can't cover another trim, so two bundles
+// can't each cut the issue they share and lose it. An error means the
+// reply held no parseable JSON object.
 func ParseDedupReply(reply string, cands []*Comment) (DedupPlan, error) {
 	start, end := strings.Index(reply, "{"), strings.LastIndex(reply, "}")
 	if start < 0 || end < start {
@@ -211,6 +231,22 @@ func ParseDedupReply(reply string, cands []*Comment) (DedupPlan, error) {
 		}
 		moved[mv.ID] = true
 		plan.Moves = append(plan.Moves, mv)
+	}
+	trimmed, covers := map[string]bool{}, map[string]bool{}
+	for _, tr := range parsed.Trims {
+		c := byID[tr.ID]
+		cover := tr.CoveredBy
+		if keep := keeperOf[cover]; keep != "" {
+			cover = keep
+		}
+		body := strings.TrimSpace(tr.Body)
+		if c == nil || !deletable(c) || keeperOf[tr.ID] != "" || trimmed[tr.ID] || covers[tr.ID] ||
+			byID[cover] == nil || cover == tr.ID || trimmed[cover] ||
+			body == "" || len(body) >= len(strings.TrimSpace(c.Body)) {
+			continue
+		}
+		trimmed[tr.ID], covers[cover] = true, true
+		plan.Trims = append(plan.Trims, DedupTrim{ID: tr.ID, CoveredBy: cover, Body: body, Reason: strings.TrimSpace(tr.Reason)})
 	}
 	return plan, nil
 }

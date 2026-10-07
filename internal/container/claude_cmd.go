@@ -139,7 +139,7 @@ var readOnlyTools = []string{"Read", "Grep", "Glob", "TodoWrite", "ToolSearch"}
 
 // readOnlyDisallowedTools are the Loop MCP tools denied on top of the batch
 // denials in a read-only run. They may not change Loop's config, tasks, threads,
-// workflows, playgrounds, quality snapshots, memory index or agent status,
+// workflows, playgrounds, quality snapshots, review comments, memory index or agent status,
 // or talk to anyone. The loop tools that only read (list_*, show_task,
 // get_*, search_*, the quality_* reports besides quality_scan, and
 // quality_whatif, which only simulates) stay allowed. Its MCP config holds
@@ -157,7 +157,9 @@ var readOnlyDisallowedTools = []string{
 	"mcp__loop__resume_workflow_run", "mcp__loop__retry_workflow_run",
 	"mcp__loop__playground", "mcp__loop__playground_file", "mcp__loop__playground_share",
 	"mcp__loop__chat_component", "mcp__loop__index_memory", "mcp__loop__quality_scan",
-	"mcp__loop__report_review_findings",
+	"mcp__loop__report_review_findings", "mcp__loop__dedup_review_findings",
+	"mcp__loop__delete_review_comment", "mcp__loop__update_review_comment",
+	"mcp__loop__push_review_comment", "mcp__loop__push_all_review_comments",
 }
 
 // runSettings is the --settings payload for every Loop run, batch and

@@ -10,6 +10,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"github.com/radutopala/loop/internal/apiauth"
 	"github.com/radutopala/loop/internal/githubapi"
 	"github.com/radutopala/loop/internal/review"
 )
@@ -324,6 +325,11 @@ func (s *reviewService) handleReviewGet(w http.ResponseWriter, r *http.Request) 
 		writeHTTPJSON(w, http.StatusOK, reviewSessionResponse{Present: false}, s.deps.logger)
 		return
 	}
+	// ?diff=false leaves out the PR diff, by far the largest field, for
+	// callers that only want the comments. Get returns a copy.
+	if r.URL.Query().Get("diff") == "false" {
+		sess.RawDiff = ""
+	}
 	writeHTTPJSON(w, http.StatusOK, reviewSessionResponse{Present: true, Session: sess}, s.deps.logger)
 }
 
@@ -619,6 +625,12 @@ func (s *reviewService) handleReviewDeleteComment(w http.ResponseWriter, r *http
 		http.Error(w, "comment not found", http.StatusNotFound)
 		return
 	}
+	// A GitHub comment is someone's, the user's own included. The user may
+	// delete theirs from the panel; an agent may not delete any.
+	if c.Source == "github" && apiauth.IsAgent(r.Context()) {
+		http.Error(w, "agents can only delete agent comments", http.StatusForbidden)
+		return
+	}
 
 	if err := s.deleteOneComment(r.Context(), channelID, c); err != nil {
 		var herr *reviewHTTPError
@@ -630,6 +642,46 @@ func (s *reviewService) handleReviewDeleteComment(w http.ResponseWriter, r *http
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// handleReviewUpdateComment replaces a comment's body, as when folding what
+// a duplicate added into the comment kept. Only an unpushed agent comment
+// can change: a GitHub comment isn't ours, and a pushed one would drift
+// from its copy on the PR. Answers the updated comment and broadcasts it.
+func (s *reviewService) handleReviewUpdateComment(w http.ResponseWriter, r *http.Request) {
+	if s.sessions == nil {
+		http.Error(w, "review service not configured", http.StatusNotImplemented)
+		return
+	}
+	var body struct {
+		Body string `json:"body"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		http.Error(w, "invalid JSON body: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	text := strings.TrimSpace(body.Body)
+	if text == "" {
+		http.Error(w, "body is required", http.StatusBadRequest)
+		return
+	}
+	channelID := r.PathValue("id")
+	commentID := r.PathValue("cid")
+	c, sess := s.sessions.FindComment(channelID, commentID)
+	if sess == nil {
+		http.Error(w, "no review session for channel", http.StatusNotFound)
+		return
+	}
+	if c == nil {
+		http.Error(w, "comment not found", http.StatusNotFound)
+		return
+	}
+	updated := s.editComment(channelID, commentID, func(c *review.Comment) { c.Body = text })
+	if updated == nil {
+		http.Error(w, "only unpushed agent comments can be edited", http.StatusConflict)
+		return
+	}
+	writeHTTPJSON(w, http.StatusOK, updated, s.deps.logger)
 }
 
 // reviewHTTPError is an error that carries the HTTP status to answer with.
@@ -859,6 +911,7 @@ type reviewDedupResult struct {
 	Clusters []reviewDedupCluster  `json:"clusters"`
 	Related  []review.DedupRelated `json:"related"`
 	Moved    []reviewDedupMove     `json:"moved"`
+	Trimmed  []reviewDedupTrim     `json:"trimmed"`
 	Checked  int                   `json:"checked"`
 	Errors   []string              `json:"errors,omitempty"`
 }
@@ -882,12 +935,22 @@ type reviewDedupMove struct {
 	To   int    `json:"to"`
 }
 
+// reviewDedupTrim reports a bundled comment the pass cut down to the issues
+// no other comment covers; CoveredBy reports the part cut out.
+type reviewDedupTrim struct {
+	ID        string `json:"id"`
+	CoveredBy string `json:"covered_by"`
+	Reason    string `json:"reason,omitempty"`
+}
+
 // handleReviewDedup runs the final dedup pass over the channel's review
 // session, the last step of a multi-round review loop. It refreshes the
 // session (so the PR's GitHub comments are current), has a read-only agent
 // group the comments that report the same issue (review.BuildDedupPrompt),
 // and deletes every group's extra agent comments, on GitHub too when they
-// were pushed. GitHub comments are never deleted.
+// were pushed. GitHub comments are never deleted. A comment bundling an
+// issue another comment covers is rewritten to the rest when it is an
+// unpushed agent finding.
 //
 // It answers when the pass is done. It takes the channel's review-run slot,
 // so it can't overlap a review run: that answers 409. A session with no
@@ -934,7 +997,7 @@ func (s *reviewService) handleReviewDedup(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	res := reviewDedupResult{Removed: []string{}, Clusters: []reviewDedupCluster{}, Related: []review.DedupRelated{}, Moved: []reviewDedupMove{}}
+	res := reviewDedupResult{Removed: []string{}, Clusters: []reviewDedupCluster{}, Related: []review.DedupRelated{}, Moved: []reviewDedupMove{}, Trimmed: []reviewDedupTrim{}}
 	cands := review.DedupCandidates(sess.Comments)
 	if len(cands) == 0 {
 		writeHTTPJSON(w, http.StatusOK, res, s.deps.logger)
@@ -973,6 +1036,12 @@ func (s *reviewService) handleReviewDedup(w http.ResponseWriter, r *http.Request
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
+	}
+	// Trims replace a body, so they go before the notes that append to one.
+	for _, tr := range plan.Trims {
+		if s.editComment(channelID, tr.ID, func(c *review.Comment) { c.Body = tr.Body }) != nil {
+			res.Trimmed = append(res.Trimmed, reviewDedupTrim{ID: tr.ID, CoveredBy: tr.CoveredBy, Reason: tr.Reason})
+		}
 	}
 	for _, cl := range plan.Clusters {
 		out := reviewDedupCluster{Kept: cl.Keep, Removed: []string{}, Reason: cl.Reason, Note: cl.Note}

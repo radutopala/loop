@@ -279,8 +279,8 @@ func (s *Store) UpdateRawDiff(channelID, rawDiff string) bool {
 }
 
 // AddComment appends a comment to the session. Returns false if no
-// session exists for channelID, or if the comment duplicates one the
-// session already holds.
+// session exists for channelID, or if the session already holds a comment
+// with the same id.
 func (s *Store) AddComment(channelID string, c *Comment) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -295,38 +295,15 @@ func (s *Store) AddComment(channelID string, c *Comment) bool {
 			return false
 		}
 	}
-	// Then by content, for the same finding written twice in different
-	// words — which is what a re-run produces, since each run re-derives
-	// its findings rather than copying the last run's text, and often
-	// anchors them a few lines off. Anchored to the neighbourhood first:
-	// two findings that far apart in wording are only plausibly the same
-	// finding when they are about the same place.
-	for _, existing := range sess.Comments {
-		if existing != nil && nearbyAnchor(existing, c) && nearDuplicate(existing.Body, c.Body) {
-			return false
-		}
-	}
 	sess.Comments = append(sess.Comments, c)
 	sess.UpdatedAt = time.Now()
 	return true
 }
 
-// nearbyLines is how far apart two comments on the same file and side can
-// sit and still be checked as one finding. A re-run re-anchors a finding
-// on a neighbouring line of the same function often enough that an exact
-// line match let it through as new. The cost is that one pattern repeated
-// within this window is reported once; further apart it's reported per
-// place.
+// nearbyLines is how far the dedup pass may move a comment: a correction
+// to a misplaced anchor is a nudge within the same function, not a new
+// finding somewhere else.
 const nearbyLines = 20
-
-// nearbyAnchor reports whether two comments hang off the same file and side
-// within nearbyLines of each other. Side is compared through its effective
-// value: the parser leaves it empty for the common case and the FE renders
-// that as RIGHT, so an empty side and an explicit "RIGHT" are the same side,
-// not two.
-func nearbyAnchor(a, b *Comment) bool {
-	return a.Path == b.Path && abs(a.Line-b.Line) <= nearbyLines && effectiveSide(a.Side) == effectiveSide(b.Side)
-}
 
 func abs(n int) int {
 	if n < 0 {
@@ -335,6 +312,8 @@ func abs(n int) int {
 	return n
 }
 
+// effectiveSide is side as the FE renders it: the parser leaves it empty for
+// the common case, which is RIGHT.
 func effectiveSide(side string) string {
 	if side == "" {
 		return "RIGHT"

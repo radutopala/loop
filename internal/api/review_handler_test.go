@@ -23,8 +23,10 @@ import (
 	"github.com/stretchr/testify/suite"
 
 	"github.com/radutopala/loop/internal/agent"
+	"github.com/radutopala/loop/internal/apiauth"
 	"github.com/radutopala/loop/internal/config"
 	"github.com/radutopala/loop/internal/db"
+	"github.com/radutopala/loop/internal/events"
 	"github.com/radutopala/loop/internal/githubapi"
 	"github.com/radutopala/loop/internal/osutil"
 	"github.com/radutopala/loop/internal/review"
@@ -787,6 +789,19 @@ func (s *ReviewHandlerSuite) TestGetWithSession() {
 	require.Equal(s.T(), "diff", resp.Session.RawDiff)
 }
 
+func (s *ReviewHandlerSuite) TestGetWithoutDiff() {
+	s.rs.Put("ch1", &review.Session{Status: review.StatusReady, RawDiff: "diff", Comments: []*review.Comment{{ID: "c1"}}})
+	w := httptest.NewRecorder()
+	s.mux.ServeHTTP(w, httptest.NewRequest("GET", "/api/channels/ch1/review?diff=false", nil))
+	require.Equal(s.T(), http.StatusOK, w.Code)
+	require.NotContains(s.T(), w.Body.String(), "raw_diff")
+	var resp reviewSessionResponse
+	require.NoError(s.T(), json.Unmarshal(w.Body.Bytes(), &resp))
+	require.Len(s.T(), resp.Session.Comments, 1)
+	// The stored session keeps its diff.
+	require.Equal(s.T(), "diff", s.rs.Get("ch1").RawDiff)
+}
+
 // ---- sessions list ----
 
 func (s *ReviewHandlerSuite) TestSessionsNoReviewStoreNotImplemented() {
@@ -1096,6 +1111,72 @@ func (s *ReviewHandlerSuite) TestErrorMessageNil() {
 	require.Equal(s.T(), "", errorMessage(nil))
 }
 
+// ---- update comment ----
+
+func (s *ReviewHandlerSuite) TestUpdateComment() {
+	s.rs.Put("ch1", &review.Session{PR: &githubapi.PRInfo{Number: 7}, HeadSHA: "abc"})
+	s.rs.AddComment("ch1", &review.Comment{ID: "a", Path: "x.go", Line: 3, Body: "Nil map write.", Source: "agent"})
+	s.rs.AddComment("ch1", &review.Comment{ID: "p", Path: "x.go", Line: 40, Body: "Pushed.", Source: "agent", GitHubID: 5, Pushed: true})
+	s.rs.AddComment("ch1", &review.Comment{ID: "gh-9", Path: "x.go", Line: 60, Body: "Theirs.", Source: "github", GitHubID: 9, Pushed: true})
+	hub := NewEventsHub(slog.Default())
+	var updated []events.ReviewCommentEventData
+	var hubMu sync.Mutex
+	hub.captureHook = func(e Event) {
+		hubMu.Lock()
+		defer hubMu.Unlock()
+		if e.Type == EventReviewCommentUpdated {
+			updated = append(updated, e.Data.(events.ReviewCommentEventData))
+		}
+	}
+	s.srv.SetEventsHub(hub)
+
+	cases := []struct {
+		name    string
+		target  string
+		body    string
+		want    int
+		wantMsg string
+	}{
+		{name: "bad json", target: "/api/channels/ch1/review/comments/a", body: `{`, want: http.StatusBadRequest, wantMsg: "invalid JSON body"},
+		{name: "empty body", target: "/api/channels/ch1/review/comments/a", body: `{"body":"  "}`, want: http.StatusBadRequest, wantMsg: "body is required"},
+		{name: "no session", target: "/api/channels/ch2/review/comments/a", body: `{"body":"x"}`, want: http.StatusNotFound, wantMsg: "no review session"},
+		{name: "no comment", target: "/api/channels/ch1/review/comments/zz", body: `{"body":"x"}`, want: http.StatusNotFound, wantMsg: "comment not found"},
+		{name: "pushed comment", target: "/api/channels/ch1/review/comments/p", body: `{"body":"x"}`, want: http.StatusConflict, wantMsg: "only unpushed agent comments"},
+		{name: "github comment", target: "/api/channels/ch1/review/comments/gh-9", body: `{"body":"x"}`, want: http.StatusConflict, wantMsg: "only unpushed agent comments"},
+	}
+	for _, tc := range cases {
+		s.Run(tc.name, func() {
+			w := httptest.NewRecorder()
+			s.mux.ServeHTTP(w, agentRequest("PATCH", tc.target, strings.NewReader(tc.body)))
+			require.Equal(s.T(), tc.want, w.Code)
+			require.Contains(s.T(), w.Body.String(), tc.wantMsg)
+		})
+	}
+
+	w := httptest.NewRecorder()
+	s.mux.ServeHTTP(w, agentRequest("PATCH", "/api/channels/ch1/review/comments/a", strings.NewReader(`{"body":" Nil map write.\n\nAlso flagged: on reload too. "}`)))
+	require.Equal(s.T(), http.StatusOK, w.Code)
+	var got review.Comment
+	require.NoError(s.T(), json.Unmarshal(w.Body.Bytes(), &got))
+	require.Equal(s.T(), "Nil map write.\n\nAlso flagged: on reload too.", got.Body)
+	c, _ := s.rs.FindComment("ch1", "a")
+	require.Equal(s.T(), got.Body, c.Body)
+	for _, id := range []string{"p", "gh-9"} {
+		c, _ := s.rs.FindComment("ch1", id)
+		require.NotEqual(s.T(), "x", c.Body)
+	}
+	hubMu.Lock()
+	require.Equal(s.T(), []events.ReviewCommentEventData{{ID: "a", Path: "x.go", Line: 3, Body: got.Body}}, updated)
+	hubMu.Unlock()
+}
+
+func (s *ReviewHandlerSuite) TestUpdateCommentNotConfigured() {
+	srv := newServerForReviewTests(s.T())
+	w := httptest.NewRecorder()
+	srv.buildMux().ServeHTTP(w, httptest.NewRequest("PATCH", "/api/channels/ch1/review/comments/a", strings.NewReader(`{"body":"x"}`)))
+	require.Equal(s.T(), http.StatusNotImplemented, w.Code)
+}
+
 // ---- delete comment ----
 
 func (s *ReviewHandlerSuite) TestDeleteCommentNoSession() {
@@ -1163,6 +1244,37 @@ func (s *ReviewHandlerSuite) TestDeleteCommentGitHubSourceForeignAuthorRefused()
 	require.NotNil(s.T(), c, "local comment must survive a refused GH delete")
 	s.gh.AssertNotCalled(s.T(), "DeletePRReviewComment", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything)
 	s.gh.AssertNotCalled(s.T(), "FetchRepoSlug", mock.Anything, mock.Anything, mock.Anything)
+}
+
+// agentRequest is a request made with the agent token of channel ch1.
+func agentRequest(method, target string, body io.Reader) *http.Request {
+	req := httptest.NewRequest(method, target, body)
+	return req.WithContext(apiauth.WithPrincipal(req.Context(), apiauth.Principal{Kind: apiauth.KindAgent, ChannelID: "ch1"}))
+}
+
+// An agent may delete agent comments, but never a GitHub one, even one the
+// configured gh user wrote and the user could delete from the panel.
+func (s *ReviewHandlerSuite) TestDeleteCommentAgentRefusedGitHubSource() {
+	s.srv.configs.load = func() (*config.Config, error) {
+		return &config.Config{GitHub: config.GitHubConfig{GHUser: "alice"}, Review: config.ReviewConfig{Enabled: true}}, nil
+	}
+	s.rs.Put("ch1", &review.Session{PR: &githubapi.PRInfo{Number: 7}, HeadSHA: "abc"})
+	s.rs.AddComment("ch1", &review.Comment{ID: "gh-99", Path: "x.go", Line: 1, Body: "b", Source: "github", Author: "alice", GitHubID: 99, Pushed: true})
+	s.rs.AddComment("ch1", &review.Comment{ID: "a", Path: "y.go", Line: 1, Body: "c", Source: "agent"})
+
+	w := httptest.NewRecorder()
+	s.mux.ServeHTTP(w, agentRequest("DELETE", "/api/channels/ch1/review/comments/gh-99", nil))
+	require.Equal(s.T(), http.StatusForbidden, w.Code)
+	require.Contains(s.T(), w.Body.String(), "agents can only delete agent comments")
+	c, _ := s.rs.FindComment("ch1", "gh-99")
+	require.NotNil(s.T(), c)
+	s.gh.AssertNotCalled(s.T(), "DeletePRReviewComment", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything)
+
+	w = httptest.NewRecorder()
+	s.mux.ServeHTTP(w, agentRequest("DELETE", "/api/channels/ch1/review/comments/a", nil))
+	require.Equal(s.T(), http.StatusNoContent, w.Code)
+	c, _ = s.rs.FindComment("ch1", "a")
+	require.Nil(s.T(), c)
 }
 
 func (s *ReviewHandlerSuite) TestDeleteCommentGitHubSourceUnconfiguredGHUserRefused() {

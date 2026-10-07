@@ -101,7 +101,7 @@ func (s *ReviewHandlerSuite) TestDedupNothingToDo() {
 
 	w := s.postDedup()
 	require.Equal(s.T(), http.StatusOK, w.Code)
-	require.JSONEq(s.T(), `{"removed":[],"clusters":[],"related":[],"moved":[],"checked":0}`, w.Body.String())
+	require.JSONEq(s.T(), `{"removed":[],"clusters":[],"related":[],"moved":[],"trimmed":[],"checked":0}`, w.Body.String())
 	require.Equal(s.T(), 0, runner.calls)
 	require.False(s.T(), s.srv.review.isReviewRunActive("ch1"))
 }
@@ -161,6 +161,7 @@ func (s *ReviewHandlerSuite) TestDedupRemovesDuplicates() {
 		],
 		"related":[{"ids":["a","c"],"reason":"same map"}],
 		"moved":[{"id":"a","from":10,"to":11}],
+		"trimmed":[],
 		"checked":7,
 		"errors":["p: slug skipped"]
 	}`, w.Body.String())
@@ -195,6 +196,59 @@ func (s *ReviewHandlerSuite) TestDedupRemovesDuplicates() {
 	}, updated)
 	hubMu.Unlock()
 	require.False(s.T(), s.srv.review.isReviewRunActive("ch1"))
+}
+
+// A bundled comment shares one of its issues with a single-issue one. The
+// model keeps the single one, trims the bundle to the rest and folds another
+// finding into the bundle, whose note lands after the trimmed body. The
+// pushed c bundles the same issue but can't be rewritten.
+func (s *ReviewHandlerSuite) TestDedupTrimsBundledComment() {
+	s.wireReadySession()
+	for _, c := range []*review.Comment{
+		{ID: "bundle", Path: "x.go", Line: 10, Body: "The expiry check copies the cache's age logic and calls time.Now instead of an injected clock.", Source: "agent"},
+		{ID: "single", Path: "x.go", Line: 10, Body: "isExpired calls time.Now, so the expiry boundary can't be tested.", Source: "agent"},
+		{ID: "copy", Path: "y.go", Line: 4, Body: "Age logic duplicated from the cache.", Source: "agent"},
+		{ID: "c", Path: "x.go", Line: 40, Body: "Copies the age logic and reads the wall clock.", Source: "agent", GitHubID: 5, Pushed: true},
+	} {
+		require.True(s.T(), s.rs.AddComment("ch1", c))
+	}
+	hub := NewEventsHub(slog.Default())
+	var updated []string
+	var hubMu sync.Mutex
+	hub.captureHook = func(e Event) {
+		hubMu.Lock()
+		defer hubMu.Unlock()
+		if e.Type == EventReviewCommentUpdated {
+			updated = append(updated, e.Data.(events.ReviewCommentEventData).Body)
+		}
+	}
+	s.srv.SetEventsHub(hub)
+	reply := `{"clusters":[{"keep":"bundle","drop":["copy"],"note":"y.go copies it too."}],` +
+		`"trims":[{"id":"bundle","covered_by":"single","body":"The expiry check copies the cache's age logic.","reason":"clock covered by single"},` +
+		`{"id":"c","covered_by":"single","body":"Copies the age logic."}]}`
+	s.srv.review.setAgent(&mockReviewRunner{runFn: func() (*agent.AgentResponse, error) {
+		return &agent.AgentResponse{Response: reply}, nil
+	}}, "", "")
+
+	w := s.postDedup()
+	require.Equal(s.T(), http.StatusOK, w.Code)
+	require.JSONEq(s.T(), `{
+		"removed":["copy"],
+		"clusters":[{"kept":"bundle","removed":["copy"],"note":"y.go copies it too.","note_added":true}],
+		"related":[],
+		"moved":[],
+		"trimmed":[{"id":"bundle","covered_by":"single","reason":"clock covered by single"}],
+		"checked":4
+	}`, w.Body.String())
+	bundle, _ := s.rs.FindComment("ch1", "bundle")
+	require.Equal(s.T(), "The expiry check copies the cache's age logic.\n\nAlso flagged: y.go copies it too.", bundle.Body)
+	single, _ := s.rs.FindComment("ch1", "single")
+	require.Equal(s.T(), "isExpired calls time.Now, so the expiry boundary can't be tested.", single.Body)
+	pushed, _ := s.rs.FindComment("ch1", "c")
+	require.Equal(s.T(), "Copies the age logic and reads the wall clock.", pushed.Body)
+	hubMu.Lock()
+	require.Equal(s.T(), []string{"The expiry check copies the cache's age logic.", bundle.Body}, updated)
+	hubMu.Unlock()
 }
 
 // Without a hub the note still lands on the comment.

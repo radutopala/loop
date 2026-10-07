@@ -56,7 +56,7 @@ Browsers can't set headers on a WebSocket, so WebSocket clients send it as a sub
 
 An agent token works only on the routes in-container clients call (the table is `agentRoutes` in `internal/api/agent_scope.go`): messages, threads, tasks, shortcuts, memory, playground, workflows, learn proposals, review, quality, the browser action and the agent-channel WebSocket. Every other route answers 403, among them config, terminals, gates, images, token rotation and content links.
 
-On the routes it may call, an agent is held to its own project. Every channel, thread, task, workflow run and `dir_path` a request names, in the path, the query or the JSON body, must be the agent's own channel or dir, or share its project root (after symlinks). A request that names anything else gets 403. The exception is `POST /api/messages` (the `send_message` tool): its `channel_id` may be any channel, so one agent can hand work or news to another project's channel. Agents may also only change `project` bash shortcuts, and can't start workflows while `workflow_bash_local` runs workflow bash on the host.
+On the routes it may call, an agent is held to its own project. Every channel, thread, task, workflow run and `dir_path` a request names, in the path, the query or the JSON body, must be the agent's own channel or dir, or share its project root (after symlinks). A request that names anything else gets 403. The exception is `POST /api/messages` (the `send_message` tool): its `channel_id` may be any channel, so one agent can hand work or news to another project's channel. Agents may also only change `project` bash shortcuts, and can't start workflows while `workflow_bash_local` runs workflow bash on the host. The routes that change review comments (delete, edit, push one, push all) are held to the agent's own channel, not its project: they act on the PR as the user. An agent may not delete a GitHub comment.
 
 ### Public routes
 
@@ -2375,6 +2375,8 @@ Response: `{"present": true, "session": { ... }}` — the full session, mirrorin
 ### `GET /api/channels/{id}/review`
 
 Return the channel's review session, or `{"present": false}` if none.
+`?diff=false` leaves out `raw_diff`, by far the largest field, for callers
+that only want the comments.
 
 ### `DELETE /api/channels/{id}/review`
 
@@ -2403,8 +2405,8 @@ review agent is not wired.
 Fold duplicate findings. Every comment in the session, across files, goes
 to a read-only agent run (no Bash, no edits, strict MCP config) when there
 are at least two and one is the agent's. The model clusters them by root
-cause, including a cause and its symptom, or the same issue anchored in two
-files, and picks the most severe and specific one to keep. The daemon
+cause, including a cause and its symptom (even when the symptom has a
+narrower fix of its own), or the same issue anchored in two files, and picks the most severe and specific one to keep. The daemon
 deletes the others the same way `DELETE /review/comments/{cid}` does, which
 includes removing them from the PR if they were pushed. Each deletion is
 broadcast as `review.comment_removed`. The model's note on what the dropped
@@ -2424,6 +2426,7 @@ Response:
   "clusters": [{"kept": "<id>", "removed": ["<id>"], "reason": "...", "note": "...", "note_added": true}],
   "related": [{"ids": ["<id>", "<id>"], "reason": "..."}],
   "moved": [{"id": "<id>", "from": 145, "to": 147}],
+  "trimmed": [{"id": "<id>", "covered_by": "<id>", "reason": "..."}],
   "checked": 11,
   "errors": ["<id>: <msg>"]
 }
@@ -2435,7 +2438,10 @@ comment is a GitHub or pushed one, which is never edited. `related` groups
 findings about the same code path that need separate fixes; nothing is
 deleted for them. `moved` lists the unpushed agent findings the model
 re-anchored to the statement they are about, at most 20 lines from where
-they were; each move is broadcast as `review.comment_updated`. `checked` is the number of comments shown to the model
+they were; each move is broadcast as `review.comment_updated`. `trimmed`
+lists the unpushed agent findings that bundled several issues and were
+rewritten to the ones no other comment covers; `covered_by` is the comment
+that reports the part cut out. Each is broadcast as `review.comment_updated`. `checked` is the number of comments shown to the model
 (`0` when there is nothing to fold, in which case no agent runs). `errors`
 lists the deletions that failed; those comments stay.
 
@@ -2485,6 +2491,29 @@ Response: `{"present": true, "session": { ... }}` — the updated session.
 **Errors:** `400` on invalid JSON or an unknown `effort`. `404` if the
 channel has no review session. `501` if the review service is not
 configured.
+
+### `DELETE /api/channels/{id}/review/comments/{cid}`
+
+Delete one comment from the session, and from the PR when it has a GitHub
+copy (a pushed agent comment, or a GitHub comment the configured gh user
+wrote). Broadcasts `review.comment_removed`. Response: `204`.
+
+**Errors:** `403` for a GitHub comment by someone else, for any GitHub
+comment with an agent token, or when review is disabled. `404` if session or
+comment id is unknown. `500` on `gh` failure; the comment is kept. `501` if
+the review service is not configured.
+
+### `PATCH /api/channels/{id}/review/comments/{cid}`
+
+Replace a comment's body, e.g. to fold in what a duplicate adds. Body:
+`{"body": "..."}`. Only an unpushed agent comment can change. Broadcasts
+`review.comment_updated`.
+
+Response: the updated comment.
+
+**Errors:** `400` on invalid JSON or an empty body. `404` if session or
+comment id is unknown. `409` for a pushed or GitHub comment. `501` if the
+review service is not configured.
 
 ### `POST /api/channels/{id}/review/comments/{cid}/push`
 
