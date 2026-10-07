@@ -347,6 +347,7 @@ On startup, `loop serve` keeps the versioned container files (`Dockerfile`, `ent
 | `discord_guild_id` | `""` | Guild ID for auto-creating Discord channels |
 | `claude_code_oauth_token` | `""` | OAuth token passed as `CLAUDE_CODE_OAUTH_TOKEN` env var to containers |
 | `anthropic_api_key` | `""` | API key passed as `ANTHROPIC_API_KEY` env var to containers (used when OAuth token is not set) |
+| `anthropic_base_url` | `""` | Gateway or proxy for Claude's API calls, passed as `ANTHROPIC_BASE_URL` to containers (`localhost` is rewritten to `host.docker.internal`) |
 | `db_path` | `"~/.loop/loop.db"` | SQLite database file path |
 | `log_file` | `"~/.loop/loop.log"` | Daemon log file path |
 | `log_level` | `"info"` | Log level (`debug`, `info`, `warn`, `error`) |
@@ -518,6 +519,7 @@ Project config overrides specific global settings. Only these fields are allowed
 | `claude_bin_path` | **Overrides** global binary path |
 | `claude_code_oauth_token` | **Overrides** global auth (clears API key) |
 | `anthropic_api_key` | **Overrides** global auth (clears OAuth token) |
+| `anthropic_base_url` | **Overrides** global base URL once the project config is trusted |
 | `container_image` | **Overrides** global image |
 | `container_memory_mb` | **Overrides** global memory limit |
 | `container_cpus` | **Overrides** global CPU limit |

@@ -21,6 +21,7 @@ func (s *RunnerSuite) TestAddAuthEnv() {
 		name       string
 		oauthToken string
 		apiKey     string
+		baseURL    string
 		want       []string
 	}{
 		{
@@ -43,12 +44,24 @@ func (s *RunnerSuite) TestAddAuthEnv() {
 			name: "neither set",
 			want: []string{"BASE=1"},
 		},
+		{
+			name:    "base URL set",
+			apiKey:  "api-key",
+			baseURL: "https://gateway.example.com/anthropic",
+			want:    []string{"BASE=1", "ANTHROPIC_BASE_URL=https://gateway.example.com/anthropic", "ANTHROPIC_API_KEY=api-key"},
+		},
+		{
+			name:    "localhost base URL reaches the host",
+			baseURL: "http://localhost:4000",
+			want:    []string{"BASE=1", "ANTHROPIC_BASE_URL=http://host.docker.internal:4000"},
+		},
 	}
 	for _, tc := range tests {
 		s.Run(tc.name, func() {
 			cfg := &config.Config{
 				ClaudeCodeOAuthToken: tc.oauthToken,
 				AnthropicAPIKey:      tc.apiKey,
+				AnthropicBaseURL:     tc.baseURL,
 			}
 			result := addAuthEnv([]string{"BASE=1"}, cfg)
 			require.Equal(s.T(), tc.want, result)

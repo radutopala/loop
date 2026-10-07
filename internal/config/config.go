@@ -24,6 +24,7 @@ type jsonConfig struct {
 	SlackAppToken                            string                     `json:"slack_app_token"`
 	ClaudeCodeOAuthToken                     string                     `json:"claude_code_oauth_token"`
 	AnthropicAPIKey                          string                     `json:"anthropic_api_key"`
+	AnthropicBaseURL                         string                     `json:"anthropic_base_url"`
 	DiscordGuildID                           string                     `json:"discord_guild_id"`
 	LogFile                                  string                     `json:"log_file"`
 	LogLevel                                 string                     `json:"log_level"`
@@ -281,6 +282,7 @@ func (l *Loader) parse() (*Config, error) {
 		ClaudeBinPath:                            stringDefault(jc.ClaudeBinPath, "claude"),
 		ClaudeCodeOAuthToken:                     jc.ClaudeCodeOAuthToken,
 		AnthropicAPIKey:                          jc.AnthropicAPIKey,
+		AnthropicBaseURL:                         jc.AnthropicBaseURL,
 		DiscordGuildID:                           jc.DiscordGuildID,
 		LogFile:                                  stringDefault(jc.LogFile, filepath.Join(loopDir, "loop.log")),
 		LogLevel:                                 stringDefault(jc.LogLevel, "info"),

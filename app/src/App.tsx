@@ -808,25 +808,6 @@ function AppInner() {
               onClose={() => closePanel("readme")}
             />
           )}
-          {settingsOpen && (
-            <Settings
-              open={settingsOpen}
-              projectDirPath={settingsDirPath}
-              channelId={settingsChannelId}
-              channel={settingsChannel || selectedChannel}
-              sidebarOpen={sidebarOpen}
-              onToggleSidebar={() => setSidebarOpen((v) => !v)}
-              onOpenPalette={() => setPaletteOpen(true)}
-              onClose={() => closePanel("settings")}
-              onDaemonRestarted={loadChannels}
-              imageBuildStatus={imageBuildStatus}
-              imageUpdateAvailable={imageUpdateAvailable}
-              onRebuildImage={handleRebuildImage}
-              onConfigDirtyChange={setConfigDirty}
-              initialSection={settingsSection}
-              onProjectTrusted={loadChannels}
-            />
-          )}
           {containersOpen && (
             <ContainersPanel
               ref={containersPanelRef}
@@ -867,24 +848,7 @@ function AppInner() {
         </>
       ) : (
         <>
-          {settingsOpen ? (
-            <Settings
-              open={settingsOpen}
-              projectDirPath={settingsDirPath}
-              channelId={settingsChannelId}
-              sidebarOpen={sidebarOpen}
-              onToggleSidebar={() => setSidebarOpen((v) => !v)}
-              onOpenPalette={() => setPaletteOpen(true)}
-              onClose={() => closePanel("settings")}
-              onDaemonRestarted={loadChannels}
-              imageBuildStatus={imageBuildStatus}
-              imageUpdateAvailable={imageUpdateAvailable}
-              onRebuildImage={handleRebuildImage}
-              onConfigDirtyChange={setConfigDirty}
-              initialSection={settingsSection}
-              onProjectTrusted={loadChannels}
-            />
-          ) : containersOpen ? (
+          {settingsOpen ? null : containersOpen ? (
             <ContainersPanel
               ref={containersPanelRef}
               sidebarOpen={sidebarOpen}
@@ -922,6 +886,26 @@ function AppInner() {
             </div>
           )}
         </>
+      )}
+      {/* Outside the branches above so a channel arriving after load doesn't remount it and drop unsaved edits */}
+      {settingsOpen && (
+        <Settings
+          open={settingsOpen}
+          projectDirPath={settingsDirPath}
+          channelId={settingsChannelId}
+          channel={settingsChannel || selectedChannel}
+          sidebarOpen={sidebarOpen}
+          onToggleSidebar={() => setSidebarOpen((v) => !v)}
+          onOpenPalette={() => setPaletteOpen(true)}
+          onClose={() => closePanel("settings")}
+          onDaemonRestarted={loadChannels}
+          imageBuildStatus={imageBuildStatus}
+          imageUpdateAvailable={imageUpdateAvailable}
+          onRebuildImage={handleRebuildImage}
+          onConfigDirtyChange={setConfigDirty}
+          initialSection={settingsSection}
+          onProjectTrusted={loadChannels}
+        />
       )}
       <CommandPalette
         channels={channels}

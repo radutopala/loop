@@ -37,6 +37,7 @@ func registerBackendSteps(ctx *godog.ScenarioContext, tc *TestContext) {
 	// Response assertion steps
 	ctx.Step(`^the response status should be (\d+)$`, tc.assertStatus)
 	ctx.Step(`^the response should contain "([^"]*)"$`, tc.assertBodyContains)
+	ctx.Step(`^a GET to "([^"]*)" should soon (contain|not contain) "([^"]*)"$`, tc.pollGETBody)
 	ctx.Step(`^the response JSON "([^"]*)" should be "([^"]*)"$`, tc.assertJSONField)
 	ctx.Step(`^the response JSON "([^"]*)" should not be empty$`, tc.assertJSONFieldNotEmpty)
 
@@ -143,6 +144,25 @@ func (tc *TestContext) assertBodyContains(expected string) error {
 		return fmt.Errorf("response body does not contain %q: %s", expected, string(tc.LastBody))
 	}
 	return nil
+}
+
+// pollGETBody repeats a GET until its body does (or doesn't) contain text,
+// for state a UI action writes asynchronously.
+func (tc *TestContext) pollGETBody(path, mode, text string) error {
+	want := mode == "contain"
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		if err := tc.doRequest(http.MethodGet, path, ""); err != nil {
+			return err
+		}
+		if strings.Contains(string(tc.LastBody), text) == want {
+			return nil
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf("GET %s should %s %q: %s", path, mode, text, string(tc.LastBody))
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
 }
 
 func (tc *TestContext) assertJSONField(field, expected string) error {

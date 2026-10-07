@@ -110,6 +110,7 @@ Exactly one of the following is set, with OAuth taking precedence:
 |---|---|
 | `CLAUDE_CODE_OAUTH_TOKEN` | Set when `claude_code_oauth_token` is configured |
 | `ANTHROPIC_API_KEY` | Set when `anthropic_api_key` is configured and no OAuth token exists |
+| `ANTHROPIC_BASE_URL` | Set when `anthropic_base_url` is configured; `localhost` becomes `host.docker.internal` |
 
 ### Proxy Forwarding
 

@@ -30,6 +30,7 @@ type projectConfig struct {
 	ClaudeRetry                              *jsonAgentRetryConfig      `json:"claude_retry"`
 	ClaudeCodeOAuthToken                     string                     `json:"claude_code_oauth_token"`
 	AnthropicAPIKey                          string                     `json:"anthropic_api_key"`
+	AnthropicBaseURL                         string                     `json:"anthropic_base_url"`
 	ContainerImage                           string                     `json:"container_image"`
 	ContainerImageAutobuild                  *bool                      `json:"container_image_autobuild"`
 	ContainerMemoryMB                        *int64                     `json:"container_memory_mb"`
@@ -317,6 +318,9 @@ func (l *Loader) loadProjectConfig(workDir string, mainConfig *Config) (*Config,
 	} else if pc.AnthropicAPIKey != "" {
 		merged.AnthropicAPIKey = pc.AnthropicAPIKey
 		merged.ClaudeCodeOAuthToken = "" // Clear OAuth so API key is used
+	}
+	if pc.AnthropicBaseURL != "" {
+		merged.AnthropicBaseURL = pc.AnthropicBaseURL
 	}
 
 	if pc.ContainerImage != "" {

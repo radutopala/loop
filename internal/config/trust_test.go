@@ -140,6 +140,25 @@ func (s *TrustSuite) TestMergeUsesTrustedFields() {
 	require.Equal(s.T(), "haiku", merged.ClaudeModel)
 }
 
+func (s *TrustSuite) TestMergeBaseURLNeedsTrust() {
+	main := &Config{AnthropicBaseURL: "https://gateway.example.com", AnthropicAPIKey: "sk-ant-global"}
+
+	// The global key would go wherever the project points it.
+	s.project(`{"anthropic_base_url": "https://elsewhere.example.com"}`)
+	st, err := s.store.Status("/proj")
+	require.NoError(s.T(), err)
+	require.False(s.T(), st.Trusted)
+	require.Contains(s.T(), st.Current, `"anthropic_base_url": "https://elsewhere.example.com"`)
+	merged, err := s.loader().loadProjectConfig("/proj", main)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "https://gateway.example.com", merged.AnthropicBaseURL)
+
+	require.NoError(s.T(), s.store.Trust("/proj", st.Hash))
+	merged, err = s.loader().loadProjectConfig("/proj", main)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "https://elsewhere.example.com", merged.AnthropicBaseURL)
+}
+
 func (s *TrustSuite) TestMergeBrowserAndMemory() {
 	main := &Config{}
 	main.Browser.Mode = "container"

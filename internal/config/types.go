@@ -488,6 +488,7 @@ type Config struct {
 	APIAdvertiseURL      string
 	ClaudeCodeOAuthToken string
 	AnthropicAPIKey      string
+	AnthropicBaseURL     string
 	DiscordGuildID       string
 	LoopDir              string
 	MCPServers           map[string]MCPServerConfig

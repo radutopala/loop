@@ -165,6 +165,14 @@ func buildSchema() *ConfigSchema {
 				XSection:    "Authentication",
 				XOrder:      2,
 			},
+			"anthropic_base_url": {
+				Type:         "string",
+				Title:        "API Base URL",
+				Description:  "Send Claude's API calls to a gateway or proxy (ANTHROPIC_BASE_URL). localhost means this machine.",
+				XSection:     "Authentication",
+				XOrder:       3,
+				XPlaceholder: "https://api.anthropic.com",
+			},
 
 			// ── Container section ──
 			"container_image": {
