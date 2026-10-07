@@ -418,6 +418,11 @@ export function AgentActivityIndicator({ activity }: { activity: AgentActivityDa
   } else if (activity.activity === "api_retry") {
     icon = "&#9203;"; // hourglass
     label = activity.description ? `API retry: ${activity.description}` : "";
+  } else if (activity.activity === "background_tasks") {
+    // The turn ended but Claude waits on background tasks before the next
+    // one; an empty description means none are left.
+    icon = "&#9203;"; // hourglass
+    label = activity.description ? `Waiting on ${activity.description}` : "";
   }
   // Kinds without a label, such as image_ready (an image build wait is
   // over), clear the indicator.

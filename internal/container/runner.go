@@ -368,6 +368,11 @@ func (r *DockerRunner) containerName(channelID, dirPath string) string {
 // uuid isn't in the session.
 const unknownResumePoint = "No message found with message.uuid"
 
+// compactionFailed prefixes the result text of a /compact that Claude Code
+// could not complete, e.g. "Error during compaction: summarization produced
+// empty response".
+const compactionFailed = "Error during compaction"
+
 // Run executes an agent request in a Docker container, retrying on transient
 // API errors (rate limiting, overload, transient 5xx) with bounded exponential
 // backoff. Terminal errors (usage/quota, auth, billing) are surfaced
@@ -435,6 +440,12 @@ func (r *DockerRunner) runWithRecovery(ctx context.Context, req *agent.AgentRequ
 		compactResp, compactErr := r.runOnce(ctx, compactReq)
 		if compactErr != nil {
 			return nil, fmt.Errorf("compacting session: %w", compactErr)
+		}
+		// A failed /compact still exits cleanly (is_error=false) and reports
+		// the failure only in its result text. Retrying would resume the same
+		// uncompacted session and fail again, so stop with the reason.
+		if strings.HasPrefix(compactResp.Response, compactionFailed) {
+			return nil, fmt.Errorf("compacting session: %s", compactResp.Response)
 		}
 		retryReq := *req
 		retryReq.SessionID = compactResp.SessionID

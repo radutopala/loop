@@ -474,6 +474,8 @@ export interface AgentConfig {
   effort: string;
   default_model: string;
   default_effort: string;
+  /** Model ids to offer, from the daemon's config.Models. */
+  models: string[];
 }
 
 export async function fetchAgentConfig(channelId: string): Promise<AgentConfig> {

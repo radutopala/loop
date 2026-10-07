@@ -3,7 +3,7 @@ import { fetchAgentConfig, updateAgentConfig } from "../../api/channels";
 import { useTheme } from "../../ThemeContext";
 import { fonts } from "../../theme";
 import { logErr } from "../../utils/log";
-import { EFFORT_PRESETS, MODEL_PRESETS, shortModel } from "./agentPresets";
+import { EFFORT_PRESETS, shortModel } from "./agentPresets";
 
 /**
  * Composer pill for the per-channel model/effort override. Applies to any
@@ -17,6 +17,7 @@ export function AgentConfigPill({ channelId }: { channelId: string }) {
   const [model, setModel] = useState("");
   const [effort, setEffort] = useState("");
   const [defaults, setDefaults] = useState({ model: "", effort: "" });
+  const [models, setModels] = useState<string[]>([]);
   const [customModel, setCustomModel] = useState("");
   const [error, setError] = useState<string | null>(null);
 
@@ -28,6 +29,7 @@ export function AgentConfigPill({ channelId }: { channelId: string }) {
         setModel(cfg.model);
         setEffort(cfg.effort);
         setDefaults({ model: cfg.default_model, effort: cfg.default_effort });
+        setModels(cfg.models ?? []);
       })
       .catch(logErr("fetching agent config"));
     return () => {
@@ -143,13 +145,13 @@ export function AgentConfigPill({ channelId }: { channelId: string }) {
               <span style={{ width: 12 }}>{model === "" ? "✓" : ""}</span>
               Default{defaults.model ? ` (${defaults.model})` : ""}
             </button>
-            {MODEL_PRESETS.map((m) => (
+            {models.map((m) => (
               <button key={m} style={rowStyle(model === m)} onClick={() => apply(m, effort)}>
                 <span style={{ width: 12 }}>{model === m ? "✓" : ""}</span>
                 {m}
               </button>
             ))}
-            {model !== "" && !MODEL_PRESETS.includes(model) && (
+            {model !== "" && !models.includes(model) && (
               <button style={rowStyle(true)} onClick={() => apply(model, effort)}>
                 <span style={{ width: 12 }}>✓</span>
                 {model}

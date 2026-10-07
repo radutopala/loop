@@ -180,6 +180,45 @@ func (s *RunnerSuite) TestRunForkSessionCompactFails() {
 	s.client.AssertExpectations(s.T())
 }
 
+func (s *RunnerSuite) TestRunSessionCompactReportsFailure() {
+	ctx := context.Background()
+	req := &agent.AgentRequest{
+		SessionID: "sess-long",
+		ChannelID: "ch-1",
+		Prompt:    "hello",
+	}
+
+	// First attempt: resume → "Prompt is too long"
+	failJSON := `{"type":"result","result":"Prompt is too long","session_id":"sess-long","is_error":true}`
+	failWait := make(chan WaitResponse, 1)
+	failWait <- WaitResponse{StatusCode: 0}
+	s.client.On("ContainerCreate", ctx, mock.MatchedBy(func(cfg *ContainerConfig) bool {
+		return !slices.Contains(cfg.Cmd, "/compact")
+	}), "loop-ch-1-aabbcc").Return("container-fail", nil).Once()
+	s.client.On("ContainerLogs", ctx, "container-fail").Return(bytes.NewReader([]byte(failJSON)), nil)
+	s.client.On("ContainerStart", ctx, "container-fail").Return(nil)
+	s.client.On("ContainerWait", ctx, "container-fail").Return((<-chan WaitResponse)(failWait), (<-chan error)(make(chan error, 1)))
+
+	// /compact exits cleanly but reports the failure in its result text.
+	compactJSON := `{"type":"result","result":"Error during compaction: summarization produced empty response","session_id":"sess-long","is_error":false}`
+	compactWait := make(chan WaitResponse, 1)
+	compactWait <- WaitResponse{StatusCode: 0}
+	s.client.On("ContainerCreate", ctx, mock.MatchedBy(func(cfg *ContainerConfig) bool {
+		return slices.Contains(cfg.Cmd, "/compact")
+	}), "loop-ch-1-aabbcc").Return("container-compact", nil).Once()
+	s.client.On("ContainerLogs", ctx, "container-compact").Return(bytes.NewReader([]byte(compactJSON)), nil)
+	s.client.On("ContainerStart", ctx, "container-compact").Return(nil)
+	s.client.On("ContainerWait", ctx, "container-compact").Return((<-chan WaitResponse)(compactWait), (<-chan error)(make(chan error, 1)))
+
+	resp, err := s.runner.Run(ctx, req)
+	require.Nil(s.T(), resp)
+	require.EqualError(s.T(), err, "compacting session: Error during compaction: summarization produced empty response")
+
+	// No retry against the uncompacted session.
+	s.client.AssertNumberOfCalls(s.T(), "ContainerCreate", 2)
+	s.client.AssertExpectations(s.T())
+}
+
 func (s *RunnerSuite) TestRunSessionCompactOnPromptTooLong() {
 	ctx := context.Background()
 	req := &agent.AgentRequest{

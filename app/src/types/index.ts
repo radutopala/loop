@@ -168,7 +168,19 @@ export interface ToolResultData {
 }
 
 export interface AgentActivityData {
-  activity: "model" | "subagent_started" | "subagent_progress" | "compacting" | "thinking" | "rate_limited" | "tool_progress" | "task_notification" | "api_retry" | "image_build" | "image_ready";
+  activity:
+    | "model"
+    | "subagent_started"
+    | "subagent_progress"
+    | "compacting"
+    | "thinking"
+    | "rate_limited"
+    | "tool_progress"
+    | "task_notification"
+    | "api_retry"
+    | "background_tasks"
+    | "image_build"
+    | "image_ready";
   model?: string;
   description?: string;
 }

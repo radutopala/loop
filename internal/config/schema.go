@@ -43,9 +43,27 @@ func GlobalConfigSchema() *ConfigSchema {
 	return globalSchema
 }
 
+// Models lists the model ids Loop offers: the settings form's claude_model
+// choices and, through the channel agent-config API, the chat composer's and
+// review panel's pickers. A "[1m]" id runs the model with its 1M-token context
+// window. Any other id still works as a custom one: it is passed to the Claude
+// CLI verbatim, never checked against this list.
+func Models() []string {
+	return []string{
+		"claude-opus-5-5", "claude-opus-5-5[1m]", "claude-opus-5", "claude-opus-5[1m]",
+		"claude-sonnet-5-5", "claude-sonnet-5-5[1m]", "claude-sonnet-5", "claude-sonnet-5[1m]",
+		"claude-fable-5-1", "claude-fable-5-1[1m]", "claude-fable-5", "claude-fable-5[1m]",
+		"claude-opus-4-8", "claude-opus-4-8[1m]",
+	}
+}
+
 // modelEnum lists the models offered by the settings form; "" means no override.
 func modelEnum() []any {
-	return []any{"", "claude-opus-5-5", "claude-opus-5", "claude-sonnet-5-5", "claude-sonnet-5", "claude-fable-5-1", "claude-fable-5", "claude-opus-4-8"}
+	enum := []any{""}
+	for _, m := range Models() {
+		enum = append(enum, m)
+	}
+	return enum
 }
 
 // effortEnum lists the --effort levels; "" leaves it unset.

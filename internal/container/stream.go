@@ -96,6 +96,35 @@ type systemEvent struct {
 	RetryDelayMs int    `json:"retry_delay_ms"`
 	Error        string `json:"error"`
 	ErrorStatus  int    `json:"error_status"`
+	// background_tasks_changed: the tasks still running in the background.
+	Tasks []backgroundTask `json:"tasks"`
+}
+
+// backgroundTask is one entry of a background_tasks_changed event.
+type backgroundTask struct {
+	Description string `json:"description"`
+}
+
+// backgroundWait describes the background tasks a run is waiting on, e.g.
+// "2 background tasks: watch CI, build image"; "" when there are none.
+func backgroundWait(tasks []backgroundTask) string {
+	if len(tasks) == 0 {
+		return ""
+	}
+	noun := "background task"
+	if len(tasks) > 1 {
+		noun += "s"
+	}
+	var descs []string
+	for _, t := range tasks {
+		if t.Description != "" {
+			descs = append(descs, t.Description)
+		}
+	}
+	if len(descs) == 0 {
+		return fmt.Sprintf("%d %s", len(tasks), noun)
+	}
+	return fmt.Sprintf("%d %s: %s", len(tasks), noun, strings.Join(descs, ", "))
 }
 
 // extractText joins all text content blocks from an assistant message.
@@ -428,11 +457,21 @@ func withTail(err error, tail *outputTail) error {
 // It dispatches "assistant" text to onTurn, tool_use blocks to onToolUse,
 // model/system events to onActivity, and returns the final "result" event.
 // Without one, the error carries the tail of the non-JSON output.
+//
+// A turn that ends with background tasks still running doesn't end the run:
+// the CLI keeps going, and when a task finishes it starts another turn, so
+// the stream holds a "result" per turn and the last one is the response.
+// While it waits, nothing else streams, so the wait is surfaced as a
+// "background_tasks" activity — sent when a turn ends with tasks pending or
+// the pending set changes between turns, and with an empty description (which
+// clears the indicator) once none are left.
 func scanStreamJSON(r io.Reader, cb streamCallbacks) (*claudeResponse, error) {
 	br := bufio.NewReaderSize(r, scannerBufInit)
 	var result *claudeResponse
 	var lastModel string
 	var tail outputTail
+	var pending []backgroundTask
+	betweenTurns := false
 	for {
 		// Peek at the first bytes to detect the event type without reading
 		// the entire line. Tool results (screenshots) can be several MB —
@@ -462,6 +501,7 @@ func scanStreamJSON(r io.Reader, cb streamCallbacks) (*claudeResponse, error) {
 			if err := json.Unmarshal(line, &msg); err != nil {
 				continue
 			}
+			betweenTurns = false
 			if msg.Message.Model != "" && msg.Message.Model != lastModel {
 				lastModel = msg.Message.Model
 				if cb.onActivity != nil {
@@ -532,6 +572,11 @@ func scanStreamJSON(r io.Reader, cb streamCallbacks) (*claudeResponse, error) {
 					}
 				case "status":
 					cb.onActivity(evt.Status, evt.Description)
+				case "background_tasks_changed":
+					pending = evt.Tasks
+					if betweenTurns {
+						cb.onActivity("background_tasks", backgroundWait(pending))
+					}
 				case "thinking_tokens":
 					// Opus emits running thinking-token estimates while it
 					// reasons (the thinking text itself is redacted). Surface
@@ -561,6 +606,10 @@ func scanStreamJSON(r io.Reader, cb streamCallbacks) (*claudeResponse, error) {
 				continue
 			}
 			result = &evt
+			betweenTurns = true
+			if len(pending) > 0 && cb.onActivity != nil {
+				cb.onActivity("background_tasks", backgroundWait(pending))
+			}
 		}
 	}
 	if result == nil {

@@ -414,6 +414,37 @@ func TestScanStreamJSONOnActivity(t *testing.T) {
 		require.Equal(t, []string{"task_notification:tests green"}, activities)
 	})
 
+	t.Run("a turn ending with background tasks pending emits a wait until they finish", func(t *testing.T) {
+		// The CLI's own sequence: a task starts mid-turn, the turn ends with
+		// it still running, it finishes, and a second turn produces the
+		// final result.
+		input := `{"type":"assistant","message":{"content":[{"type":"tool_use","id":"t1","name":"Bash","input":{}}]}}
+{"type":"system","subtype":"background_tasks_changed","tasks":[{"task_id":"b1","task_type":"local_bash","description":"watch CI"}]}
+{"type":"assistant","message":{"content":[{"type":"text","text":"Started."}]}}
+{"type":"result","result":"Started.","session_id":"s1","is_error":false}
+{"type":"system","subtype":"background_tasks_changed","tasks":[{"task_id":"b1","description":"watch CI"},{"task_id":"b2"}]}
+{"type":"system","subtype":"background_tasks_changed","tasks":[]}
+{"type":"assistant","message":{"content":[{"type":"text","text":"CI passed."}]}}
+{"type":"system","subtype":"background_tasks_changed","tasks":[{"task_id":"b3"}]}
+{"type":"result","result":"CI passed.","session_id":"s1","is_error":false}
+`
+		var activities []string
+		cb := streamCallbacks{
+			onActivity: func(activity, detail string) {
+				activities = append(activities, activity+":"+detail)
+			},
+		}
+		resp, err := scanStreamJSON(strings.NewReader(input), cb)
+		require.NoError(t, err)
+		require.Equal(t, "CI passed.", resp.Result, "the last turn's result is the response")
+		require.Equal(t, []string{
+			"background_tasks:1 background task: watch CI",
+			"background_tasks:2 background tasks: watch CI",
+			"background_tasks:",
+			"background_tasks:1 background task",
+		}, activities, "a task started mid-turn waits for the turn to end; an empty set clears the wait")
+	})
+
 	t.Run("api_retry emits an activity with attempt and backoff", func(t *testing.T) {
 		input := `{"type":"system","subtype":"api_retry","attempt":3,"max_retries":10,"retry_delay_ms":2133,"error_status":529,"error":"overloaded"}
 {"type":"system","subtype":"api_retry"}

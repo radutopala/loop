@@ -584,7 +584,7 @@ func (s *RunnerSuite) TestBuildInteractiveClaudeCmd() {
 			name:     "with model",
 			model:    "claude-opus-4-6",
 			binPath:  "claude",
-			expected: "CLAUDE_CODE_NO_FLICKER=1 claude --mcp-config /work/.loop/mcp-ch-1.json --model claude-opus-4-6 --dangerously-skip-permissions",
+			expected: "CLAUDE_CODE_NO_FLICKER=1 claude --mcp-config /work/.loop/mcp-ch-1.json --model 'claude-opus-4-6' --dangerously-skip-permissions",
 		},
 		{
 			name:     "custom bin path",
@@ -609,7 +609,7 @@ func (s *RunnerSuite) TestBuildInteractiveClaudeCmd() {
 			model:     "claude-opus-4-6",
 			binPath:   "claude",
 			sessionID: "sess-xyz",
-			expected:  "CLAUDE_CODE_NO_FLICKER=1 claude --mcp-config /work/.loop/mcp-ch-1.json --model claude-opus-4-6 --dangerously-skip-permissions --resume sess-xyz",
+			expected:  "CLAUDE_CODE_NO_FLICKER=1 claude --mcp-config /work/.loop/mcp-ch-1.json --model 'claude-opus-4-6' --dangerously-skip-permissions --resume sess-xyz",
 		},
 	}
 	for _, tc := range tests {
@@ -830,6 +830,65 @@ func (s *RunnerSuite) TestBuildClaudeCmdReviewMode() {
 	// The flag must precede --print: --disallowedTools is variadic and would
 	// otherwise swallow it.
 	require.Less(s.T(), i, slices.Index(cmd, "--print"))
+}
+
+// TestBuildClaudeCmd1MContext verifies a [1m] model — from config or the
+// per-channel override, in a plain or review run — clears
+// CLAUDE_CODE_DISABLE_1M_CONTEXT in the run's --settings, which outrank a host
+// ~/.claude/settings.json that sets it and would cap the run at 200k.
+func (s *RunnerSuite) TestBuildClaudeCmd1MContext() {
+	for name, tc := range map[string]struct {
+		cfgModel   string
+		reqModel   string
+		reviewMode bool
+		wantEnv    map[string]string
+	}{
+		"config model": {
+			cfgModel: "claude-opus-5-5[1m]",
+			wantEnv:  map[string]string{"CLAUDE_CODE_DISABLE_1M_CONTEXT": "0", "CLAUDE_CODE_SUBAGENT_MODEL": "inherit"},
+		},
+		"channel override": {
+			cfgModel: "claude-opus-5-5",
+			reqModel: "claude-fable-5-1[1m]",
+			wantEnv:  map[string]string{"CLAUDE_CODE_DISABLE_1M_CONTEXT": "0", "CLAUDE_CODE_SUBAGENT_MODEL": "inherit"},
+		},
+		"review run": {
+			cfgModel:   "claude-sonnet-5-5[1m]",
+			reviewMode: true,
+			wantEnv:    map[string]string{"CLAUDE_CODE_DISABLE_1M_CONTEXT": "0", "CLAUDE_CODE_REPORT_FINDINGS": "1", "CLAUDE_CODE_SUBAGENT_MODEL": "inherit"},
+		},
+		"overridden to a 200k model": {
+			cfgModel: "claude-opus-5-5[1m]",
+			reqModel: "claude-opus-5-5",
+			wantEnv:  map[string]string{"CLAUDE_CODE_SUBAGENT_MODEL": "inherit"},
+		},
+	} {
+		s.Run(name, func() {
+			cfg := &config.Config{ClaudeBinPath: "claude", ClaudeModel: tc.cfgModel}
+			req := &agent.AgentRequest{ChannelID: "ch-1", Prompt: "hi", Model: tc.reqModel, ReviewMode: tc.reviewMode}
+			cmd := buildClaudeCmd(cfg, "/work/.loop/mcp-ch-1.json", req)
+
+			var settings struct {
+				Env map[string]string `json:"env"`
+			}
+			require.NoError(s.T(), json.Unmarshal([]byte(cmd[slices.Index(cmd, "--settings")+1]), &settings))
+			require.Equal(s.T(), tc.wantEnv, settings.Env)
+		})
+	}
+}
+
+// TestBuildInteractiveClaudeCmd1MContext verifies the terminal command quotes
+// a [1m] model, whose brackets the shell would otherwise glob, and clears
+// CLAUDE_CODE_DISABLE_1M_CONTEXT.
+func (s *RunnerSuite) TestBuildInteractiveClaudeCmd1MContext() {
+	cfg := &config.Config{ClaudeBinPath: "claude", ClaudeModel: "claude-opus-5-5[1m]"}
+	got := BuildInteractiveClaudeCmd(cfg, "ch-1", "/work", "", "", false)
+	require.Equal(s.T(), "CLAUDE_CODE_NO_FLICKER=1 claude --mcp-config /work/.loop/mcp-ch-1.json --model 'claude-opus-5-5[1m]' --dangerously-skip-permissions"+
+		` --settings '{"env":{"CLAUDE_CODE_DISABLE_1M_CONTEXT":"0","CLAUDE_CODE_SUBAGENT_MODEL":"inherit"}}'`+claudeExitTrailer, got)
+
+	// A single quote in a custom id stays inside the quoted word.
+	cfg.ClaudeModel = "it's"
+	require.Contains(s.T(), BuildInteractiveClaudeCmd(cfg, "ch-1", "/work", "", "", false), ` --model 'it'\''s' `)
 }
 
 // TestBuildClaudeCmdReadOnly verifies a read-only run adds its denials after the
@@ -1066,7 +1125,7 @@ func (s *RunnerSuite) TestClaudeCmdBuilderProjectConfigModel() {
 
 	// Project config's claude_model should override the global one.
 	expectedMCP := tmpDir + "/.loop/mcp-ch-1.json"
-	require.Equal(s.T(), "CLAUDE_CODE_NO_FLICKER=1 claude --mcp-config "+expectedMCP+" --model claude-opus-4-6 --dangerously-skip-permissions"+interactiveTail, got)
+	require.Equal(s.T(), "CLAUDE_CODE_NO_FLICKER=1 claude --mcp-config "+expectedMCP+" --model 'claude-opus-4-6' --dangerously-skip-permissions"+interactiveTail, got)
 }
 
 func (s *RunnerSuite) TestClaudeCmdBuilderWritesAgentMCPConfig() {
@@ -1137,7 +1196,7 @@ func (s *RunnerSuite) TestClaudeCmdBuilderWorktreeProjectConfig() {
 	got := builder.BuildInteractiveCmd("ch-1", worktreeDir, parentDir, "", "", false)
 
 	expectedMCP := worktreeDir + "/.loop/mcp-ch-1.json"
-	require.Equal(s.T(), "CLAUDE_CODE_NO_FLICKER=1 claude --mcp-config "+expectedMCP+" --model claude-opus-4-6 --dangerously-skip-permissions"+interactiveTail, got)
+	require.Equal(s.T(), "CLAUDE_CODE_NO_FLICKER=1 claude --mcp-config "+expectedMCP+" --model 'claude-opus-4-6' --dangerously-skip-permissions"+interactiveTail, got)
 }
 
 func (s *RunnerSuite) TestCreateShellContainerWithCopyFiles() {

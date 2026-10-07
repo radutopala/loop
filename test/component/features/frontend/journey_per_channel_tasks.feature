@@ -53,7 +53,7 @@ Feature: Per-Channel Tasks Journey
     # Create cron task
     When I click the task create button
     And I select "cron" from "select"
-    And I clear and type "*/5 * * * *" into "input[placeholder='*/30 * * * *']"
+    And I clear and type "0 0 1 1 *" into "input[placeholder='*/30 * * * *']"
     And I type "mega-cron-task" into "textarea[placeholder='Task prompt...']"
     And I click on the button with text "Create"
     Then I wait for text "mega-cron-task" to appear

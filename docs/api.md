@@ -610,11 +610,12 @@ Return the channel's per-channel model/effort overrides plus the effective confi
   "model": "claude-opus-4-8",
   "effort": "high",
   "default_model": "claude-sonnet-5-5",
-  "default_effort": ""
+  "default_effort": "",
+  "models": ["claude-opus-5-5", "claude-opus-5-5[1m]", "claude-opus-5", "..."]
 }
 ```
 
-`model` / `effort` are empty when the channel inherits from config.
+`model` / `effort` are empty when the channel inherits from config. `models` lists the model ids to offer — the same list as the `claude_model` config options; a `[1m]` id runs the model with its 1M-token context window.
 
 **Errors:** `404` if the channel doesn't exist. `501` if the store is not configured.
 

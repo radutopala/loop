@@ -9,7 +9,7 @@ Feature: Global Tasks Panel Journey
     And I set up a test task via API with type "interval" prompt "mega-global-alpha" and schedule "30m"
     # Seed channel B with cron task
     And I set up a test channel via API for directory "/tmp/bdd-mega-global-b"
-    And I set up a test task via API with type "cron" prompt "mega-global-beta" and schedule "*/5 * * * *"
+    And I set up a test task via API with type "cron" prompt "mega-global-beta" and schedule "0 0 1 1 *"
     And I open the app in a browser
     And I wait for text "Settings" to appear
     And I wait for text "bdd-mega-global-a" to appear
@@ -49,7 +49,7 @@ Feature: Global Tasks Panel Journey
 
     # Select cron task, verify schedule
     When I click on "mega-global-beta" in the global tasks panel
-    Then I wait for text "*/5 * * * *" to appear
+    Then I wait for text "0 0 1 1 *" to appear
     And the page should contain text "Run Now"
 
     # Delete cron task
