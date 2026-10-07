@@ -787,6 +787,19 @@ func (s *ReviewHandlerSuite) TestGetWithSession() {
 	require.Equal(s.T(), "diff", resp.Session.RawDiff)
 }
 
+func (s *ReviewHandlerSuite) TestGetWithoutDiff() {
+	s.rs.Put("ch1", &review.Session{Status: review.StatusReady, RawDiff: "diff", Comments: []*review.Comment{{ID: "c1"}}})
+	w := httptest.NewRecorder()
+	s.mux.ServeHTTP(w, httptest.NewRequest("GET", "/api/channels/ch1/review?diff=false", nil))
+	require.Equal(s.T(), http.StatusOK, w.Code)
+	require.NotContains(s.T(), w.Body.String(), "raw_diff")
+	var resp reviewSessionResponse
+	require.NoError(s.T(), json.Unmarshal(w.Body.Bytes(), &resp))
+	require.Len(s.T(), resp.Session.Comments, 1)
+	// The stored session keeps its diff.
+	require.Equal(s.T(), "diff", s.rs.Get("ch1").RawDiff)
+}
+
 // ---- sessions list ----
 
 func (s *ReviewHandlerSuite) TestSessionsNoReviewStoreNotImplemented() {

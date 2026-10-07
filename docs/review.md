@@ -334,6 +334,11 @@ failed stays in the panel and is listed under `errors`. Neither case fails
 the command. A run already in flight on the channel makes it fail with a
 `409`.
 
+Agents reach the same session through MCP tools: `get_review_findings`
+reads the PR and its comments (without the diff), optionally only the
+unpushed agent comments or one file, and `dedup_review_findings` runs the
+dedup pass. See [MCP server](mcpserver.md#review).
+
 ## Status transitions
 
 Status is broadcast over the WebSocket as `review.status` events so

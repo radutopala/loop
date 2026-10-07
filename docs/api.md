@@ -2375,6 +2375,8 @@ Response: `{"present": true, "session": { ... }}` — the full session, mirrorin
 ### `GET /api/channels/{id}/review`
 
 Return the channel's review session, or `{"present": false}` if none.
+`?diff=false` leaves out `raw_diff`, by far the largest field, for callers
+that only want the comments.
 
 ### `DELETE /api/channels/{id}/review`
 

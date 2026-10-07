@@ -1159,6 +1159,9 @@ In headless/Linux environments where Electron can't launch, `LOOP_NO_ELECTRON=1 
 | `delete_queued_message` | Remove a waiting message from the current channel's queue by `msg_id` (not the running one) |
 | `list_sessions` | List the Claude sessions in a channel's project dir, newest first, the current one marked (`channel_id` optional — defaults to the current channel) |
 | `resume_session` | Make another of those sessions the channel's, so its next message resumes it; the agent's own channel switches when its run ends |
+| `report_review_findings` | Add findings to the channel's PR review session (path, line, side, body); duplicates are skipped |
+| `get_review_findings` | Read a channel's review session: the PR, head SHA, status and every comment with its id, location, pushed state and source (agent or GitHub, with the GitHub id); filter to unpushed agent comments or one file. The diff is left out |
+| `dedup_review_findings` | Run the review dedup pass: drop agent comments that repeat another on the same file, re-anchor misplaced ones |
 | `search_memory` | Semantic search across memory files (ranked by similarity) |
 | `index_memory` | Force re-index all memory files |
 | `quality_scan` | Trigger an architectural-quality scan for the current channel (status hint returns immediately; report ships via the `quality.scanned` event) |

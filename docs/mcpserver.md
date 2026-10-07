@@ -62,6 +62,14 @@ Agent (Claude Code)  ←→  MCP Protocol (stdio)  ←→  loop mcp  ←→  HTT
 | `delete_thread` | Delete a thread by ID |
 | `search_channels` | Search channels and threads by optional query. Returns IDs, names, directory paths, parent IDs, and active status. |
 
+#### Review
+
+| Tool | Description |
+|------|-------------|
+| `report_review_findings` | Add findings to the channel's [PR review session](review.md) (`POST /api/channels/{id}/review/comments`): each one's repo-relative `path`, 1-based `line`, `side` (`RIGHT`, the default, or `LEFT`) and `body`. Duplicates are skipped. Denied in read-only runs. |
+| `get_review_findings` | Read a channel's review session (`GET /api/channels/{id}/review?diff=false`): the PR number, title and URL, head SHA, status, and every comment as `[id] path:line SIDE`, its source (`agent`, or `github by <author>` with the GitHub comment id), whether an agent comment was pushed (with its GitHub id), `outdated` and `resolved`, then the body. `unpushed_only` keeps the agent comments not yet pushed; `path` keeps one file. The PR diff is left out. `channel_id` is optional — defaults to the current channel/thread. |
+| `dedup_review_findings` | Run the [dedup pass](review.md) over a channel's review session (`POST /api/channels/{id}/review/dedup`), as `loop review dedup` does: removes agent comments that repeat another comment on the same file (from the PR too when they were pushed; GitHub comments are never deleted), re-anchors misplaced ones and notes related ones, then lists what it did. Takes minutes; refused while a review run is in progress. `channel_id` is optional — defaults to the current channel/thread. Denied in read-only runs. |
+
 #### Documentation
 
 | Tool | Description |

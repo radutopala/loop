@@ -324,6 +324,11 @@ func (s *reviewService) handleReviewGet(w http.ResponseWriter, r *http.Request) 
 		writeHTTPJSON(w, http.StatusOK, reviewSessionResponse{Present: false}, s.deps.logger)
 		return
 	}
+	// ?diff=false leaves out the PR diff, by far the largest field, for
+	// callers that only want the comments. Get returns a copy.
+	if r.URL.Query().Get("diff") == "false" {
+		sess.RawDiff = ""
+	}
 	writeHTTPJSON(w, http.StatusOK, reviewSessionResponse{Present: true, Session: sess}, s.deps.logger)
 }
 
