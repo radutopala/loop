@@ -1,12 +1,12 @@
-import { Fragment, useCallback, useRef } from "react";
+import { Fragment, useCallback, useRef, useState } from "react";
 import type { AgentInfo } from "../hooks/useAgentRegistry";
 import type { ContainerStatsByType } from "../hooks/useContainerStats";
 import { useTheme } from "../ThemeContext";
-import type { ColorPalette } from "../theme";
+import { type ColorPalette, fonts } from "../theme";
 import type { PanelType } from "../types/panels";
 import { DropZoneOverlay } from "./DropZoneOverlay";
 import { PaneLeafHeader } from "./PaneLeafHeader";
-import { collectPanelTypes } from "./treeOps";
+import { collectPanelTypes, flexPercents } from "./treeOps";
 import type { DropPosition, LeafNode, PaneNode, SplitDirection } from "./types";
 
 const HEADER_HEIGHT = 22;
@@ -79,6 +79,8 @@ interface PaneTreeProps {
   flexOverride?: number;
   /** Parent split direction — controls whether an all-minimized subtree can collapse its flex. */
   parentDirection?: "vertical" | "horizontal";
+  /** The pane's share of its split while a divider next to it is dragged. */
+  resizePercent?: number;
   onUpdateFlex: (parentPath: number[], dividerIdx: number, flexA: number, flexB: number) => void;
   onDrop: (dragId: string, dropId: string, position: DropPosition) => void;
   onRemoveLeaf: (id: string) => void;
@@ -98,6 +100,7 @@ function PaneTree({
   minimizedLeaves,
   flexOverride,
   parentDirection,
+  resizePercent,
   onUpdateFlex,
   onDrop,
   onRemoveLeaf,
@@ -108,6 +111,8 @@ function PaneTree({
 }: PaneTreeProps) {
   const { colors } = useTheme();
   const containerRef = useRef<HTMLDivElement>(null);
+  // The divider being dragged, so the panes on both sides show their share.
+  const [draggingDivider, setDraggingDivider] = useState<number | null>(null);
 
   const handleDivider = useCallback(
     (e: React.MouseEvent, dividerIndex: number, direction: "vertical" | "horizontal") => {
@@ -137,6 +142,7 @@ function PaneTree({
       };
 
       const onMouseUp = () => {
+        setDraggingDivider(null);
         document.removeEventListener("mousemove", onMouseMove);
         document.removeEventListener("mouseup", onMouseUp);
         document.body.style.cursor = "";
@@ -144,6 +150,7 @@ function PaneTree({
         document.querySelectorAll("iframe").forEach((f) => ((f as HTMLElement).style.pointerEvents = ""));
       };
 
+      setDraggingDivider(dividerIndex);
       document.body.style.cursor = direction === "vertical" ? "row-resize" : "col-resize";
       document.body.style.userSelect = "none";
       // Prevent iframes from capturing mouse events during divider drag.
@@ -186,6 +193,7 @@ function PaneTree({
         />
         <DropZoneOverlay leafId={node.id} headerHeight={HEADER_HEIGHT} onDrop={onDrop} />
         {!isMinimized && <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", minHeight: 0 }}>{renderLeaf(node)}</div>}
+        {resizePercent !== undefined && <ResizePercentOverlay percent={resizePercent} />}
       </div>
     );
   }
@@ -205,6 +213,7 @@ function PaneTree({
   // this node sits inside a vertical parent.  Collapsing inside a horizontal
   // parent would shrink the column width, which is not the intended behavior.
   const allMinimized = totalActiveFlex === 0 && parentDirection === "vertical";
+  const percents = draggingDivider !== null ? flexPercents(childFlexes) : null;
 
   return (
     <div
@@ -216,6 +225,7 @@ function PaneTree({
         overflow: "hidden",
         minHeight: 0,
         minWidth: 0,
+        position: "relative",
       }}
     >
       {node.children.map((child, i) => (
@@ -231,6 +241,7 @@ function PaneTree({
             minimizedLeaves={minimizedLeaves}
             flexOverride={childFlexes[i]! > 0 && flexScale !== 1 ? childFlexes[i]! * flexScale : undefined}
             parentDirection={node.direction}
+            resizePercent={percents && (i === draggingDivider || i === draggingDivider! + 1) ? percents[i] : undefined}
             onUpdateFlex={onUpdateFlex}
             onDrop={onDrop}
             onRemoveLeaf={onRemoveLeaf}
@@ -241,6 +252,42 @@ function PaneTree({
           />
         </Fragment>
       ))}
+      {resizePercent !== undefined && <ResizePercentOverlay percent={resizePercent} />}
+    </div>
+  );
+}
+
+/** The pane's share of its split, centered over it while a divider is dragged. */
+function ResizePercentOverlay({ percent }: { percent: number }) {
+  const { colors } = useTheme();
+  return (
+    <div
+      data-testid="pane-resize-percent"
+      style={{
+        position: "absolute",
+        inset: 0,
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        pointerEvents: "none",
+        zIndex: 20,
+      }}
+    >
+      <span
+        style={{
+          padding: "6px 14px",
+          borderRadius: 8,
+          border: `1px solid ${colors.border}`,
+          backgroundColor: colors.sidebar,
+          color: colors.textLight,
+          fontFamily: fonts.mono,
+          fontSize: 18,
+          fontWeight: 600,
+          boxShadow: "0 4px 16px rgba(0, 0, 0, 0.3)",
+        }}
+      >
+        {percent}%
+      </span>
     </div>
   );
 }

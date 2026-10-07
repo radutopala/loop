@@ -18,10 +18,10 @@ import {
 import type { CodeEditorHandle } from "../components/panels/CodeEditor";
 import { makePathKey, parsePathKey } from "../components/panels/EditorFileTree";
 import { emptyGitLineChanges, type GitLineChanges, gitLineChangesForFile } from "../components/panels/editorGitGutter";
-import type { ToolUseData, WSEvent } from "../types";
+import type { ToolResultData, ToolUseData, WSEvent } from "../types";
 import { logErr } from "../utils/log";
 import { storageGetJSON, storageSetJSON } from "../utils/storage";
-import { matchAbsPathToKey } from "./editorPaths";
+import { editToolFilePath, matchAbsPathToKey } from "./editorPaths";
 import type { ChatEventListener } from "./useChatStateStore";
 import { useContentCapsEpoch } from "./useContentCapsEpoch";
 
@@ -88,6 +88,8 @@ export interface EditorStateApi {
   // Dirty + auto-refresh state
   dirtyTabs: Set<string>;
   pendingRefresh: Map<string, string>;
+  // Tabs the agent rewrote that the user hasn't looked at since.
+  agentEditedTabs: Set<string>;
   autoSaveOnBlur: boolean;
   previewTabsEnabled: boolean;
 
@@ -120,6 +122,7 @@ export interface EditorStateApi {
   // Auto-refresh resolution
   acceptPendingRefresh: (pathKey: string) => void;
   dismissPendingRefresh: (pathKey: string) => void;
+  clearAgentEdited: (pathKey: string) => void;
 }
 
 /**
@@ -195,6 +198,15 @@ export function useEditorState(channelId: string, options?: UseEditorStateOption
 
   const [dirtyTabs, setDirtyTabs] = useState<Set<string>>(new Set());
   const [pendingRefresh, setPendingRefresh] = useState<Map<string, string>>(new Map());
+  const [agentEditedTabs, setAgentEditedTabs] = useState<Set<string>>(new Set());
+  const clearAgentEdited = useCallback((pathKey: string) => {
+    setAgentEditedTabs((prev) => {
+      if (!prev.has(pathKey)) return prev;
+      const next = new Set(prev);
+      next.delete(pathKey);
+      return next;
+    });
+  }, []);
   const [autoSaveOnBlur, setAutoSaveOnBlur] = useState(false);
   const [previewTabsEnabled, setPreviewTabsEnabled] = useState(true);
 
@@ -334,6 +346,7 @@ export function useEditorState(channelId: string, options?: UseEditorStateOption
       return next;
     });
     setPreviewTab((cur) => (cur === p ? null : cur));
+    clearAgentEdited(p);
     // Editing also implicitly dismisses any pending agent refresh for this tab.
     setPendingRefresh((prev) => {
       if (!prev.has(p)) return prev;
@@ -341,7 +354,7 @@ export function useEditorState(channelId: string, options?: UseEditorStateOption
       next.delete(p);
       return next;
     });
-  }, []);
+  }, [clearAgentEdited]);
 
   const saveFile = useCallback(
     (filePath?: string) => {
@@ -385,6 +398,7 @@ export function useEditorState(channelId: string, options?: UseEditorStateOption
         if (autoSaveOnBlurRef.current) saveAllDirty();
       }
       setSelectedPath(pathKey);
+      clearAgentEdited(pathKey);
       setError(null);
       setIsBinary(false);
       const { rootIndex: ri, relativePath: rp } = parsePathKey(pathKey);
@@ -417,7 +431,7 @@ export function useEditorState(channelId: string, options?: UseEditorStateOption
         })
         .finally(() => setLoading(false));
     },
-    [channelId, saveAllDirty],
+    [channelId, saveAllDirty, clearAgentEdited],
   );
 
   // Single-click open: preview tab if enabled, else permanent.
@@ -509,6 +523,7 @@ export function useEditorState(channelId: string, options?: UseEditorStateOption
         next.delete(path);
         return next;
       });
+      clearAgentEdited(path);
       if (previewTab === path) setPreviewTab(null);
       setOpenTabs((prev) => {
         const next = prev.filter((p) => p !== path);
@@ -527,7 +542,7 @@ export function useEditorState(channelId: string, options?: UseEditorStateOption
         return next;
       });
     },
-    [previewTab, saveAllDirty, switchToTab],
+    [previewTab, saveAllDirty, switchToTab, clearAgentEdited],
   );
 
   const refreshTree = useCallback(async () => {
@@ -777,7 +792,15 @@ export function useEditorState(channelId: string, options?: UseEditorStateOption
   const applyAgentRefresh = useCallback(
     (pathKey: string) => {
       const { rootIndex: ri, relativePath: rp } = parsePathKey(pathKey);
+      const markEdited = () =>
+        setAgentEditedTabs((prev) => {
+          if (prev.has(pathKey)) return prev;
+          const next = new Set(prev);
+          next.add(pathKey);
+          return next;
+        });
       if (isMediaPath(rp)) {
+        markEdited();
         if (pathKey === selectedPathRef.current) {
           imageVersionRef.current++;
           showMedia(rp, ri);
@@ -797,6 +820,7 @@ export function useEditorState(channelId: string, options?: UseEditorStateOption
             });
             return;
           }
+          markEdited();
           if (pathKey === selectedPathRef.current) {
             const editor = codeEditorRef.current;
             if (editor) {
@@ -819,38 +843,34 @@ export function useEditorState(channelId: string, options?: UseEditorStateOption
     [channelId],
   );
 
-  // Auto-refresh on agent Edit/Write/MultiEdit tool events.
+  // Auto-refresh on agent Edit/Write tool events. tool.use is
+  // broadcast when the model announces the call, before the file is written,
+  // so the paths are remembered there and re-read on the call's tool.result.
   const applyAgentRefreshRef = useRef(applyAgentRefresh);
   applyAgentRefreshRef.current = applyAgentRefresh;
   useEffect(() => {
     if (!subscribeChatEvents) return;
+    const pendingEdits = new Map<string, string>();
+    const refreshOpen = (filePath: string) => {
+      const pathKey = matchAbsPathToKey(filePath, rootsRef.current);
+      if (pathKey && openTabsRef.current.includes(pathKey)) applyAgentRefreshRef.current(pathKey);
+    };
     const handler = (event: WSEvent) => {
-      if (event.type !== "tool.use") return;
-      const data = event.data as ToolUseData;
-      if (data.tool_name !== "Edit" && data.tool_name !== "Write" && data.tool_name !== "MultiEdit") return;
-      let parsed: { file_path?: string; edits?: { file_path?: string }[] } | null = null;
-      try {
-        parsed = JSON.parse(data.input);
-      } catch {
+      if (event.type === "tool.use") {
+        const data = event.data as ToolUseData;
+        const filePath = editToolFilePath(data.tool_name, data.input);
+        if (!filePath) return;
+        if (data.tool_use_id) pendingEdits.set(data.tool_use_id, filePath);
+        else refreshOpen(filePath);
         return;
       }
-      if (!parsed) return;
-      const filePaths: string[] = [];
-      if (typeof parsed.file_path === "string") filePaths.push(parsed.file_path);
-      if (Array.isArray(parsed.edits)) {
-        for (const edit of parsed.edits) {
-          if (edit && typeof edit.file_path === "string") filePaths.push(edit.file_path);
-        }
-      }
-      if (filePaths.length === 0) return;
-      const seen = new Set<string>();
-      for (const abs of filePaths) {
-        if (seen.has(abs)) continue;
-        seen.add(abs);
-        const pathKey = matchAbsPathToKey(abs, rootsRef.current);
-        if (!pathKey) continue;
-        if (!openTabsRef.current.includes(pathKey)) continue;
-        applyAgentRefreshRef.current(pathKey);
+      if (event.type === "tool.result") {
+        const data = event.data as ToolResultData;
+        if (!data.tool_use_id) return;
+        const filePath = pendingEdits.get(data.tool_use_id);
+        if (!filePath) return;
+        pendingEdits.delete(data.tool_use_id);
+        if (!data.is_error) refreshOpen(filePath);
       }
     };
     return subscribeChatEvents(handler);
@@ -914,6 +934,7 @@ export function useEditorState(channelId: string, options?: UseEditorStateOption
     gitChanges,
     dirtyTabs,
     pendingRefresh,
+    agentEditedTabs,
     autoSaveOnBlur,
     previewTabsEnabled,
     codeEditorRef,
@@ -937,6 +958,7 @@ export function useEditorState(channelId: string, options?: UseEditorStateOption
     clearError,
     acceptPendingRefresh,
     dismissPendingRefresh,
+    clearAgentEdited,
   };
 }
 
