@@ -198,18 +198,21 @@ describe("buildAddressAllPrompt", () => {
 });
 
 describe("reviewModelOptions", () => {
-  it("names the config default and lists the presets", () => {
-    const opts = reviewModelOptions("", "claude-opus-5-5");
+  const models = ["claude-opus-5-5", "claude-opus-5-5[1m]", "claude-sonnet-5"];
+
+  it("names the config default and lists the daemon's models", () => {
+    const opts = reviewModelOptions("", "claude-opus-5-5", models);
+    expect(opts.map((o) => o.value)).toEqual(["", ...models]);
     expect(opts[0]).toEqual({ value: "", label: "Default (opus-5-5)" });
     expect(opts[1]).toEqual({ value: "claude-opus-5-5", label: "opus-5-5" });
   });
 
   it.each([
     ["no config default", "", "", "Default model", false],
-    ["keeps an id outside the presets", "claude-custom-1", "", "Default model", true],
-    ["preset not duplicated", "claude-sonnet-5", "", "Default model", false],
+    ["keeps an id outside the models", "claude-custom-1", "", "Default model", true],
+    ["model not duplicated", "claude-sonnet-5", "", "Default model", false],
   ])("%s", (_name, current, def, wantDefault, wantExtra) => {
-    const opts = reviewModelOptions(current, def);
+    const opts = reviewModelOptions(current, def, models);
     expect(opts[0]?.label).toBe(wantDefault);
     expect(opts.filter((o) => o.value === current && current !== "").length).toBe(current ? 1 : 0);
     expect(opts.some((o) => o.value === "claude-custom-1")).toBe(wantExtra);

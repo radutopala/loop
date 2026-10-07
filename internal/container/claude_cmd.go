@@ -44,6 +44,21 @@ func claudeTranscriptMissing(stat func(string) (os.FileInfo, error), homeDir fun
 	return false
 }
 
+// oneMContextSuffix marks a model id that asks Claude Code for its 1M-token
+// context window, e.g. "claude-opus-5-5[1m]".
+const oneMContextSuffix = "[1m]"
+
+// withModelSettings adds what the model needs to a --settings payload. A
+// [1m] model only gets its 1M window while CLAUDE_CODE_DISABLE_1M_CONTEXT is
+// unset or "0", and a host ~/.claude/settings.json that sets it would cap the
+// run at 200k — so the run's flag settings, which win over it, set "0".
+func withModelSettings(settings, model string) string {
+	if !strings.HasSuffix(model, oneMContextSuffix) {
+		return settings
+	}
+	return strings.Replace(settings, `{"env":{`, `{"env":{"CLAUDE_CODE_DISABLE_1M_CONTEXT":"0",`, 1)
+}
+
 // buildBaseClaudeCmd returns the common Claude CLI flags shared by both
 // batch and interactive modes. When continueSession is true, sessionID is
 // ignored and `--continue` is emitted instead — used to relaunch a terminal
@@ -193,7 +208,7 @@ func buildClaudeCmd(cfg *config.Config, mcpConfigPath string, req *agent.AgentRe
 	if req.ReviewMode {
 		settings = reviewModeSettings
 	}
-	cmd = append(cmd, "--settings", settings)
+	cmd = append(cmd, "--settings", withModelSettings(settings, cfg.ClaudeModel))
 	// A read-only run's --mcp-config has only the loop server; this makes Claude
 	// ignore every other MCP config too (~/.claude.json, the project's
 	// .mcp.json), so the user's own servers can't act for it.
@@ -278,8 +293,12 @@ const claudeExitTrailer = `; __lec=$?; printf '\033[?1000l\033[?1002l\033[?1003l
 func buildInteractiveClaudeCmd(cfg *config.Config, channelID, workDir, sessionID, agentID string, forkSession, continueSession bool) string {
 	mcpConfigPath := mcpConfigPathForAgent(workDir, channelID, agentID)
 	cmd := buildBaseClaudeCmd(cfg, mcpConfigPath, sessionID, "", agentID, forkSession, continueSession, cfg.ExtraDirs)
-	// Single-quoted for the shell: runSettings holds no single quote.
-	cmd = append(cmd, "--settings", "'"+runSettings+"'")
+	// Single-quoted for the shell: the model's "[1m]" is a glob, and the
+	// settings JSON holds no single quote.
+	if i := slices.Index(cmd, "--model"); i >= 0 {
+		cmd[i+1] = "'" + strings.ReplaceAll(cmd[i+1], "'", `'\''`) + "'"
+	}
+	cmd = append(cmd, "--settings", "'"+withModelSettings(runSettings, cfg.ClaudeModel)+"'")
 	return "CLAUDE_CODE_NO_FLICKER=1 " + strings.Join(cmd, " ") + claudeExitTrailer
 }
 

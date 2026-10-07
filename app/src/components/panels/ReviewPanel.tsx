@@ -23,7 +23,7 @@ import { useTheme } from "../../ThemeContext";
 import { fonts } from "../../theme";
 import type { GateApprovalRequestedData, WSEvent } from "../../types";
 import { ApprovalCard } from "../chat/ApprovalCard";
-import { EFFORT_PRESETS, MODEL_PRESETS, shortModel } from "../chat/agentPresets";
+import { EFFORT_PRESETS, shortModel } from "../chat/agentPresets";
 import { ContextMenu } from "../shared/ContextMenu";
 import { ReviewDiffView } from "./ReviewDiffView";
 import { ReviewRunDrawer } from "./ReviewRunDrawer";
@@ -164,12 +164,12 @@ export interface SelectOption {
 
 /**
  * Model choices for a review run: the config default first (named, so the
- * fallback is concrete), then the presets. A current id outside the presets
- * — set from the CLI, or a preset since dropped — is kept as an option so the
+ * fallback is concrete), then the daemon's models. A current id outside them
+ * — set from the CLI, or a model since dropped — is kept as an option so the
  * select can still show it.
  */
-export function reviewModelOptions(current: string, defaultModel: string): SelectOption[] {
-  const ids = current && !MODEL_PRESETS.includes(current) ? [...MODEL_PRESETS, current] : MODEL_PRESETS;
+export function reviewModelOptions(current: string, defaultModel: string, models: string[]): SelectOption[] {
+  const ids = current && !models.includes(current) ? [...models, current] : models;
   return [{ value: "", label: defaultModel ? `Default (${shortModel(defaultModel)})` : "Default model" }, ...ids.map((m) => ({ value: m, label: shortModel(m) }))];
 }
 
@@ -335,7 +335,7 @@ export function ReviewPanel({ channelId, subscribeChatEvents, registerReviewView
   const [forkDraft, setForkDraft] = useState("");
   // The config's model/effort for this channel, so the "Default" choices
   // name what they fall back to.
-  const [agentDefaults, setAgentDefaults] = useState({ model: "", effort: "" });
+  const [agentDefaults, setAgentDefaults] = useState<{ model: string; effort: string; models: string[] }>({ model: "", effort: "", models: [] });
 
   const hasSession = session !== null && session.status !== "idle" && session.status !== "error";
 
@@ -357,10 +357,10 @@ export function ReviewPanel({ channelId, subscribeChatEvents, registerReviewView
     setError(null);
     setForkModeDraft("");
     setForkDraft("");
-    setAgentDefaults({ model: "", effort: "" });
+    setAgentDefaults({ model: "", effort: "", models: [] });
     fetchAgentConfig(channelId)
       .then((cfg) => {
-        if (!cancelled) setAgentDefaults({ model: cfg.default_model, effort: cfg.default_effort });
+        if (!cancelled) setAgentDefaults({ model: cfg.default_model, effort: cfg.default_effort, models: cfg.models ?? [] });
       })
       .catch(() => {});
     (async () => {
@@ -1152,7 +1152,7 @@ export function ReviewPanel({ channelId, subscribeChatEvents, registerReviewView
                 fontFamily: fonts.sans,
               }}
             >
-              {reviewModelOptions(session?.model ?? "", agentDefaults.model).map((o) => (
+              {reviewModelOptions(session?.model ?? "", agentDefaults.model, agentDefaults.models).map((o) => (
                 <option key={o.value} value={o.value}>
                   {o.label}
                 </option>

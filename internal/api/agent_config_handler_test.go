@@ -53,6 +53,7 @@ func (s *ServerSuite) TestAgentConfigGet() {
 	require.Equal(s.T(), "high", resp.Effort)
 	require.Equal(s.T(), "claude-sonnet-5", resp.DefaultModel)
 	require.Equal(s.T(), "low", resp.DefaultEffort)
+	require.Equal(s.T(), config.Models(), resp.Models)
 }
 
 func (s *ServerSuite) TestAgentConfigGetWorktreeDefaults() {

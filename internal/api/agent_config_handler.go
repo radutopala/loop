@@ -3,6 +3,8 @@ package api
 import (
 	"net/http"
 	"strings"
+
+	"github.com/radutopala/loop/internal/config"
 )
 
 // validEfforts are the reasoning-effort levels accepted by the Claude CLI's
@@ -13,12 +15,14 @@ var validEfforts = map[string]struct{}{
 
 // agentConfigResponse carries a channel's model/effort overrides plus the
 // effective config defaults (global → project → worktree merge for the
-// channel's dir), so the UI can label the "default" choice concretely.
+// channel's dir), so the UI can label the "default" choice concretely, and
+// the model ids to offer (config.Models), so the UI keeps no list of its own.
 type agentConfigResponse struct {
-	Model         string `json:"model"`
-	Effort        string `json:"effort"`
-	DefaultModel  string `json:"default_model"`
-	DefaultEffort string `json:"default_effort"`
+	Model         string   `json:"model"`
+	Effort        string   `json:"effort"`
+	DefaultModel  string   `json:"default_model"`
+	DefaultEffort string   `json:"default_effort"`
+	Models        []string `json:"models"`
 }
 
 type agentConfigRequest struct {
@@ -49,6 +53,7 @@ func (s *Server) handleGetAgentConfig(w http.ResponseWriter, r *http.Request) {
 		Effort:        ch.EffortOverride,
 		DefaultModel:  defModel,
 		DefaultEffort: defEffort,
+		Models:        config.Models(),
 	}, s.logger)
 }
 
