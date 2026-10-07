@@ -2405,8 +2405,8 @@ review agent is not wired.
 Fold duplicate findings. Every comment in the session, across files, goes
 to a read-only agent run (no Bash, no edits, strict MCP config) when there
 are at least two and one is the agent's. The model clusters them by root
-cause, including a cause and its symptom, or the same issue anchored in two
-files, and picks the most severe and specific one to keep. The daemon
+cause, including a cause and its symptom (even when the symptom has a
+narrower fix of its own), or the same issue anchored in two files, and picks the most severe and specific one to keep. The daemon
 deletes the others the same way `DELETE /review/comments/{cid}` does, which
 includes removing them from the PR if they were pushed. Each deletion is
 broadcast as `review.comment_removed`. The model's note on what the dropped
@@ -2426,6 +2426,7 @@ Response:
   "clusters": [{"kept": "<id>", "removed": ["<id>"], "reason": "...", "note": "...", "note_added": true}],
   "related": [{"ids": ["<id>", "<id>"], "reason": "..."}],
   "moved": [{"id": "<id>", "from": 145, "to": 147}],
+  "trimmed": [{"id": "<id>", "covered_by": "<id>", "reason": "..."}],
   "checked": 11,
   "errors": ["<id>: <msg>"]
 }
@@ -2437,7 +2438,10 @@ comment is a GitHub or pushed one, which is never edited. `related` groups
 findings about the same code path that need separate fixes; nothing is
 deleted for them. `moved` lists the unpushed agent findings the model
 re-anchored to the statement they are about, at most 20 lines from where
-they were; each move is broadcast as `review.comment_updated`. `checked` is the number of comments shown to the model
+they were; each move is broadcast as `review.comment_updated`. `trimmed`
+lists the unpushed agent findings that bundled several issues and were
+rewritten to the ones no other comment covers; `covered_by` is the comment
+that reports the part cut out. Each is broadcast as `review.comment_updated`. `checked` is the number of comments shown to the model
 (`0` when there is nothing to fold, in which case no agent runs). `errors`
 lists the deletions that failed; those comments stay.
 

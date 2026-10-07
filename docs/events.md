@@ -990,7 +990,7 @@ Emitted when a comment leaves the review session, either because it was deleted 
 
 ### `review.comment_updated`
 
-Emitted when a comment changes in place: the dedup pass (`POST /review/dedup`) appends what a kept comment's dropped duplicates added, or moves a finding to the line it is about. Same payload as `review.comment`; the FE swaps in the new body.
+Emitted when a comment changes in place: the dedup pass (`POST /review/dedup`) appends what a kept comment's dropped duplicates added, trims a comment that bundles several issues to the ones no other comment covers, or moves a finding to the line it is about. Same payload as `review.comment`; the FE swaps in the new body.
 
 **Scope:** Channel.
 

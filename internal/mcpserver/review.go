@@ -19,7 +19,7 @@ import (
 func (s *Server) registerReviewTools() {
 	mcp.AddTool(s.mcpServer, &mcp.Tool{
 		Name:        "report_review_findings",
-		Description: "Report code-review findings for the current channel's PR review session. Each finding needs the repo-relative file path, the 1-based line number, and a body describing the bug, the concrete inputs/state that trigger it, and the wrong output or crash. Side is RIGHT for added/modified lines (default) or LEFT for lines removed from the base. Call once with the full list; duplicates are skipped server-side.",
+		Description: "Report code-review findings for the current channel's PR review session. Each finding needs the repo-relative file path, the 1-based line number, and a body describing the bug, the concrete inputs/state that trigger it, and the wrong output or crash. Side is RIGHT for added/modified lines (default) or LEFT for lines removed from the base. Call once with the full list; a finding reported twice verbatim is skipped server-side.",
 	}, s.handleReportReviewFindings)
 	mcp.AddTool(s.mcpServer, &mcp.Tool{
 		Name:        "get_review_comments",

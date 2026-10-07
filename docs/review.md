@@ -61,7 +61,9 @@ per-global / per-project / per-worktree the same way as `github.gh_user`.
    [Required output format](#required-output-format)) doesn't catch. The
    dedup pass shows every comment in the session to a read-only model run
    (no Bash, no edits). The model groups them by root cause (same issue
-   means one change fixes both), keeps the most severe and specific
+   means one change fixes both; when fixing the kept comment's root cause
+   also resolves another comment, that one is a duplicate even if it has
+   a narrower fix of its own), keeps the most severe and specific
    comment in each group, and says what the others add. The daemon deletes
    the others from the panel and, if they were pushed, from the PR, and
    appends that note to the kept comment as an `Also flagged:` paragraph.
@@ -70,7 +72,11 @@ per-global / per-project / per-worktree the same way as `github.gh_user`.
    deletes agent findings: comments read from GitHub can be kept, but are
    never dropped. Findings about the same code path that still need
    separate fixes are reported as related, and nothing is deleted for
-   them. The pass also re-checks where each surviving agent finding is
+   them. A comment that bundles several issues duplicates a comment that
+   reports one of them: the model folds the single-issue comment into the
+   bundle, or, when the single one is the better keeper, rewrites an
+   unpushed bundled agent finding to only the issues nothing else covers.
+   The pass also re-checks where each surviving agent finding is
    anchored, against the file read with line numbers, and moves an
    unpushed one that sits a few lines off (on a blank line, a closing
    brace or a neighbouring statement) to the statement it is about, within
@@ -324,6 +330,7 @@ group so a pass can be audited:
   "clusters": [{"kept": "<id>", "removed": ["<id>"], "reason": "...", "note": "...", "note_added": true}],
   "related": [{"ids": ["<id>", "<id>"], "reason": "..."}],
   "moved": [{"id": "<id>", "from": 145, "to": 147}],
+  "trimmed": [{"id": "<id>", "covered_by": "<id>", "reason": "..."}],
   "checked": 11,
   "errors": ["<id>: <msg>"]
 }
@@ -409,25 +416,19 @@ container) with the full findings list. Each MCP finding carries:
 - `body` — one paragraph describing the issue.
 
 Malformed findings (empty path/body, non-positive line) are skipped, and
-the daemon deduplicates on the way in, so re-reporting the same finding —
-in the same call, over both channels, or in a later run — is safe. Two
-passes, because a re-run does not repeat itself verbatim:
+a finding whose id the session already holds is dropped. The id is a
+stable content hash of path/line/body, so this catches an agent retrying
+a report it already made, in the same call, over both channels, or in a
+later run.
 
-1. **By id** — a stable content hash of path/line/body. Catches an agent
-   retrying a report it already made.
-2. **By content** — a finding within 20 lines of another finding on the
-   same file and side is dropped when the two bodies are near-identical: word-bigram
-   Dice ≥ 0.7 after lowercasing and stripping punctuation. This is the
-   case that matters across runs. Each review run re-derives its findings
-   rather than copying the last run's text, so the same issue comes back
-   reworded, hashes differently, and the "do NOT re-emit" list — prose in
-   a system prompt — cannot reliably prevent it.
-
-The content pass is anchored to the neighbourhood first, because a re-run
-often re-anchors a finding a few lines off. The same wording further than
-20 lines away stays, so an issue that recurs in two places is still
-flagged twice; within 20 lines it's flagged once. It runs only over **agent** findings; comments read back
-from GitHub are rebuilt wholesale on Sync and never pass through it.
+Nothing on the way in judges whether two differently worded findings are
+the same. Each review run re-derives its findings rather than copying the
+last run's text, so the same issue comes back reworded, anchored a few
+lines off, or as a symptom of a cause another finding names. Telling those
+apart is left to a model: the "do NOT re-emit" list handed to the review
+run, and the [dedup pass](#lifecycle) that runs after a multi-round
+review (or on demand through `POST .../review/dedup` and the
+`dedup_review_findings` tool).
 
 ## See also
 

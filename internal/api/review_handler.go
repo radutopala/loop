@@ -911,6 +911,7 @@ type reviewDedupResult struct {
 	Clusters []reviewDedupCluster  `json:"clusters"`
 	Related  []review.DedupRelated `json:"related"`
 	Moved    []reviewDedupMove     `json:"moved"`
+	Trimmed  []reviewDedupTrim     `json:"trimmed"`
 	Checked  int                   `json:"checked"`
 	Errors   []string              `json:"errors,omitempty"`
 }
@@ -934,12 +935,22 @@ type reviewDedupMove struct {
 	To   int    `json:"to"`
 }
 
+// reviewDedupTrim reports a bundled comment the pass cut down to the issues
+// no other comment covers; CoveredBy reports the part cut out.
+type reviewDedupTrim struct {
+	ID        string `json:"id"`
+	CoveredBy string `json:"covered_by"`
+	Reason    string `json:"reason,omitempty"`
+}
+
 // handleReviewDedup runs the final dedup pass over the channel's review
 // session, the last step of a multi-round review loop. It refreshes the
 // session (so the PR's GitHub comments are current), has a read-only agent
 // group the comments that report the same issue (review.BuildDedupPrompt),
 // and deletes every group's extra agent comments, on GitHub too when they
-// were pushed. GitHub comments are never deleted.
+// were pushed. GitHub comments are never deleted. A comment bundling an
+// issue another comment covers is rewritten to the rest when it is an
+// unpushed agent finding.
 //
 // It answers when the pass is done. It takes the channel's review-run slot,
 // so it can't overlap a review run: that answers 409. A session with no
@@ -986,7 +997,7 @@ func (s *reviewService) handleReviewDedup(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	res := reviewDedupResult{Removed: []string{}, Clusters: []reviewDedupCluster{}, Related: []review.DedupRelated{}, Moved: []reviewDedupMove{}}
+	res := reviewDedupResult{Removed: []string{}, Clusters: []reviewDedupCluster{}, Related: []review.DedupRelated{}, Moved: []reviewDedupMove{}, Trimmed: []reviewDedupTrim{}}
 	cands := review.DedupCandidates(sess.Comments)
 	if len(cands) == 0 {
 		writeHTTPJSON(w, http.StatusOK, res, s.deps.logger)
@@ -1025,6 +1036,12 @@ func (s *reviewService) handleReviewDedup(w http.ResponseWriter, r *http.Request
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
+	}
+	// Trims replace a body, so they go before the notes that append to one.
+	for _, tr := range plan.Trims {
+		if s.editComment(channelID, tr.ID, func(c *review.Comment) { c.Body = tr.Body }) != nil {
+			res.Trimmed = append(res.Trimmed, reviewDedupTrim{ID: tr.ID, CoveredBy: tr.CoveredBy, Reason: tr.Reason})
+		}
 	}
 	for _, cl := range plan.Clusters {
 		out := reviewDedupCluster{Kept: cl.Keep, Removed: []string{}, Reason: cl.Reason, Note: cl.Note}
