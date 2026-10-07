@@ -162,6 +162,8 @@ export function EditorPanel({ dirPath, branch, editorState, embedded, ...panelPr
                 return (
                   <button
                     key={tab}
+                    data-testid="editor-tab"
+                    data-path={tabRelPath}
                     onClick={() => {
                       if (isActive) clearAgentEdited(tab);
                       else switchToTab(tab);

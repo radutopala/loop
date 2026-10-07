@@ -88,7 +88,7 @@ Feature: Editor HTML Viewer Journey
 
     # Switching back must load the page, not leave the frame blank
     And I record messages posted by frames
-    And I click on "button[title='page.html']"
+    And I click on "[data-testid='editor-tab'][data-path='page.html']"
     Then I wait for "[data-testid='html-preview']" to be visible
     And I wait for a frame message "loaded:Back again"
 

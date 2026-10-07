@@ -154,6 +154,10 @@ func registerFrontendSteps(ctx *godog.ScenarioContext, tc *TestContext) {
 
 	// DOM interaction — CSS selectors
 	ctx.Step(`^I click on "([^"]*)"$`, tc.clickOn)
+	ctx.Step(`^I double-click on "([^"]*)"$`, tc.doubleClickOn)
+	ctx.Step(`^I right-click on "([^"]*)"$`, tc.rightClickOn)
+	ctx.Step(`^I record clipboard writes$`, tc.recordClipboardWrites)
+	ctx.Step(`^the clipboard should hold "([^"]*)"$`, tc.assertClipboardHolds)
 	ctx.Step(`^I type "([^"]*)" into "([^"]*)"$`, tc.typeInto)
 	ctx.Step(`^I type "([^"]*)" into the agent terminal$`, tc.typeIntoAgentTerminal)
 	ctx.Step(`^I submit the agent terminal$`, tc.submitAgentTerminal)
@@ -482,6 +486,53 @@ func (tc *TestContext) clickOn(selector string) error {
 	actions = append(actions, leadCursorActions(fmt.Sprintf(`document.querySelector(%q)`, selector))...)
 	actions = append(actions, chromedp.Click(selector, chromedp.ByQuery))
 	return chromedp.Run(tc.chromeTab.ctx, actions...)
+}
+
+func (tc *TestContext) doubleClickOn(selector string) error {
+	return chromedp.Run(tc.chromeTab.ctx,
+		chromedp.WaitVisible(selector, chromedp.ByQuery),
+		chromedp.DoubleClick(selector, chromedp.ByQuery),
+	)
+}
+
+func (tc *TestContext) rightClickOn(selector string) error {
+	return chromedp.Run(tc.chromeTab.ctx,
+		chromedp.WaitVisible(selector, chromedp.ByQuery),
+		chromedp.Evaluate(fmt.Sprintf(`document.querySelector(%q).dispatchEvent(new MouseEvent('contextmenu', {bubbles: true, button: 2}))`, selector), nil),
+	)
+}
+
+// recordClipboardWrites swaps navigator.clipboard.writeText for a recorder:
+// headless Chrome has no clipboard permission, so the real call rejects.
+func (tc *TestContext) recordClipboardWrites() error {
+	return chromedp.Run(tc.chromeTab.ctx, chromedp.Evaluate(`(() => {
+		window.__bddClipboard = null;
+		Object.defineProperty(navigator, "clipboard", {
+			configurable: true,
+			value: { writeText: (t) => { window.__bddClipboard = t; return Promise.resolve(); } },
+		});
+	})()`, nil))
+}
+
+// assertClipboardHolds checks the last recorded clipboard write. The expected
+// text may use the scenario placeholders ({repo_path}, ...).
+func (tc *TestContext) assertClipboardHolds(want string) error {
+	want = tc.resolvePlaceholders(want)
+	var got *string
+	err := chromedp.Run(tc.chromeTab.ctx,
+		chromedp.Poll(fmt.Sprintf(`window.__bddClipboard === %q`, want), nil,
+			chromedp.WithPollingTimeout(5*time.Second), chromedp.WithPollingInterval(100*time.Millisecond)),
+	)
+	if err == nil {
+		return nil
+	}
+	if evalErr := chromedp.Run(tc.chromeTab.ctx, chromedp.Evaluate(`window.__bddClipboard ?? null`, &got)); evalErr != nil {
+		return evalErr
+	}
+	if got == nil {
+		return fmt.Errorf("clipboard holds nothing, want %q", want)
+	}
+	return fmt.Errorf("clipboard holds %q, want %q", *got, want)
 }
 
 // assertFieldHolds checks an input or textarea's value, polling briefly so a
