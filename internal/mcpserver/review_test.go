@@ -167,10 +167,11 @@ func (s *ReviewToolSuite) TestDedupReviewFindings() {
 		{
 			name:    "a pass that changed things",
 			args:    map[string]any{},
-			body:    `{"removed":["c2","c3"],"clusters":[{"kept":"c1","removed":["c2","c3"],"reason":"same nil check"}],"related":[{"ids":["c1","c4"],"reason":"same root cause"}],"moved":[{"id":"c4","from":7,"to":9}],"checked":4,"errors":["deleting c5: 502"]}`,
+			body:    `{"removed":["c2","c3"],"clusters":[{"kept":"c1","removed":["c2","c3"],"reason":"same nil check"}],"related":[{"ids":["c1","c4"],"reason":"same root cause"}],"moved":[{"id":"c4","from":7,"to":9}],"trimmed":[{"id":"c6","covered_by":"c1","reason":"bundles the nil check"}],"checked":4,"errors":["deleting c5: 502"]}`,
 			wantURL: "http://localhost:8222/api/channels/test-channel/review/dedup",
 			want: "Checked 4 comment(s); removed 2.\n" +
 				"- kept c1, removed c2, c3: same nil check\n" +
+				"- trimmed c6 to what c1 doesn't cover: bundles the nil check\n" +
 				"- moved c4 from line 7 to 9\n" +
 				"- related c1, c4: same root cause\n" +
 				"- error: deleting c5: 502\n",

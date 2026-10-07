@@ -27,7 +27,7 @@ func (s *Server) registerReviewTools() {
 	}, s.handleGetReviewComments)
 	mcp.AddTool(s.mcpServer, &mcp.Tool{
 		Name:        "dedup_review_findings",
-		Description: "Run the final dedup pass over this channel's review session: an agent drops agent comments that repeat another comment, re-anchors misplaced ones, and notes related ones. GitHub comments are never deleted; removed comments that were already pushed are deleted from the PR too. Takes minutes; fails while a review run is in progress.",
+		Description: "Run the final dedup pass over this channel's review session: an agent drops agent comments that repeat another comment, trims a comment that bundles an issue another comment covers, re-anchors misplaced ones, and notes related ones. GitHub comments are never deleted; removed comments that were already pushed are deleted from the PR too. Takes minutes; fails while a review run is in progress.",
 	}, s.handleDedupReviewFindings)
 	mcp.AddTool(s.mcpServer, &mcp.Tool{
 		Name:        "delete_review_comment",
@@ -206,6 +206,11 @@ type reviewDedupResult struct {
 		From int    `json:"from"`
 		To   int    `json:"to"`
 	} `json:"moved"`
+	Trimmed []struct {
+		ID        string `json:"id"`
+		CoveredBy string `json:"covered_by"`
+		Reason    string `json:"reason"`
+	} `json:"trimmed"`
 	Checked int      `json:"checked"`
 	Errors  []string `json:"errors"`
 }
@@ -225,6 +230,9 @@ func (s *Server) handleDedupReviewFindings(_ context.Context, _ *mcp.CallToolReq
 	fmt.Fprintf(&b, "Checked %d comment(s); removed %d.\n", res.Checked, len(res.Removed))
 	for _, c := range res.Clusters {
 		fmt.Fprintf(&b, "- kept %s, removed %s: %s\n", c.Kept, strings.Join(c.Removed, ", "), c.Reason)
+	}
+	for _, t := range res.Trimmed {
+		fmt.Fprintf(&b, "- trimmed %s to what %s doesn't cover: %s\n", t.ID, t.CoveredBy, t.Reason)
 	}
 	for _, m := range res.Moved {
 		fmt.Fprintf(&b, "- moved %s from line %d to %d\n", m.ID, m.From, m.To)
