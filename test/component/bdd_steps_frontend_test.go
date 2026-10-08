@@ -3095,9 +3095,12 @@ func (tc *TestContext) injectEventWithData(eventType, target string, data *godog
 	if err := json.Unmarshal([]byte(tc.resolvePlaceholders(content)), &d); err != nil {
 		return fmt.Errorf("parsing %s event data: %w", eventType, err)
 	}
+	// Stamped as the events hub stamps real events: handlers such as the
+	// sidebar's review.status one take the event's time as activity.
 	payload, err := json.Marshal(map[string]any{
 		"type":       eventType,
 		"channel_id": channelID,
+		"timestamp":  time.Now().UnixMilli(),
 		"data":       d,
 	})
 	if err != nil {
