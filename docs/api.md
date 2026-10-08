@@ -2391,6 +2391,13 @@ run continues in the background, streaming `review.comment` and
 
 A concurrent call while a run is in flight returns `202 {"status":"in_progress"}` without restarting.
 
+Once the agent is done, and before the session turns `ready`, the daemon
+runs the [dedup pass](#post-apichannelsidreviewdedup) over the comments
+the run added, checking each against every other comment in the session.
+The session's `superseded` field then maps each comment it deleted to the
+comment it was folded into; a new run clears it. A run that added no
+agent comment skips the pass, and a failed pass is only logged.
+
 If the session is configured to fork (see below), the chosen session's
 transcript is copied into the worktree's Claude project dir before the
 agent starts, and the run is launched with `--resume <id> --fork-session`.
@@ -2415,8 +2422,10 @@ agent finding, and broadcast as `review.comment_updated`.
 Only agent findings are ever deleted: a GitHub comment can be the one kept,
 but is never dropped. The run is synchronous, and while it runs the session
 holds the channel's review-run slot and shows status `reviewing`. It is in
-the agent token scope, so the seeded `review-loop` can call it from its
-container through `loop review dedup`.
+the agent token scope, so an agent can call it from its container through
+`loop review dedup`. Every review run already folds the comments it added
+(see [`POST .../review/run`](#post-apichannelsidreviewrun)); this regroups
+the whole session.
 
 Response:
 
@@ -2427,6 +2436,7 @@ Response:
   "related": [{"ids": ["<id>", "<id>"], "reason": "..."}],
   "moved": [{"id": "<id>", "from": 145, "to": 147}],
   "trimmed": [{"id": "<id>", "covered_by": "<id>", "reason": "..."}],
+  "verdicts": [{"id": "<id>", "verdict": "false_positive", "reason": "..."}],
   "checked": 11,
   "errors": ["<id>: <msg>"]
 }
@@ -2441,7 +2451,12 @@ re-anchored to the statement they are about, at most 20 lines from where
 they were; each move is broadcast as `review.comment_updated`. `trimmed`
 lists the unpushed agent findings that bundled several issues and were
 rewritten to the ones no other comment covers; `covered_by` is the comment
-that reports the part cut out. Each is broadcast as `review.comment_updated`. `checked` is the number of comments shown to the model
+that reports the part cut out. Each is broadcast as `review.comment_updated`. `verdicts`
+lists the kept agent findings the model checked against the code: `real`,
+`false_positive` or `already_fixed`, with a one-sentence `reason`. Each is
+stored on the comment as `verdict` and `verdict_reason` (pushed findings
+included; nothing is deleted for a verdict) and broadcast as
+`review.comment_updated`. `checked` is the number of comments shown to the model
 (`0` when there is nothing to fold, in which case no agent runs). `errors`
 lists the deletions that failed; those comments stay.
 

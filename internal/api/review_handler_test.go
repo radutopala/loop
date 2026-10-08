@@ -16,7 +16,6 @@ import (
 	"sync"
 	"testing"
 	"time"
-	"unicode/utf8"
 
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
@@ -1497,8 +1496,9 @@ type mockReviewRunner struct {
 	runWithCtxFn func(ctx context.Context) (*agent.AgentResponse, error)
 	// findings, when set, are handed to the run's onComment callback the
 	// way the agent's ReportFindings tool_use would deliver them.
-	findings []*review.Comment
-	done     chan struct{} // closed after Run returns
+	findings   []*review.Comment
+	done       chan struct{} // closed after the first Run returns
+	doneClosed bool
 }
 
 func (m *mockReviewRunner) Run(ctx context.Context, req review.RunRequest) (*agent.AgentResponse, error) {
@@ -1517,6 +1517,10 @@ func (m *mockReviewRunner) Run(ctx context.Context, req review.RunRequest) (*age
 	ctxFn := m.runWithCtxFn
 	fn := m.runFn
 	done := m.done
+	if m.doneClosed {
+		done = nil // only the first run closes it; a dedup pass may follow
+	}
+	m.doneClosed = true
 	findings := m.findings
 	m.mu.Unlock()
 	if onComment != nil {
@@ -2083,7 +2087,7 @@ func (s *ReviewHandlerSuite) TestIngestCommentsMalformedFindingSkippedNotFatal()
 	s.store.On("GetChannel", mock.Anything, "ch1").Return(&db.Channel{ChannelID: "ch1", DirPath: "/repo"}, nil).Maybe()
 	payload := `{"findings":[
 		{"path":"a.go","line":"NaN","body":"bad line type"},
-		{"path":"b.go","line":2,"body":"valid"}
+		{"path":"b.go","line":2,"body":"valid","category":" Correctness "}
 	]}`
 	w := httptest.NewRecorder()
 	s.mux.ServeHTTP(w, httptest.NewRequest("POST", "/api/channels/ch1/review/comments", strings.NewReader(payload)))
@@ -2094,6 +2098,7 @@ func (s *ReviewHandlerSuite) TestIngestCommentsMalformedFindingSkippedNotFatal()
 	require.Equal(s.T(), 1, res["skipped"])
 	require.Len(s.T(), s.rs.Get("ch1").Comments, 1)
 	require.Equal(s.T(), "b.go", s.rs.Get("ch1").Comments[0].Path)
+	require.Equal(s.T(), "correctness", s.rs.Get("ch1").Comments[0].Category)
 }
 
 func (s *ReviewHandlerSuite) TestIngestCommentsNoSession404() {
@@ -2187,7 +2192,7 @@ func (s *ReviewHandlerSuite) TestRunPromptIncludesConfiguredGHUser() {
 
 // When the session already carries comments (from a prior run or from
 // the GH-seed on load), the run prompt lists them so the agent can dedup.
-func (s *ReviewHandlerSuite) TestRunPromptListsExistingCommentsForDedup() {
+func (s *ReviewHandlerSuite) TestRunPromptLeavesOutExistingComments() {
 	s.rs.Put("ch1", &review.Session{
 		PR:           &githubapi.PRInfo{Number: 7, BaseRef: "main"},
 		HeadSHA:      "abc",
@@ -2200,19 +2205,13 @@ func (s *ReviewHandlerSuite) TestRunPromptListsExistingCommentsForDedup() {
 		Status: review.StatusReady,
 	})
 	s.store.On("GetChannel", mock.Anything, "ch1").Return(&db.Channel{ChannelID: "ch1", DirPath: "/repo"}, nil).Maybe()
-	// Refresh re-fetches GH comments before kicking off the agent — so
-	// the GH side of the dedup list must come back from FetchPRReviewComments,
-	// not from the seed session (which refresh discards for source=github
-	// entries). The agent comment from the seed survives untouched.
+	// Refresh re-fetches GH comments before kicking off the agent.
 	s.gh.On("FetchPRHeadSHA", mock.Anything, "/repo", mock.Anything, 7).Return("abc", nil).Maybe()
 	s.wt.On("Refresh", mock.Anything, "/repo", "/repo/.worktrees/pr-7", 7).Return(nil).Maybe()
 	slug := &githubapi.RepoSlug{Owner: "o", Name: "r"}
 	s.gh.On("FetchRepoSlug", mock.Anything, "/repo", mock.Anything).Return(slug, nil).Maybe()
 	s.gh.On("FetchPRReviewComments", mock.Anything, "/repo", mock.Anything, *slug, 7).Return([]githubapi.PRReviewComment{
 		{ID: 1, Path: "a.go", Line: 5, Side: "RIGHT", Body: "nit body", Author: "bob"},
-		// no author -> bare "github" label; empty side -> defaults to RIGHT;
-		// body > 240 chars -> truncated with ellipsis.
-		{ID: 2, Path: "c.go", Line: 3, Side: "", Body: strings.Repeat("x", 300)},
 	}, nil).Maybe()
 	s.wt.On("Diff", mock.Anything, "/repo", "/repo/.worktrees/pr-7", "main", mock.Anything).Return([]byte("diff"), nil).Maybe()
 	runner := &mockReviewRunner{done: make(chan struct{})}
@@ -2222,23 +2221,17 @@ func (s *ReviewHandlerSuite) TestRunPromptListsExistingCommentsForDedup() {
 	s.mux.ServeHTTP(w, httptest.NewRequest("POST", "/api/channels/ch1/review/run", nil))
 	require.Equal(s.T(), http.StatusAccepted, w.Code)
 	<-runner.done
-	// The default prompt is a slash command, so the PR context (including
-	// the dedup list) rides in the system prompt, not the user prompt.
-	require.Contains(s.T(), runner.lastSys, "do NOT re-emit")
-	require.Contains(s.T(), runner.lastSys, "[github @bob] a.go:L5 (RIGHT): nit body")
-	require.Contains(s.T(), runner.lastSys, "[agent] b.go:L9 (LEFT): issue body")
-	// authorless github comment falls back to bare "github" label and empty side
-	// defaults to RIGHT; long body is truncated with ellipsis.
-	require.Contains(s.T(), runner.lastSys, "[github] c.go:L3 (RIGHT): "+strings.Repeat("x", 240)+"...")
-	// The same list also rides the subagent prompt: the review command
-	// derives its findings in fan-out subagents, which never see
-	// --append-system-prompt.
-	require.Contains(s.T(), runner.lastSubSys, "Review pipeline context")
-	require.Contains(s.T(), runner.lastSubSys, "do NOT re-emit")
-	require.Contains(s.T(), runner.lastSubSys, "[agent] b.go:L9 (LEFT): issue body")
-	// PR metadata and gh auth are orchestrator business — the finders only
-	// need to know what has already been said.
-	require.NotContains(s.T(), runner.lastSubSys, "Pull request under review:")
+	// Neither prompt lists the session's comments: the dedup pass after the
+	// run folds the repeats instead.
+	for _, p := range []string{runner.lastSys, runner.lastSubSys} {
+		require.NotContains(s.T(), p, "do NOT re-emit")
+		require.NotContains(s.T(), p, "nit body")
+		require.NotContains(s.T(), p, "issue body")
+	}
+	require.Contains(s.T(), runner.lastSys, "Pull request under review:")
+	// The subagents still get the line rule.
+	require.Equal(s.T(), reviewSubagentContext, runner.lastSubSys)
+	require.Contains(s.T(), runner.lastSubSys, reviewLineRule)
 }
 
 func (s *ReviewHandlerSuite) TestRunAgentErrorTransitionsToErrorStatus() {
@@ -2258,17 +2251,40 @@ func (s *ReviewHandlerSuite) TestRunAgentErrorTransitionsToErrorStatus() {
 }
 
 func (s *ReviewHandlerSuite) TestRunUsesDefaultPromptWhenUnconfigured() {
-	s.wireReadySession()
-	runner := &mockReviewRunner{done: make(chan struct{})}
-	s.srv.review.setAgent(runner, "", "") // empty user prompt -> default
-	w := httptest.NewRecorder()
-	s.mux.ServeHTTP(w, httptest.NewRequest("POST", "/api/channels/ch1/review/run", nil))
-	require.Equal(s.T(), http.StatusAccepted, w.Code)
-	<-runner.done
-	require.Equal(s.T(), defaultReviewPrompt, runner.lastUser)
-	require.Contains(s.T(), runner.lastSys, "calling the ReportFindings tool")
-	require.Contains(s.T(), runner.lastSys, "1-based `line`")
-	require.Contains(s.T(), runner.lastSys, "Pull request under review:")
+	// The default prompt takes the run's effort as the skill's level: the
+	// session's choice first, else the config's claude_effort.
+	tests := []struct {
+		name          string
+		sessionEffort string
+		configEffort  string
+		wantPrompt    string
+	}{
+		{name: "no effort", wantPrompt: "/code-review"},
+		{name: "session effort", sessionEffort: "max", configEffort: "low", wantPrompt: "/code-review max"},
+		{name: "config effort", configEffort: "medium", wantPrompt: "/code-review medium"},
+	}
+	for _, tc := range tests {
+		s.Run(tc.name, func() {
+			s.SetupTest()
+			s.srv.configs.load = func() (*config.Config, error) {
+				return &config.Config{Review: config.ReviewConfig{Enabled: true}, ClaudeEffort: tc.configEffort}, nil
+			}
+			s.wireReadySession()
+			if tc.sessionEffort != "" {
+				require.True(s.T(), s.rs.UpdateAgent("ch1", "", tc.sessionEffort))
+			}
+			runner := &mockReviewRunner{done: make(chan struct{})}
+			s.srv.review.setAgent(runner, "", "") // empty user prompt -> default
+			w := httptest.NewRecorder()
+			s.mux.ServeHTTP(w, httptest.NewRequest("POST", "/api/channels/ch1/review/run", nil))
+			require.Equal(s.T(), http.StatusAccepted, w.Code)
+			<-runner.done
+			require.Equal(s.T(), tc.wantPrompt, runner.lastUser)
+			require.Contains(s.T(), runner.lastSys, "calling the ReportFindings tool")
+			require.Contains(s.T(), runner.lastSys, "1-based `line`")
+			require.Contains(s.T(), runner.lastSys, "Pull request under review:")
+		})
+	}
 }
 
 func (s *ReviewHandlerSuite) TestRunSecondCallCoalescesWhileInFlight() {
@@ -2720,94 +2736,6 @@ func (s *ReviewHandlerSuite) TestMaybeRediffGuards() {
 		require.Empty(s.T(), events)
 		s.rs.Delete("ch1")
 	})
-}
-
-// buildReviewContext must tolerate nil entries in the comment slice —
-// they can show up after a partial cleanup and shouldn't panic the
-// prompt assembly.
-func (s *ReviewHandlerSuite) TestBuildReviewContextSkipsNilComment() {
-	sess := &review.Session{
-		PR: &githubapi.PRInfo{Number: 7, BaseRef: "main", HeadRef: "feat-x"},
-		Comments: []*review.Comment{
-			nil,
-			{ID: "c1", Path: "x.go", Line: 1, Side: "RIGHT", Body: "real"},
-		},
-	}
-	ctx := buildReviewContext(sess, "alice")
-	require.Contains(s.T(), ctx, "real")
-	require.Contains(s.T(), ctx, "gh auth switch -u alice")
-}
-
-// Every agent finding is "summary\n\nfailure scenario", so the
-// "do NOT re-emit" list used to break each entry across three lines and
-// leave the scenario floating between bullets as its own paragraph. One
-// bullet per comment is the whole point of the list.
-func (s *ReviewHandlerSuite) TestBuildReviewContextDedupEntriesAreOneLine() {
-	sess := &review.Session{
-		PR: &githubapi.PRInfo{Number: 7, BaseRef: "main", HeadRef: "feat-x"},
-		Comments: []*review.Comment{
-			{ID: "c1", Path: "a.go", Line: 12, Side: "RIGHT", Body: "leaks the lock\n\nWhen Foo returns err\tthe mutex stays held."},
-			{ID: "c2", Path: "b.go", Line: 3, Source: "github", Author: "bob", Body: "nit:\nrename this"},
-		},
-	}
-	ctx := buildReviewContext(sess, "alice")
-	require.Contains(s.T(), ctx, "- [agent] a.go:L12 (RIGHT): leaks the lock When Foo returns err the mutex stays held.\n")
-	require.Contains(s.T(), ctx, "- [github @bob] b.go:L3 (RIGHT): nit: rename this\n")
-}
-
-// The line rule is always there; the dedup list only once there are
-// comments. A slice holding only nil entries counts as none.
-func (s *ReviewHandlerSuite) TestBuildSubagentReviewContext() {
-	header := "Review pipeline context (authoritative, supplied by the host that launched this review):\n\n" + reviewLineRule + "\n"
-	tests := []struct {
-		name     string
-		comments []*review.Comment
-		want     string
-	}{
-		{name: "no comments", comments: nil, want: header},
-		{name: "only nil entries", comments: []*review.Comment{nil}, want: header},
-		{
-			name:     "renders the list under an attributed header",
-			comments: []*review.Comment{{ID: "c1", Path: "a.go", Line: 12, Side: "RIGHT", Body: "leaks the lock"}},
-			want:     header + "\nExisting review comments on this PR — do NOT re-emit any of these. Only add NEW, non-duplicate findings.\n- [agent] a.go:L12 (RIGHT): leaks the lock\n",
-		},
-	}
-	for _, tc := range tests {
-		s.Run(tc.name, func() {
-			sess := &review.Session{
-				PR:       &githubapi.PRInfo{Number: 7, BaseRef: "main"},
-				Comments: tc.comments,
-			}
-			require.Equal(s.T(), tc.want, buildSubagentReviewContext(sess))
-		})
-	}
-}
-
-func (s *ReviewHandlerSuite) TestDedupEntryBody() {
-	cases := []struct {
-		name string
-		body string
-		want string
-	}{
-		{name: "empty", body: "", want: ""},
-		{name: "collapses newlines and tabs", body: " a\n\nb\tc \n", want: "a b c"},
-		{name: "at the cap is kept whole", body: strings.Repeat("x", 240), want: strings.Repeat("x", 240)},
-		{name: "over the cap is truncated", body: strings.Repeat("x", 241), want: strings.Repeat("x", 240) + "..."},
-		{
-			// The cap must not land mid-rune: byte 240 here is the
-			// middle of a 3-byte character, so the cut backs up.
-			name: "backs up to a rune boundary",
-			body: strings.Repeat("x", 238) + "€€",
-			want: strings.Repeat("x", 238) + "...",
-		},
-	}
-	for _, tc := range cases {
-		s.Run(tc.name, func() {
-			got := dedupEntryBody(tc.body)
-			require.Equal(s.T(), tc.want, got)
-			require.True(s.T(), utf8.ValidString(got))
-		})
-	}
 }
 
 // GetChannel error on both lookups leaves channelDirPath as "" — the

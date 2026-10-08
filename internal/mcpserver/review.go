@@ -19,15 +19,15 @@ import (
 func (s *Server) registerReviewTools() {
 	mcp.AddTool(s.mcpServer, &mcp.Tool{
 		Name:        "report_review_findings",
-		Description: "Report code-review findings for the current channel's PR review session. Each finding needs the repo-relative file path, the 1-based line number, and a body describing the bug, the concrete inputs/state that trigger it, and the wrong output or crash. Side is RIGHT for added/modified lines (default) or LEFT for lines removed from the base. Call once with the full list; a finding reported twice verbatim is skipped server-side.",
+		Description: "Report code-review findings for the current channel's PR review session. Each finding needs the repo-relative file path, the 1-based line number, and a body describing the bug, the concrete inputs/state that trigger it, and the wrong output or crash, plus an optional category slug. Side is RIGHT for added/modified lines (default) or LEFT for lines removed from the base. Call once with the full list; a finding reported twice verbatim is skipped server-side.",
 	}, s.handleReportReviewFindings)
 	mcp.AddTool(s.mcpServer, &mcp.Tool{
 		Name:        "get_review_comments",
-		Description: "Read this channel's PR review session, as shown in the Review panel: the PR, head SHA, status, and every comment with its id, file, line, side, whether it was pushed to GitHub, and its source (agent, or github with the author and GitHub comment id), then its body. Filter to unpushed agent comments or one file. The PR diff is not included.",
+		Description: "Read this channel's PR review session, as shown in the Review panel: the PR, head SHA, status, and every comment with its id, file, line, side, whether it was pushed to GitHub, and its source (agent, or github with the author and GitHub comment id), its category when the review gave one, the dedup pass's verdict (real, false_positive or already_fixed) when it has one, then its body and the verdict's reason. Filter to unpushed agent comments or one file. The PR diff is not included.",
 	}, s.handleGetReviewComments)
 	mcp.AddTool(s.mcpServer, &mcp.Tool{
 		Name:        "dedup_review_findings",
-		Description: "Run the final dedup pass over this channel's review session: an agent drops agent comments that repeat another comment, trims a comment that bundles an issue another comment covers, re-anchors misplaced ones, and notes related ones. GitHub comments are never deleted; removed comments that were already pushed are deleted from the PR too. Takes minutes; fails while a review run is in progress.",
+		Description: "Run the dedup pass over this channel's review session: an agent drops agent comments that repeat another comment, trims a comment that bundles an issue another comment covers, re-anchors misplaced ones, notes related ones, and records a verdict (real, false_positive or already_fixed) on the agent comments it keeps, which deletes nothing. GitHub comments are never deleted; removed comments that were already pushed are deleted from the PR too. Takes minutes; fails while a review run is in progress.",
 	}, s.handleDedupReviewFindings)
 	mcp.AddTool(s.mcpServer, &mcp.Tool{
 		Name:        "delete_review_comment",
@@ -48,10 +48,11 @@ func (s *Server) registerReviewTools() {
 }
 
 type reviewFindingInput struct {
-	Path string `json:"path" jsonschema:"required,Repo-relative file path the finding is in"`
-	Line int    `json:"line" jsonschema:"required,1-based line number the finding anchors to"`
-	Side string `json:"side,omitempty" jsonschema:"RIGHT for added/modified lines (default); LEFT only for lines removed from the base"`
-	Body string `json:"body" jsonschema:"required,One paragraph: the bug's trigger and the wrong output or crash"`
+	Path     string `json:"path" jsonschema:"required,Repo-relative file path the finding is in"`
+	Line     int    `json:"line" jsonschema:"required,1-based line number the finding anchors to"`
+	Side     string `json:"side,omitempty" jsonschema:"RIGHT for added/modified lines (default); LEFT only for lines removed from the base"`
+	Body     string `json:"body" jsonschema:"required,One paragraph: the bug's trigger and the wrong output or crash"`
+	Category string `json:"category,omitempty" jsonschema:"Short kebab-case slug of the finding type, e.g. correctness, security, efficiency, test-coverage"`
 }
 
 type reportReviewFindingsInput struct {
@@ -91,12 +92,16 @@ type reviewComment struct {
 	Line     int    `json:"line"`
 	Side     string `json:"side"`
 	Body     string `json:"body"`
+	Category string `json:"category"`
 	Pushed   bool   `json:"pushed"`
 	Source   string `json:"source"`
 	Author   string `json:"author"`
 	GitHubID int64  `json:"github_id"`
 	Outdated bool   `json:"outdated"`
 	Resolved bool   `json:"resolved"`
+
+	Verdict       string `json:"verdict"`
+	VerdictReason string `json:"verdict_reason"`
 }
 
 type reviewSession struct {
@@ -162,6 +167,9 @@ func (s *Server) handleGetReviewComments(_ context.Context, _ *mcp.CallToolReque
 		for line := range strings.SplitSeq(strings.TrimSpace(c.Body), "\n") {
 			fmt.Fprintf(&b, "  %s\n", line)
 		}
+		if c.VerdictReason != "" {
+			fmt.Fprintf(&b, "  (verdict: %s)\n", c.VerdictReason)
+		}
 	}
 	return textResult(b.String()), nil, nil
 }
@@ -178,6 +186,12 @@ func reviewCommentState(c reviewComment) string {
 		} else {
 			parts = append(parts, "unpushed")
 		}
+	}
+	if c.Category != "" {
+		parts = append(parts, "category "+c.Category)
+	}
+	if c.Verdict != "" {
+		parts = append(parts, "verdict "+c.Verdict)
 	}
 	if c.Outdated {
 		parts = append(parts, "outdated")
@@ -211,6 +225,11 @@ type reviewDedupResult struct {
 		CoveredBy string `json:"covered_by"`
 		Reason    string `json:"reason"`
 	} `json:"trimmed"`
+	Verdicts []struct {
+		ID      string `json:"id"`
+		Verdict string `json:"verdict"`
+		Reason  string `json:"reason"`
+	} `json:"verdicts"`
 	Checked int      `json:"checked"`
 	Errors  []string `json:"errors"`
 }
@@ -239,6 +258,9 @@ func (s *Server) handleDedupReviewFindings(_ context.Context, _ *mcp.CallToolReq
 	}
 	for _, r := range res.Related {
 		fmt.Fprintf(&b, "- related %s: %s\n", strings.Join(r.IDs, ", "), r.Reason)
+	}
+	for _, v := range res.Verdicts {
+		fmt.Fprintf(&b, "- verdict %s %s: %s\n", v.ID, v.Verdict, v.Reason)
 	}
 	for _, e := range res.Errors {
 		fmt.Fprintf(&b, "- error: %s\n", e)

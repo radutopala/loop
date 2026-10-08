@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"errors"
 	"log/slog"
 	"net/http"
@@ -101,7 +102,7 @@ func (s *ReviewHandlerSuite) TestDedupNothingToDo() {
 
 	w := s.postDedup()
 	require.Equal(s.T(), http.StatusOK, w.Code)
-	require.JSONEq(s.T(), `{"removed":[],"clusters":[],"related":[],"moved":[],"trimmed":[],"checked":0}`, w.Body.String())
+	require.JSONEq(s.T(), `{"removed":[],"clusters":[],"related":[],"moved":[],"trimmed":[],"verdicts":[],"checked":0}`, w.Body.String())
 	require.Equal(s.T(), 0, runner.calls)
 	require.False(s.T(), s.srv.review.isReviewRunActive("ch1"))
 }
@@ -109,12 +110,15 @@ func (s *ReviewHandlerSuite) TestDedupNothingToDo() {
 // The model merges b and y.go's d into a, which takes the note; f into the
 // pushed c, which can't; and p into a, whose GitHub delete fails so that
 // cluster isn't reported. e vanishes mid-run and is skipped. a moves a line
-// down; the pushed c can't be moved.
+// down; the pushed c can't be moved. a and the pushed c get verdicts; g's is
+// lost with g, which also vanishes mid-run, and p's is ignored since p is
+// dropped.
 func (s *ReviewHandlerSuite) TestDedupRemovesDuplicates() {
 	s.wireDedupSession()
 	for _, c := range []*review.Comment{
 		{ID: "e", Path: "x.go", Line: 60, Body: "Deleted by the user mid-run.", Source: "agent"},
 		{ID: "f", Path: "x.go", Line: 70, Body: "Map missing make().", Source: "agent"},
+		{ID: "g", Path: "x.go", Line: 80, Body: "Also deleted mid-run.", Source: "agent"},
 		{ID: "p", Path: "z.go", Line: 3, Body: "Pushed copy.", Source: "agent", GitHubID: 6, Pushed: true},
 	} {
 		require.True(s.T(), s.rs.AddComment("ch1", c))
@@ -143,10 +147,13 @@ func (s *ReviewHandlerSuite) TestDedupRemovesDuplicates() {
 		`{"keep":"c","drop":["f"],"note":"extra"},` +
 		`{"keep":"a","drop":["p"]}],` +
 		`"related":[{"ids":["a","c"],"reason":"same map"}],` +
-		`"moves":[{"id":"a","line":11},{"id":"c","line":41}]}`
+		`"moves":[{"id":"a","line":11},{"id":"c","line":41}],` +
+		`"verdicts":[{"id":"a","verdict":"real","reason":"no make()"},{"id":"c","verdict":"false_positive","reason":"made in init"},` +
+		`{"id":"g","verdict":"real"},{"id":"p","verdict":"real"}]}`
 	runner := &mockReviewRunner{runFn: func() (*agent.AgentResponse, error) {
 		require.Equal(s.T(), review.StatusReviewing, s.rs.Get("ch1").Status)
 		s.rs.RemoveComment("ch1", "e")
+		s.rs.RemoveComment("ch1", "g")
 		return &agent.AgentResponse{SessionID: "sess-1", Response: "```json\n" + reply + "\n```"}, nil
 	}}
 	s.srv.review.setAgent(runner, "", "")
@@ -162,7 +169,8 @@ func (s *ReviewHandlerSuite) TestDedupRemovesDuplicates() {
 		"related":[{"ids":["a","c"],"reason":"same map"}],
 		"moved":[{"id":"a","from":10,"to":11}],
 		"trimmed":[],
-		"checked":7,
+		"verdicts":[{"id":"a","verdict":"real","reason":"no make()"},{"id":"c","verdict":"false_positive","reason":"made in init"}],
+		"checked":8,
 		"errors":["p: slug skipped"]
 	}`, w.Body.String())
 
@@ -188,11 +196,17 @@ func (s *ReviewHandlerSuite) TestDedupRemovesDuplicates() {
 	keptC, _ := s.rs.FindComment("ch1", "c")
 	require.Equal(s.T(), "Map is never made before use here.", keptC.Body)
 	require.Equal(s.T(), 40, keptC.Line)
+	require.Equal(s.T(), review.VerdictReal, keptA.Verdict)
+	require.Equal(s.T(), "no make()", keptA.VerdictReason)
+	require.Equal(s.T(), review.VerdictFalsePositive, keptC.Verdict)
+	require.Equal(s.T(), "made in init", keptC.VerdictReason)
 	hubMu.Lock()
 	require.Equal(s.T(), []string{"b", "d", "f"}, removed)
 	require.Equal(s.T(), []events.ReviewCommentEventData{
 		{ID: "a", Path: "x.go", Line: 10, Body: keptA.Body},
 		{ID: "a", Path: "x.go", Line: 11, Body: keptA.Body},
+		{ID: "a", Path: "x.go", Line: 11, Body: keptA.Body, Verdict: review.VerdictReal, VerdictReason: "no make()"},
+		{ID: "c", Path: "x.go", Line: 40, Body: keptC.Body, Verdict: review.VerdictFalsePositive, VerdictReason: "made in init"},
 	}, updated)
 	hubMu.Unlock()
 	require.False(s.T(), s.srv.review.isReviewRunActive("ch1"))
@@ -238,6 +252,7 @@ func (s *ReviewHandlerSuite) TestDedupTrimsBundledComment() {
 		"related":[],
 		"moved":[],
 		"trimmed":[{"id":"bundle","covered_by":"single","reason":"clock covered by single"}],
+		"verdicts":[],
 		"checked":4
 	}`, w.Body.String())
 	bundle, _ := s.rs.FindComment("ch1", "bundle")
@@ -251,17 +266,18 @@ func (s *ReviewHandlerSuite) TestDedupTrimsBundledComment() {
 	hubMu.Unlock()
 }
 
-// Without a hub the note still lands on the comment.
+// Without a hub the note and the verdict still land on the comment.
 func (s *ReviewHandlerSuite) TestDedupNoteWithoutHub() {
 	s.wireDedupSession()
 	s.srv.review.setAgent(&mockReviewRunner{runFn: func() (*agent.AgentResponse, error) {
-		return &agent.AgentResponse{Response: `{"clusters":[{"keep":"a","drop":["b"],"note":"n"}]}`}, nil
+		return &agent.AgentResponse{Response: `{"clusters":[{"keep":"a","drop":["b"],"note":"n"}],"verdicts":[{"id":"a","verdict":"already_fixed"}]}`}, nil
 	}}, "", "")
 
 	w := s.postDedup()
 	require.Equal(s.T(), http.StatusOK, w.Code)
 	kept, _ := s.rs.FindComment("ch1", "a")
 	require.Equal(s.T(), "Nil map write panics on the first insert.\n\nAlso flagged: n", kept.Body)
+	require.Equal(s.T(), review.VerdictAlreadyFixed, kept.Verdict)
 }
 
 func (s *ReviewHandlerSuite) TestDedupRunFailures() {
@@ -294,4 +310,134 @@ func (s *ReviewHandlerSuite) TestDedupRunFailures() {
 
 func (s *ReviewHandlerSuite) TestReviewHTTPErrorMessage() {
 	require.EqualError(s.T(), &reviewHTTPError{http.StatusForbidden, "denied"}, "denied")
+}
+
+// postRunAndWait starts a review run and waits for its goroutine, the dedup
+// pass after it included, to give the run slot back.
+func (s *ReviewHandlerSuite) postRunAndWait() {
+	w := httptest.NewRecorder()
+	s.mux.ServeHTTP(w, httptest.NewRequest("POST", "/api/channels/ch1/review/run", nil))
+	require.Equal(s.T(), http.StatusAccepted, w.Code)
+	s.waitFor(func() bool { return !s.srv.review.isReviewRunActive("ch1") })
+}
+
+// dedupAfterRunRunner reports finding as the review and answers the dedup
+// pass after it with dedup.
+func dedupAfterRunRunner(finding *review.Comment, dedup func() (*agent.AgentResponse, error)) *mockReviewRunner {
+	runner := &mockReviewRunner{findings: []*review.Comment{finding}}
+	runner.runFn = func() (*agent.AgentResponse, error) {
+		if runner.lastRO {
+			return dedup()
+		}
+		return &agent.AgentResponse{}, nil
+	}
+	return runner
+}
+
+// The pass after a run checks only what the run added against the rest and
+// records what it folded, so `loop review run --wait` can report it.
+func (s *ReviewHandlerSuite) TestRunDedupsWhatItAdded() {
+	s.wireDedupSession()
+	s.rs.SetSuperseded("ch1", map[string]string{"old": "kept"})
+	fresh := review.NewComment("x.go", 12, "", "Writing to the map before make panics.")
+	runner := dedupAfterRunRunner(fresh, func() (*agent.AgentResponse, error) {
+		return &agent.AgentResponse{Response: `{"clusters":[{"keep":"a","drop":["` + fresh.ID + `"]}]}`}, nil
+	})
+	s.srv.review.setAgent(runner, "", "")
+
+	s.postRunAndWait()
+
+	require.Equal(s.T(), 2, runner.calls)
+	require.Contains(s.T(), runner.lastUser, "- id="+fresh.ID+" [agent, new] L12 (RIGHT): ")
+	require.Contains(s.T(), runner.lastUser, "- id=a [agent] L10 (RIGHT): ")
+	sess := s.rs.Get("ch1")
+	require.Equal(s.T(), review.StatusReady, sess.Status)
+	require.Equal(s.T(), map[string]string{fresh.ID: "a"}, sess.Superseded)
+	gone, _ := s.rs.FindComment("ch1", fresh.ID)
+	require.Nil(s.T(), gone)
+	require.Len(s.T(), sess.Comments, 4)
+
+	w := httptest.NewRecorder()
+	s.mux.ServeHTTP(w, httptest.NewRequest("GET", "/api/channels/ch1/review?diff=false", nil))
+	require.Contains(s.T(), w.Body.String(), `"superseded":{"`+fresh.ID+`":"a"}`)
+}
+
+// A pass that folds nothing, or fails, leaves the run's findings as
+// reported and the session ready, with the previous run's Superseded gone.
+func (s *ReviewHandlerSuite) TestRunDedupFoldsNothing() {
+	cases := []struct {
+		name  string
+		dedup func() (*agent.AgentResponse, error)
+	}{
+		{"no duplicates", func() (*agent.AgentResponse, error) {
+			return &agent.AgentResponse{Response: `{"clusters":[]}`}, nil
+		}},
+		{"pass fails", func() (*agent.AgentResponse, error) { return nil, errors.New("container died") }},
+	}
+	for _, tc := range cases {
+		s.Run(tc.name, func() {
+			s.SetupTest()
+			s.wireDedupSession()
+			s.rs.SetSuperseded("ch1", map[string]string{"old": "kept"})
+			runner := dedupAfterRunRunner(review.NewComment("x.go", 12, "", "new"), tc.dedup)
+			s.srv.review.setAgent(runner, "", "")
+
+			s.postRunAndWait()
+
+			require.Equal(s.T(), 2, runner.calls)
+			sess := s.rs.Get("ch1")
+			require.Equal(s.T(), review.StatusReady, sess.Status)
+			require.Nil(s.T(), sess.Superseded)
+			require.Len(s.T(), sess.Comments, 5)
+		})
+	}
+}
+
+// A run that adds no comment the pass may delete has nothing to fold.
+func (s *ReviewHandlerSuite) TestRunSkipsDedupWithoutNewComments() {
+	s.wireDedupSession()
+	runner := &mockReviewRunner{}
+	s.srv.review.setAgent(runner, "", "")
+
+	s.postRunAndWait()
+
+	require.Equal(s.T(), 1, runner.calls)
+	require.Equal(s.T(), review.StatusReady, s.rs.Get("ch1").Status)
+}
+
+// The session going away during the run leaves nothing to dedup.
+func (s *ReviewHandlerSuite) TestRunDedupSkippedWhenSessionDropped() {
+	s.wireDedupSession()
+	runner := &mockReviewRunner{}
+	runner.runFn = func() (*agent.AgentResponse, error) {
+		s.rs.Delete("ch1")
+		return &agent.AgentResponse{}, nil
+	}
+	s.srv.review.setAgent(runner, "", "")
+
+	s.postRunAndWait()
+
+	require.Equal(s.T(), 1, runner.calls)
+	require.Nil(s.T(), s.rs.Get("ch1"))
+}
+
+// Session-delete or shutdown cancelling the run during the pass leaves the
+// status alone, like a cancelled review.
+func (s *ReviewHandlerSuite) TestRunDedupCancelled() {
+	s.wireDedupSession()
+	runner := &mockReviewRunner{findings: []*review.Comment{review.NewComment("x.go", 12, "", "new")}}
+	runner.runWithCtxFn = func(ctx context.Context) (*agent.AgentResponse, error) {
+		if !runner.lastRO {
+			return &agent.AgentResponse{}, nil
+		}
+		s.srv.review.cancelReviewRun("ch1")
+		<-ctx.Done()
+		return nil, ctx.Err()
+	}
+	s.srv.review.setAgent(runner, "", "")
+
+	s.postRunAndWait()
+
+	require.Equal(s.T(), 2, runner.calls)
+	require.Equal(s.T(), review.StatusReviewing, s.rs.Get("ch1").Status)
 }

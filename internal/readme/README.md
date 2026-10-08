@@ -1160,8 +1160,8 @@ In headless/Linux environments where Electron can't launch, `LOOP_NO_ELECTRON=1 
 | `list_sessions` | List the Claude sessions in a channel's project dir, newest first, the current one marked (`channel_id` optional — defaults to the current channel) |
 | `resume_session` | Make another of those sessions the channel's, so its next message resumes it; the agent's own channel switches when its run ends |
 | `report_review_findings` | Add findings to the channel's PR review session (path, line, side, body); duplicates are skipped |
-| `get_review_comments` | Read the channel's review session: the PR, head SHA, status and every comment with its id, location, pushed state and source (agent or GitHub, with the GitHub id); filter to unpushed agent comments or one file. The diff is left out |
-| `dedup_review_findings` | Run the review dedup pass: drop agent comments that repeat another, trim bundled ones, re-anchor misplaced ones |
+| `get_review_comments` | Read the channel's review session: the PR, head SHA, status and every comment with its id, location, pushed state, source (agent or GitHub, with the GitHub id), category and the dedup pass's verdict; filter to unpushed agent comments or one file. The diff is left out |
+| `dedup_review_findings` | Run the review dedup pass: drop agent comments that repeat another, trim bundled ones, re-anchor misplaced ones, and record a real / false-positive / already-fixed verdict on the rest |
 | `delete_review_comment` | Delete an agent review comment (from the PR too if pushed); GitHub comments are refused |
 | `update_review_comment` | Replace an unpushed agent review comment's body |
 | `push_review_comment` | Post one agent review comment to the PR |

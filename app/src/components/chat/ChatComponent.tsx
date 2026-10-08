@@ -1,7 +1,8 @@
 import { createContext, useContext, useEffect, useRef, useState } from "react";
 import { useTheme } from "../../ThemeContext";
+import { openExternalUrl } from "../../utils/openExternal";
 import { CopyButton } from "../shared/CopyButton";
-import { componentHeight, componentMinHeight } from "./componentFence";
+import { componentHeight, componentMinHeight, componentOpenURL } from "./componentFence";
 
 /** A component's composed document, with what it's shown under. */
 export interface ShownComponent {
@@ -32,15 +33,7 @@ export function ChatComponent({ template, title, doc }: ShownComponent) {
   const [height, setHeight] = useState(componentMinHeight * 2);
   const [hovered, setHovered] = useState(false);
 
-  useEffect(() => {
-    const onMessage = (e: MessageEvent) => {
-      if (!frame.current || e.source !== frame.current.contentWindow) return;
-      const h = componentHeight(e.data);
-      if (h !== null) setHeight(h);
-    };
-    window.addEventListener("message", onMessage);
-    return () => window.removeEventListener("message", onMessage);
-  }, []);
+  useFrameMessages(frame, setHeight);
 
   const label = title || template;
 
@@ -78,7 +71,9 @@ export function ChatComponent({ template, title, doc }: ShownComponent) {
  */
 export function ChatComponentFull({ component, onClose }: { component: ShownComponent; onClose: () => void }) {
   const { colors } = useTheme();
+  const frame = useRef<HTMLIFrameElement>(null);
   const label = component.title || component.template;
+  useFrameMessages(frame);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -104,9 +99,31 @@ export function ChatComponentFull({ component, onClose }: { component: ShownComp
           ✕
         </button>
       </ComponentHeader>
-      <iframe key={component.doc} title={label} sandbox="allow-scripts" srcDoc={component.doc} style={{ flex: 1, minHeight: 0, width: "100%", border: "none" }} />
+      <iframe key={component.doc} ref={frame} title={label} sandbox="allow-scripts" srcDoc={component.doc} style={{ flex: 1, minHeight: 0, width: "100%", border: "none" }} />
     </div>
   );
+}
+
+/**
+ * Listens for what a component's document posts: its height, passed to
+ * onHeight, and a clicked web link, opened in the system browser. Messages
+ * from any other window are ignored.
+ */
+function useFrameMessages(frame: React.RefObject<HTMLIFrameElement | null>, onHeight?: (h: number) => void) {
+  useEffect(() => {
+    const onMessage = (e: MessageEvent) => {
+      if (!frame.current || e.source !== frame.current.contentWindow) return;
+      const url = componentOpenURL(e.data);
+      if (url !== null) {
+        openExternalUrl(url);
+        return;
+      }
+      const h = componentHeight(e.data);
+      if (h !== null) onHeight?.(h);
+    };
+    window.addEventListener("message", onMessage);
+    return () => window.removeEventListener("message", onMessage);
+  }, [frame, onHeight]);
 }
 
 function ComponentHeader({ label, doc, showActions, children }: { label: string; doc: string; showActions: boolean; children: React.ReactNode }) {

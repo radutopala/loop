@@ -92,16 +92,18 @@ func (s *ParserSuite) TestParseReportFindingsBody() {
 // nothing in production, because the stream handed it a summarized (empty)
 // input rather than this JSON — so pin the real shape, extra keys included.
 func (s *ParserSuite) TestParseReportFindingsRealPayload() {
-	const raw = `{"findings":[{"file":"internal/idfree/memory_store.go","line":48,"summary":"File-monitor/reload machinery duplicated verbatim across store packages","short_summary":"Duplicated file-monitor/reload machinery","failure_scenario":"MemoryStore.loadFile/checkAndReload/Monitor plus the pollInterval/openFile/lastMod fields are a line-for-line copy of internal/offer and internal/publisher.","category":"reuse"},{"file":"internal/idfree/memory_store.go","line":180,"summary":"parseModels accepts a JSON top-level null, silently yielding an empty store","short_summary":"Top-level JSON null yields empty store silently","failure_scenario":"If the file content is the literal ` + "`null`" + `, json.Unmarshal succeeds leaving parsed nil with no error.","category":"correctness"}]}`
+	const raw = `{"findings":[{"file":"internal/store/memory_store.go","line":48,"summary":"File-monitor/reload machinery duplicated verbatim across store packages","short_summary":"Duplicated file-monitor/reload machinery","failure_scenario":"MemoryStore.loadFile/checkAndReload/Monitor plus the pollInterval/openFile/lastMod fields are a line-for-line copy of internal/catalog and internal/inventory.","category":"reuse"},{"file":"internal/store/memory_store.go","line":180,"summary":"parseModels accepts a JSON top-level null, silently yielding an empty store","short_summary":"Top-level JSON null yields empty store silently","failure_scenario":"If the file content is the literal ` + "`null`" + `, json.Unmarshal succeeds leaving parsed nil with no error.","category":" Correctness"}]}`
 
 	got := ParseReportFindings(raw)
 	require.Len(s.T(), got, 2)
-	require.Equal(s.T(), "internal/idfree/memory_store.go", got[0].Path)
+	require.Equal(s.T(), "internal/store/memory_store.go", got[0].Path)
 	require.Equal(s.T(), 48, got[0].Line)
 	require.Contains(s.T(), got[0].Body, "duplicated verbatim across store packages")
 	require.Contains(s.T(), got[0].Body, "line-for-line copy")
 	require.Equal(s.T(), 180, got[1].Line)
 	require.NotEqual(s.T(), got[0].ID, got[1].ID)
+	require.Equal(s.T(), "reuse", got[0].Category)
+	require.Equal(s.T(), "correctness", got[1].Category)
 }
 
 func (s *ParserSuite) TestParseReportFindingsRejects() {

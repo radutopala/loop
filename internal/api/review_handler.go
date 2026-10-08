@@ -8,7 +8,6 @@ import (
 	"net/http"
 	"path/filepath"
 	"strings"
-	"unicode/utf8"
 
 	"github.com/radutopala/loop/internal/apiauth"
 	"github.com/radutopala/loop/internal/githubapi"
@@ -537,10 +536,11 @@ func (s *reviewService) handleReviewIngestComments(w http.ResponseWriter, r *htt
 	added, skipped := 0, 0
 	for _, raw := range body.Findings {
 		var f struct {
-			Path string `json:"path"`
-			Line int    `json:"line"`
-			Side string `json:"side"`
-			Body string `json:"body"`
+			Path     string `json:"path"`
+			Line     int    `json:"line"`
+			Side     string `json:"side"`
+			Body     string `json:"body"`
+			Category string `json:"category"`
 		}
 		if err := json.Unmarshal(raw, &f); err != nil {
 			skipped++
@@ -551,6 +551,7 @@ func (s *reviewService) handleReviewIngestComments(w http.ResponseWriter, r *htt
 			skipped++
 			continue
 		}
+		c.Category = review.NormalizeCategory(f.Category)
 		if s.ingestComment(channelID, sess.WorktreePath, parentDirPath, c) {
 			added++
 		} else {
@@ -807,8 +808,8 @@ func (s *reviewService) handleReviewRun(w http.ResponseWriter, r *http.Request) 
 
 	// Refresh the worktree + GH comments + diff before the agent kicks
 	// off. Without this, the agent could review stale code (commits
-	// pushed since Load) and miss out-of-band GH comments in its dedup
-	// list. Mirrors Sync's behavior. Errors here unregister the run and
+	// pushed since Load), and the dedup pass after it would miss
+	// out-of-band GH comments. Mirrors Sync's behavior. Errors here unregister the run and
 	// short-circuit before any status flip — the FE keeps showing
 	// StatusReady and the error banner from the HTTP response.
 	if channelDirPath == "" {
@@ -833,10 +834,18 @@ func (s *reviewService) handleReviewRun(w http.ResponseWriter, r *http.Request) 
 	// A slash-command prompt (the default /code-review, or a user-configured
 	// one) must stay bare — anything appended would be parsed as skill
 	// arguments — so the output contract and the PR context ride in the
-	// system prompt instead.
+	// system prompt instead. The default one does take the run's effort as
+	// its level argument: left to pick its own, the skill runs a --effort
+	// medium review at its high level.
 	worktreePath := sess.WorktreePath
+	if s.userPrompt == "" {
+		effort := sess.Effort
+		if effort == "" {
+			effort = s.deps.configs.claudeEffort(worktreePath, parentDirPath)
+		}
+		prompt = reviewPromptAt(effort)
+	}
 	reviewContext := buildReviewContext(sess, ghUser)
-	subagentPrompt := buildSubagentReviewContext(sess)
 	fullPrompt := prompt
 	sysPrompt := s.systemPrompt
 	if strings.HasPrefix(prompt, "/") {
@@ -859,15 +868,22 @@ func (s *reviewService) handleReviewRun(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	// The comments the run starts from, so the dedup pass after it knows
+	// which ones the run added.
+	before := make(map[string]bool, len(sess.Comments))
+	for _, c := range sess.Comments {
+		before[c.ID] = true
+	}
+	s.sessions.SetSuperseded(channelID, nil)
 	s.sessions.UpdateStatus(channelID, review.StatusReviewing, "")
 	s.broadcastReviewStatus(channelID, review.StatusReviewing, "")
 
-	go s.runReviewAsync(runCtx, review.RunRequest{
+	go s.runReviewAsync(runCtx, before, review.RunRequest{
 		ChannelID:            channelID,
 		DirPath:              worktreePath,
 		ParentDirPath:        parentDirPath,
 		SystemPrompt:         sysPrompt,
-		SubagentSystemPrompt: subagentPrompt,
+		SubagentSystemPrompt: reviewSubagentContext,
 		Prompt:               fullPrompt,
 		ForkSessionID:        forkSessionID,
 		Model:                sess.Model,
@@ -912,6 +928,7 @@ type reviewDedupResult struct {
 	Related  []review.DedupRelated `json:"related"`
 	Moved    []reviewDedupMove     `json:"moved"`
 	Trimmed  []reviewDedupTrim     `json:"trimmed"`
+	Verdicts []review.DedupVerdict `json:"verdicts"`
 	Checked  int                   `json:"checked"`
 	Errors   []string              `json:"errors,omitempty"`
 }
@@ -943,9 +960,10 @@ type reviewDedupTrim struct {
 	Reason    string `json:"reason,omitempty"`
 }
 
-// handleReviewDedup runs the final dedup pass over the channel's review
-// session, the last step of a multi-round review loop. It refreshes the
-// session (so the PR's GitHub comments are current), has a read-only agent
+// handleReviewDedup runs the dedup pass over the whole of the channel's
+// review session (`loop review dedup`); every review run already checks the
+// comments it added (dedupAfterRun). It refreshes the session (so the PR's
+// GitHub comments are current), has a read-only agent
 // group the comments that report the same issue (review.BuildDedupPrompt),
 // and deletes every group's extra agent comments, on GitHub too when they
 // were pushed. GitHub comments are never deleted. A comment bundling an
@@ -997,13 +1015,11 @@ func (s *reviewService) handleReviewDedup(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	res := reviewDedupResult{Removed: []string{}, Clusters: []reviewDedupCluster{}, Related: []review.DedupRelated{}, Moved: []reviewDedupMove{}, Trimmed: []reviewDedupTrim{}}
 	cands := review.DedupCandidates(sess.Comments)
 	if len(cands) == 0 {
-		writeHTTPJSON(w, http.StatusOK, res, s.deps.logger)
+		writeHTTPJSON(w, http.StatusOK, newReviewDedupResult(), s.deps.logger)
 		return
 	}
-	res.Checked = len(cands)
 
 	s.sessions.UpdateStatus(channelID, review.StatusReviewing, "")
 	s.broadcastReviewStatus(channelID, review.StatusReviewing, "")
@@ -1016,11 +1032,35 @@ func (s *reviewService) handleReviewDedup(w http.ResponseWriter, r *http.Request
 		ctx, cancelTimeout = context.WithTimeout(ctx, s.runTimeout)
 		defer cancelTimeout()
 	}
+	res, err := s.runDedupPass(ctx, channelID, parentDirPath, sess, cands, nil)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	writeHTTPJSON(w, http.StatusOK, res, s.deps.logger)
+}
+
+// newReviewDedupResult returns an empty result whose lists encode as [].
+func newReviewDedupResult() reviewDedupResult {
+	return reviewDedupResult{Removed: []string{}, Clusters: []reviewDedupCluster{}, Related: []review.DedupRelated{}, Moved: []reviewDedupMove{}, Trimmed: []reviewDedupTrim{}, Verdicts: []review.DedupVerdict{}}
+}
+
+// runDedupPass has a read-only agent group cands (review.DedupCandidates of
+// sess) by root cause and applies its plan: trims, then each group's extra
+// agent comments deleted (on GitHub too when pushed) with a note on the
+// keeper, then re-anchored lines, then each kept agent comment's verdict
+// recorded on it. fresh (review.DedupFresh) marks the
+// comments the latest review run added, for the agent to check against the
+// rest; nil regroups the whole session. A failed deletion keeps its comment
+// and is reported in Errors. The caller owns the run slot and the status.
+func (s *reviewService) runDedupPass(ctx context.Context, channelID, parentDirPath string, sess *review.Session, cands []*review.Comment, fresh map[string]bool) (reviewDedupResult, error) {
+	res := newReviewDedupResult()
+	res.Checked = len(cands)
 	resp, err := s.runner.Run(ctx, review.RunRequest{
 		ChannelID:     channelID,
 		DirPath:       sess.WorktreePath,
 		ParentDirPath: parentDirPath,
-		Prompt:        review.BuildDedupPrompt(cands),
+		Prompt:        review.BuildDedupPrompt(cands, fresh),
 		ReadOnly:      true,
 		Model:         sess.Model,
 		Effort:        sess.Effort,
@@ -1029,13 +1069,11 @@ func (s *reviewService) handleReviewDedup(w http.ResponseWriter, r *http.Request
 		s.sessions.AppendRunSession(channelID, resp.SessionID, s.transcriptDir(sess.WorktreePath))
 	}
 	if err != nil {
-		http.Error(w, "dedup run: "+err.Error(), http.StatusInternalServerError)
-		return
+		return res, fmt.Errorf("dedup run: %w", err)
 	}
 	plan, err := review.ParseDedupReply(resp.Response, cands)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
+		return res, err
 	}
 	// Trims replace a body, so they go before the notes that append to one.
 	for _, tr := range plan.Trims {
@@ -1079,7 +1117,12 @@ func (s *reviewService) handleReviewDedup(w http.ResponseWriter, r *http.Request
 		res.Moved = append(res.Moved, reviewDedupMove{ID: mv.ID, From: from, To: mv.Line})
 		s.maybeRediffForComment(channelID, sess.WorktreePath, parentDirPath, c)
 	}
-	writeHTTPJSON(w, http.StatusOK, res, s.deps.logger)
+	for _, v := range plan.Verdicts {
+		if s.setVerdict(channelID, v) != nil {
+			res.Verdicts = append(res.Verdicts, v)
+		}
+	}
+	return res, nil
 }
 
 // defaultReviewPrompt is the user-facing prompt sent to the review agent
@@ -1091,6 +1134,15 @@ func (s *reviewService) handleReviewDedup(w http.ResponseWriter, r *http.Request
 // extra instructions), and the PR context block moves to the system prompt
 // too — see the slash-prompt branch in handleReviewStart.
 const defaultReviewPrompt = `/code-review`
+
+// reviewPromptAt returns defaultReviewPrompt with effort as the skill's
+// level argument, or bare when no effort is set.
+func reviewPromptAt(effort string) string {
+	if effort == "" {
+		return defaultReviewPrompt
+	}
+	return defaultReviewPrompt + " " + effort
+}
 
 // defaultReviewSystemPrompt carries the review-panel output contract when
 // the prompt is the bare /code-review slash command. The command reports
@@ -1116,8 +1168,9 @@ Do not print the findings as your reply and do not emit XML blocks — the tool 
 // the agent can quote it verbatim and so a missing field (e.g. empty Title)
 // just drops one line without breaking the rest. When ghUser is set, an
 // auth block tells the agent to switch the gh CLI to that account before
-// running gh commands. Any existing review comments on the session are
-// rendered as a dedup list so the agent does not re-emit them.
+// running gh commands. The session's existing comments are left out: the
+// review repeated some of them anyway, and the dedup pass after the run
+// folds the repeats.
 func buildReviewContext(sess *review.Session, ghUser string) string {
 	var b strings.Builder
 	b.WriteString("Pull request under review:\n")
@@ -1150,70 +1203,16 @@ func buildReviewContext(sess *review.Session, ghUser string) string {
 		fmt.Fprintf(&b, "\nGitHub CLI account: %s\n", ghUser)
 		fmt.Fprintf(&b, "If you need to run gh, switch to that account first with `gh auth switch -u %s` (only if it isn't already active).\n", ghUser)
 	}
-	if list := buildReviewDedupList(sess); list != "" {
-		b.WriteString("\n" + list)
-	}
 	return b.String()
 }
 
-// buildReviewDedupList renders the "already reported, do not repeat" block,
-// or "" when the session has no comments yet. It is built separately from
-// the rest of the PR context because it has two audiences: the main agent,
-// via buildReviewContext, and — through buildSubagentReviewContext — the
-// fan-out subagents that actually derive the findings.
-func buildReviewDedupList(sess *review.Session) string {
-	if len(sess.Comments) == 0 {
-		return ""
-	}
-	var b strings.Builder
-	b.WriteString("Existing review comments on this PR — do NOT re-emit any of these. Only add NEW, non-duplicate findings.\n")
-	n := 0
-	for _, c := range sess.Comments {
-		if c == nil {
-			continue
-		}
-		n++
-		label := "agent"
-		if c.Source == "github" {
-			label = "github"
-			if c.Author != "" {
-				label = "github @" + c.Author
-			}
-		}
-		side := c.Side
-		if side == "" {
-			side = "RIGHT"
-		}
-		fmt.Fprintf(&b, "- [%s] %s:L%d (%s): %s\n", label, c.Path, c.Line, side, dedupEntryBody(c.Body))
-	}
-	if n == 0 {
-		return ""
-	}
-	return b.String()
-}
-
-// buildSubagentReviewContext renders the line rule and the dedup list for
-// the subagents the review command fans out to. The line rule is always
-// there: the subagents are the ones that pick each finding's line.
-//
-// The built-in /code-review skill derives its candidate findings in "finder
-// subagents", then verifies and reports them from the main agent. The CLI
-// applies --append-system-prompt to the main agent only — the separate
-// --append-subagent-system-prompt flag exists precisely because it does not
-// propagate — so without this the agents doing the reviewing re-derive
-// findings that are already sitting in the panel, and the orchestrator has
-// to catch every duplicate on the way out.
-//
-// The framing line matters as much as the list: text that arrives in a
-// subagent's system prompt telling it what not to say reads like a prompt
-// injection unless it is attributed to the host that launched the run.
-func buildSubagentReviewContext(sess *review.Session) string {
-	out := "Review pipeline context (authoritative, supplied by the host that launched this review):\n\n" + reviewLineRule + "\n"
-	if list := buildReviewDedupList(sess); list != "" {
-		out += "\n" + list
-	}
-	return out
-}
+// reviewSubagentContext carries the line rule to the subagents the review
+// command fans out to: they are the ones that pick each finding's line. The
+// CLI applies --append-system-prompt to the main agent only, hence the
+// separate --append-subagent-system-prompt. The framing line attributes the
+// rule to the host that launched the run, so a subagent doesn't read it as a
+// prompt injection.
+const reviewSubagentContext = "Review pipeline context (authoritative, supplied by the host that launched this review):\n\n" + reviewLineRule + "\n"
 
 // reviewLineRule tells the reviewer, and the subagents that derive its
 // findings, how to pick a finding's line. Left to read the diff, which
@@ -1221,32 +1220,6 @@ func buildSubagentReviewContext(sess *review.Session) string {
 // a line or three off: on a blank line or a closing brace next to the code
 // it means.
 const reviewLineRule = "Line numbers: `git diff` output has none, and counting from hunk headers drifts. Before reporting a finding, confirm its `line` with a numbered read of the file at HEAD (the Read tool, `grep -n` or `nl -ba`), and point it at the statement the finding is about, never at a blank line or a lone closing brace."
-
-// dedupEntryBody renders a comment body as a single line for the
-// "do NOT re-emit" list.
-//
-// Every agent finding is summary + blank line + failure scenario (see
-// review.ParseReportFindings), so writing the body verbatim turned each
-// entry into three lines and left the scenario sitting between bullets
-// as its own paragraph — after a few findings the list stops reading as
-// a list at all, which is the shape a model skims past. Collapsing
-// runs of whitespace keeps one bullet per finding.
-//
-// The cap keeps a handful of long findings from crowding out the diff
-// itself; it is applied after collapsing, and backs up to a rune
-// boundary so a multi-byte character is never cut in half.
-func dedupEntryBody(body string) string {
-	body = strings.Join(strings.Fields(body), " ")
-	const maxLen = 240
-	if len(body) <= maxLen {
-		return body
-	}
-	cut := maxLen
-	for cut > 0 && !utf8.RuneStart(body[cut]) {
-		cut--
-	}
-	return body[:cut] + "..."
-}
 
 // respondReviewError maps gh-specific errors to the right HTTP status
 // before bubbling up the message, so the FE can distinguish gh-missing

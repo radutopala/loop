@@ -106,8 +106,9 @@ func (s *MainSuite) TestRunReviewWaitsForReady() {
 				"session": map[string]any{
 					"status": "ready",
 					"comments": []map[string]any{
-						{"id": "c1", "path": "f.go", "line": 1, "body": "fix"},
+						{"id": "c1", "path": "f.go", "line": 1, "body": "fix", "verdict": "false_positive", "verdict_reason": "made in init"},
 					},
+					"superseded": map[string]string{"c9": "c1"},
 				},
 			})
 		default:
@@ -127,6 +128,10 @@ func (s *MainSuite) TestRunReviewWaitsForReady() {
 	require.False(s.T(), out.NoComments)
 	require.Len(s.T(), out.Comments, 1)
 	require.Equal(s.T(), "c1", out.Comments[0].ID)
+	require.Equal(s.T(), "false_positive", out.Comments[0].Verdict)
+	require.Equal(s.T(), "made in init", out.Comments[0].VerdictReason)
+	// The daemon's dedup pass after the run folded c9 into c1.
+	require.Equal(s.T(), map[string]string{"c9": "c1"}, out.Superseded)
 }
 
 func (s *MainSuite) TestRunReviewWaitReadyNoComments() {

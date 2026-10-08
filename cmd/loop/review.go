@@ -31,6 +31,10 @@ type reviewCLIOutput struct {
 	NoComments bool                    `json:"no_comments"`
 	Comments   []reviewCLIOutputCommit `json:"comments"`
 	Error      string                  `json:"error,omitempty"`
+	// Superseded maps each comment the daemon's dedup pass after the run
+	// deleted to the comment it was folded into, so the workflow's
+	// same-as-previous check can tell a reworded repeat from a new finding.
+	Superseded map[string]string `json:"superseded,omitempty"`
 }
 
 // reviewCLIOutputCommit is the minimal comment shape the workflow parser
@@ -43,6 +47,11 @@ type reviewCLIOutputCommit struct {
 	Path     string `json:"path,omitempty"`
 	Line     int    `json:"line,omitempty"`
 	Body     string `json:"body,omitempty"`
+	// Verdict is the dedup pass's check against the code: real,
+	// false_positive or already_fixed. The workflow parser leaves the last
+	// two out of the comments a fix step gets.
+	Verdict       string `json:"verdict,omitempty"`
+	VerdictReason string `json:"verdict_reason,omitempty"`
 }
 
 func (a *app) newReviewCmd() *cobra.Command {
@@ -462,7 +471,11 @@ func pollReviewOnce(ctx context.Context, client reviewHTTPClient, url string) (r
 				Path     string `json:"path"`
 				Line     int    `json:"line"`
 				Body     string `json:"body"`
+
+				Verdict       string `json:"verdict"`
+				VerdictReason string `json:"verdict_reason"`
 			} `json:"comments"`
+			Superseded map[string]string `json:"superseded"`
 		} `json:"session"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&raw); err != nil {
@@ -485,7 +498,7 @@ func pollReviewOnce(ctx context.Context, client reviewHTTPClient, url string) (r
 
 	switch raw.Session.Status {
 	case "ready":
-		out := reviewCLIOutput{Status: "ready"}
+		out := reviewCLIOutput{Status: "ready", Superseded: raw.Session.Superseded}
 		for _, c := range raw.Session.Comments {
 			out.Comments = append(out.Comments, reviewCLIOutputCommit{
 				ID:       c.ID,
@@ -493,6 +506,9 @@ func pollReviewOnce(ctx context.Context, client reviewHTTPClient, url string) (r
 				Path:     c.Path,
 				Line:     c.Line,
 				Body:     c.Body,
+
+				Verdict:       c.Verdict,
+				VerdictReason: c.VerdictReason,
 			})
 		}
 		out.NoComments = len(out.Comments) == 0

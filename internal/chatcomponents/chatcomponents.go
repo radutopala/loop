@@ -141,10 +141,20 @@ nav.loop-steps span { color: #9aa0a6; font-size: 0.82rem; min-width: 60px; text-
 // its content, and turns <section data-step="title"> elements into a stepper
 // that shows one at a time. It runs on DOMContentLoaded, after the
 // component's own module script, so sections that script builds count too.
+// A click on a web link is handed to the chat to open in the system browser:
+// the sandbox allows no popups, so a target="_blank" link would do nothing,
+// and any other would load the page inside the frame. A handler of the
+// component's that cancels the click keeps it.
 const baseScript = `(() => {
   const report = () => parent.postMessage({ type: "loop-component-height", height: Math.ceil(document.body.getBoundingClientRect().height) }, "*");
   new ResizeObserver(report).observe(document.body);
   addEventListener("load", report);
+  addEventListener("click", (e) => {
+    const a = e.target instanceof Element ? e.target.closest("a[href]") : null;
+    if (e.defaultPrevented || !a || !/^https?:$/.test(a.protocol)) return;
+    e.preventDefault();
+    parent.postMessage({ type: "loop-component-open", url: a.href }, "*");
+  });
   addEventListener("DOMContentLoaded", () => {
     const steps = [...document.querySelectorAll("section[data-step]")];
     for (const s of steps) {

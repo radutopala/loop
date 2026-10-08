@@ -954,7 +954,8 @@ Emitted once per finding the review agent reports during a run, via either the b
   "path": "internal/api/foo.go",
   "line": 42,
   "side": "RIGHT",
-  "body": "This nil check looks redundant — the caller already validated `req`."
+  "body": "This nil check looks redundant — the caller already validated `req`.",
+  "category": "correctness"
 }
 ```
 
@@ -965,6 +966,9 @@ Emitted once per finding the review agent reports during a run, via either the b
 | `line` | int    | Line number on the indicated side of the diff |
 | `side` | string | `"RIGHT"` (added/modified) or `"LEFT"` (deleted) |
 | `body` | string | The agent's comment text |
+| `category` | string | Finding type slug the review gave, e.g. `correctness`; omitted when none |
+| `verdict` | string | The dedup pass's check against the code: `real`, `false_positive` or `already_fixed`; omitted until a pass has checked it |
+| `verdict_reason` | string | One sentence on what in the code decided the verdict; omitted when none |
 
 **Scope:** Channel (the channel that started the review).
 
@@ -990,7 +994,7 @@ Emitted when a comment leaves the review session, either because it was deleted 
 
 ### `review.comment_updated`
 
-Emitted when a comment changes in place: the dedup pass (`POST /review/dedup`) appends what a kept comment's dropped duplicates added, trims a comment that bundles several issues to the ones no other comment covers, or moves a finding to the line it is about. Same payload as `review.comment`; the FE swaps in the new body.
+Emitted when a comment changes in place: the dedup pass (`POST /review/dedup`) appends what a kept comment's dropped duplicates added, trims a comment that bundles several issues to the ones no other comment covers, moves a finding to the line it is about, or records its verdict on an agent comment. Same payload as `review.comment`; the FE swaps in the new comment.
 
 **Scope:** Channel.
 

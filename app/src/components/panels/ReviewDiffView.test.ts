@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 import type { ReviewComment } from "../../api/review";
+import type { ColorPalette } from "../../theme";
 import { parseUnifiedDiff } from "./DiffViewer";
-import { type CommentAnchor, type FileSummary, navigableAnchors, orderedComments, unlandedTarget } from "./ReviewDiffView";
+import { type CommentAnchor, type FileSummary, navigableAnchors, orderedComments, unlandedTarget, verdictColor, verdictLabel } from "./ReviewDiffView";
 
 const DIFF = `diff --git a/a.go b/a.go
 index 111..222 100644
@@ -135,5 +136,17 @@ describe("unlandedTarget", () => {
     ["prev falls back when all are below", -1, [box(600), null], 9],
   ] as const)("%s", (_name, dir, rects, want) => {
     expect(unlandedTarget(dir, [...rects], view, 9)).toBe(want);
+  });
+});
+
+describe("verdict badge", () => {
+  const colors = { warning: "#warn", textDim: "#dim" } as ColorPalette;
+  it.each([
+    ["real", "verified", "#dim"],
+    ["false_positive", "false positive", "#warn"],
+    ["already_fixed", "already fixed", "#dim"],
+  ] as const)("%s", (v, label, color) => {
+    expect(verdictLabel(v)).toBe(label);
+    expect(verdictColor(colors, v)).toBe(color);
   });
 });

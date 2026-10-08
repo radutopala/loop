@@ -50,6 +50,87 @@ func (s *ParseReviewSuite) TestDifferingIDsNotSameAsPrev() {
 	require.Equal(s.T(), []string{"x"}, rc.Review.PrevIDs)
 }
 
+// A round's dedup pass folds comments away; the previous round's ids are
+// compared after the same folding, so a reworded repeat the pass kept over
+// the comment it repeats doesn't count as a new finding.
+func (s *ParseReviewSuite) TestSameAsPrevFoldsSupersededIDs() {
+	cases := []struct {
+		name string
+		prev []string
+		out  string
+		want bool
+	}{
+		{
+			name: "repeat dropped into the earlier comment",
+			prev: []string{"a", "b"},
+			out:  `{"status":"ready","comments":[{"id":"a"},{"id":"b"}],"superseded":{"c":"a"}}`,
+			want: true,
+		},
+		{
+			name: "earlier comment dropped into the repeat",
+			prev: []string{"a", "b"},
+			out:  `{"status":"ready","comments":[{"id":"b"},{"id":"c"}],"superseded":{"a":"c"}}`,
+			want: true,
+		},
+		{
+			name: "two earlier comments folded together",
+			prev: []string{"a", "b"},
+			out:  `{"status":"ready","comments":[{"id":"a"}],"superseded":{"b":"a"}}`,
+			want: true,
+		},
+		{
+			name: "a new finding survives the pass",
+			prev: []string{"a", "b"},
+			out:  `{"status":"ready","comments":[{"id":"b"},{"id":"c"},{"id":"d"}],"superseded":{"a":"c"}}`,
+			want: false,
+		},
+	}
+	for _, tc := range cases {
+		s.Run(tc.name, func() {
+			rc := &RunContext{}
+			rc.Review.IDs = tc.prev
+			parseReviewOutput(tc.out, rc)
+			require.Equal(s.T(), tc.want, rc.Review.SameAsPrev)
+			require.Equal(s.T(), tc.prev, rc.Review.PrevIDs)
+		})
+	}
+}
+
+// Comments the dedup pass found to be false positives or already fixed
+// aren't findings: the fix step doesn't get them, the stop check doesn't
+// count them, and a round that leaves only those has no comments.
+func (s *ParseReviewSuite) TestSkipsFalsePositivesAndFixedComments() {
+	cases := []struct {
+		name     string
+		out      string
+		wantIDs  []string
+		wantNone bool
+	}{
+		{
+			name:    "real and unchecked comments stay",
+			out:     `{"status":"ready","comments":[{"id":"a","verdict":"real"},{"id":"b","verdict":"false_positive"},{"id":"c"},{"id":"d","verdict":"already_fixed"}]}`,
+			wantIDs: []string{"a", "c"},
+		},
+		{
+			name:     "only false positives left",
+			out:      `{"status":"ready","comments":[{"id":"a","verdict":"false_positive"},{"id":"b","verdict":"already_fixed"}]}`,
+			wantIDs:  []string{},
+			wantNone: true,
+		},
+	}
+	for _, tc := range cases {
+		s.Run(tc.name, func() {
+			rc := &RunContext{}
+			parseReviewOutput(tc.out, rc)
+			require.Equal(s.T(), tc.wantIDs, rc.Review.IDs)
+			require.Equal(s.T(), tc.wantNone, rc.Review.NoComments)
+			require.False(s.T(), rc.Review.SameAsPrev)
+			require.NotContains(s.T(), rc.Review.CommentsJSON, "false_positive")
+			require.NotContains(s.T(), rc.Review.CommentsJSON, "already_fixed")
+		})
+	}
+}
+
 func (s *ParseReviewSuite) TestInvalidJSONPreservesPrevIDsAndClearsTerminators() {
 	rc := &RunContext{}
 	rc.Review.IDs = []string{"existing"}

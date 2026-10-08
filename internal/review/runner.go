@@ -51,7 +51,7 @@ type RunRequest struct {
 	// this run; empty inherits the config.
 	Model  string
 	Effort string
-	// ReadOnly runs a pass that only reads, like the final dedup pass: the
+	// ReadOnly runs a pass that only reads, like the dedup pass: the
 	// agent gets the read-only tool set (agent.AgentRequest.ReadOnly) instead
 	// of a code-review run's.
 	ReadOnly bool
@@ -71,7 +71,7 @@ func (r *Runner) Run(ctx context.Context, rr RunRequest) (*agent.AgentResponse, 
 		DirPath:       rr.DirPath,
 		ParentDirPath: rr.ParentDirPath,
 		SystemPrompt:  rr.SystemPrompt,
-		// Carries the dedup list to /code-review's fan-out subagents, which
+		// Carries the line rule to /code-review's fan-out subagents, which
 		// is where the findings are actually derived.
 		SubagentSystemPrompt: rr.SubagentSystemPrompt,
 		Prompt:               rr.Prompt,

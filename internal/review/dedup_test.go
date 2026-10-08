@@ -76,9 +76,14 @@ func (s *DedupSuite) TestBuildDedupPrompt() {
 		{ID: "gh-9", Path: "x.go", Line: 7, Side: "LEFT", Source: "github", Body: "same thing"},
 		{ID: "b2", Path: "y.go", Line: 1, Body: strings.Repeat("é", dedupBodyMax)},
 	}
-	got := BuildDedupPrompt(cands)
-	require.Contains(s.T(), got, `{"clusters":[{"keep":"<id>","drop":["<id>"],"reason":"...","note":"..."}],"trims":[{"id":"<id>","covered_by":"<id>","body":"...","reason":"..."}],"related":[{"ids":["<id>","<id>"],"reason":"..."}],"moves":[{"id":"<id>","line":0}]}`)
+	got := BuildDedupPrompt(cands, nil)
+	require.Contains(s.T(), got, `{"clusters":[{"keep":"<id>","drop":["<id>"],"reason":"...","note":"..."}],"trims":[{"id":"<id>","covered_by":"<id>","body":"...","reason":"..."}],"related":[{"ids":["<id>","<id>"],"reason":"..."}],"moves":[{"id":"<id>","line":0}],"verdicts":[{"id":"<id>","verdict":"real","reason":"..."}]}`)
 	require.Contains(s.T(), got, "a lone closing brace")
+	// Every kept agent comment is checked against the code; a verdict deletes nothing.
+	require.Contains(s.T(), got, `For every [agent] comment you don't drop, read the code it points at and decide whether the finding holds: "real"`)
+	require.Contains(s.T(), got, `"false_positive"`)
+	require.Contains(s.T(), got, `"already_fixed"`)
+	require.Contains(s.T(), got, "A verdict deletes nothing.")
 	require.Contains(s.T(), got, "share a root cause")
 	// A symptom with a narrower fix of its own is still a duplicate of the
 	// cause it follows from.
@@ -87,10 +92,57 @@ func (s *DedupSuite) TestBuildDedupPrompt() {
 	// A bundled comment is folded rather than parked under related.
 	require.Contains(s.T(), got, "A comment can bundle several issues. It duplicates any comment that reports one of them. Prefer keeping the bundled comment and dropping the single-issue one into it.")
 	require.Contains(s.T(), got, `list the bundled [agent] comment under "trims"`)
+	// A body cut for the prompt can be read in full through the review tools.
+	require.Contains(s.T(), got, `A body longer than 600 characters is cut and ends in "...". When the cut part matters to your call, read the full body with the get_review_comments tool`)
 	require.Contains(s.T(), got, "\n## x.go\n- id=a1 [agent] L3 (RIGHT): Nil deref when the map is empty.\n- id=gh-9 [github] L7 (LEFT): same thing\n")
 	require.Contains(s.T(), got, "\n## y.go\n- id=b2 [agent] L1 (RIGHT): ")
 	require.Equal(s.T(), 1, strings.Count(got, "## x.go"))
 	require.True(s.T(), strings.HasSuffix(got, "...\n"))
+	require.Contains(s.T(), got, "Do not change anything.\n\nReply with only")
+	require.NotContains(s.T(), got, "[agent, new]")
+}
+
+func (s *DedupSuite) TestBuildDedupPromptMarksFresh() {
+	cands := []*Comment{
+		{ID: "old", Path: "x.go", Line: 3, Source: "agent", Body: "old finding"},
+		{ID: "new", Path: "x.go", Line: 5, Source: "agent", Body: "new finding"},
+		{ID: "gh-1", Path: "x.go", Line: 9, Source: "github", Body: "pushed"},
+	}
+	got := BuildDedupPrompt(cands, DedupFresh(cands, map[string]bool{"old": true}))
+	require.Contains(s.T(), got, "\n## x.go\n- id=old [agent] L3 (RIGHT): old finding\n- id=new [agent, new] L5 (RIGHT): new finding\n- id=gh-1 [github] L9 (RIGHT): pushed\n")
+	require.Contains(s.T(), got, "Check every new comment against every other comment, the [github] ones included")
+	require.Contains(s.T(), got, "You need not regroup the older comments among themselves")
+	require.Contains(s.T(), got, "Only the new comments need their lines checked and a verdict.")
+	require.Contains(s.T(), got, "Do not change anything.\n- The comments marked [agent, new]")
+	require.Contains(s.T(), got, "you may when you spot a duplicate.\n\nReply with only")
+}
+
+func (s *DedupSuite) TestDedupFresh() {
+	cands := []*Comment{
+		{ID: "a", Source: "agent"},
+		{ID: "b"},
+		{ID: "gh-1", Source: "github"},
+	}
+	cases := []struct {
+		name   string
+		before map[string]bool
+		want   map[string]bool
+	}{
+		{"all there before", map[string]bool{"a": true, "b": true, "gh-1": true}, map[string]bool{}},
+		{"fresh session", nil, map[string]bool{"a": true, "b": true}},
+		{"github left out", map[string]bool{"a": true}, map[string]bool{"b": true}},
+	}
+	for _, tc := range cases {
+		s.Run(tc.name, func() {
+			require.Equal(s.T(), tc.want, DedupFresh(cands, tc.before))
+		})
+	}
+}
+
+func (s *DedupSuite) TestPromptBody() {
+	require.Equal(s.T(), "a b c", PromptBody(" a\n\nb\tc \n"))
+	require.Equal(s.T(), strings.Repeat("x", dedupBodyMax), PromptBody(strings.Repeat("x", dedupBodyMax)))
+	require.Equal(s.T(), strings.Repeat("x", dedupBodyMax)+"...", PromptBody(strings.Repeat("x", dedupBodyMax+1)))
 }
 
 func (s *DedupSuite) TestOneLine() {
@@ -185,6 +237,22 @@ func (s *DedupSuite) TestParseDedupReply() {
 			want: DedupPlan{
 				Clusters: []DedupCluster{{Keep: "a", Drop: []string{"b"}}},
 				Moves:    []DedupMove{{ID: "a", Line: 11}, {ID: "c", Line: 20}, {ID: "d", Line: 2}},
+			},
+		},
+		{
+			name: "verdicts only for kept agent comments with a known value, first one wins",
+			reply: `{"clusters":[{"keep":"a","drop":["b"]}],"verdicts":[` +
+				`{"id":"a","verdict":"real","reason":" nil map "},{"id":"a","verdict":"false_positive"},` +
+				`{"id":"b","verdict":"real"},{"id":"g","verdict":"real"},{"id":"zz","verdict":"real"},` +
+				`{"id":"c","verdict":"maybe"},{"id":"c","verdict":"false_positive","reason":"guarded above"},` +
+				`{"id":"e","verdict":"already_fixed"}]}`,
+			want: DedupPlan{
+				Clusters: []DedupCluster{{Keep: "a", Drop: []string{"b"}}},
+				Verdicts: []DedupVerdict{
+					{ID: "a", Verdict: VerdictReal, Reason: "nil map"},
+					{ID: "c", Verdict: VerdictFalsePositive, Reason: "guarded above"},
+					{ID: "e", Verdict: VerdictAlreadyFixed},
+				},
 			},
 		},
 		{name: "no object", reply: "nothing to dedup", wantErr: "no JSON object"},
@@ -289,7 +357,7 @@ func (s *DedupSuite) TestParseDedupReplyRootCauseAbsorbsSymptom() {
 		{ID: "cause", Path: "store.go", Line: 92, Source: "agent", Body: "Staleness is measured from the source file's modification time, so a valid file that simply isn't rewritten goes stale."},
 		{ID: "symptom", Path: "sync.go", Line: 627, Source: "agent", Body: "An identical re-upload skips the download, so the modification time is never refreshed."},
 	}
-	require.Contains(s.T(), BuildDedupPrompt(cands), "even when a narrower fix for it alone exists")
+	require.Contains(s.T(), BuildDedupPrompt(cands, nil), "even when a narrower fix for it alone exists")
 	got, err := ParseDedupReply(`{"clusters":[{"keep":"cause","drop":["symptom"],"reason":"staleness keyed on file mtime"}],"related":[{"ids":["cause","symptom"]}]}`, cands)
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), []DedupCluster{{Keep: "cause", Drop: []string{"symptom"}, Reason: "staleness keyed on file mtime"}}, got.Clusters)

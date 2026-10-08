@@ -19,6 +19,10 @@ import (
 // deleted (see ParseDedupReply). A comment that bundles several issues, one
 // of which another comment covers, can't be dropped without losing the
 // rest, so the model may trim it to the part nothing else covers instead.
+//
+// The same pass checks each agent comment it keeps against the code and
+// gives it a verdict (DedupVerdict), recorded on the comment. Nothing is
+// deleted for a verdict: a false positive stays for the user to judge.
 
 // DedupCluster is one group of comments the model judged to report the same
 // issue: Keep stays, Drop is deleted. Reason says what they share; Note is
@@ -55,12 +59,29 @@ type DedupTrim struct {
 	Reason    string `json:"reason,omitempty"`
 }
 
+// The verdicts the dedup pass gives an agent comment once it has read the
+// code the comment points at.
+const (
+	VerdictReal          = "real"
+	VerdictFalsePositive = "false_positive"
+	VerdictAlreadyFixed  = "already_fixed"
+)
+
+// DedupVerdict is the model's check of one agent comment against the code:
+// Verdict is one of the Verdict constants, Reason says why.
+type DedupVerdict struct {
+	ID      string `json:"id"`
+	Verdict string `json:"verdict"`
+	Reason  string `json:"reason,omitempty"`
+}
+
 // DedupPlan is the model's reply once checked against the candidates.
 type DedupPlan struct {
 	Clusters []DedupCluster
 	Related  []DedupRelated
 	Moves    []DedupMove
 	Trims    []DedupTrim
+	Verdicts []DedupVerdict
 }
 
 // dedupReply is the JSON object the model answers with.
@@ -69,6 +90,7 @@ type dedupReply struct {
 	Related  []DedupRelated `json:"related"`
 	Moves    []DedupMove    `json:"moves"`
 	Trims    []DedupTrim    `json:"trims"`
+	Verdicts []DedupVerdict `json:"verdicts"`
 }
 
 // dedupBodyMax caps each comment body in the prompt. Enough to tell two
@@ -103,11 +125,28 @@ func deletable(c *Comment) bool {
 	return c.Source != "github"
 }
 
+// DedupFresh returns the ids of the cands the pass may delete that aren't
+// in before, the ids a review run started from: the comments the run
+// added. A pass given them checks each against every other comment instead
+// of regrouping the whole session, which an earlier pass already did. Empty
+// means the run added nothing to fold.
+func DedupFresh(cands []*Comment, before map[string]bool) map[string]bool {
+	fresh := map[string]bool{}
+	for _, c := range cands {
+		if deletable(c) && !before[c.ID] {
+			fresh[c.ID] = true
+		}
+	}
+	return fresh
+}
+
 // BuildDedupPrompt renders the prompt for the model, listing cands (as
-// returned by DedupCandidates) under a heading per file.
-func BuildDedupPrompt(cands []*Comment) string {
+// returned by DedupCandidates) under a heading per file. When fresh (see
+// DedupFresh) is non-empty, those comments are marked new and the model is
+// asked to check them against the rest rather than regroup everything.
+func BuildDedupPrompt(cands []*Comment, fresh map[string]bool) string {
 	var b strings.Builder
-	b.WriteString(`You are cleaning up a pull request review. Several review rounds each reported findings, and later rounds often report an issue again: on another line, in another file, or framed differently. Group the comments below by root cause.
+	b.WriteString(`You are cleaning up a pull request review. Several review rounds each reported findings, and later rounds often report an issue again: on another line, in another file, or framed differently. Group the comments below by root cause, then check the ones you keep against the code.
 
 Rules:
 - Two comments are the same issue when they share a root cause, so that one change fixes both. That holds across files (say, where a value is built and where it is used), and when one comment describes the cause and the other a symptom or consequence of it. The same wording about separate places that each need their own fix is not the same issue.
@@ -118,12 +157,19 @@ Rules:
 - "note": one or two sentences on what the dropped comments raise that the kept one does not, such as another consequence or another place the fix must cover. It is appended to the kept comment. Leave it empty when they add nothing.
 - Only [agent] comments may be dropped.
 - Comments about the same code path or behaviour that still need separate fixes, where fixing either one leaves the other standing, are related, not duplicates: list them under "related" with a reason. Nothing is dropped for them.
+- For every [agent] comment you don't drop, read the code it points at and decide whether the finding holds: "real" (the issue is there), "false_positive" (the code doesn't do what the comment says, or the behaviour is intended or handled elsewhere), or "already_fixed" (it was real, but this checkout no longer has it). List it under "verdicts" with a one-sentence "reason" naming what in the code decided it. A verdict deletes nothing.
 - The line numbers were often counted from diff hunks and can be a few lines off. For every [agent] comment you don't drop, read its file with line numbers (the Read tool shows them) and check that its line is the statement the finding is about. When it isn't, as when it sits on a blank line, a lone closing brace, or a neighbouring statement, list the right line in the same file under "moves".
+- A body longer than ` + fmt.Sprint(dedupBodyMax) + ` characters is cut and ends in "...". When the cut part matters to your call, read the full body with the get_review_comments tool (pass "path" to list one file's comments); the ids are the ones below.
 - You may read the files in your working directory. Do not change anything.
-
+`)
+	if len(fresh) > 0 {
+		b.WriteString(`- The comments marked [agent, new] are what the latest review round added; an earlier pass already grouped the rest. Check every new comment against every other comment, the [github] ones included, and group it with the comment it repeats. Compare root causes, not wording: a new comment usually rewords an issue another comment already raised, often on another line or in another file. Only the new comments need their lines checked and a verdict. You need not regroup the older comments among themselves, though you may when you spot a duplicate.
+`)
+	}
+	b.WriteString(`
 Reply with only a JSON object, no other text:
-{"clusters":[{"keep":"<id>","drop":["<id>"],"reason":"...","note":"..."}],"trims":[{"id":"<id>","covered_by":"<id>","body":"...","reason":"..."}],"related":[{"ids":["<id>","<id>"],"reason":"..."}],"moves":[{"id":"<id>","line":0}]}
-Leave out comments that have no duplicate, nothing related, and the right line. If there are none, reply {"clusters":[],"trims":[],"related":[],"moves":[]}.
+{"clusters":[{"keep":"<id>","drop":["<id>"],"reason":"...","note":"..."}],"trims":[{"id":"<id>","covered_by":"<id>","body":"...","reason":"..."}],"related":[{"ids":["<id>","<id>"],"reason":"..."}],"moves":[{"id":"<id>","line":0}],"verdicts":[{"id":"<id>","verdict":"real","reason":"..."}]}
+Outside "verdicts", leave out comments that have no duplicate, nothing related, and the right line; use [] for an empty list.
 
 Comments, by file:
 `)
@@ -134,12 +180,24 @@ Comments, by file:
 			fmt.Fprintf(&b, "\n## %s\n", path)
 		}
 		label := "agent"
-		if !deletable(c) {
+		switch {
+		case !deletable(c):
 			label = "github"
+		case fresh[c.ID]:
+			label = "agent, new"
 		}
-		fmt.Fprintf(&b, "- id=%s [%s] L%d (%s): %s\n", c.ID, label, c.Line, effectiveSide(c.Side), oneLine(c.Body, dedupBodyMax))
+		fmt.Fprintf(&b, "- id=%s [%s] L%d (%s): %s\n", c.ID, label, c.Line, effectiveSide(c.Side), PromptBody(c.Body))
 	}
 	return b.String()
+}
+
+// PromptBody renders a comment body as one capped line for the dedup pass's
+// prompt, which lists comments. A finding
+// is summary + blank line + failure scenario (see ParseReportFindings), and
+// written verbatim it spills over several lines, which stops reading as a
+// list.
+func PromptBody(body string) string {
+	return oneLine(body, dedupBodyMax)
 }
 
 // oneLine collapses body's whitespace and caps it at limit bytes, backing up
@@ -168,8 +226,9 @@ func oneLine(body string, limit int) string {
 // by another known comment (a dropped one standing for its keeper), to a
 // non-empty body shorter than the one it replaces; a comment is trimmed
 // once, and a trimmed comment can't cover another trim, so two bundles
-// can't each cut the issue they share and lose it. An error means the
-// reply held no parseable JSON object.
+// can't each cut the issue they share and lose it. A verdict counts only
+// for a kept agent comment and a known Verdict value; the first one named
+// for an id wins. An error means the reply held no parseable JSON object.
 func ParseDedupReply(reply string, cands []*Comment) (DedupPlan, error) {
 	start, end := strings.Index(reply, "{"), strings.LastIndex(reply, "}")
 	if start < 0 || end < start {
@@ -248,7 +307,21 @@ func ParseDedupReply(reply string, cands []*Comment) (DedupPlan, error) {
 		trimmed[tr.ID], covers[cover] = true, true
 		plan.Trims = append(plan.Trims, DedupTrim{ID: tr.ID, CoveredBy: cover, Body: body, Reason: strings.TrimSpace(tr.Reason)})
 	}
+	judged := map[string]bool{}
+	for _, v := range parsed.Verdicts {
+		c := byID[v.ID]
+		if c == nil || !deletable(c) || keeperOf[v.ID] != "" || judged[v.ID] || !knownVerdict(v.Verdict) {
+			continue
+		}
+		judged[v.ID] = true
+		plan.Verdicts = append(plan.Verdicts, DedupVerdict{ID: v.ID, Verdict: v.Verdict, Reason: strings.TrimSpace(v.Reason)})
+	}
 	return plan, nil
+}
+
+// knownVerdict reports whether v is one of the Verdict constants.
+func knownVerdict(v string) bool {
+	return v == VerdictReal || v == VerdictFalsePositive || v == VerdictAlreadyFixed
 }
 
 // WithDedupNote returns body with note appended as its own paragraph, for a

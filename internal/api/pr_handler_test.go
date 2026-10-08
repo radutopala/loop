@@ -287,6 +287,16 @@ func (s *ServerSuite) TestConfigResolverDefaultLoaders() {
 	require.Equal(s.T(), "base", cfg.ClaudeModel)
 }
 
+func (s *ServerSuite) TestResolveClaudeEffort() {
+	c := configResolver{
+		load:        func() (*config.Config, error) { return &config.Config{ClaudeEffort: "high"}, nil },
+		loadProject: func(_ string, cfg *config.Config) (*config.Config, error) { return cfg, nil },
+	}
+	require.Equal(s.T(), "high", c.claudeEffort("/tmp", ""))
+	c.load = func() (*config.Config, error) { return nil, errors.New("boom") }
+	require.Equal(s.T(), "", c.claudeEffort("/tmp", ""))
+}
+
 func (s *ServerSuite) TestResolveGHUserLoadConfigError() {
 	c := configResolver{
 		load: func() (*config.Config, error) { return nil, errors.New("boom") },
