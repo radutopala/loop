@@ -41,7 +41,7 @@ func (s *EngineSuite) TestStartRunSeedsBlankDefaultInputs() {
 		{
 			Name:   "blank-input",
 			Inputs: map[string]config.WorkflowInput{"pr": {Default: ""}},
-			Nodes:  []config.NodeDef{{ID: "n", Type: config.NodeTypeBash, Script: "loop review run --pr {{.Inputs.pr}} --wait"}},
+			Nodes:  []config.NodeDef{{ID: "n", Type: config.NodeTypeBash, Script: "loop review:run --pr {{.Inputs.pr}} --wait"}},
 		},
 	}
 
@@ -49,13 +49,13 @@ func (s *EngineSuite) TestStartRunSeedsBlankDefaultInputs() {
 	done := s.waitForRunStatus()
 
 	// Blank pr → shell-quoted '' in the rendered script, never "<no value>".
-	s.bashRunner.On("RunBash", mock.Anything, "loop review run --pr '' --wait", "", "", "").Return("ok", nil)
+	s.bashRunner.On("RunBash", mock.Anything, "loop review:run --pr '' --wait", "", "", "").Return("ok", nil)
 
 	_, err := s.engine.StartRun(context.Background(), StartRunOptions{WorkflowName: "blank-input"})
 	require.NoError(s.T(), err)
 
 	s.awaitStatus(done, db.WorkflowRunStatusCompleted)
-	s.bashRunner.AssertCalled(s.T(), "RunBash", mock.Anything, "loop review run --pr '' --wait", "", "", "")
+	s.bashRunner.AssertCalled(s.T(), "RunBash", mock.Anything, "loop review:run --pr '' --wait", "", "", "")
 }
 
 func (s *EngineSuite) TestStartRunSingleBashNode() {

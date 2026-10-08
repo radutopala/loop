@@ -72,7 +72,7 @@ func (s *EngineSuite) TestExecuteLoopBodyBreaksOnReviewNoComments() {
 					MaxIterations: 5,
 					Condition:     "{{ if .Review.NoComments }}true{{ end }}",
 					Body: []*config.NodeDef{
-						{ID: "review", Type: config.NodeTypeBash, Script: "loop review run"},
+						{ID: "review", Type: config.NodeTypeBash, Script: "loop review:run"},
 					},
 				},
 			},
@@ -83,7 +83,7 @@ func (s *EngineSuite) TestExecuteLoopBodyBreaksOnReviewNoComments() {
 	done := s.waitForTerminalStatus()
 
 	var calls atomic.Int32
-	s.bashRunner.On("RunBash", mock.Anything, "loop review run", "", "", "").Return(`{"status":"ready","no_comments":true,"comments":[]}`, nil).Run(func(_ mock.Arguments) { calls.Add(1) })
+	s.bashRunner.On("RunBash", mock.Anything, "loop review:run", "", "", "").Return(`{"status":"ready","no_comments":true,"comments":[]}`, nil).Run(func(_ mock.Arguments) { calls.Add(1) })
 
 	_, err := s.engine.StartRun(context.Background(), StartRunOptions{WorkflowName: "review-loop"})
 	require.NoError(s.T(), err)
@@ -109,7 +109,7 @@ func (s *EngineSuite) TestExecuteLoopBodyBreaksOnSameAsPrev() {
 					MaxIterations: 5,
 					Condition:     "{{ if or .Review.NoComments .Review.SameAsPrev }}true{{ end }}",
 					Body: []*config.NodeDef{
-						{ID: "review", Type: config.NodeTypeBash, Script: "loop review run"},
+						{ID: "review", Type: config.NodeTypeBash, Script: "loop review:run"},
 					},
 				},
 			},
@@ -122,7 +122,7 @@ func (s *EngineSuite) TestExecuteLoopBodyBreaksOnSameAsPrev() {
 	var calls atomic.Int32
 	// Same comment ID set every call — first iter sets PrevIDs=nil so
 	// SameAsPrev=false; second iter sees PrevIDs=["x"] equal to current → break.
-	s.bashRunner.On("RunBash", mock.Anything, "loop review run", "", "", "").
+	s.bashRunner.On("RunBash", mock.Anything, "loop review:run", "", "", "").
 		Return(`{"status":"ready","no_comments":false,"comments":[{"id":"x"}]}`, nil).
 		Run(func(_ mock.Arguments) { calls.Add(1) })
 
@@ -608,14 +608,14 @@ func (s *EngineSuite) TestLoopBodyConditionTemplateErrorContinues() {
 func (s *EngineSuite) TestLoopBodyReviewExecErrorRotatesPrevIDs() {
 	e := s.engine.(*defaultEngine)
 	s.store.On("UpsertNodeRun", mock.Anything, mock.Anything).Return(nil)
-	s.bashRunner.On("RunBash", mock.Anything, "loop review run", "", "", "").
+	s.bashRunner.On("RunBash", mock.Anything, "loop review:run", "", "", "").
 		Return("", fmt.Errorf("review CLI exit 1"))
 
 	loopNode := &config.NodeDef{
 		ID:   "loop",
 		Type: config.NodeTypeLoop,
 		Body: []*config.NodeDef{
-			{ID: reviewBodyNodeID, Type: config.NodeTypeBash, Script: "loop review run"},
+			{ID: reviewBodyNodeID, Type: config.NodeTypeBash, Script: "loop review:run"},
 		},
 	}
 	// WorkflowName MUST be in reviewParsedWorkflows or the rotation branch

@@ -343,7 +343,7 @@ func dedupAfterRunRunner(finding *review.Comment, dedup func() (*agent.AgentResp
 }
 
 // The pass after a run checks only what the run added against the rest and
-// records what it folded, so `loop review run --wait` can report it.
+// records what it folded, so `loop review:run --wait` can report it.
 func (s *ReviewHandlerSuite) TestRunDedupsWhatItAdded() {
 	s.wireDedupSession()
 	s.rs.SetSuperseded("ch1", map[string]string{"old": "kept"})

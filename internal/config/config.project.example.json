@@ -41,7 +41,7 @@
   //},
 
   // Quality config override for this project. Scans run on demand (panel,
-  // `loop quality scan`, or the `quality_scan` MCP tool); there is no
+  // `loop quality:scan`, or the `quality_scan` MCP tool); there is no
   // background loop.
   //"quality": {
   //  // Refuse to scan when the post-exclusion file count exceeds this. 0 = engine default (25000).

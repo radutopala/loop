@@ -15,7 +15,7 @@ type LocalBashRunner struct {
 	// SafeDir is the root directory that dirPath must resolve within.
 	SafeDir string
 	// APIURL is exported to scripts as $LOOP_API_URL so daemon-calling commands
-	// (e.g. the seeded review workflows' `loop review run`) work in local
+	// (e.g. the seeded review workflows' `loop review:run`) work in local
 	// mode the same way they do inside an agent container, where the
 	// container env provides it.
 	APIURL string
@@ -54,7 +54,7 @@ func (r *LocalBashRunner) RunBash(ctx context.Context, script, channelID, dirPat
 	// Mirror the agent-container contract: scripts read $LOOP_CHANNEL_ID and
 	// $LOOP_API_URL (the seeded review workflows depend on both). Docker bash
 	// nodes get them from the container env; local mode must inject them
-	// or `loop review run` fails with "channel-id is required".
+	// or `loop review:run` fails with "channel-id is required".
 	cmd.Env = append(os.Environ(), "LOOP_CHANNEL_ID="+channelID)
 	if r.APIURL != "" {
 		cmd.Env = append(cmd.Env, "LOOP_API_URL="+r.APIURL)

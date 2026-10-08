@@ -14,7 +14,7 @@ type RunContext struct {
 	// inside a loop node's body. Zero outside any loop.
 	Iteration int
 	// Review carries parsed output from a bash node whose ID is "review"
-	// running `loop review run`. Used by the seeded review/review-fix loops
+	// running `loop review:run`. Used by the seeded review/review-fix loops
 	// to drive their stop condition.
 	Review ReviewState
 }
@@ -26,7 +26,7 @@ type RunMeta struct {
 	WorktreePath string
 }
 
-// ReviewState mirrors the JSON shape emitted by `loop review run --wait` and
+// ReviewState mirrors the JSON shape emitted by `loop review:run --wait` and
 // adds same-as-prev tracking used by the loop's stop condition.
 type ReviewState struct {
 	NoComments   bool            // true when the iteration produced zero comments
@@ -44,7 +44,7 @@ type ReviewState struct {
 	ParseFailed bool
 }
 
-// ReviewComment is a single review finding emitted by `loop review run`.
+// ReviewComment is a single review finding emitted by `loop review:run`.
 type ReviewComment struct {
 	ID       string `json:"id"`
 	Severity string `json:"severity,omitempty"`

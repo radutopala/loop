@@ -46,7 +46,7 @@ parses supported source files, computes the 5 structural metrics, and
 prints the aggregated quality_signal plus per-rule pass/fail.
 
 Exit code is always 0 unless the engine crashes. Rule status is data:
-  loop quality scan --json | jq -e '.rules.failed | length == 0'`,
+  loop quality:scan --json | jq -e '.rules.failed | length == 0'`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(c *cobra.Command, args []string) error {
 			root := ""
@@ -65,7 +65,7 @@ Exit code is always 0 unless the engine crashes. Rule status is data:
 	return cmd
 }
 
-// scanReport is the JSON contract for `loop quality scan --json`. Kept
+// scanReport is the JSON contract for `loop quality:scan --json`. Kept
 // separate from snapshot.Snapshot so the schema stays under our control
 // (snapshot is internal persistence shape; this is the public CLI shape).
 type scanReport struct {

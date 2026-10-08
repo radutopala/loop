@@ -2427,7 +2427,7 @@ Only agent findings are ever deleted: a GitHub comment can be the one kept,
 but is never dropped. The run is synchronous, and while it runs the session
 holds the channel's review-run slot and shows status `reviewing`. It is in
 the agent token scope, so an agent can call it from its container through
-`loop review dedup`. Every review run already folds the comments it added
+`loop review:dedup`. Every review run already folds the comments it added
 (see [`POST .../review/run`](#post-apichannelsidreviewrun)); this regroups
 the whole session.
 
@@ -2502,7 +2502,7 @@ session the user is still talking to. `session_id` is stored only for
 `custom` and cleared on any other mode.
 
 The choice lives on the review session (not on the run request) because
-the desktop app's Run button dispatches a workflow whose `loop review run`
+the desktop app's Run button dispatches a workflow whose `loop review:run`
 step has nowhere to carry per-run options. It is in-memory, so it resets
 when the daemon restarts.
 

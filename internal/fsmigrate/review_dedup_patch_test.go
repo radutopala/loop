@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"path/filepath"
+	"strings"
 
 	"github.com/stretchr/testify/require"
 )
@@ -139,4 +140,18 @@ func (s *FSMigrateSuite) TestPatchReviewLoopDropDedupNodeWriteError() {
 	sys.writeErr[configPath+".tmp"] = errors.New("io error")
 	_, err := patchReviewLoopDropDedupNodeReport(context.Background(), &Ctx{Sys: sys, LoopDir: "/loop"})
 	require.ErrorContains(s.T(), err, "writing")
+}
+
+// The dedup drop runs before the colon-path patch, so it still knows a
+// review-loop seeded with `loop review run`.
+func (s *FSMigrateSuite) TestPatchReviewLoopDropDedupNodeOnSpacedScript() {
+	spaced := strings.ReplaceAll(seededReviewLoopFinalDedupConfig, reviewRunScript, reviewRunScriptSpaced)
+	sys, configPath := s.patchEnv(spaced)
+
+	patched, err := patchReviewLoopDropDedupNodeReport(context.Background(), &Ctx{Sys: sys, LoopDir: "/loop"})
+	require.NoError(s.T(), err)
+	require.True(s.T(), patched)
+	got := string(sys.files[configPath])
+	require.NotContains(s.T(), got, reviewDedupScript)
+	require.Contains(s.T(), got, reviewRunScriptSpaced)
 }

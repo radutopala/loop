@@ -523,7 +523,7 @@ Available at both global and project level. Project values override global value
 }
 ```
 
-Scans are manual: panel "Scan now" button, `loop quality scan`, or the `quality_scan` MCP tool.
+Scans are manual: panel "Scan now" button, `loop quality:scan`, or the `quality_scan` MCP tool.
 
 | Field | Type | Default | Description |
 |---|---|---|---|
