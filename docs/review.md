@@ -90,8 +90,12 @@ per-global / per-project / per-worktree the same way as `github.gh_user`.
    20 lines. It then checks each agent finding it keeps (only the new
    ones, after a review run) against the code and records a verdict on
    it: `real`, `false_positive` (the code doesn't do what the comment
-   says, or the behaviour is intended or handled elsewhere) or
-   `already_fixed`, with a one-sentence reason. The diff card shows the
+   says, or the behaviour is intended, handled elsewhere or what the PR
+   sets out to do) or `already_fixed`, with a one-sentence reason citing
+   the line it read. Moves and verdicts are claims about the code, so
+   Loop keeps one only when the pass opened that comment's file with the
+   Read tool; one made from the comment text alone is dropped (and
+   logged). The diff card shows the
    verdict as a badge (verified, false positive, already fixed) with the
    reason on hover, and `get_review_comments` lists it. A verdict deletes
    nothing, and it is set on pushed findings too, since it stays local.

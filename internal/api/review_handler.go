@@ -7,7 +7,9 @@ import (
 	"fmt"
 	"net/http"
 	"path/filepath"
+	"slices"
 	"strings"
+	"sync"
 
 	"github.com/radutopala/loop/internal/apiauth"
 	"github.com/radutopala/loop/internal/githubapi"
@@ -1056,6 +1058,7 @@ func newReviewDedupResult() reviewDedupResult {
 func (s *reviewService) runDedupPass(ctx context.Context, channelID, parentDirPath string, sess *review.Session, cands []*review.Comment, fresh map[string]bool) (reviewDedupResult, error) {
 	res := newReviewDedupResult()
 	res.Checked = len(cands)
+	reads := &fileReads{}
 	resp, err := s.runner.Run(ctx, review.RunRequest{
 		ChannelID:     channelID,
 		DirPath:       sess.WorktreePath,
@@ -1064,6 +1067,7 @@ func (s *reviewService) runDedupPass(ctx context.Context, channelID, parentDirPa
 		ReadOnly:      true,
 		Model:         sess.Model,
 		Effort:        sess.Effort,
+		OnFileRead:    reads.add,
 	})
 	if resp != nil {
 		s.sessions.AppendRunSession(channelID, resp.SessionID, s.transcriptDir(sess.WorktreePath))
@@ -1106,7 +1110,24 @@ func (s *reviewService) runDedupPass(ctx context.Context, channelID, parentDirPa
 		res.Clusters = append(res.Clusters, out)
 	}
 	res.Related = append(res.Related, plan.Related...)
+	// A line move or a verdict is a claim about the code, so it only counts
+	// when the pass actually opened the comment's file; otherwise it is a
+	// guess from the comment text, and is dropped.
+	paths := make(map[string]string, len(cands))
+	for _, c := range cands {
+		paths[c.ID] = c.Path
+	}
+	unread := func(id, what string) bool {
+		if reads.has(paths[id]) {
+			return false
+		}
+		s.deps.logger.Info("review dedup: comment file not read, dropping claim", "claim", what, "channel_id", channelID, "comment_id", id, "path", paths[id])
+		return true
+	}
 	for _, mv := range plan.Moves {
+		if unread(mv.ID, "move") {
+			continue
+		}
 		from := 0
 		c := s.editComment(channelID, mv.ID, func(c *review.Comment) {
 			from, c.Line = c.Line, mv.Line
@@ -1118,11 +1139,37 @@ func (s *reviewService) runDedupPass(ctx context.Context, channelID, parentDirPa
 		s.maybeRediffForComment(channelID, sess.WorktreePath, parentDirPath, c)
 	}
 	for _, v := range plan.Verdicts {
+		if unread(v.ID, "verdict") {
+			continue
+		}
 		if s.setVerdict(channelID, v) != nil {
 			res.Verdicts = append(res.Verdicts, v)
 		}
 	}
 	return res, nil
+}
+
+// fileReads records the file_path of each Read tool call a dedup pass makes.
+// add runs on the agent's stream goroutine; has runs once the pass is over.
+type fileReads struct {
+	mu    sync.Mutex
+	paths []string
+}
+
+func (f *fileReads) add(path string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.paths = append(f.paths, path)
+}
+
+// has reports whether a Read opened rel, a repo-relative comment path. Read
+// takes absolute paths, which inside the container sit under the worktree.
+func (f *fileReads) has(rel string) bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return rel != "" && slices.ContainsFunc(f.paths, func(p string) bool {
+		return p == rel || strings.HasSuffix(p, "/"+rel)
+	})
 }
 
 // defaultReviewPrompt is the user-facing prompt sent to the review agent

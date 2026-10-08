@@ -80,7 +80,9 @@ func (s *DedupSuite) TestBuildDedupPrompt() {
 	require.Contains(s.T(), got, `{"clusters":[{"keep":"<id>","drop":["<id>"],"reason":"...","note":"..."}],"trims":[{"id":"<id>","covered_by":"<id>","body":"...","reason":"..."}],"related":[{"ids":["<id>","<id>"],"reason":"..."}],"moves":[{"id":"<id>","line":0}],"verdicts":[{"id":"<id>","verdict":"real","reason":"..."}]}`)
 	require.Contains(s.T(), got, "a lone closing brace")
 	// Every kept agent comment is checked against the code; a verdict deletes nothing.
-	require.Contains(s.T(), got, `For every [agent] comment you don't drop, read the code it points at and decide whether the finding holds: "real"`)
+	require.Contains(s.T(), got, `For every [agent] comment you don't drop, open its file with the Read tool around its line and decide whether the finding holds: "real"`)
+	require.Contains(s.T(), got, `or exactly what the pull request sets out to do`)
+	require.Contains(s.T(), got, `Verdicts and moves for a comment whose file you did not Read are discarded`)
 	require.Contains(s.T(), got, `"false_positive"`)
 	require.Contains(s.T(), got, `"already_fixed"`)
 	require.Contains(s.T(), got, "A verdict deletes nothing.")

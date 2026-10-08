@@ -2,6 +2,7 @@ package review
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 
 	"github.com/radutopala/loop/internal/agent"
@@ -13,6 +14,9 @@ import (
 type AgentRunner interface {
 	Run(ctx context.Context, req *agent.AgentRequest) (*agent.AgentResponse, error)
 }
+
+// readTool is Claude's built-in file-read tool; OnFileRead hooks onto it.
+const readTool = "Read"
 
 // Runner drives a single review pass: it builds an AgentRequest pointed
 // at the PR worktree and runs it to completion. Findings reach the daemon
@@ -59,6 +63,10 @@ type RunRequest struct {
 	// the built-in ReportFindings tool, in the order reported; it runs on the
 	// stream-reading goroutine, so it must not block for long.
 	OnComment func(*Comment)
+	// OnFileRead, when set, receives the file_path of each Read tool call the
+	// agent makes, so the caller can tell which files a pass actually opened;
+	// like OnComment it runs on the stream-reading goroutine.
+	OnFileRead func(path string)
 }
 
 // Run executes the review pass described by rr.
@@ -82,16 +90,23 @@ func (r *Runner) Run(ctx context.Context, rr RunRequest) (*agent.AgentResponse, 
 		Model:                rr.Model,
 		Effort:               rr.Effort,
 	}
-	if onComment := rr.OnComment; onComment != nil {
+	if rr.OnComment != nil || rr.OnFileRead != nil {
 		// OnToolUseRaw, not OnToolUse: the latter carries a chat-facing
 		// summary, which is empty for ReportFindings because the summarizer
-		// has no case for it. Only the raw form has the findings to decode.
+		// has no case for it. Only the raw form has the arguments to decode.
 		req.OnToolUseRaw = func(_, name, rawInput string) {
-			if name != ReportFindingsTool {
-				return
-			}
-			for _, c := range ParseReportFindings(rawInput) {
-				onComment(c)
+			switch {
+			case name == ReportFindingsTool && rr.OnComment != nil:
+				for _, c := range ParseReportFindings(rawInput) {
+					rr.OnComment(c)
+				}
+			case name == readTool && rr.OnFileRead != nil:
+				var in struct {
+					FilePath string `json:"file_path"`
+				}
+				if json.Unmarshal([]byte(rawInput), &in) == nil && in.FilePath != "" {
+					rr.OnFileRead(in.FilePath)
+				}
 			}
 		}
 	}

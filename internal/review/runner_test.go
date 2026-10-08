@@ -146,3 +146,38 @@ func (s *RunnerSuite) TestRunForwardsReportFindings() {
 		})
 	}
 }
+
+// Each Read tool call reaches OnFileRead with its file_path; other tools,
+// a pathless Read and malformed input are ignored, and a run that sets only
+// OnFileRead never decodes ReportFindings.
+func (s *RunnerSuite) TestRunForwardsFileReads() {
+	tests := []struct {
+		name     string
+		toolName string
+		input    string
+		want     []string
+	}{
+		{name: "read", toolName: "Read", input: `{"file_path":"/wt/a.go","offset":10,"limit":40}`, want: []string{"/wt/a.go"}},
+		{name: "no path", toolName: "Read", input: `{}`},
+		{name: "malformed", toolName: "Read", input: "not json"},
+		{name: "other tool", toolName: "Grep", input: `{"pattern":"x","path":"/wt/a.go"}`},
+		{name: "findings without onComment", toolName: ReportFindingsTool, input: `{"findings":[{"file":"a.go","line":3,"summary":"x"}]}`},
+	}
+	for _, tc := range tests {
+		s.Run(tc.name, func() {
+			a := new(mockAgentRunner)
+			a.On("Run", mock.Anything, mock.Anything).Run(func(args mock.Arguments) {
+				req, _ := args.Get(1).(*agent.AgentRequest)
+				req.OnToolUseRaw("tu-1", tc.toolName, tc.input)
+			}).Return(&agent.AgentResponse{}, nil)
+
+			var got []string
+			r := &Runner{Agent: a}
+			_, err := r.Run(context.Background(), RunRequest{ChannelID: "ch", DirPath: "/wt", OnFileRead: func(p string) {
+				got = append(got, p)
+			}})
+			require.NoError(s.T(), err)
+			require.Equal(s.T(), tc.want, got)
+		})
+	}
+}
