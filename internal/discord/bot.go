@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -11,6 +12,7 @@ import (
 	"github.com/bwmarrin/discordgo"
 
 	"github.com/radutopala/loop/internal/bot"
+	"github.com/radutopala/loop/internal/events"
 	"github.com/radutopala/loop/internal/orchestrator"
 	"github.com/radutopala/loop/internal/types"
 )
@@ -43,6 +45,7 @@ type DiscordSession interface {
 	GuildMember(guildID string, userID string, options ...discordgo.RequestOption) (*discordgo.Member, error)
 	ChannelMessageSendComplex(channelID string, data *discordgo.MessageSend, options ...discordgo.RequestOption) (*discordgo.Message, error)
 	ChannelMessageDelete(channelID string, messageID string, options ...discordgo.RequestOption) error
+	ChannelMessageEditComplex(m *discordgo.MessageEdit, options ...discordgo.RequestOption) (*discordgo.Message, error)
 	Guild(guildID string, options ...discordgo.RequestOption) (*discordgo.Guild, error)
 	ThreadMemberAdd(threadID, memberID string, options ...discordgo.RequestOption) error
 }
@@ -77,7 +80,19 @@ type DiscordBot struct {
 	typingInterval        time.Duration
 	pendingInteractions   map[string]*discordgo.Interaction
 	approvalResolver      bot.ApprovalResolver
+	// openCards holds each channel's open ask or plan card buttons message,
+	// so CloseCard can replace the buttons once the card is resolved.
+	openCards map[string]openCard
 }
+
+// openCard is the buttons message of a channel's open card.
+type openCard struct {
+	cardID    string
+	messageID string
+}
+
+// maxButtonsPerRow is Discord's limit on buttons in one actions row.
+const maxButtonsPerRow = 5
 
 // SetApprovalResolver wires the agentgate approval resolver. Clicks on
 // gate approval buttons dispatch through the resolver. Safe to leave unset
@@ -184,7 +199,7 @@ func (b *DiscordBot) sendInteractionChunks(interaction *discordgo.Interaction, c
 
 func (b *DiscordBot) sendRegularChunks(msg *bot.OutgoingMessage, chunks []string) error {
 	for i, chunk := range chunks {
-		if msg.ReplyToMessageID != "" && i == 0 {
+		if i == 0 && isSnowflake(msg.ReplyToMessageID) {
 			ref := &discordgo.MessageReference{MessageID: msg.ReplyToMessageID}
 			_, err := b.session.ChannelMessageSendReply(msg.ChannelID, chunk, ref)
 			if err != nil {
@@ -198,6 +213,13 @@ func (b *DiscordBot) sendRegularChunks(msg *bot.OutgoingMessage, chunks []string
 		}
 	}
 	return nil
+}
+
+// isSnowflake reports whether id is a Discord ID. Messages loop makes up
+// itself, like a card button click, have no Discord message to reply to.
+func isSnowflake(id string) bool {
+	_, err := strconv.ParseUint(id, 10, 64)
+	return err == nil
 }
 
 // SendTyping sends a typing indicator that refreshes periodically
@@ -296,6 +318,100 @@ func (b *DiscordBot) SendApproval(_ context.Context, channelID string, prompt bo
 		return "", fmt.Errorf("discord send approval: %w", err)
 	}
 	return msg.ID, nil
+}
+
+// SendAskCard posts an AskUserQuestion card as a text message followed by
+// its buttons. A click or the user's next reply in the channel answers it.
+func (b *DiscordBot) SendAskCard(ctx context.Context, channelID, replyToMessageID string, data events.AskUserQuestionEventData) error {
+	return b.sendCard(ctx, channelID, replyToMessageID, data.ToolUseID, bot.FormatAskCard(data, "**"), bot.AskCardButtons(data))
+}
+
+// SendPlanCard posts an ExitPlanMode card as a text message followed by its
+// buttons. A click or the user's next reply in the channel approves, rejects,
+// or revises the plan.
+func (b *DiscordBot) SendPlanCard(ctx context.Context, channelID, replyToMessageID string, data events.ExitPlanModeEventData) error {
+	return b.sendCard(ctx, channelID, replyToMessageID, data.ToolUseID, bot.FormatPlanCard(data, "**"), bot.PlanCardButtons())
+}
+
+// sendCard posts a card's text, then its buttons when the card has an ID to
+// match clicks against.
+func (b *DiscordBot) sendCard(ctx context.Context, channelID, replyToMessageID, cardID, text string, btns []bot.CardButton) error {
+	if err := b.SendMessage(ctx, &bot.OutgoingMessage{
+		ChannelID:        channelID,
+		Content:          text,
+		ReplyToMessageID: replyToMessageID,
+	}); err != nil {
+		return err
+	}
+	if cardID == "" {
+		return nil
+	}
+	msg, err := b.session.ChannelMessageSendComplex(channelID, &discordgo.MessageSend{
+		Components: cardComponents(channelID, cardID, btns),
+	})
+	if err != nil {
+		return fmt.Errorf("discord send card buttons: %w", err)
+	}
+	b.mu.Lock()
+	if b.openCards == nil {
+		b.openCards = map[string]openCard{}
+	}
+	b.openCards[channelID] = openCard{cardID: cardID, messageID: msg.ID}
+	b.mu.Unlock()
+	return nil
+}
+
+// cardComponents lays a card's buttons out in rows of five. Their custom IDs
+// carry the channel, card and choice (see bot.CardActionID).
+func cardComponents(channelID, cardID string, btns []bot.CardButton) []discordgo.MessageComponent {
+	var rows []discordgo.MessageComponent
+	for start := 0; start < len(btns); start += maxButtonsPerRow {
+		row := discordgo.ActionsRow{}
+		for _, btn := range btns[start:min(start+maxButtonsPerRow, len(btns))] {
+			style := discordgo.SecondaryButton
+			switch btn.Style {
+			case bot.CardButtonPrimary:
+				style = discordgo.PrimaryButton
+			case bot.CardButtonDanger:
+				style = discordgo.DangerButton
+			}
+			row.Components = append(row.Components, discordgo.Button{
+				Label:    btn.Label,
+				Style:    style,
+				CustomID: bot.CardActionID(channelID, cardID, btn.Choice),
+			})
+		}
+		rows = append(rows, row)
+	}
+	return rows
+}
+
+// CloseCard replaces the buttons of the channel's open card with the
+// outcome. A card that is not open here (already closed, or sent before a
+// restart) is left as is; clicks on it are refused by the orchestrator.
+func (b *DiscordBot) CloseCard(_ context.Context, channelID, cardID, outcome, userID string) error {
+	b.mu.Lock()
+	card, ok := b.openCards[channelID]
+	ok = ok && card.cardID == cardID
+	if ok {
+		delete(b.openCards, channelID)
+	}
+	b.mu.Unlock()
+	if !ok {
+		return nil
+	}
+	content := bot.CardClosedText(outcome, userID)
+	if _, err := b.session.ChannelMessageEditComplex(&discordgo.MessageEdit{
+		ID:         card.messageID,
+		Channel:    channelID,
+		Content:    &content,
+		Components: &[]discordgo.MessageComponent{},
+		// Show the mention without pinging the user.
+		AllowedMentions: &discordgo.MessageAllowedMentions{},
+	}); err != nil {
+		return fmt.Errorf("discord close card: %w", err)
+	}
+	return nil
 }
 
 // RemoveApproval deletes the approval prompt message.
@@ -713,6 +829,11 @@ func (b *DiscordBot) handleComponentInteraction(i *discordgo.InteractionCreate) 
 		return
 	}
 
+	if channelID, cardID, choice, ok := bot.ParseCardActionID(data.CustomID); ok {
+		b.handleCardComponent(i, channelID, cardID, choice)
+		return
+	}
+
 	if !strings.HasPrefix(data.CustomID, "stop:") {
 		return
 	}
@@ -743,6 +864,29 @@ func (b *DiscordBot) handleComponentInteraction(i *discordgo.InteractionCreate) 
 func (b *DiscordBot) dispatchInteraction(inter *bot.Interaction) {
 	for _, h := range bot.CopyHandlers(&b.mu, b.interactionHandlers) {
 		go h(context.Background(), inter)
+	}
+}
+
+// handleCardComponent dispatches a card button click as the reply it stands
+// for; the orchestrator checks the card is still open and closes it.
+func (b *DiscordBot) handleCardComponent(i *discordgo.InteractionCreate, channelID, cardID, choice string) {
+	msg := &bot.IncomingMessage{
+		ChannelID:    channelID,
+		GuildID:      i.GuildID,
+		Content:      choice,
+		Platform:     types.PlatformDiscord,
+		IsBotMention: true,
+		Timestamp:    time.Now(),
+		CardID:       cardID,
+	}
+	if i.Member != nil && i.Member.User != nil {
+		msg.AuthorID, msg.AuthorName = i.Member.User.ID, i.Member.User.Username
+		msg.AuthorRoles = i.Member.Roles
+	} else if i.User != nil {
+		msg.AuthorID, msg.AuthorName = i.User.ID, i.User.Username
+	}
+	for _, h := range bot.CopyHandlers(&b.mu, b.messageHandlers) {
+		go h(context.Background(), msg)
 	}
 }
 

@@ -32,6 +32,9 @@ type Bot interface {
 	RemoveStopButton(ctx context.Context, channelID, messageID string) error
 	SendApproval(ctx context.Context, channelID string, prompt bot.ApprovalPrompt) (messageID string, err error)
 	RemoveApproval(ctx context.Context, channelID, messageID string) error
+	SendAskCard(ctx context.Context, channelID, replyToMessageID string, data events.AskUserQuestionEventData) error
+	SendPlanCard(ctx context.Context, channelID, replyToMessageID string, data events.ExitPlanModeEventData) error
+	CloseCard(ctx context.Context, channelID, cardID, outcome, userID string) error
 	RegisterCommands(ctx context.Context) error
 	RemoveCommands(ctx context.Context) error
 	OnMessage(handler func(ctx context.Context, msg *bot.IncomingMessage))

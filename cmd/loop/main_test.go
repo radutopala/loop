@@ -29,6 +29,7 @@ import (
 	"github.com/radutopala/loop/internal/config"
 	"github.com/radutopala/loop/internal/container"
 	"github.com/radutopala/loop/internal/db"
+	loopevents "github.com/radutopala/loop/internal/events"
 	"github.com/radutopala/loop/internal/local"
 	"github.com/radutopala/loop/internal/orchestrator"
 	"github.com/radutopala/loop/internal/scheduler"
@@ -320,6 +321,18 @@ func (m *mockBot) SendApproval(ctx context.Context, channelID string, prompt bot
 
 func (m *mockBot) RemoveApproval(ctx context.Context, channelID, messageID string) error {
 	return m.Called(ctx, channelID, messageID).Error(0)
+}
+
+func (m *mockBot) SendAskCard(ctx context.Context, channelID, replyToMessageID string, data loopevents.AskUserQuestionEventData) error {
+	return m.Called(ctx, channelID, replyToMessageID, data).Error(0)
+}
+
+func (m *mockBot) SendPlanCard(ctx context.Context, channelID, replyToMessageID string, data loopevents.ExitPlanModeEventData) error {
+	return m.Called(ctx, channelID, replyToMessageID, data).Error(0)
+}
+
+func (m *mockBot) CloseCard(ctx context.Context, channelID, cardID, outcome, userID string) error {
+	return m.Called(ctx, channelID, cardID, outcome, userID).Error(0)
 }
 
 type closableDockerClient struct {

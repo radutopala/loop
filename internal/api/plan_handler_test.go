@@ -71,7 +71,7 @@ func (s *ServerSuite) TestPlanResolveApprove() {
 
 	s.store.On("MaxQueuedPriority", mock.Anything, "ch-1").Return(2, nil)
 	called := make(chan struct{}, 1)
-	handler.On("HandleIncomingMessageWithPriority", mock.Anything, "ch-1", "", planApprovePrompt, "", 3).
+	handler.On("HandleIncomingMessageWithPriority", mock.Anything, "ch-1", "", events.PlanApprovePrompt(""), "", 3).
 		Run(func(_ mock.Arguments) {
 			record("insert")
 			called <- struct{}{}
@@ -112,7 +112,7 @@ func (s *ServerSuite) TestPlanResolveApproveMaxPriorityErrorFallsBackToZero() {
 
 	s.store.On("MaxQueuedPriority", mock.Anything, "ch-1").Return(0, errors.New("db error"))
 	called := make(chan struct{}, 1)
-	handler.On("HandleIncomingMessageWithPriority", mock.Anything, "ch-1", "", planApprovePrompt, "", 0).
+	handler.On("HandleIncomingMessageWithPriority", mock.Anything, "ch-1", "", events.PlanApprovePrompt(""), "", 0).
 		Run(func(_ mock.Arguments) { called <- struct{}{} }).Return()
 	resolver.On("ClearPlannedChannel", "ch-1").Return()
 	resumed := make(chan struct{}, 1)
@@ -174,7 +174,7 @@ func (s *ServerSuite) TestPlanResolveApproveFallsBackWhenNoPlanFilePath() {
 	})
 	s.store.On("MaxQueuedPriority", mock.Anything, "ch-1").Return(0, nil)
 	called := make(chan struct{}, 1)
-	handler.On("HandleIncomingMessageWithPriority", mock.Anything, "ch-1", "", planApprovePrompt, "", 1).
+	handler.On("HandleIncomingMessageWithPriority", mock.Anything, "ch-1", "", events.PlanApprovePrompt(""), "", 1).
 		Run(func(_ mock.Arguments) { called <- struct{}{} }).Return()
 	resolver.On("ClearPlannedChannel", "ch-1").Return()
 	resumed := make(chan struct{}, 1)

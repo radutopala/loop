@@ -28,18 +28,34 @@ type gateResolvedCall struct {
 	data      events.GateApprovalResolvedData
 }
 
-// recordingGateBroadcaster captures gate broadcast calls for assertion.
-type recordingGateBroadcaster struct {
+// recordingBroadcaster captures broadcast calls for assertion.
+type recordingBroadcaster struct {
 	requested []gateRequestedCall
 	resolved  []gateResolvedCall
+	asks      map[string]events.AskUserQuestionEventData
+	plans     map[string]events.ExitPlanModeEventData
 }
 
-func (r *recordingGateBroadcaster) BroadcastGateApprovalRequested(channelID string, data events.GateApprovalEventData) {
+func (r *recordingBroadcaster) BroadcastGateApprovalRequested(channelID string, data events.GateApprovalEventData) {
 	r.requested = append(r.requested, gateRequestedCall{channelID: channelID, data: data})
 }
 
-func (r *recordingGateBroadcaster) BroadcastGateApprovalResolved(channelID string, data events.GateApprovalResolvedData) {
+func (r *recordingBroadcaster) BroadcastGateApprovalResolved(channelID string, data events.GateApprovalResolvedData) {
 	r.resolved = append(r.resolved, gateResolvedCall{channelID: channelID, data: data})
+}
+
+func (r *recordingBroadcaster) BroadcastAskUser(channelID string, data events.AskUserQuestionEventData) {
+	if r.asks == nil {
+		r.asks = map[string]events.AskUserQuestionEventData{}
+	}
+	r.asks[channelID] = data
+}
+
+func (r *recordingBroadcaster) BroadcastExitPlan(channelID string, data events.ExitPlanModeEventData) {
+	if r.plans == nil {
+		r.plans = map[string]events.ExitPlanModeEventData{}
+	}
+	r.plans[channelID] = data
 }
 
 type MockLocalStore struct {
@@ -145,8 +161,8 @@ func (s *BotSuite) TestRemoveApprovalWithoutBroadcasterIsNoop() {
 }
 
 func (s *BotSuite) TestSendApprovalBroadcastsEvent() {
-	g := &recordingGateBroadcaster{}
-	s.bot.SetGateBroadcaster(g)
+	g := &recordingBroadcaster{}
+	s.bot.SetBroadcaster(g)
 
 	id, err := s.bot.SendApproval(context.Background(), "ch-7", bot.ApprovalPrompt{
 		ID:      "req-42",
@@ -169,13 +185,33 @@ func (s *BotSuite) TestSendApprovalBroadcastsEvent() {
 }
 
 func (s *BotSuite) TestRemoveApprovalBroadcastsEvent() {
-	g := &recordingGateBroadcaster{}
-	s.bot.SetGateBroadcaster(g)
+	g := &recordingBroadcaster{}
+	s.bot.SetBroadcaster(g)
 
 	require.NoError(s.T(), s.bot.RemoveApproval(context.Background(), "ch-9", "req-99"))
 	require.Len(s.T(), g.resolved, 1)
 	require.Equal(s.T(), "ch-9", g.resolved[0].channelID)
 	require.Equal(s.T(), "req-99", g.resolved[0].data.ReqID)
+}
+
+func (s *BotSuite) TestSendCardsWithoutBroadcasterAreNoops() {
+	require.NoError(s.T(), s.bot.SendAskCard(context.Background(), "ch", "m1", events.AskUserQuestionEventData{}))
+	require.NoError(s.T(), s.bot.SendPlanCard(context.Background(), "ch", "m1", events.ExitPlanModeEventData{}))
+	require.NoError(s.T(), s.bot.CloseCard(context.Background(), "ch", "toolu_1", "Approved", "u1"))
+}
+
+func (s *BotSuite) TestSendCardsBroadcastEvents() {
+	g := &recordingBroadcaster{}
+	s.bot.SetBroadcaster(g)
+
+	ask := events.AskUserQuestionEventData{Questions: []events.AskUserQuestion{{Question: "Which one?"}}}
+	plan := events.ExitPlanModeEventData{Plan: "# Plan", PlanFilePath: "/plans/p.md"}
+	require.NoError(s.T(), s.bot.SendAskCard(context.Background(), "ch-1", "m1", ask))
+	require.NoError(s.T(), s.bot.SendPlanCard(context.Background(), "ch-2", "m2", plan))
+
+	require.Equal(s.T(), map[string]events.AskUserQuestionEventData{"ch-1": ask}, g.asks)
+	require.Equal(s.T(), map[string]events.ExitPlanModeEventData{"ch-2": plan}, g.plans)
+	require.Empty(s.T(), g.requested)
 }
 
 // --- DB-backed: GetChannelParentID ---

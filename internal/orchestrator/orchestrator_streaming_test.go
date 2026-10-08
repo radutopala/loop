@@ -312,12 +312,17 @@ func (s *OrchestratorSuite) TestHandleMessageStreamingAskUserQuestion() {
 	s.store.On("GetRecentMessages", s.ctx, "ch1", 50).Return([]*db.Message{}, nil)
 	s.store.On("MarkMessagesProcessed", s.ctx, []int64{}).Return(nil).Maybe()
 
+	s.store.On("UpdateSessionID", mock.Anything, "ch1", "sess-fork").Return(nil).Once()
+
 	askInput := `{"questions":[{"question":"Pick one","header":"Choice","options":[{"label":"X"}]}]}`
 	var capturedCtx context.Context
 	s.runner.On("Run", mock.Anything, mock.MatchedBy(func(req *agent.AgentRequest) bool {
 		if req.OnToolUse == nil || req.OnToolResult == nil {
 			return false
 		}
+		// A forked thread's run writes to a new session before saying
+		// anything; the park must keep it for the answer to resume.
+		req.OnSession("sess-fork")
 		req.OnToolUse("toolu_q", "AskUserQuestion", askInput)
 		// The permission_prompt deny closes the tool_use; the run is
 		// cancelled only once this result has landed (so it persists in the
@@ -331,9 +336,9 @@ func (s *OrchestratorSuite) TestHandleMessageStreamingAskUserQuestion() {
 	eb.On("BroadcastMessageCreated", "ch1", mock.Anything).Return()
 	eb.On("BroadcastToolUse", "ch1", mock.Anything).Return().Once()
 	eb.On("BroadcastToolResult", "ch1", mock.Anything).Return().Once()
-	eb.On("BroadcastAskUser", "ch1", mock.MatchedBy(func(d events.AskUserQuestionEventData) bool {
+	s.bot.On("SendAskCard", mock.Anything, "ch1", "msg-ask", mock.MatchedBy(func(d events.AskUserQuestionEventData) bool {
 		return len(d.Questions) == 1 && d.Questions[0].Header == "Choice"
-	})).Return().Once()
+	})).Return(nil).Once()
 	eb.On("BroadcastAgentStatus", "ch1", mock.MatchedBy(func(d events.AgentStatusEventData) bool {
 		return d.Status == "running" && d.MsgID == "msg-ask"
 	})).Return().Once()
@@ -345,8 +350,9 @@ func (s *OrchestratorSuite) TestHandleMessageStreamingAskUserQuestion() {
 
 	require.NotNil(s.T(), capturedCtx)
 	require.ErrorIs(s.T(), capturedCtx.Err(), context.Canceled)
-	eb.AssertCalled(s.T(), "BroadcastAskUser", "ch1", mock.Anything)
+	s.bot.AssertCalled(s.T(), "SendAskCard", mock.Anything, "ch1", "msg-ask", mock.Anything)
 	require.True(s.T(), s.orch.IsChannelAsked("ch1"))
+	s.store.AssertCalled(s.T(), "UpdateSessionID", mock.Anything, "ch1", "sess-fork")
 	eb.AssertExpectations(s.T())
 }
 
@@ -398,7 +404,7 @@ func (s *OrchestratorSuite) TestAskUserQuestionBroadcastOrder() {
 	eb.On("BroadcastMessageCreated", "ch1", mock.Anything).Return()
 	eb.On("BroadcastToolUse", "ch1", mock.Anything).Return().Once()
 	eb.On("BroadcastToolResult", "ch1", mock.Anything).Return().Once()
-	eb.On("BroadcastAskUser", "ch1", mock.Anything).Return().Once()
+	s.bot.On("SendAskCard", mock.Anything, "ch1", "msg-ask-order", mock.Anything).Return(nil).Once()
 	eb.On("BroadcastAgentStatus", "ch1", mock.MatchedBy(func(d events.AgentStatusEventData) bool {
 		return d.Status == "running"
 	})).Run(func(_ mock.Arguments) { order = append(order, "running") }).Return().Once()
@@ -414,6 +420,59 @@ func (s *OrchestratorSuite) TestAskUserQuestionBroadcastOrder() {
 	require.Equal(s.T(), []string{"running", "processed", "completed"}, order,
 		"messages.processed must fire BEFORE agent.status non-running so FE refetchHead sees the committed is_processed=1")
 	eb.AssertExpectations(s.T())
+}
+
+// TestHandleMessageStreamingReadOnlyNoCards checks a read-only run (learn,
+// explain) neither parks nor sends a card when the agent calls
+// AskUserQuestion or ExitPlanMode: it has neither tool, so the call fails.
+func (s *OrchestratorSuite) TestHandleMessageStreamingReadOnlyNoCards() {
+	tests := []struct {
+		name  string
+		tool  string
+		input string
+	}{
+		{name: "ask", tool: "AskUserQuestion", input: `{"questions":[{"question":"Pick one","header":"Choice","options":[{"label":"X"}]}]}`},
+		{name: "plan", tool: "ExitPlanMode", input: `{"plan":"# Plan"}`},
+	}
+	for _, tc := range tests {
+		s.Run(tc.name, func() {
+			s.SetupTest()
+			eb := new(MockEventBroadcaster)
+			s.orch.SetEventBroadcaster(eb)
+
+			msg := &bot.IncomingMessage{
+				ChannelID: "ch1", GuildID: "g1", AuthorID: "user1", AuthorName: "Alice",
+				Content: "ask me", MessageID: "msg-ro", IsBotMention: true, Timestamp: time.Now().UTC(),
+			}
+			s.store.On("IsChannelActive", s.ctx, "ch1").Return(true, nil)
+			s.store.On("GetChannel", mock.Anything, "ch1").Return(&db.Channel{ID: 1, ChannelID: "ch1", Active: true}, nil)
+			s.store.On("InsertMessage", s.ctx, mock.Anything).Return(nil)
+			s.store.On("InsertAgentEvent", mock.Anything, mock.Anything).Return(nil).Maybe()
+			s.store.On("UpdateSessionID", mock.Anything, "ch1", mock.Anything).Return(nil).Maybe()
+			s.bot.On("SendTyping", mock.Anything, "ch1").Return(nil).Maybe()
+			s.store.On("GetRecentMessages", s.ctx, "ch1", 50).Return([]*db.Message{}, nil)
+			s.store.On("MarkMessagesProcessed", s.ctx, []int64{}).Return(nil).Maybe()
+			s.runner.On("Run", mock.Anything, mock.MatchedBy(func(req *agent.AgentRequest) bool {
+				req.ReadOnly = true
+				req.OnToolUse("toolu_1", tc.tool, tc.input)
+				req.OnToolResult("toolu_1", "No such tool available", true)
+				return true
+			})).Return(&agent.AgentResponse{Response: "done"}, nil)
+			s.bot.On("SendMessage", mock.Anything, mock.Anything).Return(nil).Maybe()
+			eb.On("BroadcastMessageCreated", "ch1", mock.Anything).Return().Maybe()
+			eb.On("BroadcastToolUse", "ch1", mock.Anything).Return().Once()
+			eb.On("BroadcastToolResult", "ch1", mock.Anything).Return().Once()
+			eb.On("BroadcastAgentStatus", "ch1", mock.Anything).Return()
+
+			s.orch.HandleMessage(s.ctx, msg)
+
+			s.bot.AssertNotCalled(s.T(), "SendAskCard", mock.Anything, mock.Anything, mock.Anything, mock.Anything)
+			s.bot.AssertNotCalled(s.T(), "SendPlanCard", mock.Anything, mock.Anything, mock.Anything, mock.Anything)
+			s.store.AssertNotCalled(s.T(), "UpsertPausedChannel", mock.Anything, mock.Anything)
+			require.False(s.T(), s.orch.IsChannelAsked("ch1"))
+			require.False(s.T(), s.orch.IsChannelPlanned("ch1"))
+		})
+	}
 }
 
 func (s *OrchestratorSuite) TestHandleMessageStreamingExitPlanMode() {
@@ -461,9 +520,9 @@ func (s *OrchestratorSuite) TestHandleMessageStreamingExitPlanMode() {
 	eb.On("BroadcastMessageCreated", "ch1", mock.Anything).Return()
 	eb.On("BroadcastToolUse", "ch1", mock.Anything).Once()
 	eb.On("BroadcastToolResult", "ch1", mock.Anything).Return().Once()
-	eb.On("BroadcastExitPlan", "ch1", mock.MatchedBy(func(d events.ExitPlanModeEventData) bool {
+	s.bot.On("SendPlanCard", mock.Anything, "ch1", "msg-plan", mock.MatchedBy(func(d events.ExitPlanModeEventData) bool {
 		return d.Plan == "# Plan\nStep 1"
-	})).Once()
+	})).Return(nil).Once()
 	eb.On("BroadcastAgentStatus", "ch1", mock.MatchedBy(func(d events.AgentStatusEventData) bool {
 		return d.Status == "running" && d.MsgID == "msg-plan"
 	})).Return().Once()
@@ -475,7 +534,7 @@ func (s *OrchestratorSuite) TestHandleMessageStreamingExitPlanMode() {
 
 	require.NotNil(s.T(), capturedCtx)
 	require.ErrorIs(s.T(), capturedCtx.Err(), context.Canceled)
-	eb.AssertCalled(s.T(), "BroadcastExitPlan", "ch1", mock.Anything)
+	s.bot.AssertCalled(s.T(), "SendPlanCard", mock.Anything, "ch1", "msg-plan", mock.Anything)
 	// ExitPlanMode parks the channel so the drain holds queued rows
 	// until the user clicks approve / reject / deny.
 	require.True(s.T(), s.orch.IsChannelPlanned("ch1"))
@@ -515,6 +574,8 @@ func (s *OrchestratorSuite) TestHandleMessageStreamingExitPlanModeSelfInitiated(
 	s.store.On("UpsertPausedChannel", mock.Anything, mock.Anything).Return(nil).Maybe()
 	s.bot.On("SendTyping", mock.Anything, "ch1").Return(nil).Maybe()
 	s.store.On("GetRecentMessages", s.ctx, "ch1", 50).Return([]*db.Message{}, nil)
+	// A failed save is only logged; the plan card still stands.
+	s.store.On("UpdateSessionID", mock.Anything, "ch1", "sess-plan").Return(errors.New("db locked")).Once()
 
 	exitInput := `{"plan":"# Plan\nStep 1","planFilePath":"/tmp/p.md"}`
 	// Capture the run context so we can assert it was cancelled.
@@ -523,6 +584,7 @@ func (s *OrchestratorSuite) TestHandleMessageStreamingExitPlanModeSelfInitiated(
 		if req.OnToolUse == nil || req.OnToolResult == nil || req.PlanMode {
 			return false
 		}
+		req.OnSession("sess-plan")
 		req.OnToolUse("toolu_p", "ExitPlanMode", exitInput)
 		req.OnToolResult("toolu_p", "denied: plan under review", true)
 		return true
@@ -533,9 +595,9 @@ func (s *OrchestratorSuite) TestHandleMessageStreamingExitPlanModeSelfInitiated(
 	eb.On("BroadcastMessageCreated", "ch1", mock.Anything).Return()
 	eb.On("BroadcastToolUse", "ch1", mock.Anything).Return().Once()
 	eb.On("BroadcastToolResult", "ch1", mock.Anything).Return().Once()
-	eb.On("BroadcastExitPlan", "ch1", mock.MatchedBy(func(d events.ExitPlanModeEventData) bool {
+	s.bot.On("SendPlanCard", mock.Anything, "ch1", "msg-self-plan", mock.MatchedBy(func(d events.ExitPlanModeEventData) bool {
 		return d.Plan == "# Plan\nStep 1"
-	})).Return().Once()
+	})).Return(nil).Once()
 	eb.On("BroadcastAgentStatus", "ch1", mock.MatchedBy(func(d events.AgentStatusEventData) bool {
 		return d.Status == "running" && d.MsgID == "msg-self-plan"
 	})).Return().Once()
@@ -547,10 +609,11 @@ func (s *OrchestratorSuite) TestHandleMessageStreamingExitPlanModeSelfInitiated(
 
 	require.NotNil(s.T(), capturedCtx)
 	require.ErrorIs(s.T(), capturedCtx.Err(), context.Canceled)
-	eb.AssertCalled(s.T(), "BroadcastExitPlan", "ch1", mock.Anything)
+	s.bot.AssertCalled(s.T(), "SendPlanCard", mock.Anything, "ch1", "msg-self-plan", mock.Anything)
 	// Same pause flag as scenario 1 — the drain must hold queued messages
 	// regardless of whether the agent halted naturally or was cancelled.
 	require.True(s.T(), s.orch.IsChannelPlanned("ch1"))
+	s.store.AssertCalled(s.T(), "UpdateSessionID", mock.Anything, "ch1", "sess-plan")
 	// No "Run stopped." message — the plan card itself is the UI artifact.
 	s.bot.AssertNotCalled(s.T(), "SendMessage", mock.Anything, mock.MatchedBy(func(out *bot.OutgoingMessage) bool {
 		return out != nil && out.Content == "Run stopped."

@@ -84,3 +84,19 @@ func TestChannelUpdatedDescriptionJSON(t *testing.T) {
 		})
 	}
 }
+
+func TestPlanApprovePrompt(t *testing.T) {
+	cases := []struct {
+		name string
+		path string
+		want string
+	}{
+		{name: "no plan file", want: "I approve the plan. Please proceed with the implementation."},
+		{name: "plan file", path: "/work/plan.md", want: "I approve the plan at /work/plan.md. Please proceed with the implementation."},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			require.Equal(t, tc.want, PlanApprovePrompt(tc.path))
+		})
+	}
+}

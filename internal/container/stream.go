@@ -279,6 +279,7 @@ type streamCallbacks struct {
 	onActivity   func(activity, detail string)
 	onThinking   func(text string)
 	onToolResult func(toolUseID, output string, isError bool)
+	onSession    func(sessionID string)
 }
 
 // any reports whether at least one callback is set. collectOutput uses it to
@@ -290,7 +291,8 @@ type streamCallbacks struct {
 // ReportFindings findings went missing.
 func (cb streamCallbacks) any() bool {
 	return cb.onTurn != nil || cb.onToolUse != nil || cb.onToolUseRaw != nil ||
-		cb.onActivity != nil || cb.onThinking != nil || cb.onToolResult != nil
+		cb.onActivity != nil || cb.onThinking != nil || cb.onToolResult != nil ||
+		cb.onSession != nil
 }
 
 // userEventMaxBytes caps the size of "user" stream-json lines we will fully
@@ -468,7 +470,7 @@ func withTail(err error, tail *outputTail) error {
 func scanStreamJSON(r io.Reader, cb streamCallbacks) (*claudeResponse, error) {
 	br := bufio.NewReaderSize(r, scannerBufInit)
 	var result *claudeResponse
-	var lastModel string
+	var lastModel, lastSession string
 	var tail outputTail
 	var pending []backgroundTask
 	betweenTurns := false
@@ -502,6 +504,12 @@ func scanStreamJSON(r io.Reader, cb streamCallbacks) (*claudeResponse, error) {
 				continue
 			}
 			betweenTurns = false
+			if ref := msg.turnRef(); ref.SessionID != "" && ref.SessionID != lastSession {
+				lastSession = ref.SessionID
+				if cb.onSession != nil {
+					cb.onSession(lastSession)
+				}
+			}
 			if msg.Message.Model != "" && msg.Message.Model != lastModel {
 				lastModel = msg.Message.Model
 				if cb.onActivity != nil {

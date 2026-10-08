@@ -13,6 +13,7 @@ import (
 
 	"github.com/radutopala/loop/internal/bot"
 	"github.com/radutopala/loop/internal/db"
+	"github.com/radutopala/loop/internal/events"
 	"github.com/radutopala/loop/internal/types"
 )
 
@@ -316,6 +317,22 @@ func (s *BotRouterSuite) TestRemoveApproval() {
 	require.NoError(s.T(), err)
 }
 
+func (s *BotRouterSuite) TestSendAskAndPlanCards() {
+	s.store.On("GetChannel", mock.Anything, "ch-1").Return(
+		&db.Channel{ChannelID: "ch-1", Platform: types.PlatformLocal}, nil,
+	)
+	ask := events.AskUserQuestionEventData{Questions: []events.AskUserQuestion{{Question: "Which one?"}}}
+	plan := events.ExitPlanModeEventData{Plan: "# Plan"}
+	s.localBot.On("SendAskCard", mock.Anything, "ch-1", "msg-1", ask).Return(nil).Once()
+	s.localBot.On("SendPlanCard", mock.Anything, "ch-1", "msg-1", plan).Return(nil).Once()
+	s.localBot.On("CloseCard", mock.Anything, "ch-1", "toolu_1", "Approved", "u1").Return(nil).Once()
+
+	require.NoError(s.T(), s.router.SendAskCard(context.Background(), "ch-1", "msg-1", ask))
+	require.NoError(s.T(), s.router.SendPlanCard(context.Background(), "ch-1", "msg-1", plan))
+	require.NoError(s.T(), s.router.CloseCard(context.Background(), "ch-1", "toolu_1", "Approved", "u1"))
+	s.localBot.AssertExpectations(s.T())
+}
+
 func (s *BotRouterSuite) TestSetChannelTopic() {
 	s.store.On("GetChannel", mock.Anything, "ch-1").Return(
 		&db.Channel{ChannelID: "ch-1", Platform: types.PlatformDiscord}, nil,
@@ -435,6 +452,15 @@ func (s *BotRouterSuite) TestChannelMethodsReturnErrorWhenNoBotFound() {
 	require.ErrorContains(s.T(), err, "no bot found")
 
 	err = s.router.RemoveApproval(ctx, "unknown", "msg-1")
+	require.ErrorContains(s.T(), err, "no bot found")
+
+	err = s.router.SendAskCard(ctx, "unknown", "msg-1", events.AskUserQuestionEventData{})
+	require.ErrorContains(s.T(), err, "no bot found")
+
+	err = s.router.SendPlanCard(ctx, "unknown", "msg-1", events.ExitPlanModeEventData{})
+	require.ErrorContains(s.T(), err, "no bot found")
+
+	err = s.router.CloseCard(ctx, "unknown", "toolu_1", "Approved", "u1")
 	require.ErrorContains(s.T(), err, "no bot found")
 
 	err = s.router.SetChannelTopic(ctx, "unknown", "topic")

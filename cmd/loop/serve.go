@@ -745,12 +745,10 @@ func (a *app) serve() error {
 	branchPoller.SetOnDirChange(apiSrv.InvalidatePRCacheForDir)
 	go branchPoller.Run(ctx)
 	containerReg.SetBroadcaster(eventsHub)
-	if gateResolver != nil {
-		if gb, ok := localBot.(interface {
-			SetGateBroadcaster(local.GateBroadcaster)
-		}); ok {
-			gb.SetGateBroadcaster(eventsHub)
-		}
+	// Unconditional: the local bot renders ask/plan cards through the hub
+	// even when no gate is enabled.
+	if lb, ok := localBot.(interface{ SetBroadcaster(local.Broadcaster) }); ok {
+		lb.SetBroadcaster(eventsHub)
 	}
 
 	if streamer, ok := dockerClient.(container.OOMEventStreamer); ok {

@@ -14,13 +14,15 @@ import (
 	"github.com/radutopala/loop/internal/types"
 )
 
-// GateBroadcaster is the subset of events.Broadcaster needed by Bot for
-// approval prompts. The local platform has no chat-message surface for
-// buttons; approvals ride the WebSocket event stream and are rendered as
+// Broadcaster is the subset of events.Broadcaster needed by Bot for approval
+// prompts and ask/plan cards. The local platform has no chat-message surface
+// for buttons; these ride the WebSocket event stream and are rendered as
 // React cards in the desktop app.
-type GateBroadcaster interface {
+type Broadcaster interface {
 	BroadcastGateApprovalRequested(channelID string, data events.GateApprovalEventData)
 	BroadcastGateApprovalResolved(channelID string, data events.GateApprovalResolvedData)
+	BroadcastAskUser(channelID string, data events.AskUserQuestionEventData)
+	BroadcastExitPlan(channelID string, data events.ExitPlanModeEventData)
 }
 
 const (
@@ -55,8 +57,8 @@ type Bot struct {
 	channelDeleteHandler bot.ChannelDeleteHandler
 	channelJoinHandler   bot.ChannelJoinHandler
 
-	mu              sync.RWMutex
-	gateBroadcaster GateBroadcaster
+	mu          sync.RWMutex
+	broadcaster Broadcaster
 }
 
 // NewBot creates a new local platform Bot.
@@ -96,12 +98,19 @@ func (b *Bot) RemoveStopButton(_ context.Context, _, _ string) error         { r
 
 // --- Approval prompts (WS event to React ApprovalCard) ---
 
-// SetGateBroadcaster wires the events broadcaster used to fan approval
-// prompts out to the desktop app over the existing WebSocket.
-func (b *Bot) SetGateBroadcaster(g GateBroadcaster) {
+// SetBroadcaster wires the events broadcaster used to fan approval prompts
+// and ask/plan cards out to the desktop app over the existing WebSocket.
+func (b *Bot) SetBroadcaster(g Broadcaster) {
 	b.mu.Lock()
-	b.gateBroadcaster = g
+	b.broadcaster = g
 	b.mu.Unlock()
+}
+
+// getBroadcaster returns the wired broadcaster, or nil before app startup.
+func (b *Bot) getBroadcaster() Broadcaster {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+	return b.broadcaster
 }
 
 // SendApproval broadcasts a gate.approval_requested event for the channel.
@@ -111,9 +120,7 @@ func (b *Bot) SetGateBroadcaster(g GateBroadcaster) {
 // is dropped and an empty ID is returned — the gate Manager's pending entry
 // will time out via the caller's context, not hang forever.
 func (b *Bot) SendApproval(_ context.Context, channelID string, prompt bot.ApprovalPrompt) (string, error) {
-	b.mu.RLock()
-	g := b.gateBroadcaster
-	b.mu.RUnlock()
+	g := b.getBroadcaster()
 	if g == nil {
 		return "", nil
 	}
@@ -132,15 +139,40 @@ func (b *Bot) SendApproval(_ context.Context, channelID string, prompt bot.Appro
 // RemoveApproval broadcasts a gate.approval_resolved event so the card
 // dismisses itself once a decision is recorded.
 func (b *Bot) RemoveApproval(_ context.Context, channelID, reqID string) error {
-	b.mu.RLock()
-	g := b.gateBroadcaster
-	b.mu.RUnlock()
+	g := b.getBroadcaster()
 	if g == nil {
 		return nil
 	}
 	g.BroadcastGateApprovalResolved(channelID, events.GateApprovalResolvedData{
 		ReqID: reqID,
 	})
+	return nil
+}
+
+// --- Ask/plan cards (WS event to React AskCard / PlanCard) ---
+
+// SendAskCard broadcasts an agent.ask_user event for the channel. The card's
+// answer comes back through the /ask/resolve endpoint, so there is no message
+// to reply to.
+func (b *Bot) SendAskCard(_ context.Context, channelID, _ string, data events.AskUserQuestionEventData) error {
+	if g := b.getBroadcaster(); g != nil {
+		g.BroadcastAskUser(channelID, data)
+	}
+	return nil
+}
+
+// SendPlanCard broadcasts an agent.exit_plan event for the channel. The
+// decision comes back through the /plan/resolve endpoint.
+func (b *Bot) SendPlanCard(_ context.Context, channelID, _ string, data events.ExitPlanModeEventData) error {
+	if g := b.getBroadcaster(); g != nil {
+		g.BroadcastExitPlan(channelID, data)
+	}
+	return nil
+}
+
+// CloseCard is a no-op: the desktop app drops a resolved card on the
+// orchestrator's ask/plan resolved events.
+func (b *Bot) CloseCard(_ context.Context, _, _, _, _ string) error {
 	return nil
 }
 

@@ -13,6 +13,8 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/radutopala/loop/internal/bot"
+	"github.com/radutopala/loop/internal/events"
+	"github.com/radutopala/loop/internal/types"
 )
 
 // --- Stop button tests ---
@@ -192,6 +194,168 @@ func (s *BotSuite) TestSendApprovalError() {
 	msgID, err := s.bot.SendApproval(context.Background(), "C123", bot.ApprovalPrompt{ID: "r", Target: "git push"})
 	require.Error(s.T(), err)
 	require.Empty(s.T(), msgID)
+}
+
+func (s *BotSuite) TestSendCards() {
+	ask := events.AskUserQuestionEventData{ToolUseID: "toolu_1", Questions: []events.AskUserQuestion{{Question: "Which one?"}}}
+	plan := events.ExitPlanModeEventData{ToolUseID: "toolu_1", Plan: "# Plan"}
+	tests := []struct {
+		name       string
+		send       func() error
+		textErr    error
+		buttons    bool
+		buttonsErr error
+		wantErr    string
+	}{
+		{name: "ask", send: func() error { return s.bot.SendAskCard(context.Background(), "C123:1111.2222", "m1", ask) }, buttons: true},
+		{name: "plan", send: func() error { return s.bot.SendPlanCard(context.Background(), "C123:1111.2222", "m1", plan) }, buttons: true},
+		{
+			name: "card without an ID gets no buttons",
+			send: func() error {
+				return s.bot.SendPlanCard(context.Background(), "C123:1111.2222", "m1", events.ExitPlanModeEventData{Plan: "# Plan"})
+			},
+		},
+		{
+			name:    "text fails",
+			send:    func() error { return s.bot.SendAskCard(context.Background(), "C123:1111.2222", "m1", ask) },
+			textErr: errors.New("boom"), wantErr: "slack send message: boom",
+		},
+		{
+			name:    "buttons fail",
+			send:    func() error { return s.bot.SendPlanCard(context.Background(), "C123:1111.2222", "m1", plan) },
+			buttons: true, buttonsErr: errors.New("boom"), wantErr: "slack send card buttons: boom",
+		},
+	}
+	for _, tc := range tests {
+		s.Run(tc.name, func() {
+			s.SetupTest()
+			s.session.On("PostMessage", "C123", mock.Anything).Return("C123", "1111.3333", tc.textErr).Once()
+			if tc.buttons {
+				s.session.On("PostMessage", "C123", mock.Anything).Return("C123", "1111.4444", tc.buttonsErr).Once()
+			}
+
+			err := tc.send()
+
+			s.session.AssertExpectations(s.T())
+			if tc.wantErr != "" {
+				require.EqualError(s.T(), err, tc.wantErr)
+				require.Empty(s.T(), s.bot.openCards)
+				return
+			}
+			require.NoError(s.T(), err)
+			if tc.buttons {
+				require.Equal(s.T(), map[string]openCard{"C123:1111.2222": {cardID: "toolu_1", ts: "1111.4444"}}, s.bot.openCards)
+			} else {
+				require.Empty(s.T(), s.bot.openCards)
+			}
+		})
+	}
+}
+
+func (s *BotSuite) TestCardActionBlock() {
+	block := cardActionBlock("C123", "toolu_1", []bot.CardButton{
+		{Label: "A", Choice: "1"},
+		{Label: "Approve", Choice: "approve", Style: bot.CardButtonPrimary},
+		{Label: "Reject", Choice: "reject", Style: bot.CardButtonDanger},
+	})
+	require.Equal(s.T(), "card_actions:toolu_1", block.BlockID)
+	require.Len(s.T(), block.Elements.ElementSet, 3)
+	var ids, labels []string
+	var styles []goslack.Style
+	for _, el := range block.Elements.ElementSet {
+		btn, ok := el.(*goslack.ButtonBlockElement)
+		require.True(s.T(), ok)
+		ids = append(ids, btn.ActionID)
+		labels = append(labels, btn.Text.Text)
+		styles = append(styles, btn.Style)
+	}
+	require.Equal(s.T(), []string{"card:C123:toolu_1:1", "card:C123:toolu_1:approve", "card:C123:toolu_1:reject"}, ids)
+	require.Equal(s.T(), []string{"A", "Approve", "Reject"}, labels)
+	require.Equal(s.T(), []goslack.Style{"", goslack.StylePrimary, goslack.StyleDanger}, styles)
+}
+
+func (s *BotSuite) TestCardClosedBlock() {
+	block := cardClosedBlock("<b> & co", "U1")
+	require.Len(s.T(), block.ContextElements.Elements, 1)
+	text, ok := block.ContextElements.Elements[0].(*goslack.TextBlockObject)
+	require.True(s.T(), ok)
+	require.Equal(s.T(), "› &lt;b&gt; &amp; co — <@U1>", text.Text)
+}
+
+func (s *BotSuite) TestCloseCard() {
+	tests := []struct {
+		name      string
+		cardID    string
+		updateErr error
+		wantCall  bool
+		wantOpen  bool
+		wantErr   string
+	}{
+		{name: "closes the open card", cardID: "toolu_1", wantCall: true},
+		{name: "other card is left open", cardID: "toolu_old", wantOpen: true},
+		{name: "update fails", cardID: "toolu_1", wantCall: true, updateErr: errors.New("boom"), wantErr: "slack close card: boom"},
+	}
+	for _, tc := range tests {
+		s.Run(tc.name, func() {
+			s.SetupTest()
+			s.bot.openCards = map[string]openCard{"C123:1111.2222": {cardID: "toolu_1", ts: "1111.4444"}}
+			if tc.wantCall {
+				s.session.On("UpdateMessage", "C123", "1111.4444", mock.Anything).Return("C123", "1111.4444", "", tc.updateErr).Once()
+			}
+
+			err := s.bot.CloseCard(context.Background(), "C123:1111.2222", tc.cardID, "Approved", "U1")
+
+			if tc.wantErr != "" {
+				require.EqualError(s.T(), err, tc.wantErr)
+			} else {
+				require.NoError(s.T(), err)
+			}
+			_, open := s.bot.openCards["C123:1111.2222"]
+			require.Equal(s.T(), tc.wantOpen, open)
+			s.session.AssertExpectations(s.T())
+		})
+	}
+}
+
+func (s *BotSuite) TestCloseCardNothingOpen() {
+	require.NoError(s.T(), s.bot.CloseCard(context.Background(), "C123", "toolu_1", "Approved", "U1"))
+	s.session.AssertNotCalled(s.T(), "UpdateMessage", mock.Anything, mock.Anything, mock.Anything)
+}
+
+func (s *BotSuite) TestHandleInteractiveCardAction() {
+	received := make(chan *bot.IncomingMessage, 1)
+	s.bot.OnMessage(func(_ context.Context, m *bot.IncomingMessage) {
+		received <- m
+	})
+	s.socketClient.On("Ack", mock.Anything, mock.Anything).Return()
+
+	s.bot.handleInteractive(socketmode.Event{
+		Type: socketmode.EventTypeInteractive,
+		Data: goslack.InteractionCallback{
+			Type: goslack.InteractionTypeBlockActions,
+			User: goslack.User{ID: "U456"},
+			ActionCallback: goslack.ActionCallbacks{
+				BlockActions: []*goslack.BlockAction{
+					{ActionID: bot.CardActionID("C123:1111.2222", "toolu_1", "approve")},
+				},
+			},
+		},
+		Request: &socketmode.Request{},
+	})
+
+	select {
+	case msg := <-received:
+		require.Equal(s.T(), "C123:1111.2222", msg.ChannelID)
+		require.Equal(s.T(), "U456", msg.AuthorID)
+		require.Equal(s.T(), "U456", msg.AuthorName)
+		require.Equal(s.T(), "approve", msg.Content)
+		require.Equal(s.T(), "toolu_1", msg.CardID)
+		require.True(s.T(), msg.IsBotMention)
+		require.Equal(s.T(), types.PlatformSlack, msg.Platform)
+		require.False(s.T(), msg.Timestamp.IsZero())
+	case <-time.After(time.Second):
+		s.Fail("timeout waiting for card click")
+	}
 }
 
 func (s *BotSuite) TestRemoveApprovalSuccess() {

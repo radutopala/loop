@@ -591,6 +591,7 @@ func (r *DockerRunner) runOnce(ctx context.Context, req *agent.AgentRequest) (*a
 		onActivity:   req.OnActivity,
 		onThinking:   req.OnThinking,
 		onToolResult: req.OnToolResult,
+		onSession:    req.OnSession,
 	})
 	if err != nil {
 		return nil, err

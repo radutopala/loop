@@ -88,26 +88,33 @@ func (s *BotSuite) TestSendMessage() {
 		},
 		{
 			name: "with reply",
-			msg:  &bot.OutgoingMessage{ChannelID: "ch-1", Content: "hello", ReplyToMessageID: "msg-1"},
+			msg:  &bot.OutgoingMessage{ChannelID: "ch-1", Content: "hello", ReplyToMessageID: "1001"},
 			setup: func(ss *MockSession) {
-				ss.On("ChannelMessageSendReply", "ch-1", "hello", &discordgo.MessageReference{MessageID: "msg-1"}, mock.Anything).
+				ss.On("ChannelMessageSendReply", "ch-1", "hello", &discordgo.MessageReference{MessageID: "1001"}, mock.Anything).
 					Return(&discordgo.Message{}, nil)
 			},
 		},
 		{
-			name: "split",
-			msg:  &bot.OutgoingMessage{ChannelID: "ch-1", Content: strings.Repeat("a", 2500), ReplyToMessageID: "msg-1"},
+			name: "reply to a message loop made up is sent plain",
+			msg:  &bot.OutgoingMessage{ChannelID: "ch-1", Content: "hello", ReplyToMessageID: "ask-1"},
 			setup: func(ss *MockSession) {
-				ss.On("ChannelMessageSendReply", "ch-1", strings.Repeat("a", 2000), &discordgo.MessageReference{MessageID: "msg-1"}, mock.Anything).
+				ss.On("ChannelMessageSend", "ch-1", "hello", mock.Anything).Return(&discordgo.Message{}, nil)
+			},
+		},
+		{
+			name: "split",
+			msg:  &bot.OutgoingMessage{ChannelID: "ch-1", Content: strings.Repeat("a", 2500), ReplyToMessageID: "1001"},
+			setup: func(ss *MockSession) {
+				ss.On("ChannelMessageSendReply", "ch-1", strings.Repeat("a", 2000), &discordgo.MessageReference{MessageID: "1001"}, mock.Anything).
 					Return(&discordgo.Message{}, nil)
 				ss.On("ChannelMessageSend", "ch-1", strings.Repeat("a", 500), mock.Anything).Return(&discordgo.Message{}, nil)
 			},
 		},
 		{
 			name: "reply error",
-			msg:  &bot.OutgoingMessage{ChannelID: "ch-1", Content: "hello", ReplyToMessageID: "msg-1"},
+			msg:  &bot.OutgoingMessage{ChannelID: "ch-1", Content: "hello", ReplyToMessageID: "1001"},
 			setup: func(ss *MockSession) {
-				ss.On("ChannelMessageSendReply", "ch-1", "hello", &discordgo.MessageReference{MessageID: "msg-1"}, mock.Anything).
+				ss.On("ChannelMessageSendReply", "ch-1", "hello", &discordgo.MessageReference{MessageID: "1001"}, mock.Anything).
 					Return(nil, errors.New("send failed"))
 			},
 			wantErr: "discord send reply",

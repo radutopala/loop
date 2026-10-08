@@ -107,6 +107,15 @@ func (stubApprover) Request(_ context.Context, _ string, _ agentgate.ApprovalReq
 	return agentgate.Outcome{Decision: types.DecisionAllow}
 }
 
+// waitApprover stands in for a card nobody answers: Request blocks until
+// its context ends, then denies like the HTTP approver does.
+type waitApprover struct{}
+
+func (waitApprover) Request(ctx context.Context, _ string, _ agentgate.ApprovalRequest) agentgate.Outcome {
+	<-ctx.Done()
+	return agentgate.Outcome{Decision: types.DecisionDeny, Reason: "cancelled"}
+}
+
 // fakeParentDeps holds the struct-field injections for the parent path. Tests
 // set the relevant *Err fields (or leave them nil for happy path) and call
 // wire() to build the *app.
@@ -164,6 +173,14 @@ type fakeParentDeps struct {
 	waitChildCode int
 	waitChildErr  error
 	waitChildCh   chan int // if non-nil, waitChild blocks on recv here
+	waitChildFn   func(*os.Process) (int, error)
+
+	// approverReturned replaces the stubApprover newApprover returns.
+	approverReturned agentgate.Approver
+
+	// notifyContextFn stands in for the signal context; nil is a plain
+	// cancellable context no signal ever cancels.
+	notifyContextFn func(context.Context) (context.Context, context.CancelFunc)
 
 	exitCodeGot    int
 	exitCodeCalled int32
@@ -258,6 +275,9 @@ func (f *fakeParentDeps) wire() *app {
 			atomic.AddInt32(&f.approverCalls, 1)
 			f.approverAPI = apiURL
 			f.approverToken = token
+			if f.approverReturned != nil {
+				return f.approverReturned
+			}
 			return stubApprover{}
 		},
 		newGateServer: func(policy *agentgate.Policy, approver agentgate.Approver, auditor agentgate.Auditor, peerSource agentgate.PeerSourceLookup, channelID string, notifyFD int) gateServer {
@@ -296,14 +316,22 @@ func (f *fakeParentDeps) wire() *app {
 			return f.receiveHSChannelID, fd, nil
 		},
 		sendAck: func(*net.UnixConn) error { return f.sendAckErr },
-		waitChild: func(*os.Process) (int, error) {
+		waitChild: func(p *os.Process) (int, error) {
+			if f.waitChildFn != nil {
+				return f.waitChildFn(p)
+			}
 			if f.waitChildCh != nil {
 				return <-f.waitChildCh, nil
 			}
 			return f.waitChildCode, f.waitChildErr
 		},
-		notifyContext: context.WithCancel,
-		selfExe:       func() string { return "/proc/self/exe" },
+		notifyContext: func(parent context.Context) (context.Context, context.CancelFunc) {
+			if f.notifyContextFn != nil {
+				return f.notifyContextFn(parent)
+			}
+			return context.WithCancel(parent)
+		},
+		selfExe: func() string { return "/proc/self/exe" },
 		exitCode: func(code int) {
 			atomic.AddInt32(&f.exitCodeCalled, 1)
 			f.exitCodeGot = code
@@ -476,6 +504,107 @@ func (s *ParentSuite) TestRunParentChildExitClosesGateServer() {
 		s.FailNow("runParent did not return after child exit — gateServer not closed")
 	}
 	s.Require().Equal(0, f.exitCodeGot)
+}
+
+// ctxServer is a gateServer like the production one: Run is wedged in the
+// kernel ioctl until Close, and it records the context it was given.
+type ctxServer struct {
+	closeOnlyServer
+	ctx chan context.Context
+}
+
+func (s *ctxServer) Run(ctx context.Context) error {
+	s.ctx <- ctx
+	return s.closeOnlyServer.Run(ctx)
+}
+
+// TestRunParentSignalForwardedToChild: docker stop signals only the parent.
+// The parent must pass SIGTERM on to the child, so claude exits on its own
+// and flushes its transcript, instead of everything waiting for the SIGKILL
+// that follows the stop timeout. The Server's context must outlive the
+// signal so it still answers the child's traps while the child exits, but
+// a gate approval must not: nobody answers its card after the stop.
+func (s *ParentSuite) TestRunParentSignalForwardedToChild() {
+	f := newFakeParentDeps(s.T())
+	f.defaultEnv()
+	f.approverReturned = waitApprover{}
+	srv := &ctxServer{closeOnlyServer: *newCloseOnlyServer(), ctx: make(chan context.Context, 1)}
+	f.gateServerReturned = srv
+	f.notifyContextFn = func(parent context.Context) (context.Context, context.CancelFunc) {
+		ctx, cancel := context.WithCancel(parent)
+		cancel() // the shutdown signal has arrived
+		return ctx, cancel
+	}
+	var srvCtxErrAtExit error
+	var approvalAtExit agentgate.Outcome
+	f.waitChildFn = func(p *os.Process) (int, error) {
+		code, err := defaultWaitChild(p)
+		srvCtxErrAtExit = (<-srv.ctx).Err()
+		approvalAtExit = f.gateServerApprover.Request(context.Background(), "ch", agentgate.ApprovalRequest{})
+		return code, err
+	}
+
+	done := make(chan struct{})
+	go func() {
+		s.Require().NoError(f.wire().runParent())
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		s.FailNow("runParent did not return after the signal — child not signalled")
+	}
+	// The sleep child died of the forwarded SIGTERM.
+	s.Require().Equal(-1, f.exitCodeGot)
+	s.Require().NoError(srvCtxErrAtExit)
+	s.Require().Equal(types.DecisionDeny, approvalAtExit.Decision)
+	select {
+	case <-srv.released:
+	default:
+		s.Fail("gate server not closed after the child exited")
+	}
+}
+
+// TestShutdownApprover: requests pass through until shutdown; a pending one
+// ends when shutdown comes, and a new one ends at once.
+func (s *ParentSuite) TestShutdownApprover() {
+	tests := []struct {
+		name     string
+		inner    agentgate.Approver
+		shutdown func(cancel context.CancelFunc)
+		want     types.Decision
+	}{
+		{
+			name:     "before shutdown",
+			inner:    stubApprover{},
+			shutdown: func(context.CancelFunc) {},
+			want:     types.DecisionAllow,
+		},
+		{
+			name:     "after shutdown",
+			inner:    waitApprover{},
+			shutdown: func(cancel context.CancelFunc) { cancel() },
+			want:     types.DecisionDeny,
+		},
+		{
+			name:  "shutdown while pending",
+			inner: waitApprover{},
+			shutdown: func(cancel context.CancelFunc) {
+				time.AfterFunc(20*time.Millisecond, cancel)
+			},
+			want: types.DecisionDeny,
+		},
+	}
+	for _, tc := range tests {
+		s.Run(tc.name, func() {
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			tc.shutdown(cancel)
+			a := shutdownApprover{Approver: tc.inner, shutdown: ctx}
+			out := a.Request(context.Background(), "ch", agentgate.ApprovalRequest{})
+			s.Require().Equal(tc.want, out.Decision)
+		})
+	}
 }
 
 // TestRunParentServerErrorTriggersKill: stubServer returns an error

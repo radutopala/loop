@@ -265,6 +265,26 @@ func TestScanStreamJSONOnToolUse(t *testing.T) {
 	require.Equal(t, []string{"Bash:go test"}, tools)
 }
 
+// onSession reports the run's session from its first assistant event, before
+// any text, and again only when it changes. A subagent's events and events
+// without a session don't count.
+func TestScanStreamJSONOnSession(t *testing.T) {
+	input := `{"type":"assistant","message":{"content":[{"type":"text","text":"no session"}]}}
+{"type":"assistant","session_id":"fork-1","uuid":"u1","message":{"content":[{"type":"tool_use","id":"tu-1","name":"AskUserQuestion","input":{}}]}}
+{"type":"assistant","session_id":"fork-1","uuid":"u2","message":{"content":[{"type":"text","text":"same"}]}}
+{"type":"assistant","session_id":"sub-1","uuid":"u3","parent_tool_use_id":"tu-9","message":{"content":[{"type":"text","text":"subagent"}]}}
+{"type":"assistant","session_id":"fork-2","uuid":"u4","message":{"content":[{"type":"text","text":"changed"}]}}
+{"type":"result","result":"OK","session_id":"fork-2","is_error":false}
+`
+	var sessions []string
+	resp, err := scanStreamJSON(strings.NewReader(input), streamCallbacks{
+		onSession: func(id string) { sessions = append(sessions, id) },
+	})
+	require.NoError(t, err)
+	require.Equal(t, "OK", resp.Result)
+	require.Equal(t, []string{"fork-1", "fork-2"}, sessions)
+}
+
 // onToolUseRaw gets the input JSON untouched. The ReportFindings case is the
 // reason it exists: summarizeToolInput has no case for it and none of the
 // fallback keys match, so onToolUse alone hands the consumer an empty string.

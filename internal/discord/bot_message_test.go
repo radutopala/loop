@@ -12,6 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/radutopala/loop/internal/bot"
+	"github.com/radutopala/loop/internal/types"
 )
 
 // --- OnMessage / OnInteraction ---
@@ -317,6 +318,63 @@ func (s *BotSuite) TestHandleComponentInteractionDMUser() {
 
 	require.Equal(s.T(), "dm-user", received.AuthorID)
 	require.Empty(s.T(), received.AuthorRoles)
+}
+
+func (s *BotSuite) TestHandleComponentInteractionCardButton() {
+	tests := []struct {
+		name      string
+		member    *discordgo.Member
+		user      *discordgo.User
+		wantID    string
+		wantName  string
+		wantRoles []string
+	}{
+		{
+			name:   "guild member",
+			member: &discordgo.Member{User: &discordgo.User{ID: "user-1", Username: "alice"}, Roles: []string{"role-1"}},
+			wantID: "user-1", wantName: "alice", wantRoles: []string{"role-1"},
+		},
+		{
+			name:   "dm user",
+			user:   &discordgo.User{ID: "dm-user", Username: "bob"},
+			wantID: "dm-user", wantName: "bob",
+		},
+	}
+	for _, tc := range tests {
+		s.Run(tc.name, func() {
+			s.SetupTest()
+			received := make(chan *bot.IncomingMessage, 1)
+			s.bot.OnMessage(func(_ context.Context, m *bot.IncomingMessage) {
+				received <- m
+			})
+			s.session.On("InteractionRespond", mock.Anything, mock.Anything, mock.Anything).Return(nil)
+
+			s.bot.handleInteraction(nil, &discordgo.InteractionCreate{
+				Interaction: &discordgo.Interaction{
+					ChannelID: "ch-1",
+					GuildID:   "g-1",
+					Type:      discordgo.InteractionMessageComponent,
+					Member:    tc.member,
+					User:      tc.user,
+					Data: discordgo.MessageComponentInteractionData{
+						CustomID: bot.CardActionID("ch-1", "toolu_1", "2"),
+					},
+				},
+			})
+
+			msg := <-received
+			require.Equal(s.T(), "ch-1", msg.ChannelID)
+			require.Equal(s.T(), "g-1", msg.GuildID)
+			require.Equal(s.T(), tc.wantID, msg.AuthorID)
+			require.Equal(s.T(), tc.wantName, msg.AuthorName)
+			require.Equal(s.T(), tc.wantRoles, msg.AuthorRoles)
+			require.Equal(s.T(), "2", msg.Content)
+			require.Equal(s.T(), "toolu_1", msg.CardID)
+			require.True(s.T(), msg.IsBotMention)
+			require.Equal(s.T(), types.PlatformDiscord, msg.Platform)
+			require.False(s.T(), msg.Timestamp.IsZero())
+		})
+	}
 }
 
 // --- handleMessage edge cases ---
