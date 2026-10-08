@@ -2918,12 +2918,71 @@ func (s *ReviewHandlerSuite) TestPushCommentGhIDZeroLeavesUnpushed() {
 	require.Equal(s.T(), int64(0), c.GitHubID)
 }
 
-// TestRunReviewAsyncCancelledSilently covers the context.Canceled branch
-// in runReviewAsync: when session-delete fires the registered cancel func
-// mid-run, the agent observes ctx.Canceled — we must NOT broadcast
-// status=error, since the session is going away and an error event would
-// race the delete and confuse the FE.
-func (s *ReviewHandlerSuite) TestRunReviewAsyncCancelledSilently() {
+// Stop cancels the run in flight: the agent sees context.Canceled, and the
+// session goes back to ready (not error) with the findings reported so far.
+func (s *ReviewHandlerSuite) TestStopReviewRun() {
+	s.wireReadySession()
+	runner := &mockReviewRunner{done: make(chan struct{})}
+	runner.runWithCtxFn = func(ctx context.Context) (*agent.AgentResponse, error) {
+		<-ctx.Done()
+		return nil, ctx.Err()
+	}
+	s.srv.review.setAgent(runner, "", "")
+	hub := NewEventsHub(slog.Default())
+	var mu sync.Mutex
+	var statuses []string
+	hub.captureHook = func(e Event) {
+		mu.Lock()
+		defer mu.Unlock()
+		statuses = append(statuses, e.Data.(events.ReviewStatusEventData).Status)
+	}
+	s.srv.SetEventsHub(hub)
+
+	w := httptest.NewRecorder()
+	s.mux.ServeHTTP(w, httptest.NewRequest("POST", "/api/channels/ch1/review/run", nil))
+	require.Equal(s.T(), http.StatusAccepted, w.Code)
+
+	w = httptest.NewRecorder()
+	s.mux.ServeHTTP(w, httptest.NewRequest("POST", "/api/channels/ch1/review/stop", nil))
+	require.Equal(s.T(), http.StatusAccepted, w.Code)
+	require.JSONEq(s.T(), `{"status":"stopping"}`, w.Body.String())
+	<-runner.done
+
+	s.waitFor(func() bool { return !s.srv.review.isReviewRunActive("ch1") })
+	sess := s.rs.Get("ch1")
+	require.Equal(s.T(), review.StatusReady, sess.Status)
+	require.Empty(s.T(), sess.Error)
+	mu.Lock()
+	defer mu.Unlock()
+	require.Equal(s.T(), []string{string(review.StatusReviewing), string(review.StatusReady)}, statuses)
+}
+
+func (s *ReviewHandlerSuite) TestStopReviewRejects() {
+	cases := []struct {
+		name  string
+		setup func()
+		want  int
+		body  string
+	}{
+		{name: "not configured", setup: func() { s.srv.review.sessions = nil }, want: http.StatusNotImplemented},
+		{name: "no session", setup: func() {}, want: http.StatusNotFound, body: "no review session"},
+		{name: "nothing running", setup: s.wireReadySession, want: http.StatusConflict, body: "no review run in progress"},
+	}
+	for _, tc := range cases {
+		s.Run(tc.name, func() {
+			s.SetupTest()
+			tc.setup()
+			w := httptest.NewRecorder()
+			s.mux.ServeHTTP(w, httptest.NewRequest("POST", "/api/channels/ch1/review/stop", nil))
+			require.Equal(s.T(), tc.want, w.Code)
+			require.Contains(s.T(), w.Body.String(), tc.body)
+		})
+	}
+}
+
+// A run cancelled after its session was deleted leaves nothing to update and
+// broadcasts nothing; the delete's idle status stands.
+func (s *ReviewHandlerSuite) TestRunReviewAsyncCancelledAfterDelete() {
 	s.wireReadySession()
 	runner := &mockReviewRunner{done: make(chan struct{})}
 	runner.runWithCtxFn = func(ctx context.Context) (*agent.AgentResponse, error) {
@@ -2935,20 +2994,24 @@ func (s *ReviewHandlerSuite) TestRunReviewAsyncCancelledSilently() {
 	w := httptest.NewRecorder()
 	s.mux.ServeHTTP(w, httptest.NewRequest("POST", "/api/channels/ch1/review/run", nil))
 	require.Equal(s.T(), http.StatusAccepted, w.Code)
+	hub := NewEventsHub(slog.Default())
+	var mu sync.Mutex
+	var got []Event
+	hub.captureHook = func(e Event) {
+		mu.Lock()
+		defer mu.Unlock()
+		got = append(got, e)
+	}
+	s.srv.SetEventsHub(hub)
 
-	// Cancel the in-flight run directly (mirrors what handleReviewDelete
-	// would do). runReviewAsync should observe context.Canceled and return
-	// without flipping status to error.
+	s.rs.Delete("ch1")
 	s.srv.review.cancelReviewRun("ch1")
 	<-runner.done
-
-	// Give the goroutine a beat to finish unregistering — then assert no
-	// status flip happened. Status stays Reviewing (the state set by
-	// handleReviewRun before kicking off the goroutine).
 	s.waitFor(func() bool { return !s.srv.review.isReviewRunActive("ch1") })
-	sess := s.rs.Get("ch1")
-	require.Equal(s.T(), review.StatusReviewing, sess.Status)
-	require.Empty(s.T(), sess.Error)
+	require.Nil(s.T(), s.rs.Get("ch1"))
+	mu.Lock()
+	defer mu.Unlock()
+	require.Empty(s.T(), got)
 }
 
 // TestCancelReviewRunUnknownChannelNoOp ensures the helper is safe to

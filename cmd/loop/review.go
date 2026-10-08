@@ -108,14 +108,15 @@ func (a *app) newReviewRunCmd() *cobra.Command {
 	cmd.Flags().StringVar(&apiURL, "api-url", "", "Loop API base URL (default $LOOP_API_URL or http://localhost:8222)")
 	cmd.Flags().StringVar(&pr, "pr", "", "PR number or URL to load and review first (default: the channel's already-loaded review)")
 	cmd.Flags().BoolVar(&wait, "wait", false, "Block until the daemon flips to a terminal status, then print JSON")
-	// 60m default chosen to sit above the daemon-side review ceiling
-	// (api.WithReviewRunTimeout in cmd/loop/serve.go, currently 50m): the daemon
-	// flips the session to status=error first with a meaningful message,
-	// and the CLI exits with that message rather than its generic
-	// "timed out after 60m" wrapper. The earlier 30m default fired before
-	// the daemon's own deadline on big PRs, killing the workflow's bash
-	// node while the agent was still emitting comments.
-	cmd.Flags().StringVar(&timeoutStr, "timeout", "60m", "Maximum time to wait when --wait is set (Go duration)")
+	// 75m default chosen to sit above the daemon-side ceilings of a run
+	// and the dedup pass after it (api.WithReviewRunTimeout and
+	// api.WithReviewDedupTimeout in cmd/loop/serve.go, currently 50m and
+	// 15m): the daemon flips the session to status=error first with a
+	// meaningful message, and the CLI exits with that message rather than
+	// its generic "timed out after 75m" wrapper. The earlier 30m default
+	// fired before the daemon's own deadline on big PRs, killing the
+	// workflow's bash node while the agent was still emitting comments.
+	cmd.Flags().StringVar(&timeoutStr, "timeout", "75m", "Maximum time to wait when --wait is set (Go duration)")
 
 	return cmd
 }
@@ -142,8 +143,8 @@ func (a *app) newReviewDedupCmd() *cobra.Command {
 	cmd.Flags().StringVar(&channelID, "channel-id", "", "Channel ID whose review session to dedup (default $LOOP_CHANNEL_ID)")
 	cmd.Flags().StringVar(&apiURL, "api-url", "", "Loop API base URL (default $LOOP_API_URL or http://localhost:8222)")
 	// Same reasoning as run's --timeout: sit above the daemon's own
-	// review-run ceiling, which also bounds the dedup pass.
-	cmd.Flags().StringVar(&timeoutStr, "timeout", "60m", "Maximum time to wait for the pass (Go duration)")
+	// dedup ceiling (15m).
+	cmd.Flags().StringVar(&timeoutStr, "timeout", "20m", "Maximum time to wait for the pass (Go duration)")
 
 	return cmd
 }

@@ -62,7 +62,7 @@ per-global / per-project / per-worktree the same way as `github.gh_user`.
    than its cause), which the ingest-time pass (see
    [Required output format](#required-output-format)) doesn't catch. The
    dedup pass shows every comment in the session to a read-only model run
-   (no Bash, no edits), under a run timeout of its own, so a long review
+   (no Bash, no edits), under a timeout of its own (15m), so a long review
    doesn't leave it too little time. The comments the run just added are marked new,
    and the model checks each of them against every other comment (GitHub
    ones included) instead of regrouping the whole session, which an
@@ -91,18 +91,25 @@ per-global / per-project / per-worktree the same way as `github.gh_user`.
    anchored, against the file read with line numbers, and moves an
    unpushed one that sits a few lines off (on a blank line, a closing
    brace or a neighbouring statement) to the statement it is about, within
-   20 lines. It then checks each agent finding it keeps (only the new
-   ones, after a review run, even when the run added just one) against the code and records a verdict on
-   it: `real`, `false_positive` (the code doesn't do what the comment
+   20 lines. It then checks each agent finding it keeps against the code
+   and records a verdict on it. After a review run, even one that added
+   just one finding, that means the new findings plus the earlier ones
+   still standing (judged `real`, or not judged yet), since the run may
+   follow a fix: a fixed one becomes `already_fixed`, and a review-fix
+   loop stops handing it to the fix step. The verdicts are `real`, `false_positive` (the code doesn't do what the comment
    says, or the behaviour is intended, handled elsewhere or what the PR
    sets out to do) or `already_fixed`, with a one-sentence reason citing
    the line it read. Moves and verdicts are claims about the code, so
-   Loop keeps one only when the pass opened that comment's file with the
-   Read tool; one made from the comment text alone is dropped (and
+   Loop keeps one only when the pass opened that comment's file in the PR
+   worktree with the Read tool; one made from the comment text alone is dropped (and
    logged). The diff card shows the
    verdict as a badge (verified, false positive, already fixed) with the
    reason on hover, and `get_review_comments` lists it. A verdict deletes
-   nothing, and it is set on pushed findings too, since it stays local.
+   nothing, and a pass you run (`Dedup` or `loop review dedup`) sets it on
+   pushed findings too, since it stays local; the pass after a run treats
+   pushed findings like GitHub comments and leaves their verdicts alone.
+   Editing a finding's body drops its verdict until a pass checks it
+   again.
    The session records which comment each deleted one was
    folded into, and `loop review run --wait` reports it as `superseded`.
    The loop's stop check compares the comments the pass leaves with the
@@ -234,7 +241,7 @@ comments to act on:
 | **Why?** | The same quote, with `Please explain why we need this.` filled into that blank line | Yes, straight away |
 | **Address** | `Please address this review comment from the PR:` plus file, line, side, PR number, head SHA and author, then the quoted body and the run transcripts | Yes, straight away |
 | **Address all (N)** | The same request over every unpushed finding: the metadata header once, then a numbered block per finding, then the run transcripts | Yes, straight away |
-| **Check all (N)** | A request to clean up, then verify, every finding this session's runs reported (not the GitHub comments): PR number, head SHA and the PR checkout, then steps — run `dedup_review_findings`, read what is left with `get_review_comments`, check each against the code (real / false positive / already fixed), show the verdicts as a [chat component](chat.md#components) with a card per comment (its category when it has one), a verdict filter and a link to each pushed comment's GitHub thread (no severity unless the comment states one), then reply with what the dedup pass removed and the count per verdict; change nothing else | Yes, straight away |
+| **Check all (N)** | A request to clean up, then verify, every finding this session's runs reported (not the GitHub comments): PR number, head SHA and the PR checkout, then steps — run `dedup_review_findings`, read what is left with `get_review_comments`, check each against the code (real / false positive / already fixed), reply with an entry per comment (its category when it has one, its verdict and why, and a link to a pushed comment's GitHub thread; no severity unless the comment states one), ending with what the dedup pass removed and the count per verdict; change nothing else | Yes, straight away |
 
 Discuss and Why? are one builder and one send path differing by a single
 string, so the quote, the transcripts and the spacing cannot drift apart
@@ -350,6 +357,13 @@ FE: the workflow controls the channel's worktree (review session +
 auto-commits), and starting a second concurrent run mid-loop would
 race those operations.
 
+While a review runs, or a loop is active, a **Stop** button sits next to
+the Run button. It cancels the loop's workflow run first, so the loop
+doesn't start another round, then stops the review in progress
+(`POST /api/channels/{id}/review/stop`). The agent is stopped and the
+session goes back to ready with the findings reported so far. Between
+rounds, while the fix step runs, only the loop is cancelled.
+
 ## Gate approvals during a fix loop
 
 When the fix step trips a security-gate rule with `decision: approve`
@@ -387,13 +401,14 @@ load. Any session-lookup failure falls back to loading.
 | `--api-url` | `$LOOP_API_URL` then `http://localhost:8222` | Daemon URL. The agent container already exports `$LOOP_API_URL`. |
 | `--pr` | (none) | PR number (`567`) or URL (`.../pull/567`) to **load** into the channel's review session (fetch PR + create its worktree) before running. Omitted → review whatever the channel already has loaded. |
 | `--wait` | `false` | Block until the session reaches a terminal status (`ready` or `error`) and emit the JSON envelope to stdout. Without `--wait`, the command exits 0 immediately after the `202`. |
-| `--timeout` | `60m` | Bound on the total `--wait` time. Enforced inside the HTTP client, not just between polls, so a hung response can't outlive the deadline. Transient transport errors (TCP reset, momentary daemon restart, proxy 502) back off and retry instead of failing the whole loop. Sits above the daemon-side review ceiling (50m) so the daemon flips first with a meaningful error rather than the CLI's generic timeout. |
+| `--timeout` | `75m` | Bound on the total `--wait` time. Enforced inside the HTTP client, not just between polls, so a hung response can't outlive the deadline. Transient transport errors (TCP reset, momentary daemon restart, proxy 502) back off and retry instead of failing the whole loop. Sits above the daemon-side ceilings of the run and the dedup pass after it (50m and 15m) so the daemon flips first with a meaningful error rather than the CLI's generic timeout. |
 
 The emitted JSON shape is `{"status":"ready","no_comments":bool,"comments":[...]}`, plus `"superseded":{"<deleted id>":"<kept id>"}` when the dedup pass after the run deleted any — the same payload used by the workflow body parser to populate `{{.Review.*}}` templates inside the seeded loops. Each comment carries the dedup pass's `verdict` and `verdict_reason` once it has one. The workflow parser leaves out the comments marked `false_positive` or `already_fixed`: the fix step doesn't get them, the same-as-previous check doesn't count them, and a round that leaves only those sets `NoComments`, so the loop stops.
 
 `loop review dedup` runs the dedup pass on its own, over the whole session
 rather than only the latest run's comments. It
-takes the same `--channel-id`, `--api-url` and `--timeout` flags, blocks
+takes the same `--channel-id`, `--api-url` and `--timeout` flags (its
+`--timeout` defaults to `20m`, above the daemon's 15m dedup ceiling), blocks
 until the pass is done, and prints the result, which lists every merged
 group so a pass can be audited:
 

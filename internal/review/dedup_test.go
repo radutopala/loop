@@ -106,19 +106,26 @@ func (s *DedupSuite) TestBuildDedupPrompt() {
 
 func (s *DedupSuite) TestBuildDedupPromptMarksFresh() {
 	cands := []*Comment{
-		{ID: "old", Path: "x.go", Line: 3, Source: "agent", Body: "old finding"},
+		{ID: "old", Path: "x.go", Line: 3, Source: "agent", Body: "old finding", Verdict: VerdictFalsePositive},
+		{ID: "real", Path: "x.go", Line: 4, Source: "agent", Body: "real finding", Verdict: VerdictReal},
+		{ID: "unjudged", Path: "x.go", Line: 4, Source: "agent", Body: "unjudged finding"},
+		{ID: "fixed", Path: "x.go", Line: 4, Source: "agent", Body: "fixed finding", Verdict: VerdictAlreadyFixed},
 		{ID: "new", Path: "x.go", Line: 5, Source: "agent", Body: "new finding"},
 		{ID: "gh-1", Path: "x.go", Line: 9, Source: "github", Body: "pushed"},
 		{ID: "ours", Path: "x.go", Line: 12, Source: "agent", Body: "ours, pushed", Pushed: true, GitHubID: 4},
 	}
-	got := BuildDedupPrompt(cands, DedupFresh(cands, map[string]bool{"old": true, "ours": true}))
+	got := BuildDedupPrompt(cands, DedupFresh(cands, map[string]bool{"old": true, "real": true, "unjudged": true, "fixed": true, "ours": true}))
 	// A pushed agent comment is shown as [github]: an unasked-for pass keeps it off the PR's delete list.
-	require.Contains(s.T(), got, "\n## x.go\n- id=old [agent] L3 (RIGHT): old finding\n- id=new [agent, new] L5 (RIGHT): new finding\n- id=gh-1 [github] L9 (RIGHT): pushed\n- id=ours [github] L12 (RIGHT): ours, pushed\n")
+	// An earlier finding that still stands is checked again; a settled one isn't.
+	require.Contains(s.T(), got, "\n## x.go\n- id=old [agent] L3 (RIGHT): old finding\n"+
+		"- id=real [agent, recheck] L4 (RIGHT): real finding\n- id=unjudged [agent, recheck] L4 (RIGHT): unjudged finding\n- id=fixed [agent] L4 (RIGHT): fixed finding\n"+
+		"- id=new [agent, new] L5 (RIGHT): new finding\n- id=gh-1 [github] L9 (RIGHT): pushed\n- id=ours [github] L12 (RIGHT): ours, pushed\n")
 	require.Contains(s.T(), got, "Check every new comment against every other comment, the [github] ones included")
 	require.Contains(s.T(), got, "You need not regroup the older comments among themselves")
-	require.Contains(s.T(), got, "Only the new comments need their lines checked and a verdict.")
+	require.Contains(s.T(), got, "Only the new comments need their lines checked.")
+	require.Contains(s.T(), got, `one this checkout no longer has is "already_fixed"`)
 	require.Contains(s.T(), got, "Do not change anything.\n- The comments marked [agent, new]")
-	require.Contains(s.T(), got, "you may when you spot a duplicate.\n\nReply with only")
+	require.Contains(s.T(), got, "The other older comments keep their verdicts.\n\nReply with only")
 }
 
 func (s *DedupSuite) TestDedupFresh() {
@@ -141,12 +148,6 @@ func (s *DedupSuite) TestDedupFresh() {
 			require.Equal(s.T(), tc.want, DedupFresh(cands, tc.before))
 		})
 	}
-}
-
-func (s *DedupSuite) TestPromptBody() {
-	require.Equal(s.T(), "a b c", PromptBody(" a\n\nb\tc \n"))
-	require.Equal(s.T(), strings.Repeat("x", dedupBodyMax), PromptBody(strings.Repeat("x", dedupBodyMax)))
-	require.Equal(s.T(), strings.Repeat("x", dedupBodyMax)+"...", PromptBody(strings.Repeat("x", dedupBodyMax+1)))
 }
 
 func (s *DedupSuite) TestOneLine() {
@@ -395,6 +396,32 @@ func (s *DedupSuite) TestParseDedupReplyPushedOnlyDroppedWhenAsked() {
 			got, err := ParseDedupReply(reply, cands, tc.fresh)
 			require.NoError(s.T(), err)
 			require.Equal(s.T(), []DedupCluster{{Keep: "new", Drop: tc.want}}, got.Clusters)
+		})
+	}
+}
+
+// A pass after a review run shows a pushed agent comment as [github] and
+// doesn't ask for its verdict, so one it names anyway is ignored; a pass
+// someone asked for judges it like any other agent comment.
+func (s *DedupSuite) TestParseDedupReplyPushedOnlyJudgedWhenAsked() {
+	cands := []*Comment{
+		{ID: "new", Path: "x.go", Line: 5, Source: "agent"},
+		{ID: "pushed", Path: "x.go", Line: 6, Source: "agent", Pushed: true, GitHubID: 4},
+	}
+	reply := `{"verdicts":[{"id":"pushed","verdict":"false_positive"},{"id":"new","verdict":"real"}]}`
+	tests := []struct {
+		name  string
+		fresh map[string]bool
+		want  []DedupVerdict
+	}{
+		{name: "after a run", fresh: map[string]bool{"new": true}, want: []DedupVerdict{{ID: "new", Verdict: VerdictReal}}},
+		{name: "asked for", want: []DedupVerdict{{ID: "pushed", Verdict: VerdictFalsePositive}, {ID: "new", Verdict: VerdictReal}}},
+	}
+	for _, tc := range tests {
+		s.Run(tc.name, func() {
+			got, err := ParseDedupReply(reply, cands, tc.fresh)
+			require.NoError(s.T(), err)
+			require.Equal(s.T(), tc.want, got.Verdicts)
 		})
 	}
 }

@@ -147,6 +147,16 @@ export async function runReview(channelId: string): Promise<{ status: string }> 
 }
 
 /**
+ * Stop the review run in flight (or a dedup pass). The daemon stops the agent
+ * and sets the session back to ready, keeping the findings reported so far,
+ * once the agent is gone; review.status says when.
+ */
+export async function stopReview(channelId: string): Promise<void> {
+  const res = await apiFetch(`${getApiUrl()}/api/channels/${channelId}/review/stop`, { method: "POST" });
+  if (!res.ok) throw new Error((await res.text()) || `Failed to stop review: ${res.statusText}`);
+}
+
+/**
  * Record which Claude session the next review run should fork from. The
  * choice lives on the review session rather than on the run request
  * because the Run button dispatches a workflow, and the `loop review run`

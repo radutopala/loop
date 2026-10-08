@@ -483,6 +483,7 @@ func (s *Server) registerReviewRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("DELETE /api/channels/{id}/review", s.review.handleReviewDelete)
 	mux.HandleFunc("POST /api/channels/{id}/review/run", s.review.handleReviewRun)
 	mux.HandleFunc("POST /api/channels/{id}/review/dedup", s.review.handleReviewDedup)
+	mux.HandleFunc("POST /api/channels/{id}/review/stop", s.review.handleReviewStop)
 	mux.HandleFunc("PUT /api/channels/{id}/review/fork", s.review.handleReviewSetFork)
 	mux.HandleFunc("PUT /api/channels/{id}/review/agent", s.review.handleReviewSetAgent)
 	mux.HandleFunc("POST /api/channels/{id}/review/comments/{cid}/push", s.review.handleReviewPushComment)

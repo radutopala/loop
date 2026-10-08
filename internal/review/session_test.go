@@ -444,3 +444,28 @@ func (s *SessionSuite) TestEditLocalComment() {
 		})
 	}
 }
+
+// A verdict judged the comment's body: a new body drops it, a line move
+// keeps it.
+func (s *SessionSuite) TestEditLocalCommentVerdict() {
+	cases := []struct {
+		name        string
+		edit        func(*Comment)
+		wantVerdict string
+		wantReason  string
+	}{
+		{name: "body changed", edit: func(c *Comment) { c.Body = "Leak on retry." }},
+		{name: "line moved", edit: func(c *Comment) { c.Line = 5 }, wantVerdict: VerdictReal, wantReason: "x.go:3 leaks"},
+	}
+	for _, tc := range cases {
+		s.Run(tc.name, func() {
+			store := NewStore()
+			store.Put("ch1", &Session{Comments: []*Comment{
+				{ID: "local", Line: 3, Body: "Leak.", Source: "agent", Verdict: VerdictReal, VerdictReason: "x.go:3 leaks"},
+			}})
+			got := store.EditLocalComment("ch1", "local", tc.edit)
+			require.Equal(s.T(), tc.wantVerdict, got.Verdict)
+			require.Equal(s.T(), tc.wantReason, got.VerdictReason)
+		})
+	}
+}

@@ -126,7 +126,7 @@ func (s *ReviewHandlerSuite) TestDedupRemovesDuplicates() {
 		require.True(s.T(), s.rs.AddComment("ch1", c))
 	}
 	s.rs.UpdateAgent("ch1", "claude-opus-5-5", "high")
-	s.srv.review.setRunTimeout(time.Minute)
+	s.srv.review.setDedupTimeout(time.Minute)
 
 	hub := NewEventsHub(slog.Default())
 	var removed []string
@@ -152,9 +152,10 @@ func (s *ReviewHandlerSuite) TestDedupRemovesDuplicates() {
 		`"moves":[{"id":"a","line":11},{"id":"c","line":41},{"id":"u","line":6}],` +
 		`"verdicts":[{"id":"a","verdict":"real","reason":"no make()"},{"id":"c","verdict":"false_positive","reason":"made in init"},` +
 		`{"id":"g","verdict":"real"},{"id":"p","verdict":"real"},{"id":"u","verdict":"false_positive","reason":"guessed"}]}`
-	// u's file was never read (aw.go only shares its suffix), so its move
-	// and verdict are guesses and get dropped.
-	runner := &mockReviewRunner{reads: []string{"/repo/.worktrees/pr-7/x.go", "z.go", "/repo/.worktrees/pr-7/aw.go"}, runFn: func() (*agent.AgentResponse, error) {
+	// u's file was never read in the worktree (aw.go only shares its suffix,
+	// and /repo/w.go is the parent checkout's copy), so its move and verdict
+	// are guesses and get dropped.
+	runner := &mockReviewRunner{reads: []string{"/repo/.worktrees/pr-7/x.go", "z.go", "/repo/.worktrees/pr-7/aw.go", "/repo/w.go"}, runFn: func() (*agent.AgentResponse, error) {
 		require.Equal(s.T(), review.StatusReviewing, s.rs.Get("ch1").Status)
 		s.rs.RemoveComment("ch1", "e")
 		s.rs.RemoveComment("ch1", "g")
@@ -356,7 +357,8 @@ func (s *ReviewHandlerSuite) TestRunDedupsWhatItAdded() {
 
 	require.Equal(s.T(), 2, runner.calls)
 	require.Contains(s.T(), runner.lastUser, "- id="+fresh.ID+" [agent, new] L12 (RIGHT): ")
-	require.Contains(s.T(), runner.lastUser, "- id=a [agent] L10 (RIGHT): ")
+	// a has no verdict yet, so it is checked again.
+	require.Contains(s.T(), runner.lastUser, "- id=a [agent, recheck] L10 (RIGHT): ")
 	sess := s.rs.Get("ch1")
 	require.Equal(s.T(), review.StatusReady, sess.Status)
 	require.Equal(s.T(), map[string]string{fresh.ID: "a"}, sess.Superseded)
@@ -428,8 +430,8 @@ func (s *ReviewHandlerSuite) TestRunDedupSkippedWhenSessionDropped() {
 	require.Nil(s.T(), s.rs.Get("ch1"))
 }
 
-// Session-delete or shutdown cancelling the run during the pass leaves the
-// status alone, like a cancelled review.
+// Stopping the run during the pass after it leaves the session ready, like
+// a stopped review.
 func (s *ReviewHandlerSuite) TestRunDedupCancelled() {
 	s.wireDedupSession()
 	runner := &mockReviewRunner{findings: []*review.Comment{review.NewComment("x.go", 12, "", "new")}}
@@ -446,7 +448,7 @@ func (s *ReviewHandlerSuite) TestRunDedupCancelled() {
 	s.postRunAndWait()
 
 	require.Equal(s.T(), 2, runner.calls)
-	require.Equal(s.T(), review.StatusReviewing, s.rs.Get("ch1").Status)
+	require.Equal(s.T(), review.StatusReady, s.rs.Get("ch1").Status)
 }
 
 // The pass after a run gets a timeout of its own rather than what the
@@ -454,6 +456,7 @@ func (s *ReviewHandlerSuite) TestRunDedupCancelled() {
 func (s *ReviewHandlerSuite) TestRunDedupGetsItsOwnTimeout() {
 	s.wireDedupSession()
 	s.srv.review.setRunTimeout(time.Hour)
+	s.srv.review.setDedupTimeout(time.Hour)
 	var deadlines []time.Time
 	runner := &mockReviewRunner{findings: []*review.Comment{review.NewComment("x.go", 12, "", "new")}}
 	runner.runWithCtxFn = func(ctx context.Context) (*agent.AgentResponse, error) {

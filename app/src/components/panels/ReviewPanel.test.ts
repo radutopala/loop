@@ -222,8 +222,8 @@ describe("buildCheckAllPrompt", () => {
         "1. Run the dedup_review_findings tool first, so comments that report the same issue are merged before you check them. If it fails, say why and carry on.\n" +
         "2. Read the comments left with the get_review_comments tool. Skip the ones whose source is github.\n" +
         "3. For each one, read the code it points at in the checkout above and decide whether it is a real issue, a false positive, or already fixed.\n" +
-        "4. Show the result with the chat_component tool (list its templates first and pick one that fits): one card per comment with its id, path:line, category (when it has one), verdict and why, and a filter by verdict. Link a pushed comment to https://github.com/o/r/pull/7#discussion_r<its GitHub id>. Only show a severity the comment itself states; don't rate them yourself. If the tool fails, put that list in your reply instead.\n" +
-        "5. Reply with what the dedup pass removed and how many comments got each verdict.\n\n" +
+        "4. Reply with one entry per comment: its id, path:line, category (when it has one), verdict and why. Link a pushed comment to https://github.com/o/r/pull/7#discussion_r<its GitHub id>. Only show a severity the comment itself states; don't rate them yourself.\n" +
+        "5. End with what the dedup pass removed and how many comments got each verdict.\n\n" +
         "Don't change any code. Apart from the dedup pass, don't edit, delete or push any comment.",
     );
   });
@@ -234,8 +234,8 @@ describe("buildCheckAllPrompt", () => {
         "1. Run the dedup_review_findings tool first, so comments that report the same issue are merged before you check them. If it fails, say why and carry on.\n" +
         "2. Read the comments left with the get_review_comments tool. Skip the ones whose source is github.\n" +
         "3. For each one, read the code it points at and decide whether it is a real issue, a false positive, or already fixed.\n" +
-        "4. Show the result with the chat_component tool (list its templates first and pick one that fits): one card per comment with its id, path:line, category (when it has one), verdict and why, and a filter by verdict. Link a pushed comment to its GitHub thread. Only show a severity the comment itself states; don't rate them yourself. If the tool fails, put that list in your reply instead.\n" +
-        "5. Reply with what the dedup pass removed and how many comments got each verdict.\n\n" +
+        "4. Reply with one entry per comment: its id, path:line, category (when it has one), verdict and why. Link a pushed comment to its GitHub thread. Only show a severity the comment itself states; don't rate them yourself.\n" +
+        "5. End with what the dedup pass removed and how many comments got each verdict.\n\n" +
         "Don't change any code. Apart from the dedup pass, don't edit, delete or push any comment.",
     );
   });

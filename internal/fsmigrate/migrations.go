@@ -236,10 +236,13 @@ var migrations = []Migration{
 		Apply:       adoptProjectConfigs,
 	},
 	{
-		// An unmodified review-loop gets the final dedup pass after its
-		// loop, which folds the findings later rounds reported again.
+		// This once gave an unmodified review-loop a final dedup node, which
+		// a later migration drops again now that the daemon dedups after
+		// every run. It keeps its slot, so the versions after it stay put,
+		// but does nothing: a fresh install would only add the node to drop
+		// it.
 		Description: "patch review-loop with a final dedup node",
-		Apply:       patchReviewLoopDedupNode,
+		Apply:       func(context.Context, *Ctx) error { return nil },
 	},
 	{
 		// http_proxy, https_proxy and no_proxy now live in a proxies block.
@@ -1211,88 +1214,9 @@ func builtinReviewLoopDef() map[string]any {
 	)
 }
 
-// reviewDedupNode was the review-loop's last node: once the loop is done,
-// `loop review dedup` has a model fold the findings that later rounds
-// reported again, on another line or in other words. A single pass has
-// nothing to fold across rounds, so it's skipped when max_iterations is 1.
-func reviewDedupNode() map[string]any {
-	return map[string]any{
-		"id":         "dedup",
-		"type":       "bash",
-		"when":       reviewDedupWhenExpr,
-		"script":     reviewDedupScript,
-		"depends_on": []any{"loop"},
-	}
-}
-
-const (
-	reviewDedupScript   = "loop review dedup"
-	reviewDedupWhenExpr = `{{ ne .Inputs.max_iterations "1" }}`
-)
-
-// patchReviewLoopDedupNode appends reviewDedupNode to the review-loop
-// workflow when that workflow is still as seeded: one loop node whose body
-// is the single review child running reviewRunScript. Any other shape is
-// the user's and is left alone, as is a missing config or workflow.
-func patchReviewLoopDedupNode(ctx context.Context, c *Ctx) error {
-	_, err := patchReviewLoopDedupNodeReport(ctx, c)
-	return err
-}
-
-// patchReviewLoopDedupNodeReport is the (bool, error) variant used by
-// RestoreBuiltinWorkflows. The bool is true iff the patcher wrote to disk.
-// The node is added via v.Patch (RFC 6902) so the user's surrounding
-// comments and key ordering survive.
-func patchReviewLoopDedupNodeReport(_ context.Context, c *Ctx) (bool, error) {
-	v, configPath, err := loadConfigHJSON(c)
-	if err != nil || v == nil {
-		return false, err
-	}
-	rootObj, ok := v.Value.(*hujson.Object)
-	if !ok {
-		return false, fmt.Errorf("parsing %s: expected JSON object at top level", configPath)
-	}
-	wfsArr, ok := arrayValue(findObjectMember(rootObj, "workflows"))
-	if !ok {
-		return false, nil
-	}
-	var ops []jsonPatchOp
-	for i := range wfsArr.Elements {
-		wfObj, ok := wfsArr.Elements[i].Value.(*hujson.Object)
-		if !ok {
-			continue
-		}
-		if name, _ := memberString(wfObj, "name"); name != seededReviewLoopName {
-			continue
-		}
-		if seededReviewLoopShape(wfObj) {
-			ops = append(ops, jsonPatchOp{
-				Op:    "add",
-				Path:  fmt.Sprintf("/workflows/%d/nodes/-", i),
-				Value: reviewDedupNode(),
-			})
-		}
-	}
-	if len(ops) == 0 {
-		return false, nil
-	}
-	// The ops hold only fixed strings, so marshaling cannot fail, and the
-	// pointers were just walked in the AST, so the patch applies.
-	patch, _ := json.Marshal(ops)
-	_ = v.Patch(patch)
-	if err := atomicWriteConfig(c.Sys, configPath, v.Pack(), 0644); err != nil {
-		return false, fmt.Errorf("writing %s: %w", configPath, err)
-	}
-	return true, nil
-}
-
-// seededReviewLoopShape reports whether wfObj's nodes are the seeded
-// review-loop's before the dedup node: a single loop node whose body is the
-// single review child running reviewRunScript.
-func seededReviewLoopShape(wfObj *hujson.Object) bool {
-	nodesArr, ok := arrayValue(findObjectMember(wfObj, "nodes"))
-	return ok && len(nodesArr.Elements) == 1 && seededReviewLoopNode(nodesArr.Elements[0])
-}
+// reviewDedupScript is the script of the final dedup node the seeded
+// review-loop once had (see patchReviewLoopDropDedupNode).
+const reviewDedupScript = "loop review dedup"
 
 // seededReviewLoopNode reports whether node is the seeded review-loop's loop
 // node: id and type "loop", its body the single review child running
@@ -1322,7 +1246,7 @@ func seededReviewLoopNode(node hujson.Value) bool {
 }
 
 // patchReviewLoopDropDedupNode drops the review-loop's final dedup node
-// (reviewDedupNode) when the workflow is still as seeded: the loop node,
+// when the workflow is still as seeded: the loop node,
 // then that node. The daemon now runs the pass after every review run.
 // Any other shape is the user's and is left alone, as is a missing config
 // or workflow.
@@ -1360,8 +1284,8 @@ func patchReviewLoopDropDedupNodeReport(_ context.Context, c *Ctx) (bool, error)
 	if len(ops) == 0 {
 		return false, nil
 	}
-	// Same as patchReviewLoopDedupNodeReport: fixed values, pointers just
-	// walked in the AST.
+	// The ops hold only fixed values, so marshaling cannot fail, and the
+	// pointers were just walked in the AST, so the patch applies.
 	patch, _ := json.Marshal(ops)
 	_ = v.Patch(patch)
 	if err := atomicWriteConfig(c.Sys, configPath, v.Pack(), 0644); err != nil {
