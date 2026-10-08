@@ -434,6 +434,10 @@ idle ──load──▶ loading ──ok──▶ ready ──run──▶ revi
                   └──err──▶ error              └──err──▶ error
 ```
 
+Deleting the session stops a run in progress and broadcasts `idle`. While a
+run is in progress the sidebar shows the channel as running, in Recent too,
+with a `rev…` pill.
+
 ## Configuration
 
 ```json

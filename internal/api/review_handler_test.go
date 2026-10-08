@@ -898,6 +898,21 @@ func (s *ReviewHandlerSuite) TestDeleteSessionNoWorktreePath() {
 	require.Nil(s.T(), s.rs.Get("ch1"))
 }
 
+func (s *ReviewHandlerSuite) TestDeleteSessionBroadcastsIdle() {
+	s.rs.Put("ch1", &review.Session{Status: review.StatusReviewing})
+	hub := NewEventsHub(slog.Default())
+	var got []Event
+	hub.captureHook = func(e Event) { got = append(got, e) }
+	s.srv.SetEventsHub(hub)
+	w := httptest.NewRecorder()
+	s.mux.ServeHTTP(w, httptest.NewRequest("DELETE", "/api/channels/ch1/review", nil))
+	require.Equal(s.T(), http.StatusNoContent, w.Code)
+	require.Len(s.T(), got, 1)
+	require.Equal(s.T(), EventReviewStatus, got[0].Type)
+	require.Equal(s.T(), "ch1", got[0].ChannelID)
+	require.Equal(s.T(), events.ReviewStatusEventData{Status: string(review.StatusIdle)}, got[0].Data)
+}
+
 // ---- push single comment ----
 
 func (s *ReviewHandlerSuite) TestPushCommentNoSession() {

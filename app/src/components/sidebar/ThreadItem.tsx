@@ -4,7 +4,7 @@ import { useTheme } from "../../ThemeContext";
 import { fonts } from "../../theme";
 import type { Channel } from "../../types";
 import type { PillKind } from "./pills";
-import { SIDEBAR_PILLS } from "./pills";
+import { REVIEWING_PILL, SIDEBAR_PILLS } from "./pills";
 import { RowInfoPopup } from "./RowInfoPopup";
 import { SessionKindIcon } from "./SessionKindIcon";
 import { StatusPill } from "./StatusPill";
@@ -34,6 +34,8 @@ interface ThreadItemProps {
   onToggleCheck?: (id: string) => void;
   /** Real-time running status from app-level chat state store. */
   isRunningMapRef?: React.RefObject<Map<string, string>>;
+  /** Channels with a review run in progress, shown as running. */
+  reviewingIdsRef?: React.RefObject<Set<string>>;
   unreadIdsRef?: React.RefObject<Set<string>>;
   pillsRef?: React.RefObject<Map<PillKind, Set<string>>>;
 }
@@ -63,6 +65,7 @@ export function ThreadItem({
   checked,
   onToggleCheck,
   isRunningMapRef,
+  reviewingIdsRef,
   unreadIdsRef,
   pillsRef,
 }: ThreadItemProps) {
@@ -74,7 +77,8 @@ export function ThreadItem({
   const hasChildren = (subThreads?.length ?? 0) > 0;
   const isUnread = unreadIdsRef?.current?.has(thread.id) ?? false;
   const activePills = SIDEBAR_PILLS.filter((p) => pillsRef?.current?.get(p.kind)?.has(thread.id));
-  const hasAnyPill = activePills.length > 0;
+  const reviewing = reviewingIdsRef?.current?.has(thread.id) ?? false;
+  const hasAnyPill = activePills.length > 0 || reviewing;
   const displayName = sessionName(thread);
 
   return (
@@ -247,7 +251,15 @@ export function ThreadItem({
           {activePills.map((p, i) => (
             <StatusPill key={p.kind} label={p.label} color={colors[p.color]} title={p.title} marginLeft={isUnread || i > 0 || thread.diff_additions > 0 || thread.diff_deletions > 0 ? 4 : "auto"} />
           ))}
-          {(thread.container_running || thread.agent_running || isRunningMapRef?.current?.get(thread.id)) && (
+          {reviewing && (
+            <StatusPill
+              label={REVIEWING_PILL.label}
+              color={colors[REVIEWING_PILL.color]}
+              title={REVIEWING_PILL.title}
+              marginLeft={isUnread || activePills.length > 0 || thread.diff_additions > 0 || thread.diff_deletions > 0 ? 4 : "auto"}
+            />
+          )}
+          {(thread.container_running || thread.agent_running || isRunningMapRef?.current?.get(thread.id) || reviewing) && (
             <span
               style={{
                 width: 6,
@@ -315,6 +327,7 @@ export function ThreadItem({
             checked={checked}
             onToggleCheck={onToggleCheck}
             isRunningMapRef={isRunningMapRef}
+            reviewingIdsRef={reviewingIdsRef}
             unreadIdsRef={unreadIdsRef}
             pillsRef={pillsRef}
           />

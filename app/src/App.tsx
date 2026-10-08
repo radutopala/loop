@@ -364,6 +364,7 @@ function AppInner() {
     getState,
     saveState,
     isRunningMapRef,
+    reviewingIdsRef,
     unreadIdsRef,
     pillsRef,
     unreadCount,
@@ -753,6 +754,7 @@ function AppInner() {
         onDownloadUpdate={handleDownloadUpdate}
         onInstallUpdate={handleInstallUpdate}
         isRunningMapRef={isRunningMapRef}
+        reviewingIdsRef={reviewingIdsRef}
         unreadIdsRef={unreadIdsRef}
         pillsRef={pillsRef}
         unreadCount={unreadCount}

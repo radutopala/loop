@@ -4,7 +4,7 @@ import { fonts } from "../../theme";
 import type { Channel } from "../../types";
 import { NewThreadInput } from "./NewThreadInput";
 import type { PillKind } from "./pills";
-import { SIDEBAR_PILLS } from "./pills";
+import { REVIEWING_PILL, SIDEBAR_PILLS } from "./pills";
 import { RowInfoPopup } from "./RowInfoPopup";
 import { SidebarWorktreeButton } from "./SidebarWorktreeButton";
 import { StatusPill } from "./StatusPill";
@@ -33,6 +33,8 @@ interface ChannelItemProps {
   onToggleCheck?: (id: string) => void;
   /** Real-time running status from app-level chat state store. */
   isRunningMapRef?: React.RefObject<Map<string, string>>;
+  /** Channels with a review run in progress, shown as running. */
+  reviewingIdsRef?: React.RefObject<Set<string>>;
   unreadIdsRef?: React.RefObject<Set<string>>;
   pillsRef?: React.RefObject<Map<PillKind, Set<string>>>;
 }
@@ -59,6 +61,7 @@ export function ChannelItem({
   checkedIds,
   onToggleCheck,
   isRunningMapRef,
+  reviewingIdsRef,
   unreadIdsRef,
   pillsRef,
 }: ChannelItemProps) {
@@ -195,7 +198,8 @@ export function ChannelItem({
           {SIDEBAR_PILLS.filter((p) => pillsRef?.current?.get(p.kind)?.has(channel.id)).map((p) => (
             <StatusPill key={p.kind} label={p.label} color={colors[p.color]} title={p.title} />
           ))}
-          {(channel.container_running || channel.agent_running || isRunningMapRef?.current?.get(channel.id)) && (
+          {reviewingIdsRef?.current?.has(channel.id) && <StatusPill label={REVIEWING_PILL.label} color={colors[REVIEWING_PILL.color]} title={REVIEWING_PILL.title} />}
+          {(channel.container_running || channel.agent_running || isRunningMapRef?.current?.get(channel.id) || reviewingIdsRef?.current?.has(channel.id)) && (
             <span
               style={{
                 width: 6,
@@ -309,6 +313,7 @@ export function ChannelItem({
             checked={checkedIds?.has(thread.id)}
             onToggleCheck={onToggleCheck}
             isRunningMapRef={isRunningMapRef}
+            reviewingIdsRef={reviewingIdsRef}
             unreadIdsRef={unreadIdsRef}
             pillsRef={pillsRef}
           />

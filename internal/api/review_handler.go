@@ -453,6 +453,9 @@ func (s *reviewService) handleReviewDelete(w http.ResponseWriter, r *http.Reques
 		}
 	}
 	s.sessions.Delete(channelID)
+	// Every window's sidebar marks a reviewing channel as running and lights
+	// a ready one's pill, so they all need to hear the session is gone.
+	s.broadcastReviewStatus(channelID, review.StatusIdle, "")
 	w.WriteHeader(http.StatusNoContent)
 }
 

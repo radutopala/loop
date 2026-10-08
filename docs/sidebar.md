@@ -65,7 +65,7 @@ The Recent tab lists sessions (channels and threads alike) wherever they sit in 
 
 | Tab | Holds | Order |
 |---------|-------|-------|
-| **Recent** | Sessions with activity in the last 48 hours, including the active ones: those waiting on you (an approval, a question, a plan, a ready review) or with an agent running. A container that's only idling doesn't count as active. | Newest first; an active session counts as active now, so the active ones come first |
+| **Recent** | Sessions with activity in the last 48 hours, including the active ones: those waiting on you (an approval, a question, a plan, a ready review) or with an agent or a review running. A container that's only idling doesn't count as active. | Newest first; an active session counts as active now, so the active ones come first |
 | **Tree** | The channel tree, unchanged | As described in [Channel Ordering](#channel-ordering) |
 
 Activity is the time of the channel's newest message (`last_activity_at` from [`GET /api/channels`](api.md#get-apichannels)). A session that just stopped being active keeps that moment as its activity, so it doesn't drop down the list before the next channel refresh brings its newest message's time.
@@ -108,7 +108,7 @@ The clock button at the right of the tabs hides task threads from the open tab; 
 
 ### Showing only what needs you
 
-The bell at the right of the tabs narrows both tabs to the sessions with a lit pill: `gate` (an approval), `ask` (a question), `plan` (a plan to approve), `rev` (a review session open), and `trust` (a project config to trust). The tree keeps the channels and threads that lead to a lit row, so it still reads as a tree, and drops their other threads; a lit row's own unlit threads go too. Recent keeps only the lit sessions. With nothing lit, the tree says *Nothing needs you right now*. A running agent doesn't count: it isn't waiting on you. The filter combines with the search and the task toggle, and steps aside in selection mode so every row can be picked. The choice is stored in `localStorage` under `loop-sidebar-needs-you`.
+The bell at the right of the tabs narrows both tabs to the sessions with a lit pill: `gate` (an approval), `ask` (a question), `plan` (a plan to approve), `rev` (a review session open), and `trust` (a project config to trust). The tree keeps the channels and threads that lead to a lit row, so it still reads as a tree, and drops their other threads; a lit row's own unlit threads go too. Recent keeps only the lit sessions. With nothing lit, the tree says *Nothing needs you right now*. A running agent or review (`rev…`) doesn't count: it isn't waiting on you. The filter combines with the search and the task toggle, and steps aside in selection mode so every row can be picked. The choice is stored in `localStorage` under `loop-sidebar-needs-you`.
 
 ---
 
@@ -166,8 +166,8 @@ Each channel item (`ChannelItem` component) displays:
 | Collapse chevron | Shown when channel has threads. Rotates 90 degrees when collapsed. Click to toggle. |
 | Hash symbol (`#`) | Channel prefix, dimmed text |
 | Channel name | Truncated with ellipsis. Shows `dir_path.split("/").pop()` if no name set. |
-| Status pills | `rev` (`colors.active`) when a review session is open, `ask` (`colors.warning`) when an agent is parked on an `AskUserQuestion` card. Pills come from store refs (`reviewChannelIdsRef`, `askUserChannelIdsRef`) that are kept in sync via WebSocket events and rehydrated on reconnect against `/api/review/sessions` and `/api/asks/pending`. |
-| Status indicator | Green dot (6px circle, `colors.active`) when `container_running` or `agent_running` is true |
+| Status pills | `rev` (`colors.active`) when a review session is ready, `rev…` (`colors.active`, *Review in progress*) while a review runs, `ask` (`colors.warning`) when an agent is parked on an `AskUserQuestion` card. Pills come from store refs (`reviewChannelIdsRef`, `askUserChannelIdsRef`) that are kept in sync via WebSocket events and rehydrated on reconnect against `/api/review/sessions` and `/api/asks/pending`. The `rev…` pill comes from `reviewingIdsRef`, kept the same way from `review.status`. |
+| Status indicator | Green dot (6px circle, `colors.active`) when `container_running` or `agent_running` is true, or a review is running on it |
 | Config button (gear icon) | Shown on hover for channels with `dir_path`. Opens project settings. |
 | "+ thread" button | Shown on hover. Toggles the new thread input. |
 
@@ -236,8 +236,8 @@ Threads are listed below their parent channel, indented with a tree connector li
 | Task thread icon | Clock SVG icon (`colors.textDim`) for scheduled task threads (detected by `task #` name prefix). |
 | Ephemeral icon | Undo-arrow SVG icon (60% opacity) for ephemeral task threads (detected by `[ephemeral]` prefix). |
 | Thread name | Truncated with ellipsis. Task thread names have emoji prefixes (`🧵`, `⏱`) stripped for display. Falls back to thread ID. |
-| Status pills | Same set as channels: `rev` for an open review session and `ask` when an agent is parked on an `AskUserQuestion` card. |
-| Status indicator | Green dot when `container_running` or `agent_running`, positioned at the right edge. |
+| Status pills | Same set as channels: `rev` for a ready review session, `rev…` while a review runs, and `ask` when an agent is parked on an `AskUserQuestion` card. |
+| Status indicator | Green dot when `container_running` or `agent_running`, or a review is running on it, positioned at the right edge. |
 | Checkbox | Shown in selection mode instead of normal layout |
 | Sub-threads | Rendered recursively below the thread with the same connector style. |
 

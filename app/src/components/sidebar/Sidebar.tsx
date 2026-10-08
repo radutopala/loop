@@ -108,6 +108,8 @@ interface SidebarProps {
   onInstallUpdate?: () => void;
   /** Real-time running status from the app-level chat state store. */
   isRunningMapRef?: React.RefObject<Map<string, string>>;
+  /** Channels with a review run in progress, shown as running. */
+  reviewingIdsRef?: React.RefObject<Set<string>>;
   /** Channels with unread agent completions. */
   unreadIdsRef?: React.RefObject<Set<string>>;
   /** Channels with at least one pending gate approval (chat or terminal). */
@@ -149,6 +151,7 @@ export function Sidebar({
   onDownloadUpdate,
   onInstallUpdate,
   isRunningMapRef,
+  reviewingIdsRef,
   unreadIdsRef,
   pillsRef,
   unreadCount,
@@ -420,7 +423,8 @@ export function Sidebar({
 
   const query = searchQuery.toLowerCase();
   const byId = new Map(channels.map((c) => [c.id, c]));
-  const isRunning = (id: string) => !!byId.get(id)?.agent_running || !!isRunningMapRef?.current?.has(id);
+  const isReviewing = (id: string) => !!reviewingIdsRef?.current?.has(id);
+  const isRunning = (id: string) => !!byId.get(id)?.agent_running || !!isRunningMapRef?.current?.has(id) || isReviewing(id);
   const pillsFor = (id: string): PillKind[] => SIDEBAR_PILLS.filter((p) => pillsRef?.current?.get(p.kind)?.has(id)).map((p) => p.kind);
   // Hidden task threads take their sub-threads with them; one that's running
   // or waiting on you stays. Each tab has its own filter.
@@ -628,6 +632,7 @@ export function Sidebar({
             byId={byId}
             selectedId={selectedId}
             isRunning={isRunning}
+            isReviewing={isReviewing}
             pillsFor={pillsFor}
             isUnread={isUnread}
             lastActivity={lastActivity}
@@ -663,6 +668,7 @@ export function Sidebar({
             checkedIds={selected}
             onToggleCheck={toggleSelected}
             isRunningMapRef={isRunningMapRef}
+            reviewingIdsRef={reviewingIdsRef}
             unreadIdsRef={unreadIdsRef}
             pillsRef={pillsRef}
           />
