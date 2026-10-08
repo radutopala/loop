@@ -27,6 +27,12 @@ export interface ActiveChatState {
   runId: string | null;
   toolActivity: { tool_name: string; input: string } | null;
   agentActivity: AgentActivityData | null;
+  /**
+   * The background tasks the run waits on, e.g. "2 background tasks: watch
+   * CI"; null when none are running. Kept apart from agentActivity, which
+   * each new activity replaces, so they stay in view until they finish.
+   */
+  backgroundTasks: string | null;
   askUserQuestions: AskUserQuestionData | null;
   exitPlanRequest: ExitPlanModeData | null;
   agentTasks: AgentTasksData | null;
@@ -899,6 +905,7 @@ export function createEmptyState(): ActiveChatState {
     runId: null,
     toolActivity: null,
     agentActivity: null,
+    backgroundTasks: null,
     askUserQuestions: null,
     exitPlanRequest: null,
     agentTasks: null,
@@ -945,7 +952,9 @@ export function applyEvent(state: ActiveChatState, event: WSEvent): void {
       break;
     }
     case "agent.activity": {
-      state.agentActivity = event.data as AgentActivityData;
+      const data = event.data as AgentActivityData;
+      if (data.activity === "background_tasks") state.backgroundTasks = data.description || null;
+      else state.agentActivity = data;
       break;
     }
     case "agent.ask_user": {
@@ -1000,6 +1009,7 @@ export function applyEvent(state: ActiveChatState, event: WSEvent): void {
       // re-lights via its own agent.status "running".
       state.isRunning = false;
       state.runId = null;
+      state.backgroundTasks = null;
       if (state.processingMsgId && data.msg_ids.includes(state.processingMsgId)) {
         state.processingMsgId = null;
       }
@@ -1030,6 +1040,7 @@ export function applyEvent(state: ActiveChatState, event: WSEvent): void {
           state.runId = null;
           state.toolActivity = null;
           state.agentActivity = null;
+          state.backgroundTasks = null;
           state.triggerContent = null;
           // Clear agent tasks when the agent turn ends.
           state.agentTasks = null;

@@ -53,3 +53,31 @@ describe("confirmedIdle", () => {
     });
   }
 });
+
+describe("applyEvent background tasks", () => {
+  function activity(kind: string, description = ""): WSEvent {
+    return { type: "agent.activity", channel_id: "ch1", data: { activity: kind, description }, timestamp: 0 } as WSEvent;
+  }
+
+  it("keeps them apart from the activity other events replace", () => {
+    const state = runningState();
+    applyEvent(state, activity("background_tasks", "1 background task: watch CI"));
+    applyEvent(state, activity("thinking", "120"));
+    expect(state.backgroundTasks).toBe("1 background task: watch CI");
+    expect(state.agentActivity?.activity).toBe("thinking");
+  });
+
+  const clears: { name: string; event: WSEvent }[] = [
+    { name: "none are left", event: activity("background_tasks") },
+    { name: "the run ends", event: { type: "agent.status", channel_id: "ch1", data: { status: "completed", run_id: "run-1" }, timestamp: 0 } as WSEvent },
+    { name: "the turn is processed", event: processed(["m1"]) },
+  ];
+  for (const tc of clears) {
+    it(`clears them when ${tc.name}`, () => {
+      const state = runningState();
+      applyEvent(state, activity("background_tasks", "1 background task: watch CI"));
+      applyEvent(state, tc.event);
+      expect(state.backgroundTasks).toBeNull();
+    });
+  }
+});

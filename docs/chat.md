@@ -237,6 +237,8 @@ While the agent is running, activity events are shown between the last message a
 
 Activity text is truncated to **100 characters** maximum with "..." appended.
 
+Each activity replaces the one before, except background tasks. While the run waits on tasks running in the background (`background_tasks`), they get a line of their own, e.g. "Waiting on 2 background tasks: watch CI, build image". Other activity doesn't replace it; it changes as tasks start and finish, and goes once none are left or the run ends.
+
 ### Tool Use Indicator
 
 When the agent invokes a tool (`tool.use` event), an indicator is appended to the timeline:

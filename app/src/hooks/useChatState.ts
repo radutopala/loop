@@ -35,6 +35,8 @@ export interface ChatState {
   isRunning: boolean;
   toolActivity: { tool_name: string; input: string } | null;
   agentActivity: AgentActivityData | null;
+  /** The background tasks the run waits on; null when none are running. */
+  backgroundTasks: string | null;
   askUserQuestions: AskUserQuestionData | null;
   exitPlanRequest: ExitPlanModeData | null;
   agentTasks: AgentTasksData | null;
@@ -116,6 +118,7 @@ export function useChatState(channelId: string | null, initialRunningBot?: boole
   const [runId, setRunId] = useState<string | null>(initialState?.runId ?? null);
   const [toolActivity, setToolActivity] = useState<{ tool_name: string; input: string } | null>(initialState?.toolActivity ?? null);
   const [agentActivity, setAgentActivity] = useState<AgentActivityData | null>(initialState?.agentActivity ?? null);
+  const [backgroundTasks, setBackgroundTasks] = useState<string | null>(initialState?.backgroundTasks ?? null);
   const [askUserQuestions, setAskUserQuestions] = useState<AskUserQuestionData | null>(initialState?.askUserQuestions ?? null);
   const [exitPlanRequest, setExitPlanRequest] = useState<ExitPlanModeData | null>(initialState?.exitPlanRequest ?? null);
   const [agentTasks, setAgentTasks] = useState<AgentTasksData | null>(initialState?.agentTasks ?? null);
@@ -179,6 +182,8 @@ export function useChatState(channelId: string | null, initialRunningBot?: boole
   toolRef.current = toolActivity;
   const agentRef = useRef(agentActivity);
   agentRef.current = agentActivity;
+  const backgroundTasksRef = useRef(backgroundTasks);
+  backgroundTasksRef.current = backgroundTasks;
   const askRef = useRef(askUserQuestions);
   askRef.current = askUserQuestions;
   const exitRef = useRef(exitPlanRequest);
@@ -208,6 +213,7 @@ export function useChatState(channelId: string | null, initialRunningBot?: boole
         runId: runIdRef.current,
         toolActivity: toolRef.current,
         agentActivity: agentRef.current,
+        backgroundTasks: backgroundTasksRef.current,
         askUserQuestions: askRef.current,
         exitPlanRequest: exitRef.current,
         agentTasks: agentTasksRef.current,
@@ -267,6 +273,7 @@ export function useChatState(channelId: string | null, initialRunningBot?: boole
         isRunningRef.current = false;
         setIsRunning(false);
         setRunId(null);
+        setBackgroundTasks(null);
         if (processingMsgIdRef.current && data.msg_ids.includes(processingMsgIdRef.current)) {
           setProcessingMsgId(null);
         }
@@ -311,7 +318,10 @@ export function useChatState(channelId: string | null, initialRunningBot?: boole
           // summary can count it.
           appendLiveCompacting(processingMsgIdRef.current ?? undefined);
         }
-        setAgentActivity(data);
+        // Background tasks get their own slot, which other activity doesn't
+        // replace: they stay in view until they finish or the run ends.
+        if (data.activity === "background_tasks") setBackgroundTasks(data.description || null);
+        else setAgentActivity(data);
         return;
       }
       if (event.type === "agent.ask_user") {
@@ -417,6 +427,7 @@ export function useChatState(channelId: string | null, initialRunningBot?: boole
             setRunId(null);
             setToolActivity(null);
             setAgentActivity(null);
+            setBackgroundTasks(null);
             setTriggerContent(null);
             // Clear agent tasks when the agent turn ends.
             setAgentTasks(null);
@@ -478,6 +489,7 @@ export function useChatState(channelId: string | null, initialRunningBot?: boole
     isRunning,
     toolActivity,
     agentActivity,
+    backgroundTasks,
     askUserQuestions,
     exitPlanRequest,
     agentTasks,

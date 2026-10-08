@@ -434,7 +434,7 @@ func TestScanStreamJSONOnActivity(t *testing.T) {
 		require.Equal(t, []string{"task_notification:tests green"}, activities)
 	})
 
-	t.Run("a turn ending with background tasks pending emits a wait until they finish", func(t *testing.T) {
+	t.Run("background tasks are reported each time the set changes", func(t *testing.T) {
 		// The CLI's own sequence: a task starts mid-turn, the turn ends with
 		// it still running, it finishes, and a second turn produces the
 		// final result.
@@ -448,10 +448,13 @@ func TestScanStreamJSONOnActivity(t *testing.T) {
 {"type":"system","subtype":"background_tasks_changed","tasks":[{"task_id":"b3"}]}
 {"type":"result","result":"CI passed.","session_id":"s1","is_error":false}
 `
-		var activities []string
+		var events []string
 		cb := streamCallbacks{
 			onActivity: func(activity, detail string) {
-				activities = append(activities, activity+":"+detail)
+				events = append(events, activity+":"+detail)
+			},
+			onTurn: func(text string, _ agent.TurnRef) {
+				events = append(events, "turn:"+text)
 			},
 		}
 		resp, err := scanStreamJSON(strings.NewReader(input), cb)
@@ -459,10 +462,12 @@ func TestScanStreamJSONOnActivity(t *testing.T) {
 		require.Equal(t, "CI passed.", resp.Result, "the last turn's result is the response")
 		require.Equal(t, []string{
 			"background_tasks:1 background task: watch CI",
+			"turn:Started.",
 			"background_tasks:2 background tasks: watch CI",
 			"background_tasks:",
+			"turn:CI passed.",
 			"background_tasks:1 background task",
-		}, activities, "a task started mid-turn waits for the turn to end; an empty set clears the wait")
+		}, events, "a task started mid-turn is reported at once; an empty set clears it")
 	})
 
 	t.Run("api_retry emits an activity with attempt and backoff", func(t *testing.T) {
