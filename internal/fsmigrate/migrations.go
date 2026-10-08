@@ -281,6 +281,15 @@ var migrations = []Migration{
 		Description: "drop review-loop's final dedup node",
 		Apply:       patchReviewLoopDropDedupNode,
 	},
+	{
+		// The image's Debian python3 packages include python3-packaging, which
+		// pip can't uninstall when pre-commit wants a newer one, so the
+		// image build stops at the pre-commit install. The refreshed
+		// Dockerfile installs pip's copy beside it; until it lands an
+		// install's next image rebuild fails.
+		Description: "refresh container/ files: pre-commit beside Debian's python3-packaging",
+		Apply:       refreshContainerFiles,
+	},
 }
 
 // adoptProjectConfigs trusts the project config of every project checkout
