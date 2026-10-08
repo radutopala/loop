@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Channel, ChannelUpdatedData } from "../types";
-import { applyChannelUpdate, replayChannelPatches } from "./channelUpdate";
+import { applyChannelUpdate, applyReviewStatus, replayChannelPatches } from "./channelUpdate";
 
 const channel: Channel = {
   id: "t1",
@@ -13,6 +13,22 @@ const channel: Channel = {
 } as Channel;
 
 const gitOnly: ChannelUpdatedData = { channel_id: "t1", branch: "", commit: "", diff_additions: 0, diff_deletions: 0 };
+
+describe("applyReviewStatus", () => {
+  it.each([
+    ["reviewing", true],
+    ["ready", false],
+    ["idle", false],
+    ["error", false],
+  ])("%s marks the review running: %s", (status, running) => {
+    expect(applyReviewStatus(channel, status, 5).review_running).toBe(running);
+  });
+
+  it("dates the channel's activity, never back", () => {
+    expect(applyReviewStatus(channel, "reviewing", 5).last_activity_at).toBe(5);
+    expect(applyReviewStatus({ ...channel, last_activity_at: 9 }, "ready", 5).last_activity_at).toBe(9);
+  });
+});
 
 describe("applyChannelUpdate", () => {
   it("applies the poller's git state", () => {

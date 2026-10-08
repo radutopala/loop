@@ -159,8 +159,6 @@ interface SessionRowProps {
   selected: boolean;
   unread: boolean;
   running: boolean;
-  /** A review is running on it: shows the rev… pill. */
-  reviewing: boolean;
   pills: PillKind[];
   /** Shown on the right when there's no pill, e.g. "12m". */
   trailing?: string;
@@ -168,7 +166,7 @@ interface SessionRowProps {
   onContextMenu: (e: React.MouseEvent, channel: Channel) => void;
 }
 
-function SessionRow({ channel, context, selected, unread, running, reviewing, pills, trailing, onSelect, onContextMenu }: SessionRowProps) {
+function SessionRow({ channel, context, selected, unread, running, pills, trailing, onSelect, onContextMenu }: SessionRowProps) {
   const { colors } = useTheme();
   const [hovered, setHovered] = useState(false);
   const rowRef = useRef<HTMLButtonElement>(null);
@@ -235,7 +233,7 @@ function SessionRow({ channel, context, selected, unread, running, reviewing, pi
         {SIDEBAR_PILLS.filter((p) => pills.includes(p.kind)).map((p) => (
           <StatusPill key={p.kind} label={p.label} color={colors[p.color]} title={p.title} />
         ))}
-        {reviewing && <StatusPill label={REVIEWING_PILL.label} color={colors[REVIEWING_PILL.color]} title={REVIEWING_PILL.title} />}
+        {channel.review_running && <StatusPill label={REVIEWING_PILL.label} color={colors[REVIEWING_PILL.color]} title={REVIEWING_PILL.title} />}
         {!waiting && trailing && <span style={{ flexShrink: 0, fontSize: 10, fontFamily: fonts.mono, color: colors.textDisabled }}>{trailing}</span>}
       </button>
     </div>
@@ -248,7 +246,6 @@ interface SessionSectionsProps {
   byId: Map<string, Channel>;
   selectedId: string | null;
   isRunning: (id: string) => boolean;
-  isReviewing: (id: string) => boolean;
   pillsFor: (id: string) => PillKind[];
   isUnread: (id: string) => boolean;
   lastActivity: (channel: Channel) => number | undefined;
@@ -260,7 +257,7 @@ interface SessionSectionsProps {
  * SessionSections renders the Recent tab's list: every session active in the
  * last 48 hours, newest first, which puts the active sessions on top.
  */
-export function SessionSections({ active, recent, byId, selectedId, isRunning, isReviewing, pillsFor, isUnread, lastActivity, onSelect, onContextMenu }: SessionSectionsProps) {
+export function SessionSections({ active, recent, byId, selectedId, isRunning, pillsFor, isUnread, lastActivity, onSelect, onContextMenu }: SessionSectionsProps) {
   const { colors } = useTheme();
   // Re-render every minute so the Recent ages stay current.
   const [now, setNow] = useState(Date.now);
@@ -277,7 +274,6 @@ export function SessionSections({ active, recent, byId, selectedId, isRunning, i
       selected={selectedId === c.id}
       unread={isUnread(c.id)}
       running={isRunning(c.id)}
-      reviewing={isReviewing(c.id)}
       pills={pillsFor(c.id)}
       trailing={trailing}
       onSelect={onSelect}

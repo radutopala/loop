@@ -65,7 +65,7 @@ interface UseChatStateStoreOptions {
 }
 
 /** Channel events the sidebar shows for every row, not just the selected one. */
-const SIDEBAR_EVENTS = new Set(["channel.created", "channel.deleted", "channel.updated", "channel.agent_config"]);
+const SIDEBAR_EVENTS = new Set(["channel.created", "channel.deleted", "channel.updated", "channel.agent_config", "review.status"]);
 
 /**
  * App-level store that keeps per-channel chat state in memory and maintains a
@@ -107,9 +107,6 @@ export function useChatStateStore({ channels, channelsFetchedAt, selectedId, onA
   // WS event added an id and would then delete that id (it's not in the
   // stale snapshot).
   const reviewRehydrateSeqRef = useRef(0);
-  // Channels with a review run in progress. The sidebar counts them as
-  // running, so a review shows in Recent like an agent run does.
-  const reviewingIdsRef = useRef(new Set<string>());
   const [unreadCount, setUnreadCount] = useState(0);
   const [, setPillTick] = useState(0);
   // Bumped when a channel starts or stops running, so the sidebar's running
@@ -119,16 +116,6 @@ export function useChatStateStore({ channels, channelsFetchedAt, selectedId, onA
   // meanwhile, so panels holding state built from them (the Learn view's)
   // fetch it again when this changes.
   const [wsOpens, setWsOpens] = useState(0);
-
-  // setReviewing marks a channel's review as running or not, bumping the
-  // run tick only on actual transitions.
-  const setReviewing = useCallback((channelId: string, reviewing: boolean) => {
-    const set = reviewingIdsRef.current;
-    if (set.has(channelId) === reviewing) return;
-    if (reviewing) set.add(channelId);
-    else set.delete(channelId);
-    setRunTick((v) => v + 1);
-  }, []);
 
   // pillSet returns the (lazily created) channel-id set for a pill kind.
   const pillSet = useCallback((kind: PillKind): Set<string> => {
@@ -440,14 +427,8 @@ export function useChatStateStore({ channels, channelsFetchedAt, selectedId, onA
     }
     if (seq !== reviewRehydrateSeqRef.current) return;
     const ready = new Set<string>();
-    const reviewing = new Set<string>();
     for (const s of sessions) {
       if (s.status === "ready") ready.add(s.channel_id);
-      if (s.status === "reviewing") reviewing.add(s.channel_id);
-    }
-    for (const id of reviewing) setReviewing(id, true);
-    for (const id of [...reviewingIdsRef.current]) {
-      if (!reviewing.has(id)) setReviewing(id, false);
     }
     const viewing = viewingReviewChannelsRef.current;
     for (const id of ready) {
@@ -458,7 +439,7 @@ export function useChatStateStore({ channels, channelsFetchedAt, selectedId, onA
     for (const id of [...pillSet("rev")]) {
       if (!ready.has(id)) setPillMembership("rev", id, false);
     }
-  }, [pillSet, setPillMembership, setReviewing]);
+  }, [pillSet, setPillMembership]);
 
   // Also rehydrate when the user returns to Loop. The WS-onOpen path covers
   // reconnects and renderer reloads, but if a `gate.approval_requested`
@@ -598,7 +579,6 @@ export function useChatStateStore({ channels, channelsFetchedAt, selectedId, onA
     if (channelId && wsEvent.type === "review.status") {
       const data = wsEvent.data as { status: string };
       setPillMembership("rev", channelId, data.status === "ready" && !viewingReviewChannelsRef.current.has(channelId));
-      setReviewing(channelId, data.status === "reviewing");
     }
 
     // Track isRunning in the map for subscription management.
@@ -895,7 +875,6 @@ export function useChatStateStore({ channels, channelsFetchedAt, selectedId, onA
     saveState,
     removeState,
     isRunningMapRef,
-    reviewingIdsRef,
     unreadIdsRef,
     pillsRef,
     unreadCount,

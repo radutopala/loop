@@ -1002,7 +1002,7 @@ Emitted when a comment changes in place: the dedup pass (`POST /review/dedup`) a
 
 ### `review.status`
 
-Emitted on every review session status transition (`idle → loading → ready → reviewing → ready|error`), and with `idle` when the session is deleted, which also stops a run in progress. The FE swaps affordances based on this; no polling needed. The sidebar lights a ready session's `rev` pill and shows a reviewing channel as running, in Recent too.
+Emitted on every review session status transition (`idle → loading → ready → reviewing → ready|error`), and with `idle` when the session is deleted, which also stops a run in progress. The FE swaps affordances based on this; no polling needed. The sidebar lights a ready session's `rev` pill, and patches the channel's `review_running` and `last_activity_at` from it, so a reviewing channel shows as running, in Recent too.
 
 **Payload schema:**
 

@@ -40,7 +40,7 @@ import { DEFAULT_FONT_SIZES, ThemeProvider, useTheme } from "./ThemeContext";
 import { fonts } from "./theme";
 import type { Channel, ChannelAgentConfigData, ChannelUpdatedData, ImageBuildStatusData, ImageUpdateAvailableData, UpdateStatus, WSEvent } from "./types";
 import type { ChannelPatch } from "./utils/channelUpdate";
-import { applyChannelUpdate, replayChannelPatches } from "./utils/channelUpdate";
+import { applyChannelUpdate, applyReviewStatus, replayChannelPatches } from "./utils/channelUpdate";
 import { logErr } from "./utils/log";
 import { parseChannelTarget } from "./utils/messageLinks";
 import { storageGet, storageRemove, storageSet } from "./utils/storage";
@@ -317,6 +317,11 @@ function AppInner() {
         patchChannel(d.channel_id, (c) => applyChannelUpdate(c, d));
         return;
       }
+      if (event.type === "review.status") {
+        const d = event.data as { status: string };
+        patchChannel(event.channel_id, (c) => applyReviewStatus(c, d.status, event.timestamp));
+        return;
+      }
       if (event.type === "channel.agent_config") {
         const d = event.data as ChannelAgentConfigData;
         patchChannel(event.channel_id, (c) => ({ ...c, model_override: d.model_override, effort_override: d.effort_override }));
@@ -364,7 +369,6 @@ function AppInner() {
     getState,
     saveState,
     isRunningMapRef,
-    reviewingIdsRef,
     unreadIdsRef,
     pillsRef,
     unreadCount,
@@ -754,7 +758,6 @@ function AppInner() {
         onDownloadUpdate={handleDownloadUpdate}
         onInstallUpdate={handleInstallUpdate}
         isRunningMapRef={isRunningMapRef}
-        reviewingIdsRef={reviewingIdsRef}
         unreadIdsRef={unreadIdsRef}
         pillsRef={pillsRef}
         unreadCount={unreadCount}

@@ -10,6 +10,8 @@ export interface Channel {
   active: boolean;
   container_running: boolean;
   agent_running: boolean;
+  /** A review (or a dedup pass) is running on the channel's review session. */
+  review_running?: boolean;
   branch: string;
   commit: string;
   /** The commit's subject line. */
