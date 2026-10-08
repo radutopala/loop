@@ -322,9 +322,11 @@ Agent activity indicator for UI status displays. Covers model detection, subagen
 
 | Field         | Type   | Description |
 |---------------|--------|-------------|
-| `activity`    | string | Activity type: `"model"`, `"subagent_started"`, `"subagent_progress"` |
+| `activity`    | string | Activity type: `"model"`, `"subagent_started"`, `"subagent_progress"`, `"background_tasks"` and others |
 | `model`       | string | Model name (when activity is `"model"`) |
 | `description` | string | Human-readable description of the activity |
+
+A `background_tasks` activity is sent each time the set of tasks running in the background changes, mid-turn too. Its `description` lists them (`"2 background tasks: watch CI, build image"`), and is empty once none are left.
 
 ---
 

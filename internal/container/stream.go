@@ -463,17 +463,14 @@ func withTail(err error, tail *outputTail) error {
 // A turn that ends with background tasks still running doesn't end the run:
 // the CLI keeps going, and when a task finishes it starts another turn, so
 // the stream holds a "result" per turn and the last one is the response.
-// While it waits, nothing else streams, so the wait is surfaced as a
-// "background_tasks" activity — sent when a turn ends with tasks pending or
-// the pending set changes between turns, and with an empty description (which
-// clears the indicator) once none are left.
+// The tasks still running are surfaced as a "background_tasks" activity each
+// time the set changes, mid-turn too, so the chat can keep them in view
+// until they finish; an empty description means none are left.
 func scanStreamJSON(r io.Reader, cb streamCallbacks) (*claudeResponse, error) {
 	br := bufio.NewReaderSize(r, scannerBufInit)
 	var result *claudeResponse
 	var lastModel, lastSession string
 	var tail outputTail
-	var pending []backgroundTask
-	betweenTurns := false
 	for {
 		// Peek at the first bytes to detect the event type without reading
 		// the entire line. Tool results (screenshots) can be several MB —
@@ -503,7 +500,6 @@ func scanStreamJSON(r io.Reader, cb streamCallbacks) (*claudeResponse, error) {
 			if err := json.Unmarshal(line, &msg); err != nil {
 				continue
 			}
-			betweenTurns = false
 			if ref := msg.turnRef(); ref.SessionID != "" && ref.SessionID != lastSession {
 				lastSession = ref.SessionID
 				if cb.onSession != nil {
@@ -581,10 +577,7 @@ func scanStreamJSON(r io.Reader, cb streamCallbacks) (*claudeResponse, error) {
 				case "status":
 					cb.onActivity(evt.Status, evt.Description)
 				case "background_tasks_changed":
-					pending = evt.Tasks
-					if betweenTurns {
-						cb.onActivity("background_tasks", backgroundWait(pending))
-					}
+					cb.onActivity("background_tasks", backgroundWait(evt.Tasks))
 				case "thinking_tokens":
 					// Opus emits running thinking-token estimates while it
 					// reasons (the thinking text itself is redacted). Surface
@@ -614,10 +607,6 @@ func scanStreamJSON(r io.Reader, cb streamCallbacks) (*claudeResponse, error) {
 				continue
 			}
 			result = &evt
-			betweenTurns = true
-			if len(pending) > 0 && cb.onActivity != nil {
-				cb.onActivity("background_tasks", backgroundWait(pending))
-			}
 		}
 	}
 	if result == nil {
