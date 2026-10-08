@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { trustPillIds } from "./pills";
+import { REVIEWING_PILL, SIDEBAR_PILLS, trustPillIds } from "./pills";
+
+describe("REVIEWING_PILL", () => {
+  it("stays out of the pills that mean the session needs you", () => {
+    expect(SIDEBAR_PILLS.map((p) => p.label)).not.toContain(REVIEWING_PILL.label);
+  });
+});
 
 describe("trustPillIds", () => {
   it("lights a project's top-level row only", () => {

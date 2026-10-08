@@ -2380,8 +2380,9 @@ that only want the comments.
 
 ### `DELETE /api/channels/{id}/review`
 
-Remove the channel's session and delete the on-disk worktree. Idempotent —
-`204` whether or not one exists.
+Remove the channel's session and delete the on-disk worktree, stopping a
+run in progress. Broadcasts `review.status` with `idle` when there was a
+session. Idempotent — `204` whether or not one exists.
 
 ### `POST /api/channels/{id}/review/run`
 

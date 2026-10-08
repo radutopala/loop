@@ -26,6 +26,13 @@ export const SIDEBAR_PILLS: PillSpec[] = [
 ];
 
 /**
+ * The pill a channel shows while a review runs on it. It isn't a PillKind: a
+ * running review isn't waiting on you, so the needs-you filter and Recent's
+ * waiting group leave it out.
+ */
+export const REVIEWING_PILL: Omit<PillSpec, "kind"> = { label: "rev…", color: "active", title: "Review in progress" };
+
+/**
  * The rows the trust pill lights: a project's config waiting for trust is one
  * pill, on its top-level row. Its threads and worktrees report it too, but
  * show the chat banner instead, so one project doesn't fill the sidebar.
