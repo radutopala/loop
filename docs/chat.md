@@ -122,6 +122,7 @@ Messages are rendered through the `MarkdownContent` component, which uses a cust
 | Language label | ` ```go ` | Shown above the code block in `colors.textDim`, 11px font |
 | Display math | `$$...$$` or `\[...\]`, on one line or spread over several | Centered [KaTeX](https://katex.org) formula, scrolls sideways when wider than the chat; hover shows a button that copies the LaTeX |
 | Table | GFM header row, separator row, body rows | `<table>`; a pipe escaped with a backslash is text in its cell, not a column break |
+| Blockquote | Consecutive lines starting with `> ` (or a bare `>`) | `<blockquote>` with a 3px left border in `colors.border`, muted 13px text; inline formatting applies inside. Hover shows two copy buttons in a gutter on its right: **Copy as text** copies the quoted lines without the `> ` markers, ready to paste as a reply; **Copy as quote** copies them with the markers kept |
 | Paragraph | Any non-empty line | `<p>` with 2px vertical margin |
 | Empty line | Blank line | `<br>` |
 
