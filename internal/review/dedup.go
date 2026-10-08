@@ -99,9 +99,9 @@ const dedupBodyMax = 600
 
 // DedupCandidates returns the comments worth handing to the model, sorted by
 // file then line. Duplicates can span files, so that's every anchored
-// comment, as long as there are at least two and one of them is the review
-// agent's: with fewer there's nothing to fold, and with only GitHub comments
-// nothing the pass may delete. nil means no model run is needed.
+// comment, as long as one of them is the review agent's: that one needs a
+// verdict even when it is alone, while with only GitHub comments there is
+// nothing to check or delete. nil means no model run is needed.
 func DedupCandidates(comments []*Comment) []*Comment {
 	var out []*Comment
 	for _, c := range comments {
@@ -109,7 +109,7 @@ func DedupCandidates(comments []*Comment) []*Comment {
 			out = append(out, c)
 		}
 	}
-	if len(out) < 2 || !slices.ContainsFunc(out, deletable) {
+	if !slices.ContainsFunc(out, deletable) {
 		return nil
 	}
 	slices.SortStableFunc(out, func(a, b *Comment) int {
@@ -123,6 +123,15 @@ func DedupCandidates(comments []*Comment) []*Comment {
 // included, and is only there as context and as a possible keeper.
 func deletable(c *Comment) bool {
 	return c.Source != "github"
+}
+
+// droppable reports whether the pass may fold c into another comment. A pass
+// after a review run (fresh non-empty) runs without anyone asking for it, so
+// it also leaves pushed comments alone: dropping one would delete it, and
+// the replies under it, from the pull request. They are shown to the model
+// as [github] comments, which it may keep but never drop.
+func droppable(c *Comment, fresh map[string]bool) bool {
+	return deletable(c) && (len(fresh) == 0 || !c.Pushed)
 }
 
 // DedupFresh returns the ids of the cands the pass may delete that aren't
@@ -181,7 +190,7 @@ Comments, by file:
 		}
 		label := "agent"
 		switch {
-		case !deletable(c):
+		case !droppable(c, fresh):
 			label = "github"
 		case fresh[c.ID]:
 			label = "agent, new"
@@ -216,7 +225,8 @@ func oneLine(body string, limit int) string {
 
 // ParseDedupReply parses the model's reply and checks it against cands
 // rather than trusting it. A drop is ignored when its id is unknown, is a
-// GitHub comment, or is some group's keeper, so a confused reply can't chain
+// GitHub comment (or, with fresh non-empty, a pushed one; see droppable),
+// or is some group's keeper, so a confused reply can't chain
 // groups into deleting every copy of an issue; a group left with nothing to
 // drop is left out. Related groups keep their known ids, with a dropped id
 // standing for its keeper, and need two distinct ones. A move counts only
@@ -229,7 +239,7 @@ func oneLine(body string, limit int) string {
 // can't each cut the issue they share and lose it. A verdict counts only
 // for a kept agent comment and a known Verdict value; the first one named
 // for an id wins. An error means the reply held no parseable JSON object.
-func ParseDedupReply(reply string, cands []*Comment) (DedupPlan, error) {
+func ParseDedupReply(reply string, cands []*Comment, fresh map[string]bool) (DedupPlan, error) {
 	start, end := strings.Index(reply, "{"), strings.LastIndex(reply, "}")
 	if start < 0 || end < start {
 		return DedupPlan{}, errors.New("dedup reply has no JSON object")
@@ -257,7 +267,7 @@ func ParseDedupReply(reply string, cands []*Comment) (DedupPlan, error) {
 		var drops []string
 		for _, id := range cl.Drop {
 			c := byID[id]
-			if c == nil || keepers[id] || keeperOf[id] != "" || !deletable(c) {
+			if c == nil || keepers[id] || keeperOf[id] != "" || !droppable(c, fresh) {
 				continue
 			}
 			keeperOf[id] = cl.Keep

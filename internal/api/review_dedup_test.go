@@ -96,7 +96,8 @@ func (s *ReviewHandlerSuite) TestDedupRejects() {
 // Nothing to fold, so no agent run: every file holds one comment.
 func (s *ReviewHandlerSuite) TestDedupNothingToDo() {
 	s.wireReadySession()
-	s.rs.AddComment("ch1", &review.Comment{ID: "d", Path: "y.go", Line: 1, Body: "Unrelated.", Source: "agent"})
+	// Only GitHub comments: nothing to check, and nothing the pass may delete.
+	s.rs.AddComment("ch1", &review.Comment{ID: "d", Path: "y.go", Line: 1, Body: "Unrelated.", Source: "github"})
 	runner := &mockReviewRunner{}
 	s.srv.review.setAgent(runner, "", "")
 
@@ -446,4 +447,29 @@ func (s *ReviewHandlerSuite) TestRunDedupCancelled() {
 
 	require.Equal(s.T(), 2, runner.calls)
 	require.Equal(s.T(), review.StatusReviewing, s.rs.Get("ch1").Status)
+}
+
+// The pass after a run gets a timeout of its own rather than what the
+// review left of the shared one.
+func (s *ReviewHandlerSuite) TestRunDedupGetsItsOwnTimeout() {
+	s.wireDedupSession()
+	s.srv.review.setRunTimeout(time.Hour)
+	var deadlines []time.Time
+	runner := &mockReviewRunner{findings: []*review.Comment{review.NewComment("x.go", 12, "", "new")}}
+	runner.runWithCtxFn = func(ctx context.Context) (*agent.AgentResponse, error) {
+		dl, ok := ctx.Deadline()
+		require.True(s.T(), ok)
+		deadlines = append(deadlines, dl)
+		if !runner.lastRO {
+			time.Sleep(5 * time.Millisecond) // the review uses some of its budget
+			return &agent.AgentResponse{}, nil
+		}
+		return &agent.AgentResponse{Response: `{"clusters":[]}`}, nil
+	}
+	s.srv.review.setAgent(runner, "", "")
+
+	s.postRunAndWait()
+
+	require.Len(s.T(), deadlines, 2)
+	require.True(s.T(), deadlines[1].After(deadlines[0]), "the dedup pass's deadline starts when it does")
 }

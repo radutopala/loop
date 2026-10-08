@@ -1490,7 +1490,10 @@ type mockReviewRunner struct {
 	lastModel  string
 	lastEffort string
 	lastRO     bool
-	runFn      func() (*agent.AgentResponse, error)
+	// reqs holds every request in order, for a test that also sees the
+	// dedup pass a review run is followed by.
+	reqs  []review.RunRequest
+	runFn func() (*agent.AgentResponse, error)
 	// runWithCtxFn, when set, takes precedence over runFn so tests can
 	// observe ctx cancellation (used by the runReviewAsync timeout test).
 	runWithCtxFn func(ctx context.Context) (*agent.AgentResponse, error)
@@ -1516,6 +1519,7 @@ func (m *mockReviewRunner) Run(ctx context.Context, req review.RunRequest) (*age
 	m.lastModel = req.Model
 	m.lastEffort = req.Effort
 	m.lastRO = req.ReadOnly
+	m.reqs = append(m.reqs, req)
 	onComment := req.OnComment
 	ctxFn := m.runWithCtxFn
 	fn := m.runFn
@@ -1658,6 +1662,10 @@ func (s *ReviewHandlerSuite) TestRunHappyPathDispatchesCommentsAndStatus() {
 
 	runner := &mockReviewRunner{done: make(chan struct{})}
 	runner.runFn = func() (*agent.AgentResponse, error) {
+		if len(runner.reqs) > 1 {
+			// The dedup pass the lone new finding is checked by.
+			return &agent.AgentResponse{Response: `{"clusters":[]}`}, nil
+		}
 		require.Equal(s.T(), http.StatusOK, s.reportFindingViaAPI("x.go", 1, "RIGHT", "issue"))
 		return &agent.AgentResponse{}, nil
 	}
@@ -1670,19 +1678,21 @@ func (s *ReviewHandlerSuite) TestRunHappyPathDispatchesCommentsAndStatus() {
 	<-runner.done
 	s.waitFor(func() bool { return s.rs.Get("ch1").Status == review.StatusReady })
 
-	require.Equal(s.T(), 1, runner.calls)
-	require.Equal(s.T(), "/repo/.worktrees/pr-7", runner.lastDir)
-	require.Equal(s.T(), "/repo", runner.lastParent)
-	require.Equal(s.T(), "sys", runner.lastSys)
-	require.Contains(s.T(), runner.lastUser, "review-prompt-body")
-	require.Contains(s.T(), runner.lastUser, "#7")
-	require.Contains(s.T(), runner.lastUser, "https://github.com/o/r/pull/7")
-	require.Contains(s.T(), runner.lastUser, "Add X")
-	require.Contains(s.T(), runner.lastUser, "main")
-	require.Contains(s.T(), runner.lastUser, "feat-x")
-	require.Contains(s.T(), runner.lastUser, "abc") // head sha
-	require.Contains(s.T(), runner.lastUser, "git diff origin/main...HEAD")
-	require.NotContains(s.T(), runner.lastUser, "diff --git a/x b/x")
+	require.Equal(s.T(), 2, runner.calls)
+	require.True(s.T(), runner.lastRO, "a lone new finding still gets a dedup pass, for its verdict")
+	run := runner.reqs[0]
+	require.Equal(s.T(), "/repo/.worktrees/pr-7", run.DirPath)
+	require.Equal(s.T(), "/repo", run.ParentDirPath)
+	require.Equal(s.T(), "sys", run.SystemPrompt)
+	require.Contains(s.T(), run.Prompt, "review-prompt-body")
+	require.Contains(s.T(), run.Prompt, "#7")
+	require.Contains(s.T(), run.Prompt, "https://github.com/o/r/pull/7")
+	require.Contains(s.T(), run.Prompt, "Add X")
+	require.Contains(s.T(), run.Prompt, "main")
+	require.Contains(s.T(), run.Prompt, "feat-x")
+	require.Contains(s.T(), run.Prompt, "abc") // head sha
+	require.Contains(s.T(), run.Prompt, "git diff origin/main...HEAD")
+	require.NotContains(s.T(), run.Prompt, "diff --git a/x b/x")
 
 	sess := s.rs.Get("ch1")
 	require.Len(s.T(), sess.Comments, 1)
@@ -2271,6 +2281,7 @@ func (s *ReviewHandlerSuite) TestRunUsesDefaultPromptWhenUnconfigured() {
 		{name: "no effort", wantPrompt: "/code-review"},
 		{name: "session effort", sessionEffort: "max", configEffort: "low", wantPrompt: "/code-review max"},
 		{name: "config effort", configEffort: "medium", wantPrompt: "/code-review medium"},
+		{name: "unknown config effort left off", configEffort: "medium; also push", wantPrompt: "/code-review"},
 	}
 	for _, tc := range tests {
 		s.Run(tc.name, func() {
