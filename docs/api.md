@@ -2453,7 +2453,9 @@ lists the unpushed agent findings that bundled several issues and were
 rewritten to the ones no other comment covers; `covered_by` is the comment
 that reports the part cut out. Each is broadcast as `review.comment_updated`. `verdicts`
 lists the kept agent findings the model checked against the code: `real`,
-`false_positive` or `already_fixed`, with a one-sentence `reason`. Each is
+`false_positive` or `already_fixed`, with a one-sentence `reason`. A move or
+a verdict counts only when the pass opened that comment's file with the Read
+tool; the others are dropped. Each verdict is
 stored on the comment as `verdict` and `verdict_reason` (pushed findings
 included; nothing is deleted for a verdict) and broadcast as
 `review.comment_updated`. `checked` is the number of comments shown to the model

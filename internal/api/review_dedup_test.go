@@ -120,6 +120,7 @@ func (s *ReviewHandlerSuite) TestDedupRemovesDuplicates() {
 		{ID: "f", Path: "x.go", Line: 70, Body: "Map missing make().", Source: "agent"},
 		{ID: "g", Path: "x.go", Line: 80, Body: "Also deleted mid-run.", Source: "agent"},
 		{ID: "p", Path: "z.go", Line: 3, Body: "Pushed copy.", Source: "agent", GitHubID: 6, Pushed: true},
+		{ID: "u", Path: "w.go", Line: 5, Body: "Never opened by the pass.", Source: "agent"},
 	} {
 		require.True(s.T(), s.rs.AddComment("ch1", c))
 	}
@@ -147,10 +148,12 @@ func (s *ReviewHandlerSuite) TestDedupRemovesDuplicates() {
 		`{"keep":"c","drop":["f"],"note":"extra"},` +
 		`{"keep":"a","drop":["p"]}],` +
 		`"related":[{"ids":["a","c"],"reason":"same map"}],` +
-		`"moves":[{"id":"a","line":11},{"id":"c","line":41}],` +
+		`"moves":[{"id":"a","line":11},{"id":"c","line":41},{"id":"u","line":6}],` +
 		`"verdicts":[{"id":"a","verdict":"real","reason":"no make()"},{"id":"c","verdict":"false_positive","reason":"made in init"},` +
-		`{"id":"g","verdict":"real"},{"id":"p","verdict":"real"}]}`
-	runner := &mockReviewRunner{runFn: func() (*agent.AgentResponse, error) {
+		`{"id":"g","verdict":"real"},{"id":"p","verdict":"real"},{"id":"u","verdict":"false_positive","reason":"guessed"}]}`
+	// u's file was never read (aw.go only shares its suffix), so its move
+	// and verdict are guesses and get dropped.
+	runner := &mockReviewRunner{reads: []string{"/repo/.worktrees/pr-7/x.go", "z.go", "/repo/.worktrees/pr-7/aw.go"}, runFn: func() (*agent.AgentResponse, error) {
 		require.Equal(s.T(), review.StatusReviewing, s.rs.Get("ch1").Status)
 		s.rs.RemoveComment("ch1", "e")
 		s.rs.RemoveComment("ch1", "g")
@@ -170,7 +173,7 @@ func (s *ReviewHandlerSuite) TestDedupRemovesDuplicates() {
 		"moved":[{"id":"a","from":10,"to":11}],
 		"trimmed":[],
 		"verdicts":[{"id":"a","verdict":"real","reason":"no make()"},{"id":"c","verdict":"false_positive","reason":"made in init"}],
-		"checked":8,
+		"checked":9,
 		"errors":["p: slug skipped"]
 	}`, w.Body.String())
 
@@ -189,7 +192,7 @@ func (s *ReviewHandlerSuite) TestDedupRemovesDuplicates() {
 	for _, c := range sess.Comments {
 		left = append(left, c.ID)
 	}
-	require.Equal(s.T(), []string{"a", "c", "p"}, left)
+	require.Equal(s.T(), []string{"a", "c", "p", "u"}, left)
 	keptA, _ := s.rs.FindComment("ch1", "a")
 	require.Equal(s.T(), "Nil map write panics on the first insert.\n\nAlso flagged: y.go hits it too.", keptA.Body)
 	require.Equal(s.T(), 11, keptA.Line)
@@ -200,6 +203,9 @@ func (s *ReviewHandlerSuite) TestDedupRemovesDuplicates() {
 	require.Equal(s.T(), "no make()", keptA.VerdictReason)
 	require.Equal(s.T(), review.VerdictFalsePositive, keptC.Verdict)
 	require.Equal(s.T(), "made in init", keptC.VerdictReason)
+	unread, _ := s.rs.FindComment("ch1", "u")
+	require.Equal(s.T(), 5, unread.Line)
+	require.Empty(s.T(), unread.Verdict)
 	hubMu.Lock()
 	require.Equal(s.T(), []string{"b", "d", "f"}, removed)
 	require.Equal(s.T(), []events.ReviewCommentEventData{
@@ -269,7 +275,7 @@ func (s *ReviewHandlerSuite) TestDedupTrimsBundledComment() {
 // Without a hub the note and the verdict still land on the comment.
 func (s *ReviewHandlerSuite) TestDedupNoteWithoutHub() {
 	s.wireDedupSession()
-	s.srv.review.setAgent(&mockReviewRunner{runFn: func() (*agent.AgentResponse, error) {
+	s.srv.review.setAgent(&mockReviewRunner{reads: []string{"/repo/.worktrees/pr-7/x.go"}, runFn: func() (*agent.AgentResponse, error) {
 		return &agent.AgentResponse{Response: `{"clusters":[{"keep":"a","drop":["b"],"note":"n"}],"verdicts":[{"id":"a","verdict":"already_fixed"}]}`}, nil
 	}}, "", "")
 

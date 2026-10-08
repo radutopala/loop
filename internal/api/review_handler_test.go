@@ -1496,7 +1496,10 @@ type mockReviewRunner struct {
 	runWithCtxFn func(ctx context.Context) (*agent.AgentResponse, error)
 	// findings, when set, are handed to the run's onComment callback the
 	// way the agent's ReportFindings tool_use would deliver them.
-	findings   []*review.Comment
+	findings []*review.Comment
+	// reads are handed to the run's OnFileRead callback the way the agent's
+	// Read tool_use calls would deliver them.
+	reads      []string
 	done       chan struct{} // closed after the first Run returns
 	doneClosed bool
 }
@@ -1522,10 +1525,16 @@ func (m *mockReviewRunner) Run(ctx context.Context, req review.RunRequest) (*age
 	}
 	m.doneClosed = true
 	findings := m.findings
+	reads := m.reads
 	m.mu.Unlock()
 	if onComment != nil {
 		for _, c := range findings {
 			onComment(c)
+		}
+	}
+	if req.OnFileRead != nil {
+		for _, p := range reads {
+			req.OnFileRead(p)
 		}
 	}
 	defer func() {
