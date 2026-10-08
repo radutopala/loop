@@ -1,7 +1,7 @@
 ---
 title: Architectural Quality
 ---
-The quality engine reduces a workspace to one continuous `quality_signal` in the 0–10000 band, computed as the geometric mean of six graph- and function-level metrics. Scans run on demand from the desktop panel, the `loop quality scan` CLI, the `quality_scan` MCP tool, or — when enabled — automatically after each agent file edit.
+The quality engine reduces a workspace to one continuous `quality_signal` in the 0–10000 band, computed as the geometric mean of six graph- and function-level metrics. Scans run on demand from the desktop panel, the `loop quality:scan` CLI, the `quality_scan` MCP tool, or — when enabled — automatically after each agent file edit.
 
 Design is inspired by [sentrux](https://github.com/sentrux/sentrux) (Rust, MIT). Algorithms are clean-room Go re-implementations under `internal/quality/`.
 
@@ -113,7 +113,7 @@ Six built-in rules ship enabled by default. Each emits structured citations cons
 Per-rule overrides go under `quality.rules.<name>.{enabled,threshold}` (project config and global config both honored). Rule pass/fail is **data**, not behavior: the CLI exits 0 regardless. CI gates on the JSON output:
 
 ```sh
-loop quality scan --json | jq -e '.rules.failed | length == 0'
+loop quality:scan --json | jq -e '.rules.failed | length == 0'
 ```
 
 ---
@@ -143,11 +143,11 @@ The chat-bar **quality indicator** (`app/src/components/chat/QualityIndicator.ts
 ### CLI
 
 ```sh
-loop quality scan      [path]                    [--max-files <n>] [--json]
-loop quality cycles    [path]                    [--max-files <n>] [--json]
-loop quality whatif    [path] --file <muts.json> [--max-files <n>] [--json]
-loop quality evolution [path] [--since-months N] [--max-commits N] [--json]
-loop quality c4        [path]                    [--max-files <n>] [--json]
+loop quality:scan      [path]                    [--max-files <n>] [--json]
+loop quality:cycles    [path]                    [--max-files <n>] [--json]
+loop quality:whatif    [path] --file <muts.json> [--max-files <n>] [--json]
+loop quality:evolution [path] [--since-months N] [--max-commits N] [--json]
+loop quality:c4        [path]                    [--max-files <n>] [--json]
 ```
 
 All subcommands run a one-shot scan of `[path]` (defaults to CWD). `--json` emits the same payload as the matching MCP tool / HTTP endpoint. Exit code 0 unless the engine itself crashes — rule pass/fail (for `scan`) is data in the output.
@@ -221,7 +221,7 @@ See [Events System](events.md) for subscription details.
 There is no live-rescan loop. Scans run on demand:
 
 - **Panel** — the per-channel Quality panel exposes a "Scan now" button.
-- **CLI** — `loop quality scan [--json]` from the workdir.
+- **CLI** — `loop quality:scan [--json]` from the workdir.
 - **MCP** — the agent calls the `quality_scan` tool (per-channel).
 
 ---
@@ -269,7 +269,7 @@ internal/quality/
 go test ./internal/quality/...
 
 # Local one-shot scan against the current repo
-go run ./cmd/loop quality scan --root .
+go run ./cmd/loop quality:scan --root .
 ```
 
 Coverage gate (`make coverage-check`) runs over the entire tree, including all of `internal/quality/...`. The parser package exposes a `parser.Parser` interface so unit tests run without invoking gotreesitter on every iteration.

@@ -1,7 +1,7 @@
 // Package main: quality_diagnostics.go adds the diagnostics/insight tier
 // subcommands beneath `loop quality` — cycles, whatif, evolution, c4.
 // Each one mirrors a single MCP tool / HTTP endpoint and shares the
-// scan-then-emit pipeline with `loop quality scan`. All commands print
+// scan-then-emit pipeline with `loop quality:scan`. All commands print
 // human-readable text by default and accept --json for machine-readable
 // output. Like the parent, they exit 0 unless the engine itself crashes.
 

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"path/filepath"
+	"strings"
 
 	"github.com/stretchr/testify/require"
 )
@@ -135,4 +136,26 @@ func (s *FSMigrateSuite) TestPatchReviewLoopEnvSkipsMalformedShapes() {
 		require.NoError(s.T(), err, cfg)
 		require.Empty(s.T(), patched, cfg)
 	}
+}
+
+// An install seeded before the colon paths runs `loop review run`; both
+// loops move to `loop review:run`, and the pr input already there is left
+// alone.
+func (s *FSMigrateSuite) TestPatchReviewLoopEnvUpgradesSpacedScript() {
+	spaced := `{"workflows":[
+  {"name":"review-loop","inputs":{"pr":{"default":"","description":"x"}},
+   "nodes":[{"type":"loop","body":[{"id":"review","type":"bash","script":"` + reviewRunScriptSpaced + `"}]}]},
+  {"name":"review-fix-loop","inputs":{"pr":{"default":"","description":"x"}},
+   "nodes":[{"type":"loop","body":[{"id":"review","type":"bash","script":"` + reviewRunScriptSpaced + `"},{"id":"fix","type":"prompt","prompt":"fix"}]}]}
+]}`
+	sys, configPath := s.patchEnv(spaced)
+
+	patched, err := patchReviewLoopEnvAndPRInputReport(context.Background(), &Ctx{Sys: sys, LoopDir: "/loop"})
+	require.NoError(s.T(), err)
+	require.ElementsMatch(s.T(), []string{"review-loop", "review-fix-loop"}, patched)
+
+	got := string(sys.files[configPath])
+	require.NotContains(s.T(), got, reviewRunScriptSpaced)
+	require.Equal(s.T(), 2, strings.Count(got, `"script":"`+reviewRunScript+`"`))
+	require.NotContains(s.T(), got, reviewPRInputDesc)
 }

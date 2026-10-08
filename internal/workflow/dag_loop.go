@@ -17,7 +17,7 @@ import (
 )
 
 // reviewBodyNodeID is the well-known child ID inside a loop body whose
-// stdout is parsed as `loop review run` JSON into runCtx.Review. The seeded
+// stdout is parsed as `loop review:run` JSON into runCtx.Review. The seeded
 // review-loop and review-fix-loop workflows pin the bash node to this ID
 // so the parser knows which child's output to interpret.
 const reviewBodyNodeID = "review"
@@ -343,7 +343,7 @@ func (e *defaultEngine) persistBodyChildEnd(run *db.WorkflowRun, child *config.N
 	}
 }
 
-// reviewEnvelope is the JSON shape printed by `loop review run --wait` and
+// reviewEnvelope is the JSON shape printed by `loop review:run --wait` and
 // consumed by parseReviewOutput. Defined as a named type (rather than
 // inlined) so extractReviewJSON can validate the shape — specifically the
 // Status field — before accepting a candidate line as the envelope.
@@ -356,7 +356,7 @@ type reviewEnvelope struct {
 	Superseded map[string]string `json:"superseded,omitempty"`
 }
 
-// parseReviewOutput parses stdout JSON from `loop review run --wait` into
+// parseReviewOutput parses stdout JSON from `loop review:run --wait` into
 // runCtx.Review. The bash node's captured stdout includes preamble from the
 // agent container (e.g. `loop-dockerproxy started ...`) before the CLI's
 // JSON line, so the parser scans forwards through the lines and uses the

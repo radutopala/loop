@@ -117,7 +117,7 @@ type Session struct {
 	// host home and ~/.claude bind-mounted at its host path.
 	TranscriptDir string `json:"transcript_dir,omitempty"`
 	// Superseded maps each comment the latest run's dedup pass deleted to
-	// the comment it was folded into, so `loop review run --wait` can tell
+	// the comment it was folded into, so `loop review:run --wait` can tell
 	// a review loop's stop check that a reworded repeat isn't a new
 	// finding. Each run replaces it wholesale; it is never mutated.
 	Superseded map[string]string `json:"superseded,omitempty"`

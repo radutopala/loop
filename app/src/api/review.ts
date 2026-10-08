@@ -159,7 +159,7 @@ export async function stopReview(channelId: string): Promise<void> {
 /**
  * Record which Claude session the next review run should fork from. The
  * choice lives on the review session rather than on the run request
- * because the Run button dispatches a workflow, and the `loop review run`
+ * because the Run button dispatches a workflow, and the `loop review:run`
  * CLI inside it has nowhere to carry per-run options. Returns the updated
  * session so the caller can render the new state without a follow-up GET.
  */

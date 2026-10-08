@@ -105,13 +105,13 @@ per-global / per-project / per-worktree the same way as `github.gh_user`.
    logged). The diff card shows the
    verdict as a badge (verified, false positive, already fixed) with the
    reason on hover, and `get_review_comments` lists it. A verdict deletes
-   nothing, and a pass you run (`Dedup` or `loop review dedup`) sets it on
+   nothing, and a pass you run (`Dedup` or `loop review:dedup`) sets it on
    pushed findings too, since it stays local; the pass after a run treats
    pushed findings like GitHub comments and leaves their verdicts alone.
    Editing a finding's body drops its verdict until a pass checks it
    again.
    The session records which comment each deleted one was
-   folded into, and `loop review run --wait` reports it as `superseded`.
+   folded into, and `loop review:run --wait` reports it as `superseded`.
    The loop's stop check compares the comments the pass leaves with the
    previous round's, and counts a deleted comment as the one it was
    folded into, so a round whose new findings all fold into earlier ones,
@@ -225,7 +225,7 @@ session stuck in `reviewing`.
 The choice is stored on the in-memory review session (loading a PR resets
 it to the default, and so does a daemon restart) rather than on the run
 request, because the Run button dispatches a workflow whose
-`loop review run` step has nowhere to carry per-run options. See [`PUT /review/fork`](api.md).
+`loop review:run` step has nowhere to carry per-run options. See [`PUT /review/fork`](api.md).
 
 ## Handing a finding to the agent
 
@@ -378,18 +378,18 @@ already does for other agent runs.
 
 ## CLI
 
-The host-side `loop review run` subcommand drives the same async
+The host-side `loop review:run` subcommand drives the same async
 endpoint from a shell or a workflow `bash` node. The agent container
 exports both `LOOP_CHANNEL_ID` and `LOOP_API_URL`, and the CLI falls back to them,
 so the seeded review workflows' bash body is simply:
 
 ```sh
-loop review run --pr {{.Inputs.pr}} --wait
+loop review:run --pr {{.Inputs.pr}} --wait
 ```
 
 `--pr` is optional (blank via the seeded `pr` input) — leave it blank to
 review the channel's already-loaded review, or pass a PR number/URL to load
-and review that PR. The load is **idempotent**: `loop review run` first GETs
+and review that PR. The load is **idempotent**: `loop review:run` first GETs
 the channel's review session and skips the (destructive, worktree-rebuilding)
 load when it's already on that PR. So the Review panel can pre-load a PR and
 pass its number as the `pr` input for traceability without triggering a second
@@ -405,7 +405,7 @@ load. Any session-lookup failure falls back to loading.
 
 The emitted JSON shape is `{"status":"ready","no_comments":bool,"comments":[...]}`, plus `"superseded":{"<deleted id>":"<kept id>"}` when the dedup pass after the run deleted any — the same payload used by the workflow body parser to populate `{{.Review.*}}` templates inside the seeded loops. Each comment carries the dedup pass's `verdict` and `verdict_reason` once it has one. The workflow parser leaves out the comments marked `false_positive` or `already_fixed`: the fix step doesn't get them, the same-as-previous check doesn't count them, and a round that leaves only those sets `NoComments`, so the loop stops.
 
-`loop review dedup` runs the dedup pass on its own, over the whole session
+`loop review:dedup` runs the dedup pass on its own, over the whole session
 rather than only the latest run's comments. It
 takes the same `--channel-id`, `--api-url` and `--timeout` flags (its
 `--timeout` defaults to `20m`, above the daemon's 15m dedup ceiling), blocks

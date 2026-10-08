@@ -290,6 +290,13 @@ var migrations = []Migration{
 		Description: "refresh container/ files: pre-commit beside Debian's python3-packaging",
 		Apply:       refreshContainerFiles,
 	},
+	{
+		// The seeded review loops now run `loop review:run`, the colon path
+		// the help lists. The spaced form still works; this keeps an
+		// unmodified seeded script the same as a fresh seed's.
+		Description: "patch review-loop/review-fix-loop to loop review:run",
+		Apply:       patchReviewLoopEnvAndPRInput,
+	},
 }
 
 // adoptProjectConfigs trusts the project config of every project checkout
@@ -807,8 +814,8 @@ func patchReviewFixLoopBodyDepsReport(_ context.Context, c *Ctx) (bool, error) {
 
 // patchReviewLoopEnvAndPRInput walks ~/.loop/config.json and upgrades the
 // seeded review-loop / review-fix-loop workflows to the env-based review
-// command: it rewrites each `review` body child's script from the old
-// `--channel-id {{.ChannelID}} --api-url $API_URL` form to `reviewRunScript`
+// command: it rewrites each `review` body child's script from an earlier
+// seeded form (reviewRunScriptOld, reviewRunScriptSpaced) to `reviewRunScript`
 // (only when the script is unmodified) and adds the `pr` input when absent.
 // Never touches a user-customized review script. No-ops when the config file
 // is missing or the workflows are absent.
@@ -873,7 +880,7 @@ func patchReviewLoopEnvAndPRInputReport(_ context.Context, c *Ctx) ([]string, er
 					if id, _ := memberString(childObj, "id"); id != "review" {
 						continue
 					}
-					if sc, ok := memberString(childObj, "script"); ok && sc == reviewRunScriptOld {
+					if sc, ok := memberString(childObj, "script"); ok && (sc == reviewRunScriptOld || sc == reviewRunScriptSpaced) {
 						ops = append(ops, jsonPatchOp{
 							Op:    "replace",
 							Path:  fmt.Sprintf("/workflows/%d/nodes/%d/body/%d/script", i, j, k),
@@ -1160,11 +1167,13 @@ func isNullLiteral(v *hujson.Value) bool {
 // reviewRunScript is the current review-node bash: channel-id / api-url come
 // from the container's injected env (LOOP_CHANNEL_ID / LOOP_API_URL), and an optional
 // `pr` input reviews a specific PR (blank = the channel's already-loaded
-// review). reviewRunScriptOld is the pre-env form the patcher upgrades.
+// review). The patcher upgrades the earlier forms: reviewRunScriptOld, from
+// before the env, and reviewRunScriptSpaced, from before the colon paths.
 const (
-	reviewRunScript    = "loop review run --pr {{.Inputs.pr}} --wait"
-	reviewRunScriptOld = "loop review run --channel-id {{.ChannelID}} --api-url $API_URL --wait"
-	reviewPRInputDesc  = "PR number or URL to review (blank = the channel's already-loaded review)."
+	reviewRunScript       = "loop review:run --pr {{.Inputs.pr}} --wait"
+	reviewRunScriptSpaced = "loop review run --pr {{.Inputs.pr}} --wait"
+	reviewRunScriptOld    = "loop review run --channel-id {{.ChannelID}} --api-url $API_URL --wait"
+	reviewPRInputDesc     = "PR number or URL to review (blank = the channel's already-loaded review)."
 )
 
 // reviewBashBodyChild is the bash node every seeded review loop pins as its
@@ -1208,7 +1217,7 @@ func builtinLoopDef(name, description, inputDesc string, body []any) map[string]
 }
 
 // builtinReviewLoopDef is the JSON-shaped definition of the review-only loop.
-// Each iteration runs `loop review run --wait` inside the agent container,
+// Each iteration runs `loop review:run --wait` inside the agent container,
 // and the daemon folds the run's reworded repeats of earlier comments before
 // the run is done (its dedup pass after every run); the workflow stops when
 // the iteration produces zero comments OR leaves the same comment-id set as
@@ -1229,7 +1238,8 @@ const reviewDedupScript = "loop review dedup"
 
 // seededReviewLoopNode reports whether node is the seeded review-loop's loop
 // node: id and type "loop", its body the single review child running
-// reviewRunScript.
+// reviewRunScript, or reviewRunScriptSpaced on an install that hasn't yet
+// had the colon-path patch.
 func seededReviewLoopNode(node hujson.Value) bool {
 	loopObj, ok := node.Value.(*hujson.Object)
 	if !ok {
@@ -1251,7 +1261,7 @@ func seededReviewLoopNode(node hujson.Value) bool {
 	}
 	id, _ := memberString(childObj, "id")
 	script, _ := memberString(childObj, "script")
-	return id == "review" && script == reviewRunScript
+	return id == "review" && (script == reviewRunScript || script == reviewRunScriptSpaced)
 }
 
 // patchReviewLoopDropDedupNode drops the review-loop's final dedup node

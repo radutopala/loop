@@ -23,7 +23,7 @@ type reviewHTTPClient interface {
 	Do(req *http.Request) (*http.Response, error)
 }
 
-// reviewCLIOutput is the JSON shape that `loop review run --wait` prints to
+// reviewCLIOutput is the JSON shape that `loop review:run --wait` prints to
 // stdout once the daemon flips to a terminal status. Workflow bash nodes
 // parse this into runCtx.Review via internal/workflow.parseReviewOutput.
 type reviewCLIOutput struct {
@@ -77,7 +77,7 @@ func (a *app) newReviewRunCmd() *cobra.Command {
 			}
 			// Both values are injected into the agent container's environment
 			// (LOOP_CHANNEL_ID / LOOP_API_URL), so a workflow's bash node can just run
-			// `loop review run --wait` without threading them through templates.
+			// `loop review:run --wait` without threading them through templates.
 			channelID = resolveReviewChannelID(channelID, os.Getenv("LOOP_CHANNEL_ID"))
 			if channelID == "" {
 				return fmt.Errorf("channel-id is required (pass --channel-id or set $LOOP_CHANNEL_ID)")

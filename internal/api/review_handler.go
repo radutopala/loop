@@ -966,7 +966,7 @@ type reviewDedupTrim struct {
 }
 
 // handleReviewDedup runs the dedup pass over the whole of the channel's
-// review session (`loop review dedup`); every review run already checks the
+// review session (`loop review:dedup`); every review run already checks the
 // comments it added (dedupAfterRun). It refreshes the session (so the PR's
 // GitHub comments are current), has a read-only agent
 // group the comments that report the same issue (review.BuildDedupPrompt),

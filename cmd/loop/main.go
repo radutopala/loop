@@ -154,7 +154,7 @@ type app struct {
 	httpGet            func(string) (*http.Response, error)
 	getLatestVersionFn func() (string, error)
 
-	// reviewClient is the HTTP client used by `loop review run` to talk to
+	// reviewClient is the HTTP client used by `loop review:run` to talk to
 	// the daemon. Tests inject an httptest-backed client so the CLI can be
 	// driven against a fake review endpoint without spinning up serve.
 	reviewClient reviewHTTPClient
@@ -293,7 +293,7 @@ func newApp() *app {
 		// Evolution history-reader factory
 		newEvolutionReader: func() evolution.HistoryReader { return evolution.NewExecReader() },
 
-		// Poll cadences for `loop review run --wait`. Production defaults tuned
+		// Poll cadences for `loop review:run --wait`. Production defaults tuned
 		// for a real daemon that takes seconds, not microseconds, to recover.
 		reviewPollInterval:         time.Second,
 		reviewPollTransportBackoff: 2 * time.Second,
@@ -328,7 +328,9 @@ func main() {
 }
 
 func (a *app) run() int {
-	if err := a.newRootCmd().Execute(); err != nil {
+	root := a.newRootCmd()
+	root.SetArgs(expandArgs(root, os.Args[1:]))
+	if err := root.Execute(); err != nil {
 		return 1
 	}
 	return 0
@@ -338,6 +340,7 @@ func (a *app) newRootCmd() *cobra.Command {
 	root := &cobra.Command{
 		Use:   "loop",
 		Short: "Loop bot powered by Claude",
+		Long:  rootLong,
 	}
 	root.AddCommand(a.newServeCmd())
 	root.AddCommand(a.newMCPCmd())
@@ -360,47 +363,11 @@ func (a *app) newRootCmd() *cobra.Command {
 	root.AddCommand(a.newReviewCmd())
 	root.AddCommand(a.newAPIRotateTokenCmd())
 	root.AddCommand(a.newAppURLCmd())
-	root.SetHelpTemplate(helpTemplate)
+	nameHelpFlags(root)
+	root.SetHelpFunc(help)
+	root.SetUsageFunc(usage)
 	return root
 }
-
-const helpTemplate = `loop - AI-powered development platform with Claude agents, browser automation, and team collaboration
-
-Usage:
-  loop [command]
-
-Available Commands:
-  serve                    Start the bot (alias: s)
-  mcp                      Run as an MCP server over stdio (alias: m)
-    --channel-id           Channel ID
-    --dir                  Project directory path (auto-creates channel)
-    --api-url              Loop API base URL (required)
-    --log                  Path to MCP log file [default: .loop/mcp.log]
-    --author-id            User ID of the message author
-    --platform             Platform for channel creation [default: local]
-    --memory               Enable memory search/index tools
-    --agent-id             Agent ID for inter-agent tools and MCP Channels
-  onboard:global           Initialize global config at ~/.loop/ (aliases: o:global, setup)
-    --force                Overwrite existing config
-    --owner-id             Set RBAC owner user ID (exits bootstrap mode)
-  onboard:local            Register Loop MCP server in current project (aliases: o:local, init)
-    --api-url              Loop API base URL [default: http://localhost:8222]
-    --owner-id             Set RBAC owner user ID in project config
-    --platform             Only register channel for this platform (e.g. local)
-  daemon:start             Install and start the daemon — launchd on macOS, Windows services on Windows, systemd on Linux (aliases: d:start, up)
-  daemon:stop              Stop and uninstall the daemon (aliases: d:stop, down)
-  daemon:restart           Restart the daemon (aliases: d:restart, restart)
-  daemon:status            Show daemon status (alias: d:status)
-  mcp-host-browser         Standalone MCP server for host Chrome automation (auto-discovers via DevToolsActivePort)
-    --log                  Path to MCP log file [default: .loop/mcp-host-browser.log]
-  image:rebuild            Rebuild the Docker agent image (aliases: i:rebuild, i:r)
-  image:status             Show Docker agent image status and versions (aliases: i:status, i:s)
-  version                  Print version information (alias: v)
-  readme                   Print the README documentation (alias: r)
-  update                   Update loop to the latest version (alias: u)
-
-Use "loop [command] --help" for more information about a command.
-`
 
 func (a *app) newVersionCmd() *cobra.Command {
 	return &cobra.Command{

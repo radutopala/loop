@@ -620,7 +620,7 @@ func (s *reviewService) setRunTimeout(d time.Duration) {
 
 // setDedupTimeout caps a dedup pass, the one after a run and one run on
 // demand; 0 leaves it unbounded. The run's ceiling plus this one should stay
-// below the CLI's `loop review run --timeout`, which waits for both.
+// below the CLI's `loop review:run --timeout`, which waits for both.
 func (s *reviewService) setDedupTimeout(d time.Duration) {
 	s.dedupTimeout = d
 }

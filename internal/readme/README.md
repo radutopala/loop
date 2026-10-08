@@ -71,7 +71,7 @@ AI agents powered by Claude, running in Docker containers. Use the **desktop app
 - **API Server** exposes REST endpoints for task and channel management
 - **SQLite** stores channels, messages, scheduled tasks, run logs, and memory file embeddings
 - **Security Gate** — a seccomp `RET_USER_NOTIF` filter installed in every agent container (works on Linux, macOS, and Windows hosts — the filter + notify-loop server both run inside the container) traps sensitive syscalls (`connect`, `execve`/`execveat`, `openat*`, `renameat2`, `unlinkat`, …) and routes `approve`-rule hits to the chat as a three-button card. An in-container Docker HTTP proxy replaces the raw `docker.sock` bind and enforces method/path/body rules. Enabled by default; see [Configuration: Security Gate](docs/configuration.md#security-gate)
-- **Quality Engine** — pure-Go architectural-quality scanner under `internal/quality/`. Reduces a workspace to a single `quality_signal` (0–10000, geometric mean of 6 graph-level metrics: modularity (Leiden), cycles, depth, equality, redundancy (with SimHash clone detection folded in), and per-function complexity). Surfaced via the desktop `QualityPanel` (Overview / Diagnostics / Hotspots / Cycles / Evolution tabs), a chat-bar quality indicator, MCP tools (`quality_scan`, `quality_snapshot`, `quality_complexity`, `quality_clones`, …), HTTP endpoints, and `loop quality scan` for CI gates. Snapshots persist per `(channel, branch)`. See [docs/quality.md](docs/quality.md)
+- **Quality Engine** — pure-Go architectural-quality scanner under `internal/quality/`. Reduces a workspace to a single `quality_signal` (0–10000, geometric mean of 6 graph-level metrics: modularity (Leiden), cycles, depth, equality, redundancy (with SimHash clone detection folded in), and per-function complexity). Surfaced via the desktop `QualityPanel` (Overview / Diagnostics / Hotspots / Cycles / Evolution tabs), a chat-bar quality indicator, MCP tools (`quality_scan`, `quality_snapshot`, `quality_complexity`, `quality_clones`, …), HTTP endpoints, and `loop quality:scan` for CI gates. Snapshots persist per `(channel, branch)`. See [docs/quality.md](docs/quality.md)
 
 ## Prerequisites
 
@@ -575,9 +575,13 @@ For development: `make docker-build` builds from `container/Dockerfile` in the r
 | `loop daemon:restart` | `d:restart`, `restart` | Restart the daemon |
 | `loop daemon:status` | `d:status` | Show daemon status |
 | `loop mcp-host-browser` | | Standalone MCP server for host Chrome browser automation |
-| `loop quality scan` | | One-shot architectural quality scan (`--root <dir>`, `--max-files <n>`, `--json`); see [docs/quality.md](docs/quality.md) |
-| `loop review run` | | Drive a channel's review pass via the daemon (`--channel-id`, `--api-url`, `--wait`, `--timeout`); used by the seeded `review-loop` / `review-fix-loop` workflows. See [docs/review.md](docs/review.md) |
+| `loop quality:scan` | | One-shot architectural quality scan (`--root <dir>`, `--max-files <n>`, `--json`); see [docs/quality.md](docs/quality.md) |
+| `loop review:run` | | Drive a channel's review pass via the daemon (`--channel-id`, `--api-url`, `--wait`, `--timeout`); used by the seeded `review-loop` / `review-fix-loop` workflows. See [docs/review.md](docs/review.md) |
+| `loop api:rotate-token` | | Replace the API token the desktop app and CLI use; see [docs/api.md](docs/api.md) |
+| `loop app:url` | | Print the web UI's URL signed in with the API token (`--base`, default `http://localhost:5173/`), for running the UI in a browser |
 | `loop readme` | `r` | Print the README documentation |
+
+`loop --help` lists every command from the command tree. Nested commands show by colon path and run that way too: `loop review:run` is `loop review run`.
 
 ### MCP Host Browser (standalone)
 
