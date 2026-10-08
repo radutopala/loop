@@ -164,13 +164,15 @@ func (s *Store) Put(channelID string, sess *Session) {
 	s.sessions[channelID] = sess
 }
 
-// SessionSummary is the minimal (channel_id, status) pair returned by
-// List — enough for the sidebar to decide whether to render a `rev`
-// pill without dragging the whole session (raw diff + comments) over
-// the wire.
+// SessionSummary is the minimal (channel_id, status, updated_at) triple
+// returned by List — enough for the sidebar to decide whether to render a
+// `rev` pill, and for the channel list to mark a running review and date
+// the channel's activity, without dragging the whole session (raw diff +
+// comments) over the wire.
 type SessionSummary struct {
-	ChannelID string `json:"channel_id"`
-	Status    Status `json:"status"`
+	ChannelID string    `json:"channel_id"`
+	Status    Status    `json:"status"`
+	UpdatedAt time.Time `json:"updated_at"`
 }
 
 // List returns a summary of every live session. Order is unspecified.
@@ -181,7 +183,7 @@ func (s *Store) List() []SessionSummary {
 	defer s.mu.RUnlock()
 	out := make([]SessionSummary, 0, len(s.sessions))
 	for id, sess := range s.sessions {
-		out = append(out, SessionSummary{ChannelID: id, Status: sess.Status})
+		out = append(out, SessionSummary{ChannelID: id, Status: sess.Status, UpdatedAt: sess.UpdatedAt})
 	}
 	return out
 }

@@ -166,7 +166,7 @@ Each channel item (`ChannelItem` component) displays:
 | Collapse chevron | Shown when channel has threads. Rotates 90 degrees when collapsed. Click to toggle. |
 | Hash symbol (`#`) | Channel prefix, dimmed text |
 | Channel name | Truncated with ellipsis. Shows `dir_path.split("/").pop()` if no name set. |
-| Status pills | `rev` (`colors.active`) when a review session is ready, `rev…` (`colors.active`, *Review in progress*) while a review runs, `ask` (`colors.warning`) when an agent is parked on an `AskUserQuestion` card. Pills come from store refs (`reviewChannelIdsRef`, `askUserChannelIdsRef`) that are kept in sync via WebSocket events and rehydrated on reconnect against `/api/review/sessions` and `/api/asks/pending`. The `rev…` pill comes from `reviewingIdsRef`, kept the same way from `review.status`. |
+| Status pills | `rev` (`colors.active`) when a review session is ready, `rev…` (`colors.active`, *Review in progress*) while a review runs, `ask` (`colors.warning`) when an agent is parked on an `AskUserQuestion` card. Pills come from store refs (`reviewChannelIdsRef`, `askUserChannelIdsRef`) that are kept in sync via WebSocket events and rehydrated on reconnect against `/api/review/sessions` and `/api/asks/pending`. The `rev…` pill comes from the channel's `review_running`, which `/api/channels` reports and each `review.status` event patches. |
 | Status indicator | Green dot (6px circle, `colors.active`) when `container_running` or `agent_running` is true, or a review is running on it |
 | Config button (gear icon) | Shown on hover for channels with `dir_path`. Opens project settings. |
 | "+ thread" button | Shown on hover. Toggles the new thread input. |

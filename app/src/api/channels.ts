@@ -24,6 +24,7 @@ interface ChannelAPIResponse {
   active: boolean;
   container_running: boolean;
   agent_running: boolean;
+  review_running?: boolean;
   branch?: string;
   commit?: string;
   subject?: string;
@@ -62,6 +63,7 @@ export async function fetchChannels(): Promise<Channel[]> {
     active: c.active,
     container_running: c.container_running,
     agent_running: c.agent_running,
+    review_running: c.review_running ?? false,
     branch: c.branch || "",
     commit: c.commit || "",
     subject: c.subject,

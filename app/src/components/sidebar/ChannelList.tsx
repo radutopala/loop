@@ -24,8 +24,6 @@ interface ChannelListProps {
   checkedIds: Set<string>;
   onToggleCheck: (id: string) => void;
   isRunningMapRef?: React.RefObject<Map<string, string>>;
-  /** Channels with a review run in progress, shown as running. */
-  reviewingIdsRef?: React.RefObject<Set<string>>;
   unreadIdsRef?: React.RefObject<Set<string>>;
   pillsRef?: React.RefObject<Map<PillKind, Set<string>>>;
 }
@@ -51,7 +49,6 @@ export function ChannelList({
   checkedIds,
   onToggleCheck,
   isRunningMapRef,
-  reviewingIdsRef,
   unreadIdsRef,
   pillsRef,
 }: ChannelListProps) {
@@ -81,7 +78,6 @@ export function ChannelList({
           checkedIds={checkedIds}
           onToggleCheck={onToggleCheck}
           isRunningMapRef={isRunningMapRef}
-          reviewingIdsRef={reviewingIdsRef}
           unreadIdsRef={unreadIdsRef}
           pillsRef={pillsRef}
         />
@@ -109,7 +105,6 @@ export function ChannelList({
           checkedIds={checkedIds}
           onToggleCheck={onToggleCheck}
           isRunningMapRef={isRunningMapRef}
-          reviewingIdsRef={reviewingIdsRef}
           unreadIdsRef={unreadIdsRef}
           pillsRef={pillsRef}
         />

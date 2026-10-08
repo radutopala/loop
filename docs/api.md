@@ -133,6 +133,7 @@ List all channels with optional filtering. Enriches each channel with container 
     "active": true,
     "container_running": true,
     "agent_running": false,
+    "review_running": false,
     "branch": "main",
     "commit": "abc1234",
     "worktree": false,
@@ -146,6 +147,7 @@ List all channels with optional filtering. Enriches each channel with container 
 - When a channel has no `dir_path`, falls back to `~/.loop/{channel_id}/work`.
 - `container_running` is determined by querying the Docker daemon for running containers.
 - `agent_running` indicates whether an active Claude agent run exists for the channel. A run is registered before its `agent.status` "running" event is broadcast, so a response to a request made after that event reflects the run.
+- `review_running` is true while a review run or a dedup pass runs on the channel's [review session](#review) (its status is `reviewing`). Review sessions live in the daemon's memory, so this comes from the review store, not the database. The sidebar shows the channel as running and patches the flag live from `review.status` events.
 - `branch` is resolved by running `git rev-parse --abbrev-ref HEAD` in the channel's directory.
 - `commit` is the short commit hash from `git rev-parse --short HEAD`, and `subject` its subject line.
 - `upstream` is the branch's tracking branch (e.g. `origin/main`), with `ahead` / `behind` counting the commits between them. Omitted when there's none.
@@ -153,7 +155,7 @@ List all channels with optional filtering. Enriches each channel with container 
 - `worktree` is true for threads created via `POST /api/worktrees`.
 - `root_dir_path` is set on rows inside a worktree chain — the worktree thread itself, a thread under it (e.g. a scheduled task's), or a worktree cut from another worktree — and holds the `dir_path` of the non-worktree checkout the chain was cut from. Omitted everywhere else. The Kanban panel uses it for its Local/Root board switch.
 - `model_override` / `effort_override` are the model and effort picked for the channel (see [`PATCH /api/channels/{id}/agent-config`](#patch-apichannelsidagent-config)). Omitted when it inherits the config's.
-- `last_activity_at` is when the channel's newest message was written. Omitted when it has none, or when the lookup fails (the list is still returned). The sidebar's Recent section sorts by it.
+- `last_activity_at` is when the channel's newest message was written, or when its review session last changed if that's later, since a review writes no messages. Omitted when it has neither, or when the message lookup fails and there's no review session (the list is still returned). The sidebar's Recent section sorts by it.
 - `description` is what the channel or thread is for, set via [`POST /api/channels/{id}/description`](#post-apichannelsiddescription). Omitted when empty.
 - `ticket_url` is the URL of the channel or thread's ticket, set via [`POST /api/channels/{id}/ticket`](#post-apichannelsidticket). Omitted when unset.
 - `trust_pending` is `true` when the project config's host-reaching fields changed since you last trusted them, so they don't apply yet (see [`GET /api/config/project/trust`](#get-apiconfigprojecttrust)). For a worktree chain it's the root checkout's config. Omitted otherwise, and when the config can't be read.

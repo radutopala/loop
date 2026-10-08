@@ -76,6 +76,7 @@ func (s *SessionSuite) TestListReturnsSummaries() {
 	statuses := map[string]Status{}
 	for _, sum := range got {
 		statuses[sum.ChannelID] = sum.Status
+		require.Equal(s.T(), store.Get(sum.ChannelID).UpdatedAt, sum.UpdatedAt)
 	}
 	require.Equal(s.T(), StatusReady, statuses["ch1"])
 	require.Equal(s.T(), StatusReviewing, statuses["ch2"])

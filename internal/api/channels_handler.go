@@ -11,6 +11,7 @@ import (
 	"github.com/radutopala/loop/internal/container"
 	"github.com/radutopala/loop/internal/db"
 	"github.com/radutopala/loop/internal/gitutil"
+	"github.com/radutopala/loop/internal/review"
 )
 
 const channelsNotConfiguredMsg = "channel creation not configured (discord_guild_id not set or Slack not configured)"
@@ -44,32 +45,36 @@ type channelResponse struct {
 	Active           bool   `json:"active"`
 	ContainerRunning bool   `json:"container_running"`
 	AgentRunning     bool   `json:"agent_running"`
-	Branch           string `json:"branch,omitempty"`
-	Commit           string `json:"commit,omitempty"`
-	Subject          string `json:"subject,omitempty"`
-	Upstream         string `json:"upstream,omitempty"`
-	Ahead            int    `json:"ahead,omitempty"`
-	Behind           int    `json:"behind,omitempty"`
-	SyncBase         string `json:"sync_base,omitempty"`
-	BaseAhead        int    `json:"base_ahead,omitempty"`
-	BaseBehind       int    `json:"base_behind,omitempty"`
-	Worktree         bool   `json:"worktree"`
-	BaseBranch       string `json:"base_branch,omitempty"`
-	RootDirPath      string `json:"root_dir_path,omitempty"` // inside a worktree chain: the checkout it was cut from
-	Locked           bool   `json:"locked"`
-	DiffAdditions    int    `json:"diff_additions,omitempty"`
-	DiffDeletions    int    `json:"diff_deletions,omitempty"`
-	ReviewEnabled    bool   `json:"review_enabled"`
-	ModelOverride    string `json:"model_override,omitempty"`
-	EffortOverride   string `json:"effort_override,omitempty"`
+	// ReviewRunning is set while a review (or a dedup pass) runs on the
+	// channel's review session.
+	ReviewRunning  bool   `json:"review_running"`
+	Branch         string `json:"branch,omitempty"`
+	Commit         string `json:"commit,omitempty"`
+	Subject        string `json:"subject,omitempty"`
+	Upstream       string `json:"upstream,omitempty"`
+	Ahead          int    `json:"ahead,omitempty"`
+	Behind         int    `json:"behind,omitempty"`
+	SyncBase       string `json:"sync_base,omitempty"`
+	BaseAhead      int    `json:"base_ahead,omitempty"`
+	BaseBehind     int    `json:"base_behind,omitempty"`
+	Worktree       bool   `json:"worktree"`
+	BaseBranch     string `json:"base_branch,omitempty"`
+	RootDirPath    string `json:"root_dir_path,omitempty"` // inside a worktree chain: the checkout it was cut from
+	Locked         bool   `json:"locked"`
+	DiffAdditions  int    `json:"diff_additions,omitempty"`
+	DiffDeletions  int    `json:"diff_deletions,omitempty"`
+	ReviewEnabled  bool   `json:"review_enabled"`
+	ModelOverride  string `json:"model_override,omitempty"`
+	EffortOverride string `json:"effort_override,omitempty"`
 	// TaskID is the scheduled task whose thread this is, for a task's thread.
 	TaskID int64 `json:"task_id,omitempty"`
 	// Description says what a thread is for; absent when it has none.
 	Description string `json:"description,omitempty"`
 	// TicketURL links the channel or thread to its ticket; absent when unset.
 	TicketURL string `json:"ticket_url,omitempty"`
-	// LastActivityAt is when the channel's newest message was written; the
-	// sidebar's Recent section sorts by it. Absent for a channel with none.
+	// LastActivityAt is when the channel's newest message was written, or
+	// its review session last changed when that's later; the sidebar's
+	// Recent section sorts by it. Absent for a channel with neither.
 	LastActivityAt *time.Time `json:"last_activity_at,omitempty"`
 	// TrustPending is set when the channel's project config has fields
 	// waiting for the owner's trust: they don't apply until then.
@@ -163,6 +168,8 @@ func (s *Server) handleSearchChannels(w http.ResponseWriter, r *http.Request) {
 		s.logger.Warn("channel activity lookup failed", "error", err)
 	}
 
+	reviews := s.reviewSummaries()
+
 	query := r.URL.Query().Get("query")
 	platformFilter := r.URL.Query().Get("platform")
 
@@ -232,8 +239,12 @@ func (s *Server) handleSearchChannels(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		reviewEnabled := s.configs.reviewEnabled(dirPath, parentDirPath)
+		rev := reviews[ch.ChannelID]
 		var lastActivity *time.Time
 		if at, ok := activity[ch.ChannelID]; ok {
+			lastActivity = &at
+		}
+		if at := rev.UpdatedAt; !at.IsZero() && (lastActivity == nil || at.After(*lastActivity)) {
 			lastActivity = &at
 		}
 		rootDirPath := db.WorktreeRootDirPath(r.Context(), byID, ch)
@@ -250,6 +261,7 @@ func (s *Server) handleSearchChannels(w http.ResponseWriter, r *http.Request) {
 			Active:           ch.Active,
 			ContainerRunning: running,
 			AgentRunning:     runningBot,
+			ReviewRunning:    rev.Status == review.StatusReviewing,
 			Branch:           git.Branch,
 			Commit:           git.Commit,
 			Subject:          git.Subject,
@@ -600,4 +612,20 @@ func (s *Server) realOrClean(p string) string {
 
 func containsFold(s, substr string) bool {
 	return strings.Contains(strings.ToLower(s), strings.ToLower(substr))
+}
+
+// reviewSummaries indexes the live review sessions by channel. They live in
+// the daemon's memory, not in the database, so the channel list asks the
+// review store, as it asks the orchestrator about agent runs: a running
+// review marks its channel running, and a session's latest change counts as
+// the channel's activity, since a review writes no messages.
+func (s *Server) reviewSummaries() map[string]review.SessionSummary {
+	out := make(map[string]review.SessionSummary)
+	if s.review.sessions == nil {
+		return out
+	}
+	for _, sum := range s.review.sessions.List() {
+		out[sum.ChannelID] = sum
+	}
+	return out
 }

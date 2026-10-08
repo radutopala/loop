@@ -31,6 +31,15 @@ export function applyChannelUpdate(c: Channel, d: ChannelUpdatedData): Channel {
   };
 }
 
+/**
+ * Applies a review.status event to a channel, as the channel list would
+ * report it on its next fetch: a reviewing session marks the channel's
+ * review running, and the change counts as the channel's activity.
+ */
+export function applyReviewStatus(c: Channel, status: string, at: number): Channel {
+  return { ...c, review_running: status === "reviewing", last_activity_at: Math.max(c.last_activity_at ?? 0, at) };
+}
+
 /** A live change to one channel, stamped with performance.now() on arrival. */
 export interface ChannelPatch {
   at: number;

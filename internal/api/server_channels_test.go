@@ -20,6 +20,7 @@ import (
 	"github.com/radutopala/loop/internal/config"
 	"github.com/radutopala/loop/internal/container"
 	"github.com/radutopala/loop/internal/db"
+	"github.com/radutopala/loop/internal/review"
 	"github.com/radutopala/loop/internal/types"
 )
 
@@ -791,6 +792,41 @@ func (s *ServerSuite) TestSearchChannelsLastActivity() {
 			s.store.AssertExpectations(s.T())
 		})
 	}
+}
+
+// TestSearchChannelsReviewSessions: review sessions live in memory, so the
+// list asks the review store. A running review marks its channel running,
+// and a session's latest change dates the channel when it is newer than
+// the channel's newest message.
+func (s *ServerSuite) TestSearchChannelsReviewSessions() {
+	s.store.On("ListChannels", mock.Anything).Return([]*db.Channel{
+		{ChannelID: "ch-1", Name: "reviewing", DirPath: "/a", Platform: types.PlatformLocal},
+		{ChannelID: "ch-2", Name: "ready-newer-message", DirPath: "/b", Platform: types.PlatformLocal},
+		{ChannelID: "ch-3", Name: "no-review", DirPath: "/c", Platform: types.PlatformLocal},
+	}, nil)
+	old := time.Date(2026, 9, 25, 11, 3, 6, 0, time.UTC)
+	future := time.Now().Add(time.Hour).UTC().Truncate(time.Second)
+	s.store.On("ChannelActivity", mock.Anything).Return(map[string]time.Time{"ch-1": old, "ch-2": future, "ch-3": old}, nil)
+	sessions := review.NewStore()
+	sessions.Put("ch-1", &review.Session{Status: review.StatusReviewing})
+	sessions.Put("ch-2", &review.Session{Status: review.StatusReady})
+	s.srv.review.sessions = sessions
+
+	rec := s.testRequest("GET", "/api/channels", "")
+
+	require.Equal(s.T(), http.StatusOK, rec.Code)
+	var resp []channelResponse
+	require.NoError(s.T(), json.NewDecoder(rec.Body).Decode(&resp))
+	byID := make(map[string]channelResponse, len(resp))
+	for _, ch := range resp {
+		byID[ch.ChannelID] = ch
+	}
+	require.True(s.T(), byID["ch-1"].ReviewRunning)
+	require.True(s.T(), sessions.Get("ch-1").UpdatedAt.Equal(*byID["ch-1"].LastActivityAt), "the review is newer than the message")
+	require.False(s.T(), byID["ch-2"].ReviewRunning)
+	require.True(s.T(), future.Equal(*byID["ch-2"].LastActivityAt), "the message is newer than the review")
+	require.False(s.T(), byID["ch-3"].ReviewRunning)
+	require.True(s.T(), old.Equal(*byID["ch-3"].LastActivityAt))
 }
 
 // TestSearchChannelsTrustPending: each row reports whether the project
