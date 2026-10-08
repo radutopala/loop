@@ -236,6 +236,34 @@ function CodeBlock({ body, info, s }: { body: string; info: string; s: Record<st
   );
 }
 
+/**
+ * A blockquote with two hover-revealed copy buttons in a gutter on its right,
+ * as code blocks have:
+ *
+ *   - the text, without the `> ` markers, for pasting a quoted reply as is;
+ *   - the quote itself, `> ` markers kept, for anywhere that speaks markdown.
+ */
+function BlockQuote({ lines, s, channelId }: { lines: string[]; s: Record<string, React.CSSProperties>; channelId: string }) {
+  const [hovered, setHovered] = useState(false);
+  const text = lines.join("\n");
+  const quote = lines.map((l) => (l ? `> ${l}` : ">")).join("\n");
+  return (
+    // The right padding is the buttons' gutter, so they never cover the text;
+    // minHeight keeps the lower one off whatever follows a one-line quote.
+    <div data-testid="block-quote" style={{ position: "relative", paddingRight: 24, minHeight: 54 }} onMouseEnter={() => setHovered(true)} onMouseLeave={() => setHovered(false)}>
+      <CopyButton text={text} visible={hovered} title="Copy as text" style={{ position: "absolute", top: 8, right: 0 }} />
+      <CopyButton text={quote} icon={markupIcon} visible={hovered} title="Copy as quote" style={{ position: "absolute", top: 31, right: 0 }} />
+      <blockquote style={s.blockquote}>
+        {lines.map((ql, qi) => (
+          <p key={qi} style={s.paragraph}>
+            {ql ? formatInline(ql, s, channelId) : <br />}
+          </p>
+        ))}
+      </blockquote>
+    </div>
+  );
+}
+
 /** A display formula, centered, with a hover-revealed button that copies its LaTeX. */
 function MathDisplay({ tex, source }: { tex: string; source: string }) {
   const [hovered, setHovered] = useState(false);
@@ -299,15 +327,7 @@ function parseMarkdown(text: string, s: Record<string, React.CSSProperties>, cha
         quoteLines.push(ql === ">" ? "" : ql.slice(2));
         i++;
       }
-      nodes.push(
-        <blockquote key={nodes.length} style={s.blockquote}>
-          {quoteLines.map((ql, qi) => (
-            <p key={qi} style={s.paragraph}>
-              {ql ? formatInline(ql, s, channelId) : <br />}
-            </p>
-          ))}
-        </blockquote>,
-      );
+      nodes.push(<BlockQuote key={nodes.length} lines={quoteLines} s={s} channelId={channelId} />);
       continue;
     }
 
