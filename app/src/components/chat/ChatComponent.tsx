@@ -106,8 +106,9 @@ export function ChatComponentFull({ component, onClose }: { component: ShownComp
 
 /**
  * Listens for what a component's document posts: its height, passed to
- * onHeight, and a clicked web link, opened in the system browser. Messages
- * from any other window are ignored.
+ * onHeight, and a clicked web link, opened in the system browser (only while
+ * the user's click is still active). Messages from any other window are
+ * ignored.
  */
 function useFrameMessages(frame: React.RefObject<HTMLIFrameElement | null>, onHeight?: (h: number) => void) {
   useEffect(() => {
@@ -115,7 +116,10 @@ function useFrameMessages(frame: React.RefObject<HTMLIFrameElement | null>, onHe
       if (!frame.current || e.source !== frame.current.contentWindow) return;
       const url = componentOpenURL(e.data);
       if (url !== null) {
-        openExternalUrl(url);
+        // Only right after a click: the component's own script can post this
+        // too, and must not open tabs on its own. A click inside the frame
+        // activates this window as well, as it does every ancestor frame.
+        if (navigator.userActivation?.isActive) openExternalUrl(url);
         return;
       }
       const h = componentHeight(e.data);
