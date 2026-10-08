@@ -74,7 +74,10 @@ RUN git config --system --add safe.directory '*'
 # /etc/gitconfig, so a repo whose .gitattributes routes paths through lfs
 # works without further setup — and system scope survives the host
 # ~/.gitconfig being mounted over the container's global config.
-RUN pip install --break-system-packages --no-cache-dir pre-commit uv
+# --ignore-installed: the base image ships Debian's python3-packaging, which
+# pip can't uninstall when pre-commit wants a newer one; pip's copy goes
+# alongside it in /usr/local instead.
+RUN pip install --break-system-packages --no-cache-dir --ignore-installed pre-commit uv
 COPY --from=amazon/aws-cli:latest /usr/local/aws-cli /usr/local/aws-cli
 RUN ln -s /usr/local/aws-cli/v2/current/bin/aws /usr/local/bin/aws \
     && ln -s /usr/local/aws-cli/v2/current/bin/aws_completer /usr/local/bin/aws_completer \
