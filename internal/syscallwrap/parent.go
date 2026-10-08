@@ -140,7 +140,12 @@ func (a *app) runParent() error {
 		_, _ = a.waitChild(proc)
 		return fmt.Errorf("open audit: %w", err)
 	}
-	approver := a.newApprover(apiURL, token)
+	// Approvals end with the run: after a shutdown signal nobody answers
+	// a gate card, and a trap left waiting on one keeps the child from
+	// exiting until the SIGKILL that follows the stop timeout.
+	approvals, cancelApprovals := context.WithCancel(context.Background())
+	defer cancelApprovals()
+	approver := shutdownApprover{Approver: a.newApprover(apiURL, token), shutdown: approvals}
 	srv := a.newGateServer(policy, approver, auditor, a.peerSource, channelID, notifyFD)
 
 	if err := a.sendAck(uc); err != nil {
@@ -151,13 +156,19 @@ func (a *app) runParent() error {
 		return fmt.Errorf("send ack: %w", err)
 	}
 
-	ctx, stop := a.notifyContext(context.Background())
+	sigCtx, stop := a.notifyContext(context.Background())
 	defer stop()
+	// The Server gets its own context, not the signal one: after a
+	// shutdown signal it keeps answering the child's traps while the
+	// child exits.
+	srvCtx, cancelSrv := context.WithCancel(context.Background())
+	defer cancelSrv()
 
 	// Run Server + child.Wait concurrently. Whichever returns first wins:
 	//   - child exits (claude quit, or died): close Server, exit with
 	//     the child's code
-	//   - signal / Server error: kill child, wait, exit
+	//   - signal: pass it on to the child, wait for it, then as above
+	//   - Server error: kill child, wait, exit
 	childExit := make(chan int, 1)
 	go func() {
 		code, _ := a.waitChild(proc)
@@ -166,26 +177,40 @@ func (a *app) runParent() error {
 
 	serverErr := make(chan error, 1)
 	go func() {
-		serverErr <- srv.Run(ctx)
+		serverErr <- srv.Run(srvCtx)
 	}()
+
+	// closeServer ends the Server once the child is gone — no more traps
+	// will arrive, but srv.Run is likely blocked deep in
+	// SECCOMP_IOCTL_NOTIF_RECV which ctx cancellation can't interrupt.
+	// Close the transport so the kernel-side filter can drop, cancel
+	// srvCtx for any post-recv work, and don't wait for serverErr:
+	// a.exitCode (os.Exit in production) tears the blocked goroutine
+	// down. Drain serverErr in a goroutine so tests with a fake exitCode
+	// don't leak it.
+	closeServer := func() {
+		_ = srv.Close()
+		cancelSrv()
+		go func() { <-serverErr }()
+		_ = uc.Close()
+	}
 
 	var exitCode int
 	var runErr error
 	select {
 	case code := <-childExit:
-		// Child is gone — no more traps will arrive, but srv.Run is
-		// likely blocked deep in SECCOMP_IOCTL_NOTIF_RECV which ctx
-		// cancellation can't interrupt. Close the transport so the
-		// kernel-side filter can drop, cancel ctx for any
-		// post-recv work, and don't wait for serverErr: a.exitCode
-		// (os.Exit in production) tears the blocked goroutine down.
-		// Drain serverErr in a goroutine so tests with a fake
-		// exitCode don't leak it.
-		_ = srv.Close()
-		stop()
-		go func() { <-serverErr }()
-		_ = uc.Close()
+		closeServer()
 		exitCode = code
+	case <-sigCtx.Done():
+		// docker stop: the signal reached only this process. Forward
+		// it so claude exits on its own and flushes its session
+		// transcript, rather than losing the unwritten entries to the
+		// SIGKILL that follows the stop timeout. Deny any pending
+		// approval first so a trap waiting on one doesn't hold it up.
+		cancelApprovals()
+		_ = proc.Signal(syscall.SIGTERM)
+		exitCode = <-childExit
+		closeServer()
 	case err := <-serverErr:
 		runErr = err
 		// Child is still running — SIGTERM it, then reap.
@@ -335,6 +360,20 @@ func defaultNotifyContext(parent context.Context) (context.Context, context.Canc
 // defaultSelfExe returns the path the re-exec should launch. Always
 // /proc/self/exe — portable across image-layer symlink games.
 func defaultSelfExe() string { return "/proc/self/exe" }
+
+// shutdownApprover cancels its approval requests, pending and new, once
+// shutdown is done, so they end as denials instead of waiting on a card.
+type shutdownApprover struct {
+	agentgate.Approver
+	shutdown context.Context
+}
+
+func (s shutdownApprover) Request(ctx context.Context, channelID string, req agentgate.ApprovalRequest) agentgate.Outcome {
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	defer context.AfterFunc(s.shutdown, cancel)()
+	return s.Approver.Request(ctx, channelID, req)
+}
 
 // defaultNewApprover builds a production HTTP-backed approver.
 func defaultNewApprover(apiURL, token string) agentgate.Approver {

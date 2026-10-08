@@ -177,6 +177,9 @@ type AgentActivityEventData struct {
 // AskUserQuestionEventData is the payload for agent.ask_user events.
 type AskUserQuestionEventData struct {
 	Questions []AskUserQuestion `json:"questions"`
+	// ToolUseID identifies the card, so a chat button click answers only
+	// the card it was on.
+	ToolUseID string `json:"tool_use_id,omitempty"`
 }
 
 // AskedChannelEntry is one entry in the parked-AskUserQuestion snapshot
@@ -192,6 +195,9 @@ type AskedChannelEntry struct {
 type ExitPlanModeEventData struct {
 	Plan         string `json:"plan"`
 	PlanFilePath string `json:"planFilePath,omitempty"`
+	// ToolUseID identifies the card, so a chat button click answers only
+	// the card it was on.
+	ToolUseID string `json:"tool_use_id,omitempty"`
 }
 
 // PlannedChannelEntry is one entry in the parked-ExitPlanMode snapshot

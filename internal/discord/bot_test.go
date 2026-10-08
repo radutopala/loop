@@ -168,6 +168,14 @@ func (m *MockSession) GuildMember(guildID string, userID string, options ...disc
 	return args.Get(0).(*discordgo.Member), args.Error(1)
 }
 
+func (m *MockSession) ChannelMessageEditComplex(data *discordgo.MessageEdit, options ...discordgo.RequestOption) (*discordgo.Message, error) {
+	args := m.Called(data, options)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*discordgo.Message), args.Error(1)
+}
+
 func (m *MockSession) ChannelMessageSendComplex(channelID string, data *discordgo.MessageSend, options ...discordgo.RequestOption) (*discordgo.Message, error) {
 	args := m.Called(channelID, data, options)
 	if args.Get(0) == nil {

@@ -1,6 +1,7 @@
 package orchestrator
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -37,6 +38,15 @@ type TaskExecutor struct {
 	activeRuns       *sync.Map // shared with Orchestrator for stop button support
 	channelLocks     *sync.Map // shared with Orchestrator: per-channel drain locks
 	tasks            *taskRegistry
+	parker           cardParker
+}
+
+// cardParker parks a channel on an ask or plan card, as a chat run does, so
+// the answer (a desktop resolve, a card click or a reply) resumes the run's
+// session. The Orchestrator implements it.
+type cardParker interface {
+	markAskedChannel(ctx context.Context, channelID, mode string, data events.AskUserQuestionEventData)
+	markPlannedChannel(ctx context.Context, channelID string, data events.ExitPlanModeEventData)
 }
 
 // NewTaskExecutor creates a new TaskExecutor.
@@ -92,6 +102,12 @@ func (e *TaskExecutor) SetActiveRuns(m *sync.Map) {
 // agents resuming the same session at once.
 func (e *TaskExecutor) SetChannelLocks(m *sync.Map) {
 	e.channelLocks = m
+}
+
+// SetCardParker sets what parks a task's thread on an ask or plan card.
+// Without one the card is still shown, but nothing waits on its answer.
+func (e *TaskExecutor) SetCardParker(p cardParker) {
+	e.parker = p
 }
 
 // threadLocks holds the drain locks one task run has taken, each at most
@@ -317,6 +333,16 @@ func (e *TaskExecutor) ExecuteTask(ctx context.Context, task *db.ScheduledTask) 
 	// we can extract the harness-assigned id (only present in the result text)
 	// before broadcasting the cumulative task list.
 	var pendingTaskCreates sync.Map // map[toolUseID]inputJSON string
+	// gateToolUses holds the toolUseIDs of AskUserQuestion / ExitPlanMode
+	// calls whose card has been sent; the run is cancelled at the matching
+	// tool_result, once the deny is in the session (see the chat run).
+	var gateToolUses sync.Map // map[toolUseID]struct{}
+	// parked is set once a card is sent: the run ends there and the thread
+	// waits on the answer.
+	var parked atomic.Bool
+	// The session the run is in, as its stream reports it: a run cancelled
+	// at a card returns no response to tell.
+	var ranSession string
 	// Reuse existing thread for recurring tasks (all platforms).
 	// Re-fetch from DB in case a concurrent execution persisted it since this task was loaded.
 	isLocal := channel != nil && channel.Platform == types.PlatformLocal
@@ -370,6 +396,10 @@ func (e *TaskExecutor) ExecuteTask(ctx context.Context, task *db.ScheduledTask) 
 		// out of the chat.
 		storeUserTaskPrompt(ctx, e.store, e.events, threadID, task.Prompt)
 	}
+	// Created before the callbacks: a card's tool_result cancels the run.
+	runCtx, runCancel := context.WithTimeout(ctx, containerTimeout)
+	defer runCancel()
+
 	tracker := newStreamTracker(func(text string, ref agent.TurnRef) {
 		targetID := threadID
 		if targetID == "" {
@@ -389,6 +419,7 @@ func (e *TaskExecutor) ExecuteTask(ctx context.Context, task *db.ScheduledTask) 
 		text = strings.TrimSpace(strings.ReplaceAll(text, "[EPHEMERAL]", ""))
 		tracker.OnTurn(text, ref)
 	}
+	req.OnSession = func(sessionID string) { ranSession = sessionID }
 	if e.events != nil {
 		req.OnToolUse = func(toolUseID, name, input string) {
 			targetID := threadID
@@ -406,16 +437,34 @@ func (e *TaskExecutor) ExecuteTask(ctx context.Context, task *db.ScheduledTask) 
 				ToolName:  name,
 				Input:     input,
 			})
+			// Show the card where the run's replies go and park there, like
+			// a chat run, so the answer resumes this session on any platform.
 			if name == "AskUserQuestion" {
 				var data events.AskUserQuestionEventData
 				if err := json.Unmarshal([]byte(input), &data); err == nil && len(data.Questions) > 0 {
-					e.events.BroadcastAskUser(targetID, data)
+					data.ToolUseID = toolUseID
+					if e.parker != nil {
+						e.parker.markAskedChannel(ctx, targetID, "", data)
+					}
+					if err := e.bot.SendAskCard(ctx, targetID, "", data); err != nil {
+						e.logger.Error("sending ask card", "error", err, "channel_id", targetID)
+					}
+					parked.Store(true)
+					gateToolUses.Store(toolUseID, struct{}{})
 				}
 			}
 			if name == "ExitPlanMode" {
 				var data events.ExitPlanModeEventData
 				if err := json.Unmarshal([]byte(input), &data); err == nil && data.Plan != "" {
-					e.events.BroadcastExitPlan(targetID, data)
+					data.ToolUseID = toolUseID
+					if e.parker != nil {
+						e.parker.markPlannedChannel(ctx, targetID, data)
+					}
+					if err := e.bot.SendPlanCard(ctx, targetID, "", data); err != nil {
+						e.logger.Error("sending plan card", "error", err, "channel_id", targetID)
+					}
+					parked.Store(true)
+					gateToolUses.Store(toolUseID, struct{}{})
 				}
 			}
 			if name == "TaskUpdate" {
@@ -454,6 +503,11 @@ func (e *TaskExecutor) ExecuteTask(ctx context.Context, task *db.ScheduledTask) 
 					e.events.BroadcastAgentTasks(targetID, events.AgentTasksEventData{Tasks: list})
 				}
 			}
+			// The gate tool's deny is now in the session: stop the run so
+			// the card is the end of the turn.
+			if _, ok := gateToolUses.LoadAndDelete(toolUseID); ok {
+				runCancel()
+			}
 			e.events.BroadcastToolResult(targetID, events.ToolResultEventData{
 				ToolUseID: toolUseID,
 				Output:    output,
@@ -484,9 +538,6 @@ func (e *TaskExecutor) ExecuteTask(ctx context.Context, task *db.ScheduledTask) 
 	// on the same channel (e.g. a scheduled task vs. a chat agent).
 	runID := randutil.HexID(8)
 
-	runCtx, runCancel := context.WithTimeout(ctx, containerTimeout)
-	defer runCancel()
-
 	// Register cancel func so the stop button can cancel this task run.
 	// Key is req.ChannelID (the thread ID for local runs with a thread, the
 	// parent channel ID otherwise). Registered before the running
@@ -510,6 +561,11 @@ func (e *TaskExecutor) ExecuteTask(ctx context.Context, task *db.ScheduledTask) 
 	}
 
 	resp, err := e.runner.Run(runCtx, req)
+	if err != nil && parked.Load() {
+		// Stopped at an ask or plan card: the thread waits on the answer,
+		// which resumes this session, so keep it like a finished run would.
+		return "", e.finishParkedRun(ctx, task, threadID, ranSession, runID)
+	}
 	if err != nil {
 		if e.events != nil {
 			errStatus := events.AgentStatusEventData{Status: "error", RunID: runID, Error: err.Error(), ThreadID: threadID, Trigger: "scheduled"}
@@ -620,6 +676,28 @@ func (e *TaskExecutor) ExecuteTask(ctx context.Context, task *db.ScheduledTask) 
 	}
 
 	return resp.Response, nil
+}
+
+// finishParkedRun wraps up a task run stopped at an ask or plan card: it
+// saves the run's session where the answer will resume it and reports the
+// run completed. The thread is left as is; an auto-delete would remove the
+// card before anyone answered it.
+func (e *TaskExecutor) finishParkedRun(ctx context.Context, task *db.ScheduledTask, threadID, sessionID, runID string) error {
+	targetID := cmp.Or(threadID, task.ChannelID)
+	e.logger.Info("task run stopped at a card", "task_id", task.ID, "channel_id", targetID)
+	if sessionID != "" {
+		if err := e.store.UpdateSessionID(ctx, targetID, sessionID); err != nil {
+			e.logger.Error("updating session data after task", "error", err, "channel_id", targetID)
+		}
+	}
+	// A run only parks from its tool callbacks, which are set with events.
+	done := events.AgentStatusEventData{Status: "completed", RunID: runID, ThreadID: threadID, Trigger: "scheduled"}
+	if targetID != task.ChannelID {
+		e.events.BroadcastAgentStatus(targetID, done)
+	}
+	e.events.BroadcastAgentStatus(task.ChannelID, done)
+	e.tasks.clear(targetID)
+	return nil
 }
 
 // getCurrentBranch returns the current branch name in the given directory.

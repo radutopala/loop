@@ -12,6 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/radutopala/loop/internal/bot"
+	"github.com/radutopala/loop/internal/events"
 )
 
 // --- PostMessage ---
@@ -119,6 +120,146 @@ func (s *BotSuite) TestCreateSimpleThread() {
 			session.AssertExpectations(s.T())
 		})
 	}
+}
+
+// --- Ask/plan cards ---
+
+func (s *BotSuite) TestSendCards() {
+	ask := events.AskUserQuestionEventData{ToolUseID: "toolu_1", Questions: []events.AskUserQuestion{{Question: "Which one?"}}}
+	plan := events.ExitPlanModeEventData{ToolUseID: "toolu_1", Plan: "# Plan"}
+	ref := &discordgo.MessageReference{MessageID: "1001"}
+	tests := []struct {
+		name       string
+		send       func() error
+		text       string
+		textErr    error
+		buttons    int
+		buttonsErr error
+		wantErr    string
+	}{
+		{
+			name:    "ask",
+			send:    func() error { return s.bot.SendAskCard(context.Background(), "ch1", "1001", ask) },
+			text:    bot.FormatAskCard(ask, "**"),
+			buttons: 1,
+		},
+		{
+			name:    "plan",
+			send:    func() error { return s.bot.SendPlanCard(context.Background(), "ch1", "1001", plan) },
+			text:    bot.FormatPlanCard(plan, "**"),
+			buttons: 2,
+		},
+		{
+			name: "card without an ID gets no buttons",
+			send: func() error {
+				return s.bot.SendPlanCard(context.Background(), "ch1", "1001", events.ExitPlanModeEventData{Plan: "# Plan"})
+			},
+			text: bot.FormatPlanCard(events.ExitPlanModeEventData{Plan: "# Plan"}, "**"),
+		},
+		{
+			name:    "text fails",
+			send:    func() error { return s.bot.SendAskCard(context.Background(), "ch1", "1001", ask) },
+			text:    bot.FormatAskCard(ask, "**"),
+			textErr: errors.New("boom"), wantErr: "discord send reply: boom",
+		},
+		{
+			name:    "buttons fail",
+			send:    func() error { return s.bot.SendPlanCard(context.Background(), "ch1", "1001", plan) },
+			text:    bot.FormatPlanCard(plan, "**"),
+			buttons: 2, buttonsErr: errors.New("boom"), wantErr: "discord send card buttons: boom",
+		},
+	}
+	for _, tc := range tests {
+		s.Run(tc.name, func() {
+			s.SetupTest()
+			s.session.On("ChannelMessageSendReply", "ch1", tc.text, ref, mock.Anything).Return(&discordgo.Message{}, tc.textErr).Once()
+			if tc.buttons > 0 {
+				s.session.On("ChannelMessageSendComplex", "ch1", mock.MatchedBy(func(data *discordgo.MessageSend) bool {
+					return data.Content == "" && len(data.Components) == 1 &&
+						len(data.Components[0].(discordgo.ActionsRow).Components) == tc.buttons
+				}), mock.Anything).Return(&discordgo.Message{ID: "btn-1"}, tc.buttonsErr).Once()
+			}
+
+			err := tc.send()
+
+			s.session.AssertExpectations(s.T())
+			if tc.wantErr != "" {
+				require.EqualError(s.T(), err, tc.wantErr)
+				require.Empty(s.T(), s.bot.openCards)
+				return
+			}
+			require.NoError(s.T(), err)
+			if tc.buttons > 0 {
+				require.Equal(s.T(), map[string]openCard{"ch1": {cardID: "toolu_1", messageID: "btn-1"}}, s.bot.openCards)
+			} else {
+				require.Empty(s.T(), s.bot.openCards)
+			}
+		})
+	}
+}
+
+func (s *BotSuite) TestCardComponents() {
+	btns := []bot.CardButton{
+		{Label: "Approve", Choice: "approve", Style: bot.CardButtonPrimary},
+		{Label: "Reject", Choice: "reject", Style: bot.CardButtonDanger},
+	}
+	for i := 1; i <= 4; i++ {
+		btns = append(btns, bot.CardButton{Label: "O", Choice: string(rune('0' + i))})
+	}
+	rows := cardComponents("ch1", "toolu_1", btns)
+	require.Len(s.T(), rows, 2)
+	first := rows[0].(discordgo.ActionsRow).Components
+	require.Len(s.T(), first, maxButtonsPerRow)
+	require.Equal(s.T(), discordgo.Button{Label: "Approve", Style: discordgo.PrimaryButton, CustomID: "card:ch1:toolu_1:approve"}, first[0])
+	require.Equal(s.T(), discordgo.Button{Label: "Reject", Style: discordgo.DangerButton, CustomID: "card:ch1:toolu_1:reject"}, first[1])
+	require.Equal(s.T(), discordgo.Button{Label: "O", Style: discordgo.SecondaryButton, CustomID: "card:ch1:toolu_1:1"}, first[2])
+	second := rows[1].(discordgo.ActionsRow).Components
+	require.Equal(s.T(), []discordgo.MessageComponent{
+		discordgo.Button{Label: "O", Style: discordgo.SecondaryButton, CustomID: "card:ch1:toolu_1:4"},
+	}, second)
+}
+
+func (s *BotSuite) TestCloseCard() {
+	tests := []struct {
+		name     string
+		cardID   string
+		editErr  error
+		wantCall bool
+		wantOpen bool
+		wantErr  string
+	}{
+		{name: "closes the open card", cardID: "toolu_1", wantCall: true},
+		{name: "other card is left open", cardID: "toolu_old", wantOpen: true},
+		{name: "edit fails", cardID: "toolu_1", wantCall: true, editErr: errors.New("boom"), wantErr: "discord close card: boom"},
+	}
+	for _, tc := range tests {
+		s.Run(tc.name, func() {
+			s.SetupTest()
+			s.bot.openCards = map[string]openCard{"ch1": {cardID: "toolu_1", messageID: "btn-1"}}
+			if tc.wantCall {
+				s.session.On("ChannelMessageEditComplex", mock.MatchedBy(func(e *discordgo.MessageEdit) bool {
+					return e.ID == "btn-1" && e.Channel == "ch1" && *e.Content == "› Approved — <@u1>" &&
+						len(*e.Components) == 0 && e.AllowedMentions != nil && len(e.AllowedMentions.Parse) == 0
+				}), mock.Anything).Return(&discordgo.Message{}, tc.editErr).Once()
+			}
+
+			err := s.bot.CloseCard(context.Background(), "ch1", tc.cardID, "Approved", "u1")
+
+			if tc.wantErr != "" {
+				require.EqualError(s.T(), err, tc.wantErr)
+			} else {
+				require.NoError(s.T(), err)
+			}
+			_, open := s.bot.openCards["ch1"]
+			require.Equal(s.T(), tc.wantOpen, open)
+			s.session.AssertExpectations(s.T())
+		})
+	}
+}
+
+func (s *BotSuite) TestCloseCardNothingOpen() {
+	require.NoError(s.T(), s.bot.CloseCard(context.Background(), "ch1", "toolu_1", "Approved", "u1"))
+	s.session.AssertNotCalled(s.T(), "ChannelMessageEditComplex", mock.Anything, mock.Anything)
 }
 
 // --- Stop button tests ---
@@ -398,11 +539,11 @@ func (s *BotSuite) TestSendStopButtonCustomID() {
 			return false
 		}
 		return btn.CustomID == "stop:my-channel" && btn.Style == discordgo.DangerButton && btn.Label == "Stop"
-	}), mock.Anything).Return(&discordgo.Message{ID: "msg-1"}, nil)
+	}), mock.Anything).Return(&discordgo.Message{ID: "1001"}, nil)
 
 	msgID, err := s.bot.SendStopButton(context.Background(), "ch1", "my-channel")
 	require.NoError(s.T(), err)
-	require.Equal(s.T(), "msg-1", msgID)
+	require.Equal(s.T(), "1001", msgID)
 	s.session.AssertExpectations(s.T())
 }
 

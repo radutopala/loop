@@ -62,6 +62,10 @@ type IncomingMessage struct {
 	// run. 0 (the common case) means eligible immediately. Set by the delayed
 	// queue_message path to schedule a follow-up turn for later.
 	NotBefore int64
+	// CardID is set when the message is a click on an ask or plan card's
+	// button. It names the card, so a click on a card that is no longer
+	// open is dropped instead of answering a newer one.
+	CardID string
 }
 
 // OutgoingMessage to the chat platform.

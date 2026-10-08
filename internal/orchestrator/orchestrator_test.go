@@ -158,6 +158,18 @@ func (m *MockBot) RemoveApproval(ctx context.Context, channelID, messageID strin
 	return m.Called(ctx, channelID, messageID).Error(0)
 }
 
+func (m *MockBot) SendAskCard(ctx context.Context, channelID, replyToMessageID string, data events.AskUserQuestionEventData) error {
+	return m.Called(ctx, channelID, replyToMessageID, data).Error(0)
+}
+
+func (m *MockBot) SendPlanCard(ctx context.Context, channelID, replyToMessageID string, data events.ExitPlanModeEventData) error {
+	return m.Called(ctx, channelID, replyToMessageID, data).Error(0)
+}
+
+func (m *MockBot) CloseCard(ctx context.Context, channelID, cardID, outcome, userID string) error {
+	return m.Called(ctx, channelID, cardID, outcome, userID).Error(0)
+}
+
 type MockEventBroadcaster struct {
 	mock.Mock
 }

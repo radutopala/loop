@@ -8,6 +8,7 @@ import (
 
 	"github.com/radutopala/loop/internal/bot"
 	"github.com/radutopala/loop/internal/db"
+	"github.com/radutopala/loop/internal/events"
 	"github.com/radutopala/loop/internal/types"
 )
 
@@ -165,6 +166,30 @@ func (r *BotRouter) RemoveApproval(ctx context.Context, channelID, messageID str
 		return err
 	}
 	return b.RemoveApproval(ctx, channelID, messageID)
+}
+
+func (r *BotRouter) SendAskCard(ctx context.Context, channelID, replyToMessageID string, data events.AskUserQuestionEventData) error {
+	b, err := r.withBot(ctx, channelID, "SendAskCard")
+	if err != nil {
+		return err
+	}
+	return b.SendAskCard(ctx, channelID, replyToMessageID, data)
+}
+
+func (r *BotRouter) SendPlanCard(ctx context.Context, channelID, replyToMessageID string, data events.ExitPlanModeEventData) error {
+	b, err := r.withBot(ctx, channelID, "SendPlanCard")
+	if err != nil {
+		return err
+	}
+	return b.SendPlanCard(ctx, channelID, replyToMessageID, data)
+}
+
+func (r *BotRouter) CloseCard(ctx context.Context, channelID, cardID, outcome, userID string) error {
+	b, err := r.withBot(ctx, channelID, "CloseCard")
+	if err != nil {
+		return err
+	}
+	return b.CloseCard(ctx, channelID, cardID, outcome, userID)
 }
 
 func (r *BotRouter) SetChannelTopic(ctx context.Context, channelID, topic string) error {

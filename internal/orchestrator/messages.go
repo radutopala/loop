@@ -83,6 +83,28 @@ func (o *Orchestrator) HandleMessage(ctx context.Context, msg *bot.IncomingMessa
 		}
 	}
 
+	// A card button click resolves only the card it was on, and only for a
+	// user who may talk to the agent.
+	if msg.CardID != "" {
+		if !allowed {
+			return
+		}
+		if o.openCardID(msg.ChannelID) != msg.CardID {
+			_ = o.bot.SendMessage(ctx, &bot.OutgoingMessage{ChannelID: msg.ChannelID, Content: cardClosedReply})
+			return
+		}
+	}
+
+	// On chat platforms a reply in a parked channel, typed or clicked,
+	// resolves its ask or plan card. A reply that only drops the card is
+	// kept as history, and anything queued behind the card runs next.
+	if triggered && allowed && isChatPlatform(msg.Platform) && !o.bot.IsBotUser(msg.AuthorID) {
+		if handled, run := o.resolveParkFromReply(ctx, msg); handled && !run {
+			triggered = false
+			defer o.ResumeChannel(ctx, msg.ChannelID)
+		}
+	}
+
 	row := &db.Message{
 		ChatID:      channel.ID,
 		ChannelID:   msg.ChannelID,
@@ -531,7 +553,8 @@ func (o *Orchestrator) executeAgentRun(ctx context.Context, msg *bot.IncomingMes
 	// Set when the agent emits AskUserQuestion mid-turn. Cancelled at the
 	// matching tool_result (see gateToolUses) so the ask card is the
 	// end-of-turn artifact; the user's answer arrives via the /ask/resolve
-	// endpoint as a priority-bumped continuation message.
+	// endpoint (or, on Slack and Discord, as their next reply) as a
+	// priority-bumped continuation message.
 	var selfInitiatedAsk atomic.Bool
 
 	// pendingTaskCreates pairs an OnToolUse for TaskCreate with the matching
@@ -571,6 +594,7 @@ func (o *Orchestrator) executeAgentRun(ctx context.Context, msg *bot.IncomingMes
 		storeBotTurn(ctx, o.store, o.events, msg.ChannelID, text, msg.MessageID, ref)
 	})
 	req.OnTurn = tracker.OnTurn
+	req.OnSession = func(sessionID string) { ranSession = sessionID }
 	if o.events != nil {
 		req.OnToolUse = func(toolUseID, name, input string) {
 			storeAgentEvent(ctx, o.store, chatID, msg.ChannelID, &db.Message{
@@ -585,31 +609,40 @@ func (o *Orchestrator) executeAgentRun(ctx context.Context, msg *bot.IncomingMes
 				ToolName:  name,
 				Input:     input,
 			})
-			if name == "AskUserQuestion" {
+			// A read-only run (learn, explain) has neither AskUserQuestion
+			// nor ExitPlanMode. A call to either fails there, so it must not
+			// park the channel on a card the agent never showed.
+			if !req.ReadOnly && name == "AskUserQuestion" {
 				var data events.AskUserQuestionEventData
 				if err := json.Unmarshal([]byte(input), &data); err == nil && len(data.Questions) > 0 {
-					// Park before broadcasting so the drain loop sees the
+					data.ToolUseID = toolUseID
+					// Park before sending the card so the drain loop sees the
 					// flag the moment the run wraps up. The cancel happens
 					// when this call's tool_result (the permission_prompt
 					// deny) lands — see OnToolResult — so the resolution is
 					// persisted in the session before teardown and the model
 					// doesn't see a dangling, retryable attempt on resume.
 					o.markAskedChannel(ctx, msg.ChannelID, msg.Mode, data)
-					o.events.BroadcastAskUser(msg.ChannelID, data)
+					if err := o.bot.SendAskCard(ctx, msg.ChannelID, msg.MessageID, data); err != nil {
+						o.logger.Error("sending ask card", "error", err, "channel_id", msg.ChannelID)
+					}
 					selfInitiatedAsk.Store(true)
 					gateToolUses.Store(toolUseID, struct{}{})
 				}
 			}
-			if name == "ExitPlanMode" {
+			if !req.ReadOnly && name == "ExitPlanMode" {
 				var data events.ExitPlanModeEventData
 				if err := json.Unmarshal([]byte(input), &data); err == nil && data.Plan != "" {
-					// Park the channel before broadcasting so the drain
+					data.ToolUseID = toolUseID
+					// Park the channel before sending the card so the drain
 					// loop sees the flag the moment the run wraps up
 					// (relevant for the user-picked-plan-pill path, where
 					// the agent halts naturally and the drain races back
 					// to claim any queued sibling messages).
 					o.markPlannedChannel(ctx, msg.ChannelID, data)
-					o.events.BroadcastExitPlan(msg.ChannelID, data)
+					if err := o.bot.SendPlanCard(ctx, msg.ChannelID, msg.MessageID, data); err != nil {
+						o.logger.Error("sending plan card", "error", err, "channel_id", msg.ChannelID)
+					}
 					// Cancelled at the matching tool_result (the
 					// permission_prompt deny), like AskUserQuestion above, so
 					// the plan card is the end-of-turn artifact and the agent
@@ -686,10 +719,12 @@ func (o *Orchestrator) executeAgentRun(ctx context.Context, msg *bot.IncomingMes
 	if err != nil {
 		if selfInitiatedPlan.Load() {
 			o.logger.Info("run stopped for self-initiated plan mode", "channel_id", msg.ChannelID)
+			o.keepParkedSession(ctx, msg.ChannelID, ranSession)
 			return nil, "", runID, &runFinishStatus{status: "completed", sessionID: ranSession}, err
 		}
 		if selfInitiatedAsk.Load() {
 			o.logger.Info("run stopped for AskUserQuestion", "channel_id", msg.ChannelID)
+			o.keepParkedSession(ctx, msg.ChannelID, ranSession)
 			return nil, "", runID, &runFinishStatus{status: "completed", sessionID: ranSession}, err
 		}
 		if runCtx.Err() == context.Canceled {
@@ -722,6 +757,19 @@ func (o *Orchestrator) executeAgentRun(ctx context.Context, msg *bot.IncomingMes
 	}
 
 	return resp, tracker.lastText, runID, nil, nil
+}
+
+// keepParkedSession saves the session of a run stopped at an ask or plan
+// card, which never reaches deliverResponse. The answer must resume the
+// session that asked: a forked thread's run writes to a new session, and
+// without this the next run forks the source again and loses the question.
+func (o *Orchestrator) keepParkedSession(ctx context.Context, channelID, sessionID string) {
+	if sessionID == "" {
+		return
+	}
+	if err := o.store.UpdateSessionID(ctx, channelID, sessionID); err != nil {
+		o.logger.Error("updating session data", "error", err, "channel_id", channelID)
+	}
 }
 
 // postRunError tells the chat why a run failed. It is stored as well as sent:

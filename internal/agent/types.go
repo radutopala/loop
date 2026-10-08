@@ -79,6 +79,11 @@ type AgentRequest struct {
 	// stream-json line. output is already truncated by the runner; isError
 	// reflects the upstream is_error flag.
 	OnToolResult func(toolUseID, output string, isError bool) `json:"-"`
+	// OnSession is called with the session the run writes to, as soon as an
+	// assistant event reports it and again whenever it changes. A forked run
+	// writes to a new session before it has said anything, and a run stopped
+	// at an ask or plan card may never send a text turn or a final result.
+	OnSession func(sessionID string) `json:"-"`
 }
 
 // TurnRef locates an assistant text event in Claude Code's session

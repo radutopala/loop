@@ -653,12 +653,12 @@ func (s *MainSuite) TestServeDockerClientCloserCalled() {
 }
 
 // approverMockBot wraps mockBot and advertises the SetApprovalResolver and
-// SetGateBroadcaster shapes that serve() type-asserts when cfg.Gates.Agentgate.Enabled
-// is true. Counts non-nil calls so tests can assert wiring happened.
+// SetBroadcaster shapes that serve() type-asserts. Counts non-nil calls so
+// tests can assert wiring happened.
 type approverMockBot struct {
 	*mockBot
 	approvalResolverSet atomic.Int32
-	gateBroadcasterSet  atomic.Int32
+	broadcasterSet      atomic.Int32
 }
 
 func (a *approverMockBot) SetApprovalResolver(r bot.ApprovalResolver) {
@@ -667,40 +667,55 @@ func (a *approverMockBot) SetApprovalResolver(r bot.ApprovalResolver) {
 	}
 }
 
-func (a *approverMockBot) SetGateBroadcaster(g local.GateBroadcaster) {
+func (a *approverMockBot) SetBroadcaster(g local.Broadcaster) {
 	if g != nil {
-		a.gateBroadcasterSet.Add(1)
+		a.broadcasterSet.Add(1)
 	}
 }
 
-func (s *MainSuite) TestServeGateEnabledWiresApprovalResolverAndBroadcaster() {
-	m := s.setupServeMocks()
-	m.cfg.Gates.Agentgate.Enabled = true
-	m.setupHappyBot()
-
-	approver := &approverMockBot{mockBot: m.bot}
-	s.app.newDiscordBot = func(_, _, _ string, _ *slog.Logger) (orchestrator.Bot, error) { return approver, nil }
-	s.app.newLocalBot = func(_ db.Store, _ *slog.Logger) orchestrator.Bot { return approver }
-
-	errCh := make(chan error, 1)
-	go func() { errCh <- s.app.serve() }()
-
-	s.waitForServeReady(errCh)
-	p, err := os.FindProcess(os.Getpid())
-	require.NoError(s.T(), err)
-	require.NoError(s.T(), p.Signal(syscall.SIGINT))
-
-	select {
-	case err := <-errCh:
-		require.NoError(s.T(), err)
-	case <-time.After(5 * time.Second):
-		s.T().Fatal("serve() did not return in time")
+func (s *MainSuite) TestServeWiresApprovalResolverAndBroadcaster() {
+	tests := []struct {
+		name         string
+		gate         bool
+		wantResolver bool
+	}{
+		// The local bot renders ask/plan cards through the hub, so its
+		// broadcaster is wired whether or not a gate is enabled.
+		{name: "gate enabled", gate: true, wantResolver: true},
+		{name: "gate disabled", gate: false, wantResolver: false},
 	}
+	for _, tc := range tests {
+		s.Run(tc.name, func() {
+			s.SetupTest()
+			m := s.setupServeMocks()
+			m.cfg.Gates.Agentgate.Enabled = tc.gate
+			m.setupHappyBot()
 
-	require.GreaterOrEqual(s.T(), int(approver.approvalResolverSet.Load()), 1,
-		"SetApprovalResolver should be called on bots implementing it when gate is enabled")
-	require.GreaterOrEqual(s.T(), int(approver.gateBroadcasterSet.Load()), 1,
-		"SetGateBroadcaster should be called on localBot when gate is enabled")
+			approver := &approverMockBot{mockBot: m.bot}
+			s.app.newDiscordBot = func(_, _, _ string, _ *slog.Logger) (orchestrator.Bot, error) { return approver, nil }
+			s.app.newLocalBot = func(_ db.Store, _ *slog.Logger) orchestrator.Bot { return approver }
+
+			errCh := make(chan error, 1)
+			go func() { errCh <- s.app.serve() }()
+
+			s.waitForServeReady(errCh)
+			p, err := os.FindProcess(os.Getpid())
+			require.NoError(s.T(), err)
+			require.NoError(s.T(), p.Signal(syscall.SIGINT))
+
+			select {
+			case err := <-errCh:
+				require.NoError(s.T(), err)
+			case <-time.After(5 * time.Second):
+				s.T().Fatal("serve() did not return in time")
+			}
+
+			require.Equal(s.T(), tc.wantResolver, approver.approvalResolverSet.Load() >= 1,
+				"SetApprovalResolver is called only when a gate is enabled")
+			require.GreaterOrEqual(s.T(), int(approver.broadcasterSet.Load()), 1,
+				"SetBroadcaster should be called on localBot")
+		})
+	}
 }
 
 // TestServePolicyDirMkdirError covers the failure branch when serve() cannot
@@ -723,7 +738,7 @@ func (s *MainSuite) TestServePolicyDirMkdirError() {
 }
 
 func (s *MainSuite) TestServeGateEnabledBotWithoutSettersIsIgnored() {
-	// Bots that don't implement SetApprovalResolver / SetGateBroadcaster
+	// Bots that don't implement SetApprovalResolver / SetBroadcaster
 	// (plain mockBot) must be skipped without panic when gate is enabled.
 	m := s.setupServeMocks()
 	m.cfg.Gates.Agentgate.Enabled = true

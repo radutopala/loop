@@ -14,6 +14,7 @@ import (
 	"github.com/slack-go/slack/socketmode"
 
 	"github.com/radutopala/loop/internal/bot"
+	"github.com/radutopala/loop/internal/events"
 	"github.com/radutopala/loop/internal/types"
 )
 
@@ -70,6 +71,15 @@ type SlackBot struct {
 	approvalResolver      bot.ApprovalResolver
 	// lastMessageRef tracks the latest message per channel for emoji reactions.
 	lastMessageRef sync.Map // map[string]goslack.ItemRef
+	// openCards holds each channel's open ask or plan card buttons message,
+	// so CloseCard can replace the buttons once the card is resolved.
+	openCards map[string]openCard
+}
+
+// openCard is the buttons message of a channel's open card.
+type openCard struct {
+	cardID string
+	ts     string
 }
 
 // SetApprovalResolver wires the agentgate approval resolver. Clicks on
@@ -279,7 +289,98 @@ func (b *SlackBot) SendApproval(_ context.Context, channelID string, prompt bot.
 	return ts, nil
 }
 
-// RemoveApproval deletes a previously-sent approval prompt by message ts.
+// SendAskCard posts an AskUserQuestion card as a text message followed by
+// its buttons. A click or the user's next reply in the channel answers it.
+func (b *SlackBot) SendAskCard(ctx context.Context, channelID, _ string, data events.AskUserQuestionEventData) error {
+	return b.sendCard(ctx, channelID, data.ToolUseID, bot.FormatAskCard(data, "*"), bot.AskCardButtons(data))
+}
+
+// SendPlanCard posts an ExitPlanMode card as a text message followed by its
+// buttons. A click or the user's next reply in the channel approves, rejects,
+// or revises the plan.
+func (b *SlackBot) SendPlanCard(ctx context.Context, channelID, _ string, data events.ExitPlanModeEventData) error {
+	return b.sendCard(ctx, channelID, data.ToolUseID, bot.FormatPlanCard(data, "*"), bot.PlanCardButtons())
+}
+
+// sendCard posts a card's text, then its buttons when the card has an ID to
+// match clicks against.
+func (b *SlackBot) sendCard(ctx context.Context, channelID, cardID, text string, btns []bot.CardButton) error {
+	if err := b.SendMessage(ctx, &bot.OutgoingMessage{ChannelID: channelID, Content: text}); err != nil {
+		return err
+	}
+	if cardID == "" {
+		return nil
+	}
+	chID, threadTS := parseCompositeID(channelID)
+	opts := []goslack.MsgOption{goslack.MsgOptionBlocks(cardActionBlock(channelID, cardID, btns))}
+	if threadTS != "" {
+		opts = append(opts, goslack.MsgOptionTS(threadTS))
+	}
+	_, ts, err := b.session.PostMessage(chID, opts...)
+	if err != nil {
+		return fmt.Errorf("slack send card buttons: %w", err)
+	}
+	b.mu.Lock()
+	if b.openCards == nil {
+		b.openCards = map[string]openCard{}
+	}
+	b.openCards[channelID] = openCard{cardID: cardID, ts: ts}
+	b.mu.Unlock()
+	return nil
+}
+
+// cardActionBlock builds a card's buttons, whose action IDs carry the
+// channel, card and choice (see bot.CardActionID).
+func cardActionBlock(channelID, cardID string, btns []bot.CardButton) *goslack.ActionBlock {
+	elems := make([]goslack.BlockElement, 0, len(btns))
+	for _, btn := range btns {
+		el := goslack.NewButtonBlockElement(
+			bot.CardActionID(channelID, cardID, btn.Choice), btn.Choice,
+			goslack.NewTextBlockObject("plain_text", btn.Label, false, false),
+		)
+		switch btn.Style {
+		case bot.CardButtonPrimary:
+			el.Style = goslack.StylePrimary
+		case bot.CardButtonDanger:
+			el.Style = goslack.StyleDanger
+		}
+		elems = append(elems, el)
+	}
+	return goslack.NewActionBlock("card_actions:"+cardID, elems...)
+}
+
+// cardClosedBlock replaces a resolved card's buttons.
+func cardClosedBlock(outcome, userID string) *goslack.ContextBlock {
+	return goslack.NewContextBlock("card_closed",
+		goslack.NewTextBlockObject("mrkdwn", bot.CardClosedText(escapeMrkdwn(outcome), userID), false, false))
+}
+
+// CloseCard replaces the buttons of the channel's open card with the
+// outcome. A card that is not open here (already closed, or sent before a
+// restart) is left as is; clicks on it are refused by the orchestrator.
+func (b *SlackBot) CloseCard(_ context.Context, channelID, cardID, outcome, userID string) error {
+	b.mu.Lock()
+	card, ok := b.openCards[channelID]
+	ok = ok && card.cardID == cardID
+	if ok {
+		delete(b.openCards, channelID)
+	}
+	b.mu.Unlock()
+	if !ok {
+		return nil
+	}
+	chID, _ := parseCompositeID(channelID)
+	// Slack keeps a message's blocks when an update omits them, so the
+	// buttons are replaced with a context block rather than dropped.
+	if _, _, _, err := b.session.UpdateMessage(chID, card.ts,
+		goslack.MsgOptionText(bot.CardClosedText(outcome, userID), false),
+		goslack.MsgOptionBlocks(cardClosedBlock(outcome, userID)),
+	); err != nil {
+		return fmt.Errorf("slack close card: %w", err)
+	}
+	return nil
+}
+
 func (b *SlackBot) RemoveApproval(_ context.Context, channelID, messageID string) error {
 	chID, _ := parseCompositeID(channelID)
 	if _, _, err := b.session.DeleteMessage(chID, messageID); err != nil {
@@ -771,6 +872,21 @@ func (b *SlackBot) handleInteractive(evt socketmode.Event) {
 	for _, action := range callback.ActionCallback.BlockActions {
 		if strings.HasPrefix(action.ActionID, "gate:") {
 			b.handleGateAction(action.ActionID, callback.User.ID)
+			continue
+		}
+		if channelID, cardID, choice, ok := bot.ParseCardActionID(action.ActionID); ok {
+			// A click is the reply it stands for; the orchestrator checks
+			// the card is still open and closes it.
+			b.dispatchMessage(&bot.IncomingMessage{
+				ChannelID:    channelID,
+				AuthorID:     callback.User.ID,
+				AuthorName:   callback.User.ID,
+				Content:      choice,
+				Platform:     types.PlatformSlack,
+				IsBotMention: true,
+				Timestamp:    time.Now(),
+				CardID:       cardID,
+			})
 			continue
 		}
 		if !strings.HasPrefix(action.ActionID, "stop:") {
