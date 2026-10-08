@@ -54,6 +54,31 @@ Feature: Recent sessions in the sidebar
     When I click on "[data-testid='sidebar-recent'] [data-testid='sidebar-session-row']"
     Then I wait for "textarea" to be visible
 
+  Scenario: A running review keeps a session in Recent with a rev… pill
+    Given I set up a test channel via API for git repo "bdd-sessions-review"
+    And I open the app in a browser
+    And I wait for text "bdd-sessions-review" to appear
+    Then the element "[data-testid='sidebar-tabs']" should not exist
+
+    # A review starts: the session becomes recent, running, with the pill.
+    When I inject a "review.status" event for the channel with data:
+      """
+      {"status": "reviewing"}
+      """
+    Then I wait for "[data-testid='sidebar-tab-recent']" to be visible
+    When I click on "[data-testid='sidebar-tab-recent']"
+    Then I wait for "[data-testid='sidebar-recent']" to be visible
+    And the element "[data-testid='sidebar-recent'] [data-testid='sidebar-session-row']" should contain text "bdd-sessions-review"
+    And the element "[data-testid='sidebar-recent'] [title='Review in progress']" should be visible
+
+    # The review is done: the session stays in Recent, without the pill.
+    When I inject a "review.status" event for the channel with data:
+      """
+      {"status": "ready"}
+      """
+    Then I wait up to "5s" for "[data-testid='sidebar-recent'] [title='Review in progress']" to disappear
+    And the element "[data-testid='sidebar-recent']" should contain text "bdd-sessions-review"
+
   Scenario: The tree's lines scroll behind the Recent/Tree tabs
     Given I set up a test channel via API for git repo "bdd-sessions-lines"
     And I create a thread "lines-thread" under the current channel via API
