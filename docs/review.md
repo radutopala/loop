@@ -62,7 +62,8 @@ per-global / per-project / per-worktree the same way as `github.gh_user`.
    than its cause), which the ingest-time pass (see
    [Required output format](#required-output-format)) doesn't catch. The
    dedup pass shows every comment in the session to a read-only model run
-   (no Bash, no edits). The comments the run just added are marked new,
+   (no Bash, no edits), under a run timeout of its own, so a long review
+   doesn't leave it too little time. The comments the run just added are marked new,
    and the model checks each of them against every other comment (GitHub
    ones included) instead of regrouping the whole session, which an
    earlier pass already did. A run that added no comment skips the pass. Each body is cut at 600 characters in the prompt;
@@ -77,7 +78,10 @@ per-global / per-project / per-worktree the same way as `github.gh_user`.
    The note is only added when the kept comment is an unpushed agent
    finding; comments on GitHub are never edited. The pass only ever
    deletes agent findings: comments read from GitHub can be kept, but are
-   never dropped. Findings about the same code path that still need
+   never dropped. The pass after a review run, which nobody asked for,
+   treats pushed agent findings the same way, since dropping one would
+   delete it and its replies from the pull request; a pass run on demand
+   may fold them. Findings about the same code path that still need
    separate fixes are reported as related, and nothing is deleted for
    them. A comment that bundles several issues duplicates a comment that
    reports one of them: the model folds the single-issue comment into the
@@ -88,7 +92,7 @@ per-global / per-project / per-worktree the same way as `github.gh_user`.
    unpushed one that sits a few lines off (on a blank line, a closing
    brace or a neighbouring statement) to the statement it is about, within
    20 lines. It then checks each agent finding it keeps (only the new
-   ones, after a review run) against the code and records a verdict on
+   ones, after a review run, even when the run added just one) against the code and records a verdict on
    it: `real`, `false_positive` (the code doesn't do what the comment
    says, or the behaviour is intended, handled elsewhere or what the PR
    sets out to do) or `already_fixed`, with a one-sentence reason citing

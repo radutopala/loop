@@ -262,12 +262,8 @@ func (s *reviewService) pushOneComment(ctx context.Context, channelID string, se
 func (s *reviewService) runReviewAsync(runCtx context.Context, before map[string]bool, req review.RunRequest) {
 	channelID, worktreePath, parentDirPath := req.ChannelID, req.DirPath, req.ParentDirPath
 	defer s.unregisterReviewRun(channelID)
-	ctx := runCtx
-	if s.runTimeout > 0 {
-		var cancel context.CancelFunc
-		ctx, cancel = context.WithTimeout(ctx, s.runTimeout)
-		defer cancel()
-	}
+	ctx, cancel := s.withRunTimeout(runCtx)
+	defer cancel()
 	// Findings stream in as the agent reports them, so the panel fills up
 	// during the run rather than all at once at the end. ingestComment is
 	// safe to call concurrently and dedups by stable comment id, so a
@@ -303,12 +299,24 @@ func (s *reviewService) runReviewAsync(runCtx context.Context, before map[string
 		s.broadcastReviewStatus(channelID, review.StatusError, msg)
 		return
 	}
-	s.dedupAfterRun(ctx, before, req)
+	// The pass gets a budget of its own: on the review's leftovers, a long
+	// run would leave it too little to finish, and it would fail quietly.
+	dedupCtx, cancelDedup := s.withRunTimeout(runCtx)
+	defer cancelDedup()
+	s.dedupAfterRun(dedupCtx, before, req)
 	if runCtx.Err() != nil {
 		return
 	}
 	s.sessions.UpdateStatus(channelID, review.StatusReady, "")
 	s.broadcastReviewStatus(channelID, review.StatusReady, "")
+}
+
+// withRunTimeout bounds ctx by the configured run timeout, when there is one.
+func (s *reviewService) withRunTimeout(ctx context.Context) (context.Context, context.CancelFunc) {
+	if s.runTimeout <= 0 {
+		return ctx, func() {}
+	}
+	return context.WithTimeout(ctx, s.runTimeout)
 }
 
 // dedupAfterRun runs the dedup pass over the comments a review run added

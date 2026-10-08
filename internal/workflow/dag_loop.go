@@ -13,6 +13,7 @@ import (
 	"github.com/radutopala/loop/internal/config"
 	"github.com/radutopala/loop/internal/db"
 	"github.com/radutopala/loop/internal/events"
+	"github.com/radutopala/loop/internal/review"
 )
 
 // reviewBodyNodeID is the well-known child ID inside a loop body whose
@@ -342,13 +343,6 @@ func (e *defaultEngine) persistBodyChildEnd(run *db.WorkflowRun, child *config.N
 	}
 }
 
-// Verdicts the dedup pass gives a comment it finds isn't worth fixing; they
-// match the review package's VerdictFalsePositive and VerdictAlreadyFixed.
-const (
-	verdictFalsePositive = "false_positive"
-	verdictAlreadyFixed  = "already_fixed"
-)
-
 // reviewEnvelope is the JSON shape printed by `loop review run --wait` and
 // consumed by parseReviewOutput. Defined as a named type (rather than
 // inlined) so extractReviewJSON can validate the shape — specifically the
@@ -430,7 +424,7 @@ func parseReviewOutput(stdout string, runCtx *RunContext) {
 	// fixed in the checkout, isn't a finding: the fix step doesn't get it,
 	// and a round that leaves only those has nothing to fix.
 	parsed.Comments = slices.DeleteFunc(parsed.Comments, func(c ReviewComment) bool {
-		return c.Verdict == verdictFalsePositive || c.Verdict == verdictAlreadyFixed
+		return c.Verdict == review.VerdictFalsePositive || c.Verdict == review.VerdictAlreadyFixed
 	})
 	runCtx.Review.Comments = parsed.Comments
 	runCtx.Review.NoComments = parsed.NoComments || len(parsed.Comments) == 0

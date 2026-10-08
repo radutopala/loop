@@ -1029,11 +1029,8 @@ func (s *reviewService) handleReviewDedup(w http.ResponseWriter, r *http.Request
 		s.sessions.UpdateStatus(channelID, review.StatusReady, "")
 		s.broadcastReviewStatus(channelID, review.StatusReady, "")
 	}()
-	if s.runTimeout > 0 {
-		var cancelTimeout context.CancelFunc
-		ctx, cancelTimeout = context.WithTimeout(ctx, s.runTimeout)
-		defer cancelTimeout()
-	}
+	ctx, cancelTimeout := s.withRunTimeout(ctx)
+	defer cancelTimeout()
 	res, err := s.runDedupPass(ctx, channelID, parentDirPath, sess, cands, nil)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -1075,7 +1072,7 @@ func (s *reviewService) runDedupPass(ctx context.Context, channelID, parentDirPa
 	if err != nil {
 		return res, fmt.Errorf("dedup run: %w", err)
 	}
-	plan, err := review.ParseDedupReply(resp.Response, cands)
+	plan, err := review.ParseDedupReply(resp.Response, cands, fresh)
 	if err != nil {
 		return res, err
 	}
@@ -1183,9 +1180,11 @@ func (f *fileReads) has(rel string) bool {
 const defaultReviewPrompt = `/code-review`
 
 // reviewPromptAt returns defaultReviewPrompt with effort as the skill's
-// level argument, or bare when no effort is set.
+// level argument, or bare when no effort is set. A config's claude_effort
+// isn't validated where it's read, so a value the CLI doesn't know is left
+// off too rather than handed to the skill as its argument.
 func reviewPromptAt(effort string) string {
-	if effort == "" {
+	if _, ok := validEfforts[effort]; !ok || effort == "" {
 		return defaultReviewPrompt
 	}
 	return defaultReviewPrompt + " " + effort

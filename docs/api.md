@@ -2410,8 +2410,9 @@ review agent is not wired.
 ### `POST /api/channels/{id}/review/dedup`
 
 Fold duplicate findings. Every comment in the session, across files, goes
-to a read-only agent run (no Bash, no edits, strict MCP config) when there
-are at least two and one is the agent's. The model clusters them by root
+to a read-only agent run (no Bash, no edits, strict MCP config) when at
+least one is the agent's, even a lone one, since it still needs a verdict.
+The model clusters them by root
 cause, including a cause and its symptom (even when the symptom has a
 narrower fix of its own), or the same issue anchored in two files, and picks the most severe and specific one to keep. The daemon
 deletes the others the same way `DELETE /review/comments/{cid}` does, which

@@ -37,7 +37,7 @@ func (s *DedupSuite) TestDedupCandidates() {
 		want     []string
 	}{
 		{name: "empty", comments: nil, want: []string{}},
-		{name: "a single comment", comments: []*Comment{agent("a", "x.go", 1)}, want: []string{}},
+		{name: "a single agent comment still needs a verdict", comments: []*Comment{agent("a", "x.go", 1)}, want: []string{"a"}},
 		{
 			name:     "only github comments",
 			comments: []*Comment{gh("g1", "x.go", 1), gh("g2", "y.go", 5)},
@@ -109,9 +109,11 @@ func (s *DedupSuite) TestBuildDedupPromptMarksFresh() {
 		{ID: "old", Path: "x.go", Line: 3, Source: "agent", Body: "old finding"},
 		{ID: "new", Path: "x.go", Line: 5, Source: "agent", Body: "new finding"},
 		{ID: "gh-1", Path: "x.go", Line: 9, Source: "github", Body: "pushed"},
+		{ID: "ours", Path: "x.go", Line: 12, Source: "agent", Body: "ours, pushed", Pushed: true, GitHubID: 4},
 	}
-	got := BuildDedupPrompt(cands, DedupFresh(cands, map[string]bool{"old": true}))
-	require.Contains(s.T(), got, "\n## x.go\n- id=old [agent] L3 (RIGHT): old finding\n- id=new [agent, new] L5 (RIGHT): new finding\n- id=gh-1 [github] L9 (RIGHT): pushed\n")
+	got := BuildDedupPrompt(cands, DedupFresh(cands, map[string]bool{"old": true, "ours": true}))
+	// A pushed agent comment is shown as [github]: an unasked-for pass keeps it off the PR's delete list.
+	require.Contains(s.T(), got, "\n## x.go\n- id=old [agent] L3 (RIGHT): old finding\n- id=new [agent, new] L5 (RIGHT): new finding\n- id=gh-1 [github] L9 (RIGHT): pushed\n- id=ours [github] L12 (RIGHT): ours, pushed\n")
 	require.Contains(s.T(), got, "Check every new comment against every other comment, the [github] ones included")
 	require.Contains(s.T(), got, "You need not regroup the older comments among themselves")
 	require.Contains(s.T(), got, "Only the new comments need their lines checked and a verdict.")
@@ -263,7 +265,7 @@ func (s *DedupSuite) TestParseDedupReply() {
 	}
 	for _, tc := range cases {
 		s.Run(tc.name, func() {
-			got, err := ParseDedupReply(tc.reply, cands)
+			got, err := ParseDedupReply(tc.reply, cands, nil)
 			if tc.wantErr != "" {
 				require.ErrorContains(s.T(), err, tc.wantErr)
 				return
@@ -344,7 +346,7 @@ func (s *DedupSuite) TestParseDedupReplyBundledKeeper() {
 	}
 	for _, tc := range cases {
 		s.Run(tc.name, func() {
-			got, err := ParseDedupReply(tc.reply, cands)
+			got, err := ParseDedupReply(tc.reply, cands, nil)
 			require.NoError(s.T(), err)
 			require.Equal(s.T(), tc.want, got)
 		})
@@ -360,7 +362,7 @@ func (s *DedupSuite) TestParseDedupReplyRootCauseAbsorbsSymptom() {
 		{ID: "symptom", Path: "sync.go", Line: 627, Source: "agent", Body: "An identical re-upload skips the download, so the modification time is never refreshed."},
 	}
 	require.Contains(s.T(), BuildDedupPrompt(cands, nil), "even when a narrower fix for it alone exists")
-	got, err := ParseDedupReply(`{"clusters":[{"keep":"cause","drop":["symptom"],"reason":"staleness keyed on file mtime"}],"related":[{"ids":["cause","symptom"]}]}`, cands)
+	got, err := ParseDedupReply(`{"clusters":[{"keep":"cause","drop":["symptom"],"reason":"staleness keyed on file mtime"}],"related":[{"ids":["cause","symptom"]}]}`, cands, nil)
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), []DedupCluster{{Keep: "cause", Drop: []string{"symptom"}, Reason: "staleness keyed on file mtime"}}, got.Clusters)
 	// Once the symptom is folded in, the related group is the keeper alone.
@@ -369,4 +371,30 @@ func (s *DedupSuite) TestParseDedupReplyRootCauseAbsorbsSymptom() {
 
 func (s *DedupSuite) TestWithDedupNote() {
 	require.Equal(s.T(), "Nil map write.\n\nAlso flagged: panics on reload too.", WithDedupNote("Nil map write.", "panics on reload too."))
+}
+
+// A pass after a review run never drops a pushed agent comment, which would
+// delete it from the pull request; a pass someone asked for may.
+func (s *DedupSuite) TestParseDedupReplyPushedOnlyDroppedWhenAsked() {
+	cands := []*Comment{
+		{ID: "new", Path: "x.go", Line: 5, Source: "agent"},
+		{ID: "pushed", Path: "x.go", Line: 6, Source: "agent", Pushed: true, GitHubID: 4},
+		{ID: "other", Path: "y.go", Line: 1, Source: "agent"},
+	}
+	reply := `{"clusters":[{"keep":"new","drop":["pushed","other"]}]}`
+	tests := []struct {
+		name  string
+		fresh map[string]bool
+		want  []string
+	}{
+		{name: "after a run", fresh: map[string]bool{"new": true}, want: []string{"other"}},
+		{name: "asked for", want: []string{"pushed", "other"}},
+	}
+	for _, tc := range tests {
+		s.Run(tc.name, func() {
+			got, err := ParseDedupReply(reply, cands, tc.fresh)
+			require.NoError(s.T(), err)
+			require.Equal(s.T(), []DedupCluster{{Keep: "new", Drop: tc.want}}, got.Clusters)
+		})
+	}
 }
