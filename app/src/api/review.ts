@@ -12,12 +12,20 @@ export interface ReviewPR {
 
 export type ReviewStatus = "idle" | "loading" | "ready" | "reviewing" | "error";
 
+export type ReviewVerdict = "real" | "false_positive" | "already_fixed";
+
 export interface ReviewComment {
   id: string;
   path: string;
   line: number;
   side: string;
   body: string;
+  /** Finding type slug the review gave, e.g. "correctness". */
+  category?: string;
+  /** The dedup pass's check of an agent comment against the code. */
+  verdict?: ReviewVerdict;
+  /** One sentence on what in the code decided the verdict. */
+  verdict_reason?: string;
   pushed: boolean;
   pushed_at?: string;
   source?: "agent" | "github";

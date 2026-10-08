@@ -255,7 +255,11 @@ func (s *reviewService) pushOneComment(ctx context.Context, channelID string, se
 // message instead of staying at status=reviewing forever. Without this
 // gate, a hung container would leak the goroutine and any CLI/FE poller
 // would keep hitting status=reviewing until its own deadline fired.
-func (s *reviewService) runReviewAsync(runCtx context.Context, req review.RunRequest) {
+//
+// before holds the ids of the comments the run started from: once the run
+// succeeds, dedupAfterRun checks the ones it added against the rest before
+// the session is ready again.
+func (s *reviewService) runReviewAsync(runCtx context.Context, before map[string]bool, req review.RunRequest) {
 	channelID, worktreePath, parentDirPath := req.ChannelID, req.DirPath, req.ParentDirPath
 	defer s.unregisterReviewRun(channelID)
 	ctx := runCtx
@@ -299,8 +303,46 @@ func (s *reviewService) runReviewAsync(runCtx context.Context, req review.RunReq
 		s.broadcastReviewStatus(channelID, review.StatusError, msg)
 		return
 	}
+	s.dedupAfterRun(ctx, before, req)
+	if runCtx.Err() != nil {
+		return
+	}
 	s.sessions.UpdateStatus(channelID, review.StatusReady, "")
 	s.broadcastReviewStatus(channelID, review.StatusReady, "")
+}
+
+// dedupAfterRun runs the dedup pass over the comments a review run added
+// (review.DedupFresh against before), checking each against every other
+// comment, the PR's GitHub ones included. Listing the existing comments in
+// the run's prompt doesn't stop a model from reporting them again in other
+// words, so every run is followed by this pass. The comments it deletes are
+// recorded as the session's Superseded, mapped to the comment each was
+// folded into. A run that added nothing to fold skips it, and a failed pass
+// is only logged: the run's findings are kept as reported.
+func (s *reviewService) dedupAfterRun(ctx context.Context, before map[string]bool, req review.RunRequest) {
+	sess := s.sessions.Get(req.ChannelID)
+	if sess == nil {
+		return
+	}
+	cands := review.DedupCandidates(sess.Comments)
+	fresh := review.DedupFresh(cands, before)
+	if len(fresh) == 0 {
+		return
+	}
+	res, err := s.runDedupPass(ctx, req.ChannelID, req.ParentDirPath, sess, cands, fresh)
+	if err != nil {
+		s.deps.logger.Warn("review: dedup pass after the run failed", "channel_id", req.ChannelID, "error", err)
+		return
+	}
+	superseded := map[string]string{}
+	for _, cl := range res.Clusters {
+		for _, id := range cl.Removed {
+			superseded[id] = cl.Kept
+		}
+	}
+	if len(superseded) > 0 {
+		s.sessions.SetSuperseded(req.ChannelID, superseded)
+	}
 }
 
 // transcriptDir returns the directory Claude wrote this run's transcript
@@ -327,13 +369,7 @@ func (s *reviewService) ingestComment(channelID, worktreePath, parentDirPath str
 		return false
 	}
 	if hub := s.deps.eventsHub; hub != nil {
-		hub.BroadcastReviewComment(channelID, events.ReviewCommentEventData{
-			ID:   c.ID,
-			Path: c.Path,
-			Line: c.Line,
-			Side: c.Side,
-			Body: c.Body,
-		})
+		hub.BroadcastReviewComment(channelID, reviewCommentEvent(c))
 	}
 	s.maybeRediffForComment(channelID, worktreePath, parentDirPath, c)
 	return true
@@ -347,15 +383,37 @@ func (s *reviewService) editComment(channelID, commentID string, edit func(*revi
 		return nil
 	}
 	if hub := s.deps.eventsHub; hub != nil {
-		hub.BroadcastReviewCommentUpdated(channelID, events.ReviewCommentEventData{
-			ID:   c.ID,
-			Path: c.Path,
-			Line: c.Line,
-			Side: c.Side,
-			Body: c.Body,
-		})
+		hub.BroadcastReviewCommentUpdated(channelID, reviewCommentEvent(c))
 	}
 	return c
+}
+
+// setVerdict records the dedup pass's verdict on an agent comment and
+// broadcasts the result. nil when the comment is gone or a GitHub one.
+func (s *reviewService) setVerdict(channelID string, v review.DedupVerdict) *review.Comment {
+	c := s.sessions.SetVerdict(channelID, v.ID, v.Verdict, v.Reason)
+	if c == nil {
+		return nil
+	}
+	if hub := s.deps.eventsHub; hub != nil {
+		hub.BroadcastReviewCommentUpdated(channelID, reviewCommentEvent(c))
+	}
+	return c
+}
+
+// reviewCommentEvent is the panel's view of c in a review.comment or
+// review.comment_updated event.
+func reviewCommentEvent(c *review.Comment) events.ReviewCommentEventData {
+	return events.ReviewCommentEventData{
+		ID:            c.ID,
+		Path:          c.Path,
+		Line:          c.Line,
+		Side:          c.Side,
+		Body:          c.Body,
+		Category:      c.Category,
+		Verdict:       c.Verdict,
+		VerdictReason: c.VerdictReason,
+	}
 }
 
 // maybeRediffForComment re-runs git diff with widened unified context if

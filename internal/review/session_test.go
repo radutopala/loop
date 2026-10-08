@@ -211,6 +211,16 @@ func (s *SessionSuite) TestUpdateStatus() {
 	require.Equal(s.T(), "boom", got.Error)
 }
 
+func (s *SessionSuite) TestSetSuperseded() {
+	store := NewStore()
+	require.False(s.T(), store.SetSuperseded("nope", map[string]string{"b": "a"}))
+	store.Put("ch1", &Session{})
+	require.True(s.T(), store.SetSuperseded("ch1", map[string]string{"b": "a"}))
+	require.Equal(s.T(), map[string]string{"b": "a"}, store.Get("ch1").Superseded)
+	require.True(s.T(), store.SetSuperseded("ch1", nil))
+	require.Nil(s.T(), store.Get("ch1").Superseded)
+}
+
 func (s *SessionSuite) TestAddCommentMissingReturnsFalse() {
 	store := NewStore()
 	require.False(s.T(), store.AddComment("nope", &Comment{}))
@@ -351,6 +361,46 @@ func (s *SessionSuite) TestFindCommentReturnsHit() {
 
 // Only a local agent comment is edited; the session gets an updated copy,
 // so a pointer handed out earlier keeps the old fields.
+func (s *SessionSuite) TestSetVerdict() {
+	cases := []struct {
+		name    string
+		channel string
+		id      string
+		want    bool
+	}{
+		{name: "local agent comment", channel: "ch1", id: "local", want: true},
+		{name: "pushed agent comment", channel: "ch1", id: "pushed", want: true},
+		{name: "github comment", channel: "ch1", id: "gh"},
+		{name: "unknown comment", channel: "ch1", id: "zz"},
+		{name: "no session", channel: "nope", id: "local"},
+	}
+	for _, tc := range cases {
+		s.Run(tc.name, func() {
+			store := NewStore()
+			store.Put("ch1", &Session{Comments: []*Comment{
+				{ID: "local", Body: "Leak.", Source: "agent"},
+				{ID: "pushed", Body: "Leak.", Source: "agent", Pushed: true},
+				{ID: "gh", Body: "Leak.", Source: "github"},
+			}})
+			before, _ := store.FindComment("ch1", tc.id)
+
+			got := store.SetVerdict(tc.channel, tc.id, VerdictFalsePositive, "Closed in defer.")
+			if !tc.want {
+				require.Nil(s.T(), got)
+				for _, c := range store.Get("ch1").Comments {
+					require.Empty(s.T(), c.Verdict)
+				}
+				return
+			}
+			after, _ := store.FindComment("ch1", tc.id)
+			require.Equal(s.T(), got, after)
+			require.Equal(s.T(), VerdictFalsePositive, after.Verdict)
+			require.Equal(s.T(), "Closed in defer.", after.VerdictReason)
+			require.Empty(s.T(), before.Verdict)
+		})
+	}
+}
+
 func (s *SessionSuite) TestEditLocalComment() {
 	cases := []struct {
 		name    string

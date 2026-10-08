@@ -24,7 +24,7 @@ import { fonts } from "../../theme";
 import type { GateApprovalRequestedData, WSEvent } from "../../types";
 import { ApprovalCard } from "../chat/ApprovalCard";
 import { EFFORT_PRESETS, shortModel } from "../chat/agentPresets";
-import { ContextMenu } from "../shared/ContextMenu";
+import { ContextMenu, type MenuItem } from "../shared/ContextMenu";
 import { ReviewDiffView } from "./ReviewDiffView";
 import { ReviewRunDrawer } from "./ReviewRunDrawer";
 
@@ -245,6 +245,54 @@ export function buildAddressAllPrompt(cs: ReviewComment[], session?: ReviewSessi
   return [...header, ...blocks, ...tail].join("\n");
 }
 
+// buildCheckAllPrompt asks the chat agent to verify this session's own
+// findings (the "new" ones, not the GitHub comments), after the dedup pass
+// has merged the ones that repeat each other. It doesn't quote them: the
+// agent reads them with get_review_comments, which acts on the same
+// channel's session, so the request stays short however many there are and
+// the agent sees each body whole. The count is left out because the dedup
+// pass changes it. The checkout is named because the review runs in the PR
+// worktree, which need not be the chat's working directory.
+export function buildCheckAllPrompt(session?: ReviewSession | null): string {
+  const lines = ["Please check the review comments this review session reported on the PR."];
+  const prNumber = session?.pr?.number;
+  const headSHA = session?.head_sha;
+  const checkout = session?.worktree_path;
+  const prURL = session?.pr?.url;
+  if (prNumber || headSHA || checkout) lines.push("");
+  if (prNumber) lines.push(`- PR: #${prNumber}`);
+  if (headSHA) lines.push(`- Commit: ${headSHA}`);
+  if (checkout) lines.push(`- Checkout: ${checkout}`);
+  lines.push(
+    "",
+    "1. Run the dedup_review_findings tool first, so comments that report the same issue are merged before you check them. If it fails, say why and carry on.",
+    "2. Read the comments left with the get_review_comments tool. Skip the ones whose source is github.",
+    `3. For each one, read the code it points at${checkout ? " in the checkout above" : ""} and decide whether it is a real issue, a false positive, or already fixed.`,
+    `4. Show the result with the chat_component tool (list its templates first and pick one that fits): one card per comment with its id, path:line, category (when it has one), verdict and why, and a filter by verdict. Link a pushed comment to ${prURL ? `${prURL}#discussion_r<its GitHub id>` : "its GitHub thread"}. Only show a severity the comment itself states; don't rate them yourself. If the tool fails, put that list in your reply instead.`,
+    "5. Reply with what the dedup pass removed and how many comments got each verdict.",
+    "",
+    "Don't change any code. Apart from the dedup pass, don't edit, delete or push any comment.",
+  );
+  return lines.join("\n");
+}
+
+// allActionItems lists the header's "All" menu: the actions over every
+// comment of a kind, each with its count, and only those with something
+// to act on. A click while another action is busy does nothing, since the
+// menu can stay open while one starts.
+export function allActionItems(a: { newCount: number; pendingCount: number; busy: boolean; onCheckAll: () => void; onAddressAll: () => void; onPushAll: () => void }): MenuItem[] {
+  const guard = (fn: () => void) => () => {
+    if (!a.busy) fn();
+  };
+  const items: MenuItem[] = [];
+  if (a.newCount > 0) items.push({ label: `Check all (${a.newCount})`, onClick: guard(a.onCheckAll) });
+  if (a.pendingCount > 0) {
+    items.push({ label: `Address all (${a.pendingCount})`, onClick: guard(a.onAddressAll) });
+    items.push({ label: `Push all to GitHub (${a.pendingCount})`, onClick: guard(a.onPushAll) });
+  }
+  return items;
+}
+
 interface ReviewPanelProps {
   channelId: string;
   subscribeChatEvents?: (listener: ChatEventListener) => () => void;
@@ -327,6 +375,8 @@ export function ReviewPanel({ channelId, subscribeChatEvents, registerReviewView
   });
   const [menuPos, setMenuPos] = useState<{ x: number; y: number } | null>(null);
   const caretRef = useRef<HTMLButtonElement | null>(null);
+  const [allMenuPos, setAllMenuPos] = useState<{ x: number; y: number } | null>(null);
+  const allBtnRef = useRef<HTMLButtonElement | null>(null);
   // The fork control is edited locally and committed to the daemon on
   // change/blur. Two drafts because "custom" is only a legal server-side
   // choice once an id exists — the dropdown can sit on it while the
@@ -639,7 +689,7 @@ export function ReviewPanel({ channelId, subscribeChatEvents, registerReviewView
         setSession((prev) => withUpdatedComment(prev, c));
       } else if (event.type === "review.comment_removed") {
         // Deleted here or in another window, or dropped as a duplicate by
-        // the review loop's final dedup pass.
+        // the dedup pass.
         const { id } = event.data as { id: string };
         setSession((prev) => withoutComment(prev, id));
       } else if (event.type === "review.status") {
@@ -781,6 +831,13 @@ export function ReviewPanel({ channelId, subscribeChatEvents, registerReviewView
     if (!el) return;
     const r = el.getBoundingClientRect();
     setMenuPos({ x: r.left, y: r.bottom + 2 });
+  }, []);
+
+  const openAllMenu = useCallback(() => {
+    const el = allBtnRef.current;
+    if (!el) return;
+    const r = el.getBoundingClientRect();
+    setAllMenuPos({ x: r.left, y: r.bottom + 2 });
   }, []);
 
   // Push the fork choice to the daemon, which stores it on the review
@@ -976,6 +1033,20 @@ export function ReviewPanel({ channelId, subscribeChatEvents, registerReviewView
     }
   }, [channelId, ensureChatOpen, session]);
 
+  const onCheckAll = useCallback(async () => {
+    if (!(session?.comments ?? []).some((c) => c.source !== "github")) return;
+    setBusy(true);
+    setError(null);
+    try {
+      ensureChatOpen();
+      await sendMessage(channelId, buildCheckAllPrompt(session));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  }, [channelId, ensureChatOpen, session]);
+
   const onPushAll = useCallback(async () => {
     setBusy(true);
     setError(null);
@@ -999,6 +1070,7 @@ export function ReviewPanel({ channelId, subscribeChatEvents, registerReviewView
   }, [channelId]);
 
   const pendingCount = useMemo(() => (session?.comments ?? []).filter((c) => !c.pushed).length, [session]);
+  const newCount = useMemo(() => (session?.comments ?? []).filter((c) => c.source !== "github").length, [session]);
 
   const btnStyle: React.CSSProperties = {
     background: "transparent",
@@ -1279,27 +1351,18 @@ export function ReviewPanel({ channelId, subscribeChatEvents, registerReviewView
                 {loopChip}
               </span>
             )}
-            {pendingCount > 0 && (
-              <>
-                <button
-                  data-testid="review-address-all-btn"
-                  onClick={() => void onAddressAll()}
-                  disabled={busy}
-                  style={busy ? { ...btnStyle, ...disabledStyle } : btnStyle}
-                  title="Send every unpushed finding to the chat as one fix request"
-                >
-                  Address all ({pendingCount})
-                </button>
-                <button
-                  data-testid="review-push-all-btn"
-                  onClick={() => void onPushAll()}
-                  disabled={busy}
-                  style={busy ? { ...btnStyle, ...disabledStyle } : btnStyle}
-                  title="Push all unpushed comments to GitHub"
-                >
-                  Push all to GitHub ({pendingCount})
-                </button>
-              </>
+            {(newCount > 0 || pendingCount > 0) && (
+              <button
+                ref={allBtnRef}
+                data-testid="review-all-menu-btn"
+                onClick={openAllMenu}
+                disabled={busy}
+                aria-haspopup="menu"
+                style={busy ? { ...btnStyle, ...disabledStyle } : btnStyle}
+                title="Check, address or push every comment"
+              >
+                All ▾
+              </button>
             )}
             <button data-testid="review-close-btn" onClick={() => void onCloseSession()} disabled={closeDisabled} style={btnStyle} title="Close review session and remove worktree">
               Close
@@ -1390,6 +1453,21 @@ export function ReviewPanel({ channelId, subscribeChatEvents, registerReviewView
               },
             },
           ]}
+        />
+      )}
+      {allMenuPos && (
+        <ContextMenu
+          x={allMenuPos.x}
+          y={allMenuPos.y}
+          onClose={() => setAllMenuPos(null)}
+          items={allActionItems({
+            newCount,
+            pendingCount,
+            busy,
+            onCheckAll: () => void onCheckAll(),
+            onAddressAll: () => void onAddressAll(),
+            onPushAll: () => void onPushAll(),
+          })}
         />
       )}
     </div>

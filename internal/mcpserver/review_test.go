@@ -30,7 +30,7 @@ func (s *ReviewToolSuite) TestReportReviewFindings() {
 
 	text, isError := s.callTool("report_review_findings", map[string]any{
 		"findings": []map[string]any{
-			{"path": "a.go", "line": 3, "side": "RIGHT", "body": "bug one"},
+			{"path": "a.go", "line": 3, "side": "RIGHT", "body": "bug one", "category": "correctness"},
 			{"path": "b.go", "line": 9, "body": "bug two"},
 			{"path": "a.go", "line": 3, "side": "RIGHT", "body": "bug one"},
 		},
@@ -46,6 +46,8 @@ func (s *ReviewToolSuite) TestReportReviewFindings() {
 	require.NoError(s.T(), json.Unmarshal(gotBody, &payload))
 	require.Len(s.T(), payload.Findings, 3)
 	require.Equal(s.T(), "a.go", payload.Findings[0]["path"])
+	require.Equal(s.T(), "correctness", payload.Findings[0]["category"])
+	require.NotContains(s.T(), payload.Findings[1], "category")
 }
 
 func (s *ReviewToolSuite) TestReportReviewFindingsErrors() {
@@ -64,7 +66,7 @@ const reviewSessionJSON = `{"present":true,"session":{
 	"pr":{"number":104,"url":"https://github.com/o/r/pull/104","title":"Add thing"},
 	"head_sha":"abc123","status":"ready","error":"",
 	"comments":[
-		{"id":"c1","path":"a.go","line":3,"side":"RIGHT","body":"bug one\nsecond line","pushed":false,"source":"agent"},
+		{"id":"c1","path":"a.go","line":3,"side":"RIGHT","body":"bug one\nsecond line","pushed":false,"source":"agent","category":"correctness","verdict":"false_positive","verdict_reason":"made in init"},
 		{"id":"c2","path":"b.go","line":9,"side":"LEFT","body":"bug two","pushed":true,"source":"agent","github_id":77},
 		{"id":"c3","path":"a.go","line":5,"side":"RIGHT","body":"human note","pushed":true,"source":"github","author":"octo","github_id":88,"outdated":true,"resolved":true},
 		{"id":"c4","path":"a.go","line":7,"side":"RIGHT","body":"no source","pushed":false}
@@ -86,7 +88,7 @@ func (s *ReviewToolSuite) TestGetReviewComments() {
 				"PR #104 Add thing\nhttps://github.com/o/r/pull/104\n",
 				"head_sha: abc123\nstatus: ready\n",
 				"4 of 4 comment(s):",
-				"[c1] a.go:3 RIGHT, agent, unpushed\n  bug one\n  second line\n",
+				"[c1] a.go:3 RIGHT, agent, unpushed, category correctness, verdict false_positive\n  bug one\n  second line\n  (verdict: made in init)\n",
 				"[c2] b.go:9 LEFT, agent, pushed (id 77)\n",
 				"[c3] a.go:5 RIGHT, github by octo (id 88), outdated, resolved\n",
 				"[c4] a.go:7 RIGHT, agent, unpushed\n",
@@ -167,13 +169,14 @@ func (s *ReviewToolSuite) TestDedupReviewFindings() {
 		{
 			name:    "a pass that changed things",
 			args:    map[string]any{},
-			body:    `{"removed":["c2","c3"],"clusters":[{"kept":"c1","removed":["c2","c3"],"reason":"same nil check"}],"related":[{"ids":["c1","c4"],"reason":"same root cause"}],"moved":[{"id":"c4","from":7,"to":9}],"trimmed":[{"id":"c6","covered_by":"c1","reason":"bundles the nil check"}],"checked":4,"errors":["deleting c5: 502"]}`,
+			body:    `{"removed":["c2","c3"],"clusters":[{"kept":"c1","removed":["c2","c3"],"reason":"same nil check"}],"related":[{"ids":["c1","c4"],"reason":"same root cause"}],"moved":[{"id":"c4","from":7,"to":9}],"trimmed":[{"id":"c6","covered_by":"c1","reason":"bundles the nil check"}],"verdicts":[{"id":"c1","verdict":"real","reason":"no nil check"}],"checked":4,"errors":["deleting c5: 502"]}`,
 			wantURL: "http://localhost:8222/api/channels/test-channel/review/dedup",
 			want: "Checked 4 comment(s); removed 2.\n" +
 				"- kept c1, removed c2, c3: same nil check\n" +
 				"- trimmed c6 to what c1 doesn't cover: bundles the nil check\n" +
 				"- moved c4 from line 7 to 9\n" +
 				"- related c1, c4: same root cause\n" +
+				"- verdict c1 real: no nil check\n" +
 				"- error: deleting c5: 502\n",
 		},
 		{

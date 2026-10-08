@@ -142,6 +142,7 @@ func (s *ChatComponentsSuite) TestCompose() {
 				"<style>\n.paper{}\n</style>\n<style>\np{}\n</style>",
 				`<div class="paper"><p>hi</p></div>`,
 				"loop-component-height",
+				"loop-component-open",
 				"<script type=\"module\">\nconsole.log(1)\n</script>",
 			},
 		},

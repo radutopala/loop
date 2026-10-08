@@ -326,7 +326,7 @@ Enables and configures the Review panel (see [review.md](review.md)).
 | `prompt` | `string` | Inline prompt text. Mutually exclusive with `prompt_path`. |
 | `prompt_path` | `string` | Path to a prompt file, resolved as `~/.loop/review/{prompt_path}`. Mutually exclusive with `prompt`. |
 
-Both prompt fields empty (the default) uses the daemon's built-in default prompt: the bare `/code-review` slash command, with the output contract (report actionable findings via the built-in `ReportFindings` tool, each carrying a file and a 1-based line) carried in the system prompt. A configured non-slash prompt gets no system prompt, so it must carry its own contract — see [review.md](review.md#required-output-format).
+Both prompt fields empty (the default) uses the daemon's built-in default prompt: the `/code-review` slash command with the run's effort as its level (e.g. `/code-review high`; bare when no effort is set), with the output contract (report actionable findings via the built-in `ReportFindings` tool, each carrying a file and a 1-based line) carried in the system prompt. A configured non-slash prompt gets no system prompt, so it must carry its own contract — see [review.md](review.md#required-output-format).
 
 #### Playground share
 

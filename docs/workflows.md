@@ -143,7 +143,7 @@ Per-iteration node runs are persisted as separate rows in `workflow_node_runs` (
 }
 ```
 
-Loop with a body — runs `review → fix → verify` per iteration, stops when no comments remain or the comment-id set repeats:
+Loop with a body — runs `review → fix → verify` per iteration, stops when no comments remain or the comment-id set repeats. Comments the review's dedup pass marked `false_positive` or `already_fixed` don't count toward either and aren't in `CommentsJSON`:
 
 ```jsonc
 {

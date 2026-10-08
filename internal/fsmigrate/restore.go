@@ -71,7 +71,10 @@ func RestoreBuiltinWorkflows(ctx context.Context, c *Ctx) (added []string, patch
 	if err != nil {
 		return nil, nil, err
 	}
-	dedupPatched, err := patchReviewLoopDedupNodeReport(ctx, c)
+	// The final dedup node patchReviewLoopDedupNode once added is dropped
+	// again now that the daemon dedups after every run, so only the drop
+	// runs here.
+	dedupPatched, err := patchReviewLoopDropDedupNodeReport(ctx, c)
 	if err != nil {
 		return nil, nil, err
 	}

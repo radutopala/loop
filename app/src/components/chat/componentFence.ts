@@ -52,3 +52,21 @@ export function componentHeight(data: unknown): number | null {
   if (type !== componentHeightMessage || typeof height !== "number" || !Number.isFinite(height)) return null;
   return Math.min(componentMaxHeight, Math.max(componentMinHeight, Math.ceil(height)));
 }
+
+// componentOpenMessage is what a component's document posts when a web link
+// in it is clicked; the chat opens the URL in the system browser.
+export const componentOpenMessage = "loop-component-open";
+
+// componentOpenURL returns the http(s) URL a component asked to open, or null
+// for any other message or URL.
+export function componentOpenURL(data: unknown): string | null {
+  if (typeof data !== "object" || data === null) return null;
+  const { type, url } = data as { type?: unknown; url?: unknown };
+  if (type !== componentOpenMessage || typeof url !== "string") return null;
+  try {
+    const u = new URL(url);
+    return u.protocol === "http:" || u.protocol === "https:" ? u.href : null;
+  } catch {
+    return null;
+  }
+}

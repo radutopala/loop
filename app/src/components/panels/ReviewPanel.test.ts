@@ -1,6 +1,17 @@
 import { describe, expect, it } from "vitest";
 import type { ReviewComment, ReviewSession } from "../../api/review";
-import { buildAddressAllPrompt, buildAddressPrompt, buildDiscussDraft, reviewEffortOptions, reviewModelOptions, WHY_QUESTION, withoutComment, withUpdatedComment } from "./ReviewPanel";
+import {
+  allActionItems,
+  buildAddressAllPrompt,
+  buildAddressPrompt,
+  buildCheckAllPrompt,
+  buildDiscussDraft,
+  reviewEffortOptions,
+  reviewModelOptions,
+  WHY_QUESTION,
+  withoutComment,
+  withUpdatedComment,
+} from "./ReviewPanel";
 
 function comment(body: string, extra: Partial<ReviewComment> = {}): ReviewComment {
   return { id: "c1", path: "internal/api/x.go", line: 12, side: "RIGHT", body, pushed: false, ...extra };
@@ -194,6 +205,73 @@ describe("buildAddressAllPrompt", () => {
 
   it("carries the author when the finding has one", () => {
     expect(buildAddressAllPrompt([comment("leaks the lock", { author: "octocat" })])).toContain("### 1. `internal/api/x.go`:12 (RIGHT — added/new) — @octocat");
+  });
+});
+
+describe("buildCheckAllPrompt", () => {
+  // The findings aren't quoted: the agent dedups them, then reads what is
+  // left through get_review_comments, so the request names the tools and the
+  // checkout to read the code in, and leaves the comments otherwise alone.
+  it("names the PR, commit and checkout, then the steps", () => {
+    const sess = session({ head_sha: "abc1234", worktree_path: "/repo/.worktrees/pr-7", pr: { number: 7, url: "https://github.com/o/r/pull/7", base_ref: "b", head_ref: "h", state: "open" } });
+    expect(buildCheckAllPrompt(sess)).toBe(
+      "Please check the review comments this review session reported on the PR.\n\n" +
+        "- PR: #7\n" +
+        "- Commit: abc1234\n" +
+        "- Checkout: /repo/.worktrees/pr-7\n\n" +
+        "1. Run the dedup_review_findings tool first, so comments that report the same issue are merged before you check them. If it fails, say why and carry on.\n" +
+        "2. Read the comments left with the get_review_comments tool. Skip the ones whose source is github.\n" +
+        "3. For each one, read the code it points at in the checkout above and decide whether it is a real issue, a false positive, or already fixed.\n" +
+        "4. Show the result with the chat_component tool (list its templates first and pick one that fits): one card per comment with its id, path:line, category (when it has one), verdict and why, and a filter by verdict. Link a pushed comment to https://github.com/o/r/pull/7#discussion_r<its GitHub id>. Only show a severity the comment itself states; don't rate them yourself. If the tool fails, put that list in your reply instead.\n" +
+        "5. Reply with what the dedup pass removed and how many comments got each verdict.\n\n" +
+        "Don't change any code. Apart from the dedup pass, don't edit, delete or push any comment.",
+    );
+  });
+
+  it("drops what the session doesn't know", () => {
+    expect(buildCheckAllPrompt()).toBe(
+      "Please check the review comments this review session reported on the PR.\n\n" +
+        "1. Run the dedup_review_findings tool first, so comments that report the same issue are merged before you check them. If it fails, say why and carry on.\n" +
+        "2. Read the comments left with the get_review_comments tool. Skip the ones whose source is github.\n" +
+        "3. For each one, read the code it points at and decide whether it is a real issue, a false positive, or already fixed.\n" +
+        "4. Show the result with the chat_component tool (list its templates first and pick one that fits): one card per comment with its id, path:line, category (when it has one), verdict and why, and a filter by verdict. Link a pushed comment to its GitHub thread. Only show a severity the comment itself states; don't rate them yourself. If the tool fails, put that list in your reply instead.\n" +
+        "5. Reply with what the dedup pass removed and how many comments got each verdict.\n\n" +
+        "Don't change any code. Apart from the dedup pass, don't edit, delete or push any comment.",
+    );
+  });
+});
+
+describe("allActionItems", () => {
+  function items(newCount: number, pendingCount: number, busy = false) {
+    const calls: string[] = [];
+    const list = allActionItems({
+      newCount,
+      pendingCount,
+      busy,
+      onCheckAll: () => calls.push("check"),
+      onAddressAll: () => calls.push("address"),
+      onPushAll: () => calls.push("push"),
+    });
+    return { list, calls };
+  }
+
+  it("lists each action with its count", () => {
+    const { list, calls } = items(3, 2);
+    expect(list.map((it) => it.label)).toEqual(["Check all (3)", "Address all (2)", "Push all to GitHub (2)"]);
+    for (const it of list) it.onClick();
+    expect(calls).toEqual(["check", "address", "push"]);
+  });
+
+  it("leaves out actions with nothing to act on", () => {
+    expect(items(0, 2).list.map((it) => it.label)).toEqual(["Address all (2)", "Push all to GitHub (2)"]);
+    expect(items(1, 0).list.map((it) => it.label)).toEqual(["Check all (1)"]);
+    expect(items(0, 0).list).toEqual([]);
+  });
+
+  it("does nothing while another action is busy", () => {
+    const { list, calls } = items(1, 1, true);
+    for (const it of list) it.onClick();
+    expect(calls).toEqual([]);
   });
 });
 

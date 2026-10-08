@@ -22,7 +22,7 @@ type AgentRequest struct {
 	// from SystemPrompt — which the CLI applies to the main agent only.
 	// Review runs need this: /code-review derives its candidate findings
 	// in fan-out subagents, so context that only reaches the orchestrator
-	// (the dedup list) never reaches the agents doing the reviewing.
+	// (the line rule) never reaches the agents doing the reviewing.
 	SubagentSystemPrompt string `json:"subagent_system_prompt,omitempty"`
 	ChannelID            string `json:"channel_id"`
 	AuthorID             string `json:"author_id,omitempty"`

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { componentHeight, parseComponentInfo, readFence } from "./componentFence";
+import { componentHeight, componentOpenURL, parseComponentInfo, readFence } from "./componentFence";
 
 describe("readFence", () => {
   const cases: { name: string; lines: string[]; want: ReturnType<typeof readFence> }[] = [
@@ -59,6 +59,24 @@ describe("componentHeight", () => {
   for (const c of cases) {
     it(c.name, () => {
       expect(componentHeight(c.data)).toBe(c.want);
+    });
+  }
+});
+
+describe("componentOpenURL", () => {
+  const cases: { name: string; data: unknown; want: string | null }[] = [
+    { name: "https link", data: { type: "loop-component-open", url: "https://github.com/o/r/pull/7#discussion_r1" }, want: "https://github.com/o/r/pull/7#discussion_r1" },
+    { name: "http link", data: { type: "loop-component-open", url: "http://example.com" }, want: "http://example.com/" },
+    { name: "other scheme", data: { type: "loop-component-open", url: "file:///etc/passwd" }, want: null },
+    { name: "javascript url", data: { type: "loop-component-open", url: "javascript:alert(1)" }, want: null },
+    { name: "not a url", data: { type: "loop-component-open", url: "nope" }, want: null },
+    { name: "not a string", data: { type: "loop-component-open", url: 1 }, want: null },
+    { name: "another message type", data: { type: "loop-component-height", url: "https://example.com" }, want: null },
+    { name: "null", data: null, want: null },
+  ];
+  for (const c of cases) {
+    it(c.name, () => {
+      expect(componentOpenURL(c.data)).toBe(c.want);
     });
   }
 });

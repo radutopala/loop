@@ -34,7 +34,7 @@ type ReviewState struct {
 	CommentsJSON string          // raw JSON of Comments, for prompt embedding
 	IDs          []string        // sorted comment IDs from this iteration
 	PrevIDs      []string        // IDs captured from the prior iteration
-	SameAsPrev   bool            // IDs == PrevIDs (and len > 0) — fix made no progress
+	SameAsPrev   bool            // IDs == PrevIDs (and len > 0), with ids the dedup pass folded mapped to their keeper
 	// ParseFailed is true when the latest iteration's bash review child
 	// produced output that couldn't be parsed into a review envelope. The
 	// seeded review-fix-loop's `fix` body child uses this in its `when:`
@@ -51,4 +51,7 @@ type ReviewComment struct {
 	Path     string `json:"path,omitempty"`
 	Line     int    `json:"line,omitempty"`
 	Body     string `json:"body,omitempty"`
+	// Verdict is the dedup pass's check of the comment against the code.
+	Verdict       string `json:"verdict,omitempty"`
+	VerdictReason string `json:"verdict_reason,omitempty"`
 }

@@ -22,19 +22,25 @@ import (
 // Source distinguishes agent-emitted comments (the current review run)
 // from comments already filed on the PR via GitHub.
 type Comment struct {
-	ID        string    `json:"id"`
-	Path      string    `json:"path"`
-	Line      int       `json:"line"`
-	Side      string    `json:"side"` // "RIGHT" added/modified, "LEFT" deleted
-	Body      string    `json:"body"`
-	Pushed    bool      `json:"pushed"`
-	PushedAt  time.Time `json:"pushed_at,omitzero"`
-	Source    string    `json:"source,omitempty"`     // "agent" | "github"
-	Author    string    `json:"author,omitempty"`     // GitHub login (for source=github)
-	URL       string    `json:"url,omitempty"`        // html_url for source=github
-	CreatedAt string    `json:"created_at,omitempty"` // GitHub createdAt for source=github
-	Outdated  bool      `json:"outdated,omitempty"`   // true when GH could not anchor to current head
-	Resolved  bool      `json:"resolved,omitempty"`   // true when the GH review thread is marked resolved
+	ID       string `json:"id"`
+	Path     string `json:"path"`
+	Line     int    `json:"line"`
+	Side     string `json:"side"` // "RIGHT" added/modified, "LEFT" deleted
+	Body     string `json:"body"`
+	Category string `json:"category,omitempty"` // finding type slug, e.g. "correctness"
+	// Verdict is the dedup pass's check of an agent comment against the
+	// code: VerdictReal, VerdictFalsePositive or VerdictAlreadyFixed, with
+	// VerdictReason saying why. Empty until a pass has checked it.
+	Verdict       string    `json:"verdict,omitempty"`
+	VerdictReason string    `json:"verdict_reason,omitempty"`
+	Pushed        bool      `json:"pushed"`
+	PushedAt      time.Time `json:"pushed_at,omitzero"`
+	Source        string    `json:"source,omitempty"`     // "agent" | "github"
+	Author        string    `json:"author,omitempty"`     // GitHub login (for source=github)
+	URL           string    `json:"url,omitempty"`        // html_url for source=github
+	CreatedAt     string    `json:"created_at,omitempty"` // GitHub createdAt for source=github
+	Outdated      bool      `json:"outdated,omitempty"`   // true when GH could not anchor to current head
+	Resolved      bool      `json:"resolved,omitempty"`   // true when the GH review thread is marked resolved
 	// GitHubID is the numeric comment id assigned by GitHub. Set when we
 	// load existing GH comments (parsed from PRReviewComment.ID) or when
 	// we successfully push an agent comment (captured from the POST
@@ -110,6 +116,11 @@ type Session struct {
 	// *inside* an agent container too: containers run with HOME set to the
 	// host home and ~/.claude bind-mounted at its host path.
 	TranscriptDir string `json:"transcript_dir,omitempty"`
+	// Superseded maps each comment the latest run's dedup pass deleted to
+	// the comment it was folded into, so `loop review run --wait` can tell
+	// a review loop's stop check that a reworded repeat isn't a new
+	// finding. Each run replaces it wholesale; it is never mutated.
+	Superseded map[string]string `json:"superseded,omitempty"`
 }
 
 // Store is the in-memory registry of active sessions keyed by channel id.
@@ -223,6 +234,19 @@ func (s *Store) UpdateStatus(channelID string, status Status, errMsg string) boo
 	sess.Status = status
 	sess.Error = errMsg
 	sess.UpdatedAt = time.Now()
+	return true
+}
+
+// SetSuperseded replaces the session's Superseded map. Returns false if no
+// session exists for channelID.
+func (s *Store) SetSuperseded(channelID string, superseded map[string]string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	sess, ok := s.sessions[channelID]
+	if !ok {
+		return false
+	}
+	sess.Superseded = superseded
 	return true
 }
 
@@ -389,6 +413,33 @@ func (s *Store) EditLocalComment(channelID, commentID string, edit func(*Comment
 		}
 		updated := *c
 		edit(&updated)
+		sess.Comments[i] = &updated
+		sess.UpdatedAt = time.Now()
+		return &updated
+	}
+	return nil
+}
+
+// SetVerdict records the dedup pass's verdict on the agent comment with
+// the matching ID. Unlike EditLocalComment it takes a pushed comment too:
+// the verdict stays local and never reaches the PR. Returns the updated
+// comment, or nil when there is none or it is a GitHub comment.
+func (s *Store) SetVerdict(channelID, commentID, verdict, reason string) *Comment {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	sess, ok := s.sessions[channelID]
+	if !ok {
+		return nil
+	}
+	for i, c := range sess.Comments {
+		if c.ID != commentID {
+			continue
+		}
+		if !deletable(c) {
+			return nil
+		}
+		updated := *c
+		updated.Verdict, updated.VerdictReason = verdict, reason
 		sess.Comments[i] = &updated
 		sess.UpdatedAt = time.Now()
 		return &updated

@@ -342,6 +342,13 @@ func (e *defaultEngine) persistBodyChildEnd(run *db.WorkflowRun, child *config.N
 	}
 }
 
+// Verdicts the dedup pass gives a comment it finds isn't worth fixing; they
+// match the review package's VerdictFalsePositive and VerdictAlreadyFixed.
+const (
+	verdictFalsePositive = "false_positive"
+	verdictAlreadyFixed  = "already_fixed"
+)
+
 // reviewEnvelope is the JSON shape printed by `loop review run --wait` and
 // consumed by parseReviewOutput. Defined as a named type (rather than
 // inlined) so extractReviewJSON can validate the shape — specifically the
@@ -350,6 +357,9 @@ type reviewEnvelope struct {
 	Status     string          `json:"status"`
 	NoComments bool            `json:"no_comments"`
 	Comments   []ReviewComment `json:"comments"`
+	// Superseded maps each comment the dedup pass after the review run
+	// deleted to the one it was folded into.
+	Superseded map[string]string `json:"superseded,omitempty"`
 }
 
 // parseReviewOutput parses stdout JSON from `loop review run --wait` into
@@ -416,6 +426,12 @@ func parseReviewOutput(stdout string, runCtx *RunContext) {
 	runCtx.Review.PrevIDs = prev
 	runCtx.Review.ParseFailed = false
 
+	// A comment the dedup pass found to be a false positive, or already
+	// fixed in the checkout, isn't a finding: the fix step doesn't get it,
+	// and a round that leaves only those has nothing to fix.
+	parsed.Comments = slices.DeleteFunc(parsed.Comments, func(c ReviewComment) bool {
+		return c.Verdict == verdictFalsePositive || c.Verdict == verdictAlreadyFixed
+	})
 	runCtx.Review.Comments = parsed.Comments
 	runCtx.Review.NoComments = parsed.NoComments || len(parsed.Comments) == 0
 
@@ -435,7 +451,26 @@ func parseReviewOutput(stdout string, runCtx *RunContext) {
 	}
 	runCtx.Review.IDs = ids
 
-	runCtx.Review.SameAsPrev = len(ids) > 0 && slices.Equal(ids, prev)
+	runCtx.Review.SameAsPrev = len(ids) > 0 && slices.Equal(ids, foldIDs(prev, parsed.Superseded))
+}
+
+// foldIDs returns prev with every id the dedup pass folded into another
+// replaced by that one, sorted and without repeats. When the pass keeps a
+// round's reworded repeat over the earlier comment it repeats, the round
+// still found nothing new, and comparing against the folded set says so.
+func foldIDs(prev []string, superseded map[string]string) []string {
+	if len(superseded) == 0 {
+		return prev
+	}
+	out := make([]string, 0, len(prev))
+	for _, id := range prev {
+		if kept, ok := superseded[id]; ok {
+			id = kept
+		}
+		out = append(out, id)
+	}
+	slices.Sort(out)
+	return slices.Compact(out)
 }
 
 // extractReviewJSON scans stdout forwards through non-empty lines (and as

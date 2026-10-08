@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { ReviewComment } from "../../api/review";
+import type { ReviewComment, ReviewVerdict } from "../../api/review";
 import { useTheme } from "../../ThemeContext";
 import type { ColorPalette } from "../../theme";
 import { fonts } from "../../theme";
@@ -542,7 +542,7 @@ export function ReviewDiffView({ channelId, rawDiff, comments, worktreePath, onP
   // with any comment regardless of source: agent-emitted from the
   // current run, plus GH comments loaded on Load or refreshed on Sync.
   // We also fold in unique orphan paths (GH comments whose file is no
-  // longer in the diff) so "n / m commented" reflects every commented
+  // longer in the diff) so "n / m files commented" reflects every commented
   // entity the user can see, not just what's nav-able.
   const commentedIndices = useMemo(() => summaries.flatMap((s, i) => (s.agentCount + s.ghCount > 0 ? [i] : [])), [summaries]);
   const orphanPathCount = useMemo(() => {
@@ -922,7 +922,7 @@ function DiffToolbar({
         {focusedPath}
       </span>
       <span style={{ fontFamily: fonts.mono, fontSize: 11, color: colors.textDim, flexShrink: 0 }}>
-        {total === 0 ? "0 commented" : index >= 0 ? `${index + 1} / ${total} commented` : `– / ${total} commented`}
+        {total === 0 ? "0 files commented" : index >= 0 ? `${index + 1} / ${total} files commented` : `– / ${total} files commented`}
       </span>
     </div>
   );
@@ -1320,6 +1320,23 @@ function DiffLineRow({ line, colors, addr, searchTerm, activeStart }: { line: Hu
   );
 }
 
+// verdictLabel is the badge text for the dedup pass's verdict on a comment.
+export function verdictLabel(v: ReviewVerdict): string {
+  switch (v) {
+    case "real":
+      return "verified";
+    case "false_positive":
+      return "false positive";
+    case "already_fixed":
+      return "already fixed";
+  }
+}
+
+// verdictColor flags false positives; the other verdicts stay quiet.
+export function verdictColor(colors: ColorPalette, v: ReviewVerdict): string {
+  return v === "false_positive" ? colors.warning : colors.textDim;
+}
+
 function InlineComment({
   comment,
   colors,
@@ -1384,6 +1401,36 @@ function InlineComment({
         >
           {headerLabel}
         </span>
+        {comment.category && (
+          <span
+            data-testid={`review-comment-category-${comment.id}`}
+            style={{
+              fontSize: 9,
+              padding: "0 4px",
+              borderRadius: 3,
+              border: `1px solid ${colors.border}`,
+              color: colors.textDim,
+            }}
+            title="Finding type the review gave"
+          >
+            {comment.category}
+          </span>
+        )}
+        {comment.verdict && (
+          <span
+            data-testid={`review-comment-verdict-${comment.id}`}
+            style={{
+              fontSize: 9,
+              padding: "0 4px",
+              borderRadius: 3,
+              border: `1px solid ${verdictColor(colors, comment.verdict)}`,
+              color: verdictColor(colors, comment.verdict),
+            }}
+            title={comment.verdict_reason ? `Dedup check: ${comment.verdict_reason}` : "Dedup check against the code"}
+          >
+            {verdictLabel(comment.verdict)}
+          </span>
+        )}
         {comment.outdated && (
           <span
             style={{

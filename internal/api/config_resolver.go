@@ -82,3 +82,13 @@ func (c *configResolver) reviewEnabled(workdir, parentDirPath string) bool {
 	}
 	return cfg.Review.Enabled
 }
+
+// claudeEffort mirrors ghUser for claude_effort, the reasoning effort a
+// container runs at when the request sets none.
+func (c *configResolver) claudeEffort(workdir, parentDirPath string) string {
+	cfg := c.merged(workdir, parentDirPath)
+	if cfg == nil {
+		return ""
+	}
+	return cfg.ClaudeEffort
+}

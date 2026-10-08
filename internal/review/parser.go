@@ -16,13 +16,14 @@ const ReportFindingsTool = "ReportFindings"
 
 // reportFindings mirrors the ReportFindings tool's input schema. Only the
 // fields the review panel renders are decoded; `level`, `short_summary`,
-// `category`, `verdict` and `outcome` are ignored.
+// `verdict` and `outcome` are ignored.
 type reportFindings struct {
 	Findings []struct {
 		File            string `json:"file"`
 		Line            int    `json:"line"`
 		Summary         string `json:"summary"`
 		FailureScenario string `json:"failure_scenario"`
+		Category        string `json:"category"`
 	} `json:"findings"`
 }
 
@@ -48,6 +49,7 @@ func ParseReportFindings(input string) []*Comment {
 			body += scenario
 		}
 		if c := NewComment(f.File, f.Line, "", body); c != nil {
+			c.Category = NormalizeCategory(f.Category)
 			comments = append(comments, c)
 		}
 	}
@@ -77,6 +79,12 @@ func NewComment(path string, line int, side, body string) *Comment {
 		Side: side,
 		Body: body,
 	}
+}
+
+// NormalizeCategory trims a finding's category and lowercases it, so
+// "Correctness" and "correctness " show as one category in the panel.
+func NormalizeCategory(category string) string {
+	return strings.ToLower(strings.TrimSpace(category))
 }
 
 // commentID produces a stable id from the comment's identifying triple

@@ -40,9 +40,11 @@ per-global / per-project / per-worktree the same way as `github.gh_user`.
      one-shot mode; comments stream live into the panel as they arrive.
      The loop stops early when the session has no comments **or** an
      iteration leaves the session's comment-id set as it was
-     (`SameAsPrev` gate). A finding the daemon drops as a duplicate
-     (see [Required output format](#required-output-format)) doesn't change the
-     set, so a round that only re-finds known issues ends the loop. The mode and max-iter value persist in
+     (`SameAsPrev` gate). The dedup pass after each review folds the
+     findings it reports again, so a round with nothing new ends the
+     loop. A finding the daemon drops as a duplicate (see
+     [Required output format](#required-output-format)) doesn't change the
+     set either. The mode and max-iter value persist in
      `localStorage` so they survive reloads.
 
    Both modes are backed by seeded workflows (`review-loop`,
@@ -53,14 +55,19 @@ per-global / per-project / per-worktree the same way as `github.gh_user`.
    prompt node's Claude session id) is inspectable in the Workflows panel —
    see [Per-Node Run View](workflows.md#per-node-run-view).
 
-   With `max_iterations` above 1, `review-loop` ends with a **dedup** node
-   (`loop review dedup`, see [CLI](#cli)). Each round only reports; this
-   last step does the cleanup. A later round often re-finds an issue on
+   Every review run, a one-shot Run and each loop round alike, ends with
+   the **dedup pass** before the session turns ready. The review isn't
+   told which comments already exist, and a run often re-finds an issue on
    another line, in another file, or framed differently (a symptom rather
    than its cause), which the ingest-time pass (see
    [Required output format](#required-output-format)) doesn't catch. The
    dedup pass shows every comment in the session to a read-only model run
-   (no Bash, no edits). The model groups them by root cause (same issue
+   (no Bash, no edits). The comments the run just added are marked new,
+   and the model checks each of them against every other comment (GitHub
+   ones included) instead of regrouping the whole session, which an
+   earlier pass already did. A run that added no comment skips the pass. Each body is cut at 600 characters in the prompt;
+   the run can read a cut one in full with `get_review_comments`. The
+   model groups them by root cause (same issue
    means one change fixes both; when fixing the kept comment's root cause
    also resolves another comment, that one is a duplicate even if it has
    a narrower fix of its own), keeps the most severe and specific
@@ -80,12 +87,23 @@ per-global / per-project / per-worktree the same way as `github.gh_user`.
    anchored, against the file read with line numbers, and moves an
    unpushed one that sits a few lines off (on a blank line, a closing
    brace or a neighbouring statement) to the statement it is about, within
-   20 lines. A single pass has
-   nothing to fold, so the node is skipped when `max_iterations` is 1.
-   The loop's stop condition doesn't change: it compares each round
-   against the set the daemon has already deduplicated on the way in.
-   `review-fix-loop` has no dedup node, because its fix step addresses
-   the findings between rounds.
+   20 lines. It then checks each agent finding it keeps (only the new
+   ones, after a review run) against the code and records a verdict on
+   it: `real`, `false_positive` (the code doesn't do what the comment
+   says, or the behaviour is intended or handled elsewhere) or
+   `already_fixed`, with a one-sentence reason. The diff card shows the
+   verdict as a badge (verified, false positive, already fixed) with the
+   reason on hover, and `get_review_comments` lists it. A verdict deletes
+   nothing, and it is set on pushed findings too, since it stays local.
+   The session records which comment each deleted one was
+   folded into, and `loop review run --wait` reports it as `superseded`.
+   The loop's stop check compares the comments the pass leaves with the
+   previous round's, and counts a deleted comment as the one it was
+   folded into, so a round whose new findings all fold into earlier ones,
+   whichever of the two the pass keeps, ends the loop. If the pass fails,
+   it is logged and the run's findings stay as reported. In
+   `review-fix-loop` the pass is over before the fix step, so that step
+   isn't handed reworded repeats of findings it already fixed.
 
    A chip
    in the panel header mirrors the workflow events
@@ -99,9 +117,9 @@ per-global / per-project / per-worktree the same way as `github.gh_user`.
    arrives. An override prompt can instead use the
    `report_review_findings` MCP tool — see
    [Required output format](#required-output-format).
-3. **Push** — each comment ships with **Push** (single) and the header
-   carries **Push all to GitHub (N)** (when at least one comment is
-   unpushed). The backend uses `gh api ... /pulls/N/comments` against the
+3. **Push** — each comment ships with **Push** (single), and the header's
+   **All ▾** menu carries **Push all to GitHub (N)** (when at least one
+   comment is unpushed). The backend uses `gh api ... /pulls/N/comments` against the
    captured head SHA so comments anchor to the right commit even if the PR
    is force-pushed later. A pushed comment stays one comment: when Sync or
    a run reads the PR's comments back, GitHub's copy of it is folded into
@@ -119,6 +137,40 @@ config's `claude_model` / `claude_effort` for the channel and names the
 value it resolves to. A reviewer that thinks longer finds more, so
 `high`, `xhigh` and `max` are marked **recommended**. Lower levels are fine
 for a quick pass but miss findings.
+
+The effort also goes to the `/code-review` skill as its level
+(`/code-review high`). Left to pick its own level, the skill reviews a
+`--effort medium` run at its high level. With Claude Code 2.1.294 on
+Opus 5 models, the level picks one of four ways to review:
+
+| Level | How the skill reviews |
+|---|---|
+| `low` | A short review in one pass. |
+| `medium`, `high` | One careful pass over the diff, at most 15 findings. Both levels get the same instructions; only the model's effort differs. |
+| `xhigh` | 10 review angles one after another, then a sweep for gaps, all in one context. |
+| `max` | Finder subagents per angle, a subagent that verifies each candidate, then a sweep. The only level that uses subagents. |
+
+One run per level on a 26-file diff (+1100/−311), Opus 5.5:
+
+| Level | Time | Findings | Cost |
+|---|---|---|---|
+| `low` | 35 s | 0 | $0.30 |
+| `medium` | 114 s | 8 | $0.83 |
+| `high` | 214 s | 7 | $1.31 |
+| `xhigh` | 523 s | 14 | $3.27 |
+| `max` | over 30 min, stopped | – | – |
+
+These are single runs, so take the numbers as rough. `low` is too
+shallow for a PR. `medium` and `high` find about as much, so `medium` is
+the cheaper choice for a loop that runs several rounds. `xhigh` found
+about twice as many at about 2.5 times the cost of `high`. `max` was
+stopped after 30 minutes still reading code with 10 subagents, before it
+reported anything.
+
+The review isn't told which comments the session already holds. A list of
+them in its system prompt didn't stop it reporting some of them again,
+even on a fresh session, and it grew with every comment. The
+[dedup pass](#lifecycle) after every run folds the repeats instead.
 
 The choice applies to review runs only; the chat's own model/effort
 override (the composer pill) is separate. Like the fork choice below, it is
@@ -163,8 +215,10 @@ request, because the Run button dispatches a workflow whose
 ## Handing a finding to the agent
 
 A finding can also go to the channel's chat instead of (or before) GitHub.
-Four affordances do that, and they differ in **who writes the message** and
-**whether it is sent**:
+Five affordances do that, and they differ in **who writes the message** and
+**whether it is sent**. Address all and Check all sit in the header's
+**All ▾** menu, next to Push all to GitHub; each shows only when it has
+comments to act on:
 
 | Button | Message | Sent? |
 |--------|---------|-------|
@@ -172,6 +226,7 @@ Four affordances do that, and they differ in **who writes the message** and
 | **Why?** | The same quote, with `Please explain why we need this.` filled into that blank line | Yes, straight away |
 | **Address** | `Please address this review comment from the PR:` plus file, line, side, PR number, head SHA and author, then the quoted body and the run transcripts | Yes, straight away |
 | **Address all (N)** | The same request over every unpushed finding: the metadata header once, then a numbered block per finding, then the run transcripts | Yes, straight away |
+| **Check all (N)** | A request to clean up, then verify, every finding this session's runs reported (not the GitHub comments): PR number, head SHA and the PR checkout, then steps — run `dedup_review_findings`, read what is left with `get_review_comments`, check each against the code (real / false positive / already fixed), show the verdicts as a [chat component](chat.md#components) with a card per comment (its category when it has one), a verdict filter and a link to each pushed comment's GitHub thread (no severity unless the comment states one), then reply with what the dedup pass removed and the count per verdict; change nothing else | Yes, straight away |
 
 Discuss and Why? are one builder and one send path differing by a single
 string, so the quote, the transcripts and the spacing cannot drift apart
@@ -188,14 +243,23 @@ Unlike the old Push to chat it stays on a comment for its whole life, so it is
 still there for a finding already filed to GitHub; only **Push to GitHub**
 collapses into the `on github` marker once pushed.
 
-All four first dispatch `loop:open-panel`, so a Chat panel is mounted in the
+**Check all** doesn't quote the findings. The agent first runs the
+[dedup pass](#lifecycle), so it doesn't check the same issue twice, then reads
+what is left itself with `get_review_comments`, which acts on the same channel's
+session, so the request stays short however many findings there are and each
+body arrives whole. The message carries no count, since the dedup pass changes
+it. It
+names the PR checkout because the review runs in the PR worktree, which need not
+be the chat's working directory.
+
+All five first dispatch `loop:open-panel`, so a Chat panel is mounted in the
 current layout — anchored to the right of the Review panel when one has to be
 created, so the answer arrives beside the diff it is about.
 
 ### Every form carries the run transcripts
 
 The panel keeps a finding's verdict; the reasoning behind it lives only in the
-transcript of the run that produced it. So all four forms append every run
+transcript of the run that produced it. So the four forms that quote findings append every run
 transcript the session knows, oldest first — inside the quote for Discuss and
 Why?, as a trailing list for Address and Address all. The transcripts
 belong to the session rather than to any one finding, which is why the batch
@@ -246,7 +310,7 @@ twenty comments spread over four files is painful to scroll by hand:
 
 - **Toolbar prev/next** (top of the diff, always visible) steps **file to
   file**, skipping files with no comments. The counter reads
-  `n / m commented`, where `m` folds in unique out-of-diff paths so it
+  `n / m files commented`, where `m` folds in unique out-of-diff paths so it
   matches every commented entity on screen.
 - **Floating prev/next** (`review-comment-nav`, pinned bottom-right over the
   scroll) steps **comment to comment**, in render order: files top-to-bottom,
@@ -317,9 +381,10 @@ load. Any session-lookup failure falls back to loading.
 | `--wait` | `false` | Block until the session reaches a terminal status (`ready` or `error`) and emit the JSON envelope to stdout. Without `--wait`, the command exits 0 immediately after the `202`. |
 | `--timeout` | `60m` | Bound on the total `--wait` time. Enforced inside the HTTP client, not just between polls, so a hung response can't outlive the deadline. Transient transport errors (TCP reset, momentary daemon restart, proxy 502) back off and retry instead of failing the whole loop. Sits above the daemon-side review ceiling (50m) so the daemon flips first with a meaningful error rather than the CLI's generic timeout. |
 
-The emitted JSON shape is `{"status":"ready","no_comments":bool,"comments":[...]}` — the same payload used by the workflow body parser to populate `{{.Review.*}}` templates inside the seeded loops.
+The emitted JSON shape is `{"status":"ready","no_comments":bool,"comments":[...]}`, plus `"superseded":{"<deleted id>":"<kept id>"}` when the dedup pass after the run deleted any — the same payload used by the workflow body parser to populate `{{.Review.*}}` templates inside the seeded loops. Each comment carries the dedup pass's `verdict` and `verdict_reason` once it has one. The workflow parser leaves out the comments marked `false_positive` or `already_fixed`: the fix step doesn't get them, the same-as-previous check doesn't count them, and a round that leaves only those sets `NoComments`, so the loop stops.
 
-`loop review dedup` runs the dedup pass that `review-loop` ends with. It
+`loop review dedup` runs the dedup pass on its own, over the whole session
+rather than only the latest run's comments. It
 takes the same `--channel-id`, `--api-url` and `--timeout` flags, blocks
 until the pass is done, and prints the result, which lists every merged
 group so a pass can be audited:
@@ -384,14 +449,19 @@ error; setting neither uses the daemon's built-in default prompt.
 
 Findings reach the daemon two ways, both landing in the same ingest path.
 
-The default prompt is the bare `/code-review` slash command, which
-reports through Claude Code's own **`ReportFindings`** tool. The daemon
+The default prompt is the `/code-review` slash command with the run's
+effort (the panel's choice, else `claude_effort`) as its level, e.g.
+`/code-review high` (see [Model and effort](#model-and-effort)). The
+command reports through Claude Code's own **`ReportFindings`** tool. The daemon
 intercepts that tool call on the agent's stream, so nothing has to round
 -trip through HTTP. Findings need a repo-relative `file` and a 1-based
 `line`: the tool's schema treats `line` as optional, but a finding
 without one can't be anchored in the diff and is dropped, so the default
 system prompt requires it. `summary` and `failure_scenario` are joined
-into the comment body.
+into the comment body. `category` (a slug such as `correctness` or
+`reuse`) is kept on the comment, lowercased: the panel shows it as a tag
+on the comment's card and `get_review_comments` lists it. It isn't part
+of the body, so it isn't pushed to GitHub.
 
 The daemon doesn't check the line, so the PR context given to the
 reviewer and to its finder subagents asks for it to be confirmed with a
@@ -414,6 +484,8 @@ container) with the full findings list. Each MCP finding carries:
   This matches GitHub's `pulls/{N}/comments` API, so the value is
   forwarded as-is on push.
 - `body` — one paragraph describing the issue.
+- `category` — optional finding type slug, e.g. `correctness`, kept on
+  the comment as with `ReportFindings`.
 
 Malformed findings (empty path/body, non-positive line) are skipped, and
 a finding whose id the session already holds is dropped. The id is a
@@ -425,8 +497,7 @@ Nothing on the way in judges whether two differently worded findings are
 the same. Each review run re-derives its findings rather than copying the
 last run's text, so the same issue comes back reworded, anchored a few
 lines off, or as a symptom of a cause another finding names. Telling those
-apart is left to a model: the "do NOT re-emit" list handed to the review
-run, and the [dedup pass](#lifecycle) that runs after a multi-round
+apart is left to the [dedup pass](#lifecycle) that runs after every
 review (or on demand through `POST .../review/dedup` and the
 `dedup_review_findings` tool).
 
