@@ -172,7 +172,8 @@ Rules:
 - You may read the files in your working directory. Do not change anything.
 `)
 	if len(fresh) > 0 {
-		b.WriteString(`- The comments marked [agent, new] are what the latest review round added; an earlier pass already grouped the rest. Check every new comment against every other comment, the [github] ones included, and group it with the comment it repeats. Compare root causes, not wording: a new comment usually rewords an issue another comment already raised, often on another line or in another file. Only the new comments need their lines checked and a verdict. You need not regroup the older comments among themselves, though you may when you spot a duplicate.
+		b.WriteString(`- The comments marked [agent, new] are what the latest review round added; an earlier pass already grouped the rest. Check every new comment against every other comment, the [github] ones included, and group it with the comment it repeats. Compare root causes, not wording: a new comment usually rewords an issue another comment already raised, often on another line or in another file. Only the new comments need their lines checked. You need not regroup the older comments among themselves, though you may when you spot a duplicate.
+- Verdicts go to the new comments and to the ones marked [agent, recheck]: earlier findings that still stand, while the code may have changed since they were judged. Read each again; one this checkout no longer has is "already_fixed". The other older comments keep their verdicts.
 `)
 	}
 	b.WriteString(`
@@ -194,23 +195,19 @@ Comments, by file:
 			label = "github"
 		case fresh[c.ID]:
 			label = "agent, new"
+		case len(fresh) > 0 && standing(c):
+			label = "agent, recheck"
 		}
-		fmt.Fprintf(&b, "- id=%s [%s] L%d (%s): %s\n", c.ID, label, c.Line, effectiveSide(c.Side), PromptBody(c.Body))
+		fmt.Fprintf(&b, "- id=%s [%s] L%d (%s): %s\n", c.ID, label, c.Line, effectiveSide(c.Side), oneLine(c.Body, dedupBodyMax))
 	}
 	return b.String()
 }
 
-// PromptBody renders a comment body as one capped line for the dedup pass's
-// prompt, which lists comments. A finding
-// is summary + blank line + failure scenario (see ParseReportFindings), and
-// written verbatim it spills over several lines, which stops reading as a
-// list.
-func PromptBody(body string) string {
-	return oneLine(body, dedupBodyMax)
-}
-
 // oneLine collapses body's whitespace and caps it at limit bytes, backing up
-// to a rune boundary.
+// to a rune boundary. The dedup prompt lists each comment on one line: a
+// finding is summary + blank line + failure scenario (see
+// ParseReportFindings), and written verbatim it spills over several lines,
+// which stops reading as a list.
 func oneLine(body string, limit int) string {
 	body = strings.Join(strings.Fields(body), " ")
 	if len(body) <= limit {
@@ -237,7 +234,8 @@ func oneLine(body string, limit int) string {
 // non-empty body shorter than the one it replaces; a comment is trimmed
 // once, and a trimmed comment can't cover another trim, so two bundles
 // can't each cut the issue they share and lose it. A verdict counts only
-// for a kept agent comment and a known Verdict value; the first one named
+// for a kept agent comment (not, with fresh non-empty, a pushed one) and a
+// known Verdict value; the first one named
 // for an id wins. An error means the reply held no parseable JSON object.
 func ParseDedupReply(reply string, cands []*Comment, fresh map[string]bool) (DedupPlan, error) {
 	start, end := strings.Index(reply, "{"), strings.LastIndex(reply, "}")
@@ -320,13 +318,22 @@ func ParseDedupReply(reply string, cands []*Comment, fresh map[string]bool) (Ded
 	judged := map[string]bool{}
 	for _, v := range parsed.Verdicts {
 		c := byID[v.ID]
-		if c == nil || !deletable(c) || keeperOf[v.ID] != "" || judged[v.ID] || !knownVerdict(v.Verdict) {
+		if c == nil || !droppable(c, fresh) || keeperOf[v.ID] != "" || judged[v.ID] || !knownVerdict(v.Verdict) {
 			continue
 		}
 		judged[v.ID] = true
 		plan.Verdicts = append(plan.Verdicts, DedupVerdict{ID: v.ID, Verdict: v.Verdict, Reason: strings.TrimSpace(v.Reason)})
 	}
 	return plan, nil
+}
+
+// standing reports whether c is a finding as far as anyone knows: judged
+// real, or not judged at all. A pass after a review run checks the earlier
+// ones again, since the run may follow a fix; otherwise a fixed comment
+// would keep a verdict of real, and a review-fix loop would hand it to every
+// fix step after.
+func standing(c *Comment) bool {
+	return c.Verdict == "" || c.Verdict == VerdictReal
 }
 
 // knownVerdict reports whether v is one of the Verdict constants.

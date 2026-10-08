@@ -627,11 +627,13 @@ func (a *app) serve() error {
 		api.WithTunnel(tunnel.NewManager(filepath.Join(cfg.LoopDir, "bin"), logger)),
 		api.WithReview(ghClient, review.NewStore(), &review.GitPR{Run: review.CommandRunner(worktree.ExecCommandRunnerWithEnv(hostProxyEnv))}),
 		api.WithReviewAgent(&review.Runner{Agent: runner}, "", reviewPrompt),
-		// Ceiling for the daemon-side review goroutine. Picked below the
-		// CLI's `loop review run --timeout` default (60m) so the daemon
-		// flips the session to status=error first and the CLI surfaces the
-		// daemon's "timed out" message instead of its own generic wrapper.
+		// Ceilings for the daemon-side review run and the dedup pass after
+		// it. Together they stay below the CLI's `loop review run --timeout`
+		// default (75m) so the daemon flips the session to status=error
+		// first and the CLI surfaces the daemon's "timed out" message
+		// instead of its own generic wrapper.
 		api.WithReviewRunTimeout(50 * time.Minute),
+		api.WithReviewDedupTimeout(15 * time.Minute),
 		api.WithAuth(auth.deps),
 		api.WithWorkflowBashLocal(cfg.WorkflowBashLocal),
 		api.WithProjectTrust(config.NewTrustStoreIn(a.userConfigDir)),

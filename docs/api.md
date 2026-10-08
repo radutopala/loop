@@ -2458,8 +2458,9 @@ rewritten to the ones no other comment covers; `covered_by` is the comment
 that reports the part cut out. Each is broadcast as `review.comment_updated`. `verdicts`
 lists the kept agent findings the model checked against the code: `real`,
 `false_positive` or `already_fixed`, with a one-sentence `reason`. A move or
-a verdict counts only when the pass opened that comment's file with the Read
-tool; the others are dropped. Each verdict is
+a verdict counts only when the pass opened that comment's file in the PR
+worktree with the Read tool (the parent checkout's copy doesn't count); the
+others are dropped. Each verdict is
 stored on the comment as `verdict` and `verdict_reason` (pushed findings
 included; nothing is deleted for a verdict) and broadcast as
 `review.comment_updated`. `checked` is the number of comments shown to the model
@@ -2471,6 +2472,19 @@ not `ready`, or a review run is in flight. `400` if the channel has no
 `dir_path`. `403` if review is disabled for the project. `500` if the
 refresh from GitHub fails, the agent run fails, or its reply has no
 parseable JSON. `501` if the review service or agent is not wired.
+
+### `POST /api/channels/{id}/review/stop`
+
+Stop the review run in flight, or a [dedup pass](#post-apichannelsidreviewdedup),
+which holds the same slot. Returns `202 {"status":"stopping"}` at once. The
+agent is stopped, and the session goes back to `ready` once it is gone,
+keeping the findings reported so far; `review.status` says when. A stopped
+run is no error. A `POST .../review/run` before then still answers
+`202 {"status":"in_progress"}`, and a stopped dedup pass answers its own
+caller `500`.
+
+**Errors:** `404` if no session. `409` if no review run or dedup pass is in
+flight. `501` if the review service is not wired.
 
 ### `PUT /api/channels/{id}/review/fork`
 

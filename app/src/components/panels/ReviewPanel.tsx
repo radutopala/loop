@@ -15,9 +15,10 @@ import {
   type ReviewStatus,
   setReviewAgent,
   setReviewFork,
+  stopReview,
   syncReviewSession,
 } from "../../api/review";
-import { FetchWorkflowRunError, fetchWorkflowRun, startWorkflowRun } from "../../api/workflows";
+import { cancelWorkflowRun, FetchWorkflowRunError, fetchWorkflowRun, startWorkflowRun } from "../../api/workflows";
 import type { ChatEventListener } from "../../hooks/useChatStateStore";
 import { useTheme } from "../../ThemeContext";
 import { fonts } from "../../theme";
@@ -268,8 +269,8 @@ export function buildCheckAllPrompt(session?: ReviewSession | null): string {
     "1. Run the dedup_review_findings tool first, so comments that report the same issue are merged before you check them. If it fails, say why and carry on.",
     "2. Read the comments left with the get_review_comments tool. Skip the ones whose source is github.",
     `3. For each one, read the code it points at${checkout ? " in the checkout above" : ""} and decide whether it is a real issue, a false positive, or already fixed.`,
-    `4. Show the result with the chat_component tool (list its templates first and pick one that fits): one card per comment with its id, path:line, category (when it has one), verdict and why, and a filter by verdict. Link a pushed comment to ${prURL ? `${prURL}#discussion_r<its GitHub id>` : "its GitHub thread"}. Only show a severity the comment itself states; don't rate them yourself. If the tool fails, put that list in your reply instead.`,
-    "5. Reply with what the dedup pass removed and how many comments got each verdict.",
+    `4. Reply with one entry per comment: its id, path:line, category (when it has one), verdict and why. Link a pushed comment to ${prURL ? `${prURL}#discussion_r<its GitHub id>` : "its GitHub thread"}. Only show a severity the comment itself states; don't rate them yourself.`,
+    "5. End with what the dedup pass removed and how many comments got each verdict.",
     "",
     "Don't change any code. Apart from the dedup pass, don't edit, delete or push any comment.",
   );
@@ -1033,8 +1034,10 @@ export function ReviewPanel({ channelId, subscribeChatEvents, registerReviewView
     }
   }, [channelId, ensureChatOpen, session]);
 
+  const newCount = useMemo(() => (session?.comments ?? []).filter((c) => c.source !== "github").length, [session]);
+
   const onCheckAll = useCallback(async () => {
-    if (!(session?.comments ?? []).some((c) => c.source !== "github")) return;
+    if (newCount === 0) return;
     setBusy(true);
     setError(null);
     try {
@@ -1045,7 +1048,23 @@ export function ReviewPanel({ channelId, subscribeChatEvents, registerReviewView
     } finally {
       setBusy(false);
     }
-  }, [channelId, ensureChatOpen, session]);
+  }, [channelId, ensureChatOpen, session, newCount]);
+
+  // Stop cancels the loop before the review: a loop left running would start
+  // its next round as soon as the stopped review is ready again. Between
+  // reviews (a fix step) only the loop is running.
+  const onStop = useCallback(async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      if (loopActive && loopRunId) await cancelWorkflowRun(loopRunId);
+      if (session?.status === "reviewing") await stopReview(channelId);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  }, [channelId, loopActive, loopRunId, session?.status]);
 
   const onPushAll = useCallback(async () => {
     setBusy(true);
@@ -1070,7 +1089,6 @@ export function ReviewPanel({ channelId, subscribeChatEvents, registerReviewView
   }, [channelId]);
 
   const pendingCount = useMemo(() => (session?.comments ?? []).filter((c) => !c.pushed).length, [session]);
-  const newCount = useMemo(() => (session?.comments ?? []).filter((c) => c.source !== "github").length, [session]);
 
   const btnStyle: React.CSSProperties = {
     background: "transparent",
@@ -1335,6 +1353,17 @@ export function ReviewPanel({ channelId, subscribeChatEvents, registerReviewView
                 ▾
               </button>
             </div>
+            {(session?.status === "reviewing" || loopActive) && (
+              <button
+                data-testid="review-stop-btn"
+                onClick={() => void onStop()}
+                disabled={busy}
+                style={busy ? { ...btnStyle, ...disabledStyle } : { ...btnStyle, color: colors.dangerText }}
+                title={loopActive ? "Stop the review loop and the review in progress" : "Stop the review in progress"}
+              >
+                Stop
+              </button>
+            )}
             {loopChip && (
               <span
                 data-testid="review-loop-chip"

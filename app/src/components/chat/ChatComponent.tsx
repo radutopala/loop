@@ -105,10 +105,21 @@ export function ChatComponentFull({ component, onClose }: { component: ShownComp
 }
 
 /**
+ * Reports whether a link the frame posts comes from the user's click in it:
+ * the click's activation is still live, and the frame holds focus. The
+ * activation alone isn't enough, since a click anywhere in the app activates
+ * this window and lasts a few seconds; but such a click also takes focus out
+ * of the frame.
+ */
+export function clickedInFrame(frame: HTMLIFrameElement, doc: Pick<Document, "activeElement">, activation: { isActive: boolean } | undefined): boolean {
+  return !!activation?.isActive && doc.activeElement === frame;
+}
+
+/**
  * Listens for what a component's document posts: its height, passed to
- * onHeight, and a clicked web link, opened in the system browser (only while
- * the user's click is still active). Messages from any other window are
- * ignored.
+ * onHeight, and a clicked web link, opened in the system browser (only on the
+ * user's click in the frame; see clickedInFrame). Messages from any other
+ * window are ignored.
  */
 function useFrameMessages(frame: React.RefObject<HTMLIFrameElement | null>, onHeight?: (h: number) => void) {
   useEffect(() => {
@@ -116,10 +127,9 @@ function useFrameMessages(frame: React.RefObject<HTMLIFrameElement | null>, onHe
       if (!frame.current || e.source !== frame.current.contentWindow) return;
       const url = componentOpenURL(e.data);
       if (url !== null) {
-        // Only right after a click: the component's own script can post this
-        // too, and must not open tabs on its own. A click inside the frame
-        // activates this window as well, as it does every ancestor frame.
-        if (navigator.userActivation?.isActive) openExternalUrl(url);
+        // The component's own script can post this too, and must not open
+        // tabs on its own.
+        if (clickedInFrame(frame.current, document, navigator.userActivation)) openExternalUrl(url);
         return;
       }
       const h = componentHeight(e.data);

@@ -19,84 +19,6 @@ const seededReviewLoopConfig = `{
    "nodes":[{"id":"loop","type":"loop","body":[{"id":"review","type":"bash","script":"` + reviewRunScript + `"}]}]}
 ]}`
 
-func (s *FSMigrateSuite) TestPatchReviewLoopDedupNodeAppends() {
-	sys, configPath := s.patchEnv(seededReviewLoopConfig)
-
-	require.NoError(s.T(), patchReviewLoopDedupNode(context.Background(), &Ctx{Sys: sys, LoopDir: "/loop"}))
-
-	got := sys.files[configPath]
-	require.Contains(s.T(), string(got), "// user comment")
-	v, err := loadHJSONAt(sys, configPath)
-	require.NoError(s.T(), err)
-	v.Standardize()
-	var cfg struct {
-		Workflows []struct {
-			Name  string           `json:"name"`
-			Nodes []map[string]any `json:"nodes"`
-		} `json:"workflows"`
-	}
-	require.NoError(s.T(), json.Unmarshal(v.Pack(), &cfg))
-	nodes := cfg.Workflows[1].Nodes
-	require.Len(s.T(), nodes, 2)
-	require.Equal(s.T(), map[string]any{
-		"id":         "dedup",
-		"type":       "bash",
-		"when":       reviewDedupWhenExpr,
-		"script":     reviewDedupScript,
-		"depends_on": []any{"loop"},
-	}, nodes[1])
-	require.Empty(s.T(), cfg.Workflows[0].Nodes)
-
-	// A second pass finds the node and leaves the file alone.
-	patched, err := patchReviewLoopDedupNodeReport(context.Background(), &Ctx{Sys: sys, LoopDir: "/loop"})
-	require.NoError(s.T(), err)
-	require.False(s.T(), patched)
-	require.Equal(s.T(), got, sys.files[configPath])
-}
-
-func (s *FSMigrateSuite) TestPatchReviewLoopDedupNodeLeavesCustomisedLoops() {
-	cases := []string{
-		`{}`,
-		`["array","root"]`,
-		`{"workflows":"scalar"}`,
-		`{"workflows":["scalar"]}`,
-		`{"workflows":[{"name":"review-loop"}]}`,
-		`{"workflows":[{"name":"review-loop","nodes":[]}]}`,
-		`{"workflows":[{"name":"review-loop","nodes":[42]}]}`,
-		`{"workflows":[{"name":"review-loop","nodes":[{"id":"other","type":"loop"}]}]}`,
-		`{"workflows":[{"name":"review-loop","nodes":[{"id":"loop","type":"bash"}]}]}`,
-		`{"workflows":[{"name":"review-loop","nodes":[{"id":"loop","type":"loop"}]}]}`,
-		`{"workflows":[{"name":"review-loop","nodes":[{"id":"loop","type":"loop","body":[]}]}]}`,
-		`{"workflows":[{"name":"review-loop","nodes":[{"id":"loop","type":"loop","body":["scalar"]}]}]}`,
-		`{"workflows":[{"name":"review-loop","nodes":[{"id":"loop","type":"loop","body":[{"id":"review","script":"my review"}]}]}]}`,
-		`{"workflows":[{"name":"review-loop","nodes":[{"id":"loop","type":"loop","body":[{"id":"other","script":"` + reviewRunScript + `"}]}]}]}`,
-		`{"workflows":[{"name":"review-loop","nodes":[{"id":"loop","type":"loop","body":[{"id":"review","script":"` + reviewRunScript + `"}]},{"id":"mine","type":"bash"}]}]}`,
-	}
-	for _, cfg := range cases {
-		sys, configPath := s.patchEnv(cfg)
-		patched, err := patchReviewLoopDedupNodeReport(context.Background(), &Ctx{Sys: sys, LoopDir: "/loop"})
-		if cfg == `["array","root"]` {
-			require.ErrorContains(s.T(), err, "expected JSON object")
-			continue
-		}
-		require.NoError(s.T(), err, cfg)
-		require.False(s.T(), patched, cfg)
-		require.Equal(s.T(), cfg, string(sys.files[configPath]), cfg)
-	}
-
-	// No config file at all.
-	patched, err := patchReviewLoopDedupNodeReport(context.Background(), &Ctx{Sys: newFakeSystem(), LoopDir: "/loop"})
-	require.NoError(s.T(), err)
-	require.False(s.T(), patched)
-}
-
-func (s *FSMigrateSuite) TestPatchReviewLoopDedupNodeWriteError() {
-	sys, configPath := s.patchEnv(seededReviewLoopConfig)
-	sys.writeErr[configPath+".tmp"] = errors.New("io error")
-	_, err := patchReviewLoopDedupNodeReport(context.Background(), &Ctx{Sys: sys, LoopDir: "/loop"})
-	require.ErrorContains(s.T(), err, "writing")
-}
-
 // Restore doesn't give a review-loop without the final dedup node one: the
 // patcher that once added it no longer runs there.
 func (s *FSMigrateSuite) TestRestoreBuiltinWorkflowsAddsNoDedupNode() {
@@ -185,6 +107,13 @@ func (s *FSMigrateSuite) TestPatchReviewLoopDropDedupNodeLeavesCustomisedLoops()
 		`{"workflows":[{"name":"review-loop","nodes":[` + loop + `,{"id":"mine","script":"` + reviewDedupScript + `"}]}]}`,
 		`{"workflows":[{"name":"review-loop","nodes":[` + loop + `,{"id":"dedup","script":"my dedup"}]}]}`,
 		`{"workflows":[{"name":"review-loop","nodes":[{"id":"loop","type":"loop","body":[{"id":"review","script":"my review"}]},` + dedup + `]}]}`,
+		`{"workflows":[{"name":"review-loop","nodes":[42,` + dedup + `]}]}`,
+		`{"workflows":[{"name":"review-loop","nodes":[{"id":"other","type":"loop"},` + dedup + `]}]}`,
+		`{"workflows":[{"name":"review-loop","nodes":[{"id":"loop","type":"bash"},` + dedup + `]}]}`,
+		`{"workflows":[{"name":"review-loop","nodes":[{"id":"loop","type":"loop"},` + dedup + `]}]}`,
+		`{"workflows":[{"name":"review-loop","nodes":[{"id":"loop","type":"loop","body":[]},` + dedup + `]}]}`,
+		`{"workflows":[{"name":"review-loop","nodes":[{"id":"loop","type":"loop","body":["scalar"]},` + dedup + `]}]}`,
+		`{"workflows":[{"name":"review-loop","nodes":[{"id":"loop","type":"loop","body":[{"id":"other","script":"` + reviewRunScript + `"}]},` + dedup + `]}]}`,
 		`{"workflows":[{"name":"review-loop","nodes":[` + loop + `,` + dedup + `,{"id":"mine"}]}]}`,
 	}
 	for _, cfg := range cases {

@@ -1032,7 +1032,7 @@ func (s *reviewService) handleReviewDedup(w http.ResponseWriter, r *http.Request
 		s.sessions.UpdateStatus(channelID, review.StatusReady, "")
 		s.broadcastReviewStatus(channelID, review.StatusReady, "")
 	}()
-	ctx, cancelTimeout := s.withRunTimeout(ctx)
+	ctx, cancelTimeout := withTimeout(ctx, s.dedupTimeout)
 	defer cancelTimeout()
 	res, err := s.runDedupPass(ctx, channelID, parentDirPath, sess, cands, nil)
 	if err != nil {
@@ -1118,7 +1118,7 @@ func (s *reviewService) runDedupPass(ctx context.Context, channelID, parentDirPa
 		paths[c.ID] = c.Path
 	}
 	unread := func(id, what string) bool {
-		if reads.has(paths[id]) {
+		if reads.has(sess.WorktreePath, paths[id]) {
 			return false
 		}
 		s.deps.logger.Info("review dedup: comment file not read, dropping claim", "claim", what, "channel_id", channelID, "comment_id", id, "path", paths[id])
@@ -1149,6 +1149,30 @@ func (s *reviewService) runDedupPass(ctx context.Context, channelID, parentDirPa
 	return res, nil
 }
 
+// handleReviewStop serves POST /api/channels/{id}/review/stop: it cancels
+// the review run in flight, or a dedup pass, which holds the same slot. The
+// agent is stopped and the session goes back to ready, keeping the findings
+// reported so far; the run's goroutine sets that once the agent is gone, so
+// the answer comes first. 404 when there is no session, 409 when nothing is
+// running.
+func (s *reviewService) handleReviewStop(w http.ResponseWriter, r *http.Request) {
+	if s.sessions == nil {
+		http.Error(w, "review service not configured", http.StatusNotImplemented)
+		return
+	}
+	channelID := r.PathValue("id")
+	if s.sessions.Get(channelID) == nil {
+		http.Error(w, "no review session for channel", http.StatusNotFound)
+		return
+	}
+	if !s.isReviewRunActive(channelID) {
+		http.Error(w, "no review run in progress", http.StatusConflict)
+		return
+	}
+	s.cancelReviewRun(channelID)
+	writeHTTPJSON(w, http.StatusAccepted, map[string]string{"status": "stopping"}, s.deps.logger)
+}
+
 // fileReads records the file_path of each Read tool call a dedup pass makes.
 // add runs on the agent's stream goroutine; has runs once the pass is over.
 type fileReads struct {
@@ -1162,13 +1186,16 @@ func (f *fileReads) add(path string) {
 	f.paths = append(f.paths, path)
 }
 
-// has reports whether a Read opened rel, a repo-relative comment path. Read
-// takes absolute paths, which inside the container sit under the worktree.
-func (f *fileReads) has(rel string) bool {
+// has reports whether a Read opened rel, a repo-relative comment path, in
+// the worktree at root. Read takes absolute paths, and the container mounts
+// the worktree at its host path, next to the parent checkout: a read of the
+// same file there is another revision of it, and doesn't count.
+func (f *fileReads) has(root, rel string) bool {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	want := filepath.Join(root, rel)
 	return rel != "" && slices.ContainsFunc(f.paths, func(p string) bool {
-		return p == rel || strings.HasSuffix(p, "/"+rel)
+		return filepath.Clean(p) == want
 	})
 }
 

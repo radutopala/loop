@@ -31,6 +31,7 @@ type reviewService struct {
 	systemPrompt string
 	userPrompt   string
 	runTimeout   time.Duration
+	dedupTimeout time.Duration
 	mu           sync.Mutex // guards active
 	active       map[string]context.CancelFunc
 }
@@ -245,9 +246,10 @@ func (s *reviewService) pushOneComment(ctx context.Context, channelID string, se
 // and the final status broadcast.
 //
 // runCtx is the per-run cancellable context registered with
-// registerReviewRun. Session-delete (handleReviewDelete) and graceful
-// shutdown (Server.Stop) cancel it to detach the long-running agent
-// container from a session it no longer has any reason to outlive.
+// registerReviewRun. Stop (handleReviewStop) cancels it, as do
+// session-delete (handleReviewDelete) and graceful shutdown (Server.Stop),
+// to detach the long-running agent container from a session it no longer
+// has any reason to outlive.
 //
 // When reviewRunTimeout > 0 the agent run is further bounded by that
 // timeout: on expiry the run ctx is cancelled (so the underlying agent
@@ -262,7 +264,7 @@ func (s *reviewService) pushOneComment(ctx context.Context, channelID string, se
 func (s *reviewService) runReviewAsync(runCtx context.Context, before map[string]bool, req review.RunRequest) {
 	channelID, worktreePath, parentDirPath := req.ChannelID, req.DirPath, req.ParentDirPath
 	defer s.unregisterReviewRun(channelID)
-	ctx, cancel := s.withRunTimeout(runCtx)
+	ctx, cancel := withTimeout(runCtx, s.runTimeout)
 	defer cancel()
 	// Findings stream in as the agent reports them, so the panel fills up
 	// during the run rather than all at once at the end. ingestComment is
@@ -288,11 +290,10 @@ func (s *reviewService) runReviewAsync(runCtx context.Context, before map[string
 		if errors.Is(err, context.DeadlineExceeded) || ctx.Err() == context.DeadlineExceeded {
 			msg = fmt.Sprintf("review timed out after %s", s.runTimeout)
 		}
-		// Session-delete or shutdown fired the registered cancel func.
-		// Don't broadcast an "error" status — the session is going away
-		// (or already gone), and an error WS event would just race the
-		// delete and confuse the FE.
+		// Stop, session-delete or shutdown fired the registered cancel
+		// func. That's no error: see settleStopped.
 		if errors.Is(err, context.Canceled) || runCtx.Err() == context.Canceled {
+			s.settleStopped(channelID)
 			return
 		}
 		s.sessions.UpdateStatus(channelID, review.StatusError, msg)
@@ -301,22 +302,32 @@ func (s *reviewService) runReviewAsync(runCtx context.Context, before map[string
 	}
 	// The pass gets a budget of its own: on the review's leftovers, a long
 	// run would leave it too little to finish, and it would fail quietly.
-	dedupCtx, cancelDedup := s.withRunTimeout(runCtx)
+	dedupCtx, cancelDedup := withTimeout(runCtx, s.dedupTimeout)
 	defer cancelDedup()
 	s.dedupAfterRun(dedupCtx, before, req)
 	if runCtx.Err() != nil {
+		s.settleStopped(channelID)
 		return
 	}
 	s.sessions.UpdateStatus(channelID, review.StatusReady, "")
 	s.broadcastReviewStatus(channelID, review.StatusReady, "")
 }
 
-// withRunTimeout bounds ctx by the configured run timeout, when there is one.
-func (s *reviewService) withRunTimeout(ctx context.Context) (context.Context, context.CancelFunc) {
-	if s.runTimeout <= 0 {
+// settleStopped ends a cancelled run. Stop leaves the session ready, with
+// the findings the run reported so far; session-delete has removed it (or is
+// about to, and its idle status follows), so there is nothing to update.
+func (s *reviewService) settleStopped(channelID string) {
+	if s.sessions.UpdateStatus(channelID, review.StatusReady, "") {
+		s.broadcastReviewStatus(channelID, review.StatusReady, "")
+	}
+}
+
+// withTimeout bounds ctx by d, when it is set.
+func withTimeout(ctx context.Context, d time.Duration) (context.Context, context.CancelFunc) {
+	if d <= 0 {
 		return ctx, func() {}
 	}
-	return context.WithTimeout(ctx, s.runTimeout)
+	return context.WithTimeout(ctx, d)
 }
 
 // dedupAfterRun runs the dedup pass over the comments a review run added
@@ -486,8 +497,8 @@ func (s *reviewService) unregisterReviewRun(channelID string) {
 }
 
 // cancelReviewRun cancels the agent ctx of an in-flight run for
-// channelID. Safe to call when no run is active. Used by session-delete
-// and server-Stop paths to keep a running agent from outliving the
+// channelID. Safe to call when no run is active. Used by the Stop,
+// session-delete and server-Stop paths to keep a running agent from outliving the
 // session it was reviewing.
 func (s *reviewService) cancelReviewRun(channelID string) {
 	s.mu.Lock()
@@ -607,6 +618,13 @@ func (s *reviewService) setRunTimeout(d time.Duration) {
 	s.runTimeout = d
 }
 
+// setDedupTimeout caps a dedup pass, the one after a run and one run on
+// demand; 0 leaves it unbounded. The run's ceiling plus this one should stay
+// below the CLI's `loop review run --timeout`, which waits for both.
+func (s *reviewService) setDedupTimeout(d time.Duration) {
+	s.dedupTimeout = d
+}
+
 // WithReview configures the review panel's backends at construction.
 func WithReview(client GitHubReview, sessions *review.Store, wt review.PR) Option {
 	return func(s *Server) { s.review.setBackends(client, sessions, wt) }
@@ -620,4 +638,9 @@ func WithReviewAgent(runner ReviewRunner, systemPrompt, userPrompt string) Optio
 // WithReviewRunTimeout caps the daemon-side review run goroutine.
 func WithReviewRunTimeout(d time.Duration) Option {
 	return func(s *Server) { s.review.setRunTimeout(d) }
+}
+
+// WithReviewDedupTimeout caps the daemon-side dedup pass.
+func WithReviewDedupTimeout(d time.Duration) Option {
+	return func(s *Server) { s.review.setDedupTimeout(d) }
 }

@@ -398,7 +398,9 @@ func (s *Store) RemoveComment(channelID, commentID string) (*Comment, bool) {
 // right line. Only a local agent comment is changed: a GitHub comment isn't
 // ours to edit, and a pushed one would drift from its copy on the PR. edit
 // gets a copy that then replaces the comment, since FindComment hands out
-// the pointer. Returns the updated comment, or nil when nothing changed.
+// the pointer. A new body is a new claim, so it drops the verdict on the old
+// one until a pass checks it again. Returns the updated comment, or nil when
+// nothing changed.
 func (s *Store) EditLocalComment(channelID, commentID string, edit func(*Comment)) *Comment {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -415,6 +417,9 @@ func (s *Store) EditLocalComment(channelID, commentID string, edit func(*Comment
 		}
 		updated := *c
 		edit(&updated)
+		if updated.Body != c.Body {
+			updated.Verdict, updated.VerdictReason = "", ""
+		}
 		sess.Comments[i] = &updated
 		sess.UpdatedAt = time.Now()
 		return &updated
