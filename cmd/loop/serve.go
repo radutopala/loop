@@ -806,6 +806,7 @@ func (a *app) serve() error {
 	orch.SetWorkflowEngine(wfEngine)
 	executor.SetActiveRuns(orch.ActiveRunsMap())
 	executor.SetChannelLocks(orch.ChannelLocksMap())
+	executor.SetCardParker(orch)
 	apiSrv.SetIncomingMessageHandler(chatBot)
 	apiSrv.SetRunCanceller(orch)
 	apiSrv.SetExplainer(orch)
