@@ -2,7 +2,7 @@
 # GOTOOLCHAIN=local, so a runner older than the go directive cannot build the
 # module. The floating 1.27 tag also left CI stale, because ensure-test-runner
 # keys its cache on this file's hash and never noticed upstream moving.
-FROM golang:1.27.1
+FROM golang:1.27.2
 
 # The Docker CLI and buildx come from Docker's own apt repository rather than
 # Debian's, which pins buildx at 0.13.1 and the CLI at 26.1.5 — matching the
