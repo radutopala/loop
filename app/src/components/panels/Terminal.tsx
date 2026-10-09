@@ -6,6 +6,8 @@ import { useXTerminal } from "../../hooks/useXTerminal";
 import { useTheme } from "../../ThemeContext";
 import type { GateApprovalRequestedData, SessionStatus, TerminalTarget } from "../../types";
 import type { AgentOpenMode } from "../../types/panels";
+import { notifyUiChanged, registerTerminalInput } from "../../uiBridge/registry";
+import { tailLines } from "../../uiBridge/terminalText";
 import { uploadPastedImage } from "../../utils/clipboardImage";
 import { ApprovalCard } from "../chat/ApprovalCard";
 import { PaneHeaderStatus } from "./PaneHeaderStatus";
@@ -21,6 +23,8 @@ const closeRegistry = new Map<string, () => void>();
  * handling the deny tool result and redrawing the input box; once it's
  * quiescent for this long, it's back at the prompt and ready to accept \r. */
 const DENY_SUBMIT_QUIESCENCE_MS = 400;
+// How long a terminal is quiet before it stops being busy.
+const BUSY_IDLE_MS = 1500;
 
 export function getCloseForInstance(key: string): (() => void) | undefined {
   return closeRegistry.get(key);
@@ -110,7 +114,30 @@ export function Terminal({
   // QUIESCENCE_MS), we send \r to submit the pasted text.
   const pendingSubmitRef = useRef<{ idleTimer: ReturnType<typeof setTimeout> | null } | null>(null);
 
+  // When the terminal last printed, for UI commands to type only once it's
+  // quiet, and whether it's printing now (busy), which windows report.
+  const lastOutputAtRef = useRef(0);
+  const busyRef = useRef(false);
+  const busyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(
+    () => () => {
+      if (busyTimerRef.current) clearTimeout(busyTimerRef.current);
+    },
+    [],
+  );
+
   const onData = useCallback((data: ArrayBuffer) => {
+    lastOutputAtRef.current = Date.now();
+    if (busyTimerRef.current) clearTimeout(busyTimerRef.current);
+    busyTimerRef.current = setTimeout(() => {
+      busyTimerRef.current = null;
+      busyRef.current = false;
+      notifyUiChanged();
+    }, BUSY_IDLE_MS);
+    if (!busyRef.current) {
+      busyRef.current = true;
+      notifyUiChanged();
+    }
     writeRef.current?.(new Uint8Array(data));
     const ps = pendingSubmitRef.current;
     if (ps) {
@@ -191,6 +218,27 @@ export function Terminal({
       closeRegistry.delete(key);
     };
   }, [registryKey]);
+
+  // UI commands (send_input) type into the agent's terminals, the Claude TUI
+  // and shells in its container. A host shell runs on the host: it never
+  // registers, so nothing types into it.
+  const statusRef = useRef(status);
+  statusRef.current = status;
+  const isAgentTUI = !cmd || cmd.length === 0;
+  useEffect(() => {
+    if (target !== "agent" || !channelId || !instanceId) return;
+    return registerTerminalInput(channelId, instanceId, {
+      kind: isAgentTUI ? "agent" : "shell",
+      status: () => statusRef.current,
+      lastOutputAt: () => lastOutputAtRef.current,
+      busy: () => busyRef.current,
+      read: (lines) => {
+        const term = xtermInstRef.current;
+        return term ? tailLines(term.buffer.active, lines) : "";
+      },
+      send: (data) => sendInputRef.current?.(data),
+    });
+  }, [target, channelId, instanceId, isAgentTUI]);
 
   // Kill when killSignal increments from parent.
   const killSignalRef = useRef(killSignal ?? 0);

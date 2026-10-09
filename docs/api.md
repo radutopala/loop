@@ -54,9 +54,11 @@ Browsers can't set headers on a WebSocket, so WebSocket clients send it as a sub
 
 ### Agent scope
 
-An agent token works only on the routes in-container clients call (the table is `agentRoutes` in `internal/api/agent_scope.go`): messages, threads, tasks, shortcuts, memory, playground, workflows, learn proposals, review, quality, the browser action and the agent-channel WebSocket. Every other route answers 403, among them config, terminals, gates, images, token rotation and content links.
+An agent token works only on the routes in-container clients call (the table is `agentRoutes` in `internal/api/agent_scope.go`): messages, threads, tasks, shortcuts, memory, playground, workflows, learn proposals, review, quality, the UI bridge (`GET /api/ui/state`, `POST /api/ui/commands`), the browser action and the agent-channel WebSocket. Every other route answers 403, among them config, terminals, gates, images, token rotation and content links.
 
 On the routes it may call, an agent is held to its own project. Every channel, thread, task, workflow run and `dir_path` a request names, in the path, the query or the JSON body, must be the agent's own channel or dir, or share its project root (after symlinks). A request that names anything else gets 403. The exception is `POST /api/messages` (the `send_message` tool): its `channel_id` may be any channel, so one agent can hand work or news to another project's channel. Agents may also only change `project` bash shortcuts, and can't start workflows while `workflow_bash_local` runs workflow bash on the host. The routes that change review comments (delete, edit, push one, push all) are held to the agent's own channel, not its project: they act on the PR as the user. An agent may not delete a GitHub comment.
+
+On the UI bridge, an agent's command must start with `select_channel` to a channel of its project, and every `select_channel` in it must stay in the project. `GET /api/ui/state` leaves out the `state` of windows showing a channel outside it. The UI WebSocket stays owner-only.
 
 ### Public routes
 
@@ -2692,6 +2694,112 @@ Get the Loop project README content.
 
 ---
 
+## UI Bridge
+
+Drives the desktop app: each app window connects to `/api/ws/ui`, reports what it shows, and runs the steps a command sends it. The CLI wraps it as `loop ui:run` and `loop ui:state`; agents use the `ui_state` and `ui_run` MCP tools.
+
+### `GET /api/ui/state`
+
+The connected windows and what each shows.
+
+**Query Parameters:**
+
+| Param | Type | Required | Description |
+|-------|------|----------|-------------|
+| `after` | integer | no | Waits (up to 30s) for a version past this one, then answers with the state as it is |
+
+**Response:**
+```json
+{
+  "version": 12,
+  "clients": [
+    {
+      "client_id": "w-1",
+      "focused": true,
+      "connected_at": "2026-10-09T10:00:00Z",
+      "focused_at": "2026-10-09T10:01:00Z",
+      "state": {
+        "focused": true,
+        "channel_id": "ch-1",
+        "tab": "Default",
+        "tabs": ["Default", "Agents"],
+        "canvas": false,
+        "panes": [
+          {"id": "chat", "panel": "chat"},
+          {"id": "docker-agent-0", "panel": "docker-agent", "open_mode": "fresh", "status": "running", "busy": true}
+        ],
+        "maximized": "docker-agent-0"
+      }
+    }
+  ]
+}
+```
+
+`busy` is an agent terminal that printed in the last 1.5s, e.g. the Claude TUI at work. `status` is `connecting`, `running`, `completed` or `failed`.
+
+**Errors:** `400` invalid `after`.
+
+---
+
+### `POST /api/ui/commands`
+
+Runs steps in a window, in order, until one fails.
+
+**Request:**
+```json
+{
+  "client_id": "w-1",
+  "timeout": "2m",
+  "steps": [
+    {"op": "select_channel", "channel_id": "ch-1"},
+    {"op": "add_pane", "panel": "docker-agent", "open_mode": "fresh"},
+    {"op": "send_input", "pane": "docker-agent", "text": "run the tests", "submit": true},
+    {"op": "wait_for", "pane": "docker-agent", "match": "PASS|FAIL", "lines": 200}
+  ]
+}
+```
+
+`client_id` picks the window; without it, the one the user last focused. `timeout` is a Go duration (default `1m`, at most `10m`).
+
+**Steps:** a `pane` is a pane id or a panel type (its first pane).
+
+| Op | Fields | Does |
+|----|--------|------|
+| `select_channel` | `channel_id` | Opens the channel |
+| `set_tab` | `tab` | Switches the layout tab |
+| `replace_pane` | `pane`, `panel`, `open_mode?`, `item?`, `scope?` | Puts a new pane in the pane's place |
+| `add_pane` | `panel`, `next_to?`, `direction?`, `open_mode?`, `item?`, `scope?` | Adds a pane beside `next_to` (or the last pane); `direction` is `horizontal` or `vertical` |
+| `remove_pane` | `pane` | Closes the pane |
+| `maximize_pane` | `pane` | Makes the pane fill the tab |
+| `restore_pane` | | Puts a maximized pane back |
+| `open_file` | `path`, `line?` | Opens a file of the channel's roots in the editor |
+| `send_input` | `pane`, `text`, `submit?` | Types into an agent terminal |
+| `read_output` | `pane`, `lines?` | The terminal's last `lines` (default 50, at most 2000) |
+| `wait_for` | `pane`, `match?`, `quiet_ms?`, `lines?` | Waits until the last `lines` match the regular expression `match` (multiline), or, without it, until the terminal is quiet for `quiet_ms` (default 2000). After a `send_input` to that pane in the same command, only output since counts. A session that ended counts as done |
+
+`open_mode` is for `docker-agent` panes. `item` names the playground of a `playground` pane, and `scope` (`global` or `project`) picks it when both scopes have one by that name.
+
+Terminal steps (`send_input`, `read_output`, `wait_for`) work only on `docker-agent` and `docker-shell` panes, which run in containers. A host shell is refused, by the daemon and again by the window.
+
+**Response:**
+```json
+{
+  "client_id": "w-1",
+  "results": [
+    {"op": "select_channel", "ok": true},
+    {"op": "add_pane", "ok": true, "pane": "docker-agent-1"},
+    {"op": "send_input", "ok": true, "pane": "docker-agent-1"},
+    {"op": "wait_for", "ok": true, "pane": "docker-agent-1", "output": "...\nPASS"}
+  ]
+}
+```
+
+A failed step has `"ok": false` and an `error`; the steps after it don't run.
+
+**Errors:** `400` empty steps, a step without an op, a bad timeout, or a terminal step on a host shell; `403` an agent's command outside its project; `404` no window, or no window `client_id`; `502` the window dropped; `504` the window didn't answer in time.
+
+---
+
 ## WebSocket Endpoints
 
 ### `GET /api/ws`
@@ -2707,6 +2815,12 @@ Real-time events WebSocket. See [Events System](events.md) for the full protocol
 Interactive terminal WebSocket. See [Terminal WebSocket](terminal.md) for the full protocol.
 
 **Errors:** `501` if terminal manager is not configured.
+
+---
+
+### `GET /api/ws/ui`
+
+The app windows' connection to the [UI bridge](#ui-bridge): a window sends `hello`, then `state` whenever what it shows changes, and answers each `command` with a `result` message holding its `results`. Owner only.
 
 ---
 
@@ -3436,6 +3550,27 @@ Get a named playground's content.
 ```
 
 **Errors:** `400` if name is invalid. `404` if playground not found.
+
+### `GET /api/playground/state?name=...`
+
+A playground's state: a JSON object its page keeps through `window.loop.state`, stored as `state.json` in the playground's dir. A playground without one answers `{}`.
+
+**Errors:** `400` invalid name; `404` no such playground.
+
+---
+
+### `PATCH /api/playground/state?name=...`
+
+Merges the body, a JSON object, into the state; a `null` value removes its key. Answers with the new state and sends a `playground.update` event with `"kind": "state"`, which the playground's panels pass to their page.
+
+**Request:**
+```json
+{"score": 12, "draft": null}
+```
+
+**Errors:** `400` the body isn't a JSON object; `404` no such playground; `413` the state would grow past 1 MiB.
+
+---
 
 ### `GET /api/playground/export?name=...`
 

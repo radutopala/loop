@@ -63,6 +63,20 @@ The toolbar also shows the last update description from the agent.
 
 A console bridge script is injected into the iframe HTML. It intercepts `console.log`, `console.warn`, `console.error`, `console.info`, and `console.debug` calls and forwards them to the parent via `postMessage`. The parent displays them in a collapsible bottom panel with timestamps and color-coded severity.
 
+### State
+
+The same script gives the page `window.loop.state`, a JSON object the daemon keeps per playground, so a page can save what the user did and an agent or a script can read or change it:
+
+```js
+const state = await window.loop.state.get();           // the whole state
+await window.loop.state.set({ score: 12, draft: null }); // merge; null removes a key
+const stop = window.loop.state.subscribe(s => render(s)); // on every change
+```
+
+`get` and `set` resolve with the whole state. `subscribe` fires on changes from any panel showing the playground and from `PATCH /api/playground/state`; it returns a function that stops it. A state update doesn't reload the page.
+
+The state is stored as `state.json` in the playground's dir (at most 1 MiB), so agents working on the playground can read it, and it is served with the playground's other files, publicly too when the playground is shared. Don't keep secrets in it. `window.loop.state` needs the Playground panel; on a shared page, its calls fail after 10 seconds.
+
 ### Infinite Loop Protection
 
 Before injecting JavaScript into the iframe, loops (`for`, `while`, `do`) are instrumented with a timing guard. If a loop body runs for more than 3 seconds, it throws an error.
@@ -157,6 +171,8 @@ The global playground directory is bind-mounted into agent containers, so agents
 |--------|----------|-------------|
 | `PUT` | `/api/playground?name=...` | Store code + broadcast update |
 | `GET` | `/api/playground?name=...` | Retrieve current code |
+| `GET` | `/api/playground/state?name=...` | The playground's state (`{}` without one) |
+| `PATCH` | `/api/playground/state?name=...` | Merge a JSON object into the state (`null` removes a key); tells the panels |
 | `GET` | `/api/playground/export?name=...` | Download as standalone HTML |
 | `GET` | `/api/playground/items` | List all playground names (global + project) |
 | `GET` | `/api/playground/serve/{name}` | Serve global playground as HTML page |

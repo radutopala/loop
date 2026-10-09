@@ -98,8 +98,9 @@ func (s *Server) handleDeleteThread(w http.ResponseWriter, r *http.Request) {
 
 // deleteThread deletes threadID through s.threads, stops the runs of its
 // hidden learn and explain threads, which go with it, and removes their MCP
-// configs unless the parent channel's project keeps them. The thread and its
-// hidden threads are noted first, while they still exist to find.
+// configs unless the parent channel's project keeps them, then tells the app
+// windows it's gone. The thread and its hidden threads are noted first, while
+// they still exist to find.
 func (s *Server) deleteThread(ctx context.Context, threadID string) error {
 	threads := s.lookupThreads(ctx, []string{threadID})
 	hidden := s.hiddenThreads(ctx, threadID)
@@ -109,6 +110,9 @@ func (s *Server) deleteThread(ctx context.Context, threadID string) error {
 	s.stopHiddenThreads(ctx, hidden)
 	if len(threads) == 1 {
 		s.removeMCPConfigs(s.threadOwner(ctx, threads[0]), append(threads, hidden...))
+	}
+	if s.eventsHub != nil {
+		s.eventsHub.BroadcastChannelDeleted(threadID)
 	}
 	return nil
 }

@@ -86,6 +86,8 @@ The review tools act on the agent's own channel only and take no `channel_id`. T
 
 | Tool | Description |
 |------|-------------|
+| `ui_state` | The desktop app's windows: each one's open channel, layout tab and panes (with agent terminals' status and whether they're busy). Windows showing a channel outside the agent's project have no state. |
+| `ui_run` | Run steps in a desktop app window, in order until one fails: open a channel, switch tabs, add, replace, remove or maximize panes, open a file, type into an agent terminal, read its output or wait for it. Without a leading `select_channel`, it opens the agent's own channel first; any channel it opens must be in the agent's project. Terminal steps work only on agent terminals (`docker-agent`, `docker-shell`), never host shells. See [API: UI Bridge](api.md#ui-bridge). |
 | `playground` | Manage playgrounds (action: create/update/delete). Create sets up the entry HTML, title, and description. Use `playground_file` to add JS, CSS, and other files. |
 | `playground_file` | Manage files within a playground (action: create/update/read/delete/list). Write script.js, style.css, importmap.json, lib/utils.js, etc. Files served at relative URLs for ES module imports. |
 | `playground_share` | Expose a playground publicly over a cloudflared quick tunnel, or stop (action: share/unshare). `share` returns a unique public URL; idempotent per playground. Requires `playground_share.enabled`. See [Playground: Public sharing](playground.md#public-sharing). |

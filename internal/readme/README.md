@@ -579,6 +579,8 @@ For development: `make docker-build` builds from `container/Dockerfile` in the r
 | `loop review:run` | | Drive a channel's review pass via the daemon (`--channel-id`, `--api-url`, `--wait`, `--timeout`); used by the seeded `review-loop` / `review-fix-loop` workflows. See [docs/review.md](docs/review.md) |
 | `loop api:rotate-token` | | Replace the API token the desktop app and CLI use; see [docs/api.md](docs/api.md) |
 | `loop app:url` | | Print the web UI's URL signed in with the API token (`--base`, default `http://localhost:5173/`), for running the UI in a browser |
+| `loop ui:state` | | Print the desktop app windows' state (`--watch` to print each change); see [docs/api.md](docs/api.md#ui-bridge) |
+| `loop ui:run` | | Run UI steps, a JSON array from an argument or stdin, in an app window (`--client`, `--timeout`) |
 | `loop readme` | `r` | Print the README documentation |
 
 `loop --help` lists every command from the command tree. Nested commands show by colon path and run that way too: `loop review:run` is `loop review run`.
@@ -1179,6 +1181,8 @@ In headless/Linux environments where Electron can't launch, `LOOP_NO_ELECTRON=1 
 | `get_readme` | Get the full Loop README documentation |
 | `playground` | Manage playgrounds (create/update/delete) |
 | `playground_file` | Manage files within a playground (create/update/read/delete/list) |
+| `ui_state` | The desktop app's windows: open channel, layout tab and panes, with agent terminals' status |
+| `ui_run` | Drive a desktop app window: channels, tabs, panes, files, and typing into or reading agent terminals (never host shells) |
 | `chat_component` | Show a component inline in the desktop chat: a template (`math`, `canvas`, `react`, or one from config) filled with HTML/CSS/JS |
 | `prompt_shortcut` | Manage prompt shortcuts (list, add, update, delete) in global or project scope |
 | `bash_shortcut` | Manage bash shortcuts (list, add, update, delete) in global or project scope |

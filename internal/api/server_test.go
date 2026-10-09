@@ -353,6 +353,8 @@ func (s *ServerSuite) SetupTest() {
 	s.mux.HandleFunc("GET /api/playground/file", s.srv.playground.handlePlaygroundFileRead)
 	s.mux.HandleFunc("DELETE /api/playground/file", s.srv.playground.handlePlaygroundFileDelete)
 	s.mux.HandleFunc("GET /api/playground/files", s.srv.playground.handlePlaygroundFileList)
+	s.mux.HandleFunc("GET /api/playground/state", s.srv.playground.handlePlaygroundStateGet)
+	s.mux.HandleFunc("PATCH /api/playground/state", s.srv.playground.handlePlaygroundStatePatch)
 	s.mux.HandleFunc("GET /api/playground/serve/{name}", s.srv.playground.handlePlaygroundServe)
 	s.mux.HandleFunc("GET /api/playground/serve/{name}/{path...}", s.srv.playground.handlePlaygroundServeFile)
 	s.mux.HandleFunc("PUT /api/playground/share", s.srv.playground.handlePlaygroundShare)

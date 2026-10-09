@@ -1,5 +1,15 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { contentCapBase, fetchPlayground, fetchPlaygroundItems, fetchPlaygroundShareStatus, type PlaygroundItem, sharePlayground, unsharePlayground } from "../../api/loopApi";
+import {
+  contentCapBase,
+  fetchPlayground,
+  fetchPlaygroundItems,
+  fetchPlaygroundShareStatus,
+  fetchPlaygroundState,
+  type PlaygroundItem,
+  patchPlaygroundState,
+  sharePlayground,
+  unsharePlayground,
+} from "../../api/loopApi";
 import { useContentCapsEpoch } from "../../hooks/useContentCapsEpoch";
 import { useEventStream } from "../../hooks/useEventStream";
 import { useTheme } from "../../ThemeContext";
@@ -152,6 +162,18 @@ export function PlaygroundPanel({ channelId, instanceId = "default" }: Playgroun
             }
             return;
           }
+          // State change (window.loop.state, PATCH /api/playground/state):
+          // pass the new state to the page, without reloading it. Fetched,
+          // like the share status, since the event's channel may be another
+          // that maps to the same dir.
+          if (data.kind === "state") {
+            if (eventName === activeItemRef.current && eventScope === activeScopeRef.current) {
+              fetchPlaygroundState(eventName, eventScope, channelId)
+                .then((state) => iframeRef.current?.contentWindow?.postMessage({ type: "playground-state-changed", state }, "*"))
+                .catch(logErr("fetching playground state"));
+            }
+            return;
+          }
           if (eventScope === "project" && eventChannelId !== channelId) return;
           // Refresh items list (a new item may have been created).
           fetchPlaygroundItems(channelId)
@@ -190,10 +212,21 @@ export function PlaygroundPanel({ channelId, instanceId = "default" }: Playgroun
       if (e.data && e.data.type === "playground-console") {
         setConsoleMessages((prev) => [...prev.slice(-199), { level: e.data.level, message: e.data.message, time: Date.now() }]);
       }
+      // window.loop.state: get or set the state of the playground shown.
+      if (e.data && e.data.type === "playground-state" && activeItemRef.current) {
+        const source = e.source as Window;
+        const { id, op, patch } = e.data;
+        const name = activeItemRef.current;
+        const scope = activeScopeRef.current;
+        const request = op === "set" ? patchPlaygroundState(name, patch ?? {}, scope, channelId) : fetchPlaygroundState(name, scope, channelId);
+        request
+          .then((state) => source.postMessage({ type: "playground-state-reply", id, state }, "*"))
+          .catch((err) => source.postMessage({ type: "playground-state-reply", id, error: err instanceof Error ? err.message : String(err) }, "*"));
+      }
     };
     window.addEventListener("message", onMessage);
     return () => window.removeEventListener("message", onMessage);
-  }, []);
+  }, [channelId]);
 
   // Reload iframe when code changes (server serves the latest files).
   useEffect(() => {

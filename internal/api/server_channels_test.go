@@ -237,11 +237,19 @@ func (s *ServerSuite) TestDeleteThreadSuccess() {
 	s.store.On("GetChannel", mock.Anything, "thread-1").Return((*db.Channel)(nil), nil)
 	s.store.On("ListHiddenThreads", mock.Anything, "thread-1").Return([]*db.Channel(nil), nil)
 	s.threads.On("DeleteThread", mock.Anything, "thread-1").Return(nil)
+	hub := NewEventsHub(testLogger())
+	var events []Event
+	hub.captureHook = func(e Event) { events = append(events, e) }
+	s.srv.eventsHub = hub
 
 	rec := s.testRequest("DELETE", "/api/threads/thread-1", "")
 
 	require.Equal(s.T(), http.StatusNoContent, rec.Code)
 	s.threads.AssertExpectations(s.T())
+	// The app windows drop it from their sidebars.
+	require.Len(s.T(), events, 1)
+	require.Equal(s.T(), EventChannelDeleted, events[0].Type)
+	require.Equal(s.T(), "thread-1", events[0].ChannelID)
 }
 
 func (s *ServerSuite) TestDeleteThreadError() {

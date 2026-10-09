@@ -254,6 +254,16 @@ func New(channelID, apiURL, authorID string, httpClient HTTPClient, logger *slog
 	}, s.handleChatComponent)
 
 	mcp.AddTool(s.mcpServer, &mcp.Tool{
+		Name:        "ui_state",
+		Description: "Read the Loop desktop app's windows: which is focused, the channel each shows, its layout tabs and the panes of the open tab (id, panel, session status, busy). A window showing a channel outside this project shows no state. Call it before ui_run to learn the pane ids.",
+	}, s.handleUIState)
+
+	mcp.AddTool(s.mcpServer, &mcp.Tool{
+		Name:        "ui_run",
+		Description: "Drive the Loop desktop app window the user last focused: open a channel of this project, switch layout tabs, add, replace, remove or maximize panes, open a file in the editor, show a playground in a pane, and type into, read or wait on an agent terminal (docker-agent or docker-shell panes, never host shells). The steps run in order until one fails; without a select_channel first, they run in this channel. Desktop app only. Moving the user's window is visible to them: do it when they asked to see something.",
+	}, s.handleUIRun)
+
+	mcp.AddTool(s.mcpServer, &mcp.Tool{
 		Name:        "playground",
 		Description: "Manage playgrounds — live interactive sandboxes for HTML/CSS/JS that render in the user's Playground panel. Actions: create (new playground with html + title + description), update (modify html/title/description), delete (remove entirely). After creating, use playground_file to add script.js, style.css, and other files. JS runs as ES module — use import for npm packages via esm.sh CDN.",
 	}, s.handlePlayground)

@@ -341,6 +341,9 @@ func (a *app) newRootCmd() *cobra.Command {
 		Use:   "loop",
 		Short: "Loop bot powered by Claude",
 		Long:  rootLong,
+		// Flags and args are checked before this runs, so a mistyped command
+		// still prints its usage; an error from the command itself doesn't.
+		PersistentPreRun: func(cmd *cobra.Command, _ []string) { cmd.SilenceUsage = true },
 	}
 	root.AddCommand(a.newServeCmd())
 	root.AddCommand(a.newMCPCmd())
@@ -361,6 +364,7 @@ func (a *app) newRootCmd() *cobra.Command {
 	root.AddCommand(a.newDockerproxyCmd())
 	root.AddCommand(a.newQualityCmd())
 	root.AddCommand(a.newReviewCmd())
+	root.AddCommand(a.newUICmd())
 	root.AddCommand(a.newAPIRotateTokenCmd())
 	root.AddCommand(a.newAppURLCmd())
 	nameHelpFlags(root)

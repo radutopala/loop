@@ -1,0 +1,271 @@
+import { AGENT_OPEN_MODE_OPTIONS, type AgentOpenMode, PANEL_OPTIONS, type PanelType } from "../types/panels";
+import type { PaneInfo, PaneOptions, StepResult, TerminalInput, UiHost, UiStep, WorkspaceController } from "./types";
+
+/** The panes send_input types into, and read_output and wait_for read:
+ *  the agent's terminals, in its container. Never a host shell, which runs
+ *  on the host. */
+export const INPUT_PANELS: PanelType[] = ["docker-agent", "docker-shell"];
+
+/** How long a command may take when the daemon gives no timeout. */
+export const DEFAULT_TIMEOUT_MS = 60_000;
+
+/** How long an agent terminal must be quiet before it's typed into: a
+ *  starting Claude TUI prints for a while before it takes input. */
+export const INPUT_QUIET_MS = 800;
+
+/** How long wait_for wants a terminal quiet when the step doesn't say. */
+export const WAIT_QUIET_MS = 2000;
+
+/** How many lines read_output and wait_for return when the step doesn't
+ *  say, and at most. */
+export const DEFAULT_LINES = 50;
+export const MAX_LINES = 2000;
+
+const POLL_MS = 50;
+
+/** What a step adds to its result. */
+type StepOutput = Omit<StepResult, "op" | "ok">;
+
+/** What the steps of one command share: when each pane was last typed
+ *  into, for wait_for to wait for what that brought. */
+interface Run {
+  host: UiHost;
+  deadline: number;
+  sentAt: Map<string, number>;
+}
+
+class StepError extends Error {}
+
+/**
+ * Runs steps in order and returns their results, stopping at the first that
+ * fails. timeoutMs is how long the daemon waits for them; steps that wait
+ * (for a channel to open, a terminal to be ready) give up by then.
+ */
+export async function runSteps(steps: UiStep[], host: UiHost, timeoutMs = DEFAULT_TIMEOUT_MS): Promise<StepResult[]> {
+  const run: Run = { host, deadline: host.now() + timeoutMs, sentAt: new Map() };
+  const results: StepResult[] = [];
+  for (const step of steps) {
+    try {
+      results.push({ op: step.op, ok: true, ...(await runStep(step, run)) });
+    } catch (err) {
+      results.push({ op: step.op, ok: false, error: err instanceof Error ? err.message : String(err) });
+      break;
+    }
+  }
+  return results;
+}
+
+async function waitFor(host: UiHost, deadline: number, what: string, ready: () => boolean): Promise<void> {
+  while (!ready()) {
+    if (host.now() >= deadline) throw new StepError(`timed out waiting for ${what}`);
+    await host.sleep(POLL_MS);
+  }
+}
+
+function workspaceOf(host: UiHost): { channelId: string; ws: WorkspaceController } {
+  const channelId = host.selectedChannelId();
+  const ws = channelId ? host.workspace(channelId) : undefined;
+  if (!channelId || !ws) throw new StepError("no channel is open; select_channel first");
+  return { channelId, ws };
+}
+
+function splitWorkspace(host: UiHost): { channelId: string; ws: WorkspaceController } {
+  const w = workspaceOf(host);
+  if (w.ws.view().canvas) throw new StepError("the open tab is a canvas; pane steps work on split tabs");
+  return w;
+}
+
+/** A pane by id, else the first pane of that panel type. */
+function findPane(panes: PaneInfo[], pane: string | undefined): PaneInfo {
+  if (!pane) throw new StepError("pane is required");
+  const found = panes.find((p) => p.id === pane) ?? panes.find((p) => p.panel === pane);
+  if (!found) throw new StepError(`no pane "${pane}" in the open tab; panes: ${panes.map((p) => p.id).join(", ") || "none"}`);
+  return found;
+}
+
+function panelOf(panel: string | undefined): PanelType {
+  if (!panel) throw new StepError("panel is required");
+  if (!PANEL_OPTIONS.some((o) => o.panel === panel)) throw new StepError(`unknown panel "${panel}"`);
+  return panel as PanelType;
+}
+
+function openModeOf(mode: string | undefined): AgentOpenMode | undefined {
+  if (mode === undefined) return undefined;
+  if (!AGENT_OPEN_MODE_OPTIONS.some((o) => o.mode === mode)) throw new StepError(`unknown open_mode "${mode}"; use resume, fork or fresh`);
+  return mode as AgentOpenMode;
+}
+
+/** Runs a step against the controller, turning its Error into the step's. */
+function attempt<T>(fn: () => T): T {
+  try {
+    return fn();
+  } catch (err) {
+    throw new StepError(err instanceof Error ? err.message : String(err));
+  }
+}
+
+/** The playground a playground pane a step makes shows, checked against
+ *  the channel's. */
+async function paneOptions(step: UiStep, panel: PanelType, channelId: string, host: UiHost): Promise<PaneOptions> {
+  const opts: PaneOptions = {};
+  const openMode = openModeOf(step.open_mode);
+  if (openMode) opts.openMode = openMode;
+  if (step.item === undefined && step.scope === undefined) return opts;
+  if (panel !== "playground") throw new StepError("item and scope are for playground panes");
+  if (!step.item) throw new StepError("item is required with scope");
+  if (step.scope !== undefined && step.scope !== "global" && step.scope !== "project") throw new StepError(`unknown scope "${step.scope}"; use global or project`);
+  const all = await host.playgrounds(channelId);
+  const found = all.filter((p) => p.name === step.item && (step.scope === undefined || p.scope === step.scope));
+  if (found.length === 0) throw new StepError(`no playground "${step.item}"; playgrounds: ${all.map((p) => `${p.name} (${p.scope})`).join(", ") || "none"}`);
+  if (found.length > 1) throw new StepError(`playground "${step.item}" is both global and project; give scope`);
+  opts.playground = found[0];
+  return opts;
+}
+
+function linesOf(step: UiStep): number {
+  const lines = step.lines ?? DEFAULT_LINES;
+  if (!Number.isInteger(lines) || lines < 1 || lines > MAX_LINES) throw new StepError(`lines must be a whole number from 1 to ${MAX_LINES}`);
+  return lines;
+}
+
+async function runStep(step: UiStep, run: Run): Promise<StepOutput> {
+  const { host, deadline } = run;
+  switch (step.op) {
+    case "select_channel": {
+      const id = step.channel_id;
+      if (!id) throw new StepError("channel_id is required");
+      if (host.selectedChannelId() !== id) await host.selectChannel(id);
+      await waitFor(host, deadline, `channel ${id} to open`, () => host.selectedChannelId() === id && !!host.workspace(id));
+      return {};
+    }
+    case "set_tab": {
+      const { ws } = workspaceOf(host);
+      const tab = step.tab;
+      if (!tab) throw new StepError("tab is required");
+      const { tabs } = ws.view();
+      if (!tabs.includes(tab)) throw new StepError(`no tab "${tab}"; tabs: ${tabs.join(", ")}`);
+      if (ws.view().tab === tab) return {};
+      ws.setTab(tab);
+      // The tab's panes are there once it renders.
+      await waitFor(host, deadline, `tab ${tab} to open`, () => ws.view().tab === tab);
+      return {};
+    }
+    case "replace_pane": {
+      const { channelId, ws } = splitWorkspace(host);
+      const pane = findPane(ws.view().panes, step.pane);
+      const panel = panelOf(step.panel);
+      const opts = await paneOptions(step, panel, channelId, host);
+      return { pane: attempt(() => ws.replacePane(pane.id, panel, opts)) };
+    }
+    case "add_pane": {
+      const { channelId, ws } = splitWorkspace(host);
+      const panel = panelOf(step.panel);
+      const nextTo = step.next_to === undefined ? undefined : findPane(ws.view().panes, step.next_to).id;
+      const direction = step.direction ?? "horizontal";
+      if (direction !== "horizontal" && direction !== "vertical") throw new StepError(`unknown direction "${direction}"; use horizontal or vertical`);
+      const opts = await paneOptions(step, panel, channelId, host);
+      return { pane: attempt(() => ws.addPane(panel, nextTo, direction, opts)) };
+    }
+    case "remove_pane": {
+      const { ws } = splitWorkspace(host);
+      const pane = findPane(ws.view().panes, step.pane);
+      attempt(() => ws.removePane(pane.id));
+      return {};
+    }
+    case "maximize_pane": {
+      const { ws } = splitWorkspace(host);
+      const pane = findPane(ws.view().panes, step.pane);
+      ws.maximize(pane.id);
+      return { pane: pane.id };
+    }
+    case "restore_pane": {
+      const { ws } = splitWorkspace(host);
+      ws.maximize(null);
+      return {};
+    }
+    case "open_file": {
+      const { channelId } = splitWorkspace(host);
+      if (!step.path) throw new StepError("path is required");
+      if (step.line !== undefined && (!Number.isInteger(step.line) || step.line < 1)) throw new StepError("line must be a whole number from 1");
+      await host.openFile(channelId, step.path, step.line).catch((err) => {
+        throw new StepError(err instanceof Error ? err.message : String(err));
+      });
+      return {};
+    }
+    case "send_input":
+      return sendInput(step, run);
+    case "read_output": {
+      const lines = linesOf(step);
+      const { pane, t } = await terminalOf(step, run, "reads");
+      return { pane, output: t.read(lines) };
+    }
+    case "wait_for":
+      return waitForOutput(step, run);
+    default:
+      throw new StepError(`unknown op "${step.op}"`);
+  }
+}
+
+/** The agent terminal of the step's pane, once it's there and its session
+ *  has started, or ready (quiet) when ready is set. */
+async function terminalOf(step: UiStep, run: Run, verb: string, ready?: (t: TerminalInput) => boolean): Promise<{ pane: string; t: TerminalInput }> {
+  const { host, deadline } = run;
+  const { channelId, ws } = workspaceOf(host);
+  const pane = findPane(ws.view().panes, step.pane);
+  if (!INPUT_PANELS.includes(pane.panel)) throw new StepError(`${step.op} only ${verb} docker-agent and docker-shell panes, not ${pane.panel}`);
+  // A pane added a step before mounts and starts its session first.
+  let found: TerminalInput | undefined;
+  await waitFor(host, deadline, `pane ${pane.id} to be ${ready ? "ready for input" : "started"}`, () => {
+    found = host.terminal(channelId, pane.id);
+    if (!found) return false;
+    const status = found.status();
+    if (ready && (status === "completed" || status === "failed")) throw new StepError(`pane ${pane.id}'s session has ${status === "failed" ? "failed" : "ended"}`);
+    return ready ? ready(found) : status !== "connecting";
+  });
+  return { pane: pane.id, t: found as TerminalInput };
+}
+
+async function sendInput(step: UiStep, run: Run): Promise<StepOutput> {
+  if (typeof step.text !== "string") throw new StepError("text is required");
+  const { host } = run;
+  const { pane, t } = await terminalOf(step, run, "types into", (t) => t.status() === "running" && t.lastOutputAt() > 0 && host.now() - t.lastOutputAt() >= INPUT_QUIET_MS);
+  const submit = step.submit ?? true;
+  if (t.kind === "agent") {
+    // The Claude TUI: a bracketed paste keeps a multi-line prompt one
+    // input, and \r submits it.
+    t.send(`\x1b[200~${step.text}\x1b[201~${submit ? "\r" : ""}`);
+  } else {
+    t.send(`${step.text}${submit ? "\n" : ""}`);
+  }
+  run.sentAt.set(pane, host.now());
+  return { pane };
+}
+
+/** Waits until the pane's output matches step.match, or, without one, until
+ *  it's been quiet for step.quiet_ms; after a send_input to the pane earlier
+ *  in the command, only output since counts. A session that ends is done. */
+async function waitForOutput(step: UiStep, run: Run): Promise<StepOutput> {
+  const lines = linesOf(step);
+  let match: RegExp | undefined;
+  if (step.match !== undefined) {
+    try {
+      match = new RegExp(step.match, "m");
+    } catch (err) {
+      throw new StepError(`match: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+  const quietMs = step.quiet_ms ?? WAIT_QUIET_MS;
+  if (!Number.isInteger(quietMs) || quietMs < 0) throw new StepError("quiet_ms must be a whole number from 0");
+  const { host, deadline } = run;
+  const { pane, t } = await terminalOf(step, run, "reads");
+  const since = run.sentAt.get(pane) ?? 0;
+  await waitFor(host, deadline, match ? `pane ${pane} to print /${step.match}/` : `pane ${pane} to be quiet`, () => {
+    const status = t.status();
+    if (status === "completed" || status === "failed") return true;
+    const last = t.lastOutputAt();
+    if (last <= since) return false;
+    if (match) return match.test(t.read(lines));
+    return host.now() - last >= quietMs;
+  });
+  return { pane, output: t.read(lines) };
+}
