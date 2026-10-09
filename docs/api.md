@@ -2767,8 +2767,11 @@ Runs steps in a window, in order, until one fails.
 |----|--------|------|
 | `select_channel` | `channel_id` | Opens the channel |
 | `set_tab` | `tab` | Switches the layout tab |
+| `create_tab` | `tab?` | Opens a new, empty split tab named `tab` (default the next `Layout N`); the result has its `tab` |
+| `rename_tab` | `tab`, `name` | Renames the tab; the result has its new `tab` |
+| `remove_tab` | `tab` | Removes the tab, closing its terminals if it's the open one; the last tab stays |
 | `replace_pane` | `pane`, `panel`, `open_mode?`, `item?`, `scope?` | Puts a new pane in the pane's place |
-| `add_pane` | `panel`, `next_to?`, `direction?`, `open_mode?`, `item?`, `scope?` | Adds a pane beside `next_to` (or the last pane); `direction` is `horizontal` or `vertical` |
+| `add_pane` | `panel`, `next_to?`, `direction?`, `side?`, `open_mode?`, `item?`, `scope?` | Adds a pane beside `next_to`, or, without it, along that edge of the tab. `direction` is `horizontal` (a column, the default) or `vertical` (a row); `side` is `after` (right or below, the default) or `before` (left or above). Next to a pane in a row of columns (or a column of rows), the pane joins it with an equal share instead of splitting that pane in two |
 | `remove_pane` | `pane` | Closes the pane |
 | `maximize_pane` | `pane` | Makes the pane fill the tab |
 | `restore_pane` | | Puts a maximized pane back |

@@ -6,11 +6,15 @@ export interface UiStep {
   op: string;
   channel_id?: string;
   tab?: string;
+  /** rename_tab: the tab's new name. */
+  name?: string;
   pane?: string;
   panel?: string;
   open_mode?: string;
   next_to?: string;
   direction?: string;
+  /** add_pane: "before" puts the pane left of or above next_to. */
+  side?: string;
   text?: string;
   submit?: boolean;
   /** read_output, wait_for: how many of the terminal's last lines. */
@@ -33,6 +37,8 @@ export interface StepResult {
   ok: boolean;
   error?: string;
   pane?: string;
+  /** create_tab, rename_tab: the tab's name. */
+  tab?: string;
   /** read_output, wait_for: the terminal's last lines. */
   output?: string;
 }
@@ -75,10 +81,19 @@ export interface PaneOptions {
 export interface WorkspaceController {
   view(): WorkspaceView;
   setTab(name: string): void;
+  /** Opens a new split tab, named name or the next "Layout N"; returns its
+   *  name. */
+  createTab(name?: string): string;
+  renameTab(name: string, newName: string): void;
+  /** Removes a tab, closing its terminals if it's the open one. */
+  removeTab(name: string): void;
   /** Replaces the pane with a new one of panel; returns its id. */
   replacePane(id: string, panel: PanelType, opts?: PaneOptions): string;
-  /** Adds a pane of panel beside nextTo (or the last pane); returns its id. */
-  addPane(panel: PanelType, nextTo: string | undefined, direction: "horizontal" | "vertical", opts?: PaneOptions): string;
+  /** Adds a pane of panel after nextTo (right of or below it), or before it
+   *  with before set; without nextTo, at that edge of the tab. A pane that
+   *  sits in a row (or column) the pane joins gets a share of it. Returns its
+   *  id. */
+  addPane(panel: PanelType, nextTo: string | undefined, direction: "horizontal" | "vertical", before: boolean, opts?: PaneOptions): string;
   removePane(id: string): void;
   /** Makes the pane fill the tab, or, with null, puts it back. */
   maximize(id: string | null): void;

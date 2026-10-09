@@ -34,7 +34,11 @@ fails:
 
   {"op":"select_channel","channel_id":"…"}   open a channel, thread or worktree thread
   {"op":"set_tab","tab":"Chat"}               switch to a layout tab
+  {"op":"create_tab","tab":"Review"}          open a new split tab (default "Layout N")
+  {"op":"rename_tab","tab":"Review","name":"Diff"}
+  {"op":"remove_tab","tab":"Diff"}            close a tab
   {"op":"add_pane","panel":"docker-agent","next_to":"chat","direction":"horizontal","open_mode":"fresh"}
+  {"op":"add_pane","panel":"git","side":"before"}  a full-height column at the tab's left
   {"op":"replace_pane","pane":"chat","panel":"docker-agent","open_mode":"fresh"}
   {"op":"remove_pane","pane":"git"}
   {"op":"maximize_pane","pane":"docker-agent"}  make a pane fill the tab

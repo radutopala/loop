@@ -49,6 +49,14 @@ func (s *MCPServerSuite) TestUIRun() {
 	}{
 		{"in this channel", []any{map[string]any{"op": "set_tab", "tab": "Git"}}, `[{"op":"select_channel","channel_id":"test-channel"},{"op":"set_tab","tab":"Git"}]`},
 		{"in the channel it opens", []any{map[string]any{"op": "select_channel", "channel_id": "th-1"}}, `[{"op":"select_channel","channel_id":"th-1"}]`},
+		{
+			"keeping a false and a 0",
+			[]any{
+				map[string]any{"op": "send_input", "pane": "docker-shell", "text": "ls", "submit": false},
+				map[string]any{"op": "wait_for", "pane": "docker-shell", "quiet_ms": 0, "lines": 5},
+			},
+			`[{"op":"select_channel","channel_id":"test-channel"},{"op":"send_input","pane":"docker-shell","text":"ls","submit":false},{"op":"wait_for","pane":"docker-shell","quiet_ms":0,"lines":5}]`,
+		},
 	}
 	for _, tt := range tests {
 		s.Run(tt.name, func() {
@@ -81,7 +89,11 @@ func (s *MCPServerSuite) TestUIRunErrors() {
 		do   func(*http.Request) (*http.Response, error)
 		want string
 	}{
-		{name: "no steps", args: map[string]any{"steps": []any{}}, want: "steps is required"},
+		{name: "no steps", args: map[string]any{"steps": []any{}}, want: "minItems"},
+		{name: "unknown op", args: map[string]any{"steps": []any{map[string]any{"op": "close_window"}}}, want: "/op"},
+		{name: "unknown panel", args: map[string]any{"steps": []any{map[string]any{"op": "add_pane", "panel": "terminal"}}}, want: "/panel"},
+		{name: "unknown open_mode", args: map[string]any{"steps": []any{map[string]any{"op": "add_pane", "panel": "docker-agent", "open_mode": "new"}}}, want: "/open_mode"},
+		{name: "unknown field", args: map[string]any{"steps": []any{map[string]any{"op": "set_tab", "tabb": "Git"}}}, want: "tabb"},
 		{
 			name: "network error",
 			do:   func(*http.Request) (*http.Response, error) { return nil, errors.New("refused") },

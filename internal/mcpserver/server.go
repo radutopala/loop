@@ -261,6 +261,7 @@ func New(channelID, apiURL, authorID string, httpClient HTTPClient, logger *slog
 	mcp.AddTool(s.mcpServer, &mcp.Tool{
 		Name:        "ui_run",
 		Description: "Drive the Loop desktop app window the user last focused: open a channel of this project, switch layout tabs, add, replace, remove or maximize panes, open a file in the editor, show a playground in a pane, and type into, read or wait on an agent terminal (docker-agent or docker-shell panes, never host shells). The steps run in order until one fails; without a select_channel first, they run in this channel. Desktop app only. Moving the user's window is visible to them: do it when they asked to see something.",
+		InputSchema: uiRunSchema(),
 	}, s.handleUIRun)
 
 	mcp.AddTool(s.mcpServer, &mcp.Tool{

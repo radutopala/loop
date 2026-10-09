@@ -36,19 +36,37 @@ class FakeWorkspace implements WorkspaceController {
     this.calls.push(`replace ${id} ${panel} ${openMode ?? ""}`.trim());
     return pane.id;
   }
-  addPane(panel: PanelType, nextTo: string | undefined, direction: string, opts?: PaneOptions) {
+  addPane(panel: PanelType, nextTo: string | undefined, direction: string, before: boolean, opts?: PaneOptions) {
     if (this.fail) throw new Error(this.fail);
     this.opts.push(opts);
     const openMode = opts?.openMode;
     const pane = { id: `${panel}-${this.next++}`, panel };
     this.panes = [...this.panes, pane];
-    this.calls.push(`add ${panel} ${nextTo ?? "-"} ${direction} ${openMode ?? ""}`.trim());
+    this.calls.push(`add ${panel} ${nextTo ?? "-"} ${direction}${before ? " before" : ""} ${openMode ?? ""}`.trim());
     return pane.id;
   }
   removePane(id: string) {
     if (this.fail) throw new Error(this.fail);
     this.panes = this.panes.filter((p) => p.id !== id);
     this.calls.push(`remove ${id}`);
+  }
+  createTab(name?: string) {
+    const tab = name ?? `Layout ${this.tabs.length + 1}`;
+    this.calls.push(`createTab ${tab}`);
+    this.tabs = [...this.tabs, tab];
+    this.tab = tab;
+    this.panes = [];
+    return tab;
+  }
+  renameTab(name: string, newName: string) {
+    this.calls.push(`renameTab ${name} ${newName}`);
+    this.tabs = this.tabs.map((t) => (t === name ? newName : t));
+    if (this.tab === name) this.tab = newName;
+  }
+  removeTab(name: string) {
+    this.calls.push(`removeTab ${name}`);
+    this.tabs = this.tabs.filter((t) => t !== name);
+    if (this.tab === name) this.tab = this.tabs[0] as string;
   }
 }
 
@@ -144,6 +162,7 @@ describe("runSteps", () => {
       { op: "replace_pane", pane: "chat", panel: "docker-agent", open_mode: "fresh" },
       { op: "add_pane", panel: "playground", next_to: "docker-agent", direction: "vertical" },
       { op: "add_pane", panel: "notes" },
+      { op: "add_pane", panel: "git", next_to: "docker-agent", side: "before" },
       { op: "remove_pane", pane: "notes" },
     ]);
     expect(results).toEqual([
@@ -151,9 +170,17 @@ describe("runSteps", () => {
       { op: "replace_pane", ok: true, pane: "docker-agent-0" },
       { op: "add_pane", ok: true, pane: "playground-1" },
       { op: "add_pane", ok: true, pane: "notes-2" },
+      { op: "add_pane", ok: true, pane: "git-3" },
       { op: "remove_pane", ok: true },
     ]);
-    expect(ws.calls).toEqual(["setTab Git", "replace chat docker-agent fresh", "add playground docker-agent-0 vertical", "add notes - horizontal", "remove notes-2"]);
+    expect(ws.calls).toEqual([
+      "setTab Git",
+      "replace chat docker-agent fresh",
+      "add playground docker-agent-0 vertical",
+      "add notes - horizontal",
+      "add git docker-agent-0 horizontal before",
+      "remove notes-2",
+    ]);
   });
 
   it("stops at the first step that fails", async () => {
@@ -165,11 +192,20 @@ describe("runSteps", () => {
   it.each<{ name: string; step: UiStep; error: string }>([
     { name: "set_tab without a tab", step: { op: "set_tab" }, error: "tab is required" },
     { name: "set_tab to no such tab", step: { op: "set_tab", tab: "Nope" }, error: 'no tab "Nope"; tabs: Chat, Git' },
+    { name: "create_tab with a blank name", step: { op: "create_tab", tab: "  " }, error: "tab can't be empty" },
+    { name: "create_tab with a taken name", step: { op: "create_tab", tab: "Git" }, error: 'there\'s already a tab "Git"' },
+    { name: "rename_tab without a tab", step: { op: "rename_tab", name: "X" }, error: "tab is required" },
+    { name: "rename_tab without a name", step: { op: "rename_tab", tab: "Git", name: " " }, error: "name is required" },
+    { name: "rename_tab of no such tab", step: { op: "rename_tab", tab: "Nope", name: "X" }, error: 'no tab "Nope"; tabs: Chat, Git' },
+    { name: "rename_tab to a taken name", step: { op: "rename_tab", tab: "Git", name: "Chat" }, error: 'there\'s already a tab "Chat"' },
+    { name: "remove_tab without a tab", step: { op: "remove_tab" }, error: "tab is required" },
+    { name: "remove_tab of no such tab", step: { op: "remove_tab", tab: "Nope" }, error: 'no tab "Nope"; tabs: Chat, Git' },
     { name: "a pane step without a pane", step: { op: "remove_pane" }, error: "pane is required" },
     { name: "no such pane", step: { op: "remove_pane", pane: "git" }, error: 'no pane "git" in the open tab; panes: chat' },
     { name: "without a panel", step: { op: "add_pane" }, error: "panel is required" },
     { name: "an unknown panel", step: { op: "add_pane", panel: "clock" }, error: 'unknown panel "clock"' },
     { name: "an unknown open mode", step: { op: "add_pane", panel: "docker-agent", open_mode: "new" }, error: 'unknown open_mode "new"; use resume, fork or fresh' },
+    { name: "an unknown side", step: { op: "add_pane", panel: "notes", side: "left" }, error: 'unknown side "left"; use before or after' },
     { name: "an unknown direction", step: { op: "add_pane", panel: "notes", direction: "left" }, error: 'unknown direction "left"; use horizontal or vertical' },
     { name: "a missing next_to", step: { op: "add_pane", panel: "notes", next_to: "git" }, error: 'no pane "git" in the open tab; panes: chat' },
     { name: "select_channel without an id", step: { op: "select_channel" }, error: "channel_id is required" },
@@ -222,6 +258,65 @@ describe("runSteps", () => {
       };
     };
     expect(await run([{ op: "set_tab", tab: "Git" }])).toEqual([{ op: "set_tab", ok: true }]);
+  });
+
+  it("creates a named tab and adds a pane to it", async () => {
+    const results = await run([
+      { op: "create_tab", tab: " Bridge " },
+      { op: "add_pane", panel: "notes" },
+    ]);
+    expect(results).toEqual([
+      { op: "create_tab", ok: true, tab: "Bridge" },
+      { op: "add_pane", ok: true, pane: "notes-0" },
+    ]);
+    expect(ws.calls).toEqual(["createTab Bridge", "add notes - horizontal"]);
+  });
+
+  it("creates a tab with the next name and waits for it to open", async () => {
+    ws.createTab = (name) => {
+      host.onSleep = () => {
+        ws.tab = "Layout 3";
+      };
+      expect(name).toBeUndefined();
+      return "Layout 3";
+    };
+    expect(await run([{ op: "create_tab" }])).toEqual([{ op: "create_tab", ok: true, tab: "Layout 3" }]);
+  });
+
+  it("renames a tab", async () => {
+    expect(await run([{ op: "rename_tab", tab: "Chat", name: " Talk " }])).toEqual([{ op: "rename_tab", ok: true, tab: "Talk" }]);
+    expect(ws.calls).toEqual(["renameTab Chat Talk"]);
+    expect(ws.view()).toMatchObject({ tab: "Talk", tabs: ["Talk", "Git"] });
+  });
+
+  it("leaves a tab renamed to its own name", async () => {
+    expect(await run([{ op: "rename_tab", tab: "Git", name: "Git" }])).toEqual([{ op: "rename_tab", ok: true, tab: "Git" }]);
+    expect(ws.calls).toEqual([]);
+  });
+
+  it("waits for a renamed tab", async () => {
+    ws.renameTab = (name, newName) => {
+      host.onSleep = () => {
+        ws.tabs = ws.tabs.map((t) => (t === name ? newName : t));
+      };
+    };
+    expect(await run([{ op: "rename_tab", tab: "Git", name: "Diff" }])).toEqual([{ op: "rename_tab", ok: true, tab: "Diff" }]);
+  });
+
+  it("removes a tab and waits for it to close", async () => {
+    ws.removeTab = (name) => {
+      host.onSleep = () => {
+        ws.tabs = ws.tabs.filter((t) => t !== name);
+      };
+    };
+    expect(await run([{ op: "remove_tab", tab: "Git" }])).toEqual([{ op: "remove_tab", ok: true }]);
+    expect(ws.tabs).toEqual(["Chat"]);
+  });
+
+  it("doesn't remove the last tab", async () => {
+    ws.tabs = ["Chat"];
+    expect(await run([{ op: "remove_tab", tab: "Chat" }])).toEqual([{ op: "remove_tab", ok: false, error: "the last tab can't be removed" }]);
+    expect(ws.calls).toEqual([]);
   });
 
   it("selects a channel and waits for its workspace", async () => {

@@ -33,10 +33,10 @@ import { EmptyLayoutPicker } from "../../splitPane/AddPanelButton";
 import { PaneLeafHeader } from "../../splitPane/PaneLeafHeader";
 import { paneBoxStyle, SplitPaneLayout } from "../../splitPane/SplitPaneLayout";
 import {
+  addBeside,
   canAddPanel,
   collectLeaves,
   collectPanelTypes,
-  findLastLeaf,
   findLeafById,
   hasAgentLeaf,
   leafCount,
@@ -584,10 +584,10 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
   }, [openMemoryFile, tree, channelId, switchLayout, onOpenMemoryFileComplete]);
 
   const addLayout = useCallback(
-    (lt: LayoutType) => {
+    (lt: LayoutType, given?: string): string => {
       let n = 1;
-      let name = lt === "canvas" ? `Canvas ${n}` : `Layout ${n}`;
-      while (layoutNames.includes(name)) {
+      let name = given ?? (lt === "canvas" ? `Canvas ${n}` : `Layout ${n}`);
+      while (!given && layoutNames.includes(name)) {
         n++;
         name = lt === "canvas" ? `Canvas ${n}` : `Layout ${n}`;
       }
@@ -607,6 +607,7 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
       statusMapRef.current.clear();
       setAgentState("none");
       setShowNewLayoutMenu(false);
+      return name;
     },
     [channelId, layoutNames],
   );
@@ -776,6 +777,12 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
   switchLayoutRef.current = switchLayout;
   const handleRemoveLeafRef = useRef(handleRemoveLeaf);
   handleRemoveLeafRef.current = handleRemoveLeaf;
+  const addLayoutRef = useRef(addLayout);
+  addLayoutRef.current = addLayout;
+  const handleRenameLayoutRef = useRef(handleRenameLayout);
+  handleRenameLayoutRef.current = handleRenameLayout;
+  const handleDeleteLayoutRef = useRef(handleDeleteLayout);
+  handleDeleteLayoutRef.current = handleDeleteLayout;
 
   useEffect(() => {
     const setTreeNow = (t: PaneNode) => {
@@ -818,6 +825,9 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
         setMaximizedLeafId(id);
       },
       setTab: (name) => switchLayoutRef.current(name),
+      createTab: (name) => addLayoutRef.current("split", name),
+      renameTab: (name, newName) => handleRenameLayoutRef.current(name, newName),
+      removeTab: (name) => handleDeleteLayoutRef.current(name),
       replacePane: (id, panel, opts) => {
         const current = treeRef.current;
         const old = leafOf(id);
@@ -832,7 +842,7 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
         setTreeNow(next);
         return leaf.id;
       },
-      addPane: (panel, nextTo, direction, opts) => {
+      addPane: (panel, nextTo, direction, before, opts) => {
         const current = treeRef.current;
         if (!canAddPanel(current, panel)) throw new Error(`the tab can't have another ${panel} pane`);
         const leaf = newLeaf(panel, opts);
@@ -844,8 +854,7 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
           saveLayout(channelId, name, next);
           return leaf.id;
         }
-        const anchor = nextTo ? leafOf(nextTo) : (findLastLeaf(current) as LeafNode);
-        setTreeNow(withFileTree(splitLeaf(current, anchor.id, direction, leaf), leaf));
+        setTreeNow(withFileTree(addBeside(current, nextTo ? leafOf(nextTo).id : null, direction, leaf, before), leaf));
         return leaf.id;
       },
       removePane: (id) => {

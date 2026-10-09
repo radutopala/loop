@@ -150,6 +150,40 @@ async function runStep(step: UiStep, run: Run): Promise<StepOutput> {
       await waitFor(host, deadline, `tab ${tab} to open`, () => ws.view().tab === tab);
       return {};
     }
+    case "create_tab": {
+      const { ws } = workspaceOf(host);
+      const name = step.tab?.trim();
+      if (step.tab !== undefined && !name) throw new StepError("tab can't be empty");
+      if (name && ws.view().tabs.includes(name)) throw new StepError(`there's already a tab "${name}"`);
+      const tab = ws.createTab(name);
+      await waitFor(host, deadline, `tab ${tab} to open`, () => ws.view().tab === tab);
+      return { tab };
+    }
+    case "rename_tab": {
+      const { ws } = workspaceOf(host);
+      const tab = step.tab;
+      if (!tab) throw new StepError("tab is required");
+      const name = step.name?.trim();
+      if (!name) throw new StepError("name is required");
+      const { tabs } = ws.view();
+      if (!tabs.includes(tab)) throw new StepError(`no tab "${tab}"; tabs: ${tabs.join(", ")}`);
+      if (name === tab) return { tab };
+      if (tabs.includes(name)) throw new StepError(`there's already a tab "${name}"`);
+      ws.renameTab(tab, name);
+      await waitFor(host, deadline, `tab ${tab} to be renamed`, () => ws.view().tabs.includes(name));
+      return { tab: name };
+    }
+    case "remove_tab": {
+      const { ws } = workspaceOf(host);
+      const tab = step.tab;
+      if (!tab) throw new StepError("tab is required");
+      const { tabs } = ws.view();
+      if (!tabs.includes(tab)) throw new StepError(`no tab "${tab}"; tabs: ${tabs.join(", ")}`);
+      if (tabs.length <= 1) throw new StepError("the last tab can't be removed");
+      ws.removeTab(tab);
+      await waitFor(host, deadline, `tab ${tab} to close`, () => !ws.view().tabs.includes(tab));
+      return {};
+    }
     case "replace_pane": {
       const { channelId, ws } = splitWorkspace(host);
       const pane = findPane(ws.view().panes, step.pane);
@@ -163,8 +197,10 @@ async function runStep(step: UiStep, run: Run): Promise<StepOutput> {
       const nextTo = step.next_to === undefined ? undefined : findPane(ws.view().panes, step.next_to).id;
       const direction = step.direction ?? "horizontal";
       if (direction !== "horizontal" && direction !== "vertical") throw new StepError(`unknown direction "${direction}"; use horizontal or vertical`);
+      const side = step.side ?? "after";
+      if (side !== "before" && side !== "after") throw new StepError(`unknown side "${side}"; use before or after`);
       const opts = await paneOptions(step, panel, channelId, host);
-      return { pane: attempt(() => ws.addPane(panel, nextTo, direction, opts)) };
+      return { pane: attempt(() => ws.addPane(panel, nextTo, direction, side === "before", opts)) };
     }
     case "remove_pane": {
       const { ws } = splitWorkspace(host);
