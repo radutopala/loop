@@ -5,6 +5,7 @@ import type { Channel } from "../../types";
 import type { PillKind } from "./pills";
 import { REVIEWING_PILL, SIDEBAR_PILLS } from "./pills";
 import { RowInfoPopup } from "./RowInfoPopup";
+import { useRevealSelected } from "./reveal";
 import { SessionKindIcon } from "./SessionKindIcon";
 import { StatusPill } from "./StatusPill";
 import { relativeTime, sessionContext, sessionName } from "./sessions";
@@ -38,6 +39,7 @@ export function SectionTabs({ tab, showTabs, recentCount, onChange, hideTasks, o
   const tabLabel = tab === "recent" ? "Recent" : "Tree";
   return (
     <div
+      data-sidebar-sticky
       style={{
         position: "sticky",
         top: 0,
@@ -170,6 +172,7 @@ function SessionRow({ channel, context, selected, unread, running, pills, traili
   const { colors } = useTheme();
   const [hovered, setHovered] = useState(false);
   const rowRef = useRef<HTMLButtonElement>(null);
+  useRevealSelected(rowRef, selected);
   const waiting = pills.length > 0;
   return (
     <div style={{ margin: "0 8px" }}>

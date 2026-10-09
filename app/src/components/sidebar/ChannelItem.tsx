@@ -6,6 +6,7 @@ import { NewThreadInput } from "./NewThreadInput";
 import type { PillKind } from "./pills";
 import { REVIEWING_PILL, SIDEBAR_PILLS } from "./pills";
 import { RowInfoPopup } from "./RowInfoPopup";
+import { useExpandToSelected, useRevealSelected } from "./reveal";
 import { SidebarWorktreeButton } from "./SidebarWorktreeButton";
 import { StatusPill } from "./StatusPill";
 import { ThreadItem, type ThreadReorder } from "./ThreadItem";
@@ -67,6 +68,8 @@ export function ChannelItem({
   const [collapsed, setCollapsed] = useState(false);
   const [hovered, setHovered] = useState(false);
   const rowRef = useRef<HTMLDivElement>(null);
+  useExpandToSelected(threads, threadsByParent, selectedId, setCollapsed);
+  useRevealSelected(rowRef, selected);
 
   const hasThreads = threads.length > 0;
 

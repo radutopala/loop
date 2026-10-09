@@ -602,7 +602,7 @@ export function Sidebar({
         }}
         newChannelInputRef={newChannelInputRef}
       />
-      <div style={{ flex: 1, overflowY: "auto", overflowX: "hidden", minHeight: 0 }}>
+      <div data-sidebar-list style={{ flex: 1, overflowY: "auto", overflowX: "hidden", minHeight: 0 }}>
         {!selectMode && (
           <SectionTabs
             tab={openTab}
