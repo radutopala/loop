@@ -24,8 +24,14 @@ func (m *mockContainerManager) List() []*container.ContainerInfo {
 	return m.containers
 }
 
-func (m *mockContainerManager) ListByChannel(string) []*container.ContainerInfo {
-	return m.byChannel
+func (m *mockContainerManager) ListByChannel(channelID string) []*container.ContainerInfo {
+	out := []*container.ContainerInfo{}
+	for _, info := range m.byChannel {
+		if info.ChannelID == channelID {
+			out = append(out, info)
+		}
+	}
+	return out
 }
 
 func (m *mockContainerManager) RunningChannelIDs(context.Context) map[string]struct{} {

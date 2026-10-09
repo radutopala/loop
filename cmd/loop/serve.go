@@ -638,6 +638,7 @@ func (a *app) serve() error {
 		api.WithWorkflowBashLocal(cfg.WorkflowBashLocal),
 		api.WithProjectTrust(config.NewTrustStoreIn(a.userConfigDir)),
 		api.WithConfigHistory(store),
+		api.WithContainerKeepAlive(cfg.ContainerKeepAlive),
 	}
 
 	// Quality engine: parser + graph cache + SQL-backed snapshot store. The

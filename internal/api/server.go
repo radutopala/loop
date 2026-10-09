@@ -150,6 +150,7 @@ type Server struct {
 	hostTermManager         TerminalManager
 	cmdBuilder              InteractiveCmdBuilder
 	containerRegistry       ContainerManager
+	containerKeepAlive      time.Duration // how long a deleted channel's containers stay before removal
 	activeChatLister        ActiveChatLister
 	branchPoller            *BranchPoller
 	msgHandler              IncomingMessageHandler
@@ -353,6 +354,12 @@ func (s *Server) SetAuditDirResolver(r AuditDirResolver) {
 // after the domain services are created, so they may reach into them —
 // each domain defines its With* options next to its service.
 type Option func(*Server)
+
+// WithContainerKeepAlive sets how long a deleted channel's or thread's agent
+// and shell containers stay, for `docker logs`, before they're removed.
+func WithContainerKeepAlive(d time.Duration) Option {
+	return func(s *Server) { s.containerKeepAlive = d }
+}
 
 // NewServer creates a new API server. The channels, threads, store, and messages
 // parameters may be nil if those features are not configured.
