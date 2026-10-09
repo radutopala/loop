@@ -82,6 +82,18 @@ func (s *IntegrationSuite) TestIndexesAreUsed() {
 			args:      []any{"ch1"},
 			wantIndex: "idx_scheduled_tasks_channel_thread",
 		},
+		{
+			name:      "LastBotMessage",
+			query:     `SELECT id FROM messages WHERE channel_id = ? AND trigger_msg_id = ? AND trigger_msg_id != '' AND is_bot = 1 AND kind = 'message' ORDER BY id DESC LIMIT 1`,
+			args:      []any{"ch1", "u1"},
+			wantIndex: "idx_messages_trigger_msg_id",
+		},
+		{
+			name:      "FirstForkableReply",
+			query:     `SELECT id FROM messages WHERE channel_id = ? AND trigger_msg_id = ? AND trigger_msg_id != '' AND is_bot = 1 AND kind = 'message' AND session_id != '' AND transcript_uuid != '' ORDER BY id ASC LIMIT 1`,
+			args:      []any{"ch1", "u1"},
+			wantIndex: "idx_messages_trigger_msg_id",
+		},
 	}
 
 	for _, tc := range cases {

@@ -558,11 +558,12 @@ func (s *SQLiteStore) GetTimeline(ctx context.Context, channelID string, cursorP
 
 // FirstForkableReply returns the first bot message of the turn
 // triggerMsgID started in a channel that records where it sits in the
-// transcript, or nil when it has none.
+// transcript, or nil when it has none. The trigger_msg_id != ” term lets
+// SQLite use the partial idx_messages_trigger_msg_id.
 func (s *SQLiteStore) FirstForkableReply(ctx context.Context, channelID, triggerMsgID string) (*Message, error) {
 	return s.queryMessage(ctx,
 		`SELECT `+messageColumns+` FROM messages
-		 WHERE channel_id = ? AND trigger_msg_id = ? AND is_bot = 1 AND kind = 'message'
+		 WHERE channel_id = ? AND trigger_msg_id = ? AND trigger_msg_id != '' AND is_bot = 1 AND kind = 'message'
 		   AND session_id != '' AND transcript_uuid != '' ORDER BY id ASC LIMIT 1`,
 		channelID, triggerMsgID,
 	)

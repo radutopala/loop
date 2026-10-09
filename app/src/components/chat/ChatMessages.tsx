@@ -172,7 +172,9 @@ export const ChatMessages = forwardRef<ChatMessagesHandle, ChatMessagesProps>(fu
   }, [items]);
 
   // Auto-scroll to bottom on new messages, timeline growth, or streaming updates.
-  useEffect(() => {
+  // A layout effect, so the pin lands before the paint: a plain effect lets a
+  // newly opened channel paint once at its top, then jump to its bottom.
+  useLayoutEffect(() => {
     if (!autoScrollRef.current) return;
     // Jump straight to the true scroll bottom (no smooth animation). While a reply
     // streams, the content keeps growing, so a smooth scroll — which animates
