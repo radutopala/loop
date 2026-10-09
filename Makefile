@@ -167,7 +167,7 @@ lint-go: ## Run golangci-lint (with auto-fix)
 		echo "error: another loop-lint container is already running; aborting" >&2; \
 		exit 1; \
 	fi
-	docker run --rm --name loop-lint -v "$$(pwd)":/app -v /app/app/node_modules -w /app golangci/golangci-lint:v2.13.1 golangci-lint run -v --fix ./...
+	docker run --rm --name loop-lint -v "$$(pwd)":/app -v /app/app/node_modules -w /app golangci/golangci-lint:v2.14.0 golangci-lint run -v --fix ./...
 
 lint-app: ## Run biome (with auto-fix) + tsc typecheck on the app
 	@if [ -n "$$(docker ps --filter name=^loop-lint-biome$$ --quiet)" ]; then \
