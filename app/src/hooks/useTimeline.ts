@@ -2,8 +2,12 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { fetchTimeline } from "../api/loopApi";
 import type { Message, TimelineCursor, TimelineItem } from "../types";
 import { logErr } from "../utils/log";
+import { TimelineCache } from "./timelineCache";
 
 const PAGE_SIZE = 50;
+
+// The newest page each recently opened channel showed.
+const lastPages = new TimelineCache(30, PAGE_SIZE);
 
 interface UseTimelineResult {
   items: TimelineItem[];
@@ -34,8 +38,11 @@ interface UseTimelineResult {
  * agent events fetched from /api/channels/{id}/timeline. Live SSE events are
  * accumulated in a separate liveTail buffer; on run completion the caller
  * refetches the head so backfilled items replace the buffered ones.
+ *
+ * A channel opened again shows the newest page it last showed, kept in
+ * cache, until its first page loads.
  */
-export function useTimeline(channelId: string | null): UseTimelineResult {
+export function useTimeline(channelId: string | null, cache: TimelineCache = lastPages): UseTimelineResult {
   const [items, setItems] = useState<TimelineItem[]>([]);
   const [liveTail, setLiveTail] = useState<TimelineItem[]>([]);
   const [loading, setLoading] = useState(false);
@@ -44,6 +51,8 @@ export function useTimeline(channelId: string | null): UseTimelineResult {
   const loadingRef = useRef(false);
   const itemsRef = useRef<TimelineItem[]>([]);
   itemsRef.current = items;
+  // The channel items belong to; channelId changes a render before items do.
+  const itemsChannelRef = useRef<string | null>(null);
   // Per-hook-instance counter producing strictly-decreasing synthetic ids for
   // live-tail items. Negative so they never collide with backend row ids.
   const liveCounterRef = useRef(0);
@@ -52,9 +61,11 @@ export function useTimeline(channelId: string | null): UseTimelineResult {
     return liveCounterRef.current;
   }, []);
 
-  // Reset and fetch first page when the channel changes.
+  // Reset and fetch first page when the channel changes. The cached page
+  // shows meanwhile; older pages load once the first one is in.
   useEffect(() => {
-    setItems([]);
+    itemsChannelRef.current = channelId;
+    setItems((channelId && cache.get(channelId)) || []);
     setLiveTail([]);
     setHasMore(false);
     cursorRef.current = null;
@@ -87,7 +98,11 @@ export function useTimeline(channelId: string | null): UseTimelineResult {
     return () => {
       cancelled = true;
     };
-  }, [channelId]);
+  }, [channelId, cache]);
+
+  useEffect(() => {
+    if (itemsChannelRef.current) cache.set(itemsChannelRef.current, items);
+  }, [items, cache]);
 
   const loadMore = useCallback(() => {
     if (!channelId || loadingRef.current || !hasMore || !cursorRef.current) return;

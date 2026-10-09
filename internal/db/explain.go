@@ -29,11 +29,12 @@ func (s *SQLiteStore) GetChatMessage(ctx context.Context, channelID, msgID strin
 }
 
 // LastBotMessage returns the last bot message of the turn triggerMsgID
-// started in a channel, or nil when it has none.
+// started in a channel, or nil when it has none. The trigger_msg_id != ”
+// term lets SQLite use the partial idx_messages_trigger_msg_id.
 func (s *SQLiteStore) LastBotMessage(ctx context.Context, channelID, triggerMsgID string) (*Message, error) {
 	return s.queryMessage(ctx,
 		`SELECT `+messageColumns+` FROM messages
-		 WHERE channel_id = ? AND trigger_msg_id = ? AND is_bot = 1 AND kind = 'message' ORDER BY id DESC LIMIT 1`,
+		 WHERE channel_id = ? AND trigger_msg_id = ? AND trigger_msg_id != '' AND is_bot = 1 AND kind = 'message' ORDER BY id DESC LIMIT 1`,
 		channelID, triggerMsgID,
 	)
 }
